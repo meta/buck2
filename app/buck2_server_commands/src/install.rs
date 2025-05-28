@@ -918,7 +918,8 @@ async fn handle_install_request(
         let upload = async {
             let manifold = match shared {
                 Some(shared) => shared.manifold_client().await?,
-                None => ManifoldClient::new().await?,
+                // FIXME(jadel): thread configuration through
+                None => ManifoldClient::new_with_config(None).await?,
             };
             upload_installer_logs(&log_path, manifold).await
         }
@@ -956,14 +957,26 @@ async fn upload_installer_logs(
 ) -> buck2_error::Result<String> {
     let trace_id: &str = &get_dispatcher().trace_id().to_string();
     let manifold_filename = format!("flat/{trace_id}.log");
-    manifold
+    let bucket = Bucket::INSTALLER_LOGS;
+    let url = manifold
         .upload_file(
             log_path,
-            manifold_filename,
-            Bucket::INSTALLER_LOGS,
+            manifold_filename.clone(),
+            bucket,
             Ttl::from_days(14),
         )
-        .await
+        .await;
+    if cfg!(fbcode_build) {
+        let _unused = url?;
+        // We use the explorer url here rather than interncache since it is accessible off-vpn and
+        // we don't care about the truncation of long logs.
+        Ok(format!(
+            "https://www.internalfb.com/manifold/explorer/{}/{}",
+            bucket.name, manifold_filename,
+        ))
+    } else {
+        url
+    }
 }
 
 async fn build_launch_installer(

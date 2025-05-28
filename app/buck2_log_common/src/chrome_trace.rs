@@ -2285,7 +2285,8 @@ impl BuckSubcommand for ChromeTraceCommand {
             let manifold_filename =
                 format!("flat/{trace_id}_{username}_{timestamp}.chrome_trace.gz");
             println!("Uploading {manifold_filename}...");
-            let client = buck2_common::manifold::ManifoldClient::new().await?;
+            // FIXME(jadel): thread configuration through
+            let client = buck2_common::manifold::ManifoldClient::new_with_config(None).await?;
             let explorer_url = client
                 .upload_file(
                     &dest_path,

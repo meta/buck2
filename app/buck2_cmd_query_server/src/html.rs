@@ -41,19 +41,17 @@ impl Html {
             let html_out = output_format(graph)?;
             let mut cursor = Cursor::new(html_out.as_bytes());
             let manifold_path = format!("flat/{trace_id}-graph.html");
-            let manifold = ManifoldClient::new().await?;
+            // FIXME(jadel): thread configuration through
+            let manifold = ManifoldClient::new_with_config(None).await?;
 
+            let bucket = Bucket::EVENT_LOGS;
             manifold
-                .read_and_upload(
-                    Bucket::EVENT_LOGS,
-                    &manifold_path,
-                    Default::default(),
-                    &mut cursor,
-                )
+                .read_and_upload(bucket, &manifold_path, Default::default(), &mut cursor)
                 .await?;
-            res = format!(
-                "\nView html in your browser: https://interncache-all.fbcdn.net/manifold/buck2_logs/{manifold_path} (requires VPN/lighthouse)\n"
-            );
+            let url = manifold
+                .file_view_url(&bucket, &manifold_path)
+                .unwrap_or_default();
+            res = format!("\nView html in your browser: {url} (requires VPN/lighthouse)\n");
         }
         #[cfg(not(fbcode_build))]
         {

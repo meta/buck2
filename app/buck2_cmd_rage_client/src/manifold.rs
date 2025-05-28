@@ -16,11 +16,23 @@ use buck2_fs::async_fs_util;
 use buck2_fs::error::IoResultExt;
 use buck2_fs::paths::abs_path::AbsPath;
 
-pub(crate) fn manifold_leads(bucket: &Bucket, filename: String) -> String {
-    let full_path = bucket.path(filename.as_str());
-    let command = format!("manifold get {full_path}");
-    let url = bucket.intern_url(filename.as_str());
-    format!("{command}\n{url}")
+pub(crate) fn manifold_leads(
+    manifold: &ManifoldClient,
+    bucket: &Bucket,
+    filename: String,
+) -> String {
+    let url = manifold.file_view_url(bucket, &filename);
+    let command = manifold.file_dump_command(bucket, &filename);
+    let mut out = String::new();
+    if let Some(url) = url {
+        out.push_str(&url);
+    }
+    if let Some(command) = command {
+        out.push('\n');
+        out.push_str(&command);
+    }
+
+    out
 }
 
 pub(crate) async fn file_to_manifold(
@@ -37,7 +49,7 @@ pub(crate) async fn file_to_manifold(
         .read_and_upload(bucket, &filename, Default::default(), &mut file)
         .await?;
 
-    Ok(manifold_leads(&bucket, filename))
+    Ok(manifold_leads(manifold, &bucket, filename))
 }
 
 pub(crate) async fn buf_to_manifold(
@@ -52,5 +64,5 @@ pub(crate) async fn buf_to_manifold(
         .read_and_upload(bucket, &filename, Default::default(), &mut cursor)
         .await?;
 
-    Ok(manifold_leads(&bucket, filename))
+    Ok(manifold_leads(manifold, &bucket, filename))
 }

@@ -27,6 +27,7 @@ use buck2_common::daemon_dir::DaemonDir;
 use buck2_common::init::LogDownloadMethod;
 use buck2_common::invocation_paths::InvocationPaths;
 use buck2_common::invocation_paths_result::InvocationPathsResult;
+use buck2_common::manifold::BucketsConfig;
 use buck2_core::error::buck2_hard_error_env;
 use buck2_core::error::buck2_show_soft_errors_env;
 use buck2_error::BuckErrorContext;
@@ -498,6 +499,15 @@ impl<'a> ClientCommandContext<'a> {
             .daemon_startup_config()?
             .startup_options
             .log_download_method
+            .clone())
+    }
+
+    pub fn buckets_config(&self) -> buck2_error::Result<Option<BucketsConfig>> {
+        Ok(self
+            .immediate_config
+            .daemon_startup_config()?
+            .startup_options
+            .buckets_config
             .clone())
     }
 }

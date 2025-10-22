@@ -195,25 +195,31 @@ fn test_eval_build_file() {
     assert_eq!(vec!["invoke_some-exported", "java"], target_names);
 }
 
-fn cells() -> CellsData {
-    let BuckConfigBasedCells { cell_resolver, .. } =
-        futures::executor::block_on(BuckConfigBasedCells::testing_parse_with_file_ops(
-            &mut TestConfigParserFileOps::new(&[(
-                ".buckconfig",
-                indoc!(
-                    r#"
+fn cells(cell_segmentation: bool) -> CellsData {
+    let disable_cell_segmentation = !cell_segmentation;
+    let BuckConfigBasedCells {
+        cell_resolver,
+        root_config,
+        ..
+    } = futures::executor::block_on(BuckConfigBasedCells::testing_parse_with_file_ops(
+        &mut TestConfigParserFileOps::new(&[(
+            ".buckconfig",
+            &indoc::formatdoc!(
+                r#"
                     [cells]
                         root = .
                         cell1 = project/cell1
                         cell2 = project/cell2
                         xalias2 = project/cell2
+                    [buck2]
+                        disable_cell_segmentation = {disable_cell_segmentation:?}
                     "#
-                ),
-            )])
-            .unwrap(),
-            &[],
-        ))
-        .unwrap();
+            ),
+        )])
+        .unwrap(),
+        &[],
+    ))
+    .unwrap();
     (
         cell_resolver.root_cell_cell_alias_resolver().dupe(),
         cell_resolver,

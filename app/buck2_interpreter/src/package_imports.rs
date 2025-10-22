@@ -70,10 +70,13 @@ impl PackageImplicitImports {
     /// package_mapping:
     /// `package_path`=>`import_path`::`symbol_spec`::`symbol_spec`::
     /// `symbol_spec`::... symbol_spec: `alias`=`symbol` | `symbol`
+    ///
+    /// cell_segmentation is from the root buckconfig. See [crate::import_paths::GetCellSegmentation].
     pub fn new(
         cell_name: BuildFileCell,
         cell_alias_resolver: CellAliasResolver,
         encoded_mappings: Option<&str>,
+        cell_segmentation: bool,
     ) -> buck2_error::Result<Self> {
         let mut mappings = Vec::new();
         if let Some(value) = encoded_mappings {
@@ -95,7 +98,11 @@ impl PackageImplicitImports {
                     parse_import(&cell_alias_resolver, relative_import_option, import)?;
                 // Package implicit imports are only going to be used for a top-level module in
                 // the same cell, so we can set that early.
-                let import_path = ImportPath::new_with_build_file_cells(import_path, cell_name)?;
+                let import_path = ImportPath::new_with_build_file_cells(
+                    import_path,
+                    cell_name,
+                    cell_segmentation,
+                )?;
                 let symbols = symbol_specs
                     .split("::")
                     .map(|spec| {
@@ -163,6 +170,8 @@ mod tests {
             Some(
                 "src=>//:src.bzl::symbols,src/bin=>//:bin.bzl::symbols , other=>@cell1//:other.bzl::alias1=symbol1::alias2=symbol2::symbol3",
             ),
+            // cell_segmentation
+            true,
         )?;
 
         assert_eq!(

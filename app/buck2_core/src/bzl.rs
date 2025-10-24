@@ -115,7 +115,7 @@ impl ImportPath {
         Self::testing_new_cross_cell(cell, cell_relative_path, filename, cell)
     }
 
-    pub fn testing_new_cross_cell(
+    fn testing_new_cross_cell(
         cell: &str,
         cell_relative_path: &str,
         filename: &str,
@@ -127,7 +127,8 @@ impl ImportPath {
         Self::new_with_build_file_cells(
             cell_path,
             BuildFileCell::new(CellName::testing_new(build_file_cell)),
-            // All the tests are written for cell_segmentation being enabled.
+            // At the time of writing, no tests need this function,
+            // but if they did, they'd want cell_segmentation enabled.
             true,
         )
         .unwrap()

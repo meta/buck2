@@ -148,7 +148,7 @@ fn test_eval_build_file() {
 
     tester
         .add_import(
-            &ImportPath::testing_new_cross_cell("root", "imports", "one.bzl", "root"),
+            &ImportPath::testing_new("root//imports:one.bzl"),
             indoc!(
                 r#"
                     load("@root//:rules.bzl", "export_file")

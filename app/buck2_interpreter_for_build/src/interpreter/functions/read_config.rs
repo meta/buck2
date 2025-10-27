@@ -39,7 +39,9 @@ pub(crate) fn register_read_config(globals: &mut GlobalsBuilder) {
     ///
     /// In general the use of `.buckconfig` is discouraged in favour of `select`,
     /// but it can still be useful.
-    #[starlark(speculative_exec_safe)]
+    //
+    // Unlike read_root_config, this is NOT speculative_exec_safe.
+    // Its return value depends on the call stack.
     fn read_config<'v>(
         section: StringValue,
         key: StringValue,

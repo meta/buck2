@@ -39,6 +39,37 @@ pub(crate) fn register_read_config(globals: &mut GlobalsBuilder) {
     ///
     /// In general the use of `.buckconfig` is discouraged in favour of `select`,
     /// but it can still be useful.
+    ///
+    /// ### Cell segmentation
+    ///
+    /// Historically, Buck has re-evaluated each .bzl file once per cell it is imported
+    /// into. That meant that `read_config` would read from a cell based on where the
+    /// chain of imports started. Re-evaluating came with undesirable behaviour for
+    /// cross-cell type checking so this behaviour can now be disabled, but be aware
+    /// that this affects read_config().
+    ///
+    /// In the prelude, and when you disable this behaviour for all cells with the
+    /// buckconfig `buck2.disable_cell_segmentation`, the cell that this reads from
+    /// depends on the function call stack.
+    ///
+    /// ```python
+    /// # root .buckconfig
+    /// [buck2]
+    ///     disable_cell_segmentation = true
+    ///
+    /// # hello//:world.bzl
+    /// ABC_DEF = read_config("abc", "def")
+    /// def dynamic() -> str:
+    ///     return read_config("abc", "def")
+    ///
+    /// # root//BUCK
+    /// load("@hello//:world.bzl", "ABC_DEF", "dynamic")
+    /// print(ABC_DEF)      # from hello/.buckconfig
+    /// print(dynamic())    # from root .buckconfig
+    /// ```
+    ///
+    /// Please note that you can no longer read_config during analysis.
+    /// Previously this may have worked occasionally due to inlining.
     //
     // Unlike read_root_config, this is NOT speculative_exec_safe.
     // Its return value depends on the call stack.

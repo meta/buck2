@@ -33,6 +33,7 @@ class OutputJsonFiles(NamedTuple):
     ml64: IO[str]
     link: IO[str]
     rc: IO[str]
+    csc: IO[str]
 
 
 class Tool(NamedTuple):
@@ -53,7 +54,7 @@ def find_in_path(executable, is_optional=False):
     return Tool(which)
 
 
-def find_with_vswhere_exe():
+def run_vswhere(required_component):
     program_files = os.environ.get("ProgramFiles(x86)")
     if program_files is None:
         program_files = os.environ.get("ProgramFiles")
@@ -73,7 +74,7 @@ def find_with_vswhere_exe():
             "-products",
             "*",
             "-requires",
-            "Microsoft.VisualStudio.Component.VC.Tools.x86.x64",
+            required_component,
             "-format",
             "json",
             "-utf8",
@@ -91,6 +92,12 @@ def find_with_vswhere_exe():
         key=lambda vs: [int(n) for n in vs["installationVersion"].split(".")],
         reverse=True,
     )
+
+    return vswhere_json
+
+
+def find_msvc_with_vswhere_exe():
+    vswhere_json = run_vswhere("Microsoft.VisualStudio.Component.VC.Tools.x86.x64")
 
     for vs_instance in list(vswhere_json):
         installation_path = Path(vs_instance["installationPath"])
@@ -152,6 +159,32 @@ def find_with_vswhere_exe():
     )
     sys.exit(1)
 
+
+def find_roslyn_with_vswhere_exe():
+    vswhere_json = run_vswhere("Microsoft.VisualStudio.Component.Roslyn.Compiler")
+
+    for vs_instance in list(vswhere_json):
+        installation_path = Path(vs_instance["installationPath"])
+
+        roslyn_path = (
+            installation_path
+            / "MSBuild"
+            / "Current"
+            / "Bin"
+            / "Roslyn"
+            / "csc.exe"
+        )
+
+        if not roslyn_path.exists():
+            continue
+
+        return Tool(exe=roslyn_path, LIB=[], PATH=[], INCLUDE=[])
+
+    print(
+        "vswhere.exe did not find a suitable Roslyn toolchain containing csc.exe",
+        file=sys.stderr,
+    )
+    sys.exit(1)
 
 # To find the Universal CRT we look in a specific registry key for where all the
 # Universal CRTs are located and then sort them asciibetically to find the
@@ -298,36 +331,42 @@ def find_with_ewdk(ewdkdir: Path):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--cl", type=argparse.FileType("w"), required=True)
-    parser.add_argument("--cvtres", type=argparse.FileType("w"), required=True)
-    parser.add_argument("--lib", type=argparse.FileType("w"), required=True)
-    parser.add_argument("--ml64", type=argparse.FileType("w"), required=True)
-    parser.add_argument("--link", type=argparse.FileType("w"), required=True)
-    parser.add_argument("--rc", type=argparse.FileType("w"), required=True)
+    parser.add_argument("--cl", type=argparse.FileType("w"))
+    parser.add_argument("--cvtres", type=argparse.FileType("w"))
+    parser.add_argument("--lib", type=argparse.FileType("w"))
+    parser.add_argument("--ml64", type=argparse.FileType("w"))
+    parser.add_argument("--link", type=argparse.FileType("w"))
+    parser.add_argument("--rc", type=argparse.FileType("w"))
+    parser.add_argument("--csc", type=argparse.FileType("w"))
     output = OutputJsonFiles(**vars(parser.parse_args()))
 
-    # If vcvars has been run, it puts these tools onto $PATH.
-    if "VCINSTALLDIR" in os.environ:
-        cl_exe, cvtres_exe, lib_exe, ml64_exe, link_exe = (
-            find_in_path(exe) for exe in VC_EXE_NAMES
-        )
-        rc_exe = find_in_path("rc.exe", is_optional=True)
-    elif "EWDKDIR" in os.environ:
-        cl_exe, cvtres_exe, lib_exe, ml64_exe, link_exe, rc_exe = find_with_ewdk(
-            Path(os.environ["EWDKDIR"])
-        )
-    else:
-        cl_exe, cvtres_exe, lib_exe, ml64_exe, link_exe, rc_exe = (
-            find_with_vswhere_exe()
-        )
+    if output.cl or output.cvtres or output.lib or output.ml64 or output.link or output.rc:
+        # If vcvars has been run, it puts these tools onto $PATH.
+        if "VCINSTALLDIR" in os.environ:
+            cl_exe, cvtres_exe, lib_exe, ml64_exe, link_exe = (
+                find_in_path(exe) for exe in VC_EXE_NAMES
+            )
+            rc_exe = find_in_path("rc.exe", is_optional=True)
+        elif "EWDKDIR" in os.environ:
+            cl_exe, cvtres_exe, lib_exe, ml64_exe, link_exe, rc_exe = find_with_ewdk(
+                Path(os.environ["EWDKDIR"])
+            )
+        else:
+            cl_exe, cvtres_exe, lib_exe, ml64_exe, link_exe, rc_exe = (
+                find_msvc_with_vswhere_exe()
+            )
 
-    write_tool_json(output.cl, cl_exe)
-    write_tool_json(output.cvtres, cvtres_exe)
-    write_tool_json(output.lib, lib_exe)
-    write_tool_json(output.ml64, ml64_exe)
-    write_tool_json(output.link, link_exe)
-    write_tool_json(output.rc, rc_exe)
+        write_tool_json(output.cl, cl_exe)
+        write_tool_json(output.cvtres, cvtres_exe)
+        write_tool_json(output.lib, lib_exe)
+        write_tool_json(output.ml64, ml64_exe)
+        write_tool_json(output.link, link_exe)
+        write_tool_json(output.rc, rc_exe)
 
+    if output.csc:
+        csc_exe = find_roslyn_with_vswhere_exe()
+
+        write_tool_json(output.csc, csc_exe)
 
 if __name__ == "__main__":
     main()

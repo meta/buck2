@@ -12,10 +12,12 @@ def _system_csharp_toolchain_impl(ctx):
     if not host_info().os.is_windows:
         fail("csharp toolchain only supported on windows for now")
 
+    csc = ctx.attrs._csharp_tools_info[CSharpToolchainInfo].csc if ctx.attrs.csc == None else ctx.attrs.csc
+
     return [
         DefaultInfo(),
         CSharpToolchainInfo(
-            csc = RunInfo(args = ctx.attrs.csc),
+            csc = RunInfo(args = csc),
             framework_dirs = {
                 "net35": "C:\\Program Files (x86)\\Reference Assemblies\\Microsoft\\Framework\\.NETFramework\\v3.5\\Profile\\Client",
                 "net40": "C:\\Program Files (x86)\\Reference Assemblies\\Microsoft\\Framework\\.NETFramework\\v4.0",
@@ -42,12 +44,13 @@ system_csharp_toolchain = rule(
       visibility = ["PUBLIC"],
   )""",
     attrs = {
-        "csc": attrs.string(default = "csc.exe", doc = "Executable name or a path to the C# compiler frequently referred to as csc.exe"),
+        "csc": attrs.option(attrs.string(), default = None, doc = "Executable name or a path to the C# compiler frequently referred to as csc.exe"),
         "framework_dirs": attrs.dict(
             key = attrs.string(),
             value = attrs.one_of(attrs.source(), attrs.string()),
-            doc = "Dictionary of .NET framework assembly directories, where each key is a supported value in `framework_ver` and the value is a path to a directory containing .net assemblies such as System.dll matching the given framework version",
+            doc = "Dictionary of .NET framework assembly directories, where each key is a supported value in `framework_ver` and the value is a path to a directory containing .net assemblies such as System.dll matching the given framework version"
         ),
+        "_csharp_tools_info": attrs.exec_dep(providers = [CSharpToolchainInfo], default = "prelude//toolchains/msvc:roslyn_tools"),
     },
     is_toolchain_rule = True,
 )

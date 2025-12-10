@@ -6,6 +6,7 @@
 # of this source tree. You may select, at your option, one of the
 # above-listed licenses.
 
+load("@prelude//csharp:toolchain.bzl", "CSharpToolchainInfo")
 load("@prelude//cxx:cxx_toolchain_types.bzl", "LinkerType")
 load("@prelude//os_lookup:defs.bzl", "ScriptLanguage")
 load("@prelude//toolchains:cxx.bzl", "CxxToolsInfo")
@@ -177,6 +178,45 @@ def _windows_linker_wrapper(ctx: AnalysisContext, linker: [cmd_args, str]) -> cm
         language = ScriptLanguage("bat"),
     )
 
+def _find_roslyn_tools_impl(ctx: AnalysisContext) -> list[Provider]:
+    csc_exe_json = ctx.actions.declare_output("csc.exe.json")
+
+    cmd = [
+        ctx.attrs.vswhere[RunInfo],
+        cmd_args("--csc=", csc_exe_json.as_output(), delimiter = ""),
+    ]
+
+    ctx.actions.run(
+        cmd,
+        category = "vswhere",
+        local_only = True,
+    )
+
+    run_msvc_tool = ctx.attrs.run_msvc_tool[RunInfo]
+    if ctx.attrs.use_path_compilers:
+        csc_exe_script = "csc.exe"
+    else:
+        csc_exe_script = cmd_script(
+            actions = ctx.actions,
+            name = "csc",
+            cmd = cmd_args(run_msvc_tool, csc_exe_json),
+            language = ScriptLanguage("bat"),
+        )
+
+    return [
+        DefaultInfo(sub_targets = {
+            "csc.exe": [
+                RunInfo(args = [csc_exe_script]),
+                DefaultInfo(sub_targets = {
+                    "json": [DefaultInfo(default_output = csc_exe_json)],
+                }),
+            ],
+        }),
+        CSharpToolchainInfo(
+            csc = csc_exe_script
+        ),
+    ]
+
 find_msvc_tools = rule(
     impl = _find_msvc_tools_impl,
     attrs = {
@@ -184,6 +224,15 @@ find_msvc_tools = rule(
         "run_msvc_tool": attrs.default_only(attrs.dep(providers = [RunInfo], default = "prelude//toolchains/msvc:run_msvc_tool")),
         "use_path_compilers": attrs.bool(default = False),
         "use_path_linkers": attrs.bool(default = False),
+        "vswhere": attrs.default_only(attrs.dep(providers = [RunInfo], default = "prelude//toolchains/msvc:vswhere")),
+    },
+)
+
+find_roslyn_tools = rule(
+    impl = _find_roslyn_tools_impl,
+    attrs = {
+        "run_msvc_tool": attrs.default_only(attrs.dep(providers = [RunInfo], default = "prelude//toolchains/msvc:run_msvc_tool")),
+        "use_path_compilers": attrs.bool(default = False),
         "vswhere": attrs.default_only(attrs.dep(providers = [RunInfo], default = "prelude//toolchains/msvc:vswhere")),
     },
 )

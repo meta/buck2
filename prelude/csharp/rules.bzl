@@ -7,10 +7,11 @@
 # above-listed licenses.
 
 load("@prelude//:prelude_rule.bzl", "make_rules")
-load(":csharp.bzl", csharp_library_spec = "csharp_library", prebuilt_dotnet_library_spec = "prebuilt_dotnet_library")
+load(":csharp.bzl", csharp_library_spec = "csharp_library", csharp_binary_spec = "csharp_binary", prebuilt_dotnet_library_spec = "prebuilt_dotnet_library")
 
 specs = {
     "csharp_library": csharp_library_spec,
+    "csharp_binary": csharp_binary_spec,
     "prebuilt_dotnet_library": prebuilt_dotnet_library_spec,
 }
 

@@ -13,27 +13,23 @@ load(":csharp_providers.bzl", "DllDepTSet", "DllReference", "DotNetLibraryInfo",
 load(":toolchain.bzl", "CSharpToolchainInfo")
 load(":dotnet_common.bzl", "dotnet_common")
 
-def csharp_library_impl(ctx: AnalysisContext) -> list[Provider]:
+def _csharp_library_or_exe(ctx: AnalysisContext, library_or_exe_name: str, target_type: str) -> DotNetLibraryInfo:
     toolchain = ctx.attrs._csharp_toolchain[CSharpToolchainInfo]
 
-    # Automatically set the output dll_name to this target's name if the caller did not specify a
-    # custom name.
-    dll_name = "{}.dll".format(ctx.attrs.name) if not ctx.attrs.dll_name else ctx.attrs.dll_name
+    # Declare that this rule will produce a dll or exe.
+    library_or_exe = ctx.actions.declare_output(library_or_exe_name, has_content_based_path = False)
 
-    # Declare that this rule will produce a dll.
-    library = ctx.actions.declare_output(dll_name, has_content_based_path = False)
-
-    # Create a command invoking a wrapper script that calls csc.exe to compile the .dll.
+    # Create a command invoking a wrapper script that calls csc.exe to compile the .dll or the .exe.
     cmd = [toolchain.csc]
 
     # Add caller specified compiler flags.
     cmd.append(ctx.attrs.compiler_flags)
 
     # Set the output target as a .NET library.
-    cmd.append("/target:library")
+    cmd.append("/target:" + target_type)
     cmd.append(
         cmd_args(
-            library.as_output(),
+            library_or_exe.as_output(),
             format = "/out:{}",
         )
     )
@@ -69,13 +65,32 @@ def csharp_library_impl(ctx: AnalysisContext) -> list[Provider]:
     # Run the C# compiler to produce the output artifact.
     ctx.actions.run(cmd, category = "csharp_compile")
 
+    return DotNetLibraryInfo(
+        name = library_or_exe_name,
+        object = library_or_exe,
+        dll_deps = ctx.actions.tset(DllDepTSet, value = DllReference(reference = library_or_exe), children = child_deps),
+    )
+
+def csharp_library_impl(ctx: AnalysisContext) -> list[Provider]:
+    # Automatically set the output dll_name to this target's name if the caller did not specify a
+    # custom name.
+    dll_name = "{}.dll".format(ctx.attrs.name) if not ctx.attrs.dll_name else ctx.attrs.dll_name
+
+    dotNetLibraryInfo = _csharp_library_or_exe(ctx, dll_name, "library")
+
     return [
-        DefaultInfo(default_output = library),
-        DotNetLibraryInfo(
-            name = ctx.attrs.dll_name,
-            object = library,
-            dll_deps = ctx.actions.tset(DllDepTSet, value = DllReference(reference = library), children = child_deps),
-        ),
+        DefaultInfo(default_output = dotNetLibraryInfo.object),
+        dotNetLibraryInfo,
+    ]
+
+def csharp_binary_impl(ctx: AnalysisContext) -> list[Provider]:
+    exe_name = "{}.exe".format(ctx.attrs.name) if not ctx.attrs.exe_name else ctx.attrs.exe_name
+
+    dotNetLibraryInfo = _csharp_library_or_exe(ctx, exe_name, "exe")
+
+    return [
+        DefaultInfo(default_output = dotNetLibraryInfo.object),
+        RunInfo(args = cmd_args(dotNetLibraryInfo.object)),
     ]
 
 def prebuilt_dotnet_library_impl(ctx: AnalysisContext) -> list[Provider]:
@@ -134,6 +149,67 @@ csharp_library = prelude_rule(
                  the short name of the target.
             """,
             ),
+        }
+        | dotnet_common.srcs_arg()
+        | dotnet_common.resources_arg()
+        | dotnet_common.framework_ver_arg()
+        | dotnet_common.deps_arg()
+        | dotnet_common.compiler_flags_arg()
+        | dotnet_common.add_hermetic_arguments_arg()
+        | buck.licenses_arg()
+        | buck.labels_arg()
+        | buck.contacts_arg()
+        | {
+            "_csharp_toolchain": toolchains_common.csharp(),
+        }
+    ),
+)
+
+csharp_binary = prelude_rule(
+    name = "csharp_binary",
+    impl = csharp_binary_impl,
+    docs = """
+        A csharp\\_binary() rule builds a .Net library from the supplied set of C# source files
+         and dependencies by invoking csc.
+    """,
+    examples = """
+        For more examples, check out our [integration tests](https://github.com/facebook/buck/tree/dev/test/com/facebook/buck/rust/testdata/).
+
+
+        ```
+
+        csharp_binary(
+          name = 'simple',
+          exe_name = 'Cake.exe',
+          framework_ver = 'net46',
+          srcs = [
+            'Hello.cs',
+          ],
+          resources = {
+            'greeting.txt': '//some:target',
+          },
+          deps=[
+            ':other',
+            'System.dll',
+          ],
+        )
+
+        prebuilt_dotnet_library(
+          name = 'other',
+          assembly = 'other-1.0.dll',
+        )
+
+        ```
+    """,
+    further = None,
+    attrs = (
+        # @unsorted-dict-items
+        {
+            "exe_name": attrs.string(default = "", doc = """
+                The output name of the dll. This allows you to specify the name of
+                 the dll exactly. When this is not set, the dll will be named after
+                 the short name of the target.
+            """),
         }
         | dotnet_common.srcs_arg()
         | dotnet_common.resources_arg()

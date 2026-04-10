@@ -10,6 +10,8 @@
 # Translated from the Rust `cc` crate's windows_registry.rs.
 # https://github.com/rust-lang/cc-rs/blob/1.0.79/src/windows_registry.rs
 
+from __future__ import annotations
+
 import argparse
 import json
 import os

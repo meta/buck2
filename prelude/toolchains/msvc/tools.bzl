@@ -192,10 +192,10 @@ def _find_roslyn_tools_impl(ctx: AnalysisContext) -> list[Provider]:
         local_only = True,
     )
 
-    run_msvc_tool = ctx.attrs.run_msvc_tool[RunInfo]
     if ctx.attrs.use_path_compilers:
         csc_exe_script = "csc.exe"
     else:
+        run_msvc_tool = ctx.attrs.run_msvc_tool[RunInfo]
         csc_exe_script = cmd_script(
             actions = ctx.actions,
             name = "csc",

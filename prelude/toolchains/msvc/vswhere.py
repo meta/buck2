@@ -135,8 +135,8 @@ def find_msvc_with_vswhere_exe() -> list[Tool | None]:
             LIB.append(ucrt / "lib" / ucrt_version / "ucrt" / "x64")
             INCLUDE.append(ucrt / "include" / ucrt_version / "ucrt")
 
-            ucrt_exe_paths = [ucrt_bin_path / exe for exe in UCRT_EXE_NAMES]
-            ucrt_exe_paths = [exe if exe.exists() else None for exe in ucrt_exe_paths]
+            ucrt_exe_paths_not_checked = [ucrt_bin_path / exe for exe in UCRT_EXE_NAMES]
+            ucrt_exe_paths = [exe if exe.exists() else None for exe in ucrt_exe_paths_not_checked]
         else:
             ucrt_exe_paths = [None for exe in UCRT_EXE_NAMES]
 
@@ -150,7 +150,7 @@ def find_msvc_with_vswhere_exe() -> list[Tool | None]:
             INCLUDE.append(sdk / "include" / sdk_version / "shared")
 
         return [
-            Tool(exe=exe, LIB=LIB, PATH=PATH, INCLUDE=INCLUDE)
+            None if exe == None else Tool(exe=exe, LIB=LIB, PATH=PATH, INCLUDE=INCLUDE)
             for exe in vc_exe_paths + ucrt_exe_paths
         ]
 
@@ -310,8 +310,8 @@ def find_with_ewdk(ewdkdir: Path) -> list[Tool | None]:
         LIB.append(ucrt / "lib" / ucrt_version / "ucrt" / "x64")
         INCLUDE.append(ucrt / "include" / ucrt_version / "ucrt")
 
-        ucrt_exe_paths = [ucrt_bin_path / exe for exe in UCRT_EXE_NAMES]
-        ucrt_exe_paths = [exe if exe.exists() else None for exe in ucrt_exe_paths]
+        ucrt_exe_paths_not_checked = [ucrt_bin_path / exe for exe in UCRT_EXE_NAMES]
+        ucrt_exe_paths = [exe if exe.exists() else None for exe in ucrt_exe_paths_not_checked]
     else:
         ucrt_exe_paths = [None for exe in UCRT_EXE_NAMES]
 
@@ -326,7 +326,7 @@ def find_with_ewdk(ewdkdir: Path) -> list[Tool | None]:
         INCLUDE.append(sdk / "include" / sdk_version / "shared")
 
     return [
-        Tool(exe=bin_path / exe, LIB=LIB, PATH=PATH, INCLUDE=INCLUDE)
+        None if exe == None else Tool(exe=bin_path / exe, LIB=LIB, PATH=PATH, INCLUDE=INCLUDE)
         for exe in vc_exe_paths + ucrt_exe_paths
     ]
 
@@ -358,12 +358,18 @@ def main() -> None:
                 find_msvc_with_vswhere_exe()
             )
 
-        write_tool_json(output.cl, cl_exe)
-        write_tool_json(output.cvtres, cvtres_exe)
-        write_tool_json(output.lib, lib_exe)
-        write_tool_json(output.ml64, ml64_exe)
-        write_tool_json(output.link, link_exe)
-        write_tool_json(output.rc, rc_exe)
+        if output.cl and cl_exe:
+            write_tool_json(output.cl, cl_exe)
+        if output.cvtres and cvtres_exe:
+            write_tool_json(output.cvtres, cvtres_exe)
+        if output.lib and lib_exe:
+            write_tool_json(output.lib, lib_exe)
+        if output.ml64 and ml64_exe:
+            write_tool_json(output.ml64, ml64_exe)
+        if output.link and link_exe:
+            write_tool_json(output.link, link_exe)
+        if output.rc and rc_exe:
+            write_tool_json(output.rc, rc_exe)
 
     if output.csc:
         csc_exe = find_roslyn_with_vswhere_exe()

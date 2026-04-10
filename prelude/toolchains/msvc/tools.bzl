@@ -183,7 +183,7 @@ def _find_roslyn_tools_impl(ctx: AnalysisContext) -> list[Provider]:
 
     cmd = [
         ctx.attrs.vswhere[RunInfo],
-        cmd_args("--csc=", csc_exe_json.as_output(), delimiter = ""),
+        cmd_args(csc_exe_json.as_output(), format="--csc={}"),
     ]
 
     ctx.actions.run(

@@ -53,7 +53,7 @@ def find_in_path(executable: str, is_optional: bool = False) -> Tool | None:
         else:
             print(f"{executable} not found in $PATH", file=sys.stderr)
             sys.exit(1)
-    return Tool(which)
+    return Tool(Path(which))
 
 
 def run_vswhere(required_component: str) -> list[dict[str, Any]]:

@@ -15,15 +15,9 @@ FrameworkVersion = ["net35", "net40", "net45", "net46"]
 
 def _srcs_arg():
     return {
-        "srcs": attrs.list(attrs.one_of(attrs.source(), attrs.tuple(attrs.source(), attrs.list(attrs.arg()))), default = [], doc = """
-    The set of C, C++, Objective-C, Objective-C++, or assembly source files
-     to be preprocessed, compiled, and assembled by this
-     rule. We determine which stages to run on each input source based on its file extension. See the
-     [GCC documentation](https://gcc.gnu.org/onlinedocs/gcc/Overall-Options.html) for more detail on how file extensions are interpreted. Each element can be either a string
-     specifying a source file (e.g. `''`) or a tuple of
-     a string specifying a source file and a list of compilation flags
-     (e.g. `('', ['-Wall', '-Werror'])` ). In the latter case the specified flags will be used in addition to the rule's other
-     flags when preprocessing and compiling that file (if applicable).
+        "srcs": attrs.list(attrs.source(), default = [], doc = """
+    The set of C# source files to be compiled, and assembled by this rule.
+    Each element must a string specifying a source file.
 """),
     }
 

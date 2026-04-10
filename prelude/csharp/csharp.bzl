@@ -86,11 +86,15 @@ def csharp_library_impl(ctx: AnalysisContext) -> list[Provider]:
 def csharp_binary_impl(ctx: AnalysisContext) -> list[Provider]:
     exe_name = "{}.exe".format(ctx.attrs.name) if not ctx.attrs.exe_name else ctx.attrs.exe_name
 
-    library_or_exe_artifact, _ = _csharp_library_or_exe_artifact(ctx, exe_name, "exe")
+    library_or_exe_artifact, child_deps = _csharp_library_or_exe_artifact(ctx, exe_name, "exe")
+
+    new_runtime_files = []
+    for child in child_deps:
+        new_runtime_files.extend([ctx.actions.symlink_file(dll_dep.reference.basename, dll_dep.reference) for dll_dep in child.traverse()])
 
     return [
-        DefaultInfo(default_output = library_or_exe_artifact),
-        RunInfo(args = cmd_args(library_or_exe_artifact)),
+        DefaultInfo(default_output = library_or_exe_artifact, other_outputs = new_runtime_files),
+        RunInfo(args = cmd_args(library_or_exe_artifact, hidden = new_runtime_files)),
     ]
 
 def prebuilt_dotnet_library_impl(ctx: AnalysisContext) -> list[Provider]:

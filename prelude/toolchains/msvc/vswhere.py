@@ -273,7 +273,7 @@ def get_ewdk_env(ewdkdir: Path) -> dict[str, str]:
         print("set", file=tmp)
 
     env_script = ewdkdir / "BuildEnv" / "SetupBuildEnv.cmd"
-    cmd = [tmp.name, env_script, "amd64"]
+    cmd = [tmp.name, str(env_script), "amd64"]
     output = subprocess.check_output(cmd).decode("utf-8")
 
     env = {}

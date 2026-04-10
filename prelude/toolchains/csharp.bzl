@@ -12,7 +12,7 @@ def _system_csharp_toolchain_impl(ctx):
     if not host_info().os.is_windows:
         fail("csharp toolchain only supported on windows for now")
 
-    csc = ctx.attrs._csharp_tools_info[CSharpToolchainInfo].csc if ctx.attrs.csc == None else ctx.attrs.csc
+    csc = ctx.attrs.csc or ctx.attrs._csharp_tools_info[CSharpToolchainInfo].csc
 
     return [
         DefaultInfo(),

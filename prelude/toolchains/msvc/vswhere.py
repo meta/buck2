@@ -19,7 +19,7 @@ import sys
 import tempfile
 import winreg
 from pathlib import Path
-from typing import IO, NamedTuple
+from typing import IO, Any, NamedTuple
 
 VC_EXE_NAMES = ["cl.exe", "cvtres.exe", "lib.exe", "ml64.exe", "link.exe"]
 UCRT_EXE_NAMES = ["rc.exe"]
@@ -43,7 +43,7 @@ class Tool(NamedTuple):
     INCLUDE: list[Path] = []
 
 
-def find_in_path(executable, is_optional=False):
+def find_in_path(executable: str, is_optional: bool = False) -> Tool | None:
     which = shutil.which(executable)
     if which is None:
         if is_optional:
@@ -54,7 +54,7 @@ def find_in_path(executable, is_optional=False):
     return Tool(which)
 
 
-def run_vswhere(required_component):
+def run_vswhere(required_component: str) -> list[dict[str, Any]]:
     program_files = os.environ.get("ProgramFiles(x86)")
     if program_files is None:
         program_files = os.environ.get("ProgramFiles")
@@ -96,7 +96,7 @@ def run_vswhere(required_component):
     return vswhere_json
 
 
-def find_msvc_with_vswhere_exe():
+def find_msvc_with_vswhere_exe() -> list[Tool | None]:
     vswhere_json = run_vswhere("Microsoft.VisualStudio.Component.VC.Tools.x86.x64")
 
     for vs_instance in list(vswhere_json):
@@ -160,7 +160,7 @@ def find_msvc_with_vswhere_exe():
     sys.exit(1)
 
 
-def find_roslyn_with_vswhere_exe():
+def find_roslyn_with_vswhere_exe() -> Tool:
     vswhere_json = run_vswhere("Microsoft.VisualStudio.Component.Roslyn.Compiler")
 
     for vs_instance in list(vswhere_json):
@@ -192,7 +192,7 @@ def find_roslyn_with_vswhere_exe():
 # so that's good enough for us.
 #
 # Returns a pair of (root, version) for the ucrt dir if found.
-def get_ucrt_dir():
+def get_ucrt_dir() -> tuple[Path, str | None]:
     registry = winreg.ConnectRegistry(None, winreg.HKEY_LOCAL_MACHINE)
     key_name = "SOFTWARE\\Microsoft\\Windows Kits\\Installed Roots"
     registry_key = winreg.OpenKey(registry, key_name)
@@ -220,7 +220,7 @@ def get_ucrt_dir():
 # sdk version if one is already configured.
 #
 # Returns a pair of (root, version).
-def get_sdk10_dir():
+def get_sdk10_dir() -> tuple[Path, str | None]:
     windows_sdk_dir = os.environ.get("WindowsSdkDir")
     windows_sdk_version = os.environ.get("WindowsSDKVersion")
     if windows_sdk_dir is not None and windows_sdk_version is not None:
@@ -245,7 +245,7 @@ def get_sdk10_dir():
     return installation_folder, max_version
 
 
-def write_tool_json(out, tool):
+def write_tool_json(out: IO[str], tool: Tool) -> None:
     j = json.dumps(
         tool._asdict(),
         indent=4,
@@ -255,7 +255,7 @@ def write_tool_json(out, tool):
 
 
 # for use with the ewdk to grab the environment strings
-def get_ewdk_env(ewdkdir: Path):
+def get_ewdk_env(ewdkdir: Path) -> dict[str, str]:
     """
     Inspiration taken from the following:
     http://pythonwise.blogspot.fr/2010/04/sourcing-shell-script.html (Miki Tebeka)
@@ -283,7 +283,7 @@ def get_ewdk_env(ewdkdir: Path):
     return env
 
 
-def find_with_ewdk(ewdkdir: Path):
+def find_with_ewdk(ewdkdir: Path) -> list[Tool | None]:
     env = get_ewdk_env(ewdkdir)
 
     installation_path = Path(env["VSINSTALLDIR"])
@@ -329,7 +329,7 @@ def find_with_ewdk(ewdkdir: Path):
     ]
 
 
-def main():
+def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--cl", type=argparse.FileType("w"))
     parser.add_argument("--cvtres", type=argparse.FileType("w"))

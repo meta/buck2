@@ -217,22 +217,25 @@ def _find_roslyn_tools_impl(ctx: AnalysisContext) -> list[Provider]:
         ),
     ]
 
+_MSVC_TOOL_ATTRIBUTES = {
+    "run_msvc_tool": attrs.default_only(attrs.dep(providers = [RunInfo], default = "prelude//toolchains/msvc:run_msvc_tool")),
+    "vswhere": attrs.default_only(attrs.dep(providers = [RunInfo], default = "prelude//toolchains/msvc:vswhere")),
+}
+
 find_msvc_tools = rule(
     impl = _find_msvc_tools_impl,
     attrs = {
         "linker_wrapper": attrs.default_only(attrs.exec_dep(providers = [RunInfo], default = "prelude//cxx/tools:linker_wrapper")),
-        "run_msvc_tool": attrs.default_only(attrs.dep(providers = [RunInfo], default = "prelude//toolchains/msvc:run_msvc_tool")),
         "use_path_compilers": attrs.bool(default = False),
         "use_path_linkers": attrs.bool(default = False),
-        "vswhere": attrs.default_only(attrs.dep(providers = [RunInfo], default = "prelude//toolchains/msvc:vswhere")),
-    },
+    }
+    | _MSVC_TOOL_ATTRIBUTES,
 )
 
 find_roslyn_tools = rule(
     impl = _find_roslyn_tools_impl,
     attrs = {
-        "run_msvc_tool": attrs.default_only(attrs.dep(providers = [RunInfo], default = "prelude//toolchains/msvc:run_msvc_tool")),
         "use_path_compilers": attrs.bool(default = False),
-        "vswhere": attrs.default_only(attrs.dep(providers = [RunInfo], default = "prelude//toolchains/msvc:vswhere")),
-    },
+    }
+    | _MSVC_TOOL_ATTRIBUTES,
 )

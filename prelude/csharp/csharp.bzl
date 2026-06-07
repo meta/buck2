@@ -18,12 +18,6 @@ _CSHARP_LIBRARY_OR_EXE_ATTRIBUTES = {
               The set of C# source files to be compiled, and assembled by this rule.
               Each element may be either a literal string (representing the path within this package), or a target.
           """),
-    "resources": attrs.dict(key = attrs.string(), value = attrs.source(), sorted = False, default = {}, doc = """
-              Resources that should be embedded within the built DLL. The format
-              is the name of the resource once mapped into the DLL as the key, and
-              the value being the resource that should be merged. This allows
-              non-unique keys to be identified quickly.
-          """),
     "framework_ver": attrs.enum(FrameworkVersion, doc = """
               The version of the .Net framework that this library targets. This is
               one of """ + ", ".join(FrameworkVersion) + """.
@@ -154,9 +148,6 @@ csharp_library = prelude_rule(
           srcs = [
             'Hello.cs',
           ],
-          resources = {
-            'greeting.txt': '//some:target',
-          },
           deps=[
             ':other',
             'System.dll',
@@ -208,9 +199,6 @@ csharp_binary = prelude_rule(
           srcs = [
             'Hello.cs',
           ],
-          resources = {
-            'greeting.txt': '//some:target',
-          },
           deps=[
             ':other',
             'System.dll',

@@ -16,7 +16,7 @@ load(":dotnet_common.bzl", "FrameworkVersion")
 _CSHARP_LIBRARY_OR_EXE_ATTRIBUTES = {
     "srcs": attrs.list(attrs.source(), default = [], doc = """
               The set of C# source files to be compiled, and assembled by this rule.
-              Each element must a string specifying a source file.
+              Each element may be either a literal string (representing the path within this package), or a target.
           """),
     "resources": attrs.dict(key = attrs.string(), value = attrs.source(), sorted = False, default = {}, doc = """
               Resources that should be embedded within the built DLL. The format
@@ -26,17 +26,21 @@ _CSHARP_LIBRARY_OR_EXE_ATTRIBUTES = {
           """),
     "framework_ver": attrs.enum(FrameworkVersion, doc = """
               The version of the .Net framework that this library targets. This is
-              one of 'net35', 'net40', 'net45' and 'net46'.
+              one of """ + ", ".join(FrameworkVersion) + """.
           """),
-    "deps": attrs.list(attrs.one_of(attrs.dep(), attrs.string()), default = [], doc = """
-              The set of targets or system-provided assemblies to rely on. Any
+    "deps": attrs.list(attrs.one_of(attrs.dep(providers = [DotNetLibraryInfo]), attrs.string()), default = [], doc = """
+              The set of targets or system-provided assemblies this target depends on. Any
               values that are targets must be either csharp\\_library or `prebuilt_dotnet_library`
               instances.
           """),
-    "compiler_flags": attrs.list(attrs.string(), default = [], doc = """
-              The set of additional compiler flags to pass to the compiler.
+    "compiler_flags": attrs.list(attrs.arg(), default = [], doc = """
+              The set of additional compiler flags.
           """),
-    "add_hermetic_arguments": attrs.bool(default = True),
+    "add_hermetic_arguments": attrs.bool(default = True, doc = """
+              If true, the following arguments are passed to the compiler: "/noconfig", "/nostdlib" and "/nosdkpath".
+              These attributes prevent loading of default assemblies by the compiler so that they can be explicitly
+              controlled in Buck2.
+          """),
 }
 
 def _csharp_library_or_exe_artifact(ctx: AnalysisContext, library_or_exe_name: str, target_type: str) -> (Artifact, list[DllDepTSet]):
@@ -142,7 +146,7 @@ csharp_library = prelude_rule(
          and dependencies by invoking csc.
     """,
     examples = """
-        ```
+        ```python
         csharp_library(
           name = 'simple',
           dll_name = 'Cake.dll',
@@ -196,8 +200,7 @@ csharp_binary = prelude_rule(
          and dependencies by invoking csc.
     """,
     examples = """
-        ```
-
+        ```python
         csharp_binary(
           name = 'simple',
           exe_name = 'Cake.exe',
@@ -218,7 +221,6 @@ csharp_binary = prelude_rule(
           name = 'other',
           assembly = 'other-1.0.dll',
         )
-
         ```
     """,
     further = None,
@@ -226,8 +228,8 @@ csharp_binary = prelude_rule(
         # @unsorted-dict-items
         {
             "exe_name": attrs.string(default = "", doc = """
-                The output name of the dll. This allows you to specify the name of
-                 the dll exactly. When this is not set, the dll will be named after
+                The output name of the executable. This allows you to specify the name of
+                 the executable exactly. When this is not set, the executable will be named after
                  the short name of the target.
             """),
         }
@@ -249,7 +251,7 @@ prebuilt_dotnet_library = prelude_rule(
         prebuilt .Net assembles into your .Net code.
     """,
     examples = """
-        ```
+        ```python
         prebuilt_dotnet_library(
           name = 'log4net',
           assembly = 'log4net.dll',

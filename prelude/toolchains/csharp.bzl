@@ -44,7 +44,7 @@ system_csharp_toolchain = rule(
       visibility = ["PUBLIC"],
   )""",
     attrs = {
-        "csc": attrs.option(attrs.string(), default = None, doc = "Executable name or a path to the C# compiler frequently referred to as csc.exe"),
+        "csc": attrs.option(attrs.string(), default = None, doc = "Executable name or a path to the C# compiler frequently referred to as csc.exe. If not provided, the csc compiler is inferred from the CSharpToolchainInfo provided in the _csharp_tools_info attribute."),
         "framework_dirs": attrs.dict(
             key = attrs.string(),
             value = attrs.one_of(attrs.source(), attrs.string()),

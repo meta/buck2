@@ -588,6 +588,23 @@ impl CommandKind {
             recorder.update_for_client_ctx(&command_ctx, self.command_name());
         }
 
+        // Build the client's OTLP exporter now. The client process emits the invocation record (and,
+        // when `tracing`-span export is enabled, the bulk of the spans), and unlike the daemon it
+        // never `fork()`s without an immediate `exec()`, so it is safe to spawn the exporter's
+        // background threads here. Only the client activates today; a future daemon exporter would
+        // have to activate separately, after daemonizing. Skip the forking helpers, which fork+exec
+        // constantly and have nothing to export.
+        #[cfg(not(client_only))]
+        let enable_telemetry = !matches!(
+            self,
+            CommandKind::Forkserver(..) | CommandKind::InternalTestRunner(..)
+        );
+        #[cfg(client_only)]
+        let enable_telemetry = true;
+        if enable_telemetry {
+            buck2_core::logging::otel::activate(BuckVersion::get_version_for_clap());
+        }
+
         match self {
             #[cfg(not(client_only))]
             CommandKind::Daemon(..) => unreachable!("Checked earlier"),

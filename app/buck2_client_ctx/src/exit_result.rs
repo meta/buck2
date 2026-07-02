@@ -351,6 +351,12 @@ impl ExitResultVariant {
     pub fn report(self) -> ! {
         // Log the exit timestamp
         tracing::debug!("Client exiting");
+
+        // Drain any buffered OTLP spans before we leave. Every variant below either calls
+        // `libc::_exit` or `exec`s a new process image -- neither runs destructors, so the batch
+        // exporter would otherwise drop its final spans on the floor.
+        // See https://github.com/open-telemetry/opentelemetry-rust/issues/1961.
+        buck2_core::logging::otel::shutdown();
         // NOTE: We use writeln instead of println so we don't panic if stderr is closed. This
         // ensures we get the desired exit code printed instead of potentially a panic.
         let mut exit_code = match self {

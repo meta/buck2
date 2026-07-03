@@ -84,3 +84,14 @@ class LintAndTypecheckTest(BuckTestCase):
     async def test_typecheck_accepts_int_float_membership(self, buck: Buck) -> None:
         # `in` and dict indexing widen int and float like `==` does.
         await buck.starlark("typecheck", "numeric_membership.bzl")
+
+    @buck_test()
+    async def test_typecheck_bundled_cell(self, buck: Buck) -> None:
+        # Files in bundled external cells do not exist on disk; check that they
+        # are read through the file ops that know how to materialize them.
+        await buck.starlark("typecheck", "uses_prelude.bzl")
+        await buck.starlark("typecheck", "nano_prelude/prelude.bzl")
+
+    @buck_test()
+    async def test_lint_bundled_cell(self, buck: Buck) -> None:
+        await buck.starlark("lint", "nano_prelude")

@@ -255,7 +255,19 @@ impl AstModuleTypecheck for AstModule {
                 let mut all_solve_errors = Vec::new();
 
                 for top in cst.iter_mut() {
-                    if let StmtP::Def(_) = &mut top.node {
+                    // Besides functions, also solve the top-level statements that
+                    // `fill_types_for_lint_typechecker` does not check: expression
+                    // statements and the bodies of `if` and `for` statements.
+                    // Assignments and loads are handled by the fill pass itself.
+                    let solve = matches!(
+                        &top.node,
+                        StmtP::Def(_)
+                            | StmtP::Expression(_)
+                            | StmtP::If(..)
+                            | StmtP::IfElse(..)
+                            | StmtP::For(..)
+                    );
+                    if solve {
                         let bindings = match BindingsCollect::collect_one(
                             top,
                             TypecheckMode::Lint,

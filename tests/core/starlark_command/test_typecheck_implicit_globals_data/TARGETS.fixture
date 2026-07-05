@@ -1,0 +1,6 @@
+stub(
+    name = "s",
+    deps = [":t"],
+)
+
+trivial_build(name = "t")

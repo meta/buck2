@@ -420,18 +420,23 @@ pub(crate) fn print_build_succeeded(
 }
 
 /// Re-prints the Buck UI URL at command end, but only when a superconsole was
-/// actually constructed for the command (`used_superconsole`). Superconsole's
-/// live area showed the URL during the command but clears on exit, so without
-/// the re-print the URL would be gone from scrollback. Simple-console runs
-/// already printed it at command start (simpleconsole.rs) and that line stays
-/// in scrollback, so re-printing would be a duplicate. The flag comes from
-/// `get_console_with_root` via `EventsCtx::used_superconsole`, so it correctly
-/// reports `false` for the `ConsoleType::Auto`-falls-back-to-simple case.
+/// actually constructed for the command (`used_superconsole`) and status
+/// verbosity is enabled. Superconsole's live area showed the URL during the
+/// command but clears on exit, so without the re-print the URL would be gone
+/// from scrollback. Simple-console runs already printed it at command start
+/// (simpleconsole.rs) and that line stays in scrollback, so re-printing would
+/// be a duplicate. The flag comes from `get_console_with_root` via
+/// `EventsCtx::used_superconsole`, so it correctly reports `false` for the
+/// `ConsoleType::Auto`-falls-back-to-simple case.
 pub(crate) fn print_buck_ui(
     console: &FinalConsole,
     ctx: &ClientCommandContext<'_>,
     used_superconsole: bool,
 ) -> buck2_error::Result<()> {
+    if !ctx.verbosity.print_status() {
+        return Ok(());
+    }
+
     if used_superconsole {
         if cfg!(fbcode_build) {
             console.print_stderr(&format!(

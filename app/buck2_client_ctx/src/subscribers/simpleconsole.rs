@@ -491,6 +491,9 @@ where
         _command: &buck2_data::CommandStart,
         event: &BuckEvent,
     ) -> buck2_error::Result<()> {
+        if !self.verbosity.print_status() {
+            return Ok(());
+        }
         if cfg!(fbcode_build) {
             echo!(
                 "Buck UI: https://www.internalfb.com/buck2/{}",
@@ -531,12 +534,14 @@ where
             }
         }
 
-        if let Some(re) = self
-            .observer()
-            .re_state()
-            .render_header(snapshots, DrawMode::Final)
-        {
-            echo!("{}", re)?;
+        if self.verbosity.print_status() {
+            if let Some(re) = self
+                .observer()
+                .re_state()
+                .render_header(snapshots, DrawMode::Final)
+            {
+                echo!("{}", re)?;
+            }
         }
 
         if let Some(test_session) = &self.observer().session_info().test_session {

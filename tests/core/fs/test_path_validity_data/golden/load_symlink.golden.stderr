@@ -2,7 +2,6 @@
 
 [<TIMESTAMP>] Starting new buck2 daemon...
 [<TIMESTAMP>] Connected to new buck2 daemon.
-[<TIMESTAMP>] Buck UI: https://www.internalfb.com/buck2/<UUID>
 [<TIMESTAMP>] Error parsing root//loader
 [<TIMESTAMP>] From load at loader/TARGETS.fixture:1
 [<TIMESTAMP>]

@@ -2,7 +2,6 @@
 
 [<TIMESTAMP>] Starting new buck2 daemon...
 [<TIMESTAMP>] Connected to new buck2 daemon.
-[<TIMESTAMP>] Buck UI: https://www.internalfb.com/buck2/<UUID>
 [<TIMESTAMP>] Error parsing root//loader
 [<TIMESTAMP>] Error loading `load` of `//subcell/subdir:lib.bzl` from `loader/TARGETS.fixture:1:6-32`
 [<TIMESTAMP>]

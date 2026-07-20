@@ -7,7 +7,8 @@
  * of this source tree. You may select, at your option, one of the
  * above-listed licenses.
  */
-
+use buck2_interpreter::bxl_read_config::BXL_READ_CONFIG;
+use buck2_interpreter::bxl_read_config::BxlConfigValue;
 use starlark::environment::GlobalsBuilder;
 use starlark::eval::Evaluator;
 use starlark::starlark_module;
@@ -79,10 +80,27 @@ pub(crate) fn register_read_config(globals: &mut GlobalsBuilder) {
         default: Option<Value<'v>>,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<Value<'v>> {
-        let buckconfigs = &BuildContext::from_context(eval)?.buckconfigs;
-        match buckconfigs.current_cell_get(section, key, eval)? {
-            Some(v) => Ok(v.to_value()),
-            None => Ok(default.unwrap_or_else(Value::new_none)),
+        // During `BUCK`/`PACKAGE`/`.bzl` evaluation, read the current cell.
+        let build_err = match BuildContext::from_context(eval) {
+            Ok(build_context) => {
+                let buckconfigs = &build_context.buckconfigs;
+                return match buckconfigs.current_cell_get(section, key, eval)? {
+                    Some(v) => Ok(v.to_value()),
+                    None => Ok(default.unwrap_or_else(Value::new_none)),
+                };
+            }
+            Err(e) => e,
+        };
+
+        // In BXL there is no `BuildContext`; read the `.bxl` file's cell instead.
+        match (BXL_READ_CONFIG.get()?)(eval, section.as_str(), key.as_str())? {
+            BxlConfigValue::Bxl(value) => match value {
+                Some(v) => Ok(eval.heap().alloc_str(&v).to_value()),
+                None => Ok(default.unwrap_or_else(Value::new_none)),
+            },
+            // Not build file evaluation and not BXL: this is analysis, where
+            // `read_config` is unavailable. Report the original error.
+            BxlConfigValue::NotBxl => Err(build_err.into()),
         }
     }
 

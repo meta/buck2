@@ -274,7 +274,7 @@ impl SharedCache {
             // The ordinary lookup can be finished while its demanded payload is still
             // being recomputed, including while cancellation waits on a critical section.
             if let Some(recovery) = task
-                .get_finished_value()
+                .peek_finished_value()
                 .and_then(MaybeResidentComputedValue::recovery)
                 && recovery.task.as_ref().is_pending()
             {
@@ -302,7 +302,7 @@ pub(crate) mod introspection {
             let regular = self.data.storage.iter().map(|entry| {
                 let task = DiceTaskRef { internal: entry };
                 let task = task
-                    .get_finished_value()
+                    .peek_finished_value()
                     .and_then(|value| value.recovery())
                     .map_or(task, |recovery| recovery.task.as_ref());
                 (entry.key, task.introspect_state())

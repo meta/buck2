@@ -1019,11 +1019,20 @@ async fn deleting_a_branch_releases_its_values_and_strands_its_transactions() ->
 /// Deletion takes the branch's injected keys with everything else. A transaction stranded on it
 /// is still served the ones it has seen, from its own cache, and one it requests for the first
 /// time fails as if it had never been injected.
-// The panic is raised in a spawned worker that nothing awaits, so the requester only sees it if
-// the panic aborts; under unwinding (as with `cargo test`) the request hangs instead.
-#[cfg(panic = "abort")]
+// `InjectedKey::compute` panics in a spawned worker. With `panic = "abort"`, that panic ends the
+// test process. With `panic = "unwind"` (as with `cargo test`), the worker poisons the task, and
+// the requester panics because the task is poisoned.
 #[tokio::test]
-#[should_panic(expected = "Injected Keys must be injected onto the graph before being requested")]
+#[cfg_attr(
+    panic = "abort",
+    should_panic(
+        expected = "Injected Keys must be injected onto the graph before being requested"
+    )
+)]
+#[cfg_attr(
+    panic = "unwind",
+    should_panic(expected = "the key's computation panicked")
+)]
 async fn a_stranded_transaction_fails_on_an_unseen_injected_key() {
     let dice = Dice::builder().build(DetectCycles::Disabled);
     let root = dice.new_root().await;

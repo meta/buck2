@@ -8,6 +8,8 @@
  * above-listed licenses.
  */
 
+use std::panic::AssertUnwindSafe;
+
 use allocative::Allocative;
 use async_trait::async_trait;
 use derive_more::Display;
@@ -20,6 +22,7 @@ use dice::InjectedKey;
 use dice::Key;
 use dice_futures::cancellation::CancellationContext;
 use dupe::Dupe;
+use futures::FutureExt;
 use pagable::Pagable;
 use pagable::pagable_typetag;
 
@@ -302,4 +305,42 @@ async fn dropped_dep_does_not_leave_stale_rdep_edge() -> anyhow::Result<()> {
     );
 
     Ok(())
+}
+
+/// A key whose computation panics must make its waiters panic. A cancelled task without a value
+/// would make its waiters wait forever.
+#[tokio::test]
+async fn test_panicking_key_panics_its_waiters() {
+    #[derive(
+        Clone, Copy, Dupe, Display, Debug, Eq, PartialEq, Hash, Allocative, Pagable
+    )]
+    #[display("{:?}", self)]
+    #[pagable_typetag(DiceKeyDyn)]
+    struct NeverInjected;
+
+    impl InjectedKey for NeverInjected {
+        type Value = u32;
+        fn value_serialize() -> impl dice::ValueSerialize<Value = Self::Value> {
+            dice::NoValueSerialize::<Self::Value>::new()
+        }
+        fn equality_behavior() -> EqualityBehavior<Self::Value> {
+            EqualityBehavior::Compare(|x, y| x == y)
+        }
+    }
+
+    let dice = Dice::builder().build(DetectCycles::Enabled);
+    let root = dice.new_root().await;
+    let ctx = dice.updater(root).commit().await;
+
+    // `InjectedKey::compute` panics when the key was not injected.
+    let result = AssertUnwindSafe(async { ctx.compute(&NeverInjected).await })
+        .catch_unwind()
+        .await;
+    assert!(result.is_err(), "requesting a panicking key must panic");
+
+    // A second request must read the poisoned task instead of waiting on it.
+    let again = AssertUnwindSafe(async { ctx.compute(&NeverInjected).await })
+        .catch_unwind()
+        .await;
+    assert!(again.is_err(), "the poisoned task must stay poisoned");
 }

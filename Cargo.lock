@@ -1723,6 +1723,7 @@ dependencies = [
  "buck2_event_log",
  "buck2_events",
  "buck2_fs",
+ "buck2_hash",
  "buck2_log_common",
  "buck2_offline_archive",
  "buck2_wrapper_common",

@@ -18,8 +18,6 @@ use buck2_build_api::actions::artifact::get_artifact_fs::GetArtifactFs;
 use buck2_cli_proto::*;
 use buck2_common::dice::cells::HasCellResolver;
 use buck2_common::file_ops::dice::DiceFileComputations;
-use buck2_common::legacy_configs::dice::HasLegacyConfigs;
-use buck2_common::legacy_configs::key::BuckconfigKeyRef;
 use buck2_common::package_listing::dice::DicePackageListingResolver;
 use buck2_core::bxl::BxlFilePath;
 use buck2_core::bzl::ImportPath;
@@ -30,7 +28,6 @@ use buck2_core::fs::project::ProjectRoot;
 use buck2_core::fs::project_rel_path::ProjectRelativePath;
 use buck2_core::package::package_relative_path::PackageRelativePath;
 use buck2_core::package::source_path::SourcePath;
-use buck2_core::pattern::pattern::InferTargetNames;
 use buck2_core::pattern::pattern::ParsedPattern;
 use buck2_core::pattern::pattern::TargetParsingRel;
 use buck2_core::pattern::pattern_type::ProvidersPatternExtra;
@@ -50,6 +47,7 @@ use buck2_interpreter::load_module::InterpreterCalculation;
 use buck2_interpreter::paths::module::OwnedStarlarkModulePath;
 use buck2_interpreter::paths::path::OwnedStarlarkPath;
 use buck2_interpreter::prelude_path::prelude_path;
+use buck2_interpreter_for_build::interpreter::context::HasInterpreterContext;
 use buck2_interpreter_for_build::interpreter::dice_calculation_delegate::HasCalculationDelegate;
 use buck2_interpreter_for_build::interpreter::global_interpreter_state::HasGlobalInterpreterState;
 use buck2_interpreter_for_build::interpreter::interpreter_for_dir::ParseData;
@@ -517,22 +515,11 @@ impl<'a> BuckLspContext<'a> {
     ) -> buck2_error::Result<Option<StringLiteralResult>> {
         self.with_dice_ctx(|dice_ctx| async move {
             let artifact_fs = dice_ctx.ctx().get_artifact_fs().await?;
-            let infer_target_names = if dice_ctx
+            let infer_target_names = dice_ctx
                 .ctx()
-                .parse_legacy_config_property(
-                    artifact_fs.cell_resolver().root_cell(),
-                    BuckconfigKeyRef {
-                        section: "buck2",
-                        property: "infer_target_names",
-                    },
-                )
+                .get_interpreter_configuror()
                 .await?
-                .unwrap_or(false)
-            {
-                InferTargetNames::Yes
-            } else {
-                InferTargetNames::No
-            };
+                .infer_target_names();
             let (cell_alias_resolver, dir_with_allowed_relative_dirs) = (
                 dice_ctx
                     .ctx()

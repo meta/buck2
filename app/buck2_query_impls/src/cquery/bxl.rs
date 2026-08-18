@@ -19,6 +19,7 @@ use buck2_core::configuration::compatibility::MaybeCompatible;
 use buck2_core::fs::project::ProjectRoot;
 use buck2_core::fs::project_rel_path::ProjectRelativePathBuf;
 use buck2_core::global_cfg_options::GlobalCfgOptions;
+use buck2_interpreter_for_build::interpreter::context::HasInterpreterContext;
 use buck2_node::configured_universe::CqueryUniverse;
 use buck2_node::nodes::configured::ConfiguredTargetNode;
 use buck2_query::query::syntax::simple::eval::file_set::FileSet;
@@ -59,6 +60,11 @@ impl BxlCqueryFunctionsImpl {
             .dupe();
 
         let target_alias_resolver = dice.get().target_alias_resolver().await?.dupe();
+        let infer_target_names = dice
+            .get()
+            .get_interpreter_configuror()
+            .await?
+            .infer_target_names();
 
         let query_data = Arc::new(DiceQueryData::new(
             self.global_cfg_options.dupe(),
@@ -67,6 +73,7 @@ impl BxlCqueryFunctionsImpl {
             &self.working_dir,
             self.project_root.dupe(),
             target_alias_resolver,
+            infer_target_names,
             false, // allow_partial_graph
         ));
 

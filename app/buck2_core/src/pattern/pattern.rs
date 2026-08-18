@@ -523,12 +523,29 @@ impl<T: PatternType> ParsedPatternWithModifiers<T> {
         cell_resolver: &CellResolver,
         cell_alias_resolver: &CellAliasResolver,
     ) -> buck2_error::Result<Self> {
+        Self::parse_not_relaxed_with_inference(
+            pattern,
+            relative,
+            cell_resolver,
+            cell_alias_resolver,
+            InferTargetNames::No,
+        )
+    }
+
+    /// Like [`Self::parse_not_relaxed`], but optionally infers an eponymous target name.
+    pub fn parse_not_relaxed_with_inference(
+        pattern: &str,
+        relative: TargetParsingRel<'_>,
+        cell_resolver: &CellResolver,
+        cell_alias_resolver: &CellAliasResolver,
+        infer_target: InferTargetNames,
+    ) -> buck2_error::Result<Self> {
         parse_target_pattern(
             cell_resolver,
             cell_alias_resolver,
             TargetParsingOptions {
                 relative,
-                infer_target: InferTargetNames::No,
+                infer_target,
                 strip_package_trailing_slash: false,
             },
             pattern,

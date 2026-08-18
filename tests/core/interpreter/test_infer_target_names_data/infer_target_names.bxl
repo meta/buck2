@@ -1,0 +1,8 @@
+def _impl(ctx):
+    result = ctx.uquery().deps("//foo:foo", filter = "//foo")
+    ctx.output.print(result)
+
+main = bxl_main(
+    impl = _impl,
+    cli_args = {},
+)

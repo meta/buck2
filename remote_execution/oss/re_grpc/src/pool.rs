@@ -201,8 +201,8 @@ fn create_endpoint(
 
     // Do not set `Endpoint::timeout` here. CAS, AC, and Execute share this
     // channel when they share a frontend address; a channel timeout would
-    // abort long-running Execute streams. CAS/AC calls are bounded in
-    // `client.rs` instead (`RPC_TIMEOUT`).
+    // abort long-running Execute streams. Calls are bounded in `client.rs`
+    // instead (`RPC_TIMEOUT`).
 
     Ok(endpoint)
 }

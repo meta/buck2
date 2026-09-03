@@ -183,11 +183,11 @@ pub struct RECapabilities {
     supported_compressors: Vec<Compressor>,
 }
 
-/// How long a CAS/AC call may go without progress: the reply to a unary call,
-/// or the next message of a ByteStream. The same bound buck2 puts on creating
-/// the RE client (`BUCK2_RE_CONNECT_TIMEOUT_S`): something that normally takes
-/// seconds must fail rather than hang everything waiting on it. Not applied to
-/// `Execute`.
+/// How long an RE call may go without progress: the reply to a unary call, or
+/// the next message of a ByteStream or an `Execute` stream. The same bound
+/// buck2 puts on creating the RE client (`BUCK2_RE_CONNECT_TIMEOUT_S`):
+/// something that normally takes seconds must fail rather than hang everything
+/// waiting on it. A quiet `Execute` stream is resumed rather than failed.
 const RPC_TIMEOUT: Duration = Duration::from_secs(120);
 
 /// Contains runtime options for the remote execution client as set under `buck2_re_client`
@@ -928,7 +928,9 @@ struct ExecutionStreamState<F> {
 /// from one does not spend the retry budget, only the separate cap on resumes
 /// that report nothing at all. An operation the server finishes with a
 /// transient failure is also started over with `Execute`, and that does spend
-/// the budget.
+/// the budget. Opening a call, and each message after, is bounded by
+/// `RPC_TIMEOUT`. Expiry is `DEADLINE_EXCEEDED`, retried only while resuming,
+/// except that a named operation's quiet stream is resumed as if it had closed.
 fn execution_progress_stream<S, F, Fut>(
     open: F,
     cas_ttl_secs: i64,
@@ -957,7 +959,13 @@ where
 
                 let live = match &mut stream {
                     Some(live) => live,
-                    None => match (state.open)(state.operation.clone()).await {
+                    None => match tokio::time::timeout(
+                        RPC_TIMEOUT,
+                        (state.open)(state.operation.clone()),
+                    )
+                    .await
+                    .unwrap_or_else(|_| Err(rpc_timed_out().into()))
+                    {
                         Ok(opened) => stream.insert(opened),
                         Err(err) => {
                             let err = match &state.operation {
@@ -972,7 +980,16 @@ where
                     },
                 };
 
-                match live.try_next().await {
+                let next = match tokio::time::timeout(RPC_TIMEOUT, live.try_next()).await {
+                    Ok(next) => next,
+                    // `WaitExecution` answers at once, so resuming a quiet stream
+                    // costs a round trip and a dead one runs into the cap on
+                    // empty resumes.
+                    Err(_) if state.operation.is_some() => Ok(None),
+                    // Nothing to resume yet.
+                    Err(_) => Err(rpc_timed_out()),
+                };
+                match next {
                     Ok(Some(msg)) => {
                         if !msg.name.is_empty() {
                             state.operation = Some(msg.name.clone());
@@ -2531,6 +2548,78 @@ mod tests {
         let events = execution_progress_stream(open, 0).collect().await;
         let calls = calls.lock().unwrap().clone();
         (events, calls)
+    }
+
+    /// Like `run_scripted`, over streams that send their messages and then go
+    /// quiet rather than close.
+    async fn run_quiet(
+        attempts: Vec<Vec<Operation>>,
+    ) -> (
+        Vec<anyhow::Result<ExecuteWithProgressResponse>>,
+        Vec<Option<String>>,
+    ) {
+        let attempts = Mutex::new(VecDeque::from(attempts));
+        let calls = Mutex::new(Vec::new());
+        let open = |resume: Option<String>| {
+            calls.lock().unwrap().push(resume);
+            let messages = attempts.lock().unwrap().pop_front();
+            async move {
+                let messages = messages.context("opener called more often than scripted")?;
+                anyhow::Ok(
+                    futures::stream::iter(messages.into_iter().map(Ok))
+                        .chain(futures::stream::pending())
+                        .boxed(),
+                )
+            }
+        };
+        let events = execution_progress_stream(open, 0).collect().await;
+        (events, calls.into_inner().unwrap())
+    }
+
+    /// Resuming a quiet stream is free: it outlasts the retry budget.
+    #[tokio::test(start_paused = true)]
+    async fn execution_resumes_a_stream_that_goes_quiet() {
+        let quiet = vec![progress_op(execution_stage::Value::Executing)];
+        let mut attempts = vec![quiet; MAX_EXECUTION_RETRIES as usize + 2];
+        attempts.push(vec![done_op()]);
+        let (events, calls) = run_quiet(attempts).await;
+
+        assert_eq!(calls.len(), MAX_EXECUTION_RETRIES as usize + 3);
+        assert!(calls[1..].iter().all(|c| c.as_deref() == Some(OP)));
+        assert_eq!(stages(&events).last(), Some(&Stage::COMPLETED));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn execution_gives_up_on_a_server_that_stays_quiet() {
+        let mut attempts = vec![vec![progress_op(execution_stage::Value::Executing)]];
+        attempts.extend(std::iter::repeat_n(vec![], MAX_EMPTY_RESUMES as usize));
+        let (events, calls) = run_quiet(attempts).await;
+
+        assert_eq!(calls.len(), MAX_EMPTY_RESUMES as usize + 1);
+        assert!(events.last().unwrap().is_err());
+    }
+
+    /// Before the server names the operation there is nothing to resume.
+    #[tokio::test(start_paused = true)]
+    async fn execution_fails_a_stream_that_goes_quiet_before_naming_the_operation() {
+        let (events, calls) = run_quiet(vec![vec![]]).await;
+
+        assert_eq!(calls, vec![None]);
+        let Some(Err(err)) = events.last() else {
+            panic!("expected the stream to fail");
+        };
+        assert!(format!("{err:#}").contains("client RPC timeout"), "{err:#}");
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn execution_fails_a_call_that_never_opens() {
+        let open = |_| std::future::pending::<anyhow::Result<BoxStream<'static, ScriptedItem>>>();
+        let events: Vec<_> = execution_progress_stream(open, 0).collect().await;
+
+        let [Err(err)] = &events[..] else {
+            panic!("expected one error");
+        };
+        assert!(format!("{err:#}").contains("client RPC timeout"), "{err:#}");
     }
 
     fn stages(events: &[anyhow::Result<ExecuteWithProgressResponse>]) -> Vec<Stage> {

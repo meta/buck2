@@ -16,6 +16,7 @@ import tempfile
 from pathlib import Path
 
 from buck2.tests.e2e_util.api.buck import Buck
+from buck2.tests.e2e_util.asserts import expect_failure
 from buck2.tests.e2e_util.buck_workspace import buck_test, BuckTestCase
 from buck2.tests.e2e_util.helper.utils import expect_exec_count
 
@@ -218,3 +219,33 @@ class SymlinksTest(BuckTestCase):
             buck.build("//:ancestors"), timeout=SYMLINK_BUILD_TIMEOUT_S
         )
         await expect_exec_count(buck, 0)
+
+    @buck_test()
+    async def test_source_symlink_loop(self, buck: Buck) -> None:
+        setup_symlink(buck.cwd / "loop" / "a" / "l1", Path("..") / "b" / "l2")
+        setup_symlink(buck.cwd / "loop" / "b" / "l2", Path("..") / "a" / "l1")
+
+        failure = await asyncio.wait_for(
+            expect_failure(
+                buck.build("//:loop"), stderr_regex="Symlink cycle detected"
+            ),
+            timeout=SYMLINK_BUILD_TIMEOUT_S,
+        )
+        assert "root//loop/a/l1 ->" in failure.stderr
+        assert "root//loop/b/l2 ->" in failure.stderr
+
+    @buck_test()
+    async def test_source_symlink_chain_that_grows(self, buck: Buck) -> None:
+        # Resolving `a/l` goes `deep/er/path` -> `a/l/path` -> `deep/er/path/path` -> ... forever.
+        setup_symlink(
+            buck.cwd / "grow" / "a" / "l", Path("..") / "deep" / "er" / "path"
+        )
+        setup_symlink(buck.cwd / "grow" / "deep" / "er", Path("..") / "a" / "l")
+
+        await asyncio.wait_for(
+            expect_failure(
+                buck.build("//:grow"),
+                stderr_regex="Too many levels of symlinks while reading `root//grow/a/l`",
+            ),
+            timeout=SYMLINK_BUILD_TIMEOUT_S,
+        )

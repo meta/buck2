@@ -9,6 +9,7 @@
 # pyre-strict
 
 
+import asyncio
 import os
 import shutil
 import tempfile
@@ -28,6 +29,11 @@ def setup_symlink(symlink_path: Path, target: Path) -> None:
         symlink_path.unlink(missing_ok=True)
 
     os.symlink(target, symlink_path)
+
+
+# Digest computation used to hang forever on the symlinks below, so bound the builds instead of
+# stalling the suite.
+SYMLINK_BUILD_TIMEOUT_S = 200
 
 
 class SymlinksTest(BuckTestCase):
@@ -189,3 +195,26 @@ class SymlinksTest(BuckTestCase):
         setup_symlink(buck.cwd / "testlink", buck.cwd / "symdir")
 
         await buck.targets("//testlink/dir:")
+
+    @buck_test()
+    async def test_source_dir_symlinks_to_ancestors(self, buck: Buck) -> None:
+        setup_symlink(buck.cwd / "ancestors" / "sub" / "self", Path("."))
+        setup_symlink(buck.cwd / "ancestors" / "sub" / "deeper" / "up", Path(".."))
+
+        result = await asyncio.wait_for(
+            buck.build("//:ancestors"), timeout=SYMLINK_BUILD_TIMEOUT_S
+        )
+        await expect_exec_count(buck, 1)
+
+        out = result.get_build_report().output_for_target("root//:ancestors")
+        assert (out / "sub" / "deeper" / "file").read_text() == "deeper\n"
+        # Copying re-points symlinks at their original targets, so both still lead to the source dir.
+        source = (buck.cwd / "ancestors" / "sub").resolve()
+        for link in (out / "sub" / "self", out / "sub" / "deeper" / "up"):
+            assert os.path.islink(link)
+            assert link.resolve() == source
+
+        await asyncio.wait_for(
+            buck.build("//:ancestors"), timeout=SYMLINK_BUILD_TIMEOUT_S
+        )
+        await expect_exec_count(buck, 0)

@@ -46,9 +46,14 @@ use buck2_core::fs::project::ProjectRootTemp;
 use buck2_core::fs::project_rel_path::ProjectRelativePath;
 use buck2_core::package::source_path::SourcePath;
 use buck2_core::target::configured_target_label::ConfiguredTargetLabel;
+use buck2_directory::directory::entry::DirectoryEntry;
+use buck2_directory::directory::find::find;
 use buck2_execute::artifact_value::ArtifactValue;
 use buck2_execute::digest_config::DigestConfig;
 use buck2_execute::digest_config::SetDigestConfig;
+use buck2_execute::directory::ActionDirectoryMember;
+use buck2_fs::paths::RelativePathBuf;
+use buck2_fs::paths::forward_rel_path::ForwardRelativePath;
 use buck2_hash::BuckFixedSortedMap;
 use buck2_hash::BuckMutMap;
 use buck2_node::rule_type::RuleType;
@@ -254,5 +259,114 @@ async fn test_ensure_artifact_group() -> buck2_error::Result<()> {
         ]
     );
 
+    Ok(())
+}
+
+async fn source_artifact_value(
+    files: &TestFileOps,
+    fs: &ProjectRootTemp,
+    package: &str,
+    path: &str,
+) -> buck2_error::Result<ArtifactValue> {
+    let cell = CellName::testing_new("root");
+    let cell_resolver =
+        CellResolver::testing_with_name_and_path(cell, CellRootPathBuf::testing_new(""));
+    let dice_builder = files
+        .mock_in_dice(&cell_resolver, DiceBuilder::new())
+        .set_data(|data| {
+            data.set_digest_config(DigestConfig::testing_default());
+        });
+    let mut extra = UserComputationData::new();
+    initialize_read_dir_cache(&mut extra);
+    let mut dice = dice_builder.build(extra).await.unwrap();
+    dice.set_cell_resolver(cell_resolver)?;
+    dice.set_file_system_baseline(FileSystemBaseline::unique())?;
+    dice.set_buck_out_path(None)?;
+    dice.set_isolation_dir(
+        fs.path()
+            .resolve(ProjectRelativePath::unchecked_new("buck-out/v2")),
+    )?;
+    inject_legacy_config_for_test(&mut dice, cell, LegacyBuckConfig::empty())?;
+    let dice = dice.commit().await;
+
+    let artifact = Artifact::from(SourceArtifact::new(SourcePath::testing_new(package, path)));
+    let values = dice
+        .ctx()
+        .ensure_artifact_group(&ArtifactGroup::Artifact(artifact))
+        .await?;
+    Ok(values.iter().next().unwrap().1.dupe())
+}
+
+fn symlink_target(value: &ArtifactValue, path: &str) -> String {
+    let DirectoryEntry::Dir(dir) = value.entry() else {
+        panic!("not a directory");
+    };
+    match find(dir, ForwardRelativePath::new(path).unwrap().iter()).unwrap() {
+        Some(DirectoryEntry::Leaf(ActionDirectoryMember::Symlink(link))) => {
+            link.target().as_str().to_owned()
+        }
+        _ => panic!("`{path}` is not a symlink"),
+    }
+}
+
+#[tokio::test]
+async fn test_source_dir_symlinks_to_ancestors_are_leaves() -> buck2_error::Result<()> {
+    let _stack_guard = buck2_util::threads::ignore_stack_overflow_checks_for_current_thread();
+    let files = TestFileOps::new_with_files_and_symlinks(
+        btreemap![
+            CellPath::testing_new("root//pkg/dir/file") => "file".to_owned(),
+            CellPath::testing_new("root//pkg/dir/deeper/file") => "deeper".to_owned(),
+        ],
+        btreemap![
+            CellPath::testing_new("root//pkg/dir/self") => RelativePathBuf::from("."),
+            CellPath::testing_new("root//pkg/dir/deeper/up") => RelativePathBuf::from(".."),
+        ],
+    );
+    let fs = ProjectRootTemp::new()?;
+
+    let value = source_artifact_value(&files, &fs, "root//pkg", "dir").await?;
+
+    assert_eq!(symlink_target(&value, "self"), ".");
+    assert_eq!(symlink_target(&value, "deeper/up"), "..");
+    assert!(value.deps().is_none());
+
+    // Reading through such a link still resolves to the target.
+    let value = source_artifact_value(&files, &fs, "root//pkg", "dir/self/file").await?;
+    assert_eq!(
+        value,
+        ArtifactValue::file(FileMetadata {
+            digest: TrackedFileDigest::from_content(
+                b"file",
+                DigestConfig::testing_default().cas_digest_config()
+            ),
+            is_executable: false,
+        })
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_source_dir_symlink_elsewhere_keeps_deps() -> buck2_error::Result<()> {
+    let _stack_guard = buck2_util::threads::ignore_stack_overflow_checks_for_current_thread();
+    let files = TestFileOps::new_with_files_and_symlinks(
+        btreemap![
+            CellPath::testing_new("root//pkg/dir/file") => "file".to_owned(),
+            CellPath::testing_new("root//pkg/other/file") => "other".to_owned(),
+        ],
+        btreemap![
+            CellPath::testing_new("root//pkg/dir/link") => RelativePathBuf::from("../other"),
+        ],
+    );
+    let fs = ProjectRootTemp::new()?;
+
+    let value = source_artifact_value(&files, &fs, "root//pkg", "dir").await?;
+
+    assert_eq!(symlink_target(&value, "link"), "../other");
+    let deps = value.deps().expect("the symlink target is a dep");
+    assert!(
+        find(deps, ForwardRelativePath::new("pkg/other/file")?.iter())
+            .unwrap()
+            .is_some()
+    );
     Ok(())
 }

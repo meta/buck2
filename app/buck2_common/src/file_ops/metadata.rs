@@ -279,7 +279,13 @@ strong_hash::impl_strong_hash_for_impl_hash!(Symlink);
 
 impl Symlink {
     pub fn new(target: RelativePathBuf) -> Self {
-        Self(target)
+        // Normalizing a target such as `.` or `./` yields the empty path, which cannot be
+        // written back as a symlink. Keep the current directory spelled out.
+        if target.as_str().is_empty() {
+            Self(RelativePathBuf::from("."))
+        } else {
+            Self(target)
+        }
     }
 
     /// Returns the path the symlink points to.
@@ -298,7 +304,7 @@ impl Symlink {
     pub fn relativized<P: AsRef<RelativePath>>(&self, src_relative_to_dest: P) -> Self {
         // FIXME(rafaelc): we don't need to normalize the target anymore!
         let relativized_t = src_relative_to_dest.as_ref().join_normalized(&self.0);
-        Self(relativized_t)
+        Self::new(relativized_t)
     }
 }
 
@@ -428,6 +434,29 @@ mod tests {
     use crate::cas_digest::CasDigestConfig;
     use crate::file_ops::metadata::FileDigest;
     use crate::file_ops::metadata::TrackedFileDigest;
+
+    #[test]
+    fn symlink_to_current_directory_is_spelled_out() {
+        // Empty and normalized current-directory targets must remain `.` so the materializer
+        // can create the symlink. Other relative targets must keep their destination.
+        assert_eq!(Symlink::new("".into()).target().as_str(), ".");
+        assert_eq!(Symlink::new(".".into()).target().as_str(), ".");
+        assert_eq!(
+            Symlink::new("a/..".into())
+                .relativized("")
+                .target()
+                .as_str(),
+            "."
+        );
+        assert_eq!(
+            Symlink::new(".".into()).relativized("..").target().as_str(),
+            ".."
+        );
+        assert_eq!(
+            Symlink::new("x".into()).relativized("..").target().as_str(),
+            "../x"
+        );
+    }
 
     #[test]
     fn test_tracked_file_digest_equivalence() {

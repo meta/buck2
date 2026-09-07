@@ -1,4 +1,4 @@
-load(":defs.bzl", "cp", "cp_via_builtin", "stat_path")
+load(":defs.bzl", "cp", "cp_via_builtin", "stat_path", "symlink_dir")
 
 cp(name = "cp", src = "src/link/file")
 
@@ -20,4 +20,11 @@ stat_path(
 stub(
     name = "symlink_dep",
     deps = ["//testlink:dep"],
+)
+
+symlink_dir(name = "symlink_dir")
+
+symlink_dir(
+    name = "symlink_dir_unhashed",
+    has_content_based_path = False,
 )

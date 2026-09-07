@@ -241,3 +241,22 @@ async fn test_eden_io_read_symlink_dir_list_target(buck: &Buck) -> anyhow::Resul
     buck.targets(&["//testlink/dir:"]).await?;
     Ok(())
 }
+
+#[buck_test(skip_for_os = ["windows"])]
+async fn test_output_symlink_to_current_directory(buck: &Buck) -> anyhow::Result<()> {
+    // An action creates `.` and `./` links. Publication must preserve the links and their
+    // contents with content-based output paths enabled or disabled.
+    for target in ["//:symlink_dir", "//:symlink_dir_unhashed"] {
+        let result = buck.build(&[target]).await?;
+        let out = result
+            .build_report()?
+            .output_for_target(&format!("root{target}"))?;
+        assert_eq!(out.join("here").read_link()?, Path::new("."));
+        assert_eq!(fs::read_to_string(out.join("here/x"))?, "x");
+        assert_eq!(out.join("dotslash").read_link()?, Path::new("."));
+        assert_eq!(fs::read_to_string(out.join("dotslash/x"))?, "x");
+        assert_eq!(out.join("d/here").read_link()?, Path::new("../x"));
+        assert_eq!(fs::read_to_string(out.join("d/here"))?, "x");
+    }
+    Ok(())
+}

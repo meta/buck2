@@ -182,6 +182,7 @@ fn ensure_source_artifact_staged<'a>(
                 dice,
                 source.get_path().to_cell_path(),
                 Some(source.get_path().package()),
+                Vec::new(),
             )
             .await?,
         ))
@@ -297,7 +298,8 @@ async fn dir_artifact_value(
                     // TODO(scottcao): This current creates a `DirArtifactValueKey` for each subdir of a source directory.
                     // Instead, this should be 1 key for the entire top-level directory since there's almost
                     // no chance of getting cache hit with a sub-directory.
-                    let value = path_artifact_value(ctx, self.0.join(file_name), None).await?;
+                    let value =
+                        path_artifact_value(ctx, self.0.join(file_name), None, Vec::new()).await?;
                     buck2_error::Ok((file_name, value))
                 })
                 .await?;
@@ -368,11 +370,43 @@ async fn dir_artifact_value(
     ctx.compute(&DirArtifactValueKey(cell_path)).await?.dupe()
 }
 
+#[derive(Debug, Clone, buck2_error::Error)]
+#[buck2(tag = Input)]
+pub enum SourceSymlinkError {
+    #[error("{}", display_symlink_cycle(.0))]
+    Cycle(Vec<CellPath>),
+    #[error("Too many levels of symlinks while reading `{0}`, gave up at `{1}`")]
+    TooManyLevels(CellPath, CellPath),
+}
+
+fn display_symlink_cycle(cycle: &[CellPath]) -> String {
+    use std::fmt::Write;
+
+    let mut s = String::new();
+    writeln!(
+        s,
+        "Symlink cycle detected while reading sources (`->` means \"leads to\"):"
+    )
+    .unwrap();
+    for p in cycle {
+        writeln!(s, "  {p} ->").unwrap();
+    }
+    if let Some(first) = cycle.first() {
+        write!(s, "  {first}").unwrap();
+    }
+    s
+}
+
+/// Symlink chains longer than this are treated as loops, like the kernel's `MAXSYMLINKS`.
+const MAX_SYMLINK_HOPS: usize = 40;
+
 #[async_recursion]
 async fn path_artifact_value(
     ctx: &mut DiceComputations<'_>,
     cell_path: CellPath,
     label: Option<PackageLabel>,
+    // Paths already passed through by following symlinks to get to `cell_path`.
+    mut followed: Vec<CellPath>,
 ) -> buck2_error::Result<ArtifactValue> {
     let raw = match DiceFileComputations::read_path_metadata(ctx, cell_path).await {
         Ok(raw) => Ok(raw),
@@ -420,11 +454,15 @@ async fn path_artifact_value(
                 // that directory's digest depend on itself, and deps cannot hold a tree that
                 // contains itself, so record the link as a leaf without deps. A target above the
                 // source artifact is then not tracked.
-                let link_path = artifact_fs.resolve_cell_path(cell_path)?;
-                if link_path
-                    .parent()
-                    .is_some_and(|dir| dir.starts_with(&target_path))
-                {
+                // The same holds for the link this chain of links started at.
+                let mut is_ancestor = false;
+                for link in [*followed.first().unwrap_or(&cell_path), cell_path] {
+                    let link_path = artifact_fs.resolve_cell_path(link)?;
+                    is_ancestor |= link_path
+                        .parent()
+                        .is_some_and(|dir| dir.starts_with(&target_path));
+                }
+                if is_ancestor {
                     return Ok(ArtifactValue::new(
                         ActionDirectoryEntry::Leaf(ActionDirectoryMember::Symlink(target_rel)),
                         None,
@@ -432,8 +470,14 @@ async fn path_artifact_value(
                 }
             }
 
-            // TODO (T126181780): This should have a limit on recursion.
-            let target_artifact_value = path_artifact_value(ctx, target.dupe(), label).await?;
+            followed.push(cell_path);
+            if let Some(start) = followed.iter().position(|p| *p == target) {
+                return Err(SourceSymlinkError::Cycle(followed.split_off(start)).into());
+            }
+            if followed.len() > MAX_SYMLINK_HOPS {
+                return Err(SourceSymlinkError::TooManyLevels(followed[0], cell_path).into());
+            }
+            let target_artifact_value = path_artifact_value(ctx, target, label, followed).await?;
             let root_cell = ctx.get_cell_resolver().await?.root_cell();
             let use_correct_source_symlink_reading = ctx
                 .parse_legacy_config_property(

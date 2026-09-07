@@ -9,6 +9,7 @@
  */
 
 use std::sync::Arc;
+use std::time::Duration;
 
 use buck2_analysis::analysis::calculation::AnalysisKey;
 use buck2_artifact::artifact::artifact_type::Artifact;
@@ -346,6 +347,36 @@ async fn test_source_dir_symlinks_to_ancestors_are_leaves() -> buck2_error::Resu
 }
 
 #[tokio::test]
+async fn test_source_dir_indirect_symlink_to_ancestor_is_a_leaf() -> buck2_error::Result<()> {
+    let _stack_guard = buck2_util::threads::ignore_stack_overflow_checks_for_current_thread();
+    let files = TestFileOps::new_with_files_and_symlinks(
+        btreemap![
+            CellPath::testing_new("root//pkg/dir/file") => "file".to_owned(),
+        ],
+        btreemap![
+            CellPath::testing_new("root//pkg/dir/indirect") => RelativePathBuf::from("../other/back"),
+            CellPath::testing_new("root//pkg/other/back") => RelativePathBuf::from("../dir"),
+        ],
+    );
+    let fs = ProjectRootTemp::new()?;
+
+    let value = tokio::time::timeout(
+        Duration::from_secs(120),
+        source_artifact_value(&files, &fs, "root//pkg", "dir"),
+    )
+    .await
+    .expect("digest computation hung on an indirect link to an ancestor")?;
+
+    assert_eq!(symlink_target(&value, "indirect"), "../other/back");
+    let deps = value.deps().expect("the intermediate link is a dep");
+    assert_eq!(
+        symlink_target(&ArtifactValue::dir(deps.dupe()), "pkg/other/back"),
+        "../dir"
+    );
+    Ok(())
+}
+
+#[tokio::test]
 async fn test_source_dir_symlink_elsewhere_keeps_deps() -> buck2_error::Result<()> {
     let _stack_guard = buck2_util::threads::ignore_stack_overflow_checks_for_current_thread();
     let files = TestFileOps::new_with_files_and_symlinks(
@@ -367,6 +398,63 @@ async fn test_source_dir_symlink_elsewhere_keeps_deps() -> buck2_error::Result<(
         find(deps, ForwardRelativePath::new("pkg/other/file")?.iter())
             .unwrap()
             .is_some()
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_source_symlink_loop_is_an_error() -> buck2_error::Result<()> {
+    let _stack_guard = buck2_util::threads::ignore_stack_overflow_checks_for_current_thread();
+    let files = TestFileOps::new_with_files_and_symlinks(
+        btreemap![],
+        btreemap![
+            CellPath::testing_new("root//pkg/a/l1") => RelativePathBuf::from("../b/l2"),
+            CellPath::testing_new("root//pkg/b/l2") => RelativePathBuf::from("../a/l1"),
+        ],
+    );
+    let fs = ProjectRootTemp::new()?;
+
+    // Without the hop tracking this recurses forever.
+    let err = tokio::time::timeout(
+        Duration::from_secs(120),
+        source_artifact_value(&files, &fs, "root//pkg/a", "l1"),
+    )
+    .await
+    .expect("digest computation hung on a symlink loop")
+    .unwrap_err();
+
+    let err = format!("{err:#}");
+    assert!(err.contains("Symlink cycle detected"), "{err}");
+    assert!(err.contains("root//pkg/a/l1 ->"), "{err}");
+    assert!(err.contains("root//pkg/b/l2 ->"), "{err}");
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_source_symlink_chain_that_grows_is_an_error() -> buck2_error::Result<()> {
+    let _stack_guard = buck2_util::threads::ignore_stack_overflow_checks_for_current_thread();
+    // Resolving `a/l` goes `deep/er/path` -> `a/l/path` -> `deep/er/path/path` -> ... forever.
+    let files = TestFileOps::new_with_files_and_symlinks(
+        btreemap![],
+        btreemap![
+            CellPath::testing_new("root//pkg/a/l") => RelativePathBuf::from("../deep/er/path"),
+            CellPath::testing_new("root//pkg/deep/er") => RelativePathBuf::from("../a/l"),
+        ],
+    );
+    let fs = ProjectRootTemp::new()?;
+
+    let err = tokio::time::timeout(
+        Duration::from_secs(120),
+        source_artifact_value(&files, &fs, "root//pkg/a", "l"),
+    )
+    .await
+    .expect("digest computation hung on a growing symlink chain")
+    .unwrap_err();
+
+    let err = format!("{err:#}");
+    assert!(
+        err.contains("Too many levels of symlinks while reading `root//pkg/a/l`"),
+        "{err}"
     );
     Ok(())
 }

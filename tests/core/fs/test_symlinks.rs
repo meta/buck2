@@ -10,6 +10,7 @@
 
 use std::fs;
 use std::path::Path;
+use std::time::Duration;
 
 use buck2_e2e::prelude::*;
 use buck2_e2e::utils::expect_exec_count;
@@ -239,5 +240,37 @@ async fn test_eden_io_read_symlink_dir_list_target(buck: &Buck) -> anyhow::Resul
     setup_symlink(&buck.cwd().join("testlink"), &buck.cwd().join("symdir"))?;
 
     buck.targets(&["//testlink/dir:"]).await?;
+    Ok(())
+}
+
+#[buck_test]
+async fn test_source_dir_symlinks_to_ancestors(buck: &Buck) -> anyhow::Result<()> {
+    // A source directory has links to itself and its parent. Building must terminate,
+    // retain the links to their source targets, and reuse the result on an unchanged build.
+    setup_symlink(&buck.cwd().join("ancestors/sub/self"), Path::new("."))?;
+    setup_symlink(&buck.cwd().join("ancestors/sub/deeper/up"), Path::new(".."))?;
+    let result = tokio::time::timeout(
+        Duration::from_secs(200),
+        buck.build(&["//:ancestors"]).spawn().wait(),
+    )
+    .await??;
+    expect_exec_count(buck, 1).await?;
+    let out = result
+        .build_report()?
+        .output_for_target("root//:ancestors")?;
+    assert_eq!(fs::read_to_string(out.join("sub/deeper/file"))?, "deeper\n");
+    let source = fs::canonicalize(buck.cwd().join("ancestors/sub"))?;
+    for link in [out.join("sub/self"), out.join("sub/deeper/up")] {
+        assert!(link.is_symlink());
+        assert_eq!(fs::canonicalize(link)?, source);
+    }
+
+    // An unchanged build must finish without executing the copy action again.
+    tokio::time::timeout(
+        Duration::from_secs(200),
+        buck.build(&["//:ancestors"]).spawn().wait(),
+    )
+    .await??;
+    expect_exec_count(buck, 0).await?;
     Ok(())
 }

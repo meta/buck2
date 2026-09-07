@@ -413,6 +413,25 @@ async fn path_artifact_value(
             at,
             to: RawSymlink::Relative(target, target_rel),
         } => {
+            let artifact_fs = ctx.get_artifact_fs().await?;
+            let target_path = artifact_fs.resolve_cell_path(target)?;
+            if at == cell_path {
+                // A link to its own directory or to an ancestor of it. Following it would make
+                // that directory's digest depend on itself, and deps cannot hold a tree that
+                // contains itself, so record the link as a leaf without deps. A target above the
+                // source artifact is then not tracked.
+                let link_path = artifact_fs.resolve_cell_path(cell_path)?;
+                if link_path
+                    .parent()
+                    .is_some_and(|dir| dir.starts_with(&target_path))
+                {
+                    return Ok(ArtifactValue::new(
+                        ActionDirectoryEntry::Leaf(ActionDirectoryMember::Symlink(target_rel)),
+                        None,
+                    ));
+                }
+            }
+
             // TODO (T126181780): This should have a limit on recursion.
             let target_artifact_value = path_artifact_value(ctx, target.dupe(), label).await?;
             let root_cell = ctx.get_cell_resolver().await?.root_cell();
@@ -432,8 +451,6 @@ async fn path_artifact_value(
             // `ArtifactValue` to make that possible, but Jakob isn't sure that's a good idea
             let dont_read_through_symlink = use_correct_source_symlink_reading && at == cell_path;
             if dont_read_through_symlink {
-                let artifact_fs = ctx.get_artifact_fs().await?;
-                let target_path = artifact_fs.resolve_cell_path(target)?;
                 let mut builder = ActionDirectoryBuilder::empty_non_exhaustive();
                 insert_artifact(&mut builder, target_path, &target_artifact_value)?;
                 let deps = builder

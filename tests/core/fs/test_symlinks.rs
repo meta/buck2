@@ -274,3 +274,37 @@ async fn test_source_dir_symlinks_to_ancestors(buck: &Buck) -> anyhow::Result<()
     expect_exec_count(buck, 0).await?;
     Ok(())
 }
+
+#[buck_test]
+async fn test_source_symlink_loop(buck: &Buck) -> anyhow::Result<()> {
+    // Two source symlinks point at each other. Building must report the cycle and name
+    // each link instead of waiting indefinitely while computing the input digest.
+    setup_symlink(&buck.cwd().join("loop/a/l1"), Path::new("../b/l2"))?;
+    setup_symlink(&buck.cwd().join("loop/b/l2"), Path::new("../a/l1"))?;
+    let failure = tokio::time::timeout(
+        Duration::from_secs(200),
+        buck.build(&["//:loop"]).spawn().wait(),
+    )
+    .await?
+    .expect_failure();
+    failure.assert_stderr_matches("Symlink cycle detected");
+    assert!(failure.stderr.contains("root//loop/a/l1 ->"));
+    assert!(failure.stderr.contains("root//loop/b/l2 ->"));
+    Ok(())
+}
+
+#[buck_test]
+async fn test_source_symlink_chain_that_grows(buck: &Buck) -> anyhow::Result<()> {
+    // Following a source symlink repeatedly appends `path`. Building must report the
+    // symlink limit instead of computing an input digest indefinitely.
+    setup_symlink(&buck.cwd().join("grow/a/l"), Path::new("../deep/er/path"))?;
+    setup_symlink(&buck.cwd().join("grow/deep/er"), Path::new("../a/l"))?;
+    tokio::time::timeout(
+        Duration::from_secs(200),
+        buck.build(&["//:grow"]).spawn().wait(),
+    )
+    .await?
+    .expect_failure()
+    .assert_stderr_matches("Too many levels of symlinks while reading `root//grow/a/l`");
+    Ok(())
+}

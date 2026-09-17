@@ -13,9 +13,18 @@
 from buck2.tests.e2e_util.api.buck import Buck
 from buck2.tests.e2e_util.asserts import expect_failure
 from buck2.tests.e2e_util.buck_workspace import buck_test, BuckTestCase, env
+from buck2.tests.e2e_util.helper.utils import filter_events, read_what_ran
 
 # Empty test executor forces internal test executor to be used.
 INTERNAL_TEST_EXECUTOR = ""
+
+
+async def _test_runs(buck: Buck) -> list[list[str]]:
+    return [
+        entry["extra"]["testcases"]
+        for entry in await read_what_ran(buck)
+        if entry["reason"] == "test.run"
+    ]
 
 
 class InternalRunnerTest(BuckTestCase):
@@ -52,3 +61,45 @@ class InternalRunnerTest(BuckTestCase):
             ),
             stderr_regex="Timeout: ",
         )
+
+    @buck_test()
+    @env("BUCK2_ALLOW_INTERNAL_TEST_RUNNER_DO_NOT_USE", "1")
+    async def test_listing_preset_skip_is_reported_without_running(
+        self, buck: Buck
+    ) -> None:
+        result = await buck.test(
+            ":preset_skip",
+            test_executor=INTERNAL_TEST_EXECUTOR,
+        )
+        assert "Pass 1" in result.stderr, result.stderr
+        assert "Skip 1" in result.stderr, result.stderr
+
+        discovered = await filter_events(
+            buck, "Event", "data", "Instant", "data", "TestDiscovery", "data", "Tests"
+        )
+        assert [d["test_names"] for d in discovered] == [["run_me", "skip_me"]]
+
+        skipped = [
+            r
+            for r in await filter_events(
+                buck, "Event", "data", "Instant", "data", "TestResult"
+            )
+            if r["name"] == "skip_me"
+        ]
+        assert len(skipped) == 1, skipped
+        assert skipped[0]["msg"]["msg"] == "skipped by listing"
+
+        assert await _test_runs(buck) == [["run_me"]]
+
+    @buck_test()
+    @env("BUCK2_ALLOW_INTERNAL_TEST_RUNNER_DO_NOT_USE", "1")
+    async def test_listing_preset_skip_for_every_test_runs_nothing(
+        self, buck: Buck
+    ) -> None:
+        result = await buck.test(
+            ":all_skipped",
+            test_executor=INTERNAL_TEST_EXECUTOR,
+        )
+        assert "Skip 2" in result.stderr, result.stderr
+
+        assert await _test_runs(buck) == []

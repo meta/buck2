@@ -14,7 +14,9 @@ use buck2_build_api::interpreter::rule_defs::register_rule_defs;
 use buck2_build_api::interpreter::rule_defs::required_test_local_resource::register_required_test_local_resource;
 use buck2_core::bzl::ImportPath;
 use buck2_interpreter_for_build::interpreter::testing::Tester;
+use buck2_test_api::data::TestListingPresetResult;
 use buck2_test_api::data::TestStatus;
+use indoc::formatdoc;
 use indoc::indoc;
 
 fn tester() -> Tester {
@@ -981,6 +983,8 @@ mod tests {
         assert_eq!(entries[0].filter, "test_foo");
         assert_eq!(entries[1].name, "test_bar");
         assert_eq!(entries[1].filter, "test_bar");
+        assert_eq!(entries[0].preset_result, None);
+        assert_eq!(entries[1].preset_result, None);
         Ok(())
     }
 
@@ -1043,6 +1047,89 @@ mod tests {
 
         let err = InternalRunnerTestInfo::parse_test_listing_output(&info, "x").unwrap_err();
         assert!(err.to_string().contains("missing required key"), "{}", err);
+        Ok(())
+    }
+
+    fn freeze_provider_with_listing(
+        listing: &str,
+    ) -> buck2_error::Result<OwnedInternalRunnerTestInfo> {
+        freeze_provider(&formatdoc!(
+            r#"
+            exported_info = InternalRunnerTestInfo(
+                type = "custom",
+                parse_test_listing = lambda stdout: {listing},
+                parse_test_result = lambda stdout, stderr, exit_code: [],
+                listing_command = ["binary", "--list"],
+            )
+            "#
+        ))
+    }
+
+    #[test]
+    fn test_parse_test_listing_output_preset_skip() -> buck2_error::Result<()> {
+        let info = freeze_provider_with_listing(
+            r#"[
+                {"name": "a", "filter": "a", "status": "SKIP", "message": "ignored"},
+                {"name": "b", "filter": "b", "status": "SKIP"},
+                {"name": "c", "filter": "c", "status": None, "message": None},
+            ]"#,
+        )?;
+
+        let entries = InternalRunnerTestInfo::parse_test_listing_output(&info, "")?;
+        assert_eq!(
+            entries[0].preset_result,
+            Some(TestListingPresetResult {
+                status: TestStatus::SKIP,
+                message: Some("ignored".to_owned()),
+            })
+        );
+        assert_eq!(
+            entries[1].preset_result,
+            Some(TestListingPresetResult {
+                status: TestStatus::SKIP,
+                message: None,
+            })
+        );
+        assert_eq!(entries[2].preset_result, None);
+        Ok(())
+    }
+
+    #[test]
+    fn test_parse_test_listing_output_preset_status_other_than_skip() -> buck2_error::Result<()> {
+        for status in ["PASS", "FAIL", "OMITTED", "IGNORED"] {
+            let info = freeze_provider_with_listing(&format!(
+                r#"[{{"name": "a", "filter": "a", "status": "{status}"}}]"#
+            ))?;
+
+            let err = InternalRunnerTestInfo::parse_test_listing_output(&info, "").unwrap_err();
+            let err = format!("{err:#}");
+            assert!(err.contains("only set `status` to `SKIP`"), "{err}");
+            assert!(err.contains("In listing entry `a`"), "{err}");
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn test_parse_test_listing_output_message_without_status() -> buck2_error::Result<()> {
+        let info = freeze_provider_with_listing(
+            r#"[{"name": "a", "filter": "a", "message": "ignored"}]"#,
+        )?;
+
+        let err = InternalRunnerTestInfo::parse_test_listing_output(&info, "").unwrap_err();
+        let err = format!("{err:#}");
+        assert!(err.contains("no `status`"), "{err}");
+        assert!(err.contains("In listing entry `a`"), "{err}");
+        Ok(())
+    }
+
+    #[test]
+    fn test_parse_test_listing_output_status_must_be_string() -> buck2_error::Result<()> {
+        let info = freeze_provider_with_listing(r#"[{"name": "a", "filter": "a", "status": 1}]"#)?;
+
+        let err = InternalRunnerTestInfo::parse_test_listing_output(&info, "").unwrap_err();
+        let err = format!("{err:#}");
+        assert!(err.contains("`status` must be a string"), "{err}");
+        assert!(err.contains("In listing entry `a`"), "{err}");
         Ok(())
     }
 

@@ -180,6 +180,13 @@ pub struct TestListingEntry {
     pub name: String,
     /// Filter string passed back to the test binary to select this test.
     pub filter: String,
+    pub preset_result: Option<TestListingPresetResult>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TestListingPresetResult {
+    pub status: TestStatus,
+    pub message: Option<String>,
 }
 
 /// Entry from a parsed test result (returned by parse_test_result callback).

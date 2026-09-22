@@ -68,8 +68,43 @@ where
         &mut dest,
         materialize_dirs_and_syms,
         &mut file_src,
+        &mut FileCopier::default(),
         executable_bit_override,
     )
+}
+
+/// Copies the files of one entry, keeping the hardlinks among them: a second name of an inode
+/// already copied is linked to that copy rather than written again.
+#[derive(Default)]
+struct FileCopier {
+    #[cfg(unix)]
+    copied: BuckMutMap<(u64, u64), AbsNormPathBuf>,
+}
+
+impl FileCopier {
+    fn copy(&mut self, src: &AbsNormPath, dest: &AbsNormPath) -> buck2_error::Result<()> {
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::MetadataExt;
+
+            let metadata = fs_util::symlink_metadata(src)
+                .categorize_tagged(ErrorTag::MaterializeCopyMissingFile)?;
+            if metadata.nlink() > 1 {
+                let inode = (metadata.dev(), metadata.ino());
+                if let Some(first) = self.copied.get(&inode) {
+                    // A copy overwrites what is there; a link cannot.
+                    if fs_util::symlink_metadata(dest).is_ok() {
+                        fs_util::remove_file(dest).categorize_internal()?;
+                    }
+                    fs_util::hard_link(first, dest).categorize_internal()?;
+                    return Ok(());
+                }
+                self.copied.insert(inode, dest.to_owned());
+            }
+        }
+        fs_util::copy(src, dest).categorize_tagged(ErrorTag::MaterializeCopyMissingFile)?;
+        Ok(())
+    }
 }
 
 /// Materializes the directories and symlinks of an entry at `dest`. Files
@@ -138,6 +173,7 @@ fn materialize_recursively<'a, F, D>(
     dest: &mut AbsNormPathBuf,
     materialize_dirs_and_syms: bool,
     file_src: &mut F,
+    copier: &mut FileCopier,
     executable_bit_override: Option<bool>,
 ) -> buck2_error::Result<()>
 where
@@ -156,6 +192,7 @@ where
                     dest,
                     materialize_dirs_and_syms,
                     file_src,
+                    copier,
                     executable_bit_override,
                 )?;
                 dest.pop();
@@ -164,8 +201,7 @@ where
         }
         DirectoryEntry::Leaf(ActionDirectoryMember::File(_)) => {
             if let Some(src) = file_src(dest) {
-                fs_util::copy(src, &dest)
-                    .categorize_tagged(ErrorTag::MaterializeCopyMissingFile)?;
+                copier.copy(&src, dest)?;
                 if let Some(executable_bit_override) = executable_bit_override {
                     fs_util::set_executable(&dest, executable_bit_override)
                         .categorize_internal()?;
@@ -199,5 +235,73 @@ where
             }
             Ok(())
         }
+    }
+}
+
+#[cfg(all(test, unix))]
+mod tests {
+    use std::os::unix::fs::MetadataExt;
+
+    use buck2_common::file_ops::metadata::FileMetadata;
+    use buck2_core::fs::project_rel_path::ProjectRelativePathBuf;
+    use buck2_execute::digest_config::DigestConfig;
+    use buck2_execute::directory::ActionDirectoryBuilder;
+    use buck2_execute::directory::INTERNER;
+    use buck2_execute::directory::insert_file;
+    use buck2_fs::paths::forward_rel_path::ForwardRelativePath;
+    use dupe::Dupe;
+
+    use super::*;
+
+    #[test]
+    fn test_materialize_files_keeps_hardlinks() -> buck2_error::Result<()> {
+        // The source tree contains three names for one inode and a separate file with equal content.
+        // The copy must retain the hardlinks without combining the separate file.
+        let tmp = tempfile::tempdir_in("/var/tmp")?;
+        let root = AbsNormPathBuf::new(tmp.path().to_owned())?;
+        let src = root.join(ForwardRelativePath::unchecked_new("src"));
+        let dest = root.join(ForwardRelativePath::unchecked_new("dest"));
+        fs_util::create_dir_all(src.join(ForwardRelativePath::unchecked_new("sub")))?;
+        let first = src.join(ForwardRelativePath::unchecked_new("a"));
+        std::fs::write(&first, "shared")?;
+        std::fs::hard_link(&first, src.join(ForwardRelativePath::unchecked_new("b")))?;
+        std::fs::hard_link(
+            &first,
+            src.join(ForwardRelativePath::unchecked_new("sub/c")),
+        )?;
+        // Equal content on its own inode stays its own file.
+        std::fs::write(src.join(ForwardRelativePath::unchecked_new("d")), "shared")?;
+
+        let digest_config = DigestConfig::testing_default();
+        let file = FileMetadata::empty(digest_config.cas_digest_config());
+        let mut builder = ActionDirectoryBuilder::empty_non_exhaustive();
+        for path in ["a", "b", "sub/c", "d"] {
+            insert_file(
+                &mut builder,
+                ProjectRelativePathBuf::unchecked_new(path.to_owned()),
+                file.dupe(),
+            )?;
+        }
+        let entry: ActionDirectoryEntry<ActionSharedDirectory> = DirectoryEntry::Dir(
+            builder
+                .fingerprint(digest_config.as_directory_serializer())
+                .shared(&*INTERNER),
+        );
+        materialize_dirs_and_syms(entry.as_ref(), &dest)?;
+        materialize_files(entry.as_ref(), &src, &dest, None)?;
+
+        let inode = |path: &str| {
+            std::fs::metadata(dest.join(ForwardRelativePath::unchecked_new(path)))
+                .unwrap()
+                .ino()
+        };
+        assert_eq!(inode("a"), inode("b"));
+        assert_eq!(inode("a"), inode("sub/c"));
+        assert_ne!(inode("a"), inode("d"));
+        assert_eq!(
+            std::fs::read_to_string(dest.join(ForwardRelativePath::unchecked_new("b")))?,
+            "shared"
+        );
+        Ok(())
     }
 }

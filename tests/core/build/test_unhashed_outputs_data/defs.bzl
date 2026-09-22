@@ -27,6 +27,10 @@ os.makedirs(root, exist_ok=True)
 with open(os.path.join(root, "target"), "w") as f:
     f.write("contents")
 os.symlink("target", os.path.join(root, "profile"))
+os.makedirs(os.path.join(root, "sub"))
+for i, name in enumerate(["target", "profile", "sub", "."]):
+    t = int(sys.argv[2]) + i
+    os.utime(os.path.join(root, name), (t, t), follow_symlinks=False)
 """
 
 def _projected_symlink_output_impl(ctx):
@@ -41,6 +45,7 @@ def _projected_symlink_output_impl(ctx):
             "-c",
             _PROJECTED_SYMLINK_DIR,
             out.as_output(),
+            str(ctx.attrs.mtime),
         ),
         category = "projected_symlink_output",
     )
@@ -48,7 +53,7 @@ def _projected_symlink_output_impl(ctx):
 
 projected_symlink_output = rule(
     impl = _projected_symlink_output_impl,
-    attrs = {},
+    attrs = {"mtime": attrs.int(default = 1000000000)},
 )
 
 def _simple_build_impl(ctx):

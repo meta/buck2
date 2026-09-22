@@ -94,6 +94,7 @@ pub(crate) fn materialize_files<P, D>(
     src: P,
     dest: P,
     executable_bit_override: Option<bool>,
+    preserve_mtimes: bool,
 ) -> buck2_error::Result<()>
 where
     P: AsRef<AbsNormPath>,
@@ -112,7 +113,42 @@ where
             Some(src.join(subpath))
         }
     };
-    materialize(entry, dest, false, file_src, executable_bit_override)
+    materialize(
+        entry.clone(),
+        dest,
+        false,
+        file_src,
+        executable_bit_override,
+    )?;
+    if preserve_mtimes {
+        copy_mtimes(
+            entry.map_dir(|d| Directory::as_ref(d)),
+            &mut src.to_owned(),
+            &mut dest.to_owned(),
+        )?;
+    }
+    Ok(())
+}
+
+fn copy_mtimes<'a, D>(
+    entry: DirectoryEntry<D, &ActionDirectoryMember>,
+    src: &mut AbsNormPathBuf,
+    dest: &mut AbsNormPathBuf,
+) -> buck2_error::Result<()>
+where
+    D: ActionDirectoryRef<'a>,
+{
+    if let DirectoryEntry::Dir(d) = entry {
+        for (name, entry) in d.entries() {
+            src.push(name);
+            dest.push(name);
+            copy_mtimes(entry, src, dest)?;
+            src.pop();
+            dest.pop();
+        }
+    }
+    // Creating directory entries changes the directory's mtime.
+    fs_util::copy_mtime(&src, &dest).categorize_internal()
 }
 
 /// Materializes the files of an entry rooted at `dest`.

@@ -154,3 +154,30 @@ class UnhashedOutputsTest(BuckTestCase):
         assert output.parent.is_symlink()
         assert output.is_symlink()
         assert output.resolve().is_file()
+
+    @buck_test(
+        skip_for_os=["windows"],
+        extra_buck_config={"buck2": {"materializer_strict_leases": "false"}},
+    )
+    async def test_content_based_output_keeps_mtimes(self, buck: Buck) -> None:
+        # The published tree contains fixed file, symlink, empty-directory, and root mtimes.
+        # Forced rematerialization discards timestamps, so the published tree must stay on disk.
+        # A rerun with identical contents must keep the published tree while readers can use it.
+        first_inodes = {}
+        for base in (1_000_000_000, 1_000_000_100):
+            result = await buck.build(
+                "//:projected_symlink_output", "--no-buckd", "-c", f"test.mtime={base}"
+            )
+            out = (
+                result.get_build_report()
+                .output_for_target("root//:projected_symlink_output")
+                .parent
+            )
+            for i, name in enumerate(("target", "profile", "sub", ".")):
+                # os.path.join retains the trailing `.`, which Path would remove from a symlink.
+                metadata = os.lstat(os.path.join(out, name))
+                assert metadata.st_mtime == 1_000_000_000 + i, (base, name, metadata.st_mtime)
+                if base == 1_000_000_000:
+                    first_inodes[name] = metadata.st_ino
+                else:
+                    assert metadata.st_ino == first_inodes[name], name

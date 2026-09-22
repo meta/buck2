@@ -22,6 +22,10 @@ use std::ops::Deref;
 use std::os::fd::AsFd;
 #[cfg(unix)]
 use std::os::fd::BorrowedFd;
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+use std::os::unix::fs::MetadataExt;
+#[cfg(windows)]
+use std::os::windows::fs::OpenOptionsExt;
 use std::path::Path;
 use std::path::PathBuf;
 
@@ -31,6 +35,20 @@ use buck2_error::ErrorTag;
 use buck2_error::buck2_error;
 #[cfg(unix)]
 use buck2_error::internal_error;
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+use nix::fcntl::AT_FDCWD;
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+use nix::sys::stat::UtimensatFlags;
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+use nix::sys::stat::utimensat;
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+use nix::sys::time::TimeSpec;
+#[cfg(windows)]
+use windows_sys::Win32::Storage::FileSystem::FILE_FLAG_BACKUP_SEMANTICS;
+#[cfg(windows)]
+use windows_sys::Win32::Storage::FileSystem::FILE_FLAG_OPEN_REPARSE_POINT;
+#[cfg(windows)]
+use windows_sys::Win32::Storage::FileSystem::FILE_WRITE_ATTRIBUTES;
 
 use crate::cwd::assert_cwd_is_not_set;
 pub use crate::error::IoError;
@@ -965,6 +983,55 @@ pub fn set_writable<P: AsRef<AbsPath>>(path: P, writable: bool) -> Result<(), Io
     set_permissions(path, perms)
 }
 
+/// The destination receives the source mtime without following either path's final symlink.
+pub fn copy_mtime<P: AsRef<AbsPath>, Q: AsRef<AbsPath>>(from: P, to: Q) -> Result<(), IoError> {
+    let from = from.as_ref();
+    let to = to.as_ref();
+    let metadata = symlink_metadata(from)?;
+
+    let _guard = IoCounterKey::Chmod.guard();
+    with_retries(|| set_mtime_no_follow(to.as_maybe_relativized(), &metadata)).map_err(|e| {
+        IoError::new(e)
+            .context(format!(
+                "copy_mtime(from={}, to={})",
+                from.display(),
+                to.display()
+            ))
+            .check_eden(to)
+    })
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn set_mtime_no_follow(path: &Path, metadata: &fs::Metadata) -> io::Result<()> {
+    let mtime = TimeSpec::new(metadata.mtime() as _, metadata.mtime_nsec() as _);
+    utimensat(
+        AT_FDCWD,
+        path,
+        &TimeSpec::UTIME_OMIT,
+        &mtime,
+        UtimensatFlags::NoFollowSymlink,
+    )
+    .map_err(io::Error::from)
+}
+
+#[cfg(windows)]
+fn set_mtime_no_follow(path: &Path, metadata: &fs::Metadata) -> io::Result<()> {
+    // Read-only files need attribute-write access, and directories need backup semantics.
+    fs::OpenOptions::new()
+        .access_mode(FILE_WRITE_ATTRIBUTES)
+        .custom_flags(FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT)
+        .open(path)?
+        .set_times(fs::FileTimes::new().set_modified(metadata.modified()?))
+}
+
+#[cfg(not(any(target_os = "linux", target_os = "macos", windows)))]
+fn set_mtime_no_follow(_path: &Path, _metadata: &fs::Metadata) -> io::Result<()> {
+    Err(io::Error::new(
+        io::ErrorKind::Unsupported,
+        "Setting mtimes without following symlinks is unsupported on this platform",
+    ))
+}
+
 /// Removes a directory tree. On Unix, if permission is denied, adds read,
 /// write, and execute permission for the owner on every directory in the tree
 /// (but not on the parent of `path`) and tries again. Those permission changes
@@ -1472,6 +1539,13 @@ pub mod uncategorized {
         super::set_writable(path, writable).uncategorized()
     }
 
+    pub fn copy_mtime<P: AsRef<AbsPath>, Q: AsRef<AbsPath>>(
+        from: P,
+        to: Q,
+    ) -> buck2_error::Result<()> {
+        super::copy_mtime(from, to).uncategorized()
+    }
+
     pub fn remove_dir_all<P: AsRef<AbsPath>>(path: P) -> buck2_error::Result<()> {
         super::remove_dir_all(path).uncategorized()
     }
@@ -1677,6 +1751,50 @@ mod tests {
         fs_util::symlink(&target_path, &symlink_path)?;
         fs_util::write(&target_path, b"File content")?;
         assert_eq!(fs_util::read_to_string(&symlink_path)?, "File content");
+        Ok(())
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "macos", windows))]
+    #[test]
+    fn copy_mtime_does_not_follow_symlinks() -> buck2_error::Result<()> {
+        // Distinct file and directory mtimes must copy onto a symlink and a regular file.
+        // The symlink must receive its own mtime without changing its target.
+        let tempdir = tempfile::tempdir()?;
+        let root = AbsPath::new(tempdir.path())?;
+        let time = |secs| std::time::UNIX_EPOCH + std::time::Duration::new(secs, 123_456_700);
+        let set_mtime = |path: &AbsPath, mtime| -> buck2_error::Result<()> {
+            let stamp = root.join("stamp");
+            File::create(&stamp)?.set_times(fs::FileTimes::new().set_modified(mtime))?;
+            fs_util::copy_mtime(&stamp, path)
+        };
+
+        let old_file = root.join("old_file");
+        let old_dir = root.join("old_dir");
+        fs_util::write(&old_file, b"")?;
+        fs_util::create_dir_all(&old_dir)?;
+        set_mtime(&old_file, time(1_000_000_000))?;
+        set_mtime(&old_dir, time(1_000_000_001))?;
+
+        let file = root.join("file");
+        let link = root.join("link");
+        fs_util::write(&file, b"")?;
+        fs_util::symlink("file", &link)?;
+        set_mtime(&file, time(1_000_000_002))?;
+
+        // The destination symlink must change while its target stays unchanged.
+        fs_util::copy_mtime(&old_file, &link)?;
+        assert_eq!(
+            fs_util::symlink_metadata(&link)?.modified()?,
+            time(1_000_000_000)
+        );
+        assert_eq!(fs_util::metadata(&file)?.modified()?, time(1_000_000_002));
+
+        // A directory can supply the timestamp for a read-only regular file.
+        fs_util::set_writable(&file, false)?;
+        fs_util::copy_mtime(&old_dir, &file)?;
+        assert_eq!(fs_util::metadata(&file)?.modified()?, time(1_000_000_001));
+        fs_util::set_writable(&file, true)?;
+
         Ok(())
     }
 

@@ -631,6 +631,7 @@ pub struct CopiedArtifact {
     pub dest_entry: ActionDirectoryEntry<ActionImmutableDirectory>,
     // Override the destination executable bit to +x (true) or -x (false)
     pub executable_bit_override: Option<bool>,
+    pub preserve_mtimes: bool,
 }
 
 impl CopiedArtifact {
@@ -645,6 +646,7 @@ impl CopiedArtifact {
             dest,
             dest_entry,
             executable_bit_override,
+            preserve_mtimes: false,
         }
     }
 }

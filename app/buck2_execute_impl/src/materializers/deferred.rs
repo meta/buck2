@@ -729,12 +729,13 @@ impl<T: IoHandler + Allocative> Materializer for DeferredMaterializerAccessor<T>
             .declare_copy(
                 dest.clone(),
                 value.dupe(),
-                vec![CopiedArtifact::new(
+                vec![CopiedArtifact {
                     src,
-                    dest.clone(),
-                    value.entry().dupe().map_dir(|d| d.as_immutable()),
-                    None,
-                )],
+                    dest: dest.clone(),
+                    dest_entry: value.entry().dupe().map_dir(|d| d.as_immutable()),
+                    executable_bit_override: None,
+                    preserve_mtimes: true,
+                }],
             )
             .await?;
         self.ensure_materialized(vec![dest], MaterializationPurpose::IntermediateOnly)

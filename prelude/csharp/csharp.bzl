@@ -9,6 +9,7 @@
 load("@prelude//:prelude_rule.bzl", "prelude_rule")
 load("@prelude//decls:common.bzl", "buck")
 load("@prelude//decls:toolchains_common.bzl", "toolchains_common")
+load("@prelude//utils:argfile.bzl", "at_argfile")
 load(":csharp_providers.bzl", "DllDepTSet", "DllReference", "DotNetLibraryInfo", "generate_target_tset_children")
 load(":toolchain.bzl", "CSharpToolchainInfo")
 load(":dotnet_common.bzl", "FrameworkVersion")
@@ -46,18 +47,23 @@ def _csharp_library_or_exe_artifact(ctx: AnalysisContext, library_or_exe_name: s
     # Create a command invoking a wrapper script that calls csc.exe to compile the .dll or the .exe.
     cmd = [toolchain.csc]
 
+    # Arguments written to a response file to avoid command line too long errors.
+    response_file_args = []
+
     # Add caller specified compiler flags.
-    cmd.append(ctx.attrs.compiler_flags)
+    response_file_args.append(ctx.attrs.compiler_flags)
 
     # Set the output target as a .NET library.
-    cmd.append("/target:" + target_type)
-    cmd.append(
+    response_file_args.append("/target:" + target_type)
+    response_file_args.append(
         cmd_args(
             library_or_exe_artifact.as_output(),
             format = "/out:{}",
         )
     )
 
+    # NOTE: These are passed directly on the command line since /noconfig is not allowed in a
+    # response file.
     if ctx.attrs.add_hermetic_arguments:
         # Don't include any default .NET framework assemblies like "mscorlib" or "System" unless
         # explicitly requested with `/reference:{}`. This flag also stops injection of other
@@ -73,18 +79,25 @@ def _csharp_library_or_exe_artifact(ctx: AnalysisContext, library_or_exe_name: s
 
     # Let csc know the directory path where it can find system assemblies. This is the path
     # that is searched by `/reference:{libname}` if `libname` is just a DLL name.
-    cmd.append(cmd_args(toolchain.framework_dirs[ctx.attrs.framework_ver], format = "/lib:{}"))
+    response_file_args.append(cmd_args(toolchain.framework_dirs[ctx.attrs.framework_ver], format = "/lib:{}"))
 
     # Add a `/reference:{name}` argument for each dependency.
     # Buck target refs should be absolute paths and system assemblies just the DLL name.
     child_deps = generate_target_tset_children(ctx.attrs.deps, ctx)
     deps_tset = ctx.actions.tset(DllDepTSet, children = child_deps)
 
-    cmd.append(deps_tset.project_as_args("reference"))
+    response_file_args.append(deps_tset.project_as_args("reference"))
 
     # Specify the C# source code files that should be compiled into this target.
     # NOTE: This must happen after /out and /target!
-    cmd.append(ctx.attrs.srcs)
+    response_file_args.append(ctx.attrs.srcs)
+
+    cmd.append(at_argfile(
+        actions = ctx.actions,
+        name = "csc_args.rsp",
+        args = cmd_args(response_file_args, quote = "shell"),
+        allow_args = True,
+    ))
 
     # Run the C# compiler to produce the output artifact.
     ctx.actions.run(cmd, category = "csharp_compile")

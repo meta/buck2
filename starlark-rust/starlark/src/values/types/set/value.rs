@@ -360,31 +360,15 @@ impl<'v> StarlarkType<'v> for SetView<'v> {
     }
 
     // Set difference
-    //TODO(romanp) implement difference on small_set level and reuse it here and in difference function
     fn sub(&self, rhs: Value<'v>, heap: Heap<'v>) -> crate::Result<Value<'v>> {
         let rhs = SetRef::unpack_value_opt(rhs)
             .map_or_else(|| ValueError::unsupported_with(self, "-", rhs), Ok)?;
 
         let content = self.content();
-        if content.is_empty() {
-            return Ok(heap.alloc(SetData {
-                content: SmallSet::new(),
-            }));
-        }
 
-        if rhs.aref.content.is_empty() {
-            return Ok(heap.alloc(SetData {
-                content: content.clone(),
-            }));
-        }
+        let content = content.difference_with(&rhs.aref.content);
+        let data = SetData { content };
 
-        let mut data = SetData::default();
-
-        for elem in content.iter_hashed() {
-            if !rhs.aref.contains_hashed(elem.copied()) {
-                data.add_hashed(elem.copied());
-            }
-        }
         Ok(heap.alloc(data))
     }
 

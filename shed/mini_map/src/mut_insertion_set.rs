@@ -425,6 +425,28 @@ impl<T> MiniMutInsertionSet<T> {
         result
     }
 
+    /// Eagerly compute the elements of this set which are not in the other set.
+    pub fn difference_with(&self, other: &Self) -> Self
+    where
+        T: Eq + Clone,
+    {
+        if self.is_empty() {
+            return Self::new();
+        }
+
+        if other.is_empty() {
+            return self.clone();
+        }
+        let mut result = Self::with_capacity(self.len());
+        for own_entry in self.iter_hashed() {
+            if !other.contains_hashed(own_entry) {
+                result.insert_hashed(own_entry.cloned());
+            }
+        }
+
+        result
+    }
+
     /// Iterator over elements of this set which are not in the other set.
     pub fn difference<'a>(&'a self, other: &'a Self) -> Difference<'a, T>
     where
@@ -832,6 +854,14 @@ mod tests {
         let a = MiniMutInsertionSet::from_iter([1, 2, 3]);
         let b = MiniMutInsertionSet::from_iter([2, 4, 1]);
         let d = Vec::from_iter(a.difference(&b).copied());
+        assert_eq!(vec![3], d);
+    }
+
+    #[test]
+    fn test_difference_with() {
+        let a = MiniMutInsertionSet::from_iter([1, 2, 3]);
+        let b = MiniMutInsertionSet::from_iter([2, 4, 1]);
+        let d = Vec::from_iter(a.difference_with(&b).iter().copied());
         assert_eq!(vec![3], d);
     }
 

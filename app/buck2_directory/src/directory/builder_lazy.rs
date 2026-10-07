@@ -20,6 +20,9 @@ use crate::directory::shared_directory::SharedDirectory;
 pub trait DirectoryBuilderLike<D, L> {
     fn merge(&mut self, dir: D) -> Result<(), DirectoryMergeError>;
 
+    /// Same as `merge`, but this directory keeps its own exhaustiveness marking.
+    fn merge_entries(&mut self, dir: D) -> Result<(), DirectoryMergeError>;
+
     fn insert(
         &mut self,
         path: ForwardRelativePathBuf,
@@ -139,6 +142,14 @@ where
 
     fn merge(&mut self, dir: SharedDirectory<L, H>) -> Result<(), DirectoryMergeError> {
         self.merge(dir)
+    }
+
+    fn merge_entries(&mut self, dir: SharedDirectory<L, H>) -> Result<(), DirectoryMergeError> {
+        // `to_merge` only holds `SharedDirectory`s. Changing the marking of a `SharedDirectory`
+        // needs a builder, so merge into `builder` right away. `finalize` merges `to_merge` into
+        // `builder` with compatible leaves, so the order of the merges does not change the result.
+        self.builder
+            .merge_entries_with_compatible_leaves(dir.into_builder())
     }
 }
 

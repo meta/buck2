@@ -1,0 +1,11 @@
+load(":defs.bzl", "list_files", "write_path")
+
+list_files(name = "list", src = ".")
+
+list_files(name = "list_copy", src = ".", copy = True)
+
+list_files(name = "list_with_file", src = ".", extra_srcs = ["sub/file"])
+
+list_files(name = "list_sub", src = "sub")
+
+write_path(name = "path", src = ".")

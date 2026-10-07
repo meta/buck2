@@ -285,6 +285,13 @@ fn read_path_metadata<P: AsRef<AbsPath>>(
         path: relpath.to_buf(),
         abspath: root.as_ref().join(relpath.as_path()),
     };
+    if relpath.is_empty() {
+        // An empty `relpath` names `root` itself. A symlink at `root` is not a symlink inside the
+        // project, so follow it.
+        let meta = fs_util::metadata(root).categorize_internal()?;
+        return Ok(Some(convert_metadata(&curr, meta, file_digest_config)?));
+    }
+
     Ok(Some(match ExactPathMetadata::from_exact_path(&curr)? {
         ExactPathMetadata::DoesNotExist => return Ok(None),
         ExactPathMetadata::Symlink(symlink) => {
@@ -463,6 +470,22 @@ mod tests {
                 FileDigestConfig::source(CasDigestConfig::testing_default())
             ),
             Ok(Some(RawPathMetadata::File(..)))
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_read_root() -> buck2_error::Result<()> {
+        let t = TempDir::new()?;
+
+        assert_matches!(
+            read_path_metadata(
+                AbsPath::new(t.path())?,
+                ForwardRelativePath::empty(),
+                FileDigestConfig::source(CasDigestConfig::testing_default())
+            ),
+            Ok(Some(RawPathMetadata::Directory))
         );
 
         Ok(())

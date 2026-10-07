@@ -281,6 +281,16 @@ where
         Ok(())
     }
 
+    /// Same as `merge_with_compatible_leaves`, but this directory keeps its own exhaustiveness
+    /// marking instead of joining it with the marking of `other`.
+    pub fn merge_entries_with_compatible_leaves(
+        &mut self,
+        mut other: Self,
+    ) -> Result<(), DirectoryMergeError> {
+        other.set_root_exhaustiveness(Exhaustiveness::NonExhaustive);
+        self.merge_with_compatible_leaves(other)
+    }
+
     pub fn merge(&mut self, other: Self) -> Result<(), DirectoryMergeError> {
         if buck2_core::faster_directories::is_enabled() {
             let v = std::mem::replace(self, DirectoryBuilder::empty_non_exhaustive());
@@ -896,6 +906,10 @@ where
     fn merge(&mut self, dir: Self) -> Result<(), DirectoryMergeError> {
         self.merge_with_compatible_leaves(dir)
     }
+
+    fn merge_entries(&mut self, dir: Self) -> Result<(), DirectoryMergeError> {
+        self.merge_entries_with_compatible_leaves(dir)
+    }
 }
 
 #[cfg(test)]
@@ -915,6 +929,7 @@ mod tests {
     use crate::directory::directory::Directory;
     use crate::directory::directory_hasher::DirectoryDigester;
     use crate::directory::directory_iterator::DirectoryIterator;
+    use crate::directory::directory_ref::DirectoryRef;
     use crate::directory::directory_ref::FingerprintedDirectoryRef;
     use crate::directory::entry::DirectoryEntry;
     use crate::directory::fingerprinted_directory::FingerprintedDirectory;
@@ -1388,6 +1403,26 @@ mod tests {
             .unwrap();
         let d = b.fingerprint(&TestHasher);
         assert!(d.exhaustiveness_hash().is_uniformly_exhaustive());
+    }
+
+    #[test]
+    fn test_merge_entries_keeps_marking() {
+        for scaffold in [&[][..], &["x/y"][..]] {
+            let mut b = make_directory(scaffold).into_builder();
+            b.merge_entries_with_compatible_leaves(
+                make_exhaustive_directory(&["a/b"]).into_builder(),
+            )
+            .unwrap();
+            let d = b.fingerprint(&TestHasher);
+            assert!(!d.exhaustiveness_hash().is_exhaustive());
+            let Some(DirectoryEntry::Dir(a)) =
+                d.as_fingerprinted_ref().get(FileName::unchecked_new("a"))
+            else {
+                panic!("`a` is not a directory");
+            };
+            let a = a.as_fingerprinted_dyn().exhaustiveness_hash();
+            assert!(a.is_uniformly_exhaustive());
+        }
     }
 
     /// The identity-motivating case: `dir = {a, b}` assembled as one exhaustive region vs. as

@@ -300,6 +300,13 @@ class DaemonTest(BuckTestCase):
         assert spans, "an explicitly configured watcher must still run"
 
     @buck_test()
+    async def test_no_buckd_startup_is_quiet(self, buck: Buck) -> None:
+        # The in-process daemon starts up on the user's terminal, not in a buckd.stderr
+        # that a tailing client would need to catch up on.
+        result = await buck.targets(":", "--no-buckd")
+        assert "daemon_listener" not in result.stderr
+
+    @buck_test()
     async def test_buck_out_is_cache_dir(self, buck: Buck) -> None:
         await buck.targets(":")  # Start a daemon
         root = await buck.root()

@@ -546,6 +546,13 @@ impl CommandKind {
         let start_in_process_daemon = if common_opts.no_buckd {
             #[cfg(not(client_only))]
             {
+                // The default filter logs events inside the `daemon_listener` tracing spans at
+                // level "info" for recording in buckd.stderr. The in-process daemon would dump this
+                // to the user's terminal; drop that directive unless the user tweaked logging
+                // explicitly.
+                if buck2_env!("BUCK_LOG")?.is_none() {
+                    shared.log_reload_handle.update_log_filter("warn")?;
+                }
                 buck2_daemon::no_buckd::start_in_process_daemon(
                     immediate_config.daemon_startup_config()?,
                     paths.clone().get_result()?,

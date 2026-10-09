@@ -255,6 +255,8 @@ pub struct BuckdServerInitPreferences {
     pub daemon_startup_config: DaemonStartupConfig,
     pub daemon_originating_cgroup: Option<String>,
     pub started_for_clean_stale: bool,
+    /// This daemon runs as a thread inside its only client (`--no-buckd`).
+    pub in_process: bool,
 }
 
 #[derive(Allocative)]
@@ -262,6 +264,7 @@ pub(crate) struct TenantStateInitPreferences {
     pub(crate) enable_trace_io: bool,
     pub(crate) reject_materializer_state: Option<SqliteIdentity>,
     pub(crate) daemon_startup_config: DaemonStartupConfig,
+    pub(crate) in_process: bool,
 }
 
 impl BuckdServerInitPreferences {
@@ -271,6 +274,7 @@ impl BuckdServerInitPreferences {
             reject_materializer_state,
             daemon_startup_config,
             daemon_originating_cgroup,
+            in_process,
             ..
         } = self;
         (
@@ -278,6 +282,7 @@ impl BuckdServerInitPreferences {
                 enable_trace_io,
                 reject_materializer_state,
                 daemon_startup_config,
+                in_process,
             },
             daemon_originating_cgroup,
         )
@@ -424,7 +429,6 @@ impl BuckdServer {
         paths: InvocationPaths,
         init_ctx: BuckdServerInitPreferences,
         process_info: DaemonProcessInfo,
-        in_process: bool,
         prepped_cgroups: Option<PreppedBuckCgroups>,
         base_daemon_constraints: buck2_cli_proto::DaemonConstraints,
         listener: Pin<Box<dyn Stream<Item = Result<tokio::net::TcpStream, io::Error>> + Send>>,
@@ -484,6 +488,7 @@ impl BuckdServer {
                 .daemon_idle_timeout_s,
             init_ctx.started_for_clean_stale,
         )?;
+        let in_process = init_ctx.in_process;
 
         let daemon_state = Arc::new(
             DaemonState::new(

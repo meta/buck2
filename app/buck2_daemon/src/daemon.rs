@@ -274,6 +274,7 @@ impl DaemonCommand {
             daemon_startup_config: self.daemon_startup_config,
             daemon_originating_cgroup: self.daemon_originating_cgroup,
             started_for_clean_stale: self.started_for_clean_stale,
+            in_process,
         };
 
         let span = tracing::info_span!("daemon_listener");
@@ -516,7 +517,6 @@ impl DaemonCommand {
                 paths,
                 server_init_ctx,
                 process_info,
-                in_process,
                 prepped_cgroups,
                 daemon_constraints,
                 Box::pin(listener),
@@ -831,11 +831,11 @@ mod tests {
                 daemon_startup_config: DaemonStartupConfig::testing_empty(),
                 daemon_originating_cgroup: None,
                 started_for_clean_stale: false,
+                // In process: there is no daemon here, just the test binary's own process, and a
+                // watchdog would `_exit` it out from under the remaining tests.
+                in_process: true,
             },
             process_info.clone(),
-            // In process: there is no daemon here, just the test binary's own process, and a
-            // watchdog would `_exit` it out from under the remaining tests.
-            true,
             None,
             gen_daemon_constraints(&DaemonStartupConfig::testing_empty(), &daemon_id).unwrap(),
             Box::pin(listener),

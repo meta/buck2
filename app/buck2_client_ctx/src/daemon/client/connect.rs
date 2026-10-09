@@ -1398,6 +1398,24 @@ impl<'a> BuckdProcessInfo<'a> {
     }
 }
 
+/// Forget the in-process daemon (`--no-buckd`) that dies with this client: a buckd.info left
+/// behind would send the next invocation chasing, and hard-killing, a pid that is no longer a
+/// Buck daemon.
+pub fn remove_in_process_daemon_info(daemon_dir: &DaemonDir) {
+    match BuckdProcessInfo::load_if_exists(daemon_dir) {
+        Ok(Some(info)) if info.info.pid == std::process::id() as i64 => {
+            if let Err(e) = fs_util::remove_file(daemon_dir.buckd_info()) {
+                let _ignored = crate::eprintln!(
+                    "Failed to remove {}: {:#}",
+                    daemon_dir.buckd_info(),
+                    e.categorize_internal()
+                );
+            }
+        }
+        _ => {}
+    }
+}
+
 struct DaemonStatus {
     constraints: buck2_cli_proto::DaemonConstraints,
     start_instant: Option<Instant>,

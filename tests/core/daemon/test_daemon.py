@@ -19,6 +19,7 @@ import os
 import platform
 import re
 import shutil
+import signal
 import sqlite3
 import subprocess
 import sys
@@ -305,6 +306,66 @@ class DaemonTest(BuckTestCase):
         # that a tailing client would need to catch up on.
         result = await buck.targets(":", "--no-buckd")
         assert "daemon_listener" not in result.stderr
+
+    @buck_test()
+    async def test_no_buckd_leaves_no_daemon_record(self, buck: Buck) -> None:
+        await buck.targets(":", "--no-buckd")
+        daemon_dir = await buck.get_daemon_dir()
+        assert not (daemon_dir / "buckd.info").exists()
+        # The next command starts a fresh daemon instead of chasing the dead record.
+        result = await buck.targets(":")
+        assert "Could not connect" not in result.stderr
+
+    # There is no Ctrl-C for a single process on Windows.
+    @buck_test(skip_for_os=["windows"])
+    async def test_no_buckd_interrupt_leaves_no_daemon_record(
+        self, buck: Buck, tmp_path: Path
+    ) -> None:
+        event_log = tmp_path / "build.json-lines"
+        build = await buck.build(
+            ":long_running",
+            "--no-buckd",
+            "--local-only",
+            "--no-remote-cache",
+            "--event-log",
+            str(event_log),
+        ).start()
+        # Interrupt in the middle of the command, once its action runs.
+        for _ in range(600):
+            assert build.returncode is None, "the build died before its action ran"
+            with contextlib.suppress(FileNotFoundError):
+                if '"ActionExecution"' in event_log.read_text():
+                    break
+            await asyncio.sleep(0.1)
+        else:
+            raise AssertionError("the build never started its action")
+        daemon_dir = await buck.get_daemon_dir()
+        assert (daemon_dir / "buckd.info").exists()
+        build.send_signal(signal.SIGINT)
+        await build.communicate()
+        assert not (daemon_dir / "buckd.info").exists()
+        result = await buck.targets(":")
+        assert "Could not connect" not in result.stderr
+
+    @buck_test()
+    async def test_no_buckd_run_nested_buck_is_its_own_invocation(
+        self, buck: Buck
+    ) -> None:
+        result = await buck.run(
+            ":nested_buck",
+            "--no-buckd",
+            env={
+                "NESTED_BUCK2": str(Path(buck.path_to_executable).absolute()),
+                "NESTED_ISOLATION_DIR": str(buck.isolation_prefix or "v2"),
+            },
+        )
+        # `run` execs the target onto the client's pid after the daemon record is
+        # gone, so the nested invocation starts its own daemon instead of chasing a
+        # record that by now names the target itself, and killing it.
+        assert "root//:rule" in result.stdout
+        assert "killing daemon" not in result.stderr
+        daemon_dir = await buck.get_daemon_dir()
+        assert not (daemon_dir / "buckd.info").exists()
 
     @buck_test()
     async def test_buck_out_is_cache_dir(self, buck: Buck) -> None:

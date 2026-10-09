@@ -72,8 +72,36 @@ subprocess.run([buck_path, "debug", "trace-io", "enable"])
     )
     return [DefaultInfo(default_output = nested_out)]
 
+def _no_buckd_impl(ctx):
+    out = ctx.actions.declare_output("out.txt", has_content_based_path = False)
+
+    cmd = cmd_args(
+        ctx.attrs.buck2_path,
+        "build",
+        "--no-buckd",
+        "root//:trivial",
+        "-c",
+        "nested.buck2_path=" + ctx.attrs.buck2_path,
+        "--out",
+        out.as_output(),
+    )
+    ctx.actions.run(
+        cmd,
+        env = {"SANDCASTLE_ID": ""},
+        local_only = True,
+        category = "run",
+    )
+    return [DefaultInfo(default_output = out)]
+
 normal_nested_invocation = rule(
     impl = _normal_impl,
+    attrs = {
+        "buck2_path": attrs.string(),
+    },
+)
+
+no_buckd_nested_invocation = rule(
+    impl = _no_buckd_impl,
     attrs = {
         "buck2_path": attrs.string(),
     },

@@ -86,6 +86,31 @@ async fn test_different_user_version_and_state(buck: &Buck, tmp_path: &Path) -> 
 }
 
 #[buck_test(allow_soft_errors = true)]
+async fn test_no_buckd_in_action_fails_fast(buck: &Buck, tmp_path: &Path) -> anyhow::Result<()> {
+    // A daemon-less invocation inside a build action would either wait forever on the daemon-less
+    // slot its own build holds, or kill the daemon running the action; the nested client refuses
+    // instead.
+    let log = tmp_path.join("logfile.json-lines");
+    let log = log.to_str().unwrap();
+    buck.build(&[
+        "root//:nested_no_buckd",
+        "--event-log",
+        log,
+        "-c",
+        &nested_buck2_path(buck),
+    ])
+    .env("SANDCASTLE_ID", "")
+    .await
+    .expect_failure()
+    .assert_stderr_matches("Failed to build 'root//:nested_no_buckd");
+    let res = buck
+        .log(&["what-ran", "--failed", "--show-std-err", log])
+        .await?;
+    assert!(res.stdout.contains("cannot be used inside a build action"));
+    Ok(())
+}
+
+#[buck_test(allow_soft_errors = true)]
 async fn test_trace_io_mismatch(buck: &Buck, tmp_path: &Path) -> anyhow::Result<()> {
     let log = tmp_path.join("logfile.json-lines");
     let log = log.to_str().unwrap();

@@ -148,6 +148,30 @@ fn assert_evicted(outcome: Result<BuckOutput, BuckError>) {
     assert!(error.to_string().contains("evicted"), "{error}");
 }
 
+/// Waits up to a minute for `build`'s `--event-log` to record an action executing, failing if
+/// `build` exits first. Gives `build` back, still running.
+async fn wait_for_action_execution(mut build: BuckProcess, event_log: &Path) -> BuckProcess {
+    let deadline = Instant::now() + Duration::from_secs(60);
+    loop {
+        if build.try_wait().is_some() {
+            let output = build.wait().await.unwrap_or_else(BuckError::into_output);
+            panic!(
+                "the build died before its action ran (exit_code={:?}): {}",
+                output.exit_code(),
+                output.stderr
+            );
+        }
+        if std::fs::read_to_string(event_log).is_ok_and(|log| log.contains("\"ActionExecution\"")) {
+            return build;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "the build never started its action"
+        );
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+}
+
 fn generation_output(result: &BuckOutput) -> anyhow::Result<PathBuf> {
     result.build_report()?.output_for_target("//:generation")
 }
@@ -701,7 +725,7 @@ async fn test_no_buckd_interrupt_leaves_no_daemon_record(
     tmp_path: &Path,
 ) -> anyhow::Result<()> {
     let event_log = tmp_path.join("build.json-lines");
-    let mut build = buck
+    let build = buck
         .build(&[
             ":long_running",
             "--no-buckd",
@@ -712,26 +736,7 @@ async fn test_no_buckd_interrupt_leaves_no_daemon_record(
         ])
         .spawn();
     // Interrupt in the middle of the command, once its action runs.
-    let deadline = Instant::now() + Duration::from_secs(60);
-    loop {
-        if build.try_wait().is_some() {
-            let output = build.wait().await.unwrap_or_else(BuckError::into_output);
-            panic!(
-                "the build died before its action ran (exit_code={:?}): {}",
-                output.exit_code(),
-                output.stderr
-            );
-        }
-        if std::fs::read_to_string(&event_log).is_ok_and(|log| log.contains("\"ActionExecution\""))
-        {
-            break;
-        }
-        assert!(
-            Instant::now() < deadline,
-            "the build never started its action"
-        );
-        tokio::time::sleep(Duration::from_millis(100)).await;
-    }
+    let build = wait_for_action_execution(build, &event_log).await;
     let daemon_dir = buck.daemon_dir().await?;
     assert!(daemon_dir.join("buckd.info").exists());
     let _interrupted = build.interrupt().await;
@@ -766,8 +771,53 @@ async fn test_no_buckd_run_nested_buck_is_its_own_invocation(buck: &Buck) -> any
         "{}",
         result.stderr
     );
+    // The exec also released the daemon-less slot, so the nested invocation did not queue on it.
+    assert!(
+        !result.stderr.contains("waiting for it to finish"),
+        "{}",
+        result.stderr
+    );
     let daemon_dir = buck.daemon_dir().await?;
     assert!(!daemon_dir.join("buckd.info").exists());
+    Ok(())
+}
+
+#[buck_test]
+async fn test_no_buckd_invocations_serialize(buck: &Buck, tmp_path: &Path) -> anyhow::Result<()> {
+    let event_log = tmp_path.join("first.json-lines");
+    let first = buck
+        .build(&[
+            ":long_running",
+            "--no-buckd",
+            "--local-only",
+            "--no-remote-cache",
+            "--event-log",
+            path_str(&event_log),
+        ])
+        .spawn();
+    // Only once its action executes does the first invocation certainly hold the slot.
+    let mut first = wait_for_action_execution(first, &event_log).await;
+    let mut second = buck
+        .build(&[":rule", "--no-buckd", "--local-only", "--no-remote-cache"])
+        .spawn();
+    // The second invocation queues on the slot instead of killing the first's daemon.
+    tokio::time::sleep(Duration::from_secs(10)).await;
+    if second.try_wait().is_some() {
+        let output = second.wait().await.unwrap_or_else(BuckError::into_output);
+        panic!("the second build did not queue: {}", output.stderr);
+    }
+    assert!(
+        first.try_wait().is_none(),
+        "the second build killed the first"
+    );
+    // The slot frees when its holder dies, however it dies.
+    let _killed = first.kill().await;
+    let result = wait_within(second, Duration::from_secs(120)).await??;
+    assert!(
+        result.stderr.contains("waiting for it to finish"),
+        "{}",
+        result.stderr
+    );
     Ok(())
 }
 

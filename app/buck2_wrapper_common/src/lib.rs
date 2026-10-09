@@ -51,6 +51,9 @@ pub const BUCK_WRAPPER_PID_ENV_VAR: &str = "BUCK_WRAPPER_PID";
 pub const BUCK_WRAPPER_UUID_ENV_VAR: &str = "BUCK_WRAPPER_UUID";
 pub const BUCK_WRAPPER_START_TIME_ENV_VAR: &str = "BUCK_WRAPPER_START_TIME";
 pub const BUCKD_LIFECYCLE: &str = "buckd.lifecycle";
+/// Flocked by a `--no-buckd` client for its whole life to serialize daemon-less invocations.
+/// Like `BUCKD_LIFECYCLE`, never unlinked: a lock on an unlinked inode stops working.
+pub const DAEMONLESS_LOCK: &str = "daemonless.lock";
 /// Set to `1` on the `buck2 clean --stale` processes that `cleanall --stale` spawns, so their
 /// clean-stale runs are logged with the cleanall origin. An env var rather than a flag because the
 /// spawned client may be an older release that would reject an unknown flag.

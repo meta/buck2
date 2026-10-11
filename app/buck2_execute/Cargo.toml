@@ -70,6 +70,8 @@ tracing.workspace = true
 zstd.workspace = true
 
 [dev-dependencies]
+buck2_certs.workspace = true
+httptest.workspace = true
 prost-types.workspace = true
 
 [lints]

@@ -23,7 +23,9 @@ rust_library(
     },
     test_deps = [
         "fbsource//third-party/rust:assert_matches",
+        "fbsource//third-party/rust:httptest",
         "fbsource//third-party/rust:prost-types",
+        "//buck2/app/buck2_certs:buck2_certs",
     ],
     deps = [
         "fbsource//third-party/rust:anyhow",

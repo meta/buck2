@@ -657,6 +657,27 @@ async fn test_uses_the_cas_when_it_has_the_content(buck: &Buck) -> anyhow::Resul
 }
 
 #[buck_test(data_dir = "download")]
+async fn test_a_download_is_uploaded_to_the_cas(buck: &Buck) -> anyhow::Result<()> {
+    let content = random_string().into_bytes();
+    let server = StaticHttpServer::start([("/file", content.clone())]).await?;
+    let declared = configs(&server.url("/file"), Some(&sha1_hex(&content)), None, None);
+
+    buck.build(&with(&["//:download"], &[&declared])).await?;
+    assert_eq!(server.count("GET", "/file"), 1);
+
+    // A new daemon knows nothing of the first download, so only the CAS can serve it.
+    buck.kill().await?;
+    let target = "//:download_again";
+    let res = buck
+        .build(&with(&[target, "--materializations=none"], &[&declared]))
+        .await?;
+    let output = res.build_report()?.output_for_target(target)?;
+    assert!(!output.exists());
+    assert_eq!(server.count("GET", "/file"), 1);
+    Ok(())
+}
+
+#[buck_test(data_dir = "download")]
 async fn test_content_the_cas_holds_needs_no_url(buck: &Buck) -> anyhow::Result<()> {
     let content = random_string().into_bytes();
     let server = StaticHttpServer::start([("/file", content.clone())]).await?;

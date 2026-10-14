@@ -30,12 +30,14 @@ use buck2_common::file_ops::metadata::TrackedFileDigest;
 use buck2_common::io::trace::TracingIoProvider;
 use buck2_core::category::CategoryRef;
 use buck2_core::fs::buck_out_path::BuildArtifactPath;
+use buck2_core::fs::project_rel_path::ProjectRelativePath;
 use buck2_core::fs::project_rel_path::ProjectRelativePathBuf;
 use buck2_error::BuckErrorContext;
 use buck2_error::ErrorTag;
 use buck2_error::buck2_error;
 use buck2_error::conversion::from_any_with_tag;
 use buck2_execute::artifact_value::ArtifactValue;
+use buck2_execute::digest::CasDigestToReExt;
 use buck2_execute::digest_config::DigestConfig;
 use buck2_execute::execute::clean_output_paths::CleanOutputPaths;
 use buck2_execute::execute::command_executor::ActionExecutionTimingData;
@@ -52,6 +54,7 @@ use dupe::Dupe;
 use mini_vec::MiniBoxSlice;
 use pagable::Pagable;
 use pagable::pagable_typetag;
+use remote_execution::NamedDigest;
 use starlark::values::OwnedFrozen;
 use starlark::values::Value;
 
@@ -398,13 +401,58 @@ impl DownloadFileAction {
             .declare_existing(
                 &output_lease,
                 vec![DeclareArtifactPayload {
-                    path,
+                    path: path.clone(),
                     artifact: value.dupe(),
                 }],
             )
             .await?;
 
+        if let Some(metadata) = metadata {
+            self.upload_to_cas(ctx, &path, metadata).await;
+        }
+
         Ok((value, ActionExecutionKind::Simple))
+    }
+
+    /// Uploads the downloaded file to the CAS, so that the probe in `declare_from_cas` finds it
+    /// on other machines. A failed upload does not fail the action.
+    async fn upload_to_cas(
+        &self,
+        ctx: &dyn ActionExecutionCtx,
+        path: &ProjectRelativePath,
+        metadata: &FileMetadata,
+    ) {
+        let digest = metadata.digest.data();
+        // Every CAS holds the empty blob already.
+        if !ctx.run_action_knobs().upload_downloads_to_cas
+            || !ctx.cas_configured()
+            || digest.size() == 0
+        {
+            return;
+        }
+
+        let upload = async {
+            let named_digest = NamedDigest {
+                name: ctx
+                    .fs()
+                    .fs()
+                    .resolve(path)
+                    .as_maybe_relativized_str()?
+                    .to_owned(),
+                digest: metadata.digest.to_re(),
+                ..Default::default()
+            };
+            ctx.re_client()
+                .with_use_case(ctx.invocation_re_use_case())
+                .upload_files_and_directories(vec![named_digest], vec![], vec![])
+                .await
+        };
+        if let Err(e) = upload.await {
+            buck2_core::soft_error_or_panic!(
+                "download_file_cas_upload_failed",
+                e.context(format!("CAS upload for `{digest}` failed"))
+            );
+        }
     }
 
     /// Execute this action for offline builds (e.g. no network).

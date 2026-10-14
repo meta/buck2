@@ -48,6 +48,13 @@ something else, this can be configured in `.buckconfig` as follows:
 digest_algorithms = BLAKE3
 ```
 
+To upload the files that `download_file` and `http_archive` fetch to the CAS,
+set `upload_downloads_to_cas = true` in the `[buck2]` section. Other machines
+then get these files from the CAS instead of the URL. Buck2 uploads a file only
+if it has a SHA1 or SHA256 checksum that the CAS digest algorithms allow, and
+its size is known from `size_bytes` or from the server. `--no-remote-cache`
+disables the upload, unless you also give `--write-to-cache-anyway`.
+
 ## RE platform configuration
 
 Next, your build will need an

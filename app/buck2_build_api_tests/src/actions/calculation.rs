@@ -257,6 +257,7 @@ async fn make_default_dice_state(
         use_case: RemoteExecutorUseCase::buck2_default(),
         cas_configured: false,
         may_probe_cas: false,
+        skip_cache_read: false,
     });
     extra.set_http_client(HttpClientBuilder::https_with_system_roots().await?.build());
     extra.set_dep_file_cache(create_dep_file_cache());

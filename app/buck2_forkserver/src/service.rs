@@ -231,6 +231,9 @@ impl UnixForkserverService {
         Self::configure_environment(&mut cmd, &validated_cmd.env)?;
 
         #[cfg(target_os = "linux")]
+        die_with_parent(&mut cmd);
+
+        #[cfg(target_os = "linux")]
         if validated_cmd
             .network_access
             .is_some_and(is_restricted_network_access)
@@ -309,6 +312,39 @@ impl UnixForkserverService {
 
         let stream = encode_event_stream(stream);
         Ok(Box::pin(stream) as _)
+    }
+}
+
+/// Has the kernel SIGKILL the command when the forkserver exits. The
+/// forkserver is the only process that kills or reaps what it spawned, so a
+/// command that outlives it (a persistent worker, above all, which runs until
+/// it is told to stop) has nobody left to stop it. PR_SET_PDEATHSIG fires when
+/// the thread that forked the child exits, not the process (prctl(2)); the
+/// forkserver spawns from its one runtime thread (`new_current_thread` in
+/// `buck2 forkserver`), so the two are the same here.
+///
+/// Only the command itself gets the signal: its own children do not inherit
+/// the setting, so a forking wrapper's children rely on the group kill.
+#[cfg(target_os = "linux")]
+fn die_with_parent(cmd: &mut Command) {
+    use std::os::unix::process::CommandExt;
+
+    let parent = std::process::id() as libc::pid_t;
+    // Safety: prctl() and getppid() are async-signal-safe single syscalls
+    // that allocate nothing.
+    unsafe {
+        cmd.pre_exec(move || {
+            if libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGKILL) != 0 {
+                return Err(std::io::Error::last_os_error());
+            }
+            // The forkserver may have died between fork and prctl, in which
+            // case no death signal will ever come; the reparented child would
+            // see another parent here.
+            if libc::getppid() != parent {
+                return Err(std::io::Error::from_raw_os_error(libc::ESRCH));
+            }
+            Ok(())
+        });
     }
 }
 
@@ -515,5 +551,33 @@ mod tests {
             "{error}"
         );
         Ok(())
+    }
+}
+
+#[cfg(all(test, target_os = "linux"))]
+mod die_with_parent_tests {
+    use std::os::unix::process::ExitStatusExt;
+
+    use buck2_util::process::background_command;
+
+    #[test]
+    fn test_command_dies_with_the_thread_that_spawned_it() {
+        // The death signal follows the spawning thread, so a thread that
+        // spawns and exits stands in for a forkserver that exits.
+        let mut child = std::thread::spawn(|| {
+            let mut cmd = background_command("sleep");
+            cmd.arg("60");
+            super::die_with_parent(&mut cmd);
+            cmd.spawn().unwrap()
+        })
+        .join()
+        .unwrap();
+
+        let status = child.wait().unwrap();
+        assert_eq!(
+            status.signal(),
+            Some(libc::SIGKILL),
+            "the command outlived the thread that spawned it: {status}"
+        );
     }
 }

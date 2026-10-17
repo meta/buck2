@@ -7,6 +7,21 @@ The root of your [project](glossary.md#project) must contain a configuration
 file named `.buckconfig`. Before executing, Buck2 reads this file to incorporate
 any customizations it specifies.
 
+## Archive extraction
+
+The prelude's `http_archive` and `extract_archive` rules use command-line
+extraction tools by default. Set the following in the root `.buckconfig` to
+extract archives in Buck2 instead:
+
+```ini
+[buck2]
+extract_archives_in_daemon = true
+```
+
+Buck2 then extracts on the client, even when the build uses remote execution.
+The execution platform needs no archive extraction tools for that step.
+Set the key to `false`, or remove it, to use the command-line extraction path.
+
 ## Performance impact of Buck2 configuration changes
 
 Because configuration settings are sometimes included in the cache keys that

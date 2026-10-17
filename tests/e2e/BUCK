@@ -18,6 +18,7 @@ buck2_e2e_test(
     name = "test_prelude_rules",
     srcs = ["test_prelude_rules.rs"],
     data_dir = "test_prelude_rules_data",
+    deps = ["fbsource//third-party/rust:flate2", "fbsource//third-party/rust:tar"],
 )
 
 buck2_e2e_test(

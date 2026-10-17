@@ -7,3 +7,9 @@ unpack(
     archive = ":pages",
     excludes = ["\\[id\\]\\.js$"],
 )
+
+unpack(
+    name = "directory_exclusion",
+    archive = read_config("test", "directory_archive", ":pages"),
+    excludes = ["^top/bin$"],
+)

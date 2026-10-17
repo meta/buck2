@@ -13,6 +13,7 @@ use buck2_build_api::interpreter::rule_defs::context::ANALYSIS_ACTIONS_METHODS_A
 use crate::context::copy::analysis_actions_methods_copy;
 use crate::context::download::analysis_actions_methods_download;
 use crate::context::dynamic_output::analysis_actions_methods_dynamic_output;
+use crate::context::extract_archive::analysis_actions_methods_extract_archive;
 use crate::context::run::analysis_actions_methods_run;
 use crate::context::unsorted::analysis_actions_methods_unsorted;
 use crate::context::write::analysis_actions_methods_write;
@@ -22,6 +23,7 @@ mod copy;
 mod download;
 pub(crate) mod dynamic_output;
 mod execution_group;
+mod extract_archive;
 pub(crate) mod run;
 mod unsorted;
 mod write;
@@ -37,6 +39,7 @@ pub(crate) fn init_analysis_action_methods_actions() {
         analysis_actions_methods_copy(methods);
         analysis_actions_methods_download(methods);
         analysis_actions_methods_dynamic_output(methods);
+        analysis_actions_methods_extract_archive(methods);
         analysis_actions_methods_run(methods);
         analysis_actions_methods_unsorted(methods);
         analysis_actions_methods_write(methods);

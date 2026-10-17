@@ -2223,6 +2223,7 @@ enum ActionKind {
   WRITE = 5;
   WRITE_MACROS_TO_FILE = 6;
   CAS_ARTIFACT = 7;
+  EXTRACT_ARCHIVE = 8;
 }
 
 // The kinds of ways an action can be executed by buck2.

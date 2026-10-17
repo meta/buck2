@@ -332,6 +332,7 @@ buck2_wrapper_common = { path = "app/buck2_wrapper_common" }
 bumpalo = { version = "3.20.3", features = ["allocator_api", "collections"] }
 bytes = { version = "1.12.1", features = ["serde"] }
 bytesize = "2.7.0"
+bzip2 = "0.6.1"
 clap = { version = "4.6.2", features = ["derive", "env", "string", "unicode", "wrap_help"] }
 clap_complete = { version = "4.6.11", features = ["unstable-dynamic"] }
 cmp_any = { version = "0.8.1", path = "gazebo/cmp_any" }
@@ -419,6 +420,7 @@ logos = "0.16.1"
 lru = { version = "0.19.0", default-features = false }
 lsp-server = "0.10.0"
 lsp-types = "0.97"
+lzma-rust2 = { version = "0.22.0", features = ["optimization", "std", "xz"], default-features = false }
 maplit = "1.0"
 memchr = "2.8.3"
 memmap2 = "0.9.12"
@@ -554,6 +556,7 @@ windows-sys = { version = "0.61.2", features = ["Win32_Foundation", "Win32_Globa
 winver = "1"
 x509-parser = "0.18.1"
 xattr = "1.7.0"
+zip = { version = "9.4.1", features = ["bzip2", "deflate-flate2", "deflate64"], default-features = false }
 zstd = { version = "0.14.3", features = ["experimental", "zstdmt"] }
 
 [workspace.lints.clippy]

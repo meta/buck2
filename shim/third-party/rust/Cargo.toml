@@ -52,6 +52,7 @@ bytemuck = { version = "1.25", features = ["const_zeroed", "derive", "min_const_
 byteorder = "1.5"
 bytes = { version = "1.12.1", features = ["serde"] }
 bytesize = "2.7.0"
+bzip2 = "0.6.1"
 chrono = { version = "0.4.45", features = ["clock", "serde", "std"], default-features = false }
 clap = { version = "4.6.2", features = ["derive", "env", "string", "unicode", "wrap_help"] }
 clap_complete = { version = "4.6.11", features = ["unstable-dynamic"] }
@@ -134,6 +135,7 @@ logos = "0.16.1"
 lru = { version = "0.19.0", default-features = false }
 lsp-server = "0.10.0"
 lsp-types = "0.97"
+lzma-rust2 = { version = "0.22.0", features = ["encoder", "optimization", "std", "xz"], default-features = false }
 maplit = "1.0"
 md-5 = "0.10"
 memchr = "2.8.3"
@@ -265,7 +267,7 @@ whoami = "2.1.3"
 winapi = { version = "0.3", features = ["everything", "std"] }
 x509-parser = "0.18.1"
 xattr = "1.7.0"
-zip = { version = "9.4.1", features = ["aes-crypto", "bzip2", "deflate", "time"], default-features = false }
+zip = { version = "9.4.1", features = ["aes-crypto", "bzip2", "deflate", "deflate64", "time"], default-features = false }
 zstd = { version = "0.14.3", features = ["experimental", "zstdmt"] }
 
 [target.'cfg(target_os = "windows")'.dependencies]

@@ -1063,27 +1063,35 @@ dependencies = [
  "buck2_http",
  "buck2_interpreter",
  "buck2_util",
+ "bzip2",
  "derive_more 2.1.1",
  "dice",
  "dice_futures",
  "dupe",
  "either",
+ "flate2",
  "hex",
  "hmap",
  "host_sharing",
  "http",
  "itertools 0.15.0",
  "jiff",
+ "lzma-rust2",
  "mini_vec",
  "pagable",
  "parking_lot 0.13.0",
+ "regex",
  "remote_execution",
  "serde_json",
  "sha1 0.11.0",
  "starlark",
  "starlark_map",
  "strong_hash",
+ "tar",
+ "tempfile",
  "tracing",
+ "zip",
+ "zstd",
 ]
 
 [[package]]
@@ -4623,6 +4631,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "deflate64"
+version = "0.1.12"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ac6b926516df9c60bfa16e107b21086399f8285a44ca9711344b9e553c5146e2"
+
+[[package]]
 name = "defmt"
 version = "1.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -7305,6 +7319,15 @@ dependencies = [
  "serde",
  "serde_json",
  "serde_repr",
+]
+
+[[package]]
+name = "lzma-rust2"
+version = "0.22.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7277c9742229dc25243236d578b6471a798c554512c6f6a04365ec2e87c2a3bb"
+dependencies = [
+ "sha2 0.11.1",
 ]
 
 [[package]]
@@ -13322,8 +13345,11 @@ version = "9.5.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e3476fd497ac8af5b1ec7b51acab7bef380f7e8dd8e0487595bafd839417a302"
 dependencies = [
+ "bzip2",
  "constant_time_eq 0.6.1",
  "crc32fast",
+ "deflate64",
+ "flate2",
  "getrandom 0.4.3",
  "indexmap",
  "libc",

@@ -1,0 +1,88 @@
+load(":defs.bzl", "cat", "extract")
+
+extract(
+    name = "tar_gz",
+    src = "archive.tar.gz",
+    excludes = ["_test\\.txt$"],
+    strip_prefix = "pkg-1.0",
+)
+
+extract(
+    name = "tar_xz",
+    src = "archive.tar.xz",
+    strip_prefix = "pkg-1.0",
+)
+
+extract(
+    name = "zip",
+    src = "archive.zip",
+    strip_prefix = "pkg-1.0",
+)
+
+extract(
+    name = "explicit_type",
+    src = "archive.bin",
+    strip_prefix = "pkg-1.0",
+    type = "tar.gz",
+)
+
+extract(
+    name = "content_based",
+    src = "archive.tar.gz",
+    content_based = True,
+    strip_prefix = "pkg-1.0",
+)
+
+cat(
+    name = "cat_content_based",
+    dir = ":content_based",
+    path = "README",
+)
+
+extract(
+    name = "parent_dir",
+    src = "parent_dir.tar",
+)
+
+extract(
+    name = "bad_type",
+    src = "archive.tar.gz",
+    type = "rar",
+)
+
+extract(
+    name = "cached",
+    src = "archive.bin",
+    content_based = read_config("extract", "content_based", "false") == "true",
+    excludes = [read_config("extract", "excludes", "never-matches")],
+    strip_prefix = read_config("extract", "strip_prefix", "pkg-1.0"),
+    type = read_config("extract", "type", "tar.gz"),
+)
+
+constraint_setting(name = "variant")
+
+[
+    constraint_value(
+        name = "variant_{}".format(i),
+        constraint_setting = ":variant",
+    )
+    for i in range(4)
+]
+
+[
+    platform(
+        name = "platform_{}".format(i),
+        constraint_values = [":variant_{}".format(i)],
+    )
+    for i in range(4)
+]
+
+[
+    cat(
+        name = "consumer_{}".format(i),
+        default_target_platform = ":platform_{}".format(i),
+        dir = ":content_based",
+        path = "README",
+    )
+    for i in range(4)
+]

@@ -29,29 +29,38 @@ buck2_hash.workspace = true
 buck2_http.workspace = true
 buck2_interpreter.workspace = true
 buck2_util.workspace = true
+bzip2.workspace = true
 derive_more.workspace = true
 dice.workspace = true
 dupe.workspace = true
 either.workspace = true
+flate2.workspace = true
 hex.workspace = true
 hmap.workspace = true
 host_sharing.workspace = true
 http.workspace = true
 itertools.workspace = true
 jiff.workspace = true
+lzma-rust2.workspace = true
 mini_vec.workspace = true
 pagable.workspace = true
 parking_lot.workspace = true
+regex.workspace = true
 remote_execution.workspace = true
 serde_json.workspace = true
 sha1.workspace = true
 starlark.workspace = true
 starlark_map.workspace = true
 strong_hash.workspace = true
+tar.workspace = true
 tracing.workspace = true
+zip.workspace = true
+zstd.workspace = true
 
 [dev-dependencies]
 dice_futures.workspace = true
+lzma-rust2 = { workspace = true, features = ["encoder"] }
+tempfile.workspace = true
 
 [lints]
 workspace = true

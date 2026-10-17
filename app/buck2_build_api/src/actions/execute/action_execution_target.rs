@@ -45,12 +45,23 @@ impl<'a> ActionExecutionTarget<'a> {
     }
 
     pub fn scratch_path(&self) -> BuckOutScratchPath {
+        self.scratch_path_impl(self.action.all_outputs_are_content_based())
+    }
+
+    /// The scratch path of an action with only content-based outputs leaves out the
+    /// configuration, so every configuration of the action shares it. This scratch path includes
+    /// the configuration.
+    pub fn configuration_scratch_path(&self) -> BuckOutScratchPath {
+        self.scratch_path_impl(false)
+    }
+
+    fn scratch_path_impl(&self, uses_content_hash: bool) -> BuckOutScratchPath {
         BuckOutScratchPath::new(
             self.action.owner().dupe(),
             self.action.category(),
             self.action.identifier(),
             self.action.action_key(),
-            self.action.all_outputs_are_content_based(),
+            uses_content_hash,
         )
         .unwrap()
     }

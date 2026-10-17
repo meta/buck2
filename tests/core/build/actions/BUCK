@@ -5,6 +5,7 @@ oncall("build_infra")
 buck2_core_tests(
     materializer_variants = [
         "test_defer_write_actions",
+        "test_extract_archive",
         "test_write_action_cache",
         "test_write_cas_probe",
     ],

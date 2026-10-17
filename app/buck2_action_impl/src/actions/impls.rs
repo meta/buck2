@@ -15,6 +15,7 @@ pub(crate) mod copy;
 pub(crate) mod declare_writes;
 pub(crate) mod dep_file_fingerprint;
 pub(crate) mod download_file;
+pub(crate) mod extract_archive;
 pub(crate) mod offline;
 pub(crate) mod produce;
 pub(crate) mod run;

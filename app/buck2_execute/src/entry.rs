@@ -8,6 +8,8 @@
  * above-listed licenses.
  */
 
+use std::io;
+use std::io::Read;
 use std::ops::Add as _;
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
@@ -31,10 +33,15 @@ use buck2_fs::paths::RelativePath;
 use buck2_fs::paths::abs_norm_path::AbsNormPath;
 use buck2_fs::paths::abs_norm_path::AbsNormPathBuf;
 use buck2_fs::paths::file_name::FileNameBuf;
+use buck2_util::future::join_all;
 use buck2_util::future::try_join_all;
 use derive_more::Add;
+use dice_futures::cancellation::CancellationContext;
+use dice_futures::cancellation::CancellationPoller;
+use dupe::Dupe;
 use faccess::PathExt;
 use futures::Future;
+use futures::future::join;
 use futures::future::try_join;
 use pathdiff::diff_paths;
 use tokio::sync::Semaphore;
@@ -113,6 +120,44 @@ pub async fn build_entry_from_disk(
     Option<ActionDirectoryEntry<ActionDirectoryBuilder>>,
     HashingInfo,
 )> {
+    build_entry_from_disk_impl(path, digest_config, blocking_executor, project_root, None).await
+}
+
+pub async fn build_entry_from_disk_with_cancellation(
+    path: AbsNormPathBuf,
+    digest_config: FileDigestConfig,
+    blocking_executor: &dyn BlockingExecutor,
+    project_root: &AbsNormPath,
+    cancellation: &CancellationContext,
+) -> buck2_error::Result<(
+    Option<ActionDirectoryEntry<ActionDirectoryBuilder>>,
+    HashingInfo,
+)> {
+    // Hashing workers must stop before cancellation releases the caller's paths.
+    cancellation
+        .critical_section(|| {
+            build_entry_from_disk_impl(
+                path,
+                digest_config,
+                blocking_executor,
+                project_root,
+                Some(cancellation.into()),
+            )
+        })
+        .await
+}
+
+async fn build_entry_from_disk_impl(
+    path: AbsNormPathBuf,
+    digest_config: FileDigestConfig,
+    blocking_executor: &dyn BlockingExecutor,
+    project_root: &AbsNormPath,
+    cancellation: Option<CancellationPoller>,
+) -> buck2_error::Result<(
+    Option<ActionDirectoryEntry<ActionDirectoryBuilder>>,
+    HashingInfo,
+)> {
+    check_cancellation(&cancellation)?;
     // Get file metadata. If the file is missing, ignore it.
     //
     // If the symlink points to an input or output of this action, the artifact
@@ -155,14 +200,20 @@ pub async fn build_entry_from_disk(
     let value = match FileType::from(m.file_type()) {
         FileType::File => {
             let (file_metadata, file_hashing_info): (FileMetadata, HashingInfo) =
-                build_file_metadata(path, digest_config).await?;
+                build_file_metadata(path, digest_config, cancellation).await?;
             hashing_info = hashing_info.add(file_hashing_info);
             DirectoryEntry::Leaf(ActionDirectoryMember::File(file_metadata))
         }
         FileType::Symlink => DirectoryEntry::Leaf(create_symlink(&path, project_root)?),
         FileType::Directory => {
-            let (dir, dir_hashing_info) =
-                build_dir_from_disk(path, digest_config, blocking_executor, project_root).await?;
+            let (dir, dir_hashing_info) = build_dir_from_disk(
+                path,
+                digest_config,
+                blocking_executor,
+                project_root,
+                cancellation,
+            )
+            .await?;
             hashing_info = hashing_info.add(dir_hashing_info);
             DirectoryEntry::Dir(dir)
         }
@@ -184,6 +235,7 @@ async fn build_dir_from_disk(
     digest_config: FileDigestConfig,
     blocking_executor: &dyn BlockingExecutor,
     project_root: &AbsNormPath,
+    cancellation: Option<CancellationPoller>,
 ) -> buck2_error::Result<(ActionDirectoryBuilder, HashingInfo)> {
     // A disk scan is a complete listing of what's there, so the tree this builds is uniformly
     // exhaustive (each level is built from its own builder, bottom-up).
@@ -197,6 +249,7 @@ async fn build_dir_from_disk(
 
     let files = blocking_executor
         .execute_io_inline(|| {
+            check_cancellation(&cancellation)?;
             do_normalize_permissions(&disk_path)?;
             fs_util::read_dir(&disk_path)
                 .categorize_internal()
@@ -204,6 +257,7 @@ async fn build_dir_from_disk(
         })
         .await?;
     for file in files {
+        check_cancellation(&cancellation)?;
         let file = file?;
         let filetype = file.file_type()?;
         let filename = file.file_name();
@@ -221,7 +275,8 @@ async fn build_dir_from_disk(
 
         match FileType::from(filetype) {
             FileType::File => {
-                let file_future = build_file_metadata(child_disk_path, digest_config);
+                let file_future =
+                    build_file_metadata(child_disk_path, digest_config, cancellation.dupe());
                 file_names.push(filename);
                 file_futures.push(file_future)
             }
@@ -237,6 +292,7 @@ async fn build_dir_from_disk(
                     digest_config,
                     blocking_executor,
                     project_root,
+                    cancellation.dupe(),
                 );
                 directory_names.push(filename);
                 directory_futures.push(dir_future);
@@ -245,8 +301,16 @@ async fn build_dir_from_disk(
         };
     }
 
-    let (file_results, dir_results) =
-        try_join(try_join_all(file_futures), try_join_all(directory_futures)).await?;
+    let (file_results, dir_results) = if cancellation.is_some() {
+        // A failed hash must not detach workers that still read paths the caller can remove.
+        let (files, dirs) = join(join_all(file_futures), join_all(directory_futures)).await;
+        (
+            files.into_iter().collect::<buck2_error::Result<Vec<_>>>()?,
+            dirs.into_iter().collect::<buck2_error::Result<Vec<_>>>()?,
+        )
+    } else {
+        try_join(try_join_all(file_futures), try_join_all(directory_futures)).await?
+    };
 
     for (filename, file_res) in file_names.into_iter().zip(file_results.into_iter()) {
         let (file_metadata, file_hashing_info) = file_res;
@@ -269,12 +333,24 @@ async fn build_dir_from_disk(
 fn build_file_metadata(
     disk_path: AbsNormPathBuf,
     digest_config: FileDigestConfig,
+    cancellation: Option<CancellationPoller>,
 ) -> impl Future<Output = buck2_error::Result<(FileMetadata, HashingInfo)>> {
     static SEMAPHORE: LazyLock<Semaphore> = LazyLock::new(|| Semaphore::new(100));
     let io_task = move || {
+        check_cancellation(&cancellation)?;
         do_normalize_permissions(&disk_path)?;
         let hashing_start = Instant::now();
-        let digest = FileDigest::from_file(&disk_path, digest_config);
+        let digest = if let Some(cancellation) = cancellation {
+            FileDigest::from_reader(
+                CancellableReader {
+                    inner: fs_util::open_file(&disk_path).categorize_internal()?,
+                    cancellation,
+                },
+                digest_config.as_cas_digest_config(),
+            )
+        } else {
+            FileDigest::from_file(&disk_path, digest_config)
+        };
         let hashing_info = HashingInfo::new(Instant::now() - hashing_start, 1);
 
         buck2_error::Ok((disk_path.executable(), hashing_info, digest))
@@ -291,6 +367,33 @@ fn build_file_metadata(
         };
 
         Ok((file_metadata, hashing_info))
+    }
+}
+
+fn check_cancellation(cancellation: &Option<CancellationPoller>) -> buck2_error::Result<()> {
+    if cancellation
+        .as_ref()
+        .is_some_and(CancellationPoller::is_cancelled)
+    {
+        return Err(buck2_error::buck2_error!(
+            buck2_error::ErrorTag::Input,
+            "Artifact hashing was cancelled"
+        ));
+    }
+    Ok(())
+}
+
+struct CancellableReader<R> {
+    inner: R,
+    cancellation: CancellationPoller,
+}
+
+impl<R: Read> Read for CancellableReader<R> {
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        if self.cancellation.is_cancelled() {
+            return Err(io::Error::other("Artifact hashing was cancelled"));
+        }
+        self.inner.read(buf)
     }
 }
 

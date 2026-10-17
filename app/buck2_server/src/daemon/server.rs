@@ -270,6 +270,49 @@ impl DaemonShutdown {
     }
 }
 
+/// Shuts the daemon down when its forkserver exits under it.
+///
+/// The forkserver spawns every local action and persistent worker and is the only process that
+/// kills them, and nothing starts another one. A daemon that outlives it fails every local action
+/// with "Forkserver is unavailable" from then on, while the workers it started run on with nobody
+/// to stop them. Shutting down makes the next command start a daemon with a forkserver.
+#[cfg(unix)]
+fn spawn_forkserver_exit_watcher(
+    forkserver: buck2_forkserver::client::ForkserverClient,
+    server: std::sync::Weak<BuckdServerData>,
+) {
+    tokio::spawn(async move {
+        let err = forkserver.exited().await;
+        // Gone, or on its way out (`buck2 kill`): the forkserver went with it, as it should.
+        let Some(server) = server.upgrade() else {
+            return;
+        };
+        if server.daemon_shutdown.has_started() {
+            return;
+        }
+        tracing::error!(
+            "Forkserver (pid {}) exited while the daemon was running: {:#}",
+            forkserver.pid(),
+            err
+        );
+        server.daemon_shutdown.start_shutdown(
+            buck2_data::DaemonShutdown {
+                reason: format!(
+                    "the forkserver exited ({err:#}), so this daemon can run no local action or worker"
+                ),
+                callers: Vec::new(),
+                error_tag: None,
+            },
+            Some(FORKSERVER_EXIT_SHUTDOWN_TIMEOUT),
+        );
+    });
+}
+
+/// How long commands that are running when the forkserver exits get to finish. Their local work
+/// fails already; this is time to report it.
+#[cfg(unix)]
+const FORKSERVER_EXIT_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(10);
+
 #[derive(Allocative)]
 pub struct BuckdServerInitPreferences {
     pub enable_trace_io: bool,
@@ -866,6 +909,11 @@ impl BuckdServer {
             log_reload_handle,
             rt,
         }));
+
+        #[cfg(unix)]
+        if let ForkserverAccess::Client(forkserver) = &api_server.0.daemon_state.data.forkserver {
+            spawn_forkserver_exit_watcher(forkserver.dupe(), Arc::downgrade(&api_server.0));
+        }
 
         let (shutdown, shutdown_deadline) = server_shutdown_signal(
             command_receiver,

@@ -63,6 +63,16 @@ impl ForkserverCommand {
                 set_cloexec(fd)?;
             }
 
+            // h2 and tonic say why a connection ended only at debug level: h2 names the limit it
+            // enforced ("too many small DATA frames", "locally-reset streams reached limit") and
+            // tonic logs the error that ended the connection ("failed serving connection"). The
+            // forkserver serves one connection and exits when it ends, so those lines belong in
+            // buckd.stderr, which is the forkserver's stderr. An explicit BUCK_LOG wins.
+            if buck2_core::buck2_env!("BUCK_LOG")?.is_none() {
+                log_reload_handle
+                    .update_log_filter("warn,h2::proto=debug,tonic::transport::server=debug")?;
+            }
+
             let rt = tokio::runtime::Builder::new_current_thread()
                 .enable_all()
                 .build()?;

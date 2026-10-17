@@ -21,6 +21,7 @@ use buck2_grpc::DuplexChannel;
 use tokio::net::UnixListener;
 use tokio::net::UnixStream;
 
+use super::service::ForkserverStats;
 use super::service::UnixForkserverService;
 
 pub async fn run_forkserver(
@@ -54,7 +55,8 @@ pub async fn run_forkserver(
         DuplexChannel::new(read, write)
     };
 
-    let service = UnixForkserverService::new(log_reload_handle, &state_dir)
+    let stats = Arc::new(ForkserverStats::default());
+    let service = UnixForkserverService::new(log_reload_handle, &state_dir, stats)
         .buck_error_context("Failed to create UnixForkserverService")?;
 
     let router = buck2_grpc::server_builder().add_service(

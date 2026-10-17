@@ -1065,6 +1065,31 @@ pub(crate) mod state_machine {
     }
 
     #[tokio::test]
+    async fn test_file_contents_path_after_materialization_before_finished()
+    -> buck2_error::Result<()> {
+        // A completed materialization must resolve to its destination before completion commands
+        // are processed. Materialize a declared artifact without processing those commands.
+        ignore_stack_overflow_checks_for_future(async {
+            let (mut dm, _) = make_processor(Default::default());
+            let digest_config = dm.io.digest_config();
+
+            let path = make_path("foo/bar");
+            dm.testing_declare(&path, ArtifactValue::file(digest_config.empty_file()));
+            dm.materialize_artifact(&path, EventDispatcher::null())
+                .internal_error("Expected a future")?
+                .await
+                .map_err(|e| buck2_error::buck2_error!(buck2_error::ErrorTag::Tier0, "{e:?}"))?;
+
+            assert_eq!(
+                dm.tree.file_contents_path(path.clone(), digest_config).ok(),
+                Some(path)
+            );
+            Ok(())
+        })
+        .await
+    }
+
+    #[tokio::test]
     async fn test_declare_reuse() -> buck2_error::Result<()> {
         ignore_stack_overflow_checks_for_future(async {
             let (mut dm, _) = make_processor(Default::default());

@@ -46,6 +46,7 @@ use crate::subscribers::build_graph_stats::BuildGraphStats;
 use crate::subscribers::build_id_writer::BuildIdWriter;
 use crate::subscribers::event_log::EventLog;
 use crate::subscribers::health_check_subscriber::HealthCheckSubscriber;
+#[cfg(fbcode_build)]
 use crate::subscribers::re_log::ReLog;
 use crate::subscribers::subscriber::EventSubscriber;
 use crate::subscribers::superconsole::timekeeper::RealtimeClock;
@@ -111,8 +112,11 @@ fn update_events_ctx<T: StreamingCommand>(
     events_ctx.used_superconsole = used_superconsole;
 
     if let Some(paths) = paths {
-        let re_log_subscriber = ReLog::new(paths.isolation.clone());
-        subscribers.push(Box::new(re_log_subscriber));
+        #[cfg(fbcode_build)]
+        {
+            let re_log_subscriber = ReLog::new(paths.isolation.clone());
+            subscribers.push(Box::new(re_log_subscriber));
+        }
 
         if !event_log_opts.no_event_log {
             let event_log_subscriber =

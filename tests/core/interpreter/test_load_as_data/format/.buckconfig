@@ -3,3 +3,8 @@
 
 [buildfile]
   name = TARGETS.fixture
+
+[buck2]
+  # `metadata.txt` and `*.lock` carry no usable extension, so they need an
+  # explicit `?as=` hint, which in turn needs them allowlisted.
+  load_as_allowlist = *.lock, metadata.txt

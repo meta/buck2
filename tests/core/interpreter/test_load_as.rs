@@ -174,3 +174,29 @@ async fn test_audit_starlark_module_parses_a_data_file(buck: &Buck) -> anyhow::R
     );
     Ok(())
 }
+
+/// A `?as=` load is rejected when the file matches no glob in `buck2.load_as_allowlist`. The
+/// fixture allows `*.lock`; overriding the allowlist to empty makes `data.lock?as=toml` fail.
+#[buck_test]
+async fn test_load_as_extension_not_allowed(buck: &Buck) -> anyhow::Result<()> {
+    buck.targets(&["//...", "-c", "buck2.load_as_allowlist="])
+        .await
+        .expect_failure()
+        .assert_stderr_matches(r"data\.lock\?as=toml.*load_as_allowlist");
+    Ok(())
+}
+
+/// `:data.toml?as=toml` requests nothing that the plain `:data.toml` load doesn't already do, so it
+/// should not need allowlist permission the plain load never needed.
+#[buck_test(data_dir = "redundant")]
+async fn test_load_as_redundant_hint_needs_no_allowlist_entry(buck: &Buck) -> anyhow::Result<()> {
+    let result = buck.targets(&["root//:"]).await?;
+    let data = extract_test_output(&result.stderr)?;
+
+    assert_eq!(
+        data["plain"],
+        json!({"tool": {"name": "bar", "version": "2.0"}})
+    );
+    assert_eq!(data["hinted"], data["plain"]);
+    Ok(())
+}

@@ -67,6 +67,7 @@ impl AdditionalGlobalsFnDyn for FnWrapper {
 use crate::interpreter::global_interpreter_state::GlobalInterpreterState;
 use crate::interpreter::interpreter_for_dir::InterpreterForDir;
 use crate::interpreter::interpreter_for_dir::ParseData;
+use crate::interpreter::load_data::LoadAsAllowlist;
 use crate::super_package::package_value::SuperPackageValuesImpl;
 
 /// Simple container that allows us to instrument things like imports
@@ -236,6 +237,7 @@ impl Tester {
                 false,
                 true,
                 BzlEvalCell::Loader,
+                LoadAsAllowlist::from_buckconfig(&self.root_config)?,
             )?),
             Arc::new(import_paths),
             self.current_dir_with_allowed_relative_dirs.dupe(),

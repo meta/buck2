@@ -3,3 +3,9 @@
 
 [buildfile]
   name = TARGETS.fixture
+
+[buck2]
+  # Deliberately empty: `data.toml` is not allowlisted for `?as=`. A hint that
+  # merely restates the extension asks for nothing the plain `load()` doesn't
+  # already do, so it should need no permission.
+  load_as_allowlist =

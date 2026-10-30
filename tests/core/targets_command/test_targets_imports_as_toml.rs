@@ -77,3 +77,32 @@ async fn test_imports_as_toml(buck: &Buck) -> anyhow::Result<()> {
     );
     Ok(())
 }
+
+/// `*` in `buck2.load_as_allowlist` allows every file.
+#[buck_test]
+async fn test_imports_as_toml_star_allows_all(buck: &Buck) -> anyhow::Result<()> {
+    let xs = streaming_imports(buck, &["-c", "buck2.load_as_allowlist=*"]).await?;
+    assert!(
+        xs.iter()
+            .any(|x| x["buck.file"] == "root//uv.lock" && x["buck.imports"] == json!([])),
+        "uv.lock?as=toml should load when all extensions are allowed via `*`"
+    );
+    Ok(())
+}
+
+/// An entry in `buck2.load_as_allowlist` may be a whole file name (e.g. `uv.lock`), not just an
+/// extension, so specific package-manager lockfiles can be allowed without opening up every
+/// `*.lock` file.
+#[buck_test]
+async fn test_imports_as_toml_whole_filename_allowlist(buck: &Buck) -> anyhow::Result<()> {
+    let xs =
+        streaming_imports(buck, &["-c", "buck2.load_as_allowlist=uv.lock,direct.lock"]).await?;
+    let loaded: Vec<&Value> = xs
+        .iter()
+        .filter(|x| x.get("buck.imports").is_some())
+        .map(|x| &x["buck.file"])
+        .collect();
+    assert!(loaded.contains(&&json!("root//uv.lock")), "{loaded:?}");
+    assert!(loaded.contains(&&json!("root//direct.lock")), "{loaded:?}");
+    Ok(())
+}

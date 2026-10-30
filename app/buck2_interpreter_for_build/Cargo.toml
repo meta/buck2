@@ -34,6 +34,7 @@ either.workspace = true
 fancy-regex.workspace = true
 futures.workspace = true
 glob.workspace = true
+globset.workspace = true
 hashbrown.workspace = true
 hex.workspace = true
 indoc.workspace = true

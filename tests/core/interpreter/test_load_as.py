@@ -27,6 +27,16 @@ def extract_test_output(stderr: str) -> dict[str, Any]:
 
 
 class LoadAsTest(BuckTestCase):
+    @buck_test()
+    async def test_load_as_extension_not_allowed(self, buck: Buck) -> None:
+        """A `?as=` load is rejected when the file matches no glob in
+        `buck2.load_as_allowlist`. The fixture allows `*.lock`; overriding the
+        allowlist to empty makes `data.lock?as=toml` fail."""
+        await expect_failure(
+            buck.targets("//...", "-c", "buck2.load_as_allowlist="),
+            stderr_regex=r"data\.lock\?as=toml.*load_as_allowlist",
+        )
+
     @buck_test(data_dir="format")
     async def test_load_as_selects_the_parser(self, buck: Buck) -> None:
         """The hint, not the extension, picks the parser: `deps.lock` is TOML and
@@ -139,3 +149,17 @@ class LoadAsTest(BuckTestCase):
         result = await buck.audit("starlark", "module", "root//:data.toml")
 
         assert "root//data.toml" in result.stdout, result.stdout
+
+    @buck_test(data_dir="redundant")
+    async def test_load_as_redundant_hint_needs_no_allowlist_entry(
+        self,
+        buck: Buck,
+    ) -> None:
+        """`:data.toml?as=toml` requests nothing that the plain `:data.toml` load
+        doesn't already do, so it should not need allowlist permission the plain load
+        never needed."""
+        result = await buck.targets("root//:")
+        data = extract_test_output(result.stderr)
+
+        assert data["plain"] == {"tool": {"name": "bar", "version": "2.0"}}
+        assert data["hinted"] == data["plain"]

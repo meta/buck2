@@ -1,0 +1,3 @@
+load(":data.lock?as=toml", "value")
+
+value_alias = value

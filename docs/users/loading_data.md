@@ -59,6 +59,18 @@ load("//foo:Pipfile.lock?as=json", pipfile = "value")
 The accepted formats are `json` and `toml`. There is no `?as=bzl`: a file that is
 Starlark says so by being named `.bzl`.
 
+A `?as=` load only works on files the repo has opted in, via a comma-separated
+list of file name globs:
+
+```ini
+[buck2]
+  load_as_allowlist = *.lock, versions.txt
+```
+
+A load whose file matches no glob is an error naming the buckconfig. Restating
+what the extension already says (`:bar.toml?as=toml`) asks for nothing the plain
+load doesn't, so it needs no entry.
+
 ## An unparseable file fails the whole package
 
 A loaded file is a dependency of the build file that loads it, the same as any

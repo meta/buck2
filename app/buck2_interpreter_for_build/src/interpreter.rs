@@ -24,6 +24,7 @@ pub mod globals;
 pub mod globspec;
 pub mod interpreter_for_dir;
 pub mod interpreter_setup;
+pub(crate) mod load_data;
 pub mod module_internals;
 pub(crate) mod natives;
 pub mod package_file_calculation;

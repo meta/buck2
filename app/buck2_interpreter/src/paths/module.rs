@@ -13,6 +13,7 @@ use std::hash::Hasher;
 
 use allocative::Allocative;
 use buck2_core::bxl::BxlFilePath;
+use buck2_core::bzl::ImportFormat;
 use buck2_core::bzl::ImportPath;
 use buck2_core::cells::build_file_cell::BuildFileCell;
 use buck2_core::cells::cell_path::CellPath;
@@ -59,6 +60,29 @@ impl<'a> StarlarkModulePath<'a> {
         match self {
             Self::LoadFile(p) => Some(p),
             _ => None,
+        }
+    }
+
+    /// The module type `path` is parsed as: its [`ImportPath::format`] in the
+    /// module-path vocabulary. Asking the path rather than the extension means
+    /// a bare `ImportPath` always resolves to the type it was loaded as, e.g.
+    /// `uv.lock?as=toml`.
+    pub fn from_import_path(path: &'a ImportPath) -> Self {
+        match path.format() {
+            ImportFormat::Bzl => StarlarkModulePath::LoadFile(path),
+            ImportFormat::Json => StarlarkModulePath::JsonFile(path),
+            ImportFormat::Toml => StarlarkModulePath::TomlFile(path),
+        }
+    }
+
+    /// The [`ImportPath`] behind anything a `load()` can name. `None` only for
+    /// `.bxl`, which cannot be loaded.
+    pub fn unpack_import_path(self) -> Option<&'a ImportPath> {
+        match self {
+            StarlarkModulePath::LoadFile(p)
+            | StarlarkModulePath::JsonFile(p)
+            | StarlarkModulePath::TomlFile(p) => Some(p),
+            StarlarkModulePath::BxlFile(_) => None,
         }
     }
 
@@ -133,6 +157,11 @@ impl OwnedStarlarkModulePath {
             StarlarkModulePath::JsonFile(p) => Self::JsonFile(p.clone()),
             StarlarkModulePath::TomlFile(t) => Self::TomlFile(t.clone()),
         }
+    }
+
+    /// Owned counterpart of [`StarlarkModulePath::from_import_path`].
+    pub fn from_import_path(path: ImportPath) -> Self {
+        OwnedStarlarkModulePath::new(StarlarkModulePath::from_import_path(&path))
     }
 
     pub fn borrow(&self) -> StarlarkModulePath<'_> {

@@ -70,6 +70,21 @@ use crate::interpreter::interpreter_for_dir::ParseData;
 use crate::interpreter::interpreter_for_dir::ParseResult;
 use crate::super_package::package_value::SuperPackageValuesImpl;
 
+/// Context for a load-time parse failure. This fails the whole package, so the
+/// message says which parser ran and where that choice came from.
+fn parse_error_context(starlark_file: StarlarkModulePath<'_>) -> String {
+    let Some(import) = starlark_file.unpack_import_path() else {
+        return format!("Parsing `{starlark_file}`");
+    };
+    // `{:#}` is the file alone: what failed is parsing its contents, the same
+    // whichever module asked, and the format is named below in words.
+    let format = import.format();
+    match import.format_override() {
+        Some(_) => format!("Parsing `{import:#}` as {format}, as requested by `?as={format}`"),
+        None => format!("Parsing `{import:#}` as {format}"),
+    }
+}
+
 fn toml_value_to_json(value: toml::Value) -> serde_json::Value {
     match value {
         toml::Value::String(s) => serde_json::Value::String(s),
@@ -323,7 +338,7 @@ impl<'c, 'd: 'c> DiceCalculationDelegate<'c, 'd> {
             .with_package_context_information(path.path().to_string())?;
 
         let value: serde_json::Value = serde_json::from_str(&contents)
-            .with_buck_error_context(|| format!("Parsing {path}"))?;
+            .with_buck_error_context(|| parse_error_context(starlark_file))?;
 
         // We expect these to be small + simple
         // ast-grep-ignore: rust/buck2-no-starlark-module
@@ -351,8 +366,8 @@ impl<'c, 'd: 'c> DiceCalculationDelegate<'c, 'd> {
             .await
             .with_package_context_information(path.path().to_string())?;
 
-        let value: toml::Value =
-            toml::from_str(&contents).with_buck_error_context(|| format!("Parsing {path}"))?;
+        let value: toml::Value = toml::from_str(&contents)
+            .with_buck_error_context(|| parse_error_context(starlark_file))?;
         let json_value = toml_value_to_json(value);
 
         // We expect these to be small + simple

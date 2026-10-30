@@ -43,6 +43,7 @@ use buck2_interpreter::import_paths::ImplicitImportPaths;
 use buck2_interpreter::package_imports::ImplicitImport;
 use buck2_interpreter::parse_import::RelativeImports;
 use buck2_interpreter::parse_import::parse_import;
+use buck2_interpreter::parse_import::strip_format_hint;
 use buck2_interpreter::paths::module::OwnedStarlarkModulePath;
 use buck2_interpreter::paths::module::StarlarkModulePath;
 use buck2_interpreter::paths::package::PackageFilePath;
@@ -193,13 +194,14 @@ impl LoadResolver for InterpreterLoadResolver {
         path: &str,
         location: Option<&FileSpan>,
     ) -> buck2_error::Result<OwnedStarlarkModulePath> {
+        let (path_str, format_hint) = strip_format_hint(path)?;
         let relative_import_option = RelativeImports::Allow {
             current_dir_with_allowed_relative: &self.config.current_dir_with_allowed_relative_dirs,
         };
         let path = parse_import(
             self.config.cell_info.cell_alias_resolver(),
             relative_import_option,
-            path,
+            path_str,
         )?;
 
         // check for bxl files first before checking for prelude.
@@ -245,25 +247,24 @@ impl LoadResolver for InterpreterLoadResolver {
         // ensures that if you define a UDR outside of the prelude's cell, it gets the same prelude
         // as using the exported rules from the prelude would. This matters notably for identity
         // checks in t-sets, which would fail if we had > 1 copy of the prelude.
-        if let Some(prelude_import) = self.config.global_state.configuror.prelude_import() {
-            if prelude_import.is_prelude_path(&path) {
-                if path.path().extension() == Some("json") {
-                    return Ok(OwnedStarlarkModulePath::JsonFile(
-                        ImportPath::new_same_cell(path)?,
-                    ));
-                } else {
-                    return Ok(OwnedStarlarkModulePath::LoadFile(
-                        ImportPath::new_same_cell(path)?,
-                    ));
-                }
-            }
-        }
-        let import_path = ImportPath::new_with_build_file_cells(path, self.build_file_cell)?;
-        Ok(match import_path.path().path().extension() {
-            Some("json") => OwnedStarlarkModulePath::JsonFile(import_path),
-            Some("toml") => OwnedStarlarkModulePath::TomlFile(import_path),
-            _ => OwnedStarlarkModulePath::LoadFile(import_path),
-        })
+        let is_prelude = self
+            .config
+            .global_state
+            .configuror
+            .prelude_import()
+            .is_some_and(|prelude_import| prelude_import.is_prelude_path(&path));
+        let build_file_cell = if is_prelude {
+            BuildFileCell::new(path.cell())
+        } else {
+            self.build_file_cell
+        };
+
+        let import_path = match format_hint {
+            Some(format) => ImportPath::new_with_explicit_format(path, build_file_cell, format)?,
+            None => ImportPath::new_with_build_file_cells(path, build_file_cell)?,
+        };
+
+        Ok(OwnedStarlarkModulePath::from_import_path(import_path))
     }
 }
 

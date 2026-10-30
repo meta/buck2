@@ -121,3 +121,21 @@ class LoadAsTest(BuckTestCase):
             buck.targets("root//:"),
             stderr_regex=r"must have suffix `\.bzl`, `\.json`, or `\.toml`",
         )
+
+    @buck_test(data_dir="format")
+    async def test_audit_includes_lists_data_loads(self, buck: Buck) -> None:
+        """`audit includes` walks the loaded modules of a build file, so it meets
+        data files. It has to ask each path how it is parsed rather than assume
+        Starlark, or it reports a syntax error inside the data file."""
+        result = await buck.audit("includes", "TARGETS.fixture")
+
+        assert "deps.lock" in result.stdout, result.stdout
+        assert "metadata.txt" in result.stdout, result.stdout
+
+    @buck_test(data_dir="redundant")
+    async def test_audit_starlark_module_parses_a_data_file(self, buck: Buck) -> None:
+        """`audit starlark module` on a data file must parse it as data. The load
+        here carries no hint, so nothing but the extension says it isn't Starlark."""
+        result = await buck.audit("starlark", "module", "root//:data.toml")
+
+        assert "root//data.toml" in result.stdout, result.stdout

@@ -146,3 +146,31 @@ async fn test_load_without_a_hint_still_requires_a_known_extension(
         .assert_stderr_matches(r"must have suffix `\.bzl`, `\.json`, or `\.toml`");
     Ok(())
 }
+
+/// `audit includes` walks the loaded modules of a build file, so it meets data files. It has to ask
+/// each path how it is parsed rather than assume Starlark, or it reports a syntax error inside the
+/// data file.
+#[buck_test(data_dir = "format")]
+async fn test_audit_includes_lists_data_loads(buck: &Buck) -> anyhow::Result<()> {
+    let result = buck.audit(&["includes", "TARGETS.fixture"]).await?;
+
+    assert!(result.stdout.contains("deps.lock"), "{}", result.stdout);
+    assert!(result.stdout.contains("metadata.txt"), "{}", result.stdout);
+    Ok(())
+}
+
+/// `audit starlark module` on a data file must parse it as data. The load here carries no hint, so
+/// nothing but the extension says it isn't Starlark.
+#[buck_test(data_dir = "redundant")]
+async fn test_audit_starlark_module_parses_a_data_file(buck: &Buck) -> anyhow::Result<()> {
+    let result = buck
+        .audit(&["starlark", "module", "root//:data.toml"])
+        .await?;
+
+    assert!(
+        result.stdout.contains("root//data.toml"),
+        "{}",
+        result.stdout
+    );
+    Ok(())
+}

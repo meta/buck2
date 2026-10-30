@@ -71,6 +71,13 @@ A load whose file matches no glob is an error naming the buckconfig. Restating
 what the extension already says (`:bar.toml?as=toml`) asks for nothing the plain
 load doesn't, so it needs no entry.
 
+## Data files belong to one package
+
+A data file is visible only to the package that owns it, whether it is loaded by
+extension or with `?as=`. `//foo:bar.toml` can be loaded by `//foo`'s build file
+and by `.bzl` files in `//foo`, but not from `//foo/sub` or anywhere else. To
+share the data, load it in a `.bzl` in its own package and re-export from there.
+
 ## An unparseable file fails the whole package
 
 A loaded file is a dependency of the build file that loads it, the same as any

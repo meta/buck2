@@ -10,4 +10,4 @@
 [project]
   # Isolated mini-repos, each selected via data_dir by its own tests; ignored
   # so the default `//...` tests skip them.
-  ignore = format,redundant
+  ignore = cross_cell,cross_package,cross_package_json,cross_package_toml,format,redundant

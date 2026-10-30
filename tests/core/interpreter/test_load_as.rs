@@ -200,3 +200,51 @@ async fn test_load_as_redundant_hint_needs_no_allowlist_entry(buck: &Buck) -> an
     assert_eq!(data["hinted"], data["plain"]);
     Ok(())
 }
+
+/// A `?as=` load may not reference a file owned by another cell's package, even when that
+/// package's intra-cell path matches the loader's. This checks the isolation comparison is on the
+/// full cell path, not the raw package path: both sides share the intra-cell path `pkg`, but the
+/// cells differ.
+#[buck_test(data_dir = "cross_cell")]
+async fn test_load_as_cross_cell_rejected(buck: &Buck) -> anyhow::Result<()> {
+    buck.targets(&["//..."])
+        .await
+        .expect_failure()
+        .assert_stderr_matches(
+            r"other//pkg/lib\.lock\?as=toml.*only visible within its own package",
+        );
+    Ok(())
+}
+
+/// A `?as=` load may not reference another package: the loader is in `root//`, but
+/// `root//sub/data.lock` is owned by `root//sub`.
+#[buck_test(data_dir = "cross_package")]
+async fn test_load_as_cross_package_rejected(buck: &Buck) -> anyhow::Result<()> {
+    buck.targets(&["//..."])
+        .await
+        .expect_failure()
+        .assert_stderr_matches(r"data\.lock\?as=toml.*only visible within its own package");
+    Ok(())
+}
+
+/// A native `.json` load (no `?as=`) is package-isolated exactly like an `?as=` load: the loader is
+/// in `root//`, but `root//sub/data.json` is owned by `root//sub`.
+#[buck_test(data_dir = "cross_package_json")]
+async fn test_load_json_cross_package_rejected(buck: &Buck) -> anyhow::Result<()> {
+    buck.targets(&["//..."])
+        .await
+        .expect_failure()
+        .assert_stderr_matches(r"data\.json.*only visible within its own package");
+    Ok(())
+}
+
+/// A native `.toml` load (no `?as=`) is package-isolated exactly like an `?as=` load: the loader is
+/// in `root//`, but `root//sub/data.toml` is owned by `root//sub`.
+#[buck_test(data_dir = "cross_package_toml")]
+async fn test_load_toml_cross_package_rejected(buck: &Buck) -> anyhow::Result<()> {
+    buck.targets(&["//..."])
+        .await
+        .expect_failure()
+        .assert_stderr_matches(r"data\.toml.*only visible within its own package");
+    Ok(())
+}

@@ -1,0 +1,7 @@
+# A `?as=toml` load that crosses a package boundary within the same cell: this
+# build file is in package `root//`, but `//sub/data.lock` is owned by package
+# `root//sub` (which has its own build file). This must be rejected even though
+# the cell matches and `buck2.load_as_allowlist = *` would otherwise allow it.
+load("//sub/data.lock?as=toml", "value")
+
+value_alias = value

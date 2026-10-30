@@ -22,6 +22,16 @@ or more `buck` targets. Assuming that the current working directory is
 
 The `develop` command will write to the current working directory.
 
+By default, rust-project leaves isolation directory selection to Buck, which uses
+the inherited `BUCK_ISOLATION_DIR` environment variable, or `v2` if it is unset.
+Pass `--isolation-dir <NAME>` to override it. To retain the previous `.rust-analyzer`
+directory, use the following command. This flag also applies to `develop-json` and
+`check`:
+
+```bash
+rust-project --isolation-dir .rust-analyzer develop //path/to:target
+```
+
 Placing `rust-project.json` at the root of the Rust project directory will allow
 `rust-analyzer`-the-LSP-engine to find and use it for analysis.
 

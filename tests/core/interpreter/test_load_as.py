@@ -37,6 +37,46 @@ class LoadAsTest(BuckTestCase):
             stderr_regex=r"data\.lock\?as=toml.*load_as_allowlist",
         )
 
+    @buck_test(data_dir="cross_cell")
+    async def test_load_as_cross_cell_rejected(self, buck: Buck) -> None:
+        """An `?as=` load may not reference a file owned by another cell's package,
+        even when that package's intra-cell path matches the loader's. This checks
+        the isolation comparison is on the full cell path, not the raw package path:
+        both sides share the intra-cell path `pkg`, but the cells differ."""
+        await expect_failure(
+            buck.targets("//..."),
+            stderr_regex=r"other//pkg/lib\.lock\?as=toml.*only visible within its own package",
+        )
+
+    @buck_test(data_dir="cross_package")
+    async def test_load_as_cross_package_rejected(self, buck: Buck) -> None:
+        """An `?as=` load may not reference another package: the loader is in
+        `root//`, but `root//sub/data.lock` is owned by `root//sub`."""
+        await expect_failure(
+            buck.targets("//..."),
+            stderr_regex=r"data\.lock\?as=toml.*only visible within its own package",
+        )
+
+    @buck_test(data_dir="cross_package_json")
+    async def test_load_json_cross_package_rejected(self, buck: Buck) -> None:
+        """A native `.json` load (no `?as=`) is package-isolated exactly like an
+        `?as=` load: the loader is in `root//`, but `root//sub/data.json` is owned
+        by `root//sub`."""
+        await expect_failure(
+            buck.targets("//..."),
+            stderr_regex=r"data\.json.*only visible within its own package",
+        )
+
+    @buck_test(data_dir="cross_package_toml")
+    async def test_load_toml_cross_package_rejected(self, buck: Buck) -> None:
+        """A native `.toml` load (no `?as=`) is package-isolated exactly like an
+        `?as=` load: the loader is in `root//`, but `root//sub/data.toml` is owned
+        by `root//sub`."""
+        await expect_failure(
+            buck.targets("//..."),
+            stderr_regex=r"data\.toml.*only visible within its own package",
+        )
+
     @buck_test(data_dir="format")
     async def test_load_as_selects_the_parser(self, buck: Buck) -> None:
         """The hint, not the extension, picks the parser: `deps.lock` is TOML and

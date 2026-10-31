@@ -427,7 +427,7 @@ lsp-server = "0.10.0"
 lsp-types = "0.97"
 maplit = "1.0"
 memchr = "2.8.3"
-memmap2 = "0.9.11"
+memmap2 = "0.9.12"
 mimalloc = { version = "0.1.52", default-features = false }
 mini_map = { path = "shed/mini_map", features = ["pagable_dep"] }
 mini_vec = { path = "shed/mini_vec" }

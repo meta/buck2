@@ -137,7 +137,7 @@ lsp-types = "0.97"
 maplit = "1.0"
 md-5 = "0.10"
 memchr = "2.8.3"
-memmap2 = "0.9.11"
+memmap2 = "0.9.12"
 mimalloc = { version = "0.1.52", default-features = false }
 multimap = "0.10.1"
 native-tls = "0.2.18"

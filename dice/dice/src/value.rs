@@ -358,7 +358,7 @@ impl InvalidationPath {
     fn at_version(&self, v: VersionNumber) -> InvalidationPath {
         match self {
             InvalidationPath::Invalidated(t)
-                if t.version.branch() != v.branch() || t.version > v =>
+                if t.version.branch() != v.branch() || t.version.seq() > v.seq() =>
             {
                 InvalidationPath::Unknown
             }
@@ -379,7 +379,7 @@ impl InvalidationPath {
                 InvalidationPath::Invalidated(self_node),
                 InvalidationPath::Invalidated(other_node),
             ) => {
-                if self_node.version >= other_node.version {
+                if self_node.version.cmp_on_chain(other_node.version).is_ge() {
                     self
                 } else {
                     other

@@ -88,6 +88,11 @@ impl EpsilonToken {
 
 /// A branch: a line of versions extended by commits at its head (§2.1, "Versions and branches").
 /// A branch with no parent is a root; a state may have any number of them.
+///
+/// Ids are allocated in creation order and never reused, so they increase along any chain of
+/// branches: a branch is created after the one it was forked from, and deleting a branch hands its
+/// children to an older one. Visiting branches by id therefore visits parents before children,
+/// and versions of one chain order by `(branch, seq)` ([`Version::cmp_on_chain`]).
 #[derive(
     Copy, Clone, Dupe, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Allocative
 )]
@@ -136,12 +141,8 @@ impl Seq {
 
 /// A version: the immutable name of the state reached by a chain of commits, `(branch, seq)`.
 ///
-/// The derived order compares branches first and is only meaningful between versions of one
-/// branch; it exists so that versions can be used as ordered map keys and compared by callers
-/// that know they are looking at one branch.
-#[derive(
-    Copy, Clone, Dupe, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Allocative
-)]
+/// Versions have no total order; two of one chain compare by [`Version::cmp_on_chain`].
+#[derive(Copy, Clone, Dupe, Debug, PartialEq, Eq, Hash, Allocative)]
 pub struct Version {
     branch: BranchId,
     seq: Seq,
@@ -150,6 +151,13 @@ pub struct Version {
 impl Version {
     pub(crate) fn new(branch: BranchId, seq: Seq) -> Self {
         Version { branch, seq }
+    }
+
+    /// Orders two versions of one chain, that is, versions of which one is an ancestor of or
+    /// equal to the other, earlier first. Along a chain `(branch, seq)` increases lexicographically
+    /// (see [`BranchId`]). For versions of different chains the result means nothing.
+    pub fn cmp_on_chain(self, other: Version) -> std::cmp::Ordering {
+        (self.branch, self.seq).cmp(&(other.branch, other.seq))
     }
 
     pub fn branch(self) -> BranchId {

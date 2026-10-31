@@ -69,7 +69,9 @@ when to discard values. We discuss this in Appendix A.
 immutable name of the state reached after a particular chain of commits. A **branch** is a line of
 versions extended by commits at its latest version, its **head**; `fork` starts a new branch from a
 version of an existing one, so versions form a forest. A version is written `(b, s)` — branch and
-seq — where seqs order the commits of one branch and carry no cross-branch meaning.
+seq — where seqs order the commits of one branch and carry no cross-branch meaning. Branch ids are
+minted in creation order and a branch is younger than the one it was forked from, so along any
+chain `(b, s)` increases lexicographically; versions of different chains have no order.
 
 **Untracked inputs.** Computes can read things the dep graph does not track — a file-content key
 reads the disk. To make this common case convenient, the interface gives every key k an implicit

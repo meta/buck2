@@ -206,7 +206,7 @@ sha1-010 = { package = "sha1", version = "0.10.7" }
 sha2 = "0.11.0"
 sha2-010 = { package = "sha2", version = "0.10.6" }
 shlex = "2.0.1"
-similar = { version = "3.2.0", features = ["bytes", "inline", "unicode"] }
+similar = { version = "3.2.1", features = ["bytes", "inline", "unicode"] }
 siphasher = "1.0.4"
 slab = "0.4.12"
 sled = "0.34.7"

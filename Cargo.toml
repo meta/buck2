@@ -451,7 +451,7 @@ paste = "1.0.14"
 pathdiff = "0.2"
 perf-event = "0.4"
 pin-project = "1.1.13"
-plist = "1.10.1"
+plist = "1.10.3"
 postcard = { version = "1.0.8", features = ["use-crc", "use-std"] }
 pretty_assertions = { version = "1.4.1", features = ["alloc"], default-features = false }
 proc-macro2 = { version = "1.0.107", features = ["span-locations"] }

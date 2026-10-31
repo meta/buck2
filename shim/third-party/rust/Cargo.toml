@@ -180,7 +180,7 @@ rand_xoshiro = "0.8.1"
 rayon = "1.11.0"
 ref-cast = "1.0.27"
 regex = "1.13.1"
-relative-path = { version = "2.0.1", features = ["serde"] }
+relative-path = { version = "2.0.3", features = ["serde"] }
 ring = "0.17.14"
 ruff_formatter = "0.0.14"
 ruff_python_ast = "0.0.14"

@@ -58,7 +58,7 @@ clap_complete = { version = "4.6.11", features = ["unstable-dynamic"] }
 common-path = "1.0.0"
 compact_str = { version = "0.10.0", features = ["serde"] }
 console = "0.16.4"
-const_format = "0.2.36"
+const_format = "0.2.37"
 constant_time_eq = "0.6.1"
 convert_case = "0.12"
 criterion = { version = "0.8.2", features = ["async_tokio", "csv_output"] }

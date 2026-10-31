@@ -88,6 +88,8 @@ async def buck_fixture(  # noqa C901 : "too complex"
     if platform.system() != "Windows":
         env["BUCKD_STARTUP_TIMEOUT"] = "120"
         env["BUCKD_STARTUP_INIT_TIMEOUT"] = "120"
+    else:
+        env["CI"] = "true"
 
     # allow_soft_errors will override any existing environment variable behavior
     if marker.allow_soft_errors or marker.inplace:

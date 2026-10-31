@@ -330,6 +330,7 @@ impl<'a> ClientCommandContext<'a> {
             skip_targets_with_duplicate_names: false,
             trace_id: format!("{}", self.trace_id),
             reuse_current_config: false,
+            reuse_current_config_implicitly: false,
             daemon_uuid: get_possibly_nested_invocation_daemon_uuid(),
             sanitized_argv: Vec::new(),
             argfiles: Vec::new(),

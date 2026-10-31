@@ -76,7 +76,8 @@ impl StreamingCommand for CompleteTargetCommand {
         events_ctx: &mut EventsCtx,
     ) -> ExitResult {
         let buckd_client = buckd.with_flushing();
-        let context = ctx.client_context(matches, &self)?;
+        let mut context = ctx.client_context(matches, &self)?;
+        context.reuse_current_config_implicitly = true;
         let mut target_resolver = DaemonTargetResolver {
             buckd_client,
             context,

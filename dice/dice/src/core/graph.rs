@@ -443,17 +443,7 @@ impl VersionedGraph {
         match self.core.lookup(key, v) {
             Lookup::Valid { revision, source } => {
                 let invalidation_paths = match &source {
-                    ValidSource::Claim { data, dirtied, .. } => {
-                        let mut paths = data.at_version(v);
-                        if let Some(dirtied) = dirtied {
-                            paths.update(&TrackedInvalidationPaths::new(
-                                dirtied.data,
-                                key,
-                                dirtied.version,
-                            ));
-                        }
-                        paths
-                    }
+                    ValidSource::Claim { data, .. } => data.at_version(v),
                     ValidSource::Asserted { assertion } => {
                         TrackedInvalidationPaths::new(assertion.data, key, assertion.version)
                     }
@@ -576,22 +566,23 @@ impl VersionedGraph {
         invalidation_paths: TrackedInvalidationPaths,
     ) -> TrackedInvalidationPaths {
         let key = at.k;
-        let invalidation_paths = invalidation_paths.for_dependent(key);
+        let mut invalidation_paths = invalidation_paths.for_dependent(key);
+        // The certificate's ε names one dirty of the key, so this leaf is the same at every
+        // version the claim will cover.
+        if let Some(dirtied) = self.core.dirtied_at(key, at.v) {
+            invalidation_paths.update(&TrackedInvalidationPaths::new(
+                dirtied.data,
+                key,
+                dirtied.version,
+            ));
+        }
         self.core.write(cert, invalidation_paths.dupe());
         let core = &self.core;
         let policy = self.page_out_policy;
         Self::with_values_of(&mut self.values, &mut self.index, policy, key, |kv| {
             kv.entries.retain(|(r, _)| core.is_referenced(key, *r));
         });
-        let mut paths = invalidation_paths;
-        if let Some(dirtied) = self.core.dirtied_at(key, at.v) {
-            paths.update(&TrackedInvalidationPaths::new(
-                dirtied.data,
-                key,
-                dirtied.version,
-            ));
-        }
-        paths
+        invalidation_paths
     }
 
     /// A write from a transaction on a deleted branch. The core knows nothing about the branch

@@ -62,12 +62,10 @@ pub struct Assertion<T> {
 
 /// Where a `Valid` lookup's revision comes from.
 pub enum ValidSource<'a, E: Env> {
-    /// A claim. `dirtied` is the assertion of the key's untracked input in force at the looked-up
-    /// version, `None` if the key was never dirtied before it.
+    /// A claim.
     Claim {
         cert: &'a Arc<Cert<E::Premises>>,
         data: &'a E::ClaimData,
-        dirtied: Option<Assertion<E::AssertionData>>,
     },
     /// The assertion of an injected key in force at the looked-up version.
     Asserted {
@@ -168,7 +166,6 @@ impl<E: Env> CoreState<E> {
                 source: ValidSource::Claim {
                     cert: &claim.cert,
                     data: &claim.data,
-                    dirtied: self.dirtied_at(key, v),
                 },
             },
             Resolved::Asserted { owner, entry } => Lookup::Valid {

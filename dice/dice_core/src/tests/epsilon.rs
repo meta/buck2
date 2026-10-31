@@ -122,19 +122,12 @@ fn an_equal_recompute_after_a_dirty_lets_dependents_revalidate() {
 }
 
 #[test]
-fn lookups_report_the_dirty_in_force() {
+fn the_dirty_in_force_is_the_latest_at_or_before_the_version() {
     let (mut s, root) = with_injected_leaf();
     let v3 = s.dirty_at(root, k(1));
     let v4 = s.dirty_at(root, k(9));
-    let c = cert(k(1), r(1), &[(k(0), r(1))], s.epsilon(k(1), v3));
-    s.write_checked(&c);
-    match s.lookup(k(1), v4) {
-        crate::Lookup::Valid {
-            source: crate::ValidSource::Claim { dirtied, .. },
-            ..
-        } => assert_eq!(dirtied.map(|a| a.version), Some(v3)),
-        _ => panic!("valid through a claim"),
-    }
+    assert_eq!(s.dirtied_at(k(1), v4).map(|a| a.version), Some(v3));
+    assert_eq!(s.dirtied_at(k(9), v3), None);
     match s.lookup(k(0), v4) {
         crate::Lookup::Valid {
             source: crate::ValidSource::Asserted { assertion },

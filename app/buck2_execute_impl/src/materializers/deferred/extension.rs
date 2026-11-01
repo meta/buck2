@@ -442,6 +442,7 @@ impl<T: IoHandler> DeferredMaterializerAccessor<T> {
                     dispatcher,
                     dry_run: args.dry_run,
                     tracked_only: args.tracked_only,
+                    origin: args.origin,
                 }
             }
             CleanStaleArtifactsPolicy::Explicit {
@@ -457,6 +458,7 @@ impl<T: IoHandler> DeferredMaterializerAccessor<T> {
                     adaptive_low_disk_threshold,
                     adaptive_min_ttl,
                     adaptive_unmaterialize_active,
+                    args.origin,
                     dispatcher,
                     // Resolved to the processor's buck-out volume at execution.
                     None,

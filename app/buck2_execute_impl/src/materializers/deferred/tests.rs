@@ -1783,6 +1783,7 @@ pub(crate) mod state_machine {
                     },
                     dry_run: false,
                     tracked_only: false,
+                    origin: buck2_data::clean_stale_result::Origin::CleanallCommand,
                 },
             )
             .await;
@@ -1829,6 +1830,10 @@ pub(crate) mod state_machine {
             assert_eq!(
                 event.trigger,
                 buck2_data::clean_stale_result::Trigger::ManualExplicit as i32
+            );
+            assert_eq!(
+                event.origin,
+                buck2_data::clean_stale_result::Origin::CleanallCommand as i32
             );
             assert_eq!(
                 event.policy_mode,
@@ -1880,6 +1885,7 @@ pub(crate) mod state_machine {
                     },
                     dry_run: false,
                     tracked_only: false,
+                    origin: buck2_data::clean_stale_result::Origin::CleanCommand,
                 })
                 .await?;
             stats_update
@@ -1923,6 +1929,7 @@ pub(crate) mod state_machine {
                     },
                     dry_run: false,
                     tracked_only: false,
+                    origin: buck2_data::clean_stale_result::Origin::CleanCommand,
                 },
             )
             .await;
@@ -1975,6 +1982,7 @@ pub(crate) mod state_machine {
                     },
                     dry_run: false,
                     tracked_only: false,
+                    origin: buck2_data::clean_stale_result::Origin::CleanCommand,
                 },
             )
             .await;
@@ -2019,6 +2027,7 @@ pub(crate) mod state_machine {
             },
             dry_run: false,
             tracked_only,
+            origin: buck2_data::clean_stale_result::Origin::CleanCommand,
         }
     }
 
@@ -2135,6 +2144,7 @@ pub(crate) mod state_machine {
                     },
                     dry_run: false,
                     tracked_only: false,
+                    origin: buck2_data::clean_stale_result::Origin::CleanCommand,
                 })
                 .await;
 
@@ -2291,6 +2301,7 @@ pub(crate) mod state_machine {
                 },
                 dry_run: false,
                 tracked_only: false,
+                origin: buck2_data::clean_stale_result::Origin::CleanCommand,
             });
             thread::spawn(move || {
                 // Wait until a read_dir request is about to execute
@@ -2337,6 +2348,7 @@ pub(crate) mod state_machine {
                 },
                 dry_run: false,
                 tracked_only: false,
+                origin: buck2_data::clean_stale_result::Origin::CleanCommand,
             });
             thread::spawn(move || {
                 // Wait until a single clean request is about to execute
@@ -2413,6 +2425,10 @@ pub(crate) mod state_machine {
             assert_eq!(
                 res.trigger,
                 buck2_data::clean_stale_result::Trigger::Scheduled as i32
+            );
+            assert_eq!(
+                res.origin,
+                buck2_data::clean_stale_result::Origin::DaemonSchedule as i32
             );
             assert_eq!(
                 res.policy_mode,

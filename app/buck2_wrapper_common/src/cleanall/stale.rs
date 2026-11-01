@@ -19,6 +19,7 @@ use futures::stream;
 use tokio::fs;
 use tokio::process::Command;
 
+use crate::BUCK2_CLEANALL_ENV_VAR;
 use crate::async_background_command;
 use crate::cleanall::discovery::CleanallTarget;
 use crate::cleanall::discovery::discover_cleanall_targets;
@@ -55,6 +56,7 @@ impl CleanallTarget {
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .current_dir(&self.project_root)
+            .env(BUCK2_CLEANALL_ENV_VAR, "1")
             .arg("--isolation-dir")
             .arg(&self.isolation_dir)
             .args(["clean", "--stale"]);
@@ -325,6 +327,11 @@ mod tests {
         assert_eq!(
             command.get_args().collect::<Vec<_>>(),
             ["--isolation-dir", "v2", "clean", "--stale"].map(OsStr::new)
+        );
+        assert!(
+            command.get_envs().any(|(key, value)| key == BUCK2_CLEANALL_ENV_VAR
+                && value == Some(OsStr::new("1"))),
+            "the spawned clean should be marked as coming from cleanall"
         );
     }
 

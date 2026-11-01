@@ -305,6 +305,7 @@ fn clean_unused() -> CleanStaleArtifactsArgs {
         },
         dry_run: false,
         tracked_only: false,
+        origin: buck2_data::clean_stale_result::Origin::CleanCommand,
     }
 }
 
@@ -1305,6 +1306,7 @@ async fn test_an_active_root_stays_when_its_upload_fails() -> buck2_error::Resul
                 policy: CleanStaleArtifactsPolicy::Configured,
                 dry_run: false,
                 tracked_only: false,
+                origin: buck2_data::clean_stale_result::Origin::CleanCommand,
             })
             .await?
             .stats

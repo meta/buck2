@@ -20,6 +20,7 @@ use buck2_core::buck2_env;
 use buck2_core::fs::project_rel_path::ProjectRelativePath;
 use buck2_core::fs::project_rel_path::ProjectRelativePathBuf;
 use buck2_core::soft_error_or_panic;
+use buck2_data::clean_stale_result::Origin;
 use buck2_data::clean_stale_result::Trigger;
 use buck2_data::error::ErrorTag;
 use buck2_error::BuckErrorContext;
@@ -494,6 +495,7 @@ impl<T: IoHandler> DeferredMaterializerCommandProcessor<T> {
         dry_run: bool,
         tracked_only: bool,
         trigger: Trigger,
+        origin: Origin,
     ) -> CleanStaleArtifactsCommand {
         CleanStaleArtifactsCommand::configured(
             &self.clean_stale_config,
@@ -502,6 +504,7 @@ impl<T: IoHandler> DeferredMaterializerCommandProcessor<T> {
             dry_run,
             tracked_only,
             trigger,
+            origin,
         )
     }
 
@@ -628,6 +631,7 @@ impl<T: IoHandler> DeferredMaterializerCommandProcessor<T> {
                         false,
                         false,
                         Trigger::Scheduled,
+                        Origin::DaemonSchedule,
                     );
                     let clean = cmd.create_clean_fut(&mut self, None, daemon_id);
                     stream.clean_stale_fut = Some(

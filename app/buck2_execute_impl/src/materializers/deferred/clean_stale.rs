@@ -28,6 +28,7 @@ use buck2_data::CleanStaleResultKind;
 use buck2_data::CleanStaleStats;
 use buck2_data::clean_stale_result::AdaptiveOutcome;
 use buck2_data::clean_stale_result::FailurePhase;
+use buck2_data::clean_stale_result::Origin;
 use buck2_data::clean_stale_result::PolicyMode;
 use buck2_data::clean_stale_result::Trigger;
 use buck2_error::BuckErrorContext;
@@ -103,6 +104,7 @@ pub struct CleanStaleArtifactsCommand {
     /// measures the volume that holds the artifacts on every platform.
     pub buck_out_abs_path: Option<Arc<AbsPathBuf>>,
     pub trigger: Trigger,
+    pub origin: Origin,
     pub policy_mode: PolicyMode,
 }
 
@@ -138,6 +140,7 @@ impl CleanStaleArtifactsCommand {
         dry_run: bool,
         tracked_only: bool,
         trigger: Trigger,
+        origin: Origin,
     ) -> Self {
         let (artifact_ttl, adaptive_low_disk) = resolve_clean_stale_params(
             config.low_disk.as_ref(),
@@ -155,6 +158,7 @@ impl CleanStaleArtifactsCommand {
             unmaterialize_upload: config.unmaterialize_upload.clone(),
             buck_out_abs_path,
             trigger,
+            origin,
             policy_mode: match config.low_disk.as_ref().map(|config| &config.mode) {
                 None => PolicyMode::ConfiguredTtl,
                 Some(LowDiskCleanMode::Fixed(_)) => PolicyMode::ConfiguredFixedTtl,
@@ -172,6 +176,7 @@ impl CleanStaleArtifactsCommand {
         adaptive_low_disk_threshold: Option<f64>,
         adaptive_min_ttl: Option<Duration>,
         adaptive_unmaterialize_active: bool,
+        origin: Origin,
         dispatcher: EventDispatcher,
         buck_out_abs_path: Option<Arc<AbsPathBuf>>,
     ) -> Self {
@@ -196,6 +201,7 @@ impl CleanStaleArtifactsCommand {
             unmaterialize_upload: None,
             buck_out_abs_path,
             trigger: Trigger::ManualExplicit,
+            origin,
             policy_mode: if adaptive_low_disk_threshold.is_some() {
                 PolicyMode::ExplicitAdaptive
             } else {
@@ -221,6 +227,7 @@ impl CleanStaleArtifactsCommand {
                 args.dry_run,
                 args.tracked_only,
                 Trigger::ManualConfigured,
+                args.origin,
             ),
             CleanStaleArtifactsPolicy::Explicit {
                 keep_since_time,
@@ -234,6 +241,7 @@ impl CleanStaleArtifactsCommand {
                 adaptive_low_disk_threshold,
                 adaptive_min_ttl,
                 adaptive_unmaterialize_active,
+                args.origin,
                 dispatcher,
                 buck_out_abs_path,
             ),
@@ -315,6 +323,7 @@ pub(super) enum CleanStaleArtifactsExtensionCommandKind {
         dispatcher: EventDispatcher,
         dry_run: bool,
         tracked_only: bool,
+        origin: Origin,
     },
     Explicit(CleanStaleArtifactsCommand),
 }
@@ -437,6 +446,7 @@ pub(crate) fn create_result(
     daemon_id: &DaemonId,
     total_duration_s: u64,
     trigger: Trigger,
+    origin: Origin,
     policy_mode: PolicyMode,
     tracked_only: bool,
 ) -> buck2_data::CleanStaleResult {
@@ -468,6 +478,7 @@ pub(crate) fn create_result(
         failure_phase: failure_phase.into(),
         adaptive_outcome: adaptive_outcome.into(),
         tracked_only,
+        origin: origin.into(),
     }
 }
 
@@ -491,11 +502,13 @@ impl<T: IoHandler> ExtensionCommand<T> for CleanStaleArtifactsExtensionCommand {
                 dispatcher,
                 dry_run,
                 tracked_only,
+                origin,
             } => processor.configured_clean_stale_command(
                 dispatcher,
                 dry_run,
                 tracked_only,
                 Trigger::ManualConfigured,
+                origin,
             ),
             CleanStaleArtifactsExtensionCommandKind::Explicit(mut cmd) => {
                 // The sender-side constructor has no `IoHandler`, so it cannot
@@ -556,6 +569,7 @@ impl CleanStaleArtifactsCommand {
     ) -> BoxFuture<'static, CleanOutcome> {
         let start_time = Instant::now();
         let trigger = self.trigger;
+        let origin = self.origin;
         let policy_mode = self.policy_mode;
         let tracked_only = self.tracked_only;
         let pending_result = self.create_pending_clean_result(processor);
@@ -574,6 +588,7 @@ impl CleanStaleArtifactsCommand {
                 &daemon_id,
                 (Instant::now() - start_time).as_secs(),
                 trigger,
+                origin,
                 policy_mode,
                 tracked_only,
             );

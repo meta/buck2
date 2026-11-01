@@ -20,6 +20,7 @@ use buck2_core::execution_types::executor_config::RemoteExecutorUseCase;
 use buck2_core::fs::buck_out_path::BuckOutPathKind;
 use buck2_core::fs::project_rel_path::ProjectRelativePath;
 use buck2_core::fs::project_rel_path::ProjectRelativePathBuf;
+use buck2_data::clean_stale_result::Origin;
 use buck2_directory::directory::directory_iterator::DirectoryIterator;
 use buck2_directory::directory::entry::DirectoryEntry;
 use buck2_directory::directory::walk::ordered_entry_walk;
@@ -1166,6 +1167,7 @@ pub struct CleanStaleArtifactsArgs {
     pub policy: CleanStaleArtifactsPolicy,
     pub dry_run: bool,
     pub tracked_only: bool,
+    pub origin: Origin,
 }
 
 #[derive(Debug, Clone)]

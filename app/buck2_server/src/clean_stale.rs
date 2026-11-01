@@ -77,6 +77,7 @@ impl ServerCommandTemplate for CleanStaleServerCommand {
                         policy,
                         dry_run: self.req.dry_run,
                         tracked_only: self.req.tracked_only,
+                        origin: self.req.origin(),
                     })
                     .await
                     .buck_error_context("Failed to clean stale artifacts.")

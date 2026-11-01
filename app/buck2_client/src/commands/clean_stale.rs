@@ -24,9 +24,11 @@ use buck2_client_ctx::daemon::client::connect::DaemonStartupMode;
 use buck2_client_ctx::events_ctx::EventsCtx;
 use buck2_client_ctx::exit_result::ExitResult;
 use buck2_client_ctx::streaming::StreamingCommand;
+use buck2_data::clean_stale_result::Origin;
 use buck2_error::BuckErrorContext;
 use buck2_error::conversion::from_any_with_tag;
 use buck2_error::internal_error;
+use buck2_wrapper_common::BUCK2_CLEANALL_ENV_VAR;
 use jiff::SignedDuration;
 use jiff::Timestamp;
 
@@ -71,6 +73,14 @@ pub fn parse_clean_stale_args(
         (None, None) => None,
     };
     Ok(arg)
+}
+
+fn origin() -> Origin {
+    if std::env::var_os(BUCK2_CLEANALL_ENV_VAR).is_some_and(|value| value == "1") {
+        Origin::CleanallCommand
+    } else {
+        Origin::CleanCommand
+    }
 }
 
 fn format_result_stats(stats: buck2_data::CleanStaleStats) -> String {
@@ -192,6 +202,7 @@ impl StreamingCommand for CleanStaleCommand {
                     adaptive_min_ttl_seconds: self.adaptive_min_ttl.map(|d| d.as_secs() as i64),
                     adaptive_unmaterialize_active: self.adaptive_unmaterialize_active,
                     use_configured_policy,
+                    origin: origin().into(),
                 },
                 events_ctx,
                 ctx.console_interaction_stream(&self.common_opts.console_opts),

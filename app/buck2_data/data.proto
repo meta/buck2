@@ -2048,6 +2048,17 @@ message CleanStaleResult {
     SCHEDULED = 3;
   }
 
+  // What issued the clean-stale run.
+  enum Origin {
+    ORIGIN_UNSPECIFIED = 0;
+    // `buck2 clean --stale` run directly.
+    CLEAN_COMMAND = 1;
+    // `buck2 clean --stale` spawned by `buck2 cleanall --stale`.
+    CLEANALL_COMMAND = 2;
+    // The daemon's clean-stale schedule.
+    DAEMON_SCHEDULE = 3;
+  }
+
   enum PolicyMode {
     POLICY_MODE_UNSPECIFIED = 0;
     EXPLICIT_TTL = 1;
@@ -2091,6 +2102,7 @@ message CleanStaleResult {
   FailurePhase failure_phase = 8;
   AdaptiveOutcome adaptive_outcome = 9;
   bool tracked_only = 10;
+  Origin origin = 11;
 }
 
 message InstallCommandEnd {

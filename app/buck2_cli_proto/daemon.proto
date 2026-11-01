@@ -1029,6 +1029,8 @@ message CleanStaleRequest {
   // Resolve the cleanup TTL and low-disk behavior from the daemon's clean-stale
   // buckconfig. Explicit cleanup policy fields above are ignored when set.
   bool use_configured_policy = 8;
+  // What issued the request; logged on the resulting `CleanStaleResult`.
+  buck.data.CleanStaleResult.Origin origin = 9;
 }
 
 message CleanStaleResponse {

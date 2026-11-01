@@ -1,0 +1,5 @@
+load(":defs.bzl", "consume_payload", "write_payload")
+
+write_payload(name = "payload")
+consume_payload(name = "before", src = ":payload")
+consume_payload(name = "after", src = ":payload")

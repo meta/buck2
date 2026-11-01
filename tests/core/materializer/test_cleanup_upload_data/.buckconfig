@@ -1,0 +1,19 @@
+[cells]
+  root = .
+
+[buildfile]
+  name = TARGETS.fixture
+
+[buck2]
+  materializations = deferred
+  sqlite_materializer_state = true
+  defer_write_actions = true
+  update_access_times = full
+  ttl_refresh_enabled = true
+  clean_stale_enabled = false
+  clean_stale_artifact_ttl_hours = 8
+  clean_stale_low_disk_threshold = 100.0
+  clean_stale_low_disk_adaptive_enabled = true
+  clean_stale_low_disk_adaptive_min_ttl_hours = 24
+  clean_stale_low_disk_adaptive_unmaterialize_active = true
+  clean_stale_unmaterialize_upload_enabled = true

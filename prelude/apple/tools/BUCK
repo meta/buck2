@@ -19,6 +19,8 @@ apple_tools(
     info_plist_processor = "prelude//apple/tools/info_plist_processor:tool",
     ipa_package_maker = ":ipa_package_maker",
     make_modulemap = ":make_modulemap",
+    make_swift_dynamic_replacement_sources = None, # @oss-enable
+    # @oss-disable[end= ]: make_swift_dynamic_replacement_sources = "prelude//apple/tools/meta_only/swift_dynamic_thunk:sources",
     make_swift_dynamic_thunk = None, # @oss-enable
     # @oss-disable[end= ]: make_swift_dynamic_thunk = "prelude//apple/tools/meta_only/swift_dynamic_thunk:tool",
     make_swift_dynamic_thunk_command_database = None, # @oss-enable

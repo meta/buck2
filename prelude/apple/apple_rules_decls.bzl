@@ -1589,6 +1589,7 @@ apple_tools = prelude_rule(
         "info_plist_processor": attrs.exec_dep(providers = [RunInfo]),
         "ipa_package_maker": attrs.exec_dep(providers = [RunInfo]),
         "make_modulemap": attrs.exec_dep(providers = [RunInfo]),
+        "make_swift_dynamic_replacement_sources": attrs.option(attrs.exec_dep(providers = [RunInfo]), default = None),
         "make_swift_dynamic_thunk": attrs.option(attrs.exec_dep(providers = [RunInfo]), default = None),
         "make_swift_dynamic_thunk_command_database": attrs.option(attrs.exec_dep(providers = [RunInfo]), default = None),
         "make_vfsoverlay": attrs.exec_dep(providers = [RunInfo]),

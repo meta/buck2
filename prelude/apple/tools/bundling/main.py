@@ -222,6 +222,11 @@ def _args_parser() -> argparse.ArgumentParser:
         help="Record in the build info file whether the configuration compiles Swift for dynamic replacement.",
     )
     parser.add_argument(
+        "--build-info-swift-sources",
+        metavar="<file name>",
+        help="Record in the build info file the name of the Swift sources archive beside it.",
+    )
+    parser.add_argument(
         "--bundle-telemetry-logger",
         metavar="<path/to/logger>",
         type=Path,
@@ -374,6 +379,7 @@ def _main(spec_temp_dir: str) -> None:
             resources_destination=args.resources_destination,
             tmp_dir=Path(spec_temp_dir),
             swift_dynamic_replacement=args.build_info_swift_dynamic_replacement,
+            swift_sources=args.build_info_swift_sources,
         )
 
     incremental_state = assemble_bundle(
@@ -704,6 +710,7 @@ def _amend_spec_with_build_uuid(
     resources_destination: Optional[Path],
     tmp_dir: Path,
     swift_dynamic_replacement: Optional[str] = None,
+    swift_sources: Optional[str] = None,
 ) -> None:
     build_id = os.environ.get("BUCK_BUILD_ID")
     if not build_id:
@@ -730,6 +737,8 @@ def _amend_spec_with_build_uuid(
     build_info = {"build_uuid": build_id}
     if swift_dynamic_replacement is not None:
         build_info["swift_dynamic_replacement"] = swift_dynamic_replacement == "true"
+    if swift_sources is not None:
+        build_info["swift_sources"] = swift_sources
     src = tmp_dir / "BuildInfo.json"
     src.write_text(json.dumps(build_info, indent=2))
     dst = str(resources_destination / "BuildInfo.json")

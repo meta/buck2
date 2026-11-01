@@ -24,6 +24,12 @@ load(
 )
 # @oss-disable[end= ]: load("@prelude//apple/meta_only:apple_bundle_meta_validation.bzl", "apple_bundle_meta_validation")
 # @oss-disable[end= ]: load("@prelude//apple/meta_only:linker_outputs.bzl", "subtargets_for_apple_bundle_extra_outputs")
+load(
+    "@prelude//apple/swift:swift_dynamic_replacement_sources.bzl",
+    "SWIFT_SOURCES_FILE_NAME",
+    "SwiftDynamicReplacementSourcesInfo",  # @unused Used as a type
+    "swift_dynamic_replacement_sources_info",
+)
 load("@prelude//apple/user:apple_selected_debug_path_file.bzl", "SELECTED_DEBUG_PATH_FILE_NAME")
 load("@prelude//apple/user:apple_selective_debugging.bzl", "AppleSelectiveDebuggingInfo")
 load("@prelude//apple/validation:required_reasons.bzl", "get_required_reasons_validator_output")
@@ -137,6 +143,8 @@ AppleBundleDebuggableInfo = record(
 AppleBundlePartListConstructorParams = record(
     # The binaries/executables, required to create a bundle
     binaries = field(list[AppleBundlePart]),
+    # Further files the rule adds, such as the app's Swift sources for hot reload
+    extra_parts = field(list[AppleBundlePart], []),
 )
 
 AppleBundlePartListOutput = record(
@@ -374,6 +382,26 @@ def _get_selected_debug_targets_part(ctx: AnalysisContext, agg_debug_info: Aggre
     else:
         return None
 
+def _swift_sources_bundle_part(ctx: AnalysisContext, info: [SwiftDynamicReplacementSourcesInfo, None]) -> [AppleBundlePart, None]:
+    """`SwiftSources.json.zst` for an app bundle: every Swift source the app's
+    libraries compiled for dynamic replacement, with its text and owning target,
+    as zstd-compressed JSON. None without sources or without the tool."""
+    tool = ctx.attrs._apple_tools[AppleToolsInfo].make_swift_dynamic_replacement_sources
+    if info == None or tool == None:
+        return None
+    listing = ctx.actions.write(
+        "swift-dynamic-replacement-sources.txt",
+        info.sources.project_as_args("listing"),
+        with_inputs = True,
+        has_content_based_path = False,
+    )
+    output = ctx.actions.declare_output(SWIFT_SOURCES_FILE_NAME, has_content_based_path = False)
+    ctx.actions.run(
+        cmd_args(tool, "--listing", listing, "--output", output.as_output()),
+        category = "swift_dynamic_replacement_sources",
+    )
+    return AppleBundlePart(source = output, destination = AppleBundleDestination("resources"), new_name = SWIFT_SOURCES_FILE_NAME)
+
 def get_apple_bundle_part_list(ctx: AnalysisContext, params: AppleBundlePartListConstructorParams) -> AppleBundlePartListOutput:
     resource_part_list = None
     if hasattr(ctx.attrs, "_resource_bundle") and ctx.attrs._resource_bundle != None:
@@ -398,7 +426,7 @@ def get_apple_bundle_part_list(ctx: AnalysisContext, params: AppleBundlePartList
             )
 
     return AppleBundlePartListOutput(
-        parts = resource_part_list.resource_parts + params.binaries + test_frameworks_parts,
+        parts = resource_part_list.resource_parts + params.binaries + params.extra_parts + test_frameworks_parts,
         info_plist_part = resource_part_list.info_plist_part,
         codesign_manifest_parts = resource_part_list.codesign_manifest_parts,
         signing_context_parts = resource_part_list.signing_context_parts,
@@ -422,7 +450,21 @@ def apple_bundle_impl(ctx: AnalysisContext) -> list[Provider]:
     aggregated_debug_info = _get_all_agg_debug_info(ctx, binary_outputs, deps_debuggable_infos)
 
     binary_parts = _get_binary_bundle_parts(ctx, binary_outputs, aggregated_debug_info)
-    apple_bundle_part_list_output = get_apple_bundle_part_list(ctx, AppleBundlePartListConstructorParams(binaries = binary_parts.all_parts))
+
+    deps_with_binary = ctx.attrs.deps + get_flattened_binary_deps(ctx.attrs.binary)
+
+    # The Swift sources of every library below compiled for dynamic replacement:
+    # the app packs them into the bundle; an extension or other inner bundle
+    # forwards them to the app.
+    swift_sources_info = swift_dynamic_replacement_sources_info(ctx, deps_with_binary, [])
+    swift_sources_part = _swift_sources_bundle_part(ctx, swift_sources_info) if ctx.attrs.extension == "app" else None
+    apple_bundle_part_list_output = get_apple_bundle_part_list(
+        ctx,
+        AppleBundlePartListConstructorParams(
+            binaries = binary_parts.all_parts,
+            extra_parts = [swift_sources_part] if swift_sources_part else [],
+        ),
+    )
 
     bundle = bundle_output(ctx)
 
@@ -445,6 +487,7 @@ def apple_bundle_impl(ctx: AnalysisContext) -> list[Provider]:
         SwiftStdlibArguments(primary_binary_rel_path = primary_binary_rel_path),
         validation_deps_outputs,
         incremental_bundling_override = incremental_bundling_override,
+        swift_sources_file = SWIFT_SOURCES_FILE_NAME if swift_sources_part else None,
     )
     sub_targets = bundle_result.sub_targets
     sub_targets.update(aggregated_debug_info.sub_targets)
@@ -453,8 +496,6 @@ def apple_bundle_impl(ctx: AnalysisContext) -> list[Provider]:
 
     primary_binary_path = cmd_args([bundle, primary_binary_rel_path], delimiter = "/")
     primary_binary_path_arg = cmd_args(primary_binary_path, hidden = bundle)
-
-    deps_with_binary = ctx.attrs.deps + get_flattened_binary_deps(ctx.attrs.binary)
 
     linker_maps_directory, linker_map_info = _linker_maps_data(ctx.actions, deps_with_binary)
     sub_targets["linker-maps"] = [DefaultInfo(default_output = linker_maps_directory)]
@@ -652,6 +693,8 @@ def apple_bundle_impl(ctx: AnalysisContext) -> list[Provider]:
     if xplugins_debug_info:
         providers.append(xplugins_debug_info)
     providers.append(xplugins_function_mapping_manifest_info)
+    if swift_sources_info and ctx.attrs.extension != "app":
+        providers.append(swift_sources_info)
 
     return providers
 

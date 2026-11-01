@@ -38,5 +38,8 @@ def apple_tools_impl(ctx: AnalysisContext) -> list[Provider]:
             make_swift_dynamic_thunk_command_database = ctx.attrs.make_swift_dynamic_thunk_command_database[RunInfo]
             if ctx.attrs.make_swift_dynamic_thunk_command_database
             else None,
+            make_swift_dynamic_replacement_sources = ctx.attrs.make_swift_dynamic_replacement_sources[RunInfo]
+            if ctx.attrs.make_swift_dynamic_replacement_sources
+            else None,
         ),
     ]

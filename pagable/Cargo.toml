@@ -29,7 +29,7 @@ regex.workspace = true
 sequence_trie.workspace = true
 serde.workspace = true
 serde_json.workspace = true
-smallvec = { version = "1.16.2", features = ["const_generics"] }
+smallvec = { version = "1.16.4", features = ["const_generics"] }
 sorted_vector_map.workspace = true
 static_assertions.workspace = true
 static_interner.workspace = true

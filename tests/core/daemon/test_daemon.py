@@ -12,14 +12,18 @@
 import asyncio
 import contextlib
 import json
+import os
 import platform
 import re
+import sqlite3
 import subprocess
+import sys
 import time
 from pathlib import Path
+from uuid import uuid4
 
 from buck2.tests.e2e_util.api.buck import Buck
-from buck2.tests.e2e_util.api.buck_result import BuckException
+from buck2.tests.e2e_util.api.buck_result import BuckException, BuildResult
 from buck2.tests.e2e_util.asserts import expect_failure
 from buck2.tests.e2e_util.buck_workspace import (
     buck_test,
@@ -464,8 +468,9 @@ class DaemonTest(BuckTestCase):
 
     @buck_test()
     @env("BUCK2_SHARE_DAEMON", "true")
+    @env("BUCK2_TESTING_CHECKER_INTERVAL_SECONDS", "120")
     @parametrize("metadata", ["missing", "not-json", "invalid-json"])
-    @parametrize("pid_file", ["unchanged", "missing", "invalid"])
+    @parametrize("pid_file", ["unchanged", "missing", "invalid", "exited"])
     async def test_bad_shared_metadata_preserves_live_daemon(
         self, buck: Buck, metadata: str, pid_file: str
     ) -> None:
@@ -491,6 +496,11 @@ class DaemonTest(BuckTestCase):
         original_info = info_path.read_text()
         original_pid = pid_path.read_text()
         pid = json.loads(original_info)["pid"]
+        damaged_pid = {
+            "unchanged": original_pid,
+            "invalid": "not a PID",
+            "exited": str(await _exited_process_pid()),
+        }.get(pid_file)
         damaged = {"missing": None, "not-json": "not JSON", "invalid-json": "[]"}[
             metadata
         ]
@@ -499,14 +509,15 @@ class DaemonTest(BuckTestCase):
                 info_path.unlink()
             else:
                 info_path.write_text(damaged)
-            if pid_file == "missing":
+            if damaged_pid is None:
                 pid_path.unlink()
-            elif pid_file == "invalid":
-                pid_path.write_text("not a PID")
+            else:
+                pid_path.write_text(damaged_pid)
             await expect_failure(
                 newcomer.targets("//:rule"),
                 stderr_regex="Cannot verify shared daemon inactivity",
             )
+            await expect_failure(buck.kill())
             assert daemon_is_alive(pid)
             assert (
                 buck.cwd / "buck-out" / (buck.isolation_prefix or "v2") / "cache"
@@ -520,9 +531,7 @@ class DaemonTest(BuckTestCase):
             if pid_file == "missing":
                 assert not pid_path.exists()
             else:
-                assert pid_path.read_text() == (
-                    "not a PID" if pid_file == "invalid" else original_pid
-                )
+                assert pid_path.read_text() == damaged_pid
         finally:
             info_path.write_text(original_info)
             pid_path.write_text(original_pid)
@@ -540,13 +549,16 @@ class DaemonTest(BuckTestCase):
     @buck_test()
     @env("BUCK2_SHARE_DAEMON", "true")
     @parametrize("metadata", ["missing", "not-json"])
+    @parametrize("pid_file", ["unchanged", "missing", "invalid", "exited"])
     async def test_bad_shared_metadata_requires_repair_after_daemon_exit(
-        self, buck: Buck, metadata: str
+        self, buck: Buck, metadata: str, pid_file: str
     ) -> None:
         await buck.targets("//:rule")
         daemon_dir = await buck.get_daemon_dir()
         info_path = daemon_dir / "buckd.info"
+        pid_path = daemon_dir / "buckd.pid"
         original_info = info_path.read_text()
+        original_pid = pid_path.read_text()
         old_pid = json.loads(original_info)["pid"]
         await buck.kill()
         for _ in range(100):
@@ -559,14 +571,850 @@ class DaemonTest(BuckTestCase):
                 info_path.unlink()
             else:
                 info_path.write_text("not JSON")
+            if pid_file == "missing":
+                pid_path.unlink()
+            elif pid_file == "invalid":
+                pid_path.write_text("not a PID")
+            elif pid_file == "exited":
+                pid_path.write_text(str(await _exited_process_pid()))
+            damaged_info = info_path.read_bytes() if info_path.exists() else None
+            damaged_pid = pid_path.read_bytes() if pid_path.exists() else None
             await expect_failure(buck.targets("//:rule"))
             assert not daemon_is_alive(old_pid)
-            if metadata == "missing":
-                assert not info_path.exists()
-            else:
-                assert info_path.read_text() == "not JSON"
+            assert (
+                info_path.read_bytes() if info_path.exists() else None
+            ) == damaged_info
+            assert (pid_path.read_bytes() if pid_path.exists() else None) == damaged_pid
         finally:
             info_path.write_text(original_info)
+            pid_path.write_text(original_pid)
         await buck.targets("//:rule")
         new_pid = json.loads((await buck.status()).stdout)["process_info"]["pid"]
         assert new_pid != old_pid
+
+    @buck_test(skip_for_os=["windows"])
+    @parametrize("initial_tenant", [False, True])
+    @parametrize("repository_eviction", [False, True])
+    @env("BUCK2_SHARE_DAEMON", "true")
+    async def test_evicted_generation_cannot_overlap_outputs(
+        self,
+        buck: Buck,
+        tmp_path: Path,
+        initial_tenant: bool,
+        repository_eviction: bool,
+    ) -> None:
+        startup_config = buck.cwd / ".buckconfig"
+        startup_config.write_text(
+            startup_config.read_text() + "\n[buck2]\nsqlite_dep_file_state = true\n"
+        )
+        sibling = Buck(
+            buck.path_to_executable,
+            encoding=buck.encoding,
+            env=buck._env,
+            cwd=buck.cwd,
+            isolation_prefix="survivor",
+        )
+        tenant = (
+            buck
+            if initial_tenant
+            else Buck(
+                buck.path_to_executable,
+                encoding=buck.encoding,
+                env=buck._env,
+                cwd=buck.cwd,
+                isolation_prefix="recreated",
+            )
+        )
+        for instance in [tenant, sibling] if initial_tenant else [sibling, tenant]:
+            await instance.targets("//:rule")
+        pid = json.loads((await sibling.status()).stdout)["process_info"]["pid"]
+        identity = _materializer_identity(tenant)
+        isolation = tenant.isolation_prefix or "v2"
+        entries = json.loads((await sibling.debug("tenants", "--json")).stdout)
+        generation = next(
+            entry["generation"] for entry in entries if entry["isolation"] == isolation
+        )
+        old = _start_generation(tenant, tmp_path, "old")
+        tasks = [old]
+        killing = None
+        try:
+            await _wait_for_marker(tmp_path / "old.started", old)
+            old_pid = int((tmp_path / "old.started.pid").read_text())
+            assert daemon_is_alive(old_pid)
+            operation = (
+                tenant._run_buck_command(
+                    "killall",
+                    "--repo",
+                    "--in-isolation-dir",
+                    isolation,
+                    input=None,
+                    rel_cwd=None,
+                    env=None,
+                )
+                if repository_eviction
+                else tenant.kill()
+            )
+            killing = asyncio.ensure_future(operation)
+            await _wait_for_evicted_generation(sibling, isolation, generation)
+            new = _start_generation(tenant, tmp_path, "new")
+            tasks.append(new)
+            await asyncio.wait_for(asyncio.shield(killing), timeout=30)
+            with self.assertRaises(BuckException):
+                await asyncio.wait_for(asyncio.shield(old), timeout=30)
+            assert not daemon_is_alive(old_pid), (
+                "Eviction returned while the old action was alive"
+            )
+            assert not (tmp_path / "old.release").exists()
+            await _wait_for_marker(tmp_path / "new.started", new)
+            assert (tmp_path / "old.started").read_text() == (
+                tmp_path / "new.started"
+            ).read_text()
+            (tmp_path / "new.release").touch()
+            result = await asyncio.wait_for(asyncio.shield(new), timeout=30)
+            output = result.get_build_report().output_for_target("//:generation")
+            assert output.read_text() == "new"
+            assert _materializer_identity(tenant) == identity
+            assert (
+                json.loads((await sibling.status()).stdout)["process_info"]["pid"]
+                == pid
+            )
+        finally:
+            for value in ["old", "new"]:
+                (tmp_path / f"{value}.release").touch()
+            await asyncio.wait_for(
+                asyncio.gather(
+                    *tasks, *([killing] if killing else []), return_exceptions=True
+                ),
+                timeout=30,
+            )
+            await tenant.kill()
+            await sibling.kill()
+
+    @buck_test(skip_for_os=["windows"])
+    @env("BUCK2_SHARE_DAEMON", "true")
+    @parametrize("disconnect_client", [False, True])
+    async def test_eviction_during_generation_initialization(
+        self, buck: Buck, tmp_path: Path, disconnect_client: bool
+    ) -> None:
+        gate = tmp_path / "initialization"
+        buck.set_env("BUCK2_TEST_BLOCK_TENANT_INITIALIZATION", f"initializing,{gate}")
+        await buck.targets("//:rule")
+        pid = json.loads((await buck.status()).stdout)["process_info"]["pid"]
+        tenant = Buck(
+            buck.path_to_executable,
+            encoding=buck.encoding,
+            env=buck._env,
+            cwd=buck.cwd,
+            isolation_prefix="initializing",
+        )
+        old = _start_generation(tenant, tmp_path, "old")
+        tasks = [old]
+        client = None
+        try:
+            await _wait_for_marker(tmp_path / "initialization.started", old)
+            entries = json.loads((await buck.debug("tenants", "--json")).stdout)
+            generation = next(
+                entry["generation"]
+                for entry in entries
+                if entry["isolation"] == "initializing"
+            )
+            client = await tenant.kill().start()
+            await _wait_for_evicted_generation(buck, "initializing", generation)
+            new = _start_generation(tenant, tmp_path, "new")
+            tasks.append(new)
+            pending = await _wait_for_tenant_generation(
+                buck, "initializing", generation
+            )
+            assert not pending["initialized"]
+            assert not (tmp_path / "new.started").exists()
+            assert client.returncode is None, (
+                "Eviction returned before its I/O released ownership"
+            )
+            if disconnect_client:
+                client.kill()
+                await client.communicate()
+            await buck.targets("//:rule")
+            assert not (tmp_path / "new.started").exists()
+            (tmp_path / "initialization.release").touch()
+            if not disconnect_client:
+                _, stderr = await client.communicate()
+                assert client.returncode == 0, stderr.decode()
+            with self.assertRaisesRegex(BuckException, "evicted"):
+                await asyncio.wait_for(asyncio.shield(old), timeout=30)
+            await _wait_for_marker(tmp_path / "new.started", new)
+            (tmp_path / "new.release").touch()
+            result = await asyncio.wait_for(asyncio.shield(new), timeout=30)
+            assert (
+                result.get_build_report().output_for_target("//:generation").read_text()
+                == "new"
+            )
+            assert (
+                json.loads((await buck.status()).stdout)["process_info"]["pid"] == pid
+            )
+        finally:
+            (tmp_path / "initialization.release").touch()
+            for value in ["old", "new"]:
+                (tmp_path / f"{value}.release").touch()
+            if client is not None:
+                if client.returncode is None:
+                    with contextlib.suppress(ProcessLookupError):
+                        client.kill()
+                await client.communicate()
+            await asyncio.wait_for(
+                asyncio.gather(*tasks, return_exceptions=True), timeout=30
+            )
+            await tenant.kill()
+            await buck.kill()
+
+    @buck_test()
+    @env("BUCK2_SHARE_DAEMON", "true")
+    async def test_isolated_tenants_share_daemon_without_sharing_config(
+        self, buck: Buck, tmp_path: Path
+    ) -> None:
+        config_one = tmp_path / "tenant-one.bcfg"
+        config_one.write_text("[tenant]\n  value = one\n")
+        config_two = tmp_path / "tenant-two.bcfg"
+        config_two.write_text("[tenant]\n  value = two\n")
+
+        def isolated_buck(isolation: str) -> Buck:
+            return Buck(
+                buck.path_to_executable,
+                encoding=buck.encoding,
+                env=buck._env,
+                cwd=buck.cwd,
+                isolation_prefix=isolation,
+            )
+
+        tenant_one = isolated_buck("tenant-one")
+        tenant_two = isolated_buck("tenant-two")
+
+        async def config_value(tenant: Buck, config: Path) -> str:
+            result = await tenant.audit_config(
+                "tenant.value", "--style=json", "--config-file", str(config)
+            )
+            return result.get_json()["tenant.value"]
+
+        assert await config_value(tenant_one, config_one) == "one"
+        assert await config_value(tenant_two, config_two) == "two"
+
+        tenant_one_pid = json.loads((await tenant_one.status()).stdout)["process_info"][
+            "pid"
+        ]
+        tenant_two_pid = json.loads((await tenant_two.status()).stdout)["process_info"][
+            "pid"
+        ]
+        assert tenant_one_pid == tenant_two_pid
+
+        tenants = json.loads((await tenant_one.debug("tenants", "--json")).stdout)
+        tenant_one_info = next(
+            tenant for tenant in tenants if tenant["isolation"] == "tenant-one"
+        )
+        assert any(tenant["isolation"] == "tenant-two" for tenant in tenants)
+
+        await tenant_one.kill()
+        assert await config_value(tenant_two, config_two) == "two"
+        assert (
+            json.loads((await tenant_two.status()).stdout)["process_info"]["pid"]
+            == tenant_two_pid
+        )
+
+        assert await config_value(tenant_one, config_one) == "one"
+        recreated_tenants = json.loads(
+            (await tenant_one.debug("tenants", "--json")).stdout
+        )
+        recreated_tenant_one = next(
+            tenant
+            for tenant in recreated_tenants
+            if tenant["isolation"] == "tenant-one"
+        )
+        assert recreated_tenant_one["generation"] > tenant_one_info["generation"]
+
+    @buck_test()
+    @env("BUCK2_SHARE_DAEMON", "true")
+    async def test_unreachable_shared_daemon_is_not_killed(self, buck: Buck) -> None:
+        await buck.targets("//:rule")
+        sibling = Buck(
+            buck.path_to_executable,
+            encoding=buck.encoding,
+            env=buck._env,
+            cwd=buck.cwd,
+            isolation_prefix="sibling",
+        )
+        await sibling.targets("//:rule")
+        daemon_dir = await buck.get_daemon_dir()
+        info_path = daemon_dir / "buckd.info"
+        original = info_path.read_text()
+        info = json.loads(original)
+        pid = info["pid"]
+        info["endpoint"] = "tcp:1"
+        info_path.write_text(json.dumps(info))
+        try:
+            await expect_failure(buck.kill())
+            await expect_failure(
+                buck.targets("//:rule"), stderr_regex="Shared daemon is alive"
+            )
+            cache = buck.cwd / "buck-out" / (buck.isolation_prefix or "v2") / "cache"
+            assert cache.exists()
+            await expect_failure(buck.clean())
+            assert cache.exists()
+            assert daemon_is_alive(pid)
+        finally:
+            info_path.write_text(original)
+        await sibling.targets("//:rule")
+        await sibling.kill()
+
+    @buck_test()
+    @parametrize("sharing", ["false", "true"])
+    async def test_killall_repo_reaches_all_isolation_directories(
+        self, buck: Buck, sharing: str
+    ) -> None:
+        buck.set_env("BUCK2_SHARE_DAEMON", sharing)
+        tenants = [
+            Buck(
+                buck.path_to_executable,
+                encoding=buck.encoding,
+                env=buck._env,
+                cwd=buck.cwd,
+                isolation_prefix=isolation,
+            )
+            for isolation in ["tenant-one", "tenant-two"]
+        ]
+        try:
+            for tenant in tenants:
+                await tenant.targets("//:rule")
+            await buck._run_buck_command(
+                "killall",
+                "--repo",
+                "--in-isolation-dir",
+                "tenant-one",
+                input=None,
+                rel_cwd=None,
+                env={"BUCK2_SHARE_DAEMON": sharing},
+            )
+            if sharing == "false":
+                assert "no buckd running" in (await tenants[0].status()).stderr
+            else:
+                registered = json.loads(
+                    (await tenants[1].debug("tenants", "--json")).stdout
+                )
+                assert not any(t["isolation"] == "tenant-one" for t in registered)
+            await tenants[1].targets("//:rule")
+            await buck._run_buck_command(
+                "killall",
+                "--repo",
+                input=None,
+                rel_cwd=None,
+                env={"BUCK2_SHARE_DAEMON": sharing},
+            )
+            for tenant in tenants:
+                assert "no buckd running" in (await tenant.status()).stderr
+            await buck._run_buck_command(
+                "killall",
+                "--repo",
+                input=None,
+                rel_cwd=None,
+                env={"BUCK2_SHARE_DAEMON": sharing},
+            )
+        finally:
+            for tenant in tenants:
+                await tenant.kill()
+
+    @buck_test(skip_for_os=["windows"])
+    @parametrize("owner_sharing", ["false", "true"])
+    @parametrize("isolation", ["collision", "v2"])
+    async def test_mixed_daemon_modes_cannot_own_same_outputs(
+        self, buck: Buck, tmp_path: Path, owner_sharing: str, isolation: str
+    ) -> None:
+        buck.set_env("BUCK2_SHARE_DAEMON", owner_sharing)
+        buck.set_isolation_prefix(isolation)
+        other = Buck(
+            buck.path_to_executable,
+            encoding=buck.encoding,
+            env={
+                **buck._env,
+                "BUCK2_SHARE_DAEMON": "true" if owner_sharing == "false" else "false",
+            },
+            cwd=buck.cwd,
+            isolation_prefix=isolation,
+        )
+        old = _start_generation(buck, tmp_path, "old")
+        try:
+            await _wait_for_marker(tmp_path / "old.started", old)
+            new = _start_generation(other, tmp_path, "new")
+            # A shared intruder's daemon cannot take the tenant's disk lock; an unshared intruder
+            # cannot take the lifecycle lock that the shared owner holds for the tenant.
+            await expect_failure(
+                new,
+                stderr_regex=(
+                    "another process still owns it"
+                    if owner_sharing == "false"
+                    else "Error locking buckd.lifecycle"
+                ),
+            )
+            assert not (tmp_path / "new.started").exists()
+            (tmp_path / "old.release").touch()
+            result = await asyncio.wait_for(asyncio.shield(old), timeout=30)
+            output = result.get_build_report().output_for_target("//:generation")
+            assert output.read_text() == "old"
+            await buck.kill()
+            (tmp_path / "new.release").touch()
+            result = await asyncio.wait_for(
+                _start_generation(other, tmp_path, "new"), timeout=30
+            )
+            new_output = result.get_build_report().output_for_target("//:generation")
+            assert new_output == output
+            assert new_output.read_text() == "new"
+            repeated = await other.build(
+                "//:generation",
+                "--config-file",
+                str(tmp_path / "new.bcfg"),
+                "--no-remote-cache",
+            )
+            assert (
+                repeated.get_build_report()
+                .output_for_target("//:generation")
+                .read_text()
+                == "new"
+            )
+        finally:
+            for value in ["old", "new"]:
+                (tmp_path / f"{value}.release").touch()
+            await asyncio.wait_for(
+                asyncio.gather(old, return_exceptions=True), timeout=30
+            )
+            await other.kill()
+
+    @buck_test()
+    @parametrize("sharing", ["false", "true"])
+    @parametrize("background", [False, True])
+    @parametrize("dry_run", [False, True])
+    async def test_clean_preserves_sibling_tenant(
+        self, buck: Buck, tmp_path: Path, sharing: str, background: bool, dry_run: bool
+    ) -> None:
+        buck.set_env("BUCK2_SHARE_DAEMON", sharing)
+        sibling = Buck(
+            buck.path_to_executable,
+            encoding=buck.encoding,
+            env=buck._env,
+            cwd=buck.cwd,
+            isolation_prefix="survivor",
+        )
+        (tmp_path / "value.release").touch()
+        result = await _start_generation(buck, tmp_path, "value")
+        output = result.get_build_report().output_for_target("//:generation")
+        try:
+            result = await _start_generation(sibling, tmp_path, "value")
+            sibling_output = result.get_build_report().output_for_target(
+                "//:generation"
+            )
+            pid = json.loads((await sibling.status()).stdout)["process_info"]["pid"]
+            args = (["--background"] if background else []) + (
+                ["--dry-run"] if dry_run else []
+            )
+            await buck.clean(*args)
+            assert output.exists() == dry_run
+            assert sibling_output.read_text() == "value"
+            assert (
+                json.loads((await sibling.status()).stdout)["process_info"]["pid"]
+                == pid
+            )
+            await sibling.build(
+                "//:generation",
+                "--config-file",
+                str(tmp_path / "value.bcfg"),
+                "--no-remote-cache",
+            )
+            assert sibling_output.read_text() == "value"
+            (tmp_path / "after.release").touch()
+            after = await _start_generation(sibling, tmp_path, "after")
+            assert (
+                after.get_build_report().output_for_target("//:generation").read_text()
+                == "after"
+            )
+            result = await _start_generation(buck, tmp_path, "value")
+            assert (
+                result.get_build_report().output_for_target("//:generation").read_text()
+                == "value"
+            )
+        finally:
+            await sibling.kill()
+
+    @buck_test(skip_for_os=["windows"])
+    @env("BUCK2_SHARE_DAEMON", "true")
+    @parametrize("background", [False, True])
+    async def test_clean_waits_for_tenant_disk_work(
+        self, buck: Buck, tmp_path: Path, background: bool
+    ) -> None:
+        gate = tmp_path / "initialization"
+        isolation = buck.isolation_prefix or "v2"
+        buck.set_env("BUCK2_TEST_BLOCK_TENANT_INITIALIZATION", f"{isolation},{gate}")
+        sibling = Buck(
+            buck.path_to_executable,
+            encoding=buck.encoding,
+            env=buck._env,
+            cwd=buck.cwd,
+            isolation_prefix="survivor",
+        )
+        await sibling.targets("//:rule")
+        pid = json.loads((await sibling.status()).stdout)["process_info"]["pid"]
+        old = _start_generation(buck, tmp_path, "old")
+        cleaning = None
+        try:
+            await _wait_for_marker(tmp_path / "initialization.started", old)
+            entries = json.loads((await sibling.debug("tenants", "--json")).stdout)
+            generation = next(
+                entry["generation"]
+                for entry in entries
+                if entry["isolation"] == isolation
+            )
+            sentinel = buck.cwd / "buck-out" / isolation / "preserved"
+            sentinel.write_text("old")
+            cleaning = asyncio.ensure_future(
+                buck.clean(*(["--background"] if background else []))
+            )
+            await _wait_for_evicted_generation(sibling, isolation, generation)
+            assert not cleaning.done()
+            assert sentinel.exists(), (
+                "Clean deleted outputs still owned by cancelled I/O"
+            )
+            (tmp_path / "initialization.release").touch()
+            with self.assertRaisesRegex(BuckException, "evicted"):
+                await asyncio.wait_for(asyncio.shield(old), timeout=30)
+            await asyncio.wait_for(asyncio.shield(cleaning), timeout=30)
+            assert not sentinel.exists()
+            assert (
+                json.loads((await sibling.status()).stdout)["process_info"]["pid"]
+                == pid
+            )
+        finally:
+            (tmp_path / "initialization.release").touch()
+            (tmp_path / "old.release").touch()
+            await asyncio.wait_for(
+                asyncio.gather(
+                    old, *([cleaning] if cleaning else []), return_exceptions=True
+                ),
+                timeout=35,
+            )
+            await sibling.kill()
+
+    @buck_test()
+    @env("BUCK2_TESTING_CHECKER_INTERVAL_SECONDS", "120")
+    @env("BUCK2_SHARE_DAEMON", "true")
+    @parametrize("sharing", ["false", "true"])
+    @parametrize("fault", ["unreachable", "stale-pid", "rpc", "missing-info"])
+    async def test_repository_eviction_reports_and_continues_after_failures(
+        self, buck: Buck, fault: str, sharing: str
+    ) -> None:
+        tenants = [
+            Buck(
+                buck.path_to_executable,
+                encoding=buck.encoding,
+                env={**buck._env, "BUCK2_SHARE_DAEMON": sharing if i == 0 else "false"},
+                cwd=buck.cwd,
+                isolation_prefix=name,
+            )
+            for i, name in enumerate(["tenant-one", "tenant-two"])
+        ]
+        for tenant in tenants:
+            await tenant.targets("//:rule")
+        info_path = (await tenants[0].get_daemon_dir()) / "buckd.info"
+        original = info_path.read_text()
+        info = json.loads(original)
+        pid = info["pid"]
+        damaged_paths = [info_path]
+        saved = {path: path.read_bytes() for path in damaged_paths}
+        empty = info_path.parent.parent / "empty"
+        empty.mkdir()
+        if fault in ["unreachable", "stale-pid"]:
+            info["endpoint"] = "tcp:1"
+            if fault == "stale-pid":
+                info["pid"] = await _exited_process_pid()
+            info_path.write_text(json.dumps(info))
+        elif fault == "missing-info":
+            for path in damaged_paths:
+                path.unlink()
+        args = ["--repo"] + (
+            ["--in-isolation-dir", "invalid/name"] if fault == "rpc" else []
+        )
+        try:
+            result = await expect_failure(
+                buck._run_buck_command(
+                    "killall", *args, input=None, rel_cwd=None, env=None
+                ),
+                stderr_regex="Repository tenant eviction failed",
+            )
+            if sharing == "true" and fault in ["unreachable", "stale-pid"]:
+                await expect_failure(tenants[0].kill())
+            assert daemon_is_alive(pid)
+            if fault != "rpc":
+                if fault in ["unreachable", "stale-pid"]:
+                    assert "Failed to contact daemon" in result.stderr
+                else:
+                    assert "buckd.info is missing" in result.stderr
+                    assert all(not path.exists() for path in damaged_paths)
+                assert "failed for 1 daemon(s)" in result.stderr
+                assert "Evicted 1 tenant(s)" in result.stderr
+                assert "no buckd running" in (await tenants[1].status()).stderr
+            else:
+                assert "failed for 2 daemon(s)" in result.stderr
+                assert result.stderr.count("Failed to evict tenants from daemon") == 2
+                assert (
+                    str(info_path.parent) in result.stderr
+                    and "tenant-two" in result.stderr
+                )
+        finally:
+            for path, contents in saved.items():
+                path.write_bytes(contents)
+            for tenant in tenants:
+                await tenant.kill()
+
+    @buck_test()
+    @env("BUCK2_SHARE_DAEMON", "true")
+    async def test_shared_startup_mismatch_preserves_siblings(self, buck: Buck) -> None:
+        await buck.targets("//:rule")
+        sibling = Buck(
+            buck.path_to_executable,
+            encoding=buck.encoding,
+            env=buck._env,
+            cwd=buck.cwd,
+            isolation_prefix="sibling",
+        )
+        try:
+            await sibling.targets("//:rule")
+            pid = json.loads((await sibling.status()).stdout)["process_info"]["pid"]
+            config = buck.cwd / ".buckconfig"
+            original = config.read_text()
+            try:
+                config.write_text(original + "\n[buck2]\ndaemon_buster = mismatch\n")
+                await expect_failure(
+                    buck.targets("//:rule"),
+                    stderr_regex="Shared daemon constraint mismatch",
+                )
+                assert daemon_is_alive(pid)
+            finally:
+                config.write_text(original)
+            await sibling.targets("//:rule")
+            assert (
+                json.loads((await sibling.status()).stdout)["process_info"]["pid"]
+                == pid
+            )
+        finally:
+            await sibling.kill()
+
+    @buck_test()
+    async def test_host_killall_isolation_filter_preserves_other_daemons(
+        self,
+        buck: Buck,
+    ) -> None:
+        prefix = f"tenant-filter-{uuid4().hex}"
+        tenants = [
+            Buck(
+                buck.path_to_executable,
+                encoding=buck.encoding,
+                env={**buck._env, "BUCK2_SHARE_DAEMON": "false"},
+                cwd=buck.cwd,
+                isolation_prefix=f"{prefix}-{name}",
+            )
+            for name in ["selected", "survivor"]
+        ]
+        try:
+            for tenant in tenants:
+                await tenant.targets("//:rule")
+            pid = json.loads((await tenants[1].status()).stdout)["process_info"]["pid"]
+            await tenants[0]._run_buck_command(
+                "killall",
+                "--in-isolation-dir",
+                f"{prefix}-selected",
+                input=None,
+                rel_cwd=None,
+                env=None,
+            )
+            assert "no buckd running" in (await tenants[0].status()).stderr
+            await tenants[1].targets("//:rule")
+            assert (
+                json.loads((await tenants[1].status()).stdout)["process_info"]["pid"]
+                == pid
+            )
+        finally:
+            for tenant in tenants:
+                await tenant.kill()
+
+    @buck_test()
+    @env("BUCK2_SHARE_DAEMON", "true")
+    async def test_live_legacy_owner_blocks_shared_initialization(
+        self, buck: Buck
+    ) -> None:
+        buck.set_isolation_prefix("legacy")
+        shared_dir = await buck.get_daemon_dir()
+        legacy_dir = shared_dir.parent / "legacy"
+        legacy_dir.mkdir(parents=True, exist_ok=True)
+        pid_file = legacy_dir / "buckd.pid"
+        pid_file.write_text(str(os.getpid()))
+        try:
+            await expect_failure(
+                buck.targets("//:rule"), stderr_regex="already owned by a legacy daemon"
+            )
+            assert not (buck.cwd / "buck-out" / "legacy" / "cache").exists()
+        finally:
+            pid_file.unlink()
+
+    @buck_test()
+    @env("BUCK2_SHARE_DAEMON", "true")
+    async def test_clean_cannot_unlink_sibling_disk_lock(self, buck: Buck) -> None:
+        sibling = Buck(
+            buck.path_to_executable,
+            encoding=buck.encoding,
+            env={**buck._env},
+            cwd=buck.cwd,
+            isolation_prefix="sibling",
+        )
+        try:
+            await sibling.targets("//:rule")
+            daemon_dir = await sibling.get_daemon_dir()
+            lock_files = [
+                path / "sibling"
+                for path in daemon_dir.parent.iterdir()
+                if path.is_dir() and (path / "sibling").is_file()
+            ]
+            assert len(lock_files) == 1
+            inode = lock_files[0].stat().st_ino
+            buck.set_env("BUCK2_SHARE_DAEMON", "false")
+            buck.set_isolation_prefix(".tenant-locks")
+            await buck.clean()
+            assert lock_files[0].stat().st_ino == inode
+            await sibling.targets("//:rule")
+        finally:
+            await sibling.kill()
+
+    @buck_test()
+    @env("BUCK2_SHARE_DAEMON", "true")
+    @parametrize(
+        "bad_pid",
+        ["", "not a PID", "0", "-1", "99999999999999999999"],
+        ids=["empty", "garbage", "zero", "negative", "overflow"],
+    )
+    async def test_garbage_legacy_pid_refuses_shared_initialization(
+        self, buck: Buck, bad_pid: str
+    ) -> None:
+        buck.set_isolation_prefix("legacy-garbage")
+        shared_dir = await buck.get_daemon_dir()
+        legacy_dir = shared_dir.parent / "legacy-garbage"
+        legacy_dir.mkdir(parents=True, exist_ok=True)
+        pid_file = legacy_dir / "buckd.pid"
+        pid_file.write_text(bad_pid)
+        sentinel = buck.cwd / "buck-out" / "legacy-garbage" / "sentinel.txt"
+        sentinel.parent.mkdir(parents=True, exist_ok=True)
+        sentinel.write_text("sentinel")
+        try:
+            failure = await expect_failure(
+                buck.targets("//:rule"),
+                stderr_regex="Cannot verify legacy daemon ownership",
+            )
+            assert "restore a consistent" in failure.stderr
+            assert "Stop the legacy daemon" in failure.stderr
+            assert pid_file.read_text() == bad_pid
+            assert sentinel.read_text() == "sentinel"
+            assert not (buck.cwd / "buck-out" / "legacy-garbage" / "cache").exists()
+            pid_file.write_text(str(await _exited_process_pid()))
+            await buck.targets("//:rule")
+            assert (buck.cwd / "buck-out" / "legacy-garbage" / "cache").is_dir()
+        finally:
+            pid_file.unlink(missing_ok=True)
+
+    @buck_test()
+    @env("BUCK2_SHARE_DAEMON", "true")
+    @parametrize("legacy_pid", ["missing", "exited"])
+    async def test_missing_and_exited_legacy_pid_allows_shared_initialization(
+        self, buck: Buck, legacy_pid: str
+    ) -> None:
+        buck.set_isolation_prefix("legacy-allowed")
+        shared_dir = await buck.get_daemon_dir()
+        legacy_dir = shared_dir.parent / "legacy-allowed"
+        legacy_dir.mkdir(parents=True, exist_ok=True)
+        pid_file = legacy_dir / "buckd.pid"
+        try:
+            if legacy_pid == "exited":
+                pid_file.write_text(str(await _exited_process_pid()))
+            else:
+                pid_file.unlink(missing_ok=True)
+            await buck.targets("//:rule")
+            assert (buck.cwd / "buck-out" / "legacy-allowed" / "cache").is_dir()
+        finally:
+            pid_file.unlink(missing_ok=True)
+
+
+async def _wait_for_marker(path: Path, task: asyncio.Task[BuildResult]) -> None:
+    async def wait() -> None:
+        while not path.exists():
+            if task.done():
+                task.result()
+                raise AssertionError(f"Build exited without creating {path}")
+            await asyncio.sleep(0.05)
+
+    await asyncio.wait_for(wait(), timeout=30)
+
+
+def _start_generation(
+    buck: Buck, directory: Path, value: str
+) -> asyncio.Task[BuildResult]:
+    config = directory / f"{value}.bcfg"
+    config.write_text(
+        f"[generation]\nstarted = {directory / f'{value}.started'}\n"
+        f"release = {directory / f'{value}.release'}\nvalue = {value}\n"
+    )
+
+    async def build() -> BuildResult:
+        return await buck.build(
+            "//:generation", "--config-file", str(config), "--no-remote-cache"
+        )
+
+    return asyncio.create_task(build())
+
+
+async def _wait_for_tenant_generation(
+    buck: Buck, isolation: str, generation: int
+) -> dict:
+    async def wait() -> dict:
+        while True:
+            tenants = json.loads((await buck.debug("tenants", "--json")).stdout)
+            entry = next(
+                (entry for entry in tenants if entry["isolation"] == isolation), None
+            )
+            if entry is not None and entry["generation"] > generation:
+                return entry
+            await asyncio.sleep(0.05)
+
+    return await asyncio.wait_for(wait(), timeout=30)
+
+
+async def _wait_for_evicted_generation(
+    buck: Buck, isolation: str, generation: int
+) -> None:
+    async def wait() -> None:
+        while any(
+            entry["isolation"] == isolation and entry["generation"] == generation
+            for entry in json.loads((await buck.debug("tenants", "--json")).stdout)
+        ):
+            await asyncio.sleep(0.05)
+
+    await asyncio.wait_for(wait(), timeout=30)
+
+
+def _materializer_identity(buck: Buck) -> str:
+    db = (
+        buck.cwd
+        / "buck-out"
+        / (buck.isolation_prefix or "v2")
+        / "cache/materializer_state/db.sqlite"
+    )
+    with sqlite3.connect(db) as connection:
+        return connection.execute(
+            "SELECT value FROM created_by WHERE key = 'timestamp_on_initialization'"
+        ).fetchone()[0]
+
+
+async def _exited_process_pid() -> int:
+    process = await asyncio.create_subprocess_exec(sys.executable, "-c", "pass")
+    assert await process.wait() == 0
+    assert not daemon_is_alive(process.pid)
+    return process.pid

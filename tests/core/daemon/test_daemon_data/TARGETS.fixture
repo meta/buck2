@@ -1,5 +1,12 @@
-load(":defs.bzl", "long_running")
+load(":defs.bzl", "generation", "long_running")
 
 trivial_build(name = "rule")
 
 long_running(name = "long_running")
+
+generation(
+    name = "generation",
+    started = read_config("generation", "started", "unset"),
+    release = read_config("generation", "release", "unset"),
+    value = read_config("generation", "value", "unset"),
+)

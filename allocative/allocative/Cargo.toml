@@ -21,7 +21,7 @@ either = { version = "1.19.0", optional = true }
 futures = { version = "0.3.34", optional = true }
 hashbrown = { version = "0.17.1", optional = true }
 indexmap = { version = "2.14.2", optional = true }
-jiff = { version = "0.2.37", optional = true }
+jiff = { version = "0.2.38", optional = true }
 num-bigint = { version = "0.5.1", optional = true }
 once_cell = { version = "1.21.4", optional = true }
 parking_lot = { version = "0.12.1", optional = true }

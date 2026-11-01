@@ -415,7 +415,7 @@ inventory = "0.3.25"
 ipnetwork = { version = "0.21.1", features = ["serde"] }
 is_proc_translated = "0.1.1"
 itertools = "0.15.0"
-jiff = { version = "0.2.37", features = ["serde", "tzdb-bundle-always"] }
+jiff = { version = "0.2.38", features = ["serde", "tzdb-bundle-always"] }
 libc = "0.2.186"
 linked-hash-map = { version = "0.5", features = ["serde_impl"] }
 linkme = "0.3.37"

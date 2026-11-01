@@ -1,4 +1,4 @@
-load(":defs.bzl", "generation", "long_running")
+load(":defs.bzl", "generation", "long_running", "tenant_value")
 
 trivial_build(name = "rule")
 
@@ -10,3 +10,11 @@ generation(
     release = read_config("generation", "release", "unset"),
     value = read_config("generation", "value", "unset"),
 )
+
+tenant_value(name = "tenant_value", value = read_config("tenant", "value", "unset"))
+trivial_build(name = "tenant_one_probe")
+trivial_build(name = "tenant_two_probe")
+
+platform(name = "platform")
+execution_platform(name = "exec_platform", platform = ":platform", local_enabled = True)
+execution_platforms(name = "platforms", platforms = [":exec_platform"])

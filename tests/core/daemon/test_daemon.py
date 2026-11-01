@@ -9,8 +9,11 @@
 # pyre-strict
 
 
+from __future__ import annotations
+
 import asyncio
 import contextlib
+import gzip
 import json
 import os
 import platform
@@ -791,17 +794,8 @@ class DaemonTest(BuckTestCase):
         config_two = tmp_path / "tenant-two.bcfg"
         config_two.write_text("[tenant]\n  value = two\n")
 
-        def isolated_buck(isolation: str) -> Buck:
-            return Buck(
-                buck.path_to_executable,
-                encoding=buck.encoding,
-                env=buck._env,
-                cwd=buck.cwd,
-                isolation_prefix=isolation,
-            )
-
-        tenant_one = isolated_buck("tenant-one")
-        tenant_two = isolated_buck("tenant-two")
+        tenant_one = _isolated_buck(buck, "tenant-one")
+        tenant_two = _isolated_buck(buck, "tenant-two")
 
         async def config_value(tenant: Buck, config: Path) -> str:
             result = await tenant.audit_config(
@@ -1357,6 +1351,80 @@ class DaemonTest(BuckTestCase):
         finally:
             pid_file.unlink(missing_ok=True)
 
+    @buck_test()
+    @parametrize("share_dice", [False, True])
+    @env("BUCK2_SHARE_DAEMON", "true")
+    async def test_isolated_tenants_keep_cached_paths_local(
+        self, buck: Buck, tmp_path: Path, share_dice: bool
+    ) -> None:
+        startup_config = buck.cwd / ".buckconfig"
+        startup_config.write_text(
+            startup_config.read_text()
+            + f"\n[buck2]\nshare_dice = {str(share_dice).lower()}\n"
+        )
+        tenants = [_isolated_buck(buck, name) for name in ["tenant-one", "tenant-two"]]
+        try:
+            outputs = []
+            for tenant in tenants:
+                result = await tenant.build("//:tenant_value")
+                output = result.get_build_report().output_for_target("//:tenant_value")
+                assert output.read_text() == "unset"
+                outputs.append(output)
+            assert outputs[0] != outputs[1]
+            pids = [
+                json.loads((await tenant.status()).stdout)["process_info"]["pid"]
+                for tenant in tenants
+            ]
+            assert pids[0] == pids[1]
+            await _assert_tenant_cached_paths(tenants)
+            await _assert_tenant_dice_graphs(
+                tenants[0], tenants[1], tmp_path, share_dice
+            )
+        finally:
+            for tenant in tenants:
+                await tenant.kill()
+        await _assert_daemon_exits(pids[0])
+
+    @buck_test()
+    @parametrize("share_dice", [False, True])
+    @env("BUCK2_SHARE_DAEMON", "true")
+    async def test_isolated_tenants_select_dice_engine_ownership(
+        self, buck: Buck, tmp_path: Path, share_dice: bool
+    ) -> None:
+        startup_config = buck.cwd / ".buckconfig"
+        startup_config.write_text(
+            startup_config.read_text()
+            + f"\n[buck2]\nshare_dice = {str(share_dice).lower()}\n"
+        )
+        config_one = tmp_path / "tenant-one.bcfg"
+        config_one.write_text("[tenant]\nvalue = one\n")
+        config_two = tmp_path / "tenant-two.bcfg"
+        config_two.write_text("[tenant]\nvalue = two\n")
+        tenant_one = _isolated_buck(buck, "tenant-one")
+        tenant_two = _isolated_buck(buck, "tenant-two")
+        try:
+            output_one = await _tenant_value(tenant_one, config_one)
+            output_two = await _tenant_value(tenant_two, config_two)
+            assert output_one != output_two
+            assert output_one.read_text() == "one"
+            assert output_two.read_text() == "two"
+            daemon_pid = json.loads((await tenant_one.status()).stdout)["process_info"][
+                "pid"
+            ]
+            assert (
+                daemon_pid
+                == json.loads((await tenant_two.status()).stdout)["process_info"]["pid"]
+            )
+            await _assert_tenant_dice_graphs(
+                tenant_one, tenant_two, tmp_path, share_dice
+            )
+            assert (await _tenant_value(tenant_one, config_one)).read_text() == "one"
+            assert (await _tenant_value(tenant_two, config_two)).read_text() == "two"
+        finally:
+            await tenant_one.kill()
+            await tenant_two.kill()
+        await _assert_daemon_exits(daemon_pid)
+
 
 async def _wait_for_marker(path: Path, task: asyncio.Task[BuildResult]) -> None:
     async def wait() -> None:
@@ -1433,3 +1501,85 @@ async def _exited_process_pid() -> int:
     assert await process.wait() == 0
     assert not daemon_is_alive(process.pid)
     return process.pid
+
+
+def _isolated_buck(buck: Buck, isolation: str) -> Buck:
+    return Buck(
+        buck.path_to_executable,
+        encoding=buck.encoding,
+        env=buck._env,
+        cwd=buck.cwd,
+        isolation_prefix=isolation,
+    )
+
+
+async def _dice_analysis_keys(buck: Buck, path: Path) -> dict[str, int]:
+    await buck.debug("dice-dump", "--path", str(path))
+    with gzip.open(path / "nodes.gz", "rt") as nodes:
+        rows = [line.rstrip("\n").split("\t") for line in nodes]
+    return {
+        key.partition(" (")[0]: int(index)
+        for index, kind, key in rows
+        if kind == "AnalysisKey"
+    }
+
+
+async def _tenant_value(buck: Buck, config: Path) -> Path:
+    result = await buck.build(
+        "//:tenant_value", "--config-file", str(config), "--build-report=-"
+    )
+    return result.get_build_report().output_for_target("//:tenant_value")
+
+
+async def _assert_tenant_cached_paths(tenants: list[Buck]) -> None:
+    outputs = []
+    for first_run in [True, False]:
+        for tenant in tenants:
+            result = await tenant.bxl("//paths.bxl:paths")
+            root_json, output_path = result.stdout.splitlines()
+            paths = json.loads(root_json)
+            assert paths["root"] == str(tenant.cwd)
+            output = Path(output_path)
+            isolation = tenant.isolation_prefix
+            assert isolation is not None
+            assert output.is_relative_to(tenant.cwd / "buck-out" / isolation)
+            assert output.read_text() == str(tenant.cwd)
+            assert ("evaluating tenant paths" in result.stderr) == first_run
+            if first_run:
+                outputs.append(output)
+    assert len(set(outputs)) == len(tenants)
+
+
+async def _assert_daemon_exits(pid: int) -> None:
+    for _ in range(200):
+        if not daemon_is_alive(pid):
+            return
+        await asyncio.sleep(0.05)
+    assert not daemon_is_alive(pid), "Daemon survived final tenant eviction"
+
+
+async def _assert_tenant_dice_graphs(
+    tenant_one: Buck, tenant_two: Buck, tmp_path: Path, share_dice: bool
+) -> None:
+    probe_one = "root//:tenant_one_probe"
+    probe_two = "root//:tenant_two_probe"
+    await tenant_one.build("//:tenant_one_probe")
+    baseline = await _dice_analysis_keys(tenant_one, tmp_path / "before")
+    assert probe_one in baseline
+    assert probe_two not in baseline
+
+    await tenant_two.build("//:tenant_two_probe")
+    event_log = await tenant_two.log("show", "--recent", "0")
+    assert f"dice-sharing:{str(share_dice).lower()}" in event_log.stdout
+    keys_one = await _dice_analysis_keys(tenant_one, tmp_path / "after-one")
+    keys_two = await _dice_analysis_keys(tenant_two, tmp_path / "after-two")
+    assert probe_one in keys_one
+    assert probe_two in keys_two
+    if share_dice:
+        assert probe_one in keys_one
+        assert probe_two in keys_one
+        assert probe_one in keys_two
+        assert probe_two in keys_two
+    else:
+        assert probe_two not in keys_one
+        assert probe_one not in keys_two

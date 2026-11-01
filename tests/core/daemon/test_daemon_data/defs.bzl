@@ -42,3 +42,12 @@ generation = rule(
     impl = _generation_impl,
     attrs = {"release": attrs.string(), "started": attrs.string(), "value": attrs.string()},
 )
+
+def _tenant_value_impl(ctx: AnalysisContext) -> list[Provider]:
+    out = ctx.actions.write("value.txt", ctx.attrs.value)
+    return [DefaultInfo(default_output = out)]
+
+tenant_value = rule(
+    impl = _tenant_value_impl,
+    attrs = {"value": attrs.string()},
+)

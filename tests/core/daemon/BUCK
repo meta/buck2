@@ -26,6 +26,10 @@ buck2_core_tests(
             "data": ":test_daemon_data",
             "require_nano_prelude": True,
         },
+        "test_tenant_paging": {
+            "data": ":test_daemon_data",
+            "require_nano_prelude": True,
+        },
         "test_tenant_recovery": {
             "data": ":test_daemon_data",
             "require_nano_prelude": True,

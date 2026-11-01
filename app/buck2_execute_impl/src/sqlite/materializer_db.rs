@@ -60,6 +60,7 @@ pub struct MaterializerStateSqliteDb {
     /// A unique ID identifying this particular instance of the database. This will reset when we
     /// recreate it.
     identity: SqliteIdentity,
+    lifetime_guard: Option<Arc<dyn Send + Sync>>,
 }
 
 impl SqliteDb for MaterializerStateSqliteDb {
@@ -68,7 +69,11 @@ impl SqliteDb for MaterializerStateSqliteDb {
 
     fn new(tables: SqliteTables<Self::TableType>) -> buck2_error::Result<Self> {
         let identity = tables.get_identity()?;
-        Ok(Self { tables, identity })
+        Ok(Self {
+            tables,
+            identity,
+            lifetime_guard: None,
+        })
     }
 
     fn open_tables(path: &AbsNormPath) -> buck2_error::Result<SqliteTables<Self::TableType>> {
@@ -102,7 +107,8 @@ impl MaterializerStateSqliteDb {
         digest_config: DigestConfig,
         reject_identity: Option<&SqliteIdentity>,
     ) -> buck2_error::Result<(Self, buck2_error::Result<MaterializerState>)> {
-        io_executor
+        let guard = io_executor.lifetime_guard();
+        let (mut db, state) = io_executor
             .execute_io_inline(|| {
                 Self::initialize_materializer_sqlite_db(
                     materializer_state_dir,
@@ -112,7 +118,9 @@ impl MaterializerStateSqliteDb {
                     reject_identity,
                 )
             })
-            .await
+            .await?;
+        db.lifetime_guard = guard;
+        Ok((db, state))
     }
 
     /// Internal implementation that handles digest config

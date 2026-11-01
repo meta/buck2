@@ -33,6 +33,7 @@ use buck2_common::client_utils::retrying;
 use buck2_common::daemon_dir::DaemonDir;
 use buck2_common::init::DaemonStartupConfig;
 use buck2_common::invocation_paths::InvocationPaths;
+use buck2_common::invocation_paths::TenantDiskLock;
 use buck2_core::buck2_env;
 use buck2_core::soft_error_or_panic;
 use buck2_data::DaemonWasStartedReason;
@@ -1030,6 +1031,15 @@ async fn start_new_buckd_and_connect(
     // Daemon dir may be corrupted. Safer to delete it.
     lifecycle_lock.clean_daemon_dir()?;
 
+    // A previous daemon of this isolation directory may still be releasing its outputs, and the
+    // new daemon cannot start until it has. A running `buck2 clean` holds the lifecycle lock, so
+    // it has finished by now.
+    if !buck2_env!("BUCK2_SHARE_DAEMON", type=bool, default=false)? {
+        let wait =
+            deadline.rem_duration("waiting for the previous daemon to release its outputs")?;
+        drop(TenantDiskLock::acquire(&paths.tenant_paths(), wait).await?);
+    }
+
     // Now there's definitely no server that can be connected to
     lifecycle_lock
         .start_server(options)
@@ -1195,6 +1205,17 @@ impl<'a> BuckdProcessInfo<'a> {
 
     pub async fn hard_kill(&self) -> buck2_error::Result<()> {
         kill::hard_kill(&self.info).await
+    }
+
+    /// Whether the recorded pid still belongs to the daemon that wrote this record: the process
+    /// must exist and have the recorded start time. A record without a start time never matches.
+    pub(crate) fn recorded_daemon_is_running(&self) -> bool {
+        let Ok(pid) = Pid::from_i64(self.info.pid) else {
+            return false;
+        };
+        self.info.pid_start_time != 0
+            && buck2_wrapper_common::kill::process_start_time(Some(pid))
+                == Some(self.info.pid_start_time)
     }
 
     pub fn pid(&self) -> buck2_error::Result<Pid> {

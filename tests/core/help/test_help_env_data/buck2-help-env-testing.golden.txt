@@ -30,11 +30,13 @@ BUCK2_RUNTIME_THREADS                          usize
 BUCK2_SCRIBE_CATEGORY                          String
 BUCK2_SELF_TEST_TIMEOUT_S                      u64
 BUCK2_SETTINGS_OVERRIDE                        String
+BUCK2_SHARE_DAEMON                             bool                   false
 BUCK2_SHOW_SOFT_ERRORS                         String
 BUCK2_TERMINATE_AFTER                          u64
 BUCK2_TESTING_CHECKER_INTERVAL_SECONDS         u64
 BUCK2_TESTING_INACTIVITY_TIMEOUT               bool                   false
 BUCK2_TEST_BLOCK_ON_UPLOAD                     bool                   false
+BUCK2_TEST_BLOCK_TENANT_INITIALIZATION         String
 BUCK2_TEST_BUILD_ERROR                         bool                   false
 BUCK2_TEST_DAEMON_ORIGINATING_CGROUP           String
 BUCK2_TEST_DAEMON_STARTUP_SIGNAL               bool                   false

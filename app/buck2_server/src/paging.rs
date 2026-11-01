@@ -185,7 +185,7 @@ impl PagingManager {
         let page_out_started = if triggers_idle_page_out {
             spawn_page_out_on_idle(
                 self.page_out_on_idle,
-                self.tenant.dice_manager.dupe(),
+                self.tenant.dupe(),
                 dispatcher.dupe(),
                 free_disk_bytes,
                 counts.candidates,
@@ -417,7 +417,7 @@ pub(crate) struct PageOutThresholds {
 /// finish still sees itself as the sole active command, so only it starts one.
 pub(crate) async fn spawn_page_out_on_idle(
     thresholds: Option<PageOutThresholds>,
-    dice_manager: Arc<ConcurrencyHandler>,
+    tenant: Arc<TenantState>,
     dispatcher: EventDispatcher,
     free_disk_bytes: Option<u64>,
     pagable_candidates: usize,
@@ -457,7 +457,15 @@ pub(crate) async fn spawn_page_out_on_idle(
 
     let context_dispatcher = dispatcher.clone();
     tokio::spawn(with_dispatcher_async(context_dispatcher, async move {
-        if let Err(e) = page_out_on_idle(guard, dice_manager, dispatcher, command_evictions).await {
+        let _tenant = tenant;
+        if let Err(e) = page_out_on_idle(
+            guard,
+            _tenant.dice_manager.dupe(),
+            dispatcher,
+            command_evictions,
+        )
+        .await
+        {
             soft_error_or_panic!(
                 "page_out_on_idle_failed",
                 e.context("Automatic page-out on idle failed")

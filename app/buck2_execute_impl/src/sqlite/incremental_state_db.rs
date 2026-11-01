@@ -128,6 +128,7 @@ pub struct IncrementalStateSqliteDb {
     /// A unique ID identifying this particular instance of the database. This will reset when we
     /// recreate it.
     identity: SqliteIdentity,
+    lifetime_guard: Option<Arc<dyn Send + Sync>>,
 }
 
 impl SqliteDb for IncrementalStateSqliteDb {
@@ -136,7 +137,11 @@ impl SqliteDb for IncrementalStateSqliteDb {
 
     fn new(tables: SqliteTables<Self::TableType>) -> buck2_error::Result<Self> {
         let identity = tables.get_identity()?;
-        Ok(Self { tables, identity })
+        Ok(Self {
+            tables,
+            identity,
+            lifetime_guard: None,
+        })
     }
 
     fn open_tables(path: &AbsNormPath) -> buck2_error::Result<SqliteTables<Self::TableType>> {
@@ -163,7 +168,8 @@ impl IncrementalStateSqliteDb {
         io_executor: Arc<dyn BlockingExecutor>,
         reject_identity: Option<&SqliteIdentity>,
     ) -> buck2_error::Result<IncrementalDbState> {
-        io_executor
+        let guard = io_executor.lifetime_guard();
+        let mut state = io_executor
             .execute_io_inline(|| {
                 Self::initialize_incremental_sqlite_db(
                     incremental_state_dir,
@@ -172,7 +178,11 @@ impl IncrementalStateSqliteDb {
                     reject_identity,
                 )
             })
-            .await
+            .await?;
+        if let Some(db) = &mut state.db {
+            db.lifetime_guard = guard;
+        }
+        Ok(state)
     }
 
     fn initialize_incremental_sqlite_db(

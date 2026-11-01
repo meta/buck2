@@ -286,6 +286,32 @@ class DaemonTest(BuckTestCase):
         assert "triggered shutdown: `buck kill` was invoked" in killed_daemon_stderr
 
     @buck_test()
+    async def test_unreachable_recorded_daemon_is_replaced(self, buck: Buck) -> None:
+        await buck.targets(":")  # Start a daemon
+        daemon_dir = await buck.get_daemon_dir()
+        with open(daemon_dir / "buckd.info") as f:
+            info = json.load(f)
+        info["endpoint"] = "tcp:1"
+        with open(daemon_dir / "buckd.info", "w") as f:
+            json.dump(info, f)
+
+        # `kill` cannot reach the endpoint; the next command replaces the daemon.
+        await buck.kill()
+        await buck.targets(":")  # Start another daemon
+
+        def extract_pid(stderr: str) -> int:
+            pid = [re.match(r".* PID: (\d+)", line) for line in stderr.splitlines()]
+            pid = list(filter(None, pid))
+            assert len(pid) == 1, pid[0]
+            return int(pid[0].group(1))
+
+        new_daemon_stderr = await buck.daemon_stderr()
+        killed_daemon_stderr = await buck.prev_daemon_stderr()
+
+        # check logs contain buckd pid and don't match
+        assert extract_pid(new_daemon_stderr) != extract_pid(killed_daemon_stderr)
+
+    @buck_test()
     @env("BUCK2_TESTING_INACTIVITY_TIMEOUT", "true")
     @env("BUCKD_STARTUP_INIT_TIMEOUT", "20")
     async def test_recovers_promptly_after_inactivity_shutdown(
@@ -363,3 +389,45 @@ class DaemonTest(BuckTestCase):
             # terminated rather than the daemon being left alive and unusable.
             with contextlib.suppress(BuckException):
                 await subscriber.__aexit__(None, None, None)
+
+    @buck_test(skip_for_os=["windows"])
+    async def test_daemon_start_waits_for_tenant_outputs(self, buck: Buck) -> None:
+        """
+        A new daemon waits within the startup deadline for whatever still owns its tenant's
+        outputs, as it waits for a running `clean`, rather than failing after a fixed time.
+        """
+        import fcntl  # Unix-only; this test does not run on Windows.
+
+        buck.set_env("BUCK2_SHARE_DAEMON", "false")
+        await buck.targets(":")
+        daemon_dir = await buck.get_daemon_dir()
+        await buck.kill()
+        lock_path = daemon_dir.parent / "._buck2_tenant_locks" / daemon_dir.name
+        lock_path.parent.mkdir(parents=True, exist_ok=True)
+        with open(lock_path, "a") as lock:
+            fcntl.flock(lock, fcntl.LOCK_EX)
+            starting = asyncio.ensure_future(buck.targets(":"))
+            await asyncio.sleep(12)
+            assert not starting.done(), (
+                "Daemon startup gave up while the outputs were owned"
+            )
+        await asyncio.wait_for(starting, timeout=60)
+
+    @buck_test(skip_for_os=["windows"])
+    async def test_unshared_forkserver_state_is_reclaimed(self, buck: Buck) -> None:
+        buck.set_env("BUCK2_SHARE_DAEMON", "false")
+        state_root = buck.cwd / "buck-out" / "v2" / "forkserver"
+        for _ in range(3):
+            await buck.targets("//:rule")
+            states = [entry for entry in state_root.iterdir() if entry.is_dir()]
+            assert len(states) == 1
+            state = states[0]
+            assert state.is_dir()
+            await buck.kill()
+            for _ in range(100):
+                if not state.exists():
+                    break
+                await asyncio.sleep(0.05)
+            assert not state.exists()
+        await buck.clean()
+        assert not state_root.exists()

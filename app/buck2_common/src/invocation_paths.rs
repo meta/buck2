@@ -12,16 +12,24 @@
 //! Defines utilities to obtain the basic paths for buck2 client and the daemon.
 
 use std::borrow::Cow;
+use std::fs::File;
+use std::fs::TryLockError;
+use std::io::ErrorKind;
+use std::time::Duration;
 
 use allocative::Allocative;
+use buck2_core::buck2_env;
 use buck2_core::fs::project::ProjectRoot;
 use buck2_core::fs::project_rel_path::ProjectRelativePath;
 use buck2_core::fs::project_rel_path::ProjectRelativePathBuf;
+use buck2_error::BuckErrorContext;
 use buck2_fs::paths::abs_norm_path::AbsNormPathBuf;
 use buck2_fs::paths::file_name::FileName;
 use buck2_fs::paths::file_name::FileNameBuf;
 use buck2_fs::paths::forward_rel_path::ForwardRelativePath;
 pub use buck2_wrapper_common::DEFAULT_ISOLATION_DIR;
+use buck2_wrapper_common::kill::process_exists;
+use buck2_wrapper_common::pid::Pid;
 
 use crate::daemon_dir::DaemonDir;
 use crate::invocation_roots::InvocationRoots;
@@ -68,6 +76,36 @@ impl TenantPaths {
             project_root,
             isolation,
         }
+    }
+
+    /// A persistent lock file outside the tenant's disposable output and daemon directories.
+    pub fn disk_ownership_lock_path(&self) -> buck2_error::Result<AbsNormPathBuf> {
+        let paths = InvocationPaths {
+            roots: InvocationRoots {
+                project_root: self.project_root.clone(),
+                cwd: ProjectRelativePath::empty().to_buf(),
+            },
+            isolation: self.isolation.clone(),
+        };
+        Ok(paths
+            .project_daemon_dir()?
+            .path
+            .join(FileName::unchecked_new("._buck2_tenant_locks"))
+            .join(&self.isolation))
+    }
+
+    /// The daemon directory used by clients without shared daemon routing.
+    pub fn unshared_daemon_dir(&self) -> buck2_error::Result<DaemonDir> {
+        let paths = InvocationPaths {
+            roots: InvocationRoots {
+                project_root: self.project_root.clone(),
+                cwd: ProjectRelativePath::empty().to_buf(),
+            },
+            isolation: self.isolation.clone(),
+        };
+        Ok(DaemonDir {
+            path: paths.project_daemon_dir()?.path.join(&self.isolation),
+        })
     }
 
     /// Returns the tenant's project root.
@@ -152,13 +190,99 @@ impl TenantPaths {
     }
 }
 
+/// Exclusive disk ownership shared by tenant generations and cleanup clients.
+#[derive(Allocative)]
+pub struct TenantDiskLock {
+    #[allocative(skip)]
+    _file: File,
+    #[allocative(skip)]
+    _legacy_lifecycle: Option<File>,
+}
+
+impl TenantDiskLock {
+    /// Waits for disk ownership without interrupting the existing owner.
+    pub async fn acquire(paths: &TenantPaths, timeout: Duration) -> buck2_error::Result<Self> {
+        tokio::time::timeout(timeout, async {
+            loop {
+                if let Some(mut lock) = Self::try_acquire(paths).await? {
+                    if buck2_env!("BUCK2_SHARE_DAEMON", type=bool, default=false)? {
+                        let legacy_dir = paths.unshared_daemon_dir()?;
+                        let Some(file) = Self::try_lock_file(&legacy_dir.path.join(FileName::unchecked_new("buckd.lifecycle"))).await? else {
+                            tokio::time::sleep(Duration::from_millis(50)).await;
+                            continue;
+                        };
+                        lock._legacy_lifecycle = Some(file);
+                        match tokio::fs::read_to_string(legacy_dir.buckd_pid()).await {
+                            Ok(pid) => {
+                                let trimmed = pid.trim();
+                                let raw: i64 = trimmed.parse().buck_error_context(format!(
+                                    "Cannot verify legacy daemon ownership at `{legacy_dir}`; refusing shared initialization. Garbage `buckd.pid` does not prove ownership ended. Stop the legacy daemon and restore a consistent `buckd.pid` before sharing."
+                                ))?;
+                                let legacy_pid = Pid::from_i64(raw).buck_error_context(format!(
+                                    "Cannot verify legacy daemon ownership at `{legacy_dir}`; refusing shared initialization. Invalid PID `{trimmed}` does not prove ownership ended. Stop the legacy daemon and restore a consistent `buckd.pid` before sharing."
+                                ))?;
+                                if process_exists(legacy_pid)? {
+                                    return Err(buck2_error::buck2_error!(
+                                        buck2_error::ErrorTag::Input,
+                                        "Tenant disk state is already owned by a legacy daemon at `{legacy_dir}`. Stop it before enabling daemon sharing."
+                                    ));
+                                }
+                            }
+                            Err(error) if error.kind() == ErrorKind::NotFound => {}
+                            Err(error) => return Err(error.into()),
+                        }
+                    }
+                    break buck2_error::Ok(lock);
+                }
+                tokio::time::sleep(Duration::from_millis(50)).await;
+            }
+        })
+        .await
+        .map_err(|_elapsed| {
+            buck2_error::buck2_error!(
+                buck2_error::ErrorTag::BuckdLifecycleLock,
+                "Timed out waiting for exclusive use of `{}`: another process still owns it, either a Buck2 daemon or a running `buck2 clean`. Wait for it to finish, or stop the daemon (for example with `buck2 killall`), then retry.",
+                paths.buck_out_path()
+            )
+        })?
+    }
+
+    async fn try_acquire(paths: &TenantPaths) -> buck2_error::Result<Option<Self>> {
+        Ok(Self::try_lock_file(&paths.disk_ownership_lock_path()?)
+            .await?
+            .map(|file| Self {
+                _file: file,
+                _legacy_lifecycle: None,
+            }))
+    }
+
+    async fn try_lock_file(path: &AbsNormPathBuf) -> buck2_error::Result<Option<File>> {
+        tokio::fs::create_dir_all(path.parent().expect("Lock file has a parent")).await?;
+        let file = tokio::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .truncate(false)
+            .open(path)
+            .await?
+            .into_std()
+            .await;
+        match file.try_lock() {
+            Ok(()) => buck2_error::Ok(Some(file)),
+            Err(TryLockError::WouldBlock) => Ok(None),
+            Err(TryLockError::Error(error)) => Err(error.into()),
+        }
+        .buck_error_context(format!("Locking tenant disk state at `{path}`"))
+    }
+}
+
 impl InvocationPaths {
     /// Returns the stable tenant paths, excluding the invocation cwd.
     pub fn tenant_paths(&self) -> TenantPaths {
         TenantPaths::new(self.project_root().clone(), self.isolation.clone())
     }
 
-    pub fn daemon_dir(&self) -> buck2_error::Result<DaemonDir> {
+    fn project_daemon_dir(&self) -> buck2_error::Result<DaemonDir> {
         #[cfg(windows)]
         let root_relative: Cow<ForwardRelativePath> = {
             use buck2_fs::paths::forward_rel_path::ForwardRelativePathNormalizer;
@@ -178,13 +302,14 @@ impl InvocationPaths {
             .root()
             .strip_prefix(buck2_fs::paths::abs_norm_path::AbsNormPath::new("/")?)?;
 
-        let path = self
-            .roots
-            .common_buckd_dir()?
-            .join(root_relative.as_ref())
-            .join(&self.isolation);
-
+        let path = self.roots.common_buckd_dir()?.join(root_relative.as_ref());
         Ok(DaemonDir { path })
+    }
+
+    pub fn daemon_dir(&self) -> buck2_error::Result<DaemonDir> {
+        Ok(DaemonDir {
+            path: self.project_daemon_dir()?.path.join(&self.isolation),
+        })
     }
 
     pub fn project_root(&self) -> &ProjectRoot {
@@ -285,12 +410,35 @@ impl InvocationPaths {
         self.cache_dir_path().join(self.dice_state_dir_name())
     }
 
-    /// This is used by the forkserver to write the miniperf wrapper binary (if used), as well as
-    /// temporary files used by miniperf. We put this in buck-out because that directory gets
-    /// allowlisted for execution (because we write lots of tools there).
-    pub fn forkserver_state_dir(&self) -> AbsNormPathBuf {
-        self.buck_out_path()
-            .join(ForwardRelativePath::unchecked_new("forkserver"))
+    /// Daemon-scoped state outside every tenant's disposable output directory.
+    pub fn daemon_state_dir(&self) -> AbsNormPathBuf {
+        self.project_root()
+            .root()
+            .join(Self::buck_out_dir_prefix())
+            .join(FileName::unchecked_new(RESERVED_BUCK_OUT_PREFIX))
+    }
+
+    /// The daemon's working directory. A shared daemon must outlive `buck2 clean` of any one
+    /// tenant, so it lives outside the tenant output directories; an unshared daemon runs in
+    /// the tenant's buck-out.
+    pub fn daemon_working_dir(&self) -> buck2_error::Result<AbsNormPathBuf> {
+        Ok(
+            if buck2_env!("BUCK2_SHARE_DAEMON", type=bool, default=false)? {
+                self.daemon_state_dir()
+            } else {
+                self.buck_out_path()
+            },
+        )
+    }
+
+    /// Private executable state for one forkserver, under execution-allowlisted buck-out.
+    /// It is a sibling of the daemon's working directory so that `buck2 clean` of a shared
+    /// tenant leaves the daemon-wide forkserver intact.
+    pub fn forkserver_state_dir(&self, daemon_id: &str) -> buck2_error::Result<AbsNormPathBuf> {
+        Ok(self
+            .daemon_working_dir()?
+            .join(FileName::unchecked_new("forkserver"))
+            .join(FileName::new(daemon_id)?))
     }
 
     fn materializer_state_dir_name(&self) -> &FileName {
@@ -345,7 +493,9 @@ impl InvocationPaths {
 /// One entry is set aside for tools other than buck2: `buck-out/._buck2/tmp` is scratch space
 /// for tooling (e.g. compiler wrappers invoked outside of a buck2 action) that needs a temp
 /// location under buck-out. Buck2 never stores its own state there, and `clean --all` deletes
-/// it like any other reserved entry, so contents must be disposable.
+/// it like any other reserved entry, so contents must be disposable. Shared daemons keep their
+/// working directory and forkserver state under sibling entries of this prefix; those are
+/// recreated on daemon start.
 pub const RESERVED_BUCK_OUT_PREFIX: &str = "._buck2";
 
 #[cfg(test)]

@@ -10,14 +10,19 @@
 
 use std::time::Duration;
 
+use buck2_cli_proto::EvictTenantRequest;
 use buck2_client_ctx::client_ctx::BuckSubcommand;
 use buck2_client_ctx::client_ctx::ClientCommandContext;
 use buck2_client_ctx::common::BuckArgMatches;
 use buck2_client_ctx::common::CommonEventLogOptions;
 use buck2_client_ctx::daemon::client::BuckdLifecycleLock;
+use buck2_client_ctx::daemon::client::connect::BuckdConnectOptions;
+use buck2_client_ctx::daemon::client::connect::connect_buckd;
+use buck2_client_ctx::daemon::client::kill::kill_command_impl;
 use buck2_client_ctx::events_ctx::EventsCtx;
 use buck2_client_ctx::exit_result::ExitResult;
 use buck2_client_ctx::startup_deadline::StartupDeadline;
+use buck2_core::buck2_env;
 
 /// Kill the buck daemon.
 ///
@@ -26,6 +31,9 @@ use buck2_client_ctx::startup_deadline::StartupDeadline;
 /// `buck2 killall` kills all the buck2 processes on the machine.
 ///
 /// `buck2 clean` kills the buck2 daemon and also deletes the buck2 state files.
+///
+/// With `BUCK2_SHARE_DAEMON=true`, this evicts the current tenant from the shared daemon
+/// instead; the daemon exits after its final tenant is evicted.
 #[derive(Debug, clap::Parser)]
 pub struct KillCommand {
     #[clap(flatten)]
@@ -39,23 +47,62 @@ impl BuckSubcommand for KillCommand {
         self,
         _matches: BuckArgMatches<'_>,
         ctx: ClientCommandContext<'_>,
-        _events_ctx: &mut EventsCtx,
+        events_ctx: &mut EventsCtx,
     ) -> ExitResult {
-        let daemon_dir = ctx.paths()?.daemon_dir()?;
+        let paths = ctx.paths()?;
+        let daemon_dir = paths.daemon_dir()?;
 
-        let lifecycle_lock = BuckdLifecycleLock::lock_with_timeout(
-            daemon_dir.clone(),
-            StartupDeadline::duration_from_now(Duration::from_secs(10))?,
-        )
-        .await?;
+        if !buck2_env!("BUCK2_SHARE_DAEMON", type=bool, default=false)? {
+            let lifecycle_lock = BuckdLifecycleLock::lock_with_timeout(
+                daemon_dir,
+                StartupDeadline::duration_from_now(Duration::from_secs(10))?,
+            )
+            .await?;
 
-        buck2_client_ctx::daemon::client::kill::kill_command_impl(
-            &lifecycle_lock,
-            "`buck kill` was invoked",
-            false,
-        )
-        .await
-        .into()
+            return kill_command_impl(&lifecycle_lock, "`buck kill` was invoked", false)
+                .await
+                .into();
+        }
+
+        match connect_buckd(BuckdConnectOptions::ExistingOnly, events_ctx, paths).await {
+            Ok(mut buckd) => {
+                let response = buckd
+                    .with_flushing()
+                    .evict_tenant(
+                        EvictTenantRequest {
+                            context: Some(ctx.empty_client_context(Self::COMMAND_NAME)?),
+                        },
+                        events_ctx,
+                    )
+                    .await?;
+                if response.evicted {
+                    buck2_client_ctx::eprintln!(
+                        "Evicted tenant generation {}",
+                        response.generation
+                    )?;
+                    if response.shutting_down {
+                        buck2_client_ctx::eprintln!("Final tenant evicted; shutting down daemon")?;
+                    }
+                } else {
+                    buck2_client_ctx::eprintln!("No matching tenant was registered")?;
+                }
+                ExitResult::success()
+            }
+            Err(_) => {
+                let lifecycle_lock = BuckdLifecycleLock::lock_with_timeout(
+                    daemon_dir,
+                    StartupDeadline::duration_from_now(Duration::from_secs(10))?,
+                )
+                .await?;
+                kill_command_impl(
+                    &lifecycle_lock,
+                    "`buck kill` was invoked after the daemon could not be contacted",
+                    false,
+                )
+                .await
+                .into()
+            }
+        }
     }
 
     fn event_log_opts(&self) -> &CommonEventLogOptions {

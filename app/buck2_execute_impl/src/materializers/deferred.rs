@@ -31,6 +31,7 @@ use artifact_tree::ArtifactMaterializationMethod;
 use artifact_tree::ArtifactMaterializationStage;
 use artifact_tree::ProcessingFuture;
 use async_trait::async_trait;
+use buck2_common::cancellation::CancellationScope;
 use buck2_common::file_ops::metadata::FileDigest;
 use buck2_common::file_ops::metadata::FileMetadata;
 use buck2_common::file_ops::metadata::TrackedFileDigest;
@@ -135,6 +136,10 @@ pub struct DeferredMaterializerAccessor<T: IoHandler + 'static> {
     #[allocative(skip)]
     #[cfg_attr(not(test), expect(dead_code))]
     command_thread: Option<std::thread::JoinHandle<()>>,
+    #[allocative(skip)]
+    cancellation: Arc<CancellationScope>,
+    #[allocative(skip)]
+    runtime: Handle,
     /// Whether final outputs that are not required get materialized at all.
     materialize_final_artifacts: bool,
     defer_write_actions: bool,
@@ -221,8 +226,14 @@ pub type NoDiskDeferredMaterializer = DeferredMaterializerAccessor<NoDiskIoHandl
 
 impl<T: IoHandler> Drop for DeferredMaterializerAccessor<T> {
     fn drop(&mut self) {
-        // We don't try to stop the underlying thread, since in practice when we drop the
-        // DeferredMaterializer we are about to just terminate the process.
+        self.cancellation.cancel();
+        let cancellation = self.cancellation.clone();
+        let io = self.io.dupe();
+        let _cleanup = self.runtime.spawn(async move {
+            cancellation.wait().await;
+            drop(io);
+        });
+        let _ignored = self.command_sender.send(MaterializerCommand::Abort);
     }
 }
 
@@ -896,9 +907,8 @@ impl<T: IoHandler + Allocative> DeferredMaterializerAccessor<T> {
         invalidate_fut.await
     }
 
-    /// Spawns two threads (`materialization_loop` and `command_loop`).
-    /// Creates and returns a new `DeferredMaterializer` that aborts those
-    /// threads when dropped.
+    /// Spawns the command loop. Dropping the accessor stops the loop; outstanding I/O retains
+    /// its handler until it finishes.
     fn new_with_io(
         io: Arc<T>,
         configs: DeferredMaterializerConfigs,
@@ -947,12 +957,14 @@ impl<T: IoHandler + Allocative> DeferredMaterializerAccessor<T> {
         let tree = ArtifactTree::initialize(sqlite_state);
 
         let background_cleanup_gate = Arc::new(BackgroundCleanupGate::default());
+        let cancellation = Arc::new(CancellationScope::new());
         let command_processor = {
             let command_sender = command_sender.dupe();
             let rt = Handle::current();
             let stats = stats.dupe();
             let io = io.dupe();
             let background_cleanup_gate = background_cleanup_gate.dupe();
+            let cancellation = cancellation.clone();
             move |cancellations| {
                 DeferredMaterializerCommandProcessor::new(
                     io,
@@ -969,6 +981,7 @@ impl<T: IoHandler + Allocative> DeferredMaterializerAccessor<T> {
                     configs.clean_stale_config.clone(),
                     rematerialization_ttl,
                     background_cleanup_gate,
+                    cancellation,
                 )
             }
         };
@@ -993,6 +1006,8 @@ impl<T: IoHandler + Allocative> DeferredMaterializerAccessor<T> {
 
         Ok(Self {
             command_thread: Some(command_thread),
+            cancellation,
+            runtime: Handle::current(),
             command_sender,
             materialize_final_artifacts: configs.materialize_final_artifacts,
             defer_write_actions: configs.defer_write_actions,

@@ -41,6 +41,9 @@ pub(crate) struct ForkserverCommand {
 
     #[clap(long)]
     state_dir: String,
+
+    #[clap(long, hide = true)]
+    state_dir_lock_fd: Option<RawFd>,
 }
 
 impl ForkserverCommand {
@@ -57,6 +60,17 @@ impl ForkserverCommand {
 
         #[cfg(unix)]
         {
+            let _state_dir_owner = if let Some(fd) = self.state_dir_lock_fd {
+                use std::fs::File;
+                use std::os::unix::io::FromRawFd;
+                let lease = unsafe { File::from_raw_fd(fd) };
+                set_cloexec(fd)?;
+                Some(buck2_forkserver::state_dir::ForkserverStateDir::adopt(
+                    &state_dir, lease,
+                ))
+            } else {
+                None
+            };
             // For us to get this FD it must be non-CLOEXEC but we don't want our children to
             // inherit it.
             if let Some(fd) = self.fd {

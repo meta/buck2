@@ -59,6 +59,7 @@ impl SqliteTable for DepFileStateSqliteTable {
 pub struct DepFileStateSqliteDb {
     tables: SqliteTables<DepFileStateSqliteTable>,
     identity: SqliteIdentity,
+    lifetime_guard: Option<Arc<dyn Send + Sync>>,
 }
 
 impl SqliteDb for DepFileStateSqliteDb {
@@ -69,7 +70,11 @@ impl SqliteDb for DepFileStateSqliteDb {
 
     fn new(tables: SqliteTables<Self::TableType>) -> buck2_error::Result<Self> {
         let identity = tables.get_identity()?;
-        Ok(Self { tables, identity })
+        Ok(Self {
+            tables,
+            identity,
+            lifetime_guard: None,
+        })
     }
 
     fn open_tables(path: &AbsNormPath) -> buck2_error::Result<SqliteTables<Self::TableType>> {
@@ -104,7 +109,8 @@ impl DepFileStateSqliteDb {
         max_entries: Option<usize>,
     ) -> buck2_error::Result<Self> {
         let reject_identity = reject_identity.cloned();
-        io_executor
+        let guard = io_executor.lifetime_guard();
+        let mut db = io_executor
             .execute_io_inline(move || {
                 Self::initialize_dep_file_sqlite_db(
                     dep_file_state_dir,
@@ -115,7 +121,9 @@ impl DepFileStateSqliteDb {
                     max_entries,
                 )
             })
-            .await
+            .await?;
+        db.lifetime_guard = guard;
+        Ok(db)
     }
 
     fn initialize_dep_file_sqlite_db(

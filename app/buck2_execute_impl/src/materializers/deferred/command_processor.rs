@@ -14,6 +14,8 @@ use std::sync::atomic::Ordering;
 use std::task::Context;
 use std::task::Poll;
 
+use buck2_common::cancellation::CancellationScope;
+use buck2_common::liveliness_observer::LivelinessObserverSync;
 use buck2_core::buck2_env;
 use buck2_core::fs::project_rel_path::ProjectRelativePath;
 use buck2_core::fs::project_rel_path::ProjectRelativePathBuf;
@@ -39,6 +41,7 @@ use buck2_fs::paths::abs_path::AbsPathBuf;
 use buck2_hash::BuckMutSet;
 use buck2_util::threads::check_stack_overflow;
 use dice_futures::cancellation::CancellationContext;
+use dice_futures::spawn::WeakFutureError;
 use dupe::Dupe;
 use dupe::OptionDupedExt;
 use futures::Future;
@@ -57,7 +60,6 @@ use tokio::runtime::Handle;
 use tokio::sync::mpsc::UnboundedReceiver;
 use tokio::sync::oneshot;
 use tokio::sync::oneshot::error::TryRecvError;
-use tokio::task::JoinHandle;
 use tokio::time::Instant;
 use tokio::time::Interval;
 use tracing::instrument;
@@ -102,6 +104,7 @@ pub(super) struct DeferredMaterializerCommandProcessor<T: 'static> {
     /// The runtime the deferred materializer will spawn futures on. This is normally the runtime
     /// used by the rest of Buck.
     rt: Handle,
+    pub(super) cancellation: Arc<CancellationScope>,
     pub(super) defer_write_actions: bool,
     /// Keep track of artifact versions to avoid callbacks clobbering state if the state has moved
     /// forward.
@@ -340,6 +343,7 @@ struct CommandStream<T: 'static> {
     io_buffer_ticker: Interval,
     clean_stale_ticker: Option<Interval>,
     clean_stale_fut: Option<BoxFuture<'static, Result<CleanResult, CleanFailure>>>,
+    cancellation: Arc<dyn LivelinessObserverSync>,
 }
 
 enum Op<T: 'static> {
@@ -375,6 +379,10 @@ impl<T: 'static> Stream for CommandStream<T> {
 
     fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         let this = self.project();
+
+        if !this.cancellation.is_alive_sync() {
+            return Poll::Ready(None);
+        }
 
         if let Poll::Ready(Some(e)) = this.high_priority.poll_recv(cx) {
             if let MaterializerCommand::Abort = e {
@@ -429,6 +437,7 @@ impl<T: IoHandler> DeferredMaterializerCommandProcessor<T> {
         clean_stale_config: CleanStaleConfig,
         rematerialization_ttl: Option<SignedDuration>,
         background_cleanup_gate: Arc<BackgroundCleanupGate>,
+        cancellation: Arc<CancellationScope>,
     ) -> Self {
         let ttl_refresh_history = Vec::new();
         let ttl_refresh_instance = None;
@@ -438,6 +447,7 @@ impl<T: IoHandler> DeferredMaterializerCommandProcessor<T> {
             io,
             sqlite_db,
             rt,
+            cancellation,
             defer_write_actions,
             version_tracker,
             command_sender,
@@ -460,13 +470,22 @@ impl<T: IoHandler> DeferredMaterializerCommandProcessor<T> {
         self.version_tracker.next()
     }
 
-    fn spawn_from_rt<F>(rt: &Handle, dispatcher: &EventDispatcher, f: F) -> JoinHandle<F::Output>
+    fn spawn_from_rt<F, R>(
+        rt: &Handle,
+        dispatcher: &EventDispatcher,
+        cancellation: &CancellationScope,
+        f: F,
+    ) -> BoxFuture<'static, Result<R, WeakFutureError>>
     where
-        F: std::future::Future + Send + 'static,
-        F::Output: Send + 'static,
+        F: for<'a> FnOnce(&'a CancellationContext) -> BoxFuture<'a, R> + Send + 'static,
+        R: Send + 'static,
     {
         let dispatcher = dispatcher.dupe();
-        rt.spawn(with_dispatcher_async(dispatcher, f))
+        cancellation
+            .spawn(rt, move |context| {
+                with_dispatcher_async(dispatcher, f(context)).boxed()
+            })
+            .0
     }
 
     pub(super) fn configured_clean_stale_command(
@@ -486,12 +505,16 @@ impl<T: IoHandler> DeferredMaterializerCommandProcessor<T> {
         )
     }
 
-    pub(super) fn spawn<F>(&self, dispatcher: &EventDispatcher, f: F) -> JoinHandle<F::Output>
+    pub(super) fn spawn<F, R>(
+        &self,
+        dispatcher: &EventDispatcher,
+        f: F,
+    ) -> BoxFuture<'static, Result<R, WeakFutureError>>
     where
-        F: std::future::Future + Send + 'static,
-        F::Output: Send + 'static,
+        F: for<'a> FnOnce(&'a CancellationContext) -> BoxFuture<'a, R> + Send + 'static,
+        R: Send + 'static,
     {
-        Self::spawn_from_rt(&self.rt, dispatcher, f)
+        Self::spawn_from_rt(&self.rt, dispatcher, &self.cancellation, f)
     }
 
     /// Loop that runs for as long as the materializer is alive.
@@ -534,6 +557,7 @@ impl<T: IoHandler> DeferredMaterializerCommandProcessor<T> {
             io_buffer_ticker,
             clean_stale_ticker,
             clean_stale_fut: None,
+            cancellation: self.cancellation.observer(),
         };
 
         while let Some(op) = stream.next().await {
@@ -564,10 +588,14 @@ impl<T: IoHandler> DeferredMaterializerCommandProcessor<T> {
                                 // `try_recv`.
                                 let (tx, rx) = oneshot::channel();
 
-                                self.spawn(&EventDispatcher::error_on_event(), async {
-                                    let res = fut.await;
-                                    let _ignored = tx.send((Timestamp::now(), res));
-                                });
+                                let _refresh =
+                                    self.spawn(&EventDispatcher::error_on_event(), move |_| {
+                                        async move {
+                                            let res = fut.await;
+                                            let _ignored = tx.send((Timestamp::now(), res));
+                                        }
+                                        .boxed()
+                                    });
 
                                 rx
                             });
@@ -1046,7 +1074,7 @@ impl<T: IoHandler> DeferredMaterializerCommandProcessor<T> {
             self.command_sender.dupe(),
             existing_futs,
             &self.rt,
-            self.cancellations,
+            &self.cancellation,
             event_dispatcher,
         ));
 
@@ -1328,57 +1356,56 @@ impl<T: IoHandler> DeferredMaterializerCommandProcessor<T> {
             self.materialize_symlink_destination_tasks(&stack, &event_dispatcher, path, deps);
 
         let spawn_dispatcher = event_dispatcher.dupe();
-        let materialize_entry: BoxFuture<'static, Result<(), MaterializeEntryError>> =
-            match entry_details {
-                EntryDetails::Entry { entry, method } => {
-                    let io = self.io.dupe();
-                    let path_buf = path.to_buf();
-                    let cancellations = CancellationContext::never_cancelled(); // spawned
-                    async move {
-                        io.materialize_entry(
-                            path_buf,
-                            method,
-                            entry,
-                            event_dispatcher,
-                            cancellations,
-                        )
-                        .await
-                    }
-                    .boxed()
-                }
-                EntryDetails::DepsOnly => future::ready(Ok(())).boxed(),
-            };
-
         // Create a task to await deps and materialize ourselves
         let path_buf = path.to_buf();
+        let entry_path = path.to_buf();
+        let io = self.io.dupe();
         let command_sender = self.command_sender.dupe();
         let task = self
-            .spawn(&spawn_dispatcher, async move {
-                let timestamp = Timestamp::now();
-                // Materialize the deps and this entry. Regardless of whether this succeeds or fails we
-                // need to notify the materializer, so don't check the result.
-                let res = Self::perform_materialization(
-                    cleaning_fut,
-                    materialize_copy_source_tasks,
-                    materialize_symlink_destination_tasks,
-                    materialize_entry,
-                )
-                .await;
+            .spawn(&spawn_dispatcher, move |cancellations| {
+                async move {
+                    let materialize_entry: BoxFuture<'_, Result<(), MaterializeEntryError>> =
+                        match entry_details {
+                            EntryDetails::Entry { entry, method } => async move {
+                                io.materialize_entry(
+                                    entry_path,
+                                    method,
+                                    entry,
+                                    event_dispatcher,
+                                    cancellations,
+                                )
+                                .await
+                            }
+                            .boxed(),
+                            EntryDetails::DepsOnly => future::ready(Ok(())).boxed(),
+                        };
+                    let timestamp = Timestamp::now();
+                    // Materialize the deps and this entry. Regardless of whether this succeeds or fails we
+                    // need to notify the materializer, so don't check the result.
+                    let res = Self::perform_materialization(
+                        cleaning_fut,
+                        materialize_copy_source_tasks,
+                        materialize_symlink_destination_tasks,
+                        materialize_entry,
+                    )
+                    .await;
 
-                // Materialization finished, notify the command thread
-                let _ignored = command_sender.send_low_priority(
-                    LowPriorityMaterializerCommand::MaterializationFinished {
-                        path: path_buf,
-                        timestamp,
-                        version,
-                        result: res.dupe(),
-                        dispatcher: get_dispatcher_opt(),
-                    },
-                );
+                    // Materialization finished, notify the command thread
+                    let _ignored = command_sender.send_low_priority(
+                        LowPriorityMaterializerCommand::MaterializationFinished {
+                            path: path_buf,
+                            timestamp,
+                            version,
+                            result: res.dupe(),
+                            dispatcher: get_dispatcher_opt(),
+                        },
+                    );
 
-                res
+                    res
+                }
+                .boxed()
             })
-            .map(|r| r.unwrap_or_else(|e| Err(SharedMaterializingError::Error(e.into()))))
+            .map(|r| r.unwrap_or_else(|e| Err(SharedMaterializingError::Error(task_stopped(e)))))
             .boxed()
             .shared();
 
@@ -1515,7 +1542,7 @@ impl<T: IoHandler> DeferredMaterializerCommandProcessor<T> {
                                 self.command_sender.dupe(),
                                 ExistingFutures::empty(),
                                 &self.rt,
-                                self.cancellations,
+                                &self.cancellation,
                                 &dispatcher,
                             ));
                             info.processing = Processing::active(future, version);
@@ -1612,28 +1639,33 @@ fn clean_path<T: IoHandler>(
     command_sender: Arc<MaterializerSender<T>>,
     existing_futs: ExistingFutures,
     rt: &Handle,
-    cancellations: &'static CancellationContext,
+    cancellation: &CancellationScope,
     dispatcher: &EventDispatcher,
 ) -> CleaningFuture {
     if existing_futs.is_empty() {
-        return io
-            .clean_path(path, version, command_sender, cancellations)
-            .shared();
-    }
-
-    DeferredMaterializerCommandProcessor::<T>::spawn_from_rt(rt, dispatcher, {
         let io = io.dupe();
-        let cancellations = CancellationContext::never_cancelled();
-        async move {
-            join_all_existing_futs(existing_futs.into_result()?).await?;
-            io.clean_path(path, version, command_sender, cancellations)
-                .await
+        return DeferredMaterializerCommandProcessor::<T>::spawn_from_rt(
+            rt,
+            dispatcher,
+            cancellation,
+            move |cancellations| io.clean_path(path, version, command_sender, cancellations),
+        )
+        .map(|result| result.unwrap_or_else(|error| Err(task_stopped(error))))
+        .boxed()
+        .shared();
+    }
+    DeferredMaterializerCommandProcessor::<T>::spawn_from_rt(rt, dispatcher, cancellation, {
+        let io = io.dupe();
+        move |cancellations| {
+            async move {
+                join_all_existing_futs(existing_futs.into_result()?).await?;
+                io.clean_path(path, version, command_sender, cancellations)
+                    .await
+            }
+            .boxed()
         }
     })
-    .map(|r| match r {
-        Ok(r) => r,
-        Err(e) => Err(e.into()), // Turn the JoinError into a buck2_error::Error.
-    })
+    .map(|r| r.unwrap_or_else(|e| Err(task_stopped(e))))
     .boxed()
     .shared()
 }
@@ -1652,6 +1684,21 @@ impl ExistingFutures {
 
     fn empty() -> Self {
         Self(Ok(Vec::new()))
+    }
+}
+
+/// The error for a materializer task that did not finish. A join error is a panic or abort, as a
+/// tokio join error was before tasks were tracked; cancellation only happens when the tenant is
+/// evicted or the materializer is dropped at shutdown.
+pub(super) fn task_stopped(error: WeakFutureError) -> buck2_error::Error {
+    match error {
+        WeakFutureError::JoinError => {
+            buck2_error!(ErrorTag::Tokio, "Materializer task panicked or was aborted")
+        }
+        WeakFutureError::Cancelled => buck2_error!(
+            ErrorTag::InterruptedByDaemonShutdown,
+            "Materializer task was cancelled"
+        ),
     }
 }
 

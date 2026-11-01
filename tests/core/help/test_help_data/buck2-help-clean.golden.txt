@@ -4,6 +4,8 @@ Delete generated files and caches.
 
 The command also kills the buck2 daemon.
 
+With `BUCK2_SHARE_DAEMON=true`, it evicts the selected tenant from the shared daemon instead.
+
 Usage: buck2 clean [OPTIONS]
 
 Options:

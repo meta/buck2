@@ -57,7 +57,8 @@ pub async fn kill_command_impl(
     };
 
     let buckd = tokio::time::timeout(buckd_startup_timeout()?, async {
-        process.create_channel().await?.upgrade().await
+        let channel = process.create_channel().await.map_err(|e| (e, false))?;
+        channel.upgrade().await.map_err(|e| (e, true))
     })
     .await;
 
@@ -66,11 +67,10 @@ pub async fn kill_command_impl(
             crate::eprintln!("killing buckd server")?;
             Some(buckd.kill(reason).await?)
         }
-        Ok(Err(e)) => {
+        Ok(Err((e, connected))) => {
             // No time out: we just errored out. This is likely indicative that there is no
             // buckd (i.e. our connection got rejected), so let's check for this and then
             // provide some information.
-            let e = e;
 
             // TODO(minglunli): Look into checking for explicit 'Connection Refused' or something more
             // concretely pointing to `no server running` instead of all transport errors
@@ -78,15 +78,28 @@ pub async fn kill_command_impl(
                 // OK, looks like the server
                 tracing::debug!("Connect failed with a Tonic error: {:#}", e);
                 crate::eprintln!("no buckd server running")?;
+                None
             } else {
                 crate::eprintln!(
                     "unexpected error connecting to Buck2: {:#} \
                             (no buckd server running?)",
                     e
                 )?;
+                // A daemon that accepted the connection but cannot be talked to still holds its
+                // tenant's disk lock, so stop it for `clean` to proceed; but only the daemon
+                // that wrote this record, never whatever now has its pid or its port.
+                if connected && process.recorded_daemon_is_running() {
+                    match process.hard_kill().await {
+                        Ok(()) => Some(process.pid()?),
+                        Err(error) => {
+                            tracing::warn!("Could not stop the unreachable daemon: {error:#}");
+                            None
+                        }
+                    }
+                } else {
+                    None
+                }
             }
-
-            None
         }
         Err(e) => {
             tracing::debug!("Connect timed out: {:#}", e);

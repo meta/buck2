@@ -25,6 +25,7 @@ BUCK2_RE_CONNECT_TIMEOUT_S       u64                   120
 BUCK2_RE_DOWNLOAD_CONCURRENCY    usize                 256
 BUCK2_RUNTIME_THREADS            usize
 BUCK2_SCRIBE_CATEGORY            String
+BUCK2_SHARE_DAEMON               bool                  false
 BUCK2_SHOW_SOFT_ERRORS           String
 BUCK2_TEST_BLOCK_ON_UPLOAD       bool                  false
 BUCK2_TEST_TPX_USE_TCP           bool                  false

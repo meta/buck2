@@ -660,6 +660,12 @@ impl FlushingBuckdClient<'_> {
         UnstableListTenantsRequest,
         UnstableListTenantsResponse
     );
+    debug_method!(evict_tenant, EvictTenantRequest, EvictTenantResponse);
+    debug_method!(
+        evict_project_tenants,
+        EvictProjectTenantsRequest,
+        EvictProjectTenantsResponse
+    );
     debug_method!(
         unstable_dice_dump,
         UnstableDiceDumpRequest,

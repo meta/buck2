@@ -233,6 +233,8 @@ pub(crate) mod state_machine {
         // If set, add a sleep when materializing to simulate a long materialization period
         materialization_config: BuckMutMap<ProjectRelativePathBuf, TokioDuration>,
         #[allocative(skip)]
+        pub(crate) block_materialization: Option<Arc<tokio::sync::Semaphore>>,
+        #[allocative(skip)]
         read_dir_barriers: Option<Arc<(Barrier, Barrier)>>,
         #[allocative(skip)]
         clean_barriers: Option<Arc<(Barrier, Barrier)>>,
@@ -258,7 +260,6 @@ pub(crate) mod state_machine {
     impl DeferredMaterializerAccessor<StubIoHandler> {
         // Ensure that the command thread ends so that the command processor is dropped,
         // and the sqlite connection is flushed and closed.
-        // Needed since the default destructor assumes the process is about to die and shouldn't need to block.
         fn abort(mut self) {
             self.command_sender
                 .send(MaterializerCommand::Abort)
@@ -301,6 +302,7 @@ pub(crate) mod state_machine {
                 fail_next_invalidated_cleans: Default::default(),
                 invalidated_clean_attempts: Default::default(),
                 materialization_config: BuckMutMap::default(),
+                block_materialization: None,
                 read_dir_barriers: None,
                 clean_barriers: None,
                 digest_config: DigestConfig::testing_default(),
@@ -409,6 +411,10 @@ pub(crate) mod state_machine {
             _event_dispatcher: EventDispatcher,
             _cancellations: &CancellationContext,
         ) -> Result<(), MaterializeEntryError> {
+            if let Some(started) = &self.block_materialization {
+                started.add_permits(1);
+                futures::future::pending::<()>().await;
+            }
             // Simulate a non-immediate materialization if configured
             if let Some(duration) = self.materialization_config.get(&path) {
                 sleep(*duration).await;
@@ -643,6 +649,7 @@ pub(crate) mod state_machine {
                 CleanStaleConfig::default(),
                 None,
                 background_cleanup_gate.dupe(),
+                Arc::new(CancellationScope::new()),
             ),
             command_sender,
             command_receiver,
@@ -679,6 +686,7 @@ pub(crate) mod state_machine {
         ) = make_processor_for_io(io.dupe());
         processor.clean_stale_config = clean_stale_config.unwrap_or_default();
         let stats = processor.stats.dupe();
+        let cancellation = processor.cancellation.clone();
 
         let command_thread = thread_spawn("buck2-dm", {
             move || {
@@ -704,6 +712,8 @@ pub(crate) mod state_machine {
         (
             DeferredMaterializerAccessor {
                 command_thread: Some(command_thread),
+                cancellation,
+                runtime: Handle::current(),
                 command_sender,
                 materialize_final_artifacts: true,
                 defer_write_actions: true,
@@ -716,6 +726,81 @@ pub(crate) mod state_machine {
             },
             daemon_dispatcher_events,
         )
+    }
+
+    #[tokio::test]
+    async fn dropping_materializer_stops_worker_and_releases_io() {
+        let io = Arc::new(StubIoHandler::new(temp_root()));
+        let weak_io = Arc::downgrade(&io);
+        let (mut materializer, _events) = make_materializer(io, None).await;
+        let sender = materializer.command_sender.dupe();
+        let worker = materializer.command_thread.take().unwrap();
+        drop(materializer);
+        let mut stopped = tokio::task::spawn_blocking(move || worker.join());
+        let outcome = tokio::time::timeout(TokioDuration::from_secs(5), &mut stopped).await;
+        if outcome.is_err() {
+            let _ignored = sender.send(MaterializerCommand::Abort);
+            stopped.await.unwrap().unwrap();
+            panic!("dropping the materializer did not stop its worker");
+        }
+        outcome.unwrap().unwrap().unwrap();
+        tokio::time::timeout(TokioDuration::from_secs(5), async {
+            while weak_io.strong_count() != 0 {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap();
+        assert!(
+            weak_io.upgrade().is_none(),
+            "worker must release its I/O handler"
+        );
+    }
+
+    #[tokio::test]
+    async fn dropping_materializer_cancels_background_materialization() -> buck2_error::Result<()> {
+        let started = Arc::new(tokio::sync::Semaphore::new(0));
+        let mut io = StubIoHandler::new(temp_root());
+        io.block_materialization = Some(started.clone());
+        let io = Arc::new(io);
+        let weak_io = Arc::downgrade(&io);
+        let (mut materializer, _events) = make_materializer(io, None).await;
+        let path = make_path("cancelled/output");
+        materializer
+            .declare_write(Box::new(|| {
+                Ok(vec![WriteRequest {
+                    path: path.clone(),
+                    content: b"old".to_vec(),
+                    is_executable: false,
+                    path_kind: BuckOutPathKind::Configuration,
+                }])
+            }))
+            .await?;
+        let mut result = materializer.materialize_many(vec![path]).await?;
+        started.acquire().await.unwrap().forget();
+        let cancellation = materializer.cancellation.clone();
+        let worker = materializer.command_thread.take().unwrap();
+        drop(materializer);
+        tokio::time::timeout(TokioDuration::from_secs(5), cancellation.wait())
+            .await
+            .unwrap();
+        assert!(result.next().await.unwrap().is_err());
+        tokio::task::spawn_blocking(move || worker.join())
+            .await
+            .unwrap()
+            .unwrap();
+        tokio::time::timeout(TokioDuration::from_secs(5), async {
+            while weak_io.strong_count() != 0 {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap();
+        assert!(
+            weak_io.upgrade().is_none(),
+            "cancelled materialization must release its I/O handler"
+        );
+        Ok(())
     }
 
     fn receive_clean_result(events: &mut ChannelEventSource) -> buck2_data::CleanStaleResult {

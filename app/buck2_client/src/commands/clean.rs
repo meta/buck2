@@ -18,6 +18,7 @@ use std::time::Duration;
 use std::time::Instant;
 
 use buck2_agent_interactive::Advice;
+use buck2_cli_proto::EvictTenantRequest;
 use buck2_client_ctx::client_ctx::BuckSubcommand;
 use buck2_client_ctx::client_ctx::ClientCommandContext;
 use buck2_client_ctx::common::BuckArgMatches;
@@ -26,6 +27,8 @@ use buck2_client_ctx::common::CommonEventLogOptions;
 use buck2_client_ctx::common::target_cfg::TargetCfgUnusedOptions;
 use buck2_client_ctx::common::ui::ConsoleType;
 use buck2_client_ctx::daemon::client::BuckdLifecycleLock;
+use buck2_client_ctx::daemon::client::connect::BuckdProcessInfo;
+use buck2_client_ctx::daemon::client::connect::establish_connection_existing;
 use buck2_client_ctx::daemon::client::kill::kill_command_impl;
 use buck2_client_ctx::events_ctx::EventsCtx;
 use buck2_client_ctx::exit_result::ExitResult;
@@ -33,6 +36,8 @@ use buck2_client_ctx::final_console::FinalConsole;
 use buck2_client_ctx::startup_deadline::StartupDeadline;
 use buck2_client_ctx::subscribers::superconsole::StatefulSuperConsole;
 use buck2_common::daemon_dir::DaemonDir;
+use buck2_common::invocation_paths::TenantDiskLock;
+use buck2_core::buck2_env;
 use buck2_error::BuckErrorContext;
 use buck2_error::ErrorTag;
 use buck2_fs::error::IoError;
@@ -41,6 +46,7 @@ use buck2_fs::fs_util;
 use buck2_fs::paths::abs_norm_path::AbsNormPathBuf;
 use buck2_fs::paths::abs_path::AbsPath;
 use buck2_util::threads::directory_mutation_parallelism;
+use buck2_wrapper_common::kill::process_exists;
 use dupe::Dupe;
 use superconsole::Line;
 use superconsole::SuperConsole;
@@ -55,6 +61,8 @@ use crate::commands::clean_stale::parse_clean_stale_args;
 /// Delete generated files and caches.
 ///
 /// The command also kills the buck2 daemon.
+///
+/// With `BUCK2_SHARE_DAEMON=true`, it evicts the selected tenant from the shared daemon instead.
 #[derive(Debug, clap::Parser)]
 pub struct CleanCommand {
     #[clap(
@@ -197,6 +205,11 @@ impl CleanCommand {
     }
 }
 
+struct CleanGuard {
+    lifecycle: Option<BuckdLifecycleLock>,
+    disk_lock: Arc<TenantDiskLock>,
+}
+
 struct InnerCleanCommand {
     dry_run: bool,
     background: bool,
@@ -215,13 +228,15 @@ impl BuckSubcommand for InnerCleanCommand {
         let paths = ctx.paths()?;
         let buck_out_dir = paths.buck_out_path();
         let daemon_dir = paths.daemon_dir()?;
+        let sharing = buck2_env!("BUCK2_SHARE_DAEMON", type=bool, default=false)?;
+        let metadata_to_clean = (!sharing).then(|| daemon_dir.clone());
         let trash_dir = paths.trash_dir();
         let console = &self.common_opts.console_opts.final_console();
 
         if self.dry_run {
             return clean(
                 buck_out_dir,
-                daemon_dir,
+                metadata_to_clean,
                 trash_dir,
                 console,
                 self.common_opts.console_opts.console_type,
@@ -238,21 +253,56 @@ impl BuckSubcommand for InnerCleanCommand {
 
         // Kill the daemon and make sure a new daemon does not spin up while we're performing clean up operations
         // This will ensure we have exclusive access to the directories in question
-        let lifecycle_lock = BuckdLifecycleLock::lock_with_timeout(
-            daemon_dir.clone(),
-            StartupDeadline::duration_from_now(Duration::from_secs(10))?,
-        )
-        .await?;
-
-        kill_command_impl(&lifecycle_lock, "`buck2 clean` was invoked", false).await?;
+        let lifecycle = if sharing {
+            if daemon_dir.buckd_info().exists() {
+                match establish_connection_existing(&daemon_dir).await {
+                    Ok(client) => {
+                        client
+                            .to_connector()
+                            .with_flushing()
+                            .evict_tenant(
+                                EvictTenantRequest {
+                                    context: Some(ctx.empty_client_context(Self::COMMAND_NAME)?),
+                                },
+                                events_ctx,
+                            )
+                            .await?;
+                    }
+                    Err(error) => {
+                        let dead = BuckdProcessInfo::load(&daemon_dir)
+                            .and_then(|info| process_exists(info.pid()?))
+                            .is_ok_and(|alive| !alive);
+                        if !dead {
+                            return error.into();
+                        }
+                    }
+                }
+            }
+            None
+        } else {
+            let lock = BuckdLifecycleLock::lock_with_timeout(
+                daemon_dir.clone(),
+                StartupDeadline::duration_from_now(Duration::from_secs(10))?,
+            )
+            .await?;
+            kill_command_impl(&lock, "`buck2 clean` was invoked", false).await?;
+            Some(lock)
+        };
+        let disk_lock = TenantDiskLock::acquire(&paths.tenant_paths(), Duration::from_secs(30))
+            .await
+            .buck_error_context("Waiting for tenant disk work to drain; no files were deleted")?;
+        let guard = CleanGuard {
+            lifecycle,
+            disk_lock: Arc::new(disk_lock),
+        };
 
         clean(
             buck_out_dir,
-            daemon_dir,
+            metadata_to_clean,
             trash_dir,
             console,
             self.common_opts.console_opts.console_type,
-            Some(&lifecycle_lock),
+            Some(&guard),
             self.background,
         )
         .await
@@ -266,15 +316,15 @@ impl BuckSubcommand for InnerCleanCommand {
 
 async fn clean(
     buck_out_dir: AbsNormPathBuf,
-    daemon_dir: DaemonDir,
+    daemon_dir: Option<DaemonDir>,
     trash_dir: AbsNormPathBuf,
     console: &FinalConsole,
     console_type: ConsoleType,
     // None means "dry run".
-    lifecycle_lock: Option<&BuckdLifecycleLock>,
+    guard: Option<&CleanGuard>,
     background: bool,
 ) -> buck2_error::Result<()> {
-    let paths_to_clean = if background && lifecycle_lock.is_some() {
+    let paths_to_clean = if background && guard.is_some() {
         let trash_uuid = Uuid::new_v4();
         let trash_target = trash_dir.as_abs_path().join(trash_uuid.to_string());
 
@@ -296,10 +346,12 @@ async fn clean(
 
         // Clean the daemon_dir first
         let mut paths_to_clean = Vec::new();
-        if daemon_dir.path.exists() {
+        if let Some(daemon_dir) = &daemon_dir
+            && daemon_dir.path.exists()
+        {
             paths_to_clean.push(daemon_dir.to_string());
-            if let Some(lifecycle_lock) = lifecycle_lock {
-                lifecycle_lock.clean_daemon_dir(false)?;
+            if let Some(lock) = guard.and_then(|guard| guard.lifecycle.as_ref()) {
+                lock.clean_daemon_dir(false)?;
             }
         }
 
@@ -318,7 +370,9 @@ async fn clean(
                     .map(|path| path.display().to_string())
                     .collect::<Vec<_>>(),
             );
+            let disk_lock = guard.map(|guard| guard.disk_lock.clone());
             tokio::task::spawn_blocking(move || {
+                let _disk_lock = disk_lock;
                 clean_buck_out_with_retry(&trash_target_normalized, console_type)
             })
             .await?
@@ -333,8 +387,10 @@ async fn clean(
                 .iter()
                 .map(|path| path.display().to_string())
                 .collect::<Vec<_>>();
-            if lifecycle_lock.is_some() {
+            if let Some(guard) = guard {
+                let disk_lock = guard.disk_lock.clone();
                 tokio::task::spawn_blocking(move || {
+                    let _disk_lock = disk_lock;
                     clean_buck_out_with_retry(&buck_out_dir, console_type)
                 })
                 .await?
@@ -342,10 +398,12 @@ async fn clean(
             }
         }
 
-        if daemon_dir.path.exists() {
+        if let Some(daemon_dir) = &daemon_dir
+            && daemon_dir.path.exists()
+        {
             paths_to_clean.push(daemon_dir.to_string());
-            if let Some(lifecycle_lock) = lifecycle_lock {
-                lifecycle_lock.clean_daemon_dir(false)?;
+            if let Some(lock) = guard.and_then(|guard| guard.lifecycle.as_ref()) {
+                lock.clean_daemon_dir(false)?;
             }
         }
 

@@ -32,6 +32,8 @@ use buck2_fs::error::IoResultExt;
 use buck2_fs::fs_util;
 use derivative::Derivative;
 use dupe::Dupe;
+use futures::future::BoxFuture;
+use futures::future::FutureExt;
 use futures::stream::BoxStream;
 use futures::stream::StreamExt;
 use jiff::SignedDuration;
@@ -40,7 +42,6 @@ use tokio::sync::mpsc;
 use tokio::sync::mpsc::UnboundedSender;
 use tokio::sync::oneshot;
 use tokio::sync::oneshot::Sender;
-use tokio::task::JoinHandle;
 use tokio_stream::wrappers::UnboundedReceiverStream;
 
 use crate::materializers::deferred::ArtifactMaterializationMethod;
@@ -55,6 +56,7 @@ use crate::materializers::deferred::clean_stale::CleanScratchExtensionCommand;
 use crate::materializers::deferred::clean_stale::CleanStaleArtifactsCommand;
 use crate::materializers::deferred::clean_stale::CleanStaleArtifactsExtensionCommand;
 use crate::materializers::deferred::clean_stale::CleanStaleArtifactsExtensionCommandKind;
+use crate::materializers::deferred::command_processor::task_stopped;
 use crate::materializers::deferred::io_handler::IoHandler;
 use crate::materializers::deferred::io_handler::create_ttl_refresh;
 
@@ -245,7 +247,8 @@ impl<T: IoHandler> ExtensionCommand<T> for Fsck {
 #[derive(Derivative)]
 #[derivative(Debug)]
 struct RefreshTtls {
-    sender: Sender<Option<JoinHandle<buck2_error::Result<()>>>>,
+    #[derivative(Debug = "ignore")]
+    sender: Sender<Option<BoxFuture<'static, buck2_error::Result<()>>>>,
     min_ttl: i64,
 }
 
@@ -258,7 +261,12 @@ impl<T: IoHandler> ExtensionCommand<T> for RefreshTtls {
             SignedDuration::from_secs(self.min_ttl),
             processor.io.digest_config(),
         )
-        .map(|f| processor.spawn(&dispatcher, f));
+        .map(|f| {
+            processor
+                .spawn(&dispatcher, move |_| f.boxed())
+                .map(|result| result.unwrap_or_else(|error| Err(task_stopped(error))))
+                .boxed()
+        });
         let _ignored = self.sender.send(task);
     }
 }
@@ -407,9 +415,7 @@ impl<T: IoHandler> DeferredMaterializerAccessor<T> {
             .await
             .buck_error_context("No response from materializer")?
         {
-            task.await
-                .buck_error_context("Refresh task aborted")?
-                .buck_error_context("Refresh failed")?;
+            task.await.buck_error_context("Refresh failed")?;
         }
         Ok(())
     }

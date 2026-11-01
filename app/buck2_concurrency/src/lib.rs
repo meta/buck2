@@ -922,9 +922,13 @@ impl CoordinatorState {
 }
 
 impl AdmissionCoordinator {
-    fn new(dice: Arc<Dice>, branch: BranchId) -> Self {
+    fn new(
+        dice: Arc<Dice>,
+        branch: BranchId,
+        lifetime_guard: Option<Arc<dyn Send + Sync>>,
+    ) -> Self {
         let (sender, receiver) = mpsc::unbounded_channel();
-        let task = AdmissionCoordinatorTask::new(dice, branch, sender.downgrade());
+        let task = AdmissionCoordinatorTask::new(dice, branch, sender.downgrade(), lifetime_guard);
         #[cfg(test)]
         let active_commands = task.active_commands.dupe();
         let task = tokio::task::spawn(task.run(receiver));
@@ -1063,6 +1067,7 @@ struct AdmissionCoordinatorTask {
     blocked_waiters: BuckMutInsertionMap<CommandId, oneshot::Sender<()>>,
     #[cfg(test)]
     active_commands: Arc<AtomicUsize>,
+    _lifetime_guard: Option<Arc<dyn Send + Sync>>,
 }
 
 struct UpdateWaiter {
@@ -1076,6 +1081,7 @@ impl AdmissionCoordinatorTask {
         dice: Arc<Dice>,
         branch: BranchId,
         sender: mpsc::WeakUnboundedSender<CoordinatorMessage>,
+        lifetime_guard: Option<Arc<dyn Send + Sync>>,
     ) -> Self {
         Self {
             data: CoordinatorState {
@@ -1087,6 +1093,7 @@ impl AdmissionCoordinatorTask {
                 previously_tainted: false,
             },
             dice,
+            _lifetime_guard: lifetime_guard,
             sender,
             branch,
             update_in_flight: None,
@@ -1512,8 +1519,17 @@ impl ExclusiveCommandLock {
 impl ConcurrencyHandler {
     /// A handler whose commands run on `branch`.
     pub fn new(dice: Arc<Dice>, branch: BranchId) -> Arc<Self> {
+        Self::new_with_lifetime_guard(dice, branch, None)
+    }
+
+    /// Retains disk ownership until the admission task and its DICE handle have shut down.
+    pub fn new_with_lifetime_guard(
+        dice: Arc<Dice>,
+        branch: BranchId,
+        lifetime_guard: Option<Arc<dyn Send + Sync>>,
+    ) -> Arc<Self> {
         Arc::new(ConcurrencyHandler {
-            coordinator: AdmissionCoordinator::new(dice.dupe(), branch),
+            coordinator: AdmissionCoordinator::new(dice.dupe(), branch, lifetime_guard),
             dice,
             exclusive_command_lock: ExclusiveCommandLock::new(),
             next_command_id: AtomicUsize::new(0),
@@ -2787,7 +2803,7 @@ mod tests {
             updater.commit().await.version()
         };
         let (sender, receiver) = mpsc::unbounded_channel();
-        let task = AdmissionCoordinatorTask::new(dice, root, sender.downgrade());
+        let task = AdmissionCoordinatorTask::new(dice, root, sender.downgrade(), None);
         let active_commands = task.active_commands.dupe();
         let task = tokio::spawn(task.run(receiver));
         let coordinator = AdmissionCoordinator {

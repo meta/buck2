@@ -58,6 +58,7 @@ load(
     "LeanModulesValue",
     "LeanToolchainInfo",
 )
+load(":transition.bzl", "lean_transition")
 
 def lean_module_name(src: Artifact, package: str, root: str) -> str:
     """The module name of `src`: its path below `root`, with `.` for `/`."""
@@ -417,4 +418,5 @@ lean_library = rule(
             doc = "Link all objects of the library into binaries. The `lean` compiler needs this for the core library, because its interpreter finds native code with `dlsym`.",
         ),
     },
+    cfg = lean_transition,
 )

@@ -30,6 +30,7 @@ load("@prelude//os_lookup:defs.bzl", "Os", "OsLookup")
 load("@prelude//tests:re_utils.bzl", "get_re_executors_from_props")
 load(":library.bzl", "compile_lean_library", "lean_library_attrs")
 load(":providers.bzl", "LeanToolchainInfo")
+load(":transition.bzl", "lean_transition")
 
 def _executable_name(ctx: AnalysisContext, cxx: CxxToolchainInfo) -> str:
     """The output name: the target name, with the extension of the cxx
@@ -107,6 +108,7 @@ _binary_attrs = lean_library_attrs | {
 lean_binary = rule(
     impl = _lean_binary_impl,
     attrs = _binary_attrs,
+    cfg = lean_transition,
 )
 
 lean_test = rule(
@@ -118,4 +120,5 @@ lean_test = rule(
         "env": attrs.dict(key = attrs.string(), value = attrs.arg(), sorted = False, default = {}, doc = "Environment of the test binary."),
     }
     | re_test_common.test_args(),
+    cfg = lean_transition,
 )

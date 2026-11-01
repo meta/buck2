@@ -40,16 +40,35 @@ repository's tenants instead of killing processes. Incompatible startup
 settings or binaries are reported without restarting the daemon; stop the
 affected daemon's tenants explicitly before changing these settings.
 
+To also share across checkouts, set `BUCK2_DAEMON_GROUP` to the same name in
+each checkout. A group name must be a single valid filename component. Each
+tenant still uses its own checkout's files, configuration and outputs, so
+checkouts may stay on different commits.
+
+Daemon groups require compatible startup configuration and binary versions.
+An incompatible invocation fails without restarting the group's daemon.
+Use different group names for A/B instances with different startup settings,
+or evict all tenants in a group before changing those settings.
+
 `[buck2] share_dice = false` (the default) creates a separate DICE engine for
 each tenant. Setting it to `true` shares one engine within the daemon. Each
-tenant keeps its own isolated root, repository data, and command coordinator.
+tenant keeps its own root, repository data, and command coordinator.
+Matching tracked inputs allow results to be reused across tenant roots. File
+reads depend on the watcher's filesystem baseline: EdenFS and scm-aware
+Watchman can use a shared mergebase when they have recorded the checkout's
+differences from it; watchers without that guarantee use a unique baseline.
+Artifact filesystem state also identifies the checkout's project root.
 
 The client selects this setting at daemon startup. It is part of the daemon
-configuration checked on connection, so changing it selects a new daemon
-rather than changing the ownership of live graphs. Command event logs include
+configuration checked on connection. Changing it restarts an unshared daemon.
+A shared daemon reports the mismatch instead of restarting, so stop its tenants
+with `buck2 killall --repo` first; for a named group, choose a new group or
+evict its existing tenants.
+Command event logs include
 a `dice-sharing:true` or `dice-sharing:false` tag.
 
-Shared engines require compatible cycle detection and paging settings. Paging
+Cycle detection is always enabled in both modes. Shared engines require
+compatible paging, digest configuration, and Buck settings. Paging
 uses the initial tenant's DICE storage path for the lifetime of the daemon.
 Evicting a tenant releases its roots after admitted commands finish; other
 tenants keep running on the shared engine.

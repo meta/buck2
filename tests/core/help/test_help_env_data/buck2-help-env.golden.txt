@@ -4,6 +4,7 @@ Name                             Type                  Default
 BUCK2_ARG0                       String
 BUCK2_CLIENT_METADATA            String
 BUCK2_CONSOLE_OUTPUT_LIMIT       u64
+BUCK2_DAEMON_GROUP               String
 BUCK2_DEBUG_RAWOUTPUT_CHUNK_SIZE usize
 BUCK2_DICE_DUMP_ON_PANIC         bool                  false
 BUCK2_DICE_SNAPSHOT_INTERVAL_MS  u64                   500

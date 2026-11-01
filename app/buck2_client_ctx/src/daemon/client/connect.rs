@@ -938,6 +938,14 @@ async fn establish_connection_inner(
                             Err(reason) => reason,
                         };
 
+                        if let Some(group) = paths.shared_daemon_group()? {
+                            return Err(BuckdConnectError::GroupConstraintMismatch {
+                                group: group.to_string(),
+                                reason,
+                            }
+                            .into());
+                        }
+
                         if is_nested_invocation(
                             get_possibly_nested_invocation_daemon_uuid().as_ref(),
                             &client.constraints,
@@ -1360,6 +1368,14 @@ enum BuckdConnectError {
     #[error("buck2 daemon constraint mismatch during nested invocation: {reason}")]
     #[buck2(tag = DaemonNestedConstraintsMismatch)]
     NestedConstraintMismatch { reason: ConstraintUnsatisfiedReason },
+    #[error(
+        "buck2 daemon group `{group}` has incompatible constraints: {reason}. Choose a different BUCK2_DAEMON_GROUP or stop the existing group's tenants before changing its daemon configuration."
+    )]
+    #[buck2(tag = Input)]
+    GroupConstraintMismatch {
+        group: String,
+        reason: ConstraintUnsatisfiedReason,
+    },
     #[error("buckd info {path} does not exist")]
     #[buck2(tag = BuckdInfoMissing)]
     BuckdInfoMissing { path: AbsNormPathBuf },

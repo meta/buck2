@@ -18,6 +18,7 @@ import json
 import os
 import platform
 import re
+import shutil
 import sqlite3
 import subprocess
 import sys
@@ -1423,6 +1424,165 @@ class DaemonTest(BuckTestCase):
         finally:
             await tenant_one.kill()
             await tenant_two.kill()
+        await _assert_daemon_exits(daemon_pid)
+
+    @buck_test(skip_for_os=["windows"])
+    @parametrize("share_dice", [False, True])
+    @parametrize("same_commit", [False, True])
+    @env("BUCK2_SHARE_DAEMON", "true")
+    async def test_checkouts_share_daemon(
+        self, buck: Buck, tmp_path: Path, share_dice: bool, same_commit: bool
+    ) -> None:
+        source = tmp_path / "source"
+        source.mkdir()
+        for name in [".buckconfig", "TARGETS.fixture", "defs.bzl", "paths.bxl"]:
+            shutil.copyfile(buck.cwd / name, source / name)
+        (source / ".buckroot").touch()
+        startup_config = source / ".buckconfig"
+        startup_config.write_text(
+            startup_config.read_text()
+            + f"\n[buck2]\nshare_dice = {str(share_dice).lower()}\n"
+            + "file_watcher = fs_hash_crawler\n"
+        )
+        targets = source / "TARGETS.fixture"
+        template = targets.read_text()
+
+        def hg(cwd: Path, *args: str) -> str:
+            return subprocess.run(
+                ["hg", *args], cwd=cwd, check=True, stdout=subprocess.PIPE, text=True
+            ).stdout.strip()
+
+        hg(source, "init")
+        revisions = []
+        for value in ["commit-one", "commit-two"]:
+            targets.write_text(
+                template.replace(
+                    'read_config("tenant", "value", "unset")', f'"{value}"'
+                )
+            )
+            if not revisions:
+                hg(
+                    source,
+                    "add",
+                    ".buckconfig",
+                    ".buckroot",
+                    "TARGETS.fixture",
+                    "defs.bzl",
+                    "paths.bxl",
+                )
+            hg(source, "commit", "-m", value, "-u", "Buck2 E2E")
+            revisions.append(hg(source, "log", "-r", ".", "-T", "{node}"))
+        assert revisions[0] != revisions[1]
+        revisions[1] = revisions[0] if same_commit else revisions[1]
+        values = ["commit-one", "commit-one" if same_commit else "commit-two"]
+
+        tenants = []
+        for name, revision in zip(["checkout-one", "checkout-two"], revisions):
+            checkout = tmp_path / name
+            hg(source, "clone", "--updaterev", revision, str(source), str(checkout))
+            assert hg(checkout, "log", "-r", ".", "-T", "{node}") == revision
+            assert not hg(
+                checkout, "status", "--modified", "--added", "--removed", "--deleted"
+            )
+            tenants.append(
+                Buck(
+                    buck.path_to_executable,
+                    encoding=buck.encoding,
+                    env={
+                        **buck._env,
+                        "BUCK2_TEST_HOME_DIR": str(tmp_path / "home"),
+                        "BUCK2_DAEMON_GROUP": "different-commits",
+                    },
+                    cwd=checkout,
+                    isolation_prefix="checkout",
+                )
+            )
+        tenant_one, tenant_two = tenants
+
+        async def build_value(tenant: Buck) -> Path:
+            result = await tenant.build("//:tenant_value")
+            return result.get_build_report().output_for_target("//:tenant_value")
+
+        try:
+            outputs = []
+            for tenant, value in zip(tenants, values):
+                output = await build_value(tenant)
+                assert output.read_text() == value
+                assert output.is_relative_to(tenant.cwd)
+                outputs.append(output)
+            assert outputs[0] != outputs[1]
+            daemon_pid = json.loads((await tenant_one.status()).stdout)["process_info"][
+                "pid"
+            ]
+            assert (
+                json.loads((await tenant_two.status()).stdout)["process_info"]["pid"]
+                == daemon_pid
+            )
+            await _assert_tenant_dice_graphs(
+                tenant_one, tenant_two, tmp_path, share_dice
+            )
+
+            await _assert_tenant_cached_paths(tenants)
+
+            startup_config = tenant_two.cwd / ".buckconfig"
+            original_config = startup_config.read_text()
+            startup_config.write_text(
+                original_config
+                + f"\n[buck2]\nshare_dice = {str(not share_dice).lower()}\n"
+            )
+            other_group = Buck(
+                buck.path_to_executable,
+                encoding=buck.encoding,
+                env={**tenant_two._env, "BUCK2_DAEMON_GROUP": "other-mode"},
+                cwd=tenant_two.cwd,
+                isolation_prefix="other-mode",
+            )
+            try:
+                await expect_failure(
+                    tenant_two.build("//:tenant_value"),
+                    stderr_regex="daemon group .* has incompatible constraints",
+                )
+                assert (await build_value(other_group)).read_text() == values[1]
+                assert (
+                    json.loads((await other_group.status()).stdout)["process_info"][
+                        "pid"
+                    ]
+                    != daemon_pid
+                )
+            finally:
+                await other_group.kill()
+                startup_config.write_text(original_config)
+            assert (
+                json.loads((await tenant_one.status()).stdout)["process_info"]["pid"]
+                == daemon_pid
+            )
+
+            for tenant, value in zip(tenants, values):
+                assert (await build_value(tenant)).read_text() == value
+            await tenant_one.kill()
+            assert (await build_value(tenant_two)).read_text() == values[1]
+            assert (
+                json.loads((await tenant_two.status()).stdout)["process_info"]["pid"]
+                == daemon_pid
+            )
+            assert (await build_value(tenant_one)).read_text() == "commit-one"
+            assert (
+                json.loads((await tenant_one.status()).stdout)["process_info"]["pid"]
+                == daemon_pid
+            )
+            for tenant, revision in zip(tenants, revisions):
+                assert hg(tenant.cwd, "log", "-r", ".", "-T", "{node}") == revision
+                assert not hg(
+                    tenant.cwd,
+                    "status",
+                    "--modified",
+                    "--added",
+                    "--removed",
+                    "--deleted",
+                )
+        finally:
+            for tenant in tenants:
+                await tenant.kill()
         await _assert_daemon_exits(daemon_pid)
 
 

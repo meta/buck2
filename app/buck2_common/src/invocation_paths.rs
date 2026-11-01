@@ -43,7 +43,8 @@ pub struct InvocationPaths {
     /// same project root.
     ///
     /// With `BUCK2_SHARE_DAEMON=true`, daemon metadata is shared across isolation directories for
-    /// the same project. The tenant's buck-out remains `<projectroot>/buck-out/<isolationdir>/`.
+    /// the same project. `BUCK2_DAEMON_GROUP` also shares metadata across project roots in that
+    /// group. The tenant's buck-out remains `<projectroot>/buck-out/<isolationdir>/`.
     ///
     /// Any tenant-specific on-disk state from the daemon (including build outputs and similar)
     /// should only be written or read from directories that include this component.
@@ -306,6 +307,16 @@ impl InvocationPaths {
     }
 
     pub fn daemon_dir(&self) -> buck2_error::Result<DaemonDir> {
+        if let Some(group) = self.shared_daemon_group()? {
+            return Ok(DaemonDir {
+                path: self
+                    .roots
+                    .common_buckd_dir()?
+                    .join(FileName::unchecked_new(".groups"))
+                    .join(group)
+                    .join(FileName::unchecked_new(DEFAULT_ISOLATION_DIR)),
+            });
+        }
         let isolation = if buck2_env!("BUCK2_SHARE_DAEMON", type=bool, default=false)? {
             FileName::unchecked_new("._buck2_shared")
         } else {
@@ -314,6 +325,17 @@ impl InvocationPaths {
         Ok(DaemonDir {
             path: self.project_daemon_dir()?.path.join(isolation),
         })
+    }
+
+    pub fn shared_daemon_group(&self) -> buck2_error::Result<Option<FileNameBuf>> {
+        // Groups only exist among shared daemons; without sharing the variable is ignored.
+        if !buck2_env!("BUCK2_SHARE_DAEMON", type=bool, default=false)? {
+            return Ok(None);
+        }
+        let Some(group) = buck2_env!("BUCK2_DAEMON_GROUP")? else {
+            return Ok(None);
+        };
+        Ok(Some(FileName::new(group)?.to_owned()))
     }
 
     pub fn project_root(&self) -> &ProjectRoot {

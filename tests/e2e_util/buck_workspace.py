@@ -85,6 +85,7 @@ async def buck_fixture(  # noqa C901 : "too complex"
 
     env: Dict[str, str] = {**os.environ}
     env["BUCK2_SHARE_DAEMON"] = "false"
+    env.pop("BUCK2_DAEMON_GROUP", None)
     # This is necessary for static linking on Linux.
     if platform.system() != "Windows":
         env["BUCKD_STARTUP_TIMEOUT"] = "120"

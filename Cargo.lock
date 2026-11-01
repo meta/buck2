@@ -2045,7 +2045,6 @@ dependencies = [
  "tempfile",
  "test-case",
  "tokio",
- "toml",
  "tonic",
  "tower",
  "tracing",

@@ -72,7 +72,6 @@ rust_library(
         "fbsource//third-party/rust:strsim",
         "fbsource//third-party/rust:tempfile",
         "fbsource//third-party/rust:tokio",
-        "fbsource//third-party/rust:toml",
         "fbsource//third-party/rust:tonic",
         "fbsource//third-party/rust:tracing",
         "fbsource//third-party/rust:triomphe",

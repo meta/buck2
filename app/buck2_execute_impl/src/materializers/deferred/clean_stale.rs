@@ -64,7 +64,6 @@ use crate::materializers::deferred::ArtifactMaterializationStage;
 use crate::materializers::deferred::DeferredMaterializerCommandProcessor;
 use crate::materializers::deferred::DeferredMaterializerStats;
 use crate::materializers::deferred::LowPriorityMaterializerCommand;
-use crate::materializers::deferred::MaterializerCommand;
 use crate::materializers::deferred::MaterializerSender;
 use crate::materializers::deferred::MaterializerSizeStats;
 use crate::materializers::deferred::SharedMaterializingError;
@@ -526,7 +525,7 @@ impl<T: IoHandler> ExtensionCommand<T> for CleanStaleArtifactsExtensionCommand {
 
 #[derive(Derivative)]
 #[derivative(Debug)]
-struct FinishUnmaterializationUpload {
+pub(super) struct FinishUnmaterializationUpload {
     upload: UnmaterializationUpload,
     info: Arc<CasDownloadInfo>,
     #[derivative(Debug = "ignore")]
@@ -535,14 +534,17 @@ struct FinishUnmaterializationUpload {
     sender: Sender<buck2_error::Result<Option<UnmaterializationIneligibleArtifact>>>,
 }
 
-impl<T: IoHandler> ExtensionCommand<T> for FinishUnmaterializationUpload {
-    fn execute(self: Box<Self>, processor: &mut DeferredMaterializerCommandProcessor<T>) {
+impl FinishUnmaterializationUpload {
+    pub(super) fn execute<T: IoHandler>(
+        self,
+        processor: &mut DeferredMaterializerCommandProcessor<T>,
+    ) {
         let Self {
             upload,
             info,
             cleaning_fut,
             sender,
-        } = *self;
+        } = self;
         let result = processor
             .sqlite_db
             .as_mut()
@@ -1354,18 +1356,23 @@ fn create_clean_fut<T: IoHandler>(
                 .boxed()
                 .shared();
                 let (finish_sender, finish_receiver) = tokio::sync::oneshot::channel();
-                if let Err(error) = command_sender.send(MaterializerCommand::Extension(
-                    Box::new(FinishUnmaterializationUpload {
-                        upload,
-                        info,
-                        cleaning_fut: attached_fut,
-                        sender: finish_sender,
-                    }),
-                    get_dispatcher_opt(),
-                )) {
+                if !command_sender.send_low_priority(
+                    LowPriorityMaterializerCommand::FinishUnmaterializationUpload {
+                        command: FinishUnmaterializationUpload {
+                            upload,
+                            info,
+                            cleaning_fut: attached_fut,
+                            sender: finish_sender,
+                        },
+                        dispatcher: get_dispatcher_opt(),
+                    },
+                ) {
                     return CleanPathOutcome::Failed {
                         size,
-                        error: error.into(),
+                        error: buck2_error!(
+                            ErrorTag::Tier0,
+                            "Materializer command processor stopped during unmaterialization"
+                        ),
                     };
                 }
                 match finish_receiver.await {

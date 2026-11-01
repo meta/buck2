@@ -14,11 +14,9 @@ from buck2.tests.e2e_util.helper.utils import filter_events, read_what_ran
 
 
 async def unmaterialize_payload(buck: Buck, payload: Path) -> None:
-    # Clean-stale should handle the local-only payload in three steps: upload
-    # it to CAS, record it as "declared: cas download", then delete the local
-    # copy. Currently the run treats its own upload finishing as outside
-    # activity and interrupts itself after the second step, so the local copy
-    # is never deleted.
+    # Clean-stale handles the local-only payload in three steps: upload it to
+    # CAS, record it as "declared: cas download", then delete the local copy.
+    # The run's own upload finishing must not interrupt it.
     await buck.clean("--stale")
     results = await filter_events(
         buck, "Event", "data", "Instant", "data", "CleanStaleResult"
@@ -26,13 +24,14 @@ async def unmaterialize_payload(buck: Buck, payload: Path) -> None:
     assert len(results) == 1, results
     assert results[0]["error"] is None, results
     stats = results[0]["stats"]
-    # The delete counts as interrupted, the upload is not counted as succeeded
-    # (that counter needs the delete to finish), and the payload stays on disk.
+    # An interrupted run would already have uploaded and declared the payload,
+    # so the audit check below would still pass; these stats and the deletion
+    # check are what catch it.
     assert stats["unmaterialization_upload_attempted_artifact_count"] == 1, stats
-    assert stats["delete_interrupted_artifact_count"] == 1, stats
-    assert stats["unmaterialization_upload_succeeded_artifact_count"] == 0, stats
-    assert stats["unmaterialized_only_artifact_count"] == 0, stats
-    assert payload.exists()
+    assert stats["delete_interrupted_artifact_count"] == 0, stats
+    assert stats["unmaterialization_upload_succeeded_artifact_count"] == 1, stats
+    assert stats["unmaterialized_only_artifact_count"] == 1, stats
+    assert not payload.exists()
     audit = (await buck.audit("deferred-materializer", "list")).stdout
     assert "declared: cas download" in audit, audit
 
@@ -65,12 +64,10 @@ class CleanupUploadTest(BuckTestCase):
             await unmaterialize_payload(buck, payload)
 
         # Without cleanup, the second build reads the payload already on disk.
-        # With cleanup, the interrupted run left the payload on disk, but buck2
-        # already tracks it as "download from CAS" instead of "on disk". So the
-        # second build throws away the leftover local copy and downloads the
-        # payload from CAS again (the `Materialization` check below). Either
-        # way `write_payload` does not run again: the only command is the
-        # `root//:after` consumer.
+        # With cleanup, the local copy was deleted and buck2 tracks the payload
+        # as "download from CAS", so the second build downloads it from CAS
+        # (the `Materialization` check below). Either way `write_payload` does
+        # not run again: the only command is the `root//:after` consumer.
         after = await buck.build("root//:after", "--no-remote-cache")
         output = after.get_build_report().output_for_target("root//:after")
         assert output.read_text() == "payload"

@@ -42,12 +42,11 @@ pub struct InvocationPaths {
     /// a tenant's on-disk state. This allows multiple isolated tenants to use the
     /// same project root.
     ///
-    /// The legacy per-repo daemon metadata directory is post-fixed with the isolation prefix
-    /// (i.e `$HOME/.buck/buckd/<projectroot>/<isolationdir>`).
-    /// The buck-out is `<projectroot>/buck-out/<isolationdir>/`
+    /// With `BUCK2_SHARE_DAEMON=true`, daemon metadata is shared across isolation directories for
+    /// the same project. The tenant's buck-out remains `<projectroot>/buck-out/<isolationdir>/`.
     ///
-    /// Any on-disk state from the daemon (including build outputs and similar) should only
-    /// be written or read from directories that include this component.
+    /// Any tenant-specific on-disk state from the daemon (including build outputs and similar)
+    /// should only be written or read from directories that include this component.
     ///
     /// This form of isolation is currently supported primarily for two uses:
     ///
@@ -307,8 +306,13 @@ impl InvocationPaths {
     }
 
     pub fn daemon_dir(&self) -> buck2_error::Result<DaemonDir> {
+        let isolation = if buck2_env!("BUCK2_SHARE_DAEMON", type=bool, default=false)? {
+            FileName::unchecked_new("._buck2_shared")
+        } else {
+            &self.isolation
+        };
         Ok(DaemonDir {
-            path: self.project_daemon_dir()?.path.join(&self.isolation),
+            path: self.project_daemon_dir()?.path.join(isolation),
         })
     }
 
@@ -544,6 +548,16 @@ mod tests {
             .join(ForwardRelativePath::unchecked_new(expected_path))
             .as_os_str()
         );
+
+        let other_paths = InvocationPaths {
+            roots: paths.roots.clone(),
+            isolation: FileNameBuf::unchecked_new("other-isolation"),
+        };
+        assert_ne!(
+            paths.daemon_dir().unwrap().path,
+            other_paths.daemon_dir().unwrap().path,
+        );
+        assert_ne!(paths.buck_out_path(), other_paths.buck_out_path());
 
         let expected_path = if cfg!(windows) {
             "C:\\my\\project"

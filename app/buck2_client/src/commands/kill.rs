@@ -18,6 +18,7 @@ use buck2_client_ctx::common::CommonEventLogOptions;
 use buck2_client_ctx::daemon::client::BuckdLifecycleLock;
 use buck2_client_ctx::daemon::client::connect::BuckdConnectOptions;
 use buck2_client_ctx::daemon::client::connect::connect_buckd;
+use buck2_client_ctx::daemon::client::connect::shared_daemon_is_inactive;
 use buck2_client_ctx::daemon::client::kill::kill_command_impl;
 use buck2_client_ctx::events_ctx::EventsCtx;
 use buck2_client_ctx::exit_result::ExitResult;
@@ -88,19 +89,17 @@ impl BuckSubcommand for KillCommand {
                 }
                 ExitResult::success()
             }
-            Err(_) => {
-                let lifecycle_lock = BuckdLifecycleLock::lock_with_timeout(
-                    daemon_dir,
+            Err(error) => {
+                let _lifecycle_lock = BuckdLifecycleLock::lock_with_timeout(
+                    daemon_dir.clone(),
                     StartupDeadline::duration_from_now(Duration::from_secs(10))?,
                 )
                 .await?;
-                kill_command_impl(
-                    &lifecycle_lock,
-                    "`buck kill` was invoked after the daemon could not be contacted",
-                    false,
-                )
-                .await
-                .into()
+                if !shared_daemon_is_inactive(&daemon_dir).await? {
+                    return error.into();
+                }
+                buck2_client_ctx::eprintln!("no buckd server running")?;
+                ExitResult::success()
             }
         }
     }

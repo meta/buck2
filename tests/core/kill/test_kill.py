@@ -36,6 +36,7 @@ _BUCK_TEST_DECORATOR = buck_test(
 class KillTest(BuckTestCase):
     @_BUCK_TEST_DECORATOR
     @env("BUCK2_TEST_FAIL_BUCKD_AUTH", "true")
+    @env("BUCK2_SHARE_DAEMON", "false")
     async def test_kill_error(self, buck: Buck) -> None:
         # Performing a build should fail, since we will not be able to authenticate to the
         # buck daemon

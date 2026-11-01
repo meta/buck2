@@ -14,8 +14,8 @@ use buck2_client_ctx::client_ctx::BuckSubcommand;
 use buck2_client_ctx::client_ctx::ClientCommandContext;
 use buck2_client_ctx::common::BuckArgMatches;
 use buck2_client_ctx::common::CommonEventLogOptions;
-use buck2_client_ctx::daemon::client::connect::BuckdProcessInfo;
 use buck2_client_ctx::daemon::client::connect::establish_connection_existing;
+use buck2_client_ctx::daemon::client::connect::shared_daemon_is_inactive;
 use buck2_client_ctx::events_ctx::EventsCtx;
 use buck2_client_ctx::exit_result::ExitResult;
 use buck2_common::daemon_dir::DaemonDir;
@@ -26,7 +26,6 @@ use buck2_error::conversion::from_any_with_tag;
 use buck2_fs::fs_util::uncategorized as fs_util;
 use buck2_wrapper_common::KillallFilter;
 use buck2_wrapper_common::is_buck2::WhoIsAsking;
-use buck2_wrapper_common::kill::process_exists;
 use dupe::Dupe;
 use walkdir::WalkDir;
 
@@ -161,16 +160,24 @@ impl KillallCommand {
                 let client = match establish_connection_existing(&dir).await {
                     Ok(client) => client,
                     Err(error) => {
-                        let dead = BuckdProcessInfo::load(&dir)
-                            .and_then(|info| process_exists(info.pid()?))
-                            .is_ok_and(|alive| !alive);
-                        if !dead {
-                            failures += 1;
-                            buck2_client_ctx::eprintln!(
-                                "Failed to contact daemon `{}`: {:#}",
-                                dir,
-                                error
-                            )?;
+                        match shared_daemon_is_inactive(&dir).await {
+                            Ok(true) => {}
+                            Ok(false) => {
+                                failures += 1;
+                                buck2_client_ctx::eprintln!(
+                                    "Failed to contact daemon `{}`: {:#}",
+                                    dir,
+                                    error
+                                )?;
+                            }
+                            Err(inactive_error) => {
+                                failures += 1;
+                                buck2_client_ctx::eprintln!(
+                                    "Cannot inspect daemon `{}`: {:#}",
+                                    dir,
+                                    inactive_error
+                                )?;
+                            }
                         }
                         continue;
                     }

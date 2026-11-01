@@ -43,6 +43,7 @@ use buck2_error::ErrorTag;
 use buck2_error::buck2_error;
 use buck2_error::conversion::from_any_with_tag;
 use buck2_events::daemon_id::DaemonId;
+use buck2_fs::error::IoResultExt;
 use buck2_fs::fs_util;
 use buck2_fs::paths::abs_norm_path::AbsNormPathBuf;
 use buck2_resource_control::spawn_daemon::create_daemon_spawn_command;
@@ -408,7 +409,15 @@ impl<'a> BuckdLifecycle<'a> {
         })
     }
 
-    fn clean_daemon_dir(&self) -> buck2_error::Result<()> {
+    async fn clean_daemon_dir(&self) -> buck2_error::Result<()> {
+        if buck2_env!("BUCK2_SHARE_DAEMON", type=bool, default=false)?
+            && !shared_daemon_is_inactive(self.lock.daemon_dir()).await?
+        {
+            return Err(buck2_error!(
+                ErrorTag::Input,
+                "Cannot verify shared daemon inactivity; no metadata was changed. Restore consistent buckd.info and buckd.pid before retrying."
+            ));
+        }
         self.lock
             .clean_daemon_dir(true)
             .buck_error_context("Cleaning daemon dir")
@@ -819,6 +828,34 @@ pub async fn establish_connection_existing(
         .await
 }
 
+/// Checks for an empty daemon directory or consistent metadata naming an exited process.
+/// Hold lifecycle coordination when using the result to change daemon state.
+pub async fn shared_daemon_is_inactive(daemon_dir: &DaemonDir) -> buck2_error::Result<bool> {
+    let daemon_dir = daemon_dir.clone();
+    tokio::task::spawn_blocking(move || -> buck2_error::Result<bool> {
+        let Some(info) = BuckdProcessInfo::load_if_exists(&daemon_dir)? else {
+            return Ok(![
+                daemon_dir.buckd_pid(),
+                daemon_dir.buckd_stdout(),
+                daemon_dir.buckd_stderr(),
+                daemon_dir.buckd_error_log(),
+            ]
+            .iter()
+            .any(|path| path.exists()));
+        };
+        let pid = info.pid()?;
+        let recorded_pid: u32 = fs_util::read_to_string(daemon_dir.buckd_pid())
+            .categorize_internal()?
+            .trim()
+            .parse()?;
+        Ok(recorded_pid == pid.to_u32() && !process_exists(pid)?)
+    })
+    .await?
+    .buck_error_context(
+        "Cannot verify shared daemon inactivity; restore consistent buckd.info and buckd.pid before retrying",
+    )
+}
+
 async fn establish_connection(
     paths: &InvocationPaths,
     options: &BuckdConnectDaemonOptions,
@@ -918,6 +955,13 @@ async fn establish_connection_inner(
                             }
                         }
 
+                        if buck2_env!("BUCK2_SHARE_DAEMON", type=bool, default=false)? {
+                            return Err(buck2_error!(
+                                ErrorTag::Input,
+                                "Shared daemon constraint mismatch: {reason}. Stop its tenants with `buck2 killall --repo` before changing daemon startup settings or binaries."
+                            ));
+                        }
+
                         let message = match reason {
                             ConstraintUnsatisfiedReason::BuckSettings { .. } => {
                                 format!("{reason}; restarting daemon...")
@@ -940,15 +984,15 @@ async fn establish_connection_inner(
                         reason.to_daemon_was_started_reason()
                     }
                     Err(reason) => {
-                        events_ctx
-                            .eprintln(&format!(
-                                "Could not connect to buck2 daemon ({}), killing daemon..",
+                        if buck2_env!("BUCK2_SHARE_DAEMON", type=bool, default=false)?
+                            && process_exists(buckd_info.pid()?)?
+                        {
+                            return Err(buck2_error!(
+                                ErrorTag::Input,
+                                "Shared daemon is alive but could not be contacted: {}. No daemon was killed.",
                                 explain_failed_to_connect_reason(reason)
-                            ))
-                            .await?;
-
-                        // The recorded daemon is unusable either way, so start a new one rather
-                        // than leaving buckd.info in place for the next invocation to trip over.
+                            ));
+                        }
                         //
                         // This kill can fail with EPERM when the recorded pid belongs to another
                         // uid, or was recorded inside a pid namespace and resolves to an unrelated
@@ -960,13 +1004,21 @@ async fn establish_connection_inner(
                         // cmdline) before signalling, and any gap in that check is a
                         // cross-user kill primitive. Until that is designed carefully, we accept
                         // that these daemons cannot be removed from here.
-                        if let Err(error) = hard_kill_until(&buckd_info.info, &deadline).await {
+                        if !buck2_env!("BUCK2_SHARE_DAEMON", type=bool, default=false)? {
                             events_ctx
                                 .eprintln(&format!(
-                                    "{}",
-                                    BuckdConnectError::DaemonKillFailed { error }
+                                    "Could not connect to buck2 daemon ({}), killing daemon..",
+                                    explain_failed_to_connect_reason(reason)
                                 ))
                                 .await?;
+                            if let Err(error) = hard_kill_until(&buckd_info.info, &deadline).await {
+                                events_ctx
+                                    .eprintln(&format!(
+                                        "{}",
+                                        BuckdConnectError::DaemonKillFailed { error }
+                                    ))
+                                    .await?;
+                            }
                         }
 
                         reason
@@ -1029,7 +1081,7 @@ async fn start_new_buckd_and_connect(
     let constraints = &options.constraints;
 
     // Daemon dir may be corrupted. Safer to delete it.
-    lifecycle_lock.clean_daemon_dir()?;
+    lifecycle_lock.clean_daemon_dir().await?;
 
     // A previous daemon of this isolation directory may still be releasing its outputs, and the
     // new daemon cannot start until it has. A running `buck2 clean` holds the lifecycle lock, so
@@ -1379,6 +1431,14 @@ async fn daemon_connect_error(
 
         classify_server_stderr(error, &stderr, disk_near_full)
     };
+    if matches!(
+        buck2_env!("BUCK2_SHARE_DAEMON", type=bool, default=false),
+        Ok(true)
+    ) {
+        return error.context(
+            "Failed to connect to shared buck daemon. Restore consistent buckd.info and buckd.pid before retrying if metadata is damaged.",
+        );
+    }
     let delete_command = if cfg!(windows) {
         "rmdir /s /q %USERPROFILE%\\.buck\\buckd"
     } else {

@@ -18,6 +18,18 @@ The isolation directory serves as a fundamental boundary that:
 - Provides independent build environments with no shared state
 - Allows multiple Buck2 commands to run in parallel
 
+## Daemon Sharing
+
+Daemon sharing is opt-in with `BUCK2_SHARE_DAEMON=true`. Isolation directories
+in the same project then become tenants of one daemon, with independent output
+and cache paths. The default `false` mode keeps separate daemons.
+
+In that mode `buck2 clean` evicts the selected tenant and waits for its disk
+work to finish before deleting its outputs and caches, and `buck2 kill` evicts
+the tenant rather than stopping the process. Sibling tenants remain running and
+the daemon shuts down after its final tenant is evicted. Conflicting routing
+modes cannot own the same tenant disk state simultaneously.
+
 ## How Isolation Directories Work
 
 ### Physical Structure

@@ -30,6 +30,29 @@ daemon from starting over the same daemon directory. Exclusivity relies on the
 client-side lifecycle lock described below, plus the periodic self-check in
 point 2 here.
 
+With `BUCK2_SHARE_DAEMON=true`, isolation directories within a repository share
+the reserved `._buck2_shared` daemon directory and retain separate output and
+cache state.
+
+Sharing is opt-in during initial rollout. Set `BUCK2_SHARE_DAEMON=true` for
+selected callers; unset it or set it to `false` to restore separate daemon
+directories. Inplace tests and `buck2.py` disable sharing so their local
+binary does not replace the daemon running the outer build or test command.
+Clients check the daemon executable version and startup settings before reuse.
+A mismatch or a failed connection to a live shared daemon is reported without
+killing sibling tenants. Stop the tenants with `buck2 killall --repo` before
+changing daemon settings or binaries. Unshared daemons retain restart recovery.
+
+Tenant disk ownership uses a persistent OS file lock independent of daemon
+routing. A conflicting daemon cannot initialize the same tenant output and cache
+paths until the owner releases them. `buck2 clean` evicts the selected shared
+tenant and waits for cancellation and cleanup before deletion; sibling tenants and the
+daemon-global forkserver state remain available. Lock files are outside the
+disposable tenant directories. Shared tenants also retain the legacy isolation
+lifecycle lock, fencing startup by older clients. An already running legacy
+daemon must be stopped before shared initialization can claim its disk state.
+
+
 There are 3 ways that the buckd process will shutdown:
 
 1. The grpc api includes a `kill()` call that will shutdown buckd.

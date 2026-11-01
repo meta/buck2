@@ -27,8 +27,8 @@ use buck2_client_ctx::common::CommonEventLogOptions;
 use buck2_client_ctx::common::target_cfg::TargetCfgUnusedOptions;
 use buck2_client_ctx::common::ui::ConsoleType;
 use buck2_client_ctx::daemon::client::BuckdLifecycleLock;
-use buck2_client_ctx::daemon::client::connect::BuckdProcessInfo;
 use buck2_client_ctx::daemon::client::connect::establish_connection_existing;
+use buck2_client_ctx::daemon::client::connect::shared_daemon_is_inactive;
 use buck2_client_ctx::daemon::client::kill::kill_command_impl;
 use buck2_client_ctx::events_ctx::EventsCtx;
 use buck2_client_ctx::exit_result::ExitResult;
@@ -46,7 +46,6 @@ use buck2_fs::fs_util;
 use buck2_fs::paths::abs_norm_path::AbsNormPathBuf;
 use buck2_fs::paths::abs_path::AbsPath;
 use buck2_util::threads::directory_mutation_parallelism;
-use buck2_wrapper_common::kill::process_exists;
 use dupe::Dupe;
 use superconsole::Line;
 use superconsole::SuperConsole;
@@ -254,31 +253,32 @@ impl BuckSubcommand for InnerCleanCommand {
         // Kill the daemon and make sure a new daemon does not spin up while we're performing clean up operations
         // This will ensure we have exclusive access to the directories in question
         let lifecycle = if sharing {
-            if daemon_dir.buckd_info().exists() {
-                match establish_connection_existing(&daemon_dir).await {
-                    Ok(client) => {
-                        client
-                            .to_connector()
-                            .with_flushing()
-                            .evict_tenant(
-                                EvictTenantRequest {
-                                    context: Some(ctx.empty_client_context(Self::COMMAND_NAME)?),
-                                },
-                                events_ctx,
-                            )
-                            .await?;
+            match establish_connection_existing(&daemon_dir).await {
+                Ok(client) => {
+                    client
+                        .to_connector()
+                        .with_flushing()
+                        .evict_tenant(
+                            EvictTenantRequest {
+                                context: Some(ctx.empty_client_context(Self::COMMAND_NAME)?),
+                            },
+                            events_ctx,
+                        )
+                        .await?;
+                    None
+                }
+                Err(error) => {
+                    let lock = BuckdLifecycleLock::lock_with_timeout(
+                        daemon_dir.clone(),
+                        StartupDeadline::duration_from_now(Duration::from_secs(10))?,
+                    )
+                    .await?;
+                    if !shared_daemon_is_inactive(&daemon_dir).await? {
+                        return error.into();
                     }
-                    Err(error) => {
-                        let dead = BuckdProcessInfo::load(&daemon_dir)
-                            .and_then(|info| process_exists(info.pid()?))
-                            .is_ok_and(|alive| !alive);
-                        if !dead {
-                            return error.into();
-                        }
-                    }
+                    Some(lock)
                 }
             }
-            None
         } else {
             let lock = BuckdLifecycleLock::lock_with_timeout(
                 daemon_dir.clone(),

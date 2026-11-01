@@ -129,7 +129,7 @@ impl BuckdLifecycleLock {
             .map_err(|e| LifecycleLockError { error: e })
     }
 
-    /// Remove everything except `buckd.lifecycle` file which is the lock file.
+    /// Remove metadata while preserving the lifecycle lock file.
     /// If `keep_prev` is true, backup previous daemon logs to `prev` dir for debugging.
     pub fn clean_daemon_dir(&self, keep_prev: bool) -> buck2_error::Result<()> {
         let prev_daemon_dir = self

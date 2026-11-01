@@ -267,6 +267,7 @@ class DaemonTest(BuckTestCase):
 
     @buck_test()
     async def test_prev_daemon_dir(self, buck: Buck) -> None:
+        buck.set_env("BUCK2_SHARE_DAEMON", "false")
         await buck.targets(":")  # Start a daemon
         await buck.kill()
         await buck.targets(":")  # Start another daemon
@@ -287,6 +288,7 @@ class DaemonTest(BuckTestCase):
 
     @buck_test()
     async def test_unreachable_recorded_daemon_is_replaced(self, buck: Buck) -> None:
+        buck.set_env("BUCK2_SHARE_DAEMON", "false")
         await buck.targets(":")  # Start a daemon
         daemon_dir = await buck.get_daemon_dir()
         with open(daemon_dir / "buckd.info") as f:
@@ -431,3 +433,140 @@ class DaemonTest(BuckTestCase):
             assert not state.exists()
         await buck.clean()
         assert not state_root.exists()
+
+    @buck_test()
+    async def test_unshared_daemon_preserves_shared_daemon(self, buck: Buck) -> None:
+        buck.set_env("BUCK2_SHARE_DAEMON", "true")
+        shared_status = json.loads((await buck.server("--status")).stdout)
+        shared_pid = shared_status["process_info"]["pid"]
+        isolated = Buck(
+            buck.path_to_executable,
+            encoding=buck.encoding,
+            env={**buck._env, "BUCK2_SHARE_DAEMON": "false"},
+            cwd=buck.cwd,
+            isolation_prefix="unshared",
+        )
+        subscriber = await buck.subscribe()
+        try:
+            isolated_status = json.loads((await isolated.server("--status")).stdout)
+            assert isolated_status["process_info"]["pid"] != shared_pid
+            await isolated.targets("//:rule")
+            await isolated.kill()
+            assert daemon_is_alive(shared_pid)
+            assert (
+                json.loads((await buck.status()).stdout)["process_info"]["pid"]
+                == shared_pid
+            )
+            await buck.targets("//:rule")
+        finally:
+            await subscriber.__aexit__(None, None, None)
+            await isolated.kill()
+
+    @buck_test()
+    @env("BUCK2_SHARE_DAEMON", "true")
+    @parametrize("metadata", ["missing", "not-json", "invalid-json"])
+    @parametrize("pid_file", ["unchanged", "missing", "invalid"])
+    async def test_bad_shared_metadata_preserves_live_daemon(
+        self, buck: Buck, metadata: str, pid_file: str
+    ) -> None:
+        await buck.targets("//:rule")
+        sibling = Buck(
+            buck.path_to_executable,
+            encoding=buck.encoding,
+            env=buck._env,
+            cwd=buck.cwd,
+            isolation_prefix="survivor",
+        )
+        await sibling.targets("//:rule")
+        newcomer = Buck(
+            buck.path_to_executable,
+            encoding=buck.encoding,
+            env=buck._env,
+            cwd=buck.cwd,
+            isolation_prefix="newcomer",
+        )
+        daemon_dir = await buck.get_daemon_dir()
+        info_path = daemon_dir / "buckd.info"
+        pid_path = daemon_dir / "buckd.pid"
+        original_info = info_path.read_text()
+        original_pid = pid_path.read_text()
+        pid = json.loads(original_info)["pid"]
+        damaged = {"missing": None, "not-json": "not JSON", "invalid-json": "[]"}[
+            metadata
+        ]
+        try:
+            if damaged is None:
+                info_path.unlink()
+            else:
+                info_path.write_text(damaged)
+            if pid_file == "missing":
+                pid_path.unlink()
+            elif pid_file == "invalid":
+                pid_path.write_text("not a PID")
+            await expect_failure(
+                newcomer.targets("//:rule"),
+                stderr_regex="Cannot verify shared daemon inactivity",
+            )
+            assert daemon_is_alive(pid)
+            assert (
+                buck.cwd / "buck-out" / (buck.isolation_prefix or "v2") / "cache"
+            ).is_dir()
+            assert (buck.cwd / "buck-out" / "survivor" / "cache").is_dir()
+            assert not (buck.cwd / "buck-out" / "newcomer" / "cache").exists()
+            if damaged is None:
+                assert not info_path.exists()
+            else:
+                assert info_path.read_text() == damaged
+            if pid_file == "missing":
+                assert not pid_path.exists()
+            else:
+                assert pid_path.read_text() == (
+                    "not a PID" if pid_file == "invalid" else original_pid
+                )
+        finally:
+            info_path.write_text(original_info)
+            pid_path.write_text(original_pid)
+        try:
+            for tenant in [buck, sibling, newcomer]:
+                await tenant.targets("//:rule")
+                assert (
+                    json.loads((await tenant.status()).stdout)["process_info"]["pid"]
+                    == pid
+                )
+        finally:
+            await newcomer.kill()
+            await sibling.kill()
+
+    @buck_test()
+    @env("BUCK2_SHARE_DAEMON", "true")
+    @parametrize("metadata", ["missing", "not-json"])
+    async def test_bad_shared_metadata_requires_repair_after_daemon_exit(
+        self, buck: Buck, metadata: str
+    ) -> None:
+        await buck.targets("//:rule")
+        daemon_dir = await buck.get_daemon_dir()
+        info_path = daemon_dir / "buckd.info"
+        original_info = info_path.read_text()
+        old_pid = json.loads(original_info)["pid"]
+        await buck.kill()
+        for _ in range(100):
+            if not daemon_is_alive(old_pid):
+                break
+            await asyncio.sleep(0.1)
+        assert not daemon_is_alive(old_pid)
+        try:
+            if metadata == "missing":
+                info_path.unlink()
+            else:
+                info_path.write_text("not JSON")
+            await expect_failure(buck.targets("//:rule"))
+            assert not daemon_is_alive(old_pid)
+            if metadata == "missing":
+                assert not info_path.exists()
+            else:
+                assert info_path.read_text() == "not JSON"
+        finally:
+            info_path.write_text(original_info)
+        await buck.targets("//:rule")
+        new_pid = json.loads((await buck.status()).stdout)["process_info"]["pid"]
+        assert new_pid != old_pid

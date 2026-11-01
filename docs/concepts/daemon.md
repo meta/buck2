@@ -23,23 +23,37 @@ file system that are specified in the `[project].ignore` setting of
 You can see detailed information about the status of the daemon by running
 `buck2 status`.
 
+## Experimental daemon sharing
+
+Daemon sharing is opt-in and off by default. `BUCK2_SHARE_DAEMON=true` lets
+tenants in different isolation directories share a daemon while retaining
+separate output and cache state.
+
+In this mode `buck2 kill` evicts the selected `(project root, isolation
+directory)` tenant from the daemon and cancels its work. Eviction waits for
+cancellation and cleanup before returning. A later command can recreate the
+tenant only after the old generation releases its output and cache
+directories. Other tenants continue running; the daemon shuts down after its
+final tenant is evicted. `buck2 clean` uses the same ownership lock while
+deleting the selected tenant's state, and `buck2 killall --repo` evicts the
+repository's tenants instead of killing processes. Incompatible startup
+settings or binaries are reported without restarting the daemon; stop the
+affected daemon's tenants explicitly before changing these settings.
+
 ## Killing or disabling the Buck daemon
 
-`buck2 kill` evicts the selected `(project root, isolation directory)` tenant
-from the daemon and cancels its work. Eviction waits for cancellation and cleanup
-before returning. A later command can recreate the tenant only after the old
-generation releases its output and cache directories. Other tenants continue
-running; the daemon shuts down after its final tenant is evicted. `buck2 clean`
-uses the same ownership lock while deleting the selected tenant's state.
+The Buck daemon process is killed if `buck2 clean` or `buck2 kill` commands are
+run. Note that they won't kill the daemon associated with custom isolation dirs.
+To do that, run using the `--isolation-dir` option
+(`buck2 --isolation-dir <dir> <command>`)
 
 <FbInternalOnly>
 
 The Daemon is also killed when:
 
-- The unfiltered `buck2 killall` command is run. It kills every Buck2 process
-  on the machine. `buck2 killall --repo` instead evicts repository tenants and
-  shuts down a daemon after its final tenant is evicted. `--in-isolation-dir`
-  can select one tenant.
+- The `buck2 killall` command is run. By default it kills every buck2 process
+  on the machine; pass `--in-isolation-dir <dir>` and/or `--repo` to only kill
+  processes using that isolation dir and/or running in the current repository.
 - A new buck2 version is available.
 
 </FbInternalOnly>

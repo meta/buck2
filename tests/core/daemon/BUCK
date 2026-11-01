@@ -10,5 +10,21 @@ buck2_core_tests(
                 "ovr_config//os:macos",
             ],
         },
+        "test_killall_repo_resilience": {
+            "data": ":test_daemon_data",
+            "require_nano_prelude": True,
+        },
+        "test_tenant_kill_startup": {
+            "compatible_with": [
+                "ovr_config//os:linux",
+                "ovr_config//os:macos",
+            ],
+            "data": ":test_daemon_data",
+            "require_nano_prelude": True,
+        },
+        "test_tenant_recovery": {
+            "data": ":test_daemon_data",
+            "require_nano_prelude": True,
+        },
     },
 )

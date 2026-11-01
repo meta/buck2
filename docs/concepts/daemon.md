@@ -40,6 +40,20 @@ repository's tenants instead of killing processes. Incompatible startup
 settings or binaries are reported without restarting the daemon; stop the
 affected daemon's tenants explicitly before changing these settings.
 
+`[buck2] share_dice = false` (the default) creates a separate DICE engine for
+each tenant. Setting it to `true` shares one engine within the daemon. Each
+tenant keeps its own isolated root, repository data, and command coordinator.
+
+The client selects this setting at daemon startup. It is part of the daemon
+configuration checked on connection, so changing it selects a new daemon
+rather than changing the ownership of live graphs. Command event logs include
+a `dice-sharing:true` or `dice-sharing:false` tag.
+
+Shared engines require compatible cycle detection and paging settings. Paging
+uses the initial tenant's DICE storage path for the lifetime of the daemon.
+Evicting a tenant releases its roots after admitted commands finish; other
+tenants keep running on the shared engine.
+
 ## Killing or disabling the Buck daemon
 
 The Buck daemon process is killed if `buck2 clean` or `buck2 kill` commands are

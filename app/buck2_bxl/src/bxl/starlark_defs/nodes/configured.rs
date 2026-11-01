@@ -28,7 +28,6 @@ use buck2_build_api::analysis::AnalysisResult;
 use buck2_build_api::bxl::unconfigured_attribute::StarlarkCoercedAttr;
 use buck2_build_api::interpreter::rule_defs::artifact::starlark_artifact::StarlarkArtifact;
 use buck2_common::dice::cells::HasCellResolver;
-use buck2_common::dice::data::HasIoProvider;
 use buck2_configuration_providers::configuration_info::ConfigurationInfo;
 use buck2_core::cells::cell_path::CellPath;
 use buck2_core::fs::project_rel_path::ProjectRelativePath;
@@ -609,9 +608,7 @@ fn configured_target_node_value_methods(builder: &mut MethodsBuilder) {
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<NoneOr<StarlarkArtifact>> {
         let path = Path::new(path);
-        let fs = ctx.via_dice(eval, |ctx| {
-            ctx.global_data().get_io_provider().project_root().dupe()
-        });
+        let fs = ctx.project_root();
         let path = if path.is_absolute() {
             Cow::Owned(
                 fs.relativize_any(AbsPath::new(path)?)

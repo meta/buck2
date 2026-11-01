@@ -45,6 +45,7 @@ use buck2_build_api::context::SetBuildContextData;
 use buck2_build_api::keep_going::HasKeepGoing;
 use buck2_build_api::spawner::BuckSpawner;
 use buck2_common::dice::cells::SetCellResolver;
+use buck2_common::dice::data::SetIsolationDir;
 use buck2_common::dice::data::testing::SetTestingIoProvider;
 use buck2_common::external_symlink::ExternalSymlink;
 use buck2_common::file_ops::baseline::FileSystemBaseline;
@@ -271,6 +272,7 @@ async fn make_default_dice_state(
         CellName::testing_new("root"),
         LegacyBuckConfig::empty(),
     )?;
+    computations.set_isolation_dir(temp_fs.path().resolve(&output_path))?;
     computations.set_buck_out_path(Some(output_path))?;
     computations.set_cell_resolver(cell_resolver)?;
     computations.set_file_system_baseline(FileSystemBaseline::unique())?;

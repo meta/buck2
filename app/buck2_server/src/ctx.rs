@@ -47,6 +47,7 @@ use buck2_cli_proto::client_context::HostPlatformOverride;
 use buck2_cli_proto::client_context::PreemptibleWhen;
 use buck2_cli_proto::common_build_options::ExecutionStrategy;
 use buck2_cli_proto::config_override::ConfigType;
+use buck2_common::dice::data::SetIsolationDir;
 use buck2_common::file_ops::io::initialize_read_dir_cache;
 use buck2_common::http::SetHttpClient;
 use buck2_common::ignores::ignore_set::IgnoreSet;
@@ -878,6 +879,14 @@ impl DiceUpdater for DiceCommandUpdater<'_, '_> {
         )?;
 
         ctx.set_buck_out_path(Some(self.cmd_ctx.buck_out_dir.clone()))?;
+        ctx.set_isolation_dir(
+            self.cmd_ctx
+                .base_context
+                .repo()
+                .paths
+                .project_root()
+                .resolve(&self.cmd_ctx.buck_out_dir),
+        )?;
 
         let optional_validations = self
             .cmd_ctx

@@ -14,7 +14,6 @@ use std::sync::Arc;
 use buck2_build_api::interpreter::rule_defs::context::AnalysisActions;
 use buck2_cli_proto::build_request::Materializations;
 use buck2_cli_proto::build_request::Uploads;
-use buck2_common::dice::data::HasIoProvider;
 use buck2_common::events::HasEvents;
 use buck2_core::cells::cell_path::CellPath;
 use buck2_core::cells::paths::CellRelativePath;
@@ -110,23 +109,11 @@ pub(crate) fn bxl_context_methods(builder: &mut MethodsBuilder) {
     /// Returns the absolute path to the root of the repository
     ///
     /// This function is not available on the `bxl_ctx` when called from `dynamic_output`.
-    fn root<'v>(
-        this: &'v BxlContext<'v>,
-        eval: &mut Evaluator<'v, '_, '_>,
-    ) -> starlark::Result<String> {
+    fn root<'v>(this: &'v BxlContext<'v>) -> starlark::Result<String> {
         let _root_type = this.context_type.unpack_root().map_err(|_| {
             buck2_error::Error::from(BxlContextError::Unsupported("root".to_owned()))
         })?;
-        Ok(this.via_dice(eval, |ctx| {
-            buck2_error::Ok(
-                ctx.global_data()
-                    .get_io_provider()
-                    .project_root()
-                    .root()
-                    .to_str()?
-                    .to_owned(),
-            )
-        })?)
+        Ok(this.project_root().root().to_str()?.to_owned())
     }
 
     /// Returns the absolute path to the cell of the repository

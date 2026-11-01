@@ -604,6 +604,8 @@ pub struct DaemonStartupConfig {
 /// Any difference requires a new daemon; Buck Settings have a separate compatibility check.
 #[derive(Allocative, Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct DaemonStartupOptions {
+    /// Share one DICE engine across isolated tenant roots for this daemon's lifetime.
+    pub share_dice: bool,
     pub num_tokio_workers: Option<usize>,
     pub daemon_buster: Option<String>,
     pub digest_algorithms: Option<String>,
@@ -683,6 +685,12 @@ impl DaemonStartupConfig {
         }?;
 
         let startup_options = DaemonStartupOptions {
+            share_dice: config
+                .parse(BuckconfigKeyRef {
+                    section: "buck2",
+                    property: "share_dice",
+                })?
+                .unwrap_or(false),
             num_tokio_workers: config
                 .parse(BuckconfigKeyRef {
                     section: "build",
@@ -785,6 +793,7 @@ impl DaemonStartupConfig {
 
     pub fn testing_empty() -> Self {
         let startup_options = DaemonStartupOptions {
+            share_dice: false,
             num_tokio_workers: None,
             daemon_buster: None,
             digest_algorithms: None,
@@ -844,6 +853,23 @@ mod tests {
         let deserialized = DaemonStartupConfig::deserialize(&serialized)?;
         assert_eq!(deserialized.startup_options, config.startup_options);
         assert_eq!(deserialized.daemon_buck_settings(), &settings.daemon);
+        Ok(())
+    }
+
+    #[test]
+    fn dice_sharing_is_a_daemon_startup_option() -> buck2_error::Result<()> {
+        let empty = parse(&[("config", "")], "config")?;
+        let control = DaemonStartupConfig::new(&empty, &DaemonBuckSettings::default(), false)?;
+        assert!(!control.startup_options.share_dice);
+        let configured = parse(&[("config", "[buck2]\nshare_dice = true")], "config")?;
+        let treatment =
+            DaemonStartupConfig::new(&configured, &DaemonBuckSettings::default(), false)?;
+        assert!(treatment.startup_options.share_dice);
+        assert_ne!(control.startup_options, treatment.startup_options);
+        assert_eq!(
+            treatment.startup_options,
+            DaemonStartupConfig::deserialize(&treatment.serialize()?)?.startup_options
+        );
         Ok(())
     }
 

@@ -211,11 +211,24 @@ impl Dice {
     /// affect computed values must be represented by keys or tracked dependencies. Dropping
     /// the future before it yields the branch does not leak one.
     pub fn new_root_with_data(&self, data: DiceData) -> impl Future<Output = BranchId> + use<> {
+        self.new_root_with_shared_data(StdArc::new(data))
+    }
+
+    /// Start an empty root with the same immutable computation data as `from`.
+    /// Cached results are shared wherever their tracked dependencies agree.
+    pub fn new_root_from(&self, from: BranchId) -> impl Future<Output = BranchId> + use<> {
+        self.new_root_with_shared_data(self.data_for_branch(from))
+    }
+
+    fn new_root_with_shared_data(
+        &self,
+        data: StdArc<DiceData>,
+    ) -> impl Future<Output = BranchId> + use<> {
         let branch_data = self.branch_data.dupe();
         let branch = self.state_handle.new_root();
         async move {
             let branch = branch.await;
-            branch_data.write().insert(branch, StdArc::new(data));
+            branch_data.write().insert(branch, data);
             branch
         }
     }

@@ -3333,6 +3333,7 @@ dependencies = [
  "buck2_validation",
  "buck2_wrapper_common",
  "constant_time_eq 0.6.1",
+ "derive_more 2.1.1",
  "dice",
  "dice_futures",
  "dupe",

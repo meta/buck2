@@ -710,12 +710,12 @@ impl Drop for EvictionGateCommand {
     }
 }
 
-/// Evicts a tenant's backed DICE values, those a row already holds, when resource control starts
+/// Evicts an engine's backed DICE values, those a row already holds, when resource control starts
 /// seeing memory pressure (the default `hydration.eviction_policy`, `on_memory_pressure`, under
 /// which a page-out evicts nothing and these are the only evictions), at most once per command
-/// (see [`EvictionGate`]). Only the onset triggers it. Ends with the tenant or the tracker.
+/// (see [`EvictionGate`]). Only the onset triggers it. Ends with the engine or the tracker.
 pub(crate) fn spawn_evict_on_memory_pressure(
-    dice_manager: Weak<ConcurrencyHandler>,
+    dice: Weak<Dice>,
     gate: Arc<EvictionGate>,
     mut pressure: watch::Receiver<bool>,
 ) {
@@ -724,14 +724,14 @@ pub(crate) fn spawn_evict_on_memory_pressure(
             if !*pressure.borrow_and_update() {
                 continue;
             }
-            let Some(dice_manager) = dice_manager.upgrade() else {
+            let Some(dice) = dice.upgrade() else {
                 return;
             };
             if !gate.try_evict() {
                 tracing::debug!("Skipping eviction: this command has already evicted once");
                 continue;
             }
-            evict_backed_measured(dice_manager.unsafe_dice()).await;
+            evict_backed_measured(&dice).await;
         }
     });
 }

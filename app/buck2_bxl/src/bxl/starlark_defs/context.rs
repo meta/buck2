@@ -21,7 +21,6 @@ use buck2_build_api::actions::artifact::get_artifact_fs::GetArtifactFs;
 use buck2_build_api::analysis::registry::AnalysisRegistry;
 use buck2_build_api::interpreter::rule_defs::context::AnalysisActions;
 use buck2_common::dice::cells::HasCellResolver;
-use buck2_common::dice::data::HasIoProvider;
 use buck2_common::target_aliases::BuckConfigTargetAliasResolver;
 use buck2_common::target_aliases::HasTargetAliasResolver;
 use buck2_core::cells::CellAliasResolver;
@@ -222,7 +221,7 @@ impl BxlContextCoreData {
         let target_alias_resolver = dice.target_alias_resolver().await?.dupe();
         let cell_alias_resolver = dice.get_cell_alias_resolver(cell).await?.dupe();
         let artifact_fs = dice.get_artifact_fs().await?;
-        let project_fs = dice.global_data().get_io_provider().project_root().dupe();
+        let project_fs = artifact_fs.fs().dupe();
 
         let cell_root_abs = project_fs.root().join(
             cell_resolver

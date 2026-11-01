@@ -435,6 +435,18 @@ impl InvocationPaths {
         )
     }
 
+    /// Daemon-scoped paged DICE storage, outside every disposable tenant tree.
+    pub fn shared_dice_state_dir(&self) -> AbsNormPathBuf {
+        self.daemon_state_dir()
+            .join(FileName::unchecked_new("dice_state"))
+    }
+
+    /// Per-boot shared paging storage, scoped by daemon id. Independent of
+    /// tenant generation and output isolation.
+    pub fn shared_dice_state_path(&self, daemon_id: &str) -> buck2_error::Result<AbsNormPathBuf> {
+        Ok(self.shared_dice_state_dir().join(FileName::new(daemon_id)?))
+    }
+
     /// Private executable state for one forkserver, under execution-allowlisted buck-out.
     /// It is a sibling of the daemon's working directory so that `buck2 clean` of a shared
     /// tenant leaves the daemon-wide forkserver intact.

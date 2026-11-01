@@ -136,6 +136,7 @@ use tracing::Instrument;
 use crate::active_commands::ActiveCommandDropGuard;
 use crate::ctx::BaseServerCommandContext;
 use crate::daemon::check_working_dir;
+use crate::daemon::dice::TenantDiceProvider;
 use crate::daemon::disk_state::DiskStateOptions;
 use crate::daemon::disk_state::delete_unknown_disk_state;
 use crate::daemon::disk_state::maybe_initialize_dep_file_sqlite_db;
@@ -145,6 +146,7 @@ use crate::daemon::forkserver::maybe_launch_forkserver;
 use crate::daemon::io_provider::create_io_provider;
 use crate::daemon::panic::DaemonStatePanicDiceDump;
 use crate::daemon::server::BuckdServerInitPreferences;
+use crate::daemon::server::TenantDiceInputs;
 use crate::daemon::server::TenantStateInitPreferences;
 use crate::daemon::tenting_provider::create_tenting_acl_provider;
 use crate::paging::EvictionGate;
@@ -324,6 +326,7 @@ struct TenantStateInit<'a> {
     shared: DaemonSharedServices<'a>,
     disk_ownership: Arc<Semaphore>,
     cancellation: Arc<CancellationScope>,
+    dice_provider: &'a TenantDiceProvider,
 }
 
 struct TenantInitializationGate {
@@ -350,6 +353,7 @@ struct DaemonSharedServices<'a> {
 
 #[derive(Allocative)]
 struct TenantStateFactory {
+    dice_provider: TenantDiceProvider,
     #[allocative(skip)]
     fb: FacebookInit,
     init_ctx: TenantStateInitPreferences,
@@ -405,6 +409,7 @@ impl TenantStateFactory {
             shared,
             disk_ownership,
             cancellation,
+            dice_provider: &self.dice_provider,
         })
         .await
     }
@@ -423,6 +428,7 @@ impl TenantState {
             shared,
             disk_ownership,
             cancellation,
+            dice_provider,
         } = init;
         let lifetime = cancellation.register()?;
         let permit = disk_ownership
@@ -766,15 +772,20 @@ impl TenantState {
         let tenting_acl_provider = create_tenting_acl_provider(fb, paths.project_root());
 
         tracing::info!("Constructing DICE...");
-        let (dice, root) = init_ctx
-            .construct_dice(
-                io.dupe(),
+        let (dice_manager, _root, eviction_gate) = init_ctx
+            .construct_dice(TenantDiceInputs {
+                io: io.dupe(),
                 digest_config,
-                ignore_set.dupe(),
+                ignore_set: ignore_set.dupe(),
                 root_config,
                 tenting_acl_provider,
-                paths.dice_state_path().as_ref(),
-            )
+                dice_state_path: paths.dice_state_path().as_ref(),
+                provider: dice_provider,
+                lifetime_guard: blocking_executor.lifetime_guard(),
+                memory_pressure: shared
+                    .memory_tracker
+                    .map(|tracker| tracker.memory_pressure()),
+            })
             .await?;
 
         let dep_file_cache = create_dep_file_cache();
@@ -858,6 +869,10 @@ impl TenantState {
         }
 
         let tags = vec![
+            format!(
+                "dice-sharing:{}",
+                init_ctx.daemon_startup_config.startup_options.share_dice
+            ),
             // TODO(scottcao): Delete this tag since now hash all commands is always enabled.
             "hash-all-commands:true".to_owned(),
             format!(
@@ -878,21 +893,6 @@ impl TenantState {
             format!("has-cgroup:{}", shared.memory_tracker.is_some()),
         ];
 
-        let dice_manager = ConcurrencyHandler::new_with_lifetime_guard(
-            dice,
-            root,
-            blocking_executor.lifetime_guard(),
-        );
-        let eviction_gate = Arc::new(EvictionGate::default());
-        if let Some(memory_tracker) = shared.memory_tracker
-            && evicts_on_memory_pressure
-        {
-            crate::paging::spawn_evict_on_memory_pressure(
-                Arc::downgrade(&dice_manager),
-                eviction_gate.dupe(),
-                memory_tracker.memory_pressure(),
-            );
-        }
         let repo = Arc::new(RepoState {
             paths,
             file_watcher,
@@ -1260,6 +1260,9 @@ impl TenantStateRegistry {
             .unwrap_or_else(|poisoned| poisoned.into_inner());
         let entry = tenants.remove(key)?;
         entry.cancellation.cancel();
+        if let Some(state) = entry.state.get() {
+            state.dice_manager.retire();
+        }
         let final_tenant = tenants.is_empty();
         if final_tenant {
             self.draining.store(true, Ordering::Release);
@@ -1288,6 +1291,9 @@ impl TenantStateRegistry {
             if matches {
                 entry.cancellation.cancel();
                 evicted.push(entry.clone());
+                if let Some(state) = entry.state.get() {
+                    state.dice_manager.retire();
+                }
                 generations.push(entry.generation);
             }
             !matches
@@ -1776,6 +1782,12 @@ impl DaemonState {
 
             let (init_ctx, daemon_originating_cgroup) = init_ctx.split();
             let tenant_state_factory = TenantStateFactory {
+                dice_provider: TenantDiceProvider::new(
+                    init_ctx.daemon_startup_config.startup_options.share_dice,
+                    invocation_paths
+                        .shared_dice_state_path(&daemon_id.to_string())?
+                        .to_path_buf(),
+                ),
                 fb,
                 init_ctx,
                 final_artifact_materialization,

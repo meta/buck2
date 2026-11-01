@@ -12,6 +12,7 @@ pub mod check_working_dir;
 pub mod common;
 pub mod crash;
 pub mod daemon_tcp;
+pub(crate) mod dice;
 pub mod dice_dump;
 pub mod disk_state;
 pub mod forkserver;

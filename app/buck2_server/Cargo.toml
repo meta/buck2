@@ -78,6 +78,7 @@ variant_name.workspace = true
 
 [dev-dependencies]
 assert_matches.workspace = true
+derive_more.workspace = true
 indoc.workspace = true
 tempfile.workspace = true
 

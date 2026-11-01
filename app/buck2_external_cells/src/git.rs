@@ -19,7 +19,7 @@ use std::sync::OnceLock;
 
 use buck2_build_api::actions::artifact::get_artifact_fs::GetArtifactFs;
 use buck2_build_api::materialize::invocation_re_use_case;
-use buck2_common::dice::data::HasIoProvider;
+use buck2_common::dice::data::HasProjectRoot;
 use buck2_common::file_ops::delegate::FileOpsDelegate;
 use buck2_common::file_ops::metadata::FileDigestConfig;
 use buck2_common::file_ops::metadata::FileType;
@@ -223,8 +223,8 @@ async fn download_impl(
         // value. This work is kind of duplicated with the reading in the fileops, but only the first
         // time the contents are downloaded. On subsequent invocations of the daemon, we won't rerun
         // this however, so that case will still avoid doing unnecessary work.
-        let io_prov = ctx.global_data().get_io_provider();
-        let proj_root = io_prov.project_root().root();
+        let project_root = ctx.get_project_root().await?.dupe();
+        let proj_root = project_root.root();
         let abs_path = proj_root.join(path);
         let digest_config = ctx.global_data().get_digest_config();
         let file_digest_config = FileDigestConfig::build(digest_config.cas_digest_config());

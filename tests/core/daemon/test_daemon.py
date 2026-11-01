@@ -596,16 +596,19 @@ class DaemonTest(BuckTestCase):
     @parametrize("initial_tenant", [False, True])
     @parametrize("repository_eviction", [False, True])
     @env("BUCK2_SHARE_DAEMON", "true")
+    @parametrize("share_dice", [False, True])
     async def test_evicted_generation_cannot_overlap_outputs(
         self,
         buck: Buck,
         tmp_path: Path,
         initial_tenant: bool,
         repository_eviction: bool,
+        share_dice: bool,
     ) -> None:
         startup_config = buck.cwd / ".buckconfig"
         startup_config.write_text(
-            startup_config.read_text() + "\n[buck2]\nsqlite_dep_file_state = true\n"
+            startup_config.read_text()
+            + f"\n[buck2]\nsqlite_dep_file_state = true\nshare_dice = {str(share_dice).lower()}\n"
         )
         sibling = Buck(
             buck.path_to_executable,
@@ -693,11 +696,17 @@ class DaemonTest(BuckTestCase):
     @buck_test(skip_for_os=["windows"])
     @env("BUCK2_SHARE_DAEMON", "true")
     @parametrize("disconnect_client", [False, True])
+    @parametrize("share_dice", [False, True])
     async def test_eviction_during_generation_initialization(
-        self, buck: Buck, tmp_path: Path, disconnect_client: bool
+        self, buck: Buck, tmp_path: Path, disconnect_client: bool, share_dice: bool
     ) -> None:
         gate = tmp_path / "initialization"
         buck.set_env("BUCK2_TEST_BLOCK_TENANT_INITIALIZATION", f"initializing,{gate}")
+        startup_config = buck.cwd / ".buckconfig"
+        startup_config.write_text(
+            startup_config.read_text()
+            + f"\n[buck2]\nshare_dice = {str(share_dice).lower()}\n"
+        )
         await buck.targets("//:rule")
         pid = json.loads((await buck.status()).stdout)["process_info"]["pid"]
         tenant = Buck(
@@ -768,9 +777,15 @@ class DaemonTest(BuckTestCase):
 
     @buck_test()
     @env("BUCK2_SHARE_DAEMON", "true")
+    @parametrize("share_dice", [False, True])
     async def test_isolated_tenants_share_daemon_without_sharing_config(
-        self, buck: Buck, tmp_path: Path
+        self, buck: Buck, tmp_path: Path, share_dice: bool
     ) -> None:
+        startup_config = buck.cwd / ".buckconfig"
+        startup_config.write_text(
+            startup_config.read_text()
+            + f"\n[buck2]\nshare_dice = {str(share_dice).lower()}\n"
+        )
         config_one = tmp_path / "tenant-one.bcfg"
         config_one.write_text("[tenant]\n  value = one\n")
         config_two = tmp_path / "tenant-two.bcfg"

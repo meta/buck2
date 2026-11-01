@@ -26,7 +26,10 @@ use std::time::SystemTime;
 
 use allocative::Allocative;
 use async_trait::async_trait;
-use buck2_build_api::configure_dice::configure_dice_for_buck;
+use buck2_build_api::configure_dice::DiceEngineConfiguration;
+use buck2_build_api::configure_dice::DiceEngineConfigurationInputs;
+use buck2_build_api::configure_dice::DiceRootConfiguration;
+use buck2_build_api::configure_dice::configure_dice_data_for_buck;
 use buck2_certs::validate::CertState;
 use buck2_certs::validate::CertStateReport;
 use buck2_certs::validate::INVALID_CERTS_TAG;
@@ -72,6 +75,7 @@ use buck2_profile::starlark_profiler_configuration_from_request;
 use buck2_resource_control::buck_cgroup_tree::BuckCgroupTree;
 use buck2_resource_control::buck_cgroup_tree::PreppedBuckCgroups;
 use buck2_server_ctx::bxl::BXL_SERVER_COMMANDS;
+use buck2_server_ctx::concurrency::ConcurrencyHandler;
 use buck2_server_ctx::ctx::ServerCommandContextTrait;
 use buck2_server_ctx::late_bindings::AUDIT_SERVER_COMMAND;
 use buck2_server_ctx::late_bindings::LSP_SERVER_COMMAND;
@@ -90,6 +94,7 @@ use buck2_util::system_stats::system_memory_stats;
 use buck2_util::threads::thread_spawn;
 use dice::BranchId;
 use dice::Dice;
+use dice::EvictionPolicy;
 use dice_futures::cancellation::CancellationContext;
 use dice_futures::cancellation::DropcancelHandle;
 use dice_futures::drop::DropTogether;
@@ -109,6 +114,7 @@ use rand::Rng as _;
 use rand::SeedableRng;
 use tokio::runtime::Handle;
 use tokio::sync::oneshot;
+use tokio::sync::watch;
 use tokio::time::timeout;
 use tokio::time::timeout_at;
 use tonic::Code;
@@ -123,12 +129,14 @@ use crate::active_commands::ActiveCommandStateWriter;
 use crate::clean_stale::clean_stale_command;
 use crate::ctx::ServerCommandContext;
 use crate::daemon::crash::crash;
+use crate::daemon::dice::TenantDiceProvider;
 use crate::daemon::multi_event_stream::MultiEventStream;
 use crate::daemon::server_allocative::spawn_allocative;
 use crate::daemon::state::DaemonState;
 use crate::file_status::file_status_command;
 use crate::hydration::hydration_command;
 use crate::new_generic::new_generic_command;
+use crate::paging::EvictionGate;
 use crate::paging::cancel_active_page_out;
 use crate::profile::profile_command;
 use crate::profiling_manager::StarlarkProfilingManager;
@@ -274,40 +282,69 @@ impl BuckdServerInitPreferences {
     }
 }
 
+pub(crate) struct TenantDiceInputs<'a> {
+    pub(crate) io: Arc<dyn IoProvider>,
+    pub(crate) digest_config: DigestConfig,
+    pub(crate) ignore_set: Arc<IgnoreSet>,
+    pub(crate) root_config: &'a LegacyBuckConfig,
+    pub(crate) tenting_acl_provider: Option<Arc<dyn TentingAclProvider>>,
+    pub(crate) dice_state_path: &'a Path,
+    pub(crate) provider: &'a TenantDiceProvider,
+    pub(crate) lifetime_guard: Option<Arc<dyn Send + Sync>>,
+    pub(crate) memory_pressure: Option<watch::Receiver<bool>>,
+}
+
 impl TenantStateInitPreferences {
-    pub async fn construct_dice(
+    pub(crate) async fn construct_dice(
         &self,
-        io: Arc<dyn IoProvider>,
-        digest_config: DigestConfig,
-        ignore_set: Arc<IgnoreSet>,
-        root_config: &LegacyBuckConfig,
-        tenting_acl_provider: Option<Arc<dyn TentingAclProvider>>,
-        dice_state_path: &Path,
-    ) -> buck2_error::Result<(Arc<Dice>, BranchId)> {
-        // `hydration` is `Some` when paging is enabled (via `enable_paging` or
-        // `page_out_on_idle`), which is what gates setting up on-disk storage.
+        inputs: TenantDiceInputs<'_>,
+    ) -> buck2_error::Result<(Arc<ConcurrencyHandler>, BranchId, Arc<EvictionGate>)> {
+        let TenantDiceInputs {
+            io,
+            digest_config,
+            ignore_set,
+            root_config,
+            tenting_acl_provider,
+            dice_state_path,
+            provider,
+            lifetime_guard,
+            memory_pressure,
+        } = inputs;
         let hydration = self
             .daemon_startup_config
             .startup_options
             .hydration
             .as_ref();
-        configure_dice_for_buck(
-            io,
-            digest_config,
-            ignore_set,
-            Some(root_config),
-            tenting_acl_provider,
-            self.daemon_startup_config.daemon_buck_settings().dupe(),
-            hydration.map(|_| dice_state_path),
-            hydration.map_or_else(Default::default, |h| h.pagable_storage_backend),
-            hydration.map_or_else(Default::default, |h| h.page_out_policy),
-            hydration.map_or_else(Default::default, |h| h.eviction_policy),
-            self.daemon_startup_config
+        let configuration = DiceEngineConfiguration::resolve(DiceEngineConfigurationInputs {
+            dice_state_path: hydration.map(|_| provider.state_path(dice_state_path)),
+            pagable_storage_backend: hydration
+                .map_or_else(Default::default, |h| h.pagable_storage_backend),
+            page_out_policy: hydration.map_or_else(Default::default, |h| h.page_out_policy),
+            eviction_policy: hydration.map_or_else(Default::default, |h| h.eviction_policy),
+            defer_field_reads: self
+                .daemon_startup_config
                 .daemon_buck_settings()
                 .hydration
                 .defer_field_reads(),
-        )
-        .await
+        })?;
+        let data = configure_dice_data_for_buck(DiceRootConfiguration {
+            io,
+            digest_config,
+            ignore_set,
+            root_config: Some(root_config),
+            tenting_acl_provider,
+            buck_settings: self.daemon_startup_config.daemon_buck_settings().dupe(),
+        })?;
+        provider
+            .create_with_lifetime_guard(
+                configuration,
+                data,
+                lifetime_guard,
+                memory_pressure.filter(|_| {
+                    hydration.is_some_and(|h| h.eviction_policy == EvictionPolicy::OnMemoryPressure)
+                }),
+            )
+            .await
     }
 }
 

@@ -13,7 +13,7 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use buck2_build_api::configure_targets::load_compatible_patterns_with_modifiers;
 use buck2_common::dice::cells::HasCellResolver;
-use buck2_common::dice::data::HasIoProvider;
+use buck2_common::dice::data::HasProjectRoot;
 use buck2_common::file_ops::dice::DiceFileComputations;
 use buck2_common::package_listing::dice::DicePackageListingResolver;
 use buck2_common::package_listing::resolver::PackageListingResolver;
@@ -408,12 +408,7 @@ pub(crate) async fn get_dice_query_delegate<'a, 'c: 'a, 'd>(
         .await?
         .dupe();
     let target_alias_resolver = ctx.get().target_alias_resolver().await?.dupe();
-    let project_root = ctx
-        .get()
-        .global_data()
-        .get_io_provider()
-        .project_root()
-        .to_owned();
+    let project_root = ctx.get().get_project_root().await?.dupe();
     Ok(DiceQueryDelegate::new(
         ctx,
         Arc::new(DiceQueryData::new(

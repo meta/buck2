@@ -18,6 +18,7 @@ rust_library(
     },
     test_deps = [
         "fbsource//third-party/rust:assert_matches",
+        "fbsource//third-party/rust:derive_more",
         "fbsource//third-party/rust:indoc",
         "fbsource//third-party/rust:tempfile",
         "//buck2/app/buck2_util:buck2_util",

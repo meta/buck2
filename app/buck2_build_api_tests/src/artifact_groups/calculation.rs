@@ -26,6 +26,7 @@ use buck2_build_api::interpreter::rule_defs::transitive_set::TransitiveSet;
 use buck2_build_api::interpreter::rule_defs::transitive_set::TransitiveSetOrdering;
 use buck2_build_api::keep_going::HasKeepGoing;
 use buck2_common::dice::cells::SetCellResolver;
+use buck2_common::dice::data::SetIsolationDir;
 use buck2_common::file_ops::baseline::FileSystemBaseline;
 use buck2_common::file_ops::baseline::SetFileSystemBaseline;
 use buck2_common::file_ops::io::initialize_read_dir_cache;
@@ -41,6 +42,8 @@ use buck2_core::cells::name::CellName;
 use buck2_core::configuration::compatibility::ResultMaybeCompatible;
 use buck2_core::deferred::base_deferred_key::BaseDeferredKey;
 use buck2_core::deferred::key::DeferredHolderKey;
+use buck2_core::fs::project::ProjectRootTemp;
+use buck2_core::fs::project_rel_path::ProjectRelativePath;
 use buck2_core::package::source_path::SourcePath;
 use buck2_core::target::configured_target_label::ConfiguredTargetLabel;
 use buck2_execute::artifact_value::ArtifactValue;
@@ -206,6 +209,11 @@ async fn test_ensure_artifact_group() -> buck2_error::Result<()> {
     dice.set_cell_resolver(cell_resolver)?;
     dice.set_file_system_baseline(FileSystemBaseline::unique())?;
     dice.set_buck_out_path(None)?;
+    let fs = ProjectRootTemp::new()?;
+    dice.set_isolation_dir(
+        fs.path()
+            .resolve(ProjectRelativePath::unchecked_new("buck-out/v2")),
+    )?;
     inject_legacy_config_for_test(&mut dice, cell_parent, LegacyBuckConfig::empty())?;
     let dice = dice.commit().await;
 

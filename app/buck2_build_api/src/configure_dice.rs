@@ -45,7 +45,8 @@ use crate::build::detailed_aggregated_metrics::events::DetailedAggregatedMetrics
 /// Configuration which is fixed for the lifetime of a DICE engine.
 ///
 /// Every repository root attached to a shared engine must resolve to the same
-/// values. Root-specific inputs belong in [`DiceData`] instead.
+/// values. Root-specific facilities belong in [`DiceData`]; inputs that affect
+/// cached values must be tracked through injected keys.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct DiceEngineConfiguration {
     dice_state_path: Option<PathBuf>,
@@ -108,6 +109,42 @@ impl DiceEngineConfiguration {
             pagable_storage_backend,
             defer_field_reads,
         })
+    }
+
+    /// Resolved paging path, including any environment override.
+    pub fn dice_state_path(&self) -> Option<&Path> {
+        self.dice_state_path.as_deref()
+    }
+
+    /// Open storage and construct an engine with default root data.
+    pub fn build(&self, data: DiceData) -> buck2_error::Result<Arc<Dice>> {
+        let mut dice = DiceDataBuilder::from(data);
+
+        // Opt-in pagable storage, enabling `Dice::page_out()` to serialize node
+        // values to disk (backend chosen by `pagable_storage_backend`) via `buck2
+        // debug hydration`. `dice_state_path` is `Some` when
+        // `hydration.enable_paging` is set (its value is the default path,
+        // under buck-out). The `BUCK2_DICE_DB_PATH` override (used by benchmarks)
+        // takes precedence and picks the path.
+        if let Some(path) = &self.dice_state_path {
+            let mut storage =
+                DiceStorage::open(path, self.pagable_storage_backend).map_err(|e| {
+                    buck2_error::conversion::from_any_with_tag(
+                        e,
+                        buck2_error::ErrorTag::Environment,
+                    )
+                })?;
+            storage.set_page_out_policy(self.page_out_policy);
+            storage.set_eviction_policy(self.eviction_policy);
+            if self.defer_field_reads {
+                storage
+                    .storage_context()
+                    .get_or_init(|| DeferredFieldReadsEnabled);
+            }
+            dice.set_pagable_storage(storage);
+        }
+
+        Ok(dice.build(DetectCycles::Enabled))
     }
 
     /// Reject a root whose settings would change an already-running engine.
@@ -200,30 +237,7 @@ pub async fn configure_dice_for_buck(
         tenting_acl_provider,
         buck_settings,
     })?;
-    let mut dice = DiceDataBuilder::from(data);
-
-    // Opt-in pagable storage, enabling `Dice::page_out()` to serialize node
-    // values to disk (backend chosen by `pagable_storage_backend`) via `buck2
-    // debug hydration`. `dice_state_path` is `Some` when
-    // `hydration.enable_paging` is set (its value is the default path,
-    // under buck-out). The `BUCK2_DICE_DB_PATH` override (used by benchmarks)
-    // takes precedence and picks the path.
-    if let Some(path) = &engine_config.dice_state_path {
-        let mut storage =
-            DiceStorage::open(path, engine_config.pagable_storage_backend).map_err(|e| {
-                buck2_error::conversion::from_any_with_tag(e, buck2_error::ErrorTag::Environment)
-            })?;
-        storage.set_page_out_policy(engine_config.page_out_policy);
-        storage.set_eviction_policy(engine_config.eviction_policy);
-        if engine_config.defer_field_reads {
-            storage
-                .storage_context()
-                .get_or_init(|| DeferredFieldReadsEnabled);
-        }
-        dice.set_pagable_storage(storage);
-    }
-
-    let dice = dice.build(DetectCycles::Enabled);
+    let dice = engine_config.build(data)?;
     let root = dice.new_root().await;
     let mut dice_ctx = dice.updater(root);
     dice_ctx.set_none_cell_resolver()?;

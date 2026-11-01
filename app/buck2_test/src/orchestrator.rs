@@ -2820,6 +2820,7 @@ fn failure_exit_code(exit_code: Option<i32>) -> i32 {
 mod tests {
     use buck2_build_api::context::SetBuildContextData;
     use buck2_common::dice::cells::SetCellResolver;
+    use buck2_common::dice::data::SetIsolationDir;
     use buck2_common::dice::data::testing::SetTestingIoProvider;
     use buck2_common::file_ops::baseline::FileSystemBaseline;
     use buck2_common::file_ops::baseline::SetFileSystemBaseline;
@@ -2862,6 +2863,7 @@ mod tests {
             .build(UserComputationData::new())
             .await
             .unwrap();
+        dice.set_isolation_dir(fs.path().resolve(&buckout_path))?;
         dice.set_buck_out_path(Some(buckout_path))?;
         dice.set_cell_resolver(cell_resolver)?;
         dice.set_file_system_baseline(FileSystemBaseline::unique())?;

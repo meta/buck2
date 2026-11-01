@@ -13,7 +13,6 @@ use buck2_data::BxlDiceInvocationEnd;
 use buck2_data::BxlDiceInvocationStart;
 use buck2_events::dispatch::with_dispatcher_async;
 use dice::DiceComputations;
-use dice::DiceData;
 use dice::UserComputationData;
 use dice_futures::cancellation::CancellationObserver;
 use dupe::Dupe;
@@ -74,10 +73,6 @@ impl<'s> BxlDiceComputations<'s> {
                 BxlDiceInvocationEnd {},
             )
         })
-    }
-
-    pub(crate) fn global_data(&self) -> &DiceData {
-        self.0.access(|dice| dice.global_data())
     }
 
     pub(crate) fn per_transaction_data(&self) -> &UserComputationData {

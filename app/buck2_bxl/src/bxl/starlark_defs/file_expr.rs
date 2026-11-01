@@ -16,7 +16,7 @@ use buck2_artifact::artifact::source_artifact::SourceArtifact;
 use buck2_build_api::interpreter::rule_defs::artifact::starlark_artifact::StarlarkArtifact;
 use buck2_build_api::interpreter::rule_defs::artifact::starlark_artifact_like::ValueAsInputArtifactLike;
 use buck2_common::dice::cells::HasCellResolver;
-use buck2_common::dice::data::HasIoProvider;
+use buck2_common::dice::data::HasProjectRoot;
 use buck2_core::cells::CellAliasResolver;
 use buck2_core::cells::cell_path::CellPath;
 use buck2_core::cells::instance::CellInstance;
@@ -94,7 +94,7 @@ impl<'a> FileExpr<'a> {
                 match parse_cell_path_as_file_expr_literal(val, &cell_alias_resolver)? {
                     Some(cell_path) => Ok(cell_path),
                     None => {
-                        let fs = dice.global_data().get_io_provider().project_root().dupe();
+                        let fs = dice.get_project_root().await?.dupe();
                         let path = Path::new(val);
                         let rel = if path.is_absolute() {
                             Cow::Owned(fs.relativize_any(AbsPath::new(path)?)?)

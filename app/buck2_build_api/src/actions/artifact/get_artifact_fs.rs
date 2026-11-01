@@ -11,7 +11,7 @@
 use allocative::Allocative;
 use async_trait::async_trait;
 use buck2_common::dice::cells::HasCellResolver;
-use buck2_common::dice::data::HasIoProvider;
+use buck2_common::dice::data::HasProjectRoot;
 use buck2_core::fs::artifact_path_resolver::ArtifactFs;
 use derive_more::Display;
 use dice::CancellationContext;
@@ -56,7 +56,7 @@ impl Key for ArtifactFsKey {
     ) -> Self::Value {
         let buck_out_path_resolver = ctx.get_buck_out_path().await?.dupe();
         let cell_resolver = ctx.get_cell_resolver().await?.dupe();
-        let project_filesystem = ctx.global_data().get_io_provider().project_root().dupe();
+        let project_filesystem = ctx.get_project_root().await?.dupe();
         Ok(ArtifactFs::new(
             cell_resolver,
             buck_out_path_resolver,

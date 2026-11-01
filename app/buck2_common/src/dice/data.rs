@@ -12,9 +12,22 @@
 
 use std::sync::Arc;
 
+use allocative::Allocative;
+use async_trait::async_trait;
+use buck2_core::fs::project::ProjectRoot;
+use buck2_fs::paths::abs_norm_path::AbsNormPathBuf;
+use derive_more::Display;
+use dice::DiceComputations;
 use dice::DiceData;
 use dice::DiceDataBuilder;
+use dice::DiceTransactionUpdater;
+use dice::EqualityBehavior;
+use dice::InjectedKey;
+use dice::PagableValueSerialize;
+use dice::ValueSerialize;
 use dupe::Dupe;
+use pagable::Pagable;
+use pagable::pagable_typetag;
 
 use crate::cas_digest::CasDigestConfig;
 use crate::io::IoProvider;
@@ -44,6 +57,60 @@ impl SetIoProvider for DiceDataBuilder {
 impl SetIoProvider for DiceData {
     fn set_io_provider(&mut self, fs: Arc<dyn IoProvider>) {
         self.set(fs)
+    }
+}
+
+#[derive(Clone, Dupe, Display, Debug, Eq, Hash, PartialEq, Allocative, Pagable)]
+#[pagable_typetag(dice::DiceKeyDyn)]
+struct IsolationDirKey;
+
+impl InjectedKey for IsolationDirKey {
+    type Value = AbsNormPathBuf;
+
+    fn equality_behavior() -> EqualityBehavior<Self::Value> {
+        EqualityBehavior::Compare(|a, b| a == b)
+    }
+
+    fn value_serialize() -> impl ValueSerialize<Value = Self::Value> {
+        PagableValueSerialize::<Self::Value>::new()
+    }
+}
+
+#[async_trait]
+pub trait HasIsolationDir<'d> {
+    /// The absolute output directory of the current tenant.
+    async fn get_isolation_dir(&mut self) -> buck2_error::Result<&'d AbsNormPathBuf>;
+}
+
+#[async_trait]
+impl<'d> HasIsolationDir<'d> for DiceComputations<'d> {
+    async fn get_isolation_dir(&mut self) -> buck2_error::Result<&'d AbsNormPathBuf> {
+        Ok(self.compute(&IsolationDirKey).await?)
+    }
+}
+
+#[async_trait]
+pub trait HasProjectRoot<'d> {
+    /// The project root associated with the tracked tenant isolation directory.
+    async fn get_project_root(&mut self) -> buck2_error::Result<&'d ProjectRoot>;
+}
+
+#[async_trait]
+impl<'d> HasProjectRoot<'d> for DiceComputations<'d> {
+    async fn get_project_root(&mut self) -> buck2_error::Result<&'d ProjectRoot> {
+        self.get_isolation_dir().await?;
+        Ok(self.global_data().get_io_provider().project_root())
+    }
+}
+
+pub trait SetIsolationDir {
+    /// Set the absolute output directory of the current tenant.
+    fn set_isolation_dir(&mut self, path: AbsNormPathBuf) -> buck2_error::Result<()>;
+}
+
+impl SetIsolationDir for DiceTransactionUpdater {
+    fn set_isolation_dir(&mut self, path: AbsNormPathBuf) -> buck2_error::Result<()> {
+        Ok(self.changed_to(vec![(IsolationDirKey, path)])?)
     }
 }
 

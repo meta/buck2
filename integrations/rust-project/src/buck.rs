@@ -520,6 +520,7 @@ pub(crate) struct Buck {
     command: String,
     mode: Option<String>,
     project_root: Option<PathBuf>,
+    isolation_dir: Option<String>,
 }
 
 impl Buck {
@@ -527,6 +528,7 @@ impl Buck {
         command: Option<String>,
         mode: Option<String>,
         project_root: Option<PathBuf>,
+        isolation_dir: Option<String>,
     ) -> Self {
         tracing::info!(?project_root, "Project root was set");
 
@@ -534,6 +536,7 @@ impl Buck {
             command: command.unwrap_or_else(|| "buck2".into()),
             mode,
             project_root,
+            isolation_dir,
         }
     }
 
@@ -590,7 +593,9 @@ impl Buck {
         cmd.env_remove("RUST_BACKTRACE")
             .env_remove("RUST_LIB_BACKTRACE");
 
-        cmd.args(["--isolation-dir", ".rust-analyzer"]);
+        if let Some(isolation_dir) = &self.isolation_dir {
+            cmd.args(["--isolation-dir", isolation_dir]);
+        }
         cmd.arg(CLIENT_METADATA_RUST_PROJECT);
         cmd.args(subcommands);
         cmd.args(["--oncall", "rust_devx"]);
@@ -1120,6 +1125,10 @@ pub(crate) fn select_mode(mode: Option<&str>) -> Option<String> {
     }
 }
 
+pub(crate) fn select_isolation_dir(isolation_dir: Option<String>) -> Option<String> {
+    isolation_dir.or_else(|| cfg!(fbcode_build).then(|| ".rust-analyzer".to_owned()))
+}
+
 fn remove_duplicates_preserve_order(paths: Vec<PathBuf>) -> Vec<PathBuf> {
     let mut uniq_paths = Vec::with_capacity(paths.len());
     let mut seen = FxHashSet::default();
@@ -1196,6 +1205,40 @@ fn unwrap_selector_best_effort(v: &serde_json::Value) -> Option<String> {
         }
         _ => None,
     }
+}
+
+#[test]
+fn explicit_isolation_directory() {
+    let buck = Buck::new(None, None, None, Some("custom".to_owned()));
+    let command = buck.command_without_config(["root"]);
+    assert_eq!(
+        command.get_args().collect::<Vec<_>>(),
+        [
+            "--isolation-dir",
+            "custom",
+            CLIENT_METADATA_RUST_PROJECT,
+            "root",
+            "--oncall",
+            "rust_devx",
+        ]
+    );
+}
+
+#[test]
+fn inherit_isolation_directory_by_default() {
+    let buck = Buck::new(None, None, None, None);
+    let command = buck.command(["bxl"]);
+    assert_eq!(
+        command.get_args().collect::<Vec<_>>(),
+        [
+            CLIENT_METADATA_RUST_PROJECT,
+            "bxl",
+            "--oncall",
+            "rust_devx",
+            "-c=rust.rust_project_build=true",
+            "-c=project.package_boundary_exceptions=.",
+        ]
+    );
 }
 
 /// When we merge targets with their tests, we shouldn't end up
@@ -1633,4 +1676,21 @@ fn test_select_mode() {
             Some("custom-mode".to_owned())
         );
     }
+}
+
+#[test]
+fn test_select_isolation_dir() {
+    if cfg!(fbcode_build) {
+        assert_eq!(
+            select_isolation_dir(None),
+            Some(".rust-analyzer".to_owned())
+        );
+    } else {
+        assert_eq!(select_isolation_dir(None), None);
+    }
+
+    assert_eq!(
+        select_isolation_dir(Some("custom".to_owned())),
+        Some("custom".to_owned())
+    );
 }

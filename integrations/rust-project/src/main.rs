@@ -34,6 +34,7 @@ use tracing_subscriber::filter::LevelFilter;
 use tracing_subscriber::layer::SubscriberExt;
 
 use crate::buck::Buck;
+use crate::buck::select_isolation_dir;
 use crate::cli::ProjectKind;
 use crate::project_json::Crate;
 use crate::project_json::Dep;
@@ -45,6 +46,10 @@ struct Opt {
     /// Print the current version.
     #[arg(short = 'V', long)]
     version: bool,
+    /// Buck isolation directory to run in. If omitted, Buck chooses, except in fbcode builds, which
+    /// use `.rust-analyzer`.
+    #[arg(long, global = true)]
+    isolation_dir: Option<String>,
 }
 
 #[derive(Subcommand, Debug, PartialEq)]
@@ -309,13 +314,14 @@ fn main() -> Result<(), anyhow::Error> {
         .with_writer(io::stderr);
 
     let project_root = file_from_command(&command).and_then(find_project_root_from_file);
+    let isolation_dir = select_isolation_dir(opt.isolation_dir);
 
     match command {
         c @ Command::Develop { .. } => {
             let subscriber = tracing_subscriber::registry().with(fmt.with_filter(filter));
             tracing::subscriber::set_global_default(subscriber)?;
 
-            let (develop, input, out) = cli::Develop::from_command(c, project_root);
+            let (develop, input, out) = cli::Develop::from_command(c, project_root, isolation_dir);
             match develop.run(input.clone(), out) {
                 Ok(_) => Ok(()),
                 Err(e) => {
@@ -336,7 +342,7 @@ fn main() -> Result<(), anyhow::Error> {
                 .with(progress::ProgressLayer::new(std::io::stdout).with_filter(filter));
             tracing::subscriber::set_global_default(subscriber)?;
 
-            let (develop, input, out) = cli::Develop::from_command(c, project_root);
+            let (develop, input, out) = cli::Develop::from_command(c, project_root, isolation_dir);
             match develop.run(input.clone(), out) {
                 Ok(_) => Ok(()),
                 Err(e) => {
@@ -368,7 +374,7 @@ fn main() -> Result<(), anyhow::Error> {
             let subscriber = tracing_subscriber::registry().with(fmt.with_filter(filter));
             tracing::subscriber::set_global_default(subscriber)?;
 
-            let buck = Buck::new(buck2_command, mode, project_root);
+            let buck = Buck::new(buck2_command, mode, project_root, isolation_dir);
 
             cli::Check::new(buck, use_clippy, saved_file.clone())
                 .run()
@@ -408,6 +414,38 @@ fn fb_build_info_from_elf() -> Result<String, anyhow::Error> {
     let build_time = build_info["time"].as_str().unwrap_or("(unknown)");
 
     Ok(format!("revision: {revision}, build time: {build_time}"))
+}
+
+#[test]
+fn isolation_inherited_by_default() {
+    let opt = Opt::try_parse_from(["rust-project", "check", "foo.rs"]).unwrap();
+    assert_eq!(opt.isolation_dir, None);
+}
+
+#[test]
+fn isolation_directory_before_subcommand() {
+    let opt = Opt::try_parse_from([
+        "rust-project",
+        "--isolation-dir",
+        ".rust-analyzer",
+        "develop",
+        "//foo:foo",
+    ])
+    .unwrap();
+    assert_eq!(opt.isolation_dir.as_deref(), Some(".rust-analyzer"));
+}
+
+#[test]
+fn isolation_directory_after_subcommand() {
+    let opt = Opt::try_parse_from([
+        "rust-project",
+        "develop-json",
+        "--isolation-dir",
+        "custom",
+        r#"{"path":"foo.rs"}"#,
+    ])
+    .unwrap();
+    assert_eq!(opt.isolation_dir.as_deref(), Some("custom"));
 }
 
 #[test]
@@ -460,6 +498,7 @@ fn json_args_pass() {
             rustc_target: None,
         }),
         version: false,
+        isolation_dir: None,
     };
     let actual = Opt::try_parse_from([
         "rust-project",
@@ -481,6 +520,7 @@ fn json_args_pass() {
             rustc_target: None,
         }),
         version: false,
+        isolation_dir: None,
     };
     let actual = Opt::try_parse_from([
         "rust-project",
@@ -502,6 +542,7 @@ fn json_args_pass() {
             rustc_target: None,
         }),
         version: false,
+        isolation_dir: None,
     };
     let actual = Opt::try_parse_from([
         "rust-project",

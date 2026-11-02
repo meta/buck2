@@ -58,6 +58,7 @@ impl Develop {
     pub(crate) fn from_command(
         command: Command,
         project_root: Option<PathBuf>,
+        isolation_dir: Option<String>,
     ) -> (Develop, Input, OutputCfg) {
         if let crate::Command::Develop {
             files,
@@ -91,7 +92,12 @@ impl Develop {
             };
 
             let mode = select_mode(mode.as_deref());
-            let buck = buck::Buck::new(buck2_command.clone(), mode, project_root.clone());
+            let buck = buck::Buck::new(
+                buck2_command.clone(),
+                mode,
+                project_root.clone(),
+                isolation_dir,
+            );
 
             let develop = Develop {
                 sysroot,
@@ -144,7 +150,7 @@ impl Develop {
             };
 
             let mode = select_mode(mode.as_deref());
-            let buck = buck::Buck::new(buck2_command.clone(), mode, project_root);
+            let buck = buck::Buck::new(buck2_command.clone(), mode, project_root, isolation_dir);
 
             let develop = Develop {
                 sysroot,

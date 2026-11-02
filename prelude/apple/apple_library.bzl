@@ -680,6 +680,8 @@ def apple_library_rule_constructor_params_and_swift_providers(
 
         subtargets["swiftmodule"] = [DefaultInfo(default_output = swift_compile.swiftmodule)]
         subtargets["swift-objc-header"] = [DefaultInfo(default_output = swift_compile.exported_swift_header)]
+        if swift_compile.generated_umbrella_header:
+            subtargets["umbrella-header"] = [DefaultInfo(default_output = swift_compile.generated_umbrella_header)]
         if swift_compile.dynamic_thunk:
             module_name = get_module_name(ctx)
             thunk_linked = _link_swift_dynamic_thunk(ctx, params, module_name, swift_compile.dynamic_thunk.object)

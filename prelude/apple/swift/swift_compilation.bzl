@@ -171,6 +171,10 @@ SwiftCompilationOutput = record(
     exported_pre = field(CPreprocessor),
     # Exported -Swift.h header
     exported_swift_header = field(Artifact),
+    # The umbrella header generated for a mixed module (`__<M>_umbrella__/<M>.h`, when
+    # `disable_generated_umbrella_header` is off): the exported header map names it under
+    # `<M>/<M>.h`, and `[umbrella-header]` is the one way to build it by label.
+    generated_umbrella_header = field(Artifact | None, None),
     # Argsfiles used to compile object files.
     argsfiles = field(CompileArgsfiles),
     # A tset of (SDK/first-party) swiftmodule artifacts required to be linked into binary.
@@ -728,6 +732,7 @@ def compile_swift(
             pre = pre,
             exported_pre = exported_pp_info,
             exported_swift_header = exported_swift_header.artifact,
+            generated_umbrella_header = generated_umbrella_header.artifact if generated_umbrella_header else None,
             argsfiles = object_output.argsfiles,
             swift_debug_info = extract_and_merge_swift_debug_infos(ctx, deps_providers, [output_swiftmodule]),
             clang_debug_info = extract_and_merge_clang_debug_infos(

@@ -427,7 +427,14 @@ def _get_internal_bridging_header_flags(
         swift_cxx_flags,
         additional_args,
     )
-    return cmd_args("-disable-bridging-pch", "-internal-import-bridging-header", pch)
+    # Clang reads the PCH's input headers when loading it, even with PCH
+    # validation disabled, so they must be materialized for Swift compilation.
+    return cmd_args(
+        "-disable-bridging-pch",
+        "-internal-import-bridging-header",
+        pch,
+        hidden = [header, private_header_args, public_header_args],
+    )
 
 def _generate_umbrella_header(ctx: AnalysisContext, module_name: str, exported_headers: list[CHeader], uses_content_based_paths: bool) -> [CHeader, None]:
     """Auto-generate an umbrella header for mixed ObjC/Swift modules.

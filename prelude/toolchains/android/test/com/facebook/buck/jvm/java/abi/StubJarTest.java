@@ -115,6 +115,10 @@ public class StubJarTest {
     return isKotlinVersion("2.3");
   }
 
+  public boolean isKotlin24() {
+    return isKotlinVersion("2.4");
+  }
+
   public boolean isKotlin20() {
     return isKotlinVersion("2.0");
   }
@@ -125,16 +129,30 @@ public class StubJarTest {
 
   private String metadataForKotlinVersion(String metadata22, String metadata20) {
     if (isKotlin23()) {
-      String kotlin22Version = "mv={2, 2, 0}";
-      if (!metadata22.contains(kotlin22Version)) {
-        throw new IllegalArgumentException("Missing Kotlin 2.2 metadata version: " + metadata22);
-      }
-      return metadata22.replace(kotlin22Version, "mv={2, 3, 0}");
+      return withMetadataVersion(metadata22, "mv={2, 3, 0}");
+    }
+    if (isKotlin24()) {
+      // Kotlin 2.4 also writes the visibility of a synthetic class (k=3) to xi bits 8-10:
+      // public (3 << 8) for the public-ABI (xi=176) lambdas these tests expect.
+      return withMetadataVersion(metadata22, "mv={2, 4, 0}").replace("k=3, xi=176", "k=3, xi=944");
     }
     if (isKotlin22()) {
       return metadata22;
     }
     return metadata20;
+  }
+
+  // Kotlin 2.4 also writes annotations to metadata, so annotated declarations need a 2.4 golden.
+  private String metadataForKotlinVersion(String metadata24, String metadata22, String metadata20) {
+    return isKotlin24() ? metadata24 : metadataForKotlinVersion(metadata22, metadata20);
+  }
+
+  private static String withMetadataVersion(String metadata22, String metadataVersion) {
+    String kotlin22Version = "mv={2, 2, 0}";
+    if (!metadata22.contains(kotlin22Version)) {
+      throw new IllegalArgumentException("Missing Kotlin 2.2 metadata version: " + metadata22);
+    }
+    return metadata22.replace(kotlin22Version, metadataVersion);
   }
 
   private static final ImmutableSortedSet<Path> EMPTY_CLASSPATH = ImmutableSortedSet.of();
@@ -382,6 +400,16 @@ public class StubJarTest {
     }
 
     tester = new Tester(Language.KOTLIN);
+    String metadata24 =
+        "  @Lkotlin/Metadata;(mv={2, 4, 0}, k=1, xi=48, d1={\"\\u0000\\u0016\\n"
+            + "\\u0002\\u0018\\u0002\\n"
+            + "\\u0002\\u0010\\u0000\\n"
+            + "\\u0002\\u0008\\u0003\\n"
+            + "\\u0002\\u0010\\u000e\\n"
+            + "\\u0000\\n"
+            + "\\u0002\\u0018\\u0002\\u0008\\u0016\\u0018\\u00002\\u00020\\u0001B\\u0007\\u00a2\\u0006\\u0004\\u0008\\u0002\\u0010\\u0003J\\u0009\\u0010\\u0004\\u001a\\u00020\\u0005H\\u0086\\u0008J\\u000c\\u0010\\u0006\\u001a\\u00020\\u0005H\\u0001b\\u0002\\u0008\\u0007\"},"
+            + " d2={\"Lcom/example/buck/A;\", \"\", \"<init>\", \"()V\", \"getString\", \"\","
+            + " \"getPublishedString\", \"Lkotlin/PublishedApi;\"})";
     String metadata22 =
         "  @Lkotlin/Metadata;(mv={2, 2, 0}, k=1, xi=48, d1={\"\\u0000\\u0012\\n"
             + "\\u0002\\u0018\\u0002\\n"
@@ -417,7 +445,7 @@ public class StubJarTest {
             "",
             "  // compiled from: A.kt",
             "",
-            metadataForKotlinVersion(metadata22, metadata20),
+            metadataForKotlinVersion(metadata24, metadata22, metadata20),
             "",
             "  // access flags 0x1",
             "  public <init>()V",
@@ -468,6 +496,17 @@ public class StubJarTest {
     }
 
     tester = new Tester(Language.KOTLIN);
+    String metadata24 =
+        "  @Lkotlin/Metadata;(mv={2, 4, 0}, k=1, xi=48, d1={\"\\u0000\\u0018\\n"
+            + "\\u0002\\u0018\\u0002\\n"
+            + "\\u0002\\u0010\\u0000\\n"
+            + "\\u0002\\u0008\\u0003\\n"
+            + "\\u0002\\u0010\\u000e\\n"
+            + "\\u0000\\n"
+            + "\\u0002\\u0018\\u0002\\n"
+            + "\\u0000\\u0008\\u0016\\u0018\\u00002\\u00020\\u0001B\\u0007\\u00a2\\u0006\\u0004\\u0008\\u0002\\u0010\\u0003J\\u001c\\u0010\\u0004\\u001a\\u00020\\u0005H\\u0087\\u0008b\\u000c\\u0008\\u0007\\u0012\\u0008\\u0008\\u0008\\u0012\\u0004\\u0008\\u0008(\\u0006\\u00a2\\u0006\\u0002\\u0008\\u0006\"},"
+            + " d2={\"Lcom/example/buck/A;\", \"\", \"<init>\", \"()V\", \"getString\", \"\","
+            + " \"someOtherName\", \"Lkotlin/jvm/JvmName;\", \"name\"})";
     String metadata22 =
         "  @Lkotlin/Metadata;(mv={2, 2, 0}, k=1, xi=48, d1={\"\\u0000\\u0012\\n"
             + "\\u0002\\u0018\\u0002\\n"
@@ -502,7 +541,7 @@ public class StubJarTest {
             "",
             "  // compiled from: A.kt",
             "",
-            metadataForKotlinVersion(metadata22, metadata20),
+            metadataForKotlinVersion(metadata24, metadata22, metadata20),
             "",
             "  // access flags 0x1",
             "  public <init>()V",
@@ -821,7 +860,7 @@ public class StubJarTest {
             "",
             "  OUTERCLASS com/example/buck/AKt test ()Lkotlin/jvm/functions/Function2;",
             "",
-            isKotlin23()
+            isKotlin23() || isKotlin24()
                 ? "  @Lkotlin/coroutines/jvm/internal/DebugMetadata;(f=\"A.kt\", l={}, nl={}, i={},"
                     + " s={}, n={}, m=\"invokeSuspend\", c=\"com.example.buck.AKt$test$1\", v=2)"
                 : "  @Lkotlin/coroutines/jvm/internal/DebugMetadata;(f=\"A.kt\", l={}, i={}, s={},"
@@ -7919,6 +7958,17 @@ public class StubJarTest {
     }
 
     tester = new Tester(Language.KOTLIN);
+    String metadata24 =
+        "  @Lkotlin/Metadata;(mv={2, 4, 0}, k=1, xi=48, d1={\"\\u0000\\u0010\\n"
+            + "\\u0002\\u0018\\u0002\\n"
+            + "\\u0002\\u0010\\u0000\\n"
+            + "\\u0002\\u0008\\u0006\\n"
+            + "\\u0002\\u0018\\u0002\\u0008\\u00c6\\u0002\\u0018\\u00002\\u00020\\u0001B\\u0009\\u0008\\u0002\\u00a2\\u0006\\u0004\\u0008\\u0002\\u0010\\u0003R"
+            + " \\u0010\\u0004\\u001a\\u00020\\u00018\\u0006X\\u0087\\u0004r\\u0002\\u0008\\u0008\\u00a2\\u0006\\u000e\\n"
+            + "\\u0000\\u0012\\u0004\\u0008\\u0005\\u0010\\u0003\\u001a\\u0004\\u0008\\u0006\\u0010\\u0007\"},"
+            + " d2={\"Lcom/example/buck/Obj;\", \"\", \"<init>\", \"()V\", \"prop\","
+            + " \"getProp$annotations\", \"getProp\", \"()Ljava/lang/Object;\","
+            + " \"Lkotlin/jvm/JvmStatic;\"})";
     String metadata22 =
         "  @Lkotlin/Metadata;(mv={2, 2, 0}, k=1, xi=48, d1={\"\\u0000\\u000c\\n"
             + "\\u0002\\u0018\\u0002\\n"
@@ -7950,7 +8000,7 @@ public class StubJarTest {
             "",
             "  // compiled from: Obj.kt",
             "",
-            metadataForKotlinVersion(metadata22, metadata20),
+            metadataForKotlinVersion(metadata24, metadata22, metadata20),
             "",
             "  // access flags 0x19",
             "  public final static Lcom/example/buck/Obj; INSTANCE",
@@ -7985,6 +8035,24 @@ public class StubJarTest {
     }
 
     tester = new Tester(Language.KOTLIN);
+    String metadata24 =
+        "  @Lkotlin/Metadata;(mv={2, 4, 0}, k=1, xi=48, d1={\"\\u0000&\\n"
+            + "\\u0002\\u0018\\u0002\\n"
+            + "\\u0002\\u0010\\u0000\\n"
+            + "\\u0002\\u0008\\u0003\\n"
+            + "\\u0002\\u0010\\u000e\\n"
+            + "\\u0000\\n"
+            + "\\u0002\\u0018\\u0002\\n"
+            + "\\u0002\\u0008\\u0003\\n"
+            + "\\u0002\\u0018\\u0002\\n"
+            + "\\u0002\\u0008\\u0002\\n"
+            + "\\u0002\\u0010\\u000b\\u0018\\u00002\\u00020\\u0001B\\u0007\\u00a2\\u0006\\u0004\\u0008\\u0002\\u0010\\u0003J,\\u0010\\u0004\\u001a\\u00020\\u00052\\u0008\\u0008\\u0002\\u0010\\u0006\\u001a\\u00020\\u0005H\\u0007b\\u0018\\u0008\\u0007\\u0012\\u0008\\u0008\\u0008\\u0012\\u0004\\u0008\\u0008(\\u0009\\u0012\\n"
+            + "\\u0008\\n"
+            + "\\u0012\\u0006\\u0008\\n"
+            + "0\\u000b8\\u000cJ\\u001a\\u0010\\u0004\\u001a\\u00020\\u00052\\u0008\\u0008\\u0002\\u0010\\u0006\\u001a\\u00020\\u00052\\u0008\\u0008\\u0002\\u0010\\r"
+            + "\\u001a\\u00020\\u000e\"}, d2={\"Lcom/example/buck/A;\", \"\", \"<init>\", \"()V\","
+            + " \"testFunc\", \"\", \"str\", \"Lkotlin/Deprecated;\", \"message\", \"Testing"
+            + " deprecated\", \"level\", \"Lkotlin/DeprecationLevel;\", \"HIDDEN\", \"b\", \"\"})";
     String metadata22 =
         "  @Lkotlin/Metadata;(mv={2, 2, 0}, k=1, xi=48, d1={\"\\u0000\\u0018\\n"
             + "\\u0002\\u0018\\u0002\\n"
@@ -8023,7 +8091,7 @@ public class StubJarTest {
             "",
             "  // compiled from: A.kt",
             "",
-            metadataForKotlinVersion(metadata22, metadata20),
+            metadataForKotlinVersion(metadata24, metadata22, metadata20),
             "",
             "  // access flags 0x1",
             "  public <init>()V",

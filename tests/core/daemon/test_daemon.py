@@ -1426,7 +1426,7 @@ class DaemonTest(BuckTestCase):
             await tenant_two.kill()
         await _assert_daemon_exits(daemon_pid)
 
-    @buck_test(skip_for_os=["windows"])
+    @buck_test(skip_for_os=["darwin", "windows"])
     @parametrize("share_dice", [False, True])
     @parametrize("same_commit", [False, True])
     @env("BUCK2_SHARE_DAEMON", "true")

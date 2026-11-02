@@ -803,6 +803,12 @@ FRAMEWORK_INTRODUCED_VERSIONS = {
         "maccatalyst": (15, 0, 0),
         "macosx": (12, 0, 0),
     },
+    "PaperKit": {
+        "iphoneos": (26, 0, 0),
+        "maccatalyst": (26, 0, 0),
+        "macosx": (26, 0, 0),
+        "visionos": (26, 0, 0),
+    },
     "ParavirtualizedGraphics": {
         "maccatalyst": (14, 0, 0),
         "macosx": (11, 0, 0),

@@ -6,9 +6,6 @@
 # of this source tree. You may select, at your option, one of the
 # above-listed licenses.
 
-# pyre-strict
-
-
 import json
 from pathlib import Path
 
@@ -19,6 +16,53 @@ from .test_coverage_utils import collect_coverage_for
 
 
 class CoverageCppTest(BuckTestCase):
+    async def _compile_commands(
+        self, buck: Buck, target: str, selected_files: list[str] | None
+    ) -> dict[str, str]:
+        args = []
+        if selected_files is not None:
+            args.extend(
+                [
+                    "-c",
+                    "code_coverage.enable=filtered",
+                    "-c",
+                    "code_coverage.file_path_filter=" + ":".join(selected_files),
+                ]
+            )
+        result = await buck.aquery(
+            f"kind(run, deps('{target}'))",
+            "--output-attribute=^(category|identifier|cmd)$",
+            "--json",
+            *args,
+        )
+        commands = {}
+        for key, action in json.loads(result.stdout).items():
+            if action["category"] == "cxx_compile":
+                label = key.split("`")[1].split(" (")[0]
+                commands[label + " " + action["identifier"]] = action["cmd"]
+        assert commands
+        return commands
+
+    @buck_test(inplace=True)
+    async def test_cpp_coverage_private_dep_cache_reuse(self, buck: Buck) -> None:
+        package = "fbcode//testing_frameworks/code_coverage/playground"
+        source_dir = "fbcode/testing_frameworks/code_coverage/playground/"
+        header = source_dir + "ThirdLevelDep.h"
+        ordinary = await self._compile_commands(buck, package + ":test", None)
+        selected = await self._compile_commands(buck, package + ":test", [header])
+        unchanged = (package + ":first_level_dep ", package + ":test ")
+        instrumented = (
+            package + ":third_level_dep ",
+            package + ":second_level_dep_that_includes_third_level_dep ",
+        )
+        for prefix in unchanged + instrumented:
+            assert any(key.startswith(prefix) for key in selected), prefix
+        for key, command in selected.items():
+            if key.startswith(unchanged):
+                assert command == ordinary[key]
+            elif key.startswith(instrumented):
+                assert "-fprofile-instr-generate" in command
+
     @buck_test(inplace=True)
     async def test_cpp_test_coverage(self, buck: Buck, tmp_path: Path) -> None:
         coverage_file = tmp_path / "coverage.txt"

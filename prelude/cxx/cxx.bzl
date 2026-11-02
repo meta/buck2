@@ -124,6 +124,7 @@ load(
     "value_or",
 )
 load(":attrs.bzl", "BUILD_INFO_ATTR", "cxx_library_extra_attrs")
+load(":clang_profile_list.bzl", "get_coverage_profile_list_srcs")
 load(":cxx_context.bzl", "get_cxx_toolchain_info")
 load(":cxx_executable.bzl", "cxx_executable")
 load(
@@ -281,6 +282,7 @@ def cxx_library_generate(ctx: AnalysisContext, rule_type: str) -> list[Provider]
         use_content_based_paths = cxx_attr_use_content_based_paths(ctx),
         coverage_instrumentation_compiler_flags = ctx.attrs.coverage_instrumentation_compiler_flags,
         coverage_profile_list = ctx.attrs.coverage_profile_list[DefaultInfo].default_outputs[0] if ctx.attrs.coverage_profile_list else None,
+        coverage_profile_list_srcs = get_coverage_profile_list_srcs(ctx.attrs.coverage_profile_list),
         separate_debug_info = ctx.attrs.separate_debug_info,
         cuda_compile_style = CudaCompileStyle(ctx.attrs.cuda_compile_style),
         # @oss-disable[end= ]: extra_linker_outputs_factory = get_extra_linker_outputs,
@@ -364,6 +366,7 @@ def cxx_binary_impl(ctx: AnalysisContext) -> list[Provider]:
         use_content_based_paths = cxx_attr_use_content_based_paths(ctx),
         coverage_instrumentation_compiler_flags = ctx.attrs.coverage_instrumentation_compiler_flags,
         coverage_profile_list = ctx.attrs.coverage_profile_list[DefaultInfo].default_outputs[0] if ctx.attrs.coverage_profile_list else None,
+        coverage_profile_list_srcs = get_coverage_profile_list_srcs(ctx.attrs.coverage_profile_list),
         separate_debug_info = ctx.attrs.separate_debug_info,
         cuda_compile_style = CudaCompileStyle(ctx.attrs.cuda_compile_style),
         link_preference = LinkPreference(ctx.attrs.link_preference),
@@ -1083,6 +1086,7 @@ def cxx_test_impl(ctx: AnalysisContext) -> list[Provider]:
         use_content_based_paths = cxx_attr_use_content_based_paths(ctx),
         coverage_instrumentation_compiler_flags = ctx.attrs.coverage_instrumentation_compiler_flags,
         coverage_profile_list = ctx.attrs.coverage_profile_list[DefaultInfo].default_outputs[0] if ctx.attrs.coverage_profile_list else None,
+        coverage_profile_list_srcs = get_coverage_profile_list_srcs(ctx.attrs.coverage_profile_list),
         separate_debug_info = ctx.attrs.separate_debug_info,
         cuda_compile_style = CudaCompileStyle(ctx.attrs.cuda_compile_style),
         link_preference = LinkPreference(ctx.attrs.link_preference),

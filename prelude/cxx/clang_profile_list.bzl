@@ -9,6 +9,7 @@
 ClangProfileListInfo = provider(
     fields = {
         "profile_list": provider_field(Artifact),
+        "srcs": provider_field(list[str]),
     }
 )
 
@@ -20,6 +21,12 @@ def get_coverage_profile_list_artifact(dep: [Dependency, None]) -> [Artifact, No
     if info == None:
         return None
     return info.profile_list
+
+def get_coverage_profile_list_srcs(dep: Dependency | None) -> list[str] | None:
+    if dep == None:
+        return None
+    info = dep.get(ClangProfileListInfo)
+    return info.srcs if info else None
 
 def _clang_profile_list_impl(ctx: AnalysisContext) -> list[Provider]:
     """
@@ -52,7 +59,7 @@ def _clang_profile_list_impl(ctx: AnalysisContext) -> list[Provider]:
 
     return [
         DefaultInfo(default_output = profile_list),
-        ClangProfileListInfo(profile_list = profile_list),
+        ClangProfileListInfo(profile_list = profile_list, srcs = ctx.attrs.srcs),
     ]
 
 clang_profile_list = rule(

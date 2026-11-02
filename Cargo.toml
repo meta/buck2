@@ -532,7 +532,7 @@ thiserror = "2.0.21"
 threadpool = "1.8.1"
 three_billion_instructions = { path = "shed/three_billion_instructions" }
 tikv-jemallocator = { version = "0.7.0", features = ["stats", "unprefixed_malloc_on_supported_platforms"] }
-tokio = { version = "1.53.2", features = ["full", "test-util", "tracing"] }
+tokio = { version = "1.54.1", features = ["full", "test-util", "tracing"] }
 tokio-retry = "0.3.2"
 tokio-rustls = { version = "0.26.6", features = ["logging", "ring", "tls12"], default-features = false }
 tokio-stream = { version = "0.1.19", features = ["fs", "io-util", "net", "signal", "sync", "time"] }

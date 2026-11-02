@@ -22,7 +22,7 @@ itertools = "0.15.0"
 pin-project = "1.1.13"
 take_mut = "0.2"
 thiserror = "2.0.21"
-tokio = { version = "1.53.2", features = ["io-util", "rt", "sync"] }
+tokio = { version = "1.54.1", features = ["io-util", "rt", "sync"] }
 tokio-stream = "0.1.19"
 tokio-util = { version = "0.7.20", features = ["io"] }
 tracing = "0.1.41"
@@ -32,7 +32,7 @@ unicode-width = "0.2.2"
 [dev-dependencies]
 anyhow = "1.0.104"
 derive_more = { version = "2.1.1", features = ["full"] }
-tokio = { version = "1.53.2", features = ["macros", "rt-multi-thread", "time"] }
+tokio = { version = "1.54.1", features = ["macros", "rt-multi-thread", "time"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 nix = { version = "0.31.3", features = ["fs"] }

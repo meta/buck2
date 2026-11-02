@@ -27,7 +27,8 @@ value(name = "dev", setting = ":mode")
 value(name = "opt", setting = ":mode")
 setting(name = "link")
 value(name = "static", setting = ":link")
-group(name = "default_link_style", entries = {"static": ":static"})
+value(name = "static_pic", setting = ":link")
+group(name = "default_link_style", entries = {"static": ":static", "static_pic": ":static_pic"})
 setting(name = "info")
 value(name = "full", setting = ":info")
 group(name = "fbcode-build-info-mode", entries = {"full": ":full"})
@@ -37,11 +38,18 @@ group(name = "native-debugging", entries = {"supported": ":supported"})""",
         "build_mode": """setting(name = "sanitizer")
 value(name = "no-san", setting = ":sanitizer")
 value(name = "asan-ubsan-dev", setting = ":sanitizer")
-group(name = "sanitizer_type", entries = {"no-san": ":no-san", "asan-ubsan-dev": ":asan-ubsan-dev"})""",
+group(name = "sanitizer_type", entries = {"no-san": ":no-san", "asan-ubsan-dev": ":asan-ubsan-dev"})
+setting(name = "arvr")
+value(name = "enabled", setting = ":arvr")
+group(name = "arvr_mode", entries = {"enabled": ":enabled"})""",
         "platform/execution/constraints": """setting(name = "execution")
 value(name = "execution-platform-transitioned", setting = ":execution")""",
         "build_mode/default_opt_cxx": """setting(name = "opt_cxx")
 value(name = "enabled", setting = ":opt_cxx")""",
+        "cpu/constraints": """setting(name = "cpu")
+value(name = "x86_64", setting = ":cpu")""",
+        "toolchain/cxx/constraints": """setting(name = "mcmodel")
+value(name = "mcmodel-large", setting = ":mcmodel")""",
     }
     for package, definitions in packages.items():
         path = root / "configuration" / package / "BUCK"

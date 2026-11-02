@@ -54,7 +54,12 @@ probe = rule(
 
 python_probe = rule(
     impl = _probe_impl,
-    attrs = dict(constraint_overrides.attributes, selected = attrs.list(attrs.string()), opt_by_default_enabled = attrs.bool(default = False)),
+    attrs = dict(
+        constraint_overrides.attributes,
+        selected = attrs.list(attrs.string()),
+        omnibus_linking = attrs.option(attrs.enum(["always", "static_link_style"]), default = None),
+        opt_by_default_enabled = attrs.bool(default = False),
+    ),
     cfg = constraint_overrides.python_transition,
 )
 

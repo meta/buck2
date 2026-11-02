@@ -18,12 +18,15 @@ use buck2_core::cells::name::CellName;
 use buck2_core::cells::paths::CellRelativePath;
 use buck2_core::fs::project_rel_path::ProjectRelativePath;
 use buck2_core::fs::project_rel_path::ProjectRelativePathBuf;
+use buck2_error::ErrorTag;
+use buck2_error::buck2_error;
 use buck2_error::internal_error;
 use buck2_hash::BuckMutMap;
 use dice::DiceData;
 use dice::DiceDataBuilder;
 use dupe::Dupe;
 use globset::GlobSetBuilder;
+use pagable::Pagable;
 use pagable::PagableDeserialize;
 use pagable::PagableDeserializer;
 use pagable::PagableSerialize;
@@ -51,6 +54,11 @@ pub fn compute_ignore_set(
     Ok(IgnoreSet { by_cell, cells })
 }
 
+/// The `project.ignore` patterns of every cell.
+///
+/// The set answers for a path taken by itself and says nothing about the directories above it;
+/// the callers take a path under an ignored directory to be ignored, whatever the set says about
+/// the path.
 #[derive(Debug, Allocative, PagableUnsupported, PartialEq, Eq)]
 pub struct IgnoreSet {
     by_cell: BuckMutMap<CellName, PerCellIgnoreSet>,
@@ -58,7 +66,7 @@ pub struct IgnoreSet {
 }
 
 impl IgnoreSet {
-    /// Returns a pattern that matches the candidate if there is one.
+    /// The pattern that ignores the path, if one does and no `!` pattern un-ignores it.
     pub(crate) fn matches_candidate<'a>(&'a self, path: &ProjectRelativePath) -> Option<&'a str> {
         let (cell, path) = self.cells.split_cell_path(path);
         self.by_cell
@@ -66,7 +74,7 @@ impl IgnoreSet {
             .and_then(|ignore_set| ignore_set.matches_candidate(path))
     }
 
-    /// Returns whether any pattern matches.
+    /// Whether a pattern ignores the path and no `!` pattern un-ignores it.
     pub fn is_match(&self, path: &ProjectRelativePath) -> bool {
         let (cell, path) = self.cells.split_cell_path(path);
         self.by_cell
@@ -134,14 +142,21 @@ impl SetIgnoreSet for DiceData {
     }
 }
 
+/// One cell's patterns as written, less the `!` of the negated ones.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Allocative, Pagable)]
+struct IgnorePatterns {
+    ignored: Vec<String>,
+    unignored: Vec<String>,
+}
+
 #[derive(Debug, Clone, Allocative)]
 struct PerCellIgnoreSet {
+    /// Indexed like `patterns.ignored`, which is how a match is reported as its pattern.
     #[allocative(skip)]
-    globset: globset::GlobSet,
-    // Patterns that were added to the globset. Storing this seprately to support ser/de and
-    // so that error messages can refer to the specific pattern that was matched.
-    // This should be in the same order as the strings were added to the GlobSet to match the indices returned from it.
-    patterns: Vec<String>,
+    ignored: globset::GlobSet,
+    #[allocative(skip)]
+    unignored: globset::GlobSet,
+    patterns: IgnorePatterns,
 }
 
 impl PagableSerialize for PerCellIgnoreSet {
@@ -154,16 +169,15 @@ impl<'de> PagableDeserialize<'de> for PerCellIgnoreSet {
     fn pagable_deserialize<D: PagableDeserializer<'de> + ?Sized>(
         deserializer: &mut D,
     ) -> pagable::Result<Self> {
-        let patterns = Vec::<String>::pagable_deserialize(deserializer)?;
-        let globset = Self::build_globset(&patterns)
-            .map_err(|e| pagable::Error::new(e).context("rebuilding IgnoreSet globset"))?;
-        Ok(Self { globset, patterns })
+        let patterns = IgnorePatterns::pagable_deserialize(deserializer)?;
+        Self::from_patterns(patterns)
+            .map_err(|e| pagable::Error::new(e).context("rebuilding IgnoreSet globset"))
     }
 }
 
 impl PartialEq for PerCellIgnoreSet {
     fn eq(&self, other: &Self) -> bool {
-        // Only compare patterns because globset is derived from patterns.
+        // The globsets are derived from the patterns.
         self.patterns == other.patterns
     }
 }
@@ -181,17 +195,14 @@ impl PerCellIgnoreSet {
         Self::from_ignore_spec(spec, root_cell)
     }
 
-    /// Creates an IgnoreSet from an "ignore spec".
+    /// Creates an IgnoreSet from an "ignore spec": a comma-separated list of patterns relative
+    /// to the cell root, in the syntax buck1 used.
     ///
-    /// This is modeled after buck1's parsing of project.ignores.
-    ///
-    /// An ignore spec is a comma-separated list of ignore patterns. If an ignore pattern
-    /// contains a glob character, then it uses java.nio.file.FileSystem.getPathMatcher,
-    /// otherwise it creates a com.facebook.buck.io.filesystem.RecursivePathMatcher
-    ///
-    /// Java's path matcher does not allow  '*' to cross directory boundaries. We get
-    /// the RecursivePathMatcher behavior by identifying non-globby things and appending
-    /// a '/**'.
+    /// A pattern without glob characters names a directory and covers everything under it. One
+    /// with glob characters is matched like a `java.nio.file` glob, in which `*` does not cross
+    /// `/`. A pattern starting with `!` un-ignores what it matches. It wins wherever in the list
+    /// it appears, rather than by gitignore's last-match-wins: the list is spliced together from
+    /// several config files, and its order is nothing to lean on.
     ///
     /// Always ignores `buck-out` if it is a `root_cell`.
     fn from_ignore_spec(spec: &str, root_cell: bool) -> buck2_error::Result<Self> {
@@ -202,7 +213,7 @@ impl PerCellIgnoreSet {
         // `**/*.ext`: an extension filter. These can all be merged into one hashset lookup.
         // `**/*x*x*`: just some general glob on the filename alone, can merge these into one GlobSet that just needs to check against the filename.
         // `some/prefix/**`: a directory prefix. These can all be merged into one trie lookup.
-        let mut patterns = Vec::new();
+        let mut patterns = IgnorePatterns::default();
         let buck_out = if root_cell { Some("buck-out") } else { None };
         for val in buck_out.into_iter().chain(spec.split(',')) {
             let val = val.trim();
@@ -211,12 +222,30 @@ impl PerCellIgnoreSet {
             }
 
             let val = val.trim_end_matches('/');
-            patterns.push(val.to_owned());
+            match val.strip_prefix('!') {
+                Some(unignored) => {
+                    let unignored = unignored.trim_start();
+                    if unignored.is_empty() {
+                        return Err(buck2_error!(
+                            ErrorTag::Input,
+                            "`project.ignore` has a `!` entry that names no path"
+                        ));
+                    }
+                    patterns.unignored.push(unignored.to_owned());
+                }
+                None => patterns.ignored.push(val.to_owned()),
+            }
         }
 
-        let globset = Self::build_globset(&patterns).map_err(|e| internal_error!("{}", e))?;
+        Self::from_patterns(patterns).map_err(|e| internal_error!("{}", e))
+    }
 
-        Ok(Self { globset, patterns })
+    fn from_patterns(patterns: IgnorePatterns) -> Result<Self, globset::Error> {
+        Ok(Self {
+            ignored: Self::build_globset(&patterns.ignored)?,
+            unignored: Self::build_globset(&patterns.unignored)?,
+            patterns,
+        })
     }
 
     /// Build a `GlobSet` from the given patterns.
@@ -241,21 +270,22 @@ impl PerCellIgnoreSet {
         builder.build()
     }
 
-    /// Returns a pattern that matches the candidate if there is one.
+    /// The pattern that ignores the candidate, if one does and no `!` pattern un-ignores it.
     pub(crate) fn matches_candidate(&self, candidate: &CellRelativePath) -> Option<&str> {
-        match self
-            .globset
-            .matches_candidate(&globset::Candidate::new(candidate.as_str()))
-            .as_slice()
-        {
-            [] => None,
-            [v, ..] => Some(&self.patterns[*v]),
+        let candidate = globset::Candidate::new(candidate.as_str());
+        match self.ignored.matches_candidate(&candidate).first() {
+            Some(v) if !self.unignored.is_match_candidate(&candidate) => {
+                Some(&self.patterns.ignored[*v])
+            }
+            _ => None,
         }
     }
 
-    /// Returns whether any pattern matches.
+    /// Whether a pattern ignores the path and no `!` pattern un-ignores it.
     fn is_match(&self, path: &CellRelativePath) -> bool {
-        self.globset.is_match(path.as_str())
+        let candidate = globset::Candidate::new(path.as_str());
+        self.ignored.is_match_candidate(&candidate)
+            && !self.unignored.is_match_candidate(&candidate)
     }
 }
 
@@ -265,27 +295,55 @@ mod tests {
 
     use super::*;
 
-    #[test]
-    fn test_root_cell_defaults_include_buck_out() {
+    fn set(spec: &str) -> buck2_error::Result<IgnoreSet> {
         let root = CellName::testing_new("root");
         let cells =
             CellResolver::testing_with_name_and_path(root, CellRootPathBuf::testing_new(""));
-        let set = IgnoreSet::testing_new_single_cell(cells, root, "").unwrap();
-        assert!(set.is_match(ProjectRelativePath::new("buck-out/gen/src/file.txt").unwrap()));
-        assert!(set.is_match(ProjectRelativePath::new("buck-out/art/src/file.txt").unwrap()));
-        assert!(!set.is_match(ProjectRelativePath::new("src/file.txt").unwrap()));
+        IgnoreSet::testing_new_single_cell(cells, root, spec)
+    }
+
+    fn p(s: &str) -> &ProjectRelativePath {
+        ProjectRelativePath::new(s).unwrap()
+    }
+
+    #[test]
+    fn test_root_cell_defaults_include_buck_out() {
+        let set = set("").unwrap();
+        assert!(set.is_match(p("buck-out/gen/src/file.txt")));
+        assert!(set.is_match(p("buck-out/art/src/file.txt")));
+        assert!(!set.is_match(p("src/file.txt")));
     }
 
     #[test]
     fn test_non_root_cell_prefixes_patterns() {
-        let root = CellName::testing_new("root");
-        let cells =
-            CellResolver::testing_with_name_and_path(root, CellRootPathBuf::testing_new(""));
-        let set = IgnoreSet::testing_new_single_cell(cells, root, "recursive, some/*").unwrap();
-        assert!(set.is_match(ProjectRelativePath::new("recursive").unwrap()));
-        assert!(set.is_match(ProjectRelativePath::new("recursive/sub").unwrap()));
-        assert!(set.is_match(ProjectRelativePath::new("some/x").unwrap()));
-        assert!(!set.is_match(ProjectRelativePath::new("x/recursive").unwrap()));
-        assert!(!set.is_match(ProjectRelativePath::new("foo/bar/some/x/y").unwrap()));
+        let set = set("recursive, some/*").unwrap();
+        assert!(set.is_match(p("recursive")));
+        assert!(set.is_match(p("recursive/sub")));
+        assert!(set.is_match(p("some/x")));
+        assert!(!set.is_match(p("x/recursive")));
+        assert!(!set.is_match(p("foo/bar/some/x/y")));
+    }
+
+    /// A `!` pattern un-ignores exactly what it matches, before or after the pattern it
+    /// counters, and like any other pattern covers a directory it names in full.
+    #[test]
+    fn test_negated_patterns() {
+        let set = set("!kept.gen, **/*.gen, **/*.gen/**, !shown/*.gen/keep").unwrap();
+        assert_eq!(set.matches_candidate(p("a/x.gen")), Some("**/*.gen"));
+        assert!(set.is_match(p("a/x.gen/f")));
+        assert!(!set.is_match(p("kept.gen")));
+        assert!(!set.is_match(p("kept.gen/sub/f")));
+        assert_eq!(set.matches_candidate(p("kept.gen/sub/f")), None);
+        assert!(set.is_match(p("shown/x.gen")));
+        assert!(!set.is_match(p("shown/x.gen/keep")));
+        assert!(set.is_match(p("shown/x.gen/other")));
+        assert!(!set.is_match(p("shown/keep")));
+    }
+
+    #[test]
+    fn test_negated_pattern_must_name_a_path() {
+        assert!(set("a, !").is_err());
+        assert!(set("a, !/").is_err());
+        assert!(set("a, ! b/").is_ok());
     }
 }

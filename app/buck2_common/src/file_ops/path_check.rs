@@ -186,7 +186,8 @@ impl ToleratedRead {
                 format!(
                     "{subject} the `project.ignore` pattern `{pattern}`. buck2 does not see \
                      changes to ignored files, so builds that read it can be stale, and reading \
-                     ignored files will become an error. Stop reading it, or narrow the pattern"
+                     ignored files will become an error. Stop reading it, or un-ignore it: narrow \
+                     the pattern, or add a `!` pattern for the path"
                 )
             }
         }
@@ -616,6 +617,55 @@ mod tests {
         Ok(())
     }
 
+    /// A `!` pattern un-ignores what it matches and nothing above it: under a directory that
+    /// stays ignored, so does everything.
+    #[tokio::test]
+    async fn negated_ignores() -> buck2_error::Result<()> {
+        let f =
+            Fixture::new("ign, **/*.gen, **/*.gen/**, !ign/kept, !a/*.gen, !a/*.gen/keep").await?;
+        f.fs.write_file("ign/kept/f", "");
+        f.fs.write_file("a/x.gen/keep", "");
+        f.fs.write_file("a/x.gen/other", "");
+        f.fs.write_file("b/y.gen/keep", "");
+        let ctx = f.transaction(FileChangeTracker::new()).await?;
+
+        assert_eq!(
+            check(&ctx, "ign/kept").await,
+            PathCheck::Ignored { at: p("ign") }
+        );
+        assert_eq!(
+            check(&ctx, "ign/kept/f").await,
+            PathCheck::Ignored { at: p("ign") }
+        );
+        assert_eq!(
+            check(&ctx, "a/x.gen").await,
+            PathCheck::Present(FileType::Directory)
+        );
+        assert_eq!(
+            check(&ctx, "a/x.gen/keep").await,
+            PathCheck::Present(FileType::File)
+        );
+        assert_eq!(
+            check(&ctx, "a/x.gen/other").await,
+            PathCheck::Ignored {
+                at: p("a/x.gen/other")
+            }
+        );
+        assert_eq!(
+            check(&ctx, "b/y.gen/keep").await,
+            PathCheck::Ignored { at: p("b/y.gen") }
+        );
+        assert_eq!(read_dir(&ctx, "root//").await, names(&["a", "b"]));
+        assert_eq!(read_dir(&ctx, "root//a").await, names(&["x.gen"]));
+        assert_eq!(read_dir(&ctx, "root//a/x.gen").await, names(&["keep"]));
+        assert_eq!(read_dir(&ctx, "root//b").await, names(&[]));
+        fails_with(
+            read_dir(&ctx, "root//b/y.gen").await,
+            "is ignored (`project.ignore` contains `**/*.gen`)",
+        );
+        Ok(())
+    }
+
     /// A check is recomputed when the file watcher reports its path, and when it reports a
     /// prefix of it.
     #[tokio::test]
@@ -852,7 +902,8 @@ mod tests {
             .to_string(),
             "`a/f.orig` matches the `project.ignore` pattern `**/*.orig`. buck2 does not see \
              changes to ignored files, so builds that read it can be stale, and reading ignored \
-             files will become an error. Stop reading it, or narrow the pattern"
+             files will become an error. Stop reading it, or un-ignore it: narrow the pattern, \
+             or add a `!` pattern for the path"
         );
         assert!(
             ToleratedRead::Ignored {

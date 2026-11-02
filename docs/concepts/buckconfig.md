@@ -275,3 +275,32 @@ You can view the contents of this section using the `buck2 audit cell` command.
 
 `[repositories]` is additionally supported as a deprecated alternative name for
 this section.
+
+## [project]
+
+### ignore
+
+A comma-separated list of patterns, relative to the cell, for paths that Buck2
+treats as absent: they are left out of directory listings and globs, changes to
+them are not noticed, and reading one that is named explicitly is refused. A
+pattern without glob characters names a directory and covers everything under
+it. One with glob characters is matched like a gitignore pattern, except that
+`*` does not cross `/`. `buck-out` is always ignored in the root cell.
+
+A pattern starting with `!` un-ignores the paths it matches, whatever other
+patterns say about them, and only those paths: under a directory that stays
+ignored, everything stays ignored.
+
+```ini
+[project]
+  ignore = \
+    **/*.xcodeproj, \
+    **/*.xcodeproj/**, \
+    !apps/*/*.xcodeproj, \
+    !apps/*/*.xcodeproj/project.pbxproj
+```
+
+Here every Xcode project is ignored, except that the project files of those
+directly under `apps` are not. Those directories are un-ignored too, since a
+file under an ignored directory could not be. Everything else in them, such as
+the state Xcode writes while a project is open, stays ignored.

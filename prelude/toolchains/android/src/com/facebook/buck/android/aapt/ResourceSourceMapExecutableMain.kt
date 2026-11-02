@@ -167,7 +167,9 @@ object ResourceSourceMapExecutableMain {
 
   private fun resourceLines(root: Path, file: ResourceFile, sourceFiles: List<Path>): List<String> {
     val miniAapt = MiniAapt(ImmutableSet.of())
-    miniAapt.processAllFiles(ImmutableMap.of(file.relative, file.path))
+    miniAapt.processAllFilesIncludingExcludedFromBuckResourceMap(
+        ImmutableMap.of(file.relative, file.path),
+    )
     val sources = sourceFiles.map { sourcePath(root, it, file.ownerBuildFile) }.distinct()
     val qualifiers = qualifiers(file.relative.getName(0).toString())
     return miniAapt.resourceCollector.resources.flatMap { entry ->

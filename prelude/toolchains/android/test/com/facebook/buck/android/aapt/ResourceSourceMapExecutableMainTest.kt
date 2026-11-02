@@ -261,6 +261,47 @@ class ResourceSourceMapExecutableMainTest {
   }
 
   @Test
+  fun `excluded values entries remain available for coverage attribution`() {
+    val root = temporaryFolder.newFolder("repo").toPath()
+    val resources = root.resolve("fbandroid/example/res")
+    Files.createDirectories(resources.resolve("values"))
+    Files.createDirectories(resources.resolve("values-it"))
+    Files.writeString(
+        resources.resolve("values/strings.xml"),
+        "<resources><string name=\"title\">Title</string></resources>",
+        StandardCharsets.UTF_8,
+    )
+    Files.writeString(
+        resources.resolve("values-it/strings.xml"),
+        """
+        <resources exclude-from-buck-resource-map="true">
+          <string name="title">Titolo</string>
+        </resources>
+        """
+            .trimIndent(),
+        StandardCharsets.UTF_8,
+    )
+    val resourceDirs = temporaryFolder.newFile("excluded-resource-dirs").toPath()
+    Files.writeString(
+        resourceDirs,
+        "$resources\tfbandroid/example/BUCK",
+        StandardCharsets.UTF_8,
+    )
+    val assetDirs = temporaryFolder.newFile("excluded-asset-dirs").toPath()
+    val output = temporaryFolder.newFile("excluded-source-map").toPath()
+
+    ResourceSourceMapExecutableMain.generate(resourceDirs, assetDirs, output, root)
+
+    assertEquals(
+        listOf(
+            "R\t0\tstring\ttitle\t\tfbandroid/example/res/values/strings.xml\tfbandroid/example/BUCK",
+            "R\t0\tstring\ttitle\tit\tfbandroid/example/res/values-it/strings.xml\tfbandroid/example/BUCK",
+        ),
+        Files.readAllLines(output, StandardCharsets.UTF_8),
+    )
+  }
+
+  @Test
   fun `entry point writes an empty map when generation fails`() {
     val resourceDirs = temporaryFolder.newFile("resource-dirs").toPath()
     Files.writeString(

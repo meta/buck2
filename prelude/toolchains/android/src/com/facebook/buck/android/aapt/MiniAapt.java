@@ -165,6 +165,18 @@ public class MiniAapt {
 
   public ImmutableSet<RDotTxtEntry> processAllFiles(ImmutableMap<Path, Path> files)
       throws IOException, ResourceParseException, XPathExpressionException {
+    return processAllFiles(files, false);
+  }
+
+  ImmutableSet<RDotTxtEntry> processAllFilesIncludingExcludedFromBuckResourceMap(
+      ImmutableMap<Path, Path> files)
+      throws IOException, ResourceParseException, XPathExpressionException {
+    return processAllFiles(files, true);
+  }
+
+  private ImmutableSet<RDotTxtEntry> processAllFiles(
+      ImmutableMap<Path, Path> files, boolean includeExcludedFromBuckResourceMap)
+      throws IOException, ResourceParseException, XPathExpressionException {
     ImmutableSet.Builder<RDotTxtEntry> references = ImmutableSet.builder();
     for (Map.Entry<Path, Path> entry : files.entrySet()) {
       Path relativePath = entry.getKey();
@@ -182,7 +194,7 @@ public class MiniAapt {
         if (!isAValuesDir(dirName)) {
           throw new ResourceParseException("'%s' is not a valid values directory.", dirName);
         }
-        references.addAll(processValuesFile(fullPath));
+        references.addAll(processValuesFile(fullPath, includeExcludedFromBuckResourceMap));
       } else {
         processNonValuesFile(fullPath, dirName);
         if (fullPath.endsWith("styles.xml")) {
@@ -289,6 +301,12 @@ public class MiniAapt {
   @VisibleForTesting
   ImmutableSet<RDotTxtEntry> processValuesFile(Path valuesFile)
       throws IOException, ResourceParseException {
+    return processValuesFile(valuesFile, false);
+  }
+
+  private ImmutableSet<RDotTxtEntry> processValuesFile(
+      Path valuesFile, boolean includeExcludedFromBuckResourceMap)
+      throws IOException, ResourceParseException {
     ImmutableSet.Builder<RDotTxtEntry> references = ImmutableSet.builder();
     try (InputStream stream = new BufferedInputStream(Files.newInputStream(valuesFile))) {
       Document dom = parseXml(valuesFile, stream);
@@ -298,7 +316,8 @@ public class MiniAapt {
       // This is useful to exclude using generated strings to build the
       // resource map, which ensures a build break will show up at build time
       // rather than being hidden until generated resources are updated.
-      if (root.getAttribute("exclude-from-buck-resource-map").equals("true")) {
+      if (!includeExcludedFromBuckResourceMap
+          && root.getAttribute("exclude-from-buck-resource-map").equals("true")) {
         return ImmutableSet.of();
       }
 

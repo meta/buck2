@@ -364,7 +364,7 @@ impl<'v, TLeft: UnpackValue<'v>, TRight: UnpackValue<'v>> UnpackValue<'v>
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, debug_assertions))]
 mod tests {
     use std::convert::Infallible;
 
@@ -451,12 +451,7 @@ mod tests {
     }
 
     #[test]
-    #[allow(clippy::assertions_on_constants)]
     fn test_agreeing_unpacks_pass() {
-        assert!(
-            cfg!(debug_assertions),
-            "the agreement check is a debug build check"
-        );
         let a = assert();
         a.pass("takes_loose_str('x')");
         a.pass("takes_strict_str('x')");

@@ -50,8 +50,8 @@ use futures::future;
 use futures::future::BoxFuture;
 use futures::future::FutureExt;
 use futures::future::TryFutureExt;
+use futures::stream;
 use futures::stream::BoxStream;
-use futures::stream::FuturesOrdered;
 use futures::stream::Stream;
 use futures::stream::StreamExt;
 use jiff::SignedDuration;
@@ -867,21 +867,25 @@ impl<T: IoHandler> DeferredMaterializerCommandProcessor<T> {
         paths: Vec<ProjectRelativePathBuf>,
         event_dispatcher: EventDispatcher,
     ) -> BoxStream<'static, Result<(), MaterializationError>> {
-        let tasks = paths.into_iter().map(|path| {
-            match self.materialize_artifact(path.as_ref(), event_dispatcher.dupe()) {
-                Some(fut) => future::Either::Left(fut.map_err(move |e| match e {
-                    SharedMaterializingError::Error(source) => {
-                        MaterializationError::Error { path, source }
-                    }
-                    SharedMaterializingError::NotFound(source) => {
-                        MaterializationError::NotFound { source }
-                    }
-                })),
-                None => future::Either::Right(future::ready(Ok(()))),
-            }
-        });
+        // Jobs start eagerly and are only awaited in order, keeping order and per-path errors.
+        let tasks: Vec<_> = paths
+            .into_iter()
+            .map(
+                |path| match self.materialize_artifact(path.as_ref(), event_dispatcher.dupe()) {
+                    Some(fut) => future::Either::Left(fut.map_err(move |e| match e {
+                        SharedMaterializingError::Error(source) => {
+                            MaterializationError::Error { path, source }
+                        }
+                        SharedMaterializingError::NotFound(source) => {
+                            MaterializationError::NotFound { source }
+                        }
+                    })),
+                    None => future::Either::Right(future::ready(Ok(()))),
+                },
+            )
+            .collect();
 
-        tasks.collect::<FuturesOrdered<_>>().boxed()
+        stream::iter(tasks).then(|task| task).boxed()
     }
 
     fn promote_final_output_closure(&mut self, paths: &[ProjectRelativePathBuf]) {

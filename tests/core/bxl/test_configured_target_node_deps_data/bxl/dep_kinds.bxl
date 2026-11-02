@@ -1,0 +1,60 @@
+# Copyright (c) Meta Platforms, Inc. and affiliates.
+#
+# This source code is dual-licensed under either the MIT license found in the
+# LICENSE-MIT file in the root directory of this source tree or the Apache
+# License, Version 2.0 found in the LICENSE-APACHE file in the root directory
+# of this source tree. You may select, at your option, one of the
+# above-listed licenses.
+
+def _assert_eq(a, b):
+    if a != b:
+        fail("Expected {} == {}".format(a, b))
+
+def _raw_labels(nodes):
+    return sorted([str(node.label.raw_target()) for node in nodes])
+
+def _assert_partition(node):
+    """The four kinds partition `deps()`."""
+    all_deps = sorted([str(dep.label) for dep in node.deps()])
+    by_kind = sorted([str(dep.label) for dep in node.target_deps() + node.exec_deps() + node.toolchain_deps() + node.configuration_deps()])
+    _assert_eq(by_kind, all_deps)
+
+def _dep_kinds_impl(ctx):
+    node = ctx.configured_targets("root//:node")
+
+    target_deps = node.target_deps()
+    exec_deps = node.exec_deps()
+    toolchain_deps = node.toolchain_deps()
+
+    # Only the deps the selected arm names are target deps; the other arm is not a dep at all.
+    _assert_eq(_raw_labels(target_deps), ["root//:dep", "root//:linux_dep"])
+    _assert_eq(_raw_labels(exec_deps), ["root//:tool"])
+    _assert_eq(_raw_labels(toolchain_deps), ["root//:toolchain"])
+    # The keys of the `select()` and the platform are resolved while configuring; they are not deps of the configured node.
+    _assert_eq(_raw_labels(node.configuration_deps()), [])
+
+    # Target deps share the node's configuration; exec deps carry the execution platform's.
+    for dep in target_deps:
+        _assert_eq(str(dep.label.config()), str(node.label.config()))
+        _assert_eq(dep.rule_kind, "normal")
+    for dep in exec_deps:
+        _assert_eq(str(dep.label.config()) != str(node.label.config()), True)
+        _assert_eq(dep.rule_kind, "normal")
+    for dep in toolchain_deps:
+        _assert_eq(dep.rule_kind, "toolchain")
+    _assert_partition(node)
+
+    # A configuration rule's deps on other configuration rules are configuration deps, not target deps.
+    platform = ctx.configured_targets("root//:linux_platform")
+    _assert_eq(_raw_labels(platform.configuration_deps()), ["root//:linux"])
+    _assert_eq(_raw_labels(platform.target_deps()), [])
+    for dep in platform.configuration_deps():
+        _assert_eq(dep.rule_kind, "configuration")
+    _assert_partition(platform)
+
+    ctx.output.print("ok")
+
+dep_kinds = bxl_main(
+    impl = _dep_kinds_impl,
+    cli_args = {},
+)

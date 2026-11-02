@@ -4,8 +4,10 @@
 ## ConfiguredTargetNode.attrs\_eager
 ## ConfiguredTargetNode.attrs\_lazy
 ## ConfiguredTargetNode.buildfile\_path
+## ConfiguredTargetNode.configuration\_deps
 ## ConfiguredTargetNode.configuration\_info
 ## ConfiguredTargetNode.deps
+## ConfiguredTargetNode.exec\_deps
 ## ConfiguredTargetNode.get\_attr
 ## ConfiguredTargetNode.get\_attrs
 ## ConfiguredTargetNode.get\_source
@@ -17,4 +19,6 @@
 ## ConfiguredTargetNode.rule\_kind
 ## ConfiguredTargetNode.rule\_type
 ## ConfiguredTargetNode.sources
+## ConfiguredTargetNode.target\_deps
+## ConfiguredTargetNode.toolchain\_deps
 ## ConfiguredTargetNode.unwrap\_forward

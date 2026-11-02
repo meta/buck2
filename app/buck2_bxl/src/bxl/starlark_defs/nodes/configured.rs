@@ -699,6 +699,97 @@ fn configured_target_node_value_methods(builder: &mut MethodsBuilder) {
         ))
     }
 
+    /// Gets the target deps of this target: the deps in the target's own configuration (those of
+    /// `attrs.dep()` and the other dependency attributes, transitioned deps included), without
+    /// the exec deps, the toolchain deps and the configuration deps. The same set `target_deps()`
+    /// selects in a `deps()` query. Together with `exec_deps()`, `toolchain_deps()` and
+    /// `configuration_deps()` this partitions `deps()`.
+    /// The result is a list of `ConfiguredTargetNode`.
+    ///
+    /// Sample usage:
+    /// ```python
+    /// def _impl_get_target_deps(ctx):
+    ///     target_node = ctx.configured_targets("//foo:bar")
+    ///     ctx.output.print(target_node.target_deps())
+    /// ```
+    fn target_deps<'v>(
+        this: &'v StarlarkConfiguredTargetNode,
+    ) -> starlark::Result<AllocList<impl IntoIterator<Item = StarlarkConfiguredTargetNode> + 'v>>
+    {
+        Ok(AllocList(
+            this.0
+                .target_deps()
+                .map(|node| StarlarkConfiguredTargetNode(node.dupe())),
+        ))
+    }
+
+    /// Gets the exec deps of this target: the deps of its `attrs.exec_dep()` attributes,
+    /// configured for the target's execution platform. The same set `exec_deps()` selects in a
+    /// `deps()` query.
+    /// The result is a list of `ConfiguredTargetNode`.
+    ///
+    /// Sample usage:
+    /// ```python
+    /// def _impl_get_exec_deps(ctx):
+    ///     target_node = ctx.configured_targets("//foo:bar")
+    ///     ctx.output.print(target_node.exec_deps())
+    /// ```
+    fn exec_deps<'v>(
+        this: &'v StarlarkConfiguredTargetNode,
+    ) -> starlark::Result<AllocList<impl IntoIterator<Item = StarlarkConfiguredTargetNode> + 'v>>
+    {
+        Ok(AllocList(
+            this.0
+                .exec_deps()
+                .iter()
+                .map(|node| StarlarkConfiguredTargetNode(node.dupe())),
+        ))
+    }
+
+    /// Gets the toolchain deps of this target: the deps of its `attrs.toolchain_dep()`
+    /// attributes. The same set `toolchain_deps()` selects in a `deps()` query.
+    /// The result is a list of `ConfiguredTargetNode`.
+    ///
+    /// Sample usage:
+    /// ```python
+    /// def _impl_get_toolchain_deps(ctx):
+    ///     target_node = ctx.configured_targets("//foo:bar")
+    ///     ctx.output.print(target_node.toolchain_deps())
+    /// ```
+    fn toolchain_deps<'v>(
+        this: &'v StarlarkConfiguredTargetNode,
+    ) -> starlark::Result<AllocList<impl IntoIterator<Item = StarlarkConfiguredTargetNode> + 'v>>
+    {
+        Ok(AllocList(
+            this.0
+                .toolchain_deps()
+                .map(|node| StarlarkConfiguredTargetNode(node.dupe())),
+        ))
+    }
+
+    /// Gets the configuration deps of this target: the configuration rules among its deps, such as
+    /// the `constraint_value`s a `platform` names. The keys of a `select()` and the compatibility
+    /// attributes are resolved while configuring the target and are not deps of the configured
+    /// node. The same set `configuration_deps()` selects in a `deps()` query.
+    /// The result is a list of `ConfiguredTargetNode`.
+    ///
+    /// Sample usage:
+    /// ```python
+    /// def _impl_get_configuration_deps(ctx):
+    ///     target_node = ctx.configured_targets("//foo:bar")
+    ///     ctx.output.print(target_node.configuration_deps())
+    /// ```
+    fn configuration_deps<'v>(
+        this: &'v StarlarkConfiguredTargetNode,
+    ) -> starlark::Result<AllocList<impl IntoIterator<Item = StarlarkConfiguredTargetNode> + 'v>>
+    {
+        Ok(AllocList(
+            this.0
+                .configuration_deps()
+                .map(|node| StarlarkConfiguredTargetNode(node.dupe())),
+        ))
+    }
+
     /// Returns a `ConfigurationInfo` representing this node's configuration,
     /// or `None` if the configuration is not bound.
     ///

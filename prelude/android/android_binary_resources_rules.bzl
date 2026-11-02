@@ -349,6 +349,7 @@ def _maybe_filter_resources(ctx: AnalysisContext, resources: list[AndroidResourc
             manifest_file = resource.manifest_file,
             r_dot_java_package = resource.r_dot_java_package,
             res = filtered_res,
+            source_res = resource.source_res,
             text_symbols = resource.text_symbols,
             unused_resource_dep_validation_has_non_xml_resources = resource.unused_resource_dep_validation_has_non_xml_resources,
         )

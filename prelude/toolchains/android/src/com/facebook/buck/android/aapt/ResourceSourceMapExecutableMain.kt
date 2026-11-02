@@ -67,19 +67,24 @@ object ResourceSourceMapExecutableMain {
     return inlineValue?.takeIf(String::isNotEmpty)?.let(Paths::get)
   }
 
-  internal fun generate(resourceDirsFile: Path, assetDirsFile: Path, output: Path) {
-    val root = Paths.get(".").toAbsolutePath().normalize()
-    val resourceRoots = readRoots(resourceDirsFile)
+  internal fun generate(
+      resourceDirsFile: Path,
+      assetDirsFile: Path,
+      output: Path,
+      root: Path = Paths.get(".").toAbsolutePath().normalize(),
+  ) {
+    val resourceRoots = readResourceRoots(resourceDirsFile)
     val assetRoots = readRoots(assetDirsFile)
     val lines = TreeSet<String>()
 
     val resourceFiles = resourceRoots.flatMapIndexed { priority, input ->
       val resourceDir = resolve(root, input.path)
+      val sourceResolver = input.sourcePath?.let { SourceFileResolver(resolve(root, it)) }
       filesUnder(resourceDir).mapNotNull { (relative, file) ->
         if (relative.nameCount < 2) {
           null
         } else {
-          ResourceFile(relative, file, input.ownerBuildFile, priority)
+          ResourceFile(relative, file, sourceResolver, input.ownerBuildFile, priority)
         }
       }
     }
@@ -98,7 +103,21 @@ object ResourceSourceMapExecutableMain {
           null
         } else {
           val parts = line.split('\t', limit = 2)
-          InputRoot(Paths.get(parts[0]), parts.getOrElse(1) { "" })
+          InputRoot(Paths.get(parts[0]), null, parts.getOrElse(1) { "" })
+        }
+      }
+
+  private fun readResourceRoots(path: Path): List<InputRoot> =
+      Files.readAllLines(path, StandardCharsets.UTF_8).mapNotNull { line ->
+        if (line.isBlank()) {
+          null
+        } else {
+          val parts = line.split('\t', limit = 3)
+          when (parts.size) {
+            1 -> InputRoot(Paths.get(parts[0]), null, "")
+            2 -> InputRoot(Paths.get(parts[0]), null, parts[1])
+            else -> InputRoot(Paths.get(parts[0]), Paths.get(parts[1]), parts[2])
+          }
         }
       }
 
@@ -132,8 +151,10 @@ object ResourceSourceMapExecutableMain {
   }
 
   private fun resourceLinesOrEmpty(root: Path, file: ResourceFile): List<String> {
+    val sourceFiles =
+        file.sourceResolver?.resolve(file.relative).orEmpty().ifEmpty { listOf(file.path) }
     try {
-      return resourceLines(root, file)
+      return resourceLines(root, file, sourceFiles)
     } catch (failure: Throwable) {
       if (failure is VirtualMachineError || failure is ThreadDeath) throw failure
       System.err.println(
@@ -144,26 +165,28 @@ object ResourceSourceMapExecutableMain {
     }
   }
 
-  private fun resourceLines(root: Path, file: ResourceFile): List<String> {
+  private fun resourceLines(root: Path, file: ResourceFile, sourceFiles: List<Path>): List<String> {
     val miniAapt = MiniAapt(ImmutableSet.of())
     miniAapt.processAllFiles(ImmutableMap.of(file.relative, file.path))
-    val source = sourcePath(root, file.path, file.ownerBuildFile)
+    val sources = sourceFiles.map { sourcePath(root, it, file.ownerBuildFile) }.distinct()
     val qualifiers = qualifiers(file.relative.getName(0).toString())
-    return miniAapt.resourceCollector.resources.mapNotNull { entry ->
+    return miniAapt.resourceCollector.resources.flatMap { entry ->
       // Styleables are generated arrays and indices, not runtime resource-table entries. MiniAapt
       // emits their underlying attributes separately as R.attr entries.
       if (entry.type == RType.STYLEABLE) {
-        null
+        emptyList()
       } else {
-        ResourceSourceMapFormat.ResourceRow(
-                file.priority,
-                entry.type.name.lowercase(Locale.ROOT),
-                entry.name,
-                qualifiers,
-                source,
-                file.ownerBuildFile,
-            )
-            .serialize()
+        sources.map { source ->
+          ResourceSourceMapFormat.ResourceRow(
+                  file.priority,
+                  entry.type.name.lowercase(Locale.ROOT),
+                  entry.name,
+                  qualifiers,
+                  source,
+                  file.ownerBuildFile,
+              )
+              .serialize()
+        }
       }
     }
   }
@@ -227,11 +250,65 @@ object ResourceSourceMapExecutableMain {
   private fun qualifiers(resourceDirectory: String): String =
       resourceDirectory.substringAfter('-', missingDelimiterValue = "")
 
-  private data class InputRoot(val path: Path, val ownerBuildFile: String)
+  private fun qualifierParts(resourceDirectory: String): Set<String> =
+      qualifiers(resourceDirectory).takeIf(String::isNotEmpty)?.split('-')?.toSet() ?: emptySet()
+
+  private class SourceFileResolver(private val root: Path) {
+    private val candidatesByResource: Map<ResourceKey, List<SourceCandidate>> by lazy {
+      filesUnder(root)
+          .mapNotNull { (relative, path) -> sourceCandidate(relative, path) }
+          .groupBy({ it.first }, { it.second })
+    }
+
+    fun resolve(relative: Path): List<Path> {
+      val exact = root.resolve(relative)
+      if (Files.exists(exact)) return listOf(exact)
+
+      val generated = resourceIdentity(relative) ?: return emptyList()
+      val candidates = candidatesByResource[generated.key] ?: return emptyList()
+      val ranked = candidates.mapNotNull { candidate ->
+        if (generated.qualifiers.containsAll(candidate.qualifiers)) {
+          candidate to candidate.qualifiers.size
+        } else {
+          null
+        }
+      }
+      val bestScore = ranked.maxOfOrNull { it.second } ?: return emptyList()
+      return ranked.filter { it.second == bestScore }.map { it.first.path }.distinct()
+    }
+
+    private fun sourceCandidate(relative: Path, path: Path): Pair<ResourceKey, SourceCandidate>? {
+      val identity = resourceIdentity(relative) ?: return null
+      return identity.key to SourceCandidate(identity.qualifiers, path)
+    }
+
+    private fun resourceIdentity(relative: Path): ResourceIdentity? {
+      if (relative.nameCount < 2) return null
+      val resourceDirectory = relative.getName(0).toString()
+      val type = resourceDirectory.substringBefore('-')
+      if (type == "values") return null
+      val name = relative.fileName.toString().substringBefore('.')
+      if (name.isEmpty()) return null
+      return ResourceIdentity(ResourceKey(type, name), qualifierParts(resourceDirectory))
+    }
+  }
+
+  private data class ResourceKey(val type: String, val name: String)
+
+  private data class ResourceIdentity(val key: ResourceKey, val qualifiers: Set<String>)
+
+  private data class SourceCandidate(val qualifiers: Set<String>, val path: Path)
+
+  private data class InputRoot(
+      val path: Path,
+      val sourcePath: Path?,
+      val ownerBuildFile: String,
+  )
 
   private data class ResourceFile(
       val relative: Path,
       val path: Path,
+      val sourceResolver: SourceFileResolver?,
       val ownerBuildFile: String,
       val priority: Int,
   )

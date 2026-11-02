@@ -257,6 +257,8 @@ AndroidResourceInfo = provider(
         "r_dot_java_package": provider_field(Artifact | None, default = None),
         # resources defined by this rule. May be empty
         "res": provider_field(Artifact | None, default = None),
+        # original resources before transforms, when available
+        "source_res": provider_field(Artifact | None, default = None),
         # whether this resource contains non-XML resources
         "unused_resource_dep_validation_has_non_xml_resources": provider_field(bool, default = False),
         # priority of the resources, may be 'low' or 'normal'

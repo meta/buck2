@@ -8,7 +8,7 @@
 
 load("@prelude//:artifacts.bzl", "single_artifact")
 load("@prelude//:paths.bzl", "paths")
-load("@prelude//apple:apple_toolchain_types.bzl", "AppleToolchainInfo")
+load("@prelude//apple/swift:swift_toolchain_types.bzl", "SwiftToolchainInfo")
 load("@prelude//cxx:headers.bzl", "CHeader")
 load(
     "@prelude//linking:link_info.bzl",
@@ -37,6 +37,9 @@ load(
     "get_flattened_binary_deps",
     "get_is_watch_bundle",
     "get_product_name",
+    "get_resources_execution_group",
+    "get_resources_toolchain",
+    "get_resources_toolchain_info",
 )
 load(":apple_core_data.bzl", "compile_apple_core_data")
 load(":apple_info_plist.bzl", "process_info_plist", "process_plist")
@@ -174,11 +177,12 @@ def _create_pkg_info_if_needed(ctx: AnalysisContext) -> list[AppleBundlePart]:
     extension = get_extension_attr(ctx)
     if extension == "xpc" or extension == "qlgenerator":
         return []
-    artifact = ctx.actions.write("PkgInfo", "APPLWRUN\n", has_content_based_path = False)
+    artifact = ctx.actions.write("PkgInfo", "APPLWRUN\n", has_content_based_path = False, exec_group = get_resources_execution_group(ctx))
     return [AppleBundlePart(source = artifact, destination = AppleBundleDestination("metadata"))]
 
 def _copy_privacy_manifest_if_needed(ctx: AnalysisContext) -> list[AppleBundlePart]:
-    privacy_manifest = ctx.attrs.privacy_manifest
+    # `apple_test()` has no `privacy_manifest`, `copy_public_framework_headers` or `module_map`.
+    privacy_manifest = getattr(ctx.attrs, "privacy_manifest", None)
     if privacy_manifest == None:
         return []
 
@@ -248,7 +252,7 @@ def _copy_swift_library_evolution_support(ctx: AnalysisContext) -> list[AppleBun
     return [AppleBundlePart(source = framework_module_dir, destination = AppleBundleDestination("modules"), new_name = module_name + ".swiftmodule")]
 
 def _public_headers(ctx: AnalysisContext) -> list[Artifact]:
-    if not ctx.attrs.copy_public_framework_headers:
+    if not getattr(ctx.attrs, "copy_public_framework_headers", None):
         return []
     binary_deps = getattr(ctx.attrs, "binary")
     if binary_deps == None:
@@ -270,7 +274,7 @@ def _public_headers(ctx: AnalysisContext) -> list[Artifact]:
     return headers
 
 def _copy_public_headers(ctx: AnalysisContext) -> list[AppleBundlePart]:
-    if not ctx.attrs.copy_public_framework_headers:
+    if not getattr(ctx.attrs, "copy_public_framework_headers", None):
         return []
     binary_deps = getattr(ctx.attrs, "binary")
     if binary_deps == None:
@@ -318,6 +322,8 @@ def _create_framework_module_map(ctx: AnalysisContext) -> Artifact:
         module_name = module_name,
         headers = cheaders,
         is_framework = True,
+        swift_toolchain = get_resources_toolchain(ctx)[SwiftToolchainInfo],
+        exec_group = get_resources_execution_group(ctx),
     )
     return preprocessor_info.modulemap_artifact
 
@@ -325,7 +331,7 @@ def _copy_module_map(ctx: AnalysisContext) -> list[AppleBundlePart]:
     extension = get_extension_attr(ctx)
     if not extension == "framework":
         return []
-    module_map = ctx.attrs.module_map
+    module_map = getattr(ctx.attrs, "module_map", None)
     if module_map == None:
         return []
     if module_map == "auto":
@@ -492,7 +498,7 @@ def _run_ibtool(
 
     # Equivalent of `AppleProcessResources::BASE_IBTOOL_FLAGS` from v1
     base_flags = ["--output-format", "human-readable-text", "--notices", "--warnings", "--errors"]
-    ibtool = ctx.attrs._apple_toolchain[AppleToolchainInfo].ibtool
+    ibtool = get_resources_toolchain_info(ctx).ibtool
     ibtool_flags = getattr(ctx.attrs, "ibtool_flags", None) or []
     ibtool_command = [ibtool] + base_flags + ibtool_flags
     if target_device != None:
@@ -525,6 +531,7 @@ def _run_ibtool(
         script_lines,
         allow_args = True,
         has_content_based_path = False,
+        exec_group = get_resources_execution_group(ctx),
     )
     command = cmd_args(["/bin/sh", wrapper_script], hidden = [ibtool_command, output])
     action_identifier = _ibtool_identifier(command_for_identifier, raw_file)
@@ -534,6 +541,7 @@ def _run_ibtool(
         prefer_local = processing_options.prefer_local,
         prefer_remote = processing_options.prefer_remote,
         allow_cache_upload = processing_options.allow_cache_upload,
+        exec_group = get_resources_execution_group(ctx),
         category = "apple_ibtool",
         identifier = action_identifier,
     )

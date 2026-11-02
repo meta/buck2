@@ -8,8 +8,15 @@
 
 load(":apple_bundle_destination.bzl", "AppleBundleDestination")
 load(":apple_bundle_part.bzl", "AppleBundlePart")
-load(":apple_bundle_utility.bzl", "get_bundle_min_target_version", "get_default_binary_dep", "get_product_name")
-load(":apple_sdk.bzl", "get_apple_sdk_name")
+load(
+    ":apple_bundle_utility.bzl",
+    "get_bundle_min_target_version",
+    "get_default_binary_dep",
+    "get_product_name",
+    "get_resources_execution_group",
+    "get_resources_sdk_name",
+    "get_resources_toolchain_info",
+)
 load(
     ":apple_sdk_metadata.bzl",
     "AppleSdkMetadata",  # @unused Used as a type
@@ -20,7 +27,7 @@ load(
     "get_apple_sdk_metadata_for_sdk_name",
 )
 load(":apple_target_sdk_version.bzl", "get_platform_name_for_sdk", "get_platform_version_for_sdk_version")
-load(":apple_toolchain_types.bzl", "AppleToolchainInfo", "AppleToolsInfo")
+load(":apple_toolchain_types.bzl", "AppleToolsInfo")
 
 UpdateOperations = enum("set", "insert")
 MergeOperations = enum("merge")
@@ -41,10 +48,11 @@ def process_info_plist(ctx: AnalysisContext, override_input: Artifact | None) ->
     )
     return AppleBundlePart(source = output, destination = AppleBundleDestination("metadata"))
 
-def _get_plist_run_options() -> dict[str, bool]:
+def _get_plist_run_options(ctx: AnalysisContext) -> dict[str, typing.Any]:
     return {
         # Output is deterministic, so can be cached
         "allow_cache_upload": True,
+        "exec_group": get_resources_execution_group(ctx),
         # plist generation is cheap and fast, RE network overhead not worth it
         "prefer_local": True,
     }
@@ -68,11 +76,11 @@ def _preprocess_info_plist(ctx: AnalysisContext) -> Artifact:
     if substitutions_json != None:
         command.add(["--substitutions-json", substitutions_json])
     if getattr(ctx.attrs, "enforce_minimum_os_plist_key", False):
-        sdk_name = get_apple_sdk_name(ctx)
+        sdk_name = get_resources_sdk_name(ctx)
         sdk_metadata = get_apple_sdk_metadata_for_sdk_name(sdk_name)
         command.add(["--enforce-minimum-os-plist-key", sdk_metadata.min_version_plist_info_key])
 
-    ctx.actions.run(command, category = "apple_preprocess_info_plist", **_get_plist_run_options())
+    ctx.actions.run(command, category = "apple_preprocess_info_plist", **_get_plist_run_options(ctx))
     return output
 
 def _plist_substitutions_as_json_file(ctx: AnalysisContext) -> Artifact | None:
@@ -80,7 +88,9 @@ def _plist_substitutions_as_json_file(ctx: AnalysisContext) -> Artifact | None:
     if not info_plist_substitutions:
         return None
 
-    substitutions_json = ctx.actions.write_json("plist_substitutions.json", info_plist_substitutions, has_content_based_path = False)
+    substitutions_json = ctx.actions.write_json(
+        "plist_substitutions.json", info_plist_substitutions, has_content_based_path = False, exec_group = get_resources_execution_group(ctx)
+    )
     return substitutions_json
 
 def process_plist(
@@ -110,38 +120,39 @@ def process_plist(
         + additional_keys_arguments
         + override_keys_arguments
     )
-    ctx.actions.run(command, category = "apple_process_info_plist", identifier = action_id or input.basename, **_get_plist_run_options())
+    ctx.actions.run(command, category = "apple_process_info_plist", identifier = action_id or input.basename, **_get_plist_run_options(ctx))
 
 def _additional_keys_as_json_file(ctx: AnalysisContext) -> Artifact:
     additional_keys = _info_plist_additional_keys(ctx)
-    return ctx.actions.write_json("plist_additional.json", additional_keys, has_content_based_path = False)
+    return ctx.actions.write_json("plist_additional.json", additional_keys, has_content_based_path = False, exec_group = get_resources_execution_group(ctx))
 
 def _info_plist_additional_keys(ctx: AnalysisContext) -> dict[str, typing.Any]:
-    sdk_name = get_apple_sdk_name(ctx)
+    toolchain = get_resources_toolchain_info(ctx)
+    sdk_name = toolchain.sdk_name
     platform_name = get_platform_name_for_sdk(sdk_name)
     sdk_metadata = get_apple_sdk_metadata_for_sdk_name(sdk_name)
     result = _extra_mac_info_plist_keys(sdk_metadata, ctx.attrs.extension)
     result["CFBundleSupportedPlatforms"] = sdk_metadata.info_plist_supported_platforms_values
     result["DTPlatformName"] = platform_name
-    sdk_version = ctx.attrs._apple_toolchain[AppleToolchainInfo].sdk_version
+    sdk_version = toolchain.sdk_version
     if sdk_version:
         platform_version = get_platform_version_for_sdk_version(
             sdk_name = sdk_name,
             sdk_version = sdk_version,
         )
         result["DTPlatformVersion"] = platform_version
-        sdk_canonical_name = ctx.attrs._apple_toolchain[AppleToolchainInfo].sdk_canonical_name
+        sdk_canonical_name = toolchain.sdk_canonical_name
         # TODO(T157757124): Remove conditional when selected Xcode provides this value
         if sdk_canonical_name:
             result["DTSDKName"] = sdk_canonical_name
-    sdk_build_version = ctx.attrs._apple_toolchain[AppleToolchainInfo].sdk_build_version
+    sdk_build_version = toolchain.sdk_build_version
     if sdk_build_version:
         result["DTPlatformBuild"] = sdk_build_version
         result["DTSDKBuild"] = sdk_build_version
-    xcode_build_version = ctx.attrs._apple_toolchain[AppleToolchainInfo].xcode_build_version
+    xcode_build_version = toolchain.xcode_build_version
     if xcode_build_version:
         result["DTXcodeBuild"] = xcode_build_version
-    xcode_version = ctx.attrs._apple_toolchain[AppleToolchainInfo].xcode_version
+    xcode_version = toolchain.xcode_version
     if xcode_version:
         result["DTXcode"] = xcode_version
     result[sdk_metadata.min_version_plist_info_key] = get_platform_version_for_sdk_version(
@@ -169,10 +180,10 @@ def _extra_mac_info_plist_keys(sdk_metadata: AppleSdkMetadata, extension: str) -
 
 def _override_keys_as_json_file(ctx: AnalysisContext) -> Artifact:
     override_keys = _info_plist_override_keys(ctx)
-    return ctx.actions.write_json("plist_override.json", override_keys, has_content_based_path = False)
+    return ctx.actions.write_json("plist_override.json", override_keys, has_content_based_path = False, exec_group = get_resources_execution_group(ctx))
 
 def _info_plist_override_keys(ctx: AnalysisContext) -> dict[str, typing.Any]:
-    sdk_name = get_apple_sdk_name(ctx)
+    sdk_name = get_resources_sdk_name(ctx)
     result = {}
     if sdk_name == MacOSXSdkMetadata.name:
         if ctx.attrs.extension != "xpc":
@@ -211,7 +222,9 @@ def apple_info_plist_impl(ctx: AnalysisContext) -> list[Provider]:
 
     # Add mutations if provided
     if ctx.attrs.mutations:
-        mutations_file = ctx.actions.write_json("mutations.json", ctx.attrs.mutations, has_content_based_path = False)
+        mutations_file = ctx.actions.write_json(
+            "mutations.json", ctx.attrs.mutations, has_content_based_path = False, exec_group = get_resources_execution_group(ctx)
+        )
         command.add("--mutations")
         command.add(mutations_file)
         for mutation in ctx.attrs.mutations:
@@ -219,7 +232,7 @@ def apple_info_plist_impl(ctx: AnalysisContext) -> list[Provider]:
             if operation in MergeOperations.values() or operation in RestrictedMergeOperations.values():
                 command.add(cmd_args(hidden = mutation[1]))
 
-    ctx.actions.run(command, category = "apple_info_plist", identifier = input_plist.basename, **_get_plist_run_options())
+    ctx.actions.run(command, category = "apple_info_plist", identifier = input_plist.basename, **_get_plist_run_options(ctx))
 
     return [
         DefaultInfo(default_output = output_plist),

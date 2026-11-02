@@ -32,6 +32,7 @@ prelude_rule = record(
     attrs = field(dict[str, Attr]),
     impl = field([typing.Callable, None], None),
     uses_plugins = field([list[plugins.PluginKind], None], None),
+    exec_groups = field([list[ExecGroup], None], None),
     supports_incoming_transition = field([bool, None], None),
     is_toolchain_rule = field(bool, False),
     is_configuration_rule = field(bool, False),
@@ -104,6 +105,8 @@ def make_rule(spec: prelude_rule, extra_attrs: dict[str, typing.Any] = dict(), i
         impl = impl_override
     if spec.uses_plugins != None:
         kwargs["uses_plugins"] = spec.uses_plugins
+    if spec.exec_groups != None:
+        kwargs["exec_groups"] = spec.exec_groups
     if spec.supports_incoming_transition != None:
         kwargs["supports_incoming_transition"] = spec.supports_incoming_transition
 

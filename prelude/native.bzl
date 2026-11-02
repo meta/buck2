@@ -345,16 +345,16 @@ def _configured_alias_macro_stub(
     )
 
 def _apple_bundle_macro_stub(**kwargs):
-    apple_bundle_macro_impl(apple_bundle_rule = __rules__["apple_bundle"], apple_resource_bundle_rule = __rules__["apple_resource_bundle"], **kwargs)
+    apple_bundle_macro_impl(apple_bundle_rule = __rules__["apple_bundle"], **kwargs)
 
 def _apple_watchos_bundle_macro_stub(**kwargs):
-    apple_bundle_macro_impl(apple_bundle_rule = __rules__["apple_watchos_bundle"], apple_resource_bundle_rule = __rules__["apple_resource_bundle"], **kwargs)
+    apple_bundle_macro_impl(apple_bundle_rule = __rules__["apple_watchos_bundle"], **kwargs)
 
 def _apple_macos_bundle_macro_stub(**kwargs):
-    apple_bundle_macro_impl(apple_bundle_rule = __rules__["apple_macos_bundle"], apple_resource_bundle_rule = __rules__["apple_resource_bundle"], **kwargs)
+    apple_bundle_macro_impl(apple_bundle_rule = __rules__["apple_macos_bundle"], **kwargs)
 
 def _apple_test_macro_stub(**kwargs):
-    apple_test_macro_impl(apple_test_rule = __rules__["apple_test"], apple_resource_bundle_rule = __rules__["apple_resource_bundle"], **kwargs)
+    apple_test_macro_impl(apple_test_rule = __rules__["apple_test"], **kwargs)
 
 def _apple_xcuitest_macro_stub(**kwargs):
     apple_xcuitest_macro_impl(apple_xcuitest_rule = __rules__["apple_xcuitest"], **kwargs)

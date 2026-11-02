@@ -34,8 +34,8 @@ load("@prelude//tests:test_listing.bzl", "TestListingInfo")
 load("@prelude//tests:test_toolchain.bzl", "TestToolchainInfo")
 load("@prelude//zip_file:zip_file_toolchain.bzl", "ZipFileToolchainInfo")
 
-def _toolchain(lang: str, providers: list[typing.Any], *, default: typing.Any = None) -> Attr:
-    return attrs.toolchain_dep(default = default or ("toolchains//:" + lang), providers = providers)
+def _toolchain(lang: str, providers: list[typing.Any], *, default: typing.Any = None, exec_group: [ExecGroup, None] = None) -> Attr:
+    return attrs.toolchain_dep(default = default or ("toolchains//:" + lang), providers = providers, exec_group = exec_group)
 
 def _android_toolchain():
     return _toolchain("android", [AndroidToolchainInfo, AndroidPlatformInfo, TestListingInfo])
@@ -120,7 +120,9 @@ def _remote_test_execution_toolchain():
     return _toolchain("remote_test_execution", [RemoteTestExecutionToolchainInfo])
 
 def _test_toolchain():
-    return _toolchain("test", [TestToolchainInfo])
+    # Test rules with named execution groups, such as `apple_test`, must name the group of every
+    # toolchain dep.
+    return _toolchain("test", [TestToolchainInfo], exec_group = DefaultExecGroup)
 
 toolchains_common = struct(
     android = _android_toolchain,

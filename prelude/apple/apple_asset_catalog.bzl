@@ -6,7 +6,6 @@
 # of this source tree. You may select, at your option, one of the
 # above-listed licenses.
 
-load("@prelude//apple:apple_toolchain_types.bzl", "AppleToolchainInfo")
 load(
     "@prelude//ide_integrations/xcode:data.bzl",
     "XCODE_DATA_SUB_TARGET",
@@ -18,8 +17,14 @@ load(
     ":apple_asset_catalog_compilation_options.bzl", "AppleAssetCatalogsCompilationOptions", "get_apple_asset_catalogs_compilation_options"
 )  # @unused Used as a type
 load(":apple_asset_catalog_types.bzl", "AppleAssetCatalogResult", "AppleAssetCatalogSpec", "StringWithSourceTarget")
-load(":apple_bundle_utility.bzl", "get_bundle_min_target_version", "get_bundle_resource_processing_options")
-load(":apple_sdk.bzl", "get_apple_sdk_name")
+load(
+    ":apple_bundle_utility.bzl",
+    "get_bundle_min_target_version",
+    "get_bundle_resource_processing_options",
+    "get_resources_execution_group",
+    "get_resources_sdk_name",
+    "get_resources_toolchain_info",
+)
 load(":apple_sdk_metadata.bzl", "get_apple_sdk_metadata_for_sdk_name")
 load(":resource_groups.bzl", "create_resource_graph")
 
@@ -63,6 +68,7 @@ def compile_apple_asset_catalog(ctx: AnalysisContext, specs: list[AppleAssetCata
         prefer_local = processing_options.prefer_local,
         prefer_remote = processing_options.prefer_remote,
         allow_cache_upload = processing_options.allow_cache_upload,
+        exec_group = get_resources_execution_group(ctx),
         category = "apple_asset_catalog",
     )
     return AppleAssetCatalogResult(compiled_catalog = catalog, catalog_plist = plist)
@@ -98,7 +104,7 @@ def _actool_flags(
     info: AppleAssetCatalogSpec,
     compilation_options: AppleAssetCatalogsCompilationOptions,
 ) -> list[typing.Any]:
-    external_name = get_apple_sdk_name(ctx)
+    external_name = get_resources_sdk_name(ctx)
     sdk_metadata = get_apple_sdk_metadata_for_sdk_name(external_name)
     target_device = sdk_metadata.target_device_flags
 
@@ -132,7 +138,7 @@ def _get_actool_command(
     compilation_options: AppleAssetCatalogsCompilationOptions,
 ) -> cmd_args:
     flags = _actool_flags(ctx, info, compilation_options)
-    actool = ctx.attrs._apple_toolchain[AppleToolchainInfo].actool
+    actool = get_resources_toolchain_info(ctx).actool
     actool_command = cmd_args(
         [actool]
         + flags
@@ -159,6 +165,7 @@ def _get_actool_command(
         ],
         allow_args = True,
         has_content_based_path = False,
+        exec_group = get_resources_execution_group(ctx),
     )
     command = cmd_args(["/bin/sh", wrapper_script], hidden = [actool_command, catalog_output])
     return command

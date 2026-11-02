@@ -43,7 +43,7 @@ load("@prelude//utils:expect.bzl", "expect")
 load(":apple_bundle.bzl", "AppleBundlePartListConstructorParams", "get_apple_bundle_part_list")
 load(":apple_bundle_destination.bzl", "AppleBundleDestination", "bundle_relative_path_for_destination")
 load(":apple_bundle_part.bzl", "AppleBundlePart", "assemble_bundle", "bundle_output", "get_bundle_dir_name")
-load(":apple_bundle_types.bzl", "AppleBundleInfo")
+load(":apple_bundle_types.bzl", "AppleBundleInfo", "AppleBundleResourceInfo")
 load(":apple_bundle_utility.bzl", "get_product_name")
 load(
     ":apple_dsym.bzl",
@@ -236,6 +236,7 @@ def apple_test_impl(ctx: AnalysisContext) -> [list[Provider], Promise]:
                 [
                     DefaultInfo(default_output = xctest_bundle, sub_targets = sub_targets),
                     _get_test_info(ctx, xctest_bundle, test_host_app_bundle, ui_test_target_app_bundle = ui_test_target_app_bundle),
+                    AppleBundleResourceInfo(resource_output = part_list_output.resource_output),
                     cxx_library_output.index_store_info,
                     cxx_library_output.xcode_data_info,
                     cxx_library_output.cxx_compilationdb_info,

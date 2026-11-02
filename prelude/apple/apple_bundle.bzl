@@ -85,7 +85,7 @@ load(
     "get_apple_bundle_part_relative_destination_path",
     "get_bundle_dir_name",
 )
-load(":apple_bundle_resources.bzl", "get_apple_bundle_resource_part_list")
+load(":apple_bundle_resources.bzl", "AppleBundleResourcePartListOutput", "get_apple_bundle_resource_part_list")
 load(
     ":apple_bundle_types.bzl",
     "AppleBinaryExtraOutputsInfo",
@@ -159,6 +159,7 @@ AppleBundlePartListOutput = record(
     xcassets_catalogs = field([XcassetsBundleResourceCatalogs, None], None),
     xcassets_sub_targets = field(dict[str, list[Provider]], {}),
     xcassets_trim_providers = field(list[Provider], []),
+    resource_output = field(AppleBundleResourcePartListOutput),
 )
 
 _AppleBundleBinaryParts = record(
@@ -403,14 +404,7 @@ def _swift_sources_bundle_part(ctx: AnalysisContext, info: [SwiftDynamicReplacem
     return AppleBundlePart(source = output, destination = AppleBundleDestination("resources"), new_name = SWIFT_SOURCES_FILE_NAME)
 
 def get_apple_bundle_part_list(ctx: AnalysisContext, params: AppleBundlePartListConstructorParams) -> AppleBundlePartListOutput:
-    resource_part_list = None
-    if hasattr(ctx.attrs, "_resource_bundle") and ctx.attrs._resource_bundle != None:
-        resource_info = ctx.attrs._resource_bundle[AppleBundleResourceInfo]
-        if resource_info != None:
-            resource_part_list = resource_info.resource_output
-
-    if resource_part_list == None:
-        resource_part_list = get_apple_bundle_resource_part_list(ctx)
+    resource_part_list = get_apple_bundle_resource_part_list(ctx)
 
     test_frameworks_parts = []
     if getattr(ctx.attrs, "embed_xctest_frameworks", False):
@@ -433,6 +427,7 @@ def get_apple_bundle_part_list(ctx: AnalysisContext, params: AppleBundlePartList
         xcassets_catalogs = resource_part_list.xcassets_catalogs,
         xcassets_sub_targets = resource_part_list.xcassets_sub_targets,
         xcassets_trim_providers = resource_part_list.xcassets_trim_providers,
+        resource_output = resource_part_list,
     )
 
 def _infer_apple_bundle_type(ctx: AnalysisContext) -> AppleBundleType:
@@ -661,6 +656,7 @@ def apple_bundle_impl(ctx: AnalysisContext) -> list[Provider]:
                 signing_context_tree = bundle_result.signing_context_tree,
                 signing_info = bundle_result.signing_info,
             ),
+            AppleBundleResourceInfo(resource_output = apple_bundle_part_list_output.resource_output),
             AppleDebuggableInfo(
                 dsyms = dsym_artifacts,
                 binaries = binary_debug_artifacts,

@@ -275,7 +275,7 @@ def _executable_name_arg():
 
 def _apple_toolchain_arg():
     return {
-        "_apple_toolchain": attrs.toolchain_dep(default = "toolchains//:apple-default", providers = [AppleToolchainInfo]),
+        "_apple_toolchain": attrs.toolchain_dep(default = "toolchains//:apple-default", providers = [AppleToolchainInfo], exec_group = DefaultExecGroup),
     }
 
 def _asset_catalogs_compilation_options_arg():

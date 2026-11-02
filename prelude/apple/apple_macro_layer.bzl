@@ -11,7 +11,6 @@ load("@prelude//utils:selects.bzl", "selects")
 load(":apple_bundle_config.bzl", "apple_bundle_config")
 load(":apple_info_plist_substitutions_parsing.bzl", "parse_codesign_entitlements")
 load(":apple_package_config.bzl", "apple_package_config")
-load(":apple_resource_bundle.bzl", "make_resource_bundle_rule")
 load(
     ":apple_rules_impl_utility.bzl",
     "APPLE_ARCHIVE_OBJECTS_LOCALLY_OVERRIDE_ATTR_NAME",
@@ -83,25 +82,24 @@ def apple_macro_layer_set_bool_override_attrs_from_config(overrides: list[AppleB
             })
     return attribs
 
-def apple_test_macro_impl(apple_test_rule, apple_resource_bundle_rule, **kwargs):
+def apple_test_macro_impl(apple_test_rule, **kwargs):
     kwargs.update(apple_bundle_config())
     kwargs.update(apple_macro_layer_set_bool_override_attrs_from_config(_APPLE_TEST_LOCAL_EXECUTION_OVERRIDES))
 
-    # `extension` is used both by `apple_test` and `apple_resource_bundle`, so provide default here
     kwargs["extension"] = kwargs.pop("extension", "xctest")
 
-    apple_test_rule(_resource_bundle = make_resource_bundle_rule(apple_resource_bundle_rule, **kwargs), **kwargs)
+    apple_test_rule(**kwargs)
 
 def apple_xcuitest_macro_impl(apple_xcuitest_rule, **kwargs):
     kwargs.update(apple_bundle_config())
     apple_xcuitest_rule(**kwargs)
 
-def apple_bundle_macro_impl(apple_bundle_rule, apple_resource_bundle_rule, **kwargs):
+def apple_bundle_macro_impl(apple_bundle_rule, **kwargs):
     info_plist_substitutions = kwargs.get("info_plist_substitutions")
     kwargs.update(apple_bundle_config())
     codesign_entitlements = selects.apply(info_plist_substitutions, parse_codesign_entitlements)
 
-    apple_bundle_rule(_codesign_entitlements = codesign_entitlements, _resource_bundle = make_resource_bundle_rule(apple_resource_bundle_rule, **kwargs), **kwargs)
+    apple_bundle_rule(_codesign_entitlements = codesign_entitlements, **kwargs)
 
 def apple_library_macro_impl(apple_library_rule = None, **kwargs):
     kwargs.update(apple_macro_layer_set_bool_override_attrs_from_config(_APPLE_LIBRARY_LOCAL_EXECUTION_OVERRIDES))

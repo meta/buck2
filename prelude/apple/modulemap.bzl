@@ -11,7 +11,8 @@ load(
     "@prelude//apple/swift:swift_incremental_support.bzl",
     "get_uses_content_based_paths",
 )
-load("@prelude//apple/swift:swift_toolchain.bzl", "supports_modulemaps_with_hmaps")
+load("@prelude//apple/swift:swift_toolchain.bzl", "get_swift_toolchain_info")
+load("@prelude//apple/swift:swift_toolchain_types.bzl", "SwiftToolchainInfo")  # @unused Used as a type
 load(
     "@prelude//cxx:headers.bzl",
     "CHeader",  # @unused Used as a type
@@ -22,14 +23,22 @@ load(
 )
 
 def create_modulemap(
-    ctx: AnalysisContext, name: str, module_name: str, headers: list[CHeader], swift_header: Artifact | None = None, is_framework: bool = False
+    ctx: AnalysisContext,
+    name: str,
+    module_name: str,
+    headers: list[CHeader],
+    swift_header: Artifact | None = None,
+    is_framework: bool = False,
+    swift_toolchain: SwiftToolchainInfo | None = None,
+    exec_group: ExecGroup | None = None,
 ) -> CPreprocessor:
     # We don't want to name this module.modulemap to avoid implicit importing
     if name == "module" and not is_framework:
         fail("Don't use the name `module` for modulemaps, this will allow for implicit importing.")
 
-    uses_content_based_paths = get_uses_content_based_paths(ctx)
-    use_relative_paths = supports_modulemaps_with_hmaps(ctx)
+    swift_toolchain = swift_toolchain or get_swift_toolchain_info(ctx)
+    uses_content_based_paths = get_uses_content_based_paths(ctx, swift_toolchain)
+    use_relative_paths = swift_toolchain.supports_modulemaps_with_hmaps
 
     # Create a map of header import path to artifact location
     header_map = {}
@@ -95,7 +104,7 @@ def create_modulemap(
             cmd.add(include_path)
             cmd.add(cmd_args(symlink_tree, format = "{}/" + include_path))
 
-    ctx.actions.run(cmd, category = "modulemap", identifier = name)
+    ctx.actions.run(cmd, category = "modulemap", identifier = name, exec_group = exec_group)
 
     header_artifacts = header_map.values()
     modular_args = [cmd_args(output, format = "-fmodule-map-file={}", hidden = header_artifacts)]

@@ -68,10 +68,14 @@ jobs:
           cat "$GITHUB_OUTPUT"
       - id: get_tags_count
         name: Count the number of tags already published for this month
+        env:
+          # Unauthenticated, the request shares 60 calls an hour with every other job on the
+          # runner's address and gets a 403 now and then (run 15069); the token has 1000.
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           # GITHUB_REPOSITORY is used to allow this action to work on forks
           url="https://api.github.com/repos/$GITHUB_REPOSITORY/tags"
-          curl --retry 5 -fsSL "$url" -o tags.txt
+          curl --retry 5 -fsSL -H "Authorization: Bearer $GITHUB_TOKEN" "$url" -o tags.txt
           tags=$(cat tags.txt |  jq -r ".[].name")
           # Anchor the match so manual timestamped releases (YYYY-MM-DD-HH.MM.SS) don't count
           tags_count=$(echo "$tags" | grep -c "^${{ steps.get_date.outputs.month }}-[0-9][0-9]$" || true)

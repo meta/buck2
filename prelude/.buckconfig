@@ -23,7 +23,6 @@ config = ovr_config
   kotlincd_dep_files = per_class
   ksp_version = 2.0.2
   ksp_version_for_kotlin_2_3_plus = 2.3.9
-  ksp_version_for_upgrade_only_do_not_use=2.0.2
   min_language_version_for_dcg = 1.9
   min_language_version_for_jvm_abi_gen = 1.9
   track_class_usage = true

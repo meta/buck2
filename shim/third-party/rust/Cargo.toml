@@ -31,7 +31,7 @@ anymap3 = "1.1.0"
 arc-swap = { version = "1.9.3", features = ["weak"] }
 argfile = "1.0.0"
 assert_matches = "1.5"
-async-compression = { version = "0.4.50", features = ["brotli", "bzip2", "deflate", "futures-io", "gzip", "tokio", "zlib", "zstd", "zstdmt"] }
+async-compression = { version = "0.4.51", features = ["brotli", "bzip2", "deflate", "futures-io", "gzip", "tokio", "zlib", "zstd", "zstdmt"] }
 async-condvar-fair = { version = "1.0.1", features = ["parking_lot_0_12", "tokio"] }
 async-recursion = "1.2.0"
 async-scoped = { version = "0.9", features = ["use-tokio"] }

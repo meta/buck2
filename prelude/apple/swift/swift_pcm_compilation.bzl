@@ -249,6 +249,14 @@ def compile_internal_bridging_header_pch(
     swift_cxx_args: list[str],
     additional_args: cmd_args,
 ) -> Artifact:
+    # Clang only applies -fmodule-file-home-is-cwd when writing a module, so a
+    # PCH records its input files by absolute path. A PCH built on one machine
+    # (e.g. locally) and consumed on another (e.g. on RE) then fails with
+    # "could not find file ... referenced by AST file". Embedding the inputs
+    # lets the consumer read them from the PCH instead of from disk. The paths
+    # remain absolute, so the PCH still differs between machines until Clang
+    # writes them relative to the working directory.
+    additional_args = cmd_args(additional_args, "-Xcc", "-Xclang", "-Xcc", "-fmodules-embed-all-files")
     return _compile_clang_headers(
         ctx,
         "swift_internal_bridging_header_pch_compile",

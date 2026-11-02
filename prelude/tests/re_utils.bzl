@@ -30,11 +30,6 @@ RemoteTestExecutorConfig = record(
     use_project_relative_paths = field(bool, default = False),
 )
 
-def _network_access_kwargs(network_access: str | None) -> dict[str, str]:
-    if network_access == None:
-        return {}
-    return {"network_access": network_access}
-
 _FORCE_RUN_AS_BUNDLE = read_root_config("tpx", "force_run_as_bundle", "False")
 
 def _force_local_re_tests() -> bool:
@@ -150,7 +145,7 @@ def _get_re_executors(
     network_access = getattr(ctx.attrs, "network_access", None)
 
     if re_arg.disabled:
-        executor = CommandExecutorConfig(local_enabled = True, remote_enabled = False, **_network_access_kwargs(network_access))
+        executor = CommandExecutorConfig(local_enabled = True, remote_enabled = False, network_access = network_access)
         # A `remote_execution = "disabled"` target has always produced an executor
         # and therefore run from the project root; preserve that behavior.
         return RemoteTestExecutorConfig(default_executor = executor, run_from_project_root = True, use_project_relative_paths = True)
@@ -165,7 +160,7 @@ def _get_re_executors(
         # `remote_cache_enabled = False` keeps this a plain `Executor::Local`
         # (parity: the unset default is True in fbcode but False in OSS), and nothing
         # is uploaded from here anyway (`allow_cache_uploads` is False).
-        executor = CommandExecutorConfig(local_enabled = True, remote_enabled = False, remote_cache_enabled = False, **_network_access_kwargs(network_access))
+        executor = CommandExecutorConfig(local_enabled = True, remote_enabled = False, remote_cache_enabled = False, network_access = network_access)
         return RemoteTestExecutorConfig(default_executor = executor)
 
     re_props_copy = dict(re_props)
@@ -208,7 +203,7 @@ def _get_re_executors(
         remote_execution_resource_units = re_resource_units,
         remote_execution_dynamic_image = re_dynamic_image,
         meta_internal_extra_params = meta_internal_extra_params,
-        **_network_access_kwargs(network_access),
+        network_access = network_access,
     )
 
     listing_executor = default_executor
@@ -222,7 +217,7 @@ def _get_re_executors(
             remote_execution_resource_units = re_listing_resource_units,
             remote_execution_dynamic_image = re_dynamic_image,
             meta_internal_extra_params = meta_internal_extra_params,
-            **_network_access_kwargs(network_access),
+            network_access = network_access,
         )
     return RemoteTestExecutorConfig(
         default_executor = default_executor,

@@ -549,41 +549,6 @@ impl Buck {
         I: IntoIterator<Item = S>,
         S: AsRef<OsStr>,
     {
-        let mut cmd = self.command_without_config(subcommands);
-        cmd.args([
-            "-c=rust.rust_project_build=true",
-            // Buck owner() queries stop at the innermost BUCK file unless
-            // package_boundary_exceptions is set.
-            //
-            // This is arguably a bug in buck, because it's possible for a parent BUCK
-            // file to own a file in a subdirectory that has its own BUCK file.
-            //
-            // Buck probably didn't intend to allow this pattern: it doesn't work when you
-            // use `srcs = glob()`, but it does work for srcs with explicit paths.
-            //
-            // The intent of package_boundary_exceptions (added to buck2 in D34073360,
-            // rolled out in D4339610) was to enforce boundaries with an explicit opt-out
-            // list.
-            //
-            // However, due to the confusion with srcs, we can end up with owner() not
-            // finding the target even when the package is not opted-out. Instead, opt-out
-            // all packages for this query, so owner() always looks at parent BUCK files
-            // and finds the relevant target.
-            "-c=project.package_boundary_exceptions=.",
-        ]);
-
-        cmd
-    }
-
-    /// Invoke `buck` with the given subcommands.
-    ///
-    /// This method should only be used with buck commands that do not accept
-    /// configuration options, such as `root`. [`Buck::command`] should be preferred.
-    fn command_without_config<I, S>(&self, subcommands: I) -> Command
-    where
-        I: IntoIterator<Item = S>,
-        S: AsRef<OsStr>,
-    {
         let mut cmd = Command::new(&self.command);
 
         // rust-analyzer invokes the check-on-save command with `RUST_BACKTRACE=short`
@@ -609,7 +574,7 @@ impl Buck {
 
     /// Return the absolute path of the current Buck project root.
     pub(crate) fn resolve_project_root(&self) -> Result<PathBuf, anyhow::Error> {
-        let mut command = self.command_without_config(["root"]);
+        let mut command = self.command(["root"]);
         command.arg("--kind=project");
 
         let mut stdout = utf8_output(command.output(), &command)?;
@@ -1210,7 +1175,7 @@ fn unwrap_selector_best_effort(v: &serde_json::Value) -> Option<String> {
 #[test]
 fn explicit_isolation_directory() {
     let buck = Buck::new(None, None, None, Some("custom".to_owned()));
-    let command = buck.command_without_config(["root"]);
+    let command = buck.command(["root"]);
     assert_eq!(
         command.get_args().collect::<Vec<_>>(),
         [
@@ -1230,14 +1195,7 @@ fn inherit_isolation_directory_by_default() {
     let command = buck.command(["bxl"]);
     assert_eq!(
         command.get_args().collect::<Vec<_>>(),
-        [
-            CLIENT_METADATA_RUST_PROJECT,
-            "bxl",
-            "--oncall",
-            "rust_devx",
-            "-c=rust.rust_project_build=true",
-            "-c=project.package_boundary_exceptions=.",
-        ]
+        [CLIENT_METADATA_RUST_PROJECT, "bxl", "--oncall", "rust_devx",]
     );
 }
 

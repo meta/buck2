@@ -92,6 +92,7 @@ use buck2_test::executor_launcher::get_all_test_executors;
 use buck2_util::system_stats::num_cores;
 use buck2_util::system_stats::system_memory_stats;
 use buck2_util::threads::thread_spawn;
+use buck2_wrapper_common::invocation_id::TraceId;
 use dice::BranchId;
 use dice::Dice;
 use dice::EvictionPolicy;
@@ -1118,19 +1119,22 @@ where
     // control events; our first step is to spawn it.
 
     let trace_id = dispatcher.trace_id().dupe();
-    let task_dispatcher = dispatcher.dupe();
-    let (spawned, cancellation) = cancellation_scope.spawn(rt, move |context| {
-        buck2_events::dispatch::with_dispatcher_async(task_dispatcher, func(context)).boxed()
+    // Created outside the task so that a task that never runs still reports.
+    let report = ReportCancelledCommand {
+        dispatcher: Some(dispatcher.dupe()),
+        trace_id: trace_id.dupe(),
+    };
+    let (_spawned, cancellation) = cancellation_scope.spawn(rt, move |context| {
+        async move {
+            buck2_events::dispatch::with_dispatcher_async(dispatcher, func(context)).await;
+            // `func` sends its own result and the event pump stops at the first one, so the guard
+            // is disarmed in the same poll that `func` returns in. This relies on `func` not
+            // awaiting between sending its result and returning, which holds for both callers.
+            report.disarm();
+        }
+        .boxed()
     });
     let cancellation = CancelCommandOnDrop(cancellation);
-    let _monitor = rt.spawn(async move {
-        if let Err(error) = spawned.await {
-            dispatcher.command_result(error_to_command_result(buck2_error!(
-                ErrorTag::Input,
-                "Tenant command stopped: {error}"
-            )));
-        }
-    });
     let (output_send, output_recv) = tokio::sync::mpsc::unbounded_channel();
 
     // We run the event consumer on new non-tokio thread to avoid the consumer task from getting stuck behind
@@ -1194,6 +1198,30 @@ struct CancelCommandOnDrop(Arc<DropcancelHandle>);
 impl Drop for CancelCommandOnDrop {
     fn drop(&mut self) {
         self.0.cancel();
+    }
+}
+
+/// Sends the command's result if the task is dropped before the body returns.
+struct ReportCancelledCommand {
+    dispatcher: Option<EventDispatcher>,
+    trace_id: TraceId,
+}
+
+impl ReportCancelledCommand {
+    fn disarm(mut self) {
+        self.dispatcher = None;
+    }
+}
+
+impl Drop for ReportCancelledCommand {
+    fn drop(&mut self) {
+        if let Some(dispatcher) = self.dispatcher.take() {
+            dispatcher.command_result(error_to_command_result(buck2_error!(
+                ErrorTag::InterruptedByDaemonShutdown,
+                "Command {} was cancelled before it completed: its daemon tenant was evicted or the daemon is shutting down",
+                self.trace_id
+            )));
+        }
     }
 }
 
@@ -2548,14 +2576,258 @@ impl<Req> StreamingCommandOptions<Req> for DapCommandOptions {
 mod tests {
     use std::time::Duration;
 
+    use buck2_events::BuckEvent;
+    use buck2_events::EventSink;
     use futures::channel::mpsc;
+    use parking_lot::Mutex;
 
     use super::*;
+    use crate::active_commands::ActiveCommandDropGuard;
 
     /// These tests drive the shutdown signal to completion inside the test binary, under
     /// `tokio::time::pause`. A watchdog would sleep against the wall clock the paused deadline has
     /// no relation to, and then `_exit` the test binary out from under the other tests.
     const IN_PROCESS: bool = true;
+
+    /// Records the `CommandResult`s sent to the event pump's channel.
+    struct RecordingSink {
+        send: crossbeam_channel::Sender<Event>,
+        results: Arc<Mutex<Vec<CommandResult>>>,
+    }
+
+    impl EventSink for RecordingSink {
+        fn send(&self, event: Event) {
+            if let Event::CommandResult(result) = &event {
+                self.results.lock().push((**result).clone());
+            }
+            let _ignored = self.send.send(event);
+        }
+    }
+
+    struct StreamingCommand {
+        response: Option<Response<ResponseStream>>,
+        dispatcher: EventDispatcher,
+        results: Arc<Mutex<Vec<CommandResult>>>,
+        /// Another sender on the pump's channel, which fails once the pump has exited.
+        probe: crossbeam_channel::Sender<Event>,
+        _guard: ActiveCommandDropGuard,
+        /// Dropping the scope would cancel the command.
+        _scope: CancellationScope,
+    }
+
+    impl StreamingCommand {
+        fn start(
+            func: impl FnOnce(EventDispatcher) -> BoxFuture<'static, ()> + Send + 'static,
+        ) -> Self {
+            Self::start_in(CancellationScope::new(), func)
+        }
+
+        fn start_in(
+            scope: CancellationScope,
+            func: impl FnOnce(EventDispatcher) -> BoxFuture<'static, ()> + Send + 'static,
+        ) -> Self {
+            let (send, recv) = crossbeam_channel::unbounded();
+            let results = Arc::new(Mutex::new(Vec::new()));
+            let dispatcher = EventDispatcher::new(
+                TraceId::new(),
+                DaemonId::new(),
+                RecordingSink {
+                    send: send.clone(),
+                    results: results.dupe(),
+                },
+            );
+            let ActiveCommand {
+                guard,
+                state,
+                daemon_shutdown_channel,
+            } = ActiveCommand::new(&dispatcher, Vec::new());
+            let body_dispatcher = dispatcher.dupe();
+            let response = streaming(
+                ChannelEventSource::new(recv),
+                state,
+                dispatcher.dupe(),
+                daemon_shutdown_channel,
+                &scope,
+                move |_| func(body_dispatcher),
+                &Handle::current(),
+            );
+            Self {
+                response: Some(response),
+                dispatcher,
+                results,
+                probe: send,
+                _guard: guard,
+                _scope: scope,
+            }
+        }
+
+        async fn wait_for_pump_exit(&self) {
+            let probe = || {
+                Event::Buck(BuckEvent::new(
+                    SystemTime::now(),
+                    self.dispatcher.trace_id().dupe(),
+                    None,
+                    None,
+                    buck2_data::SpanStartEvent {
+                        data: Some(buck2_data::AnalysisStart::default().into()),
+                    }
+                    .into(),
+                ))
+            };
+            tokio::time::timeout(Duration::from_secs(30), async {
+                while self.probe.send(probe()).is_ok() {
+                    tokio::time::sleep(Duration::from_millis(10)).await;
+                }
+            })
+            .await
+            .expect("the event pump should exit after the first result");
+        }
+
+        /// What tonic does when the client disconnects.
+        fn drop_response(&mut self) {
+            self.response = None;
+        }
+
+        fn results(&self) -> Vec<CommandResult> {
+            self.results.lock().clone()
+        }
+
+        fn cancelled_message(&self) -> String {
+            format!(
+                "Command {} was cancelled before it completed: its daemon tenant was evicted or the daemon is shutting down",
+                self.dispatcher.trace_id()
+            )
+        }
+    }
+
+    fn error_report(result: &CommandResult) -> &buck2_data::ErrorReport {
+        match &result.result {
+            Some(command_result::Result::Error(report)) => report,
+            other => panic!("expected an error result, got {other:?}"),
+        }
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn test_streaming_reports_command_dropped_before_its_result() {
+        let (started_send, started_recv) = oneshot::channel();
+        let (_park_send, park_recv) = oneshot::channel::<()>();
+        let (dropped_send, dropped_recv) = oneshot::channel::<()>();
+        let mut command = StreamingCommand::start(move |dispatcher| {
+            async move {
+                let _dropped = dropped_send;
+                started_send.send(()).unwrap();
+                let _ignored = park_recv.await;
+                dispatcher.command_result(error_to_command_result(buck2_error!(
+                    ErrorTag::Input,
+                    "body result"
+                )));
+            }
+            .boxed()
+        });
+        started_recv.await.unwrap();
+
+        command.drop_response();
+        command.wait_for_pump_exit().await;
+        // The body is dropped by then, so nothing can send another result.
+        assert!(dropped_recv.await.is_err());
+
+        let results = command.results();
+        assert_eq!(
+            1,
+            results.len(),
+            "only the guard should report: {results:?}"
+        );
+        let report = error_report(&results[0]);
+        assert_eq!(
+            Some(command.cancelled_message().as_str()),
+            report.message.lines().next()
+        );
+        assert!(
+            report
+                .tags
+                .contains(&(ErrorTag::InterruptedByDaemonShutdown as i32))
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn test_streaming_does_not_report_completed_command_again() {
+        let (dropped_send, dropped_recv) = oneshot::channel::<()>();
+        let mut command = StreamingCommand::start(move |dispatcher| {
+            async move {
+                let _dropped = dropped_send;
+                dispatcher.command_result(error_to_command_result(buck2_error!(
+                    ErrorTag::Input,
+                    "body result"
+                )));
+            }
+            .boxed()
+        });
+        command.wait_for_pump_exit().await;
+        assert!(dropped_recv.await.is_err());
+
+        command.drop_response();
+        tokio::task::yield_now().await;
+
+        let results = command.results();
+        assert_eq!(1, results.len(), "only the body should report: {results:?}");
+        assert_eq!(
+            Some("body result"),
+            error_report(&results[0]).message.lines().next()
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn test_streaming_does_not_report_command_cancelled_after_its_result() {
+        let (release_send, release_recv) = std::sync::mpsc::channel::<()>();
+        let (dropped_send, dropped_recv) = oneshot::channel::<()>();
+        let mut command = StreamingCommand::start(move |dispatcher| {
+            async move {
+                let _dropped = dropped_send;
+                dispatcher.command_result(error_to_command_result(buck2_error!(
+                    ErrorTag::Input,
+                    "body result"
+                )));
+                // Blocks without yielding, so the cancel below arrives during the task's final
+                // poll, after the body has sent its result.
+                release_recv.recv().unwrap();
+            }
+            .boxed()
+        });
+        command.wait_for_pump_exit().await;
+
+        command.drop_response();
+        release_send.send(()).unwrap();
+        assert!(dropped_recv.await.is_err());
+        tokio::time::sleep(Duration::from_millis(500)).await;
+
+        let results = command.results();
+        assert_eq!(1, results.len(), "only the body should report: {results:?}");
+        assert_eq!(
+            Some("body result"),
+            error_report(&results[0]).message.lines().next()
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn test_streaming_reports_command_admitted_after_scope_closed() {
+        let scope = CancellationScope::new();
+        scope.cancel();
+        let command = StreamingCommand::start_in(scope, |_| {
+            async { unreachable!("a closed scope should not run the command") }.boxed()
+        });
+        command.wait_for_pump_exit().await;
+
+        let results = command.results();
+        assert_eq!(
+            1,
+            results.len(),
+            "only the guard should report: {results:?}"
+        );
+        assert_eq!(
+            Some(command.cancelled_message().as_str()),
+            error_report(&results[0]).message.lines().next()
+        );
+    }
 
     #[tokio::test]
     async fn test_server_shutdown_custom_idle_timeout() {

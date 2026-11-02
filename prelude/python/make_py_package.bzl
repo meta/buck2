@@ -282,6 +282,17 @@ def make_py_package(
     if pex_modules.extensions:
         srcs.append(pex_modules.extensions.manifest)
 
+    # The packages of extensions linked into the executable get an `__init__.py`
+    # from their stubs, so `__manifest__.modules` has to see the stubs too.
+    if pex_modules.extra_manifests:
+        static_extension_stubs = [
+            (dest, artifact, "prelude//python:make_py_package.bzl")
+            for artifact, dest in pex_modules.extra_manifests.artifacts
+            if isinstance(dest, str) and dest.endswith(".empty_stub")
+        ]
+        if static_extension_stubs:
+            srcs.append(create_manifest_for_entries(ctx, "manifest/static_extension_stubs", static_extension_stubs).manifest)
+
     if ctx.attrs._exec_os_type[OsLookup].os == Os("macos"):
         # preload_deps might include additional shared libraries which macOS will
         # not be able to load unless they're inside the PAR.

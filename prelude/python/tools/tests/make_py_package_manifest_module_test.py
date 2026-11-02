@@ -119,3 +119,12 @@ class ModuleNamesTest(unittest.TestCase):
             ]
         )
         self.assertEqual(modules, ["pkg.__init__", "pkg._speedups"])
+
+    def test_static_extension_stubs_get_a_package_init(self) -> None:
+        modules = self._modules_for(
+            [
+                ["pkg/native/ext.empty_stub", "src", "origin"],
+                ["pkg/native/ext.pyi", "src", "origin"],
+            ]
+        )
+        self.assertEqual(modules, ["pkg.__init__", "pkg.native.__init__"])

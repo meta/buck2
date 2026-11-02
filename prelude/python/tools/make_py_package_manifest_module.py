@@ -57,6 +57,10 @@ def parse_args() -> argparse.Namespace:
 # part of its module name.
 _SOABI_TAG = re.compile(r"\.(cpython-[^./\\]+|abi3)$")
 
+# Marks an extension linked into the executable. It isn't an importable file,
+# but its package is.
+_STATIC_EXTENSION_STUB_SUFFIX = ".empty_stub"
+
 
 def path_to_module(path: str) -> str | None:
     for suffix in (".py", ".so", ".pyd"):
@@ -102,9 +106,10 @@ def main() -> None:
             with open(module_manifest_file) as f:
                 for pkg_path, _, origin_desc in json.load(f):
                     module = path_to_module(pkg_path)
-                    if not module:
+                    if module:
+                        modules[module] = origin_desc
+                    elif not pkg_path.endswith(_STATIC_EXTENSION_STUB_SUFFIX):
                         continue
-                    modules[module] = origin_desc
                     # Add artificial __init__.py files like in make_py_package_modules.py
                     for parent in Path(pkg_path).parents:
                         if parent == Path("") or parent == Path("."):

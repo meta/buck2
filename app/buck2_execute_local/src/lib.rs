@@ -547,7 +547,10 @@ mod tests {
             background_command("sh")
         };
         if cfg!(windows) {
-            cmd.args(["/c", "start /b timeout 10 >nul & echo hello"]);
+            // `ping` to loopback is the sleep: `timeout` would be GNU coreutils' when Git's
+            // `usr/bin` precedes System32 on PATH, which has no command to run and says so on
+            // stderr.
+            cmd.args(["/c", "start /b ping -n 11 127.0.0.1 >nul & echo hello"]);
         } else {
             cmd.args(["-c", "(sleep 10 &) && echo hello"]);
         }

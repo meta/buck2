@@ -1657,6 +1657,7 @@ impl RemoteExecutionClientImpl {
                 ..Default::default()
             }),
             respect_file_symlinks: Some(self.respect_file_symlinks),
+            disable_cancel_on_disconnect: !meta_internal_extra_params.cancel_on_client_disconnect,
             ..use_case.metadata(Some(identity))
         };
 
@@ -1857,10 +1858,8 @@ impl RemoteExecutionClientImpl {
                     compute_cost_ms,
                 ))
             }
-            // Cancelling an execution request from the RE client causes it to be cancelled on the
-            // server side if and only if it had not yet started executing - if it had started
-            // executing, it'll run to completion and be written to the cache, so treat it mostly
-            // like a completed execution.
+            // RE drops a cancelled execution that had not started. A started one already ran on RE,
+            // whether RE then finishes or stops it, so trace it as an execution.
             Ok(ExecuteResponseOrCancelled::Cancelled(_, _, ExecutionStarted::Yes)) => Some((
                 buck2_data::action_digest_trace::ActionDigestTraceEvent::RemoteExecution,
                 None,

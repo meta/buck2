@@ -182,6 +182,9 @@ pub fn register_command_executor_config(builder: &mut GlobalsBuilder) {
     ///     - `num_of_workers`: Number of workers in the gang (required, integer)
     ///     - `locality`: Optional locality constraint ("region", "datacenter", or "network_domain")
     ///     Note: mutually exclusive with `remote_execution_gang_workers`
+    ///   - `cancel_on_client_disconnect`: Directs RE to stop a started execution when buck2
+    ///     closes the execution stream (e.g. the command is cancelled or the process exits).
+    ///     Defaults to `False`, which lets RE run it to completion and write the result to cache.
     /// * `priority`: The priority for remote execution requests. The exact interpretation is up
     ///   to the RE server. See the Bazel Remote Execution API for recommended interpretation:
     ///   https://github.com/bazelbuild/remote-apis/blob/main/build/bazel/remote/execution/v2/remote_execution.proto#L1499
@@ -624,6 +627,11 @@ pub fn parse_meta_internal_extra_params<'v>(
         .and_then(|v| v.unpack_bool())
         .unwrap_or(false);
 
+    let cancel_on_client_disconnect = params
+        .get_str("cancel_on_client_disconnect")
+        .and_then(|v| v.unpack_bool())
+        .unwrap_or(false);
+
     let result = MetaInternalExtraParams {
         remote_execution_policy: parse_remote_execution_policy(
             params.get_str("remote_execution_policy"),
@@ -633,6 +641,7 @@ pub fn parse_meta_internal_extra_params<'v>(
         )?,
         gang,
         allow_unsandboxed_action_cache_uploads,
+        cancel_on_client_disconnect,
     };
 
     if result == MetaInternalExtraParams::default() {
@@ -720,9 +729,12 @@ mod tests {
     use buck2_interpreter::factory::BuckStarlarkModule;
     use buck2_interpreter::factory::StarlarkEvaluatorProvider;
     use dice_futures::cancellation::CancellationContext;
+    use starlark::values::Heap;
     use starlark::values::dict::AllocDict;
+    use starlark::values::dict::DictRef;
     use starlark::values::list::AllocList;
 
+    use crate::interpreter::rule_defs::command_executor_config::parse_meta_internal_extra_params;
     use crate::interpreter::rule_defs::command_executor_config::parse_remote_execution_properties;
 
     #[test]
@@ -756,6 +768,24 @@ mod tests {
             )?;
             let (profiling, _) = finished_eval.finish()?;
             Ok((profiling, ()))
+        })
+    }
+
+    #[test]
+    fn test_parse_meta_internal_extra_params_cancel_on_client_disconnect() -> buck2_error::Result<()>
+    {
+        Heap::temp(|heap| {
+            let params = heap.alloc(AllocDict([("cancel_on_client_disconnect", true)]));
+            let params = parse_meta_internal_extra_params(DictRef::from_value(params))?;
+            assert!(params.cancel_on_client_disconnect);
+
+            let params = heap.alloc(AllocDict([(
+                "allow_unsandboxed_action_cache_uploads",
+                true,
+            )]));
+            let params = parse_meta_internal_extra_params(DictRef::from_value(params))?;
+            assert!(!params.cancel_on_client_disconnect, "defaults to false");
+            Ok(())
         })
     }
 }

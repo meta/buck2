@@ -611,6 +611,12 @@ pub struct MetaInternalExtraParams {
     /// when the action runs without network isolation. Useful for actions
     /// that require network access but produce deterministic outputs.
     pub allow_unsandboxed_action_cache_uploads: bool,
+    /// Directs RE to stop a started execution when buck2 closes the execution stream — either
+    /// because the action's future was cancelled (e.g. build failure without --keep-going, ctrl-C,
+    /// or command timeout) or because the process exited. A transient network drop also closes the
+    /// stream. If RE has merged another identical request into this execution, it keeps running for
+    /// that requester.
+    pub cancel_on_client_disconnect: bool,
 }
 
 impl MetaInternalExtraParams {

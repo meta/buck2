@@ -140,6 +140,14 @@ impl SettingsReport {
                 let _ = write!(out, "  (absent)");
             }
             let _ = writeln!(out);
+            for ignored in &layer.ignored {
+                let _ = writeln!(
+                    out,
+                    "    ignored {}: {}",
+                    ignored.setting.as_deref().unwrap_or("the whole file"),
+                    ignored.reason
+                );
+            }
         }
 
         for section in &self.sections {

@@ -14,7 +14,8 @@ use std::sync::Arc;
 
 use buck2_core::buck2_env;
 use buck2_core::fs::project::ProjectRoot;
-use buck2_core::warn_user_or_panic;
+#[cfg(fbcode_build)]
+use buck2_core::soft_error_or_panic;
 use buck2_error::BuckErrorContext;
 use buck2_fs::fs_util;
 use buck2_fs::paths::abs_path::AbsPath;
@@ -33,6 +34,8 @@ use crate::path::DOT_BUCKSETTINGS;
 use crate::path::SettingsSource as SettingsPathSource;
 #[cfg(fbcode_build)]
 use crate::path::rollouts_path;
+#[cfg(fbcode_build)]
+use crate::rollouts::SelectedRollout;
 #[cfg(fbcode_build)]
 use crate::rollouts::select_rollout_table;
 use crate::settings::ALL_SECTION_METADATA;
@@ -77,8 +80,45 @@ impl SettingOrigin {
 pub struct SettingsLayerReport {
     pub origin: SettingOrigin,
     /// Whether the layer contributed: a file that exists and parsed, a flag.
-    /// A rollout cache that fails to parse is reported and skipped.
     pub applied: bool,
+    /// What the layer held but did not contribute. Only the rollout cache
+    /// tolerates that; any other layer fails the command instead.
+    pub ignored: Vec<IgnoredSetting>,
+}
+
+/// Rollout content that was not applied, and why.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct IgnoredSetting {
+    /// `section.key`, or `section` when a whole section was skipped; `None`
+    /// when the whole file was.
+    pub setting: Option<String>,
+    pub reason: String,
+}
+
+impl IgnoredSetting {
+    #[cfg(fbcode_build)]
+    pub(crate) fn key(section: &str, key: &str, reason: impl Into<String>) -> Self {
+        Self {
+            setting: Some(format!("{section}.{key}")),
+            reason: reason.into(),
+        }
+    }
+
+    #[cfg(fbcode_build)]
+    pub(crate) fn section(section: &str, reason: impl Into<String>) -> Self {
+        Self {
+            setting: Some(section.to_owned()),
+            reason: reason.into(),
+        }
+    }
+
+    #[cfg(fbcode_build)]
+    fn layer(reason: impl Into<String>) -> Self {
+        Self {
+            setting: None,
+            reason: reason.into(),
+        }
+    }
 }
 
 /// Settings together with the layers they came from.
@@ -121,9 +161,17 @@ struct SettingsLayer {
     table: toml::Table,
 }
 
+/// The rollout layer and what was left out of it.
+#[derive(Default)]
+struct RolloutLayer {
+    layer: Option<SettingsLayer>,
+    ignored: Vec<IgnoredSetting>,
+}
+
+#[cfg(fbcode_build)]
 struct LoadedRollout {
     path: AbsPathBuf,
-    table: toml::Table,
+    selected: SelectedRollout,
 }
 
 impl SettingsLayer {
@@ -276,7 +324,7 @@ fn parse_table(path: &AbsPath) -> buck2_error::Result<Option<toml::Table>> {
 fn parse_layers(
     repo_root: &AbsPath,
     home_dir: Option<&AbsPath>,
-    rollout_layer: Option<SettingsLayer>,
+    rollout: RolloutLayer,
 ) -> buck2_error::Result<(Vec<SettingsLayer>, Vec<SettingsLayerReport>)> {
     let mut base_layers = Vec::new();
     let mut base_reports = Vec::new();
@@ -312,6 +360,7 @@ fn parse_layers(
         reports.push(SettingsLayerReport {
             origin: origin.clone(),
             applied: table.is_some(),
+            ignored: Vec::new(),
         });
         if let Some(table) = table {
             layers.push(SettingsLayer::new(origin, table));
@@ -323,10 +372,11 @@ fn parse_layers(
     {
         base_reports.push(SettingsLayerReport {
             origin,
-            applied: rollout_layer.is_some(),
+            applied: rollout.layer.is_some(),
+            ignored: rollout.ignored,
         });
     }
-    base_layers.extend(rollout_layer);
+    base_layers.extend(rollout.layer);
     base_layers.extend(local_layers);
     base_reports.extend(local_reports);
     Ok((base_layers, base_reports))
@@ -351,32 +401,65 @@ fn try_load_rollout(home_dir: Option<&AbsPath>) -> buck2_error::Result<Option<Lo
     let Some(versioned_settings) = parse_table(&path)? else {
         return Ok(None);
     };
-    let table = select_rollout_table(versioned_settings)
-        .with_buck_error_context(|| format!("Selecting settings rollout cache `{path}`"))?;
-    Ok(table.map(|table| LoadedRollout { path, table }))
+    Ok(Some(LoadedRollout {
+        path,
+        selected: select_rollout_table(versioned_settings),
+    }))
+}
+
+/// Loads the rollout layer. Nothing in the cache fails the command: a file
+/// that cannot be read or parsed is skipped whole, and a stanza's unusable
+/// keys are skipped one by one. Both are reported and logged, not shown: the
+/// user cannot do anything about the wrapper's cache.
+#[cfg(fbcode_build)]
+fn rollout_layer(home_dir: Option<&AbsPath>) -> RolloutLayer {
+    let LoadedRollout { path, selected } = match try_load_rollout(home_dir) {
+        Ok(Some(loaded)) => loaded,
+        Ok(None) => return RolloutLayer::default(),
+        Err(error) => {
+            let reason = format!("{error:#}");
+            soft_error_or_panic!(
+                "buck_settings_rollout_ignored",
+                error.context("Ignoring the settings rollout cache")
+            );
+            return RolloutLayer {
+                layer: None,
+                ignored: vec![IgnoredSetting::layer(reason)],
+            };
+        }
+    };
+    if !selected.ignored.is_empty() {
+        let ignored: Vec<String> = selected
+            .ignored
+            .iter()
+            .map(|ignored| {
+                format!(
+                    "{}: {}",
+                    ignored.setting.as_deref().unwrap_or("file"),
+                    ignored.reason
+                )
+            })
+            .collect();
+        soft_error_or_panic!(
+            "buck_settings_rollout_ignored",
+            buck2_error::buck2_error!(
+                buck2_error::ErrorTag::Input,
+                "Ignored parts of the settings rollout cache `{path}`: [{}]",
+                ignored.join(", ")
+            )
+        );
+    }
+    let layer = (!selected.layer.is_empty())
+        .then(|| SettingsLayer::new(SettingOrigin::Rollout(path), selected.layer));
+    RolloutLayer {
+        layer,
+        ignored: selected.ignored,
+    }
 }
 
 #[cfg(not(fbcode_build))]
-fn try_load_rollout(_home_dir: Option<&AbsPath>) -> buck2_error::Result<Option<LoadedRollout>> {
-    Ok(None)
-}
-
-/// Loads the rollout layer. A rollout file that cannot be read, parsed, or validated is
-/// reported and skipped rather than failing the command.
-fn rollout_layer(home_dir: Option<&AbsPath>) -> Option<SettingsLayer> {
-    match try_load_rollout(home_dir) {
-        Ok(Some(LoadedRollout { path, table })) => {
-            Some(SettingsLayer::new(SettingOrigin::Rollout(path), table))
-        }
-        Ok(None) => None,
-        Err(error) => {
-            warn_user_or_panic!(
-                "buck_settings_rollout_ignored",
-                error.context("Error parsing settings rollout file")
-            );
-            None
-        }
-    }
+fn rollout_layer(_home_dir: Option<&AbsPath>) -> RolloutLayer {
+    RolloutLayer::default()
 }
 
 /// Recursively merges overlay into base. Overlay values take precedence over base values.
@@ -492,6 +575,7 @@ pub(crate) fn resolve_settings_with_home(
         reports.push(SettingsLayerReport {
             origin: SettingOrigin::Local(path.to_owned()),
             applied: true,
+            ignored: Vec::new(),
         });
         layers.push(SettingsLayer::new(
             SettingOrigin::Local(path.to_owned()),
@@ -502,6 +586,7 @@ pub(crate) fn resolve_settings_with_home(
         reports.push(SettingsLayerReport {
             origin: SettingOrigin::CommandLine,
             applied: true,
+            ignored: Vec::new(),
         });
         layers.push(SettingsLayer::setting_flag(table.clone()));
     }
@@ -587,7 +672,7 @@ mod tests {
         let (mut layers, _reports) = parse_layers(
             repo.path().root().as_abs_path(),
             Some(home.path().root().as_abs_path()),
-            None,
+            RolloutLayer::default(),
         )?;
         layers.extend(
             settings_args
@@ -772,11 +857,6 @@ mod tests {
                     "malformed selected version",
                     format!("[log_download]\n{version} = false").into_bytes(),
                 ),
-                (
-                    "unknown selected setting",
-                    rollout_toml("log_url = \"https://rollout/\"\nnot_a_setting = true")
-                        .into_bytes(),
-                ),
             ];
 
             for (label, content) in cases {
@@ -791,6 +871,50 @@ mod tests {
                     "{label} must not affect other settings"
                 );
             }
+            Ok(())
+        }
+
+        #[test]
+        fn unusable_rollout_keys_are_skipped_individually() -> buck2_error::Result<()> {
+            let repo = ProjectRootTemp::new()?;
+            repo.write_file(
+                DOT_BUCKSETTINGS,
+                &format!("[log_download]\nlog_url = \"{REPO_URL}\"\n"),
+            );
+            let home = ProjectRootTemp::new()?;
+            write_rollout(
+                &home,
+                rollout_toml("log_url = \"https://rollout/\"\nnot_a_setting = true").as_bytes(),
+            );
+            let resolved = resolve_settings_with_home(
+                repo.path().root().as_abs_path(),
+                Some(home.path().root().as_abs_path()),
+                None,
+                &[],
+            )?;
+            assert_eq!(
+                resolved
+                    .settings
+                    .daemon
+                    .log_download
+                    .log_url(&mut NoBuckconfig)?
+                    .as_deref(),
+                Some("https://rollout/")
+            );
+            let rollout = resolved
+                .layers
+                .iter()
+                .find(|layer| matches!(layer.origin, SettingOrigin::Rollout(_)))
+                .expect("the rollout cache is reported");
+            assert!(rollout.applied);
+            assert_eq!(
+                rollout.ignored,
+                [IgnoredSetting::key(
+                    "log_download",
+                    "not_a_setting",
+                    "unknown setting"
+                )]
+            );
             Ok(())
         }
 
@@ -974,10 +1098,13 @@ mod tests {
         let (mut layers, reports) = parse_layers(
             repo.path().root().as_abs_path(),
             Some(home.path().root().as_abs_path()),
-            Some(SettingsLayer::new(
-                SettingOrigin::Rollout(rollout_path.clone()),
-                table("[test_section]\ntest_value = \"rollout\""),
-            )),
+            RolloutLayer {
+                layer: Some(SettingsLayer::new(
+                    SettingOrigin::Rollout(rollout_path.clone()),
+                    table("[test_section]\ntest_value = \"rollout\""),
+                )),
+                ignored: Vec::new(),
+            },
         )?;
         let repository =
             SettingOrigin::Repository(repo.path().root().as_abs_path().join(DOT_BUCKSETTINGS));
@@ -986,6 +1113,7 @@ mod tests {
             SettingsLayerReport {
                 origin: repository.clone(),
                 applied: true,
+                ignored: Vec::new(),
             }
         );
         // The rollout cache is only a layer in Meta-internal builds.
@@ -995,6 +1123,7 @@ mod tests {
                 SettingsLayerReport {
                     origin: SettingOrigin::Rollout(rollout_path.clone()),
                     applied: true,
+                    ignored: Vec::new(),
                 }
             );
         }

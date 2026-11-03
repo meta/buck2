@@ -10,69 +10,82 @@
 
 //! Selection of settings rollouts from the versioned TOML cache.
 
-use buck2_error::buck2_error;
-
 use crate::metadata::SectionMetadata;
+use crate::parser::IgnoredSetting;
 use crate::settings::ALL_SECTION_METADATA;
 use crate::settings::BuckSettingsData;
 
-/// Selects, for every registered section, the newest stanza at or below the
-/// compiled section version.
-///
-/// A stanza applies from its version on, until a newer stanza supersedes it.
-/// A newer stanza never reaches an older binary, which is what lets a rollout
-/// use keys the older binary does not have.
-///
-/// `Ok(None)` means no stanza applies to any registered section. `Err` means
-/// a registered section or its selected stanza is malformed, or the selected
-/// layer does not match the compiled settings schema.
-pub(super) fn select_rollout_table(
-    versioned_settings: toml::Table,
-) -> buck2_error::Result<Option<toml::Table>> {
-    let Some(layer) = select_rollout_layer_with_registry(versioned_settings, ALL_SECTION_METADATA)?
-    else {
-        return Ok(None);
-    };
-    validate_rollout_layer(&layer)?;
-    Ok(Some(layer))
+/// What the selector took from the cache: the layer to merge, and what it
+/// left out and why.
+#[derive(Debug, Default, PartialEq)]
+pub(super) struct SelectedRollout {
+    pub(super) layer: toml::Table,
+    pub(super) ignored: Vec<IgnoredSetting>,
 }
 
-fn select_rollout_layer_with_registry(
+/// Selects, for every registered section, the newest stanza at or below the
+/// compiled section version, and keeps the keys of it this binary can use.
+///
+/// A stanza applies from its version on, until a newer one supersedes it. A
+/// newer stanza never reaches an older binary, which is what lets a rollout
+/// use keys the older binary does not have. Within the selected stanza a key
+/// this binary does not know or cannot parse is left out on its own, so one
+/// mistake in a rollout costs that key and nothing else.
+pub(super) fn select_rollout_table(versioned_settings: toml::Table) -> SelectedRollout {
+    select_with_registry(versioned_settings, ALL_SECTION_METADATA, validate_key)
+}
+
+fn select_with_registry(
     mut versioned_settings: toml::Table,
     sections: &[SectionMetadata],
-) -> buck2_error::Result<Option<toml::Table>> {
-    let mut layer = toml::Table::new();
+    validate: impl Fn(&SectionMetadata, &str, &toml::Value) -> Result<(), String>,
+) -> SelectedRollout {
+    let mut selected = SelectedRollout::default();
 
     for section in sections {
         let Some(versions) = versioned_settings.remove(section.section_name) else {
             continue;
         };
         let toml::Value::Table(mut versions) = versions else {
-            return Err(buck2_error!(
-                buck2_error::ErrorTag::Input,
-                "Buck settings rollout section `{}` must contain a table of versions",
+            selected.ignored.push(IgnoredSetting::section(
                 section.section_name,
+                "not a table of versions",
             ));
+            continue;
         };
 
         let Some(version) = newest_version_at_or_below(&versions, section.section_version) else {
             continue;
         };
-        let Some(toml::Value::Table(settings)) = versions.remove(&version) else {
-            return Err(buck2_error!(
-                buck2_error::ErrorTag::Input,
-                "Buck settings rollout section `{}` version `{version}` must contain a table of settings",
+        let Some(toml::Value::Table(stanza)) = versions.remove(&version) else {
+            selected.ignored.push(IgnoredSetting::section(
                 section.section_name,
+                format!("version `{version}` is not a table of settings"),
             ));
+            continue;
         };
 
-        layer.insert(
-            section.section_name.to_owned(),
-            toml::Value::Table(settings),
-        );
+        let mut kept = toml::Table::new();
+        for (key, value) in stanza {
+            match validate(section, &key, &value) {
+                Ok(()) => {
+                    kept.insert(key, value);
+                }
+                Err(reason) => {
+                    selected
+                        .ignored
+                        .push(IgnoredSetting::key(section.section_name, &key, reason));
+                }
+            }
+        }
+        if !kept.is_empty() {
+            selected
+                .layer
+                .insert(section.section_name.to_owned(), toml::Value::Table(kept));
+        }
     }
 
-    Ok((!layer.is_empty()).then_some(layer))
+    selected
 }
 
 /// The key of the newest stanza that applies to `compiled`. Keys that are not
@@ -88,17 +101,28 @@ fn newest_version_at_or_below(versions: &toml::Table, compiled: u32) -> Option<S
         .map(|(_, key)| key.clone())
 }
 
-fn validate_rollout_layer(layer: &toml::Table) -> buck2_error::Result<()> {
-    let _validated: BuckSettingsData =
-        toml::Value::Table(layer.clone())
-            .try_into()
-            .map_err(|error| {
-                buck2_error!(
-                    buck2_error::ErrorTag::Input,
-                    "Validating settings rollout layer: {error}"
-                )
-            })?;
-    Ok(())
+/// Whether `section.key = value` is a setting of this binary, by the same
+/// deserialization every other layer goes through.
+fn validate_key(section: &SectionMetadata, key: &str, value: &toml::Value) -> Result<(), String> {
+    if !section.settings.iter().any(|setting| setting.name == key) {
+        return Err("unknown setting".to_owned());
+    }
+    let mut stanza = toml::Table::new();
+    stanza.insert(key.to_owned(), value.clone());
+    let mut layer = toml::Table::new();
+    layer.insert(section.section_name.to_owned(), toml::Value::Table(stanza));
+    toml::Value::Table(layer)
+        .try_into::<BuckSettingsData>()
+        .map(|_| ())
+        .map_err(|error| {
+            // The first line names the problem; the rest repeats the key.
+            error
+                .to_string()
+                .lines()
+                .next()
+                .unwrap_or_default()
+                .to_owned()
+        })
 }
 
 #[cfg(test)]
@@ -122,32 +146,34 @@ mod tests {
         toml::from_str(content).expect("Test input should be valid TOML")
     }
 
-    fn select(content: &str) -> buck2_error::Result<Option<toml::Table>> {
-        select_at(content, 0)
+    /// Selects against a one-section registry at `compiled`, accepting every key.
+    fn select_at(content: &str, compiled: u32) -> SelectedRollout {
+        select_with_registry(table(content), &[metadata(compiled)], |_, _, _| Ok(()))
     }
 
-    fn select_at(content: &str, compiled: u32) -> buck2_error::Result<Option<toml::Table>> {
-        select_rollout_layer_with_registry(table(content), &[metadata(compiled)])
+    fn selected(content: &str) -> SelectedRollout {
+        SelectedRollout {
+            layer: table(content),
+            ignored: Vec::new(),
+        }
     }
 
     #[test]
-    fn selects_compiled_version_over_newer() -> buck2_error::Result<()> {
-        let selected = select(
-            r#"
-                [test_section.0]
-                test_flag = true
-                test_value = "compiled"
-
-                [test_section.1]
-                test_flag = false
-                test_value = "future"
-            "#,
-        )?
-        .expect("The compiled section version is present");
-
+    fn selects_compiled_version_over_newer() {
         assert_eq!(
-            selected,
-            table(
+            select_at(
+                r#"
+                    [test_section.0]
+                    test_flag = true
+                    test_value = "compiled"
+
+                    [test_section.1]
+                    test_flag = false
+                    test_value = "future"
+                "#,
+                0,
+            ),
+            selected(
                 r#"
                     [test_section]
                     test_flag = true
@@ -155,46 +181,38 @@ mod tests {
                 "#,
             ),
         );
-        Ok(())
     }
 
     #[test]
-    fn selects_newest_version_at_or_below_compiled() -> buck2_error::Result<()> {
-        let selected = select_at(
-            r#"
-                [test_section.0]
-                test_value = "oldest"
-
-                [test_section.1]
-                test_value = "newest applicable"
-
-                [test_section.3]
-                test_value = "future"
-            "#,
-            2,
-        )?
-        .expect("An older section version is present");
-
+    fn selects_newest_version_at_or_below_compiled() {
         assert_eq!(
-            selected,
-            table(
+            select_at(
                 r#"
-                    [test_section]
+                    [test_section.0]
+                    test_value = "oldest"
+
+                    [test_section.1]
                     test_value = "newest applicable"
+
+                    [test_section.3]
+                    test_value = "future"
                 "#,
+                2,
             ),
+            selected("[test_section]\ntest_value = \"newest applicable\""),
         );
-        Ok(())
     }
 
     #[test]
-    fn skips_section_with_only_newer_versions() -> buck2_error::Result<()> {
-        assert_eq!(select("[test_section.1]\ntest_flag = true")?, None);
-        Ok(())
+    fn skips_section_with_only_newer_versions() {
+        assert_eq!(
+            select_at("[test_section.1]\ntest_flag = true", 0),
+            SelectedRollout::default()
+        );
     }
 
     #[test]
-    fn ignores_keys_that_are_not_versions() -> buck2_error::Result<()> {
+    fn ignores_keys_that_are_not_versions() {
         assert_eq!(
             select_at(
                 r#"
@@ -205,107 +223,50 @@ mod tests {
                     test_flag = true
                 "#,
                 2,
-            )?,
-            Some(table("[test_section]\ntest_flag = true")),
+            ),
+            selected("[test_section]\ntest_flag = true"),
         );
-        Ok(())
     }
 
     #[test]
-    fn ignores_unknown_section() -> buck2_error::Result<()> {
+    fn ignores_unknown_section() {
         assert_eq!(
-            select(
+            select_at(
                 r#"
                     unknown_section = false
 
                     [test_section.0]
                     test_flag = true
                 "#,
-            )?,
-            Some(table(
-                r#"
-                    [test_section]
-                    test_flag = true
-                "#,
-            )),
-        );
-        Ok(())
-    }
-
-    #[test]
-    fn rejects_non_table_section() {
-        select("test_section = false")
-            .expect_err("A registered section must contain version tables");
-    }
-
-    #[test]
-    fn rejects_non_table_version() {
-        select("[test_section]\n0 = false")
-            .expect_err("The selected version must contain a settings table");
-    }
-
-    #[test]
-    fn accepts_valid_settings() -> buck2_error::Result<()> {
-        let selected = select_rollout_table(table(
-            r#"
-                [log_download.0]
-                log_use_manifold = true
-                log_url = "https://example.com"
-            "#,
-        ))?
-        .expect("The production section version is present");
-
-        assert_eq!(
-            selected,
-            table(
-                r#"
-                    [log_download]
-                    log_use_manifold = true
-                    log_url = "https://example.com"
-                "#,
+                0,
             ),
+            selected("[test_section]\ntest_flag = true"),
         );
-        Ok(())
     }
 
     #[test]
-    fn accepts_valid_hydration_settings() -> buck2_error::Result<()> {
-        let selected = select_rollout_table(table(
-            r#"
-                [hydration.4]
-                enable_paging = true
-                defer_field_reads = true
-                page_out_on_idle = true
-                page_out_on_idle_isolation_dir_scope = "non_default"
-                page_out_min_free_disk_gb = 0
-                page_out_policy = "once_per_key"
-                eviction_policy = "on_idle"
-                pagable_storage_backend = "sqlite"
-            "#,
-        ))?
-        .expect("The hydration section version is present");
-
+    fn ignores_malformed_sections_individually() {
         assert_eq!(
-            selected,
-            table(
-                r#"
-                    [hydration]
-                    enable_paging = true
-                    defer_field_reads = true
-                    page_out_on_idle = true
-                    page_out_on_idle_isolation_dir_scope = "non_default"
-                    page_out_min_free_disk_gb = 0
-                    page_out_policy = "once_per_key"
-                    eviction_policy = "on_idle"
-                    pagable_storage_backend = "sqlite"
-                "#,
-            ),
+            select_at("test_section = false", 0),
+            SelectedRollout {
+                layer: toml::Table::new(),
+                ignored: vec![IgnoredSetting::section(SECTION, "not a table of versions")],
+            }
         );
-        Ok(())
+        assert_eq!(
+            select_at("[test_section]\n0 = false", 0),
+            SelectedRollout {
+                layer: toml::Table::new(),
+                ignored: vec![IgnoredSetting::section(
+                    SECTION,
+                    "version `0` is not a table of settings"
+                )],
+            }
+        );
     }
 
     #[test]
-    fn applies_previous_hydration_version() -> buck2_error::Result<()> {
+    fn applies_previous_hydration_version() {
         assert_eq!(
             select_rollout_table(table(
                 r#"
@@ -313,37 +274,47 @@ mod tests {
                     enable_paging = true
                     page_out_on_idle = true
                 "#,
-            ))?,
-            Some(table(
+            )),
+            selected(
                 r#"
                     [hydration]
                     enable_paging = true
                     page_out_on_idle = true
                 "#,
-            )),
+            ),
         );
-        Ok(())
     }
 
     #[test]
-    fn rejects_unknown_setting_in_selected_version() {
-        select_rollout_table(table(
+    fn ignores_unknown_and_mistyped_keys_individually() {
+        let result = select_rollout_table(table(
             r#"
                 [log_download.0]
+                log_url = "https://example.com"
+                log_use_manifold = 1
                 not_a_setting = true
             "#,
-        ))
-        .expect_err("An unknown setting must fail standalone validation");
-    }
-
-    #[test]
-    fn rejects_wrong_value_type_in_selected_version() {
-        select_rollout_table(table(
-            r#"
-                [log_download.0]
-                log_use_manifold = 1
-            "#,
-        ))
-        .expect_err("A setting with the wrong type must fail standalone validation");
+        ));
+        assert_eq!(
+            result.layer,
+            table("[log_download]\nlog_url = \"https://example.com\"")
+        );
+        assert_eq!(
+            result
+                .ignored
+                .iter()
+                .map(|ignored| ignored.setting.as_deref())
+                .collect::<Vec<_>>(),
+            [
+                Some("log_download.log_use_manifold"),
+                Some("log_download.not_a_setting")
+            ]
+        );
+        assert_eq!(result.ignored[1].reason, "unknown setting");
+        assert!(
+            result.ignored[0].reason.contains("expected a boolean"),
+            "{}",
+            result.ignored[0].reason
+        );
     }
 }

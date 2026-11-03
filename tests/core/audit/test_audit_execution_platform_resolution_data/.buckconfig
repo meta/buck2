@@ -11,5 +11,3 @@
 [external_cells]
   nano_prelude = bundled
 
-[build]
-    execution_platforms = //execution_platforms:execution_platforms

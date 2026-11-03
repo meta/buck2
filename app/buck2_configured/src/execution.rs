@@ -53,7 +53,6 @@ use buck2_node::cfg_constructor::CfgConstructorModifiers;
 use buck2_node::configuration::calculation::CellNameForConfigurationResolution;
 use buck2_node::configuration::resolved::ConfigurationSettingKey;
 use buck2_node::configuration::resolved::MatchedConfigurationSettingKeysWithCfg;
-use buck2_node::execution::EXECUTION_PLATFORMS_BUCKCONFIG;
 use buck2_node::execution::ExecutionPlatformCandidateOutcomes;
 use buck2_node::execution::ExecutionPlatformDiagnosis;
 use buck2_node::execution::GET_EXECUTION_PLATFORMS;
@@ -64,6 +63,8 @@ use buck2_node::nodes::configured_frontend::ConfiguredTargetNodeCalculation;
 use buck2_node::nodes::frontend::TargetGraphCalculation;
 use buck2_node::nodes::unconfigured::TargetNodeRef;
 use buck2_node::rule::RuleExecutionGroup;
+use buck2_settings::ExecutionPlatforms as ExecutionPlatformsSettings;
+use buck2_settings::dice::HasDiceBuckSettings;
 use derive_more::Display;
 use dice::DiceComputations;
 use dice::EqualityBehavior;
@@ -559,9 +560,11 @@ async fn compute_execution_platforms(
     let cells = ctx.get_cell_resolver().await?;
     let cell_alias_resolver = ctx.get_cell_alias_resolver(cells.root_cell()).await?;
 
+    let root_config = ctx.get_legacy_root_config_on_dice().await?;
     let execution_platforms_target = ctx
-        .get_legacy_config_property(cells.root_cell(), EXECUTION_PLATFORMS_BUCKCONFIG)
-        .await?;
+        .dice_settings::<ExecutionPlatformsSettings>()
+        .await?
+        .target(&mut root_config.view(ctx))?;
 
     let execution_platforms_target = match execution_platforms_target {
         Some(v) => TargetLabel::parse(&v, cells.root_cell(), &cells, &cell_alias_resolver)?,

@@ -42,8 +42,8 @@ class AuditExecutionPlatformResolutionTest(BuckTestCase):
         result = await buck.audit(
             "execution-platform-resolution",
             "//:no_compatible_platform",
-            "-c",
-            "build.execution_platforms=root//execution_platforms:execution_platforms_error_fallback",
+            "--setting",
+            "execution_platforms.target=root//execution_platforms:execution_platforms_error_fallback",
         )
         golden_replace_cfg_hash(
             output=result.stdout, rel_path="error_fallback.txt.golden"

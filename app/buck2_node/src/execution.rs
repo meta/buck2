@@ -11,7 +11,6 @@
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use buck2_common::legacy_configs::key::BuckconfigKeyRef;
 use buck2_core::execution_types::execution::ExecutionPlatformIncompatibleReason;
 use buck2_core::execution_types::execution::ExecutionPlatformResolutionPartial;
 use buck2_core::execution_types::execution_group::NamedExecutionGroup;
@@ -25,11 +24,6 @@ use futures::future::BoxFuture;
 
 use crate::configuration::calculation::CellNameForConfigurationResolution;
 use crate::configuration::resolved::ConfigurationSettingKey;
-
-pub const EXECUTION_PLATFORMS_BUCKCONFIG: BuckconfigKeyRef = BuckconfigKeyRef {
-    section: "build",
-    property: "execution_platforms",
-};
 
 /// The outcome of checking each candidate execution platform, by platform name.
 pub type ExecutionPlatformCandidateOutcomes =
@@ -81,7 +75,8 @@ pub static GET_EXECUTION_PLATFORMS: LateBinding<&'static dyn GetExecutionPlatfor
 
 pub trait GetExecutionPlatforms<'d>: Send {
     /// Returns a list of the configured execution platforms. This looks up the providers on the target
-    /// configured **in the root cell's buckconfig** with key `build.execution_platforms`. If there's no
+    /// the `execution_platforms.target` setting names (falling back to the root cell's
+    /// `build.execution_platforms` buckconfig). If there's no
     /// value configured, it will return `None` which indicates we should fallback to the legacy execution
     /// platform behavior.
     fn get_execution_platforms<'a>(

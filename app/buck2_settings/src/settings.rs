@@ -23,6 +23,7 @@ use crate::buckconfig::BuckconfigSource;
 use crate::daemon::Daemon;
 use crate::digest::Digest;
 use crate::event_log::EventLog;
+use crate::execution_platforms::ExecutionPlatforms;
 use crate::health_check::HealthCheck;
 use crate::http::Http;
 use crate::hydration::Hydration;
@@ -211,6 +212,7 @@ buck_settings! {
         health_check: HealthCheck,
     }
     dice {
+        execution_platforms: ExecutionPlatforms,
         starlark: Starlark,
     }
 }

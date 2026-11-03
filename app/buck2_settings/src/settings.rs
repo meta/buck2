@@ -21,6 +21,7 @@ use crate::agent_materialization::AgentMaterialization;
 use crate::analysis::Analysis;
 use crate::daemon::Daemon;
 use crate::digest::Digest;
+use crate::event_log::EventLog;
 use crate::hydration::Hydration;
 use crate::log_download::LogDownload;
 use crate::metadata::SectionMetadata;
@@ -154,6 +155,7 @@ buck_settings! {
         agent_config_change: AgentConfigChange,
         agent_interactive: AgentInteractive,
         agent_materialization: AgentMaterialization,
+        event_log: EventLog,
     }
 }
 
@@ -397,6 +399,7 @@ mod tests {
                     "clean_enabled": null,
                     "new_isolation_dir_enabled": null,
                 },
+                "event_log": {"retained_logs": null},
             })
         );
         let invocation = InvocationBuckSettings::from_request(Some(&request))?;

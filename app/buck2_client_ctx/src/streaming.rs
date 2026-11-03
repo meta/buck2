@@ -16,7 +16,6 @@ use buck2_agent_interactive::Advice;
 use buck2_agent_interactive::Decision;
 use buck2_common::argv::Argv;
 use buck2_common::argv::SanitizedArgv;
-use buck2_common::init::DEFAULT_RETAINED_EVENT_LOGS;
 use buck2_common::invocation_paths::DEFAULT_ISOLATION_DIR;
 use buck2_common::invocation_paths::InvocationPaths;
 use buck2_error::ErrorTag;
@@ -344,10 +343,9 @@ fn get_event_log_subscriber<T: StreamingCommand>(
         T::COMMAND_NAME.to_owned(),
         ctx.start_time,
         log_size_counter_bytes,
-        ctx.immediate_config
-            .daemon_startup_config()
-            .map(|daemon_startup_config| daemon_startup_config.startup_options.retained_event_logs)
-            .unwrap_or(DEFAULT_RETAINED_EVENT_LOGS),
+        ctx.buck_settings()
+            .map(|settings| settings.invocation.event_log.retained_logs())
+            .unwrap_or_else(|_| buck2_settings::EventLog::default().retained_logs()),
     );
     Box::new(log)
 }

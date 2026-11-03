@@ -32,8 +32,6 @@ use serde::Serialize;
 use crate::legacy_configs::configs::LegacyBuckConfig;
 use crate::legacy_configs::key::BuckconfigKeyRef;
 
-pub const DEFAULT_RETAINED_EVENT_LOGS: usize = 12;
-
 /// Helper enum to categorize the kind of timeout we get from the startup config.
 #[derive(Clone, Debug)]
 pub enum Timeout {
@@ -620,7 +618,6 @@ pub struct DaemonStartupOptions {
     pub resource_control: ResourceControlConfig,
     pub log_download_method: LogDownloadMethod,
     pub health_check_config: HealthCheckConfig,
-    pub retained_event_logs: usize,
     pub macos_qos_class: Option<MacosQosClass>,
     pub daemon_idle_timeout_s: Option<u64>,
     /// Pagable DICE storage settings, or `None` when paging is disabled.
@@ -743,13 +740,6 @@ impl DaemonStartupConfig {
             resource_control: ResourceControlConfig::from_config(config)?,
             log_download_method,
             health_check_config: HealthCheckConfig::from_config(config)?,
-            retained_event_logs: config
-                .get(BuckconfigKeyRef {
-                    section: "buck2",
-                    property: "retained_event_logs",
-                })
-                .and_then(|s| s.parse::<usize>().ok())
-                .unwrap_or(DEFAULT_RETAINED_EVENT_LOGS),
             macos_qos_class: {
                 if buck2_env!("BUCK2_DISABLE_MACOS_QOS", bool)? {
                     return Err(buck2_error::buck2_error!(
@@ -823,7 +813,6 @@ impl DaemonStartupConfig {
                 LogDownloadMethod::None
             },
             health_check_config: HealthCheckConfig::default(),
-            retained_event_logs: DEFAULT_RETAINED_EVENT_LOGS,
             macos_qos_class: None,
             daemon_idle_timeout_s: None,
             hydration: None,

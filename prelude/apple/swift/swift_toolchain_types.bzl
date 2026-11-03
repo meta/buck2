@@ -50,6 +50,7 @@ SwiftToolchainInfo = provider(
         # "unknown argument", so this defaults off.
         "supports_modularization_dependency_graph": provider_field(bool, default = False),
         "supports_modulemaps_with_hmaps": provider_field(bool, default = False),
+        "supports_pch_base_dir_is_cwd": provider_field(bool, default = False),
         "supports_relative_resource_dir": provider_field(bool),
         "swift_experimental_features": provider_field(dict[str, list[str]]),  # { "5": [], "6", [] }
         "swift_ide_test_tool": provider_field([RunInfo, None], default = None),

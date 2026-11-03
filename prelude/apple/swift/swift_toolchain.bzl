@@ -128,6 +128,7 @@ def swift_toolchain_impl(ctx):
             supports_incremental_file_hashing = ctx.attrs.supports_incremental_file_hashing,
             supports_modularization_dependency_graph = ctx.attrs.supports_modularization_dependency_graph,
             supports_modulemaps_with_hmaps = ctx.attrs.supports_modulemaps_with_hmaps,
+            supports_pch_base_dir_is_cwd = ctx.attrs.supports_pch_base_dir_is_cwd,
             supports_relative_resource_dir = ctx.attrs.supports_relative_resource_dir,
             swift_ide_test_tool = ctx.attrs.swift_ide_test_tool[RunInfo] if ctx.attrs.swift_ide_test_tool else None,
             swift_stdlib_tool = ctx.attrs.swift_stdlib_tool[RunInfo],

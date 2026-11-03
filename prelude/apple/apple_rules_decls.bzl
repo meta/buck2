@@ -1442,6 +1442,7 @@ swift_toolchain = prelude_rule(
             # -emit-modularization-dependency-dot-graph.
             "supports_modularization_dependency_graph": attrs.bool(default = False),
             "supports_modulemaps_with_hmaps": attrs.bool(default = False),
+            "supports_pch_base_dir_is_cwd": attrs.bool(default = False),
             "supports_relative_resource_dir": attrs.bool(default = False),
             "swift_experimental_features": attrs.dict(
                 key = attrs.enum(SwiftVersion), value = attrs.list(attrs.string()), sorted = False, default = SWIFT_VERSION_FEATURE_MAP

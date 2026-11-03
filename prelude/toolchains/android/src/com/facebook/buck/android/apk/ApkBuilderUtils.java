@@ -23,6 +23,7 @@ import java.nio.file.Path;
 import java.security.KeyStoreException;
 import java.security.NoSuchAlgorithmException;
 import java.security.UnrecoverableKeyException;
+import java.util.function.Predicate;
 import org.jetbrains.annotations.Nullable;
 
 /** A class that provides methods useful for building an APK. */
@@ -45,7 +46,8 @@ public class ApkBuilderUtils {
       KeystoreProperties keystoreProperties,
       boolean packageMetaInfVersionFiles,
       @Nullable PrintStream output,
-      ImmutableSet<String> excludedResources)
+      ImmutableSet<String> excludedResources,
+      Predicate<String> storedPaths)
       throws IOException,
           ApkCreationException,
           KeyStoreException,
@@ -60,7 +62,8 @@ public class ApkBuilderUtils {
             dexFile.toFile(),
             packageMetaInfVersionFiles,
             output,
-            excludedResources);
+            excludedResources,
+            storedPaths);
     for (Path nativeLibraryDirectory : nativeLibraryDirectories.stream().sorted().toList()) {
       builder.addNativeLibraries(nativeLibraryDirectory.toFile());
     }

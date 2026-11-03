@@ -24,6 +24,7 @@ import java.util.Objects;
 import java.util.Set;
 import java.util.jar.JarEntry;
 import java.util.jar.JarOutputStream;
+import java.util.zip.CRC32;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipInputStream;
 import org.jetbrains.annotations.Nullable;
@@ -134,6 +135,37 @@ public class ApkJarBuilder {
       // close the file stream used to read the file
       fis.close();
     }
+  }
+
+  /**
+   * Writes a new {@link File} into the archive without compressing it.
+   *
+   * @param inputFile the {@link File} to write.
+   * @param jarPath the filepath inside the archive.
+   * @throws IOException
+   */
+  public void writeStoredFile(File inputFile, String jarPath) throws IOException {
+    JarEntry entry = new JarEntry(jarPath);
+    entry.setTime(DOS_FAKE_TIME);
+    entry.setMethod(ZipEntry.STORED);
+    entry.setSize(inputFile.length());
+    entry.setCompressedSize(inputFile.length());
+    entry.setCrc(crc32(inputFile));
+
+    try (FileInputStream fis = new FileInputStream(inputFile)) {
+      writeEntry(fis, entry);
+    }
+  }
+
+  private long crc32(File inputFile) throws IOException {
+    CRC32 crc = new CRC32();
+    try (FileInputStream fis = new FileInputStream(inputFile)) {
+      int count;
+      while ((count = fis.read(mBuffer)) != -1) {
+        crc.update(mBuffer, 0, count);
+      }
+    }
+    return crc.getValue();
   }
 
   /**

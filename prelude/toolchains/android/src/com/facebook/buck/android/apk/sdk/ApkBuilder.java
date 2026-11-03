@@ -24,6 +24,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
+import java.util.function.Predicate;
 import java.util.regex.Pattern;
 import org.jetbrains.annotations.Nullable;
 
@@ -180,6 +181,7 @@ public final class ApkBuilder implements IArchiveBuilder {
 
   private final NullZipFilter mNullFilter = new NullZipFilter();
   private final JavaAndNativeResourceFilter mFilter;
+  private final Predicate<String> mStoredPaths;
   private final Map<String, File> mAddedFiles = new HashMap<String, File>();
 
   /**
@@ -242,7 +244,31 @@ public final class ApkBuilder implements IArchiveBuilder {
       @Nullable PrintStream verboseStream,
       Set<String> excludedResources)
       throws ApkCreationException {
+    this(
+        apkFile,
+        resFile,
+        dexFile,
+        packageMetaInfVersionFiles,
+        verboseStream,
+        excludedResources,
+        archivePath -> false);
+  }
+
+  /**
+   * Creates a new instance that writes the files whose archive path matches {@code storedPaths}
+   * without compressing them.
+   */
+  public ApkBuilder(
+      File apkFile,
+      File resFile,
+      @Nullable File dexFile,
+      boolean packageMetaInfVersionFiles,
+      @Nullable PrintStream verboseStream,
+      Set<String> excludedResources,
+      Predicate<String> storedPaths)
+      throws ApkCreationException {
     mFilter = new JavaAndNativeResourceFilter(excludedResources);
+    mStoredPaths = storedPaths;
     init(apkFile, resFile, dexFile, packageMetaInfVersionFiles, verboseStream);
   }
 
@@ -577,7 +603,11 @@ public final class ApkBuilder implements IArchiveBuilder {
     }
 
     mAddedFiles.put(archivePath, file);
-    mBuilder.writeFile(file, archivePath);
+    if (mStoredPaths.test(archivePath)) {
+      mBuilder.writeStoredFile(file, archivePath);
+    } else {
+      mBuilder.writeFile(file, archivePath);
+    }
   }
 
   /**

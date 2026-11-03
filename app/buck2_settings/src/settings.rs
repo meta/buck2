@@ -32,6 +32,7 @@ use crate::metadata::SectionReport;
 use crate::metadata::SectionScope;
 use crate::metadata::SettingsSection;
 use crate::package_visibility::PackageVisibility;
+use crate::resource_control::ResourceControl;
 use crate::section::Section;
 
 /// Assembles `BuckSettings` from the sections, each listed under its scope.
@@ -158,6 +159,7 @@ buck_settings! {
         hydration: Hydration,
         log_download: LogDownload,
         package_visibility: PackageVisibility,
+        resource_control: ResourceControl,
     }
     invocation {
         agent_config_change: AgentConfigChange,

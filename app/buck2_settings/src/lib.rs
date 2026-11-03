@@ -36,6 +36,7 @@ mod package_visibility;
 pub mod parser;
 mod path;
 pub mod report;
+mod resource_control;
 #[cfg(fbcode_build)]
 mod rollouts;
 mod section;
@@ -66,6 +67,7 @@ pub use parser::ResolvedSettings;
 pub use parser::SettingOrigin;
 pub use parser::SettingsLayerReport;
 pub use report::SettingsReport;
+pub use resource_control::ResourceControl;
 pub use section::Section;
 pub use settings::BuckSettingChange;
 pub use settings::BuckSettings;

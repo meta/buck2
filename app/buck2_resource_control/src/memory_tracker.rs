@@ -266,7 +266,6 @@ impl MemoryTracker {
 mod tests {
     use std::time::Duration;
 
-    use buck2_common::legacy_configs::configs::LegacyBuckConfig;
     use buck2_wrapper_common::invocation_id::TraceId;
 
     use super::*;
@@ -279,7 +278,7 @@ mod tests {
         };
         let config = ResourceControlConfig {
             memory_high: Some("19000000".to_owned()),
-            ..ResourceControlConfig::from_config(&LegacyBuckConfig::empty())?
+            ..ResourceControlConfig::testing_default()
         };
         let cgroup_tree = BuckCgroupTree::set_up(prepped, &config).await?;
         let tracker = create_memory_tracker(Some(cgroup_tree), &config, &DaemonId::new())

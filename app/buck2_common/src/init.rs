@@ -23,6 +23,7 @@ use buck2_settings::BuckSettingChange;
 use buck2_settings::DaemonBuckSettings;
 use buck2_settings::Http;
 use buck2_settings::MacosQosClass;
+use buck2_settings::ResourceControl;
 use dice::EvictionPolicy;
 use dice::PagableStorageBackend;
 use dice::PageOutPolicy;
@@ -259,7 +260,7 @@ pub struct ResourceControlConfig {
 
 impl ResourceControlConfig {
     pub fn testing_default() -> Self {
-        Self::from_config(&LegacyBuckConfig::empty()).unwrap()
+        Self::from_settings(&ResourceControl::default(), &LegacyBuckConfig::empty()).unwrap()
     }
 }
 
@@ -363,108 +364,63 @@ const RESOURCE_CONTROL_ALGO_VERSION: u32 = 6;
 const DAEMON_CGROUP_VERSION: u32 = 1;
 
 impl ResourceControlConfig {
-    pub fn from_config(config: &LegacyBuckConfig) -> buck2_error::Result<Self> {
+    pub fn from_settings(
+        resource_control: &ResourceControl,
+        config: &LegacyBuckConfig,
+    ) -> buck2_error::Result<Self> {
         if let Some(env_conf) = buck2_env!(
             "BUCK2_TEST_RESOURCE_CONTROL_CONFIG",
             applicability = testing,
         )? {
-            Self::deserialize(env_conf)
-        } else {
-            let status: Option<ResourceControlStatus> = config.parse(BuckconfigKeyRef {
-                section: "buck2_resource_control",
-                property: "status",
-            })?;
-            let status = if let Some(status) = status {
-                status
-            } else {
-                let min_version_for_gated_status: Option<u32> = config.parse(BuckconfigKeyRef {
-                    section: "buck2_resource_control",
-                    property: "min_version_for_gated_status",
-                })?;
-                if min_version_for_gated_status
-                    .is_some_and(|min_version| DAEMON_CGROUP_VERSION >= min_version)
-                {
-                    config
-                        .parse(BuckconfigKeyRef {
-                            section: "buck2_resource_control",
-                            property: "version_gated_default_status",
-                        })?
-                        .unwrap_or(ResourceControlStatus::IfAvailable)
+            return Self::deserialize(env_conf);
+        }
+        let mut buckconfig = config;
+        let status = match resource_control.status(&mut buckconfig)? {
+            Some(status) => status.parse()?,
+            None => {
+                let gated = resource_control
+                    .min_version_for_gated_status(&mut buckconfig)?
+                    .is_some_and(|min_version| DAEMON_CGROUP_VERSION >= min_version);
+                if gated {
+                    match resource_control.version_gated_default_status(&mut buckconfig)? {
+                        Some(status) => status.parse()?,
+                        None => ResourceControlStatus::IfAvailable,
+                    }
                 } else {
                     ResourceControlStatus::Off
                 }
+            }
+        };
+        let init = match resource_control.init(&mut buckconfig)? {
+            Some(init) => init.parse()?,
+            None => ResourceControlInit::Systemd,
+        };
+        let enable_suspension = resource_control
+            .enable_suspension(&mut buckconfig)?
+            .unwrap_or(false)
+            || resource_control
+                .enable_suspension_if_min_algo_version(&mut buckconfig)?
+                .is_some_and(|min_version| RESOURCE_CONTROL_ALGO_VERSION >= min_version);
+        let preferred_action_suspend_strategy =
+            match resource_control.preferred_action_suspend_strategy(&mut buckconfig)? {
+                Some(strategy) => strategy.parse()?,
+                None => ActionSuspendStrategy::KillAndRetry,
             };
-            let init = config
-                .parse(BuckconfigKeyRef {
-                    section: "buck2_resource_control",
-                    property: "init",
-                })?
-                .unwrap_or(ResourceControlInit::Systemd);
-            let memory_max = config.parse(BuckconfigKeyRef {
-                section: "buck2_resource_control",
-                property: "memory_max",
-            })?;
-            let memory_high = config.parse(BuckconfigKeyRef {
-                section: "buck2_resource_control",
-                property: "memory_high",
-            })?;
-            let memory_max_per_action = config.parse(BuckconfigKeyRef {
-                section: "buck2_resource_control",
-                property: "memory_max_per_action",
-            })?;
-            let memory_high_per_action = config.parse(BuckconfigKeyRef {
-                section: "buck2_resource_control",
-                property: "memory_high_per_action",
-            })?;
-            let memory_high_actions = config.parse(BuckconfigKeyRef {
-                section: "buck2_resource_control",
-                property: "memory_high_actions",
-            })?;
-            let memory_max_actions = config.parse(BuckconfigKeyRef {
-                section: "buck2_resource_control",
-                property: "memory_max_actions",
-            })?;
-            let memory_swap_max_actions = config.parse(BuckconfigKeyRef {
-                section: "buck2_resource_control",
-                property: "memory_swap_max_actions",
-            })?;
-            let enable_suspension = config.parse(BuckconfigKeyRef {
-                section: "buck2_resource_control",
-                property: "enable_suspension",
-            })?;
-            let enable_suspension_if_min_algo_version: Option<u32> =
-                config.parse(BuckconfigKeyRef {
-                    section: "buck2_resource_control",
-                    property: "enable_suspension_if_min_algo_version",
-                })?;
-            let enable_suspension = enable_suspension.unwrap_or(false)
-                || enable_suspension_if_min_algo_version
-                    .is_some_and(|min_version| RESOURCE_CONTROL_ALGO_VERSION >= min_version);
-            let experimental_suspension_algo_variant = config.parse(BuckconfigKeyRef {
-                section: "buck2_resource_control",
-                property: "experimental_suspension_algo_variant",
-            })?;
-            let preferred_action_suspend_strategy = config
-                .parse(BuckconfigKeyRef {
-                    section: "buck2_resource_control",
-                    property: "preferred_action_suspend_strategy",
-                })?
-                .unwrap_or(ActionSuspendStrategy::KillAndRetry);
-            Ok(Self {
-                status,
-                init,
-                memory_max,
-                memory_high,
-                memory_max_per_action,
-                memory_high_per_action,
-                memory_high_actions,
-                memory_max_actions,
-                memory_swap_max_actions,
-                enable_suspension,
-                experimental_suspension_algo_variant,
-                preferred_action_suspend_strategy,
-            })
-        }
+        Ok(Self {
+            status,
+            init,
+            memory_max: resource_control.memory_max(&mut buckconfig)?,
+            memory_high: resource_control.memory_high(&mut buckconfig)?,
+            memory_max_per_action: resource_control.memory_max_per_action(&mut buckconfig)?,
+            memory_high_per_action: resource_control.memory_high_per_action(&mut buckconfig)?,
+            memory_high_actions: resource_control.memory_high_actions(&mut buckconfig)?,
+            memory_max_actions: resource_control.memory_max_actions(&mut buckconfig)?,
+            memory_swap_max_actions: resource_control.memory_swap_max_actions(&mut buckconfig)?,
+            enable_suspension,
+            experimental_suspension_algo_variant: resource_control
+                .experimental_suspension_algo_variant(&mut buckconfig)?,
+            preferred_action_suspend_strategy,
+        })
     }
 
     pub fn serialize(&self) -> buck2_error::Result<String> {
@@ -625,7 +581,10 @@ impl DaemonStartupConfig {
                 })
                 .map(ToOwned::to_owned),
             http: HttpConfig::from_settings(&settings.http, config)?,
-            resource_control: ResourceControlConfig::from_config(config)?,
+            resource_control: ResourceControlConfig::from_settings(
+                &settings.resource_control,
+                config,
+            )?,
             log_download_method,
             macos_qos_class: {
                 if buck2_env!("BUCK2_DISABLE_MACOS_QOS", bool)? {
@@ -767,6 +726,8 @@ mod tests {
                     num_tokio_workers = 4
                     [http]
                     http2 = false
+                    [buck2_resource_control]
+                    memory_max = 50%
                     "#
                 ),
             )],
@@ -781,6 +742,7 @@ mod tests {
         assert_eq!(options.daemon_idle_timeout_s, Some(100));
         assert_eq!(options.num_tokio_workers, Some(4));
         assert!(!options.http.http2);
+        assert_eq!(options.resource_control.memory_max.as_deref(), Some("50%"));
 
         let settings = resolve_setting_flags(vec![table(indoc!(
             r#"
@@ -794,6 +756,8 @@ mod tests {
             source_algorithm = "BLAKE3-KEYED"
             [http]
             http2 = true
+            [resource_control]
+            memory_max = "60%"
             "#
         ))])?;
         let from_settings = DaemonStartupConfig::new(&config, &settings.daemon, false)?;
@@ -811,6 +775,7 @@ mod tests {
         assert_eq!(options.daemon_idle_timeout_s, Some(60));
         assert_eq!(options.num_tokio_workers, Some(8));
         assert!(options.http.http2);
+        assert_eq!(options.resource_control.memory_max.as_deref(), Some("60%"));
         Ok(())
     }
 

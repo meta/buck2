@@ -913,7 +913,7 @@ public class AdbHelper implements AndroidDevicesHelper {
                   device,
                   buck2BuildUuid,
                   timings)
-              .doInstall(isolatedApkInfo, setDebugAppMode, restartApp);
+              .doInstall(isolatedApkInfo, setDebugAppMode, restartApp, options.isForceQueryable());
           return true;
         },
         quiet);
@@ -948,14 +948,23 @@ public class AdbHelper implements AndroidDevicesHelper {
             }
             return device.installApexOnDevice(apk, quiet, restart, options.getWaitForDeviceReady());
           } else if (!options.isStagedInstallModeEnabled()
-              && !shouldAppBeInstalled(device, packageName, apk, androidPrinter)) {
+              && !shouldAppBeInstalled(
+                  device, packageName, apk, androidPrinter, options.isForceQueryable())) {
             if (restartApp) {
               device.stopPackage(packageName);
             }
             return true;
           } else {
             return device.installApkOnDevice(
-                apk, installViaSd, quiet, options.isStagedInstallModeEnabled(), packageName);
+                apk,
+                installViaSd,
+                quiet,
+                /* verifyTempWritable= */ true,
+                options.isStagedInstallModeEnabled(),
+                /* userId= */ null,
+                /* allowFastDeploy= */ true,
+                packageName,
+                options.isForceQueryable());
           }
         },
         quiet);
@@ -970,9 +979,17 @@ public class AdbHelper implements AndroidDevicesHelper {
     }
   }
 
-  /** Whether {@code device} lacks {@code apk} as the installed apk of {@code packageName}. */
+  /**
+   * Whether {@code device} lacks {@code apk} as the installed apk of {@code packageName}. With
+   * {@code forceQueryable}, also true when the installed package is not queryable or its
+   * queryability cannot be read.
+   */
   public static boolean shouldAppBeInstalled(
-      AndroidDevice device, String packageName, File apk, AndroidInstallPrinter androidPrinter)
+      AndroidDevice device,
+      String packageName,
+      File apk,
+      AndroidInstallPrinter androidPrinter,
+      boolean forceQueryable)
       throws Exception {
     AndroidDevice.InstalledApk installed;
     try {
@@ -989,6 +1006,17 @@ public class AdbHelper implements AndroidDevicesHelper {
         LOG.info("Installed APK differs.  Must re-install.");
         return true;
       default:
+        if (forceQueryable) {
+          try {
+            if (!device.isPackageQueryable(packageName)) {
+              LOG.info("Installed APK is not queryable.  Must re-install.");
+              return true;
+            }
+          } catch (AdbCommandFailedException e) {
+            LOG.info("Could not read package queryability.  Must re-install: %s", e.getMessage());
+            return true;
+          }
+        }
         LOG.info("Installed APK matches.  No need to install.");
         return false;
     }

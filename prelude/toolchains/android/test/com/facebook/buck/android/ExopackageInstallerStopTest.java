@@ -168,6 +168,61 @@ public class ExopackageInstallerStopTest {
     assertFalse(device.events().contains("push:metadata"));
   }
 
+  @Test
+  public void forceQueryableReinstallsAnUnchangedExopackageApk() throws Exception {
+    device.files.add(DEX_FILE);
+    device.metadata(METADATA_CONTENTS);
+    device.installedApkHash = localApkHash;
+
+    new ExopackageInstaller(
+            exoInfo, new NoopPrinter(), tmpDir.getRoot(), PACKAGE, device, Optional.empty())
+        .doInstall(apkInfo, SetDebugAppMode.SKIP, false, true);
+
+    assertEquals(ImmutableList.of("install:queryable"), device.events());
+  }
+
+  @Test
+  public void forceQueryableReusesAMatchingQueryableExopackageApk() throws Exception {
+    device.files.add(DEX_FILE);
+    device.metadata(METADATA_CONTENTS);
+    device.installedApkHash = localApkHash;
+    device.queryable = true;
+
+    new ExopackageInstaller(
+            exoInfo, new NoopPrinter(), tmpDir.getRoot(), PACKAGE, device, Optional.empty())
+        .doInstall(apkInfo, SetDebugAppMode.SKIP, false, true);
+
+    assertEquals(ImmutableList.of(), device.events());
+  }
+
+  @Test
+  public void queryableExopackageReusePreservesRequestedRestart() throws Exception {
+    device.files.add(DEX_FILE);
+    device.metadata(METADATA_CONTENTS);
+    device.installedApkHash = localApkHash;
+    device.queryable = true;
+
+    new ExopackageInstaller(
+            exoInfo, new NoopPrinter(), tmpDir.getRoot(), PACKAGE, device, Optional.empty())
+        .doInstall(apkInfo, SetDebugAppMode.SKIP, true, true);
+
+    assertEquals(ImmutableList.of("stop"), device.events());
+  }
+
+  @Test
+  public void queryableExopackageStillInstallsAChangedApk() throws Exception {
+    device.files.add(DEX_FILE);
+    device.metadata(METADATA_CONTENTS);
+    device.installedApkHash = "different";
+    device.queryable = true;
+
+    new ExopackageInstaller(
+            exoInfo, new NoopPrinter(), tmpDir.getRoot(), PACKAGE, device, Optional.empty())
+        .doInstall(apkInfo, SetDebugAppMode.SKIP, false, true);
+
+    assertEquals(ImmutableList.of("install:queryable"), device.events());
+  }
+
   private void install() throws Exception {
     install(/* restartApp= */ false);
   }
@@ -175,7 +230,7 @@ public class ExopackageInstallerStopTest {
   private void install(boolean restartApp) throws Exception {
     new ExopackageInstaller(
             exoInfo, new NoopPrinter(), tmpDir.getRoot(), PACKAGE, device, Optional.empty())
-        .doInstall(apkInfo, SetDebugAppMode.SKIP, restartApp);
+        .doInstall(apkInfo, SetDebugAppMode.SKIP, restartApp, /* forceQueryable= */ false);
   }
 
   /** Records, in order, every operation an app running on the device could notice. */
@@ -184,6 +239,12 @@ public class ExopackageInstallerStopTest {
     final TreeSet<Path> files = new TreeSet<>();
     private final Map<String, String> hashes = new HashMap<>();
     String installedApkHash = "";
+    boolean queryable;
+
+    @Override
+    public boolean isPackageQueryable(String packageName) {
+      return queryable;
+    }
 
     void metadata(String text) {
       files.add(METADATA);
@@ -224,6 +285,21 @@ public class ExopackageInstallerStopTest {
         boolean allowFastDeploy,
         String packageName) {
       events.add("install");
+      return true;
+    }
+
+    @Override
+    public boolean installApkOnDevice(
+        File apk,
+        boolean installViaSd,
+        boolean quiet,
+        boolean verifyTempWritable,
+        boolean stagedInstallMode,
+        String userId,
+        boolean allowFastDeploy,
+        String packageName,
+        boolean forceQueryable) {
+      events.add(forceQueryable ? "install:queryable" : "install");
       return true;
     }
 

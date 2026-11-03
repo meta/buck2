@@ -43,7 +43,30 @@ class AndroidDeviceImpl(val serial: String, val adbUtils: AdbUtils) : AndroidDev
       userId: String?,
       allowFastDeploy: Boolean,
       packageName: String,
+  ): Boolean = installApkOnDevice(
+      apk,
+      installViaSd,
+      quiet,
+      verifyTempWritable,
+      stagedInstallMode,
+      userId,
+      allowFastDeploy,
+      packageName,
+      false,
+  )
+
+  override fun installApkOnDevice(
+      apk: File,
+      installViaSd: Boolean,
+      quiet: Boolean,
+      verifyTempWritable: Boolean,
+      stagedInstallMode: Boolean,
+      userId: String?,
+      allowFastDeploy: Boolean,
+      packageName: String,
+      forceQueryable: Boolean,
   ): Boolean {
+    val queryable = forceQueryable && sdkSupportsForceQueryable()
     val elapsed = measureTimeMillis {
       if (verifyTempWritable) {
         try {
@@ -61,13 +84,16 @@ class AndroidDeviceImpl(val serial: String, val adbUtils: AdbUtils) : AndroidDev
       // Fast path: use --fastdeploy on SDK-supported devices.
       // On any failure we fall back to a plain install.
       if (allowFastDeploy && !stagedInstallMode && sdkSupportsFastDeploy()) {
-        installArgs = buildInstallArgs(apk, true, stagedInstallMode, userId)
+        installArgs = buildInstallArgs(apk, true, stagedInstallMode, userId, queryable)
         try {
           executeInstallCatching(
               installArgs,
               "Failed to install ${apk.name} with --fastdeploy.",
           )
           verifyInstalledApkMatches(apk, packageName)
+          if (queryable) {
+            verifyPackageQueryable(packageName)
+          }
           return@measureTimeMillis
         } catch (e: AndroidInstallException) {
           LOG.warn(
@@ -77,7 +103,7 @@ class AndroidDeviceImpl(val serial: String, val adbUtils: AdbUtils) : AndroidDev
         }
       }
 
-      installArgs = buildInstallArgs(apk, false, stagedInstallMode, userId)
+      installArgs = buildInstallArgs(apk, false, stagedInstallMode, userId, queryable)
       try {
         executeInstall(installArgs)
       } catch (e: AdbCommandFailedException) {
@@ -104,6 +130,9 @@ class AndroidDeviceImpl(val serial: String, val adbUtils: AdbUtils) : AndroidDev
 
       if (!stagedInstallMode) {
         verifyInstalledApkMatches(apk, packageName)
+        if (queryable) {
+          verifyPackageQueryable(packageName)
+        }
       }
     }
     val userSuffix = if (userId != null) " for user $userId" else ""
@@ -144,6 +173,24 @@ class AndroidDeviceImpl(val serial: String, val adbUtils: AdbUtils) : AndroidDev
                   " does not match the local apk after installing.",
           )
       AndroidDevice.InstalledApk.SAME -> Unit
+    }
+  }
+
+  private fun verifyPackageQueryable(packageName: String) {
+    val visible =
+        try {
+          isPackageQueryable(packageName)
+        } catch (e: AdbCommandFailedException) {
+          throw AndroidInstallException.adbCommandFailedException(
+              "Could not verify package queryability for $packageName.",
+              e.message,
+          )
+        }
+    if (!visible) {
+      throw AndroidInstallException.adbCommandFailedException(
+          "Install did not make $packageName queryable.",
+          null,
+      )
     }
   }
 
@@ -207,12 +254,60 @@ class AndroidDeviceImpl(val serial: String, val adbUtils: AdbUtils) : AndroidDev
       fastDeploy: Boolean,
       stagedInstallMode: Boolean,
       userId: String?,
+      forceQueryable: Boolean,
   ): String = buildString {
     append("-r -d")
+    if (forceQueryable) append(" --force-queryable")
     if (fastDeploy) append(" --fastdeploy")
     if (stagedInstallMode) append(" --staged")
     if (userId != null) append(" --user $userId")
     append(" ${apk.absolutePath}")
+  }
+
+  @Throws(Exception::class)
+  override fun isPackageQueryable(packageName: String): Boolean {
+    require(packageName.matches(Regex("[A-Za-z0-9_]+(?:\\.[A-Za-z0-9_]+)*"))) {
+      "Invalid package name: $packageName"
+    }
+    if (!sdkSupportsForceQueryable()) {
+      return true
+    }
+    val lines = executeAdbShellCommand("dumpsys package queries $packageName").lines()
+    val queries = lines.indexOfFirst { it.trim() == "Queries:" }
+    if (queries >= 0 && lines.getOrNull(queries + 1)?.trim() == "DISABLED") {
+      return true
+    }
+    val start = lines.indexOfFirst {
+      it.trim() == "queries via forceQueryable:" || it.trim() == "forceQueryable:"
+    }
+    val end = lines.indexOfFirst { it.trim() == "queries via package name:" }
+    if (
+        start < 0 &&
+            queries >= 0 &&
+            end > queries &&
+            lines.subList(queries + 1, end).any { it.trim().startsWith("system apps queryable:") }
+    ) {
+      return false
+    }
+    if (queries < 0 || start <= queries || end <= start) {
+      throw AdbCommandFailedException("Could not read the forceQueryable set for $packageName")
+    }
+    return lines.subList(start + 1, end).any { line ->
+      line.trim().removeSurrounding("[", "]").split(',').any { it.trim() == packageName }
+    }
+  }
+
+  private fun sdkSupportsForceQueryable(): Boolean {
+    val sdkVersion =
+        try {
+          getProperty("ro.build.version.sdk").toInt()
+        } catch (e: Exception) {
+          throw AndroidInstallException.adbCommandFailedException(
+              "Unable to determine SDK version for --force-queryable.",
+              e.message,
+          )
+        }
+    return sdkVersion >= MIN_SDK_VERSION_FOR_FORCE_QUERYABLE
   }
 
   private fun sdkSupportsFastDeploy(): Boolean {
@@ -902,6 +997,7 @@ class AndroidDeviceImpl(val serial: String, val adbUtils: AdbUtils) : AndroidDev
     // --fastdeploy is only supported on Android 10+ (API 29+)
     // https://developer.android.com/tools/releases/platform-tools#2905_october_2019
     private const val MIN_SDK_VERSION_FOR_FASTDEPLOY = 29
+    private const val MIN_SDK_VERSION_FOR_FORCE_QUERYABLE = 30
 
     private const val INSTALL_FAILED_UPDATE_INCOMPATIBLE = "INSTALL_FAILED_UPDATE_INCOMPATIBLE"
 

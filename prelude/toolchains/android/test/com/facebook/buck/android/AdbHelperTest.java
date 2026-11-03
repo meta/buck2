@@ -427,7 +427,16 @@ public class AdbHelperTest {
     installPlainApk(/* restartApp= */ false);
 
     verify(device, never())
-        .installApkOnDevice(any(File.class), anyBoolean(), anyBoolean(), anyBoolean(), anyString());
+        .installApkOnDevice(
+            any(File.class),
+            anyBoolean(),
+            anyBoolean(),
+            anyBoolean(),
+            anyBoolean(),
+            any(),
+            anyBoolean(),
+            anyString(),
+            anyBoolean());
     verify(device, never()).stopPackage(anyString());
   }
 
@@ -438,7 +447,16 @@ public class AdbHelperTest {
     installPlainApk(/* restartApp= */ true);
 
     verify(device, never())
-        .installApkOnDevice(any(File.class), anyBoolean(), anyBoolean(), anyBoolean(), anyString());
+        .installApkOnDevice(
+            any(File.class),
+            anyBoolean(),
+            anyBoolean(),
+            anyBoolean(),
+            anyBoolean(),
+            any(),
+            anyBoolean(),
+            anyString(),
+            anyBoolean());
     verify(device).stopPackage("com.example.app");
   }
 
@@ -450,7 +468,15 @@ public class AdbHelperTest {
 
     verify(device)
         .installApkOnDevice(
-            any(File.class), anyBoolean(), anyBoolean(), anyBoolean(), eq("com.example.app"));
+            any(File.class),
+            anyBoolean(),
+            anyBoolean(),
+            /* verifyTempWritable= */ eq(true),
+            /* stagedInstallMode= */ eq(false),
+            /* userId= */ eq(null),
+            /* allowFastDeploy= */ eq(true),
+            eq("com.example.app"),
+            eq(false));
     verify(device, never()).stopPackage(anyString());
   }
 
@@ -464,7 +490,167 @@ public class AdbHelperTest {
 
     verify(device)
         .installApkOnDevice(
-            any(File.class), anyBoolean(), anyBoolean(), anyBoolean(), eq("com.example.app"));
+            any(File.class),
+            anyBoolean(),
+            anyBoolean(),
+            /* verifyTempWritable= */ eq(true),
+            /* stagedInstallMode= */ eq(false),
+            /* userId= */ eq(null),
+            /* allowFastDeploy= */ eq(true),
+            eq("com.example.app"),
+            eq(false));
+  }
+
+  @Test
+  public void testForceQueryableInstallsEvenWhenTheApkMatches() throws Exception {
+    AndroidDeviceImpl device = deviceWithInstalledApk(/* sameApk= */ true);
+    when(device.isPackageQueryable("com.example.app")).thenReturn(false);
+    when(device.installApkOnDevice(
+            any(File.class),
+            eq(false),
+            eq(true),
+            eq(true),
+            eq(false),
+            eq(null),
+            eq(true),
+            eq("com.example.app"),
+            eq(true)))
+        .thenReturn(true);
+    AdbOptions options =
+        new AdbOptions("path_to_adb", 0, 0, false, false, false, false, "no", false, true);
+
+    try (AdbHelper helper = createAdbHelper(options)) {
+      installPlainApk(helper, /* restartApp= */ false);
+    }
+
+    verify(device)
+        .installApkOnDevice(
+            any(File.class),
+            eq(false),
+            eq(true),
+            eq(true),
+            eq(false),
+            eq(null),
+            eq(true),
+            eq("com.example.app"),
+            eq(true));
+    verify(device).isPackageQueryable("com.example.app");
+  }
+
+  @Test
+  public void testForceQueryableReusesAMatchingQueryableApkAndRestartsWhenRequested()
+      throws Exception {
+    AndroidDeviceImpl device = deviceWithInstalledApk(/* sameApk= */ true);
+    when(device.isPackageQueryable("com.example.app")).thenReturn(true);
+    when(device.installApkOnDevice(
+            any(File.class),
+            anyBoolean(),
+            anyBoolean(),
+            anyBoolean(),
+            anyBoolean(),
+            any(),
+            anyBoolean(),
+            anyString(),
+            eq(true)))
+        .thenReturn(true);
+    AdbOptions options =
+        new AdbOptions("path_to_adb", 0, 0, false, false, false, false, "no", false, true);
+
+    try (AdbHelper helper = createAdbHelper(options)) {
+      installPlainApk(helper, /* restartApp= */ true);
+    }
+
+    verify(device).isPackageQueryable("com.example.app");
+    verify(device).stopPackage("com.example.app");
+    verify(device, never())
+        .installApkOnDevice(
+            any(File.class),
+            anyBoolean(),
+            anyBoolean(),
+            anyBoolean(),
+            anyBoolean(),
+            any(),
+            anyBoolean(),
+            anyString(),
+            anyBoolean());
+  }
+
+  @Test
+  public void testForceQueryableStillInstallsChangedApkWithoutReadingVisibility() throws Exception {
+    AndroidDeviceImpl device = deviceWithInstalledApk(/* sameApk= */ false);
+    when(device.installApkOnDevice(
+            any(File.class),
+            anyBoolean(),
+            anyBoolean(),
+            anyBoolean(),
+            anyBoolean(),
+            any(),
+            anyBoolean(),
+            anyString(),
+            eq(true)))
+        .thenReturn(true);
+    AdbOptions options =
+        new AdbOptions("path_to_adb", 0, 0, false, false, false, false, "no", false, true);
+
+    try (AdbHelper helper = createAdbHelper(options)) {
+      installPlainApk(helper, /* restartApp= */ false);
+    }
+
+    verify(device, never()).isPackageQueryable(anyString());
+    verify(device)
+        .installApkOnDevice(
+            any(File.class),
+            eq(false),
+            eq(true),
+            eq(true),
+            eq(false),
+            eq(null),
+            eq(true),
+            eq("com.example.app"),
+            eq(true));
+  }
+
+  @Test
+  public void testForceQueryableInstallsWhenVisibilityCannotBeRead() throws Exception {
+    AndroidDeviceImpl device = deviceWithInstalledApk(/* sameApk= */ true);
+    when(device.isPackageQueryable("com.example.app"))
+        .thenThrow(new AdbCommandFailedException("unreadable queryability"));
+    when(device.installApkOnDevice(
+            any(File.class),
+            anyBoolean(),
+            anyBoolean(),
+            anyBoolean(),
+            anyBoolean(),
+            any(),
+            anyBoolean(),
+            anyString(),
+            eq(true)))
+        .thenReturn(true);
+    AdbOptions options =
+        new AdbOptions("path_to_adb", 0, 0, false, false, false, false, "no", false, true);
+
+    try (AdbHelper helper = createAdbHelper(options)) {
+      installPlainApk(helper, /* restartApp= */ false);
+    }
+
+    verify(device)
+        .installApkOnDevice(
+            any(File.class),
+            eq(false),
+            eq(true),
+            eq(true),
+            eq(false),
+            eq(null),
+            eq(true),
+            eq("com.example.app"),
+            eq(true));
+  }
+
+  @Test
+  public void testPlainInstallDoesNotReadQueryabilityWithoutOptIn() throws Exception {
+    AndroidDeviceImpl device = deviceWithInstalledApk(/* sameApk= */ true);
+    installPlainApk(/* restartApp= */ false);
+    verify(device, never()).isPackageQueryable(anyString());
   }
 
   @Test
@@ -481,7 +667,15 @@ public class AdbHelperTest {
 
     verify(device)
         .installApkOnDevice(
-            any(File.class), anyBoolean(), anyBoolean(), eq(true), eq("com.example.app"));
+            any(File.class),
+            anyBoolean(),
+            anyBoolean(),
+            /* verifyTempWritable= */ eq(true),
+            /* stagedInstallMode= */ eq(true),
+            /* userId= */ eq(null),
+            /* allowFastDeploy= */ eq(true),
+            eq("com.example.app"),
+            eq(false));
   }
 
   private File plainApk() throws Exception {
@@ -500,7 +694,15 @@ public class AdbHelperTest {
         .thenReturn(
             sameApk ? AndroidDevice.InstalledApk.SAME : AndroidDevice.InstalledApk.DIFFERENT);
     when(device.installApkOnDevice(
-            any(File.class), anyBoolean(), anyBoolean(), anyBoolean(), anyString()))
+            any(File.class),
+            anyBoolean(),
+            anyBoolean(),
+            anyBoolean(),
+            anyBoolean(),
+            any(),
+            anyBoolean(),
+            anyString(),
+            anyBoolean()))
         .thenReturn(true);
     when(adbUtils.getDevices()).thenReturn(Collections.singletonList(device));
     return device;

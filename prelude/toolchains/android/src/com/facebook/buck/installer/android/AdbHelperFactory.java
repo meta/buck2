@@ -46,7 +46,8 @@ class AdbHelperFactory {
             cliOptions.ignoreMissingDevices,
             apkOptions.apexMode,
             cliOptions.restartMode.name(),
-            cliOptions.waitForDeviceReady);
+            cliOptions.waitForDeviceReady,
+            cliOptions.forceQueryable);
     logger.info("adbOptions: " + adbOptions);
 
     TargetDeviceOptions targetDeviceOptions =

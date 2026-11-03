@@ -32,6 +32,7 @@ buck_kotlin_library(
     srcs = HELPERS_SRCS,
     tests = [
         "prelude//toolchains/android/test/com/facebook/buck/android:unit",
+        "prelude//toolchains/android/test/com/facebook/buck/android/exopackage:unit",
     ],
     visibility = [
         "PUBLIC",

@@ -151,6 +151,14 @@ class AndroidCommandLineOptions {
   public boolean keepUserData = false;
 
   @Option(
+      name = "--force-queryable",
+      usage =
+          "Make the installed app visible to all packages on Android 11+. Reuses a matching APK"
+              + " when it is already queryable. The app stays queryable until it is uninstalled"
+              + " or reinstalled with --uninstall (-u) without this flag.")
+  public boolean forceQueryable = false;
+
+  @Option(
       name = "--uninstall",
       aliases = {"-u"},
       usage = "Uninstall before installing an app")

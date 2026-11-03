@@ -55,11 +55,24 @@ class AndroidDeviceImplTest {
   }
 
   /** Stubs the post-install verification so the on-device apk matches [apkFile]. */
-  private fun stubInstallVerified() {
+  private fun stubInstallVerified(sdk: String = "34") {
     whenever(mockAdbUtils.executeAdbShellCommand("pm path $packageName", serialNumber))
         .thenReturn("package:$onDeviceApkPath")
     whenever(mockAdbUtils.executeAdbShellCommand("md5sum $onDeviceApkPath", serialNumber))
         .thenReturn("${md5Hex(apkFile)}  $onDeviceApkPath")
+    whenever(
+        mockAdbUtils.executeAdbShellCommand(
+            "dumpsys package queries $packageName",
+            serialNumber,
+        ),
+    )
+        .thenReturn(
+            if (sdk in listOf("30", "31", "32")) {
+              "Queries:\n  system apps queryable: false\n  forceQueryable:\n    $packageName\n  queries via package name:\n"
+            } else {
+              "Queries:\n  queries via forceQueryable:\n    forceQueryable:\n      $packageName\n  queries via package name:\n"
+            },
+        )
   }
 
   private fun md5Hex(file: File): String =
@@ -109,6 +122,456 @@ class AndroidDeviceImplTest {
 
     verify(mockAdbUtils).executeAdbCommand("install -r -d ${apkFile.absolutePath}", serialNumber)
     assertTrue(result)
+  }
+
+  @Test
+  fun testForceQueryableOnApi30() {
+    assertForceQueryableInstall("30", " --force-queryable")
+  }
+
+  @Test
+  fun testForceQueryableOnApi34() {
+    assertForceQueryableInstall("34", " --force-queryable")
+  }
+
+  @Test
+  fun testForceQueryableOmittedOnApi29() {
+    assertForceQueryableInstall("29", "")
+  }
+
+  private fun assertForceQueryableInstall(sdk: String, queryableArg: String) {
+    whenever(mockAdbUtils.executeAdbShellCommand("getprop ro.build.version.sdk", serialNumber))
+        .thenReturn(sdk)
+    val command = "install -r -d$queryableArg --fastdeploy ${apkFile.absolutePath}"
+    whenever(mockAdbUtils.executeAdbCommand(any(), eq(serialNumber), any())).thenReturn("Success")
+    whenever(mockAdbUtils.executeAdbCommand(command, serialNumber)).thenReturn("Success")
+    stubInstallVerified(sdk)
+
+    assertTrue(
+        androidDevice.installApkOnDevice(
+            apkFile,
+            false,
+            false,
+            false,
+            false,
+            null,
+            true,
+            packageName,
+            true,
+        ),
+    )
+
+    verify(mockAdbUtils).executeAdbCommand(command, serialNumber)
+  }
+
+  @Test
+  fun testForceQueryableWithStagedInstallAndUser() {
+    whenever(mockAdbUtils.executeAdbShellCommand("getprop ro.build.version.sdk", serialNumber))
+        .thenReturn("34")
+    val command = "install -r -d --force-queryable --staged --user 10 ${apkFile.absolutePath}"
+    whenever(mockAdbUtils.executeAdbCommand(command, serialNumber)).thenReturn("Success")
+
+    assertTrue(
+        androidDevice.installApkOnDevice(
+            apkFile,
+            false,
+            false,
+            false,
+            true,
+            "10",
+            true,
+            packageName,
+            true,
+        ),
+    )
+
+    verify(mockAdbUtils).executeAdbCommand(command, serialNumber)
+  }
+
+  @Test
+  fun testForceQueryableRetainedOnSignatureMismatchRetry() {
+    whenever(mockAdbUtils.executeAdbShellCommand("getprop ro.build.version.sdk", serialNumber))
+        .thenReturn("34")
+    val command = "install -r -d --force-queryable ${apkFile.absolutePath}"
+    whenever(mockAdbUtils.executeAdbCommand(command, serialNumber))
+        .thenReturn(
+            "Failure [INSTALL_FAILED_UPDATE_INCOMPATIBLE: Existing package $packageName " +
+                "signatures do not match newer version]",
+        )
+        .thenReturn("Success")
+    stubInstallVerified()
+
+    assertTrue(
+        androidDevice.installApkOnDevice(
+            apkFile,
+            false,
+            false,
+            false,
+            false,
+            null,
+            false,
+            packageName,
+            true,
+        ),
+    )
+
+    verify(mockAdbUtils, times(2)).executeAdbCommand(command, serialNumber)
+    verify(mockAdbUtils).executeAdbCommand("uninstall $packageName", serialNumber)
+  }
+
+  @Test
+  fun testForceQueryableFailsBeforeInstallingWhenSdkIsUnknown() {
+    whenever(mockAdbUtils.executeAdbShellCommand("getprop ro.build.version.sdk", serialNumber))
+        .thenReturn("invalid")
+    try {
+      androidDevice.installApkOnDevice(
+          apkFile,
+          false,
+          false,
+          false,
+          false,
+          null,
+          true,
+          packageName,
+          true,
+      )
+      fail("Expected unknown SDK to fail an explicit force-queryable install")
+    } catch (e: AndroidInstallException) {
+      assertTrue(e.message!!.contains("Unable to determine SDK version for --force-queryable"))
+    }
+    verify(mockAdbUtils, never()).executeAdbCommand(any(), eq(serialNumber), any())
+  }
+
+  @Test
+  fun testForceQueryableFallsBackWhenFastdeployLeavesOnlyTheMatchingApk() {
+    whenever(mockAdbUtils.executeAdbShellCommand("getprop ro.build.version.sdk", serialNumber))
+        .thenReturn("34")
+    val fast = "install -r -d --force-queryable --fastdeploy ${apkFile.absolutePath}"
+    val plain = "install -r -d --force-queryable ${apkFile.absolutePath}"
+    whenever(mockAdbUtils.executeAdbCommand(fast, serialNumber))
+        .thenReturn("PM Create Session Failed")
+    whenever(mockAdbUtils.executeAdbCommand(plain, serialNumber)).thenReturn("Success")
+    stubInstallVerified()
+    whenever(
+        mockAdbUtils.executeAdbShellCommand(
+            "dumpsys package queries $packageName",
+            serialNumber,
+        ),
+    )
+        .thenReturn("Queries:\n  queries via forceQueryable:\n  queries via package name:\n")
+        .thenReturn(
+            "Queries:\n  queries via forceQueryable:\n    forceQueryable:\n      $packageName\n  queries via package name:\n",
+        )
+
+    assertTrue(
+        androidDevice.installApkOnDevice(
+            apkFile,
+            false,
+            false,
+            false,
+            false,
+            null,
+            true,
+            packageName,
+            true,
+        ),
+    )
+
+    verify(mockAdbUtils).executeAdbCommand(fast, serialNumber)
+    verify(mockAdbUtils).executeAdbCommand(plain, serialNumber)
+    verify(mockAdbUtils, times(2))
+        .executeAdbShellCommand("dumpsys package queries $packageName", serialNumber)
+  }
+
+  @Test
+  fun testForceQueryableFallsBackWhenFastdeployVisibilityIsUnreadable() {
+    whenever(mockAdbUtils.executeAdbShellCommand("getprop ro.build.version.sdk", serialNumber))
+        .thenReturn("34")
+    val fast = "install -r -d --force-queryable --fastdeploy ${apkFile.absolutePath}"
+    val plain = "install -r -d --force-queryable ${apkFile.absolutePath}"
+    whenever(mockAdbUtils.executeAdbCommand(fast, serialNumber)).thenReturn("Success")
+    whenever(mockAdbUtils.executeAdbCommand(plain, serialNumber)).thenReturn("Success")
+    stubInstallVerified()
+    whenever(
+        mockAdbUtils.executeAdbShellCommand(
+            "dumpsys package queries $packageName",
+            serialNumber,
+        ),
+    )
+        .thenReturn("Permission Denial")
+        .thenReturn(
+            "Queries:\n  queries via forceQueryable:\n    forceQueryable:\n      $packageName\n  queries via package name:\n",
+        )
+
+    assertTrue(
+        androidDevice.installApkOnDevice(
+            apkFile,
+            false,
+            false,
+            false,
+            false,
+            null,
+            true,
+            packageName,
+            true,
+        ),
+    )
+
+    verify(mockAdbUtils).executeAdbCommand(fast, serialNumber)
+    verify(mockAdbUtils).executeAdbCommand(plain, serialNumber)
+  }
+
+  @Test
+  fun testForceQueryableFailsIfPlainInstallDoesNotApplyVisibility() {
+    whenever(mockAdbUtils.executeAdbShellCommand("getprop ro.build.version.sdk", serialNumber))
+        .thenReturn("34")
+    val plain = "install -r -d --force-queryable ${apkFile.absolutePath}"
+    whenever(mockAdbUtils.executeAdbCommand(plain, serialNumber)).thenReturn("Success")
+    stubInstallVerified()
+    whenever(
+        mockAdbUtils.executeAdbShellCommand(
+            "dumpsys package queries $packageName",
+            serialNumber,
+        ),
+    )
+        .thenReturn("Queries:\n  queries via forceQueryable:\n  queries via package name:\n")
+
+    try {
+      androidDevice.installApkOnDevice(
+          apkFile,
+          false,
+          false,
+          false,
+          false,
+          null,
+          false,
+          packageName,
+          true,
+      )
+      fail("Expected missing queryability to fail")
+    } catch (e: AndroidInstallException) {
+      assertTrue(e.message!!.contains("did not make $packageName queryable"))
+    }
+  }
+
+  @Test
+  fun testForceQueryableFailsIfVisibilityCannotBeVerified() {
+    whenever(mockAdbUtils.executeAdbShellCommand("getprop ro.build.version.sdk", serialNumber))
+        .thenReturn("34")
+    val plain = "install -r -d --force-queryable ${apkFile.absolutePath}"
+    whenever(mockAdbUtils.executeAdbCommand(plain, serialNumber)).thenReturn("Success")
+    stubInstallVerified()
+    whenever(
+        mockAdbUtils.executeAdbShellCommand(
+            "dumpsys package queries $packageName",
+            serialNumber,
+        ),
+    )
+        .thenReturn("Permission Denial")
+
+    try {
+      androidDevice.installApkOnDevice(
+          apkFile,
+          false,
+          false,
+          false,
+          false,
+          null,
+          false,
+          packageName,
+          true,
+      )
+      fail("Expected unreadable queryability to fail")
+    } catch (e: AndroidInstallException) {
+      assertTrue(e.message!!.contains("Could not verify package queryability"))
+    }
+  }
+
+  @Test
+  fun testPackageQueryableUsesTheEffectiveSet() {
+    stubQueryableOutput("    $packageName\n")
+    assertTrue(androidDevice.isPackageQueryable(packageName))
+  }
+
+  @Test
+  fun testApi30LegacyQueryDumpFindsQueryablePackage() {
+    whenever(mockAdbUtils.executeAdbShellCommand("getprop ro.build.version.sdk", serialNumber))
+        .thenReturn("30")
+    whenever(
+        mockAdbUtils.executeAdbShellCommand(
+            "dumpsys package queries $packageName",
+            serialNumber,
+        ),
+    )
+        .thenReturn(
+            "Queries:\n  system apps queryable: false\n  forceQueryable:\n    $packageName\n  queries via package name:\n",
+        )
+    assertTrue(androidDevice.isPackageQueryable(packageName))
+  }
+
+  @Test
+  fun testApi30LegacyEmptyQuerySetNeedsAnOverride() {
+    whenever(mockAdbUtils.executeAdbShellCommand("getprop ro.build.version.sdk", serialNumber))
+        .thenReturn("30")
+    whenever(
+        mockAdbUtils.executeAdbShellCommand(
+            "dumpsys package queries $packageName",
+            serialNumber,
+        ),
+    )
+        .thenReturn("Queries:\n  system apps queryable: false\n  queries via package name:\n")
+    assertFalse(androidDevice.isPackageQueryable(packageName))
+  }
+
+  @Test
+  fun testPackageQueryableRecognizesSharedUidMembers() {
+    stubQueryableOutput("    [com.other.app,$packageName]\n")
+    assertTrue(androidDevice.isPackageQueryable(packageName))
+  }
+
+  @Test
+  fun testPackageQueryableDoesNotMatchPackagePrefixes() {
+    stubQueryableOutput("    $packageName.extra\n")
+    assertFalse(androidDevice.isPackageQueryable(packageName))
+  }
+
+  @Test
+  fun testPackageQueryableDoesNotMatchAnotherQueriesSection() {
+    stubQueryableOutput("", "    com.other.app:\n      $packageName\n")
+    assertFalse(androidDevice.isPackageQueryable(packageName))
+  }
+
+  @Test
+  fun testEmptyForceQueryableSetIsNotQueryable() {
+    stubQueryableOutput("")
+    assertFalse(androidDevice.isPackageQueryable(packageName))
+  }
+
+  @Test
+  fun testPackageQueryabilityIsNotCachedAcrossInstalls() {
+    whenever(mockAdbUtils.executeAdbShellCommand("getprop ro.build.version.sdk", serialNumber))
+        .thenReturn("34")
+    whenever(
+        mockAdbUtils.executeAdbShellCommand(
+            "dumpsys package queries $packageName",
+            serialNumber,
+        ),
+    )
+        .thenReturn("Queries:\n  queries via forceQueryable:\n  queries via package name:\n")
+        .thenReturn(
+            "Queries:\n  queries via forceQueryable:\n    forceQueryable:\n      $packageName\n  queries via package name:\n",
+        )
+    assertFalse(androidDevice.isPackageQueryable(packageName))
+    assertTrue(androidDevice.isPackageQueryable(packageName))
+  }
+
+  @Test
+  fun testApi29DoesNotNeedQueryableMetadata() {
+    whenever(mockAdbUtils.executeAdbShellCommand("getprop ro.build.version.sdk", serialNumber))
+        .thenReturn("29")
+    assertTrue(androidDevice.isPackageQueryable(packageName))
+    verify(mockAdbUtils, never())
+        .executeAdbShellCommand(argThat { startsWith("dumpsys") }, eq(serialNumber), any())
+  }
+
+  @Test
+  fun testDisabledPackageFilteringIsQueryable() {
+    whenever(mockAdbUtils.executeAdbShellCommand("getprop ro.build.version.sdk", serialNumber))
+        .thenReturn("34")
+    whenever(
+        mockAdbUtils.executeAdbShellCommand(
+            "dumpsys package queries $packageName",
+            serialNumber,
+        ),
+    )
+        .thenReturn("Queries:\n  DISABLED\n")
+    assertTrue(androidDevice.isPackageQueryable(packageName))
+  }
+
+  @Test
+  fun testMalformedQueryableOutputIsNotSuccessfulVisibility() {
+    whenever(mockAdbUtils.executeAdbShellCommand("getprop ro.build.version.sdk", serialNumber))
+        .thenReturn("34")
+    for (output in
+        listOf(
+            "",
+            "Permission Denial",
+            "queries via forceQueryable:\n    $packageName\n  queries via package name:\n",
+            "Queries:\n  queries via forceQueryable:\n    $packageName",
+        )) {
+      whenever(
+          mockAdbUtils.executeAdbShellCommand(
+              "dumpsys package queries $packageName",
+              serialNumber,
+          ),
+      )
+          .thenReturn(output)
+      try {
+        androidDevice.isPackageQueryable(packageName)
+        fail("Expected malformed queryability output to fail")
+      } catch (e: AdbCommandFailedException) {
+        assertTrue(e.message!!.contains("Could not read the forceQueryable set"))
+      }
+    }
+  }
+
+  @Test
+  fun testQueryableTransportFailureIsPropagated() {
+    whenever(mockAdbUtils.executeAdbShellCommand("getprop ro.build.version.sdk", serialNumber))
+        .thenReturn("34")
+    doAnswer { throw AdbCommandFailedException("transport failed") }
+        .whenever(mockAdbUtils)
+        .executeAdbShellCommand("dumpsys package queries $packageName", serialNumber)
+    try {
+      androidDevice.isPackageQueryable(packageName)
+      fail("Expected transport failure")
+    } catch (e: AdbCommandFailedException) {
+      assertEquals("transport failed", e.message)
+    }
+  }
+
+  @Test
+  fun testQueryablePackageNameRejectsShellCharacters() {
+    try {
+      androidDevice.isPackageQueryable("com.test.app; touch /tmp/invalid")
+      fail("Expected invalid package name")
+    } catch (e: IllegalArgumentException) {
+      assertTrue(e.message!!.contains("Invalid package name"))
+    }
+    verify(mockAdbUtils, never()).executeAdbShellCommand(any(), eq(serialNumber), any())
+  }
+
+  private fun stubQueryableOutput(forceQueryableRows: String, packageQueries: String = "") {
+    whenever(mockAdbUtils.executeAdbShellCommand("getprop ro.build.version.sdk", serialNumber))
+        .thenReturn("34")
+    whenever(
+        mockAdbUtils.executeAdbShellCommand(
+            "dumpsys package queries $packageName",
+            serialNumber,
+        ),
+    )
+        .thenReturn(
+            "Queries:\n  queries via forceQueryable:\n    forceQueryable:\n$forceQueryableRows  queries via package name:\n$packageQueries",
+        )
+  }
+
+  @Test
+  fun testDefaultApi34InstallStillUsesFastDeployWithoutForceQueryable() {
+    whenever(mockAdbUtils.executeAdbShellCommand("getprop ro.build.version.sdk", serialNumber))
+        .thenReturn("34")
+    val command = "install -r -d --fastdeploy ${apkFile.absolutePath}"
+    whenever(mockAdbUtils.executeAdbCommand(command, serialNumber)).thenReturn("Success")
+    stubInstallVerified()
+
+    assertTrue(androidDevice.installApkOnDevice(apkFile, false, false, false, false, packageName))
+
+    verify(mockAdbUtils).executeAdbCommand(command, serialNumber)
+    verify(mockAdbUtils, never())
+        .executeAdbCommand(
+            argThat { contains("--force-queryable") },
+            eq(serialNumber),
+            any(),
+        )
   }
 
   @Test

@@ -150,7 +150,10 @@ public class ExopackageInstaller {
    * replace it.
    */
   public void doInstall(
-      IsolatedApkInfo isolatedApkInfo, SetDebugAppMode setDebugAppMode, boolean restartApp)
+      IsolatedApkInfo isolatedApkInfo,
+      SetDebugAppMode setDebugAppMode,
+      boolean restartApp,
+      boolean forceQueryable)
       throws Exception {
     if (setDebugAppMode == SetDebugAppMode.SET) {
       device.setDebugAppPackageName(packageName);
@@ -198,28 +201,30 @@ public class ExopackageInstaller {
       device.installBuildUuidFile(
           AdbHelper.BUILD_METADATA_INSTALL_ROOT, packageName, buck2BuildUuid.get());
     }
-    boolean apkInstalled = installApkIfNecessary(isolatedApkInfo);
+    boolean apkInstalled = installApkIfNecessary(isolatedApkInfo, forceQueryable);
     if (restartApp && !apkInstalled) {
       stopApp();
     }
   }
 
-  /** Installs the apk unless the device already has this exact apk; returns whether it did. */
-  private boolean installApkIfNecessary(IsolatedApkInfo isolatedApkInfo) throws Exception {
+  /** Installs the apk if its contents or requested queryability differ. */
+  private boolean installApkIfNecessary(IsolatedApkInfo isolatedApkInfo, boolean forceQueryable)
+      throws Exception {
     File apk = isolatedApkInfo.getApkPath().toFile();
 
-    if (AdbHelper.shouldAppBeInstalled(device, packageName, apk, androidPrinter)) {
+    if (AdbHelper.shouldAppBeInstalled(device, packageName, apk, androidPrinter, forceQueryable)) {
       long installStart = System.currentTimeMillis();
       boolean success =
           device.installApkOnDevice(
               apk,
               /* installViaSd= */ false,
-              /* quiet */ false,
+              /* quiet= */ false,
               /* verifyTempWritable= */ true,
               /* stagedInstallMode= */ false,
               /* userId= */ null,
               /* allowFastDeploy= */ false,
-              packageName);
+              packageName,
+              forceQueryable);
       timings.recordApkInstall(installStart, System.currentTimeMillis());
       if (!success) {
         throw AndroidInstallException.Companion.adbCommandFailedException(

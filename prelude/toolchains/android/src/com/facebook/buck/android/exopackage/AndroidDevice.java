@@ -86,6 +86,45 @@ public interface AndroidDevice {
       boolean allowFastDeploy,
       String packageName);
 
+  /**
+   * Same as the 8-argument overload; with {@code forceQueryable}, also requests visibility to all
+   * packages on API 30+ and, for non-staged installs, verifies the package is queryable afterwards.
+   * Implementations that do not support it throw {@link UnsupportedOperationException} when {@code
+   * forceQueryable} is true.
+   */
+  default boolean installApkOnDevice(
+      File apk,
+      boolean installViaSd,
+      boolean quiet,
+      boolean verifyTempWritable,
+      boolean stagedInstallMode,
+      @Nullable String userId,
+      boolean allowFastDeploy,
+      String packageName,
+      boolean forceQueryable) {
+    if (forceQueryable) {
+      throw new UnsupportedOperationException(
+          "This device does not support force-queryable installs");
+    }
+    return installApkOnDevice(
+        apk,
+        installViaSd,
+        quiet,
+        verifyTempWritable,
+        stagedInstallMode,
+        userId,
+        allowFastDeploy,
+        packageName);
+  }
+
+  /**
+   * Returns whether package visibility permits all apps to discover this installed package. Unknown
+   * implementations conservatively require installation.
+   */
+  default boolean isPackageQueryable(String packageName) throws Exception {
+    return false;
+  }
+
   default boolean installApexOnDevice(File apex, boolean quiet) {
     return installApexOnDevice(apex, quiet, true);
   }

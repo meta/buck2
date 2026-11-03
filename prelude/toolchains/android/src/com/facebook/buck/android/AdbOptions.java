@@ -26,6 +26,7 @@ public class AdbOptions {
   private boolean apexMode;
   private String restartMode;
   private boolean waitForDeviceReady;
+  private final boolean forceQueryable;
 
   public AdbOptions(
       String adbExecutablePath,
@@ -37,6 +38,31 @@ public class AdbOptions {
       boolean apexMode,
       String restartMode,
       boolean waitForDeviceReady) {
+    this(
+        adbExecutablePath,
+        adbThreadCount,
+        adbServerPort,
+        multiInstallMode,
+        stagedInstallMode,
+        ignoreMissingDevice,
+        apexMode,
+        restartMode,
+        waitForDeviceReady,
+        false);
+  }
+
+  public AdbOptions(
+      String adbExecutablePath,
+      int adbThreadCount,
+      int adbServerPort,
+      boolean multiInstallMode,
+      boolean stagedInstallMode,
+      boolean ignoreMissingDevice,
+      boolean apexMode,
+      String restartMode,
+      boolean waitForDeviceReady,
+      boolean forceQueryable) {
+    this.forceQueryable = forceQueryable;
     this.adbExecutablePath = adbExecutablePath;
     this.adbThreadCount = adbThreadCount;
     this.adbServerPort = adbServerPort;
@@ -84,6 +110,10 @@ public class AdbOptions {
     return waitForDeviceReady;
   }
 
+  public boolean isForceQueryable() {
+    return forceQueryable;
+  }
+
   @Override
   public String toString() {
     return "AdbOptions{"
@@ -105,6 +135,8 @@ public class AdbOptions {
         + restartMode
         + ", waitForDeviceReady="
         + waitForDeviceReady
+        + ", forceQueryable="
+        + forceQueryable
         + '}';
   }
 }

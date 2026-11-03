@@ -263,6 +263,7 @@ def _compute_executor_overrides(ctx: AnalysisContext, instrumentation_test_can_r
         remote_enabled = True,
         remote_execution_properties = remote_execution_properties,
         remote_execution_use_case = _compute_re_use_case(ctx.attrs.labels or []),
+        meta_internal_extra_params = _meta_internal_extra_params_for(remote_execution_properties, None),
     )
     dynamic_listing_executor_override = default_executor_override
     test_execution_executor_override = default_executor_override
@@ -275,7 +276,7 @@ def _compute_executor_overrides(ctx: AnalysisContext, instrumentation_test_can_r
                 remote_enabled = True,
                 remote_execution_properties = ctx.attrs.re_caps["dynamic-listing"],
                 remote_execution_use_case = ctx.attrs.re_use_case["dynamic-listing"],
-                meta_internal_extra_params = ctx.attrs.meta_internal_extra_params,
+                meta_internal_extra_params = _meta_internal_extra_params_for(ctx.attrs.re_caps["dynamic-listing"], ctx.attrs.meta_internal_extra_params),
             )
         if "test-execution" in ctx.attrs.re_caps and "test-execution" in ctx.attrs.re_use_case:
             _validate_executor_override_re_config(ctx.attrs.re_caps["test-execution"], ctx.attrs.re_use_case["test-execution"])
@@ -284,7 +285,7 @@ def _compute_executor_overrides(ctx: AnalysisContext, instrumentation_test_can_r
                 remote_enabled = True,
                 remote_execution_properties = ctx.attrs.re_caps["test-execution"],
                 remote_execution_use_case = ctx.attrs.re_use_case["test-execution"],
-                meta_internal_extra_params = ctx.attrs.meta_internal_extra_params,
+                meta_internal_extra_params = _meta_internal_extra_params_for(ctx.attrs.re_caps["test-execution"], ctx.attrs.meta_internal_extra_params),
             )
 
     return {
@@ -349,6 +350,12 @@ def _compute_re_use_case(labels: list[str]) -> str:
         return DEFAULT_ANDROID_INSTRUMENTATION_TESTS_USE_CASE
     else:  # len(re_use_case_labels) == 1:
         return re_use_case_labels[0].replace("re_opts_use_case=", "")
+
+# A `riot` run holds a lab device until it ends, so have RE stop it once buck2 disconnects.
+def _meta_internal_extra_params_for(re_caps: dict[str, str], meta_internal_extra_params: dict[str, typing.Any] | None) -> dict[str, typing.Any] | None:
+    if re_caps.get("platform") != "riot":
+        return meta_internal_extra_params
+    return (meta_internal_extra_params or {}) | {"cancel_on_client_disconnect": True}
 
 def _validate_executor_override_re_config(re_caps: dict[str, str], re_use_case: str):
     expect(

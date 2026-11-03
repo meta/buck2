@@ -14,6 +14,7 @@ imported.
 
     python3 fmt.py            # format the whole tree in place
     python3 fmt.py --check    # exit 1 and show a diff if anything would change
+                              # (2 when a formatter could not run or rejected a file)
     python3 fmt.py prelude/   # only these paths
 
 Rust goes through the nightly `rustfmt` named in `.rustfmt-version` with the
@@ -38,11 +39,13 @@ import difflib
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path, PurePosixPath
+from typing import NoReturn
 
 ROOT = Path(__file__).resolve().parent
 
@@ -156,36 +159,58 @@ def run(args: list[str], **kwargs) -> subprocess.CompletedProcess:
     return subprocess.run(args, text=True, **kwargs)
 
 
+# Exit code when a formatter could not run (as opposed to 1, files that
+# `--check` found unformatted or that a formatter rejected), so a caller can
+# tell the two apart.
+TOOL_FAILURE = 2
+
+
+def tool_failure(message: str) -> NoReturn:
+    print(message, file=sys.stderr)
+    sys.exit(TOOL_FAILURE)
+
+
 def find_rustfmt(explicit: str | None) -> list[str]:
     if explicit:
+        if not shutil.which(explicit):
+            tool_failure(f"--rustfmt={explicit}: not an executable")
         return [explicit]
     if not RUSTFMT_VERSION_FILE.exists():
-        sys.exit(f"{RUSTFMT_VERSION_FILE.name} is missing; run from a full checkout")
+        tool_failure(
+            f"{RUSTFMT_VERSION_FILE.name} is missing; run from a full checkout"
+        )
     toolchain = RUSTFMT_VERSION_FILE.read_text().strip()
     rustfmt = ["rustup", "run", toolchain, "rustfmt"]
     try:
         installed = run(rustfmt + ["--version"], capture_output=True).returncode == 0
     except FileNotFoundError:
-        sys.exit("rustup is not on PATH (https://rustup.rs), and no --rustfmt given")
+        tool_failure(
+            "rustup is not on PATH (https://rustup.rs), and no --rustfmt given"
+        )
     if not installed:
         print(f"Installing rustfmt {toolchain} through rustup (once)", flush=True)
-        run(
-            [
-                "rustup",
-                "toolchain",
-                "install",
-                toolchain,
-                "--profile=minimal",
-                "--component=rustfmt",
-                "--no-self-update",
-            ],
-            check=True,
-        )
+        if (
+            run(
+                [
+                    "rustup",
+                    "toolchain",
+                    "install",
+                    toolchain,
+                    "--profile=minimal",
+                    "--component=rustfmt",
+                    "--no-self-update",
+                ]
+            ).returncode
+            != 0
+        ):
+            tool_failure(f"installing rustfmt {toolchain} failed")
     return rustfmt
 
 
 def find_starlark_fmt(explicit: str | None) -> str:
     if explicit:
+        if not shutil.which(explicit):
+            tool_failure(f"--starlark-fmt={explicit}: not an executable")
         return explicit
     print("Building starlark_fmt with cargo", flush=True)
     result = run(
@@ -200,22 +225,44 @@ def find_starlark_fmt(explicit: str | None) -> str:
         stdout=subprocess.PIPE,
     )
     if result.returncode != 0:
-        sys.exit("building starlark_fmt failed")
+        tool_failure("building starlark_fmt failed")
     for line in result.stdout.splitlines():
         message = json.loads(line)
         if message.get("reason") == "compiler-artifact" and message.get("executable"):
             return message["executable"]
-    sys.exit("cargo did not report the starlark_fmt executable")
+    tool_failure("cargo did not report the starlark_fmt executable")
 
 
 def chunks(items: list, size: int) -> list[list]:
     return [items[i : i + size] for i in range(0, len(items), size)]
 
 
-def format_rust(rustfmt: list[str], mirror: Path, files: list[Path]) -> None:
-    """Formats `files` (under `mirror`) in place, each as a standalone module."""
+def rejected_files(
+    command: list[str], files: list[Path], tool: str, cwd: Path | None = None
+) -> list[Path]:
+    """
+    After `command` failed on `files`, the ones it fails on by itself. A
+    formatter that fails on every one of several files did not run at all,
+    which is a tool failure; one that fails on some rejected those (a syntax
+    error, say).
+    """
+    rejected = [
+        f
+        for f in files
+        if run(command + [str(f)], cwd=cwd, capture_output=True).returncode != 0
+    ]
+    if len(files) > 1 and len(rejected) == len(files):
+        tool_failure(f"{tool} failed on every file")
+    return rejected
+
+
+def format_rust(rustfmt: list[str], mirror: Path, files: list[Path]) -> list[Path]:
+    """
+    Formats `files` (under `mirror`) in place, each as a standalone module;
+    returns the files rustfmt rejected.
+    """
     if not files:
-        return
+        return []
     command = rustfmt + [
         f"--config-path={RUSTFMT_CONFIG}",
         "--unstable-features",
@@ -223,33 +270,38 @@ def format_rust(rustfmt: list[str], mirror: Path, files: list[Path]) -> None:
         "--quiet",
     ]
     # Command lines are bounded (Windows: 32 KiB).
+    batches = chunks(files, 50)
     with ThreadPoolExecutor(os.cpu_count() or 1) as pool:
         results = pool.map(
             lambda chunk: run(command + [str(f) for f in chunk], capture_output=True),
-            chunks(files, 50),
+            batches,
         )
-    failed = False
-    for result in results:
+    failed = []
+    for chunk, result in zip(batches, results):
         if result.returncode != 0:
-            failed = True
+            failed += chunk
             # The files are under the mirror; name them as in the tree.
             sys.stderr.write(result.stderr.replace(f"{mirror}{os.sep}", ""))
-    if failed:
-        sys.exit("rustfmt failed")
+    return rejected_files(command, failed, "rustfmt") if failed else []
 
 
-def format_starlark(starlark_fmt: str, mirror: Path, files: list[Path]) -> None:
-    """Formats `files` (under `mirror`) in place; paths select config overrides."""
+def format_starlark(starlark_fmt: str, mirror: Path, files: list[Path]) -> list[Path]:
+    """
+    Formats `files` (under `mirror`) in place, paths selecting config
+    overrides; returns the files starlark_fmt rejected.
+    """
     if not files:
-        return
+        return []
+    command = [starlark_fmt, f"--config={STARLARK_FMT_CONFIG}", "fmt"]
     argfile = mirror / "starlark_fmt_files.txt"
     argfile.write_text("".join(f"{f.relative_to(mirror)}\n" for f in files))
-    result = run(
-        [starlark_fmt, f"--config={STARLARK_FMT_CONFIG}", "fmt", f"@{argfile}"],
-        cwd=mirror,
-    )
-    if result.returncode != 0:
-        sys.exit("starlark_fmt failed")
+    if run(command + [f"@{argfile}"], cwd=mirror).returncode == 0:
+        return []
+    relative = [f.relative_to(mirror) for f in files]
+    return [
+        mirror / f
+        for f in rejected_files(command, relative, "starlark_fmt", cwd=mirror)
+    ]
 
 
 # -- Driver -------------------------------------------------------------------
@@ -295,11 +347,11 @@ def collect(paths: list[str]) -> dict[PurePosixPath, str]:
 
 def format_all(
     originals: dict[PurePosixPath, str], rustfmt: str | None, starlark_fmt: str | None
-) -> dict[PurePosixPath, str]:
+) -> tuple[dict[PurePosixPath, str], list[PurePosixPath]]:
     """
-    The formatted contents of `originals`, for the files that change. Each
-    file is formatted in its internal form, under a mirror of the tree, and
-    rewritten back to the exported form.
+    The formatted contents of `originals`, for the files that change, and
+    the files a formatter rejected. Each file is formatted in its internal
+    form, under a mirror of the tree, and rewritten back to the exported form.
     """
     rust_files = [p for p in originals if is_rust(p)]
     starlark_files = [p for p in originals if not is_rust(p)]
@@ -313,18 +365,26 @@ def format_all(
             target.parent.mkdir(parents=True, exist_ok=True)
             internal = to_internal(text.replace("\r\n", "\n"), comment_start(path))
             target.write_bytes(internal.encode("utf-8"))
-        format_rust(rustfmt_command, mirror, [mirror / p for p in rust_files])
-        format_starlark(starlark_fmt_path, mirror, [mirror / p for p in starlark_files])
+        rejected = format_rust(
+            rustfmt_command, mirror, [mirror / p for p in rust_files]
+        ) + format_starlark(
+            starlark_fmt_path, mirror, [mirror / p for p in starlark_files]
+        )
+        rejected_paths = [
+            PurePosixPath(f.relative_to(mirror).as_posix()) for f in rejected
+        ]
 
         changed = {}
         for path, text in originals.items():
+            if path in rejected_paths:
+                continue
             formatted = (mirror / path).read_bytes().decode("utf-8")
             formatted = to_exported(formatted, comment_start(path))
             if "\r\n" in text:
                 formatted = formatted.replace("\n", "\r\n")
             if formatted != text:
                 changed[path] = formatted
-    return changed
+    return changed, rejected_paths
 
 
 def main() -> int:
@@ -343,27 +403,43 @@ def main() -> int:
         help="starlark_fmt executable to use instead of building it with cargo",
     )
     parser.add_argument(
+        "--changed-list",
+        type=Path,
+        help="Also write the paths of the files that were (with --check: would be) "
+        "reformatted here, one per line; a file a formatter rejected is followed "
+        "by a tab and `rejected`",
+    )
+    parser.add_argument(
         "paths", nargs="*", help="Files or directories to format (default: all)"
     )
     args = parser.parse_args()
 
     for required in [RUSTFMT_CONFIG, STARLARK_FMT_CONFIG]:
         if not required.exists():
-            sys.exit(
+            tool_failure(
                 f"{required.relative_to(ROOT)} is missing; run from a full checkout"
             )
 
     originals = collect(args.paths)
-    changed = format_all(originals, args.rustfmt, args.starlark_fmt)
+    changed, rejected = format_all(originals, args.rustfmt, args.starlark_fmt)
+    if args.changed_list is not None:
+        args.changed_list.write_text(
+            "".join(f"{p}\n" for p in changed)
+            + "".join(f"{p}\trejected\n" for p in rejected)
+        )
+    if rejected:
+        print(f"{len(rejected)} file(s) rejected by a formatter; see above:")
+        print("".join(f"  {p}\n" for p in rejected), end="")
     if not changed:
-        print(f"{len(originals)} files already formatted")
-        return 0
+        if not rejected:
+            print(f"{len(originals)} files already formatted")
+        return 1 if rejected else 0
 
     if not args.check:
         for path, formatted in changed.items():
             (ROOT / path).write_bytes(formatted.encode("utf-8"))
         print(f"Reformatted {len(changed)} file(s)")
-        return 0
+        return 1 if rejected else 0
 
     for path, formatted in changed.items():
         sys.stdout.writelines(

@@ -155,6 +155,7 @@ impl SettingsReport {
             let scope = match section.scope {
                 SectionScope::Daemon => "daemon",
                 SectionScope::Invocation => "invocation",
+                SectionScope::Dice => "dice",
             };
             let _ = writeln!(
                 out,

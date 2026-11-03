@@ -2924,6 +2924,7 @@ dependencies = [
  "buck2_events",
  "buck2_fs",
  "buck2_hash",
+ "buck2_settings",
  "buck2_util",
  "derivative",
  "derive_more 2.1.1",

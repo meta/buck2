@@ -11,8 +11,9 @@
 use std::sync::Arc;
 
 use buck2_common::legacy_configs::dice::HasLegacyConfigs;
-use buck2_common::legacy_configs::key::BuckconfigKeyRef;
 use buck2_error::conversion::from_any_with_tag;
+use buck2_settings::Starlark;
+use buck2_settings::dice::HasDiceBuckSettings;
 use dice::DiceComputations;
 use dice::UserComputationData;
 use dice_futures::cancellation::CancellationPoller;
@@ -116,11 +117,9 @@ impl StarlarkEvaluatorProvider {
         let root_buckconfig = ctx.get_legacy_root_config_on_dice().await?;
         let profile_listener = ctx.get_profile_event_listener().cloned();
 
+        let starlark = ctx.dice_settings::<Starlark>().await?;
         let starlark_max_callstack_size =
-            root_buckconfig.view(ctx).parse::<usize>(BuckconfigKeyRef {
-                section: "buck2",
-                property: "starlark_max_callstack_size",
-            })?;
+            starlark.max_callstack_size(&mut root_buckconfig.view(ctx))?;
 
         let debugger_handle = ctx.get_starlark_debugger_handle();
         let debugger = match debugger_handle {

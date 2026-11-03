@@ -103,10 +103,10 @@ fn parse_section_args(attr: proc_macro2::TokenStream) -> syn::Result<SectionArgs
                 "version" => version = Some(input.parse::<LitInt>()?),
                 "scope" => {
                     let value: Ident = input.parse()?;
-                    if value != "daemon" && value != "invocation" {
+                    if value != "daemon" && value != "invocation" && value != "dice" {
                         return Err(syn::Error::new(
                             value.span(),
-                            "expected `daemon` or `invocation`",
+                            "expected `daemon`, `invocation` or `dice`",
                         ));
                     }
                     scope = Some(value);
@@ -319,8 +319,10 @@ fn expand(
     let scope = Ident::new(
         if scope == "daemon" {
             "Daemon"
-        } else {
+        } else if scope == "invocation" {
             "Invocation"
+        } else {
+            "Dice"
         },
         scope.span(),
     );
@@ -480,6 +482,12 @@ fn expand(
         });
     }
 
+    let dice_projection = if scope == "Dice" {
+        dice_projection(&struct_name, &section_name.value())
+    } else {
+        quote!()
+    };
+
     Ok(quote! {
         #[derive(
             Clone,
@@ -516,5 +524,64 @@ fn expand(
                 ::core::result::Result::Ok(::std::vec![#(#values),*])
             }
         }
+
+        #dice_projection
     })
+}
+
+/// For a `dice` section: the DICE projection that hands out this section of
+/// the injected per-invocation settings, so a computation depends on this
+/// section alone, and the trait that lets `DiceComputations::dice_settings`
+/// find it.
+fn dice_projection(struct_name: &Ident, section_name: &str) -> proc_macro2::TokenStream {
+    let key_name = Ident::new(&format!("{struct_name}DiceKey"), struct_name.span());
+    let display = format!("settings section `{section_name}`");
+    quote! {
+        #[derive(
+            Clone,
+            Debug,
+            PartialEq,
+            Eq,
+            Hash,
+            ::derive_more::Display,
+            ::allocative::Allocative,
+            ::pagable::Pagable
+        )]
+        #[display(#display)]
+        #[::pagable::pagable_typetag(::dice::DiceProjectionDyn)]
+        pub struct #key_name;
+
+        impl ::dice::ProjectionKey for #key_name {
+            type DeriveFromKey = ::buck2_settings::dice::DiceBuckSettingsKey;
+            type Value = ::buck2_settings::Section<#struct_name>;
+
+            fn compute(
+                &self,
+                settings: &::buck2_settings::DiceBuckSettings,
+                _ctx: &::dice::DiceProjectionComputations,
+            ) -> Self::Value {
+                ::dupe::Dupe::dupe(
+                    <::buck2_settings::DiceBuckSettings as ::buck2_settings::dice::HasDiceSection<
+                        #struct_name,
+                    >>::section(settings),
+                )
+            }
+
+            fn equality_behavior() -> ::dice::EqualityBehavior<Self::Value> {
+                ::dice::EqualityBehavior::Compare(|x, y| x == y)
+            }
+
+            fn value_serialize() -> impl ::dice::ValueSerialize<Value = Self::Value> {
+                ::dice::NoValueSerialize::<Self::Value>::new()
+            }
+        }
+
+        impl ::buck2_settings::dice::DiceSettingsSection for #struct_name {
+            type Key = #key_name;
+
+            fn key() -> Self::Key {
+                #key_name
+            }
+        }
+    }
 }

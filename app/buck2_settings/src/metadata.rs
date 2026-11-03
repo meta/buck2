@@ -35,14 +35,17 @@ pub(super) enum SettingSource {
     Override(OverrideSource),
 }
 
-/// Whether a section's values are fixed for the daemon's lifetime, so that a
-/// change restarts it, or belong to one invocation and travel with each
-/// command.
+/// How long a section's values live and who may read them.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum SectionScope {
+    /// Fixed for the daemon's lifetime; a change restarts it.
     Daemon,
+    /// Per invocation, read untracked from the command context.
     Invocation,
+    /// Per invocation, read only through DICE, which tracks the dependency.
+    /// Never set by rollouts.
+    Dice,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

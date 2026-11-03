@@ -1,0 +1,4 @@
+load(":defs.bzl", "deep")
+
+# Deep enough to exceed a small `starlark.max_callstack_size`.
+deep(40)

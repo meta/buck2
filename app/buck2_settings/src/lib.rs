@@ -42,6 +42,7 @@ mod resource_control;
 mod rollouts;
 mod section;
 pub mod settings;
+mod starlark;
 pub mod telemetry;
 
 pub use agent_config_change::AgentConfigChange;
@@ -74,4 +75,6 @@ pub use section::Section;
 pub use settings::BuckSettingChange;
 pub use settings::BuckSettings;
 pub use settings::DaemonBuckSettings;
+pub use settings::DiceBuckSettings;
 pub use settings::InvocationBuckSettings;
+pub use starlark::Starlark;

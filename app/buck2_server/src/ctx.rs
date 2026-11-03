@@ -129,6 +129,7 @@ use buck2_server_ctx::stderr_output_guard::StderrOutputWriter;
 use buck2_server_starlark_debug::BuckStarlarkDebuggerHandle;
 use buck2_server_starlark_debug::create_debugger_handle;
 use buck2_settings::BuckSettings;
+use buck2_settings::DiceBuckSettings;
 use buck2_settings::InvocationBuckSettings;
 use buck2_settings::telemetry::observe_settings;
 use buck2_test::local_resource_registry::InitLocalResourceRegistry;
@@ -407,12 +408,11 @@ impl<'a> ServerCommandContext<'a> {
         // Read before `base_context` moves into the struct literal below.
         let buck_out_dir = base_context.repo().paths.buck_out_dir();
         let isolation_prefix = base_context.repo().paths.isolation().to_owned();
-        let buck_settings = BuckSettings {
-            daemon: base_context.daemon.daemon_buck_settings().dupe(),
-            invocation: InvocationBuckSettings::from_request(
-                client_context.invocation_settings.as_deref(),
-            )?,
-        };
+        let buck_settings = BuckSettings::new(
+            base_context.daemon.daemon_buck_settings().dupe(),
+            InvocationBuckSettings::from_request(client_context.invocation_settings.as_deref())?,
+            DiceBuckSettings::from_request(client_context.dice_settings.as_deref())?,
+        );
         if let Some(observed) = observe_settings(&buck_settings) {
             base_context.events.instant_event(observed);
         }
@@ -904,6 +904,7 @@ impl DiceUpdater for DiceCommandUpdater<'_, '_> {
             cell_resolver,
             configuror,
             cells_and_configs.external_data,
+            self.cmd_ctx.buck_settings.dice_sections().dupe(),
             profiler_instrumentation_override.clone(),
             self.cmd_ctx.disable_starlark_types,
             self.cmd_ctx.unstable_typecheck,

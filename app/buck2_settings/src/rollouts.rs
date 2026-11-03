@@ -11,6 +11,7 @@
 //! Selection of settings rollouts from the versioned TOML cache.
 
 use crate::metadata::SectionMetadata;
+use crate::metadata::SectionScope;
 use crate::parser::IgnoredSetting;
 use crate::settings::ALL_SECTION_METADATA;
 use crate::settings::BuckSettingsData;
@@ -46,6 +47,13 @@ fn select_with_registry(
         let Some(versions) = versioned_settings.remove(section.section_name) else {
             continue;
         };
+        if matches!(section.scope, SectionScope::Dice) {
+            selected.ignored.push(IgnoredSetting::section(
+                section.section_name,
+                "DICE-tracked sections take no rollouts",
+            ));
+            continue;
+        }
         let toml::Value::Table(mut versions) = versions else {
             selected.ignored.push(IgnoredSetting::section(
                 section.section_name,
@@ -128,7 +136,6 @@ fn validate_key(section: &SectionMetadata, key: &str, value: &toml::Value) -> Re
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::metadata::SectionScope;
 
     const SECTION: &str = "test_section";
 
@@ -260,6 +267,28 @@ mod tests {
                 ignored: vec![IgnoredSetting::section(
                     SECTION,
                     "version `0` is not a table of settings"
+                )],
+            }
+        );
+    }
+
+    #[test]
+    fn dice_sections_take_no_rollouts() {
+        let dice = SectionMetadata {
+            scope: SectionScope::Dice,
+            ..metadata(0)
+        };
+        assert_eq!(
+            select_with_registry(
+                table("[test_section.0]\ntest_flag = true"),
+                &[dice],
+                |_, _, _| Ok(()),
+            ),
+            SelectedRollout {
+                layer: toml::Table::new(),
+                ignored: vec![IgnoredSetting::section(
+                    SECTION,
+                    "DICE-tracked sections take no rollouts"
                 )],
             }
         );

@@ -43,6 +43,7 @@ rust_library(
         "//buck2/app/buck2_events:buck2_events",
         "//buck2/app/buck2_fs:buck2_fs",
         "//buck2/app/buck2_hash:buck2_hash",
+        "//buck2/app/buck2_settings:buck2_settings",
         "//buck2/app/buck2_util:buck2_util",
         "//buck2/dice/dice:dice",
         "//buck2/dice/dice_futures:dice_futures",

@@ -216,6 +216,10 @@ message ClientContext {
   // JSON containing only InvocationBuckSettings. Missing overrides use the
   // setting's defaults for this command.
   optional string invocation_settings = 29;
+
+  // JSON containing only DiceBuckSettings, the per-invocation sections the
+  // daemon injects into DICE. Missing overrides use the setting's defaults.
+  optional string dice_settings = 30;
 }
 
 message TargetsRequest {

@@ -39,7 +39,9 @@ use buck2_interpreter_for_build::interpreter::configuror::BuildInterpreterConfig
 use buck2_interpreter_for_build::interpreter::context::SetInterpreterContext;
 use buck2_node::nodes::frontend::TargetGraphCalculation;
 use buck2_node::package_visibility::HasPackageVisibilityDefaultIntersection;
+use buck2_settings::DiceBuckSettings;
 use buck2_settings::PackageVisibilityDefaultIntersection;
+use buck2_settings::dice::SetDiceBuckSettings;
 use dice::DetectCycles;
 use dice::Dice;
 use dice::DiceTransaction;
@@ -96,6 +98,8 @@ pub(crate) async fn calculation_with_package_visibility_mode(
     )
     .unwrap();
     ctx.set_legacy_config_external_data(ExternalBuckconfigData::testing_default())
+        .unwrap();
+    ctx.set_dice_buck_settings(DiceBuckSettings::default())
         .unwrap();
     ctx.set_starlark_profiler_configuration(StarlarkProfilerConfiguration::default())
         .unwrap();

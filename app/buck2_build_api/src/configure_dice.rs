@@ -26,7 +26,9 @@ use buck2_core::rollout_percentage::RolloutPercentage;
 use buck2_execute::digest_config::DigestConfig;
 use buck2_execute::digest_config::SetDigestConfig;
 use buck2_settings::DaemonBuckSettings;
+use buck2_settings::DiceBuckSettings;
 use buck2_settings::dice::SetBuckSettings;
+use buck2_settings::dice::SetDiceBuckSettings;
 use dice::BranchId;
 use dice::DetectCycles;
 use dice::Dice;
@@ -242,6 +244,9 @@ pub async fn configure_dice_for_buck(
     let mut dice_ctx = dice.updater(root);
     dice_ctx.set_none_cell_resolver()?;
     dice_ctx.set_none_legacy_config_external_data()?;
+    // Defaults until the first command injects its own, so that nothing
+    // computes against an uninjected key.
+    dice_ctx.set_dice_buck_settings(DiceBuckSettings::default())?;
     dice_ctx.commit().await;
 
     Ok((dice, root))

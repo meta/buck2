@@ -35,10 +35,11 @@ use crate::metadata::SettingsSection;
 use crate::package_visibility::PackageVisibility;
 use crate::resource_control::ResourceControl;
 use crate::section::Section;
+use crate::starlark::Starlark;
 
 /// Assembles `BuckSettings` from the sections, each listed under its scope.
 ///
-/// Generates the flat on-disk form (`BuckSettingsData`), the two scope
+/// Generates the flat on-disk form (`BuckSettingsData`), the three scope
 /// structs, the conversion between them, and the registry the parser and the
 /// rollout selector consult. A section listed under the wrong scope fails to
 /// compile.
@@ -46,10 +47,12 @@ macro_rules! buck_settings {
     (
         daemon { $($daemon:ident: $daemon_ty:ty,)* }
         invocation { $($invocation:ident: $invocation_ty:ty,)* }
+        dice { $($dice:ident: $dice_ty:ty,)* }
     ) => {
         pub(crate) static ALL_SECTION_METADATA: &[SectionMetadata] = &[
             $(<$daemon_ty as SettingsSection>::METADATA,)*
             $(<$invocation_ty as SettingsSection>::METADATA,)*
+            $(<$dice_ty as SettingsSection>::METADATA,)*
         ];
 
         const _: () = {
@@ -61,6 +64,10 @@ macro_rules! buck_settings {
                 matches!(<$invocation_ty as SettingsSection>::METADATA.scope, SectionScope::Invocation),
                 concat!("`", stringify!($invocation_ty), "` is listed as an invocation section but declares another scope"),
             );)*
+            $(assert!(
+                matches!(<$dice_ty as SettingsSection>::METADATA.scope, SectionScope::Dice),
+                concat!("`", stringify!($dice_ty), "` is listed as a dice section but declares another scope"),
+            );)*
         };
 
         // The file format: every section at the top level, unknown ones rejected
@@ -70,6 +77,7 @@ macro_rules! buck_settings {
         pub(crate) struct BuckSettingsData {
             $(#[serde(default)] $daemon: $daemon_ty,)*
             $(#[serde(default)] $invocation: $invocation_ty,)*
+            $(#[serde(default)] $dice: $dice_ty,)*
         }
 
         /// Sections whose values are fixed for the daemon's lifetime. Every
@@ -115,6 +123,31 @@ macro_rules! buck_settings {
             $(pub $invocation: Section<$invocation_ty>,)*
         }
 
+        /// Sections whose values belong to one invocation and are read only
+        /// through DICE, which tracks the dependency: see `dice::HasDiceBuckSettings`.
+        /// A request carries them next to the invocation sections.
+        #[derive(
+            Clone,
+            Dupe,
+            Debug,
+            Default,
+            Serialize,
+            Deserialize,
+            PartialEq,
+            Eq,
+            Allocative
+        )]
+        #[serde(default, deny_unknown_fields)]
+        pub struct DiceBuckSettings {
+            $(pub $dice: Section<$dice_ty>,)*
+        }
+
+        $(impl crate::dice::HasDiceSection<$dice_ty> for DiceBuckSettings {
+            fn section(&self) -> &Section<$dice_ty> {
+                &self.$dice
+            }
+        })*
+
         impl From<BuckSettingsData> for BuckSettings {
             fn from(data: BuckSettingsData) -> Self {
                 Self {
@@ -123,6 +156,9 @@ macro_rules! buck_settings {
                     },
                     invocation: InvocationBuckSettings {
                         $($invocation: Section::new(data.$invocation),)*
+                    },
+                    dice: DiceBuckSettings {
+                        $($dice: Section::new(data.$dice),)*
                     },
                 }
             }
@@ -144,6 +180,10 @@ macro_rules! buck_settings {
                     $(SectionReport {
                         metadata: <$invocation_ty as SettingsSection>::METADATA,
                         values: self.invocation.$invocation.values(buckconfig)?,
+                    },)*
+                    $(SectionReport {
+                        metadata: <$dice_ty as SettingsSection>::METADATA,
+                        values: self.dice.$dice.values(buckconfig)?,
                     },)*
                 ])
             }
@@ -170,6 +210,9 @@ buck_settings! {
         event_log: EventLog,
         health_check: HealthCheck,
     }
+    dice {
+        starlark: Starlark,
+    }
 }
 
 /// Settings for a client invocation or server command. Shared daemon state must
@@ -191,6 +234,31 @@ pub struct BuckSettings {
     pub daemon: DaemonBuckSettings,
     #[serde(flatten)]
     pub invocation: InvocationBuckSettings,
+    // Not public: on the daemon these are read through DICE, and the only
+    // other uses are sending them there and reporting them.
+    #[serde(flatten)]
+    dice: DiceBuckSettings,
+}
+
+impl BuckSettings {
+    pub fn new(
+        daemon: DaemonBuckSettings,
+        invocation: InvocationBuckSettings,
+        dice: DiceBuckSettings,
+    ) -> Self {
+        Self {
+            daemon,
+            invocation,
+            dice,
+        }
+    }
+
+    /// The `dice` sections, for the client to send with a request and the
+    /// daemon to inject into its transaction. Computations read them through
+    /// `dice::HasDiceBuckSettings` instead, so the dependency is recorded.
+    pub fn dice_sections(&self) -> &DiceBuckSettings {
+        &self.dice
+    }
 }
 
 impl InvocationBuckSettings {
@@ -198,6 +266,17 @@ impl InvocationBuckSettings {
         match request {
             Some(request) => {
                 serde_json::from_str(request).buck_error_context("Invalid invocation Buck Settings")
+            }
+            None => Ok(Self::default()),
+        }
+    }
+}
+
+impl DiceBuckSettings {
+    pub fn from_request(request: Option<&str>) -> buck2_error::Result<Self> {
+        match request {
+            Some(request) => {
+                serde_json::from_str(request).buck_error_context("Invalid DICE Buck Settings")
             }
             None => Ok(Self::default()),
         }
@@ -469,13 +548,20 @@ mod tests {
         let settings = BuckSettings::default();
         let daemon = serde_json::to_value(&settings.daemon)?;
         let invocation = serde_json::to_value(&settings.invocation)?;
+        let dice = serde_json::to_value(settings.dice_sections())?;
         let daemon = daemon.as_object().unwrap();
         let invocation = invocation.as_object().unwrap();
+        let dice = dice.as_object().unwrap();
         assert!(daemon.keys().all(|name| !invocation.contains_key(name)));
+        assert!(
+            dice.keys()
+                .all(|name| !invocation.contains_key(name) && !daemon.contains_key(name))
+        );
         let combined: serde_json::Map<_, _> = daemon
             .clone()
             .into_iter()
             .chain(invocation.clone())
+            .chain(dice.clone())
             .collect();
         assert_eq!(
             Value::Object(combined),

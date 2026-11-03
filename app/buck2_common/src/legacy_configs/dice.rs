@@ -22,6 +22,7 @@ use buck2_core::fs::project_rel_path::ProjectRelativePath;
 use buck2_error::BuckErrorContext;
 use buck2_error::BuckErrorOptionContext;
 use buck2_events::dispatch::get_dispatcher;
+use buck2_settings::buckconfig::BuckconfigSource;
 use derive_more::Display;
 use dice::DiceComputations;
 use dice::DiceProjectionComputations;
@@ -97,7 +98,7 @@ impl LegacyBuckConfigOnDice<'_, '_> {
     where
         buck2_error::Error: From<<T as FromStr>::Err>,
     {
-        LegacyBuckConfig::parse_value(key, self.get(key)?.as_deref())
+        LegacyBuckConfig::parse_value(key, LegacyBuckConfigView::get(self, key)?.as_deref())
     }
 }
 
@@ -112,6 +113,17 @@ impl std::fmt::Debug for LegacyBuckConfigOnDice<'_, '_> {
 impl LegacyBuckConfigView for LegacyBuckConfigOnDice<'_, '_> {
     fn get(&mut self, key: BuckconfigKeyRef) -> buck2_error::Result<Option<Arc<str>>> {
         self.config.lookup(self.ctx, key)
+    }
+}
+
+/// A setting's buckconfig fallback read inside DICE depends on that key like
+/// any other tracked buckconfig read.
+impl BuckconfigSource for LegacyBuckConfigOnDice<'_, '_> {
+    fn get(&mut self, section: &str, property: &str) -> buck2_error::Result<Option<String>> {
+        Ok(self
+            .config
+            .lookup(self.ctx, BuckconfigKeyRef { section, property })?
+            .map(|value| value.to_string()))
     }
 }
 

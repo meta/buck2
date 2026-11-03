@@ -8,11 +8,29 @@
  * above-listed licenses.
  */
 
+//! How settings reach DICE: the daemon's sections as global data, read
+//! untracked, and the `dice` sections as an injected key per command, read
+//! through projections that record the dependency.
+
+use allocative::Allocative;
+use derive_more::Display;
+use dice::DiceComputations;
 use dice::DiceData;
 use dice::DiceDataBuilder;
+use dice::DiceTransactionUpdater;
+use dice::EqualityBehavior;
+use dice::InjectedKey;
+use dice::NoValueSerialize;
+use dice::ProjectionKey;
+use dice::ValueSerialize;
 use dupe::Dupe;
+use pagable::Pagable;
+use pagable::pagable_typetag;
 
 use crate::DaemonBuckSettings;
+use crate::DiceBuckSettings;
+use crate::Section;
+use crate::metadata::SettingsSection;
 
 /// Reads the daemon's Buck settings from DICE global data. Unlike buckconfig
 /// reads this is a plain lookup, not a tracked computation.
@@ -45,6 +63,65 @@ impl SetBuckSettings for DiceDataBuilder {
 impl SetBuckSettings for DiceData {
     fn set_buck_settings(&mut self, settings: DaemonBuckSettings) {
         self.set(settings)
+    }
+}
+
+/// The `dice` sections of the current command, injected before anything
+/// computes. Equal values re-injected do not invalidate anything.
+#[derive(Clone, Dupe, Debug, Display, Eq, Hash, PartialEq, Allocative, Pagable)]
+#[display("DiceBuckSettingsKey")]
+#[pagable_typetag(dice::DiceKeyDyn)]
+pub struct DiceBuckSettingsKey;
+
+impl InjectedKey for DiceBuckSettingsKey {
+    type Value = DiceBuckSettings;
+
+    fn equality_behavior() -> EqualityBehavior<Self::Value> {
+        EqualityBehavior::Compare(|x, y| x == y)
+    }
+
+    fn value_serialize() -> impl ValueSerialize<Value = Self::Value> {
+        NoValueSerialize::<Self::Value>::new()
+    }
+}
+
+/// Implemented by `DiceBuckSettings` for each of its sections; the
+/// projections `#[buck_settings_section]` generates read through it.
+pub trait HasDiceSection<S> {
+    fn section(&self) -> &Section<S>;
+}
+
+/// A section declared with `scope = dice`: its projection key, which is how
+/// a computation depends on this section and nothing else.
+pub trait DiceSettingsSection: SettingsSection + Sized + 'static {
+    type Key: ProjectionKey<DeriveFromKey = DiceBuckSettingsKey, Value = Section<Self>>;
+
+    fn key() -> Self::Key;
+}
+
+pub trait SetDiceBuckSettings {
+    fn set_dice_buck_settings(&mut self, settings: DiceBuckSettings) -> buck2_error::Result<()>;
+}
+
+impl SetDiceBuckSettings for DiceTransactionUpdater {
+    fn set_dice_buck_settings(&mut self, settings: DiceBuckSettings) -> buck2_error::Result<()> {
+        Ok(self.changed_to(vec![(DiceBuckSettingsKey, settings)])?)
+    }
+}
+
+/// The tracked way to read a `dice` section.
+pub trait HasDiceBuckSettings {
+    /// The section as injected for this command. The computation depends on
+    /// this section's value, not on the other sections.
+    fn dice_settings<S: DiceSettingsSection>(
+        &mut self,
+    ) -> impl Future<Output = buck2_error::Result<Section<S>>> + Send;
+}
+
+impl HasDiceBuckSettings for DiceComputations<'_> {
+    async fn dice_settings<S: DiceSettingsSection>(&mut self) -> buck2_error::Result<Section<S>> {
+        let injected = self.compute_opaque(&DiceBuckSettingsKey).await?;
+        Ok(self.projection(&injected, &S::key())?)
     }
 }
 

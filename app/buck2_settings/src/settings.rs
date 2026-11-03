@@ -27,6 +27,7 @@ use crate::health_check::HealthCheck;
 use crate::http::Http;
 use crate::hydration::Hydration;
 use crate::log_download::LogDownload;
+use crate::materializer::Materializer;
 use crate::metadata::SectionMetadata;
 use crate::metadata::SectionReport;
 use crate::metadata::SectionScope;
@@ -158,6 +159,7 @@ buck_settings! {
         http: Http,
         hydration: Hydration,
         log_download: LogDownload,
+        materializer: Materializer,
         package_visibility: PackageVisibility,
         resource_control: ResourceControl,
     }

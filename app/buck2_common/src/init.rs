@@ -568,12 +568,7 @@ impl DaemonStartupConfig {
             digest_algorithms: settings.digest.algorithms(&mut buckconfig)?,
             source_digest_algorithm: settings.digest.source_algorithm(&mut buckconfig)?,
             paranoid,
-            materializations: config
-                .get(BuckconfigKeyRef {
-                    section: "buck2",
-                    property: "materializations",
-                })
-                .map(ToOwned::to_owned),
+            materializations: settings.materializer.materializations(&mut buckconfig)?,
             materializer: config
                 .get(BuckconfigKeyRef {
                     section: "buck2",

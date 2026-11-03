@@ -145,7 +145,7 @@ def _get_re_executors(
     network_access = getattr(ctx.attrs, "network_access", None)
 
     if re_arg.disabled:
-        executor = CommandExecutorConfig(local_enabled = True, remote_enabled = False, network_access = network_access)
+        executor = CommandExecutorConfig(local_enabled = True, remote_enabled = False, remote_cache_enabled = False, network_access = network_access)
         # A `remote_execution = "disabled"` target has always produced an executor
         # and therefore run from the project root; preserve that behavior.
         return RemoteTestExecutorConfig(default_executor = executor, run_from_project_root = True, use_project_relative_paths = True)

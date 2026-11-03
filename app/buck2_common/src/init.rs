@@ -21,6 +21,7 @@ use buck2_fs::paths::file_name::FileName;
 use buck2_http::ProxyHostAllowlist;
 use buck2_settings::BuckSettingChange;
 use buck2_settings::DaemonBuckSettings;
+use buck2_settings::Http;
 use buck2_settings::MacosQosClass;
 use dice::EvictionPolicy;
 use dice::PagableStorageBackend;
@@ -64,6 +65,7 @@ impl Timeout {
     Eq
 )]
 pub struct HttpConfig {
+    /// Stays a buckconfig key: a list, which settings do not carry yet.
     #[cfg(fbcode_build)]
     pub proxy_env_allowlist: ProxyHostAllowlist,
     connect_timeout_ms: Option<u64>,
@@ -75,34 +77,8 @@ pub struct HttpConfig {
 }
 
 impl HttpConfig {
-    pub fn from_config(config: &LegacyBuckConfig) -> buck2_error::Result<Self> {
-        let connect_timeout_ms = config.parse(BuckconfigKeyRef {
-            section: "http",
-            property: "connect_timeout_ms",
-        })?;
-        let read_timeout_ms = config.parse(BuckconfigKeyRef {
-            section: "http",
-            property: "read_timeout_ms",
-        })?;
-        let write_timeout_ms = config.parse(BuckconfigKeyRef {
-            section: "http",
-            property: "write_timeout_ms",
-        })?;
-        let max_redirects = config.parse(BuckconfigKeyRef {
-            section: "http",
-            property: "max_redirects",
-        })?;
-        let http2 = config
-            .parse(BuckconfigKeyRef {
-                section: "http",
-                property: "http2",
-            })?
-            .unwrap_or(true);
-        let max_concurrent_requests = config.parse(BuckconfigKeyRef {
-            section: "http",
-            property: "max_concurrent_requests",
-        })?;
-
+    pub fn from_settings(http: &Http, config: &LegacyBuckConfig) -> buck2_error::Result<Self> {
+        let mut buckconfig = config;
         Ok(Self {
             #[cfg(fbcode_build)]
             proxy_env_allowlist: config
@@ -112,12 +88,12 @@ impl HttpConfig {
                 })?
                 .unwrap_or_default()
                 .try_into()?,
-            connect_timeout_ms,
-            read_timeout_ms,
-            write_timeout_ms,
-            http2,
-            max_redirects,
-            max_concurrent_requests,
+            connect_timeout_ms: http.connect_timeout_ms(&mut buckconfig)?,
+            read_timeout_ms: http.read_timeout_ms(&mut buckconfig)?,
+            write_timeout_ms: http.write_timeout_ms(&mut buckconfig)?,
+            http2: http.http2(&mut buckconfig)?,
+            max_redirects: http.max_redirects(&mut buckconfig)?,
+            max_concurrent_requests: http.max_concurrent_requests(&mut buckconfig)?,
         })
     }
 
@@ -683,7 +659,7 @@ impl DaemonStartupConfig {
                     property: "materializer",
                 })
                 .map(ToOwned::to_owned),
-            http: HttpConfig::from_config(config)?,
+            http: HttpConfig::from_settings(&settings.http, config)?,
             resource_control: ResourceControlConfig::from_config(config)?,
             log_download_method,
             health_check_config: HealthCheckConfig::from_config(config)?,
@@ -826,6 +802,8 @@ mod tests {
                     daemon_idle_timeout_s = 100
                     [build]
                     num_tokio_workers = 4
+                    [http]
+                    http2 = false
                     "#
                 ),
             )],
@@ -839,6 +817,7 @@ mod tests {
         assert_eq!(options.macos_qos_class, Some(MacosQosClass::Background));
         assert_eq!(options.daemon_idle_timeout_s, Some(100));
         assert_eq!(options.num_tokio_workers, Some(4));
+        assert!(!options.http.http2);
 
         let settings = resolve_setting_flags(vec![table(indoc!(
             r#"
@@ -850,6 +829,8 @@ mod tests {
             [digest]
             algorithms = "BLAKE3-KEYED,SHA1"
             source_algorithm = "BLAKE3-KEYED"
+            [http]
+            http2 = true
             "#
         ))])?;
         let from_settings = DaemonStartupConfig::new(&config, &settings.daemon, false)?;
@@ -866,6 +847,7 @@ mod tests {
         assert_eq!(options.macos_qos_class, Some(MacosQosClass::SkipLowering));
         assert_eq!(options.daemon_idle_timeout_s, Some(60));
         assert_eq!(options.num_tokio_workers, Some(8));
+        assert!(options.http.http2);
         Ok(())
     }
 

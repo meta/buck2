@@ -23,6 +23,7 @@ use crate::buckconfig::BuckconfigSource;
 use crate::daemon::Daemon;
 use crate::digest::Digest;
 use crate::event_log::EventLog;
+use crate::http::Http;
 use crate::hydration::Hydration;
 use crate::log_download::LogDownload;
 use crate::metadata::SectionMetadata;
@@ -152,6 +153,7 @@ buck_settings! {
         analysis: Analysis,
         daemon: Daemon,
         digest: Digest,
+        http: Http,
         hydration: Hydration,
         log_download: LogDownload,
         package_visibility: PackageVisibility,

@@ -46,9 +46,10 @@ def from_named_set(srcs: [dict[str, Artifact | Dependency], list[Artifact | Depe
 
     if type(srcs) == type([]):
         srcs_dict = {}
+        artifacts = {}
         for src in srcs:
             if isinstance(src, Artifact):
-                name = src.short_path
+                artifact = src
             else:
                 # If the src is a `dependency`, use the short path of the
                 # default output.
@@ -57,7 +58,14 @@ def from_named_set(srcs: [dict[str, Artifact | Dependency], list[Artifact | Depe
                     "expected exactly one default output from {} ({})".format(src, src[DefaultInfo].default_outputs),
                 )
                 [artifact] = src[DefaultInfo].default_outputs
-                name = artifact.short_path
+            name = artifact.short_path
+            expect(
+                artifacts.setdefault(name, artifact) == artifact,
+                "Sources {} and {} both have the name `{}`",
+                artifacts[name],
+                artifact,
+                name,
+            )
             srcs_dict[name] = src
         return srcs_dict
     else:

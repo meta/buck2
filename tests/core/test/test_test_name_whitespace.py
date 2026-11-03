@@ -17,6 +17,9 @@ from buck2.tests.e2e_util.helper.golden import golden
 # test case under a name that holds it (see `TARGETS.fixture`).
 TARGETS = ["line_break", "tab"]
 
+# `line_break` reports a failing test and `tab` a skipped one.
+EXPECTED_EXIT_CODES = {"line_break": 32, "tab": 0}
+
 _TIMESTAMP = re.compile(r"^\[[^\]]+\] ?")
 _ANSI_ESCAPE = re.compile(r"\x1b\[[0-9;?]*[A-Za-z]")
 _RESULT_LINE = re.compile(r"^(✗ Fail|↷ Skip): ")
@@ -58,10 +61,15 @@ class TestNameWhitespaceTest(BuckTestCase):
 
     @buck_test()
     async def test_superconsole(self, buck: Buck) -> None:
-        # The superconsole's failure dumps the whole event, timestamps and trace ID
-        # included, so it is checked rather than compared with a golden file.
+        # The superconsole redraws its output, so the test checks the outcome
+        # rather than comparing it with a golden file.
         for target in TARGETS:
             exit_code, stderr = await _test(buck, "super", target)
             stderr = _ANSI_ESCAPE.sub("", stderr)
-            assert exit_code == 2, f"{target}: exit code {exit_code}"
-            assert _SPAN_ERROR in stderr, f"{target}: {stderr}"
+            assert _SPAN_ERROR not in stderr, f"{target}: {stderr}"
+            assert any(_RESULT_LINE.match(line) for line in stderr.splitlines()), (
+                f"{target}: no result line in {stderr}"
+            )
+            assert exit_code == EXPECTED_EXIT_CODES[target], (
+                f"{target}: exit code {exit_code}"
+            )

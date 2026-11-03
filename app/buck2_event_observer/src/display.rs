@@ -851,6 +851,9 @@ pub fn format_test_result(
         TestStatus::RERUN => Span::new_styled("↻ Rerun".to_owned().cyan()),
         TestStatus::LISTING_FAILED => Span::new_styled("⚠ Listing failed".to_owned().red()),
     }?;
+    // A test name is free text from the test runner, so it can hold a tab or a
+    // line break (a title interpolating a value, say), which a `Span` refuses.
+    let name = name.replace(|c: char| c != ' ' && c.is_whitespace(), " ");
     let mut base = Line::from_iter([prefix, Span::new_unstyled(format!(": {name}",))?]);
 
     if let Some(duration) = duration {
@@ -1506,6 +1509,64 @@ mod tests {
                 },
             )),
         })
+    }
+
+    fn test_result(name: &str, status: buck2_data::TestStatus) -> buck2_data::TestResult {
+        buck2_data::TestResult {
+            name: name.to_owned(),
+            status: status as i32,
+            ..Default::default()
+        }
+    }
+
+    fn rendered_lines(result: &buck2_data::TestResult) -> buck2_error::Result<Vec<String>> {
+        let lines = format_test_result(result, Verbosity::default())?
+            .expect("a failed, skipped or rerun test should always be displayed");
+        Ok(lines.iter().map(|line| line.to_unstyled()).collect())
+    }
+
+    #[test]
+    fn test_result_name_with_line_breaks_and_tabs_is_one_line() -> buck2_error::Result<()> {
+        let name = "suite > names function Loading() {\n\treturn x;\r\n} > case";
+        let expected = "suite > names function Loading() {  return x;  } > case";
+
+        for (status, prefix) in [
+            (buck2_data::TestStatus::Fail, "\u{2717} Fail"),
+            (buck2_data::TestStatus::Skip, "\u{21b7} Skip"),
+            (buck2_data::TestStatus::Rerun, "\u{21bb} Rerun"),
+        ] {
+            assert_eq!(
+                rendered_lines(&test_result(name, status))?,
+                vec![format!("{prefix}: {expected}")],
+                "{prefix}: every tab and line break in the name should become a space, on a single line",
+            );
+        }
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_result_name_with_unicode_line_separator_is_one_line() -> buck2_error::Result<()> {
+        let result = test_result("a\u{2028}b", buck2_data::TestStatus::Fail);
+
+        assert_eq!(
+            rendered_lines(&result)?,
+            vec!["\u{2717} Fail: a b".to_owned()]
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_result_name_without_special_whitespace_is_unchanged() -> buck2_error::Result<()> {
+        let result = test_result("suite > keeps  two spaces", buck2_data::TestStatus::Fail);
+
+        assert_eq!(
+            rendered_lines(&result)?,
+            vec!["\u{2717} Fail: suite > keeps  two spaces".to_owned()],
+        );
+
+        Ok(())
     }
 
     #[test]

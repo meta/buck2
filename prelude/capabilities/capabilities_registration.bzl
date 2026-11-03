@@ -26,6 +26,8 @@ def _project_as_manifest_json(entry):
         result["props"] = entry.props
     if entry.features:
         result["features"] = entry.features
+    if entry.exception_metadata:
+        result["exception_metadata"] = entry.exception_metadata
     return result
 
 CapabilitiesRegistrationEntry = record(
@@ -33,6 +35,7 @@ CapabilitiesRegistrationEntry = record(
     kind = field(str),
     props = field(dict[str, typing.Any], {}),
     features = field(dict[str, typing.Any], {}),
+    exception_metadata = field(dict[str, str], {}),
 )
 
 CapabilitiesRegistrationTSet = transitive_set(
@@ -65,6 +68,7 @@ def capabilities_registration_providers(ctx) -> list:
                     kind = reg["kind"],
                     props = reg.get("props", {}),
                     features = reg.get("features", {}),
+                    exception_metadata = reg.get("exception_metadata", {}),
                 )
             )
 

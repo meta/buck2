@@ -45,6 +45,11 @@ rust_toolchain_attrs = {
     "rustc_target_triple": provider_field(str | None, default = None),
     # Extra env variables that should be made available to the rustc executable.
     "rustc_env": provider_field(dict[str, typing.Any], default = {}),
+    # Optional declared executable wrapping the complete rustc_action invocation.
+    # Inert unless [rust] action_adapter_enabled = true. See action_adapter.bzl
+    # for its metadata/argv contract; this does not grant cache admission.
+    "rustc_action_adapter": provider_field(RunInfo | None, default = None),
+
     # Baseline compiler config
     "rustc_flags": provider_field(list[typing.Any], default = []),
     # Extra rustc flags applied only while compiling a proc-macro crate.

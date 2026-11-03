@@ -150,6 +150,7 @@ load(
 )
 load(":resources.bzl", "rust_attr_resources")
 load(":rust_toolchain.bzl", "PanicRuntime", "RustToolchainInfo")
+load(":action_adapter.bzl", "adapt_rustc_action")
 load(
     ":sources.bzl",
     "RustSources",
@@ -2094,6 +2095,13 @@ def _rustc_invoke(
         # Libraries (check, metadata, rlib) have no preference.
         action_allow_cache_upload = None
 
+    compile_cmd, adapter_options = adapt_rustc_action(
+        ctx,
+        compile_cmd,
+        toolchain_info.rustc_action_adapter,
+        "{}-{}".format(prefix, diag),
+    )
+
     ctx.actions.run(
         compile_cmd,
         local_only = local_only,
@@ -2104,6 +2112,7 @@ def _rustc_invoke(
         no_outputs_cleanup = incremental_enabled,
         allow_cache_upload = action_allow_cache_upload,
         error_handler = toolchain_info.rust_error_handler,
+        **adapter_options
     )
 
     return Invoke(

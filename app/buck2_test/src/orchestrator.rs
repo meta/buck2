@@ -1320,8 +1320,6 @@ impl BuckTestOrchestrator<'_> {
             action_key_suffix: create_action_key_suffix(stage),
         };
 
-        // For test execution, we currently do not do any cache queries
-
         let prepared_action = match executor.prepare_action(&request, digest_config, false) {
             Ok(prepared_action) => prepared_action,
             Err(e) => return Err(ExecuteError::Error(e)),

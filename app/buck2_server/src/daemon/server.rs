@@ -2962,4 +2962,282 @@ mod tests {
 
         assert_eq!(expected_deadline, shutdown_deadline.await.unwrap());
     }
+
+    /// `streaming` must dispatch exactly one `CommandResult` per command, however the command's
+    /// completion interleaves with its cancellation. `pump_events` stops at the first result, and
+    /// `ChannelEventSink` reports a control event that finds its receiver gone as a soft error,
+    /// which is a panic under the hard errors these tests run with. These tests record every
+    /// result dispatched, and a panic in a spawned task fails them.
+    ///
+    /// The cancellation primitive makes a second one easy to produce: a task whose body completes
+    /// in the same poll in which a cancel arrives still resolves as cancelled, so "the task was
+    /// cancelled" does not mean "the body did not report". A client that receives its result and
+    /// closes its stream cancels the command exactly like that.
+    mod one_result_per_command {
+        use std::sync::mpsc;
+
+        use buck2_events::EventSink;
+        use buck2_wrapper_common::invocation_id::TraceId;
+        use parking_lot::Mutex;
+
+        use super::super::*;
+        use crate::active_commands::ActiveCommandDropGuard;
+
+        /// Records every `CommandResult` dispatched for a command, in front of the sink the
+        /// command's client reads from.
+        struct RecordingSink<S> {
+            results: Arc<Mutex<Vec<CommandResult>>>,
+            inner: S,
+            /// Dropped with the last clone of the dispatcher, after which nothing can send.
+            _held: oneshot::Sender<()>,
+        }
+
+        impl<S: EventSink> EventSink for RecordingSink<S> {
+            fn send(&self, event: Event) {
+                if let Event::CommandResult(result) = &event {
+                    self.results.lock().push((**result).clone());
+                }
+                self.inner.send(event);
+            }
+        }
+
+        /// A command's plumbing before `streaming` takes it: what `run_streaming_erased` sets up.
+        struct CommandUnderTest {
+            dispatcher: EventDispatcher,
+            events: ChannelEventSource,
+            active: ActiveCommand,
+            results: Arc<Mutex<Vec<CommandResult>>>,
+            released: oneshot::Receiver<()>,
+        }
+
+        /// What is left once the command is streaming: the results dispatched so far, and the
+        /// means to wait until nothing can dispatch another.
+        struct Dispatched {
+            results: Arc<Mutex<Vec<CommandResult>>>,
+            released: oneshot::Receiver<()>,
+            guard: ActiveCommandDropGuard,
+        }
+
+        impl CommandUnderTest {
+            fn new() -> Self {
+                let (events, sink) = buck2_events::create_source_sink_pair();
+                let results = Arc::new(Mutex::new(Vec::new()));
+                let (held, released) = oneshot::channel();
+                let dispatcher = EventDispatcher::new(
+                    TraceId::new(),
+                    DaemonId::new(),
+                    RecordingSink {
+                        results: results.dupe(),
+                        inner: sink,
+                        _held: held,
+                    },
+                );
+                let active = ActiveCommand::new(&dispatcher, Vec::new());
+                Self {
+                    dispatcher,
+                    events,
+                    active,
+                    results,
+                    released,
+                }
+            }
+
+            fn stream<F>(self, scope: &CancellationScope, func: F) -> (ResponseStream, Dispatched)
+            where
+                F: for<'a> FnOnce(&'a CancellationContext) -> BoxFuture<'a, ()> + Send + 'static,
+            {
+                let ActiveCommand {
+                    guard,
+                    daemon_shutdown_channel,
+                    state,
+                } = self.active;
+                let response = streaming(
+                    self.events,
+                    state,
+                    self.dispatcher,
+                    daemon_shutdown_channel,
+                    scope,
+                    func,
+                    &Handle::current(),
+                );
+                (
+                    response.into_inner(),
+                    Dispatched {
+                        results: self.results,
+                        released: self.released,
+                        guard,
+                    },
+                )
+            }
+        }
+
+        impl Dispatched {
+            /// Waits until every holder of the command's dispatcher is gone: the command's task,
+            /// whatever `streaming` spawned beside it, and the active command registry. Only then
+            /// is the list of dispatched results final.
+            async fn settled(self) -> Vec<CommandResult> {
+                drop(self.guard);
+                let _ = timeout(Duration::from_secs(60), self.released)
+                    .await
+                    .expect("the command's dispatcher should be released once its task is done");
+                self.results.lock().clone()
+            }
+        }
+
+        fn body_result() -> CommandResult {
+            CommandResult {
+                result: Some(command_result::Result::PingResponse(PingResponse::default())),
+            }
+        }
+
+        fn is_error(result: &CommandResult) -> bool {
+            matches!(result.result, Some(command_result::Result::Error(_)))
+        }
+
+        /// The result the client reads from the stream.
+        async fn delivered(response: &mut ResponseStream) -> CommandResult {
+            while let Some(batch) = response.next().await {
+                for message in batch
+                    .expect("the stream carries no transport errors")
+                    .messages
+                {
+                    if let Some(command_progress::Progress::Result(result)) = message.progress {
+                        return *result;
+                    }
+                }
+            }
+            panic!("the stream ended without a result");
+        }
+
+        #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+        async fn a_completed_command_reports_once() {
+            let scope = CancellationScope::new();
+            let command = CommandUnderTest::new();
+            let dispatcher = command.dispatcher.dupe();
+            let (mut response, dispatched) = command.stream(&scope, move |_| {
+                async move { dispatcher.command_result(body_result()) }.boxed()
+            });
+
+            assert!(!is_error(&delivered(&mut response).await));
+            let results = dispatched.settled().await;
+            assert_eq!(1, results.len(), "{results:?}");
+        }
+
+        /// The client receives its result and closes its stream while the command's task is still
+        /// inside the poll that sent it. Closing the stream cancels the task, which then resolves
+        /// as cancelled even though its body reported; that must not be reported again. This is
+        /// the crash that fast-reverted the 2026-11-02 buck2 bump (D129074969).
+        #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+        async fn a_client_that_disconnects_after_its_result_does_not_get_a_second_one() {
+            let scope = CancellationScope::new();
+            let (release, released) = mpsc::channel::<()>();
+            let command = CommandUnderTest::new();
+            let dispatcher = command.dispatcher.dupe();
+            let (mut response, dispatched) = command.stream(&scope, move |_| {
+                async move {
+                    dispatcher.command_result(body_result());
+                    // Blocks inside the poll on purpose: the cancel has to land before the task
+                    // resolves, as a client's disconnect does when it wins the race with the
+                    // task's last few instructions.
+                    released.recv().unwrap();
+                }
+                .boxed()
+            });
+
+            assert!(!is_error(&delivered(&mut response).await));
+            drop(response);
+            release.send(()).unwrap();
+
+            let results = dispatched.settled().await;
+            assert_eq!(1, results.len(), "{results:?}");
+            assert!(!is_error(&results[0]), "{results:?}");
+        }
+
+        /// The cancel lands in the poll that reports, before the body has sent its result. The
+        /// body still completes, so its result is the only one.
+        #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+        async fn a_cancel_during_the_reporting_poll_does_not_add_a_result() {
+            let scope = CancellationScope::new();
+            let (started, polling) = oneshot::channel::<()>();
+            let (release, released) = mpsc::channel::<()>();
+            let command = CommandUnderTest::new();
+            let dispatcher = command.dispatcher.dupe();
+            let (response, dispatched) = command.stream(&scope, move |_| {
+                async move {
+                    started.send(()).unwrap();
+                    released.recv().unwrap();
+                    dispatcher.command_result(body_result());
+                }
+                .boxed()
+            });
+
+            polling.await.unwrap();
+            drop(response);
+            release.send(()).unwrap();
+
+            let results = dispatched.settled().await;
+            assert_eq!(1, results.len(), "{results:?}");
+            assert!(!is_error(&results[0]), "{results:?}");
+        }
+
+        /// The client disconnects while the body is pending: the body never reports, so the
+        /// cancellation is the one result.
+        #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+        async fn a_client_that_disconnects_mid_command_gets_one_result() {
+            let scope = CancellationScope::new();
+            let command = CommandUnderTest::new();
+            let (response, dispatched) =
+                command.stream(&scope, |_| futures::future::pending::<()>().boxed());
+
+            drop(response);
+
+            let results = dispatched.settled().await;
+            assert_eq!(1, results.len(), "{results:?}");
+            assert!(is_error(&results[0]), "{results:?}");
+        }
+
+        /// The tenant is evicted while the body is pending and the client is still connected: the
+        /// client is told once that its command stopped.
+        #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+        async fn an_evicted_command_tells_its_client_once() {
+            let scope = CancellationScope::new();
+            let command = CommandUnderTest::new();
+            let (mut response, dispatched) =
+                command.stream(&scope, |_| futures::future::pending::<()>().boxed());
+
+            scope.cancel();
+            assert!(is_error(&delivered(&mut response).await));
+            scope.wait().await;
+
+            let results = dispatched.settled().await;
+            assert_eq!(1, results.len(), "{results:?}");
+        }
+
+        /// The tenant was evicted before the command was spawned: the body never runs, and the
+        /// client is told once.
+        #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+        async fn a_command_admitted_after_eviction_tells_its_client_once() {
+            let scope = CancellationScope::new();
+            scope.cancel();
+            let ran = Arc::new(AtomicBool::new(false));
+            let command = CommandUnderTest::new();
+            let dispatcher = command.dispatcher.dupe();
+            let (mut response, dispatched) = command.stream(&scope, {
+                let ran = ran.dupe();
+                move |_| {
+                    async move {
+                        ran.store(true, Ordering::SeqCst);
+                        dispatcher.command_result(body_result());
+                    }
+                    .boxed()
+                }
+            });
+
+            assert!(is_error(&delivered(&mut response).await));
+
+            let results = dispatched.settled().await;
+            assert_eq!(1, results.len(), "{results:?}");
+            assert!(!ran.load(Ordering::SeqCst));
+        }
+    }
 }

@@ -21,6 +21,7 @@ use buck2_fs::paths::file_name::FileName;
 use buck2_http::ProxyHostAllowlist;
 use buck2_settings::BuckSettingChange;
 use buck2_settings::DaemonBuckSettings;
+use buck2_settings::MacosQosClass;
 use dice::EvictionPolicy;
 use dice::PagableStorageBackend;
 use dice::PageOutPolicy;
@@ -620,7 +621,7 @@ pub struct DaemonStartupOptions {
     pub log_download_method: LogDownloadMethod,
     pub health_check_config: HealthCheckConfig,
     pub retained_event_logs: usize,
-    pub macos_qos_class: Option<String>,
+    pub macos_qos_class: Option<MacosQosClass>,
     pub daemon_idle_timeout_s: Option<u64>,
     /// Pagable DICE storage settings, or `None` when paging is disabled.
     pub hydration: Option<HydrationConfig>,
@@ -684,6 +685,8 @@ impl DaemonStartupConfig {
             }
         }?;
 
+        // Keys that have moved to Buck settings keep reading buckconfig while
+        // repositories still set them there.
         let startup_options = DaemonStartupOptions {
             share_dice: config
                 .parse(BuckconfigKeyRef {
@@ -691,30 +694,38 @@ impl DaemonStartupConfig {
                     property: "share_dice",
                 })?
                 .unwrap_or(false),
-            num_tokio_workers: config
-                .parse(BuckconfigKeyRef {
-                    section: "build",
-                    property: "num_tokio_workers",
-                })
-                .unwrap_or(Some(0)),
-            daemon_buster: config
-                .get(BuckconfigKeyRef {
-                    section: "buck2",
-                    property: "daemon_buster",
-                })
-                .map(ToOwned::to_owned),
-            digest_algorithms: config
-                .get(BuckconfigKeyRef {
-                    section: "buck2",
-                    property: "digest_algorithms",
-                })
-                .map(ToOwned::to_owned),
-            source_digest_algorithm: config
-                .get(BuckconfigKeyRef {
-                    section: "buck2",
-                    property: "source_digest_algorithm",
-                })
-                .map(ToOwned::to_owned),
+            num_tokio_workers: settings.daemon.num_tokio_workers().or_else(|| {
+                config
+                    .parse(BuckconfigKeyRef {
+                        section: "build",
+                        property: "num_tokio_workers",
+                    })
+                    .unwrap_or(Some(0))
+            }),
+            daemon_buster: settings.daemon.buster().or_else(|| {
+                config
+                    .get(BuckconfigKeyRef {
+                        section: "buck2",
+                        property: "daemon_buster",
+                    })
+                    .map(ToOwned::to_owned)
+            }),
+            digest_algorithms: settings.digest.algorithms().or_else(|| {
+                config
+                    .get(BuckconfigKeyRef {
+                        section: "buck2",
+                        property: "digest_algorithms",
+                    })
+                    .map(ToOwned::to_owned)
+            }),
+            source_digest_algorithm: settings.digest.source_algorithm().or_else(|| {
+                config
+                    .get(BuckconfigKeyRef {
+                        section: "buck2",
+                        property: "source_digest_algorithm",
+                    })
+                    .map(ToOwned::to_owned)
+            }),
             paranoid,
             materializations: config
                 .get(BuckconfigKeyRef {
@@ -740,25 +751,28 @@ impl DaemonStartupConfig {
                 .and_then(|s| s.parse::<usize>().ok())
                 .unwrap_or(DEFAULT_RETAINED_EVENT_LOGS),
             macos_qos_class: {
-                let from_config = config
-                    .get(BuckconfigKeyRef {
-                        section: "buck2",
-                        property: "macos_qos_class",
-                    })
-                    .map(ToOwned::to_owned);
                 if buck2_env!("BUCK2_DISABLE_MACOS_QOS", bool)? {
                     return Err(buck2_error::buck2_error!(
                         buck2_error::ErrorTag::Input,
                         "`BUCK2_DISABLE_MACOS_QOS` is not supported, set \
-                         `[buck2] macos_qos_class = skip_lowering` in buckconfig instead"
+                         `daemon.macos_qos_class = \"skip_lowering\"` in `.bucksettings.toml` instead"
                     ));
                 }
-                from_config
+                match settings.daemon.macos_qos_class() {
+                    Some(class) => Some(class),
+                    None => config.parse(BuckconfigKeyRef {
+                        section: "buck2",
+                        property: "macos_qos_class",
+                    })?,
+                }
             },
-            daemon_idle_timeout_s: config.parse(BuckconfigKeyRef {
-                section: "buck2",
-                property: "daemon_idle_timeout_s",
-            })?,
+            daemon_idle_timeout_s: match settings.daemon.idle_timeout_s() {
+                Some(seconds) => Some(seconds),
+                None => config.parse(BuckconfigKeyRef {
+                    section: "buck2",
+                    property: "daemon_idle_timeout_s",
+                })?,
+            },
             hydration: HydrationConfig::from_settings(settings),
         };
         Ok(Self {
@@ -874,34 +888,60 @@ mod tests {
     }
 
     #[test]
-    fn test_daemon_idle_timeout_s_default() -> buck2_error::Result<()> {
-        let config = parse(&[("config", indoc!(r#""#))], "config")?;
-        let startup_config =
-            DaemonStartupConfig::new(&config, &DaemonBuckSettings::default(), false)?;
-        assert_eq!(startup_config.startup_options.daemon_idle_timeout_s, None);
-        Ok(())
-    }
-
-    #[test]
-    fn test_daemon_idle_timeout_s_configured() -> buck2_error::Result<()> {
+    fn test_settings_win_over_buckconfig_fallbacks() -> buck2_error::Result<()> {
         let config = parse(
             &[(
                 "config",
                 indoc!(
                     r#"
                     [buck2]
-                    daemon_idle_timeout_s = 10800
+                    daemon_buster = buckconfig
+                    digest_algorithms = SHA1
+                    source_digest_algorithm = SHA1
+                    macos_qos_class = background
+                    daemon_idle_timeout_s = 100
+                    [build]
+                    num_tokio_workers = 4
                     "#
                 ),
             )],
             "config",
         )?;
-        let startup_config =
-            DaemonStartupConfig::new(&config, &DaemonBuckSettings::default(), false)?;
+        let fallback = DaemonStartupConfig::new(&config, &DaemonBuckSettings::default(), false)?;
+        let options = &fallback.startup_options;
+        assert_eq!(options.daemon_buster.as_deref(), Some("buckconfig"));
+        assert_eq!(options.digest_algorithms.as_deref(), Some("SHA1"));
+        assert_eq!(options.source_digest_algorithm.as_deref(), Some("SHA1"));
+        assert_eq!(options.macos_qos_class, Some(MacosQosClass::Background));
+        assert_eq!(options.daemon_idle_timeout_s, Some(100));
+        assert_eq!(options.num_tokio_workers, Some(4));
+
+        let settings = resolve_setting_flags(vec![table(indoc!(
+            r#"
+            [daemon]
+            buster = "settings"
+            idle_timeout_s = 60
+            num_tokio_workers = 8
+            macos_qos_class = "skip_lowering"
+            [digest]
+            algorithms = "BLAKE3-KEYED,SHA1"
+            source_algorithm = "BLAKE3-KEYED"
+            "#
+        ))])?;
+        let from_settings = DaemonStartupConfig::new(&config, &settings.daemon, false)?;
+        let options = &from_settings.startup_options;
+        assert_eq!(options.daemon_buster.as_deref(), Some("settings"));
         assert_eq!(
-            startup_config.startup_options.daemon_idle_timeout_s,
-            Some(10800)
+            options.digest_algorithms.as_deref(),
+            Some("BLAKE3-KEYED,SHA1")
         );
+        assert_eq!(
+            options.source_digest_algorithm.as_deref(),
+            Some("BLAKE3-KEYED")
+        );
+        assert_eq!(options.macos_qos_class, Some(MacosQosClass::SkipLowering));
+        assert_eq!(options.daemon_idle_timeout_s, Some(60));
+        assert_eq!(options.num_tokio_workers, Some(8));
         Ok(())
     }
 

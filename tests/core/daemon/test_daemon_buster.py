@@ -21,6 +21,8 @@ class DaemonBusterTest(BuckTestCase):
         async def pid() -> int:
             return json.loads((await buck.status()).stdout)["process_info"]["pid"]
 
+        settings = buck.cwd / ".bucksettings.toml"
+
         await buck.build(":")
         pid0 = await pid()
 
@@ -28,11 +30,12 @@ class DaemonBusterTest(BuckTestCase):
         pid1 = await pid()
         assert pid1 == pid0
 
-        with open(buck.cwd / ".buckconfig", "a") as f:
-            f.write("[buck2]\n")
-            f.write("daemon_buster = 1\n")
-
-        await buck.build(":")
+        settings.write_text('[daemon]\nbuster = "1"\n')
+        result = await buck.build(":")
+        assert (
+            'Buck settings changed (daemon.buster: null -> "1"); restarting daemon'
+            in result.stderr
+        )
         pid2 = await pid()
         assert pid2 != pid1
 
@@ -40,24 +43,12 @@ class DaemonBusterTest(BuckTestCase):
         pid3 = await pid()
         assert pid3 == pid2
 
-        with open(buck.cwd / ".buckconfig", "a") as f:
-            f.write("[buck2]\n")
-            f.write("daemon_buster = 2\n")
-
+        settings.write_text('[daemon]\nbuster = "2"\n')
         await buck.build(":")
         pid4 = await pid()
         assert pid4 != pid3
 
-        with open(buck.cwd / ".buckconfig", "r") as f:
-            config = f.read()
-
-        with open(buck.cwd / ".buckconfig", "w") as f:
-            f.write(
-                "\n".join(
-                    line for line in config.splitlines() if "daemon_buster" not in line
-                )
-            )
-
+        settings.unlink()
         await buck.build(":")
         pid5 = await pid()
         assert pid5 != pid4

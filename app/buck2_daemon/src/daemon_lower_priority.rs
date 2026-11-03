@@ -10,61 +10,26 @@
 
 #[cfg(target_os = "macos")]
 use buck2_error::conversion::from_any_with_tag;
+use buck2_settings::MacosQosClass;
 
-/// macOS QoS (Quality of Service) class for the Buck2 daemon process.
-///
-/// Configurable via `[buck2] macos_qos_class` in buckconfig.
-/// Defaults to `Utility` if unset.
-///
-/// Only `utility` and `background` are supported by
-/// `posix_spawnattr_set_qos_class_np`. Higher QoS classes
-/// (`user_interactive`, `user_initiated`) and sentinel values
-/// (`default`, `unspecified`) are rejected with `EINVAL`.
-///
-/// Use `skip_lowering` to disable QoS lowering entirely,
-/// keeping the daemon at the system-default priority.
-#[derive(Debug, Clone, Copy)]
-enum MacosQosClass {
-    SkipLowering,
-    Utility,
-    Background,
-}
-
-impl MacosQosClass {
-    /// Parse a QoS class from a buckconfig string value.
-    ///
-    /// Valid values: `utility`, `background`, `skip_lowering`.
-    fn from_config(s: &str) -> buck2_error::Result<Self> {
-        match s {
-            "utility" => Ok(Self::Utility),
-            "background" => Ok(Self::Background),
-            "skip_lowering" => Ok(Self::SkipLowering),
-            other => Err(buck2_error::buck2_error!(
-                buck2_error::ErrorTag::Input,
-                "Invalid macOS QoS class `{}`. Expected one of: utility, background, skip_lowering",
-                other
-            )),
-        }
-    }
-
-    /// Convert to the corresponding `libc::qos_class_t` value.
-    ///
-    /// Only valid for `Utility` and `Background`.
-    #[cfg(target_os = "macos")]
-    fn to_qos_class_t(self) -> buck2_error::Result<libc::qos_class_t> {
-        match self {
-            Self::Utility => Ok(libc::qos_class_t::QOS_CLASS_UTILITY),
-            Self::Background => Ok(libc::qos_class_t::QOS_CLASS_BACKGROUND),
-            Self::SkipLowering => Err(buck2_error::internal_error!(
-                "SkipLowering should not reach do_lower_priority"
-            )),
-        }
+/// The `libc::qos_class_t` for a class the daemon can be spawned with. Higher
+/// classes (`user_interactive`, `user_initiated`) and the sentinel values
+/// (`default`, `unspecified`) are rejected by `posix_spawnattr_set_qos_class_np`
+/// with `EINVAL`, which is why the setting only offers these two.
+#[cfg(target_os = "macos")]
+fn to_qos_class_t(qos_class: MacosQosClass) -> buck2_error::Result<libc::qos_class_t> {
+    match qos_class {
+        MacosQosClass::Utility => Ok(libc::qos_class_t::QOS_CLASS_UTILITY),
+        MacosQosClass::Background => Ok(libc::qos_class_t::QOS_CLASS_BACKGROUND),
+        MacosQosClass::SkipLowering => Err(buck2_error::internal_error!(
+            "SkipLowering should not reach do_lower_priority"
+        )),
     }
 }
 
 pub(crate) fn daemon_lower_priority(
     skip_macos_qos_flag: bool,
-    macos_qos_class: Option<&str>,
+    macos_qos_class: Option<MacosQosClass>,
 ) -> buck2_error::Result<()> {
     if skip_macos_qos_flag {
         // Either:
@@ -73,10 +38,7 @@ pub(crate) fn daemon_lower_priority(
         return Ok(());
     }
 
-    let qos_class = match macos_qos_class {
-        Some(s) => MacosQosClass::from_config(s)?,
-        None => MacosQosClass::Utility,
-    };
+    let qos_class = macos_qos_class.unwrap_or(MacosQosClass::Utility);
 
     match qos_class {
         MacosQosClass::SkipLowering => {}
@@ -180,7 +142,7 @@ fn do_lower_priority(qos_class: MacosQosClass) -> buck2_error::Result<()> {
                 .buck_error_context("posix_spawnattr_setflags");
         }
 
-        let r = posix_spawnattr_set_qos_class_np(&mut spawnattr.0, qos_class.to_qos_class_t()?);
+        let r = posix_spawnattr_set_qos_class_np(&mut spawnattr.0, to_qos_class_t(qos_class)?);
 
         if r != 0 {
             return Err(io::Error::from_raw_os_error(r))

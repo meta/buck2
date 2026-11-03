@@ -259,10 +259,7 @@ impl DaemonCommand {
 
         daemon_lower_priority(
             self.skip_macos_qos,
-            self.daemon_startup_config
-                .startup_options
-                .macos_qos_class
-                .as_deref(),
+            self.daemon_startup_config.startup_options.macos_qos_class,
         )?;
 
         // TODO(nga): this breaks relative paths in `--no-buckd`.

@@ -19,6 +19,8 @@ use crate::agent_config_change::AgentConfigChange;
 use crate::agent_interactive::AgentInteractive;
 use crate::agent_materialization::AgentMaterialization;
 use crate::analysis::Analysis;
+use crate::daemon::Daemon;
+use crate::digest::Digest;
 use crate::hydration::Hydration;
 use crate::log_download::LogDownload;
 use crate::metadata::SectionMetadata;
@@ -142,6 +144,8 @@ macro_rules! buck_settings {
 buck_settings! {
     daemon {
         analysis: Analysis,
+        daemon: Daemon,
+        digest: Digest,
         hydration: Hydration,
         log_download: LogDownload,
         package_visibility: PackageVisibility,
@@ -361,7 +365,10 @@ mod tests {
             Some("https://example.com/")
         );
         let serialized = serde_json::to_value(&settings)?;
-        assert!(serialized.get("daemon").is_none());
+        // The flat form has no scope groups: `daemon` here is the section of
+        // that name.
+        assert!(serialized["daemon"].get("analysis").is_none());
+        assert_eq!(serialized["daemon"]["buster"], Value::Null);
         assert!(serialized.get("invocation").is_none());
         assert_eq!(serialized["agent_materialization"]["enabled"], true);
         assert_eq!(

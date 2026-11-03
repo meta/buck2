@@ -424,6 +424,7 @@ def cxx_gnu_dist_link(
                             # as a string rather than a single-element list.
                             "archive_opt_objects_dir": cmd_args(link_data.opt_objects_dir, delimiter = "", ignore_artifacts = True),
                             "archive_plan": outputs[link_data.plan].as_output(),
+                            "link_whole": link_data.link_whole,
                             "objects": [] if manifest["objects"] else None,
                             "prepend": link_data.prepend,
                             "type": "archive",
@@ -592,10 +593,10 @@ def cxx_gnu_dist_link(
         def optimize_object(ctx: AnalysisContext, artifacts, outputs):
             plan_json = artifacts[plan].read_json()
 
-            # If the object was not compiled with thinlto flags, then there
-            # won't be valid outputs for it from the indexing, but we still
-            # need to bind the artifact.
-            if not plan_json["is_bc"]:
+            # A machine-code object has no backend; neither has a bitcode module the
+            # thin link did not select. An empty file binds the outputs of either;
+            # nothing reads it, because the final link names neither.
+            if not plan_json["is_bc"] or plan_json["skip_backend"]:
                 ctx.actions.write(outputs[opt_object], "")
                 if external_debug_info != None and external_debug_info != opt_object:
                     ctx.actions.write(outputs[external_debug_info], "")
@@ -657,6 +658,12 @@ def cxx_gnu_dist_link(
             output_manifest = cmd_args()
             dwo_dir = {}
             for entry in plan_json["objects"]:
+                # The thin link did not select this member (the planner rejects a
+                # skipped member of a whole archive): no backend, and the final
+                # link index never names it under `opt_objects_dir`.
+                if entry["skip_backend"]:
+                    continue
+
                 base_dir = plan_json["base_dir"]
                 source_path = paths.relativize(entry["path"], base_dir)
                 if not entry["is_bc"]:

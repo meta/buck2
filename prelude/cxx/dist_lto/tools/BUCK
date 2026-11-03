@@ -70,6 +70,8 @@ prelude.python_test(
     name = "test_dist_lto_opt",
     srcs = [
         "dist_lto_opt_gnu.py",
+        "dist_lto_planner_gnu.py",
         "tests/test_dist_lto_opt.py",
+        "tests/test_dist_lto_planner_gnu.py",
     ],
 )

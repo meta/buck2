@@ -105,6 +105,34 @@ def _enable_core_dumps() -> None:
         print(f"warning: failed to enable core dumps: {e}", file=sys.stderr)
 
 
+def _reject_bitcode_without_summary(path, bc_file):
+    # LLD writes a zero-byte index for a bitcode module it linked but could not
+    # thin-link: bitcode without a module summary (`-flto` rather than
+    # `-flto=thin`). The module is neither in the linked-objects index nor
+    # compilable by a distributed backend; a skip-flag index is never empty.
+    if os.path.getsize(bc_file) == 0:
+        raise AssertionError(
+            f"LLD linked bitcode without a ThinLTO summary: {path} "
+            "(compiled with -flto rather than -flto=thin?)"
+        )
+
+
+def _validate_linked_bitcode_outputs(
+    linked_paths, mapped_paths, index_path, bitcode_suffix, imports_suffix
+):
+    for path in sorted(linked_paths & mapped_paths.keys()):
+        imports_path = index_path(path) + imports_suffix
+        if not os.path.exists(imports_path):
+            raise AssertionError(
+                f"LLD selected ThinLTO module without imports file: {path}"
+            )
+        bc_file = index_path(path) + bitcode_suffix
+        if not os.path.exists(bc_file):
+            raise AssertionError(
+                f"LLD selected ThinLTO module without bitcode index: {path}"
+            )
+
+
 def main(argv):
     parser = argparse.ArgumentParser()
     parser.add_argument("--meta")
@@ -221,6 +249,7 @@ def main(argv):
     #        to the archive's base dir (the dir holding `archive_plan`). It is the
     #        only dir of the archive that Phase 4 Final Link materializes, so the
     #        final-link index must refer to members through it.
+    #  - link_whole: Whether every member of this archive must be linked.
     #
     # There are two indices that are derived from this meta file: the object
     # index (mapping["index"]) and the archive index (mapping["archive_index"]).
@@ -277,7 +306,40 @@ def main(argv):
                     "objects": [],
                     "plan": archive_plan,
                     "index_dir": archive_index_dir,
+                    "link_whole": linkable["link_whole"],
                 }
+
+    mapping_by_normalized_path = {}
+    original_path_by_normalized_path = {}
+    for path, data in mapping.items():
+        normalized_path = os.path.normpath(path)
+        if normalized_path in mapping_by_normalized_path:
+            raise RuntimeError(
+                "ThinLTO inputs normalize to the same path: {!r} and {!r}".format(
+                    original_path_by_normalized_path[normalized_path], path
+                )
+            )
+        mapping_by_normalized_path[normalized_path] = data
+        original_path_by_normalized_path[normalized_path] = path
+
+    # LLD emits index sidecars for unselected lazy bitcode members. Only paths
+    # in the linked-objects index require a distributed backend.
+    index = {}
+    linked_bitcode_paths = set()
+    with open(index_path("index")) as indexfile:
+        for line in indexfile:
+            path = os.path.normpath(os.path.relpath(line.strip(), start=args.index))
+            linked_bitcode_paths.add(path)
+            if path in mapping_by_normalized_path:
+                index[mapping_by_normalized_path[path]["index"]] = 1
+
+    _validate_linked_bitcode_outputs(
+        linked_bitcode_paths,
+        mapping_by_normalized_path,
+        index_path,
+        bitcode_suffix,
+        imports_suffix,
+    )
 
     non_lto_objects = {}
     for path, data in sorted(mapping.items(), key=lambda v: v[0]):
@@ -295,6 +357,7 @@ def main(argv):
 
         if os.path.exists(imports_path):
             assert os.path.exists(bc_file), "missing bc file for %s" % path
+            _reject_bitcode_without_summary(path, bc_file)
             os.rename(bc_file, output_loc)
             imports = read_imports(path, imports_path)
             imports_list = []
@@ -314,6 +377,7 @@ def main(argv):
                 "bitcode_file": bc_file,
                 "path": path,
                 "is_bc": True,
+                "skip_backend": os.path.normpath(path) not in linked_bitcode_paths,
             }
         else:
             non_lto_objects[data["index"]] = 1
@@ -321,6 +385,7 @@ def main(argv):
                 pass
             plan = {
                 "is_bc": False,
+                "skip_backend": False,
             }
 
         with open(data["plan_output"], "w") as planout:
@@ -342,8 +407,23 @@ def main(argv):
             os.makedirs(output_path, exist_ok=True)
             if os.path.exists(imports_path):
                 bc_file = index_path(obj) + bitcode_suffix
+                _reject_bitcode_without_summary(obj, bc_file)
+                skip_backend = os.path.normpath(obj) not in linked_bitcode_paths
+                if skip_backend and archive["link_whole"]:
+                    raise AssertionError(
+                        f"LLD skipped whole-archive ThinLTO member {obj}"
+                    )
+                if skip_backend:
+                    object_plans.append(
+                        {
+                            "is_bc": True,
+                            "path": obj,
+                            "skip_backend": True,
+                        }
+                    )
+                    continue
                 os.rename(bc_file, os.path.join(output_path, os.path.basename(bc_file)))
-                imports = read_imports(path, imports_path)
+                imports = read_imports(obj, imports_path)
 
                 imports_list = []
                 archives_list = []
@@ -364,6 +444,7 @@ def main(argv):
                         "bitcode_file": os.path.join(
                             output_path, os.path.basename(bc_file)
                         ),
+                        "skip_backend": False,
                     }
                 )
             else:
@@ -371,6 +452,7 @@ def main(argv):
                     {
                         "is_bc": False,
                         "path": obj,
+                        "skip_backend": False,
                     }
                 )
 
@@ -390,8 +472,6 @@ def main(argv):
     # The file paths in `index` and the LLVM IR Bitcode files in `index.full` are listed as a child of the `args.index` directory.
     # HOWEVER, the LLVM IR Bitcode files do NOT exist there and instead exist in the location with the `args.index` directory stripped off (i.e., with `os.path.relpath(start=args.index)`).
     # The files suffixed with `.imports` and `.thinlto.bc` DO exist in the directory under `args.index`.
-    index = {}
-    index_files_set = set()
     # TODO(T130322878): since we call linker wrapper twice (in index and in final_link), to avoid these libs get
     # added twice we remove them from the index file for now.
     KNOWN_REMOVABLE_DEPS_SUFFIX = [
@@ -406,13 +486,6 @@ def main(argv):
         "glibc/lib/crtn.o",
     ]
     GENERATED_BUILD_INFO_OBJECT_BASENAME_PREFIX = "__buck2_generated_build_info.c"
-    with open(index_path("index")) as indexfile:
-        for line in indexfile:
-            line = line.strip()
-            index_files_set.add(line)
-            path = os.path.relpath(line, start=args.index)
-            if path in mapping:
-                index[mapping[path]["index"]] = 1
 
     with open(args.link_plan, "w") as outfile:
         json.dump(
@@ -471,10 +544,10 @@ def main(argv):
             # LLVM IR files that are indexed in Phase 2 Thin Link are reported by `ld.lld` to exist under the directory `args.index`,
             # but they actually exist at the path with the prefix `args.index` removed.
             # Remove the prefix `args.index` with `os.path.relpath`.
-            path = os.path.relpath(line, start=args.index)
+            path = os.path.normpath(os.path.relpath(line, start=args.index))
+            mapping_entry = mapping_by_normalized_path.get(path)
 
-            if path in mapping:
-                mapping_entry = mapping[path]
+            if mapping_entry is not None:
                 meta_index = mapping_entry["meta_index"]
             elif line in mapping:
                 # This case happens when a library is marked with `enable_distributed_thinlto = True`, but
@@ -489,6 +562,15 @@ def main(argv):
             else:
                 mapping_entry = None
                 meta_index = None
+
+            if (
+                mapping_entry is not None
+                and path not in linked_bitcode_paths
+                and os.path.exists(index_path(path) + imports_suffix)
+            ):
+                raise AssertionError(
+                    f"LLD listed skipped ThinLTO member in index.full: {path}"
+                )
 
             has_meta_entry = meta_index is not None
 
@@ -537,7 +619,11 @@ def main(argv):
 
             prev_meta_index = meta_index
 
-            if line in index_files_set and path in mapping and mapping[path]["output"]:
+            if path in linked_bitcode_paths and mapping_entry is None:
+                # Bitcode the linker indexed that no linkable declared (an object
+                # named in raw linker flags): passed through as the linker wrote it.
+                final_link_index_output.write(line + "\n")
+            elif path in linked_bitcode_paths and mapping_entry["output"]:
                 # This case is for a known and true LLVM IR Bitcode file that was
                 # NOT extracted from an archive.
 
@@ -545,7 +631,7 @@ def main(argv):
                 # which is resulting file from Phase 3 ThinLTO Backends.
                 # These files are suffixed with ".opt.o" and are siblings to the ".thinlto.bc" files,
                 # so the path is obtained by replacing the suffix.
-                output = mapping[path]["output"].replace(
+                output = mapping_entry["output"].replace(
                     bitcode_suffix, opt_objects_suffix
                 )
                 final_link_index_output.write(output + "\n")

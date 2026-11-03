@@ -46,6 +46,7 @@ RIOT_USE_CASES = [
     "vr-diff",
     "wearables-diff",
     "wearables-human-lease",
+    "wearables-mqb",
     "wearables-other",
 ]
 SUPPORTED_POOLS = ["EUREKA_POOL", "HOLLYWOOD_POOL", "STAGE_DELPHI_POOL", "PANTHER_POOL", "SEACLIFF_POOL"]

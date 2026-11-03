@@ -103,11 +103,6 @@ def create_jar_artifact_kotlincd(
             )
         )
     actual_abi_generation_mode = abi_generation_mode or AbiGenerationMode("class") if srcs else AbiGenerationMode("none")
-
-    # A toolchain without Kosabi (kotlin.enable_source_only_abi=false) can't produce a source-only
-    # ABI, so targets that hard-code source_only fall back to the class ABI instead of failing.
-    if actual_abi_generation_mode == AbiGenerationMode("source_only") and kotlin_toolchain.kosabi_stubs_gen_k2_plugin == None:
-        actual_abi_generation_mode = AbiGenerationMode("class")
     kosabi_applicability_cell_root = (
         label.cell_root
         if not is_creating_subtarget and actual_abi_generation_mode == AbiGenerationMode("source_only") and kotlin_toolchain.kosabi_applicability_plugin != None

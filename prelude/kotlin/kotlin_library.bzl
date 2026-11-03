@@ -410,6 +410,10 @@ def build_kotlin_library(
 ) -> JavaProviders:
     srcs = ctx.attrs.srcs
     has_kotlin_srcs = lazy.is_any(lambda src: src.extension == ".kt" or src.basename.endswith(".src.zip") or src.basename.endswith("-sources.jar"), srcs)
+    kotlin_toolchain = ctx.attrs._kotlin_toolchain[KotlinToolchainInfo]
+    abi_generation_mode = get_abi_generation_mode(ctx.attrs.abi_generation_mode)
+    if abi_generation_mode == AbiGenerationMode("source_only") and kotlin_toolchain.kosabi_stubs_gen_k2_plugin == None:
+        abi_generation_mode = AbiGenerationMode("class")
 
     if not has_kotlin_srcs:
         return build_java_library(
@@ -417,8 +421,7 @@ def build_kotlin_library(
             ctx.attrs.srcs,
             custom_jdk_info = custom_jdk_info,
             additional_classpath_entries = additional_classpath_entries,
-            # Match buck1, which always does class ABI generation for Kotlin targets unless explicitly specified.
-            override_abi_generation_mode = get_abi_generation_mode(ctx.attrs.abi_generation_mode) or AbiGenerationMode("class"),
+            override_abi_generation_mode = abi_generation_mode or AbiGenerationMode("class"),
             extra_sub_targets = extra_sub_targets,
             validation_deps_outputs = validation_deps_outputs,
             extra_arguments = extra_arguments,
@@ -449,7 +452,6 @@ def build_kotlin_library(
         javac_tool = derive_javac(ctx.attrs.javac) if getattr(ctx.attrs, "javac", None) else None
         source_level, target_level = get_java_version_attributes(ctx)
 
-        kotlin_toolchain = ctx.attrs._kotlin_toolchain[KotlinToolchainInfo]
         if javac_tool or kotlin_toolchain.kotlinc_protocol == "classic":
             kotlinc_classes, kapt_generated_sources, ksp_generated_sources = _create_kotlin_sources(
                 ctx,
@@ -522,7 +524,6 @@ def build_kotlin_library(
                 hidden = validation_deps_outputs or [],
             )
 
-            abi_generation_mode = get_abi_generation_mode(ctx.attrs.abi_generation_mode)
             kosabi_applicability_runs = abi_generation_mode == AbiGenerationMode("source_only") and kotlin_toolchain.kosabi_applicability_plugin != None
             # Applicability verdicts need whole-target analysis; incremental frontends can omit findings from unchanged files.
             incremental = ctx.attrs.incremental and not kosabi_applicability_runs

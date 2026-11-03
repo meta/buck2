@@ -695,12 +695,20 @@ pub(crate) fn string_methods(builder: &mut MethodsBuilder) {
                     Some(x2) => {
                         let s1 = as_str(x1)?.as_str();
                         let s2 = as_str(x2)?.as_str();
-                        // guess towards the upper bound, since we throw away over-allocations quickly
-                        // include a buffer (20 bytes)
+                        // Reserve the first two parts and every separator, and guess that
+                        // each later part is as long as the longer of the first two. The
+                        // guess is capped, as a long first part followed by many short ones
+                        // would otherwise reserve its length once per part; past the cap the
+                        // buffer grows as the parts are pushed.
+                        const MAX_GUESS: usize = 64 * 1024;
                         let n = it.size_hint().0 + 2;
-                        let guess =
-                            (cmp::max(s1.len(), s2.len()) * n) + (this.len() * (n - 1)) + 20;
-                        let mut r = String::with_capacity(guess);
+                        let guess = cmp::min(
+                            cmp::max(s1.len(), s2.len()).saturating_mul(n - 2),
+                            MAX_GUESS,
+                        );
+                        let mut r = String::with_capacity(
+                            s1.len() + s2.len() + this.len() * (n - 1) + guess + 20,
+                        );
                         r.push_str(s1);
                         r.push_str(this);
                         r.push_str(s2);
@@ -1389,6 +1397,21 @@ mod tests {
         // Indices that do not both clamp still give an empty range.
         assert::eq(r#""abc".find("", -1, -2)"#, "-1");
         assert::eq(r#""abc".find("c", -1, -2)"#, "-1");
+    }
+
+    /// `join` reserves room for the later parts from a capped guess based on the first two,
+    /// so the result must not depend on whether that guess is far too large or too small.
+    #[test]
+    fn test_join_parts_of_different_lengths() {
+        assert::eq(
+            r#""-".join(["abcdef", "g", "", "hi"])"#,
+            r#""abcdef-g--hi""#,
+        );
+        assert::eq(r#""-".join(["", "g", "abcdef"])"#, r#""-g-abcdef""#);
+        assert::is_true(r#""".join(["x" * 100000] + [""] * 1000) == "x" * 100000"#);
+        assert::is_true(r#"",".join(["x" * 1000] + ["y"] * 1000) == "x" * 1000 + ",y" * 1000"#);
+        assert::is_true(r#"",".join(["a", "b", "z" * 100000]) == "a,b," + "z" * 100000"#);
+        assert::fail(r#""-".join(["a", "b", 1])"#, "to_join");
     }
 
     /// The spec says `split` fails on an empty separator.

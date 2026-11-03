@@ -400,13 +400,6 @@ fn resolve_layers(
     layers: Vec<SettingsLayer>,
     reports: Vec<SettingsLayerReport>,
 ) -> buck2_error::Result<ResolvedSettings> {
-    let layers = layers
-        .into_iter()
-        .map(|SettingsLayer { provenance, table }| SettingsLayer {
-            provenance,
-            table: migrate_legacy_log_download_keys(table),
-        })
-        .collect();
     let merged = merge_layers(layers);
     merged.validate(ALL_SECTION_METADATA)?;
     let origins = merged.origins();
@@ -430,31 +423,6 @@ pub fn resolve_setting_flags(tables: Vec<toml::Table>) -> buck2_error::Result<Bu
             .map(SettingsLayer::setting_flag)
             .collect(),
     )
-}
-
-fn migrate_legacy_log_download_keys(mut layer: toml::Table) -> toml::Table {
-    // Temporary backwards compatibility while moving `log_use_manifold` and `log_url` to `[log_download]`
-    let legacy_values: Vec<_> = ["log_use_manifold", "log_url"]
-        .into_iter()
-        .filter_map(|name| layer.remove(name).map(|value| (name, value)))
-        .collect();
-    if legacy_values.is_empty() {
-        return layer;
-    }
-
-    let log_download = layer
-        .entry("log_download")
-        .or_insert_with(|| toml::Value::Table(toml::Table::new()));
-    let Some(log_download) = log_download.as_table_mut() else {
-        legacy_values.into_iter().for_each(|(name, value)| {
-            layer.insert(name.to_owned(), value);
-        });
-        return layer;
-    };
-    legacy_values.into_iter().for_each(|(name, value)| {
-        log_download.entry(name).or_insert(value);
-    });
-    layer
 }
 
 pub fn parse_settings(
@@ -1121,32 +1089,9 @@ mod tests {
     }
 
     #[test]
-    fn test_migrate_legacy_log_download_keys_in_layer() {
-        assert_eq!(
-            migrate_legacy_log_download_keys(table(
-                "log_use_manifold = false\nlog_url = \"legacy\""
-            )),
-            table("[log_download]\nlog_use_manifold = false\nlog_url = \"legacy\"")
-        );
-        assert_eq!(
-            migrate_legacy_log_download_keys(table(
-                "log_url = \"legacy\"\n[log_download]\nlog_url = \"sectioned\""
-            )),
-            table("[log_download]\nlog_url = \"sectioned\"")
-        );
-    }
-
-    #[test]
-    fn test_migrate_legacy_log_download_keys_before_merging_layers() -> buck2_error::Result<()> {
-        let settings = resolve_setting_flags(vec![table("log_use_manifold = false")])?;
-        assert_eq!(settings.daemon.log_download.log_use_manifold(), Some(false));
-
-        let settings = resolve_setting_flags(vec![
-            table("[log_download]\nlog_use_manifold = true"),
-            table("log_use_manifold = false"),
-        ])?;
-        assert_eq!(settings.daemon.log_download.log_use_manifold(), Some(false));
-        Ok(())
+    fn test_top_level_keys_are_rejected() {
+        let error = resolve_setting_flags(vec![table("log_use_manifold = false")]).unwrap_err();
+        assert!(error.to_string().contains("log_use_manifold"), "{error}");
     }
 
     #[test]

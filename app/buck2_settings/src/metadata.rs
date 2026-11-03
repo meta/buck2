@@ -14,6 +14,8 @@
 use serde::Serialize;
 use serde_json::Value;
 
+use crate::buckconfig::BuckconfigSource;
+
 /// Where a setting's value may come from besides the repository file and
 /// rollouts, which may always set it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
@@ -49,6 +51,16 @@ pub(crate) struct SettingKeyRef<'a> {
     pub(crate) name: &'a str,
 }
 
+/// The buckconfig key a setting reads when no layer set it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+pub struct BuckconfigFallback {
+    /// `section.property`.
+    pub key: &'static str,
+    /// Only open source builds read it; internally every value has moved to
+    /// the setting.
+    pub oss_only: bool,
+}
+
 // No `PartialEq`: the default thunks are function pointers, which do not
 // compare meaningfully. Compare names.
 #[derive(Debug, Clone, Copy)]
@@ -60,11 +72,12 @@ pub struct SettingKeyMetadata {
     pub type_name: &'static str,
     pub overridable_in: &'static [OverrideSource],
     /// The value an unset key takes in Meta-internal builds, as JSON. `None`
-    /// when an unset key stays unset, which is how keys still migrating from
-    /// buckconfig say "fall back".
+    /// when an unset key stays unset.
     pub internal_default: fn() -> Option<Value>,
     /// The same for open source builds.
     pub oss_default: fn() -> Option<Value>,
+    /// Read, before the defaults apply, when no layer set the key.
+    pub buckconfig_fallback: Option<BuckconfigFallback>,
 }
 
 impl SettingKeyMetadata {
@@ -99,6 +112,7 @@ impl SettingKeyMetadata {
             overridable_in,
             internal_default: unset,
             oss_default: unset,
+            buckconfig_fallback: None,
         }
     }
 }
@@ -120,9 +134,11 @@ pub struct SettingValue {
     pub name: &'static str,
     /// What the settings layers set; `Null` when none did.
     pub set: Value,
-    /// What callers of the accessor see: the set value, or this build's
-    /// default.
+    /// What callers of the accessor see: the set value, the buckconfig
+    /// fallback, or this build's default.
     pub resolved: Value,
+    /// Whether `resolved` came from the declared buckconfig fallback.
+    pub from_buckconfig: bool,
 }
 
 /// A section's metadata together with one instance's values.
@@ -136,8 +152,12 @@ pub struct SectionReport {
 pub trait SettingsSection {
     const METADATA: SectionMetadata;
 
-    /// Every key's value in this instance, in declaration order.
-    fn values(&self) -> Vec<SettingValue>;
+    /// Every key's value in this instance, in declaration order. `buckconfig`
+    /// is what keys with a declared fallback read when unset.
+    fn values(
+        &self,
+        buckconfig: &mut dyn BuckconfigSource,
+    ) -> buck2_error::Result<Vec<SettingValue>>;
 }
 
 pub(crate) fn find_setting_metadata<'a>(

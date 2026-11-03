@@ -149,6 +149,12 @@ impl<'a> ImmediateConfigContext<'a> {
         resolve_settings(project_root, setting_arg_layers)
     }
 
+    /// The root `.buckconfig`, which is what the buckconfig fallbacks of
+    /// settings read on the client.
+    pub fn root_config(&self) -> buck2_error::Result<&LegacyBuckConfig> {
+        Ok(&self.data()?.root_config)
+    }
+
     pub fn daemon_startup_config(&self) -> buck2_error::Result<&DaemonStartupConfig> {
         self.daemon_startup_config
             .get_or_try_init(|| {
@@ -339,7 +345,7 @@ mod tests {
                 .buck_settings(&project_root)?
                 .daemon
                 .log_download
-                .log_url()
+                .log_url(&mut buck2_settings::NoBuckconfig)?
                 .as_deref(),
             Some("https://command-line/")
         );

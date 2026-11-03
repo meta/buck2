@@ -15,12 +15,16 @@ use buck2_settings_derive::buck_settings_section;
 pub struct Digest {
     /// The algorithms the daemon accepts, most preferred first, as a
     /// comma-separated list of `BLAKE3-KEYED`, `BLAKE3`, `SHA1` and `SHA256`.
-    /// Unset leaves the decision to the `buck2.digest_algorithms` buckconfig.
-    #[setting(overridable_in(CommandLine, LocalSettings))]
+    #[setting(
+        buckconfig_fallback = "buck2.digest_algorithms",
+        overridable_in(CommandLine, LocalSettings)
+    )]
     algorithms: Option<String>,
     /// The algorithm source files are hashed with, one of `algorithms`; the
-    /// first of them when unset. Unset also leaves the decision to the
-    /// `buck2.source_digest_algorithm` buckconfig.
-    #[setting(overridable_in(CommandLine, LocalSettings))]
+    /// first of them when unset.
+    #[setting(
+        buckconfig_fallback = "buck2.source_digest_algorithm",
+        overridable_in(CommandLine, LocalSettings)
+    )]
     source_algorithm: Option<String>,
 }

@@ -638,52 +638,27 @@ impl DaemonStartupConfig {
         settings: &DaemonBuckSettings,
         paranoid: bool,
     ) -> buck2_error::Result<Self> {
-        // Intepreted client side because we need the value here.
+        // Resolved on the client, buckconfig fallbacks included, so the daemon
+        // only ever sees the result.
+        let mut buckconfig = config;
 
         let log_download_method = {
             let log_download = &settings.log_download;
-            // Determine the log download method to use. Only default to
-            // manifold in fbcode contexts, or when specifically asked.
-            let use_manifold = log_download
-                .log_use_manifold()
-                .map(Ok::<_, buck2_error::Error>)
-                .unwrap_or_else(|| {
-                    Ok(config
-                        .parse(BuckconfigKeyRef {
-                            section: "buck2",
-                            property: "log_use_manifold",
-                        })?
-                        .unwrap_or(cfg!(fbcode_build)))
-                })?;
-
-            if use_manifold {
-                Ok(LogDownloadMethod::Manifold)
-            } else {
-                let log_url = log_download.log_url().or_else(|| {
-                    config
-                        .get(BuckconfigKeyRef {
-                            section: "buck2",
-                            property: "log_url",
-                        })
-                        .map(str::to_owned)
-                });
-                if let Some(log_url) = log_url {
-                    if log_url.is_empty() {
-                        Err(buck2_error::buck2_error!(
-                            buck2_error::ErrorTag::Input,
-                            "log_url is empty, but log_use_manifold is false"
-                        ))
-                    } else {
-                        Ok(LogDownloadMethod::Curl(log_url))
-                    }
-                } else {
-                    Ok(LogDownloadMethod::None)
+            if log_download.log_use_manifold(&mut buckconfig)? {
+                LogDownloadMethod::Manifold
+            } else if let Some(log_url) = log_download.log_url(&mut buckconfig)? {
+                if log_url.is_empty() {
+                    return Err(buck2_error::buck2_error!(
+                        buck2_error::ErrorTag::Input,
+                        "log_url is empty, but log_use_manifold is false"
+                    ));
                 }
+                LogDownloadMethod::Curl(log_url)
+            } else {
+                LogDownloadMethod::None
             }
-        }?;
+        };
 
-        // Keys that have moved to Buck settings keep reading buckconfig while
-        // repositories still set them there.
         let startup_options = DaemonStartupOptions {
             share_dice: config
                 .parse(BuckconfigKeyRef {
@@ -691,38 +666,10 @@ impl DaemonStartupConfig {
                     property: "share_dice",
                 })?
                 .unwrap_or(false),
-            num_tokio_workers: settings.daemon.num_tokio_workers().or_else(|| {
-                config
-                    .parse(BuckconfigKeyRef {
-                        section: "build",
-                        property: "num_tokio_workers",
-                    })
-                    .unwrap_or(Some(0))
-            }),
-            daemon_buster: settings.daemon.buster().or_else(|| {
-                config
-                    .get(BuckconfigKeyRef {
-                        section: "buck2",
-                        property: "daemon_buster",
-                    })
-                    .map(ToOwned::to_owned)
-            }),
-            digest_algorithms: settings.digest.algorithms().or_else(|| {
-                config
-                    .get(BuckconfigKeyRef {
-                        section: "buck2",
-                        property: "digest_algorithms",
-                    })
-                    .map(ToOwned::to_owned)
-            }),
-            source_digest_algorithm: settings.digest.source_algorithm().or_else(|| {
-                config
-                    .get(BuckconfigKeyRef {
-                        section: "buck2",
-                        property: "source_digest_algorithm",
-                    })
-                    .map(ToOwned::to_owned)
-            }),
+            num_tokio_workers: settings.daemon.num_tokio_workers(&mut buckconfig)?,
+            daemon_buster: settings.daemon.buster(&mut buckconfig)?,
+            digest_algorithms: settings.digest.algorithms(&mut buckconfig)?,
+            source_digest_algorithm: settings.digest.source_algorithm(&mut buckconfig)?,
             paranoid,
             materializations: config
                 .get(BuckconfigKeyRef {
@@ -748,21 +695,9 @@ impl DaemonStartupConfig {
                          `daemon.macos_qos_class = \"skip_lowering\"` in `.bucksettings.toml` instead"
                     ));
                 }
-                match settings.daemon.macos_qos_class() {
-                    Some(class) => Some(class),
-                    None => config.parse(BuckconfigKeyRef {
-                        section: "buck2",
-                        property: "macos_qos_class",
-                    })?,
-                }
+                settings.daemon.macos_qos_class(&mut buckconfig)?
             },
-            daemon_idle_timeout_s: match settings.daemon.idle_timeout_s() {
-                Some(seconds) => Some(seconds),
-                None => config.parse(BuckconfigKeyRef {
-                    section: "buck2",
-                    property: "daemon_idle_timeout_s",
-                })?,
-            },
+            daemon_idle_timeout_s: settings.daemon.idle_timeout_s(&mut buckconfig)?,
             hydration: HydrationConfig::from_settings(settings),
         };
         Ok(Self {

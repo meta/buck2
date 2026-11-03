@@ -163,6 +163,14 @@ impl<'a> ClientCommandContext<'a> {
             .resolved_settings(self.paths()?.project_root())
     }
 
+    /// The report `buck2 audit settings` and `buck2 rage` show, with the
+    /// buckconfig fallbacks read from the root config as the client reads them.
+    pub fn settings_report(&self) -> buck2_error::Result<buck2_settings::SettingsReport> {
+        let resolved = self.resolved_settings()?;
+        let mut buckconfig = self.immediate_config.root_config()?;
+        buck2_settings::SettingsReport::new(&resolved, &mut buckconfig)
+    }
+
     /// Evaluates repository-scoped advice without loading build configuration.
     /// Callers apply the decision only when the guarded operation will actually run.
     pub fn agent_advice(&self, advice: Advice) -> buck2_error::Result<Decision> {

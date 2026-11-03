@@ -13,7 +13,6 @@ rust_library(
         "//buck2/app/buck2_cli_proto:buck2_cli_proto",
         "//buck2/app/buck2_client_ctx:buck2_client_ctx",
         "//buck2/app/buck2_error:buck2_error",
-        "//buck2/app/buck2_settings:buck2_settings",
         "//buck2/gazebo/dupe:dupe",
     ],
 )

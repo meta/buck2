@@ -14,6 +14,7 @@ use std::sync::Arc;
 use buck2_core::soft_error_or_panic;
 use buck2_error::BuckErrorContext;
 use buck2_hash::BuckFixedSortedMap;
+use buck2_settings::buckconfig::BuckconfigSource;
 use buck2_util::env_vars::substitute_env_vars;
 
 use crate::legacy_configs::configs::ConfigValue;
@@ -47,6 +48,12 @@ pub fn parse_buckconfig_metadata(config: &LegacyBuckConfig) -> BuckFixedSortedMa
 impl LegacyBuckConfigView for &LegacyBuckConfig {
     fn get(&mut self, key: BuckconfigKeyRef) -> buck2_error::Result<Option<Arc<str>>> {
         Ok(LegacyBuckConfig::get(self, key).map(|v| v.to_owned().into()))
+    }
+}
+
+impl BuckconfigSource for &LegacyBuckConfig {
+    fn get(&mut self, section: &str, property: &str) -> buck2_error::Result<Option<String>> {
+        Ok(LegacyBuckConfig::get(self, BuckconfigKeyRef { section, property }).map(str::to_owned))
     }
 }
 

@@ -19,6 +19,7 @@ use crate::agent_config_change::AgentConfigChange;
 use crate::agent_interactive::AgentInteractive;
 use crate::agent_materialization::AgentMaterialization;
 use crate::analysis::Analysis;
+use crate::buckconfig::BuckconfigSource;
 use crate::daemon::Daemon;
 use crate::digest::Digest;
 use crate::event_log::EventLog;
@@ -125,18 +126,22 @@ macro_rules! buck_settings {
 
         impl BuckSettings {
             /// Every section with its metadata and this value's keys, daemon
-            /// sections first. For reporting.
-            pub fn sections(&self) -> Vec<SectionReport> {
-                vec![
+            /// sections first. For reporting. `buckconfig` is what keys with
+            /// a declared fallback read when unset.
+            pub fn sections(
+                &self,
+                buckconfig: &mut dyn BuckconfigSource,
+            ) -> buck2_error::Result<Vec<SectionReport>> {
+                Ok(vec![
                     $(SectionReport {
                         metadata: <$daemon_ty as SettingsSection>::METADATA,
-                        values: self.daemon.$daemon.values(),
+                        values: self.daemon.$daemon.values(buckconfig)?,
                     },)*
                     $(SectionReport {
                         metadata: <$invocation_ty as SettingsSection>::METADATA,
-                        values: self.invocation.$invocation.values(),
+                        values: self.invocation.$invocation.values(buckconfig)?,
                     },)*
-                ]
+                ])
             }
         }
     };
@@ -363,7 +368,11 @@ mod tests {
         assert!(settings.invocation.agent_materialization.enabled());
         assert!(!settings.daemon.analysis.record_requested_anon_targets());
         assert_eq!(
-            settings.daemon.log_download.log_url().as_deref(),
+            settings
+                .daemon
+                .log_download
+                .log_url(&mut crate::buckconfig::NoBuckconfig)?
+                .as_deref(),
             Some("https://example.com/")
         );
         let serialized = serde_json::to_value(&settings)?;

@@ -20,7 +20,6 @@ buck2_event_log.workspace = true
 buck2_events.workspace = true
 buck2_fs.workspace = true
 buck2_hash.workspace = true
-buck2_settings.workspace = true
 buck2_util.workspace = true
 buck2_wrapper_common.workspace = true
 clap.workspace = true

@@ -16,6 +16,8 @@ use std::fmt::Write;
 use serde::Serialize;
 use serde_json::Value;
 
+use crate::buckconfig::BuckconfigSource;
+use crate::metadata::BuckconfigFallback;
 use crate::metadata::OverrideSource;
 use crate::metadata::SectionScope;
 use crate::parser::ResolvedSettings;
@@ -43,67 +45,78 @@ pub struct SectionEntry {
 #[derive(Debug, Clone, Serialize)]
 pub struct SettingEntry {
     pub name: &'static str,
-    /// What callers see: the set value, or this build's default.
+    /// What callers see: the set value, the buckconfig fallback, or this
+    /// build's default.
     pub value: Value,
     /// What the layers set; `null` when none did.
     pub set: Value,
-    /// Where `set` came from; `null` when no layer set the key.
+    /// Where `value` came from; `null` for a default.
     pub origin: Option<SettingOrigin>,
     pub internal_default: Option<Value>,
     pub oss_default: Option<Value>,
+    /// The buckconfig key read when no layer sets the key, if declared.
+    pub buckconfig_fallback: Option<BuckconfigFallback>,
     pub type_name: &'static str,
     pub overridable_in: &'static [OverrideSource],
     pub doc: &'static str,
 }
 
 impl SettingsReport {
-    pub fn new(resolved: &ResolvedSettings) -> Self {
-        let sections = resolved
-            .settings
-            .sections()
-            .into_iter()
-            .map(|section| {
-                let metadata = section.metadata;
-                let settings = section
-                    .values
-                    .into_iter()
-                    .map(|value| {
-                        let key = metadata
-                            .settings
-                            .iter()
-                            .find(|key| key.name == value.name)
-                            .expect("a section reports the keys it declares");
-                        SettingEntry {
-                            name: value.name,
-                            value: value.resolved,
-                            set: value.set,
-                            origin: resolved.origin(metadata.section_name, value.name).cloned(),
-                            internal_default: (key.internal_default)(),
-                            oss_default: (key.oss_default)(),
-                            type_name: key.type_name,
-                            overridable_in: key.overridable_in,
-                            doc: key.doc,
-                        }
-                    })
-                    .collect();
-                SectionEntry {
-                    name: metadata.section_name,
-                    scope: metadata.scope,
-                    version: metadata.section_version,
-                    doc: metadata.doc,
-                    settings,
-                }
-            })
-            .collect();
-        Self {
+    /// `buckconfig` is what the fallbacks of unset keys are read from, as the
+    /// command itself would read them.
+    pub fn new(
+        resolved: &ResolvedSettings,
+        buckconfig: &mut dyn BuckconfigSource,
+    ) -> buck2_error::Result<Self> {
+        let mut sections = Vec::new();
+        for section in resolved.settings.sections(buckconfig)? {
+            let metadata = section.metadata;
+            let settings = section
+                .values
+                .into_iter()
+                .map(|value| {
+                    let key = metadata
+                        .settings
+                        .iter()
+                        .find(|key| key.name == value.name)
+                        .expect("a section reports the keys it declares");
+                    let origin = if value.from_buckconfig {
+                        key.buckconfig_fallback
+                            .map(|fallback| SettingOrigin::Buckconfig(fallback.key.to_owned()))
+                    } else {
+                        resolved.origin(metadata.section_name, value.name).cloned()
+                    };
+                    SettingEntry {
+                        name: value.name,
+                        value: value.resolved,
+                        set: value.set,
+                        origin,
+                        internal_default: (key.internal_default)(),
+                        oss_default: (key.oss_default)(),
+                        buckconfig_fallback: key.buckconfig_fallback,
+                        type_name: key.type_name,
+                        overridable_in: key.overridable_in,
+                        doc: key.doc,
+                    }
+                })
+                .collect();
+            sections.push(SectionEntry {
+                name: metadata.section_name,
+                scope: metadata.scope,
+                version: metadata.section_version,
+                doc: metadata.doc,
+                settings,
+            });
+        }
+        Ok(Self {
             hash: resolved.settings.snapshot().hash,
             layers: resolved.layers.clone(),
             sections,
-        }
+        })
     }
 
-    /// The report as text. `verbose` adds each key's documentation, type and
-    /// override policy.
+    /// The report as text. `verbose` adds each key's documentation, type,
+    /// fallback and override policy.
     pub fn render(&self, verbose: bool) -> String {
         let mut out = String::new();
         // Writing to a `String` cannot fail.
@@ -116,6 +129,8 @@ impl SettingsReport {
                 SettingOrigin::Local(path) => ("local", Some(path)),
                 SettingOrigin::Rollout(path) => ("rollouts", Some(path)),
                 SettingOrigin::CommandLine => ("--setting", None),
+                // Not a layer.
+                SettingOrigin::Buckconfig(_) => ("buckconfig", None),
             };
             let _ = write!(out, "  {kind:<11}");
             if let Some(path) = path {
@@ -155,6 +170,7 @@ impl SettingsReport {
                     Some(SettingOrigin::Local(path)) => format!("local {}", path.display()),
                     Some(SettingOrigin::Rollout(_)) => "rollouts".to_owned(),
                     Some(SettingOrigin::CommandLine) => "--setting".to_owned(),
+                    Some(SettingOrigin::Buckconfig(key)) => format!("buckconfig {key}"),
                     None if setting.value.is_null() => "unset".to_owned(),
                     None => "default".to_owned(),
                 };
@@ -189,6 +205,18 @@ impl SettingsReport {
                             ),
                         }
                     );
+                    if let Some(fallback) = &setting.buckconfig_fallback {
+                        let _ = writeln!(
+                            out,
+                            "    falls back to buckconfig `{}`{}",
+                            fallback.key,
+                            if fallback.oss_only {
+                                " in open source builds"
+                            } else {
+                                ""
+                            }
+                        );
+                    }
                 }
             }
         }
@@ -208,47 +236,52 @@ mod tests {
     use buck2_core::fs::project::ProjectRootTemp;
 
     use super::*;
+    use crate::buckconfig::NoBuckconfig;
     use crate::parser::resolve_settings_with_home;
 
-    #[test]
-    fn report_names_origins() -> buck2_error::Result<()> {
+    fn resolve(repo_settings: &str, flag: &str) -> buck2_error::Result<ResolvedSettings> {
         let repo = ProjectRootTemp::new()?;
-        repo.write_file(
-            ".bucksettings.toml",
-            "[analysis]\nrecord_requested_anon_targets = false\n",
-        );
+        repo.write_file(".bucksettings.toml", repo_settings);
         // An empty home keeps the developer's own local settings out of the test.
         let home = ProjectRootTemp::new()?;
-        let flag: toml::Table =
-            toml::from_str("[agent_materialization]\nenabled = true").expect("valid TOML");
-        let resolved = resolve_settings_with_home(
+        let flag: toml::Table = toml::from_str(flag).expect("valid TOML");
+        resolve_settings_with_home(
             repo.path().root().as_abs_path(),
             Some(home.path().root().as_abs_path()),
             None,
             &[flag],
+        )
+    }
+
+    fn find(report: &SettingsReport, section: &str, key: &str) -> SettingEntry {
+        report
+            .sections
+            .iter()
+            .find(|s| s.name == section)
+            .expect("section is reported")
+            .settings
+            .iter()
+            .find(|s| s.name == key)
+            .expect("key is reported")
+            .clone()
+    }
+
+    #[test]
+    fn report_names_origins() -> buck2_error::Result<()> {
+        let resolved = resolve(
+            "[analysis]\nrecord_requested_anon_targets = false\n",
+            "[agent_materialization]\nenabled = true",
         )?;
-        let report = SettingsReport::new(&resolved);
+        let report = SettingsReport::new(&resolved, &mut NoBuckconfig)?;
 
         assert!(report.hash.starts_with("buck2settings-"));
-        let find = |section: &str, key: &str| -> SettingEntry {
-            report
-                .sections
-                .iter()
-                .find(|s| s.name == section)
-                .expect("section is reported")
-                .settings
-                .iter()
-                .find(|s| s.name == key)
-                .expect("key is reported")
-                .clone()
-        };
-        let anon = find("analysis", "record_requested_anon_targets");
+        let anon = find(&report, "analysis", "record_requested_anon_targets");
         assert_eq!(anon.value, Value::Bool(false));
         assert!(matches!(anon.origin, Some(SettingOrigin::Repository(_))));
-        let enabled = find("agent_materialization", "enabled");
+        let enabled = find(&report, "agent_materialization", "enabled");
         assert_eq!(enabled.value, Value::Bool(true));
         assert_eq!(enabled.origin, Some(SettingOrigin::CommandLine));
-        let defer = find("hydration", "defer_field_reads");
+        let defer = find(&report, "hydration", "defer_field_reads");
         assert_eq!(defer.value, Value::Bool(true));
         assert_eq!(defer.origin, None);
         assert_eq!(defer.internal_default, Some(Value::Bool(true)));
@@ -266,6 +299,54 @@ mod tests {
             "{text}"
         );
         assert!(text.contains("overridable in:"), "{text}");
+        Ok(())
+    }
+
+    struct Buckconfig(&'static str, &'static str, &'static str);
+
+    impl BuckconfigSource for Buckconfig {
+        fn get(&mut self, section: &str, property: &str) -> buck2_error::Result<Option<String>> {
+            Ok((section == self.0 && property == self.1).then(|| self.2.to_owned()))
+        }
+    }
+
+    #[test]
+    fn report_shows_buckconfig_fallbacks() -> buck2_error::Result<()> {
+        let resolved = resolve("", "[daemon]\nbuster = \"set\"")?;
+        let mut buckconfig = Buckconfig("buck2", "daemon_idle_timeout_s", "100");
+        let report = SettingsReport::new(&resolved, &mut buckconfig)?;
+
+        let idle = find(&report, "daemon", "idle_timeout_s");
+        assert_eq!(idle.value, Value::from(100));
+        assert_eq!(idle.set, Value::Null);
+        assert_eq!(
+            idle.origin,
+            Some(SettingOrigin::Buckconfig(
+                "buck2.daemon_idle_timeout_s".to_owned()
+            ))
+        );
+        assert_eq!(
+            idle.buckconfig_fallback.map(|fallback| fallback.key),
+            Some("buck2.daemon_idle_timeout_s")
+        );
+        // A set key does not consult its fallback.
+        let buster = find(&report, "daemon", "buster");
+        assert_eq!(buster.origin, Some(SettingOrigin::CommandLine));
+        // An unset key whose fallback is unset stays unset.
+        let algorithms = find(&report, "digest", "algorithms");
+        assert_eq!(algorithms.value, Value::Null);
+        assert_eq!(algorithms.origin, None);
+
+        let text = report.render(true);
+        assert!(text.contains("idle_timeout_s = 100"), "{text}");
+        assert!(
+            text.contains("(buckconfig buck2.daemon_idle_timeout_s)"),
+            "{text}"
+        );
+        assert!(
+            text.contains("falls back to buckconfig `buck2.digest_algorithms`"),
+            "{text}"
+        );
         Ok(())
     }
 }

@@ -12,7 +12,6 @@ async-trait.workspace = true
 buck2_cli_proto.workspace = true
 buck2_client_ctx.workspace = true
 buck2_error.workspace = true
-buck2_settings.workspace = true
 clap.workspace = true
 dupe.workspace = true
 serde.workspace = true

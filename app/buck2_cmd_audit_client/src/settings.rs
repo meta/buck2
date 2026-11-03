@@ -14,7 +14,6 @@ use buck2_client_ctx::common::BuckArgMatches;
 use buck2_client_ctx::common::CommonCommandOptions;
 use buck2_client_ctx::common::target_cfg::TargetCfgUnusedOptions;
 use buck2_error::BuckErrorContext;
-use buck2_settings::SettingsReport;
 
 use crate::AuditSubcommand;
 
@@ -50,7 +49,7 @@ impl AuditSettingsCommand {
         _matches: BuckArgMatches<'_>,
         ctx: ClientCommandContext<'_>,
     ) -> buck2_error::Result<()> {
-        let report = SettingsReport::new(&ctx.resolved_settings()?);
+        let report = ctx.settings_report()?;
         let text = if self.json {
             serde_json::to_string_pretty(&report)
                 .map_err(|e| {

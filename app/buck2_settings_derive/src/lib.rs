@@ -57,15 +57,24 @@ use syn::spanned::Spanned;
 ///   side. A key with both defaults gets an accessor returning `T`; a key
 ///   missing either gets one returning `Option<T>`, for keys whose unset
 ///   value means "fall back to buckconfig".
+/// - `buckconfig_fallback = "section.property"`: the buckconfig key read,
+///   before the defaults apply, when no layer set the key, for keys whose
+///   values still live in buckconfigs. The accessor then takes a
+///   `&mut dyn BuckconfigSource` and returns a `Result`, so every call site
+///   says which config the fallback is read from, and dropping the fallback
+///   later breaks exactly those call sites. `oss_buckconfig_fallback` is the
+///   same for a fallback only open source builds still read. `T` must
+///   implement `FromStr`.
 /// - `accessor = <name>`: the accessor's name when the field's name is taken
 ///   by a hand-written one.
 ///
 /// The struct gets the serde and `Allocative` derives, an accessor per key,
 /// and an implementation of `SettingsSection` whose metadata carries the doc
-/// comments, types, defaults, and policies. `version` selects the rollout
-/// stanza: bump it whenever the section's schema or semantics change, and ship
-/// the bump together with a stanza for the new version that carries every key
-/// of the previous one, since a binary selects its exact version only.
+/// comments, types, defaults, fallbacks, and policies. `version` selects the
+/// rollout stanza: bump it whenever the section's schema or semantics change,
+/// and ship the bump together with a stanza for the new version that carries
+/// every key of the previous one, since a binary selects its exact version
+/// only.
 #[proc_macro_attribute]
 pub fn buck_settings_section(attr: TokenStream, item: TokenStream) -> TokenStream {
     match expand(attr.into(), item.into()) {
@@ -133,6 +142,8 @@ struct SettingArgs {
     oss_default: Option<Expr>,
     overridable_in: Option<Vec<Ident>>,
     accessor: Option<Ident>,
+    /// `section.property`, and whether only open source builds read it.
+    buckconfig_fallback: Option<(LitStr, bool)>,
 }
 
 fn parse_setting_args(attrs: &[Attribute], field: &Ident) -> syn::Result<SettingArgs> {
@@ -155,7 +166,26 @@ fn parse_setting_args(attrs: &[Attribute], field: &Ident) -> syn::Result<Setting
         attr.parse_args_with(|input: ParseStream| {
             while !input.is_empty() {
                 let key: Ident = input.parse()?;
-                match key.to_string().as_str() {
+                let option = key.to_string();
+                match option.as_str() {
+                    "buckconfig_fallback" | "oss_buckconfig_fallback" => {
+                        input.parse::<Token![=]>()?;
+                        let fallback: LitStr = input.parse()?;
+                        if !fallback.value().contains('.') {
+                            return Err(syn::Error::new(
+                                fallback.span(),
+                                "expected a buckconfig key as `section.property`",
+                            ));
+                        }
+                        if args.buckconfig_fallback.is_some() {
+                            return Err(syn::Error::new(
+                                fallback.span(),
+                                "one buckconfig fallback per key",
+                            ));
+                        }
+                        args.buckconfig_fallback =
+                            Some((fallback, option == "oss_buckconfig_fallback"));
+                    }
                     "default" => {
                         input.parse::<Token![=]>()?;
                         let expr: Expr = input.parse()?;
@@ -199,7 +229,8 @@ fn parse_setting_args(attrs: &[Attribute], field: &Ident) -> syn::Result<Setting
                             key.span(),
                             format!(
                                 "unknown setting option `{other}`; expected `default`, \
-                                `internal_default`, `oss_default`, `overridable_in` or `accessor`"
+                                `internal_default`, `oss_default`, `overridable_in`, \
+                                `buckconfig_fallback`, `oss_buckconfig_fallback` or `accessor`"
                             ),
                         ));
                     }
@@ -334,11 +365,12 @@ fn expand(
         };
         let internal_thunk = as_thunk(&setting.internal_default);
         let oss_thunk = as_thunk(&setting.oss_default);
-        let (returns, body) = match (&setting.internal_default, &setting.oss_default) {
+        // `value` is the `Option<T>` after the layers and the fallback.
+        let (returns, finish) = match (&setting.internal_default, &setting.oss_default) {
             (Some(internal), Some(oss)) => (
                 quote!(#inner),
                 quote! {
-                    match ::core::clone::Clone::clone(&self.#name) {
+                    match value {
                         ::core::option::Option::Some(value) => value,
                         ::core::option::Option::None => {
                             if cfg!(fbcode_build) { #internal } else { #oss }
@@ -352,18 +384,88 @@ fn expand(
                 (
                     quote!(::core::option::Option<#inner>),
                     quote! {
-                        ::core::clone::Clone::clone(&self.#name)
-                            .or_else(|| if cfg!(fbcode_build) { #internal } else { #oss })
+                        value.or_else(|| if cfg!(fbcode_build) { #internal } else { #oss })
                     },
                 )
             }
         };
-        accessors.push(quote! {
-            #(#doc_attrs)*
-            pub fn #accessor(&self) -> #returns {
-                #body
-            }
+        let fallback = setting.buckconfig_fallback.as_ref().map(|(key, oss_only)| {
+            let key = key.value();
+            let (section, property) = key.split_once('.').expect("checked when parsing");
+            (
+                key.clone(),
+                section.to_owned(),
+                property.to_owned(),
+                *oss_only,
+            )
         });
+        let fallback_metadata = match &fallback {
+            Some((key, _, _, oss_only)) => quote!(::core::option::Option::Some(
+                ::buck2_settings::metadata::BuckconfigFallback { key: #key, oss_only: #oss_only }
+            )),
+            None => quote!(::core::option::Option::None),
+        };
+        match &fallback {
+            None => {
+                accessors.push(quote! {
+                    #(#doc_attrs)*
+                    pub fn #accessor(&self) -> #returns {
+                        let value = ::core::clone::Clone::clone(&self.#name);
+                        #finish
+                    }
+                });
+                values.push(quote! {
+                    ::buck2_settings::metadata::SettingValue {
+                        name: #name_str,
+                        set: ::serde_json::to_value(&self.#name)
+                            .expect("settings serialize as JSON"),
+                        resolved: ::serde_json::to_value(&self.#accessor())
+                            .expect("settings serialize as JSON"),
+                        from_buckconfig: false,
+                    }
+                });
+            }
+            Some((_, section, property, oss_only)) => {
+                // Internal builds never read an OSS-only fallback.
+                let read = quote! {
+                    if #oss_only && cfg!(fbcode_build) {
+                        ::core::option::Option::None
+                    } else {
+                        ::buck2_settings::buckconfig::read_fallback::<#inner>(
+                            buckconfig, #section, #property,
+                        )?
+                    }
+                };
+                accessors.push(quote! {
+                    #(#doc_attrs)*
+                    pub fn #accessor(
+                        &self,
+                        buckconfig: &mut dyn ::buck2_settings::buckconfig::BuckconfigSource,
+                    ) -> ::buck2_error::Result<#returns> {
+                        let value = match ::core::clone::Clone::clone(&self.#name) {
+                            ::core::option::Option::Some(value) => ::core::option::Option::Some(value),
+                            ::core::option::Option::None => #read,
+                        };
+                        ::core::result::Result::Ok(#finish)
+                    }
+                });
+                values.push(quote! {
+                    {
+                        let from_buckconfig = self.#name.is_none()
+                            && !(#oss_only && cfg!(fbcode_build))
+                            && buckconfig.get(#section, #property)?.is_some();
+                        ::buck2_settings::metadata::SettingValue {
+                            name: #name_str,
+                            set: ::serde_json::to_value(&self.#name)
+                                .expect("settings serialize as JSON"),
+                            resolved: ::serde_json::to_value(&self.#accessor(buckconfig)?)
+                                .expect("settings serialize as JSON"),
+                            from_buckconfig,
+                        }
+                    }
+                });
+            }
+        }
         metadata.push(quote! {
             ::buck2_settings::metadata::SettingKeyMetadata {
                 name: #name_str,
@@ -372,14 +474,7 @@ fn expand(
                 overridable_in: &[#(::buck2_settings::metadata::OverrideSource::#sources),*],
                 internal_default: #internal_thunk,
                 oss_default: #oss_thunk,
-            }
-        });
-        values.push(quote! {
-            ::buck2_settings::metadata::SettingValue {
-                name: #name_str,
-                set: ::serde_json::to_value(&self.#name).expect("settings serialize as JSON"),
-                resolved: ::serde_json::to_value(&self.#accessor())
-                    .expect("settings serialize as JSON"),
+                buckconfig_fallback: #fallback_metadata,
             }
         });
     }
@@ -412,8 +507,12 @@ fn expand(
                     settings: &[#(#metadata),*],
                 };
 
-            fn values(&self) -> ::std::vec::Vec<::buck2_settings::metadata::SettingValue> {
-                ::std::vec![#(#values),*]
+            #[allow(unused_variables)]
+            fn values(
+                &self,
+                buckconfig: &mut dyn ::buck2_settings::buckconfig::BuckconfigSource,
+            ) -> ::buck2_error::Result<::std::vec::Vec<::buck2_settings::metadata::SettingValue>> {
+                ::core::result::Result::Ok(::std::vec![#(#values),*])
             }
         }
     })

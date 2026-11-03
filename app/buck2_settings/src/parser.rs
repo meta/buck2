@@ -53,6 +53,10 @@ pub enum SettingOrigin {
     Rollout(AbsPathBuf),
     #[display("`--setting`")]
     CommandLine,
+    /// The buckconfig key a setting declares as its fallback. An origin in
+    /// reports only, never a layer.
+    #[display("buckconfig `{_0}`")]
+    Buckconfig(String),
 }
 
 impl SettingOrigin {
@@ -62,6 +66,8 @@ impl SettingOrigin {
             Self::Rollout(_) => SettingSource::Rollout,
             Self::Local(_) => SettingSource::Override(OverrideSource::LocalSettings),
             Self::CommandLine => SettingSource::Override(OverrideSource::CommandLine),
+            // Never merged as a layer, so never checked against a policy.
+            Self::Buckconfig(_) => SettingSource::Base,
         }
     }
 }
@@ -514,6 +520,7 @@ mod tests {
     use super::*;
     use crate::args::SettingOverride;
     use crate::args::parse_setting_flag_arg;
+    use crate::buckconfig::NoBuckconfig;
     use crate::metadata::SectionScope;
     use crate::metadata::SettingKeyMetadata;
     use crate::settings::testing::TestBuckSettingsData;
@@ -672,7 +679,11 @@ mod tests {
 
             let settings = parse_settings_with_home(repo_root, Some(home_dir), None, &[])?;
             assert_eq!(
-                settings.daemon.log_download.log_url().as_deref(),
+                settings
+                    .daemon
+                    .log_download
+                    .log_url(&mut NoBuckconfig)?
+                    .as_deref(),
                 Some("https://rollout/")
             );
 
@@ -682,7 +693,11 @@ mod tests {
             );
             let settings = parse_settings_with_home(repo_root, Some(home_dir), None, &[])?;
             assert_eq!(
-                settings.daemon.log_download.log_url().as_deref(),
+                settings
+                    .daemon
+                    .log_download
+                    .log_url(&mut NoBuckconfig)?
+                    .as_deref(),
                 Some("https://home-local/")
             );
 
@@ -692,7 +707,11 @@ mod tests {
             );
             let settings = parse_settings_with_home(repo_root, Some(home_dir), None, &[])?;
             assert_eq!(
-                settings.daemon.log_download.log_url().as_deref(),
+                settings
+                    .daemon
+                    .log_download
+                    .log_url(&mut NoBuckconfig)?
+                    .as_deref(),
                 Some("https://repo-local/")
             );
 
@@ -709,7 +728,11 @@ mod tests {
             let settings =
                 parse_settings_with_home(repo_root, Some(home_dir), Some(&override_file), &[])?;
             assert_eq!(
-                settings.daemon.log_download.log_url().as_deref(),
+                settings
+                    .daemon
+                    .log_download
+                    .log_url(&mut NoBuckconfig)?
+                    .as_deref(),
                 Some("https://override/")
             );
 
@@ -721,7 +744,11 @@ mod tests {
                 &settings_args,
             )?;
             assert_eq!(
-                settings.daemon.log_download.log_url().as_deref(),
+                settings
+                    .daemon
+                    .log_download
+                    .log_url(&mut NoBuckconfig)?
+                    .as_deref(),
                 Some("https://command-line/")
             );
 
@@ -755,7 +782,11 @@ mod tests {
             for (label, content) in cases {
                 let settings = settings_with_rollout(Some(&content))?;
                 assert_eq!(
-                    settings.daemon.log_download.log_url().as_deref(),
+                    settings
+                        .daemon
+                        .log_download
+                        .log_url(&mut NoBuckconfig)?
+                        .as_deref(),
                     Some(REPO_URL),
                     "{label} must not affect other settings"
                 );
@@ -781,7 +812,11 @@ mod tests {
                 &[],
             )?;
             assert_eq!(
-                settings.daemon.log_download.log_url().as_deref(),
+                settings
+                    .daemon
+                    .log_download
+                    .log_url(&mut NoBuckconfig)?
+                    .as_deref(),
                 Some(REPO_URL)
             );
             Ok(())
@@ -857,7 +892,14 @@ mod tests {
             None,
             &[],
         )?;
-        assert_eq!(settings.daemon.log_download.log_url().as_deref(), None);
+        assert_eq!(
+            settings
+                .daemon
+                .log_download
+                .log_url(&mut NoBuckconfig)?
+                .as_deref(),
+            None
+        );
         Ok(())
     }
 

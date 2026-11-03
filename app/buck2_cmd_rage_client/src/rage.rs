@@ -39,7 +39,6 @@ use buck2_events::sink::remote::new_remote_event_sink_if_enabled;
 use buck2_fs::paths::abs_norm_path::AbsNormPath;
 use buck2_fs::paths::abs_norm_path::AbsNormPathBuf;
 use buck2_hash::IntentionallyStdHashMap;
-use buck2_settings::SettingsReport;
 use buck2_util::process::async_background_command;
 use buck2_wrapper_common::invocation_id::TraceId;
 use derive_more::Display;
@@ -106,9 +105,7 @@ impl RageCommand {
         let paths = ctx.paths()?;
         let daemon_dir = paths.daemon_dir()?;
         // Resolved before anything else borrows `ctx`; cheap, and it needs no daemon.
-        let settings = ctx
-            .resolved_settings()
-            .map(|resolved| SettingsReport::new(&resolved).render(true));
+        let settings = ctx.settings_report().map(|report| report.render(true));
         let stderr_path = daemon_dir.buckd_stderr();
         let re_logs_dir = ctx.paths()?.re_logs_dir();
         let logdir = paths.log_dir();

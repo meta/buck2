@@ -32,6 +32,8 @@ class AuditSettingsTest(BuckTestCase):
         )
         home_local = buck.get_settings_home_dir() / ".bucksettings.local.toml"
         home_local.write_text('[log_download]\nlog_url = "https://home/"\n')
+        with open(buck.cwd / ".buckconfig", "a") as buckconfig:
+            buckconfig.write("[buck2]\ndaemon_idle_timeout_s = 100\n")
 
         result = await buck.audit(
             "settings",
@@ -67,6 +69,17 @@ class AuditSettingsTest(BuckTestCase):
         defer = entries["hydration.defer_field_reads"]
         assert defer["value"] is True
         assert defer["origin"] is None
+
+        # A declared fallback is read from the root buckconfig when no layer
+        # sets the key.
+        idle = entries["daemon.idle_timeout_s"]
+        assert idle["value"] == 100
+        assert idle["set"] is None
+        assert idle["origin"] == {
+            "kind": "buckconfig",
+            "path": "buck2.daemon_idle_timeout_s",
+        }
+        assert idle["buckconfig_fallback"]["key"] == "buck2.daemon_idle_timeout_s"
 
         scopes = {section["name"]: section["scope"] for section in report["sections"]}
         assert scopes["hydration"] == "daemon"

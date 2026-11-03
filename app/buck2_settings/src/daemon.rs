@@ -48,21 +48,33 @@ impl FromStr for MacosQosClass {
 pub struct Daemon {
     /// Any value; changing it starts a new daemon. Set in the repository, it
     /// restarts every daemon after a change that invalidates their state.
-    /// Unset leaves the decision to the `buck2.daemon_buster` buckconfig.
-    #[setting(overridable_in(CommandLine, LocalSettings))]
+    // FIXME(jakobdegen): drop the fallback once fbsource sets this in `.bucksettings.toml`.
+    #[setting(
+        buckconfig_fallback = "buck2.daemon_buster",
+        overridable_in(CommandLine, LocalSettings)
+    )]
     buster: Option<String>,
-    /// Seconds without a command after which the daemon exits. Unset leaves
-    /// the decision to the `buck2.daemon_idle_timeout_s` buckconfig, and the
-    /// daemon's own default applies when neither sets it.
-    #[setting(overridable_in(CommandLine, LocalSettings))]
+    /// Seconds without a command after which the daemon exits; the daemon's
+    /// own default when unset.
+    #[setting(
+        buckconfig_fallback = "buck2.daemon_idle_timeout_s",
+        overridable_in(CommandLine, LocalSettings)
+    )]
     idle_timeout_s: Option<u64>,
-    /// Worker threads of the daemon's tokio runtime; `0` lets tokio choose.
-    /// Unset leaves the decision to the `build.num_tokio_workers` buckconfig.
-    #[setting(overridable_in(CommandLine, LocalSettings))]
+    /// Worker threads of the daemon's tokio runtime; `0` or unset lets tokio
+    /// choose.
+    // FIXME(jakobdegen): drop the fallback once Sandcastle passes this as a setting.
+    #[setting(
+        buckconfig_fallback = "build.num_tokio_workers",
+        overridable_in(CommandLine, LocalSettings)
+    )]
     num_tokio_workers: Option<usize>,
-    /// Unset leaves the decision to the `buck2.macos_qos_class` buckconfig,
-    /// and the daemon uses `utility` when neither sets it.
-    #[setting(overridable_in(CommandLine, LocalSettings))]
+    /// `utility` when unset.
+    // FIXME(jakobdegen): drop the fallback once fbsource sets this in `.bucksettings.toml`.
+    #[setting(
+        buckconfig_fallback = "buck2.macos_qos_class",
+        overridable_in(CommandLine, LocalSettings)
+    )]
     macos_qos_class: Option<MacosQosClass>,
 }
 

@@ -47,29 +47,6 @@ def get_enable_library_evolution():
         })
     )
 
-def swift_dynamic_replacement_select(enabled, disabled):
-    """`enabled` or `disabled`, as the configuration decides Swift dynamic
-    replacement. The `swift_dynamic_replacement` constraint decides when it is
-    set, to `enabled` or `disabled`; the
-    `apple.swift_dynamic_replacement_override_enabled` buckconfig is only the
-    fallback for a configuration that leaves the constraint unspecified, so a
-    platform or a mode's modifier pins the decision and a buckconfig alone
-    cannot override a platform that pins `disabled`. No target can decide it."""
-    return select({
-        "DEFAULT": select({
-            "DEFAULT": disabled,
-            "config//features/apple:swift_dynamic_replacement_override_enabled": enabled,
-        }),
-        "config//features/apple/constraints:swift_dynamic_replacement[disabled]": disabled,
-        "config//features/apple/constraints:swift_dynamic_replacement[enabled]": enabled,
-    })
-
-def get_swift_dynamic_replacement_enabled():
-    """Whether the configuration compiles Swift for dynamic replacement, as
-    `swift_dynamic_replacement_select` decides; `default_only` because no
-    target may decide it."""
-    return attrs.default_only(attrs.bool(default = swift_dynamic_replacement_select(True, False)))
-
 def _strict_provisioning_profile_search_default_attr():
     default_value = read_root_config("apple", "strict_provisioning_profile_search", "true").lower() == "true"
     return attrs.bool(
@@ -204,9 +181,6 @@ def _apple_bundle_like_common_attrs():
         "_skip_adhoc_resigning_scrubbed_frameworks_default": _skip_adhoc_resigning_scrubbed_frameworks_default_attr(),
         "_skip_adhoc_resigning_scrubbed_frameworks_override": attrs.option(attrs.bool(), default = None),
         "_strict_provisioning_profile_search_default": _strict_provisioning_profile_search_default_attr(),
-        # Whether the configuration compiles Swift for dynamic replacement, the
-        # same attribute `apple_library` has; recorded in `BuildInfo.json`.
-        "_swift_dynamic_replacement_enabled": get_swift_dynamic_replacement_enabled(),
         APPLE_USE_ENTITLEMENTS_WHEN_ADHOC_CODE_SIGNING_CONFIG_OVERRIDE_ATTR_NAME: attrs.option(attrs.bool(), default = None),
         APPLE_USE_ENTITLEMENTS_WHEN_ADHOC_CODE_SIGNING_ATTR_NAME: attrs.bool(default = False),
         APPLE_EMBED_PROVISIONING_PROFILE_WHEN_ADHOC_CODE_SIGNING_CONFIG_OVERRIDE_ATTR_NAME: attrs.option(attrs.bool(), default = None),
@@ -217,6 +191,7 @@ def _apple_bundle_like_common_attrs():
     attribs.update(get_apple_info_plist_build_system_identification_attrs())
     attribs.update(apple_common.apple_tools_arg())
     attribs.update(apple_common.enforce_minimum_os_plist_key())
+    attribs.update(apple_common.swift_dynamic_replacement_enabled_arg())
     return attribs
 
 def apple_test_extra_attrs():

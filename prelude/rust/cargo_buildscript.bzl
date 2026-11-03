@@ -448,8 +448,8 @@ def buildscript_run(
 
     filegroup_for_manifest_dir = None
     if local_manifest_dir != None:
-        prefix_with_trailing_slash = "{}/".format(local_manifest_dir)
-        filegroup_for_manifest_dir = {path.removeprefix(prefix_with_trailing_slash): path for path in glob(["{}/**".format(local_manifest_dir)])}
+        prefix_with_trailing_slash = "" if local_manifest_dir in ("", ".") else "{}/".format(local_manifest_dir)
+        filegroup_for_manifest_dir = {path.removeprefix(prefix_with_trailing_slash): path for path in glob(["{}**".format(prefix_with_trailing_slash)])}
 
     def platform_buildscript_build_name(plat):
         if name.endswith("-build-script-run"):

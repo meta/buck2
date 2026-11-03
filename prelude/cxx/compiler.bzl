@@ -26,6 +26,9 @@ def get_flags_for_reproducible_build(target_label: Label, compiler_type: str) ->
     if compiler_type in ["clang_cl", "windows"]:
         flags.extend(["/Brepro", "/d2threads1"])
 
+    if compiler_type == "windows_ml64":
+        flags.append("/Brepro")
+
     if compiler_type in ["clang", "clang_windows", "clang_cl"]:
         flags.extend(["-Xclang", "-fdebug-compilation-dir", "-Xclang", cmd_args(target_label.project_root)])
 

@@ -71,10 +71,11 @@ use syn::spanned::Spanned;
 /// The struct gets the serde and `Allocative` derives, an accessor per key,
 /// and an implementation of `SettingsSection` whose metadata carries the doc
 /// comments, types, defaults, fallbacks, and policies. `version` selects the
-/// rollout stanza: bump it whenever the section's schema or semantics change,
-/// and ship the bump together with a stanza for the new version that carries
-/// every key of the previous one, since a binary selects its exact version
-/// only.
+/// rollout stanza: a binary applies the newest stanza at or below its
+/// version, so a bump without a stanza of its own keeps the previous stanza
+/// applying. Bump it when a stanza must only reach binaries from the bump on,
+/// such as one using a key older binaries lack; a key whose meaning changes is
+/// renamed instead, since older stanzas keep driving it.
 #[proc_macro_attribute]
 pub fn buck_settings_section(attr: TokenStream, item: TokenStream) -> TokenStream {
     match expand(attr.into(), item.into()) {

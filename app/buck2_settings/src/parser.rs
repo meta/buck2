@@ -870,9 +870,14 @@ mod tests {
         }
 
         #[test]
-        fn old_agent_interactive_rollout_does_not_enable_guards() -> buck2_error::Result<()> {
+        fn older_agent_interactive_stanza_applies() -> buck2_error::Result<()> {
+            // A stanza for an older version keeps applying; the guards keep
+            // needing their own switch on top of the master one.
             let settings = settings_with_rollout(Some(b"[agent_interactive.0]\nenabled = true"))?;
-            assert!(!settings.invocation.agent_interactive.enabled());
+            let guards = &settings.invocation.agent_interactive;
+            assert!(guards.enabled());
+            assert!(!guards.killall_enabled());
+            assert!(!guards.clean_enabled());
             Ok(())
         }
     }

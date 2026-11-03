@@ -295,7 +295,7 @@ def uses_dynamic_replacement(ctx: AnalysisContext) -> bool:
     """Whether the module is compiled so its functions can be replaced at run
     time. Only `apple_library` declares the attribute; other Swift rules never
     opt in."""
-    return getattr(ctx.attrs, "_swift_dynamic_replacement_enabled", False)
+    return getattr(ctx.attrs, "swift_dynamic_replacement_enabled", False)
 
 def get_swift_dynamic_thunk_entry_point_name(ctx: AnalysisContext) -> str:
     """The C symbol of the dynamic thunk's entry point, which is also the Swift

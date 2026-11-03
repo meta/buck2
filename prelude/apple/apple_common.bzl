@@ -202,7 +202,10 @@ def swift_dynamic_replacement_select(enabled, disabled):
     `apple.swift_dynamic_replacement_override_enabled` buckconfig is only the
     fallback for a configuration that leaves the constraint unspecified, so a
     platform or a mode's modifier pins the decision and a buckconfig alone
-    cannot override a platform that pins `disabled`. No target can decide it."""
+    cannot override a platform that pins `disabled`. It is the default of the
+    `swift_dynamic_replacement_enabled` attribute, which a target may set
+    itself; what follows the configuration alone, such as the runtime
+    `ios_binary` links, uses this select directly."""
     return select({
         "DEFAULT": select({
             "DEFAULT": disabled,
@@ -213,22 +216,21 @@ def swift_dynamic_replacement_select(enabled, disabled):
     })
 
 def get_swift_dynamic_replacement_enabled():
-    """Whether the configuration compiles Swift for dynamic replacement, as
-    `swift_dynamic_replacement_select` decides; `default_only` because no
-    target may decide it."""
-    return attrs.default_only(attrs.bool(default = swift_dynamic_replacement_select(True, False)))
+    """Whether Swift is compiled for dynamic replacement: by default as
+    `swift_dynamic_replacement_select` decides, and a target may set it."""
+    return attrs.bool(default = swift_dynamic_replacement_select(True, False))
 
 def _swift_dynamic_replacement_enabled_arg():
     """Compiles a Swift module so that every function, initializer, computed
     property and subscript can be replaced at run time with
     `@_dynamicReplacement`, and lets the library produce such replacements;
     on a bundle, records the decision in `BuildInfo.json`. Every call pays an
-    indirection, so this is for development builds only and no target can set
-    it: it follows the `swift_dynamic_replacement` constraint, and when that is
-    unspecified the `apple.swift_dynamic_replacement_override_enabled`
-    buckconfig."""
+    indirection, so this is for development builds only. Unset, it follows the
+    `swift_dynamic_replacement` constraint, and when that is unspecified the
+    `apple.swift_dynamic_replacement_override_enabled` buckconfig; a target
+    that sets it decides for itself, whatever the configuration says."""
     return {
-        "_swift_dynamic_replacement_enabled": get_swift_dynamic_replacement_enabled(),
+        "swift_dynamic_replacement_enabled": get_swift_dynamic_replacement_enabled(),
     }
 
 def _meta_apple_library_validation_enabled_default_value():

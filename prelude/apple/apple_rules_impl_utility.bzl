@@ -191,7 +191,6 @@ def _apple_bundle_like_common_attrs():
     attribs.update(get_apple_info_plist_build_system_identification_attrs())
     attribs.update(apple_common.apple_tools_arg())
     attribs.update(apple_common.enforce_minimum_os_plist_key())
-    attribs.update(apple_common.swift_dynamic_replacement_enabled_arg())
     return attribs
 
 def apple_test_extra_attrs():
@@ -315,4 +314,7 @@ def apple_bundle_extra_attrs():
     attribs.update(apple_common.entitlements_removed_keys_arg())
     attribs.update(apple_common.entitlements_removed_values_map_arg())
     attribs.update(apple_common.minimum_os_version_arg())
+    # Only `apple_bundle`: `apple_test` shares the bundle-like attributes but
+    # test code is never compiled for replacement.
+    attribs.update(apple_common.swift_dynamic_replacement_enabled_arg())
     return attribs

@@ -394,7 +394,7 @@ def assemble_bundle(
         extension_allowed = ctx.attrs.extension in ctx.attrs.include_build_info_file_in_bundles_with_extensions
         if extension_allowed:
             command.add("--include-build-info-file")
-            command.add("--build-info-swift-dynamic-replacement", "true" if getattr(ctx.attrs, "_swift_dynamic_replacement_enabled", False) else "false")
+            command.add("--build-info-swift-dynamic-replacement", "true" if getattr(ctx.attrs, "swift_dynamic_replacement_enabled", False) else "false")
     command.add(codesign_configuration_args)
 
     bundle_telemetry_logger = tools.bundle_telemetry_logger

@@ -192,7 +192,7 @@ SwiftCompilationOutput = record(
     swift_module_map_artifact = field(Artifact | None, None),
     # The `@_dynamicReplacement` thunks for every function in the module,
     # compiled as a separate module that imports this one. Populated when
-    # `_swift_dynamic_replacement_enabled` is set and the toolchain carries the
+    # `swift_dynamic_replacement_enabled` is set and the toolchain carries the
     # thunk tool; `apple_library` links the object and records the commands in
     # `[swift-dynamic-dylib-thunk-command-database]`.
     dynamic_thunk = field(SwiftDynamicThunkOutput | None, None),

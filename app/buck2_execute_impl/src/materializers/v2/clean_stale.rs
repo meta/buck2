@@ -69,6 +69,7 @@ use crate::materializers::deferred::artifact_tree::ArtifactClassification;
 use crate::materializers::deferred::artifact_tree::UnmaterializationEligibility;
 use crate::materializers::deferred::artifact_tree::UnmaterializationIneligibilityReason;
 use crate::materializers::deferred::artifact_tree::UnmaterializationIneligibleArtifact;
+use crate::materializers::deferred::clean_stale::CleanDiskSpace;
 use crate::materializers::deferred::clean_stale::CleanFailure;
 use crate::materializers::deferred::clean_stale::CleanFailurePhase;
 use crate::materializers::deferred::clean_stale::CleanOutcome;
@@ -246,9 +247,11 @@ impl<T: IoHandler> Cleaner<T> {
         let cleaner = self.dupe();
         async move {
             let start = Instant::now();
+            let disk_space = CleanDiskSpace::new(cleaner.buck_out_abs_path.as_deref());
             let observer = cleaner.begin();
-            let result = cleaner.dupe().run_inner(command.clone(), observer).await;
+            let mut result = cleaner.dupe().run_inner(command.clone(), observer).await;
             cleaner.interrupt();
+            disk_space.record(&mut result);
             let trace_id = match command.trigger {
                 Trigger::Scheduled => None,
                 _ => Some(command.dispatcher.trace_id().dupe()),

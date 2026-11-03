@@ -45,8 +45,10 @@ use buck2_execute::materialize::materializer::CasDownloadInfo;
 use buck2_execute::materialize::materializer::CleanStaleArtifactsArgs;
 use buck2_execute::materialize::materializer::CleanStaleArtifactsPolicy;
 use buck2_fs::fs_util;
+use buck2_fs::fs_util::DiskSpaceStats;
 use buck2_fs::fs_util::disk_space_stats;
 use buck2_fs::paths::abs_norm_path::AbsNormPath;
+use buck2_fs::paths::abs_path::AbsPath;
 use buck2_fs::paths::abs_path::AbsPathBuf;
 use buck2_fs::paths::file_name::FileName;
 use buck2_fs::paths::file_name::FileNameBuf;
@@ -438,6 +440,58 @@ impl From<CleanResult> for buck2_cli_proto::CleanStaleResponse {
     }
 }
 
+/// Samples used bytes on the buck-out filesystem using the same resolved path at the start and end
+/// of a clean.
+pub(crate) struct CleanDiskSpace {
+    path: Option<AbsPathBuf>,
+    start: Option<u64>,
+}
+
+impl CleanDiskSpace {
+    pub(crate) fn new(path: Option<&AbsPathBuf>) -> Self {
+        let path = path.and_then(|path| {
+            let mut path: &AbsPath = path;
+            loop {
+                match fs_util::symlink_metadata_if_exists(path).ok()? {
+                    Some(_) => {
+                        return fs_util::canonicalize(path)
+                            .ok()
+                            .map(|path| path.into_abs_path_buf());
+                    }
+                    None => path = path.parent()?,
+                }
+            }
+        });
+        let start = path
+            .as_ref()
+            .and_then(|path| disk_space_stats(path).ok())
+            .map(used_disk_space);
+        Self { path, start }
+    }
+
+    pub(crate) fn record(self, result: &mut CleanOutcome) {
+        let end = self
+            .path
+            .as_ref()
+            .and_then(|path| disk_space_stats(path).ok())
+            .map(used_disk_space);
+        record_used_disk_space(result, self.start, end);
+    }
+}
+
+fn used_disk_space(stats: DiskSpaceStats) -> u64 {
+    stats.total_space.saturating_sub(stats.free_space)
+}
+
+fn record_used_disk_space(result: &mut CleanOutcome, start: Option<u64>, end: Option<u64>) {
+    let stats = match result {
+        Ok(result) => &mut result.stats,
+        Err(failure) => &mut failure.stats,
+    };
+    stats.used_disk_space_bytes_start = start;
+    stats.used_disk_space_bytes_end = end;
+}
+
 /// The event a run ends with, for either outcome.
 pub(crate) fn create_result(
     result: CleanOutcome,
@@ -574,16 +628,18 @@ impl CleanStaleArtifactsCommand {
         let origin = self.origin;
         let policy_mode = self.policy_mode;
         let tracked_only = self.tracked_only;
+        let disk_space = CleanDiskSpace::new(self.buck_out_abs_path.as_deref());
         let pending_result = self.create_pending_clean_result(processor);
         let dispatcher_dup = self.dispatcher.dupe();
         async move {
-            let result = match pending_result {
+            let mut result = match pending_result {
                 Ok(res) => match res {
                     PendingCleanResult::Finished(result) => Ok(result),
                     PendingCleanResult::Pending(fut) => fut.await,
                 },
                 Err(e) => Err(e),
             };
+            disk_space.record(&mut result);
             let result_event: buck2_data::CleanStaleResult = create_result(
                 result.clone(),
                 trace_id,
@@ -2528,9 +2584,14 @@ impl CleanStaleConfig {
 
 #[cfg(test)]
 mod tests {
+    use buck2_core::fs::project::ProjectRootTemp;
     use buck2_core::fs::project_rel_path::ProjectRelativePathBuf;
+    use buck2_data::CleanStaleResultKind;
     use buck2_data::CleanStaleStats;
     use buck2_data::clean_stale_result::AdaptiveOutcome;
+    use buck2_error::internal_error;
+    use buck2_events::daemon_id::DaemonId;
+    use buck2_fs::fs_util;
     use jiff::Timestamp;
 
     use crate::materializers::deferred::artifact_tree::ArtifactClassification;
@@ -2539,14 +2600,134 @@ mod tests {
     use crate::materializers::deferred::artifact_tree::UnmaterializationIneligibleArtifact;
     use crate::materializers::deferred::artifact_tree::UnmaterializeArtifactsResult;
     use crate::materializers::deferred::clean_stale::AdaptiveLowDiskParams;
+    use crate::materializers::deferred::clean_stale::CleanDiskSpace;
+    use crate::materializers::deferred::clean_stale::CleanFailure;
+    use crate::materializers::deferred::clean_stale::CleanFailurePhase;
+    use crate::materializers::deferred::clean_stale::CleanResult;
     use crate::materializers::deferred::clean_stale::CleanStaleStatsExt;
     use crate::materializers::deferred::clean_stale::FoundPath;
     use crate::materializers::deferred::clean_stale::StaleOrigin;
     use crate::materializers::deferred::clean_stale::TrackedState;
     use crate::materializers::deferred::clean_stale::apply_adaptive_low_disk;
+    use crate::materializers::deferred::clean_stale::create_result;
     use crate::materializers::deferred::clean_stale::duration_from_config_hours;
     use crate::materializers::deferred::clean_stale::percentage_from_config;
+    use crate::materializers::deferred::clean_stale::record_used_disk_space;
     use crate::materializers::deferred::clean_stale::unmaterialization_threshold_from_config;
+
+    #[test]
+    fn test_used_disk_space_outcomes() {
+        for kind in [
+            CleanStaleResultKind::Finished,
+            CleanStaleResultKind::Interrupted,
+            CleanStaleResultKind::SkippedDryRun,
+            CleanStaleResultKind::SkippedNoGenDir,
+            CleanStaleResultKind::SkippedDeferWriteDisabled,
+            CleanStaleResultKind::SkippedSqliteDisabled,
+            CleanStaleResultKind::Failed,
+        ] {
+            for (start, end) in [
+                (Some(101), Some(99)),
+                (Some(0), None),
+                (None, Some(0)),
+                (None, None),
+            ] {
+                let mut result = if kind == CleanStaleResultKind::Failed {
+                    Err(CleanFailure::new(
+                        CleanFailurePhase::Scan,
+                        CleanStaleStats::default(),
+                        AdaptiveOutcome::Disabled,
+                        internal_error!("scan failed"),
+                    ))
+                } else {
+                    Ok(CleanResult::new(
+                        kind,
+                        CleanStaleStats::default(),
+                        AdaptiveOutcome::Disabled,
+                    ))
+                };
+                record_used_disk_space(&mut result, start, end);
+                let event = create_result(
+                    result,
+                    None,
+                    &DaemonId::new(),
+                    3,
+                    buck2_data::clean_stale_result::Trigger::ManualExplicit,
+                    buck2_data::clean_stale_result::Origin::CleanCommand,
+                    buck2_data::clean_stale_result::PolicyMode::ExplicitTtl,
+                    false,
+                );
+                assert_eq!(event.kind, kind as i32);
+                assert_eq!(event.error.is_some(), kind == CleanStaleResultKind::Failed);
+                let stats = event.stats.expect("clean stats");
+                assert_eq!(stats.used_disk_space_bytes_start, start);
+                assert_eq!(stats.used_disk_space_bytes_end, end);
+                assert_eq!(stats.total_duration_s, 3);
+            }
+        }
+    }
+
+    #[test]
+    fn test_used_disk_space_probe_path() -> buck2_error::Result<()> {
+        let temp = ProjectRootTemp::new()?;
+        let path = temp
+            .path()
+            .resolve(ProjectRelativePathBuf::unchecked_new(
+                "buck-out/missing".to_owned(),
+            ))
+            .into_abs_path_buf();
+        let sample = CleanDiskSpace::new(Some(&path));
+        assert_eq!(
+            sample.path,
+            Some(
+                fs_util::canonicalize(temp.path().root())
+                    .expect("canonicalize temp root")
+                    .into_abs_path_buf()
+            )
+        );
+        assert!(sample.start.is_some());
+        assert!(!fs_util::try_exists(&path)?);
+        let mut result = Ok(CleanResult::new(
+            CleanStaleResultKind::SkippedNoGenDir,
+            CleanStaleStats::default(),
+            AdaptiveOutcome::Disabled,
+        ));
+        sample.record(&mut result);
+        let stats = result.ok().expect("clean succeeds").stats;
+        assert!(stats.used_disk_space_bytes_start.is_some());
+        assert!(stats.used_disk_space_bytes_end.is_some());
+
+        let mut result = Ok(CleanResult::new(
+            CleanStaleResultKind::Finished,
+            CleanStaleStats::default(),
+            AdaptiveOutcome::Disabled,
+        ));
+        CleanDiskSpace {
+            path: Some(path),
+            start: Some(0),
+        }
+        .record(&mut result);
+        let stats = result
+            .ok()
+            .expect("end probe failure does not fail cleaning")
+            .stats;
+        assert_eq!(stats.used_disk_space_bytes_start, Some(0));
+        assert_eq!(stats.used_disk_space_bytes_end, None);
+
+        let mut result = Ok(CleanResult::new(
+            CleanStaleResultKind::Finished,
+            CleanStaleStats::default(),
+            AdaptiveOutcome::Disabled,
+        ));
+        CleanDiskSpace::new(None).record(&mut result);
+        let stats = result
+            .ok()
+            .expect("probe failure does not fail cleaning")
+            .stats;
+        assert_eq!(stats.used_disk_space_bytes_start, None);
+        assert_eq!(stats.used_disk_space_bytes_end, None);
+        Ok(())
+    }
 
     #[test]
     fn test_duration_from_config_hours() {

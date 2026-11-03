@@ -1150,6 +1150,8 @@ async fn test_clean_stale_deletes_what_this_daemon_has_not_used() -> buck2_error
             .await?
             .stats
             .expect("stats");
+        assert!(stats.used_disk_space_bytes_start.is_some());
+        assert!(stats.used_disk_space_bytes_end.is_some());
         assert_eq!(
             (
                 stats.stale_artifact_count,
@@ -1254,6 +1256,8 @@ async fn test_clean_stale_dry_run_deletes_nothing() -> buck2_error::Result<()> {
             .await?
             .stats
             .expect("stats");
+        assert!(stats.used_disk_space_bytes_start.is_some());
+        assert!(stats.used_disk_space_bytes_end.is_some());
         assert_eq!(
             (stats.stale_artifact_count, stats.cleaned_artifact_count),
             (1, 0)

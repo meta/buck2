@@ -1893,6 +1893,8 @@ pub(crate) mod state_machine {
                 .expect("materializer stats update should finish");
 
             let stats = res.stats.expect("clean-stale should return stats");
+            assert!(stats.used_disk_space_bytes_start.is_some());
+            assert!(stats.used_disk_space_bytes_end.is_some());
             assert_eq!(
                 (
                     stats.materialized_intermediate_only_bytes_before,

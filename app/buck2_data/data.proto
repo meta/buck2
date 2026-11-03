@@ -2028,6 +2028,10 @@ message CleanStaleStats {
   uint64 unmaterialization_upload_failed_bytes = 67;
   uint64 unmaterialization_upload_skipped_oversize_artifact_count = 68;
   uint64 unmaterialization_upload_skipped_oversize_bytes = 69;
+  // Used bytes (total minus free) on the buck-out filesystem; absent on probe
+  // failure.
+  optional uint64 used_disk_space_bytes_start = 70;
+  optional uint64 used_disk_space_bytes_end = 71;
 }
 
 enum CleanStaleResultKind {

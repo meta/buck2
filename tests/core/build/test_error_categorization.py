@@ -6,8 +6,6 @@
 # of this source tree. You may select, at your option, one of the
 # above-listed licenses.
 
-# pyre-strict
-
 import json
 import os
 import shutil
@@ -269,10 +267,9 @@ class ErrorCategorizationTest(BuckTestCase):
             assert category_key.startswith("SERVER_SIGABRT")
             assert error["best_tag"] == "SERVER_SIGABRT"
 
-        # A crash key is only attached when the signal handler printed stack frames, which it
-        # currently doesn't for this abort on Linux.
         if is_running_on_linux():
-            assert "crash(" not in category_key
+            assert "\n    @ " in error["message"], error["message"]
+            assert "crash(" in category_key, category_key
         if "crash(" in category_key:
             # test string tags are in error_tags
             assert error["tags"][-1].startswith("crash(")

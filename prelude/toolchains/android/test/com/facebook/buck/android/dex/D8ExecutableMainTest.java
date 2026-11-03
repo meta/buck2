@@ -11,10 +11,13 @@
 package com.facebook.buck.android.dex;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertTrue;
 import static org.junit.Assert.fail;
 
 import com.facebook.buck.android.dex.D8ExecutableMain.DexRefCounts;
 import com.google.common.collect.ImmutableList;
+import com.google.common.collect.ImmutableMap;
 import java.io.ByteArrayInputStream;
 import java.io.IOException;
 import java.nio.ByteBuffer;
@@ -24,7 +27,9 @@ import java.nio.file.Path;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipFile;
 import java.util.zip.ZipOutputStream;
+import org.junit.Rule;
 import org.junit.Test;
+import org.junit.rules.TemporaryFolder;
 
 /**
  * Tests for DEX ref count reading functionality in D8ExecutableMain.
@@ -33,6 +38,8 @@ import org.junit.Test;
  * at well-known offsets. These counts are used for 64K-limit-aware secondary DEX splitting.
  */
 public class D8ExecutableMainTest {
+
+  @Rule public TemporaryFolder tmp = new TemporaryFolder();
 
   // First 120 bytes of a real DEX header from main_r_dot_java.jar, produced by D8.
   // Expected ref counts (independently verified via Python struct.unpack_from):
@@ -246,6 +253,62 @@ public class D8ExecutableMainTest {
     } finally {
       Files.deleteIfExists(jarPath);
     }
+  }
+
+  private static final DexRefCounts OVER_FIELD_LIMIT = new DexRefCounts(124, 72367, 53);
+
+  @Test
+  public void testWantsClassRefCounts_flagOff_noneEvenOverTheLimit() {
+    assertFalse(D8ExecutableMain.wantsClassRefCounts(false, OVER_FIELD_LIMIT, ImmutableMap.of()));
+  }
+
+  @Test
+  public void testWantsClassRefCounts_flagOn_overTheLimit() {
+    assertTrue(D8ExecutableMain.wantsClassRefCounts(true, OVER_FIELD_LIMIT, ImmutableMap.of()));
+    assertTrue(
+        D8ExecutableMain.wantsClassRefCounts(
+            true, new DexRefCounts(65537, 0, 1), ImmutableMap.of()));
+    assertTrue(
+        D8ExecutableMain.wantsClassRefCounts(
+            true, new DexRefCounts(0, 0, 65537), ImmutableMap.of()));
+  }
+
+  @Test
+  public void testWantsClassRefCounts_flagOn_noneAtOrUnderTheLimit() {
+    assertFalse(
+        D8ExecutableMain.wantsClassRefCounts(
+            true, new DexRefCounts(65536, 65536, 65536), ImmutableMap.of()));
+  }
+
+  @Test
+  public void testWantsClassRefCounts_flagOn_noneWithSyntheticClasses() {
+    assertFalse(
+        D8ExecutableMain.wantsClassRefCounts(
+            true, OVER_FIELD_LIMIT, ImmutableMap.of("a/B$$Lambda0", "a/B")));
+  }
+
+  @Test
+  public void testGetClassRefCountLines_oneLinePerClass() throws Exception {
+    Path dir = tmp.newFolder("per-class").toPath();
+    writeDexFile(dir.resolve("com/example/P3.dex"), makeDexHeader(2, 16405, 4));
+    writeDexFile(dir.resolve("com/example/B$C.dex"), makeDexHeader(13, 4, 12));
+    Files.write(dir.resolve("com/example/notes.txt"), new byte[] {1});
+    assertEquals(
+        ImmutableList.of("13 4 12 com/example/B$C", "2 16405 4 com/example/P3"),
+        D8ExecutableMain.getClassRefCountLines(dir));
+  }
+
+  @Test
+  public void testGetClassRefCountLines_noneWhenAClassNameHoldsASpace() throws Exception {
+    Path dir = tmp.newFolder("per-class").toPath();
+    writeDexFile(dir.resolve("com/example/P3.dex"), makeDexHeader(2, 16405, 4));
+    writeDexFile(dir.resolve("com/example/B\u00a0C.dex"), makeDexHeader(13, 4, 12));
+    assertEquals(ImmutableList.of(), D8ExecutableMain.getClassRefCountLines(dir));
+  }
+
+  private static void writeDexFile(Path path, byte[] header) throws IOException {
+    Files.createDirectories(path.getParent());
+    Files.write(path, header);
   }
 
   @Test

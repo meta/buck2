@@ -26,8 +26,11 @@ DexLibraryInfo = provider(
         "weight_estimate": provider_field(typing.Any, default = None),  # ["artifact", None]
         # a file containing the exact method_ids_size, field_ids_size, and type_ids_size
         # from the DEX header. Format: "<method_ref_count> <field_ref_count> <type_ref_count>"
-        # (single line). These are the actual counts that the 64K DEX limits apply to,
-        # unlike weight_estimate which is a byte-size proxy.
+        # (first line, summed over the .dex.jar's dex files). These are the actual counts that
+        # the 64K DEX limits apply to, unlike weight_estimate which is a byte-size proxy. When the
+        # dex toolchain sets class_ref_counts, a library over a 64K limit without synthetic
+        # classes also gets one "<method_ref_count> <field_ref_count> <type_ref_count> <class>"
+        # line per class, counted with D8 dexing that class alone.
         "ref_count": provider_field(typing.Any, default = None),  # ["artifact", None]
         # a file mapping each synthetic class D8 created to the class it was synthesized from,
         # one "<synthetic> <context>" pair per line. A synthetic must be placed in the same dex
@@ -76,6 +79,8 @@ def get_dex_produced_from_java_library(
 
     ref_count_file = ctx.actions.declare_output(prefix + "_ref_count.txt", has_content_based_path = True)
     d8_cmd.add(["--ref-count-path", ref_count_file.as_output()])
+    if dex_toolchain.class_ref_counts:
+        d8_cmd.add("--class-ref-counts")
 
     synthetic_contexts_file = ctx.actions.declare_output(prefix + "_synthetic_contexts.txt", has_content_based_path = True)
     d8_cmd.add(["--synthetic-contexts-path", synthetic_contexts_file.as_output()])

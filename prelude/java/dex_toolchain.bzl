@@ -12,6 +12,8 @@ DexToolchainInfo = provider(
     doc = "Dex toolchain info",
     fields = {
         "android_jar": provider_field(typing.Any, default = None),
+        # Pre-dex also writes each class's ref counts for a library over a 64K limit.
+        "class_ref_counts": provider_field(bool, default = False),
         "d8_command": provider_field(typing.Any, default = None),
     },
 )

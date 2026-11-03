@@ -35,5 +35,8 @@ public enum D8Options {
 
   /** Fail if D8 produces multiple DEX files when a single output is expected */
   FAIL_ON_MULTIPLE_DEX,
+
+  /** Write each class to its own DEX file in the output directory */
+  FILE_PER_CLASS,
   ;
 }

@@ -17,6 +17,9 @@ import com.google.common.base.Preconditions;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.Iterables;
+import com.google.common.io.MoreFiles;
+import com.google.common.io.RecursiveDeleteOption;
+import java.io.File;
 import java.io.IOException;
 import java.io.InputStream;
 import java.nio.ByteBuffer;
@@ -33,6 +36,7 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
+import java.util.stream.Stream;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipFile;
 import org.jetbrains.annotations.Nullable;
@@ -103,6 +107,13 @@ public class D8ExecutableMain {
   @Option(name = "--ref-count-path")
   @Nullable
   private String refCountOutput = null;
+
+  /**
+   * Also write each class's ref counts to the ref count file, for a library over a 64K limit. This
+   * dexes the library a second time, one class at a time.
+   */
+  @Option(name = "--class-ref-counts")
+  private boolean classRefCounts = false;
 
   @Option(name = "--synthetic-contexts-path")
   @Nullable
@@ -186,6 +197,7 @@ public class D8ExecutableMain {
   private static final int DEX_TYPE_IDS_SIZE_OFFSET = 64;
   private static final int DEX_FIELD_IDS_SIZE_OFFSET = 80;
   private static final int DEX_METHOD_IDS_SIZE_OFFSET = 88;
+  private static final int DEX_REF_LIMIT = 65536;
 
   public static void main(String[] args) throws IOException {
     D8ExecutableMain main = new D8ExecutableMain();
@@ -308,6 +320,7 @@ public class D8ExecutableMain {
         int methodRefCount = 0;
         int fieldRefCount = 0;
         int typeRefCount = 0;
+        ImmutableList<String> classLines = ImmutableList.of();
 
         // For pre-dex (intermediate) mode, the output is a .dex.jar containing one or
         // more .dex files (classes.dex, classes2.dex, ...).  We sum ref counts across
@@ -322,6 +335,18 @@ public class D8ExecutableMain {
             methodRefCount = jarCounts.methodIds;
             fieldRefCount = jarCounts.fieldIds;
             typeRefCount = jarCounts.typeIds;
+          }
+          if (wantsClassRefCounts(
+              classRefCounts,
+              new DexRefCounts(methodRefCount, fieldRefCount, typeRefCount),
+              d8InternalData.getSyntheticToSynthesizingContext())) {
+            Path perClassDexDir = Files.createTempDirectory("dexFilePerClass");
+            try {
+              dexEachClass(perClassDexDir, filesToDex, classpathFiles, minSdkVersion);
+              classLines = getClassRefCountLines(perClassDexDir);
+            } finally {
+              MoreFiles.deleteRecursively(perClassDexDir, RecursiveDeleteOption.ALLOW_INSECURE);
+            }
           }
         } else if (outputPath.toString().endsWith(".dex")) {
           if (!outputPath.toFile().exists()) {
@@ -343,7 +368,10 @@ public class D8ExecutableMain {
 
         Files.write(
             refCountPath,
-            Collections.singletonList(methodRefCount + " " + fieldRefCount + " " + typeRefCount));
+            ImmutableList.<String>builder()
+                .add(methodRefCount + " " + fieldRefCount + " " + typeRefCount)
+                .addAll(classLines)
+                .build());
       }
 
       if (syntheticContextsPath.isPresent()) {
@@ -443,6 +471,76 @@ public class D8ExecutableMain {
       }
     }
     return new DexRefCounts(methodRefCount, fieldRefCount, typeRefCount);
+  }
+
+  /**
+   * Whether to add each class's ref counts to the ref count file: they were asked for, the library
+   * is over a 64K limit, and D8 made no synthetic classes for it. A merge can move a synthetic
+   * class next to the class it came from, so its counts would not stay with the class they were
+   * measured for.
+   */
+  static boolean wantsClassRefCounts(
+      boolean classRefCounts, DexRefCounts libraryCounts, Map<String, String> syntheticToContext) {
+    return classRefCounts
+        && Math.max(
+                libraryCounts.methodIds, Math.max(libraryCounts.fieldIds, libraryCounts.typeIds))
+            > DEX_REF_LIMIT
+        && syntheticToContext.isEmpty();
+  }
+
+  /** Dexes each class to its own dex file in {@code perClassDexDir}. */
+  private void dexEachClass(
+      Path perClassDexDir,
+      ImmutableSet<Path> filesToDex,
+      ImmutableSet<Path> classpathFiles,
+      Optional<Integer> minSdkVersion)
+      throws CompilationFailedException, IOException {
+    D8Utils.runD8Command(
+        new D8Utils.D8DiagnosticsHandler(),
+        perClassDexDir,
+        filesToDex,
+        ImmutableSet.<D8Options>builder()
+            .addAll(getD8Options())
+            .add(D8Options.FILE_PER_CLASS)
+            .build(),
+        Optional.empty(),
+        Paths.get(androidJar),
+        classpathFiles,
+        minSdkVersion);
+  }
+
+  /**
+   * Returns one "{@code <method_ids> <field_ids> <type_ids> <class>}" line per dex file under
+   * {@code perClassDexDir}, each holding a single class. Their sum bounds the ref counts of any
+   * group of those classes. Returns no lines when a class name holds a space, as the line could not
+   * be read back.
+   */
+  static ImmutableList<String> getClassRefCountLines(Path perClassDexDir) throws IOException {
+    ImmutableList<Path> dexFiles;
+    try (Stream<Path> paths = Files.walk(perClassDexDir)) {
+      dexFiles =
+          paths
+              .filter(path -> path.toString().endsWith(".dex"))
+              .sorted()
+              .collect(ImmutableList.toImmutableList());
+    }
+    ImmutableList.Builder<String> lines = ImmutableList.builder();
+    for (Path dexFile : dexFiles) {
+      String relativePath =
+          perClassDexDir.relativize(dexFile).toString().replace(File.separatorChar, '/');
+      String className = relativePath.substring(0, relativePath.length() - ".dex".length());
+      if (className
+          .codePoints()
+          .anyMatch(c -> Character.isWhitespace(c) || Character.isSpaceChar(c))) {
+        return ImmutableList.of();
+      }
+      DexRefCounts counts;
+      try (InputStream is = Files.newInputStream(dexFile)) {
+        counts = readDexRefCounts(is);
+      }
+      lines.add(counts.methodIds + " " + counts.fieldIds + " " + counts.typeIds + " " + className);
+    }
+    return lines.build();
   }
 
   /** Converts D8 type descriptors ("Lcom/example/Foo;") to internal names ("com/example/Foo"). */

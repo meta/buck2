@@ -14,6 +14,7 @@ import com.android.tools.r8.ByteDataView;
 import com.android.tools.r8.CompilationFailedException;
 import com.android.tools.r8.CompilationMode;
 import com.android.tools.r8.D8Command;
+import com.android.tools.r8.DexFilePerClassFileConsumer;
 import com.android.tools.r8.DexIndexedConsumer;
 import com.android.tools.r8.Diagnostic;
 import com.android.tools.r8.DiagnosticsHandler;
@@ -237,7 +238,9 @@ public class D8Utils {
                 });
 
     OutputClassDescriptorConsumer outputClassDescriptorConsumer = null;
-    if (outputOptions.contains(D8OutputOption.CLASS_DESCRIPTORS)) {
+    if (options.contains(D8Options.FILE_PER_CLASS)) {
+      builder.setProgramConsumer(new DexFilePerClassFileConsumer.DirectoryConsumer(output));
+    } else if (outputOptions.contains(D8OutputOption.CLASS_DESCRIPTORS)) {
       outputClassDescriptorConsumer = new OutputClassDescriptorConsumer(recordingConsumer);
       builder.setProgramConsumer(outputClassDescriptorConsumer);
     } else {

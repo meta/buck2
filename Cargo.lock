@@ -11308,7 +11308,7 @@ dependencies = [
  "toml_datetime",
  "toml_parser",
  "toml_writer",
- "winnow 1.0.4",
+ "winnow",
 ]
 
 [[package]]
@@ -11329,7 +11329,7 @@ dependencies = [
  "indexmap",
  "toml_datetime",
  "toml_parser",
- "winnow 1.0.4",
+ "winnow",
 ]
 
 [[package]]
@@ -11338,7 +11338,7 @@ version = "1.1.5+spec-1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "baa693a8032d7e1cada7d0041e96126df243179ff061456783ac7f12bda4744c"
 dependencies = [
- "winnow 1.0.4",
+ "winnow",
 ]
 
 [[package]]
@@ -12902,15 +12902,6 @@ dependencies = [
 
 [[package]]
 name = "winnow"
-version = "0.7.15"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "df79d97927682d2fd8adb29682d1140b343be4ac0f08fd68b7765d9c059d3945"
-dependencies = [
- "memchr",
-]
-
-[[package]]
-name = "winnow"
 version = "1.0.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "23b97319f7b8343df12cc98938e5c3eb436064524c8d2b4e30a1d3a36eecdf81"
@@ -13077,8 +13068,9 @@ dependencies = [
 
 [[package]]
 name = "zbus"
-version = "5.14.0"
-source = "git+https://github.com/z-galaxy/zbus?rev=40d8995fa012652c1b1e1e9bd96e54327024be09#40d8995fa012652c1b1e1e9bd96e54327024be09"
+version = "5.19.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5db4be7c075cb421e4b7ee645541604239bd243ba7c357511f4ff3a74b555907"
 dependencies = [
  "async-broadcast",
  "async-executor",
@@ -13103,7 +13095,7 @@ dependencies = [
  "uds_windows",
  "uuid",
  "windows-sys 0.61.2",
- "winnow 0.7.15",
+ "winnow",
  "zbus_macros",
  "zbus_names",
  "zvariant",
@@ -13111,13 +13103,14 @@ dependencies = [
 
 [[package]]
 name = "zbus_macros"
-version = "5.14.0"
-source = "git+https://github.com/z-galaxy/zbus?rev=40d8995fa012652c1b1e1e9bd96e54327024be09#40d8995fa012652c1b1e1e9bd96e54327024be09"
+version = "5.19.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2990635d09ade6df1868f72f8cac69a876a90981e8bd3c40b1be413f8dc88f40"
 dependencies = [
  "proc-macro-crate",
  "proc-macro2",
  "quote",
- "syn 2.0.119",
+ "syn 3.0.9",
  "zbus_names",
  "zvariant",
  "zvariant_utils",
@@ -13125,12 +13118,22 @@ dependencies = [
 
 [[package]]
 name = "zbus_names"
-version = "4.3.1"
-source = "git+https://github.com/z-galaxy/zbus?rev=40d8995fa012652c1b1e1e9bd96e54327024be09#40d8995fa012652c1b1e1e9bd96e54327024be09"
+version = "4.3.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "812a12be4ead7a59e18ea8f047d08add0066b73bc62fc1467066a2472ae088dd"
 dependencies = [
  "serde",
- "winnow 0.7.15",
+ "winnow",
  "zvariant",
+]
+
+[[package]]
+name = "zcheapstr"
+version = "1.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "939f186d9ecebe044315a5cb6d6f78568bbc21152adc954d5a0c2f58bdbc9920"
+dependencies = [
+ "serde",
 ]
 
 [[package]]
@@ -13284,48 +13287,47 @@ dependencies = [
 
 [[package]]
 name = "zvariant"
-version = "5.10.0"
-source = "git+https://github.com/z-galaxy/zbus?rev=40d8995fa012652c1b1e1e9bd96e54327024be09#40d8995fa012652c1b1e1e9bd96e54327024be09"
+version = "5.15.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "80bf6d6cd6a4b601acb64cfb8284cdc643fcfa75ef26ae3c46ec8aa4e8a1fbb7"
 dependencies = [
  "endi",
  "enumflags2",
  "serde",
  "url",
- "winnow 0.7.15",
+ "winnow",
+ "zcheapstr",
  "zvariant_derive",
  "zvariant_utils",
 ]
 
 [[package]]
 name = "zvariant_derive"
-version = "5.10.0"
-source = "git+https://github.com/z-galaxy/zbus?rev=40d8995fa012652c1b1e1e9bd96e54327024be09#40d8995fa012652c1b1e1e9bd96e54327024be09"
+version = "5.15.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ef2672456ba1cb54b5eaec136e63135b3c7495fb938e53b28a62e633496d486d"
 dependencies = [
  "proc-macro-crate",
  "proc-macro2",
  "quote",
- "syn 2.0.119",
+ "syn 3.0.9",
  "zvariant_utils",
 ]
 
 [[package]]
 name = "zvariant_utils"
-version = "3.3.0"
-source = "git+https://github.com/z-galaxy/zbus?rev=40d8995fa012652c1b1e1e9bd96e54327024be09#40d8995fa012652c1b1e1e9bd96e54327024be09"
+version = "4.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bad0294361a320b694a328460dc73add56c306150f5cb6bfafc44446120008a3"
 dependencies = [
  "proc-macro2",
  "quote",
  "serde",
- "syn 2.0.119",
- "winnow 0.7.15",
+ "syn 3.0.9",
+ "winnow",
 ]
 
 [[patch.unused]]
 name = "bindgen"
 version = "0.72.1"
 source = "git+https://github.com/jsgf/rust-bindgen?rev=4d385d21c160e6ee1f443aeb7e00528a1dc7fd44#4d385d21c160e6ee1f443aeb7e00528a1dc7fd44"
-
-[[patch.unused]]
-name = "zbus_xml"
-version = "5.1.0"
-source = "git+https://github.com/z-galaxy/zbus?rev=40d8995fa012652c1b1e1e9bd96e54327024be09#40d8995fa012652c1b1e1e9bd96e54327024be09"

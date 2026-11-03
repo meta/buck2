@@ -46,11 +46,6 @@ rustflags = ["--cfg", "tokio_unstable"]
 # @oss-disable: rev = "05343b387085842b434d267f91b6b0ec157e4331"
 # @oss-disable: replace-with = "vendored-sources"
 
-# @oss-disable: [source."git+https://github.com/z-galaxy/zbus?rev=40d8995fa012652c1b1e1e9bd96e54327024be09"]
-# @oss-disable: git = "https://github.com/z-galaxy/zbus"
-# @oss-disable: rev = "40d8995fa012652c1b1e1e9bd96e54327024be09"
-# @oss-disable: replace-with = "vendored-sources"
-
 # @oss-disable: [source.vendored-sources]
 # @oss-disable: directory = "../../third-party/rust/vendor"
 

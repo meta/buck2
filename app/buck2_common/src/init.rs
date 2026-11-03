@@ -484,40 +484,6 @@ pub enum LogDownloadMethod {
     None,
 }
 
-#[derive(
-    Allocative,
-    Clone,
-    Debug,
-    Default,
-    Serialize,
-    Deserialize,
-    PartialEq,
-    Eq
-)]
-pub struct HealthCheckConfig {
-    pub enable_health_checks: bool,
-    pub disabled_health_check_names: Option<String>,
-}
-
-impl HealthCheckConfig {
-    pub fn from_config(config: &LegacyBuckConfig) -> buck2_error::Result<Self> {
-        let enable_health_checks = config.parse(BuckconfigKeyRef {
-            section: "buck2_health_check",
-            property: "enable_health_checks",
-        })?;
-        let disabled_health_check_names = config.parse(BuckconfigKeyRef {
-            section: "buck2_health_check",
-            property: "disabled_health_check_names",
-        })?;
-
-        Ok(Self {
-            // TODO(rajneeshl): When the rollout is successful, change this to default to true.
-            enable_health_checks: enable_health_checks.unwrap_or(false),
-            disabled_health_check_names,
-        })
-    }
-}
-
 /// Pagable DICE storage settings, present (`Some`) only when paging is enabled by
 /// the `hydration` Buck settings. `page_out_on_idle` also implies paging is
 /// enabled. When present, the daemon
@@ -593,7 +559,6 @@ pub struct DaemonStartupOptions {
     pub http: HttpConfig,
     pub resource_control: ResourceControlConfig,
     pub log_download_method: LogDownloadMethod,
-    pub health_check_config: HealthCheckConfig,
     pub macos_qos_class: Option<MacosQosClass>,
     pub daemon_idle_timeout_s: Option<u64>,
     /// Pagable DICE storage settings, or `None` when paging is disabled.
@@ -662,7 +627,6 @@ impl DaemonStartupConfig {
             http: HttpConfig::from_settings(&settings.http, config)?,
             resource_control: ResourceControlConfig::from_config(config)?,
             log_download_method,
-            health_check_config: HealthCheckConfig::from_config(config)?,
             macos_qos_class: {
                 if buck2_env!("BUCK2_DISABLE_MACOS_QOS", bool)? {
                     return Err(buck2_error::buck2_error!(
@@ -723,7 +687,6 @@ impl DaemonStartupConfig {
             } else {
                 LogDownloadMethod::None
             },
-            health_check_config: HealthCheckConfig::default(),
             macos_qos_class: None,
             daemon_idle_timeout_s: None,
             hydration: None,

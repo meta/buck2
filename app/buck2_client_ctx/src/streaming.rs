@@ -72,12 +72,10 @@ fn update_events_ctx<T: StreamingCommand>(
     let log_size_counter_bytes = Some(Arc::new(AtomicU64::new(0)));
 
     let enable_health_checks = ctx
-        .immediate_config
-        .daemon_startup_config()
-        .map(|daemon_startup_config| {
-            daemon_startup_config.startup_options
-                .health_check_config
-                .enable_health_checks
+        .buck_settings()
+        .and_then(|settings| {
+            let mut buckconfig = ctx.immediate_config.root_config()?;
+            settings.invocation.health_check.enabled(&mut buckconfig)
         })
         .unwrap_or(false)
         // Force-enable health checks when the test override is set.

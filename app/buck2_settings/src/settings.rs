@@ -23,6 +23,7 @@ use crate::buckconfig::BuckconfigSource;
 use crate::daemon::Daemon;
 use crate::digest::Digest;
 use crate::event_log::EventLog;
+use crate::health_check::HealthCheck;
 use crate::http::Http;
 use crate::hydration::Hydration;
 use crate::log_download::LogDownload;
@@ -163,6 +164,7 @@ buck_settings! {
         agent_interactive: AgentInteractive,
         agent_materialization: AgentMaterialization,
         event_log: EventLog,
+        health_check: HealthCheck,
     }
 }
 
@@ -398,21 +400,20 @@ mod tests {
             r#"{"agent_materialization":{"enabled":false},"agent_interactive":{"enabled":true,"killall_enabled":true},"analysis":{"record_requested_anon_targets":false}}"#,
         )?;
         let request = serde_json::to_string(&client.invocation)?;
-        let values: Value = serde_json::from_str(&request)?;
-        assert_eq!(
-            values,
-            serde_json::json!({
-                "agent_config_change": {"enabled": null},
-                "agent_materialization": {"enabled": false},
-                "agent_interactive": {
-                    "enabled": true,
-                    "killall_enabled": true,
-                    "clean_enabled": null,
-                    "new_isolation_dir_enabled": null,
-                },
-                "event_log": {"retained_logs": null},
-            })
-        );
+        let values: serde_json::Map<String, Value> = serde_json::from_str(&request)?;
+        // Every invocation section travels, set or not, and nothing else.
+        let mut sections: Vec<&str> = values.keys().map(String::as_str).collect();
+        sections.sort_unstable();
+        let mut invocation_sections: Vec<&str> = ALL_SECTION_METADATA
+            .iter()
+            .filter(|section| matches!(section.scope, SectionScope::Invocation))
+            .map(|section| section.section_name)
+            .collect();
+        invocation_sections.sort_unstable();
+        assert_eq!(sections, invocation_sections);
+        assert_eq!(values["agent_materialization"]["enabled"], false);
+        assert_eq!(values["agent_interactive"]["killall_enabled"], true);
+        assert_eq!(values["agent_interactive"]["clean_enabled"], Value::Null);
         let invocation = InvocationBuckSettings::from_request(Some(&request))?;
         assert_eq!(invocation, client.invocation);
         assert!(invocation.agent_interactive.killall_enabled());

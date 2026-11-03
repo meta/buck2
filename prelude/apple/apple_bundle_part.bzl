@@ -109,7 +109,6 @@ def assemble_bundle(
     extra_hidden: list[Artifact] = [],
     skip_adhoc_signing: bool = False,
     incremental_bundling_override = None,
-    swift_sources_file: [str, None] = None,
 ) -> AppleBundleConstructionResult:
     """
     Returns extra subtargets related to bundling.
@@ -396,8 +395,6 @@ def assemble_bundle(
         if extension_allowed:
             command.add("--include-build-info-file")
             command.add("--build-info-swift-dynamic-replacement", "true" if getattr(ctx.attrs, "_swift_dynamic_replacement_enabled", False) else "false")
-            if swift_sources_file:
-                command.add("--build-info-swift-sources", swift_sources_file)
     command.add(codesign_configuration_args)
 
     bundle_telemetry_logger = tools.bundle_telemetry_logger

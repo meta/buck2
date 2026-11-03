@@ -43,8 +43,7 @@ load(
     "get_swift_pcm_uncompile_info",
     "get_swiftmodule_linkable",
 )
-load("@prelude//apple/swift:swift_dynamic_replacement_sources.bzl", "swift_dynamic_replacement_sources_info")
-load("@prelude//apple/swift:swift_helpers.bzl", "get_swift_dynamic_thunk_entry_point_name", "uses_dynamic_replacement", "uses_explicit_modules")
+load("@prelude//apple/swift:swift_helpers.bzl", "get_swift_dynamic_thunk_entry_point_name", "uses_explicit_modules")
 load(
     "@prelude//apple/swift:swift_incremental_support.bzl",
     "get_uses_content_based_paths",
@@ -233,12 +232,7 @@ def apple_library_impl(ctx: AnalysisContext) -> [Promise, list[Provider]]:
         )
         output = cxx_library_parameterized(ctx, constructor_params)
 
-        swift_sources_info = swift_dynamic_replacement_sources_info(
-            ctx,
-            cxx_attr_deps(ctx) + cxx_attr_exported_deps(ctx),
-            [s.file for s in _filter_swift_srcs(ctx)[1]] if uses_dynamic_replacement(ctx) else [],
-        )
-        return output.providers + _make_mockingbird_library_info_provider(ctx) + graphql_providers(ctx) + ([swift_sources_info] if swift_sources_info else [])
+        return output.providers + _make_mockingbird_library_info_provider(ctx) + graphql_providers(ctx)
 
     if uses_explicit_modules(ctx):
         providers = get_swift_anonymous_targets(ctx, get_apple_library_providers)

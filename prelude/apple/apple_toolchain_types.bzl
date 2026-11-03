@@ -82,6 +82,5 @@ AppleToolsInfo = provider(
         # not provide it.
         "make_swift_dynamic_thunk": provider_field(RunInfo | None, default = None),
         "make_swift_dynamic_thunk_command_database": provider_field(RunInfo | None, default = None),
-        "make_swift_dynamic_replacement_sources": provider_field(RunInfo | None, default = None),
     },
 )

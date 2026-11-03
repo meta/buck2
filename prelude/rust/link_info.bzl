@@ -389,7 +389,7 @@ def gather_explicit_sysroot_deps(dep_ctx: DepCollectionContext) -> list[RustOrNa
                     flags = ["noprelude", "nounused"],
                 )
             )
-    for d in explicit_sysroot_deps.others:
+    for d in filter(None, [explicit_sysroot_deps.alloc, explicit_sysroot_deps.compiler_builtins]) + explicit_sysroot_deps.others:
         out.append(
             RustOrNativeDependency(
                 dep = d,

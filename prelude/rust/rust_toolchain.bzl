@@ -25,6 +25,8 @@ RustExplicitSysrootDeps = record(
     std = Dependency | None,
     panic_unwind = Dependency | None,
     panic_abort = Dependency | None,
+    alloc = field(Dependency | None, None),
+    compiler_builtins = field(Dependency | None, None),
     others = list[Dependency],
 )
 

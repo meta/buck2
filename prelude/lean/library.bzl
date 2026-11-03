@@ -18,7 +18,8 @@ Imports resolve through `LEAN_PATH`: every module of a library writes its
 lists that directory for its own library and for every library it depends on,
 each once, in dependency order. Two libraries cannot have a module of the same
 name. The inputs of a module are only the `.olean` and IR files of the modules
-it imports, transitively.
+it imports, transitively, and the `resources` of the target: files that the
+modules read at compile time with `include_str`.
 """
 
 load("@prelude//cxx:archive.bzl", "archive_flags")
@@ -79,6 +80,7 @@ def _compile_impl(
     deps_json: ArtifactValue,
     src_names: list[str],
     src_files: list[Artifact],
+    resources: list[Artifact],
     dep_values: list[ResolvedDynamicValue],
     lean: RunInfo,
     lean_flags: list[typing.Any],
@@ -179,7 +181,7 @@ def _compile_impl(
                 "-c",
                 c_file.as_output(),
                 lean_flags,
-                hidden = [part.as_output() for part in parts] + [s.project_as_args("artifacts") for s in import_sets],
+                hidden = [part.as_output() for part in parts] + [s.project_as_args("artifacts") for s in import_sets] + resources,
             ),
             env = {"LEAN_PATH": cmd_args([root] + dep_roots.values(), delimiter = lean_path_separator)},
             category = "lean",
@@ -242,6 +244,7 @@ _compile = dynamic_actions(
         "lean_flags": dynattrs.value(list[typing.Any]),
         "lean_path_separator": dynattrs.value(str),
         "object_extension": dynattrs.value(str),
+        "resources": dynattrs.value(list[Artifact]),
         "src_files": dynattrs.value(list[Artifact]),
         "src_names": dynattrs.value(list[str]),
     },
@@ -318,6 +321,7 @@ def compile_lean_library(ctx: AnalysisContext, link_whole: bool) -> struct:
             deps_json = deps_json,
             src_names = src_names,
             src_files = src_files,
+            resources = ctx.attrs.resources,
             dep_values = [dep[LeanLibraryInfo].modules for dep in lean_deps],
             lean = toolchain.lean,
             lean_flags = toolchain.lean_flags + ctx.attrs.lean_flags,
@@ -398,6 +402,11 @@ lean_library_attrs = {
         providers = [LeanToolchainInfo],
         default = "toolchains//:lean",
         doc = "The Lean toolchain. Bootstrap builds of the core library set it to an earlier stage.",
+    ),
+    "resources": attrs.list(
+        attrs.source(),
+        default = [],
+        doc = "Files that the modules read at compile time, with `include_str`. Every `lean` action of the target gets them as inputs, at their source paths, so a module reaches them with a path relative to its own file. They are not runtime resources of a `lean_binary`.",
     ),
     "root": attrs.string(
         default = "",

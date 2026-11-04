@@ -24,6 +24,12 @@ load(
 )
 # @oss-disable[end= ]: load("@prelude//apple/meta_only:apple_bundle_meta_validation.bzl", "apple_bundle_meta_validation")
 # @oss-disable[end= ]: load("@prelude//apple/meta_only:linker_outputs.bzl", "subtargets_for_apple_bundle_extra_outputs")
+load(
+    "@prelude//apple/swift:swift_dynamic_replacement_targets.bzl",
+    "SWIFT_DYNAMIC_REPLACEMENT_TARGETS_SUBTARGET",
+    "swift_dynamic_replacement_targets_info",
+    "write_swift_dynamic_replacement_targets",
+)
 load("@prelude//apple/user:apple_selected_debug_path_file.bzl", "SELECTED_DEBUG_PATH_FILE_NAME")
 load("@prelude//apple/user:apple_selective_debugging.bzl", "AppleSelectiveDebuggingInfo")
 load("@prelude//apple/validation:required_reasons.bzl", "get_required_reasons_validator_output")
@@ -451,6 +457,13 @@ def apple_bundle_impl(ctx: AnalysisContext) -> list[Provider]:
 
     deps_with_binary = ctx.attrs.deps + get_flattened_binary_deps(ctx.attrs.binary)
 
+    # The libraries below compiled for Swift dynamic replacement, as a JSON list
+    # a hot reload session reads; an inner bundle also forwards them to the app.
+    swift_dynamic_replacement_targets = swift_dynamic_replacement_targets_info(ctx, deps_with_binary, False)
+    sub_targets[SWIFT_DYNAMIC_REPLACEMENT_TARGETS_SUBTARGET] = [
+        DefaultInfo(default_output = write_swift_dynamic_replacement_targets(ctx, swift_dynamic_replacement_targets)),
+    ]
+
     linker_maps_directory, linker_map_info = _linker_maps_data(ctx.actions, deps_with_binary)
     sub_targets["linker-maps"] = [DefaultInfo(default_output = linker_maps_directory)]
 
@@ -648,6 +661,8 @@ def apple_bundle_impl(ctx: AnalysisContext) -> list[Provider]:
     if xplugins_debug_info:
         providers.append(xplugins_debug_info)
     providers.append(xplugins_function_mapping_manifest_info)
+    if swift_dynamic_replacement_targets:
+        providers.append(swift_dynamic_replacement_targets)
 
     return providers
 

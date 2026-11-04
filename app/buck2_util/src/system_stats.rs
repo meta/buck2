@@ -73,6 +73,15 @@ pub fn system_memory_stats() -> u64 {
     system.total_memory()
 }
 
+/// The memory limit of the container this process runs in, as published by the container's
+/// launcher, or `None` outside such containers. Inside one, [`system_memory_stats`] reports the
+/// host's memory instead.
+pub fn container_memory_limit_bytes() -> Option<u64> {
+    buck2_env::env::buck2_env!("FAAS_CONTAINER_MEM_SOFT_LIMIT", type=u64, applicability=internal)
+        .ok()
+        .flatten()
+}
+
 // `sysinfo` calls `sysconf`s that Miri does not implement.
 #[cfg(all(test, not(miri)))]
 mod tests {

@@ -89,6 +89,7 @@ use buck2_server_ctx::streaming_request_handler::StreamingRequestHandler;
 use buck2_server_ctx::test_command::TEST_COMMAND;
 use buck2_server_starlark_debug::run::run_dap_server_command;
 use buck2_test::executor_launcher::get_all_test_executors;
+use buck2_util::system_stats::container_memory_limit_bytes;
 use buck2_util::system_stats::num_cores;
 use buck2_util::system_stats::system_memory_stats;
 use buck2_util::threads::thread_spawn;
@@ -736,6 +737,7 @@ impl BuckdServer {
                     }
                 },
                 num_cores: Some(num_cores() as u64),
+                container_memory_limit_bytes: container_memory_limit_bytes(),
             });
 
             // Fire off a snapshot before we start doing anything else. We use the metrics emitted here

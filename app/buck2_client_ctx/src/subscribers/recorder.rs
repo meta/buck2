@@ -1178,6 +1178,7 @@ impl InvocationRecorder {
                 .time_to_first_unknown_test_result
                 .and_then(duration_as_millis),
             system_total_memory_bytes: self.system_info.system_total_memory_bytes,
+            container_memory_limit_bytes: self.system_info.container_memory_limit_bytes,
             file_watcher_stats: self.file_watcher_stats.take(),
             file_watcher_duration_ms: self.file_watcher_duration.and_then(duration_as_millis),
             time_to_last_action_execution_end_ms: self
@@ -3232,5 +3233,52 @@ mod tests {
 
         let record = record_after_lookups(4, 10).await;
         assert_eq!(record.re_average_local_cache_lookup_microseconds, Some(2.5));
+    }
+
+    async fn record_after_system_info(
+        system_info: buck2_data::SystemInfo,
+    ) -> buck2_data::InvocationRecord {
+        let trace_id = TraceId::new();
+        let start = SystemTime::now();
+        let mut recorder = InvocationRecorder::new(trace_id.clone(), None, start, vec![]);
+        recorder
+            .handle_events(&[Arc::new(BuckEvent::new(
+                start,
+                trace_id,
+                None,
+                None,
+                buck2_data::buck_event::Data::Instant(buck2_data::InstantEvent {
+                    data: Some(system_info.into()),
+                }),
+            ))])
+            .await
+            .unwrap();
+        record_of(&recorder.create_record_event())
+    }
+
+    #[tokio::test]
+    async fn test_container_memory_limit_is_copied_from_system_info() {
+        let record = record_after_system_info(buck2_data::SystemInfo {
+            system_total_memory_bytes: Some(256 << 30),
+            container_memory_limit_bytes: Some(32 << 30),
+            ..Default::default()
+        })
+        .await;
+        assert_eq!(record.container_memory_limit_bytes, Some(32 << 30));
+        assert_eq!(
+            record.system_total_memory_bytes,
+            Some(256 << 30),
+            "the host's memory is still logged alongside the container's limit"
+        );
+
+        let record = record_after_system_info(buck2_data::SystemInfo {
+            system_total_memory_bytes: Some(256 << 30),
+            ..Default::default()
+        })
+        .await;
+        assert_eq!(
+            record.container_memory_limit_bytes, None,
+            "outside a container the limit is absent, not the host's memory"
+        );
     }
 }

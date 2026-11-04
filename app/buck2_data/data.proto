@@ -3565,6 +3565,8 @@ message InvocationRecord {
   optional uint64 time_to_first_command_execution_start_ms = 45;
   // Total system memory in bytes
   optional uint64 system_total_memory_bytes = 46;
+  // See `SystemInfo.container_memory_limit_bytes`.
+  optional uint64 container_memory_limit_bytes = 776;
   // Information of file changes provided by file watcher
   FileWatcherStats file_watcher_stats = 47;
   // How long did we spend querying the file watcher
@@ -4424,6 +4426,11 @@ message SystemInfo {
   optional string daemon_cgroup_slice_path = 13;
   // Number of CPU cores on the system (from sysconf _SC_NPROCESSORS_ONLN).
   optional uint64 num_cores = 14;
+  // Memory limit of the container the daemon runs in, as published by the
+  // container's launcher. Unlike `system_total_memory_bytes`, which reports
+  // the host, this is the container's own size. Absent outside such
+  // containers.
+  optional uint64 container_memory_limit_bytes = 15;
 }
 
 message CpuCounter {

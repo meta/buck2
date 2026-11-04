@@ -30,7 +30,7 @@ load(
     "generate_java_classpath_snapshot",
 )
 load("@prelude//java:java_toolchain.bzl", "JavaToolchainInfo")
-load("@prelude//jvm:attrs.bzl", "dex_min_sdk_version", "jvm_common")
+load("@prelude//jvm:attrs.bzl", "jvm_common", "min_sdk_version")
 
 def android_prebuilt_aar_impl(ctx: AnalysisContext) -> list[Provider]:
     manifest = ctx.actions.declare_output("AndroidManifest.xml", has_content_based_path = True)
@@ -256,7 +256,7 @@ android_prebuilt_aar = prelude_rule(
             "dex_weight_factor": attrs.int(default = 1),
             "for_primary_apk": attrs.bool(default = False),
             "maven_coords": attrs.option(attrs.string(), default = None),
-            "min_sdk_version": attrs.default_only(attrs.option(attrs.int(), default = dex_min_sdk_version())),
+            "min_sdk_version": attrs.default_only(attrs.option(attrs.int(), default = min_sdk_version())),
             "required_for_source_only_abi": attrs.bool(default = True),
             "_android_toolchain": toolchains_common.android(),
             "_build_only_native_code": attrs.default_only(attrs.bool(default = is_build_only_native_code())),

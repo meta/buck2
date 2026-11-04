@@ -364,7 +364,7 @@ jvm_common = struct(
     content_based_path_attr = _content_based_path_attr,
 )
 
-def dex_min_sdk_version():
+def min_sdk_version():
     min_sdk_version_dict = {"DEFAULT": None}
     for min_sdk in get_min_sdk_version_range():
         constraint = "prelude//android/constraints:{}".format(get_min_sdk_version_constraint_value_name(min_sdk))

@@ -138,7 +138,10 @@ def main(argv: list[str]) -> None:
         "--invalidation-mode",
         type=str,
         default=PycInvalidationMode.UNCHECKED_HASH.name,
-        choices=[PycInvalidationMode.UNCHECKED_HASH.name],
+        choices=[
+            PycInvalidationMode.UNCHECKED_HASH.name,
+            PycInvalidationMode.CHECKED_HASH.name,
+        ],
     )
     parser.add_argument(
         "--debug",

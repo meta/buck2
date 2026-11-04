@@ -9,9 +9,9 @@
 load(":manifest.bzl", "ManifestInfo")
 load(":toolchain.bzl", "PythonToolchainInfo")
 
-def compile_manifests(ctx: AnalysisContext, manifests: list[ManifestInfo]) -> ManifestInfo:
-    mode = "UNCHECKED_HASH"
-    has_content_based_path = ctx.attrs._python_toolchain[PythonToolchainInfo].supports_content_based_paths == True
+def compile_manifests(ctx: AnalysisContext, manifests: list[ManifestInfo], mode: str = "UNCHECKED_HASH") -> ManifestInfo:
+    # packagers only resolve content-based paths under `bytecode_UNCHECKED_HASH`
+    has_content_based_path = mode == "UNCHECKED_HASH" and ctx.attrs._python_toolchain[PythonToolchainInfo].supports_content_based_paths == True
     output = ctx.actions.declare_output("bytecode_{}".format(mode), dir = True, has_content_based_path = has_content_based_path)
     bytecode_manifest = ctx.actions.declare_output("bytecode_{}.manifest".format(mode), has_content_based_path = has_content_based_path)
     cmd = [

@@ -10,6 +10,7 @@ load("@fbcode//buck2/app:modifier.bzl", "buck2_modifiers")
 load("@fbcode_macros//build_defs:native_rules.bzl", "buck_filegroup")
 load("@fbcode_macros//build_defs:platform_utils.bzl", "platform_utils")
 load("@fbcode_macros//build_defs:python_unittest.bzl", "python_unittest")
+load("@fbsource//tools/build_defs/testinfra:network_access_utils.bzl", "network_access_utils")
 load("@fbsource//tools/target_determinator/macros:ci.bzl", "ci")
 load("@fbsource//tools/target_determinator/macros:ci_hint.bzl", "ci_hint")
 
@@ -45,6 +46,8 @@ def buck_e2e_test(
     labels = labels or []
     deps = deps or []
     cfg_modifiers = cfg_modifiers or []
+    if network_access == None:
+        network_access = network_access_utils.all()
 
     for s in skip_for_os:
         if s not in ["darwin", "windows"]:
@@ -137,11 +140,6 @@ def buck_e2e_test(
         # `remote_execution = False` pin — the narrow form — instead of a
         # directory-wide PACKAGE opt-out.
         remote_execution = remote_execution,
-        # Forwarded verbatim for the same reason as `remote_execution`: the
-        # nested buck2 these tests spawn is resolved through DotSlash and talks
-        # to RE, so a caller under a no-network PACKAGE
-        # (network_access_utils.set_package_default) needs the per-target pin to
-        # keep its own unit tests isolated.
         network_access = network_access,
         resources = resources,
         skip_on_mode_mac = "darwin" in skip_for_os,

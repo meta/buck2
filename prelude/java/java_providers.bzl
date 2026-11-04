@@ -804,7 +804,7 @@ def create_java_library_providers(
     desugar_classpath = None
     if needs_desugar and compiling_deps != None and _is_dexing_enabled(ctx):
         # Below API 24, D8 desugars interface method calls and needs synthetic members that ABI jars drop.
-        min_sdk_version = getattr(ctx.attrs, "min_sdk_version", None)
+        min_sdk_version = ctx.attrs.min_sdk_version
         abi_jars_suffice = min_sdk_version != None and int(min_sdk_version) >= 24
         desugar_classpath = compiling_deps.project_as_args("args_for_compiling" if abi_jars_suffice else "full_library_args")
 

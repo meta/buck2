@@ -85,7 +85,7 @@ def get_dex_produced_from_java_library(
     synthetic_contexts_file = ctx.actions.declare_output(prefix + "_synthetic_contexts.txt", has_content_based_path = True)
     d8_cmd.add(["--synthetic-contexts-path", synthetic_contexts_file.as_output()])
 
-    min_sdk_version = getattr(ctx.attrs, "min_sdk_version", None)
+    min_sdk_version = ctx.attrs.min_sdk_version
     if min_sdk_version:
         d8_cmd.add(["--min-sdk-version", str(min_sdk_version)])
 

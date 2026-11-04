@@ -746,6 +746,29 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ac07cdecf99051d9a5238b80f35af32cdeba5b336e55d957b318b50137e18da5"
 
 [[package]]
+name = "bazel_bep_proto"
+version = "0.1.0"
+dependencies = [
+ "buck2_protoc_dev",
+ "prost",
+ "prost-types",
+ "tonic",
+ "tonic-prost",
+]
+
+[[package]]
+name = "bes_grpc_proto"
+version = "0.1.0"
+dependencies = [
+ "buck2_protoc_dev",
+ "google_grpc_proto",
+ "prost",
+ "prost-types",
+ "tonic",
+ "tonic-prost",
+]
+
+[[package]]
 name = "bincode"
 version = "2.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1589,6 +1612,7 @@ dependencies = [
  "buck2_fs",
  "buck2_hash",
  "buck2_health_check",
+ "buck2_re_configuration",
  "buck2_resource_control",
  "buck2_settings",
  "buck2_util",
@@ -2486,6 +2510,8 @@ version = "0.1.0"
 dependencies = [
  "allocative",
  "async-trait",
+ "bazel_bep_proto",
+ "bes_grpc_proto",
  "buck2_build_info",
  "buck2_cli_proto",
  "buck2_core",
@@ -2494,21 +2520,30 @@ dependencies = [
  "buck2_hash",
  "buck2_util",
  "buck2_wrapper_common",
+ "chrono",
  "console",
  "crossbeam-channel",
  "derive_more 2.1.1",
  "dupe",
  "fbinit",
+ "flate2",
  "futures 0.3.34",
+ "google_grpc_proto",
  "hostname",
  "is_proc_translated",
  "pin-project",
  "prost",
+ "prost-types",
  "serde",
  "serde_json",
+ "sha2 0.11.1",
  "smallvec",
  "sys-info",
+ "tempfile",
  "tokio",
+ "tokio-stream",
+ "tonic",
+ "tracing",
  "uuid",
  "winver",
 ]
@@ -2674,6 +2709,7 @@ dependencies = [
  "buck2_build_api",
  "buck2_common",
  "buck2_core",
+ "buck2_data",
  "buck2_directory",
  "buck2_error",
  "buck2_execute",
@@ -3561,6 +3597,7 @@ dependencies = [
  "libc",
  "maplit",
  "pagable",
+ "prost-types",
  "remote_execution",
  "serde",
  "serde_json",
@@ -3939,6 +3976,7 @@ checksum = "1aa79e62e7697b8e29b513a68abacf485adcd1fe8284a4316c5ae868e6633327"
 dependencies = [
  "iana-time-zone",
  "num-traits",
+ "serde",
  "windows-link",
 ]
 
@@ -6009,6 +6047,19 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2c4ee00b289aba7a9e5306d57c2d05499b2e5dc427f84ac708bd2c090212cf3e"
 dependencies = [
  "gl_generator",
+]
+
+[[package]]
+name = "google_grpc_proto"
+version = "0.1.0"
+dependencies = [
+ "buck2_proto_serde",
+ "buck2_protoc_dev",
+ "prost",
+ "prost-types",
+ "serde",
+ "tonic",
+ "tonic-prost",
 ]
 
 [[package]]
@@ -9176,6 +9227,7 @@ version = "0.1.0"
 dependencies = [
  "buck2_proto_serde",
  "buck2_protoc_dev",
+ "google_grpc_proto",
  "prost",
  "prost-types",
  "serde",

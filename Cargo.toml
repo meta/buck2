@@ -179,6 +179,9 @@ members = [
   "pagable",
   "pagable_derive",
   "pagable_storage",
+  "remote_execution/oss/bazel_bep_proto",
+  "remote_execution/oss/bes_grpc_proto",
+  "remote_execution/oss/google_grpc_proto",
   "remote_execution/oss/re_grpc",
   "remote_execution/oss/re_grpc_proto",
   "shed/lock_free_hashtable",
@@ -225,6 +228,8 @@ async-stream = "0.3"
 async-trait = "0.1.92"
 backtrace = "0.3"
 base64 = { version = "0.23.1", features = ["alloc"] }
+bazel_bep_proto = { path = "remote_execution/oss/bazel_bep_proto" }
+bes_grpc_proto = { path = "remote_execution/oss/bes_grpc_proto" }
 bincode = { version = "2", features = ["serde"] }
 bit-set = "0.11.1"
 blake3 = { version = "1.8", features = ["mmap", "rayon", "traits-preview"] }
@@ -388,6 +393,7 @@ hostname = "0.4.2"
 http = "1.5.0"
 http-body = "1.1.0"
 http-body-util = "0.1.5"
+google_grpc_proto = { path = "remote_execution/oss/google_grpc_proto" }
 httparse = "1.7.1"
 httptest = "0.16.4"
 humantime = "2.4.0"

@@ -5,11 +5,15 @@ oncall("build_infra")
 rust_protobuf_library(
     name = "re_grpc_proto",
     srcs = glob(["src/**/*.rs"]),
+    build_env = {
+        "GOOGLE_PROTO_ROOT": "$(location //remote_execution/oss/google_grpc_proto:google_grpc_proto_sources)",
+    },
     build_script = "build.rs",
     protos = glob(["proto/**/*.proto"]),
     deps = [
         "fbsource//third-party/rust:prost-types",
         "fbsource//third-party/rust:serde",
         "//buck2/app/buck2_proto_serde:buck2_proto_serde",
+        "//buck2/remote_execution/oss/google_grpc_proto:google_grpc_proto",
     ],
 )

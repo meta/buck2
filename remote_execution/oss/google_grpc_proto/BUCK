@@ -1,0 +1,22 @@
+load("@fbcode//buck2:proto_defs.bzl", "rust_protobuf_library")
+load("@fbcode_macros//build_defs:native_rules.bzl", "buck_filegroup")
+
+oncall("build_infra")
+
+rust_protobuf_library(
+    name = "google_grpc_proto",
+    srcs = glob(["src/**/*.rs"]),
+    build_script = "build.rs",
+    protos = glob(["proto/**/*.proto"]),
+    deps = [
+        "fbsource//third-party/rust:prost-types",
+        "fbsource//third-party/rust:serde",
+        "//buck2/app/buck2_proto_serde:buck2_proto_serde",
+    ],
+)
+
+buck_filegroup(
+    name = "google_grpc_proto_sources",
+    srcs = glob(["proto/**/*.proto"]),
+    visibility = ["PUBLIC"],
+)

@@ -109,7 +109,11 @@ def _parse_args():
         type=pathlib.Path,
         required=True,
         nargs="+",
-        help="a path to a ref count file (format: '<method_count> <field_count> <type_count>')",
+        help=(
+            "a path to a ref count file ('<method_count> <field_count> <type_count>' for the"
+            " whole lib, optionally followed by one '<method_count> <field_count> <type_count>"
+            " <class>' line per class)"
+        ),
     )
     parser.add_argument(
         "--synthetic-contexts",
@@ -129,15 +133,29 @@ def _parse_args():
 
 
 def _parse_ref_counts(ref_count_path):
-    """Parse a ref count file containing '<method_count> <field_count> <type_count>'."""
+    """Parse a ref count file: '<method_count> <field_count> <type_count>' for the whole lib,
+    then, for a lib over a 64K limit, one '<method_count> <field_count> <type_count> <class>'
+    line per class."""
     with open(ref_count_path) as ref_count_file:
-        parts = ref_count_file.read().strip().split()
+        first_line, *class_lines = ref_count_file.read().strip().split("\n")
+        parts = first_line.split()
         if len(parts) != 3:
             raise ValueError(
                 f"Expected 3 values (method field type) in ref count file "
                 f"{ref_count_path}, got {len(parts)}: {parts!r}"
             )
-        return parts[0], parts[1], parts[2]
+        class_ref_counts = {}
+        for line in class_lines:
+            class_parts = line.split()
+            if len(class_parts) != 4:
+                return parts[0], parts[1], parts[2], {}
+            method_count, field_count, type_count, class_name = class_parts
+            try:
+                counts = [int(method_count), int(field_count), int(type_count)]
+            except ValueError:
+                return parts[0], parts[1], parts[2], {}
+            class_ref_counts[class_name + ".class"] = counts
+        return parts[0], parts[1], parts[2], class_ref_counts
 
 
 def _parse_synthetic_contexts(synthetic_contexts_path):
@@ -223,8 +241,8 @@ def main():
         with open(weight_estimate_path) as weight_estimate_file:
             weight_estimate = weight_estimate_file.read().strip()
 
-        method_ref_count, field_ref_count, type_ref_count = _parse_ref_counts(
-            ref_count_paths[i]
+        method_ref_count, field_ref_count, type_ref_count, class_ref_counts = (
+            _parse_ref_counts(ref_count_paths[i])
         )
 
         class_names_path = class_names_paths[i]
@@ -255,6 +273,8 @@ def main():
             "field_ref_count": field_ref_count,
             "type_ref_count": type_ref_count,
         }
+        if class_ref_counts:
+            json_output[dex_target_name]["class_ref_counts"] = class_ref_counts
 
     with open(output, "w") as output_file:
         json.dump(json_output, output_file, indent=4)

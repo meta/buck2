@@ -28,9 +28,7 @@ merge_dexes actions.
 from __future__ import annotations
 
 import argparse
-import itertools
 import json
-import math
 import pathlib
 from typing import Optional, TypedDict
 
@@ -49,6 +47,10 @@ ROOT_MODULE: str = "dex"
 # always <= sum of input refs, never more.
 DEX_REF_LIMIT: int = 65536
 
+# Each secondary dex merge also gets a canary interface: no methods or fields, and up to two
+# types (the canary and java/lang/Object).
+CANARY_TYPE_REF_COUNT: int = 2
+
 # Type aliases for the data structures used throughout.
 # A single entry in a dex group: {"id": <lib_id>, "class_names": [<class>, ...]}
 DexEntry = dict[str, object]
@@ -58,7 +60,12 @@ DexGroup = list[DexEntry]
 ModuleSortResult = dict[str, list[DexGroup]]
 
 
-class FilterDexInfo(TypedDict):
+class _OptionalFilterDexInfo(TypedDict, total=False):
+    # [method, field, type] ref counts of each class alone, for a lib over a 64K limit.
+    class_ref_counts: dict[str, list[int]]
+
+
+class FilterDexInfo(_OptionalFilterDexInfo):
     primary_dex_class_names: list[str]
     secondary_dex_class_names: list[str]
     weight_estimate: str
@@ -220,22 +227,61 @@ def _assign_to_dex(
     current_inputs.append({"id": lib_id, "class_names": dex_class_names})
 
 
-def _deal_pairs_round_robin(class_names: list[str], num_chunks: int) -> list[list[str]]:
-    """Deal adjacent class pairs round-robin across `num_chunks` buckets.
+def _split_to_fit(
+    chunk: list[str], class_ref_counts: dict[str, list[int]], reserved_types: int
+) -> list[list[str]]:
+    """Split a chunk into runs of classes whose summed ref counts fit one dex.
 
-    Pair-stride interleaves long runs of heavy classes across chunks while
-    preserving even-aligned adjacent pairs (e.g. a synthetic + its
-    synthesizing context, when adjacently aligned) in the same chunk;
-    odd-aligned pairs may still split. Buckets with no pairs are dropped,
-    so the result never contains empty chunks.
+    The sum over a run bounds its merged ref counts, since classes can only share refs. Classes
+    that share many refs can be split without needing it. A chunk that fits comes back whole, and
+    a class that does not fit even alone gets a run of its own.
     """
-    pairs = [class_names[i : i + 2] for i in range(0, len(class_names), 2)]
-    chunks = []
-    for chunk_idx in range(num_chunks):
-        chunk = list(itertools.chain.from_iterable(pairs[chunk_idx::num_chunks]))
-        if chunk:
-            chunks.append(chunk)
-    return chunks
+    limits = (DEX_REF_LIMIT, DEX_REF_LIMIT, DEX_REF_LIMIT - reserved_types)
+    runs: list[list[str]] = []
+    totals = [0, 0, 0]
+    for name in chunk:
+        counts = class_ref_counts[name]
+        if runs and all(t + c <= lim for t, c, lim in zip(totals, counts, limits)):
+            runs[-1].append(name)
+            totals = [t + c for t, c in zip(totals, counts)]
+        else:
+            runs.append([name])
+            totals = list(counts)
+    return runs
+
+
+def _chunk_oversized_lib(
+    dex_class_names: list[str],
+    weight_estimate: int,
+    ref_counts: tuple[int, int, int],
+    dex_weight_limit: Optional[int],
+    class_ref_counts: dict[str, list[int]],
+    reserved_types: int,
+) -> list[list[str]]:
+    """Chunk a lib over the weight limit or a 64K ref limit by class count.
+
+    Class count chunks assume refs are spread evenly over classes. For a lib over a ref limit,
+    a chunk that the per-class ref counts cannot show to fit is split further.
+    """
+    num_classes = len(dex_class_names)
+    chunks = max(
+        weight_estimate / dex_weight_limit if dex_weight_limit else 1,
+        *(ref / DEX_REF_LIMIT if ref > DEX_REF_LIMIT else 1 for ref in ref_counts),
+    )
+    chunk_size = max(1, int(num_classes // chunks))
+    chunked = [
+        dex_class_names[start_index : start_index + chunk_size]
+        for start_index in range(0, num_classes, chunk_size)
+    ]
+    if max(ref_counts) <= DEX_REF_LIMIT or not all(
+        name in class_ref_counts for name in dex_class_names
+    ):
+        return chunked
+    return [
+        run
+        for chunk in chunked
+        for run in _split_to_fit(chunk, class_ref_counts, reserved_types)
+    ]
 
 
 def _organize_lib(
@@ -253,6 +299,8 @@ def _organize_lib(
     current_method_refs_map: dict[str, int],
     current_field_refs_map: dict[str, int],
     current_type_refs_map: dict[str, int],
+    class_ref_counts: dict[str, list[int]],
+    reserved_types: int,
 ) -> None:
     """Organize a lib into dex groups, chunking classes if weight or ref counts exceed limits."""
     if len(dex_class_names) == 0:
@@ -270,24 +318,14 @@ def _organize_lib(
             is_oversized = True
 
     if is_oversized:
-        oversize_ratio = max(
-            weight_estimate / dex_weight_limit if dex_weight_limit else 1,
-            method_ref_count / DEX_REF_LIMIT if method_ref_count > DEX_REF_LIMIT else 1,
-            field_ref_count / DEX_REF_LIMIT if field_ref_count > DEX_REF_LIMIT else 1,
-            type_ref_count / DEX_REF_LIMIT if type_ref_count > DEX_REF_LIMIT else 1,
-        )
-        # Pair-stride across ceil(oversize_ratio) buckets. Contiguous chunking
-        # concentrates heavy classes that cluster together in lib order
-        # (e.g. adjacent classes emitted by codegen) in one chunk, so the
-        # tail dex can still exceed DEX_REF_LIMIT; interleaving spreads refs
-        # evenly. Non-adjacent affinity is not modeled; the sorter does not
-        # see those pairs yet.
-        # Known limitation: ceil() buckets leave no headroom, so skewed
-        # per-pair weights or cross-chunk shared refs can still overflow a
-        # chunk. The principled fix is per-class ref counts from filter_dex
-        # for ref-aware packing.
-        num_chunks = max(1, math.ceil(oversize_ratio))
-        for chunked in _deal_pairs_round_robin(dex_class_names, num_chunks):
+        for chunked in _chunk_oversized_lib(
+            dex_class_names,
+            weight_estimate,
+            (method_ref_count, field_ref_count, type_ref_count),
+            dex_weight_limit,
+            class_ref_counts,
+            reserved_types,
+        ):
             _assign_to_dex(
                 dest,
                 module,
@@ -372,6 +410,7 @@ def _sort_pre_dexed_files(
         lib_method_refs = int(filter_info["method_ref_count"])
         lib_field_refs = int(filter_info["field_ref_count"])
         lib_type_refs = int(filter_info["type_ref_count"])
+        class_ref_counts = filter_info.get("class_ref_counts", {})
 
         module_inputs = sorted_inputs[module]
 
@@ -398,6 +437,8 @@ def _sort_pre_dexed_files(
             current_primary_method_refs,
             current_primary_field_refs,
             current_primary_type_refs,
+            class_ref_counts,
+            0,  # primary and bootstrap dexes get no canary
         )
 
         # Organize secondary dex classes
@@ -416,6 +457,8 @@ def _sort_pre_dexed_files(
             current_secondary_method_refs,
             current_secondary_field_refs,
             current_secondary_type_refs,
+            class_ref_counts,
+            CANARY_TYPE_REF_COUNT,
         )
 
     return sorted_inputs

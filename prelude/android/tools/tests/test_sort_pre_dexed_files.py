@@ -26,11 +26,13 @@ import subprocess
 import tempfile
 import unittest
 
+from android.tools.filter_dex import _parse_ref_counts
 from android.tools.sort_pre_dexed_files import (
     _flatten_groups,
     _parse_module_graph,
     _sort_pre_dexed_files,
 )
+from android.tools.tests.generate_mobileconfig_fixture import fixture_expectations
 
 # Path to the tool script, relative to the link-tree layout
 _TOOL_MODULE_PATH = os.path.join(
@@ -38,6 +40,13 @@ _TOOL_MODULE_PATH = os.path.join(
 )
 
 _DEFAULT_WEIGHT_LIMIT = 12 * 1024 * 1024  # 12 MiB, matches Buck default
+
+# Raw pre_dex counts and expectations are captured together by
+# generate_mobileconfig_fixture.py. Its recipe pins the build's weight estimate,
+# fb4a's 5 MiB limit and independently reviewed group boundaries.
+_MOBILECONFIG_FIXTURE_PATH = os.path.join(
+    os.path.dirname(__file__), "testdata", "mobileconfig_definition_lib_ref_count"
+)
 
 _DEFAULT_REF_COUNTS = {
     "method_ref_count": "0",
@@ -65,6 +74,37 @@ def _sort(filter_data, lib_metadata, target_to_module=None, **kwargs):
         weight_limit=kwargs.get("weight_limit", _DEFAULT_WEIGHT_LIMIT),
         enable_bootstrap_dexes=kwargs.get("enable_bootstrap_dexes", False),
     )
+
+
+class MobileConfigFixtureTest(unittest.TestCase):
+    def test_checked_in_expectations_are_reproducible(self):
+        with open(_MOBILECONFIG_FIXTURE_PATH + ".txt") as f:
+            ref_counts = f.read()
+        with open(_MOBILECONFIG_FIXTURE_PATH + ".json") as f:
+            fixture = json.load(f)
+        self.assertEqual(
+            fixture_expectations(
+                ref_counts,
+                fixture["weight_estimate"],
+                [len(group["class_names"]) for group in fixture["expected_groups"]],
+                fixture["source_revision"],
+            ),
+            fixture,
+        )
+
+    def test_expected_counts_come_from_raw_class_rows(self):
+        fixture = fixture_expectations(
+            "2 30 4\n1 20 3 a/Z\n1 10 2 a/A\n", 100, [2], "test"
+        )
+        self.assertEqual(
+            fixture["expected_groups"],
+            [{"class_names": ["a/A.class", "a/Z.class"], "ref_counts": [2, 30, 5]}],
+        )
+
+    def test_group_sizes_must_cover_every_class(self):
+        for sizes in ([0, 1], [], [2]):
+            with self.subTest(sizes=sizes), self.assertRaises(ValueError):
+                fixture_expectations("1 2 3\n1 2 3 a/A\n", 100, sizes, "test")
 
 
 class SortPreDexedFilesTest(unittest.TestCase):
@@ -380,60 +420,136 @@ class SortPreDexedFilesTest(unittest.TestCase):
                 all_classes.extend(entry["class_names"])
         self.assertCountEqual(all_classes, classes)
 
-    def test_oversized_lib_pair_stride_splits_clustered_tail(self):
-        """An oversized lib whose heavy classes cluster at the tail of lib
-        order must have them interleaved across chunks, while even-aligned
-        adjacent pairs stay in the same chunk."""
-        # The last 4 classes model consecutive heavy classes, each large
-        # enough that all 4 packed in one chunk would exceed DEX_REF_LIMIT.
-        classes = ["com.Class{}".format(i) for i in range(24)] + [
-            "com.Heavy{}".format(i) for i in range(4)
-        ]
+    def test_real_mobileconfig_ref_counts_split_only_the_overflowing_chunk(self):
+        """The pinned build forms a fitting first run and an overflowing tail.
+        Only the tail is split, matching the fixture's reviewed expectations."""
+        with open(_MOBILECONFIG_FIXTURE_PATH + ".json") as f:
+            fixture = json.load(f)
+        method_ref_count, field_ref_count, type_ref_count, class_ref_counts = (
+            _parse_ref_counts(_MOBILECONFIG_FIXTURE_PATH + ".txt")
+        )
+        # filter_dex lists classes in pre-dex class name order, with a .class suffix.
+        classes = sorted(class_ref_counts, key=lambda name: name.removesuffix(".class"))
         filter_data = {
-            "lib1": {
+            "mc": {
+                "primary_dex_class_names": [],
+                "secondary_dex_class_names": classes,
+                "weight_estimate": str(fixture["weight_estimate"]),
+                "method_ref_count": method_ref_count,
+                "field_ref_count": field_ref_count,
+                "type_ref_count": type_ref_count,
+                "class_ref_counts": class_ref_counts,
+            },
+        }
+        # fb4a's 5 MiB secondary limit comes from
+        # tools/buckconfigs/fbsource-mobile-common.bcfg, not Buck's 12 MiB fallback.
+        result = _sort(
+            filter_data,
+            {"mc": "//apps:mc"},
+            weight_limit=fixture["secondary_dex_weight_limit"],
+        )
+
+        groups = [
+            [name for entry in group for name in entry["class_names"]]
+            for group in result["dex"]["secondary_groups"]
+        ]
+        self.assertEqual(
+            groups, [group["class_names"] for group in fixture["expected_groups"]]
+        )
+        self.assertEqual(
+            [
+                [sum(class_ref_counts[name][i] for name in group) for i in range(3)]
+                for group in groups
+            ],
+            [group["ref_counts"] for group in fixture["expected_groups"]],
+        )
+        self.assertCountEqual([name for group in groups for name in group], classes)
+
+    def test_chunks_that_fit_by_class_ref_counts_are_kept(self):
+        """A lib just over the method limit with refs spread evenly. Its class count chunks
+        fit, so the per-class counts do not change them."""
+        classes = [
+            "com/foo/Test{}.class".format(c) for c in "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+        ]
+
+        def plan(class_ref_counts):
+            filter_data = {
+                "lib": {
+                    "primary_dex_class_names": [],
+                    "secondary_dex_class_names": classes,
+                    "weight_estimate": "5482334",
+                    "method_ref_count": "66354",
+                    "field_ref_count": "0",
+                    "type_ref_count": "30",
+                    "class_ref_counts": class_ref_counts,
+                },
+            }
+            result = _sort(filter_data, {"lib": "//apps:lib"}, weight_limit=5000000)
+            return [
+                [name for entry in group for name in entry["class_names"]]
+                for group in result["dex"]["secondary_groups"]
+            ]
+
+        groups = plan({name: [2553, 0, 3] for name in classes})
+        self.assertEqual(groups, [classes[:23], classes[23:]])
+        self.assertEqual(groups, plan({}))
+
+    def test_canary_types_are_left_room_in_each_secondary_chunk(self):
+        """Each secondary dex also gets a canary with up to two types, so a secondary chunk can
+        hold 65534 types of its own. Primary and bootstrap dexes get no canary."""
+        classes = ["com/A{}.class".format(i) for i in range(4)]
+
+        def plan(third_class_types, groups):
+            types = [30000, 30000, third_class_types, 1]
+            in_primary = groups == "primary_groups"
+            filter_data = {
+                "lib": {
+                    "primary_dex_class_names": classes if in_primary else [],
+                    "secondary_dex_class_names": [] if in_primary else classes,
+                    "weight_estimate": "100",
+                    "method_ref_count": "0",
+                    "field_ref_count": "70000",
+                    "type_ref_count": "100",
+                    "class_ref_counts": {
+                        name: [0, 17500, t] for name, t in zip(classes, types)
+                    },
+                },
+            }
+            result = _sort(
+                filter_data, {"lib": "//apps:lib"}, enable_bootstrap_dexes=True
+            )
+            return [
+                [name for entry in group for name in entry["class_names"]]
+                for group in result["dex"][groups]
+            ]
+
+        split = [classes[:2], classes[2:3], classes[3:]]
+        self.assertEqual(plan(5534, "secondary_groups"), [classes[:3], classes[3:]])
+        self.assertEqual(plan(5535, "secondary_groups"), split)
+        self.assertEqual(plan(5536, "primary_groups"), [classes[:3], classes[3:]])
+        self.assertEqual(plan(5537, "primary_groups"), split)
+
+    def test_class_count_chunks_are_kept_without_counts_for_every_class(self):
+        """Per-class counts that miss a class are not used."""
+        classes = ["com/A{}.class".format(i) for i in range(4)]
+        filter_data = {
+            "lib": {
                 "primary_dex_class_names": [],
                 "secondary_dex_class_names": classes,
                 "weight_estimate": "100",
                 "method_ref_count": "0",
-                "field_ref_count": "72369",
-                "type_ref_count": "0",
+                "field_ref_count": "70000",
+                "type_ref_count": "10",
+                "class_ref_counts": {name: [0, 40000, 1] for name in classes[:3]},
             },
         }
-        result = _sort(
-            filter_data, {"lib1": "//apps:lib1"}, weight_limit=_DEFAULT_WEIGHT_LIMIT
-        )
+        result = _sort(filter_data, {"lib": "//apps:lib"})
 
-        # NOTE: the pre-existing chunking tests only assert that a split
-        # happened and no classes were lost, so they pass under both old
-        # and new logic; this pins the chunk geometry itself.
-        # ceil(72369 / 65536) = 2 chunks, each forcing its own group
-        groups = result["dex"]["secondary_groups"]
-        self.assertEqual(len(groups), 2)
-        chunked = [entry["class_names"] for group in groups for entry in group]
-        self.assertEqual(sorted(len(c) for c in chunked), [14, 14])
-
-        def group_of(cls):
-            for i, group in enumerate(groups):
-                for entry in group:
-                    if cls in entry["class_names"]:
-                        return i
-            self.fail("class {} missing from all groups".format(cls))
-
-        # The 4 consecutive heavy classes would exceed DEX_REF_LIMIT if
-        # packed in one chunk, so they must split 2+2 across chunks ...
-        heavy = classes[24:]
-        self.assertEqual(group_of(heavy[0]), group_of(heavy[1]))
-        self.assertEqual(group_of(heavy[2]), group_of(heavy[3]))
-        self.assertNotEqual(group_of(heavy[0]), group_of(heavy[2]))
-        # ... while every adjacent pair stays in the same chunk.
-        for i in range(0, 28, 2):
-            self.assertEqual(group_of(classes[i]), group_of(classes[i + 1]))
-
-        all_classes = []
-        for group in groups:
-            for entry in group:
-                all_classes.extend(entry["class_names"])
-        self.assertCountEqual(all_classes, classes)
+        groups = [
+            [name for entry in group for name in entry["class_names"]]
+            for group in result["dex"]["secondary_groups"]
+        ]
+        self.assertEqual(groups, [classes[:3], classes[3:]])
 
     # --- Ordering and skipping ---
 

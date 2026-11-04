@@ -1,0 +1,62 @@
+{
+  "source_revision": "b53bf164",
+  "weight_estimate": 8232224,
+  "secondary_dex_weight_limit": 5242880,
+  "expected_groups": [
+    {
+      "class_names": [
+        "com/facebook/mobileconfig/MobileConfigConfigNames.class",
+        "com/facebook/mobileconfig/MobileConfigConfigs.class",
+        "com/facebook/mobileconfig/MobileConfigConfigsDebug.class",
+        "com/facebook/mobileconfig/MobileConfigConstants.class",
+        "com/facebook/mobileconfig/MobileConfigConstants$ADMINID.class",
+        "com/facebook/mobileconfig/MobileConfigConstants$AD_ACCOUNT_ID.class",
+        "com/facebook/mobileconfig/MobileConfigConstants$FAMILY_DEVICE_ID.class",
+        "com/facebook/mobileconfig/MobileConfigConstants$FRLID.class",
+        "com/facebook/mobileconfig/MobileConfigConstants$GROUP.class",
+        "com/facebook/mobileconfig/MobileConfigConstants$PAGEID.class",
+        "com/facebook/mobileconfig/MobileConfigConstants$SESSIONBASED.class",
+        "com/facebook/mobileconfig/MobileConfigConstants$SESSIONLESS.class",
+        "com/facebook/mobileconfig/MobileConfigConstants$WEARABLE_DEVICE_OWNER_ID.class",
+        "com/facebook/mobileconfig/MobileConfigDefaults.class",
+        "com/facebook/mobileconfig/MobileConfigLegacyLocalConfigIds.class",
+        "com/facebook/mobileconfig/MobileConfigParamNames.class",
+        "com/facebook/mobileconfig/MobileConfigParamNames0.class"
+      ],
+      "ref_counts": [
+        135,
+        6807,
+        148
+      ]
+    },
+    {
+      "class_names": [
+        "com/facebook/mobileconfig/MobileConfigParamNames1.class",
+        "com/facebook/mobileconfig/MobileConfigParamNames2.class",
+        "com/facebook/mobileconfig/MobileConfigParamNames3.class",
+        "com/facebook/mobileconfig/MobileConfigParamNames4.class",
+        "com/facebook/mobileconfig/MobileConfigParamNames5.class",
+        "com/facebook/mobileconfig/MobileConfigParamNames6.class",
+        "com/facebook/mobileconfig/MobileConfigParamNames7.class",
+        "com/facebook/mobileconfig/MobileConfigParams0.class",
+        "com/facebook/mobileconfig/MobileConfigParams1.class",
+        "com/facebook/mobileconfig/MobileConfigParams2.class"
+      ],
+      "ref_counts": [
+        55,
+        49155,
+        61
+      ]
+    },
+    {
+      "class_names": [
+        "com/facebook/mobileconfig/MobileConfigParams3.class"
+      ],
+      "ref_counts": [
+        2,
+        16405,
+        4
+      ]
+    }
+  ]
+}

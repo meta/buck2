@@ -21,10 +21,46 @@ import unittest
 
 from android.tools.filter_dex import (
     _belongs_in_primary_dex,
+    _parse_ref_counts,
     _parse_synthetic_contexts,
     _resolve_synthesizing_context,
     ClassNameFilter,
 )
+
+
+class ParseRefCountsTest(unittest.TestCase):
+    def _parse(self, contents: str):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "ref_count.txt")
+            with open(path, "w") as f:
+                f.write(contents)
+            return _parse_ref_counts(path)
+
+    def test_lib_totals_alone(self) -> None:
+        self.assertEqual(self._parse("19 10 17\n"), ("19", "10", "17", {}))
+
+    def test_counts_of_each_class(self) -> None:
+        self.assertEqual(
+            self._parse("124 72367 53\n2 16405 4 a/P3\n13 4 12 a/B$C\n"),
+            (
+                "124",
+                "72367",
+                "53",
+                {"a/P3.class": [2, 16405, 4], "a/B$C.class": [13, 4, 12]},
+            ),
+        )
+
+    def test_malformed_class_line_discards_all_class_counts(self) -> None:
+        for line in ("2 3 4", "2 3 4 a/With Space", "x 3 4 a/B", "", "   "):
+            with self.subTest(line=line):
+                self.assertEqual(
+                    self._parse(f"124 72367 53\n2 16405 4 a/P3\n{line}\n13 4 12 a/B\n"),
+                    ("124", "72367", "53", {}),
+                )
+
+    def test_malformed_lib_totals_are_rejected(self) -> None:
+        with self.assertRaises(ValueError):
+            self._parse("19 10\n2 3 4 a/B\n")
 
 
 class ParseSyntheticContextsTest(unittest.TestCase):

@@ -8,8 +8,16 @@ prelude = native
 
 prelude.python_test(
     name = "test_sort_pre_dexed_files",
-    srcs = ["test_sort_pre_dexed_files.py"],
+    srcs = [
+        "generate_mobileconfig_fixture.py",
+        "test_sort_pre_dexed_files.py",
+    ],
+    resources = [
+        "testdata/mobileconfig_definition_lib_ref_count.json",
+        "testdata/mobileconfig_definition_lib_ref_count.txt",
+    ],
     deps = [
+        "prelude//android/tools:filter_dex_lib",
         "prelude//android/tools:sort_pre_dexed_files_lib",
     ],
 )

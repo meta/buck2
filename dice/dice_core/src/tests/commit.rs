@@ -13,6 +13,7 @@
 use crate::Change;
 use crate::EpsilonToken;
 use crate::Seq;
+use crate::tests::Stamp;
 use crate::tests::State;
 use crate::tests::StateExt;
 use crate::tests::cert;
@@ -44,12 +45,12 @@ fn a_commit_with_no_effective_change_returns_the_head() {
             Change::Assert {
                 key: k(0),
                 revision: r(1),
-                data: (),
+                data: Stamp::mint(),
             },
             Change::Assert {
                 key: k(1),
                 revision: r(1),
-                data: (),
+                data: Stamp::mint(),
             },
         ],
     );
@@ -129,24 +130,24 @@ fn batched_changes_close_overlapping_dependents_only() {
                 Change::Assert {
                     key: k(0),
                     revision: r(1),
-                    data: (),
+                    data: Stamp::mint(),
                 },
                 Change::Dirty {
                     key: k(2),
-                    data: (),
+                    data: Stamp::mint(),
                 },
                 Change::Assert {
                     key: k(1),
                     revision: r(2),
-                    data: (),
+                    data: Stamp::mint(),
                 },
                 Change::Dirty {
                     key: k(3),
-                    data: (),
+                    data: Stamp::mint(),
                 },
                 Change::Dirty {
                     key: k(4),
-                    data: (),
+                    data: Stamp::mint(),
                 },
             ];
             if reverse {
@@ -192,12 +193,12 @@ fn a_dirty_closes_the_key_and_its_dependents() {
     assert!(s.is_unknown_at(k(1), v2));
     assert_eq!(s.valid_at(k(0), v(root, 1)), Some(r(1)));
     assert_eq!(s.valid_at(k(1), v(root, 1)), Some(r(1)));
-    assert_eq!(
-        s.dirtied_at(k(0), v2).map(|a| a.version),
-        Some(v2),
-        "the dirty in force at the new version is the one just committed"
+    assert_ne!(
+        s.epsilon(k(0), v2),
+        EpsilonToken::INITIAL,
+        "the dirty just committed is in force at the new version"
     );
-    assert_eq!(s.dirtied_at(k(0), v(root, 1)), None);
+    assert_eq!(s.epsilon(k(0), v(root, 1)), EpsilonToken::INITIAL);
 }
 
 /// Closing an inherited claim gives the branch its own closed copy and leaves the parent alone.
@@ -348,11 +349,11 @@ fn a_key_appearing_twice_in_one_commit_panics() {
         vec![
             Change::Dirty {
                 key: k(1),
-                data: (),
+                data: Stamp::mint(),
             },
             Change::Dirty {
                 key: k(1),
-                data: (),
+                data: Stamp::mint(),
             },
         ],
     );

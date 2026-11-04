@@ -126,15 +126,9 @@ fn the_dirty_in_force_is_the_latest_at_or_before_the_version() {
     let (mut s, root) = with_injected_leaf();
     let v3 = s.dirty_at(root, k(1));
     let v4 = s.dirty_at(root, k(9));
-    assert_eq!(s.dirtied_at(k(1), v4).map(|a| a.version), Some(v3));
-    assert_eq!(s.dirtied_at(k(9), v3), None);
-    match s.lookup(k(0), v4) {
-        crate::Lookup::Valid {
-            source: crate::ValidSource::Asserted { assertion },
-            ..
-        } => assert_eq!(assertion.version, v(root, 2)),
-        _ => panic!("valid through an assertion"),
-    }
+    assert_ne!(s.epsilon(k(1), v3), EpsilonToken::INITIAL);
+    assert_eq!(s.epsilon(k(1), v4), s.epsilon(k(1), v3));
+    assert_eq!(s.epsilon(k(9), v3), EpsilonToken::INITIAL);
 }
 
 /// Dirties of one key on two branches mint distinct untracked revisions, so neither branch's

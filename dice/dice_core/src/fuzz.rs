@@ -43,6 +43,7 @@ use crate::oracle::Atom;
 use crate::oracle::Model;
 use crate::oracle::eps_of;
 use crate::oracle::rev_of;
+use crate::tests::Stamp;
 use crate::tests::State;
 use crate::tests::TestCert;
 
@@ -146,7 +147,7 @@ impl Run {
     }
 
     /// Commits, records the new version if one was minted, and returns it.
-    fn commit(&mut self, b: BranchId, changes: Vec<Change<()>>) -> Option<Version> {
+    fn commit(&mut self, b: BranchId, changes: Vec<Change<Stamp>>) -> Option<Version> {
         let before = self.state.head(b);
         let mut asserted = Vec::new();
         let mut dirtied = Vec::new();
@@ -207,7 +208,7 @@ impl Run {
     }
 
     fn write(&mut self, cert: &TestCert) {
-        self.state.write(cert.clone(), ());
+        self.state.write(cert.clone());
         self.state.check_invariants();
         self.model.record_write(cert);
     }
@@ -334,7 +335,7 @@ fn run_ops(_seed: u64, ops: &[Op]) {
             Op::Commit { branch, changes } => {
                 let b = version_of(&run.state, *branch, 0).branch();
                 let mut seen = HashSet::new();
-                let changes: Vec<Change<()>> = changes
+                let changes: Vec<Change<Stamp>> = changes
                     .iter()
                     .filter_map(|c| match c {
                         GenChange::Assert { key, revision } => {
@@ -342,12 +343,15 @@ fn run_ops(_seed: u64, ops: &[Op]) {
                             seen.insert(key).then_some(Change::Assert {
                                 key,
                                 revision: Revision::testing_new(*revision),
-                                data: (),
+                                data: Stamp::mint(),
                             })
                         }
                         GenChange::Dirty { key } => {
                             let key = computed(*key);
-                            seen.insert(key).then_some(Change::Dirty { key, data: () })
+                            seen.insert(key).then_some(Change::Dirty {
+                                key,
+                                data: Stamp::mint(),
+                            })
                         }
                     })
                     .collect();
@@ -511,7 +515,7 @@ impl Honest {
             .map(|i| Change::Assert {
                 key: injected(i),
                 revision: self.intern(injected(i), 1),
-                data: (),
+                data: Stamp::mint(),
             })
             .collect();
         self.run.commit(root, changes);
@@ -577,7 +581,9 @@ impl Honest {
             "injected {key:?} is unknown at {v}"
         );
         let (candidate, epsilon) = match self.run.state.lookup(key, v) {
-            crate::Lookup::Unknown { candidate, epsilon } => (candidate.cloned(), epsilon),
+            crate::Lookup::Unknown {
+                candidate, epsilon, ..
+            } => (candidate.cloned(), epsilon),
             crate::Lookup::Valid { .. } => unreachable!(),
         };
         if let Some(candidate) = candidate
@@ -660,7 +666,7 @@ impl Honest {
                     core_changes.push(Change::Assert {
                         key,
                         revision,
-                        data: (),
+                        data: Stamp::mint(),
                     });
                 }
                 HonestChange::Dirty { key, content } => {
@@ -669,7 +675,10 @@ impl Honest {
                         continue;
                     }
                     changed.insert(key);
-                    core_changes.push(Change::Dirty { key, data: () });
+                    core_changes.push(Change::Dirty {
+                        key,
+                        data: Stamp::mint(),
+                    });
                     minted_content.push((key, *content));
                 }
             }

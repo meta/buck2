@@ -328,6 +328,8 @@ pub(crate) enum PageInOutcome {
 pub(crate) struct PageInRecovery {
     pub(crate) task: DiceTask,
     pub(crate) epsilon: EpsilonToken,
+    /// The sources of the key's own dirty in force, which the recomputation starts from.
+    pub(crate) sources: InvalidationSources,
 }
 
 impl MaybeResidentComputedValue {

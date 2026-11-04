@@ -13,6 +13,7 @@ use dupe::Dupe;
 
 use crate::ids::Key;
 use crate::ids::Revision;
+use crate::ids::Version;
 
 /// One premise of a certificate: a key the compute read, and the revision it saw there.
 #[derive(Copy, Clone, Dupe, Debug, PartialEq, Eq, Hash, Allocative)]
@@ -55,18 +56,30 @@ impl Premises for Vec<(Key, Revision)> {
     }
 }
 
-/// What an execution environment attaches to the core's objects. The core stores these and hands
-/// them back; it never interprets them.
+/// What an execution environment attaches to the core's objects: data on assertions, which the
+/// core stores without interpreting, and an attribute of derivations (`incrementality.md` §4.7),
+/// which the core computes from that data.
 pub trait Env: 'static {
     /// The dependency payload of a certificate.
     type Premises: Premises + Allocative;
 
-    /// Data kept with every claim. A claim the core manufactures from an existing one (when it
-    /// preserves a child branch's view of a key across a change at its parent) carries a clone of
-    /// that claim's data; a claim installed by a write carries the data passed to the write.
-    type ClaimData: Clone + Allocative;
-
-    /// Data kept with every assertion, i.e. with every injected revision and every dirty, and
-    /// handed back by lookups that resolve through it.
+    /// Data kept with every assertion, i.e. with every injected revision and every dirty.
     type AssertionData: Copy + Allocative;
+
+    /// The attribute of a derivation: [`Self::assertion`] at an (Assert) leaf, [`Self::combine`]
+    /// over the premises at a (Cert) step. The core keeps the attribute of the derivation each
+    /// claim stands for and hands it out with every `Valid` lookup.
+    type Attribute: Copy + Allocative;
+
+    /// The attribute of a derivation that rests on no assertion: a certificate without premises
+    /// whose key was never dirtied.
+    const EMPTY: Self::Attribute;
+
+    /// The attribute of the assertion made at `at` with `data`.
+    fn assertion(at: Version, data: Self::AssertionData) -> Self::Attribute;
+
+    /// The attribute of a derivation from those of two parts of it. Commutative and associative,
+    /// with [`Self::EMPTY`] as the identity. `a` and `b` are always attributes of derivations at
+    /// one version, so every assertion in either lies on that version's chain.
+    fn combine(a: Self::Attribute, b: Self::Attribute) -> Self::Attribute;
 }

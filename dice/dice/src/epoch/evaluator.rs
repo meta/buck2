@@ -279,10 +279,10 @@ impl TransactionData {
             Err(error) => {
                 self.hydration_failed(key, &error);
                 if !is_transient_read_error(&error)
-                    && let Some(epsilon) = self
+                    && let Some((epsilon, sources)) = self
                         .dice
                         .state_handle
-                        .recovery_epsilon(VersionedGraphKey::new(
+                        .recovery_untracked(VersionedGraphKey::new(
                             self.version_state.get_version(),
                             key,
                         ))
@@ -291,6 +291,7 @@ impl TransactionData {
                     return PageInOutcome::Recompute(PageInRecovery {
                         task: DiceTask::new_idle(key),
                         epsilon,
+                        sources,
                     });
                 }
                 Err(self.page_in_failed(key, error))
@@ -308,8 +309,13 @@ impl TransactionData {
             DiceTaskDependedOnByResult::Finished(value) => DicePromise::ready(value),
             DiceTaskDependedOnByResult::Pending(promise) => promise,
             DiceTaskDependedOnByResult::NeedsRestart(prepared, previous) => {
-                DiceTaskWorker::new_recompute(demand.key, self.dupe(), recovery.epsilon)
-                    .spawn(prepared, Some(previous))
+                DiceTaskWorker::new_recompute(
+                    demand.key,
+                    self.dupe(),
+                    recovery.epsilon,
+                    recovery.sources,
+                )
+                .spawn(prepared, Some(previous))
             }
         }
     }
@@ -336,11 +342,14 @@ impl TransactionData {
         )
     }
 
+    /// Runs `key`'s computation. `own_sources`, the sources of the key's own dirty in force,
+    /// is what the sources of the result start from.
     pub(crate) async fn evaluate(
         &self,
         cancellations: &CancellationContext,
         key: DiceKey,
         state: DiceWorkerStateEvaluating,
+        own_sources: InvalidationSources,
     ) -> WorkerResult<DiceWorkerStateFinishedEvaluating> {
         let key_erased = self.dice.key_index.get(key);
 
@@ -354,7 +363,7 @@ impl TransactionData {
                 };
                 let mut ctx = TrackedComputations::Normal {
                     compute: &compute,
-                    dep_trackers: RecordingDepsTracker::new(InvalidationSources::NONE),
+                    dep_trackers: RecordingDepsTracker::new(own_sources),
                 }
                 .into();
 

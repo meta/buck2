@@ -64,8 +64,6 @@ pub use crate::introspect::KeyIntrospection;
 pub use crate::slot::Claim;
 pub use crate::slot::Slot;
 pub use crate::slot::Window;
-pub use crate::state::Assertion;
 pub use crate::state::CoreState;
 pub use crate::state::Lookup;
-pub use crate::state::ValidSource;
 pub use crate::write::WriteOutcome;

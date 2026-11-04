@@ -110,14 +110,18 @@ Dep sets are unordered. Dice's evaluation engine records deps in a richer series
 which the core carries as an opaque payload for the environment's own re-evaluation walks; the
 semantics reads it as the set (Appendix B).
 
+**Attributes.** The environment may define an attribute of derivations (§4.7): a value the
+structure computes for every claim it holds and returns with every `Valid` lookup. Dice's is the
+invalidation sources of a value, the most recent changes it depends on.
+
 ### 2.2 Operations
 
 ```
 commit(b: BranchId, assertions: Map<Key, Revision>, dirties: Set<Key>) → Seq
 fork(v: Version) → BranchId
 new_root() → BranchId
-lookup(k: Key, v: Version) → Valid(Revision)
-                           | Unknown { candidate: Option<Cert>, epsilon: Revision }
+lookup(k: Key, v: Version) → Valid(Revision, Attribute)
+                           | Unknown { candidate: Option<Cert>, epsilon: Revision, untracked: Attribute }
 write(cert: Cert)
 ```
 
@@ -140,9 +144,11 @@ is what its commits assert.
 **`lookup`** is the operation the soundness theorem is about. `Valid(r)` claims that r is justified
 for k at v in the sense of §3 — that is the entire contract. `Unknown` claims nothing and is
 therefore always a sound answer. The values provided with `Unknown` are service, not contract:
-`candidate` is a previously written certificate for k that the caller may try to re-establish, and
+`candidate` is a previously written certificate for k that the caller may try to re-establish,
 `epsilon` is the current revision of k's untracked input at v, for stamping the certificate the
-caller is presumably about to produce (provided because there is no direct `lookup(k')` operation).
+caller is presumably about to produce (provided because there is no direct `lookup(k')` operation),
+and `untracked` is the attribute of that revision's assertion, a leaf of the derivation of whatever
+the caller produces.
 
 **`write`** hands the structure a certificate. Note the signature: no version. This is designed
 specifically to make it easy for an execution environment to produce soundly from a direct trace of
@@ -447,18 +453,62 @@ of the requested ones. This notion of attachment lets us do that, giving attache
 representation that implicitly makes them valid at newly committed versions until a change actually
 affects them.
 
+### 4.7 Derivation attributes
+
+The environment may have the structure carry an **attribute** of derivations. It supplies a set A
+with an element `empty`, a function `assertion: Version × AssertionData → A`, and a commutative,
+associative `combine: A × A → A` with `empty` as its identity. The attribute `attr(T)` of a
+derivation T of §3.2's judgment is defined inductively: at an (Assert) leaf for an assertion made
+at version u with data d, `assertion(u, d)`; at a (Cert) step, the combination of the attributes of
+the premises' derivations, the k′ premise included, where the implicit initial assertion of an
+untracked input contributes `empty`.
+
+Dice's attribute is a value's invalidation sources: per source priority, the version of the most
+recent assertion in the derivation. Its `combine` keeps the later version per priority, which is
+well-defined because all assertions in one derivation at v are in force at v, and so lie on
+path(v).
+
+The structure maintains `attr(T(k, v))` on every claim with a nonempty window, where T(k, v) is
+the **materialized derivation**: the one that justifies each premise through the claim or history
+entry that resolution finds. `lookup` returns it with `Valid`; for an injected key it returns
+`assertion` of the entry in force. The attribute is a function of the derivation, not of the
+certificate: one certificate installed on two branches whose assertions differ carries two
+attributes, which is why the structure, not the environment, computes it.
+
+**Constancy across a window.** A window lies within the cover, and the cover is the intersection
+of the premises' intervals (§4.5): the window of a claim, which has one derivation by induction, or
+one interval of a history, over which one entry is in force. So every premise has one derivation
+across the window, and the attribute is the same at every version of it; and the same again at
+every version of a branch that inherits the claim, since inheritance means no commit of the
+inheriting branch has touched a premise.
+
+**Where it is computed.** At install, in the same pass as the cover: the pieces of §4.5 carry the
+attribute of the premises considered so far, intersection combines, and the installed window takes
+its piece's attribute. Every other way a claim comes to be copies a claim whose derivation it
+shares: closing an inherited claim (§5.3), re-homing a child's view across an installation at its
+parent (§5.2), and the copies `delete` makes (§5.5). A fork's residuals and a write's shadows have
+empty windows and no attribute worth the name.
+
+**What `delete` does to it.** `delete` moves the assertions a child inherited to the child's first
+version. Attributes computed before refer to the deleted branch's versions for those assertions,
+and the structure leaves them be: those versions remain distinct from all others and keep their
+place in the order of §2.1, so an attribute that orders versions along a chain, like dice's, is
+unaffected, and an environment that needs more can carry an identity in its assertion data.
+
 ## 5. Operations
 
 ### 5.1 `lookup(K, (b, s))`
 
 Returns:
 
-- **`Valid(r)`** if `resolve(K, (b, s))` yields `Valid(r)`.
+- **`Valid(r)`** if `resolve(K, (b, s))` yields `Valid(r)`, with the attribute (§4.7) of the
+  resolving claim, or of the resolving assertion for an injected key.
 - If resolution is `Unknown`, but a **candidate** cert exists — the witnessing cert of the nearest
   claim on the resolution chain, whatever its window, or else any other claim on the node - returns
-  the cert together with `resolve(K′, (b, s))` as the `epsilon` field. The caller attempts to
-  establish `(b, s) ∈ cover_b(cert)` by re-checking each premise's resolution at `(b, s)` against
-  the cert's recorded revisions; success is a successful revalidation (§2.2's `revalidate`).
+  the cert together with `resolve(K′, (b, s))` as the `epsilon` field and the attribute of that
+  assertion as `untracked`. The caller attempts to establish `(b, s) ∈ cover_b(cert)` by
+  re-checking each premise's resolution at `(b, s)` against the cert's recorded revisions; success
+  is a successful revalidation (§2.2's `revalidate`).
 - If resolution is `Unknown` with no candidate cert, return `Unknown`. The caller runs a full
   recompute.
 
@@ -472,8 +522,9 @@ it is attached (possibly via inheritance). Skip it if so; attached branches may 
 Otherwise, for the popped branch b:
 
 **1. Install**: Compute `cover_b(C)`. If the cover is non-empty, install one interval of it (§4.5)
-as the key's claim at b, creating the slot if there is none; where the cover reaches the head, attach
-it as well by inserting the cert's dep edges `D → K` into the rdeps map.
+as the key's claim at b, with the attribute of the derivation there (§4.7), creating the slot if
+there is none; where the cover reaches the head, attach it as well by inserting the cert's dep edges
+`D → K` into the rdeps map.
 
 The soundness of resolution of K on versions in b is immediate from the definition of `cover_b(C)`,
 since it precisely matches the conditions of the soundness judgement by induction. If attaching,

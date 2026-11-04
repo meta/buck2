@@ -102,8 +102,8 @@ impl StateProcessor {
             }
             StateRequest::DeleteBranch { branch } => self.state.delete_branch(branch),
             StateRequest::LookupKey { key, resp } => drop(resp.send(self.state.lookup_key(key))),
-            StateRequest::RecoveryEpsilon { key, resp } => {
-                let _ = resp.send(self.state.recovery_epsilon(key));
+            StateRequest::RecoveryUntracked { key, resp } => {
+                let _ = resp.send(self.state.recovery_untracked(key));
             }
             StateRequest::UpdateComputed {
                 key,

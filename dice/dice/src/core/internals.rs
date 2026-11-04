@@ -117,8 +117,11 @@ impl ActorState {
         self.graph.get(key)
     }
 
-    pub(super) fn recovery_epsilon(&self, key: VersionedGraphKey) -> Option<EpsilonToken> {
-        self.graph.recovery_epsilon(key)
+    pub(super) fn recovery_untracked(
+        &self,
+        key: VersionedGraphKey,
+    ) -> Option<(EpsilonToken, InvalidationSources)> {
+        self.graph.recovery_untracked(key)
     }
 
     pub(super) fn update_computed(

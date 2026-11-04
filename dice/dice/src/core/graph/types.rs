@@ -13,6 +13,7 @@
 use dupe::Dupe;
 use variant_name::VariantName;
 
+use crate::api::invalidation_tracking::InvalidationSources;
 use crate::arc::Arc;
 use crate::core::graph::DiceCert;
 use crate::core::graph::revision::EpsilonToken;
@@ -59,6 +60,8 @@ pub(crate) enum VersionedGraphResult {
         candidate: Option<Candidate>,
         /// The key's untracked-input revision, stamped on a newly computed certificate.
         epsilon: EpsilonToken,
+        /// The sources of the key's own dirty in force, which anything computed here depends on.
+        sources: InvalidationSources,
     },
 }
 

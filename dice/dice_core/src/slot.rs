@@ -88,7 +88,9 @@ impl Window {
 pub struct Claim<E: Env> {
     pub cert: Arc<Cert<E::Premises>>,
     pub window: Window,
-    pub data: E::ClaimData,
+    /// The attribute of the derivation the claim stands for (§4.7). Meaningless for an empty
+    /// window.
+    pub attribute: E::Attribute,
 }
 
 impl<E: Env> Claim<E> {
@@ -102,7 +104,7 @@ impl<E: Env> Clone for Claim<E> {
         Claim {
             cert: self.cert.clone(),
             window: self.window,
-            data: self.data.clone(),
+            attribute: self.attribute,
         }
     }
 }

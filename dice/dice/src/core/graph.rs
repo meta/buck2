@@ -20,7 +20,6 @@ use dice_core::CoreState;
 use dice_core::Env;
 use dice_core::KeyMap;
 use dice_core::Lookup;
-use dice_core::ValidSource;
 use dupe::Dupe;
 use pagable::DataKey;
 use smallvec::SmallVec;
@@ -58,15 +57,24 @@ mod tests;
 pub(crate) mod types;
 
 /// Dice's environment for the core state: the deps of a certificate keep their series-parallel
-/// shape, a claim carries the invalidation sources of its value, and every assertion its
-/// invalidation source priority.
+/// shape, every assertion carries its invalidation source priority, and the attribute of a
+/// derivation is its invalidation sources.
 #[derive(Allocative)]
 pub(crate) struct DiceEnv;
 
 impl Env for DiceEnv {
     type Premises = SeriesParallelDeps;
-    type ClaimData = InvalidationSources;
     type AssertionData = InvalidationSourcePriority;
+    type Attribute = InvalidationSources;
+    const EMPTY: InvalidationSources = InvalidationSources::NONE;
+
+    fn assertion(at: VersionNumber, priority: InvalidationSourcePriority) -> InvalidationSources {
+        InvalidationSources::source(priority, at)
+    }
+
+    fn combine(a: InvalidationSources, b: InvalidationSources) -> InvalidationSources {
+        a.merge(b)
+    }
 }
 
 pub(crate) type DiceCert = Cert<SeriesParallelDeps>;
@@ -437,25 +445,25 @@ impl VersionedGraph {
             return VersionedGraphResult::Unknown {
                 candidate: None,
                 epsilon: EpsilonToken::INITIAL,
+                sources: InvalidationSources::NONE,
             };
         }
         match self.core.lookup(key, v) {
-            Lookup::Valid { revision, source } => {
-                let invalidation_sources = match &source {
-                    ValidSource::Claim { data, .. } => **data,
-                    ValidSource::Asserted { assertion } => {
-                        InvalidationSources::source(assertion.data, assertion.version)
-                    }
-                };
-                VersionedGraphResult::Match {
-                    value: MaybeResidentComputedValue::new(
-                        self.stored(key, revision).into_payload(),
-                        invalidation_sources,
-                        revision,
-                    ),
-                }
-            }
-            Lookup::Unknown { candidate, epsilon } => {
+            Lookup::Valid {
+                revision,
+                attribute,
+            } => VersionedGraphResult::Match {
+                value: MaybeResidentComputedValue::new(
+                    self.stored(key, revision).into_payload(),
+                    attribute,
+                    revision,
+                ),
+            },
+            Lookup::Unknown {
+                candidate,
+                epsilon,
+                untracked,
+            } => {
                 let (cert, revalidatable) = match candidate {
                     Some(cert) => (Some(cert), true),
                     None => (self.core.nearest_certificate(key, v), false),
@@ -467,22 +475,28 @@ impl VersionedGraph {
                         revalidatable,
                     }),
                     epsilon,
+                    sources: untracked,
                 }
             }
         }
     }
 
-    /// Inputs for demand recovery, without returning the unreadable cached value again.
-    /// Asserted keys, including ordinary `Key`s set with `changed_to`, cannot be repaired by
-    /// a compute: their asserted value is authoritative and the core forbids writing a claim.
-    pub(crate) fn recovery_epsilon(&self, at: VersionedGraphKey) -> Option<EpsilonToken> {
+    /// Inputs for demand recovery, without returning the unreadable cached value again: the
+    /// untracked-input revision to stamp the recomputed certificate with, and the sources its
+    /// result starts from. Asserted keys, including ordinary `Key`s set with `changed_to`,
+    /// cannot be repaired by a compute: their asserted value is authoritative and the core
+    /// forbids writing a claim.
+    pub(crate) fn recovery_untracked(
+        &self,
+        at: VersionedGraphKey,
+    ) -> Option<(EpsilonToken, InvalidationSources)> {
         if self.core.is_asserted(at.k) {
             return None;
         }
         Some(if self.core.is_live(at.v.branch()) {
-            self.core.epsilon(at.k, at.v)
+            self.core.untracked(at.k, at.v)
         } else {
-            EpsilonToken::INITIAL
+            (EpsilonToken::INITIAL, InvalidationSources::NONE)
         })
     }
 
@@ -556,6 +570,9 @@ impl VersionedGraph {
         MaybeResidentComputedValue::new(value.into_payload(), sources, revision)
     }
 
+    /// Writes `cert` and returns the sources of the key at `at.v`: those of the claim now
+    /// covering it, or `invalidation_sources`, the transaction's own, if the write installed no
+    /// claim covering `at.v`.
     fn finish_update(
         &mut self,
         at: VersionedGraphKey,
@@ -563,19 +580,21 @@ impl VersionedGraph {
         invalidation_sources: InvalidationSources,
     ) -> InvalidationSources {
         let key = at.k;
-        let mut invalidation_sources = invalidation_sources;
-        // The certificate's ε names one dirty of the key, so this source is the same at every
-        // version the claim will cover.
-        if let Some(dirtied) = self.core.dirtied_at(key, at.v) {
-            invalidation_sources.update(InvalidationSources::source(dirtied.data, dirtied.version));
-        }
-        self.core.write(cert, invalidation_sources);
+        debug_assert_eq!(
+            invalidation_sources.merge(self.core.untracked(key, at.v).1),
+            invalidation_sources,
+            "a transaction's sources start from its key's own dirty"
+        );
+        self.core.write(cert);
         let core = &self.core;
         let policy = self.page_out_policy;
         Self::with_values_of(&mut self.values, &mut self.index, policy, key, |kv| {
             kv.entries.retain(|(r, _)| core.is_referenced(key, *r));
         });
-        invalidation_sources
+        match self.core.lookup(key, at.v) {
+            Lookup::Valid { attribute, .. } => attribute,
+            Lookup::Unknown { .. } => invalidation_sources,
+        }
     }
 
     /// The number of keys the state holds anything for.

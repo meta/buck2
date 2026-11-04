@@ -1850,6 +1850,7 @@ async fn recovery_demands_use_the_transaction_cache() {
                 .set(PageInOutcome::Recompute(PageInRecovery {
                     task: make_completed_task::<PagableKey>(key, recovered),
                     epsilon: EpsilonToken::INITIAL,
+                    sources: InvalidationSources::NONE,
                 }))
                 .is_ok()
         );

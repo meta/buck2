@@ -147,26 +147,43 @@ fn dirty(graph: &mut VersionedGraph, root: BranchId, k: DiceKey) -> VersionNumbe
     version
 }
 
-/// The deps a compute of a key over `key(0)` records at `v`.
-fn deps_on_leaf(graph: &VersionedGraph, v: VersionNumber) -> SeriesParallelDeps {
-    let revision = graph
-        .get(VersionedGraphKey::new(v, key(0)))
-        .unpack_match()
-        .expect("the leaf is injected")
-        .revision()
-        .expect("an injected value is valid");
-    SeriesParallelDeps::serial_from_edges(vec![DepEdge::new(key(0), revision)])
+/// The sources a transaction at `v` folds for `k` from reading `deps`: those of each dep,
+/// starting from `k`'s own dirty.
+fn sources_of(
+    graph: &VersionedGraph,
+    k: DiceKey,
+    v: VersionNumber,
+    deps: impl Iterator<Item = DiceKey>,
+) -> InvalidationSources {
+    let mut sources = graph.core.untracked(k, v).1;
+    for dep in deps {
+        let dep = graph.get(VersionedGraphKey::new(v, dep));
+        sources.update(
+            dep.unpack_match()
+                .expect("a dep was valid when read")
+                .invalidation_sources(),
+        );
+    }
+    sources
 }
 
-/// A computed write of `value` for `k`, stamped as a transaction at `v` would stamp it.
+/// A computed write of `value` for `k` over `key(0)`, stamped as a transaction at `v` would
+/// stamp it.
 fn compute(
     graph: &mut VersionedGraph,
     k: DiceKey,
     v: VersionNumber,
     value: DiceValidValue,
 ) -> MaybeResidentComputedValue {
-    let deps = deps_on_leaf(graph, v);
+    let revision = graph
+        .get(VersionedGraphKey::new(v, key(0)))
+        .unpack_match()
+        .expect("the leaf is injected")
+        .revision()
+        .expect("an injected value is valid");
+    let deps = SeriesParallelDeps::serial_from_edges(vec![DepEdge::new(key(0), revision)]);
     let epsilon = graph.core.epsilon(k, v);
+    let sources = sources_of(graph, k, v, deps.iter_keys());
     let out = graph.update_computed(
         VersionedGraphKey::new(v, k),
         ComputedValueUpdate {
@@ -174,7 +191,7 @@ fn compute(
             deps,
             epsilon,
         },
-        InvalidationSources::NONE,
+        sources,
     );
     graph.assert_consistent();
     out.into_computed()
@@ -186,11 +203,8 @@ fn revalidate(
     v: VersionNumber,
     candidate: Candidate,
 ) -> MaybeResidentComputedValue {
-    let out = graph.revalidate(
-        VersionedGraphKey::new(v, k),
-        candidate,
-        InvalidationSources::NONE,
-    );
+    let sources = sources_of(graph, k, v, candidate.cert.deps.iter_keys());
+    let out = graph.revalidate(VersionedGraphKey::new(v, k), candidate, sources);
     graph.assert_consistent();
     out
 }
@@ -356,7 +370,7 @@ fn a_dep_less_recompute_under_the_same_epsilon_adopts_the_stored_revision() {
     let root = graph.new_root();
     let v1 = graph.head(root);
     let compute_without_deps = |graph: &mut VersionedGraph, v: VersionNumber, n: usize| {
-        let epsilon = graph.core.epsilon(key(1), v);
+        let (epsilon, sources) = graph.core.untracked(key(1), v);
         let out = graph.update_computed(
             VersionedGraphKey::new(v, key(1)),
             ComputedValueUpdate {
@@ -364,7 +378,7 @@ fn a_dep_less_recompute_under_the_same_epsilon_adopts_the_stored_revision() {
                 deps: SeriesParallelDeps::None,
                 epsilon,
             },
-            InvalidationSources::NONE,
+            sources,
         );
         graph.assert_consistent();
         out.into_computed()
@@ -456,6 +470,7 @@ fn a_dirtied_key_offers_a_stale_candidate() {
         VersionedGraphResult::Unknown {
             candidate: Some(candidate),
             epsilon,
+            ..
         } => assert_ne!(candidate.cert.epsilon, epsilon),
         other => panic!("expected a stale candidate, got {other:?}"),
     }

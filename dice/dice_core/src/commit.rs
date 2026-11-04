@@ -127,7 +127,7 @@ impl<E: Env> CoreState<E> {
                 Some(Attached::Inherited { claim, .. }) => Close::Inherited(Claim {
                     cert: claim.cert.clone(),
                     window: Window::closed(first, at),
-                    data: claim.data.clone(),
+                    attribute: claim.attribute,
                 }),
                 None => Close::NotAttached,
             };

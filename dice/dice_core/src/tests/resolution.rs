@@ -25,7 +25,9 @@ fn unknown_key_is_unknown_with_the_initial_epsilon() {
     let mut s = State::new();
     let root = s.new_root();
     match s.lookup(k(7), v(root, 1)) {
-        Lookup::Unknown { candidate, epsilon } => {
+        Lookup::Unknown {
+            candidate, epsilon, ..
+        } => {
             assert!(candidate.is_none());
             assert_eq!(epsilon, EpsilonToken::INITIAL);
         }

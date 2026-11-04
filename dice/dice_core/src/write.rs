@@ -51,10 +51,10 @@ enum Cascade<E: Env> {
 }
 
 impl<E: Env> CoreState<E> {
-    /// `write(cert)` (§5.2). `data` is stored with every claim the write installs.
+    /// `write(cert)` (§5.2).
     ///
     /// Panics if the key has been asserted: no key is both asserted and certified.
-    pub fn write(&mut self, cert: Arc<Cert<E::Premises>>, data: E::ClaimData) -> WriteOutcome {
+    pub fn write(&mut self, cert: Arc<Cert<E::Premises>>) -> WriteOutcome {
         let key = cert.key;
         assert!(
             !self.is_asserted(key),
@@ -68,7 +68,7 @@ impl<E: Env> CoreState<E> {
                 continue;
             }
             let cover = self.cover(b, &cert);
-            let Some(window) = self.pick_window(b, &cover) else {
+            let Some((window, attribute)) = self.pick_window(b, &cover) else {
                 continue;
             };
             if let Some(existing) = self.slot(key, b).and_then(|slot| slot.claim.as_ref())
@@ -82,7 +82,7 @@ impl<E: Env> CoreState<E> {
                 Claim {
                     cert: cert.clone(),
                     window,
-                    data: data.clone(),
+                    attribute,
                 },
             );
             outcome.installed.push(b);
@@ -120,7 +120,7 @@ impl<E: Env> CoreState<E> {
                         claim: Claim {
                             cert: claim.cert.clone(),
                             window: Window::open(self.branch(child).first),
-                            data: claim.data.clone(),
+                            attribute: claim.attribute,
                         },
                     }
                 }
@@ -146,8 +146,9 @@ impl<E: Env> CoreState<E> {
             Cascade::FillInOrShadow { child, candidate } => {
                 let first = self.branch(child).first;
                 let cover = self.cover(child, &new.cert);
-                let covers_all =
-                    cover.len() == 1 && cover[0].from == first && cover[0].until.is_none();
+                let covers_all = cover.len() == 1
+                    && cover[0].interval.from == first
+                    && cover[0].interval.until.is_none();
                 if covers_all {
                     self.register_edges(child, &new.cert);
                     let grandchildren: Vec<BranchId> = self
@@ -179,9 +180,9 @@ impl<E: Env> CoreState<E> {
                         Some(Claim {
                             cert: candidate.unwrap_or_else(|| new.cert.clone()),
                             window: Window::empty(first),
-                            // A shadow resolves Unknown, and only Valid resolutions hand data
-                            // out, so whose data this is never matters.
-                            data: new.data.clone(),
+                            // A shadow resolves Unknown, and only Valid resolutions hand
+                            // attributes out, so this one is never seen.
+                            attribute: E::EMPTY,
                         }),
                     );
                 }

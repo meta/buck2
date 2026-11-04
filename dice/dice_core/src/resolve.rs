@@ -83,8 +83,9 @@ pub(crate) struct Interval {
 }
 
 impl Interval {
+    /// Whether the interval holds no seq, `until` being at or before `from`.
     fn is_empty(self) -> bool {
-        self.until == Some(self.from)
+        self.until.is_some_and(|until| until <= self.from)
     }
 
     fn contains(self, seq: Seq) -> bool {
@@ -92,37 +93,45 @@ impl Interval {
     }
 }
 
-/// Disjoint, nonempty intervals in increasing order.
-pub(crate) type Intervals = SmallVec<[Interval; 2]>;
-
-fn push_merging(out: &mut Intervals, interval: Interval) {
-    if interval.is_empty() {
-        return;
-    }
-    if let Some(last) = out.last_mut()
-        && last.until == Some(interval.from)
-    {
-        last.until = interval.until;
-        return;
-    }
-    out.push(interval);
+/// A piece of a cover (§4.5): seqs of one branch at which some premises resolve to their recorded
+/// revisions, with the attribute (§4.7) of their derivations there, which is the same at every
+/// seq of the piece.
+#[derive(Copy, Clone, Debug)]
+pub(crate) struct Piece<A> {
+    pub(crate) interval: Interval,
+    pub(crate) attribute: A,
 }
 
-fn intersect(a: &[Interval], b: &[Interval]) -> Intervals {
-    let mut out = Intervals::new();
+/// Disjoint, nonempty pieces in increasing order. Adjacent pieces are kept apart, as their
+/// attributes may differ.
+pub(crate) type Pieces<A> = SmallVec<[Piece<A>; 2]>;
+
+fn push<A>(out: &mut Pieces<A>, piece: Piece<A>) {
+    if !piece.interval.is_empty() {
+        out.push(piece);
+    }
+}
+
+fn intersect<E: Env>(a: &[Piece<E::Attribute>], b: &[Piece<E::Attribute>]) -> Pieces<E::Attribute> {
+    let mut out = Pieces::new();
     let (mut i, mut j) = (0, 0);
     while i < a.len() && j < b.len() {
-        let from = a[i].from.max(b[j].from);
-        let until = match (a[i].until, b[j].until) {
+        let (x, y) = (a[i].interval, b[j].interval);
+        let from = x.from.max(y.from);
+        let until = match (x.until, y.until) {
             (Some(x), Some(y)) => Some(x.min(y)),
             (Some(x), None) | (None, Some(x)) => Some(x),
             (None, None) => None,
         };
-        if until.is_none_or(|until| from < until) {
-            push_merging(&mut out, Interval { from, until });
-        }
+        push(
+            &mut out,
+            Piece {
+                interval: Interval { from, until },
+                attribute: E::combine(a[i].attribute, b[j].attribute),
+            },
+        );
         // Advance whichever interval ends first; an unbounded one never does.
-        match (a[i].until, b[j].until) {
+        match (x.until, y.until) {
             (Some(x), Some(y)) if x <= y => i += 1,
             (Some(_), Some(_)) => j += 1,
             (Some(_), None) => i += 1,
@@ -221,32 +230,44 @@ impl<E: Env> CoreState<E> {
         }
     }
 
+    /// The attribute of the assertion `entry` of a history owned by `b`.
+    fn entry_attribute<R>(b: BranchId, entry: &Entry<R, E::AssertionData>) -> E::Attribute {
+        E::assertion(Version::new(b, entry.seq), entry.data)
+    }
+
     /// The seqs of `b` at which an assertion history resolves to `revision`, given the branch's
-    /// own entries and whether the parent resolves to `revision` at the fork point (§4.5).
-    fn history_intervals<R: Copy + Eq, T>(
+    /// own entries and, if the parent resolves to `revision` at the fork point, the attribute of
+    /// the assertion it resolves through (§4.5).
+    fn history_pieces<R: Copy + Eq>(
         &self,
         b: BranchId,
-        own: &[Entry<R, T>],
-        parent_matches: bool,
+        own: &[Entry<R, E::AssertionData>],
+        parent: Option<E::Attribute>,
         revision: R,
-    ) -> Intervals {
-        let mut out = Intervals::new();
-        if parent_matches {
-            push_merging(
+    ) -> Pieces<E::Attribute> {
+        let mut out = Pieces::new();
+        if let Some(attribute) = parent {
+            push(
                 &mut out,
-                Interval {
-                    from: self.branch(b).first,
-                    until: own.first().map(|e| e.seq),
+                Piece {
+                    interval: Interval {
+                        from: self.branch(b).first,
+                        until: own.first().map(|e| e.seq),
+                    },
+                    attribute,
                 },
             );
         }
         for (i, entry) in own.iter().enumerate() {
             if entry.revision == revision {
-                push_merging(
+                push(
                     &mut out,
-                    Interval {
-                        from: entry.seq,
-                        until: own.get(i + 1).map(|e| e.seq),
+                    Piece {
+                        interval: Interval {
+                            from: entry.seq,
+                            until: own.get(i + 1).map(|e| e.seq),
+                        },
+                        attribute: Self::entry_attribute(b, entry),
                     },
                 );
             }
@@ -255,7 +276,7 @@ impl<E: Env> CoreState<E> {
     }
 
     /// The seqs of `b` at which `premise` resolves to its recorded revision.
-    fn premise_intervals(&self, b: BranchId, premise: Premise) -> Intervals {
+    fn premise_pieces(&self, b: BranchId, premise: Premise) -> Pieces<E::Attribute> {
         let revision = premise.revision;
         let parent = self.branch(b).parent;
         if let Some(histories) = self.assertions.get(&premise.key) {
@@ -263,81 +284,117 @@ impl<E: Env> CoreState<E> {
                 .iter()
                 .find_map(|(hb, h)| (*hb == b).then_some(h.entries()))
                 .unwrap_or(&[]);
-            let parent_matches =
-                parent.is_some_and(|p| self.resolve(premise.key, p).revision() == Some(revision));
-            return self.history_intervals(b, own, parent_matches, revision);
+            let parent = parent.and_then(|p| match self.resolve(premise.key, p) {
+                Resolved::Asserted { owner, entry } if entry.revision == revision => {
+                    Some(Self::entry_attribute(owner, entry))
+                }
+                _ => None,
+            });
+            return self.history_pieces(b, own, parent, revision);
         }
         match self.slot(premise.key, b).and_then(|s| s.claim.as_ref()) {
             Some(claim) => {
                 if claim.revision() == revision && !claim.window.is_empty() {
-                    smallvec![Interval {
-                        from: claim.window.from(),
-                        until: claim.window.until(),
+                    smallvec![Piece {
+                        interval: Interval {
+                            from: claim.window.from(),
+                            until: claim.window.until(),
+                        },
+                        attribute: claim.attribute,
                     }]
                 } else {
-                    Intervals::new()
+                    Pieces::new()
                 }
             }
             None => {
-                let inherited = parent
-                    .is_some_and(|p| self.resolve(premise.key, p).revision() == Some(revision));
-                if inherited {
-                    smallvec![Interval {
-                        from: self.branch(b).first,
-                        until: None,
-                    }]
-                } else {
-                    Intervals::new()
+                let inherited = parent.and_then(|p| match self.resolve(premise.key, p) {
+                    Resolved::Claim { claim, .. } if claim.revision() == revision => {
+                        Some(claim.attribute)
+                    }
+                    _ => None,
+                });
+                match inherited {
+                    Some(attribute) => smallvec![Piece {
+                        interval: Interval {
+                            from: self.branch(b).first,
+                            until: None,
+                        },
+                        attribute,
+                    }],
+                    None => Pieces::new(),
                 }
             }
         }
     }
 
     /// The seqs of `b` at which `key`'s untracked input has revision `epsilon`.
-    fn untracked_intervals(&self, b: BranchId, key: Key, epsilon: EpsilonToken) -> Intervals {
+    fn untracked_pieces(
+        &self,
+        b: BranchId,
+        key: Key,
+        epsilon: EpsilonToken,
+    ) -> Pieces<E::Attribute> {
         let own = self
             .slot(key, b)
             .map(|s| s.untracked.entries())
             .unwrap_or(&[]);
-        let parent_matches = match self.branch(b).parent {
-            Some(p) => self.epsilon(key, p) == epsilon,
-            None => epsilon == EpsilonToken::INITIAL,
+        let parent = match self.branch(b).parent {
+            Some(p) => match self.resolve_untracked(key, p) {
+                Some((owner, entry)) => {
+                    (entry.revision == epsilon).then(|| Self::entry_attribute(owner, entry))
+                }
+                None => (epsilon == EpsilonToken::INITIAL).then_some(E::EMPTY),
+            },
+            None => (epsilon == EpsilonToken::INITIAL).then_some(E::EMPTY),
         };
-        self.history_intervals(b, own, parent_matches, epsilon)
+        self.history_pieces(b, own, parent, epsilon)
     }
 
     /// `cover_b(cert)` (§4.5): the seqs of `b` at which every premise of `cert`, the untracked
-    /// input included, resolves to its recorded revision.
-    pub(crate) fn cover(&self, b: BranchId, cert: &Cert<E::Premises>) -> Intervals {
-        let mut cover: Intervals = smallvec![Interval {
-            from: self.branch(b).first,
-            until: None,
+    /// input included, resolves to its recorded revision, in pieces carrying the attribute of
+    /// the certificate's derivation there (§4.7).
+    pub(crate) fn cover(&self, b: BranchId, cert: &Cert<E::Premises>) -> Pieces<E::Attribute> {
+        let mut cover: Pieces<E::Attribute> = smallvec![Piece {
+            interval: Interval {
+                from: self.branch(b).first,
+                until: None,
+            },
+            attribute: E::EMPTY,
         }];
-        cover = intersect(&cover, &self.untracked_intervals(b, cert.key, cert.epsilon));
+        cover = intersect::<E>(&cover, &self.untracked_pieces(b, cert.key, cert.epsilon));
         for premise in cert.premises() {
             if cover.is_empty() {
                 break;
             }
-            cover = intersect(&cover, &self.premise_intervals(b, premise));
+            cover = intersect::<E>(&cover, &self.premise_pieces(b, premise));
         }
         cover
     }
 
-    /// The window a write installs from a nonempty cover (§4.5, §5.2): the interval containing the
-    /// head, as an open window, if there is one, otherwise the most recent interval.
-    pub(crate) fn pick_window(&self, b: BranchId, cover: &Intervals) -> Option<Window> {
+    /// The window a write installs from a nonempty cover (§4.5, §5.2), with its attribute: the
+    /// piece containing the head, as an open window, if there is one, otherwise the most recent
+    /// piece.
+    pub(crate) fn pick_window(
+        &self,
+        b: BranchId,
+        cover: &[Piece<E::Attribute>],
+    ) -> Option<(Window, E::Attribute)> {
         let last = cover.last()?;
         let head = self.branch(b).head;
-        if last.contains(head) {
+        let window = if last.interval.contains(head) {
             debug_assert!(
-                last.until.is_none(),
+                last.interval.until.is_none(),
                 "an interval reaching the head is unbounded: nothing closes at or after it"
             );
-            Some(Window::open(last.from))
+            Window::open(last.interval.from)
         } else {
-            let until = last.until.expect("an unbounded interval contains the head");
+            let until = last
+                .interval
+                .until
+                .expect("an unbounded interval contains the head");
             debug_assert!(until <= head);
-            Some(Window::closed(last.from, until))
-        }
+            Window::closed(last.interval.from, until)
+        };
+        Some((window, last.attribute))
     }
 }

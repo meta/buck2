@@ -83,8 +83,9 @@ pub(crate) struct DiceTaskWorker {
 
 enum DiceTaskMode {
     Lookup,
-    /// A failed demand already ruled out reuse. Run the normal compute/write path directly.
-    Recompute(EpsilonToken),
+    /// A failed demand already ruled out reuse. Run the normal compute/write path directly,
+    /// with the ε and the sources a lookup would have handed out.
+    Recompute(EpsilonToken, InvalidationSources),
 }
 
 impl DiceTaskWorker {
@@ -96,11 +97,16 @@ impl DiceTaskWorker {
         }
     }
 
-    pub(crate) fn new_recompute(k: DiceKey, eval: TransactionData, epsilon: EpsilonToken) -> Self {
+    pub(crate) fn new_recompute(
+        k: DiceKey,
+        eval: TransactionData,
+        epsilon: EpsilonToken,
+        sources: InvalidationSources,
+    ) -> Self {
         Self {
             k,
             eval,
-            mode: DiceTaskMode::Recompute(epsilon),
+            mode: DiceTaskMode::Recompute(epsilon, sources),
         }
     }
 
@@ -156,7 +162,7 @@ impl DiceTaskWorker {
         let v = self.eval.version_state.get_version();
 
         // handle cancelled/cache hits before sending started events
-        let (candidate, epsilon) = match self.mode {
+        let (candidate, epsilon, own_sources) = match self.mode {
             DiceTaskMode::Lookup => match state_handle
                 .lookup_key(VersionedGraphKey::new(v, self.k))
                 .await
@@ -164,9 +170,13 @@ impl DiceTaskWorker {
                 VersionedGraphResult::Match { value } => {
                     return task_state.lookup_matches(cancellations, value);
                 }
-                VersionedGraphResult::Unknown { candidate, epsilon } => (candidate, epsilon),
+                VersionedGraphResult::Unknown {
+                    candidate,
+                    epsilon,
+                    sources,
+                } => (candidate, epsilon, sources),
             },
-            DiceTaskMode::Recompute(epsilon) => (None, epsilon),
+            DiceTaskMode::Recompute(epsilon, sources) => (None, epsilon, sources),
         };
 
         self.eval.started(self.k);
@@ -196,8 +206,9 @@ impl DiceTaskWorker {
 
                 match check_deps_result {
                     CheckDependenciesResult::NoChange { .. } => {
-                        let invalidation_sources =
+                        let mut invalidation_sources =
                             check_deps_result.unwrap_no_change_invalidation_sources();
+                        invalidation_sources.update(own_sources);
 
                         let task_state = task_state.deps_match(cancellations)?;
                         let activation_info = self.activation_info(
@@ -232,7 +243,7 @@ impl DiceTaskWorker {
             state,
             activation_data,
             result,
-        } = self.compute(cancellations, task_state).await?;
+        } = self.compute(cancellations, task_state, own_sources).await?;
 
         // explicitly drop this here to make it clear that its important that we hold onto it, it
         // otherwise appears unused, but we don't want to cancel anything that it has started requesting
@@ -294,13 +305,16 @@ impl DiceTaskWorker {
         &self,
         cancellations: &CancellationContext,
         task_state: DiceWorkerStateEvaluating,
+        own_sources: InvalidationSources,
     ) -> WorkerResult<DiceWorkerStateFinishedEvaluating> {
         self.eval.compute_started(self.k);
         scopeguard::defer! {
             self.eval.compute_finished(self.k);
         };
 
-        self.eval.evaluate(cancellations, self.k, task_state).await
+        self.eval
+            .evaluate(cancellations, self.k, task_state, own_sources)
+            .await
     }
 
     fn activation_info<'a>(
@@ -510,18 +524,20 @@ async fn validate_projection_without_base(
 ) -> ProjectionValidation {
     let v = eval.version_state.get_version();
     let state_handle = &eval.dice.state_handle;
-    let candidate = match state_handle
+    let (candidate, own_sources) = match state_handle
         .lookup_key(VersionedGraphKey::new(v, key))
         .await
     {
         VersionedGraphResult::Match { value } => return ProjectionValidation::Resolved(value),
-        VersionedGraphResult::Unknown { candidate, .. } => candidate,
+        VersionedGraphResult::Unknown {
+            candidate, sources, ..
+        } => (candidate, sources),
     };
     let Some(candidate) = candidate.filter(|c| c.revalidatable) else {
         return ProjectionValidation::NeedsRecompute;
     };
     let cert = candidate.cert.dupe();
-    let invalidation_sources =
+    let mut invalidation_sources =
         match check_dependencies(eval, ParentKey::Some(key), &cert.deps).await {
             result @ CheckDependenciesResult::NoChange { .. } => {
                 result.unwrap_no_change_invalidation_sources()
@@ -530,6 +546,7 @@ async fn validate_projection_without_base(
                 return ProjectionValidation::NeedsRecompute;
             }
         };
+    invalidation_sources.update(own_sources);
     let projection = state_handle
         .revalidate(
             VersionedGraphKey::new(v, key),

@@ -111,7 +111,7 @@ impl<E: Env> CoreState<E> {
                     Some(Claim {
                         cert: claim.cert,
                         window: Window::empty(first),
-                        data: claim.data,
+                        attribute: claim.attribute,
                     }),
                 );
             }

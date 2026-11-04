@@ -11,6 +11,11 @@
 //! Unit tests, one module per part of `incrementality.md`. Every mutating call on the test
 //! state re-checks the invariants, so a test that passes has exercised the checker at each step.
 
+use std::sync::atomic::AtomicU64;
+use std::sync::atomic::Ordering;
+
+use allocative::Allocative;
+
 use crate::Cert;
 use crate::Change;
 use crate::CoreState;
@@ -25,6 +30,7 @@ use crate::WriteOutcome;
 use crate::arc::Arc;
 use crate::ids::BranchId;
 
+mod attributes;
 mod cascade;
 mod commit;
 mod cycles;
@@ -38,10 +44,32 @@ mod write;
 
 pub(crate) struct TestEnv;
 
+/// Identifies one assertion through everything the state does with it, the re-homing by
+/// `delete` included. Minted in commit order, which along any chain is version order.
+#[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Allocative)]
+pub(crate) struct Stamp(u64);
+
+impl Stamp {
+    pub(crate) fn mint() -> Self {
+        static NEXT: AtomicU64 = AtomicU64::new(1);
+        Stamp(NEXT.fetch_add(1, Ordering::Relaxed))
+    }
+}
+
 impl Env for TestEnv {
     type Premises = Vec<Premise>;
-    type ClaimData = ();
-    type AssertionData = ();
+    type AssertionData = Stamp;
+    /// The latest assertion a derivation rests on, `None` if it rests on none.
+    type Attribute = Option<Stamp>;
+    const EMPTY: Option<Stamp> = None;
+
+    fn assertion(_at: Version, stamp: Stamp) -> Option<Stamp> {
+        Some(stamp)
+    }
+
+    fn combine(a: Option<Stamp>, b: Option<Stamp>) -> Option<Stamp> {
+        a.max(b)
+    }
 }
 
 pub(crate) type State = CoreState<TestEnv>;
@@ -76,13 +104,17 @@ pub(crate) fn cert(
 pub(crate) trait StateExt {
     fn assert_at(&mut self, b: BranchId, key: Key, revision: Revision) -> Version;
     fn dirty_at(&mut self, b: BranchId, key: Key) -> Version;
-    fn commit_checked(&mut self, b: BranchId, changes: Vec<Change<()>>) -> Version;
+    fn commit_checked(&mut self, b: BranchId, changes: Vec<Change<Stamp>>) -> Version;
     fn write_checked(&mut self, cert: &TestCert) -> WriteOutcome;
     fn fork_checked(&mut self, from: Version) -> BranchId;
     fn delete_checked(&mut self, b: BranchId) -> Vec<Key>;
     fn valid_at(&self, key: Key, v: Version) -> Option<Revision>;
     fn candidate_at(&self, key: Key, v: Version) -> Option<Revision>;
     fn is_unknown_at(&self, key: Key, v: Version) -> bool;
+    /// The attribute of `key`'s derivation at `v`, which must resolve `Valid`.
+    fn attribute_at(&self, key: Key, v: Version) -> Option<Stamp>;
+    /// The attribute of the dirty of `key` in force at `v`.
+    fn untracked_attribute_at(&self, key: Key, v: Version) -> Option<Stamp>;
 }
 
 impl StateExt for State {
@@ -92,23 +124,29 @@ impl StateExt for State {
             vec![Change::Assert {
                 key,
                 revision,
-                data: (),
+                data: Stamp::mint(),
             }],
         )
     }
 
     fn dirty_at(&mut self, b: BranchId, key: Key) -> Version {
-        self.commit_checked(b, vec![Change::Dirty { key, data: () }])
+        self.commit_checked(
+            b,
+            vec![Change::Dirty {
+                key,
+                data: Stamp::mint(),
+            }],
+        )
     }
 
-    fn commit_checked(&mut self, b: BranchId, changes: Vec<Change<()>>) -> Version {
+    fn commit_checked(&mut self, b: BranchId, changes: Vec<Change<Stamp>>) -> Version {
         let v = self.commit(b, changes);
         self.check_invariants();
         v
     }
 
     fn write_checked(&mut self, cert: &TestCert) -> WriteOutcome {
-        let outcome = self.write(cert.clone(), ());
+        let outcome = self.write(cert.clone());
         self.check_invariants();
         outcome
     }
@@ -136,6 +174,17 @@ impl StateExt for State {
 
     fn is_unknown_at(&self, key: Key, v: Version) -> bool {
         !self.lookup(key, v).is_valid()
+    }
+
+    fn attribute_at(&self, key: Key, v: Version) -> Option<Stamp> {
+        match self.lookup(key, v) {
+            crate::Lookup::Valid { attribute, .. } => attribute,
+            crate::Lookup::Unknown { .. } => panic!("{key:?} is unknown at {v}"),
+        }
+    }
+
+    fn untracked_attribute_at(&self, key: Key, v: Version) -> Option<Stamp> {
+        self.untracked(key, v).1
     }
 }
 

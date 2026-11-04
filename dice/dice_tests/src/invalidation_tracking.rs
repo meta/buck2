@@ -297,3 +297,73 @@ fn test_compute_tracks_invalidations_over_versions() -> anyhow::Result<()> {
         Ok(())
     })
 }
+
+/// Sources describe the derivation of the value being computed, not the reason for its
+/// recomputation: a change to an early dep that stops the compute from reading a later one
+/// removes that dep's source from the result, even at a higher priority.
+#[test]
+fn sources_describe_the_new_derivation() -> anyhow::Result<()> {
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .unhandled_panic(tokio::runtime::UnhandledPanic::ShutdownRuntime)
+        .build()
+        .unwrap();
+
+    rt.block_on(async {
+        let dice = {
+            let builder = Dice::builder();
+            builder.build(DetectCycles::Enabled)
+        };
+        let root = dice.new_root().await;
+
+        #[derive(Allocative, Clone, Copy, Debug, Display, Eq, PartialEq, Hash, Pagable)]
+        #[pagable_typetag(DiceKeyDyn)]
+        struct Switch;
+
+        #[async_trait]
+        impl Key for Switch {
+            type Value = CapturedInvalidationSources;
+            fn value_serialize() -> impl dice::ValueSerialize<Value = Self::Value> {
+                dice::NoValueSerialize::<Self::Value>::new()
+            }
+            async fn compute(
+                &self,
+                ctx: &mut DiceComputations,
+                _cancellations: &CancellationContext,
+            ) -> Self::Value {
+                if *ctx.compute(&NormalInjected(0)).await.unwrap() == 0 {
+                    ctx.compute(&HighChanged(0)).await.unwrap();
+                }
+                CapturedInvalidationSources(ctx.get_invalidation_sources())
+            }
+
+            fn equality_behavior() -> EqualityBehavior<Self::Value> {
+                EqualityBehavior::Compare(|_x, _y| false)
+            }
+        }
+
+        let mut updater = dice.updater(root);
+        updater.changed_to([(NormalInjected(0), 0)])?;
+        updater.changed_to([(HighInjected(0), 0)])?;
+        updater.commit().await;
+        let mut updater = dice.updater(root);
+        updater.changed([HighChanged(0)])?;
+        updater.commit().await;
+
+        // At 3 the switch reads both: the dirty of HighChanged(0) at 3 is the most recent
+        // source at either priority.
+        let ctx = dice.updater(root).commit().await;
+        assert_invalidations(Some(3), Some(3), ctx.compute(&Switch).await?);
+
+        // The change at 4 makes the switch skip HighChanged(0). The recompute depends on no
+        // high-priority source any more, though one caused the previous value to be read and is
+        // still in force.
+        let mut updater = dice.updater(root);
+        updater.changed_to([(NormalInjected(0), 1)])?;
+        updater.commit().await;
+        let ctx = dice.updater(root).commit().await;
+        assert_invalidations(Some(4), None, ctx.compute(&Switch).await?);
+
+        Ok(())
+    })
+}

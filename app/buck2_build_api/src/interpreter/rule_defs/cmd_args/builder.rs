@@ -274,7 +274,7 @@ struct StringOptions<'v> {
 /// up. Bump this when rendering or hashing changes in any way, so that nothing keyed by a hash
 /// from before the change is found after it; the golden test in `buck2_build_api_tests` says
 /// when that is.
-pub const HASH_VERSION: u32 = 0;
+pub const HASH_VERSION: u32 = 1;
 
 /// An operation that can be performed on a command line builder, used for its hash impl
 ///

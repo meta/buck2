@@ -71,6 +71,16 @@ class WriteTest(BuckTestCase):
         output = build_report.output_for_target("//:writes_absolute")
         assert os.path.isabs(output.read_text().strip())
 
+    @buck_test(data_dir="write")
+    async def test_shell_quoted_words_survive_bash(self, buck: Buck) -> None:
+        # `cmd_args(.., quote = "shell")` written to an argsfile: bash must read every word back
+        # as one word, braces included (bare braces would be brace-expanded).
+        result = await buck.build("//:shell_quoted_roundtrip")
+        output = result.get_build_report().output_for_target(
+            "//:shell_quoted_roundtrip"
+        )
+        assert output.read_text() == "<a{b,c}>\n<{a..c}>\n<x y>\n", output.read_text()
+
     @buck_test(data_dir="write_fails")
     async def test_write_files_fails_invalid_content(self, buck: Buck) -> None:
         await expect_failure(

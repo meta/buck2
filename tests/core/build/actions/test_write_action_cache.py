@@ -70,8 +70,8 @@ async def soft_errors(buck: Buck, category: str) -> int:
 # moves it too; the plain key does not move with that. The platform is the repo's own, with a
 # fixed path separator, so the keys are the same on every host.
 GOLDEN_KEYS = {
-    "prelude//:write": "53936911ab4db47a2756903fc00e386fb539788b4e7f5b4e009999af83ffac29",
-    "prelude//:write_tset": "3434dc53ca83f845ea2d19282a91ab32ec2bc20076b2b33790ac5ec762cf8f53",
+    "prelude//:write": "f2503b3ff7cb537d034d6d042b05b046ebe8980c4a8a2841a3bbc66c268ff2bf",
+    "prelude//:write_tset": "6da1d4f6369bb634140fc022b3cf0f97534e2bd7b60a3bf844810ba921ad679f",
 }
 
 

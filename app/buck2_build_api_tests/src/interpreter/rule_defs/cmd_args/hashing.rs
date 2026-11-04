@@ -76,11 +76,18 @@ fn distinct_renders_have_distinct_hashes() -> buck2_error::Result<()> {
 /// command line's hash no longer stands for what it renders, so entries keyed by hashes from
 /// before the change must not be found after it: bump `HASH_VERSION` and add a pair under the
 /// new version. Never edit a pair in place.
-const GOLDEN: &[(u32, &str, &str)] = &[(
-    0,
-    "cfbedc058843ca652b8a2ca71b485284ca2593379cd8ab49444f14ecb1bb9cb7",
-    "aefdd4564d5d2cf0844775524ae338f8f3d59b464e8b10d9c09192ec77ab25af",
-)];
+const GOLDEN: &[(u32, &str, &str)] = &[
+    (
+        0,
+        "cfbedc058843ca652b8a2ca71b485284ca2593379cd8ab49444f14ecb1bb9cb7",
+        "aefdd4564d5d2cf0844775524ae338f8f3d59b464e8b10d9c09192ec77ab25af",
+    ),
+    (
+        1,
+        "121136ff5f19572a7bda1cfa79e40367eb214c847bb039e234242f02c22c0de9",
+        "8ec6a718b8680b09d3202af390783daca46de71d594a4ed8d24b79ddaaca9943",
+    ),
+];
 
 #[test]
 fn golden_corpus() -> buck2_error::Result<()> {

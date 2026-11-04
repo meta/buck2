@@ -76,3 +76,30 @@ simple_write = rule(
     impl = _simple_write_impl,
     attrs = {},
 )
+
+def _shell_quoted_roundtrip_impl(ctx):
+    # `quote = "shell"` words, written to an argsfile and read back by bash: each word must
+    # survive bash word processing (brace expansion included) as a single word.
+    argsfile = ctx.actions.write(
+        "args.txt",
+        cmd_args(["a{b,c}", "{a..c}", "x y"], quote = "shell"),
+        has_content_based_path = False,
+    )
+    out = ctx.actions.declare_output("out.txt", has_content_based_path = False)
+    ctx.actions.run(
+        cmd_args([
+            "bash",
+            "-c",
+            'eval "printf \'<%s>\\n\' $(tr "\\n" " " < "$1")" > "$2"',
+            "_",
+            argsfile,
+            out.as_output(),
+        ]),
+        category = "roundtrip",
+    )
+    return [DefaultInfo(default_output = out)]
+
+shell_quoted_roundtrip = rule(
+    impl = _shell_quoted_roundtrip_impl,
+    attrs = {},
+)

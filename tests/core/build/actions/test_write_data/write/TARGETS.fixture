@@ -1,4 +1,4 @@
-load(":defs.bzl", "simple_write", "write_file")
+load(":defs.bzl", "shell_quoted_roundtrip", "simple_write", "write_file")
 
 simple_write(name = "simple")
 
@@ -41,3 +41,5 @@ write_file(
     name = "writes_absolute",
     dep = ":simple",
 )
+
+shell_quoted_roundtrip(name = "shell_quoted_roundtrip")

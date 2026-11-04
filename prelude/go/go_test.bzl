@@ -342,7 +342,7 @@ go_test = prelude_rule(
             "platform": attrs.option(attrs.string(), default = None),
             "runner": attrs.option(attrs.dep(), default = None),
             "specs": attrs.option(attrs.arg(json = True), default = None),
-            "supports_test_execution_caching": attrs.bool(default = False),
+            "supports_test_execution_caching": attrs.bool(default = True),
         }
         | buck.licenses_arg()
         | buck.contacts_arg()

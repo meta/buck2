@@ -265,7 +265,13 @@ impl BuckSubcommand for InnerCleanCommand {
         if sharing {
             kill_unidaemon_tenant(&lifecycle, TenantShutdownCommand::Clean, None).await?;
         } else {
-            kill_command_impl(&lifecycle, "`buck2 clean` was invoked", false).await?;
+            kill_command_impl(
+                &lifecycle,
+                "`buck2 clean` was invoked",
+                false,
+                Duration::ZERO,
+            )
+            .await?;
         }
         let lifecycle = Some(lifecycle);
         let disk_lock = TenantDiskForCleanup::take(&paths.tenant_paths(), Duration::from_secs(30))

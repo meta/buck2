@@ -9,11 +9,15 @@ source_listing()
 # extension with the new name. Key off kotlin.kotlin_version, the compiler actually run.
 _KOTLIN_VERSION_PARTS = read_root_config("kotlin", "kotlin_version", "2.2.0").split(".")
 
-_PRE_2_4 = (int(_KOTLIN_VERSION_PARTS[0]), int(_KOTLIN_VERSION_PARTS[1])) < (2, 4)
+_KOTLIN_MAJOR_MINOR = (int(_KOTLIN_VERSION_PARTS[0]), int(_KOTLIN_VERSION_PARTS[1]))
+
+_PRE_2_4 = _KOTLIN_MAJOR_MINOR < (2, 4)
 
 buck_kotlin_library(
     name = "common",
     srcs = glob(["*.kt"]) + (glob(["compilercompat/2.2.0/*.kt"]) if _PRE_2_4 else []),
+    # Implementing KtFile requires an explicit PSI opt-in from Kotlin 2.5 onward.
+    extra_kotlinc_arguments = ["-opt-in=org.jetbrains.kotlin.psi.KtImplementationDetail"] if _KOTLIN_MAJOR_MINOR >= (2, 5) else [],
     labels = ["codegen_rule"],
     provided_deps = [
         "prelude//toolchains/android/third-party:kotlin-compiler",

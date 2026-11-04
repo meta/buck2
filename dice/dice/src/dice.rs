@@ -137,6 +137,10 @@ impl DiceDataBuilder {
         self.cycle_check_interval = interval;
     }
 
+    /// Starts the core state thread. Call this from within the tokio runtime that will run the
+    /// computations: the thread answers requests through that runtime's workers, which is a good
+    /// deal cheaper than answering them itself, as it does when started outside a runtime, so the
+    /// runtime has to keep running for as long as the `Dice` is in use.
     pub fn build(self, detect_cycles: DetectCycles) -> StdArc<Dice> {
         let cycle_check_interval = match detect_cycles {
             DetectCycles::Enabled => Some(self.cycle_check_interval),

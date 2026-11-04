@@ -549,8 +549,11 @@ fn handle_project_eval_result(
     handle.compute_finished();
 
     let result = match value.dupe().into_valid_value() {
-        Ok(valid_value) => {
-            let rx = state.update_computed(
+        // Blocking here is safe: the core state never waits on compute threads
+        // (`compute_finished` above is what makes that true), so the reply arrives after the
+        // (bounded) requests ahead of us in its queue are processed.
+        Ok(valid_value) => state
+            .update_computed_blocking(
                 VersionedGraphKey::new(v, k),
                 storage,
                 valid_value,
@@ -561,19 +564,8 @@ fn handle_project_eval_result(
                 // revision.
                 EpsilonToken::INITIAL,
                 invalidation_sources,
-            );
-            // Blocking here is safe: the core state runs on its own dedicated thread and never
-            // waits on compute threads (`compute_finished` above is what makes the second half
-            // of that true), so the response arrives after the (bounded) requests ahead of us in
-            // its queue are processed.
-            //
-            // The `unconstrained` is load bearing, not an optimization: we are typically inside
-            // a tokio task's poll here, and `oneshot::Receiver` participates in tokio's coop
-            // budget. With the budget exhausted, the poll would return `Pending` without even
-            // looking at the channel, deferring our waker until the surrounding task yields to
-            // the runtime - which it never does, because we're blocking its thread right here.
-            futures::executor::block_on(tokio::task::unconstrained(rx)).into_computed()
-        }
+            )
+            .into_computed(),
         Err(_transient_result) => {
             // transients are never stored in the state, but the result should be shared
             // with async computations as if it were.

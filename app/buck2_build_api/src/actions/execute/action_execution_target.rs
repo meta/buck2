@@ -15,6 +15,7 @@ use buck2_core::deferred::base_deferred_key::BaseDeferredKey;
 use buck2_core::fs::buck_out_path::BuckOutScratchPath;
 use buck2_data::ToProtoMessage;
 use buck2_execute::execute::target::CommandExecutionTarget;
+use buck2_execute::execute::target::request_metadata_target_id;
 use derivative::Derivative;
 use dupe::Dupe;
 
@@ -85,5 +86,23 @@ impl CommandExecutionTarget for ActionExecutionTarget<'_> {
             category: self.action.category().as_str().to_owned(),
             identifier: self.action.identifier().unwrap_or("").to_owned(),
         }
+    }
+
+    fn action_mnemonic(&self) -> Option<String> {
+        Some(self.action.category().as_str().to_owned())
+    }
+
+    fn target_label(&self) -> Option<String> {
+        self.action
+            .owner()
+            .unpack_target_label()
+            .map(request_metadata_target_id)
+    }
+
+    fn configuration_hash(&self) -> Option<String> {
+        self.action
+            .owner()
+            .unpack_target_label()
+            .map(|label| label.cfg().output_hash().as_str().to_owned())
     }
 }

@@ -41,6 +41,7 @@ futures.workspace = true
 host_sharing.workspace = true
 itertools.workspace = true
 pagable.workspace = true
+prost-types.workspace = true
 remote_execution.workspace = true
 serde.workspace = true
 serde_json.workspace = true

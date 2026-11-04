@@ -17,6 +17,7 @@ rust_library(
         "//buck2/app/buck2_build_api:buck2_build_api",
         "//buck2/app/buck2_common:buck2_common",
         "//buck2/app/buck2_core:buck2_core",
+        "//buck2/app/buck2_data:buck2_data",
         "//buck2/app/buck2_directory:buck2_directory",
         "//buck2/app/buck2_error:buck2_error",
         "//buck2/app/buck2_execute:buck2_execute",

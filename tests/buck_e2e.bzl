@@ -10,6 +10,7 @@ load("@fbcode//buck2/app:modifier.bzl", "buck2_modifiers")
 load("@fbcode_macros//build_defs:native_rules.bzl", "buck_filegroup")
 load("@fbcode_macros//build_defs:platform_utils.bzl", "platform_utils")
 load("@fbcode_macros//build_defs:python_unittest.bzl", "python_unittest")
+load("@fbcode_macros//build_defs/lib:re_test_utils.bzl", "re_test_utils")
 load("@fbsource//tools/build_defs/testinfra:network_access_utils.bzl", "network_access_utils")
 load("@fbsource//tools/target_determinator/macros:ci.bzl", "ci")
 load("@fbsource//tools/target_determinator/macros:ci_hint.bzl", "ci_hint")
@@ -46,6 +47,8 @@ def buck_e2e_test(
     labels = labels or []
     deps = deps or []
     cfg_modifiers = cfg_modifiers or []
+    if remote_execution == None and not re_test_utils.labels_have_re_signal(labels):
+        remote_execution = False
     if network_access == None:
         network_access = network_access_utils.all()
 
@@ -134,11 +137,6 @@ def buck_e2e_test(
         deps = deps,
         env = env,
         emails = contacts,
-        # Forwarded verbatim: e2e tests boot buck2 daemons against the host
-        # checkout, so callers under an RE-by-default PACKAGE
-        # (re_test_utils.set_package_default) need the per-target
-        # `remote_execution = False` pin — the narrow form — instead of a
-        # directory-wide PACKAGE opt-out.
         remote_execution = remote_execution,
         network_access = network_access,
         resources = resources,

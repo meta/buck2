@@ -798,7 +798,12 @@ def create_java_library_providers(
     first_order_classpath_libs = [dep.output_for_classpath_macro for dep in first_order_classpath_deps]
 
     compiling_deps = get_compiling_deps_tset(ctx.actions, declared_deps + exported_deps + provided_deps + exported_provided_deps)
-    desugar_classpath = compiling_deps.project_as_args("full_library_args") if needs_desugar and compiling_deps != None else None
+    desugar_classpath = None
+    if needs_desugar and compiling_deps != None:
+        # Below API 24, D8 desugars interface method calls and needs synthetic members that ABI jars drop.
+        min_sdk_version = getattr(ctx.attrs, "_dex_min_sdk_version", None) or getattr(ctx.attrs, "min_sdk_version", None)
+        abi_jars_suffice = min_sdk_version != None and int(min_sdk_version) >= 24
+        desugar_classpath = compiling_deps.project_as_args("args_for_compiling" if abi_jars_suffice else "full_library_args")
 
     library_info, packaging_info, global_code_info, shared_library_info, cxx_resource_info, linkable_graph = _create_non_template_providers(
         ctx,

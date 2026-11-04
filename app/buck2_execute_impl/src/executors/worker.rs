@@ -1106,6 +1106,7 @@ mod worker_handle_tests {
     use std::future::Future;
     use std::pin::Pin;
     use std::sync::Arc;
+    use std::sync::LazyLock;
     use std::sync::Mutex;
     use std::sync::atomic::AtomicU32;
     use std::sync::atomic::AtomicU64;
@@ -1138,6 +1139,7 @@ mod worker_handle_tests {
     use tonic::Status;
     use tonic::transport::Channel;
     use tonic::transport::Server;
+    use tracing::Dispatch;
     use tracing::Event;
     use tracing::Metadata;
     use tracing::Subscriber;
@@ -1146,6 +1148,7 @@ mod worker_handle_tests {
     use tracing::span::Attributes;
     use tracing::span::Id;
     use tracing::span::Record;
+    use tracing::subscriber::NoSubscriber;
 
     use super::WorkerClient;
     use super::WorkerDiagnostics;
@@ -1456,6 +1459,15 @@ mod worker_handle_tests {
         diagnostics_disabled: bool,
     }
 
+    impl WorkerReceiptRecorder {
+        fn record<R>(&self, f: impl FnOnce() -> R) -> R {
+            static RECORDER_IS_NEVER_THE_ONLY_DISPATCHER: LazyLock<Dispatch> =
+                LazyLock::new(|| Dispatch::new(NoSubscriber::new()));
+            LazyLock::force(&RECORDER_IS_NEVER_THE_ONLY_DISPATCHER);
+            tracing::subscriber::with_default(self.clone(), f)
+        }
+    }
+
     struct WorkerReceiptFields(BuckMutMap<String, String>);
 
     impl Visit for WorkerReceiptFields {
@@ -1510,7 +1522,7 @@ mod worker_handle_tests {
     #[tokio::test]
     async fn test_worker_handle_drop_receipt_is_payload_free() {
         let recorder = WorkerReceiptRecorder::default();
-        tracing::subscriber::with_default(recorder.clone(), || {
+        recorder.record(|| {
             let channel = Channel::from_static("http://127.0.0.1:1").connect_lazy();
             let (handle, _child_alive) = test_handle(WorkerClient::single(channel));
             drop(handle);
@@ -1534,7 +1546,7 @@ mod worker_handle_tests {
         let (tx, mut rx) = tokio::sync::oneshot::channel();
         waiters.insert(7, tx);
         let (observer, guard) = LivelinessGuard::create_sync();
-        tracing::subscriber::with_default(recorder.clone(), || {
+        recorder.record(|| {
             let mut reader = WorkerResponseReader::new(diagnostics);
             reader.response(Err(Status::unknown("SYNTHETIC_PRIVATE_PAYLOAD")), &waiters);
             reader.response(Err(Status::unknown("SYNTHETIC_PRIVATE_PAYLOAD")), &waiters);
@@ -1603,7 +1615,7 @@ mod worker_handle_tests {
         let waiters = WorkerResponseWaiters::default();
         let (tx, _rx) = tokio::sync::oneshot::channel();
         waiters.insert(7, tx);
-        tracing::subscriber::with_default(recorder.clone(), || {
+        recorder.record(|| {
             let mut reader = WorkerResponseReader::new(WorkerDiagnostics::new());
             reader.response(Err(Status::unknown("SYNTHETIC_PRIVATE_PAYLOAD")), &waiters);
             reader.response(Err(Status::unknown("SYNTHETIC_PRIVATE_PAYLOAD")), &waiters);
@@ -1623,7 +1635,7 @@ mod worker_handle_tests {
         let waiters = WorkerResponseWaiters::default();
         let (tx, mut rx) = tokio::sync::oneshot::channel();
         waiters.insert(7, tx);
-        tracing::subscriber::with_default(recorder.clone(), || {
+        recorder.record(|| {
             let mut reader = WorkerResponseReader::new(diagnostics);
             reader.response(
                 Ok(ExecuteResponseStream {
@@ -1665,7 +1677,7 @@ mod worker_handle_tests {
     #[tokio::test]
     async fn test_worker_handle_receipt_preserves_arc_and_owner_guard_lifetime() {
         let recorder = WorkerReceiptRecorder::default();
-        tracing::subscriber::with_default(recorder.clone(), || {
+        recorder.record(|| {
             let channel = Channel::from_static("http://127.0.0.1:1").connect_lazy();
             let (child_observer, _child_guard) = LivelinessGuard::create();
             let (owner_observer, owner_guard) = LivelinessGuard::create_sync();
@@ -1730,7 +1742,7 @@ mod worker_handle_tests {
             "future-dropped-before-return",
         ] {
             let recorder = WorkerReceiptRecorder::default();
-            tracing::subscriber::with_default(recorder.clone(), || {
+            recorder.record(|| {
                 let mut fixture = WorkerStreamFixture::new();
                 if outcome == "send-failed" {
                     fixture.commands.close();
@@ -1816,7 +1828,7 @@ mod worker_handle_tests {
     #[test]
     fn test_worker_cancelled_receiver_observations_do_not_clean_waiters() {
         let recorder = WorkerReceiptRecorder::default();
-        tracing::subscriber::with_default(recorder.clone(), || {
+        recorder.record(|| {
             let mut fixture = WorkerStreamFixture::new();
             let diagnostics = match &fixture.client {
                 WorkerClient::Stream { diagnostics, .. } => *diagnostics,
@@ -1851,7 +1863,7 @@ mod worker_handle_tests {
     #[test]
     fn test_worker_clones_share_ordinal_and_instances_distinguish_request_zero() {
         let recorder = WorkerReceiptRecorder::default();
-        tracing::subscriber::with_default(recorder.clone(), || {
+        recorder.record(|| {
             let mut first = WorkerStreamFixture::new();
             let mut cloned = first.client.clone();
             let mut second = WorkerStreamFixture::new();
@@ -1899,7 +1911,7 @@ mod worker_handle_tests {
                 "SYNTHETIC_PRIVATE_PAYLOAD"
             )),
         ];
-        tracing::subscriber::with_default(recorder.clone(), || {
+        recorder.record(|| {
             for result in &results {
                 diagnostics.exit_observed(result);
             }

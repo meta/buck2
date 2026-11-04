@@ -214,6 +214,10 @@ impl IoProvider for FsIoProvider {
         &self,
         path: IProjectRelativePath,
     ) -> buck2_error::Result<Option<RawPathMetadata<ProjectRelativePathBuf>>> {
+        // Limit blocking-pool contention, matching the cap on file reads above.
+        static SEMAPHORE: LazyLock<Semaphore> = LazyLock::new(|| Semaphore::new(100));
+        let _permit = SEMAPHORE.acquire().await.unwrap();
+
         let fs = self.fs.dupe();
         let file_digest_config = FileDigestConfig::source(self.cas_digest_config);
         let is_eden = self.is_eden;

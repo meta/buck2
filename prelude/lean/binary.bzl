@@ -92,6 +92,7 @@ def _lean_test_impl(ctx: AnalysisContext) -> list[Provider]:
             executor_overrides = re_executors.executor_overrides,
             run_from_project_root = re_executors.run_from_project_root,
             use_project_relative_paths = re_executors.use_project_relative_paths,
+            supports_test_execution_caching = ctx.attrs.supports_test_execution_caching,
         ),
     ]
 
@@ -118,6 +119,7 @@ lean_test = rule(
         "args": attrs.list(attrs.arg(), default = [], doc = "Arguments for the test binary."),
         "contacts": attrs.list(attrs.string(), default = []),
         "env": attrs.dict(key = attrs.string(), value = attrs.arg(), sorted = False, default = {}, doc = "Environment of the test binary."),
+        "supports_test_execution_caching": attrs.bool(default = True),
     }
     | re_test_common.test_args(),
     cfg = lean_transition,

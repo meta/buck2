@@ -1014,6 +1014,10 @@ def prebuilt_cxx_library_impl(ctx: AnalysisContext) -> list[Provider]:
             )
         )
         sub_targets["prefer-{}".format(linkage.value)] = lproviders_with_default
+    # Usually zero or one exported header map.
+    exported_header_maps = generic_exported_pre.args.header_maps
+    if len(exported_header_maps) == 1:
+        sub_targets["exported-header-map"] = [DefaultInfo(default_output = exported_header_maps[0])]
     providers.append(
         DefaultInfo(
             default_output = output,

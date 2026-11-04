@@ -1198,7 +1198,7 @@ rust_test = prelude_rule(
                 same command-line parameters and produce the same output as the test framework.
             """,
             ),
-            "supports_test_execution_caching": attrs.bool(default = False),
+            "supports_test_execution_caching": attrs.bool(default = True),
         }
         | miri_interpreted_attr()
         | re_test_common.test_args()

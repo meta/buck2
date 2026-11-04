@@ -1,0 +1,23 @@
+oncall("build_infra")
+
+genrule(
+    name = "ok",
+    out = "ok.txt",
+    cmd = "echo ok > $OUT",
+)
+
+genrule(
+    name = "fail",
+    out = "fail.txt",
+    cmd = "echo failing on purpose >&2; exit 1",
+)
+
+sh_test(
+    name = "test_pass",
+    test = "test_pass.sh",
+)
+
+sh_test(
+    name = "test_fail",
+    test = "test_fail.sh",
+)

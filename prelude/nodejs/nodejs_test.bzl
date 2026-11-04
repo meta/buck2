@@ -382,7 +382,7 @@ nodejs_test = prelude_rule(
             "library": attrs.option(attrs.dep(), default = None),
             "entry_point": attrs.option(attrs.string(), default = None),
             "node_modules": attrs.option(attrs.list(attrs.dep()), default = None),
-            "supports_test_execution_caching": attrs.bool(default = False),
+            "supports_test_execution_caching": attrs.bool(default = True),
             "_nodejs_toolchain": toolchains_common.nodejs(),
             "_target_os_type": buck.target_os_type_arg(),
             "_test_adapter": attrs.default_only(attrs.source(default = "prelude//nodejs/tools:nodejs_test_adapter.cjs")),

@@ -337,7 +337,7 @@ def cxx_gnu_dist_link(
                 )
                 link_data_repository.append(link_data)
                 archive_opt_manifests.append(archive_opt_manifest)
-                plan_inputs.extend([archive_manifest, archive_objects])
+                plan_inputs.append(archive_manifest)
                 plan_outputs.extend([archive_indexes.as_output(), archive_plan.as_output()])
             elif isinstance(linkable, FrameworksLinkable) or isinstance(linkable, SwiftmoduleLinkable):
                 # These add no linker inputs on GNU: append_linkable_args no-ops them

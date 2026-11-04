@@ -449,6 +449,10 @@ def derive_compiling_deps_wrapper(
 
     return actions.tset(JavaCompilingDepsTSetWrapper, children = (children or []) + ([library_output] if library_output else []))
 
+def _is_dexing_enabled(ctx: AnalysisContext) -> bool:
+    dex_toolchain = getattr(ctx.attrs, "_dex_toolchain", None)
+    return dex_toolchain != None and dex_toolchain[DexToolchainInfo].d8_command != None
+
 def create_java_packaging_dep(
     ctx: AnalysisContext,
     library_jar: Artifact | None = None,
@@ -466,8 +470,7 @@ def create_java_packaging_dep(
     gwt_module: Artifact | None = None,
     compiler_depth: JavaCompilerDepth | None = None,
 ) -> JavaPackagingDep:
-    dex_toolchain = getattr(ctx.attrs, "_dex_toolchain", None)
-    if library_jar != None and has_srcs and dex_toolchain != None and ctx.attrs._dex_toolchain[DexToolchainInfo].d8_command != None:
+    if library_jar != None and has_srcs and _is_dexing_enabled(ctx):
         dex = get_dex_produced_from_java_library(
             ctx,
             ctx.attrs._dex_toolchain[DexToolchainInfo],
@@ -799,7 +802,7 @@ def create_java_library_providers(
 
     compiling_deps = get_compiling_deps_tset(ctx.actions, declared_deps + exported_deps + provided_deps + exported_provided_deps)
     desugar_classpath = None
-    if needs_desugar and compiling_deps != None:
+    if needs_desugar and compiling_deps != None and _is_dexing_enabled(ctx):
         # Below API 24, D8 desugars interface method calls and needs synthetic members that ABI jars drop.
         min_sdk_version = getattr(ctx.attrs, "min_sdk_version", None)
         abi_jars_suffice = min_sdk_version != None and int(min_sdk_version) >= 24

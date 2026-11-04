@@ -273,7 +273,7 @@ class WriteActionCacheTest(BuckTestCase):
     async def test_a_key_outside_the_share_is_a_plain_write(self, buck: Buck) -> None:
         content = random_string()
         # A share this small holds none of the keys a test produces; a write outside it, with the
-        # mode off (explicitly: the disk-state core turns it on), never asks the cache.
+        # mode off, never asks the cache.
         res = await buck.build(
             "//:write",
             "-c",
@@ -303,7 +303,7 @@ class WriteActionCacheTest(BuckTestCase):
         ]
 
         # The share covers every key, but the executor publishes no local results: with the mode
-        # off (explicitly: the disk-state core turns it on) the cache is not asked...
+        # off the cache is not asked...
         res = await buck.build(
             "//:write", "-c", "buck2.write_action_cache=off", *configs
         )

@@ -300,14 +300,6 @@ pub struct RepoState {
     /// answers the same.
     pub(crate) materializer_defers_writes: bool,
 
-    /// Whether this repo's `materializer` wants every write served from the action cache where
-    /// it can be, and every write it cannot and every source copy probed against the CAS before
-    /// its content is produced, whatever `buck2.write_action_cache` and `buck2.write_cas_probe`
-    /// say: the disk-state core's, which otherwise writes to disk what the CAS already holds,
-    /// 98% of a cold adfinder build's writes (RESULTS.md, 2026-10-13). One switch for the core
-    /// and what spares its writes keeps a rollout from meeting them in every combination.
-    pub(crate) materializer_probes_writes: bool,
-
     /// How often this repo's `materializer` refreshes TTLs (`buck2.ttl_refresh_frequency_seconds`).
     /// The daemon-wide walk over the digest interner runs at the first repo's.
     pub(crate) ttl_refresh_frequency: Duration,
@@ -640,7 +632,6 @@ impl TenantState {
             }
         };
         let materializer_defers_writes = deferred_materializer_configs.defer_write_actions;
-        let materializer_probes_writes = disk_state_core;
         let ttl_refresh_frequency = deferred_materializer_configs.ttl_refresh.frequency;
 
         let use_eden_thrift_read = root_config
@@ -928,7 +919,6 @@ impl TenantState {
             system_warning_config: SystemWarningConfig::from_config(root_config)?,
             detect_eden_restart,
             materializer_defers_writes,
-            materializer_probes_writes,
             ttl_refresh_frequency,
             clean_scratch_on_idle: root_config
                 .parse::<RolloutPercentage>(BuckconfigKeyRef {

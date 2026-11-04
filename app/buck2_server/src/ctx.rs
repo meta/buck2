@@ -1060,36 +1060,25 @@ impl DiceCommandUpdater<'_, '_> {
         // A write whose content the CAS already has is declared as a CAS download, so its bytes
         // then exist nowhere but the CAS, and a copy from a source file follows the same
         // decision: the same question about content produced here, and its source stays where
-        // it is either way. Under the deferred core that pays only when the content would not
-        // have gone to the output path right away (`defer_write_actions`); a hit trades a write
-        // for a download otherwise, and the knob decides. The disk-state core asks for the probe
-        // itself (`materializer_probes_writes`): it writes to the path at once, and most of a
-        // cold build's writes are never read from disk.
+        // it is either way. That pays only when the content would not have gone to the output
+        // path right away (`defer_write_actions`); a hit trades a write for a download
+        // otherwise, and the knob decides.
         let repo = self.cmd_ctx.base_context.repo();
         run_action_knobs.defer_write_actions = repo.materializer_defers_writes;
-        run_action_knobs.write_cas_probe = repo.materializer_probes_writes
-            || (root_config
-                .parse::<RolloutPercentage>(BuckconfigKeyRef {
-                    section: "buck2",
-                    property: "write_cas_probe",
-                })?
-                .unwrap_or_else(RolloutPercentage::never)
-                .roll()
-                && repo.materializer_defers_writes);
-        // The disk-state core asks for the write cache as it asks for the probe: a hit costs
-        // neither the rendering nor the probe's read of the content, and a miss is produced as a
-        // run action's output is, which is the only kind of write the core has. The config
-        // overrides either way, so a build can take the cache away from the core in a pinch.
+        run_action_knobs.write_cas_probe = root_config
+            .parse::<RolloutPercentage>(BuckconfigKeyRef {
+                section: "buck2",
+                property: "write_cas_probe",
+            })?
+            .unwrap_or_else(RolloutPercentage::never)
+            .roll()
+            && repo.materializer_defers_writes;
         run_action_knobs.write_action_cache = root_config
             .parse::<WriteActionCacheMode>(BuckconfigKeyRef {
                 section: "buck2",
                 property: "write_action_cache",
             })?
-            .unwrap_or(if repo.materializer_probes_writes {
-                WriteActionCacheMode::Use
-            } else {
-                WriteActionCacheMode::Off
-            });
+            .unwrap_or_default();
         run_action_knobs.write_action_cache_populate = root_config
             .parse::<RolloutFraction>(BuckconfigKeyRef {
                 section: "buck2",

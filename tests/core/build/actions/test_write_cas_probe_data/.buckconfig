@@ -10,6 +10,3 @@ materializations = deferred
 defer_write_actions = true
 ttl_refresh_enabled = true
 write_cas_probe = true
-# This suite is about the probe, which the write action cache stands in front of by default
-# under the disk-state core.
-write_action_cache = off

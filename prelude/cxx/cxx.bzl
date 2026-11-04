@@ -1548,7 +1548,7 @@ cxx_test = prelude_rule(
             "post_linker_flags": attrs.list(attrs.arg(anon_target_compatible = True), default = []),
             "prefer_stripped_objects": attrs.bool(default = False),
             "prefix_header": attrs.option(attrs.source(), default = None),
-            "supports_test_execution_caching": attrs.bool(default = False),
+            "supports_test_execution_caching": attrs.bool(default = True),
             "thin_lto": attrs.bool(default = False),
             "use_default_test_main": attrs.option(attrs.bool(), default = None),
             "use_header_units": attrs.one_of(

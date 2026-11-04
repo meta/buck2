@@ -9,7 +9,7 @@
 load("@prelude//:attrs_validators.bzl", "validation_common")
 load("@prelude//apple:apple_bundle_types.bzl", "AppleBundleTypeAttributeType")
 load("@prelude//apple:apple_code_signing_types.bzl", "CodeSignConfiguration", "CodeSignType")
-load("@prelude//apple:apple_common.bzl", "apple_common")
+load("@prelude//apple:apple_common.bzl", "apple_common", "apple_hot_code_reload_enabled_select")
 load("@prelude//apple:apple_execution_groups.bzl", "AppleResources")
 load("@prelude//apple:apple_test_device_types.bzl", "AppleTestDeviceType")
 load("@prelude//apple:apple_toolchain_types.bzl", "AppleToolchainInfo")
@@ -317,4 +317,7 @@ def apple_bundle_extra_attrs():
     # Only `apple_bundle`: `apple_test` shares the bundle-like attributes but
     # test code is never compiled for replacement.
     attribs.update(apple_common.swift_dynamic_replacement_enabled_arg())
+    # Whether this is a hot code reload build, recorded in `BuildInfo.json`;
+    # test bundles take no part in hot reload.
+    attribs["_hot_code_reload_enabled"] = attrs.default_only(attrs.bool(default = apple_hot_code_reload_enabled_select(True, False)))
     return attribs

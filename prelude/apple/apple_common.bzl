@@ -235,9 +235,8 @@ def get_swift_dynamic_replacement_enabled():
 def _swift_dynamic_replacement_enabled_arg():
     """Compiles a Swift module so that every function, initializer, computed
     property and subscript can be replaced at run time with
-    `@_dynamicReplacement`, and lets the library produce such replacements;
-    on a bundle, records the decision in `BuildInfo.json`. Every call pays an
-    indirection, so this is for development builds only. Unset, it follows the
+    `@_dynamicReplacement`, and lets the library produce such replacements.
+    Every call pays an indirection, so this is for development builds only. Unset, it follows the
     `swift_dynamic_replacement` constraint, and when that is unspecified the
     `apple.swift_dynamic_replacement_override_enabled` buckconfig; a target
     that sets it decides for itself, whatever the configuration says."""

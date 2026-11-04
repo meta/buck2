@@ -1,0 +1,5 @@
+load("@prelude//toolchains:demo.bzl", "system_demo_toolchains")
+
+oncall("build_infra")
+
+system_demo_toolchains()

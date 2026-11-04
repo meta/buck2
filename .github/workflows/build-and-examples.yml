@@ -61,6 +61,7 @@ jobs:
         $RUNNER_TEMP/artifacts/buck2 test //... -v 2
     - uses: ./.github/actions/build_example_conan
     - uses: ./.github/actions/build_example_no_prelude
+    - uses: ./.github/actions/build_example_bes
     - uses: ./.github/actions/build_example_toolchain
       with:
         toolchain: python_toolchain

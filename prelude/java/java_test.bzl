@@ -367,7 +367,7 @@ java_test = prelude_rule(
             "runner": attrs.option(attrs.dep(), default = None),
             "runtime_deps": attrs.list(attrs.dep(), default = []),
             "source_only_abi_deps": attrs.list(attrs.dep(), default = []),
-            "supports_test_execution_caching": attrs.bool(default = False),
+            "supports_test_execution_caching": attrs.bool(default = True),
             "test_case_timeout_ms": attrs.option(attrs.int(), default = None),
             "test_class_names_file": attrs.option(attrs.source(), default = None),
             "unbundled_resources_root": attrs.option(attrs.source(allow_directory = True), default = None),

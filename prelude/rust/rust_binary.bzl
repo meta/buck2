@@ -1122,6 +1122,7 @@ rust_binary = prelude_rule(
             "_generated_build_info_enabled": attrs.bool(default = False),
             "_generated_build_info_mode": attrs.enum(["full", "stable"], default = "stable"),
             "_generated_build_info_spec": BUILD_INFO_ATTR,
+            "_pgo_profile": attrs.option(attrs.dep(), default = None),
         }
     ),
     uses_plugins = [RustProcMacroPlugin],

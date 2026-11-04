@@ -35,8 +35,8 @@ with the compiler used for capture.
 First export the merged `.profdata` as a Buck target and replace `None` for
 `buck2-td` in `profiles.bzl` with that target's label. The historical
 `fbcode//buck2/pgo:td_pgo_profile` example is not a checked-in artifact.
-Until a real profile is registered, generation works but profile use fails
-explicitly. Do not substitute another product's profile or an empty profile.
+Until a real profile is registered, generation works but profile use builds
+without one. Do not substitute another product's profile or an empty profile.
 
 After registering the artifact:
 

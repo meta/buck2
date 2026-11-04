@@ -505,6 +505,7 @@ def rust_library_impl(ctx: AnalysisContext) -> list[Provider]:
         rustdoc = rustdoc,
         rustdoc_test = rustdoc_test,
         doctests_enabled = doctests_enabled,
+        doc_supports_test_execution_caching = ctx.attrs.doc_supports_test_execution_caching,
         re_executors = re_executors,
         check_artifacts = output_as_diag_subtargets(diag_artifacts[incr_enabled], clippy_artifacts[incr_enabled]),
         expand = expand,
@@ -792,6 +793,7 @@ def _default_providers(
     rustdoc: Artifact,
     rustdoc_test: cmd_args | None,
     doctests_enabled: bool,
+    doc_supports_test_execution_caching: bool,
     re_executors: RemoteTestExecutorConfig,
     check_artifacts: dict[str, Artifact | None],
     expand: Artifact | None,
@@ -852,6 +854,7 @@ def _default_providers(
         rustdoc_test_info = ExternalRunnerTestInfo(
             type = "rustdoc",
             command = [rustdoc_test],
+            supports_test_execution_caching = doc_supports_test_execution_caching,
             default_executor = re_executors.default_executor,
             executor_overrides = re_executors.executor_overrides,
             # Doctests always run from the project root with project-relative paths,
@@ -1351,6 +1354,7 @@ rust_library = prelude_rule(
         | {
             "crate_dynamic": attrs.option(attrs.dep(), default = None),
             "doc_env": rust_common.env_arg()["env"],
+            "doc_supports_test_execution_caching": attrs.bool(default = True),
             "doctests": attrs.option(attrs.bool(), default = None),
             "include_in_android_merge_map_output": attrs.bool(default = True),
             "proc_macro": attrs.bool(default = False),

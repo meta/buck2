@@ -67,6 +67,7 @@ strong_hash.workspace = true
 tempfile.workspace = true
 tokio.workspace = true
 tracing.workspace = true
+zstd.workspace = true
 
 [dev-dependencies]
 assert_matches.workspace = true

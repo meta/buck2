@@ -1070,6 +1070,9 @@ impl<T: IoHandler + Allocative> Materializer for DiskStateMaterializer<T> {
         snapshot.blob_store_bytes = store.bytes;
         snapshot.blob_store_removed_bytes = store.removed_bytes;
         snapshot.blob_store_served_files = store.served;
+        snapshot.blob_store_memory_entries = store.memory_entries;
+        snapshot.blob_store_memory_bytes = store.memory_bytes;
+        snapshot.blob_store_memory_served_files = store.memory_served;
         snapshot.disk_state_materializer_copied_from_disk =
             self.shared.copied_from_disk.load(Ordering::Relaxed);
     }

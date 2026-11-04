@@ -1464,6 +1464,11 @@ message Snapshot {
   // holding the same content, rather than downloading, since the daemon
   // started.
   uint64 disk_state_materializer_copied_from_disk = 208;
+  // The BlobStore's memory: the blobs in it and their bytes as compressed, and
+  // the files it has written at their destinations since the daemon started.
+  uint64 blob_store_memory_entries = 209;
+  uint64 blob_store_memory_bytes = 210;
+  uint64 blob_store_memory_served_files = 211;
 
   optional UnixSystemStats unix_system_stats = 300;
 

@@ -10,19 +10,22 @@
 
 //! The BlobStore: where the blobs behind the daemon's tracked file digests are, and how to get
 //! them back. It is the digest interner with its backings made explicit, a recorded CAS
-//! expiration and a recorded stash entry, the stash directory under buck-out that keeps content
-//! this daemon produced and the CAS is not known to hold, and one walk over the table that
-//! refreshes CAS expirations. Where a digest's entry says the stash holds the blob, the
-//! materializer links the content out of it before asking the CAS.
+//! expiration and a recorded local entry; the two places this daemon keeps content the CAS is
+//! not known to hold, the stash directory under buck-out and compressed bytes in memory; and one
+//! walk over the table that refreshes CAS expirations. Where a digest's entry says the store
+//! holds the blob, the materializer puts the content on disk from there before asking the CAS.
 //!
-//! The stash holds exactly the blobs some `TrackedFileDigest` is held for and the CAS is not
-//! known to hold, and starts empty with every daemon. An insertion writes a file under a name of
-//! its own and commits by recording it on the digest's entry in one atomic step; a second
-//! insertion of the same digest finds the record and removes its own file. The record leaves the
-//! entry when the entry leaves the table, at the last handle's drop or at a walk, or when a CAS
-//! expiration is recorded for the blob, and the interner hands it to this store's collector,
-//! which unlinks the file. Nothing coordinates in memory beyond that, and nothing reads the
-//! directory: what the table does not record is not in the stash.
+//! The stash and the memory hold exactly the blobs some `TrackedFileDigest` is held for and the
+//! CAS is not known to hold, and start empty with every daemon. The stash takes content that is
+//! on disk already, an action's output, by the cheapest link the filesystem has; the memory takes
+//! content an action made and nothing has asked for on disk, a deferred write. Either insertion
+//! puts the content under a nonce of its own and commits by recording it on the digest's entry in
+//! one atomic step; a second insertion of the same digest finds the record and removes its own.
+//! The record leaves the entry when the entry leaves the table, at the last handle's drop or at a
+//! walk, or when a CAS expiration is recorded for the blob, and the interner hands it to the
+//! collector of whichever place made it, by the id in its nonce: the stash's unlinks the file,
+//! the memory's drops the bytes. Nothing coordinates beyond that, and nothing reads the
+//! directory: what the table does not record is in neither.
 
 use std::collections::hash_map::RandomState;
 use std::fs::File;
@@ -52,6 +55,7 @@ use buck2_fs::paths::abs_norm_path::AbsNormPath;
 use buck2_fs::paths::abs_norm_path::AbsNormPathBuf;
 use buck2_fs::paths::forward_rel_path::ForwardRelativePath;
 use buck2_fs::paths::forward_rel_path::ForwardRelativePathBuf;
+use buck2_hash::BuckDashMap;
 use dupe::Dupe;
 use jiff::Timestamp;
 use tokio::sync::mpsc;
@@ -82,7 +86,7 @@ pub struct FileToInsert {
     pub origin: Origin,
 }
 
-/// A blob to put on disk out of the stash.
+/// A blob to put on disk out of the store.
 #[derive(Debug)]
 pub struct FileToLink {
     pub digest: TrackedFileDigest,
@@ -98,7 +102,7 @@ enum Collect {
     Flush(oneshot::Sender<()>),
 }
 
-/// The stash as the snapshot reports it.
+/// The store's two places as the snapshot reports them.
 #[derive(Copy, Clone, Debug, Default, Eq, PartialEq)]
 pub struct BlobStoreStats {
     /// Files in the stash and their bytes, as insertions and the collector keep count.
@@ -112,6 +116,12 @@ pub struct BlobStoreStats {
     pub duplicates: u64,
     /// Files put at their destinations out of the stash since this process started.
     pub served: u64,
+    /// Blobs in memory and their bytes as compressed, as insertions and the collector keep
+    /// count.
+    pub memory_entries: u64,
+    pub memory_bytes: u64,
+    /// Files written at their destinations out of memory since this process started.
+    pub memory_served: u64,
 }
 
 #[derive(buck2_error::Error, Debug)]
@@ -127,6 +137,9 @@ enum BlobStoreError {
     #[error("The BlobStore has no stash to put content in")]
     #[buck2(tag = Tier0)]
     NoStash,
+    #[error("`{digest}` is not the digest of the {len} bytes offered as its content")]
+    #[buck2(tag = Tier0)]
+    WrongContent { digest: FileDigest, len: usize },
 }
 
 #[derive(Allocative)]
@@ -135,6 +148,7 @@ pub struct BlobStore {
     interner: &'static DigestInterner,
     /// The directory, once the daemon has given the store one.
     stash: OnceLock<Arc<AttachedStash>>,
+    memory: Arc<Memory>,
     /// The CAS side of the walk, once the daemon has an RE connection to refresh through.
     #[allocative(skip)]
     refresh: OnceLock<TtlRefresher>,
@@ -159,6 +173,9 @@ struct Counters {
     insertions: AtomicU64,
     duplicates: AtomicU64,
     served: AtomicU64,
+    memory_entries: AtomicU64,
+    memory_bytes: AtomicU64,
+    memory_served: AtomicU64,
 }
 
 impl Counters {
@@ -175,6 +192,17 @@ impl Counters {
 
     fn unlinked(&self, bytes: u64) {
         self.removed_bytes.fetch_add(bytes, Ordering::Relaxed);
+    }
+
+    fn memory_recorded(&self, compressed_bytes: u64) {
+        self.memory_entries.fetch_add(1, Ordering::Relaxed);
+        self.memory_bytes
+            .fetch_add(compressed_bytes, Ordering::Relaxed);
+    }
+
+    fn memory_forgotten(&self, compressed_bytes: u64) {
+        saturating_sub(&self.memory_entries, 1);
+        saturating_sub(&self.memory_bytes, compressed_bytes);
     }
 }
 
@@ -193,19 +221,30 @@ impl BlobStore {
     }
 
     pub fn new(interner: &'static DigestInterner) -> Self {
+        let memory = Arc::new(Memory::new());
+        let counters = Arc::new(Counters::default());
+        interner.add_stash_collector(memory.nonces.id, {
+            let (memory, counters) = (memory.dupe(), counters.dupe());
+            Box::new(move |_digest, record| {
+                if let Some(blob) = memory.remove(record) {
+                    counters.memory_forgotten(blob.len() as u64);
+                }
+            })
+        });
         Self {
             interner,
             stash: OnceLock::new(),
+            memory,
             refresh: OnceLock::new(),
-            counters: Arc::new(Counters::default()),
+            counters,
         }
     }
 
-    /// Gives the store its directory and starts it empty: what a previous daemon left there is
-    /// moved aside and removed in the background, since nothing refers to it any more. Returns
-    /// whether the store took the directory: the store has one, and a second materializer in the
-    /// process shares the first's. Must be called from within a tokio runtime, which the
-    /// collector's task then lives on.
+    /// Gives the store its directory, and the executor it does its IO on, and starts the
+    /// directory empty: what a previous daemon left there is moved aside and removed in the
+    /// background, since nothing refers to it any more. Returns whether the store took the
+    /// directory: the store has one, and a second materializer in the process shares the first's.
+    /// Must be called from within a tokio runtime, which the collector's task then lives on.
     pub fn attach_stash(
         &self,
         root: AbsNormPathBuf,
@@ -227,7 +266,7 @@ impl BlobStore {
         }
         let inbox = attached.collector.clone();
         self.interner.add_stash_collector(
-            attached.stash.id,
+            attached.stash.nonces.id,
             Box::new(move |digest, record| {
                 let _ignored = inbox.send(Collect::Orphan(digest.dupe(), record));
             }),
@@ -270,6 +309,9 @@ impl BlobStore {
             insertions: self.counters.insertions.load(Ordering::Relaxed),
             duplicates: self.counters.duplicates.load(Ordering::Relaxed),
             served: self.counters.served.load(Ordering::Relaxed),
+            memory_entries: self.counters.memory_entries.load(Ordering::Relaxed),
+            memory_bytes: self.counters.memory_bytes.load(Ordering::Relaxed),
+            memory_served: self.counters.memory_served.load(Ordering::Relaxed),
         }
     }
 
@@ -339,10 +381,40 @@ impl BlobStore {
             .await
     }
 
-    /// The whole of an insertion: the file under a name of its own, then the record on the
-    /// entry, which is the commit. Whoever finds a record there by then holds a duplicate and
-    /// removes it; nothing else ever has to agree with anything. A blob the CAS is known to hold
-    /// is not inserted: the CAS serves it, and the stash holds what the CAS does not.
+    /// Keeps `content`, which must be `digest`'s, in memory as the content of the digest,
+    /// compressed: for a write made here that nothing has asked for on disk, and that the
+    /// materializer writes out of memory when something does. A digest the store holds already,
+    /// or the CAS is known to, is left alone. Compresses on the calling thread.
+    pub fn insert_in_memory(
+        &self,
+        content: &[u8],
+        digest: &TrackedFileDigest,
+        executable: bool,
+    ) -> buck2_error::Result<()> {
+        if digest.stash().is_some() || in_cas(digest) {
+            return Ok(());
+        }
+        if digest.size() != content.len() as u64 {
+            return Err(BlobStoreError::WrongContent {
+                digest: digest.data().dupe(),
+                len: content.len(),
+            }
+            .into());
+        }
+        let (record, compressed_bytes) = self.memory.insert(content, executable)?;
+        if digest.register_stash(record) {
+            self.counters.memory_recorded(compressed_bytes);
+        } else {
+            self.memory.remove(record);
+        }
+        Ok(())
+    }
+
+    /// The whole of an insertion into the stash: the file under a name of its own, then the
+    /// record on the entry, which is the commit. Whoever finds a record there by then holds a
+    /// duplicate and removes it; nothing else ever has to agree with anything. A blob the CAS
+    /// is known to hold is not inserted: the CAS serves it, and the stash holds what the CAS does
+    /// not.
     fn insert_one(
         stash: &Stash,
         counters: &Counters,
@@ -364,14 +436,16 @@ impl BlobStore {
         Ok(())
     }
 
-    /// Puts each digest's blob at its destination, with the executable bit as asked: a clone of
-    /// the stash's file where the filesystem has them, else a hardlink when the mode agrees, else
-    /// a copy. One answer per file, `false` where the stash does not hold the blob.
+    /// Puts each digest's blob at its destination, with the executable bit as asked: out of the
+    /// stash, a clone of its file where the filesystem has them, else a hardlink when the mode
+    /// agrees, else a copy; out of memory, written. One answer per file, `false` where the store
+    /// does not hold the blob, which is every answer before `attach_stash`, since the IO runs on
+    /// the executor that gives the store.
     pub async fn materialize(&self, files: Vec<FileToLink>) -> buck2_error::Result<Vec<bool>> {
         let Some(attached) = self.stash.get() else {
             return Ok(vec![false; files.len()]);
         };
-        let (stash, counters) = (&attached.stash, &*self.counters);
+        let (stash, memory, counters) = (&attached.stash, &*self.memory, &*self.counters);
         attached
             .blocking
             .execute_io_inline(move || {
@@ -381,15 +455,28 @@ impl BlobStore {
                         let Some(record) = file.digest.stash() else {
                             return Ok(false);
                         };
-                        match stash.link(file.digest.data(), record, file.executable, &file.dest) {
+                        let digest = file.digest.data();
+                        let put = if record.stash_id() == memory.nonces.id {
+                            memory.write(digest, record, file.executable, &file.dest)
+                        } else {
+                            stash.link(digest, record, file.executable, &file.dest)
+                        };
+                        match put {
                             Ok(true) => {
-                                counters.served.fetch_add(1, Ordering::Relaxed);
+                                if record.stash_id() == memory.nonces.id {
+                                    counters.memory_served.fetch_add(1, Ordering::Relaxed);
+                                } else {
+                                    counters.served.fetch_add(1, Ordering::Relaxed);
+                                }
                                 Ok(true)
                             }
                             Ok(false) => {
-                                // The file is gone from under the record, which only something
-                                // outside buck2 does; the record goes too, and the CAS is asked.
-                                if file.digest.clear_stash(record) {
+                                // The blob is gone from under the record: a file, by something
+                                // outside buck2; bytes, by the collector, racing this read of the
+                                // record. The record goes too, and the CAS is asked.
+                                if file.digest.clear_stash(record)
+                                    && record.stash_id() != memory.nonces.id
+                                {
                                     counters.forgotten(file.digest.size());
                                 }
                                 Ok(false)
@@ -400,7 +487,7 @@ impl BlobStore {
                                 buck2_core::soft_error!(
                                     "blob_store_link_failed",
                                     e.context(format!(
-                                        "Putting {} out of the stash at {}",
+                                        "Putting {} out of the store at {}",
                                         file.digest.data(),
                                         file.dest
                                     ))
@@ -579,6 +666,38 @@ enum Source {
     Bytes(Vec<u8>),
 }
 
+/// The nonces one of the store's places names its entries by: nonzero and below 2^62, as the
+/// record wants, with the place's id in the upper half, by which the interner hands a record to
+/// the place's collector (`StashRecord::stash_id`). A stash's id is odd and a memory's even, so
+/// that the two of one store never share one; the stores of one process, the daemon's and a
+/// test's several, draw theirs at random.
+#[derive(Allocative)]
+struct Nonces {
+    id: u32,
+    /// The lower half of the next nonce, started at random.
+    next: AtomicU64,
+}
+
+impl Nonces {
+    fn new(id: u32) -> Self {
+        Self {
+            id,
+            next: AtomicU64::new(RandomState::new().hash_one(0u64)),
+        }
+    }
+
+    /// A nonce this place has not used.
+    fn next(&self) -> u64 {
+        let low = self.next.fetch_add(1, Ordering::Relaxed) as u32;
+        (u64::from(self.id) << 32) | u64::from(low)
+    }
+}
+
+/// A random id below 2^30, odd or even as asked.
+fn random_id(odd: bool) -> u32 {
+    (RandomState::new().hash_one(1u64) as u32 & 0x3fff_fffc) + if odd { 1 } else { 2 }
+}
+
 /// The directory: CASd's layout, `<algo>/<h0h1>/<h2h3>/<rest>.<size>[_non_exec].<nonce>`, so
 /// that no directory grows large and so that the store can follow CASd if it changes its mind.
 /// Every insertion writes a file of its own, named by a nonce, so that no two insertions and no
@@ -591,11 +710,7 @@ struct Stash {
     root: AbsNormPathBuf,
     #[allocative(skip)]
     config: CasDigestConfig,
-    /// This stash's id, the upper half of every nonce it makes, by which the interner tells its
-    /// records from another stash's in the same table (tests have several).
-    id: u32,
-    /// The lower half of the next nonce, started at random.
-    next_nonce: AtomicU64,
+    nonces: Nonces,
 }
 
 const NON_EXECUTABLE: &str = "_non_exec";
@@ -605,16 +720,8 @@ impl Stash {
         Self {
             root,
             config,
-            id: (RandomState::new().hash_one(1u64) as u32 & 0x3fff_fffe) + 1,
-            next_nonce: AtomicU64::new(RandomState::new().hash_one(0u64)),
+            nonces: Nonces::new(random_id(true)),
         }
-    }
-
-    /// A nonce no insertion by this stash has used: nonzero and below 2^62, as the record wants,
-    /// with the stash's id in its upper half.
-    fn nonce(&self) -> u64 {
-        let low = self.next_nonce.fetch_add(1, Ordering::Relaxed) as u32;
-        (u64::from(self.id) << 32) | u64::from(low)
     }
 
     fn file(&self, digest: &FileDigest, record: StashRecord) -> AbsNormPathBuf {
@@ -628,7 +735,7 @@ impl Stash {
         source: Source,
     ) -> buck2_error::Result<StashRecord> {
         let record = StashRecord {
-            nonce: self.nonce(),
+            nonce: self.nonces.next(),
             executable,
         };
         let file = self.file(digest, record);
@@ -718,6 +825,74 @@ impl Stash {
             .into());
         }
         Ok(())
+    }
+}
+
+/// The bytes: content compressed with zstd, by nonce. A deferred write's, which nothing has asked
+/// for on disk and most never will: a cold build's writes are hundreds of thousands of small
+/// files, nearly all of them inputs of actions that run remotely or hit the cache, and they are
+/// a small fraction of the daemon's memory compressed where on disk they are gigabytes and the IO
+/// to put them there. Nothing is modified once inserted, and a record names its bytes exactly
+/// until the collector takes them.
+#[derive(Allocative)]
+struct Memory {
+    nonces: Nonces,
+    blobs: BuckDashMap<u64, Box<[u8]>>,
+}
+
+impl Memory {
+    fn new() -> Self {
+        Self {
+            nonces: Nonces::new(random_id(false)),
+            blobs: BuckDashMap::default(),
+        }
+    }
+
+    /// Puts `content` in under a nonce of its own: the record for it, and how many bytes it
+    /// takes compressed.
+    fn insert(&self, content: &[u8], executable: bool) -> buck2_error::Result<(StashRecord, u64)> {
+        // The zstd crate does not release the spare capacity of its encoding buffer, so the
+        // compressed `Vec` is as large as the input until it is shrunk here.
+        let compressed = zstd::bulk::compress(content, 0)
+            .with_buck_error_context(|| format!("Compressing {} bytes", content.len()))?
+            .into_boxed_slice();
+        let compressed_bytes = compressed.len() as u64;
+        let record = StashRecord {
+            nonce: self.nonces.next(),
+            executable,
+        };
+        self.blobs.insert(record.nonce, compressed);
+        Ok((record, compressed_bytes))
+    }
+
+    /// Takes the recorded bytes out, if they are there.
+    fn remove(&self, record: StashRecord) -> Option<Box<[u8]>> {
+        self.blobs.remove(&record.nonce).map(|(_, blob)| blob)
+    }
+
+    /// Writes the recorded content, `digest`'s, at `dest` with the mode asked. `Ok(false)` when
+    /// the bytes are not there.
+    fn write(
+        &self,
+        digest: &FileDigest,
+        record: StashRecord,
+        executable: bool,
+        dest: &AbsNormPath,
+    ) -> buck2_error::Result<bool> {
+        // The compressed bytes are copied out from under the shard's lock, which an insertion
+        // into the shard would otherwise wait on for the length of the decompression and the
+        // write.
+        let Some(compressed) = self.blobs.get(&record.nonce).map(|blob| blob.clone()) else {
+            return Ok(false);
+        };
+        let content = zstd::bulk::decompress(&compressed, digest.size() as usize)
+            .with_buck_error_context(|| format!("Decompressing {digest}"))?;
+        if let Some(parent) = dest.parent() {
+            fs_util::create_dir_all(parent)?;
+        }
+        fs_util::write(dest, content)?;
+        fs_util::set_executable(dest, executable)?;
+        Ok(true)
     }
 }
 
@@ -1154,21 +1329,141 @@ mod tests {
         Ok(())
     }
 
+    /// Bytes kept in memory come out at any destination in either mode, and nothing of them is
+    /// on disk until then.
+    #[tokio::test]
+    async fn test_bytes_kept_in_memory_come_out_in_either_mode() -> buck2_error::Result<()> {
+        let temp = ProjectRootTemp::new()?;
+        let (store, table) = store(temp.path());
+        let content = b"deferred write ".repeat(64);
+        let digest = table.intern(self::digest(&content), 0);
+        store.insert_in_memory(&content, &digest, false)?;
+        // A second insertion of a recorded digest does nothing.
+        store.insert_in_memory(&content, &digest, true)?;
+        let stats = store.stats();
+        assert_eq!(stats.memory_entries, 1);
+        assert!(stats.memory_bytes > 0 && stats.memory_bytes < content.len() as u64);
+        assert_eq!((stats.entries, stats.insertions), (0, 0));
+        assert_eq!(files_of(&store, digest.data()), Vec::<String>::new());
+
+        let plain = scratch(temp.path(), "plain");
+        assert!(materialize_one(&store, &digest, false, &plain).await?);
+        assert_eq!(fs_util::read_to_string(&plain)?.as_bytes(), &content[..]);
+        let exec = scratch(temp.path(), "exec");
+        assert!(materialize_one(&store, &digest, true, &exec).await?);
+        assert_eq!(fs_util::read_to_string(&exec)?.as_bytes(), &content[..]);
+        if cfg!(unix) {
+            assert!(is_executable(&exec));
+            assert!(!is_executable(&plain));
+        }
+        assert_eq!((store.stats().memory_served, store.stats().served), (2, 0));
+
+        // Content that is not the digest's is refused.
+        let other = table.intern(self::digest(b"other"), 0);
+        assert!(store.insert_in_memory(&content, &other, false).is_err());
+        assert_eq!(other.stash(), None);
+        Ok(())
+    }
+
+    /// One place holds a blob, whichever recorded it first; the other leaves it alone.
+    #[tokio::test]
+    async fn test_one_place_holds_a_blob() -> buck2_error::Result<()> {
+        let temp = ProjectRootTemp::new()?;
+        let (store, table) = store(temp.path());
+        let memory_first = table.intern(digest(b"memory first"), 0);
+        store.insert_in_memory(b"memory first", &memory_first, false)?;
+        store
+            .insert_bytes(b"memory first".to_vec(), &memory_first, false)
+            .await?;
+        let stash_first = table.intern(digest(b"stash first"), 0);
+        store
+            .insert_bytes(b"stash first".to_vec(), &stash_first, false)
+            .await?;
+        store.insert_in_memory(b"stash first", &stash_first, false)?;
+        let stats = store.stats();
+        assert_eq!((stats.memory_entries, stats.entries), (1, 1));
+        assert_eq!(files_of(&store, memory_first.data()), Vec::<String>::new());
+        assert_eq!(files_of(&store, stash_first.data()).len(), 1);
+        Ok(())
+    }
+
+    /// The last handle takes the bytes with it, as it takes the stash's file, and so does the
+    /// CAS turning out to hold the blob.
+    #[tokio::test]
+    async fn test_memory_lets_go_as_the_stash_does() -> buck2_error::Result<()> {
+        let temp = ProjectRootTemp::new()?;
+        let store = store_over_global(temp.path());
+        let content = b"blob_store test: in memory until its last handle drops";
+        let handle = TrackedFileDigest::from_content(content, config());
+        store.insert_in_memory(content, &handle, false)?;
+        assert_eq!(store.stats().memory_entries, 1);
+        // A second handle keeps it.
+        let again = TrackedFileDigest::from_content(content, config());
+        drop(handle);
+        assert_eq!(store.stats().memory_entries, 1);
+        assert!(again.stash().is_some());
+        drop(again);
+        assert_eq!(
+            (store.stats().memory_entries, store.stats().memory_bytes),
+            (0, 0)
+        );
+
+        let later_content = b"blob_store test: in memory until the CAS has it";
+        let later = TrackedFileDigest::from_content(later_content, config());
+        store.insert_in_memory(later_content, &later, false)?;
+        assert_eq!(store.stats().memory_entries, 1);
+        later.update_expires(Timestamp::now() + SignedDuration::from_hours(4));
+        assert_eq!(later.stash(), None);
+        assert_eq!(store.stats().memory_entries, 0);
+        let dest = scratch(temp.path(), "dest");
+        assert!(!materialize_one(&store, &later, false, &dest).await?);
+        Ok(())
+    }
+
+    /// The walk drops the bytes of an entry nothing holds, as it drops a stash record.
+    #[tokio::test]
+    async fn test_a_walk_drops_memory_nothing_holds() -> buck2_error::Result<()> {
+        let temp = ProjectRootTemp::new()?;
+        let (store, table) = store(temp.path());
+        let dropped = table.intern(digest(b"dropped from memory"), 0);
+        store.insert_in_memory(b"dropped from memory", &dropped, false)?;
+        // A private table's handles drop through the global interner, so the walk is what
+        // drops this entry.
+        let dropped_data = dropped.data().dupe();
+        drop(dropped);
+        assert_eq!(store.stats().memory_entries, 1);
+
+        let sweep = store.walk().await?;
+        assert_eq!(sweep.swept, 1);
+        assert!(table.peek(&dropped_data).is_none());
+        assert_eq!(
+            (store.stats().memory_entries, store.stats().memory_bytes),
+            (0, 0)
+        );
+        Ok(())
+    }
+
     #[test]
-    fn test_nonces_carry_the_stash_s_id_and_never_repeat() {
+    fn test_nonces_carry_the_place_s_id_and_never_repeat() {
         let stash = Stash::new(AbsNormPathBuf::new(std::env::temp_dir()).unwrap(), config());
-        let (a, b) = (stash.nonce(), stash.nonce());
+        let (a, b) = (stash.nonces.next(), stash.nonces.next());
         assert_ne!(a, b);
         assert!(a != 0 && a < 1 << 62);
-        assert_ne!(stash.id, 0);
+        assert_ne!(stash.nonces.id, 0);
         assert_eq!(
             StashRecord {
                 nonce: a,
                 executable: false
             }
             .stash_id(),
-            stash.id
+            stash.nonces.id
         );
+        // The two places of one store never draw the same id.
+        let memory = Memory::new();
+        assert_eq!(stash.nonces.id % 2, 1);
+        assert_eq!(memory.nonces.id % 2, 0);
+        let c = memory.nonces.next();
+        assert!(c != 0 && c < 1 << 62);
     }
 
     // The refresh side of the walk, with a CAS that answers as the test says.

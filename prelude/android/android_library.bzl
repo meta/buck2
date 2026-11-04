@@ -354,6 +354,7 @@ android_library = prelude_rule(
             "language": attrs.option(attrs.enum(JvmLanguage), default = None),
             "manifest_file": attrs.option(attrs.source(), default = None),
             "maven_coords": attrs.option(attrs.string(), default = None),
+            "min_sdk_version": attrs.default_only(attrs.option(attrs.int(), default = dex_min_sdk_version())),
             "proguard_config": attrs.option(attrs.source(), default = None),
             "remove_classes": attrs.list(
                 attrs.regex(),
@@ -368,7 +369,6 @@ android_library = prelude_rule(
             VALIDATION_DEPS_ATTR_NAME: attrs.set(attrs.dep(), sorted = True, default = []),
             "_android_toolchain": toolchains_common.android(),
             "_build_only_native_code": attrs.default_only(attrs.bool(default = is_build_only_native_code())),
-            "_dex_min_sdk_version": attrs.default_only(attrs.option(attrs.int(), default = dex_min_sdk_version())),
             "_dex_toolchain": toolchains_common.dex(),
             "_exec_os_type": buck.exec_os_type_arg(),
             "_is_building_android_binary": is_building_android_binary_attr(),

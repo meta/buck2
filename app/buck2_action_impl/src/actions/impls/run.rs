@@ -467,6 +467,7 @@ enum ExecuteResult {
         executor_preference: ExecutorPreference,
         action_and_blobs: ActionDigestAndBlobs,
         input_files_bytes: u64,
+        request: CommandExecutionRequest,
     },
 }
 
@@ -1361,6 +1362,7 @@ impl RunAction {
             executor_preference: req.executor_preference,
             action_and_blobs,
             input_files_bytes: req.paths().input_files_bytes(),
+            request: req,
         })
     }
 
@@ -1746,6 +1748,7 @@ impl Action for RunAction {
             executor_preference,
             action_and_blobs,
             input_files_bytes,
+            request,
         ) = match self.execute_inner(ctx, waiting_data).await? {
             ExecuteResult::LocalDepFileHit(outputs, metadata) => {
                 return Ok((outputs, metadata));
@@ -1756,12 +1759,14 @@ impl Action for RunAction {
                 executor_preference,
                 action_and_blobs,
                 input_files_bytes,
+                request,
             } => (
                 result,
                 dep_file_bundle,
                 executor_preference,
                 action_and_blobs,
                 input_files_bytes,
+                request,
             ),
         };
 
@@ -1793,6 +1798,7 @@ impl Action for RunAction {
             // build wall time; its in-flight limit has to rise first or it drops most seeding uploads.
             let upload_result = ctx
                 .cache_upload(
+                    &request,
                     &action_and_blobs,
                     &result,
                     re_result.as_mut(),

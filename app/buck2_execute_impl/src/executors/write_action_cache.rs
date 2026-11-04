@@ -82,7 +82,7 @@ impl WriteActionCache for ReWriteActionCache {
     ) -> buck2_error::Result<Option<TActionResult2>> {
         let response = self
             .re_client
-            .action_cache(action.action, &self.platform.to_re_platform())
+            .action_cache(action.action, &self.platform.to_re_platform(), None)
             .await?;
         Ok(response.map(|response| response.action_result))
     }
@@ -143,6 +143,7 @@ impl WriteActionCache for ReWriteActionCache {
             .write_action_result(
                 action.action,
                 &mut result,
+                None,
                 &self.platform.to_re_platform(),
                 ActionCacheWriteType::WriteAction,
             )

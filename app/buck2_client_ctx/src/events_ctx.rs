@@ -611,6 +611,21 @@ impl EventsCtx {
             .await
     }
 
+    pub async fn handle_client_instant_event(
+        &mut self,
+        trace_id: TraceId,
+        data: buck2_data::instant_event::Data,
+    ) -> buck2_error::Result<()> {
+        let event = BuckEvent::new(
+            SystemTime::now(),
+            trace_id,
+            None,
+            None,
+            buck2_data::buck_event::Data::Instant(buck2_data::InstantEvent { data: Some(data) }),
+        );
+        self.handle_events(vec![event], &mut None).await
+    }
+
     async fn handle_command_result(
         &mut self,
         result: &buck2_cli_proto::CommandResult,

@@ -391,9 +391,14 @@ async fn build_action_inner(
         .map(|outputs| {
             outputs
                 .iter()
-                .filter_map(|(_artifact, value)| {
+                .filter_map(|(artifact, value)| {
+                    let digest = value.digest()?;
                     Some(buck2_data::ActionOutput {
-                        tiny_digest: value.digest()?.tiny_digest().to_string(),
+                        tiny_digest: digest.tiny_digest().to_string(),
+                        path: artifact.path().to_string(),
+                        digest: digest.to_string(),
+                        size: digest.size(),
+                        is_directory: value.is_dir(),
                     })
                 })
                 .collect()

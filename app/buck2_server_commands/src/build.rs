@@ -645,7 +645,13 @@ async fn process_build_result(
                     .use_case,
             )
             .await;
-            (res, buck2_data::CreateOutputSymlinksEnd {})
+            (
+                res,
+                // The materializer creates these links; it does not list them yet.
+                buck2_data::CreateOutputSymlinksEnd {
+                    symlinks: Vec::new(),
+                },
+            )
         })
         .await?;
     }

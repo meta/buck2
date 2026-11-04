@@ -1479,6 +1479,19 @@ impl ServerCommandContextTrait for ServerCommandContext<'_> {
                 .materializer_implementation
                 .to_owned(),
         );
+        metadata.insert(
+            "REPO_ROOT".to_owned(),
+            self.base_context
+                .repo()
+                .paths
+                .project_root()
+                .root()
+                .to_string(),
+        );
+        metadata.insert(
+            "BUILD_WORKING_DIRECTORY".to_owned(),
+            self.working_dir_abs.to_string(),
+        );
 
         if let Some(originating_cgroup) = &self.base_context.daemon.daemon_originating_cgroup {
             metadata.insert(

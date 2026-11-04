@@ -405,8 +405,12 @@ impl PreparedCommandExecutor for ReExecutor {
             )?;
         }
 
-        let identity =
-            ReActionIdentity::new(*target, self.re_action_key.as_deref(), request.paths());
+        let identity = ReActionIdentity::new(
+            *target,
+            self.re_action_key.as_deref(),
+            request.paths(),
+            Some(action_and_blobs.action.raw_digest().to_string()),
+        );
 
         // TODO(bobyf, torozco): remote execution probably needs to explicitly handle cancellations
         let manager = self

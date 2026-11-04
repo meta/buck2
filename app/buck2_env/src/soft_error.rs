@@ -135,7 +135,7 @@ pub macro soft_error($category:expr, $err:expr $(, $k:ident : $v:expr)* $(,)?) {
 /// panics there.
 ///
 /// ```ignore
-/// soft_error_or_panic!("write_lease_released_unsettled", err);
+/// soft_error_or_panic!("command_lease_release_failed", err);
 /// ```
 pub macro soft_error_or_panic($category:expr, $err:expr $(, $k:ident : $v:expr)* $(,)?) {
     $crate::soft_error::panic_on_hard_error($crate::soft_error::report!(

@@ -643,7 +643,7 @@ impl<T: IoHandler + Allocative> Materializer for DiskStateMaterializer<T> {
         self.cleaner.prevent().await
     }
 
-    async fn declare_existing_impl(
+    async fn declare_existing(
         &self,
         lease: &WriteLease,
         artifacts: Vec<DeclareArtifactPayload>,
@@ -667,7 +667,7 @@ impl<T: IoHandler + Allocative> Materializer for DiskStateMaterializer<T> {
         Ok(())
     }
 
-    async fn materialize_impl(
+    async fn materialize(
         &self,
         request: MaterializeRequest,
     ) -> buck2_error::Result<MaterializeResponse> {
@@ -788,7 +788,7 @@ impl<T: IoHandler + Allocative> Materializer for DiskStateMaterializer<T> {
 
     /// Found content is backed from its path before it is handed out: a previous daemon's write
     /// or copy, whose store went with it.
-    async fn hold_or_take_impl(
+    async fn hold_or_take(
         &self,
         path: ProjectRelativePathBuf,
         value: ArtifactValue,
@@ -837,7 +837,7 @@ impl<T: IoHandler + Allocative> Materializer for DiskStateMaterializer<T> {
             .await
     }
 
-    async fn prepare_outputs_impl(
+    async fn prepare_outputs(
         &self,
         paths: Vec<ProjectRelativePathBuf>,
     ) -> buck2_error::Result<WriteLease> {
@@ -854,7 +854,7 @@ impl<T: IoHandler + Allocative> Materializer for DiskStateMaterializer<T> {
             .await
     }
 
-    async fn publish_impl(
+    async fn publish(
         &self,
         lease: &WriteLease,
         src: ProjectRelativePathBuf,

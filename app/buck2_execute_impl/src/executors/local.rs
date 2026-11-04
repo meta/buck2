@@ -615,13 +615,9 @@ impl LocalExecutor {
         } = materialized_inputs;
         // An action with neither outputs nor a scratch path has nothing to report under it.
         let outputs_lease = outputs_lease.unwrap_or_else(WriteLease::noop);
-        // Set once the run's outputs have been collected: that report settles every root of the
-        // lease, what the run produced tracked and what it did not left, and the leases over
-        // published content join the outputs lease for the result's readers. Every other way
-        // out leaves the run's partial content untracked, for the next run of the action to
-        // clear.
-        let mut reported = false;
-        let mut published = Vec::new();
+        // Set once the run's outputs have been collected: the leases `publish` returned over
+        // them, which join the outputs lease for the result's readers.
+        let mut published = None;
 
         let mut result = async {
             manager.start_waiting_category(WaitingCategory::Unknown);
@@ -775,8 +771,7 @@ impl LocalExecutor {
                         .await
                     {
                         Ok((output_values, hashing_time, leases)) => {
-                            reported = true;
-                            published = leases;
+                            published = Some(leases);
                             (output_values, hashing_time)
                         }
                         Err(e) => {
@@ -884,8 +879,7 @@ impl LocalExecutor {
                         .await
                     {
                         Ok((output_values, hashing_time, leases)) => {
-                            reported = true;
-                            published = leases;
+                            published = Some(leases);
                             (output_values, hashing_time)
                         }
                         Err(e) => {
@@ -909,11 +903,9 @@ impl LocalExecutor {
             }
         }
         .await;
-        if reported {
+        if let Some(mut published) = published {
             published.push(outputs_lease.into_read_lease());
             result.outputs_lease = Some(ReadLease::join(published));
-        } else {
-            outputs_lease.abandon();
         }
 
         if let Some(run_action_key) = request.run_action_key()
@@ -967,8 +959,6 @@ impl LocalExecutor {
             if let Some(entry) = entry {
                 insert_entry(&mut builder, path.clone(), entry)?;
                 entries.push((output.cloned(), path));
-            } else {
-                outputs_lease.leave_untracked(&path)?;
             }
         }
 
@@ -1452,11 +1442,6 @@ pub async fn materialize_inputs(
         }
         Err(e) => return Err(e.into()),
     };
-
-    // Scratch content is never an artifact: nothing reports it.
-    if let (Some(lease), Some(scratch)) = (&outputs, &scratch.0) {
-        lease.leave_untracked(scratch)?;
-    }
 
     Ok(MaterializedInputPaths {
         scratch,

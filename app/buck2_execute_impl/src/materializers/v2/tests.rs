@@ -479,7 +479,7 @@ async fn test_a_report_outside_the_lease_is_refused() -> buck2_error::Result<()>
         assert!(format!("{err:#}").contains("outside the write roots"));
         // A lease this materializer did not grant is refused too.
         let err = dm
-            .declare_existing_impl(
+            .declare_existing(
                 &WriteLease::noop(),
                 vec![DeclareArtifactPayload {
                     path: a.clone(),

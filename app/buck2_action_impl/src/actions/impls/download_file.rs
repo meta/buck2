@@ -348,66 +348,61 @@ impl DownloadFileAction {
         // the materializer's record of it, so the disk has to be cleared to match. The lease is
         // held until that report is in.
         let output_lease = materializer.prepare_outputs(vec![path.clone()]).await?;
-        let downloaded = async {
-            ctx.blocking_executor()
-                .execute_io(
-                    Box::new(CleanOutputPaths {
-                        paths: vec![path.clone()],
-                    }),
-                    ctx.cancellation_context(),
-                )
-                .await?;
-
-            let digest = http_download(
-                client,
-                ctx.fs().fs(),
-                ctx.digest_config(),
-                &path,
-                url,
-                &self.inner.checksum,
-                self.inner.is_executable,
+        ctx.blocking_executor()
+            .execute_io(
+                Box::new(CleanOutputPaths {
+                    paths: vec![path.clone()],
+                }),
+                ctx.cancellation_context(),
             )
             .await?;
 
-            // RE knows this file by the digest (checksum, size), where the size came from
-            // `size_bytes` or the HEAD response rather than from the content. A wrong size would leave
-            // every remote consumer unable to find its input, so it is caught here.
-            if let Some(metadata) = metadata
-                && digest.size() != metadata.digest.size()
-            {
-                return Err(buck2_error!(
-                    ErrorTag::DownloadSizeMismatch,
-                    "Downloaded size ({}) does not match expected size ({})",
-                    digest.size(),
-                    metadata.digest.size(),
-                ));
-            }
+        let digest = http_download(
+            client,
+            ctx.fs().fs(),
+            ctx.digest_config(),
+            &path,
+            url,
+            &self.inner.checksum,
+            self.inner.is_executable,
+        )
+        .await?;
 
-            // The declared metadata, when there is any, is the value: the checksum verified the
-            // content and the size was checked above, and a content-based output path was resolved
-            // from it. The digest the download computed is under the digest config's preferred
-            // algorithm, which need not be the checksum's, so it only stands in when nothing was
-            // declared.
-            let value = match metadata {
-                Some(metadata) => ArtifactValue::file(metadata.dupe()),
-                None => ArtifactValue::file(FileMetadata {
-                    digest,
-                    is_executable: self.inner.is_executable,
-                }),
-            };
-            materializer
-                .declare_existing(
-                    &output_lease,
-                    vec![DeclareArtifactPayload {
-                        path,
-                        artifact: value.dupe(),
-                    }],
-                )
-                .await?;
-            buck2_error::Ok(value)
+        // RE knows this file by the digest (checksum, size), where the size came from
+        // `size_bytes` or the HEAD response rather than from the content. A wrong size would leave
+        // every remote consumer unable to find its input, so it is caught here.
+        if let Some(metadata) = metadata
+            && digest.size() != metadata.digest.size()
+        {
+            return Err(buck2_error!(
+                ErrorTag::DownloadSizeMismatch,
+                "Downloaded size ({}) does not match expected size ({})",
+                digest.size(),
+                metadata.digest.size(),
+            ));
         }
-        .await;
-        let value = output_lease.abandon_on_err(downloaded)?;
+
+        // The declared metadata, when there is any, is the value: the checksum verified the
+        // content and the size was checked above, and a content-based output path was resolved
+        // from it. The digest the download computed is under the digest config's preferred
+        // algorithm, which need not be the checksum's, so it only stands in when nothing was
+        // declared.
+        let value = match metadata {
+            Some(metadata) => ArtifactValue::file(metadata.dupe()),
+            None => ArtifactValue::file(FileMetadata {
+                digest,
+                is_executable: self.inner.is_executable,
+            }),
+        };
+        materializer
+            .declare_existing(
+                &output_lease,
+                vec![DeclareArtifactPayload {
+                    path,
+                    artifact: value.dupe(),
+                }],
+            )
+            .await?;
 
         Ok((value, ActionExecutionKind::Simple))
     }

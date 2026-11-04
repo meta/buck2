@@ -343,13 +343,11 @@ impl CasArtifactAction {
             .fs()
             .buck_out_path_resolver()
             .resolve_scratch(&ctx.target().scratch_path())?;
-        // The scratch directory is written to below, so it is claimed like any other output;
-        // what it holds is never an artifact.
-        let scratch_lease = ctx
+        // The scratch directory is written to below, so it is claimed like any other output.
+        let _scratch_lease = ctx
             .materializer()
             .prepare_outputs(vec![scratch_rel.clone()])
             .await?;
-        scratch_lease.leave_untracked(&scratch_rel)?;
         let scratch_dir = ctx.fs().fs().resolve(&scratch_rel);
         let scratch_file =
             scratch_dir.join(ForwardRelativePath::unchecked_new("cas_artifact_copy"));

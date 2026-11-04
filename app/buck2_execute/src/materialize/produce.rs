@@ -54,11 +54,8 @@ pub async fn produce_locally(
         HeldContent::Found(_lease) => return Ok(Produced::Found),
         HeldContent::Missing(lease) => lease,
     };
-    if let Err(e) = blocking_executor.execute_io_inline(make).await {
-        lease.abandon();
-        return Err(e);
-    }
-    let reported = materializer
+    blocking_executor.execute_io_inline(make).await?;
+    materializer
         .declare_existing(
             &lease,
             vec![DeclareArtifactPayload {
@@ -66,8 +63,7 @@ pub async fn produce_locally(
                 artifact: value,
             }],
         )
-        .await;
-    lease.abandon_on_err(reported)?;
+        .await?;
     Ok(Produced::Made)
 }
 

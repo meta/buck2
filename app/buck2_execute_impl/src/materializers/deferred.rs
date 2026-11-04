@@ -456,7 +456,7 @@ impl<T: IoHandler + Allocative> Materializer for DeferredMaterializerAccessor<T>
         MaterializerBackgroundCleanupGuard::new(guard)
     }
 
-    async fn declare_existing_impl(
+    async fn declare_existing(
         &self,
         _lease: &WriteLease,
         artifacts: Vec<DeclareArtifactPayload>,
@@ -475,7 +475,7 @@ impl<T: IoHandler + Allocative> Materializer for DeferredMaterializerAccessor<T>
 
     /// Requires the artifacts to have been declared, as every caller does today; the values are
     /// carried for the materializer that consumes them, this one only ensures the paths.
-    async fn materialize_impl(
+    async fn materialize(
         &self,
         request: MaterializeRequest,
     ) -> buck2_error::Result<MaterializeResponse> {
@@ -494,7 +494,7 @@ impl<T: IoHandler + Allocative> Materializer for DeferredMaterializerAccessor<T>
             if outputs.is_empty() {
                 Ok(None)
             } else {
-                self.prepare_outputs_impl(outputs).await.map(Some)
+                self.prepare_outputs(outputs).await.map(Some)
             }
         };
         let ensure = async {
@@ -590,7 +590,7 @@ impl<T: IoHandler + Allocative> Materializer for DeferredMaterializerAccessor<T>
         false
     }
 
-    async fn hold_or_take_impl(
+    async fn hold_or_take(
         &self,
         path: ProjectRelativePathBuf,
         _value: ArtifactValue,
@@ -687,7 +687,7 @@ impl<T: IoHandler + Allocative> Materializer for DeferredMaterializerAccessor<T>
         Ok(has_artifact)
     }
 
-    async fn prepare_outputs_impl(
+    async fn prepare_outputs(
         &self,
         paths: Vec<ProjectRelativePathBuf>,
     ) -> buck2_error::Result<WriteLease> {
@@ -703,7 +703,7 @@ impl<T: IoHandler + Allocative> Materializer for DeferredMaterializerAccessor<T>
         self.io.make_outputs_writable(paths).await
     }
 
-    async fn publish_impl(
+    async fn publish(
         &self,
         lease: &WriteLease,
         src: ProjectRelativePathBuf,
@@ -716,7 +716,7 @@ impl<T: IoHandler + Allocative> Materializer for DeferredMaterializerAccessor<T>
         // nothing here provides; that is a property of the rewritten materializer. Leaving `src`
         // behind is harmless: nothing reads it until the action that owns it runs again, and
         // that run deletes it first.
-        self.declare_existing_impl(
+        self.declare_existing(
             lease,
             vec![DeclareArtifactPayload {
                 path: src.clone(),

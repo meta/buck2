@@ -192,7 +192,7 @@ impl ParanoidDownloader {
             })
             .await;
 
-        let res = outputs_lease.abandon_on_err(res);
+        drop(outputs_lease);
 
         match res {
             Ok(()) => (),

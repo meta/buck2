@@ -1206,9 +1206,7 @@ impl TestOrchestrator for BuckTestOrchestrator<'_> {
         // here can report them: what it writes is untracked content under buck-out that no
         // core serves, keeps or cleans. Closing that needs the runner to report what it wrote,
         // or buck2 to collect it once the runner is done with the command.
-        if let Some(lease) = materialized_inputs.outputs {
-            lease.abandon();
-        }
+        drop(materialized_inputs.outputs);
         let mut held = vec![materialized_inputs.lease];
 
         for local_resource_setup_command in setup_commands.iter() {
@@ -1233,9 +1231,7 @@ impl TestOrchestrator for BuckTestOrchestrator<'_> {
             )
             .await?;
             // FIXME(materializer): As for the test command above.
-            if let Some(lease) = materialized_inputs.outputs {
-                lease.abandon();
-            }
+            drop(materialized_inputs.outputs);
             held.push(materialized_inputs.lease);
         }
         self.session.hold(output_root, ReadLease::join(held));

@@ -191,66 +191,63 @@ async fn download_impl(
     let io = ctx.get_blocking_executor();
     // Held until the fetched checkout is reported below.
     let output_lease = materializer.prepare_outputs(vec![path.to_owned()]).await?;
-    let fetched = async {
-        io.execute_io(
-            Box::new(CleanOutputPaths {
-                paths: vec![path.to_owned()],
-            }),
-            cancellations,
-        )
-        .await?;
+    io.execute_io(
+        Box::new(CleanOutputPaths {
+            paths: vec![path.to_owned()],
+        }),
+        cancellations,
+    )
+    .await?;
 
-        io.execute_io(
-            Box::new(GitFetchIoRequest {
-                setup: setup.dupe(),
+    io.execute_io(
+        Box::new(GitFetchIoRequest {
+            setup: setup.dupe(),
+            path: path.to_owned(),
+        }),
+        cancellations,
+    )
+    .await?;
+
+    // Unfortunately, there's no way to ask git not to create this, but it's important that we
+    // delete it so that we don't use it or waste cycles hashing it.
+    io.execute_io(
+        Box::new(CleanOutputPaths {
+            paths: vec![path.join(ForwardRelativePath::new(".git").unwrap())],
+        }),
+        cancellations,
+    )
+    .await?;
+
+    // Read and hash the contents. We have to do this because the materializer requires an artifact
+    // value. This work is kind of duplicated with the reading in the fileops, but only the first
+    // time the contents are downloaded. On subsequent invocations of the daemon, we won't rerun
+    // this however, so that case will still avoid doing unnecessary work.
+    let project_root = ctx.get_project_root().await?.dupe();
+    let proj_root = project_root.root();
+    let abs_path = proj_root.join(path);
+    let digest_config = ctx.global_data().get_digest_config();
+    let file_digest_config = FileDigestConfig::build(digest_config.cas_digest_config());
+    let entry = build_entry_from_disk(abs_path, file_digest_config, io, proj_root)
+        .await?
+        .0
+        .ok_or(GitError::NoDirectory)?;
+    let entry = entry.map_dir(|d| {
+        d.to_builder()
+            .fingerprint(digest_config.as_directory_serializer())
+            .shared(&*INTERNER)
+    });
+
+    materializer
+        .declare_existing(
+            &output_lease,
+            vec![DeclareArtifactPayload {
                 path: path.to_owned(),
-            }),
-            cancellations,
+                artifact: ArtifactValue::new(entry, None),
+            }],
         )
         .await?;
 
-        // Unfortunately, there's no way to ask git not to create this, but it's important that we
-        // delete it so that we don't use it or waste cycles hashing it.
-        io.execute_io(
-            Box::new(CleanOutputPaths {
-                paths: vec![path.join(ForwardRelativePath::new(".git").unwrap())],
-            }),
-            cancellations,
-        )
-        .await?;
-
-        // Read and hash the contents. We have to do this because the materializer requires an artifact
-        // value. This work is kind of duplicated with the reading in the fileops, but only the first
-        // time the contents are downloaded. On subsequent invocations of the daemon, we won't rerun
-        // this however, so that case will still avoid doing unnecessary work.
-        let project_root = ctx.get_project_root().await?.dupe();
-        let proj_root = project_root.root();
-        let abs_path = proj_root.join(path);
-        let digest_config = ctx.global_data().get_digest_config();
-        let file_digest_config = FileDigestConfig::build(digest_config.cas_digest_config());
-        let entry = build_entry_from_disk(abs_path, file_digest_config, io, proj_root)
-            .await?
-            .0
-            .ok_or(GitError::NoDirectory)?;
-        let entry = entry.map_dir(|d| {
-            d.to_builder()
-                .fingerprint(digest_config.as_directory_serializer())
-                .shared(&*INTERNER)
-        });
-
-        materializer
-            .declare_existing(
-                &output_lease,
-                vec![DeclareArtifactPayload {
-                    path: path.to_owned(),
-                    artifact: ArtifactValue::new(entry, None),
-                }],
-            )
-            .await?;
-        buck2_error::Ok(())
-    }
-    .await;
-    output_lease.abandon_on_err(fetched)
+    Ok(())
 }
 
 async fn download_and_materialize(

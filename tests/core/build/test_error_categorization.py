@@ -284,9 +284,7 @@ class ErrorCategorizationTest(BuckTestCase):
     ) -> None:
         pre_daemon_timestamp = current_dmesg_timestamp(seconds_ago=60)
         await buck.build()
-        daemon_cgroup = read_daemon_cgroup(
-            await wait_for_daemon_pid(buck)
-        ).removeprefix("/")
+        daemon_cgroup = read_daemon_cgroup(await wait_for_daemon_pid(buck))
 
         dmesg_env, dmesg_called = fake_dmesg_env(
             tmp_path,
@@ -308,9 +306,7 @@ class ErrorCategorizationTest(BuckTestCase):
         self, buck: Buck, tmp_path: Path
     ) -> None:
         await buck.build()
-        daemon_cgroup = read_daemon_cgroup(
-            await wait_for_daemon_pid(buck)
-        ).removeprefix("/")
+        daemon_cgroup = read_daemon_cgroup(await wait_for_daemon_pid(buck))
         dmesg_env, dmesg_called = fake_dmesg_env(
             tmp_path,
             f"<6>[{current_dmesg_timestamp()}] oomd kill: 81.28 80.05 42.78 {daemon_cgroup} 1000 ruleset:[test]\n",
@@ -319,7 +315,7 @@ class ErrorCategorizationTest(BuckTestCase):
         res = await expect_failure(buck.debug("crash", "panic", env=dmesg_env))
         error = res.invocation_record().single_error()
         assert dmesg_called.exists()
-        assert "DAEMON_OOM_KILLED" in error["tags"]
+        assert "DAEMON_OOM_KILLED" in error["tags"], (daemon_cgroup, error)
         assert error["best_tag"] == "DAEMON_OOM_KILLED"
 
     @buck_test(
@@ -331,9 +327,7 @@ class ErrorCategorizationTest(BuckTestCase):
         self, buck: Buck, tmp_path: Path
     ) -> None:
         await buck.build()
-        daemon_cgroup = read_daemon_cgroup(
-            await wait_for_daemon_pid(buck)
-        ).removeprefix("/")
+        daemon_cgroup = read_daemon_cgroup(await wait_for_daemon_pid(buck))
         dmesg_env, dmesg_called = fake_dmesg_env(
             tmp_path,
             f"<6>[{current_dmesg_timestamp()}] oomd kill: 81.28 80.05 42.78 {daemon_cgroup}/child 1000 ruleset:[test]\n",

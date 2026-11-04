@@ -1,0 +1,11 @@
+name: build_example_bes
+description: Check what buck2 sends a Build Event Service
+runs:
+  using: composite
+  steps:
+  - name: Check examples/bes against a recording Build Event Service
+    run: |-
+      python3 -m venv $RUNNER_TEMP/bes-venv
+      $RUNNER_TEMP/bes-venv/bin/pip install --quiet grpcio==1.76.0 grpcio-tools==1.76.0
+      $RUNNER_TEMP/bes-venv/bin/python examples/bes/check.py --buck2 $RUNNER_TEMP/artifacts/buck2
+    shell: bash

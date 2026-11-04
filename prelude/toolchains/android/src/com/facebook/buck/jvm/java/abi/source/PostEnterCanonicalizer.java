@@ -202,8 +202,15 @@ class PostEnterCanonicalizer {
             }
           }
 
-          canonicalType =
-              types.getDeclaredType(canonicalEnclosingType, canonicalElement, canonicalTypeArgs);
+          try {
+            canonicalType =
+                types.getDeclaredType(canonicalEnclosingType, canonicalElement, canonicalTypeArgs);
+          } catch (IllegalArgumentException e) {
+            // An arity mismatch means a hollow element bound through an incomplete
+            // supertype hierarchy. Name the missing supertypes and the fix.
+            throw HollowBindingExplainer.explain(
+                javacTrees, treePath, declaredType.asElement().getSimpleName().toString(), e);
+          }
           break;
         }
       case PACKAGE:
@@ -282,8 +289,16 @@ class PostEnterCanonicalizer {
             enclosingType = null;
           }
 
-          return types.getDeclaredType(
-              (DeclaredType) enclosingType, (TypeElement) baseType.asElement(), typeArguments);
+          try {
+            return types.getDeclaredType(
+                (DeclaredType) enclosingType, (TypeElement) baseType.asElement(), typeArguments);
+          } catch (IllegalArgumentException e) {
+            // Resolving through an incomplete supertype hierarchy bound a hollow element
+            // with no type parameters. Name the missing supertypes and the fix instead of
+            // crashing with an arity mismatch that names nothing fixable.
+            throw HollowBindingExplainer.explain(
+                javacTrees, treePath, baseType.asElement().getSimpleName().toString(), e);
+          }
         }
       case UNBOUNDED_WILDCARD:
         return types.getWildcardType(null, null);

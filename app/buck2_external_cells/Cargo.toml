@@ -14,6 +14,7 @@ blake3.workspace = true
 buck2_build_api.workspace = true
 buck2_common.workspace = true
 buck2_core.workspace = true
+buck2_data.workspace = true
 buck2_directory.workspace = true
 buck2_error.workspace = true
 buck2_execute.workspace = true

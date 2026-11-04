@@ -31,8 +31,8 @@ where
 {
     buck2_data::CommandEnd {
         data: Some(data.into()),
+        is_success: result.is_ok(),
         build_result: result.as_ref().ok().and_then(build_result),
-        ..Default::default()
     }
 }
 

@@ -425,7 +425,7 @@ impl StreamingCommand for TestCommand {
                     build_filtered_targets: self.build_filtered_targets,
                     // we don't currently have a different flag for this, so just use the build one.
                     concurrency: self.build_opts.num_threads.unwrap_or(0),
-                    build_opts: Some(self.build_opts.to_proto()),
+                    build_opts: Some(self.build_opts.to_proto(ctx.verbosity)),
                     session_options: Some(TestSessionOptions {
                         allow_re: self.unstable_allow_compatible_tests_on_re
                             || self.unstable_allow_all_tests_on_re,

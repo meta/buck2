@@ -116,6 +116,14 @@ Options:
           expired. In this case, downloading the action itself would fail. Enabling this option
           would unconditionally upload all actions, thus you will not hit any expiration issues.
 
+      --keep-action-stdout
+          Keep the stdout of successful actions in the event log, so that it can be read with `buck2
+          log show`. By default, only the stdout of failed actions is kept. Only actions that
+          execute during this command are affected.
+
+          To also print it on the console, use `-v stdout` (e.g. `-v 1,stdout`), which implies this
+          flag.
+
       --fail-fast
           If Buck hits an error, do as little work as possible before exiting.
 
@@ -376,9 +384,10 @@ Universal Options:
           Values: 0 = Quiet, errors only; 1 = Show status. Default; 2 = more info about errors; 3 =
           more info about everything; 4 = more info about everything + stderr;
 
-          It can be combined with specific log items (stderr, full_failed_command, commands,
+          It can be combined with specific log items (stderr, stdout, full_failed_command, commands,
           actions, status, stats, success) to fine-tune the verbosity of the log. Example usage
-          "-v=1,stderr"
+          "-v=1,stderr". `stdout` prints the stdout of successful actions; it is not part of any
+          level.
 
           [env: BUCK_VERBOSE=]
           [default: 1]

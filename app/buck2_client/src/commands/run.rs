@@ -151,7 +151,7 @@ impl StreamingCommand for RunCommand {
                         return_outputs: false,
                         return_run_args: true,
                     }),
-                    build_opts: Some(self.build_opts.to_proto()),
+                    build_opts: Some(self.build_opts.to_proto(ctx.verbosity)),
                     final_artifact_materializations: Materializations::Materialize as i32,
                     final_artifact_uploads: Uploads::Never as i32,
                     target_universe: self.target_cfg.target_universe,

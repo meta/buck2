@@ -484,6 +484,11 @@ impl<'a> ServerCommandContext<'a> {
             false
         };
 
+        let keep_action_stdout = self
+            .build_options
+            .as_ref()
+            .is_some_and(|opts| opts.keep_action_stdout);
+
         let run_action_knobs = RunActionKnobs {
             use_network_action_output_cache: self
                 .base_context
@@ -495,6 +500,7 @@ impl<'a> ServerCommandContext<'a> {
             write_cas_probe: false,
             write_action_cache: WriteActionCacheMode::Off,
             write_action_cache_populate: RolloutFraction::none(),
+            keep_action_stdout,
         };
 
         let concurrency = self

@@ -231,11 +231,12 @@ async fn build_action_inner(
         .await;
 
     let allow_omit_details = execute_result.is_ok();
+    let keep_stdout = executor.keep_action_stdout();
 
     let commands = buck2_util::future::join_all(
         command_reports
             .iter()
-            .map(|r| command_execution_report_to_proto(r, allow_omit_details)),
+            .map(|r| command_execution_report_to_proto(r, allow_omit_details, keep_stdout)),
     )
     .await;
 
@@ -784,8 +785,9 @@ impl Key for BuildKey {
 async fn command_execution_report_to_proto(
     report: &CommandExecutionReport,
     allow_omit_details: bool,
+    keep_stdout: bool,
 ) -> buck2_data::CommandExecution {
-    let details = command_details(report, allow_omit_details).await;
+    let details = command_details(report, allow_omit_details, keep_stdout).await;
 
     let status = match &report.status {
         CommandExecutionStatus::Success { .. } => buck2_data::command_execution::Success {}.into(),
@@ -824,9 +826,12 @@ async fn command_execution_report_to_proto(
     }
 }
 
+/// `keep_stdout` keeps the command's stdout even when other details are omitted, so that users
+/// who ask for it (`--keep-action-stdout` or `-v stdout`) can see what successful actions print.
 pub async fn command_details(
     command: &CommandExecutionReport,
     allow_omit_details: bool,
+    keep_stdout: bool,
 ) -> buck2_data::CommandExecutionDetails {
     // If the top-level command failed then we don't want to omit any details. If it succeeded and
     // so did this command (it could succeed while not having a success here if we have rejected
@@ -836,7 +841,7 @@ pub async fn command_details(
 
     let signed_exit_code = command.exit_code;
 
-    let (stdout, stderr) = if omit_details {
+    let (stdout, stderr) = if omit_details && !keep_stdout {
         (
             Default::default(),
             command.std_streams.to_lossy_stderr().await,

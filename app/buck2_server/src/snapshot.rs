@@ -485,6 +485,13 @@ impl SnapshotCollector {
                 buffered,
                 dropped,
                 bytes_written,
+                worker_busy_us,
+                worker_convert_us,
+                worker_upload_us,
+                worker_send_wait_us,
+                worker_transport_opens,
+                worker_upload_connect_us,
+                worker_upload_slot_wait_us,
             } = metrics;
             snapshot.sink_successes = Some(successes);
             snapshot.sink_failures = Some(metrics.failures());
@@ -499,6 +506,13 @@ impl SnapshotCollector {
             snapshot.sink_buffer_depth = Some(buffered);
             snapshot.sink_dropped = Some(dropped);
             snapshot.sink_bytes_written = Some(bytes_written);
+            snapshot.sink_worker_busy_us = Some(worker_busy_us);
+            snapshot.sink_worker_convert_us = Some(worker_convert_us);
+            snapshot.sink_worker_upload_us = Some(worker_upload_us);
+            snapshot.sink_worker_send_wait_us = Some(worker_send_wait_us);
+            snapshot.sink_worker_transport_opens = Some(worker_transport_opens);
+            snapshot.sink_worker_upload_connect_us = Some(worker_upload_connect_us);
+            snapshot.sink_worker_upload_slot_wait_us = Some(worker_upload_slot_wait_us);
         }
     }
 

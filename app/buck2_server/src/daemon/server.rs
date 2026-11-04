@@ -833,6 +833,8 @@ impl BuckdServer {
         if !in_process {
             *DAEMON_SHUTDOWN.lock() = Arc::downgrade(&daemon_shutdown);
         }
+        // Held past the move of `daemon_state` below, for the shutdown sequence.
+        let scribe_sink = daemon_state.data().scribe_sink.dupe();
         let api_server = BuckdServer(Arc::new(BuckdServerData {
             process_info,
             base_daemon_constraints,
@@ -890,6 +892,21 @@ impl BuckdServer {
             .is_err()
         {
             eprintln!("timed out waiting for DICE tasks to finish during shutdown");
+        }
+
+        // Finish the Build Event Service streams before the process exits. The sink's worker
+        // would do it when the sink is dropped, but that is after this function returns, and
+        // the process does not wait for it; the server then shows the build running forever.
+        if let Some(sink) = scribe_sink {
+            match timeout(Duration::from_secs(10), sink.shutdown()).await {
+                Ok(Ok(())) => {}
+                Ok(Err(e)) => {
+                    tracing::warn!("remote event sink streams not finished cleanly: {:#}", e)
+                }
+                Err(_) => {
+                    tracing::warn!("timed out finishing remote event sink streams during shutdown")
+                }
+            }
         }
 
         server_result?;
@@ -1646,6 +1663,22 @@ impl DaemonApi for BuckdServer {
                 reason: req.reason,
                 callers: req.callers,
             };
+
+            // Finish the Build Event Service streams first, while the daemon is still whole. A
+            // kill during a build ends in a forced shutdown that exits the process without the
+            // graceful path's cleanup, and a stream left open shows as a build running forever.
+            // Bounded, so a dead server cannot hold the kill hostage.
+            if let Some(sink) = self.0.daemon_state.data().scribe_sink.dupe() {
+                match tokio::time::timeout(Duration::from_secs(5), sink.shutdown()).await {
+                    Ok(Ok(())) => {}
+                    Ok(Err(e)) => {
+                        tracing::warn!("remote event sink streams not finished cleanly: {:#}", e)
+                    }
+                    Err(_) => tracing::warn!(
+                        "timed out finishing remote event sink streams before shutdown"
+                    ),
+                }
+            }
 
             if self.0.daemon_state.data().routing().is_shared() {
                 // A process-state rejection covers shared services. Retire all generations and

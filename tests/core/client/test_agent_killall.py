@@ -49,6 +49,7 @@ class AgentKillallTest(BuckTestCase):
         record = result.invocation_record()
         assert record["agent_direct_call"] is True
         assert "agent_interactive.killall.block" in record["tags"]
+        assert "agent_interactive.killall.enabled" in record["tags"]
         assert "AGENT_ADVICE_BLOCKED" in record.single_error()["tags"]
 
     @buck_test(write_invocation_record=True)
@@ -85,6 +86,25 @@ class AgentKillallTest(BuckTestCase):
         assert "Buck advice" not in result.stderr
         assert "agent_interactive.killall.ack" in result.invocation_record()["tags"]
         assert "no buckd running" in (await buck.status()).stderr
+
+    @buck_test(write_invocation_record=True)
+    async def test_disabled_direct_killall_records_its_state(self, buck: Buck) -> None:
+        buck.set_isolation_prefix(uuid.uuid4().hex)
+        await buck.audit_config()
+        result = await scoped_killall(buck, "--agent-context=direct_call=true")
+        assert "Buck advice" not in result.stderr
+        assert "no buckd running" in (await buck.status()).stderr
+        assert (
+            "agent_interactive.killall.disabled" in result.invocation_record()["tags"]
+        )
+
+        # Calls that are not direct are outside the experiment.
+        await buck.audit_config()
+        result = await scoped_killall(buck)
+        assert (
+            "agent_interactive.killall.disabled"
+            not in result.invocation_record()["tags"]
+        )
 
     @buck_test()
     async def test_disabled_and_non_direct_calls_keep_existing_behavior(

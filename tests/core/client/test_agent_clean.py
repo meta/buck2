@@ -45,6 +45,7 @@ class AgentCleanTest(BuckTestCase):
             )
             record = result.invocation_record()
             assert "agent_interactive.clean.block" in record["tags"]
+            assert "agent_interactive.clean.enabled" in record["tags"]
             assert "AGENT_ADVICE_BLOCKED" in record.single_error()["tags"]
 
     @buck_test(write_invocation_record=True)
@@ -77,6 +78,27 @@ class AgentCleanTest(BuckTestCase):
         assert not output.exists()
         assert "no buckd running" in (await buck.status()).stderr
         assert "agent_interactive.clean.ack" in result.invocation_record()["tags"]
+
+    @buck_test(write_invocation_record=True)
+    async def test_disabled_direct_clean_records_its_state(self, buck: Buck) -> None:
+        buck.set_isolation_prefix(uuid.uuid4().hex)
+        assert buck.isolation_prefix
+        await buck.audit_config()
+        output = buck.cwd / "buck-out" / buck.isolation_prefix / "output.txt"
+        output.write_text("remove this output")
+        result = await buck.clean(DIRECT)
+        assert "Buck advice" not in result.stderr
+        assert not output.exists()
+        assert "agent_interactive.clean.disabled" in result.invocation_record()["tags"]
+
+        # A dry run, a stale cleanup, or a call that is not direct is not recorded.
+        await buck.audit_config()
+        for args in [("--dry-run", DIRECT), ("--stale=1d", DIRECT), ()]:
+            result = await buck.clean(*args)
+            assert (
+                "agent_interactive.clean.disabled"
+                not in result.invocation_record()["tags"]
+            ), args
 
     @buck_test()
     async def test_dry_run_and_stale_do_not_require_full_clean_ack(

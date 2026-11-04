@@ -94,6 +94,19 @@ pub const CONFIG_CHANGE_EXPLICIT_TAG: &str = "agent_interactive.config_change.ex
 pub const CONFIG_CHANGE_ENABLED_TAG: &str = "agent_interactive.config_change.enabled";
 pub const CONFIG_CHANGE_DISABLED_TAG: &str = "agent_interactive.config_change.disabled";
 
+/// Tag for a config change the command did not ask for: it drops config args the daemon's
+/// configuration uses, which changes a resolved value. This is what the config change guard acts
+/// on, and it is recorded in both arms of the guard's A/B test; `CONFIG_CHANGE_ENABLED_TAG` or
+/// `CONFIG_CHANGE_DISABLED_TAG` on the same command says which arm.
+pub const CONFIG_CHANGE_IMPLICIT_TAG: &str = "agent_interactive.config_change.implicit";
+
+/// Tags recording whether the `agent_interactive` guards (killall, clean, new isolation directory)
+/// were on for a direct agent call that reached the daemon. Those guards run in the client and tag
+/// only the operations they guard, so these let an A/B analysis assign every other command to an
+/// arm as well.
+pub const AGENT_INTERACTIVE_ENABLED_TAG: &str = "agent_interactive.enabled";
+pub const AGENT_INTERACTIVE_DISABLED_TAG: &str = "agent_interactive.disabled";
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Decision {
     Inactive,
@@ -115,6 +128,15 @@ impl Advice {
             Self::NewIsolationDir => "new_isolation_dir",
             Self::ConfigChange => "config_change",
         }
+    }
+
+    /// Tag recording that this guard's operation is about to happen in a direct agent call, and
+    /// whether the guard is on. Callers record it after the same eligibility checks in both arms of
+    /// the guard's A/B test, so the operations of the control arm can be compared with those the
+    /// guard acted on. The build guard records the same names.
+    pub fn state_tag(self, enabled: bool) -> String {
+        let state = if enabled { "enabled" } else { "disabled" };
+        format!("agent_interactive.{}.{state}", self.id())
     }
 
     /// `acknowledged` must refer to this advice ID in the current invocation.
@@ -253,6 +275,23 @@ mod tests {
                 assert_eq!(advice.evaluate(&invocation, false), Decision::Inactive);
             }
         }
+    }
+
+    #[test]
+    fn state_tags_name_the_guard_and_its_state() {
+        assert_eq!(
+            Advice::Killall.state_tag(true),
+            "agent_interactive.killall.enabled"
+        );
+        assert_eq!(
+            Advice::NewIsolationDir.state_tag(false),
+            "agent_interactive.new_isolation_dir.disabled"
+        );
+        // Matches the names the build guard records for every language.
+        assert_eq!(
+            Advice::Build(BuildLanguage::Rust).state_tag(false),
+            "agent_interactive.build.disabled"
+        );
     }
 
     #[test]

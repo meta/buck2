@@ -19,6 +19,10 @@ ADVICE = r"Buck advice \[config_change\]"
 EXPLICIT_TAG = "agent_interactive.config_change.explicit"
 ENABLED_TAG = "agent_interactive.config_change.enabled"
 DISABLED_TAG = "agent_interactive.config_change.disabled"
+BLOCK_TAG = "agent_interactive.config_change.block"
+IMPLICIT_TAG = "agent_interactive.config_change.implicit"
+INTERACTIVE_ENABLED_TAG = "agent_interactive.enabled"
+INTERACTIVE_DISABLED_TAG = "agent_interactive.disabled"
 
 
 class AgentConfigChangeTest(BuckTestCase):
@@ -36,7 +40,8 @@ class AgentConfigChangeTest(BuckTestCase):
         assert "that this command drops:" in result.stderr
         assert "--config foo.bar=1" in result.stderr
         record = result.invocation_record()
-        assert "agent_interactive.config_change.block" in record["tags"]
+        assert IMPLICIT_TAG in record["tags"]
+        assert BLOCK_TAG in record["tags"]
         assert ENABLED_TAG in record["tags"]
         assert "AGENT_ADVICE_BLOCKED" in record.single_error()["tags"]
 
@@ -135,10 +140,56 @@ class AgentConfigChangeTest(BuckTestCase):
             assert expected in tags, args
             assert ({ENABLED_TAG, DISABLED_TAG} - {expected}).isdisjoint(tags), args
 
+        # The agent_interactive guards' arm is recorded the same way.
+        for args, expected in [
+            (
+                ("--setting=agent_interactive.enabled=true", DIRECT),
+                INTERACTIVE_ENABLED_TAG,
+            ),
+            ((DIRECT,), INTERACTIVE_DISABLED_TAG),
+        ]:
+            tags = (await buck.targets("//:", *args)).invocation_record()["tags"]
+            assert expected in tags, args
+            assert (
+                {INTERACTIVE_ENABLED_TAG, INTERACTIVE_DISABLED_TAG} - {expected}
+            ).isdisjoint(tags), args
+
         # Only direct agent calls are in the experiment population.
+        arm_tags = {
+            ENABLED_TAG,
+            DISABLED_TAG,
+            INTERACTIVE_ENABLED_TAG,
+            INTERACTIVE_DISABLED_TAG,
+        }
         for args in [(*ENABLED,), (*ENABLED, "--agent-context=direct_call=false")]:
             tags = (await buck.targets("//:", *args)).invocation_record()["tags"]
-            assert ENABLED_TAG not in tags and DISABLED_TAG not in tags, args
+            assert arm_tags.isdisjoint(tags), args
+
+    @buck_test(write_invocation_record=True)
+    async def test_disabled_guard_records_the_same_events(self, buck: Buck) -> None:
+        await buck.targets("//:", "-c", "foo.bar=1", DIRECT)
+
+        # The implicit change the guard would block is allowed and recorded with the control arm.
+        result = await buck.targets("//:", DIRECT)
+        assert "Buck advice" not in result.stderr
+        tags = result.invocation_record()["tags"]
+        assert IMPLICIT_TAG in tags and DISABLED_TAG in tags
+        assert BLOCK_TAG not in tags
+
+        # An explicit change is recorded the same way in both arms.
+        tags = (
+            await buck.targets("//:", "-c", "test.default=2", DIRECT)
+        ).invocation_record()["tags"]
+        assert EXPLICIT_TAG in tags and DISABLED_TAG in tags
+
+        # Dropping an arg that restates the repo value changes nothing, so nothing is recorded.
+        tags = (await buck.targets("//:", DIRECT)).invocation_record()["tags"]
+        assert IMPLICIT_TAG not in tags and EXPLICIT_TAG not in tags
+
+        # Calls that are not direct are outside the experiment.
+        await buck.targets("//:", "-c", "foo.bar=1", DIRECT)
+        tags = (await buck.targets("//:")).invocation_record()["tags"]
+        assert IMPLICIT_TAG not in tags
 
     @buck_test()
     async def test_master_switch_does_not_affect_the_guard(self, buck: Buck) -> None:

@@ -16,17 +16,24 @@
 //! The guard blocks only the change an agent did not ask for: a command that drops args the
 //! daemon's configuration uses, such as `uquery` without the preceding build's `-c` flags, and
 //! thereby changes a resolved value. A command that passes its own new or different args chose
-//! that configuration, so it is allowed and tagged with `CONFIG_CHANGE_EXPLICIT_TAG`. Every direct
-//! agent call is also tagged with whether the guard was on, for A/B analysis.
+//! that configuration, so it is allowed and tagged with `CONFIG_CHANGE_EXPLICIT_TAG`.
+//!
+//! The guard is rolled out as an A/B test. Every direct agent call is tagged with whether the guard
+//! was on, and the implicit and explicit change tags are recorded in both arms, so the arms can be
+//! compared event by event. With the guard off, that classification is telemetry only and never
+//! fails a command.
 //!
 //! Only the daemon knows which configuration its state was built with, so this guard runs in
 //! `DiceCommandUpdater::update`. That runs before the transaction commits, so blocking leaves the
 //! state untouched.
 
+use buck2_agent_interactive::AGENT_INTERACTIVE_DISABLED_TAG;
+use buck2_agent_interactive::AGENT_INTERACTIVE_ENABLED_TAG;
 use buck2_agent_interactive::Advice;
 use buck2_agent_interactive::CONFIG_CHANGE_DISABLED_TAG;
 use buck2_agent_interactive::CONFIG_CHANGE_ENABLED_TAG;
 use buck2_agent_interactive::CONFIG_CHANGE_EXPLICIT_TAG;
+use buck2_agent_interactive::CONFIG_CHANGE_IMPLICIT_TAG;
 use buck2_agent_interactive::Decision;
 use buck2_agent_interactive::Invocation;
 use buck2_common::legacy_configs::cells::ExternalBuckconfigData;
@@ -62,42 +69,40 @@ pub(crate) async fn check_agent_config_change(
     let enabled = settings.agent_config_change.enabled();
     // Tag every direct call with the guard's state, not only the calls it acts on, so an A/B
     // analysis can compare all commands in each arm.
-    let arm_tag = if enabled {
-        CONFIG_CHANGE_ENABLED_TAG
-    } else {
-        CONFIG_CHANGE_DISABLED_TAG
+    tag(
+        events,
+        if enabled {
+            CONFIG_CHANGE_ENABLED_TAG
+        } else {
+            CONFIG_CHANGE_DISABLED_TAG
+        },
+    );
+
+    let change = match classify_change(existing, new).await {
+        Ok(change) => change,
+        Err(e) if enabled => return Err(e),
+        // With the guard off the classification is telemetry only.
+        Err(e) => {
+            tracing::debug!("Skipping config change classification for a disabled guard: {e:#}");
+            return Ok(());
+        }
     };
-    events.instant_event(buck2_data::TagEvent {
-        tags: vec![arm_tag.to_owned()],
-    });
-    if !enabled {
-        return Ok(());
-    }
-    let Some(diff) = existing
-        .injected_external_buckconfig_data_change(new)
-        .await?
-    else {
-        return Ok(());
+    let diff = match change {
+        ConfigChange::Unchanged => return Ok(()),
+        ConfigChange::Explicit => {
+            // Recorded so the volume of explicit switches can be measured, and compared between
+            // arms, before deciding whether to guard them too.
+            tag(events, CONFIG_CHANGE_EXPLICIT_TAG);
+            return Ok(());
+        }
+        ConfigChange::Implicit(diff) => {
+            tag(events, CONFIG_CHANGE_IMPLICIT_TAG);
+            diff
+        }
     };
-    if !diff.added_args.is_empty() {
-        // The command chose new or different values. Record it so the volume of explicit switches
-        // can be measured before deciding whether to guard them too.
-        events.instant_event(buck2_data::TagEvent {
-            tags: vec![CONFIG_CHANGE_EXPLICIT_TAG.to_owned()],
-        });
-        return Ok(());
-    }
-    // With nothing dropped, only files outside the repo changed or the same args were reordered;
-    // neither is something the command left out.
-    if diff.removed_args.is_empty() {
-        return Ok(());
-    }
-    // The dropped args may only restate values the repo config already sets.
-    if !existing.injected_root_buckconfig_values_change(new).await? {
-        return Ok(());
-    }
 
     let advice = Advice::ConfigChange;
+    // `Decision::Inactive` when the guard is off.
     let decision = advice.evaluate(
         &Invocation {
             enabled,
@@ -106,10 +111,8 @@ pub(crate) async fn check_agent_config_change(
         },
         is_advice_acknowledged(agent_context, advice.id()),
     );
-    if let Some(tag) = decision.tag() {
-        events.instant_event(buck2_data::TagEvent {
-            tags: vec![tag.to_owned()],
-        });
+    if let Some(decision_tag) = decision.tag() {
+        tag(events, decision_tag);
     }
     match decision {
         Decision::Inactive | Decision::Acknowledged(_) => Ok(()),
@@ -121,6 +124,67 @@ pub(crate) async fn check_agent_config_change(
             describe_dropped_args(&diff),
         )),
     }
+}
+
+/// Tags a direct agent call with whether the `agent_interactive` guards were on. Those guards run
+/// in the client and tag only the operations they guard; this assigns the call to an arm of their
+/// A/B test even when it is not one of those operations.
+pub(crate) fn tag_agent_interactive_arm(
+    settings: &InvocationBuckSettings,
+    agent_context: &[AgentContextEntry],
+    events: &EventDispatcher,
+) {
+    if !is_direct_call(agent_context) {
+        return;
+    }
+    tag(
+        events,
+        if settings.agent_interactive.enabled() {
+            AGENT_INTERACTIVE_ENABLED_TAG
+        } else {
+            AGENT_INTERACTIVE_DISABLED_TAG
+        },
+    );
+}
+
+/// How the config a command is about to inject differs from the injected config, as far as the
+/// guard is concerned.
+enum ConfigChange {
+    /// No change, or none the command left out: only files outside the repo changed, the same args
+    /// were reordered, or the dropped args only restated values the repo config already sets.
+    Unchanged,
+    /// The command passed new or different args, so it chose the new configuration.
+    Explicit,
+    /// The command dropped args and that changes a resolved value.
+    Implicit(ExternalBuckconfigDataDiff),
+}
+
+async fn classify_change(
+    existing: &mut DiceComputations<'_>,
+    new: &ExternalBuckconfigData,
+) -> buck2_error::Result<ConfigChange> {
+    let Some(diff) = existing
+        .injected_external_buckconfig_data_change(new)
+        .await?
+    else {
+        return Ok(ConfigChange::Unchanged);
+    };
+    if !diff.added_args.is_empty() {
+        return Ok(ConfigChange::Explicit);
+    }
+    if diff.removed_args.is_empty() {
+        return Ok(ConfigChange::Unchanged);
+    }
+    if !existing.injected_root_buckconfig_values_change(new).await? {
+        return Ok(ConfigChange::Unchanged);
+    }
+    Ok(ConfigChange::Implicit(diff))
+}
+
+fn tag(events: &EventDispatcher, tag: &str) {
+    events.instant_event(buck2_data::TagEvent {
+        tags: vec![tag.to_owned()],
+    });
 }
 
 /// Lists the args the command drops, which `--reuse-current-config` would keep.

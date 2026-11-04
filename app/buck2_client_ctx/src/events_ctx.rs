@@ -36,6 +36,7 @@ use futures::stream::FuturesUnordered;
 use tokio::runtime::Runtime;
 
 use crate::client_cpu_tracker::ClientCpuTracker;
+use crate::client_ctx::AgentAdvice;
 use crate::command_outcome::CommandOutcome;
 use crate::console_interaction_stream::ConsoleInteraction;
 use crate::console_interaction_stream::ConsoleInteractionStream;
@@ -538,18 +539,14 @@ impl EventsCtx {
     pub async fn handle_agent_advice(
         &mut self,
         trace_id: TraceId,
-        decision: Decision,
+        advice: AgentAdvice,
     ) -> buck2_error::Result<()> {
-        if let Some(tag) = decision.tag() {
-            self.instant_event(
-                trace_id,
-                buck2_data::TagEvent {
-                    tags: vec![tag.to_owned()],
-                },
-            )
-            .await?;
+        let tags = advice.tags();
+        if !tags.is_empty() {
+            self.instant_event(trace_id, buck2_data::TagEvent { tags })
+                .await?;
         }
-        match decision {
+        match advice.decision() {
             Decision::Inactive | Decision::Acknowledged(_) => Ok(()),
             Decision::Block(advice) => Err(buck2_error::buck2_error!(
                 ErrorTag::AgentAdviceBlocked,

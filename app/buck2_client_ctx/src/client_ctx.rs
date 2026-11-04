@@ -78,6 +78,41 @@ pub struct ClientCommandContext<'a> {
     agent_invocation_info: AgentInvocationInfo,
 }
 
+/// A client-side guard's verdict on one operation, together with what to record about it.
+#[derive(Debug, Clone, Copy)]
+pub struct AgentAdvice {
+    advice: Advice,
+    decision: Decision,
+    /// Whether the guard is on, for a direct call in a repository. `None` for every other call,
+    /// which is outside the guards' A/B tests and records nothing.
+    enabled: Option<bool>,
+}
+
+impl AgentAdvice {
+    /// For an operation the guard does not cover, such as starting the default isolation's daemon.
+    pub(crate) fn not_applicable(advice: Advice) -> Self {
+        Self {
+            advice,
+            decision: Decision::Inactive,
+            enabled: None,
+        }
+    }
+
+    pub(crate) fn decision(self) -> Decision {
+        self.decision
+    }
+
+    /// The guard's state, recorded in both arms of its A/B test, followed by its decision when it
+    /// acted.
+    pub(crate) fn tags(self) -> Vec<String> {
+        self.enabled
+            .map(|enabled| self.advice.state_tag(enabled))
+            .into_iter()
+            .chain(self.decision.tag().map(str::to_owned))
+            .collect()
+    }
+}
+
 impl<'a> ClientCommandContext<'a> {
     pub fn new(
         init: fbinit::FacebookInit,
@@ -173,10 +208,10 @@ impl<'a> ClientCommandContext<'a> {
 
     /// Evaluates repository-scoped advice without loading build configuration.
     /// Callers apply the decision only when the guarded operation will actually run.
-    pub fn agent_advice(&self, advice: Advice) -> buck2_error::Result<Decision> {
+    pub fn agent_advice(&self, advice: Advice) -> buck2_error::Result<AgentAdvice> {
         let agent = self.agent_context();
         if !agent.is_direct_call() || self.maybe_paths()?.is_none() {
-            return Ok(Decision::Inactive);
+            return Ok(AgentAdvice::not_applicable(advice));
         }
         let settings = &self.buck_settings()?.invocation;
         let enabled = match advice {
@@ -185,17 +220,22 @@ impl<'a> ClientCommandContext<'a> {
             Advice::NewIsolationDir => settings.agent_interactive.new_isolation_dir_enabled(),
             // These policies need daemon configuration or resolved target rule types.
             Advice::Build(_) | Advice::ConfigChange => {
-                return Ok(Decision::Inactive);
+                return Ok(AgentAdvice::not_applicable(advice));
             }
         };
-        Ok(advice.evaluate(
+        let decision = advice.evaluate(
             &Invocation {
                 enabled,
                 direct_call: agent.is_direct_call(),
                 reason: agent.reason(),
             },
             agent.is_advice_acknowledged(advice.id()),
-        ))
+        );
+        Ok(AgentAdvice {
+            advice,
+            decision,
+            enabled: Some(enabled),
+        })
     }
 
     pub fn with_runtime<Fut, F>(self, func: F) -> <Fut as Future>::Output

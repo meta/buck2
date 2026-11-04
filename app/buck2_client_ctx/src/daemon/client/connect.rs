@@ -21,7 +21,6 @@ use std::path::PathBuf;
 use std::time::Duration;
 use std::time::Instant;
 
-use buck2_agent_interactive::Decision;
 use buck2_cli_proto::DaemonProcessInfo;
 use buck2_cli_proto::daemon_api_client::DaemonApiClient;
 use buck2_common::buckd_connection::BUCK_AUTH_TOKEN_HEADER;
@@ -65,6 +64,7 @@ use tonic::metadata::AsciiMetadataValue;
 use tonic::service::Interceptor;
 use tonic::transport::Channel;
 
+use crate::client_ctx::AgentAdvice;
 use crate::command_outcome::CommandOutcome;
 use crate::daemon::client::BuckdClient;
 use crate::daemon::client::BuckdClientConnector;
@@ -278,7 +278,7 @@ pub enum BuckdConnectOptions {
 pub struct BuckdConnectDaemonOptions {
     pub(crate) constraints: DaemonConstraintsRequest,
     pub(crate) daemon_startup_mode: DaemonStartupMode,
-    pub(crate) new_isolation_dir_advice: Decision,
+    pub(crate) new_isolation_dir_advice: AgentAdvice,
     pub(crate) trace_id: TraceId,
     /// Start the daemon by asking the installed Buck wrapper to re-exec it
     /// outside of the AI sandbox.

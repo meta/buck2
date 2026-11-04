@@ -13,7 +13,6 @@ use std::sync::atomic::AtomicU64;
 
 use async_trait::async_trait;
 use buck2_agent_interactive::Advice;
-use buck2_agent_interactive::Decision;
 use buck2_common::argv::Argv;
 use buck2_common::argv::SanitizedArgv;
 use buck2_common::invocation_paths::DEFAULT_ISOLATION_DIR;
@@ -23,6 +22,7 @@ use buck2_error::ExitCode;
 use buck2_event_observer::span_tracker::EventTimestamp;
 use dupe::Dupe;
 
+use crate::client_ctx::AgentAdvice;
 use crate::client_ctx::BuckSubcommand;
 use crate::client_ctx::ClientCommandContext;
 use crate::common::BuckArgMatches;
@@ -247,7 +247,7 @@ impl<T: StreamingCommand> BuckSubcommand for T {
                     new_isolation_dir_advice: if ctx.paths()?.isolation.as_str()
                         == DEFAULT_ISOLATION_DIR
                     {
-                        Decision::Inactive
+                        AgentAdvice::not_applicable(Advice::NewIsolationDir)
                     } else {
                         ctx.agent_advice(Advice::NewIsolationDir)?
                     },

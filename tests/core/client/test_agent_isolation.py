@@ -64,6 +64,7 @@ class AgentIsolationTest(BuckTestCase):
             assert "no buckd running" in (await buck.status()).stderr
             record = result.invocation_record()
             assert "agent_interactive.new_isolation_dir.block" in record["tags"]
+            assert "agent_interactive.new_isolation_dir.enabled" in record["tags"]
             assert "AGENT_ADVICE_BLOCKED" in record.single_error()["tags"]
 
         result = await buck.audit_config(
@@ -85,6 +86,25 @@ class AgentIsolationTest(BuckTestCase):
         await buck.kill()
         # Restarting a previously initialized isolation also reuses its stored state.
         await buck.audit_config(*ENABLED, DIRECT)
+
+    @buck_test(write_invocation_record=True)
+    async def test_disabled_direct_new_isolation_records_its_state(
+        self, buck: Buck
+    ) -> None:
+        buck.set_isolation_prefix(uuid.uuid4().hex)
+        result = await buck.audit_config(DIRECT)
+        assert "Buck advice" not in result.stderr
+        assert (
+            "agent_interactive.new_isolation_dir.disabled"
+            in result.invocation_record()["tags"]
+        )
+
+        # Reusing the isolation's daemon does not start a new isolation.
+        reused = await buck.audit_config(DIRECT)
+        assert (
+            "agent_interactive.new_isolation_dir.disabled"
+            not in reused.invocation_record()["tags"]
+        )
 
     @buck_test()
     async def test_default_isolation_needs_no_ack(self, buck: Buck) -> None:

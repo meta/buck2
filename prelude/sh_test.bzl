@@ -173,7 +173,7 @@ sh_test = prelude_rule(
             "run_args": attrs.list(attrs.string(), default = []),
             "run_env": attrs.dict(key = attrs.string(), value = attrs.string(), sorted = False, default = {}),
             "run_test_separately": attrs.bool(default = False),
-            "supports_test_execution_caching": attrs.bool(default = False),
+            "supports_test_execution_caching": attrs.bool(default = True),
             "test": attrs.option(
                 attrs.one_of(attrs.dep(), attrs.source()),
                 default = None,

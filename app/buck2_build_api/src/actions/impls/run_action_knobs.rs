@@ -39,6 +39,12 @@ pub struct RunActionKnobs {
     /// instead of a write when it is there.
     pub write_cas_probe: bool,
 
+    /// `buck2.defer_write_actions`: a write made here keeps its content off its output path
+    /// until something needs the file. The deferred core does that itself, at `declare_write`;
+    /// under the disk-state core the action keeps the content in the BlobStore's memory
+    /// (`buck2_action_impl`'s `produce::write_here`).
+    pub defer_write_actions: bool,
+
     pub write_action_cache: WriteActionCacheMode,
 
     /// The share of write keys whose misses are recorded in the action cache for later builds,

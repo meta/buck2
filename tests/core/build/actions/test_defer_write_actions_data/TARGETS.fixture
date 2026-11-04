@@ -1,0 +1,5 @@
+load(":defs.bzl", "consume", "write")
+
+write(name = "write", content = read_config("test", "content"))
+
+consume(name = "consume", dep = ":write")

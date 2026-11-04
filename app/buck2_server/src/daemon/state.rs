@@ -293,9 +293,11 @@ pub struct RepoState {
     /// (`buck2.clean_scratch_on_idle`). The sweep runs through this repo's `materializer`.
     pub(crate) clean_scratch_on_idle: bool,
 
-    /// Whether this repo's `materializer` keeps a write action's content off its output path
-    /// until something needs the file: the deferred core's when `buck2.defer_write_actions`
-    /// says so. The disk-state core writes to the path at once.
+    /// Whether a write action's content stays off its output path until something needs the
+    /// file (`buck2.defer_write_actions`): the deferred core's doing, at `declare_write`; the
+    /// write action's under the disk-state core, which keeps the content in the BlobStore's
+    /// memory. Read once, with the core's configuration, so that every command of this repo
+    /// answers the same.
     pub(crate) materializer_defers_writes: bool,
 
     /// Whether this repo's `materializer` wants every write served from the action cache where
@@ -637,8 +639,7 @@ impl TenantState {
                 strict_leases,
             }
         };
-        let materializer_defers_writes =
-            !disk_state_core && deferred_materializer_configs.defer_write_actions;
+        let materializer_defers_writes = deferred_materializer_configs.defer_write_actions;
         let materializer_probes_writes = disk_state_core;
         let ttl_refresh_frequency = deferred_materializer_configs.ttl_refresh.frequency;
 

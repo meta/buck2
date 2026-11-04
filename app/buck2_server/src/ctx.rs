@@ -493,6 +493,7 @@ impl<'a> ServerCommandContext<'a> {
             default_allow_cache_upload: false,
             action_paths_interner: None,
             write_cas_probe: false,
+            defer_write_actions: false,
             write_action_cache: WriteActionCacheMode::Off,
             write_action_cache_populate: RolloutFraction::none(),
         };
@@ -1065,6 +1066,7 @@ impl DiceCommandUpdater<'_, '_> {
         // itself (`materializer_probes_writes`): it writes to the path at once, and most of a
         // cold build's writes are never read from disk.
         let repo = self.cmd_ctx.base_context.repo();
+        run_action_knobs.defer_write_actions = repo.materializer_defers_writes;
         run_action_knobs.write_cas_probe = repo.materializer_probes_writes
             || (root_config
                 .parse::<RolloutPercentage>(BuckconfigKeyRef {

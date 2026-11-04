@@ -13,9 +13,11 @@
 //! the hybrid executor runs local commands behind, held while it is made so that a burst counts
 //! as the load it is; uploaded and declared as CAS content when there is no permit to be had,
 //! since a burst of writes in a cold build is thousands of files nothing on this machine may
-//! ever read, and one write in a small build is quicker made than sent. "Here" is
-//! `produce_locally` under the disk-state core, which finds a previous build's content on disk
-//! rather than make it again, and a declaration under the deferred core.
+//! ever read, and one write in a small build is quicker made than sent. "Here" is a declaration
+//! under the deferred core; under the disk-state core, `produce_locally`, which finds a previous
+//! build's content on disk rather than make it again, or for a write under
+//! `defer_write_actions`, the BlobStore's memory, where the content waits, compressed, for
+//! something to ask for the file.
 
 use std::sync::Arc;
 
@@ -38,6 +40,7 @@ use buck2_directory::directory::entry::DirectoryEntry;
 use buck2_directory::directory::walk::unordered_entry_walk;
 use buck2_error::BuckErrorOptionContext;
 use buck2_execute::artifact_value::ArtifactValue;
+use buck2_execute::blob_store::BlobStore;
 use buck2_execute::directory::ActionDirectoryBuilder;
 use buck2_execute::directory::ActionDirectoryEntry;
 use buck2_execute::directory::ActionDirectoryMember;
@@ -102,15 +105,19 @@ pub(crate) async fn produce_write(
     Ok((value, kind(produced)))
 }
 
-/// A write made on this machine, whichever core: on disk now under the disk-state core, found
-/// or made (`write_locally`); a declaration under the deferred core, written when something
-/// reads it.
+/// A write made on this machine, whichever core: under the disk-state core, kept in memory
+/// (`defer_write`) or on disk now, found or made (`write_locally`); a declaration under the
+/// deferred core, written when something reads it, or at once, as that core's own
+/// `defer_write_actions` says.
 pub(crate) async fn write_here(
     ctx: &dyn ActionExecutionCtx,
     request: WriteRequest,
 ) -> buck2_error::Result<(ArtifactValue, Produced)> {
     let materializer = ctx.materializer();
     if materializer.is_disk_state() {
+        if ctx.run_action_knobs().defer_write_actions {
+            return defer_write(ctx, request);
+        }
         return write_locally(
             materializer,
             ctx.blocking_executor(),
@@ -126,6 +133,29 @@ pub(crate) async fn write_here(
         .into_iter()
         .next()
         .internal_error("a write declares one value")?;
+    Ok((value, Produced::Made))
+}
+
+/// A write whose content goes into the BlobStore's memory, compressed, rather than to its path:
+/// the value names the digest, and the materializer writes the file out of memory when something
+/// asks for the path, as it links one out of the stash. Nothing is on disk, and the materializer
+/// hears nothing, until then.
+fn defer_write(
+    ctx: &dyn ActionExecutionCtx,
+    request: WriteRequest,
+) -> buck2_error::Result<(ArtifactValue, Produced)> {
+    let WriteRequest {
+        path: _,
+        content,
+        is_executable,
+        path_kind: _,
+    } = request;
+    let digest = TrackedFileDigest::from_content(&content, ctx.digest_config().cas_digest_config());
+    BlobStore::global().insert_in_memory(&content, &digest, is_executable)?;
+    let value = ArtifactValue::file(FileMetadata {
+        digest,
+        is_executable,
+    });
     Ok((value, Produced::Made))
 }
 

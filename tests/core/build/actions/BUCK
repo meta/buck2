@@ -3,7 +3,11 @@ load("@fbcode//buck2/tests:buck_e2e.bzl", "buck2_core_tests")
 oncall("build_infra")
 
 buck2_core_tests(
-    materializer_variants = ["test_write_action_cache", "test_write_cas_probe"],
+    materializer_variants = [
+        "test_defer_write_actions",
+        "test_write_action_cache",
+        "test_write_cas_probe",
+    ],
     target_extra_attrs = {
         "test_download_file": {
             "deps": [

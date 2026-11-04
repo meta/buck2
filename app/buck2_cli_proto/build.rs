@@ -32,6 +32,7 @@ fn main() -> io::Result<()> {
         .type_attribute(".", "#[derive(::allocative::Allocative)]")
         .field_attribute("start_time", "#[serde(with = \"serialize_timestamp\")]")
         .field_attribute("timeout", "#[serde(rename = \"timeout_us\", with = \"buck2_proto_serde::serialize_duration_as_micros\")]")
+        .field_attribute("bes_drain_timeout", "#[serde(rename = \"bes_drain_timeout_us\", with = \"buck2_proto_serde::serialize_duration_as_micros\")]")
         .field_attribute("uptime", "#[serde(rename = \"uptime_us\", with = \"buck2_proto_serde::serialize_duration_as_micros\")]")
         .field_attribute("delay", "#[serde(rename = \"delay_us\", with = \"buck2_proto_serde::serialize_duration_as_micros\")]")
         .field_attribute("ProfileResponse.elapsed", "#[serde(rename = \"elapsed_us\", with = \"buck2_proto_serde::serialize_duration_as_micros\")]")

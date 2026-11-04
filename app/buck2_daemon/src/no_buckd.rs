@@ -49,6 +49,7 @@ pub fn start_in_process_daemon(
                     &lifecycle_lock,
                     "A command with `--no-buckd` is invoked",
                     true,
+                    std::time::Duration::ZERO,
                 )
                 .await
             })

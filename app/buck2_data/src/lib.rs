@@ -80,6 +80,7 @@ impl CallerKind {
             Self::CommandShell => "command_shell",
             Self::Other => "other",
             Self::Wrapper => "wrapper",
+            Self::CommandWrapper => "command_wrapper",
         }
     }
 }

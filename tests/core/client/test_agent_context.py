@@ -268,6 +268,7 @@ class AgentContextTest(BuckTestCase):
     async def test_detect_direct_agent_and_stop_at_tools(self, buck: Buck) -> None:
         # Prost serializes protobuf enum fields as integers in invocation-record JSON.
         caller_agent, caller_command_shell, caller_other = 1, 2, 3
+        caller_command_wrapper = 5
         stop_agent, stop_other = 1, 2
         buck._env.pop("CODING_AGENT_METADATA", None)
         # Copy a shell so its executable identity is stable without depending on an
@@ -360,6 +361,37 @@ class AgentContextTest(BuckTestCase):
                             ).name,
                         }
                     ]
+
+        timeout = ["/usr/bin/timeout", "60"]
+        timeout_caller = {"kind": caller_command_wrapper, "executable": "timeout"}
+        for prefix in [timeout, [*timeout, *direct], [*direct, *timeout]]:
+            code, stderr, record = await run(prefix)
+            assert code == 0, stderr
+            assert record.get("agent_direct_call") is None
+            assert record["agent_inferred_direct_call"] is True
+            assert record["agent_detection_stop_reason"] == stop_agent
+            assert record["agent_callers"].count(timeout_caller) == 1
+            assert record["agent_callers"][-1] == {
+                "kind": caller_agent,
+                "executable": "codex",
+            }
+
+        # timeout must not hide a script/tool boundary on either side of it.
+        for tool in tools:
+            tool_caller = {
+                "kind": caller_other,
+                "executable": PurePosixPath(os.path.realpath(tool[0])).name,
+            }
+            for prefix, expected_callers in [
+                ([*timeout, *tool], [tool_caller]),
+                ([*tool, *timeout], [timeout_caller, tool_caller]),
+            ]:
+                code, stderr, record = await run(prefix)
+                assert code == 0, stderr
+                assert record.get("agent_direct_call") is None
+                assert record["agent_inferred_direct_call"] is False
+                assert record["agent_detection_stop_reason"] == stop_other
+                assert record["agent_callers"] == expected_callers
 
         # exec and sourced scripts erase the visible tool boundary. These known
         # false positives must leave the explicit direct-call marker unset.

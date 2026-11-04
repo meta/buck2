@@ -9,9 +9,9 @@
  */
 
 //! Best-effort detection of Buck calls whose output is consumed directly by an
-//! agent, walking client ancestry through command shells and stopping at tools
-//! or scripts. Inherited metadata cannot establish this boundary; executable
-//! names and `exec` can also mislead detection. Results and caller diagnostics
+//! agent, walking client ancestry through command shells and transparent wrappers,
+//! stopping at tools or scripts. Inherited metadata cannot establish this boundary;
+//! executable names and `exec` can also mislead detection. Results and caller diagnostics
 //! are logged to improve the classifier; only explicit `direct_call` controls advice.
 
 use std::env;
@@ -47,6 +47,8 @@ enum Caller {
     CommandShell,
     /// The launching Buck wrapper, identified by its direct-parent PID marker.
     Wrapper,
+    /// A command launcher, e.g. `timeout`, that leaves output for its caller; check its parent.
+    CommandWrapper,
     /// Tool boundary, e.g. `python tool.py` or `bash script.sh`, or unsupported
     /// shell arguments; stop with a non-match.
     Other,
@@ -61,6 +63,7 @@ impl Caller {
             Self::Agent => buck2_data::CallerKind::Agent,
             Self::CommandShell => buck2_data::CallerKind::CommandShell,
             Self::Wrapper => buck2_data::CallerKind::Wrapper,
+            Self::CommandWrapper => buck2_data::CallerKind::CommandWrapper,
             Self::Other => buck2_data::CallerKind::Other,
             Self::Unknown => buck2_data::CallerKind::Unknown,
         }
@@ -145,7 +148,7 @@ fn walk_ancestors(
             });
             match caller {
                 Caller::Agent => break 'walk (Some(true), AgentDetectionStopReason::Agent),
-                Caller::CommandShell | Caller::Wrapper => child = parent,
+                Caller::CommandShell | Caller::Wrapper | Caller::CommandWrapper => child = parent,
                 Caller::Other => break 'walk (Some(false), AgentDetectionStopReason::Other),
                 Caller::Unknown => break 'walk (None, AgentDetectionStopReason::Unknown),
             }
@@ -169,6 +172,11 @@ fn classify(exe: Option<&Path>, cmd: &[OsString]) -> Caller {
     // arbitrary arguments: tool commands and prompts can contain agent names.
     if AGENT_EXE_NAMES.contains(&name) {
         return Caller::Agent;
+    }
+    // timeout leaves the child's output for its own caller to consume. Keep
+    // walking: a tool or script on either side of it still establishes a boundary.
+    if name == "timeout" {
+        return Caller::CommandWrapper;
     }
     // A recognized shell with missing argv is Unknown.
     if cmd.is_empty()
@@ -299,6 +307,20 @@ mod tests {
     }
 
     #[test]
+    fn timeout_is_a_command_wrapper() {
+        for args in [
+            vec!["60", "buck2", "build", "//:x"],
+            vec!["--signal=TERM", "--kill-after=5s", "1m", "bash", "tool.sh"],
+        ] {
+            assert_eq!(caller("/usr/bin/timeout", &args), Caller::CommandWrapper);
+        }
+        assert_eq!(
+            classify(Some(Path::new("timeout")), &[]),
+            Caller::CommandWrapper
+        );
+    }
+
+    #[test]
     fn scripts_and_tools_are_boundaries() {
         for (exe, args) in [
             ("bash", vec!["script.sh", "-c", "claude"]),
@@ -308,6 +330,7 @@ mod tests {
             ("bash", vec!["-c", ""]),
             ("zsh", vec!["-l"]),
             ("python3", vec!["-c", "codex"]),
+            ("python3", vec!["tool.py", "timeout", "60", "buck2"]),
             ("node", vec!["tool.js", "claude"]),
             ("powershell.exe", vec!["-File", "script.ps1"]),
             ("pwsh", vec!["-ExecutionPolicy"]),
@@ -326,6 +349,7 @@ mod tests {
             ("cmd.exe", vec!["/K", "buck2"]),
             ("buck2", vec!["build"]),
             ("not-codex", vec![]),
+            ("not-timeout", vec!["60", "buck2"]),
         ] {
             assert_eq!(caller(exe, &args), Caller::Other, "{exe} {args:?}");
         }
@@ -367,7 +391,8 @@ mod tests {
                     (1, Some(2), 10, Other),
                     (2, Some(3), 9, wrapper),
                     (3, Some(4), 8, CommandShell),
-                    (4, None, 7, boundary),
+                    (4, Some(5), 7, caller("timeout", &["60", "buck2"])),
+                    (5, None, 6, boundary),
                 ];
                 let inference = walk_with_wrapper(&rows, Some(2));
                 assert_eq!(inference.inferred_direct_call, expected);
@@ -380,6 +405,7 @@ mod tests {
                     [
                         Wrapper.to_proto(),
                         CommandShell.to_proto(),
+                        CommandWrapper.to_proto(),
                         boundary.to_proto()
                     ],
                 );
@@ -468,7 +494,8 @@ mod tests {
                 let (caller, executable) = match pid.as_u32() {
                     1 => (Caller::Other, Some("buck2")),
                     2 => (Caller::CommandShell, Some("bash")),
-                    3 => (terminal, executable),
+                    3 => (caller("timeout", &["60", "bash"]), Some("timeout")),
+                    4 => (terminal, executable),
                     _ => panic!("inspected beyond a classifier boundary"),
                 };
                 Some(ProcessInfo {
@@ -478,7 +505,7 @@ mod tests {
                     executable: executable.map(str::to_owned),
                 })
             });
-            assert_eq!(visited, [1, 2, 3]);
+            assert_eq!(visited, [1, 2, 3, 4]);
             assert_eq!(inference.inferred_direct_call, inferred);
             assert_eq!(inference.stop_reason, Some(reason));
             assert_eq!(
@@ -487,6 +514,10 @@ mod tests {
                     buck2_data::CallerProcess {
                         kind: Caller::CommandShell.to_proto().into(),
                         executable: Some("bash".to_owned())
+                    },
+                    buck2_data::CallerProcess {
+                        kind: Caller::CommandWrapper.to_proto().into(),
+                        executable: Some("timeout".to_owned())
                     },
                     buck2_data::CallerProcess {
                         kind: terminal.to_proto().into(),

@@ -3452,7 +3452,10 @@ enum CallerKind {
   CALLER_KIND_AGENT = 1;
   CALLER_KIND_COMMAND_SHELL = 2;
   CALLER_KIND_OTHER = 3;
+  // The launching Buck wrapper, identified by its direct-parent PID marker.
   CALLER_KIND_WRAPPER = 4;
+  // A command launcher that leaves output for its caller, e.g. timeout.
+  CALLER_KIND_COMMAND_WRAPPER = 5;
 }
 
 enum AgentDetectionStopReason {

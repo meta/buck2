@@ -75,6 +75,7 @@ rust_library(
         "//buck2/app/buck2_fs:buck2_fs",
         "//buck2/app/buck2_hash:buck2_hash",
         "//buck2/app/buck2_health_check:buck2_health_check",
+        "//buck2/app/buck2_re_configuration:buck2_re_configuration",
         "//buck2/app/buck2_resource_control:buck2_resource_control",
         "//buck2/app/buck2_settings:buck2_settings",
         "//buck2/app/buck2_util:buck2_util",

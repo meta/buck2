@@ -500,6 +500,8 @@ impl BuckdServer {
         );
 
         let auth_token = process_info.auth_token.clone();
+        // Held past the move of `daemon_state` below, for the shutdown sequence.
+        let scribe_sink = daemon_state.data().scribe_sink.dupe();
         let api_server = BuckdServer(Arc::new(BuckdServerData {
             stop_accepting_requests: AtomicBool::new(false),
             process_info,
@@ -557,6 +559,21 @@ impl BuckdServer {
             .is_err()
         {
             eprintln!("timed out waiting for DICE tasks to finish during shutdown");
+        }
+
+        // Finish the Build Event Service streams before the process exits. The sink's worker
+        // would do it when the sink is dropped, but that is after this function returns, and
+        // the process does not wait for it; the server then shows the build running forever.
+        if let Some(sink) = scribe_sink {
+            match timeout(Duration::from_secs(10), sink.shutdown()).await {
+                Ok(Ok(())) => {}
+                Ok(Err(e)) => {
+                    tracing::warn!("remote event sink streams not finished cleanly: {:#}", e)
+                }
+                Err(_) => {
+                    tracing::warn!("timed out finishing remote event sink streams during shutdown")
+                }
+            }
         }
 
         server_result?;
@@ -1287,6 +1304,22 @@ impl DaemonApi for BuckdServer {
             self.0
                 .stop_accepting_requests
                 .store(true, Ordering::Relaxed);
+
+            // Finish the Build Event Service streams first, while the daemon is still whole. A
+            // kill during a build ends in a forced shutdown that exits the process without the
+            // graceful path's cleanup, and a stream left open shows as a build running forever.
+            // Bounded, so a dead server cannot hold the kill hostage.
+            if let Some(sink) = self.0.daemon_state.data().scribe_sink.dupe() {
+                match timeout(Duration::from_secs(5), sink.shutdown()).await {
+                    Ok(Ok(())) => {}
+                    Ok(Err(e)) => {
+                        tracing::warn!("remote event sink streams not finished cleanly: {:#}", e)
+                    }
+                    Err(_) => tracing::warn!(
+                        "timed out finishing remote event sink streams before shutdown"
+                    ),
+                }
+            }
 
             let timeout = req
                 .timeout

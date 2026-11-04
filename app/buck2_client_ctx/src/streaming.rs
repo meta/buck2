@@ -41,6 +41,7 @@ use crate::daemon::client::connect::connect_buckd;
 use crate::events_ctx::EventsCtx;
 use crate::exit_result::ExitResult;
 use crate::path_arg::PathArg;
+use crate::remote_sink_config;
 use crate::signal_handler::with_simple_sigint_handler;
 use crate::subscribers::build_graph_stats::BuildGraphStats;
 use crate::subscribers::build_id_writer::BuildIdWriter;
@@ -66,6 +67,7 @@ fn update_events_ctx<T: StreamingCommand>(
     let expect_spans = cmd.should_expect_spans();
 
     let paths = ctx.paths().ok();
+    let bes_results_url = remote_sink_config::bes_results_url(paths);
 
     // Need this to get information from one subscriber (event_log)
     // and log it in another (invocation_recorder)
@@ -106,6 +108,7 @@ fn update_events_ctx<T: StreamingCommand>(
         T::COMMAND_NAME,
         console_opts.superconsole_config(),
         health_check_display_reports_receiver,
+        bes_results_url,
     );
     subscribers.push(console_subscriber);
     events_ctx.used_superconsole = used_superconsole;
@@ -379,9 +382,10 @@ fn get_build_graph_stats<T: StreamingCommand>(
     ctx: &ClientCommandContext,
 ) -> Option<Box<dyn EventSubscriber>> {
     if should_handle_build_graph_stats(cmd) {
-        Some(Box::new(BuildGraphStats::new(
+        Some(Box::new(BuildGraphStats::new_with_paths(
             ctx.fbinit(),
             ctx.trace_id.dupe(),
+            ctx.paths().ok(),
         )))
     } else {
         None

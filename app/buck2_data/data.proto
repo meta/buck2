@@ -1446,6 +1446,18 @@ message Snapshot {
   optional uint64 sink_failures_internal_error = 1206;
   optional uint64 sink_failures_timed_out = 1207;
   optional uint64 sink_failures_unknown = 1208;
+  // Where the BES sink's worker thread spent its time, cumulative microseconds: on queued
+  // messages in all, converting them to Bazel events, uploading their files, and waiting for
+  // the transport to take them. And how many transports it opened.
+  optional uint64 sink_worker_busy_us = 1218;
+  optional uint64 sink_worker_convert_us = 1219;
+  optional uint64 sink_worker_upload_us = 1220;
+  optional uint64 sink_worker_send_wait_us = 1221;
+  optional uint64 sink_worker_transport_opens = 1222;
+  // Within sink_worker_upload_us: opening the uploader's connection, and waiting while the
+  // queued upload bytes are over their bound.
+  optional uint64 sink_worker_upload_connect_us = 1223;
+  optional uint64 sink_worker_upload_slot_wait_us = 1224;
   // Current number of messages queued up to be submitted.
   optional uint64 sink_buffer_depth = 107;
   // Cumulative count of messages that were dropped (i.e. not even processed).

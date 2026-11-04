@@ -126,7 +126,7 @@ use futures::future::BoxFuture;
 use futures::future::FutureExt;
 use futures::future::Shared;
 use host_sharing::NamedSemaphores;
-use remote::ScribeConfig;
+use remote::RemoteEventConfig;
 use tokio::runtime::Handle;
 use tokio::sync::Mutex;
 use tokio::sync::OnceCell;
@@ -1704,12 +1704,31 @@ impl DaemonState {
                 .parse_single_cell(cells.root_cell(), &fs)
                 .await?;
 
+            #[cfg(not(fbcode_build))]
+            let buffer_size = root_config
+                .parse(BuckconfigKeyRef {
+                    section: "bes",
+                    property: "buffer_size",
+                })?
+                .unwrap_or(10000);
+            #[cfg(fbcode_build)]
             let buffer_size = root_config
                 .parse(BuckconfigKeyRef {
                     section: "buck2",
                     property: "event_log_buffer_size",
                 })?
                 .unwrap_or(10000);
+
+            #[cfg(not(fbcode_build))]
+            let retry_backoff = Duration::from_millis(
+                root_config
+                    .parse(BuckconfigKeyRef {
+                        section: "bes",
+                        property: "retry_backoff_duration_ms",
+                    })?
+                    .unwrap_or(500),
+            );
+            #[cfg(fbcode_build)]
             let retry_backoff = Duration::from_millis(
                 root_config
                     .parse(BuckconfigKeyRef {
@@ -1718,25 +1737,262 @@ impl DaemonState {
                     })?
                     .unwrap_or(500),
             );
+
+            #[cfg(not(fbcode_build))]
+            let retry_attempts = root_config
+                .parse(BuckconfigKeyRef {
+                    section: "bes",
+                    property: "retry_attempts",
+                })?
+                .unwrap_or(5);
+            #[cfg(fbcode_build)]
             let retry_attempts = root_config
                 .parse(BuckconfigKeyRef {
                     section: "buck2",
                     property: "event_log_retry_attempts",
                 })?
                 .unwrap_or(5);
+
+            #[cfg(not(fbcode_build))]
+            let message_batch_size = root_config.parse(BuckconfigKeyRef {
+                section: "bes",
+                property: "message_batch_size",
+            })?;
+            #[cfg(fbcode_build)]
             let message_batch_size = root_config.parse(BuckconfigKeyRef {
                 section: "buck2",
                 property: "event_log_message_batch_size",
             })?;
+            #[cfg(not(fbcode_build))]
+            let bes_backend = root_config
+                .get(BuckconfigKeyRef {
+                    section: "bes",
+                    property: "backend",
+                })
+                .map(str::to_owned);
+            #[cfg(not(fbcode_build))]
+            let (bes_headers, missing_header_env) =
+                Self::parse_bes_headers(root_config.parse_list::<String>(BuckconfigKeyRef {
+                    section: "bes",
+                    property: "header",
+                })?)?;
+            // `[bes] connection = re_client` reuses the remote execution client's endpoint,
+            // headers and TLS identity. Explicit `backend` and `header` keys still win.
+            #[cfg(not(fbcode_build))]
+            let bes_connection = match root_config
+                .get(BuckconfigKeyRef {
+                    section: "bes",
+                    property: "connection",
+                })
+                .map(str::trim)
+            {
+                Some("re_client") => {
+                    let connection =
+                        buck2_re_configuration::BesConnection::from_re_client(&root_config)?;
+                    if connection.is_none() {
+                        tracing::info!(
+                            "[bes] connection = re_client, but no [buck2_re_client] engine_address: build events off"
+                        );
+                    }
+                    connection
+                }
+                Some("") | None => None,
+                Some(other) => {
+                    return Err(buck2_error::buck2_error!(
+                        buck2_error::ErrorTag::Input,
+                        "Invalid `bes.connection` `{}` (expected `re_client`)",
+                        other
+                    ));
+                }
+            };
+            #[cfg(not(fbcode_build))]
+            let bes_backend = bes_backend.or_else(|| {
+                bes_connection
+                    .as_ref()
+                    .map(|connection| connection.backend.clone())
+            });
+            // Headers are expanded once, here, from this process's environment, and a server
+            // takes an empty API key for none: a header whose variable is unset turns BES off
+            // for the daemon's life rather than send every stream unauthenticated.
+            #[cfg(not(fbcode_build))]
+            let bes_backend = if missing_header_env.is_empty() {
+                bes_backend
+            } else {
+                tracing::warn!(
+                    "{}",
+                    remote::missing_bes_header_env_warning(&missing_header_env, "the daemon's")
+                );
+                None
+            };
+            #[cfg(not(fbcode_build))]
+            let bes_headers = if bes_headers.is_empty() {
+                bes_connection
+                    .as_ref()
+                    .map(|connection| connection.headers.clone())
+                    .unwrap_or_default()
+            } else {
+                bes_headers
+            };
+            #[cfg(not(fbcode_build))]
+            let bes_tls = bes_connection
+                .as_ref()
+                .map(|connection| remote::BesTls {
+                    client_cert: connection.tls_client_cert.clone(),
+                    ca_certs: connection.tls_ca_certs.clone(),
+                })
+                .unwrap_or_default();
+            #[cfg(not(fbcode_build))]
+            let build_metadata = Self::parse_bes_build_metadata(
+                root_config.parse_list::<String>(BuckconfigKeyRef {
+                    section: "bes",
+                    property: "build_metadata",
+                })?,
+            )?;
+            #[cfg(not(fbcode_build))]
+            let bes_event_format = root_config
+                .parse::<remote::BesEventFormat>(BuckconfigKeyRef {
+                    section: "bes",
+                    property: "event_format",
+                })?
+                .unwrap_or_default();
+            #[cfg(not(fbcode_build))]
+            let re_client_cas_address = buck2_re_configuration::bes_cas_address(root_config)?;
+            #[cfg(not(fbcode_build))]
+            let re_client_instance_name = root_config.parse(BuckconfigKeyRef {
+                section: "buck2_re_client",
+                property: "instance_name",
+            })?;
+            #[cfg(not(fbcode_build))]
+            let bazel_artifact_upload = root_config
+                .parse::<bool>(BuckconfigKeyRef {
+                    section: "bes",
+                    property: "bazel_artifact_upload",
+                })?
+                .unwrap_or(true);
+            #[cfg(not(fbcode_build))]
+            let upload_successful_action_events = root_config
+                .parse::<bool>(BuckconfigKeyRef {
+                    section: "bes",
+                    property: "upload_successful_action_events",
+                })?
+                .unwrap_or(true);
+            #[cfg(not(fbcode_build))]
+            let bazel_artifact_upload_backend = root_config
+                .get(BuckconfigKeyRef {
+                    section: "bes",
+                    property: "bazel_artifact_upload_backend",
+                })
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .map(str::to_owned);
+            #[cfg(not(fbcode_build))]
+            let bazel_artifact_upload_instance_name = root_config
+                .get(BuckconfigKeyRef {
+                    section: "bes",
+                    property: "bazel_artifact_upload_instance_name",
+                })
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .map(str::to_owned);
+            #[cfg(not(fbcode_build))]
+            let bazel_artifact_uri_authority = root_config
+                .get(BuckconfigKeyRef {
+                    section: "bes",
+                    property: "bazel_artifact_uri_authority",
+                })
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .map(str::to_owned);
+            #[cfg(not(fbcode_build))]
+            let bazel_artifact_upload_max_bytes = root_config
+                .parse::<usize>(BuckconfigKeyRef {
+                    section: "bes",
+                    property: "bazel_artifact_upload_max_bytes",
+                })?
+                .unwrap_or(10 * 1024 * 1024);
+            #[cfg(not(fbcode_build))]
+            let bes_channel = buck2_events::sink::remote::BesChannelSettings {
+                grpc_keepalive_time_secs: root_config.parse(BuckconfigKeyRef {
+                    section: "buck2_re_client",
+                    property: "grpc_keepalive_time_secs",
+                })?,
+                grpc_keepalive_timeout_secs: root_config.parse(BuckconfigKeyRef {
+                    section: "buck2_re_client",
+                    property: "grpc_keepalive_timeout_secs",
+                })?,
+                grpc_keepalive_while_idle: root_config.parse(BuckconfigKeyRef {
+                    section: "buck2_re_client",
+                    property: "grpc_keepalive_while_idle",
+                })?,
+                tcp_keepalive_secs: root_config.parse(BuckconfigKeyRef {
+                    section: "buck2_re_client",
+                    property: "tcp_keepalive_secs",
+                })?,
+                bytestream_progress_timeout_secs: root_config.parse(BuckconfigKeyRef {
+                    section: "buck2_re_client",
+                    property: "bytestream_progress_timeout_secs",
+                })?,
+            };
+            #[cfg(not(fbcode_build))]
+            let bes_replay =
+                buck2_re_configuration::BesReplaySettings::from_legacy_config(root_config)?;
             tracing::info!("Initializing scribe sink...");
             let scribe_sink = Self::init_scribe_sink(
                 fb,
-                ScribeConfig {
+                RemoteEventConfig {
                     buffer_size,
                     retry_backoff,
                     retry_attempts,
+                    #[cfg(not(fbcode_build))]
+                    retry_window: Duration::from_secs(
+                        bes_replay
+                            .retry_window_secs
+                            .unwrap_or(remote::DEFAULT_RETRY_WINDOW_SECS),
+                    ),
+                    #[cfg(not(fbcode_build))]
+                    replay_spill_dir: Some(
+                        invocation_paths
+                            .tmp_dir()
+                            .join(ForwardRelativePath::unchecked_new("bes-replay-spill"))
+                            .into_path_buf(),
+                    ),
+                    #[cfg(not(fbcode_build))]
+                    replay_spill_max_bytes: bes_replay
+                        .replay_spill_max_bytes
+                        .unwrap_or(remote::DEFAULT_REPLAY_SPILL_MAX_BYTES),
                     message_batch_size,
+                    #[cfg(fbcode_build)]
                     thrift_timeout: Duration::from_secs(1),
+                    #[cfg(not(fbcode_build))]
+                    grpc_timeout: Duration::from_secs(10),
+                    #[cfg(not(fbcode_build))]
+                    bes_backend,
+                    #[cfg(not(fbcode_build))]
+                    bes_headers,
+                    #[cfg(not(fbcode_build))]
+                    bes_tls,
+                    #[cfg(not(fbcode_build))]
+                    build_metadata,
+                    #[cfg(not(fbcode_build))]
+                    event_format: bes_event_format,
+                    #[cfg(not(fbcode_build))]
+                    bazel_artifact_upload,
+                    #[cfg(not(fbcode_build))]
+                    upload_successful_action_events,
+                    #[cfg(not(fbcode_build))]
+                    bazel_artifact_upload_backend,
+                    #[cfg(not(fbcode_build))]
+                    re_client_cas_address,
+                    #[cfg(not(fbcode_build))]
+                    bazel_artifact_upload_instance_name,
+                    #[cfg(not(fbcode_build))]
+                    re_client_instance_name,
+                    #[cfg(not(fbcode_build))]
+                    bazel_artifact_uri_authority,
+                    #[cfg(not(fbcode_build))]
+                    bazel_artifact_upload_max_bytes,
+                    #[cfg(not(fbcode_build))]
+                    channel: bes_channel,
                 },
             )
             .buck_error_context("failed to init scribe sink")?;
@@ -1841,11 +2097,90 @@ impl DaemonState {
 
     fn init_scribe_sink(
         fb: FacebookInit,
-        config: ScribeConfig,
+        config: RemoteEventConfig,
     ) -> buck2_error::Result<Option<Arc<dyn EventSinkWithStats>>> {
         facebook_only();
         remote::new_remote_event_sink_if_enabled(fb, config)
             .map(|maybe_scribe| maybe_scribe.map(|scribe| Arc::new(scribe) as _))
+    }
+
+    #[cfg(not(fbcode_build))]
+    fn parse_bes_headers(
+        raw_headers: Option<Vec<String>>,
+    ) -> buck2_error::Result<remote::BesHeadersAndMissingVars> {
+        Self::parse_bes_headers_with_env(raw_headers, |name| std::env::var(name).ok())
+    }
+
+    #[cfg(not(fbcode_build))]
+    fn parse_bes_headers_with_env<F>(
+        raw_headers: Option<Vec<String>>,
+        mut env: F,
+    ) -> buck2_error::Result<remote::BesHeadersAndMissingVars>
+    where
+        F: FnMut(&str) -> Option<String>,
+    {
+        let mut headers = Vec::new();
+        let mut missing = Vec::new();
+        for raw_header in raw_headers.unwrap_or_default() {
+            let (raw_header, unset) =
+                remote::expand_bes_config_env_vars_reporting(&raw_header, &mut env);
+            missing.extend(unset);
+            let (key, value) = raw_header.split_once('=').ok_or_else(|| {
+                buck2_error!(
+                    ErrorTag::Input,
+                    "Invalid `bes.header` entry `{}` (expected `NAME=VALUE`)",
+                    raw_header
+                )
+            })?;
+            let key = key.trim();
+            if key.is_empty() {
+                return Err(buck2_error!(
+                    ErrorTag::Input,
+                    "Invalid `bes.header` entry `{}` (header name is empty)",
+                    raw_header
+                ));
+            }
+            headers.push((key.to_owned(), value.to_owned()));
+        }
+        Ok((headers, missing))
+    }
+
+    #[cfg(not(fbcode_build))]
+    fn parse_bes_build_metadata(
+        raw_entries: Option<Vec<String>>,
+    ) -> buck2_error::Result<Vec<(String, String)>> {
+        Self::parse_bes_build_metadata_with_env(raw_entries, |name| std::env::var(name).ok())
+    }
+
+    #[cfg(not(fbcode_build))]
+    fn parse_bes_build_metadata_with_env<F>(
+        raw_entries: Option<Vec<String>>,
+        mut env: F,
+    ) -> buck2_error::Result<Vec<(String, String)>>
+    where
+        F: FnMut(&str) -> Option<String>,
+    {
+        let mut metadata = Vec::new();
+        for raw_entry in raw_entries.unwrap_or_default() {
+            let raw_entry = remote::expand_bes_config_env_vars_with(&raw_entry, &mut env);
+            let (key, value) = raw_entry.split_once('=').ok_or_else(|| {
+                buck2_error!(
+                    ErrorTag::Input,
+                    "Invalid bes.build_metadata entry '{}' (expected KEY=VALUE)",
+                    raw_entry
+                )
+            })?;
+            let key = key.trim();
+            if key.is_empty() {
+                return Err(buck2_error!(
+                    ErrorTag::Input,
+                    "Invalid bes.build_metadata entry '{}' (metadata key is empty)",
+                    raw_entry
+                ));
+            }
+            metadata.push((key.to_owned(), value.to_owned()));
+        }
+        Ok(metadata)
     }
 
     /// Prepares an event stream for a request by bootstrapping an event source and EventDispatcher pair. The given
@@ -2313,5 +2648,54 @@ mod tests {
         assert_eq!(None, builder.write_timeout());
 
         Ok(())
+    }
+
+    #[cfg(not(fbcode_build))]
+    #[test]
+    fn expands_env_vars_in_bes_headers_and_metadata() {
+        let (headers, missing) = DaemonState::parse_bes_headers_with_env(
+            Some(vec!["x-buildbuddy-api-key=$BUILDBUDDY_API_KEY".to_owned()]),
+            test_env,
+        )
+        .unwrap();
+        assert_eq!(
+            headers,
+            vec![("x-buildbuddy-api-key".to_owned(), "secret".to_owned())]
+        );
+        assert!(missing.is_empty());
+
+        let (_, missing) = DaemonState::parse_bes_headers_with_env(
+            Some(vec!["x-buildbuddy-api-key=$UNSET_API_KEY".to_owned()]),
+            test_env,
+        )
+        .unwrap();
+        assert_eq!(missing, vec!["UNSET_API_KEY".to_owned()]);
+
+        let metadata = DaemonState::parse_bes_build_metadata_with_env(
+            Some(vec![
+                "PARENT_RUN_ID=${BUILDBUDDY_RUN_ID}".to_owned(),
+                "MISSING=$MISSING".to_owned(),
+                "LITERAL=$9".to_owned(),
+            ]),
+            test_env,
+        )
+        .unwrap();
+        assert_eq!(
+            metadata,
+            vec![
+                ("PARENT_RUN_ID".to_owned(), "run-id".to_owned()),
+                ("MISSING".to_owned(), "".to_owned()),
+                ("LITERAL".to_owned(), "$9".to_owned()),
+            ]
+        );
+    }
+
+    #[cfg(not(fbcode_build))]
+    fn test_env(name: &str) -> Option<String> {
+        match name {
+            "BUILDBUDDY_API_KEY" => Some("secret".to_owned()),
+            "BUILDBUDDY_RUN_ID" => Some("run-id".to_owned()),
+            _ => None,
+        }
     }
 }

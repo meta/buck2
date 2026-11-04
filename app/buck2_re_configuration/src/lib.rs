@@ -667,3 +667,242 @@ impl Buck2OssReConfiguration {
 pub use fbcode::RemoteExecutionStaticMetadata;
 #[cfg(not(fbcode_build))]
 pub use not_fbcode::RemoteExecutionStaticMetadata;
+
+/// How the Build Event Service sink reaches its backend under `[bes] connection = re_client`:
+/// the remote execution engine, with the same TLS identity and the same headers. Namespace
+/// serves both on one endpoint, and `nsc reapi setup buck2` writes only `[buck2_re_client]`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct BesConnection {
+    /// `grpcs://host:port` or `grpc://host:port`, the spelling `[bes] backend` takes.
+    pub backend: String,
+    pub headers: Vec<(String, String)>,
+    /// PEM file with the client certificate and its key, when TLS is on and one is configured.
+    pub tls_client_cert: Option<String>,
+    pub tls_ca_certs: Option<String>,
+}
+
+impl BesConnection {
+    /// `Ok(None)` when no remote execution engine is configured: a checked-in
+    /// `[bes] connection = re_client` then means "report when there is somewhere to report to",
+    /// and a machine without `nsc reapi setup buck2` builds without a sink rather than failing.
+    pub fn from_re_client(legacy_config: &LegacyBuckConfig) -> buck2_error::Result<Option<Self>> {
+        let config = Buck2OssReConfiguration::from_legacy_config(legacy_config)?;
+        let Some(engine) = config
+            .engine_address
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+        else {
+            return Ok(None);
+        };
+        // The sink follows `[buck2_re_client] tls` when it is set and otherwise the address
+        // scheme, as `bes_cas_address` does, so a plaintext engine is reached in plaintext.
+        let tls_key: Option<bool> = legacy_config.parse(BuckconfigKeyRef {
+            section: BUCK2_RE_CLIENT_CFG_SECTION,
+            property: "tls",
+        })?;
+        let (backend, tls) = grpc_backend(engine, tls_key);
+        Ok(Some(Self {
+            backend,
+            headers: config
+                .http_headers
+                .iter()
+                .map(|header| (header.key.clone(), header.value.clone()))
+                .collect(),
+            tls_client_cert: config.tls_client_cert.filter(|_| tls),
+            tls_ca_certs: config.tls_ca_certs.filter(|_| tls),
+        }))
+    }
+}
+
+/// Where the Build Event Service sink uploads the files of a Bazel-format stream when no
+/// `[bes] bazel_artifact_upload_backend` is set: the remote execution CAS, spelled as
+/// `[bes] backend` is. The scheme alone does not say whether that CAS takes TLS, because
+/// `tls = true` beside `grpc://host:443` turns it on, so a sink that read only the address
+/// dialled a TLS port in plaintext and uploaded nothing.
+pub fn bes_cas_address(legacy_config: &LegacyBuckConfig) -> buck2_error::Result<Option<String>> {
+    let address = legacy_config
+        .parse::<String>(BuckconfigKeyRef {
+            section: BUCK2_RE_CLIENT_CFG_SECTION,
+            property: "cas_address",
+        })?
+        .or(legacy_config.parse::<String>(BuckconfigKeyRef {
+            section: BUCK2_RE_CLIENT_CFG_SECTION,
+            property: "address",
+        })?);
+    let Some(address) = address.as_deref().map(str::trim).filter(|s| !s.is_empty()) else {
+        return Ok(None);
+    };
+    let tls = legacy_config.parse::<bool>(BuckconfigKeyRef {
+        section: BUCK2_RE_CLIENT_CFG_SECTION,
+        property: "tls",
+    })?;
+    Ok(Some(grpc_backend(address, tls).0))
+}
+
+/// `grpcs://host` or `grpc://host` for a remote execution address, and whether that is TLS.
+/// The `tls` key wins over the scheme, as it does for the remote execution client.
+fn grpc_backend(address: &str, tls: Option<bool>) -> (String, bool) {
+    let (scheme, host) = match address.split_once("://") {
+        Some((scheme, host)) => (Some(scheme.to_ascii_lowercase()), host),
+        None => (None, address),
+    };
+    let tls = tls.unwrap_or_else(|| !matches!(scheme.as_deref(), Some("grpc") | Some("http")));
+    (
+        format!(
+            "{}://{}",
+            if tls { "grpcs" } else { "grpc" },
+            host.trim_end_matches('/')
+        ),
+        tls,
+    )
+}
+
+/// The `[bes]` keys that bound what a broken stream keeps and for how long. The daemon's sink
+/// and the client's both read them; unset keys take the sink's defaults.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct BesReplaySettings {
+    pub retry_window_secs: Option<u64>,
+    pub replay_spill_max_bytes: Option<u64>,
+}
+
+impl BesReplaySettings {
+    pub fn from_legacy_config(legacy_config: &LegacyBuckConfig) -> buck2_error::Result<Self> {
+        Ok(Self {
+            retry_window_secs: legacy_config.parse(BuckconfigKeyRef {
+                section: "bes",
+                property: "retry_window_secs",
+            })?,
+            replay_spill_max_bytes: legacy_config.parse(BuckconfigKeyRef {
+                section: "bes",
+                property: "replay_spill_max_bytes",
+            })?,
+        })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use buck2_common::legacy_configs::configs::testing::parse;
+
+    use super::*;
+
+    #[test]
+    fn bes_replay_settings_read_the_bes_keys() -> buck2_error::Result<()> {
+        let unset = parse(&[("config", "")], "config")?;
+        let set = parse(
+            &[(
+                "config",
+                "[bes]\nretry_window_secs = 300\nreplay_spill_max_bytes = 1048576\n",
+            )],
+            "config",
+        )?;
+
+        assert_eq!(
+            BesReplaySettings::from_legacy_config(&unset)?,
+            BesReplaySettings::default()
+        );
+        assert_eq!(
+            BesReplaySettings::from_legacy_config(&set)?,
+            BesReplaySettings {
+                retry_window_secs: Some(300),
+                replay_spill_max_bytes: Some(1048576),
+            }
+        );
+        let invalid = parse(&[("config", "[bes]\nretry_window_secs = soon\n")], "config")?;
+        assert!(BesReplaySettings::from_legacy_config(&invalid).is_err());
+        Ok(())
+    }
+
+    #[test]
+    fn bes_connection_takes_tls_from_the_tls_key_over_the_scheme() -> buck2_error::Result<()> {
+        let legacy_config = parse(
+            &[(
+                "config",
+                "[buck2_re_client]\nengine_address = grpc://reapi.example:444\ntls = true\ntls_client_cert = /tmp/client.pem\nhttp_headers = x-a:1, x-b:two words\n",
+            )],
+            "config",
+        )?;
+        let connection = BesConnection::from_re_client(&legacy_config)?.expect("engine configured");
+        assert_eq!(connection.backend, "grpcs://reapi.example:444");
+        assert_eq!(
+            connection.tls_client_cert.as_deref(),
+            Some("/tmp/client.pem")
+        );
+        assert_eq!(
+            connection.headers,
+            vec![
+                ("x-a".to_owned(), "1".to_owned()),
+                ("x-b".to_owned(), "two words".to_owned()),
+            ]
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn bes_connection_follows_the_tls_key_whatever_the_scheme() -> buck2_error::Result<()> {
+        let bare = parse(
+            &[(
+                "config",
+                "[buck2_re_client]\nengine_address = reapi.example:443\n",
+            )],
+            "config",
+        )?;
+        assert_eq!(
+            BesConnection::from_re_client(&bare)?
+                .expect("engine configured")
+                .backend,
+            "grpcs://reapi.example:443"
+        );
+
+        let plain = parse(
+            &[(
+                "config",
+                "[buck2_re_client]\nengine_address = grpc://localhost:8980\ntls = false\ntls_client_cert = /tmp/client.pem\n",
+            )],
+            "config",
+        )?;
+        let connection = BesConnection::from_re_client(&plain)?.expect("engine configured");
+        assert_eq!(connection.backend, "grpc://localhost:8980");
+        assert_eq!(connection.tls_client_cert, None);
+        Ok(())
+    }
+
+    #[test]
+    fn bes_cas_address_takes_tls_from_the_tls_key_over_the_scheme() -> buck2_error::Result<()> {
+        let legacy_config = parse(
+            &[(
+                "config",
+                "[buck2_re_client]\nengine_address = grpc://reapi.example:443\ncas_address = grpc://cas.example:443\ntls = true\n",
+            )],
+            "config",
+        )?;
+        assert_eq!(
+            bes_cas_address(&legacy_config)?.as_deref(),
+            Some("grpcs://cas.example:443")
+        );
+
+        let shared = parse(
+            &[(
+                "config",
+                "[buck2_re_client]\naddress = grpc://localhost:1985\n",
+            )],
+            "config",
+        )?;
+        assert_eq!(
+            bes_cas_address(&shared)?.as_deref(),
+            Some("grpc://localhost:1985")
+        );
+
+        let unset = parse(&[("config", "")], "config")?;
+        assert_eq!(bes_cas_address(&unset)?, None);
+        Ok(())
+    }
+
+    #[test]
+    fn bes_connection_is_none_without_an_engine_address() -> buck2_error::Result<()> {
+        let legacy_config = parse(&[("config", "")], "config")?;
+        assert_eq!(BesConnection::from_re_client(&legacy_config)?, None);
+        Ok(())
+    }
+}

@@ -15,7 +15,15 @@
  * limitations under the License.
  */
 
+use std::cell::Cell;
+
+use starlark_derive::starlark_module;
+
+use crate as starlark;
+use crate::assert::Assert;
+use crate::environment::GlobalsBuilder;
 use crate::tests::bc::golden::bc_golden_test;
+use crate::values::Value;
 
 #[test]
 fn test_methods_invoked_speculatively() {
@@ -50,6 +58,43 @@ MyEnum = enum("red", "green", "blue")
 def test(x):
     # Test there is no enum evaluation.
     return x == MyEnum("red")
+"#,
+    );
+}
+
+#[test]
+fn test_min_max_key_not_invoked_speculatively() {
+    thread_local! {
+        static KEY_CALLS: Cell<i32> = const { Cell::new(0) };
+    }
+
+    #[starlark_module]
+    fn natives(builder: &mut GlobalsBuilder) {
+        fn counted_key<'v>(#[starlark(require = pos)] x: Value<'v>) -> anyhow::Result<Value<'v>> {
+            KEY_CALLS.with(|c| c.set(c.get() + 1));
+            Ok(x)
+        }
+
+        fn key_calls() -> anyhow::Result<i32> {
+            Ok(KEY_CALLS.with(|c| c.get()))
+        }
+    }
+
+    let mut a = Assert::new();
+    a.globals_add(natives);
+    a.pass(
+        r#"
+start = key_calls()
+
+def f():
+    return max((1, 2), key = counted_key), min((1, 2), key = counted_key)
+
+# `key` can be any callable, so it must only run when `f` is called,
+# not while `f` is compiled.
+assert_eq(start, key_calls())
+assert_eq((2, 1), f())
+assert_eq((2, 1), f())
+assert_eq(start + 8, key_calls())
 "#,
     );
 }

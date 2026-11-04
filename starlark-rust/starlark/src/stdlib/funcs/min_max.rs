@@ -105,7 +105,8 @@ pub(crate) fn register_min_max(globals: &mut GlobalsBuilder) {
     /// max("two", "three", "four", key=len)  == "three"  # the longest
     /// # "#);
     /// ```
-    #[starlark(speculative_exec_safe)]
+    // This function is not spec-safe, because it may call `key` function
+    // which might be not spec-safe.
     fn max<'v>(
         #[starlark(args)] args: UnpackTuple<Value<'v>>,
         key: Option<Value<'v>>,
@@ -130,7 +131,8 @@ pub(crate) fn register_min_max(globals: &mut GlobalsBuilder) {
     /// min("two", "three", "four", key=len)    == "two"   # the shortest
     /// # "#);
     /// ```
-    #[starlark(speculative_exec_safe)]
+    // This function is not spec-safe, because it may call `key` function
+    // which might be not spec-safe.
     fn min<'v>(
         #[starlark(args)] args: UnpackTuple<Value<'v>>,
         key: Option<Value<'v>>,

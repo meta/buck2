@@ -190,7 +190,7 @@ python_test = prelude_rule(
         | {
             "implicit_test_library": attrs.option(attrs.dep(providers = [PythonLibraryInfo]), default = None),
             "safer_lazy_imports": attrs.bool(default = False),  # TODO(T240038931) When enabling lazy imports by default, remove this line
-            "supports_test_execution_caching": attrs.bool(default = False),
+            "supports_test_execution_caching": attrs.bool(default = True),
             "_test_main": attrs.source(default = "prelude//python/tools:__test_main__.py"),
         }
         | re_test_common.test_args()

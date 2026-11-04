@@ -16,13 +16,16 @@
 //! The guard blocks only the change an agent did not ask for: a command that drops args the
 //! daemon's configuration uses, such as `uquery` without the preceding build's `-c` flags, and
 //! thereby changes a resolved value. A command that passes its own new or different args chose
-//! that configuration, so it is allowed and tagged with `CONFIG_CHANGE_EXPLICIT_TAG`.
+//! that configuration, so it is allowed and tagged with `CONFIG_CHANGE_EXPLICIT_TAG`. Every direct
+//! agent call is also tagged with whether the guard was on, for A/B analysis.
 //!
 //! Only the daemon knows which configuration its state was built with, so this guard runs in
 //! `DiceCommandUpdater::update`. That runs before the transaction commits, so blocking leaves the
 //! state untouched.
 
 use buck2_agent_interactive::Advice;
+use buck2_agent_interactive::CONFIG_CHANGE_DISABLED_TAG;
+use buck2_agent_interactive::CONFIG_CHANGE_ENABLED_TAG;
 use buck2_agent_interactive::CONFIG_CHANGE_EXPLICIT_TAG;
 use buck2_agent_interactive::Decision;
 use buck2_agent_interactive::Invocation;
@@ -49,12 +52,25 @@ pub(crate) async fn check_agent_config_change(
 ) -> buck2_error::Result<()> {
     // Check the cheap conditions first: comparing configs clones the new data, and every
     // command that is not a guarded agent call should skip that.
+    let direct_call = is_direct_call(agent_context);
+    if !direct_call {
+        return Ok(());
+    }
     // Unlike the other agent guards, this one ignores the `agent_interactive.enabled` master
     // switch. Requiring both would limit it to the intersection of two GK rollouts and leave no
     // clean control group for an A/B test of this guard.
     let enabled = settings.agent_config_change.enabled();
-    let direct_call = is_direct_call(agent_context);
-    if !enabled || !direct_call {
+    // Tag every direct call with the guard's state, not only the calls it acts on, so an A/B
+    // analysis can compare all commands in each arm.
+    let arm_tag = if enabled {
+        CONFIG_CHANGE_ENABLED_TAG
+    } else {
+        CONFIG_CHANGE_DISABLED_TAG
+    };
+    events.instant_event(buck2_data::TagEvent {
+        tags: vec![arm_tag.to_owned()],
+    });
+    if !enabled {
         return Ok(());
     }
     let Some(diff) = existing

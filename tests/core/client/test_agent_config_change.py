@@ -17,6 +17,8 @@ ENABLED = ("--setting=agent_config_change.enabled=true",)
 DIRECT = "--agent-context=direct_call=true"
 ADVICE = r"Buck advice \[config_change\]"
 EXPLICIT_TAG = "agent_interactive.config_change.explicit"
+ENABLED_TAG = "agent_interactive.config_change.enabled"
+DISABLED_TAG = "agent_interactive.config_change.disabled"
 
 
 class AgentConfigChangeTest(BuckTestCase):
@@ -35,6 +37,7 @@ class AgentConfigChangeTest(BuckTestCase):
         assert "--config foo.bar=1" in result.stderr
         record = result.invocation_record()
         assert "agent_interactive.config_change.block" in record["tags"]
+        assert ENABLED_TAG in record["tags"]
         assert "AGENT_ADVICE_BLOCKED" in record.single_error()["tags"]
 
         # The blocked command never committed, so returning to the original config finds the
@@ -118,6 +121,24 @@ class AgentConfigChangeTest(BuckTestCase):
         ]:
             result = await buck.targets("//:", *args, *ENABLED, DIRECT)
             assert "Buck advice" not in result.stderr
+
+    @buck_test(write_invocation_record=True)
+    async def test_direct_calls_record_whether_the_guard_is_on(
+        self, buck: Buck
+    ) -> None:
+        for args, expected in [
+            ((*ENABLED, DIRECT), ENABLED_TAG),
+            ((DIRECT,), DISABLED_TAG),
+            (("--setting=agent_config_change.enabled=false", DIRECT), DISABLED_TAG),
+        ]:
+            tags = (await buck.targets("//:", *args)).invocation_record()["tags"]
+            assert expected in tags, args
+            assert ({ENABLED_TAG, DISABLED_TAG} - {expected}).isdisjoint(tags), args
+
+        # Only direct agent calls are in the experiment population.
+        for args in [(*ENABLED,), (*ENABLED, "--agent-context=direct_call=false")]:
+            tags = (await buck.targets("//:", *args)).invocation_record()["tags"]
+            assert ENABLED_TAG not in tags and DISABLED_TAG not in tags, args
 
     @buck_test()
     async def test_master_switch_does_not_affect_the_guard(self, buck: Buck) -> None:

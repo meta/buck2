@@ -33,6 +33,12 @@ pub enum Advice {
 /// such changes; the tag measures how often agents make them.
 pub const CONFIG_CHANGE_EXPLICIT_TAG: &str = "agent_interactive.config_change.explicit";
 
+/// Tags recording whether the config change guard was on for a direct agent call. Every direct
+/// call that reaches the guard gets exactly one, so an A/B analysis can assign every command to an
+/// arm, including the commands the guard never acts on.
+pub const CONFIG_CHANGE_ENABLED_TAG: &str = "agent_interactive.config_change.enabled";
+pub const CONFIG_CHANGE_DISABLED_TAG: &str = "agent_interactive.config_change.disabled";
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Decision {
     Inactive,

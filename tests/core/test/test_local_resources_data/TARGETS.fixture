@@ -1,4 +1,4 @@
-load(":rules.bzl", "broker", "daemon_broker", "daemon_test", "test", "two_types_one_broker_test")
+load(":rules.bzl", "broker", "daemon_broker", "daemon_test", "dual_registered_test", "registered_broker", "test", "two_types_one_broker_test")
 
 broker(
     name = "my_broker",
@@ -21,4 +21,31 @@ daemon_test(
 two_types_one_broker_test(
     name = "two_types_one_broker",
     broker = ":my_broker",
+)
+
+registered_broker(name = "registered_success_broker", mode = "success")
+test(name = "registered_success", broker = ":registered_success_broker")
+
+registered_broker(name = "registered_failure_broker", mode = "failure")
+test(name = "registered_failure", broker = ":registered_failure_broker")
+
+registered_broker(name = "registered_bad_descriptor_broker", mode = "bad_descriptor")
+test(name = "registered_bad_descriptor", broker = ":registered_bad_descriptor_broker")
+
+registered_broker(name = "registered_ack_loss_broker", mode = "ack_loss")
+test(name = "registered_ack_loss", broker = ":registered_ack_loss_broker")
+
+registered_broker(name = "registered_timeout_broker", mode = "timeout")
+test(name = "registered_timeout", broker = ":registered_timeout_broker")
+
+registered_broker(name = "registered_withheld_broker", mode = "withheld")
+test(name = "registered_withheld", broker = ":registered_withheld_broker")
+registered_broker(name = "ack_hold", mode = "ack_hold")
+registered_broker(name = "wait_for_holder", mode = "wait_for_holder")
+dual_registered_test(name = "concurrent_registered", holder = ":ack_hold", waiter = ":wait_for_holder")
+
+dual_registered_test(
+    name = "registered_aliases",
+    holder = ":registered_success_broker",
+    waiter = ":registered_success_broker[alias]",
 )

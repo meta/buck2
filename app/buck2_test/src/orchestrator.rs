@@ -22,6 +22,7 @@ use std::hash::Hasher;
 use std::ops::ControlFlow;
 use std::sync::Arc;
 use std::time::Duration;
+use std::time::Instant;
 
 use allocative::Allocative;
 use async_trait::async_trait;
@@ -139,6 +140,7 @@ use buck2_execute_impl::executors::local::create_output_dirs;
 use buck2_execute_impl::executors::local::materialize_inputs;
 use buck2_execute_impl::executors::local::output_paths;
 use buck2_execute_impl::executors::local::prep_scratch_path;
+use buck2_fs::async_fs_util::spawn_blocking;
 use buck2_fs::paths::forward_rel_path::ForwardRelativePath;
 use buck2_fs::paths::forward_rel_path::ForwardRelativePathBuf;
 use buck2_hash::BuckFixedSortedMap;
@@ -193,7 +195,11 @@ use pagable::pagable_typetag;
 
 use crate::command::InternalRunnerConfig;
 use crate::local_resource_api::LocalResourcesSetupResult;
+use crate::local_resource_registry::CLEANUP_CAPABILITY_ENV;
+use crate::local_resource_registry::CleanupSetup;
 use crate::local_resource_registry::HasLocalResourceRegistry;
+use crate::local_resource_registry::LocalResourceEntry;
+use crate::local_resource_registry::PreparedLocalResource;
 use crate::local_resource_setup::TestStageSimple;
 use crate::local_resource_setup::required_providers;
 use crate::remote_storage;
@@ -924,10 +930,16 @@ impl Display for TestExecutionKey {
     }
 }
 
+enum LocalResourceSetupEvent {
+    Prepared(buck2_error::Result<PreparedLocalResource>),
+    Registered(buck2_error::Result<crate::local_resource_registry::SetupOwnership>),
+}
+
 struct PreparedLocalResourceSetupContext {
     pub target: ConfiguredTargetLabel,
     pub execution_request: CommandExecutionRequest,
     pub env_var_mapping: BuckMutInsertionMap<String, String>,
+    cleanup_setup: Option<CleanupSetup>,
 }
 
 #[derive(Clone, Dupe, Allocative)]
@@ -2043,6 +2055,11 @@ impl BuckTestOrchestrator<'_> {
         if required_providers.is_empty() {
             return Ok(vec![]);
         }
+        // The registry owns one pool per configured target, including its subtargets.
+        let required_providers = required_providers
+            .into_iter()
+            .unique_by(|(target, _)| (*target).dupe())
+            .collect::<Vec<_>>();
         let setup_commands = dice
             .try_compute_join(required_providers, async |dice, provider| {
                 Self::prepare_local_resource(
@@ -2087,23 +2104,89 @@ impl BuckTestOrchestrator<'_> {
                 async move {
                     (
                         missing_target.dupe(),
-                        setup.await.with_buck_error_context(|| {
-                            format!(
-                                "Error setting up local resource declared in `{missing_target}`"
-                            )
-                        }),
+                        LocalResourceSetupEvent::Prepared(setup.await.with_buck_error_context(
+                            || {
+                                format!(
+                                    "Error setting up local resource declared in `{missing_target}`"
+                                )
+                            },
+                        )),
                     )
                 }
+                .boxed()
             });
-        for (target, result) in
-            buck2_util::future::join_all(resource_futs.collect::<Vec<_>>()).await
-        {
-            lock.insert(target, result);
+        let mut completed = futures::stream::FuturesUnordered::from_iter(resource_futs);
+        while let Some((target, event)) = completed.next().await {
+            match event {
+                LocalResourceSetupEvent::Prepared(Ok(PreparedLocalResource {
+                    state,
+                    ownership: Some(mut owner),
+                })) => {
+                    lock.insert(
+                        target.dupe(),
+                        Ok(LocalResourceEntry::Pending {
+                            state,
+                            lease: owner.lease.dupe(),
+                        }),
+                    );
+                    let liveliness = liveliness_observer.dupe();
+                    completed.push(async move {
+                        let result = cancellation.with_structured_cancellation(|observer| async {
+                            futures::pin_mut!(observer);
+                            let registered = tokio::select! {
+                                result = owner.register() => result,
+                                _ = &mut observer => Err(buck2_error::buck2_error!(ErrorTag::LocalResourceSetup, "Local resource registration cancelled")),
+                                _ = liveliness.while_alive() => Err(buck2_error::buck2_error!(ErrorTag::LocalResourceSetup, "Local resource request ended during registration")),
+                            };
+                            registered?;
+                            if observer.is_cancelled() { return Err(buck2_error::buck2_error!(ErrorTag::LocalResourceSetup, "Local resource registration cancelled")); }
+                            Self::require_alive(liveliness.dupe()).await.map_err(|_| buck2_error::buck2_error!(ErrorTag::LocalResourceSetup, "Local resource request ended before registration commit"))?;
+                            Ok(())
+                        }).await;
+                        (target, LocalResourceSetupEvent::Registered(result.map(|()| owner)))
+                    }.boxed());
+                }
+                LocalResourceSetupEvent::Registered(Ok(owner)) => {
+                    if !liveliness_observer.is_alive().await {
+                        lock.insert(
+                            target,
+                            Err(buck2_error::buck2_error!(
+                                ErrorTag::LocalResourceSetup,
+                                "Local resource request ended before registration commit"
+                            )),
+                        );
+                        continue;
+                    }
+                    let pending = lock
+                        .remove(&target)
+                        .expect("Pending entry inserted before registration")?;
+                    let LocalResourceEntry::Pending { state, .. } = pending else {
+                        unreachable!("Entry remains pending under registry lock")
+                    };
+                    lock.insert(
+                        target,
+                        Ok(LocalResourceEntry::Registered {
+                            state,
+                            lease: owner.commit(),
+                        }),
+                    );
+                }
+                LocalResourceSetupEvent::Prepared(Ok(PreparedLocalResource {
+                    state,
+                    ownership: None,
+                })) => {
+                    lock.insert(target, Ok(LocalResourceEntry::Legacy(state)));
+                }
+                LocalResourceSetupEvent::Prepared(Err(error))
+                | LocalResourceSetupEvent::Registered(Err(error)) => {
+                    lock.insert(target, Err(error));
+                }
+            }
         }
 
         let result: buck2_error::Result<Vec<_>> = required_targets
             .iter()
-            .map(|t| lock.get(t).unwrap().clone())
+            .map(|t| lock.get(t).unwrap().as_ref().map_err(Clone::clone)?.state())
             .collect();
         Ok(result?)
     }
@@ -2116,6 +2199,40 @@ impl BuckTestOrchestrator<'_> {
         default_timeout: Duration,
     ) -> buck2_error::Result<PreparedLocalResourceSetupContext> {
         let digest_config = dice.global_data().get_digest_config();
+        let root = dice.get_cell_resolver().await?.root_cell();
+        let enabled = dice
+            .get_legacy_config_property(
+                root,
+                BuckconfigKeyRef {
+                    section: "buck2",
+                    property: "local_resource_cleanup_registration",
+                },
+            )
+            .await?;
+        let enabled = enabled
+            .as_deref()
+            .unwrap_or("false")
+            .parse::<bool>()
+            .map_err(|_| {
+                buck2_error::buck2_error!(
+                    ErrorTag::LocalResourceSetup,
+                    "Invalid cleanup registration buckconfig value"
+                )
+            })?
+            && cfg!(target_os = "linux");
+        let cleanup_setup = if enabled {
+            Some(spawn_blocking(CleanupSetup::create).await??)
+        } else {
+            None
+        };
+        let env = [(
+            CLEANUP_CAPABILITY_ENV.to_owned(),
+            cleanup_setup
+                .as_ref()
+                .map_or_else(String::new, |s| s.capability.to_owned()),
+        )]
+        .into_iter()
+        .collect();
 
         let (target, provider) = provider;
         // The `'v`-branded view of the provider must not be held across an await (only the
@@ -2162,8 +2279,7 @@ impl BuckTestOrchestrator<'_> {
                 .action_paths_interner
                 .as_ref(),
         )?;
-        let mut execution_request =
-            CommandExecutionRequest::new(vec![], cmd, paths, Default::default());
+        let mut execution_request = CommandExecutionRequest::new(vec![], cmd, paths, env);
         execution_request =
             execution_request.with_timeout(info.setup_timeout().unwrap_or(default_timeout));
         execution_request = execution_request.with_skip_resource_control();
@@ -2171,6 +2287,7 @@ impl BuckTestOrchestrator<'_> {
             target: target.dupe(),
             execution_request,
             env_var_mapping: info.env_var_mapping(),
+            cleanup_setup,
         })
     }
 
@@ -2179,9 +2296,10 @@ impl BuckTestOrchestrator<'_> {
         liveliness_observer: Arc<dyn LivelinessObserver>,
         digest_config: DigestConfig,
         executor: CommandExecutor,
-        context: PreparedLocalResourceSetupContext,
+        mut context: PreparedLocalResourceSetupContext,
         cancellation: &CancellationContext,
-    ) -> buck2_error::Result<LocalResourceState> {
+    ) -> buck2_error::Result<PreparedLocalResource> {
+        let mut cleanup_setup = context.cleanup_setup.take();
         let manager = CommandExecutionManager::new(
             Box::new(MutexClaimManager::new()),
             events.dupe(),
@@ -2200,6 +2318,10 @@ impl BuckTestOrchestrator<'_> {
             prepared_action: &prepared_action,
             digest_config,
         };
+        let registration_deadline = context
+            .execution_request
+            .timeout()
+            .map(|timeout| Instant::now() + timeout);
         let command = executor.exec_cmd(manager, &prepared_command, cancellation);
 
         let start = SetupLocalResourcesStart {
@@ -2207,8 +2329,20 @@ impl BuckTestOrchestrator<'_> {
         };
         let end = SetupLocalResourcesEnd {};
         let execution_result = events
-            .span_async(start, async move { (command.await, end) })
-            .await;
+            .span_async(start, async {
+                let execution = async {
+                    futures::pin_mut!(command);
+                    if let Some(setup) = cleanup_setup.as_mut() {
+                        tokio::select! {
+                            result = &mut command => return Ok::<_, buck2_error::Error>(result),
+                            result = setup.accept() => result?,
+                        }
+                    }
+                    Ok(command.await)
+                };
+                (execution.await, end)
+            })
+            .await?;
 
         let CommandExecutionResult {
             outputs: _,
@@ -2260,12 +2394,23 @@ impl BuckTestOrchestrator<'_> {
         };
 
         let string_content = String::from_utf8_lossy(&std_streams.stdout);
-        let data: LocalResourcesSetupResult = serde_json::from_str(&string_content)
+        let mut data: LocalResourcesSetupResult = serde_json::from_str(&string_content)
             // .buck_error_context("Error parsing local resource setup command output")
             .map_err(|e| from_any_with_tag(e, ErrorTag::LocalResourceSetup))?;
+        let descriptor = data.cleanup_registration.take();
+        let ownership = match cleanup_setup {
+            Some(setup) => setup.finish(descriptor, data.pid, registration_deadline)?,
+            None if descriptor.is_none() => None,
+            None => {
+                return Err(buck2_error::buck2_error!(
+                    ErrorTag::LocalResourceSetup,
+                    "Cleanup registration is not enabled"
+                ));
+            }
+        };
         let state = data.into_state(context.target.dupe(), &context.env_var_mapping)?;
 
-        Ok(state)
+        Ok(PreparedLocalResource { state, ownership })
     }
 }
 

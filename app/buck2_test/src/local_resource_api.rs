@@ -29,6 +29,15 @@ pub(crate) struct LocalResourcesSetupResult {
     /// to a value which represents resource. String alias is mapped to an environment variable key
     /// (which will be added to a command requiring such resource) using a `LocalResourceInfo` provider.
     pub(crate) resources: Vec<BTreeMap<String, String>>,
+    #[serde(default)]
+    pub(crate) cleanup_registration: Option<CleanupRegistration>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct CleanupRegistration {
+    pub(crate) version: u32,
+    pub(crate) attempt_id: String,
 }
 
 impl LocalResourcesSetupResult {
@@ -102,6 +111,7 @@ mod tests {
     #[tokio::test]
     async fn test_into_state() -> buck2_error::Result<()> {
         let setup_result = LocalResourcesSetupResult {
+            cleanup_registration: None,
             pid: Some(42),
             resources: vec![
                 btreemap! { "socket_address".to_owned() => "foo".to_owned(), "named_pipe".to_owned() => "bar".to_owned() },
@@ -149,6 +159,7 @@ mod tests {
     fn test_non_positive_pid_is_rejected() {
         for pid in [0, -1] {
             let setup_result = LocalResourcesSetupResult {
+                cleanup_registration: None,
                 pid: Some(pid),
                 resources: vec![btreemap! { "socket_address".to_owned() => "foo".to_owned() }],
             };
@@ -173,6 +184,7 @@ mod tests {
     #[test]
     fn test_empty_resource_list_is_rejected() {
         let setup_result = LocalResourcesSetupResult {
+            cleanup_registration: None,
             pid: None,
             resources: vec![],
         };
@@ -193,6 +205,7 @@ mod tests {
     #[tokio::test]
     async fn test_missing_value() -> buck2_error::Result<()> {
         let setup_result = LocalResourcesSetupResult {
+            cleanup_registration: None,
             pid: Some(42),
             resources: vec![
                 btreemap! { "socket_address".to_owned() => "foo".to_owned() },

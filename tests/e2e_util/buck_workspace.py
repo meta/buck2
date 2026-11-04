@@ -42,6 +42,7 @@ from typing import (
 
 import __manifest__
 from buck2.tests.e2e_util.api.buck import Buck
+from buck2.tests.e2e_util.api.buck_result import BuckException
 from buck2.tests.e2e_util.api.executable import WindowsCmdOption
 from decorator import decorator
 
@@ -59,6 +60,7 @@ BuckTestMarker = namedtuple(
         "setup_eden",
         "disable_daemon_cgroup",
         "write_invocation_record",
+        "allow_daemon_panics",
     ],
 )
 
@@ -289,11 +291,22 @@ async def buck_fixture(  # noqa C901 : "too complex"
 
         yield buck
 
+        daemon_panic = None
+        if not (marker.allow_daemon_panics or marker.inplace):
+            if not marker.skip_final_kill:
+                # Kill (not clean) first: it waits for the daemon to exit and leaves its
+                # stderr in place for the check.
+                await buck.kill()
+            daemon_panic = await _daemon_panic(buck)
+
         if not marker.skip_final_kill:
             if keep_temp:
                 await buck.kill()
             else:
                 await buck.clean()
+
+        if daemon_panic is not None:
+            raise AssertionError(daemon_panic)
     finally:
         sys.stdout = orig_stdout
 
@@ -338,6 +351,53 @@ async def _get_common_dir() -> Path:
     assert stdout is not None, "stdout should not be None"
     common_dir = Path(stdout.decode().strip())
     return common_dir
+
+
+async def _daemon_panic(buck: Buck) -> Optional[str]:
+    """
+    A failure message if any daemon this test used panicked, else None.
+
+    A daemon that panics after answering a command goes unnoticed: the client already has its
+    result and the next command starts a new daemon. So this reads the daemon's stderr after
+    the test, including the previous daemon's copy in `prev/`.
+    """
+    if not buck.cwd.is_dir():
+        # The test deleted its own project.
+        return None
+    try:
+        daemon_dir = await buck.get_daemon_dir()
+    except BuckException:
+        # No project root, so no daemon.
+        return None
+    project_daemon_dir = daemon_dir.parent
+    if not project_daemon_dir.is_dir():
+        return None
+    for stderr in sorted(project_daemon_dir.glob("*/buckd.stderr")) + sorted(
+        project_daemon_dir.glob("*/prev/buckd.stderr")
+    ):
+        try:
+            text = stderr.read_text(errors="replace")
+        except OSError:
+            continue
+        if "panicked at" not in text:
+            continue
+        if _HARD_ERROR_UPGRADE in text:
+            what = (
+                "The buck2 daemon hit a soft error during this test. Tests run with "
+                "BUCK2_HARD_ERROR, which turns soft errors into panics. If this soft error is "
+                "expected, mark the test `allow_soft_errors=True` (or `allow_daemon_panics=True` "
+                "to keep hard errors for everything else)."
+            )
+        else:
+            what = (
+                "The buck2 daemon panicked during this test. If that is expected, mark the test "
+                "`allow_daemon_panics=True`."
+            )
+        return f"{what} Daemon stderr ({stderr}):\n\n{text}"
+    return None
+
+
+_HARD_ERROR_UPGRADE = "Upgraded warning to failure via $BUCK2_HARD_ERROR"
 
 
 def _buck_argument(args: Sequence[Any], kwargs: Dict[str, Any]) -> Buck:
@@ -888,6 +948,7 @@ def buck_test(
     setup_eden: bool = False,
     disable_daemon_cgroup: bool = True,
     write_invocation_record: bool = False,
+    allow_daemon_panics: bool = False,
 ) -> Callable[..., Any]:
     """
     Defines a buck test. This is a must have decorator on all test case functions.
@@ -919,6 +980,11 @@ def buck_test(
         setup_eden:
             Whether or not to set up an EdenFS repo for this test. Only matters for inplace=False.
             Note that this will slow the test down, so it should not be widely enabled.
+        allow_daemon_panics:
+            By default an isolated test fails if its daemon panicked at any point, even after
+            the command finished. Set this if the test deliberately makes the daemon panic.
+            That includes tests that expect a soft error from the daemon, since
+            BUCK2_HARD_ERROR turns those into panics.
     """
 
     if inplace and data_dir == "":
@@ -962,6 +1028,7 @@ def buck_test(
         setup_eden=setup_eden,
         disable_daemon_cgroup=disable_daemon_cgroup,
         write_invocation_record=write_invocation_record,
+        allow_daemon_panics=allow_daemon_panics,
     )
 
     def decorate(fn: Callable[..., Any]) -> Callable[..., Any]:

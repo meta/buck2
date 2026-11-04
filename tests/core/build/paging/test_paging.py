@@ -516,7 +516,9 @@ class PagingTest(BuckTestCase):
         (buck.cwd / "src.txt").write_text("content-2\n")
         assert _output(await _build(buck)) == "content-2\n"
 
-    @buck_test(data_dir="paging", write_invocation_record=True)
+    @buck_test(
+        data_dir="paging", write_invocation_record=True, allow_daemon_panics=True
+    )
     @env("BUCK2_TEST_FAIL_PAGE_OUT", "true")
     async def test_idle_page_out_disabled_after_error(self, buck: Buck) -> None:
         _hydration_settings(buck)

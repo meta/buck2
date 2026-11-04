@@ -188,7 +188,7 @@ class ErrorCategorizationTest(BuckTestCase):
             rel_path="fixtures/test_targets_error_categorization.golden.txt",
         )
 
-    @buck_test(write_invocation_record=True)
+    @buck_test(write_invocation_record=True, allow_daemon_panics=True)
     async def test_daemon_crash(self, buck: Buck) -> None:
         await buck.build()
 
@@ -277,6 +277,7 @@ class ErrorCategorizationTest(BuckTestCase):
     @buck_test(
         skip_for_os=["darwin", "windows"],
         write_invocation_record=True,
+        allow_daemon_panics=True,
     )
     async def test_pre_daemon_oom_record_does_not_mask_daemon_crash(
         self, buck: Buck, tmp_path: Path
@@ -301,6 +302,7 @@ class ErrorCategorizationTest(BuckTestCase):
     @buck_test(
         skip_for_os=["darwin", "windows"],
         write_invocation_record=True,
+        allow_daemon_panics=True,
     )
     async def test_current_oomd_record_marks_daemon_crash_as_oom(
         self, buck: Buck, tmp_path: Path
@@ -323,6 +325,7 @@ class ErrorCategorizationTest(BuckTestCase):
     @buck_test(
         skip_for_os=["darwin", "windows"],
         write_invocation_record=True,
+        allow_daemon_panics=True,
     )
     async def test_oomd_kill_in_descendant_cgroup_does_not_mask_daemon_crash(
         self, buck: Buck, tmp_path: Path
@@ -345,6 +348,7 @@ class ErrorCategorizationTest(BuckTestCase):
     @buck_test(
         skip_for_os=["darwin", "windows"],
         write_invocation_record=True,
+        allow_daemon_panics=True,
     )
     async def test_kernel_oom_victim_pid_marks_daemon_crash_as_oom(
         self, buck: Buck, tmp_path: Path
@@ -365,6 +369,7 @@ class ErrorCategorizationTest(BuckTestCase):
     @buck_test(
         skip_for_os=["darwin", "windows"],
         write_invocation_record=True,
+        allow_daemon_panics=True,
     )
     async def test_kernel_oom_for_other_pid_does_not_mask_daemon_crash(
         self, buck: Buck, tmp_path: Path

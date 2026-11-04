@@ -30,7 +30,7 @@ class ExitCodeTest(BuckTestCase):
         await expect_failure(buck.build(":build_fail"), exit_code=ExitCodeV2.USER_ERROR)
 
     # Deliberately cause a daemon connection failure.
-    @buck_test()
+    @buck_test(allow_daemon_panics=True)
     @env("BUCK2_TEST_FAIL_BUCKD_AUTH", "true")
     # This test case spawns a loose daemon that we can't connect to. On windows
     # this loose daemon will keep holding onto buck-out files after test case finishes

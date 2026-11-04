@@ -80,7 +80,7 @@ class CommandReportTest(BuckTestCase):
         assert "Injected init daemon error" in report["error_messages"][0]
 
     # Deliberately cause a daemon connection failure.
-    @buck_test(write_invocation_record=True)
+    @buck_test(write_invocation_record=True, allow_daemon_panics=True)
     @env("BUCK2_TEST_FAIL_BUCKD_AUTH", "true")
     # This test case spawns a loose daemon that we can't connect to. On windows
     # this loose daemon will keep holding onto buck-out files after test case finishes

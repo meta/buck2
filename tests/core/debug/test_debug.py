@@ -18,7 +18,7 @@ from buck2.tests.e2e_util.buck_workspace import buck_test, BuckTestCase
 
 
 class DebugTest(BuckTestCase):
-    @buck_test()
+    @buck_test(allow_daemon_panics=True)
     async def test_debug_crash(self, buck: Buck) -> None:
         # If the first operation immediately does a panic then we fail to connect.
         # While that's not great, having some panics is better than none, so test once after we spawn.

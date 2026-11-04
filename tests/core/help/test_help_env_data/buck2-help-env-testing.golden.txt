@@ -39,6 +39,7 @@ BUCK2_TESTING_INACTIVITY_TIMEOUT               bool                   false
 BUCK2_TEST_BLOCK_ON_UPLOAD                     bool                   false
 BUCK2_TEST_BLOCK_TENANT_INITIALIZATION         String
 BUCK2_TEST_BUILD_ERROR                         bool                   false
+BUCK2_TEST_COMMAND_END_STALL_MS                u64
 BUCK2_TEST_DAEMON_ORIGINATING_CGROUP           String
 BUCK2_TEST_DAEMON_STARTUP_SIGNAL               bool                   false
 BUCK2_TEST_DISABLE_CACHING                     bool

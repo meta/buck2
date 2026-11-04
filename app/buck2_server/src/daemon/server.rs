@@ -1132,6 +1132,14 @@ where
             // `func` sends its own result and the event pump stops at the first one, so the guard
             // is disarmed in the same poll that `func` returns in. This relies on `func` not
             // awaiting between sending its result and returning, which holds for both callers.
+            // Blocking on purpose: the test needs the task to stay in this poll.
+            if let Ok(Some(ms)) = buck2_env!(
+                "BUCK2_TEST_COMMAND_END_STALL_MS",
+                type = u64,
+                applicability = testing
+            ) {
+                thread::sleep(Duration::from_millis(ms));
+            }
             report.disarm();
         }
         .boxed()

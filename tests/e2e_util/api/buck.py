@@ -968,7 +968,16 @@ class Buck(Executable):
         )
 
     async def get_daemon_dir(self) -> Path:
-        return Path((await self.debug("daemon-dir")).stdout.strip())
+        # `debug daemon-dir` doesn't accept `--unstable-write-invocation-record`.
+        daemon_dir = await self._run_buck_command(
+            "debug",
+            "daemon-dir",
+            input=None,
+            rel_cwd=None,
+            env=None,
+            can_write_invocation_record=False,
+        )
+        return Path(daemon_dir.stdout.strip())
 
     async def daemon_stderr(self) -> str:
         daemon_dir = await self.get_daemon_dir()

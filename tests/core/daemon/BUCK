@@ -10,6 +10,10 @@ buck2_core_tests(
                 "ovr_config//os:macos",
             ],
         },
+        "test_client_disconnect": {
+            "data": ":test_daemon_data",
+            "require_nano_prelude": True,
+        },
         "test_killall_repo_resilience": {
             "data": ":test_daemon_data",
             "require_nano_prelude": True,

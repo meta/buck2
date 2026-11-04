@@ -147,8 +147,9 @@ public class ApkBuilderExecutableMain {
     Path keystorePath = Paths.get(keystore);
     Path keystorePropertiesPath = Paths.get(keystoreProperties);
 
-    Path intermediateApk = Files.createTempFile("intermediate", "output.apk");
-    Path zipalignApk = Files.createTempFile("zipalign", "output.apk");
+    Path tempDir = Files.createTempDirectory("apk_builder");
+    Path intermediateApk = tempDir.resolve("intermediate.apk");
+    Path zipalignApk = tempDir.resolve("zipalign.apk");
     KeystoreProperties keystoreProperties =
         KeystoreProperties.createFromPropertiesFile(keystorePath, keystorePropertiesPath);
 
@@ -170,7 +171,7 @@ public class ApkBuilderExecutableMain {
 
       if (compressResourcesDotArsc) {
         Path intermediateApkWithCompressedResources =
-            Files.createTempFile("intermediate", "output_with_compressed_resources.apk");
+            tempDir.resolve("intermediate_with_compressed_resources.apk");
         RepackZipEntries.repack(
             intermediateApk,
             intermediateApkWithCompressedResources,
@@ -184,7 +185,7 @@ public class ApkBuilderExecutableMain {
             findCompressedEntries(intermediateApk, uncompressedFilePatterns);
         if (!compressedUncompressedFiles.isEmpty()) {
           Path intermediateApkWithUncompressedFiles =
-              Files.createTempFile("intermediate", "output_with_uncompressed_files.apk");
+              tempDir.resolve("intermediate_with_uncompressed_files.apk");
           RepackZipEntries.repack(
               intermediateApk,
               intermediateApkWithUncompressedFiles,
@@ -215,14 +216,11 @@ public class ApkBuilderExecutableMain {
               "Found duplicate file for APK: %1$s\nOrigin 1: %2$s\nOrigin 2: %3$s",
               e.getArchivePath(), e.getFile1(), e.getFile2()));
     } finally {
+      deleteRecursivelyQuietly(tempDir);
       if (buildInfoDir != null) {
         // Clean up the synthesized build-info temp dir (the bundler does the same on iOS); the
         // action sandbox would reclaim it anyway.
-        try {
-          MoreFiles.deleteRecursively(buildInfoDir, RecursiveDeleteOption.ALLOW_INSECURE);
-        } catch (IOException e) {
-          // Best-effort cleanup.
-        }
+        deleteRecursivelyQuietly(buildInfoDir);
       }
     }
 
@@ -254,6 +252,14 @@ public class ApkBuilderExecutableMain {
       throw new RuntimeException("Build-info generator failed with exit code " + exitCode);
     }
     return dir;
+  }
+
+  private static void deleteRecursivelyQuietly(Path path) {
+    try {
+      MoreFiles.deleteRecursively(path, RecursiveDeleteOption.ALLOW_INSECURE);
+    } catch (IOException e) {
+      // Best-effort cleanup.
+    }
   }
 
   private static boolean matchesAny(ImmutableSet<Pattern> patterns, String archivePath) {

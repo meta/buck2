@@ -1004,6 +1004,20 @@ mod tests {
             assert!(!guards.clean_enabled());
             Ok(())
         }
+
+        #[test]
+        fn agent_build_rollout_preserves_existing_guards() -> buck2_error::Result<()> {
+            for enabled in [false, true] {
+                let rollout = format!(
+                    "[agent_interactive.1]\nenabled = true\nclean_enabled = true\n\
+                     [agent_build.0]\nenabled = {enabled}"
+                );
+                let settings = settings_with_rollout(Some(rollout.as_bytes()))?;
+                assert!(settings.invocation.agent_interactive.clean_enabled());
+                assert_eq!(settings.invocation.agent_build.enabled(), enabled);
+            }
+            Ok(())
+        }
     }
 
     #[cfg(not(fbcode_build))]

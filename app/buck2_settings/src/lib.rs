@@ -17,6 +17,7 @@
 // The declaration macro refers to this crate by name, including from here.
 extern crate self as buck2_settings;
 
+mod agent_build;
 mod agent_config_change;
 pub mod agent_interactive;
 mod agent_materialization;
@@ -46,6 +47,7 @@ pub mod settings;
 mod starlark;
 pub mod telemetry;
 
+pub use agent_build::AgentBuild;
 pub use agent_config_change::AgentConfigChange;
 pub use agent_interactive::AgentInteractive;
 pub use agent_materialization::AgentMaterialization;

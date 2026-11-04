@@ -3372,6 +3372,7 @@ name = "buck2_server_commands"
 version = "0.1.0"
 dependencies = [
  "async-trait",
+ "buck2_agent_interactive",
  "buck2_artifact",
  "buck2_build_api",
  "buck2_build_signals",

@@ -9,6 +9,7 @@ license.workspace = true
 
 [dependencies]
 async-trait.workspace = true
+buck2_agent_interactive.workspace = true
 buck2_artifact.workspace = true
 buck2_build_api.workspace = true
 buck2_build_signals.workspace = true

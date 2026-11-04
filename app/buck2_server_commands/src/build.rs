@@ -95,10 +95,12 @@ use itertools::Either;
 use itertools::Itertools;
 use tokio::sync::mpsc::UnboundedSender;
 
+use crate::build::agent_advice::BuildAdviceContext;
 use crate::build::result_report::ResultReporter;
 use crate::build::result_report::ResultReporterOptions;
 use crate::build::unhashed_outputs::create_unhashed_outputs_via_materializer;
 
+mod agent_advice;
 mod result_report;
 mod unhashed_outputs;
 
@@ -397,6 +399,7 @@ async fn build(
         .as_ref()
         .is_some_and(|o| o.return_run_args);
     let build_start = Instant::now();
+    let build_advice = BuildAdviceContext::new(&server_ctx.buck_settings().invocation, request);
     let cloned_ctx = ctx.clone(); // build_future does a mutable borrow on the context, so we clone it first
     let mut dice = ctx.ctx();
     let build_future = dice.with_linear_recompute(|ctx| {
@@ -415,6 +418,7 @@ async fn build(
                 timeout_observer.as_ref(),
                 streaming_build_result_tx,
                 build_start,
+                build_advice.as_ref(),
             )
             .await
         }
@@ -679,6 +683,7 @@ async fn build_targets(
     timeout_observer: Option<&Arc<dyn LivelinessObserver>>,
     streaming_build_result_tx: Option<UnboundedSender<BuildTargetResult>>,
     build_start: Instant,
+    build_advice: Option<&BuildAdviceContext<'_>>,
 ) -> buck2_error::Result<BuildTargetResult> {
     let (builder, consumer) =
         AsyncBuildTargetResultBuilder::new(streaming_build_result_tx, build_start);
@@ -699,6 +704,7 @@ async fn build_targets(
                 graph_properties,
                 return_run_args,
                 timeout_observer,
+                build_advice,
             )
             .left_future()
         }
@@ -712,6 +718,7 @@ async fn build_targets(
             graph_properties,
             return_run_args,
             timeout_observer,
+            build_advice,
         )
         .right_future(),
     };
@@ -729,6 +736,7 @@ async fn build_targets_in_universe(
     graph_properties: GraphPropertiesOptions,
     return_run_args: bool,
     timeout_observer: Option<&Arc<dyn LivelinessObserver>>,
+    build_advice: Option<&BuildAdviceContext<'_>>,
 ) {
     let providers_to_build = build_providers_to_providers_to_build(&build_providers);
     let provider_labels = universe.get_provider_labels(&spec);
@@ -751,7 +759,7 @@ async fn build_targets_in_universe(
                         labels
                             .into_iter()
                             .map(|label| {
-                                build::build_configured_label(
+                                agent_advice::build_configured_label(
                                     event_consumer,
                                     ctx,
                                     materialization_and_upload,
@@ -763,6 +771,7 @@ async fn build_targets_in_universe(
                                         return_run_args,
                                     },
                                     timeout_observer,
+                                    build_advice,
                                 )
                             })
                             .collect::<FuturesUnordered<_>>()
@@ -798,6 +807,7 @@ async fn build_targets_with_global_target_platform(
     graph_properties: GraphPropertiesOptions,
     return_run_args: bool,
     timeout_observer: Option<&Arc<dyn LivelinessObserver>>,
+    build_advice: Option<&BuildAdviceContext<'_>>,
 ) {
     let global_cfg_options = &global_cfg_options;
     let build_providers = &build_providers;
@@ -817,6 +827,7 @@ async fn build_targets_with_global_target_platform(
                 graph_properties,
                 return_run_args,
                 timeout_observer,
+                build_advice,
             )
             .await
         })
@@ -869,6 +880,7 @@ async fn build_targets_for_spec(
     graph_properties: GraphPropertiesOptions,
     return_run_args: bool,
     timeout_observer: Option<&Arc<dyn LivelinessObserver>>,
+    build_advice: Option<&BuildAdviceContext<'_>>,
 ) {
     let skippable = match spec {
         PackageSpec::Targets(..) => skip_incompatible_targets,
@@ -961,6 +973,7 @@ async fn build_targets_for_spec(
                             &providers_to_build,
                             materialization_and_upload,
                             timeout_observer,
+                            build_advice,
                         )
                     })
                     .collect::<FuturesUnordered<_>>()
@@ -1042,6 +1055,7 @@ async fn build_target(
     providers_to_build: &ProvidersToBuild,
     materialization_and_upload: MaterializationAndUploadContext,
     timeout_observer: Option<&Arc<dyn LivelinessObserver>>,
+    build_advice: Option<&BuildAdviceContext<'_>>,
 ) -> Option<ConfiguredProvidersLabel> {
     let local_cfg_options = match spec.modifiers.as_slice() {
         None => spec.global_cfg_options.dupe(),
@@ -1073,7 +1087,7 @@ async fn build_target(
         }
     };
 
-    build::build_configured_label(
+    agent_advice::build_configured_label(
         event_consumer,
         ctx,
         materialization_and_upload,
@@ -1085,6 +1099,7 @@ async fn build_target(
             return_run_args: spec.return_run_args,
         },
         timeout_observer,
+        build_advice,
     )
     .await;
     Some(providers_label)

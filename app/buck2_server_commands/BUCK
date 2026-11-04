@@ -19,6 +19,7 @@ rust_library(
         "fbsource//third-party/rust:tokio-stream",
         "fbsource//third-party/rust:tonic",
         "fbsource//third-party/rust:tracing",
+        "//buck2/app/buck2_agent_interactive:buck2_agent_interactive",
         "//buck2/app/buck2_artifact:buck2_artifact",
         "//buck2/app/buck2_build_api:buck2_build_api",
         "//buck2/app/buck2_build_signals:buck2_build_signals",

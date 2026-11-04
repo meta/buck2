@@ -15,6 +15,7 @@ use serde::Deserialize;
 use serde::Serialize;
 use serde_json::Value;
 
+use crate::agent_build::AgentBuild;
 use crate::agent_config_change::AgentConfigChange;
 use crate::agent_interactive::AgentInteractive;
 use crate::agent_materialization::AgentMaterialization;
@@ -205,6 +206,7 @@ buck_settings! {
         resource_control: ResourceControl,
     }
     invocation {
+        agent_build: AgentBuild,
         agent_config_change: AgentConfigChange,
         agent_interactive: AgentInteractive,
         agent_materialization: AgentMaterialization,
@@ -407,6 +409,7 @@ mod tests {
         let previous = BuckSettings::default();
         for (section, name) in [
             ("agent_interactive", "enabled"),
+            ("agent_build", "enabled"),
             ("agent_interactive", "killall_enabled"),
             ("agent_interactive", "clean_enabled"),
             ("agent_interactive", "new_isolation_dir_enabled"),
@@ -496,6 +499,7 @@ mod tests {
             .collect();
         invocation_sections.sort_unstable();
         assert_eq!(sections, invocation_sections);
+        assert_eq!(values["agent_build"]["enabled"], Value::Null);
         assert_eq!(values["agent_materialization"]["enabled"], false);
         assert_eq!(values["agent_interactive"]["killall_enabled"], true);
         assert_eq!(values["agent_interactive"]["clean_enabled"], Value::Null);

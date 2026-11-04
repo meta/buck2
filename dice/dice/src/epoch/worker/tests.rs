@@ -40,6 +40,7 @@ use crate::DiceKeyDyn;
 use crate::EqualityBehavior;
 use crate::api::computations::DiceComputations;
 use crate::api::data::DiceData;
+use crate::api::invalidation_tracking::InvalidationSources;
 use crate::api::key::InvalidationSourcePriority;
 use crate::api::key::Key;
 use crate::api::key::NoValueSerialize;
@@ -63,7 +64,6 @@ use crate::key::DiceKey;
 use crate::key::ParentKey;
 use crate::updater::ChangeType;
 use crate::value::DiceValidity;
-use crate::value::TrackedInvalidationPaths;
 use crate::versions::VersionNumber;
 
 #[derive(Allocative, Clone, Dupe, Debug, Display, PartialEq, Eq, Hash, Pagable)]
@@ -892,7 +892,7 @@ async fn test_check_dependencies_can_eagerly_check_all_parallel_deps() -> anyhow
     // No key has been computed yet, so every dep check computes its key, which mints
     // `Revision::FIRST`. Every edge records that revision except key 9's, which records one
     // no key has: only key 9 looks changed.
-    let mut deps = RecordingDepsTracker::new(TrackedInvalidationPaths::clean());
+    let mut deps = RecordingDepsTracker::new(InvalidationSources::NONE);
     let record = |deps: &mut RecordingDepsTracker<'_>, k: DiceKey| {
         let recorded = if k == keys[9] {
             Revision::testing_new(2)
@@ -902,7 +902,7 @@ async fn test_check_dependencies_can_eagerly_check_all_parallel_deps() -> anyhow
         deps.record(
             DepEdge::new(k, Some(recorded)),
             DiceValidity::Valid,
-            &TrackedInvalidationPaths::clean(),
+            InvalidationSources::NONE,
         );
     };
     record(&mut deps, keys[0]);
@@ -912,15 +912,15 @@ async fn test_check_dependencies_can_eagerly_check_all_parallel_deps() -> anyhow
         let mut branches = Vec::new();
         for i in 0..3 {
             let offset = i * 5;
-            let mut deps = RecordingDepsTracker::new(TrackedInvalidationPaths::clean());
+            let mut deps = RecordingDepsTracker::new(InvalidationSources::NONE);
             record(&mut deps, keys[3 + offset]);
             record(&mut deps, keys[4 + offset]);
             {
                 let mut inner_branches = Vec::new();
-                let mut inner = RecordingDepsTracker::new(TrackedInvalidationPaths::clean());
+                let mut inner = RecordingDepsTracker::new(InvalidationSources::NONE);
                 record(&mut inner, keys[5 + offset]);
                 inner_branches.push(inner.collect_deps());
-                let mut inner = RecordingDepsTracker::new(TrackedInvalidationPaths::clean());
+                let mut inner = RecordingDepsTracker::new(InvalidationSources::NONE);
                 record(&mut inner, keys[6 + offset]);
                 inner_branches.push(inner.collect_deps());
                 deps.insert_parallel_for_test(inner_branches);

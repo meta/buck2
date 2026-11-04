@@ -171,6 +171,7 @@ mod tests {
     use super::ProjectionTask;
     use crate::DiceKeyDyn;
     use crate::api::computations::DiceComputations;
+    use crate::api::invalidation_tracking::InvalidationSources;
     use crate::api::key::Key;
     use crate::api::key::NoValueSerialize;
     use crate::api::key::ValueSerialize;
@@ -180,7 +181,6 @@ mod tests {
     use crate::value::DiceValidValue;
     use crate::value::MaybeResidentComputedValue;
     use crate::value::MaybeValidDiceValue;
-    use crate::value::TrackedInvalidationPaths;
 
     #[derive(Allocative, Clone, Dupe, Debug, Display, Eq, PartialEq, Hash, Pagable)]
     #[pagable_typetag(DiceKeyDyn)]
@@ -210,7 +210,7 @@ mod tests {
     fn computed(val: usize) -> MaybeResidentComputedValue {
         MaybeResidentComputedValue::new_resident(
             MaybeValidDiceValue::valid(DiceValidValue::testing_new(DiceKeyValue::<K>::new(val))),
-            TrackedInvalidationPaths::clean(),
+            InvalidationSources::NONE,
             Revision::FIRST,
         )
     }

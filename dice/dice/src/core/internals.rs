@@ -11,6 +11,7 @@
 use dice_core::BranchId;
 use pagable::DataKey;
 
+use crate::api::invalidation_tracking::InvalidationSources;
 use crate::api::key::InvalidationSourcePriority;
 use crate::api::storage_type::StorageType;
 use crate::core::graph::ComputedValueUpdate;
@@ -38,7 +39,6 @@ use crate::value::HydratedValue;
 use crate::value::MaybeResidentComputedValue;
 use crate::value::PageOutResult;
 use crate::value::ResidentComputedValue;
-use crate::value::TrackedInvalidationPaths;
 use crate::versions::VersionNumber;
 
 /// Everything the actor thread owns: the graph and the transactions in flight.
@@ -126,10 +126,10 @@ impl ActorState {
         key: VersionedGraphKey,
         storage: StorageType,
         update: ComputedValueUpdate,
-        invalidation_paths: TrackedInvalidationPaths,
+        invalidation_sources: InvalidationSources,
     ) -> ResidentComputedValue {
         self.update_value(storage, |graph| {
-            graph.update_computed(key, update, invalidation_paths)
+            graph.update_computed(key, update, invalidation_sources)
         })
     }
 
@@ -138,10 +138,10 @@ impl ActorState {
         key: VersionedGraphKey,
         storage: StorageType,
         candidate: Candidate,
-        invalidation_paths: TrackedInvalidationPaths,
+        invalidation_sources: InvalidationSources,
     ) -> MaybeResidentComputedValue {
         self.update_value(storage, |graph| {
-            graph.revalidate(key, candidate, invalidation_paths)
+            graph.revalidate(key, candidate, invalidation_sources)
         })
     }
 
@@ -284,6 +284,7 @@ mod tests {
 
     use crate::DiceKeyDyn;
     use crate::api::computations::DiceComputations;
+    use crate::api::invalidation_tracking::InvalidationSources;
     use crate::api::key::InvalidationSourcePriority;
     use crate::api::key::Key;
     use crate::api::key::NoValueSerialize;
@@ -305,7 +306,6 @@ mod tests {
     use crate::updater::ChangeType;
     use crate::value::DiceKeyValue;
     use crate::value::DiceValidValue;
-    use crate::value::TrackedInvalidationPaths;
     use crate::versions::VersionNumber;
 
     #[test]
@@ -377,7 +377,7 @@ mod tests {
                     deps: SeriesParallelDeps::None,
                     epsilon: EpsilonToken::INITIAL,
                 },
-                TrackedInvalidationPaths::clean(),
+                InvalidationSources::NONE,
             );
         };
         compute(&mut core, 0);

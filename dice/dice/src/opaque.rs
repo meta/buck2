@@ -12,11 +12,11 @@ use std::marker::PhantomData;
 
 use derivative::Derivative;
 
+use crate::api::invalidation_tracking::InvalidationSources;
 use crate::api::key::Key;
 use crate::core::graph::revision::Revision;
 use crate::key::DiceKey;
 use crate::value::MaybeValidDiceValue;
-use crate::value::TrackedInvalidationPaths;
 
 #[derive(Derivative)]
 #[derivative(Debug)]
@@ -27,7 +27,7 @@ pub struct OpaqueValue<'d, K: Key> {
     /// The [`Revision`] of `derive_from`'s value, `None` iff the value is transient.
     /// Recorded on the dep edge when this `OpaqueValue` is folded into the caller's deps.
     pub(crate) revision: Option<Revision>,
-    pub(crate) invalidation_paths: &'d TrackedInvalidationPaths,
+    pub(crate) invalidation_sources: InvalidationSources,
     ty: PhantomData<K>,
 }
 
@@ -39,13 +39,13 @@ where
         derive_from_key: DiceKey,
         derive_from: &'d MaybeValidDiceValue,
         revision: Option<Revision>,
-        invalidation_paths: &'d TrackedInvalidationPaths,
+        invalidation_sources: InvalidationSources,
     ) -> Self {
         Self {
             derive_from_key,
             derive_from,
             revision,
-            invalidation_paths,
+            invalidation_sources,
             ty: Default::default(),
         }
     }
@@ -67,6 +67,7 @@ mod tests {
     use crate::DiceKeyDyn;
     use crate::HashSet;
     use crate::api::data::DiceData;
+    use crate::api::invalidation_tracking::InvalidationSources;
     use crate::api::key::Key;
     use crate::api::key::NoValueSerialize;
     use crate::api::key::ValueSerialize;
@@ -75,7 +76,6 @@ mod tests {
     use crate::value::DiceKeyValue;
     use crate::value::DiceValidity;
     use crate::value::MaybeValidDiceValue;
-    use crate::value::TrackedInvalidationPaths;
 
     #[derive(Allocative, Clone, Hash, Eq, PartialEq, Debug, Display, Pagable)]
     #[pagable_typetag(DiceKeyDyn)]
@@ -112,8 +112,8 @@ mod tests {
 
         let v =
             MaybeValidDiceValue::new(StdArc::new(DiceKeyValue::<K>::new(1)), DiceValidity::Valid);
-        let i = TrackedInvalidationPaths::clean();
-        let opaque = OpaqueValue::<K>::new(DiceKey { index: 0 }, &v, None, &i);
+        let opaque =
+            OpaqueValue::<K>::new(DiceKey { index: 0 }, &v, None, InvalidationSources::NONE);
 
         assert_eq!(ctx.recorded_deps_for_test(), HashSet::default());
 

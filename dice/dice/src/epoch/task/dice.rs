@@ -834,6 +834,7 @@ impl<T> Future for TerminationObserver<T> {
 
 #[cfg(test)]
 pub(crate) mod testing_helpers {
+    use crate::api::invalidation_tracking::InvalidationSources;
     use crate::api::key::Key;
     use crate::core::graph::revision::Revision;
     use crate::epoch::task::dice::DiceTask;
@@ -842,7 +843,6 @@ pub(crate) mod testing_helpers {
     use crate::value::DiceValidValue;
     use crate::value::MaybeResidentComputedValue;
     use crate::value::MaybeValidDiceValue;
-    use crate::value::TrackedInvalidationPaths;
 
     pub(crate) fn make_completed_task<K: Key>(key: DiceKey, val: K::Value) -> DiceTask {
         make_completed_task_with_computed_value(
@@ -851,7 +851,7 @@ pub(crate) mod testing_helpers {
                 MaybeValidDiceValue::valid(DiceValidValue::testing_new(DiceKeyValue::<K>::new(
                     val,
                 ))),
-                TrackedInvalidationPaths::clean(),
+                InvalidationSources::NONE,
                 Revision::FIRST,
             ),
         )

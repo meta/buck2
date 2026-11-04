@@ -20,7 +20,6 @@ pagable.workspace = true
 parking_lot.workspace = true
 tempfile.workspace = true
 tokio.workspace = true
-variant_name.workspace = true
 
 [lints]
 workspace = true

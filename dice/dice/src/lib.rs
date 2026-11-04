@@ -232,10 +232,7 @@ pub use crate::api::dyn_key::DynKey;
 pub use crate::api::events::DiceEvent;
 pub use crate::api::events::DiceEventListener;
 pub use crate::api::injected::InjectedKey;
-pub use crate::api::invalidation_tracking::DiceInvalidationPath;
-pub use crate::api::invalidation_tracking::DiceKeyTrackedInvalidationPaths;
-pub use crate::api::invalidation_tracking::DiceTrackedInvalidationPath;
-pub use crate::api::invalidation_tracking::InvalidationPathEntry;
+pub use crate::api::invalidation_tracking::InvalidationSources;
 pub use crate::api::key::EqualityBehavior;
 pub use crate::api::key::InvalidationSourcePriority;
 pub use crate::api::key::Key;
@@ -269,6 +266,7 @@ pub use crate::storage::EvictionPolicy;
 pub use crate::storage::PagableStorageBackend;
 pub use crate::storage::PageOutPolicy;
 pub use crate::value::DiceValueDyn;
+pub use crate::versions::VersionNumber;
 
 pub mod testing {
     pub use crate::api::dice::testing::DiceBuilder;

@@ -23,8 +23,8 @@ use futures::future::BoxFuture;
 use pagable::Pagable;
 use pagable::pagable_typetag;
 
-use crate::DiceKeyTrackedInvalidationPaths;
 use crate::EqualityBehavior;
+use crate::InvalidationSources;
 use crate::OpaqueValue;
 use crate::ProjectionKey;
 use crate::api::data::DiceData;
@@ -469,9 +469,9 @@ impl<'d> DiceComputations<'d> {
         self.0.store_evaluation_data(value)
     }
 
-    /// Returns the current tracked invalidation paths for this computation node.
-    pub fn get_invalidation_paths(&mut self) -> DiceKeyTrackedInvalidationPaths {
-        self.0.get_invalidation_paths()
+    /// The invalidation sources of the dependencies requested so far.
+    pub fn get_invalidation_sources(&mut self) -> InvalidationSources {
+        self.0.get_invalidation_sources()
     }
 
     /// Spawn a computation on a new tokio task.

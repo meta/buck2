@@ -25,6 +25,7 @@ use dupe::Dupe;
 use pagable::DataKey;
 use smallvec::SmallVec;
 
+use crate::api::invalidation_tracking::InvalidationSources;
 use crate::api::key::InvalidationSourcePriority;
 use crate::api::storage_type::StorageType;
 use crate::arc::Arc;
@@ -45,10 +46,8 @@ use crate::updater::ChangeType;
 use crate::value::DiceValidValue;
 use crate::value::MaybeResident;
 use crate::value::MaybeResidentComputedValue;
-use crate::value::MaybeValidDiceValue;
 use crate::value::PageOutResult;
 use crate::value::ResidentComputedValue;
-use crate::value::TrackedInvalidationPaths;
 use crate::versions::VersionNumber;
 
 pub(crate) mod introspection;
@@ -59,22 +58,22 @@ mod tests;
 pub(crate) mod types;
 
 /// Dice's environment for the core state: the deps of a certificate keep their series-parallel
-/// shape, a claim carries the invalidation paths of its compute, and every assertion its
+/// shape, a claim carries the invalidation sources of its value, and every assertion its
 /// invalidation source priority.
 #[derive(Allocative)]
 pub(crate) struct DiceEnv;
 
 impl Env for DiceEnv {
     type Premises = SeriesParallelDeps;
-    type ClaimData = TrackedInvalidationPaths;
+    type ClaimData = InvalidationSources;
     type AssertionData = InvalidationSourcePriority;
 }
 
 pub(crate) type DiceCert = Cert<SeriesParallelDeps>;
 
 mini_vec::size_assert::words_of_type!(DiceCert, 4);
-mini_vec::size_assert::words_of_type!(dice_core::Claim<DiceEnv>, 3);
-mini_vec::size_assert::words_of_type!(dice_core::Slot<DiceEnv>, 5);
+mini_vec::size_assert::words_of_type!(dice_core::Claim<DiceEnv>, 4);
+mini_vec::size_assert::words_of_type!(dice_core::Slot<DiceEnv>, 6);
 mini_vec::size_assert::words_of_type!(KeyValues, 6);
 mini_vec::size_assert::words_of_type!(Candidate, 5);
 
@@ -442,16 +441,16 @@ impl VersionedGraph {
         }
         match self.core.lookup(key, v) {
             Lookup::Valid { revision, source } => {
-                let invalidation_paths = match &source {
-                    ValidSource::Claim { data, .. } => data.at_version(v),
+                let invalidation_sources = match &source {
+                    ValidSource::Claim { data, .. } => **data,
                     ValidSource::Asserted { assertion } => {
-                        TrackedInvalidationPaths::new(assertion.data, key, assertion.version)
+                        InvalidationSources::source(assertion.data, assertion.version)
                     }
                 };
                 VersionedGraphResult::Match {
                     value: MaybeResidentComputedValue::new(
                         self.stored(key, revision).into_payload(),
-                        invalidation_paths,
+                        invalidation_sources,
                         revision,
                     ),
                 }
@@ -493,7 +492,7 @@ impl VersionedGraph {
         &mut self,
         at: VersionedGraphKey,
         update: ComputedValueUpdate,
-        invalidation_paths: TrackedInvalidationPaths,
+        invalidation_sources: InvalidationSources,
     ) -> ResidentComputedValue {
         let ComputedValueUpdate {
             value,
@@ -502,13 +501,10 @@ impl VersionedGraph {
         } = update;
         let key = at.k;
         if !self.core.is_live(at.v.branch()) {
-            // The revision is minted for the value but never stored; see `unretained`.
+            // The core knows nothing about the branch any more, so the certificate cannot be
+            // placed: the revision is minted for the value but nothing is retained.
             let revision = self.with_values(key, |kv| kv.mint.mint());
-            return ResidentComputedValue::new(
-                value,
-                invalidation_paths.for_dependent(key),
-                revision,
-            );
+            return ResidentComputedValue::new(value, invalidation_sources, revision);
         }
         debug_assert_eq!(
             epsilon,
@@ -533,8 +529,8 @@ impl VersionedGraph {
             }
         };
         let revision = cert.revision;
-        let paths = self.finish_update(at, cert, invalidation_paths);
-        ResidentComputedValue::new(value, paths, revision)
+        let sources = self.finish_update(at, cert, invalidation_sources);
+        ResidentComputedValue::new(value, sources, revision)
     }
 
     /// Reissues a candidate whose dependencies still hold; its value may remain paged out.
@@ -542,59 +538,44 @@ impl VersionedGraph {
         &mut self,
         at: VersionedGraphKey,
         candidate: Candidate,
-        invalidation_paths: TrackedInvalidationPaths,
+        invalidation_sources: InvalidationSources,
     ) -> MaybeResidentComputedValue {
         let revision = candidate.cert.revision;
         if !self.core.is_live(at.v.branch()) {
-            return Self::unretained(
-                at.k,
+            // The core knows nothing about the branch any more, so the certificate cannot be
+            // placed: the value goes back to the transaction as it is, and nothing is retained.
+            return MaybeResidentComputedValue::new(
                 candidate.entry.into_payload(),
-                invalidation_paths,
+                invalidation_sources,
                 revision,
             );
         }
         let policy = self.page_out_policy;
         let value = self.with_values(at.k, |kv| kv.restore(revision, candidate.entry, policy));
-        let paths = self.finish_update(at, candidate.cert, invalidation_paths);
-        MaybeResidentComputedValue::new(value.into_payload(), paths, revision)
+        let sources = self.finish_update(at, candidate.cert, invalidation_sources);
+        MaybeResidentComputedValue::new(value.into_payload(), sources, revision)
     }
 
     fn finish_update(
         &mut self,
         at: VersionedGraphKey,
         cert: Arc<DiceCert>,
-        invalidation_paths: TrackedInvalidationPaths,
-    ) -> TrackedInvalidationPaths {
+        invalidation_sources: InvalidationSources,
+    ) -> InvalidationSources {
         let key = at.k;
-        let mut invalidation_paths = invalidation_paths.for_dependent(key);
-        // The certificate's ε names one dirty of the key, so this leaf is the same at every
+        let mut invalidation_sources = invalidation_sources;
+        // The certificate's ε names one dirty of the key, so this source is the same at every
         // version the claim will cover.
         if let Some(dirtied) = self.core.dirtied_at(key, at.v) {
-            invalidation_paths.update(&TrackedInvalidationPaths::new(
-                dirtied.data,
-                key,
-                dirtied.version,
-            ));
+            invalidation_sources.update(InvalidationSources::source(dirtied.data, dirtied.version));
         }
-        self.core.write(cert, invalidation_paths.dupe());
+        self.core.write(cert, invalidation_sources);
         let core = &self.core;
         let policy = self.page_out_policy;
         Self::with_values_of(&mut self.values, &mut self.index, policy, key, |kv| {
             kv.entries.retain(|(r, _)| core.is_referenced(key, *r));
         });
-        invalidation_paths
-    }
-
-    /// A write from a transaction on a deleted branch. The core knows nothing about the branch
-    /// any more, so the certificate cannot be placed: the value goes back to the transaction as
-    /// it is, and nothing is retained.
-    fn unretained(
-        key: DiceKey,
-        value: MaybeResident<MaybeValidDiceValue>,
-        invalidation_paths: TrackedInvalidationPaths,
-        revision: Revision,
-    ) -> MaybeResidentComputedValue {
-        MaybeResidentComputedValue::new(value, invalidation_paths.for_dependent(key), revision)
+        invalidation_sources
     }
 
     /// The number of keys the state holds anything for.

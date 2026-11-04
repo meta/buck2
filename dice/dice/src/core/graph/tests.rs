@@ -23,6 +23,7 @@ use pagable::pagable_typetag;
 
 use crate::DiceKeyDyn;
 use crate::api::computations::DiceComputations;
+use crate::api::invalidation_tracking::InvalidationSources;
 use crate::api::key::InvalidationSourcePriority;
 use crate::api::key::Key;
 use crate::api::key::NoValueSerialize;
@@ -45,7 +46,6 @@ use crate::value::DiceKeyValue;
 use crate::value::DiceValidValue;
 use crate::value::MaybeResident;
 use crate::value::MaybeResidentComputedValue;
-use crate::value::TrackedInvalidationPaths;
 use crate::versions::VersionNumber;
 
 #[derive(Allocative, Clone, Dupe, Debug, Display, PartialEq, Eq, Hash, Pagable)]
@@ -174,7 +174,7 @@ fn compute(
             deps,
             epsilon,
         },
-        TrackedInvalidationPaths::clean(),
+        InvalidationSources::NONE,
     );
     graph.assert_consistent();
     out.into_computed()
@@ -189,7 +189,7 @@ fn revalidate(
     let out = graph.revalidate(
         VersionedGraphKey::new(v, k),
         candidate,
-        TrackedInvalidationPaths::clean(),
+        InvalidationSources::NONE,
     );
     graph.assert_consistent();
     out
@@ -364,7 +364,7 @@ fn a_dep_less_recompute_under_the_same_epsilon_adopts_the_stored_revision() {
                 deps: SeriesParallelDeps::None,
                 epsilon,
             },
-            TrackedInvalidationPaths::clean(),
+            InvalidationSources::NONE,
         );
         graph.assert_consistent();
         out.into_computed()
@@ -782,7 +782,7 @@ fn deleting_a_branch_releases_its_values_and_retains_nothing_written_from_it() {
                 deps: SeriesParallelDeps::None,
                 epsilon: EpsilonToken::INITIAL,
             },
-            TrackedInvalidationPaths::clean(),
+            InvalidationSources::NONE,
         )
         .into_computed();
     graph.assert_consistent();

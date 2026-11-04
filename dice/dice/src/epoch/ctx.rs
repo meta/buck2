@@ -36,7 +36,7 @@ use crate::LinearRecomputeDiceComputations;
 use crate::api::computations::DiceComputations;
 use crate::api::computations::DiceComputationsData;
 use crate::api::data::DiceData;
-use crate::api::invalidation_tracking::DiceKeyTrackedInvalidationPaths;
+use crate::api::invalidation_tracking::InvalidationSources;
 use crate::api::key::Key;
 use crate::api::projection::ProjectionKey;
 use crate::api::user_data::UserComputationData;
@@ -58,7 +58,6 @@ use crate::key::ParentKey;
 use crate::opaque::OpaqueValue;
 use crate::updater::ActiveTransactionGuard;
 use crate::value::MaybeResidentComputedValue;
-use crate::value::TrackedInvalidationPaths;
 use crate::versions::VersionNumber;
 
 /// Provides a `DiceTransaction` access to key computations.
@@ -123,7 +122,7 @@ impl TransactionCtx {
             compute: &self.ctx,
             // Provide a dep tracker here because this type expects to track its deps, but in the
             // context of a `DiceTransaction` we don't actually need the data
-            dep_trackers: RecordingDepsTracker::new(TrackedInvalidationPaths::clean()),
+            dep_trackers: RecordingDepsTracker::new(InvalidationSources::NONE),
         }
     }
 }
@@ -263,8 +262,9 @@ impl<'d> TrackedComputations<'d> {
         let shared = LinearShared {
             compute_ctx,
             dep_trackers: Mutex::new(LinearDepsTracker::new(
-                // TODO(cjhopman): if inspected during the with_linear_recompute, this will be missing some invalidation paths.
-                TrackedInvalidationPaths::clean(),
+                // TODO(cjhopman): if inspected during the with_linear_recompute, this will be
+                // missing some invalidation sources.
+                InvalidationSources::NONE,
             )),
             branch_ctxs: LinearRecomputeArena::new(),
         };
@@ -275,9 +275,9 @@ impl<'d> TrackedComputations<'d> {
             let dep_trackers = shared.dep_trackers.into_inner().collect_deps();
             let validity = dep_trackers.deps_validity;
             for edge in dep_trackers.deps.iter_edges() {
-                self_dep_trackers.record(edge, validity, &TrackedInvalidationPaths::clean())
+                self_dep_trackers.record(edge, validity, InvalidationSources::NONE)
             }
-            self_dep_trackers.update_invalidation_paths(&dep_trackers.invalidation_paths);
+            self_dep_trackers.update_invalidation_sources(dep_trackers.invalidation_sources);
             res
         })
     }
@@ -312,7 +312,7 @@ impl<'d> TrackedComputations<'d> {
                 async move {
                     let mut ctx = TrackedComputations::Normal {
                         compute: &inner_core_ctx,
-                        dep_trackers: RecordingDepsTracker::new(TrackedInvalidationPaths::clean()),
+                        dep_trackers: RecordingDepsTracker::new(InvalidationSources::NONE),
                     }
                     .into();
                     let res = closure(&mut ctx, cancellation).await;
@@ -332,9 +332,9 @@ impl<'d> TrackedComputations<'d> {
             let validity = deps.deps_validity;
             let mut self_dep_trackers = self_dep_trackers;
             for edge in deps.deps.iter_edges() {
-                self_dep_trackers.record(edge, validity, &TrackedInvalidationPaths::clean())
+                self_dep_trackers.record(edge, validity, InvalidationSources::NONE)
             }
-            self_dep_trackers.update_invalidation_paths(&deps.invalidation_paths);
+            self_dep_trackers.update_invalidation_sources(deps.invalidation_sources);
 
             res
         })
@@ -352,14 +352,14 @@ impl<'d> TrackedComputations<'d> {
             derive_from_key,
             derive_from,
             revision,
-            invalidation_paths,
+            invalidation_sources,
             ..
         } = opaque;
 
         deps.record(
             DepEdge::new(derive_from_key, revision),
             derive_from.validity(),
-            invalidation_paths,
+            invalidation_sources,
         );
 
         derive_from
@@ -367,16 +367,8 @@ impl<'d> TrackedComputations<'d> {
             .expect("type mismatch")
     }
 
-    pub(crate) fn get_invalidation_paths(&mut self) -> DiceKeyTrackedInvalidationPaths {
-        let (normal, high) = {
-            let paths = self.dep_trackers_holder().invalidation_paths();
-            (paths.get_normal(), paths.get_high())
-        };
-        DiceKeyTrackedInvalidationPaths::new(
-            self.ctx_data().transaction_data.dice.dupe(),
-            normal,
-            high,
-        )
+    pub(crate) fn get_invalidation_sources(&mut self) -> InvalidationSources {
+        self.dep_trackers_holder().invalidation_sources()
     }
 
     pub(crate) fn data(&self) -> DiceComputationsData {
@@ -490,25 +482,25 @@ impl<'a, 'd> DepsTrackerHolder<'a, 'd> {
         &mut self,
         edge: DepEdge<Option<Revision>>,
         validity: crate::value::DiceValidity,
-        invalidation_paths: &TrackedInvalidationPaths,
+        invalidation_sources: InvalidationSources,
     ) {
         match &mut self.0 {
-            Either::Left(t) => t.record(edge, validity, invalidation_paths),
-            Either::Right(m) => m.lock().record(edge, validity, invalidation_paths),
+            Either::Left(t) => t.record(edge, validity, invalidation_sources),
+            Either::Right(m) => m.lock().record(edge, validity, invalidation_sources),
         }
     }
 
-    fn update_invalidation_paths(&mut self, invalidation_paths: &TrackedInvalidationPaths) {
+    fn update_invalidation_sources(&mut self, invalidation_sources: InvalidationSources) {
         match &mut self.0 {
-            Either::Left(t) => t.update_invalidation_paths(invalidation_paths),
-            Either::Right(m) => m.lock().update_invalidation_paths(invalidation_paths),
+            Either::Left(t) => t.update_invalidation_sources(invalidation_sources),
+            Either::Right(m) => m.lock().update_invalidation_sources(invalidation_sources),
         }
     }
 
-    fn invalidation_paths(&mut self) -> TrackedInvalidationPaths {
+    fn invalidation_sources(&mut self) -> InvalidationSources {
         match &mut self.0 {
-            Either::Left(t) => t.invalidation_paths().dupe(),
-            Either::Right(m) => m.lock().invalidation_paths().dupe(),
+            Either::Left(t) => t.invalidation_sources(),
+            Either::Right(m) => m.lock().invalidation_sources(),
         }
     }
 
@@ -530,11 +522,11 @@ impl<'d> TrackedComputations<'d> {
                 dep_trackers,
             } => {
                 let ctx_data = *ctx_data;
-                let invalidation_paths = dep_trackers.invalidation_paths().dupe();
+                let invalidation_sources = dep_trackers.invalidation_sources();
                 let group = ParallelArena::new((0..len).map(|_| {
                     TrackedComputations::Normal {
                         compute: ctx_data,
-                        dep_trackers: RecordingDepsTracker::new(invalidation_paths.dupe()),
+                        dep_trackers: RecordingDepsTracker::new(invalidation_sources),
                     }
                     .into()
                 }));
@@ -592,7 +584,7 @@ impl<'d> TrackedComputations<'d> {
         dep_trackers.record(
             DepEdge::new(dice_key, res.revision()),
             value.validity(),
-            res.invalidation_paths(),
+            res.invalidation_sources(),
         );
 
         Ok(value
@@ -704,7 +696,7 @@ impl ComputeCtx {
                 key,
                 value.value(),
                 value.revision(),
-                value.invalidation_paths(),
+                value.invalidation_sources(),
             ))
         }
         .boxed()
@@ -726,7 +718,7 @@ impl ComputeCtx {
             dice_key,
             base.derive_from,
             base.revision,
-            base.invalidation_paths,
+            base.invalidation_sources,
             &self.transaction_data,
         );
         Ok((dice_key, value))
@@ -810,7 +802,7 @@ impl<'d, K: Key> Future for ComputeOpaqueFuture<'d, K> {
                             *key,
                             resident.value(),
                             resident.revision(),
-                            resident.invalidation_paths(),
+                            resident.invalidation_sources(),
                         )));
                     }
                     let future = compute.page_in_opaque(*key);

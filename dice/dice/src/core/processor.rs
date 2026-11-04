@@ -111,7 +111,7 @@ impl StateProcessor {
                 value,
                 deps,
                 epsilon,
-                invalidation_paths,
+                invalidation_sources,
                 resp,
             } => {
                 // ignore error if the requester dropped it.
@@ -123,21 +123,21 @@ impl StateProcessor {
                         deps,
                         epsilon,
                     },
-                    invalidation_paths,
+                    invalidation_sources,
                 )));
             }
             StateRequest::Revalidate {
                 key,
                 storage,
                 candidate,
-                invalidation_paths,
+                invalidation_sources,
                 resp,
             } => {
                 // ignore error if the requester dropped it.
                 drop(
                     resp.send(
                         self.state
-                            .revalidate(key, storage, candidate, invalidation_paths),
+                            .revalidate(key, storage, candidate, invalidation_sources),
                     ),
                 );
             }

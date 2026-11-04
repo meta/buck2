@@ -25,6 +25,7 @@ use crate::DiceEvent;
 use crate::DynKey;
 use crate::api::activation_tracker::PageInPhase;
 use crate::api::data::DiceData;
+use crate::api::invalidation_tracking::InvalidationSources;
 use crate::api::projection::DiceProjectionComputations;
 use crate::api::storage_type::StorageType;
 use crate::api::user_data::UserComputationData;
@@ -64,7 +65,6 @@ use crate::value::PageInOutcome;
 use crate::value::PageInRecovery;
 use crate::value::PagedOutValue;
 use crate::value::ResidentComputedValueRef;
-use crate::value::TrackedInvalidationPaths;
 use crate::versions::VersionNumber;
 
 /// Context that is shared for all current live computations of the same version.
@@ -118,7 +118,7 @@ impl VersionState {
         key: DiceKey,
         base: &MaybeValidDiceValue,
         base_revision: Option<Revision>,
-        base_invalidation_paths: &TrackedInvalidationPaths,
+        base_invalidation_sources: InvalidationSources,
         transaction: &TransactionData,
     ) -> MaybeResidentComputedValue {
         let task = match self.cache.get_projection(key) {
@@ -140,7 +140,7 @@ impl VersionState {
                     key,
                     base,
                     base_revision,
-                    base_invalidation_paths,
+                    base_invalidation_sources,
                 );
                 let r = handle_project_eval_result(
                     &transaction.dice.state_handle,
@@ -354,7 +354,7 @@ impl TransactionData {
                 };
                 let mut ctx = TrackedComputations::Normal {
                     compute: &compute,
-                    dep_trackers: RecordingDepsTracker::new(TrackedInvalidationPaths::clean()),
+                    dep_trackers: RecordingDepsTracker::new(InvalidationSources::NONE),
                 }
                 .into();
 
@@ -374,7 +374,7 @@ impl TransactionData {
                         value: MaybeValidDiceValue::new(value, validity),
                         deps: recorded_deps.deps,
                         storage: key_dyn.storage_type(),
-                        invalidation_paths: recorded_deps.invalidation_paths,
+                        invalidation_sources: recorded_deps.invalidation_sources,
                     },
                     compute.evaluation_data.into_inner().into_activation_data(),
                 )
@@ -424,7 +424,7 @@ impl TransactionData {
                     key,
                     base.value(),
                     base.revision(),
-                    base.invalidation_paths(),
+                    base.invalidation_sources(),
                 );
 
                 state.finished(
@@ -441,7 +441,7 @@ impl TransactionData {
         key: DiceKey,
         base: &MaybeValidDiceValue,
         base_revision: Option<Revision>,
-        base_invalidation_paths: &TrackedInvalidationPaths,
+        base_invalidation_sources: InvalidationSources,
     ) -> KeyEvaluationResult {
         let DiceKeyErased::Projection(proj) = self.dice.key_index.get(key) else {
             unreachable!("cannot evaluate async keys synchronously")
@@ -460,7 +460,7 @@ impl TransactionData {
                 base_revision,
             )]),
             storage: proj.proj().storage_type(),
-            invalidation_paths: base_invalidation_paths.for_dependent(key),
+            invalidation_sources: base_invalidation_sources,
         }
     }
 
@@ -534,7 +534,7 @@ fn handle_project_eval_result(
         value,
         deps,
         storage,
-        invalidation_paths,
+        invalidation_sources,
     } = eval_result;
 
     handle.compute_finished();
@@ -551,7 +551,7 @@ fn handle_project_eval_result(
                 // force-dirtied, and their untracked input never leaves its initial
                 // revision.
                 EpsilonToken::INITIAL,
-                invalidation_paths,
+                invalidation_sources,
             );
             // Blocking here is safe: the core state runs on its own dedicated thread and never
             // waits on compute threads (`compute_finished` above is what makes the second half
@@ -568,7 +568,7 @@ fn handle_project_eval_result(
         Err(_transient_result) => {
             // transients are never stored in the state, but the result should be shared
             // with async computations as if it were.
-            MaybeResidentComputedValue::new_for_transient(value, invalidation_paths)
+            MaybeResidentComputedValue::new_for_transient(value, invalidation_sources)
         }
     };
 
@@ -579,7 +579,7 @@ pub(crate) struct KeyEvaluationResult {
     pub(crate) value: MaybeValidDiceValue,
     pub(crate) deps: SeriesParallelDeps<Option<Revision>>,
     pub(crate) storage: StorageType,
-    pub(crate) invalidation_paths: TrackedInvalidationPaths,
+    pub(crate) invalidation_sources: InvalidationSources,
 }
 
 fn recovered_value(value: &MaybeResidentComputedValue) -> ResidentComputedValueRef<'_> {

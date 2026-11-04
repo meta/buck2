@@ -28,6 +28,7 @@ use variant_name::VariantName;
 use crate::DynKey;
 use crate::api::activation_tracker::ActivationData;
 use crate::api::activation_tracker::PageInPhase;
+use crate::api::invalidation_tracking::InvalidationSources;
 use crate::core::graph::revision::EpsilonToken;
 use crate::core::graph::types::VersionedGraphKey;
 use crate::core::graph::types::VersionedGraphResult;
@@ -54,7 +55,6 @@ use crate::key::DiceKeyErased;
 use crate::key::ParentKey;
 use crate::value::MaybeResidentComputedValue;
 use crate::value::ResidentComputedValue;
-use crate::value::TrackedInvalidationPaths;
 
 pub(crate) mod state;
 
@@ -196,8 +196,8 @@ impl DiceTaskWorker {
 
                 match check_deps_result {
                     CheckDependenciesResult::NoChange { .. } => {
-                        let invalidation_paths =
-                            check_deps_result.unwrap_no_change_invalidation_paths();
+                        let invalidation_sources =
+                            check_deps_result.unwrap_no_change_invalidation_sources();
 
                         let task_state = task_state.deps_match(cancellations)?;
                         let activation_info = self.activation_info(
@@ -209,7 +209,7 @@ impl DiceTaskWorker {
                                 VersionedGraphKey::new(v, self.k),
                                 self.eval.storage_type(self.k),
                                 to_revalidate.dupe(),
-                                invalidation_paths,
+                                invalidation_sources,
                             )
                             .await;
 
@@ -277,12 +277,12 @@ impl DiceTaskWorker {
                             value,
                             result.deps.certify(),
                             epsilon,
-                            result.invalidation_paths,
+                            result.invalidation_sources,
                         )
                         .await
                 }
                 Err(value) => {
-                    ResidentComputedValue::new_for_transient(value, result.invalidation_paths)
+                    ResidentComputedValue::new_for_transient(value, result.invalidation_sources)
                 }
             }
         };
@@ -372,14 +372,14 @@ async fn check_dependencies<'a>(
         parent_key: ParentKey,
         deps: impl Iterator<Item = SeriesParallelDepsIteratorItem<'a>> + Send + 'a,
     ) -> BoxFuture<'a, CheckDependenciesResult<'a>> {
-        let mut invalidation_paths = TrackedInvalidationPaths::clean();
+        let mut invalidation_sources = InvalidationSources::NONE;
         async move {
             for v in deps {
                 match v {
                     SeriesParallelDepsIteratorItem::Key(edge) => {
                         match check_dependency(eval, parent_key, edge).await {
-                            CheckDependencyResult::NoChange(dep_paths) => {
-                                invalidation_paths.update(&dep_paths);
+                            CheckDependencyResult::NoChange(dep_sources) => {
+                                invalidation_sources.update(dep_sources);
                             }
                             CheckDependencyResult::Changed => {
                                 return CheckDependenciesResult::Changed {
@@ -396,9 +396,9 @@ async fn check_dependencies<'a>(
                         while let Some(v) = futures.next().await {
                             match v {
                                 CheckDependenciesResult::NoChange {
-                                    invalidation_paths: deps_paths,
+                                    invalidation_sources: deps_sources,
                                 } => {
-                                    invalidation_paths.update(&deps_paths);
+                                    invalidation_sources.update(deps_sources);
                                 }
                                 CheckDependenciesResult::NoDeps => {}
                                 CheckDependenciesResult::Changed { continuables } => {
@@ -412,7 +412,9 @@ async fn check_dependencies<'a>(
                     }
                 }
             }
-            CheckDependenciesResult::NoChange { invalidation_paths }
+            CheckDependenciesResult::NoChange {
+                invalidation_sources,
+            }
         }
         .boxed()
     }
@@ -426,7 +428,7 @@ async fn check_dependencies<'a>(
 
 enum CheckDependencyResult {
     Changed,
-    NoChange(TrackedInvalidationPaths),
+    NoChange(InvalidationSources),
 }
 
 async fn check_dependency(
@@ -494,7 +496,7 @@ fn compare_revision(
     // The dep has the recorded revision iff it has the value the compute observed.
     match dep_result.revision() {
         Some(current) if current == edge.revision => {
-            CheckDependencyResult::NoChange(dep_result.invalidation_paths().dupe())
+            CheckDependencyResult::NoChange(dep_result.invalidation_sources())
         }
         _ => CheckDependencyResult::Changed,
     }
@@ -519,21 +521,21 @@ async fn validate_projection_without_base(
         return ProjectionValidation::NeedsRecompute;
     };
     let cert = candidate.cert.dupe();
-    let invalidation_paths = match check_dependencies(eval, ParentKey::Some(key), &cert.deps).await
-    {
-        result @ CheckDependenciesResult::NoChange { .. } => {
-            result.unwrap_no_change_invalidation_paths()
-        }
-        CheckDependenciesResult::NoDeps | CheckDependenciesResult::Changed { .. } => {
-            return ProjectionValidation::NeedsRecompute;
-        }
-    };
+    let invalidation_sources =
+        match check_dependencies(eval, ParentKey::Some(key), &cert.deps).await {
+            result @ CheckDependenciesResult::NoChange { .. } => {
+                result.unwrap_no_change_invalidation_sources()
+            }
+            CheckDependenciesResult::NoDeps | CheckDependenciesResult::Changed { .. } => {
+                return ProjectionValidation::NeedsRecompute;
+            }
+        };
     let projection = state_handle
         .revalidate(
             VersionedGraphKey::new(v, key),
             eval.storage_type(key),
             candidate,
-            invalidation_paths,
+            invalidation_sources,
         )
         .await;
     ProjectionValidation::Resolved(projection)
@@ -543,7 +545,7 @@ async fn validate_projection_without_base(
 enum CheckDependenciesResult<'a> {
     NoDeps,
     NoChange {
-        invalidation_paths: TrackedInvalidationPaths,
+        invalidation_sources: InvalidationSources,
     },
     Changed {
         /// If any dep has changed, the deps checking doesn't need to be stopped, when something has
@@ -556,9 +558,11 @@ enum CheckDependenciesResult<'a> {
     },
 }
 impl CheckDependenciesResult<'_> {
-    fn unwrap_no_change_invalidation_paths(self) -> TrackedInvalidationPaths {
+    fn unwrap_no_change_invalidation_sources(self) -> InvalidationSources {
         match self {
-            Self::NoChange { invalidation_paths } => invalidation_paths,
+            Self::NoChange {
+                invalidation_sources,
+            } => invalidation_sources,
             _ => panic!(),
         }
     }

@@ -106,11 +106,9 @@ pub trait Key:
     fn value_serialize() -> impl ValueSerialize<Value = Self::Value>;
 }
 
-/// Dice tracks up to two invalidation paths for each node, a normal priority and a
-/// high priority one. The high priority one considers root invalidated Keys that have a High priority,
-/// the normal priority one will consider both Normal and High. The InvalidationSourcePriority
-/// is used only for the priority of the Key as a source of invalidation, all nodes participate
-/// in both normal and high for propagating invalidations.
+/// What a key counts as when it is a source of invalidation, i.e. when it is injected or dirtied;
+/// see [`crate::InvalidationSources`]. Every key takes part in propagating sources of both
+/// priorities.
 #[derive(Allocative, Debug, Clone, Copy, Dupe, PartialEq, Eq)]
 pub enum InvalidationSourcePriority {
     /// The key will be ignored for invalidation source tracking.

@@ -46,7 +46,6 @@ use buck2_node::rule_type::RuleType;
 use buck2_util::time_span::TimeSpan;
 use derive_more::Display;
 use dice::DiceComputations;
-use dice::DiceTrackedInvalidationPath;
 use dice::EqualityBehavior;
 use dice::Key;
 use dice::OkPagableValueSerialize;
@@ -402,21 +401,13 @@ async fn build_action_inner(
         .unwrap_or_default();
 
     let invalidation_info = if executor.invalidation_tracking_enabled() {
-        fn to_proto(
-            invalidation_path: &DiceTrackedInvalidationPath,
-        ) -> Option<buck2_data::command_invalidation_info::InvalidationSource> {
-            match invalidation_path {
-                dice::DiceTrackedInvalidationPath::Clean
-                | dice::DiceTrackedInvalidationPath::Unknown => None,
-                dice::DiceTrackedInvalidationPath::Invalidated(_) => {
-                    Some(buck2_data::command_invalidation_info::InvalidationSource {})
-                }
-            }
-        }
-        let invalidation_paths = ctx.get_invalidation_paths();
+        let to_proto = |changed: bool| {
+            changed.then_some(buck2_data::command_invalidation_info::InvalidationSource {})
+        };
+        let sources = ctx.get_invalidation_sources();
         Some(buck2_data::CommandInvalidationInfo {
-            changed_any: to_proto(&invalidation_paths.normal_priority_path),
-            changed_file: to_proto(&invalidation_paths.high_priority_path),
+            changed_any: to_proto(sources.normal_priority().is_some()),
+            changed_file: to_proto(sources.high_priority().is_some()),
         })
     } else {
         None

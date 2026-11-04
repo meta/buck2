@@ -8,130 +8,114 @@
  * above-listed licenses.
  */
 
-//! Dice computations track "invalidation paths" for every node in the computation.
+//! Invalidation sources: which reported change a value depends on.
 //!
-//! Invalidation path tracking is a data flow analysis that tracks the flow of changed
-//! state through the computation graph. Directly invalidated or injected nodes
-//! are the root "invalidation sources". For every computed node, its invalidation paths
-//! will each either be "clean" (if all of its dependencies' invalidation paths are clean)
-//! or will point to one of its non-clean dependencies . When multiple deps
-//! are not clean, it will point to the one with the most recently changed invalidation
-//! source. In this way, we record an invalidation path through the graph to the invalidation
-//! source for every affected node.
+//! A *source* is a change reported to dice: a value set for an injected key with `changed_to`,
+//! or a key dirtied with `changed`. A value depends on every source in force at its version
+//! among the injected and dirtied keys its computation transitively read, whether or not the
+//! change made a difference to any value in between. Its [`InvalidationSources`] record the
+//! version of the most recent of those.
 //!
-//! We track invalidations of two priorities: "normal" and "high". Each key type specifies
-//! its own invalidation source priority that is used when that node is directly invalidated or
-//! injected. Each node will record the most recent invalidation source for each priority.
-//! A high priority invalidation will also count for normal priority tracking (but not the
-//! reverse). So if a node has two deps A and B, and A has a normal priority invalidation
-//! at v1 and B has a high priority invalidation at v2, B would be recorded for both normal
-//! and high priority source. If those versions were reversed (A at v2, B at v1), we'd
-//! record A for the normal priority invalidation path (because its invalidation is more recent) and would
-//! record B for the high priority invalidation path (because A is normal priority).
+//! Sources are tracked at two priorities. Each key type chooses with
+//! [`Key::invalidation_source_priority`](crate::Key::invalidation_source_priority) which it is
+//! as a source: the normal-priority entry considers sources of normal and of high priority, the
+//! high-priority entry only sources of high priority, and keys of `Ignored` priority are never
+//! sources. Every value takes part in propagating both.
+//!
+//! During a computation, [`DiceComputations::get_invalidation_sources`] reports the sources of
+//! the dependencies requested so far.
+//!
+//! [`DiceComputations::get_invalidation_sources`]: crate::DiceComputations::get_invalidation_sources
 
-use std::sync::Arc;
-
+use allocative::Allocative;
 use dupe::Dupe;
-use variant_name::VariantName;
 
-pub use crate::api::dyn_key::DynKey;
-use crate::dice::Dice;
-use crate::value::InvalidationPath;
-use crate::value::InvalidationPathNode;
+use crate::api::key::InvalidationSourcePriority;
 use crate::versions::VersionNumber;
 
-/// The invalidation paths for a key. This is accessible from [`crate::DiceComputations::get_invalidation_paths()`]
-#[derive(Debug)]
-pub struct DiceKeyTrackedInvalidationPaths {
-    pub normal_priority_path: DiceTrackedInvalidationPath,
-    pub high_priority_path: DiceTrackedInvalidationPath,
+/// The most recent change among the sources a value depends on, per priority: `None` where it
+/// depends on no source of that priority.
+#[derive(Allocative, Clone, Copy, Dupe, Debug, PartialEq, Eq)]
+pub struct InvalidationSources {
+    normal: Option<VersionNumber>,
+    high: Option<VersionNumber>,
 }
 
-/// The invalidation path state for a computation node.
-#[derive(Debug, VariantName)]
-pub enum DiceTrackedInvalidationPath {
-    /// Indicates no (non-Ignored) invalidated source data flowed into this computation.
-    Clean,
-    /// The invalidation path state is unknown. We only track the most recent invalidation source for a node, and if we compute the value
-    /// at an older version we won't know the invalidation source.
-    Unknown,
-    /// Invalidated data has flowed into this computation. [DiceInvalidationPath] holds the invalidation path.
-    Invalidated(DiceInvalidationPath),
-}
+impl InvalidationSources {
+    /// Depends on no source.
+    pub(crate) const NONE: Self = Self {
+        normal: None,
+        high: None,
+    };
 
-pub struct DiceInvalidationPath {
-    dice: Arc<Dice>,
-    data: crate::arc::Arc<InvalidationPathNode>,
-}
-
-impl std::fmt::Debug for DiceInvalidationPath {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("DiceInvalidationPath")
-            .field("data", &self.data)
-            .finish()
+    /// Depends on one source, changed at `at`.
+    pub(crate) fn source(priority: InvalidationSourcePriority, at: VersionNumber) -> Self {
+        match priority {
+            InvalidationSourcePriority::Ignored => Self::NONE,
+            InvalidationSourcePriority::Normal => Self {
+                normal: Some(at),
+                high: None,
+            },
+            InvalidationSourcePriority::High => Self {
+                normal: Some(at),
+                high: Some(at),
+            },
+        }
     }
-}
 
-/// A node in the invalidation path.
-pub struct InvalidationPathEntry {
-    pub key: DynKey,
-    pub version: VersionNumber,
-}
-
-impl DiceInvalidationPath {
-    /// Returns the "invalidation path".
-    ///
-    /// This will contain all nodes from the invalidation source to this node indicating how the
-    /// data has flowed to this node. The first entry of the result will be the invalidation source.
-    pub fn get_invalidation_path(&self) -> Vec<InvalidationPathEntry> {
-        let mut res = Vec::new();
-
-        let mut data = &self.data;
-        loop {
-            let key = self.dice.key_index.get(data.key);
-            res.push(InvalidationPathEntry {
-                key: DynKey { erased: key.dupe() },
-                version: data.version,
-            });
-            match &data.cause {
-                InvalidationPath::Invalidated(cause) => {
-                    data = cause;
-                }
-                _ => {
-                    break;
-                }
+    /// Depends on the sources of both. The versions in `self` and `other` must lie on one chain,
+    /// which they do when both are in force at one version.
+    pub(crate) fn merge(self, other: Self) -> Self {
+        fn later(a: Option<VersionNumber>, b: Option<VersionNumber>) -> Option<VersionNumber> {
+            match (a, b) {
+                (Some(a), Some(b)) => Some(if a.cmp_on_chain(b).is_lt() { b } else { a }),
+                (a, b) => a.or(b),
             }
         }
-
-        res.reverse();
-        res
-    }
-}
-
-impl DiceKeyTrackedInvalidationPaths {
-    pub(crate) fn new(
-        dice: Arc<Dice>,
-        normal_priority_path: InvalidationPath,
-        high_priority_path: InvalidationPath,
-    ) -> Self {
         Self {
-            normal_priority_path: DiceTrackedInvalidationPath::new(
-                dice.dupe(),
-                normal_priority_path,
-            ),
-            high_priority_path: DiceTrackedInvalidationPath::new(dice, high_priority_path),
+            normal: later(self.normal, other.normal),
+            high: later(self.high, other.high),
         }
+    }
+
+    pub(crate) fn update(&mut self, other: Self) {
+        *self = self.merge(other);
+    }
+
+    /// The most recent change among the sources of normal or high priority.
+    pub fn normal_priority(&self) -> Option<VersionNumber> {
+        self.normal
+    }
+
+    /// The most recent change among the sources of high priority.
+    pub fn high_priority(&self) -> Option<VersionNumber> {
+        self.high
     }
 }
 
-impl DiceTrackedInvalidationPath {
-    pub(crate) fn new(dice: Arc<Dice>, path: InvalidationPath) -> Self {
-        match path {
-            InvalidationPath::Clean => DiceTrackedInvalidationPath::Clean,
-            InvalidationPath::Unknown => DiceTrackedInvalidationPath::Unknown,
-            InvalidationPath::Invalidated(data) => {
-                DiceTrackedInvalidationPath::Invalidated(DiceInvalidationPath { dice, data })
-            }
-        }
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn merge_keeps_the_latest_source_per_priority() {
+        let v = VersionNumber::testing_new;
+        let normal = |at| InvalidationSources::source(InvalidationSourcePriority::Normal, at);
+        let high = |at| InvalidationSources::source(InvalidationSourcePriority::High, at);
+
+        let mut sources = InvalidationSources::NONE;
+        sources.update(normal(v(2)));
+        assert_eq!(sources, normal(v(2)));
+        sources.update(high(v(3)));
+        assert_eq!(sources, high(v(3)));
+        sources.update(normal(v(4)));
+        assert_eq!(sources, normal(v(4)).merge(high(v(3))));
+        assert_eq!(sources.normal_priority(), Some(v(4)));
+        assert_eq!(sources.high_priority(), Some(v(3)));
+        sources.update(InvalidationSources::source(
+            InvalidationSourcePriority::Ignored,
+            v(5),
+        ));
+        assert_eq!(sources.normal_priority(), Some(v(4)));
     }
 }

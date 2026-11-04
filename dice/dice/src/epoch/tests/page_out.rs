@@ -66,6 +66,7 @@ use crate::api::activation_tracker::ActivationData;
 use crate::api::activation_tracker::ActivationTracker;
 use crate::api::computations::DiceComputations;
 use crate::api::cycles::DetectCycles;
+use crate::api::invalidation_tracking::InvalidationSources;
 use crate::api::key::EqualityBehavior;
 use crate::api::key::Key;
 use crate::api::key::NoValueSerialize;
@@ -89,7 +90,6 @@ use crate::value::MaybeResident;
 use crate::value::MaybeResidentComputedValue;
 use crate::value::PageInOutcome;
 use crate::value::PageInRecovery;
-use crate::value::TrackedInvalidationPaths;
 
 /// Per-test compute counter, injected via `UserComputationData` so tests don't share state.
 #[derive(Clone, Dupe)]
@@ -1809,10 +1809,7 @@ async fn equal_revisions_get_distinct_paged_out_descriptors_across_versions() ->
         .ok()
         .expect("hydrated values must be available to the resident fast path");
     assert!(ptr::eq(read.value(), resident.value()));
-    assert!(ptr::eq(
-        read.invalidation_paths(),
-        resident.invalidation_paths()
-    ));
+    assert_eq!(read.invalidation_sources(), resident.invalidation_sources());
     assert_eq!(read.revision(), resident.revision());
     assert!(copy.try_as_resident().is_ok());
     assert!(new_value.try_as_resident().is_err());
@@ -1829,7 +1826,7 @@ async fn recovery_demands_use_the_transaction_cache() {
         let cache = SharedCache::new();
         let value = MaybeResidentComputedValue::new(
             MaybeResident::PagedOut(DataKey::compute(0, b"owner-check", &[])),
-            TrackedInvalidationPaths::clean(),
+            InvalidationSources::NONE,
             Revision::FIRST,
         );
         cache.testing_insert_task(key, make_completed_task_with_computed_value(key, value));

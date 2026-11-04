@@ -39,6 +39,7 @@ use crate::EqualityBehavior;
 use crate::api::computations::DiceComputations;
 use crate::api::cycles::DetectCycles;
 use crate::api::injected::InjectedKey;
+use crate::api::invalidation_tracking::InvalidationSources;
 use crate::api::key::Key;
 use crate::api::key::NoValueSerialize;
 use crate::api::key::ValueSerialize;
@@ -64,7 +65,6 @@ use crate::value::DiceKeyValue;
 use crate::value::DiceValidValue;
 use crate::value::MaybeResidentComputedValue;
 use crate::value::MaybeValidDiceValue;
-use crate::value::TrackedInvalidationPaths;
 
 // A detected cycle, and what it does to the tasks in it.
 
@@ -164,7 +164,7 @@ fn spawn_releasable_task(release: &Arc<Notify>) -> (DiceTask, DicePromise<'stati
             release.notified().await;
             handle.finished(Ok(MaybeResidentComputedValue::new_resident(
                 MaybeValidDiceValue::valid(DiceValidValue::testing_new(DiceKeyValue::<N>::new(2))),
-                TrackedInvalidationPaths::clean(),
+                InvalidationSources::NONE,
                 Revision::FIRST,
             )));
         }

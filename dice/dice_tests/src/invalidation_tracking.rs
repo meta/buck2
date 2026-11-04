@@ -9,7 +9,6 @@
  */
 
 use std::hash::Hash;
-use std::sync::Arc;
 
 use allocative::Allocative;
 use async_trait::async_trait;
@@ -18,17 +17,15 @@ use dice::DetectCycles;
 use dice::Dice;
 use dice::DiceComputations;
 use dice::DiceKeyDyn;
-use dice::DiceKeyTrackedInvalidationPaths;
-use dice::DiceTrackedInvalidationPath;
 use dice::EqualityBehavior;
 use dice::InjectedKey;
 use dice::InvalidationSourcePriority;
+use dice::InvalidationSources;
 use dice::Key;
 use dice_futures::cancellation::CancellationContext;
 use dupe::Dupe;
 use pagable::Pagable;
 use pagable::pagable_typetag;
-use variant_name::VariantName;
 
 #[derive(Allocative, Clone, Copy, Debug, Display, Eq, PartialEq, Hash, Pagable)]
 #[pagable_typetag(DiceKeyDyn)]
@@ -113,84 +110,18 @@ impl Key for HighChanged {
 }
 
 #[derive(Allocative, Debug, Clone, Dupe)]
-struct CapturedInvalidationPaths(#[allocative(skip)] Arc<DiceKeyTrackedInvalidationPaths>);
+struct CapturedInvalidationSources(InvalidationSources);
 
-impl CapturedInvalidationPaths {
-    fn new(paths: DiceKeyTrackedInvalidationPaths) -> Self {
-        Self(Arc::new(paths))
-    }
-}
-
-enum ExpectedInvalidation {
-    Clean,
-    #[allow(unused)]
-    Unknown,
-    Invalidated(Vec<(String, usize)>),
-}
-
-impl ExpectedInvalidation {
-    fn item<K: Key>(k: K, v: usize) -> (String, usize) {
-        (format!("{}({})", K::key_type_name(), k), v)
-    }
-}
-
+/// Asserts the seqs of the most recent normal- and high-priority sources.
 #[track_caller]
 fn assert_invalidations(
-    normal: ExpectedInvalidation,
-    high: ExpectedInvalidation,
-    actual: &CapturedInvalidationPaths,
+    normal: Option<usize>,
+    high: Option<usize>,
+    actual: &CapturedInvalidationSources,
 ) {
-    assert_single_invalidation(normal, &actual.0.normal_priority_path, "normal");
-    assert_single_invalidation(high, &actual.0.high_priority_path, "high");
-}
-
-#[track_caller]
-fn assert_single_invalidation(
-    expected: ExpectedInvalidation,
-    actual: &DiceTrackedInvalidationPath,
-    priority: &str,
-) {
-    match (expected, actual) {
-        (ExpectedInvalidation::Clean, DiceTrackedInvalidationPath::Clean) => {}
-        (ExpectedInvalidation::Clean, _) => {
-            panic!(
-                "{} invalidation mismatch. Expected DiceTrackedInvalidationPath::Clean, got DiceTrackedInvalidationPath::{}",
-                priority,
-                actual.variant_name()
-            )
-        }
-        (ExpectedInvalidation::Unknown, DiceTrackedInvalidationPath::Unknown) => {}
-        (ExpectedInvalidation::Unknown, _) => {
-            panic!(
-                "{} invalidation mismatch. Expected DiceTrackedInvalidationPath::Unknown, got DiceTrackedInvalidationPath::{}",
-                priority,
-                actual.variant_name()
-            )
-        }
-        (
-            ExpectedInvalidation::Invalidated(expected),
-            DiceTrackedInvalidationPath::Invalidated(actual),
-        ) => {
-            assert_eq!(
-                expected,
-                actual
-                    .get_invalidation_path()
-                    .iter()
-                    .map(|v| (
-                        format!("{}({})", v.key.key_type_name(), v.key),
-                        v.version.testing_value()
-                    ))
-                    .collect::<Vec<_>>()
-            )
-        }
-        (ExpectedInvalidation::Invalidated(..), _) => {
-            panic!(
-                "{} invalidation mismatch. Expected DiceTrackedInvalidationPath::Invalidated, got DiceTrackedInvalidationPath::{}",
-                priority,
-                actual.variant_name()
-            )
-        }
-    }
+    let seq = |v: Option<dice::VersionNumber>| v.map(|v| v.testing_value());
+    assert_eq!(seq(actual.0.normal_priority()), normal, "normal priority");
+    assert_eq!(seq(actual.0.high_priority()), high, "high priority");
 }
 
 #[test]
@@ -234,7 +165,7 @@ fn test_compute_tracks_invalidations() -> anyhow::Result<()> {
 
         #[async_trait]
         impl Key for Top {
-            type Value = CapturedInvalidationPaths;
+            type Value = CapturedInvalidationSources;
             fn value_serialize() -> impl dice::ValueSerialize<Value = Self::Value> {
                 dice::NoValueSerialize::<Self::Value>::new()
             }
@@ -269,7 +200,7 @@ fn test_compute_tracks_invalidations() -> anyhow::Result<()> {
                     }
                 }
 
-                CapturedInvalidationPaths::new(ctx.get_invalidation_paths())
+                CapturedInvalidationSources(ctx.get_invalidation_sources())
             }
 
             fn equality_behavior() -> EqualityBehavior<Self::Value> {
@@ -279,50 +210,17 @@ fn test_compute_tracks_invalidations() -> anyhow::Result<()> {
 
         let ctx = dice.updater(root).commit().await;
 
-        assert_invalidations(
-            ExpectedInvalidation::Clean,
-            ExpectedInvalidation::Clean,
-            ctx.compute(&Top(0)).await?,
-        );
-        assert_invalidations(
-            ExpectedInvalidation::Invalidated(vec![ExpectedInvalidation::item(
-                NormalInjected(1),
-                4,
-            )]),
-            ExpectedInvalidation::Invalidated(vec![ExpectedInvalidation::item(HighInjected(0), 2)]),
-            ctx.compute(&Top(1)).await?,
-        );
-        assert_invalidations(
-            ExpectedInvalidation::Invalidated(vec![ExpectedInvalidation::item(HighChanged(1), 5)]),
-            ExpectedInvalidation::Invalidated(vec![ExpectedInvalidation::item(HighChanged(1), 5)]),
-            ctx.compute(&Top(2)).await?,
-        );
-        assert_invalidations(
-            ExpectedInvalidation::Invalidated(vec![ExpectedInvalidation::item(
-                NormalChanged(1),
-                5,
-            )]),
-            ExpectedInvalidation::Invalidated(vec![ExpectedInvalidation::item(HighChanged(0), 3)]),
-            ctx.compute(&Top(3)).await?,
-        );
-
-        assert_invalidations(
-            ExpectedInvalidation::Invalidated(vec![
-                ExpectedInvalidation::item(NormalChanged(1), 5),
-                ExpectedInvalidation::item(Top(3), 5),
-                ExpectedInvalidation::item(Top(4), 5),
-                ExpectedInvalidation::item(Top(5), 5),
-                ExpectedInvalidation::item(Top(6), 5),
-            ]),
-            ExpectedInvalidation::Invalidated(vec![
-                ExpectedInvalidation::item(HighChanged(0), 3),
-                ExpectedInvalidation::item(Top(3), 3),
-                ExpectedInvalidation::item(Top(4), 3),
-                ExpectedInvalidation::item(Top(5), 3),
-                ExpectedInvalidation::item(Top(6), 3),
-            ]),
-            ctx.compute(&Top(7)).await?,
-        );
+        // Top(0) reads nothing.
+        assert_invalidations(None, None, ctx.compute(&Top(0)).await?);
+        // NormalInjected(1) was injected at 4, HighInjected(0) at 2.
+        assert_invalidations(Some(4), Some(2), ctx.compute(&Top(1)).await?);
+        // HighChanged(1) was dirtied at 5, which outranks NormalChanged(0) at 3 for both.
+        assert_invalidations(Some(5), Some(5), ctx.compute(&Top(2)).await?);
+        // NormalChanged(1) at 5 is the most recent source, HighChanged(0) at 3 the most recent
+        // high-priority one.
+        assert_invalidations(Some(5), Some(3), ctx.compute(&Top(3)).await?);
+        // Sources propagate unchanged through a chain of dependents.
+        assert_invalidations(Some(5), Some(3), ctx.compute(&Top(7)).await?);
 
         Ok(())
     })
@@ -354,7 +252,7 @@ fn test_compute_tracks_invalidations_over_versions() -> anyhow::Result<()> {
 
         #[async_trait]
         impl Key for Top {
-            type Value = CapturedInvalidationPaths;
+            type Value = CapturedInvalidationSources;
             fn value_serialize() -> impl dice::ValueSerialize<Value = Self::Value> {
                 dice::NoValueSerialize::<Self::Value>::new()
             }
@@ -365,7 +263,7 @@ fn test_compute_tracks_invalidations_over_versions() -> anyhow::Result<()> {
             ) -> Self::Value {
                 ctx.compute(&HighChanged(self.0)).await.unwrap();
 
-                CapturedInvalidationPaths::new(ctx.get_invalidation_paths())
+                CapturedInvalidationSources(ctx.get_invalidation_sources())
             }
 
             fn equality_behavior() -> EqualityBehavior<Self::Value> {
@@ -378,45 +276,23 @@ fn test_compute_tracks_invalidations_over_versions() -> anyhow::Result<()> {
         updater.commit().await;
 
         let ctx = dice.updater(root).commit().await;
-        assert_invalidations(
-            ExpectedInvalidation::Invalidated(vec![
-                ExpectedInvalidation::item(HighInjected(0), 2),
-                ExpectedInvalidation::item(HighChanged(0), 2),
-            ]),
-            ExpectedInvalidation::Invalidated(vec![
-                ExpectedInvalidation::item(HighInjected(0), 2),
-                ExpectedInvalidation::item(HighChanged(0), 2),
-            ]),
-            ctx.compute(&Top(0)).await?,
-        );
+        assert_invalidations(Some(2), Some(2), ctx.compute(&Top(0)).await?);
 
         let mut updater = dice.updater(root);
         updater.changed_to([(HighInjected(0), 1)])?;
         updater.commit().await;
 
         let ctx = dice.updater(root).commit().await;
-        assert_invalidations(
-            ExpectedInvalidation::Invalidated(vec![
-                ExpectedInvalidation::item(HighInjected(0), 3),
-                ExpectedInvalidation::item(HighChanged(0), 3),
-            ]),
-            ExpectedInvalidation::Invalidated(vec![
-                ExpectedInvalidation::item(HighInjected(0), 3),
-                ExpectedInvalidation::item(HighChanged(0), 3),
-            ]),
-            ctx.compute(&Top(0)).await?,
-        );
+        assert_invalidations(Some(3), Some(3), ctx.compute(&Top(0)).await?);
 
         let mut updater = dice.updater(root);
         updater.changed([HighChanged(0)])?;
         updater.commit().await;
 
         let ctx = dice.updater(root).commit().await;
-        assert_invalidations(
-            ExpectedInvalidation::Invalidated(vec![ExpectedInvalidation::item(HighChanged(0), 4)]),
-            ExpectedInvalidation::Invalidated(vec![ExpectedInvalidation::item(HighChanged(0), 4)]),
-            ctx.compute(&Top(0)).await?,
-        );
+        // The dirty of HighChanged(0) at 4 is now the most recent source; the injected key's
+        // change at 3 is still in force but older.
+        assert_invalidations(Some(4), Some(4), ctx.compute(&Top(0)).await?);
 
         Ok(())
     })

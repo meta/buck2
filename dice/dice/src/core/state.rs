@@ -24,6 +24,7 @@ use tokio::sync::oneshot;
 use tokio::sync::oneshot::Receiver;
 use tokio::sync::oneshot::Sender;
 
+use crate::api::invalidation_tracking::InvalidationSources;
 use crate::api::key::InvalidationSourcePriority;
 use crate::api::storage_type::StorageType;
 use crate::core::graph::introspection::VersionedGraphIntrospectable;
@@ -51,7 +52,6 @@ use crate::value::HydratedValue;
 use crate::value::MaybeResidentComputedValue;
 use crate::value::PageOutResult;
 use crate::value::ResidentComputedValue;
-use crate::value::TrackedInvalidationPaths;
 use crate::versions::VersionNumber;
 
 /// Padded out to a full cache line so that two of these placed adjacent in a
@@ -266,7 +266,7 @@ impl CoreStateHandle {
         value: DiceValidValue,
         deps: SeriesParallelDeps,
         epsilon: EpsilonToken,
-        invalidation_paths: TrackedInvalidationPaths,
+        invalidation_sources: InvalidationSources,
     ) -> impl Future<Output = ResidentComputedValue> + use<> {
         let (resp, recv) = oneshot::channel();
         self.call(
@@ -276,7 +276,7 @@ impl CoreStateHandle {
                 value,
                 deps,
                 epsilon,
-                invalidation_paths,
+                invalidation_sources,
                 resp,
             },
             recv,
@@ -290,7 +290,7 @@ impl CoreStateHandle {
         key: VersionedGraphKey,
         storage: StorageType,
         candidate: Candidate,
-        invalidation_paths: TrackedInvalidationPaths,
+        invalidation_sources: InvalidationSources,
     ) -> impl Future<Output = MaybeResidentComputedValue> + use<> {
         let (resp, recv) = oneshot::channel();
         self.call(
@@ -299,7 +299,7 @@ impl CoreStateHandle {
                 storage,
                 candidate,
                 resp,
-                invalidation_paths,
+                invalidation_sources,
             },
             recv,
         )
@@ -541,7 +541,7 @@ pub(super) enum StateRequest {
         deps: SeriesParallelDeps,
         /// The revision of the key's untracked input the value was computed under
         epsilon: EpsilonToken,
-        invalidation_paths: TrackedInvalidationPaths,
+        invalidation_sources: InvalidationSources,
         /// Response of the new value to use. This could be a different instance that is `Eq` to the
         /// given computed value if the state already stores an instance of value that is equal.
         resp: Sender<ResidentComputedValue>,
@@ -553,7 +553,7 @@ pub(super) enum StateRequest {
         storage: StorageType,
         /// The certificate that was verified
         candidate: Candidate,
-        invalidation_paths: TrackedInvalidationPaths,
+        invalidation_sources: InvalidationSources,
         /// Response of the new value to use. This could be a different instance that is `Eq` to the
         /// given computed value if the state already stores an instance of value that is equal.
         resp: Sender<MaybeResidentComputedValue>,

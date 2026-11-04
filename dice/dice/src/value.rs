@@ -16,20 +16,17 @@ use std::sync::Arc as StdArc;
 use allocative::Allocative;
 use dice_error::DiceResult;
 use dupe::Dupe;
-use mini_vec::packed_ptr::PackedPtr;
 use pagable::DataKey;
 use tokio::sync::OnceCell;
 
 use crate::Key;
 use crate::ProjectionKey;
+use crate::api::invalidation_tracking::InvalidationSources;
 use crate::api::key::EqualityBehavior;
-use crate::api::key::InvalidationSourcePriority;
 use crate::arc::Arc;
 use crate::core::graph::revision::EpsilonToken;
 use crate::core::graph::revision::Revision;
 use crate::epoch::task::dice::DiceTask;
-use crate::key::DiceKey;
-use crate::versions::VersionNumber;
 
 /// Type erased value associated for each Key in Dice. The 'DiceValidValue' only holds valid values
 /// and never anything that is transient, or whose dependencies are transient.
@@ -153,7 +150,7 @@ impl MaybeValidDiceValue {
 /// `DataKey` locates it.
 ///
 /// A paged-out value is read back only when a caller needs the payload. Everything a
-/// dependency check needs, the value's revision and its invalidation paths, travels beside the
+/// dependency check needs, the value's revision and its invalidation sources, travels beside the
 /// value, so proving a key unchanged never has to touch storage.
 #[derive(Allocative, Clone, Dupe)]
 pub(crate) enum MaybeResident<V> {
@@ -211,7 +208,7 @@ impl DiceValidity {
 #[derive(Allocative, Clone, Dupe)]
 pub(crate) struct ComputedValue<V> {
     value: V,
-    invalidation_paths: TrackedInvalidationPaths,
+    invalidation_sources: InvalidationSources,
     /// The revision the value was interned under, `None` iff the value is transient:
     /// transients never enter the graph and so have no interned identity to name.
     revision: Option<Revision>,
@@ -224,30 +221,30 @@ pub(crate) type ResidentComputedValue = ComputedValue<MaybeValidDiceValue>;
 #[derive(Clone, Copy, Dupe)]
 pub(crate) struct ResidentComputedValueRef<'d> {
     value: &'d MaybeValidDiceValue,
-    invalidation_paths: &'d TrackedInvalidationPaths,
+    invalidation_sources: InvalidationSources,
     revision: Option<Revision>,
 }
 
 impl ResidentComputedValue {
     pub(crate) fn new(
         value: DiceValidValue,
-        invalidation_paths: TrackedInvalidationPaths,
+        invalidation_sources: InvalidationSources,
         revision: Revision,
     ) -> Self {
         Self {
             value: MaybeValidDiceValue::valid(value),
-            invalidation_paths,
+            invalidation_sources,
             revision: Some(revision),
         }
     }
 
     pub(crate) fn new_for_transient(
         value: MaybeValidDiceValue,
-        invalidation_paths: TrackedInvalidationPaths,
+        invalidation_sources: InvalidationSources,
     ) -> Self {
         Self {
             value,
-            invalidation_paths,
+            invalidation_sources,
             revision: None,
         }
     }
@@ -255,7 +252,7 @@ impl ResidentComputedValue {
     pub(crate) fn into_computed(self) -> MaybeResidentComputedValue {
         MaybeResidentComputedValue {
             value: MaybeResidentDiceValue::Resident(self.value),
-            invalidation_paths: self.invalidation_paths,
+            invalidation_sources: self.invalidation_sources,
             revision: self.revision,
         }
     }
@@ -263,7 +260,7 @@ impl ResidentComputedValue {
     pub(crate) fn as_ref(&self) -> ResidentComputedValueRef<'_> {
         ResidentComputedValueRef {
             value: &self.value,
-            invalidation_paths: &self.invalidation_paths,
+            invalidation_sources: self.invalidation_sources,
             revision: self.revision,
         }
     }
@@ -274,8 +271,8 @@ impl<'d> ResidentComputedValueRef<'d> {
         self.value
     }
 
-    pub(crate) fn invalidation_paths(&self) -> &'d TrackedInvalidationPaths {
-        self.invalidation_paths
+    pub(crate) fn invalidation_sources(&self) -> InvalidationSources {
+        self.invalidation_sources
     }
 
     pub(crate) fn revision(&self) -> Option<Revision> {
@@ -333,178 +330,15 @@ pub(crate) struct PageInRecovery {
     pub(crate) epsilon: EpsilonToken,
 }
 
-#[derive(Allocative, Debug, Clone, Dupe, PartialEq, Eq)]
-pub(crate) enum InvalidationPath {
-    Clean,
-    Unknown,
-    Invalidated(Arc<InvalidationPathNode>),
-}
-
-impl InvalidationPath {
-    fn for_dependent(&self, key: DiceKey) -> InvalidationPath {
-        match self {
-            InvalidationPath::Clean => InvalidationPath::Clean,
-            InvalidationPath::Unknown => InvalidationPath::Unknown,
-            InvalidationPath::Invalidated(v) => {
-                InvalidationPath::Invalidated(Arc::new(InvalidationPathNode {
-                    key,
-                    version: v.version,
-                    cause: self.dupe(),
-                }))
-            }
-        }
-    }
-
-    fn at_version(&self, v: VersionNumber) -> InvalidationPath {
-        match self {
-            InvalidationPath::Invalidated(t)
-                if t.version.branch() != v.branch() || t.version.seq() > v.seq() =>
-            {
-                InvalidationPath::Unknown
-            }
-            _ => self.dupe(),
-        }
-    }
-
-    /// Always returns one of its arguments; callers rely on that to avoid reallocating when the
-    /// merge is a no-op.
-    fn merge<'a>(&'a self, other: &'a InvalidationPath) -> &'a InvalidationPath {
-        match (self, other) {
-            (InvalidationPath::Unknown, _) => self,
-            // FIXME(JakobDegen): Why the asymmetric treatment? Bug?
-            (_, InvalidationPath::Unknown) => self,
-            (InvalidationPath::Clean, _) => other,
-            (_, InvalidationPath::Clean) => self,
-            (
-                InvalidationPath::Invalidated(self_node),
-                InvalidationPath::Invalidated(other_node),
-            ) => {
-                if self_node.version.cmp_on_chain(other_node.version).is_ge() {
-                    self
-                } else {
-                    other
-                }
-            }
-        }
-    }
-}
-
-#[derive(Allocative, Debug, Clone, Dupe, PartialEq, Eq)]
-pub(crate) struct InvalidationPathNode {
-    /// The key at this node in the path.
-    pub(crate) key: DiceKey,
-    pub(crate) version: VersionNumber,
-    pub(crate) cause: InvalidationPath,
-}
-
-#[derive(Allocative, Debug, Clone, Dupe, PartialEq, Eq)]
-struct InvalidationPathsHeap {
-    normal: InvalidationPath,
-    high: InvalidationPath,
-}
-
-const TAG_ALLOCATED: u8 = 0;
-const TAG_BOTH_CLEAN: u8 = 1;
-const TAG_BOTH_UNKNOWN: u8 = 2;
-
-#[derive(Allocative, Debug, Clone, Dupe, PartialEq, Eq)]
-pub(crate) struct TrackedInvalidationPaths(PackedPtr<Option<Arc<InvalidationPathsHeap>>>);
-
-impl TrackedInvalidationPaths {
-    fn from_pair(normal: InvalidationPath, high: InvalidationPath) -> Self {
-        match (normal, high) {
-            (InvalidationPath::Clean, InvalidationPath::Clean) => {
-                Self(PackedPtr::new(None, TAG_BOTH_CLEAN))
-            }
-            (InvalidationPath::Unknown, InvalidationPath::Unknown) => {
-                Self(PackedPtr::new(None, TAG_BOTH_UNKNOWN))
-            }
-            (normal, high) => Self(PackedPtr::new(
-                Some(Arc::new(InvalidationPathsHeap { normal, high })),
-                TAG_ALLOCATED,
-            )),
-        }
-    }
-
-    fn get(&self) -> (&InvalidationPath, &InvalidationPath) {
-        match self.0.extra() {
-            TAG_ALLOCATED => {
-                let h = self.0.as_ref().unwrap();
-                (&h.normal, &h.high)
-            }
-            TAG_BOTH_CLEAN => (&InvalidationPath::Clean, &InvalidationPath::Clean),
-            TAG_BOTH_UNKNOWN => (&InvalidationPath::Unknown, &InvalidationPath::Unknown),
-            _ => unreachable!(),
-        }
-    }
-
-    pub(crate) fn for_dependent(&self, key: DiceKey) -> TrackedInvalidationPaths {
-        let (normal, high) = self.get();
-        TrackedInvalidationPaths::from_pair(normal.for_dependent(key), high.for_dependent(key))
-    }
-
-    pub(crate) fn clean() -> TrackedInvalidationPaths {
-        Self::from_pair(InvalidationPath::Clean, InvalidationPath::Clean)
-    }
-
-    pub(crate) fn at_version(&self, v: VersionNumber) -> TrackedInvalidationPaths {
-        let (normal, high) = self.get();
-        TrackedInvalidationPaths::from_pair(normal.at_version(v), high.at_version(v))
-    }
-
-    pub(crate) fn new(
-        priority: InvalidationSourcePriority,
-        key: DiceKey,
-        version: VersionNumber,
-    ) -> Self {
-        let path = InvalidationPath::Invalidated(Arc::new(InvalidationPathNode {
-            key,
-            version,
-            cause: InvalidationPath::Clean,
-        }));
-        match priority {
-            InvalidationSourcePriority::Ignored => Self::clean(),
-            InvalidationSourcePriority::Normal => Self::from_pair(path, InvalidationPath::Clean),
-            InvalidationSourcePriority::High => Self::from_pair(path.dupe(), path),
-        }
-    }
-
-    pub(crate) fn update(&mut self, new_paths: &TrackedInvalidationPaths) {
-        let (this_normal, this_high) = self.get();
-        let (new_normal, new_high) = new_paths.get();
-        let normal = this_normal.merge(new_normal);
-        let high = this_high.merge(new_high);
-        // This runs once per recorded dependency, and dependency-heavy keys record hundreds of
-        // thousands, so avoid reallocating the heap in the common cases where one side wins both
-        // merges. `merge` always returns one of its arguments, so pointer identity detects that.
-        if std::ptr::eq(normal, this_normal) && std::ptr::eq(high, this_high) {
-            return;
-        }
-        if std::ptr::eq(normal, new_normal) && std::ptr::eq(high, new_high) {
-            *self = new_paths.dupe();
-            return;
-        }
-        *self = Self::from_pair(normal.dupe(), high.dupe());
-    }
-
-    pub(crate) fn get_normal(&self) -> InvalidationPath {
-        self.get().0.dupe()
-    }
-
-    pub(crate) fn get_high(&self) -> InvalidationPath {
-        self.get().1.dupe()
-    }
-}
-
 impl MaybeResidentComputedValue {
     pub(crate) fn new(
         value: MaybeResident<MaybeValidDiceValue>,
-        invalidation_paths: TrackedInvalidationPaths,
+        invalidation_sources: InvalidationSources,
         revision: Revision,
     ) -> Self {
         Self {
             value: MaybeResidentDiceValue::new(value),
-            invalidation_paths,
+            invalidation_sources,
             revision: Some(revision),
         }
     }
@@ -512,17 +346,21 @@ impl MaybeResidentComputedValue {
     #[cfg(test)]
     pub(crate) fn new_resident(
         value: MaybeValidDiceValue,
-        invalidation_paths: TrackedInvalidationPaths,
+        invalidation_sources: InvalidationSources,
         revision: Revision,
     ) -> Self {
-        Self::new(MaybeResident::Resident(value), invalidation_paths, revision)
+        Self::new(
+            MaybeResident::Resident(value),
+            invalidation_sources,
+            revision,
+        )
     }
 
     /// The same result with `value` — read back from storage — as its payload.
     pub(crate) fn paged_in(&self, value: DiceValidValue) -> ResidentComputedValue {
         ResidentComputedValue {
             value: MaybeValidDiceValue::valid(value),
-            invalidation_paths: self.invalidation_paths.dupe(),
+            invalidation_sources: self.invalidation_sources,
             revision: self.revision,
         }
     }
@@ -530,9 +368,9 @@ impl MaybeResidentComputedValue {
     /// A transient result: never stored in the core state and so without a revision.
     pub(crate) fn new_for_transient(
         value: MaybeValidDiceValue,
-        invalidation_paths: TrackedInvalidationPaths,
+        invalidation_sources: InvalidationSources,
     ) -> Self {
-        ResidentComputedValue::new_for_transient(value, invalidation_paths).into_computed()
+        ResidentComputedValue::new_for_transient(value, invalidation_sources).into_computed()
     }
 
     /// Borrow the original resident representation, without following page-in outcomes.
@@ -547,7 +385,7 @@ impl MaybeResidentComputedValue {
         match &self.value {
             MaybeResidentDiceValue::Resident(value) => Ok(ResidentComputedValueRef {
                 value,
-                invalidation_paths: &self.invalidation_paths,
+                invalidation_sources: self.invalidation_sources,
                 revision: self.revision,
             }),
             MaybeResidentDiceValue::PagedOut(paged_out) => match paged_out.outcome.get() {
@@ -588,8 +426,8 @@ impl MaybeResidentComputedValue {
 }
 
 impl<V> ComputedValue<V> {
-    pub(crate) fn invalidation_paths(&self) -> &TrackedInvalidationPaths {
-        &self.invalidation_paths
+    pub(crate) fn invalidation_sources(&self) -> InvalidationSources {
+        self.invalidation_sources
     }
 
     /// The revision the value was interned under, `None` iff the value is transient.
@@ -699,16 +537,10 @@ where
 
 #[cfg(test)]
 pub mod testing {
-    use crate::arc::Arc;
-    use crate::key::DiceKey;
     use crate::value::DiceValidValue;
     use crate::value::DiceValueDyn;
-    use crate::value::InvalidationPath;
-    use crate::value::InvalidationPathNode;
     use crate::value::MaybeResidentComputedValue;
     use crate::value::MaybeValidDiceValue;
-    use crate::value::TrackedInvalidationPaths;
-    use crate::versions::VersionNumber;
 
     impl DiceValidValue {
         pub(crate) fn testing_new<V: DiceValueDyn>(value: V) -> Self {
@@ -727,96 +559,5 @@ pub mod testing {
         pub(crate) fn testing_resident_value(&self) -> &MaybeValidDiceValue {
             self.resident_value().expect("value should be resident")
         }
-    }
-
-    pub struct MakeInvalidationPaths {
-        pub normal: (DiceKey, usize),
-        pub high: Option<(DiceKey, usize)>,
-    }
-
-    impl MakeInvalidationPaths {
-        pub fn into(self) -> TrackedInvalidationPaths {
-            let normal = InvalidationPath::Invalidated(Arc::new(InvalidationPathNode {
-                key: self.normal.0,
-                version: VersionNumber::testing_new(self.normal.1 as u32),
-                cause: InvalidationPath::Clean,
-            }));
-            let high = self.high.map_or(InvalidationPath::Clean, |(k, v)| {
-                InvalidationPath::Invalidated(Arc::new(InvalidationPathNode {
-                    key: k,
-                    version: VersionNumber::testing_new(v as u32),
-                    cause: InvalidationPath::Clean,
-                }))
-            });
-            TrackedInvalidationPaths::from_pair(normal, high)
-        }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::value::testing::MakeInvalidationPaths;
-
-    #[test]
-
-    fn test_invalidation_paths() -> anyhow::Result<()> {
-        let key0 = DiceKey { index: 0 };
-        let key1 = DiceKey { index: 1 };
-        let key2 = DiceKey { index: 2 };
-        let mut paths = TrackedInvalidationPaths::clean();
-
-        paths.update(
-            &MakeInvalidationPaths {
-                normal: (key0, 2),
-                high: None,
-            }
-            .into(),
-        );
-
-        assert_eq!(
-            paths,
-            MakeInvalidationPaths {
-                normal: (key0, 2),
-                high: None,
-            }
-            .into()
-        );
-
-        paths.update(
-            &MakeInvalidationPaths {
-                normal: (key1, 3),
-                high: Some((key1, 3)),
-            }
-            .into(),
-        );
-
-        assert_eq!(
-            paths,
-            MakeInvalidationPaths {
-                normal: (key1, 3),
-                high: Some((key1, 3)),
-            }
-            .into()
-        );
-
-        paths.update(
-            &MakeInvalidationPaths {
-                normal: (key2, 4),
-                high: None,
-            }
-            .into(),
-        );
-
-        assert_eq!(
-            paths,
-            MakeInvalidationPaths {
-                normal: (key2, 4),
-                high: Some((key1, 3))
-            }
-            .into()
-        );
-
-        Ok(())
     }
 }

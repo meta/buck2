@@ -4820,7 +4820,6 @@ dependencies = [
  "parking_lot 0.12.5",
  "tempfile",
  "tokio",
- "variant_name",
 ]
 
 [[package]]

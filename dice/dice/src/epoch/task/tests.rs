@@ -33,6 +33,7 @@ use tokio::sync::Notify;
 use crate::DiceKeyDyn;
 use crate::EqualityBehavior;
 use crate::api::computations::DiceComputations;
+use crate::api::invalidation_tracking::InvalidationSources;
 use crate::api::key::Key;
 use crate::api::key::NoValueSerialize;
 use crate::api::key::ValueSerialize;
@@ -49,7 +50,6 @@ use crate::value::DiceValidValue;
 use crate::value::MaybeResidentComputedValue;
 use crate::value::MaybeValidDiceValue;
 use crate::value::ResidentComputedValue;
-use crate::value::TrackedInvalidationPaths;
 
 #[derive(Allocative, Clone, Dupe, Debug, Display, Eq, PartialEq, Hash, Pagable)]
 #[pagable_typetag(DiceKeyDyn)]
@@ -93,7 +93,7 @@ async fn simple_task() -> anyhow::Result<()> {
                     MaybeValidDiceValue::valid(DiceValidValue::testing_new(
                         DiceKeyValue::<K>::new(2),
                     )),
-                    TrackedInvalidationPaths::clean(),
+                    InvalidationSources::NONE,
                     Revision::FIRST,
                 )));
             }
@@ -192,7 +192,7 @@ async fn not_ready_until_dropped() -> anyhow::Result<()> {
                     MaybeValidDiceValue::valid(DiceValidValue::testing_new(
                         DiceKeyValue::<K>::new(1),
                     )),
-                    TrackedInvalidationPaths::clean(),
+                    InvalidationSources::NONE,
                     Revision::FIRST,
                 )));
 
@@ -280,7 +280,7 @@ async fn multiple_promises_all_completes() -> anyhow::Result<()> {
                     MaybeValidDiceValue::valid(DiceValidValue::testing_new(
                         DiceKeyValue::<K>::new(2),
                     )),
-                    TrackedInvalidationPaths::clean(),
+                    InvalidationSources::NONE,
                     Revision::FIRST,
                 )));
             }
@@ -494,11 +494,8 @@ async fn resident_task_shares_result_after_restart() -> anyhow::Result<()> {
     assert!(previous.await_termination().await.is_none());
 
     let expected = DiceValidValue::testing_new(DiceKeyValue::<K>::new(2));
-    let value = ResidentComputedValue::new(
-        expected.dupe(),
-        TrackedInvalidationPaths::clean(),
-        Revision::FIRST,
-    );
+    let value =
+        ResidentComputedValue::new(expected.dupe(), InvalidationSources::NONE, Revision::FIRST);
     let first = spawn_prepared_task(prepared, &TokioSpawner, &(), |handle| {
         async move { handle.finished(Ok(value)) }.boxed()
     });

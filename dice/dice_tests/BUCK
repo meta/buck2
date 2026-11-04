@@ -21,7 +21,6 @@ rust_library(
         "//buck2/dice/dice:dice",
         "//buck2/dice/dice_futures:dice_futures",
         "//buck2/gazebo/dupe:dupe",
-        "//buck2/gazebo/variant_name:variant_name",
         "//buck2/pagable:pagable",
     ],
 )

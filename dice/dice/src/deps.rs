@@ -10,6 +10,7 @@
 
 //! Trackers that records dependencies and reverse dependencies during execution of requested nodes
 
+use crate::api::invalidation_tracking::InvalidationSources;
 use crate::core::graph::revision::Revision;
 use crate::deps::graph::DepEdge;
 use crate::deps::graph::SeriesParallelDeps;
@@ -17,7 +18,6 @@ use crate::epoch::branches::ParallelArena;
 #[cfg(test)]
 use crate::key::DiceKey;
 use crate::value::DiceValidity;
-use crate::value::TrackedInvalidationPaths;
 
 pub(crate) mod encoding;
 pub(crate) mod graph;
@@ -38,7 +38,7 @@ pub(crate) struct RecordingDepsTracker<'d> {
 pub(crate) struct RecordedDeps {
     pub(crate) deps: SeriesParallelDeps<Option<Revision>>,
     pub(crate) deps_validity: DiceValidity,
-    pub(crate) invalidation_paths: TrackedInvalidationPaths,
+    pub(crate) invalidation_sources: InvalidationSources,
 }
 
 impl RecordedDeps {
@@ -46,11 +46,11 @@ impl RecordedDeps {
         &mut self,
         edge: DepEdge<Option<Revision>>,
         validity: DiceValidity,
-        invalidation_paths: &TrackedInvalidationPaths,
+        invalidation_sources: InvalidationSources,
     ) {
         self.deps.insert(edge);
         self.deps_validity.and(validity);
-        self.update_invalidation_paths(invalidation_paths)
+        self.update_invalidation_sources(invalidation_sources)
     }
 
     #[cfg(test)]
@@ -58,19 +58,19 @@ impl RecordedDeps {
         self.record(
             DepEdge::new(DiceKey { index }, None),
             DiceValidity::Valid,
-            &TrackedInvalidationPaths::clean(),
+            InvalidationSources::NONE,
         );
     }
 
-    fn update_invalidation_paths(&mut self, paths: &TrackedInvalidationPaths) {
-        self.invalidation_paths.update(paths)
+    fn update_invalidation_sources(&mut self, paths: InvalidationSources) {
+        self.invalidation_sources.update(paths)
     }
 
     pub(crate) fn new() -> Self {
         RecordedDeps {
             deps: SeriesParallelDeps::None,
             deps_validity: DiceValidity::Valid,
-            invalidation_paths: TrackedInvalidationPaths::clean(),
+            invalidation_sources: InvalidationSources::NONE,
         }
     }
 
@@ -80,7 +80,7 @@ impl RecordedDeps {
 
         for dep in &parallel {
             self.deps_validity.and(dep.deps_validity);
-            self.invalidation_paths.update(&dep.invalidation_paths);
+            self.invalidation_sources.update(dep.invalidation_sources);
             let header = dep.deps.header();
             new_keys += header.keys_len();
             new_specs += header.encoded_len();
@@ -99,7 +99,7 @@ impl RecordedDeps {
     }
 }
 
-mini_vec::size_assert::words_of_type!(RecordingDepsTracker<'static>, 5);
+mini_vec::size_assert::words_of_type!(RecordingDepsTracker<'static>, 6);
 
 fn _check_deps_trackers_send_and_sync() {
     fn _assert_send_sync<T: Send + Sync>() {}
@@ -107,9 +107,9 @@ fn _check_deps_trackers_send_and_sync() {
 }
 
 impl<'d> RecordingDepsTracker<'d> {
-    pub(crate) fn new(invalidation_paths: TrackedInvalidationPaths) -> Self {
+    pub(crate) fn new(invalidation_sources: InvalidationSources) -> Self {
         let mut deps = RecordedDeps::new();
-        deps.invalidation_paths = invalidation_paths;
+        deps.invalidation_sources = invalidation_sources;
         Self {
             deps,
             curr_parallel: None,
@@ -120,10 +120,10 @@ impl<'d> RecordingDepsTracker<'d> {
         &mut self,
         edge: DepEdge<Option<Revision>>,
         validity: DiceValidity,
-        invalidation_paths: &TrackedInvalidationPaths,
+        invalidation_sources: InvalidationSources,
     ) {
         self.flatten_parallel();
-        self.deps.record(edge, validity, invalidation_paths);
+        self.deps.record(edge, validity, invalidation_sources);
     }
 
     #[cfg(test)]
@@ -131,14 +131,14 @@ impl<'d> RecordingDepsTracker<'d> {
         self.record(
             DepEdge::new(DiceKey { index }, None),
             DiceValidity::Valid,
-            &TrackedInvalidationPaths::clean(),
+            InvalidationSources::NONE,
         );
     }
-    pub(crate) fn update_invalidation_paths(
+    pub(crate) fn update_invalidation_sources(
         &mut self,
-        invalidation_paths: &TrackedInvalidationPaths,
+        invalidation_sources: InvalidationSources,
     ) {
-        self.deps.update_invalidation_paths(&invalidation_paths);
+        self.deps.update_invalidation_sources(invalidation_sources);
     }
 
     /// Used to start a new parallel computation, storing the group that owns the parallel
@@ -162,9 +162,9 @@ impl<'d> RecordingDepsTracker<'d> {
         }
     }
 
-    pub(crate) fn invalidation_paths(&mut self) -> &TrackedInvalidationPaths {
+    pub(crate) fn invalidation_sources(&mut self) -> InvalidationSources {
         self.flatten_parallel();
-        &self.deps.invalidation_paths
+        self.deps.invalidation_sources
     }
 
     /// Tests inject parallel deps directly instead of going through real parallel ctxs.
@@ -187,9 +187,9 @@ pub(crate) struct LinearDepsTracker {
 }
 
 impl LinearDepsTracker {
-    pub(crate) fn new(invalidation_paths: TrackedInvalidationPaths) -> Self {
+    pub(crate) fn new(invalidation_sources: InvalidationSources) -> Self {
         let mut deps = RecordedDeps::new();
-        deps.invalidation_paths = invalidation_paths;
+        deps.invalidation_sources = invalidation_sources;
         Self { deps }
     }
 
@@ -197,20 +197,20 @@ impl LinearDepsTracker {
         &mut self,
         edge: DepEdge<Option<Revision>>,
         validity: DiceValidity,
-        invalidation_paths: &TrackedInvalidationPaths,
+        invalidation_sources: InvalidationSources,
     ) {
-        self.deps.record(edge, validity, invalidation_paths);
+        self.deps.record(edge, validity, invalidation_sources);
     }
 
-    pub(crate) fn update_invalidation_paths(
+    pub(crate) fn update_invalidation_sources(
         &mut self,
-        invalidation_paths: &TrackedInvalidationPaths,
+        invalidation_sources: InvalidationSources,
     ) {
-        self.deps.update_invalidation_paths(invalidation_paths);
+        self.deps.update_invalidation_sources(invalidation_sources);
     }
 
-    pub(crate) fn invalidation_paths(&self) -> &TrackedInvalidationPaths {
-        &self.deps.invalidation_paths
+    pub(crate) fn invalidation_sources(&self) -> InvalidationSources {
+        self.deps.invalidation_sources
     }
 
     pub(crate) fn collect_deps(self) -> RecordedDeps {
@@ -247,6 +247,8 @@ mod tests {
     use itertools::Itertools;
 
     use crate::HashSet;
+    use crate::api::invalidation_tracking::InvalidationSources;
+    use crate::api::key::InvalidationSourcePriority;
     use crate::core::graph::revision::Revision;
     use crate::deps::RecordedDeps;
     use crate::deps::RecordingDepsTracker;
@@ -255,8 +257,7 @@ mod tests {
     use crate::deps::iterator::SeriesParallelDepsIteratorItem;
     use crate::key::DiceKey;
     use crate::value::DiceValidity;
-    use crate::value::TrackedInvalidationPaths;
-    use crate::value::testing::MakeInvalidationPaths;
+    use crate::versions::VersionNumber;
 
     struct DisplaySPDeps<'a, T: Iterator<Item = SeriesParallelDepsIteratorItem<'a, Option<Revision>>>>(
         T,
@@ -356,17 +357,17 @@ mod tests {
 
     #[tokio::test]
     async fn recording_deps_tracker_tracks_deps() -> anyhow::Result<()> {
-        let mut deps_tracker = RecordingDepsTracker::new(TrackedInvalidationPaths::clean());
+        let mut deps_tracker = RecordingDepsTracker::new(InvalidationSources::NONE);
 
         deps_tracker.record(
             DepEdge::new(DiceKey { index: 2 }, None),
             DiceValidity::Valid,
-            &TrackedInvalidationPaths::clean(),
+            InvalidationSources::NONE,
         );
         deps_tracker.record(
             DepEdge::new(DiceKey { index: 3 }, None),
             DiceValidity::Valid,
-            &TrackedInvalidationPaths::clean(),
+            InvalidationSources::NONE,
         );
 
         let recorded_deps = deps_tracker.collect_deps();
@@ -380,25 +381,19 @@ mod tests {
 
     #[tokio::test]
     async fn recording_deps_tracker_tracks_invalidations() -> anyhow::Result<()> {
-        let mut deps_tracker = RecordingDepsTracker::new(TrackedInvalidationPaths::clean());
+        let source =
+            |priority, seq| InvalidationSources::source(priority, VersionNumber::testing_new(seq));
+        let mut deps_tracker = RecordingDepsTracker::new(InvalidationSources::NONE);
 
         deps_tracker.record(
             DepEdge::new(DiceKey { index: 2 }, None),
             DiceValidity::Valid,
-            &MakeInvalidationPaths {
-                normal: (DiceKey { index: 101 }, 8),
-                high: None,
-            }
-            .into(),
+            source(InvalidationSourcePriority::Normal, 8),
         );
 
         assert_eq!(
-            deps_tracker.invalidation_paths(),
-            &MakeInvalidationPaths {
-                normal: (DiceKey { index: 101 }, 8),
-                high: None,
-            }
-            .into()
+            deps_tracker.invalidation_sources(),
+            source(InvalidationSourcePriority::Normal, 8)
         );
 
         {
@@ -406,21 +401,14 @@ mod tests {
             s1.record(
                 DepEdge::new(DiceKey { index: 11 }, None),
                 DiceValidity::Valid,
-                &MakeInvalidationPaths {
-                    normal: (DiceKey { index: 102 }, 6),
-                    high: Some((DiceKey { index: 102 }, 6)),
-                }
-                .into(),
+                source(InvalidationSourcePriority::High, 6),
             );
             deps_tracker.insert_parallel_for_test(vec![s1]);
         }
         assert_eq!(
-            deps_tracker.invalidation_paths(),
-            &MakeInvalidationPaths {
-                normal: (DiceKey { index: 101 }, 8),
-                high: Some((DiceKey { index: 102 }, 6)),
-            }
-            .into()
+            deps_tracker.invalidation_sources(),
+            source(InvalidationSourcePriority::Normal, 8)
+                .merge(source(InvalidationSourcePriority::High, 6))
         );
 
         Ok(())
@@ -428,17 +416,17 @@ mod tests {
 
     #[test]
     fn recording_deps_tracker_tracks_deps_invalid() -> anyhow::Result<()> {
-        let mut deps_tracker = RecordingDepsTracker::new(TrackedInvalidationPaths::clean());
+        let mut deps_tracker = RecordingDepsTracker::new(InvalidationSources::NONE);
 
         deps_tracker.record(
             DepEdge::new(DiceKey { index: 2 }, None),
             DiceValidity::Valid,
-            &TrackedInvalidationPaths::clean(),
+            InvalidationSources::NONE,
         );
         deps_tracker.record(
             DepEdge::new(DiceKey { index: 3 }, None),
             DiceValidity::Transient,
-            &TrackedInvalidationPaths::clean(),
+            InvalidationSources::NONE,
         );
 
         let recorded_deps = deps_tracker.collect_deps();
@@ -452,7 +440,7 @@ mod tests {
 
     #[test]
     fn test_series_parallel_record_and_iter() -> anyhow::Result<()> {
-        let mut tracker = RecordingDepsTracker::new(TrackedInvalidationPaths::clean());
+        let mut tracker = RecordingDepsTracker::new(InvalidationSources::NONE);
 
         {
             let mut s1 = RecordedDeps::new();

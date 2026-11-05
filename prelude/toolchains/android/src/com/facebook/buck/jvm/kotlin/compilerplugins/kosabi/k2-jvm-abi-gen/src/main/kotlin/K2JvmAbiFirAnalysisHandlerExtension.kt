@@ -504,6 +504,9 @@ class K2JvmAbiFirAnalysisHandlerExtension(private val outputPath: String) :
     val composeAbiEnabled =
         configuration.get(K2JvmAbiConfigurationKeys.ENABLE_COMPOSE_ABI_EMULATION) == true
     val allIrExtensions = buildList {
+      // Plugin extensions run first, before the emulations and the sanitizer read the IR they
+      // change (e.g. Compose stability reads the superclass DataClassGenerate injects).
+      addAll(abiRelevantPluginIrExtensions(project, configuration))
       // Compose ABI emulation runs before the IR sanitizer so that any emulated
       // declarations are present when non-ABI content is stripped.
       if (composeAbiEnabled) {

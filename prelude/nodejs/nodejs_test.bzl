@@ -148,8 +148,9 @@ def _framework_command(ctx: AnalysisContext) -> struct:
                 ctx.label, ctx.attrs.framework
             )
         )
-    if ctx.attrs.coverage_prefix != None and vitest == None:
-        fail('{}: `coverage_prefix` requires framework = "vitest"'.format(ctx.label))
+    for attr in ("coverage_prefix", "coverage_paths"):
+        if getattr(ctx.attrs, attr) != None and jest == None and vitest == None:
+            fail('{}: `{}` requires framework = "jest" or "vitest"'.format(ctx.label, attr))
     for reserved in ("LIST_COMMAND", "TEST_COMMAND"):
         if reserved in ctx.attrs.env:
             fail('{}: `env` cannot set `{}` with framework = "{}", which uses it to list and run tests'.format(ctx.label, reserved, ctx.attrs.framework))
@@ -176,6 +177,10 @@ def _framework_command(ctx: AnalysisContext) -> struct:
         args.add("--jest", jest, "--root", staged.runtime)
         if ctx.attrs.config != None:
             args.add("--config", cmd_args(staged.runtime, format = "{}/" + ctx.attrs.config.short_path))
+        if ctx.attrs.coverage_prefix != None:
+            args.add("--coverage-prefix", ctx.attrs.coverage_prefix)
+        if ctx.attrs.coverage_paths != None:
+            args.add("--coverage-paths", json.encode(ctx.attrs.coverage_paths))
         for arg in ctx.attrs.args:
             args.add("--arg", arg)
     if vitest != None:
@@ -184,6 +189,8 @@ def _framework_command(ctx: AnalysisContext) -> struct:
             args.add("--config", cmd_args(staged.runtime, format = "{}/" + ctx.attrs.config.short_path))
         if ctx.attrs.coverage_prefix != None:
             args.add("--coverage-prefix", ctx.attrs.coverage_prefix)
+        if ctx.attrs.coverage_paths != None:
+            args.add("--coverage-paths", json.encode(ctx.attrs.coverage_paths))
         for arg in ctx.attrs.args:
             args.add("--arg", arg)
     for entry in staged.entries:
@@ -258,10 +265,15 @@ nodejs_test = prelude_rule(
     staged directory. `args` are passed to Jest, except the watch modes,
     the flags the adapter sets (`--ci`, `--watchman`, `--config`,
     `--json`, `--outputFile`, `--listTests`, `--runTestsByPath`,
-    `--testNamePattern`) and the flags that change which test files run
-    (`--onlyChanged`, `--onlyFailures`, `--changedSince`,
-    `--changedFilesWithAncestor`, `--lastCommit`, `--findRelatedTests`,
-    `--shard`), which fail the test.
+    `--testNamePattern`, `--coverage`/`--collectCoverage`,
+    `--coverageReporters`, `--coverageDirectory`) and the flags that change
+    which test files run (`--onlyChanged`, `--onlyFailures`,
+    `--changedSince`, `--changedFilesWithAncestor`, `--lastCommit`,
+    `--findRelatedTests`, `--shard`), which fail the test. Coverage is
+    collected as for `"vitest"` below, with Jest's
+    `--coverage --coverageReporters=json`; the Jest config decides which
+    files are instrumented (`collectCoverageFrom`,
+    `coveragePathIgnorePatterns`).
 
     `"vitest"` runs the test files with Vitest from `test_runner` (a
     `nodejs_node_modules` target), or the nodejs toolchain's `vitest`. Its
@@ -271,8 +283,8 @@ nodejs_test = prelude_rule(
     with `--config`; without it, Vitest's own config discovery under the
     staged directory applies. `args` are passed to Vitest, except the
     flags the adapter sets (`run`, `--root`, `--config`, `--reporter`,
-    `--outputFile`, `--testNamePattern`, the `--coverage*` flags it sets
-    when coverage is collected, and `list`/`--filesOnly`/`--json`) and
+    `--outputFile`, `--testNamePattern`, the `--coverage*` flags, and
+    `list`/`--filesOnly`/`--json`) and
     the flags that change which test files run (`--changed`, `--related`,
     `--shard`, `--dir`, `--exclude`), which fail the test. Without
     `tsconfig`, the `srcs` are staged as they are and Vitest transpiles
@@ -280,9 +292,10 @@ nodejs_test = prelude_rule(
     When TPX coverage collection is active
     (`COVERAGE_COLLECTION_OUTPUT_FILE` is set, as it is for targets with
     the `tpx:supports_coverage` label), the adapter runs Vitest with
-    `--coverage --coverage.reporter=json` into
-    `COVERAGE_COLLECTION_TMPDIR` (or a temporary directory), then writes
-    TPX coverage JSONL to `COVERAGE_COLLECTION_OUTPUT_FILE`: one
+    `--coverage --coverage.reporter=json`, writing each Vitest run's
+    report to a directory of its own under `COVERAGE_COLLECTION_TMPDIR`
+    (or a temporary directory), then merges the reports and writes TPX coverage
+    JSONL to `COVERAGE_COLLECTION_OUTPUT_FILE`: one
     `{"filepath", "covered_lines", "executable_lines"}` object per file
     (0-based lines, from the Istanbul `statementMap`), for files under
     the staged directory outside `node_modules`. `filepath` is the path
@@ -290,8 +303,11 @@ nodejs_test = prelude_rule(
     when it is set, so a caller whose staged files mirror a project
     subtree (for example `coverage_prefix =
     "xplat/wearable/tools/js/core_utils_common"`) gets paths relative
-    to the repository root. A missing or unreadable coverage report is
-    a run failure.
+    to the repository root. `coverage_paths`, when set, keeps only the
+    files whose `filepath` is one of its entries or under one of them, as
+    for selective coverage, where the `fb_native` wrapper sets it from
+    `code_coverage.file_path_filter` and `folder_path_filter`; `[]` keeps
+    none. A missing or unreadable coverage report is a run failure.
 
     `tsconfig`, with `"node"`, `"jest"` or `"vitest"`, compiles the `.ts`, `.tsx`, `.mts`
     and `.cts` `srcs` (not declarations) together with the toolchain's
@@ -375,6 +391,7 @@ nodejs_test = prelude_rule(
             "tsconfig": attrs.option(attrs.source(allow_directory = False), default = None),
             "test_runner": attrs.option(attrs.dep(), default = None),
             "coverage_prefix": attrs.option(attrs.string(), default = None),
+            "coverage_paths": attrs.option(attrs.list(attrs.string()), default = None),
             "args": attrs.list(attrs.arg(), default = []),
             "node_args": attrs.list(attrs.string(), default = []),
             "env": attrs.dict(attrs.string(), attrs.arg(), default = {}),

@@ -34,6 +34,8 @@ use starlark_syntax::syntax::ast::StmtP;
 use starlark_syntax::syntax::module::AstModuleFields;
 use starlark_syntax::syntax::uniplate::Visit;
 
+use crate::definition::utf16_column_to_byte_offset;
+
 #[derive(Debug, PartialEq, Eq, Clone, Hash)]
 pub enum AutocompleteType {
     /// Offer completions of all available symbol. Cursor is e.g. at the start of a line,
@@ -89,7 +91,8 @@ impl AstModuleInspect for AstModule {
             }
             Some(line_span) => line_span,
         };
-        let current_pos = std::cmp::min(line_span.begin() + col, line_span.end());
+        let line_text = self.codemap().source_span(line_span);
+        let current_pos = line_span.begin() + utf16_column_to_byte_offset(line_text, col) as u32;
 
         // Walk through the AST to find a node matching the current position.
         fn walk_and_find_completion_type(

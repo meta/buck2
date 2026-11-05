@@ -487,3 +487,18 @@ class LspTest(BuckTestCase):
                 buck.cwd / src_bxl_path,
                 src_bxl.spans["dest_f"],
             )
+
+    @buck_test()
+    async def test_goto_definition_after_non_ascii_text(self, buck: Buck) -> None:
+        # The LSP column counts UTF-16 units; `x` is at column 12 after a three-character
+        # CJK string, at byte 18.
+        path = Path("utf16_column.bzl")
+        async with await buck.lsp() as lsp:
+            await lsp.init_connection()
+            await lsp.open_file(path)
+            res = await lsp.goto_definition(path, 9, 12)
+            # pyrefly: ignore [unsupported-operation]
+            assert res[0]["targetRange"] == {
+                "start": {"line": 8, "character": 0},
+                "end": {"line": 8, "character": 1},
+            }, res

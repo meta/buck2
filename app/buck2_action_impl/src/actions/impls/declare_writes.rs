@@ -41,7 +41,7 @@ pub(crate) async fn declare_writes(
     ctx: &dyn ActionExecutionCtx,
     mut generate: Box<dyn FnMut() -> buck2_error::Result<Vec<WriteRequest>> + Send + '_>,
 ) -> buck2_error::Result<(Vec<ArtifactValue>, ActionExecutionKind)> {
-    if !cas_probe::enabled(ctx) {
+    if !cas_probe::probes_writes(ctx) {
         return here(ctx, generate()?).await;
     }
 

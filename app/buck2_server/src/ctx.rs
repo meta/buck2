@@ -1066,11 +1066,10 @@ impl DiceCommandUpdater<'_, '_> {
         }
 
         // A write whose content the CAS already has is declared as a CAS download, so its bytes
-        // then exist nowhere but the CAS, and a copy from a source file follows the same
-        // decision: the same question about content produced here, and its source stays where
-        // it is either way. That pays only when the content would not have gone to the output
-        // path right away (`defer_write_actions`); a hit trades a write for a download
-        // otherwise, and the knob decides.
+        // then exist nowhere but the CAS. That pays only when the content would not have gone to
+        // the output path right away (`defer_write_actions`); a hit trades a write for a download
+        // otherwise, and the knob decides. A copy of a source file asks on the core's terms, not
+        // the knob's (`buck2_action_impl`'s `cas_probe::probes_copies`).
         let repo = self.cmd_ctx.base_context.repo();
         run_action_knobs.defer_write_actions = repo.materializer_defers_writes;
         run_action_knobs.write_cas_probe = root_config

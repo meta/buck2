@@ -9,8 +9,9 @@
  */
 
 //! Content an action can make, a write or a copy of a source file, that the CAS already holds is
-//! declared as CAS content instead of being made: the probe behind the `write_cas_probe` knob.
-//! What the CAS lacks comes to be as `produce` says.
+//! declared as CAS content instead of being made. A write asks behind the `write_cas_probe`
+//! knob; a copy of a source file asks under the disk-state core, which would otherwise make the
+//! copy now. What the CAS lacks comes to be as `produce` says.
 
 use std::sync::Arc;
 
@@ -36,10 +37,18 @@ use dupe::Dupe;
 /// it holds.
 pub(crate) type SourceFile = (ProjectRelativePathBuf, FileMetadata);
 
-/// Whether the CAS is asked before content is produced: the knob's decision, and never when the
-/// invocation asks the CAS nothing (`ActionExecutionCtx::may_probe_cas`).
-pub(crate) fn enabled(ctx: &dyn ActionExecutionCtx) -> bool {
+/// Whether a write asks the CAS before its content is made: the knob's decision, and never when
+/// the invocation asks the CAS nothing (`ActionExecutionCtx::may_probe_cas`).
+pub(crate) fn probes_writes(ctx: &dyn ActionExecutionCtx) -> bool {
     ctx.run_action_knobs().write_cas_probe && ctx.may_probe_cas()
+}
+
+/// Whether a copy of a source file asks the CAS before it is made: under the disk-state core
+/// always, since what a hit spares there is a copy made now, a file at a time; under the deferred
+/// core never, since a copy there is a declaration made only when something needs the file, and a
+/// hit would turn it into a download. Never when the invocation asks the CAS nothing.
+pub(crate) fn probes_copies(ctx: &dyn ActionExecutionCtx) -> bool {
+    ctx.materializer().is_disk_state() && ctx.may_probe_cas()
 }
 
 /// Which of `digests` the CAS holds, one answer per digest, with the `CasDownloadInfo` to
@@ -76,14 +85,14 @@ pub(crate) async fn probe(
     Some((info, in_cas))
 }
 
-/// The probe over `files`: the info to declare the hits under, and the positions of the files
-/// the CAS lacks. `None` when the CAS was not asked (`enabled`) or could not answer, in which
-/// case every file is the caller's to make.
+/// The probe over `files`, source files a copy would make: the info to declare the hits under,
+/// and the positions of the files the CAS lacks. `None` when the CAS was not asked
+/// (`probes_copies`) or could not answer, in which case every file is the caller's to make.
 pub(crate) async fn missing(
     ctx: &dyn ActionExecutionCtx,
     files: &[SourceFile],
 ) -> Option<(Arc<CasDownloadInfo>, Vec<usize>)> {
-    if !enabled(ctx) {
+    if !probes_copies(ctx) {
         return None;
     }
     let digests = files

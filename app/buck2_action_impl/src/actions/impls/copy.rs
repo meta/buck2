@@ -217,10 +217,11 @@ impl Action for CopyAction {
             tmp_dest
         };
 
-        // A source file's content is not known to be in the CAS: the probe a write makes spares
-        // copying it when the CAS has it, and the rest comes to be as a write's miss does
-        // (`produce`). A build artifact's content is the materializer's already, and a symlink
-        // copies nothing; both are declared, which is nothing to the disk-state core.
+        // A source file's content is not known to be in the CAS. The disk-state core is declared
+        // no copy of it: the probe spares making one when the CAS has the file, and a miss comes
+        // to be as a write's does (`produce`). The deferred core is declared the copy, made when
+        // something needs the file. A build artifact's content is the materializer's already, and
+        // a symlink copies nothing; both are declared, which is nothing to the disk-state core.
         let source_copy = match self.copy {
             CopyMode::Copy {
                 executable_bit_override,
@@ -228,7 +229,7 @@ impl Action for CopyAction {
             _ => None,
         };
         let (execution_kind, declare) = match source_copy {
-            Some(executable_bit_override) => {
+            Some(executable_bit_override) if ctx.materializer().is_disk_state() => {
                 let files = cas_probe::files_of(value.entry(), &src);
                 match cas_probe::missing(ctx, &files).await {
                     Some((info, missing)) if missing.is_empty() => {
@@ -243,7 +244,7 @@ impl Action for CopyAction {
                             .await?;
                         (ActionExecutionKind::Deferred, false)
                     }
-                    probed if ctx.materializer().is_disk_state() => {
+                    probed => {
                         let kind = produce::produce_copies(
                             ctx,
                             vec![SourceCopy {
@@ -257,10 +258,9 @@ impl Action for CopyAction {
                         .await?;
                         (kind, false)
                     }
-                    _ => (ActionExecutionKind::Simple, true),
                 }
             }
-            None => (ActionExecutionKind::Simple, true),
+            _ => (ActionExecutionKind::Simple, true),
         };
         if declare {
             ctx.materializer()

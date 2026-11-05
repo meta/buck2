@@ -366,25 +366,24 @@ impl Action for AssembledDirAction {
             }
             .as_ref(),
         )?;
-        // Copied source files are not known to be in the CAS, and the probe a `copy` makes asks
-        // about them a file at a time: the files are action inputs the CAS usually has, while the
-        // directory assembled here is in the CAS only if some action uploaded it in this exact
-        // shape. Copies of build artifacts are the materializer's already, and symlinks copy
-        // nothing.
-        let files: Vec<SourceFile> = source_files
-            .iter()
-            .map(|(src, _, metadata, _)| (src.clone(), metadata.dupe()))
-            .collect();
-        let probed = if files.is_empty() {
-            None
-        } else {
-            cas_probe::missing(ctx, &files).await
-        };
         let materializer = ctx.materializer();
         let execution_kind = if materializer.is_disk_state() {
-            // The output's structure is in its value, and copies of buck-out content are nothing
-            // to the core. The source files the CAS lacks are made under their own paths, or
-            // uploaded, as a write's misses are; the rest is CAS content.
+            // The output's structure is in its value; copies of buck-out content are nothing to
+            // the core and symlinks copy nothing. Copied source files are not known to be in the
+            // CAS, and the probe a `copy` makes asks about them a file at a time: the files are
+            // action inputs the CAS usually has, while the directory assembled here is in the CAS
+            // only if some action uploaded it in this exact shape. The files the CAS lacks are
+            // made under their own paths, or uploaded, as a write's misses are; the rest is CAS
+            // content.
+            let files: Vec<SourceFile> = source_files
+                .iter()
+                .map(|(src, _, metadata, _)| (src.clone(), metadata.dupe()))
+                .collect();
+            let probed = if files.is_empty() {
+                None
+            } else {
+                cas_probe::missing(ctx, &files).await
+            };
             let (uploadable, to_make): (bool, Vec<usize>) = match &probed {
                 Some((_, missing)) => (true, missing.clone()),
                 None => (false, (0..source_files.len()).collect()),
@@ -411,9 +410,7 @@ impl Action for AssembledDirAction {
                 produce::produce_copies(ctx, copies, uploadable).await?
             }
         } else {
-            // The deferred core is declared the copy either way; the probe decides only what the
-            // action reports.
-            let all_in_cas = matches!(&probed, Some((_, missing)) if missing.is_empty());
+            // The deferred core is declared the copy, made when something needs the directory.
             let srcs = srcs
                 .into_iter()
                 .map(
@@ -430,11 +427,7 @@ impl Action for AssembledDirAction {
             materializer
                 .declare_copy(actual_output, value.dupe(), srcs)
                 .await?;
-            if all_in_cas {
-                ActionExecutionKind::Deferred
-            } else {
-                ActionExecutionKind::Simple
-            }
+            ActionExecutionKind::Simple
         };
         Ok((
             ActionOutputs::from_single(self.output().get_path().dupe(), value),

@@ -12,9 +12,10 @@
 With `buck2.write_cas_probe` on, a write action asks the CAS for its content before writing it.
 When the CAS has the content with enough TTL left, the output is declared as a CAS download and
 nothing is written until something needs the file; otherwise the write is made here while the
-machine has room for local work and uploaded when it has not. A copy of a source file, alone or
-into a `copied_dir`, asks the same way before copying, and a miss is made or uploaded the same
-way. None of them asks under `--local-only` or `--no-remote-cache`.
+machine has room for local work and uploaded when it has not. Under the disk-state materializer
+a copy of a source file, alone or into a `copied_dir`, asks the same way before copying, whatever
+the knob says, and a miss is made or uploaded the same way; the deferred materializer copies
+without asking. None of them asks under `--local-only` or `--no-remote-cache`.
 """
 
 from buck2.tests.e2e_util.api.buck import Buck
@@ -129,7 +130,7 @@ class WriteCasProbeTest(BuckTestCase):
         await buck.build("//:write", *configs, env=env)
         assert output.read_text() == content
 
-    @buck_test(write_invocation_record=True)
+    @buck_test(write_invocation_record=True, skip_for_materializer=["deferred"])
     async def test_copy_of_a_source_file_the_cas_has_is_not_made(
         self, buck: Buck
     ) -> None:
@@ -192,7 +193,7 @@ class WriteCasProbeTest(BuckTestCase):
         await buck.build(target, *configs, env=env)
         assert output.read_text() == content
 
-    @buck_test(write_invocation_record=True)
+    @buck_test(write_invocation_record=True, skip_for_materializer=["deferred"])
     async def test_copied_dir_of_a_source_file_the_cas_has_is_not_made(
         self, buck: Buck
     ) -> None:
@@ -307,6 +308,67 @@ class WriteCasProbeTest(BuckTestCase):
         await buck.build(target, *configs, env=env)
         assert (output / "mixed_a.txt").read_text() == content_a
         assert (output / "mixed_b.txt").read_text() == content_b
+
+    @buck_test(write_invocation_record=True, skip_for_materializer=["deferred"])
+    async def test_copies_probe_whatever_the_write_knob_says(self, buck: Buck) -> None:
+        # The knob is the write's: with it off, a write is made without asking...
+        knob_off = ["-c", "buck2.write_cas_probe=false"]
+        await _written_without_a_probe(buck, *knob_off)
+
+        # ...while a copy of a source file still asks, since what a hit spares under the
+        # disk-state core is a copy made now.
+        (buck.cwd / "src.txt").write_text(random_string())
+        configs = [*knob_off, "-c", f"test.content={random_string()}"]
+        res = await buck.build("//:copy_src", *configs)
+        rpcs = presence_check_rpcs(res)
+        assert rpcs >= 1, "the probe asked the CAS"
+        assert (
+            await get_last_execution_kind(buck, category="copy")
+            == ACTION_EXECUTION_KIND_SIMPLE
+        )
+
+        # A `copied_dir` asks about its files the same way.
+        (buck.cwd / "mixed_a.txt").write_text(random_string())
+        (buck.cwd / "mixed_b.txt").write_text(random_string())
+        res = await buck.build("//:copied_dir_mixed", *configs)
+        assert presence_check_rpcs(res) > rpcs, "the probe asked the CAS"
+        assert (
+            await get_last_execution_kind(buck, category="symlinked_dir")
+            == ACTION_EXECUTION_KIND_SIMPLE
+        )
+
+    @buck_test(write_invocation_record=True, skip_for_materializer=["v2"])
+    async def test_the_deferred_materializer_copies_without_a_probe(
+        self, buck: Buck
+    ) -> None:
+        # A copy under the deferred materializer is made when something needs the file, so there
+        # is nothing for a hit to spare: neither a copy nor a `copied_dir` asks, with the knob
+        # on...
+        content = random_string()
+        (buck.cwd / "src.txt").write_text(content)
+        configs = ["-c", f"test.content={random_string()}"]
+
+        res = await buck.build("//:copy_src", *configs)
+        output = res.get_build_report().output_for_target("//:copy_src")
+        assert presence_check_rpcs(res) == 0, "the CAS was not asked"
+        assert (
+            await get_last_execution_kind(buck, category="copy")
+            == ACTION_EXECUTION_KIND_SIMPLE
+        )
+        assert output.read_text() == content
+
+        res = await buck.build("//:copied_dir_src", *configs)
+        output = res.get_build_report().output_for_target("//:copied_dir_src")
+        assert presence_check_rpcs(res) == 0, "the CAS was not asked"
+        assert (
+            await get_last_execution_kind(buck, category="symlinked_dir")
+            == ACTION_EXECUTION_KIND_SIMPLE
+        )
+        assert (output / "src.txt").read_text() == content
+
+        # ...while a write does.
+        res = await buck.build("//:write", *configs)
+        assert presence_check_rpcs(res) >= 1, "the probe asked the CAS"
 
     @buck_test(write_invocation_record=True, skip_for_materializer=["deferred"])
     async def test_content_already_on_disk_is_copied_rather_than_downloaded(

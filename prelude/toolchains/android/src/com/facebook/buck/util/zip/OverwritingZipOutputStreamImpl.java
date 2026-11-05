@@ -50,7 +50,13 @@ public class OverwritingZipOutputStreamImpl implements CustomZipOutputStream.Imp
     this.delegate = out;
 
     try {
-      scratchDir = Files.createTempDirectory("overwritingzip").toFile();
+      String scratchEnv = System.getenv("BUCK_SCRATCH_PATH");
+      Path scratchPath =
+          Path.of(
+              scratchEnv == null || scratchEnv.isEmpty()
+                  ? System.getProperty("java.io.tmpdir")
+                  : scratchEnv);
+      scratchDir = Files.createTempDirectory(scratchPath, "overwritingzip").toFile();
       // Reading the source, it seems like the temp dir isn't scheduled for deletion. We will delete
       // the directory when we close the stream, but if that method is never called, we'd leave
       // cruft on the FS. It's not foolproof, but try and avoid that.

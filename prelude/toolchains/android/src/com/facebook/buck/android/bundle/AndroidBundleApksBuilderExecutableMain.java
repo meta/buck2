@@ -55,7 +55,13 @@ public class AndroidBundleApksBuilderExecutableMain {
   private Path keystorePropertiesPath = null;
 
   private void run() throws Exception {
-    Path apksDirectory = Files.createTempDirectory("derived.apks");
+    String scratchPath = System.getenv("BUCK_SCRATCH_PATH");
+    if (scratchPath == null || scratchPath.isEmpty()) {
+      throw new IllegalStateException(
+          "BUCK_SCRATCH_PATH environment variable must be set and non-empty");
+    }
+    Path scratchDir = Path.of(scratchPath);
+    Path apksDirectory = Files.createTempDirectory(scratchDir, "derived.apks");
     BuildApksCommand.Builder buildApksCommandBuilder =
         BuildApksCommand.builder()
             .setApkBuildMode(BuildApksCommand.ApkBuildMode.UNIVERSAL)

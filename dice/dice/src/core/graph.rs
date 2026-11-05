@@ -115,6 +115,14 @@ impl KeyValues {
             .find_map(|(r, v)| (*r == revision).then_some(v))
     }
 
+    fn values(&self) -> impl Iterator<Item = &PagableValue> {
+        self.entries.iter().map(|(_, value)| value)
+    }
+
+    fn values_mut(&mut self) -> impl Iterator<Item = &mut PagableValue> {
+        self.entries.iter_mut().map(|(_, value)| value)
+    }
+
     fn lifecycle(&self) -> fn(DiceValidValue) -> PagableValue {
         PagableValue::lifecycle_after(self.entries.last().map(|(_, v)| v))
     }
@@ -211,7 +219,7 @@ impl KeyValues {
         if self.injected {
             return c;
         }
-        for (_, value) in &self.entries {
+        for value in self.values() {
             match value {
                 PagableValue::PagedOut(_) => c.paged_out += 1,
                 PagableValue::NeverPagedOut(_) | PagableValue::Recomputed(_) => {
@@ -610,7 +618,7 @@ impl VersionedGraph {
                 index: index as u32,
             };
             if let Some(kv) = self.values.get(&key) {
-                for (_, value) in &kv.entries {
+                for value in kv.values() {
                     if value.is_page_out_candidate(self.page_out_policy) {
                         out.push((
                             key,
@@ -630,7 +638,7 @@ impl VersionedGraph {
             if kv.injected {
                 continue;
             }
-            for (_, value) in &kv.entries {
+            for value in kv.values() {
                 if let Some(data_key) = value.data_key() {
                     out.push((*key, data_key));
                 }
@@ -649,7 +657,7 @@ impl VersionedGraph {
             if kv.injected {
                 continue;
             }
-            for (_, value) in &kv.entries {
+            for value in kv.values() {
                 match value {
                     PagableValue::PagedOut(_) => paged_out.push(*key),
                     PagableValue::Backed(_) => {
@@ -693,7 +701,7 @@ impl VersionedGraph {
         ) in keys
         {
             self.with_values(key, |kv| {
-                for (_, value) in kv.entries.iter_mut() {
+                for value in kv.values_mut() {
                     if value
                         .as_hydrated()
                         .is_some_and(|current| current.ptr_eq(&serialized_value))
@@ -726,7 +734,7 @@ impl VersionedGraph {
         let mut evicted = 0u64;
         for key in keys {
             self.with_values(key, |kv| {
-                for (_, value) in kv.entries.iter_mut() {
+                for value in kv.values_mut() {
                     if value.evict_backed() {
                         evicted += 1;
                     }
@@ -741,7 +749,7 @@ impl VersionedGraph {
     pub(crate) fn mark_non_pageable(&mut self, keys: Vec<(DiceKey, DiceValidValue)>) {
         for (key, inspected) in keys {
             self.with_values(key, |kv| {
-                for (_, value) in kv.entries.iter_mut() {
+                for value in kv.values_mut() {
                     if value
                         .as_hydrated()
                         .is_some_and(|current| current.ptr_eq(&inspected))

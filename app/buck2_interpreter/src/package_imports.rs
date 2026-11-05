@@ -79,13 +79,18 @@ impl PackageImplicitImports {
         if let Some(value) = encoded_mappings {
             let root_path = CellPath::empty(cell_name.name());
             for item in value.split(',') {
+                let item = item.trim();
+                if item.is_empty() {
+                    continue;
+                }
                 let (dir, import_spec) = item
-                    .trim()
                     .split_once("=>")
                     .ok_or_else(|| PackageImportsError::MissingArrow(item.to_owned()))?;
+                let (dir, import_spec) = (dir.trim(), import_spec.trim());
                 let (import, symbol_specs) = import_spec
                     .split_once("::")
                     .ok_or_else(|| PackageImportsError::MissingColons(import_spec.to_owned()))?;
+                let import = import.trim();
                 let relative_import_option = RelativeImports::Allow {
                     current_dir_with_allowed_relative: &CellPathWithAllowedRelativeDir::new(
                         root_path, None,
@@ -99,7 +104,11 @@ impl PackageImplicitImports {
                 let symbols = symbol_specs
                     .split("::")
                     .map(|spec| {
-                        let (alias, symbol) = spec.split_once('=').unwrap_or((spec, spec));
+                        let spec = spec.trim();
+                        let (alias, symbol) = match spec.split_once('=') {
+                            Some((alias, symbol)) => (alias.trim(), symbol.trim()),
+                            None => (spec, spec),
+                        };
                         (alias.to_owned(), symbol.to_owned())
                     })
                     .collect();
@@ -203,6 +212,56 @@ mod tests {
             imports.get(PackageLabel::testing_parse("root//third_party/src"))
         );
 
+        Ok(())
+    }
+
+    fn parse(value: &str) -> buck2_error::Result<PackageImplicitImports> {
+        let cell_alias_resolver = CellAliasResolver::new(
+            CellName::testing_new("root"),
+            vec![(
+                NonEmptyCellAlias::new("root".to_owned()).unwrap(),
+                CellName::testing_new("root"),
+            )]
+            .into_iter()
+            .collect(),
+        )?;
+        PackageImplicitImports::new(
+            BuildFileCell::new(CellName::testing_new("root")),
+            cell_alias_resolver,
+            Some(value),
+        )
+    }
+
+    /// Empty items (an empty value, a trailing comma) are skipped, like `project.ignore` does.
+    #[test]
+    fn test_empty_items_are_skipped() -> buck2_error::Result<()> {
+        assert!(
+            parse("")?
+                .get(PackageLabel::testing_parse("root//src"))
+                .is_none()
+        );
+        let imports = parse("src=>//:src.bzl::s,")?;
+        assert_eq!(
+            "root//src.bzl",
+            imports
+                .get(PackageLabel::testing_parse("root//src"))
+                .unwrap()
+                .import()
+                .to_string()
+        );
+        Ok(())
+    }
+
+    /// Blanks around `=>`, `::` and `=` are trimmed.
+    #[test]
+    fn test_blanks_are_trimmed() -> buck2_error::Result<()> {
+        let imports = parse(" src => //:src.bzl :: x = y :: s ")?;
+        let import = imports
+            .get(PackageLabel::testing_parse("root//src"))
+            .unwrap();
+        assert_eq!("root//src.bzl", import.import().to_string());
+        assert_eq!("y", import.lookup_alias("x"));
+        assert_eq!("s", import.lookup_alias("s"));
         Ok(())
     }
 }

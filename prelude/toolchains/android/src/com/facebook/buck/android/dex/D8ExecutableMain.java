@@ -246,8 +246,16 @@ public class D8ExecutableMain {
         Optional.ofNullable(syntheticContextsOutput).map(Paths::get);
 
     Path outputPath = Paths.get(outputDex);
+    String scratchPath = System.getenv("BUCK_SCRATCH_PATH");
+    if (scratchPath == null || scratchPath.isEmpty()) {
+      throw new IllegalStateException(
+          "BUCK_SCRATCH_PATH environment variable must be set and non-empty");
+    }
+    Path scratchDir = Paths.get(scratchPath);
     Path d8Output =
-        primaryDexClassNamesPath.isPresent() ? Files.createTempDirectory("dexTmpDir") : outputPath;
+        primaryDexClassNamesPath.isPresent()
+            ? Files.createTempDirectory(scratchDir, "dexTmpDir")
+            : outputPath;
 
     try {
       D8Output d8InternalData =
@@ -340,7 +348,7 @@ public class D8ExecutableMain {
               classRefCounts,
               new DexRefCounts(methodRefCount, fieldRefCount, typeRefCount),
               d8InternalData.getSyntheticToSynthesizingContext())) {
-            Path perClassDexDir = Files.createTempDirectory("dexFilePerClass");
+            Path perClassDexDir = Files.createTempDirectory(scratchDir, "dexFilePerClass");
             try {
               dexEachClass(perClassDexDir, filesToDex, classpathFiles, minSdkVersion);
               classLines = getClassRefCountLines(perClassDexDir);

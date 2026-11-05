@@ -243,8 +243,7 @@ pub struct RepoState {
     /// A unique identifier for the materializer state.
     pub materializer_state_identity: Option<SqliteIdentity>,
 
-    /// Which materializer `materializer` is, as `buck2.materializer` names it; reported in
-    /// command metadata.
+    /// Which materializer `materializer` is, `deferred` or `v2`; reported in command metadata.
     pub materializer_implementation: &'static str,
 
     /// Tracks data about previous command (e.g. configs)
@@ -541,12 +540,11 @@ impl TenantState {
         let cache_dir_path = paths.cache_dir_path();
         let valid_cache_dirs = paths.valid_cache_dirs();
 
-        let implementation = init_ctx
+        let disk_state_core = init_ctx
             .daemon_startup_config
             .startup_options
-            .materializer
-            .as_deref();
-        let disk_state_core = implementation == Some(disk_state::CONFIG_VALUE);
+            .materializer_v2_version
+            .is_some_and(|wanted| disk_state::ROLLOUT_VERSION >= wanted);
         let deferred_materializer_configs = {
             let defer_write_actions = root_config
                 .parse::<RolloutPercentage>(BuckconfigKeyRef {
@@ -749,7 +747,7 @@ impl TenantState {
             buck2_execute::blob_store::discard_stash(&stash, blocking_executor.dupe());
         }
         let materializer = RepoState::create_materializer(
-            implementation,
+            disk_state_core,
             io.project_root().dupe(),
             digest_config,
             paths.buck_out_dir(),
@@ -902,11 +900,7 @@ impl TenantState {
             disk_state_options,
             create_unhashed_outputs_lock: Arc::new(Mutex::new(())),
             materializer_state_identity,
-            materializer_implementation: if disk_state_core {
-                disk_state::CONFIG_VALUE
-            } else {
-                "deferred"
-            },
+            materializer_implementation: if disk_state_core { "v2" } else { "deferred" },
             previous_command_data: LockedPreviousCommandData::new(),
             incremental_db_state,
             persisted_dep_file_cache,
@@ -966,7 +960,7 @@ impl TenantState {
 
 impl RepoState {
     fn create_materializer(
-        implementation: Option<&str>,
+        disk_state_core: bool,
         fs: ProjectRoot,
         digest_config: DigestConfig,
         buck_out_path: ProjectRelativePathBuf,
@@ -977,8 +971,8 @@ impl RepoState {
         materializer_state: Option<MaterializerState>,
         daemon_dispatcher: EventDispatcher,
     ) -> buck2_error::Result<Arc<dyn Materializer>> {
-        match implementation {
-            None | Some("deferred") => Ok(Arc::new(DeferredMaterializer::new(
+        if disk_state_core {
+            Ok(Arc::new(DiskStateMaterializer::new(
                 fs,
                 digest_config,
                 buck_out_path,
@@ -988,8 +982,9 @@ impl RepoState {
                 materializer_db,
                 materializer_state,
                 daemon_dispatcher,
-            )?)),
-            Some(disk_state::CONFIG_VALUE) => Ok(Arc::new(DiskStateMaterializer::new(
+            )?))
+        } else {
+            Ok(Arc::new(DeferredMaterializer::new(
                 fs,
                 digest_config,
                 buck_out_path,
@@ -999,12 +994,7 @@ impl RepoState {
                 materializer_db,
                 materializer_state,
                 daemon_dispatcher,
-            )?)),
-            Some(other) => Err(buck2_error::buck2_error!(
-                ErrorTag::Input,
-                "Unknown `buck2.materializer` value `{other}`; expected `deferred` or `{}`",
-                disk_state::CONFIG_VALUE
-            )),
+            )?))
         }
     }
 }

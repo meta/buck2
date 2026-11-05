@@ -509,9 +509,9 @@ pub struct DaemonStartupOptions {
     pub source_digest_algorithm: Option<String>,
     pub paranoid: bool,
     pub materializations: Option<String>,
-    /// Which materializer implementation the daemon runs (`buck2.materializer`); `None` is the
-    /// deferred one.
-    pub materializer: Option<String>,
+    /// `buck2.materializer_v2_version`: the daemon runs the disk-state materializer when its
+    /// `ROLLOUT_VERSION` is at least this, and the deferred one when this is unset.
+    pub materializer_v2_version: Option<u32>,
     pub http: HttpConfig,
     pub resource_control: ResourceControlConfig,
     pub log_download_method: LogDownloadMethod,
@@ -569,12 +569,10 @@ impl DaemonStartupConfig {
             source_digest_algorithm: settings.digest.source_algorithm(&mut buckconfig)?,
             paranoid,
             materializations: settings.materializer.materializations(&mut buckconfig)?,
-            materializer: config
-                .get(BuckconfigKeyRef {
-                    section: "buck2",
-                    property: "materializer",
-                })
-                .map(ToOwned::to_owned),
+            materializer_v2_version: config.parse(BuckconfigKeyRef {
+                section: "buck2",
+                property: "materializer_v2_version",
+            })?,
             http: HttpConfig::from_settings(&settings.http, config)?,
             resource_control: ResourceControlConfig::from_settings(
                 &settings.resource_control,
@@ -633,7 +631,7 @@ impl DaemonStartupConfig {
             source_digest_algorithm: None,
             paranoid: false,
             materializations: None,
-            materializer: None,
+            materializer_v2_version: None,
             http: HttpConfig::default(),
             resource_control: ResourceControlConfig::testing_default(),
             log_download_method: if cfg!(fbcode_build) {

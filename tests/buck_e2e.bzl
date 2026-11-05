@@ -335,7 +335,8 @@ def buck2_e2e_test(
         previous_env["BUCK2_CHANNEL"] = "previous"
         buck_e2e_test(name = name + "_with_reverted_buck2", env = previous_env, executable = "buck2", skip_for_os = skip_for_os, deps = deps, **kwargs)
 
-# Materializer implementations other than the default, by their `buck2.materializer` value.
+# Materializer implementations other than the default, by the names `buck_workspace.py` maps to
+# their configs.
 OTHER_MATERIALIZERS = ["v2"]
 
 def buck2_core_tests(extra_attrs = {}, target_extra_attrs = {}, allow_bundled_cells = False, materializer_variants = []):

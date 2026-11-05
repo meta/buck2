@@ -155,8 +155,13 @@ use crate::materializers::v2::tree::WriteHold;
 use crate::sqlite::materializer_db::MaterializerState;
 use crate::sqlite::materializer_db::MaterializerStateSqliteDb;
 
-/// The value of `buck2.materializer` that selects this implementation.
-pub const CONFIG_VALUE: &str = "v2";
+/// Rolls this implementation out: a daemon runs it when `buck2.materializer_v2_version` is set
+/// to at most this value, and the deferred materializer otherwise.
+///
+/// Bump this with any fix that a rollback waited on. Setting the config above every version in
+/// the fleet rolls back; setting it to the fixed version then rolls out again to the binaries
+/// that have the fix, and to no others.
+pub const ROLLOUT_VERSION: u32 = 1;
 
 /// How often buffered access-time bumps reach sqlite under `AccessTimesUpdates::Full`.
 const ACCESS_TIMES_FLUSH_PERIOD: Duration = Duration::from_secs(5);

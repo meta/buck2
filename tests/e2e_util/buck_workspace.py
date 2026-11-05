@@ -251,17 +251,19 @@ async def buck_fixture(  # noqa C901 : "too complex"
 
             buck_cwd = project_dir
 
+        # Core tests run with read-only outputs, under either materializer.
+        extra_config_lines.append("[buck2]\nreadonly_outputs = true\n")
         # A target variant can run its suite against another materializer implementation;
         # see `buck2_core_tests`.
         materializer = os.environ.get("BUCK2_TEST_MATERIALIZER")
-        if materializer:
-            extra_config_lines.append(f"[buck2]\nmaterializer = {materializer}\n")
-        # Core tests run with read-only outputs, under either materializer.
-        extra_config_lines.append("[buck2]\nreadonly_outputs = true\n")
         if materializer == "v2":
+            # Every `ROLLOUT_VERSION` is at least 0.
+            extra_config_lines.append("[buck2]\nmaterializer_v2_version = 0\n")
             # The disk-state twins run strict: a root leaves disk the moment its last lease
             # does, so a reader without one fails here rather than by chance in use.
             extra_config_lines.append("[buck2]\nmaterializer_strict_leases = true\n")
+        elif materializer is not None:
+            raise Exception(f"Unknown `BUCK2_TEST_MATERIALIZER` value `{materializer}`")
 
         for section, config in marker.extra_buck_config.items():
             extra_config_lines.append(f"[{section}]\n")
@@ -939,8 +941,9 @@ def buck_test(
     data_dir: Optional[str] = "",
     # Accepted values are specified in SKIPPABLE_PLATFORMS
     skip_for_os: List[str] = [],  # noqa: B006 value is read-only
-    # Materializer implementations (`buck2.materializer` values) the test does not apply to,
-    # for tests that assert on one implementation's own state or output. See `buck2_core_tests`.
+    # Materializer implementations (`BUCK2_TEST_MATERIALIZER` values) the test does not apply
+    # to, for tests that assert on one implementation's own state or output. See
+    # `buck2_core_tests`.
     skip_for_materializer: List[str] = [],  # noqa: B006 value is read-only
     allow_soft_errors: bool = False,
     extra_buck_config: Optional[Dict[str, Dict[str, str]]] = None,

@@ -716,32 +716,43 @@ impl EventsCtx {
         .await
     }
 
-    pub async fn finalize(self) -> Vec<String> {
+    pub async fn finalize(mut self) -> Vec<String> {
+        let mut errors = self.finalize_subscribers().await;
+        errors.extend(self.finalize_recorder().await);
+        errors
+    }
+
+    async fn finalize_one(subscriber: Box<dyn EventSubscriber>, errors: &mut Vec<String>) {
+        let start = Instant::now();
+        let name = subscriber.name().to_owned();
+        let res = subscriber.finalize().await;
+        let elapsed = Instant::now() - start;
+        tracing::info!("Finalizing \'{}\' took {:?}", name, elapsed);
+
+        if let Err(e) = res {
+            errors.push(format!(
+                "{:?}",
+                e.context(format!("\'{}\' failed to finalize", name))
+            ));
+        }
+    }
+
+    /// Finalizes every subscriber except the invocation recorder, in order.
+    async fn finalize_subscribers(&mut self) -> Vec<String> {
         let mut errors = Vec::new();
-
-        async fn finalize(subscriber: Box<dyn EventSubscriber>, errors: &mut Vec<String>) {
-            let start = Instant::now();
-            let name = subscriber.name().to_owned();
-            let res = subscriber.finalize().await;
-            let elapsed = Instant::now() - start;
-            tracing::info!("Finalizing \'{}\' took {:?}", name, elapsed);
-
-            if let Err(e) = res {
-                errors.push(format!(
-                    "{:?}",
-                    e.context(format!("\'{}\' failed to finalize", name))
-                ));
-            }
+        for subscriber in std::mem::take(&mut self.subscribers) {
+            Self::finalize_one(subscriber, &mut errors).await;
         }
+        errors
+    }
 
-        for subscriber in self.subscribers.into_iter() {
-            finalize(subscriber, &mut errors).await;
-        }
-
+    /// Sends the invocation record, if this command logs one.
+    async fn finalize_recorder(self) -> Vec<String> {
+        let mut errors = Vec::new();
         if self.log_invocation_record
             && let Some(recorder) = self.recorder
         {
-            finalize(recorder, &mut errors).await;
+            Self::finalize_one(recorder, &mut errors).await;
         }
         errors
     }
@@ -755,13 +766,13 @@ impl EventsCtx {
         runtime.block_on(async move {
             let buck_log_dir = self.buck_log_dir.take();
             let command_report_path = self.command_report_path.take();
-            let finalize_events = async {
+            let finalize_subscribers = async {
                 self.handle_exit_result(&result);
-                self.finalize().await
+                self.finalize_subscribers().await
             };
 
             let logging_timeout = Duration::from_secs(30);
-            let finalizing_errors = tokio::time::timeout(logging_timeout, finalize_events)
+            let mut finalizing_errors = tokio::time::timeout(logging_timeout, finalize_subscribers)
                 .await
                 .unwrap_or_else(|_| {
                     vec![format!(
@@ -769,6 +780,16 @@ impl EventsCtx {
                         logging_timeout
                     )]
                 });
+
+            // The invocation record must not be starved by a slow log upload, so it gets its
+            // own budget rather than whatever the other subscribers left of theirs.
+            match tokio::time::timeout(logging_timeout, self.finalize_recorder()).await {
+                Ok(errors) => finalizing_errors.extend(errors),
+                Err(_) => finalizing_errors.push(format!(
+                    "Timeout after {:?} waiting for the invocation record",
+                    logging_timeout
+                )),
+            }
 
             // Don't fail the command if command report fails to write. TODO(ctolliday) show a warning?
             let _unused = result.write_command_report(
@@ -791,4 +812,85 @@ pub enum EventsCtxError {
         source: buck2_error::Error,
         other: buck2_error::Error,
     },
+}
+
+#[cfg(test)]
+mod tests {
+    use std::time::Duration;
+    use std::time::SystemTime;
+
+    use async_trait::async_trait;
+    use buck2_fs::paths::abs_path::AbsPathBuf;
+    use buck2_wrapper_common::invocation_id::TraceId;
+
+    use crate::events_ctx::EventsCtx;
+    use crate::exit_result::ExitResult;
+    use crate::subscribers::recorder::InvocationRecorder;
+    use crate::subscribers::subscriber::EventSubscriber;
+
+    struct SlowFinalize(Duration);
+
+    #[async_trait]
+    impl EventSubscriber for SlowFinalize {
+        fn name(&self) -> &'static str {
+            "slow"
+        }
+
+        async fn finalize(self: Box<Self>) -> buck2_error::Result<()> {
+            tokio::time::sleep(self.0).await;
+            Ok(())
+        }
+    }
+
+    /// The finalizing errors written to the command report when the only other subscriber
+    /// takes `slow` to finalize. The recorder has no Scribe sink here, so its `finalize`
+    /// leaves a "Scribe sink not enabled" error whenever it runs: that error is the evidence
+    /// that the invocation record was attempted.
+    fn finalizing_errors(slow: Duration) -> Vec<String> {
+        buck2_events::sink::remote::disable();
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .start_paused(true)
+            .build()
+            .unwrap();
+        let recorder = InvocationRecorder::new(TraceId::new(), None, SystemTime::now(), vec![]);
+        let mut ctx = EventsCtx::new(Some(recorder), vec![Box::new(SlowFinalize(slow))]);
+        let dir = tempfile::tempdir().unwrap();
+        let path = AbsPathBuf::new(dir.path().join("command_report.json")).unwrap();
+        ctx.command_report_path = Some(path.clone());
+        let res = ctx.finalize_events(TraceId::new(), ExitResult::success(), &runtime);
+        assert!(res.is_success());
+        let report: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        report["finalizing_error_messages"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|v| v.as_str().unwrap().to_owned())
+            .collect()
+    }
+
+    #[test]
+    fn test_recorder_is_finalized_after_a_fast_subscriber() {
+        let errors = finalizing_errors(Duration::ZERO);
+        assert_eq!(errors.len(), 1, "{errors:?}");
+        assert!(
+            errors[0].contains("'invocation recorder' failed to finalize"),
+            "{errors:?}"
+        );
+        assert!(errors[0].contains("Scribe sink not enabled"), "{errors:?}");
+    }
+
+    /// A subscriber that takes longer than the cleanup budget is reported as a timeout, and the
+    /// invocation record is still attempted afterwards.
+    #[test]
+    fn test_slow_subscriber_does_not_skip_the_invocation_record() {
+        let errors = finalizing_errors(Duration::from_secs(31));
+        assert_eq!(errors.len(), 2, "{errors:?}");
+        assert_eq!(errors[0], "Timeout after 30s waiting for logging cleanup");
+        assert!(
+            errors[1].contains("'invocation recorder' failed to finalize"),
+            "{errors:?}"
+        );
+    }
 }

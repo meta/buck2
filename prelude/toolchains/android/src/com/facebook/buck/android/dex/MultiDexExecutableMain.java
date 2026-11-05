@@ -158,8 +158,8 @@ public class MultiDexExecutableMain {
   private void run() throws IOException {
     Optional<Integer> minSdkVersion =
         Optional.ofNullable(minSdkVersionString).map(Integer::parseInt);
-    Path d8OutputDir = Files.createTempDirectory("d8_output_dir");
-    Path canaryClassDirectory = Files.createTempDirectory("canary_classes");
+    Path d8OutputDir = Files.createTempDirectory(getScratchPath(), "d8_output_dir");
+    Path canaryClassDirectory = Files.createTempDirectory(getScratchPath(), "canary_classes");
     ImmutableList<Path> filesToDex = readInputPaths(Paths.get(filesToDexList));
     ImmutableSet<Path> classpathFiles =
         classpathFilesList == null
@@ -177,7 +177,8 @@ public class MultiDexExecutableMain {
           !deliberatelySculptingPrimaryDex,
           "Pre-dexed native multidex inputs do not support primary dex sculpting");
     }
-    Path primaryDexClassNamesPath = Files.createTempFile("primary_dex_class_names", "txt");
+    Path primaryDexClassNamesPath =
+        Files.createTempFile(getScratchPath(), "primary_dex_class_names", "txt");
     Path bootstrapDexOutputDir = null;
     if (bootstrapDexOutputDirString != null) {
       bootstrapDexOutputDir = Paths.get(bootstrapDexOutputDirString);
@@ -219,7 +220,8 @@ public class MultiDexExecutableMain {
           Preconditions.checkNotNull(
               bootstrapDexOutputDir,
               "Need to supply --bootstrap-dex-output-dir with --enable-bootstrap-dexes");
-          Path d8OutputDirInitial = Files.createTempDirectory("d8_output_dir_bootstrap");
+          Path d8OutputDirInitial =
+              Files.createTempDirectory(getScratchPath(), "d8_output_dir_bootstrap");
           // Similar as the below minimizePrimaryDex case, but generate potentially many dex files
           // for the base.apk file using the split up primary pattern matching jars (output path to
           // d8 is a dir instead of single file as above). However many .dex files created beyond
@@ -383,6 +385,15 @@ public class MultiDexExecutableMain {
         d8OutputDir, moduleDexFilesEmitted, canariesCreated, minSdkVersion);
   }
 
+  private static Path getScratchPath() {
+    String scratchPath = System.getenv("BUCK_SCRATCH_PATH");
+    if (scratchPath == null || scratchPath.isEmpty()) {
+      throw new IllegalStateException(
+          "BUCK_SCRATCH_PATH environment variable must be set and non-empty");
+    }
+    return Paths.get(scratchPath);
+  }
+
   static ImmutableList<Path> readInputPaths(Path inputList) throws IOException {
     ImmutableList.Builder<Path> inputs = ImmutableList.builder();
     for (String line : Files.readAllLines(inputList)) {
@@ -441,7 +452,7 @@ public class MultiDexExecutableMain {
       throws IOException {
     Path secondaryDexesWithCanaries = Paths.get(secondaryDexOutputDirString);
     Files.createDirectories(secondaryDexesWithCanaries);
-    Path canaryClassDirectory = Files.createTempDirectory("canary_classes");
+    Path canaryClassDirectory = Files.createTempDirectory(getScratchPath(), "canary_classes");
     // Check if a previous step has already consumed the classes.dex file from this output dir. If
     // so, count beyond it.
     long secondaryDexCount;
@@ -650,7 +661,8 @@ public class MultiDexExecutableMain {
    */
   Path synthesizePrimaryDexClassNamesFileForDexes(ImmutableList<Path> filesToDex, String desc)
       throws IOException {
-    Path primaryDexClassNamesPath = Files.createTempFile("primary_dex_class_names_" + desc, "txt");
+    Path primaryDexClassNamesPath =
+        Files.createTempFile(getScratchPath(), "primary_dex_class_names_" + desc, "txt");
     String className = extractFirstClassNameFromInputs(filesToDex);
     Files.write(primaryDexClassNamesPath, ImmutableList.of(className));
     return primaryDexClassNamesPath;

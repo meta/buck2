@@ -31,6 +31,7 @@ BUCK2_SHOW_SOFT_ERRORS           String
 BUCK2_TEST_BLOCK_ON_UPLOAD       bool                  false
 BUCK2_TEST_TPX_USE_TCP           bool                  false
 BUCK2_WATCHMAN_TIMEOUT           u64                   57
+BUCKD_LAUNCH_TIMEOUT             u64
 BUCKD_STARTUP_INIT_TIMEOUT       u64
 BUCKD_STARTUP_TIMEOUT            u64
 BUCK_CONSOLE                     String
@@ -47,6 +48,7 @@ BUCK_WRAPPER_START_TIME          u64
 CI                               bool                  false
 CODING_AGENT_METADATA            String
 ENFORCE_DISPATCHER_SET           bool                  false
+FAAS_CONTAINER_MEM_SOFT_LIMIT    u64
 FORCE_WANT_RESTART               bool                  false
 SANDCASTLE                       String
 SANDCASTLE_ALIAS                 String

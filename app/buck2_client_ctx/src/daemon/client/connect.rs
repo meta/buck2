@@ -363,16 +363,45 @@ pub async fn new_daemon_api_client(
     .max_decoding_message_size(usize::MAX))
 }
 
-pub fn buckd_startup_timeout() -> buck2_error::Result<Duration> {
+// Client-side startup timeouts:
+//   BUCKD_STARTUP_TIMEOUT       10 s  connect to an existing daemon (also `buck2 kill`, `--no-buckd` lock)
+//   BUCKD_LAUNCH_TIMEOUT        30 s  wait for the daemon launcher to complete; falls back to BUCKD_STARTUP_TIMEOUT when that is larger
+//   BUCKD_STARTUP_INIT_TIMEOUT  90 s  the whole connect-or-start sequence; bounds the other two
+
+/// The connect timeout (`BUCKD_STARTUP_TIMEOUT`; env var name is historical).
+pub fn buckd_connect_timeout() -> buck2_error::Result<Duration> {
     Ok(Duration::from_secs(
         buck2_env!("BUCKD_STARTUP_TIMEOUT", type=u64)?.unwrap_or(10),
     ))
 }
 
+/// The launcher wait (`BUCKD_LAUNCH_TIMEOUT`), clamped to the remaining startup deadline.
+pub fn buckd_launch_timeout() -> buck2_error::Result<Duration> {
+    Ok(launch_timeout_from(
+        buck2_env!("BUCKD_LAUNCH_TIMEOUT", type=u64)?,
+        buckd_connect_timeout()?,
+    ))
+}
+
+/// The overall startup deadline (`BUCKD_STARTUP_INIT_TIMEOUT`).
 pub fn buckd_startup_init_timeout() -> buck2_error::Result<Duration> {
     Ok(Duration::from_secs(
         buck2_env!("BUCKD_STARTUP_INIT_TIMEOUT", type=u64)?.unwrap_or(90),
     ))
+}
+
+const DEFAULT_LAUNCH_TIMEOUT: Duration = Duration::from_secs(30);
+
+/// An explicit `BUCKD_LAUNCH_TIMEOUT` is taken literally.
+fn launch_timeout_from(launch_timeout_secs: Option<u64>, connect_timeout: Duration) -> Duration {
+    match launch_timeout_secs {
+        Some(secs) => Duration::from_secs(secs),
+        None => connect_timeout.max(DEFAULT_LAUNCH_TIMEOUT),
+    }
+}
+
+fn launcher_wait(configured: Duration, remaining: Duration) -> Duration {
+    configured.min(remaining)
 }
 
 struct ExecutableAndArgs<'a> {
@@ -424,7 +453,11 @@ impl<'a> BuckdLifecycle<'a> {
             .tag(ErrorTag::DaemonDirCleanupFailed)
     }
 
-    async fn start_server(&self, options: &BuckdConnectDaemonOptions) -> buck2_error::Result<()> {
+    async fn start_server(
+        &self,
+        options: &BuckdConnectDaemonOptions,
+        deadline: &StartupDeadline,
+    ) -> buck2_error::Result<()> {
         let constraints = &options.constraints;
         let mut args = vec!["--isolation-dir", self.paths.isolation.as_str(), "daemon"];
 
@@ -500,6 +533,7 @@ impl<'a> BuckdLifecycle<'a> {
                 &daemon_env_vars,
                 &constraints.daemon_startup_config,
                 &daemon_id,
+                deadline,
             )
             .await
         } else {
@@ -534,9 +568,16 @@ impl<'a> BuckdLifecycle<'a> {
         daemon_env_vars: &[(&OsStr, OsString)],
         daemon_startup_config: &DaemonStartupConfig,
         daemon_id: &DaemonId,
+        deadline: &StartupDeadline,
     ) -> buck2_error::Result<()> {
         let project_dir = self.paths.project_root();
-        let timeout_secs = buckd_startup_timeout()?;
+        // The launcher gets its own budget, but never more than the overall startup deadline has
+        // left; when the deadline is the smaller of the two it is the effective wait.
+        let configured_timeout = buckd_launch_timeout()?;
+        let timeout_secs = launcher_wait(
+            configured_timeout,
+            deadline.rem_duration("launching buck2 daemon")?,
+        );
 
         // Create a unique name that we know won't overlap with other buck2 daemons and has enough
         // information to understand at least a little bit about which daemon it is
@@ -659,6 +700,7 @@ impl<'a> BuckdLifecycle<'a> {
             {
                 Err(BuckdConnectError::BuckDaemonLaunchTimeout {
                     timeout: timeout_secs,
+                    configured: configured_timeout,
                     elapsed,
                     stdout: String::from_utf8_lossy(&stdout).to_string(),
                     stderr: String::from_utf8_lossy(&stderr).to_string(),
@@ -721,6 +763,17 @@ fn maybe_killed_by_sigkill(_status: std::process::ExitStatus) -> bool {
 fn launch_wait_note(timeout: Duration, elapsed: Duration) -> String {
     if elapsed.as_secs() > timeout.as_secs() {
         format!(" (waited {}s)", elapsed.as_secs())
+    } else {
+        String::new()
+    }
+}
+
+fn launch_timeout_note(timeout: Duration, configured: Duration) -> String {
+    if timeout < configured {
+        format!(
+            " (launch timeout {}s, clamped to the remaining startup deadline)",
+            configured.as_secs()
+        )
     } else {
         String::new()
     }
@@ -875,7 +928,7 @@ pub async fn connect_buckd(
 pub async fn establish_connection_existing(
     daemon_dir: &DaemonDir,
 ) -> buck2_error::Result<BootstrapBuckdClient> {
-    let deadline = StartupDeadline::duration_from_now(buckd_startup_timeout()?)?;
+    let deadline = StartupDeadline::duration_from_now(buckd_connect_timeout()?)?;
     deadline
         .run(
             "establishing connection to existing Buck daemon",
@@ -1164,7 +1217,7 @@ async fn start_new_buckd_and_connect(
 
     // Now there's definitely no server that can be connected to
     lifecycle_lock
-        .start_server(options)
+        .start_server(options, &deadline)
         .await
         .buck_error_context("Error starting buck2 daemon")?;
     // It might take a little bit for the daemon server to start up. We could wait for the buckd.info
@@ -1239,7 +1292,7 @@ async fn try_connect_existing(
     timeout: &StartupDeadline,
     _lock: &BuckdLifecycle<'_>,
 ) -> Result<BuckdChannel, buck2_data::DaemonWasStartedReason> {
-    let timeout: buck2_error::Result<_> = try { timeout.min(buckd_startup_timeout()?)? };
+    let timeout: buck2_error::Result<_> = try { timeout.min(buckd_connect_timeout()?)? };
     let Ok(timeout) = timeout else {
         return Err(buck2_data::DaemonWasStartedReason::TimeoutCalculationError);
     };
@@ -1419,14 +1472,18 @@ enum BuckdConnectError {
         error: buck2_error::Error,
     },
     #[error(
-        "buck2 daemon launcher did not complete within {}s{}; the host may be overloaded \
+        "buck2 daemon launcher did not complete within {}s{}{}; the host may be overloaded \
          (systemd-run / cgroup setup / Eden chdir / binary page-in); killed it\nstdout:\n{stdout}\nstderr:\n{stderr}",
         .timeout.as_secs(),
-        launch_wait_note(*.timeout, *.elapsed)
+        launch_wait_note(*.timeout, *.elapsed),
+        launch_timeout_note(*.timeout, *.configured)
     )]
     #[buck2(tag = DaemonLaunchTimeout)]
     BuckDaemonLaunchTimeout {
+        /// The effective wait (`launcher_wait`).
         timeout: Duration,
+        /// The configured launch timeout (`buckd_launch_timeout`).
+        configured: Duration,
         /// Spawn-to-kill time; shown only when it overshoots `timeout` by a second or more.
         elapsed: Duration,
         stdout: String,
@@ -1553,7 +1610,7 @@ async fn daemon_connect_error(
     {daemon_process_info}
 
     The daemon launcher was killed because it did not complete in time; try again, and if the \
-    host is busy raise the launcher wait (`BUCKD_STARTUP_TIMEOUT`, in seconds)"
+    host is busy raise the launcher wait (`BUCKD_LAUNCH_TIMEOUT`, in seconds; default 30)"
         )
     } else {
         format!(
@@ -1737,6 +1794,7 @@ mod tests {
 
         let killed_by_client: buck2_error::Error = BuckdConnectError::BuckDaemonLaunchTimeout {
             timeout: Duration::from_secs(10),
+            configured: Duration::from_secs(30),
             elapsed: Duration::from_millis(10_020),
             stdout: String::new(),
             stderr: String::new(),
@@ -1746,6 +1804,7 @@ mod tests {
         assert_eq!(killed_by_client.category_key(), "DAEMON_LAUNCH_TIMEOUT");
         let message = format!("{:#}", killed_by_client);
         assert!(message.contains("did not complete within 10s"), "{message}");
+        assert!(message.contains("launch timeout 30s"), "{message}");
         // 10.02 s against a 10 s budget is not worth repeating.
         assert!(!message.contains("waited"), "{message}");
         assert_eq!(
@@ -1775,6 +1834,95 @@ mod tests {
         assert_eq!(
             killed_by_someone_else.category_key(),
             "DAEMON_STARTUP_FAILED:SIGKILL"
+        );
+    }
+
+    #[test]
+    fn test_launch_timeout_message() {
+        for (timeout, configured, expected_note) in [
+            (Duration::from_secs(30), Duration::from_secs(30), ""),
+            (Duration::from_secs(120), Duration::from_secs(120), ""),
+            (Duration::ZERO, Duration::ZERO, ""),
+            (
+                Duration::from_secs(12),
+                Duration::from_secs(30),
+                " (launch timeout 30s, clamped to the remaining startup deadline)",
+            ),
+            (
+                Duration::from_millis(29_900),
+                Duration::from_secs(30),
+                " (launch timeout 30s, clamped to the remaining startup deadline)",
+            ),
+            (
+                Duration::ZERO,
+                Duration::from_secs(30),
+                " (launch timeout 30s, clamped to the remaining startup deadline)",
+            ),
+        ] {
+            let error: buck2_error::Error = BuckdConnectError::BuckDaemonLaunchTimeout {
+                timeout,
+                configured,
+                elapsed: timeout,
+                stdout: String::new(),
+                stderr: String::new(),
+            }
+            .into();
+            let message = format!("{error:#}");
+            assert!(
+                message.starts_with(&format!(
+                    "buck2 daemon launcher did not complete within {}s{expected_note}; the host",
+                    timeout.as_secs()
+                )),
+                "{message}"
+            );
+            assert_eq!(error.category_key(), "DAEMON_LAUNCH_TIMEOUT");
+        }
+    }
+
+    /// The launcher wait is its own knob: 30 s by default, a raised `BUCKD_STARTUP_TIMEOUT` when
+    /// that is larger (it used to bound the launcher), `BUCKD_LAUNCH_TIMEOUT` when set; and it
+    /// is clamped to whatever the overall startup deadline has left.
+    #[test]
+    fn test_launcher_wait() {
+        if std::env::var_os("BUCKD_LAUNCH_TIMEOUT").is_none()
+            && std::env::var_os("BUCKD_STARTUP_TIMEOUT").is_none()
+        {
+            assert_eq!(buckd_launch_timeout().unwrap(), Duration::from_secs(30));
+            assert_eq!(buckd_connect_timeout().unwrap(), Duration::from_secs(10));
+        }
+        // Unset: the default, unless `BUCKD_STARTUP_TIMEOUT` was raised above it.
+        assert_eq!(
+            launch_timeout_from(None, Duration::from_secs(10)),
+            Duration::from_secs(30)
+        );
+        assert_eq!(
+            launch_timeout_from(None, Duration::from_secs(0)),
+            Duration::from_secs(30)
+        );
+        assert_eq!(
+            launch_timeout_from(None, Duration::from_secs(120)),
+            Duration::from_secs(120)
+        );
+        // Set: taken literally, even below the startup timeout.
+        assert_eq!(
+            launch_timeout_from(Some(0), Duration::from_secs(120)),
+            Duration::ZERO
+        );
+        assert_eq!(
+            launch_timeout_from(Some(45), Duration::from_secs(10)),
+            Duration::from_secs(45)
+        );
+        assert_eq!(
+            launcher_wait(Duration::from_secs(30), Duration::from_secs(90)),
+            Duration::from_secs(30)
+        );
+        assert_eq!(
+            launcher_wait(Duration::from_secs(30), Duration::from_secs(12)),
+            Duration::from_secs(12)
+        );
+        assert_eq!(
+            launcher_wait(Duration::from_secs(0), Duration::from_secs(90)),
+            Duration::ZERO
         );
     }
 

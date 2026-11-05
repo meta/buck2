@@ -28,7 +28,7 @@ use tonic::transport::Channel;
 use crate::daemon::client::BuckdLifecycleLock;
 use crate::daemon::client::connect::BuckAddAuthTokenInterceptor;
 use crate::daemon::client::connect::BuckdProcessInfo;
-use crate::daemon::client::connect::buckd_startup_timeout;
+use crate::daemon::client::connect::buckd_connect_timeout;
 use crate::startup_deadline::StartupDeadline;
 
 const GRACEFUL_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(4);
@@ -56,7 +56,7 @@ pub async fn kill_command_impl(
         }
     };
 
-    let buckd = tokio::time::timeout(buckd_startup_timeout()?, async {
+    let buckd = tokio::time::timeout(buckd_connect_timeout()?, async {
         let channel = process.create_channel().await.map_err(|e| (e, false))?;
         channel.upgrade().await.map_err(|e| (e, true))
     })

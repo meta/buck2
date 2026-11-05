@@ -76,6 +76,7 @@ BUCK2_TEST_TOMBSTONED_DIGESTS                  BuckMutSet<FileDigest>
 BUCK2_TEST_TPX_USE_TCP                         bool                   false
 BUCK2_TEST_WRITE_ACTION_CACHE_KEY_DUMP         String
 BUCK2_WATCHMAN_TIMEOUT                         u64                    57
+BUCKD_LAUNCH_TIMEOUT                           u64
 BUCKD_STARTUP_INIT_TIMEOUT                     u64
 BUCKD_STARTUP_TIMEOUT                          u64
 BUCK_CONSOLE                                   String
@@ -93,6 +94,7 @@ CI                                             bool                   false
 CODING_AGENT_METADATA                          String
 COMPLETION_VERIFY_LOCKFILE                     String
 ENFORCE_DISPATCHER_SET                         bool                   false
+FAAS_CONTAINER_MEM_SOFT_LIMIT                  u64
 FORCE_WANT_RESTART                             bool                   false
 SANDCASTLE                                     String
 SANDCASTLE_ALIAS                               String

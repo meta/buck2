@@ -16,6 +16,7 @@ def _opts_for_tests_arg() -> Attr:
     #     "listing_capabilities": Dict<str, str> | None
     #     "local_listing_enabled": bool | None
     #     "local_enabled": bool |  None
+    #     "remote_enabled": bool | None
     #     "use_case": str | None
     #     "remote_cache_enabled": bool | None
     #     "dependencies": list<Dict<str, str>> | []

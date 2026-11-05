@@ -271,12 +271,12 @@ impl<'a> TypingOracleCtx<'a> {
                         }
                     }
                     [arg] => self.validate_type(*arg, &param.ty)?,
-                    [_, _, ..] => {
-                        return Err(TypingOrInternalError::Internal(InternalError::msg(
-                            "Multiple arguments bound to parameter",
-                            span,
-                            self.codemap,
-                        )));
+                    [_, arg, ..] => {
+                        // A user error, like the runtime reports it; not a typechecker bug.
+                        return Err(self.msg_error(
+                            arg.span,
+                            format!("Argument `{}` occurs more than once", param.name_display()),
+                        ));
                     }
                 },
                 ParamMode::Args => {

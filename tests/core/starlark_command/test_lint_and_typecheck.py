@@ -66,3 +66,16 @@ class LintAndTypecheckTest(BuckTestCase):
             stderr_regex="Detected 1 errors",
         )
         assert "Variable `y` not found" in failure.stdout, failure.stdout
+
+    @buck_test()
+    async def test_typecheck_reports_duplicate_argument(self, buck: Buck) -> None:
+        # A parameter bound both positionally and by name is a typing error naming it, as at
+        # runtime, not an internal error; a union of callables where another alternative accepts
+        # the call is accepted.
+        failure = await expect_failure(
+            buck.starlark("typecheck", "duplicate_arg.bzl"),
+            stderr_regex="Detected 1 errors",
+        )
+        assert "Argument `a` occurs more than once" in failure.stdout, failure.stdout
+        assert "Internal error" not in failure.stdout, failure.stdout
+        await buck.starlark("typecheck", "duplicate_arg_union.bzl")

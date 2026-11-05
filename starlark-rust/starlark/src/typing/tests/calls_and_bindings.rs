@@ -57,6 +57,14 @@ fn eval(code: &str, static_typecheck: bool) -> Result<String, String> {
     .unwrap()
 }
 
+/// `defs` is accepted by both typecheckers and `defs + call` runs.
+#[track_caller]
+fn accepted_and_runs(defs: &str, call: &str) {
+    assert_eq!(lint(defs), None);
+    eval(defs, true).expect("compiler typechecker rejected");
+    eval(&format!("{defs}\n{call}"), false).expect("runtime failed");
+}
+
 /// `<undefined>.append(..)` inside a def is a scope error for the lint typechecker, like it is
 /// for the compiler typechecker, not a panic.
 #[test]
@@ -69,5 +77,20 @@ fn test_lint_reports_unresolved_append() {
         eval("def t():\n    y.append(1)\n", true)
             .unwrap_err()
             .contains("Variable `y` not found")
+    );
+}
+
+/// A name passed both positionally and by keyword is a typing error naming the parameter, and
+/// a union of callables where another alternative accepts the call is accepted.
+#[test]
+fn test_duplicate_argument_is_a_typing_error() {
+    let err = lint("def f(a, b): pass\ndef use():\n    f(1, a = 2)\n").unwrap();
+    assert!(err.contains("Argument `a` occurs more than once"), "{err}");
+    assert!(!err.contains("Internal error"), "{err}");
+    let err = eval("def f(a, b): pass\nf(1, a = 2)", false).unwrap_err();
+    assert!(err.contains("occurs more than once"), "{err}");
+    accepted_and_runs(
+        "def f(a, b): pass\ndef h(*args, **kwargs): pass\ndef t(c):\n    k = f if c else h\n    k(1, a = 2)\n",
+        "t(False)",
     );
 }

@@ -669,14 +669,22 @@ impl CliArgType {
                         .collect::<buck2_error::Result<_>>()?,
                     )),
                 },
-                CliArgType::Option(inner) => Some(if clap.value_of().is_some() {
-                    inner
-                        .parse_clap(clap, ctx)
-                        .await?
-                        .expect("arg is verified to be present")
-                } else {
-                    CliArgValue::None
-                }),
+                CliArgType::Option(inner) => {
+                    if clap.is_present() {
+                        // A flag present with no values (a bare `--flag` for a list) parses
+                        // like the inner type does.
+                        Some(
+                            inner
+                                .parse_clap(clap, ctx)
+                                .await?
+                                .unwrap_or(CliArgValue::None),
+                        )
+                    } else {
+                        // Absent: `CliArgs::parse_clap` applies the declared default, which
+                        // `option()` set to `None` when the script gave none.
+                        None
+                    }
+                }
                 CliArgType::TargetLabel => clap.value_of().map_or(Ok(None), |x| {
                     let r: buck2_error::Result<_> = try {
                         CliArgValue::TargetLabel(
@@ -1279,6 +1287,14 @@ pub(crate) enum ArgAccessor<'a> {
 }
 
 impl<'a> ArgAccessor<'a> {
+    /// Whether the flag was given at all, including with no values.
+    fn is_present(&self) -> bool {
+        match self {
+            ArgAccessor::Clap { clap, arg } => clap.value_source(arg).is_some(),
+            ArgAccessor::Literal(_) => true,
+        }
+    }
+
     fn value_of(&self) -> Option<&str> {
         match self {
             ArgAccessor::Clap { clap, arg } => clap.get_one::<String>(arg).map(|x| x.as_str()),

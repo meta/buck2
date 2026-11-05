@@ -734,3 +734,29 @@ class CliTest(BuckTestCase):
             "--json-file",
             "a.json",
         )
+
+    @buck_test()
+    async def test_bxl_cli_option_default_is_used(self, buck: Buck) -> None:
+        # `cli_args.option(T, default = X)` gives X when the flag is absent, and None when no
+        # default was declared.
+        result = await buck.bxl("//cli_args.bxl:cli_option_default")
+        assert "opt_int: 5\n" in result.stdout
+        assert 'opt_str: "consumer"\n' in result.stdout
+        assert "opt_bool: True\n" in result.stdout
+        assert "opt_list: None\n" in result.stdout
+
+        # A given flag wins.
+        result = await buck.bxl(
+            "//cli_args.bxl:cli_option_default",
+            "--",
+            "--opt_int",
+            "7",
+            "--opt_bool",
+            "false",
+        )
+        assert "opt_int: 7\n" in result.stdout
+        assert "opt_bool: False\n" in result.stdout
+
+        # A bare `--opt_list` gives [] like a plain list arg does.
+        result = await buck.bxl("//cli_args.bxl:cli_option_default", "--", "--opt_list")
+        assert "opt_list: []\n" in result.stdout

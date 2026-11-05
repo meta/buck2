@@ -55,6 +55,16 @@ pub(crate) struct BackedValue {
     pub(crate) serialized_bytes: u64,
 }
 
+impl BackedValue {
+    fn new(value: DiceValidValue, data_key: DataKey, serialized_bytes: u64) -> Box<Self> {
+        Box::new(Self {
+            value,
+            data_key,
+            serialized_bytes,
+        })
+    }
+}
+
 mini_vec::size_assert::words_of_type!(PagableValue, 3);
 
 impl PagableValue {
@@ -126,11 +136,9 @@ impl PagableValue {
         if let PagableValue::PagedOut(data_key) = *self {
             *self = match policy {
                 PageOutPolicy::OncePerKey => PagableValue::Recomputed(value),
-                PageOutPolicy::OncePerValue => PagableValue::Backed(Box::new(BackedValue {
-                    value,
-                    data_key,
-                    serialized_bytes,
-                })),
+                PageOutPolicy::OncePerValue => {
+                    PagableValue::Backed(BackedValue::new(value, data_key, serialized_bytes))
+                }
             };
         }
     }
@@ -144,13 +152,8 @@ impl PagableValue {
         serialized_bytes: u64,
         policy: EvictionPolicy,
     ) -> RowCommitted {
-        let backed = |value| {
-            PagableValue::Backed(Box::new(BackedValue {
-                value,
-                data_key,
-                serialized_bytes,
-            }))
-        };
+        let backed =
+            |value| PagableValue::Backed(BackedValue::new(value, data_key, serialized_bytes));
         match std::mem::replace(self, PagableValue::PagedOut(data_key)) {
             PagableValue::NeverPagedOut(value) => match policy {
                 EvictionPolicy::OnIdle => RowCommitted::Evicted,

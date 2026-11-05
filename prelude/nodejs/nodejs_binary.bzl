@@ -93,6 +93,7 @@ def _directory_main(ctx: AnalysisContext, mains: list[Artifact], srcs: list[Arti
         dir = None,
         runtime = None,
         entries = [NodejsEntry(name = entry_point, path = cmd_args(mains[0], format = "{}/" + entry_point))],
+        dir_paths = [],
         hidden = [],
         resources = list(ctx.attrs.resources),
         env = dict(ctx.attrs.env),
@@ -120,6 +121,7 @@ def stage_nodejs_entries(
     - `dir`: the staged directory, if any.
     - `runtime`: `dir`, or `None` when `mains` run in place.
     - `entries`: a `NodejsEntry` per main, or for the `library`'s entry.
+    - `dir_paths`: the path of each entry in `dir`.
     - `hidden`: the inputs of an in-place run.
     - `resources`: the `resources` of an in-place run.
     - `env`: the environment to run with.
@@ -200,13 +202,10 @@ def stage_nodejs_entries(
     runtime = staged_dir if dep_infos or data_deps or tree_infos or bundled_node or stage or isinstance(ctx.attrs.resources, dict) else None
 
     hidden = []
+    dir_paths = list(mains_by_path)
     if lib_info != None:
-        entries = [
-            NodejsEntry(
-                name = entry_point,
-                path = cmd_args(runtime, format = "{}/node_modules/" + lib_info.dir_name + "/" + entry_point),
-            ),
-        ]
+        dir_paths = ["node_modules/" + lib_info.dir_name + "/" + entry_point]
+        entries = [NodejsEntry(name = entry_point, path = cmd_args(runtime, format = "{}/" + dir_paths[0]))]
     elif runtime != None:
         entries = [NodejsEntry(name = path, path = cmd_args(runtime, format = "{}/" + path)) for path in mains_by_path]
     else:
@@ -217,6 +216,7 @@ def stage_nodejs_entries(
         dir = staged_dir,
         runtime = runtime,
         entries = entries,
+        dir_paths = dir_paths,
         hidden = hidden,
         resources = list(ctx.attrs.resources) if runtime == None else [],
         env = dict(ctx.attrs.env),

@@ -15,12 +15,16 @@ package_tree.py archive --src DIR --format FORMAT --out FILE [--root ROOT] [--ex
 package_tree.py compress --src FILE --out OUT [--sha256 FILE] --zstd ZSTD...
 package_tree.py manifest --tree DIR --out FILE
 package_tree.py strip-types --src DIR --out DIR
+package_tree.py build --dir DIR --output-path PATH --out DIR [--root-prefix PREFIX] [--env-key KEY]... --command COMMAND...
 package_tree.py validate-package --package DIR --name NAME [--dir-name NAME] [--main PATH] [--bin NAME:PATH]... [--type TYPE] [--version VERSION]
     [--module DIR [--module-src-root PATH]] --out FILE
 
 The `--entries` file of `assemble-package` is a JSON list of
 `[path, src, name]` entries: `src` is copied to the package-relative `path`,
 and `name` describes the entry in error messages.
+
+`build` runs `COMMAND` in a writable copy of a staged directory and copies the
+directory it writes at `PATH` to `--out`.
 
 `validate-package` writes a Buck2 validation result: a failure lists every
 problem with the package's `package.json`.
@@ -42,6 +46,7 @@ import stat
 import subprocess
 import sys
 import tarfile
+import tempfile
 import zipfile
 from collections.abc import Collection, Iterator, Sequence
 from pathlib import Path
@@ -1303,6 +1308,65 @@ def _starts_with_shebang(path: Path) -> bool:
         return f.read(5).removeprefix(b"\xef\xbb\xbf")[:2] == b"#!"
 
 
+def run_build(
+    staged: Path,
+    output_path: str,
+    out: Path,
+    command: Sequence[str],
+    work_parent: Path,
+    root_prefix: str = "",
+    env_keys: Collection[str] = (),
+) -> int:
+    """Run `command` in a copy of `staged` and copy the directory it writes at `output_path` to `out`.
+
+    The copy is made in `work_parent`. Files outside `node_modules` are
+    copied, so the command may write beside them; each entry of
+    `node_modules` is a symlink to the staged one, so packages resolve to
+    their staged location. In `command` and in the environment variables
+    `env_keys`, `root_prefix` is replaced by the current directory, which
+    the command no longer runs in. Symlinks are copied as their targets,
+    both into the copy and to `out`. Returns the command's exit code, or 1
+    if it wrote no `output_path` directory. Raises `ValueError` on a
+    symlink cycle and `OSError` if a symlink cannot be made or a file
+    cannot be copied.
+    """
+    root = os.getcwd() + os.sep
+    work = work_parent / "work"
+    if work.exists():
+        shutil.rmtree(work)
+    work.mkdir(parents=True)
+    for child in sorted(staged.iterdir()):
+        if child.name == "node_modules":
+            (work / child.name).mkdir()
+            for package in sorted(child.iterdir()):
+                target = package.resolve()
+                (work / child.name / package.name).symlink_to(
+                    target, target_is_directory=target.is_dir()
+                )
+        elif child.is_dir():
+            _copy_resolved(child, work / child.name, set())
+        else:
+            shutil.copy(child, work / child.name)
+    env = dict(os.environ)
+    if root_prefix:
+        command = [arg.replace(root_prefix, root) for arg in command]
+        for key in env_keys:
+            if key in env:
+                env[key] = env[key].replace(root_prefix, root)
+    code = subprocess.run(command, cwd=work, env=env).returncode
+    if code != 0:
+        return code
+    built = work / output_path
+    if not built.is_dir():
+        print(
+            f"build: the command wrote no directory at '{output_path}'",
+            file=sys.stderr,
+        )
+        return 1
+    _copy_resolved(built, out, set())
+    return 0
+
+
 def write_validation_result(out: Path, errors: list[str]) -> None:
     """Write `errors` as a Buck2 validation result: a failure listing them, or a success when there are none."""
     data = (
@@ -1399,6 +1463,32 @@ def _run_compress(args: argparse.Namespace) -> int:
     return 0
 
 
+def _run_build(args: argparse.Namespace) -> int:
+    if not args.command_args:
+        raise ValueError("--command requires a command")
+    scratch = os.environ.get("BUCK_SCRATCH_PATH")
+    if scratch:
+        return run_build(
+            args.dir,
+            args.output_path,
+            args.out,
+            args.command_args,
+            _path(scratch),
+            args.root_prefix,
+            args.env_key,
+        )
+    with tempfile.TemporaryDirectory() as tmp:
+        return run_build(
+            args.dir,
+            args.output_path,
+            args.out,
+            args.command_args,
+            Path(tmp),
+            args.root_prefix,
+            args.env_key,
+        )
+
+
 def _run_strip_types(args: argparse.Namespace) -> int:
     strip_types(args.src, args.out)
     return 0
@@ -1453,6 +1543,16 @@ def _parser() -> argparse.ArgumentParser:
         run=_run_compress,
         errors=(ValueError, OSError, subprocess.CalledProcessError),
     )
+    build = commands.add_parser("build")
+    build.add_argument("--dir", type=_path, required=True)
+    build.add_argument("--output-path", required=True)
+    build.add_argument("--out", type=_path, required=True)
+    build.add_argument("--root-prefix", default="")
+    build.add_argument("--env-key", action="append", default=[])
+    build.add_argument(
+        "--command", dest="command_args", nargs=argparse.REMAINDER, required=True
+    )
+    build.set_defaults(run=_run_build, errors=(ValueError, OSError))
     strip = commands.add_parser("strip-types")
     strip.add_argument("--src", type=_path, required=True)
     strip.add_argument("--out", type=_path, required=True)

@@ -24,6 +24,11 @@ A test module is a `BuckTestCase` subclass (`e2e_util/buck_workspace.py`); each 
 runs a method once per set of arguments, as pytest's did. The test targets are `python_unittest`s:
 `buck2 test <target> -- --regex <name>` runs one test.
 
+A test module can be written in Rust instead, on the harness in `e2e_util/rust` (see its crate
+documentation): `test_foo.rs` takes the place of `test_foo.py`, next to the same `test_foo_data`.
+Each test is an `async fn test_*(buck: &Buck)` marked `#[buck_test(...)]`, whose options are those
+of `@buck_test(...)`, written `name = value`. The test targets are `rust_unittest`s.
+
 A module still written for pytest is converted with
 `buck2 run fbcode//buck2/tests/tools/pytest_to_unittest:pytest_to_unittest -- <files>`.
 

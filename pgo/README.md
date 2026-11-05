@@ -13,7 +13,6 @@ Build the instrumented binary:
 ```bash
 buck2 build @fbcode//mode/opt \
   -m 'ovr_config//build_mode/constraints:llvm-ir-pgo[generate]' \
-  -m 'ovr_config//build_mode/constraints:llvm-ir-pgo-profile[buck2-td]' \
   --show-full-output \
   fbcode//buck2:buck2
 ```
@@ -32,25 +31,22 @@ with the compiler used for capture.
 
 ## Use
 
-First export the merged `.profdata` as a Buck target and replace `None` for
-`buck2-td` in `profiles.bzl` with that target's label. The historical
-`fbcode//buck2/pgo:td_pgo_profile` example is not a checked-in artifact.
-Until a real profile is registered, generation works but profile use builds
-without one. Do not substitute another product's profile or an empty profile.
+`//buck2/app/buck2:buck2-bin` takes its profile from `//buck2/facebook/pgo:pgo`.
+Check in the merged `.profdata`, set it as that target's `profile`, and list
+the target in `LLVM_IR_PGO_TARGETS` in `fbcode/buck2/platform/pgo/registry.bzl`.
+Until then, generation works but profile use fails explicitly. Do not
+substitute another product's profile or an empty profile.
 
-After registering the artifact:
+After registering the profile:
 
 ```bash
 buck2 build @fbcode//mode/opt \
   -m 'ovr_config//build_mode/constraints:llvm-ir-pgo[use]' \
-  -m 'ovr_config//build_mode/constraints:llvm-ir-pgo-profile[buck2-td]' \
   fbcode//buck2:buck2
 ```
 
-Keep the same profile family and other build settings for generation and use.
-The family participates in Rust symbol identity, even though generation does
-not depend on the profile artifact. Capture a fresh profile with these settings
-rather than assuming profiles from the old buckconfig build have matching names.
+Keep the other build settings the same for generation and use: a profile only
+matches the Rust symbol names of the configuration it was captured in.
 
 These are local CLI commands. CI workflows should apply the same constraints
 through a transitioned wrapper target; arbitrary CLI modifiers are restricted

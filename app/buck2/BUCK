@@ -120,6 +120,7 @@ buck_rust_binary(
     # Set via -c buck2.emit_relocs=true in the deploy script to produce a
     # binary with ELF relocations for BOLT post-link optimization.
     linker_flags = ["-Wl,--emit-relocs"] if read_config("buck2", "emit_relocs", "") == "true" else [],
+    # @oss-disable[end= ]: pgo = "//buck2/facebook/pgo:pgo",
     rustc_flags = (["--cfg=buck2_memfrag"] if _memfrag else [])
     + select({
         ":buck2_client_only_setting[build]": ["--cfg=client_only"],

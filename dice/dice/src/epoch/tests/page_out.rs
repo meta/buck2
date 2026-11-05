@@ -47,6 +47,7 @@ use pagable::storage::traits::DeserializedArcCache;
 use pagable::storage::traits::PagableStorage;
 use pagable::storage::traits::WriteTicket;
 use pagable::traits::StorageContext;
+use pagable::traits::StorageState;
 use tempfile::TempDir;
 use tempfile::tempdir;
 use tokio::sync::Notify;
@@ -2562,24 +2563,50 @@ async fn pagable_status_by_type_is_deterministically_ordered() -> anyhow::Result
 struct StagedCommitStorage {
     inner: Arc<dyn PagableStorage>,
     committed_before: u64,
+    /// Reports nothing committed until the page-out is cancelled or flushes, so
+    /// only the end of the page-out, never a periodic evictor tick, sees the frontier.
+    committed_at_end: bool,
+    flushed: AtomicBool,
     discarded: AtomicBool,
+    stored: Mutex<Vec<DataKey>>,
 }
 
 /// Rows stored by any `StagedCommitStorage`; a `PageOutCancel` is a plain
 /// function, so the cancel condition reads this instead of capturing.
 static STAGED_ROWS_STORED: AtomicU64 = AtomicU64::new(0);
 
+/// Set by the cancel conditions below, or directly by a test.
+static STAGED_PAGE_OUT_CANCELLED: AtomicBool = AtomicBool::new(false);
+
 fn cancel_once_both_rows_are_stored() -> bool {
-    STAGED_ROWS_STORED.load(Ordering::SeqCst) >= 2
+    if STAGED_ROWS_STORED.load(Ordering::SeqCst) >= 2 {
+        STAGED_PAGE_OUT_CANCELLED.store(true, Ordering::SeqCst);
+    }
+    staged_page_out_cancelled()
+}
+
+fn staged_page_out_cancelled() -> bool {
+    STAGED_PAGE_OUT_CANCELLED.load(Ordering::SeqCst)
 }
 
 impl StagedCommitStorage {
     fn new(inner: Arc<dyn PagableStorage>, committed_before: u64) -> Self {
         STAGED_ROWS_STORED.store(0, Ordering::SeqCst);
+        STAGED_PAGE_OUT_CANCELLED.store(false, Ordering::SeqCst);
         Self {
             inner,
             committed_before,
+            committed_at_end: false,
+            flushed: AtomicBool::new(false),
             discarded: AtomicBool::new(false),
+            stored: Mutex::new(Vec::new()),
+        }
+    }
+
+    fn committed_at_end(inner: Arc<dyn PagableStorage>, committed_before: u64) -> Self {
+        Self {
+            committed_at_end: true,
+            ..Self::new(inner, committed_before)
         }
     }
 }
@@ -2607,13 +2634,22 @@ impl PagableStorage for StagedCommitStorage {
     }
 
     fn store_data_ticketed(&self, data: PagableData) -> anyhow::Result<(DataKey, WriteTicket)> {
+        if let Some(gate) = self.storage_context().get::<OrdinalStoreGate>()
+            && gate.issued.fetch_add(1, Ordering::SeqCst) == 2
+        {
+            gate.block_third_store();
+        }
         let (key, _) = self.inner.store_data_ticketed(data)?;
+        self.stored.lock().expect("stored keys lock").push(key);
         let seq = STAGED_ROWS_STORED.fetch_add(1, Ordering::SeqCst) + 1;
         Ok((key, WriteTicket::new(0, seq)))
     }
 
     fn commit_frontier(&self) -> CommitFrontier {
-        CommitFrontier::new(vec![self.committed_before])
+        let visible = !self.committed_at_end
+            || staged_page_out_cancelled()
+            || self.flushed.load(Ordering::SeqCst);
+        CommitFrontier::new(vec![if visible { self.committed_before } else { 0 }])
     }
 
     fn discard_unwritten(&self) {
@@ -2621,10 +2657,18 @@ impl PagableStorage for StagedCommitStorage {
     }
 
     fn flush(&self) -> anyhow::Result<()> {
+        self.flushed.store(true, Ordering::SeqCst);
         self.inner.flush()
     }
 
     fn release_memory(&self) {
+        if let Some(probe) = self.storage_context().get::<BindingShutdownProbe>()
+            && probe.active.load(Ordering::SeqCst) != 0
+        {
+            probe
+                .caches_released_while_binding
+                .store(true, Ordering::SeqCst);
+        }
         self.inner.release_memory()
     }
 }
@@ -2725,5 +2769,332 @@ async fn cancelled_page_out_binds_arcs_of_committed_rows() -> anyhow::Result<()>
             "with rows before {committed_before} committed"
         );
     }
+    Ok(())
+}
+
+#[derive(Allocative, Clone, Dupe, Debug, Display, PartialEq, Eq, Hash, Pagable)]
+#[pagable_typetag(DiceKeyDyn)]
+struct RoundtripArcKey(u32);
+
+#[async_trait]
+impl Key for RoundtripArcKey {
+    type Value = Arc<Vec<u8>>;
+
+    async fn compute(
+        &self,
+        ctx: &mut DiceComputations,
+        _cancel: &CancellationContext,
+    ) -> Self::Value {
+        if let Ok(counter) = ctx.per_transaction_data().data.get::<ComputeCounter>() {
+            counter.0.fetch_add(1, Ordering::SeqCst);
+        }
+        Arc::new(vec![self.0 as u8; 32])
+    }
+
+    fn equality_behavior() -> EqualityBehavior<Self::Value> {
+        EqualityBehavior::Compare(|a, b| a == b)
+    }
+
+    fn value_serialize() -> impl ValueSerialize<Value = Self::Value> {
+        PagableValueSerialize::new()
+    }
+}
+
+#[tokio::test]
+async fn cancelled_page_out_retains_durable_root_backing() -> anyhow::Result<()> {
+    let _serial = PAGE_OUT_RACE_TEST_LOCK.lock().await;
+    let backing = InMemoryPagableStorage::new();
+    let storage = Arc::new(StagedCommitStorage::committed_at_end(backing.handle(), 3));
+    let (dice, root) = make_dice_with(
+        DiceStorage::new(storage.clone()),
+        PageOutPolicy::OncePerValue,
+        EvictionPolicy::OnMemoryPressure,
+    )
+    .await;
+    let counter = ComputeCounter::new();
+    let tx = dice
+        .updater_with_data(root, user_data_with_counter(&counter))
+        .commit()
+        .await;
+    assert_eq!(**tx.compute(&RoundtripArcKey(7)).await?, vec![7; 32]);
+    drop(tx);
+    dice.wait_for_idle().await;
+
+    dice.page_out_cancellable(cancel_once_both_rows_are_stored)
+        .await?;
+    let keys = storage.stored.lock().expect("stored keys lock").clone();
+    assert_eq!(keys.len(), 2, "one arc row and one root row were written");
+    for key in keys {
+        storage.fetch_data(&key).await?;
+    }
+    let counts = dice.pagable_node_counts().await;
+    assert_eq!(
+        (counts.backed, counts.candidates, counts.paged_out),
+        (1, 0, 0),
+        "the durable root must stay resident with backing even after cancellation"
+    );
+
+    let writes = dice
+        .storage_io_metrics()
+        .expect("configured storage")
+        .data_keys_out;
+    assert_eq!(dice.evict_backed().await, 1);
+    let before = page_in_count::<RoundtripArcKey>(&dice);
+    let tx = dice
+        .updater_with_data(root, user_data_with_counter(&counter))
+        .commit()
+        .await;
+    assert_eq!(**tx.compute(&RoundtripArcKey(7)).await?, vec![7; 32]);
+    drop(tx);
+    dice.wait_for_idle().await;
+    assert_eq!(page_in_count::<RoundtripArcKey>(&dice), before + 1);
+    assert_eq!(
+        counter.count(),
+        1,
+        "both root and nested arc must roundtrip, not recompute"
+    );
+    assert_eq!(dice.storage_io_metrics().unwrap().data_keys_out, writes);
+    Ok(())
+}
+
+#[tokio::test]
+async fn cancelled_page_out_does_not_back_unwritten_root() -> anyhow::Result<()> {
+    let _serial = PAGE_OUT_RACE_TEST_LOCK.lock().await;
+    let backing = InMemoryPagableStorage::new();
+    let storage = Arc::new(StagedCommitStorage::committed_at_end(backing.handle(), 2));
+    let (dice, root) = make_dice_with(
+        DiceStorage::new(storage.clone()),
+        PageOutPolicy::OncePerValue,
+        EvictionPolicy::OnMemoryPressure,
+    )
+    .await;
+    let tx = dice.updater(root).commit().await;
+    assert_eq!(**tx.compute(&RoundtripArcKey(7)).await?, vec![7; 32]);
+    drop(tx);
+    dice.wait_for_idle().await;
+    dice.page_out_cancellable(cancel_once_both_rows_are_stored)
+        .await?;
+    let counts = dice.pagable_node_counts().await;
+    assert_eq!(
+        (counts.backed, counts.candidates, counts.paged_out),
+        (0, 1, 0),
+        "frontier 2 covers the arc but not root ticket 2"
+    );
+    assert_eq!(dice.evict_backed().await, 0);
+    Ok(())
+}
+
+struct BindingShutdownProbe {
+    started: Notify,
+    block_once: AtomicBool,
+    active: AtomicUsize,
+    released: Mutex<bool>,
+    released_cv: Condvar,
+    caches_released_while_binding: AtomicBool,
+}
+
+impl StorageState for BindingShutdownProbe {}
+
+impl BindingShutdownProbe {
+    fn new() -> Self {
+        Self {
+            started: Notify::new(),
+            block_once: AtomicBool::new(false),
+            active: AtomicUsize::new(0),
+            released: Mutex::new(false),
+            released_cv: Condvar::new(),
+            caches_released_while_binding: AtomicBool::new(false),
+        }
+    }
+
+    fn release(&self) {
+        *self.released.lock().expect("binding release lock") = true;
+        self.released_cv.notify_all();
+    }
+}
+
+fn block_first_binding(context: &StorageContext, _arc: &dyn ArcEraseDyn, _key: DataKey) {
+    let probe = context
+        .get::<BindingShutdownProbe>()
+        .expect("installed binding probe");
+    if probe.block_once.swap(true, Ordering::SeqCst) {
+        return;
+    }
+    probe.active.fetch_add(1, Ordering::SeqCst);
+    probe.started.notify_one();
+    let mut released = probe.released.lock().expect("binding release lock");
+    while !*released {
+        released = probe
+            .released_cv
+            .wait(released)
+            .expect("binding release wait");
+    }
+    probe.active.fetch_sub(1, Ordering::SeqCst);
+}
+
+struct ReleaseBindingOnDrop(Arc<BindingShutdownProbe>);
+
+impl Drop for ReleaseBindingOnDrop {
+    fn drop(&mut self) {
+        self.0.release();
+    }
+}
+
+/// Blocks the third store to start until released. A worker issues its stores
+/// one at a time, so by then at least one arc row has been written.
+struct OrdinalStoreGate {
+    issued: AtomicUsize,
+    started: Notify,
+    released: Mutex<bool>,
+    released_cv: Condvar,
+}
+
+impl StorageState for OrdinalStoreGate {}
+
+impl OrdinalStoreGate {
+    fn new() -> Self {
+        Self {
+            issued: AtomicUsize::new(0),
+            started: Notify::new(),
+            released: Mutex::new(false),
+            released_cv: Condvar::new(),
+        }
+    }
+
+    fn block_third_store(&self) {
+        self.started.notify_one();
+        let mut released = self.released.lock().expect("store release lock");
+        while !*released {
+            released = self.released_cv.wait(released).expect("store release wait");
+        }
+    }
+
+    fn release(&self) {
+        *self.released.lock().expect("store release lock") = true;
+        self.released_cv.notify_all();
+    }
+}
+
+struct ReleaseStoreOnDrop(Arc<OrdinalStoreGate>);
+
+impl Drop for ReleaseStoreOnDrop {
+    fn drop(&mut self) {
+        self.0.release();
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn cancelled_page_out_waits_for_blocking_bind_workers() -> anyhow::Result<()> {
+    let _serial = PAGE_OUT_RACE_TEST_LOCK.lock().await;
+    let backing = InMemoryPagableStorage::new();
+    let storage = Arc::new(StagedCommitStorage::new(backing.handle(), u64::MAX));
+    let context = storage.storage_context();
+    let probe = context.get_or_init(BindingShutdownProbe::new);
+    let store_gate = context.get_or_init(OrdinalStoreGate::new);
+    context.observe_arc_data_keys(block_first_binding);
+    let _release_binding = ReleaseBindingOnDrop(probe.clone());
+    let _release_store = ReleaseStoreOnDrop(store_gate.clone());
+    let (dice, root) = make_dice_with(
+        DiceStorage::new(storage.clone()),
+        PageOutPolicy::OncePerValue,
+        EvictionPolicy::OnMemoryPressure,
+    )
+    .await;
+    let tx = dice.updater(root).commit().await;
+    tx.compute(&RoundtripArcKey(1)).await?;
+    tx.compute(&RoundtripArcKey(2)).await?;
+    drop(tx);
+    dice.wait_for_idle().await;
+    let mut task = tokio::spawn({
+        let dice = dice.clone();
+        async move { dice.page_out_cancellable(staged_page_out_cancelled).await }
+    });
+    timeout(Duration::from_secs(10), store_gate.started.notified())
+        .await
+        .expect("the third store must block");
+    timeout(Duration::from_secs(10), probe.started.notified())
+        .await
+        .expect("the periodic worker must start a real blocking bind job");
+    assert_eq!(probe.active.load(Ordering::SeqCst), 1);
+    STAGED_PAGE_OUT_CANCELLED.store(true, Ordering::SeqCst);
+    store_gate.release();
+
+    // The binder cannot complete until this test releases its explicit gate.
+    let early = timeout(Duration::from_secs(1), &mut task).await;
+    probe.release();
+    let completed_early = match early {
+        Ok(result) => {
+            result??;
+            true
+        }
+        Err(_) => {
+            timeout(Duration::from_secs(10), task).await???;
+            false
+        }
+    };
+    assert!(
+        !probe.caches_released_while_binding.load(Ordering::SeqCst),
+        "backend caches must not be released while detached binding still runs"
+    );
+    assert!(
+        !completed_early,
+        "page-out must await blocking bind jobs after cancellation"
+    );
+    assert_eq!(probe.active.load(Ordering::SeqCst), 0);
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn cancelled_page_out_does_not_back_stale_root() -> anyhow::Result<()> {
+    let _serial = PAGE_OUT_RACE_TEST_LOCK.lock().await;
+    let backing = InMemoryPagableStorage::new();
+    let storage = Arc::new(StagedCommitStorage::committed_at_end(
+        backing.handle(),
+        u64::MAX,
+    ));
+    let (dice, root) = make_dice_with(
+        DiceStorage::new(storage),
+        PageOutPolicy::OncePerValue,
+        EvictionPolicy::OnMemoryPressure,
+    )
+    .await;
+    let mut updater = dice.updater(root);
+    updater.changed_to([(DeferredInput(0), 1)])?;
+    let tx = updater.commit().await;
+    assert_eq!(*tx.compute(&PageOutRaceRoot).await?, 1);
+    drop(tx);
+    dice.wait_for_idle().await;
+    let gate = Arc::new(PageOutSerializationGate::new());
+    let _installed = InstalledPageOutSerializationGate::install(gate.clone());
+    let task = tokio::spawn({
+        let dice = dice.clone();
+        async move { dice.page_out_cancellable(staged_page_out_cancelled).await }
+    });
+    gate.wait_until_started().await;
+    let mut updater = dice.updater(root);
+    updater.changed_to([(DeferredInput(0), 2)])?;
+    let tx = updater.commit().await;
+    assert_eq!(*tx.compute(&PageOutRaceRoot).await?, 0);
+    drop(tx);
+    STAGED_PAGE_OUT_CANCELLED.store(true, Ordering::SeqCst);
+    gate.release();
+    timeout(Duration::from_secs(10), task).await???;
+    let counts = dice.pagable_node_counts().await;
+    assert_eq!(
+        (counts.backed, counts.paged_out),
+        (0, 0),
+        "durable serialization of the old allocation must not back its replacement"
+    );
+    let root_key = dice.key_index.index_key(PageOutRaceRoot);
+    assert!(
+        dice.state_handle
+            .keys_to_page_out()
+            .await
+            .iter()
+            .any(|(key, _)| *key == root_key),
+        "the replacement root must remain a page-out candidate"
+    );
+    let tx = dice.updater(root).commit().await;
+    assert_eq!(*tx.compute(&PageOutRaceRoot).await?, 0);
     Ok(())
 }

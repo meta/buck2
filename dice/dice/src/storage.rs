@@ -49,6 +49,7 @@ use pagable_storage::storage::sled::SledBackedPagableStorage;
 use pagable_storage::storage::sqlite::SqliteBackedPagableStorage;
 use serde::Deserialize;
 use serde::Serialize;
+use tokio::sync::watch;
 
 use crate::HashMap;
 use crate::core::state::CoreStateHandle;
@@ -355,7 +356,14 @@ impl DiceStorage {
             pending: pending.dupe(),
             state_handle: state_handle.dupe(),
         };
-        let mut evictor = AbortOnDrop(tokio::spawn(evict_as_rows_commit(awaiting_commit.dupe())));
+        let (stop_evictor, stopping) = watch::channel(false);
+        let mut evictor = AbortOnDrop(tokio::spawn(
+            PageOutEvictor {
+                awaiting_commit: awaiting_commit.dupe(),
+                stopping,
+            }
+            .run(),
+        ));
 
         let mut remaining = keys;
         let mut worker_error = None;
@@ -424,21 +432,28 @@ impl DiceStorage {
             }
         }
 
-        evictor.0.abort();
-        // Aborted, so the join reports cancellation; there is nothing to act on.
-        drop((&mut evictor.0).await);
+        stop_evictor.send_replace(true);
+        if let Err(error) = (&mut evictor.0).await {
+            worker_error = Some(match worker_error {
+                Some(original) => {
+                    original.context(format!("page-out binding worker failed: {error}"))
+                }
+                None => error.into(),
+            });
+        }
         if cancelled() {
             // Rows committed by now may already back evicted values, so the
-            // arcs those rows hold are bound before anything is dropped; an
-            // arc can reach the unbound list after the tick that evicted a
-            // value referencing it. Nothing refers to the rows still queued,
-            // so dropping them hands the shards back to the command that
-            // cancelled us, instead of draining a queue it would have to
-            // read past. The frontier is taken before the discard, which
-            // makes the dropped rows look committed.
+            // arcs those rows hold are bound, and the values they cover
+            // committed, before anything is dropped; an arc can reach the
+            // unbound list after the tick that evicted a value referencing it.
+            // Nothing refers to the rows still queued, so dropping them hands
+            // the shards back to the command that cancelled us, instead of
+            // draining a queue it would have to read past. The frontier is
+            // taken before the discard, which makes the dropped rows look
+            // committed.
             let committed = self.storage.commit_frontier();
             self.storage.discard_unwritten();
-            bind_in_parallel(&self.storage, finished.take_covered(&committed)).await;
+            awaiting_commit.commit_covered(&committed).await;
             pending.clear();
             finished.discard_unbound();
         }
@@ -739,16 +754,26 @@ impl Drop for AbortOnDrop {
     }
 }
 
-/// Binds written arcs and evicts pending values as their rows commit, so
-/// memory is released during the page-out rather than at its end. Runs until
-/// aborted; the sleep is the
-/// only await, so an abort never lands inside a tick.
-async fn evict_as_rows_commit(awaiting_commit: AwaitingCommit) {
-    loop {
-        tokio::time::sleep(Duration::from_millis(250)).await;
-        awaiting_commit
-            .commit_covered(&awaiting_commit.storage.storage.commit_frontier())
-            .await;
+/// Every 250 ms, commits what the storage has committed so far, so memory is released during the
+/// page-out rather than at its end. Shutdown waits for the current tick, binding included; it
+/// never detaches binding jobs partway through.
+struct PageOutEvictor {
+    awaiting_commit: AwaitingCommit,
+    stopping: watch::Receiver<bool>,
+}
+
+impl PageOutEvictor {
+    async fn run(mut self) {
+        loop {
+            tokio::select! {
+                biased;
+                _ = self.stopping.wait_for(|stopping| *stopping) => return,
+                _ = tokio::time::sleep(Duration::from_millis(250)) => {}
+            }
+            self.awaiting_commit
+                .commit_covered(&self.awaiting_commit.storage.storage.commit_frontier())
+                .await;
+        }
     }
 }
 

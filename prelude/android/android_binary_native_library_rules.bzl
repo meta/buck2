@@ -386,7 +386,7 @@ def get_android_binary_native_library_info(
     )
 
     middle_gatorade_products = None
-    if enable_relinker and "middle" in getattr(ctx.attrs, "gatorade_phases", []):
+    if enable_relinker and has_native_merging and "middle" in getattr(ctx.attrs, "gatorade_phases", []):
         middle_gatorade_products = ctx.actions.declare_output(
             "middle_gatorade_products",
             dir = True,

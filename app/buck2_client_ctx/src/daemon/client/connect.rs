@@ -593,6 +593,7 @@ impl<'a> BuckdLifecycle<'a> {
             cmd.arg0(title);
         }
 
+        let launch_start = Instant::now();
         let mut child = cmd.spawn()?;
         let mut stdout_taken = child
             .stdout
@@ -607,20 +608,23 @@ impl<'a> BuckdLifecycle<'a> {
             let result = timeout(timeout_secs, child.wait()).await;
             match result {
                 Err(_elapsed) => {
-                    // The command has timed out, kill the process and wait
+                    // The launcher has not completed within the timeout: kill it and collect
+                    // the status.
                     child.kill().await.buck_error_context(
                         "Error killing process after buck2 daemon launch timing out",
                     )?;
-                    // This should return immediately as kill() waits for the process to end. We wait here again to fetch the ExitStatus
-                    // Signal termination is not considered a success, so wait() results in an appropriate ExitStatus
-                    buck2_error::Ok(
-                        child
-                            .wait()
-                            .await
-                            .buck_error_context("Daemon startup timed out")?,
-                    )
+                    // This should return immediately as kill() waits for the process to end. We
+                    // wait here again to fetch the ExitStatus.
+                    let status = child
+                        .wait()
+                        .await
+                        .buck_error_context("Daemon startup timed out")?;
+                    buck2_error::Ok(LauncherExit::KilledOnTimeout {
+                        status,
+                        elapsed: Instant::now() - launch_start,
+                    })
                 }
-                Ok(result) => result.map_err(buck2_error::Error::from),
+                Ok(result) => Ok(LauncherExit::Exited(result?)),
             }
         };
         let stdout_fut = async {
@@ -647,7 +651,25 @@ impl<'a> BuckdLifecycle<'a> {
         let joined = try_join3(status_fut, stdout_fut, stderr_fut).await;
         match joined {
             Err(error) => Err(BuckdConnectError::BuckDaemonLaunchFailed { error }.into()),
-            Ok((status, stdout, stderr)) => {
+            // Our own kill: report it as a launch timeout, not as a daemon that was killed by
+            // somebody else. `DAEMON_STARTUP_FAILED:SIGKILL` is left for launchers that die from
+            // a signal on their own, within the timeout.
+            Ok((LauncherExit::KilledOnTimeout { status, elapsed }, stdout, stderr))
+                if maybe_killed_by_sigkill(status) =>
+            {
+                Err(BuckdConnectError::BuckDaemonLaunchTimeout {
+                    timeout: timeout_secs,
+                    elapsed,
+                    stdout: String::from_utf8_lossy(&stdout).to_string(),
+                    stderr: String::from_utf8_lossy(&stderr).to_string(),
+                }
+                .into())
+            }
+            Ok((
+                LauncherExit::KilledOnTimeout { status, .. } | LauncherExit::Exited(status),
+                stdout,
+                stderr,
+            )) => {
                 if !status.success() {
                     let exit_status_error = buck2_error::Error::from(status);
                     Err(BuckdConnectError::BuckDaemonStartupFailed {
@@ -661,6 +683,46 @@ impl<'a> BuckdLifecycle<'a> {
                 }
             }
         }
+    }
+}
+
+/// How the daemon launcher process (`buck2 daemon`, possibly behind `systemd-run` and the
+/// unsandboxing wrapper) ended, as observed by `start_server_unix`.
+enum LauncherExit {
+    /// The launcher exited on its own within the launch timeout.
+    Exited(std::process::ExitStatus),
+    /// The launcher did not complete within the launch timeout and the client killed it.
+    KilledOnTimeout {
+        status: std::process::ExitStatus,
+        /// Time from spawning the launcher to the kill.
+        elapsed: Duration,
+    },
+}
+
+/// Whether `status` is the status the client's own `Child::kill` (SIGKILL) produces. Anything
+/// else after a timeout means the launcher raced our kill and ended on its own.
+#[cfg(unix)]
+fn maybe_killed_by_sigkill(status: std::process::ExitStatus) -> bool {
+    use std::os::unix::process::ExitStatusExt;
+    status.signal() == Some(libc::SIGKILL)
+}
+
+/// Where the exit status cannot distinguish a SIGKILL from anything else, assume that a launcher
+/// we observed as `KilledOnTimeout` died from our own kill, so the launch-timeout classification
+/// is reachable on every platform that ever uses this path.
+#[cfg(not(unix))]
+fn maybe_killed_by_sigkill(_status: std::process::ExitStatus) -> bool {
+    true
+}
+
+/// The "(waited Ns)" note for `BuckDaemonLaunchTimeout`: only when the kill took effect a whole
+/// second or more after the budget ran out, so the message does not repeat the budget as a
+/// fake-precise measurement.
+fn launch_wait_note(timeout: Duration, elapsed: Duration) -> String {
+    if elapsed.as_secs() > timeout.as_secs() {
+        format!(" (waited {}s)", elapsed.as_secs())
+    } else {
+        String::new()
     }
 }
 
@@ -1357,6 +1419,20 @@ enum BuckdConnectError {
         error: buck2_error::Error,
     },
     #[error(
+        "buck2 daemon launcher did not complete within {}s{}; the host may be overloaded \
+         (systemd-run / cgroup setup / Eden chdir / binary page-in); killed it\nstdout:\n{stdout}\nstderr:\n{stderr}",
+        .timeout.as_secs(),
+        launch_wait_note(*.timeout, *.elapsed)
+    )]
+    #[buck2(tag = DaemonLaunchTimeout)]
+    BuckDaemonLaunchTimeout {
+        timeout: Duration,
+        /// Spawn-to-kill time; shown only when it overshoots `timeout` by a second or more.
+        elapsed: Duration,
+        stdout: String,
+        stderr: String,
+    },
+    #[error(
         "during buck daemon startup, the started process did not match constraints ({reason}).\nexpected: {expected:?}\nactual: {actual:?}"
     )]
     #[buck2(tag = DaemonConstraintsWrongAfterStart)]
@@ -1469,12 +1545,24 @@ async fn daemon_connect_error(
         ""
     };
 
-    let error_message = format!(
-        "Failed to connect to buck daemon.
+    let error_message = if error.has_tag(ErrorTag::DaemonLaunchTimeout) {
+        // The client killed its own launcher for being slow. There is no daemon state to clean
+        // up, and deleting the daemon dir does not make the next launch any faster.
+        format!(
+            "Failed to connect to buck daemon.
+    {daemon_process_info}
+
+    The daemon launcher was killed because it did not complete in time; try again, and if the \
+    host is busy raise the launcher wait (`BUCKD_STARTUP_TIMEOUT`, in seconds)"
+        )
+    } else {
+        format!(
+            "Failed to connect to buck daemon.
     {daemon_process_info}
 
     Try {kill_command}running `{delete_command}` and your command afterwards"
-    );
+        )
+    };
     error.context(error_message)
 }
 
@@ -1638,6 +1726,56 @@ mod tests {
         startup["buck_settings"] = serde_json::to_value(settings.daemon).unwrap();
         req.daemon_startup_config = serde_json::from_value(startup).unwrap();
         req
+    }
+
+    /// The client's own kill of a slow launcher and a launcher killed by somebody else must land
+    /// under different category keys.
+    #[cfg(unix)]
+    #[test]
+    fn test_launcher_kill_category_keys() {
+        use std::os::unix::process::ExitStatusExt;
+
+        let killed_by_client: buck2_error::Error = BuckdConnectError::BuckDaemonLaunchTimeout {
+            timeout: Duration::from_secs(10),
+            elapsed: Duration::from_millis(10_020),
+            stdout: String::new(),
+            stderr: String::new(),
+        }
+        .into();
+        assert!(killed_by_client.has_tag(ErrorTag::DaemonLaunchTimeout));
+        assert_eq!(killed_by_client.category_key(), "DAEMON_LAUNCH_TIMEOUT");
+        let message = format!("{:#}", killed_by_client);
+        assert!(message.contains("did not complete within 10s"), "{message}");
+        // 10.02 s against a 10 s budget is not worth repeating.
+        assert!(!message.contains("waited"), "{message}");
+        assert_eq!(
+            launch_wait_note(Duration::from_secs(10), Duration::from_millis(13_400)),
+            " (waited 13s)"
+        );
+        assert_eq!(
+            launch_wait_note(Duration::from_secs(10), Duration::from_millis(10_900)),
+            ""
+        );
+
+        let sigkill = std::process::ExitStatus::from_raw(libc::SIGKILL);
+        assert!(maybe_killed_by_sigkill(sigkill));
+        assert!(!maybe_killed_by_sigkill(
+            std::process::ExitStatus::from_raw(libc::SIGTERM)
+        ));
+        assert!(!maybe_killed_by_sigkill(
+            std::process::ExitStatus::from_raw(0)
+        ));
+        let killed_by_someone_else: buck2_error::Error =
+            BuckdConnectError::BuckDaemonStartupFailed {
+                stdout: String::new(),
+                stderr: String::new(),
+                exit_status_error: buck2_error::Error::from(sigkill),
+            }
+            .into();
+        assert_eq!(
+            killed_by_someone_else.category_key(),
+            "DAEMON_STARTUP_FAILED:SIGKILL"
+        );
     }
 
     #[test]

@@ -95,6 +95,9 @@ enum ErrorTag {
   EXIT_STATUS = 517;
   EXIT_STATUS_UNKNOWN = 519;
   DAEMON_LAUNCH_FAILED = 508;
+  // The client gave up waiting for the daemon launcher process to complete
+  // and killed it.
+  DAEMON_LAUNCH_TIMEOUT = 522;
   DAEMON_NESTED_CONSTRAINTS_MISMATCH = 509;
   DAEMON_CONSTRAINTS_WRONG_AFTER_START = 510;
   DAEMON_DIR_CLEANUP_FAILED = 511;

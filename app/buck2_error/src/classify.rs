@@ -264,6 +264,7 @@ fn tag_metadata(tag: ErrorTag) -> TagMetadata {
         ErrorTag::ServerSigabrt => rank!(tier0),
         ErrorTag::ClientStartupTimeout => rank!(tier0),
         ErrorTag::DaemonLaunchFailed => rank!(tier0),
+        ErrorTag::DaemonLaunchTimeout => rank!(tier0),
         ErrorTag::DaemonStartupFailed => rank!(tier0),
         ErrorTag::ExitStatusUnknown => rank!(tier0),
         ErrorTag::DaemonNestedConstraintsMismatch => rank!(tier0),

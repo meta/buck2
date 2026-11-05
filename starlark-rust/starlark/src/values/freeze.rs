@@ -44,6 +44,7 @@ use std::cell::RefCell;
 use std::cell::UnsafeCell;
 use std::marker::PhantomData;
 
+use either::Either;
 use mini_map::MiniMutInsertionMap;
 use mini_map::MiniMutInsertionSet;
 use mini_vec::MiniBoxSlice;
@@ -420,6 +421,17 @@ where
             new.insert_hashed_unique_unchecked(value);
         }
         Ok(new)
+    }
+}
+
+impl<'v, L: Freeze<'v>, R: Freeze<'v>> Freeze<'v> for Either<L, R> {
+    type Frozen<'fv> = Either<L::Frozen<'fv>, R::Frozen<'fv>>;
+
+    fn freeze<'fv>(self, freezer: &Freezer<'v, 'fv>) -> FreezeResult<Self::Frozen<'fv>> {
+        match self {
+            Either::Left(l) => Ok(Either::Left(l.freeze(freezer)?)),
+            Either::Right(r) => Ok(Either::Right(r.freeze(freezer)?)),
+        }
     }
 }
 

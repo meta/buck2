@@ -31,7 +31,9 @@ use buck2_build_api::build::build_report::build_report_opts;
 use buck2_build_api::build::build_report::maybe_stream_build_reports;
 use buck2_build_api::build::build_report::streaming_build_result_channel;
 use buck2_build_api::build::build_report::write_build_report;
-use buck2_build_api::build::detailed_aggregated_metrics::dice::HasDetailedAggregatedMetrics;
+use buck2_build_api::build::build_report_metrics::BuildReportMetricsConfig;
+use buck2_build_api::build::build_report_metrics::compute_build_report_supplemental_data;
+use buck2_build_api::build::graph_properties::GraphPropertiesOptions;
 use buck2_build_api::interpreter::rule_defs::provider::builtin::internal_runner_test_info::InternalRunnerTestInfo;
 use buck2_build_api::interpreter::rule_defs::provider::builtin::internal_runner_test_info::OwnedInternalRunnerTestInfo;
 use buck2_build_api::interpreter::rule_defs::provider::builtin::run_info::RunInfo;
@@ -75,7 +77,6 @@ use buck2_core::provider::label::ProvidersLabel;
 use buck2_core::tag_result;
 use buck2_core::target::label::label::TargetLabel;
 use buck2_data::BuildResult;
-use buck2_data::ToProtoMessage;
 use buck2_error::BuckErrorContext;
 use buck2_error::BuckErrorOptionContext;
 use buck2_error::ErrorTag;
@@ -497,6 +498,10 @@ async fn test(
         .build_opts
         .as_ref()
         .internal_error("should have build options")?;
+    let build_report_metrics_config =
+        BuildReportMetricsConfig::from_buckconfig(&mut ctx.ctx(), cell_resolver.root_cell())
+            .await?;
+    let graph_properties = build_report_metrics_config.graph_properties;
 
     let timeout = request
         .timeout
@@ -545,6 +550,7 @@ async fn test(
         tpx_experiments,
         streaming_build_result_tx,
         build_start,
+        graph_properties,
     );
 
     let test_outcome = maybe_stream_build_reports(
@@ -554,7 +560,7 @@ async fn test(
         server_ctx.project_root(),
         server_ctx.working_dir(),
         server_ctx.events().trace_id().dupe(),
-        Default::default(),
+        graph_properties,
         streaming_build_result_rx,
     )
     .await?;
@@ -634,46 +640,17 @@ async fn test(
         ),
     };
 
-    let want_detailed_metrics = ctx
-        .ctx()
-        .parse_legacy_config_property(
-            cell_resolver.root_cell(),
-            BuckconfigKeyRef {
-                section: "buck2",
-                property: "detailed_aggregated_metrics",
-            },
-        )
-        .await?
-        .unwrap_or_default();
-
-    let detailed_metrics = if want_detailed_metrics {
-        let events = ctx.ctx().take_per_build_events()?;
-        let mut metrics = ctx.ctx().compute_detailed_metrics(events).await?;
-        for target_metric in &mut metrics.top_level_target_metrics {
-            if let Some(Some(result)) = test_outcome
-                .build_target_result
-                .configured
-                .get(&target_metric.target)
-            {
-                target_metric.wall_clock_completion_ms =
-                    result.wall_clock_completion().map(|d| d.as_millis() as u64);
-            }
-        }
-        instant_event(metrics.as_proto());
-        Some(metrics)
-    } else {
-        None
-    };
+    let supplemental_data = compute_build_report_supplemental_data(
+        &mut ctx.ctx(),
+        &test_outcome.build_target_result,
+        build_report_metrics_config,
+    )
+    .await?;
 
     let serialized_build_report = if build_opts.unstable_print_build_report {
         let artifact_fs = ctx.ctx().get_artifact_fs().await?;
-        let build_report_opts = build_report_opts(
-            &mut ctx.ctx(),
-            &cell_resolver,
-            build_opts,
-            Default::default(),
-        )
-        .await?;
+        let build_report_opts =
+            build_report_opts(&mut ctx.ctx(), &cell_resolver, build_opts, graph_properties).await?;
 
         write_build_report(
             build_report_opts,
@@ -687,9 +664,9 @@ async fn test(
                 .build_target_result
                 .configured_to_pattern_modifiers,
             &test_outcome.build_target_result.other_errors,
-            detailed_metrics,
-            None,
-            None,
+            supplemental_data.detailed_metrics,
+            supplemental_data.action_graph_sketch_result,
+            supplemental_data.artifact_path_sketch_result,
         )?
     } else {
         None
@@ -730,6 +707,7 @@ async fn test_targets(
     tpx_experiments: BuckMutSet<String>,
     streaming_build_result_tx: Option<UnboundedSender<BuildTargetResult>>,
     build_start: Instant,
+    graph_properties: GraphPropertiesOptions,
 ) -> buck2_error::Result<TestOutcome> {
     let session = Arc::new(session);
 
@@ -861,6 +839,7 @@ async fn test_targets(
                         build_default_info,
                         build_run_info,
                         build_start,
+                        graph_properties,
                     },
                     streaming_build_result_tx,
                 );
@@ -1049,6 +1028,7 @@ struct TestDriverState<'a, 'e> {
     build_default_info: bool,
     build_run_info: bool,
     build_start: Instant,
+    graph_properties: GraphPropertiesOptions,
 }
 
 type DriverWorkResult = ControlFlow<Vec<BuildEvent>, Vec<TestDriverTask>>;
@@ -1505,6 +1485,7 @@ impl<'a, 'e> TestDriver<'a, 'e> {
                             state.build_run_info,
                             streaming_build_result_tx,
                             state.build_start,
+                            state.graph_properties,
                         )
                         .await
                     }
@@ -1592,6 +1573,7 @@ async fn build_target_result(
     build_run_info: bool,
     streaming_build_result_tx: Option<UnboundedSender<BuildTargetResult>>,
     build_start: Instant,
+    graph_properties: GraphPropertiesOptions,
 ) -> buck2_error::Result<(BuildTargetResult, FrozenProviderCollectionValue)> {
     // NOTE: We fail if we hit an incompatible target here. This can happen if we reach an
     // incompatible target via `tests = [...]`. This should perhaps change, but that's how it works
@@ -1650,7 +1632,7 @@ async fn build_target_result(
                 },
                 BuildConfiguredLabelOptions {
                     skippable: false,
-                    graph_properties: Default::default(),
+                    graph_properties,
                     return_run_args: false,
                 },
                 None, // TODO: is this right?

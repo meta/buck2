@@ -24,7 +24,12 @@ def _impl(ctx):
     return [
         DefaultInfo(default_output = out),
         ExternalRunnerTestInfo(
-            command = ["fbpython", "-c", "import sys; sys.exit(0)"],
+            command = [
+                "fbpython",
+                "-c",
+                "import pathlib, sys; assert pathlib.Path(sys.argv[1]).read_text() == 'hello'",
+                out,
+            ],
             type = "custom",
         ),
     ]

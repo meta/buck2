@@ -34,7 +34,7 @@ class ToolsTest(BuckTestCase):
         @env("BUCK2_KEEP_DEP_FILE_DIRECTORIES", "true")
         async def test_arvr_cuda_dep_files(self, buck: Buck) -> None:
             target = "fbsource//arvr/tools/buck/tests/cuda:test_cuda_arvr"
-            mode_file = "@fbsource//arvr/mode/platform010/cuda12_8/opt"
+            mode_file = "@fbsource//arvr/mode/platform010/cuda13_3/opt"
             await buck.build(mode_file, target)
             res = await buck.audit_dep_files(
                 target, "cuda_compile", "main.cu", mode_file

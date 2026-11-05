@@ -1441,7 +1441,6 @@ swift_toolchain = prelude_rule(
             "swift_ide_test_tool": attrs.option(attrs.exec_dep(providers = [RunInfo]), default = None),
             "swift_stdlib_tool": attrs.exec_dep(providers = [RunInfo]),
             "swift_stdlib_tool_flags": attrs.list(attrs.arg(), default = []),
-            "swift_symbolgraph_extract": attrs.option(attrs.exec_dep(providers = [RunInfo]), default = None),
             "swift_upcoming_features": attrs.dict(
                 key = attrs.enum(SwiftVersion), value = attrs.list(attrs.string()), sorted = False, default = SWIFT_VERSION_FEATURE_MAP
             ),

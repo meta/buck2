@@ -135,9 +135,6 @@ def swift_toolchain_impl(ctx):
             swift_stdlib_tool_flags = ctx.attrs.swift_stdlib_tool_flags,
             swift_experimental_features = ctx.attrs.swift_experimental_features,
             swift_upcoming_features = ctx.attrs.swift_upcoming_features,
-            symbolgraph_extractor = cmd_args(ctx.attrs._swiftc_wrapper[RunInfo]).add(ctx.attrs.swift_symbolgraph_extract[RunInfo])
-            if ctx.attrs.swift_symbolgraph_extract
-            else None,
             uncompiled_clang_sdk_modules_deps = uncompiled_clang_sdk_modules_deps,
             uncompiled_swift_sdk_modules_deps = uncompiled_swift_sdk_modules_deps,
             enforce_dedupe_eligibility = ctx.attrs.enforce_dedupe_eligibility,

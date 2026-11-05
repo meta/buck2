@@ -12,6 +12,7 @@ use std::ops::ControlFlow;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
+use std::time::Instant;
 use std::time::SystemTime;
 
 use async_trait::async_trait;
@@ -30,6 +31,7 @@ use buck2_build_api::build::build_report::build_report_opts;
 use buck2_build_api::build::build_report::maybe_stream_build_reports;
 use buck2_build_api::build::build_report::streaming_build_result_channel;
 use buck2_build_api::build::build_report::write_build_report;
+use buck2_build_api::build::detailed_aggregated_metrics::dice::HasDetailedAggregatedMetrics;
 use buck2_build_api::interpreter::rule_defs::provider::builtin::internal_runner_test_info::InternalRunnerTestInfo;
 use buck2_build_api::interpreter::rule_defs::provider::builtin::internal_runner_test_info::OwnedInternalRunnerTestInfo;
 use buck2_build_api::interpreter::rule_defs::provider::builtin::run_info::RunInfo;
@@ -73,6 +75,7 @@ use buck2_core::provider::label::ProvidersLabel;
 use buck2_core::tag_result;
 use buck2_core::target::label::label::TargetLabel;
 use buck2_data::BuildResult;
+use buck2_data::ToProtoMessage;
 use buck2_error::BuckErrorContext;
 use buck2_error::BuckErrorOptionContext;
 use buck2_error::ErrorTag;
@@ -517,6 +520,7 @@ async fn test(
     let (streaming_build_result_tx, streaming_build_result_rx) =
         streaming_build_result_channel(build_opts);
 
+    let build_start = Instant::now();
     let test_future = test_targets(
         ctx.dupe(),
         resolved_pattern,
@@ -540,6 +544,7 @@ async fn test(
         build_run_info,
         tpx_experiments,
         streaming_build_result_tx,
+        build_start,
     );
 
     let test_outcome = maybe_stream_build_reports(
@@ -629,6 +634,37 @@ async fn test(
         ),
     };
 
+    let want_detailed_metrics = ctx
+        .ctx()
+        .parse_legacy_config_property(
+            cell_resolver.root_cell(),
+            BuckconfigKeyRef {
+                section: "buck2",
+                property: "detailed_aggregated_metrics",
+            },
+        )
+        .await?
+        .unwrap_or_default();
+
+    let detailed_metrics = if want_detailed_metrics {
+        let events = ctx.ctx().take_per_build_events()?;
+        let mut metrics = ctx.ctx().compute_detailed_metrics(events).await?;
+        for target_metric in &mut metrics.top_level_target_metrics {
+            if let Some(Some(result)) = test_outcome
+                .build_target_result
+                .configured
+                .get(&target_metric.target)
+            {
+                target_metric.wall_clock_completion_ms =
+                    result.wall_clock_completion().map(|d| d.as_millis() as u64);
+            }
+        }
+        instant_event(metrics.as_proto());
+        Some(metrics)
+    } else {
+        None
+    };
+
     let serialized_build_report = if build_opts.unstable_print_build_report {
         let artifact_fs = ctx.ctx().get_artifact_fs().await?;
         let build_report_opts = build_report_opts(
@@ -651,7 +687,7 @@ async fn test(
                 .build_target_result
                 .configured_to_pattern_modifiers,
             &test_outcome.build_target_result.other_errors,
-            None,
+            detailed_metrics,
             None,
             None,
         )?
@@ -693,6 +729,7 @@ async fn test_targets(
     build_run_info: bool,
     tpx_experiments: BuckMutSet<String>,
     streaming_build_result_tx: Option<UnboundedSender<BuildTargetResult>>,
+    build_start: Instant,
 ) -> buck2_error::Result<TestOutcome> {
     let session = Arc::new(session);
 
@@ -823,6 +860,7 @@ async fn test_targets(
                         ignore_tests_attribute,
                         build_default_info,
                         build_run_info,
+                        build_start,
                     },
                     streaming_build_result_tx,
                 );
@@ -1010,6 +1048,7 @@ struct TestDriverState<'a, 'e> {
     ignore_tests_attribute: bool,
     build_default_info: bool,
     build_run_info: bool,
+    build_start: Instant,
 }
 
 type DriverWorkResult = ControlFlow<Vec<BuildEvent>, Vec<TestDriverTask>>;
@@ -1052,7 +1091,7 @@ impl<'a, 'e> TestDriver<'a, 'e> {
             labels_tested: BuckMutSet::default(),
             errors: BuildTargetResultBuilder::new(
                 streaming_build_result_tx.clone(),
-                std::time::Instant::now(),
+                state.build_start,
             ),
             first_internal_error: None,
             build_target_result: BuildTargetResult::new(),
@@ -1465,6 +1504,7 @@ impl<'a, 'e> TestDriver<'a, 'e> {
                             state.build_default_info,
                             state.build_run_info,
                             streaming_build_result_tx,
+                            state.build_start,
                         )
                         .await
                     }
@@ -1551,6 +1591,7 @@ async fn build_target_result(
     build_default_info: bool,
     build_run_info: bool,
     streaming_build_result_tx: Option<UnboundedSender<BuildTargetResult>>,
+    build_start: Instant,
 ) -> buck2_error::Result<(BuildTargetResult, FrozenProviderCollectionValue)> {
     // NOTE: We fail if we hit an incompatible target here. This can happen if we reach an
     // incompatible target via `tests = [...]`. This should perhaps change, but that's how it works
@@ -1584,7 +1625,7 @@ async fn build_target_result(
 
     let materialization_and_upload = MaterializationAndUploadContext::skip();
     let (result_builder, consumer) =
-        AsyncBuildTargetResultBuilder::new(streaming_build_result_tx, std::time::Instant::now());
+        AsyncBuildTargetResultBuilder::new(streaming_build_result_tx, build_start);
     let configured_target = label.target().dupe();
     let target = TargetLabelWithModifiers {
         target_label: configured_target.unconfigured().dupe(),

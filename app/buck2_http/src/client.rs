@@ -651,6 +651,95 @@ mod tests {
         Ok(())
     }
 
+    /// A relative-path `Location` is resolved against the request URI (RFC 3986 section 5.2).
+    #[tokio::test]
+    async fn test_relative_path_location() -> buck2_error::Result<()> {
+        buck2_certs::certs::maybe_setup_cryptography();
+        let test_server = httptest::Server::run();
+        test_server.expect(
+            Expectation::matching(request::method_path("GET", "/dir/start"))
+                .times(1)
+                .respond_with(
+                    responders::status_code(302).append_header(http::header::LOCATION, "sub/next"),
+                ),
+        );
+        test_server.expect(
+            Expectation::matching(request::method_path("GET", "/dir/sub/next"))
+                .times(1)
+                .respond_with(responders::status_code(200)),
+        );
+        let client = HttpClientBuilder::https_with_system_roots()
+            .await?
+            .with_max_redirects(10)
+            .build();
+        let resp = client.get(&test_server.url_str("/dir/start")).await?;
+        assert_eq!(200, resp.status().as_u16());
+        Ok(())
+    }
+
+    /// A query-only `Location` keeps the request path and replaces the query.
+    #[tokio::test]
+    async fn test_query_only_location() -> buck2_error::Result<()> {
+        buck2_certs::certs::maybe_setup_cryptography();
+        let test_server = httptest::Server::run();
+        test_server.expect(
+            Expectation::matching(all_of![
+                request::method_path("GET", "/dir/start"),
+                request::query(url_decoded(not(contains(("page", "2"))))),
+            ])
+            .times(1)
+            .respond_with(
+                responders::status_code(302).append_header(http::header::LOCATION, "?page=2"),
+            ),
+        );
+        test_server.expect(
+            Expectation::matching(all_of![
+                request::method_path("GET", "/dir/start"),
+                request::query(url_decoded(contains(("page", "2")))),
+            ])
+            .times(1)
+            .respond_with(responders::status_code(200)),
+        );
+        let client = HttpClientBuilder::https_with_system_roots()
+            .await?
+            .with_max_redirects(10)
+            .build();
+        let resp = client.get(&test_server.url_str("/dir/start")).await?;
+        assert_eq!(200, resp.status().as_u16());
+        Ok(())
+    }
+
+    /// A network-path `Location` (`//host/path`) goes to that host, without the credentials.
+    #[tokio::test]
+    async fn test_network_path_location() -> buck2_error::Result<()> {
+        buck2_certs::certs::maybe_setup_cryptography();
+        let test_server = httptest::Server::run();
+        test_server.expect(
+            Expectation::matching(request::method_path("GET", "/a"))
+                .times(1)
+                .respond_with(
+                    responders::status_code(302)
+                        .append_header(http::header::LOCATION, "//mirror.example/f"),
+                ),
+        );
+        let client = HttpClientBuilder::https_with_system_roots()
+            .await?
+            .with_max_redirects(10)
+            .build();
+        let req = Request::builder()
+            .method(Method::GET)
+            .uri(test_server.url_str("/a"))
+            .header(http::header::AUTHORIZATION, "Bearer secret")
+            .body(Bytes::new())?;
+        let result = client.request(req).await;
+        // The redirect leaves the test server for `mirror.example`.
+        match result {
+            Err(HttpError::SendRequest { uri, .. }) => assert_eq!(uri, "http://mirror.example/f"),
+            other => panic!("unexpected: {:?}", other.map(|r| r.status())),
+        }
+        Ok(())
+    }
+
     #[tokio::test]
     async fn test_too_many_redirects_fails() -> buck2_error::Result<()> {
         buck2_certs::certs::maybe_setup_cryptography();

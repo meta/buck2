@@ -139,6 +139,26 @@ class DownloadFileTest(BuckTestCase):
             assert server.count("GET", "/file") == 1
 
     @buck_test(data_dir="download")
+    async def test_follows_a_relative_location(self, buck: Buck) -> None:
+        """A relative `Location` is resolved against the request URI (RFC 3986 section 5.2),
+        so the redirect stays on the server instead of going to a host named after the file."""
+        content = random_string().encode()
+        async with StaticHttpServer(
+            {"/dir/artifact.bin": content}, redirects={"/dir/start": "artifact.bin"}
+        ) as server:
+            assert (
+                await build_and_read(
+                    buck,
+                    "//:download",
+                    *configs(server.url("/dir/start"), sha1=sha1_hex(content)),
+                )
+                == content
+            )
+            assert server.count("GET", "/dir/start") == 1
+            # The HEAD and the GET of `/dir/start` were both redirected to the file.
+            assert server.count("GET", "/dir/artifact.bin") >= 1
+
+    @buck_test(data_dir="download")
     async def test_times_out_after_retries(self, buck: Buck) -> None:
         routes = web.RouteTableDef()
 

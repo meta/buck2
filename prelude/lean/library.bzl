@@ -11,7 +11,10 @@
 One action runs `lean --deps-json` on all sources to read their imports. A
 dynamic action then declares one `lean` action per module, in import order,
 and one C compile action per module. The objects go into one static archive;
-`link_whole` says whether it links whole.
+`link_whole` says whether it links whole. When the toolchain has
+`c_export_flags`, a second C compile action per module makes the object that
+exports every symbol; `LeanModule.export_object` carries it for the rules
+that link shared libraries of Lean code.
 
 Imports resolve through `LEAN_PATH`: every module of a library writes its
 `.olean` below one directory of the library, and the `LEAN_PATH` of a module
@@ -86,6 +89,7 @@ def _compile_impl(
     lean_flags: list[typing.Any],
     lean_path_separator: str,
     c_compile: cmd_args,
+    c_export_flags: list[typing.Any],
     object_extension: str,
     archive_cmd: cmd_args,
     archiver_supports_argfiles: bool,
@@ -188,6 +192,23 @@ def _compile_impl(
             identifier = name,
         )
 
+        obj = actions.declare_output("obj", path + "." + object_extension, has_content_based_path = False)
+        actions.run(
+            cmd_args(c_compile, "-c", c_file, "-o", obj.as_output()),
+            category = "lean_cc",
+            identifier = name,
+        )
+        objects.append(obj)
+
+        export_obj = None
+        if c_export_flags:
+            export_obj = actions.declare_output("obj-export", path + "." + object_extension, has_content_based_path = False)
+            actions.run(
+                cmd_args(c_compile, c_export_flags, "-c", c_file, "-o", export_obj.as_output()),
+                category = "lean_cc_export",
+                identifier = name,
+            )
+
         modules[name] = LeanModule(
             name = name,
             library = library,
@@ -197,15 +218,9 @@ def _compile_impl(
                 value = [olean] + parts,
                 children = import_sets,
             ),
+            object = obj,
+            export_object = export_obj,
         )
-
-        obj = actions.declare_output("obj", path + "." + object_extension, has_content_based_path = False)
-        actions.run(
-            cmd_args(c_compile, "-c", c_file, "-o", obj.as_output()),
-            category = "lean_cc",
-            identifier = name,
-        )
-        objects.append(obj)
 
     if archiver_supports_argfiles:
         objects_args = at_argfile(
@@ -236,6 +251,7 @@ _compile = dynamic_actions(
         "archive_cmd": dynattrs.value(cmd_args),
         "archiver_supports_argfiles": dynattrs.value(bool),
         "c_compile": dynattrs.value(cmd_args),
+        "c_export_flags": dynattrs.value(list[typing.Any]),
         "dep_values": dynattrs.list(dynattrs.dynamic_value()),
         "deps_json": dynattrs.artifact_value(),
         "label": dynattrs.value(Label),
@@ -327,6 +343,7 @@ def compile_lean_library(ctx: AnalysisContext, link_whole: bool) -> struct:
             lean_flags = toolchain.lean_flags + ctx.attrs.lean_flags,
             lean_path_separator = lean_path_separator,
             c_compile = _c_compile_cmd(ctx, cxx, toolchain),
+            c_export_flags = toolchain.c_export_flags,
             object_extension = cxx.linker_info.object_file_extension,
             archive_cmd = _archive_cmd(cxx),
             archiver_supports_argfiles = bool(cxx.linker_info.archiver_supports_argfiles),

@@ -94,3 +94,36 @@ fn test_duplicate_argument_is_a_typing_error() {
         "t(False)",
     );
 }
+
+/// Membership tests and dict/set lookups widen int and float like `==` does.
+#[test]
+fn test_int_float_membership_and_lookup_are_accepted() {
+    let cases = [
+        (
+            "def f(x: float) -> bool:\n    return x in [1, 2]\n",
+            "f(1.0)",
+            "Binary operator `in` is not available",
+        ),
+        (
+            "def f(d: dict[int, str], k: float) -> str:\n    return d[k]\n",
+            "f({1: \"a\"}, 1.0)",
+            "does not have [] operator",
+        ),
+        (
+            "def f(d: dict[int, str], k: float) -> bool:\n    return k in d\n",
+            "f({1: \"a\"}, 1.0)",
+            "Binary operator `in` is not available",
+        ),
+        (
+            "def f(s: set[int], k: float) -> bool:\n    return k in s\n",
+            "f(set([1]), 1.0)",
+            "Binary operator `in` is not available",
+        ),
+    ];
+    for (defs, call, _msg) in cases {
+        accepted_and_runs(defs, call);
+    }
+    // A string key is still rejected.
+    let err = lint("def f(d: dict[int, str], k: str) -> str:\n    return d[k]\n").unwrap();
+    assert!(err.contains("does not have [] operator"), "{err}");
+}

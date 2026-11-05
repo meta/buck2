@@ -79,3 +79,8 @@ class LintAndTypecheckTest(BuckTestCase):
         assert "Argument `a` occurs more than once" in failure.stdout, failure.stdout
         assert "Internal error" not in failure.stdout, failure.stdout
         await buck.starlark("typecheck", "duplicate_arg_union.bzl")
+
+    @buck_test()
+    async def test_typecheck_accepts_int_float_membership(self, buck: Buck) -> None:
+        # `in` and dict indexing widen int and float like `==` does.
+        await buck.starlark("typecheck", "numeric_membership.bzl")

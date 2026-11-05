@@ -416,7 +416,8 @@ impl<'a> TypingOracleCtx<'a> {
                 Ok((**item).dupe())
             }
             TyBasic::Dict(k, v) => {
-                if !self.intersects(&Ty::basic(index.node.dupe()), k)? {
+                // Int and float keys compare equal, as for `==`.
+                if !self.intersects(&Self::widen_numeric(&Ty::basic(index.node.dupe())), k)? {
                     return Err(TypingNoContextOrInternalError::Typing);
                 }
                 Ok((**v).dupe())
@@ -617,7 +618,7 @@ impl<'a> TypingOracleCtx<'a> {
                     }
                 }
                 TypingBinOp::In => {
-                    if self.intersects(elem, &Ty::basic(rhs.node.dupe()))? {
+                    if self.intersects(elem, &Self::widen_numeric(&Ty::basic(rhs.node.dupe())))? {
                         Ok(Ty::bool())
                     } else {
                         Err(TypingNoContextOrInternalError::Typing)
@@ -658,7 +659,7 @@ impl<'a> TypingOracleCtx<'a> {
                     }
                 }
                 TypingBinOp::In => {
-                    if self.intersects(&Ty::basic(rhs.node.dupe()), k)? {
+                    if self.intersects(&Self::widen_numeric(&Ty::basic(rhs.node.dupe())), k)? {
                         Ok(Ty::bool())
                     } else {
                         Err(TypingNoContextOrInternalError::Typing)
@@ -669,7 +670,7 @@ impl<'a> TypingOracleCtx<'a> {
             TyBasic::Custom(lhs) => Ok(lhs.0.bin_op_dyn(bin_op, rhs.node, self)?),
             TyBasic::Set(elem) => match bin_op {
                 TypingBinOp::In => {
-                    if self.intersects(&Ty::basic(rhs.node.dupe()), elem)? {
+                    if self.intersects(&Self::widen_numeric(&Ty::basic(rhs.node.dupe())), elem)? {
                         Ok(Ty::bool())
                     } else {
                         Err(TypingNoContextOrInternalError::Typing)

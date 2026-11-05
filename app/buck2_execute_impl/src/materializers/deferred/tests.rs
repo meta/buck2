@@ -2100,9 +2100,19 @@ pub(crate) mod state_machine {
         .await
     }
 
+    /// The tests remove the owner permissions of `path`. If the clean under test fails to
+    /// delete `path`, the temp dir can't be deleted until the permissions are restored.
+    #[cfg(unix)]
+    fn restore_permissions_if_exists(path: &AbsNormPathBuf) -> buck2_error::Result<()> {
+        if fs_util::try_exists(path)? {
+            fs_util::set_permissions(path, std::fs::Permissions::from_mode(0o755))?;
+        }
+        Ok(())
+    }
+
     #[cfg(unix)]
     #[tokio::test]
-    async fn test_clean_stale_skips_unreadable() -> buck2_error::Result<()> {
+    async fn test_clean_stale_deletes_unreadable() -> buck2_error::Result<()> {
         ignore_stack_overflow_checks_for_future(async {
             let path = make_path(SAMPLE_BUCK_OUT_PATH);
             let project_root = temp_root();
@@ -2146,9 +2156,8 @@ pub(crate) mod state_machine {
                 })
                 .await;
 
-            // Restore permissions so the temp dir can be deleted.
-            fs_util::set_permissions(&unreadable_dir, std::fs::Permissions::from_mode(0o755))?;
-            fs_util::set_permissions(&listable_dir, std::fs::Permissions::from_mode(0o755))?;
+            restore_permissions_if_exists(&unreadable_dir)?;
+            restore_permissions_if_exists(&listable_dir)?;
 
             let res = res?;
             let &buck2_data::CleanStaleStats {
@@ -2163,6 +2172,8 @@ pub(crate) mod state_machine {
                 .stats
                 .as_ref()
                 .unwrap_or_else(|| panic!("{}", res.message.unwrap()));
+            assert!(!fs_util::try_exists(&untracked_dir)?);
+            assert!(!fs_util::try_exists(&listable_dir)?);
             assert_eq!(
                 (
                     stale_artifact_count,
@@ -2172,12 +2183,10 @@ pub(crate) mod state_machine {
                     scan_unreadable_count,
                     delete_permission_denied_artifact_count,
                 ),
-                (1, 1, 2, 4, 2, 2),
-                "clean should finish despite the unreadable entries: the stale artifact is \
-                 cleaned; neither untracked root can be fully deleted, so both are skipped \
-                 rather than failing the clean — four skips total: the scan reading the \
-                 unreadable dir, the scan statting the file in the non-traversable dir, and \
-                 the two failed deletions"
+                (1, 3, 2, 2, 2, 0),
+                "the scan skips reading the unreadable dir and statting the file in the \
+                 non-traversable dir, and the clean still deletes both untracked roots \
+                 because it adds owner permissions to the directories it deletes"
             );
             Ok(())
         })
@@ -2198,7 +2207,8 @@ pub(crate) mod state_machine {
             fs_util::create_dir_all(&dead)?;
             fs_util::write(&dead_file, b"xxxx")?;
 
-            // Unknown-age scratch (permission denied) is skipped, never deleted.
+            // The scan can't read `unreadable` or traverse `listable`. The sweep still deletes
+            // `unreadable` and `listable`.
             let unreadable = project_root.resolve(make_path("buck-out/v2/tmp/unreadable"));
             let unreadable_file =
                 project_root.resolve(make_path("buck-out/v2/tmp/unreadable/junk"));
@@ -2227,9 +2237,8 @@ pub(crate) mod state_machine {
             let dispatcher = EventDispatcher::new(TraceId::null(), DaemonId::new(), sink);
             let res = with_dispatcher_async(dispatcher, dm.clean_scratch()).await;
 
-            // Restore permissions so the temp dir can be deleted.
-            fs_util::set_permissions(&unreadable, std::fs::Permissions::from_mode(0o755))?;
-            fs_util::set_permissions(&listable, std::fs::Permissions::from_mode(0o755))?;
+            restore_permissions_if_exists(&unreadable)?;
+            restore_permissions_if_exists(&listable)?;
 
             let res = res?;
             let &buck2_data::CleanStaleStats {
@@ -2244,8 +2253,8 @@ pub(crate) mod state_machine {
                 .as_ref()
                 .unwrap_or_else(|| panic!("{}", res.message.unwrap()));
             assert!(!fs_util::try_exists(&dead)?);
-            assert!(fs_util::try_exists(&unreadable_file)?);
-            assert!(fs_util::try_exists(&listable_file)?);
+            assert!(!fs_util::try_exists(&unreadable)?);
+            assert!(!fs_util::try_exists(&listable)?);
             #[cfg(not(target_os = "macos"))]
             assert!(fs_util::try_exists(&invalid_name)?);
             let expected_invalid_filename_count = if cfg!(target_os = "macos") { 0 } else { 1 };
@@ -2257,9 +2266,9 @@ pub(crate) mod state_machine {
                     skipped_unreadable_count,
                     scan_invalid_filename_count,
                 ),
-                (3, 1, 4, 4, expected_invalid_filename_count,),
-                "the sweep deletes dead scratch and records permission-denied and invalid-name \
-                 operations separately"
+                (3, 3, 4, 2, expected_invalid_filename_count,),
+                "the sweep deletes all scratch with a valid name and records the entries the \
+                 scan can't read and the invalid names separately"
             );
             assert!(
                 events.try_receive().is_none(),

@@ -1639,8 +1639,10 @@ impl IoRequest for CleanInvalidatedPathRequest {
 /// sends this when it goes idle after a command.
 ///
 /// The sweep holds the same clean guard as `clean --stale`: the moment any other
-/// materializer command arrives, deletion stops between paths. Entries that cannot be read
-/// or deleted (permission denied) are counted and skipped, like the artifact scan.
+/// materializer command arrives, deletion stops between paths. Entries below a root that the
+/// scan cannot read are counted, like in the artifact scan, but still deleted: the deletion adds
+/// owner permissions to the directories it removes. Entries that stay undeletable (permission
+/// denied, e.g. owned by another user) are counted and skipped.
 #[derive(Derivative)]
 #[derivative(Debug)]
 pub struct CleanScratchExtensionCommand {

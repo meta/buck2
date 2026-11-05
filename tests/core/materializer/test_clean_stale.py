@@ -719,8 +719,8 @@ clean_stale_low_disk_adaptive_min_ttl_hours = 24
         dead.mkdir(parents=True)
         (dead / "junk").write_text("x" * 16)
 
-        # A sibling scratch root the sweep cannot read: skipped, never deleted.
-        # (Kept out of `tmp/root` so its failed deletion cannot shadow `dead`'s.)
+        # A sibling scratch root the sweep's scan cannot read: still deleted, since
+        # the deletion adds owner permissions to the directories it removes.
         unreadable = buck.cwd / "buck-out" / "v2" / "tmp" / "unreadable"
         unreadable.mkdir()
         (unreadable / "junk").write_text("y")
@@ -731,11 +731,12 @@ clean_stale_low_disk_adaptive_min_ttl_hours = 24
             # The sweep starts shortly after the command finishes, once the daemon
             # is idle.
             for _ in range(60):
-                if not dead.exists():
+                if not dead.exists() and not unreadable.exists():
                     break
                 time.sleep(0.5)
         finally:
-            unreadable.chmod(0o755)
+            if unreadable.exists():
+                unreadable.chmod(0o755)
 
         assert not dead.exists()
-        assert (unreadable / "junk").exists()
+        assert not unreadable.exists()

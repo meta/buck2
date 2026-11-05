@@ -642,6 +642,33 @@ fn ok_if_not_found(res: Result<(), IoError>) -> buck2_error::Result<()> {
     }
 }
 
+/// Removes a file, or a directory whose contents were just removed. Below the top level, the
+/// containing directory is being removed as well, so the `_harder` variants may add owner
+/// permissions to it; the root survives the clean, so its permissions are left alone. A directory
+/// the walk couldn't list (no owner read or execute permission) still has its contents, so fall
+/// back to `remove_dir_all`, which adds owner permissions to every directory in the tree.
+fn remove_entry(root: &AbsPath, path: &AbsPath, is_dir: bool) -> Result<(), IoError> {
+    let in_root = path.parent() == Some(root);
+    if !is_dir {
+        return if in_root {
+            fs_util::remove_file(path)
+        } else {
+            fs_util::remove_file_harder(path)
+        };
+    }
+    let res = if in_root {
+        fs_util::remove_dir(path)
+    } else {
+        fs_util::remove_dir_harder(path)
+    };
+    match res {
+        Err(e) if e.io_error_kind() == Some(io::ErrorKind::DirectoryNotEmpty) => {
+            fs_util::remove_dir_all(path)
+        }
+        res => res,
+    }
+}
+
 /// Chooses disjoint subtrees whose removal can proceed in parallel.
 ///
 /// Starting from the top-level directories, descends level by level until at least `target_units`
@@ -702,6 +729,7 @@ fn clean_buck_out_pass(path: &AbsNormPathBuf, state: &Arc<CleanProgressState>) -
 
     let pool = ThreadPool::new(directory_mutation_parallelism());
     for subtree_root in subtree_roots {
+        let root = path.clone();
         let failures = failures.dupe();
         let dir_counter = dir_counter.dupe();
         let file_counter = file_counter.dupe();
@@ -713,13 +741,8 @@ fn clean_buck_out_pass(path: &AbsNormPathBuf, state: &Arc<CleanProgressState>) -
             for dir_entry in walk.into_iter().flatten() {
                 let is_dir = dir_entry.file_type().is_dir();
                 // The walk gives us back absolute paths since we give it absolute paths.
-                let res = AbsPath::new(dir_entry.path()).and_then(|p| {
-                    if is_dir {
-                        ok_if_not_found(fs_util::remove_dir(p))
-                    } else {
-                        ok_if_not_found(fs_util::remove_file(p))
-                    }
-                });
+                let res = AbsPath::new(dir_entry.path())
+                    .and_then(|p| ok_if_not_found(remove_entry(root.as_abs_path(), p, is_dir)));
 
                 match res {
                     Ok(()) => {
@@ -747,7 +770,11 @@ fn clean_buck_out_pass(path: &AbsNormPathBuf, state: &Arc<CleanProgressState>) -
                 if entry.file_type().is_ok_and(|t| t.is_dir()) {
                     continue;
                 }
-                match ok_if_not_found(fs_util::remove_file(entry.path())) {
+                match ok_if_not_found(remove_entry(
+                    path.as_abs_path(),
+                    entry.path().as_abs_path(),
+                    false,
+                )) {
                     Ok(()) => {
                         file_counter.fetch_add(1, Ordering::Relaxed);
                     }
@@ -755,7 +782,7 @@ fn clean_buck_out_pass(path: &AbsNormPathBuf, state: &Arc<CleanProgressState>) -
                 }
             }
         }
-        match ok_if_not_found(fs_util::remove_dir(dir)) {
+        match ok_if_not_found(remove_entry(path.as_abs_path(), dir.as_abs_path(), true)) {
             Ok(()) => {
                 dir_counter.fetch_add(1, Ordering::Relaxed);
             }
@@ -776,11 +803,11 @@ fn clean_buck_out_pass(path: &AbsNormPathBuf, state: &Arc<CleanProgressState>) -
                     Err(_) => std::fs::symlink_metadata(entry.path())
                         .is_ok_and(|m| m.file_type().is_dir()),
                 };
-                let res = if is_dir {
-                    ok_if_not_found(fs_util::remove_dir(entry.path()))
-                } else {
-                    ok_if_not_found(fs_util::remove_file(entry.path()))
-                };
+                let res = ok_if_not_found(remove_entry(
+                    path.as_abs_path(),
+                    entry.path().as_abs_path(),
+                    is_dir,
+                ));
                 match res {
                     Ok(()) => {
                         let counter = if is_dir { &dir_counter } else { &file_counter };
@@ -804,6 +831,77 @@ mod tests {
     use std::collections::BTreeMap;
 
     use super::*;
+
+    #[cfg(unix)]
+    #[test]
+    fn test_clean_readonly_directory_with_empty_children() -> buck2_error::Result<()> {
+        use std::os::unix::fs::PermissionsExt;
+
+        let tempdir = tempfile::tempdir()?;
+        let root = AbsNormPathBuf::new(tempdir.path().to_path_buf())?;
+        let parent = tempdir.path().join("delta");
+        std::fs::create_dir_all(parent.join("dev"))?;
+        std::fs::set_permissions(&parent, std::fs::Permissions::from_mode(0o555))?;
+
+        let state = Arc::new(CleanProgressState::new());
+        let outcome = clean_buck_out_pass(&root, &state);
+        drop(std::fs::set_permissions(
+            &parent,
+            std::fs::Permissions::from_mode(0o755),
+        ));
+
+        assert_eq!(outcome.failed, 0, "{:?}", outcome.first_error);
+        assert_eq!(std::fs::read_dir(&root)?.count(), 0);
+        assert_eq!(state.dirs_deleted(), 2);
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_clean_unlistable_directory() -> buck2_error::Result<()> {
+        use std::os::unix::fs::PermissionsExt;
+
+        let tempdir = tempfile::tempdir()?;
+        let root = AbsNormPathBuf::new(tempdir.path().to_path_buf())?;
+        let locked = tempdir.path().join("gamma").join("locked");
+        std::fs::create_dir_all(locked.join("dir"))?;
+        std::fs::write(locked.join("file"), b"content")?;
+        std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o000))?;
+
+        let state = Arc::new(CleanProgressState::new());
+        let outcome = clean_buck_out_pass(&root, &state);
+        drop(std::fs::set_permissions(
+            &locked,
+            std::fs::Permissions::from_mode(0o755),
+        ));
+
+        assert_eq!(outcome.failed, 0, "{:?}", outcome.first_error);
+        assert_eq!(std::fs::read_dir(&root)?.count(), 0);
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_clean_leaves_root_permissions_alone() -> buck2_error::Result<()> {
+        use std::os::unix::fs::PermissionsExt;
+
+        let tempdir = tempfile::tempdir()?;
+        let root_path = tempdir.path().join("root");
+        std::fs::create_dir_all(root_path.join("dir"))?;
+        std::fs::write(root_path.join("file"), b"content")?;
+        let root = AbsNormPathBuf::new(root_path)?;
+        std::fs::set_permissions(&root, std::fs::Permissions::from_mode(0o555))?;
+
+        let state = Arc::new(CleanProgressState::new());
+        // Depending on capabilities (e.g. CAP_DAC_OVERRIDE) the removal may succeed or fail;
+        // either way the root's permissions must be left untouched.
+        drop(clean_buck_out_pass(&root, &state));
+        let mode = std::fs::symlink_metadata(&root)?.permissions().mode();
+        std::fs::set_permissions(&root, std::fs::Permissions::from_mode(0o755))?;
+
+        assert_eq!(mode & 0o777, 0o555);
+        Ok(())
+    }
 
     fn fixture<'a>(
         children: &'a BTreeMap<&'static str, Vec<&'static str>>,

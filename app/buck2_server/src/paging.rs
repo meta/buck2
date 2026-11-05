@@ -378,6 +378,12 @@ pub(crate) fn cancel_active_page_out() {
     let _ = PAGE_OUT.compare_exchange(RUNNING, CANCELLED, Ordering::Relaxed, Ordering::Relaxed);
 }
 
+/// Cancel the in-progress idle page-out, if any, and wait for it to finish.
+pub(crate) async fn stop_idle_page_out() {
+    cancel_active_page_out();
+    wait_for_idle_page_out().await;
+}
+
 /// RAII single-flight guard; while held, [`PAGE_OUT`] is `RUNNING`/`CANCELLED`, so
 /// no second page-out can start.
 struct PageOutGuard;

@@ -34,10 +34,10 @@ use starlark::pagable::starlark_deserialization_state_retained_bytes;
 use starlark::pagable::starlark_serialization_state_retained_bytes;
 
 use crate::ctx::ServerCommandContext;
-use crate::paging::cancel_active_page_out;
 use crate::paging::evict_backed_measured;
 use crate::paging::page_out_in_progress;
 use crate::paging::page_out_measured;
+use crate::paging::stop_idle_page_out;
 use crate::paging::wait_for_idle_page_out;
 
 pub(crate) async fn hydration_command(
@@ -47,12 +47,18 @@ pub(crate) async fn hydration_command(
 ) -> buck2_error::Result<buck2_cli_proto::HydrationResponse> {
     let dice = ctx.base_context.tenant.dice_manager.unsafe_dice().dupe();
     let subcommand = HydrationSubcommand::try_from(req.subcommand)?;
+    // These wait for the idle page-out before the command takes its DICE admission lease: the
+    // idle page-out waits for every transaction to end, so waiting while holding one would never
+    // return.
+    match subcommand {
+        HydrationSubcommand::Status if req.wait => wait_for_idle_page_out().await,
+        // A manual page-out or page-in supersedes the idle page-out, and must not use the storage
+        // while a cancelled one drains: the drain discards rows not yet written.
+        HydrationSubcommand::PageOut | HydrationSubcommand::PageIn => stop_idle_page_out().await,
+        _ => {}
+    }
     run_server_command(
-        HydrationServerCommand {
-            dice,
-            subcommand,
-            wait: req.wait,
-        },
+        HydrationServerCommand { dice, subcommand },
         ctx,
         partial_result_dispatcher,
     )
@@ -62,8 +68,6 @@ pub(crate) async fn hydration_command(
 struct HydrationServerCommand {
     dice: Arc<Dice>,
     subcommand: HydrationSubcommand,
-    /// `status --wait`: block until any in-progress idle page-out finishes.
-    wait: bool,
 }
 
 #[async_trait]
@@ -90,9 +94,6 @@ impl ServerCommandTemplate for HydrationServerCommand {
     ) -> buck2_error::Result<Self::Response> {
         match self.subcommand {
             HydrationSubcommand::PageOut => {
-                // A manual page-out supersedes any idle one; stop it first so they
-                // don't page the same graph out concurrently.
-                cancel_active_page_out();
                 // Never cancelled: holds the exclusive command lock.
                 let (result, summary) =
                     page_out_measured(&self.dice, || false, server_ctx.events()).await;
@@ -103,8 +104,6 @@ impl ServerCommandTemplate for HydrationServerCommand {
                 })
             }
             HydrationSubcommand::PageIn => {
-                // Page-in wants values resident; stop any idle page-out racing it.
-                cancel_active_page_out();
                 self.dice
                     .page_in()
                     .await
@@ -119,9 +118,6 @@ impl ServerCommandTemplate for HydrationServerCommand {
                 })
             }
             HydrationSubcommand::Status => {
-                if self.wait {
-                    wait_for_idle_page_out().await;
-                }
                 let status = self.dice.pagable_status().await;
                 let starlark_serialization_state_bytes = self
                     .dice

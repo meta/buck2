@@ -19,6 +19,8 @@ from buck2.tests.e2e_util.helper.golden import golden
 AGENT_MATERIALIZATION = "--setting=agent_materialization.enabled=true"
 DIRECT = "--agent-context=direct_call=true"
 MATERIALIZATION_NOTICE = "Final-output materialization was automatically disabled"
+MATERIALIZATION_ENABLED_TAG = "agent_materialization.enabled"
+MATERIALIZATION_DISABLED_TAG = "agent_materialization.disabled"
 
 
 class BuildOutputTest(BuckTestCase):
@@ -79,7 +81,8 @@ class BuildOutputTest(BuckTestCase):
     @buck_test(
         extra_buck_config={
             "buck2": {"materializations": "deferred", "defer_write_actions": "true"}
-        }
+        },
+        write_invocation_record=True,
     )
     async def test_agent_materialization_activation_and_overrides(
         self, buck: Buck
@@ -104,6 +107,11 @@ class BuildOutputTest(BuckTestCase):
                 False,
             ),
         ]
+        # Only builds the setting decides record its state; the rest are outside its A/B test.
+        expected_tags = {
+            "direct": MATERIALIZATION_ENABLED_TAG,
+            "disabled": MATERIALIZATION_DISABLED_TAG,
+        }
         # Distinct outputs keep earlier materializations from masking a later skip.
         (buck.cwd / "TARGETS.fixture").write_text(
             "\n".join(f'trivial_build(name="{name}")' for name, _, _ in cases)
@@ -125,6 +133,13 @@ class BuildOutputTest(BuckTestCase):
                 1 if name == "direct" else 0
             ), name
             assert MATERIALIZATION_NOTICE not in result.stdout
+            tags = result.invocation_record()["tags"]
+            expected_tag = expected_tags.get(name)
+            assert {
+                tag
+                for tag in (MATERIALIZATION_ENABLED_TAG, MATERIALIZATION_DISABLED_TAG)
+                if tag in tags
+            } == ({expected_tag} if expected_tag else set()), name
             assert (
                 json.loads((await buck.status()).stdout)["daemon_constraints"][
                     "daemon_id"
@@ -147,6 +162,19 @@ class BuildOutputTest(BuckTestCase):
                 assert path.exists() == materialized, name
                 if materialized:
                     assert path.read_text() == "abcd"
+
+    @buck_test(write_invocation_record=True)
+    async def test_agent_materialization_tag_is_recorded_for_failed_builds(
+        self, buck: Buck
+    ) -> None:
+        # The notice only follows a successful build, but the tag is recorded before building.
+        for args, expected_tag in [
+            ((AGENT_MATERIALIZATION, DIRECT), MATERIALIZATION_ENABLED_TAG),
+            ((DIRECT,), MATERIALIZATION_DISABLED_TAG),
+        ]:
+            result = await expect_failure(buck.build("root//:does_not_exist", *args))
+            assert MATERIALIZATION_NOTICE not in result.stderr, args
+            assert expected_tag in result.invocation_record()["tags"], args
 
     @buck_test(
         extra_buck_config={

@@ -3,8 +3,8 @@
 This replaces the `rust.pgo_generate_dir` and `rust.pgo_profile` buckconfigs
 from D101392776. PGO is off by default. The shared Rust toolchain instruments
 the configured Rust dependency graph, excluding bootstrap/sysroot crates and
-dependencies transitioned to execution platforms. This does not opt Buck2's
-C/C++ dependencies into PGO.
+dependencies transitioned to execution platforms, and the fbcode clang
+toolchain does the same for Buck2's C/C++ dependencies.
 
 ## Generate
 

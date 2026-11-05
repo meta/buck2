@@ -57,3 +57,12 @@ class LintAndTypecheckTest(BuckTestCase):
             buck.starlark("lint", "linkdir/good.bzl"),
             stderr_regex="is behind the symlink `linkdir`, which buck2 does not follow",
         )
+
+    @buck_test()
+    async def test_typecheck_reports_unresolved_append(self, buck: Buck) -> None:
+        # A typo'd `y.append(1)` inside a def is a scope error, not a daemon panic.
+        failure = await expect_failure(
+            buck.starlark("typecheck", "unresolved_append.bzl"),
+            stderr_regex="Detected 1 errors",
+        )
+        assert "Variable `y` not found" in failure.stdout, failure.stdout

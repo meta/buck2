@@ -57,6 +57,7 @@ use crate::values::typing::StarlarkIter;
 
 mod call;
 mod callable;
+mod calls_and_bindings;
 mod list;
 mod special_function;
 mod tuple;

@@ -105,6 +105,13 @@ public class ApkBuilderExecutableMain {
   }
 
   private void run() throws IOException {
+    String scratchPath = System.getenv("BUCK_SCRATCH_PATH");
+    if (scratchPath == null || scratchPath.isEmpty()) {
+      throw new IllegalStateException(
+          "BUCK_SCRATCH_PATH environment variable must be set and non-empty");
+    }
+    Path scratchDir = Paths.get(scratchPath);
+
     ImmutableSet<Path> assetDirectories =
         Files.readAllLines(Paths.get(assetDirectoriesList)).stream()
             .map(Paths::get)
@@ -112,7 +119,7 @@ public class ApkBuilderExecutableMain {
 
     Path buildInfoDir = null;
     if (buildInfoGeneratorArgs != null) {
-      buildInfoDir = generateBuildInfoAssetDir(buildInfoGeneratorArgs);
+      buildInfoDir = generateBuildInfoAssetDir(buildInfoGeneratorArgs, scratchDir);
       assetDirectories =
           ImmutableSet.<Path>builder().addAll(assetDirectories).add(buildInfoDir).build();
     }
@@ -147,7 +154,7 @@ public class ApkBuilderExecutableMain {
     Path keystorePath = Paths.get(keystore);
     Path keystorePropertiesPath = Paths.get(keystoreProperties);
 
-    Path tempDir = Files.createTempDirectory("apk_builder");
+    Path tempDir = Files.createTempDirectory(scratchDir, "apk_builder");
     Path intermediateApk = tempDir.resolve("intermediate.apk");
     Path zipalignApk = tempDir.resolve("zipalign.apk");
     KeystoreProperties keystoreProperties =
@@ -235,9 +242,10 @@ public class ApkBuilderExecutableMain {
    * it from the apk packaging action, ties the baked id to the APK content (re-baked only when the
    * APK changes).
    */
-  private static Path generateBuildInfoAssetDir(String argsFile) throws IOException {
+  private static Path generateBuildInfoAssetDir(String argsFile, Path scratchDir)
+      throws IOException {
     List<String> command = new ArrayList<>(Files.readAllLines(Paths.get(argsFile)));
-    Path dir = Files.createTempDirectory("build_info");
+    Path dir = Files.createTempDirectory(scratchDir, "build_info");
     command.add("--output-dir");
     command.add(dir.toString());
     Process process = new ProcessBuilder(command).inheritIO().start();

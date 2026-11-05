@@ -14,6 +14,7 @@ use pagable::DataKey;
 use crate::api::invalidation_tracking::InvalidationSources;
 use crate::api::key::InvalidationSourcePriority;
 use crate::api::storage_type::StorageType;
+use crate::core::graph::BackedSnapshot;
 use crate::core::graph::ComputedValueUpdate;
 use crate::core::graph::VersionedGraph;
 use crate::core::graph::introspection::VersionedGraphIntrospectable;
@@ -189,9 +190,13 @@ impl ActorState {
         }
     }
 
-    pub(super) fn evict_backed(&mut self, limit: usize) -> u64 {
+    pub(super) fn backed_snapshot(&self) -> BackedSnapshot {
+        self.graph.backed_snapshot()
+    }
+
+    pub(super) fn evict_backed(&mut self, keys: &[DiceKey], cutoff: u64) -> u64 {
         let window = AllocWindow::open();
-        let evicted = self.graph.evict_backed(limit);
+        let evicted = self.graph.evict_backed(keys, cutoff);
         if let Some(metrics) = &self.paging_memory {
             let freed = window.net_freed();
             metrics.record_nodes_paged_out(evicted);

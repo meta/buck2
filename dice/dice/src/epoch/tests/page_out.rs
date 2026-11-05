@@ -3098,3 +3098,214 @@ async fn cancelled_page_out_does_not_back_stale_root() -> anyhow::Result<()> {
     assert_eq!(*tx.compute(&PageOutRaceRoot).await?, 0);
     Ok(())
 }
+
+/// Evicts what `snapshot` names in batches of 1000 keys, as `Dice::evict_backed` does, so a
+/// test can act between them. Returns how many values each batch evicted.
+async fn evict_snapshot_batches(
+    dice: &Dice,
+    snapshot: &crate::core::graph::BackedSnapshot,
+    batches: std::ops::Range<usize>,
+) -> u64 {
+    let mut evicted = 0;
+    for keys in snapshot
+        .keys
+        .chunks(1000)
+        .skip(batches.start)
+        .take(batches.len())
+    {
+        evicted += dice
+            .state_handle
+            .evict_backed(keys.to_vec(), snapshot.cutoff)
+            .await;
+    }
+    evicted
+}
+
+struct SweepFixture {
+    dice: Arc<Dice>,
+    root: BranchId,
+    counter: ComputeCounter,
+    ordered: Vec<PagableKey>,
+    _directory: TempDir,
+}
+
+impl SweepFixture {
+    async fn new(count: u32) -> anyhow::Result<Self> {
+        let directory = tempdir()?;
+        let (dice, root) = make_dice_with(
+            DiceStorage::open(directory.path(), PagableStorageBackend::Sqlite)?,
+            PageOutPolicy::OncePerValue,
+            EvictionPolicy::OnMemoryPressure,
+        )
+        .await;
+        let counter = ComputeCounter::new();
+        let tx = dice
+            .updater_with_data(root, user_data_with_counter(&counter))
+            .commit()
+            .await;
+        let mut ordered: Vec<_> = (0..count).map(PagableKey).collect();
+        for key in &ordered {
+            assert_eq!(*tx.compute(key).await?, u64::from(key.0) * 100);
+        }
+        drop(tx);
+        dice.wait_for_idle().await;
+        dice.page_out().await?;
+        ordered.sort_by_key(|key| dice.key_index.index_key(key.dupe()).index);
+        assert_eq!(dice.pagable_node_counts().await.backed, count as usize);
+        Ok(Self {
+            dice,
+            root,
+            counter,
+            ordered,
+            _directory: directory,
+        })
+    }
+
+    async fn fresh_transaction(&self, epoch: u64) -> anyhow::Result<crate::DiceTransaction> {
+        let mut updater = self
+            .dice
+            .updater_with_data(self.root, user_data_with_counter(&self.counter));
+        updater.changed_to([(DeferredInput(0), epoch)])?;
+        Ok(updater.commit().await)
+    }
+}
+
+#[tokio::test]
+async fn eviction_sweep_leaves_values_backed_after_it_starts() -> anyhow::Result<()> {
+    let fixture = SweepFixture::new(2000).await?;
+    let snapshot = fixture.dice.state_handle.backed_snapshot().await;
+    assert_eq!(
+        evict_snapshot_batches(&fixture.dice, &snapshot, 0..1).await,
+        1000
+    );
+
+    let tx = fixture.fresh_transaction(1).await?;
+    let before = page_in_count::<PagableKey>(&fixture.dice);
+    for key in &fixture.ordered[..1000] {
+        tx.compute(key).await?;
+    }
+    assert_eq!(page_in_count::<PagableKey>(&fixture.dice), before + 1000);
+    assert_eq!(*tx.compute(&PagableKey(2000)).await?, 200000);
+    drop(tx);
+    fixture.dice.wait_for_idle().await;
+    fixture.dice.page_out().await?;
+    assert_eq!(
+        evict_snapshot_batches(&fixture.dice, &snapshot, 0..2).await,
+        1000,
+        "readbacks and newly written values survive; the rest of the snapshot is evicted"
+    );
+
+    let tx = fixture.fresh_transaction(2).await?;
+    let before = page_in_count::<PagableKey>(&fixture.dice);
+    tx.compute(&fixture.ordered[0]).await?;
+    tx.compute(&PagableKey(2000)).await?;
+    assert_eq!(page_in_count::<PagableKey>(&fixture.dice), before);
+    tx.compute(&fixture.ordered[1000]).await?;
+    assert_eq!(page_in_count::<PagableKey>(&fixture.dice), before + 1);
+    drop(tx);
+    fixture.dice.wait_for_idle().await;
+    assert_eq!(fixture.counter.count(), 2001);
+    assert_eq!(
+        fixture.dice.evict_backed().await,
+        1002,
+        "a later eviction includes everything backed since"
+    );
+    Ok(())
+}
+
+#[derive(Allocative, Clone, Dupe, Debug, Display, PartialEq, Eq, Hash, Pagable)]
+#[pagable_typetag(DiceKeyDyn)]
+struct VersionedSweepKey(u32);
+
+#[async_trait]
+impl Key for VersionedSweepKey {
+    type Value = u64;
+
+    async fn compute(&self, ctx: &mut DiceComputations, _cancel: &CancellationContext) -> u64 {
+        if let Ok(counter) = ctx.per_transaction_data().data.get::<ComputeCounter>() {
+            counter.0.fetch_add(1, Ordering::SeqCst);
+        }
+        u64::from(self.0) * 100
+            + *ctx
+                .compute(&DeferredInput(0))
+                .await
+                .expect("input was asserted")
+    }
+
+    fn equality_behavior() -> EqualityBehavior<u64> {
+        EqualityBehavior::Compare(|a, b| a == b)
+    }
+
+    fn value_serialize() -> impl ValueSerialize<Value = u64> {
+        PagableValueSerialize::new()
+    }
+}
+
+#[tokio::test]
+async fn eviction_sweep_cutoff_excludes_later_revision_on_original_key() -> anyhow::Result<()> {
+    let directory = tempdir()?;
+    let (dice, root) = make_dice_with(
+        DiceStorage::open(directory.path(), PagableStorageBackend::Sqlite)?,
+        PageOutPolicy::OncePerValue,
+        EvictionPolicy::OnMemoryPressure,
+    )
+    .await;
+    let counter = ComputeCounter::new();
+    let mut updater = dice.updater_with_data(root, user_data_with_counter(&counter));
+    updater.changed_to([(DeferredInput(0), 1)])?;
+    let tx = updater.commit().await;
+    let mut ordered: Vec<_> = (0..2000).map(VersionedSweepKey).collect();
+    for key in &ordered {
+        assert_eq!(*tx.compute(key).await?, u64::from(key.0) * 100 + 1);
+    }
+    drop(tx);
+    dice.wait_for_idle().await;
+    dice.page_out().await?;
+    assert_eq!(dice.pagable_node_counts().await.backed, 2000);
+    ordered.sort_by_key(|key| dice.key_index.index_key(key.dupe()).index);
+    let snapshot = dice.state_handle.backed_snapshot().await;
+    assert_eq!(evict_snapshot_batches(&dice, &snapshot, 0..1).await, 1000);
+    let key = ordered[1000].dupe();
+    let expected = u64::from(key.0) * 100 + 2;
+    let mut updater = dice.updater_with_data(root, user_data_with_counter(&counter));
+    updater.changed_to([(DeferredInput(0), 2)])?;
+    let tx = updater.commit().await;
+    assert_eq!(*tx.compute(&key).await?, expected);
+    drop(tx);
+    dice.wait_for_idle().await;
+    dice.page_out().await?;
+    let total = 1000 + evict_snapshot_batches(&dice, &snapshot, 1..2).await;
+    assert!(
+        (1999..=2000).contains(&total),
+        "the old revision may have been released, never evict the new one"
+    );
+
+    let mut updater = dice.updater_with_data(root, user_data_with_counter(&counter));
+    updater.changed_to([(DeferredInput(1), 1)])?;
+    let tx = updater.commit().await;
+    let before = page_in_count::<VersionedSweepKey>(&dice);
+    assert_eq!(*tx.compute(&key).await?, expected);
+    assert_eq!(
+        page_in_count::<VersionedSweepKey>(&dice),
+        before,
+        "the later revision was backed after the snapshot"
+    );
+    drop(tx);
+    dice.wait_for_idle().await;
+    assert_eq!(
+        dice.evict_backed().await,
+        1,
+        "the later revision is eligible in the next eviction"
+    );
+    let mut updater = dice.updater_with_data(root, user_data_with_counter(&counter));
+    updater.changed_to([(DeferredInput(1), 2)])?;
+    let tx = updater.commit().await;
+    assert_eq!(*tx.compute(&key).await?, expected);
+    assert_eq!(page_in_count::<VersionedSweepKey>(&dice), before + 1);
+    assert_eq!(
+        counter.count(),
+        2001,
+        "subsequent demands must hydrate or reuse, not recompute again"
+    );
+    Ok(())
+}

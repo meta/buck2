@@ -25,6 +25,7 @@ use tokio::sync::mpsc::WeakUnboundedSender;
 use crate::api::invalidation_tracking::InvalidationSources;
 use crate::api::key::InvalidationSourcePriority;
 use crate::api::storage_type::StorageType;
+use crate::core::graph::BackedSnapshot;
 use crate::core::graph::introspection::VersionedGraphIntrospectable;
 use crate::core::graph::revision::EpsilonToken;
 use crate::core::graph::types::Candidate;
@@ -380,10 +381,18 @@ impl CoreStateHandle {
         })
     }
 
-    /// Evict the backed values of up to `limit` keys, returning how many values were evicted:
-    /// zero only once none is left.
-    pub(crate) fn evict_backed(&self, limit: usize) -> impl Future<Output = u64> + use<> {
-        self.call(move |resp| StateRequest::EvictBacked { limit, resp })
+    /// The keys with a backed value now, and the residency cutoff of that moment.
+    pub(crate) fn backed_snapshot(&self) -> impl Future<Output = BackedSnapshot> + use<> {
+        self.call(|resp| StateRequest::BackedSnapshot { resp })
+    }
+
+    /// Evict the values of `keys` backed no later than `cutoff`, returning how many were evicted.
+    pub(crate) fn evict_backed(
+        &self,
+        keys: Vec<DiceKey>,
+        cutoff: u64,
+    ) -> impl Future<Output = u64> + use<> {
+        self.call(move |resp| StateRequest::EvictBacked { keys, cutoff, resp })
     }
 
     /// Mark nodes that page-out could not serialize so they are not offered as
@@ -615,8 +624,14 @@ pub(super) enum StateRequest {
         keys: Vec<(DiceKey, PageOutResult)>,
         eviction_policy: EvictionPolicy,
     },
-    /// Drop the backed values of up to `limit` keys, leaving their rows.
-    EvictBacked { limit: usize, resp: Responder<u64> },
+    /// The keys with a backed value now, and the residency cutoff of that moment.
+    BackedSnapshot { resp: Responder<BackedSnapshot> },
+    /// Drop the values of `keys` backed no later than `cutoff`, leaving their rows.
+    EvictBacked {
+        keys: Vec<DiceKey>,
+        cutoff: u64,
+        resp: Responder<u64>,
+    },
     /// Mark nodes that page-out could not serialize.
     MarkNonPageable {
         keys: Vec<(DiceKey, DiceValidValue)>,

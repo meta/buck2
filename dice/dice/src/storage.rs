@@ -493,19 +493,16 @@ impl DiceStorage {
     pub(crate) async fn evict_backed(&self, state_handle: &CoreStateHandle) -> u64 {
         // In batches of keys, so the core thread stays responsive between them.
         const EVICT_BATCH_KEYS: usize = 1000;
-        // Bounded by what was backed at the start. Computations run meanwhile, and under
-        // `OncePerValue` each value one reads back is backed again by the next batch; evicting
-        // those would be evicting what is in use, and would never end while anything runs. They
-        // are left for the next eviction.
+        // Bounded by what was backed at the start. Computations run meanwhile, and values that
+        // become backed in the meantime, read back by a computation or written by a page-out, are
+        // likely in use. They are left for the next eviction.
         self.paging_memory.record_eviction();
-        let target = state_handle.pagable_node_counts().await.backed as u64;
+        let snapshot = state_handle.backed_snapshot().await;
         let mut evicted = 0;
-        while evicted < target {
-            let batch = state_handle.evict_backed(EVICT_BATCH_KEYS).await;
-            if batch == 0 {
-                break;
-            }
-            evicted += batch;
+        for keys in snapshot.keys.chunks(EVICT_BATCH_KEYS) {
+            evicted += state_handle
+                .evict_backed(keys.to_vec(), snapshot.cutoff)
+                .await;
         }
         self.release_after_evictions();
         evicted

@@ -297,6 +297,13 @@ impl PagableIndex {
     }
 }
 
+/// The keys with a backed value at one point, and a residency cutoff that excludes values
+/// backed after it.
+pub(crate) struct BackedSnapshot {
+    pub(crate) keys: Vec<DiceKey>,
+    pub(crate) cutoff: u64,
+}
+
 /// The core state with its values: what the actor thread operates on.
 #[derive(Allocative)]
 pub(crate) struct VersionedGraph {
@@ -718,24 +725,30 @@ impl VersionedGraph {
         evicted
     }
 
-    /// Evicts the backed values of up to `limit` keys, leaving their rows. Returns how many
-    /// values were evicted: zero only once no key has a backed value.
-    pub(crate) fn evict_backed(&mut self, limit: usize) -> u64 {
-        // Collected first: evicting a key's values takes it out of the index.
-        let keys: Vec<DiceKey> = self
-            .index
-            .backed
-            .iter()
-            .take(limit)
-            .map(|index| DiceKey {
-                index: index as u32,
-            })
-            .collect();
+    /// What is backed now, for an eviction sweep that must leave alone values backed after it
+    /// starts.
+    pub(crate) fn backed_snapshot(&self) -> BackedSnapshot {
+        BackedSnapshot {
+            keys: self
+                .index
+                .backed
+                .iter()
+                .map(|index| DiceKey {
+                    index: index as u32,
+                })
+                .collect(),
+            cutoff: lifecycle::residency_cutoff(),
+        }
+    }
+
+    /// Evicts the values of `keys` backed no later than `cutoff`,
+    /// leaving their rows. Returns how many values were evicted.
+    pub(crate) fn evict_backed(&mut self, keys: &[DiceKey], cutoff: u64) -> u64 {
         let mut evicted = 0u64;
-        for key in keys {
+        for &key in keys {
             self.with_values(key, |kv| {
                 for value in kv.values_mut() {
-                    if value.evict_backed() {
+                    if value.evict_backed(cutoff) {
                         evicted += 1;
                     }
                 }

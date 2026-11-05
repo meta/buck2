@@ -8,6 +8,9 @@
  * above-listed licenses.
  */
 
+use std::sync::atomic::AtomicU64;
+use std::sync::atomic::Ordering;
+
 use allocative::Allocative;
 use dupe::Dupe;
 use pagable::DataKey;
@@ -53,6 +56,16 @@ pub(crate) struct BackedValue {
     /// Size of the row's top-level serialized blob, excluding nested `PagableArc` sub-values;
     /// zero when the value became backed without its row being read or written.
     pub(crate) serialized_bytes: u64,
+    /// When the value became backed; see [`residency_cutoff`].
+    residency_generation: u64,
+}
+
+static RESIDENCY_GENERATION: AtomicU64 = AtomicU64::new(0);
+
+/// A generation no earlier than that of any value backed so far, and earlier than that of any
+/// value backed from now on.
+pub(crate) fn residency_cutoff() -> u64 {
+    RESIDENCY_GENERATION.load(Ordering::Relaxed)
 }
 
 impl BackedValue {
@@ -61,6 +74,7 @@ impl BackedValue {
             value,
             data_key,
             serialized_bytes,
+            residency_generation: RESIDENCY_GENERATION.fetch_add(1, Ordering::Relaxed) + 1,
         })
     }
 }
@@ -173,11 +187,15 @@ impl PagableValue {
         }
     }
 
-    /// Drops a backed value, leaving its row. Returns whether there was one.
-    pub(crate) fn evict_backed(&mut self) -> bool {
+    /// Drops a value backed no later than `cutoff` (see [`residency_cutoff`]), leaving its row.
+    /// Returns whether there was one.
+    pub(crate) fn evict_backed(&mut self, cutoff: u64) -> bool {
         let PagableValue::Backed(backed) = self else {
             return false;
         };
+        if backed.residency_generation > cutoff {
+            return false;
+        }
         let data_key = backed.data_key;
         *self = PagableValue::PagedOut(data_key);
         true

@@ -276,19 +276,39 @@ pub(crate) fn to_project_json(
         check_cycles_in_crate_graph(&crates);
     }
 
+    let buck_test_command = buck.command([
+        "test".to_owned(),
+        CLIENT_METADATA_RUST_PROJECT.to_owned(),
+        "{label}".to_owned(),
+    ]);
+
+    let mut args: Vec<String> = buck_test_command
+        .get_args()
+        // It is safe to call unwrap on this because we've constructed all the
+        // args from Rust strings (i.e. utf-8) so `to_str` will never return
+        // `None`.
+        .map(|a| a.to_str().unwrap().to_owned())
+        .collect();
+
+    args.push("--".to_owned());
+
+    if cfg!(fbcode_build) {
+        args.extend_from_slice(&["{test_id}".to_owned(), "--print-passing-details".to_owned()]);
+    } else {
+        args.extend_from_slice(&[
+            "--test-arg".to_owned(),
+            "--exact".to_owned(),
+            "--no-capture".to_owned(),
+            "{test_id}".to_owned(),
+        ]);
+    }
+
     let jp = ProjectJson {
         sysroot: Box::new(sysroot),
         crates,
         runnables: vec![Runnable {
-            program: "buck".to_owned(),
-            args: vec![
-                "test".to_owned(),
-                CLIENT_METADATA_RUST_PROJECT.to_owned(),
-                "{label}".to_owned(),
-                "--".to_owned(),
-                "{test_id}".to_owned(),
-                "--print-passing-details".to_owned(),
-            ],
+            program: buck_test_command.get_program().to_str().unwrap().to_owned(),
+            args,
             cwd: project_root.to_owned(),
             kind: RunnableKind::TestOne,
         }],

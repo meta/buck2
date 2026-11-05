@@ -1164,6 +1164,12 @@ async fn compute_configured_target_node_no_transition(
         // (2) isn't allowed to do execution
         // And so we use an "unspecified" execution platform to avoid cycles and cause any attempts at execution to fail.
         None
+    } else if let Some(exec_cfg) = target_label.exec_cfg()
+        && exec_cfg == &ConfigurationData::unspecified_exec()
+    {
+        // The parent resolved to no execution platform (the `use_unspecified` fallback), and so
+        // does its toolchain dep.
+        Some(ExecutionPlatformResolutionPartial::new(None, Vec::new()))
     } else if let Some(exec_cfg) = target_label.exec_cfg() {
         // The label was produced by a toolchain_dep, so we use the execution platform of our parent
         // We need to convert that to an execution platform, so just find the one with the same configuration.

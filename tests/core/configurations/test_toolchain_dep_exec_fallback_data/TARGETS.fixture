@@ -1,0 +1,28 @@
+load(":defs.bzl", "toolchain", "uses_toolchain")
+
+platform(name = "p")
+
+toolchain(name = "tc")
+
+# No candidate platform satisfies plan9, so resolution falls back.
+uses_toolchain(
+    name = "falls_back",
+    exec_compatible_with = ["//config:plan9"],
+    default_target_platform = ":p",
+)
+
+# Control: minix is a candidate.
+uses_toolchain(
+    name = "resolves",
+    exec_compatible_with = ["//config:minix"],
+    default_target_platform = ":p",
+)
+
+# Reason order: d0 runs only on hurd, d1 only on sunos (not a candidate).
+stub(name = "d0", target_compatible_with = ["//config:hurd"])
+stub(name = "d1", target_compatible_with = ["//config:sunos"])
+stub(
+    name = "two_exec_deps",
+    exec_deps = [":d0", ":d1"],
+    default_target_platform = ":p",
+)

@@ -1,0 +1,33 @@
+constraint_setting(name = "os")
+
+constraint_value(
+    name = "haiku",
+    constraint_setting = ":os",
+    visibility = ["PUBLIC"],
+)
+
+constraint_value(
+    name = "hurd",
+    constraint_setting = ":os",
+    visibility = ["PUBLIC"],
+)
+
+constraint_value(
+    name = "minix",
+    constraint_setting = ":os",
+    visibility = ["PUBLIC"],
+)
+
+constraint_value(
+    name = "sunos",
+    constraint_setting = ":os",
+    visibility = ["PUBLIC"],
+)
+
+# Deliberately not part of any execution platform, so that requiring it makes
+# every candidate platform get skipped.
+constraint_value(
+    name = "plan9",
+    constraint_setting = ":os",
+    visibility = ["PUBLIC"],
+)

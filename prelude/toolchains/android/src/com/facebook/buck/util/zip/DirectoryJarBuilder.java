@@ -22,6 +22,7 @@ import static java.util.stream.Stream.concat;
 import com.facebook.buck.core.filesystems.AbsPath;
 import com.facebook.buck.util.zip.DirectoryJarEntryContainer.FileJarEntry;
 import com.google.common.annotations.VisibleForTesting;
+import com.google.common.base.Strings;
 import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.nio.file.Files;
@@ -213,7 +214,16 @@ public class DirectoryJarBuilder {
 
   /** Creates a temporary file that will be deleted after the JVM exits. */
   private AbsPath newTemporaryJarFile() throws IOException {
-    final Path temp = Files.createTempFile("parallel-", ".jar").toAbsolutePath();
+    String scratchPath = System.getenv("BUCK_SCRATCH_PATH");
+    final Path scratchDir =
+        Path.of(
+            Strings.isNullOrEmpty(scratchPath)
+                ? System.getProperty("java.io.tmpdir")
+                : scratchPath);
+    if (!isDirectory(scratchDir)) {
+      throw new IOException("Scratch path must be an existing directory: " + scratchDir);
+    }
+    final Path temp = Files.createTempFile(scratchDir, "parallel-", ".jar").toAbsolutePath();
     temp.toFile().deleteOnExit();
     return AbsPath.of(temp);
   }

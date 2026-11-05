@@ -11,6 +11,7 @@
 package com.facebook.buck.jvm.cd.workertool.grpc;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
@@ -18,6 +19,7 @@ import static org.mockito.Mockito.when;
 import io.grpc.ServerServiceDefinition;
 import java.nio.file.Path;
 import java.util.Optional;
+import java.util.OptionalLong;
 import org.junit.Test;
 
 public class WorkerGrpcServerTest {
@@ -53,5 +55,34 @@ public class WorkerGrpcServerTest {
         "Health check thread should exist with name containing '" + serverName + "-health-check'",
         healthCheckThread.isPresent());
     assertTrue("Health check thread should be a daemon thread", healthCheckThread.get().isDaemon());
+  }
+
+  @Test
+  public void testParentAliveWhileItIsTheStartingParent() {
+    ProcessHandle parent = ProcessHandle.current();
+
+    assertTrue(WorkerGrpcServer.isParentAlive(Optional.of(parent), OptionalLong.of(parent.pid())));
+  }
+
+  @Test
+  public void testParentNotAliveAfterAdoptionByAnotherProcess() {
+    // A subreaper adopting the orphaned worker: the parent is alive and not pid 1, but it is not
+    // the process that started the worker.
+    ProcessHandle adopter = ProcessHandle.current();
+
+    assertFalse(
+        WorkerGrpcServer.isParentAlive(Optional.of(adopter), OptionalLong.of(adopter.pid() + 1)));
+  }
+
+  @Test
+  public void testParentAliveWhenWorkerStartedWithoutParent() {
+    // With no parent at startup there is nothing to compare with, so a live parent counts as alive.
+    assertTrue(
+        WorkerGrpcServer.isParentAlive(Optional.of(ProcessHandle.current()), OptionalLong.empty()));
+  }
+
+  @Test
+  public void testParentNotAliveWithoutParent() {
+    assertFalse(WorkerGrpcServer.isParentAlive(Optional.empty(), OptionalLong.empty()));
   }
 }

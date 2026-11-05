@@ -40,6 +40,7 @@ import java.io.OutputStream;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.Optional;
+import java.util.OptionalLong;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -105,9 +106,20 @@ public class WorkerGrpcServer implements ServerInterceptor {
 
   private static final int AVAILABLE_PROCESSORS = Runtime.getRuntime().availableProcessors();
 
+  // A subreaper such as `systemd --user` adopts an orphaned worker, so its parent need not become
+  // pid 1: compare with the parent the worker started with, if it had one.
+  private final OptionalLong startingParentPid =
+      ProcessHandle.current().parent().stream().mapToLong(ProcessHandle::pid).findFirst();
+
   private boolean isParentAlive() {
-    Optional<ProcessHandle> parent = ProcessHandle.current().parent();
-    return parent.isPresent() && parent.get().pid() != 1 && parent.get().isAlive();
+    return isParentAlive(ProcessHandle.current().parent(), startingParentPid);
+  }
+
+  static boolean isParentAlive(Optional<ProcessHandle> parent, OptionalLong startingParentPid) {
+    return parent.isPresent()
+        && (startingParentPid.isEmpty() || parent.get().pid() == startingParentPid.getAsLong())
+        && parent.get().pid() != 1
+        && parent.get().isAlive();
   }
 
   private void checkCDState() {

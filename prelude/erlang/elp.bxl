@@ -101,7 +101,7 @@ def _build_alias_map(ctx, targets):
             visited.append(cur)
             cur = raw_map[cur]
         if cur in raw_map:
-            warning("alias chain starting at {} exceeds 10 hops — possible cycle, truncating".format(src))
+            print("alias chain starting at {} exceeds 10 hops — possible cycle, truncating".format(src))  # buildifier: disable=print
         for v in visited:
             alias_map[v] = cur
     return alias_map
@@ -288,7 +288,7 @@ def _as_build(artifact):
     return {"type": "build", "value": artifact}
 
 def _as_error(error):
-    warning("ERROR: {}".format(error))
+    print("ERROR: {}".format(error))  # buildifier: disable=print
     return {"type": "error", "value": error}
 
 # ------------------ INTERFACE ------------------

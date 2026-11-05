@@ -39,7 +39,12 @@ def gen_aidl_impl(ctx: AnalysisContext) -> list[Provider]:
         if source_info != None:
             dep_srcs += source_info.srcs
         else:
-            warning("`{}` dependency `{}` is not a `gen_aidl` rule and will be ignored".format(ctx.label, dep.label))
+            deprecation(
+                "starlark_gen_aidl_non_aidl_dep",
+                "`{}` dependency `{}` is not a `gen_aidl` rule and will be ignored".format(ctx.label, dep.label),
+                owner = "jwm",
+                started = "2022-10-17",
+            )
 
     aidl_cmd.add(cmd_args(hidden = dep_srcs))
 

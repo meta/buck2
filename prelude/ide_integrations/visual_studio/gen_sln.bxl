@@ -7,7 +7,7 @@
 # above-listed licenses.
 
 load("get_vs_settings.bxl", "get_basic_vs_settings")
-load("utils.bxl", "basename", "gen_guid", "get_project_file_path", "log_debug", "sanitize")
+load("utils.bxl", "basename", "gen_guid", "get_project_file_path", "log_debug", "log_warn", "sanitize")
 
 def _gen_entry(project_type_guid, project_name, project_filepath, project_guid):
     return """Project("{project_type_guid}") = "{project_name}", "{project_filepath}", "{project_guid}"
@@ -118,10 +118,9 @@ def _set_startup_target(targets, vs_settings_list, startup_target_label: TargetL
         targets[0], targets[startup_target_index] = targets[startup_target_index], targets[0]
         vs_settings_list[0], vs_settings_list[startup_target_index] = vs_settings_list[startup_target_index], vs_settings_list[0]
     else:
-        warning(
-            "Startup target couldn't be located: {}. Please check passed in targets list, `--recursive_target_types`, `--target_exclude_pattern` and `--target_exclude_pattern`.".format(
-                startup_target_label
-            )
+        log_warn(
+            "Startup target couldn't be located: {}. Please check passed in targets list, `--recursive_target_types`, `--target_exclude_pattern` and `--target_exclude_pattern`.",
+            startup_target_label,
         )
 
 # In buck dependency tree, duplicate targets can exist with exact same label but different

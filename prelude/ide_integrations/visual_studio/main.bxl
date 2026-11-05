@@ -15,7 +15,7 @@ load("get_attrs.bxl", "get_attrs", "get_cxx_toolchain")
 load("get_compiler_settings.bxl", "materialize_compiler_settings_file")
 load("get_deps.bxl", "get_deps")
 load("get_vs_settings.bxl", "get_basic_vs_settings", "get_vs_settings", "get_vs_settings_for_toolchain")
-load("utils.bxl", "basename", "get_project_file_path", "log_debug")
+load("utils.bxl", "basename", "get_project_file_path", "log_debug", "log_warn")
 
 def _match_recursive_target_types(target: bxl.ConfiguredTargetNode, recursive_target_types: list[str], bxl_ctx) -> bool:
     for type_regex in recursive_target_types:
@@ -111,7 +111,7 @@ def _main(bxl_ctx):
     target_set = bxl.ctarget_set(targets)
     missing_mode_hashes = [m for m in bxl_ctx.cli_args.mode_files if m not in (bxl_ctx.cli_args.mode_hashes or {})]
     if len(bxl_ctx.cli_args.mode_files) > 1 and missing_mode_hashes:
-        warning("Missing mode hashes for following mode files: " + str(missing_mode_hashes))
+        log_warn("Missing mode hashes for following mode files: {}", missing_mode_hashes, bxl_ctx = bxl_ctx)
 
     deps = get_deps(bxl_ctx, target_set)  # list[bxl.ConfiguredTargetNode]
     # print(deps)

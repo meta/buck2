@@ -24,7 +24,6 @@ use crate::ids::Key;
 use crate::ids::Revision;
 use crate::ids::Seq;
 use crate::ids::Version;
-use crate::key_vec::KeyVec;
 use crate::resolve::Resolved;
 use crate::slot::Claim;
 use crate::slot::Slot;
@@ -48,7 +47,7 @@ pub struct CoreState<E: Env> {
     /// A key's slots, one per branch it has a claim or an untracked-input history on. A key stays
     /// in the map once certified, even with no slots left after [`Self::delete_branch`]: that
     /// memory is what lets [`Self::commit`] refuse to assert a key that has been certified.
-    pub(crate) slots: KeyVec<KeySlots<E>>,
+    pub(crate) slots: KeyMap<KeySlots<E>>,
     pub(crate) assertions: KeyMap<KeyAssertions<E>>,
     /// The number of distinct keys across `slots` and `assertions`. Neither map ever drops a key.
     pub(crate) key_count: usize,
@@ -100,7 +99,7 @@ impl<E: Env> CoreState<E> {
     pub fn new() -> Self {
         CoreState {
             branches: Vec::new(),
-            slots: KeyVec::default(),
+            slots: KeyMap::default(),
             assertions: KeyMap::default(),
             key_count: 0,
         }
@@ -241,7 +240,7 @@ impl<E: Env> CoreState<E> {
         for (key, slots) in self.slots.iter_mut() {
             if let Some(index) = slots.iter().position(|slot| slot.branch == b) {
                 if slots[index].claim.is_some() {
-                    affected.push(key);
+                    affected.push(*key);
                 }
                 slots.remove(index);
             }
@@ -267,7 +266,7 @@ impl<E: Env> CoreState<E> {
             .slots
             .iter()
             .filter(|(_, slots)| slots.iter().any(|slot| slot.branch == b))
-            .map(|(key, _)| key)
+            .map(|(key, _)| *key)
             .collect();
         for key in keys {
             let slot = self.slot(key, b).expect("filtered above");
@@ -349,7 +348,7 @@ impl<E: Env> CoreState<E> {
     }
 
     pub(crate) fn slot_or_insert(&mut self, key: Key, b: BranchId) -> &mut Slot<E> {
-        let slots = self.slots.get_or_insert_with(key, || {
+        let slots = self.slots.entry(key).or_insert_with(|| {
             if !self.assertions.contains_key(&key) {
                 self.key_count += 1;
             }

@@ -13,9 +13,11 @@ buck_kotlin_test(
         ],
     ),
     env = {
+        "CP_SNAPSHOT_GENERATOR_JAR": "$(location prelude//toolchains/android/src/com/facebook/buck/jvm/kotlin/buildtools/snapshot:cp_snapshot_generator.jar)",
         # The test compiles with `-no-stdlib` and must place a standalone kotlin-stdlib jar on the
         # compiler classpath. A merged test binary jar drops the `META-INF/*.kotlin_module` metadata
         # the compiler needs to resolve top-level stdlib declarations, so point at the discrete jar.
+        "KOTLIN_COMPILER_VERSION": read_root_config("kotlin", "kotlin_version", "2.3.21"),
         "KOTLIN_STDLIB_JAR": "$(location prelude//toolchains/android/third-party:kotlin-stdlib)",
     },
     friend_paths = [

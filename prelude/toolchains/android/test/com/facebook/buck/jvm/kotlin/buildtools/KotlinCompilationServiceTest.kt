@@ -12,7 +12,6 @@ package com.facebook.buck.jvm.kotlin.buildtools
 
 import com.facebook.buck.core.filesystems.AbsPath
 import com.facebook.buck.jvm.java.CompilerClassToSourceMap
-import com.facebook.buck.jvm.kotlin.buildtools.snapshot.ClasspathSnapshotGenerator
 import com.facebook.buck.jvm.kotlin.buildtools.snapshot.SnapshotGranularity
 import com.facebook.buck.jvm.kotlin.kotlinc.incremental.ClasspathChanges
 import com.facebook.buck.jvm.kotlin.kotlinc.incremental.KotlinSourceChanges
@@ -23,6 +22,8 @@ import java.io.File
 import java.nio.file.Files
 import java.nio.file.attribute.FileTime
 import java.util.UUID
+import java.util.jar.JarFile
+import javax.tools.ToolProvider
 import kotlin.io.path.absolute
 import kotlin.io.path.extension
 import kotlin.io.path.listDirectoryEntries
@@ -578,6 +579,64 @@ internal class KotlinCompilationServiceTest {
     }
   }
 
+  @Test
+  fun `prebuilt snapshot generator selects the registered compiler version`() {
+    val compilerVersion = checkNotNull(System.getenv("KOTLIN_COMPILER_VERSION"))
+    assertEquals(
+        compilerVersion,
+        CompilationService.loadImplementation(javaClass.classLoader).getCompilerVersion(),
+    )
+    val expectedGeneratorVersion =
+        if (compilerVersion == "2.5.0-Beta2") compilerVersion else "2.0.20"
+    val generatorVersion =
+        JarFile(checkNotNull(System.getenv("CP_SNAPSHOT_GENERATOR_JAR"))).use { jar ->
+          jar.getInputStream(jar.getJarEntry("META-INF/compiler.version")).bufferedReader().use {
+            it.readText().trim()
+          }
+        }
+    assertEquals(expectedGeneratorVersion, generatorVersion)
+  }
+
+  @Test
+  fun `prebuilt Java snapshots are consumed incrementally`() {
+    val javaSource = sourcesDir.resolve("JavaDependency.java")
+    val consumer = KotlinSourceFile(
+        sourcesDir.resolve("Consumer.kt"),
+        "class Consumer { fun value() = JavaDependency().value() }",
+    )
+    fun compileDependency(returnType: String) {
+      Files.writeString(
+          javaSource.path,
+          "public class JavaDependency { public $returnType value() { return 1; } }",
+      )
+      assertEquals(
+          0,
+          checkNotNull(ToolProvider.getSystemJavaCompiler())
+              .run(null, null, null, "-d", librariesDir.toString(), javaSource.toString()),
+      )
+    }
+    fun compileConsumer(): CompilationResult {
+      val snapshot = generateClasspathSnapshot(librariesDir, SnapshotGranularity.CLASS_MEMBER_LEVEL)
+      return kotlinCompilationService.compile(
+          ProjectId.ProjectUUID(UUID.randomUUID()),
+          createCompilerArgs(listOf(consumer), classesDir, listOf(librariesDir)),
+          createIncrementalMode(
+              ClasspathChanges.ToBeComputedByIncrementalCompiler(ImmutableList.of(snapshot)),
+          ),
+      )
+    }
+
+    compileDependency("int")
+    assertEquals(CompilationResult.COMPILATION_SUCCESS, compileConsumer())
+    resetClassModificationTimesToSentinel()
+    assertEquals(CompilationResult.COMPILATION_SUCCESS, compileConsumer())
+    assertEquals(SENTINEL_TIMESTAMP_MS, getClassModificationTimes()["Consumer.class"])
+
+    compileDependency("long")
+    assertEquals(CompilationResult.COMPILATION_SUCCESS, compileConsumer())
+    assertNotEquals(SENTINEL_TIMESTAMP_MS, getClassModificationTimes()["Consumer.class"])
+  }
+
   private fun createCompilerArgs(
       sourceFiles: List<KotlinSourceFile>,
       outputDir: AbsPath,
@@ -650,7 +709,23 @@ internal class KotlinCompilationServiceTest {
     // snapshot needs a distinct name or a stale cached snapshot is returned. A timestamp-based name
     // collides when two snapshots are generated within the same millisecond, so use a UUID instead.
     val snapshotFile = librarySnapshotsDir.resolve("dep-${UUID.randomUUID()}.snapshot")
-    ClasspathSnapshotGenerator(dependencyOutput.path, snapshotFile.path, granularity).run()
+    // Exercise the bootstrap prebuilt, not the in-process generator whose compiler always matches.
+    val generatorJar = checkNotNull(System.getenv("CP_SNAPSHOT_GENERATOR_JAR"))
+    val process = ProcessBuilder(
+        File(System.getProperty("java.home"), "bin/java").path,
+        "-jar",
+        generatorJar,
+        "--input-jar",
+        dependencyOutput.toString(),
+        "--output-snapshot",
+        snapshotFile.toString(),
+        "--granularity",
+        granularity.name,
+    )
+        .redirectErrorStream(true)
+        .start()
+    val output = process.inputStream.bufferedReader().use { it.readText() }
+    assertEquals(output, 0, process.waitFor())
 
     return snapshotFile.toFile()
   }

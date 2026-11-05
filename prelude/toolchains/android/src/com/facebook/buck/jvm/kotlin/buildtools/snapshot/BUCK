@@ -49,11 +49,21 @@ buck_prebuilt_jar(
     visibility = ["PUBLIC"],
 )
 
+# Snapshot serialization is compiler-version-specific; keep registry keys exact.
+_DEFAULT_SNAPSHOT_GENERATOR_DIGEST = "0febd203f9e94fa652a9e26c18d50b17ffc6d3ba23ccde84b2f785a25b4adacf:60666465"
+_SNAPSHOT_GENERATOR_DIGESTS = {
+    "2.5.0-Beta2": "3b4c246766c65ab315854661e086742332323133274172234415876074b17be3:67470117",
+}
+_SNAPSHOT_GENERATOR_DIGEST = _SNAPSHOT_GENERATOR_DIGESTS.get(
+    read_root_config("kotlin", "kotlin_version", ""),
+    _DEFAULT_SNAPSHOT_GENERATOR_DIGEST,
+)
+
 # To rebuild the jar and upload it to CAS, do:
 # buck build prelude//toolchains/android/src/com/facebook/buck/jvm/kotlin/buildtools/snapshot:cp_snapshot_generator_binary --show-simple-output | xargs frecli --use-case android_build_infra_tools cas upload-blob
 buck_prebuilt_artifact(
     name = "cp_snapshot_generator.jar",
-    # @oss-disable[end= ]: cas_digest = "0febd203f9e94fa652a9e26c18d50b17ffc6d3ba23ccde84b2f785a25b4adacf:60666465",
+    # @oss-disable[end= ]: cas_digest = _SNAPSHOT_GENERATOR_DIGEST,
     oss_sha1 = "1bbf0a79f5c88a4bb316ebd98dfca7b615aae52a",
     oss_url = "https://github.com/facebook/buck2/releases/download/androidToolchain%2F2025-04-03/cp_snapshot_generator.jar",
 )

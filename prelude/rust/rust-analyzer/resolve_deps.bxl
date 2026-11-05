@@ -143,7 +143,11 @@ def gather_unconfigured_deps(ctx: bxl.Context, targets: list[TargetLabel]) -> di
         raw_env = _get_attr_no_select(target, "env") or {}
         env = {k: cmd_args(v, delimiter = "") for k, v in raw_env.items()}
 
-        srcs = [src.short_path for src in _get_attr_no_select(target, "srcs") or []]
+        srcs = []
+        for src in _get_attr_no_select(target, "srcs") or []:
+            # Generated srcs are target labels, and have no path until they're built.
+            if not hasattr(src, "raw_target"):
+                srcs.append(src.short_path)
 
         mapped_srcs = {}
         raw_mapped_srcs = _get_attr_no_select(target, "mapped_srcs") or {}

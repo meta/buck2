@@ -214,6 +214,22 @@ class RustProjectTest(BuckTestCase):
         # A plain source file key is resolved to its path rather than dropped.
         assert any(k.endswith("mapped_g.rs") for k in mapped_srcs), mapped_srcs
 
+    @buck_test(inplace=True, skip_for_os=["darwin", "windows"])
+    async def test_fallback_generated_srcs(self, buck: Buck) -> None:
+        result_raw = await buck.bxl(
+            "prelude//rust/rust-analyzer/resolve_deps.bxl:resolve_targets",
+            "--",
+            "--targets",
+            "//buck2/integrations/rust-project/tests/targets/foo:g_with_generated_srcs",
+        )
+        result: Dict[str, Any] = json.load(open(result_raw.stdout.rstrip()))
+
+        dep = list(result["resolved_deps"].values())[0]
+
+        # Generated srcs have no path until they're built, so only the plain source
+        # file is reported.
+        assert dep["srcs"] == ["lib_g.rs"], dep["srcs"]
+
     # FIXME: Remove once actual tests work on mac and windows
     @buck_test(inplace=True)
     async def test_noop(self, buck: Buck) -> None:

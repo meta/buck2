@@ -56,6 +56,16 @@ rust_library(
     target_compatible_with = ["ovr_config//cpu/constraints:riscv64"],
 )
 
+rust_library(
+    name = "g_with_generated_srcs",
+    srcs = [
+        "lib_g.rs",
+        ":g_filegroup",
+    ],
+    crate_root = "lib_g.rs",
+    target_compatible_with = ["ovr_config//cpu/constraints:riscv64"],
+)
+
 rust_binary(
     name = "binary",
     srcs = ["main.rs"],

@@ -349,12 +349,13 @@ impl DiceStorage {
         let finished = Arc::new(ArcSerCache::new());
         let num_workers = env_concurrency("BUCK2_DICE_PAGE_OUT_WORKERS");
         let pending = Arc::new(PendingEvictions::default());
-        let mut evictor = AbortOnDrop(tokio::spawn(evict_as_rows_commit(
-            self.dupe(),
-            finished.dupe(),
-            pending.dupe(),
-            state_handle.dupe(),
-        )));
+        let awaiting_commit = AwaitingCommit {
+            storage: self.dupe(),
+            finished: finished.dupe(),
+            pending: pending.dupe(),
+            state_handle: state_handle.dupe(),
+        };
+        let mut evictor = AbortOnDrop(tokio::spawn(evict_as_rows_commit(awaiting_commit.dupe())));
 
         let mut remaining = keys;
         let mut worker_error = None;
@@ -445,13 +446,9 @@ impl DiceStorage {
         // Only rows the flush committed may be bound or evicted: after a failed
         // flush the frontier still names the rows that never landed, and their
         // values stay resident.
-        let frontier = self.storage.commit_frontier();
-        bind_in_parallel(&self.storage, finished.take_covered(&frontier)).await;
-        commit_in_batches(
-            state_handle,
-            pending.take_covered(&frontier),
-            self.eviction_policy,
-        );
+        awaiting_commit
+            .commit_covered(&self.storage.commit_frontier())
+            .await;
         // Evictions are fire-and-forget. The sweep must run after the core has
         // processed every one, or the arcs of late evictions stay pinned until
         // the next sweep. State requests are FIFO, so any round trip is the barrier.
@@ -746,20 +743,33 @@ impl Drop for AbortOnDrop {
 /// memory is released during the page-out rather than at its end. Runs until
 /// aborted; the sleep is the
 /// only await, so an abort never lands inside a tick.
-async fn evict_as_rows_commit(
+async fn evict_as_rows_commit(awaiting_commit: AwaitingCommit) {
+    loop {
+        tokio::time::sleep(Duration::from_millis(250)).await;
+        awaiting_commit
+            .commit_covered(&awaiting_commit.storage.storage.commit_frontier())
+            .await;
+    }
+}
+
+/// What a page-out has written whose rows the storage has yet to commit: the arcs to bind to
+/// their rows, and the values for the core state to back or evict.
+#[derive(Clone, Dupe)]
+struct AwaitingCommit {
     storage: DiceStorage,
     finished: Arc<ArcSerCache>,
     pending: Arc<PendingEvictions>,
     state_handle: CoreStateHandle,
-) {
-    loop {
-        tokio::time::sleep(Duration::from_millis(250)).await;
-        let frontier = storage.storage.commit_frontier();
-        bind_in_parallel(&storage.storage, finished.take_covered(&frontier)).await;
+}
+
+impl AwaitingCommit {
+    /// Binds the arcs, then commits the values to the core state, whose rows `frontier` covers.
+    async fn commit_covered(&self, frontier: &CommitFrontier) {
+        bind_in_parallel(&self.storage.storage, self.finished.take_covered(frontier)).await;
         commit_in_batches(
-            &state_handle,
-            pending.take_covered(&frontier),
-            storage.eviction_policy,
+            &self.state_handle,
+            self.pending.take_covered(frontier),
+            self.storage.eviction_policy,
         );
     }
 }

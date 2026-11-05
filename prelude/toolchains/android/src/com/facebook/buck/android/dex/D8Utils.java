@@ -159,7 +159,15 @@ public class D8Utils {
     // D8 only outputs to dex if the output path is a directory. So we output to a temporary dir
     // and move it over to the final location
     boolean outputToDex = outputDexFile.getFileName().toString().endsWith(".dex");
-    Path output = outputToDex ? Files.createTempDirectory("buck-d8") : outputDexFile;
+    Path output = outputDexFile;
+    if (outputToDex) {
+      String scratchPath = System.getenv("BUCK_SCRATCH_PATH");
+      if (scratchPath == null || scratchPath.isEmpty()) {
+        throw new IllegalStateException(
+            "BUCK_SCRATCH_PATH environment variable must be set and non-empty");
+      }
+      output = Files.createTempDirectory(Path.of(scratchPath), "buck-d8");
+    }
 
     // Wrap the consumer that setOutput() would have installed so we can record which classes D8
     // actually wrote.

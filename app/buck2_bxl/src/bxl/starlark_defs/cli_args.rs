@@ -541,9 +541,11 @@ impl CliArgType {
                 .value_parser(|x: &str| x.parse::<bool>().map(|_| x.to_owned())),
             CliArgType::Int => clap
                 .num_args(1)
+                .allow_negative_numbers(true)
                 .value_parser(|x: &str| x.parse::<BigInt>().map(|_| x.to_owned())),
             CliArgType::Float => clap
                 .num_args(1)
+                .allow_negative_numbers(true)
                 .value_parser(|x: &str| x.parse::<f64>().map(|_| x.to_owned())),
             CliArgType::String => clap.num_args(1),
             CliArgType::Enumeration(variants) => clap

@@ -760,3 +760,14 @@ class CliTest(BuckTestCase):
         # A bare `--opt_list` gives [] like a plain list arg does.
         result = await buck.bxl("//cli_args.bxl:cli_option_default", "--", "--opt_list")
         assert "opt_list: []\n" in result.stdout
+
+    @buck_test()
+    async def test_bxl_cli_negative_int_is_accepted(self, buck: Buck) -> None:
+        result = await buck.bxl("//cli_args.bxl:cli_int", "--", "--n", "-5")
+        assert "n: -5\n" in result.stdout
+        result = await buck.bxl(
+            "//cli_args.bxl:cli_int", "--", "--n", "1", "--ns", "1", "-2"
+        )
+        assert "ns: [1, -2]\n" in result.stdout
+        result = await buck.bxl("//cli_args.bxl:cli_int", "--", "--n=-5")
+        assert "n: -5\n" in result.stdout

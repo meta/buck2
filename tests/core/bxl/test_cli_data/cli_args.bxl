@@ -178,3 +178,15 @@ cli_option_default = bxl_main(
         "opt_str": cli_args.option(cli_args.string(), default = "consumer"),
     },
 )
+
+def _cli_int_impl(ctx):
+    ctx.output.print("n: " + repr(ctx.cli_args.n))
+    ctx.output.print("ns: " + repr(ctx.cli_args.ns))
+
+cli_int = bxl_main(
+    impl = _cli_int_impl,
+    cli_args = {
+        "n": cli_args.int(),
+        "ns": cli_args.list(cli_args.int(), default = []),
+    },
+)

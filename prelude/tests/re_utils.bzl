@@ -192,7 +192,7 @@ def _get_re_executors(
         unexpected_props = ", ".join(re_props_copy.keys())
         fail("{}: found unexpected re props: {}".format(ctx.label, unexpected_props))
     if not local_enabled and not remote_enabled:
-        fail("{}: neither remote nor local test execution are enabled")
+        fail("{}: neither remote nor local test execution are enabled".format(ctx.label))
 
     if re_gang != None:
         meta_internal_extra_params = dict(meta_internal_extra_params or {})

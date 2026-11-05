@@ -695,7 +695,7 @@ impl<'v> CommandLineBuilderRegular<'v, '_> {
         } else if self.absolute {
             // Note that for obvious reasons we ignore `absolute` in the case where there's a
             // `relative_to` provided
-            path_format_absolute(&path, self.fs.path_separator(), self.fs.fs().fs()).into_owned()
+            path_format_absolute(&path, self.fs.path_separator(), self.fs.fs().fs())?
         } else {
             path_format(path.as_ref(), self.fs.path_separator()).into_owned()
         };
@@ -798,31 +798,56 @@ pub fn path_format<'p>(path: &'p RelativePath, sep: PathSeparatorKind) -> Cow<'p
     }
 }
 
-pub(crate) fn path_format_absolute<'p>(
-    path: &'p ProjectRelativePath,
+/// Returns the path, resolved against the project root, rendered in a way that is appropriate for
+/// use in command lines.
+///
+/// The project root is a host path, and so uses the host's separators, which are not necessarily
+/// the separators that the command line is being rendered for. Its separators are therefore
+/// rewritten to `sep` as well.
+///
+/// Errors if the project root is not valid UTF-8.
+///
+/// FIXME(JakobDegen): An absolute host path only means anything on a command line that runs on the
+/// host, so rewriting the root's separators is papering over the fact that this is only ever
+/// correct when `sep` is the host's separator anyway. Fix the path types to make that a
+/// non-question.
+pub(crate) fn path_format_absolute(
+    path: &ProjectRelativePath,
     sep: PathSeparatorKind,
     root: &ProjectRoot,
-) -> Cow<'p, str> {
-    let mut p = root.root().to_path_buf();
-    p.extend(path.iter());
-    // FIXME(JakobDegen): Seriously?
-    let s = p.to_string_lossy();
-    // FIXME(JakobDegen): This is pretty confused. `PathBuf` and our absolute path types
-    // use the host's path separators. Fix, and also write a test, and also fix the path
-    // types to make these sorts of bugs not possible
-    if sep == PathSeparatorKind::Windows {
-        Cow::Owned(s.as_ref().replace('/', "\\"))
-    } else {
-        Cow::Owned(s.into_owned())
+) -> buck2_error::Result<String> {
+    let sep = match sep {
+        PathSeparatorKind::Unix => '/',
+        PathSeparatorKind::Windows => '\\',
+    };
+    let root = root.root().as_abs_path().to_str()?;
+
+    let mut res = String::with_capacity(root.len() + 1 + path.as_str().len());
+    res.extend(
+        root.chars()
+            .map(|c| if c == '/' || c == '\\' { sep } else { c }),
+    );
+    for component in path.iter() {
+        if !res.ends_with(sep) {
+            res.push(sep);
+        }
+        res.push_str(component.as_str());
     }
+    Ok(res)
 }
 
 #[cfg(test)]
 mod tests {
     use buck2_core::execution_types::executor_config::PathSeparatorKind;
+    use buck2_core::fs::project_rel_path::ProjectRelativePath;
     use buck2_fs::paths::RelativePath;
+    use buck2_fs::paths::abs_norm_path::AbsNormPathBuf;
 
     use super::*;
+
+    fn project_root(root: &str) -> ProjectRoot {
+        ProjectRoot::new_unchecked(AbsNormPathBuf::unchecked_new(root.into()))
+    }
 
     #[test]
     fn test_path_format() {
@@ -840,6 +865,62 @@ mod tests {
         assert_eq!(
             path_format(RelativePath::unchecked_new("a/b"), windows),
             "a\\b"
+        );
+    }
+
+    #[test]
+    fn test_path_format_absolute() {
+        let unix = PathSeparatorKind::Unix;
+        let windows = PathSeparatorKind::Windows;
+
+        // The project root is a host path, so the host decides what it looks like, but the
+        // separator we render it with does not.
+        let (root, unix_root, windows_root) = if cfg!(windows) {
+            (r"c:\project", "c:/project", r"c:\project")
+        } else {
+            ("/project", "/project", r"\project")
+        };
+        let root = project_root(root);
+        let fmt =
+            |p: &str, sep| path_format_absolute(ProjectRelativePath::unchecked_new(p), sep, &root);
+
+        assert_eq!(fmt("", unix).unwrap(), unix_root);
+        assert_eq!(fmt("", windows).unwrap(), windows_root);
+        assert_eq!(fmt("a", unix).unwrap(), format!("{unix_root}/a"));
+        assert_eq!(fmt("a", windows).unwrap(), format!("{windows_root}\\a"));
+        assert_eq!(fmt("a/b", unix).unwrap(), format!("{unix_root}/a/b"));
+        assert_eq!(fmt("a/b", windows).unwrap(), format!("{windows_root}\\a\\b"));
+    }
+
+    #[test]
+    fn test_path_format_absolute_root_ending_in_separator() {
+        let root = project_root(if cfg!(windows) { r"c:\" } else { "/" });
+        let rendered = path_format_absolute(
+            ProjectRelativePath::unchecked_new("a"),
+            PathSeparatorKind::Unix,
+            &root,
+        )
+        .unwrap();
+        assert_eq!(rendered, if cfg!(windows) { "c:/a" } else { "/a" });
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_path_format_absolute_non_utf8_root() {
+        use std::ffi::OsStr;
+        use std::os::unix::ffi::OsStrExt;
+        use std::path::PathBuf;
+
+        let root = ProjectRoot::new_unchecked(AbsNormPathBuf::unchecked_new(PathBuf::from(
+            OsStr::from_bytes(b"/project/\xff"),
+        )));
+        assert!(
+            path_format_absolute(
+                ProjectRelativePath::unchecked_new("a"),
+                PathSeparatorKind::Unix,
+                &root,
+            )
+            .is_err()
         );
     }
 }

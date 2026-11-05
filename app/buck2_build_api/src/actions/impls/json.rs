@@ -8,6 +8,7 @@
  * above-listed licenses.
  */
 
+use std::borrow::Cow;
 use std::io::Write;
 use std::io::sink;
 use std::sync::Arc;
@@ -227,7 +228,11 @@ impl<'a, 'v> Serialize for SerializeValue<'a, 'v> {
                             }
                         };
                         let p = if self.absolute {
-                            path_format_absolute(&p, fs.path_separator(), fs.fs().fs())
+                            Cow::Owned(err(path_format_absolute(
+                                &p,
+                                fs.path_separator(),
+                                fs.fs().fs(),
+                            ))?)
                         } else {
                             path_format(p.as_ref(), fs.path_separator())
                         };

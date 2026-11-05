@@ -114,9 +114,10 @@ pub fn parse_macros(input: &str) -> buck2_error::Result<ParsedArg> {
             // and so it's easy to compute where that is in input.
             let error_start = input.len() - remaining.len();
 
-            // We truncate the string to 65 chars, max 15 before.
-            let message_start = std::cmp::max(15, error_start) - 15;
-            let message_end = std::cmp::min(input.len(), message_start + 60);
+            // We truncate the string to 60 bytes, max 15 before, cutting only at char boundaries.
+            let message_start = input.floor_char_boundary(error_start.saturating_sub(15));
+            let message_end =
+                input.floor_char_boundary(std::cmp::min(input.len(), message_start + 60));
 
             // We'll print a line of `^` to indicate where the processing failed.
             let pointer = error_start - message_start;
@@ -511,6 +512,23 @@ mod tests {
         assert!(read_macro_type("platform%name ").is_err());
         assert!(read_macro_type("platform$name ").is_err());
         Ok(())
+    }
+
+    #[test]
+    fn test_parse_macros_error_window_start_inside_multibyte_char() {
+        // The window of the input quoted by the error starts 15 bytes before the error, which
+        // would fall inside `\u{e9}` here; it is moved back to the char boundary.
+        let input = format!("\u{e9}{}$(", "a".repeat(12));
+        let error = parse_macros(&input).unwrap_err().to_string();
+        assert!(error.contains(&format!("V:{input}")), "{error}");
+    }
+
+    #[test]
+    fn test_parse_macros_error_window_end_inside_multibyte_char() {
+        let input = format!("a$({}\u{e9}", "a".repeat(56));
+        let error = parse_macros(&input).unwrap_err().to_string();
+        assert!(error.contains("V:a$(aaaa"), "{error}");
+        assert!(!error.contains('\u{e9}'), "{error}");
     }
 
     #[test]

@@ -95,10 +95,17 @@ enum Command {
         #[clap(long, conflicts_with = "sysroot")]
         prefer_rustup_managed_toolchain: bool,
 
-        /// The directory containing the Rust source code, including std.
+        /// The directory containing the Rust standard library and the rust-analyzer proc macro
+        /// server.
         /// Default value is determined based on platform.
         #[clap(short = 's', long)]
         sysroot: Option<PathBuf>,
+
+        /// The directory containing the Rust standard library source code.
+        /// Defaults to the value of the `RUST_SRC_PATH` environment variable, if set, or the
+        /// `--sysroot` flag otherwise.
+        #[clap(long)]
+        sysroot_src: Option<PathBuf>,
 
         /// Pretty-print generated `rust-project.json` file.
         #[clap(short, long)]

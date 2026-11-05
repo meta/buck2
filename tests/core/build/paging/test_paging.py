@@ -516,9 +516,9 @@ class PagingTest(BuckTestCase):
         (buck.cwd / "src.txt").write_text("content-2\n")
         assert _output(await _build(buck)) == "content-2\n"
 
-    @buck_test(
-        data_dir="paging", write_invocation_record=True, allow_daemon_panics=True
-    )
+    # The injected failure is reported as a soft error, which `BUCK2_HARD_ERROR` would turn
+    # into a panic that takes the daemon, and its disabled flag, down with it.
+    @buck_test(data_dir="paging", write_invocation_record=True, allow_soft_errors=True)
     @env("BUCK2_TEST_FAIL_PAGE_OUT", "true")
     async def test_idle_page_out_disabled_after_error(self, buck: Buck) -> None:
         _hydration_settings(buck)

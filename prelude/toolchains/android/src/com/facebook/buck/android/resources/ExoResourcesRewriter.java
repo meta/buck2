@@ -428,7 +428,7 @@ public class ExoResourcesRewriter {
       return randomAccessFile;
     }
 
-    private Map<String, Long> localHeaderOffsets;
+    @Nullable private Map<String, Long> localHeaderOffsets;
 
     /**
      * Lazily parses the central directory to build a map of entry name → local header offset.

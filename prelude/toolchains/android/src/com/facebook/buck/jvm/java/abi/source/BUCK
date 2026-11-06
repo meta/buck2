@@ -31,6 +31,5 @@ buck_java_library(
         # internals (outside of stuff designed for use in plugins) or large libraries like Guava
         "prelude//toolchains/android/src/com/facebook/buck/jvm/java/lang/model:model",
         "prelude//toolchains/android/src/com/facebook/buck/jvm/java/plugin/adapter:adapter",
-        "prelude//toolchains/android/src/com/facebook/buck/util/liteinfersupport:liteinfersupport",
     ],
 )

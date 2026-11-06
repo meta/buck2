@@ -11,8 +11,8 @@
 package com.facebook.buck.jvm.java.abi.source;
 
 import com.facebook.buck.jvm.java.plugin.adapter.ElementsExtendedImpl;
-import com.facebook.buck.util.liteinfersupport.PropagatesNullable;
 import com.facebook.infer.annotation.Nullsafe;
+import com.facebook.infer.annotation.PropagatesNullable;
 import com.sun.source.util.Trees;
 import java.io.Writer;
 import java.util.Arrays;

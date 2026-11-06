@@ -11,7 +11,7 @@
 package com.facebook.buck.jvm.java.abi.source;
 
 import com.facebook.buck.jvm.java.lang.model.MoreElements;
-import com.facebook.buck.util.liteinfersupport.PropagatesNullable;
+import com.facebook.infer.annotation.PropagatesNullable;
 import com.sun.source.tree.AnnotatedTypeTree;
 import com.sun.source.tree.IdentifierTree;
 import com.sun.source.tree.MemberSelectTree;

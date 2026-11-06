@@ -32,7 +32,7 @@ use crate::values::Heap;
 use crate::values::StarlarkValue;
 use crate::values::StringValue;
 use crate::values::Value;
-use crate::values::ValueOfUnchecked;
+use crate::values::ValueOf;
 use crate::values::typing::iter::StarlarkIter;
 
 /// An opaque iterator over a string, produced by elems/codepoints
@@ -58,8 +58,8 @@ starlark_complex_value!(StringIterable);
 pub(crate) fn iterate_chars<'v>(
     string: StringValue<'v>,
     heap: Heap<'v>,
-) -> ValueOfUnchecked<'v, StarlarkIter<String>> {
-    ValueOfUnchecked::new(heap.alloc_complex(StringIterable {
+) -> ValueOf<'v, StarlarkIter<String>> {
+    ValueOf::new_unchecked(heap.alloc_complex(StringIterable {
         string,
         produce_char: true,
     }))
@@ -68,8 +68,8 @@ pub(crate) fn iterate_chars<'v>(
 pub(crate) fn iterate_codepoints<'v>(
     string: StringValue<'v>,
     heap: Heap<'v>,
-) -> ValueOfUnchecked<'v, StarlarkIter<u32>> {
-    ValueOfUnchecked::new(heap.alloc_complex(StringIterable {
+) -> ValueOf<'v, StarlarkIter<u32>> {
+    ValueOf::new_unchecked(heap.alloc_complex(StringIterable {
         string,
         produce_char: false,
     }))

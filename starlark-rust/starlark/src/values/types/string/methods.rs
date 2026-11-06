@@ -32,9 +32,9 @@ use crate::values::Heap;
 use crate::values::StringValue;
 use crate::values::UnpackValue;
 use crate::values::Value;
-use crate::values::ValueOfUnchecked;
+use crate::values::ValueOf;
 use crate::values::list::AllocList;
-use crate::values::list::UnpackList;
+use crate::values::list::ListType;
 use crate::values::none::NoneOr;
 use crate::values::string::dot_format;
 use crate::values::tuple::UnpackTuple;
@@ -167,7 +167,7 @@ pub(crate) fn string_methods(builder: &mut MethodsBuilder) {
     fn elems<'v>(
         this: StringValue<'v>,
         heap: Heap<'v>,
-    ) -> anyhow::Result<ValueOfUnchecked<'v, StarlarkIter<String>>> {
+    ) -> anyhow::Result<ValueOf<'v, StarlarkIter<String>>> {
         Ok(iterate_chars(this, heap))
     }
 
@@ -217,7 +217,7 @@ pub(crate) fn string_methods(builder: &mut MethodsBuilder) {
     fn codepoints<'v>(
         this: StringValue<'v>,
         heap: Heap<'v>,
-    ) -> anyhow::Result<ValueOfUnchecked<'v, StarlarkIter<u32>>> {
+    ) -> anyhow::Result<ValueOf<'v, StarlarkIter<u32>>> {
         Ok(iterate_codepoints(this, heap))
     }
 
@@ -675,22 +675,22 @@ pub(crate) fn string_methods(builder: &mut MethodsBuilder) {
     #[starlark(speculative_exec_safe)]
     fn join<'v>(
         this: &str,
-        #[starlark(require = pos)] to_join: ValueOfUnchecked<'v, StarlarkIter<String>>,
+        #[starlark(require = pos)] to_join: ValueOf<'v, StarlarkIter<String>>,
         heap: Heap<'v>,
-    ) -> starlark::Result<ValueOfUnchecked<'v, String>> {
+    ) -> starlark::Result<StringValue<'v>> {
         #[inline(always)]
         fn as_str<'v>(x: Value<'v>) -> crate::Result<StringValue<'v>> {
             StringValue::unpack_named_param(x, "to_join")
         }
 
-        let mut it = to_join.get().iterate(heap)?;
+        let mut it = to_join.to_value().iterate(heap)?;
         match it.next() {
-            None => Ok(ValueOfUnchecked::new(Value::new_empty_string())),
+            None => Ok(StringValue::default()),
             Some(x1) => {
                 match it.next() {
                     None => {
                         // If there is a singleton we can avoid reallocation
-                        Ok(as_str(x1)?.to_value_of_unchecked().cast())
+                        as_str(x1)
                     }
                     Some(x2) => {
                         let s1 = as_str(x1)?.as_str();
@@ -716,7 +716,7 @@ pub(crate) fn string_methods(builder: &mut MethodsBuilder) {
                             r.push_str(this);
                             r.push_str(as_str(x)?.as_str());
                         }
-                        Ok(heap.alloc_typed_unchecked(r))
+                        Ok(heap.alloc_str(&r))
                     }
                 }
             }
@@ -986,7 +986,7 @@ pub(crate) fn string_methods(builder: &mut MethodsBuilder) {
         #[starlark(require = pos, default = NoneOr::None)] sep: NoneOr<&str>,
         #[starlark(require = pos, default = NoneOr::None)] maxsplit: NoneOr<i32>,
         heap: Heap<'v>,
-    ) -> anyhow::Result<ValueOfUnchecked<'v, UnpackList<String>>> {
+    ) -> anyhow::Result<ValueOf<'v, ListType<StringValue<'v>>>> {
         if sep.into_option() == Some("") {
             return Err(anyhow::anyhow!(
                 "Empty separator cannot be used for splitting"
@@ -1004,12 +1004,10 @@ pub(crate) fn string_methods(builder: &mut MethodsBuilder) {
         };
         Ok(match sep.into_option() {
             None => match maxsplit {
-                None => heap
-                    .alloc_typed_unchecked(AllocList(this.split_whitespace()))
-                    .cast(),
-                Some(maxsplit) => heap
-                    .alloc_typed_unchecked(rsplitn_whitespace(this, maxsplit))
-                    .cast(),
+                None => ValueOf::new_unchecked(heap.alloc(AllocList(this.split_whitespace()))),
+                Some(maxsplit) => {
+                    ValueOf::new_unchecked(heap.alloc(rsplitn_whitespace(this, maxsplit)))
+                }
             },
             Some(sep) => {
                 let mut v: Vec<_> = match maxsplit {
@@ -1017,7 +1015,7 @@ pub(crate) fn string_methods(builder: &mut MethodsBuilder) {
                     Some(maxsplit) => this.rsplitn(maxsplit, sep).collect(),
                 };
                 v.reverse();
-                heap.alloc_typed_unchecked(AllocList(v)).cast()
+                ValueOf::new_unchecked(heap.alloc(AllocList(v)))
             }
         })
     }
@@ -1093,7 +1091,7 @@ pub(crate) fn string_methods(builder: &mut MethodsBuilder) {
         #[starlark(require = pos, default = NoneOr::None)] sep: NoneOr<&str>,
         #[starlark(require = pos, default = NoneOr::None)] maxsplit: NoneOr<i32>,
         heap: Heap<'v>,
-    ) -> anyhow::Result<ValueOfUnchecked<'v, UnpackList<String>>> {
+    ) -> anyhow::Result<ValueOf<'v, ListType<StringValue<'v>>>> {
         if sep.into_option() == Some("") {
             return Err(anyhow::anyhow!(
                 "Empty separator cannot be used for splitting"
@@ -1110,12 +1108,10 @@ pub(crate) fn string_methods(builder: &mut MethodsBuilder) {
             }
         };
         Ok(match (sep.into_option(), maxsplit) {
-            (None, None) => heap
-                .alloc_typed_unchecked(AllocList(this.split_whitespace()))
-                .cast(),
-            (None, Some(maxsplit)) => heap
-                .alloc_typed_unchecked(AllocList(splitn_whitespace(this, maxsplit)))
-                .cast(),
+            (None, None) => ValueOf::new_unchecked(heap.alloc(AllocList(this.split_whitespace()))),
+            (None, Some(maxsplit)) => {
+                ValueOf::new_unchecked(heap.alloc(AllocList(splitn_whitespace(this, maxsplit))))
+            }
             (Some(sep), None) => {
                 if sep.len() == 1 {
                     // If we are searching for a 1-byte string, we can provide a much faster path.
@@ -1129,15 +1125,14 @@ pub(crate) fn string_methods(builder: &mut MethodsBuilder) {
                             .map(|x| unsafe { std::str::from_utf8_unchecked(x) }),
                     );
                     debug_assert_eq!(res.len(), count + 1);
-                    heap.alloc_typed_unchecked(AllocList(res)).cast()
+                    ValueOf::new_unchecked(heap.alloc(AllocList(res)))
                 } else {
-                    heap.alloc_typed_unchecked(AllocList(this.split(sep)))
-                        .cast()
+                    ValueOf::new_unchecked(heap.alloc(AllocList(this.split(sep))))
                 }
             }
-            (Some(sep), Some(maxsplit)) => heap
-                .alloc_typed_unchecked(AllocList(this.splitn(maxsplit, sep)))
-                .cast(),
+            (Some(sep), Some(maxsplit)) => {
+                ValueOf::new_unchecked(heap.alloc(AllocList(this.splitn(maxsplit, sep))))
+            }
         })
     }
 

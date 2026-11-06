@@ -84,7 +84,6 @@ use crate::values::layout::heap::repr::AValueHeapEntryState;
 use crate::values::layout::heap::repr::AValueRepr;
 use crate::values::layout::pointer::Pointer;
 use crate::values::layout::pointer::RawPointer;
-use crate::values::layout::static_string::VALUE_EMPTY_STRING;
 use crate::values::layout::vtable::AValueDynFull;
 use crate::values::layout::vtable::AValueVTable;
 use crate::values::list::value::VALUE_EMPTY_FROZEN_LIST;
@@ -295,12 +294,6 @@ impl<'v> Value<'v> {
     #[cfg(test)]
     pub(crate) fn testing_new_int(x: i32) -> Self {
         Self::new_int(InlineInt::try_from(x).ok().unwrap())
-    }
-
-    /// Create a new blank string.
-    #[inline]
-    pub(crate) fn new_empty_string() -> Self {
-        VALUE_EMPTY_STRING.erase().at().to_value()
     }
 
     /// Create a new empty tuple.

@@ -20,7 +20,7 @@ use starlark_derive::starlark_module;
 use crate as starlark;
 use crate::environment::MethodsBuilder;
 use crate::values::Heap;
-use crate::values::ValueOfUnchecked;
+use crate::values::ValueOf;
 use crate::values::types::bytes::value::StarlarkBytes;
 use crate::values::typing::StarlarkIter;
 
@@ -56,11 +56,11 @@ pub(crate) fn bytes_methods(builder: &mut MethodsBuilder) {
     fn elems<'v>(
         this: &'v StarlarkBytes,
         heap: Heap<'v>,
-    ) -> anyhow::Result<ValueOfUnchecked<'v, StarlarkIter<StarlarkBytes>>> {
+    ) -> anyhow::Result<ValueOf<'v, StarlarkIter<StarlarkBytes>>> {
         let it = this
             .as_bytes()
             .iter()
             .map(|&b| heap.alloc(StarlarkBytes::new(&[b])));
-        Ok(ValueOfUnchecked::new(heap.alloc_tuple_iter(it)))
+        Ok(ValueOf::new_unchecked(heap.alloc_tuple_iter(it)))
     }
 }

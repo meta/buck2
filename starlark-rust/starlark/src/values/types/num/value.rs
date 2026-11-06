@@ -244,6 +244,7 @@ mod tests {
     use num_bigint::BigInt;
 
     use super::*;
+    use crate::values::StringValue;
     use crate::values::Value;
     use crate::values::types::int::inline_int::InlineInt;
 
@@ -260,7 +261,7 @@ mod tests {
                 .is_none()
         );
         assert!(
-            NumRef::unpack_value(Value::new_empty_string())
+            NumRef::unpack_value(StringValue::default().to_value())
                 .unwrap()
                 .is_none()
         );

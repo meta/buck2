@@ -22,7 +22,7 @@ use crate::environment::GlobalsBuilder;
 use crate::values::Heap;
 use crate::values::UnpackValue;
 use crate::values::Value;
-use crate::values::ValueOfUnchecked;
+use crate::values::ValueOf;
 use crate::values::function::SpecialBuiltinFunction;
 use crate::values::set::refs::SetRef;
 use crate::values::set::value::FrozenSet;
@@ -37,14 +37,14 @@ pub(crate) fn register_set(globals: &mut GlobalsBuilder) {
         special_builtin_function = SpecialBuiltinFunction::Set,
     )]
     fn set<'v>(
-        #[starlark(require = pos)] arg: Option<ValueOfUnchecked<'v, StarlarkIter<Value<'v>>>>,
+        #[starlark(require = pos)] arg: Option<ValueOf<'v, StarlarkIter<Value<'v>>>>,
         heap: Heap<'v>,
     ) -> starlark::Result<SetData<'v>> {
         let set = match arg {
-            Some(pos) => match SetRef::unpack_value_opt(pos.get()) {
+            Some(pos) => match SetRef::unpack_value_opt(pos.to_value()) {
                 Some(set) => (set.aref).clone(),
                 None => {
-                    let it = pos.get().iterate(heap)?;
+                    let it = pos.to_value().iterate(heap)?;
                     let mut data = SetData::default();
                     for el in it {
                         let el = el.get_hashed()?;

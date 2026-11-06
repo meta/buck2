@@ -30,12 +30,12 @@ use crate::values::Heap;
 use crate::values::StringValue;
 use crate::values::Value;
 use crate::values::ValueError;
+use crate::values::ValueOf;
 use crate::values::list::AllocList;
 use crate::values::tuple::UnpackTuple;
 use crate::values::typing::StarlarkIter;
 use crate::values::typing::never::StarlarkNever;
 use crate::values::typing::ty::AbstractType;
-use crate::values::value_of_unchecked::ValueOfUnchecked;
 
 #[starlark_module]
 pub(crate) fn register_other(builder: &mut GlobalsBuilder) {
@@ -79,10 +79,10 @@ pub(crate) fn register_other(builder: &mut GlobalsBuilder) {
     /// ```
     #[starlark(speculative_exec_safe)]
     fn any<'v>(
-        #[starlark(require = pos)] x: ValueOfUnchecked<'v, StarlarkIter<Value<'v>>>,
+        #[starlark(require = pos)] x: ValueOf<'v, StarlarkIter<Value<'v>>>,
         heap: Heap<'v>,
     ) -> starlark::Result<bool> {
-        for i in x.get().iterate(heap)? {
+        for i in x.to_value().iterate(heap)? {
             if i.to_bool() {
                 return Ok(true);
             }
@@ -109,10 +109,10 @@ pub(crate) fn register_other(builder: &mut GlobalsBuilder) {
     /// ```
     #[starlark(speculative_exec_safe)]
     fn all<'v>(
-        #[starlark(require = pos)] x: ValueOfUnchecked<'v, StarlarkIter<Value<'v>>>,
+        #[starlark(require = pos)] x: ValueOf<'v, StarlarkIter<Value<'v>>>,
         heap: Heap<'v>,
     ) -> starlark::Result<bool> {
-        for i in x.get().iterate(heap)? {
+        for i in x.to_value().iterate(heap)? {
             if !i.to_bool() {
                 return Ok(false);
             }
@@ -157,12 +157,12 @@ pub(crate) fn register_other(builder: &mut GlobalsBuilder) {
     /// ```
     #[starlark(speculative_exec_safe)]
     fn enumerate<'v>(
-        #[starlark(require = pos)] it: ValueOfUnchecked<'v, StarlarkIter<Value<'v>>>,
+        #[starlark(require = pos)] it: ValueOf<'v, StarlarkIter<Value<'v>>>,
         #[starlark(default = 0)] start: i32,
         heap: Heap<'v>,
     ) -> starlark::Result<impl AllocValue<'v>> {
         let v = it
-            .get()
+            .to_value()
             .iterate(heap)?
             .enumerate()
             .map(move |(k, v)| (k as i64 + start as i64, v));
@@ -303,10 +303,10 @@ pub(crate) fn register_other(builder: &mut GlobalsBuilder) {
     /// ```
     #[starlark(speculative_exec_safe)]
     fn reversed<'v>(
-        #[starlark(require = pos)] a: ValueOfUnchecked<'v, StarlarkIter<Value<'v>>>,
+        #[starlark(require = pos)] a: ValueOf<'v, StarlarkIter<Value<'v>>>,
         heap: Heap<'v>,
     ) -> starlark::Result<Vec<Value<'v>>> {
-        let mut v: Vec<Value> = a.get().iterate(heap)?.collect();
+        let mut v: Vec<Value> = a.to_value().iterate(heap)?.collect();
         v.reverse();
         Ok(v)
     }
@@ -336,12 +336,12 @@ pub(crate) fn register_other(builder: &mut GlobalsBuilder) {
     // This function is not spec-safe, because it may call `key` function
     // which might be not spec-safe.
     fn sorted<'v>(
-        #[starlark(require = pos)] x: ValueOfUnchecked<'v, StarlarkIter<Value<'v>>>,
+        #[starlark(require = pos)] x: ValueOf<'v, StarlarkIter<Value<'v>>>,
         #[starlark(require = named)] key: Option<Value<'v>>,
         #[starlark(require = named, default = false)] reverse: bool,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<AllocList<impl IntoIterator<Item = Value<'v>> + use<'v>>> {
-        let it = x.get().iterate(eval.heap())?;
+        let it = x.to_value().iterate(eval.heap())?;
         let mut it = match key {
             None => it.map(|x| (x, x)).collect(),
             Some(key) => {

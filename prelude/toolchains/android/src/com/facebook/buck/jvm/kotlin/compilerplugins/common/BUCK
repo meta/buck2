@@ -1,4 +1,5 @@
 load("@prelude//toolchains/android/tools:build_rules.bzl", "buck_kotlin_library")
+load("@prelude//toolchains/android/tools:kotlin_utils.bzl", "kotlin_implementation_detail_opt_in_args", "kotlin_version_at_least")
 load("@prelude//utils:source_listing.bzl", "source_listing")
 
 oncall("android_devxx")
@@ -7,17 +8,12 @@ source_listing()
 
 # Kotlin 2.4 renamed FirResolvedQualifier.symbol to qualifierSymbol; older compilers get an
 # extension with the new name. Key off kotlin.kotlin_version, the compiler actually run.
-_KOTLIN_VERSION_PARTS = read_root_config("kotlin", "kotlin_version", "2.2.0").split(".")
-
-_KOTLIN_MAJOR_MINOR = (int(_KOTLIN_VERSION_PARTS[0]), int(_KOTLIN_VERSION_PARTS[1]))
-
-_PRE_2_4 = _KOTLIN_MAJOR_MINOR < (2, 4)
+_PRE_2_4 = not kotlin_version_at_least(2, 4)
 
 buck_kotlin_library(
     name = "common",
     srcs = glob(["*.kt"]) + (glob(["compilercompat/2.2.0/*.kt"]) if _PRE_2_4 else []),
-    # Implementing KtFile requires an explicit PSI opt-in from Kotlin 2.5 onward.
-    extra_kotlinc_arguments = ["-opt-in=org.jetbrains.kotlin.psi.KtImplementationDetail"] if _KOTLIN_MAJOR_MINOR >= (2, 5) else [],
+    extra_kotlinc_arguments = kotlin_implementation_detail_opt_in_args(),
     labels = ["codegen_rule"],
     provided_deps = [
         "prelude//toolchains/android/third-party:kotlin-compiler",

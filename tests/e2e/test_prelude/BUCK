@@ -43,3 +43,8 @@ bxl_test(
     name = "clone_rule_cfg_test",
     src = "clone_rule_cfg_test.bxl",
 )
+
+bxl_test(
+    name = "kotlin_utils_test",
+    src = "kotlin_utils_test.bxl",
+)

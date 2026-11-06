@@ -10,7 +10,13 @@ buck2_core_tests(
             ],
         },
         "test_content_based_paths": {
-            "deps": ["//buck2/tests/e2e_util:http_archive"],
+            "deps": [
+                "fbsource//third-party/rust:flate2",
+                "fbsource//third-party/rust:tar",
+            ],
+        },
+        "test_dep_files": {
+            "deps": ["fbsource//third-party/rust:shlex"],
         },
         "test_hash_all_commands": {
             # These tests heavily depend on watchman, which is flakey on
@@ -19,6 +25,9 @@ buck2_core_tests(
                 "darwin",
                 "windows",
             ],
+        },
+        "test_materialization_for_failed_actions": {
+            "deps": ["fbsource//third-party/rust:regex"],
         },
         "test_missing_materialized_inputs": {
             # `buck2 test` needs the compiled test executor.
@@ -32,6 +41,7 @@ buck2_core_tests(
             ],
         },
         "test_outputs_ordering": {
+            "deps": ["fbsource//third-party/rust:regex"],
             "env": {
                 "RECLI": "$(location fbsource//xplat/remote_execution/dotslash:recli)",
             },

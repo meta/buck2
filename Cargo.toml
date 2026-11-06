@@ -377,7 +377,7 @@ futures-intrusive = "0.5.0"
 fxhash = "0.2.1"
 games = { path = "games" }
 glob = "0.3.4"
-globset = { version = "0.4.20", features = ["serde1"] }
+globset = { version = "0.4.21", features = ["serde1"] }
 h2 = "0.4.20"
 hashbrown = "0.17.1"
 hex = { version = "0.4.3", features = ["alloc"] }

@@ -1209,11 +1209,13 @@ internal class IrSanitizerStage(
  * ASM-based post-processing of generated .class files:
  * - Strip @Throws annotations from RuntimeInvisibleAnnotations
  * - Strip private declarations from @Metadata annotation
+ * - Strip line numbers from method bodies that consumers do not inline
  */
 internal class BytecodeSanitizerStage : AbiGenStage {
   override val name = "BytecodeSanitizer"
 
-  private val transformers = listOf(ThrowsAnnotationStripper(), PrivateMetadataStripper())
+  private val transformers =
+      listOf(ThrowsAnnotationStripper(), PrivateMetadataStripper(), StubLineNumberStripper())
 
   /** Transform class bytecode in-memory, applying all sanitization transformers. */
   fun transform(bytes: ByteArray): ByteArray {

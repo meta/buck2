@@ -586,8 +586,8 @@ class K2JvmAbiFirAnalysisHandlerExtension(private val outputPath: String) :
         }
 
     // Write bytecode from generationState.factory to disk.
-    // Apply bytecode post-processing (strip @Throws annotations and private metadata)
-    // in-memory before writing to avoid a separate read-back pass.
+    // Apply bytecode post-processing (see BytecodeSanitizerStage) in-memory before writing to
+    // avoid a separate read-back pass.
     val outputFiles =
         result.classFileFactoryCompat.asList().map { outputFile ->
           val originalBytes = outputFile.asByteArray()

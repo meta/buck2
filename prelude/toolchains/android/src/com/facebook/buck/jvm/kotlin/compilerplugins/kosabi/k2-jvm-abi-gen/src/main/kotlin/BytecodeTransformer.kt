@@ -10,8 +10,14 @@
 
 package com.facebook
 
+import kotlin.metadata.KmDeclarationContainer
 import kotlin.metadata.Visibility
+import kotlin.metadata.isInline
+import kotlin.metadata.jvm.JvmMethodSignature
 import kotlin.metadata.jvm.KotlinClassMetadata
+import kotlin.metadata.jvm.getterSignature
+import kotlin.metadata.jvm.setterSignature
+import kotlin.metadata.jvm.signature
 import kotlin.metadata.visibility
 import org.jetbrains.org.objectweb.asm.AnnotationVisitor
 import org.jetbrains.org.objectweb.asm.ClassReader
@@ -20,6 +26,9 @@ import org.jetbrains.org.objectweb.asm.ClassWriter
 import org.jetbrains.org.objectweb.asm.FieldVisitor
 import org.jetbrains.org.objectweb.asm.MethodVisitor
 import org.jetbrains.org.objectweb.asm.Opcodes
+import org.jetbrains.org.objectweb.asm.tree.ClassNode
+import org.jetbrains.org.objectweb.asm.tree.LineNumberNode
+import org.jetbrains.org.objectweb.asm.tree.MethodNode
 
 /** Transforms class file bytecode. Returns null if no transformation was needed. */
 interface BytecodeTransformer {
@@ -312,5 +321,119 @@ class PrivateMetadataStripper : BytecodeTransformer {
 
     reader.accept(visitor, 0)
     return writer.toByteArray()
+  }
+}
+
+/**
+ * Strips LineNumberTable entries from the method bodies that no consumer inlines.
+ *
+ * Consumers read the method bodies of an ABI jar only to inline them. The line numbers of the other
+ * bodies change whenever a line is added or removed above them, so keeping those numbers changes
+ * the ABI jar on edits that keep the ABI, and every action that reads the jar runs again. A class
+ * still changes on such an edit if it has a kept inline body below the edit, or a kept inline body
+ * that inlines another function: its SourceDebugExtension records the line count of the file.
+ *
+ * Keeps the line numbers of inline functions and inline property accessors (matched by JVM name and
+ * descriptor), of the `$default` and `$$forInline` methods of inline functions (matched by name),
+ * and of all methods of local and anonymous classes: an inline function copies the classes it
+ * declares to each call site. Leaves unchanged multi-file class facades, which carry copies of the
+ * inline bodies of their parts, synthetic classes other than `$DefaultImpls`, and classes without
+ * readable Kotlin metadata.
+ */
+class StubLineNumberStripper : BytecodeTransformer {
+  override fun transform(bytes: ByteArray): ByteArray? {
+    val node = ClassNode()
+    ClassReader(bytes).accept(node, 0)
+    // Only local and anonymous classes have an EnclosingMethod attribute.
+    if (node.outerClass != null) {
+      return null
+    }
+    val inline = inlineSignatures(node) ?: return null
+    val signatures = inline.mapTo(HashSet()) { it.name + it.descriptor }
+    val names = inline.mapTo(HashSet()) { it.name }
+    var stripped = false
+    for (method in node.methods) {
+      if (method.name + method.desc in signatures || method.isVariantOf(names)) {
+        continue
+      }
+      val instructions = method.instructions.iterator()
+      while (instructions.hasNext()) {
+        if (instructions.next() is LineNumberNode) {
+          instructions.remove()
+          stripped = true
+        }
+      }
+    }
+    if (!stripped) {
+      return null
+    }
+    val writer = ClassWriter(0)
+    node.accept(writer)
+    return writer.toByteArray()
+  }
+
+  /** Whether this is the `$default` or `$$forInline` method of a function named in [names]. */
+  private fun MethodNode.isVariantOf(names: Set<String>): Boolean = VARIANT_SUFFIXES.any {
+    name.endsWith(it) && name.removeSuffix(it) in names
+  }
+
+  /** The inline functions and accessors of [node], or null to leave the class unchanged. */
+  private fun inlineSignatures(node: ClassNode): Set<JvmMethodSignature>? {
+    val container: KmDeclarationContainer =
+        when (val metadata = readMetadata(node)) {
+          is KotlinClassMetadata.Class -> metadata.kmClass
+          is KotlinClassMetadata.FileFacade -> metadata.kmPackage
+          is KotlinClassMetadata.MultiFileClassPart -> metadata.kmPackage
+          // An interface cannot declare a non-private inline function, so `$DefaultImpls` has no
+          // body that a consumer inlines. The inliner copies other synthetic classes, such as
+          // `$WhenMappings`, to the call site of an inline body that uses them.
+          is KotlinClassMetadata.SyntheticClass ->
+              return if (node.name.endsWith("\$DefaultImpls")) emptySet() else null
+          else -> return null
+        }
+    val signatures = mutableSetOf<JvmMethodSignature>()
+    for (function in container.functions) {
+      if (function.isInline) {
+        signatures += function.signature ?: return null
+      }
+    }
+    // InlineBodyStage keeps no accessor body today, so these entries only keep stub lines.
+    for (property in container.properties) {
+      if (property.getter.isInline) {
+        signatures += property.getterSignature ?: return null
+      }
+      if (property.setter?.isInline == true) {
+        signatures += property.setterSignature ?: return null
+      }
+    }
+    return signatures
+  }
+
+  private fun readMetadata(node: ClassNode): KotlinClassMetadata? {
+    val annotation =
+        node.visibleAnnotations?.firstOrNull { it.desc == "Lkotlin/Metadata;" } ?: return null
+    return try {
+      // ASM lists annotation arguments as alternating names and values. kotlinc omits an argument
+      // that has its default value (`d1` and `d2` in `$DefaultImpls`), and this factory, unlike
+      // the `kotlin.Metadata` constructor, takes null for it.
+      val values = annotation.values.orEmpty().chunked(2).associate { it[0] as String to it[1] }
+      KotlinClassMetadata.readLenient(
+          kotlin.metadata.jvm.Metadata(
+              values["k"] as Int?,
+              (values["mv"] as List<*>?)?.map { it as Int }?.toIntArray(),
+              (values["d1"] as List<*>?)?.map { it as String }?.toTypedArray(),
+              (values["d2"] as List<*>?)?.map { it as String }?.toTypedArray(),
+              values["xs"] as String?,
+              values["pn"] as String?,
+              values["xi"] as Int?,
+          ),
+      )
+    } catch (e: Exception) {
+      null
+    }
+  }
+
+  private companion object {
+    val VARIANT_SUFFIXES = listOf("\$default", "\$\$forInline")
   }
 }

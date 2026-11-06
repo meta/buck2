@@ -63,18 +63,16 @@ enum DownloadFileActionError {
     #[error("Exactly one output file must be specified for a download file action, got {0}")]
     WrongNumberOfOutputs(usize),
     #[error(
-        "Downloads using content-based path {0} must supply metadata (usually in the form of a sha1)!"
+        "Downloads using content-based path {0} must supply metadata (usually in the form of a sha1 or sha256; a sha512 alone is not enough)!"
     )]
     ContentBasedPathWithoutMetadata(BuildArtifactPath),
 }
 
-/// The size a download must have: the declared metadata's, else `size_bytes`. The metadata's size
-/// is `size_bytes` when that was given, so `size_bytes` only matters when no metadata could be
-/// declared (for example a sha512-only download).
+/// The size a download must have: `size_bytes` when it was given, else the declared metadata's
+/// (from the HEAD response). When `size_bytes` was given the metadata's size is `size_bytes`, so
+/// one size is checked and a mismatch is reported once.
 fn expected_size(metadata: Option<&FileMetadata>, size_bytes: Option<u64>) -> Option<u64> {
-    metadata
-        .map(|metadata| metadata.digest.size())
-        .or(size_bytes)
+    size_bytes.or_else(|| metadata.map(|metadata| metadata.digest.size()))
 }
 
 /// Fails if a size was declared (by `size_bytes` or a HEAD response) and the download has another.
@@ -393,8 +391,8 @@ impl DownloadFileAction {
         // RE knows this file by the digest (checksum, size), where the size came from
         // `size_bytes` or the HEAD response rather than from the content. A wrong size would leave
         // every remote consumer unable to find its input, so it is caught here. `size_bytes` is
-        // checked even when no digest could be declared up front (for example a sha512-only
-        // download), where it is the only thing that can catch a wrong size.
+        // checked whenever it is given, also when no digest could be declared up front (a
+        // sha512-only download, or a checksum the digest config does not accept).
         check_downloaded_size(
             expected_size(metadata, self.inner.size_bytes),
             digest.size(),
@@ -575,12 +573,32 @@ mod tests {
     }
 
     #[test]
+    fn content_based_path_error_says_sha512_is_not_enough() {
+        use buck2_core::configuration::data::ConfigurationData;
+        use buck2_core::deferred::base_deferred_key::BaseDeferredKey;
+        use buck2_core::fs::buck_out_path::BuckOutPathKind;
+        use buck2_core::target::label::label::TargetLabel;
+        use buck2_fs::paths::forward_rel_path::ForwardRelativePathBuf;
+
+        let target =
+            TargetLabel::testing_parse("cell//pkg:t").configure(ConfigurationData::testing_new());
+        let err = DownloadFileActionError::ContentBasedPathWithoutMetadata(BuildArtifactPath::new(
+            BaseDeferredKey::TargetLabel(target),
+            ForwardRelativePathBuf::unchecked_new("out".into()),
+            BuckOutPathKind::Configuration,
+        ));
+        let msg = format!("{err}");
+        assert!(msg.contains("a sha1 or sha256"), "{msg}");
+        assert!(msg.contains("a sha512 alone is not enough"), "{msg}");
+    }
+
+    #[test]
     fn test_expected_size() {
-        // A sha512-only download has no metadata; `size_bytes` is the only size there is.
+        // `size_bytes` is checked whenever it is given, with or without declared metadata (none
+        // is declared for a sha512-only download, or a sha256 under a sha1 digest config).
         assert_eq!(expected_size(None, Some(6)), Some(6));
         assert_eq!(expected_size(None, None), None);
 
-        // With metadata, its size wins (it is `size_bytes` or the HEAD response's).
         let metadata = FileMetadata {
             digest: TrackedFileDigest::new(
                 FileDigest::from_content(b"foobar", testing::sha256()),
@@ -588,7 +606,8 @@ mod tests {
             ),
             is_executable: false,
         };
-        assert_eq!(expected_size(Some(&metadata), Some(9)), Some(6));
+        // Metadata carries `size_bytes` when that was given; alone it is the HEAD response's size.
+        assert_eq!(expected_size(Some(&metadata), Some(6)), Some(6));
         assert_eq!(expected_size(Some(&metadata), None), Some(6));
     }
 }

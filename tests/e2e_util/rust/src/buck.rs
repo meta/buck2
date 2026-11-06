@@ -115,6 +115,12 @@ impl Buck {
         &self.executable
     }
 
+    /// Runs every later command with `executable` instead, as a test that compares buck2 versions
+    /// does.
+    pub fn set_executable(&mut self, executable: impl Into<PathBuf>) {
+        self.executable = executable.into();
+    }
+
     /// The environment variables every command gets, for a process other than buck2 that must
     /// see what buck2 sees.
     pub fn envs(&self) -> impl Iterator<Item = (&OsStr, &OsStr)> {
@@ -695,5 +701,12 @@ mod tests {
         assert_eq!(envs.get(OsStr::new("KEY")), Some(&OsStr::new("value")));
         assert_eq!(envs.get(OsStr::new("NO_BUCKD")), Some(&OsStr::new("0")));
         assert_eq!(buck.executable(), Path::new("/bin/buck2"));
+    }
+
+    #[test]
+    fn test_later_commands_run_the_new_executable() {
+        let mut buck = buck(false);
+        buck.set_executable("buck2");
+        assert_eq!(argv(buck.kill()), ["buck2", "kill"]);
     }
 }

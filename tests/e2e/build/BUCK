@@ -6,7 +6,7 @@ oncall("build_infra")
 
 buck2_e2e_test(
     name = "test_build_isolated",
-    srcs = ["test_build_isolated.py"],
+    srcs = ["test_build_isolated.rs"],
     data = "//buck2/tests/targets:isolated_targets",
     env = {
         # `cpe::x2p` resolves `localhost` incorrectly, and the download tests fail.
@@ -15,44 +15,30 @@ buck2_e2e_test(
         "PRELUDE": "$(location prelude//:prelude)",
     },
     serialize_test_cases = False,
-    deps = [
-        "fbcode//buck2/tests/e2e_util:assert_occurrences",
-        "fbcode//buck2/tests/e2e_util:http_server",
-        "fbcode//buck2/tests/e2e_util:utils",
-        "fbsource//third-party/pypi/aiohttp:aiohttp",  # @autodeps2-fixme-manual
-    ],
+    deps = ["fbsource//third-party/rust:regex"],
 )
 
 buck2_e2e_test(
     name = "test_build_inplace",
-    srcs = ["test_build_inplace.py"],
+    srcs = ["test_build_inplace.rs"],
     require_nano_prelude = True,
-    deps = [
-        "//buck2/tests/e2e_util:utils",
-    ],
 )
 
 buck2_e2e_test(
     name = "test_build_id_inplace",
-    srcs = ["test_build_id_inplace.py"],
+    srcs = ["test_build_id_inplace.rs"],
     test_with_deployed_buck2 = True,
-    deps = [
-        "//buck2/tests/e2e_util:utils",
-    ],
 )
 
 buck2_e2e_test(
     name = "test_worker",
-    srcs = ["test_worker.py"],
+    srcs = ["test_worker.rs"],
     labels = [tpx_labels.long_running],
-    deps = [
-        "//buck2/tests/e2e_util:utils",
-    ],
 )
 
 buck2_e2e_test(
     name = "test_remote_worker",
-    srcs = ["test_remote_worker.py"],
+    srcs = ["test_remote_worker.rs"],
     labels = [tpx_labels.long_running],
     skip_for_os = [
         "darwin",
@@ -60,12 +46,11 @@ buck2_e2e_test(
     ],
     test_with_deployed_buck2 = False,
     use_compiled_buck2_client_and_tpx = True,
-    deps = ["//buck2/tests/e2e_util:utils"],
 )
 
 buck2_e2e_test(
     name = "test_action_digest",
-    srcs = ["test_action_digest.py"],
+    srcs = ["test_action_digest.rs"],
     # Version-bump diffs rewrite these files; the test must run on them so
     # the candidate is compared against the outgoing version before it ships.
     ci_srcs = [
@@ -90,7 +75,4 @@ buck2_e2e_test(
     # this is used to gate changes that modify action_digest.
     # Changing it will prevent the test from working properly
     test_with_compiled_buck2 = True,
-    deps = [
-        "//buck2/tests/e2e_util:utils",
-    ],
 )

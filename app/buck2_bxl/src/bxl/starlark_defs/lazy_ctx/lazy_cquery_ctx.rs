@@ -21,7 +21,8 @@ use starlark::starlark_simple_value;
 use starlark::values::NoSerialize;
 use starlark::values::StarlarkValue;
 use starlark::values::Trace;
-use starlark::values::list_or_tuple::UnpackListOrTuple;
+use starlark::values::ValueOf;
+use starlark::values::list_or_tuple::ListOrTupleType;
 use starlark::values::none::NoneOr;
 use starlark::values::starlark_value;
 
@@ -92,14 +93,17 @@ fn lazy_cquery_methods(builder: &mut MethodsBuilder) {
             UnpackUnconfiguredQueryArgs<'v>,
         >,
         #[starlark(require = named, default = NoneOr::None)] target_universe: NoneOr<
-            UnpackListOrTuple<String>,
+            ValueOf<'v, ListOrTupleType<String>>,
         >,
     ) -> starlark::Result<StarlarkLazy> {
         let query_args = match query_args {
             NoneOr::None => Vec::new(),
-            NoneOr::Other(query_args) => query_args.into_strings(),
+            NoneOr::Other(query_args) => query_args.into_strings()?,
         };
-        let target_universe = target_universe.into_option().map(|list| list.items.clone());
+        let target_universe = target_universe
+            .into_option()
+            .map(|list| list.try_to_vec())
+            .transpose()?;
         Ok(StarlarkLazy::new_cquery(LazyCqueryOperation::new_eval(
             this.global_cfg_options_override.dupe(),
             query.to_owned(),

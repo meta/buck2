@@ -45,7 +45,7 @@ use starlark::values::Heap;
 use starlark::values::UnpackValue;
 use starlark::values::Value;
 use starlark::values::ValueOf;
-use starlark::values::list::UnpackList;
+use starlark::values::list::ListType;
 use starlark::values::type_repr::StarlarkTypeRepr;
 
 use crate::bxl::starlark_defs::context::BxlContext;
@@ -144,14 +144,14 @@ pub(crate) enum ConfiguredTargetNodeArg<'v> {
 #[derive(StarlarkTypeRepr, UnpackValue)]
 pub(crate) enum TargetSetOrTargetList<'v> {
     TargetSet(&'v StarlarkTargetSet<TargetNode>),
-    TargetList(UnpackList<ValueOf<'v, TargetNodeOrTargetLabelOrStr<'v>>>),
+    TargetList(ValueOf<'v, ListType<ValueOf<'v, TargetNodeOrTargetLabelOrStr<'v>>>>),
 }
 
 #[derive(StarlarkTypeRepr, UnpackValue)]
 pub(crate) enum ConfiguredTargetListArg<'v> {
     ConfiguredTargetSet(&'v StarlarkTargetSet<ConfiguredTargetNode>),
     TargetSet(&'v StarlarkTargetSet<TargetNode>),
-    TargetList(UnpackList<ConfiguredTargetNodeArg<'v>>),
+    TargetList(ValueOf<'v, ListType<ConfiguredTargetNodeArg<'v>>>),
 }
 
 #[derive(StarlarkTypeRepr, UnpackValue)]
@@ -432,7 +432,8 @@ impl<'v> TargetListExpr<'v, ConfiguredTargetNode> {
                 // FIXME(JakobDegen): These iterations don't run in parallel, which is pretty sad.
                 // Unfortunately, that's also not easy to fix because for some reason this code
                 // prints to console
-                for item in unpack.items {
+                for item in unpack.try_items() {
+                    let item = item?;
                     let unpacked =
                         match Self::unpack_literal(item, global_cfg_options, ctx, dice, keep_going)
                             .await
@@ -532,7 +533,8 @@ impl<'v> TargetListExpr<'v, TargetNode> {
             TargetSetOrTargetList::TargetList(items) => {
                 let mut resolved = vec![];
 
-                for item in items.items {
+                for item in items.try_items() {
+                    let item = item?;
                     let unpacked = Self::unpack_literal(item.unpack(), ctx, dice).await?;
 
                     match unpacked {
@@ -809,8 +811,8 @@ pub(crate) enum OwnedTargetListExprArg {
 }
 
 impl OwnedTargetListExprArg {
-    pub(crate) fn from_ref(expr: &TargetListExprArg<'_>) -> Self {
-        match expr {
+    pub(crate) fn from_ref(expr: &TargetListExprArg<'_>) -> buck2_error::Result<Self> {
+        Ok(match expr {
             TargetListExprArg::Target(target) => {
                 OwnedTargetListExprArg::Target(OwnedTargetNodeArg::from_ref(target))
             }
@@ -820,14 +822,13 @@ impl OwnedTargetListExprArg {
                 }
                 TargetSetOrTargetList::TargetList(list) => {
                     let owned_targets = list
-                        .items
-                        .iter()
-                        .map(|item| OwnedTargetNodeArg::from_ref(&item.unpack()))
-                        .collect();
+                        .try_items()
+                        .map(|item| buck2_error::Ok(OwnedTargetNodeArg::from_ref(&item?.unpack())))
+                        .collect::<buck2_error::Result<_>>()?;
                     OwnedTargetListExprArg::TargetList(owned_targets)
                 }
             },
-        }
+        })
     }
 
     pub(crate) async fn to_unconfigured_target_set(

@@ -26,8 +26,9 @@ use starlark::values::NoSerialize;
 use starlark::values::StarlarkValue;
 use starlark::values::Trace;
 use starlark::values::Value;
+use starlark::values::ValueOf;
 use starlark::values::ValueTyped;
-use starlark::values::list::UnpackList;
+use starlark::values::list::ListType;
 use starlark::values::starlark_value;
 
 use crate::bxl::starlark_defs::artifacts::ArtifactArg;
@@ -140,10 +141,13 @@ fn lazy_ctx_methods(builder: &mut MethodsBuilder) {
     /// ```
     fn join_all<'v>(
         #[starlark(this)] _this: &'v StarlarkLazyCtx,
-        #[starlark(require = pos)] operations: UnpackList<&StarlarkLazy>,
+        #[starlark(require = pos)] operations: ValueOf<'v, ListType<&'v StarlarkLazy>>,
     ) -> starlark::Result<StarlarkLazy> {
         Ok(StarlarkLazy::new_batch(
-            operations.into_iter().map(|o| o.dupe()),
+            operations
+                .try_items()
+                .map(|o| starlark::Result::Ok(o?.dupe()))
+                .collect::<starlark::Result<Vec<_>>>()?,
         ))
     }
 
@@ -241,11 +245,14 @@ fn lazy_ctx_methods(builder: &mut MethodsBuilder) {
         #[starlark(require = pos)] expr: ConfiguredTargetNodeArg<'v>,
         #[starlark(require = named, default = ValueAsStarlarkTargetLabel::NONE)]
         target_platform: ValueAsStarlarkTargetLabel<'v>,
-        #[starlark(require = named, default = UnpackList::default())] modifiers: UnpackList<String>,
+        #[starlark(require = named, default = ValueOf::empty_list())] modifiers: ValueOf<
+            'v,
+            ListType<String>,
+        >,
     ) -> starlark::Result<StarlarkLazy> {
         let global_cfg_options = this
             .ctx
-            .resolve_global_cfg_options(target_platform, modifiers.items);
+            .resolve_global_cfg_options(target_platform, modifiers.try_to_vec()?);
         let owned = OwnedConfiguredTargetNodeArg::from_ref(expr);
         Ok(StarlarkLazy::new_configured_target_node(
             owned,
@@ -330,11 +337,14 @@ fn lazy_ctx_methods(builder: &mut MethodsBuilder) {
         this: &'v StarlarkLazyCtx,
         #[starlark(require = named, default = ValueAsStarlarkTargetLabel::NONE)]
         target_platform: ValueAsStarlarkTargetLabel<'v>,
-        #[starlark(require = named, default = UnpackList::default())] modifiers: UnpackList<String>,
+        #[starlark(require = named, default = ValueOf::empty_list())] modifiers: ValueOf<
+            'v,
+            ListType<String>,
+        >,
     ) -> starlark::Result<StarlarkLazyCqueryCtx> {
         let global_cfg_options = this
             .ctx
-            .resolve_global_cfg_options(target_platform, modifiers.items)?;
+            .resolve_global_cfg_options(target_platform, modifiers.try_to_vec()?)?;
         Ok(StarlarkLazyCqueryCtx::new(global_cfg_options))
     }
 

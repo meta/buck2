@@ -41,7 +41,7 @@ use starlark::starlark_module;
 use starlark::values::Value;
 use starlark::values::ValueOf;
 use starlark::values::ValueTyped;
-use starlark::values::list::UnpackList;
+use starlark::values::list::ListType;
 use starlark::values::none::NoneOr;
 use starlark::values::none::NoneType;
 use starlark::values::structs::StructRef;
@@ -149,13 +149,15 @@ pub(crate) fn bxl_context_methods(builder: &mut MethodsBuilder) {
         #[starlark(require = pos)] labels: ConfiguredTargetListExprArg<'v>,
         #[starlark(default = ValueAsStarlarkTargetLabel::NONE)]
         target_platform: ValueAsStarlarkTargetLabel<'v>,
-        #[starlark(require = named, default = NoneOr::None)] modifiers: NoneOr<UnpackList<String>>,
+        #[starlark(require = named, default = NoneOr::None)] modifiers: NoneOr<
+            ValueOf<'v, ListType<String>>,
+        >,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<
         Either<NoneOr<StarlarkConfiguredTargetNode>, StarlarkTargetSet<ConfiguredTargetNode>>,
     > {
         let cli_modifiers = match modifiers.into_option() {
-            Some(cli_modifiers) => cli_modifiers.items,
+            Some(cli_modifiers) => cli_modifiers.try_to_vec()?,
             None => Vec::new(),
         };
         let global_cfg_options = this.resolve_global_cfg_options(target_platform, cli_modifiers)?;
@@ -278,10 +280,13 @@ pub(crate) fn bxl_context_methods(builder: &mut MethodsBuilder) {
         #[starlark(default = ValueAsStarlarkTargetLabel::NONE)]
         target_platform: ValueAsStarlarkTargetLabel<'v>,
         #[starlark(require = named, default = false)] keep_going: bool,
-        #[starlark(require = named, default = UnpackList::default())] modifiers: UnpackList<String>,
+        #[starlark(require = named, default = ValueOf::empty_list())] modifiers: ValueOf<
+            'v,
+            ListType<String>,
+        >,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<StarlarkTargetUniverse<'v>> {
-        let modifiers = modifiers.items;
+        let modifiers = modifiers.try_to_vec()?;
         let global_cfg_options = this.resolve_global_cfg_options(target_platform, modifiers)?;
 
         Ok(this.via_dice(eval, |ctx| {
@@ -558,7 +563,7 @@ pub(crate) fn bxl_context_methods(builder: &mut MethodsBuilder) {
             >,
         >,
     > {
-        let providers = labels.unpack();
+        let providers = labels.unpack()?;
 
         let res: buck2_error::Result<_> = this.via_dice(eval, |dice| {
             dice.via(|dice| {

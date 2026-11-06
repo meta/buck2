@@ -37,8 +37,9 @@ use starlark::values::StarlarkValue;
 use starlark::values::Trace;
 use starlark::values::UnpackValue;
 use starlark::values::Value;
+use starlark::values::ValueOf;
 use starlark::values::ValueTyped;
-use starlark::values::list::UnpackList;
+use starlark::values::list::ListType;
 use starlark::values::none::NoneOr;
 use starlark::values::starlark_value;
 use starlark::values::type_repr::StarlarkTypeRepr;
@@ -119,11 +120,11 @@ pub(crate) async fn get_aquery_env(
 
 #[derive(StarlarkTypeRepr, UnpackValue)]
 enum UnpackActionNodes<'v> {
-    ActionQueryNodes(UnpackList<StarlarkActionQueryNode>),
+    ActionQueryNodes(ValueOf<'v, ListType<StarlarkActionQueryNode>>),
     ActionQueryNodesSet(&'v StarlarkTargetSet<ActionQueryNode>),
     ConfiguredProviders(AnyProvidersExprArg<'v>),
     ConfiguredTargets(ConfiguredTargetListExprArg<'v>),
-    StarlarkActions(UnpackList<StarlarkAction>),
+    StarlarkActions(ValueOf<'v, ListType<StarlarkAction>>),
 }
 
 // Aquery operates on `ActionQueryNode`s. Under the hood, the target set of action query nodes is obtained
@@ -139,14 +140,17 @@ async fn unpack_action_nodes<'v>(
     let aquery_env = get_aquery_env(&this.ctx, &this.global_cfg_options_override).await?;
     let providers = match expr {
         UnpackActionNodes::ActionQueryNodes(action_nodes) => {
-            return Ok(action_nodes.into_iter().map(|v| v.0).collect());
+            return action_nodes
+                .try_items()
+                .map(|v| buck2_error::Ok(v?.0))
+                .collect();
         }
         UnpackActionNodes::ActionQueryNodesSet(action_nodes) => return Ok(action_nodes.0.clone()),
         UnpackActionNodes::StarlarkActions(actions) => {
             let action_keys: Vec<ActionKey> = actions
-                .into_iter()
-                .map(|starlark_action| starlark_action.0.key().dupe())
-                .collect();
+                .try_items()
+                .map(|starlark_action| buck2_error::Ok(starlark_action?.0.key().dupe()))
+                .collect::<buck2_error::Result<_>>()?;
 
             return aquery_env.get_action_nodes(dice, action_keys).await;
         }
@@ -337,7 +341,7 @@ fn aquery_methods(builder: &mut MethodsBuilder) {
     ) -> starlark::Result<Value<'v>> {
         let query_args = match query_args {
             NoneOr::None => Vec::new(),
-            NoneOr::Other(query_args) => query_args.into_strings(),
+            NoneOr::Other(query_args) => query_args.into_strings()?,
         };
 
         let heap = eval.heap();

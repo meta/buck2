@@ -34,7 +34,8 @@ use starlark::values::StarlarkValue;
 use starlark::values::UnpackValue;
 use starlark::values::Value;
 use starlark::values::ValueError;
-use starlark::values::list_or_tuple::UnpackListOrTuple;
+use starlark::values::ValueOf;
+use starlark::values::list_or_tuple::ListOrTupleType;
 use starlark::values::starlark_value;
 use starlark::values::type_repr::StarlarkTypeRepr;
 
@@ -48,7 +49,7 @@ use crate::bxl::starlark_defs::context::BxlContextCoreData;
 #[derive(StarlarkTypeRepr, UnpackValue)]
 pub(crate) enum FileSetExpr<'v> {
     Literal(&'v str),
-    Literals(UnpackListOrTuple<&'v str>),
+    Literals(ValueOf<'v, ListOrTupleType<&'v str>>),
     FileSet(&'v StarlarkFileSet),
 }
 
@@ -60,8 +61,8 @@ impl<'a> FileSetExpr<'a> {
             )])),
             FileSetExpr::Literals(val) => {
                 let mut file_set = FileSet::new(BuckMutInsertionSet::default());
-                for arg in &val {
-                    file_set.insert(FileNode(bxl.parse_query_file_literal(arg)?));
+                for arg in val.try_items() {
+                    file_set.insert(FileNode(bxl.parse_query_file_literal(arg?)?));
                 }
                 Cow::Owned(file_set)
             }
@@ -79,14 +80,16 @@ pub(crate) enum OwnedFileSetExpr {
 }
 
 impl OwnedFileSetExpr {
-    pub(crate) fn from_ref(expr: &FileSetExpr) -> Self {
-        match expr {
+    pub(crate) fn from_ref(expr: &FileSetExpr) -> buck2_error::Result<Self> {
+        Ok(match expr {
             FileSetExpr::Literal(val) => Self::Literal(val.to_string()),
-            FileSetExpr::Literals(val) => {
-                Self::Literals(val.items.iter().map(|s| s.to_string()).collect())
-            }
+            FileSetExpr::Literals(val) => Self::Literals(
+                val.try_items()
+                    .map(|s| buck2_error::Ok(s?.to_owned()))
+                    .collect::<buck2_error::Result<_>>()?,
+            ),
             FileSetExpr::FileSet(val) => Self::FileSet(val.0.clone()),
-        }
+        })
     }
 
     pub(crate) fn get<'a>(

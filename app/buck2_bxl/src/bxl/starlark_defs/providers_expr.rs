@@ -28,7 +28,8 @@ use dice::DiceComputations;
 use dupe::Dupe;
 use itertools::Either;
 use starlark::values::UnpackValue;
-use starlark::values::list::UnpackList;
+use starlark::values::ValueOf;
+use starlark::values::list::ListType;
 use starlark::values::type_repr::StarlarkTypeRepr;
 
 use crate::bxl::starlark_defs::context::BxlContext;
@@ -56,7 +57,7 @@ pub(crate) enum ProvidersLabelArg<'v> {
 
 #[derive(StarlarkTypeRepr, UnpackValue)]
 pub(crate) enum ProvidersLabelListArg<'v> {
-    List(UnpackList<ProvidersLabelArg<'v>>),
+    List(ValueOf<'v, ListType<ProvidersLabelArg<'v>>>),
     TargetSet(&'v StarlarkTargetSet<TargetNode>),
 }
 
@@ -79,7 +80,7 @@ pub(crate) enum ConfiguredProvidersLabelArg<'v> {
 /// a list of configured provider labels
 #[derive(StarlarkTypeRepr, UnpackValue)]
 pub(crate) enum ConfiguredProvidersLabelListArg<'v> {
-    List(UnpackList<ConfiguredProvidersLabelArg<'v>>),
+    List(ValueOf<'v, ListType<ConfiguredProvidersLabelArg<'v>>>),
     TargetSet(&'v StarlarkTargetSet<ConfiguredTargetNode>),
 }
 
@@ -103,7 +104,7 @@ pub(crate) enum AnyProvidersLabelArg<'v> {
 pub(crate) enum AnyProvidersLabelListArg<'v> {
     StarlarkTargetSet(&'v StarlarkTargetSet<TargetNode>),
     StarlarkConfiguredTargetSet(&'v StarlarkTargetSet<ConfiguredTargetNode>),
-    List(UnpackList<AnyProvidersLabelArg<'v>>),
+    List(ValueOf<'v, ListType<AnyProvidersLabelArg<'v>>>),
 }
 
 #[derive(StarlarkTypeRepr, UnpackValue)]
@@ -129,17 +130,16 @@ impl<'v> ConfiguredProvidersLabelArg<'v> {
 }
 
 impl<'v> ConfiguredProvidersExprArg<'v> {
-    pub(crate) fn unpack(&self) -> ProvidersExpr<ConfiguredProvidersLabel> {
-        match self {
+    pub(crate) fn unpack(&self) -> buck2_error::Result<ProvidersExpr<ConfiguredProvidersLabel>> {
+        Ok(match self {
             ConfiguredProvidersExprArg::One(arg) => {
                 ProvidersExpr::Literal(arg.configured_providers_label())
             }
             ConfiguredProvidersExprArg::List(ConfiguredProvidersLabelListArg::List(list)) => {
                 ProvidersExpr::Iterable(
-                    list.items
-                        .iter()
-                        .map(|arg| arg.configured_providers_label())
-                        .collect(),
+                    list.try_items()
+                        .map(|arg| buck2_error::Ok(arg?.configured_providers_label()))
+                        .collect::<buck2_error::Result<_>>()?,
                 )
             }
             ConfiguredProvidersExprArg::List(ConfiguredProvidersLabelListArg::TargetSet(
@@ -151,7 +151,7 @@ impl<'v> ConfiguredProvidersExprArg<'v> {
                     .map(|node| ConfiguredProvidersLabel::default_for(node.label().dupe()))
                     .collect(),
             ),
-        }
+        })
     }
 }
 
@@ -216,7 +216,8 @@ impl ProvidersExpr<ConfiguredProvidersLabel> {
             }
             AnyProvidersLabelListArg::List(iterable) => {
                 let mut res = Vec::new();
-                for arg in iterable.items {
+                for arg in iterable.try_items() {
+                    let arg = arg?;
                     res.push(
                         Self::unpack_literal(arg, global_cfg_options_override, ctx, dice).await?,
                     );
@@ -258,8 +259,8 @@ impl ProvidersExpr<ProvidersLabel> {
             )),
             ProvidersLabelListArg::List(iterable) => {
                 let mut res = Vec::new();
-                for val in iterable.items {
-                    res.push(Self::unpack_providers_label(val, ctx)?)
+                for val in iterable.try_items() {
+                    res.push(Self::unpack_providers_label(val?, ctx)?)
                 }
                 Ok(ProvidersExpr::Iterable(res))
             }

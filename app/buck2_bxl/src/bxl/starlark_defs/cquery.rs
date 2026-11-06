@@ -32,8 +32,9 @@ use starlark::values::NoSerialize;
 use starlark::values::StarlarkValue;
 use starlark::values::Trace;
 use starlark::values::Value;
+use starlark::values::ValueOf;
 use starlark::values::ValueTyped;
-use starlark::values::list_or_tuple::UnpackListOrTuple;
+use starlark::values::list_or_tuple::ListOrTupleType;
 use starlark::values::none::NoneOr;
 use starlark::values::starlark_value;
 
@@ -548,14 +549,20 @@ fn cquery_methods(builder: &mut MethodsBuilder) {
         this: &StarlarkCQueryCtx<'v>,
         query: &'v str,
         #[starlark(default = NoneOr::None)] query_args: NoneOr<UnpackUnconfiguredQueryArgs<'v>>,
-        #[starlark(default = NoneOr::None)] target_universe: NoneOr<UnpackListOrTuple<String>>,
+        #[starlark(default = NoneOr::None)] target_universe: NoneOr<
+            ValueOf<'v, ListOrTupleType<String>>,
+        >,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<Value<'v>> {
         let query_args = match query_args {
             NoneOr::None => Vec::new(),
-            NoneOr::Other(query_args) => query_args.into_strings(),
+            NoneOr::Other(query_args) => query_args.into_strings()?,
         };
 
+        let target_universe = target_universe
+            .into_option()
+            .map(|v| v.try_to_vec())
+            .transpose()?;
         let heap = eval.heap();
 
         Ok(this.ctx.via_dice(eval, |dice| {
@@ -570,7 +577,7 @@ fn cquery_methods(builder: &mut MethodsBuilder) {
                                 query,
                                 &query_args,
                                 this.global_cfg_options_override.clone(),
-                                target_universe.into_option().as_ref().map(|v| &v.items[..]),
+                                target_universe.as_deref(),
                                 false,
                             )
                             .await?

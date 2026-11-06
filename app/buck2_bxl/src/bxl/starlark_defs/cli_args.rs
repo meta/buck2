@@ -63,10 +63,11 @@ use starlark::values::StarlarkValue;
 use starlark::values::UnpackValue;
 use starlark::values::Value;
 use starlark::values::ValueError;
+use starlark::values::ValueOf;
 use starlark::values::float::StarlarkFloat;
 use starlark::values::list::AllocList;
 use starlark::values::list::ListRef;
-use starlark::values::list_or_tuple::UnpackListOrTuple;
+use starlark::values::list_or_tuple::ListOrTupleType;
 use starlark::values::none::NoneType;
 use starlark::values::starlark_value;
 use variant_name::VariantName;
@@ -1056,7 +1057,7 @@ pub(crate) fn cli_args_module(registry: &mut GlobalsBuilder) {
     /// buck2 bxl //my.bxl:target -- --mode debug
     /// ```
     fn r#enum<'v>(
-        #[starlark(require = pos)] variants: UnpackListOrTuple<String>,
+        #[starlark(require = pos)] variants: ValueOf<'v, ListOrTupleType<String>>,
         default: Option<Value<'v>>,
         #[starlark(default = "")] doc: &str,
         #[starlark(require = named)] short: Option<Value<'v>>,
@@ -1067,7 +1068,7 @@ pub(crate) fn cli_args_module(registry: &mut GlobalsBuilder) {
         Ok(CliArgs::new(
             default,
             doc,
-            CliArgType::enumeration(variants.into_iter().collect()),
+            CliArgType::enumeration(variants.try_items().collect::<starlark::Result<_>>()?),
             short,
         )?)
     }

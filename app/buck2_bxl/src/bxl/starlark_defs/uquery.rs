@@ -34,8 +34,9 @@ use starlark::values::StarlarkValue;
 use starlark::values::Trace;
 use starlark::values::UnpackValue;
 use starlark::values::Value;
+use starlark::values::ValueOf;
 use starlark::values::ValueTyped;
-use starlark::values::list::UnpackList;
+use starlark::values::list::ListType;
 use starlark::values::none::NoneOr;
 use starlark::values::starlark_value;
 use starlark::values::type_repr::StarlarkTypeRepr;
@@ -615,7 +616,7 @@ fn uquery_methods(builder: &mut MethodsBuilder) {
     ) -> starlark::Result<Value<'v>> {
         let query_args = match query_args {
             NoneOr::None => Vec::new(),
-            NoneOr::Other(query_args) => query_args.into_strings(),
+            NoneOr::Other(query_args) => query_args.into_strings()?,
         };
 
         let heap = eval.heap();
@@ -645,19 +646,19 @@ fn uquery_methods(builder: &mut MethodsBuilder) {
 
 #[derive(StarlarkTypeRepr, UnpackValue)]
 pub(crate) enum UnpackUnconfiguredQueryArgs<'v> {
-    ListOfStrings(UnpackList<String>),
+    ListOfStrings(ValueOf<'v, ListType<String>>),
     TargetSet(&'v StarlarkTargetSet<TargetNode>),
 }
 
 impl<'v> UnpackUnconfiguredQueryArgs<'v> {
-    pub(crate) fn into_strings(self) -> Vec<String> {
-        match self {
-            UnpackUnconfiguredQueryArgs::ListOfStrings(list) => list.items,
+    pub(crate) fn into_strings(self) -> buck2_error::Result<Vec<String>> {
+        Ok(match self {
+            UnpackUnconfiguredQueryArgs::ListOfStrings(list) => list.try_to_vec()?,
             UnpackUnconfiguredQueryArgs::TargetSet(set) => {
                 // TODO - we really should change eval_query() to handle this, but escaping the unconfigured target label for now
                 // as a quick solution.
                 set.0.iter_names().map(|e| format!("\"{e}\"")).collect()
             }
-        }
+        })
     }
 }

@@ -602,6 +602,11 @@ def _merge_assets(
 
         merge_assets_cmd.add("--binary-type", "aab" if is_bundle_build else "apk")
 
+        # `apk_build` and the bundle builder inflate every compressed entry of this APK and deflate it
+        # again at their own level, so the level used here never reaches the final APK or bundle.
+        if not is_exopackaged_enabled_for_resources:
+            merge_assets_cmd.add("--compression-level", "1")
+
         return merge_assets_cmd, merged_assets_output_hash
 
     if apk_module_graph_file:

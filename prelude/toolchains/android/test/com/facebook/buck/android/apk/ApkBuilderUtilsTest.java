@@ -12,6 +12,7 @@ package com.facebook.buck.android.apk;
 
 import static org.junit.Assert.assertArrayEquals;
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertNotEquals;
 
 import com.google.common.collect.ImmutableSet;
 import java.io.IOException;
@@ -19,9 +20,11 @@ import java.io.OutputStream;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.Random;
 import java.util.function.Predicate;
 import java.util.regex.Pattern;
 import java.util.zip.CRC32;
+import java.util.zip.Deflater;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipFile;
 import java.util.zip.ZipOutputStream;
@@ -114,6 +117,50 @@ public class ApkBuilderUtilsTest {
     assertEquals(ImmutableSet.of(OTHER_NATIVE_LIB, ASSET), compressed);
   }
 
+  @Test
+  public void resourceApkCompressionLevelDoesNotChangeTheApk() throws Exception {
+    byte[] model = vertices(30_000);
+    byte[] arsc = repeated("resource table\n", 2_000);
+    resourceApk = writeResourceApk("resources-fast.ap_", Deflater.BEST_SPEED, model, arsc);
+    byte[] fromFastResources = Files.readAllBytes(buildApk(path -> false));
+    resourceApk = writeResourceApk("resources-best.ap_", Deflater.BEST_COMPRESSION, model, arsc);
+    byte[] fromBestResources = Files.readAllBytes(buildApk(path -> false));
+
+    assertArrayEquals(fromBestResources, fromFastResources);
+    try (ZipFile fast = new ZipFile(tmp.getRoot().toPath().resolve("resources-fast.ap_").toFile());
+        ZipFile best = new ZipFile(tmp.getRoot().toPath().resolve("resources-best.ap_").toFile())) {
+      assertDeflated(fast, "assets/model.glb", model);
+      assertNotEquals(
+          best.getEntry("assets/model.glb").getCompressedSize(),
+          fast.getEntry("assets/model.glb").getCompressedSize());
+    }
+  }
+
+  private Path writeResourceApk(String name, int level, byte[] model, byte[] arsc)
+      throws IOException {
+    Path path = tmp.getRoot().toPath().resolve(name);
+    try (ZipOutputStream out = new ZipOutputStream(Files.newOutputStream(path))) {
+      out.setLevel(level);
+      out.putNextEntry(new ZipEntry("AndroidManifest.xml"));
+      out.write("<manifest/>".getBytes(StandardCharsets.UTF_8));
+      out.closeEntry();
+      ZipEntry arscEntry = new ZipEntry("resources.arsc");
+      arscEntry.setMethod(ZipEntry.STORED);
+      arscEntry.setSize(arsc.length);
+      arscEntry.setCompressedSize(arsc.length);
+      CRC32 crc = new CRC32();
+      crc.update(arsc);
+      arscEntry.setCrc(crc.getValue());
+      out.putNextEntry(arscEntry);
+      out.write(arsc);
+      out.closeEntry();
+      out.putNextEntry(new ZipEntry("assets/model.glb"));
+      out.write(model);
+      out.closeEntry();
+    }
+    return path;
+  }
+
   private Path buildApk(Predicate<String> storedPaths) throws Exception {
     Path apk = tmp.getRoot().toPath().resolve("out-" + System.nanoTime() + ".apk");
     ApkBuilderUtils.buildApk(
@@ -140,6 +187,16 @@ public class ApkBuilderUtilsTest {
       out.write(bytes);
     }
     return path;
+  }
+
+  private static byte[] vertices(int count) {
+    Random random = new Random(42);
+    StringBuilder builder = new StringBuilder();
+    for (int i = 0; i < count; i++) {
+      builder.append("v ").append(random.nextInt(100)).append(' ').append(random.nextInt(100));
+      builder.append('\n');
+    }
+    return builder.toString().getBytes(StandardCharsets.UTF_8);
   }
 
   private static byte[] repeated(String line, int times) {

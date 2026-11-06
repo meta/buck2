@@ -70,6 +70,7 @@ public class MergeAssetsUtils {
    *     SDK aapt2 C++ tool upstream when building the base APK. Note that C++ uses std::regex, so
    *     this pattern is going to be ECMAScript regex.
    * @param binaryType type of binary being built (APK or AAB)
+   * @param compressionLevel deflate level, from 1 to 9, of the entries that are compressed
    * @throws IOException if an error occurs during asset merging
    */
   public static void mergeAssets(
@@ -80,8 +81,15 @@ public class MergeAssetsUtils {
       ImmutableMap<String, ImmutableSet<RelPath>> moduleToAssetsDirectories,
       ImmutableSet<String> extraNoCompressExtensions,
       Optional<String> noCompressRegex,
-      BinaryType binaryType)
+      BinaryType binaryType,
+      int compressionLevel)
       throws IOException {
+    Preconditions.checkArgument(
+        compressionLevel >= Deflater.BEST_SPEED && compressionLevel <= Deflater.BEST_COMPRESSION,
+        "Compression level must be between %s and %s, got %s",
+        Deflater.BEST_SPEED,
+        Deflater.BEST_COMPRESSION,
+        compressionLevel);
     ImmutableSet<String> allNoCompressExtensions =
         new ImmutableSet.Builder<String>()
             .addAll(DEFAULT_NO_COMPRESS_EXTENSIONS)
@@ -110,7 +118,7 @@ public class MergeAssetsUtils {
                   inputEntry.getSize(),
                   inputEntry.getCrc(),
                   inputEntry.getName(),
-                  shouldCompress ? Deflater.BEST_COMPRESSION : 0,
+                  shouldCompress ? compressionLevel : 0,
                   inputEntry.isDirectory());
             }
           }
@@ -131,7 +139,8 @@ public class MergeAssetsUtils {
               assets,
               assetsZipRoot,
               allNoCompressExtensions,
-              noCompressPattern);
+              noCompressPattern,
+              compressionLevel);
         } else {
           Path moduleDir = moduleAssetsOutputDir.orElseThrow().resolve(moduleName);
           java.nio.file.Files.createDirectory(moduleDir);
@@ -140,7 +149,12 @@ public class MergeAssetsUtils {
                   moduleDir.resolve("assets.ap_"), /* addManifestIfMissing */ false)) {
             Path assetsZipRoot = Paths.get("assets").resolve(moduleName);
             addAllAssets(
-                moduleOutputApk, assets, assetsZipRoot, allNoCompressExtensions, noCompressPattern);
+                moduleOutputApk,
+                assets,
+                assetsZipRoot,
+                allNoCompressExtensions,
+                noCompressPattern,
+                compressionLevel);
           }
         }
       }
@@ -230,7 +244,8 @@ public class MergeAssetsUtils {
       ImmutableMap<Path, Path> assets,
       Path assetsZipRoot,
       ImmutableSet<String> allNoCompressExtensions,
-      Optional<Pattern> noCompressPattern)
+      Optional<Pattern> noCompressPattern,
+      int compressionLevel)
       throws IOException {
     for (Map.Entry<Path, Path> assetPaths : assets.entrySet()) {
       Path packagingPathForAsset = assetPaths.getKey();
@@ -238,7 +253,7 @@ public class MergeAssetsUtils {
       int compression =
           isNoCompress(packagingPathForAsset.toString(), allNoCompressExtensions, noCompressPattern)
               ? 0
-              : Deflater.BEST_COMPRESSION;
+              : compressionLevel;
       byte[] assetBytes = java.nio.file.Files.readAllBytes(fullPathToAsset);
       CRC32 crc32 = new CRC32();
       crc32.update(assetBytes);

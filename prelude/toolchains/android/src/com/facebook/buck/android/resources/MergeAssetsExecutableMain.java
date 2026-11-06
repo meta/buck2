@@ -27,6 +27,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.zip.Deflater;
 import org.jetbrains.annotations.Nullable;
 import org.kohsuke.args4j.CmdLineException;
 import org.kohsuke.args4j.CmdLineParser;
@@ -67,6 +68,11 @@ public class MergeAssetsExecutableMain {
 
   @Option(name = "--binary-type", usage = "either 'apk' or 'aab'")
   private @Nullable String binaryType = null;
+
+  @Option(
+      name = "--compression-level",
+      usage = "deflate level, from 1 to 9, of the entries that are compressed (default: 9)")
+  private int compressionLevel = Deflater.BEST_COMPRESSION;
 
   public static void main(String[] args) throws IOException {
     MergeAssetsExecutableMain main = new MergeAssetsExecutableMain();
@@ -109,7 +115,8 @@ public class MergeAssetsExecutableMain {
         dirs,
         ImmutableSet.copyOf(extraNoCompressAssetExtensions),
         Optional.ofNullable(extraNoCompressRegex),
-        MergeAssetsUtils.BinaryType.valueOf(Objects.requireNonNull(binaryType).toUpperCase()));
+        MergeAssetsUtils.BinaryType.valueOf(Objects.requireNonNull(binaryType).toUpperCase()),
+        compressionLevel);
 
     if (outputApkHash != null) {
       Files.writeString(

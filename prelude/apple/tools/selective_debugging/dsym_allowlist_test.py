@@ -16,7 +16,11 @@ from unittest.mock import patch
 
 import importlib_resources as resources
 
-from .dsym_allowlist import kept_debug_file_paths, write_dsymutil_allowlist
+from .dsym_allowlist import (
+    kept_debug_file_paths,
+    linked_target_output_paths,
+    write_dsymutil_allowlist,
+)
 from .dsym_allowlist_main import main
 from .scrubber import scrub
 
@@ -31,6 +35,17 @@ _OBJECTS = [
     f"{_PREFIX}/__HelloWorld__/__objects__/srcs/RootViewController.m.o",
     f"{_PREFIX}/__HelloWorld__/__objects__/srcs/main.m.o",
 ]
+
+# The output directories of the targets in the debug map of `HelloWorld`. Each
+# path is also read as a content-based path, whose configuration hash then
+# looks like the first component of the package.
+_LINKED_TARGET_OUTPUT_PATHS = sorted(
+    [
+        f"{prefix}fbobjc/buck2/samples/focused_debugging/{path}"
+        for prefix in ["", "56628b5feecfab0a/"]
+        for path in ["__Foo__", "__HelloWorld__", "__HelloWorld__/__objects__"]
+    ]
+)
 
 _TARGETS_FILES = [
     "focused_targets_empty.json",
@@ -147,3 +162,40 @@ class DsymAllowlistTest(unittest.TestCase):
 
         with open(output) as f:
             self.assertEqual(json.load(f), {"objects": [{"filename": _ARCHIVE_MEMBER}]})
+
+    def test_linked_target_output_paths(self) -> None:
+        self.assertEqual(
+            linked_target_output_paths(_resource("HelloWorld")),
+            _LINKED_TARGET_OUTPUT_PATHS,
+        )
+
+    def test_main_linked_targets(self) -> None:
+        output = os.path.join(self.tmp_dir.name, "linked_targets.json")
+        argv = [
+            "dsym_allowlist",
+            "--input",
+            _resource("HelloWorld"),
+            "--linked-targets-output",
+            output,
+        ]
+        with patch("sys.argv", argv):
+            main()
+
+        with open(output) as f:
+            self.assertEqual(
+                json.load(f),
+                {"output_paths": _LINKED_TARGET_OUTPUT_PATHS},
+            )
+
+    def test_main_linked_targets_rejects_selection(self) -> None:
+        argv = [
+            "dsym_allowlist",
+            "--input",
+            _resource("HelloWorld"),
+            "--linked-targets-output",
+            os.path.join(self.tmp_dir.name, "linked_targets.json"),
+            "--targets-file",
+            _resource("focused_targets.json"),
+        ]
+        with patch("sys.argv", argv), self.assertRaises(SystemExit):
+            main()

@@ -95,6 +95,27 @@ def _get_target_output_paths_from_debug_file_path(
     return candidates
 
 
+def get_target_output_paths(debug_file_path: str) -> list[str]:
+    """
+    Returns the output directories (`package/__name__`, as returned by
+    `load_focused_targets_output_paths()`) of the targets which may have produced
+    the object file or archive of an `N_OSO` entry.
+    """
+    # debug_file_path usually have the format x/y/z/libFoo.a(bar.m.o)
+    if debug_file_path.startswith("buck-out/"):
+        return _get_target_output_paths_from_debug_file_path(
+            debug_file_path.split("(")[0]
+        )
+
+    # occasionally archive file can be directly from source.
+    candidates = []
+    (package, name) = os.path.split(debug_file_path)
+    while package != "" and package != "/":
+        candidates.append(f"{package}/__{name}__")
+        (package, name) = os.path.split(package)
+    return candidates
+
+
 # Visible for testing
 def should_scrub_with_focused_targets_output_paths(
     focused_targets_output_paths: set[str], debug_file_path: str
@@ -103,28 +124,10 @@ def should_scrub_with_focused_targets_output_paths(
     if len(focused_targets_output_paths) == 0:
         return True
 
-    # debug_file_path usually have the format x/y/z/libFoo.a(bar.m.o)
-    if "(" in debug_file_path:
-        debug_target_path = debug_file_path.split("(")[0]
-    else:
-        debug_target_path = debug_file_path
-
-    if debug_file_path.startswith("buck-out/"):
-        return not any(
-            target_output_path in focused_targets_output_paths
-            for target_output_path in _get_target_output_paths_from_debug_file_path(
-                debug_target_path
-            )
-        )
-    else:
-        # occasionally archive file can be directly from source.
-        (package, name) = os.path.split(debug_file_path)
-        while package != "" and package != "/":
-            if f"{package}/__{name}__" in focused_targets_output_paths:
-                return False
-            (package, name) = os.path.split(package)
-
-        return True
+    return not any(
+        target_output_path in focused_targets_output_paths
+        for target_output_path in get_target_output_paths(debug_file_path)
+    )
 
 
 def _should_scrub_with_targets_file(

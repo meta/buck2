@@ -1591,7 +1591,7 @@ async fn build_target_result(
     // 3. --build-run-info is requested and the target produces a RunInfo
     if let Some(test_info) = test_provider_from_collection(collections)? {
         let skip_build_based_on_labels = !label_filtering.build_filtered_targets
-            && label_filtering.is_excluded(test_info.labels());
+            && label_filtering.is_excluded(test_info.labels()?);
         if skip_build_based_on_labels {
             return Ok((BuildTargetResult::new(), providers));
         }
@@ -1683,7 +1683,8 @@ async fn test_target<'a, 'e>(
         if use_internal_runner {
             let excluded = {
                 let provider = internal_provider.as_ref().value().as_ref();
-                label_filtering.is_excluded(provider.labels().collect())
+                label_filtering
+                    .is_excluded(provider.labels().collect::<buck2_error::Result<Vec<_>>>()?)
             };
             if excluded {
                 return Ok(None);
@@ -1720,24 +1721,24 @@ async fn test_target<'a, 'e>(
                 let provider = internal_provider.as_ref().value().as_ref();
                 let listing_spec = build_external_runner_spec(
                     provider.listing_command(),
-                    provider.env().map(|(k, _)| k),
+                    provider.env().map(|entry| Ok(entry?.0)),
                     provider.test_type(),
                     provider.labels(),
                     provider.contacts(),
                     handle.clone(),
                     working_dir_cell,
                     &tenting_acl_names,
-                );
+                )?;
                 let spec = build_external_runner_spec(
                     provider.command(),
-                    provider.env().map(|(k, _)| k),
+                    provider.env().map(|entry| Ok(entry?.0)),
                     provider.test_type(),
                     provider.labels(),
                     provider.contacts(),
                     handle,
                     working_dir_cell,
                     &tenting_acl_names,
-                );
+                )?;
                 (spec, listing_spec)
             };
             crate::internal_runner::run_internal_test(
@@ -1754,7 +1755,7 @@ async fn test_target<'a, 'e>(
 
     let fut = match test_provider_from_collection(collection)? {
         Some(test_info) => {
-            if label_filtering.is_excluded(test_info.labels()) {
+            if label_filtering.is_excluded(test_info.labels()?) {
                 return Ok(None);
             }
             run_tests(

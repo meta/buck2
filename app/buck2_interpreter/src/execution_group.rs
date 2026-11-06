@@ -183,6 +183,7 @@ impl StarlarkExecutionGroupView<'_> {
     }
 }
 
+#[derive(ProvidesStaticType)]
 pub struct ExecutionGroupArg {
     pub group: ExecutionGroup,
 }

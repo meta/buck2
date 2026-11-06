@@ -32,7 +32,7 @@ pub trait TestProvider<'v> {
         visitor: &mut dyn CommandLineArtifactVisitor<'v>,
     ) -> buck2_error::Result<()>;
 
-    fn labels(&self) -> Vec<&str>;
+    fn labels(&self) -> buck2_error::Result<Vec<&'v str>>;
 
     fn dispatch<'exec>(
         &self,
@@ -47,41 +47,46 @@ pub trait TestProvider<'v> {
 /// Used by both `ExternalRunnerTestInfo` and `InternalRunnerTestInfo`
 /// to dispatch to the external test executor (TPX).
 pub fn build_external_runner_spec<'a>(
-    command: impl Iterator<Item = TestCommandMember<'a>>,
-    env_keys: impl Iterator<Item = &'a str>,
+    command: impl Iterator<Item = buck2_error::Result<TestCommandMember<'a>>>,
+    env_keys: impl Iterator<Item = buck2_error::Result<&'a str>>,
     test_type: &str,
-    labels: impl Iterator<Item = &'a str>,
-    contacts: impl Iterator<Item = &'a str>,
+    labels: impl Iterator<Item = buck2_error::Result<&'a str>>,
+    contacts: impl Iterator<Item = buck2_error::Result<&'a str>>,
     target: ConfiguredTarget,
     working_dir_cell: CellName,
     tenting_status: &TentingStatus,
-) -> ExternalRunnerSpec {
+) -> buck2_error::Result<ExternalRunnerSpec> {
     let mut handle_index = 0;
 
     let command = command
-        .map(|c| match c {
-            TestCommandMember::Literal(l) => ExternalRunnerSpecValue::Verbatim(l.to_owned()),
-            TestCommandMember::Arglike(_) => {
-                // We assign indices to handles, which Tpx can use to reference them later.
-                // We don't count literals in here since Tpx won't use handles to
-                // communicate those (it would just use a literal instead).
-                let handle = ExternalRunnerSpecValue::ArgHandle(handle_index.into());
-                handle_index += 1;
-                handle
-            }
+        .map(|c| {
+            Ok(match c? {
+                TestCommandMember::Literal(l) => ExternalRunnerSpecValue::Verbatim(l.to_owned()),
+                TestCommandMember::Arglike(_) => {
+                    // We assign indices to handles, which Tpx can use to reference them later.
+                    // We don't count literals in here since Tpx won't use handles to
+                    // communicate those (it would just use a literal instead).
+                    let handle = ExternalRunnerSpecValue::ArgHandle(handle_index.into());
+                    handle_index += 1;
+                    handle
+                }
+            })
         })
-        .collect();
+        .collect::<buck2_error::Result<_>>()?;
 
     let env = env_keys
         .map(|k| {
-            (
+            let k = k?;
+            Ok((
                 k.to_owned(),
                 ExternalRunnerSpecValue::EnvHandle(k.to_owned().into()),
-            )
+            ))
         })
-        .collect();
+        .collect::<buck2_error::Result<_>>()?;
     let package_oncall = target.package_oncall.clone();
-    let mut labels: Vec<String> = labels.map(|l| l.to_owned()).collect();
+    let mut labels: Vec<String> = labels
+        .map(|l| Ok(l?.to_owned()))
+        .collect::<buck2_error::Result<_>>()?;
     // Single JSON-array label, carried verbatim through TPX -> RR -> WWW. The three
     // wire states let WWW tell "not tented" from "not reported":
     //   Tented -> ["acl",..]    NotTented -> []    Unknown -> no label
@@ -96,7 +101,9 @@ pub fn build_external_runner_spec<'a>(
         }
         TentingStatus::Unknown => {}
     }
-    let contacts: Vec<String> = contacts.map(|l| l.to_owned()).collect();
+    let contacts: Vec<String> = contacts
+        .map(|l| Ok(l?.to_owned()))
+        .collect::<buck2_error::Result<_>>()?;
     let oncall = contacts
         .iter()
         .exactly_one()
@@ -104,7 +111,7 @@ pub fn build_external_runner_spec<'a>(
         .cloned()
         .or(package_oncall);
 
-    ExternalRunnerSpec {
+    Ok(ExternalRunnerSpec {
         target,
         test_type: test_type.to_owned(),
         command,
@@ -113,7 +120,7 @@ pub fn build_external_runner_spec<'a>(
         contacts,
         oncall,
         working_dir_cell,
-    }
+    })
 }
 
 impl<'v> TestProvider<'v> for ExternalRunnerTestInfo<'v> {
@@ -124,7 +131,7 @@ impl<'v> TestProvider<'v> for ExternalRunnerTestInfo<'v> {
         ExternalRunnerTestInfo::visit_artifacts(self, visitor)
     }
 
-    fn labels(&self) -> Vec<&str> {
+    fn labels(&self) -> buck2_error::Result<Vec<&'v str>> {
         ExternalRunnerTestInfo::labels(self).collect()
     }
 
@@ -137,7 +144,7 @@ impl<'v> TestProvider<'v> for ExternalRunnerTestInfo<'v> {
     ) -> BoxFuture<'exec, buck2_error::Result<()>> {
         let spec = build_external_runner_spec(
             self.command(),
-            self.env().map(|(k, _)| k),
+            self.env().map(|entry| Ok(entry?.0)),
             self.test_type(),
             self.labels(),
             self.contacts(),
@@ -145,7 +152,7 @@ impl<'v> TestProvider<'v> for ExternalRunnerTestInfo<'v> {
             working_dir_cell,
             &tenting_acl_names,
         );
-        async move { executor.external_runner_spec(spec).await }.boxed()
+        async move { executor.external_runner_spec(spec?).await }.boxed()
     }
 }
 
@@ -157,7 +164,7 @@ impl<'v> TestProvider<'v> for InternalRunnerTestInfo<'v> {
         InternalRunnerTestInfo::visit_artifacts(self, visitor)
     }
 
-    fn labels(&self) -> Vec<&str> {
+    fn labels(&self) -> buck2_error::Result<Vec<&'v str>> {
         InternalRunnerTestInfo::labels(self).collect()
     }
 
@@ -175,7 +182,7 @@ impl<'v> TestProvider<'v> for InternalRunnerTestInfo<'v> {
     ) -> BoxFuture<'exec, buck2_error::Result<()>> {
         let spec = build_external_runner_spec(
             self.command(),
-            self.env().map(|(k, _)| k),
+            self.env().map(|entry| Ok(entry?.0)),
             self.test_type(),
             self.labels(),
             self.contacts(),
@@ -183,7 +190,7 @@ impl<'v> TestProvider<'v> for InternalRunnerTestInfo<'v> {
             working_dir_cell,
             &tenting_acl_names,
         );
-        async move { executor.external_runner_spec(spec).await }.boxed()
+        async move { executor.external_runner_spec(spec?).await }.boxed()
     }
 }
 

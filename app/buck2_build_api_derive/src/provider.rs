@@ -255,7 +255,7 @@ impl ProviderCodegen {
         }
 
         let error = "Field type must be `ValueOf<'v, SomeType>`, `ValueOfUnchecked<'v, SomeType>`, \
-             `ValueTyped<'v, SomeType>`, or either of the first and last in an `Option`";
+             `ValueTyped<'v, SomeType>`, `StringValue<'v>`, or any but the second in an `Option`";
         let err = || syn::Error::new_spanned(field, error);
 
         let (ident, args) = generic_segment(&field.ty).ok_or_else(err)?;
@@ -271,29 +271,44 @@ impl ProviderCodegen {
             (false, ident, args)
         };
 
-        let kind = if ident == "ValueTyped" {
+        let typed = |optional| {
             if optional {
                 FieldKind::OptionTyped
             } else {
                 FieldKind::Typed
             }
-        } else if ident == "ValueOf" {
-            if optional {
-                FieldKind::OptionOf
-            } else {
-                FieldKind::Of
-            }
-        } else if ident == "ValueOfUnchecked" && !optional {
-            FieldKind::Unchecked
-        } else {
-            return Err(err());
         };
-        let [
-            syn::GenericArgument::Lifetime(_),
-            syn::GenericArgument::Type(field_type),
-        ] = Vec::from_iter(&args.args).as_slice()
-        else {
-            return Err(err());
+        // `StringValue<'v>` is `ValueTyped<'v, StarlarkStr>` under its usual name.
+        let (kind, field_type): (FieldKind, syn::Type) = if ident == "StringValue" {
+            let [syn::GenericArgument::Lifetime(_)] = Vec::from_iter(&args.args).as_slice() else {
+                return Err(err());
+            };
+            (
+                typed(optional),
+                syn::parse_quote! { starlark::values::string::StarlarkStr },
+            )
+        } else {
+            let kind = if ident == "ValueTyped" {
+                typed(optional)
+            } else if ident == "ValueOf" {
+                if optional {
+                    FieldKind::OptionOf
+                } else {
+                    FieldKind::Of
+                }
+            } else if ident == "ValueOfUnchecked" && !optional {
+                FieldKind::Unchecked
+            } else {
+                return Err(err());
+            };
+            let [
+                syn::GenericArgument::Lifetime(_),
+                syn::GenericArgument::Type(field_type),
+            ] = Vec::from_iter(&args.args).as_slice()
+            else {
+                return Err(err());
+            };
+            (kind, field_type.clone())
         };
 
         let name = field.ident.as_ref().unwrap().to_owned();
@@ -303,7 +318,7 @@ impl ProviderCodegen {
         Ok(Field {
             name,
             docstring,
-            field_type: field_type.clone(),
+            field_type,
             kind,
         })
     }

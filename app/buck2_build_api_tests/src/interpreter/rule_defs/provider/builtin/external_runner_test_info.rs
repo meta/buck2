@@ -65,7 +65,7 @@ fn test_validation() -> buck2_error::Result<()> {
             ExternalRunnerTestInfo(type = 123)
         "#
         ),
-        "`type`",
+        "Expected type `str` but got `int`",
     );
 
     tester.run_starlark_bzl_test_expecting_error(
@@ -75,7 +75,7 @@ fn test_validation() -> buck2_error::Result<()> {
             ExternalRunnerTestInfo(type = "foo", command = "foo")
         "#
         ),
-        "`command`",
+        "Expected type `None | list[Artifact",
     );
 
     tester.run_starlark_bzl_test_expecting_error(
@@ -85,7 +85,7 @@ fn test_validation() -> buck2_error::Result<()> {
             ExternalRunnerTestInfo(type = "foo", command = [123])
         "#
         ),
-        "`command`",
+        "but got `list[int]`",
     );
 
     tester.run_starlark_bzl_test_expecting_error(
@@ -95,7 +95,7 @@ fn test_validation() -> buck2_error::Result<()> {
             ExternalRunnerTestInfo(type = "foo", env = "foo")
         "#
         ),
-        "`env`",
+        "Expected type `None | dict[str, Artifact",
     );
 
     tester.run_starlark_bzl_test_expecting_error(
@@ -105,7 +105,7 @@ fn test_validation() -> buck2_error::Result<()> {
             ExternalRunnerTestInfo(type = "foo", env = {"foo": 123})
         "#
         ),
-        "`env`",
+        "but got `dict[str, int]`",
     );
 
     tester.run_starlark_bzl_test_expecting_error(
@@ -115,7 +115,7 @@ fn test_validation() -> buck2_error::Result<()> {
             ExternalRunnerTestInfo(type = "foo", labels = "foo")
         "#
         ),
-        "`labels`",
+        "Expected type `None | list[str] | tuple[str, ...]` but got `str`",
     );
 
     tester.run_starlark_bzl_test_expecting_error(
@@ -125,7 +125,7 @@ fn test_validation() -> buck2_error::Result<()> {
             ExternalRunnerTestInfo(type = "foo", labels = [123])
         "#
         ),
-        "`labels`",
+        "but got `list[int]`",
     );
 
     tester.run_starlark_bzl_test_expecting_error(
@@ -135,7 +135,7 @@ fn test_validation() -> buck2_error::Result<()> {
             ExternalRunnerTestInfo(type = "foo", contacts = "foo")
         "#
         ),
-        "`contacts`",
+        "Expected type `None | list[str] | tuple[str, ...]` but got `str`",
     );
 
     tester.run_starlark_bzl_test_expecting_error(
@@ -145,7 +145,7 @@ fn test_validation() -> buck2_error::Result<()> {
             ExternalRunnerTestInfo(type = "foo", contacts = [123])
         "#
         ),
-        "`contacts`",
+        "but got `list[int]`",
     );
 
     tester.run_starlark_bzl_test_expecting_error(
@@ -155,7 +155,7 @@ fn test_validation() -> buck2_error::Result<()> {
             ExternalRunnerTestInfo(type = "foo", use_project_relative_paths = "foo")
         "#
         ),
-        "`use_project_relative_paths`",
+        "Expected type `None | bool` but got `str`",
     );
 
     tester.run_starlark_bzl_test_expecting_error(
@@ -165,7 +165,7 @@ fn test_validation() -> buck2_error::Result<()> {
             ExternalRunnerTestInfo(type = "foo", run_from_project_root = "foo")
         "#
         ),
-        "`run_from_project_root`",
+        "Expected type `None | bool` but got `str`",
     );
 
     tester.run_starlark_bzl_test_expecting_error(
@@ -185,7 +185,7 @@ fn test_validation() -> buck2_error::Result<()> {
             ExternalRunnerTestInfo(type = "foo", executor_overrides = {"foo": "bar" })
         "#
         ),
-        "`executor_overrides`",
+        "Expected type `None | dict[str, CommandExecutorConfig]` but got `dict[str, str]`",
     );
 
     tester.run_starlark_bzl_test_expecting_error(
@@ -195,7 +195,7 @@ fn test_validation() -> buck2_error::Result<()> {
             ExternalRunnerTestInfo(type = "foo", required_local_resources = ["bar"])
         "#
         ),
-        "`required_local_resources` should only contain `RequiredTestLocalResource` values, got \"bar\"",
+        "Expected type `None | list[RequiredTestLocalResource] | tuple[RequiredTestLocalResource, ...]` but got `list[str]`",
     );
 
     tester.run_starlark_bzl_test_expecting_error(

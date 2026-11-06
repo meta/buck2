@@ -230,11 +230,17 @@ impl OwnedTestInfo {
         }
     }
 
-    fn cli_args_for_stage<'v>(&'v self, stage: &TestStage) -> Vec<&'v dyn CommandLineArgLike<'v>> {
-        let filter = |c: TestCommandMember<'v>| -> Option<&'v dyn CommandLineArgLike<'v>> {
+    fn cli_args_for_stage<'v>(
+        &'v self,
+        stage: &TestStage,
+    ) -> buck2_error::Result<Vec<&'v dyn CommandLineArgLike<'v>>> {
+        let filter = |c: buck2_error::Result<TestCommandMember<'v>>| -> Option<
+            buck2_error::Result<&'v dyn CommandLineArgLike<'v>>,
+        > {
             match c {
-                TestCommandMember::Literal(..) => None,
-                TestCommandMember::Arglike(a) => Some(a),
+                Ok(TestCommandMember::Literal(..)) => None,
+                Ok(TestCommandMember::Arglike(a)) => Some(Ok(a)),
+                Err(e) => Some(Err(e)),
             }
         };
         match (self, stage) {
@@ -262,24 +268,38 @@ impl OwnedTestInfo {
         }
     }
 
-    fn env_args<'v>(&'v self) -> BuckMutMap<&'v str, &'v dyn CommandLineArgLike<'v>> {
+    fn env_args<'v>(
+        &'v self,
+    ) -> buck2_error::Result<BuckMutMap<&'v str, &'v dyn CommandLineArgLike<'v>>> {
         match self {
             Self::External(info) => info.as_ref().value().as_ref().env().collect(),
             Self::Internal(info) => info.as_ref().value().as_ref().env().collect(),
         }
     }
 
-    fn local_resources(&self) -> BuckMutInsertionMap<&str, Option<&ConfiguredProvidersLabel>> {
+    fn local_resources(
+        &self,
+    ) -> buck2_error::Result<BuckMutInsertionMap<&str, Option<&ConfiguredProvidersLabel>>> {
         match self {
             Self::External(info) => info.as_ref().value().as_ref().local_resources(),
             Self::Internal(info) => info.as_ref().value().as_ref().local_resources(),
         }
     }
 
-    fn required_local_resource_names_for_stage(&self, stage: &TestStageSimple) -> Vec<&str> {
-        let filter = |r: &StarlarkRequiredTestLocalResource| match stage {
-            TestStageSimple::Listing => r.listing,
-            TestStageSimple::Testing => r.execution,
+    fn required_local_resource_names_for_stage<'v>(
+        &'v self,
+        stage: &TestStageSimple,
+    ) -> buck2_error::Result<Vec<&'v str>> {
+        let select = |r: buck2_error::Result<&'v StarlarkRequiredTestLocalResource>| {
+            let r = match r {
+                Ok(r) => r,
+                Err(e) => return Some(Err(e)),
+            };
+            let wanted = match stage {
+                TestStageSimple::Listing => r.listing,
+                TestStageSimple::Testing => r.execution,
+            };
+            wanted.then(|| Ok(r.name.as_str()))
         };
         match self {
             Self::External(info) => info
@@ -287,25 +307,26 @@ impl OwnedTestInfo {
                 .value()
                 .as_ref()
                 .required_local_resources()
-                .filter(|r| filter(r))
-                .map(|r| r.name.as_str())
+                .filter_map(select)
                 .collect(),
             Self::Internal(info) => info
                 .as_ref()
                 .value()
                 .as_ref()
                 .required_local_resources()
-                .filter(|r| filter(r))
-                .map(|r| r.name.as_str())
+                .filter_map(select)
                 .collect(),
         }
     }
 
-    fn execution_required_local_resource_names(&self) -> Vec<&str> {
+    fn execution_required_local_resource_names(&self) -> buck2_error::Result<Vec<&str>> {
         self.required_local_resource_names_for_stage(&TestStageSimple::Testing)
     }
 
-    fn executor_override(&self, key: &str) -> Option<&StarlarkCommandExecutorConfig> {
+    fn executor_override(
+        &self,
+        key: &str,
+    ) -> buck2_error::Result<Option<&StarlarkCommandExecutorConfig>> {
         match self {
             Self::External(info) => info.as_ref().value().as_ref().executor_override(key),
             Self::Internal(info) => info.as_ref().value().as_ref().executor_override(key),
@@ -354,20 +375,20 @@ impl OwnedTestInfo {
         }
     }
 
-    fn has_static_listing_label(&self) -> bool {
+    fn has_static_listing_label(&self) -> buck2_error::Result<bool> {
+        fn has<'v>(
+            labels: impl Iterator<Item = buck2_error::Result<&'v str>>,
+        ) -> buck2_error::Result<bool> {
+            for label in labels {
+                if label? == "static-listing" {
+                    return Ok(true);
+                }
+            }
+            Ok(false)
+        }
         match self {
-            Self::External(info) => info
-                .as_ref()
-                .value()
-                .as_ref()
-                .labels()
-                .any(|l| l == "static-listing"),
-            Self::Internal(info) => info
-                .as_ref()
-                .value()
-                .as_ref()
-                .labels()
-                .any(|l| l == "static-listing"),
+            Self::External(info) => has(info.as_ref().value().as_ref().labels()),
+            Self::Internal(info) => has(info.as_ref().value().as_ref().labels()),
         }
     }
 }
@@ -458,8 +479,11 @@ impl<'a> BuckTestOrchestrator<'a> {
     /// forkserver would put a restricted policy in a network namespace where the stub
     /// can't resolve, so the local listing action must run without isolation. Has no
     /// effect on remote execution.
-    fn disable_local_network_isolation(stage: &TestStage, test_info: &OwnedTestInfo) -> bool {
-        matches!(stage, TestStage::Listing { .. }) && test_info.has_static_listing_label()
+    fn disable_local_network_isolation(
+        stage: &TestStage,
+        test_info: &OwnedTestInfo,
+    ) -> buck2_error::Result<bool> {
+        Ok(matches!(stage, TestStage::Listing { .. }) && test_info.has_static_listing_label()?)
     }
 
     async fn execute2(
@@ -634,7 +658,7 @@ impl<'a> BuckTestOrchestrator<'a> {
         let effective_test_execution_caching =
             test_info.supports_test_execution_caching() && !disable_test_execution_caching;
         let disable_local_network_isolation =
-            Self::disable_local_network_isolation(stage.as_ref(), &test_info);
+            Self::disable_local_network_isolation(stage.as_ref(), &test_info)?;
         let test_executor = Self::get_test_executor(
             dice,
             &test_target,
@@ -688,9 +712,9 @@ impl<'a> BuckTestOrchestrator<'a> {
             let simple_stage = stage.as_ref().into();
 
             let available_resources: BuckMutMap<_, _> =
-                test_info.local_resources().into_iter().collect();
+                test_info.local_resources()?.into_iter().collect();
             let rule_required_names =
-                test_info.required_local_resource_names_for_stage(&simple_stage);
+                test_info.required_local_resource_names_for_stage(&simple_stage)?;
             let required_providers = {
                 required_providers(
                     dice,
@@ -1092,15 +1116,15 @@ impl TestOrchestrator for BuckTestOrchestrator<'_> {
         )
         .await?;
         let disable_local_network_isolation =
-            Self::disable_local_network_isolation(&stage, &test_info);
+            Self::disable_local_network_isolation(&stage, &test_info)?;
 
         // In contrast from actual test execution we do not check if local execution is possible.
         // We leave that decision to actual local execution runner that requests local execution preparation.
         let setup_local_resources_executor =
             Self::get_local_executor(&mut self.dice.dupe().ctx(), fs)?;
         let available_resources: BuckMutMap<_, _> =
-            test_info.local_resources().into_iter().collect();
-        let rule_required_names = test_info.execution_required_local_resource_names();
+            test_info.local_resources()?.into_iter().collect();
+        let rule_required_names = test_info.execution_required_local_resource_names()?;
         let providers = {
             required_providers(
                 &mut self.dice.dupe().ctx(),
@@ -1733,7 +1757,7 @@ impl BuckTestOrchestrator<'_> {
         let resolved_executor_override = match executor_override {
             Some(executor_override) => Some(
                 &test_info
-                    .executor_override(&executor_override.name)
+                    .executor_override(&executor_override.name)?
                     .ok_or_else(|| {
                         internal_error!("The `executor_override` provided does not exist")
                     })
@@ -1747,7 +1771,7 @@ impl BuckTestOrchestrator<'_> {
             ),
             None => match stage {
                 TestStage::Listing { .. } if test_info.has_executor_overrides() => test_info
-                    .executor_override("listing")
+                    .executor_override("listing")?
                     .or(test_info.default_executor())
                     .map(|o| &o.0),
                 _ => test_info.default_executor().map(|o| &o.0),
@@ -2488,8 +2512,8 @@ impl<'a> Execute2RequestExpander<'a> {
             env,
             ..
         } = self;
-        let cli_args_for_interpolation = test_info.cli_args_for_stage(stage);
-        let env_for_interpolation = test_info.env_args();
+        let cli_args_for_interpolation = test_info.cli_args_for_stage(stage)?;
+        let env_for_interpolation = test_info.env_args()?;
 
         let visit_arg_artifacts =
             make_visit_arg_artifacts(cli_args_for_interpolation, env_for_interpolation);
@@ -2583,8 +2607,8 @@ impl<'a> Execute2RequestExpander<'a> {
             env,
             digest_config,
         } = self;
-        let cli_args_for_interpolation = test_info.cli_args_for_stage(stage);
-        let env_for_interpolation = test_info.env_args();
+        let cli_args_for_interpolation = test_info.cli_args_for_stage(stage)?;
+        let env_for_interpolation = test_info.env_args()?;
 
         let artifact_path_mapping = ArtifactPathMapperImpl::from(ensured_inputs);
 

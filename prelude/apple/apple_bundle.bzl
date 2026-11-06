@@ -34,6 +34,7 @@ load("@prelude//apple/user:apple_selected_debug_path_file.bzl", "SELECTED_DEBUG_
 load(
     "@prelude//apple/user:apple_selective_debugging.bzl",
     "AppleSelectedDebugInfo",  # @unused Used as a type
+    "AppleSelectedDsymArchives",  # @unused Used as a type
     "AppleSelectiveDebuggingInfo",
 )
 load("@prelude//apple/validation:required_reasons.bzl", "get_required_reasons_validator_output")
@@ -269,7 +270,20 @@ def _maybe_scrub_binary(ctx, binary_dep: Dependency) -> AppleBundleBinaryOutput:
                 if binary_execution_preference_info
                 else LinkExecutionPreference("any"),
             )
-        dsym_artifact = _get_binary_dsym(ctx, binary, _get_dsym_debug_info(ctx, filtered_external_debug_info, selected_debug_info), dsym_allowlist)
+        dsym_archives = None
+        if selective_debugging_info.select_dsym_archives:
+            binary_execution_preference_info = binary_dep.get(LinkExecutionPreferenceInfo)
+            dsym_archives = selective_debugging_info.select_dsym_archives(
+                ctx,
+                debug_info_tset,
+                debug_binary,
+                binary_execution_preference_info.preference if binary_execution_preference_info else LinkExecutionPreference("any"),
+                "selected_dsym_archives/{}".format(debug_binary.short_path),
+                filtered_debug_info,
+            )
+        dsym_artifact = _get_binary_dsym(
+            ctx, binary, _get_dsym_debug_info(ctx, filtered_external_debug_info, selected_debug_info, dsym_archives), dsym_allowlist
+        )
 
         filtered_map = {}
         for selected_target_info in filtered_debug_info.selected_target_infos:
@@ -283,7 +297,7 @@ def _maybe_scrub_binary(ctx, binary_dep: Dependency) -> AppleBundleBinaryOutput:
             selective_metadata = [
                 AppleSelectiveDebuggableMetadata(
                     dsym = dsym_artifact,
-                    metadata = filtered_debug_info.metadata,
+                    metadata = dsym_archives.metadata if dsym_archives else filtered_debug_info.metadata,
                 ),
             ],
         )
@@ -293,6 +307,7 @@ def _maybe_scrub_binary(ctx, binary_dep: Dependency) -> AppleBundleBinaryOutput:
             debuggable_info = debuggable_info,
             dsym_allowlist = dsym_allowlist,
             selected_debug_info = selected_debug_info,
+            dsym_archives = dsym_archives,
         )
     else:
         binary = _scrub_binary(ctx, binary, binary_dep.get(LinkExecutionPreferenceInfo))
@@ -300,12 +315,21 @@ def _maybe_scrub_binary(ctx, binary_dep: Dependency) -> AppleBundleBinaryOutput:
 
 # Returns the inputs of a dSYM action: the objects whose debug info gets linked,
 # and the Swift modules.
-def _get_dsym_debug_info(ctx, debug_info_tset: ArtifactTSet | list[ArtifactTSet], selected_debug_info: [AppleSelectedDebugInfo, None]) -> list[ArgLike]:
+def _get_dsym_debug_info(
+    ctx,
+    debug_info_tset: ArtifactTSet | list[ArtifactTSet],
+    selected_debug_info: [AppleSelectedDebugInfo, None],
+    dsym_archives: [AppleSelectedDsymArchives, None],
+) -> list[ArgLike]:
+    archives = [dsym_archives.artifacts] if dsym_archives else []
     if selected_debug_info:
-        return [selected_debug_info.artifacts]
-    return project_artifacts(
-        actions = ctx.actions,
-        tsets = debug_info_tset,
+        return [selected_debug_info.artifacts] + archives
+    return (
+        project_artifacts(
+            actions = ctx.actions,
+            tsets = debug_info_tset,
+        )
+        + archives
     )
 
 def _get_binary_dsym(ctx, binary: Artifact, debug_info: list[ArgLike], dsym_allowlist: [Artifact, None]) -> Artifact:
@@ -379,6 +403,7 @@ def _get_bundle_binary_dsym_artifacts(ctx: AnalysisContext, binary_output: Apple
                 ctx,
                 binary_debuggable_info.debug_info_tset if binary_debuggable_info else [],
                 binary_output.selected_debug_info,
+                binary_output.dsym_archives,
             ),
             action_identifier = get_bundle_dir_name(ctx),
             output_path = _get_bundle_dsym_name(ctx),

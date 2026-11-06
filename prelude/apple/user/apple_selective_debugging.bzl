@@ -32,6 +32,10 @@ _SelectionCriteria = record(
     include_regular_expressions = field(list[regex], []),
     exclude_build_target_patterns = field(list[BuildTargetPattern], []),
     exclude_regular_expressions = field(list[regex], []),
+    # The regular expressions as the scrubber and the dSYM allowlist tool match
+    # them, against debug map paths instead of labels.
+    include_path_regular_expressions = field(list[regex], []),
+    exclude_path_regular_expressions = field(list[regex], []),
 )
 
 AppleSelectiveDebuggingInfo = provider(
@@ -54,7 +58,27 @@ AppleSelectiveDebuggingInfo = provider(
         # aggregate of such results: the Swift debug info of the dependencies of a
         # selected target is only kept from the node that holds the target.
         "select_debug_info": provider_field(typing.Callable | None, default = None),
+        # Set with a `spec` selection which has include regular expressions,
+        # `None` otherwise. The scrubber and the dSYM allowlist tool match them
+        # against debug map paths, which name the members of archives, so which
+        # archives a dSYM needs is only known from the binary. Takes the context,
+        # the unfiltered `ArtifactTSet` of a binary, the binary, its link
+        # execution preference, an output name and the result of `filter`, and
+        # returns an `AppleSelectedDsymArchives` with the debug info of the
+        # targets whose debug map entries the scrubber keeps.
+        "select_dsym_archives": provider_field(typing.Callable | None, default = None),
     },
+)
+
+# The debug info (archives, Swift and Clang modules) of the targets whose
+# entries the scrubber keeps in the debug map of a binary, picked at build time.
+AppleSelectedDsymArchives = record(
+    # Directory of symlinks to the artifacts, to use as an input of the dSYM
+    # actions of the binary.
+    artifacts = field(Artifact),
+    # Replaces the `metadata` of `AppleSelectiveDebuggingFilteredDebugInfo`,
+    # also counting these targets.
+    metadata = field(Artifact),
 )
 
 # The artifacts of the selected targets, picked at build time.
@@ -77,6 +101,8 @@ AppleSelectiveDebuggingFilteredDebugInfo = record(
     selected_target_infos = field(list[ArtifactInfo]),
     swift_modules_labels = field(list[Label]),
     metadata = field(Artifact),
+    # Whether `metadata` says that a selected target is linked.
+    is_any_selected_target_linked = field(bool, False),
 )
 
 # The type of selective debugging json input to utilze.
@@ -197,6 +223,45 @@ def _select_debug_info_impl(
     actions.symlinked_dir(artifacts, entries)
     return []
 
+def _select_dsym_archives_impl(
+    actions: AnalysisActions,
+    debug_info_tset: ArtifactTSet,
+    is_any_selected_target_linked: bool,
+    kept_targets_json: ArtifactValue,
+    archives: OutputArtifact,
+    metadata: OutputArtifact,
+) -> list[Provider]:
+    kept_target_output_paths = set(kept_targets_json.read_json()["output_paths"])
+    selected_artifacts = []
+    seen = set()
+    if debug_info_tset._tset:
+        for infos in debug_info_tset._tset.traverse():
+            for info in infos:
+                if "{}/__{}__".format(info.label.package, info.label.name) not in kept_target_output_paths:
+                    continue
+
+                # All the debug info of a kept target, like selecting its label
+                # does: its archive, and its Swift and Clang modules.
+                for artifact in info.artifacts:
+                    if artifact not in seen:
+                        seen.add(artifact)
+                        selected_artifacts.append(artifact)
+
+    actions.symlinked_dir(archives, {"{}_{}".format(index, artifact.basename): artifact for index, artifact in enumerate(selected_artifacts)})
+    actions.write_json(metadata, _generate_metadata_json_object(is_any_selected_target_linked or bool(selected_artifacts)), pretty = True)
+    return []
+
+_select_dsym_archives = dynamic_actions(
+    impl = _select_dsym_archives_impl,
+    attrs = {
+        "archives": dynattrs.output(),
+        "debug_info_tset": dynattrs.value(ArtifactTSet),
+        "is_any_selected_target_linked": dynattrs.value(bool),
+        "kept_targets_json": dynattrs.artifact_value(),
+        "metadata": dynattrs.output(),
+    },
+)
+
 _select_debug_info = dynamic_actions(
     impl = _select_debug_info_impl,
     attrs = {
@@ -256,6 +321,8 @@ def apple_selective_debugging_impl(ctx: AnalysisContext) -> list[Provider]:
         include_regular_expressions = include_regular_expressions,
         exclude_build_target_patterns = exclude_build_target_patterns,
         exclude_regular_expressions = exclude_regular_expressions,
+        include_path_regular_expressions = [_path_regex(expression) for expression in ctx.attrs.include_regular_expressions],
+        exclude_path_regular_expressions = [_path_regex(expression) for expression in ctx.attrs.exclude_regular_expressions],
     )
 
     def scrub_selected_debug_paths_file(inner_ctx: AnalysisContext, package_names: list[str], output_name: str) -> Artifact:
@@ -320,6 +387,38 @@ def apple_selective_debugging_impl(ctx: AnalysisContext) -> list[Provider]:
         )
         return AppleSelectedDebugInfo(artifacts = artifacts, paths = artifacts.project(_SELECTED_PATHS_FILE_NAME))
 
+    def select_dsym_archives(
+        inner_ctx: AnalysisContext,
+        debug_info_tset: ArtifactTSet,
+        dsym_binary: Artifact,
+        dsym_binary_execution_preference: LinkExecutionPreference,
+        output_name: str,
+        filtered_debug_info: AppleSelectiveDebuggingFilteredDebugInfo,
+    ) -> AppleSelectedDsymArchives:
+        kept_targets_json = inner_ctx.actions.declare_output(output_name + ".kept_targets.json", has_content_based_path = False)
+        action_execution_properties = get_action_execution_attributes(dsym_binary_execution_preference)
+        inner_ctx.actions.run(
+            cmd_args(dsym_allowlist_tool, selection_args, "--input", dsym_binary, "--kept-targets-output", kept_targets_json.as_output()),
+            category = "selective_debugging_kept_targets",
+            identifier = output_name,
+            prefer_local = action_execution_properties.prefer_local,
+            prefer_remote = action_execution_properties.prefer_remote,
+            local_only = action_execution_properties.local_only,
+            force_full_hybrid_if_capable = action_execution_properties.full_hybrid,
+        )
+        archives = inner_ctx.actions.declare_output(output_name, dir = True, has_content_based_path = False)
+        metadata = inner_ctx.actions.declare_output(output_name + ".selective_metadata.json", has_content_based_path = False)
+        inner_ctx.actions.dynamic_output_new(
+            _select_dsym_archives(
+                archives = archives.as_output(),
+                debug_info_tset = debug_info_tset,
+                is_any_selected_target_linked = filtered_debug_info.is_any_selected_target_linked,
+                kept_targets_json = kept_targets_json,
+                metadata = metadata.as_output(),
+            )
+        )
+        return AppleSelectedDsymArchives(artifacts = archives, metadata = metadata)
+
     def scrub_binary(
         inner_ctx,
         executable: Artifact,
@@ -359,10 +458,18 @@ def apple_selective_debugging_impl(ctx: AnalysisContext) -> list[Provider]:
         is_any_selected_target_linked = False
         is_using_spec = json_type == _SelectiveDebuggingJsonType("spec")
         selected_targets_contain_swift = False
+        # Targets selected because an include regular expression matches one of
+        # their object files. The traversal visits the node with the objects of
+        # a target before the nodes with its Swift and Clang modules, which
+        # carry the same label.
+        path_selected_labels = set()
         for infos in debug_info:
             for info in infos:
                 is_swift_debug_info = ArtifactInfoTag("swift_debug_info") in info.tags
-                is_label_included = _is_label_included(info.label, selection_criteria)
+                is_selected = _is_label_included(info.label, selection_criteria) or info.label in path_selected_labels
+                if not is_selected and _are_debug_map_paths_included(info, selection_criteria):
+                    path_selected_labels.add(info.label)
+                    is_selected = True
 
                 is_any_selected_target_linked_when_using_spec = is_using_spec and is_any_selected_target_linked
                 if not is_any_selected_target_linked_when_using_spec:
@@ -380,17 +487,17 @@ def apple_selective_debugging_impl(ctx: AnalysisContext) -> list[Provider]:
                         lambda debug_artifact: debug_artifact.extension in _OBJECT_FILE_EXTENSIONS, info.artifacts
                     )
                     if debug_artifact_contains_object_code:
-                        if is_using_spec and is_label_included:
+                        if is_using_spec and is_selected:
                             is_any_selected_target_linked = True
                         if not is_using_spec:
                             # `linked_targets` only used in targets mode, avoid costs in all other modes
                             linked_targets.add(info.label)
 
-                if is_label_included:
+                if is_selected:
                     # `selected_target_infos` should only include targets explicitly selected by the user,
                     # not anything included in addition to support the debugger (e.g., `.swiftmodule` files)
                     selected_target_infos.append(info)
-                if is_label_included or (selected_targets_contain_swift and is_swift_debug_info):
+                if is_selected or (selected_targets_contain_swift and is_swift_debug_info):
                     # There might be a few ArtifactInfo corresponding to the same Label,
                     # so to avoid overwriting, we need to preserve all artifacts.
                     artifact_infos.append(info)
@@ -440,6 +547,7 @@ def apple_selective_debugging_impl(ctx: AnalysisContext) -> list[Provider]:
             selected_target_infos = selected_target_infos,
             swift_modules_labels = [],
             metadata = metadata_output,
+            is_any_selected_target_linked = is_any_selected_target_linked,
         )
 
     def generate_dsym_allowlist(
@@ -491,6 +599,7 @@ def apple_selective_debugging_impl(ctx: AnalysisContext) -> list[Provider]:
             scrub_selected_debug_paths_file = scrub_selected_debug_paths_file,
             generate_dsym_allowlist = generate_dsym_allowlist if filtering_strategy == _SelectiveDebuggingFilteringStrategy("dsym_allowlist") else None,
             select_debug_info = select_debug_info if json_type == _SelectiveDebuggingJsonType("targets") else None,
+            select_dsym_archives = select_dsym_archives if json_type == _SelectiveDebuggingJsonType("spec") and include_regular_expressions else None,
         ),
         LinkExecutionPreferenceDeterminatorInfo(preference_for_links = preference_for_links),
     ]
@@ -516,6 +625,38 @@ def _is_label_included(label: Label, selection_criteria: _SelectionCriteria) -> 
     return not _check_if_label_matches_patterns_or_expressions(
         label, selection_criteria.exclude_build_target_patterns, selection_criteria.exclude_regular_expressions
     )
+
+# Whether the scrubber or the dSYM allowlist tool would keep any object file of
+# `info` because of an include regular expression, which they match against
+# debug map paths: such a target must be selected for its objects to be inputs
+# of the dSYM actions, even when the expression doesn't match its label.
+def _are_debug_map_paths_included(info: ArtifactInfo, selection_criteria: _SelectionCriteria) -> bool:
+    if not selection_criteria.include_path_regular_expressions:
+        return False
+    for pattern in selection_criteria.exclude_build_target_patterns:
+        if pattern.matches(info.label):
+            return False
+    for artifact in info.artifacts:
+        if artifact.extension not in _OBJECT_FILE_EXTENSIONS:
+            continue
+        path = _debug_map_path(info.label, artifact)
+        if lazy.is_any(lambda expression: expression.match(path), selection_criteria.include_path_regular_expressions) and not lazy.is_any(
+            lambda expression: expression.match(path),
+            selection_criteria.exclude_path_regular_expressions,
+        ):
+            return True
+    return False
+
+# The debug map path of `artifact`, without what analysis can't see: the
+# `buck-out/v2/gen/` prefix, the configuration or content hash, and the
+# folder `declare_output()` hides from `short_path` (e.g. `__objects__`).
+def _debug_map_path(label: Label, artifact: Artifact) -> str:
+    return "{}/{}/__{}__/{}".format(label.cell, label.package, label.name, artifact.short_path)
+
+# Like the scrubber, drops the cell from an expression that starts with one.
+def _path_regex(expression: str) -> regex:
+    double_slash_index = expression.find("//")
+    return regex(expression[double_slash_index + 1 :] if double_slash_index != -1 else expression, fancy = True)
 
 def _check_if_label_matches_patterns_or_expressions(label: Label, patterns: list[BuildTargetPattern], expressions: list[regex]) -> bool:
     for pattern in patterns:

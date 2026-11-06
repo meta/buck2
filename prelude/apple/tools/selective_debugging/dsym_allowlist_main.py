@@ -15,6 +15,7 @@ import sys
 
 from .dsym_allowlist import (
     kept_debug_file_paths,
+    kept_target_output_paths,
     linked_target_output_paths,
     write_dsymutil_allowlist,
 )
@@ -33,6 +34,10 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--linked-targets-output",
         help="Instead of the YAML file, write a JSON file with the output directories of the targets in the debug map of the input.",
+    )
+    parser.add_argument(
+        "--kept-targets-output",
+        help="Instead of the YAML file, write a JSON file with the output directories of the targets whose debug map entries the scrubber would keep.",
     )
     group = parser.add_mutually_exclusive_group()
     group.add_argument(
@@ -54,11 +59,21 @@ def _parse_args() -> argparse.Namespace:
             or args.targets_file
             or args.spec_file
             or args.persisted_targets_file
+            or args.kept_targets_output
         ):
             parser.error("--linked-targets-output takes only --input")
+    elif args.kept_targets_output is not None:
+        if args.output or args.persisted_targets_file:
+            parser.error(
+                "--kept-targets-output takes only --input and one of --targets-file or --spec-file"
+            )
+        if args.targets_file is None and args.spec_file is None:
+            parser.error(
+                "--kept-targets-output requires one of --targets-file or --spec-file"
+            )
     elif args.output is None or (args.targets_file is None and args.spec_file is None):
         parser.error(
-            "--output and one of --targets-file or --spec-file are required without --linked-targets-output"
+            "--output and one of --targets-file or --spec-file are required without --linked-targets-output or --kept-targets-output"
         )
     return args
 
@@ -67,13 +82,19 @@ def main() -> None:
     args = _parse_args()
     try:
         if args.linked_targets_output:
-            with open(args.linked_targets_output, "w") as f:
-                json.dump(
-                    {"output_paths": linked_target_output_paths(args.input)},
-                    f,
-                    indent=2,
-                )
-                f.write("\n")
+            _write_output_paths(
+                linked_target_output_paths(args.input), args.linked_targets_output
+            )
+            return
+        if args.kept_targets_output:
+            _write_output_paths(
+                kept_target_output_paths(
+                    args.input,
+                    targets_file=args.targets_file,
+                    spec_file=args.spec_file,
+                ),
+                args.kept_targets_output,
+            )
             return
         paths = kept_debug_file_paths(
             input_file=args.input,
@@ -85,6 +106,12 @@ def main() -> None:
     except Exception as e:
         print(f"Focused debugging failed: {e}", file=sys.stderr)
         sys.exit(1)
+
+
+def _write_output_paths(output_paths: list[str], output_file: str) -> None:
+    with open(output_file, "w") as f:
+        json.dump({"output_paths": output_paths}, f, indent=2)
+        f.write("\n")
 
 
 if __name__ == "__main__":

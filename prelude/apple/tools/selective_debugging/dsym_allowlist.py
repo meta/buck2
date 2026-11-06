@@ -48,6 +48,30 @@ def linked_target_output_paths(input_file: str) -> list[str]:
     )
 
 
+def kept_target_output_paths(
+    input_file: str,
+    targets_file: str | None = None,
+    spec_file: str | None = None,
+) -> list[str]:
+    """
+    Returns the output directories (`package/__name__`) of the targets whose
+    object files or archive members in the debug map of `input_file` the
+    scrubber would keep. The file is only read.
+    """
+    return sorted(
+        {
+            output_path
+            for path in kept_debug_file_paths(
+                input_file,
+                persisted_targets_file=None,
+                targets_file=targets_file,
+                spec_file=spec_file,
+            )
+            for output_path in get_target_output_paths(path)
+        }
+    )
+
+
 def write_dsymutil_allowlist(paths: list[str], output_file: str) -> None:
     """
     Writes the YAML file consumed by `dsymutil --allow`. JSON is a subset of

@@ -6,7 +6,7 @@
 # of this source tree. You may select, at your option, one of the
 # above-listed licenses.
 
-load("@prelude//apple/user:apple_selective_debugging.bzl", "AppleSelectedDebugInfo")
+load("@prelude//apple/user:apple_selective_debugging.bzl", "AppleSelectedDebugInfo", "AppleSelectedDsymArchives")
 load(":debug.bzl", "AppleDebuggableInfo")
 
 AppleBundleType = enum(
@@ -130,6 +130,8 @@ AppleBundleBinaryOutput = record(
     # When set, the dSYMs of the binary must be generated from these artifacts
     # instead of `debuggable_info.debug_info_tset`.
     selected_debug_info = field([AppleSelectedDebugInfo, None], None),
+    # When set, the dSYM actions of the binary also get these archives as inputs.
+    dsym_archives = field([AppleSelectedDsymArchives, None], None),
 )
 
 AppleBundleTypeDefault = AppleBundleType("default")

@@ -187,6 +187,31 @@ class DsymAllowlistTest(unittest.TestCase):
                 {"output_paths": _LINKED_TARGET_OUTPUT_PATHS},
             )
 
+    def test_main_kept_targets(self) -> None:
+        output = os.path.join(self.tmp_dir.name, "kept_targets.json")
+        argv = [
+            "dsym_allowlist",
+            "--input",
+            _resource("HelloWorld"),
+            "--spec-file",
+            _resource("focused_spec.json"),
+            "--kept-targets-output",
+            output,
+        ]
+        with patch("sys.argv", argv):
+            main()
+
+        with open(output) as f:
+            self.assertEqual(
+                json.load(f),
+                {
+                    "output_paths": [
+                        "56628b5feecfab0a/fbobjc/buck2/samples/focused_debugging/__Foo__",
+                        "fbobjc/buck2/samples/focused_debugging/__Foo__",
+                    ]
+                },
+            )
+
     def test_main_linked_targets_rejects_selection(self) -> None:
         argv = [
             "dsym_allowlist",

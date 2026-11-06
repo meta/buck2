@@ -11,6 +11,7 @@
 package com.facebook.buck.jvm.java;
 
 import com.facebook.buck.util.zip.JarBuilder;
+import com.facebook.infer.annotation.Nullsafe;
 import java.net.URI;
 import javax.annotation.Nullable;
 import javax.lang.model.element.Modifier;
@@ -25,6 +26,7 @@ import javax.tools.SimpleJavaFileObject;
  * used when the CLASS_OUTPUT is represented by a straight to jar write. The only content that it
  * stores is the full uri, the relative path within the jar and the kind of the {@link FileObject}.
  */
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public abstract class JarFileObject implements JavaFileObject {
 
   protected final URI uri;

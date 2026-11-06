@@ -14,6 +14,7 @@ import com.facebook.buck.core.filesystems.AbsPath;
 import com.facebook.buck.core.filesystems.RelPath;
 import com.facebook.buck.jvm.core.BuildTargetValue;
 import com.facebook.buck.step.isolatedsteps.IsolatedStep;
+import com.facebook.infer.annotation.Nullsafe;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
 import javax.annotation.Nullable;
@@ -23,6 +24,7 @@ import javax.annotation.Nullable;
  *
  * @param <T> Type of extra parameters needed to create these steps.
  */
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public interface CompileToJarStepFactory<T extends CompileToJarStepFactory.ExtraParams> {
 
   /**

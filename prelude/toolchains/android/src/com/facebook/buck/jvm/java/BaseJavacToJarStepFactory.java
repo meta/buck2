@@ -15,6 +15,7 @@ import com.facebook.buck.core.filesystems.RelPath;
 import com.facebook.buck.jvm.core.BuildTargetValue;
 import com.facebook.buck.step.isolatedsteps.IsolatedStep;
 import com.facebook.buck.step.isolatedsteps.common.MkdirIsolatedStep;
+import com.facebook.infer.annotation.Nullsafe;
 import com.google.common.collect.ImmutableList;
 import javax.annotation.Nullable;
 
@@ -22,6 +23,7 @@ import javax.annotation.Nullable;
  * Java implementation of compile to jar steps factory that doesn't depend on internal build graph
  * datastructures, and only knows how to create compile steps.
  */
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public class BaseJavacToJarStepFactory extends BaseCompileToJarStepFactory<JavaExtraParams> {
   public BaseJavacToJarStepFactory() {}
 

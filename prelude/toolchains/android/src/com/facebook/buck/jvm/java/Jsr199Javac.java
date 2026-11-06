@@ -14,6 +14,7 @@ import com.facebook.buck.cd.model.java.AbiGenerationMode;
 import com.facebook.buck.core.filesystems.RelPath;
 import com.facebook.buck.jvm.core.BuildTargetValue;
 import com.facebook.buck.jvm.java.abi.source.api.SourceOnlyAbiRuleInfoFactory;
+import com.facebook.infer.annotation.Nullsafe;
 import com.google.common.base.Joiner;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableSortedSet;
@@ -21,6 +22,7 @@ import javax.annotation.Nullable;
 import javax.tools.JavaCompiler;
 
 /** Command used to compile java libraries with a variety of ways to handle dependencies. */
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public abstract class Jsr199Javac {
 
   /** Base class for a resolved javac in-process tool. */

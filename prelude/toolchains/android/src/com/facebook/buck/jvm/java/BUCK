@@ -172,6 +172,7 @@ buck_kotlin_library(
         "prelude//toolchains/android/src/com/facebook/buck/util/unarchive:unarchive",
         "prelude//toolchains/android/src/com/facebook/buck/util/zip:zip",
         "prelude//toolchains/android/third-party:guava",
+        "prelude//toolchains/android/third-party:infer-annotations",
         "prelude//toolchains/android/third-party:jackson-annotations",
         "prelude//toolchains/android/third-party:jackson-databind",
         "prelude//toolchains/android/third-party:jsr305",

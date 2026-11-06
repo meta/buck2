@@ -15,12 +15,14 @@ import com.facebook.buck.core.filesystems.RelPath;
 import com.facebook.buck.jvm.core.BuildTargetValue;
 import com.facebook.buck.jvm.java.abi.source.api.SourceOnlyAbiRuleInfoFactory;
 import com.facebook.buck.util.Escaper;
+import com.facebook.infer.annotation.Nullsafe;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableSortedSet;
 import java.util.function.Function;
 import javax.annotation.Nullable;
 
 /** Interface for a resolved javac tool. */
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public interface ResolvedJavac {
 
   /** An escaper for arguments written to @argfiles. */

@@ -10,6 +10,7 @@
 
 package com.facebook.buck.jvm.java;
 
+import com.facebook.infer.annotation.Nullsafe;
 import com.google.common.io.Files;
 import difflib.DiffUtils;
 import difflib.Patch;
@@ -18,6 +19,7 @@ import java.nio.file.Path;
 import java.util.Collections;
 import java.util.List;
 
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public final class JarDiffer {
   private final Path left;
   private final Path right;

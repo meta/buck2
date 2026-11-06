@@ -19,12 +19,14 @@ import com.facebook.buck.jvm.java.abi.StubJar;
 import com.facebook.buck.step.StepExecutionResult;
 import com.facebook.buck.step.StepExecutionResults;
 import com.facebook.buck.step.isolatedsteps.IsolatedStep;
+import com.facebook.infer.annotation.Nullsafe;
 import com.google.common.base.Preconditions;
 import java.io.IOException;
 import java.nio.file.Path;
 import javax.annotation.Nullable;
 
 /** Calculates class abi from the library.jar */
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public class CalculateClassAbiStep implements IsolatedStep {
 
   private final RelPath binaryJar;

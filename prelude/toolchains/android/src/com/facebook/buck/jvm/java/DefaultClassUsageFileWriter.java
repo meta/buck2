@@ -14,6 +14,7 @@ import com.facebook.buck.core.filesystems.AbsPath;
 import com.facebook.buck.core.filesystems.RelPath;
 import com.facebook.buck.io.filesystem.impl.ProjectFilesystemUtils;
 import com.facebook.buck.util.json.ObjectMappers;
+import com.facebook.infer.annotation.Nullsafe;
 import com.google.common.base.Preconditions;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.ImmutableSortedMap;
@@ -23,6 +24,7 @@ import java.nio.file.Path;
 import java.util.Map;
 import java.util.Set;
 
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public class DefaultClassUsageFileWriter implements ClassUsageFileWriter {
 
   @Override

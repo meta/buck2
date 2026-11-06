@@ -62,6 +62,7 @@ buck_java_library(
         "prelude//toolchains/android/src/com/facebook/buck/workertool/resources/proto:worker-model",
         "prelude//toolchains/android/third-party:args4j",
         "prelude//toolchains/android/third-party:guava",
+        "prelude//toolchains/android/third-party:infer-annotations",
         ":command_lib",
     ],
 )

@@ -19,11 +19,8 @@ python_binary(
 
 buck2_e2e_test(
     name = "test_health_check",
-    srcs = ["test_health_check.py"],
+    srcs = ["test_health_check.rs"],
     skip_for_os = [
         "windows",
-    ],
-    deps = [
-        "fbcode//buck2/tests/e2e_util:utils",
     ],
 )

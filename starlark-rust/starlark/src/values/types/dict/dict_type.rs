@@ -70,6 +70,11 @@ impl<'v, K: UnpackValue<'v>, V: UnpackValue<'v>> UnpackValue<'v> for DictType<K,
 }
 
 impl<'v, K: UnpackValue<'v>, V: UnpackValue<'v>> ValueOf<'v, DictType<K, V>> {
+    /// The empty dict.
+    pub fn empty_dict() -> Self {
+        Self::new_unchecked(Value::new_empty_dict())
+    }
+
     /// A new dict of these entries.
     pub fn alloc_dict(
         heap: Heap<'v>,

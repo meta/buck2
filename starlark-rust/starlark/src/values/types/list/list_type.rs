@@ -15,6 +15,8 @@
  * limitations under the License.
  */
 
+use either::Either;
+
 use crate as starlark;
 use crate::any::ProvidesStaticType;
 use crate::typing::Ty;
@@ -24,6 +26,7 @@ use crate::values::Value;
 use crate::values::ValueOf;
 use crate::values::list::AllocList;
 use crate::values::list::ListRef;
+use crate::values::tuple::TupleType;
 use crate::values::type_repr::StarlarkTypeRepr;
 
 /// A list type marker.
@@ -58,6 +61,31 @@ impl<'v, T: UnpackValue<'v>> UnpackValue<'v> for ListType<T> {
         Ok(Some(ListType {
             _item: std::marker::PhantomData,
         }))
+    }
+}
+
+/// A type that `[]` belongs to: [`ListType`] and
+/// [`ListOrTupleType`](crate::values::list_or_tuple::ListOrTupleType).
+pub trait EmptyListType: sealed::Sealed {}
+
+impl<T> EmptyListType for ListType<T> {}
+impl<T> EmptyListType for Either<ListType<T>, TupleType<T>> {}
+
+mod sealed {
+    use either::Either;
+
+    use crate::values::list::ListType;
+    use crate::values::tuple::TupleType;
+
+    pub trait Sealed {}
+    impl<T> Sealed for ListType<T> {}
+    impl<T> Sealed for Either<ListType<T>, TupleType<T>> {}
+}
+
+impl<'v, T: UnpackValue<'v> + EmptyListType> ValueOf<'v, T> {
+    /// The empty list.
+    pub fn empty_list() -> Self {
+        Self::new_unchecked(Value::new_empty_list())
     }
 }
 

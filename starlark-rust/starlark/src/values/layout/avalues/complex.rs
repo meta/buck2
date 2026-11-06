@@ -95,6 +95,7 @@ mod tests {
     use starlark_derive::NoSerialize;
     use starlark_derive::StarlarkPagable;
     use starlark_derive::StarlarkPagablePanic;
+    use starlark_derive::StarlarkRepresentations;
     use starlark_derive::starlark_value;
 
     use crate as starlark;
@@ -106,9 +107,11 @@ mod tests {
     use crate::values::FreezeSlot;
     use crate::values::FreezeTarget;
     use crate::values::Freezer;
+    use crate::values::StarlarkType;
     use crate::values::StarlarkValue;
     use crate::values::Trace;
     use crate::values::Value;
+    use crate::values::ValueTyped;
 
     #[derive(
         Debug,
@@ -121,9 +124,22 @@ mod tests {
     #[display("small dynamic freeze target")]
     struct SmallTarget(u32);
 
+    /// The targets a dynamic freeze may select, and the value that is frozen into them.
+    #[derive(Debug, Clone, Copy, StarlarkRepresentations)]
+    enum DynamicFreezeTargetView<'v> {
+        Small(ValueTyped<'v, SmallTarget>),
+        Large(ValueTyped<'v, LargeTarget>),
+        Drop(ValueTyped<'v, DropTarget>),
+        Source(ValueTyped<'v, FreezeDynamicValue<'v>>),
+    }
+
     #[starlark_value(type = "dynamic_freeze_target")]
+    impl<'v> StarlarkType<'v> for DynamicFreezeTargetView<'v> {}
+
+    #[starlark_value]
     impl<'v> StarlarkValue<'v> for SmallTarget {
         type Canonical = Self;
+        type Type = DynamicFreezeTargetView<'v>;
     }
 
     #[derive(
@@ -137,9 +153,10 @@ mod tests {
     #[display("large dynamic freeze target")]
     struct LargeTarget([u64; 4]);
 
-    #[starlark_value(type = "dynamic_freeze_target")]
+    #[starlark_value]
     impl<'v> StarlarkValue<'v> for LargeTarget {
         type Canonical = SmallTarget;
+        type Type = DynamicFreezeTargetView<'v>;
     }
 
     /// The size of `SmallTarget`, but with a destructor.
@@ -154,9 +171,10 @@ mod tests {
     #[display("dropping dynamic freeze target")]
     struct DropTarget(Box<u32>);
 
-    #[starlark_value(type = "dynamic_freeze_target")]
+    #[starlark_value]
     impl<'v> StarlarkValue<'v> for DropTarget {
         type Canonical = SmallTarget;
+        type Type = DynamicFreezeTargetView<'v>;
     }
 
     #[derive(Debug, Display, ProvidesStaticType, NoSerialize, Allocative, Trace)]
@@ -195,9 +213,10 @@ mod tests {
         }
     }
 
-    #[starlark_value(type = "dynamic_freeze_target", skip_vtable)]
+    #[starlark_value(skip_vtable)]
     impl<'v> StarlarkValue<'v> for FreezeDynamicValue<'v> {
         type Canonical = SmallTarget;
+        type Type = DynamicFreezeTargetView<'v>;
     }
 
     #[derive(Copy, Clone, Debug, Allocative)]

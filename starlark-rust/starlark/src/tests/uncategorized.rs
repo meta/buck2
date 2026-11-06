@@ -22,6 +22,7 @@ use allocative::Allocative;
 use anyhow::Context;
 use derive_more::Display;
 use starlark_derive::StarlarkPagable;
+use starlark_derive::StarlarkRepresentations;
 use starlark_derive::starlark_module;
 use starlark_derive::starlark_value;
 use starlark_syntax::golden_test_template::golden_test_template;
@@ -44,10 +45,13 @@ use crate::values::FreezeResult;
 use crate::values::Freezer;
 use crate::values::Heap;
 use crate::values::NoSerialize;
+use crate::values::StarlarkType;
 use crate::values::StarlarkValue;
 use crate::values::Trace;
 use crate::values::UnpackValue;
 use crate::values::Value;
+use crate::values::ValueError;
+use crate::values::ValueTyped;
 use crate::values::layout::heap::name::StarlarkTestHeapName;
 use crate::values::list_or_tuple::UnpackListOrTuple;
 use crate::values::none::NoneType;
@@ -766,16 +770,37 @@ fn test_label_assign() {
     #[display("{:?}", self)]
     struct Wrapper<'v>(RefCell<SmallMap<String, Value<'v>>>);
 
+    #[derive(Debug, Clone, Copy, StarlarkRepresentations)]
+    enum WrapperView<'v> {
+        Unfrozen(ValueTyped<'v, Wrapper<'v>>),
+        Frozen(ValueTyped<'v, FrozenWrapper>),
+    }
+
     #[starlark_value(type = "wrapper")]
-    impl<'v> StarlarkValue<'v> for Wrapper<'v> {
+    impl<'v> StarlarkType<'v> for WrapperView<'v> {
         fn get_attr(&self, attribute: &str, _heap: Heap<'v>) -> Option<Value<'v>> {
-            Some(*self.0.borrow().get(attribute).unwrap())
+            match self {
+                WrapperView::Unfrozen(this) => Some(*this.0.borrow().get(attribute).unwrap()),
+                WrapperView::Frozen(_) => None,
+            }
         }
 
         fn set_attr(&self, attribute: &str, new_value: Value<'v>) -> starlark::Result<()> {
-            self.0.borrow_mut().insert(attribute.to_owned(), new_value);
-            Ok(())
+            match self {
+                WrapperView::Unfrozen(this) => {
+                    this.0.borrow_mut().insert(attribute.to_owned(), new_value);
+                    Ok(())
+                }
+                WrapperView::Frozen(_) => Err(starlark::Error::new_other(
+                    ValueError::CannotMutateImmutableValue,
+                )),
+            }
         }
+    }
+
+    #[starlark_value]
+    impl<'v> StarlarkValue<'v> for Wrapper<'v> {
+        type Type = WrapperView<'v>;
     }
 
     #[derive(
@@ -789,9 +814,10 @@ fn test_label_assign() {
     #[display("FrozenWrapper")]
     struct FrozenWrapper;
 
-    #[starlark_value(type = "wrapper")]
+    #[starlark_value]
     impl<'v> StarlarkValue<'v> for FrozenWrapper {
         type Canonical = Wrapper<'v>;
+        type Type = WrapperView<'v>;
     }
 
     impl<'v> Freeze<'v> for Wrapper<'v> {

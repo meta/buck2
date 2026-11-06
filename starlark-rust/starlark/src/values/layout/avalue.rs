@@ -375,6 +375,7 @@ mod tests {
     use std::fmt;
 
     use allocative::Allocative;
+    use starlark_derive::StarlarkRepresentations;
     use starlark_derive::starlark_value;
 
     use crate as starlark;
@@ -384,10 +385,12 @@ mod tests {
     use crate::values::Freezer;
     use crate::values::NoSerialize;
     use crate::values::StarlarkPagable;
+    use crate::values::StarlarkType;
     use crate::values::StarlarkValue;
     use crate::values::Trace;
     use crate::values::UnpackValue;
     use crate::values::Value;
+    use crate::values::ValueTyped;
     use crate::values::dict::AllocDict;
     use crate::values::freeze_error::FreezeResult;
     use crate::values::layout::heap::name::StarlarkTestHeapName;
@@ -405,8 +408,19 @@ mod tests {
         }
     }
 
+    #[derive(Debug, Clone, Copy, StarlarkRepresentations)]
+    enum ReentrantTupleFreezeView<'v> {
+        Unfrozen(ValueTyped<'v, ReentrantTupleFreeze<'v>>),
+        Frozen(ValueTyped<'v, FrozenReentrantTupleFreeze>),
+    }
+
     #[starlark_value(type = "reentrant_tuple_freeze")]
-    impl<'v> StarlarkValue<'v> for ReentrantTupleFreeze<'v> {}
+    impl<'v> StarlarkType<'v> for ReentrantTupleFreezeView<'v> {}
+
+    #[starlark_value]
+    impl<'v> StarlarkValue<'v> for ReentrantTupleFreeze<'v> {
+        type Type = ReentrantTupleFreezeView<'v>;
+    }
 
     #[derive(Debug, ProvidesStaticType, NoSerialize, Allocative, StarlarkPagable)]
     struct FrozenReentrantTupleFreeze;
@@ -417,9 +431,10 @@ mod tests {
         }
     }
 
-    #[starlark_value(type = "reentrant_tuple_freeze")]
+    #[starlark_value]
     impl<'v> StarlarkValue<'v> for FrozenReentrantTupleFreeze {
         type Canonical = ReentrantTupleFreeze<'v>;
+        type Type = ReentrantTupleFreezeView<'v>;
     }
 
     impl<'v> Freeze<'v> for ReentrantTupleFreeze<'v> {
@@ -448,8 +463,19 @@ mod tests {
         }
     }
 
+    #[derive(Debug, Clone, Copy, StarlarkRepresentations)]
+    enum ReentrantListFreezeView<'v> {
+        Unfrozen(ValueTyped<'v, ReentrantListFreeze<'v>>),
+        Frozen(ValueTyped<'v, FrozenReentrantListFreeze>),
+    }
+
     #[starlark_value(type = "reentrant_list_freeze")]
-    impl<'v> StarlarkValue<'v> for ReentrantListFreeze<'v> {}
+    impl<'v> StarlarkType<'v> for ReentrantListFreezeView<'v> {}
+
+    #[starlark_value]
+    impl<'v> StarlarkValue<'v> for ReentrantListFreeze<'v> {
+        type Type = ReentrantListFreezeView<'v>;
+    }
 
     #[derive(Debug, ProvidesStaticType, NoSerialize, Allocative, StarlarkPagable)]
     struct FrozenReentrantListFreeze;
@@ -460,9 +486,10 @@ mod tests {
         }
     }
 
-    #[starlark_value(type = "reentrant_list_freeze")]
+    #[starlark_value]
     impl<'v> StarlarkValue<'v> for FrozenReentrantListFreeze {
         type Canonical = ReentrantListFreeze<'v>;
+        type Type = ReentrantListFreezeView<'v>;
     }
 
     impl<'v> Freeze<'v> for ReentrantListFreeze<'v> {

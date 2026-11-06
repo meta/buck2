@@ -22,16 +22,11 @@ use starlark::util::ArcStr;
 use starlark::values::Freeze;
 use starlark::values::OwnedFrozen;
 use starlark::values::StarlarkPagable;
+use starlark::values::StringValue;
 use starlark::values::Trace;
-use starlark::values::Value;
 use starlark::values::ValueOf;
-use starlark::values::ValueOfUnchecked;
 use starlark::values::ValueTyped;
-use starlark::values::list::ListRef;
-use starlark::values::list_or_tuple::UnpackListOrTuple;
-use starlark::values::none::NoneOr;
-use starlark::values::tuple::TupleRef;
-use starlark::values::typing::StarlarkCallable;
+use starlark::values::list_or_tuple::ListOrTupleType;
 use starlark::values::typing::StarlarkCallableChecked;
 use starlark::values::typing::StarlarkCallableParamSpec;
 
@@ -39,7 +34,7 @@ use crate::transition::starlark::IMPL_ATTRS_PARAM;
 use crate::transition::starlark::IMPL_PLATFORM_PARAM;
 use crate::transition::starlark::ImplSingleReturnTy;
 
-struct TransitionImplParams;
+pub(crate) struct TransitionImplParams;
 
 impl StarlarkCallableParamSpec for TransitionImplParams {
     fn params() -> ParamSpec {
@@ -71,8 +66,9 @@ impl StarlarkCallableParamSpec for TransitionImplParams {
 )]
 #[repr(C)]
 pub(crate) struct TransitionInfo<'v> {
-    pub(crate) r#impl: ValueOfUnchecked<'v, StarlarkCallable<'static>>,
-    pub(crate) attrs: ValueOfUnchecked<'v, NoneOr<UnpackListOrTuple<String>>>,
+    pub(crate) r#impl:
+        ValueOf<'v, StarlarkCallableChecked<'v, TransitionImplParams, ImplSingleReturnTy<'static>>>,
+    pub(crate) attrs: Option<ValueOf<'v, ListOrTupleType<StringValue<'v>>>>,
 }
 
 /// A `TransitionInfo` kept alive by its owning frozen heap; usable across threads and awaits.
@@ -82,37 +78,20 @@ pub(crate) type OwnedTransitionInfo = OwnedFrozen<ValueTyped<'static, Transition
 fn transition_info_creator(globals: &mut GlobalsBuilder) {
     #[starlark(as_type = TransitionInfo<'static>)]
     fn TransitionInfo<'v>(
-        #[starlark(require = named)] r#impl: StarlarkCallableChecked<
+        #[starlark(require = named)] r#impl: ValueOf<
             'v,
-            TransitionImplParams,
-            ImplSingleReturnTy,
+            StarlarkCallableChecked<'v, TransitionImplParams, ImplSingleReturnTy<'static>>,
         >,
-        #[starlark(require = named)] attrs: Option<ValueOf<'v, UnpackListOrTuple<String>>>,
+        #[starlark(require = named)] attrs: Option<ValueOf<'v, ListOrTupleType<StringValue<'v>>>>,
     ) -> starlark::Result<TransitionInfo<'v>> {
-        let attrs = attrs.map_or(Value::new_none(), |v| v.to_value());
-        Ok(TransitionInfo {
-            r#impl: ValueOfUnchecked::new(r#impl.0),
-            attrs: ValueOfUnchecked::new(attrs),
-        })
+        Ok(TransitionInfo { r#impl, attrs })
     }
 }
 
 impl<'v> TransitionInfo<'v> {
-    pub(crate) fn get_attrs_names(&self) -> Option<impl IntoIterator<Item = &'v str> + use<'v>> {
-        let v = self.attrs.get();
-        let slice: &[_] = if v.is_none() {
-            return None;
-        } else if let Some(v) = ListRef::from_value(v) {
-            v
-        } else if let Some(v) = TupleRef::from_value(v) {
-            v.content()
-        } else {
-            unreachable!("Checked at construction");
-        };
-        Some(slice.iter().map(|v| {
-            v.unpack_starlark_str()
-                .expect("checked at construction")
-                .as_str()
-        }))
+    pub(crate) fn get_attrs_names(
+        &self,
+    ) -> Option<impl Iterator<Item = buck2_error::Result<&'v str>> + use<'v>> {
+        Some(self.attrs?.iter().map(|s| Ok(s?.unpack().as_str())))
     }
 }

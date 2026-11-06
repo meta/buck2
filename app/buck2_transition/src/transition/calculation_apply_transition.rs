@@ -102,7 +102,12 @@ fn call_transition_function<'v>(
             args.push(("refs", refs));
             v.as_ref().add_to_heap(eval.heap()).as_ref().implementation
         }
-        TransitionData::Target(v) => v.as_ref().add_to_heap(eval.heap()).as_ref().r#impl.get(),
+        TransitionData::Target(v) => v
+            .as_ref()
+            .add_to_heap(eval.heap())
+            .as_ref()
+            .r#impl
+            .to_value(),
     };
     if let Some(attrs) = attrs {
         args.push(("attrs", attrs));
@@ -163,7 +168,8 @@ async fn do_apply_transition(
                 let attrs = match (transition.attr_names(), attrs) {
                     (Some(names), Some(values)) => {
                         let mut attrs = Vec::new();
-                        for (name, value) in names.into_iter().zip_eq(values.iter()) {
+                        for (name, value) in names.zip_eq(values.iter()) {
+                            let name = name?;
                             let value = match value {
                                 Some(value) => (CONFIGURED_ATTR_TO_VALUE.get()?)(
                                     value,
@@ -341,16 +347,13 @@ impl TransitionCalculation for TransitionCalculationImpl {
 
         let transition = ctx.fetch_transition(transition_id).await?;
 
-        #[allow(clippy::manual_map)]
-        let attrs = if let Some(attrs) = transition.attr_names() {
-            Some(
+        let attrs = match transition.attr_names() {
+            Some(attrs) => Some(
                 attrs
-                    .into_iter()
-                    .map(|attr| configured_attrs.get(attr).duped())
-                    .collect(),
-            )
-        } else {
-            None
+                    .map(|attr| Ok(configured_attrs.get(attr?).duped()))
+                    .collect::<buck2_error::Result<_>>()?,
+            ),
+            None => None,
         };
 
         let key = TransitionKey {

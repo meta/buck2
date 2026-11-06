@@ -24,15 +24,12 @@ use starlark::values::StarlarkPagable;
 use starlark::values::StarlarkValue;
 use starlark::values::StringValue;
 use starlark::values::Trace;
-use starlark::values::UnpackValue;
 use starlark::values::ValueOf;
-use starlark::values::ValueOfUnchecked;
 use starlark::values::starlark_value;
 
 use crate::interpreter::rule_defs::artifact::starlark_artifact::StarlarkArtifact;
 use crate::interpreter::rule_defs::artifact::starlark_artifact_like::StarlarkInputArtifactLike;
 use crate::interpreter::rule_defs::artifact::starlark_artifact_like::ValueAsInputArtifactLike;
-use crate::interpreter::rule_defs::artifact::starlark_artifact_like::ValueIsInputArtifactAnnotation;
 
 #[derive(Debug, buck2_error::Error)]
 #[buck2(tag = Input)]
@@ -70,7 +67,7 @@ pub struct StarlarkValidationSpec<'v> {
     /// Name identifying this validation. Must be non-empty and unique within
     /// the enclosing `ValidationInfo`. Surfaces in CLI output and is the
     /// handle used by `--enable-optional-validations <name>`.
-    name: ValueOfUnchecked<'v, String>,
+    name: StringValue<'v>,
     /// Build artifact produced by the validator. After the action that
     /// produces it runs, Buck2 reads the file as UTF-8 JSON and expects
     /// the following shape:
@@ -96,7 +93,7 @@ pub struct StarlarkValidationSpec<'v> {
     ///
     /// See [Writing the validator](https://buck2.build/docs/rule_authors/validation/#writing-the-validator)
     /// in the Validations guide for the full schema reference and examples.
-    validation_result: ValueOfUnchecked<'v, ValueIsInputArtifactAnnotation>,
+    validation_result: ValueOf<'v, ValueAsInputArtifactLike<'v>>,
 
     /// If `True`, the validation is skipped by default and only runs when
     /// the user passes `--enable-optional-validations <name>`. Defaults to
@@ -108,16 +105,11 @@ starlark_complex_value!(pub(crate) StarlarkValidationSpec);
 
 impl<'v> StarlarkValidationSpec<'v> {
     pub fn name(&self) -> &'v str {
-        self.name
-            .cast::<&str>()
-            .unpack()
-            .expect("type checked during construction or freezing")
+        self.name.as_str()
     }
 
     pub fn validation_result(&self) -> &'v dyn StarlarkInputArtifactLike<'v> {
-        ValueAsInputArtifactLike::unpack_value_opt(self.validation_result.get())
-            .expect("type checked during construction or freezing")
-            .0
+        self.validation_result.unpack().0
     }
 
     pub fn optional(&self) -> bool {
@@ -134,12 +126,10 @@ impl<'v> Display for StarlarkValidationSpec<'v> {
 }
 
 fn validate_validation_spec<'v>(spec: &StarlarkValidationSpec<'v>) -> buck2_error::Result<()> {
-    let name = spec.name.unpack()?;
-    if name.is_empty() {
+    if spec.name().is_empty() {
         return Err(ValidationSpecError::EmptyName.into());
     }
-    let artifact = ValueAsInputArtifactLike::unpack_value_err(spec.validation_result.get())?;
-    let artifact = match artifact.0.get_bound_artifact() {
+    let artifact = match spec.validation_result().get_bound_artifact() {
         Ok(bound_artifact) => bound_artifact,
         Err(e) => {
             return Err(e.context("Validation result artifact should be bound."));
@@ -216,8 +206,7 @@ fn validation_spec_methods(builder: &mut MethodsBuilder) {
     fn validation_result<'v>(
         this: &'v StarlarkValidationSpec,
     ) -> starlark::Result<StarlarkArtifact> {
-        let artifact = ValueAsInputArtifactLike::unpack_value_err(this.validation_result.get())?;
-        Ok(artifact.0.get_bound_starlark_artifact()?)
+        Ok(this.validation_result().get_bound_starlark_artifact()?)
     }
 }
 
@@ -226,12 +215,12 @@ pub fn register_validation_spec(builder: &mut GlobalsBuilder) {
     #[starlark(as_type = StarlarkValidationSpec<'static>)]
     fn ValidationSpec<'v>(
         #[starlark(require = named)] name: StringValue<'v>,
-        #[starlark(require = named)] validation_result: ValueOf<'v, ValueIsInputArtifactAnnotation>,
+        #[starlark(require = named)] validation_result: ValueOf<'v, ValueAsInputArtifactLike<'v>>,
         #[starlark(require = named, default = false)] optional: bool,
     ) -> starlark::Result<StarlarkValidationSpec<'v>> {
         let result = StarlarkValidationSpec {
-            name: name.to_value_of_unchecked().cast(),
-            validation_result: validation_result.as_unchecked().cast(),
+            name,
+            validation_result,
             optional,
         };
         validate_validation_spec(&result)?;

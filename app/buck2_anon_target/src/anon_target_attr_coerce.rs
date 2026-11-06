@@ -107,7 +107,7 @@ impl AnonTargetAttrTypeCoerce for AttrType {
                         let attr_type = match x.transition {
                             DepAttrTransition::Identity(..) => x.clone(),
                             DepAttrTransition::Exec => {
-                                match dep.execution_platform()? {
+                                match dep.execution_platform() {
                                 Some(exec_dep_resolution) => {
                                     // Compare only base platform, not the full resolution
                                     if exec_dep_resolution.platform()? != ctx.execution_platform_resolution.platform()? {

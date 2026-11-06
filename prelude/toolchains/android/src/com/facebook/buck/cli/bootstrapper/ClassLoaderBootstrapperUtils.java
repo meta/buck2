@@ -10,10 +10,12 @@
 
 package com.facebook.buck.cli.bootstrapper;
 
+import com.facebook.infer.annotation.Nullsafe;
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
 
 /** Utility class for {@link ClassLoaderBootstrapper} */
+@Nullsafe(Nullsafe.Mode.LOCAL)
 class ClassLoaderBootstrapperUtils {
 
   private ClassLoaderBootstrapperUtils() {}

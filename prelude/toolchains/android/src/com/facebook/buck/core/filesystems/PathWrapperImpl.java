@@ -10,9 +10,11 @@
 
 package com.facebook.buck.core.filesystems;
 
+import com.facebook.infer.annotation.Nullsafe;
 import java.nio.file.Path;
 
 /** Base implementation of two path wrappers. Not visible to users. */
+@Nullsafe(Nullsafe.Mode.LOCAL)
 abstract class PathWrapperImpl implements PathWrapper {
   protected final Path path;
 

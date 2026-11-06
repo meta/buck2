@@ -26,6 +26,9 @@ buck_java_binary(
 buck_java_library(
     name = "bootstrapper_lib",
     srcs = glob(["*.java"]),
+    provided_deps = [
+        "prelude//toolchains/android/third-party:infer-annotations",
+    ],
     visibility = [
         "PUBLIC",
         "prelude//toolchains/android/test/...",

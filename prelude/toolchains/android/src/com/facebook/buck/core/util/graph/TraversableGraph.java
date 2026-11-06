@@ -10,7 +10,10 @@
 
 package com.facebook.buck.core.util.graph;
 
+import com.facebook.infer.annotation.Nullsafe;
+
 /** Minimal interface needed by {@link AbstractBottomUpTraversal} to traverse a graph. */
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public interface TraversableGraph<T> {
 
   /**

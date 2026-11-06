@@ -17,4 +17,7 @@ buck_java_library(
         "prelude//toolchains/android/src/com/facebook/buck/core/util/log:log",
         "prelude//toolchains/android/src/com/facebook/buck/testrunner:junit",
     ],
+    deps = [
+        "prelude//toolchains/android/third-party:infer-annotations",
+    ],
 )

@@ -10,6 +10,7 @@
 
 package com.facebook.buck.cli.bootstrapper;
 
+import com.facebook.infer.annotation.Nullsafe;
 import java.util.Arrays;
 
 /**
@@ -26,6 +27,7 @@ import java.util.Arrays;
  * would, this would result in annotation processors getting Buck's versions of Guava, Jackson, etc.
  * instead of their own.
  */
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public final class ClassLoaderBootstrapper {
 
   static {

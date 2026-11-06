@@ -11,9 +11,11 @@
 package com.facebook.buck.io.pathformat;
 
 import com.facebook.buck.core.filesystems.PathWrapper;
+import com.facebook.infer.annotation.Nullsafe;
 import java.nio.file.Path;
 
 /** Utilities to format paths with predictable path separators. */
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public class PathFormatter {
   /** Utility class: do not instantiate. */
   private PathFormatter() {}

@@ -10,7 +10,10 @@
 
 package com.facebook.buck.io.filesystem;
 
+import com.facebook.infer.annotation.Nullsafe;
+
 /** Controls the behavior of how the source should be treated when copying. */
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public enum CopySourceMode {
   /** Copy the single source file into the destination path. */
   FILE,

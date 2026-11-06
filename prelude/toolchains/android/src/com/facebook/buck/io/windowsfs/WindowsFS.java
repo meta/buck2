@@ -10,11 +10,13 @@
 
 package com.facebook.buck.io.windowsfs;
 
+import com.facebook.infer.annotation.Nullsafe;
 import java.io.IOException;
 import java.nio.file.FileAlreadyExistsException;
 import java.nio.file.Path;
 
 /** Utility class for working with windows FS */
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public class WindowsFS {
 
   /**

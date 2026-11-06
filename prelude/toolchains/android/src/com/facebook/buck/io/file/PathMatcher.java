@@ -11,9 +11,11 @@
 package com.facebook.buck.io.file;
 
 import com.facebook.buck.core.filesystems.RelPath;
+import com.facebook.infer.annotation.Nullsafe;
 import java.nio.file.Path;
 
 /** A contract for matching {@link Path}s. */
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public interface PathMatcher {
 
   /** Check if given path matches pattern. */

@@ -80,6 +80,12 @@ impl Buck {
         self.env.insert(key.into(), value.into());
     }
 
+    /// Unsets an environment variable, inherited from the test's environment or set, for every
+    /// later command.
+    pub fn remove_env(&mut self, key: impl AsRef<OsStr>) {
+        self.env.remove(key.as_ref());
+    }
+
     /// The value an environment variable has for commands.
     pub fn env_var(&self, key: impl AsRef<OsStr>) -> Option<&OsStr> {
         self.env.get(key.as_ref()).map(OsString::as_os_str)
@@ -621,6 +627,18 @@ mod tests {
                 "out.xml",
                 "--"
             ]
+        );
+    }
+
+    #[test]
+    fn test_a_removed_variable_reaches_no_command() {
+        let mut buck = buck(false);
+        buck.set_env("HTTP_PROXY", "http://proxy");
+        buck.remove_env("HTTP_PROXY");
+        assert_eq!(buck.env_var("HTTP_PROXY"), None);
+        assert_eq!(
+            buck.kill().prepare("ID").env.get(OsStr::new("HTTP_PROXY")),
+            None
         );
     }
 

@@ -15,6 +15,7 @@
  * limitations under the License.
  */
 
+use std::convert::Infallible;
 use std::marker::PhantomData;
 
 use allocative::Allocative;
@@ -29,16 +30,30 @@ use crate::docs::DocString;
 use crate::docs::DocType;
 use crate::static_starlark_value;
 use crate::typing::Ty;
+use crate::typing::TyStarlarkValue;
 use crate::values::AllocFrozenValue;
 use crate::values::FrozenHeap;
 use crate::values::StarlarkValue;
+use crate::values::UnpackValue;
 use crate::values::Value;
 use crate::values::type_repr::StarlarkTypeRepr;
 
-enum NonInstantiable {}
+/// `typing.Iterable[T]`: a type marker, and the check that a value is iterable.
+///
+/// The check is the one the type's matcher does: that the value iterates. What it yields is
+/// not looked at, so `T` is what the caller asserts of the items, not something verified.
+pub struct StarlarkIter<T: StarlarkTypeRepr>(PhantomData<T>);
 
-/// `StarlarkTypeRepr` for iterable types.
-pub struct StarlarkIter<T: StarlarkTypeRepr>(PhantomData<T>, NonInstantiable);
+impl<'v, T: StarlarkTypeRepr> UnpackValue<'v> for StarlarkIter<T> {
+    type Error = Infallible;
+
+    fn unpack_value_impl(value: Value<'v>) -> Result<Option<Self>, Self::Error> {
+        Ok(
+            TyStarlarkValue::is_iterable(&value.vtable().starlark_value.ty)
+                .then_some(StarlarkIter(PhantomData)),
+        )
+    }
+}
 
 impl<T: StarlarkTypeRepr> StarlarkTypeRepr for StarlarkIter<T> {
     type Canonical = StarlarkIter<T::Canonical>;

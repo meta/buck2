@@ -22,10 +22,14 @@ use dupe::Dupe;
 use crate as starlark;
 use crate::any::ProvidesStaticType;
 use crate::typing::Ty;
+use crate::values::AllocValue;
+use crate::values::Heap;
 use crate::values::StringValue;
 use crate::values::UnpackValue;
 use crate::values::Value;
+use crate::values::ValueOf;
 use crate::values::starlark_type_id::StarlarkTypeId;
+use crate::values::structs::AllocStruct;
 use crate::values::structs::value::Struct;
 use crate::values::type_repr::StarlarkTypeRepr;
 
@@ -50,6 +54,16 @@ impl<'v> StructRef<'v> {
     /// Iterate over struct fields.
     pub fn iter(&self) -> impl ExactSizeIterator<Item = (StringValue<'v>, Value<'v>)> + '_ {
         self.0.iter()
+    }
+}
+
+impl<'v> ValueOf<'v, StructRef<'v>> {
+    /// A new struct of these fields.
+    pub fn alloc_struct<S>(heap: Heap<'v>, fields: AllocStruct<S>) -> Self
+    where
+        AllocStruct<S>: AllocValue<'v>,
+    {
+        Self::new_unchecked(heap.alloc(fields))
     }
 }
 

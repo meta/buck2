@@ -77,6 +77,7 @@ def remote_file_impl(ctx: AnalysisContext) -> list[Provider]:
         unzip_tool = ctx.attrs._unzip_tool[RunInfo],
         sha1 = ctx.attrs.sha1,
         sha256 = ctx.attrs.sha256,
+        sha512 = ctx.attrs.sha512,
         size_bytes = ctx.attrs.size_bytes,
         has_content_based_path = ctx.attrs.has_content_based_path,
     )
@@ -170,7 +171,7 @@ remote_file = prelude_rule(
                 default = None,
                 doc = """
                 Size in bytes of the downloaded artifact. Buck verifies this is correct and fails the fetch
-                 command if it doesn't match (only when a SHA-1 hash is used).
+                 command if it doesn't match (when a SHA-1 hash or only a SHA-512 hash is used).
             """,
             ),
             "out": attrs.option(
@@ -216,5 +217,6 @@ remote_file = prelude_rule(
             "_unzip_tool": attrs.default_only(attrs.exec_dep(providers = [RunInfo], default = "prelude//zip_file/tools:unzip")),
         }
         | remote_common.sha256_arg()
+        | remote_common.sha512_arg()
     ),
 )

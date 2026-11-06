@@ -18,6 +18,7 @@ buck2_core_tests(
         "test_download_file": {
             "deps": [
                 "fbsource//third-party/rust:hex",
+                "fbsource//third-party/rust:regex",
                 "fbsource//third-party/rust:sha2",
             ],
             "env": {

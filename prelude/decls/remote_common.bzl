@@ -32,6 +32,20 @@ def _sha256_arg():
         ),
     }
 
+def _sha512_arg():
+    return {
+        "sha512": attrs.option(
+            attrs.string(),
+            default = None,
+            doc = """
+    The [`SHA-512`](//wikipedia.org/wiki/SHA-2) hash of the downloaded artifact. It is preferred
+     over `sha1` and `sha256` when it is available. Buck verifies this is correct and fails the
+     fetch command if it doesn't match in order to guarantee repeatable builds. A `sha512` alone
+     cannot be used with `has_content_based_path`; add a `sha1` or `sha256` for that.
+""",
+        ),
+    }
+
 def _urls_arg():
     return {
         "urls": attrs.list(
@@ -148,6 +162,7 @@ def _unarchive_args():
 remote_common = struct(
     name_arg = _name_arg,
     sha256_arg = _sha256_arg,
+    sha512_arg = _sha512_arg,
     urls_arg = _urls_arg,
     unarchive_args = _unarchive_args,
 )

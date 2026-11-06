@@ -4,16 +4,16 @@ oncall("testing_frameworks")
 
 buck2_e2e_test(
     name = "test_test_inplace",
-    srcs = ["test_test_inplace.py"],
+    srcs = ["test_test_inplace.rs"],
     data = "//buck2/tests/targets:isolated_targets",
     test_with_deployed_buck2 = True,
     use_compiled_buck2_client_and_tpx = True,
-    deps = ["//buck2/tests/e2e_util:utils"],
+    deps = ["fbsource//third-party/rust:regex"],
 )
 
 buck2_e2e_test(
     name = "test_test_artifacts",
-    srcs = ["test_test_artifacts.py"],
+    srcs = ["test_test_artifacts.rs"],
     compatible_with = ["ovr_config//os:linux"],
     env = {
         "TESTX_BIN": "$(exe_target fbcode//tae/testx:testx)",
@@ -25,18 +25,14 @@ buck2_e2e_test(
     test_with_deployed_buck2 = True,
     use_compiled_buck2_client_and_tpx = True,
     deps = [
-        "//buck2/tests/e2e_util:utils",
-        "//remote_execution/client_lib/wrappers/python:py_re_client_lib",
-        "//remote_execution/lib/if:common-py3-types",
-        "//remote_execution/lib/if:common-python-types",
-        "//remote_execution/lib/if/client_lib:re-client-lib-if-py3-types",
-        "//tae/testx:py",
+        "//common/rust/shed/fbinit:fbinit",
+        "//remote_execution/client_lib/wrappers/rust:re_client_lib",
     ],
 )
 
 buck2_e2e_test(
     name = "test_test_details_artifacts",
-    srcs = ["test_test_details_artifacts.py"],
+    srcs = ["test_test_details_artifacts.rs"],
     compatible_with = ["ovr_config//os:linux"],
     env = {
         "TESTX_BIN": "$(exe_target fbcode//tae/testx:testx)",
@@ -47,15 +43,11 @@ buck2_e2e_test(
     ],
     test_with_deployed_buck2 = False,
     use_compiled_buck2_client_and_tpx = True,
-    deps = [
-        "//buck2/tests/e2e_util:utils",
-        "//tae/testx:py",
-    ],
 )
 
 buck2_e2e_test(
     name = "test_testname_formatting",
-    srcs = ["test_testname_formatting.py"],
+    srcs = ["test_testname_formatting.rs"],
     compatible_with = ["ovr_config//os:linux"],
     skip_for_os = [
         "darwin",
@@ -63,14 +55,11 @@ buck2_e2e_test(
     ],
     test_with_deployed_buck2 = True,
     use_compiled_buck2_client_and_tpx = True,
-    deps = [
-        "//remote_execution/client_lib/wrappers/python:py_re_client_lib",  # @autodeps2-fixme-manual
-    ],
 )
 
 buck2_e2e_test(
     name = "test_test_remote_execution",
-    srcs = ["test_test_remote_execution.py"],
+    srcs = ["test_test_remote_execution.rs"],
     data = "//buck2/tests/targets:isolated_targets",
     test_with_deployed_buck2 = False,
     use_compiled_buck2_client_and_tpx = True,
@@ -78,33 +67,30 @@ buck2_e2e_test(
 
 buck2_e2e_test(
     name = "test_configs",
-    srcs = ["test_configs.py"],
+    srcs = ["test_configs.rs"],
     skip_for_os = [
         "darwin",
         "windows",
     ],
     test_with_deployed_buck2 = False,
     use_compiled_buck2_client_and_tpx = True,
-    deps = [
-        "//buck2/tests/e2e_util:utilities",
-        "//buck2/tests/e2e_util/api:api",
-    ],
 )
 
 buck2_e2e_test(
     name = "test_brr_suite_level_retry",
-    srcs = ["test_brr_suite_level_retry.py"],
+    srcs = ["test_brr_suite_level_retry.rs"],
     skip_for_os = [
         "darwin",
         "windows",
     ],
     test_with_deployed_buck2 = False,
     use_compiled_buck2_client_and_tpx = True,
+    deps = ["fbsource//third-party/rust:regex"],
 )
 
 buck2_e2e_test(
     name = "test_brr_unmanaged_retry",
-    srcs = ["test_brr_unmanaged_retry.py"],
+    srcs = ["test_brr_unmanaged_retry.rs"],
     skip_for_os = [
         "darwin",
         "windows",

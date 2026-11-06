@@ -46,6 +46,7 @@
 #[cfg(test)]
 extern crate self as buck2_e2e;
 
+pub mod ansi;
 pub mod approx;
 mod buck;
 mod fixture;
@@ -59,6 +60,7 @@ mod output;
 pub mod piped;
 pub mod process;
 pub mod subscribe;
+pub mod testx;
 pub mod utils;
 
 pub use buck2_e2e_macros::buck_test;

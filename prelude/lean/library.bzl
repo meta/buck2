@@ -311,15 +311,16 @@ def compile_lean_library(ctx: AnalysisContext, link_whole: bool) -> struct:
     src_files = ctx.attrs.srcs
     src_names = [lean_module_name(src, ctx.label.package, ctx.attrs.root) for src in src_files]
 
-    # `lean --deps-json` writes to stdout; the tool puts it into the file.
+    # `lean_deps` lists the modules and runs `lean --deps-json` on them, with
+    # the file names on stdin, so their number has no limit.
     deps_json = ctx.actions.declare_output("deps.json", has_content_based_path = False)
     ctx.actions.run(
         cmd_args(
-            ctx.attrs._stdout_to_file[RunInfo],
+            ctx.attrs._lean_deps[RunInfo],
             cmd_args(deps_json.as_output(), format = "--out={}"),
+            at_argfile(actions = ctx.actions, name = "deps.argsfile", args = cmd_args(src_files, format = "--src={}")),
             toolchain.lean,
             "--deps-json",
-            src_files,
         ),
         category = "lean_deps",
     )
@@ -432,7 +433,7 @@ lean_library_attrs = {
     "srcs": attrs.list(attrs.source(), default = [], doc = "The `.lean` files."),
     "_cxx_toolchain": attrs.toolchain_dep(default = "toolchains//:cxx", providers = [CxxToolchainInfo]),
     "_exec_os_type": buck.exec_os_type_arg(),
-    "_stdout_to_file": attrs.default_only(attrs.exec_dep(providers = [RunInfo], default = "prelude//lean/tools:stdout_to_file")),
+    "_lean_deps": attrs.default_only(attrs.exec_dep(providers = [RunInfo], default = "prelude//lean/tools:lean_deps")),
 }
 
 lean_library = rule(

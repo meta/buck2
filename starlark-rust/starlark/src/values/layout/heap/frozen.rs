@@ -45,7 +45,6 @@ use crate::values::OwnedFrozen;
 use crate::values::OwnedFrozenRef;
 use crate::values::StarlarkValue;
 use crate::values::StringValue;
-use crate::values::ValueOfUnchecked;
 use crate::values::ValueTyped;
 use crate::values::layout::avalue::AValue;
 use crate::values::layout::avalue::AValueImpl;
@@ -280,14 +279,6 @@ impl<'fh> FrozenHeap<'fh> {
         val: T,
     ) -> ValueTyped<'fh, T> {
         ValueTyped::new(self.alloc(val)).expect("just allocated value must have the right type")
-    }
-
-    /// Allocate a value and return [`ValueOfUnchecked`] of it.
-    pub fn alloc_typed_unchecked<T: AllocFrozenValue<'fh>>(
-        self,
-        val: T,
-    ) -> ValueOfUnchecked<'fh, T> {
-        ValueOfUnchecked::new(self.alloc(val))
     }
 
     /// Number of bytes allocated on this heap, not including any memory

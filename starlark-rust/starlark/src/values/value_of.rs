@@ -47,7 +47,6 @@ use crate::values::Tracer;
 use crate::values::UnpackValue;
 use crate::values::UnpackValueStable;
 use crate::values::Value;
-use crate::values::ValueOfUnchecked;
 use crate::values::ValueTyped;
 use crate::values::type_repr::StarlarkTypeRepr;
 
@@ -129,12 +128,6 @@ impl<'v, T: UnpackValue<'v>> ValueOf<'v, T> {
     #[inline]
     pub fn try_unpack(self) -> crate::Result<T> {
         T::unpack_value_err(self.0)
-    }
-
-    /// Transitional: as the unchecked handle, for code not yet migrated to `ValueOf`.
-    #[inline]
-    pub fn as_unchecked(self) -> ValueOfUnchecked<'v, T> {
-        ValueOfUnchecked::new(self.0)
     }
 }
 

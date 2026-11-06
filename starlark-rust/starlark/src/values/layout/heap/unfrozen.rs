@@ -42,7 +42,6 @@ use crate::values::OwnedFrozenRef;
 use crate::values::StarlarkValue;
 use crate::values::StringValue;
 use crate::values::Trace;
-use crate::values::ValueOfUnchecked;
 use crate::values::ValueTyped;
 use crate::values::layout::avalue::AValue;
 use crate::values::layout::avalue::AValueImpl;
@@ -245,11 +244,6 @@ impl<'v> Heap<'v> {
     /// Can fail if the [`AllocValue`] trait generates a different type on the heap.
     pub fn alloc_typed<T: AllocValue<'v> + StarlarkValue<'v>>(self, x: T) -> ValueTyped<'v, T> {
         ValueTyped::new(self.alloc(x)).expect("just allocated value must have the right type")
-    }
-
-    /// Allocate a value and return [`ValueOfUnchecked`] of it.
-    pub fn alloc_typed_unchecked<T: AllocValue<'v>>(self, x: T) -> ValueOfUnchecked<'v, T> {
-        ValueOfUnchecked::new(self.alloc(x))
     }
 
     pub(crate) unsafe fn visit_arena(

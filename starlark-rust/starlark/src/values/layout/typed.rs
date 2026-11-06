@@ -56,7 +56,6 @@ use crate::values::Trace;
 use crate::values::Tracer;
 use crate::values::UnpackValue;
 use crate::values::Value;
-use crate::values::ValueOfUnchecked;
 use crate::values::alloc_value::AllocStringValue;
 use crate::values::layout::avalue::AValue;
 use crate::values::layout::avalue::AValueImpl;
@@ -261,12 +260,6 @@ impl<'v, T: StarlarkValue<'v>> ValueTyped<'v, T> {
             self.to_value().get_hash()?
         };
         Ok(Hashed::new_unchecked(hash, self))
-    }
-
-    /// Convert to another `Value` wrapper.
-    #[inline]
-    pub fn to_value_of_unchecked(self) -> ValueOfUnchecked<'v, T> {
-        ValueOfUnchecked::new(self.to_value())
     }
 }
 

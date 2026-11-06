@@ -1,0 +1,10 @@
+# `//app/allowed.bxl` is in package `//app`, within `//app/...`, so it may load `vis.bzl`.
+load("//lib/vis.bzl", "SYM2")
+
+def _impl(ctx: bxl.Context):
+    ctx.output.print(SYM2)
+
+check = bxl_main(
+    impl = _impl,
+    cli_args = {},
+)

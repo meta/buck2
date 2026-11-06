@@ -276,6 +276,19 @@ impl ParsedPattern<TargetPatternExtra> {
             }
         }
     }
+
+    /// Check if a [`ParsedPattern`] matches a package, identified by the
+    /// cell path of its directory. Used for load visibility, where the entity
+    /// being matched is the directory of a loading `BUCK`/`.bzl` file rather
+    /// than a target. A `Target` pattern (`//pkg:name`) names a single target,
+    /// not a package, so it never matches.
+    pub fn matches_package(&self, package: CellPath) -> bool {
+        match self {
+            ParsedPattern::Target(..) => false,
+            ParsedPattern::Package(pkg) => pkg.as_cell_path() == package,
+            ParsedPattern::Recursive(cell_path) => package.starts_with(*cell_path),
+        }
+    }
 }
 
 impl ParsedPattern<ProvidersPatternExtra> {

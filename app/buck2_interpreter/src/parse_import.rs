@@ -33,6 +33,10 @@ enum ImportParseError {
     #[error("Unexpected relative import spec. Got `{0}`")]
     ProhibitedRelativeImport(String),
     #[error(
+        "Cell-qualified load path `{import}` must begin with `@` to reference another cell (did you mean `{suggestion}`?). A bare cell alias like `cell//...` is not accepted in `load()`."
+    )]
+    CellAliasMissingAtSymbol { import: String, suggestion: String },
+    #[error(
         "Unable to parse import spec. Expected format `(@<cell>)//package/name:filename.bzl` or `:filename.bzl`, but got a path. Got `{0}`"
     )]
     NotAFileName(String),
@@ -60,6 +64,12 @@ fn has_cell_alias_prefix(path: &str, allow_missing_at_symbol: bool) -> bool {
         return false;
     };
     alias.is_empty() || alias.starts_with('@') || allow_missing_at_symbol
+}
+
+/// `cell//...` with a non-empty alias and no leading `@`.
+fn has_bare_cell_alias_prefix(path: &str) -> bool {
+    path.split_once("//")
+        .is_some_and(|(alias, _)| !alias.is_empty() && !alias.starts_with('@'))
 }
 
 pub fn parse_import(
@@ -93,6 +103,15 @@ pub fn parse_import_with_config(
 
             if has_cell_alias_prefix(import, opts.allow_missing_at_symbol) {
                 Ok(parse_cell_path(import, cell_resolver)?)
+            } else if has_bare_cell_alias_prefix(import) {
+                // `cell//pkg/file` looks cell-qualified, but the alias lacks the
+                // required leading `@`. Give a targeted hint rather than treating
+                // it as a relative import that fails later with an opaque error.
+                Err(ImportParseError::CellAliasMissingAtSymbol {
+                    import: import.to_owned(),
+                    suggestion: format!("@{import}"),
+                }
+                .into())
             } else if let RelativeImports::Allow {
                 current_dir_with_allowed_relative,
             } = opts.relative_import_option
@@ -416,6 +435,38 @@ mod tests {
                 }
             )?,
         );
+        Ok(())
+    }
+
+    #[test]
+    fn cell_alias_without_at_symbol_is_rejected_with_hint() -> buck2_error::Result<()> {
+        // A bare `cell//...` (no leading `@`, no colon) must not be silently
+        // treated as a relative import and fail later with an opaque
+        // forward-relative-path error. It should report the missing `@`.
+        let import = "other//pkg/lib.lock";
+        let res = parse_import(
+            &resolver(),
+            RelativeImports::Allow {
+                current_dir_with_allowed_relative: &CellPathWithAllowedRelativeDir::new(
+                    CellPath::testing_new("root//pkg"),
+                    None,
+                ),
+            },
+            import,
+        );
+        match res {
+            Ok(res) => panic!("Expected parse failure for {import}, got result {res}"),
+            Err(e) => {
+                assert_eq!(
+                    format!("{e:#}"),
+                    ImportParseError::CellAliasMissingAtSymbol {
+                        import: import.to_owned(),
+                        suggestion: format!("@{import}"),
+                    }
+                    .to_string()
+                );
+            }
+        };
         Ok(())
     }
 

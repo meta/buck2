@@ -13,6 +13,7 @@ use std::fmt::Display;
 use std::fmt::Formatter;
 
 use allocative::Allocative;
+use buck2_core::cells::cell_path::CellPath;
 use buck2_core::package::PackageLabel;
 use buck2_core::pattern::package::PackagePattern;
 use buck2_core::pattern::pattern::ParsedPattern;
@@ -452,6 +453,24 @@ impl VisibilityPatternList {
             }
         }
     }
+
+    /// Whether this list matches the package of a loading file, for load
+    /// visibility. `target_name_glob(...)` patterns are target-oriented and never
+    /// match a bare package, so they are treated as non-matching (they also
+    /// cannot be produced by the `visibility()` builtin, which only accepts
+    /// strings).
+    pub fn matches_package(&self, package: CellPath) -> bool {
+        match self {
+            VisibilityPatternList::Public => true,
+            VisibilityPatternList::List(patterns) => patterns.iter().any(|pattern| match pattern {
+                VisibilityPattern::Parsed(p) => p.matches_package(package),
+                VisibilityPattern::TargetNameGlob(_) => false,
+            }),
+            VisibilityPatternList::Intersection(sub_lists) => {
+                sub_lists.iter().all(|s| s.matches_package(package))
+            }
+        }
+    }
 }
 
 impl Display for VisibilityPatternList {
@@ -797,6 +816,72 @@ impl Display for WithinViewSpecification {
     }
 }
 
+/// The load visibility of a `.bzl` file: the set of packages whose `BUCK`/`.bzl`
+/// files may `load()` it, as declared by the `visibility()` builtin. Unlike
+/// target visibility this is matched against the *package* of the loading file
+/// rather than a target label. When a `.bzl` file never calls `visibility()`
+/// there is no `LoadVisibility` at all, which is treated as public (matching
+/// Bazel).
+#[derive(Debug, Eq, PartialEq, Hash, Clone, Dupe, Allocative, Pagable)]
+pub enum LoadVisibility {
+    /// `visibility("private")`: loadable only from the same package (enforced
+    /// separately by the load-visibility check). Kept distinct from an empty
+    /// pattern list, which has the same meaning, so it renders as written.
+    Private,
+    /// `visibility([...])`, including `[]` and `["PUBLIC"]`.
+    Patterns(VisibilityPatternList),
+}
+
+impl LoadVisibility {
+    pub fn new(list: VisibilityPatternList) -> LoadVisibility {
+        LoadVisibility::Patterns(list)
+    }
+
+    /// `visibility(["PUBLIC"])` / `visibility("public")`: loadable from anywhere.
+    pub fn public() -> LoadVisibility {
+        LoadVisibility::Patterns(VisibilityPatternList::Public)
+    }
+
+    /// `visibility("private")`: loadable only from the same package.
+    pub fn private() -> LoadVisibility {
+        LoadVisibility::Private
+    }
+
+    /// Whether this is `visibility(["PUBLIC"])` / `visibility("public")`.
+    pub fn is_public(&self) -> bool {
+        matches!(
+            self,
+            LoadVisibility::Patterns(VisibilityPatternList::Public)
+        )
+    }
+
+    /// Whether a file in `package` may load the `.bzl` file that declared this
+    /// visibility.
+    pub fn matches_package(&self, package: CellPath) -> bool {
+        match self {
+            LoadVisibility::Private => false,
+            LoadVisibility::Patterns(list) => list.matches_package(package),
+        }
+    }
+
+    pub fn to_json(&self) -> serde_json::Value {
+        match self {
+            LoadVisibility::Private => serde_json::json!("private"),
+            LoadVisibility::Patterns(list) => list.to_json(),
+        }
+    }
+}
+
+/// Renders the argument as it would be passed to `visibility()`.
+impl Display for LoadVisibility {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        match self {
+            LoadVisibility::Private => write!(f, "\"private\""),
+            LoadVisibility::Patterns(list) => Display::fmt(list, f),
+        }
+    }
+}
+
 impl AnyMatches for VisibilitySpecification {
     fn any_matches(
         &self,
@@ -930,6 +1015,55 @@ mod tests {
             !intersection
                 .matches_target(&label("root//bar:bar"))
                 .unwrap()
+        );
+    }
+
+    fn pkg(s: &str) -> buck2_core::cells::cell_path::CellPath {
+        label(s).pkg().as_cell_path().to_owned()
+    }
+
+    #[test]
+    fn matches_package_public_and_private() {
+        assert!(VisibilityPatternList::Public.matches_package(pkg("root//anywhere:x")));
+
+        // Empty list is private: matches nothing.
+        let private = VisibilityPatternList::List(ThinArcSlice::empty());
+        assert!(!private.matches_package(pkg("root//anywhere:x")));
+    }
+
+    #[test]
+    fn matches_package_recursive_and_exact() {
+        let list = VisibilityPatternList::testing_parse(&["root//foo/...", "root//bar:"]);
+        // `//foo/...` matches the package itself and its subpackages.
+        assert!(list.matches_package(pkg("root//foo:x")));
+        assert!(list.matches_package(pkg("root//foo/sub:x")));
+        // `//bar:` matches only that exact package, not subpackages.
+        assert!(list.matches_package(pkg("root//bar:x")));
+        assert!(!list.matches_package(pkg("root//bar/sub:x")));
+        // Unrelated package does not match.
+        assert!(!list.matches_package(pkg("root//other:x")));
+    }
+
+    #[test]
+    fn matches_package_target_pattern_never_matches() {
+        // A `//foo:bar` target pattern names a target, not a package.
+        let list = VisibilityPatternList::testing_parse(&["root//foo:bar"]);
+        assert!(!list.matches_package(pkg("root//foo:anything")));
+    }
+
+    #[test]
+    fn load_visibility_public_and_private() {
+        assert!(LoadVisibility::public().matches_package(pkg("root//anywhere:x")));
+        assert!(!LoadVisibility::private().matches_package(pkg("root//anywhere:x")));
+    }
+
+    #[test]
+    fn load_visibility_display() {
+        assert_eq!(LoadVisibility::private().to_string(), "\"private\"");
+        assert_eq!(LoadVisibility::public().to_string(), "[\"PUBLIC\"]");
+        assert_eq!(
+            LoadVisibility::new(VisibilityPatternList::List(ThinArcSlice::empty())).to_string(),
+            "[]"
         );
     }
 

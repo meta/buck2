@@ -1120,6 +1120,11 @@ apple_test = prelude_rule(
             "force_static": attrs.option(attrs.bool(), default = None),
             "headers_as_raw_headers_mode": attrs.option(attrs.enum(HeadersAsRawHeadersMode), default = None),
             "incremental_bundling_enabled": attrs.option(attrs.bool(), default = None),
+            "internal_bridging_header": attrs.option(
+                attrs.source(),
+                default = None,
+                doc = "A bridging header whose declarations are imported with internal visibility during Swift compilation.",
+            ),
             "is_ui_test": attrs.bool(default = False),
             "lang_compiler_flags": attrs.dict(key = attrs.enum(CxxSourceType), value = attrs.list(attrs.arg()), sorted = False, default = {}),
             "lang_preprocessor_flags": attrs.dict(key = attrs.enum(CxxSourceType), value = attrs.list(attrs.arg()), sorted = False, default = {}),

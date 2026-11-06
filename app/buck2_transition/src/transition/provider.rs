@@ -89,7 +89,7 @@ fn transition_info_creator(globals: &mut GlobalsBuilder) {
         >,
         #[starlark(require = named)] attrs: Option<ValueOf<'v, UnpackListOrTuple<String>>>,
     ) -> starlark::Result<TransitionInfo<'v>> {
-        let attrs = attrs.map_or(Value::new_none(), |v| v.value);
+        let attrs = attrs.map_or(Value::new_none(), |v| v.to_value());
         Ok(TransitionInfo {
             r#impl: ValueOfUnchecked::new(r#impl.0),
             attrs: ValueOfUnchecked::new(attrs),

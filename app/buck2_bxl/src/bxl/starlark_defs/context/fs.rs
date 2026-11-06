@@ -314,7 +314,7 @@ fn fs_operations(builder: &mut MethodsBuilder) {
                         }
                         NoneOr::Other(target_hint) => {
                             let target_expr = TargetListExpr::<'v, TargetNode>::unpack(
-                                target_hint.typed,
+                                target_hint.unpack(),
                                 &this.ctx,
                                 dice,
                             )
@@ -323,7 +323,7 @@ fn fs_operations(builder: &mut MethodsBuilder) {
                                 Ok(node.label().pkg())
                             } else {
                                 Err(BxlFilesystemError::MultipleTargetHintsNotSupported(
-                                    target_hint.value.to_repr(),
+                                    target_hint.to_value().to_repr(),
                                 )
                                 .into())
                             }

@@ -207,7 +207,7 @@ pub(crate) fn analysis_actions_methods_write(methods: &mut MethodsBuilder) {
         )?;
 
         let value = declaration.into_declared_artifact(AssociatedArtifacts::new());
-        let cli = UnregisteredWriteJsonAction::cli(value.to_value(), content.value)?;
+        let cli = UnregisteredWriteJsonAction::cli(value.to_value(), content.to_value())?;
 
         let mut visitor = CommandLineInputVisitor::new(false);
         cli.visit_contents(&mut visitor)?;
@@ -220,7 +220,7 @@ pub(crate) fn analysis_actions_methods_write(methods: &mut MethodsBuilder) {
                 absolute,
                 use_dep_files_placeholder_for_content_based_paths,
             ),
-            Some(content.value),
+            Some(content.to_value()),
             None,
             exec_group,
             action_name,
@@ -231,7 +231,7 @@ pub(crate) fn analysis_actions_methods_write(methods: &mut MethodsBuilder) {
         if dep_files_fingerprint_using_canonical_paths {
             let fingerprint = StarlarkDepFileFingerprint {
                 artifact: value.to_value(),
-                content: content.value,
+                content: content.to_value(),
                 absolute,
                 format: DepFileFingerprintFormat::Json { pretty },
             };
@@ -280,12 +280,12 @@ pub(crate) fn analysis_actions_methods_write(methods: &mut MethodsBuilder) {
             has_content_based_path.into_option(),
         )?;
         let value = declaration.into_declared_artifact(AssociatedArtifacts::new());
-        visit_hmap_artifacts(content.value, &mut CommandLineInputVisitor::new(false))?;
+        visit_hmap_artifacts(content.to_value(), &mut CommandLineInputVisitor::new(false))?;
         let action_name = write_action_name("write_hmap", &output_artifact);
         this.register_action_in_group(
             buck_mut_insertion_set![output_artifact],
             UnregisteredWriteHmapAction {},
-            Some(content.value),
+            Some(content.to_value()),
             None,
             exec_group,
             action_name,

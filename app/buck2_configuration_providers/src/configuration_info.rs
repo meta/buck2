@@ -210,25 +210,24 @@ fn configuration_info_creator(globals: &mut GlobalsBuilder) {
         >,
         #[starlark(
             require = named,
-            default = ValueOf {
-                value: starlark::values::Value::new_empty_dict(),
-                typed: UnpackDictEntries::default()
-            }
+            default = ValueOf::new_unchecked(starlark::values::Value::new_empty_dict())
         )]
         root_values: ValueOf<'v, UnpackDictEntries<&'v str, UnpackAndDiscard<&'v str>>>,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<ConfigurationInfo<'v>> {
         let new_constraints = build_constraints_map_from_dict(constraints)?;
 
-        for (k, _) in &values.typed.entries {
+        let value_entries = values.unpack().entries;
+        let root_value_entries = root_values.unpack().entries;
+        for (k, _) in &value_entries {
             parse_config_section_and_key(k, None)?;
         }
-        for (k, _) in &root_values.typed.entries {
+        for (k, _) in &root_value_entries {
             parse_config_section_and_key(k, None)?;
         }
 
-        let value_keys: BuckMutSet<&str> = values.typed.entries.iter().map(|(k, _)| *k).collect();
-        for (k, _) in &root_values.typed.entries {
+        let value_keys: BuckMutSet<&str> = value_entries.iter().map(|(k, _)| *k).collect();
+        for (k, _) in &root_value_entries {
             if value_keys.contains(k) {
                 return Err(buck2_error::Error::from(
                     ConfigurationInfoError::DuplicateKeyAcrossValuesAndRootValues(k.to_string()),

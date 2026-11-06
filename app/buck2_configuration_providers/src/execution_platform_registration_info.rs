@@ -141,7 +141,7 @@ fn info_creator(globals: &mut GlobalsBuilder) {
         >,
     ) -> starlark::Result<ExecutionPlatformRegistrationInfo<'v>> {
         Ok(ExecutionPlatformRegistrationInfo {
-            platforms: ValueOfUnchecked::new(platforms.value),
+            platforms: ValueOfUnchecked::new(platforms.to_value()),
             fallback: ValueOfUnchecked::new(match fallback {
                 NoneOr::None => Value::new_none(),
                 NoneOr::Other(v) => v,

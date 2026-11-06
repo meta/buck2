@@ -88,7 +88,7 @@ pub(crate) fn register_int(globals: &mut GlobalsBuilder) {
         let Some(a) = a else {
             return Ok(ValueOfUnchecked::new(heap.alloc(0)));
         };
-        let num_or_bool = match a.typed {
+        let num_or_bool = match a.unpack() {
             Either::Left(num_or_bool) => num_or_bool,
             Either::Right(s) => {
                 let base = base.unwrap_or(0);
@@ -160,7 +160,7 @@ pub(crate) fn register_int(globals: &mut GlobalsBuilder) {
         }
 
         match num_or_bool {
-            Either::Left(NumRef::Int(_)) => Ok(ValueOfUnchecked::new(a.value)),
+            Either::Left(NumRef::Int(_)) => Ok(ValueOfUnchecked::new(a.to_value())),
             Either::Left(NumRef::Float(f)) => Ok(ValueOfUnchecked::new(
                 heap.alloc(StarlarkInt::from_f64_exact(f.0.trunc())?),
             )),

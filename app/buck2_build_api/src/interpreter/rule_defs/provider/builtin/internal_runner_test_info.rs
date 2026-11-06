@@ -625,8 +625,9 @@ fn internal_runner_test_info_creator(globals: &mut GlobalsBuilder) {
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<InternalRunnerTestInfo<'v>> {
         let exec_group = exec_group.into_option();
+        let group = exec_group.map(|g| g.try_unpack()).transpose()?;
         let default_executor = default_executor_with_execution_group(
-            exec_group.as_ref().map(|g| &g.typed.group),
+            group.as_ref().map(|g| &g.group),
             default_executor.into_option(),
             eval,
         )?;
@@ -640,7 +641,9 @@ fn internal_runner_test_info_creator(globals: &mut GlobalsBuilder) {
             use_project_relative_paths: ValueOfUnchecked::new(use_project_relative_paths),
             run_from_project_root: ValueOfUnchecked::new(run_from_project_root),
             default_executor,
-            exec_group: ValueOfUnchecked::new(exec_group.map_or(Value::new_none(), |g| g.value)),
+            exec_group: ValueOfUnchecked::new(
+                exec_group.map_or(Value::new_none(), |g| g.to_value()),
+            ),
             executor_overrides: ValueOfUnchecked::new(executor_overrides),
             local_resources: ValueOfUnchecked::new(local_resources),
             required_local_resources: ValueOfUnchecked::new(required_local_resources),

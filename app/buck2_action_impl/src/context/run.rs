@@ -474,7 +474,7 @@ pub(crate) fn analysis_actions_methods_run(methods: &mut MethodsBuilder) {
         let starlark_env = match &env {
             None => None,
             Some(env) => {
-                for (_k, v) in &env.typed.entries {
+                for (_k, v) in &env.unpack().entries {
                     v.0.visit_artifacts(&mut artifact_visitor)?;
                 }
                 Some(env.as_unchecked().cast())

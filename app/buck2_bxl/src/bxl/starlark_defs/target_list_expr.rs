@@ -407,7 +407,7 @@ impl<'v> TargetListExpr<'v, ConfiguredTargetNode> {
         dice: &mut DiceComputations<'_>,
         keep_going: bool,
     ) -> buck2_error::Result<TargetListExpr<'v, ConfiguredTargetNode>> {
-        match value.typed {
+        match value.unpack() {
             ConfiguredTargetListArg::ConfiguredTargetSet(s) => {
                 Ok(Self::TargetSet(Cow::Borrowed(s)))
             }
@@ -454,10 +454,10 @@ impl<'v> TargetListExpr<'v, ConfiguredTargetNode> {
                                 resolved.extend(items);
                             } else {
                                 let error: buck2_error::Error =
-                                    TargetExprError::NotATarget(value.value.to_repr()).into();
+                                    TargetExprError::NotATarget(value.to_value().to_repr()).into();
                                 return Err(error.context(format!(
                                     "Error resolving list `{}`",
-                                    truncate(&value.value.to_repr(), 150)
+                                    truncate(&value.to_value().to_repr(), 150)
                                 )));
                             }
                         }
@@ -533,7 +533,7 @@ impl<'v> TargetListExpr<'v, TargetNode> {
                 let mut resolved = vec![];
 
                 for item in items.items {
-                    let unpacked = Self::unpack_literal(item.typed, ctx, dice).await?;
+                    let unpacked = Self::unpack_literal(item.unpack(), ctx, dice).await?;
 
                     match unpacked {
                         TargetListExpr::One(node) => resolved.push(node),
@@ -543,7 +543,7 @@ impl<'v> TargetListExpr<'v, TargetNode> {
                         }
                         .for_each(|t| resolved.push(TargetExpr::Node(t))),
                         TargetListExpr::Iterable(_) => {
-                            return Err(TargetExprError::NotATarget(item.value.to_repr()))
+                            return Err(TargetExprError::NotATarget(item.to_value().to_repr()))
                                 .buck_error_context("list in a list");
                         }
                     }
@@ -822,7 +822,7 @@ impl OwnedTargetListExprArg {
                     let owned_targets = list
                         .items
                         .iter()
-                        .map(|item| OwnedTargetNodeArg::from_ref(&item.typed))
+                        .map(|item| OwnedTargetNodeArg::from_ref(&item.unpack()))
                         .collect();
                     OwnedTargetListExprArg::TargetList(owned_targets)
                 }

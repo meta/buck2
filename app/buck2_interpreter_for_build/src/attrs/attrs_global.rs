@@ -602,7 +602,7 @@ fn attr_module(registry: &mut GlobalsBuilder) {
         // it ends up being `Type` which doesn't match the data we see.
         Ok(Attribute::attr(
             eval,
-            default.map(|v| v.value),
+            default.map(|v| v.to_value()),
             doc,
             AttrType::enumeration(variants.items)?,
             ToolMarks::NONE,

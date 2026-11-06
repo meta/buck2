@@ -399,7 +399,7 @@ fn default_info_creator(builder: &mut GlobalsBuilder) {
         #[starlark(default = NoneOr::None)] default_outputs: NoneOr<
             ValueOf<'v, UnpackList<UnpackAndDiscard<ValueIsInputArtifactAnnotation>>>,
         >,
-        #[starlark(default = ValueOf { value: Value::new_empty_list(), typed: UnpackList::default()})]
+        #[starlark(default = ValueOf::new_unchecked(Value::new_empty_list()))]
         other_outputs: ValueOf<
             'v,
             UnpackList<UnpackAndDiscard<ValueAsCommandLineLike<'v>>>,

@@ -15,10 +15,16 @@
  * limitations under the License.
  */
 
+use crate as starlark;
+use crate::any::ProvidesStaticType;
 use crate::typing::Ty;
+use crate::values::Heap;
 use crate::values::UnpackAndDiscard;
 use crate::values::UnpackValue;
 use crate::values::Value;
+use crate::values::ValueOf;
+use crate::values::list::AllocList;
+use crate::values::list::ListRef;
 use crate::values::list::UnpackList;
 use crate::values::type_repr::StarlarkTypeRepr;
 
@@ -26,6 +32,7 @@ use crate::values::type_repr::StarlarkTypeRepr;
 ///
 /// [`StarlarkTypeRepr`] provides `list[T]`.
 /// [`UnpackValue`] implementation verifies the types of items.
+#[derive(ProvidesStaticType)]
 pub struct ListType<T> {
     _item: std::marker::PhantomData<T>,
 }
@@ -50,5 +57,31 @@ impl<'v, T: UnpackValue<'v>> UnpackValue<'v> for ListType<T> {
             Ok(None) => Ok(None),
             Err(e) => Err(e),
         }
+    }
+}
+
+impl<'v, T: UnpackValue<'v>> ValueOf<'v, ListType<T>> {
+    /// A new list of these values.
+    pub fn alloc_list(heap: Heap<'v>, items: impl IntoIterator<Item = ValueOf<'v, T>>) -> Self {
+        Self::new_unchecked(heap.alloc(AllocList(items.into_iter().map(|x| x.to_value()))))
+    }
+
+    /// The list.
+    #[inline]
+    pub fn list(self) -> &'v ListRef<'v> {
+        ListRef::from_value(self.to_value()).expect("a value's type does not change")
+    }
+
+    /// The elements. Each is re-checked unless the list is frozen, since a mutable list may
+    /// have been changed after the check; for a frozen list every item is `Ok`.
+    pub fn iter(self) -> impl Iterator<Item = crate::Result<ValueOf<'v, T>>> + 'v {
+        let frozen = self.to_value().is_frozen();
+        self.list().iter().map(move |x| {
+            if frozen {
+                Ok(ValueOf::new_unchecked(x))
+            } else {
+                ValueOf::new_err(x)
+            }
+        })
     }
 }

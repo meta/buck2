@@ -95,7 +95,7 @@ fn struct_dynattrs(globals: &mut GlobalsBuilder) {
         #[starlark(require = pos)] ty: ValueOf<'v, TypeType>,
         heap: Heap<'v>,
     ) -> starlark::Result<StarlarkDynamicAttrType<'v>> {
-        let ty = TypeCompiled::new(ty.value, heap)?;
+        let ty = TypeCompiled::new(ty.to_value(), heap)?;
         Ok(StarlarkDynamicAttrType {
             ty: DynamicAttrType::Value(ty),
         })
@@ -117,7 +117,7 @@ fn struct_dynattrs(globals: &mut GlobalsBuilder) {
         #[starlark(require = pos)] value: &'v StarlarkDynamicAttrType<'v>,
         heap: Heap<'v>,
     ) -> starlark::Result<StarlarkDynamicAttrType<'v>> {
-        let key = TypeCompiled::new(key.value, heap)?;
+        let key = TypeCompiled::new(key.to_value(), heap)?;
         let value = value.ty.clone();
         Ok(StarlarkDynamicAttrType {
             ty: DynamicAttrType::Dict(Box::new((key, value))),

@@ -132,7 +132,7 @@ fn validation_info_creator(globals: &mut GlobalsBuilder) {
         >,
     ) -> starlark::Result<ValidationInfo<'v>> {
         let result = ValidationInfo {
-            validations: ValueOfUnchecked::new(validations.value),
+            validations: ValueOfUnchecked::new(validations.to_value()),
         };
         validate_validation_info(&result)?;
         Ok(result)

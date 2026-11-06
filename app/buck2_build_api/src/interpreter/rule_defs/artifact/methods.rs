@@ -104,7 +104,7 @@ fn input_artifact_methods(builder: &mut MethodsBuilder) {
     fn as_output<'v>(
         this: ValueOf<'v, &'v dyn StarlarkInputArtifactLike<'v>>,
     ) -> starlark::Result<StarlarkOutputArtifact<'v>> {
-        Ok(this.typed.as_output(this.value)?)
+        Ok(this.unpack().as_output(this.to_value())?)
     }
 
     /// Create an artifact that lives at path relative from this artifact.

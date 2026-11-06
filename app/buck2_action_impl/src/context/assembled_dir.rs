@@ -65,7 +65,7 @@ fn assembled_dir_members(globals: &mut GlobalsBuilder) {
     ) -> starlark::Result<StarlarkAssembledDirEntry<'v>> {
         Ok(StarlarkAssembledDirEntry {
             copy: true,
-            artifact: artifact.value,
+            artifact: artifact.to_value(),
         })
     }
 
@@ -77,7 +77,7 @@ fn assembled_dir_members(globals: &mut GlobalsBuilder) {
     ) -> starlark::Result<StarlarkAssembledDirEntry<'v>> {
         Ok(StarlarkAssembledDirEntry {
             copy: false,
-            artifact: artifact.value,
+            artifact: artifact.to_value(),
         })
     }
 }

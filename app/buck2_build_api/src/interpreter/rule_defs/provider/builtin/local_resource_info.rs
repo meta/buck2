@@ -130,7 +130,7 @@ fn local_resource_info_creator(globals: &mut GlobalsBuilder) {
             resource_env_vars: resource_env_vars.as_unchecked().cast(),
             setup_timeout_seconds: match setup_timeout_seconds {
                 NoneOr::None => ValueOfUnchecked::new(Value::new_none()),
-                NoneOr::Other(s) => ValueOfUnchecked::new(s.value),
+                NoneOr::Other(s) => ValueOfUnchecked::new(s.to_value()),
             },
         };
         validate_local_resource_info(&result)?;

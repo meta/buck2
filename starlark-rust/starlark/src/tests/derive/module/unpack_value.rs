@@ -32,28 +32,28 @@ use crate::values::set::UnpackSetEntries;
 #[starlark_module]
 fn validate_module(builder: &mut GlobalsBuilder) {
     fn with_int<'v>(v: ValueOf<'v, i32>) -> anyhow::Result<(Value<'v>, String)> {
-        Ok((*v, format!("{}", v.typed)))
+        Ok((v.to_value(), format!("{}", v.unpack())))
     }
     fn with_int_list<'v>(v: ValueOf<'v, UnpackList<i32>>) -> anyhow::Result<(Value<'v>, String)> {
-        let repr = v.typed.items.iter().join(", ");
-        Ok((v.value, repr))
+        let repr = v.unpack().items.iter().join(", ");
+        Ok((v.to_value(), repr))
     }
     fn with_list_list<'v>(
         v: ValueOf<'v, UnpackList<ValueOf<'v, UnpackList<i32>>>>,
     ) -> anyhow::Result<(Value<'v>, String)> {
         let repr = v
-            .typed
+            .unpack()
             .items
             .iter()
-            .map(|l| l.typed.items.iter().join(", "))
+            .map(|l| l.unpack().items.iter().join(", "))
             .join(" + ");
-        Ok((v.value, repr))
+        Ok((v.to_value(), repr))
     }
     fn with_dict_list<'v>(
         v: ValueOf<'v, UnpackList<UnpackDictEntries<i32, i32>>>,
     ) -> anyhow::Result<(Value<'v>, String)> {
         let repr = v
-            .typed
+            .unpack()
             .items
             .iter()
             .map(|l| {
@@ -63,35 +63,35 @@ fn validate_module(builder: &mut GlobalsBuilder) {
                     .join(", ")
             })
             .join(" + ");
-        Ok((v.value, repr))
+        Ok((v.to_value(), repr))
     }
     fn with_int_dict<'v>(
         v: ValueOf<'v, UnpackDictEntries<i32, i32>>,
     ) -> anyhow::Result<(Value<'v>, String)> {
         let repr = v
-            .typed
+            .unpack()
             .entries
             .iter()
             .map(|(k, v)| format!("{k}: {v}"))
             .join(" + ");
-        Ok((v.value, repr))
+        Ok((v.to_value(), repr))
     }
     fn with_list_dict<'v>(
         v: ValueOf<'v, UnpackDictEntries<i32, ValueOf<'v, UnpackList<i32>>>>,
     ) -> anyhow::Result<(Value<'v>, String)> {
         let repr = v
-            .typed
+            .unpack()
             .entries
             .iter()
-            .map(|(k, v)| format!("{}: {}", k, v.typed.items.iter().join(", ")))
+            .map(|(k, v)| format!("{}: {}", k, v.unpack().items.iter().join(", ")))
             .join(" + ");
-        Ok((v.value, repr))
+        Ok((v.to_value(), repr))
     }
     fn with_dict_dict<'v>(
         v: ValueOf<'v, UnpackDictEntries<i32, UnpackDictEntries<i32, i32>>>,
     ) -> anyhow::Result<(Value<'v>, String)> {
         let repr = v
-            .typed
+            .unpack()
             .entries
             .iter()
             .map(|(k, v)| {
@@ -103,7 +103,7 @@ fn validate_module(builder: &mut GlobalsBuilder) {
                 format!("{k}: {inner_repr}")
             })
             .join(" + ");
-        Ok((v.value, repr))
+        Ok((v.to_value(), repr))
     }
     fn with_either<'v>(
         v: Either<i32, Either<String, ValueOf<'v, UnpackList<i32>>>>,
@@ -112,13 +112,13 @@ fn validate_module(builder: &mut GlobalsBuilder) {
             Either::Left(i) => Ok(i.to_string()),
             Either::Right(nested) => match nested {
                 Either::Left(s) => Ok(s),
-                Either::Right(l) => Ok(l.value.to_repr()),
+                Either::Right(l) => Ok(l.to_value().to_repr()),
             },
         }
     }
     fn with_set<'v>(v: ValueOf<'v, UnpackSetEntries<i32>>) -> anyhow::Result<(Value<'v>, String)> {
-        let repr = v.typed.entries.iter().join(", ");
-        Ok((v.value, repr))
+        let repr = v.unpack().entries.iter().join(", ");
+        Ok((v.to_value(), repr))
     }
 }
 

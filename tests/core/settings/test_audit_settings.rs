@@ -139,7 +139,7 @@ async fn test_text_report(buck: &Buck) -> anyhow::Result<()> {
         buck.cwd().join(".bucksettings.toml"),
         "[analysis]\nrecord_requested_anon_targets = false\n",
     )?;
-    let result = buck.audit(&["settings", "--verbose"]).await?;
+    let result = buck.audit(&["settings", "--detailed"]).await?;
     assert!(result.stdout.contains("Buck settings buck2settings-"));
     assert!(result.stdout.contains("Layers, lowest priority first:"));
     assert!(result.stdout.contains("[analysis]  daemon scope, version"));

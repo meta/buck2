@@ -703,6 +703,8 @@ impl CommandKind {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeSet;
+
     use buck2_client_ctx::agent_context::parse_agent_context;
 
     use super::*;
@@ -725,6 +727,35 @@ mod tests {
             .iter()
             .map(|value| parse_agent_context(value).unwrap())
             .collect()
+    }
+
+    #[test]
+    fn test_no_command_has_two_arguments_with_the_same_name() {
+        // clap checks this itself only when it is built with debug assertions, as open source's
+        // debug buck2 is, and then panics when it builds the command.
+        fn check(command: &clap::Command, path: &str) {
+            let mut longs = BTreeSet::new();
+            let mut shorts = BTreeSet::new();
+            for arg in command.get_arguments() {
+                if let Some(long) = arg.get_long() {
+                    assert!(longs.insert(long), "`{path}` has two `--{long}` arguments");
+                }
+                if let Some(short) = arg.get_short() {
+                    assert!(
+                        shorts.insert(short),
+                        "`{path}` has two `-{short}` arguments"
+                    );
+                }
+            }
+            for subcommand in command.get_subcommands() {
+                check(subcommand, &format!("{path} {}", subcommand.get_name()));
+            }
+        }
+
+        // Building the command gives each subcommand the global arguments.
+        let mut command = Opt::clap_command();
+        command.build();
+        check(&command, "buck2");
     }
 
     #[test]

@@ -62,6 +62,12 @@ buck2_e2e_test(
     name = "test_prelude_rules",
     srcs = ["test_prelude_rules.rs"],
     data_dir = "test_prelude_rules_data",
+    # `cpe::x2p` resolves `localhost` incorrectly, and the downloads fail.
+    env = {"CPE_RUST_X2P_SUPPORTS_VPNLESS": "0"},
+    deps = [
+        "fbsource//third-party/rust:hex",
+        "fbsource//third-party/rust:sha2",
+    ],
 )
 
 buck2_e2e_test(

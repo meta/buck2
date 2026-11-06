@@ -10,6 +10,7 @@
 
 package com.facebook.buck.installer.android;
 
+import com.facebook.infer.annotation.Nullsafe;
 import com.google.common.annotations.VisibleForTesting;
 import java.util.ArrayList;
 import java.util.EnumSet;
@@ -28,6 +29,7 @@ import java.util.logging.Logger; // NOPMD
  * together, so that pair is one method rather than a contract callers are trusted to keep, and the
  * pushes are waited on and stopped from here rather than handed out.
  */
+@Nullsafe(Nullsafe.Mode.LOCAL)
 final class StreamedPushes {
   private static final Logger LOG = Logger.getLogger(StreamedPushes.class.getName());
 

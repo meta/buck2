@@ -11,6 +11,7 @@
 package com.facebook.buck.installer.android;
 
 import com.facebook.buck.android.AdbHelper;
+import com.facebook.infer.annotation.Nullsafe;
 import java.util.function.Supplier;
 import javax.annotation.Nullable;
 
@@ -18,6 +19,7 @@ import javax.annotation.Nullable;
  * Everything one install accumulates, so that something new to track is a field here rather than
  * another map keyed by install id.
  */
+@Nullsafe(Nullsafe.Mode.LOCAL)
 final class InstallState {
   private final AndroidArtifacts artifacts = new AndroidArtifacts();
   private final InstallMetrics metrics = new InstallMetrics();

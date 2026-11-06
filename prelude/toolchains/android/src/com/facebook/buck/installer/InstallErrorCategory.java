@@ -11,7 +11,9 @@
 package com.facebook.buck.installer;
 
 import com.facebook.buck.install.model.ErrorCategory;
+import com.facebook.infer.annotation.Nullsafe;
 
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public enum InstallErrorCategory {
   UNKNOWN,
   INFRA,

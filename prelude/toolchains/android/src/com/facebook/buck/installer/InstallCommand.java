@@ -10,6 +10,7 @@
 
 package com.facebook.buck.installer;
 
+import com.facebook.infer.annotation.Nullsafe;
 import java.nio.file.Path;
 import java.util.Set;
 
@@ -17,6 +18,7 @@ import java.util.Set;
  * Install Command interface. Support for a specific installer such as iOS or Android is implemented
  * as subclasses of this interface. *
  */
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public interface InstallCommand {
   /**
    * Names this implementation, e.g. {@code android}. Reported with every install so telemetry can

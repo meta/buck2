@@ -17,6 +17,7 @@ import com.facebook.buck.android.device.TargetDeviceOptions;
 import com.facebook.buck.android.exopackage.AdbUtils;
 import com.facebook.buck.android.exopackage.InstallTimings;
 import com.facebook.buck.android.exopackage.SetDebugAppMode;
+import com.facebook.infer.annotation.Nullsafe;
 import java.util.Optional;
 import java.util.logging.Logger; // NOPMD
 
@@ -26,6 +27,7 @@ import java.util.logging.Logger; // NOPMD
  * <p>The one place the command line and the install options are turned into the objects adb needs,
  * so a second construction cannot drift from it and reach a different set of devices.
  */
+@Nullsafe(Nullsafe.Mode.LOCAL)
 class AdbHelperFactory {
 
   private AdbHelperFactory() {}

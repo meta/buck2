@@ -11,10 +11,12 @@
 package com.facebook.buck.installer.android;
 
 import com.facebook.buck.android.AndroidInstallPrinter;
+import com.facebook.infer.annotation.Nullsafe;
 import java.util.logging.Level;
 import java.util.logging.Logger; // NOPMD
 
 /** Handles logging for android installs */
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public class IsolatedAndroidInstallerPrinter implements AndroidInstallPrinter {
 
   private final Logger logger;

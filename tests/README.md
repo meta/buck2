@@ -7,7 +7,9 @@ This directory contains tests for buck2. Primary constituents:
  - `e2e_util/` - the test framework for the integration tests.
  - `e2e/` and `meta_only/e2e` - a hodgepodge of tests covering a combination of buck2 itself, the
    prelude, some macros, and various integrations. Avoid if possible. Strongly avoid in favor of
-   `core/` if testing buck2 core.
+   `core/` if testing buck2 core. A test that runs inplace, building fbsource's own targets, or
+   otherwise needs Meta's infrastructure goes in `meta_only/e2e`, which open source does not get;
+   `e2e/` keeps the tests that set up their own project.
  - `targets/` - target definitions accessed by `e2e` tests.
  - `prelude/` - there is currently no fully endorsed testing strategy for the prelude. This
    directory is an attempt at creating one, however its still immature and there are gaps.

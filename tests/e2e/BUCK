@@ -3,56 +3,6 @@ load("@fbcode//buck2/tests:buck_e2e.bzl", "buck2_e2e_test")
 oncall("build_infra")
 
 buck2_e2e_test(
-    name = "test_starlark",
-    srcs = ["test_starlark.rs"],
-)
-
-buck2_e2e_test(
-    name = "test_rust_project",
-    srcs = ["test_rust_project.rs"],
-    env = {
-        "RUST_PROJECT_BIN": "$(location fbcode//buck2/integrations/rust-project:rust-project)",
-    },
-)
-
-buck2_e2e_test(
-    name = "test_cxx_flags",
-    srcs = ["test_cxx_flags.rs"],
-    deps = ["fbsource//third-party/rust:shlex"],
-)
-
-buck2_e2e_test(
-    name = "test_linker_argsfile",
-    srcs = ["test_linker_argsfile.rs"],
-)
-
-buck2_e2e_test(
-    name = "test_lsp_fbsource",
-    srcs = ["test_lsp_fbsource.rs"],
-)
-
-buck2_e2e_test(
-    name = "test_cpp_gen_cdb",
-    srcs = ["test_cpp_gen_cdb.rs"],
-)
-
-buck2_e2e_test(
-    name = "test_tools",
-    srcs = ["test_tools.rs"],
-    test_with_deployed_buck2 = True,
-    use_compiled_buck2_client_and_tpx = True,
-    deps = select({
-        "DEFAULT": [],
-        "ovr_config//os:linux": ["fbsource//third-party/rust:regex"],
-    }),
-)
-
-buck2_e2e_test(
-    name = "test_install_modifiers",
-    srcs = ["test_install_modifiers.rs"],
-)
-
-buck2_e2e_test(
     name = "test_git_fetch",
     srcs = ["test_git_fetch.rs"],
     data_dir = "test_git_fetch_data",

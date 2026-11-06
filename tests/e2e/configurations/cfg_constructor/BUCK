@@ -1,16 +1,8 @@
 # @noautodeps
 load("@fbcode//buck2/tests:buck_e2e.bzl", "buck2_e2e_test")
 load("@fbsource//tools/build_defs:rust_library.bzl", "rust_library")
-load("@prelude//cfg/modifier:name.bzl", "NAMED_CONSTRAINT_SETTINGS")
-load(":constraint_setting_group.bzl", "constraint_setting_group")
 
 oncall("buck2")
-
-buck2_e2e_test(
-    name = "test_cli_modifiers",
-    srcs = ["test_cli_modifiers.rs"],
-    deps = [":modifiers_util"],
-)
 
 buck2_e2e_test(
     name = "test_invoke_cfg_constructors",
@@ -19,27 +11,9 @@ buck2_e2e_test(
 )
 
 buck2_e2e_test(
-    name = "test_set_cfg_modifiers",
-    srcs = ["test_set_cfg_modifiers.rs"],
-    test_with_deployed_buck2 = True,
-)
-
-buck2_e2e_test(
     name = "test_invoke_cfg_constructors_bad_constraints",
     srcs = ["test_invoke_cfg_constructors_bad_constraints.rs"],
     data_dir = "test_invoke_cfg_constructors_bad_constraints_data",
-)
-
-buck2_e2e_test(
-    name = "test_cfg_constructors_inplace",
-    srcs = ["test_cfg_constructors_inplace.rs"],
-    test_with_deployed_buck2 = True,
-    test_with_reverted_buck2 = True,
-)
-
-constraint_setting_group(
-    name = "test_named_constraint_settings",
-    deps = NAMED_CONSTRAINT_SETTINGS.keys(),
 )
 
 buck2_e2e_test(

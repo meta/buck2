@@ -819,6 +819,112 @@ async fn test_no_buckd_explicit_file_watcher_wins(buck: &Buck) -> anyhow::Result
 }
 
 #[buck_test]
+async fn test_no_buckd_startup_is_quiet(buck: &Buck) -> anyhow::Result<()> {
+    // The in-process daemon starts up on the user's terminal, not in a buckd.stderr
+    // that a tailing client would need to catch up on.
+    let result = buck.targets(&[":", "--no-buckd"]).await?;
+    assert!(
+        !result.stderr.contains("daemon_listener"),
+        "{}",
+        result.stderr
+    );
+    Ok(())
+}
+
+#[buck_test]
+async fn test_no_buckd_leaves_no_daemon_record(buck: &Buck) -> anyhow::Result<()> {
+    buck.targets(&[":", "--no-buckd"]).await?;
+    let daemon_dir = buck.daemon_dir().await?;
+    assert!(!daemon_dir.join("buckd.info").exists());
+    // The next command starts a fresh daemon instead of chasing the dead record.
+    let result = buck.targets(&[":"]).await?;
+    assert!(
+        !result.stderr.contains("Could not connect"),
+        "{}",
+        result.stderr
+    );
+    Ok(())
+}
+
+// There is no Ctrl-C for a single process on Windows.
+#[cfg(unix)]
+#[buck_test(skip_for_os = ["windows"])]
+async fn test_no_buckd_interrupt_leaves_no_daemon_record(
+    buck: &Buck,
+    tmp_path: &Path,
+) -> anyhow::Result<()> {
+    let event_log = tmp_path.join("build.json-lines");
+    let mut build = buck
+        .build(&[
+            ":long_running",
+            "--no-buckd",
+            "--local-only",
+            "--no-remote-cache",
+            "--event-log",
+            event_log.to_str().context("event log path is not UTF-8")?,
+        ])
+        .spawn();
+    // Interrupt in the middle of the command, once its action runs.
+    let deadline = Instant::now() + Duration::from_secs(60);
+    loop {
+        if build.try_wait().is_some() {
+            let output = build.wait().await.unwrap_or_else(BuckError::into_output);
+            panic!(
+                "the build died before its action ran (exit_code={:?}): {}",
+                output.exit_code(),
+                output.stderr
+            );
+        }
+        if std::fs::read_to_string(&event_log).is_ok_and(|log| log.contains("\"ActionExecution\""))
+        {
+            break;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "the build never started its action"
+        );
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    let daemon_dir = buck.daemon_dir().await?;
+    assert!(daemon_dir.join("buckd.info").exists());
+    let _interrupted = build.interrupt().await;
+    assert!(!daemon_dir.join("buckd.info").exists());
+    let result = buck.targets(&[":"]).await?;
+    assert!(
+        !result.stderr.contains("Could not connect"),
+        "{}",
+        result.stderr
+    );
+    Ok(())
+}
+
+// On Windows `run` waits for the target as a child instead of replacing the client with it,
+// so the in-process daemon still owns buck-out while the target runs.
+#[buck_test(skip_for_os = ["windows"])]
+async fn test_no_buckd_run_nested_buck_is_its_own_invocation(buck: &Buck) -> anyhow::Result<()> {
+    let result = buck
+        .run(&[":nested_buck", "--no-buckd"])
+        .env("NESTED_BUCK2", buck.executable().as_os_str())
+        .env(
+            "NESTED_ISOLATION_DIR",
+            buck.isolation_prefix().unwrap_or("v2"),
+        )
+        .await?;
+    // `run` execs the target onto the client's pid after the daemon record is
+    // gone, so the nested invocation starts its own daemon instead of chasing a
+    // record that by now names the target itself, and killing it.
+    assert!(result.stdout.contains("root//:rule"), "{}", result.stdout);
+    assert!(
+        !result.stderr.contains("killing daemon"),
+        "{}",
+        result.stderr
+    );
+    let daemon_dir = buck.daemon_dir().await?;
+    assert!(!daemon_dir.join("buckd.info").exists());
+    Ok(())
+}
+
+#[buck_test]
 async fn test_buck_out_is_cache_dir(buck: &Buck) -> anyhow::Result<()> {
     buck.targets(&[":"]).await?; // Start a daemon
     let root = buck.root(&[]).await?;

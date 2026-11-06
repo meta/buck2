@@ -38,6 +38,7 @@ use crate::daemon::client::connect::DaemonConstraintsRequest;
 use crate::daemon::client::connect::DaemonStartupMode;
 use crate::daemon::client::connect::DesiredTraceIoState;
 use crate::daemon::client::connect::connect_buckd;
+use crate::daemon::client::connect::remove_in_process_daemon_info;
 use crate::events_ctx::EventsCtx;
 use crate::exit_result::ExitResult;
 use crate::path_arg::PathArg;
@@ -234,6 +235,10 @@ impl<T: StreamingCommand> BuckSubcommand for T {
         mut ctx: ClientCommandContext<'_>,
         events_ctx: &mut EventsCtx,
     ) -> ExitResult {
+        let in_process_daemon_dir = match &ctx.start_in_process_daemon {
+            None => None,
+            Some(_) => Some(ctx.paths()?.daemon_dir()?),
+        };
         let work = async {
             let mut connect_options = if T::existing_only() {
                 BuckdConnectOptions::ExistingOnly
@@ -294,9 +299,18 @@ impl<T: StreamingCommand> BuckSubcommand for T {
         };
 
         // FIXME: move this into client_ctx
-        with_simple_sigint_handler(work)
+        let result = with_simple_sigint_handler(work)
             .await
-            .unwrap_or_else(ExitResult::signal_interrupt)
+            .unwrap_or_else(ExitResult::signal_interrupt);
+
+        // The in-process daemon dies with this client: by exit, or by `run` replacing the client
+        // with the target. The command is done or interrupted, so the record goes now, before
+        // either.
+        if let Some(daemon_dir) = in_process_daemon_dir {
+            remove_in_process_daemon_info(&daemon_dir);
+        }
+
+        result
     }
 
     fn update_events_ctx(

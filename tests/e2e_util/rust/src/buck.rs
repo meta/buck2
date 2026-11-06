@@ -96,6 +96,11 @@ impl Buck {
         self.isolation_prefix = Some(prefix.into());
     }
 
+    /// The `--isolation-dir` commands run with, if the test set one.
+    pub fn isolation_prefix(&self) -> Option<&str> {
+        self.isolation_prefix.as_deref()
+    }
+
     /// Runs every later command in `cwd` instead of the project directory, for a test that makes
     /// another checkout of the project.
     pub fn set_cwd(&mut self, cwd: impl Into<PathBuf>) {

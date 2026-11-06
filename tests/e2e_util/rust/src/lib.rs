@@ -54,6 +54,7 @@ pub mod http;
 pub mod json;
 pub mod lsp;
 pub mod manifold;
+pub mod mode;
 mod output;
 pub mod piped;
 pub mod process;

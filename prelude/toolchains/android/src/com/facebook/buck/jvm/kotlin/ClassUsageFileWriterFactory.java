@@ -13,7 +13,9 @@ package com.facebook.buck.jvm.kotlin;
 import com.facebook.buck.jvm.java.ClassUsageFileWriter;
 import com.facebook.buck.jvm.java.DefaultClassUsageFileWriter;
 import com.facebook.buck.jvm.kotlin.kotlinc.incremental.KotlincMode;
+import com.facebook.infer.annotation.Nullsafe;
 
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public class ClassUsageFileWriterFactory {
 
   private ClassUsageFileWriterFactory() {}

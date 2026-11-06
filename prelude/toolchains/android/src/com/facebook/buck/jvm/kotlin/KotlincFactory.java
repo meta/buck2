@@ -13,7 +13,9 @@ package com.facebook.buck.jvm.kotlin;
 import com.facebook.buck.core.util.log.Logger;
 import com.facebook.buck.jvm.kotlin.buildtools.BuildToolsKotlinc;
 import com.facebook.buck.jvm.kotlin.kotlinc.Kotlinc;
+import com.facebook.infer.annotation.Nullsafe;
 
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public class KotlincFactory {
 
   private static final Logger LOG = Logger.get(KotlincFactory.class);

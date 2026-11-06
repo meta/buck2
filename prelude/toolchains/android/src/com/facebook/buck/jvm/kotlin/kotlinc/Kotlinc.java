@@ -17,6 +17,7 @@ import com.facebook.buck.jvm.core.BuildTargetValue;
 import com.facebook.buck.jvm.kotlin.cd.analytics.KotlinCDLoggingContext;
 import com.facebook.buck.jvm.kotlin.kotlinc.incremental.KotlincMode;
 import com.facebook.buck.jvm.kotlin.util.KotlinUnarchiverKt;
+import com.facebook.infer.annotation.Nullsafe;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.ImmutableSortedSet;
@@ -26,6 +27,7 @@ import java.util.Optional;
 import javax.annotation.Nullable;
 
 /** Interface for a kotlin compiler. */
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public interface Kotlinc {
 
   int buildWithClasspath(

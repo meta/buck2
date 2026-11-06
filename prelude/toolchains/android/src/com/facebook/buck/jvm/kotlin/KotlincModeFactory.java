@@ -17,10 +17,12 @@ import com.facebook.buck.jvm.cd.command.kotlin.KotlinExtraParams;
 import com.facebook.buck.jvm.java.ActionMetadata;
 import com.facebook.buck.jvm.kotlin.kotlinc.incremental.KotlinSourceChanges;
 import com.facebook.buck.jvm.kotlin.kotlinc.incremental.KotlincMode;
+import com.facebook.infer.annotation.Nullsafe;
 import com.google.common.collect.ImmutableList;
 import java.util.Optional;
 import javax.annotation.Nullable;
 
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public class KotlincModeFactory {
   private static final Logger LOG = Logger.get(KotlincModeFactory.class);
 

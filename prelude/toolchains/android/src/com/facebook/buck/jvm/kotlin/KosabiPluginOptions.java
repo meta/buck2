@@ -11,9 +11,11 @@
 package com.facebook.buck.jvm.kotlin;
 
 import com.facebook.buck.core.filesystems.AbsPath;
+import com.facebook.infer.annotation.Nullsafe;
 import com.google.common.collect.ImmutableMap;
 import java.util.Map;
 
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public class KosabiPluginOptions {
   private final ImmutableMap<String, AbsPath> resolvedKosabiPluginOptionPath;
 

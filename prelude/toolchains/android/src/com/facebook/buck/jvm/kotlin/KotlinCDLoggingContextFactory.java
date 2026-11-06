@@ -19,9 +19,11 @@ import com.facebook.buck.jvm.kotlin.cd.analytics.StepParam;
 import com.facebook.buck.jvm.kotlin.kotlinc.incremental.ClasspathChanges;
 import com.facebook.buck.jvm.kotlin.kotlinc.incremental.KotlinSourceChanges;
 import com.facebook.buck.jvm.kotlin.kotlinc.incremental.KotlincMode;
+import com.facebook.infer.annotation.Nullsafe;
 import java.util.Set;
 import java.util.stream.Collectors;
 
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public class KotlinCDLoggingContextFactory {
 
   private KotlinCDLoggingContextFactory() {}

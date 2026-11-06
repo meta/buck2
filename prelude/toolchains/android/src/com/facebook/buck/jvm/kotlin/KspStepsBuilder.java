@@ -31,12 +31,14 @@ import com.facebook.buck.step.isolatedsteps.common.MkdirIsolatedStep;
 import com.facebook.buck.step.isolatedsteps.common.RmIsolatedStep;
 import com.facebook.buck.step.isolatedsteps.common.ZipIsolatedStep;
 import com.facebook.buck.util.zip.ZipCompressionLevel;
+import com.facebook.infer.annotation.Nullsafe;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.ImmutableSortedSet;
 import java.util.List;
 
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public class KspStepsBuilder {
   /**
    * Providers of the processors that may write the final-round placeholder: the triggers of the

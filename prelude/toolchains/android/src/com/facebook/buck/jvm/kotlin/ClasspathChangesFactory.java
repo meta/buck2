@@ -13,9 +13,11 @@ package com.facebook.buck.jvm.kotlin;
 import com.facebook.buck.core.filesystems.AbsPath;
 import com.facebook.buck.core.util.log.Logger;
 import com.facebook.buck.jvm.kotlin.kotlinc.incremental.ClasspathChanges;
+import com.facebook.infer.annotation.Nullsafe;
 import com.google.common.collect.ImmutableList;
 import java.util.stream.Collectors;
 
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public class ClasspathChangesFactory {
 
   private static final Logger LOG = Logger.get(KotlinSourceChangesFactory.class);

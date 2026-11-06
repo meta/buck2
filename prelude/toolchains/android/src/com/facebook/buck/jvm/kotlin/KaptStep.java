@@ -18,12 +18,14 @@ import com.facebook.buck.jvm.java.CompilerOutputPaths;
 import com.facebook.buck.jvm.kotlin.cd.analytics.KotlinCDAnalytics;
 import com.facebook.buck.jvm.kotlin.kotlinc.Kotlinc;
 import com.facebook.buck.jvm.kotlin.kotlinc.incremental.KotlincMode;
+import com.facebook.infer.annotation.Nullsafe;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.ImmutableSortedSet;
 import java.nio.file.Path;
 import java.util.Optional;
 
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public class KaptStep extends KotlincStep {
 
   private static final String VERBOSE = "-verbose";

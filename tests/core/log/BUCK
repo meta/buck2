@@ -5,12 +5,19 @@ oncall("build_infra")
 buck2_core_tests(
     target_extra_attrs = {
         "test_upload_re_logs": {
-            "deps": [
-                "//manifold/clients/python:manifold_client_deprecated",
-            ],
+            "env": {
+                "MANIFOLD_CLI": "$(exe_target fbcode//manifold/clients/cli:manifold)",
+            },
+        },
+        "test_user_event_log": {
+            "deps": ["fbsource//third-party/rust:regex"],
         },
         "test_what_materialized": {
+            "deps": ["fbsource//third-party/rust:csv"],
             "use_compiled_buck2_client_and_tpx": True,
+        },
+        "test_what_uploaded": {
+            "deps": ["fbsource//third-party/rust:csv"],
         },
     },
 )

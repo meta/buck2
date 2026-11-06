@@ -165,6 +165,8 @@ impl<'v> Display for StarlarkRuleCallable<'v> {
 enum RuleError {
     #[error("The output of rule() may only be called after the module is loaded")]
     RuleCalledBeforeFreezing,
+    #[error("Rule used before the module defining it finished loading")]
+    UsedBeforeLoaded,
     #[error("`{0}` is not a valid attribute name")]
     InvalidParameterName(String),
     #[error("Rule defined in `{0}` must be assigned to a variable, e.g. `my_rule = rule(...)`")]
@@ -845,9 +847,7 @@ impl<'v> StarlarkRuleCallableView<'v> {
     pub fn frozen(self) -> buck2_error::Result<ValueTyped<'v, FrozenStarlarkRuleCallable<'v>>> {
         match self {
             StarlarkRuleCallableView::Frozen(rule) => Ok(rule),
-            StarlarkRuleCallableView::Unfrozen(_) => Err(buck2_error::internal_error!(
-                "Rule used before the module defining it was loaded"
-            )),
+            StarlarkRuleCallableView::Unfrozen(_) => Err(RuleError::UsedBeforeLoaded.into()),
         }
     }
 }

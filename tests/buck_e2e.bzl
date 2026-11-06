@@ -161,6 +161,8 @@ def buck_e2e_test(
         rust_unittest(
             name = name,
             srcs = srcs,
+            # A target name may hold characters a crate name cannot, as in `test_x.py@fbcode__mode_dev_fbcode`.
+            crate = _crate_name(name),
             crate_root = srcs[0],
             deps = deps + ["fbcode//buck2/tests/e2e_util/rust:buck2_e2e"],
             # Unlike `run_env`, `env` would also set the variables for rustc.
@@ -241,6 +243,9 @@ def _is_rust_test(name, srcs):
     if rust and len(rust) != len(srcs):
         fail("{} mixes Rust sources with others".format(name))
     return len(rust) > 0
+
+def _crate_name(name):
+    return "".join([c if c.isalnum() or c == "_" else "_" for c in name.elems()])
 
 def _remove_ci_labels(labels, removals):
     """Apply CI removals without discarding CI labels the caller set.

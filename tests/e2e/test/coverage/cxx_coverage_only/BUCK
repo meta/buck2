@@ -1,0 +1,40 @@
+load("@fbcode//buck2/tests:buck_e2e.bzl", "buck2_e2e_test")
+
+oncall("tcc")
+
+buck2_e2e_test(
+    name = "test_coverage_cpp_cxx_only",
+    srcs = ["test_coverage_cpp_cxx_only.rs"],
+    compatible_with = ["ovr_config//os:linux"],
+    skip_for_os = [
+        "darwin",
+        "windows",
+    ],
+    test_with_deployed_buck2 = True,
+    use_compiled_buck2_client_and_tpx = True,
+)
+
+buck2_e2e_test(
+    name = "test_coverage_python_cxx_only",
+    srcs = ["test_coverage_python_cxx_only.rs"],
+    compatible_with = ["ovr_config//os:linux"],
+    skip_for_os = [
+        "darwin",
+        "windows",
+    ],
+    test_with_deployed_buck2 = True,
+    use_compiled_buck2_client_and_tpx = True,
+)
+
+buck2_e2e_test(
+    name = "test_coverage_rust_cxx_only",
+    srcs = ["test_coverage_rust_cxx_only.rs"],
+    compatible_with = ["ovr_config//os:linux"],
+    skip_for_os = [
+        "darwin",
+        "windows",
+    ],
+    test_with_deployed_buck2 = True,
+    use_compiled_buck2_client_and_tpx = True,
+    deps = ["fbsource//third-party/rust:regex"],
+)

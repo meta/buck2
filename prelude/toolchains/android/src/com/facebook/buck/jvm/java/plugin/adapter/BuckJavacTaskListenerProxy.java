@@ -14,6 +14,7 @@ import com.facebook.buck.jvm.java.plugin.api.BuckJavacTaskListener;
 import com.facebook.buck.jvm.java.plugin.api.CompilationUnitTreeProxy;
 import com.facebook.buck.jvm.java.plugin.api.TaskEventMirror;
 import com.facebook.buck.util.liteinfersupport.Nullable;
+import com.facebook.infer.annotation.Nullsafe;
 import com.sun.source.tree.CompilationUnitTree;
 import com.sun.source.util.TaskEvent;
 import com.sun.source.util.TaskListener;
@@ -22,6 +23,7 @@ import com.sun.source.util.TaskListener;
  * Implements {@link TaskListener} by proxying calls to an inner {@link BuckJavacTaskListener}. This
  * is the bridge that allows us to implement {@link TaskListener}s in Buck itself.
  */
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public class BuckJavacTaskListenerProxy implements TaskListener {
   private final BuckJavacTaskListener buckSideListener;
 

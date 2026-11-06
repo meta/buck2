@@ -14,6 +14,7 @@ import com.facebook.buck.jvm.java.abi.source.api.SourceCodeWillNotCompileExcepti
 import com.facebook.buck.jvm.java.abi.source.api.StopCompilation;
 import com.facebook.buck.jvm.java.plugin.adapter.BuckJavacTask;
 import com.facebook.buck.util.liteinfersupport.Nullable;
+import com.facebook.infer.annotation.Nullsafe;
 import com.sun.source.tree.CompilationUnitTree;
 import com.sun.source.tree.Tree;
 import com.sun.source.util.JavacTask;
@@ -42,6 +43,7 @@ import javax.tools.JavaFileObject;
  * about references to symbols defined in those dependencies. See the documentation of {@link
  * com.facebook.buck.jvm.java.abi.source} for details.
  */
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public class FrontendOnlyJavacTask extends BuckJavacTask {
   private final JavacTask javacTask;
 

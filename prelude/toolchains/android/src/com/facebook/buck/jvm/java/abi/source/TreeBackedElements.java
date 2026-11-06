@@ -13,6 +13,7 @@ package com.facebook.buck.jvm.java.abi.source;
 import com.facebook.buck.jvm.java.plugin.adapter.ElementsExtendedImpl;
 import com.facebook.buck.util.liteinfersupport.Nullable;
 import com.facebook.buck.util.liteinfersupport.PropagatesNullable;
+import com.facebook.infer.annotation.Nullsafe;
 import com.sun.source.util.Trees;
 import java.io.Writer;
 import java.util.Arrays;
@@ -40,6 +41,7 @@ import javax.lang.model.util.Types;
  * meanings of some names, and thus must be used with care. See documentation for individual methods
  * and {@link com.facebook.buck.jvm.java.abi.source} for more information.
  */
+@Nullsafe(Nullsafe.Mode.LOCAL)
 class TreeBackedElements extends ElementsExtendedImpl {
 
   private final Elements javacElements;

@@ -10,12 +10,14 @@
 
 package com.facebook.buck.jvm.java.plugin.adapter;
 
+import com.facebook.infer.annotation.Nullsafe;
 import com.sun.source.tree.CompilationUnitTree;
 import com.sun.source.tree.Tree;
 import com.sun.source.util.JavacTask;
 import com.sun.source.util.TaskListener;
 import java.io.IOException;
 import java.util.Locale;
+import javax.annotation.Nullable;
 import javax.annotation.processing.Processor;
 import javax.lang.model.element.Element;
 import javax.lang.model.type.TypeMirror;
@@ -27,6 +29,7 @@ import javax.tools.JavaFileObject;
  * NOTE: A Java8 copy of this file exists in ../java8/JavacTaskWrapper.java. Please make sure to
  * update the other copy when modifying this file.
  */
+@Nullsafe(Nullsafe.Mode.LOCAL)
 abstract class JavacTaskWrapper extends JavacTask {
   protected final JavacTask inner;
 
@@ -65,6 +68,7 @@ abstract class JavacTaskWrapper extends JavacTask {
   }
 
   @Override
+  @Nullable
   public TypeMirror getTypeMirror(Iterable<? extends Tree> path) {
     return inner.getTypeMirror(path);
   }

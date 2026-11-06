@@ -11,6 +11,7 @@
 package com.facebook.buck.jvm.java.abi.source;
 
 import com.facebook.buck.util.liteinfersupport.Nullable;
+import com.facebook.infer.annotation.Nullsafe;
 import com.sun.source.tree.AnnotationTree;
 import com.sun.source.tree.AssignmentTree;
 import com.sun.source.tree.ExpressionTree;
@@ -30,6 +31,7 @@ import javax.lang.model.element.ExecutableElement;
 import javax.lang.model.element.Name;
 import javax.lang.model.type.DeclaredType;
 
+@Nullsafe(Nullsafe.Mode.LOCAL)
 class TreeBackedAnnotationMirror implements ArtificialAnnotationMirror {
   private final AnnotationMirror underlyingAnnotationMirror;
   private final TreePath treePath;

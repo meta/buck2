@@ -12,6 +12,7 @@ buck_java_library(
     srcs = glob(["*.java"]),
     provided_deps = [
         "prelude//toolchains/android/third-party:infer-annotations",
+        "prelude//toolchains/android/third-party:jsr305",
         # api modules are included in the bootstrapper at runtime, so we don't need direct deps on them
         "prelude//toolchains/android/src/com/facebook/buck/jvm/java/plugin/api:api",
     ],

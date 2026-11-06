@@ -465,6 +465,8 @@ pub struct EventsCtx {
     // Internal commands triggered by other commands should not log an invocation record.
     pub log_invocation_record: bool,
     pub daemon_pid: Option<i64>,
+    #[cfg(target_os = "macos")]
+    daemon_exit_monitor: Option<crate::subscribers::oom_macos::DaemonExitMonitor>,
     // The daemon process's cgroup path as read from /proc/{pid}/cgroup by the client. Unlike the
     // `daemon_cgroup_path` the daemon reports about itself, this is available even when the daemon
     // isn't running with resource control.
@@ -490,15 +492,27 @@ impl EventsCtx {
             command_report_path: None,
             log_invocation_record: true,
             daemon_pid: None,
+            #[cfg(target_os = "macos")]
+            daemon_exit_monitor: None,
             cgroup_path_of_buck2_daemon: None,
             daemon_start_instant: None,
             used_superconsole: false,
         }
     }
 
+    /// Register while the connected daemon is alive, before command RPCs.
+    #[cfg(target_os = "macos")]
+    pub(crate) fn monitor_daemon_exit(&mut self, pid: i64) {
+        self.daemon_exit_monitor = crate::subscribers::oom_macos::DaemonExitMonitor::new(pid)
+            .map_err(|error| {
+                tracing::debug!("Failed to monitor daemon PID {pid} for OOM: {error}");
+            })
+            .ok();
+    }
+
     /// Describes why the daemon is believed to have been OOM-killed, if it was.
     ///
-    /// The evidence is read from `dmesg`, so this never reports anything off Linux.
+    /// The evidence is read from `dmesg`.
     #[cfg(target_os = "linux")]
     pub(crate) async fn daemon_oom_reason(&self) -> buck2_error::Result<Option<String>> {
         let Some(pid) = self.daemon_pid else {
@@ -513,7 +527,15 @@ impl EventsCtx {
         Ok(evidence.map(|evidence| evidence.to_string()))
     }
 
-    #[cfg(not(target_os = "linux"))]
+    #[cfg(target_os = "macos")]
+    pub(crate) async fn daemon_oom_reason(&self) -> buck2_error::Result<Option<String>> {
+        let Some(monitor) = &self.daemon_exit_monitor else {
+            return Ok(None);
+        };
+        Ok(monitor.oom_reason().await)
+    }
+
+    #[cfg(not(any(target_os = "linux", target_os = "macos")))]
     pub(crate) async fn daemon_oom_reason(&self) -> buck2_error::Result<Option<String>> {
         Ok(None)
     }

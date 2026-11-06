@@ -8,6 +8,10 @@
 
 """`lean_library`: compiles Lean modules and the C that `lean` generates.
 
+The modules are the files of `srcs` and the `.lean` files below the
+directories of `src_dirs`, usually generated, which `lean_deps` lists at build
+time, so their number need not be known in BUCK.
+
 One action runs `lean --deps-json` on all sources to read their imports. A
 dynamic action then declares one `lean` action per module, in import order,
 and one C compile action per module. The objects go into one static archive;
@@ -83,6 +87,7 @@ def _compile_impl(
     deps_json: ArtifactValue,
     src_names: list[str],
     src_files: list[Artifact],
+    src_dirs: list[Artifact],
     resources: list[Artifact],
     dep_values: list[ResolvedDynamicValue],
     lean: RunInfo,
@@ -96,7 +101,18 @@ def _compile_impl(
     archive: OutputArtifact,
     lean_dir: OutputArtifact,
 ) -> list[Provider]:
-    headers = deps_json.read_json()["imports"]
+    deps = deps_json.read_json()
+
+    # The modules of `src_dirs` come after those of `srcs`, in the order of
+    # `lean_deps`, which is the order of `imports`.
+    src_names = list(src_names)
+    src_files = list(src_files)
+    for src_dir, paths in zip(src_dirs, deps["dirs"]):
+        for path in paths:
+            src_names.append(path[: -len(".lean")].replace("/", "."))
+            src_files.append(src_dir.project(path))
+
+    headers = deps["imports"]
     if len(headers) != len(src_files):
         fail("`lean --deps-json` returned {} results for {} files".format(len(headers), len(src_files)))
 
@@ -261,6 +277,7 @@ _compile = dynamic_actions(
         "lean_path_separator": dynattrs.value(str),
         "object_extension": dynattrs.value(str),
         "resources": dynattrs.value(list[Artifact]),
+        "src_dirs": dynattrs.value(list[Artifact]),
         "src_files": dynattrs.value(list[Artifact]),
         "src_names": dynattrs.value(list[str]),
     },
@@ -311,6 +328,15 @@ def compile_lean_library(ctx: AnalysisContext, link_whole: bool) -> struct:
     src_files = ctx.attrs.srcs
     src_names = [lean_module_name(src, ctx.label.package, ctx.attrs.root) for src in src_files]
 
+    # A copy of each source directory, at a path that does not change with
+    # the directory's content. A generated directory usually has a
+    # content-based path, which changes when any file in it changes; the
+    # path of every module is in its `lean` command, so with the original
+    # directory one changed module would miss the cache for all of them.
+    src_dirs = []
+    for i, src_dir in enumerate(ctx.attrs.src_dirs):
+        src_dirs.append(ctx.actions.copy_dir("src_dirs/{}".format(i), src_dir, has_content_based_path = False))
+
     # `lean_deps` lists the modules and runs `lean --deps-json` on them, with
     # the file names on stdin, so their number has no limit.
     deps_json = ctx.actions.declare_output("deps.json", has_content_based_path = False)
@@ -319,6 +345,7 @@ def compile_lean_library(ctx: AnalysisContext, link_whole: bool) -> struct:
             ctx.attrs._lean_deps[RunInfo],
             cmd_args(deps_json.as_output(), format = "--out={}"),
             at_argfile(actions = ctx.actions, name = "deps.argsfile", args = cmd_args(src_files, format = "--src={}")),
+            cmd_args(src_dirs, format = "--src-dir={}"),
             toolchain.lean,
             "--deps-json",
         ),
@@ -338,6 +365,7 @@ def compile_lean_library(ctx: AnalysisContext, link_whole: bool) -> struct:
             deps_json = deps_json,
             src_names = src_names,
             src_files = src_files,
+            src_dirs = src_dirs,
             resources = ctx.attrs.resources,
             dep_values = [dep[LeanLibraryInfo].modules for dep in lean_deps],
             lean = toolchain.lean,
@@ -429,6 +457,11 @@ lean_library_attrs = {
     "root": attrs.string(
         default = "",
         doc = "The directory, relative to the package, that module names start at. `<root>/Foo/Bar.lean` is module `Foo.Bar`.",
+    ),
+    "src_dirs": attrs.list(
+        attrs.source(allow_directory = True),
+        default = [],
+        doc = "Directories of `.lean` files, usually generated, for modules whose number is known only at build time. A module's name is its path below the directory: `<dir>/Foo/Bar.lean` is module `Foo.Bar`; `root` does not apply. Files that do not end in `.lean` are ignored. The modules join those of `srcs` in the library.",
     ),
     "srcs": attrs.list(attrs.source(), default = [], doc = "The `.lean` files."),
     "_cxx_toolchain": attrs.toolchain_dep(default = "toolchains//:cxx", providers = [CxxToolchainInfo]),

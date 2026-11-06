@@ -2993,6 +2993,7 @@ dependencies = [
  "smallvec",
  "starlark",
  "toml",
+ "tracing",
  "twox-hash",
 ]
 

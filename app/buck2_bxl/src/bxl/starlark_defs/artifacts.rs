@@ -24,6 +24,7 @@ use buck2_build_api::artifact_groups::calculation::ArtifactGroupCalculation;
 use buck2_build_api::interpreter::rule_defs::artifact::starlark_artifact::StarlarkArtifact;
 use buck2_build_api::interpreter::rule_defs::artifact::starlark_artifact_like::StarlarkInputArtifactLike;
 use buck2_build_api::interpreter::rule_defs::artifact::starlark_declared_artifact::StarlarkDeclaredArtifact;
+use buck2_build_api::interpreter::rule_defs::artifact::unpack_artifact::UnpackNonPromiseInputArtifact;
 use buck2_hash::BuckMutInsertionSet;
 use derive_more::Display;
 use dice::DiceComputations;
@@ -36,6 +37,7 @@ use starlark::collections::StarlarkHasher;
 use starlark::environment::Methods;
 use starlark::environment::MethodsBuilder;
 use starlark::starlark_module;
+use starlark::typing::Ty;
 use starlark::values::AllocValue;
 use starlark::values::Heap;
 use starlark::values::StarlarkValue;
@@ -202,10 +204,34 @@ impl PartialEq for EnsuredArtifact {
 
 impl Eq for EnsuredArtifact {}
 
-#[derive(StarlarkTypeRepr, UnpackValue, Display)]
+/// An `Artifact` that is not a promise artifact; see `UnpackNonPromiseInputArtifact`.
+#[derive(Display)]
 pub(crate) enum ArtifactArg<'v> {
     Artifact(&'v StarlarkArtifact),
     DeclaredArtifact(&'v StarlarkDeclaredArtifact<'v>),
+}
+
+impl<'v> StarlarkTypeRepr for ArtifactArg<'v> {
+    type Canonical = <UnpackNonPromiseInputArtifact<'v> as StarlarkTypeRepr>::Canonical;
+
+    fn starlark_type_repr() -> Ty {
+        UnpackNonPromiseInputArtifact::starlark_type_repr()
+    }
+}
+
+impl<'v> UnpackValue<'v> for ArtifactArg<'v> {
+    type Error = <UnpackNonPromiseInputArtifact<'v> as UnpackValue<'v>>::Error;
+
+    fn unpack_value_impl(value: Value<'v>) -> Result<Option<Self>, Self::Error> {
+        Ok(
+            UnpackNonPromiseInputArtifact::unpack_value_impl(value)?.map(|x| match x {
+                UnpackNonPromiseInputArtifact::Artifact(x) => ArtifactArg::Artifact(x),
+                UnpackNonPromiseInputArtifact::DeclaredArtifact(x) => {
+                    ArtifactArg::DeclaredArtifact(x)
+                }
+            }),
+        )
+    }
 }
 
 impl<'v> ArtifactArg<'v> {

@@ -8,6 +8,7 @@
  * above-listed licenses.
  */
 
+use std::convert::Infallible;
 use std::fmt;
 use std::fmt::Debug;
 use std::fmt::Display;
@@ -26,6 +27,7 @@ use starlark::any::ProvidesStaticType;
 use starlark::environment::GlobalsBuilder;
 use starlark::environment::Methods;
 use starlark::environment::MethodsBuilder;
+use starlark::typing::Ty;
 use starlark::values::AllocFrozenValue;
 use starlark::values::AllocValue;
 use starlark::values::Demand;
@@ -36,6 +38,7 @@ use starlark::values::FrozenHeap;
 use starlark::values::Heap;
 use starlark::values::NoSerialize;
 use starlark::values::StarlarkPagable;
+use starlark::values::StarlarkType;
 use starlark::values::StarlarkValue;
 use starlark::values::StringValue;
 use starlark::values::Trace;
@@ -104,11 +107,45 @@ impl<'fv> AllocFrozenValue<'fv> for FrozenStarlarkOutputArtifact<'fv> {
     }
 }
 
-/// Unpack an output artifact in either form, at the value's own heap brand.
-#[derive(StarlarkTypeRepr, UnpackValue)]
+/// An `OutputArtifact` in either of its representations: the receiver of the type's methods,
+/// and the binding for a native parameter of type `OutputArtifact`.
+#[derive(Debug, Clone, Copy)]
 pub enum StarlarkOutputArtifactUnpack<'v> {
     Unfrozen(&'v StarlarkOutputArtifact<'v>),
     Frozen(&'v FrozenStarlarkOutputArtifact<'v>),
+}
+
+impl<'v> StarlarkOutputArtifactUnpack<'v> {
+    fn as_artifact_like(self) -> &'v dyn StarlarkArtifactLike<'v> {
+        match self {
+            StarlarkOutputArtifactUnpack::Unfrozen(x) => x,
+            StarlarkOutputArtifactUnpack::Frozen(x) => x,
+        }
+    }
+}
+
+impl<'v> StarlarkTypeRepr for StarlarkOutputArtifactUnpack<'v> {
+    type Canonical = StarlarkOutputArtifact<'v>;
+
+    fn starlark_type_repr() -> Ty {
+        <Self as StarlarkType<'v>>::get_type_starlark_repr()
+    }
+}
+
+impl<'v> UnpackValue<'v> for StarlarkOutputArtifactUnpack<'v> {
+    type Error = Infallible;
+
+    fn unpack_value_impl(value: Value<'v>) -> Result<Option<Self>, Self::Error> {
+        Ok(
+            if let Some(x) = value.downcast_ref::<StarlarkOutputArtifact>() {
+                Some(StarlarkOutputArtifactUnpack::Unfrozen(x))
+            } else {
+                value
+                    .downcast_ref::<FrozenStarlarkOutputArtifact>()
+                    .map(StarlarkOutputArtifactUnpack::Frozen)
+            },
+        )
+    }
 }
 
 impl<'v> Display for StarlarkOutputArtifactUnpack<'v> {
@@ -246,18 +283,31 @@ starlark::methods_static!(
     }
 );
 
-#[starlark_value(type = "OutputArtifact", StarlarkTypeRepr, UnpackValue)]
-impl<'v> StarlarkValue<'v> for StarlarkOutputArtifact<'v> {
+#[starlark_value(type = "OutputArtifact")]
+impl<'v> StarlarkType<'v> for StarlarkOutputArtifactUnpack<'v> {
     fn get_methods() -> Option<&'static Methods> {
         Some(OUTPUT_ARTIFACT_METHODS.methods())
     }
 
+    fn get_type_starlark_repr() -> Ty {
+        Ty::starlark_value::<StarlarkOutputArtifact>()
+    }
+
     fn equals(&self, other: Value<'v>) -> starlark::Result<bool> {
-        StarlarkArtifactLike::equals(self, other)
+        StarlarkArtifactLike::equals(self.as_artifact_like(), other)
     }
 
     fn write_hash(&self, hasher: &mut StarlarkHasher) -> starlark::Result<()> {
-        StarlarkArtifactLike::write_hash(self, hasher)
+        StarlarkArtifactLike::write_hash(self.as_artifact_like(), hasher)
+    }
+}
+
+#[starlark_value]
+impl<'v> StarlarkValue<'v> for StarlarkOutputArtifact<'v> {
+    type Type = StarlarkOutputArtifactUnpack<'v>;
+
+    fn with_type<R>(this: &'v Self, f: impl FnOnce(&Self::Type) -> R) -> R {
+        f(&StarlarkOutputArtifactUnpack::Unfrozen(this))
     }
 
     fn provide(&'v self, demand: &mut Demand<'_, 'v>) {
@@ -265,20 +315,13 @@ impl<'v> StarlarkValue<'v> for StarlarkOutputArtifact<'v> {
     }
 }
 
-#[starlark_value(type = "OutputArtifact", StarlarkTypeRepr, UnpackValue, frozen_vtable)]
+#[starlark_value(frozen_vtable)]
 impl<'v> StarlarkValue<'v> for FrozenStarlarkOutputArtifact<'v> {
     type Canonical = StarlarkOutputArtifact<'v>;
+    type Type = StarlarkOutputArtifactUnpack<'v>;
 
-    fn get_methods() -> Option<&'static Methods> {
-        Some(OUTPUT_ARTIFACT_METHODS.methods())
-    }
-
-    fn equals(&self, other: Value<'v>) -> starlark::Result<bool> {
-        StarlarkArtifactLike::equals(self, other)
-    }
-
-    fn write_hash(&self, hasher: &mut StarlarkHasher) -> starlark::Result<()> {
-        StarlarkArtifactLike::write_hash(self, hasher)
+    fn with_type<R>(this: &'v Self, f: impl FnOnce(&Self::Type) -> R) -> R {
+        f(&StarlarkOutputArtifactUnpack::Frozen(this))
     }
 
     fn provide(&'v self, demand: &mut Demand<'_, 'v>) {

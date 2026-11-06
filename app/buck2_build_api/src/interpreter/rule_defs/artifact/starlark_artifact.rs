@@ -22,8 +22,6 @@ use dupe::OptionDupedExt;
 use serde::Serialize;
 use serde::Serializer;
 use starlark::any::ProvidesStaticType;
-use starlark::collections::StarlarkHasher;
-use starlark::environment::Methods;
 use starlark::values::Demand;
 use starlark::values::StarlarkPagable;
 use starlark::values::StarlarkValue;
@@ -37,11 +35,11 @@ use crate::artifact_groups::ArtifactGroup;
 use crate::interpreter::rule_defs::artifact::ArtifactError;
 use crate::interpreter::rule_defs::artifact::associated::AssociatedArtifacts;
 use crate::interpreter::rule_defs::artifact::methods::EitherStarlarkInputArtifact;
-use crate::interpreter::rule_defs::artifact::methods::artifact_methods;
 use crate::interpreter::rule_defs::artifact::starlark_artifact_like::ArtifactFingerprint;
 use crate::interpreter::rule_defs::artifact::starlark_artifact_like::StarlarkArtifactLike;
 use crate::interpreter::rule_defs::artifact::starlark_artifact_like::StarlarkInputArtifactLike;
 use crate::interpreter::rule_defs::artifact::starlark_artifact_like::ValueAsInputArtifactLike;
+use crate::interpreter::rule_defs::artifact::starlark_artifact_like::ValueAsInputArtifactLikeUnpack;
 use crate::interpreter::rule_defs::artifact::starlark_output_artifact::StarlarkOutputArtifact;
 use crate::interpreter::rule_defs::cmd_args::ArtifactPathMapper;
 use crate::interpreter::rule_defs::cmd_args::CommandLineArgLike;
@@ -286,20 +284,12 @@ impl<'v> CommandLineArgLike<'v> for StarlarkArtifact {
     }
 }
 
-starlark::methods_static!(STARLARK_ARTIFACT_METHODS = artifact_methods);
-
-#[starlark_value(type = "Artifact")]
+#[starlark_value]
 impl<'v> StarlarkValue<'v> for StarlarkArtifact {
-    fn get_methods() -> Option<&'static Methods> {
-        Some(STARLARK_ARTIFACT_METHODS.methods())
-    }
+    type Type = ValueAsInputArtifactLikeUnpack<'v>;
 
-    fn equals(&self, other: Value<'v>) -> starlark::Result<bool> {
-        StarlarkArtifactLike::equals(self, other)
-    }
-
-    fn write_hash(&self, hasher: &mut StarlarkHasher) -> starlark::Result<()> {
-        StarlarkArtifactLike::write_hash(self, hasher)
+    fn with_type<R>(this: &'v Self, f: impl FnOnce(&Self::Type) -> R) -> R {
+        f(&ValueAsInputArtifactLikeUnpack::Artifact(this))
     }
 
     fn provide(&'v self, demand: &mut Demand<'_, 'v>) {

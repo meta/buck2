@@ -10,17 +10,59 @@
 
 use buck2_artifact::artifact::artifact_type::Artifact;
 use dupe::Dupe;
+use starlark::typing::Ty;
 use starlark::values::UnpackValue;
+use starlark::values::Value;
 use starlark::values::type_repr::StarlarkTypeRepr;
 
 use crate::interpreter::rule_defs::artifact::starlark_artifact::StarlarkArtifact;
 use crate::interpreter::rule_defs::artifact::starlark_artifact_like::StarlarkInputArtifactLike;
+use crate::interpreter::rule_defs::artifact::starlark_artifact_like::ValueAsInputArtifactLikeUnpack;
 use crate::interpreter::rule_defs::artifact::starlark_declared_artifact::StarlarkDeclaredArtifact;
 
-#[derive(StarlarkTypeRepr, UnpackValue)]
+#[derive(Debug, buck2_error::Error)]
+#[buck2(tag = Input)]
+enum UnpackNonPromiseInputArtifactError {
+    #[error("Promise artifacts are not accepted here, got `{0}`")]
+    PromiseArtifact(String),
+}
+
+/// An `Artifact` that is not a promise artifact. This is stricter than the type, so a promise
+/// artifact is a conversion error, not a type mismatch.
+#[derive(Debug, Clone, Copy)]
 pub enum UnpackNonPromiseInputArtifact<'v> {
     Artifact(&'v StarlarkArtifact),
     DeclaredArtifact(&'v StarlarkDeclaredArtifact<'v>),
+}
+
+impl<'v> StarlarkTypeRepr for UnpackNonPromiseInputArtifact<'v> {
+    type Canonical = <ValueAsInputArtifactLikeUnpack<'v> as StarlarkTypeRepr>::Canonical;
+
+    fn starlark_type_repr() -> Ty {
+        ValueAsInputArtifactLikeUnpack::starlark_type_repr()
+    }
+}
+
+impl<'v> UnpackValue<'v> for UnpackNonPromiseInputArtifact<'v> {
+    type Error = starlark::Error;
+
+    fn unpack_value_impl(value: Value<'v>) -> Result<Option<Self>, Self::Error> {
+        match ValueAsInputArtifactLikeUnpack::unpack_value_opt(value) {
+            None => Ok(None),
+            Some(ValueAsInputArtifactLikeUnpack::Artifact(x)) => {
+                Ok(Some(UnpackNonPromiseInputArtifact::Artifact(x)))
+            }
+            Some(ValueAsInputArtifactLikeUnpack::DeclaredArtifact(x)) => {
+                Ok(Some(UnpackNonPromiseInputArtifact::DeclaredArtifact(x)))
+            }
+            Some(ValueAsInputArtifactLikeUnpack::PromiseArtifact(x)) => Err(
+                buck2_error::Error::from(UnpackNonPromiseInputArtifactError::PromiseArtifact(
+                    x.to_string(),
+                ))
+                .into(),
+            ),
+        }
+    }
 }
 
 impl<'v> UnpackNonPromiseInputArtifact<'v> {

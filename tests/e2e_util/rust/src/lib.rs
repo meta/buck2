@@ -62,6 +62,7 @@ pub mod process;
 pub mod subscribe;
 pub mod testx;
 pub mod utils;
+pub mod windows_cmd;
 
 pub use buck2_e2e_macros::buck_test;
 

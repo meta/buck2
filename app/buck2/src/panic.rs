@@ -73,7 +73,7 @@ mod imp {
     use buck2_events::BuckEvent;
     use buck2_events::daemon_id::get_daemon_id_for_panics;
     use buck2_events::metadata;
-    use buck2_events::sink::remote::ScribeConfig;
+    use buck2_events::sink::remote::RemoteEventConfig;
     use buck2_events::sink::remote::new_remote_event_sink_if_enabled;
     use buck2_hash::IntentionallyStdHashMap;
     use buck2_util::threads::thread_spawn;
@@ -274,7 +274,7 @@ mod imp {
             return;
         }
 
-        let sink = match new_remote_event_sink_if_enabled(fb, ScribeConfig::default()) {
+        let sink = match new_remote_event_sink_if_enabled(fb, RemoteEventConfig::default()) {
             #[allow(unreachable_patterns)]
             Ok(Some(sink)) => sink,
             _ => {

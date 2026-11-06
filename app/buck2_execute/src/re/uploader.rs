@@ -422,13 +422,17 @@ impl Uploader {
         files: Vec<NamedDigest>,
         blobs: Vec<InlinedBlobWithDigest>,
     ) -> buck2_error::Result<()> {
+        let mut metadata = use_case.metadata(identity);
+        if let Some(id) = identity.and_then(|id| id.action_id.clone()) {
+            metadata.action_id = Some(id);
+        }
         with_error_handler(
             "upload",
             client.get_session_id(),
             client
                 .get_raw_re_client()
                 .upload(
-                    &use_case.metadata(identity),
+                    &metadata,
                     UploadRequest {
                         files_with_digest: Some(files),
                         inlined_blobs_with_digest: Some(blobs),

@@ -25,6 +25,7 @@ use crate::dice_dump::DiceDumpCommand;
 use crate::eval::EvalCommand;
 use crate::exe::ExeCommand;
 use crate::file_status::FileStatusCommand;
+use crate::flush_bes::FlushBesCommand;
 use crate::flush_dep_files::FlushDepFilesCommand;
 use crate::flush_pgo_profile::FlushPgoProfileCommand;
 use crate::heap_dump::HeapDumpCommand;
@@ -49,6 +50,7 @@ mod dice_dump;
 mod eval;
 mod exe;
 mod file_status;
+mod flush_bes;
 mod flush_dep_files;
 mod flush_pgo_profile;
 mod heap_dump;
@@ -83,6 +85,9 @@ pub enum DebugCommand {
     ChromeTrace(ChromeTraceCommand),
     /// Flushes all dep files known to Buck2.
     FlushDepFiles(FlushDepFilesCommand),
+    /// Closes the BES streams of finished commands; exits non-zero unless the server
+    /// acknowledged every event within `--timeout`.
+    FlushBes(FlushBesCommand),
     /// Flush PGO profile data from the daemon to disk.
     FlushPgoProfile(FlushPgoProfileCommand),
     // Upload RE logs given an RE session ID
@@ -132,6 +137,7 @@ impl DebugCommand {
             DebugCommand::InternalVersion(cmd) => cmd.exec(matches, ctx),
             DebugCommand::ChromeTrace(cmd) => ctx.exec(cmd, matches, events_ctx),
             DebugCommand::FlushDepFiles(cmd) => ctx.exec(cmd, matches, events_ctx),
+            DebugCommand::FlushBes(cmd) => ctx.exec(cmd, matches, events_ctx),
             DebugCommand::FlushPgoProfile(cmd) => ctx.exec(cmd, matches, events_ctx),
             DebugCommand::UploadReLogs(cmd) => ctx.exec(cmd, matches, events_ctx),
             DebugCommand::DaemonDir(cmd) => cmd.exec(matches, ctx),

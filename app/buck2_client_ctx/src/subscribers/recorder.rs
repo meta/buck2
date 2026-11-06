@@ -48,6 +48,8 @@ use buck2_error::buck2_error;
 use buck2_error::classify::ERROR_TAG_UNCLASSIFIED;
 use buck2_error::classify::ErrorLike;
 use buck2_error::classify::source_area;
+// Used by the Scribe path, which only an fbcode build has, and by the tests.
+#[cfg_attr(not(any(fbcode_build, test)), allow(unused_imports))]
 use buck2_error::internal_error;
 use buck2_error::source_location::SourceLocation;
 use buck2_event_log::ttl::manifold_event_log_ttl;
@@ -59,7 +61,8 @@ use buck2_event_observer::last_command_execution_kind::get_last_command_executio
 use buck2_events::BuckEvent;
 use buck2_events::daemon_id::DaemonId;
 use buck2_events::metadata;
-use buck2_events::sink::remote::ScribeConfig;
+use buck2_events::sink::remote::RemoteEventConfig;
+#[cfg(fbcode_build)]
 use buck2_events::sink::remote::new_remote_event_sink_if_enabled;
 use buck2_fs::error::IoResultExt;
 use buck2_fs::fs_util;
@@ -86,6 +89,7 @@ use crate::common::CommonEventLogOptions;
 use crate::common::PreemptibleWhen;
 use crate::console_interaction_stream::ConsoleInteraction;
 use crate::exit_result::ExitResult;
+use crate::remote_sink_config;
 use crate::subscribers::classify_server_stderr::classify_server_stderr;
 use crate::subscribers::observer::ErrorObserver;
 use crate::subscribers::subscriber::EventSubscriber;
@@ -216,6 +220,7 @@ pub struct InvocationRecorder {
     has_command_result: bool,
     has_end_of_stream: bool,
     compressed_event_log_size_bytes: Option<Arc<AtomicU64>>,
+    remote_sink_config: RemoteEventConfig,
     critical_path_backend: Option<String>,
     bxl_ensure_artifacts_duration: Option<prost_types::Duration>,
     install_duration: Option<prost_types::Duration>,
@@ -452,6 +457,51 @@ impl InvocationRecorder {
             has_command_result: false,
             has_end_of_stream: false,
             compressed_event_log_size_bytes: None,
+            remote_sink_config: RemoteEventConfig {
+                buffer_size: 1,
+                retry_backoff: Duration::from_millis(500),
+                retry_attempts: 5,
+                #[cfg(not(fbcode_build))]
+                retry_window: Duration::from_secs(
+                    buck2_events::sink::remote::DEFAULT_RETRY_WINDOW_SECS,
+                ),
+                #[cfg(not(fbcode_build))]
+                replay_spill_dir: None,
+                #[cfg(not(fbcode_build))]
+                replay_spill_max_bytes: buck2_events::sink::remote::DEFAULT_REPLAY_SPILL_MAX_BYTES,
+                message_batch_size: None,
+                #[cfg(fbcode_build)]
+                thrift_timeout: Duration::from_secs(2),
+                #[cfg(not(fbcode_build))]
+                grpc_timeout: Duration::from_secs(10),
+                #[cfg(not(fbcode_build))]
+                bes_backend: None,
+                #[cfg(not(fbcode_build))]
+                bes_headers: Vec::new(),
+                bes_tls: Default::default(),
+                #[cfg(not(fbcode_build))]
+                build_metadata: Vec::new(),
+                #[cfg(not(fbcode_build))]
+                event_format: Default::default(),
+                #[cfg(not(fbcode_build))]
+                bazel_artifact_upload: true,
+                #[cfg(not(fbcode_build))]
+                upload_successful_action_events: true,
+                #[cfg(not(fbcode_build))]
+                bazel_artifact_upload_backend: None,
+                #[cfg(not(fbcode_build))]
+                re_client_cas_address: None,
+                #[cfg(not(fbcode_build))]
+                bazel_artifact_upload_instance_name: None,
+                #[cfg(not(fbcode_build))]
+                re_client_instance_name: None,
+                #[cfg(not(fbcode_build))]
+                bazel_artifact_uri_authority: None,
+                #[cfg(not(fbcode_build))]
+                bazel_artifact_upload_max_bytes: 10 * 1024 * 1024,
+                #[cfg(not(fbcode_build))]
+                channel: Default::default(),
+            },
             critical_path_backend: None,
             bxl_ensure_artifacts_duration: None,
             install_duration: None,
@@ -655,6 +705,54 @@ impl InvocationRecorder {
         self.build_count_manager = build_count;
         self.filesystem = Some(filesystem);
         self.compressed_event_log_size_bytes = log_size_counter_bytes;
+        self.remote_sink_config = remote_sink_config::with_buckconfig_overrides(
+            paths,
+            RemoteEventConfig {
+                buffer_size: 1,
+                retry_backoff: Duration::from_millis(500),
+                retry_attempts: 5,
+                #[cfg(not(fbcode_build))]
+                retry_window: Duration::from_secs(
+                    buck2_events::sink::remote::DEFAULT_RETRY_WINDOW_SECS,
+                ),
+                #[cfg(not(fbcode_build))]
+                replay_spill_dir: None,
+                #[cfg(not(fbcode_build))]
+                replay_spill_max_bytes: buck2_events::sink::remote::DEFAULT_REPLAY_SPILL_MAX_BYTES,
+                message_batch_size: None,
+                #[cfg(fbcode_build)]
+                thrift_timeout: Duration::from_secs(2),
+                #[cfg(not(fbcode_build))]
+                grpc_timeout: Duration::from_secs(10),
+                #[cfg(not(fbcode_build))]
+                bes_backend: None,
+                #[cfg(not(fbcode_build))]
+                bes_headers: Vec::new(),
+                bes_tls: Default::default(),
+                #[cfg(not(fbcode_build))]
+                build_metadata: Vec::new(),
+                #[cfg(not(fbcode_build))]
+                event_format: Default::default(),
+                #[cfg(not(fbcode_build))]
+                bazel_artifact_upload: true,
+                #[cfg(not(fbcode_build))]
+                upload_successful_action_events: true,
+                #[cfg(not(fbcode_build))]
+                bazel_artifact_upload_backend: None,
+                #[cfg(not(fbcode_build))]
+                re_client_cas_address: None,
+                #[cfg(not(fbcode_build))]
+                bazel_artifact_upload_instance_name: None,
+                #[cfg(not(fbcode_build))]
+                re_client_instance_name: None,
+                #[cfg(not(fbcode_build))]
+                bazel_artifact_uri_authority: None,
+                #[cfg(not(fbcode_build))]
+                bazel_artifact_upload_max_bytes: 10 * 1024 * 1024,
+                #[cfg(not(fbcode_build))]
+                channel: Default::default(),
+            },
+        );
         self.health_check_tags_receiver = health_check_tags_receiver;
         self.preemptible = build_config_opts.and_then(|opts| opts.preemptible);
         self.repo_path = paths.map(|p| p.project_root().root().to_string());
@@ -2873,25 +2971,32 @@ impl EventSubscriber for InvocationRecorder {
     }
 
     async fn finalize(mut self: Box<Self>) -> buck2_error::Result<()> {
-        // Can't set this before the daemon forks.
-        // Typically initialized already unless the command failed early.
-        let fb = buck2_common::fbinit::get_or_init_fbcode_globals();
         let event = self.create_record_event();
-        if let Some(scribe_sink) = new_remote_event_sink_if_enabled(
-            fb,
-            ScribeConfig {
-                buffer_size: 1,
-                retry_backoff: Duration::from_millis(500),
-                retry_attempts: 5,
-                message_batch_size: None,
-                thrift_timeout: Duration::from_secs(2),
-            },
-        )? {
-            tracing::info!("Recording invocation to Scribe: {:?}", &event);
-            scribe_sink.send_now(event).await
-        } else {
-            tracing::info!("Invocation record is not sent to Scribe: {:?}", &event);
-            Err(internal_error!("Scribe sink not enabled"))
+
+        #[cfg(not(fbcode_build))]
+        {
+            drop(event);
+            // In OSS, daemon-side BES upload is the source of truth for the
+            // invocation stream. Sending a second client-side stream with the
+            // same invocation ID causes BuildBuddy to cancel/preempt attempts
+            // and can downgrade a successful invocation to disconnected.
+            return Ok(());
+        }
+
+        #[cfg(fbcode_build)]
+        {
+            // Can't set this before the daemon forks.
+            // Typically initialized already unless the command failed early.
+            let fb = buck2_common::fbinit::get_or_init_fbcode_globals();
+            let remote_sink_config =
+                std::mem::replace(&mut self.remote_sink_config, RemoteEventConfig::default());
+            if let Some(scribe_sink) = new_remote_event_sink_if_enabled(fb, remote_sink_config)? {
+                tracing::info!("Recording invocation to Scribe: {:?}", &event);
+                scribe_sink.send_now(event).await
+            } else {
+                tracing::info!("Invocation record is not sent to Scribe: {:?}", &event);
+                Err(internal_error!("Scribe sink not enabled"))
+            }
         }
     }
 

@@ -273,7 +273,7 @@ pub(crate) fn analysis_actions_methods_run(methods: &mut MethodsBuilder) {
         #[starlark(require = named)] weight: Option<u32>,
         #[starlark(require = named)] weight_percentage: Option<u32>,
         #[starlark(require = named)] dep_files: Option<
-            BuckMutInsertionMap<&'v str, &'v ArtifactTag>,
+            ValueOf<'v, DictType<&'v str, &'v ArtifactTag>>,
         >,
         #[starlark(require = named, default = ValueOf::empty_list())]
         dep_file_fingerprints: ValueOf<
@@ -302,11 +302,11 @@ pub(crate) fn analysis_actions_methods_run(methods: &mut MethodsBuilder) {
         #[starlark(require = named, default = ValueOf::empty_list())]
         remote_execution_dependencies: ValueOf<
             'v,
-            ListType<BuckMutInsertionMap<&'v str, &'v str>>,
+            ListType<ValueOf<'v, DictType<&'v str, &'v str>>>,
         >,
         #[starlark(require = named, default = ValueOf::empty_list())] re_gang_workers: ValueOf<
             'v,
-            ListType<BuckMutInsertionMap<&'v str, &'v str>>,
+            ListType<ValueOf<'v, DictType<&'v str, &'v str>>>,
         >,
         #[starlark(default = NoneType, require = named)] remote_execution_dynamic_image: Value<'v>,
         #[starlark(require = named, default = NoneOr::None)] timeout_seconds: NoneOr<u32>,
@@ -342,23 +342,26 @@ pub(crate) fn analysis_actions_methods_run(methods: &mut MethodsBuilder) {
         }
 
         impl<'v> RunCommandArtifactVisitor<'v> {
-            fn new(dep_files: &Option<BuckMutInsertionMap<&'v str, &'v ArtifactTag>>) -> Self {
+            fn new(
+                dep_files: Option<ValueOf<'v, DictType<&'v str, &'v ArtifactTag>>>,
+            ) -> buck2_error::Result<Self> {
                 let dep_file_artifact_tags = if let Some(dep_files) = dep_files {
-                    let mut tags = BuckMutInsertionSet::with_capacity(dep_files.len());
-                    for (_key, tag) in dep_files {
-                        tags.insert(tag.dupe());
+                    let mut tags = BuckMutInsertionSet::with_capacity(dep_files.dict().len());
+                    for entry in dep_files.try_items() {
+                        let (_key, tag) = entry?;
+                        tags.insert(tag);
                     }
                     Some(tags)
                 } else {
                     None
                 };
-                Self {
+                Ok(Self {
                     inner: SimpleCommandLineArtifactVisitor::new(),
                     tagged_outputs: BuckMutMap::default(),
                     depth: 0,
                     dep_file_artifact_tags,
                     inputs_with_multiple_tags_for_dep_files: Vec::new(),
-                }
+                })
             }
         }
 
@@ -431,7 +434,7 @@ pub(crate) fn analysis_actions_methods_run(methods: &mut MethodsBuilder) {
 
         let executor_preference = new_executor_preference(local_only, prefer_local, prefer_remote)?;
 
-        let mut artifact_visitor = RunCommandArtifactVisitor::new(&dep_files);
+        let mut artifact_visitor = RunCommandArtifactVisitor::new(dep_files)?;
 
         let starlark_args = StarlarkCmdArgs::try_from_value_typed(arguments)?;
         starlark_args.visit_artifacts(&mut artifact_visitor)?;
@@ -502,7 +505,8 @@ pub(crate) fn analysis_actions_methods_run(methods: &mut MethodsBuilder) {
             BuckMutInsertionMap::new();
 
         if let Some(dep_files) = dep_files {
-            for (key, tag) in dep_files {
+            for entry in dep_files.try_items() {
+                let (key, tag) = entry?;
                 let tagged = tagged_outputs.get(tag);
                 let count = tagged.map_or(0, |t| t.len());
 
@@ -599,12 +603,14 @@ pub(crate) fn analysis_actions_methods_run(methods: &mut MethodsBuilder) {
 
         let re_dependencies = remote_execution_dependencies
             .try_items()
-            .map(|d| RemoteExecutorDependency::parse(d?))
+            .map(|d| {
+                RemoteExecutorDependency::parse(d?.try_items().collect::<starlark::Result<_>>()?)
+            })
             .collect::<buck2_error::Result<MiniBoxSlice<RemoteExecutorDependency>>>()?;
 
         let re_gang_workers = re_gang_workers
             .try_items()
-            .map(|w| ReGangWorker::parse(w?))
+            .map(|w| ReGangWorker::parse(w?.try_items().collect::<starlark::Result<_>>()?))
             .collect::<buck2_error::Result<MiniBoxSlice<ReGangWorker>>>()?;
 
         let re_custom_image = parse_custom_re_image(

@@ -66,6 +66,7 @@ use starlark::values::ValueOf;
 use starlark::values::ValueTyped;
 use starlark::values::any_complex::StarlarkAnyComplex;
 use starlark::values::dict::DictRef;
+use starlark::values::dict::DictType;
 use starlark::values::list::ListRef;
 use starlark::values::list_or_tuple::ListOrTupleType;
 use starlark::values::starlark_value;
@@ -665,7 +666,7 @@ pub fn register_provider(builder: &mut GlobalsBuilder) {
         #[starlark(require=named, default = "")] doc: &str,
         #[starlark(require=named)] fields: Either<
             ValueOf<'v, ListOrTupleType<String>>,
-            BuckMutInsertionMap<String, Value<'v>>,
+            ValueOf<'v, DictType<String, Value<'v>>>,
         >,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<UserProviderCallable<'v>> {
@@ -688,8 +689,9 @@ pub fn register_provider(builder: &mut GlobalsBuilder) {
                 new_fields
             }
             Either::Right(fields) => {
-                let mut new_fields = BuckMutInsertionMap::with_capacity(fields.len());
-                for (name, field) in fields {
+                let mut new_fields = BuckMutInsertionMap::with_capacity(fields.dict().len());
+                for entry in fields.try_items() {
+                    let (name, field) = entry?;
                     if let Some(field) = field.downcast_ref::<UserProviderField>() {
                         new_fields.insert(name, field.dupe());
                     } else {

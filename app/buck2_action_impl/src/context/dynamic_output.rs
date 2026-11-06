@@ -26,7 +26,6 @@ use buck2_dynamic_actions::params::DynamicLambdaStaticFields;
 use buck2_dynamic_actions::storage::DynamicLambdaParamsStorageImpl;
 use buck2_error::conversion::from_any_with_tag;
 use buck2_error::internal_error;
-use buck2_hash::BuckMutInsertionMap;
 use dupe::Dupe;
 use mini_vec::MiniBoxSlice;
 use starlark::environment::MethodsBuilder;
@@ -34,6 +33,7 @@ use starlark::starlark_module;
 use starlark::values::Value;
 use starlark::values::ValueOf;
 use starlark::values::ValueTyped;
+use starlark::values::dict::DictType;
 use starlark::values::list_or_tuple::ListOrTupleType;
 use starlark::values::none::NoneType;
 use starlark::values::typing::StarlarkCallable;
@@ -114,8 +114,8 @@ pub(crate) fn analysis_actions_methods_dynamic_output(methods: &mut MethodsBuild
             'v,
             (
                 Value<'static>,
-                BuckMutInsertionMap<StarlarkArtifact, StarlarkArtifactValue>,
-                BuckMutInsertionMap<StarlarkArtifact, StarlarkDeclaredArtifact>,
+                DictType<StarlarkArtifact, StarlarkArtifactValue>,
+                DictType<StarlarkArtifact, StarlarkDeclaredArtifact>,
             ),
             NoneType,
         >,

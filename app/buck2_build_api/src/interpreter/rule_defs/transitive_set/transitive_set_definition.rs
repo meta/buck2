@@ -47,6 +47,7 @@ use starlark::values::Trace;
 use starlark::values::Value;
 use starlark::values::ValueOf;
 use starlark::values::ValueTyped;
+use starlark::values::dict::DictType;
 use starlark::values::list::ListType;
 use starlark::values::starlark_value;
 use starlark::values::typing::StarlarkCallableChecked;
@@ -435,45 +436,50 @@ impl<'v> TransitiveSetDefinitionLike<'v> for FrozenTransitiveSetDefinition<'v> {
 pub fn register_transitive_set(builder: &mut GlobalsBuilder) {
     fn transitive_set<'v>(
         #[starlark(require = named)] args_projections: Option<
-            BuckMutInsertionMap<String, ProjectionCallable<'v>>,
+            ValueOf<'v, DictType<String, ProjectionCallable<'v>>>,
         >,
         #[starlark(require = named)] json_projections: Option<
-            BuckMutInsertionMap<String, ProjectionCallable<'v>>,
+            ValueOf<'v, DictType<String, ProjectionCallable<'v>>>,
         >,
         #[starlark(require = named)] reductions: Option<
-            BuckMutInsertionMap<String, ReductionCallable<'v>>,
+            ValueOf<'v, DictType<String, ReductionCallable<'v>>>,
         >,
         eval: &mut Evaluator,
     ) -> starlark::Result<TransitiveSetDefinition<'v>> {
         let projections: BuckMutInsertionMap<_, _> = args_projections
             .into_iter()
-            .flat_map(|v| v.into_iter())
-            .map(|(k, v)| {
-                (
+            .flat_map(|v| v.try_items())
+            .map(|entry| {
+                let (k, v) = entry?;
+                Ok::<_, starlark::Error>((
                     k,
                     TransitiveSetProjectionSpec {
                         kind: TransitiveSetProjectionKind::Args,
                         projection: v,
                     },
-                )
+                ))
             })
             .chain(
                 json_projections
                     .into_iter()
-                    .flat_map(|v| v.into_iter())
-                    .map(|(k, v)| {
-                        (
+                    .flat_map(|v| v.try_items())
+                    .map(|entry| {
+                        let (k, v) = entry?;
+                        Ok::<_, starlark::Error>((
                             k,
                             TransitiveSetProjectionSpec {
                                 kind: TransitiveSetProjectionKind::Json,
                                 projection: v,
                             },
-                        )
+                        ))
                     }),
             )
-            .collect();
+            .collect::<starlark::Result<_>>()?;
 
-        let reductions = reductions.unwrap_or_default();
+        let reductions = match reductions {
+            Some(reductions) => reductions.try_items().collect::<starlark::Result<_>>()?,
+            None => BuckMutInsertionMap::new(),
+        };
 
         let starlark_path: StarlarkPath = starlark_path_from_build_context(eval)?;
         Ok(TransitiveSetDefinition::new(

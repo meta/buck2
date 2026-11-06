@@ -8,11 +8,12 @@
  * above-listed licenses.
  */
 
-use buck2_hash::BuckMutInsertionMap;
 use starlark::environment::GlobalsBuilder;
 use starlark::eval::Evaluator;
 use starlark::starlark_module;
 use starlark::values::Value;
+use starlark::values::ValueOf;
+use starlark::values::dict::DictType;
 use starlark::values::none::NoneType;
 
 #[starlark_module]
@@ -25,10 +26,11 @@ pub(crate) fn register_load_symbols(builder: &mut GlobalsBuilder) {
     /// here later in the same module, or if they overlap with existing definitions.
     /// This function should be used rarely.
     fn load_symbols<'v>(
-        symbols: BuckMutInsertionMap<&'v str, Value<'v>>,
+        symbols: ValueOf<'v, DictType<&'v str, Value<'v>>>,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<NoneType> {
-        for (k, v) in symbols.into_iter() {
+        for entry in symbols.try_items() {
+            let (k, v) = entry?;
             eval.set_module_variable_at_some_point(k, v)?;
         }
         Ok(NoneType)

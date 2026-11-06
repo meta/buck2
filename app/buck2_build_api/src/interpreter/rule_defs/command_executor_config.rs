@@ -39,7 +39,6 @@ use buck2_error::BuckErrorContext;
 use buck2_error::BuckErrorOptionContext;
 use buck2_error::internal_error;
 use buck2_hash::BuckFixedSortedMap;
-use buck2_hash::BuckMutInsertionMap;
 use derive_more::Display;
 use starlark::any::ProvidesStaticType;
 use starlark::environment::GlobalsBuilder;
@@ -50,6 +49,7 @@ use starlark::values::StarlarkValue;
 use starlark::values::Value;
 use starlark::values::ValueOf;
 use starlark::values::dict::DictRef;
+use starlark::values::dict::DictType;
 use starlark::values::list::ListRef;
 use starlark::values::list::ListType;
 use starlark::values::none::NoneOr;
@@ -220,12 +220,12 @@ pub fn register_command_executor_config(builder: &mut GlobalsBuilder) {
         #[starlark(default = ValueOf::empty_list(), require = named)]
         remote_execution_dependencies: ValueOf<
             'v,
-            ListType<BuckMutInsertionMap<&'v str, &'v str>>,
+            ListType<ValueOf<'v, DictType<&'v str, &'v str>>>,
         >,
         #[starlark(default = ValueOf::empty_list(), require = named)]
         remote_execution_gang_workers: ValueOf<
             'v,
-            ListType<BuckMutInsertionMap<&'v str, &'v str>>,
+            ListType<ValueOf<'v, DictType<&'v str, &'v str>>>,
         >,
         #[starlark(default = NoneType, require = named)] remote_execution_dynamic_image: Value<'v>,
         #[starlark(default = NoneOr::None, require = named)] meta_internal_extra_params: NoneOr<
@@ -249,12 +249,16 @@ pub fn register_command_executor_config(builder: &mut GlobalsBuilder) {
 
             let re_dependencies = remote_execution_dependencies
                 .try_items()
-                .map(|d| RemoteExecutorDependency::parse(d?))
+                .map(|d| {
+                    RemoteExecutorDependency::parse(
+                        d?.try_items().collect::<starlark::Result<_>>()?,
+                    )
+                })
                 .collect::<buck2_error::Result<Vec<RemoteExecutorDependency>>>()?;
 
             let re_gang_workers = remote_execution_gang_workers
                 .try_items()
-                .map(|w| ReGangWorker::parse(w?))
+                .map(|w| ReGangWorker::parse(w?.try_items().collect::<starlark::Result<_>>()?))
                 .collect::<buck2_error::Result<Vec<ReGangWorker>>>()?;
 
             let re_dynamic_image = parse_custom_re_image(

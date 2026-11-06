@@ -53,7 +53,9 @@ use itertools::Itertools;
 use starlark::environment::GlobalsBuilder;
 use starlark::starlark_module;
 use starlark::values::OwnedFrozenRef;
+use starlark::values::ValueOf;
 use starlark::values::ValueTyped;
+use starlark::values::dict::DictType;
 use starlark::values::type_repr::StarlarkTypeRepr;
 use starlark::values::typing::StarlarkCallableChecked;
 
@@ -295,9 +297,9 @@ pub(crate) fn register_dynamic_actions(globals: &mut GlobalsBuilder) {
             DynamicActionsCallbackParamSpec,
             DynamicActionsCallbackReturnType,
         >,
-        #[starlark(require = named)] attrs: BuckMutInsertionMap<
-            String,
-            &'v StarlarkDynamicAttrType<'v>,
+        #[starlark(require = named)] attrs: ValueOf<
+            'v,
+            DictType<String, &'v StarlarkDynamicAttrType<'v>>,
         >,
     ) -> starlark::Result<DynamicActionsCallable<'v>> {
         Ok(new_dynamic_actions_callable(r#impl, attrs, &P_BXLCTX)?)

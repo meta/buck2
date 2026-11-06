@@ -381,9 +381,12 @@ impl<'v> StarlarkRuleCallable<'v> {
         implementation: RuleImpl<'v>,
         attrs: ValueOf<'v, DictType<&'v str, &'v StarlarkAttribute>>,
         doc: &str,
-        artifact_promise_mappings: BuckMutInsertionMap<
-            StringValue<'v>,
-            StarlarkCallable<'v, (Value<'static>,), ListType<Value<'static>>>,
+        artifact_promise_mappings: ValueOf<
+            'v,
+            DictType<
+                StringValue<'v>,
+                StarlarkCallable<'v, (Value<'static>,), ListType<Value<'static>>>,
+            >,
         >,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> buck2_error::Result<Self> {
@@ -399,9 +402,12 @@ impl<'v> StarlarkRuleCallable<'v> {
             Vec::new(),
             Some(ArtifactPromiseMappings {
                 mappings: artifact_promise_mappings
-                    .iter()
-                    .map(|(k, v)| (*k, v.0))
-                    .collect::<BuckMutInsertionMap<_, _>>(),
+                    .try_items()
+                    .map(|entry| {
+                        let (k, v) = entry?;
+                        Ok::<_, starlark::Error>((k, v.0))
+                    })
+                    .collect::<starlark::Result<BuckMutInsertionMap<_, _>>>()?,
             }),
             eval,
         )
@@ -411,9 +417,12 @@ impl<'v> StarlarkRuleCallable<'v> {
         implementation: StarlarkCallable<'v, (Value<'static>,), ListType<Value<'static>>>,
         attrs: ValueOf<'v, DictType<&'v str, &'v StarlarkAttribute>>,
         doc: &str,
-        artifact_promise_mappings: BuckMutInsertionMap<
-            StringValue<'v>,
-            StarlarkCallable<'v, (Value<'static>,), ListType<Value<'static>>>,
+        artifact_promise_mappings: ValueOf<
+            'v,
+            DictType<
+                StringValue<'v>,
+                StarlarkCallable<'v, (Value<'static>,), ListType<Value<'static>>>,
+            >,
         >,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> buck2_error::Result<Self> {
@@ -434,9 +443,12 @@ impl<'v> StarlarkRuleCallable<'v> {
         >,
         attrs: ValueOf<'v, DictType<&'v str, &'v StarlarkAttribute>>,
         doc: &str,
-        artifact_promise_mappings: BuckMutInsertionMap<
-            StringValue<'v>,
-            StarlarkCallable<'v, (Value<'static>,), ListType<Value<'static>>>,
+        artifact_promise_mappings: ValueOf<
+            'v,
+            DictType<
+                StringValue<'v>,
+                StarlarkCallable<'v, (Value<'static>,), ListType<Value<'static>>>,
+            >,
         >,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> buck2_error::Result<Self> {
@@ -1075,9 +1087,12 @@ pub fn register_rule_function(builder: &mut GlobalsBuilder) {
         >,
         #[starlark(require = named)] attrs: ValueOf<'v, DictType<&'v str, &'v StarlarkAttribute>>,
         #[starlark(require = named, default = "")] doc: &str,
-        #[starlark(require = named)] artifact_promise_mappings: BuckMutInsertionMap<
-            StringValue<'v>,
-            StarlarkCallable<'v, (Value<'static>,), ListType<Value<'static>>>,
+        #[starlark(require = named)] artifact_promise_mappings: ValueOf<
+            'v,
+            DictType<
+                StringValue<'v>,
+                StarlarkCallable<'v, (Value<'static>,), ListType<Value<'static>>>,
+            >,
         >,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<StarlarkRuleCallable<'v>> {

@@ -20,6 +20,8 @@ use starlark::typing::ParamIsRequired;
 use starlark::typing::ParamSpec;
 use starlark::typing::Ty;
 use starlark::util::ArcStr;
+use starlark::values::ValueOf;
+use starlark::values::dict::DictType;
 use starlark::values::type_repr::StarlarkTypeRepr;
 use starlark::values::typing::StarlarkCallableChecked;
 
@@ -39,19 +41,22 @@ pub fn new_dynamic_actions_callable<'v>(
         DynamicActionsCallbackParamSpec,
         DynamicActionsCallbackReturnType,
     >,
-    attrs: BuckMutInsertionMap<String, &'v StarlarkDynamicAttrType<'v>>,
+    attrs: ValueOf<'v, DictType<String, &'v StarlarkDynamicAttrType<'v>>>,
     callback_param: &DynamicActionsCallbackParam,
 ) -> buck2_error::Result<DynamicActionsCallable<'v>> {
-    if attrs.contains_key(callback_param.name.as_str()) {
+    if attrs.dict().get_str(callback_param.name.as_str()).is_some() {
         return Err(buck2_error!(
             buck2_error::ErrorTag::Input,
             "Cannot define `actions` attribute"
         ));
     }
     let attrs: BuckMutInsertionMap<String, DynamicAttrType<'v>> = attrs
-        .into_iter()
-        .map(|(name, ty)| (name, ty.ty.clone()))
-        .collect();
+        .try_items()
+        .map(|entry| {
+            let (name, ty) = entry?;
+            Ok::<_, starlark::Error>((name, ty.ty.clone()))
+        })
+        .collect::<starlark::Result<_>>()?;
 
     let attr_args = attrs
         .iter()
@@ -109,9 +114,9 @@ pub fn register_dynamic_actions(globals: &mut GlobalsBuilder) {
             DynamicActionsCallbackParamSpec,
             DynamicActionsCallbackReturnType,
         >,
-        #[starlark(require = named)] attrs: BuckMutInsertionMap<
-            String,
-            &'v StarlarkDynamicAttrType<'v>,
+        #[starlark(require = named)] attrs: ValueOf<
+            'v,
+            DictType<String, &'v StarlarkDynamicAttrType<'v>>,
         >,
     ) -> starlark::Result<DynamicActionsCallable<'v>> {
         Ok(new_dynamic_actions_callable(r#impl, attrs, &P_ACTIONS)?)

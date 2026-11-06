@@ -115,10 +115,13 @@ pub(crate) fn register_anon_rule(globals: &mut GlobalsBuilder) {
         >,
         #[starlark(require = named)] attrs: ValueOf<'v, DictType<&'v str, &'v StarlarkAttribute>>,
         #[starlark(require = named, default = "")] doc: &str,
-        #[starlark(require = named, default = BuckMutInsertionMap::default())]
-        artifact_promise_mappings: BuckMutInsertionMap<
-            StringValue<'v>,
-            StarlarkCallable<'v, (Value<'static>,), ListType<Value<'static>>>,
+        #[starlark(require = named, default = ValueOf::empty_dict())]
+        artifact_promise_mappings: ValueOf<
+            'v,
+            DictType<
+                StringValue<'v>,
+                StarlarkCallable<'v, (Value<'static>,), ListType<Value<'static>>>,
+            >,
         >,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<StarlarkRuleCallable<'v>> {

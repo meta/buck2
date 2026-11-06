@@ -21,6 +21,7 @@ pub use self::transitive_set::TransitiveSet;
 pub use self::transitive_set_args_projection::TransitiveSetArgsProjection;
 pub use self::transitive_set_definition::FrozenTransitiveSetDefinition;
 pub use self::transitive_set_definition::TransitiveSetDefinition;
+pub use self::transitive_set_definition::TransitiveSetDefinitionView;
 pub use self::transitive_set_definition::TransitiveSetOperations;
 pub use self::transitive_set_definition::TransitiveSetProjectionKind;
 pub use self::transitive_set_definition::TransitiveSetProjectionSpec;

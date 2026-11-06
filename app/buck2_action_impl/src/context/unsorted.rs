@@ -14,13 +14,12 @@ use buck2_build_api::interpreter::rule_defs::artifact::starlark_declared_artifac
 use buck2_build_api::interpreter::rule_defs::artifact_tagging::ArtifactTag;
 use buck2_build_api::interpreter::rule_defs::context::AnalysisActions;
 use buck2_build_api::interpreter::rule_defs::digest_config::StarlarkDigestConfig;
-use buck2_build_api::interpreter::rule_defs::transitive_set::FrozenTransitiveSetDefinition;
 use buck2_build_api::interpreter::rule_defs::transitive_set::TransitiveSet;
+use buck2_build_api::interpreter::rule_defs::transitive_set::TransitiveSetDefinitionView;
 use buck2_core::fs::buck_out_path::BuckOutPathKind;
 use starlark::environment::MethodsBuilder;
 use starlark::eval::Evaluator;
 use starlark::starlark_module;
-use starlark::values::FrozenValueTyped;
 use starlark::values::Value;
 use starlark::values::ValueOf;
 use starlark::values::ValueTyped;
@@ -93,14 +92,12 @@ pub(crate) fn analysis_actions_methods_unsorted(builder: &mut MethodsBuilder) {
     /// Creates a new transitive set. For details, see https://buck2.build/docs/rule_authors/transitive_sets/.
     fn tset<'v>(
         this: &AnalysisActions<'v>,
-        #[starlark(require = pos)] definition: FrozenValueTyped<
-            'v,
-            FrozenTransitiveSetDefinition<'v>,
-        >,
+        #[starlark(require = pos)] definition: TransitiveSetDefinitionView<'v>,
         #[starlark(require = named)] value: Option<Value<'v>>,
         #[starlark(require = named)] children: Option<ValueOf<'v, StarlarkIter<Value<'v>>>>,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<ValueTyped<'v, TransitiveSet<'v>>> {
+        let definition = definition.frozen()?;
         let mut this = this.state()?;
         this.create_transitive_set(definition, value, children.map(|v| v.to_value()), eval)
     }

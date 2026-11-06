@@ -15,6 +15,7 @@ use std::sync::Arc;
 
 use allocative::Allocative;
 use buck2_core::bzl::ImportPath;
+use buck2_error::BuckErrorContext;
 use buck2_error::BuckErrorOptionContext;
 use buck2_hash::BuckMutInsertionMap;
 use buck2_interpreter::build_context::starlark_path_from_build_context;
@@ -37,6 +38,7 @@ use starlark::values::Freeze;
 use starlark::values::FreezeError;
 use starlark::values::FreezeResult;
 use starlark::values::Freezer;
+use starlark::values::FrozenValueTyped;
 use starlark::values::Heap;
 use starlark::values::StarlarkPagable;
 use starlark::values::StarlarkPagableViaPagable;
@@ -65,6 +67,8 @@ use crate::interpreter::rule_defs::type_id_domain::Buck2TypeIdDomain;
 enum TransitiveSetDefinitionError {
     #[error("`transitive_set()` can only be used in `bzl` files")]
     TransitiveSetOnlyInBzl,
+    #[error("Transitive set definition used before the module defining it finished loading")]
+    UsedBeforeLoaded,
 }
 
 #[derive(
@@ -248,6 +252,21 @@ pub enum TransitiveSetDefinitionView<'v> {
 }
 
 impl<'v> TransitiveSetDefinitionView<'v> {
+    /// The definition once its module is loaded, which is what creating a set requires: the set
+    /// keeps the definition, and a definition is only unfrozen while its module loads, when no
+    /// analysis runs.
+    pub fn frozen(
+        self,
+    ) -> buck2_error::Result<FrozenValueTyped<'v, FrozenTransitiveSetDefinition<'v>>> {
+        match self {
+            TransitiveSetDefinitionView::Frozen(this) => FrozenValueTyped::new_err(this.to_value())
+                .internal_error("the frozen representation is only allocated on a frozen heap"),
+            TransitiveSetDefinitionView::Unfrozen(_) => {
+                Err(TransitiveSetDefinitionError::UsedBeforeLoaded.into())
+            }
+        }
+    }
+
     /// What `export_as` establishes; always present once frozen.
     fn exported(&self) -> Option<&'v TransitiveSetDefinitionExported> {
         match self {

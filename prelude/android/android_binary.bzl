@@ -8,7 +8,7 @@
 
 load("@prelude//android:android_binary_native_library_rules.bzl", "get_android_binary_native_library_info")
 load("@prelude//android:android_binary_resources_rules.bzl", "get_android_binary_resources_info")
-load("@prelude//android:android_build_config.bzl", "generate_android_build_config", "get_build_config_fields")
+load("@prelude//android:android_build_config.bzl", "generate_android_build_config", "get_build_config_fields", "write_build_config_defaults")
 load(
     "@prelude//android:android_providers.bzl",
     "AndroidBinaryNativeLibsInfo",  # @unused Used as type
@@ -286,7 +286,11 @@ def get_binary_info(ctx: AnalysisContext, use_proto_format: bool) -> AndroidBina
     )
 
 def get_build_config_java_libraries(
-    ctx: AnalysisContext, build_config_infos: list[AndroidBuildConfigInfo], package_type: str, exopackage_modes: list[str]
+    ctx: AnalysisContext,
+    build_config_infos: list[AndroidBuildConfigInfo],
+    package_type: str,
+    exopackage_modes: list[str],
+    is_binary: bool = True,
 ) -> list[JavaPackagingInfo]:
     # BuildConfig deps should not be added for instrumented APKs because BuildConfig.class has
     # already been added to the APK under test.
@@ -299,7 +303,12 @@ def get_build_config_java_libraries(
         BuildConfigField(type = "int", name = "EXOPACKAGE_FLAGS", value = str(get_exopackage_flags(exopackage_modes))),
     ]
 
-    default_build_config_fields = get_build_config_fields(ctx.attrs.build_config_values)
+    binary_build_config_values = {field.name: field for field in get_build_config_fields(ctx.attrs.build_config_values) + build_config_constants}
+    binary_inline_values_file = ctx.actions.write(
+        "binary_build_config_values",
+        ["{} {} = {}".format(field.type, field.name, field.value) for field in binary_build_config_values.values()],
+        has_content_based_path = True,
+    )
 
     android_binary_values_file = (
         ctx.attrs.build_config_values_file[DefaultInfo].default_outputs[0]
@@ -314,19 +323,25 @@ def get_build_config_java_libraries(
         expect(java_package not in java_packages_seen, "Got the same java_package {} for different AndroidBuildConfigs".format(java_package))
         java_packages_seen.append(java_package)
 
-        all_build_config_values = {}
-        for build_config_field in build_config_info.build_config_fields + default_build_config_fields + build_config_constants:
-            all_build_config_values[build_config_field.name] = build_config_field
+        default_values = {field.name: field for field in build_config_info.build_config_fields + build_config_constants}
+        default_values_files = [write_build_config_defaults(ctx, java_package, default_values.values())]
+        if build_config_info.values_file:
+            default_values_files.append(build_config_info.values_file)
 
-        values_file = android_binary_values_file if android_binary_values_file else build_config_info.values_file
+        values_files = [binary_inline_values_file]
+        if android_binary_values_file:
+            values_files.append(android_binary_values_file)
+        if not is_binary:
+            default_values_files.extend(values_files)
+            values_files = []
         java_libraries.append(
             generate_android_build_config(
                 ctx,
                 java_package,
                 java_package,
-                True,  # use_constant_expressions
-                all_build_config_values.values(),
-                values_file,
+                use_constant_expressions = True,
+                default_values_files = default_values_files,
+                values_files = values_files,
             )[1]
         )
 

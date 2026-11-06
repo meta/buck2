@@ -34,13 +34,17 @@ def android_build_config_impl(ctx: AnalysisContext) -> list[Provider]:
     providers.append(android_build_config_info)
     providers.append(merge_android_packageable_info(ctx.label, ctx.actions, deps = [], build_config_info = android_build_config_info))
 
+    default_values_files = [write_build_config_defaults(ctx, ctx.attrs.package, default_build_config_fields)]
+    if ctx.attrs.values_file:
+        default_values_files.append(ctx.attrs.values_file)
+
     build_config_dot_java_library, java_packaging_info, build_config_dot_java = generate_android_build_config(
         ctx,
         ctx.attrs.name,
         ctx.attrs.package,
-        False,
-        default_build_config_fields,
-        ctx.attrs.values_file,
+        use_constant_expressions = False,
+        default_values_files = default_values_files,
+        values_files = [],
     )
 
     providers.append(java_packaging_info)
@@ -57,9 +61,14 @@ def android_build_config_impl(ctx: AnalysisContext) -> list[Provider]:
     return providers
 
 def generate_android_build_config(
-    ctx: AnalysisContext, source: str, java_package: str, use_constant_expressions: bool, default_values: list[BuildConfigField], values_file: Artifact | None
+    ctx: AnalysisContext,
+    source: str,
+    java_package: str,
+    use_constant_expressions: bool,
+    default_values_files: list[Artifact],
+    values_files: list[Artifact],
 ) -> (JavaLibraryInfo, JavaPackagingInfo, Artifact):
-    build_config_dot_java = _generate_build_config_dot_java(ctx, source, java_package, use_constant_expressions, default_values, values_file)
+    build_config_dot_java = _generate_build_config_dot_java(ctx, source, java_package, use_constant_expressions, default_values_files, values_files)
 
     compiled_build_config_dot_java = _compile_and_package_build_config_dot_java(ctx, java_package, build_config_dot_java)
     library_output = compiled_build_config_dot_java.classpath_entry
@@ -81,7 +90,12 @@ def generate_android_build_config(
     )
 
 def _generate_build_config_dot_java(
-    ctx: AnalysisContext, source: str, java_package: str, use_constant_expressions: bool, default_values: list[BuildConfigField], values_file: Artifact | None
+    ctx: AnalysisContext,
+    source: str,
+    java_package: str,
+    use_constant_expressions: bool,
+    default_values_files: list[Artifact],
+    values_files: list[Artifact],
 ) -> Artifact:
     generate_build_config_cmd = cmd_args(ctx.attrs._android_toolchain[AndroidToolchainInfo].generate_build_config[RunInfo])
     generate_build_config_cmd.add([
@@ -93,13 +107,9 @@ def _generate_build_config_dot_java(
         str(use_constant_expressions),
     ])
 
-    default_values_file = ctx.actions.write(
-        _get_output_name(java_package, "default_values"),
-        ["{} {} = {}".format(x.type, x.name, x.value) for x in default_values],
-        has_content_based_path = True,
-    )
-    generate_build_config_cmd.add(["--default-values-file", default_values_file])
-    if values_file:
+    for values_file in default_values_files:
+        generate_build_config_cmd.add(["--default-values-file", values_file])
+    for values_file in values_files:
         generate_build_config_cmd.add(["--values-file", values_file])
 
     build_config_dot_java = ctx.actions.declare_output(
@@ -115,6 +125,13 @@ def _generate_build_config_dot_java(
     )
 
     return build_config_dot_java
+
+def write_build_config_defaults(ctx: AnalysisContext, java_package: str, fields: list[BuildConfigField]) -> Artifact:
+    return ctx.actions.write(
+        _get_output_name(java_package, "default_values"),
+        ["{} {} = {}".format(field.type, field.name, field.value) for field in fields],
+        has_content_based_path = True,
+    )
 
 def _compile_and_package_build_config_dot_java(ctx: AnalysisContext, java_package: str, build_config_dot_java: Artifact) -> JavaCompileOutputs:
     return compile_to_jar(
@@ -268,6 +285,7 @@ android_build_config = prelude_rule(
                  non-constant-expressions that evaluate to the value specified in the file at compilation
                  time.
                  To override the values in an APK, specify build\\_config\\_values or build\\_config\\_values\\_file in `android_binary()`.
+                 Binary values override matching fields; other fields from this file keep their values.
 
                  Note that values\\_file can be a generated file, as can build\\_config\\_values\\_file as
                  demonstrated in the example below.

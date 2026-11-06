@@ -17,7 +17,8 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
-import org.jetbrains.annotations.Nullable;
+import java.util.ArrayList;
+import java.util.List;
 import org.kohsuke.args4j.CmdLineException;
 import org.kohsuke.args4j.CmdLineParser;
 import org.kohsuke.args4j.Option;
@@ -35,11 +36,10 @@ public class GenerateBuildConfigExecutableMain {
   private String useConstantExpressions;
 
   @Option(name = "--default-values-file", required = true)
-  private String defaultValuesFile;
+  private List<String> defaultValuesFiles = new ArrayList<>();
 
   @Option(name = "--values-file")
-  @Nullable
-  private String valuesFile;
+  private List<String> valuesFiles = new ArrayList<>();
 
   @Option(name = "--output", required = true)
   private String output;
@@ -59,20 +59,14 @@ public class GenerateBuildConfigExecutableMain {
   }
 
   private void run() throws IOException {
-    Path defaultValuesPath = Paths.get(defaultValuesFile);
     Path outputPath = Paths.get(output);
 
-    BuildConfigFields defaultValues =
-        BuildConfigFields.fromFieldDeclarations(Files.readAllLines(defaultValuesPath));
-
-    BuildConfigFields fields;
-    if (valuesFile == null) {
-      fields = defaultValues;
-    } else {
-      Path valuesPath = Paths.get(valuesFile);
-      fields =
-          defaultValues.putAll(
-              BuildConfigFields.fromFieldDeclarations(Files.readAllLines(valuesPath)));
+    BuildConfigFields fields = BuildConfigFields.of();
+    for (String path : defaultValuesFiles) {
+      fields = fields.putAll(readFields(path));
+    }
+    for (String path : valuesFiles) {
+      fields = fields.putAll(readFields(path));
     }
 
     String java =
@@ -85,5 +79,9 @@ public class GenerateBuildConfigExecutableMain {
     }
 
     System.exit(0);
+  }
+
+  private static BuildConfigFields readFields(String path) throws IOException {
+    return BuildConfigFields.fromFieldDeclarations(Files.readAllLines(Paths.get(path)));
   }
 }

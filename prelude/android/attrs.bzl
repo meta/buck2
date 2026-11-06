@@ -201,7 +201,7 @@ ANDROID_BINARY_BUNDLE_COMMON_ATTRS = (
         "build_config_values_file": attrs.option(
             attrs.one_of(attrs.transition_dep(cfg = cpu_transition), attrs.source()),
             default = None,
-            doc = "See the documentation on the values_file argument for android_build_config().",
+            doc = "Overrides build_config_values and matching fields from each android_build_config() rule's values and values_file. Other package fields are retained.",
         ),
         "build_string_source_map": attrs.bool(default = False, doc = ""),
         "compiled_resource_apks": attrs.list(attrs.source(), default = [], doc = ""),

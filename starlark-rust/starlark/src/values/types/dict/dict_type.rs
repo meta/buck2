@@ -100,12 +100,24 @@ impl<'v, K: UnpackValue<'v>, V: UnpackValue<'v>> ValueOf<'v, DictType<K, V>> {
         }
     }
 
+    /// The value at `key`, re-checked unless the dict is frozen.
+    pub fn get(self, key: Value<'v>) -> crate::Result<Option<ValueOf<'v, V>>> {
+        self.dict().get(key)?.map(|v| self.checked(v)).transpose()
+    }
+
     /// The value at a string key, re-checked unless the dict is frozen.
     pub fn get_str(self, key: &str) -> crate::Result<Option<ValueOf<'v, V>>> {
-        match self.dict().get_str(key) {
-            None => Ok(None),
-            Some(v) if self.to_value().is_frozen() => Ok(Some(ValueOf::new_unchecked(v))),
-            Some(v) => Ok(Some(ValueOf::new_err(v)?)),
+        self.dict()
+            .get_str(key)
+            .map(|v| self.checked(v))
+            .transpose()
+    }
+
+    fn checked(self, v: Value<'v>) -> crate::Result<ValueOf<'v, V>> {
+        if self.to_value().is_frozen() {
+            Ok(ValueOf::new_unchecked(v))
+        } else {
+            ValueOf::new_err(v)
         }
     }
 }

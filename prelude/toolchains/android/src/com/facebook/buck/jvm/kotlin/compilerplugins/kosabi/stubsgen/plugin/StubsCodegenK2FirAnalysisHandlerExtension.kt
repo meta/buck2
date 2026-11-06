@@ -11,7 +11,6 @@
 package com.facebook.kotlin.compilerplugins.kosabi.stubsgen.plugin.stubsgen_k2
 
 import com.facebook.kotlin.compilerplugins.kosabi.stubsgen.generators.StubsGenAPI // @oss-enable
-import com.facebook.kotlin.compilercompat.FirAnalysisHandlerExtensionCompat
 // @oss-disable: import com.facebook.kotlin.compilerplugins.kosabi.stubsgen.generators.meta_only.StubsGenApiImpl
 import com.facebook.kotlin.compilerplugins.kosabi.stubsgen.util.parseJavaDeclarations
 import com.facebook.kotlin.compilerplugins.kosabi.stubsgen.util.parseJavaSources
@@ -21,6 +20,7 @@ import org.jetbrains.kotlin.cli.jvm.compiler.createSourceFilesFromSourceRoots
 import org.jetbrains.kotlin.cli.jvm.config.javaSourceRoots
 import org.jetbrains.kotlin.com.intellij.openapi.project.Project
 import org.jetbrains.kotlin.config.CompilerConfiguration
+import org.jetbrains.kotlin.fir.extensions.FirAnalysisHandlerExtension
 
 @SuppressWarnings("PackageLocationMismatch")
 class StubsCodegenK2FirAnalysisHandlerExtension(
@@ -28,7 +28,7 @@ class StubsCodegenK2FirAnalysisHandlerExtension(
     private val stubsClassOutputDir: File,
     private val classPaths: List<File>,
     private val skipJavaImports: Boolean = false,
-) : FirAnalysisHandlerExtensionCompat() {
+) : FirAnalysisHandlerExtension() {
 
   override fun isApplicable(configuration: CompilerConfiguration): Boolean {
     return true

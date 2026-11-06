@@ -43,7 +43,7 @@ use starlark::values::ValueOf;
 use starlark::values::ValueTyped;
 use starlark::values::dict::DictType;
 use starlark::values::list::AllocList;
-use starlark::values::list_or_tuple::UnpackListOrTuple;
+use starlark::values::list_or_tuple::ListOrTupleType;
 use starlark::values::none::NoneOr;
 use starlark::values::starlark_value;
 
@@ -286,10 +286,13 @@ fn analysis_actions_methods_anon_target(builder: &mut MethodsBuilder) {
     fn anon_targets<'v>(
         this: &AnalysisActions<'v>,
         // TODO(nga): this should be either positional or named, not both.
-        rules: UnpackListOrTuple<(
-            StarlarkRuleCallableView<'v>,
-            ValueOf<'v, DictType<&'v str, Value<'v>>>,
-        )>,
+        rules: ValueOf<
+            'v,
+            ListOrTupleType<(
+                StarlarkRuleCallableView<'v>,
+                ValueOf<'v, DictType<&'v str, Value<'v>>>,
+            )>,
+        >,
         #[starlark(require = named, default = NoneOr::None)] exec_group: NoneOr<ExecutionGroupArg>,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<StarlarkAnonTargets<'v>> {
@@ -305,9 +308,9 @@ fn analysis_actions_methods_anon_target(builder: &mut MethodsBuilder) {
         let mut promises_to_join = Vec::new();
         let owner_key = this.analysis_value_storage.self_key.owner();
         rules
-            .items
-            .into_iter()
-            .map(|(rule, attributes)| {
+            .try_items()
+            .map(|rule| {
+                let (rule, attributes) = rule?;
                 let rule = rule.frozen()?;
                 let key =
                     registry.anon_target_key(rule, attributes, owner_key, exec_group.as_ref())?;

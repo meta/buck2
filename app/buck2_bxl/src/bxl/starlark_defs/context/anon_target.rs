@@ -62,7 +62,6 @@ use starlark::values::ValueOf;
 use starlark::values::ValueTyped;
 use starlark::values::dict::DictType;
 use starlark::values::list::ListType;
-use starlark::values::list::UnpackList;
 use starlark::values::structs::StructRef;
 use starlark::values::type_repr::StarlarkTypeRepr;
 use starlark::values::typing::StarlarkCallable;
@@ -119,7 +118,7 @@ pub(crate) fn register_anon_rule(globals: &mut GlobalsBuilder) {
         #[starlark(require = named, default = BuckMutInsertionMap::default())]
         artifact_promise_mappings: BuckMutInsertionMap<
             StringValue<'v>,
-            StarlarkCallable<'v, (Value<'static>,), UnpackList<Value<'static>>>,
+            StarlarkCallable<'v, (Value<'static>,), ListType<Value<'static>>>,
         >,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<StarlarkRuleCallable<'v>> {

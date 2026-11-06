@@ -31,10 +31,11 @@ use starlark::values::StarlarkValue;
 use starlark::values::Trace;
 use starlark::values::UnpackValue;
 use starlark::values::Value;
+use starlark::values::ValueOf;
 use starlark::values::ValueTyped;
 use starlark::values::list::AllocList;
-use starlark::values::list_or_tuple::UnpackListOrTuple;
 use starlark::values::starlark_value;
+use starlark::values::tuple::TupleType;
 use starlark::values::type_repr::StarlarkTypeRepr;
 use starlark::values::typing::StarlarkCallable;
 
@@ -327,11 +328,11 @@ fn promise_methods(builder: &mut MethodsBuilder) {
     /// those from `p1`, `p2` and `p3` respectively.
     fn join<'v>(
         this: ValueTyped<'v, StarlarkPromise<'v>>,
-        #[starlark(args)] mut args: UnpackListOrTuple<ValueTyped<'v, StarlarkPromise<'v>>>,
+        #[starlark(args)] args: ValueOf<'v, TupleType<ValueTyped<'v, StarlarkPromise<'v>>>>,
         heap: Heap<'v>,
     ) -> starlark::Result<ValueTyped<'v, StarlarkPromise<'v>>> {
-        args.items.insert(0, this);
-        Ok(StarlarkPromise::join(args.items, heap))
+        let args = std::iter::once(this).chain(args.items()).collect();
+        Ok(StarlarkPromise::join(args, heap))
     }
 }
 

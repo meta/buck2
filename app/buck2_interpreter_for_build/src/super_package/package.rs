@@ -30,7 +30,8 @@ use either::Either;
 use starlark::environment::GlobalsBuilder;
 use starlark::eval::Evaluator;
 use starlark::starlark_module;
-use starlark::values::list_or_tuple::UnpackListOrTuple;
+use starlark::values::ValueOf;
+use starlark::values::list_or_tuple::ListOrTupleType;
 use starlark::values::none::NoneOr;
 use starlark::values::none::NoneType;
 
@@ -266,12 +267,14 @@ pub(crate) fn register_package_function(globals: &mut GlobalsBuilder) {
     fn package<'v>(
         #[starlark(require=named, default=false)] inherit: bool,
         #[starlark(require=named, default=NoneOr::None)] visibility: NoneOr<
-            UnpackListOrTuple<Either<&'v str, &'v StarlarkTargetNameGlob>>,
+            ValueOf<'v, ListOrTupleType<Either<&'v str, &'v StarlarkTargetNameGlob>>>,
         >,
-        #[starlark(require=named, default=UnpackListOrTuple::default())]
-        within_view: UnpackListOrTuple<Either<&'v str, &'v StarlarkTargetNameGlob>>,
-        #[starlark(require=named, default=UnpackListOrTuple::default())]
-        visibility_exempt_targets: UnpackListOrTuple<&'v str>,
+        #[starlark(require=named, default=ValueOf::empty_list())] within_view: ValueOf<
+            'v,
+            ListOrTupleType<Either<&'v str, &'v StarlarkTargetNameGlob>>,
+        >,
+        #[starlark(require=named, default=ValueOf::empty_list())]
+        visibility_exempt_targets: ValueOf<'v, ListOrTupleType<&'v str>>,
         eval: &mut Evaluator,
     ) -> starlark::Result<NoneType> {
         let build_context = BuildContext::from_context(eval)?;
@@ -279,30 +282,33 @@ pub(crate) fn register_package_function(globals: &mut GlobalsBuilder) {
         if package_file_eval_ctx.visibility.borrow().is_some() {
             return Err(buck2_error::Error::from(PackageFileError::AtMostOnce).into());
         }
-        let visibility_provided = visibility.into_option();
+        let visibility_provided = visibility
+            .into_option()
+            .map(|v| v.try_to_vec())
+            .transpose()?;
+        let within_view = within_view.try_to_vec()?;
+        let visibility_exempt_targets = visibility_exempt_targets.try_to_vec()?;
         // Validated regardless of `package_visibility.default_intersection`, so an
         // emergency enforce-to-off flip cannot turn valid PACKAGE files into errors.
-        if visibility_provided.is_none() && !visibility_exempt_targets.items.is_empty() {
+        if visibility_provided.is_none() && !visibility_exempt_targets.is_empty() {
             return Err(
                 buck2_error::Error::from(PackageFileError::ExemptTargetsRequireVisibility).into(),
             );
         }
         let visibility = parse_visibility(
-            visibility_provided
-                .as_ref()
-                .map_or(&[], |v| v.items.as_slice()),
+            visibility_provided.as_deref().unwrap_or(&[]),
             build_context.cell_info().name().name(),
             build_context.cell_info().cell_resolver(),
             build_context.cell_info().cell_alias_resolver(),
         )?;
         let within_view = parse_within_view(
-            &within_view.items,
+            &within_view,
             build_context.cell_info().name().name(),
             build_context.cell_info().cell_resolver(),
             build_context.cell_info().cell_alias_resolver(),
         )?;
         let exemptions = parse_exempt_targets(
-            &visibility_exempt_targets.items,
+            &visibility_exempt_targets,
             build_context.cell_info().name().name(),
             build_context.cell_info().cell_resolver(),
             build_context.cell_info().cell_alias_resolver(),

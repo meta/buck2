@@ -38,7 +38,8 @@ use starlark::values::StringValue;
 use starlark::values::UnpackValue;
 use starlark::values::Value;
 use starlark::values::ValueError;
-use starlark::values::list::UnpackList;
+use starlark::values::ValueOf;
+use starlark::values::list::ListType;
 use starlark::values::starlark_value;
 use starlark::values::type_repr::StarlarkTypeRepr;
 
@@ -159,7 +160,7 @@ fn label_methods(builder: &mut MethodsBuilder) {
     fn with_sub_target<'v>(
         this: &StarlarkTargetLabel,
         // TODO(nga): must be either positional or named.
-        #[starlark(default = SubtargetNameArg::List(UnpackList { items: Vec::new() }))]
+        #[starlark(default = SubtargetNameArg::List(ValueOf::empty_list()))]
         subtarget_name: SubtargetNameArg<'v>,
     ) -> starlark::Result<StarlarkProvidersLabel> {
         let providers_name = value_to_providers_name(subtarget_name)?;
@@ -293,7 +294,7 @@ fn configured_label_methods(builder: &mut MethodsBuilder) {
     fn with_sub_target<'v>(
         this: &'v StarlarkConfiguredTargetLabel,
         // TODO(nga): must be either positional or named.
-        #[starlark(default = SubtargetNameArg::List(UnpackList { items: Vec::new() }))]
+        #[starlark(default = SubtargetNameArg::List(ValueOf::empty_list()))]
         subtarget_name: SubtargetNameArg<'v>,
     ) -> starlark::Result<StarlarkConfiguredProvidersLabel> {
         let providers_name = value_to_providers_name(subtarget_name)?;
@@ -306,17 +307,16 @@ fn configured_label_methods(builder: &mut MethodsBuilder) {
 
 #[derive(StarlarkTypeRepr, UnpackValue)]
 enum SubtargetNameArg<'v> {
-    List(UnpackList<String>),
+    List(ValueOf<'v, ListType<String>>),
     Str(&'v str),
 }
 
 fn value_to_providers_name(subtarget_name: SubtargetNameArg) -> buck2_error::Result<ProvidersName> {
     let subtarget = match subtarget_name {
         SubtargetNameArg::List(list) => list
-            .items
-            .into_iter()
+            .try_items()
             .map(|name| {
-                ProviderName::new(name).buck_error_context("for parameter `subtarget_name`")
+                ProviderName::new(name?).buck_error_context("for parameter `subtarget_name`")
             })
             .collect::<buck2_error::Result<Vec<_>>>()?,
         SubtargetNameArg::Str(str) => {

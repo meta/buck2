@@ -11,7 +11,8 @@
 use buck2_node::visibility::StarlarkTargetNameGlob;
 use starlark::environment::GlobalsBuilder;
 use starlark::starlark_module;
-use starlark::values::list_or_tuple::UnpackListOrTuple;
+use starlark::values::ValueOf;
+use starlark::values::list_or_tuple::ListOrTupleType;
 
 #[starlark_module]
 pub(crate) fn register_target_name_glob(builder: &mut GlobalsBuilder) {
@@ -44,12 +45,20 @@ pub(crate) fn register_target_name_glob(builder: &mut GlobalsBuilder) {
     /// ```
     #[starlark(as_type = StarlarkTargetNameGlob)]
     fn target_name_glob<'v>(
-        #[starlark(require = pos)] name_globs: UnpackListOrTuple<&'v str>,
-        #[starlark(require = named, default = UnpackListOrTuple::default())]
-        within: UnpackListOrTuple<&'v str>,
+        #[starlark(require = pos)] name_globs: ValueOf<'v, ListOrTupleType<&'v str>>,
+        #[starlark(require = named, default = ValueOf::empty_list())] within: ValueOf<
+            'v,
+            ListOrTupleType<&'v str>,
+        >,
     ) -> starlark::Result<StarlarkTargetNameGlob> {
-        let name_globs = name_globs.items.into_iter().map(str::to_owned).collect();
-        let within = within.items.into_iter().map(str::to_owned).collect();
+        let name_globs = name_globs
+            .try_items()
+            .map(|s| s.map(str::to_owned))
+            .collect::<starlark::Result<_>>()?;
+        let within = within
+            .try_items()
+            .map(|s| s.map(str::to_owned))
+            .collect::<starlark::Result<_>>()?;
         Ok(StarlarkTargetNameGlob::try_new(name_globs, within)?)
     }
 }

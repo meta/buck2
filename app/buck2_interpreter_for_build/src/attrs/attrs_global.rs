@@ -36,7 +36,7 @@ use starlark::values::Value;
 use starlark::values::ValueError;
 use starlark::values::ValueOf;
 use starlark::values::ValueTyped;
-use starlark::values::list_or_tuple::UnpackListOrTuple;
+use starlark::values::list_or_tuple::ListOrTupleType;
 use starlark::values::none::NoneOr;
 use starlark::values::tuple::TupleType;
 
@@ -125,11 +125,13 @@ pub(crate) fn init_coerce_providers_label_for_bzl() {
 }
 
 /// Common code to handle `providers` argument of dep-like attrs.
-fn dep_like_attr_handle_providers_arg(providers: Vec<Value>) -> buck2_error::Result<ProviderIdSet> {
+fn dep_like_attr_handle_providers_arg<'v>(
+    providers: ValueOf<'v, ListOrTupleType<Value<'v>>>,
+) -> buck2_error::Result<ProviderIdSet> {
     Ok(ProviderIdSet::from(
         providers
-            .iter()
-            .map(|v| match v.as_provider_callable() {
+            .try_items()
+            .map(|v| match v?.as_provider_callable() {
                 Some(callable) => buck2_error::Ok(callable.id()?.dupe()),
                 None => Err(
                     starlark::Error::from(ValueError::IncorrectParameterTypeNamed(
@@ -205,14 +207,16 @@ fn attr_module(registry: &mut GlobalsBuilder) {
     /// must declare the group in `rule(exec_groups = ...)`. A rule that declares named execution
     /// groups must pass `exec_group`, with `DefaultExecGroup` for the default group.
     fn exec_dep<'v>(
-        #[starlark(require = named, default = UnpackListOrTuple::default())]
-        providers: UnpackListOrTuple<Value<'v>>,
+        #[starlark(require = named, default = ValueOf::empty_list())] providers: ValueOf<
+            'v,
+            ListOrTupleType<Value<'v>>,
+        >,
         #[starlark(require = named)] default: Option<Value<'v>>,
         #[starlark(require = named, default = "")] doc: &str,
         #[starlark(require = named, default = NoneOr::None)] exec_group: NoneOr<ExecutionGroupArg>,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<StarlarkAttribute> {
-        let required_providers = dep_like_attr_handle_providers_arg(providers.items)?;
+        let required_providers = dep_like_attr_handle_providers_arg(providers)?;
         let (coercer, marks) = match exec_group.into_option() {
             None => (
                 AttrType::exec_dep(required_providers),
@@ -258,14 +262,16 @@ fn attr_module(registry: &mut GlobalsBuilder) {
     /// `rule(exec_groups = ...)`. A rule that declares named execution groups must pass
     /// `exec_group`, with `DefaultExecGroup` for the default group.
     fn toolchain_dep<'v>(
-        #[starlark(require = named, default = UnpackListOrTuple::default())]
-        providers: UnpackListOrTuple<Value<'v>>,
+        #[starlark(require = named, default = ValueOf::empty_list())] providers: ValueOf<
+            'v,
+            ListOrTupleType<Value<'v>>,
+        >,
         #[starlark(require = named)] default: Option<Value<'v>>,
         #[starlark(require = named, default = "")] doc: &str,
         #[starlark(require = named, default = NoneOr::None)] exec_group: NoneOr<ExecutionGroupArg>,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<StarlarkAttribute> {
-        let required_providers = dep_like_attr_handle_providers_arg(providers.items)?;
+        let required_providers = dep_like_attr_handle_providers_arg(providers)?;
         let (coercer, marks) = match exec_group.into_option() {
             None => (
                 AttrType::toolchain_dep(required_providers),
@@ -280,14 +286,16 @@ fn attr_module(registry: &mut GlobalsBuilder) {
     }
 
     fn transition_dep<'v>(
-        #[starlark(require = named, default = UnpackListOrTuple::default())]
-        providers: UnpackListOrTuple<Value<'v>>,
+        #[starlark(require = named, default = ValueOf::empty_list())] providers: ValueOf<
+            'v,
+            ListOrTupleType<Value<'v>>,
+        >,
         #[starlark(require = named)] cfg: Option<Either<StringValue<'v>, ValueAsTransition<'v>>>,
         #[starlark(require = named)] default: Option<Value<'v>>,
         #[starlark(require = named, default = "")] doc: &str,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<StarlarkAttribute> {
-        let required_providers = dep_like_attr_handle_providers_arg(providers.items)?;
+        let required_providers = dep_like_attr_handle_providers_arg(providers)?;
         let label_coercion_ctx = attr_coercion_context_for_bzl(eval)?;
 
         let transition_id = match cfg {
@@ -315,13 +323,15 @@ fn attr_module(registry: &mut GlobalsBuilder) {
     }
 
     fn configured_dep<'v>(
-        #[starlark(require = named, default = UnpackListOrTuple::default())]
-        providers: UnpackListOrTuple<Value<'v>>,
+        #[starlark(require = named, default = ValueOf::empty_list())] providers: ValueOf<
+            'v,
+            ListOrTupleType<Value<'v>>,
+        >,
         #[starlark(require = named)] default: Option<Value<'v>>,
         #[starlark(require = named, default = "")] doc: &str,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<StarlarkAttribute> {
-        let required_providers = dep_like_attr_handle_providers_arg(providers.items)?;
+        let required_providers = dep_like_attr_handle_providers_arg(providers)?;
         let coercer = AttrType::configured_dep(required_providers);
         Ok(Attribute::attr(
             eval,
@@ -333,14 +343,16 @@ fn attr_module(registry: &mut GlobalsBuilder) {
     }
 
     fn split_transition_dep<'v>(
-        #[starlark(require = named, default = UnpackListOrTuple::default())]
-        providers: UnpackListOrTuple<Value<'v>>,
+        #[starlark(require = named, default = ValueOf::empty_list())] providers: ValueOf<
+            'v,
+            ListOrTupleType<Value<'v>>,
+        >,
         #[starlark(require = named)] cfg: ValueAsTransition<'v>,
         #[starlark(require = named)] default: Option<Value<'v>>,
         #[starlark(require = named, default = "")] doc: &str,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<StarlarkAttribute> {
-        let required_providers = dep_like_attr_handle_providers_arg(providers.items)?;
+        let required_providers = dep_like_attr_handle_providers_arg(providers)?;
         let coercer = AttrType::split_transition_dep(required_providers, cfg.transition_id()?);
 
         let coerced_default = match default {
@@ -390,30 +402,35 @@ fn attr_module(registry: &mut GlobalsBuilder) {
     /// The `pulls_plugins` and `pulls_and_pushes_plugins` parameters control plugin propagation.
     /// See the [`plugins`](../plugins) namespace documentation for a full explanation.
     fn dep<'v>(
-        #[starlark(require = named, default = UnpackListOrTuple::default())]
-        providers: UnpackListOrTuple<Value<'v>>,
-        #[starlark(require = named, default = UnpackListOrTuple::default())]
-        pulls_plugins: UnpackListOrTuple<PluginKindArg>,
-        #[starlark(require = named, default = Either::Left(UnpackListOrTuple::default()))]
-        pulls_and_pushes_plugins: Either<UnpackListOrTuple<PluginKindArg>, &'v AllPlugins>,
+        #[starlark(require = named, default = ValueOf::empty_list())] providers: ValueOf<
+            'v,
+            ListOrTupleType<Value<'v>>,
+        >,
+        #[starlark(require = named, default = ValueOf::empty_list())] pulls_plugins: ValueOf<
+            'v,
+            ListOrTupleType<PluginKindArg>,
+        >,
+        #[starlark(require = named, default = Either::Left(ValueOf::empty_list()))]
+        pulls_and_pushes_plugins: Either<
+            ValueOf<'v, ListOrTupleType<PluginKindArg>>,
+            &'v AllPlugins,
+        >,
         #[starlark(require = named)] default: Option<Value<'v>>,
         #[starlark(require = named, default = "")] doc: &str,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<StarlarkAttribute> {
-        let required_providers = dep_like_attr_handle_providers_arg(providers.items)?;
+        let required_providers = dep_like_attr_handle_providers_arg(providers)?;
         let plugin_kinds = match pulls_and_pushes_plugins {
             Either::Right(_) => PluginKindSet::ALL,
             Either::Left(pulls_and_pushes_plugins) => {
                 let pulls_and_pushes_plugins: Vec<_> = pulls_and_pushes_plugins
-                    .items
-                    .into_iter()
-                    .map(|PluginKindArg { plugin_kind }| plugin_kind)
-                    .collect();
+                    .try_items()
+                    .map(|arg| arg.map(|PluginKindArg { plugin_kind }| plugin_kind))
+                    .collect::<starlark::Result<_>>()?;
                 let pulls_plugins: Vec<_> = pulls_plugins
-                    .items
-                    .into_iter()
-                    .map(|PluginKindArg { plugin_kind }| plugin_kind)
-                    .collect();
+                    .try_items()
+                    .map(|arg| arg.map(|PluginKindArg { plugin_kind }| plugin_kind))
+                    .collect::<starlark::Result<_>>()?;
                 PluginKindSet::new(pulls_plugins, pulls_and_pushes_plugins)?
             }
         };
@@ -585,7 +602,7 @@ fn attr_module(registry: &mut GlobalsBuilder) {
     /// Takes a string from one of the variants given, and gives that string to the rule.
     /// Strings are matched case-insensitively, and always passed to the rule lowercase.
     fn r#enum<'v>(
-        #[starlark(require = pos)] variants: UnpackListOrTuple<String>,
+        #[starlark(require = pos)] variants: ValueOf<'v, ListOrTupleType<String>>,
         #[starlark(require = named)] default: Option<
             ValueOf<'v, Either<StringValue<'v>, ValueTyped<'v, StarlarkSelector<'v>>>>,
         >,
@@ -599,7 +616,7 @@ fn attr_module(registry: &mut GlobalsBuilder) {
             eval,
             default.map(|v| v.to_value()),
             doc,
-            AttrType::enumeration(variants.items)?,
+            AttrType::enumeration(variants.try_to_vec()?)?,
             ToolMarks::NONE,
         )?)
     }

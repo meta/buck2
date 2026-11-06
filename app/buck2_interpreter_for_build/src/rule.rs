@@ -72,8 +72,7 @@ use starlark::values::ValueOf;
 use starlark::values::ValueTyped;
 use starlark::values::dict::DictType;
 use starlark::values::list::ListType;
-use starlark::values::list::UnpackList;
-use starlark::values::list_or_tuple::UnpackListOrTuple;
+use starlark::values::list_or_tuple::ListOrTupleType;
 use starlark::values::starlark_value;
 use starlark::values::typing::StarlarkCallable;
 use starlark::values::typing::StarlarkCallableChecked;
@@ -384,7 +383,7 @@ impl<'v> StarlarkRuleCallable<'v> {
         doc: &str,
         artifact_promise_mappings: BuckMutInsertionMap<
             StringValue<'v>,
-            StarlarkCallable<'v, (Value<'static>,), UnpackList<Value<'static>>>,
+            StarlarkCallable<'v, (Value<'static>,), ListType<Value<'static>>>,
         >,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> buck2_error::Result<Self> {
@@ -414,7 +413,7 @@ impl<'v> StarlarkRuleCallable<'v> {
         doc: &str,
         artifact_promise_mappings: BuckMutInsertionMap<
             StringValue<'v>,
-            StarlarkCallable<'v, (Value<'static>,), UnpackList<Value<'static>>>,
+            StarlarkCallable<'v, (Value<'static>,), ListType<Value<'static>>>,
         >,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> buck2_error::Result<Self> {
@@ -437,7 +436,7 @@ impl<'v> StarlarkRuleCallable<'v> {
         doc: &str,
         artifact_promise_mappings: BuckMutInsertionMap<
             StringValue<'v>,
-            StarlarkCallable<'v, (Value<'static>,), UnpackList<Value<'static>>>,
+            StarlarkCallable<'v, (Value<'static>,), ListType<Value<'static>>>,
         >,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> buck2_error::Result<Self> {
@@ -1034,10 +1033,14 @@ pub fn register_rule_function(builder: &mut GlobalsBuilder) {
         #[starlark(require = named, default = "")] doc: &str,
         #[starlark(require = named, default = false)] is_configuration_rule: bool,
         #[starlark(require = named, default = false)] is_toolchain_rule: bool,
-        #[starlark(require = named, default = UnpackListOrTuple::default())]
-        uses_plugins: UnpackListOrTuple<PluginKindArg>,
-        #[starlark(require = named, default = UnpackListOrTuple::default())]
-        exec_groups: UnpackListOrTuple<ExecutionGroupArg>,
+        #[starlark(require = named, default = ValueOf::empty_list())] uses_plugins: ValueOf<
+            'v,
+            ListOrTupleType<PluginKindArg>,
+        >,
+        #[starlark(require = named, default = ValueOf::empty_list())] exec_groups: ValueOf<
+            'v,
+            ListOrTupleType<ExecutionGroupArg>,
+        >,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<StarlarkRuleCallable<'v>> {
         Ok(StarlarkRuleCallable::new(
@@ -1049,15 +1052,13 @@ pub fn register_rule_function(builder: &mut GlobalsBuilder) {
             is_configuration_rule,
             is_toolchain_rule,
             uses_plugins
-                .items
-                .into_iter()
-                .map(|PluginKindArg { plugin_kind }| plugin_kind)
-                .collect(),
+                .try_items()
+                .map(|arg| arg.map(|PluginKindArg { plugin_kind }| plugin_kind))
+                .collect::<starlark::Result<_>>()?,
             exec_groups
-                .items
-                .into_iter()
-                .map(|ExecutionGroupArg { group }| group)
-                .collect(),
+                .try_items()
+                .map(|arg| arg.map(|ExecutionGroupArg { group }| group))
+                .collect::<starlark::Result<_>>()?,
             None,
             eval,
         )?)
@@ -1076,7 +1077,7 @@ pub fn register_rule_function(builder: &mut GlobalsBuilder) {
         #[starlark(require = named, default = "")] doc: &str,
         #[starlark(require = named)] artifact_promise_mappings: BuckMutInsertionMap<
             StringValue<'v>,
-            StarlarkCallable<'v, (Value<'static>,), UnpackList<Value<'static>>>,
+            StarlarkCallable<'v, (Value<'static>,), ListType<Value<'static>>>,
         >,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<StarlarkRuleCallable<'v>> {

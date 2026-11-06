@@ -50,7 +50,8 @@ use pagable::pagable_typetag;
 use starlark::eval::Evaluator;
 use starlark::values::UnpackValue;
 use starlark::values::Value;
-use starlark::values::dict::UnpackDictEntries;
+use starlark::values::ValueOf;
+use starlark::values::dict::DictType;
 use starlark::values::structs::AllocStruct;
 
 use crate::transition::calculation_fetch_transition::FetchTransition;
@@ -116,10 +117,11 @@ fn call_transition_function<'v>(
         .eval_function(impl_, &[], &args)
         .map_err(buck2_error::Error::from)?;
     if transition.is_split() {
-        match UnpackDictEntries::<&str, &PlatformInfo>::unpack_value(new_platforms)? {
+        match ValueOf::<DictType<&str, &PlatformInfo>>::new(new_platforms) {
             Some(dict) => {
                 let mut split = BuckMutInsertionMap::new();
-                for (k, v) in dict.entries {
+                for entry in dict.try_items() {
+                    let (k, v) = entry?;
                     let prev = split.insert(
                         k.to_owned(),
                         v.to_configuration(conf.exec_marking().dupe())?,

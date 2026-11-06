@@ -14,7 +14,7 @@ use starlark::starlark_module;
 use starlark::values::StringValue;
 use starlark::values::ValueOf;
 use starlark::values::list::ListType;
-use starlark::values::list_or_tuple::UnpackListOrTuple;
+use starlark::values::list_or_tuple::ListOrTupleType;
 
 use crate::interpreter::build_context::BuildContext;
 use crate::interpreter::globspec::GlobSpec;
@@ -51,13 +51,15 @@ pub(crate) fn register_path(builder: &mut GlobalsBuilder) {
     /// Currently `glob` is evaluated case-insensitively on all file systems, but we expect
     /// that to change to case sensitive in the near future.
     fn glob<'v>(
-        include: UnpackListOrTuple<String>,
-        #[starlark(require = named, default=UnpackListOrTuple::default())]
-        exclude: UnpackListOrTuple<String>,
+        include: ValueOf<'v, ListOrTupleType<String>>,
+        #[starlark(require = named, default = ValueOf::empty_list())] exclude: ValueOf<
+            'v,
+            ListOrTupleType<String>,
+        >,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<ValueOf<'v, ListType<StringValue<'v>>>> {
         let extra = ModuleInternals::from_context(eval, "glob")?;
-        let spec = GlobSpec::new(&include.items, &exclude.items)?;
+        let spec = GlobSpec::new(&include.try_to_vec()?, &exclude.try_to_vec()?)?;
         let heap = eval.heap();
         let res = extra
             .resolve_glob(&spec)

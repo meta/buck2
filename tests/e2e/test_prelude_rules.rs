@@ -12,8 +12,11 @@ use std::collections::BTreeMap;
 use std::path::PathBuf;
 
 use anyhow::Context;
+use buck2_e2e::http::StaticHttpServer;
 use buck2_e2e::prelude::*;
+use buck2_e2e::utils::random_string;
 use serde_json::Value;
+use sha2::Digest;
 
 async fn output(buck: &Buck, target: &str) -> anyhow::Result<PathBuf> {
     let res = buck
@@ -129,5 +132,47 @@ async fn test_excluded_names_are_read_by_tar_as_globs(buck: &Buck) -> anyhow::Re
         .collect::<anyhow::Result<Vec<_>>>()?;
     names.sort();
     assert_eq!(names, ["[id].js", "keep.js"]);
+    Ok(())
+}
+
+// prelude/http_file.bzl `http_file_shared`, through `http_file` and `remote_file`
+#[buck_test(inplace = false, skip_for_os = ["windows"])]
+async fn test_a_sha512_alone_is_a_checksum(buck: &Buck) -> anyhow::Result<()> {
+    let content = random_string().into_bytes();
+    let sha512 = hex::encode(sha2::Sha512::digest(&content));
+    let server = StaticHttpServer::start([("/file", content.clone())]).await?;
+    let url_config = format!("test.url={}", server.url("/file"));
+    let sha512_config = format!("test.sha512={sha512}");
+    for target in ["root//download:http_file", "root//download:remote_file"] {
+        let mut args = vec![target, "--show-full-simple-output"];
+        args.extend(["-c", &url_config, "-c", &sha512_config]);
+        let res = buck.build_without_report(&args).await?;
+        assert_eq!(std::fs::read(res.stdout.trim())?, content, "{target}");
+    }
+    Ok(())
+}
+
+// prelude/http_file.bzl `http_file_shared`, through `http_file` and `remote_file`
+#[buck_test(inplace = false, skip_for_os = ["windows"])]
+async fn test_a_wrong_sha512_fails_the_download(buck: &Buck) -> anyhow::Result<()> {
+    let content = random_string().into_bytes();
+    let wrong = "0".repeat(128);
+    let server = StaticHttpServer::start([("/file", content.clone())]).await?;
+    let url = server.url("/file");
+    for target in ["root//download:http_file", "root//download:remote_file"] {
+        buck.build(&[
+            target,
+            "-c",
+            &format!("test.url={url}"),
+            "-c",
+            &format!("test.sha512={wrong}"),
+        ])
+        .await
+        .expect_failure()
+        .assert_stderr_matches(&format!(
+            "Invalid sha512 digest. Expected {wrong}, got {}",
+            hex::encode(sha2::Sha512::digest(&content))
+        ));
+    }
     Ok(())
 }

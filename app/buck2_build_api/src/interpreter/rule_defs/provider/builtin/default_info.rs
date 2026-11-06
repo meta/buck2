@@ -40,7 +40,7 @@ use starlark::values::none::NoneOr;
 use crate as buck2_build_api;
 use crate::artifact_groups::ArtifactGroup;
 use crate::interpreter::rule_defs::artifact::starlark_artifact::StarlarkArtifact;
-use crate::interpreter::rule_defs::artifact::starlark_artifact_like::ValueAsInputArtifactLike;
+use crate::interpreter::rule_defs::artifact::starlark_artifact_like::StarlarkArtifactView;
 use crate::interpreter::rule_defs::artifact_tagging::ArtifactTag;
 use crate::interpreter::rule_defs::cmd_args::CommandLineArtifactVisitor;
 use crate::interpreter::rule_defs::cmd_args::InputProperties;
@@ -137,7 +137,7 @@ pub struct DefaultInfo<'v> {
     /// A list of `Artifact`s that are built by default if this rule is requested
     /// explicitly (via CLI or `$(location)` etc), or depended on as as a "source"
     /// (i.e., `attrs.source()`).
-    default_outputs: ValueOf<'v, ListType<ValueAsInputArtifactLike<'v>>>,
+    default_outputs: ValueOf<'v, ListType<StarlarkArtifactView<'v>>>,
     /// A list of `ArtifactTraversable`. The underlying `Artifact`s they define will
     /// be built by default if this rule is requested (via CLI or `$(location)` etc),
     /// but _not_ when it's depended on as as a "source" (i.e., `attrs.source()`).
@@ -190,7 +190,9 @@ impl<'v> DefaultInfo<'v> {
         self.default_outputs
             .iter()
             .map(|v| -> buck2_error::Result<StarlarkArtifact> {
-                v?.unpack().0.get_bound_starlark_artifact()
+                v?.unpack()
+                    .as_input_artifact_like()
+                    .get_bound_starlark_artifact()
             })
     }
 
@@ -224,7 +226,12 @@ impl<'v> DefaultInfo<'v> {
         processor: &mut dyn FnMut(Artifact),
     ) -> buck2_error::Result<()> {
         for output in self.default_outputs.iter() {
-            processor(output?.unpack().0.get_bound_artifact()?);
+            processor(
+                output?
+                    .unpack()
+                    .as_input_artifact_like()
+                    .get_bound_artifact()?,
+            );
         }
         Ok(())
     }
@@ -234,7 +241,10 @@ impl<'v> DefaultInfo<'v> {
         processor: &mut dyn FnMut(ArtifactGroup),
     ) -> buck2_error::Result<()> {
         for output in self.default_outputs.iter() {
-            let others = output?.unpack().0.get_associated_artifacts();
+            let others = output?
+                .unpack()
+                .as_input_artifact_like()
+                .get_associated_artifacts();
             others
                 .iter()
                 .flat_map(|v| v.iter())
@@ -308,10 +318,10 @@ fn default_info_creator(builder: &mut GlobalsBuilder) {
     fn DefaultInfo<'v>(
         // TODO(nga): parameters must be named only.
         #[starlark(default = NoneOr::None)] default_output: NoneOr<
-            ValueOf<'v, ValueAsInputArtifactLike<'v>>,
+            ValueOf<'v, StarlarkArtifactView<'v>>,
         >,
         #[starlark(default = NoneOr::None)] default_outputs: NoneOr<
-            ValueOf<'v, ListType<ValueAsInputArtifactLike<'v>>>,
+            ValueOf<'v, ListType<StarlarkArtifactView<'v>>>,
         >,
         #[starlark(default = ValueOf::new_unchecked(Value::new_empty_list()))]
         other_outputs: ValueOf<'v, ListType<ValueAsCommandLineLike<'v>>>,

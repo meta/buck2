@@ -14,7 +14,7 @@ use buck2_build_api::actions::impls::json::JsonUnpack;
 use buck2_build_api::actions::impls::json::SerializeValue;
 use buck2_build_api::actions::impls::json::visit_json_artifacts;
 use buck2_build_api::artifact_groups::ArtifactGroup;
-use buck2_build_api::interpreter::rule_defs::artifact::starlark_artifact_like::ValueAsInputArtifactLike;
+use buck2_build_api::interpreter::rule_defs::artifact::starlark_artifact_like::StarlarkArtifactView;
 use buck2_build_api::interpreter::rule_defs::artifact_tagging::ArtifactTag;
 use buck2_build_api::interpreter::rule_defs::cmd_args::CommandLineArtifactVisitor;
 use buck2_build_api::interpreter::rule_defs::cmd_args::InputProperties;
@@ -67,14 +67,14 @@ fn test_tagging() -> buck2_error::Result<()> {
         fn check_artifact_is_tagged<'v>(
             tagged: Value<'v>,
             tag: Value<'v>,
-            artifact: ValueAsInputArtifactLike<'v>,
+            artifact: StarlarkArtifactView<'v>,
         ) -> starlark::Result<Value<'v>> {
             let tag = ArtifactTag::from_value(tag)
                 .internal_error("Invalid tag")?
                 .dupe();
 
             let artifact = artifact
-                .0
+                .as_input_artifact_like()
                 .get_bound_artifact()
                 .buck_error_context("Not a bound artifact")?
                 .dupe();

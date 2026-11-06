@@ -27,7 +27,7 @@ use starlark::values::ValueTyped;
 use starlark::values::dict::DictType;
 
 use crate as buck2_build_api;
-use crate::interpreter::rule_defs::artifact::starlark_artifact_like::ValueAsInputArtifactLike;
+use crate::interpreter::rule_defs::artifact::starlark_artifact_like::StarlarkArtifactView;
 
 // Provider that signals a rule is installable (ex. android_binary)
 
@@ -54,7 +54,7 @@ pub struct InstallInfo<'v> {
     // Label for the installer
     installer: ValueTyped<'v, StarlarkConfiguredProvidersLabel>,
     // list of files that need to be installed
-    files: ValueOf<'v, DictType<StringValue<'v>, ValueAsInputArtifactLike<'v>>>,
+    files: ValueOf<'v, DictType<StringValue<'v>, StarlarkArtifactView<'v>>>,
 }
 
 impl<'v> InstallInfo<'v> {
@@ -64,8 +64,7 @@ impl<'v> InstallInfo<'v> {
 
     fn get_files_iter(
         &self,
-    ) -> impl Iterator<Item = buck2_error::Result<(&'v str, ValueAsInputArtifactLike<'v>)>> + 'v
-    {
+    ) -> impl Iterator<Item = buck2_error::Result<(&'v str, StarlarkArtifactView<'v>)>> + 'v {
         self.files.iter().map(|entry| {
             let (k, v) = entry?;
             Ok((k.unpack().as_str(), v.unpack()))
@@ -78,7 +77,8 @@ impl<'v> InstallInfo<'v> {
                 let (k, v) = x?;
                 Ok((
                     k.to_owned(),
-                    v.0.get_bound_artifact()
+                    v.as_input_artifact_like()
+                        .get_bound_artifact()
                         .with_buck_error_context(|| format!("For key `{k}`"))?,
                 ))
             })
@@ -90,7 +90,7 @@ impl<'v> InstallInfo<'v> {
 fn install_info_creator(globals: &mut GlobalsBuilder) {
     fn InstallInfo<'v>(
         installer: ValueTyped<'v, StarlarkConfiguredProvidersLabel>,
-        files: ValueOf<'v, DictType<StringValue<'v>, ValueAsInputArtifactLike<'v>>>,
+        files: ValueOf<'v, DictType<StringValue<'v>, StarlarkArtifactView<'v>>>,
     ) -> starlark::Result<InstallInfo<'v>> {
         let info = InstallInfo { installer, files };
         validate_install_info(&info)?;
@@ -101,11 +101,11 @@ fn install_info_creator(globals: &mut GlobalsBuilder) {
 fn validate_install_info<'v>(info: &InstallInfo<'v>) -> buck2_error::Result<()> {
     for x in info.get_files_iter() {
         let (k, v) = x?;
-        if let Some(other_artifacts) = v.0.get_associated_artifacts() {
+        if let Some(other_artifacts) = v.as_input_artifact_like().get_associated_artifacts() {
             if !other_artifacts.is_empty() {
                 return Err(InstallInfoProviderErrors::AssociatedArtifacts {
                     key: k.to_owned(),
-                    artifact: v.0.to_string(),
+                    artifact: v.to_string(),
                 }
                 .into());
             }

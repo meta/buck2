@@ -28,8 +28,8 @@ use starlark::values::ValueOf;
 use starlark::values::starlark_value;
 
 use crate::interpreter::rule_defs::artifact::starlark_artifact::StarlarkArtifact;
+use crate::interpreter::rule_defs::artifact::starlark_artifact_like::StarlarkArtifactView;
 use crate::interpreter::rule_defs::artifact::starlark_artifact_like::StarlarkInputArtifactLike;
-use crate::interpreter::rule_defs::artifact::starlark_artifact_like::ValueAsInputArtifactLike;
 
 #[derive(Debug, buck2_error::Error)]
 #[buck2(tag = Input)]
@@ -93,7 +93,7 @@ pub struct StarlarkValidationSpec<'v> {
     ///
     /// See [Writing the validator](https://buck2.build/docs/rule_authors/validation/#writing-the-validator)
     /// in the Validations guide for the full schema reference and examples.
-    validation_result: ValueOf<'v, ValueAsInputArtifactLike<'v>>,
+    validation_result: ValueOf<'v, StarlarkArtifactView<'v>>,
 
     /// If `True`, the validation is skipped by default and only runs when
     /// the user passes `--enable-optional-validations <name>`. Defaults to
@@ -109,7 +109,7 @@ impl<'v> StarlarkValidationSpec<'v> {
     }
 
     pub fn validation_result(&self) -> &'v dyn StarlarkInputArtifactLike<'v> {
-        self.validation_result.unpack().0
+        self.validation_result.unpack().as_input_artifact_like()
     }
 
     pub fn optional(&self) -> bool {
@@ -215,7 +215,7 @@ pub fn register_validation_spec(builder: &mut GlobalsBuilder) {
     #[starlark(as_type = StarlarkValidationSpec<'static>)]
     fn ValidationSpec<'v>(
         #[starlark(require = named)] name: StringValue<'v>,
-        #[starlark(require = named)] validation_result: ValueOf<'v, ValueAsInputArtifactLike<'v>>,
+        #[starlark(require = named)] validation_result: ValueOf<'v, StarlarkArtifactView<'v>>,
         #[starlark(require = named, default = false)] optional: bool,
     ) -> starlark::Result<StarlarkValidationSpec<'v>> {
         let result = StarlarkValidationSpec {

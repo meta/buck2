@@ -114,7 +114,7 @@ pub enum StarlarkOutputArtifactView<'v> {
 }
 
 impl<'v> StarlarkOutputArtifactView<'v> {
-    fn as_artifact_like(self) -> &'v dyn StarlarkArtifactLike<'v> {
+    pub(crate) fn as_artifact_like(self) -> &'v dyn StarlarkArtifactLike<'v> {
         match self {
             StarlarkOutputArtifactView::Unfrozen(x) => x.as_ref(),
             StarlarkOutputArtifactView::Frozen(x) => x.as_ref(),

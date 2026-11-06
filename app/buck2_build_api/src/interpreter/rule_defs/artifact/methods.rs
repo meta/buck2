@@ -24,9 +24,8 @@ use starlark::values::none::NoneOr;
 use starlark::values::type_repr::StarlarkTypeRepr;
 
 use crate::interpreter::rule_defs::artifact::starlark_artifact::StarlarkArtifact;
-use crate::interpreter::rule_defs::artifact::starlark_artifact_like::StarlarkArtifactLike;
-use crate::interpreter::rule_defs::artifact::starlark_artifact_like::StarlarkInputArtifactLike;
-use crate::interpreter::rule_defs::artifact::starlark_artifact_like::ValueAsInputArtifactLike;
+use crate::interpreter::rule_defs::artifact::starlark_artifact_like::ArtifactOrOutputArtifact;
+use crate::interpreter::rule_defs::artifact::starlark_artifact_like::StarlarkArtifactView;
 use crate::interpreter::rule_defs::artifact::starlark_declared_artifact::StarlarkDeclaredArtifact;
 use crate::interpreter::rule_defs::artifact::starlark_output_artifact::StarlarkOutputArtifact;
 use crate::interpreter::rule_defs::artifact::starlark_promise_artifact::StarlarkPromiseArtifact;
@@ -43,29 +42,33 @@ pub(crate) fn any_artifact_methods(builder: &mut MethodsBuilder) {
     /// The base name of this artifact. e.g. for an artifact at `foo/bar`, this is `bar`
     #[starlark(attribute)]
     fn basename<'v>(
-        this: &'v dyn StarlarkArtifactLike<'v>,
+        this: ArtifactOrOutputArtifact<'v>,
         heap: Heap<'v>,
     ) -> starlark::Result<StringValue<'v>> {
-        Ok(this.with_filename(&|filename| heap.alloc_str(filename.as_str()))?)
+        Ok(this
+            .as_artifact_like()
+            .with_filename(&|filename| heap.alloc_str(filename.as_str()))?)
     }
 
     /// The file extension of this artifact. e.g. for an artifact at foo/bar.sh,
     /// this is `.sh`. If no extension is present, `""` is returned.
     #[starlark(attribute)]
     fn extension<'v>(
-        this: &'v dyn StarlarkArtifactLike<'v>,
+        this: ArtifactOrOutputArtifact<'v>,
         heap: Heap<'v>,
     ) -> starlark::Result<StringValue<'v>> {
-        Ok(this.with_filename(&|filename| match filename.extension() {
-            None => heap.alloc_str(""),
-            Some(x) => heap.alloc_str_concat(".", x),
-        })?)
+        Ok(this
+            .as_artifact_like()
+            .with_filename(&|filename| match filename.extension() {
+                None => heap.alloc_str(""),
+                Some(x) => heap.alloc_str_concat(".", x),
+            })?)
     }
 
     /// Whether the artifact represents a source file
     #[starlark(attribute)]
-    fn is_source<'v>(this: &'v dyn StarlarkArtifactLike<'v>) -> starlark::Result<bool> {
-        Ok(this.is_source()?)
+    fn is_source<'v>(this: ArtifactOrOutputArtifact<'v>) -> starlark::Result<bool> {
+        Ok(this.as_artifact_like().is_source()?)
     }
 
     /// The `Label` of the rule that originally created this artifact. May also be None in
@@ -73,9 +76,9 @@ pub(crate) fn any_artifact_methods(builder: &mut MethodsBuilder) {
     /// action was not created by a rule.
     #[starlark(attribute)]
     fn owner<'v>(
-        this: &'v dyn StarlarkArtifactLike<'v>,
+        this: ArtifactOrOutputArtifact<'v>,
     ) -> starlark::Result<NoneOr<StarlarkConfiguredProvidersLabel>> {
-        match this.owner()? {
+        match this.as_artifact_like().owner()? {
             None => Ok(NoneOr::None),
             Some(BaseDeferredKey::TargetLabel(target)) => {
                 Ok(NoneOr::Other(StarlarkConfiguredProvidersLabel::new(
@@ -90,10 +93,12 @@ pub(crate) fn any_artifact_methods(builder: &mut MethodsBuilder) {
     /// For an artifact declared as `foo/bar`, this is `foo/bar`.
     #[starlark(attribute)]
     fn short_path<'v>(
-        this: &'v dyn StarlarkArtifactLike<'v>,
+        this: ArtifactOrOutputArtifact<'v>,
         heap: Heap<'_>,
     ) -> starlark::Result<StringValue<'v>> {
-        Ok(this.with_short_path(&|short_path| heap.alloc_str(short_path.as_str()))?)
+        Ok(this
+            .as_artifact_like()
+            .with_short_path(&|short_path| heap.alloc_str(short_path.as_str()))?)
     }
 }
 
@@ -102,9 +107,12 @@ fn input_artifact_methods(builder: &mut MethodsBuilder) {
     /// Returns an `OutputArtifact` instance, or fails if the artifact is
     /// either an `Artifact`, or is a bound `Artifact` (You cannot bind twice)
     fn as_output<'v>(
-        this: ValueOf<'v, &'v dyn StarlarkInputArtifactLike<'v>>,
+        this: ValueOf<'v, StarlarkArtifactView<'v>>,
     ) -> starlark::Result<StarlarkOutputArtifact<'v>> {
-        Ok(this.unpack().as_output(this.to_value())?)
+        Ok(this
+            .unpack()
+            .as_input_artifact_like()
+            .as_output(this.to_value())?)
     }
 
     /// Create an artifact that lives at path relative from this artifact.
@@ -114,29 +122,33 @@ fn input_artifact_methods(builder: &mut MethodsBuilder) {
     /// have the short name of the resulting artifact only contain the projected path, by passing
     /// `hide_prefix = True` to `project()`.
     fn project<'v>(
-        this: &'v dyn StarlarkInputArtifactLike<'v>,
+        this: StarlarkArtifactView<'v>,
         #[starlark(require = pos)] path: &str,
         #[starlark(require = named, default = false)] hide_prefix: bool,
     ) -> starlark::Result<EitherStarlarkInputArtifact<'v>> {
         let path = ForwardRelativePath::new(path)?;
-        Ok(this.project(path, hide_prefix)?)
+        Ok(this.as_input_artifact_like().project(path, hide_prefix)?)
     }
 
     /// Returns an `Artifact` instance which is identical to the original artifact, except
     /// with no associated artifacts.
     fn without_associated_artifacts<'v>(
-        this: &'v dyn StarlarkInputArtifactLike<'v>,
+        this: StarlarkArtifactView<'v>,
     ) -> starlark::Result<EitherStarlarkInputArtifact<'v>> {
-        Ok(this.without_associated_artifacts()?)
+        Ok(this
+            .as_input_artifact_like()
+            .without_associated_artifacts()?)
     }
 
     /// Returns an `Artifact` instance which is identical to the original artifact, but with
     /// potentially additional artifacts. The artifacts must be bound.
     fn with_associated_artifacts<'v>(
-        this: &'v dyn StarlarkInputArtifactLike<'v>,
-        artifacts: ValueOf<'v, ListType<ValueAsInputArtifactLike<'v>>>,
+        this: StarlarkArtifactView<'v>,
+        artifacts: ValueOf<'v, ListType<StarlarkArtifactView<'v>>>,
     ) -> starlark::Result<EitherStarlarkInputArtifact<'v>> {
-        Ok(this.with_associated_artifacts(artifacts)?)
+        Ok(this
+            .as_input_artifact_like()
+            .with_associated_artifacts(artifacts)?)
     }
 }
 

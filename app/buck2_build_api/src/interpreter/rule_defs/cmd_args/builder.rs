@@ -80,9 +80,10 @@ fn unpack_relative_origin<'v>(
             };
             RelativeToOption::OutputArtifact(value.inner().artifact.dupe(), parents)
         }
-        RelativeOrigin::Artifact(artifact) => {
-            RelativeToOption::Artifact(artifact.0.get_bound_artifact()?, parents)
-        }
+        RelativeOrigin::Artifact(artifact) => RelativeToOption::Artifact(
+            artifact.as_input_artifact_like().get_bound_artifact()?,
+            parents,
+        ),
         RelativeOrigin::CellRoot(cell_root) => {
             RelativeToOption::CellPath(cell_root.cell_path(), parents)
         }

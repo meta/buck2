@@ -13,7 +13,7 @@ use std::fmt::Debug;
 use std::iter;
 
 use buck2_build_api::artifact_groups::promise::PromiseArtifactAttr;
-use buck2_build_api::interpreter::rule_defs::artifact::starlark_artifact_like::ValueAsInputArtifactLike;
+use buck2_build_api::interpreter::rule_defs::artifact::starlark_artifact_like::StarlarkArtifactView;
 use buck2_build_api::interpreter::rule_defs::artifact::starlark_promise_artifact::StarlarkPromiseArtifact;
 use buck2_build_api::interpreter::rule_defs::provider::dependency::Dependency;
 use buck2_build_api::interpreter::rule_defs::resolved_macro::ResolvedStringWithMacros;
@@ -142,8 +142,10 @@ impl AnonTargetAttrTypeCoerce for AttrType {
                             has_content_based_path: promise_artifact.has_content_based_path,
                         },
                     )))
-                } else if let Some(artifact_like) = ValueAsInputArtifactLike::unpack_value(value)? {
-                    let artifact = artifact_like.0.get_bound_artifact()?;
+                } else if let Some(artifact_like) = StarlarkArtifactView::unpack_value(value)? {
+                    let artifact = artifact_like
+                        .as_input_artifact_like()
+                        .get_bound_artifact()?;
                     Ok(AnonTargetAttr::Artifact(artifact))
                 } else {
                     // TODO(nga): `EnsuredArtifact` gets here with unhelpful error message like:

@@ -37,8 +37,8 @@ use starlark::values::type_repr::StarlarkTypeRepr;
 use crate::artifact_groups::ArtifactGroup;
 use crate::bxl::select::StarlarkSelectConcat;
 use crate::bxl::select::StarlarkSelectDict;
+use crate::interpreter::rule_defs::artifact::starlark_artifact_like::StarlarkArtifactView;
 use crate::interpreter::rule_defs::artifact::starlark_artifact_like::StarlarkInputArtifactLike;
-use crate::interpreter::rule_defs::artifact::starlark_artifact_like::ValueAsInputArtifactLike;
 use crate::interpreter::rule_defs::artifact::starlark_output_artifact::StarlarkOutputArtifactView;
 use crate::interpreter::rule_defs::artifact_tagging::StarlarkTaggedValue;
 use crate::interpreter::rule_defs::cmd_args::ArtifactPathMapper;
@@ -118,7 +118,7 @@ fn err<R, E: serde::ser::Error>(res: buck2_error::Result<R>) -> Result<R, E> {
 /// and end up getting wrapped in a list below.
 #[derive(UnpackValue, StarlarkTypeRepr)]
 pub enum JsonArtifact<'v> {
-    ValueAsInputArtifactLike(ValueAsInputArtifactLike<'v>),
+    Artifact(StarlarkArtifactView<'v>),
     StarlarkOutputArtifact(StarlarkOutputArtifactView<'v>),
 }
 
@@ -208,8 +208,8 @@ impl<'a, 'v> Serialize for SerializeValue<'a, 'v> {
                     }
                     Some(fs) => {
                         let p = match x {
-                            JsonArtifact::ValueAsInputArtifactLike(x) => {
-                                let art = err(x.0.get_bound_artifact())?;
+                            JsonArtifact::Artifact(x) => {
+                                let art = err(x.as_input_artifact_like().get_bound_artifact())?;
                                 err(art.resolve_path(fs.fs(), self.artifact_path_mapping.get(&art)))?
                             }
                             JsonArtifact::StarlarkOutputArtifact(x) => {

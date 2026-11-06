@@ -228,7 +228,7 @@ impl<'v> AnalysisRegistry<'v> {
             OutputArtifactArg::OutputArtifact(output) => output.inner(),
             OutputArtifactArg::DeclaredArtifact(artifact) => artifact,
             OutputArtifactArg::WrongArtifact(artifact) => {
-                return Err(artifact.0.as_output_error());
+                return Err(artifact.as_input_artifact_like().as_output_error());
             }
         };
 

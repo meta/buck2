@@ -14,7 +14,7 @@ use std::path::Path;
 
 use buck2_artifact::artifact::source_artifact::SourceArtifact;
 use buck2_build_api::interpreter::rule_defs::artifact::starlark_artifact::StarlarkArtifact;
-use buck2_build_api::interpreter::rule_defs::artifact::starlark_artifact_like::ValueAsInputArtifactLike;
+use buck2_build_api::interpreter::rule_defs::artifact::starlark_artifact_like::StarlarkArtifactView;
 use buck2_common::dice::cells::HasCellResolver;
 use buck2_common::dice::data::HasProjectRoot;
 use buck2_core::cells::CellAliasResolver;
@@ -50,10 +50,10 @@ impl<'v> UnpackValue<'v> for SourceArtifactUnpack {
     type Error = Infallible;
 
     fn unpack_value_impl(value: Value<'v>) -> Result<Option<Self>, Self::Error> {
-        let Some(v) = ValueAsInputArtifactLike::unpack_value_opt(value) else {
+        let Some(v) = StarlarkArtifactView::unpack_value_opt(value) else {
             return Ok(None);
         };
-        let Some(bound_artifact) = v.0.get_bound_artifact().ok() else {
+        let Some(bound_artifact) = v.as_input_artifact_like().get_bound_artifact().ok() else {
             return Ok(None);
         };
         let Some(artifact) = bound_artifact.get_source() else {

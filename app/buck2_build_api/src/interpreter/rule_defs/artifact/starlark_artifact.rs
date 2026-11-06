@@ -40,7 +40,6 @@ use crate::interpreter::rule_defs::artifact::starlark_artifact_like::ArtifactFin
 use crate::interpreter::rule_defs::artifact::starlark_artifact_like::StarlarkArtifactLike;
 use crate::interpreter::rule_defs::artifact::starlark_artifact_like::StarlarkArtifactView;
 use crate::interpreter::rule_defs::artifact::starlark_artifact_like::StarlarkInputArtifactLike;
-use crate::interpreter::rule_defs::artifact::starlark_artifact_like::ValueAsInputArtifactLike;
 use crate::interpreter::rule_defs::artifact::starlark_output_artifact::StarlarkOutputArtifact;
 use crate::interpreter::rule_defs::cmd_args::ArtifactPathMapper;
 use crate::interpreter::rule_defs::cmd_args::CommandLineArgLike;
@@ -228,11 +227,11 @@ impl<'v> StarlarkInputArtifactLike<'v> for StarlarkArtifact {
 
     fn with_associated_artifacts(
         &'v self,
-        artifacts: ValueOf<'v, ListType<ValueAsInputArtifactLike<'v>>>,
+        artifacts: ValueOf<'v, ListType<StarlarkArtifactView<'v>>>,
     ) -> buck2_error::Result<EitherStarlarkInputArtifact<'v>> {
         let artifacts = artifacts
             .try_items()
-            .map(|a| a?.0.get_artifact_group())
+            .map(|a| a?.as_input_artifact_like().get_artifact_group())
             .collect::<buck2_error::Result<Vec<_>>>()?;
 
         let artifacts = AssociatedArtifacts::from(artifacts);

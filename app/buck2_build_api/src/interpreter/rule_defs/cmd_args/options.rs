@@ -39,7 +39,7 @@ use starlark::values::string::StarlarkStr;
 use starlark::values::type_repr::StarlarkTypeRepr;
 use strong_hash::StrongHash;
 
-use crate::interpreter::rule_defs::artifact::starlark_artifact_like::ValueAsInputArtifactLike;
+use crate::interpreter::rule_defs::artifact::starlark_artifact_like::StarlarkArtifactView;
 use crate::interpreter::rule_defs::artifact::starlark_output_artifact::StarlarkOutputArtifactView;
 use crate::interpreter::rule_defs::cmd_args::regex::CmdArgsRegex;
 
@@ -432,7 +432,7 @@ where
 #[derive(Display, StarlarkTypeRepr, UnpackValue, ProvidesStaticType)]
 pub(crate) enum RelativeOrigin<'v> {
     OutputArtifact(StarlarkOutputArtifactView<'v>),
-    Artifact(ValueAsInputArtifactLike<'v>),
+    Artifact(StarlarkArtifactView<'v>),
     CellRoot(&'v CellRoot),
     /// Bit of a useless variant since this is simply the default, but we allow it for consistency.
     ProjectRoot(&'v StarlarkProjectRoot),

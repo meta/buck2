@@ -23,7 +23,7 @@ use buck2_build_api::anon_target::AnonTargetDependentAnalysisResults;
 use buck2_build_api::anon_target::AnonTargetDyn;
 use buck2_build_api::artifact_groups::promise::PromiseArtifactId;
 use buck2_build_api::artifact_groups::promise::PromiseArtifactResolveError;
-use buck2_build_api::interpreter::rule_defs::artifact::starlark_artifact_like::ValueAsInputArtifactLike;
+use buck2_build_api::interpreter::rule_defs::artifact::starlark_artifact_like::StarlarkArtifactView;
 use buck2_core::configuration::data::ConfigurationData;
 use buck2_core::configuration::pair::ConfigurationNoExec;
 use buck2_core::content_hash::ContentBasedPathHash;
@@ -270,8 +270,11 @@ impl AnonTargetDyn for AnonTarget {
                 let promise_id =
                     PromiseArtifactId::new(BaseDeferredKey::AnonTarget(self.dupe()), id);
 
-                match ValueAsInputArtifactLike::unpack_value(artifact)? {
-                    Some(artifact) => Ok((promise_id, artifact.0.get_bound_artifact()?)),
+                match StarlarkArtifactView::unpack_value(artifact)? {
+                    Some(artifact) => Ok((
+                        promise_id,
+                        artifact.as_input_artifact_like().get_bound_artifact()?,
+                    )),
                     None => {
                         Err(PromiseArtifactResolveError::NotAnArtifact(artifact.to_repr()).into())
                     }

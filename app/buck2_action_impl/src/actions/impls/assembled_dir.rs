@@ -24,7 +24,7 @@ use buck2_build_api::actions::execute::action_executor::ActionExecutionMetadata;
 use buck2_build_api::actions::execute::action_executor::ActionOutputs;
 use buck2_build_api::artifact_groups::ArtifactGroup;
 use buck2_build_api::interpreter::rule_defs::artifact::associated::AssociatedArtifacts;
-use buck2_build_api::interpreter::rule_defs::artifact::starlark_artifact_like::ValueAsInputArtifactLike;
+use buck2_build_api::interpreter::rule_defs::artifact::starlark_artifact_like::StarlarkArtifactView;
 use buck2_build_signals::env::WaitingData;
 use buck2_core::category::CategoryRef;
 use buck2_core::content_hash::ContentBasedPathHash;
@@ -135,7 +135,7 @@ impl UnregisteredAssembledDirAction {
     // Map each artifact into an optional tuple of (artifact, path) and associated_artifacts, then collect
     // them into an optional tuple of vector and an index set respectively
     fn unpack_args<'v>(
-        srcs: ValueOf<'v, DictType<&'v str, ValueAsInputArtifactLike<'v>>>,
+        srcs: ValueOf<'v, DictType<&'v str, StarlarkArtifactView<'v>>>,
         copy: CopyMode,
     ) -> buck2_error::Result<(
         Vec<(ArtifactGroup, Box<ForwardRelativePath>, CopyMode)>,
@@ -145,10 +145,11 @@ impl UnregisteredAssembledDirAction {
         srcs.try_items()
             .map(|entry| {
                 let (k, as_artifact) = entry?;
-                let associates = as_artifact.0.get_associated_artifacts();
+                let as_artifact = as_artifact.as_input_artifact_like();
+                let associates = as_artifact.get_associated_artifacts();
                 buck2_error::Ok((
                     (
-                        as_artifact.0.get_artifact_group()?,
+                        as_artifact.get_artifact_group()?,
                         ForwardRelativePathBuf::try_from(k.to_owned())
                             .buck_error_context("dict key must be a forward relative path")?
                             .into_box(),
@@ -171,7 +172,7 @@ impl UnregisteredAssembledDirAction {
 
     pub(crate) fn new<'v>(
         copy: CopyMode,
-        srcs: ValueOf<'v, DictType<&'v str, ValueAsInputArtifactLike<'v>>>,
+        srcs: ValueOf<'v, DictType<&'v str, StarlarkArtifactView<'v>>>,
     ) -> buck2_error::Result<Self> {
         let (mut args, unioned_associated_artifacts) = Self::unpack_args(srcs, copy)
             // FIXME: This warning is talking about the Starlark-level argument name `srcs`.
@@ -198,14 +199,15 @@ impl UnregisteredAssembledDirAction {
     /// non-overlapping -- mixing copies and symlinks under overlapping paths
     /// is ill-defined.
     pub(crate) fn new_assembled<'v>(
-        contents: Vec<(&'v str, ValueAsInputArtifactLike<'v>, CopyMode)>,
+        contents: Vec<(&'v str, StarlarkArtifactView<'v>, CopyMode)>,
     ) -> buck2_error::Result<Self> {
         let mut args = Vec::with_capacity(contents.len());
         let mut assocs = BuckMutInsertionSet::new();
         for (k, as_artifact, mode) in contents {
-            let associates = as_artifact.0.get_associated_artifacts();
+            let as_artifact = as_artifact.as_input_artifact_like();
+            let associates = as_artifact.get_associated_artifacts();
             args.push((
-                as_artifact.0.get_artifact_group()?,
+                as_artifact.get_artifact_group()?,
                 ForwardRelativePathBuf::try_from(k.to_owned())
                     .buck_error_context("dict key must be a forward relative path")?
                     .into_box(),

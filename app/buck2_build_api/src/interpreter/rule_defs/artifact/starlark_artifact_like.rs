@@ -8,7 +8,6 @@
  * above-listed licenses.
  */
 
-use std::convert::Infallible;
 use std::fmt::Display;
 use std::hash::Hash;
 use std::hash::Hasher;
@@ -18,15 +17,12 @@ use buck2_artifact::artifact::artifact_type::Artifact;
 use buck2_core::deferred::base_deferred_key::BaseDeferredKey;
 use buck2_fs::paths::file_name::FileName;
 use buck2_fs::paths::forward_rel_path::ForwardRelativePath;
-use starlark::any::ProvidesStaticType;
 use starlark::collections::StarlarkHasher;
 use starlark::environment::Methods;
-use starlark::typing::Ty;
 use starlark::values::StarlarkRepresentations;
 use starlark::values::StarlarkType;
 use starlark::values::StringValue;
 use starlark::values::UnpackValue;
-use starlark::values::UnpackValueStable;
 use starlark::values::Value;
 use starlark::values::ValueOf;
 use starlark::values::ValueTyped;
@@ -69,8 +65,8 @@ pub trait StarlarkArtifactLike<'v>: Display {
         'v: 's;
 
     fn equals(&self, other: Value<'v>) -> starlark::Result<bool> {
-        Ok(<&dyn StarlarkArtifactLike<'v>>::unpack_value(other)?
-            .is_some_and(|other| self.fingerprint() == other.fingerprint()))
+        Ok(ArtifactOrOutputArtifact::unpack_value_opt(other)
+            .is_some_and(|other| self.fingerprint() == other.as_artifact_like().fingerprint()))
     }
 
     fn write_hash(&self, hasher: &mut StarlarkHasher) -> starlark::Result<()> {
@@ -125,7 +121,7 @@ pub trait StarlarkInputArtifactLike<'v>: StarlarkArtifactLike<'v> {
 
     fn with_associated_artifacts(
         &'v self,
-        artifacts: ValueOf<'v, ListType<ValueAsInputArtifactLike<'v>>>,
+        artifacts: ValueOf<'v, ListType<StarlarkArtifactView<'v>>>,
     ) -> buck2_error::Result<EitherStarlarkInputArtifact<'v>>;
 }
 
@@ -165,60 +161,18 @@ impl<'v> StarlarkType<'v> for StarlarkArtifactView<'v> {
     }
 }
 
-impl<'v> StarlarkTypeRepr for &'v dyn StarlarkInputArtifactLike<'v> {
-    type Canonical = StarlarkArtifact;
-
-    fn starlark_type_repr() -> Ty {
-        StarlarkArtifactView::starlark_type_repr()
-    }
-}
-
-impl<'v> UnpackValueStable<'v> for &'v dyn StarlarkInputArtifactLike<'v> {}
-
-impl<'v> UnpackValue<'v> for &'v dyn StarlarkInputArtifactLike<'v> {
-    type Error = Infallible;
-
-    fn unpack_value_impl(value: Value<'v>) -> Result<Option<Self>, Self::Error> {
-        Ok(StarlarkArtifactView::unpack_value_opt(value).map(|x| x.as_input_artifact_like()))
-    }
-}
-
-#[derive(UnpackValue, StarlarkTypeRepr, ProvidesStaticType)]
-pub struct ValueAsInputArtifactLike<'v>(pub &'v dyn StarlarkInputArtifactLike<'v>);
-
-impl Display for ValueAsInputArtifactLike<'_> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        Display::fmt(self.0, f)
-    }
-}
-
+/// An `OutputArtifact` or an `Artifact`: the receiver of the methods the two types share.
 #[derive(StarlarkTypeRepr, UnpackValue)]
-pub enum ValueAsArtifactLikeUnpack<'v> {
+pub enum ArtifactOrOutputArtifact<'v> {
     OutputArtifact(StarlarkOutputArtifactView<'v>),
-    InputArtifact(&'v dyn StarlarkInputArtifactLike<'v>),
+    Artifact(StarlarkArtifactView<'v>),
 }
 
-impl<'v> StarlarkTypeRepr for &'v dyn StarlarkArtifactLike<'v> {
-    type Canonical = <ValueAsArtifactLikeUnpack<'v> as StarlarkTypeRepr>::Canonical;
-
-    fn starlark_type_repr() -> Ty {
-        ValueAsArtifactLikeUnpack::starlark_type_repr()
-    }
-}
-
-impl<'v> UnpackValueStable<'v> for &'v dyn StarlarkArtifactLike<'v> {}
-
-impl<'v> UnpackValue<'v> for &'v dyn StarlarkArtifactLike<'v> {
-    type Error = Infallible;
-
-    fn unpack_value_impl(value: Value<'v>) -> Result<Option<Self>, Self::Error> {
-        match ValueAsArtifactLikeUnpack::unpack_value_opt(value) {
-            Some(ValueAsArtifactLikeUnpack::OutputArtifact(artifact)) => match artifact {
-                StarlarkOutputArtifactView::Unfrozen(artifact) => Ok(Some(artifact.as_ref())),
-                StarlarkOutputArtifactView::Frozen(artifact) => Ok(Some(artifact.as_ref())),
-            },
-            Some(ValueAsArtifactLikeUnpack::InputArtifact(artifact)) => Ok(Some(artifact)),
-            None => Ok(None),
+impl<'v> ArtifactOrOutputArtifact<'v> {
+    pub fn as_artifact_like(self) -> &'v dyn StarlarkArtifactLike<'v> {
+        match self {
+            ArtifactOrOutputArtifact::OutputArtifact(x) => x.as_artifact_like(),
+            ArtifactOrOutputArtifact::Artifact(x) => x.as_input_artifact_like(),
         }
     }
 }

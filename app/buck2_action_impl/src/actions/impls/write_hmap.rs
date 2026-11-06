@@ -25,7 +25,7 @@ use buck2_build_api::actions::execute::action_executor::ActionExecutionKind;
 use buck2_build_api::actions::execute::action_executor::ActionExecutionMetadata;
 use buck2_build_api::actions::execute::action_executor::ActionOutputs;
 use buck2_build_api::artifact_groups::ArtifactGroup;
-use buck2_build_api::interpreter::rule_defs::artifact::starlark_artifact_like::ValueAsInputArtifactLike;
+use buck2_build_api::interpreter::rule_defs::artifact::starlark_artifact_like::StarlarkArtifactView;
 use buck2_build_api::interpreter::rule_defs::cmd_args::ArtifactPathMapper;
 use buck2_build_api::interpreter::rule_defs::cmd_args::CommandLineArtifactVisitor;
 use buck2_build_api::interpreter::rule_defs::cmd_args::path_format;
@@ -68,15 +68,15 @@ enum WriteHmapActionValidationError {
 
 /// Header map entries: include name to `(artifact, path below it)`.
 /// An empty path means the artifact itself.
-pub(crate) type HmapMappings<'v> = DictType<&'v str, (ValueAsInputArtifactLike<'v>, &'v str)>;
+pub(crate) type HmapMappings<'v> = DictType<&'v str, (StarlarkArtifactView<'v>, &'v str)>;
 
 fn for_each_mapping<'v>(
     mappings: Value<'v>,
-    mut f: impl FnMut(&'v str, ValueAsInputArtifactLike<'v>, &'v str) -> buck2_error::Result<()>,
+    mut f: impl FnMut(&'v str, StarlarkArtifactView<'v>, &'v str) -> buck2_error::Result<()>,
 ) -> buck2_error::Result<()> {
     for (name, entry) in DictRef::unpack_value_err(mappings)?.iter() {
         let name = <&str>::unpack_value_err(name)?;
-        let (artifact, subpath) = <(ValueAsInputArtifactLike, &str)>::unpack_value_err(entry)?;
+        let (artifact, subpath) = <(StarlarkArtifactView, &str)>::unpack_value_err(entry)?;
         f(name, artifact, subpath)?;
     }
     Ok(())
@@ -87,7 +87,10 @@ pub(crate) fn visit_hmap_artifacts<'v>(
     visitor: &mut dyn CommandLineArtifactVisitor<'v>,
 ) -> buck2_error::Result<()> {
     for_each_mapping(mappings, |_, artifact, _| {
-        artifact.0.as_command_line_like().visit_artifacts(visitor)
+        artifact
+            .as_input_artifact_like()
+            .as_command_line_like()
+            .visit_artifacts(visitor)
     })
 }
 
@@ -143,8 +146,8 @@ impl WriteHmapAction {
                 mappings.iter().map(|(name, entry)| {
                     let name = <&str>::unpack_value_err(name)?;
                     let (artifact, subpath) =
-                        <(ValueAsInputArtifactLike, &str)>::unpack_value_err(entry)?;
-                    let artifact = artifact.0.get_bound_artifact()?;
+                        <(StarlarkArtifactView, &str)>::unpack_value_err(entry)?;
+                    let artifact = artifact.as_input_artifact_like().get_bound_artifact()?;
                     let artifact_path =
                         artifact.resolve_path(fs.fs(), artifact_path_mapping.get(&artifact))?;
                     let mut path =

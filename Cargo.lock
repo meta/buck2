@@ -11383,8 +11383,9 @@ checksum = "06bdbd8cfc056b8d2e2e85f29b56a3bdbecb527cef81eb39e3e7b98af4652770"
 
 [[package]]
 name = "tonic"
-version = "0.14.6"
-source = "git+https://github.com/grpc/grpc-rust?rev=de65d0a48783869d89b7d8d4a65ce703f1612249#de65d0a48783869d89b7d8d4a65ce703f1612249"
+version = "0.14.9"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e2cdfc673aabd30fe8fee92e65837b644c37c5d47f0f97ae6d5e0f1237d15e1b"
 dependencies = [
  "async-trait",
  "axum",
@@ -11406,6 +11407,7 @@ dependencies = [
  "tokio",
  "tokio-rustls",
  "tokio-stream",
+ "tokio-util 0.7.20",
  "tower",
  "tower-layer",
  "tower-service",

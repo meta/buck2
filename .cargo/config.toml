@@ -21,11 +21,6 @@ rustflags = ["--cfg", "tokio_unstable"]
 # @oss-disable: rev = "f73ddb1002d51ae74c1b41670fae56bd5896b7a3"
 # @oss-disable: replace-with = "vendored-sources"
 
-# @oss-disable: [source."git+https://github.com/grpc/grpc-rust?rev=de65d0a48783869d89b7d8d4a65ce703f1612249"]
-# @oss-disable: git = "https://github.com/grpc/grpc-rust"
-# @oss-disable: rev = "de65d0a48783869d89b7d8d4a65ce703f1612249"
-# @oss-disable: replace-with = "vendored-sources"
-
 # @oss-disable: [source."git+https://github.com/jsgf/rust-bindgen?rev=4d385d21c160e6ee1f443aeb7e00528a1dc7fd44"]
 # @oss-disable: git = "https://github.com/jsgf/rust-bindgen"
 # @oss-disable: rev = "4d385d21c160e6ee1f443aeb7e00528a1dc7fd44"

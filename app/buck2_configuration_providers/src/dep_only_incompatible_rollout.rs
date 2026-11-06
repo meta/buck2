@@ -15,10 +15,9 @@ use starlark::environment::GlobalsBuilder;
 use starlark::starlark_module;
 use starlark::values::Freeze;
 use starlark::values::StarlarkPagable;
+use starlark::values::StringValue;
 use starlark::values::Trace;
 use starlark::values::ValueOf;
-use starlark::values::ValueOfUnchecked;
-use starlark::values::list::ListRef;
 use starlark::values::list::ListType;
 
 /// A provider that is used to signal the targets that we want to soft error on
@@ -36,32 +35,21 @@ use starlark::values::list::ListType;
 #[repr(C)]
 pub struct DepOnlyIncompatibleRollout<'v> {
     /// A list of target patterns (minus exclusions) that we want to soft error on.
-    pub target_patterns: ValueOfUnchecked<'v, ListType<String>>,
+    pub target_patterns: ValueOf<'v, ListType<StringValue<'v>>>,
     /// A list of target patterns that we want to exclude from the soft error.
-    pub exclusions: ValueOfUnchecked<'v, ListType<String>>,
-}
-
-impl<'v> DepOnlyIncompatibleRollout<'v> {
-    pub fn target_patterns(&'v self) -> &'v ListRef<'v> {
-        ListRef::from_value(self.target_patterns.get())
-            .expect("internal error: type checked as list")
-    }
-
-    pub fn exclusions(&'v self) -> &'v ListRef<'v> {
-        ListRef::from_value(self.exclusions.get()).expect("internal error: type checked as list")
-    }
+    pub exclusions: ValueOf<'v, ListType<StringValue<'v>>>,
 }
 
 #[starlark_module]
 fn dep_only_incompatible_custom_soft_error_creator(globals: &mut GlobalsBuilder) {
     #[starlark(as_type = DepOnlyIncompatibleRollout<'static>)]
     fn DepOnlyIncompatibleRollout<'v>(
-        #[starlark(require = named)] target_patterns: ValueOf<'v, ListType<&'v str>>,
-        #[starlark(require = named)] exclusions: ValueOf<'v, ListType<&'v str>>,
+        #[starlark(require = named)] target_patterns: ValueOf<'v, ListType<StringValue<'v>>>,
+        #[starlark(require = named)] exclusions: ValueOf<'v, ListType<StringValue<'v>>>,
     ) -> starlark::Result<DepOnlyIncompatibleRollout<'v>> {
         Ok(DepOnlyIncompatibleRollout {
-            target_patterns: target_patterns.as_unchecked().cast(),
-            exclusions: exclusions.as_unchecked().cast(),
+            target_patterns,
+            exclusions,
         })
     }
 }

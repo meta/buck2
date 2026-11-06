@@ -29,9 +29,6 @@ use starlark::starlark_module;
 use starlark::values::Freeze;
 use starlark::values::StarlarkPagable;
 use starlark::values::Trace;
-use starlark::values::UnpackValue;
-use starlark::values::Value;
-use starlark::values::ValueOfUnchecked;
 use starlark::values::ValueTyped;
 use starlark::values::none::NoneOr;
 
@@ -51,7 +48,7 @@ use starlark::values::none::NoneOr;
 pub(crate) struct ConstraintSettingInfo<'v> {
     label: ValueTyped<'v, StarlarkTargetLabel>,
     // TODO(nero): Remove NoneOr when we migrate to unified constraint
-    default: ValueOfUnchecked<'v, NoneOr<StarlarkProvidersLabel>>,
+    default: Option<ValueTyped<'v, StarlarkProvidersLabel>>,
 }
 
 impl<'v> ConstraintSettingInfo<'v> {
@@ -60,9 +57,7 @@ impl<'v> ConstraintSettingInfo<'v> {
     }
 
     pub(crate) fn default(&self) -> Option<ValueTyped<'v, StarlarkProvidersLabel>> {
-        NoneOr::<ValueTyped<StarlarkProvidersLabel>>::unpack_value_err(self.default.get())
-            .expect("validated at construction")
-            .into_option()
+        self.default
     }
 
     /// Convert to a ConstraintKey for use in configuration data.
@@ -78,17 +73,9 @@ impl<'v> ConstraintSettingInfo<'v> {
 
     pub(crate) fn new(
         label: ValueTyped<'v, StarlarkTargetLabel>,
-        default: NoneOr<ValueTyped<'v, StarlarkProvidersLabel>>,
+        default: Option<ValueTyped<'v, StarlarkProvidersLabel>>,
     ) -> ConstraintSettingInfo<'v> {
-        let default_value = match default {
-            NoneOr::None => ValueOfUnchecked::new(Value::new_none()),
-            NoneOr::Other(d) => ValueOfUnchecked::new(d.to_value()),
-        };
-
-        ConstraintSettingInfo {
-            label,
-            default: default_value,
-        }
+        ConstraintSettingInfo { label, default }
     }
 }
 
@@ -101,6 +88,6 @@ fn constraint_info_creator(globals: &mut GlobalsBuilder) {
             ValueTyped<'v, StarlarkProvidersLabel>,
         >,
     ) -> starlark::Result<ConstraintSettingInfo<'v>> {
-        Ok(ConstraintSettingInfo::new(label, default))
+        Ok(ConstraintSettingInfo::new(label, default.into_option()))
     }
 }

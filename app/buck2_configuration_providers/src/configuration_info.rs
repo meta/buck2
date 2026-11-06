@@ -16,7 +16,6 @@ use buck2_build_api_derive::internal_provider;
 use buck2_common::legacy_configs::configs::parse_config_section_and_key;
 use buck2_core::configuration::config_setting::ConfigSettingData;
 use buck2_core::configuration::data::ConfigurationDataData;
-use buck2_hash::BuckMutInsertionMap;
 use buck2_hash::BuckMutSet;
 use buck2_interpreter::types::configured_providers_label::StarlarkProvidersLabel;
 use buck2_interpreter::types::target_label::StarlarkTargetLabel;
@@ -29,17 +28,14 @@ use starlark::starlark_module;
 use starlark::values::Freeze;
 use starlark::values::Heap;
 use starlark::values::StarlarkPagable;
+use starlark::values::StringValue;
 use starlark::values::Trace;
-use starlark::values::UnpackAndDiscard;
+use starlark::values::UnpackValue;
 use starlark::values::Value;
 use starlark::values::ValueOf;
-use starlark::values::ValueOfUnchecked;
 use starlark::values::ValueTyped;
-use starlark::values::dict::AllocDict;
 use starlark::values::dict::DictMut;
-use starlark::values::dict::DictRef;
 use starlark::values::dict::DictType;
-use starlark::values::dict::UnpackDictEntries;
 use starlark::values::none::NoneOr;
 
 use crate::constraint_setting_info::ConstraintSettingInfo;
@@ -55,52 +51,38 @@ use crate::constraint_value_info::ConstraintValueInfo;
 #[derive(Debug, Trace, Freeze, ProvidesStaticType, Allocative, StarlarkPagable)]
 #[repr(C)]
 pub struct ConfigurationInfo<'v> {
-    constraints: ValueOfUnchecked<'v, DictType<StarlarkTargetLabel, ConstraintValueInfo<'static>>>,
-    values: ValueOfUnchecked<'v, DictType<String, String>>,
-    root_values: ValueOfUnchecked<'v, DictType<String, String>>,
+    constraints: ValueOf<
+        'v,
+        DictType<ValueTyped<'v, StarlarkTargetLabel>, ValueTyped<'v, ConstraintValueInfo<'v>>>,
+    >,
+    values: ValueOf<'v, DictType<StringValue<'v>, StringValue<'v>>>,
+    root_values: ValueOf<'v, DictType<StringValue<'v>, StringValue<'v>>>,
 }
 
+type Constraints<'v> = ValueOf<
+    'v,
+    DictType<ValueTyped<'v, StarlarkTargetLabel>, ValueTyped<'v, ConstraintValueInfo<'v>>>,
+>;
+type Buckconfigs<'v> = ValueOf<'v, DictType<StringValue<'v>, StringValue<'v>>>;
+
 impl<'v> ConfigurationInfo<'v> {
-    pub fn to_config_setting_data(&self) -> ConfigSettingData {
-        let constraints =
-            DictRef::from_value(self.constraints.get()).expect("type checked on construction");
-        let mut converted_constraints = BTreeMap::new();
-        for (k, v) in constraints.iter() {
-            let key_target = StarlarkTargetLabel::from_value(k.to_value())
-                .expect("type checked on construction");
-            let value_target = ConstraintValueInfo::from_value(v.to_value())
-                .expect("type checked on construction");
-            let (constraint_key, constraint_value) = value_target.to_constraint_key_value();
+    pub fn to_config_setting_data(&self) -> buck2_error::Result<ConfigSettingData> {
+        let mut constraints = BTreeMap::new();
+        for entry in self.constraints.iter() {
+            let (key, value) = entry?;
+            let (constraint_key, constraint_value) = value.unpack().to_constraint_key_value();
             debug_assert_eq!(
-                key_target.label(),
+                key.unpack().label(),
                 &constraint_key.key,
                 "dict key should match constraint setting label"
             );
-            converted_constraints.insert(constraint_key, constraint_value);
+            constraints.insert(constraint_key, constraint_value);
         }
-
-        let values = DictRef::from_value(self.values.get()).expect("type checked on construction");
-        let mut converted_values = BTreeMap::new();
-        for (k, v) in values.iter() {
-            let key_config = k.to_value().to_str();
-            let value_config = v.to_value().to_str();
-            converted_values.insert(key_config, value_config);
-        }
-
-        let root_values =
-            DictRef::from_value(self.root_values.get()).expect("type checked on construction");
-        let mut converted_root_values = BTreeMap::new();
-        for (k, v) in root_values.iter() {
-            let key_config = k.to_value().to_str();
-            let value_config = v.to_value().to_str();
-            converted_root_values.insert(key_config, value_config);
-        }
-
-        ConfigSettingData {
-            constraints: converted_constraints,
-            buckconfigs: converted_values,
-            root_buckconfigs: converted_root_values,
-        }
+        Ok(ConfigSettingData {
+            constraints,
+            buckconfigs: buckconfig_map(self.values)?,
+            root_buckconfigs: buckconfig_map(self.root_values)?,
+        })
     }
 
     pub fn to_configuration_data(&self) -> buck2_error::Result<ConfigurationDataData> {
@@ -108,7 +90,7 @@ impl<'v> ConfigurationInfo<'v> {
             constraints,
             buckconfigs,
             root_buckconfigs,
-        } = self.to_config_setting_data();
+        } = self.to_config_setting_data()?;
         if !buckconfigs.is_empty() || !root_buckconfigs.is_empty() {
             return Err(ConfigurationInfoError::BuckConfigsNotAllowed.into());
         }
@@ -117,8 +99,7 @@ impl<'v> ConfigurationInfo<'v> {
 
     /// Create a provider from configuration data.
     pub fn from_configuration_data(conf: &ConfigurationDataData, heap: Heap<'v>) -> Self {
-        let mut constraints = BuckMutInsertionMap::new();
-        for (k, v) in &conf.constraints {
+        let constraints = conf.constraints.iter().map(|(k, v)| {
             let constraint_setting_label = heap.alloc_typed(StarlarkTargetLabel::new(k.key.dupe()));
             let default_value = k
                 .default
@@ -127,26 +108,36 @@ impl<'v> ConfigurationInfo<'v> {
             let constraint_value_label = heap.alloc_typed(StarlarkProvidersLabel::new(v.0.dupe()));
             let constraint_setting = heap.alloc_typed(ConstraintSettingInfo::new(
                 constraint_setting_label,
-                NoneOr::from_option(default_value),
+                default_value,
             ));
-            let constraint_value =
-                ConstraintValueInfo::new(constraint_setting, constraint_value_label);
-            let prev = constraints.insert_hashed(
-                constraint_setting_label
-                    .to_value()
-                    .get_hashed()
-                    .expect("StarlarkTargetLabel is hashable"),
-                heap.alloc(constraint_value),
-            );
-            assert!(prev.is_none());
-        }
-
+            let constraint_value = heap.alloc_typed(ConstraintValueInfo::new(
+                constraint_setting,
+                constraint_value_label,
+            ));
+            (
+                ValueOf::from(constraint_setting_label),
+                ValueOf::from(constraint_value),
+            )
+        });
         ConfigurationInfo {
-            constraints: ValueOfUnchecked::new(heap.alloc(constraints)),
-            values: heap.alloc_typed_unchecked(AllocDict([("", ""); 0])).cast(),
-            root_values: heap.alloc_typed_unchecked(AllocDict([("", ""); 0])).cast(),
+            constraints: ValueOf::alloc_dict(heap, constraints),
+            values: ValueOf::alloc_dict(heap, []),
+            root_values: ValueOf::alloc_dict(heap, []),
         }
     }
+}
+
+fn buckconfig_map<'v>(values: Buckconfigs<'v>) -> buck2_error::Result<BTreeMap<String, String>> {
+    values
+        .iter()
+        .map(|entry| {
+            let (k, v) = entry?;
+            Ok((
+                k.unpack().as_str().to_owned(),
+                v.unpack().as_str().to_owned(),
+            ))
+        })
+        .collect()
 }
 
 #[derive(Debug, buck2_error::Error)]
@@ -164,82 +155,74 @@ enum ConfigurationInfoError {
     DuplicateKeyAcrossValuesAndRootValues(String),
 }
 
-/// Helper function to validate and build a constraints map from dictionary entries.
-fn build_constraints_map_from_dict<'v>(
-    dict_entries: UnpackDictEntries<
-        ValueTyped<'v, StarlarkTargetLabel>,
-        ValueTyped<'v, ConstraintValueInfo<'v>>,
-    >,
-) -> starlark::Result<BuckMutInsertionMap<Value<'v>, Value<'v>>> {
-    let mut new_constraints = BuckMutInsertionMap::new();
-
-    for (constraint_setting, constraint_value) in dict_entries.entries {
-        let constraint_setting_hashed = constraint_setting
-            .to_value()
-            .get_hashed()
-            .expect("should be hashable, we picked it from dict");
-        let constraint_setting_from_constraint_value = constraint_value.setting().label();
-        if *constraint_setting != *constraint_setting_from_constraint_value {
+/// The provider's own copy of `constraints`, so that its mutating methods do not reach the
+/// caller's dict; each key must name its value's setting.
+fn copy_constraints<'v>(
+    constraints: Constraints<'v>,
+    heap: Heap<'v>,
+) -> starlark::Result<Constraints<'v>> {
+    let mut entries = Vec::with_capacity(constraints.dict().len());
+    for entry in constraints.iter() {
+        let (setting, value) = entry?;
+        if *setting.unpack() != *value.unpack().setting().label() {
             return Err(buck2_error::Error::from(
                 ConfigurationInfoError::ConstraintsKeyValueMismatch(
-                    constraint_setting.to_string(),
-                    constraint_value.to_string(),
+                    setting.unpack().to_string(),
+                    value.unpack().to_string(),
                 ),
             )
             .into());
         }
-        let prev =
-            new_constraints.insert_hashed(constraint_setting_hashed, constraint_value.to_value());
-        assert!(prev.is_none());
+        entries.push((setting, value));
     }
+    Ok(ValueOf::alloc_dict(heap, entries))
+}
 
-    Ok(new_constraints)
+fn copy_dict<'v, K: UnpackValue<'v>, V: UnpackValue<'v>>(
+    dict: ValueOf<'v, DictType<K, V>>,
+    heap: Heap<'v>,
+) -> starlark::Result<ValueOf<'v, DictType<K, V>>> {
+    Ok(ValueOf::alloc_dict(
+        heap,
+        dict.iter().collect::<starlark::Result<Vec<_>>>()?,
+    ))
 }
 
 #[starlark_module]
 fn configuration_info_creator(globals: &mut GlobalsBuilder) {
     #[starlark(as_type = ConfigurationInfo<'static>)]
     fn ConfigurationInfo<'v>(
-        #[starlark(require = named)] constraints: UnpackDictEntries<
-            ValueTyped<'v, StarlarkTargetLabel>,
-            ValueTyped<'v, ConstraintValueInfo<'v>>,
-        >,
-        #[starlark(require = named)] values: ValueOf<
-            'v,
-            UnpackDictEntries<&'v str, UnpackAndDiscard<&'v str>>,
-        >,
-        #[starlark(
-            require = named,
-            default = ValueOf::new_unchecked(starlark::values::Value::new_empty_dict())
-        )]
-        root_values: ValueOf<'v, UnpackDictEntries<&'v str, UnpackAndDiscard<&'v str>>>,
+        #[starlark(require = named)] constraints: Constraints<'v>,
+        #[starlark(require = named)] values: Buckconfigs<'v>,
+        #[starlark(require = named, default = ValueOf::new_unchecked(Value::new_empty_dict()))]
+        root_values: Buckconfigs<'v>,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<ConfigurationInfo<'v>> {
-        let new_constraints = build_constraints_map_from_dict(constraints)?;
+        let constraints = copy_constraints(constraints, eval.heap())?;
 
-        let value_entries = values.try_unpack()?.entries;
-        let root_value_entries = root_values.try_unpack()?.entries;
-        for (k, _) in &value_entries {
+        let mut value_keys = BuckMutSet::default();
+        for entry in values.iter() {
+            let (k, _) = entry?;
+            let k = k.unpack().as_str();
             parse_config_section_and_key(k, None)?;
+            value_keys.insert(k);
         }
-        for (k, _) in &root_value_entries {
+        for entry in root_values.iter() {
+            let (k, _) = entry?;
+            let k = k.unpack().as_str();
             parse_config_section_and_key(k, None)?;
-        }
-
-        let value_keys: BuckMutSet<&str> = value_entries.iter().map(|(k, _)| *k).collect();
-        for (k, _) in &root_value_entries {
             if value_keys.contains(k) {
                 return Err(buck2_error::Error::from(
-                    ConfigurationInfoError::DuplicateKeyAcrossValuesAndRootValues(k.to_string()),
+                    ConfigurationInfoError::DuplicateKeyAcrossValuesAndRootValues(k.to_owned()),
                 )
                 .into());
             }
         }
 
         Ok(ConfigurationInfo {
-            constraints: ValueOfUnchecked::new(eval.heap().alloc(new_constraints)),
-            values: values.as_unchecked().cast(),
-            root_values: root_values.as_unchecked().cast(),
+            constraints,
+            values,
+            root_values,
         })
     }
 }
@@ -249,27 +232,19 @@ fn configuration_info_creator(globals: &mut GlobalsBuilder) {
 fn configuration_info_methods(builder: &mut MethodsBuilder) {
     /// A dictionary mapping constraint setting labels to their corresponding constraint values.
     #[starlark(attribute)]
-    fn constraints<'v>(
-        this: &ConfigurationInfo<'v>,
-    ) -> starlark::Result<
-        ValueOfUnchecked<'v, DictType<StarlarkTargetLabel, ConstraintValueInfo<'static>>>,
-    > {
+    fn constraints<'v>(this: &ConfigurationInfo<'v>) -> starlark::Result<Constraints<'v>> {
         Ok(this.constraints)
     }
 
     /// A dictionary of buckconfig section.key pairs and their values (evaluated from target cell).
     #[starlark(attribute)]
-    fn values<'v>(
-        this: &ConfigurationInfo<'v>,
-    ) -> starlark::Result<ValueOfUnchecked<'v, DictType<String, String>>> {
+    fn values<'v>(this: &ConfigurationInfo<'v>) -> starlark::Result<Buckconfigs<'v>> {
         Ok(this.values)
     }
 
     /// A dictionary of buckconfig section.key pairs and their values (evaluated from root cell).
     #[starlark(attribute)]
-    fn root_values<'v>(
-        this: &ConfigurationInfo<'v>,
-    ) -> starlark::Result<ValueOfUnchecked<'v, DictType<String, String>>> {
+    fn root_values<'v>(this: &ConfigurationInfo<'v>) -> starlark::Result<Buckconfigs<'v>> {
         Ok(this.root_values)
     }
 
@@ -303,15 +278,8 @@ fn configuration_info_methods(builder: &mut MethodsBuilder) {
         #[starlark(require = pos)] key: ValueTyped<'v, ConstraintSettingInfo<'v>>,
         heap: Heap<'v>,
     ) -> starlark::Result<NoneOr<ValueTyped<'v, ConstraintValueInfo<'v>>>> {
-        let constraints =
-            DictRef::from_value(this.constraints.get()).expect("type checked on construction");
-
-        let label = key.label();
-        match constraints.get(label.to_value())? {
-            Some(v) => {
-                let v = ValueTyped::new_err(v).expect("type checked on construction");
-                Ok(NoneOr::Other(v))
-            }
+        match this.constraints.get(key.label().to_value())? {
+            Some(v) => Ok(NoneOr::Other(v.unpack())),
             // if not find in the constraints, we return the default constraint value
             None => Ok(get_default_constraint_value(key, heap)),
         }
@@ -348,9 +316,9 @@ fn configuration_info_methods(builder: &mut MethodsBuilder) {
         let setting_info = constraint_value.setting();
         let label = setting_info.label();
 
-        let mut constraints = DictMut::from_value(this.constraints.get())?;
+        let mut constraints = DictMut::from_value(this.constraints.to_value())?;
 
-        let v = constraints.aref.insert_hashed(
+        let previous = constraints.aref.insert_hashed(
             label
                 .to_value()
                 .get_hashed()
@@ -358,11 +326,8 @@ fn configuration_info_methods(builder: &mut MethodsBuilder) {
             value.to_value(),
         );
 
-        match v {
-            Some(v) => {
-                let v = ValueTyped::new_err(v).expect("type checked on construction");
-                Ok(NoneOr::Other(v))
-            }
+        match previous {
+            Some(v) => Ok(NoneOr::Other(ValueTyped::new_err(v)?)),
             // if not found in the constraints, we return the default constraint value
             None => Ok(get_default_constraint_value(setting_info, heap)),
         }
@@ -399,7 +364,7 @@ fn configuration_info_methods(builder: &mut MethodsBuilder) {
         heap: Heap<'v>,
     ) -> starlark::Result<NoneOr<ValueTyped<'v, ConstraintValueInfo<'v>>>> {
         let label = key.label();
-        let mut constraints = DictMut::from_value(this.constraints.get())?;
+        let mut constraints = DictMut::from_value(this.constraints.to_value())?;
 
         // Remove and return the value
         let removed = constraints.aref.remove_hashed(
@@ -410,10 +375,7 @@ fn configuration_info_methods(builder: &mut MethodsBuilder) {
         );
 
         match removed {
-            Some(v) => {
-                let v = ValueTyped::new_err(v).expect("type checked on construction");
-                Ok(NoneOr::Other(v))
-            }
+            Some(v) => Ok(NoneOr::Other(ValueTyped::new_err(v)?)),
             // if not found in the constraints, we return the default constraint value
             None => Ok(get_default_constraint_value(key, heap)),
         }
@@ -440,36 +402,10 @@ fn configuration_info_methods(builder: &mut MethodsBuilder) {
         this: &ConfigurationInfo<'v>,
         heap: Heap<'v>,
     ) -> starlark::Result<ConfigurationInfo<'v>> {
-        // Copy constraints dict
-        let constraints =
-            DictRef::from_value(this.constraints.get()).expect("type checked on construction");
-        let mut new_constraints = BuckMutInsertionMap::new();
-        for (k, v) in constraints.iter() {
-            let key_hashed = k.get_hashed().expect("should be hashable");
-            new_constraints.insert_hashed(key_hashed, v);
-        }
-
-        // Copy values dict
-        let values = DictRef::from_value(this.values.get()).expect("type checked on construction");
-        let mut new_values = BuckMutInsertionMap::new();
-        for (k, v) in values.iter() {
-            let key_hashed = k.get_hashed().expect("should be hashable");
-            new_values.insert_hashed(key_hashed, v);
-        }
-
         Ok(ConfigurationInfo {
-            constraints: ValueOfUnchecked::new(heap.alloc(new_constraints)),
-            values: ValueOfUnchecked::new(heap.alloc(new_values)),
-            root_values: {
-                let root_values = DictRef::from_value(this.root_values.get())
-                    .expect("type checked on construction");
-                let mut new_root_values = BuckMutInsertionMap::new();
-                for (k, v) in root_values.iter() {
-                    let key_hashed = k.get_hashed().expect("should be hashable");
-                    new_root_values.insert_hashed(key_hashed, v);
-                }
-                ValueOfUnchecked::new(heap.alloc(new_root_values))
-            },
+            constraints: copy_dict(this.constraints, heap)?,
+            values: copy_dict(this.values, heap)?,
+            root_values: copy_dict(this.root_values, heap)?,
         })
     }
 }
@@ -494,13 +430,15 @@ mod tests {
     fn to_configuration_data_rejects_root_buckconfigs_with_clear_error() {
         Heap::temp(|heap| {
             let info = ConfigurationInfo {
-                constraints: ValueOfUnchecked::new(
-                    heap.alloc(BuckMutInsertionMap::<Value, Value>::new()),
+                constraints: ValueOf::alloc_dict(heap, []),
+                values: ValueOf::alloc_dict(heap, []),
+                root_values: ValueOf::alloc_dict(
+                    heap,
+                    [(
+                        ValueOf::from(heap.alloc_str("apple.key")),
+                        ValueOf::from(heap.alloc_str("value")),
+                    )],
                 ),
-                values: heap.alloc_typed_unchecked(AllocDict([("", ""); 0])).cast(),
-                root_values: heap
-                    .alloc_typed_unchecked(AllocDict([("apple.key", "value")]))
-                    .cast(),
             };
 
             let Err(err) = info.to_configuration_data() else {

@@ -18,7 +18,6 @@ use buck2_core::pattern::pattern::ParsedPattern;
 use buck2_core::pattern::pattern_type::TargetPatternExtra;
 use buck2_core::target::label::label::TargetLabel;
 use buck2_hash::BuckFixedSortedMap;
-use buck2_hash::BuckMutInsertionMap;
 use buck2_util::arc_str::ArcStr;
 use dupe::Dupe;
 use starlark::any::ProvidesStaticType;
@@ -29,12 +28,10 @@ use starlark::values::Freeze;
 use starlark::values::StarlarkPagable;
 use starlark::values::StringValue;
 use starlark::values::Trace;
-use starlark::values::Value;
-use starlark::values::ValueOfUnchecked;
+use starlark::values::ValueOf;
 use starlark::values::ValueTyped;
-use starlark::values::dict::DictRef;
 use starlark::values::dict::DictType;
-use starlark::values::dict::UnpackDictEntries;
+use starlark::values::list::ListType;
 
 use crate::dep_only_incompatible_rollout::DepOnlyIncompatibleRollout;
 
@@ -77,27 +74,29 @@ use crate::dep_only_incompatible_rollout::DepOnlyIncompatibleRollout;
 #[repr(C)]
 pub struct DepOnlyIncompatibleInfo<'v> {
     pub custom_soft_errors:
-        ValueOfUnchecked<'v, DictType<String, DepOnlyIncompatibleRollout<'static>>>,
+        ValueOf<'v, DictType<StringValue<'v>, ValueTyped<'v, DepOnlyIncompatibleRollout<'v>>>>,
 }
 
 #[starlark_module]
 fn dep_only_incompatible_info_creator(globals: &mut GlobalsBuilder) {
     #[starlark(as_type = DepOnlyIncompatibleInfo<'static>)]
     fn DepOnlyIncompatibleInfo<'v>(
-        #[starlark(require = named)] custom_soft_errors: UnpackDictEntries<
-            StringValue<'v>,
-            ValueTyped<'v, DepOnlyIncompatibleRollout<'v>>,
+        #[starlark(require = named)] custom_soft_errors: ValueOf<
+            'v,
+            DictType<StringValue<'v>, ValueTyped<'v, DepOnlyIncompatibleRollout<'v>>>,
         >,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<DepOnlyIncompatibleInfo<'v>> {
-        let mut result = BuckMutInsertionMap::with_capacity(custom_soft_errors.entries.len());
-        for (category, value) in custom_soft_errors.entries {
-            let category_str = category.as_str();
-            validate_logview_category(category_str)?;
-            result.insert(category_str, value.to_value());
+        // The provider's own copy, so that mutating the caller's dict cannot add a category that
+        // was not validated.
+        let mut entries = Vec::with_capacity(custom_soft_errors.dict().len());
+        for entry in custom_soft_errors.iter() {
+            let (category, rollout) = entry?;
+            validate_logview_category(category.unpack().as_str())?;
+            entries.push((category, rollout));
         }
         Ok(DepOnlyIncompatibleInfo {
-            custom_soft_errors: ValueOfUnchecked::new(eval.heap().alloc(result)),
+            custom_soft_errors: ValueOf::alloc_dict(eval.heap(), entries),
         })
     }
 }
@@ -134,44 +133,32 @@ impl<'v> DepOnlyIncompatibleInfo<'v> {
         cell_resolver: &CellResolver,
         cell_alias_resolver: &CellAliasResolver,
     ) -> buck2_error::Result<DepOnlyIncompatibleCustomSoftErrors> {
-        let value_to_target_pattern =
-            |target_pattern: Value<'_>| -> buck2_error::Result<ParsedPattern<TargetPatternExtra>> {
-                ParsedPattern::parse_precise(
-                    &target_pattern.to_value().to_str(),
-                    root_cell.dupe(),
-                    cell_resolver,
-                    cell_alias_resolver,
-                )
-            };
-
-        let custom_soft_errors = DictRef::from_value(self.custom_soft_errors.get())
-            .expect("Internal error: expected to be a dict")
+        let patterns = |patterns: ValueOf<'v, ListType<StringValue<'v>>>| {
+            patterns
+                .iter()
+                .map(|pattern| {
+                    ParsedPattern::parse_precise(
+                        pattern?.unpack().as_str(),
+                        root_cell.dupe(),
+                        cell_resolver,
+                        cell_alias_resolver,
+                    )
+                })
+                .collect::<buck2_error::Result<Box<[_]>>>()
+        };
+        self.custom_soft_errors
             .iter()
-            .map(|(k, v)| {
-                let k = ArcStr::from(k.unpack_str().expect("Type checked to be string"));
-                let v = DepOnlyIncompatibleRollout::from_value(v).expect(
-                    "Internal error: type checked to be a DepOnlyIncompatibleRollout provider",
-                );
-                let target_patterns = v
-                    .target_patterns()
-                    .iter()
-                    .map(value_to_target_pattern)
-                    .collect::<buck2_error::Result<Vec<_>>>()?
-                    .into_boxed_slice();
-                let exclusions = v
-                    .exclusions()
-                    .iter()
-                    .map(value_to_target_pattern)
-                    .collect::<buck2_error::Result<Vec<_>>>()?
-                    .into_boxed_slice();
-                let v = DepOnlyIncompatibleRolloutPatterns {
-                    target_patterns,
-                    exclusions,
-                };
-                Ok((k, v))
+            .map(|entry| {
+                let (category, rollout) = entry?;
+                let rollout = rollout.unpack();
+                Ok((
+                    ArcStr::from(category.unpack().as_str()),
+                    DepOnlyIncompatibleRolloutPatterns {
+                        target_patterns: patterns(rollout.target_patterns)?,
+                        exclusions: patterns(rollout.exclusions)?,
+                    },
+                ))
             })
-            .collect::<buck2_error::Result<_>>()?;
-
-        Ok(custom_soft_errors)
+            .collect()
     }
 }

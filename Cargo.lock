@@ -2093,6 +2093,7 @@ dependencies = [
  "buck2_interpreter",
  "buck2_util",
  "dupe",
+ "either",
  "pagable",
  "starlark",
 ]

@@ -18,6 +18,7 @@ buck2_hash.workspace = true
 buck2_interpreter.workspace = true
 buck2_util.workspace = true
 dupe.workspace = true
+either.workspace = true
 pagable.workspace = true
 starlark.workspace = true
 

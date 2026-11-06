@@ -13,6 +13,7 @@ use std::fmt::Debug;
 use allocative::Allocative;
 use buck2_build_api_derive::internal_provider;
 use buck2_core::execution_types::execution_platforms::ExecutionPlatformFallback;
+use either::Either;
 use starlark::any::ProvidesStaticType;
 use starlark::environment::GlobalsBuilder;
 use starlark::starlark_module;
@@ -20,11 +21,8 @@ use starlark::values::Freeze;
 use starlark::values::StarlarkPagable;
 use starlark::values::StringValue;
 use starlark::values::Trace;
-use starlark::values::Value;
 use starlark::values::ValueOf;
-use starlark::values::ValueOfUnchecked;
 use starlark::values::ValueTyped;
-use starlark::values::list::ListRef;
 use starlark::values::list::ListType;
 use starlark::values::none::NoneOr;
 
@@ -33,10 +31,6 @@ use crate::execution_platform_info::ExecutionPlatformInfo;
 #[derive(Debug, buck2_error::Error)]
 #[buck2(tag = Input)]
 enum ExecutionPlatformRegistrationTypeError {
-    #[error("expected a list of ExecutionPlatformInfo, got `{0}` (type `{1}`)")]
-    ExpectedListOfPlatforms(String, String),
-    #[error("expected a ExecutionPlatformInfo, got `{0}` (type `{1}`)")]
-    NotAPlatform(String, String),
     #[error(
         "expected an ExecutionPlatformInfo or one of the strings \"error\" or \"use_unspecified\", got `{0}` (type `{1}`)"
     )]
@@ -57,7 +51,7 @@ enum ExecutionPlatformRegistrationTypeError {
 #[repr(C)]
 pub struct ExecutionPlatformRegistrationInfo<'v> {
     /// The list of execution platforms that are available for the build.
-    platforms: ValueOfUnchecked<'v, Vec<ExecutionPlatformInfo<'static>>>,
+    platforms: ValueOf<'v, ListType<ValueTyped<'v, ExecutionPlatformInfo<'v>>>>,
     /// Specifies the behavior when no compatible execution platform is found from the `platforms` list.
     /// Can be one of:
     /// - `None` or `"use_unspecified"`: Proceed with an unspecified execution platform.
@@ -65,66 +59,45 @@ pub struct ExecutionPlatformRegistrationInfo<'v> {
     /// - `"error"`: Fail the build with an error message indicating no compatible platform was found.
     /// - An `ExecutionPlatformInfo`: Use this specific platform as a fallback when no other
     ///   platform from the `platforms` list matches.
-    // TODO(nga): specify type more precisely.
-    fallback: ValueOfUnchecked<'v, Value<'static>>,
+    fallback:
+        Option<ValueOf<'v, Either<StringValue<'v>, ValueTyped<'v, ExecutionPlatformInfo<'v>>>>>,
     /// Optional marker constraint that identifies platforms as execution platforms.
     /// If set, every execution platform in `platforms` will be marked with this constraint,
     /// allowing to distinguish execution platforms from target platforms.
-    exec_marker_constraint: ValueOfUnchecked<'v, Option<String>>,
+    exec_marker_constraint: Option<StringValue<'v>>,
 }
 
+type Fallback<'v> = ValueOf<'v, Either<StringValue<'v>, ValueTyped<'v, ExecutionPlatformInfo<'v>>>>;
+
 impl<'v> ExecutionPlatformRegistrationInfo<'v> {
-    // TODO(cjhopman): Validity could be checked when constructed rather than only when used.
     pub fn platforms(&self) -> buck2_error::Result<Vec<ValueTyped<'v, ExecutionPlatformInfo<'v>>>> {
-        ListRef::from_value(self.platforms.get())
-            .ok_or_else(|| {
-                ExecutionPlatformRegistrationTypeError::ExpectedListOfPlatforms(
-                    self.platforms.get().to_repr(),
-                    self.platforms.get().get_type().to_owned(),
-                )
-            })?
-            .iter()
-            .map(|v| {
-                ValueTyped::new(v).ok_or_else(|| {
-                    ExecutionPlatformRegistrationTypeError::NotAPlatform(
-                        v.to_repr(),
-                        v.get_type().to_owned(),
-                    )
-                    .into()
-                })
-            })
-            .collect::<buck2_error::Result<_>>()
+        self.platforms.iter().map(|p| Ok(p?.unpack())).collect()
     }
 
     pub fn fallback(&self) -> buck2_error::Result<ExecutionPlatformFallback> {
-        if self.fallback.get().is_none() {
-            return Ok(ExecutionPlatformFallback::UseUnspecifiedExec);
-        }
-        let fallback = self.fallback.get();
-        if let Some(v) = ExecutionPlatformInfo::from_value(fallback) {
-            return Ok(ExecutionPlatformFallback::Platform(
-                v.to_execution_platform()?,
-            ));
-        }
-
-        match fallback.unpack_str() {
-            Some("error") => Ok(ExecutionPlatformFallback::Error),
-            Some("use_unspecified") => Ok(ExecutionPlatformFallback::UseUnspecifiedExec),
-            _ => Err(ExecutionPlatformRegistrationTypeError::InvalidFallback(
-                fallback.to_repr(),
-                fallback.get_type().to_owned(),
-            )
-            .into()),
+        match self.fallback.map(|f| f.unpack()) {
+            None => Ok(ExecutionPlatformFallback::UseUnspecifiedExec),
+            Some(Either::Left(word)) => fallback_from_str(word),
+            Some(Either::Right(platform)) => Ok(ExecutionPlatformFallback::Platform(
+                platform.to_execution_platform()?,
+            )),
         }
     }
 
-    pub fn exec_marker_constraint(&self) -> Option<&str> {
-        let value = self.exec_marker_constraint.get();
-        if value.is_none() {
-            None
-        } else {
-            value.unpack_str()
-        }
+    pub fn exec_marker_constraint(&self) -> Option<&'v str> {
+        self.exec_marker_constraint.map(|s| s.as_str())
+    }
+}
+
+fn fallback_from_str(word: StringValue) -> buck2_error::Result<ExecutionPlatformFallback> {
+    match word.as_str() {
+        "error" => Ok(ExecutionPlatformFallback::Error),
+        "use_unspecified" => Ok(ExecutionPlatformFallback::UseUnspecifiedExec),
+        _ => Err(ExecutionPlatformRegistrationTypeError::InvalidFallback(
+            word.to_value().to_repr(),
+            word.to_value().get_type().to_owned(),
+        )
+        .into()),
     }
 }
 
@@ -135,21 +108,19 @@ fn info_creator(globals: &mut GlobalsBuilder) {
             'v,
             ListType<ValueTyped<'v, ExecutionPlatformInfo<'v>>>,
         >,
-        #[starlark(require = named, default = NoneOr::None)] fallback: NoneOr<Value<'v>>,
+        #[starlark(require = named, default = NoneOr::None)] fallback: NoneOr<Fallback<'v>>,
         #[starlark(require = named, default = NoneOr::None)] exec_marker_constraint: NoneOr<
             StringValue<'v>,
         >,
     ) -> starlark::Result<ExecutionPlatformRegistrationInfo<'v>> {
+        let fallback = fallback.into_option();
+        if let Some(Either::Left(word)) = fallback.map(|f| f.unpack()) {
+            fallback_from_str(word)?;
+        }
         Ok(ExecutionPlatformRegistrationInfo {
-            platforms: ValueOfUnchecked::new(platforms.to_value()),
-            fallback: ValueOfUnchecked::new(match fallback {
-                NoneOr::None => Value::new_none(),
-                NoneOr::Other(v) => v,
-            }),
-            exec_marker_constraint: ValueOfUnchecked::new(match exec_marker_constraint {
-                NoneOr::None => Value::new_none(),
-                NoneOr::Other(v) => v.to_value(),
-            }),
+            platforms,
+            fallback,
+            exec_marker_constraint: exec_marker_constraint.into_option(),
         })
     }
 }

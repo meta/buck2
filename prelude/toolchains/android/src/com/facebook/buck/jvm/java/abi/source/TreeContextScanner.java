@@ -11,6 +11,7 @@
 package com.facebook.buck.jvm.java.abi.source;
 
 import com.facebook.buck.util.liteinfersupport.Nullable;
+import com.facebook.infer.annotation.Nullsafe;
 import com.sun.source.tree.Tree;
 import com.sun.source.util.TreePath;
 import com.sun.source.util.TreeScanner;
@@ -27,6 +28,7 @@ import javax.lang.model.type.TypeMirror;
  *   <li>The nearest {@link Element} that encloses the current {@link Tree}
  * </ul>
  */
+@Nullsafe(Nullsafe.Mode.LOCAL)
 class TreeContextScanner<R, P> extends TreeScanner<R, P> {
 
   private final Trees trees;

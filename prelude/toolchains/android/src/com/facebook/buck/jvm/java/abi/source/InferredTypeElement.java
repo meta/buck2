@@ -11,6 +11,7 @@
 package com.facebook.buck.jvm.java.abi.source;
 
 import com.facebook.buck.jvm.java.abi.source.api.CannotInferException;
+import com.facebook.infer.annotation.Nullsafe;
 import java.util.List;
 import java.util.Objects;
 import javax.lang.model.element.ElementKind;
@@ -18,11 +19,13 @@ import javax.lang.model.element.ElementVisitor;
 import javax.lang.model.element.Name;
 import javax.lang.model.element.NestingKind;
 import javax.lang.model.type.TypeMirror;
+import org.jspecify.annotations.Nullable;
 
 /**
  * Represents a {@link javax.lang.model.element.TypeElement} whose existence has been inferred from
  * references to it in the code.
  */
+@Nullsafe(Nullsafe.Mode.LOCAL)
 class InferredTypeElement extends InferredElement implements ArtificialTypeElement {
   private final Name qualifiedName;
   private final TypeMirror typeMirror;
@@ -64,7 +67,7 @@ class InferredTypeElement extends InferredElement implements ArtificialTypeEleme
   }
 
   @Override
-  public <R, P> R accept(ElementVisitor<R, P> v, P p) {
+  public <R, P> R accept(ElementVisitor<R, P> v, @Nullable P p) {
     return v.visitType(this, p);
   }
 

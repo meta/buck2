@@ -10,6 +10,7 @@
 
 package com.facebook.buck.jvm.java.abi.source;
 
+import com.facebook.infer.annotation.Nullsafe;
 import java.util.Collections;
 import java.util.Set;
 import javax.lang.model.element.ElementKind;
@@ -17,11 +18,13 @@ import javax.lang.model.element.ElementVisitor;
 import javax.lang.model.element.Modifier;
 import javax.lang.model.element.Name;
 import javax.lang.model.type.TypeMirror;
+import org.jspecify.annotations.Nullable;
 
 /**
  * A {@link javax.lang.model.element.PackageElement} whose existence is inferred from references to
  * it in the code.
  */
+@Nullsafe(Nullsafe.Mode.LOCAL)
 class InferredPackageElement extends InferredElement implements ArtificialPackageElement {
   private final Name qualifiedName;
   private final TypeMirror typeMirror;
@@ -59,7 +62,7 @@ class InferredPackageElement extends InferredElement implements ArtificialPackag
   }
 
   @Override
-  public <R, P> R accept(ElementVisitor<R, P> v, P p) {
+  public <R, P> R accept(ElementVisitor<R, P> v, @Nullable P p) {
     return v.visitPackage(this, p);
   }
 

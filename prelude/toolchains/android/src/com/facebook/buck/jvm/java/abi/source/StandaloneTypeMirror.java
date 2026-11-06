@@ -10,6 +10,7 @@
 
 package com.facebook.buck.jvm.java.abi.source;
 
+import com.facebook.infer.annotation.Nullsafe;
 import java.lang.annotation.Annotation;
 import java.util.Collections;
 import java.util.List;
@@ -28,6 +29,7 @@ import javax.lang.model.type.TypeVariable;
 import javax.lang.model.type.TypeVisitor;
 import javax.lang.model.type.UnionType;
 import javax.lang.model.type.WildcardType;
+import org.jspecify.annotations.Nullable;
 
 /**
  * An implementation of {@link TypeMirror} that is not dependent on any particular compiler
@@ -35,6 +37,7 @@ import javax.lang.model.type.WildcardType;
  * javax.lang.model.type.TypeMirror}s, but do not depend on any particular implementation of them
  * (beyond the spec).
  */
+@Nullsafe(Nullsafe.Mode.LOCAL)
 abstract class StandaloneTypeMirror implements TypeMirror {
 
   private final TypeKind kind;
@@ -55,7 +58,7 @@ abstract class StandaloneTypeMirror implements TypeMirror {
   }
 
   @Override
-  public <R, P> R accept(TypeVisitor<R, P> v, P p) {
+  public <R, P> R accept(TypeVisitor<R, P> v, @Nullable P p) {
     switch (kind) {
       case BOOLEAN:
       case BYTE:

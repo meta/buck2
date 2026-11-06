@@ -10,13 +10,16 @@
 
 package com.facebook.buck.jvm.java.abi.source;
 
+import com.facebook.infer.annotation.Nullsafe;
 import java.io.IOException;
 import javax.annotation.processing.Filer;
 import javax.lang.model.element.Element;
 import javax.tools.FileObject;
 import javax.tools.JavaFileManager;
 import javax.tools.JavaFileObject;
+import org.jspecify.annotations.Nullable;
 
+@Nullsafe(Nullsafe.Mode.LOCAL)
 class TreeBackedFiler implements Filer {
   private final FrontendOnlyJavacTask task;
   private final Filer javacFiler;
@@ -34,8 +37,8 @@ class TreeBackedFiler implements Filer {
   }
 
   @Override
-  public JavaFileObject createClassFile(CharSequence name, Element... originatingElements)
-      throws IOException {
+  public JavaFileObject createClassFile(
+      CharSequence name, Element @Nullable ... originatingElements) throws IOException {
     return javacFiler.createClassFile(
         name, task.getElements().getJavacElements(originatingElements));
   }
@@ -45,7 +48,7 @@ class TreeBackedFiler implements Filer {
       JavaFileManager.Location location,
       CharSequence pkg,
       CharSequence relativeName,
-      Element... originatingElements)
+      Element @Nullable ... originatingElements)
       throws IOException {
     return javacFiler.createResource(
         location, pkg, relativeName, task.getElements().getJavacElements(originatingElements));

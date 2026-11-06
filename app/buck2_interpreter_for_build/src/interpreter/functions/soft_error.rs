@@ -134,6 +134,17 @@ pub(crate) fn register_soft_error(builder: &mut GlobalsBuilder) {
         }
         record_deprecation(category, message, owner, started, stack, eval)
     }
+
+    /// Validate that a soft error category is valid for use from Starlark.
+    /// The category must start with `starlark_` and be `lower_snake_case`
+    /// (only `a-z` and `_`, no consecutive underscores, must start and end with a letter).
+    /// Raises an error if the category is invalid, returns `None` on success.
+    fn validate_soft_error_category(
+        #[starlark(require = pos)] category: &str,
+    ) -> starlark::Result<NoneType> {
+        validate_category(category)?;
+        Ok(NoneType)
+    }
 }
 
 #[cfg(test)]
@@ -143,31 +154,60 @@ mod tests {
     use crate::interpreter::functions::soft_error::register_soft_error;
 
     #[test]
-    fn test_deprecation_category_needs_prefix() {
+    fn test_validate_soft_error_category_valid() {
         let mut a = Assert::new();
         a.globals_add(register_soft_error);
-        for category in ["no_starlark_prefix", ""] {
-            a.fail(
-                &format!(
-                    "deprecation('{category}', 'Blah', owner = 'jakobdegen', started = '2026-11-02')"
-                ),
-                "should have category starting with `starlark_`",
-            );
-        }
+        a.is_true("validate_soft_error_category('starlark_valid_category') == None");
     }
 
     #[test]
-    fn test_deprecation_category_is_snake_case() {
+    fn test_validate_soft_error_category_missing_prefix() {
         let mut a = Assert::new();
         a.globals_add(register_soft_error);
-        for category in ["starlark_", "starlark_has__double", "starlark_has_1number"] {
-            a.fail(
-                &format!(
-                    "deprecation('{category}', 'Blah', owner = 'jakobdegen', started = '2026-11-02')"
-                ),
-                "must be lower_snake_case",
-            );
-        }
+        a.fail(
+            "validate_soft_error_category('no_starlark_prefix')",
+            "should have category starting with `starlark_`",
+        );
+    }
+
+    #[test]
+    fn test_validate_soft_error_category_ends_with_underscore() {
+        let mut a = Assert::new();
+        a.globals_add(register_soft_error);
+        a.fail(
+            "validate_soft_error_category('starlark_')",
+            "must be lower_snake_case",
+        );
+    }
+
+    #[test]
+    fn test_validate_soft_error_category_consecutive_underscores() {
+        let mut a = Assert::new();
+        a.globals_add(register_soft_error);
+        a.fail(
+            "validate_soft_error_category('starlark_has__double')",
+            "must be lower_snake_case",
+        );
+    }
+
+    #[test]
+    fn test_validate_soft_error_category_contains_digit() {
+        let mut a = Assert::new();
+        a.globals_add(register_soft_error);
+        a.fail(
+            "validate_soft_error_category('starlark_has_1number')",
+            "must be lower_snake_case",
+        );
+    }
+
+    #[test]
+    fn test_validate_soft_error_category_empty() {
+        let mut a = Assert::new();
+        a.globals_add(register_soft_error);
+        a.fail(
+            "validate_soft_error_category('')",
+            "should have category starting with `starlark_`",
+        );
     }
 
     #[test]

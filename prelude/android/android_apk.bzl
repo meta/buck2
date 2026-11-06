@@ -46,19 +46,37 @@ def android_apk_impl(ctx: AnalysisContext) -> list[Provider]:
     )
 
     keystore = ctx.attrs.keystore[KeystoreInfo]
-    output_apk = wrapped_build_apk(
-        output_filename = ctx.label.name,
+    apk_kwargs = dict(
         actions = ctx.actions,
         android_toolchain = ctx.attrs._android_toolchain[AndroidToolchainInfo],
         keystore = keystore,
         dex_files_info = dex_files_info,
-        native_library_info = native_library_info,
         resources_info = resources_info,
         compress_resources_dot_arsc = ctx.attrs.resource_compression == "enabled" or ctx.attrs.resource_compression == "enabled_with_strings_as_assets",
-        validation_deps_outputs = get_validation_deps_outputs(ctx) + validation_outputs,
         packaging_options = ctx.attrs.packaging_options,
         # Exclude BUCK_BUILD_ID from assets/BuildInfo.json for release builds.
         include_build_info_file = ctx.attrs.include_build_info_file and ctx.attrs.package_type != "release",
+    )
+
+    # With a deferred relink, the apk this rule outputs is built from the relinked libraries, and
+    # an early apk from the unrelinked ones lets Redex start before the relinks finish (the
+    # [unrelinked_package] sub-target; the step after Redex swaps the relinked libraries in).
+    unrelinked_apk = None
+    if native_library_info.shipped:
+        unrelinked_apk = build_apk(
+            output_filename = ctx.label.name + "_unrelinked",
+            native_library_info = native_library_info,
+            validation_deps_outputs = get_validation_deps_outputs(ctx) + validation_outputs,
+            name_prefix = "unrelinked/",
+            **apk_kwargs,
+        )
+        validation_outputs = validation_outputs + native_library_info.shipped.validation_outputs
+        native_library_info = native_library_info.shipped
+    output_apk = wrapped_build_apk(
+        output_filename = ctx.label.name,
+        native_library_info = native_library_info,
+        validation_deps_outputs = get_validation_deps_outputs(ctx) + validation_outputs,
+        **apk_kwargs,
     )
 
     if dex_files_info.secondary_dex_exopackage_info or native_library_info.exopackage_info or resources_info.exopackage_info:
@@ -101,59 +119,77 @@ def android_apk_impl(ctx: AnalysisContext) -> list[Provider]:
     )
     sub_targets.update(target_stats_subtargets)
 
-    providers = [
-        AndroidApkInfo(
-            apk = output_apk,
+    def apk_info(apk):
+        return AndroidApkInfo(
+            apk = apk,
             manifest = resources_info.manifest,
             materialized_artifacts = android_binary_info.materialized_artifacts,
             unstripped_shared_libraries = native_library_info.unstripped_shared_libraries,
-        ),
-        AndroidBinaryPrimaryPlatformInfo(
-            primary_platform = android_binary_info.primary_platform,
-        ),
-        AndroidApkUnderTestInfo(
-            java_packaging_deps = set([dep.label.raw_target() for dep in java_packaging_deps]),
-            keystore = keystore,
-            manifest_entries = ctx.attrs.manifest_entries,
-            min_sdk_version = ctx.attrs.min_sdk_version,
-            prebuilt_native_library_dirs = set([native_lib.raw_target for native_lib in native_library_info.prebuilt_native_library_dirs]),
-            platform_configurations = set([str(x.label.configured_target().config()) for x in flatten(android_binary_info.deps_by_platform.values())]),
-            platforms = android_binary_info.deps_by_platform.keys(),
-            primary_platform = android_binary_info.primary_platform,
-            resource_infos = set([info.raw_target for info in resources_info.unfiltered_resource_infos]),
-            r_dot_java_packages = set(
-                [info.specified_r_dot_java_package for info in resources_info.unfiltered_resource_infos if info.specified_r_dot_java_package]
-            ),
-            shared_libraries = set(native_library_info.shared_libraries),
-            # Merge map delegate
-            native_library_merge_sequence = ctx.attrs.native_library_merge_sequence,
-            native_library_merge_code_generator = ctx.attrs.native_library_merge_code_generator,
-            native_library_merge_glue = ctx.attrs.native_library_merge_glue,
-            native_library_merge_linker_args_all = ctx.attrs.native_library_merge_linker_args_all,
-            native_library_merge_linker_args = ctx.attrs.native_library_merge_linker_args,
-            native_library_merge_map = ctx.attrs.native_library_merge_map,
-            native_library_merge_non_asset_libs = ctx.attrs.native_library_merge_non_asset_libs,
-            native_library_merge_sequence_blocklist = ctx.attrs.native_library_merge_sequence_blocklist,
-        ),
-        DefaultInfo(
-            default_output = default_output,
-            other_outputs = install_info.files.values() + android_binary_info.materialized_artifacts,
-            sub_targets = sub_targets,
-        ),
-        install_info,
-        TemplatePlaceholderInfo(
-            keyed_variables = {
-                "classpath": cmd_args(classpath, delimiter = get_path_separator_for_exec_os(ctx)),
-                "classpath_including_targets_with_no_output": cmd_args(
-                    [dep.output_for_classpath_macro for dep in java_packaging_deps], delimiter = get_path_separator_for_exec_os(ctx)
-                ),
-            },
-        ),
-        android_binary_info.class_to_srcs,
-    ] + target_stats_providers
+        )
 
-    if android_binary_info.preprocessed_java_classes_info:
-        providers.append(android_binary_info.preprocessed_java_classes_info)
+    apk_under_test_info = AndroidApkUnderTestInfo(
+        java_packaging_deps = set([dep.label.raw_target() for dep in java_packaging_deps]),
+        keystore = keystore,
+        manifest_entries = ctx.attrs.manifest_entries,
+        min_sdk_version = ctx.attrs.min_sdk_version,
+        prebuilt_native_library_dirs = set([native_lib.raw_target for native_lib in native_library_info.prebuilt_native_library_dirs]),
+        platform_configurations = set([str(x.label.configured_target().config()) for x in flatten(android_binary_info.deps_by_platform.values())]),
+        platforms = android_binary_info.deps_by_platform.keys(),
+        primary_platform = android_binary_info.primary_platform,
+        resource_infos = set([info.raw_target for info in resources_info.unfiltered_resource_infos]),
+        r_dot_java_packages = set([info.specified_r_dot_java_package for info in resources_info.unfiltered_resource_infos if info.specified_r_dot_java_package]),
+        shared_libraries = set(native_library_info.shared_libraries),
+        # Merge map delegate
+        native_library_merge_sequence = ctx.attrs.native_library_merge_sequence,
+        native_library_merge_code_generator = ctx.attrs.native_library_merge_code_generator,
+        native_library_merge_glue = ctx.attrs.native_library_merge_glue,
+        native_library_merge_linker_args_all = ctx.attrs.native_library_merge_linker_args_all,
+        native_library_merge_linker_args = ctx.attrs.native_library_merge_linker_args,
+        native_library_merge_map = ctx.attrs.native_library_merge_map,
+        native_library_merge_non_asset_libs = ctx.attrs.native_library_merge_non_asset_libs,
+        native_library_merge_sequence_blocklist = ctx.attrs.native_library_merge_sequence_blocklist,
+    )
+    template_placeholder_info = TemplatePlaceholderInfo(
+        keyed_variables = {
+            "classpath": cmd_args(classpath, delimiter = get_path_separator_for_exec_os(ctx)),
+            "classpath_including_targets_with_no_output": cmd_args(
+                [dep.output_for_classpath_macro for dep in java_packaging_deps], delimiter = get_path_separator_for_exec_os(ctx)
+            ),
+        },
+    )
+    preprocessed_java_classes_info = [android_binary_info.preprocessed_java_classes_info] if android_binary_info.preprocessed_java_classes_info else []
+
+    # What an apk_genrule needs to run on the early package: the step that runs Redex on a
+    # deferred relink's binary reads this, and the step after it swaps the relinked libraries in.
+    # Without a deferred relink it is the apk this rule outputs.
+    early_apk = unrelinked_apk or output_apk
+    sub_targets["unrelinked_package"] = [
+        apk_info(early_apk),
+        apk_under_test_info,
+        template_placeholder_info,
+        android_binary_info.class_to_srcs,
+        DefaultInfo(default_output = early_apk, sub_targets = dict(sub_targets)),
+    ] + preprocessed_java_classes_info
+
+    providers = (
+        [
+            apk_info(output_apk),
+            AndroidBinaryPrimaryPlatformInfo(
+                primary_platform = android_binary_info.primary_platform,
+            ),
+            apk_under_test_info,
+            DefaultInfo(
+                default_output = default_output,
+                other_outputs = install_info.files.values() + android_binary_info.materialized_artifacts,
+                sub_targets = sub_targets,
+            ),
+            install_info,
+            template_placeholder_info,
+            android_binary_info.class_to_srcs,
+        ]
+        + target_stats_providers
+        + preprocessed_java_classes_info
+    )
 
     # Expose the exopackage secondary-dex dir so android_instrumentation_test can push it to the device.
     if exopackage_info != None and exopackage_info.secondary_dex_info != None:
@@ -175,6 +211,8 @@ def build_apk(
     validation_deps_outputs: [list[Artifact], None] = None,
     packaging_options: dict | None = None,
     include_build_info_file: bool = False,
+    # Prefixes the files declared besides the apk, so one analysis can build two apks.
+    name_prefix: str = "",
 ) -> Artifact:
     output_apk = actions.declare_output("{}.apk".format(output_filename), has_content_based_path = False)
 
@@ -207,12 +245,12 @@ def build_apk(
         + dex_files_info.non_root_module_secondary_dex_dirs
         + resources_info.module_manifests
     )
-    asset_directories_file = argfile(actions = actions, name = "asset_directories.txt", args = asset_directories)
-    native_library_directories = argfile(actions = actions, name = "native_library_directories", args = native_library_info.native_libs_for_primary_apk)
+    asset_directories_file = argfile(actions = actions, name = name_prefix + "asset_directories.txt", args = asset_directories)
+    native_library_directories = argfile(actions = actions, name = name_prefix + "native_library_directories", args = native_library_info.native_libs_for_primary_apk)
     all_zip_files = [resources_info.packaged_string_assets] if resources_info.packaged_string_assets else []
-    zip_files = argfile(actions = actions, name = "zip_files", args = all_zip_files)
+    zip_files = argfile(actions = actions, name = name_prefix + "zip_files", args = all_zip_files)
     jar_files_that_may_contain_resources = argfile(
-        actions = actions, name = "jar_files_that_may_contain_resources", args = resources_info.jar_files_that_may_contain_resources
+        actions = actions, name = name_prefix + "jar_files_that_may_contain_resources", args = resources_info.jar_files_that_may_contain_resources
     )
 
     apk_builder_args.add([
@@ -235,7 +273,7 @@ def build_apk(
             "--build-info-generator-args",
             argfile(
                 actions = actions,
-                name = "build_info_generator_args",
+                name = name_prefix + "build_info_generator_args",
                 args = cmd_args(android_toolchain.build_info_generator[RunInfo]),
                 allow_args = True,
             ),
@@ -244,13 +282,13 @@ def build_apk(
     if packaging_options:
         for key, value in packaging_options.items():
             if key == "excluded_resources":
-                apk_builder_args.add("--excluded-resources", actions.write("excluded_resources.txt", value, has_content_based_path = False))
+                apk_builder_args.add("--excluded-resources", actions.write(name_prefix + "excluded_resources.txt", value, has_content_based_path = False))
             elif key == "uncompressed_files":
-                apk_builder_args.add("--uncompressed-files", actions.write("uncompressed_files.txt", value, has_content_based_path = False))
+                apk_builder_args.add("--uncompressed-files", actions.write(name_prefix + "uncompressed_files.txt", value, has_content_based_path = False))
             else:
                 fail("Only 'excluded_resources' and 'uncompressed_files' are supported in packaging_options right now!")
 
-    actions.run(apk_builder_args, category = "apk_build", allow_cache_upload = True)
+    actions.run(apk_builder_args, category = "apk_build", identifier = output_filename, allow_cache_upload = True)
 
     return output_apk
 

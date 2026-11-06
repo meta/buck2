@@ -61,6 +61,11 @@ AndroidBinaryNativeLibsInfo = record(
     # Artifacts that must be produced for the binary to be valid. Threaded into
     # the apk's validation_deps_outputs, so a failing check fails the build.
     validation_outputs = list[Artifact],
+    # Under defer_relink, the same packaging inputs built from the relinked
+    # libraries (an AndroidBinaryNativeLibsInfo): the binary's own package is
+    # built from them, while the inputs above, from the unrelinked libraries,
+    # make the early package Redex starts from. None otherwise.
+    shipped = field(typing.Any, None),
 )
 
 AndroidBinaryResourcesInfo = record(

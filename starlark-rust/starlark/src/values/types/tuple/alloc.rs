@@ -23,7 +23,7 @@ use crate::values::AllocValue;
 use crate::values::FrozenHeap;
 use crate::values::Heap;
 use crate::values::Value;
-use crate::values::tuple::UnpackTuple;
+use crate::values::tuple::TupleType;
 use crate::values::type_repr::StarlarkTypeRepr;
 
 /// Utility to allocate a tuple.
@@ -52,7 +52,7 @@ where
     T: IntoIterator,
     T::Item: StarlarkTypeRepr,
 {
-    type Canonical = <UnpackTuple<T::Item> as StarlarkTypeRepr>::Canonical;
+    type Canonical = <TupleType<T::Item> as StarlarkTypeRepr>::Canonical;
 
     fn starlark_type_repr() -> Ty {
         Ty::tuple_of(T::Item::starlark_type_repr())

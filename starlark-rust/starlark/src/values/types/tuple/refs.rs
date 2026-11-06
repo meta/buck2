@@ -25,7 +25,7 @@ use ref_cast::ref_cast_custom;
 use crate::typing::Ty;
 use crate::values::UnpackValue;
 use crate::values::Value;
-use crate::values::tuple::UnpackTuple;
+use crate::values::tuple::TupleType;
 use crate::values::type_repr::StarlarkTypeRepr;
 use crate::values::types::tuple::value::Tuple;
 
@@ -66,7 +66,7 @@ impl<'v> TupleRef<'v> {
 }
 
 impl<'v> StarlarkTypeRepr for &'v TupleRef<'v> {
-    type Canonical = <UnpackTuple<Value<'static>> as StarlarkTypeRepr>::Canonical;
+    type Canonical = <TupleType<Value<'static>> as StarlarkTypeRepr>::Canonical;
 
     fn starlark_type_repr() -> Ty {
         Ty::any_tuple()

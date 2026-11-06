@@ -25,7 +25,11 @@ use either::Either;
 use crate::typing::Ty;
 use crate::values::UnpackValue;
 use crate::values::Value;
+use crate::values::ValueOf;
+use crate::values::list::ListRef;
+use crate::values::list::ListType;
 use crate::values::list::UnpackList;
+use crate::values::tuple::TupleType;
 use crate::values::tuple::UnpackTuple;
 use crate::values::type_repr::StarlarkTypeRepr;
 
@@ -89,6 +93,24 @@ impl<'a, T> IntoIterator for &'a mut UnpackListOrTuple<T> {
 
     fn into_iter(self) -> Self::IntoIter {
         self.items.iter_mut()
+    }
+}
+
+/// `list[T] | tuple[T, ...]`, the usual type of a parameter that takes a sequence of `T`.
+pub type ListOrTupleType<T> = Either<ListType<T>, TupleType<T>>;
+
+impl<'v, T: UnpackValue<'v>> ValueOf<'v, ListOrTupleType<T>> {
+    /// The items, as [`ValueOf<ListType<T>>::iter`](ValueOf::iter) or
+    /// [`ValueOf<TupleType<T>>::iter`](ValueOf::iter) gives them.
+    pub fn iter(self) -> impl Iterator<Item = crate::Result<ValueOf<'v, T>>> + 'v {
+        let value = self.to_value();
+        // A list and a tuple are different representations, so which side this is cannot
+        // change; the items are re-checked by that side's `iter` as for any sequence.
+        if ListRef::from_value(value).is_some() {
+            Either::Left(ValueOf::<ListType<T>>::new_unchecked(value).iter())
+        } else {
+            Either::Right(ValueOf::<TupleType<T>>::new_unchecked(value).iter())
+        }
     }
 }
 

@@ -439,7 +439,7 @@ os_str_bytes = { version = "7.2.1", features = ["conversions"] }
 pagable = { version = "0.4.2", path = "pagable", features = ["tokio"] }
 pagable_derive = { version = "0.4.2", path = "pagable_derive" }
 pagable_storage = { version = "0.4.2", path = "pagable_storage", features = ["tokio"] }
-parking_lot = { version = "0.12.1", features = ["arc_lock", "send_guard", "serde"] }
+parking_lot = { version = "0.13.0", features = ["arc_lock", "send_guard", "serde"] }
 paste = "1.0.14"
 pathdiff = "0.2"
 perf-event = "0.4"

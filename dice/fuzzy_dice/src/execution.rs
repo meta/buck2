@@ -584,7 +584,7 @@ const QUERY_TIMEOUT: Duration = Duration::from_secs(30);
 /// A panic inside a dice task terminates that task without ever producing a result, so
 /// the query depending on it waits forever instead of failing. Watching this log while a
 /// query runs is what turns such a panic into a prompt failure.
-static PANICS: Mutex<Vec<String>> = parking_lot::const_mutex(Vec::new());
+static PANICS: Mutex<Vec<String>> = Mutex::new(Vec::new());
 static PANIC_HOOK: Once = Once::new();
 
 /// Whether the generator produces transient computation steps. There is a known dice bug

@@ -101,7 +101,7 @@ dependencies = [
  "jiff",
  "num-bigint 0.5.1",
  "once_cell",
- "parking_lot 0.12.5",
+ "parking_lot 0.13.0",
  "prost-types",
  "serde_json",
  "slab",
@@ -1076,7 +1076,7 @@ dependencies = [
  "jiff",
  "mini_vec",
  "pagable",
- "parking_lot 0.12.5",
+ "parking_lot 0.13.0",
  "remote_execution",
  "serde_json",
  "sha1 0.11.0",
@@ -2027,7 +2027,7 @@ dependencies = [
  "nix 0.31.3",
  "num_enum",
  "pagable",
- "parking_lot 0.12.5",
+ "parking_lot 0.13.0",
  "prost-types",
  "rand 0.10.3",
  "regex",
@@ -2074,7 +2074,7 @@ dependencies = [
  "futures 0.3.34",
  "itertools 0.15.0",
  "pagable",
- "parking_lot 0.12.5",
+ "parking_lot 0.13.0",
  "tokio",
  "tracing",
 ]
@@ -2561,7 +2561,7 @@ dependencies = [
  "itertools 0.15.0",
  "jiff",
  "pagable",
- "parking_lot 0.12.5",
+ "parking_lot 0.13.0",
  "pathdiff",
  "prost",
  "prost-types",
@@ -2618,7 +2618,7 @@ dependencies = [
  "itertools 0.15.0",
  "jiff",
  "mini_vec",
- "parking_lot 0.12.5",
+ "parking_lot 0.13.0",
  "pin-project",
  "prost",
  "regex",
@@ -3349,7 +3349,7 @@ dependencies = [
  "jiff",
  "libc",
  "pagable",
- "parking_lot 0.12.5",
+ "parking_lot 0.13.0",
  "pin-project",
  "prost",
  "prost-types",
@@ -3624,7 +3624,7 @@ dependencies = [
  "clap",
  "futures 0.3.34",
  "host_sharing",
- "parking_lot 0.12.5",
+ "parking_lot 0.13.0",
  "tokio",
 ]
 
@@ -4556,7 +4556,7 @@ checksum = "978747c1d849a7d2ee5e8adc0159961c48fb7e5db2f06af6723b80123bb53856"
 dependencies = [
  "cfg-if",
  "hashbrown 0.14.5",
- "lock_api",
+ "lock_api 0.4.14",
  "once_cell",
  "parking_lot_core 0.9.12",
 ]
@@ -4570,7 +4570,7 @@ dependencies = [
  "cfg-if",
  "crossbeam-utils",
  "hashbrown 0.14.5",
- "lock_api",
+ "lock_api 0.4.14",
  "once_cell",
  "parking_lot_core 0.9.12",
  "rayon",
@@ -4734,7 +4734,7 @@ dependencies = [
  "mini_vec",
  "pagable",
  "pagable_storage",
- "parking_lot 0.12.5",
+ "parking_lot 0.13.0",
  "pin-project",
  "ref-cast",
  "scopeguard",
@@ -4799,7 +4799,7 @@ dependencies = [
  "dupe",
  "futures 0.3.34",
  "mini_vec",
- "parking_lot 0.12.5",
+ "parking_lot 0.13.0",
  "pin-project",
  "smallvec",
  "thiserror 2.0.21",
@@ -4819,7 +4819,7 @@ dependencies = [
  "dupe",
  "futures 0.3.34",
  "pagable",
- "parking_lot 0.12.5",
+ "parking_lot 0.13.0",
  "tempfile",
  "tokio",
 ]
@@ -5698,7 +5698,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1d930c203dd0b6ff06e0201a4a2fe9149b43c684fd4420555b26d21b1a02956f"
 dependencies = [
  "futures-core",
- "lock_api",
+ "lock_api 0.4.14",
  "parking_lot 0.12.5",
 ]
 
@@ -7179,6 +7179,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "224399e74b87b5f3557511d98dff8b14089b3dadafcab6bb93eab67d3aace965"
 dependencies = [
  "scopeguard",
+]
+
+[[package]]
+name = "lock_api"
+version = "0.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "65d91b22da179613dcf4d6ec8349563f52a363f6849e03b00dd0a185ec4a59af"
+dependencies = [
+ "scopeguard",
  "serde",
 ]
 
@@ -7188,7 +7197,7 @@ version = "0.2.0"
 dependencies = [
  "allocative",
  "num_cpus",
- "parking_lot 0.12.5",
+ "parking_lot 0.13.0",
 ]
 
 [[package]]
@@ -8278,7 +8287,7 @@ dependencies = [
  "num-bigint 0.5.1",
  "once_cell",
  "pagable_derive",
- "parking_lot 0.12.5",
+ "parking_lot 0.13.0",
  "postcard",
  "regex",
  "sequence_trie",
@@ -8331,7 +8340,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7d17b78036a60663b797adeaee46f5c9dfebb86948d1255007a1d6be0271ff99"
 dependencies = [
  "instant",
- "lock_api",
+ "lock_api 0.4.14",
  "parking_lot_core 0.8.6",
 ]
 
@@ -8341,8 +8350,18 @@ version = "0.12.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "93857453250e3077bd71ff98b6a65ea6621a19bb0f559a85248955ac12c45a1a"
 dependencies = [
- "lock_api",
+ "lock_api 0.4.14",
  "parking_lot_core 0.9.12",
+]
+
+[[package]]
+name = "parking_lot"
+version = "0.13.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a9cf937ca4e1d0b7578784559063422fc39ae7c5a00f02471f2614d5486fd226"
+dependencies = [
+ "lock_api 0.5.0",
+ "parking_lot_core 0.10.0",
 ]
 
 [[package]]
@@ -8368,6 +8387,18 @@ dependencies = [
  "cfg-if",
  "libc",
  "redox_syscall 0.5.18",
+ "smallvec",
+ "windows-link",
+]
+
+[[package]]
+name = "parking_lot_core"
+version = "0.10.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9cfff060068cc18aa7815010fcaf80c68c7fb9e85fc7f5c0f9bf142c21d19826"
+dependencies = [
+ "libc",
+ "redox_syscall 0.9.5",
  "smallvec",
  "windows-link",
 ]
@@ -10443,7 +10474,7 @@ version = "0.9.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3763264f6b73151db08c50ff20d7d8a0b8796e021cdea7ceedad07b80155fa0e"
 dependencies = [
- "lock_api",
+ "lock_api 0.4.14",
 ]
 
 [[package]]

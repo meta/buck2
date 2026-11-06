@@ -12,6 +12,13 @@ use async_condvar_fair::Condvar;
 use futures::future::Future;
 use futures::future::FutureExt;
 use parking_lot::Mutex;
+use parking_lot::MutexGuard;
+
+async_condvar_fair::RelockMutexGuard! {
+    RelockableMutexGuard(MutexGuard) [Mutex],
+    l => async move { l.lock() },
+    g => MutexGuard::mutex(&g),
+}
 
 /// A semaphore-like structure that locks up and stops emitting permits *at all* if the number of
 /// requests exceeds the permit limit. This puts an upper bound on callers entering the critical
@@ -87,7 +94,7 @@ impl LowPassFilter {
                 if state.can_dispatch_more(self.capacity) {
                     return guard;
                 }
-                state = self.cv.wait(state).await;
+                state = self.cv.wait(RelockableMutexGuard(state)).await;
             }
         }
         .right_future()

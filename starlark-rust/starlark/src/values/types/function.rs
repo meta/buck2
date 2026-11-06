@@ -52,12 +52,6 @@ use crate::values::ValueError;
 use crate::values::types::ellipsis::Ellipsis;
 use crate::values::typing::type_compiled::compiled::TypeCompiled;
 
-#[derive(Debug, thiserror::Error)]
-enum FunctionError {
-    #[error("`tuple[]` is implemented only for `tuple[T, ...]`")]
-    TupleOnlyEllipsis,
-}
-
 /// Return value of `type(any function)`.
 pub const FUNCTION_TYPE: &str = "function";
 
@@ -192,6 +186,12 @@ impl<'v> StarlarkValue<'v> for NativeFunction<'v> {
                 let index = TypeCompiled::new(index, heap)?;
                 Ok(TypeCompiled::type_set_of(index, heap).to_inner())
             }
+            Some(SpecialBuiltinFunction::Tuple) => {
+                // The 1-tuple type, whatever the element type is: a tuple of types is itself a
+                // type (the tuple of those types), so it is not read as a list of elements here.
+                let elem = TypeCompiled::new(index, heap)?;
+                Ok(TypeCompiled::from_ty(&Ty::tuple(vec![elem.as_ty().clone()]), heap).to_inner())
+            }
             _ => ValueError::unsupported(self, "[]"),
         }
     }
@@ -220,7 +220,12 @@ impl<'v> StarlarkValue<'v> for NativeFunction<'v> {
                     )
                     .to_inner())
                 } else {
-                    Err(crate::Error::new_other(FunctionError::TupleOnlyEllipsis))
+                    let second = TypeCompiled::new(index1, heap)?;
+                    Ok(TypeCompiled::from_ty(
+                        &Ty::tuple(vec![item.as_ty().clone(), second.as_ty().clone()]),
+                        heap,
+                    )
+                    .to_inner())
                 }
             }
             _ => ValueError::unsupported(self, "[,]"),

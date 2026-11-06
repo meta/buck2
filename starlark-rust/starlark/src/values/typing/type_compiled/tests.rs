@@ -300,3 +300,32 @@ fn test_bit_or() {
         }
     }
 }
+
+/// `tuple[A]` and `tuple[A, B]` as in Python. The grammar has no third subscript, and
+/// `tuple[(A, B, C)]` cannot stand for `tuple[A, B, C]` because a tuple of types is itself a
+/// type, so a longer tuple type is spelled as that tuple of types, `(A, B, C)`.
+#[test]
+fn test_tuple_type_expressions() {
+    let a = crate::assert::Assert::new();
+    a.all_true(
+        r#"
+isinstance((1,), tuple[int])
+isinstance((1, "a"), tuple[int, str])
+isinstance((1, "a", None), (int, str, None))
+isinstance(((1, "a", None),), tuple[(int, str, None)])
+not isinstance((1, "a", None), tuple[(int, str, None)])
+isinstance((1, 2, 3), tuple[int, ...])
+not isinstance((1, "a"), tuple[int])
+not isinstance((1, "a"), tuple[str, int])
+not isinstance((1, "a", "b"), tuple[int, str])
+not isinstance([1, "a"], tuple[int, str])
+"#,
+    );
+    a.pass(
+        r#"
+def f(x: tuple[int, str]) -> tuple[str, int]:
+    return (x[1], x[0])
+f((1, "a"))
+"#,
+    );
+}

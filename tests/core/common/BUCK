@@ -1,12 +1,19 @@
-load("@fbcode_macros//build_defs:python_library.bzl", "python_library")
+load("@fbsource//tools/build_defs:rust_library.bzl", "rust_library")
 
 oncall("build_infra")
 
-python_library(
+# The file watcher tests that `tests/core/io` runs against each file watcher and file system; see
+# `io/lib.rs`. Like the tests, it builds with buck only.
+rust_library(
     name = "io",
-    srcs = glob(["io/*.py"]),
+    srcs = glob(["io/*.rs"]),
+    autocargo = {"ignore_rule": True},
+    crate = "common_io",
+    crate_root = "io/lib.rs",
     deps = [
-        "//buck2/tests/e2e_util:utils",
-        "//buck2/tests/e2e_util/api:api",
+        "fbcode//buck2/tests/e2e_util/rust:buck2_e2e",
+        "fbsource//third-party/rust:anyhow",
+        "fbsource//third-party/rust:serde_json",
+        "fbsource//third-party/rust:tokio",
     ],
 )

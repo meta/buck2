@@ -24,7 +24,18 @@ rust_library(
         "fbsource//third-party/rust:tokio",
         "fbsource//third-party/rust:uuid",
         ":buck2_e2e_macros",
-    ],
+    ] + select({
+        "DEFAULT": [],
+        "ovr_config//os:linux": [
+            "fbsource//third-party/rust:libc",
+        ],
+        "ovr_config//os:macos": [
+            "fbsource//third-party/rust:libc",
+        ],
+        "ovr_config//os:windows": [
+            "fbsource//third-party/rust:windows-sys",
+        ],
+    }),
 )
 
 rust_library(

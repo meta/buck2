@@ -56,6 +56,7 @@ pub mod lsp;
 pub mod manifold;
 mod output;
 pub mod piped;
+pub mod process;
 pub mod subscribe;
 pub mod utils;
 

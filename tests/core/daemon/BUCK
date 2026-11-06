@@ -9,10 +9,22 @@ buck2_core_tests(
                 "ovr_config//os:linux",
                 "ovr_config//os:macos",
             ],
+            "deps": ["fbsource//third-party/rust:regex"],
         },
         "test_client_disconnect": {
             "data": ":test_daemon_data",
             "require_nano_prelude": True,
+        },
+        "test_daemon": {
+            "deps": [
+                "fbsource//third-party/rust:flate2",
+                "fbsource//third-party/rust:regex",
+                "fbsource//third-party/rust:rusqlite",
+                "fbsource//third-party/rust:uuid",
+            ],
+        },
+        "test_daemon_killed_on_checkout_removal": {
+            "deps": ["fbsource//third-party/rust:regex"],
         },
         "test_killall_repo_resilience": {
             "data": ":test_daemon_data",
@@ -28,10 +40,12 @@ buck2_core_tests(
                 "ovr_config//os:macos",
             ],
             "data": ":test_daemon_data",
+            "deps": ["fbsource//third-party/rust:uuid"],
             "require_nano_prelude": True,
         },
         "test_tenant_paging": {
             "data": ":test_daemon_data",
+            "deps": ["fbsource//third-party/rust:rusqlite"],
             "require_nano_prelude": True,
         },
         "test_tenant_recovery": {

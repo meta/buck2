@@ -18,6 +18,7 @@ use buck2_e2e::lsp::LspResponseError;
 use buck2_e2e::lsp::file_uri;
 use buck2_e2e::piped::PipedProcess;
 use buck2_e2e::prelude::*;
+use buck2_e2e::process;
 use buck2_e2e::subscribe::SubscribeClient;
 use regex::Regex;
 use serde_json::Value;
@@ -276,23 +277,13 @@ async fn wait_for_active_command_state(
     }
 }
 
-/// Whether a process with this id exists.
+/// Whether the process `pid`, a JSON number, exists.
 fn daemon_is_alive(pid: &Value) -> bool {
-    let pid = pid.as_u64().expect("a process id").to_string();
-    if cfg!(windows) {
-        let output = std::process::Command::new("tasklist")
-            .args(["/FI", &format!("PID eq {pid}"), "/NH", "/FO", "CSV"])
-            .output()
-            .expect("running tasklist");
-        String::from_utf8_lossy(&output.stdout).contains(&format!("\"{pid}\""))
-    } else {
-        std::process::Command::new("kill")
-            .args(["-0", &pid])
-            .stderr(std::process::Stdio::null())
-            .status()
-            .expect("running kill")
-            .success()
-    }
+    process::daemon_is_alive(
+        pid.as_u64()
+            .and_then(|pid| u32::try_from(pid).ok())
+            .expect("a process id"),
+    )
 }
 
 async fn status_pid(buck: &Buck) -> anyhow::Result<Value> {

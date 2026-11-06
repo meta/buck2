@@ -185,6 +185,35 @@ pub fn remove_output(path: &Path) -> std::io::Result<()> {
     std::fs::remove_file(path)
 }
 
+/// The identity of `path`'s file on its filesystem, as Python's `os.stat(path).st_ino` gives it:
+/// its inode number, or on Windows its file index, which the standard library does not expose yet.
+pub fn file_id(path: &Path) -> std::io::Result<u64> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        Ok(std::fs::metadata(path)?.ino())
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::OpenOptionsExt;
+        use std::os::windows::io::AsRawHandle;
+
+        use windows_sys::Win32::Storage::FileSystem::BY_HANDLE_FILE_INFORMATION;
+        use windows_sys::Win32::Storage::FileSystem::FILE_READ_ATTRIBUTES;
+        use windows_sys::Win32::Storage::FileSystem::GetFileInformationByHandle;
+
+        let file = std::fs::OpenOptions::new()
+            .access_mode(FILE_READ_ATTRIBUTES)
+            .open(path)?;
+        let mut information = BY_HANDLE_FILE_INFORMATION::default();
+        // SAFETY: the handle is open for the call, and `information` is the struct it fills.
+        if unsafe { GetFileInformationByHandle(file.as_raw_handle(), &mut information) } == 0 {
+            return Err(std::io::Error::last_os_error());
+        }
+        Ok((u64::from(information.nFileIndexHigh) << 32) | u64::from(information.nFileIndexLow))
+    }
+}
+
 /// 256 random lowercase letters.
 pub fn random_string() -> String {
     std::iter::repeat_with(|| uuid::Uuid::new_v4().into_bytes())
@@ -276,6 +305,20 @@ mod tests {
         std::fs::write(&file, "a b a").unwrap();
         replace_in_file("a", "c", &file);
         assert_eq!(std::fs::read_to_string(&file).unwrap(), "c b c");
+    }
+
+    #[test]
+    fn test_file_id_follows_the_file_not_its_name() {
+        let dir = tempfile::tempdir().unwrap();
+        let a = dir.path().join("a");
+        let b = dir.path().join("b");
+        std::fs::write(&a, "a").unwrap();
+        std::fs::write(&b, "b").unwrap();
+        let id = file_id(&a).unwrap();
+        assert_eq!(file_id(&a).unwrap(), id);
+        assert_ne!(file_id(&b).unwrap(), id);
+        std::fs::rename(&a, &b).unwrap();
+        assert_eq!(file_id(&b).unwrap(), id);
     }
 
     #[test]

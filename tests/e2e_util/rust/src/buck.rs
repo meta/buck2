@@ -96,6 +96,12 @@ impl Buck {
         self.isolation_prefix = Some(prefix.into());
     }
 
+    /// Runs every later command in `cwd` instead of the project directory, for a test that makes
+    /// another checkout of the project.
+    pub fn set_cwd(&mut self, cwd: impl Into<PathBuf>) {
+        self.cwd = cwd.into();
+    }
+
     /// The directory buck2 keeps its user settings in for this test.
     pub fn settings_home_dir(&self) -> PathBuf {
         PathBuf::from(
@@ -671,6 +677,14 @@ mod tests {
                 .get(OsStr::new("BUCK_WRAPPER_UUID")),
             Some(&OsString::from("mine"))
         );
+    }
+
+    #[test]
+    fn test_commands_run_where_the_buck_was_moved() {
+        let mut buck = buck(false);
+        buck.set_cwd("/checkout");
+        assert_eq!(buck.cwd(), Path::new("/checkout"));
+        assert_eq!(buck.kill().prepare("ID").cwd, Path::new("/checkout"));
     }
 
     #[test]

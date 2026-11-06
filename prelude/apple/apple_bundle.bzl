@@ -252,7 +252,7 @@ def _maybe_scrub_binary(ctx, binary_dep: Dependency) -> AppleBundleBinaryOutput:
             dsym_allowlist = _generate_dsym_allowlist(ctx, debug_binary, binary_dep.get(LinkExecutionPreferenceInfo), filtered_debug_info.swift_modules_labels)
         else:
             binary = _scrub_binary(ctx, binary, binary_dep.get(LinkExecutionPreferenceInfo), filtered_debug_info.swift_modules_labels)
-        dsym_artifact = _get_binary_dsym(ctx, binary, debug_info_tset, dsym_allowlist)
+        dsym_artifact = _get_binary_dsym(ctx, binary, filtered_external_debug_info, dsym_allowlist)
 
         filtered_map = {}
         for selected_target_info in filtered_debug_info.selected_target_infos:

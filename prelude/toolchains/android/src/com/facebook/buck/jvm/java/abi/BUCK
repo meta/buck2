@@ -88,6 +88,7 @@ buck_java_library(
     srcs = ["ApiStubber.java"],
     deps = [
         "prelude//toolchains/android/src/com/facebook/buck/core/filesystems:filesystems",
+        "prelude//toolchains/android/third-party:infer-annotations",
         ":abi",
     ],
 )

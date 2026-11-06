@@ -10,10 +10,12 @@
 
 package com.facebook.buck.jvm.java.abi;
 
+import com.facebook.infer.annotation.Nullsafe;
 import java.nio.file.Path;
 import java.util.Collections;
 import java.util.List;
 
+@Nullsafe(Nullsafe.Mode.LOCAL)
 class StubJarResourceEntry extends StubJarEntry {
   private final LibraryReader input;
   private final Path path;

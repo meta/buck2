@@ -12,6 +12,7 @@ package com.facebook.buck.jvm.java.abi;
 
 import com.facebook.buck.cd.model.java.AbiGenerationMode;
 import com.facebook.buck.jvm.java.abi.kotlin.InlineFunctionScope;
+import com.facebook.infer.annotation.Nullsafe;
 import java.io.IOException;
 import java.nio.file.Path;
 import java.util.Collections;
@@ -19,6 +20,7 @@ import java.util.List;
 import java.util.Set;
 import javax.annotation.Nullable;
 
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public abstract class StubJarEntry {
   @Nullable
   static StubJarEntry of(

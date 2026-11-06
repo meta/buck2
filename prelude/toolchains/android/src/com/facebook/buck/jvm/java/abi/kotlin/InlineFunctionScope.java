@@ -10,6 +10,7 @@
 
 package com.facebook.buck.jvm.java.abi.kotlin;
 
+import com.facebook.infer.annotation.Nullsafe;
 import java.nio.file.Path;
 import java.util.Collection;
 import java.util.HashMap;
@@ -31,6 +32,7 @@ import org.objectweb.asm.tree.ClassNode;
  * inline functions (or nested inside classes that are nested inside inline functions, and so on,
  * transitively).
  */
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public final class InlineFunctionScope {
   private static final String DEFAULT_METHOD_SUFFIX = "$default";
   private static final int DEFAULT_METHOD_SUFFIX_LENGTH = DEFAULT_METHOD_SUFFIX.length();

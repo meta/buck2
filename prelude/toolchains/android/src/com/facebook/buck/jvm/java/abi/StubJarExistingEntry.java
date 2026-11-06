@@ -10,6 +10,7 @@
 
 package com.facebook.buck.jvm.java.abi;
 
+import com.facebook.infer.annotation.Nullsafe;
 import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.nio.file.Path;
@@ -19,6 +20,7 @@ import java.util.Set;
 import javax.annotation.Nullable;
 
 /** Write an entry to stub jar by directly copy an existing abi. */
+@Nullsafe(Nullsafe.Mode.LOCAL)
 class StubJarExistingEntry extends StubJarEntry {
   private final LibraryReader existingAbiInput;
   private final Path path;

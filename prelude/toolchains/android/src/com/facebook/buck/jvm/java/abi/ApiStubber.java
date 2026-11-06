@@ -11,10 +11,12 @@
 package com.facebook.buck.jvm.java.abi;
 
 import com.facebook.buck.core.filesystems.AbsPath;
+import com.facebook.infer.annotation.Nullsafe;
 import java.io.IOException;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public class ApiStubber {
 
   private ApiStubber() {

@@ -10,9 +10,11 @@
 
 package com.facebook.buck.jvm.java.abi;
 
+import com.facebook.infer.annotation.Nullsafe;
 import org.objectweb.asm.Opcodes;
 import org.objectweb.asm.signature.SignatureVisitor;
 
+@Nullsafe(Nullsafe.Mode.LOCAL)
 class SourceAbiCompatibleSignatureVisitor extends SignatureVisitorWrapper {
   public SourceAbiCompatibleSignatureVisitor(SignatureVisitor sv) {
     super(Opcodes.ASM9, sv);

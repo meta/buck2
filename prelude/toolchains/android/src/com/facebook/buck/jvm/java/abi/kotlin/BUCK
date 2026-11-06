@@ -19,6 +19,7 @@ buck_java_library(
     ],
     deps = [
         "prelude//toolchains/android/third-party:asm",
+        "prelude//toolchains/android/third-party:infer-annotations",
         "prelude//toolchains/android/third-party:kotlin-metadata-jvm",
         "prelude//toolchains/android/third-party:kotlin-stdlib",
     ],

@@ -16,11 +16,13 @@ import com.facebook.buck.util.function.ThrowingSupplier;
 import com.facebook.buck.util.zip.CustomZipEntry;
 import com.facebook.buck.util.zip.JarBuilder;
 import com.facebook.buck.util.zip.JarEntrySupplier;
+import com.facebook.infer.annotation.Nullsafe;
 import java.io.IOException;
 import java.io.InputStream;
 import java.nio.file.Path;
 
 /** A {@link StubJarWriter} that writes to a file. */
+@Nullsafe(Nullsafe.Mode.LOCAL)
 class FilesystemStubJarWriter implements StubJarWriter {
 
   private final AbsPath outputPath;

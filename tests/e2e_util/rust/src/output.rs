@@ -399,10 +399,20 @@ impl BuildReport {
 
     /// The absolute path of the one default output of `target`.
     pub fn output_for_target(&self, target: &str) -> anyhow::Result<PathBuf> {
-        let outputs = self.outputs_for_target(target, "DEFAULT")?;
+        self.output_for_sub_target(target, "DEFAULT")
+    }
+
+    /// The absolute path of the one output of `target`'s `sub_target`.
+    pub fn output_for_sub_target(&self, target: &str, sub_target: &str) -> anyhow::Result<PathBuf> {
+        let outputs = self.outputs_for_target(target, sub_target)?;
         match <[PathBuf; 1]>::try_from(outputs) {
             Ok([output]) => Ok(output),
-            Err(outputs) => anyhow::bail!("`{target}` has {} outputs: {outputs:?}", outputs.len()),
+            Err(outputs) => {
+                anyhow::bail!(
+                    "`{target}[{sub_target}]` has {} outputs: {outputs:?}",
+                    outputs.len()
+                )
+            }
         }
     }
 }
@@ -516,6 +526,14 @@ mod tests {
     #[test]
     fn test_a_target_without_one_output_is_an_error() {
         assert!(report().output_for_target("cell//:two").is_err());
+    }
+
+    #[test]
+    fn test_a_sub_target_without_one_output_is_an_error() {
+        let error = report()
+            .output_for_sub_target("root//:one", "sub")
+            .unwrap_err();
+        assert!(error.to_string().contains("has 2 outputs"), "{error}");
     }
 
     #[test]

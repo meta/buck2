@@ -24,9 +24,8 @@ use starlark::typing::Ty;
 use starlark::values::Freeze;
 use starlark::values::NoSerialize;
 use starlark::values::StarlarkValue;
-use starlark::values::UnpackValue;
-use starlark::values::ValueOfUnchecked;
-use starlark::values::list::ListRef;
+use starlark::values::StringValue;
+use starlark::values::ValueOf;
 use starlark::values::list::ListType;
 use starlark::values::starlark_value;
 
@@ -73,16 +72,14 @@ impl StarlarkBuckRegex {
 
     /// Matches the regex against each element of `strings`, combining results with OR
     /// (`any = true`) or AND (`any = false`). Returns as soon as the result is decided,
-    /// without inspecting or type-checking the remaining elements.
+    /// without matching the remaining elements.
     fn multi_match<'v>(
         &self,
-        strings: ValueOfUnchecked<'v, ListType<&'v str>>,
+        strings: ValueOf<'v, ListType<StringValue<'v>>>,
         any: bool,
     ) -> starlark::Result<bool> {
-        let strings = <&ListRef>::unpack_value_err(strings.get())?;
         for string in strings.iter() {
-            let string = string.unpack_str_err()?;
-            if self.is_match(string)? == any {
+            if self.is_match(string?.unpack().as_str())? == any {
                 return Ok(any);
             }
         }
@@ -132,26 +129,26 @@ fn regex_methods(builder: &mut MethodsBuilder) {
 
     /// Determine if the regex matches a substring of any of the given strings.
     /// Returns `False` for an empty list. Returns as soon as a match is found,
-    /// without validating the remaining elements.
+    /// without matching the remaining elements.
     ///
     /// Behaves like calling `match` on each element, but is significantly faster on large
     /// lists because it crosses from Starlark into native code only once.
     fn any_match<'v>(
         this: &StarlarkBuckRegex,
-        #[starlark(require = pos)] strings: ValueOfUnchecked<'v, ListType<&'v str>>,
+        #[starlark(require = pos)] strings: ValueOf<'v, ListType<StringValue<'v>>>,
     ) -> starlark::Result<bool> {
         this.multi_match(strings, true)
     }
 
     /// Determine if the regex matches a substring of every one of the given strings.
     /// Returns `True` for an empty list. Returns as soon as a non-matching element is
-    /// found, without validating the remaining elements.
+    /// found, without matching the remaining elements.
     ///
     /// Behaves like calling `match` on each element, but is significantly faster on large
     /// lists because it crosses from Starlark into native code only once.
     fn all_match<'v>(
         this: &StarlarkBuckRegex,
-        #[starlark(require = pos)] strings: ValueOfUnchecked<'v, ListType<&'v str>>,
+        #[starlark(require = pos)] strings: ValueOf<'v, ListType<StringValue<'v>>>,
     ) -> starlark::Result<bool> {
         this.multi_match(strings, false)
     }
@@ -235,10 +232,11 @@ mod tests {
         a.is_true("regex('abc|def|ghi').any_match(['none', 'def'])");
         a.is_false("regex('abc|def|ghi').any_match(['none', 'other'])");
         a.is_false("regex('x').any_match([])");
-        a.fail("regex('x').any_match('x')", "Expected `list`");
-        a.fail("regex('x').any_match([1])", "Expected `str`");
-        // Short-circuits once the result is decided; later elements are not validated.
-        a.is_true("regex('x').any_match(['x', 1])");
+        a.fail("regex('x').any_match('x')", "expected `list[str]`");
+        a.fail("regex('x').any_match([1])", "expected `list[str]`");
+        // The list is checked as a whole before any matching, so a non-string anywhere is an
+        // error even when an earlier element decides the result.
+        a.fail("regex('x').any_match(['x', 1])", "expected `list[str]`");
     }
 
     #[test]
@@ -249,10 +247,14 @@ mod tests {
         a.is_true("regex('abc|def|ghi').all_match(['xdefy', 'abc'])");
         a.is_false("regex('abc|def|ghi').all_match(['def', 'other'])");
         a.is_true("regex('x').all_match([])");
-        a.fail("regex('x').all_match('x')", "Expected `list`");
-        a.fail("regex('x').all_match([1])", "Expected `str`");
-        // Short-circuits once the result is decided; later elements are not validated.
-        a.is_false("regex('x').all_match(['nomatch', 1])");
+        a.fail("regex('x').all_match('x')", "expected `list[str]`");
+        a.fail("regex('x').all_match([1])", "expected `list[str]`");
+        // The list is checked as a whole before any matching, so a non-string anywhere is an
+        // error even when an earlier element decides the result.
+        a.fail(
+            "regex('x').all_match(['nomatch', 1])",
+            "expected `list[str]`",
+        );
     }
 
     #[test]

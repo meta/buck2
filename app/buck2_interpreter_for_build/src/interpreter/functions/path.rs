@@ -11,9 +11,9 @@
 use starlark::environment::GlobalsBuilder;
 use starlark::eval::Evaluator;
 use starlark::starlark_module;
-use starlark::values::ValueOfUnchecked;
-use starlark::values::list::AllocList;
-use starlark::values::list::UnpackList;
+use starlark::values::StringValue;
+use starlark::values::ValueOf;
+use starlark::values::list::ListType;
 use starlark::values::list_or_tuple::UnpackListOrTuple;
 
 use crate::interpreter::build_context::BuildContext;
@@ -55,11 +55,14 @@ pub(crate) fn register_path(builder: &mut GlobalsBuilder) {
         #[starlark(require = named, default=UnpackListOrTuple::default())]
         exclude: UnpackListOrTuple<String>,
         eval: &mut Evaluator<'v, '_, '_>,
-    ) -> starlark::Result<ValueOfUnchecked<'v, UnpackList<String>>> {
+    ) -> starlark::Result<ValueOf<'v, ListType<StringValue<'v>>>> {
         let extra = ModuleInternals::from_context(eval, "glob")?;
         let spec = GlobSpec::new(&include.items, &exclude.items)?;
-        let res = extra.resolve_glob(&spec).map(|path| path.as_str());
-        Ok(eval.heap().alloc_typed_unchecked(AllocList(res)).cast())
+        let heap = eval.heap();
+        let res = extra
+            .resolve_glob(&spec)
+            .map(|path| ValueOf::from(heap.alloc_str(path.as_str())));
+        Ok(ValueOf::alloc_list(heap, res))
     }
 
     /// `package_name()` can only be called in buildfiles (e.g. BUCK files) or PACKAGE files, and returns the name of the package.

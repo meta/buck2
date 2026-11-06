@@ -51,11 +51,9 @@ use dupe::Dupe;
 use itertools::Itertools;
 use starlark::eval::Evaluator;
 use starlark::values::OwnedFrozenRef;
-use starlark::values::UnpackValue;
-use starlark::values::ValueOfUnchecked;
+use starlark::values::ValueOf;
 use starlark::values::ValueTyped;
 use starlark::values::structs::AllocStruct;
-use starlark::values::structs::StructRef;
 use tokio::sync::Semaphore;
 
 use crate::bxl::key::BxlKey;
@@ -199,13 +197,14 @@ impl BxlInnerEvaluator {
             let (finished_eval, (actions, output_stream_outcome)) = {
                 let stream_state = OutputStreamState::new();
 
-                let resolved_args = ValueOfUnchecked::<StructRef>::unpack_value_err(
-                    env.heap().alloc(AllocStruct(
+                let resolved_args = ValueOf::alloc_struct(
+                    env.heap(),
+                    AllocStruct(
                         key.cli_args()
                             .iter()
                             .map(|(k, v)| (k, v.as_starlark(env.heap()))),
-                    )),
-                )?;
+                    ),
+                );
 
                 let print = EventDispatcherPrintHandler(dispatcher.clone());
                 let mut extra = BxlEvalExtra::new(bxl_dice, data.dupe(), stream_state.dupe());

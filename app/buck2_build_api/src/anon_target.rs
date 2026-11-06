@@ -30,7 +30,7 @@ use dupe::Dupe;
 use starlark::environment::Module;
 use starlark::eval::Evaluator;
 use starlark::values::Value;
-use starlark::values::ValueOfUnchecked;
+use starlark::values::ValueOf;
 use starlark::values::structs::StructRef;
 
 use crate::analysis::AnalysisResult;
@@ -61,7 +61,7 @@ pub trait AnonTargetDyn: Send + Sync + Display {
         attrs_spec: &AttributeSpec,
         dependents_analyses: AnonTargetDependentAnalysisResults<'_>,
         exec_resolution: ExecutionPlatformResolution,
-    ) -> buck2_error::Result<ValueOfUnchecked<'v, StructRef<'static>>>;
+    ) -> buck2_error::Result<ValueOf<'v, StructRef<'v>>>;
 }
 
 /// Rendered description of an anon target, for introspection commands.

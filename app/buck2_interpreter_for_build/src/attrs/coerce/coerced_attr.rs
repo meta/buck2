@@ -22,7 +22,6 @@ use buck2_node::attrs::coercion_context::CoerceMemoKey;
 use buck2_node::attrs::configurable::AttrIsConfigurable;
 use buck2_node::configuration::resolved::ConfigurationSettingKey;
 use starlark::values::Value;
-use starlark::values::dict::DictRef;
 
 use crate::attrs::coerce::attr_type::AttrTypeExt;
 use crate::interpreter::selector::StarlarkSelector;
@@ -30,10 +29,6 @@ use crate::interpreter::selector::StarlarkSelector;
 #[derive(buck2_error::Error, Debug)]
 #[buck2(input)]
 enum SelectError {
-    #[error("select() condition was not a string, got `{0}`.")]
-    KeyNotString(String),
-    #[error("select() value was not a dict, got `{0}`.")]
-    ValueNotDict(String),
     #[error("addition not supported for this attribute type `{0}`, got `{1}`.")]
     ConcatNotSupported(String, String),
     #[error("select() cannot be used in non-configurable attribute")]
@@ -111,56 +106,51 @@ fn coerce_inner<'v>(
 
         match *selector {
             StarlarkSelector::Primary(v) => {
-                if let Some(dict) = DictRef::from_value(v.get()) {
-                    let has_default = dict.get_str("DEFAULT").is_some();
-                    let mut entries =
-                        Vec::with_capacity(dict.len().saturating_sub(has_default as usize));
+                let has_default = v.get_str("DEFAULT")?.is_some();
+                let mut entries =
+                    Vec::with_capacity(v.dict().len().saturating_sub(has_default as usize));
 
-                    let mut default = None;
-                    for (k, v) in dict.iter() {
-                        let k = k
-                            .unpack_str()
-                            .ok_or_else(|| SelectError::KeyNotString(k.to_repr()))?;
-                        let v = match default_attr {
-                            Some(default_attr) if v.is_none() => {
-                                ctx.attr_arena().encode_view(default_attr)?
-                            }
-                            _ => match coerce_attr(attr, configurable, ctx, v, default_attr) {
-                                Ok(v) => v,
-                                Err(e) => {
-                                    if let Some(select_fail) = StarlarkSelectFail::from_value(v) {
-                                        ctx.attr_arena().encode_select_fail(select_fail.as_str())?
-                                    } else if let Some(select_incompatible) =
-                                        StarlarkSelectIncompatible::from_value(v)
-                                    {
-                                        ctx.attr_arena().encode_select_incompatible(
-                                            select_incompatible.as_str(),
-                                        )?
-                                    } else {
-                                        return Err(e);
-                                    }
-                                }
-                            },
-                        };
-                        if k == "DEFAULT" {
-                            if default.is_some() {
-                                return Err(internal_error!(
-                                    "duplicate `\"DEFAULT\"` key in `select()`"
-                                ));
-                            }
-                            default = Some(v);
-                        } else {
-                            let label = ctx.coerce_providers_label(k)?;
-                            entries.push((ConfigurationSettingKey(label), v));
+                let mut default = None;
+                for entry in v.iter() {
+                    let (k, v) = entry?;
+                    let k = k.unpack().as_str();
+                    let v = v.unpack();
+                    let v = match default_attr {
+                        Some(default_attr) if v.is_none() => {
+                            ctx.attr_arena().encode_view(default_attr)?
                         }
+                        _ => match coerce_attr(attr, configurable, ctx, v, default_attr) {
+                            Ok(v) => v,
+                            Err(e) => {
+                                if let Some(select_fail) = StarlarkSelectFail::from_value(v) {
+                                    ctx.attr_arena().encode_select_fail(select_fail.as_str())?
+                                } else if let Some(select_incompatible) =
+                                    StarlarkSelectIncompatible::from_value(v)
+                                {
+                                    ctx.attr_arena()
+                                        .encode_select_incompatible(select_incompatible.as_str())?
+                                } else {
+                                    return Err(e);
+                                }
+                            }
+                        },
+                    };
+                    if k == "DEFAULT" {
+                        if default.is_some() {
+                            return Err(internal_error!(
+                                "duplicate `\"DEFAULT\"` key in `select()`"
+                            ));
+                        }
+                        default = Some(v);
+                    } else {
+                        let label = ctx.coerce_providers_label(k)?;
+                        entries.push((ConfigurationSettingKey(label), v));
                     }
-
-                    assert_eq!(entries.capacity(), entries.len());
-
-                    ctx.attr_arena().encode_selector(&entries, default)
-                } else {
-                    Err(SelectError::ValueNotDict(v.get().to_repr()).into())
                 }
+
+                assert_eq!(entries.capacity(), entries.len());
+
+                ctx.attr_arena().encode_selector(&entries, default)
             }
             StarlarkSelector::Sum(l, r) => {
                 if !attr.supports_concat() {

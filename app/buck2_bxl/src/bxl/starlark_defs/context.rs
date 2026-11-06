@@ -53,7 +53,7 @@ use starlark::values::NoSerialize;
 use starlark::values::StarlarkValue;
 use starlark::values::Trace;
 use starlark::values::Value;
-use starlark::values::ValueOfUnchecked;
+use starlark::values::ValueOf;
 use starlark::values::ValueTyped;
 use starlark::values::starlark_value;
 use starlark::values::structs::StructRef;
@@ -111,7 +111,7 @@ struct TargetPlatformInAnalysis;
 #[derive(ProvidesStaticType, Trace, NoSerialize, Allocative, Debug, Derivative)]
 pub(crate) struct RootBxlContextData<'v> {
     output_stream: ValueTyped<'v, StarlarkOutputStream>,
-    cli_args: ValueOfUnchecked<'v, StructRef<'v>>,
+    cli_args: ValueOf<'v, StructRef<'v>>,
 }
 
 /// Data object for `BxlContextType::Dynamic`.
@@ -340,7 +340,7 @@ impl<'v> BxlContext<'v> {
         heap: Heap<'v>,
         core: Arc<BxlContextCoreData>,
         stream_state: OutputStreamState,
-        cli_args: ValueOfUnchecked<'v, StructRef<'v>>,
+        cli_args: ValueOf<'v, StructRef<'v>>,
         digest_config: DigestConfig,
     ) -> buck2_error::Result<Self> {
         let root_data = RootBxlContextData {
@@ -389,7 +389,7 @@ impl<'v> BxlContext<'v> {
         core: Arc<BxlContextCoreData>,
         digest_config: DigestConfig,
         analysis_registry: AnalysisRegistry<'v>,
-        attributes: ValueOfUnchecked<'v, StructRef<'static>>,
+        attributes: ValueOf<'v, StructRef<'v>>,
     ) -> buck2_error::Result<Self> {
         Ok(Self {
             state: heap.alloc_typed(AnalysisActions {

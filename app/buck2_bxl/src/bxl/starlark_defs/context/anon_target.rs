@@ -58,7 +58,7 @@ use starlark::typing::ParamSpec;
 use starlark::util::ArcStr;
 use starlark::values::StringValue;
 use starlark::values::Value;
-use starlark::values::ValueOfUnchecked;
+use starlark::values::ValueOf;
 use starlark::values::ValueTyped;
 use starlark::values::dict::UnpackDictEntries;
 use starlark::values::list::ListType;
@@ -164,10 +164,10 @@ impl AnonImpl {
         &self,
         eval: &mut Evaluator<'v, '_, '_>,
         bxl_ctx: ValueTyped<'v, BxlContext<'v>>,
-        attrs: ValueOfUnchecked<'v, StructRef<'static>>,
+        attrs: ValueOf<'v, StructRef<'v>>,
     ) -> buck2_error::Result<Value<'v>> {
         let anon_impl = get_rule_impl(eval, &self.module, &self.name)?;
-        eval.eval_function(anon_impl, &[bxl_ctx.to_value(), attrs.get()], &[])
+        eval.eval_function(anon_impl, &[bxl_ctx.to_value(), attrs.to_value()], &[])
             .map_err(|e| e.into())
     }
 

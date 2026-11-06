@@ -60,7 +60,7 @@ use starlark::environment::Module;
 use starlark::eval::Evaluator;
 use starlark::values::UnpackValue;
 use starlark::values::Value;
-use starlark::values::ValueOfUnchecked;
+use starlark::values::ValueOf;
 use starlark::values::structs::AllocStruct;
 use starlark::values::structs::StructRef;
 use strong_hash::StrongHash;
@@ -210,7 +210,7 @@ impl AnonTargetDyn for AnonTarget {
         attrs_spec: &AttributeSpec,
         dependents_analyses: AnonTargetDependentAnalysisResults<'_>,
         exec_resolution: ExecutionPlatformResolution,
-    ) -> buck2_error::Result<ValueOfUnchecked<'v, StructRef<'static>>> {
+    ) -> buck2_error::Result<ValueOf<'v, StructRef<'v>>> {
         let dep_analysis_results =
             get_deps_from_analysis_results(dependents_analyses.dep_analysis_results)?;
 
@@ -249,11 +249,10 @@ impl AnonTargetDyn for AnonTarget {
         // Storage order (attribute ids) is an internal detail; present the
         // fields in name order.
         resolved_attrs.sort_unstable_by_key(|(name, _)| *name);
-        let attributes = env
-            .heap()
-            .alloc_typed_unchecked(AllocStruct(resolved_attrs))
-            .cast();
-        Ok(attributes)
+        Ok(ValueOf::alloc_struct(
+            env.heap(),
+            AllocStruct(resolved_attrs),
+        ))
     }
 
     fn get_fulfilled_promise_artifacts<'v>(

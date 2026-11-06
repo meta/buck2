@@ -39,7 +39,7 @@ use starlark::environment::MethodsBuilder;
 use starlark::eval::Evaluator;
 use starlark::starlark_module;
 use starlark::values::Value;
-use starlark::values::ValueOfUnchecked;
+use starlark::values::ValueOf;
 use starlark::values::ValueTyped;
 use starlark::values::list::UnpackList;
 use starlark::values::none::NoneOr;
@@ -646,9 +646,7 @@ pub(crate) fn bxl_context_methods(builder: &mut MethodsBuilder) {
     ///
     /// This attribute is not available on the bxl context within the a dynamic lambda.
     #[starlark(attribute)]
-    fn cli_args<'v>(
-        this: &'v BxlContext<'v>,
-    ) -> starlark::Result<ValueOfUnchecked<'v, StructRef<'v>>> {
+    fn cli_args<'v>(this: &'v BxlContext<'v>) -> starlark::Result<ValueOf<'v, StructRef<'v>>> {
         let cli_args = this
             .context_type
             .unpack_root()

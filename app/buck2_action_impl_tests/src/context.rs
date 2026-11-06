@@ -31,6 +31,7 @@ use starlark::eval::ReturnFileLoader;
 use starlark::syntax::AstModule;
 use starlark::values::UnpackValue;
 use starlark::values::Value;
+use starlark::values::ValueOf;
 use starlark::values::structs::AllocStruct;
 
 fn run_ctx_test(
@@ -76,10 +77,8 @@ fn run_ctx_test(
                 BaseDeferredKey::TargetLabel(label.dupe()),
                 ExecutionPlatformResolution::unspecified(),
             )?;
-            let attributes = eval
-                .heap()
-                .alloc_typed_unchecked(AllocStruct([("name", "some_name")]))
-                .cast();
+            let attributes =
+                ValueOf::alloc_struct(eval.heap(), AllocStruct([("name", "some_name")]));
             let plugins = eval
                 .heap()
                 .alloc_typed(AnalysisPlugins::new(BuckMutInsertionMap::new()))

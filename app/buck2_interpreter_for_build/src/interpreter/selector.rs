@@ -35,8 +35,6 @@ use starlark::values::Trace;
 use starlark::values::UnpackValue;
 use starlark::values::Value;
 use starlark::values::ValueOf;
-use starlark::values::ValueOfUnchecked;
-use starlark::values::dict::DictRef;
 use starlark::values::dict::DictType;
 use starlark::values::none::NoneOr;
 use starlark::values::starlark_value;
@@ -47,7 +45,7 @@ use starlark::values::starlark_value;
 pub enum StarlarkSelector<'v> {
     /// Simplest form, backed by dictionary representation
     /// wrapped into `select` function call.
-    Primary(ValueOfUnchecked<'v, DictType<StringValue<'static>, Value<'static>>>),
+    Primary(ValueOf<'v, DictType<StringValue<'v>, Value<'v>>>),
     Sum(Value<'v>, Value<'v>),
 }
 
@@ -74,7 +72,7 @@ impl<'v> Serialize for StarlarkSelector<'v> {
             StarlarkSelector::Primary(dict_value) => {
                 let mut map = serializer.serialize_map(Some(2))?;
                 map.serialize_entry("__type", "selector")?;
-                map.serialize_entry("entries", &dict_value.get().to_value())?;
+                map.serialize_entry("entries", &dict_value.to_value())?;
                 map.end()
             }
             StarlarkSelector::Sum(left, right) => {
@@ -91,7 +89,7 @@ starlark_complex_value!(pub StarlarkSelector);
 
 impl<'v> StarlarkSelector<'v> {
     pub fn new(d: ValueOf<'v, DictType<StringValue<'v>, Value<'v>>>) -> Self {
-        StarlarkSelector::Primary(d.as_unchecked().cast())
+        StarlarkSelector::Primary(d)
     }
 
     fn sum(left: Value<'v>, right: Value<'v>, heap: Heap<'v>) -> Value<'v> {
@@ -154,7 +152,7 @@ impl<'v> StarlarkSelector<'v> {
         if let Some(selector) = StarlarkSelector::from_value(val) {
             match *selector {
                 StarlarkSelector::Primary(selector) => {
-                    let selector = DictRef::from_value(selector.get()).unwrap();
+                    let selector = selector.dict();
                     let mut mapped = BuckMutInsertionMap::with_capacity(selector.len());
                     for (k, v) in selector.iter_hashed() {
                         if StarlarkSelectFail::from_value(v).is_some()
@@ -217,7 +215,7 @@ impl<'v> StarlarkSelector<'v> {
         if let Some(selector) = StarlarkSelector::from_value(val) {
             match *selector {
                 StarlarkSelector::Primary(selector) => {
-                    let selector = DictRef::from_value(selector.get()).unwrap();
+                    let selector = selector.dict();
                     for v in selector.values() {
                         // select_test only applies the test to non-SelectFail/SelectIncompatible values.
                         if StarlarkSelectFail::from_value(v).is_none()
@@ -263,13 +261,10 @@ impl<'v> StarlarkValue<'v> for StarlarkSelector<'v> {
 
     fn add(&self, other: Value<'v>, heap: Heap<'v>) -> Option<starlark::Result<Value<'v>>> {
         match self {
-            Self::Primary(v) => match ValueOf::unpack_value_err(v.get().to_value()) {
-                Ok(v) => {
-                    let this = heap.alloc(StarlarkSelector::new(v));
-                    Some(Ok(StarlarkSelector::sum(this, other, heap)))
-                }
-                Err(e) => Some(Err(e)),
-            },
+            Self::Primary(v) => {
+                let this = heap.alloc(StarlarkSelector::new(*v));
+                Some(Ok(StarlarkSelector::sum(this, other, heap)))
+            }
             Self::Sum(l, r) => {
                 let this = StarlarkSelector::sum(l.to_value(), r.to_value(), heap);
                 Some(Ok(StarlarkSelector::sum(this, other, heap)))

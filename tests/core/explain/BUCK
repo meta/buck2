@@ -2,12 +2,4 @@ load("@fbcode//buck2/tests:buck_e2e.bzl", "buck2_core_tests")
 
 oncall("build_infra")
 
-buck2_core_tests(
-    target_extra_attrs = {
-        "test_explain": {
-            "deps": [
-                "//manifold/clients/python:manifold_client_deprecated",
-            ],
-        },
-    },
-)
+buck2_core_tests()

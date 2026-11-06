@@ -53,4 +53,32 @@ public class BuildConfigFieldsTest {
         "String KEYSTORE_TYPE = \"inhouse\"",
         BuildConfigFields.Field.of("String", "KEYSTORE_TYPE", "\"inhouse\"").toString());
   }
+
+  @Test
+  public void testOverrideExistingFields() {
+    BuildConfigFields defaults =
+        BuildConfigFields.fromFieldDeclarations(
+            ImmutableList.of("int VERSION_CODE = 1", "String FLAVOR = \"package\""));
+    BuildConfigFields overrides =
+        BuildConfigFields.fromFieldDeclarations(
+            ImmutableList.of("int VERSION_CODE = 2", "int BUILD_ID = 3"));
+
+    assertEquals(
+        BuildConfigFields.fromFieldDeclarations(
+                ImmutableList.of("int VERSION_CODE = 2", "String FLAVOR = \"package\""))
+            .getNameToField(),
+        defaults.overrideExisting(overrides).getNameToField());
+    assertEquals(
+        BuildConfigFields.fromFieldDeclarations(
+                ImmutableList.of(
+                    "int VERSION_CODE = 2", "String FLAVOR = \"package\"", "int BUILD_ID = 3"))
+            .getNameToField(),
+        defaults.putAll(overrides).getNameToField());
+    assertEquals(
+        BuildConfigFields.of().getNameToField(),
+        BuildConfigFields.of().overrideExisting(overrides).getNameToField());
+    assertEquals(
+        defaults.getNameToField(),
+        defaults.overrideExisting(BuildConfigFields.of()).getNameToField());
+  }
 }

@@ -63,6 +63,7 @@ use crate::values::ValueTyped;
 use crate::values::demand::Demand;
 use crate::values::error::ControlError;
 use crate::values::function::FUNCTION_TYPE;
+use crate::values::layout::vtable::StarlarkValueRawPtr;
 
 /// A trait for values which are more complex - because they are either mutable
 /// (e.g. using [`RefCell`](std::cell::RefCell)), or contain references to other values.
@@ -863,6 +864,20 @@ pub trait StarlarkValue<'v>:
     /// Call `f` on this value as the receiver of its type's methods: the payload itself for a
     /// type with one representation, the view a type with several builds here.
     fn with_type<R>(this: ValueTyped<'v, Self>, f: impl FnOnce(&Self::Type) -> R) -> R;
+
+    /// [`with_type`](Self::with_type) for a caller that already holds the payload, which is
+    /// every vtable entry; a type with one representation hands it straight to `f` instead of
+    /// deriving it from the value again.
+    #[doc(hidden)]
+    #[inline]
+    fn with_type_at<R>(
+        payload: &'v Self,
+        this: ValueTyped<'v, Self>,
+        f: impl FnOnce(&Self::Type) -> R,
+    ) -> R {
+        let _ = payload;
+        Self::with_type(this, f)
+    }
 
     /// [`StarlarkType::TYPE`] of [`Type`](Self::Type), for code generic over representations.
     const TYPE: &'static str = <Self::Type as StarlarkType<'v>>::TYPE;

@@ -713,6 +713,18 @@ impl ImplStarlarkValue {
         );
         let has_fn_flags = self.has_fn_flags(&type_impl)?;
         type_impl.items.extend(has_fn_flags);
+        if self.impl_of == ImplOf::Type {
+            // A view's methods are the bodies of each representation's vtable entries, which
+            // build the view with a constant variant; inlined there, the dispatch on the variant
+            // folds away and the code is what one `impl` per representation would have been.
+            for item in &mut type_impl.items {
+                if let syn::ImplItem::Fn(f) = item {
+                    if !f.attrs.iter().any(|a| a.path().is_ident("inline")) {
+                        f.attrs.push(syn::parse_quote! { #[inline] });
+                    }
+                }
+            }
+        }
         Ok(type_impl)
     }
 
@@ -731,18 +743,30 @@ impl ImplStarlarkValue {
         }
     }
 
-    /// `with_type` for a representation that is its own type.
-    fn with_type_identity(&self) -> syn::ImplItem {
+    /// `with_type` and `with_type_at` for a representation that is its own type.
+    fn with_type_identity(&self) -> [syn::ImplItem; 2] {
         let lt = &self.lifetime_param;
-        syn::parse_quote! {
-            #[inline]
-            fn with_type<StarlarkWithTypeResult>(
-                this: starlark::values::ValueTyped<#lt, Self>,
-                f: impl FnOnce(&Self::Type) -> StarlarkWithTypeResult,
-            ) -> StarlarkWithTypeResult {
-                f(this.as_ref())
-            }
-        }
+        [
+            syn::parse_quote! {
+                #[inline]
+                fn with_type<StarlarkWithTypeResult>(
+                    this: starlark::values::ValueTyped<#lt, Self>,
+                    f: impl FnOnce(&Self::Type) -> StarlarkWithTypeResult,
+                ) -> StarlarkWithTypeResult {
+                    f(this.as_ref())
+                }
+            },
+            syn::parse_quote! {
+                #[inline]
+                fn with_type_at<StarlarkWithTypeResult>(
+                    payload: &#lt Self,
+                    _this: starlark::values::ValueTyped<#lt, Self>,
+                    f: impl FnOnce(&Self::Type) -> StarlarkWithTypeResult,
+                ) -> StarlarkWithTypeResult {
+                    f(payload)
+                }
+            },
+        ]
     }
 }
 
@@ -832,8 +856,9 @@ fn derive_starlark_value_impl(
     let with_type = impl_starlark_value.with_type_identity();
     rep_impl.items.splice(
         0..0,
-        [please_use_starlark_type_macro, type_self, with_type]
+        [please_use_starlark_type_macro, type_self]
             .into_iter()
+            .chain(with_type)
             .chain(canonical),
     );
 

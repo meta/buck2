@@ -129,30 +129,45 @@ impl Gen {
         ty
     }
 
-    /// Parse `StarlarkValue` method parameter into vtable `fn` parameter and unpack expr.
-    fn vtable_entry_param(&self, span: Span, param: &FnArg) -> syn::Result<VTableFnParam> {
+    /// Parse `StarlarkValue` method parameter into vtable `fn` parameters and unpack exprs.
+    fn vtable_entry_param(&self, span: Span, param: &FnArg) -> syn::Result<Vec<VTableFnParam>> {
         match param {
-            // The receiver arrives as the `Value`, so that the receiver handed to the method
-            // can carry it; the lifetime is erased like every other parameter's.
-            FnArg::Receiver(_) => Ok(VTableFnParam {
-                span,
-                name: syn::parse_quote_spanned! {span=>
-                    this
+            // The receiver arrives twice: as the payload pointer, which is what a type with one
+            // representation needs, and as the `Value`, which a view needs to carry. Lifetimes
+            // are erased like every other parameter's.
+            FnArg::Receiver(_) => Ok(vec![
+                VTableFnParam {
+                    span,
+                    name: syn::parse_quote_spanned! {span=>
+                        this_ptr
+                    },
+                    ty: syn::parse_quote_spanned! {span=>
+                        StarlarkValueRawPtr
+                    },
+                    unpack: syn::parse_quote_spanned! {span=>
+                        &*this_ptr.value_ptr::<T>()
+                    },
                 },
-                ty: syn::parse_quote_spanned! {span=>
-                    Value<'v>
+                VTableFnParam {
+                    span,
+                    name: syn::parse_quote_spanned! {span=>
+                        this
+                    },
+                    ty: syn::parse_quote_spanned! {span=>
+                        Value<'v>
+                    },
+                    unpack: syn::parse_quote_spanned! {span=>
+                        ValueTyped::<T>::new_unchecked(std::mem::transmute::<Value<'_>, Value<'_>>(this))
+                    },
                 },
-                unpack: syn::parse_quote_spanned! {span=>
-                    ValueTyped::<T>::new_unchecked(std::mem::transmute::<Value<'_>, Value<'_>>(this))
-                },
-            }),
+            ]),
             FnArg::Typed(p) => {
                 let name: &Ident = match &*p.pat {
                     Pat::Ident(p) => &p.ident,
                     p => return Err(syn::Error::new(p.span(), "parameter must be identifier")),
                 };
                 let ty_without_lifetime = Self::remove_lifetime_params(&p.ty);
-                Ok(VTableFnParam {
+                Ok(vec![VTableFnParam {
                     span,
                     name: name.clone(),
                     ty: (*p.ty).clone(),
@@ -162,7 +177,7 @@ impl Gen {
                         // to fail at compile time if there's a bug in derive.
                         std::mem::transmute::<#ty_without_lifetime, #ty_without_lifetime>(#name)
                     },
-                })
+                }])
             }
         }
     }
@@ -176,7 +191,10 @@ impl Gen {
             .inputs
             .iter()
             .map(|param| self.vtable_entry_param(method.sig.span(), param))
-            .collect::<syn::Result<_>>()?;
+            .collect::<syn::Result<Vec<_>>>()?
+            .into_iter()
+            .flatten()
+            .collect();
 
         let field_init_param_pairs: Vec<syn::FnArg> = params.iter().map(|p| p.fn_arg()).collect();
         let ret = match &method.sig.output {
@@ -203,24 +221,24 @@ impl Gen {
                 },
             ),
             Dispatch::OnRepresentation => {
-                let (receiver, args) = field_init_args
-                    .split_first()
-                    .expect("a method with a receiver has a receiver");
+                let [payload, _value, args @ ..] = field_init_args.as_slice() else {
+                    unreachable!("a method with a receiver has a receiver");
+                };
                 (
                     quote! { StarlarkValue<'v2> },
                     syn::parse_quote_spanned! {method.sig.span()=>
-                        T::#fn_name((#receiver).as_ref(), #(#args),*)
+                        T::#fn_name(#payload, #(#args),*)
                     },
                 )
             }
             Dispatch::ViaRepresentation => {
-                let (receiver, args) = field_init_args
-                    .split_first()
-                    .expect("a method with a receiver has a receiver");
+                let [payload, value, args @ ..] = field_init_args.as_slice() else {
+                    unreachable!("a method with a receiver has a receiver");
+                };
                 (
                     quote! { StarlarkValue<'v2> },
                     syn::parse_quote_spanned! {method.sig.span()=>
-                        T::with_type(#receiver, |receiver| {
+                        T::with_type_at(#payload, #value, |receiver| {
                             <T::Type as StarlarkType<'v2>>::#fn_name(receiver, #(#args),*)
                         })
                     },

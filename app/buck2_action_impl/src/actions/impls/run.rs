@@ -385,7 +385,6 @@ impl<'v> StarlarkValue<'v> for StarlarkRunActionValues<'v> {
 
 #[starlark_value(frozen_vtable)]
 impl<'v> StarlarkValue<'v> for FrozenStarlarkRunActionValues<'v> {
-    type Canonical = StarlarkRunActionValues<'v>;
     type Type = StarlarkRunActionValuesView<'v>;
 }
 

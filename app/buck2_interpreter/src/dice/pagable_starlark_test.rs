@@ -180,9 +180,7 @@ struct ScopeLeafData {
 starlark_simple_value!(ScopeLeafData);
 
 #[starlark_value(type = "ScopeLeafData")]
-impl<'v> StarlarkValue<'v> for ScopeLeafData {
-    type Canonical = Self;
-}
+impl<'v> StarlarkValue<'v> for ScopeLeafData {}
 
 #[derive(
     Debug,
@@ -206,9 +204,7 @@ impl<'fv> AllocFrozenValue<'fv> for ScopeRootData<'fv> {
 }
 
 #[starlark_value(type = "ScopeRootData", frozen_vtable)]
-impl<'v> StarlarkValue<'v> for ScopeRootData<'v> {
-    type Canonical = Self;
-}
+impl<'v> StarlarkValue<'v> for ScopeRootData<'v> {}
 
 #[derive(Clone, Dupe, Allocative)]
 struct ScopeHeapValue(#[allocative(skip)] Arc<Mutex<Option<OwnedFrozen<Value<'static>>>>>);

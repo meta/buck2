@@ -37,7 +37,6 @@ use crate::values::layout::pointer::RawPointer;
 use crate::values::layout::vtable::AValueDyn;
 use crate::values::layout::vtable::AValueVTable;
 use crate::values::layout::vtable::StarlarkValueRawPtr;
-use crate::values::types::bigint::StarlarkBigInt;
 use crate::values::types::int::inline_int::InlineInt;
 use crate::values::types::int::view::IntView;
 
@@ -117,7 +116,6 @@ impl Display for PointerI32 {
 
 #[starlark_value]
 impl<'v> StarlarkValue<'v> for PointerI32 {
-    type Canonical = StarlarkBigInt;
     type Type = IntView<'v>;
 
     fn is_special(_: Private) -> bool

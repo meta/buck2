@@ -134,7 +134,6 @@ where
     T: Allocative + ProvidesStaticType<'v> + 'v + StarlarkAnyComplexHasTyVTable,
     T::StaticType: Sized,
 {
-    type Canonical = Self;
 }
 
 impl<T: crate::pagable::StarlarkSerialize> crate::pagable::StarlarkSerialize

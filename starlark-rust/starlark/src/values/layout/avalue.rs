@@ -433,7 +433,6 @@ mod tests {
 
     #[starlark_value]
     impl<'v> StarlarkValue<'v> for FrozenReentrantTupleFreeze {
-        type Canonical = ReentrantTupleFreeze<'v>;
         type Type = ReentrantTupleFreezeView<'v>;
     }
 
@@ -488,7 +487,6 @@ mod tests {
 
     #[starlark_value]
     impl<'v> StarlarkValue<'v> for FrozenReentrantListFreeze {
-        type Canonical = ReentrantListFreeze<'v>;
         type Type = ReentrantListFreezeView<'v>;
     }
 

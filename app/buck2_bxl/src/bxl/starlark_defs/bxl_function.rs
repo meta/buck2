@@ -234,7 +234,6 @@ pub(crate) type OwnedBxlFunction = OwnedFrozen<ValueTyped<'static, FrozenBxlFunc
 
 #[starlark_value(frozen_vtable)]
 impl<'v> StarlarkValue<'v> for FrozenBxlFunction<'v> {
-    type Canonical = BxlFunction<'v>;
     type Type = BxlFunctionView<'v>;
 }
 

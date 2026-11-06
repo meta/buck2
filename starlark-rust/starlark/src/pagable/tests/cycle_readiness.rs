@@ -79,9 +79,7 @@ impl Drop for CycleNode<'_> {
 }
 
 #[starlark_value(type = "CycleReadinessNode", frozen_vtable)]
-impl<'v> StarlarkValue<'v> for CycleNode<'v> {
-    type Canonical = Self;
-}
+impl<'v> StarlarkValue<'v> for CycleNode<'v> {}
 
 impl StarlarkSerialize for CycleNode<'_> {
     fn starlark_serialize(&self, ctx: &mut dyn StarlarkSerializeContext) -> crate::Result<()> {
@@ -161,9 +159,7 @@ struct OwnedCarrier {
 starlark_simple_value!(OwnedCarrier);
 
 #[starlark_value(type = "CycleReadinessOwnedCarrier")]
-impl<'v> StarlarkValue<'v> for OwnedCarrier {
-    type Canonical = Self;
-}
+impl<'v> StarlarkValue<'v> for OwnedCarrier {}
 
 #[derive(Debug, Allocative, ProvidesStaticType)]
 struct OwningBackEdge {
@@ -221,9 +217,7 @@ struct SelfOwningCarrier {
 starlark_simple_value!(SelfOwningCarrier);
 
 #[starlark_value(type = "CycleReadinessSelfOwningCarrier")]
-impl<'v> StarlarkValue<'v> for SelfOwningCarrier {
-    type Canonical = Self;
-}
+impl<'v> StarlarkValue<'v> for SelfOwningCarrier {}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Root {

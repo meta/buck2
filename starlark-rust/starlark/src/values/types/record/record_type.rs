@@ -175,7 +175,7 @@ impl<'v, V: RecordVariant> StarlarkTypeRepr for &'v RecordTypeGen<'v, V>
 where
     RecordTypeGen<'v, V>: StarlarkValue<'v>,
 {
-    type Canonical = <RecordTypeGen<'v, V> as StarlarkValue<'v>>::Canonical;
+    type Canonical = <RecordTypeView<'v> as StarlarkTypeRepr>::Canonical;
 
     #[inline]
     fn starlark_type_repr() -> crate::typing::Ty {
@@ -451,13 +451,11 @@ impl<'v> StarlarkType<'v> for RecordTypeView<'v> {
 
 #[starlark_value]
 impl<'v> StarlarkValue<'v> for RecordType<'v> {
-    type Canonical = FrozenRecordType<'v>;
     type Type = RecordTypeView<'v>;
 }
 
 #[starlark_value]
 impl<'v> StarlarkValue<'v> for FrozenRecordType<'v> {
-    type Canonical = Self;
     type Type = RecordTypeView<'v>;
 }
 

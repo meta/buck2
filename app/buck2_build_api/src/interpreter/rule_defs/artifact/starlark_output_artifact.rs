@@ -274,7 +274,6 @@ impl<'v> StarlarkValue<'v> for StarlarkOutputArtifact<'v> {
 
 #[starlark_value(frozen_vtable)]
 impl<'v> StarlarkValue<'v> for FrozenStarlarkOutputArtifact<'v> {
-    type Canonical = StarlarkOutputArtifact<'v>;
     type Type = StarlarkOutputArtifactView<'v>;
 
     fn provide(&'v self, demand: &mut Demand<'_, 'v>) {

@@ -155,9 +155,7 @@ where
 }
 
 #[starlark_value(type = "any")]
-impl<'v, T: StarlarkAnyRegistered> StarlarkValue<'v> for StarlarkAny<T> {
-    type Canonical = Self;
-}
+impl<'v, T: StarlarkAnyRegistered> StarlarkValue<'v> for StarlarkAny<T> {}
 
 /// Register a type for use with [`StarlarkAny`].
 ///

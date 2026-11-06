@@ -330,7 +330,6 @@ impl<'v> StarlarkType<'v> for TransitiveSetDefinitionView<'v> {
 
 #[starlark_value]
 impl<'v> StarlarkValue<'v> for TransitiveSetDefinition<'v> {
-    type Canonical = FrozenTransitiveSetDefinition<'v>;
     type Type = TransitiveSetDefinitionView<'v>;
 }
 
@@ -363,7 +362,6 @@ impl<'v> Serialize for FrozenTransitiveSetDefinition<'v> {
 
 #[starlark_value(frozen_vtable)]
 impl<'v> StarlarkValue<'v> for FrozenTransitiveSetDefinition<'v> {
-    type Canonical = Self;
     type Type = TransitiveSetDefinitionView<'v>;
 }
 

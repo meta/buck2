@@ -1006,7 +1006,6 @@ impl<'v> FrozenStarlarkRuleCallable<'v> {
 
 #[starlark_value(frozen_vtable)]
 impl<'v> StarlarkValue<'v> for FrozenStarlarkRuleCallable<'v> {
-    type Canonical = StarlarkRuleCallable<'v>;
     type Type = StarlarkRuleCallableView<'v>;
 }
 

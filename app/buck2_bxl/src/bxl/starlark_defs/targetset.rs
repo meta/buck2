@@ -217,8 +217,6 @@ impl<'v, Node: NodeLike> StarlarkValue<'v> for StarlarkTargetSet<Node>
 where
     Self: HasTyVTable,
 {
-    type Canonical = Self;
-
     fn get_type_starlark_repr() -> Ty {
         Node::target_set_ty()
     }

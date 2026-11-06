@@ -570,7 +570,6 @@ impl<'v> StarlarkType<'v> for ListView<'v> {
 
 #[starlark_value]
 impl<'v> StarlarkValue<'v> for ListGen<ListData<'v>> {
-    type Canonical = ListGen<FrozenListData<'v>>;
     type Type = ListView<'v>;
 
     fn is_special(_: Private) -> bool

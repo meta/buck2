@@ -247,7 +247,6 @@ impl<'v, T: 'static> StarlarkValue<'v> for TypeCompiledImplAsStarlarkValue<T>
 where
     T: TypeMatcher,
 {
-    type Canonical = TypeCompiledImplAsStarlarkValue<DummyTypeMatcher>;
     type Type = TypeCompiled<'v>;
 
     fn with_type<R>(this: ValueTyped<'v, Self>, f: impl FnOnce(&Self::Type) -> R) -> R {

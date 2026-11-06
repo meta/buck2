@@ -816,7 +816,6 @@ fn test_label_assign() {
 
     #[starlark_value]
     impl<'v> StarlarkValue<'v> for FrozenWrapper {
-        type Canonical = Wrapper<'v>;
         type Type = WrapperView<'v>;
     }
 

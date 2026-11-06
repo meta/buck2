@@ -135,9 +135,7 @@ where
 }
 
 #[starlark_value(type = "AnyArray")]
-impl<'v, T: AnyArrayRegistered> StarlarkValue<'v> for AnyArray<T> {
-    type Canonical = Self;
-}
+impl<'v, T: AnyArrayRegistered> StarlarkValue<'v> for AnyArray<T> {}
 
 /// Register a typing vtable entry for `AnyArray<T>`.
 #[macro_export]

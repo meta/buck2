@@ -343,7 +343,7 @@ starlark::methods_static!(ENUM_TYPE_METHODS = enum_type_methods);
 pub(crate) type AnyEnumType<'v> = &'v EnumTypeGen<'v, dyn EnumVariant>;
 
 impl<'v> StarlarkTypeRepr for AnyEnumType<'v> {
-    type Canonical = <FrozenEnumType<'v> as StarlarkValue<'v>>::Canonical;
+    type Canonical = <EnumTypeView<'v> as StarlarkTypeRepr>::Canonical;
 
     #[inline]
     fn starlark_type_repr() -> crate::typing::Ty {
@@ -462,7 +462,6 @@ impl<'v> StarlarkType<'v> for EnumTypeView<'v> {
 
 #[starlark_value]
 impl<'v> StarlarkValue<'v> for EnumType<'v> {
-    type Canonical = FrozenEnumType<'v>;
     type Type = EnumTypeView<'v>;
 
     fn provide(&'v self, demand: &mut Demand<'_, 'v>) {
@@ -472,7 +471,6 @@ impl<'v> StarlarkValue<'v> for EnumType<'v> {
 
 #[starlark_value]
 impl<'v> StarlarkValue<'v> for FrozenEnumType<'v> {
-    type Canonical = Self;
     type Type = EnumTypeView<'v>;
 
     fn provide(&'v self, demand: &mut Demand<'_, 'v>) {

@@ -592,7 +592,6 @@ impl<'v> StarlarkType<'v> for DictView<'v> {
 
 #[starlark_value]
 impl<'v> StarlarkValue<'v> for DictGen<RefCell<Dict<'v>>> {
-    type Canonical = DictGen<Dict<'v>>;
     type Type = DictView<'v>;
 }
 

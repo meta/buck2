@@ -75,7 +75,6 @@ impl<'v> StarlarkValue<'v> for ValueCaptured<'v> {
 
 #[starlark_value(frozen_vtable)]
 impl<'v> StarlarkValue<'v> for FrozenValueCaptured<'v> {
-    type Canonical = ValueCaptured<'v>;
     type Type = ValueCapturedView<'v>;
 }
 

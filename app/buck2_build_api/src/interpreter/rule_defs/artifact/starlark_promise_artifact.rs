@@ -41,7 +41,6 @@ use crate::artifact_groups::promise::PromiseArtifact;
 use crate::interpreter::rule_defs::artifact::ArtifactError;
 use crate::interpreter::rule_defs::artifact::associated::AssociatedArtifacts;
 use crate::interpreter::rule_defs::artifact::methods::EitherStarlarkInputArtifact;
-use crate::interpreter::rule_defs::artifact::starlark_artifact::StarlarkArtifact;
 use crate::interpreter::rule_defs::artifact::starlark_artifact_like::ArtifactFingerprint;
 use crate::interpreter::rule_defs::artifact::starlark_artifact_like::StarlarkArtifactLike;
 use crate::interpreter::rule_defs::artifact::starlark_artifact_like::StarlarkArtifactView;
@@ -299,7 +298,6 @@ impl<'v> CommandLineArgLike<'v> for StarlarkPromiseArtifact {
 
 #[starlark_value]
 impl<'v> StarlarkValue<'v> for StarlarkPromiseArtifact {
-    type Canonical = StarlarkArtifact;
     type Type = StarlarkArtifactView<'v>;
 
     fn provide(&'v self, demand: &mut Demand<'_, 'v>) {

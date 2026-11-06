@@ -534,7 +534,6 @@ impl<'v> StarlarkType<'v> for UserProviderCallableView<'v> {
 
 #[starlark_value(skip_vtable)]
 impl<'v> StarlarkValue<'v> for UserProviderCallable<'v> {
-    type Canonical = FrozenUserProviderCallable<'v>;
     type Type = UserProviderCallableView<'v>;
 
     fn provide(&'v self, demand: &mut Demand<'_, 'v>) {
@@ -587,7 +586,6 @@ impl<'v> ProviderCallableLike for FrozenUserProviderCallable<'v> {
 
 #[starlark_value(frozen_vtable)]
 impl<'v> StarlarkValue<'v> for FrozenUserProviderCallable<'v> {
-    type Canonical = Self;
     type Type = UserProviderCallableView<'v>;
 
     fn provide(&'v self, demand: &mut Demand<'_, 'v>) {

@@ -327,7 +327,6 @@ impl<'v> AllocValue<'v> for StarlarkDeclaredArtifact<'v> {
 
 #[starlark_value]
 impl<'v> StarlarkValue<'v> for StarlarkDeclaredArtifact<'v> {
-    type Canonical = StarlarkArtifact;
     type Type = StarlarkArtifactView<'v>;
 
     fn provide(&'v self, demand: &mut Demand<'_, 'v>) {

@@ -52,7 +52,6 @@ use crate::private::Private;
 use crate::typing::Ty;
 use crate::typing::TyBasic;
 use crate::typing::TypingBinOp;
-use crate::typing::starlark_value::HasTyVTable;
 use crate::values::FreezeDynamic;
 use crate::values::Heap;
 use crate::values::StringValue;
@@ -853,10 +852,6 @@ pub trait StarlarkType<'v>: 'v + ProvidesStaticType<'v> + Debug + Display + Size
 pub trait StarlarkValue<'v>:
     'v + ProvidesStaticType<'v> + Allocative + Debug + Display + Serialize + Sized
 {
-    /// Two representations are of the same Starlark type iff their `Canonical` is the same
-    /// type. `#[starlark_value]` generates `Self` when nothing says otherwise.
-    type Canonical: StarlarkValue<'v> + HasTyVTable;
-
     /// The Starlark type this is a representation of: `Self` for a type with one
     /// representation, otherwise the view the type implements [`StarlarkType`] for.
     type Type: StarlarkType<'v>;

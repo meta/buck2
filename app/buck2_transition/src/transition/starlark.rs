@@ -194,7 +194,6 @@ impl<'v> StarlarkValue<'v> for Transition<'v> {
 
 #[starlark_value(frozen_vtable)]
 impl<'v> StarlarkValue<'v> for FrozenTransition<'v> {
-    type Canonical = Transition<'v>;
     type Type = TransitionView<'v>;
 
     fn provide(&'v self, demand: &mut Demand<'_, 'v>) {

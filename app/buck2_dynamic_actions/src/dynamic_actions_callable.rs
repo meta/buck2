@@ -209,13 +209,11 @@ impl<'v> StarlarkType<'v> for DynamicActionsCallableView<'v> {
 
 #[starlark_value]
 impl<'v> StarlarkValue<'v> for DynamicActionsCallable<'v> {
-    type Canonical = FrozenStarlarkDynamicActionsCallable<'v>;
     type Type = DynamicActionsCallableView<'v>;
 }
 
 #[starlark_value(frozen_vtable)]
 impl<'v> StarlarkValue<'v> for FrozenStarlarkDynamicActionsCallable<'v> {
-    type Canonical = Self;
     type Type = DynamicActionsCallableView<'v>;
 }
 

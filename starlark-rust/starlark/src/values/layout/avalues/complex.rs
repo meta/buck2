@@ -138,7 +138,6 @@ mod tests {
 
     #[starlark_value]
     impl<'v> StarlarkValue<'v> for SmallTarget {
-        type Canonical = Self;
         type Type = DynamicFreezeTargetView<'v>;
     }
 
@@ -155,7 +154,6 @@ mod tests {
 
     #[starlark_value]
     impl<'v> StarlarkValue<'v> for LargeTarget {
-        type Canonical = SmallTarget;
         type Type = DynamicFreezeTargetView<'v>;
     }
 
@@ -173,7 +171,6 @@ mod tests {
 
     #[starlark_value]
     impl<'v> StarlarkValue<'v> for DropTarget {
-        type Canonical = SmallTarget;
         type Type = DynamicFreezeTargetView<'v>;
     }
 
@@ -215,7 +212,6 @@ mod tests {
 
     #[starlark_value(skip_vtable)]
     impl<'v> StarlarkValue<'v> for FreezeDynamicValue<'v> {
-        type Canonical = SmallTarget;
         type Type = DynamicFreezeTargetView<'v>;
     }
 

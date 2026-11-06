@@ -185,8 +185,6 @@ impl<'v> StarlarkDeserialize<'v> for Partial<'v> {
 
 #[starlark_value(type = FUNCTION_TYPE)]
 impl<'v> StarlarkValue<'v> for Partial<'v> {
-    type Canonical = Partial<'v>;
-
     fn name_for_call_stack(&self, _me: Value<'v>) -> String {
         "partial".to_owned()
     }

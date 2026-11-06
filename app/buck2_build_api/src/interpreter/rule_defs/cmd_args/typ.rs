@@ -708,7 +708,6 @@ impl<'v> StarlarkValue<'v> for StarlarkCmdArgs<'v> {
 
 #[starlark_value(frozen_vtable)]
 impl<'v> StarlarkValue<'v> for FrozenStarlarkCmdArgs<'v> {
-    type Canonical = StarlarkCmdArgs<'v>;
     type Type = StarlarkCmdArgsView<'v>;
 
     fn provide(&'v self, demand: &mut Demand<'_, 'v>) {

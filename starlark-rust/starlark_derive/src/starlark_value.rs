@@ -52,8 +52,8 @@ struct StarlarkValueAttrs {
 enum VtableMode {
     /// Decided by the shape of `Self`'s generics.
     Default,
-    /// `skip_vtable`: register nothing. For types whose frozen canonical form handles
-    /// serialization (e.g. unfrozen types with `type Canonical = FrozenFoo`).
+    /// `skip_vtable`: register nothing. For types whose frozen representation handles
+    /// serialization.
     Skip,
     /// `ty_vtable_no_freeze`: register only the typing-side vtable (`TyStarlarkValueVTable`);
     /// skip the pagable `AValue` vtable that would require `T: StarlarkPagable + Sync`.
@@ -150,7 +150,7 @@ struct ImplStarlarkValue {
 /// is the type's behaviour.
 fn is_representation_item(item: &syn::ImplItem) -> bool {
     match item {
-        syn::ImplItem::Type(t) => t.ident == "Canonical" || t.ident == "Type",
+        syn::ImplItem::Type(t) => t.ident == "Type",
         syn::ImplItem::Fn(f) => matches!(
             f.sig.ident.to_string().as_str(),
             "provide" | "type_matches_value" | "is_special" | "with_type"
@@ -331,17 +331,6 @@ impl ImplStarlarkValue {
         })
     }
 
-    /// Find a type with given name.
-    fn find_ty(&self, name: &str) -> Option<&syn::ImplItemType> {
-        self.input.items.iter().find_map(|item| {
-            if let syn::ImplItem::Type(ty) = item {
-                if ty.ident == name { Some(ty) } else { None }
-            } else {
-                None
-            }
-        })
-    }
-
     /// There's an function with given name.
     fn has_fn(&self, name: &str) -> bool {
         self.find_fn(name).is_some()
@@ -486,72 +475,6 @@ impl ImplStarlarkValue {
                 starlark::values::typing::macro_refs::starlark_value_bit_or_for_type(self, other, heap)
             }
         })?))
-    }
-
-    /// Extract path from self_ty for type transformation.
-    fn extract_self_ty_path(&self) -> syn::Result<syn::Path> {
-        let syn::Type::Path(type_path) = &*self.input.self_ty else {
-            return Err(syn::Error::new_spanned(
-                &self.input.self_ty,
-                "self type is not path",
-            ));
-        };
-        let syn::TypePath {
-            attrs: _,
-            qself,
-            path,
-        } = type_path;
-        if qself.is_some() {
-            return Err(syn::Error::new_spanned(
-                type_path,
-                "qualified self not supported",
-            ));
-        }
-        Ok(path.clone())
-    }
-
-    /// `Canonical` when the impl does not spell it: the self type, which is only right when
-    /// there is nothing to canonicalize away, so type and const parameters are an error.
-    fn make_canonical_type(&self) -> syn::Result<syn::Type> {
-        for param in &self.input.generics.params {
-            match param {
-                syn::GenericParam::Lifetime(_) => {}
-                syn::GenericParam::Type(_) | syn::GenericParam::Const(_) => {
-                    return Err(syn::Error::new_spanned(
-                        param,
-                        "cannot infer `Canonical` for a type with type or const parameters; \
-                         specify `type Canonical` explicitly",
-                    ));
-                }
-            }
-        }
-
-        let path = self.extract_self_ty_path()?;
-
-        // If type name is `FrozenXxx`, it is likely that it should have `Canonical`
-        // pointing to `Xxx`. Make it an error and force user to specify it explicitly to be safe.
-        if let Some(last) = path.segments.last() {
-            if last.ident.to_string().starts_with("Frozen") {
-                return Err(syn::Error::new_spanned(
-                    last,
-                    "Type name starts with `Frozen`, please specify `Canonical` explicitly",
-                ));
-            }
-        }
-
-        Ok(syn::parse_quote! { #path })
-    }
-
-    /// `type Canonical = ...`.
-    fn canonical_member(&self) -> syn::Result<Option<syn::ImplItem>> {
-        if self.find_ty("Canonical").is_some() {
-            Ok(None)
-        } else {
-            let ty = self.make_canonical_type()?;
-            Ok(Some(syn::parse_quote! {
-                type Canonical = #ty;
-            }))
-        }
     }
 
     /// Classify `Self`'s generics for `vtable_registration`.
@@ -802,8 +725,18 @@ fn derive_starlark_value_impl(
         .iter()
         .any(|item| matches!(item, syn::ImplItem::Type(t) if t.ident == "Type"));
 
+    if let Some(item) = input
+        .items
+        .iter()
+        .find(|item| matches!(item, syn::ImplItem::Type(t) if t.ident == "Canonical"))
+    {
+        return Err(syn::Error::new_spanned(
+            item,
+            "there is no `Canonical`; a representation of a type with several representations \
+             names the type with `type Type = ...`",
+        ));
+    }
     let please_use_starlark_type_macro = impl_starlark_value.please_use_starlark_type_macro()?;
-    let canonical = impl_starlark_value.canonical_member()?;
     let vtable_registration = impl_starlark_value.vtable_registration()?;
     let mut rep_impl = input.clone();
     rep_impl.items = rep_items;
@@ -838,8 +771,7 @@ fn derive_starlark_value_impl(
             0..0,
             [please_use_starlark_type_macro]
                 .into_iter()
-                .chain(with_type)
-                .chain(canonical),
+                .chain(with_type),
         );
         return Ok(quote! {
             #rep_impl
@@ -858,8 +790,7 @@ fn derive_starlark_value_impl(
         0..0,
         [please_use_starlark_type_macro, type_self]
             .into_iter()
-            .chain(with_type)
-            .chain(canonical),
+            .chain(with_type),
     );
 
     Ok(quote! {

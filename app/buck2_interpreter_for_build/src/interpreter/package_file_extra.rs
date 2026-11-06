@@ -110,7 +110,6 @@ impl<'v> StarlarkValue<'v> for PackageFileExtra<'v> {
 
 #[starlark_value(frozen_vtable)]
 impl<'v> StarlarkValue<'v> for FrozenPackageFileExtra<'v> {
-    type Canonical = PackageFileExtra<'v>;
     type Type = PackageFileExtraView<'v>;
 }
 

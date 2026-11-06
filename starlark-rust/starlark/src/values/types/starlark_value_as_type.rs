@@ -40,6 +40,7 @@ use crate::values::AllocStaticSimple;
 use crate::values::AllocValue;
 use crate::values::FrozenHeap;
 use crate::values::Heap;
+use crate::values::StarlarkType;
 use crate::values::StarlarkValue;
 use crate::values::StaticValueRegistered;
 use crate::values::Value;
@@ -81,7 +82,9 @@ unsafe impl StaticValueRegistered for StarlarkValueAsTypeStarlarkValue {}
 
 #[starlark_value(type = "type")]
 impl<'v> StarlarkValue<'v> for StarlarkValueAsTypeStarlarkValue {
-    type Canonical = AbstractType;
+    fn get_type_starlark_repr() -> Ty {
+        <AbstractType as StarlarkType>::get_type_starlark_repr()
+    }
 
     fn eval_type(&self) -> Option<Ty> {
         Some((self.0)())

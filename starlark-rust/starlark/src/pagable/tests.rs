@@ -210,9 +210,7 @@ struct SimpleData {
 starlark_simple_value!(SimpleData);
 
 #[starlark_value(type = "SimpleData")]
-impl<'v> StarlarkValue<'v> for SimpleData {
-    type Canonical = Self;
-}
+impl<'v> StarlarkValue<'v> for SimpleData {}
 
 /// A value that cannot be paged, as a heap holding one must say so without panicking.
 #[derive(
@@ -229,9 +227,7 @@ struct Unpagable;
 starlark_simple_value!(Unpagable);
 
 #[starlark_value(type = "Unpagable")]
-impl<'v> StarlarkValue<'v> for Unpagable {
-    type Canonical = Self;
-}
+impl<'v> StarlarkValue<'v> for Unpagable {}
 
 #[test]
 fn unsupported_value_fails_page_out_instead_of_panicking() {
@@ -471,9 +467,7 @@ struct HeapData {
 starlark_simple_value!(HeapData);
 
 #[starlark_value(type = "HeapData")]
-impl<'v> StarlarkValue<'v> for HeapData {
-    type Canonical = Self;
-}
+impl<'v> StarlarkValue<'v> for HeapData {}
 
 #[test]
 fn test_simple_value_round_trip() -> crate::Result<()> {
@@ -535,9 +529,7 @@ struct BrandedData<'v> {
 }
 
 #[starlark_value(type = "BrandedData", frozen_vtable)]
-impl<'v> StarlarkValue<'v> for BrandedData<'v> {
-    type Canonical = Self;
-}
+impl<'v> StarlarkValue<'v> for BrandedData<'v> {}
 
 #[test]
 fn test_frozen_vtable_flag_round_trip() -> crate::Result<()> {
@@ -579,9 +571,7 @@ struct RefData<'v> {
 }
 
 #[starlark_value(type = "RefData", frozen_vtable)]
-impl<'v> StarlarkValue<'v> for RefData<'v> {
-    type Canonical = Self;
-}
+impl<'v> StarlarkValue<'v> for RefData<'v> {}
 
 #[test]
 fn test_frozen_value_ref_round_trip() -> crate::Result<()> {
@@ -620,9 +610,7 @@ struct DropRefData<'v> {
 }
 
 #[starlark_value(type = "DropRefData", frozen_vtable)]
-impl<'v> StarlarkValue<'v> for DropRefData<'v> {
-    type Canonical = Self;
-}
+impl<'v> StarlarkValue<'v> for DropRefData<'v> {}
 
 #[test]
 fn test_frozen_value_drop_to_undrop_round_trip() -> crate::Result<()> {
@@ -1263,9 +1251,7 @@ struct SmallMapData<'v> {
 }
 
 #[starlark_value(type = "SmallMapData", frozen_vtable)]
-impl<'v> StarlarkValue<'v> for SmallMapData<'v> {
-    type Canonical = Self;
-}
+impl<'v> StarlarkValue<'v> for SmallMapData<'v> {}
 
 /// A test type with `SmallMap<Value, Value>`.
 #[derive(
@@ -1282,9 +1268,7 @@ struct SmallMapFvData<'v> {
 }
 
 #[starlark_value(type = "SmallMapFvData", frozen_vtable)]
-impl<'v> StarlarkValue<'v> for SmallMapFvData<'v> {
-    type Canonical = Self;
-}
+impl<'v> StarlarkValue<'v> for SmallMapFvData<'v> {}
 
 #[test]
 fn test_small_map_string_key_round_trip() -> crate::Result<()> {
@@ -1573,9 +1557,7 @@ struct TestStackFrame {
 starlark_simple_value!(TestStackFrame);
 
 #[starlark_value(type = "TestStackFrame")]
-impl<'v> StarlarkValue<'v> for TestStackFrame {
-    type Canonical = Self;
-}
+impl<'v> StarlarkValue<'v> for TestStackFrame {}
 
 #[test]
 fn test_stack_frame_data_round_trip() -> crate::Result<()> {
@@ -2303,9 +2285,7 @@ struct ArcBlanketOuter {
 starlark_simple_value!(ArcBlanketOuter);
 
 #[starlark_value(type = "ArcBlanketOuter")]
-impl<'v> StarlarkValue<'v> for ArcBlanketOuter {
-    type Canonical = Self;
-}
+impl<'v> StarlarkValue<'v> for ArcBlanketOuter {}
 
 #[test]
 fn test_arc_blanket_round_trip() -> crate::Result<()> {
@@ -2505,9 +2485,7 @@ impl std::fmt::Debug for AtomicHost<'_> {
 }
 
 #[starlark_value(type = "AtomicHost", frozen_vtable)]
-impl<'v> StarlarkValue<'v> for AtomicHost<'v> {
-    type Canonical = Self;
-}
+impl<'v> StarlarkValue<'v> for AtomicHost<'v> {}
 
 #[test]
 fn test_atomic_value_typed_option_some_round_trip() -> crate::Result<()> {
@@ -2794,9 +2772,7 @@ struct FieldErrorTestData {
 starlark_simple_value!(FieldErrorTestData);
 
 #[starlark_value(type = "FieldErrorTestData")]
-impl<'v> StarlarkValue<'v> for FieldErrorTestData {
-    type Canonical = Self;
-}
+impl<'v> StarlarkValue<'v> for FieldErrorTestData {}
 
 #[test]
 fn test_deserialize_field_error_includes_field_name() {
@@ -2836,9 +2812,7 @@ struct DropFieldErrorTestData {
 starlark_simple_value!(DropFieldErrorTestData);
 
 #[starlark_value(type = "DropFieldErrorTestData")]
-impl<'v> StarlarkValue<'v> for DropFieldErrorTestData {
-    type Canonical = Self;
-}
+impl<'v> StarlarkValue<'v> for DropFieldErrorTestData {}
 
 /// A value that fails to deserialize leaves its slot without a payload; the
 /// heap, dropped on the way out of the failed page-in, must still walk past it.
@@ -3115,9 +3089,7 @@ mod claim_unwind {
     starlark_simple_value!(PanicDeserData);
 
     #[starlark_value(type = "PanicDeserData")]
-    impl<'v> StarlarkValue<'v> for PanicDeserData {
-        type Canonical = Self;
-    }
+    impl<'v> StarlarkValue<'v> for PanicDeserData {}
 
     #[test]
     fn test_panicking_deserializer_fails_claim_and_wakes_waiter() -> crate::Result<()> {
@@ -3276,9 +3248,7 @@ impl Allocative for ParkedData {
 starlark_simple_value!(ParkedData);
 
 #[starlark_value(type = "ParkedData")]
-impl<'v> StarlarkValue<'v> for ParkedData {
-    type Canonical = Self;
-}
+impl<'v> StarlarkValue<'v> for ParkedData {}
 
 /// Walk an unfinished slot, then let its writer finish and claim another slot
 /// inside a profiling callback. The snapshot must exclude the later allocation
@@ -6012,8 +5982,6 @@ starlark_simple_value!(GateKey);
 
 #[starlark_value(type = "GateKey")]
 impl<'v> StarlarkValue<'v> for GateKey {
-    type Canonical = Self;
-
     fn write_hash(&self, hasher: &mut crate::collections::StarlarkHasher) -> crate::Result<()> {
         use std::hash::Hasher;
         hasher.write_u32(self.id);

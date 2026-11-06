@@ -72,7 +72,6 @@ pub struct StarlarkExecutionGroup(RefCell<InnerStarlarkExecutionGroup>);
 
 #[starlark_value(skip_vtable)]
 impl<'v> StarlarkValue<'v> for StarlarkExecutionGroup {
-    type Canonical = FrozenStarlarkExecutionGroup;
     type Type = StarlarkExecutionGroupView<'v>;
 }
 
@@ -131,7 +130,6 @@ impl FrozenStarlarkExecutionGroup {
 
 #[starlark_value]
 impl<'v> StarlarkValue<'v> for FrozenStarlarkExecutionGroup {
-    type Canonical = FrozenStarlarkExecutionGroup;
     type Type = StarlarkExecutionGroupView<'v>;
 }
 

@@ -74,7 +74,6 @@ pub struct StarlarkPluginKind(RefCell<InnerStarlarkPluginKind>);
 
 #[starlark_value(skip_vtable)]
 impl<'v> StarlarkValue<'v> for StarlarkPluginKind {
-    type Canonical = FrozenStarlarkPluginKind;
     type Type = StarlarkPluginKindView<'v>;
 }
 
@@ -116,7 +115,6 @@ starlark_simple_value!(FrozenStarlarkPluginKind);
 
 #[starlark_value]
 impl<'v> StarlarkValue<'v> for FrozenStarlarkPluginKind {
-    type Canonical = FrozenStarlarkPluginKind;
     type Type = StarlarkPluginKindView<'v>;
 }
 

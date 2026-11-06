@@ -66,4 +66,13 @@ buck2_e2e_test(
     name = "test_prelude_tools",
     srcs = ["test_prelude_tools.py"],
     data_dir = "test_prelude_tools_data",
+    # The clang of the fbcode platform, for the tests that compile with a real clang; they run
+    # on Linux only.
+    env = {
+        "CLANG": select({
+            "DEFAULT": "",
+            "ovr_config//os:linux": "$(location fbcode//third-party-buck/platform010/build/llvm-fb/21:bin/clang)",
+        }),
+    },
+    deps = ["fbcode//buck2/tests/e2e_util:utils"],
 )

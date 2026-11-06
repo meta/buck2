@@ -58,6 +58,18 @@ prelude.python_bootstrap_library(
     ],
 )
 
+# The processors import each other as top-level modules.
+prelude.python_library(
+    name = "dep_file_processors_lib",
+    srcs = [
+        "dep_file_utils.py",
+        "makefile_to_dep_file.py",
+        "show_headers_to_dep_file.py",
+    ],
+    base_module = "",
+    visibility = ["prelude//cxx/tools/..."],
+)
+
 prelude.python_bootstrap_binary(
     name = "linker_wrapper",
     main = "linker_wrapper.py",

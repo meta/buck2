@@ -1,0 +1,15 @@
+load("@prelude//utils:source_listing.bzl", "source_listing")
+
+oncall("build_infra")
+
+source_listing()
+
+prelude = native
+
+prelude.python_test(
+    name = "test_dep_file_processor",
+    srcs = ["test_dep_file_processor.py"],
+    deps = [
+        "prelude//cxx/tools:dep_file_processors_lib",
+    ],
+)

@@ -39,9 +39,12 @@ use starlark::values::FrozenValueTyped;
 use starlark::values::Heap;
 use starlark::values::NoSerialize;
 use starlark::values::StarlarkPagable;
+use starlark::values::StarlarkRepresentations;
+use starlark::values::StarlarkType;
 use starlark::values::StarlarkValue;
 use starlark::values::Trace;
 use starlark::values::Value;
+use starlark::values::ValueTyped;
 use starlark::values::list::ListType;
 use starlark::values::starlark_value;
 use starlark::values::type_repr::StarlarkTypeRepr;
@@ -136,42 +139,26 @@ pub struct FrozenStarlarkDynamicActionsCallable<'v> {
 
 starlark::methods_static!(DYNAMIC_ACTION_CALLABLE_METHODS = dynamic_action_callable_methods);
 
-#[starlark_value(type = "DynamicActionCallable")]
-impl<'v> StarlarkValue<'v> for DynamicActionsCallable<'v> {
-    type Canonical = FrozenStarlarkDynamicActionsCallable<'v>;
+/// A dynamic actions callable in either of its representations.
+#[derive(Debug, Clone, Copy, StarlarkRepresentations)]
+pub enum DynamicActionsCallableView<'v> {
+    Frozen(ValueTyped<'v, FrozenStarlarkDynamicActionsCallable<'v>>),
+    Unfrozen(ValueTyped<'v, DynamicActionsCallable<'v>>),
+}
 
+#[starlark_value(type = "DynamicActionCallable")]
+impl<'v> StarlarkType<'v> for DynamicActionsCallableView<'v> {
     fn export_as(
         &self,
         variable_name: &str,
         _eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<()> {
-        // First wins.
-        self.name.get_or_init(|| variable_name.to_owned());
+        if let DynamicActionsCallableView::Unfrozen(this) = self {
+            // First wins.
+            this.name.get_or_init(|| variable_name.to_owned());
+        }
         Ok(())
     }
-
-    fn invoke(
-        &self,
-        _me: Value<'v>,
-        _args: &Arguments<'v, '_>,
-        _eval: &mut Evaluator<'v, '_, '_>,
-    ) -> starlark::Result<Value<'v>> {
-        Err(buck2_error::Error::from(DynamicActionCallableError::NotFrozen).into())
-    }
-
-    fn typechecker_ty(&self) -> Option<Ty> {
-        Some(self.self_ty.dupe())
-    }
-
-    // used for docs of `DynamicActionCallable`
-    fn get_methods() -> Option<&'static Methods> {
-        Some(DYNAMIC_ACTION_CALLABLE_METHODS.methods())
-    }
-}
-
-#[starlark_value(type = "DynamicActionCallable", frozen_vtable)]
-impl<'v> StarlarkValue<'v> for FrozenStarlarkDynamicActionsCallable<'v> {
-    type Canonical = Self;
 
     fn invoke(
         &self,
@@ -179,11 +166,17 @@ impl<'v> StarlarkValue<'v> for FrozenStarlarkDynamicActionsCallable<'v> {
         args: &Arguments<'v, '_>,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<Value<'v>> {
+        let this = match self {
+            DynamicActionsCallableView::Frozen(this) => this,
+            DynamicActionsCallableView::Unfrozen(_) => {
+                return Err(buck2_error::Error::from(DynamicActionCallableError::NotFrozen).into());
+            }
+        };
         let me = FrozenValueTyped::new_err(me)?;
         let attr_values: DynamicAttrValues<'v> =
-            self.signature.parser(args, eval, |parser, _eval| {
-                let mut attr_values = Vec::with_capacity(self.attrs.len());
-                for (name, attr_ty) in &self.attrs {
+            this.signature.parser(args, eval, |parser, _eval| {
+                let mut attr_values = Vec::with_capacity(this.attrs.len());
+                for (name, attr_ty) in &this.attrs {
                     let value = attr_ty
                         .coerce(parser.next()?)
                         .with_buck_error_context(|| format!("Error coercing attribute `{name}`"))?;
@@ -202,8 +195,28 @@ impl<'v> StarlarkValue<'v> for FrozenStarlarkDynamicActionsCallable<'v> {
     }
 
     fn typechecker_ty(&self) -> Option<Ty> {
-        Some(self.self_ty.dupe())
+        match self {
+            DynamicActionsCallableView::Frozen(this) => Some(this.self_ty.dupe()),
+            DynamicActionsCallableView::Unfrozen(this) => Some(this.self_ty.dupe()),
+        }
     }
+
+    // used for docs of `DynamicActionCallable`
+    fn get_methods() -> Option<&'static Methods> {
+        Some(DYNAMIC_ACTION_CALLABLE_METHODS.methods())
+    }
+}
+
+#[starlark_value]
+impl<'v> StarlarkValue<'v> for DynamicActionsCallable<'v> {
+    type Canonical = FrozenStarlarkDynamicActionsCallable<'v>;
+    type Type = DynamicActionsCallableView<'v>;
+}
+
+#[starlark_value(frozen_vtable)]
+impl<'v> StarlarkValue<'v> for FrozenStarlarkDynamicActionsCallable<'v> {
+    type Canonical = Self;
+    type Type = DynamicActionsCallableView<'v>;
 }
 
 impl<'v> AllocValue<'v> for DynamicActionsCallable<'v> {

@@ -392,7 +392,8 @@ def _get_all_agg_debug_info(
     ctx: AnalysisContext, binary_output: AppleBundleBinaryOutput, deps_debuggable_infos: list[AppleDebuggableInfo]
 ) -> AggregatedAppleDebugInfo:
     all_debug_infos = deps_debuggable_infos + ([binary_output.debuggable_info] if binary_output.debuggable_info else [])
-    return get_aggregated_debug_info(ctx, all_debug_infos)
+    select_debug_info = ctx.attrs.selective_debugging[AppleSelectiveDebuggingInfo].select_debug_info if ctx.attrs.selective_debugging else None
+    return get_aggregated_debug_info(ctx, all_debug_infos, select_debug_info)
 
 def _maybe_scrub_selected_debug_paths_file(ctx: AnalysisContext, package_names: list[str]) -> Artifact:
     if not ctx.attrs.selective_debugging:

@@ -27,11 +27,12 @@ use std::sync::atomic::AtomicPtr;
 use allocative::Allocative;
 use dupe::Dupe;
 use starlark_derive::NoSerialize;
-use starlark_derive::ProvidesStaticType;
 use starlark_derive::StarlarkPagable;
 use starlark_derive::starlark_value;
 
 use crate as starlark;
+use crate::any::IsStaticType;
+use crate::any::ProvidesStaticType;
 use crate::docs::DocItem;
 use crate::docs::DocString;
 use crate::docs::DocType;
@@ -173,6 +174,20 @@ impl<'v, P: StarlarkCallableParamSpec, R: StarlarkTypeRepr> Clone for StarlarkCa
 }
 
 impl<'v, P: StarlarkCallableParamSpec, R: StarlarkTypeRepr> Dupe for StarlarkCallable<'v, P, R> {}
+
+// SAFETY: the static type is the same type with the heap lifetime erased; `P` and `R` only
+// describe the signature and carry no heap lifetime.
+unsafe impl<'v, P: StarlarkCallableParamSpec + 'static, R: StarlarkTypeRepr + 'static>
+    ProvidesStaticType<'v> for StarlarkCallable<'v, P, R>
+{
+    type StaticType = StarlarkCallable<'static, P, R>;
+}
+
+impl<P: StarlarkCallableParamSpec + 'static, R: StarlarkTypeRepr + 'static> IsStaticType
+    for StarlarkCallable<'static, P, R>
+{
+    type Reinfect<'lt> = StarlarkCallable<'lt, P, R>;
+}
 
 impl<'v, P: StarlarkCallableParamSpec, R: StarlarkTypeRepr> Debug for StarlarkCallable<'v, P, R> {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {

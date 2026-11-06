@@ -19,6 +19,8 @@ use allocative::Allocative;
 use dupe::Dupe;
 use either::Either;
 
+use crate as starlark;
+use crate::any::ProvidesStaticType;
 use crate::typing::Ty;
 use crate::values::AllocFrozenValue;
 use crate::values::AllocValue;
@@ -32,7 +34,16 @@ use crate::values::type_repr::StarlarkTypeRepr;
 /// Equivalent of a Rust [`Option`], where `None`
 /// is encoded as [`NoneType`](crate::values::none::NoneType).
 /// Useful for its [`UnpackValue`] instance.
-#[derive(Debug, Eq, PartialEq, Copy, Clone, Dupe, Allocative)]
+#[derive(
+    Debug,
+    Eq,
+    PartialEq,
+    Copy,
+    Clone,
+    Dupe,
+    Allocative,
+    ProvidesStaticType
+)]
 pub enum NoneOr<T> {
     /// Starlark `None`.
     None,

@@ -659,6 +659,14 @@ mod tests {
     }
 
     #[test]
+    fn test_the_isolation_prefix_is_the_one_set() {
+        let mut buck = buck(false);
+        assert_eq!(buck.isolation_prefix(), None);
+        buck.set_isolation_prefix("iso");
+        assert_eq!(buck.isolation_prefix(), Some("iso"));
+    }
+
+    #[test]
     fn test_a_removed_variable_reaches_no_command() {
         let mut buck = buck(false);
         buck.set_env("HTTP_PROXY", "http://proxy");

@@ -21,7 +21,6 @@ buck_java_library(
     ],
     deps = [
         "prelude//toolchains/android/src/com/facebook/buck/jvm/java/version/utils:utils",
-        "prelude//toolchains/android/src/com/facebook/buck/util/liteinfersupport:liteinfersupport",
         # Don't add deps that aren't already in the bootstrapper; any dependencies
         # here will pollute the compiler and annotation processor class loaders
     ],

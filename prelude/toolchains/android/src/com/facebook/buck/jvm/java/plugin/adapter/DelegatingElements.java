@@ -10,7 +10,6 @@
 
 package com.facebook.buck.jvm.java.plugin.adapter;
 
-import com.facebook.buck.util.liteinfersupport.Nullable;
 import com.facebook.infer.annotation.Nullsafe;
 import java.io.Writer;
 import java.util.List;
@@ -25,6 +24,7 @@ import javax.lang.model.element.Name;
 import javax.lang.model.element.PackageElement;
 import javax.lang.model.element.TypeElement;
 import javax.lang.model.util.Elements;
+import org.jspecify.annotations.Nullable;
 
 /** Delegates all method calls to an inner instance of {@link Elements}. */
 @Nullsafe(Nullsafe.Mode.LOCAL)

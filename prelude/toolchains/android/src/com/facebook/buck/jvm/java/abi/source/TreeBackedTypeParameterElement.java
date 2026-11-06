@@ -10,7 +10,6 @@
 
 package com.facebook.buck.jvm.java.abi.source;
 
-import com.facebook.buck.util.liteinfersupport.Nullable;
 import com.facebook.infer.annotation.Nullsafe;
 import com.sun.source.tree.TypeParameterTree;
 import com.sun.source.util.TreePath;
@@ -21,6 +20,7 @@ import javax.lang.model.element.Element;
 import javax.lang.model.element.ElementVisitor;
 import javax.lang.model.element.TypeParameterElement;
 import javax.lang.model.type.TypeMirror;
+import org.jspecify.annotations.Nullable;
 
 /**
  * An implementation of {@link TypeParameterElement} that uses only the information available from a

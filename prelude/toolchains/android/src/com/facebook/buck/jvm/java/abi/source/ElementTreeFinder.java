@@ -10,7 +10,6 @@
 
 package com.facebook.buck.jvm.java.abi.source;
 
-import com.facebook.buck.util.liteinfersupport.Nullable;
 import com.facebook.infer.annotation.Nullsafe;
 import com.sun.source.tree.BlockTree;
 import com.sun.source.tree.ClassTree;
@@ -24,6 +23,7 @@ import com.sun.source.util.Trees;
 import java.util.HashMap;
 import java.util.Map;
 import javax.lang.model.element.Element;
+import org.jspecify.annotations.Nullable;
 
 /**
  * This class is more complete than {@link Trees#getTree(Element)} in that it will return a tree for

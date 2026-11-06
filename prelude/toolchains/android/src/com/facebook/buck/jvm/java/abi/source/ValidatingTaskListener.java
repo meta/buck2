@@ -14,7 +14,6 @@ import com.facebook.buck.jvm.java.abi.source.api.SourceOnlyAbiRuleInfoFactory.So
 import com.facebook.buck.jvm.java.plugin.adapter.BuckJavacTask;
 import com.facebook.buck.jvm.java.plugin.adapter.BuckJavacTaskProxyImpl;
 import com.facebook.buck.jvm.java.plugin.api.BuckJavacTaskProxy;
-import com.facebook.buck.util.liteinfersupport.Nullable;
 import com.facebook.infer.annotation.Nullsafe;
 import com.sun.source.tree.CompilationUnitTree;
 import com.sun.source.util.TaskEvent;
@@ -24,6 +23,7 @@ import java.util.List;
 import java.util.Objects;
 import java.util.function.Supplier;
 import javax.tools.Diagnostic;
+import org.jspecify.annotations.Nullable;
 
 /**
  * A {@link TaskListener} that is used during full compilation to validate the guesses made by

@@ -11,7 +11,6 @@
 package com.facebook.buck.jvm.java.plugin.adapter;
 
 import com.facebook.buck.jvm.java.lang.model.ElementsExtended;
-import com.facebook.buck.util.liteinfersupport.Nullable;
 import com.sun.source.util.JavacTask;
 import com.sun.source.util.TaskEvent;
 import com.sun.source.util.TaskListener;
@@ -26,6 +25,7 @@ import java.util.Set;
 import java.util.function.Consumer;
 import javax.lang.model.element.Element;
 import javax.lang.model.util.Elements;
+import org.jspecify.annotations.Nullable;
 
 /**
  * Extends {@link JavacTask} with functionality that is useful for Buck:

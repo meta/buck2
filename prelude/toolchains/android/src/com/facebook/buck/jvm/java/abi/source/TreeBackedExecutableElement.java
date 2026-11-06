@@ -10,7 +10,6 @@
 
 package com.facebook.buck.jvm.java.abi.source;
 
-import com.facebook.buck.util.liteinfersupport.Nullable;
 import com.sun.source.tree.MethodTree;
 import com.sun.source.tree.Tree;
 import com.sun.source.tree.VariableTree;
@@ -27,6 +26,7 @@ import javax.lang.model.element.TypeParameterElement;
 import javax.lang.model.element.VariableElement;
 import javax.lang.model.type.TypeMirror;
 import javax.lang.model.type.TypeVariable;
+import org.jspecify.annotations.Nullable;
 
 /**
  * An implementation of {@link ExecutableElement} that uses only the information available from a
@@ -62,8 +62,7 @@ class TreeBackedExecutableElement extends TreeBackedParameterizable
   }
 
   @Override
-  @Nullable
-  MethodTree getTree() {
+  @Nullable MethodTree getTree() {
     return tree;
   }
 

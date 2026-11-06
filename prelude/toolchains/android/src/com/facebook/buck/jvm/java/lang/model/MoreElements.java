@@ -10,7 +10,6 @@
 
 package com.facebook.buck.jvm.java.lang.model;
 
-import com.facebook.buck.util.liteinfersupport.Nullable;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
@@ -29,6 +28,7 @@ import javax.lang.model.type.DeclaredType;
 import javax.lang.model.type.TypeKind;
 import javax.lang.model.type.TypeMirror;
 import javax.lang.model.util.Elements;
+import org.jspecify.annotations.Nullable;
 
 /**
  * More utility functions for working with {@link Element}s, along the lines of those found on

@@ -10,7 +10,6 @@
 
 package com.facebook.buck.jvm.java.abi.source;
 
-import com.facebook.buck.util.liteinfersupport.Nullable;
 import com.facebook.infer.annotation.Nullsafe;
 import com.sun.source.tree.Tree;
 import com.sun.source.util.TreePath;
@@ -24,6 +23,7 @@ import javax.lang.model.element.ElementKind;
 import javax.lang.model.element.Modifier;
 import javax.lang.model.element.Name;
 import javax.lang.model.type.TypeMirror;
+import org.jspecify.annotations.Nullable;
 
 /**
  * An implementation of {@link Element} that uses only the information available from a {@link
@@ -64,13 +64,11 @@ public abstract class TreeBackedElement extends TreeBackedAnnotatedConstruct
 
   public abstract void complete();
 
-  @Nullable
-  /* package */ TreePath getTreePath() {
+  @Nullable /* package */ TreePath getTreePath() {
     return treePath;
   }
 
-  @Nullable
-  /* package */ Tree getTree() {
+  @Nullable /* package */ Tree getTree() {
     return treePath == null ? null : treePath.getLeaf();
   }
 

@@ -10,12 +10,11 @@
 
 package com.facebook.buck.jvm.java.plugin.api;
 
-import com.facebook.buck.util.liteinfersupport.Nullable;
 import com.facebook.infer.annotation.Nullsafe;
+import org.jspecify.annotations.Nullable;
 
 /** Utility interface for loading classes that live in Buck's Java compiler plugin. */
 @Nullsafe(Nullsafe.Mode.LOCAL)
 public interface PluginClassLoader {
-  @Nullable
-  <T> Class<? extends T> loadClass(String name, Class<T> superclass);
+  @Nullable <T> Class<? extends T> loadClass(String name, Class<T> superclass);
 }

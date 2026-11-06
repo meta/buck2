@@ -10,7 +10,6 @@
 
 package com.facebook.buck.jvm.java.abi.source;
 
-import com.facebook.buck.util.liteinfersupport.Nullable;
 import com.facebook.buck.util.liteinfersupport.PropagatesNullable;
 import com.sun.source.tree.AnnotatedTypeTree;
 import com.sun.source.tree.ArrayTypeTree;
@@ -49,6 +48,7 @@ import javax.lang.model.type.WildcardType;
 import javax.lang.model.util.SimpleAnnotationValueVisitor8;
 import javax.tools.Diagnostic;
 import javax.tools.Diagnostic.Kind;
+import org.jspecify.annotations.Nullable;
 
 /**
  * After the enter phase is complete, this class can obtain the "canonical" version of any {@link

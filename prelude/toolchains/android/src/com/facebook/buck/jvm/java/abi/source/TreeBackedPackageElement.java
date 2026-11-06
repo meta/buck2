@@ -10,7 +10,6 @@
 
 package com.facebook.buck.jvm.java.abi.source;
 
-import com.facebook.buck.util.liteinfersupport.Nullable;
 import com.facebook.infer.annotation.Nullsafe;
 import com.sun.source.util.TreePath;
 import java.util.List;
@@ -21,6 +20,7 @@ import javax.lang.model.element.ElementVisitor;
 import javax.lang.model.element.Name;
 import javax.lang.model.element.PackageElement;
 import javax.lang.model.element.TypeElement;
+import org.jspecify.annotations.Nullable;
 
 /**
  * An implementation of {@link TypeElement} that uses only the information available from one or

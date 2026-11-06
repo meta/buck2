@@ -10,7 +10,6 @@
 
 package com.facebook.buck.jvm.java.abi.source;
 
-import com.facebook.buck.util.liteinfersupport.Nullable;
 import com.facebook.infer.annotation.Nullsafe;
 import com.sun.source.tree.Tree;
 import com.sun.source.util.TreePath;
@@ -19,6 +18,7 @@ import com.sun.source.util.Trees;
 import java.util.Objects;
 import javax.lang.model.element.Element;
 import javax.lang.model.type.TypeMirror;
+import org.jspecify.annotations.Nullable;
 
 /**
  * A {@link TreeScanner} that keeps track of the following as it is scanning:

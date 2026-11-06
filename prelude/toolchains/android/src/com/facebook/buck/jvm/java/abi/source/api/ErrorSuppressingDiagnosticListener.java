@@ -10,7 +10,6 @@
 
 package com.facebook.buck.jvm.java.abi.source.api;
 
-import com.facebook.buck.util.liteinfersupport.Nullable;
 import java.lang.reflect.Field;
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
@@ -20,6 +19,7 @@ import javax.tools.Diagnostic;
 import javax.tools.DiagnosticListener;
 import javax.tools.JavaCompiler;
 import javax.tools.JavaFileObject;
+import org.jspecify.annotations.Nullable;
 
 /**
  * When running the compiler with some dependencies missing (as when generating ABIs from source),
@@ -31,7 +31,7 @@ import javax.tools.JavaFileObject;
  */
 public class ErrorSuppressingDiagnosticListener implements DiagnosticListener<JavaFileObject> {
   private final DiagnosticListener<? super JavaFileObject> inner;
-  @Nullable private JavaCompiler.CompilationTask task;
+  private JavaCompiler.@Nullable CompilationTask task;
   @Nullable private Field contextField;
   @Nullable private Method instanceMethod;
   @Nullable private Field nErrorsField;

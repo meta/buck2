@@ -10,10 +10,10 @@
 
 package com.facebook.buck.jvm.java.plugin.api;
 
-import com.facebook.buck.util.liteinfersupport.Nullable;
 import com.facebook.infer.annotation.Nullsafe;
 import javax.lang.model.element.TypeElement;
 import javax.tools.JavaFileObject;
+import org.jspecify.annotations.Nullable;
 
 /**
  * {@link com.sun.source.util.TaskEvent} is included with the compiler and is thus not directly

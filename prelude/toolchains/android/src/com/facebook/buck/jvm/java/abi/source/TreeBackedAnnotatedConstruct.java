@@ -11,7 +11,6 @@
 package com.facebook.buck.jvm.java.abi.source;
 
 import com.facebook.buck.jvm.java.lang.model.AnnotationValueScanner8;
-import com.facebook.buck.util.liteinfersupport.Nullable;
 import com.facebook.infer.annotation.Nullsafe;
 import java.lang.annotation.Annotation;
 import java.util.ArrayList;
@@ -21,6 +20,7 @@ import java.util.List;
 import java.util.Set;
 import javax.lang.model.AnnotatedConstruct;
 import javax.lang.model.type.TypeMirror;
+import org.jspecify.annotations.Nullable;
 
 /**
  * An implementation of {@link javax.lang.model.AnnotatedConstruct} that uses only the information

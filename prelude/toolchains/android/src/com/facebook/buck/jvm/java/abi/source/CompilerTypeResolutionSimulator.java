@@ -11,7 +11,6 @@
 package com.facebook.buck.jvm.java.abi.source;
 
 import com.facebook.buck.jvm.java.lang.model.MoreElements;
-import com.facebook.buck.util.liteinfersupport.Nullable;
 import com.facebook.buck.util.liteinfersupport.PropagatesNullable;
 import com.sun.source.tree.AnnotatedTypeTree;
 import com.sun.source.tree.IdentifierTree;
@@ -24,6 +23,7 @@ import java.util.HashSet;
 import java.util.Set;
 import javax.lang.model.element.NestingKind;
 import javax.lang.model.element.TypeElement;
+import org.jspecify.annotations.Nullable;
 
 /**
  * Simulates how {@code javac} resolves types, at least so far as to determine whether a given

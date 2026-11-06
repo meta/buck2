@@ -13,7 +13,6 @@ package com.facebook.buck.jvm.java.abi.source;
 import com.facebook.buck.jvm.java.abi.source.api.SourceCodeWillNotCompileException;
 import com.facebook.buck.jvm.java.abi.source.api.StopCompilation;
 import com.facebook.buck.jvm.java.plugin.adapter.BuckJavacTask;
-import com.facebook.buck.util.liteinfersupport.Nullable;
 import com.facebook.infer.annotation.Nullsafe;
 import com.sun.source.tree.CompilationUnitTree;
 import com.sun.source.tree.Tree;
@@ -33,6 +32,7 @@ import javax.lang.model.type.TypeMirror;
 import javax.lang.model.util.Elements;
 import javax.lang.model.util.Types;
 import javax.tools.JavaFileObject;
+import org.jspecify.annotations.Nullable;
 
 /**
  * An implementation of {@link JavacTask} that implements only the frontend portions of the task,

@@ -10,7 +10,6 @@
 
 package com.facebook.buck.jvm.java.abi.source;
 
-import com.facebook.buck.util.liteinfersupport.Nullable;
 import com.sun.source.util.TreePath;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -25,6 +24,7 @@ import javax.lang.model.element.QualifiedNameable;
 import javax.lang.model.element.TypeElement;
 import javax.lang.model.util.Elements;
 import javax.lang.model.util.Types;
+import org.jspecify.annotations.Nullable;
 
 /** Simulates import resolution scopes in a source-only ABI classpath. */
 class ImportsTracker {

@@ -17,13 +17,13 @@ import com.sun.source.util.JavacTask;
 import com.sun.source.util.TaskListener;
 import java.io.IOException;
 import java.util.Locale;
-import javax.annotation.Nullable;
 import javax.annotation.processing.Processor;
 import javax.lang.model.element.Element;
 import javax.lang.model.type.TypeMirror;
 import javax.lang.model.util.Elements;
 import javax.lang.model.util.Types;
 import javax.tools.JavaFileObject;
+import org.jspecify.annotations.Nullable;
 
 /**
  * NOTE: A Java8 copy of this file exists in ../java8/JavacTaskWrapper.java. Please make sure to

@@ -10,7 +10,6 @@
 
 package com.facebook.buck.jvm.java.lang.model;
 
-import com.facebook.buck.util.liteinfersupport.Nullable;
 import com.facebook.infer.annotation.Nullsafe;
 import java.util.List;
 import javax.lang.model.element.AnnotationMirror;
@@ -18,6 +17,7 @@ import javax.lang.model.element.Element;
 import javax.lang.model.element.ExecutableElement;
 import javax.lang.model.element.TypeElement;
 import javax.lang.model.util.Elements;
+import org.jspecify.annotations.Nullable;
 
 /**
  * Wraps and extends {@link javax.lang.model.util.Elements} with methods that cannot be added as
@@ -34,11 +34,9 @@ public interface ElementsExtended extends Elements {
 
   List<BridgeMethod> getAllBridgeMethods(TypeElement type);
 
-  @Nullable
-  ExecutableElement getImplementation(ExecutableElement method, TypeElement inType);
+  @Nullable ExecutableElement getImplementation(ExecutableElement method, TypeElement inType);
 
-  @Nullable
-  TypeElement getBinaryImplementationOwner(ExecutableElement method, TypeElement inType);
+  @Nullable TypeElement getBinaryImplementationOwner(ExecutableElement method, TypeElement inType);
 
   boolean isCompiledInCurrentRun(Element element);
 

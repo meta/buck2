@@ -23,6 +23,7 @@ use buck2_hash::BuckMutInsertionMap;
 use buck2_interpreter::execution_group::ExecutionGroupArg;
 use buck2_interpreter::types::configured_providers_label::StarlarkConfiguredProvidersLabel;
 use buck2_test_api::data::TestListingEntry;
+use buck2_test_api::data::TestListingPresetResult;
 use buck2_test_api::data::TestResultEntry;
 use buck2_test_api::data::TestStatus;
 use either::Either;
@@ -154,8 +155,10 @@ pub struct InternalRunnerTestInfo<'v> {
     /// ```python
     /// def parse_test_listing(listing_content: str) -> list[dict[str, ...]]:
     ///     """Returns list of dicts with keys:
-    ///         "name": str       — human-readable display name
-    ///         "filter": str     — argument to select this test for execution
+    ///         "name": str              — human-readable display name
+    ///         "filter": str            — argument to select this test for execution
+    ///         "status": str | None     — "SKIP" to report the test as skipped without running it
+    ///         "message": str | None    — reason reported with `status`; requires `status`
     ///     """
     /// ```
     parse_test_listing: ValueOfUnchecked<
@@ -349,9 +352,14 @@ impl<'v> InternalRunnerTestInfo<'v> {
                         }
                     };
 
+                    let name = get_required_str("name")?;
+                    let preset_result = parse_listing_preset_result(&dict)
+                        .with_buck_error_context(|| format!("In listing entry `{}`", name))?;
+
                     Ok(TestListingEntry {
-                        name: get_required_str("name")?,
+                        name,
                         filter: get_required_str("filter")?,
+                        preset_result,
                     })
                 })
                 .collect()
@@ -435,29 +443,8 @@ impl<'v> InternalRunnerTestInfo<'v> {
                         )
                     })?;
 
-                    let get_opt_str = |key: &str| -> buck2_error::Result<Option<String>> {
-                        match dict.get_str(key) {
-                            Some(v) => {
-                                if v.is_none() {
-                                    Ok(None)
-                                } else {
-                                    let s = v.unpack_str().ok_or_else(|| {
-                                        buck2_error!(
-                                            buck2_error::ErrorTag::Input,
-                                            "`{}` must be a string, got: `{}`",
-                                            key,
-                                            v
-                                        )
-                                    })?;
-                                    Ok(Some(s.to_owned()))
-                                }
-                            }
-                            None => Ok(None),
-                        }
-                    };
-
                     let get_required_str = |key: &str| -> buck2_error::Result<String> {
-                        get_opt_str(key)?.ok_or_else(|| {
+                        get_opt_str(&dict, key)?.ok_or_else(|| {
                             buck2_error!(
                                 buck2_error::ErrorTag::Input,
                                 "parse_test_result dict missing required key `{}`",
@@ -469,8 +456,8 @@ impl<'v> InternalRunnerTestInfo<'v> {
                     let name = get_required_str("name")?;
                     let status_str = get_required_str("status")?;
                     let status = TestStatus::parse(&status_str)?;
-                    let message = get_opt_str("message")?;
-                    let details = get_opt_str("details")?;
+                    let message = get_opt_str(&dict, "message")?;
+                    let details = get_opt_str(&dict, "details")?;
 
                     let duration = match dict.get_str("duration") {
                         Some(v) => {
@@ -515,6 +502,44 @@ impl<'v> InternalRunnerTestInfo<'v> {
                 })
                 .collect()
         })
+    }
+}
+
+fn get_opt_str(dict: &DictRef<'_>, key: &str) -> buck2_error::Result<Option<String>> {
+    let Some(value) = dict.get_str(key) else {
+        return Ok(None);
+    };
+    Ok(NoneOr::<&str>::unpack_value(value)?
+        .ok_or_else(|| {
+            buck2_error!(
+                buck2_error::ErrorTag::Input,
+                "`{}` must be a string, got: `{}`",
+                key,
+                value
+            )
+        })?
+        .into_option()
+        .map(str::to_owned))
+}
+
+fn parse_listing_preset_result(
+    dict: &DictRef<'_>,
+) -> buck2_error::Result<Option<TestListingPresetResult>> {
+    match (get_opt_str(dict, "status")?, get_opt_str(dict, "message")?) {
+        (None, None) => Ok(None),
+        (None, Some(_)) => Err(buck2_error!(
+            buck2_error::ErrorTag::Input,
+            "parse_test_listing dict has `message` but no `status`"
+        )),
+        (Some(status), message) if status == "SKIP" => Ok(Some(TestListingPresetResult {
+            status: TestStatus::SKIP,
+            message,
+        })),
+        (Some(status), _) => Err(buck2_error!(
+            buck2_error::ErrorTag::Input,
+            "parse_test_listing may only set `status` to `SKIP`, got: `{}`",
+            status
+        )),
     }
 }
 

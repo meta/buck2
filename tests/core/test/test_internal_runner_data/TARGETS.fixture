@@ -1,3 +1,4 @@
+load(":listing_test.bzl", "listing_test")
 load(":python_test.bzl", "python_test")
 
 python_test(
@@ -13,4 +14,16 @@ python_test(
 python_test(
     name = "timeout",
     script = "import time; time.sleep(60)",
+)
+
+listing_test(
+    name = "preset_skip",
+    script = "import sys; name = sys.argv[1]; sys.exit(1) if name.startswith('skip_') else print(name)",
+    test_names = ["run_me", "skip_me"],
+)
+
+listing_test(
+    name = "all_skipped",
+    script = "import sys; sys.exit(1)",
+    test_names = ["skip_one", "skip_two"],
 )

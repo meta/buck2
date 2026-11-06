@@ -40,8 +40,8 @@ use host_sharing::HostSharingRequirements;
 /// Run the full test lifecycle for a single target in-process:
 /// 1. Execute the test binary in listing mode
 /// 2. Parse listing output via the Starlark `parse_test_listing` callback
-/// 3. Report discovered tests
-/// 4. Execute each discovered test individually
+/// 3. Report discovered tests, and any results the listing already decided
+/// 4. Execute each remaining test individually
 /// 5. Report each test result
 pub async fn run_internal_test(
     orchestrator: &dyn TestOrchestrator,
@@ -129,12 +129,34 @@ pub async fn run_internal_test(
         .await
         .buck_error_context("Failed to report discovered tests")?;
 
+    let mut tests_to_run = Vec::with_capacity(discovered_tests.len());
+    for entry in discovered_tests {
+        match entry.preset_result {
+            Some(preset_result) => {
+                let test_result = TestResult {
+                    target: target_handle,
+                    name: entry.name,
+                    status: preset_result.status,
+                    msg: preset_result.message,
+                    duration: None,
+                    details: String::new(),
+                    max_memory_used_bytes: None,
+                };
+                orchestrator
+                    .report_test_result(test_result)
+                    .await
+                    .buck_error_context("Failed to report test result")?;
+            }
+            None => tests_to_run.push(entry),
+        }
+    }
+
     // Step 4+5: Execute and report each discovered test.
     // FuturesUnordered pipelines execute2 calls so the next test's orchestrator
     // dispatch overlaps with result parsing of the previous test.
     let mut futures = FuturesUnordered::new();
 
-    for entry in &discovered_tests {
+    for entry in &tests_to_run {
         let test_stage = TestStage::Testing {
             suite: suite.clone(),
             testcases: vec![entry.filter.clone()],

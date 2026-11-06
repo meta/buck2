@@ -1,0 +1,7 @@
+load("//:defs.bzl", "lib", "toolchain")
+
+lib(name = "ok", value = "ok")
+lib(name = "sel", value = select({"//:windows": "W"}))
+lib(name = "parent", deps = [":sel"], value = "p")
+toolchain(name = "tc", value = select({"//:windows": "W"}))
+lib(name = "uses_tc", toolchain = ":tc", value = "u")

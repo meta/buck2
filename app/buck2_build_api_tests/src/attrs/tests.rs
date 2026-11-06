@@ -17,6 +17,8 @@ use buck2_common::package_listing::listing::testing::PackageListingExt;
 use buck2_core::cells::CellResolver;
 use buck2_core::cells::cell_root_path::CellRootPathBuf;
 use buck2_core::cells::name::CellName;
+use buck2_core::configuration::compatibility::IncompatiblePlatformReasonCause;
+use buck2_core::configuration::compatibility::MaybeCompatible;
 use buck2_core::configuration::data::ConfigurationData;
 use buck2_core::execution_types::executor_config::PathSeparatorKind;
 use buck2_core::fs::artifact_path_resolver::ArtifactFs;
@@ -44,7 +46,9 @@ use buck2_node::attrs::configured_attr_info_for_tests::ConfiguredAttrInfoForTest
 use buck2_node::attrs::display::AttrDisplayWithContextExt;
 use buck2_node::attrs::fmt_context::AttrFmtContext;
 use buck2_node::attrs::testing::configuration_ctx;
+use buck2_node::attrs::testing::configuration_ctx_unmatched_select_incompatible;
 use buck2_node::provider_id_set::ProviderIdSet;
+use buck2_util::arc_str::ArcStr;
 use dupe::Dupe;
 use indoc::indoc;
 use starlark::environment::GlobalsBuilder;
@@ -124,6 +128,55 @@ fn test_string() -> buck2_error::Result<()> {
             .configure(&attr, &configuration_ctx(), None)
             .require_compatible()?;
         assert_eq!(r#""ab""#, configured.as_display_no_ctx().to_string());
+
+        Ok(())
+    })
+}
+
+#[test]
+fn test_unmatched_select() -> buck2_error::Result<()> {
+    Module::with_temp_heap(|env| {
+        let globals = GlobalsBuilder::standard().with(register_select).build();
+        let attr = AttrType::string();
+        let value = to_value(&env, &globals, r#""a" + select({"//some:config": "b"})"#);
+        let coerced = coercion_ctx().coerce_sealed(&attr, value)?;
+
+        let err = coerced
+            .as_ref()
+            .configure(&attr, &configuration_ctx(), Some("srcs"))
+            .require_compatible()
+            .expect_err("unmatched select without a default should fail");
+        assert!(
+            err.to_string()
+                .contains("None of 1 conditions matched configuration"),
+            "err: {err}"
+        );
+
+        match coerced
+            .as_ref()
+            .configure(
+                &attr,
+                &configuration_ctx_unmatched_select_incompatible("use the fan-out alias"),
+                Some("srcs"),
+            )
+            .ok()?
+        {
+            MaybeCompatible::Incompatible(reason) => {
+                assert_eq!(
+                    reason.cause,
+                    IncompatiblePlatformReasonCause::UnmatchedSelect {
+                        attr: Some(ArcStr::from("srcs")),
+                        reason: ArcStr::from("use the fan-out alias"),
+                    }
+                );
+            }
+            MaybeCompatible::Compatible(configured) => {
+                panic!(
+                    "expected incompatible, got {}",
+                    configured.as_display_no_ctx()
+                )
+            }
+        }
 
         Ok(())
     })

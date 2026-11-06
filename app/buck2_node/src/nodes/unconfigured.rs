@@ -235,6 +235,11 @@ impl TargetNodeData {
     pub fn visibility_intersection(&self) -> &VisibilityIntersection {
         &self.package.visibility_intersection
     }
+
+    /// Reason from the `buck.unmatched_select_incompatible` package value, if set.
+    pub fn unmatched_select_incompatible(&self) -> Option<&ArcStr> {
+        self.package.unmatched_select_incompatible.as_ref()
+    }
 }
 
 /// A target as recorded while its package is still evaluating: everything a
@@ -301,6 +306,7 @@ impl TargetNode {
                 buildfile_path: self.0.package.buildfile_path.dupe(),
                 oncall: self.0.package.oncall.dupe(),
                 visibility_intersection: intersection,
+                unmatched_select_incompatible: self.0.package.unmatched_select_incompatible.dupe(),
             }),
             self.0.label.dupe(),
             self.0.attributes.clone(),
@@ -576,6 +582,7 @@ impl TargetNode {
         // Hash the visibility intersection so that tightening the visibility
         // at the PACKAGE level still invalidates the target hash
         self.visibility_intersection().hash(state);
+        self.unmatched_select_incompatible().hash(state);
         self.attrs(AttrInspectOptions::All).for_each(|x| {
             // We deliberately don't hash the attribute, as if the value being passed to analysis
             // stays the same, we don't care if the attribute that generated it changed.
@@ -629,6 +636,11 @@ impl<'a> TargetNodeRef<'a> {
 
     pub fn buildfile_path(self) -> &'a BuildFilePath {
         &self.0.get().package.buildfile_path
+    }
+
+    /// Reason from the `buck.unmatched_select_incompatible` package value, if set.
+    pub fn unmatched_select_incompatible(self) -> Option<&'a ArcStr> {
+        self.0.get().package.unmatched_select_incompatible.as_ref()
     }
 
     /// Get attribute.
@@ -947,6 +959,7 @@ pub mod testing {
                     buildfile_path,
                     oncall: None,
                     visibility_intersection: VisibilityIntersection::unrestricted(),
+                    unmatched_select_incompatible: None,
                 }),
                 label,
                 attributes,

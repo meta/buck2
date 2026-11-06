@@ -323,7 +323,7 @@ impl Semantics for kinds::Selector {
     ) -> ResultMaybeCompatible<ConfiguredAttr> {
         match CoercedAttrRef::select_view(ctx, entries, default)? {
             Some(selected) => selected.configure(t, ctx, name),
-            None => CoercedAttrRef::select_no_match_error(ctx, entries).into(),
+            None => CoercedAttrRef::select_no_match(ctx, entries, name),
         }
     }
 
@@ -340,7 +340,7 @@ impl Semantics for kinds::Selector {
     ) -> ResultMaybeCompatible<()> {
         match CoercedAttrRef::select_view(ctx, entries, default) {
             Ok(Some(selected)) => selected.traverse_configured(t, pkg, ctx, tr, name),
-            Ok(None) => CoercedAttrRef::select_no_match_error(ctx, entries).into(),
+            Ok(None) => CoercedAttrRef::select_no_match(ctx, entries, name),
             Err(e) => e.into(),
         }
     }
@@ -351,7 +351,7 @@ impl Semantics for kinds::Selector {
     ) -> ResultMaybeCompatible<()> {
         match CoercedAttrRef::select_view(ctx, entries, default) {
             Ok(Some(selected)) => selected.concat_leaves(ctx, out),
-            Ok(None) => CoercedAttrRef::select_no_match_error(ctx, entries).into(),
+            Ok(None) => CoercedAttrRef::select_no_match(ctx, entries, None),
             Err(e) => e.into(),
         }
     }

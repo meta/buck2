@@ -431,6 +431,12 @@ pub enum IncompatiblePlatformReasonCause {
     Dependency(Arc<IncompatiblePlatformReason>),
     /// Target is incompatible because a select resolved to select_incompatible().
     SelectIncompatible(ArcStr),
+    /// Target is incompatible because a select had no matching condition and no default,
+    /// and its package set `buck.unmatched_select_incompatible` (the reason).
+    UnmatchedSelect {
+        attr: Option<ArcStr>,
+        reason: ArcStr,
+    },
 }
 
 #[derive(
@@ -445,7 +451,8 @@ impl IncompatiblePlatformReason {
     pub fn to_err(&self) -> buck2_error::Error {
         match self.cause {
             IncompatiblePlatformReasonCause::UnsatisfiedConfig(_)
-            | IncompatiblePlatformReasonCause::SelectIncompatible(_) => {
+            | IncompatiblePlatformReasonCause::SelectIncompatible(_)
+            | IncompatiblePlatformReasonCause::UnmatchedSelect { .. } => {
                 CompatibilityErrors::TargetIncompatible(self.dupe()).into()
             }
             IncompatiblePlatformReasonCause::Dependency(_) => {
@@ -457,7 +464,8 @@ impl IncompatiblePlatformReason {
     pub fn to_soft_err(&self) -> buck2_error::Error {
         match &self.cause {
             IncompatiblePlatformReasonCause::UnsatisfiedConfig(_)
-            | IncompatiblePlatformReasonCause::SelectIncompatible(_) => self.to_err(),
+            | IncompatiblePlatformReasonCause::SelectIncompatible(_)
+            | IncompatiblePlatformReasonCause::UnmatchedSelect { .. } => self.to_err(),
             IncompatiblePlatformReasonCause::Dependency(reason) => {
                 let root_cause = reason.get_root_cause();
                 CompatibilityErrors::DepOnlyIncompatibleSoftError(
@@ -473,7 +481,8 @@ impl IncompatiblePlatformReason {
         // Recurse until we find the root UnsatisfiedConfig/SelectIncompatible error that caused incompatibility errors
         match &self.cause {
             IncompatiblePlatformReasonCause::UnsatisfiedConfig(_)
-            | IncompatiblePlatformReasonCause::SelectIncompatible(_) => self,
+            | IncompatiblePlatformReasonCause::SelectIncompatible(_)
+            | IncompatiblePlatformReasonCause::UnmatchedSelect { .. } => self,
             IncompatiblePlatformReasonCause::Dependency(reason) => reason.get_root_cause(),
         }
     }
@@ -529,6 +538,15 @@ impl Display for IncompatiblePlatformReason {
                 "{}\n    is incompatible: select resolved to select_incompatible(): {}",
                 self.target.unconfigured(),
                 message,
+            ),
+            IncompatiblePlatformReasonCause::UnmatchedSelect { attr, reason } => write!(
+                f,
+                "{}\n    is incompatible with {}: no condition of a select(){} matched and no default was set: {}",
+                self.target.unconfigured(),
+                self.target.cfg(),
+                attr.as_ref()
+                    .map_or(String::new(), |attr| format!(" in `{attr}`")),
+                reason,
             ),
             IncompatiblePlatformReasonCause::Dependency(previous) => {
                 if f.alternate() {

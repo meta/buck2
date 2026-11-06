@@ -1,0 +1,8 @@
+load("//:defs.bzl", "lib")
+
+lib(name = "ok", value = "ok")
+lib(
+    name = "tcw",
+    value = "t",
+    target_compatible_with = select({"//:linux": select_incompatible("not for linux"), "DEFAULT": []}),
+)

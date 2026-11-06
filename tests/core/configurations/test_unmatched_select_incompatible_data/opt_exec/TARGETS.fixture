@@ -1,0 +1,6 @@
+load("//:defs.bzl", "lib", "runner")
+
+# A tool that only builds for windows, so it rules out linux as the execution platform.
+lib(name = "tool", value = select({"//:windows": "W"}))
+
+runner(name = "runner", tool = ":tool")

@@ -181,6 +181,14 @@ impl TargetNodeOrForward {
             TargetNodeOrForward::Forward(forward) => forward.oncall(),
         }
     }
+
+    fn unmatched_select_incompatible(&self) -> Option<&ArcStr> {
+        match self {
+            TargetNodeOrForward::TargetNode(node) => node.unmatched_select_incompatible(),
+            // The only attribute of a forward node is `actual`, which has no select.
+            TargetNodeOrForward::Forward(..) => None,
+        }
+    }
 }
 
 // TODO(cjhopman): There's a lot of optimization opportunities here.
@@ -689,6 +697,7 @@ impl<'a> ConfiguredTargetNodeRef<'a> {
             &self.0.get().execution_platform_resolution,
             &self.0.get().resolved_transition_configurations,
             &self.0.get().platform_cfgs,
+            self.0.get().target_node.unmatched_select_incompatible(),
         )
     }
 

@@ -26,6 +26,7 @@ use buck2_core::target::configured_target_label::ConfiguredTargetLabel;
 use buck2_core::target::label::label::TargetLabel;
 use buck2_error::BuckErrorOptionContext;
 use buck2_hash::BuckFixedSortedMap;
+use buck2_util::arc_str::ArcStr;
 use dupe::Dupe;
 
 use crate::configuration::resolved::MatchedConfigurationSettingKeys;
@@ -50,6 +51,12 @@ pub trait AttrConfigurationContext {
     /// The execution platform resolution of the target whose attributes are being configured,
     /// when there is one.
     fn execution_platform_resolution(&self) -> Option<&ExecutionPlatformResolution> {
+        None
+    }
+
+    /// Reason to mark the target incompatible when a `select()` has no matching condition
+    /// and no default. `None` makes that case an error.
+    fn unmatched_select_incompatible(&self) -> Option<&ArcStr> {
         None
     }
 
@@ -146,6 +153,7 @@ pub struct AttrConfigurationContextImpl<'b> {
     /// The execution platform resolution, which contains per-exec_dep configurations
     /// when in the Resolved state.
     execution_platform_resolution: &'b ExecutionPlatformResolution,
+    unmatched_select_incompatible: Option<&'b ArcStr>,
 }
 
 impl<'b> AttrConfigurationContextImpl<'b> {
@@ -155,6 +163,7 @@ impl<'b> AttrConfigurationContextImpl<'b> {
         execution_platform_resolution: &'b ExecutionPlatformResolution,
         resolved_transitions: &'b BuckFixedSortedMap<Arc<TransitionId>, Arc<TransitionApplied>>,
         platform_cfgs: &'b BuckFixedSortedMap<TargetLabel, ConfigurationData>,
+        unmatched_select_incompatible: Option<&'b ArcStr>,
     ) -> AttrConfigurationContextImpl<'b> {
         let exec_cfg = execution_platform_resolution.base_cfg();
         AttrConfigurationContextImpl {
@@ -164,6 +173,7 @@ impl<'b> AttrConfigurationContextImpl<'b> {
             resolved_transitions,
             platform_cfgs,
             execution_platform_resolution,
+            unmatched_select_incompatible,
         }
     }
 }
@@ -175,6 +185,10 @@ impl AttrConfigurationContext for AttrConfigurationContextImpl<'_> {
 
     fn cfg(&self) -> ConfigurationNoExec {
         self.resolved_cfg.cfg().dupe()
+    }
+
+    fn unmatched_select_incompatible(&self) -> Option<&ArcStr> {
+        self.unmatched_select_incompatible
     }
 
     fn incompatible_platform_reason(

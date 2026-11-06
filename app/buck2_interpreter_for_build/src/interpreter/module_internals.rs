@@ -30,6 +30,7 @@ use buck2_node::oncall::Oncall;
 use buck2_node::package::Package;
 use buck2_node::super_package::SuperPackage;
 use dupe::Dupe;
+use dupe::OptionDupedExt;
 use starlark::environment::FrozenModule;
 use starlark::values::OwnedFrozen;
 use starlark::values::Value;
@@ -225,6 +226,10 @@ impl ModuleInternals {
                                     .super_package
                                     .visibility_intersection()
                                     .for_defining_package(self.buildfile_path.package()),
+                                unmatched_select_incompatible: self
+                                    .super_package
+                                    .unmatched_select_incompatible()
+                                    .duped(),
                             }),
                             targets: UnsealedTargetsMap::new(),
                         });

@@ -12,6 +12,7 @@ use std::sync::Arc;
 
 use allocative::Allocative;
 use buck2_core::build_file_path::BuildFilePath;
+use buck2_util::arc_str::ArcStr;
 use pagable::Pagable;
 
 use crate::oncall::Oncall;
@@ -31,4 +32,7 @@ pub struct Package {
     /// (`VisibilityIntersection::for_defining_package`). Empty = no restriction.
     /// Stored once per build file; ANDed with `visibility` at `is_visible_to` time.
     pub visibility_intersection: VisibilityIntersection,
+    /// From the `buck.unmatched_select_incompatible` package value: when set, a `select()`
+    /// with no matching key and no default marks the target incompatible with this reason.
+    pub unmatched_select_incompatible: Option<ArcStr>,
 }

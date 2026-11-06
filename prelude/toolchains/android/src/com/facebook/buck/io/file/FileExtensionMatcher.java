@@ -11,10 +11,13 @@
 package com.facebook.buck.io.file;
 
 import com.facebook.buck.core.filesystems.RelPath;
+import com.facebook.infer.annotation.Nullsafe;
 import com.google.common.io.Files;
 import java.util.Objects;
+import org.jspecify.annotations.Nullable;
 
 /** Matcher that matches file paths with specific extension. */
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public class FileExtensionMatcher implements PathMatcher {
 
   private final String extension;
@@ -24,7 +27,7 @@ public class FileExtensionMatcher implements PathMatcher {
   }
 
   @Override
-  public boolean equals(Object other) {
+  public boolean equals(@Nullable Object other) {
     if (this == other) {
       return true;
     }

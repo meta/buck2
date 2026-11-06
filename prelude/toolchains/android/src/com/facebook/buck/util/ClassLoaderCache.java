@@ -11,6 +11,7 @@
 package com.facebook.buck.util;
 
 import com.facebook.buck.core.util.log.Logger;
+import com.facebook.infer.annotation.Nullsafe;
 import com.google.common.annotations.VisibleForTesting;
 import com.google.common.collect.ImmutableList;
 import java.io.IOException;
@@ -25,6 +26,7 @@ import javax.annotation.Nullable;
  * Maintain a cache mapping class paths to class loaders that load from these class paths. The class
  * loaders remain active until ClassLoaderCache itself is unloaded.
  */
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public final class ClassLoaderCache implements AutoCloseable {
   private static final Logger LOG = Logger.get(ClassLoaderCache.class);
 

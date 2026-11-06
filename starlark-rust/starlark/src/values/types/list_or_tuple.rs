@@ -111,6 +111,20 @@ impl<'v, T: UnpackValue<'v>> ValueOf<'v, ListOrTupleType<T>> {
             Either::Right(ValueOf::<TupleType<T>>::new_unchecked(value).iter())
         }
     }
+
+    /// The items, unpacked, as [`ValueOf<ListType<T>>::try_items`](ValueOf::try_items) or
+    /// [`ValueOf<TupleType<T>>::try_items`](ValueOf::try_items) gives them.
+    pub fn try_items(self) -> impl Iterator<Item = crate::Result<T>> + 'v
+    where
+        T: 'v,
+    {
+        let value = self.to_value();
+        if ListRef::from_value(value).is_some() {
+            Either::Left(ValueOf::<ListType<T>>::new_unchecked(value).try_items())
+        } else {
+            Either::Right(ValueOf::<TupleType<T>>::new_unchecked(value).try_items())
+        }
+    }
 }
 
 #[cfg(test)]

@@ -85,4 +85,12 @@ impl<'v, T: UnpackValue<'v>> ValueOf<'v, ListType<T>> {
             }
         })
     }
+
+    /// The items, unpacked. Each is re-checked, as for [`iter`](Self::iter).
+    pub fn try_items(self) -> impl Iterator<Item = crate::Result<T>> + 'v
+    where
+        T: 'v,
+    {
+        self.list().iter().map(T::unpack_value_err)
+    }
 }

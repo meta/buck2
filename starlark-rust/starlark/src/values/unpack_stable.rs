@@ -41,6 +41,7 @@ use crate::values::types::int::int_or_big::StarlarkIntRef;
 use crate::values::typing::StarlarkCallable;
 use crate::values::typing::StarlarkCallableChecked;
 use crate::values::typing::StarlarkCallableParamSpec;
+use crate::values::typing::StarlarkIter;
 use crate::values::typing::TypeType;
 
 /// An [`UnpackValue`] whose verdict for a value cannot change over the value's lifetime.
@@ -84,6 +85,7 @@ impl<'v> UnpackValueStable<'v> for StarlarkIntRef<'v> {}
 impl<'v> UnpackValueStable<'v> for InlineInt {}
 impl<'v> UnpackValueStable<'v> for NoneType {}
 impl<'v> UnpackValueStable<'v> for TypeType {}
+impl<'v, T: StarlarkTypeRepr> UnpackValueStable<'v> for StarlarkIter<T> {}
 
 impl<'v, T: UnpackValueStable<'v>> UnpackValueStable<'v> for NoneOr<T> {}
 impl<'v, A: UnpackValueStable<'v>, B: UnpackValueStable<'v>> UnpackValueStable<'v>

@@ -21,6 +21,7 @@ use crate as starlark;
 use crate::any::ProvidesStaticType;
 use crate::typing::Ty;
 use crate::values::UnpackValue;
+use crate::values::UnpackValueStable;
 use crate::values::Value;
 use crate::values::ValueOf;
 use crate::values::tuple::TupleRef;
@@ -78,5 +79,24 @@ impl<'v, T: UnpackValue<'v>> ValueOf<'v, TupleType<T>> {
                 ValueOf::new_err(x)
             }
         })
+    }
+
+    /// The items, unpacked. A tuple does not change, so for a `T` whose check cannot change
+    /// either ([`UnpackValueStable`]) there is nothing to re-check.
+    pub fn items(self) -> impl Iterator<Item = T> + 'v
+    where
+        T: UnpackValueStable<'v> + 'v,
+    {
+        self.tuple()
+            .iter()
+            .map(|x| ValueOf::<T>::new_unchecked(x).unpack())
+    }
+
+    /// The items, unpacked. Each is re-checked, as for [`iter`](Self::iter).
+    pub fn try_items(self) -> impl Iterator<Item = crate::Result<T>> + 'v
+    where
+        T: 'v,
+    {
+        self.tuple().iter().map(T::unpack_value_err)
     }
 }

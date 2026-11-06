@@ -95,9 +95,21 @@ impl<'v, K: UnpackValue<'v>, V: UnpackValue<'v>> ValueOf<'v, DictType<K, V>> {
     pub fn iter(self) -> DictEntries<'v, K, V> {
         DictEntries {
             frozen: self.to_value().is_frozen(),
+            entries: self.entries(),
+            _marker: PhantomData,
+        }
+    }
+
+    /// The entries, unpacked. Each is re-checked, as for [`iter`](Self::iter).
+    pub fn try_items(self) -> impl Iterator<Item = crate::Result<(K, V)>> + 'v {
+        self.entries()
+            .map(|(k, v)| Ok((K::unpack_value_err(k)?, V::unpack_value_err(v)?)))
+    }
+
+    fn entries(self) -> Entries<'v> {
+        Entries {
             dict: self.dict(),
             index: 0,
-            _marker: PhantomData,
         }
     }
 
@@ -126,8 +138,7 @@ impl<'v, K: UnpackValue<'v>, V: UnpackValue<'v>> ValueOf<'v, DictType<K, V>> {
 /// The entries of a [`ValueOf<DictType<K, V>>`], borrowed from the dict.
 pub struct DictEntries<'v, K, V> {
     frozen: bool,
-    dict: DictRef<'v>,
-    index: usize,
+    entries: Entries<'v>,
     _marker: PhantomData<fn() -> (K, V)>,
 }
 
@@ -135,14 +146,32 @@ impl<'v, K: UnpackValue<'v>, V: UnpackValue<'v>> Iterator for DictEntries<'v, K,
     type Item = crate::Result<(ValueOf<'v, K>, ValueOf<'v, V>)>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        let (k, v) = self.dict.content.get_index(self.index)?;
-        let (k, v) = (*k, *v);
-        self.index += 1;
+        let (k, v) = self.entries.next()?;
         Some(if self.frozen {
             Ok((ValueOf::new_unchecked(k), ValueOf::new_unchecked(v)))
         } else {
             (|| Ok((ValueOf::new_err(k)?, ValueOf::new_err(v)?)))()
         })
+    }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        self.entries.size_hint()
+    }
+}
+
+/// The entries of a dict, borrowed from it; indexed because the borrow lives in the iterator.
+struct Entries<'v> {
+    dict: DictRef<'v>,
+    index: usize,
+}
+
+impl<'v> Iterator for Entries<'v> {
+    type Item = (Value<'v>, Value<'v>);
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let (k, v) = self.dict.content.get_index(self.index)?;
+        self.index += 1;
+        Some((*k, *v))
     }
 
     fn size_hint(&self) -> (usize, Option<usize>) {

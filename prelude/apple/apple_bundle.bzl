@@ -31,7 +31,11 @@ load(
     "write_swift_dynamic_replacement_targets",
 )
 load("@prelude//apple/user:apple_selected_debug_path_file.bzl", "SELECTED_DEBUG_PATH_FILE_NAME")
-load("@prelude//apple/user:apple_selective_debugging.bzl", "AppleSelectiveDebuggingInfo")
+load(
+    "@prelude//apple/user:apple_selective_debugging.bzl",
+    "AppleSelectedDebugInfo",  # @unused Used as a type
+    "AppleSelectiveDebuggingInfo",
+)
 load("@prelude//apple/validation:required_reasons.bzl", "get_required_reasons_validator_output")
 load("@prelude//apple/validation:swiftmodule_change_analysis.bzl", "get_swiftmodule_change_analysis_output")
 load(
@@ -252,7 +256,20 @@ def _maybe_scrub_binary(ctx, binary_dep: Dependency) -> AppleBundleBinaryOutput:
             dsym_allowlist = _generate_dsym_allowlist(ctx, debug_binary, binary_dep.get(LinkExecutionPreferenceInfo), filtered_debug_info.swift_modules_labels)
         else:
             binary = _scrub_binary(ctx, binary, binary_dep.get(LinkExecutionPreferenceInfo), filtered_debug_info.swift_modules_labels)
-        dsym_artifact = _get_binary_dsym(ctx, binary, filtered_external_debug_info, dsym_allowlist)
+
+        selected_debug_info = None
+        if selective_debugging_info.select_debug_info:
+            binary_execution_preference_info = binary_dep.get(LinkExecutionPreferenceInfo)
+            selected_debug_info = selective_debugging_info.select_debug_info(
+                ctx,
+                filtered_external_debug_info,
+                "selected_debug_info/{}".format(debug_binary.short_path),
+                dsym_binary = debug_binary,
+                dsym_binary_execution_preference = binary_execution_preference_info.preference
+                if binary_execution_preference_info
+                else LinkExecutionPreference("any"),
+            )
+        dsym_artifact = _get_binary_dsym(ctx, binary, _get_dsym_debug_info(ctx, filtered_external_debug_info, selected_debug_info), dsym_allowlist)
 
         filtered_map = {}
         for selected_target_info in filtered_debug_info.selected_target_infos:
@@ -270,16 +287,28 @@ def _maybe_scrub_binary(ctx, binary_dep: Dependency) -> AppleBundleBinaryOutput:
                 ),
             ],
         )
-        return AppleBundleBinaryOutput(binary = binary, unstripped_binary = unstripped_binary, debuggable_info = debuggable_info, dsym_allowlist = dsym_allowlist)
+        return AppleBundleBinaryOutput(
+            binary = binary,
+            unstripped_binary = unstripped_binary,
+            debuggable_info = debuggable_info,
+            dsym_allowlist = dsym_allowlist,
+            selected_debug_info = selected_debug_info,
+        )
     else:
         binary = _scrub_binary(ctx, binary, binary_dep.get(LinkExecutionPreferenceInfo))
         return AppleBundleBinaryOutput(binary = binary, unstripped_binary = unstripped_binary)
 
-def _get_binary_dsym(ctx, binary: Artifact, debug_info_tset: ArtifactTSet, dsym_allowlist: [Artifact, None]) -> Artifact:
-    debug_info = project_artifacts(
+# Returns the inputs of a dSYM action: the objects whose debug info gets linked,
+# and the Swift modules.
+def _get_dsym_debug_info(ctx, debug_info_tset: ArtifactTSet | list[ArtifactTSet], selected_debug_info: [AppleSelectedDebugInfo, None]) -> list[ArgLike]:
+    if selected_debug_info:
+        return [selected_debug_info.artifacts]
+    return project_artifacts(
         actions = ctx.actions,
         tsets = debug_info_tset,
     )
+
+def _get_binary_dsym(ctx, binary: Artifact, debug_info: list[ArgLike], dsym_allowlist: [Artifact, None]) -> Artifact:
     dsym_artifact = get_apple_dsym(
         ctx = ctx,
         executable = binary,
@@ -346,9 +375,10 @@ def _get_bundle_binary_dsym_artifacts(ctx: AnalysisContext, binary_output: Apple
         bundle_binary_dsym_artifact = get_apple_dsym_ext(
             ctx = ctx,
             executable = executable_arg,
-            debug_info = project_artifacts(
-                actions = ctx.actions,
-                tsets = binary_debuggable_info.debug_info_tset if binary_debuggable_info else [],
+            debug_info = _get_dsym_debug_info(
+                ctx,
+                binary_debuggable_info.debug_info_tset if binary_debuggable_info else [],
+                binary_output.selected_debug_info,
             ),
             action_identifier = get_bundle_dir_name(ctx),
             output_path = _get_bundle_dsym_name(ctx),

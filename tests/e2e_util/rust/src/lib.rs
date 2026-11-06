@@ -52,6 +52,7 @@ mod fixture;
 pub mod golden;
 pub mod http;
 pub mod json;
+pub mod lsp;
 pub mod manifold;
 mod output;
 pub mod piped;

@@ -264,7 +264,7 @@ which = "8.0.6"
 whoami = "2.1.3"
 winapi = { version = "0.3", features = ["everything", "std"] }
 x509-parser = "0.18.1"
-xattr = "1.6.1"
+xattr = "1.7.0"
 zip = { version = "8.6.0", features = ["aes-crypto", "bzip2", "deflate", "time"], default-features = false }
 zstd = { version = "0.14.3", features = ["experimental", "zstdmt"] }
 

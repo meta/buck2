@@ -53,8 +53,8 @@ fn validate_category(category: &str) -> starlark::Result<()> {
 fn record_deprecation(
     category: &str,
     message: String,
-    owner: Option<&str>,
-    started: Option<&str>,
+    owner: &str,
+    started: &str,
     stack: bool,
     eval: &mut Evaluator<'_, '_, '_>,
 ) -> starlark::Result<NoneType> {
@@ -81,8 +81,8 @@ fn record_deprecation(
         (file!(), line!(), column!()),
         StructuredErrorOptions {
             kind: SoftErrorKind::Deprecation {
-                owner: owner.map(|owner| Cow::Owned(owner.to_owned())),
-                started: started.map(|started| Cow::Owned(started.to_owned())),
+                owner: Some(Cow::Owned(owner.to_owned())),
+                started: Some(Cow::Owned(started.to_owned())),
             },
             ..Default::default()
         },
@@ -132,21 +132,7 @@ pub(crate) fn register_soft_error(builder: &mut GlobalsBuilder) {
         if owner.is_empty() {
             return Err(buck2_error::Error::from(SoftErrorError::MissingOwner).into());
         }
-        record_deprecation(category, message, Some(owner), Some(started), stack, eval)
-    }
-
-    /// Will soon be removed in favor of `deprecation`.
-    fn soft_error<'v>(
-        #[starlark(require = pos)] category: &str,
-        #[starlark(require = pos)] message: String,
-        #[starlark(require = named)] stack: Option<bool>,
-        #[starlark(require = named)] quiet: Option<bool>,
-        eval: &mut Evaluator<'v, '_, '_>,
-    ) -> starlark::Result<NoneType> {
-        // A deprecation is never shown, so `quiet` has nothing to say; it stays accepted until
-        // the callers in the repo have dropped it, since they and buck2 do not release together.
-        let _ = quiet;
-        record_deprecation(category, message, None, None, stack.unwrap_or(true), eval)
+        record_deprecation(category, message, owner, started, stack, eval)
     }
 
     /// Validate that a soft error category is valid for use from Starlark.

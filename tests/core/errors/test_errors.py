@@ -17,31 +17,6 @@ from buck2.tests.e2e_util.helper.golden import golden
 
 class ErrorsTest(BuckTestCase):
     @buck_test()
-    async def test_soft_error(self, buck: Buck) -> None:
-        await expect_failure(
-            buck.targets(":"),
-            stderr_regex="starlark_raised_soft_error.*Will be reported",
-        )
-
-    @buck_test()
-    @env("BUCK2_HARD_ERROR", "false")
-    async def test_soft_error_is_silent(self, buck: Buck) -> None:
-        res = await buck.targets(":", "no_stack:")
-        assert "starlark_raised_soft_error" not in res.stderr
-        assert "starlark_no_stack_soft_error" not in res.stderr
-
-    @buck_test()
-    @env("BUCK2_HARD_ERROR", "false")
-    async def test_soft_error_no_stack(self, buck: Buck) -> None:
-        await buck.targets(":")
-        log = await buck.log("show")
-        assert "Traceback" in log.stdout
-
-        await buck.targets("no_stack:")
-        log = await buck.log("show")
-        assert "Traceback" not in log.stdout
-
-    @buck_test()
     async def test_deprecation(self, buck: Buck) -> None:
         await expect_failure(
             buck.targets("deprecation:"),
@@ -55,6 +30,17 @@ class ErrorsTest(BuckTestCase):
         assert "starlark_deprecation_example" not in res.stderr
         log = await buck.log("show")
         assert "starlark_deprecation_example" in log.stdout
+
+    @buck_test()
+    @env("BUCK2_HARD_ERROR", "false")
+    async def test_deprecation_no_stack(self, buck: Buck) -> None:
+        await buck.targets("deprecation:")
+        log = await buck.log("show")
+        assert "Traceback" in log.stdout
+
+        await buck.targets("no_stack:")
+        log = await buck.log("show")
+        assert "Traceback" not in log.stdout
 
     @buck_test()
     @env("BUCK2_HARD_ERROR", "false")

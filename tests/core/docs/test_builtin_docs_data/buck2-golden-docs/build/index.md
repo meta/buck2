@@ -48,7 +48,6 @@
 ## set\_starlark\_peak\_allocated\_byte\_limit
 ## sha1
 ## sha256
-## soft\_error
 ## test\_config\_unification\_rollout
 ## transition
 ## transitive\_set

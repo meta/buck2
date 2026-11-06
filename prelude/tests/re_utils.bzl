@@ -171,6 +171,7 @@ def _get_re_executors(
     use_case = re_props_copy.pop("use_case")
     listing_capabilities = re_props_copy.pop("listing_capabilities", None)
     remote_cache_enabled = re_props_copy.pop("remote_cache_enabled", None)
+    remote_enabled = re_props_copy.pop("remote_enabled", True)
     re_dependencies = re_props_copy.pop("dependencies", [])
     re_gang_workers = re_props_copy.pop("gang_workers", [])
     re_gang = re_props_copy.pop("gang", None)
@@ -187,6 +188,8 @@ def _get_re_executors(
     if re_props_copy:
         unexpected_props = ", ".join(re_props_copy.keys())
         fail("{}: found unexpected re props: {}".format(ctx.label, unexpected_props))
+    if not local_enabled and not remote_enabled:
+        fail("{}: neither remote nor local test execution are enabled".format(ctx.label))
 
     if re_gang != None:
         meta_internal_extra_params = dict(meta_internal_extra_params or {})
@@ -194,7 +197,7 @@ def _get_re_executors(
 
     default_executor = CommandExecutorConfig(
         local_enabled = local_enabled,
-        remote_enabled = True,
+        remote_enabled = remote_enabled,
         remote_execution_properties = capabilities,
         remote_execution_use_case = use_case or "tpx-default",
         remote_cache_enabled = remote_cache_enabled,
@@ -210,7 +213,7 @@ def _get_re_executors(
     if listing_capabilities != None or local_listing_enabled != None:
         listing_executor = CommandExecutorConfig(
             local_enabled = local_listing_enabled if local_listing_enabled != None else local_enabled,
-            remote_enabled = True,
+            remote_enabled = remote_enabled,
             remote_execution_properties = listing_capabilities if listing_capabilities != None else capabilities,
             remote_execution_use_case = use_case or "tpx-default",
             remote_cache_enabled = remote_cache_enabled,

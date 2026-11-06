@@ -259,7 +259,7 @@ def get_import_library(ctx: AnalysisContext, linker_type: LinkerType, output_sho
         return None, []
 
 def get_deffile_flags(ctx: AnalysisContext, linker_type: LinkerType) -> list[ArgLike]:
-    if linker_type == LinkerType("windows") and ctx.attrs.deffile != None:
+    if linker_type == LinkerType("windows") and getattr(ctx.attrs, "deffile", None) != None:
         return [
             cmd_args(ctx.attrs.deffile, format = "/DEF:{}"),
         ]

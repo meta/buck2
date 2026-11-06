@@ -31,6 +31,13 @@ prelude.python_bootstrap_binary(
 )
 
 prelude.python_bootstrap_binary(
+    name = "windows_export_def",
+    has_content_based_path = True,
+    main = "windows_export_def.py",
+    visibility = ["PUBLIC"],
+)
+
+prelude.python_bootstrap_binary(
     name = "rustc_action",
     has_content_based_path = True,
     main = "rustc_action.py",

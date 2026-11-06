@@ -2291,6 +2291,22 @@ def get_inherited_link_args(
 
     return inherited_link_args
 
+def _windows_export_def(ctx: AnalysisContext, compile_ctx: CompileContext, static_lib: LinkInfo) -> Artifact:
+    deffile = ctx.actions.declare_output("{}.def".format(compile_ctx.soname), has_content_based_path = True)
+    ctx.actions.run(
+        cmd_args(
+            compile_ctx.internal_tools_info.windows_export_def,
+            cmd_args(deffile.as_output(), format = "--out={}"),
+            cmd_args(
+                [linkable.archive.artifact for linkable in static_lib.linkables if isinstance(linkable, ArchiveLinkable)],
+                format = "--archive={}",
+            ),
+            compile_ctx.cxx_toolchain_info.binary_utilities_info.nm,
+        ),
+        category = "rust_export_def",
+    )
+    return deffile
+
 def rust_link_shared(
     ctx: AnalysisContext,
     compile_ctx: CompileContext,
@@ -2332,6 +2348,9 @@ def rust_link_shared(
         LinkArgs(infos = [set_link_info_link_whole(static_lib)]),
         inherited_link_args,
     ]
+
+    if compile_ctx.cxx_toolchain_info.linker_info.type == LinkerType("windows"):
+        link_args.append(LinkArgs(flags = [cmd_args(_windows_export_def(ctx, compile_ctx, static_lib), format = "/DEF:{}")]))
 
     return cxx_link_shared_library(
         ctx = ctx,

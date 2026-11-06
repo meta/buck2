@@ -667,7 +667,7 @@ impl<'f> FrozenProviderCollectionValueRef<'f> {
                             for provider_name in &**provider_names {
                                 let maybe_di = collection_value
                                     .default_info()?
-                                    .get_sub_target_providers(provider_name.as_str());
+                                    .get_sub_target_providers(provider_name.as_str())?;
 
                                 match maybe_di {
                                     Some(inner) => {
@@ -680,7 +680,7 @@ impl<'f> FrozenProviderCollectionValueRef<'f> {
                                                 label.dupe(),
                                                 collection_value
                                                     .default_info()?
-                                                    .sub_targets()
+                                                    .sub_targets()?
                                                     .keys()
                                                     .map(|s| (*s).to_owned())
                                                     .collect(),

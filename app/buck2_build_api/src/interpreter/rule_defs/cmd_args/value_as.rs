@@ -16,6 +16,8 @@ use buck2_interpreter::types::configured_providers_label::StarlarkConfiguredProv
 use buck2_interpreter::types::project_root::StarlarkProjectRoot;
 use buck2_interpreter::types::target_label::StarlarkTargetLabel;
 use dupe::Dupe;
+use starlark::any::IsStaticType;
+use starlark::any::ProvidesStaticType;
 use starlark::typing::Ty;
 use starlark::values::UnpackValue;
 use starlark::values::Value;
@@ -26,6 +28,15 @@ use crate::interpreter::rule_defs::cmd_args::command_line_arg_like_type::command
 use crate::interpreter::rule_defs::provider::builtin::run_info::RunInfo;
 
 pub struct ValueAsCommandLineLike<'v>(pub &'v dyn CommandLineArgLike<'v>);
+
+// SAFETY: the static type is the same type with the heap lifetime erased.
+unsafe impl<'v> ProvidesStaticType<'v> for ValueAsCommandLineLike<'v> {
+    type StaticType = ValueAsCommandLineLike<'static>;
+}
+
+impl IsStaticType for ValueAsCommandLineLike<'static> {
+    type Reinfect<'lt> = ValueAsCommandLineLike<'lt>;
+}
 
 impl<'v> StarlarkTypeRepr for ValueAsCommandLineLike<'v> {
     type Canonical = ValueAsCommandLineLike<'static>;

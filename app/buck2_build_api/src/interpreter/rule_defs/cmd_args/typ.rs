@@ -686,6 +686,13 @@ impl<'v> StarlarkCmdArgsView<'v> {
             StarlarkCmdArgsView::Frozen(x) => x.is_empty(),
         }
     }
+
+    pub fn as_command_line_arg_like(self) -> &'v dyn CommandLineArgLike<'v> {
+        match self {
+            StarlarkCmdArgsView::Unfrozen(x) => x.as_ref(),
+            StarlarkCmdArgsView::Frozen(x) => x.as_ref(),
+        }
+    }
 }
 
 starlark::methods_static!(CMD_ARGS_METHODS = cmd_args_methods);

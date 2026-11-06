@@ -101,7 +101,7 @@ async fn server_execute_with_dice(
                         ) -> buck2_error::Result<serde_json::Value> {
                             let mut entries = serde_json::Map::new();
                             for (subtarget, providers) in
-                                providers.default_info()?.sub_targets().iter()
+                                providers.default_info()?.sub_targets()?.iter()
                             {
                                 entries.insert(
                                     subtarget.to_string(),
@@ -123,7 +123,7 @@ async fn server_execute_with_dice(
                             label: &mut Subtarget,
                         ) -> buck2_error::Result<()> {
                             for (subtarget, providers) in
-                                providers.default_info()?.sub_targets().iter()
+                                providers.default_info()?.sub_targets()?.iter()
                             {
                                 label.push(subtarget.to_string());
                                 writeln!(stdout, "{label}")?;
@@ -144,7 +144,7 @@ async fn server_execute_with_dice(
                         .require_compatible()?
                         .provider_collection()
                         .default_info()?
-                        .sub_targets()
+                        .sub_targets()?
                         .keys()
                     {
                         entries.insert(
@@ -159,7 +159,7 @@ async fn server_execute_with_dice(
                         .require_compatible()?
                         .provider_collection()
                         .default_info()?
-                        .sub_targets()
+                        .sub_targets()?
                         .keys()
                     {
                         label.push(sub.to_string());

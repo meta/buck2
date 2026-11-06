@@ -233,7 +233,7 @@ fn dependency_methods(builder: &mut MethodsBuilder) {
         let providers = this
             .collection()
             .default_info()?
-            .get_sub_target_providers(subtarget)
+            .get_sub_target_providers(subtarget)?
             .ok_or_else(|| {
                 buck2_error::Error::from(DependencyError::UnknownSubtarget(subtarget.to_owned()))
             })?;

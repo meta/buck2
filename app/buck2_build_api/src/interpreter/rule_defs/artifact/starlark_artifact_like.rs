@@ -18,6 +18,7 @@ use buck2_artifact::artifact::artifact_type::Artifact;
 use buck2_core::deferred::base_deferred_key::BaseDeferredKey;
 use buck2_fs::paths::file_name::FileName;
 use buck2_fs::paths::forward_rel_path::ForwardRelativePath;
+use starlark::any::ProvidesStaticType;
 use starlark::collections::StarlarkHasher;
 use starlark::environment::Methods;
 use starlark::typing::Ty;
@@ -178,7 +179,7 @@ impl<'v> UnpackValue<'v> for &'v dyn StarlarkInputArtifactLike<'v> {
     }
 }
 
-#[derive(UnpackValue, StarlarkTypeRepr)]
+#[derive(UnpackValue, StarlarkTypeRepr, ProvidesStaticType)]
 pub struct ValueAsInputArtifactLike<'v>(pub &'v dyn StarlarkInputArtifactLike<'v>);
 
 #[derive(StarlarkTypeRepr, UnpackValue)]

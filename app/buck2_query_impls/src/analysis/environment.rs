@@ -321,7 +321,7 @@ async fn get_template_info_provider_artifacts(
                 providers_collection.builtin_provider::<TemplatePlaceholderInfo>()?
             {
                 if let Some(template_info) = template_placeholder_info
-                    .keyed_variables()
+                    .keyed_variables()?
                     .get(template_name)
                 {
                     let mut cmd_visitor = SimpleCommandLineArtifactVisitor::new();

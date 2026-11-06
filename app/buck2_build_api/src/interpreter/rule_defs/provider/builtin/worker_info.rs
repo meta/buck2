@@ -9,39 +9,29 @@
  */
 
 use std::fmt::Debug;
-use std::iter::empty;
-use std::iter::once;
 use std::sync::atomic;
 use std::sync::atomic::AtomicU64;
 
 use allocative::Allocative;
 use buck2_build_api_derive::internal_provider;
-use buck2_error::BuckErrorContext;
-use buck2_error::BuckErrorOptionContext;
-use buck2_error::buck2_error;
-use either::Either;
-use itertools::Itertools;
 use starlark::any::ProvidesStaticType;
 use starlark::environment::GlobalsBuilder;
 use starlark::eval::Evaluator;
 use starlark::values::Freeze;
 use starlark::values::FreezeError;
 use starlark::values::StarlarkPagable;
+use starlark::values::StringValue;
 use starlark::values::Trace;
-use starlark::values::UnpackValue;
 use starlark::values::Value;
 use starlark::values::ValueOf;
-use starlark::values::ValueOfUnchecked;
-use starlark::values::dict::DictRef;
 use starlark::values::dict::DictType;
 use starlark::values::list::AllocList;
 use starlark::values::none::NoneOr;
-use starlark::values::none::NoneType;
 
 use crate as buck2_build_api;
 use crate::interpreter::rule_defs::cmd_args::CommandLineArgLike;
-use crate::interpreter::rule_defs::cmd_args::FrozenStarlarkCmdArgs;
 use crate::interpreter::rule_defs::cmd_args::StarlarkCmdArgs;
+use crate::interpreter::rule_defs::cmd_args::StarlarkCmdArgsView;
 use crate::interpreter::rule_defs::cmd_args::value_as::ValueAsCommandLineLike;
 
 /// Provider that signals that a rule is a worker tool
@@ -59,15 +49,15 @@ use crate::interpreter::rule_defs::cmd_args::value_as::ValueAsCommandLineLike;
 #[repr(C)]
 pub struct WorkerInfo<'v> {
     // Command to spawn a new worker
-    pub exe: ValueOfUnchecked<'v, FrozenStarlarkCmdArgs<'static>>,
-    /// A Starlark value representing the environment for the command that spawns the worker.
-    env: ValueOfUnchecked<'v, DictType<String, FrozenStarlarkCmdArgs<'static>>>,
+    pub exe: ValueOf<'v, StarlarkCmdArgsView<'v>>,
+    /// Environment for the command that spawns the worker.
+    env: Option<ValueOf<'v, DictType<StringValue<'v>, ValueAsCommandLineLike<'v>>>>,
     // Maximum number of concurrent commands to execute on a worker instance without queuing
-    pub concurrency: ValueOfUnchecked<'v, NoneOr<usize>>,
+    pub concurrency: Option<ValueOf<'v, usize>>,
     // Whether to always run actions using this worker via the streaming API
-    pub streaming: ValueOfUnchecked<'v, bool>,
+    pub streaming: Option<ValueOf<'v, bool>>,
     // Bazel remote persistent worker protocol capable worker
-    pub supports_bazel_remote_persistent_worker_protocol: ValueOfUnchecked<'v, bool>,
+    pub supports_bazel_remote_persistent_worker_protocol: ValueOf<'v, bool>,
 
     pub id: u64,
 }
@@ -82,119 +72,71 @@ fn worker_info_creator(globals: &mut GlobalsBuilder) {
     #[starlark(as_type = WorkerInfo<'static>)]
     fn WorkerInfo<'v>(
         #[starlark(default = AllocList::EMPTY)] exe: Value<'v>,
-        #[starlark(default = NoneType)] env: Value<'v>,
+        #[starlark(default = NoneOr::None)] env: NoneOr<
+            ValueOf<'v, DictType<StringValue<'v>, ValueAsCommandLineLike<'v>>>,
+        >,
         #[starlark(require = named, default = NoneOr::None)] concurrency: NoneOr<
             ValueOf<'v, usize>,
         >,
-        #[starlark(require = named, default = NoneType)] streaming: Value<'v>,
+        #[starlark(require = named, default = NoneOr::None)] streaming: NoneOr<ValueOf<'v, bool>>,
         #[starlark(require = named, default = false)]
         supports_bazel_remote_persistent_worker_protocol: bool,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<WorkerInfo<'v>> {
         let heap = eval.heap();
         let valid_exe = StarlarkCmdArgs::try_from_value(exe)?;
-        let exe = ValueOfUnchecked::new(heap.alloc(valid_exe));
         let id = next_id();
         Ok(WorkerInfo {
-            exe,
-            env: ValueOfUnchecked::new(heap.alloc(env)),
+            exe: ValueOf::alloc(heap, valid_exe),
+            env: env.into_option(),
             id,
-            concurrency: heap.alloc_typed_unchecked(concurrency).cast(),
-            streaming: ValueOfUnchecked::new(streaming),
-            supports_bazel_remote_persistent_worker_protocol: heap
-                .alloc_typed_unchecked(supports_bazel_remote_persistent_worker_protocol)
-                .cast(),
+            concurrency: concurrency.into_option(),
+            streaming: streaming.into_option(),
+            supports_bazel_remote_persistent_worker_protocol: ValueOf::new_unchecked(
+                heap.alloc(supports_bazel_remote_persistent_worker_protocol),
+            ),
         })
     }
 }
 
-fn iter_env<'v>(
-    env: Value<'v>,
-) -> impl Iterator<Item = buck2_error::Result<(&'v str, &'v dyn CommandLineArgLike<'v>)>> {
-    if env.is_none() {
-        return Either::Left(Either::Left(empty()));
-    }
-
-    let env = match DictRef::from_value(env) {
-        Some(env) => env,
-        None => {
-            return Either::Left(Either::Right(once(Err(buck2_error!(
-                buck2_error::ErrorTag::Input,
-                "Invalid `env`: Expected a dict, got: `{}`",
-                env
-            )))));
-        }
-    };
-
-    let env = env.iter().collect::<Vec<_>>();
-
-    Either::Right(env.into_iter().map(|(key, value)| {
-        let key = key.unpack_str().with_internal_error(|| {
-            format!("Invalid key in `env`: Expected a str, got: `{key}`")
-        })?;
-
-        let arglike = ValueAsCommandLineLike::unpack_value_err(value)
-            .with_buck_error_context(|| format!("Invalid value in `env` for key `{key}`"))?
-            .0;
-
-        Ok((key, arglike))
-    }))
-}
-
 impl<'v> WorkerInfo<'v> {
     pub fn exe_command_line(&self) -> &'v dyn CommandLineArgLike<'v> {
-        ValueAsCommandLineLike::unpack_value_err(self.exe.get())
-            .expect("validated at construction")
-            .0
+        self.exe.unpack().as_command_line_arg_like()
     }
 
-    pub fn env(&self) -> Vec<(&'v str, &'v dyn CommandLineArgLike<'v>)> {
-        iter_env(self.env.get())
-            .map(|e| e.expect("validated at construction"))
-            .collect_vec()
+    pub fn env(&self) -> buck2_error::Result<Vec<(&'v str, &'v dyn CommandLineArgLike<'v>)>> {
+        let Some(env) = self.env else {
+            return Ok(Vec::new());
+        };
+        env.iter()
+            .map(|entry| {
+                let (key, value) = entry?;
+                Ok((key.unpack().as_str(), value.unpack().0))
+            })
+            .collect()
     }
 
     pub fn concurrency(&self) -> Option<usize> {
-        self.concurrency
-            .unpack()
-            .expect("validated at construction")
-            .into_option()
+        self.concurrency.map(|v| v.unpack())
     }
 
     pub fn streaming(&self) -> bool {
-        NoneOr::<bool>::unpack_value(self.streaming.get())
-            .unwrap()
-            .unwrap()
-            .into_option()
-            .unwrap_or(false)
+        self.streaming.is_some_and(|v| v.unpack())
     }
 
     pub fn supports_bazel_remote_persistent_worker_protocol(&self) -> bool {
         self.supports_bazel_remote_persistent_worker_protocol
             .unpack()
-            .expect("validated at construction")
     }
 }
 
 fn validate_worker_info<'v>(info: &WorkerInfo<'v>) -> buck2_error::Result<()> {
-    let exe = StarlarkCmdArgs::try_from_value(info.exe.get()).with_buck_error_context(|| {
-        format!(
-            "Value for `exe` field is not a command line: `{}`",
-            info.exe
-        )
-    })?;
-    if exe.is_empty() {
+    if info.exe.unpack().is_empty() {
         return Err(buck2_error::buck2_error!(
             buck2_error::ErrorTag::Input,
             "Value for `exe` field is an empty command line: `{}`",
             info.exe
         ));
     }
-
-    let env = iter_env(info.env.get());
-    for res in env {
-        res?;
-    }
-
     Ok(())
 }

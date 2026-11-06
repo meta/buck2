@@ -23,6 +23,7 @@ use starlark::values::Freezer;
 use starlark::values::StarlarkPagable;
 use starlark::values::Trace;
 use starlark::values::UnpackValue;
+use starlark::values::UnpackValueStable;
 use starlark::values::Value;
 use starlark::values::ValueTyped;
 use starlark::values::type_repr::StarlarkTypeRepr;
@@ -83,6 +84,8 @@ impl<'v> StarlarkTypeRepr for CommandLineArg<'v> {
         ValueAsCommandLineLike::starlark_type_repr()
     }
 }
+
+impl<'v> UnpackValueStable<'v> for CommandLineArg<'v> {}
 
 impl<'v> UnpackValue<'v> for CommandLineArg<'v> {
     type Error = Infallible;

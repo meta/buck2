@@ -20,27 +20,20 @@ use starlark::environment::GlobalsBuilder;
 use starlark::values::Freeze;
 use starlark::values::FreezeError;
 use starlark::values::StarlarkPagable;
+use starlark::values::StringValue;
 use starlark::values::Trace;
-use starlark::values::UnpackValue;
 use starlark::values::ValueOf;
-use starlark::values::ValueOfUnchecked;
 use starlark::values::ValueTyped;
-use starlark::values::dict::DictRef;
 use starlark::values::dict::DictType;
 
 use crate as buck2_build_api;
 use crate::interpreter::rule_defs::artifact::starlark_artifact_like::ValueAsInputArtifactLike;
-use crate::interpreter::rule_defs::artifact::starlark_artifact_like::ValueIsInputArtifactAnnotation;
 
 // Provider that signals a rule is installable (ex. android_binary)
 
 #[derive(Debug, buck2_error::Error)]
 #[buck2(tag = Input)]
 enum InstallInfoProviderErrors {
-    #[error("Expected a dictionary of artifacts but key `{key}` contained `{got}`")]
-    ExpectedArtifact { key: String, got: String },
-    #[error("Expected a dictionary with string keys, but got key `{0}`")]
-    ExpectedStringKey(String),
     #[error("File with key `{key}`: `{artifact}` should not have any associated artifacts")]
     AssociatedArtifacts { key: String, artifact: String },
 }
@@ -61,7 +54,7 @@ pub struct InstallInfo<'v> {
     // Label for the installer
     installer: ValueTyped<'v, StarlarkConfiguredProvidersLabel>,
     // list of files that need to be installed
-    files: ValueOfUnchecked<'v, DictType<String, ValueIsInputArtifactAnnotation>>,
+    files: ValueOf<'v, DictType<StringValue<'v>, ValueAsInputArtifactLike<'v>>>,
 }
 
 impl<'v> InstallInfo<'v> {
@@ -69,32 +62,18 @@ impl<'v> InstallInfo<'v> {
         self.installer.label().to_owned()
     }
 
-    fn get_files_dict(&self) -> DictRef<'v> {
-        DictRef::from_value(self.files.get()).expect("Value is a Dict")
-    }
-
-    fn get_files_iter<'a>(
-        files: &'a DictRef<'v>,
-    ) -> impl Iterator<Item = buck2_error::Result<(&'v str, ValueAsInputArtifactLike<'v>)>> + 'a
+    fn get_files_iter(
+        &self,
+    ) -> impl Iterator<Item = buck2_error::Result<(&'v str, ValueAsInputArtifactLike<'v>)>> + 'v
     {
-        files.iter().map(|(k, v)| {
-            let k = k
-                .unpack_str()
-                .ok_or_else(|| InstallInfoProviderErrors::ExpectedStringKey(k.to_string()))?;
-            Ok((
-                k,
-                ValueAsInputArtifactLike::unpack_value(v)?.ok_or_else(|| {
-                    InstallInfoProviderErrors::ExpectedArtifact {
-                        key: k.to_owned(),
-                        got: v.get_type().to_owned(),
-                    }
-                })?,
-            ))
+        self.files.iter().map(|entry| {
+            let (k, v) = entry?;
+            Ok((k.unpack().as_str(), v.unpack()))
         })
     }
 
     pub fn get_files(&self) -> buck2_error::Result<BuckMutInsertionMap<String, Artifact>> {
-        Self::get_files_iter(&self.get_files_dict())
+        self.get_files_iter()
             .map(|x| {
                 let (k, v) = x?;
                 Ok((
@@ -111,19 +90,16 @@ impl<'v> InstallInfo<'v> {
 fn install_info_creator(globals: &mut GlobalsBuilder) {
     fn InstallInfo<'v>(
         installer: ValueTyped<'v, StarlarkConfiguredProvidersLabel>,
-        files: ValueOf<'v, DictType<&'v str, ValueIsInputArtifactAnnotation>>,
+        files: ValueOf<'v, DictType<StringValue<'v>, ValueAsInputArtifactLike<'v>>>,
     ) -> starlark::Result<InstallInfo<'v>> {
-        let info = InstallInfo {
-            installer,
-            files: files.as_unchecked().cast(),
-        };
+        let info = InstallInfo { installer, files };
         validate_install_info(&info)?;
         Ok(info)
     }
 }
 
 fn validate_install_info<'v>(info: &InstallInfo<'v>) -> buck2_error::Result<()> {
-    for x in InstallInfo::get_files_iter(&info.get_files_dict()) {
+    for x in info.get_files_iter() {
         let (k, v) = x?;
         if let Some(other_artifacts) = v.0.get_associated_artifacts() {
             if !other_artifacts.is_empty() {

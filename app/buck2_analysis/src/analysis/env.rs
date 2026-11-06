@@ -140,7 +140,7 @@ pub fn resolve_unkeyed_placeholder<'v>(
             else {
                 return buck2_error::Ok(None);
             };
-            let Some(value) = placeholder_info.unkeyed_variables().get(name).copied() else {
+            let Some(value) = placeholder_info.unkeyed_variables()?.get(name).copied() else {
                 return Ok(None);
             };
             // IMPORTANT: Anything given back to the user must be kept alive; the edge

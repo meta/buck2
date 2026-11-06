@@ -613,26 +613,34 @@ impl RunAction {
         };
         let worker: Option<&WorkerInfo> = values.worker()?.map(|v| v.as_ref());
 
-        let worker = worker.map(|worker| UnpackedWorkerValues {
-            exe: worker.exe_command_line(),
-            env: worker.env(),
-            id: WorkerId(worker.id),
-            concurrency: worker.concurrency(),
-            streaming: worker.streaming(),
-            supports_bazel_remote_persistent_worker_protocol: worker
-                .supports_bazel_remote_persistent_worker_protocol(),
-        });
+        let worker = worker
+            .map(|worker| {
+                buck2_error::Ok(UnpackedWorkerValues {
+                    exe: worker.exe_command_line(),
+                    env: worker.env()?,
+                    id: WorkerId(worker.id),
+                    concurrency: worker.concurrency(),
+                    streaming: worker.streaming(),
+                    supports_bazel_remote_persistent_worker_protocol: worker
+                        .supports_bazel_remote_persistent_worker_protocol(),
+                })
+            })
+            .transpose()?;
 
         let remote_worker: Option<&WorkerInfo> = values.remote_worker()?.map(|v| v.as_ref());
 
-        let remote_worker = remote_worker.map(|remote_worker| UnpackedWorkerValues {
-            exe: remote_worker.exe_command_line(),
-            env: remote_worker.env(),
-            id: WorkerId(remote_worker.id),
-            concurrency: remote_worker.concurrency(),
-            streaming: false,
-            supports_bazel_remote_persistent_worker_protocol: false,
-        });
+        let remote_worker = remote_worker
+            .map(|remote_worker| {
+                buck2_error::Ok(UnpackedWorkerValues {
+                    exe: remote_worker.exe_command_line(),
+                    env: remote_worker.env()?,
+                    id: WorkerId(remote_worker.id),
+                    concurrency: remote_worker.concurrency(),
+                    streaming: false,
+                    supports_bazel_remote_persistent_worker_protocol: false,
+                })
+            })
+            .transpose()?;
 
         Ok(UnpackedRunActionValues {
             exe,

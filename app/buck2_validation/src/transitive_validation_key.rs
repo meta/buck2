@@ -70,6 +70,7 @@ impl TransitiveValidationKey {
                 .as_ref()
                 .validations()
                 .map(|spec| {
+                    let spec = spec?;
                     Ok(Validation {
                         name: spec.name().to_owned(),
                         optional: spec.optional(),

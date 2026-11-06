@@ -55,14 +55,15 @@ impl syn::parse::Parse for InternalProviderArgs {
 /// implementation. `ValueOfUnchecked<'v, T>` is the unchecked predecessor of `ValueOf`, being
 /// migrated away from.
 ///
-/// A field that may legitimately be absent is declared `Option<ValueTyped<'v, T>>`, which is the
-/// only spelling that documents itself honestly - the others describe a field that is always a
-/// `T`, so an absent value has to be smuggled through as a `None` the starlark type does not
-/// mention.
+/// A field that may legitimately be absent is declared `Option<ValueOf<'v, T>>` or
+/// `Option<ValueTyped<'v, T>>`, which is the only spelling that documents itself honestly - the
+/// others describe a field that is always a `T`, so an absent value would have to be smuggled
+/// through as a `None` the starlark type does not mention.
 #[derive(Copy, Clone)]
 enum FieldKind {
     Unchecked,
     Of,
+    OptionOf,
     Typed,
     OptionTyped,
 }
@@ -90,9 +91,11 @@ impl Field {
         let field_type = &self.field_type;
         let ty: syn::Type = match self.kind {
             FieldKind::Unchecked | FieldKind::Of | FieldKind::Typed => field_type.clone(),
-            FieldKind::OptionTyped => syn::parse_quote_spanned! { self.name.span() =>
-                starlark::values::none::NoneOr<#field_type>
-            },
+            FieldKind::OptionOf | FieldKind::OptionTyped => {
+                syn::parse_quote_spanned! { self.name.span() =>
+                    starlark::values::none::NoneOr<#field_type>
+                }
+            }
         };
         syn::parse_quote_spanned! { self.name.span() =>
             <#ty as starlark::values::type_repr::StarlarkTypeRepr>::starlark_type_repr()
@@ -109,9 +112,11 @@ impl Field {
             FieldKind::Of | FieldKind::Typed => syn::parse_quote_spanned! { name.span() =>
                 #this.#name.to_value()
             },
-            FieldKind::OptionTyped => syn::parse_quote_spanned! { name.span() =>
-                #this.#name.map_or_else(starlark::values::Value::new_none, |v| v.to_value())
-            },
+            FieldKind::OptionOf | FieldKind::OptionTyped => {
+                syn::parse_quote_spanned! { name.span() =>
+                    #this.#name.map_or_else(starlark::values::Value::new_none, |v| v.to_value())
+                }
+            }
         }
     }
 }
@@ -250,7 +255,7 @@ impl ProviderCodegen {
         }
 
         let error = "Field type must be `ValueOf<'v, SomeType>`, `ValueOfUnchecked<'v, SomeType>`, \
-             `ValueTyped<'v, SomeType>` or `Option<ValueTyped<'v, SomeType>>`";
+             `ValueTyped<'v, SomeType>`, or either of the first and last in an `Option`";
         let err = || syn::Error::new_spanned(field, error);
 
         let (ident, args) = generic_segment(&field.ty).ok_or_else(err)?;
@@ -272,8 +277,12 @@ impl ProviderCodegen {
             } else {
                 FieldKind::Typed
             }
-        } else if ident == "ValueOf" && !optional {
-            FieldKind::Of
+        } else if ident == "ValueOf" {
+            if optional {
+                FieldKind::OptionOf
+            } else {
+                FieldKind::Of
+            }
         } else if ident == "ValueOfUnchecked" && !optional {
             FieldKind::Unchecked
         } else {

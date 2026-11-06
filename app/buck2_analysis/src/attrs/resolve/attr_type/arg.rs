@@ -158,7 +158,7 @@ fn resolve_configured_macro<'v>(
                         label.dupe(),
                     )
                 })?;
-            let keyed_variables = placeholder_info.keyed_variables();
+            let keyed_variables = placeholder_info.keyed_variables()?;
             let either_cmd_or_mapping = keyed_variables.get(&**name).ok_or_else(|| {
                 ResolveMacroError::KeyedPlaceholderMappingMissing(
                     (**name).to_owned(),

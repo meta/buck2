@@ -20,40 +20,13 @@ use starlark::values::Freeze;
 use starlark::values::StarlarkPagable;
 use starlark::values::StringValue;
 use starlark::values::Trace;
-use starlark::values::UnpackValue;
 use starlark::values::Value;
-use starlark::values::ValueOfUnchecked;
-use starlark::values::dict::AllocDict;
-use starlark::values::dict::DictRef;
+use starlark::values::ValueOf;
 use starlark::values::dict::DictType;
 
 use crate as buck2_build_api;
 use crate::interpreter::rule_defs::cmd_args::value::CommandLineArg;
-use crate::interpreter::rule_defs::cmd_args::value_as::ValueAsCommandLineLike;
 
-#[derive(Debug, buck2_error::Error)]
-#[buck2(tag = Input)]
-enum TemplatePlaceholderInfoError {
-    #[error(
-        "Expected TemplatePlaceholderInfo.{field_key} to be a dict of String->arg-like Value, got `{value_repr}`."
-    )]
-    VariablesNotADict {
-        field_key: String,
-        value_repr: String,
-    },
-    #[error(
-        "Expected TemplatePlaceholderInfo.{field_key} to be a dict of String->Value, where each Value is ArgLike or is itself a dict of String->ArgLike but {key} isn't either of those."
-    )]
-    ValueNotValidKeyedPlaceholder { field_key: String, key: String },
-    #[error(
-        "Expected TemplatePlaceholderInfo.{field_key}[{key}] to be a dict of String->Arglike but {inner_key} isn't an ArgLike Value."
-    )]
-    InnerValueNotCommandLineLike {
-        field_key: String,
-        key: String,
-        inner_key: String,
-    },
-}
 /// A provider that is used for expansions in string attribute templates
 ///
 /// String attribute templates allow two types of user-defined placeholders, "unkeyed placeholders"
@@ -88,112 +61,54 @@ enum TemplatePlaceholderInfoError {
 )]
 #[repr(C)]
 pub struct TemplatePlaceholderInfo<'v> {
-    // `Value` in both fields is command line arg.
-    // TODO(nga): specify type more precisely.
-    unkeyed_variables: ValueOfUnchecked<'v, DictType<String, Value<'static>>>,
-    keyed_variables: ValueOfUnchecked<
+    unkeyed_variables: ValueOf<'v, DictType<StringValue<'v>, CommandLineArg<'v>>>,
+    keyed_variables: ValueOf<
         'v,
-        DictType<String, Either<Value<'static>, DictType<String, Value<'static>>>>,
+        DictType<
+            StringValue<'v>,
+            Either<CommandLineArg<'v>, DictType<StringValue<'v>, CommandLineArg<'v>>>,
+        >,
     >,
 }
 
+fn collect_variables<'v>(
+    variables: ValueOf<'v, DictType<StringValue<'v>, CommandLineArg<'v>>>,
+) -> buck2_error::Result<BuckMutInsertionMap<StringValue<'v>, CommandLineArg<'v>>> {
+    variables
+        .iter()
+        .map(|entry| {
+            let (k, v) = entry?;
+            Ok((k.unpack(), v.unpack()))
+        })
+        .collect()
+}
+
 impl<'v> TemplatePlaceholderInfo<'v> {
-    pub fn unkeyed_variables(&self) -> BuckMutInsertionMap<StringValue<'v>, CommandLineArg<'v>> {
-        DictRef::from_value(self.unkeyed_variables.get())
-            .expect("should be a dict-like object")
-            .iter()
-            .map(|(k, v)| {
-                (
-                    StringValue::new(k).expect("should have string keys"),
-                    CommandLineArg::new(v).expect("arg-like values, verified at construction"),
-                )
-            })
-            .collect()
+    pub fn unkeyed_variables(
+        &self,
+    ) -> buck2_error::Result<BuckMutInsertionMap<StringValue<'v>, CommandLineArg<'v>>> {
+        collect_variables(self.unkeyed_variables)
     }
 
     pub fn keyed_variables(
         &self,
-    ) -> BuckMutInsertionMap<
-        StringValue<'v>,
-        Either<CommandLineArg<'v>, BuckMutInsertionMap<StringValue<'v>, CommandLineArg<'v>>>,
+    ) -> buck2_error::Result<
+        BuckMutInsertionMap<
+            StringValue<'v>,
+            Either<CommandLineArg<'v>, BuckMutInsertionMap<StringValue<'v>, CommandLineArg<'v>>>,
+        >,
     > {
-        DictRef::from_value(self.keyed_variables.get())
-            .expect("should be a dict-like object")
+        self.keyed_variables
             .iter()
-            .map(|(k, v)| {
-                (StringValue::new(k).expect("should have string keys"), {
-                    if let Some(dict) = DictRef::from_value(v) {
-                        Either::Right(
-                            dict.iter()
-                                .map(|(k, v)| {
-                                    (
-                                        StringValue::new(k).expect("should have string keys"),
-                                        CommandLineArg::new(v)
-                                            .expect("arg-like values, verified at construction"),
-                                    )
-                                })
-                                .collect(),
-                        )
-                    } else if let Ok(cmd) = CommandLineArg::new(v) {
-                        Either::Left(cmd)
-                    } else {
-                        unreachable!("should be dict or command line")
-                    }
-                })
+            .map(|entry| {
+                let (k, v) = entry?;
+                let v = match v.split()? {
+                    Either::Left(arg) => Either::Left(arg.unpack()),
+                    Either::Right(dict) => Either::Right(collect_variables(dict)?),
+                };
+                Ok((k.unpack(), v))
             })
             .collect()
-    }
-
-    fn new(unkeyed_variables: Value<'v>, keyed_variables: Value<'v>) -> buck2_error::Result<Self> {
-        verify_variables_type("unkeyed_variables", unkeyed_variables)?;
-        verify_variables_type("keyed_variables", keyed_variables)?;
-        Ok(Self {
-            unkeyed_variables: ValueOfUnchecked::new(unkeyed_variables),
-            keyed_variables: ValueOfUnchecked::new(keyed_variables),
-        })
-    }
-}
-
-fn verify_variables_type(field_key: &str, variables: Value) -> buck2_error::Result<()> {
-    match DictRef::from_value(variables) {
-        None => Err(TemplatePlaceholderInfoError::VariablesNotADict {
-            field_key: field_key.to_owned(),
-            value_repr: variables.to_repr(),
-        }
-        .into()),
-        Some(dict) => {
-            for (key, value) in dict.iter() {
-                if ValueAsCommandLineLike::unpack_value(value)?.is_some() {
-                    continue;
-                }
-
-                if let Some(dict) = DictRef::from_value(value) {
-                    for (inner_key, value) in dict.iter() {
-                        if ValueAsCommandLineLike::unpack_value(value)?.is_none() {
-                            return Err(
-                                TemplatePlaceholderInfoError::InnerValueNotCommandLineLike {
-                                    field_key: field_key.to_owned(),
-                                    key: key.to_string(),
-                                    inner_key: inner_key.to_string(),
-                                }
-                                .into(),
-                            );
-                        }
-                    }
-                    continue;
-                }
-
-                return Err(
-                    TemplatePlaceholderInfoError::ValueNotValidKeyedPlaceholder {
-                        field_key: field_key.to_owned(),
-                        key: key.to_string(),
-                    }
-                    .into(),
-                );
-            }
-
-            Ok(())
-        }
     }
 }
 
@@ -201,13 +116,20 @@ fn verify_variables_type(field_key: &str, variables: Value) -> buck2_error::Resu
 fn template_placeholder_info_creator(builder: &mut GlobalsBuilder) {
     #[starlark(as_type = TemplatePlaceholderInfo<'static>)]
     fn TemplatePlaceholderInfo<'v>(
-        // TODO(nga): specify parameter types.
-        #[starlark(default = AllocDict::EMPTY)] unkeyed_variables: Value<'v>,
-        #[starlark(default = AllocDict::EMPTY)] keyed_variables: Value<'v>,
+        #[starlark(default = ValueOf::new_unchecked(Value::new_empty_dict()))]
+        unkeyed_variables: ValueOf<'v, DictType<StringValue<'v>, CommandLineArg<'v>>>,
+        #[starlark(default = ValueOf::new_unchecked(Value::new_empty_dict()))]
+        keyed_variables: ValueOf<
+            'v,
+            DictType<
+                StringValue<'v>,
+                Either<CommandLineArg<'v>, DictType<StringValue<'v>, CommandLineArg<'v>>>,
+            >,
+        >,
     ) -> starlark::Result<TemplatePlaceholderInfo<'v>> {
-        Ok(TemplatePlaceholderInfo::new(
+        Ok(TemplatePlaceholderInfo {
             unkeyed_variables,
             keyed_variables,
-        )?)
+        })
     }
 }

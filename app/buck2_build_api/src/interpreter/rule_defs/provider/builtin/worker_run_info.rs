@@ -19,14 +19,14 @@ use starlark::values::Freeze;
 use starlark::values::StarlarkPagable;
 use starlark::values::Trace;
 use starlark::values::Value;
-use starlark::values::ValueOfUnchecked;
+use starlark::values::ValueOf;
 use starlark::values::ValueTyped;
 use starlark::values::list::AllocList;
 use starlark::values::none::NoneOr;
 
 use crate as buck2_build_api;
-use crate::interpreter::rule_defs::cmd_args::FrozenStarlarkCmdArgs;
 use crate::interpreter::rule_defs::cmd_args::StarlarkCmdArgs;
+use crate::interpreter::rule_defs::cmd_args::StarlarkCmdArgsView;
 use crate::interpreter::rule_defs::provider::builtin::worker_info::WorkerInfo;
 
 /// Provider that signals that a rule can run using a worker
@@ -49,7 +49,7 @@ pub struct WorkerRunInfo<'v> {
     remote_worker: Option<ValueTyped<'v, WorkerInfo<'v>>>,
 
     // Command to execute without spawning a worker, when the build environment or configuration does not support workers
-    exe: ValueOfUnchecked<'v, FrozenStarlarkCmdArgs<'static>>,
+    exe: ValueOf<'v, StarlarkCmdArgsView<'v>>,
 }
 
 #[starlark_module]
@@ -71,7 +71,7 @@ fn worker_run_info_creator(globals: &mut GlobalsBuilder) {
         Ok(WorkerRunInfo {
             worker: worker.into_option(),
             remote_worker: remote_worker.into_option(),
-            exe: ValueOfUnchecked::new(heap.alloc(valid_exe)),
+            exe: ValueOf::alloc(heap, valid_exe),
         })
     }
 }
@@ -85,7 +85,7 @@ impl<'v> WorkerRunInfo<'v> {
         self.remote_worker
     }
 
-    pub fn exe(&self) -> ValueTyped<'v, StarlarkCmdArgs<'v>> {
-        ValueTyped::new_err(self.exe.get()).expect("validated at construction")
+    pub fn exe(&self) -> ValueOf<'v, StarlarkCmdArgsView<'v>> {
+        self.exe
     }
 }

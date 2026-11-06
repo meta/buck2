@@ -21,9 +21,7 @@ use starlark::values::OwnedFrozen;
 use starlark::values::StarlarkPagable;
 use starlark::values::Trace;
 use starlark::values::ValueOf;
-use starlark::values::ValueOfUnchecked;
 use starlark::values::ValueTyped;
-use starlark::values::list::ListRef;
 use starlark::values::list::ListType;
 
 use crate as buck2_build_api;
@@ -32,12 +30,8 @@ use crate::interpreter::rule_defs::validation_spec::StarlarkValidationSpec;
 #[derive(Debug, buck2_error::Error)]
 #[buck2(tag = Input)]
 enum ValidationInfoError {
-    #[error("Expected `ValidationSpec` value, got `{0}`")]
-    WrongSpecType(String),
     #[error("Multiple specs with same name `{0}` which is not allowed.")]
     SpecsWithDuplicateName(String),
-    #[error("Validations should be a list of `ValidationSpec` values")]
-    ValidationsAreNotListOfSpecs,
     #[error("`ValidationInfo` should contain at least one validation.")]
     ValidationSpecsEmpty,
 }
@@ -96,22 +90,13 @@ pub struct ValidationInfo<'v> {
     /// See the [Validations guide](https://buck2.build/docs/rule_authors/validation/)
     /// for how to declare validations end-to-end and write the validator
     /// action that produces each spec's `validation_result`.
-    validations: ValueOfUnchecked<'v, Vec<StarlarkValidationSpec<'static>>>,
+    validations: ValueOf<'v, ListType<ValueTyped<'v, StarlarkValidationSpec<'v>>>>,
 }
 
 fn validate_validation_info<'v>(info: &ValidationInfo<'v>) -> buck2_error::Result<()> {
-    let values = ListRef::from_value(info.validations.get())
-        .ok_or(buck2_error::Error::from(
-            ValidationInfoError::ValidationsAreNotListOfSpecs,
-        ))?
-        .iter();
     let mut spec_names = BuckMutSet::default();
-    for value in values {
-        let wrong_type_error = || ValidationInfoError::WrongSpecType(format!("{value}"));
-        let name = value
-            .downcast_ref::<StarlarkValidationSpec>()
-            .ok_or_else(wrong_type_error)?
-            .name();
+    for spec in info.validations.iter() {
+        let name = spec?.unpack().as_ref().name();
         if !spec_names.insert(name) {
             return Err(ValidationInfoError::SpecsWithDuplicateName(name.to_owned()).into());
         }
@@ -128,12 +113,10 @@ fn validation_info_creator(globals: &mut GlobalsBuilder) {
     fn ValidationInfo<'v>(
         #[starlark(require = named)] validations: ValueOf<
             'v,
-            ListType<&'v StarlarkValidationSpec<'v>>,
+            ListType<ValueTyped<'v, StarlarkValidationSpec<'v>>>,
         >,
     ) -> starlark::Result<ValidationInfo<'v>> {
-        let result = ValidationInfo {
-            validations: ValueOfUnchecked::new(validations.to_value()),
-        };
+        let result = ValidationInfo { validations };
         validate_validation_info(&result)?;
         Ok(result)
     }
@@ -143,13 +126,11 @@ fn validation_info_creator(globals: &mut GlobalsBuilder) {
 pub type OwnedValidationInfo = OwnedFrozen<ValueTyped<'static, ValidationInfo<'static>>>;
 
 impl<'v> ValidationInfo<'v> {
-    pub fn validations(&self) -> impl Iterator<Item = &'v StarlarkValidationSpec<'v>> {
-        let it = ListRef::from_value(self.validations.get())
-            .expect("type checked during construction or freezing")
-            .iter();
-        it.map(|x| {
-            x.downcast_ref::<StarlarkValidationSpec>()
-                .expect("type checked during construction or freezing")
-        })
+    pub fn validations(
+        &self,
+    ) -> impl Iterator<Item = buck2_error::Result<&'v StarlarkValidationSpec<'v>>> + 'v {
+        self.validations
+            .iter()
+            .map(|spec| Ok(spec?.unpack().as_ref()))
     }
 }

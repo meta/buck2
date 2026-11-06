@@ -437,9 +437,7 @@ pub(crate) fn analysis_actions_methods_run(methods: &mut MethodsBuilder) {
             Some(Either::Left(worker_run)) => {
                 let worker = worker_run.worker();
                 let remote_worker = worker_run.remote_worker();
-                let worker_exe = worker_run.exe();
-                worker_exe.as_ref().visit_artifacts(&mut artifact_visitor)?;
-                let starlark_exe = StarlarkCmdArgs::try_from_value(worker_exe.to_value())?;
+                let starlark_exe = StarlarkCmdArgs::try_from_value(worker_run.exe().to_value())?;
                 starlark_exe.visit_artifacts(&mut artifact_visitor)?;
                 (starlark_exe, worker, remote_worker)
             }

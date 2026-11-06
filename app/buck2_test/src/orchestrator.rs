@@ -2282,7 +2282,7 @@ impl BuckTestOrchestrator<'_> {
         Ok(PreparedLocalResourceSetupContext {
             target: target.dupe(),
             execution_request,
-            env_var_mapping: info.env_var_mapping(),
+            env_var_mapping: info.env_var_mapping()?,
             cleanup_setup,
         })
     }
@@ -2646,7 +2646,7 @@ impl<'a> Execute2RequestExpander<'a> {
                     CommandLineBuilder::new(&mut worker_rendered, &artifact_path_mapping, self.fs);
                 worker_exe.add_to_command_line(&mut fmt)?;
                 let worker_env: buck2_error::Result<BuckFixedSortedMap<_, _>> = worker
-                    .env()
+                    .env()?
                     .into_iter()
                     .map(|(k, v)| {
                         let mut env = SingletonCommandLineSink::new();

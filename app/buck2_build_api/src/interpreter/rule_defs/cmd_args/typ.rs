@@ -1018,7 +1018,7 @@ fn cmd_args_methods(builder: &mut MethodsBuilder) {
         #[starlark(require = pos)] directory: ValueOf<'v, RelativeOrigin<'v>>,
         #[starlark(require = named, default = 0u32)] parent: u32,
     ) -> starlark::Result<StarlarkCommandLineMut<'v>> {
-        this.borrow.options_mut().relative_to = Some((directory.as_unchecked(), parent));
+        this.borrow.options_mut().relative_to = Some((directory, parent));
         Ok(this)
     }
 
@@ -1241,7 +1241,7 @@ pub fn register_cmd_args(builder: &mut GlobalsBuilder) {
             opts.parent = parent;
             opts.relative_to = relative_to.map(|either| {
                 let (relative_to, parent) = either.map_left(|o| (o, 0)).into_inner();
-                (relative_to.as_unchecked(), parent)
+                (relative_to, parent)
             });
         }
         let replace_regex: Vec<(CmdArgsRegex, StringValue)> = replace_regex

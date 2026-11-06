@@ -185,6 +185,12 @@ impl<'v> UnpackValue<'v> for &'v dyn StarlarkInputArtifactLike<'v> {
 #[derive(UnpackValue, StarlarkTypeRepr, ProvidesStaticType)]
 pub struct ValueAsInputArtifactLike<'v>(pub &'v dyn StarlarkInputArtifactLike<'v>);
 
+impl Display for ValueAsInputArtifactLike<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        Display::fmt(self.0, f)
+    }
+}
+
 #[derive(StarlarkTypeRepr, UnpackValue)]
 pub enum ValueAsArtifactLikeUnpack<'v> {
     OutputArtifact(StarlarkOutputArtifactView<'v>),

@@ -53,7 +53,6 @@ use starlark::values::ThinBoxSliceValue;
 use starlark::values::Trace;
 use starlark::values::UnpackValue;
 use starlark::values::Value;
-use starlark::values::ValueOfUnchecked;
 use starlark::values::ValueTyped;
 use starlark::values::list::AllocList;
 use starlark::values::starlark_value;
@@ -555,7 +554,7 @@ impl<'v> TransitiveSet<'v> {
                     .iter()
                     .map(|(name, spec)| {
                         let projected_value = eval
-                            .eval_function(spec.projection.get(), &[value], &[])
+                            .eval_function(spec.projection.to_value(), &[value], &[])
                             .map_err(|error| TransitiveSetError::ProjectionError {
                                 error: error.into(),
                                 name: name.clone(),
@@ -595,7 +594,7 @@ impl<'v> TransitiveSet<'v> {
                     let value = value.unwrap_or_else(Value::new_none);
 
                     let reduced = eval
-                        .eval_function(reduce.get(), &[children_values, value], &[])
+                        .eval_function(reduce.to_value(), &[children_values, value], &[])
                         .map_err(|error| TransitiveSetError::ReductionError {
                             error: error.into(),
                             name: name.clone(),
@@ -787,7 +786,7 @@ fn transitive_set_methods(builder: &mut MethodsBuilder) {
             .get_index_of_projection(TransitiveSetProjectionKind::Json, projection)?;
 
         Ok(TransitiveSetJsonProjection {
-            transitive_set: ValueOfUnchecked::<TransitiveSet<'static>>::new(this.to_value()),
+            transitive_set: this,
             projection: index,
             ordering: TransitiveSetOrdering::parse(ordering)?,
         })
@@ -805,7 +804,7 @@ fn transitive_set_methods(builder: &mut MethodsBuilder) {
             .get_index_of_projection(TransitiveSetProjectionKind::Args, projection)?;
 
         Ok(TransitiveSetArgsProjection {
-            transitive_set: ValueOfUnchecked::<TransitiveSet<'static>>::new(this.to_value()),
+            transitive_set: this,
             projection: index,
             ordering: TransitiveSetOrdering::parse(ordering)?,
         })

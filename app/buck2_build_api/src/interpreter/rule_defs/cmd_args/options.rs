@@ -34,12 +34,12 @@ use starlark::values::StringValue;
 use starlark::values::Trace;
 use starlark::values::UnpackValue;
 use starlark::values::Value;
-use starlark::values::ValueOfUnchecked;
+use starlark::values::ValueOf;
 use starlark::values::string::StarlarkStr;
 use starlark::values::type_repr::StarlarkTypeRepr;
 use strong_hash::StrongHash;
 
-use crate::interpreter::rule_defs::artifact::starlark_artifact_like::StarlarkInputArtifactLike;
+use crate::interpreter::rule_defs::artifact::starlark_artifact_like::ValueAsInputArtifactLike;
 use crate::interpreter::rule_defs::artifact::starlark_output_artifact::StarlarkOutputArtifactView;
 use crate::interpreter::rule_defs::cmd_args::regex::CmdArgsRegex;
 
@@ -99,7 +99,7 @@ pub(crate) trait CommandLineOptionsTrait<'v> {
 #[repr(C)]
 pub(crate) struct CommandLineOptions<'v> {
     // These impact how artifacts are rendered
-    pub(crate) relative_to: Option<(ValueOfUnchecked<'v, RelativeOrigin<'v>>, u32)>,
+    pub(crate) relative_to: Option<(ValueOf<'v, RelativeOrigin<'v>>, u32)>,
     pub(crate) absolute_prefix: Option<StringValue<'v>>,
     pub(crate) absolute_suffix: Option<StringValue<'v>>,
     pub(crate) parent: u32,
@@ -161,7 +161,7 @@ impl<'v, 'a> Serialize for OptionsReplacementsRef<'v, 'a> {
 #[derive(Default, Serialize)]
 pub(crate) struct CommandLineOptionsRef<'v, 'a> {
     #[serde(serialize_with = "serialize_opt_display")]
-    pub(crate) relative_to: Option<(ValueOfUnchecked<'v, RelativeOrigin<'v>>, u32)>,
+    pub(crate) relative_to: Option<(ValueOf<'v, RelativeOrigin<'v>>, u32)>,
     pub(crate) absolute_prefix: Option<StringValue<'v>>,
     pub(crate) absolute_suffix: Option<StringValue<'v>>,
     pub(crate) parent: u32,
@@ -225,7 +225,7 @@ impl<'v> CommandLineOptionsTrait<'v> for CommandLineOptions<'v> {
 
 #[derive(Debug, Allocative, StarlarkPagable)]
 enum FrozenCommandLineOption<'v> {
-    RelativeTo(ValueOfUnchecked<'v, RelativeOrigin<'v>>, u32),
+    RelativeTo(ValueOf<'v, RelativeOrigin<'v>>, u32),
     AbsolutePrefix(StringValue<'v>),
     AbsoluteSuffix(StringValue<'v>),
     Parent(u32),
@@ -369,9 +369,8 @@ impl<'v> Freeze<'v> for CommandLineOptions<'v> {
 
         let mut options = Vec::new();
         if let Some((relative_to, parent)) = relative_to {
-            let relative_to = freezer.freeze(relative_to.get())?;
             options.push(FrozenCommandLineOption::RelativeTo(
-                ValueOfUnchecked::new(relative_to),
+                Freeze::freeze(relative_to, freezer)?,
                 parent,
             ));
         }
@@ -430,10 +429,10 @@ where
 
 // NOTE: This is an enum as opposed to a trait because of the `C` parameter on (which is required
 // because upcasting is not stable).
-#[derive(Display, StarlarkTypeRepr, UnpackValue)]
+#[derive(Display, StarlarkTypeRepr, UnpackValue, ProvidesStaticType)]
 pub(crate) enum RelativeOrigin<'v> {
     OutputArtifact(StarlarkOutputArtifactView<'v>),
-    Artifact(&'v dyn StarlarkInputArtifactLike<'v>),
+    Artifact(ValueAsInputArtifactLike<'v>),
     CellRoot(&'v CellRoot),
     /// Bit of a useless variant since this is simply the default, but we allow it for consistency.
     ProjectRoot(&'v StarlarkProjectRoot),
@@ -486,7 +485,7 @@ impl<'v, 'x> CommandLineOptionsRef<'v, 'x> {
         if let Some((value, index)) = relative_to {
             iter.push((
                 "relative_to",
-                CommandLineOptionsIterItem::Value(value.get()),
+                CommandLineOptionsIterItem::Value(value.to_value()),
             ));
             if *index != 0 {
                 iter.push((

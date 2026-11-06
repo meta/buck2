@@ -13,7 +13,6 @@ use std::fmt::Display;
 use std::iter;
 
 use allocative::Allocative;
-use buck2_error::BuckErrorOptionContext;
 use display_container::display_pair;
 use display_container::fmt_container;
 use display_container::iter_display_chain;
@@ -29,7 +28,6 @@ use starlark::values::StarlarkValue;
 use starlark::values::StringValue;
 use starlark::values::Trace;
 use starlark::values::Value;
-use starlark::values::ValueOfUnchecked;
 use starlark::values::ValueTyped;
 use starlark::values::starlark_value;
 
@@ -56,7 +54,7 @@ use crate::interpreter::rule_defs::transitive_set::traversal::TransitiveSetProje
 #[derive(NoSerialize)] // TODO we should probably have a serialization for transitive set
 #[repr(C)]
 pub struct TransitiveSetJsonProjection<'v> {
-    pub(super) transitive_set: ValueOfUnchecked<'v, TransitiveSet<'static>>,
+    pub(super) transitive_set: ValueTyped<'v, TransitiveSet<'v>>,
 
     /// The index of the projection. Once transitive sets are defined, their projections never
     /// change, so we can afford to just store the index here.
@@ -84,16 +82,15 @@ impl<'v> Display for TransitiveSetJsonProjection<'v> {
 
 impl<'v> TransitiveSetJsonProjection<'v> {
     fn projection_name(&self) -> buck2_error::Result<&'v str> {
-        TransitiveSet::from_value(self.transitive_set.get().to_value())
-            .internal_error("Invalid transitive_set")?
+        self.transitive_set
+            .as_ref()
             .projection_name(self.projection)
     }
 
     pub(crate) fn to_projection_key_wrapper(
         &self,
     ) -> buck2_error::Result<TransitiveSetProjectionWrapper> {
-        let set = TransitiveSet::from_value(self.transitive_set.get().to_value())
-            .internal_error("Invalid transitive_set")?;
+        let set = self.transitive_set.as_ref();
 
         Ok(TransitiveSetProjectionWrapper::new(
             TransitiveSetProjectionKey {
@@ -110,8 +107,7 @@ impl<'v> TransitiveSetJsonProjection<'v> {
 impl<'v> TransitiveSetJsonProjection<'v> {
     /// Every node's projected value. Consumes the whole set.
     pub fn collect_values(&self) -> buck2_error::Result<Vec<Value<'v>>> {
-        let set = TransitiveSet::from_value(self.transitive_set.get().to_value())
-            .internal_error("Invalid transitive_set")?;
+        let set = self.transitive_set.as_ref();
         set.collect_projection_values(self.ordering, self.projection)
     }
 }
@@ -153,7 +149,7 @@ fn transitive_set_json_projection_methods(builder: &mut MethodsBuilder) {
     #[starlark(attribute)]
     fn transitive_set<'v>(
         this: ValueTyped<'v, TransitiveSetJsonProjection<'v>>,
-    ) -> starlark::Result<ValueOfUnchecked<'v, TransitiveSet<'static>>> {
+    ) -> starlark::Result<ValueTyped<'v, TransitiveSet<'v>>> {
         Ok(this.transitive_set)
     }
 }

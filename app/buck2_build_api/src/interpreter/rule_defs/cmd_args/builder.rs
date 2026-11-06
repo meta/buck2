@@ -23,7 +23,6 @@ use buck2_core::fs::artifact_path_resolver::ArtifactFs;
 use buck2_core::fs::project::ProjectRoot;
 use buck2_core::fs::project_rel_path::ProjectRelativePath;
 use buck2_core::fs::project_rel_path::ProjectRelativePathBuf;
-use buck2_error::BuckErrorContext;
 use buck2_error::internal_error;
 use buck2_execute::artifact::fs::ExecutorFs;
 use buck2_fs::paths::RelativePath;
@@ -32,7 +31,7 @@ use buck2_util::strong_hasher::Blake3StrongHasher;
 use buck2_util::strong_hasher::StrongHash128;
 use dupe::Dupe;
 use regex::Regex;
-use starlark::values::ValueOfUnchecked;
+use starlark::values::ValueOf;
 use strong_hash::StrongHash;
 
 use crate::interpreter::rule_defs::artifact::starlark_output_artifact::StarlarkOutputArtifactView;
@@ -66,13 +65,10 @@ fn path_popn(path: &mut ProjectRelativePathBuf, parents: u32) -> buck2_error::Re
 }
 
 fn unpack_relative_origin<'v>(
-    t: ValueOfUnchecked<'v, RelativeOrigin<'v>>,
+    t: ValueOf<'v, RelativeOrigin<'v>>,
     parents: u32,
 ) -> buck2_error::Result<RelativeToOption> {
-    let origin = t
-        .unpack()
-        .internal_error("Must be a valid RelativeOrigin as this was checked in the setter")?;
-    Ok(match origin {
+    Ok(match t.unpack() {
         RelativeOrigin::OutputArtifact(artifact) => {
             let value = match artifact {
                 StarlarkOutputArtifactView::Frozen(value) => value,
@@ -85,7 +81,7 @@ fn unpack_relative_origin<'v>(
             RelativeToOption::OutputArtifact(value.inner().artifact.dupe(), parents)
         }
         RelativeOrigin::Artifact(artifact) => {
-            RelativeToOption::Artifact(artifact.get_bound_artifact()?, parents)
+            RelativeToOption::Artifact(artifact.0.get_bound_artifact()?, parents)
         }
         RelativeOrigin::CellRoot(cell_root) => {
             RelativeToOption::CellPath(cell_root.cell_path(), parents)
@@ -145,7 +141,7 @@ fn finish_relative_to_path(
 }
 
 pub(crate) fn compute_relative_to_path<'v>(
-    t: ValueOfUnchecked<'v, RelativeOrigin<'v>>,
+    t: ValueOf<'v, RelativeOrigin<'v>>,
     parents: u32,
     fs: &ArtifactFs,
     artifact_path_mapping: &'_ dyn ArtifactPathMapper,

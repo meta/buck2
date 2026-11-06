@@ -20,7 +20,7 @@ use starlark::values::StarlarkPagable;
 use starlark::values::StarlarkValue;
 use starlark::values::Trace;
 use starlark::values::Value;
-use starlark::values::ValueOfUnchecked;
+use starlark::values::ValueTyped;
 use starlark::values::starlark_value;
 use strong_hash::StrongHash;
 
@@ -120,7 +120,7 @@ impl<'v> StarlarkValue<'v> for TransitiveSetTraversal<'v> {
 #[display("Traversal({}[\"{}\"])", transitive_set, projection)]
 #[repr(C)]
 pub struct TransitiveSetProjectionTraversal<'v> {
-    pub(super) transitive_set: ValueOfUnchecked<'v, TransitiveSet<'static>>,
+    pub(super) transitive_set: ValueTyped<'v, TransitiveSet<'v>>,
     pub projection: usize,
     pub ordering: TransitiveSetOrdering,
 }
@@ -130,8 +130,7 @@ starlark_complex_value!(pub TransitiveSetProjectionTraversal);
 #[starlark_value(type = "TransitiveSetArgsProjectionIterator")]
 impl<'v> StarlarkValue<'v> for TransitiveSetProjectionTraversal<'v> {
     fn iterate_collect(&self, _heap: Heap<'v>) -> starlark::Result<Vec<Value<'v>>> {
-        let set = TransitiveSet::from_value(self.transitive_set.get().to_value())
-            .internal_error("Invalid inner")?;
+        let set = self.transitive_set.as_ref();
         Ok(set.collect_projection_values(self.ordering, self.projection)?)
     }
 }

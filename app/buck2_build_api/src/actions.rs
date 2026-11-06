@@ -83,9 +83,8 @@ use remote_execution::TActionResult2;
 use starlark::values::Heap;
 use starlark::values::OwnedFrozen;
 use starlark::values::Value;
-use starlark::values::ValueOfUnchecked;
-use starlark::values::dict::DictType;
 
+use crate::actions::errors::error_handler::OutputArtifacts;
 use crate::actions::errors::execute_error::ExecuteError;
 use crate::actions::execute::action_execution_target::ActionExecutionTarget;
 use crate::actions::execute::action_executor::ActionExecutionMetadata;
@@ -93,8 +92,6 @@ use crate::actions::execute::action_executor::ActionOutputs;
 use crate::actions::impls::run_action_knobs::RunActionKnobs;
 use crate::artifact_groups::ArtifactGroup;
 use crate::artifact_groups::ArtifactGroupValues;
-use crate::interpreter::rule_defs::artifact::starlark_artifact::StarlarkArtifact;
-use crate::interpreter::rule_defs::artifact::starlark_artifact_value::StarlarkArtifactValue;
 use crate::interpreter::rule_defs::cmd_args::ArtifactPathMapper;
 
 pub mod artifact;
@@ -202,9 +199,8 @@ pub trait Action: PagableTagged + Allocative + Debug + Send + Sync + 'static {
         _artifact_fs: &ArtifactFs,
         _heap: Heap<'v>,
         _outputs: Option<&ActionOutputs>,
-    ) -> buck2_error::Result<ValueOfUnchecked<'v, DictType<StarlarkArtifact, StarlarkArtifactValue>>>
-    {
-        Ok(ValueOfUnchecked::new(starlark::values::Value::new_none()))
+    ) -> buck2_error::Result<Option<OutputArtifacts<'v>>> {
+        Ok(None)
     }
 
     fn all_outputs_are_content_based(&self) -> bool {

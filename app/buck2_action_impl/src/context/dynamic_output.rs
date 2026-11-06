@@ -251,7 +251,7 @@ pub(crate) fn analysis_actions_methods_dynamic_output(methods: &mut MethodsBuild
 
         attr_values.bind(&key)?;
 
-        let outputs = attr_values.outputs();
+        let outputs = attr_values.outputs()?;
         let artifact_values = attr_values.artifact_values();
         let dynamic_values = attr_values.dynamic_values();
 

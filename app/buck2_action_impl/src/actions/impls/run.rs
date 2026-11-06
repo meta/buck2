@@ -24,6 +24,7 @@ use buck2_build_api::actions::Action;
 use buck2_build_api::actions::ActionExecutionCtx;
 use buck2_build_api::actions::UnregisteredAction;
 use buck2_build_api::actions::box_slice_set::BoxSliceSet;
+use buck2_build_api::actions::errors::error_handler::OutputArtifacts;
 use buck2_build_api::actions::errors::execute_error::ExecuteError;
 use buck2_build_api::actions::execute::action_execution_target::ActionExecutionTarget;
 use buck2_build_api::actions::execute::action_executor::ActionExecutionKind;
@@ -128,12 +129,9 @@ use starlark::values::StarlarkType;
 use starlark::values::StarlarkValue;
 use starlark::values::StringValue;
 use starlark::values::Trace;
-use starlark::values::UnpackValue;
 use starlark::values::Value;
-use starlark::values::ValueOfUnchecked;
+use starlark::values::ValueOf;
 use starlark::values::ValueTyped;
-use starlark::values::dict::AllocDict;
-use starlark::values::dict::DictRef;
 use starlark::values::dict::DictType;
 use starlark::values::starlark_value;
 use strong_hash::StrongHash;
@@ -338,7 +336,7 @@ pub(crate) struct StarlarkRunActionValues<'v> {
     pub(crate) exe: ValueTyped<'v, StarlarkCmdArgs<'v>>,
     pub(crate) args: ValueTyped<'v, StarlarkCmdArgs<'v>>,
     pub(crate) dep_file_fingerprints: MiniBoxSlice<ValueTyped<'v, StarlarkDepFileFingerprint<'v>>>,
-    pub(crate) env: Option<ValueOfUnchecked<'v, DictType<String, ValueAsCommandLineLike<'static>>>>,
+    pub(crate) env: Option<ValueOf<'v, DictType<StringValue<'v>, ValueAsCommandLineLike<'v>>>>,
     pub(crate) worker: Option<ValueTyped<'v, WorkerInfo<'v>>>,
     pub(crate) remote_worker: Option<ValueTyped<'v, WorkerInfo<'v>>>,
     pub(crate) category: StringValue<'v>,
@@ -359,7 +357,7 @@ pub(crate) struct FrozenStarlarkRunActionValues<'v> {
     pub(crate) exe: ValueTyped<'v, FrozenStarlarkCmdArgs<'v>>,
     pub(crate) args: ValueTyped<'v, FrozenStarlarkCmdArgs<'v>>,
     pub(crate) dep_file_fingerprints: MiniBoxSlice<ValueTyped<'v, StarlarkDepFileFingerprint<'v>>>,
-    pub(crate) env: Option<ValueOfUnchecked<'v, DictType<String, ValueAsCommandLineLike<'static>>>>,
+    pub(crate) env: Option<ValueOf<'v, DictType<StringValue<'v>, ValueAsCommandLineLike<'v>>>>,
     pub(crate) worker: Option<ValueTyped<'v, WorkerInfo<'v>>>,
     pub(crate) remote_worker: Option<ValueTyped<'v, WorkerInfo<'v>>>,
     pub(crate) category: StringValue<'v>,
@@ -599,17 +597,13 @@ impl RunAction {
         let args: &dyn CommandLineArgLike = values.args.as_ref();
         let env = match values.env {
             None => Vec::new(),
-            Some(env) => {
-                let d = DictRef::from_value(env.get()).internal_error("expecting dict")?;
-                let mut res = Vec::with_capacity(d.len());
-                for (k, v) in d.iter() {
-                    res.push((
-                        k.unpack_str().internal_error("expecting string")?,
-                        ValueAsCommandLineLike::unpack_value_err(v)?.0,
-                    ));
-                }
-                res
-            }
+            Some(env) => env
+                .iter()
+                .map(|entry| {
+                    let (k, v) = entry?;
+                    Ok((k.unpack().as_str(), v.unpack().0))
+                })
+                .collect::<buck2_error::Result<Vec<_>>>()?,
         };
         let worker: Option<&WorkerInfo> = values.worker()?.map(|v| v.as_ref());
 
@@ -1689,8 +1683,7 @@ impl Action for RunAction {
         artifact_fs: &ArtifactFs,
         heap: Heap<'v>,
         outputs: Option<&ActionOutputs>,
-    ) -> buck2_error::Result<ValueOfUnchecked<'v, DictType<StarlarkArtifact, StarlarkArtifactValue>>>
-    {
+    ) -> buck2_error::Result<Option<OutputArtifacts<'v>>> {
         let values = self.values();
         let mut artifact_value_dict = Vec::with_capacity(values.outputs_for_error_handler.len());
 
@@ -1742,9 +1735,15 @@ impl Action for RunAction {
             artifact_value_dict.push((artifact, artifact_value));
         }
 
-        Ok(heap
-            .alloc_typed_unchecked(AllocDict(artifact_value_dict))
-            .cast())
+        Ok(Some(ValueOf::alloc_dict(
+            heap,
+            artifact_value_dict.into_iter().map(|(artifact, value)| {
+                (
+                    ValueOf::from(heap.alloc_typed(artifact)),
+                    ValueOf::from(heap.alloc_typed(value)),
+                )
+            }),
+        )))
     }
 
     async fn execute(
@@ -1899,6 +1898,7 @@ mod tests {
     use starlark::environment::GlobalsBuilder;
     use starlark::syntax::AstModule;
     use starlark::syntax::Dialect;
+    use starlark::values::UnpackValue;
 
     use super::*;
 

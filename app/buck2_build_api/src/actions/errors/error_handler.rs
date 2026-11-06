@@ -29,7 +29,8 @@ use starlark::values::StarlarkValue;
 use starlark::values::Trace;
 use starlark::values::Value;
 use starlark::values::ValueError;
-use starlark::values::ValueOfUnchecked;
+use starlark::values::ValueOf;
+use starlark::values::ValueTyped;
 use starlark::values::dict::DictType;
 use starlark::values::list::UnpackList;
 use starlark::values::list_or_tuple::UnpackListOrTuple;
@@ -57,13 +58,17 @@ pub(crate) enum ActionErrorHandlerError {
 pub struct StarlarkActionErrorContext<'v> {
     stderr: String,
     stdout: String,
-    output_artifacts: ValueOfUnchecked<'v, DictType<StarlarkArtifact, StarlarkArtifactValue>>,
+    output_artifacts: Option<OutputArtifacts<'v>>,
 }
+
+/// The outputs an error handler may read, by artifact.
+pub type OutputArtifacts<'v> =
+    ValueOf<'v, DictType<ValueTyped<'v, StarlarkArtifact>, ValueTyped<'v, StarlarkArtifactValue>>>;
 
 impl<'v> StarlarkActionErrorContext<'v> {
     pub(crate) fn new_from_command_execution(
         command: Option<&CommandExecution>,
-        output_artifacts: ValueOfUnchecked<'v, DictType<StarlarkArtifact, StarlarkArtifactValue>>,
+        output_artifacts: Option<OutputArtifacts<'v>>,
     ) -> Self {
         let stderr = command.map_or(String::default(), |c| {
             c.details.as_ref().map_or(String::default(), |c| {
@@ -184,9 +189,8 @@ fn action_error_context_methods(builder: &mut MethodsBuilder) {
     #[starlark(attribute)]
     fn output_artifacts<'v>(
         this: &'v StarlarkActionErrorContext<'v>,
-    ) -> starlark::Result<ValueOfUnchecked<'v, DictType<StarlarkArtifact, StarlarkArtifactValue>>>
-    {
-        Ok(this.output_artifacts)
+    ) -> starlark::Result<NoneOr<OutputArtifacts<'v>>> {
+        Ok(NoneOr::from_option(this.output_artifacts))
     }
 
     /// Create a new sub error, specifying an error category name, optional message, and
@@ -580,7 +584,7 @@ pub(crate) fn register_action_error_handler_for_testing(builder: &mut GlobalsBui
         Ok(StarlarkActionErrorContext {
             stderr: stderr.to_owned(),
             stdout: stdout.to_owned(),
-            output_artifacts: ValueOfUnchecked::new(starlark::values::Value::new_none()),
+            output_artifacts: None,
         })
     }
 }

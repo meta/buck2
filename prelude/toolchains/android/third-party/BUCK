@@ -710,6 +710,17 @@ third_party_jar(
 )
 # ===   End: jna
 
+# === Begin: jspecify
+
+third_party_jar(
+    name = "jspecify",
+    # @oss-disable[end= ]: internal_alias = "fbsource//third-party/java/org/jspecify/jspecify:jspecify",
+    sha1 = "3d60fd98eb8ade73004f4195c37b6317e02cf3d7",
+    url = "mvn:org.jspecify:jspecify:jar:1.0.1",
+    visibility = ["PUBLIC"],
+)
+# ===   End: jspecify
+
 # === Begin: jsr
 
 third_party_jar(

@@ -25,6 +25,7 @@ use std::ops::Deref;
 
 use allocative::Allocative;
 use display_container::fmt_container;
+use either::Either;
 use serde::Serialize;
 use starlark_map::Hashed;
 use starlark_map::small_set::SmallSet;
@@ -41,11 +42,14 @@ use crate::values::Freezer;
 use crate::values::Heap;
 use crate::values::ProvidesStaticType;
 use crate::values::StarlarkPagable;
+use crate::values::StarlarkRepresentations;
+use crate::values::StarlarkType;
 use crate::values::StarlarkValue;
 use crate::values::Trace;
 use crate::values::UnpackValue;
 use crate::values::Value;
 use crate::values::ValueError;
+use crate::values::ValueTyped;
 use crate::values::comparison::equals_small_set;
 use crate::values::set::methods;
 use crate::values::starlark_value;
@@ -121,7 +125,6 @@ crate::register_simple_vtable_entry!(FrozenSet);
 // SAFETY: The vtable entry is registered above. The deser type id is
 // lifetime-erased, so the `'static` instantiation covers all heap lifetimes.
 unsafe impl<'v> crate::__derive_refs::VtableRegistered for SetGen<SetData<'v>> {}
-crate::register_ty_starlark_value!(SetGen<SetData<'_>>);
 
 impl<'v> AllocValue<'v> for SetData<'v> {
     fn alloc_value(self, heap: Heap<'v>) -> Value<'v> {
@@ -230,29 +233,54 @@ impl<'v> SetLike<'v> for SetData<'v> {
 
 starlark::methods_static!(SET_METHODS = methods::set_methods);
 
-#[starlark_value(type = "set")]
-impl<'v, T: SetLike<'v> + 'v> StarlarkValue<'v> for SetGen<T>
-where
-    Self: ProvidesStaticType<'v>,
-{
-    type Canonical = SetGen<SetData<'v>>;
+/// A `set` in either of its representations.
+#[derive(Debug, Clone, Copy, StarlarkRepresentations)]
+pub(crate) enum SetView<'v> {
+    Frozen(ValueTyped<'v, SetGen<SetData<'v>>>),
+    Unfrozen(ValueTyped<'v, SetGen<RefCell<SetData<'v>>>>),
+}
 
+/// `$e` with `$x` bound to the representation's `SetLike`.
+macro_rules! with_set {
+    ($self:expr, |$x:ident| $e:expr) => {
+        match $self {
+            SetView::Frozen($x) => {
+                let $x = &$x.as_ref().0;
+                $e
+            }
+            SetView::Unfrozen($x) => {
+                let $x = &$x.as_ref().0;
+                $e
+            }
+        }
+    };
+}
+
+impl<'v> SetView<'v> {
+    #[inline]
+    fn content(self) -> Either<Ref<'v, SmallSet<Value<'v>>>, &'v SmallSet<Value<'v>>> {
+        match self {
+            SetView::Frozen(x) => Either::Right(x.as_ref().0.content()),
+            SetView::Unfrozen(x) => Either::Left(x.as_ref().0.content()),
+        }
+    }
+}
+
+#[starlark_value(type = "set")]
+impl<'v> StarlarkType<'v> for SetView<'v> {
     /// Returns the length of the value, if this value is a sequence.
     fn length(&self) -> crate::Result<i32> {
-        Ok(self.0.content().len() as i32)
+        Ok(self.content().len() as i32)
     }
 
     fn is_in(&self, other: Value<'v>) -> crate::Result<bool> {
-        Ok(self
-            .0
-            .content()
-            .contains_hashed(other.get_hashed()?.as_ref()))
+        Ok(self.content().contains_hashed(other.get_hashed()?.as_ref()))
     }
 
     fn equals(&self, other: Value<'v>) -> crate::Result<bool> {
         match SetRef::unpack_value_opt(other) {
             None => Ok(false),
-            Some(other) => Ok(equals_small_set(&self.0.content(), &other.aref.content)),
+            Some(other) => Ok(equals_small_set(&self.content(), &other.aref.content)),
         }
     }
 
@@ -262,29 +290,28 @@ where
 
     unsafe fn iterate(&self, me: Value<'v>, _heap: Heap<'v>) -> crate::Result<Value<'v>> {
         unsafe {
-            self.0.iter_start()?;
+            with_set!(self, |s| s.iter_start())?;
             Ok(me)
         }
     }
 
     unsafe fn iter_size_hint(&self, index: usize) -> (usize, Option<usize>) {
-        debug_assert!(index <= self.0.content().len());
-        let rem = self.0.content().len() - index;
+        let len = self.content().len();
+        debug_assert!(index <= len);
+        let rem = len - index;
         (rem, Some(rem))
     }
 
     unsafe fn iter_next(&self, index: usize, _heap: Heap<'v>) -> Option<Value<'v>> {
-        unsafe { self.0.content_unchecked().iter().nth(index).copied() }
+        unsafe { with_set!(self, |s| s.content_unchecked().iter().nth(index).copied()) }
     }
 
     unsafe fn iter_stop(&self) {
-        unsafe {
-            self.0.iter_stop();
-        }
+        unsafe { with_set!(self, |s| s.iter_stop()) }
     }
 
     fn to_bool(&self) -> bool {
-        !self.0.content().is_empty()
+        !self.content().is_empty()
     }
 
     // Set union
@@ -292,10 +319,11 @@ where
         // Unlike in `union` it is not possible to `|` `set` and iterable. This is due python semantics.
         let rhs = SetRef::unpack_value_opt(rhs)
             .map_or_else(|| ValueError::unsupported_with(self, "|", rhs), Ok)?;
-        if self.0.content().is_empty() {
+        let content = self.content();
+        if content.is_empty() {
             return Ok(heap.alloc((*rhs.aref).clone()));
         }
-        let mut items = self.0.content().clone();
+        let mut items = content.clone();
         for h in rhs.aref.iter_hashed() {
             items.insert_hashed(h);
         }
@@ -308,12 +336,13 @@ where
             .map_or_else(|| ValueError::unsupported_with(self, "&", rhs), Ok)?;
 
         let mut items = SmallSet::new();
-        if self.0.content().is_empty() {
+        let content = self.content();
+        if content.is_empty() {
             return Ok(heap.alloc(SetData { content: items }));
         }
 
         for h in rhs.aref.iter_hashed() {
-            if self.0.content().contains_hashed(h.as_ref()) {
+            if content.contains_hashed(h.as_ref()) {
                 items.insert_hashed_unique_unchecked(h);
             }
         }
@@ -326,7 +355,7 @@ where
         let rhs = SetRef::unpack_value_opt(rhs)
             .map_or_else(|| ValueError::unsupported_with(self, "^", rhs), Ok)?;
 
-        let items = self.0.content().symmetric_difference(&rhs.aref.content);
+        let items = self.content().symmetric_difference(&rhs.aref.content);
         Ok(heap.alloc(SetData { content: items }))
     }
 
@@ -336,7 +365,8 @@ where
         let rhs = SetRef::unpack_value_opt(rhs)
             .map_or_else(|| ValueError::unsupported_with(self, "-", rhs), Ok)?;
 
-        if self.0.content().is_empty() {
+        let content = self.content();
+        if content.is_empty() {
             return Ok(heap.alloc(SetData {
                 content: SmallSet::new(),
             }));
@@ -344,13 +374,13 @@ where
 
         if rhs.aref.content.is_empty() {
             return Ok(heap.alloc(SetData {
-                content: self.0.content().clone(),
+                content: content.clone(),
             }));
         }
 
         let mut data = SetData::default();
 
-        for elem in self.0.content().iter_hashed() {
+        for elem in content.iter_hashed() {
             if !rhs.aref.contains_hashed(elem.copied()) {
                 data.add_hashed(elem.copied());
             }
@@ -365,6 +395,17 @@ where
     fn get_type_starlark_repr() -> Ty {
         Ty::any_set()
     }
+}
+
+#[starlark_value]
+impl<'v> StarlarkValue<'v> for SetGen<RefCell<SetData<'v>>> {
+    type Canonical = SetGen<SetData<'v>>;
+    type Type = SetView<'v>;
+}
+
+#[starlark_value]
+impl<'v> StarlarkValue<'v> for SetGen<SetData<'v>> {
+    type Type = SetView<'v>;
 }
 
 impl<'v, T: SetLike<'v>> Serialize for SetGen<T> {

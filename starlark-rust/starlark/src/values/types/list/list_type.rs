@@ -121,4 +121,12 @@ impl<'v, T: UnpackValue<'v>> ValueOf<'v, ListType<T>> {
     {
         self.list().iter().map(T::unpack_value_err)
     }
+
+    /// The items, unpacked into a `Vec`, as [`try_items`](Self::try_items) gives them.
+    pub fn try_to_vec(self) -> crate::Result<Vec<T>>
+    where
+        T: 'v,
+    {
+        self.try_items().collect()
+    }
 }

@@ -125,6 +125,14 @@ impl<'v, T: UnpackValue<'v>> ValueOf<'v, ListOrTupleType<T>> {
             Either::Right(ValueOf::<TupleType<T>>::new_unchecked(value).try_items())
         }
     }
+
+    /// The items, unpacked into a `Vec`, as [`try_items`](Self::try_items) gives them.
+    pub fn try_to_vec(self) -> crate::Result<Vec<T>>
+    where
+        T: 'v,
+    {
+        self.try_items().collect()
+    }
 }
 
 #[cfg(test)]

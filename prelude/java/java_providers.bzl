@@ -111,9 +111,6 @@ def _args_for_ast_dumper(entry: JavaClasspathEntry):
 def _args_for_compiling(entry: JavaClasspathEntry):
     return entry.abi
 
-def _javacd_json(v):
-    return v.abi
-
 def _abi_snapshot_json(entry: JavaClasspathEntry):
     if entry.abi and entry.abi_jar_snapshot:
         return cmd_args([entry.abi_jar_snapshot], delimiter = " ")
@@ -162,7 +159,6 @@ JavaCompilingDepsTSet = transitive_set(
     },
     json_projections = {
         "abi_snapshot_json": _abi_snapshot_json,
-        "javacd_json": _javacd_json,
     },
     reductions = {
         "compiler_depth": _compiler_depth,

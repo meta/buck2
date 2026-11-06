@@ -305,7 +305,7 @@ def encode_base_jar_command(
         if use_abi_dirs:
             compiling_classpath = cmd_args(compiling_deps_tset.project_as_args("abi_and_dir", ordering = "topological")) if compiling_deps_tset else []
         else:
-            compiling_classpath = compiling_deps_tset.project_as_json("javacd_json", ordering = "topological") if compiling_deps_tset else []
+            compiling_classpath = cmd_args(compiling_deps_tset.project_as_args("args_for_compiling", ordering = "topological")) if compiling_deps_tset else []
         # The snapshot inputs are tagged for association with dep_files, but they are not marked as used,
         # as they serve the incremental compiler's internal needs,
         # which are utilized after the build system has determined whether a rebuild is necessary.

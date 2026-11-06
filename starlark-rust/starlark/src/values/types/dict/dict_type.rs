@@ -91,18 +91,13 @@ impl<'v, K: UnpackValue<'v>, V: UnpackValue<'v>> ValueOf<'v, DictType<K, V>> {
 
     /// The entries, re-checked unless the dict is frozen, as for
     /// [`ValueOf<ListType<T>>::iter`](ValueOf::iter).
-    pub fn iter(
-        self,
-    ) -> impl Iterator<Item = crate::Result<(ValueOf<'v, K>, ValueOf<'v, V>)>> + 'v {
-        let frozen = self.to_value().is_frozen();
-        let entries: Vec<(Value<'v>, Value<'v>)> = self.dict().iter().collect();
-        entries.into_iter().map(move |(k, v)| {
-            if frozen {
-                Ok((ValueOf::new_unchecked(k), ValueOf::new_unchecked(v)))
-            } else {
-                Ok((ValueOf::new_err(k)?, ValueOf::new_err(v)?))
-            }
-        })
+    pub fn iter(self) -> DictEntries<'v, K, V> {
+        DictEntries {
+            frozen: self.to_value().is_frozen(),
+            dict: self.dict(),
+            index: 0,
+            _marker: PhantomData,
+        }
     }
 
     /// The value at a string key, re-checked unless the dict is frozen.
@@ -112,5 +107,33 @@ impl<'v, K: UnpackValue<'v>, V: UnpackValue<'v>> ValueOf<'v, DictType<K, V>> {
             Some(v) if self.to_value().is_frozen() => Ok(Some(ValueOf::new_unchecked(v))),
             Some(v) => Ok(Some(ValueOf::new_err(v)?)),
         }
+    }
+}
+
+/// The entries of a [`ValueOf<DictType<K, V>>`], borrowed from the dict.
+pub struct DictEntries<'v, K, V> {
+    frozen: bool,
+    dict: DictRef<'v>,
+    index: usize,
+    _marker: PhantomData<fn() -> (K, V)>,
+}
+
+impl<'v, K: UnpackValue<'v>, V: UnpackValue<'v>> Iterator for DictEntries<'v, K, V> {
+    type Item = crate::Result<(ValueOf<'v, K>, ValueOf<'v, V>)>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let (k, v) = self.dict.content.get_index(self.index)?;
+        let (k, v) = (*k, *v);
+        self.index += 1;
+        Some(if self.frozen {
+            Ok((ValueOf::new_unchecked(k), ValueOf::new_unchecked(v)))
+        } else {
+            (|| Ok((ValueOf::new_err(k)?, ValueOf::new_err(v)?)))()
+        })
+    }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        let rem = self.dict.content.len() - self.index;
+        (rem, Some(rem))
     }
 }

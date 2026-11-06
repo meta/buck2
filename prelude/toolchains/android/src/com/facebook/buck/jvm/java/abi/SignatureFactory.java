@@ -11,6 +11,7 @@
 package com.facebook.buck.jvm.java.abi;
 
 import com.facebook.buck.jvm.java.abi.source.api.CannotInferException;
+import com.facebook.infer.annotation.Nullsafe;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
@@ -38,6 +39,7 @@ import org.objectweb.asm.signature.SignatureVisitor;
 import org.objectweb.asm.signature.SignatureWriter;
 
 /** Computes type signatures for {@link Element}s that require them. */
+@Nullsafe(Nullsafe.Mode.LOCAL)
 class SignatureFactory {
   private final DescriptorFactory descriptorFactory;
 

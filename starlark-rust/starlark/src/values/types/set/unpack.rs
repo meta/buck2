@@ -45,7 +45,6 @@ impl<K: StarlarkTypeRepr> StarlarkTypeRepr for UnpackSetEntries<K> {
 
 impl<'v, K: UnpackValue<'v>> UnpackValue<'v> for UnpackSetEntries<K> {
     type Error = K::Error;
-    const UNCHECKED: bool = K::UNCHECKED;
 
     fn unpack_value_impl(value: Value<'v>) -> Result<Option<Self>, Self::Error> {
         let Some(set) = SetRef::unpack_value_opt(value) else {

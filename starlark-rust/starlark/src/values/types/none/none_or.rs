@@ -86,7 +86,6 @@ impl<T: StarlarkTypeRepr> StarlarkTypeRepr for NoneOr<T> {
 
 impl<'v, T: UnpackValue<'v>> UnpackValue<'v> for NoneOr<T> {
     type Error = <T as UnpackValue<'v>>::Error;
-    const UNCHECKED: bool = T::UNCHECKED;
 
     fn unpack_value_impl(value: Value<'v>) -> Result<Option<Self>, Self::Error> {
         if value.is_none() {

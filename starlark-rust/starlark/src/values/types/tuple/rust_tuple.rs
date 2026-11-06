@@ -112,7 +112,6 @@ impl<T1: StarlarkTypeRepr, T2: StarlarkTypeRepr, T3: StarlarkTypeRepr> StarlarkT
 
 impl<'v, T1: UnpackValue<'v>, T2: UnpackValue<'v>> UnpackValue<'v> for (T1, T2) {
     type Error = Either<T1::Error, T2::Error>;
-    const UNCHECKED: bool = T1::UNCHECKED || T2::UNCHECKED;
 
     fn unpack_value_impl(value: Value<'v>) -> Result<Option<Self>, Self::Error> {
         let Some(t) = Tuple::from_value(value) else {
@@ -136,7 +135,6 @@ impl<'v, T1: UnpackValue<'v>, T2: UnpackValue<'v>, T3: UnpackValue<'v>> UnpackVa
     for (T1, T2, T3)
 {
     type Error = Either<T1::Error, Either<T2::Error, T3::Error>>;
-    const UNCHECKED: bool = T1::UNCHECKED || T2::UNCHECKED || T3::UNCHECKED;
 
     fn unpack_value_impl(value: Value<'v>) -> Result<Option<Self>, Self::Error> {
         let Some(t) = Tuple::from_value(value) else {

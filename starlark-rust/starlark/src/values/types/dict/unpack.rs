@@ -50,7 +50,6 @@ impl<K: StarlarkTypeRepr, V: StarlarkTypeRepr> StarlarkTypeRepr for UnpackDictEn
 
 impl<'v, K: UnpackValue<'v>, V: UnpackValue<'v>> UnpackValue<'v> for UnpackDictEntries<K, V> {
     type Error = Either<K::Error, V::Error>;
-    const UNCHECKED: bool = K::UNCHECKED || V::UNCHECKED;
 
     fn unpack_value_impl(value: Value<'v>) -> Result<Option<Self>, Self::Error> {
         let Some(dict) = DictRef::unpack_value_opt(value) else {

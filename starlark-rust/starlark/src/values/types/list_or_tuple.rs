@@ -56,7 +56,6 @@ impl<T: StarlarkTypeRepr> StarlarkTypeRepr for UnpackListOrTuple<T> {
 
 impl<'v, T: UnpackValue<'v>> UnpackValue<'v> for UnpackListOrTuple<T> {
     type Error = <T as UnpackValue<'v>>::Error;
-    const UNCHECKED: bool = T::UNCHECKED;
 
     fn unpack_value_impl(value: Value<'v>) -> Result<Option<Self>, Self::Error> {
         match Either::<UnpackList<T>, UnpackTuple<T>>::unpack_value_impl(value)

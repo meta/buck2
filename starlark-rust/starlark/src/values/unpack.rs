@@ -78,10 +78,6 @@ fn check_type_agreement<'v, T: UnpackValue<'v>>(
         }
     };
     let matches = matcher.matches(value);
-    if T::UNCHECKED && accepted {
-        // Accepting a value outside the type is what unchecked means.
-        return;
-    }
     if matches != accepted {
         let param = match param_name {
             Some(name) => format!("parameter `{name}`"),
@@ -222,11 +218,6 @@ pub trait UnpackValue<'v>: Sized + StarlarkTypeRepr {
     /// Typically [`starlark::Error`](crate::Error), [`anyhow::Error`], or [`Infallible`].
     type Error: UnpackValueError;
 
-    /// Whether this binding also accepts values outside the type [`StarlarkTypeRepr`] declares
-    /// for it. Nothing does any more; every impl returns `None` for exactly the values outside
-    /// its type, and the constant goes next.
-    const UNCHECKED: bool = false;
-
     /// Given a [`Value`], try and unpack it into the given type,
     /// which may involve some element of conversion.
     ///
@@ -352,7 +343,6 @@ impl<'v, TLeft: UnpackValue<'v>, TRight: UnpackValue<'v>> UnpackValue<'v>
     for Either<TLeft, TRight>
 {
     type Error = Either<TLeft::Error, TRight::Error>;
-    const UNCHECKED: bool = TLeft::UNCHECKED || TRight::UNCHECKED;
 
     // Only implemented for types that implement [`UnpackValue`]. Nonsensical for other types.
     fn unpack_value_impl(value: Value<'v>) -> Result<Option<Self>, Self::Error> {

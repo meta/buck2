@@ -47,7 +47,6 @@ impl<T: StarlarkTypeRepr> StarlarkTypeRepr for UnpackTuple<T> {
 
 impl<'v, T: UnpackValue<'v>> UnpackValue<'v> for UnpackTuple<T> {
     type Error = <T as UnpackValue<'v>>::Error;
-    const UNCHECKED: bool = T::UNCHECKED;
 
     fn unpack_value_impl(value: Value<'v>) -> Result<Option<Self>, Self::Error> {
         let Some(tuple) = TupleRef::from_value(value) else {

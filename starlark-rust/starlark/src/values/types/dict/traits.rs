@@ -62,7 +62,6 @@ impl<'v, K: UnpackValue<'v> + Hash + Eq, V: UnpackValue<'v>> UnpackValue<'v>
     for MiniMutInsertionMap<K, V>
 {
     type Error = Either<K::Error, V::Error>;
-    const UNCHECKED: bool = K::UNCHECKED || V::UNCHECKED;
 
     fn unpack_value_impl(value: Value<'v>) -> Result<Option<Self>, Self::Error> {
         SmallMap::unpack_value_impl(value).map(|r| r.map(SmallMap::into_inner))
@@ -125,7 +124,6 @@ impl<K: StarlarkTypeRepr, V: StarlarkTypeRepr> StarlarkTypeRepr for SmallMap<K, 
 
 impl<'v, K: UnpackValue<'v> + Hash + Eq, V: UnpackValue<'v>> UnpackValue<'v> for SmallMap<K, V> {
     type Error = Either<K::Error, V::Error>;
-    const UNCHECKED: bool = K::UNCHECKED || V::UNCHECKED;
 
     fn unpack_value_impl(value: Value<'v>) -> Result<Option<Self>, Self::Error> {
         let Some(dict) = DictRef::from_value(value) else {
@@ -203,7 +201,6 @@ impl<K: StarlarkTypeRepr, V: StarlarkTypeRepr> StarlarkTypeRepr for BTreeMap<K, 
 
 impl<'v, K: UnpackValue<'v> + Ord, V: UnpackValue<'v>> UnpackValue<'v> for BTreeMap<K, V> {
     type Error = Either<K::Error, V::Error>;
-    const UNCHECKED: bool = K::UNCHECKED || V::UNCHECKED;
 
     fn unpack_value_impl(value: Value<'v>) -> Result<Option<Self>, Self::Error> {
         let Some(dict) = DictRef::from_value(value) else {

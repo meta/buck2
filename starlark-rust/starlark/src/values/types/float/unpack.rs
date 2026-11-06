@@ -15,6 +15,8 @@
  * limitations under the License.
  */
 
+use crate as starlark;
+use crate::any::ProvidesStaticType;
 use crate::typing::Ty;
 use crate::values::UnpackValue;
 use crate::values::Value;
@@ -23,6 +25,7 @@ use crate::values::types::num::value::Num;
 use crate::values::types::num::value::NumRef;
 
 /// Unpack `int` or `float` into `f64`.
+#[derive(ProvidesStaticType)]
 pub struct UnpackFloat(pub f64);
 
 impl StarlarkTypeRepr for UnpackFloat {

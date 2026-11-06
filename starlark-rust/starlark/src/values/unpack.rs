@@ -26,6 +26,7 @@ use starlark_syntax::StarlarkResultExt;
 
 use crate::typing::Ty;
 use crate::values::Value;
+use crate::values::ValueOf;
 use crate::values::type_repr::StarlarkTypeRepr;
 
 /// Debug-build check that an unpack agreed with the matcher for its declared type: the value was
@@ -360,6 +361,18 @@ impl<'v, TLeft: UnpackValue<'v>, TRight: UnpackValue<'v>> UnpackValue<'v>
             _ => Ok(TRight::unpack_value_impl(value)
                 .map_err(Either::Right)?
                 .map(Self::Right)),
+        }
+    }
+}
+
+impl<'v, A: UnpackValue<'v>, B: UnpackValue<'v>> ValueOf<'v, Either<A, B>> {
+    /// Which side of the union this value is, trying `A` first as unpacking does. Fallible for
+    /// the same reason as [`try_unpack`](ValueOf::try_unpack).
+    pub fn split(self) -> crate::Result<Either<ValueOf<'v, A>, ValueOf<'v, B>>> {
+        let value = self.to_value();
+        match A::unpack_value(value)? {
+            Some(_) => Ok(Either::Left(ValueOf::new_unchecked(value))),
+            None => Ok(Either::Right(ValueOf::new_err(value)?)),
         }
     }
 }

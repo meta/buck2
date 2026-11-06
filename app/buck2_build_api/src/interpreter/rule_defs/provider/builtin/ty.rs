@@ -15,6 +15,7 @@ use buck2_hash::BuckFixedSortedMap;
 use buck2_interpreter::types::provider::callable::ProviderCallableLike;
 use dupe::Dupe;
 use starlark::environment::GlobalsBuilder;
+use starlark::typing::HasTyVTable;
 use starlark::typing::Ty;
 use starlark::typing::TyStarlarkValue;
 use starlark::values::StarlarkValue;
@@ -29,8 +30,8 @@ use crate::interpreter::rule_defs::type_id_domain::Buck2TypeIdDomain;
 /// Types associated with builtin providers.
 pub struct BuiltinProviderTy<
     'v,
-    P: StarlarkValue<'v> + ProviderLike<'v>,
-    C: StarlarkValue<'v> + ProviderCallableLike,
+    P: StarlarkValue<'v> + HasTyVTable + ProviderLike<'v>,
+    C: StarlarkValue<'v> + HasTyVTable + ProviderCallableLike,
 > {
     callable: OnceLock<Ty>,
     instance: OnceLock<Ty>,
@@ -42,14 +43,17 @@ pub struct BuiltinProviderTy<
 
 unsafe impl<
     'v,
-    P: StarlarkValue<'v> + ProviderLike<'v>,
-    C: StarlarkValue<'v> + ProviderCallableLike,
+    P: StarlarkValue<'v> + HasTyVTable + ProviderLike<'v>,
+    C: StarlarkValue<'v> + HasTyVTable + ProviderCallableLike,
 > Sync for BuiltinProviderTy<'v, P, C>
 {
 }
 
-impl<'v, P: StarlarkValue<'v> + ProviderLike<'v>, C: StarlarkValue<'v> + ProviderCallableLike>
-    BuiltinProviderTy<'v, P, C>
+impl<
+    'v,
+    P: StarlarkValue<'v> + HasTyVTable + ProviderLike<'v>,
+    C: StarlarkValue<'v> + HasTyVTable + ProviderCallableLike,
+> BuiltinProviderTy<'v, P, C>
 {
     pub const fn new(
         fields: fn() -> BuckFixedSortedMap<String, Ty>,
@@ -87,7 +91,10 @@ impl<'v, P: StarlarkValue<'v> + ProviderLike<'v>, C: StarlarkValue<'v> + Provide
     }
 }
 
-fn builtin_provider_typechecker_ty<'v, C: StarlarkValue<'v> + ProviderCallableLike>(
+fn builtin_provider_typechecker_ty<
+    'v,
+    C: StarlarkValue<'v> + HasTyVTable + ProviderCallableLike,
+>(
     creator_func: for<'a> fn(&'a mut GlobalsBuilder),
 ) -> Ty {
     let globals = GlobalsBuilder::new().with(creator_func).build();

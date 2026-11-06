@@ -38,6 +38,7 @@ use crate::typing::TypingUnOp;
 use crate::typing::error::TypingError;
 use crate::typing::error::TypingNoContextError;
 use crate::typing::ty::TypeRenderConfig;
+use crate::values::StarlarkType;
 use crate::values::StarlarkValue;
 use crate::values::bool::StarlarkBool;
 use crate::values::dict::value::FrozenDict;
@@ -67,9 +68,6 @@ pub struct TyStarlarkValueVTable {
     type_name: &'static str,
     vtable: StarlarkTypeVTable,
     starlark_type_id: StarlarkTypeId,
-    /// `starlark_type_id` is `TypeId` of `T::Canonical`.
-    /// This is `TypeId` of `T::Canonical::Canonical`.
-    starlark_type_id_check: StarlarkTypeId,
 }
 
 // `StarlarkTypeVTable` contains function pointers which don't implement `Ord`,
@@ -132,26 +130,24 @@ impl<T: ?Sized> HasTyVTable for T {}
 pub struct TyStarlarkValueVTableGet<'v, T: StarlarkValue<'v>>(PhantomData<&'v T>);
 
 impl<'v, T: StarlarkValue<'v>> TyStarlarkValueVTableGet<'v, T> {
+    /// Everything here is the type's, so the representations of a type hold equal vtables.
     #[doc(hidden)]
     pub const VTABLE: TyStarlarkValueVTable = TyStarlarkValueVTable {
-        type_name: T::TYPE,
+        type_name: <T::Type as StarlarkType<'v>>::TYPE,
         vtable: StarlarkTypeVTableGet::<T::Type>::VTABLE,
-        starlark_type_id: StarlarkTypeId::of_canonical::<T>(),
-        starlark_type_id_check: StarlarkTypeId::of_canonical::<T::Canonical>(),
+        starlark_type_id: StarlarkTypeId::of::<T>(),
     };
 }
 
 /// Internal: inside a `const _: () = { ... };` block, emit a `VTABLE` static
-/// containing `TyStarlarkValueVTableGet::<$frozen_ty::Canonical>::VTABLE` and
+/// containing `TyStarlarkValueVTableGet::<$frozen_ty>::VTABLE` and
 /// a pagable `VTABLE_STATIC` entry pointing at it.
 #[doc(hidden)]
 #[macro_export]
 macro_rules! __declare_ty_vtable_static {
     ($frozen_ty:ty) => {
         static VTABLE: $crate::__derive_refs::TyStarlarkValueVTable =
-            $crate::__derive_refs::TyStarlarkValueVTableGet::<
-                <$frozen_ty as $crate::values::StarlarkValue<'_>>::Canonical,
-            >::VTABLE;
+            $crate::__derive_refs::TyStarlarkValueVTableGet::<$frozen_ty>::VTABLE;
         $crate::__derive_refs::static_value!(
             pub VTABLE_STATIC: $crate::__derive_refs::TyStarlarkValueVTable = &VTABLE,
             $crate::__derive_refs::TyStarlarkValueVTableStaticEntry
@@ -312,19 +308,16 @@ impl<'de> pagable::PagableDeserialize<'de> for TyStarlarkValue {
 }
 
 impl TyStarlarkValue {
-    /// Create a type instance from an implementation of `StarlarkValue`.
-    /// When `pagable` is enabled, requires `T::Canonical` to have been
+    /// Create a type instance from a representation of the type.
+    /// When `pagable` is enabled, requires `T` to have been
     /// registered via [`register_ty_starlark_value!`]; otherwise the bound is
     /// trivially satisfied by the blanket impl on [`HasTyVTable`].
-    pub const fn new<'v, T: StarlarkValue<'v>>() -> TyStarlarkValue
-    where
-        T::Canonical: HasTyVTable,
-    {
+    pub const fn new<'v, T: StarlarkValue<'v> + HasTyVTable>() -> TyStarlarkValue {
         TyStarlarkValue {
             #[cfg(feature = "pagable")]
-            vtable: <T::Canonical as HasTyVTable>::TY_VTABLE_STATIC,
+            vtable: <T as HasTyVTable>::TY_VTABLE_STATIC,
             #[cfg(not(feature = "pagable"))]
-            vtable: &TyStarlarkValueVTableGet::<T::Canonical>::VTABLE,
+            vtable: &TyStarlarkValueVTableGet::<T>::VTABLE,
         }
     }
 
@@ -333,18 +326,7 @@ impl TyStarlarkValue {
         self.vtable.starlark_type_id
     }
 
-    // Cannot have this check in constructor where it belongs because `new` is `const`.
-    #[inline]
-    fn self_check(self) {
-        debug_assert_eq!(
-            self.vtable.starlark_type_id, self.vtable.starlark_type_id_check,
-            "`Canonical` for `{}` is not canonical",
-            self.vtable.type_name
-        );
-    }
-
     pub(crate) fn as_name(self) -> &'static str {
-        self.self_check();
         self.vtable.type_name
     }
 
@@ -361,33 +343,27 @@ impl TyStarlarkValue {
     }
 
     pub(crate) fn is_str(self) -> bool {
-        self.self_check();
         self == TyStarlarkValue::new::<StarlarkStr>()
     }
 
     pub(crate) fn is_int(self) -> bool {
-        self.self_check();
         self == TyStarlarkValue::new::<StarlarkBigInt>()
     }
 
     pub(crate) fn is_list(self) -> bool {
-        self.self_check();
         self == TyStarlarkValue::new::<FrozenList>()
     }
 
     pub(crate) fn is_dict(self) -> bool {
-        self.self_check();
         self == TyStarlarkValue::new::<FrozenDict>()
     }
 
     pub(crate) fn is_tuple(self) -> bool {
-        self.self_check();
         self == TyStarlarkValue::new::<Tuple>()
     }
 
     #[allow(dead_code)]
     pub(crate) fn is_set(self) -> bool {
-        self.self_check();
         self == TyStarlarkValue::new::<FrozenSet>()
     }
 
@@ -492,7 +468,6 @@ impl TyStarlarkValue {
     }
 
     pub(crate) fn is_type(self) -> bool {
-        self.self_check();
         Self::is_type_from_vtable(&self.vtable.vtable)
     }
 
@@ -506,8 +481,6 @@ impl TyStarlarkValue {
 
     /// Convert to runtime type matcher.
     pub(crate) fn matcher<T: TypeMatcherAlloc>(self, matcher: T) -> T::Result {
-        self.self_check();
-
         // First handle special cases that can match faster than default matcher.
         // These are optimizations.
         if self.vtable.starlark_type_id == StarlarkTypeId::of::<StarlarkBigInt>() {
@@ -600,9 +573,8 @@ mod tests {
 
     #[test]
     fn test_round_trip_live_generic_matches_frozen_canonical() {
-        // `Tuple::Canonical = TupleGen<Value<'v>>` and
-        // `Tuple::Canonical = Tuple` (which is `TupleGen<Value<'v>>`). Both go
-        // through the same `HasTyVTable` impl and should be indistinguishable.
+        // `Tuple<'static>` and `Tuple<'v>` are the same representation at two brands; they
+        // should be indistinguishable.
         let ty_frozen = TyStarlarkValue::new::<Tuple<'static>>();
         let ty_live = TyStarlarkValue::new::<Tuple>();
         assert_eq!(ty_frozen, ty_live);

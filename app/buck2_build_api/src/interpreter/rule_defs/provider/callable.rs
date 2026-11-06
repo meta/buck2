@@ -458,7 +458,9 @@ impl<'v> StarlarkType<'v> for UserProviderCallableView<'v> {
                 &this.fields,
                 ty_provider.clone(),
             )?;
-            let ty_callable = ty_provider_callable::<UserProviderCallable>(creator_func)?;
+            // The frozen representation is the one with a registered typing vtable; both
+            // representations' vtables are the type's.
+            let ty_callable = ty_provider_callable::<FrozenUserProviderCallable>(creator_func)?;
             buck2_error::Ok(UserProviderCallableNamed {
                 id: provider_id.dupe(),
                 signature,

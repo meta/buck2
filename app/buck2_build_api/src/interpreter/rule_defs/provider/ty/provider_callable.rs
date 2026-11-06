@@ -9,6 +9,7 @@
  */
 
 use buck2_interpreter::types::provider::callable::ProviderCallableLike;
+use starlark::typing::HasTyVTable;
 use starlark::typing::Ty;
 use starlark::typing::TyCallable;
 use starlark::typing::TyStarlarkValue;
@@ -19,7 +20,10 @@ use starlark::values::typing::TypeInstanceId;
 
 use crate::interpreter::rule_defs::type_id_domain::Buck2TypeIdDomain;
 
-pub(crate) fn ty_provider_callable<'v, C: StarlarkValue<'v> + ProviderCallableLike>(
+pub(crate) fn ty_provider_callable<
+    'v,
+    C: StarlarkValue<'v> + HasTyVTable + ProviderCallableLike,
+>(
     creator_func: TyCallable,
 ) -> buck2_error::Result<Ty> {
     Ok(Ty::custom(TyUser::new(

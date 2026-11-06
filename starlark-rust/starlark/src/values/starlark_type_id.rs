@@ -18,14 +18,14 @@
 use allocative::Allocative;
 use dupe::Dupe;
 
+use crate::values::StarlarkType;
 use crate::values::StarlarkValue;
 use crate::values::layout::const_type_id::ConstTypeId;
 
-/// Identifier of a starlark type.
+/// Identifier of a starlark type: the static type id of its [`StarlarkType`].
 ///
-/// This is different from `TypeId` of `StarlarkValue` implementation:
-/// multiple Rust types can share the same `StarlarkTypeId`.
-/// For example, mutable and frozen list share the same `StarlarkTypeId`.
+/// This is different from `TypeId` of a `StarlarkValue` implementation: every representation
+/// of a type shares the type's `StarlarkTypeId`. For example, mutable and frozen list share one.
 #[derive(
     Eq, PartialEq, PartialOrd, Ord, Hash, Copy, Clone, Dupe, Debug, Allocative
 )]
@@ -37,30 +37,14 @@ impl StarlarkTypeId {
         StarlarkTypeId(type_id)
     }
 
+    /// The id of the type `T` is a representation of.
     #[inline]
     pub(crate) const fn of<'v, T: StarlarkValue<'v>>() -> StarlarkTypeId {
-        StarlarkTypeId::of_canonical::<T::Canonical>()
+        StarlarkTypeId::of_type::<T::Type>()
     }
 
     #[inline]
-    pub(crate) const fn of_canonical<'v, T: StarlarkValue<'v>>() -> StarlarkTypeId {
-        #[cfg(rust_nightly)]
-        {
-            // We should check type ids, but `TypeId` equality is not available even in nightly.
-            let type_name = std::any::type_name::<T>();
-            let type_name_of_canonical_again = std::any::type_name::<T::Canonical>();
-            if type_name.len() != type_name_of_canonical_again.len() {
-                panic!("Canonical type of already canonical type `T` is not `T`")
-            }
-            let mut i = 0;
-            while i != type_name.len() {
-                if type_name.as_bytes()[i] != type_name_of_canonical_again.as_bytes()[i] {
-                    panic!("Canonical type of already canonical type `T` is not `T`")
-                }
-                i += 1;
-            }
-        }
-
+    pub(crate) const fn of_type<'v, T: StarlarkType<'v>>() -> StarlarkTypeId {
         StarlarkTypeId(ConstTypeId::of::<T::StaticType>())
     }
 }

@@ -44,6 +44,7 @@ use crate::typing::function::TyCustomFunction;
 use crate::typing::function::TyCustomFunctionImpl;
 use crate::typing::function::TyFunction;
 use crate::typing::small_arc_vec::SmallArcVec1;
+use crate::typing::starlark_value::HasTyVTable;
 use crate::typing::starlark_value::TyStarlarkValue;
 use crate::typing::structs::TyStruct;
 use crate::typing::tuple::TyTuple;
@@ -274,7 +275,7 @@ impl Ty {
     }
 
     /// Type from the implementation of [`StarlarkValue`].
-    pub const fn starlark_value<'v, T: StarlarkValue<'v>>() -> Self {
+    pub const fn starlark_value<'v, T: StarlarkValue<'v> + HasTyVTable>() -> Self {
         Ty::basic(TyBasic::starlark_value::<T>())
     }
 

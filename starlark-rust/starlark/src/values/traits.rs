@@ -210,7 +210,7 @@ impl<'v, V> ComplexValue<'v> for V where V: StarlarkValue<'v> + Trace<'v> + Free
 /// implementations other than the default are never run.
 #[starlark_internal_vtable]
 #[allow(non_upper_case_globals, non_snake_case)] // For generated members.
-pub trait StarlarkType<'v>: 'v + Debug + Display + Sized {
+pub trait StarlarkType<'v>: 'v + ProvidesStaticType<'v> + Debug + Display + Sized {
     /// Return a string describing the type of self, as returned by the type()
     /// function.
     ///

@@ -19,6 +19,7 @@
 
 use quote::quote;
 
+use crate::any_lifetime::derive_provides_static_type_for;
 use crate::v_lifetime::find_v_lifetime;
 
 pub(crate) fn derive_starlark_representations(
@@ -90,12 +91,15 @@ fn derive_starlark_representations_impl(
         ));
     };
 
+    let provides_static_type = derive_provides_static_type_for(&input)?;
     let ident = &input.ident;
     let (impl_generics, type_generics, where_clause) = input.generics.split_for_impl();
     let variant_idents: Vec<&syn::Ident> = variants.iter().map(|(v, _)| *v).collect();
     let reps: Vec<&syn::Type> = variants.iter().map(|(_, r)| r).collect();
 
     Ok(quote! {
+        #provides_static_type
+
         impl #impl_generics std::fmt::Display for #ident #type_generics #where_clause {
             fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
                 match self {

@@ -105,12 +105,15 @@ configuration_alias(
     visibility = ["PUBLIC"],
 )
 
+# The cxx.windows_compiler_type settings read the root cell's config, so a
+# project that consumes this shim and other projects as cells sets the compiler
+# once, at its root, for every cell.
 config_setting(
     name = "windows-cl",
     constraint_values = [
         "prelude//os/constraints:os[windows]",
     ],
-    values = {"cxx.windows_compiler_type": "windows"},
+    root_values = {"cxx.windows_compiler_type": "windows"},
     visibility = ["PUBLIC"],
 )
 
@@ -119,7 +122,7 @@ config_setting(
     constraint_values = [
         "prelude//os/constraints:os[windows]",
     ],
-    values = {"cxx.windows_compiler_type": "clang"},
+    root_values = {"cxx.windows_compiler_type": "clang"},
     visibility = ["PUBLIC"],
 )
 
@@ -132,6 +135,6 @@ config_setting(
     constraint_values = [
         "prelude//os/constraints:os[windows]",
     ],
-    values = {"cxx.windows_compiler_type": "clang"},
+    root_values = {"cxx.windows_compiler_type": "clang"},
     visibility = ["PUBLIC"],
 )

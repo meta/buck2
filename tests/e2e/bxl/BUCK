@@ -4,7 +4,7 @@ oncall("build_infra")
 
 buck2_e2e_test(
     name = "test_bxl",
-    srcs = ["test_bxl.py"],
+    srcs = ["test_bxl.rs"],
     data = "//buck2/tests/targets:isolated_targets",
     env = {
         "OVR_CONFIG": "1",
@@ -13,111 +13,84 @@ buck2_e2e_test(
     skip_for_os = [
         "darwin",
     ],
-    deps = [
-        "//buck2/tests/e2e_util:utils",  # @autodeps2-fixme-manual
-    ],
 )
 
 buck2_e2e_test(
     name = "test_bxl_query",
-    srcs = ["test_bxl_query.py"],
+    srcs = ["test_bxl_query.rs"],
     data = "//buck2/tests/targets:isolated_targets",
     env = {
         "OVR_CONFIG": "1",
         "PRELUDE": "$(location prelude//:prelude)",
     },
-    deps = [
-        "//buck2/tests/e2e_util:utils",  # @autodeps2-fixme-manual
-    ],
 )
 
 buck2_e2e_test(
     name = "test_bxl_fs",
-    srcs = ["test_bxl_fs.py"],
+    srcs = ["test_bxl_fs.rs"],
     data = "//buck2/tests/targets:isolated_targets",
     env = {
         "OVR_CONFIG": "1",
         "PRELUDE": "$(location prelude//:prelude)",
     },
-    deps = [
-        "//buck2/tests/e2e_util:utils",  # @autodeps2-fixme-manual
-    ],
 )
 
 buck2_e2e_test(
     name = "test_bxl_node_operations",
-    srcs = ["test_bxl_node_operations.py"],
+    srcs = ["test_bxl_node_operations.rs"],
     data = "//buck2/tests/targets:isolated_targets",
     env = {
         "OVR_CONFIG": "1",
         "PRELUDE": "$(location prelude//:prelude)",
     },
-    deps = [
-        "//buck2/tests/e2e_util:utils",  # @autodeps2-fixme-manual
-    ],
 )
 
 buck2_e2e_test(
     name = "test_bxl_lazy_analysis",
-    srcs = ["test_bxl_lazy_analysis.py"],
+    srcs = ["test_bxl_lazy_analysis.rs"],
     data = "//buck2/tests/targets:isolated_targets",
     env = {
         "OVR_CONFIG": "1",
         "PRELUDE": "$(location prelude//:prelude)",
     },
-    deps = [
-        "//buck2/tests/e2e_util:utils",  # @autodeps2-fixme-manual
-    ],
 )
 
 buck2_e2e_test(
     name = "test_bxl_lazy_configured_target_node",
-    srcs = ["test_bxl_lazy_configured_target_node.py"],
+    srcs = ["test_bxl_lazy_configured_target_node.rs"],
     data = "//buck2/tests/targets:isolated_targets",
     env = {
         "OVR_CONFIG": "1",
         "PRELUDE": "$(location prelude//:prelude)",
     },
-    deps = [
-        "//buck2/tests/e2e_util:utilities",
-    ],
 )
 
 buck2_e2e_test(
     name = "test_bxl_lazy_unconfigured_target_node",
-    srcs = ["test_bxl_lazy_unconfigured_target_node.py"],
+    srcs = ["test_bxl_lazy_unconfigured_target_node.rs"],
     data = "//buck2/tests/targets:isolated_targets",
     env = {
         "OVR_CONFIG": "1",
         "PRELUDE": "$(location prelude//:prelude)",
     },
-    deps = [
-        "//buck2/tests/e2e_util:utilities",
-    ],
 )
 
 buck2_e2e_test(
     name = "test_bxl_targets",
-    srcs = ["test_bxl_targets.py"],
+    srcs = ["test_bxl_targets.rs"],
     data = "//buck2/tests/targets:isolated_targets",
     env = {
         "OVR_CONFIG": "1",
         "PRELUDE": "$(location prelude//:prelude)",
     },
-    deps = [
-        "//buck2/tests/e2e_util:utils",  # @autodeps2-fixme-manual
-    ],
 )
 
 buck2_e2e_test(
     name = "test_bxl_lazy_cquery",
-    srcs = ["test_bxl_lazy_cquery.py"],
+    srcs = ["test_bxl_lazy_cquery.rs"],
     data = "//buck2/tests/targets:isolated_targets",
     env = {
         "OVR_CONFIG": "1",
         "PRELUDE": "$(location prelude//:prelude)",
     },
-    deps = [
-        "//buck2/tests/e2e_util:utils",  # @autodeps2-fixme-manual
-    ],
 )

@@ -71,7 +71,7 @@ use crate::eval::runtime::profile::instant::ProfilerInstant;
 use crate::eval::runtime::slots::LocalCapturedSlotId;
 use crate::eval::runtime::slots::LocalSlotId;
 use crate::values::Heap;
-use crate::values::StarlarkValue;
+use crate::values::StarlarkType;
 use crate::values::StringValue;
 use crate::values::Value;
 use crate::values::ValueTyped;

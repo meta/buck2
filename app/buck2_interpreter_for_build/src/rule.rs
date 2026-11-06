@@ -1015,7 +1015,7 @@ impl<'v> StarlarkValue<'v> for FrozenStarlarkRuleCallable<'v> {
     }
 
     fn get_type_starlark_repr() -> Ty {
-        StarlarkRuleCallable::get_type_starlark_repr()
+        <StarlarkRuleCallable as StarlarkValue>::get_type_starlark_repr()
     }
 }
 

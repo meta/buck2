@@ -840,8 +840,8 @@ impl<'v> Value<'v> {
         self.vtable().type_starlark_repr()
     }
 
-    /// Add two [`Value`]s together. Will first try using [`add`](StarlarkValue::add),
-    /// before falling back to [`radd`](StarlarkValue::radd).
+    /// Add two [`Value`]s together. Will first try using [`add`](crate::values::StarlarkType::add),
+    /// before falling back to [`radd`](crate::values::StarlarkType::radd).
     pub fn add(self, other: Value<'v>, heap: Heap<'v>) -> crate::Result<Value<'v>> {
         // Fast special case for ints.
         if let Some(ls) = self.unpack_inline_int() {
@@ -911,17 +911,17 @@ impl<'v> Value<'v> {
         serde_json::to_value(self).map_err(|e| anyhow::anyhow!(e))
     }
 
-    /// Forwards to [`StarlarkValue::set_attr`].
+    /// Forwards to [`StarlarkType::set_attr`](crate::values::StarlarkType::set_attr).
     pub fn set_attr(self, attribute: &str, alloc_value: Value<'v>) -> crate::Result<()> {
         self.get_ref().set_attr(attribute, alloc_value)
     }
 
-    /// Forwards to [`StarlarkValue::set_at`].
+    /// Forwards to [`StarlarkType::set_at`](crate::values::StarlarkType::set_at).
     pub fn set_at(self, index: Value<'v>, alloc_value: Value<'v>) -> crate::Result<()> {
         self.get_ref().set_at(index, alloc_value)
     }
 
-    /// Forwards to [`StarlarkValue::documentation`].
+    /// Forwards to [`StarlarkType::documentation`](crate::values::StarlarkType::documentation).
     pub fn documentation(self) -> DocItem {
         self.get_ref().documentation()
     }

@@ -369,7 +369,7 @@ pub(crate) fn register_string_with_macros(globals: &mut GlobalsBuilder) {}
 mod tests {
 
     use starlark::values::Heap;
-    use starlark::values::StarlarkValue;
+    use starlark::values::StarlarkType;
 
     use super::*;
 

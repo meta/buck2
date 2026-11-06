@@ -34,7 +34,9 @@ pub(crate) fn derive_starlark_value(
 }
 
 struct StarlarkValueAttrs {
-    typ: syn::Expr,
+    /// The `type()` string. Required unless the impl is a representation that names its
+    /// `Type`, whose string it is then.
+    typ: Option<syn::Expr>,
     /// Implement `UnpackValue` for `&T`.
     /// Note we are implementing `UnpackValue` for `&T` instead of `T`,
     /// therefore we use proc macro on impl trait instead of `#[derive]` on struct.
@@ -79,9 +81,13 @@ impl StarlarkValueAttrs {
 
 impl syn::parse::Parse for StarlarkValueAttrs {
     fn parse(input: syn::parse::ParseStream) -> syn::Result<Self> {
-        input.parse::<syn::Token![type]>()?;
-        input.parse::<syn::Token![=]>()?;
-        let typ = input.parse::<syn::Expr>()?;
+        let typ = if input.peek(syn::Token![type]) {
+            input.parse::<syn::Token![type]>()?;
+            input.parse::<syn::Token![=]>()?;
+            Some(input.parse::<syn::Expr>()?)
+        } else {
+            None
+        };
         let mut attrs = StarlarkValueAttrs {
             typ,
             unpack_value: false,
@@ -93,10 +99,12 @@ impl syn::parse::Parse for StarlarkValueAttrs {
             if input.is_empty() {
                 break;
             }
-            input.parse::<syn::Token![,]>()?;
-            if input.is_empty() {
-                // Allow trailing comma.
-                break;
+            if input.peek(syn::Token![,]) {
+                input.parse::<syn::Token![,]>()?;
+                if input.is_empty() {
+                    // Allow trailing comma.
+                    break;
+                }
             }
             let name = input.parse::<syn::Ident>()?;
             if name == "UnpackValue" {
@@ -121,10 +129,34 @@ impl syn::parse::Parse for StarlarkValueAttrs {
     }
 }
 
+/// Which trait the block under the attribute is an impl of.
+#[derive(Copy, Clone, PartialEq, Eq)]
+enum ImplOf {
+    /// `impl StarlarkValue for X`: `X` is a representation, and unless it names a `Type`, its
+    /// type too, with the type's behaviour written in this block.
+    Value,
+    /// `impl StarlarkType for X`: `X` is a type whose representations are elsewhere.
+    Type,
+}
+
 struct ImplStarlarkValue {
     input: syn::ItemImpl,
+    impl_of: ImplOf,
     lifetime_param: syn::Lifetime,
     attrs: StarlarkValueAttrs,
+}
+
+/// An item of an `impl StarlarkValue` block that stays on the representation. Everything else
+/// is the type's behaviour.
+fn is_representation_item(item: &syn::ImplItem) -> bool {
+    match item {
+        syn::ImplItem::Type(t) => t.ident == "Canonical" || t.ident == "Type",
+        syn::ImplItem::Fn(f) => matches!(
+            f.sig.ident.to_string().as_str(),
+            "provide" | "is_special" | "with_type"
+        ),
+        _ => false,
+    }
 }
 
 /// The shape of the generics on the impl's `Self`; see `ImplStarlarkValue::vtable_registration`.
@@ -142,16 +174,20 @@ fn is_impl_starlark_value(
     input: syn::ItemImpl,
     attrs: StarlarkValueAttrs,
 ) -> syn::Result<ImplStarlarkValue> {
-    let err = "expected `impl StarlarkValue for ...`";
+    let err = "expected `impl StarlarkValue for ...` or `impl StarlarkType for ...`";
     let Some((path, _)) = &input.trait_ else {
         return Err(syn::Error::new_spanned(input, err));
     };
     let Some(last) = path.segments.last() else {
         return Err(syn::Error::new_spanned(path, err));
     };
-    if last.ident != "StarlarkValue" {
+    let impl_of = if last.ident == "StarlarkValue" {
+        ImplOf::Value
+    } else if last.ident == "StarlarkType" {
+        ImplOf::Type
+    } else {
         return Err(syn::Error::new_spanned(&last.ident, err));
-    }
+    };
     let lifetime_param = match find_v_lifetime(&input.generics)? {
         Some(lt) => lt.clone(),
         None => {
@@ -163,6 +199,7 @@ fn is_impl_starlark_value(
     };
     Ok(ImplStarlarkValue {
         input,
+        impl_of,
         lifetime_param,
         attrs,
     })
@@ -219,15 +256,40 @@ impl ImplStarlarkValue {
         })
     }
 
+    fn typ(&self) -> syn::Result<&syn::Expr> {
+        self.attrs.typ.as_ref().ok_or_else(|| {
+            syn::Error::new_spanned(&self.input.self_ty, "`type = \"...\"` is required")
+        })
+    }
+
     fn const_type(&self) -> syn::Result<syn::ImplItem> {
-        let typ = &self.attrs.typ;
+        let typ = self.typ()?;
         syn::parse2(quote! {
             const TYPE: &'static str = #typ;
         })
     }
 
+    /// `get_type_starlark_repr` when the block does not override it: the nominal type of the
+    /// representation. A type with several representations has to say what its type is.
+    fn get_type_starlark_repr(&self) -> syn::Result<Option<syn::ImplItem>> {
+        if self.has_fn("get_type_starlark_repr") {
+            return Ok(None);
+        }
+        match self.impl_of {
+            ImplOf::Value => Ok(Some(syn::parse_quote! {
+                fn get_type_starlark_repr() -> starlark::typing::Ty {
+                    starlark::typing::Ty::starlark_value::<Self>()
+                }
+            })),
+            ImplOf::Type => Err(syn::Error::new_spanned(
+                &self.input.self_ty,
+                "an `impl StarlarkType` must implement `get_type_starlark_repr`",
+            )),
+        }
+    }
+
     fn get_type_value_static(&self) -> syn::Result<syn::ImplItem> {
-        let typ = &self.attrs.typ;
+        let typ = self.typ()?;
         syn::parse2(quote! {
             #[inline]
             fn get_type_value_static() -> starlark::values::StringValue<'static> {
@@ -622,46 +684,138 @@ impl ImplStarlarkValue {
     }
 }
 
+impl ImplStarlarkValue {
+    /// The `impl StarlarkType` for `self_ty`: `items` plus the generated members.
+    fn type_impl(&self, items: Vec<syn::ImplItem>) -> syn::Result<syn::ItemImpl> {
+        let lt = &self.lifetime_param;
+        let mut type_impl = self.input.clone();
+        let (_, for_token) = type_impl.trait_.take().expect("checked to be a trait impl");
+        type_impl.trait_ = Some((
+            syn::parse_quote! { starlark::values::StarlarkType<#lt> },
+            for_token,
+        ));
+        type_impl.items = items;
+        type_impl.items.splice(
+            0..0,
+            [self.const_type()?, self.get_type_value_static()?]
+                .into_iter()
+                .chain(self.get_type_starlark_repr()?)
+                .chain(self.attr_ty()?)
+                .chain(self.bit_or()?)
+                .chain(self.bin_op_ty()?)
+                .chain(self.rbin_op_ty()?),
+        );
+        let has_fn_flags = self.has_fn_flags(&type_impl)?;
+        type_impl.items.extend(has_fn_flags);
+        Ok(type_impl)
+    }
+
+    /// `with_type` for a representation that is its own type.
+    fn with_type_identity(&self) -> syn::ImplItem {
+        let lt = &self.lifetime_param;
+        syn::parse_quote! {
+            #[inline]
+            fn with_type<StarlarkWithTypeResult>(
+                this: &#lt Self,
+                f: impl FnOnce(&Self::Type) -> StarlarkWithTypeResult,
+            ) -> StarlarkWithTypeResult {
+                f(this)
+            }
+        }
+    }
+}
+
 fn derive_starlark_value_impl(
     attr: StarlarkValueAttrs,
-    mut input: syn::ItemImpl,
+    input: syn::ItemImpl,
 ) -> syn::Result<proc_macro2::TokenStream> {
     let impl_starlark_value: ImplStarlarkValue = is_impl_starlark_value(input.clone(), attr)?;
 
-    let impl_unpack_value = impl_starlark_value.impl_unpack_value()?;
+    if impl_starlark_value.impl_of == ImplOf::Type {
+        // A type whose representations are elsewhere: nothing is allocated as it, so there is
+        // no vtable to register and nothing to unpack.
+        if impl_starlark_value.attrs.unpack_value
+            || impl_starlark_value.attrs.starlark_type_repr
+            || impl_starlark_value.attrs.vtable != VtableMode::Default
+        {
+            return Err(syn::Error::new_spanned(
+                &input.self_ty,
+                "an `impl StarlarkType` takes only `type = ...`; unpacking and vtable \
+                 registration are the representations'",
+            ));
+        }
+        let type_impl = impl_starlark_value.type_impl(input.items.clone())?;
+        return Ok(quote! { #type_impl });
+    }
+
+    let (rep_items, ty_items): (Vec<syn::ImplItem>, Vec<syn::ImplItem>) = input
+        .items
+        .iter()
+        .cloned()
+        .partition(is_representation_item);
+    let names_type = rep_items
+        .iter()
+        .any(|item| matches!(item, syn::ImplItem::Type(t) if t.ident == "Type"));
 
     let please_use_starlark_type_macro = impl_starlark_value.please_use_starlark_type_macro()?;
-    let const_type = impl_starlark_value.const_type()?;
-    let get_type_value_static = impl_starlark_value.get_type_value_static()?;
-    let bin_op_ty = impl_starlark_value.bin_op_ty()?;
-    let rbin_op_ty = impl_starlark_value.rbin_op_ty()?;
-    let attr_ty = impl_starlark_value.attr_ty()?;
-    let bit_or = impl_starlark_value.bit_or()?;
     let canonical = impl_starlark_value.canonical_member()?;
     let vtable_registration = impl_starlark_value.vtable_registration()?;
+    let mut rep_impl = input.clone();
+    rep_impl.items = rep_items;
 
-    input.items.splice(
+    if names_type {
+        // One representation of a type with several: its behaviour is the type's.
+        if let Some(item) = ty_items.first() {
+            return Err(syn::Error::new_spanned(
+                item,
+                "a representation of a type with several representations has no behaviour of \
+                 its own; this belongs on the `impl StarlarkType` of its `Type`",
+            ));
+        }
+        if impl_starlark_value.attrs.unpack_value || impl_starlark_value.attrs.starlark_type_repr {
+            return Err(syn::Error::new_spanned(
+                &input.self_ty,
+                "one representation of a type cannot be a binding for the type; bind its `Type`",
+            ));
+        }
+        if let Some(typ) = &impl_starlark_value.attrs.typ {
+            return Err(syn::Error::new_spanned(
+                typ,
+                "the `type()` string is the `Type`'s; it is not given on a representation",
+            ));
+        }
+        rep_impl.items.splice(
+            0..0,
+            [please_use_starlark_type_macro]
+                .into_iter()
+                .chain(canonical),
+        );
+        return Ok(quote! {
+            #rep_impl
+
+            #vtable_registration
+        });
+    }
+
+    let impl_unpack_value = impl_starlark_value.impl_unpack_value()?;
+    let type_impl = impl_starlark_value.type_impl(ty_items)?;
+    let type_self: syn::ImplItem = syn::parse_quote! {
+        type Type = Self;
+    };
+    let with_type = impl_starlark_value.with_type_identity();
+    rep_impl.items.splice(
         0..0,
-        [
-            const_type,
-            get_type_value_static,
-            please_use_starlark_type_macro,
-        ]
-        .into_iter()
-        .chain(attr_ty)
-        .chain(bit_or)
-        .chain(bin_op_ty)
-        .chain(rbin_op_ty)
-        .chain(canonical),
+        [please_use_starlark_type_macro, type_self, with_type]
+            .into_iter()
+            .chain(canonical),
     );
-
-    let has_fn_flags = impl_starlark_value.has_fn_flags(&input)?;
-    input.items.extend(has_fn_flags);
 
     Ok(quote! {
         #impl_unpack_value
 
-        #input
+        #type_impl
+
+        #rep_impl
 
         #vtable_registration
     })

@@ -135,7 +135,7 @@ impl<'v, T: StarlarkValue<'v>> TyStarlarkValueVTableGet<'v, T> {
     #[doc(hidden)]
     pub const VTABLE: TyStarlarkValueVTable = TyStarlarkValueVTable {
         type_name: T::TYPE,
-        vtable: StarlarkTypeVTableGet::<T>::VTABLE,
+        vtable: StarlarkTypeVTableGet::<T::Type>::VTABLE,
         starlark_type_id: StarlarkTypeId::of_canonical::<T>(),
         starlark_type_id_check: StarlarkTypeId::of_canonical::<T::Canonical>(),
     };

@@ -341,7 +341,7 @@ mod tests {
 
     use crate::assert;
     use crate::collections::StarlarkHasher;
-    use crate::values::StarlarkValue;
+    use crate::values::StarlarkType;
     use crate::values::float::StarlarkFloat;
     use crate::values::types::bigint::StarlarkBigInt;
 

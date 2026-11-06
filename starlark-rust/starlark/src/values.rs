@@ -117,6 +117,7 @@ pub use crate::values::layout::value::Value;
 pub use crate::values::thin_box_slice_value::packed_impl::ThinBoxSliceValue;
 pub use crate::values::trace::Trace;
 pub use crate::values::traits::ComplexValue;
+pub use crate::values::traits::StarlarkType;
 pub use crate::values::traits::StarlarkValue;
 pub use crate::values::types::any;
 pub use crate::values::types::any_complex;

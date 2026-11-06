@@ -46,6 +46,7 @@
 #[cfg(test)]
 extern crate self as buck2_e2e;
 
+pub mod approx;
 mod buck;
 mod fixture;
 pub mod golden;

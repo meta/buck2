@@ -12,6 +12,9 @@ buck2_core_tests(
         "test_critical_path": {
             "use_compiled_buck2_client_and_tpx": True,
         },
+        "test_error_categorization": {
+            "deps": ["fbsource//third-party/rust:libc"],
+        },
         "test_memory_sketches": {
             "env": {
                 "SKETCH_SIZE_BIN": "$(location fbcode//buck2/shed/setsketch:sketch_size)",

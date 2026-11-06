@@ -30,6 +30,7 @@ rust_library(
         "//buck2/app/buck2_fs:buck2_fs",
         "//buck2/app/buck2_hash:buck2_hash",
         "//buck2/app/buck2_interpreter:buck2_interpreter",
+        "//buck2/app/buck2_interpreter_for_build:buck2_interpreter_for_build",
         "//buck2/app/buck2_node:buck2_node",
         "//buck2/app/buck2_query:buck2_query",
         "//buck2/app/buck2_query_parser:buck2_query_parser",

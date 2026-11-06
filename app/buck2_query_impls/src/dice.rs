@@ -44,6 +44,7 @@ use buck2_fs::paths::abs_norm_path::AbsNormPathBuf;
 use buck2_fs::paths::file_name::FileNameBuf;
 use buck2_hash::BuckMutMap;
 use buck2_hash::buck_mut_insertion_set;
+use buck2_interpreter_for_build::interpreter::context::HasInterpreterContext;
 use buck2_node::load_patterns::MissingTargetBehavior;
 use buck2_node::load_patterns::load_patterns;
 use buck2_node::nodes::configured::ConfiguredTargetNode;
@@ -71,6 +72,7 @@ pub(crate) struct LiteralParser {
     cell_resolver: CellResolver,
     cell_alias_resolver: CellAliasResolver,
     target_alias_resolver: BuckConfigTargetAliasResolver,
+    infer_target_names: InferTargetNames,
 }
 
 impl LiteralParser {
@@ -128,7 +130,7 @@ impl LiteralParser {
             ),
             &self.cell_resolver,
             &self.cell_alias_resolver,
-            InferTargetNames::No,
+            self.infer_target_names,
         )
     }
 
@@ -136,7 +138,7 @@ impl LiteralParser {
         &self,
         value: &str,
     ) -> buck2_error::Result<ParsedPatternWithModifiers<ProvidersPatternExtra>> {
-        ParsedPatternWithModifiers::parse_not_relaxed(
+        ParsedPatternWithModifiers::parse_not_relaxed_with_inference(
             value,
             TargetParsingRel::AllowRelative(
                 &CellPathWithAllowedRelativeDir::backwards_relative_not_supported(self.working_dir),
@@ -144,6 +146,7 @@ impl LiteralParser {
             ),
             &self.cell_resolver,
             &self.cell_alias_resolver,
+            self.infer_target_names,
         )
     }
 
@@ -182,6 +185,7 @@ impl DiceQueryData {
         working_dir: &ProjectRelativePath,
         project_root: ProjectRoot,
         target_alias_resolver: BuckConfigTargetAliasResolver,
+        infer_target_names: InferTargetNames,
         allow_partial_graph: bool,
     ) -> Self {
         let cell_path = cell_resolver.get_cell_path(working_dir);
@@ -196,6 +200,7 @@ impl DiceQueryData {
                 cell_resolver,
                 cell_alias_resolver,
                 target_alias_resolver,
+                infer_target_names,
             },
             global_cfg_options,
             allow_partial_graph,
@@ -408,6 +413,11 @@ pub(crate) async fn get_dice_query_delegate<'a, 'c: 'a, 'd>(
         .await?
         .dupe();
     let target_alias_resolver = ctx.get().target_alias_resolver().await?.dupe();
+    let infer_target_names = ctx
+        .get()
+        .get_interpreter_configuror()
+        .await?
+        .infer_target_names();
     let project_root = ctx.get().get_project_root().await?.dupe();
     Ok(DiceQueryDelegate::new(
         ctx,
@@ -418,6 +428,7 @@ pub(crate) async fn get_dice_query_delegate<'a, 'c: 'a, 'd>(
             working_dir,
             project_root,
             target_alias_resolver,
+            infer_target_names,
             allow_partial_graph,
         )),
     ))

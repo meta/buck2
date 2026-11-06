@@ -19,6 +19,7 @@ buck2_events.workspace = true
 buck2_fs.workspace = true
 buck2_hash.workspace = true
 buck2_interpreter.workspace = true
+buck2_interpreter_for_build.workspace = true
 buck2_node.workspace = true
 buck2_query.workspace = true
 buck2_query_parser.workspace = true

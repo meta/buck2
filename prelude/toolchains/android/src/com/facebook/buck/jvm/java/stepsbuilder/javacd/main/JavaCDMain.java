@@ -14,6 +14,7 @@ import com.facebook.buck.core.util.log.Logger;
 import com.facebook.buck.jvm.cd.CompilerDaemonLoggerUtil;
 import com.facebook.buck.jvm.cd.CompilerDaemonRunner;
 import com.facebook.buck.jvm.cd.ErrorInterceptor;
+import com.facebook.infer.annotation.Nullsafe;
 import com.google.common.collect.ImmutableMap;
 import java.io.IOException;
 import java.util.logging.Level;
@@ -23,6 +24,7 @@ import java.util.logging.Level;
  *
  * <p>This provides a simple executable that can run any of the javacd actions.
  */
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public class JavaCDMain {
   private static final String LOG_PATH = "buck-out/v2/javacd";
 

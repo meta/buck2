@@ -19,6 +19,7 @@ import com.facebook.buck.installer.InstallCommand;
 import com.facebook.buck.installer.InstallError;
 import com.facebook.buck.installer.InstallId;
 import com.facebook.buck.installer.InstallResult;
+import com.facebook.infer.annotation.Nullsafe;
 import com.google.common.annotations.VisibleForTesting;
 import com.google.common.base.Preconditions;
 import com.google.common.base.Throwables;
@@ -46,6 +47,7 @@ import java.util.logging.Logger; // NOPMD
  * Coordinates an Android Install of an APK. We need three artifacts: the apk,
  * install_android_options.json (configuration options), and an AndroidManifest.xml
  */
+@Nullsafe(Nullsafe.Mode.LOCAL)
 class AndroidInstallerManager implements InstallCommand {
 
   private static final Logger LOG = Logger.getLogger(AndroidInstallerManager.class.getName());

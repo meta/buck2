@@ -11,6 +11,7 @@
 package com.facebook.buck.installer.android;
 
 import com.facebook.buck.android.exopackage.InstallTimings;
+import com.facebook.infer.annotation.Nullsafe;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
@@ -29,6 +30,7 @@ import java.util.stream.Collectors;
  * this object's monitor. Arrival times live with the artifacts that arrived; {@link #summarise}
  * takes them as an argument rather than tracking them twice.
  */
+@Nullsafe(Nullsafe.Mode.LOCAL)
 final class InstallMetrics implements InstallTimings {
   // Stage timings, written from the push threads and read once the install is over.
   // Every shard's window, per push group. Kept separately rather than spanned: shards of a group

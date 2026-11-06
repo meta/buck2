@@ -10,6 +10,7 @@
 
 package com.facebook.buck.io.file;
 
+import com.facebook.infer.annotation.Nullsafe;
 import com.google.common.base.Functions;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
@@ -25,6 +26,7 @@ import java.util.Optional;
 import java.util.OptionalInt;
 
 /** Utility class to list files which match a pattern, applying ordering and filtering. */
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public class PathListing {
   // Utility class, do not instantiate.
   private PathListing() {}

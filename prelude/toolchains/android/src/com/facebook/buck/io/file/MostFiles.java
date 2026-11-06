@@ -13,6 +13,7 @@ package com.facebook.buck.io.file;
 import com.facebook.buck.core.filesystems.AbsPath;
 import com.facebook.buck.core.util.log.Logger;
 import com.facebook.buck.io.windowsfs.WindowsFS;
+import com.facebook.infer.annotation.Nullsafe;
 import com.google.common.annotations.VisibleForTesting;
 import com.google.common.base.CharMatcher;
 import com.google.common.base.Functions;
@@ -54,6 +55,7 @@ import java.util.function.Function;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public final class MostFiles {
 
   private static final Logger LOG = Logger.get(MostFiles.class);

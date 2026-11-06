@@ -11,6 +11,7 @@
 package com.facebook.buck.testrunner.reportlayer;
 
 import com.facebook.buck.testrunner.InstrumentationTestRunner;
+import com.facebook.infer.annotation.Nullsafe;
 import java.net.URI;
 import java.nio.file.FileSystem;
 import java.nio.file.FileSystems;
@@ -21,6 +22,7 @@ import java.util.HashMap;
 import java.util.Iterator;
 
 /** report layer to collect tombstones to TRA after tests finish */
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public class TombstonesReportLayer extends ReportLayer {
 
   private static final String TOMBSTONE_REMOTE_PATH = "/data/tombstones/";

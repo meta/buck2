@@ -10,11 +10,13 @@
 
 package com.facebook.buck.io.windowsfs;
 
+import com.facebook.infer.annotation.Nullsafe;
 import com.sun.jna.Library;
 import com.sun.jna.Native;
 import com.sun.jna.win32.W32APIOptions;
 
 /** Utility class to bridge native windows FS calls to Java using JNA. */
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public interface WindowsFSLibrary extends Library {
   WindowsFSLibrary INSTANCE =
       Native.loadLibrary("kernel32", WindowsFSLibrary.class, W32APIOptions.UNICODE_OPTIONS);

@@ -13,6 +13,7 @@ package com.facebook.buck.testrunner;
 import static com.facebook.buck.testrunner.CheckDependency.optionalAnnotation;
 import static com.facebook.buck.testrunner.CheckDependency.optionalClass;
 
+import com.facebook.infer.annotation.Nullsafe;
 import java.lang.annotation.Annotation;
 import java.lang.reflect.AnnotatedElement;
 import java.lang.reflect.Constructor;
@@ -26,6 +27,7 @@ import java.util.stream.Stream;
 import org.junit.platform.commons.util.ReflectionUtils;
 
 /** Validate the presence of JUnit APIs. */
+@Nullsafe(Nullsafe.Mode.LOCAL)
 class JUnitSupport {
 
   private static final JUnit4ApiSupport JUNIT4_API = new JUnit4ApiSupport();

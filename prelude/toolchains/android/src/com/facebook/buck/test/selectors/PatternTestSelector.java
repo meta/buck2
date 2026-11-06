@@ -10,6 +10,7 @@
 
 package com.facebook.buck.test.selectors;
 
+import com.facebook.infer.annotation.Nullsafe;
 import java.util.regex.Pattern;
 import java.util.regex.PatternSyntaxException;
 
@@ -21,6 +22,7 @@ import java.util.regex.PatternSyntaxException;
  * <p>(The same rules apply for the method-name as well. If this selector's class-part or
  * method-part are null, all class-names or method-names will match.)
  */
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public class PatternTestSelector implements TestSelector {
 
   static final PatternTestSelector INCLUDE_EVERYTHING = new PatternTestSelector(true, null, null);

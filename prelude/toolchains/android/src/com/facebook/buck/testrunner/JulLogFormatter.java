@@ -11,6 +11,7 @@
 package com.facebook.buck.testrunner;
 
 import com.facebook.buck.core.util.log.appendablelogrecord.AppendableLogRecord;
+import com.facebook.infer.annotation.Nullsafe;
 import java.io.PrintWriter; // NOPMD can't depend on Guava
 import java.io.StringWriter;
 import java.time.Instant;
@@ -21,6 +22,7 @@ import java.util.logging.Formatter;
 import java.util.logging.Level;
 import java.util.logging.LogRecord;
 
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public class JulLogFormatter extends Formatter {
   private static final int ERROR_LEVEL = Level.SEVERE.intValue();
   private static final int WARN_LEVEL = Level.WARNING.intValue();

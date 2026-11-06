@@ -10,10 +10,12 @@
 
 package com.facebook.buck.installer;
 
+import com.facebook.infer.annotation.Nullsafe;
 import java.util.Comparator;
 import java.util.Set;
 import java.util.stream.Collectors;
 
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public class InstallError {
   private final String message;
   private final Set<InstallErrorTag> tags;

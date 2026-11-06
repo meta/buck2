@@ -31,6 +31,7 @@ import com.facebook.buck.step.isolatedsteps.common.MakeCleanDirectoryIsolatedSte
 import com.facebook.buck.step.isolatedsteps.common.ZipIsolatedStep;
 import com.facebook.buck.step.isolatedsteps.java.JarDirectoryStep;
 import com.facebook.buck.util.zip.ZipCompressionLevel;
+import com.facebook.infer.annotation.Nullsafe;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.ImmutableSet;
@@ -40,6 +41,7 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.logging.Level;
 
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public class KosabiStubgenStepsBuilder {
   private static final String VERBOSE = "-verbose";
 

@@ -223,8 +223,8 @@ pub trait UnpackValue<'v>: Sized + StarlarkTypeRepr {
     type Error: UnpackValueError;
 
     /// Whether this binding also accepts values outside the type [`StarlarkTypeRepr`] declares
-    /// for it. Only [`ValueOfUnchecked`](crate::values::ValueOfUnchecked) and bindings built on
-    /// it do; every other impl returns `None` for exactly the values outside its type.
+    /// for it. Nothing does any more; every impl returns `None` for exactly the values outside
+    /// its type, and the constant goes next.
     const UNCHECKED: bool = false;
 
     /// Given a [`Value`], try and unpack it into the given type,

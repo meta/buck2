@@ -40,7 +40,7 @@ use crate::values::Heap;
 use crate::values::StarlarkValue;
 use crate::values::StringValue;
 use crate::values::Value;
-use crate::values::ValueOfUnchecked;
+use crate::values::ValueTyped;
 use crate::values::list::UnpackList;
 use crate::values::none::NoneType;
 use crate::values::tuple::UnpackTuple;
@@ -105,9 +105,9 @@ fn globals(builder: &mut GlobalsBuilder) {
     #[allow(unused_variables)]
     fn custom_types<'v>(
         arg1: StringValue<'v>,
-        arg2: ValueOfUnchecked<'v, InputTypeRepr>,
+        arg2: ValueTyped<'v, InputTypeRepr>,
         heap: Heap<'v>,
-    ) -> anyhow::Result<ValueOfUnchecked<'v, OutputTypeRepr>> {
+    ) -> anyhow::Result<ValueTyped<'v, OutputTypeRepr>> {
         unimplemented!()
     }
 

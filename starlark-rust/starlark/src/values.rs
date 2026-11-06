@@ -146,7 +146,6 @@ pub use crate::values::unpack::UnpackValueError;
 pub use crate::values::unpack::UnpackValueErrorInfallible;
 pub use crate::values::unpack_stable::UnpackValueStable;
 pub use crate::values::value_of::ValueOf;
-pub use crate::values::value_of_unchecked::ValueOfUnchecked;
 
 mod alloc_value;
 mod comparison;
@@ -171,4 +170,3 @@ pub mod typing;
 mod unpack;
 mod unpack_stable;
 pub(crate) mod value_of;
-pub(crate) mod value_of_unchecked;

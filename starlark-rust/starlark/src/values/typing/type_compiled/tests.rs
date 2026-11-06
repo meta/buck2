@@ -104,9 +104,10 @@ isinstance(assert_type, typing.Callable)
 isinstance([], list[int])
 isinstance([], list[typing.Any])
 isinstance([1, 2, 3], list[int])
-isinstance(None, [None, int])
+isinstance(None, None | int)
 isinstance('test', int | str)
 isinstance(('test', None), (str, None))
+isinstance(('test', None), tuple[str, None])
 isinstance({"test": 1, "more": 2}, dict[str, int])
 isinstance({1: 1, 2: 2}, dict[int, int])
 
@@ -124,11 +125,9 @@ isinstance([1,2,"test"], list)
 
     // Checking types fails for invalid types
     a.fail("isinstance(None, isinstance)", "not a valid type");
-    a.fail("isinstance(None, [])", "cannot be used as type");
-    a.fail(
-        "isinstance(None, {'1': '', '2': ''})",
-        "cannot be used as type",
-    );
+    a.fail("isinstance(None, [])", "expected `type`");
+    a.fail("isinstance(None, [None, int])", "expected `type`");
+    a.fail("isinstance(None, {'1': '', '2': ''})", "expected `type`");
 
     // Should check the type of default parameters that aren't used
     a.fail(

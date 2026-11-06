@@ -8,18 +8,17 @@
  * above-listed licenses.
  */
 
+use std::convert::Infallible;
 use std::sync::Arc;
 
 use buck2_core::configuration::transition::id::TransitionId;
 use starlark::any::ProvidesStaticType;
+use starlark::typing::Ty;
+use starlark::values::UnpackValue;
 use starlark::values::Value;
+use starlark::values::type_repr::StarlarkTypeRepr;
 
-#[derive(Debug, buck2_error::Error)]
-#[buck2(tag = Input)]
-enum TransitionError {
-    #[error("cfg parameter is not a transition object: {}", _0)]
-    WrongType(String),
-}
+use crate::late_binding_ty::TransitionReprLate;
 
 /// Implemented by starlark transition objects.
 pub trait TransitionValue {
@@ -30,9 +29,29 @@ unsafe impl<'v> ProvidesStaticType<'v> for &'v dyn TransitionValue {
     type StaticType = &'static dyn TransitionValue;
 }
 
-pub fn transition_id_from_value(value: Value) -> buck2_error::Result<Arc<TransitionId>> {
-    match value.request_value::<&dyn TransitionValue>() {
-        Some(has) => has.transition_id(),
-        None => Err(TransitionError::WrongType(value.to_repr()).into()),
+/// A value that is a transition, in whichever representation the transition crate gives it.
+pub struct ValueAsTransition<'v>(pub &'v dyn TransitionValue);
+
+impl StarlarkTypeRepr for ValueAsTransition<'_> {
+    type Canonical = TransitionReprLate;
+
+    fn starlark_type_repr() -> Ty {
+        TransitionReprLate::starlark_type_repr()
+    }
+}
+
+impl<'v> UnpackValue<'v> for ValueAsTransition<'v> {
+    type Error = Infallible;
+
+    fn unpack_value_impl(value: Value<'v>) -> Result<Option<Self>, Self::Error> {
+        Ok(value
+            .request_value::<&dyn TransitionValue>()
+            .map(ValueAsTransition))
+    }
+}
+
+impl ValueAsTransition<'_> {
+    pub fn transition_id(&self) -> buck2_error::Result<Arc<TransitionId>> {
+        self.0.transition_id()
     }
 }

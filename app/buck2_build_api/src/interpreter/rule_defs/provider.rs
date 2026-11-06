@@ -24,16 +24,16 @@
 //! #[derive(Clone, Debug, Trace, Freeze, ProvidesStaticType, Allocative, StarlarkPagable)]
 //! #[repr(C)]
 //! pub struct MyProvider<'v> {
-//!    field1: ValueOfUnchecked<'v, String>,
-//!    field2: ValueOfUnchecked<'v, String>,
+//!    field1: StringValue<'v>,
+//!    field2: ValueOf<'v, ListType<StringValue<'v>>>,
 //! }
 //!
 //! #[starlark_module]
 //! fn create_my_prov(globals: &mut GlobalsBuilder) {
 //!    fn NameDoesntMatter<'v>(
 //!        // It's not enforced that the args here match the fields, but it's generally the user expectation that they do.
-//!        field1: ValueOfUnchecked<'v, String>,
-//!        field2: ValueOfUnchecked<'v, String>,
+//!        field1: StringValue<'v>,
+//!        field2: ValueOf<'v, ListType<StringValue<'v>>>,
 //!    ) -> starlark::Result<MyProvider<'v>> {
 //!       // Can do some arg validation or computation here, just need to construct the provider.
 //!       Ok(MyProvider {

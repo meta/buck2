@@ -56,7 +56,7 @@ use starlark::values::Trace;
 use starlark::values::Tracer;
 use starlark::values::UnpackValue;
 use starlark::values::Value;
-use starlark::values::ValueOfUnchecked;
+use starlark::values::ValueOf;
 use starlark::values::ValueTyped;
 use starlark::values::list::ListRef;
 use starlark::values::none::NoneOr;
@@ -69,7 +69,6 @@ use crate::interpreter::rule_defs::provider::DefaultInfo;
 use crate::interpreter::rule_defs::provider::DefaultInfoCallable;
 use crate::interpreter::rule_defs::provider::FrozenBuiltinProviderLike;
 use crate::interpreter::rule_defs::provider::ValueAsProviderLike;
-use crate::interpreter::rule_defs::provider::ty::abstract_provider::AbstractProvider;
 
 fn format_provider_keys_for_error(keys: &[String]) -> String {
     format!(
@@ -387,9 +386,9 @@ impl<'v> ProviderCollection<'v> {
     pub(crate) fn get(
         &self,
         index: Value<'v>,
-    ) -> buck2_error::Result<NoneOr<ValueOfUnchecked<'v, AbstractProvider>>> {
+    ) -> buck2_error::Result<NoneOr<ValueOf<'v, ValueAsProviderLike<'v>>>> {
         match self.get_impl(index, GetOp::Get)? {
-            Either::Left(v) => Ok(NoneOr::Other(ValueOfUnchecked::new(v))),
+            Either::Left(v) => Ok(NoneOr::Other(ValueOf::new_err(v)?)),
             Either::Right(_) => Ok(NoneOr::None),
         }
     }
@@ -420,7 +419,7 @@ fn provider_collection_methods(builder: &mut MethodsBuilder) {
     fn get<'v>(
         this: &ProviderCollection<'v>,
         index: Value<'v>,
-    ) -> starlark::Result<NoneOr<ValueOfUnchecked<'v, AbstractProvider>>> {
+    ) -> starlark::Result<NoneOr<ValueOf<'v, ValueAsProviderLike<'v>>>> {
         Ok(this.get(index)?)
     }
 }

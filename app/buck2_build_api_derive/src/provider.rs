@@ -52,8 +52,7 @@ impl syn::parse::Parse for InternalProviderArgs {
 /// `ValueOf<'v, T>` holds a value checked to be a `T` when the provider is constructed, for any
 /// `T` that is a parameter binding (a view, a `ValueTyped`, `ListType<T>`, a union), and reads
 /// never re-check. `ValueTyped<'v, T>` is the same for a type that is exactly one `StarlarkValue`
-/// implementation. `ValueOfUnchecked<'v, T>` is the unchecked predecessor of `ValueOf`, being
-/// migrated away from.
+/// implementation.
 ///
 /// A field that may legitimately be absent is declared `Option<ValueOf<'v, T>>` or
 /// `Option<ValueTyped<'v, T>>`, which is the only spelling that documents itself honestly - the
@@ -61,7 +60,6 @@ impl syn::parse::Parse for InternalProviderArgs {
 /// through as a `None` the starlark type does not mention.
 #[derive(Copy, Clone)]
 enum FieldKind {
-    Unchecked,
     Of,
     OptionOf,
     Typed,
@@ -90,7 +88,7 @@ impl Field {
     fn field_type_ty(&self) -> syn::Expr {
         let field_type = &self.field_type;
         let ty: syn::Type = match self.kind {
-            FieldKind::Unchecked | FieldKind::Of | FieldKind::Typed => field_type.clone(),
+            FieldKind::Of | FieldKind::Typed => field_type.clone(),
             FieldKind::OptionOf | FieldKind::OptionTyped => {
                 syn::parse_quote_spanned! { self.name.span() =>
                     starlark::values::none::NoneOr<#field_type>
@@ -106,9 +104,6 @@ impl Field {
     fn value(&self, this: &syn::Expr) -> syn::Expr {
         let name = &self.name;
         match self.kind {
-            FieldKind::Unchecked => syn::parse_quote_spanned! { name.span() =>
-                #this.#name.get()
-            },
             FieldKind::Of | FieldKind::Typed => syn::parse_quote_spanned! { name.span() =>
                 #this.#name.to_value()
             },
@@ -254,8 +249,8 @@ impl ProviderCodegen {
             ));
         }
 
-        let error = "Field type must be `ValueOf<'v, SomeType>`, `ValueOfUnchecked<'v, SomeType>`, \
-             `ValueTyped<'v, SomeType>`, `StringValue<'v>`, or any but the second in an `Option`";
+        let error = "Field type must be `ValueOf<'v, SomeType>`, `ValueTyped<'v, SomeType>` or \
+             `StringValue<'v>`, any of them in an `Option`";
         let err = || syn::Error::new_spanned(field, error);
 
         let (ident, args) = generic_segment(&field.ty).ok_or_else(err)?;
@@ -296,8 +291,6 @@ impl ProviderCodegen {
                 } else {
                     FieldKind::Of
                 }
-            } else if ident == "ValueOfUnchecked" && !optional {
-                FieldKind::Unchecked
             } else {
                 return Err(err());
             };

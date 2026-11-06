@@ -32,15 +32,15 @@ use starlark::values::StarlarkPagable;
 use starlark::values::StarlarkValue;
 use starlark::values::Trace;
 use starlark::values::Value;
-use starlark::values::ValueOfUnchecked;
+use starlark::values::ValueOf;
 use starlark::values::ValueTyped;
 use starlark::values::none::NoneOr;
 use starlark::values::starlark_value;
 use starlark_map::StarlarkHasher;
 
+use crate::interpreter::rule_defs::provider::ValueAsProviderLike;
 use crate::interpreter::rule_defs::provider::collection::ProviderCollection;
 use crate::interpreter::rule_defs::provider::execution_platform::StarlarkExecutionPlatformResolution;
-use crate::interpreter::rule_defs::provider::ty::abstract_provider::AbstractProvider;
 
 #[derive(Debug, buck2_error::Error)]
 #[buck2(tag = Input)]
@@ -259,7 +259,7 @@ fn dependency_methods(builder: &mut MethodsBuilder) {
     fn get<'v>(
         this: &Dependency<'v>,
         index: Value<'v>,
-    ) -> starlark::Result<NoneOr<ValueOfUnchecked<'v, AbstractProvider>>> {
+    ) -> starlark::Result<NoneOr<ValueOf<'v, ValueAsProviderLike<'v>>>> {
         Ok(this.collection().get(index).with_buck_error_context(|| {
             format!("Error accessing dependencies of `{}`", this.label)
         })?)

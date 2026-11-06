@@ -17,7 +17,7 @@ use buck2_error::BuckErrorContext;
 use buck2_interpreter::coerce::COERCE_PROVIDERS_LABEL_FOR_BZL;
 use buck2_interpreter::execution_group::ExecutionGroupArg;
 use buck2_interpreter::types::provider::callable::ValueAsProviderCallableLike;
-use buck2_interpreter::types::transition::transition_id_from_value;
+use buck2_interpreter::types::transition::ValueAsTransition;
 use buck2_node::attrs::attr::Attribute;
 use buck2_node::attrs::attr_type::AttrType;
 use buck2_node::attrs::attr_type::configuration_dep::ConfigurationDepKind;
@@ -282,7 +282,7 @@ fn attr_module(registry: &mut GlobalsBuilder) {
     fn transition_dep<'v>(
         #[starlark(require = named, default = UnpackListOrTuple::default())]
         providers: UnpackListOrTuple<Value<'v>>,
-        #[starlark(require = named)] cfg: Option<Value<'v>>,
+        #[starlark(require = named)] cfg: Option<Either<StringValue<'v>, ValueAsTransition<'v>>>,
         #[starlark(require = named)] default: Option<Value<'v>>,
         #[starlark(require = named, default = "")] doc: &str,
         eval: &mut Evaluator<'v, '_, '_>,
@@ -290,16 +290,12 @@ fn attr_module(registry: &mut GlobalsBuilder) {
         let required_providers = dep_like_attr_handle_providers_arg(providers.items)?;
         let label_coercion_ctx = attr_coercion_context_for_bzl(eval)?;
 
-        // FIXME(JakobDegen): Use a proper unpack for this. Easier to do after deleting old API
-        let transition_id = if let Some(cfg) = cfg {
-            Some(if let Some(s) = StringValue::new(cfg) {
-                let transition_target = label_coercion_ctx.coerce_providers_label(&s)?;
-                Arc::new(TransitionId::Target(transition_target))
-            } else {
-                transition_id_from_value(cfg)?
-            })
-        } else {
-            None
+        let transition_id = match cfg {
+            Some(Either::Left(target)) => Some(Arc::new(TransitionId::Target(
+                label_coercion_ctx.coerce_providers_label(&target)?,
+            ))),
+            Some(Either::Right(transition)) => Some(transition.transition_id()?),
+            None => None,
         };
 
         let coercer = AttrType::transition_dep(required_providers, transition_id);
@@ -339,14 +335,13 @@ fn attr_module(registry: &mut GlobalsBuilder) {
     fn split_transition_dep<'v>(
         #[starlark(require = named, default = UnpackListOrTuple::default())]
         providers: UnpackListOrTuple<Value<'v>>,
-        #[starlark(require = named)] cfg: Value<'v>,
+        #[starlark(require = named)] cfg: ValueAsTransition<'v>,
         #[starlark(require = named)] default: Option<Value<'v>>,
         #[starlark(require = named, default = "")] doc: &str,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<StarlarkAttribute> {
         let required_providers = dep_like_attr_handle_providers_arg(providers.items)?;
-        let transition_id = transition_id_from_value(cfg)?;
-        let coercer = AttrType::split_transition_dep(required_providers, transition_id);
+        let coercer = AttrType::split_transition_dep(required_providers, cfg.transition_id()?);
 
         let coerced_default = match default {
             None => None,

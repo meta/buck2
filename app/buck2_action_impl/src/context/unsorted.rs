@@ -22,7 +22,7 @@ use starlark::eval::Evaluator;
 use starlark::starlark_module;
 use starlark::values::FrozenValueTyped;
 use starlark::values::Value;
-use starlark::values::ValueOfUnchecked;
+use starlark::values::ValueOf;
 use starlark::values::ValueTyped;
 use starlark::values::typing::StarlarkIter;
 
@@ -98,13 +98,11 @@ pub(crate) fn analysis_actions_methods_unsorted(builder: &mut MethodsBuilder) {
             FrozenTransitiveSetDefinition<'v>,
         >,
         #[starlark(require = named)] value: Option<Value<'v>>,
-        #[starlark(require = named)] children: Option<
-            ValueOfUnchecked<'v, StarlarkIter<Value<'v>>>,
-        >,
+        #[starlark(require = named)] children: Option<ValueOf<'v, StarlarkIter<Value<'v>>>>,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<ValueTyped<'v, TransitiveSet<'v>>> {
         let mut this = this.state()?;
-        this.create_transitive_set(definition, value, children.map(|v| v.get()), eval)
+        this.create_transitive_set(definition, value, children.map(|v| v.to_value()), eval)
     }
 
     /// Create a unique artifact tag for tracking input dependencies with dependency files.

@@ -23,11 +23,10 @@ use buck2_hash::BuckMutInsertionMap;
 use buck2_interpreter::execution_group::ExecutionGroupArg;
 use buck2_interpreter::late_binding_ty::AnalysisContextReprLate;
 use buck2_interpreter::late_binding_ty::ProviderReprLate;
-use buck2_interpreter::late_binding_ty::TransitionReprLate;
 use buck2_interpreter::starlark_promise::StarlarkPromise;
 use buck2_interpreter::types::rule::FROZEN_PROMISE_ARTIFACT_MAPPINGS_GET_IMPL;
 use buck2_interpreter::types::rule::FROZEN_RULE_GET_IMPL;
-use buck2_interpreter::types::transition::transition_id_from_value;
+use buck2_interpreter::types::transition::ValueAsTransition;
 use buck2_node::attrs::attr::Attribute;
 use buck2_node::attrs::spec::AttributeId;
 use buck2_node::attrs::spec::AttributeSpec;
@@ -69,7 +68,6 @@ use starlark::values::StarlarkValue;
 use starlark::values::StringValue;
 use starlark::values::Trace;
 use starlark::values::Value;
-use starlark::values::ValueOfUnchecked;
 use starlark::values::ValueTyped;
 use starlark::values::dict::UnpackDictEntries;
 use starlark::values::list::ListType;
@@ -253,7 +251,7 @@ impl<'v> StarlarkRuleCallable<'v> {
     fn new(
         implementation: RuleImpl<'v>,
         attrs: UnpackDictEntries<&'v str, &'v StarlarkAttribute>,
-        cfg: Option<Value>,
+        cfg: Option<ValueAsTransition>,
         supports_incoming_transition: Option<bool>,
         doc: &str,
         is_configuration_rule: bool,
@@ -313,7 +311,7 @@ impl<'v> StarlarkRuleCallable<'v> {
 
         let cfg = match (cfg, supports_incoming_transition) {
             (Some(_), Some(_)) => return Err(RuleError::CfgAndSupportsIncomingTransition.into()),
-            (Some(cfg), None) => RuleIncomingTransition::Fixed(transition_id_from_value(cfg)?),
+            (Some(cfg), None) => RuleIncomingTransition::Fixed(cfg.transition_id()?),
             (None, Some(true)) => RuleIncomingTransition::FromAttribute,
             (None, Some(false) | None) => RuleIncomingTransition::None,
         };
@@ -1031,7 +1029,7 @@ pub fn register_rule_function(builder: &mut GlobalsBuilder) {
             Either<ListType<ProviderReprLate>, StarlarkPromise>,
         >,
         #[starlark(require = named)] attrs: UnpackDictEntries<&'v str, &'v StarlarkAttribute>,
-        #[starlark(require = named)] cfg: Option<ValueOfUnchecked<'v, TransitionReprLate>>,
+        #[starlark(require = named)] cfg: Option<ValueAsTransition<'v>>,
         #[starlark(require = named)] supports_incoming_transition: Option<bool>,
         #[starlark(require = named, default = "")] doc: &str,
         #[starlark(require = named, default = false)] is_configuration_rule: bool,
@@ -1045,7 +1043,7 @@ pub fn register_rule_function(builder: &mut GlobalsBuilder) {
         Ok(StarlarkRuleCallable::new(
             RuleImpl::BuildRule(StarlarkCallable::unchecked_new(r#impl.0)),
             attrs,
-            cfg.map(|v| v.get()),
+            cfg,
             supports_incoming_transition,
             doc,
             is_configuration_rule,

@@ -1,0 +1,10 @@
+# `?as=toml` on a `.toml` file restates the extension. It must resolve to the
+# same module as the plain load, not a second one.
+load(":data.toml", plain = "value")
+load(":data.toml?as=toml", hinted = "value")
+
+# buildifier: disable=print
+print("DATA_LOAD_TEST_OUTPUT: " + repr({
+    "plain": plain,
+    "hinted": hinted,
+}))

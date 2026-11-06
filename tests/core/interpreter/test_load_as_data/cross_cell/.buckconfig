@@ -1,0 +1,14 @@
+[buildfile]
+name=TARGETS.fixture
+
+[buck2]
+# Allow everything, so the only thing that can block the load below is the
+# package-isolation rule, not the allowlist.
+load_as_allowlist = *
+
+[repositories]
+root = .
+other = other
+
+[repository_aliases]
+prelude = root

@@ -59,7 +59,7 @@ pub(crate) async fn server_execute(
 
             let loaded_module = dice_ctx
                 .ctx()
-                .get_loaded_module(StarlarkModulePath::LoadFile(&import_path))
+                .get_loaded_module(StarlarkModulePath::from_import_path(&import_path))
                 .await?;
 
             let mut stdout = stdout.as_writer();

@@ -1,0 +1,3 @@
+# Deliberately valid TOML but INVALID Starlark (inline table uses `=`, not `:`).
+# Loaded directly by the build file via `load(":direct.lock?as=toml", ...)`.
+tool = { name = "bar", version = "2.0" }

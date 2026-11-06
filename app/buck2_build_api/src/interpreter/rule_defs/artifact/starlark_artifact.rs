@@ -27,7 +27,8 @@ use starlark::values::StarlarkPagable;
 use starlark::values::StarlarkValue;
 use starlark::values::StringValue;
 use starlark::values::Value;
-use starlark::values::list::UnpackList;
+use starlark::values::ValueOf;
+use starlark::values::list::ListType;
 use starlark::values::starlark_value;
 use starlark::values::type_repr::StarlarkTypeRepr;
 
@@ -227,13 +228,12 @@ impl<'v> StarlarkInputArtifactLike<'v> for StarlarkArtifact {
 
     fn with_associated_artifacts(
         &'v self,
-        artifacts: UnpackList<ValueAsInputArtifactLike<'v>>,
+        artifacts: ValueOf<'v, ListType<ValueAsInputArtifactLike<'v>>>,
     ) -> buck2_error::Result<EitherStarlarkInputArtifact<'v>> {
         let artifacts = artifacts
-            .items
-            .iter()
-            .map(|a| a.0.get_artifact_group())
-            .collect::<Result<Vec<_>, _>>()?;
+            .try_items()
+            .map(|a| a?.0.get_artifact_group())
+            .collect::<buck2_error::Result<Vec<_>>>()?;
 
         let artifacts = AssociatedArtifacts::from(artifacts);
 

@@ -62,11 +62,12 @@ use starlark::values::StarlarkValue;
 use starlark::values::Trace;
 use starlark::values::Tracer;
 use starlark::values::Value;
+use starlark::values::ValueOf;
 use starlark::values::ValueTyped;
 use starlark::values::any_complex::StarlarkAnyComplex;
 use starlark::values::dict::DictRef;
 use starlark::values::list::ListRef;
-use starlark::values::list_or_tuple::UnpackListOrTuple;
+use starlark::values::list_or_tuple::ListOrTupleType;
 use starlark::values::starlark_value;
 use starlark::values::typing::TypeCompiled;
 use starlark::values::typing::TypeInstanceId;
@@ -663,7 +664,7 @@ pub fn register_provider(builder: &mut GlobalsBuilder) {
     fn provider<'v>(
         #[starlark(require=named, default = "")] doc: &str,
         #[starlark(require=named)] fields: Either<
-            UnpackListOrTuple<String>,
+            ValueOf<'v, ListOrTupleType<String>>,
             BuckMutInsertionMap<String, Value<'v>>,
         >,
         eval: &mut Evaluator<'v, '_, '_>,
@@ -673,17 +674,15 @@ pub fn register_provider(builder: &mut GlobalsBuilder) {
 
         let fields = match fields {
             Either::Left(fields) => {
+                let fields = fields.try_to_vec()?;
                 let new_fields: BuckMutInsertionMap<String, UserProviderField<'v>> = fields
-                    .items
                     .iter()
                     .map(|name| (name.clone(), UserProviderField::default()))
                     .collect();
-                if new_fields.len() != fields.items.len() {
+                if new_fields.len() != fields.len() {
                     return Err(
-                        buck2_error::Error::from(ProviderCallableError::NonUniqueFields(
-                            fields.items,
-                        ))
-                        .into(),
+                        buck2_error::Error::from(ProviderCallableError::NonUniqueFields(fields))
+                            .into(),
                     );
                 }
                 new_fields

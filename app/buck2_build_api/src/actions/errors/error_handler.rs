@@ -32,15 +32,15 @@ use starlark::values::ValueError;
 use starlark::values::ValueOf;
 use starlark::values::ValueTyped;
 use starlark::values::dict::DictType;
-use starlark::values::list::UnpackList;
-use starlark::values::list_or_tuple::UnpackListOrTuple;
+use starlark::values::list::ListType;
+use starlark::values::list_or_tuple::ListOrTupleType;
 use starlark::values::none::NoneOr;
 use starlark::values::starlark_value;
 
 use crate::interpreter::rule_defs::artifact::starlark_artifact::StarlarkArtifact;
 use crate::interpreter::rule_defs::artifact::starlark_artifact_value::StarlarkArtifactValue;
 
-pub(crate) type ActionSubErrorResult<'a> = UnpackList<&'a StarlarkActionSubError>;
+pub(crate) type ActionSubErrorResult<'a> = ValueOf<'a, ListType<&'a StarlarkActionSubError>>;
 
 #[derive(Debug, buck2_error::Error)]
 #[buck2(tag = Tier0)]
@@ -266,12 +266,13 @@ fn action_error_context_methods(builder: &mut MethodsBuilder) {
         #[starlark(this)] _this: &'v StarlarkActionErrorContext,
         #[starlark(require = named)] category: String,
         #[starlark(require = named)] error: String,
-        #[starlark(require = named)] errorformats: UnpackListOrTuple<String>,
+        #[starlark(require = named)] errorformats: ValueOf<'v, ListOrTupleType<String>>,
         _heap: Heap<'v>,
     ) -> starlark::Result<Vec<StarlarkActionSubError>> {
         let error_lines = buck2_errorformat::split_lines(&error);
-        let error_entries = buck2_errorformat::parse_error_format(errorformats.items, error_lines)
-            .map_err(buck2_error::Error::from)?;
+        let error_entries =
+            buck2_errorformat::parse_error_format(errorformats.try_to_vec()?, error_lines)
+                .map_err(buck2_error::Error::from)?;
         let res = error_entries
             .into_iter()
             .map(|e| StarlarkActionSubError::from_errorformat_entry(e, category.clone()))

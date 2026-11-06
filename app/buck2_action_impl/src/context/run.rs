@@ -56,8 +56,8 @@ use starlark::values::ValueOf;
 use starlark::values::ValueTyped;
 use starlark::values::dict::DictRef;
 use starlark::values::dict::DictType;
-use starlark::values::list::UnpackList;
-use starlark::values::list_or_tuple::UnpackListOrTuple;
+use starlark::values::list::ListType;
+use starlark::values::list_or_tuple::ListOrTupleType;
 use starlark::values::none::NoneOr;
 use starlark::values::none::NoneType;
 use starlark::values::typing::StarlarkCallable;
@@ -275,12 +275,15 @@ pub(crate) fn analysis_actions_methods_run(methods: &mut MethodsBuilder) {
         #[starlark(require = named)] dep_files: Option<
             BuckMutInsertionMap<&'v str, &'v ArtifactTag>,
         >,
-        #[starlark(require = named, default = UnpackListOrTuple::default())]
-        dep_file_fingerprints: UnpackListOrTuple<ValueTyped<'v, StarlarkDepFileFingerprint<'v>>>,
+        #[starlark(require = named, default = ValueOf::empty_list())]
+        dep_file_fingerprints: ValueOf<
+            'v,
+            ListOrTupleType<ValueTyped<'v, StarlarkDepFileFingerprint<'v>>>,
+        >,
         #[starlark(require = named)] metadata_env_var: Option<String>,
         #[starlark(require = named)] metadata_path: Option<String>,
-        #[starlark(require = named, default = UnpackListOrTuple::default())]
-        incremental_metadata_ignore_tags: UnpackListOrTuple<&'v ArtifactTag>,
+        #[starlark(require = named, default = ValueOf::empty_list())]
+        incremental_metadata_ignore_tags: ValueOf<'v, ListOrTupleType<&'v ArtifactTag>>,
         // TODO(scottcao): Refactor `no_outputs_cleanup` to `outputs_cleanup`
         #[starlark(require = named, default = false)] no_outputs_cleanup: bool,
         #[starlark(require = named, default = false)] incremental_remote_outputs: bool,
@@ -296,10 +299,14 @@ pub(crate) fn analysis_actions_methods_run(methods: &mut MethodsBuilder) {
             StarlarkCallable<'v>,
         >,
         eval: &mut Evaluator<'v, '_, '_>,
-        #[starlark(require = named, default=UnpackList::default())]
-        remote_execution_dependencies: UnpackList<BuckMutInsertionMap<&'v str, &'v str>>,
-        #[starlark(require = named, default=UnpackList::default())] re_gang_workers: UnpackList<
-            BuckMutInsertionMap<&'v str, &'v str>,
+        #[starlark(require = named, default = ValueOf::empty_list())]
+        remote_execution_dependencies: ValueOf<
+            'v,
+            ListType<BuckMutInsertionMap<&'v str, &'v str>>,
+        >,
+        #[starlark(require = named, default = ValueOf::empty_list())] re_gang_workers: ValueOf<
+            'v,
+            ListType<BuckMutInsertionMap<&'v str, &'v str>>,
         >,
         #[starlark(default = NoneType, require = named)] remote_execution_dynamic_image: Value<'v>,
         #[starlark(require = named, default = NoneOr::None)] timeout_seconds: NoneOr<u32>,
@@ -307,9 +314,10 @@ pub(crate) fn analysis_actions_methods_run(methods: &mut MethodsBuilder) {
             DictRef<'v>,
         >,
         // Note: Intentionally don't support frozen output artifacts
-        #[starlark(require = named, default = UnpackListOrTuple::default())]
-        outputs_for_error_handler: UnpackListOrTuple<
-            ValueTyped<'v, StarlarkOutputArtifact<'v>>,
+        #[starlark(require = named, default = ValueOf::empty_list())]
+        outputs_for_error_handler: ValueOf<
+            'v,
+            ListOrTupleType<ValueTyped<'v, StarlarkOutputArtifact<'v>>>,
         >,
         #[starlark(require = named, default = NoneOr::None)] expect_eligible_for_dedupe: NoneOr<
             bool,
@@ -427,7 +435,8 @@ pub(crate) fn analysis_actions_methods_run(methods: &mut MethodsBuilder) {
 
         let starlark_args = StarlarkCmdArgs::try_from_value_typed(arguments)?;
         starlark_args.visit_artifacts(&mut artifact_visitor)?;
-        for fingerprint in &dep_file_fingerprints.items {
+        let dep_file_fingerprints = dep_file_fingerprints.try_to_vec()?;
+        for fingerprint in &dep_file_fingerprints {
             fingerprint.as_ref().visit_inputs(&mut artifact_visitor)?;
         }
 
@@ -545,9 +554,9 @@ pub(crate) fn analysis_actions_methods_run(methods: &mut MethodsBuilder) {
                     env_var,
                     path,
                     ignore_tags: incremental_metadata_ignore_tags
-                        .into_iter()
-                        .map(|x| x.dupe())
-                        .collect(),
+                        .try_items()
+                        .map(|x| buck2_error::Ok(x?.dupe()))
+                        .collect::<buck2_error::Result<_>>()?,
                 })))
             }
             (Some(_), None) => Err(RunActionError::MetadataPathMissing.into()),
@@ -560,7 +569,8 @@ pub(crate) fn analysis_actions_methods_run(methods: &mut MethodsBuilder) {
         }
         let heap = eval.heap();
 
-        for o in outputs_for_error_handler.items.iter() {
+        let outputs_for_error_handler = outputs_for_error_handler.try_to_vec()?;
+        for o in outputs_for_error_handler.iter() {
             let to_materialize = o.artifact();
             if !artifacts.declared_outputs.contains(&to_materialize) {
                 return Err(buck2_error::Error::from(
@@ -575,7 +585,7 @@ pub(crate) fn analysis_actions_methods_run(methods: &mut MethodsBuilder) {
         let starlark_values = heap.alloc(StarlarkRunActionValues {
             exe: heap.alloc_typed(starlark_exe),
             args: heap.alloc_typed(starlark_args),
-            dep_file_fingerprints: MiniBoxSlice::from(dep_file_fingerprints.items),
+            dep_file_fingerprints: MiniBoxSlice::from(dep_file_fingerprints),
             env: starlark_env,
             worker: starlark_worker,
             remote_worker: starlark_remote_worker,
@@ -584,17 +594,17 @@ pub(crate) fn analysis_actions_methods_run(methods: &mut MethodsBuilder) {
                 category
             },
             identifier: identifier.into_option(),
-            outputs_for_error_handler: MiniBoxSlice::from(outputs_for_error_handler.items),
+            outputs_for_error_handler: MiniBoxSlice::from(outputs_for_error_handler),
         });
 
         let re_dependencies = remote_execution_dependencies
-            .into_iter()
-            .map(RemoteExecutorDependency::parse)
+            .try_items()
+            .map(|d| RemoteExecutorDependency::parse(d?))
             .collect::<buck2_error::Result<MiniBoxSlice<RemoteExecutorDependency>>>()?;
 
         let re_gang_workers = re_gang_workers
-            .into_iter()
-            .map(ReGangWorker::parse)
+            .try_items()
+            .map(|w| ReGangWorker::parse(w?))
             .collect::<buck2_error::Result<MiniBoxSlice<ReGangWorker>>>()?;
 
         let re_custom_image = parse_custom_re_image(

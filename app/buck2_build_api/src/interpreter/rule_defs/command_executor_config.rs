@@ -48,9 +48,10 @@ use starlark::values::NoSerialize;
 use starlark::values::StarlarkPagable;
 use starlark::values::StarlarkValue;
 use starlark::values::Value;
+use starlark::values::ValueOf;
 use starlark::values::dict::DictRef;
 use starlark::values::list::ListRef;
-use starlark::values::list::UnpackList;
+use starlark::values::list::ListType;
 use starlark::values::none::NoneOr;
 use starlark::values::none::NoneType;
 use starlark::values::starlark_value;
@@ -216,10 +217,16 @@ pub fn register_command_executor_config(builder: &mut GlobalsBuilder) {
         #[starlark(default = NoneOr::None, require = named)] network_access: NoneOr<&str>,
         #[starlark(default = NoneOr::None, require = named)]
         remote_execution_resource_units: NoneOr<i64>,
-        #[starlark(default=UnpackList::default(), require = named)]
-        remote_execution_dependencies: UnpackList<BuckMutInsertionMap<&'v str, &'v str>>,
-        #[starlark(default=UnpackList::default(), require = named)]
-        remote_execution_gang_workers: UnpackList<BuckMutInsertionMap<&'v str, &'v str>>,
+        #[starlark(default = ValueOf::empty_list(), require = named)]
+        remote_execution_dependencies: ValueOf<
+            'v,
+            ListType<BuckMutInsertionMap<&'v str, &'v str>>,
+        >,
+        #[starlark(default = ValueOf::empty_list(), require = named)]
+        remote_execution_gang_workers: ValueOf<
+            'v,
+            ListType<BuckMutInsertionMap<&'v str, &'v str>>,
+        >,
         #[starlark(default = NoneType, require = named)] remote_execution_dynamic_image: Value<'v>,
         #[starlark(default = NoneOr::None, require = named)] meta_internal_extra_params: NoneOr<
             DictRef<'v>,
@@ -241,13 +248,13 @@ pub fn register_command_executor_config(builder: &mut GlobalsBuilder) {
                 parse_remote_execution_properties(remote_execution_properties.to_value())?;
 
             let re_dependencies = remote_execution_dependencies
-                .into_iter()
-                .map(RemoteExecutorDependency::parse)
+                .try_items()
+                .map(|d| RemoteExecutorDependency::parse(d?))
                 .collect::<buck2_error::Result<Vec<RemoteExecutorDependency>>>()?;
 
             let re_gang_workers = remote_execution_gang_workers
-                .into_iter()
-                .map(ReGangWorker::parse)
+                .try_items()
+                .map(|w| ReGangWorker::parse(w?))
                 .collect::<buck2_error::Result<Vec<ReGangWorker>>>()?;
 
             let re_dynamic_image = parse_custom_re_image(

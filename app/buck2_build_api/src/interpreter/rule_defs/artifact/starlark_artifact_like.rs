@@ -28,8 +28,9 @@ use starlark::values::StringValue;
 use starlark::values::UnpackValue;
 use starlark::values::UnpackValueStable;
 use starlark::values::Value;
+use starlark::values::ValueOf;
 use starlark::values::ValueTyped;
-use starlark::values::list::UnpackList;
+use starlark::values::list::ListType;
 use starlark::values::starlark_value;
 use starlark::values::type_repr::StarlarkTypeRepr;
 
@@ -124,7 +125,7 @@ pub trait StarlarkInputArtifactLike<'v>: StarlarkArtifactLike<'v> {
 
     fn with_associated_artifacts(
         &'v self,
-        artifacts: UnpackList<ValueAsInputArtifactLike<'v>>,
+        artifacts: ValueOf<'v, ListType<ValueAsInputArtifactLike<'v>>>,
     ) -> buck2_error::Result<EitherStarlarkInputArtifact<'v>>;
 }
 

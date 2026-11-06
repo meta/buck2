@@ -32,8 +32,9 @@ use mini_vec::MiniBoxSlice;
 use starlark::environment::MethodsBuilder;
 use starlark::starlark_module;
 use starlark::values::Value;
+use starlark::values::ValueOf;
 use starlark::values::ValueTyped;
-use starlark::values::list_or_tuple::UnpackListOrTuple;
+use starlark::values::list_or_tuple::ListOrTupleType;
 use starlark::values::none::NoneType;
 use starlark::values::typing::StarlarkCallable;
 
@@ -98,12 +99,16 @@ pub(crate) fn analysis_actions_methods_dynamic_output(methods: &mut MethodsBuild
     /// the actions it outputs is actually requested as part of the build.
     fn dynamic_output<'v>(
         this: &'v AnalysisActions<'v>,
-        #[starlark(require = named)] dynamic: UnpackListOrTuple<UnpackNonPromiseInputArtifact>,
-        #[starlark(require = named)] inputs: Option<
-            UnpackListOrTuple<UnpackNonPromiseInputArtifact>,
+        #[starlark(require = named)] dynamic: ValueOf<
+            'v,
+            ListOrTupleType<UnpackNonPromiseInputArtifact<'v>>,
         >,
-        #[starlark(require = named)] outputs: UnpackListOrTuple<
-            ValueTyped<'v, StarlarkOutputArtifact<'v>>,
+        #[starlark(require = named)] inputs: Option<
+            ValueOf<'v, ListOrTupleType<UnpackNonPromiseInputArtifact<'v>>>,
+        >,
+        #[starlark(require = named)] outputs: ValueOf<
+            'v,
+            ListOrTupleType<ValueTyped<'v, StarlarkOutputArtifact<'v>>>,
         >,
         #[starlark(require = named)] f: StarlarkCallable<
             'v,
@@ -119,15 +124,15 @@ pub(crate) fn analysis_actions_methods_dynamic_output(methods: &mut MethodsBuild
         let _unused = inputs;
 
         // Parameter validation
-        if outputs.items.is_empty() {
+        let outputs = outputs.try_to_vec()?;
+        if outputs.is_empty() {
             return Err(buck2_error::Error::from(DynamicOutputError::EmptyOutput).into());
         }
 
         // Conversion
         let artifact_values = dynamic
-            .items
-            .iter()
-            .map(|x| x.artifact())
+            .try_items()
+            .map(|x| x?.artifact())
             .collect::<buck2_error::Result<_>>()?;
 
         let attributes = this.attributes;
@@ -141,7 +146,7 @@ pub(crate) fn analysis_actions_methods_dynamic_output(methods: &mut MethodsBuild
             DynamicLambdaParamsStorageImpl::get(&mut this.analysis_value_storage)?;
 
         let key = lambda_params_storage.next_dynamic_actions_key()?;
-        let outputs = output_artifacts_to_lambda_build_artifacts(&key, outputs.items)?;
+        let outputs = output_artifacts_to_lambda_build_artifacts(&key, outputs)?;
 
         // Registration
         let lambda_params = DynamicLambdaParams {

@@ -617,10 +617,11 @@ fn try_run_error_handler(
                         );
 
                         let data = match error_handler_result {
-                            Ok(result) => match ActionSubErrorResult::unpack_value_err(result) {
-                                Ok(result) => Data::SubErrors(ActionSubErrors {
-                                    sub_errors: result
-                                        .items
+                            Ok(result) => match ActionSubErrorResult::unpack_value_err(result)
+                                .and_then(|result| result.try_to_vec())
+                            {
+                                Ok(sub_errors) => Data::SubErrors(ActionSubErrors {
+                                    sub_errors: sub_errors
                                         .into_iter()
                                         .map(|s| s.to_proto())
                                         .collect(),

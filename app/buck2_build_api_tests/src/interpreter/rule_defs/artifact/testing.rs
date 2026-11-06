@@ -56,7 +56,8 @@ use starlark::environment::GlobalsBuilder;
 use starlark::eval::Evaluator;
 use starlark::starlark_module;
 use starlark::values::Value;
-use starlark::values::list_or_tuple::UnpackListOrTuple;
+use starlark::values::ValueOf;
+use starlark::values::list_or_tuple::ListOrTupleType;
 
 use crate::actions::testings::SimpleUnregisteredAction;
 
@@ -194,7 +195,7 @@ pub(crate) fn artifactory(builder: &mut GlobalsBuilder) {
     fn declared_bound_artifact_with_associated_artifacts<'v>(
         // TODO(nga): parameters should be either positional or named, not both.
         artifact: OutputArtifactArg<'v>,
-        associated_artifacts: UnpackListOrTuple<UnpackNonPromiseInputArtifact<'v>>,
+        associated_artifacts: ValueOf<'v, ListOrTupleType<UnpackNonPromiseInputArtifact<'v>>>,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<Value<'v>> {
         let target_label = get_label(eval, "//foo:bar")?;
@@ -209,9 +210,8 @@ pub(crate) fn artifactory(builder: &mut GlobalsBuilder) {
 
         let associated_artifacts = AssociatedArtifacts::from(
             associated_artifacts
-                .items
-                .iter()
-                .map(|a| ArtifactGroup::Artifact(a.artifact().unwrap())),
+                .try_items()
+                .map(|a| ArtifactGroup::Artifact(a.unwrap().artifact().unwrap())),
         );
         let (declaration, output_artifact) =
             analysis_registry.get_or_declare_output(eval, artifact, OutputType::File, None)?;

@@ -59,7 +59,7 @@ use starlark::values::ValueError;
 use starlark::values::ValueOf;
 use starlark::values::ValueTyped;
 use starlark::values::list::ListRef;
-use starlark::values::list::UnpackList;
+use starlark::values::list::ListType;
 use starlark::values::starlark_value;
 use starlark::values::tuple::TupleType;
 use starlark::values::type_repr::StarlarkTypeRepr;
@@ -1210,9 +1210,9 @@ pub fn register_cmd_args(builder: &mut GlobalsBuilder) {
         relative_to: Option<
             Either<ValueOf<'v, RelativeOrigin<'v>>, (ValueOf<'v, RelativeOrigin<'v>>, u32)>,
         >,
-        #[starlark(default = Either::Right(UnpackList::default()))] replace_regex: Either<
+        #[starlark(default = Either::Right(ValueOf::empty_list()))] replace_regex: Either<
             (CmdArgsRegex<'v>, StringValue<'v>),
-            UnpackList<(CmdArgsRegex<'v>, StringValue<'v>)>,
+            ValueOf<'v, ListType<(CmdArgsRegex<'v>, StringValue<'v>)>>,
         >,
     ) -> starlark::Result<StarlarkCmdArgs<'v>> {
         let format = format.filter(|format| format.as_str() != "{}");
@@ -1244,10 +1244,10 @@ pub fn register_cmd_args(builder: &mut GlobalsBuilder) {
                 (relative_to, parent)
             });
         }
-        let replace_regex: Vec<(CmdArgsRegex, StringValue)> = replace_regex
-            .map_left(|x| vec![x])
-            .map_right(|x| x.items)
-            .into_inner();
+        let replace_regex: Vec<(CmdArgsRegex, StringValue)> = match replace_regex {
+            Either::Left(x) => vec![x],
+            Either::Right(xs) => xs.try_to_vec()?,
+        };
         if !replace_regex.is_empty() {
             for (pattern, _replacement) in &replace_regex {
                 pattern.validate()?;

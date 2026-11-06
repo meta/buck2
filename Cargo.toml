@@ -510,7 +510,7 @@ superconsole = { version = "0.3.0", path = "superconsole" }
 syn = { version = "3.0.9", features = ["extra-traits", "fold", "full", "visit", "visit-mut"] }
 sync_wrapper = "1.0.2"
 sys-info = "0.9.1"
-sysinfo = "0.40.1"
+sysinfo = { version = "0.40.1", features = ["system"], default-features = false }
 take_mut = "0.2"
 tar = "0.4.46"
 tempfile = "3.27.0"

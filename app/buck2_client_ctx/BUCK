@@ -7,6 +7,14 @@ rust_library(
     srcs = glob(["src/**/*.rs"]),
     autocargo = {
         "cargo_toml_config": {
+            # Only the process and memory APIs are used. sysinfo's default
+            # `gpu` feature calls `statx`, which the glibc of the release
+            # workflow's aarch64 and riscv64 cross images predates.
+            "dependencies_override": {
+                "dependencies": {
+                    "sysinfo": {"default-features": False, "features": ["system"]},
+                },
+            },
             "extra_buck_dependencies": {
                 "dependencies": [
                     (None, "//common/rust/shed/detect_eden:detect_eden"),

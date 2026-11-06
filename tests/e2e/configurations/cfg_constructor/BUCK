@@ -1,38 +1,39 @@
 # @noautodeps
 load("@fbcode//buck2/tests:buck_e2e.bzl", "buck2_e2e_test")
 load("@fbcode_macros//build_defs:python_library.bzl", "python_library")
+load("@fbsource//tools/build_defs:rust_library.bzl", "rust_library")
 load("@prelude//cfg/modifier:name.bzl", "NAMED_CONSTRAINT_SETTINGS")
 load(":constraint_setting_group.bzl", "constraint_setting_group")
 
 oncall("buck2")
 
 buck2_e2e_test(
-    name = "test_cli_modifiers.py",
-    srcs = ["test_cli_modifiers.py"],
+    name = "test_cli_modifiers",
+    srcs = ["test_cli_modifiers.rs"],
     deps = [":modifiers_util"],
 )
 
 buck2_e2e_test(
-    name = "test_invoke_cfg_constructors.py",
-    srcs = ["test_invoke_cfg_constructors.py"],
+    name = "test_invoke_cfg_constructors",
+    srcs = ["test_invoke_cfg_constructors.rs"],
     data_dir = "test_invoke_cfg_constructors_data",
 )
 
 buck2_e2e_test(
-    name = "test_set_cfg_modifiers.py",
-    srcs = ["test_set_cfg_modifiers.py"],
+    name = "test_set_cfg_modifiers",
+    srcs = ["test_set_cfg_modifiers.rs"],
     test_with_deployed_buck2 = True,
 )
 
 buck2_e2e_test(
-    name = "test_invoke_cfg_constructors_bad_constraints.py",
-    srcs = ["test_invoke_cfg_constructors_bad_constraints.py"],
+    name = "test_invoke_cfg_constructors_bad_constraints",
+    srcs = ["test_invoke_cfg_constructors_bad_constraints.rs"],
     data_dir = "test_invoke_cfg_constructors_bad_constraints_data",
 )
 
 buck2_e2e_test(
-    name = "test_cfg_constructors_inplace.py",
-    srcs = ["test_cfg_constructors_inplace.py"],
+    name = "test_cfg_constructors_inplace",
+    srcs = ["test_cfg_constructors_inplace.rs"],
     test_with_deployed_buck2 = True,
     test_with_reverted_buck2 = True,
 )
@@ -44,19 +45,27 @@ constraint_setting_group(
 
 buck2_e2e_test(
     name = "test_cfg_modifiers_attr",
-    srcs = ["test_cfg_modifiers_attr.py"],
+    srcs = ["test_cfg_modifiers_attr.rs"],
     data_dir = "test_cfg_modifiers_attr_data",
     deps = [":modifiers_util"],
 )
 
 buck2_e2e_test(
     name = "test_exec_modifier",
-    srcs = ["test_exec_modifier.py"],
+    srcs = ["test_exec_modifier.rs"],
     data_dir = "test_exec_modifier_data",
 )
 
-python_library(
+rust_library(
     name = "modifiers_util",
+    srcs = ["modifiers_util.rs"],
+    autocargo = {"ignore_rule": True},
+    deps = ["fbcode//buck2/tests/e2e_util/rust:buck2_e2e"],
+)
+
+# For the Python tests outside this directory that still use `get_cfg`.
+python_library(
+    name = "modifiers_util_py",
     srcs = ["modifiers_util.py"],
     deps = ["//buck2/tests/e2e_util/api:api"],
 )

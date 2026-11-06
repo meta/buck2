@@ -1,33 +1,34 @@
-# Copyright (c) Meta Platforms, Inc. and affiliates.
-#
-# This source code is dual-licensed under either the MIT license found in the
-# LICENSE-MIT file in the root directory of this source tree or the Apache
-# License, Version 2.0 found in the LICENSE-APACHE file in the root directory
-# of this source tree. You may select, at your option, one of the
-# above-listed licenses.
+/*
+ * Copyright (c) Meta Platforms, Inc. and affiliates.
+ *
+ * This source code is dual-licensed under either the MIT license found in the
+ * LICENSE-MIT file in the root directory of this source tree or the Apache
+ * License, Version 2.0 found in the LICENSE-APACHE file in the root directory
+ * of this source tree. You may select, at your option, one of the
+ * above-listed licenses.
+ */
 
-# pyre-strict
+use anyhow::Context;
+use buck2_e2e::prelude::*;
 
-
-import json
-
-from buck2.tests.e2e_util.api.buck import Buck
-from buck2.tests.e2e_util.asserts import expect_failure
-from buck2.tests.e2e_util.buck_workspace import buck_test, BuckTestCase
-
-
-class SetCfgModifiersTest(BuckTestCase):
-    @buck_test(inplace=True)
-    async def test_set_cfg_modifiers(self, buck: Buck) -> None:
-        result = await buck.targets(
+#[buck_test(inplace = true)]
+async fn test_set_cfg_modifiers(buck: &Buck) -> anyhow::Result<()> {
+    let result = buck
+        .targets(&[
             "fbcode//buck2/tests/e2e/configurations/cfg_constructor/test_clear_package_modifiers_data/set_cfg_modifiers/dir:test",
             "--package-values",
-        )
-        targets = json.loads(result.stdout)
-        assert len(targets) == 1
-        target = targets[0]
-        cfg_modifiers = target["buck.package_values"]["buck.cfg_modifiers"]
-        assert cfg_modifiers == [
+        ])
+        .await?;
+    let targets: Vec<serde_json::Value> = serde_json::from_str(&result.stdout)?;
+    assert_eq!(targets.len(), 1);
+    let target = &targets[0];
+    let cfg_modifiers = target
+        .get("buck.package_values")
+        .and_then(|values| values.get("buck.cfg_modifiers"))
+        .context("No `buck.package_values.buck.cfg_modifiers`")?;
+    assert_eq!(
+        *cfg_modifiers,
+        serde_json::json!([
             {
                 "_type": "TaggedModifiers",
                 "location": {
@@ -45,7 +46,7 @@ class SetCfgModifiersTest(BuckTestCase):
                         "_type": "ModifiersMatch",
                     },
                 ],
-                "rule_name": None,
+                "rule_name": null,
             },
             {
                 "_type": "TaggedModifiers",
@@ -71,20 +72,23 @@ class SetCfgModifiersTest(BuckTestCase):
                     },
                     "ovr_config//os/constraints:macos",
                 ],
-                "rule_name": None,
+                "rule_name": null,
             },
-        ]
+        ])
+    );
+    Ok(())
+}
 
-    @buck_test(inplace=True)
-    async def test_set_cfg_modifiers_from_package_file_only(
-        self,
-        buck: Buck,
-    ) -> None:
-        await expect_failure(
-            buck.targets(
-                "fbcode//buck2/tests/e2e/configurations/cfg_constructor/test_clear_package_modifiers_data/set_cfg_modifiers/package_file_check:test",
-                "-c",
-                "buck_e2e.testing_failure=true",
-            ),
-            stderr_regex="set_cfg_modifiers is only allowed to be used from a PACKAGE or BUCK_TREE file, not a bzl file",
-        )
+#[buck_test(inplace = true)]
+async fn test_set_cfg_modifiers_from_package_file_only(buck: &Buck) {
+    buck.targets(&[
+        "fbcode//buck2/tests/e2e/configurations/cfg_constructor/test_clear_package_modifiers_data/set_cfg_modifiers/package_file_check:test",
+        "-c",
+        "buck_e2e.testing_failure=true",
+    ])
+    .await
+    .expect_failure()
+    .assert_stderr_matches(
+        "set_cfg_modifiers is only allowed to be used from a PACKAGE or BUCK_TREE file, not a bzl file",
+    );
+}

@@ -4,12 +4,12 @@ oncall("build_infra")
 
 buck2_e2e_test(
     name = "test_unified_constraint",
-    srcs = ["test_unified_constraint.py"],
+    srcs = ["test_unified_constraint.rs"],
     data_dir = "test_unified_constraint_data",
 )
 
 buck2_e2e_test(
     name = "test_constraint_overrides",
-    srcs = ["test_constraint_overrides.py"],
+    srcs = ["test_constraint_overrides.rs"],
     data_dir = "test_constraint_overrides_data",
 )

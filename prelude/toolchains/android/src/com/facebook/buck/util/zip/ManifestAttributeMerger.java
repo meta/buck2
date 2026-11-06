@@ -10,12 +10,14 @@
 
 package com.facebook.buck.util.zip;
 
+import com.facebook.infer.annotation.Nullsafe;
 import javax.annotation.Nullable;
 
 /**
  * Strategy interface for merging manifest attribute values. Implementations define how to compute
  * the final value when merging attributes from multiple manifests.
  */
+@Nullsafe(Nullsafe.Mode.LOCAL)
 @FunctionalInterface
 public interface ManifestAttributeMerger {
 

@@ -15,6 +15,7 @@ import com.facebook.buck.core.util.log.Logger;
 import com.facebook.buck.io.file.PathMatcher;
 import com.facebook.buck.io.filesystem.impl.ProjectFilesystemUtils;
 import com.facebook.buck.io.pathformat.PathFormatter;
+import com.facebook.infer.annotation.Nullsafe;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableSet;
 import com.google.common.hash.Hashing;
@@ -34,6 +35,7 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.zip.ZipEntry;
 
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public class Zip {
   private static final Logger LOG = Logger.get(Zip.class);
 

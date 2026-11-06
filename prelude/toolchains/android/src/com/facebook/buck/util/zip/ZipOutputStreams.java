@@ -11,12 +11,14 @@
 package com.facebook.buck.util.zip;
 
 import com.facebook.buck.util.io.IoUtil;
+import com.facebook.infer.annotation.Nullsafe;
 import java.io.BufferedOutputStream;
 import java.io.IOException;
 import java.io.OutputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
 
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public class ZipOutputStreams {
 
   /** The size of the BufferedOutputStream used to wrap the underlying file. */

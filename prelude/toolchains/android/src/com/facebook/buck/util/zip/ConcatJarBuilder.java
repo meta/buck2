@@ -13,6 +13,7 @@ package com.facebook.buck.util.zip;
 import static java.util.Optional.ofNullable;
 
 import com.facebook.buck.core.filesystems.AbsPath;
+import com.facebook.infer.annotation.Nullsafe;
 import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.nio.file.Path;
@@ -27,6 +28,7 @@ import java.util.stream.Collectors;
  * files. It extends the JarBuilder class and provides additional functionality for handling merging
  * logic of resource files.
  */
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public class ConcatJarBuilder extends JarBuilder {
 
   private final List<AbsPath> entriesToJar = new LinkedList<>();

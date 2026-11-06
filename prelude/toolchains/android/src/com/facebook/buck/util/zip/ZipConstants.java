@@ -10,9 +10,11 @@
 
 package com.facebook.buck.util.zip;
 
+import com.facebook.infer.annotation.Nullsafe;
 import java.util.Calendar;
 import java.util.zip.ZipEntry;
 
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public class ZipConstants {
 
   static final long END_MAXLEN = 0xFFFF + ZipEntry.ENDHDR; // header max size ~64k

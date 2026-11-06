@@ -14,6 +14,7 @@ import static com.facebook.buck.util.zip.ByteIo.writeInt;
 import static com.facebook.buck.util.zip.ByteIo.writeLong;
 import static com.facebook.buck.util.zip.ByteIo.writeShort;
 
+import com.facebook.infer.annotation.Nullsafe;
 import java.io.IOException;
 import java.io.OutputStream;
 import java.nio.charset.StandardCharsets;
@@ -26,6 +27,7 @@ import java.util.zip.ZipEntry;
  * <p>The central directory consists of a series of "file headers", describing each entry in the
  * zip, and a "end of central directory" signature containing book keeping information.
  */
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public class CentralDirectory {
 
   /** Execute before the central directory is created and return number of bytes prepended. */

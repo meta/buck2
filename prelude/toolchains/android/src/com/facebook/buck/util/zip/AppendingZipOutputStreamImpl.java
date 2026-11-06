@@ -10,6 +10,7 @@
 
 package com.facebook.buck.util.zip;
 
+import com.facebook.infer.annotation.Nullsafe;
 import java.io.IOException;
 import java.io.OutputStream;
 import java.util.HashSet;
@@ -31,6 +32,7 @@ import javax.annotation.Nullable;
  * href="http://www.pkware.com/documents/casestudies/APPNOTE.TXT">
  * http://www.pkware.com/documents/casestudies/APPNOTE.TXT </a>
  */
+@Nullsafe(Nullsafe.Mode.LOCAL)
 class AppendingZipOutputStreamImpl implements CustomZipOutputStream.Impl {
 
   private final OutputStream delegate;

@@ -10,6 +10,7 @@
 
 package com.facebook.buck.util.zip;
 
+import com.facebook.infer.annotation.Nullsafe;
 import com.google.common.base.Preconditions;
 import java.io.IOException;
 import java.nio.file.Files;
@@ -22,6 +23,7 @@ import javax.annotation.Nullable;
  * Represents a container for entries to be added to a jar file by @{link JarBuilder}. Examples
  * include a directory tree or another jar file.
  */
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public interface JarEntryContainer extends AutoCloseable {
 
   /**

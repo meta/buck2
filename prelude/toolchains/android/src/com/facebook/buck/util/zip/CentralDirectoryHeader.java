@@ -13,6 +13,7 @@ package com.facebook.buck.util.zip;
 import static java.util.Collections.emptyList;
 import static java.util.Optional.ofNullable;
 
+import com.facebook.infer.annotation.Nullsafe;
 import java.nio.file.Path;
 import java.util.Collections;
 import java.util.List;
@@ -22,6 +23,7 @@ import java.util.List;
  * header information, such as offset position and previous list of files. It's used to support
  * append operations by preserving header of previous files.
  */
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public class CentralDirectoryHeader extends CentralDirectory {
 
   private final Path path;

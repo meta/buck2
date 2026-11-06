@@ -10,9 +10,11 @@
 
 package com.facebook.buck.util.zip.collect;
 
+import com.facebook.infer.annotation.Nullsafe;
 import java.nio.file.Path;
 
 /** Represents source for an entry in a zip file. */
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public interface ZipEntrySource {
 
   /**

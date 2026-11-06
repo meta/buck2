@@ -10,6 +10,7 @@
 
 package com.facebook.buck.util.zip;
 
+import com.facebook.infer.annotation.Nullsafe;
 import java.io.IOException;
 import java.io.OutputStream;
 import java.util.LinkedList;
@@ -22,6 +23,7 @@ import javax.annotation.Nullable;
  * An implementation of {@link CustomZipOutputStream.Impl} that doesn't perform any checks around
  * duplicate entries.
  */
+@Nullsafe(Nullsafe.Mode.LOCAL)
 class SimpleZipOutputStreamImpl implements CustomZipOutputStream.Impl {
 
   private final OutputStream delegate;

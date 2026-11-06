@@ -10,6 +10,7 @@
 
 package com.facebook.buck.util.zip;
 
+import com.facebook.infer.annotation.Nullsafe;
 import com.google.common.collect.ImmutableSet;
 import com.google.common.hash.Hashing;
 import com.google.common.io.ByteStreams;
@@ -24,6 +25,7 @@ import java.util.zip.ZipEntry;
 import java.util.zip.ZipInputStream;
 
 /** Class for repacking ZIP archives. */
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public class RepackZipEntries {
   /**
    * A command that creates a copy of a ZIP archive, making sure that certain user-specified entries

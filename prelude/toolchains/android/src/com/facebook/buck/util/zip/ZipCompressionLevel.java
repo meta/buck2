@@ -10,6 +10,9 @@
 
 package com.facebook.buck.util.zip;
 
+import com.facebook.infer.annotation.Nullsafe;
+
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public enum ZipCompressionLevel {
   NONE(0),
   MIN(1),

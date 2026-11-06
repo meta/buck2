@@ -11,12 +11,14 @@
 package com.facebook.buck.util.zip;
 
 import com.facebook.buck.util.function.ThrowingSupplier;
+import com.facebook.infer.annotation.Nullsafe;
 import java.io.IOException;
 import java.io.InputStream;
 
 /**
  * Encapsulates a file or directory to be added as a single entry to a jar by {@link JarBuilder}.
  */
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public class JarEntrySupplier {
   private final CustomZipEntry entry;
   private final ThrowingSupplier<InputStream, IOException> inputStreamSupplier;

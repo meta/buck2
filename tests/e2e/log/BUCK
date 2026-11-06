@@ -4,25 +4,26 @@ oncall("build_infra")
 
 buck2_e2e_test(
     name = "test_what_ran",
-    srcs = ["test_what_ran.py"],
+    srcs = ["test_what_ran.rs"],
     use_compiled_buck2_client_and_tpx = True,
+    deps = ["fbsource//third-party/rust:csv"],
 )
 
 buck2_e2e_test(
     name = "test_what_failed",
-    srcs = ["test_what_failed.py"],
+    srcs = ["test_what_failed.rs"],
 )
 
 buck2_e2e_test(
     name = "test_log_format",
-    srcs = ["test_log_format.py"],
+    srcs = ["test_log_format.rs"],
     use_compiled_buck2_client_and_tpx = True,
 )
 
 buck2_e2e_test(
     name = "test_persist_event_logs",
-    srcs = ["test_persist_event_logs.py"],
-    deps = [
-        "//manifold/clients/python:manifold_client_deprecated",
-    ],
+    srcs = ["test_persist_event_logs.rs"],
+    env = {
+        "MANIFOLD_CLI": "$(exe_target fbcode//manifold/clients/cli:manifold)",
+    },
 )

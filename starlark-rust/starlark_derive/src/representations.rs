@@ -129,6 +129,8 @@ fn derive_starlark_representations_impl(
             }
         }
 
+        impl #impl_generics starlark::values::UnpackValueStable<#lt> for #ident #type_generics #where_clause {}
+
         impl #impl_generics starlark::values::UnpackValue<#lt> for #ident #type_generics #where_clause {
             type Error = std::convert::Infallible;
 

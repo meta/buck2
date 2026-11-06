@@ -20,6 +20,7 @@ use starlark::any::IsStaticType;
 use starlark::any::ProvidesStaticType;
 use starlark::typing::Ty;
 use starlark::values::UnpackValue;
+use starlark::values::UnpackValueStable;
 use starlark::values::Value;
 use starlark::values::type_repr::StarlarkTypeRepr;
 
@@ -76,6 +77,9 @@ impl<'v> ValueAsCommandLineLike<'v> {
         Some(ValueAsCommandLineLike(value.request_value()?))
     }
 }
+
+/// Whether a value provides `CommandLineArgLike` is a property of its type.
+impl<'v> UnpackValueStable<'v> for ValueAsCommandLineLike<'v> {}
 
 impl<'v> UnpackValue<'v> for ValueAsCommandLineLike<'v> {
     type Error = Infallible;

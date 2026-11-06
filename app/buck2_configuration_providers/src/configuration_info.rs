@@ -217,8 +217,8 @@ fn configuration_info_creator(globals: &mut GlobalsBuilder) {
     ) -> starlark::Result<ConfigurationInfo<'v>> {
         let new_constraints = build_constraints_map_from_dict(constraints)?;
 
-        let value_entries = values.unpack().entries;
-        let root_value_entries = root_values.unpack().entries;
+        let value_entries = values.try_unpack()?.entries;
+        let root_value_entries = root_values.try_unpack()?.entries;
         for (k, _) in &value_entries {
             parse_config_section_and_key(k, None)?;
         }

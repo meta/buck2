@@ -95,5 +95,13 @@ fn derive_unpack_value_impl(input: syn::DeriveInput) -> syn::Result<proc_macro2:
             }
         }
     };
-    Ok(quote::quote_spanned! { span => #trait_impl })
+    // Stable iff every variant is; the bounds decide per instantiation.
+    let stable_impl: syn::ItemImpl = syn::parse_quote_spanned! { span =>
+        impl #impl_generics starlark::values::UnpackValueStable<'v> for #ident #type_generics
+        where
+            #(#variant_types: starlark::values::UnpackValueStable<'v>,)*
+        {
+        }
+    };
+    Ok(quote::quote_spanned! { span => #trait_impl #stable_impl })
 }

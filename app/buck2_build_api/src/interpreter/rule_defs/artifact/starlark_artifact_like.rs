@@ -26,6 +26,7 @@ use starlark::values::StarlarkRepresentations;
 use starlark::values::StarlarkType;
 use starlark::values::StringValue;
 use starlark::values::UnpackValue;
+use starlark::values::UnpackValueStable;
 use starlark::values::Value;
 use starlark::values::ValueTyped;
 use starlark::values::list::UnpackList;
@@ -171,6 +172,8 @@ impl<'v> StarlarkTypeRepr for &'v dyn StarlarkInputArtifactLike<'v> {
     }
 }
 
+impl<'v> UnpackValueStable<'v> for &'v dyn StarlarkInputArtifactLike<'v> {}
+
 impl<'v> UnpackValue<'v> for &'v dyn StarlarkInputArtifactLike<'v> {
     type Error = Infallible;
 
@@ -195,6 +198,8 @@ impl<'v> StarlarkTypeRepr for &'v dyn StarlarkArtifactLike<'v> {
         ValueAsArtifactLikeUnpack::starlark_type_repr()
     }
 }
+
+impl<'v> UnpackValueStable<'v> for &'v dyn StarlarkArtifactLike<'v> {}
 
 impl<'v> UnpackValue<'v> for &'v dyn StarlarkArtifactLike<'v> {
     type Error = Infallible;
@@ -226,6 +231,8 @@ impl StarlarkTypeRepr for ValueIsInputArtifactAnnotation {
         StarlarkArtifactView::<'static>::starlark_type_repr()
     }
 }
+
+impl<'v> UnpackValueStable<'v> for ValueIsInputArtifactAnnotation {}
 
 impl<'v> UnpackValue<'v> for ValueIsInputArtifactAnnotation {
     type Error = Infallible;

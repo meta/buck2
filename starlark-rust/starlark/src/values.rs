@@ -145,6 +145,7 @@ pub use crate::values::unpack::UnpackValue;
 pub use crate::values::unpack::UnpackValueError;
 pub use crate::values::unpack::UnpackValueErrorInfallible;
 pub use crate::values::unpack_and_discard::UnpackAndDiscard;
+pub use crate::values::unpack_stable::UnpackValueStable;
 pub use crate::values::value_of::ValueOf;
 pub use crate::values::value_of_unchecked::ValueOfUnchecked;
 
@@ -170,5 +171,6 @@ pub(crate) mod types;
 pub mod typing;
 mod unpack;
 mod unpack_and_discard;
+mod unpack_stable;
 pub(crate) mod value_of;
 pub(crate) mod value_of_unchecked;

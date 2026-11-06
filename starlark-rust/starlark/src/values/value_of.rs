@@ -45,6 +45,7 @@ use crate::values::StarlarkValue;
 use crate::values::Trace;
 use crate::values::Tracer;
 use crate::values::UnpackValue;
+use crate::values::UnpackValueStable;
 use crate::values::Value;
 use crate::values::ValueOfUnchecked;
 use crate::values::ValueTyped;
@@ -62,8 +63,11 @@ use crate::values::type_repr::StarlarkTypeRepr;
 /// been changed since it was checked).
 ///
 /// The point is that code which holds a `ValueOf<T>` neither unpacks again on every read nor
-/// asserts a type it already checked: [`unpack`](Self::unpack) is the one place that relies on
-/// the check having been done.
+/// asserts a type it already checked. [`unpack`](Self::unpack) gives the `T` back where the
+/// check cannot be invalidated ([`UnpackValueStable`]: the type of a value never changes);
+/// where it can, because `T` looks into a mutable container, [`try_unpack`](Self::try_unpack)
+/// and the container handles' accessors re-check and report an error, which only a value that
+/// is not frozen yet can produce.
 #[derive(Clone_, Copy_, Dupe_, Allocative)]
 #[allocative(bound = "")]
 #[derive(pagable::PagablePanic, StarlarkPagable)]
@@ -102,26 +106,26 @@ impl<'v, T: UnpackValue<'v>> ValueOf<'v, T> {
         self.0
     }
 
-    /// The `T` this value is.
-    ///
-    /// Panics if the value is no longer a `T`, which only a mutable container whose contents
-    /// were changed after the check can be; freezing re-checks, so a frozen `ValueOf` never
-    /// panics here. Where that window matters, use [`try_unpack`](Self::try_unpack).
+    /// The `T` this value is, for a `T` whose check cannot be invalidated
+    /// ([`UnpackValueStable`]).
     #[inline]
-    pub fn unpack(self) -> T {
+    pub fn unpack(self) -> T
+    where
+        T: UnpackValueStable<'v>,
+    {
         match T::unpack_value_err(self.0) {
             Ok(x) => x,
-            Err(e) => panic!(
-                "Value `{}` of type `{}` is no longer a `{}`: it was changed after it was checked: {e}",
-                self.0,
-                self.0.get_type(),
+            Err(e) => unreachable!(
+                "`{}` is `UnpackValueStable`, yet value `{}` stopped being one: {e}",
                 T::starlark_type_repr(),
+                self.0,
             ),
         }
     }
 
-    /// The `T` this value is, as an error rather than a panic when a mutable container was
-    /// changed after the check.
+    /// The `T` this value is, re-checked: for a `T` that looks into a mutable container, the
+    /// container may have been changed since the check, and this is where that surfaces.
+    /// Freezing re-checks too, so a frozen `ValueOf` always gives `Ok`.
     #[inline]
     pub fn try_unpack(self) -> crate::Result<T> {
         T::unpack_value_err(self.0)

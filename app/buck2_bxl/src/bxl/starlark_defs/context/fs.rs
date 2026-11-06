@@ -314,7 +314,7 @@ fn fs_operations(builder: &mut MethodsBuilder) {
                         }
                         NoneOr::Other(target_hint) => {
                             let target_expr = TargetListExpr::<'v, TargetNode>::unpack(
-                                target_hint.unpack(),
+                                target_hint.try_unpack()?,
                                 &this.ctx,
                                 dice,
                             )

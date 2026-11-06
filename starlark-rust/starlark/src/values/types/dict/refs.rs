@@ -61,6 +61,7 @@ pub struct DictMut<'v> {
 
 impl<'v> DictRef<'v> {
     /// Downcast the value to a dict.
+    #[inline]
     pub fn from_value(x: Value<'v>) -> Option<DictRef<'v>> {
         if let Some(x) = x.downcast_ref::<DictGen<Dict<'v>>>() {
             Some(DictRef {
@@ -107,6 +108,7 @@ impl<'v> DictMut<'v> {
 impl<'v> Deref for DictRef<'v> {
     type Target = Dict<'v>;
 
+    #[inline]
     fn deref(&self) -> &Self::Target {
         &self.aref
     }

@@ -44,6 +44,7 @@ impl<'v> TupleRef<'v> {
     fn new(slice: &'v [Value<'v>]) -> &'v TupleRef<'v>;
 
     /// Downcast a value to a tuple.
+    #[inline]
     pub fn from_value(value: Value<'v>) -> Option<&'v TupleRef<'v>> {
         Some(Self::new(Tuple::from_value(value)?.content()))
     }

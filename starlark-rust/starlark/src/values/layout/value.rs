@@ -1013,6 +1013,7 @@ impl<'v> Value<'v> {
 
     /// Get a reference to underlying data or [`None`]
     /// if contained object has different type than requested.
+    #[inline]
     pub fn downcast_ref<T: StarlarkValue<'v>>(self) -> Option<&'v T> {
         if T::static_type_id() == StarlarkStr::static_type_id() {
             if self.is_str() {

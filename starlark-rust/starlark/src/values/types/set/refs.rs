@@ -52,6 +52,7 @@ impl<'v> Clone for SetRef<'v> {
 
 impl<'v> SetRef<'v> {
     /// Downcast the value to a set.
+    #[inline]
     pub fn from_value(x: Value<'v>) -> Option<SetRef<'v>> {
         if let Some(x) = x.downcast_ref::<SetGen<SetData<'v>>>() {
             Some(SetRef {

@@ -52,6 +52,8 @@ use starlark::values::Heap;
 use starlark::values::NoSerialize;
 use starlark::values::OwnedFrozen;
 use starlark::values::StarlarkPagable;
+use starlark::values::StarlarkRepresentations;
+use starlark::values::StarlarkType;
 use starlark::values::StarlarkValue;
 use starlark::values::StringValue;
 use starlark::values::Trace;
@@ -152,32 +154,48 @@ fn deserialize_refs<'v>(
     Ok(map)
 }
 
+/// A transition in either of its representations.
+#[derive(Debug, Clone, Copy, StarlarkRepresentations)]
+pub(crate) enum TransitionView<'v> {
+    Unfrozen(ValueTyped<'v, Transition<'v>>),
+    Frozen(ValueTyped<'v, FrozenTransition<'v>>),
+}
+
 #[starlark_value(type = "Transition")]
-impl<'v> StarlarkValue<'v> for Transition<'v> {
+impl<'v> StarlarkType<'v> for TransitionView<'v> {
     fn export_as(
         &self,
         variable_name: &str,
         _eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<()> {
-        let mut id = self.id.borrow_mut();
+        let TransitionView::Unfrozen(this) = self else {
+            return Ok(());
+        };
+        let mut id = this.id.borrow_mut();
         // First export wins
         if id.is_none() {
             *id = Some(Arc::new(TransitionId::MagicObject {
-                path: self.path.clone(),
+                path: this.path.clone(),
                 name: variable_name.to_owned(),
             }));
         }
         Ok(())
     }
+}
+
+#[starlark_value]
+impl<'v> StarlarkValue<'v> for Transition<'v> {
+    type Type = TransitionView<'v>;
 
     fn provide(&'v self, demand: &mut Demand<'_, 'v>) {
         demand.provide_value::<&dyn TransitionValue>(self);
     }
 }
 
-#[starlark_value(type = "Transition", frozen_vtable)]
+#[starlark_value(frozen_vtable)]
 impl<'v> StarlarkValue<'v> for FrozenTransition<'v> {
     type Canonical = Transition<'v>;
+    type Type = TransitionView<'v>;
 
     fn provide(&'v self, demand: &mut Demand<'_, 'v>) {
         demand.provide_value::<&dyn TransitionValue>(self);
@@ -372,5 +390,5 @@ fn register_transition_function(builder: &mut GlobalsBuilder) {
 
 pub(crate) fn init_register_transition() {
     REGISTER_BUCK2_TRANSITION_GLOBALS.init(register_transition_function);
-    TransitionReprLate::init(Transition::starlark_type_repr());
+    TransitionReprLate::init(TransitionView::starlark_type_repr());
 }

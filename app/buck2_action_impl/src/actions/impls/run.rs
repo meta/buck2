@@ -123,6 +123,8 @@ use starlark::values::NoSerialize;
 use starlark::values::OwnedFrozen;
 use starlark::values::ProvidesStaticType;
 use starlark::values::StarlarkPagable;
+use starlark::values::StarlarkRepresentations;
+use starlark::values::StarlarkType;
 use starlark::values::StarlarkValue;
 use starlark::values::StringValue;
 use starlark::values::Trace;
@@ -366,12 +368,25 @@ pub(crate) struct FrozenStarlarkRunActionValues<'v> {
         MiniBoxSlice<ValueTyped<'v, FrozenStarlarkOutputArtifact<'v>>>,
 }
 
-#[starlark_value(type = "RunActionValues")]
-impl<'v> StarlarkValue<'v> for StarlarkRunActionValues<'v> {}
+/// A `RunActionValues` in either of its representations.
+#[derive(Debug, Clone, Copy, StarlarkRepresentations)]
+pub(crate) enum StarlarkRunActionValuesView<'v> {
+    Unfrozen(ValueTyped<'v, StarlarkRunActionValues<'v>>),
+    Frozen(ValueTyped<'v, FrozenStarlarkRunActionValues<'v>>),
+}
 
-#[starlark_value(type = "RunActionValues", frozen_vtable)]
+#[starlark_value(type = "RunActionValues")]
+impl<'v> StarlarkType<'v> for StarlarkRunActionValuesView<'v> {}
+
+#[starlark_value]
+impl<'v> StarlarkValue<'v> for StarlarkRunActionValues<'v> {
+    type Type = StarlarkRunActionValuesView<'v>;
+}
+
+#[starlark_value(frozen_vtable)]
 impl<'v> StarlarkValue<'v> for FrozenStarlarkRunActionValues<'v> {
     type Canonical = StarlarkRunActionValues<'v>;
+    type Type = StarlarkRunActionValuesView<'v>;
 }
 
 impl<'v> AllocValue<'v> for StarlarkRunActionValues<'v> {

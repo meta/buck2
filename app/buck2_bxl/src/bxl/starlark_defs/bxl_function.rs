@@ -37,6 +37,8 @@ use starlark::values::Heap;
 use starlark::values::NoSerialize;
 use starlark::values::OwnedFrozen;
 use starlark::values::StarlarkPagable;
+use starlark::values::StarlarkRepresentations;
+use starlark::values::StarlarkType;
 use starlark::values::StarlarkValue;
 use starlark::values::Trace;
 use starlark::values::Value;
@@ -157,19 +159,33 @@ impl<'v> AllocValue<'v> for BxlFunction<'v> {
     }
 }
 
+/// A bxl function in either of its representations.
+#[derive(Debug, Clone, Copy, StarlarkRepresentations)]
+pub(crate) enum BxlFunctionView<'v> {
+    Unfrozen(ValueTyped<'v, BxlFunction<'v>>),
+    Frozen(ValueTyped<'v, FrozenBxlFunction<'v>>),
+}
+
 #[starlark_value(type = "bxl")]
-impl<'v> StarlarkValue<'v> for BxlFunction<'v> {
+impl<'v> StarlarkType<'v> for BxlFunctionView<'v> {
     fn export_as(
         &self,
         variable_name: &str,
         _eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<()> {
-        *self.id.borrow_mut() = Some(BxlFunctionLabel {
-            bxl_path: self.bxl_path.clone(),
-            name: variable_name.to_owned(),
-        });
+        if let BxlFunctionView::Unfrozen(this) = self {
+            *this.id.borrow_mut() = Some(BxlFunctionLabel {
+                bxl_path: this.bxl_path.clone(),
+                name: variable_name.to_owned(),
+            });
+        }
         Ok(())
     }
+}
+
+#[starlark_value]
+impl<'v> StarlarkValue<'v> for BxlFunction<'v> {
+    type Type = BxlFunctionView<'v>;
 }
 
 impl<'v> Freeze<'v> for BxlFunction<'v> {
@@ -216,9 +232,10 @@ pub(crate) struct FrozenBxlFunction<'v> {
 /// A bxl function kept alive by its owning frozen heap; usable across threads and awaits.
 pub(crate) type OwnedBxlFunction = OwnedFrozen<ValueTyped<'static, FrozenBxlFunction<'static>>>;
 
-#[starlark_value(type = "bxl", frozen_vtable)]
+#[starlark_value(frozen_vtable)]
 impl<'v> StarlarkValue<'v> for FrozenBxlFunction<'v> {
     type Canonical = BxlFunction<'v>;
+    type Type = BxlFunctionView<'v>;
 }
 
 impl<'v> FrozenBxlFunction<'v> {

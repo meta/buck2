@@ -877,6 +877,39 @@ pub(crate) mod state_machine {
         .await
     }
 
+    #[tokio::test(start_paused = true)]
+    async fn test_ensure_times_out_if_command_thread_never_runs() {
+        let io = Arc::new(StubIoHandler::new(temp_root()));
+        let (processor, command_sender, command_receiver, _events, background_cleanup_gate) =
+            make_processor_for_io(io.dupe());
+        let dm = DeferredMaterializerAccessor {
+            command_thread: None,
+            cancellation: processor.cancellation.clone(),
+            runtime: Handle::current(),
+            command_sender,
+            materialize_final_artifacts: true,
+            defer_write_actions: true,
+            io,
+            materializer_state_info: buck2_data::MaterializerStateInfo {
+                num_entries_from_sqlite: 0,
+            },
+            stats: Arc::new(DeferredMaterializerStats::default()),
+            background_cleanup_gate,
+        };
+        // Keep the receiver so `send` succeeds, but never run the command loop.
+        let _keep_unprocessed = (processor, command_receiver);
+
+        let err = dm
+            .ensure_materialized(
+                vec![make_path("foo")],
+                MaterializationPurpose::IntermediateOnly,
+            )
+            .await
+            .unwrap_err();
+        let msg = format!("{err:#}");
+        assert!(msg.contains("Ensure") && msg.contains("buck2-dm"), "{msg}");
+    }
+
     #[tokio::test]
     async fn test_declare_reuse() -> buck2_error::Result<()> {
         ignore_stack_overflow_checks_for_future(async {

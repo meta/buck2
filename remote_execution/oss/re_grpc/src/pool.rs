@@ -199,6 +199,11 @@ fn create_endpoint(
         ))
         .keep_alive_while_idle(config.grpc_keepalive_while_idle.unwrap_or(true));
 
+    // Do not set `Endpoint::timeout` here. CAS, AC, and Execute share this
+    // channel when they share a frontend address; a channel timeout would
+    // abort long-running Execute streams. CAS/AC calls are bounded in
+    // `client.rs` instead (`RPC_TIMEOUT`).
+
     Ok(endpoint)
 }
 

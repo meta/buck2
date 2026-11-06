@@ -4,6 +4,6 @@ oncall("build_infra")
 
 buck2_e2e_test(
     name = "test_select_types",
-    srcs = ["test_select_types.py"],
+    srcs = ["test_select_types.rs"],
     data_dir = "test_select_types_data",
 )

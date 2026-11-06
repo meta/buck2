@@ -54,6 +54,8 @@ pub mod http;
 pub mod json;
 pub mod manifold;
 mod output;
+pub mod piped;
+pub mod subscribe;
 pub mod utils;
 
 pub use buck2_e2e_macros::buck_test;

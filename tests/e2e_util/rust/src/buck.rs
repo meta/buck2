@@ -274,12 +274,12 @@ pub struct BuckCommand<'a> {
     invocation_record: bool,
 }
 
-struct Prepared {
-    argv: Vec<OsString>,
-    args: Vec<OsString>,
-    cwd: PathBuf,
-    env: BTreeMap<OsString, OsString>,
-    invocation_record_path: Option<PathBuf>,
+pub(crate) struct Prepared {
+    pub(crate) argv: Vec<OsString>,
+    pub(crate) args: Vec<OsString>,
+    pub(crate) cwd: PathBuf,
+    pub(crate) env: BTreeMap<OsString, OsString>,
+    pub(crate) invocation_record_path: Option<PathBuf>,
 }
 
 impl<'a> BuckCommand<'a> {
@@ -321,7 +321,7 @@ impl<'a> BuckCommand<'a> {
         self
     }
 
-    fn prepare(&self, invocation_id: &str) -> Prepared {
+    pub(crate) fn prepare(&self, invocation_id: &str) -> Prepared {
         let mut env = self.buck.env.clone();
         env.extend(self.env.iter().cloned());
         env.entry("BUCK_WRAPPER_UUID".into())
@@ -436,7 +436,7 @@ impl<'a> BuckCommand<'a> {
     }
 }
 
-fn read_all(
+pub(crate) fn read_all(
     mut pipe: impl tokio::io::AsyncRead + Unpin + Send + 'static,
 ) -> tokio::task::JoinHandle<Vec<u8>> {
     tokio::spawn(async move {

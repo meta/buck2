@@ -47,6 +47,7 @@ use starlark::values::Freezer;
 use starlark::values::Heap;
 use starlark::values::NoSerialize;
 use starlark::values::StarlarkPagable;
+use starlark::values::StarlarkType;
 use starlark::values::StarlarkValue;
 use starlark::values::StaticFreezePlan;
 use starlark::values::StringValue;
@@ -54,6 +55,7 @@ use starlark::values::ThinBoxSliceValue;
 use starlark::values::Trace;
 use starlark::values::UnpackValue;
 use starlark::values::Value;
+use starlark::values::ValueError;
 use starlark::values::ValueOf;
 use starlark::values::list::ListRef;
 use starlark::values::list::UnpackList;
@@ -668,11 +670,43 @@ impl<'v> StarlarkCmdArgs<'v> {
     }
 }
 
-/// Unpack a `cmd_args` in either form, at the value's own heap brand.
-#[derive(StarlarkTypeRepr, UnpackValue)]
+/// A `cmd_args` in either of its representations: the receiver of the type's methods, and the
+/// binding for a native parameter of type `cmd_args`.
+#[derive(Debug)]
 pub enum StarlarkCmdArgsUnpack<'v> {
     Unfrozen(&'v StarlarkCmdArgs<'v>),
     Frozen(&'v FrozenStarlarkCmdArgs<'v>),
+}
+
+impl<'v> Display for StarlarkCmdArgsUnpack<'v> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        match self {
+            StarlarkCmdArgsUnpack::Unfrozen(x) => Display::fmt(x, f),
+            StarlarkCmdArgsUnpack::Frozen(x) => Display::fmt(x, f),
+        }
+    }
+}
+
+impl<'v> StarlarkTypeRepr for StarlarkCmdArgsUnpack<'v> {
+    type Canonical = StarlarkCmdArgs<'v>;
+
+    fn starlark_type_repr() -> Ty {
+        <Self as StarlarkType<'v>>::get_type_starlark_repr()
+    }
+}
+
+impl<'v> UnpackValue<'v> for StarlarkCmdArgsUnpack<'v> {
+    type Error = Infallible;
+
+    fn unpack_value_impl(value: Value<'v>) -> Result<Option<Self>, Self::Error> {
+        Ok(if let Some(x) = value.downcast_ref::<StarlarkCmdArgs>() {
+            Some(StarlarkCmdArgsUnpack::Unfrozen(x))
+        } else {
+            value
+                .downcast_ref::<FrozenStarlarkCmdArgs>()
+                .map(StarlarkCmdArgsUnpack::Frozen)
+        })
+    }
 }
 
 impl<'v> StarlarkCmdArgsUnpack<'v> {
@@ -685,12 +719,24 @@ impl<'v> StarlarkCmdArgsUnpack<'v> {
 }
 
 starlark::methods_static!(CMD_ARGS_METHODS = cmd_args_methods);
-starlark::methods_static!(FROZEN_CMD_ARGS_METHODS = cmd_args_methods);
 
-#[starlark_value(type = "cmd_args", StarlarkTypeRepr, UnpackValue)]
-impl<'v> StarlarkValue<'v> for StarlarkCmdArgs<'v> {
+#[starlark_value(type = "cmd_args")]
+impl<'v> StarlarkType<'v> for StarlarkCmdArgsUnpack<'v> {
     fn get_methods() -> Option<&'static Methods> {
         Some(CMD_ARGS_METHODS.methods())
+    }
+
+    fn get_type_starlark_repr() -> Ty {
+        Ty::starlark_value::<StarlarkCmdArgs>()
+    }
+}
+
+#[starlark_value]
+impl<'v> StarlarkValue<'v> for StarlarkCmdArgs<'v> {
+    type Type = StarlarkCmdArgsUnpack<'v>;
+
+    fn with_type<R>(this: &'v Self, f: impl FnOnce(&Self::Type) -> R) -> R {
+        f(&StarlarkCmdArgsUnpack::Unfrozen(this))
     }
 
     fn provide(&'v self, demand: &mut Demand<'_, 'v>) {
@@ -698,14 +744,13 @@ impl<'v> StarlarkValue<'v> for StarlarkCmdArgs<'v> {
     }
 }
 
-#[starlark_value(type = "cmd_args", StarlarkTypeRepr, UnpackValue, frozen_vtable)]
+#[starlark_value(frozen_vtable)]
 impl<'v> StarlarkValue<'v> for FrozenStarlarkCmdArgs<'v> {
     type Canonical = StarlarkCmdArgs<'v>;
+    type Type = StarlarkCmdArgsUnpack<'v>;
 
-    fn get_methods() -> Option<&'static Methods> {
-        // We return the same methods for frozen command lines, even though some of them fail,
-        // so the methods remain consistent during freezing
-        Some(FROZEN_CMD_ARGS_METHODS.methods())
+    fn with_type<R>(this: &'v Self, f: impl FnOnce(&Self::Type) -> R) -> R {
+        f(&StarlarkCmdArgsUnpack::Frozen(this))
     }
 
     fn provide(&'v self, demand: &mut Demand<'_, 'v>) {
@@ -934,13 +979,20 @@ impl<'v> StarlarkTypeRepr for StarlarkCommandLineMut<'v> {
 }
 
 impl<'v> UnpackValue<'v> for StarlarkCommandLineMut<'v> {
-    type Error = Infallible;
+    type Error = starlark::Error;
 
     fn unpack_value_impl(value: Value<'v>) -> Result<Option<Self>, Self::Error> {
-        Ok(value.downcast_ref::<StarlarkCmdArgs>().map(|v| Self {
-            value,
-            borrow: v.0.borrow_mut(),
-        }))
+        match StarlarkCmdArgsUnpack::unpack_value_opt(value) {
+            None => Ok(None),
+            Some(StarlarkCmdArgsUnpack::Unfrozen(v)) => Ok(Some(Self {
+                value,
+                borrow: v.0.borrow_mut(),
+            })),
+            // A `cmd_args` all the same; what fails is the mutation.
+            Some(StarlarkCmdArgsUnpack::Frozen(_)) => Err(starlark::Error::new_other(
+                ValueError::CannotMutateImmutableValue,
+            )),
+        }
     }
 }
 

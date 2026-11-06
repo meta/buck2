@@ -4,10 +4,14 @@ oncall("build_infra")
 
 buck2_e2e_test(
     name = "test_targets",
-    srcs = ["test_targets.py"],
+    srcs = ["test_targets.rs"],
+    deps = [
+        "fbsource//third-party/rust:flate2",
+        "fbsource//third-party/rust:regex",
+    ],
 )
 
 buck2_e2e_test(
     name = "test_targets_inplace",
-    srcs = ["test_targets_inplace.py"],
+    srcs = ["test_targets_inplace.rs"],
 )

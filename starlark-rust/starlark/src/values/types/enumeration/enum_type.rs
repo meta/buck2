@@ -27,6 +27,7 @@ use dupe::Dupe;
 use mini_map::MiniFixedSortedMap;
 use once_cell::unsync::OnceCell;
 use starlark_derive::NoSerialize;
+use starlark_derive::StarlarkRepresentations;
 use starlark_derive::Trace;
 use starlark_derive::starlark_module;
 use starlark_derive::starlark_value;
@@ -56,6 +57,7 @@ use crate::values::Freeze;
 use crate::values::FreezeResult;
 use crate::values::Freezer;
 use crate::values::Heap;
+use crate::values::StarlarkType;
 use crate::values::StarlarkValue;
 use crate::values::StringValue;
 use crate::values::UnpackValue;
@@ -89,7 +91,7 @@ pub(crate) trait EnumVariant: Allocative + Debug + 'static {
 }
 
 #[derive(Debug, Allocative)]
-pub(super) struct EnumVariantUnfrozen {
+pub(crate) struct EnumVariantUnfrozen {
     // FIXME(JakobDegen): allocative OSS release
     #[allocative(skip)]
     data: OnceCell<Arc<TyEnumData>>,
@@ -210,8 +212,6 @@ crate::register_simple_vtable_entry!(FrozenEnumType<'static>);
 // SAFETY: The vtable entry is registered above. The deser type id is
 // lifetime-erased, so the `'static` instantiation covers all heap lifetimes.
 unsafe impl<'v> crate::__derive_refs::VtableRegistered for FrozenEnumType<'v> {}
-crate::register_ty_starlark_value!(EnumType<'_>);
-crate::register_ty_starlark_value!(FrozenEnumType<'_>);
 
 impl<'v> EnumType<'v> {
     pub(super) fn new(
@@ -265,118 +265,8 @@ impl<'v, V: EnumVariant + ?Sized> EnumTypeGen<'v, V> {
         self.ty_enum_data.get_ty()
     }
 
-    pub(crate) fn construct(&self, val: Value<'v>) -> crate::Result<Value<'v>> {
-        match self.elements().get_hashed_by_value(val.get_hashed()?) {
-            Some(v) => Ok(*v),
-            None => Err(crate::Error::new_other(EnumError::InvalidElement(
-                val.to_str(),
-                self.to_string(),
-            ))),
-        }
-    }
-}
-
-starlark::methods_static!(ENUM_TYPE_METHODS = enum_type_methods);
-
-pub(crate) type AnyEnumType<'v> = &'v EnumTypeGen<'v, dyn EnumVariant>;
-
-impl<'v> StarlarkTypeRepr for AnyEnumType<'v> {
-    type Canonical = <FrozenEnumType<'v> as StarlarkValue<'v>>::Canonical;
-
-    #[inline]
-    fn starlark_type_repr() -> crate::typing::Ty {
-        <FrozenEnumType<'v> as StarlarkValue<'v>>::get_type_starlark_repr()
-    }
-}
-
-impl<'v> UnpackValue<'v> for AnyEnumType<'v> {
-    type Error = std::convert::Infallible;
-
-    fn unpack_value_impl(value: Value<'v>) -> Result<Option<Self>, Self::Error> {
-        Ok(value.request_value())
-    }
-}
-
-#[starlark_value(type = FUNCTION_TYPE)]
-impl<'v, V: EnumVariant> StarlarkValue<'v> for EnumTypeGen<'v, V> {
-    type Canonical = FrozenEnumType<'v>;
-
-    // TODO(nga): replace `Color("RED")` with `Color.RED`.
-    //   https://www.internalfb.com/tasks/?t=183515013
-    fn invoke(
-        &self,
-        _me: Value<'v>,
-        args: &Arguments<'v, '_>,
-        eval: &mut Evaluator<'v, '_, '_>,
-    ) -> crate::Result<Value<'v>> {
-        args.no_named_args()?;
-        let val = args.positional1(eval.heap())?;
-        Ok(self.construct(val)?.to_value())
-    }
-
-    fn get_attr(&self, attribute: &str, _heap: Heap<'v>) -> Option<Value<'v>> {
-        self.elements()
-            .get(&ValueStr(attribute))
-            .map(|v| v.to_value())
-    }
-
-    fn dir_attr(&self) -> Vec<String> {
-        // The unwrap here is safe because the new() method requires the elements be
-        // of type StringValue<'v>
-        self.elements()
-            .keys()
-            .map(|key| key.to_value().unpack_str().unwrap().to_owned())
-            .collect()
-    }
-
-    fn length(&self) -> crate::Result<i32> {
-        Ok(self.elements().len() as i32)
-    }
-
-    fn at(&self, index: Value, _heap: Heap<'v>) -> crate::Result<Value<'v>> {
-        let i = convert_index(index, self.elements().len() as i32)? as usize;
-        // Must be in the valid range since convert_index checks that, so just unwrap
-        Ok(self
-            .elements()
-            .get_index(i)
-            .map(|x| *x.1)
-            .unwrap()
-            .to_value())
-    }
-
-    unsafe fn iterate(&self, me: Value<'v>, _heap: Heap<'v>) -> crate::Result<Value<'v>> {
-        Ok(me)
-    }
-
-    unsafe fn iter_size_hint(&self, index: usize) -> (usize, Option<usize>) {
-        debug_assert!(index <= self.elements().len());
-        let rem = self.elements().len() - index;
-        (rem, Some(rem))
-    }
-
-    unsafe fn iter_next(&self, index: usize, _heap: Heap<'v>) -> Option<Value<'v>> {
-        self.elements().values().nth(index).map(|v| v.to_value())
-    }
-
-    unsafe fn iter_stop(&self) {}
-
-    fn get_methods() -> Option<&'static Methods> {
-        Some(ENUM_TYPE_METHODS.methods())
-    }
-
-    fn eval_type(&self) -> Option<Ty> {
-        self.ty_enum_data().map(|t| t.ty_enum_value.dupe())
-    }
-
-    fn typechecker_ty(&self) -> Option<Ty> {
-        self.ty_enum_data().map(|t| t.ty_enum_type.dupe())
-    }
-
-    fn export_as(
-        &self,
-        variable_name: &str,
-        _eval: &mut Evaluator<'v, '_, '_>,
-    ) -> crate::Result<()> {
+    /// What `export_as` does: give the type its name, once.
+    fn export_as(&self, variable_name: &str) -> crate::Result<()> {
         self.ty_enum_data.get_or_init_ty(&|| {
             let ty_enum_value = Ty::custom(TyUser::new(
                 variable_name.to_owned(),
@@ -436,6 +326,154 @@ impl<'v, V: EnumVariant> StarlarkValue<'v> for EnumTypeGen<'v, V> {
             }))
         })
     }
+
+    pub(crate) fn construct(&self, val: Value<'v>) -> crate::Result<Value<'v>> {
+        match self.elements().get_hashed_by_value(val.get_hashed()?) {
+            Some(v) => Ok(*v),
+            None => Err(crate::Error::new_other(EnumError::InvalidElement(
+                val.to_str(),
+                self.to_string(),
+            ))),
+        }
+    }
+}
+
+starlark::methods_static!(ENUM_TYPE_METHODS = enum_type_methods);
+
+pub(crate) type AnyEnumType<'v> = &'v EnumTypeGen<'v, dyn EnumVariant>;
+
+impl<'v> StarlarkTypeRepr for AnyEnumType<'v> {
+    type Canonical = <FrozenEnumType<'v> as StarlarkValue<'v>>::Canonical;
+
+    #[inline]
+    fn starlark_type_repr() -> crate::typing::Ty {
+        <FrozenEnumType<'v> as StarlarkValue<'v>>::get_type_starlark_repr()
+    }
+}
+
+impl<'v> UnpackValue<'v> for AnyEnumType<'v> {
+    type Error = std::convert::Infallible;
+
+    fn unpack_value_impl(value: Value<'v>) -> Result<Option<Self>, Self::Error> {
+        Ok(value.request_value())
+    }
+}
+
+/// An enum type in either of its representations.
+#[derive(Debug, Clone, Copy, StarlarkRepresentations)]
+pub(crate) enum EnumTypeView<'v> {
+    Frozen(ValueTyped<'v, FrozenEnumType<'v>>),
+    Unfrozen(ValueTyped<'v, EnumType<'v>>),
+}
+
+impl<'v> EnumTypeView<'v> {
+    fn as_dyn(self) -> AnyEnumType<'v> {
+        match self {
+            EnumTypeView::Frozen(x) => x.as_ref(),
+            EnumTypeView::Unfrozen(x) => x.as_ref(),
+        }
+    }
+}
+
+#[starlark_value(type = FUNCTION_TYPE)]
+impl<'v> StarlarkType<'v> for EnumTypeView<'v> {
+    // TODO(nga): replace `Color("RED")` with `Color.RED`.
+    //   https://www.internalfb.com/tasks/?t=183515013
+    fn invoke(
+        &self,
+        _me: Value<'v>,
+        args: &Arguments<'v, '_>,
+        eval: &mut Evaluator<'v, '_, '_>,
+    ) -> crate::Result<Value<'v>> {
+        args.no_named_args()?;
+        let val = args.positional1(eval.heap())?;
+        Ok(self.as_dyn().construct(val)?.to_value())
+    }
+
+    fn get_attr(&self, attribute: &str, _heap: Heap<'v>) -> Option<Value<'v>> {
+        self.as_dyn()
+            .elements()
+            .get(&ValueStr(attribute))
+            .map(|v| v.to_value())
+    }
+
+    fn dir_attr(&self) -> Vec<String> {
+        // The unwrap here is safe because the new() method requires the elements be
+        // of type StringValue<'v>
+        self.as_dyn()
+            .elements()
+            .keys()
+            .map(|key| key.to_value().unpack_str().unwrap().to_owned())
+            .collect()
+    }
+
+    fn length(&self) -> crate::Result<i32> {
+        Ok(self.as_dyn().elements().len() as i32)
+    }
+
+    fn at(&self, index: Value, _heap: Heap<'v>) -> crate::Result<Value<'v>> {
+        let elements = self.as_dyn().elements();
+        let i = convert_index(index, elements.len() as i32)? as usize;
+        // Must be in the valid range since convert_index checks that, so just unwrap
+        Ok(elements.get_index(i).map(|x| *x.1).unwrap().to_value())
+    }
+
+    unsafe fn iterate(&self, me: Value<'v>, _heap: Heap<'v>) -> crate::Result<Value<'v>> {
+        Ok(me)
+    }
+
+    unsafe fn iter_size_hint(&self, index: usize) -> (usize, Option<usize>) {
+        let len = self.as_dyn().elements().len();
+        debug_assert!(index <= len);
+        let rem = len - index;
+        (rem, Some(rem))
+    }
+
+    unsafe fn iter_next(&self, index: usize, _heap: Heap<'v>) -> Option<Value<'v>> {
+        self.as_dyn()
+            .elements()
+            .values()
+            .nth(index)
+            .map(|v| v.to_value())
+    }
+
+    unsafe fn iter_stop(&self) {}
+
+    fn get_methods() -> Option<&'static Methods> {
+        Some(ENUM_TYPE_METHODS.methods())
+    }
+
+    fn eval_type(&self) -> Option<Ty> {
+        self.as_dyn().ty_enum_data().map(|t| t.ty_enum_value.dupe())
+    }
+
+    fn typechecker_ty(&self) -> Option<Ty> {
+        self.as_dyn().ty_enum_data().map(|t| t.ty_enum_type.dupe())
+    }
+
+    fn export_as(
+        &self,
+        variable_name: &str,
+        _eval: &mut Evaluator<'v, '_, '_>,
+    ) -> crate::Result<()> {
+        self.as_dyn().export_as(variable_name)
+    }
+}
+
+#[starlark_value]
+impl<'v> StarlarkValue<'v> for EnumType<'v> {
+    type Canonical = FrozenEnumType<'v>;
+    type Type = EnumTypeView<'v>;
+
+    fn provide(&'v self, demand: &mut Demand<'_, 'v>) {
+        demand.provide_value::<AnyEnumType<'v>>(self);
+    }
+}
+
+#[starlark_value]
+impl<'v> StarlarkValue<'v> for FrozenEnumType<'v> {
+    type Canonical = Self;
+    type Type = EnumTypeView<'v>;
 
     fn provide(&'v self, demand: &mut Demand<'_, 'v>) {
         demand.provide_value::<AnyEnumType<'v>>(self);

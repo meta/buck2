@@ -19,13 +19,11 @@ use crate as starlark;
 use crate::any::ProvidesStaticType;
 use crate::typing::Ty;
 use crate::values::Heap;
-use crate::values::UnpackAndDiscard;
 use crate::values::UnpackValue;
 use crate::values::Value;
 use crate::values::ValueOf;
 use crate::values::list::AllocList;
 use crate::values::list::ListRef;
-use crate::values::list::UnpackList;
 use crate::values::type_repr::StarlarkTypeRepr;
 
 /// A list type marker.
@@ -50,13 +48,17 @@ impl<'v, T: UnpackValue<'v>> UnpackValue<'v> for ListType<T> {
     const UNCHECKED: bool = T::UNCHECKED;
 
     fn unpack_value_impl(value: Value<'v>) -> Result<Option<Self>, Self::Error> {
-        match UnpackList::<UnpackAndDiscard<T>>::unpack_value_impl(value) {
-            Ok(Some(_)) => Ok(Some(ListType {
-                _item: std::marker::PhantomData,
-            })),
-            Ok(None) => Ok(None),
-            Err(e) => Err(e),
+        let Some(list) = ListRef::from_value(value) else {
+            return Ok(None);
+        };
+        for item in list.iter() {
+            if T::unpack_value_impl(item)?.is_none() {
+                return Ok(None);
+            }
         }
+        Ok(Some(ListType {
+            _item: std::marker::PhantomData,
+        }))
     }
 }
 

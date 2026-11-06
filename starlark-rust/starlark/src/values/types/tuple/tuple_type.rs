@@ -20,12 +20,10 @@ use std::marker::PhantomData;
 use crate as starlark;
 use crate::any::ProvidesStaticType;
 use crate::typing::Ty;
-use crate::values::UnpackAndDiscard;
 use crate::values::UnpackValue;
 use crate::values::Value;
 use crate::values::ValueOf;
 use crate::values::tuple::TupleRef;
-use crate::values::tuple::UnpackTuple;
 use crate::values::type_repr::StarlarkTypeRepr;
 
 /// A tuple type marker: a tuple of any length whose items are all `T`.
@@ -50,11 +48,15 @@ impl<'v, T: UnpackValue<'v>> UnpackValue<'v> for TupleType<T> {
     const UNCHECKED: bool = T::UNCHECKED;
 
     fn unpack_value_impl(value: Value<'v>) -> Result<Option<Self>, Self::Error> {
-        match UnpackTuple::<UnpackAndDiscard<T>>::unpack_value_impl(value) {
-            Ok(Some(_)) => Ok(Some(TupleType { _item: PhantomData })),
-            Ok(None) => Ok(None),
-            Err(e) => Err(e),
+        let Some(tuple) = TupleRef::from_value(value) else {
+            return Ok(None);
+        };
+        for item in tuple.iter() {
+            if T::unpack_value_impl(item)?.is_none() {
+                return Ok(None);
+            }
         }
+        Ok(Some(TupleType { _item: PhantomData }))
     }
 }
 

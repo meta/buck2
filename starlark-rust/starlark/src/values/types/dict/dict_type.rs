@@ -23,13 +23,11 @@ use crate as starlark;
 use crate::any::ProvidesStaticType;
 use crate::typing::Ty;
 use crate::values::Heap;
-use crate::values::UnpackAndDiscard;
 use crate::values::UnpackValue;
 use crate::values::Value;
 use crate::values::ValueOf;
 use crate::values::dict::AllocDict;
 use crate::values::dict::DictRef;
-use crate::values::dict::UnpackDictEntries;
 use crate::values::type_repr::StarlarkTypeRepr;
 
 /// A dict type marker.
@@ -55,16 +53,20 @@ impl<'v, K: UnpackValue<'v>, V: UnpackValue<'v>> UnpackValue<'v> for DictType<K,
     const UNCHECKED: bool = K::UNCHECKED || V::UNCHECKED;
 
     fn unpack_value_impl(value: Value<'v>) -> Result<Option<Self>, Self::Error> {
-        match UnpackDictEntries::<UnpackAndDiscard<K>, UnpackAndDiscard<V>>::unpack_value_impl(
-            value,
-        ) {
-            Ok(Some(_)) => Ok(Some(DictType {
-                k: PhantomData,
-                v: PhantomData,
-            })),
-            Ok(None) => Ok(None),
-            Err(e) => Err(e),
+        let Some(dict) = DictRef::from_value(value) else {
+            return Ok(None);
+        };
+        for (k, v) in dict.iter() {
+            if K::unpack_value_impl(k).map_err(Either::Left)?.is_none()
+                || V::unpack_value_impl(v).map_err(Either::Right)?.is_none()
+            {
+                return Ok(None);
+            }
         }
+        Ok(Some(DictType {
+            k: PhantomData,
+            v: PhantomData,
+        }))
     }
 }
 

@@ -61,7 +61,7 @@ use starlark::values::ValueTyped;
 use starlark::values::list::ListRef;
 use starlark::values::list::UnpackList;
 use starlark::values::starlark_value;
-use starlark::values::tuple::UnpackTuple;
+use starlark::values::tuple::TupleType;
 use starlark::values::type_repr::StarlarkTypeRepr;
 
 use crate::artifact_groups::ArtifactGroup;
@@ -1195,7 +1195,7 @@ pub fn register_cmd_args(builder: &mut GlobalsBuilder) {
     /// Replaces all parts matching pattern regular expression (or regular expressions)
     /// in each argument with replacement strings.
     fn cmd_args<'v>(
-        #[starlark(args)] args: UnpackTuple<StarlarkCommandLineValueUnpack<'v>>,
+        #[starlark(args)] args: ValueOf<'v, TupleType<StarlarkCommandLineValueUnpack<'v>>>,
         hidden: Option<StarlarkCommandLineValueUnpack<'v>>,
         delimiter: Option<StringValue<'v>>,
         format: Option<StringValue<'v>>,
@@ -1254,7 +1254,7 @@ pub fn register_cmd_args(builder: &mut GlobalsBuilder) {
             }
             builder.options_mut().replacements = replace_regex.into();
         }
-        for v in args.items {
+        for v in args.items() {
             builder.add_value_typed(v)?;
         }
         if let Some(hidden) = hidden {

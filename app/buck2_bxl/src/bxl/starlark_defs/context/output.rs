@@ -56,6 +56,7 @@ use starlark::values::StarlarkValue;
 use starlark::values::Trace;
 use starlark::values::UnpackValue;
 use starlark::values::Value;
+use starlark::values::ValueOf;
 use starlark::values::dict::DictRef;
 use starlark::values::dict::UnpackDictEntries;
 use starlark::values::list::ListRef;
@@ -66,7 +67,7 @@ use starlark::values::set::SetRef;
 use starlark::values::starlark_value;
 use starlark::values::structs::StructRef;
 use starlark::values::tuple::TupleRef;
-use starlark::values::tuple::UnpackTuple;
+use starlark::values::tuple::TupleType;
 use starlark::values::type_repr::StarlarkTypeRepr;
 
 use crate::bxl::starlark_defs::artifacts::ArtifactArg;
@@ -611,14 +612,14 @@ fn output_stream_methods(builder: &mut MethodsBuilder) {
     /// ```
     fn print<'v>(
         this: &'v StarlarkOutputStream,
-        #[starlark(args)] args: UnpackTuple<Value<'v>>,
+        #[starlark(args)] args: ValueOf<'v, TupleType<Value<'v>>>,
         #[starlark(default = " ")] sep: &'v str,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<NoneType> {
         let buffer_output = BufferPrintOutput {
             output: this.output(),
         };
-        this.print(args.into_iter(), sep, eval, buffer_output)?;
+        this.print(args.items(), sep, eval, buffer_output)?;
 
         Ok(NoneType)
     }
@@ -684,7 +685,7 @@ fn output_stream_methods(builder: &mut MethodsBuilder) {
     /// ```
     fn stream<'v>(
         this: &'v StarlarkOutputStream,
-        #[starlark(args)] args: UnpackTuple<Value<'v>>,
+        #[starlark(args)] args: ValueOf<'v, TupleType<Value<'v>>>,
         #[starlark(default = " ")] sep: &'v str,
         #[starlark(require = named, default = UnpackList::default())] wait_on: UnpackList<
             Either<&'v EnsuredArtifact, &'v EnsuredArtifactGroup>,
@@ -706,7 +707,7 @@ fn output_stream_methods(builder: &mut MethodsBuilder) {
         });
 
         let streaming_output = StreamingOutput::new(wait_on, this.state.dupe(), streaming_writer);
-        this.print(args.into_iter(), sep, eval, streaming_output)?;
+        this.print(args.items(), sep, eval, streaming_output)?;
 
         Ok(NoneType)
     }

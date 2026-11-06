@@ -38,7 +38,7 @@ use starlark::values::ValueOf;
 use starlark::values::ValueTyped;
 use starlark::values::list_or_tuple::UnpackListOrTuple;
 use starlark::values::none::NoneOr;
-use starlark::values::tuple::UnpackTuple;
+use starlark::values::tuple::TupleType;
 
 use crate::attrs::coerce::attr_type::AttrTypeExt;
 use crate::attrs::coerce::ctx::BuildAttrCoercionContext;
@@ -675,18 +675,16 @@ fn attr_module(registry: &mut GlobalsBuilder) {
 
     /// Given a list of alternative attributes, selects the first that matches and gives that to the rule.
     fn one_of<'v>(
-        #[starlark(args)] args: UnpackTuple<&StarlarkAttribute>,
+        #[starlark(args)] args: ValueOf<'v, TupleType<&'v StarlarkAttribute>>,
         #[starlark(require = named)] default: Option<Value<'v>>,
         #[starlark(require = named, default = "")] doc: &str,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<StarlarkAttribute> {
         let marks = args
-            .items
-            .iter()
+            .items()
             .fold(ToolMarks::NONE, |marks, arg| marks.union(arg.tool_marks()));
         let coercer = AttrType::one_of(
-            args.items
-                .into_iter()
+            args.items()
                 .map(|arg| arg.coercer_for_inner())
                 .collect::<Result<Vec<_>, _>>()?,
         );
@@ -695,18 +693,16 @@ fn attr_module(registry: &mut GlobalsBuilder) {
 
     /// Takes a tuple of values and gives a tuple to the rule.
     fn tuple<'v>(
-        #[starlark(args)] args: UnpackTuple<&StarlarkAttribute>,
+        #[starlark(args)] args: ValueOf<'v, TupleType<&'v StarlarkAttribute>>,
         #[starlark(require = named)] default: Option<Value<'v>>,
         #[starlark(require = named, default = "")] doc: &str,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<StarlarkAttribute> {
         let marks = args
-            .items
-            .iter()
+            .items()
             .fold(ToolMarks::NONE, |marks, arg| marks.union(arg.tool_marks()));
         let coercer = AttrType::tuple(
-            args.items
-                .into_iter()
+            args.items()
                 .map(|arg| arg.coercer_for_inner())
                 .collect::<Result<Vec<_>, _>>()?,
         );

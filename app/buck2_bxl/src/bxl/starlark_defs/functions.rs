@@ -32,9 +32,10 @@ use starlark::values::Heap;
 use starlark::values::StringValue;
 use starlark::values::UnpackValue;
 use starlark::values::Value;
+use starlark::values::ValueOf;
 use starlark::values::list::UnpackList;
 use starlark::values::none::NoneType;
-use starlark::values::tuple::UnpackTuple;
+use starlark::values::tuple::TupleType;
 use starlark::values::type_repr::StarlarkTypeRepr;
 
 use super::artifacts::visit_artifact_path_without_associated_deduped;
@@ -276,9 +277,11 @@ impl std::error::Error for BxlErrorWithoutStacktrace {}
 /// Global method for error handling.
 #[starlark_module]
 pub(crate) fn register_error_handling_function(builder: &mut GlobalsBuilder) {
-    fn fail_no_stacktrace(#[starlark(args)] args: UnpackTuple<Value>) -> anyhow::Result<NoneType> {
+    fn fail_no_stacktrace<'v>(
+        #[starlark(args)] args: ValueOf<'v, TupleType<Value<'v>>>,
+    ) -> anyhow::Result<NoneType> {
         let mut s = String::new();
-        for x in args {
+        for x in args.items() {
             s.push(' ');
             match x.unpack_str() {
                 Some(x) => s.push_str(x),

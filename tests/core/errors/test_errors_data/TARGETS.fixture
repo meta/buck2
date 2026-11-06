@@ -1,0 +1,1 @@
+soft_error("starlark_raised_soft_error", "Will be reported")

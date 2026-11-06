@@ -18,7 +18,9 @@ and one C compile action per module. The objects go into one static archive;
 `link_whole` says whether it links whole. When the toolchain has
 `c_export_flags`, a second C compile action per module makes the object that
 exports every symbol; `LeanModule.export_object` carries it for the rules
-that link shared libraries of Lean code.
+that link shared libraries of Lean code. The `[lean]` sub-target is the
+directory of the `.olean` files, `[modules]` the module names, one per line,
+in build order: a module after the modules it imports.
 
 Imports resolve through `LEAN_PATH`: every module of a library writes its
 `.olean` below one directory of the library, and the `LEAN_PATH` of a module
@@ -100,6 +102,7 @@ def _compile_impl(
     archiver_supports_argfiles: bool,
     archive: OutputArtifact,
     lean_dir: OutputArtifact,
+    module_list: OutputArtifact,
 ) -> list[Provider]:
     deps = deps_json.read_json()
 
@@ -163,7 +166,9 @@ def _compile_impl(
     lean_dir_files = {}
     # Every module after the modules it imports. `post_order_traversal` fails
     # on an import cycle.
-    for name in post_order_traversal(own_imports_only):
+    order = post_order_traversal(own_imports_only)
+    actions.write(module_list, "".join([name + "\n" for name in order]))
+    for name in order:
         src = own[name]
         path = name.replace(".", "/")
         depth = len(name.split("."))
@@ -275,6 +280,7 @@ _compile = dynamic_actions(
         "lean_dir": dynattrs.output(),
         "lean_flags": dynattrs.value(list[typing.Any]),
         "lean_path_separator": dynattrs.value(str),
+        "module_list": dynattrs.output(),
         "object_extension": dynattrs.value(str),
         "resources": dynattrs.value(list[Artifact]),
         "src_dirs": dynattrs.value(list[Artifact]),
@@ -318,9 +324,9 @@ def _archive_cmd(cxx: CxxToolchainInfo) -> cmd_args:
 def compile_lean_library(ctx: AnalysisContext, link_whole: bool) -> struct:
     """Compiles the sources of a `lean_library`, `lean_binary` or `lean_test`.
 
-    Returns a struct with `archive`, `lean_dir`, `modules` (the
-    `LeanLibraryInfo` dynamic value), `link_infos`, `merged_link_info` and
-    `native_deps`.
+    Returns a struct with `archive`, `lean_dir`, `module_list` (the module
+    names, one per line, in build order), `modules` (the `LeanLibraryInfo`
+    dynamic value), `link_infos`, `merged_link_info` and `native_deps`.
     """
     toolchain = ctx.attrs.lean_toolchain[LeanToolchainInfo]
     cxx = get_cxx_toolchain_info(ctx)
@@ -359,6 +365,7 @@ def compile_lean_library(ctx: AnalysisContext, link_whole: bool) -> struct:
     lean_deps = toolchain.stdlib + ctx.attrs.deps
     archive = ctx.actions.declare_output("lib{}.{}".format(ctx.label.name, cxx.linker_info.static_library_extension), has_content_based_path = False)
     lean_dir = ctx.actions.declare_output("lean", dir = True, has_content_based_path = False)
+    module_list = ctx.actions.declare_output("modules.txt", has_content_based_path = False)
     modules = ctx.actions.dynamic_output_new(
         _compile(
             label = ctx.label,
@@ -378,6 +385,7 @@ def compile_lean_library(ctx: AnalysisContext, link_whole: bool) -> struct:
             archiver_supports_argfiles = bool(cxx.linker_info.archiver_supports_argfiles),
             archive = archive.as_output(),
             lean_dir = lean_dir.as_output(),
+            module_list = module_list.as_output(),
         )
     )
 
@@ -399,6 +407,7 @@ def compile_lean_library(ctx: AnalysisContext, link_whole: bool) -> struct:
     return struct(
         archive = archive,
         lean_dir = lean_dir,
+        module_list = module_list,
         modules = modules,
         link_infos = link_infos,
         merged_link_info = create_merged_link_info(
@@ -416,7 +425,10 @@ def lean_library_impl(ctx: AnalysisContext) -> list[Provider]:
     return [
         DefaultInfo(
             default_output = library.archive,
-            sub_targets = {"lean": [DefaultInfo(default_output = library.lean_dir)]},
+            sub_targets = {
+                "lean": [DefaultInfo(default_output = library.lean_dir)],
+                "modules": [DefaultInfo(default_output = library.module_list)],
+            },
         ),
         LeanLibraryInfo(modules = library.modules),
         library.merged_link_info,

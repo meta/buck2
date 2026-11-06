@@ -29,8 +29,10 @@ use std::ops::Deref;
 
 use allocative::Allocative;
 use display_container::fmt_keyed_container;
+use either::Either;
 use serde::Serialize;
 use starlark_derive::StarlarkPagable;
+use starlark_derive::StarlarkRepresentations;
 use starlark_derive::starlark_value;
 use starlark_map::Equivalent;
 
@@ -51,11 +53,13 @@ use crate::values::FreezeResult;
 use crate::values::Freezer;
 use crate::values::FrozenHeap;
 use crate::values::Heap;
+use crate::values::StarlarkType;
 use crate::values::StarlarkValue;
 use crate::values::StaticFreezePlan;
 use crate::values::StringValue;
 use crate::values::Trace;
 use crate::values::Value;
+use crate::values::ValueTyped;
 use crate::values::comparison::equals_small_map;
 use crate::values::dict::DictRef;
 use crate::values::error::ValueError;
@@ -122,7 +126,6 @@ crate::register_simple_vtable_entry!(FrozenDict);
 // SAFETY: The vtable entry is registered above. The deser type id is
 // lifetime-erased, so the `'static` instantiation covers all heap lifetimes.
 unsafe impl<'v> crate::__derive_refs::VtableRegistered for DictGen<Dict<'v>> {}
-crate::register_ty_starlark_value!(DictGen<Dict<'_>>);
 
 static_starlark_value!(
     pub(crate) VALUE_EMPTY_FROZEN_DICT: DictGen<Dict<'static>> = DictGen(Dict {
@@ -445,13 +448,43 @@ impl<'v> DictLike<'v> for Dict<'v> {
 
 starlark::methods_static!(DICT_METHODS = crate::values::types::dict::methods::dict_methods);
 
-#[starlark_value(type = Dict::TYPE)]
-impl<'v, T: DictLike<'v> + 'v> StarlarkValue<'v> for DictGen<T>
-where
-    Self: ProvidesStaticType<'v>,
-{
-    type Canonical = DictGen<Dict<'v>>;
+/// A `dict` in either of its representations.
+#[derive(Debug, Clone, Copy, StarlarkRepresentations)]
+pub(crate) enum DictView<'v> {
+    Frozen(ValueTyped<'v, DictGen<Dict<'v>>>),
+    Unfrozen(ValueTyped<'v, DictGen<RefCell<Dict<'v>>>>),
+}
 
+/// `$e` with `$x` bound to the representation's `DictLike`.
+macro_rules! with_dict {
+    ($self:expr, |$x:ident| $e:expr) => {
+        match $self {
+            DictView::Frozen($x) => {
+                let $x = &$x.as_ref().0;
+                $e
+            }
+            DictView::Unfrozen($x) => {
+                let $x = &$x.as_ref().0;
+                $e
+            }
+        }
+    };
+}
+
+impl<'v> DictView<'v> {
+    #[inline]
+    fn content(
+        self,
+    ) -> Either<Ref<'v, SmallMap<Value<'v>, Value<'v>>>, &'v SmallMap<Value<'v>, Value<'v>>> {
+        match self {
+            DictView::Frozen(x) => Either::Right(x.as_ref().0.content()),
+            DictView::Unfrozen(x) => Either::Left(x.as_ref().0.content()),
+        }
+    }
+}
+
+#[starlark_value(type = Dict::TYPE)]
+impl<'v> StarlarkType<'v> for DictView<'v> {
     fn get_methods() -> Option<&'static Methods> {
         Some(DICT_METHODS.methods())
     }
@@ -459,7 +492,7 @@ where
     fn collect_repr(&self, r: &mut String) {
         // Fast path as repr() for dicts is quite hot
         r.push('{');
-        for (i, (name, value)) in self.0.content().iter().enumerate() {
+        for (i, (name, value)) in self.content().iter().enumerate() {
             if i != 0 {
                 r.push_str(", ");
             }
@@ -475,20 +508,18 @@ where
     }
 
     fn to_bool(&self) -> bool {
-        !self.0.content().is_empty()
+        !self.content().is_empty()
     }
 
     fn equals(&self, other: Value<'v>) -> crate::Result<bool> {
         match DictRef::from_value(other) {
             None => Ok(false),
-            Some(other) => {
-                equals_small_map(&*self.0.content(), &other.content, |x, y| x.equals(*y))
-            }
+            Some(other) => equals_small_map(&self.content(), &other.content, |x, y| x.equals(*y)),
         }
     }
 
     fn at(&self, index: Value<'v>, _heap: Heap<'v>) -> crate::Result<Value<'v>> {
-        match self.0.content().get_hashed_by_value(index.get_hashed()?) {
+        match self.content().get_hashed_by_value(index.get_hashed()?) {
             Some(v) => Ok(v.to_value()),
             None => Err(crate::Error::new_other(ValueError::KeyNotFound(
                 index.to_repr(),
@@ -497,54 +528,53 @@ where
     }
 
     fn length(&self) -> crate::Result<i32> {
-        Ok(self.0.content().len() as i32)
+        Ok(self.content().len() as i32)
     }
 
     fn is_in(&self, other: Value<'v>) -> crate::Result<bool> {
         Ok(self
-            .0
             .content()
             .contains_key_hashed_by_value(other.get_hashed()?))
     }
 
     unsafe fn iterate(&self, me: Value<'v>, _heap: Heap<'v>) -> crate::Result<Value<'v>> {
         unsafe {
-            self.0.iter_start()?;
+            with_dict!(self, |d| d.iter_start())?;
             Ok(me)
         }
     }
 
     unsafe fn iter_size_hint(&self, index: usize) -> (usize, Option<usize>) {
-        debug_assert!(index <= self.0.content().len());
-        let rem = self.0.content().len() - index;
+        let len = self.content().len();
+        debug_assert!(index <= len);
+        let rem = len - index;
         (rem, Some(rem))
     }
 
     unsafe fn iter_next(&self, index: usize, _heap: Heap<'v>) -> Option<Value<'v>> {
-        unsafe { self.0.content_unchecked().keys().nth(index).copied() }
+        unsafe { with_dict!(self, |d| d.content_unchecked().keys().nth(index).copied()) }
     }
 
     unsafe fn iter_stop(&self) {
-        unsafe {
-            self.0.iter_stop();
-        }
+        unsafe { with_dict!(self, |d| d.iter_stop()) }
     }
 
     fn set_at(&self, index: Value<'v>, alloc_value: Value<'v>) -> crate::Result<()> {
         let index = index.get_hashed()?;
-        self.0.set_at(index, alloc_value)
+        with_dict!(self, |d| d.set_at(index, alloc_value))
     }
 
     fn bit_or(&self, rhs: Value<'v>, heap: Heap<'v>) -> crate::Result<Value<'v>> {
         let rhs = DictRef::from_value(rhs)
             .map_or_else(|| ValueError::unsupported_with(self, "|", rhs), Ok)?;
-        if self.0.content().is_empty() {
+        let content = self.content();
+        if content.is_empty() {
             return Ok(heap.alloc((*rhs).clone()));
         }
         // Might be faster if we preallocate the capacity, but then copying in the LHS
         // is more expensive and might oversize given the behaviour on duplicates.
         // If this becomes a bottleneck, benchmark.
-        let mut items = self.0.content().clone();
+        let mut items = content.clone();
         for (k, v) in rhs.iter_hashed() {
             items.insert_hashed(k, v);
         }
@@ -558,6 +588,17 @@ where
     fn get_type_starlark_repr() -> Ty {
         Ty::any_dict()
     }
+}
+
+#[starlark_value]
+impl<'v> StarlarkValue<'v> for DictGen<RefCell<Dict<'v>>> {
+    type Canonical = DictGen<Dict<'v>>;
+    type Type = DictView<'v>;
+}
+
+#[starlark_value]
+impl<'v> StarlarkValue<'v> for DictGen<Dict<'v>> {
+    type Type = DictView<'v>;
 }
 
 impl<'v, T: DictLike<'v>> Serialize for DictGen<T> {

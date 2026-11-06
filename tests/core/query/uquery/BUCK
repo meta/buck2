@@ -5,9 +5,9 @@ oncall("build_infra")
 buck2_core_tests(
     target_extra_attrs = {
         "test_uquery": {
-            "deps": [
-                "//manifold/clients/python:manifold_client_deprecated",
-            ],
+            "env": {
+                "MANIFOLD_CLI": "$(exe_target fbcode//manifold/clients/cli:manifold)",
+            },
         },
     },
 )

@@ -237,12 +237,6 @@ pub trait StarlarkType<'v>: 'v + Debug + Display + Sized {
     /// of the representation, unless the block overrides it.
     fn get_type_starlark_repr() -> Ty;
 
-    /// Function is implemented for types values.
-    #[doc(hidden)]
-    fn type_matches_value(&self, _value: Value<'v>, _private: Private) -> bool {
-        unreachable!("`type_matches_value` should only be called on special types")
-    }
-
     /// Get the members associated with this type, accessible via `this_type.x`.
     /// These members will have `dir`/`getattr`/`hasattr` properly implemented,
     /// so it is the preferred way to go if possible.
@@ -926,11 +920,20 @@ pub trait StarlarkValue<'v>:
     /// The API is based on
     /// [std::any::Provider](https://doc.rust-lang.org/std/any/trait.Provider.html).
     ///
-    /// This is the one method of a value that lives on its representation rather than on
-    /// [`StarlarkType`]: what it provides are references into the representation's memory, for
-    /// the heap's lifetime, which the receiver of a `StarlarkType` method, built for the call,
-    /// cannot give out.
+    /// This lives on the representation rather than on [`StarlarkType`]: what it provides are
+    /// references into the representation's memory, for the heap's lifetime, which the receiver
+    /// of a `StarlarkType` method, built for the call, cannot give out.
     fn provide(&'v self, demand: &mut Demand<'_, 'v>) {
         let _ = demand;
+    }
+
+    /// Whether `value` is of the type this value denotes, for the representations of `type`.
+    ///
+    /// This lives on the representation rather than on [`StarlarkType`]: it runs on every runtime
+    /// type check, and a representation of `type` is monomorphised over its matcher, so here the
+    /// matcher is called statically where the view of `type` could only call it dynamically.
+    #[doc(hidden)]
+    fn type_matches_value(&self, _value: Value<'v>, _private: Private) -> bool {
+        unreachable!("`type_matches_value` should only be called on special types")
     }
 }

@@ -153,7 +153,7 @@ fn is_representation_item(item: &syn::ImplItem) -> bool {
         syn::ImplItem::Type(t) => t.ident == "Canonical" || t.ident == "Type",
         syn::ImplItem::Fn(f) => matches!(
             f.sig.ident.to_string().as_str(),
-            "provide" | "is_special" | "with_type"
+            "provide" | "type_matches_value" | "is_special" | "with_type"
         ),
         _ => false,
     }

@@ -50,11 +50,13 @@ use crate::values::Freeze;
 use crate::values::FrozenHeap;
 use crate::values::Heap;
 use crate::values::NoSerialize;
+use crate::values::StarlarkType;
 use crate::values::StarlarkValue;
 use crate::values::StaticValueRegistered;
 use crate::values::StringValue;
 use crate::values::Trace;
 use crate::values::Value;
+use crate::values::ValueTyped;
 use crate::values::dict::DictRef;
 use crate::values::list::ListRef;
 use crate::values::none::NoneType;
@@ -210,38 +212,26 @@ crate::register_ty_starlark_value!(TypeCompiledImplAsStarlarkValue<DummyTypeMatc
 
 starlark::methods_static!(TYPE_COMPILED_METHODS = type_compiled_methods);
 
+/// The behaviour of a compiled type, whose representations are one per matcher.
 #[starlark_value(type = "type")]
-impl<'v, T: 'static> StarlarkValue<'v> for TypeCompiledImplAsStarlarkValue<T>
-where
-    T: TypeMatcher,
-{
-    type Canonical = TypeCompiledImplAsStarlarkValue<DummyTypeMatcher>;
-
-    fn type_matches_value(&self, value: Value<'v>, _private: Private) -> bool {
-        self.type_compiled_impl.matches(value)
-    }
-
-    fn provide(&'v self, demand: &mut Demand<'_, 'v>) {
-        demand.provide_ref_static::<dyn TypeCompiledDyn>(self);
-    }
-
+impl<'v> StarlarkType<'v> for TypeCompiled<'v> {
     fn write_hash(&self, hasher: &mut StarlarkHasher) -> crate::Result<()> {
-        Hash::hash(&self.ty, hasher);
+        Hash::hash(self.as_ty(), hasher);
         Ok(())
     }
 
     fn equals(&self, other: Value<'v>) -> crate::Result<bool> {
-        let Some(other) = other.downcast_ref::<Self>() else {
+        let Some(other) = other.request_value::<&dyn TypeCompiledDyn>() else {
             return Ok(false);
         };
-        Ok(self.ty == other.ty)
+        Ok(self.as_ty() == other.as_ty_dyn())
     }
 
     fn eval_type(&self) -> Option<Ty> {
         // `TypeCompiled::new` handles this type explicitly,
         // but implement this function to make proc-macro generate `bit_or`.
         // Also safer to be explicit here.
-        Some(self.ty.clone())
+        Some(self.as_ty().clone())
     }
 
     fn get_methods() -> Option<&'static Methods>
@@ -249,6 +239,27 @@ where
         Self: Sized,
     {
         Some(TYPE_COMPILED_METHODS.methods())
+    }
+}
+
+#[starlark_value]
+impl<'v, T: 'static> StarlarkValue<'v> for TypeCompiledImplAsStarlarkValue<T>
+where
+    T: TypeMatcher,
+{
+    type Canonical = TypeCompiledImplAsStarlarkValue<DummyTypeMatcher>;
+    type Type = TypeCompiled<'v>;
+
+    fn with_type<R>(this: ValueTyped<'v, Self>, f: impl FnOnce(&Self::Type) -> R) -> R {
+        f(&TypeCompiled(this.to_value()))
+    }
+
+    fn type_matches_value(&self, value: Value<'v>, _private: Private) -> bool {
+        self.type_compiled_impl.matches(value)
+    }
+
+    fn provide(&'v self, demand: &mut Demand<'_, 'v>) {
+        demand.provide_ref_static::<dyn TypeCompiledDyn>(self);
     }
 }
 

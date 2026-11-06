@@ -359,20 +359,26 @@ impl Gen {
         }
         trait_item.items.extend(extra_items);
 
-        // `provide` hands out references into the representation's memory, so it is a
-        // `StarlarkValue` method rather than a `StarlarkType` one; the vtable needs an entry for
-        // it all the same.
-        let provide: TraitItemFn = syn::parse_quote! {
-            fn provide(&'v self, demand: &mut Demand<'_, 'v>);
-        };
-        let VTableEntry {
-            field,
-            init,
-            init_for_uninitialized,
-        } = self.vtable_entry(&provide, Dispatch::OnRepresentation)?;
-        value_fields.push(field);
-        value_inits.push(init);
-        value_uninits.push(init_for_uninitialized);
+        // The `StarlarkValue` methods with vtable entries all the same; `StarlarkValue` says why
+        // each is not a `StarlarkType` method.
+        let representation_methods: [TraitItemFn; 2] = [
+            syn::parse_quote! {
+                fn provide(&'v self, demand: &mut Demand<'_, 'v>);
+            },
+            syn::parse_quote! {
+                fn type_matches_value(&self, value: Value<'v>, private: Private) -> bool;
+            },
+        ];
+        for method in &representation_methods {
+            let VTableEntry {
+                field,
+                init,
+                init_for_uninitialized,
+            } = self.vtable_entry(method, Dispatch::OnRepresentation)?;
+            value_fields.push(field);
+            value_inits.push(init);
+            value_uninits.push(init_for_uninitialized);
+        }
 
         Ok(quote_spanned! {
             self.trait_item.span() =>

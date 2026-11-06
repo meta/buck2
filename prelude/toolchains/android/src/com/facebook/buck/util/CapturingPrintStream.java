@@ -10,11 +10,13 @@
 
 package com.facebook.buck.util;
 
+import com.facebook.infer.annotation.Nullsafe;
 import java.io.ByteArrayOutputStream;
 import java.io.PrintStream;
 import java.io.UnsupportedEncodingException;
 import java.nio.charset.Charset;
 
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public class CapturingPrintStream extends PrintStream {
 
   private final ByteArrayOutputStream byteArrayOutputStream;

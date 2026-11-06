@@ -11,11 +11,13 @@
 package com.facebook.buck.util;
 
 import com.facebook.buck.util.function.ThrowingSupplier;
+import com.facebook.infer.annotation.Nullsafe;
 import com.google.common.base.Preconditions;
 import com.google.common.base.Throwables;
 import javax.annotation.Nullable;
 
 /** A Generic memoizer capable of memoizing Exceptions */
+@Nullsafe(Nullsafe.Mode.LOCAL)
 class AbstractMemoizer<T, E extends Exception> {
 
   @Nullable private volatile T value = null;

@@ -10,10 +10,12 @@
 
 package com.facebook.buck.util.escaper;
 
+import com.facebook.infer.annotation.Nullsafe;
 import com.google.common.base.CharMatcher;
 import java.util.function.Function;
 
 /** Utility functions used for escaping */
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public class EscaperUtils {
   /**
    * Escapes the special characters identified the {@link CharMatcher}, using single quotes.

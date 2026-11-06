@@ -11,6 +11,7 @@
 package com.facebook.buck.util;
 
 import com.facebook.buck.core.util.log.Logger;
+import com.facebook.infer.annotation.Nullsafe;
 import java.io.Closeable;
 import java.io.IOException;
 import java.nio.file.Files;
@@ -19,6 +20,7 @@ import java.nio.file.attribute.FileAttribute;
 import java.util.function.Supplier;
 
 /** Creates a temporary file that is deleted when this object is closed. */
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public class NamedTemporaryFile implements Closeable, Supplier<Path> {
   private static final Logger LOG = Logger.get(NamedTemporaryFile.class);
 

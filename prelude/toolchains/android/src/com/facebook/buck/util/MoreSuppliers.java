@@ -10,6 +10,7 @@
 
 package com.facebook.buck.util;
 
+import com.facebook.infer.annotation.Nullsafe;
 import com.fasterxml.jackson.core.JsonGenerator;
 import com.fasterxml.jackson.databind.SerializerProvider;
 import com.fasterxml.jackson.databind.annotation.JsonSerialize;
@@ -18,6 +19,7 @@ import java.io.IOException;
 import java.util.Objects;
 import java.util.function.Supplier;
 
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public final class MoreSuppliers {
   private MoreSuppliers() {}
 

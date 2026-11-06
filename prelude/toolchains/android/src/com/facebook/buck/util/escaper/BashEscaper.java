@@ -10,10 +10,12 @@
 
 package com.facebook.buck.util.escaper;
 
+import com.facebook.infer.annotation.Nullsafe;
 import com.google.common.base.CharMatcher;
 import java.util.function.Function;
 
 /** Utils for escaping bash */
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public class BashEscaper {
   public static final CharMatcher BASH_SPECIAL_CHARS =
       CharMatcher.anyOf("<>|!?*[]$\\(){}\"'`&;=").or(CharMatcher.whitespace());

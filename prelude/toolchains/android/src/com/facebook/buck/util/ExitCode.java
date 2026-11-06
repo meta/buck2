@@ -10,6 +10,7 @@
 
 package com.facebook.buck.util;
 
+import com.facebook.infer.annotation.Nullsafe;
 import com.fasterxml.jackson.annotation.JsonValue;
 import com.google.common.collect.ImmutableMap;
 
@@ -28,6 +29,7 @@ import com.google.common.collect.ImmutableMap;
  *
  * <p>Binary protocol is open to extension but closed to modification.
  */
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public enum ExitCode {
   // Success 0
 

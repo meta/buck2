@@ -11,12 +11,14 @@
 package com.facebook.buck.util;
 
 import com.facebook.buck.util.function.ThrowingSupplier;
+import com.facebook.infer.annotation.Nullsafe;
 import java.util.function.Supplier;
 
 /**
  * Memoizes a value, supporting passing in a supplier when getting the value, unlike {@link
  * MoreSuppliers.MemoizingSupplier}.
  */
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public class Memoizer<T> extends AbstractMemoizer<T, RuntimeException> {
 
   public T get(Supplier<T> delegate) {

@@ -10,8 +10,10 @@
 
 package com.facebook.buck.util.unit;
 
+import com.facebook.infer.annotation.Nullsafe;
 import java.math.BigDecimal;
 
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public enum SizeUnit {
   BYTES(0, "bytes"),
   KILOBYTES(1, "Kbytes"),

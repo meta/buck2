@@ -12,6 +12,7 @@ package com.facebook.buck.util.relativepathmap;
 
 import com.facebook.buck.core.filesystems.AbsPath;
 import com.facebook.buck.io.filesystem.impl.ProjectFilesystemUtils;
+import com.facebook.infer.annotation.Nullsafe;
 import com.google.common.collect.ImmutableSet;
 import java.io.IOException;
 import java.nio.file.Files;
@@ -19,6 +20,7 @@ import java.nio.file.Path;
 import java.util.Map;
 
 /** Utilities method related to process relative path maps */
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public class RelativePathMapUtils {
 
   /** Adds path to relative map */

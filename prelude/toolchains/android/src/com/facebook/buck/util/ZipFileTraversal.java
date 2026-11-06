@@ -10,12 +10,14 @@
 
 package com.facebook.buck.util;
 
+import com.facebook.infer.annotation.Nullsafe;
 import java.io.IOException;
 import java.nio.file.Path;
 import java.util.Enumeration;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipFile;
 
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public abstract class ZipFileTraversal {
   private final Path file;
 

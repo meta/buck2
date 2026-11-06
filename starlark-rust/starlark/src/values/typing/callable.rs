@@ -307,6 +307,19 @@ impl<'v, P: StarlarkCallableParamSpec, R: StarlarkTypeRepr> Dupe
 {
 }
 
+// SAFETY: as for `StarlarkCallable`.
+unsafe impl<'v, P: StarlarkCallableParamSpec + 'static, R: StarlarkTypeRepr + 'static>
+    ProvidesStaticType<'v> for StarlarkCallableChecked<'v, P, R>
+{
+    type StaticType = StarlarkCallableChecked<'static, P, R>;
+}
+
+impl<P: StarlarkCallableParamSpec + 'static, R: StarlarkTypeRepr + 'static> IsStaticType
+    for StarlarkCallableChecked<'static, P, R>
+{
+    type Reinfect<'lt> = StarlarkCallableChecked<'lt, P, R>;
+}
+
 impl<'v, P: StarlarkCallableParamSpec, R: StarlarkTypeRepr> Debug
     for StarlarkCallableChecked<'v, P, R>
 {

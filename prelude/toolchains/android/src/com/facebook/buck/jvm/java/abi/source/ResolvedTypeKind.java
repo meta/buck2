@@ -10,6 +10,9 @@
 
 package com.facebook.buck.jvm.java.abi.source;
 
+import com.facebook.infer.annotation.Nullsafe;
+
+@Nullsafe(Nullsafe.Mode.LOCAL)
 enum ResolvedTypeKind {
   /** Type would resolve successfully. */
   RESOLVED_TYPE,

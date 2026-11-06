@@ -11,10 +11,12 @@
 package com.facebook.buck.jvm.java.abi.source;
 
 import com.facebook.buck.jvm.java.abi.source.api.CannotInferException;
+import com.facebook.infer.annotation.Nullsafe;
 import java.util.List;
 import javax.lang.model.type.TypeMirror;
 
 /** Returned as the type of an {@link InferredTypeElement}. */
+@Nullsafe(Nullsafe.Mode.LOCAL)
 class InferredDeclaredType extends StandaloneDeclaredType {
   public InferredDeclaredType(InferredTypeElement inferredTypeElement) {
     super(inferredTypeElement);

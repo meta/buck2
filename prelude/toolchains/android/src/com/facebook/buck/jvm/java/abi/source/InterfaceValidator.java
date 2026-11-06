@@ -15,6 +15,7 @@ import com.facebook.buck.jvm.java.abi.source.TreeBackedTypeResolutionSimulator.T
 import com.facebook.buck.jvm.java.abi.source.api.SourceOnlyAbiRuleInfoFactory.SourceOnlyAbiRuleInfo;
 import com.facebook.buck.jvm.java.plugin.adapter.BuckJavacTask;
 import com.facebook.buck.util.liteinfersupport.Nullable;
+import com.facebook.infer.annotation.Nullsafe;
 import com.sun.source.tree.ClassTree;
 import com.sun.source.tree.CompilationUnitTree;
 import com.sun.source.tree.Tree;
@@ -55,6 +56,7 @@ import javax.tools.Diagnostic;
  * <p>In order to be compatible, compile-time constants in missing classes may not be referenced
  * from the non-private interface of a class being compiled.
  */
+@Nullsafe(Nullsafe.Mode.LOCAL)
 class InterfaceValidator {
   private final Elements elements;
   private final Diagnostic.Kind messageKind;

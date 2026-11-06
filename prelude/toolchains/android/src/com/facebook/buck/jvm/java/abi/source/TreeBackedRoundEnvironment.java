@@ -10,6 +10,7 @@
 
 package com.facebook.buck.jvm.java.abi.source;
 
+import com.facebook.infer.annotation.Nullsafe;
 import java.lang.annotation.Annotation;
 import java.util.LinkedHashSet;
 import java.util.Set;
@@ -19,6 +20,7 @@ import javax.annotation.processing.RoundEnvironment;
 import javax.lang.model.element.Element;
 import javax.lang.model.element.TypeElement;
 
+@Nullsafe(Nullsafe.Mode.LOCAL)
 class TreeBackedRoundEnvironment implements RoundEnvironment {
   private final FrontendOnlyJavacTask task;
   private final RoundEnvironment javacRoundEnvironment;

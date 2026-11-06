@@ -11,6 +11,7 @@
 package com.facebook.buck.jvm.java.abi.source;
 
 import com.facebook.buck.util.liteinfersupport.Nullable;
+import com.facebook.infer.annotation.Nullsafe;
 import com.sun.source.tree.Tree;
 import com.sun.source.util.TreePath;
 import java.util.ArrayList;
@@ -29,6 +30,7 @@ import javax.lang.model.type.TypeMirror;
  * com.sun.source.tree.Tree}. This results in an incomplete implementation; see documentation for
  * individual methods and {@link com.facebook.buck.jvm.java.abi.source} for more information.
  */
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public abstract class TreeBackedElement extends TreeBackedAnnotatedConstruct
     implements ArtificialElement {
   private final Element underlyingElement;

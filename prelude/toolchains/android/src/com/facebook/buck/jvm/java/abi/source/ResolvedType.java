@@ -10,6 +10,7 @@
 
 package com.facebook.buck.jvm.java.abi.source;
 
+import com.facebook.infer.annotation.Nullsafe;
 import java.util.Collections;
 import java.util.Set;
 import javax.lang.model.element.TypeElement;
@@ -18,6 +19,7 @@ import javax.lang.model.element.TypeElement;
  * Represents a resolved type as simulated by {@link
  * com.facebook.buck.jvm.java.abi.source.CompilerTypeResolutionSimulator}.
  */
+@Nullsafe(Nullsafe.Mode.LOCAL)
 class ResolvedType {
   public final ResolvedTypeKind kind;
   public final TypeElement type;

@@ -11,10 +11,12 @@
 package com.facebook.buck.jvm.java.abi.source;
 
 import com.facebook.buck.util.liteinfersupport.Nullable;
+import com.facebook.infer.annotation.Nullsafe;
 import java.util.List;
 import javax.lang.model.element.Element;
 
 /** Interface for {@link Element}s that are implemented by something other than javac itself. */
+@Nullsafe(Nullsafe.Mode.LOCAL)
 interface ArtificialElement extends Element {
   @Override
   @Nullable

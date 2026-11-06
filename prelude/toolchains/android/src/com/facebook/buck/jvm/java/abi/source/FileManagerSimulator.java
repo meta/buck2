@@ -12,12 +12,14 @@ package com.facebook.buck.jvm.java.abi.source;
 
 import com.facebook.buck.jvm.java.abi.source.api.SourceOnlyAbiRuleInfoFactory.SourceOnlyAbiRuleInfo;
 import com.facebook.buck.util.liteinfersupport.Nullable;
+import com.facebook.infer.annotation.Nullsafe;
 import com.sun.source.util.Trees;
 import javax.lang.model.element.Element;
 import javax.lang.model.element.TypeElement;
 import javax.lang.model.util.Elements;
 
 /** Simulates the behavior of {@code javac}'s file manager for source-only ABI classpaths. */
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public class FileManagerSimulator {
   private final Elements elements;
   private final Trees trees;

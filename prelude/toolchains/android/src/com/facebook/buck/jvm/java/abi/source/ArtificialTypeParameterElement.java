@@ -10,6 +10,7 @@
 
 package com.facebook.buck.jvm.java.abi.source;
 
+import com.facebook.infer.annotation.Nullsafe;
 import java.util.List;
 import javax.lang.model.element.TypeParameterElement;
 
@@ -17,6 +18,7 @@ import javax.lang.model.element.TypeParameterElement;
  * Interface for {@link TypeParameterElement}s that are implemented by something other than javac
  * itself.
  */
+@Nullsafe(Nullsafe.Mode.LOCAL)
 interface ArtificialTypeParameterElement extends TypeParameterElement, ArtificialElement {
   @Override
   List<? extends ArtificialElement> getEnclosedElements();

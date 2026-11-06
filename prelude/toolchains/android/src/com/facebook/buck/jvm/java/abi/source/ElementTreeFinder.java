@@ -11,6 +11,7 @@
 package com.facebook.buck.jvm.java.abi.source;
 
 import com.facebook.buck.util.liteinfersupport.Nullable;
+import com.facebook.infer.annotation.Nullsafe;
 import com.sun.source.tree.BlockTree;
 import com.sun.source.tree.ClassTree;
 import com.sun.source.tree.CompilationUnitTree;
@@ -29,6 +30,7 @@ import javax.lang.model.element.Element;
  * method and type parameters. It is also faster for doing a lot of lookups within a given
  * compilation unit.
  */
+@Nullsafe(Nullsafe.Mode.LOCAL)
 class ElementTreeFinder {
 
   public static ElementTreeFinder forCompilationUnit(CompilationUnitTree tree, Trees trees) {

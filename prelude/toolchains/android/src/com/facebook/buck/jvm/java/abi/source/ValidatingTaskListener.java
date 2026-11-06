@@ -15,6 +15,7 @@ import com.facebook.buck.jvm.java.plugin.adapter.BuckJavacTask;
 import com.facebook.buck.jvm.java.plugin.adapter.BuckJavacTaskProxyImpl;
 import com.facebook.buck.jvm.java.plugin.api.BuckJavacTaskProxy;
 import com.facebook.buck.util.liteinfersupport.Nullable;
+import com.facebook.infer.annotation.Nullsafe;
 import com.sun.source.tree.CompilationUnitTree;
 import com.sun.source.util.TaskEvent;
 import com.sun.source.util.TaskListener;
@@ -28,6 +29,7 @@ import javax.tools.Diagnostic;
  * A {@link TaskListener} that is used during full compilation to validate the guesses made by
  * source-based ABI generation.
  */
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public class ValidatingTaskListener implements TaskListener {
   private final BuckJavacTask javacTask;
   private final List<CompilationUnitTree> compilationUnits = new ArrayList<>();

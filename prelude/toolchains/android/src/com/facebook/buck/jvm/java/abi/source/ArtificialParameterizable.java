@@ -10,12 +10,14 @@
 
 package com.facebook.buck.jvm.java.abi.source;
 
+import com.facebook.infer.annotation.Nullsafe;
 import java.util.List;
 import javax.lang.model.element.Parameterizable;
 
 /**
  * Interface for {@link Parameterizable}s that are implemented by something other than javac itself.
  */
+@Nullsafe(Nullsafe.Mode.LOCAL)
 interface ArtificialParameterizable extends Parameterizable, ArtificialElement {
   @Override
   List<? extends ArtificialTypeParameterElement> getTypeParameters();

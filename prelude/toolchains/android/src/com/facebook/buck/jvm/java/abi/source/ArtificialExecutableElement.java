@@ -10,6 +10,7 @@
 
 package com.facebook.buck.jvm.java.abi.source;
 
+import com.facebook.infer.annotation.Nullsafe;
 import java.util.List;
 import javax.lang.model.element.ExecutableElement;
 
@@ -17,6 +18,7 @@ import javax.lang.model.element.ExecutableElement;
  * Interface for {@link ExecutableElement}s that are implemented by something other than javac
  * itself.
  */
+@Nullsafe(Nullsafe.Mode.LOCAL)
 interface ArtificialExecutableElement extends ExecutableElement, ArtificialParameterizable {
   @Override
   List<? extends ArtificialVariableElement> getParameters();

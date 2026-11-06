@@ -11,6 +11,7 @@
 package com.facebook.buck.jvm.java.abi.source;
 
 import com.facebook.buck.util.liteinfersupport.Nullable;
+import com.facebook.infer.annotation.Nullsafe;
 import java.util.List;
 import javax.lang.model.element.AnnotationMirror;
 import javax.lang.model.type.TypeKind;
@@ -22,6 +23,7 @@ import javax.lang.model.type.WildcardType;
  * implementation. It requires a {@link TypeMirror}, but does not depend on any particular
  * implementation of it (beyond the spec).
  */
+@Nullsafe(Nullsafe.Mode.LOCAL)
 class StandaloneWildcardType extends StandaloneTypeMirror implements WildcardType {
 
   @Nullable private final TypeMirror extendsBound;

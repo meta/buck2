@@ -9,6 +9,7 @@ buck_java_library(
     name = "source",
     srcs = glob(["*.java"]),
     provided_deps = [
+        "prelude//toolchains/android/third-party:infer-annotations",
         # Interface-only api module for communicating back to Buck core, also loaded by the bootstrapper
         "prelude//toolchains/android/src/com/facebook/buck/jvm/java/abi/source/api:api",
         # Another interface-only api module for communicating back to Buck core, also loaded by the bootstrapper

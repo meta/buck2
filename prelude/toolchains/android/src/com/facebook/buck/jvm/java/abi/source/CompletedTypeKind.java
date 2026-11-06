@@ -10,6 +10,9 @@
 
 package com.facebook.buck.jvm.java.abi.source;
 
+import com.facebook.infer.annotation.Nullsafe;
+
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public enum CompletedTypeKind {
   COMPLETED_TYPE,
   PARTIALLY_COMPLETED_TYPE,

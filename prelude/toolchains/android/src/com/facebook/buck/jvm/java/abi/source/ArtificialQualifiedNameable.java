@@ -10,7 +10,9 @@
 
 package com.facebook.buck.jvm.java.abi.source;
 
+import com.facebook.infer.annotation.Nullsafe;
 import javax.lang.model.element.QualifiedNameable;
 
 /** Interface for {@link QualifiedNameable}s that are implemented by something other than javac. */
+@Nullsafe(Nullsafe.Mode.LOCAL)
 interface ArtificialQualifiedNameable extends QualifiedNameable, ArtificialElement {}

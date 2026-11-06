@@ -12,6 +12,7 @@ package com.facebook.buck.jvm.java.abi.source;
 
 import com.facebook.buck.jvm.java.abi.source.api.CannotInferException;
 import com.facebook.buck.util.liteinfersupport.Nullable;
+import com.facebook.infer.annotation.Nullsafe;
 import java.lang.annotation.Annotation;
 import java.util.List;
 import java.util.Set;
@@ -24,6 +25,7 @@ import javax.lang.model.element.Name;
  * Represents an {@link javax.lang.model.element.Element} whose existence has been inferred from
  * references to it in the code.
  */
+@Nullsafe(Nullsafe.Mode.LOCAL)
 abstract class InferredElement implements ArtificialElement {
   private final Name simpleName;
   @Nullable private final ArtificialElement enclosingElement;

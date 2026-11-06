@@ -12,6 +12,7 @@ package com.facebook.buck.jvm.java.abi.source;
 
 import com.facebook.buck.jvm.java.lang.model.AnnotationValueScanner8;
 import com.facebook.buck.util.liteinfersupport.Nullable;
+import com.facebook.infer.annotation.Nullsafe;
 import java.lang.annotation.Annotation;
 import java.util.ArrayList;
 import java.util.Collections;
@@ -27,6 +28,7 @@ import javax.lang.model.type.TypeMirror;
  * see documentation for individual methods and {@link com.facebook.buck.jvm.java.abi.source} for
  * more information.
  */
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public class TreeBackedAnnotatedConstruct implements ArtificialAnnotatedConstruct {
   private final AnnotatedConstruct underlyingConstruct;
   private final List<TreeBackedAnnotationMirror> annotationMirrors = new ArrayList<>();

@@ -10,11 +10,14 @@
 
 package com.facebook.buck.jvm.java.abi.source;
 
+import com.facebook.infer.annotation.Nullsafe;
+
 /**
  * Thrown when an error in source code is detected in a place that doesn't have enough context to
  * report a graceful compiler error. Caught at a higher level, where the message is reported as a
  * compiler error with relevant context.
  */
+@Nullsafe(Nullsafe.Mode.LOCAL)
 class CompilerErrorException extends Exception {
   public CompilerErrorException(String message) {
     super(message);

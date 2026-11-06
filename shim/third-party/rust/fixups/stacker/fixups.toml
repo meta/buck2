@@ -7,3 +7,20 @@
 # above-listed licenses.
 
 buildscript.run = false
+
+# On Windows, src/backends/windows.rs links a library named stacker, which the
+# build script compiles from src/arch/windows.c. Run it there.
+['cfg(target_os = "windows")'.buildscript.run]
+rustc_link_lib = true
+rustc_link_search = true
+
+# cc-rs reads the profile Cargo would have set. With CC and AR empty it finds
+# MSVC's cl.exe and lib.exe itself, as under Cargo. Through the prelude's
+# compiler and archiver wrappers the object and the archive land where cc-rs
+# does not look for them.
+['cfg(target_os = "windows")'.buildscript.run.env]
+AR = ""
+CC = ""
+OPT_LEVEL = "3"
+PROFILE = "release"
+DEBUG = "false"

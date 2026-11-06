@@ -7,3 +7,17 @@
 # above-listed licenses.
 
 buildscript.run = false
+
+# buck2 uses mimalloc as its global allocator on Windows only
+# (app/buck2/bin/buck2.rs), so only Windows needs the C code the build script
+# would compile. With MSVC the build script compiles static.c as C++17, which
+# mimalloc expects for its atomics, and these are its release defines. Without
+# the v2 feature it builds v3.
+[['cfg(all(target_os = "windows", target_env = "msvc"))'.cxx_library]]
+name = "mimalloc"
+srcs = ["c_src/mimalloc/v3/src/static.c"]
+headers = ["c_src/mimalloc/v3/include/**/*.h", "c_src/mimalloc/v3/src/**/*.h", "c_src/mimalloc/v3/src/**/*.c"]
+include_paths = ["c_src/mimalloc/v3/include", "c_src/mimalloc/v3/src"]
+compiler_flags = ["/TP", "/std:c++17", "/Zc:__cplusplus"]
+preprocessor_flags = ["-DMI_DEBUG=0", "-DMI_BUILD_RELEASE", "-DNDEBUG"]
+preferred_linkage = "static"

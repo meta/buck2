@@ -27,12 +27,9 @@ class ShowHeadersTest(unittest.TestCase):
             with open(dep_file) as f:
                 return f.read().splitlines()
 
-    def test_dots_and_spaces_are_deleted_from_header_paths(self) -> None:
+    def test_header_paths_are_kept_verbatim(self) -> None:
         # What clang 21 prints for `clang -H -I.gen -c ./r.c` when `r.c` includes `"v.h"`,
         # `<g.h>` and `"sub/my dir/s.h"`, and `g.h` includes `"h.h"` next to it.
         deps = self._deps(". ./v.h\n. .gen/g.h\n.. .gen/h.h\n. ./sub/my dir/s.h\n")
 
-        # Deleting every space and leading dot makes `./v.h` and `./sub/my dir/s.h` absolute
-        # paths, dropped as outside the build root, and leaves the other two naming files
-        # that do not exist.
-        self.assertEqual(deps, ["gen/g.h", "gen/h.h", "r.c"])
+        self.assertEqual(deps, ["v.h", ".gen/g.h", ".gen/h.h", "sub/my dir/s.h", "r.c"])

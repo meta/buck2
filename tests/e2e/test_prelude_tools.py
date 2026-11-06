@@ -81,19 +81,18 @@ class PreludeToolsTest(BuckTestCase):
 
     # prelude/cxx/tools/show_headers_to_dep_file.py
     @buck_test(inplace=False, skip_for_os=["darwin", "windows"])
-    async def test_show_headers_dep_file_drops_the_headers_found_next_to_the_source(
+    async def test_show_headers_dep_file_keeps_the_headers_found_next_to_the_source(
         self, buck: Buck
     ) -> None:
         _write_spaced_header(buck)
         await _build_object(buck)
         # The rules compile `./r.c`, so clang prints every header it found relative to the
-        # source as `. ./<path>`. The processor turns `./v.h` into `/v.h`, outside the build
-        # root, and drops it; the other two paths go the same way.
-        assert await _tagged_headers(buck) == []
+        # source as `. ./<path>`; the dep file keeps each path as printed.
+        assert await _tagged_headers(buck) == DEP_FILES_HEADERS
 
-        # So an edit to the three headers does not rebuild the object.
+        # So an edit to the three headers rebuilds the object.
         for header in DEP_FILES_HEADERS:
             path = buck.cwd / header
             path.write_text(path.read_text().replace(" 1\n", " 2\n"))
         await _build_object(buck)
-        assert await _compile_executors(buck) == ["LocalDepFileCache"]
+        assert await _compile_executors(buck) == ["Local"]

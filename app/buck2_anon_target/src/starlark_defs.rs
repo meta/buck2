@@ -23,7 +23,7 @@ use buck2_interpreter::downstream_crate_starlark_defs::REGISTER_BUCK2_ANON_TARGE
 use buck2_interpreter::execution_group::ExecutionGroupArg;
 use buck2_interpreter::starlark_promise::StarlarkPromise;
 use buck2_interpreter_for_build::rule::FrozenArtifactPromiseMappings;
-use buck2_interpreter_for_build::rule::StarlarkRuleCallableUnpack;
+use buck2_interpreter_for_build::rule::StarlarkRuleCallableView;
 use dupe::Dupe;
 use starlark::any::ProvidesStaticType;
 use starlark::codemap::FileSpan;
@@ -255,7 +255,7 @@ fn analysis_actions_methods_anon_target(builder: &mut MethodsBuilder) {
     fn anon_target<'v>(
         this: &AnalysisActions<'v>,
         // TODO(nga): this should be either positional or named, not both.
-        rule: StarlarkRuleCallableUnpack<'v>,
+        rule: StarlarkRuleCallableView<'v>,
         attrs: UnpackDictEntries<&'v str, Value<'v>>,
         #[starlark(require = named, default = NoneOr::None)] exec_group: NoneOr<ExecutionGroupArg>,
         eval: &mut Evaluator<'v, '_, '_>,
@@ -286,7 +286,7 @@ fn analysis_actions_methods_anon_target(builder: &mut MethodsBuilder) {
         this: &AnalysisActions<'v>,
         // TODO(nga): this should be either positional or named, not both.
         rules: UnpackListOrTuple<(
-            StarlarkRuleCallableUnpack<'v>,
+            StarlarkRuleCallableView<'v>,
             UnpackDictEntries<&'v str, Value<'v>>,
         )>,
         #[starlark(require = named, default = NoneOr::None)] exec_group: NoneOr<ExecutionGroupArg>,

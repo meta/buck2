@@ -63,10 +63,11 @@ use starlark::values::Freezer;
 use starlark::values::Heap;
 use starlark::values::NoSerialize;
 use starlark::values::StarlarkPagable;
+use starlark::values::StarlarkRepresentations;
+use starlark::values::StarlarkType;
 use starlark::values::StarlarkValue;
 use starlark::values::StringValue;
 use starlark::values::Trace;
-use starlark::values::UnpackValue;
 use starlark::values::Value;
 use starlark::values::ValueOfUnchecked;
 use starlark::values::ValueTyped;
@@ -75,7 +76,6 @@ use starlark::values::list::ListType;
 use starlark::values::list::UnpackList;
 use starlark::values::list_or_tuple::UnpackListOrTuple;
 use starlark::values::starlark_value;
-use starlark::values::type_repr::StarlarkTypeRepr;
 use starlark::values::typing::StarlarkCallable;
 use starlark::values::typing::StarlarkCallableChecked;
 
@@ -704,40 +704,9 @@ fn validate_execution_groups(
     ))
 }
 
-#[starlark_value(type = "Rule")]
+#[starlark_value]
 impl<'v> StarlarkValue<'v> for StarlarkRuleCallable<'v> {
-    fn export_as(
-        &self,
-        variable_name: &str,
-        _eval: &mut Evaluator<'v, '_, '_>,
-    ) -> starlark::Result<()> {
-        *self.id.borrow_mut() = Some(StarlarkRuleType {
-            path: self.rule_path.clone(),
-            name: variable_name.to_owned(),
-        });
-        Ok(())
-    }
-
-    fn invoke(
-        &self,
-        _me: Value<'v>,
-        _args: &Arguments<'v, '_>,
-        _eval: &mut Evaluator<'v, '_, '_>,
-    ) -> starlark::Result<Value<'v>> {
-        Err(buck2_error::Error::from(RuleError::RuleCalledBeforeFreezing).into())
-    }
-
-    fn documentation(&self) -> DocItem {
-        self.documentation_impl()
-    }
-
-    fn typechecker_ty(&self) -> Option<Ty> {
-        Some(self.ty.clone())
-    }
-
-    fn get_type_starlark_repr() -> Ty {
-        Ty::function(ParamSpec::kwargs(Ty::any()), Ty::none())
-    }
+    type Type = StarlarkRuleCallableView<'v>;
 }
 
 #[derive(Debug, ProvidesStaticType, Allocative, Clone, Dupe, StarlarkPagable)]
@@ -854,31 +823,103 @@ fn downcast_frozen_rule<'v>(
 }
 
 /// A rule in either of its representations; the binding for a native parameter of type `Rule`.
-#[derive(UnpackValue)]
-pub enum StarlarkRuleCallableUnpack<'v> {
+#[derive(Debug, Clone, Copy, StarlarkRepresentations)]
+pub enum StarlarkRuleCallableView<'v> {
     Unfrozen(ValueTyped<'v, StarlarkRuleCallable<'v>>),
     Frozen(ValueTyped<'v, FrozenStarlarkRuleCallable<'v>>),
 }
 
-impl<'v> StarlarkTypeRepr for StarlarkRuleCallableUnpack<'v> {
-    type Canonical = <FrozenStarlarkRuleCallable<'v> as StarlarkTypeRepr>::Canonical;
-
-    fn starlark_type_repr() -> Ty {
-        FrozenStarlarkRuleCallable::starlark_type_repr()
-    }
-}
-
-impl<'v> StarlarkRuleCallableUnpack<'v> {
+impl<'v> StarlarkRuleCallableView<'v> {
     /// The rule once its module is loaded, which is what instantiating it requires. A rule can
     /// only be defined while its module loads, and nothing that instantiates rules runs then, so
     /// the unfrozen representation never reaches such a function.
     pub fn frozen(self) -> buck2_error::Result<ValueTyped<'v, FrozenStarlarkRuleCallable<'v>>> {
         match self {
-            StarlarkRuleCallableUnpack::Frozen(rule) => Ok(rule),
-            StarlarkRuleCallableUnpack::Unfrozen(_) => Err(buck2_error::internal_error!(
+            StarlarkRuleCallableView::Frozen(rule) => Ok(rule),
+            StarlarkRuleCallableView::Unfrozen(_) => Err(buck2_error::internal_error!(
                 "Rule used before the module defining it was loaded"
             )),
         }
+    }
+}
+
+#[starlark_value(type = "Rule")]
+impl<'v> StarlarkType<'v> for StarlarkRuleCallableView<'v> {
+    fn export_as(
+        &self,
+        variable_name: &str,
+        _eval: &mut Evaluator<'v, '_, '_>,
+    ) -> starlark::Result<()> {
+        if let StarlarkRuleCallableView::Unfrozen(this) = self {
+            *this.id.borrow_mut() = Some(StarlarkRuleType {
+                path: this.rule_path.clone(),
+                name: variable_name.to_owned(),
+            });
+        }
+        Ok(())
+    }
+
+    fn invoke(
+        &self,
+        _me: Value<'v>,
+        args: &Arguments<'v, '_>,
+        eval: &mut Evaluator<'v, '_, '_>,
+    ) -> starlark::Result<Value<'v>> {
+        let this = match self {
+            StarlarkRuleCallableView::Frozen(this) => this,
+            StarlarkRuleCallableView::Unfrozen(_) => {
+                return Err(buck2_error::Error::from(RuleError::RuleCalledBeforeFreezing).into());
+            }
+        };
+        let record_target_call_stack =
+            ModuleInternals::from_context(eval, this.rule.rule_type.name())?
+                .record_target_call_stacks();
+        let call_stack = if record_target_call_stack {
+            Some(eval.call_stack())
+        } else {
+            None
+        };
+        let arg_count = args.len()?;
+        this.signature.parser(args, eval, |param_parser, eval| {
+            // The body of the callable returned by `rule()`.
+            // Records the target in this package's `TargetMap`.
+            let internals = ModuleInternals::from_context(eval, this.rule.rule_type.name())?;
+            let coercion_ctx = MemoizedCoercionCtx {
+                base: internals.attr_coercion_context(),
+                memo: &InterpreterExtraValue::get(eval.module())?.coerce_memo,
+            };
+            let target_node = UnsealedTargetNode::from_params(
+                this.rule.dupe(),
+                internals.package(),
+                internals,
+                &coercion_ctx,
+                param_parser,
+                arg_count,
+                this.ignore_attrs_for_profiling,
+                call_stack,
+            )?;
+            this.check_ungrouped_args(&target_node, internals)?;
+            internals.record(target_node)?;
+            Ok(Value::new_none())
+        })
+    }
+
+    fn documentation(&self) -> DocItem {
+        match self {
+            StarlarkRuleCallableView::Unfrozen(this) => this.documentation_impl(),
+            StarlarkRuleCallableView::Frozen(this) => this.rule_docs.clone(),
+        }
+    }
+
+    fn typechecker_ty(&self) -> Option<Ty> {
+        match self {
+            StarlarkRuleCallableView::Unfrozen(this) => Some(this.ty.clone()),
+            StarlarkRuleCallableView::Frozen(this) => Some(this.ty.clone()),
+        }
+    }
+
+    fn get_type_starlark_repr() -> Ty {
+        Ty::function(ParamSpec::kwargs(Ty::any()), Ty::none())
     }
 }
 
@@ -963,60 +1004,10 @@ impl<'v> FrozenStarlarkRuleCallable<'v> {
     }
 }
 
-#[starlark_value(type = "Rule", frozen_vtable)]
+#[starlark_value(frozen_vtable)]
 impl<'v> StarlarkValue<'v> for FrozenStarlarkRuleCallable<'v> {
     type Canonical = StarlarkRuleCallable<'v>;
-
-    fn invoke(
-        &self,
-        _me: Value<'v>,
-        args: &Arguments<'v, '_>,
-        eval: &mut Evaluator<'v, '_, '_>,
-    ) -> starlark::Result<Value<'v>> {
-        let record_target_call_stack =
-            ModuleInternals::from_context(eval, self.rule.rule_type.name())?
-                .record_target_call_stacks();
-        let call_stack = if record_target_call_stack {
-            Some(eval.call_stack())
-        } else {
-            None
-        };
-        let arg_count = args.len()?;
-        self.signature.parser(args, eval, |param_parser, eval| {
-            // The body of the callable returned by `rule()`.
-            // Records the target in this package's `TargetMap`.
-            let internals = ModuleInternals::from_context(eval, self.rule.rule_type.name())?;
-            let coercion_ctx = MemoizedCoercionCtx {
-                base: internals.attr_coercion_context(),
-                memo: &InterpreterExtraValue::get(eval.module())?.coerce_memo,
-            };
-            let target_node = UnsealedTargetNode::from_params(
-                self.rule.dupe(),
-                internals.package(),
-                internals,
-                &coercion_ctx,
-                param_parser,
-                arg_count,
-                self.ignore_attrs_for_profiling,
-                call_stack,
-            )?;
-            self.check_ungrouped_args(&target_node, internals)?;
-            internals.record(target_node)?;
-            Ok(Value::new_none())
-        })
-    }
-
-    fn documentation(&self) -> DocItem {
-        self.rule_docs.clone()
-    }
-
-    fn typechecker_ty(&self) -> Option<Ty> {
-        Some(self.ty.clone())
-    }
-
-    fn get_type_starlark_repr() -> Ty {
-        <StarlarkRuleCallable as StarlarkValue>::get_type_starlark_repr()
-    }
+    type Type = StarlarkRuleCallableView<'v>;
 }
 
 #[starlark_module]

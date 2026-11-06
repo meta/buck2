@@ -11,10 +11,12 @@
 use std::any::TypeId;
 use std::sync::Arc;
 use std::sync::Barrier;
+use std::sync::Weak;
 use std::sync::atomic::AtomicBool;
 use std::sync::atomic::AtomicUsize;
 use std::sync::atomic::Ordering;
 
+use dashmap::try_result::TryResult;
 use dupe::Dupe;
 
 use super::*;
@@ -1159,6 +1161,259 @@ fn evicting_an_arc_evicts_the_arcs_only_its_value_held() {
 
     // The inner arc is held by the outer value until the outer binding drops.
     cache.evict_expired();
+    assert_eq!(cache.len(), 0);
+}
+
+#[derive(pagable::PagableUnsupported)]
+struct NativeCacheChainNode {
+    child: Option<triomphe::Arc<NativeCacheChainNode>>,
+    drops: Arc<AtomicUsize>,
+}
+
+impl Drop for NativeCacheChainNode {
+    fn drop(&mut self) {
+        self.drops.fetch_add(1, Ordering::SeqCst);
+    }
+}
+
+fn cached_native_chain(
+    cache: &DeserializedArcCache,
+    drops: &Arc<AtomicUsize>,
+    len: usize,
+) -> triomphe::Arc<NativeCacheChainNode> {
+    (0..len)
+        .fold(None, |child, index| {
+            let arc = triomphe::Arc::new(NativeCacheChainNode {
+                child,
+                drops: drops.dupe(),
+            });
+            drop(
+                cache
+                    .get_or_page_in(
+                        TypeId::of::<triomphe::Arc<NativeCacheChainNode>>(),
+                        DataKey::testing_new(index as u128 + 1),
+                        || Ok::<_, anyhow::Error>(Box::new(arc.clone())),
+                    )
+                    .expect("page-in closure is infallible"),
+            );
+            Some(arc)
+        })
+        .expect("the test chain is nonempty")
+}
+
+#[test]
+fn a_native_cache_chain_is_collected_in_one_pass() {
+    const NODES: usize = 500;
+    let cache = DeserializedArcCache::new();
+    let drops = Arc::new(AtomicUsize::new(0));
+    drop(cached_native_chain(&cache, &drops, NODES));
+
+    let stats = cache.evict_expired();
+    assert_eq!(stats.passes, 2);
+    assert_eq!(stats.entries_examined, NODES);
+    assert_eq!(stats.removed, NODES);
+    assert_eq!(drops.load(Ordering::SeqCst), NODES);
+}
+
+#[test]
+fn out_of_order_bindings_are_collected_by_fresh_fallback_passes() {
+    const NODES: usize = 8;
+    let cache = DeserializedArcCache::new();
+    let drops = Arc::new(AtomicUsize::new(0));
+    let root = cached_native_chain(&cache, &drops, NODES);
+
+    // Rebind parents before children, deliberately reversing the sweep hint.
+    let mut node = Some(&root);
+    let mut index = NODES;
+    while let Some(arc) = node {
+        cache.bind(
+            TypeId::of::<triomphe::Arc<NativeCacheChainNode>>(),
+            DataKey::testing_new(index as u128),
+            arc,
+        );
+        index -= 1;
+        node = arc.child.as_ref();
+    }
+    assert_eq!(index, 0);
+    drop(root);
+
+    let stats = cache.evict_expired();
+    assert_eq!(stats.passes, NODES + 1);
+    assert_eq!(stats.entries_examined, NODES * (NODES + 1) / 2);
+    assert_eq!(stats.removed, NODES);
+    assert_eq!(drops.load(Ordering::SeqCst), NODES);
+}
+
+#[test]
+fn eviction_stats_count_successful_removals_not_stale_candidates() {
+    let cache = DeserializedArcCache::new();
+    let key = DataKey::testing_new(1);
+    let type_id = TypeId::of::<PartialPagableArc<ResidentArcValue>>();
+    let first = PartialPagableArc::new(ResidentArcValue(1));
+    drop(page_in_partial_arc(&cache, key, &first));
+    drop(first);
+
+    let expired: Vec<_> = cache
+        .map
+        .iter()
+        .filter(|entry| entry.value().expired())
+        .map(|entry| *entry.key())
+        .collect();
+    assert_eq!(expired, vec![(type_id, key)]);
+
+    // A page-in between the scan and removal binds a live allocation to the
+    // same key. Replay that interleaving without depending on thread scheduling.
+    let replacement = PartialPagableArc::new(ResidentArcValue(2));
+    drop(page_in_partial_arc(&cache, key, &replacement));
+    assert_eq!(cache.remove_expired(expired), 0);
+    let bound = cache.get(&type_id, &key).expect("live rebind survives");
+    assert!(PartialPagableArc::ptr_eq(
+        &replacement,
+        downcast_partial_arc(&*bound),
+    ));
+    drop((bound, replacement));
+    let stats = cache.evict_expired();
+    assert_eq!(stats.passes, 2);
+    assert_eq!(stats.entries_examined, 1);
+    assert_eq!(stats.removed, 1);
+}
+
+#[test]
+fn eviction_preserves_a_page_in_gate_replacing_an_expired_binding() {
+    let cache = DeserializedArcCache::new();
+    let key = DataKey::testing_new(1);
+    let type_id = TypeId::of::<PartialPagableArc<ResidentArcValue>>();
+    let arc = PartialPagableArc::new(ResidentArcValue(1));
+    drop(page_in_partial_arc(&cache, key, &arc));
+    drop(arc);
+    assert!(cache.map.get(&(type_id, key)).unwrap().expired());
+
+    let gate = Arc::new(Mutex::new(()));
+    let previous = cache
+        .map
+        .insert((type_id, key), Slot::PagingIn(gate.dupe()));
+    drop(previous);
+    assert_eq!(cache.remove_expired(vec![(type_id, key)]), 0);
+    assert!(matches!(
+        cache.map.get(&(type_id, key)).unwrap().value(),
+        Slot::PagingIn(bound) if Arc::ptr_eq(bound, &gate),
+    ));
+    assert_eq!(cache.evict_expired().removed, 0);
+}
+
+#[derive(pagable::PagableUnsupported)]
+struct CacheDropAction {
+    cache: Weak<DeserializedArcCache>,
+    own_key: DataKey,
+    action: Box<dyn Fn(&DeserializedArcCache) + Send + Sync>,
+}
+
+impl Drop for CacheDropAction {
+    fn drop(&mut self) {
+        let cache = self.cache.upgrade().expect("the test holds the cache");
+        let own_key = (TypeId::of::<triomphe::Arc<Self>>(), self.own_key);
+        // A nonblocking probe fails promptly instead of deadlocking if the
+        // removal still holds this value's shard lock during its destructor.
+        assert!(!matches!(cache.map.try_get(&own_key), TryResult::Locked));
+        assert!(matches!(cache.map.entry(own_key), Entry::Vacant(_)));
+        (self.action)(&cache);
+    }
+}
+
+fn bind_cache_drop_action(
+    cache: &Arc<DeserializedArcCache>,
+    key: DataKey,
+    action: impl Fn(&DeserializedArcCache) + Send + Sync + 'static,
+) {
+    let arc = triomphe::Arc::new(CacheDropAction {
+        cache: Arc::downgrade(cache),
+        own_key: key,
+        action: Box::new(action),
+    });
+    cache.bind(TypeId::of::<triomphe::Arc<CacheDropAction>>(), key, &arc);
+}
+
+#[test]
+fn drop_callback_rebinds_a_snapshot_key_without_holding_its_shard_lock() {
+    let cache = Arc::new(DeserializedArcCache::new());
+    let target_key = DataKey::testing_new(1);
+    let type_id = TypeId::of::<PartialPagableArc<ResidentArcValue>>();
+    let stale = PartialPagableArc::new(ResidentArcValue(1));
+    drop(page_in_partial_arc(&cache, target_key, &stale));
+    drop(stale);
+
+    let replacement = PartialPagableArc::new(ResidentArcValue(2));
+    ArcErase::set_data_key(&replacement, target_key);
+    let callbacks = Arc::new(AtomicUsize::new(0));
+    bind_cache_drop_action(&cache, DataKey::testing_new(2), {
+        let replacement = replacement.dupe();
+        let callbacks = callbacks.dupe();
+        move |cache| {
+            cache.register_resident(target_key, &replacement);
+            callbacks.fetch_add(1, Ordering::SeqCst);
+        }
+    });
+
+    let stats = cache.evict_expired();
+    assert_eq!(callbacks.load(Ordering::SeqCst), 1);
+    assert_eq!(stats.passes, 2);
+    assert_eq!(
+        stats.entries_examined, 3,
+        "two initial visits plus one live survivor"
+    );
+    assert_eq!(stats.removed, 1);
+    let bound = cache
+        .get(&type_id, &target_key)
+        .expect("the rebind survives");
+    assert!(PartialPagableArc::ptr_eq(
+        &replacement,
+        downcast_partial_arc(&*bound),
+    ));
+    drop((bound, replacement));
+    assert_eq!(cache.evict_expired().removed, 1);
+}
+
+#[test]
+fn a_drop_callback_new_binding_is_visited_by_a_fresh_snapshot() {
+    let cache = Arc::new(DeserializedArcCache::new());
+    let callbacks = Arc::new(AtomicUsize::new(0));
+    bind_cache_drop_action(&cache, DataKey::testing_new(1), {
+        let callbacks = callbacks.dupe();
+        move |cache| {
+            let arc = triomphe::Arc::new(7u8);
+            cache.bind(
+                TypeId::of::<triomphe::Arc<u8>>(),
+                DataKey::testing_new(2),
+                &arc,
+            );
+            callbacks.fetch_add(1, Ordering::SeqCst);
+        }
+    });
+
+    let stats = cache.evict_expired();
+    assert_eq!(callbacks.load(Ordering::SeqCst), 1);
+    assert_eq!(stats.passes, 3);
+    assert_eq!(stats.entries_examined, 2);
+    assert_eq!(stats.removed, 2);
+}
+
+#[test]
+fn an_expired_rebind_is_eligible_despite_its_new_order() {
+    let cache = DeserializedArcCache::new();
+    let key = DataKey::testing_new(1);
+    let stale = PartialPagableArc::new(ResidentArcValue(1));
+    drop(page_in_partial_arc(&cache, key, &stale));
+    drop(stale);
+    let bindings = cache.bindings_in_eviction_order();
+    assert_eq!(bindings.len(), 1);
+
+    let replacement = PartialPagableArc::new(ResidentArcValue(2));
+    drop(page_in_partial_arc(&cache, key, &replacement));
+    drop(replacement);
+    assert_eq!(
+        cache.remove_expired(bindings.into_iter().map(|(_, key)| key)),
+        1
+    );
     assert_eq!(cache.len(), 0);
 }
 

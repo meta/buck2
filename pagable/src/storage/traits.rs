@@ -9,11 +9,15 @@
  */
 
 use std::any::TypeId;
+use std::cmp::Reverse;
 use std::collections::HashMap;
 use std::hash::BuildHasherDefault;
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
+use std::sync::atomic::AtomicU64;
 use std::sync::atomic::Ordering;
+use std::time::Duration;
+use std::time::Instant;
 
 use dashmap::DashMap;
 use dashmap::mapref::entry::Entry;
@@ -50,26 +54,44 @@ const SHARDS: usize = 64;
 /// its own: a page-out of a large graph leaves millions of bindings behind.
 pub struct DeserializedArcCache {
     map: DashMap<(TypeId, DataKey), Slot>,
+    next_binding_order: AtomicU64,
+}
+
+/// What [`DeserializedArcCache::evict_expired`] did. Concurrent page-ins can bind and rebind
+/// keys while it runs, so the counts describe this call, not the cache.
+#[derive(Debug, Default)]
+pub struct EvictExpiredStats {
+    /// Passes over the map, including the last one, which removes nothing.
+    pub passes: usize,
+    /// Bindings visited across all passes.
+    pub entries_examined: usize,
+    pub removed: usize,
+    pub elapsed: Duration,
 }
 
 /// What a `(TypeId, DataKey)` holds: its binding, or the gate of the page-in
 /// about to bind it. Concurrent page-ins of one key wait on the gate, so the
 /// key deserializes at most once between them.
 enum Slot {
-    Bound(Box<dyn WeakEraseDyn>),
+    Bound {
+        weak: Box<dyn WeakEraseDyn>,
+        /// When the key was bound, so eviction can visit newer bindings first. Only a hint:
+        /// rebinding a key out of order costs extra passes, never correctness.
+        order: u64,
+    },
     PagingIn(Arc<Mutex<()>>),
 }
 
 impl Slot {
     fn live(&self) -> Option<Box<dyn ArcEraseDyn>> {
         match self {
-            Slot::Bound(weak) => weak.upgrade(),
+            Slot::Bound { weak, .. } => weak.upgrade(),
             Slot::PagingIn(_) => None,
         }
     }
 
     fn expired(&self) -> bool {
-        matches!(self, Slot::Bound(weak) if weak.is_expired())
+        matches!(self, Slot::Bound { weak, .. } if weak.is_expired())
     }
 }
 
@@ -179,6 +201,7 @@ impl DeserializedArcCache {
     pub fn new() -> Self {
         Self {
             map: DashMap::with_shard_amount(SHARDS),
+            next_binding_order: AtomicU64::new(0),
         }
     }
 
@@ -256,10 +279,10 @@ impl DeserializedArcCache {
                     drop(occupied);
                     return live;
                 }
-                Some(occupied.insert(Slot::Bound(arc.downgrade())))
+                Some(occupied.insert(self.bound_slot(&*arc)))
             }
             Entry::Vacant(vacant) => {
-                vacant.insert(Slot::Bound(arc.downgrade()));
+                vacant.insert(self.bound_slot(&*arc));
                 None
             }
         };
@@ -273,10 +296,15 @@ impl DeserializedArcCache {
     /// that identity rather than an older allocation that happens to survive.
     fn bind(&self, type_id: TypeId, key: DataKey, arc: &dyn ArcEraseDyn) {
         // Dropped outside the shard lock: a strong-as-weak binding frees its value.
-        let previous = self
-            .map
-            .insert((type_id, key), Slot::Bound(arc.downgrade()));
+        let previous = self.map.insert((type_id, key), self.bound_slot(arc));
         drop(previous);
+    }
+
+    fn bound_slot(&self, arc: &dyn ArcEraseDyn) -> Slot {
+        Slot::Bound {
+            weak: arc.downgrade(),
+            order: self.next_binding_order.fetch_add(1, Ordering::Relaxed),
+        }
     }
 
     /// Strong references to every live allocation of type `T` bound to a key.
@@ -311,32 +339,52 @@ impl DeserializedArcCache {
     /// Drops entries whose allocation is gone, or that the cache alone keeps
     /// alive. A pass visits every entry, so this runs after a page-out or an
     /// eviction, where values drop in bulk, not per command.
-    pub fn evict_expired(&self) {
+    pub fn evict_expired(&self) -> EvictExpiredStats {
+        let started = Instant::now();
+        let mut stats = EvictExpiredStats::default();
         // Dropping a strong-as-weak binding frees its value, which may leave
         // the arcs inside it held by the cache alone, so passes repeat until
         // one frees nothing.
-        while self.evict_expired_once() > 0 {}
+        loop {
+            let bindings = self.bindings_in_eviction_order();
+            stats.passes += 1;
+            stats.entries_examined += bindings.len();
+            let removed = self.remove_expired(bindings.into_iter().map(|(_, key)| key));
+            stats.removed += removed;
+            if removed == 0 {
+                break;
+            }
+        }
+        stats.elapsed = started.elapsed();
+        stats
     }
 
-    /// One pass of [`Self::evict_expired`]; returns how many entries it dropped.
-    fn evict_expired_once(&self) -> usize {
-        // Removed in two steps: a page-in may rebind a key between them, and
-        // the bindings are dropped outside the shard locks, since dropping a
-        // strong-as-weak binding frees its value.
-        let expired: Vec<(TypeId, DataKey)> = self
+    fn bindings_in_eviction_order(&self) -> Vec<(u64, (TypeId, DataKey))> {
+        // Eager page-ins bind children before parents. Visiting the newest
+        // bindings first lets dropping a parent make its children eligible in
+        // this pass. Only keys and order are copied: another strong-as-weak
+        // handle would itself prevent an allocation from becoming unique.
+        let mut bindings: Vec<_> = self
             .map
             .iter()
-            .filter(|entry| entry.value().expired())
-            .map(|entry| *entry.key())
+            .filter_map(|entry| match entry.value() {
+                Slot::Bound { order, .. } => Some((*order, *entry.key())),
+                Slot::PagingIn(_) => None,
+            })
             .collect();
-        let unbound: Vec<Slot> = expired
-            .into_iter()
+        bindings.sort_unstable_by_key(|(order, _)| Reverse(*order));
+        bindings
+    }
+
+    fn remove_expired(&self, keys: impl IntoIterator<Item = (TypeId, DataKey)>) -> usize {
+        keys.into_iter()
+            // A page-in may rebind after the snapshot. Eligibility belongs to
+            // the current slot, never its snapshotted order or allocation.
             .filter_map(|key| self.map.remove_if(&key, |_, slot| slot.expired()))
-            .map(|(_, slot)| slot)
-            .collect();
-        let dropped = unbound.len();
-        drop(unbound);
-        dropped
+            // Drop outside the shard lock and before visiting the next key:
+            // a strong-as-weak value may be its children's last referrer.
+            .map(|(_, slot)| drop(slot))
+            .count()
     }
 
     pub fn len(&self) -> usize {

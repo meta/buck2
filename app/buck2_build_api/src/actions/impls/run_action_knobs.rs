@@ -53,6 +53,10 @@ pub struct RunActionKnobs {
     /// and the traffic to it grows, in steps that are the same on every host. A write within
     /// the share goes through the cache whatever `write_action_cache` says.
     pub write_action_cache_populate: RolloutFraction,
+
+    /// Whether a `run` action whose digest equals that of one already executing waits for that
+    /// execution and takes its result (`buck2.dedupe_in_flight_actions`).
+    pub dedupe_in_flight_actions: bool,
 }
 
 /// How write actions use the action cache; `buck2.write_action_cache`. Whether a miss is

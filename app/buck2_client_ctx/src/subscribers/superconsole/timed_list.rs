@@ -16,6 +16,10 @@ use buck2_event_observer::display::TargetDisplayOptions;
 use buck2_event_observer::fmt_duration;
 use buck2_event_observer::span_tracker::BuckEventSpanHandle;
 use buck2_event_observer::span_tracker::BuckEventSpanTracker;
+use buck2_events::BuckEvent;
+use buck2_hash::BuckMutMap;
+use buck2_hash::BuckMutSet;
+use prost::Message;
 use superconsole::Component;
 use superconsole::Dimensions;
 use superconsole::DrawMode;
@@ -60,6 +64,7 @@ impl TimedListBody<'_> {
         root: &BuckEventSpanHandle,
         single_child: BuckEventSpanHandle,
         remaining_children: usize,
+        waiting: usize,
         display_platform: bool,
     ) -> buck2_error::Result<TimedRow> {
         let info = root.info();
@@ -86,6 +91,9 @@ impl TimedListBody<'_> {
         if remaining_children > 0 {
             write!(aux, " + {remaining_children}").expect("Write to String is not fallible");
         }
+        if waiting > 0 {
+            write!(aux, " ({})", fmt_waiting(waiting)).expect("Write to String is not fallible");
+        }
 
         // Escalate the row color on time in the current stage, and only while
         // actively executing -- total elapsed is mostly queueing under contention.
@@ -107,7 +115,13 @@ impl TimedListBody<'_> {
         )
     }
 
-    fn draw_root(&self, root: &BuckEventSpanHandle) -> buck2_error::Result<Vec<TimedRow>> {
+    /// `waiting` counts the actions waiting for this one to take its result, which have no row
+    /// of their own.
+    fn draw_root(
+        &self,
+        root: &BuckEventSpanHandle,
+        waiting: usize,
+    ) -> buck2_error::Result<Vec<TimedRow>> {
         let timekeeper = &self.state.timekeeper;
         let config = &self.state.config;
         let two_lines = config.two_lines;
@@ -121,13 +135,17 @@ impl TimedListBody<'_> {
                 root,
                 first,
                 it.len(),
+                waiting,
                 display_platform,
             )?]),
             first => {
                 let mut rows = Vec::new();
-                rows.push(TimedRow::span(
+                // With no stage running, the stage column of the aux text stays empty, so the
+                // count lines up with the other rows' timings.
+                rows.push(TimedRow::span_with_aux(
                     0,
                     info,
+                    (waiting > 0).then(|| format!(" ({})", fmt_waiting(waiting))),
                     timekeeper,
                     self.cutoffs,
                     display_platform,
@@ -161,7 +179,23 @@ impl Component for TimedListBody<'_> {
 
         let spans = observer.spans();
 
-        let mut roots = spans.iter_roots();
+        // An action waiting for an identical action that is also running shows as a count on
+        // that action's row rather than as a row of its own.
+        let running: BuckMutSet<Vec<u8>> = spans
+            .iter_roots()
+            .filter_map(|root| action_key_bytes(&root.info().event))
+            .collect();
+        let mut waiting: BuckMutMap<Vec<u8>, usize> = BuckMutMap::default();
+        let mut roots = Vec::new();
+        for root in spans.iter_roots() {
+            match waited_for(&root) {
+                Some(leader) if running.contains(&leader) => {
+                    *waiting.entry(leader).or_default() += 1
+                }
+                _ => roots.push(root),
+            }
+        }
+        let mut roots = roots.into_iter();
 
         let mut builder = Table::new();
 
@@ -169,7 +203,10 @@ impl Component for TimedListBody<'_> {
         let mut visible_roots = 0;
 
         while let Some(root) = roots.next() {
-            let rows = self.draw_root(&root)?;
+            let waiters = action_key_bytes(&root.info().event)
+                .and_then(|key| waiting.get(&key).copied())
+                .unwrap_or(0);
+            let rows = self.draw_root(&root, waiters)?;
             let hidden_roots_after_this = roots.len();
             let reserved_summary_rows = if hidden_roots_after_this > 0 { 1 } else { 0 };
 
@@ -194,6 +231,43 @@ impl Component for TimedListBody<'_> {
 
         builder.draw(dimensions, mode)
     }
+}
+
+fn fmt_waiting(waiting: usize) -> String {
+    format!("+{waiting} waiting")
+}
+
+/// The encoded action key of an action's span, to compare keys.
+fn action_key_bytes(event: &BuckEvent) -> Option<Vec<u8>> {
+    let buck2_data::buck_event::Data::SpanStart(start) = event.data() else {
+        return None;
+    };
+    match start.data.as_ref()? {
+        buck2_data::span_start_event::Data::ActionExecution(action) => {
+            Some(action.key.as_ref()?.encode_to_vec())
+        }
+        _ => None,
+    }
+}
+
+/// The encoded key of the action that `root` is waiting for, if it is in an `in_flight_wait`.
+fn waited_for(root: &BuckEventSpanHandle) -> Option<Vec<u8>> {
+    root.children().find_map(|child| {
+        let buck2_data::buck_event::Data::SpanStart(start) = child.info().event.data() else {
+            return None;
+        };
+        match start.data.as_ref()? {
+            buck2_data::span_start_event::Data::ExecutorStage(stage) => {
+                match stage.stage.as_ref()? {
+                    buck2_data::executor_stage_start::Stage::InFlightWait(wait) => {
+                        Some(wait.leader_action_key.as_ref()?.encode_to_vec())
+                    }
+                    _ => None,
+                }
+            }
+            _ => None,
+        }
+    })
 }
 
 /// Component for timed list header
@@ -357,6 +431,7 @@ mod tests {
             remote_dep_file_cached_actions: 0,
             remote_served_from_cache_actions: 0,
             remote_deduplicated_actions: 0,
+            in_flight_actions: 0,
             excess_cache_misses: 0,
         };
 
@@ -445,6 +520,7 @@ mod tests {
             remote_dep_file_cached_actions: 0,
             remote_served_from_cache_actions: 0,
             remote_deduplicated_actions: 0,
+            in_flight_actions: 0,
             excess_cache_misses: 0,
         };
 
@@ -507,6 +583,7 @@ mod tests {
             remote_dep_file_cached_actions: 0,
             remote_served_from_cache_actions: 0,
             remote_deduplicated_actions: 0,
+            in_flight_actions: 0,
             excess_cache_misses: 0,
         };
 
@@ -651,6 +728,7 @@ mod tests {
             remote_dep_file_cached_actions: 0,
             remote_served_from_cache_actions: 0,
             remote_deduplicated_actions: 0,
+            in_flight_actions: 0,
             excess_cache_misses: 0,
         };
 
@@ -740,6 +818,142 @@ mod tests {
         Ok(())
     }
 
+    fn stage_event(
+        parent: SpanId,
+        time: SystemTime,
+        stage: buck2_data::executor_stage_start::Stage,
+    ) -> Arc<BuckEvent> {
+        Arc::new(BuckEvent::new(
+            time,
+            TraceId::new(),
+            Some(SpanId::next()),
+            Some(parent),
+            SpanStartEvent {
+                data: Some(buck2_data::ExecutorStageStart { stage: Some(stage) }.into()),
+            }
+            .into(),
+        ))
+    }
+
+    #[test]
+    fn test_in_flight_waiters_fold_into_leader() -> buck2_error::Result<()> {
+        let tick = Tick::now();
+        let leader = SpanId::next();
+        let mut state = BuckEventSpanTracker::new();
+        state.start_at(&action_start_event(
+            Some(leader),
+            fake_time(&tick, 10),
+            "conf",
+        ))?;
+        state.start_at(&stage_event(
+            leader,
+            fake_time(&tick, 5),
+            buck2_data::PrepareAction {}.into(),
+        ))?;
+        for configuration in ["conf2", "conf3"] {
+            let waiter = SpanId::next();
+            state.start_at(&action_start_event(
+                Some(waiter),
+                fake_time(&tick, 8),
+                configuration,
+            ))?;
+            state.start_at(&stage_event(
+                waiter,
+                fake_time(&tick, 7),
+                buck2_data::InFlightWait {
+                    leader_action_key: Some(action_key("conf")),
+                }
+                .into(),
+            ))?;
+        }
+
+        let output = TimedList::new(
+            &CUTOFFS,
+            &super_console_state_for_test(
+                state,
+                ActionStats::default(),
+                fake_timekeeper(tick),
+                SuperConsoleConfig {
+                    max_lines: 5,
+                    ..Default::default()
+                },
+            ),
+        )
+        .draw(
+            Dimensions {
+                width: 80,
+                height: 10,
+            },
+            DrawMode::Normal,
+        )?;
+        let expected = [
+            "────────────────────────────────────────────────────────────────────────────────",
+            "pkg:target [category identifier] prepare         5.0s (+2 waiting)         10.0s",
+        ]
+        .iter()
+        .map(|l| format!("{l}\n"))
+        .join("");
+
+        pretty_assertions::assert_eq!(output.fmt_for_test().to_string(), expected);
+        Ok(())
+    }
+
+    #[test]
+    fn test_in_flight_waiters_fold_into_leader_between_stages() -> buck2_error::Result<()> {
+        let tick = Tick::now();
+        let leader = SpanId::next();
+        let waiter = SpanId::next();
+        let mut state = BuckEventSpanTracker::new();
+        state.start_at(&action_start_event(
+            Some(leader),
+            fake_time(&tick, 10),
+            "conf",
+        ))?;
+        state.start_at(&action_start_event(
+            Some(waiter),
+            fake_time(&tick, 8),
+            "conf2",
+        ))?;
+        state.start_at(&stage_event(
+            waiter,
+            fake_time(&tick, 7),
+            buck2_data::InFlightWait {
+                leader_action_key: Some(action_key("conf")),
+            }
+            .into(),
+        ))?;
+
+        let output = TimedList::new(
+            &CUTOFFS,
+            &super_console_state_for_test(
+                state,
+                ActionStats::default(),
+                fake_timekeeper(tick),
+                SuperConsoleConfig {
+                    max_lines: 5,
+                    ..Default::default()
+                },
+            ),
+        )
+        .draw(
+            Dimensions {
+                width: 80,
+                height: 10,
+            },
+            DrawMode::Normal,
+        )?;
+        let expected = [
+            "────────────────────────────────────────────────────────────────────────────────",
+            "pkg:target [category identifier]                 (+1 waiting)              10.0s",
+        ]
+        .iter()
+        .map(|l| format!("{l}\n"))
+        .join("");
+
+        pretty_assertions::assert_eq!(output.fmt_for_test().to_string(), expected);
+        Ok(())
+    }
+
     fn dice_snapshot(time: SystemTime) -> Arc<BuckEvent> {
         Arc::new(BuckEvent::new(
             time,
@@ -775,6 +989,33 @@ mod tests {
     }
 
     fn span_start_event(parent_span: Option<SpanId>, time: SystemTime) -> Arc<BuckEvent> {
+        action_start_event(parent_span, time, "conf")
+    }
+
+    fn action_key(configuration: &str) -> buck2_data::ActionKey {
+        buck2_data::ActionKey {
+            id: Default::default(),
+            owner: Some(buck2_data::action_key::Owner::TargetLabel(
+                buck2_data::ConfiguredTargetLabel {
+                    label: Some(buck2_data::TargetLabel {
+                        package: "pkg".into(),
+                        name: "target".into(),
+                    }),
+                    configuration: Some(buck2_data::Configuration {
+                        full_name: configuration.into(),
+                    }),
+                    execution_configuration: None,
+                },
+            )),
+            key: "".to_owned(),
+        }
+    }
+
+    fn action_start_event(
+        parent_span: Option<SpanId>,
+        time: SystemTime,
+        configuration: &str,
+    ) -> Arc<BuckEvent> {
         let span_id = Some(parent_span.unwrap_or(SpanId::next()));
         Arc::new(BuckEvent::new(
             time,
@@ -784,22 +1025,7 @@ mod tests {
             SpanStartEvent {
                 data: Some(
                     buck2_data::ActionExecutionStart {
-                        key: Some(buck2_data::ActionKey {
-                            id: Default::default(),
-                            owner: Some(buck2_data::action_key::Owner::TargetLabel(
-                                buck2_data::ConfiguredTargetLabel {
-                                    label: Some(buck2_data::TargetLabel {
-                                        package: "pkg".into(),
-                                        name: "target".into(),
-                                    }),
-                                    configuration: Some(buck2_data::Configuration {
-                                        full_name: "conf".into(),
-                                    }),
-                                    execution_configuration: None,
-                                },
-                            )),
-                            key: "".to_owned(),
-                        }),
+                        key: Some(action_key(configuration)),
                         name: Some(buck2_data::ActionName {
                             category: "category".into(),
                             identifier: "identifier".into(),

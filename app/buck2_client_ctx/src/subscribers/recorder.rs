@@ -148,6 +148,7 @@ pub struct InvocationRecorder {
     run_remote_dep_file_cache_count: u64,
     run_remote_served_from_cache_count: u64,
     run_remote_deduplicated_count: u64,
+    run_in_flight_count: u64,
     run_skipped_count: u64,
     run_fallback_count: u64,
     run_fallback_re_queue_count: u64,
@@ -385,6 +386,7 @@ impl InvocationRecorder {
             run_remote_dep_file_cache_count: 0,
             run_remote_served_from_cache_count: 0,
             run_remote_deduplicated_count: 0,
+            run_in_flight_count: 0,
             run_skipped_count: 0,
             run_fallback_count: 0,
             run_fallback_re_queue_count: 0,
@@ -1105,6 +1107,7 @@ impl InvocationRecorder {
             run_remote_dep_file_cache_count: self.run_remote_dep_file_cache_count,
             run_remote_served_from_cache_count: self.run_remote_served_from_cache_count,
             run_remote_deduplicated_count: self.run_remote_deduplicated_count,
+            run_in_flight_count: self.run_in_flight_count,
             cache_hit_rate: total_cache_hit_rate(
                 self.run_local_count,
                 self.run_remote_count,
@@ -1699,6 +1702,9 @@ impl InvocationRecorder {
                 LastCommandExecutionKind::RemoteDeduplicated => {
                     self.run_remote_count += 1;
                     self.run_remote_deduplicated_count += 1;
+                }
+                LastCommandExecutionKind::InFlight => {
+                    self.run_in_flight_count += 1;
                 }
                 LastCommandExecutionKind::NoCommand => {
                     self.run_skipped_count += 1;

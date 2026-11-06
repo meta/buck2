@@ -48,6 +48,7 @@ sha1.workspace = true
 starlark.workspace = true
 starlark_map.workspace = true
 strong_hash.workspace = true
+tokio.workspace = true
 tracing.workspace = true
 
 [dev-dependencies]

@@ -529,6 +529,12 @@ where
                     self.observer().action_stats().total_executed_actions()
                 )?;
             }
+            if self.observer().action_stats().in_flight_actions > 0 {
+                echo!(
+                    "Deduplicated by buck2: {}",
+                    self.observer().action_stats().in_flight_actions
+                )?;
+            }
         }
 
         if let Some(re) = self

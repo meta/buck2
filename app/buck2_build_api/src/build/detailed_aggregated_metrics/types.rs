@@ -218,7 +218,8 @@ impl TopLevelTargetAggregatedData {
             | ActionExecutionKind::LocalDepFile
             | ActionExecutionKind::RemoteDepFileCache
             | ActionExecutionKind::LocalActionCache
-            | ActionExecutionKind::RemoteServedFromCache => {
+            | ActionExecutionKind::RemoteServedFromCache
+            | ActionExecutionKind::InFlight => {
                 // ignore
             }
         }
@@ -276,7 +277,8 @@ impl AggregatedBuildMetrics {
                 | buck2_data::ActionExecutionKind::Simple
                 | buck2_data::ActionExecutionKind::Deferred
                 | buck2_data::ActionExecutionKind::LocalDepFile
-                | buck2_data::ActionExecutionKind::LocalActionCache => {
+                | buck2_data::ActionExecutionKind::LocalActionCache
+                | buck2_data::ActionExecutionKind::InFlight => {
                     // ignored.
                 }
             }

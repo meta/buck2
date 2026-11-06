@@ -2428,6 +2428,7 @@ fn executor_stage_name(st: &buck2_data::ExecutorStageStart) -> &'static str {
         Some(Stage::CacheQuery(..)) => "CacheQuery",
         Some(Stage::CacheHit(..)) => "CacheHit",
         Some(Stage::Prepare(..)) => "Prepare",
+        Some(Stage::InFlightWait(..)) => "InFlightWait",
         None => "?",
     }
 }

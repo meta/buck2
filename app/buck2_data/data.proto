@@ -2233,6 +2233,10 @@ enum ActionExecutionKind {
   // build: the service deduplicated it against an identical execution already
   // in flight.
   ACTION_EXECUTION_KIND_REMOTE_DEDUPLICATED = 13;
+  // This action took the result of an identical action that was already
+  // running in this daemon, instead of looking up a cache or executing
+  // (`buck2.dedupe_in_flight_actions`).
+  ACTION_EXECUTION_KIND_IN_FLIGHT = 14;
 }
 
 // A name for a particular action, suitable for offline analytics and user
@@ -2296,7 +2300,21 @@ message CommandExecutionKind {
     WorkerInitCommand worker_init_command = 4;
     // The command, if executed by a local worker.
     WorkerCommand worker_command = 5;
+    // The command, if this action took the result of an identical action that
+    // was already running in this daemon.
+    InFlightCommand in_flight_command = 6;
   }
+}
+
+// A command whose result came from an identical action (same action digest)
+// that was already running in this daemon. Nothing was looked up or executed
+// for it.
+message InFlightCommand {
+  string action_digest = 1;
+  // The action whose execution this one shared.
+  ActionKey leader_action_key = 2;
+  // How the leader's result was produced.
+  ActionExecutionKind leader_execution_kind = 3;
 }
 
 // Serialization of CommandExecutionMetadata
@@ -2821,10 +2839,19 @@ message ExecutorStageStart {
     CacheHit cache_hit = 23;
     PrepareAction prepare = 24;
     CasArtifactStage cas_artifact = 25;
+    // Waiting for an identical action already running in this daemon.
+    InFlightWait in_flight_wait = 26;
   }
 }
 
 message PrepareAction {}
+
+// An action waiting for an identical action (same action digest) that is
+// already running in this daemon, to take its result.
+message InFlightWait {
+  // The action being waited for.
+  ActionKey leader_action_key = 1;
+}
 
 // A step of the `cas_artifact` action, which declares an artifact that is
 // already in CAS. None of the steps downloads file contents.
@@ -3864,6 +3891,9 @@ message InvocationRecord {
   // shared with another build, deduplicated against an identical execution
   // already in flight.
   uint64 run_remote_deduplicated_count = 763;
+  // Count of actions that took the result of an identical action already
+  // running in this daemon (`buck2.dedupe_in_flight_actions`).
+  uint64 run_in_flight_count = 775;
 
   // Client ancestry inference, independent of agent_direct_call and never used
   // to enable advice. Unset when inference is unavailable or inconclusive.

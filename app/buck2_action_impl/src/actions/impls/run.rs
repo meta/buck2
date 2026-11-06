@@ -71,6 +71,7 @@ use buck2_core::fs::buck_out_path::BuckOutPathKind;
 use buck2_core::fs::buck_out_path::BuildArtifactPath;
 use buck2_core::fs::project_rel_path::ProjectRelativePathBuf;
 use buck2_core::target::label::label::TargetLabel;
+use buck2_directory::directory::fingerprinted_directory::FingerprintedDirectory;
 use buck2_error::BuckErrorContext;
 use buck2_error::BuckErrorOptionContext;
 use buck2_error::buck2_error;
@@ -83,6 +84,8 @@ use buck2_execute::execute::cache_uploader::force_cache_upload;
 use buck2_execute::execute::command_executor::ActionExecutionTimingData;
 use buck2_execute::execute::dep_file_digest::DepFileDigest;
 use buck2_execute::execute::environment_inheritance::EnvironmentInheritance;
+use buck2_execute::execute::kind::CommandExecutionKind;
+use buck2_execute::execute::manager::CommandExecutionManagerExt;
 use buck2_execute::execute::request::ActionMetadataBlob;
 use buck2_execute::execute::request::ActionSalt;
 use buck2_execute::execute::request::CommandExecutionInput;
@@ -93,7 +96,10 @@ use buck2_execute::execute::request::ExecutorPreference;
 use buck2_execute::execute::request::RemoteWorkerSpec;
 use buck2_execute::execute::request::WorkerId;
 use buck2_execute::execute::request::WorkerSpec;
+use buck2_execute::execute::result::CommandExecutionMetadata;
 use buck2_execute::execute::result::CommandExecutionResult;
+use buck2_execute::execute::result::CommandExecutionStatus;
+use buck2_execute::execute::target::CommandExecutionTarget;
 use buck2_execute::materialize::materializer::WriteRequest;
 use buck2_execute::re::client::induced_cache_misses_configured;
 use buck2_execute::re::client::is_induced_cache_miss;
@@ -106,6 +112,7 @@ use buck2_hash::BuckMutInsertionSet;
 use buck2_hash::BuckMutMap;
 use buck2_hash::BuckMutSet;
 use buck2_hash::buck_mut_insertion_map;
+use buck2_util::time_span::TimeSpan;
 use derive_more::Display;
 use dupe::Dupe;
 use host_sharing::HostSharingRequirements;
@@ -149,6 +156,7 @@ use crate::context::run::RunActionError;
 
 pub(crate) mod audit_dep_files;
 pub(crate) mod dep_files;
+mod in_flight;
 mod metadata;
 
 #[derive(Debug, Allocative, Pagable)]
@@ -472,12 +480,27 @@ pub(crate) struct RunAction {
 
 #[allow(clippy::large_enum_variant)]
 enum ExecuteResult {
-    LocalDepFileHit(ActionOutputs, ActionExecutionMetadata),
+    /// Served by the local dep file cache. Carries the in-flight guard when the hit came after
+    /// this action took the lead, so its followers get the outputs too.
+    LocalDepFileHit(
+        ActionOutputs,
+        ActionExecutionMetadata,
+        Option<in_flight::LeaderGuard>,
+    ),
     ExecutedOrReHit {
         result: CommandExecutionResult,
         dep_file_bundle: DepFileBundle,
         executor_preference: ExecutorPreference,
         action_and_blobs: ActionDigestAndBlobs,
+        input_files_bytes: u64,
+        /// Set when this action leads an in-flight group; publish to it on success.
+        in_flight: Option<in_flight::LeaderGuard>,
+    },
+    /// Took the result of an identical action that was in flight.
+    InFlightHit {
+        result: CommandExecutionResult,
+        dep_file_bundle: DepFileBundle,
+        executor_preference: ExecutorPreference,
         input_files_bytes: u64,
     },
 }
@@ -581,6 +604,31 @@ impl RunAction {
         }
         for (_, v) in values.env.iter() {
             v.visit_artifacts(artifact_visitor)?;
+        }
+        Ok(())
+    }
+
+    /// Cache outputs if tracing and parameter enabled
+    async fn copy_to_offline_output_cache(
+        &self,
+        ctx: &mut dyn ActionExecutionCtx,
+        outputs: &ActionOutputs,
+    ) -> buck2_error::Result<()> {
+        if self.inner.allow_offline_output_cache {
+            let io_provider = ctx.io_provider();
+            if let Some(tracer) = TracingIoProvider::from_io(io_provider) {
+                for output in self.outputs.iter() {
+                    if let Some(value) = outputs.get(output.get_path()) {
+                        offline::declare_copy_to_offline_output_cache(
+                            ctx,
+                            tracer,
+                            output,
+                            value.dupe(),
+                        )
+                        .await?;
+                    }
+                }
+            }
         }
         Ok(())
     }
@@ -1258,7 +1306,7 @@ impl RunAction {
         // We can avoid preparing the action for a local cache hit as long as we're not forcing certain digests to cache-miss.
         let forced_misses = induced_cache_misses_configured();
         if !forced_misses && let Some((outputs, metadata)) = identical_action {
-            return Ok(ExecuteResult::LocalDepFileHit(outputs, metadata));
+            return Ok(ExecuteResult::LocalDepFileHit(outputs, metadata, None));
         }
 
         let req =
@@ -1267,10 +1315,107 @@ impl RunAction {
         let induced_cache_miss = is_induced_cache_miss(&prepared_action.action_and_blobs.action);
         let req = req.with_induced_cache_miss(induced_cache_miss);
         if !induced_cache_miss && let Some((outputs, metadata)) = identical_action {
-            return Ok(ExecuteResult::LocalDepFileHit(outputs, metadata));
+            return Ok(ExecuteResult::LocalDepFileHit(outputs, metadata, None));
         }
         let should_fully_check_dep_file_cache =
             should_fully_check_dep_file_cache && !induced_cache_miss;
+
+        // Wait for an identical action already in flight, and take its result when it can be shared.
+        let in_flight = if self.dedupes_in_flight(ctx, induced_cache_miss) {
+            let key = in_flight::InFlightKey {
+                digest: prepared_action.action_and_blobs.action.dupe(),
+                executor: ctx.executor_config_fingerprint(),
+                command_options: ctx.command_options_fingerprint(),
+                executor_preference: req.executor_preference.to_string(),
+                allow_cache_upload: self.allow_cache_upload(ctx)?,
+                remote_dep_file: (self.inner.allow_dep_file_cache_upload
+                    && dep_file_bundle.has_dep_files())
+                .then(|| {
+                    dep_file_bundle
+                        .remote_dep_file_action(
+                            ctx.digest_config(),
+                            ctx.mergebase().0.as_ref(),
+                            ctx.re_platform(),
+                        )
+                        .action
+                }),
+                worker: req.worker().as_ref().map(|worker| {
+                    let mut hasher = std::hash::DefaultHasher::new();
+                    std::hash::Hash::hash(&worker.exe, &mut hasher);
+                    std::hash::Hash::hash(&worker.env, &mut hasher);
+                    std::hash::Hash::hash(&worker.concurrency, &mut hasher);
+                    std::hash::Hash::hash(&worker.streaming, &mut hasher);
+                    std::hash::Hash::hash(&worker.remote_key, &mut hasher);
+                    std::hash::Hash::hash(
+                        worker.input_paths.input_directory().fingerprint(),
+                        &mut hasher,
+                    );
+                    std::hash::Hasher::finish(&hasher)
+                }),
+                tenant: {
+                    let mut hasher = std::hash::DefaultHasher::new();
+                    std::hash::Hash::hash(ctx.fs().fs().root(), &mut hasher);
+                    std::hash::Hash::hash(ctx.fs().buck_out_path_resolver().root(), &mut hasher);
+                    std::hash::Hasher::finish(&hasher)
+                },
+            };
+            waiting_data.start_waiting_category_now(WaitingCategory::InFlight);
+            let waited = TimeSpan::start_now();
+            match in_flight::enter(key, ctx.target().as_proto_action_key()).await {
+                in_flight::Gate::Leader(guard) => Some(guard),
+                in_flight::Gate::Alone => None,
+                in_flight::Gate::Follower(leader) => {
+                    // `Ok` holds a succeeded leader's outputs, `Err` a failed leader's exit.
+                    let shared = match &leader.outcome {
+                        in_flight::LeaderOutcome::Succeeded { outputs } => {
+                            in_flight::LeaderResult::outputs_for(outputs, &req, ctx.fs())?.map(Ok)
+                        }
+                        in_flight::LeaderOutcome::Failed {
+                            outputs,
+                            exit_code,
+                            std_streams,
+                        } => Some(Err((
+                            in_flight::LeaderResult::failed_outputs_for(outputs, &req, ctx.fs())?,
+                            *exit_code,
+                            std_streams.clone(),
+                        ))),
+                    };
+                    // Equal digests declare equal outputs; carry on alone if they somehow do not.
+                    if let Some(shared) = shared {
+                        let execution_kind = CommandExecutionKind::InFlight {
+                            digest: prepared_action.action_and_blobs.action.dupe(),
+                            leader: leader.leader.clone(),
+                            leader_kind: leader.leader_kind,
+                        };
+                        let timing = CommandExecutionMetadata::empty(waited.end_now());
+                        let manager = ctx.command_execution_manager(waiting_data).claim().await;
+                        let result = match shared {
+                            Ok(outputs) => {
+                                manager.success(execution_kind, outputs, Default::default(), timing)
+                            }
+                            Err((outputs, exit_code, std_streams)) => manager.failure(
+                                execution_kind,
+                                outputs,
+                                std_streams,
+                                exit_code,
+                                timing,
+                                None,
+                                false,
+                            ),
+                        };
+                        return Ok(ExecuteResult::InFlightHit {
+                            result,
+                            dep_file_bundle,
+                            executor_preference: req.executor_preference,
+                            input_files_bytes: req.paths().input_files_bytes(),
+                        });
+                    }
+                    None
+                }
+            }
+        } else {
+            None
+        };
 
         // Check the action cache, fully check the local dep file cache if needed, then execute the command
         waiting_data.start_waiting_category_now(WaitingCategory::CheckingCaches);
@@ -1288,7 +1433,7 @@ impl RunAction {
                         .check_local_dep_file_cache(ctx, self.outputs.as_slice())
                         .await?;
                     if let Some((outputs, metadata)) = lookup {
-                        return Ok(ExecuteResult::LocalDepFileHit(outputs, metadata));
+                        return Ok(ExecuteResult::LocalDepFileHit(outputs, metadata, in_flight));
                     }
                 }
 
@@ -1377,7 +1522,31 @@ impl RunAction {
             executor_preference: req.executor_preference,
             action_and_blobs,
             input_files_bytes: req.paths().input_files_bytes(),
+            in_flight,
         })
+    }
+
+    /// Whether this action takes part in in-flight deduplication. Only actions whose outputs are
+    /// all content-based can share a digest across configurations, and incremental actions read
+    /// their own previous outputs.
+    fn dedupes_in_flight(&self, ctx: &dyn ActionExecutionCtx, induced_cache_miss: bool) -> bool {
+        ctx.run_action_knobs().dedupe_in_flight_actions
+            && !induced_cache_miss
+            && !self.inner.no_outputs_cleanup
+            && !self.inner.incremental_remote_outputs
+            && self.outputs.iter().next().is_some()
+            && self
+                .outputs
+                .iter()
+                .all(|output| output.get_path().is_content_based_path())
+    }
+
+    fn allow_cache_upload(&self, ctx: &dyn ActionExecutionCtx) -> buck2_error::Result<bool> {
+        Ok(self
+            .inner
+            .allow_cache_upload
+            .unwrap_or_else(|| ctx.run_action_knobs().default_allow_cache_upload)
+            || force_cache_upload()?)
     }
 
     async fn output_paths_as_inputs(
@@ -1767,8 +1936,49 @@ impl Action for RunAction {
             executor_preference,
             action_and_blobs,
             input_files_bytes,
+            published,
         ) = match self.execute_inner(ctx, waiting_data).await? {
-            ExecuteResult::LocalDepFileHit(outputs, metadata) => {
+            ExecuteResult::LocalDepFileHit(outputs, metadata, in_flight) => {
+                if let Some(guard) = in_flight {
+                    guard.publish(in_flight::LeaderResult::from_dep_file_hit(
+                        &outputs,
+                        ctx.fs(),
+                        ctx.target().as_proto_action_key(),
+                    )?);
+                }
+                return Ok((outputs, metadata));
+            }
+            ExecuteResult::InFlightHit {
+                result,
+                dep_file_bundle,
+                executor_preference,
+                input_files_bytes,
+            } => {
+                // The dep-file entry is persisted as the leader's is: only for a result produced
+                // on this machine.
+                let leader_ran_locally = matches!(
+                    &result.report.status,
+                    CommandExecutionStatus::Success {
+                        execution_kind: CommandExecutionKind::InFlight { leader_kind, .. },
+                    } if matches!(
+                        leader_kind,
+                        buck2_data::ActionExecutionKind::Local
+                            | buck2_data::ActionExecutionKind::LocalWorker
+                    )
+                );
+                // The leader uploaded, if anyone did. A shared failure returns its error here.
+                let (outputs, mut metadata) = ctx.unpack_command_execution_result(
+                    executor_preference,
+                    result,
+                    self.allow_cache_upload(ctx)?,
+                    self.inner.allow_dep_file_cache_upload,
+                    Some(input_files_bytes),
+                    buck2_data::IncrementalKind::NonIncremental,
+                )?;
+                self.copy_to_offline_output_cache(ctx, &outputs).await?;
+                let queued_write =
+                    populate_dep_files(ctx, dep_file_bundle, &outputs, leader_ran_locally).await?;
+                metadata.dep_file_db_writes_queued = u64::from(queued_write);
                 return Ok((outputs, metadata));
             }
             ExecuteResult::ExecutedOrReHit {
@@ -1777,13 +1987,37 @@ impl Action for RunAction {
                 executor_preference,
                 action_and_blobs,
                 input_files_bytes,
-            } => (
-                result,
-                dep_file_bundle,
-                executor_preference,
-                action_and_blobs,
-                input_files_bytes,
-            ),
+                in_flight,
+            } => {
+                // Release followers before the cache upload: they take the result directly. The
+                // guard is held through the upload, so that an action arriving meanwhile takes the
+                // result too instead of missing the action cache.
+                let published = match in_flight {
+                    Some(guard) => match in_flight::LeaderResult::new(
+                        &result,
+                        ctx.fs(),
+                        ctx.target().as_proto_action_key(),
+                    )? {
+                        Some(leader) => {
+                            guard.publish(leader);
+                            Some(guard)
+                        }
+                        None => {
+                            guard.release();
+                            None
+                        }
+                    },
+                    None => None,
+                };
+                (
+                    result,
+                    dep_file_bundle,
+                    executor_preference,
+                    action_and_blobs,
+                    input_files_bytes,
+                    published,
+                )
+            }
         };
 
         let allow_cache_upload = self
@@ -1847,6 +2081,7 @@ impl Action for RunAction {
                     buck2_data::UploadResult::DepFileUploadNotAllowed;
             }
         }
+        drop(published);
 
         let was_locally_executed = result.was_locally_executed();
         let (outputs, mut metadata) = ctx.unpack_command_execution_result(
@@ -1858,23 +2093,7 @@ impl Action for RunAction {
             incremental_kind,
         )?;
 
-        // Cache outputs if tracing and parameter enabled
-        if self.inner.allow_offline_output_cache {
-            let io_provider = ctx.io_provider();
-            if let Some(tracer) = TracingIoProvider::from_io(io_provider) {
-                for output in self.outputs.iter() {
-                    if let Some(value) = outputs.get(output.get_path()) {
-                        offline::declare_copy_to_offline_output_cache(
-                            ctx,
-                            tracer,
-                            output,
-                            value.dupe(),
-                        )
-                        .await?;
-                    }
-                }
-            }
-        }
+        self.copy_to_offline_output_cache(ctx, &outputs).await?;
 
         let queued_write =
             populate_dep_files(ctx, dep_file_bundle, &outputs, was_locally_executed).await?;

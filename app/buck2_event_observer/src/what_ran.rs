@@ -235,6 +235,8 @@ pub enum CommandReproducer {
     LocalExecute(buck2_data::LocalExecute),
     WorkerExecute(buck2_data::WorkerExecute),
     WorkerInit(buck2_data::WorkerInit),
+    /// Took the result of an identical action already running in this daemon.
+    InFlight(buck2_data::InFlightCommand),
 }
 
 impl CommandReproducer {
@@ -254,6 +256,7 @@ impl CommandReproducer {
             Self::LocalExecute(..) => "local".to_owned(),
             Self::WorkerExecute(..) => "worker".to_owned(),
             Self::WorkerInit(..) => "worker_init".to_owned(),
+            Self::InFlight(..) => "in_flight".to_owned(),
         }
     }
 
@@ -334,6 +337,9 @@ impl fmt::Display for CommandReproducer {
                 write!(formatter, "{}", cache_hit.action_digest)
             }
             CommandReproducer::LocalDepFileCacheHit => Ok(()),
+            CommandReproducer::InFlight(in_flight) => {
+                write!(formatter, "{}", in_flight.action_digest)
+            }
             CommandReproducer::ReExecute(re_execute)
             | CommandReproducer::ReServedFromCache(re_execute)
             | CommandReproducer::ReDeduplicated(re_execute) => {

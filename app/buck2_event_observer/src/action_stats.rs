@@ -25,6 +25,8 @@ use crate::last_command_execution_kind::get_last_command_execution_kind;
 /// not overlap. `fallback_actions` counts actions whose command ran more than
 /// once (hence, using fallback to run), and `remote_deduplicated_actions` the
 /// `remote_actions` the service ran as an execution shared with another build.
+/// `in_flight_actions` took the result of an identical action already running
+/// in this daemon; they are neither executed nor cached.
 ///
 /// These stats only track executions/commands.
 #[derive(Default, Clone, Dupe)]
@@ -36,6 +38,7 @@ pub struct ActionStats {
     pub remote_dep_file_cached_actions: u64,
     pub remote_served_from_cache_actions: u64,
     pub remote_deduplicated_actions: u64,
+    pub in_flight_actions: u64,
     pub excess_cache_misses: u64,
 }
 
@@ -105,6 +108,9 @@ impl ActionStats {
             LastCommandExecutionKind::RemoteDepFileCached => {
                 self.remote_dep_file_cached_actions += 1;
             }
+            LastCommandExecutionKind::InFlight => {
+                self.in_flight_actions += 1;
+            }
             LastCommandExecutionKind::NoCommand => {}
         }
         if let Some(v) = &action.invalidation_info {
@@ -143,6 +149,10 @@ impl fmt::Display for ActionStats {
                 self.remote_deduplicated_actions, self.remote_actions
             )
             .as_str();
+        }
+        if self.in_flight_actions > 0 {
+            action_stats_message +=
+                format!(". Deduplicated by buck2: {}", self.in_flight_actions).as_str();
         }
         write!(f, "{action_stats_message}")
     }

@@ -162,6 +162,18 @@ impl TimedRow {
         cutoffs: &Cutoffs,
         display_platform: bool,
     ) -> buck2_error::Result<Self> {
+        Self::span_with_aux(padding, span, None, timekeeper, cutoffs, display_platform)
+    }
+
+    /// Like `span`, with `aux` text after the event.
+    pub(crate) fn span_with_aux(
+        padding: usize,
+        span: &BuckEventSpanInfo,
+        aux: Option<String>,
+        timekeeper: &Timekeeper,
+        cutoffs: &Cutoffs,
+        display_platform: bool,
+    ) -> buck2_error::Result<Self> {
         let event = display::display_event(
             &span.event,
             TargetDisplayOptions::for_console(display_platform),
@@ -180,7 +192,7 @@ impl TimedRow {
             event.label,
             event.detail,
             event.category,
-            None,
+            aux,
             time,
             style_age,
             cutoffs,

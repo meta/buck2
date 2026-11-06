@@ -316,6 +316,13 @@ impl WhatRanCommandState {
                         .reproducers
                         .push(CommandReproducer::LocalDepFileCacheHit);
                 }
+                if let Some(in_flight) = in_flight_command(&span.data)
+                    && !options.options.skip_cache_hits
+                {
+                    entry
+                        .reproducers
+                        .push(CommandReproducer::InFlight(in_flight.clone()));
+                }
                 if let Some(remote) = remote_command {
                     entry.reproducers = entry
                         .reproducers
@@ -329,6 +336,28 @@ impl WhatRanCommandState {
         }
 
         Ok(())
+    }
+}
+
+/// The command of an action that took the result of an identical in-flight action.
+fn in_flight_command(
+    data: &Option<buck2_data::span_end_event::Data>,
+) -> Option<&buck2_data::InFlightCommand> {
+    let Some(buck2_data::span_end_event::Data::ActionExecution(action_exec)) = data else {
+        return None;
+    };
+    match action_exec
+        .commands
+        .last()?
+        .details
+        .as_ref()?
+        .command_kind
+        .as_ref()?
+        .command
+        .as_ref()?
+    {
+        buck2_data::command_execution_kind::Command::InFlightCommand(in_flight) => Some(in_flight),
+        _ => None,
     }
 }
 
@@ -424,6 +453,16 @@ impl WhatRanOutputWriter for OutputFormatWithWriter<'_> {
                         }
                     },
                     CommandReproducer::LocalDepFileCacheHit => JsonReproducer::LocalDepFileCache,
+                    CommandReproducer::InFlight(in_flight) => JsonReproducer::InFlight {
+                        digest: &in_flight.action_digest,
+                        leader: in_flight.leader_action_key.as_ref().and_then(|key| {
+                            buck2_event_observer::display::display_action_key(
+                                key,
+                                buck2_event_observer::display::TargetDisplayOptions::for_log(),
+                            )
+                            .ok()
+                        }),
+                    },
                     CommandReproducer::ReExecute(re_execute)
                     | CommandReproducer::ReServedFromCache(re_execute)
                     | CommandReproducer::ReDeduplicated(re_execute) => {
@@ -583,6 +622,11 @@ mod json_reproducer {
             action_key: Option<&'a str>,
         },
         LocalDepFileCache,
+        InFlight {
+            digest: &'a str,
+            #[serde(skip_serializing_if = "Option::is_none")]
+            leader: Option<String>,
+        },
         Re {
             digest: &'a str,
             platform_properties: BuckMutInsertionMap<&'a str, &'a str>,

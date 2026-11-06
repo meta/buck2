@@ -528,7 +528,8 @@ impl<'d> HasActionExecutor<'d> for DiceComputations<'d> {
             invalidation_tracking_enabled,
             output_trees_download_config,
             invocation_re_settings,
-        ))
+        )
+        .with_executor_config(executor_config, self.get_command_options_fingerprint()?))
     }
 }
 
@@ -549,6 +550,10 @@ pub struct BuckActionExecutor<'d> {
     invalidation_tracking_enabled: bool,
     output_trees_download_config: OutputTreesDownloadConfig,
     invocation_re_settings: InvocationReSettings,
+    /// Hash of the `CommandExecutorConfig` this executor was built from. Zero when unknown.
+    executor_config_fingerprint: u64,
+    /// `HasCommandExecutor::command_options_fingerprint` of the command this executor runs for.
+    command_options_fingerprint: u64,
 }
 
 impl<'d> BuckActionExecutor<'d> {
@@ -587,7 +592,24 @@ impl<'d> BuckActionExecutor<'d> {
             invalidation_tracking_enabled,
             output_trees_download_config,
             invocation_re_settings,
+            executor_config_fingerprint: 0,
+            command_options_fingerprint: 0,
         }
+    }
+
+    /// Records which `CommandExecutorConfig` this executor runs, and under which command options
+    /// (`HasCommandExecutor::command_options_fingerprint`), so that actions can tell executions
+    /// under different executors or commands apart.
+    pub fn with_executor_config(
+        mut self,
+        config: &CommandExecutorConfig,
+        command_options_fingerprint: u64,
+    ) -> Self {
+        let mut hasher = std::hash::DefaultHasher::new();
+        std::hash::Hash::hash(config, &mut hasher);
+        self.executor_config_fingerprint = std::hash::Hasher::finish(&hasher);
+        self.command_options_fingerprint = command_options_fingerprint;
+        self
     }
 }
 
@@ -715,6 +737,14 @@ impl ActionExecutionCtx for BuckActionExecutionContext<'_, '_> {
 
     fn run_action_knobs(&self) -> &RunActionKnobs {
         &self.executor.run_action_knobs
+    }
+
+    fn executor_config_fingerprint(&self) -> u64 {
+        self.executor.executor_config_fingerprint
+    }
+
+    fn command_options_fingerprint(&self) -> u64 {
+        self.executor.command_options_fingerprint
     }
 
     fn dep_file_store(&self) -> Option<&dyn DepFileStore> {

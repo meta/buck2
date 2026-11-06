@@ -517,6 +517,10 @@ fn project_attempt(
             report.executor = "worker_init".to_owned();
             report.command = Some(logged_command(command.argv, command.env, Vec::new()));
         }
+        Some(Command::InFlightCommand(command)) => {
+            report.executor = "in_flight".to_owned();
+            report.action_digest = nonempty(command.action_digest);
+        }
         Some(Command::RemoteCommand(command)) => {
             report.executor = "remote".to_owned();
             report.action_digest = nonempty(command.action_digest);

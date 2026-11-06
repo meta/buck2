@@ -94,6 +94,16 @@ pub enum CommandExecutionKind {
         env: BuckFixedSortedMap<String, String>,
         fallback_exe: Vec<String>,
     },
+    /// This action took the result of an identical action already running in this daemon, and
+    /// was neither looked up in a cache nor executed.
+    #[display("in_flight")]
+    InFlight {
+        digest: ActionDigest,
+        /// The action whose execution this one shared.
+        leader: buck2_data::ActionKey,
+        /// How the leader's result was produced.
+        leader_kind: buck2_data::ActionExecutionKind,
+    },
 }
 
 impl CommandExecutionKind {
@@ -121,6 +131,7 @@ impl CommandExecutionKind {
             } => buck2_data::ActionExecutionKind::RemoteDeduplicated,
             Self::ActionCache { .. } => buck2_data::ActionExecutionKind::ActionCache,
             Self::RemoteDepFileCache { .. } => buck2_data::ActionExecutionKind::RemoteDepFileCache,
+            Self::InFlight { .. } => buck2_data::ActionExecutionKind::InFlight,
         }
     }
 
@@ -260,6 +271,15 @@ impl CommandExecutionKind {
                     })
                     .collect(),
                 fallback_exe: fallback_exe.to_owned(),
+            }),
+            Self::InFlight {
+                digest,
+                leader,
+                leader_kind,
+            } => Command::InFlightCommand(buck2_data::InFlightCommand {
+                action_digest: digest.to_string(),
+                leader_action_key: Some(leader.clone()),
+                leader_execution_kind: (*leader_kind).into(),
             }),
         });
 

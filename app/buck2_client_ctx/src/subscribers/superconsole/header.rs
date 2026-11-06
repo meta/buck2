@@ -372,6 +372,12 @@ impl ProgressHeader<'_> {
                         if compact { "" } else { " hit" }
                     ));
                 }
+                if self.action_stats.in_flight_actions > 0 {
+                    res_types.push(format!(
+                        "{} deduplicated",
+                        self.action_stats.in_flight_actions
+                    ));
+                }
 
                 if res_types.is_empty() {
                     String::new()
@@ -705,6 +711,7 @@ mod tests {
             remote_dep_file_cached_actions: 0,
             remote_served_from_cache_actions: 0,
             remote_deduplicated_actions: 0,
+            in_flight_actions: 0,
             excess_cache_misses: 0,
         }
     }
@@ -876,6 +883,31 @@ mod tests {
     }
 
     #[test]
+    fn test_actions_stats_count_deduplicated() {
+        let action_stats = ActionStats {
+            local_actions: 9,
+            remote_actions: 1885,
+            in_flight_actions: 8955,
+            ..ActionStats::default()
+        };
+        let header = ProgressHeader {
+            header: "header",
+            phase_stats: &phase_stats(),
+            progress_stats: &progress_stats(),
+            action_stats: &action_stats,
+            time_elapsed: "1234s".to_owned(),
+        };
+        assert_eq!(
+            header.render_actions_stats(Style::Normal(5)),
+            "Finished 9 local, 1885 remote, 8955 deduplicated"
+        );
+        assert_eq!(
+            header.render_actions_stats(Style::Compact(5)),
+            "9 local, 1885 remote, 8955 deduplicated"
+        );
+    }
+
+    #[test]
     fn test_validation_line_not_shown_when_not_started() -> buck2_error::Result<()> {
         let mut stats = phase_stats();
         stats.validations = BuildProgressPhaseStatsItem {
@@ -918,6 +950,7 @@ mod tests {
             remote_dep_file_cached_actions: 0,
             remote_served_from_cache_actions: 0,
             remote_deduplicated_actions: 0,
+            in_flight_actions: 0,
             excess_cache_misses: 0,
         };
         let output = SimpleHeader::new_for_data(HeaderData {
@@ -951,6 +984,7 @@ mod tests {
             remote_dep_file_cached_actions: 0,
             remote_served_from_cache_actions: 0,
             remote_deduplicated_actions: 0,
+            in_flight_actions: 0,
             excess_cache_misses: 0,
         };
         let output = SimpleHeader::new_for_data(HeaderData {
@@ -985,6 +1019,7 @@ mod tests {
             remote_dep_file_cached_actions: 0,
             remote_served_from_cache_actions: 0,
             remote_deduplicated_actions: 0,
+            in_flight_actions: 0,
             excess_cache_misses: 0,
         };
         let output = SimpleHeader::new_for_data(HeaderData {
@@ -1020,6 +1055,7 @@ mod tests {
             remote_dep_file_cached_actions: 0,
             remote_served_from_cache_actions: 0,
             remote_deduplicated_actions: 0,
+            in_flight_actions: 0,
             excess_cache_misses: 0,
         };
         let output = SimpleHeader::new_for_data(HeaderData {

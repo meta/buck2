@@ -446,6 +446,8 @@ impl SpanTrackable for BuckEvent {
 
                         matches!(stage.stage.as_ref(), Some(Stage::Queue(..)))
                     }
+                    // Waiting for an identical action, like waiting in a queue.
+                    Some(Stage::InFlightWait(..)) => true,
                     _ => false,
                 }
             }

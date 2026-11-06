@@ -668,6 +668,7 @@ pub fn display_executor_stage(
 
     let label = match stage {
         Stage::Prepare(..) => "prepare",
+        Stage::InFlightWait(..) => "in_flight_wait",
         Stage::CasArtifact(cas) => {
             use buck2_data::cas_artifact_stage::Phase;
             match Phase::try_from(cas.phase) {
@@ -779,6 +780,7 @@ pub fn is_active_execution_stage(event: &BuckEvent) -> bool {
             }
         }
         Stage::Prepare(..)
+        | Stage::InFlightWait(..)
         | Stage::CacheQuery(..)
         | Stage::CacheHit(..)
         | Stage::CasArtifact(..) => false,
@@ -985,6 +987,12 @@ impl ActionErrorDisplay<'_> {
                         );
                     }
                 }
+                Some(Command::InFlightCommand(in_flight)) => {
+                    append!(
+                        "Took the result of an identical in-flight action, digest: '{}'",
+                        in_flight.action_digest
+                    );
+                }
                 Some(Command::OmittedLocalCommand(..)) | None => {
                     // Nothing to show in this case.
                 }
@@ -1125,6 +1133,7 @@ fn failure_reason_for_command_execution(
             Some(Command::LocalCommand(..)) | Some(Command::OmittedLocalCommand(..)) => "Local ",
             Some(Command::WorkerInitCommand(..)) => "Local Worker Initialization ",
             Some(Command::WorkerCommand(..)) => "Local Worker ",
+            Some(Command::InFlightCommand(..)) => "In-flight ",
             None => "",
         }
     } else {

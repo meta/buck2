@@ -163,6 +163,9 @@ pub enum WaitingCategory {
     /// Time between an install's dependencies finishing and the installer being launched and
     /// connected.
     InstallerStartup,
+    /// Time a `run` action spent waiting for an identical action already in flight
+    /// (`buck2.dedupe_in_flight_actions`).
+    InFlight,
 }
 
 #[derive(Copy, Clone, Dupe, derive_more::Display, Allocative)]

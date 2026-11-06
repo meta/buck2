@@ -87,11 +87,12 @@ pub fn extract_interval(end: &buck2_data::ActionExecutionEnd) -> Option<ActionIn
         | LastCommandExecutionKind::LocalWorker
         | LastCommandExecutionKind::Remote
         | LastCommandExecutionKind::RemoteDeduplicated => {}
-        // Cache hits, including the service's own, and no-command actions do not occupy
-        // execution capacity.
+        // Cache hits, including the service's own, results shared in flight, and no-command
+        // actions do not occupy execution capacity.
         LastCommandExecutionKind::Cached
         | LastCommandExecutionKind::RemoteDepFileCached
         | LastCommandExecutionKind::RemoteServedFromCache
+        | LastCommandExecutionKind::InFlight
         | LastCommandExecutionKind::NoCommand => return None,
     }
 

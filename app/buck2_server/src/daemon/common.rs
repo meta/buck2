@@ -185,6 +185,18 @@ enum ExecutorCompatibilityError {
 }
 
 impl HasCommandExecutor for CommandExecutorFactory {
+    fn command_options_fingerprint(&self) -> u64 {
+        let mut hasher = std::hash::DefaultHasher::new();
+        std::hash::Hash::hash(&self.strategy, &mut hasher);
+        std::hash::Hash::hash(&self.skip_cache_read, &mut hasher);
+        std::hash::Hash::hash(&self.skip_cache_write, &mut hasher);
+        std::hash::Hash::hash(&self.upload_all_actions, &mut hasher);
+        std::hash::Hash::hash(&self.materialize_failed_inputs, &mut hasher);
+        std::hash::Hash::hash(&self.materialize_failed_outputs, &mut hasher);
+        std::hash::Hash::hash(&self.re_use_case_override, &mut hasher);
+        std::hash::Hasher::finish(&hasher)
+    }
+
     fn get_command_executor(
         &self,
         artifact_fs: &ArtifactFs,

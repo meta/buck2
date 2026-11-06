@@ -19,6 +19,8 @@ pub enum LastCommandExecutionKind {
     RemoteDeduplicated,
     Cached,
     RemoteDepFileCached,
+    /// Took the result of an identical action already running in this daemon.
+    InFlight,
     NoCommand,
 }
 
@@ -56,6 +58,7 @@ pub fn get_last_command_execution_kind(
                     LastCommandExecutionKind::RemoteDeduplicated
                 }
             },
+            Some(Command::InFlightCommand(_)) => LastCommandExecutionKind::InFlight,
             None => LastCommandExecutionKind::NoCommand,
         }
     } else {

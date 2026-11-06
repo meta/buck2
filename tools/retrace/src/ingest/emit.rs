@@ -189,6 +189,7 @@ fn exec_kind_name(kind: i32) -> String {
         11 => "remote_worker",
         12 => "remote_served_from_cache",
         13 => "remote_deduplicated",
+        14 => "in_flight",
         n => return format!("kind_{n}"),
     }
     .to_owned()

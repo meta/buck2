@@ -1,0 +1,53 @@
+load(":defs.bzl", "constraint_setting", "constraint_value", "depf", "diagnosed", "execution_platforms", "fan", "fan_arm", "fan_x86", "gen", "platform")
+load(":runs.bzl", "RUNS")
+
+constraint_setting(name = "cpu")
+constraint_value(name = "x86", setting = ":cpu")
+constraint_value(name = "arm", setting = ":cpu")
+constraint_setting(name = "variant")
+constraint_value(name = "a", setting = ":variant")
+constraint_value(name = "b", setting = ":variant")
+
+platform(name = "base")
+execution_platforms(name = "execs", platform = ":base")
+
+# Reads no axis: one digest in all four configurations.
+gen(name = "common", runs = RUNS, text = "common")
+
+# Selects on variant: two digests across the four configurations.
+gen(name = "per_variant", runs = RUNS, text = select({":a": "variant a", ":b": "variant b"}))
+
+# Fails in every configuration.
+gen(name = "broken", runs = RUNS, status = "fail", text = "broken")
+
+# Fails in every configuration, leaving a diagnostic for its error handler.
+diagnosed(name = "diagnosed", runs = RUNS)
+
+# Killed by a signal in every configuration.
+gen(name = "killed", runs = RUNS, delay = "1", status = "kill", text = "killed")
+
+# Slow enough to cancel while it runs.
+gen(name = "slow", runs = RUNS, delay = "15", text = "slow")
+
+# Times out in every configuration.
+gen(name = "times_out", runs = RUNS, delay = "15", text = "times out", timeout = 1)
+
+# Copies its output to the offline cache while I/O is traced.
+gen(name = "offline", runs = RUNS, offline = True, text = "offline")
+
+fan(name = "all", deps = [":common", ":per_variant"])
+fan(name = "all_broken", deps = [":broken"])
+fan(name = "all_killed", deps = [":killed"])
+fan(name = "all_diagnosed", deps = [":diagnosed"])
+fan(name = "all_times_out", deps = [":times_out"])
+fan(name = "all_offline", deps = [":offline"])
+fan_x86(name = "common_x86", deps = [":common"])
+fan_arm(name = "common_arm", deps = [":common"])
+fan_x86(name = "slow_x86", deps = [":slow"])
+fan_arm(name = "slow_arm", deps = [":slow"])
+
+# A tagged input the dep file leaves out. It takes a moment to build, so all four configurations
+# of depf become ready together after it changes.
+gen(name = "unused", runs = RUNS, delay = "2", text = "unused v1")
+depf(name = "depf", runs = RUNS, used = "used.txt", unused = ":unused")
+fan(name = "all_depf", deps = [":depf"])

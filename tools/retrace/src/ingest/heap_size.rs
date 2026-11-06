@@ -222,6 +222,8 @@ fn executor_heap(executor: &buck2_data::ExecutorStageStart) -> Option<usize> {
             no_owned_heap(phase);
             0
         }
+        // The leader's action key owns nested heap; measure it the slow way.
+        Some(Stage::InFlightWait(_)) => return None,
     })
 }
 

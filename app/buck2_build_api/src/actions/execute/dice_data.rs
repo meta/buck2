@@ -51,6 +51,13 @@ pub trait HasCommandExecutor {
         artifact_fs: &ArtifactFs,
         config: &CommandExecutorConfig,
     ) -> buck2_error::Result<CommandExecutorResponse>;
+
+    /// Hash of the command's own options that change how its executors produce a result
+    /// (strategy, cache reads and writes, uploading every action), beyond the
+    /// `CommandExecutorConfig`. Zero when there are none.
+    fn command_options_fingerprint(&self) -> u64 {
+        0
+    }
 }
 
 impl SetCommandExecutor for UserComputationData {
@@ -68,6 +75,8 @@ pub trait DiceHasCommandExecutor {
         artifact_fs: &ArtifactFs,
         config: &CommandExecutorConfig,
     ) -> buck2_error::Result<CommandExecutorResponse>;
+
+    fn get_command_options_fingerprint(&self) -> buck2_error::Result<u64>;
 }
 
 impl DiceHasCommandExecutor for DiceComputations<'_> {
@@ -83,6 +92,16 @@ impl DiceHasCommandExecutor for DiceComputations<'_> {
             .map_err(|e| from_any_with_tag(e, buck2_error::ErrorTag::Tier0))
             .buck_error_context("CommandExecutorDelegate should be set")?;
         holder.delegate.get_command_executor(artifact_fs, config)
+    }
+
+    fn get_command_options_fingerprint(&self) -> buck2_error::Result<u64> {
+        let holder = self
+            .per_transaction_data()
+            .data
+            .get::<HasCommandExecutorHolder>()
+            .map_err(|e| from_any_with_tag(e, buck2_error::ErrorTag::Tier0))
+            .buck_error_context("CommandExecutorDelegate should be set")?;
+        Ok(holder.delegate.command_options_fingerprint())
     }
 }
 

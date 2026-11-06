@@ -11,12 +11,14 @@
 package com.facebook.buck.testrunner;
 
 import com.facebook.buck.test.result.type.ResultType;
+import com.facebook.infer.annotation.Nullsafe;
 import javax.annotation.Nullable;
 
 /**
  * Result of an individual test method in JUnit. Similar to {@link org.junit.runner.Result}, except
  * that it always corresponds to exactly one test method.
  */
+@Nullsafe(Nullsafe.Mode.LOCAL)
 final class TestResult {
   final String testClassName;
   final String testMethodName;

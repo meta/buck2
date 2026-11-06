@@ -10,6 +10,8 @@
 
 package com.facebook.buck.testrunner;
 
+import com.facebook.infer.annotation.Nullsafe;
+
 /**
  * Launcher for TestNG.
  *
@@ -26,6 +28,7 @@ package com.facebook.buck.testrunner;
  * Java API. The objective is to limit the set of files added to the ClassLoader that runs the test,
  * as not to interfere with the results of the test.
  */
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public class TestNGMain {
 
   private TestNGMain() {

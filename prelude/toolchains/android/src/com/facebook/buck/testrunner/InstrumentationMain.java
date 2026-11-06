@@ -10,6 +10,9 @@
 
 package com.facebook.buck.testrunner;
 
+import com.facebook.infer.annotation.Nullsafe;
+
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public class InstrumentationMain {
 
   @FunctionalInterface

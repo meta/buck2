@@ -11,11 +11,13 @@
 package com.facebook.buck.testrunner.reportlayer;
 
 import com.facebook.buck.testrunner.InstrumentationTestRunner;
+import com.facebook.infer.annotation.Nullsafe;
 
 /**
  * base class for report layers for InstrumentationTestRunner. report layers like video recording,
  * tombstone reporting will use it as base class
  */
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public abstract class ReportLayer {
   protected final InstrumentationTestRunner runner;
 

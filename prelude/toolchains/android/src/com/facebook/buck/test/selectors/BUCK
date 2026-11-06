@@ -8,6 +8,9 @@ source_listing()
 buck_java_library(
     name = "selectors",
     srcs = glob(["*.java"]),
+    provided_deps = [
+        "prelude//toolchains/android/third-party:infer-annotations",
+    ],
     # This target is pulled in by testrunner, which needs to compile against Java 8.
     # @oss-disable[end= ]: source = "8",
     # @oss-disable[end= ]: target = "8",

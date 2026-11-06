@@ -10,6 +10,7 @@
 
 package com.facebook.buck.testrunner;
 
+import com.facebook.infer.annotation.Nullsafe;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -17,6 +18,7 @@ import java.util.regex.Pattern;
  * Analyzes crash information from logcat output to detect specific crash types and provide enhanced
  * crash reporting.
  */
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public class CrashAnalyzer {
 
   /** Defines a crash type with its detection pattern and message. */

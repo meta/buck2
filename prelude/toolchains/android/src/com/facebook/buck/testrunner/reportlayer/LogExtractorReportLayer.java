@@ -11,6 +11,7 @@
 package com.facebook.buck.testrunner.reportlayer;
 
 import com.facebook.buck.testrunner.InstrumentationTestRunner;
+import com.facebook.infer.annotation.Nullsafe;
 import java.io.File;
 import java.io.FileWriter;
 import java.nio.file.Path;
@@ -22,6 +23,7 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 /** report layer to extract logs to separate tra by regex matching */
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public class LogExtractorReportLayer extends ReportLayer {
 
   public static final String ARG = "--log-extractor";

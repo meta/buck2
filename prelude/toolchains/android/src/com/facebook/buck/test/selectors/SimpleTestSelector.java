@@ -10,12 +10,14 @@
 
 package com.facebook.buck.test.selectors;
 
+import com.facebook.infer.annotation.Nullsafe;
 import java.util.Objects;
 
 /**
  * A {@link TestDescription} will match if this selector's class-part is identical to the
  * TestDescriptions class name (same for the method name).
  */
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public class SimpleTestSelector implements TestSelector {
   private final @Nullable String className;
   private final @Nullable String methodName;

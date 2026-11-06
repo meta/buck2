@@ -10,10 +10,12 @@
 
 package com.facebook.buck.testrunner;
 
+import com.facebook.infer.annotation.Nullsafe;
 import java.io.IOException;
 import java.util.logging.Level;
 
 /** Record a test execution, saving the standard outputs and duration. */
+@Nullsafe(Nullsafe.Mode.LOCAL)
 class TestRecorder {
 
   private static final String DEBUG_LOGS_HEADER = "====DEBUG LOGS====\n\n";

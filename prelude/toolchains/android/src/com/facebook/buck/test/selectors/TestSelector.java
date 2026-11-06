@@ -10,10 +10,13 @@
 
 package com.facebook.buck.test.selectors;
 
+import com.facebook.infer.annotation.Nullsafe;
+
 /**
  * A way of matching a test-method in a test-class, and saying whether or not to include any matches
  * in a test run.
  */
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public interface TestSelector {
   String getRawSelector();
 

@@ -34,6 +34,7 @@ use pagable::PagableSerialize;
 use pagable::PagableSerializer;
 use starlark_derive::StarlarkPagable;
 use starlark_syntax::syntax::ast::Visibility;
+use static_assertions::assert_eq_size;
 
 use crate as starlark;
 use crate::collections::Hashed;
@@ -141,10 +142,13 @@ pub(crate) struct FrozenModuleData<'v> {
     docstring: Option<String>,
     /// When heap profile enabled, this field stores retained memory info.
     /// Runtime profiling data — not meaningful to round-trip, so we skip
-    /// serialization and restore as `None`.
+    /// serialization and restore as `None`. Boxed to keep every frozen module
+    /// small: this is `None` unless the retained heap profiler is on.
     #[starlark_pagable(skip)]
-    heap_profile: Option<RetainedHeapProfile>,
+    heap_profile: Option<Box<RetainedHeapProfile>>,
 }
+
+assert_eq_size!(FrozenModuleData<'static>, [usize; 9]);
 
 register_starlark_any_complex!(frozen FrozenModuleData<'_>);
 
@@ -564,10 +568,10 @@ impl<'v> Module<'v> {
                 // TODO(nga): retained heap profile does not store information about data
                 //   allocated in frozen heap before freeze starts.
                 let heap_profile = AggregateHeapProfileInfo::collect(heap, Some(HeapKind::Frozen));
-                Some(RetainedHeapProfile {
+                Some(Box::new(RetainedHeapProfile {
                     info: heap_profile,
                     mode,
-                })
+                }))
             } else {
                 None
             };

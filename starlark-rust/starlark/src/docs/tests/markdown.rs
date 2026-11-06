@@ -24,7 +24,6 @@ use starlark_derive::NoSerialize;
 use starlark_derive::StarlarkPagable;
 use starlark_derive::starlark_module;
 use starlark_derive::starlark_value;
-use starlark_map::small_map::SmallMap;
 use starlark_syntax::golden_test_template::golden_test_template;
 
 use crate as starlark;
@@ -42,9 +41,11 @@ use crate::environment::Methods;
 use crate::environment::MethodsBuilder;
 use crate::values::StarlarkValue;
 use crate::values::Value;
-use crate::values::list::UnpackList;
+use crate::values::ValueOf;
+use crate::values::dict::DictType;
+use crate::values::list::ListType;
 use crate::values::none::NoneType;
-use crate::values::tuple::UnpackTuple;
+use crate::values::tuple::TupleType;
 
 fn docs_golden_test(test_file_name: &str, doc: DocItem) -> String {
     assert!(test_file_name.ends_with(".golden.md"));
@@ -166,8 +167,11 @@ fn module(builder: &mut GlobalsBuilder) {
     }
 
     fn with_defaults<'v>(
-        #[starlark(default=UnpackList::default())] explicit_default: UnpackList<String>,
-        hidden_default: Option<UnpackList<String>>,
+        #[starlark(default = ValueOf::empty_list())] explicit_default: ValueOf<
+            'v,
+            ListType<String>,
+        >,
+        hidden_default: Option<ValueOf<'v, ListType<String>>>,
         #[starlark(default = "my_default")] string_default: &str,
     ) -> anyhow::Result<NoneType> {
         let _unused = (explicit_default, hidden_default, string_default);
@@ -191,13 +195,15 @@ fn submodule(builder: &mut GlobalsBuilder) {
         Ok(a)
     }
 
-    fn starlark_args(#[starlark(args)] args: UnpackTuple<String>) -> anyhow::Result<NoneType> {
+    fn starlark_args<'v>(
+        #[starlark(args)] args: ValueOf<'v, TupleType<String>>,
+    ) -> anyhow::Result<NoneType> {
         let _ignore = args;
         Ok(NoneType)
     }
 
-    fn starlark_kwargs(
-        #[starlark(kwargs)] kwargs: SmallMap<String, u32>,
+    fn starlark_kwargs<'v>(
+        #[starlark(kwargs)] kwargs: ValueOf<'v, DictType<String, u32>>,
     ) -> anyhow::Result<NoneType> {
         let _ignore = kwargs;
         Ok(NoneType)

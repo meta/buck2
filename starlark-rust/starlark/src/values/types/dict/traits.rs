@@ -16,9 +16,7 @@
  */
 
 use std::collections::BTreeMap;
-use std::hash::Hash;
 
-use either::Either;
 use mini_map::MiniMutInsertionMap;
 
 use crate::collections::SmallMap;
@@ -27,10 +25,8 @@ use crate::values::AllocFrozenValue;
 use crate::values::AllocValue;
 use crate::values::FrozenHeap;
 use crate::values::Heap;
-use crate::values::UnpackValue;
 use crate::values::Value;
 use crate::values::dict::AllocDict;
-use crate::values::dict::DictRef;
 use crate::values::type_repr::StarlarkTypeRepr;
 use crate::values::types::dict::dict_type::DictType;
 
@@ -55,16 +51,6 @@ impl<K: StarlarkTypeRepr, V: StarlarkTypeRepr> StarlarkTypeRepr for MiniMutInser
 
     fn starlark_type_repr() -> Ty {
         DictType::<K, V>::starlark_type_repr()
-    }
-}
-
-impl<'v, K: UnpackValue<'v> + Hash + Eq, V: UnpackValue<'v>> UnpackValue<'v>
-    for MiniMutInsertionMap<K, V>
-{
-    type Error = Either<K::Error, V::Error>;
-
-    fn unpack_value_impl(value: Value<'v>) -> Result<Option<Self>, Self::Error> {
-        SmallMap::unpack_value_impl(value).map(|r| r.map(SmallMap::into_inner))
     }
 }
 
@@ -122,29 +108,6 @@ impl<K: StarlarkTypeRepr, V: StarlarkTypeRepr> StarlarkTypeRepr for SmallMap<K, 
     }
 }
 
-impl<'v, K: UnpackValue<'v> + Hash + Eq, V: UnpackValue<'v>> UnpackValue<'v> for SmallMap<K, V> {
-    type Error = Either<K::Error, V::Error>;
-
-    fn unpack_value_impl(value: Value<'v>) -> Result<Option<Self>, Self::Error> {
-        let Some(dict) = DictRef::from_value(value) else {
-            return Ok(None);
-        };
-        let it = dict.iter();
-        let mut r = SmallMap::with_capacity(it.len());
-        for (k, v) in it {
-            let Some(k) = K::unpack_value_impl(k).map_err(Either::Left)? else {
-                return Ok(None);
-            };
-            let Some(v) = V::unpack_value_impl(v).map_err(Either::Right)? else {
-                return Ok(None);
-            };
-            // TODO(nga): return error if keys are not unique.
-            r.insert(k, v);
-        }
-        Ok(Some(r))
-    }
-}
-
 // BTreeMap
 
 impl<'v, K: AllocValue<'v>, V: AllocValue<'v>> AllocValue<'v> for BTreeMap<K, V> {
@@ -196,27 +159,5 @@ impl<K: StarlarkTypeRepr, V: StarlarkTypeRepr> StarlarkTypeRepr for BTreeMap<K, 
 
     fn starlark_type_repr() -> Ty {
         DictType::<K, V>::starlark_type_repr()
-    }
-}
-
-impl<'v, K: UnpackValue<'v> + Ord, V: UnpackValue<'v>> UnpackValue<'v> for BTreeMap<K, V> {
-    type Error = Either<K::Error, V::Error>;
-
-    fn unpack_value_impl(value: Value<'v>) -> Result<Option<Self>, Self::Error> {
-        let Some(dict) = DictRef::from_value(value) else {
-            return Ok(None);
-        };
-        let mut r = BTreeMap::new();
-        for (k, v) in dict.iter() {
-            let Some(k) = K::unpack_value_impl(k).map_err(Either::Left)? else {
-                return Ok(None);
-            };
-            let Some(v) = V::unpack_value_impl(v).map_err(Either::Right)? else {
-                return Ok(None);
-            };
-            // TODO(nga): return error if keys are not unique.
-            r.insert(k, v);
-        }
-        Ok(Some(r))
     }
 }

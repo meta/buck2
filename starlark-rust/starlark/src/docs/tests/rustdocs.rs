@@ -23,7 +23,6 @@ use starlark_derive::ProvidesStaticType;
 use starlark_derive::StarlarkPagable;
 use starlark_derive::starlark_module;
 use starlark_derive::starlark_value;
-use starlark_map::small_map::SmallMap;
 
 use crate as starlark;
 use crate::assert::Assert;
@@ -40,10 +39,12 @@ use crate::values::Heap;
 use crate::values::StarlarkValue;
 use crate::values::StringValue;
 use crate::values::Value;
+use crate::values::ValueOf;
 use crate::values::ValueTyped;
-use crate::values::list::UnpackList;
+use crate::values::dict::DictType;
+use crate::values::list::ListType;
 use crate::values::none::NoneType;
-use crate::values::tuple::UnpackTuple;
+use crate::values::tuple::TupleType;
 
 #[derive(
     Debug,
@@ -76,11 +77,11 @@ impl<'v> StarlarkValue<'v> for OutputTypeRepr {}
 #[starlark_types(InputTypeRepr as Input, OutputTypeRepr as Output)]
 fn globals(builder: &mut GlobalsBuilder) {
     #[allow(unused_variables)]
-    fn simple(
+    fn simple<'v>(
         arg_int: i32,
         arg_bool: bool,
-        arg_vec: UnpackList<&str>,
-        arg_dict: SmallMap<String, (bool, i32)>,
+        arg_vec: ValueOf<'v, ListType<&'v str>>,
+        arg_dict: ValueOf<'v, DictType<String, (bool, i32)>>,
     ) -> anyhow::Result<NoneType> {
         unimplemented!()
     }
@@ -96,7 +97,7 @@ fn globals(builder: &mut GlobalsBuilder) {
 
     #[allow(unused_variables)]
     fn args_kwargs<'v>(
-        #[starlark(args)] args: UnpackTuple<Value<'v>>,
+        #[starlark(args)] args: ValueOf<'v, TupleType<Value<'v>>>,
         #[starlark(kwargs)] kwargs: Value<'v>,
     ) -> anyhow::Result<NoneType> {
         unimplemented!()

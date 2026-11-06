@@ -51,9 +51,11 @@ use crate::values::Trace;
 use crate::values::UnpackValue;
 use crate::values::Value;
 use crate::values::ValueError;
+use crate::values::ValueOf;
 use crate::values::ValueTyped;
+use crate::values::dict::DictType;
 use crate::values::layout::heap::name::StarlarkTestHeapName;
-use crate::values::list_or_tuple::UnpackListOrTuple;
+use crate::values::list_or_tuple::ListOrTupleType;
 use crate::values::none::NoneType;
 
 #[test]
@@ -313,10 +315,10 @@ fn test_radd() {
             match Select::from_value(value) {
                 Some(x) => Ok(Some(x.clone())),
                 None => {
-                    let Some(list_or_tuple) = UnpackListOrTuple::unpack_value(value)? else {
+                    let Some(list_or_tuple) = ValueOf::<ListOrTupleType<i32>>::new(value) else {
                         return Ok(None);
                     };
-                    Ok(Some(Select(list_or_tuple.items)))
+                    Ok(Some(Select(list_or_tuple.try_to_vec()?)))
                 }
             }
         }
@@ -346,8 +348,8 @@ fn test_radd() {
 
     #[starlark_module]
     fn module(build: &mut GlobalsBuilder) {
-        fn select(xs: UnpackListOrTuple<i32>) -> anyhow::Result<Select> {
-            Ok(Select(xs.items))
+        fn select<'v>(xs: ValueOf<'v, ListOrTupleType<i32>>) -> anyhow::Result<Select> {
+            Ok(Select(xs.try_to_vec().map_err(|e| e.into_anyhow())?))
         }
     }
 
@@ -1030,7 +1032,11 @@ animal("Joe")
         let mut eval = Evaluator::new(&m);
         let ast = AstModule::parse("code.bzl", code.to_owned(), &Dialect::Standard).unwrap();
         let res: Value = eval.eval_module(ast, &globals).unwrap();
-        let animal = SmallMap::<String, Value>::unpack_value(res).unwrap();
+        let animal: SmallMap<String, Value> = ValueOf::<DictType<String, Value>>::new_err(res)
+            .unwrap()
+            .try_items()
+            .collect::<crate::Result<_>>()
+            .unwrap();
         println!("animal = {animal:?}");
         crate::Result::Ok(())
     })

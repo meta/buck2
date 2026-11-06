@@ -24,12 +24,10 @@ pub(crate) mod globals;
 pub(crate) mod methods;
 mod refs;
 mod traits;
-pub(crate) mod unpack;
 pub(crate) mod value;
 
 pub use crate::values::dict::alloc::AllocDict;
 pub use crate::values::dict::dict_type::DictType;
 pub use crate::values::dict::refs::DictMut;
 pub use crate::values::dict::refs::DictRef;
-pub use crate::values::dict::unpack::UnpackDictEntries;
 pub use crate::values::dict::value::Dict;

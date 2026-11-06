@@ -754,12 +754,9 @@ fn render_default_as_value(default: &Expr) -> Option<syn::Expr> {
     ) {
         // Make sure we don't splice in `x` again, or we double quote the string
         Some(syn::parse_quote! { |__heap| __heap.alloc(#default) })
-    } else if x == "UnpackListOrTuple :: default()"
-        || x == "UnpackList :: default()"
-        || x == "ValueOf :: empty_list()"
-    {
+    } else if x == "ValueOf :: empty_list()" {
         Some(syn::parse_quote! { |_| starlark::values::Value::new_empty_list() })
-    } else if x == "SmallMap :: new()" || x == "ValueOf :: empty_dict()" {
+    } else if x == "ValueOf :: empty_dict()" {
         Some(syn::parse_quote! { |_| starlark::values::Value::new_empty_dict() })
     } else {
         None

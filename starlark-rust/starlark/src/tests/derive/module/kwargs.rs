@@ -21,22 +21,32 @@ use starlark_map::small_map::SmallMap;
 use crate as starlark;
 use crate::assert::Assert;
 use crate::environment::GlobalsBuilder;
+use crate::values::ValueOf;
+use crate::values::dict::DictType;
 
 #[starlark_module]
 fn test_kwargs_module(globals: &mut GlobalsBuilder) {
-    fn pos_kwargs(
+    fn pos_kwargs<'v>(
         #[starlark(require = pos)] a: u32,
         #[starlark(require = pos)] b: bool,
-        #[starlark(kwargs)] kwargs: SmallMap<String, u64>,
+        #[starlark(kwargs)] kwargs: ValueOf<'v, DictType<String, u64>>,
     ) -> anyhow::Result<String> {
+        let kwargs = kwargs
+            .try_items()
+            .collect::<crate::Result<SmallMap<_, _>>>()
+            .map_err(|e| e.into_anyhow())?;
         Ok(format!("a={a} b={b} kwargs={kwargs:?}"))
     }
 
-    fn pos_named_kwargs(
+    fn pos_named_kwargs<'v>(
         #[starlark(require = pos)] a: u32,
         #[starlark(require = named)] b: bool,
-        #[starlark(kwargs)] kwargs: SmallMap<String, u64>,
+        #[starlark(kwargs)] kwargs: ValueOf<'v, DictType<String, u64>>,
     ) -> anyhow::Result<String> {
+        let kwargs = kwargs
+            .try_items()
+            .collect::<crate::Result<SmallMap<_, _>>>()
+            .map_err(|e| e.into_anyhow())?;
         Ok(format!("a={a} b={b} kwargs={kwargs:?}"))
     }
 }

@@ -295,18 +295,19 @@ g(x=1, y=2)
 #[cfg_attr(rust_nightly, cfg(not(sanitize = "address")))]
 #[test]
 fn test_frame_size() {
-    use starlark::values::list_or_tuple::UnpackListOrTuple;
+    use starlark::values::list_or_tuple::ListOrTupleType;
     use starlark_derive::starlark_module;
 
     use crate as starlark;
     use crate::environment::GlobalsBuilder;
     use crate::values::UnpackValue;
     use crate::values::Value;
+    use crate::values::ValueOf;
 
     #[starlark_module]
     fn natives(builder: &mut GlobalsBuilder) {
-        fn stack_ptr(args: UnpackListOrTuple<Value>) -> anyhow::Result<usize> {
-            drop(args);
+        fn stack_ptr<'v>(args: ValueOf<'v, ListOrTupleType<Value<'v>>>) -> anyhow::Result<usize> {
+            let _ = args;
 
             let x = std::hint::black_box(1);
             let ptr = &x;

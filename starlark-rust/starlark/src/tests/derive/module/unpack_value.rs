@@ -24,9 +24,9 @@ use crate::assert::Assert;
 use crate::environment::GlobalsBuilder;
 use crate::values::Value;
 use crate::values::ValueOf;
-use crate::values::dict::UnpackDictEntries;
-use crate::values::list::UnpackList;
-use crate::values::set::UnpackSetEntries;
+use crate::values::dict::DictType;
+use crate::values::list::ListType;
+use crate::values::set::SetType;
 
 // TODO(nmj): Figure out default values here. ValueOf<i32> = 5 should work.
 #[starlark_module]
@@ -34,33 +34,31 @@ fn validate_module(builder: &mut GlobalsBuilder) {
     fn with_int<'v>(v: ValueOf<'v, i32>) -> anyhow::Result<(Value<'v>, String)> {
         Ok((v.to_value(), format!("{}", v.unpack())))
     }
-    fn with_int_list<'v>(v: ValueOf<'v, UnpackList<i32>>) -> anyhow::Result<(Value<'v>, String)> {
-        let repr = v.try_unpack().unwrap().items.iter().join(", ");
+    fn with_int_list<'v>(v: ValueOf<'v, ListType<i32>>) -> anyhow::Result<(Value<'v>, String)> {
+        let repr = v.try_to_vec().unwrap().iter().join(", ");
         Ok((v.to_value(), repr))
     }
     fn with_list_list<'v>(
-        v: ValueOf<'v, UnpackList<ValueOf<'v, UnpackList<i32>>>>,
+        v: ValueOf<'v, ListType<ValueOf<'v, ListType<i32>>>>,
     ) -> anyhow::Result<(Value<'v>, String)> {
         let repr = v
-            .try_unpack()
+            .try_to_vec()
             .unwrap()
-            .items
             .iter()
-            .map(|l| l.try_unpack().unwrap().items.iter().join(", "))
+            .map(|l| l.try_to_vec().unwrap().iter().join(", "))
             .join(" + ");
         Ok((v.to_value(), repr))
     }
     fn with_dict_list<'v>(
-        v: ValueOf<'v, UnpackList<UnpackDictEntries<i32, i32>>>,
+        v: ValueOf<'v, ListType<ValueOf<'v, DictType<i32, i32>>>>,
     ) -> anyhow::Result<(Value<'v>, String)> {
         let repr = v
-            .try_unpack()
+            .try_to_vec()
             .unwrap()
-            .items
             .iter()
             .map(|l| {
-                l.entries
-                    .iter()
+                l.try_items()
+                    .map(Result::unwrap)
                     .map(|(k, v)| format!("{k}: {v}"))
                     .join(", ")
             })
@@ -68,41 +66,35 @@ fn validate_module(builder: &mut GlobalsBuilder) {
         Ok((v.to_value(), repr))
     }
     fn with_int_dict<'v>(
-        v: ValueOf<'v, UnpackDictEntries<i32, i32>>,
+        v: ValueOf<'v, DictType<i32, i32>>,
     ) -> anyhow::Result<(Value<'v>, String)> {
         let repr = v
-            .try_unpack()
-            .unwrap()
-            .entries
-            .iter()
+            .try_items()
+            .map(Result::unwrap)
             .map(|(k, v)| format!("{k}: {v}"))
             .join(" + ");
         Ok((v.to_value(), repr))
     }
     fn with_list_dict<'v>(
-        v: ValueOf<'v, UnpackDictEntries<i32, ValueOf<'v, UnpackList<i32>>>>,
+        v: ValueOf<'v, DictType<i32, ValueOf<'v, ListType<i32>>>>,
     ) -> anyhow::Result<(Value<'v>, String)> {
         let repr = v
-            .try_unpack()
-            .unwrap()
-            .entries
-            .iter()
-            .map(|(k, v)| format!("{}: {}", k, v.try_unpack().unwrap().items.iter().join(", ")))
+            .try_items()
+            .map(Result::unwrap)
+            .map(|(k, v)| format!("{}: {}", k, v.try_to_vec().unwrap().iter().join(", ")))
             .join(" + ");
         Ok((v.to_value(), repr))
     }
     fn with_dict_dict<'v>(
-        v: ValueOf<'v, UnpackDictEntries<i32, UnpackDictEntries<i32, i32>>>,
+        v: ValueOf<'v, DictType<i32, ValueOf<'v, DictType<i32, i32>>>>,
     ) -> anyhow::Result<(Value<'v>, String)> {
         let repr = v
-            .try_unpack()
-            .unwrap()
-            .entries
-            .iter()
+            .try_items()
+            .map(Result::unwrap)
             .map(|(k, v)| {
                 let inner_repr = v
-                    .entries
-                    .iter()
+                    .try_items()
+                    .map(Result::unwrap)
                     .map(|(k2, v2)| format!("{k2}:{v2}"))
                     .join(", ");
                 format!("{k}: {inner_repr}")
@@ -111,7 +103,7 @@ fn validate_module(builder: &mut GlobalsBuilder) {
         Ok((v.to_value(), repr))
     }
     fn with_either<'v>(
-        v: Either<i32, Either<String, ValueOf<'v, UnpackList<i32>>>>,
+        v: Either<i32, Either<String, ValueOf<'v, ListType<i32>>>>,
     ) -> anyhow::Result<String> {
         match v {
             Either::Left(i) => Ok(i.to_string()),
@@ -121,8 +113,8 @@ fn validate_module(builder: &mut GlobalsBuilder) {
             },
         }
     }
-    fn with_set<'v>(v: ValueOf<'v, UnpackSetEntries<i32>>) -> anyhow::Result<(Value<'v>, String)> {
-        let repr = v.try_unpack().unwrap().entries.iter().join(", ");
+    fn with_set<'v>(v: ValueOf<'v, SetType<i32>>) -> anyhow::Result<(Value<'v>, String)> {
+        let repr = v.try_items().map(Result::unwrap).join(", ");
         Ok((v.to_value(), repr))
     }
 }

@@ -25,7 +25,7 @@ use crate::values::Heap;
 use crate::values::StringValue;
 use crate::values::Value;
 use crate::values::ValueOf;
-use crate::values::list_or_tuple::UnpackListOrTuple;
+use crate::values::list_or_tuple::ListOrTupleType;
 use crate::values::typing::StarlarkIter;
 
 // The examples from the starlark_module documentation.
@@ -33,9 +33,13 @@ use crate::values::typing::StarlarkIter;
 fn test_starlark_module() {
     #[starlark_module]
     fn global(builder: &mut GlobalsBuilder) {
-        fn cc_binary(name: &str, srcs: UnpackListOrTuple<&str>) -> anyhow::Result<String> {
+        fn cc_binary<'v>(
+            name: &str,
+            srcs: ValueOf<'v, ListOrTupleType<&'v str>>,
+        ) -> anyhow::Result<String> {
             // real implementation may write it to a global variable
-            Ok(format!("{:?} {:?}", name, srcs.items))
+            let srcs = srcs.try_to_vec().map_err(|e| e.into_anyhow())?;
+            Ok(format!("{name:?} {srcs:?}"))
         }
     }
 

@@ -66,7 +66,7 @@ def python_bootstrap_binary_impl(ctx: AnalysisContext) -> list[Provider]:
         hidden = run_tree,
     )
     return [
-        DefaultInfo(default_output = main_artifact, other_outputs = [run_tree]),
+        DefaultInfo(default_output = main_artifact, other_outputs = [run_tree, interpreter]),
         RunInfo(args = run_args),
     ]
 

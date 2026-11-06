@@ -1247,6 +1247,7 @@ impl RunAction {
             cmdline_digest_for_dep_files,
             &prepared_run_action.paths,
             prepared_run_action.worker.as_ref().map(|w| &w.input_paths),
+            self.inner.executor_preference,
         )?;
 
         // First, check in the local dep file cache if an identical action can be found there.

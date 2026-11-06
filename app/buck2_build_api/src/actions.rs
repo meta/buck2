@@ -367,6 +367,10 @@ pub trait ActionExecutionCtx: Send + Sync {
     /// Obtain per-command knobs for RunAction.
     fn run_action_knobs(&self) -> &RunActionKnobs;
 
+    /// Hash of the parts of the executor configuration this action runs under that can change
+    /// what it produces.
+    fn executor_result_fingerprint(&self) -> u64;
+
     /// The current repo's persisted dep-file cache, if enabled.
     fn dep_file_store(&self) -> Option<&dyn DepFileStore>;
 

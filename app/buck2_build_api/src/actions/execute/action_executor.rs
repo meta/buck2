@@ -26,6 +26,9 @@ use buck2_common::io::IoProvider;
 use buck2_common::liveliness_observer::NoopLivelinessObserver;
 use buck2_core::content_hash::ContentBasedPathHash;
 use buck2_core::execution_types::executor_config::CommandExecutorConfig;
+use buck2_core::execution_types::executor_config::Executor;
+use buck2_core::execution_types::executor_config::RemoteEnabledExecutor;
+use buck2_core::execution_types::executor_config::RemoteEnabledExecutorOptions;
 use buck2_core::execution_types::executor_config::RemoteExecutorUseCase;
 use buck2_core::fs::artifact_path_resolver::ArtifactFs;
 use buck2_core::fs::buck_out_path::BuildArtifactPath;
@@ -528,7 +531,8 @@ impl<'d> HasActionExecutor<'d> for DiceComputations<'d> {
             invalidation_tracking_enabled,
             output_trees_download_config,
             invocation_re_settings,
-        ))
+        )
+        .with_executor_config(executor_config))
     }
 }
 
@@ -549,6 +553,9 @@ pub struct BuckActionExecutor<'d> {
     invalidation_tracking_enabled: bool,
     output_trees_download_config: OutputTreesDownloadConfig,
     invocation_re_settings: InvocationReSettings,
+    /// `executor_result_fingerprint` of the `CommandExecutorConfig` this executor was built from.
+    /// Zero when unknown.
+    executor_result_fingerprint: u64,
 }
 
 impl<'d> BuckActionExecutor<'d> {
@@ -587,8 +594,70 @@ impl<'d> BuckActionExecutor<'d> {
             invalidation_tracking_enabled,
             output_trees_download_config,
             invocation_re_settings,
+            executor_result_fingerprint: 0,
         }
     }
+
+    /// Records which `CommandExecutorConfig` this executor runs, so that actions can tell
+    /// executions under executors that produce different results apart.
+    pub fn with_executor_config(mut self, config: &CommandExecutorConfig) -> Self {
+        // The same in every daemon of one binary: the local action cache persists entries keyed on
+        // it. `Hash` layouts can change with the toolchain, which only costs a re-execution.
+        self.executor_result_fingerprint = executor_result_fingerprint(config);
+        self
+    }
+}
+
+/// Hash of the parts of `config` that can change what an action produces: where it runs (local or
+/// remote, and with which local options, RE platform, use case, image, dependencies and workers)
+/// and how its command is formed. Cache, upload, queue and priority settings are left out, so
+/// configurations whose executors differ only in those share local action cache entries.
+fn executor_result_fingerprint(config: &CommandExecutorConfig) -> u64 {
+    use std::hash::Hash;
+
+    let mut hasher = Blake3StrongHasher::new();
+    let CommandExecutorConfig { executor, options } = config;
+    options.hash(&mut hasher);
+    std::mem::discriminant(executor).hash(&mut hasher);
+    match executor {
+        Executor::Local(local) => local.hash(&mut hasher),
+        Executor::RemoteEnabled(RemoteEnabledExecutorOptions {
+            executor,
+            re_properties,
+            re_use_case,
+            re_action_key: _,
+            cache_upload_behavior: _,
+            remote_cache_enabled: _,
+            remote_dep_file_cache_enabled: _,
+            dependencies,
+            gang_workers,
+            custom_image,
+            meta_internal_extra_params,
+            priority: _,
+        }) => {
+            std::mem::discriminant(executor).hash(&mut hasher);
+            match executor {
+                RemoteEnabledExecutor::Local(local) => local.hash(&mut hasher),
+                RemoteEnabledExecutor::Remote(_) => {}
+                RemoteEnabledExecutor::Hybrid {
+                    local,
+                    remote: _,
+                    level,
+                } => {
+                    local.hash(&mut hasher);
+                    level.hash(&mut hasher);
+                }
+            }
+            re_properties.hash(&mut hasher);
+            re_use_case.hash(&mut hasher);
+            dependencies.hash(&mut hasher);
+            gang_workers.hash(&mut hasher);
+            custom_image.hash(&mut hasher);
+            meta_internal_extra_params.hash(&mut hasher);
+        }
+        Executor::None => {}
+    }
+    std::hash::Hasher::finish(&hasher)
 }
 
 struct BuckActionExecutionContext<'a, 'd> {
@@ -715,6 +784,10 @@ impl ActionExecutionCtx for BuckActionExecutionContext<'_, '_> {
 
     fn run_action_knobs(&self) -> &RunActionKnobs {
         &self.executor.run_action_knobs
+    }
+
+    fn executor_result_fingerprint(&self) -> u64 {
+        self.executor.executor_result_fingerprint
     }
 
     fn dep_file_store(&self) -> Option<&dyn DepFileStore> {
@@ -1052,6 +1125,78 @@ mod tests {
     use dupe::Dupe;
 
     use super::*;
+
+    #[test]
+    fn test_executor_result_fingerprint() {
+        use buck2_core::execution_types::executor_config::CacheUploadBehavior;
+        use buck2_core::execution_types::executor_config::LocalExecutorOptions;
+        use buck2_core::execution_types::executor_config::MetaInternalExtraParams;
+        use buck2_core::execution_types::executor_config::RePlatformFields;
+        use buck2_core::execution_types::executor_config::RemoteExecutorOptions;
+        use buck2_hash::BuckFixedSortedMap;
+
+        let remote = |image: &str, options: RemoteExecutorOptions, priority, upload| {
+            let mut config = (*CommandExecutorConfig::testing_local()).clone();
+            config.executor = Executor::RemoteEnabled(RemoteEnabledExecutorOptions {
+                executor: RemoteEnabledExecutor::Remote(options),
+                re_properties: RePlatformFields {
+                    properties: Arc::new(BuckFixedSortedMap::from_iter([(
+                        "container-image".to_owned(),
+                        vec![image.to_owned()],
+                    )])),
+                },
+                re_use_case: RemoteExecutorUseCase::buck2_default(),
+                re_action_key: None,
+                cache_upload_behavior: upload,
+                remote_cache_enabled: true,
+                remote_dep_file_cache_enabled: false,
+                dependencies: vec![],
+                gang_workers: vec![],
+                custom_image: None,
+                meta_internal_extra_params: MetaInternalExtraParams::default_arc(),
+                priority,
+            });
+            executor_result_fingerprint(&config)
+        };
+        let base = remote(
+            "a",
+            RemoteExecutorOptions::default(),
+            None,
+            CacheUploadBehavior::Disabled,
+        );
+        // Queue, priority and upload settings do not change a result.
+        assert_eq!(
+            base,
+            remote(
+                "a",
+                RemoteExecutorOptions {
+                    re_max_queue_time: Some(std::time::Duration::from_secs(5)),
+                    ..Default::default()
+                },
+                Some(7),
+                CacheUploadBehavior::Enabled { max_bytes: None },
+            )
+        );
+        // The image does, and so does running locally.
+        assert_ne!(
+            base,
+            remote(
+                "b",
+                RemoteExecutorOptions::default(),
+                None,
+                CacheUploadBehavior::Disabled,
+            )
+        );
+        let mut local = (*CommandExecutorConfig::testing_local()).clone();
+        assert_ne!(base, executor_result_fingerprint(&local));
+        local.executor = Executor::Local(LocalExecutorOptions {
+            use_persistent_workers: false,
+        });
+        assert_ne!(
+            executor_result_fingerprint(&CommandExecutorConfig::testing_local()),
+            executor_result_fingerprint(&local)
+        );
+    }
 
     #[test]
     fn test_action_outputs_map_small_large_boundary() {

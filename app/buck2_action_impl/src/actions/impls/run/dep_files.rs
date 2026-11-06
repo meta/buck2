@@ -81,6 +81,7 @@ use buck2_execute::execute::action_digest_and_blobs::ActionDigestAndBlobsBuilder
 use buck2_execute::execute::cache_uploader::IntoRemoteDepFile;
 use buck2_execute::execute::dep_file_digest::DepFileDigest;
 use buck2_execute::execute::request::CommandExecutionPaths;
+use buck2_execute::execute::request::ExecutorPreference;
 use buck2_execute::execute::result::CommandExecutionResult;
 use buck2_execute::materialize::materializer::MaterializationError;
 use buck2_execute::materialize::materializer::MaterializationPurpose;
@@ -868,6 +869,29 @@ pub(crate) struct DepFileBundle {
     declared_dep_files: DeclaredDepFiles,
     filtered_input_fingerprints: Option<StoredFingerprints>,
     common_digests: CommonDigests,
+    /// The command line digest the local action cache compares; see `local_cache_cli_digest`.
+    local_cli_digest: ExpandedCommandLineDigest,
+}
+
+/// The command line digest the local action cache keys on: `cli` plus what in the executor
+/// configuration the action runs under can change its result, and its executor preference.
+///
+/// The local cache shares hits across configurations of a target. With content-based paths, two
+/// configurations can have the same command line and inputs while running under different
+/// executors (another RE platform or image), or under one hybrid executor with one preferring
+/// local and the other remote execution, and a tool the image or host provides then differs while
+/// nothing the other digests cover does. The remote dep-file key keeps `cli` alone: the RE
+/// platform is part of its action.
+fn local_cache_cli_digest(
+    cli: &ExpandedCommandLineDigest,
+    executor_result_fingerprint: u64,
+    executor_preference: ExecutorPreference,
+) -> ExpandedCommandLineDigest {
+    let mut hasher = blake3::Hasher::new();
+    hasher.update(cli.as_bytes());
+    hasher.update(&executor_result_fingerprint.to_le_bytes());
+    hasher.update(executor_preference.to_string().as_bytes());
+    ExpandedCommandLineDigest::from_bytes(*hasher.finalize().as_bytes())
 }
 
 #[async_trait]
@@ -951,7 +975,7 @@ impl DepFileBundle {
                     &self.dep_files_key,
                     &self.input_directory_digest,
                     &self.common_digests.local_worker_inputs_digest,
-                    &self.common_digests.commandline_cli_digest,
+                    &self.local_cli_digest,
                     declared_outputs,
                     &self.declared_dep_files,
                     &mut stats,
@@ -998,7 +1022,7 @@ impl DepFileBundle {
                     &self.dep_files_key,
                     &self.input_directory_digest,
                     &self.common_digests.local_worker_inputs_digest,
-                    &self.common_digests.commandline_cli_digest,
+                    &self.local_cli_digest,
                     &self.shared_declared_inputs,
                     declared_outputs,
                     &self.declared_dep_files,
@@ -1147,6 +1171,7 @@ pub(crate) fn make_dep_file_bundle<'a>(
     expanded_command_line_digest: ExpandedCommandLineDigest,
     execution_paths: &'a CommandExecutionPaths,
     local_worker_execution_paths: Option<&'a CommandExecutionPaths>,
+    executor_preference: ExecutorPreference,
 ) -> buck2_error::Result<DepFileBundle> {
     let input_directory_digest = execution_paths.input_directory().fingerprint();
     let dep_files_key = RunActionKey::from_action_execution_target(ctx.target());
@@ -1180,6 +1205,11 @@ pub(crate) fn make_dep_file_bundle<'a>(
         (None, input_directory_digest.dupe())
     };
 
+    let local_cli_digest = local_cache_cli_digest(
+        &expanded_command_line_digest,
+        ctx.executor_result_fingerprint(),
+        executor_preference,
+    );
     // Construct digests needed to construct a remote dep file key and remote dep file entry (if needed)
     let common_digests = CommonDigests {
         commandline_cli_digest: expanded_command_line_digest,
@@ -1198,6 +1228,7 @@ pub(crate) fn make_dep_file_bundle<'a>(
         shared_declared_inputs,
         declared_dep_files,
         common_digests,
+        local_cli_digest,
         // We will lazily compute this when we need it.
         filtered_input_fingerprints: None,
     })
@@ -2056,10 +2087,11 @@ pub(crate) async fn populate_dep_files(
         shared_declared_inputs,
         filtered_input_fingerprints,
         common_digests,
+        local_cli_digest,
     } = dep_file_bundle;
     let should_compute_fingerprints = ctx.run_action_knobs().eager_dep_files;
     let digests = CommandDigests {
-        cli: common_digests.commandline_cli_digest,
+        cli: local_cli_digest,
         directory: input_directory_digest,
         local_worker_directory: common_digests.local_worker_inputs_digest,
     };

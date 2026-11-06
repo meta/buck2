@@ -27,7 +27,7 @@ tokio-stream = "0.1.19"
 tokio-util = { version = "0.7.20", features = ["io"] }
 tracing = "0.1.41"
 unicode-segmentation = "1.13.3"
-unicode-width = "0.2.2"
+unicode-width = "0.2.3"
 
 [dev-dependencies]
 anyhow = "1.0.104"

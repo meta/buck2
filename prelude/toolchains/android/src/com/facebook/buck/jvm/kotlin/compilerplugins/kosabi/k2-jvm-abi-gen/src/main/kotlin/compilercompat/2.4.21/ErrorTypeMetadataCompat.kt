@@ -33,9 +33,8 @@ import org.jetbrains.kotlin.fir.types.ConeKotlinType
 import org.jetbrains.kotlin.fir.types.FirResolvedTypeRef
 import org.jetbrains.kotlin.fir.types.FirTypeRef
 import org.jetbrains.kotlin.fir.types.builder.buildResolvedTypeRef
+import org.jetbrains.kotlin.fir.types.constructClassLikeType
 import org.jetbrains.kotlin.fir.types.contains
-import org.jetbrains.kotlin.fir.types.impl.ConeClassLikeTypeImpl
-import org.jetbrains.kotlin.fir.types.toLookupTag
 import org.jetbrains.kotlin.fir.types.typeContext
 import org.jetbrains.kotlin.ir.declarations.IrModuleFragment
 import org.jetbrains.kotlin.name.ClassId
@@ -66,11 +65,7 @@ private class ErrorTypeReplacer(session: FirSession) {
       object : AbstractConeSubstitutor(session.typeContext) {
         override fun substituteType(type: ConeKotlinType): ConeKotlinType? =
             if (type is ConeErrorType) {
-              ConeClassLikeTypeImpl(
-                  NON_EXISTENT_CLASS_ID.toLookupTag(),
-                  emptyArray(),
-                  type.isMarkedNullable,
-              )
+              NON_EXISTENT_CLASS_ID.constructClassLikeType(emptyArray(), type.isMarkedNullable)
             } else {
               null
             }

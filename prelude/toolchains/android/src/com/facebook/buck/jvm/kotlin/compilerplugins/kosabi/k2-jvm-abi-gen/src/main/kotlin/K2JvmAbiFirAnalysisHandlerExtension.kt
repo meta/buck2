@@ -1291,15 +1291,11 @@ class K2JvmAbiFirAnalysisHandlerExtension(private val outputPath: String) :
       configuration: CompilerConfiguration,
   ): FrontendOutputCompat? {
 
-    val sourceScope =
-        projectEnvironment.getSearchScopeByPsiFiles(ktFiles) +
-            projectEnvironment.getSearchScopeForProjectJavaSources()
-
     val (librariesScope, providerAndScopeForIncrementalCompilation) =
         prepareLibrariesScopeAndIncrementalContextCompat(
             projectEnvironment,
             configuration,
-            sourceScope,
+            ktFiles,
         )
     val sessionsWithSources = prepareJvmSessionsCompat(
         ktFiles,

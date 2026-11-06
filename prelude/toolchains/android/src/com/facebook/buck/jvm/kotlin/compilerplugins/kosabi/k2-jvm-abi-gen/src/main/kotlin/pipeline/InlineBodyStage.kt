@@ -16,6 +16,7 @@ package com.facebook
 import com.facebook.buck.jvm.kotlin.compilerplugins.common.InlineBodyKeepability
 import com.facebook.buck.jvm.kotlin.compilerplugins.common.isStub
 import java.lang.reflect.InvocationTargetException
+import java.lang.reflect.Modifier
 import java.util.Collections
 import java.util.IdentityHashMap
 import org.jetbrains.kotlin.backend.common.extensions.IrGenerationExtension
@@ -199,7 +200,14 @@ internal class InlineBodyStage : AbiGenStage {
                 .java
                 .getMethod("putParametersInScope", IrFunction::class.java, FirFunction::class.java)
                 .invoke(declarations, irFunction, firFunction)
-            convertToIrBlockBodyMethod().invoke(storage.fir2IrVisitor, firBody) as IrBlockBody
+            val converter = convertToIrBlockBodyMethod()
+            (if (converter.parameterCount == 1) {
+              converter.invoke(storage.fir2IrVisitor, firBody)
+            } else {
+              // The newer API's null prologue is the ordinary block-conversion default.
+              converter.invoke(storage.fir2IrVisitor, firBody, null)
+            })
+                as IrBlockBody
           } finally {
             skipBodies.setBoolean(configuration, skipped)
             declarations.leaveScope(irFunction.symbol)
@@ -217,7 +225,10 @@ internal class InlineBodyStage : AbiGenStage {
   private fun convertToIrBlockBodyMethod() =
       Fir2IrVisitor::class.java.methods.singleOrNull {
         it.name.startsWith("convertToIrBlockBody\$") &&
-            it.parameterTypes.contentEquals(arrayOf(FirBlock::class.java))
+            !Modifier.isStatic(it.modifiers) &&
+            it.returnType == IrBlockBody::class.java &&
+            (it.parameterTypes.contentEquals(arrayOf(FirBlock::class.java)) ||
+                it.parameterTypes.contentEquals(arrayOf(FirBlock::class.java, List::class.java)))
       }
           ?: throw NoSuchMethodException(
               "${Fir2IrVisitor::class.java.name}.convertToIrBlockBody(${FirBlock::class.java.name})",

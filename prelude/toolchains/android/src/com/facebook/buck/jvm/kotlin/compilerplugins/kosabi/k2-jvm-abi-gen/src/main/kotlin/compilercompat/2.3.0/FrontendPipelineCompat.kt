@@ -139,8 +139,11 @@ fun CompilerConfigurationExtension.updateFileRegistryCompat(project: Project) {
 fun prepareLibrariesScopeAndIncrementalContextCompat(
     projectEnvironment: VfsBasedProjectEnvironment,
     configuration: CompilerConfiguration,
-    sourceScope: AbstractProjectFileSearchScope,
+    ktFiles: List<KtFile>,
 ): Pair<AbstractProjectFileSearchScope, IncrementalCompilationContext?> {
+  val sourceScope =
+      projectEnvironment.getSearchScopeByPsiFiles(ktFiles) +
+          projectEnvironment.getSearchScopeForProjectJavaSources()
   val context =
       createContextForIncrementalCompilation(projectEnvironment, configuration, sourceScope)
   var librariesScope = projectEnvironment.getSearchScopeForProjectLibraries()

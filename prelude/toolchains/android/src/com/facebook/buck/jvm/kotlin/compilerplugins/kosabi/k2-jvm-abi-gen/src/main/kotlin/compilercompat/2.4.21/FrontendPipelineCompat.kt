@@ -17,9 +17,6 @@
 package com.facebook
 
 import org.jetbrains.kotlin.cli.common.messages.MessageCollector
-import org.jetbrains.kotlin.cli.jvm.compiler.VfsBasedProjectEnvironment
-import org.jetbrains.kotlin.cli.jvm.compiler.prepareIncrementalCompilationContextAndLibrariesScope
-import org.jetbrains.kotlin.cli.pipeline.jvm.JvmFrontendPipelinePhase
 import org.jetbrains.kotlin.com.intellij.openapi.project.Project
 import org.jetbrains.kotlin.config.CompilerConfiguration
 import org.jetbrains.kotlin.diagnostics.impl.BaseDiagnosticsCollector
@@ -31,10 +28,7 @@ import org.jetbrains.kotlin.fir.declarations.FirNamedFunction
 import org.jetbrains.kotlin.fir.pipeline.AllModulesFrontendOutput
 import org.jetbrains.kotlin.fir.pipeline.SingleModuleFrontendOutput
 import org.jetbrains.kotlin.fir.resolve.ScopeSession
-import org.jetbrains.kotlin.fir.session.IncrementalCompilationContext
-import org.jetbrains.kotlin.fir.session.environment.AbstractProjectFileSearchScope
 import org.jetbrains.kotlin.fir.visitors.FirDefaultVisitorVoid
-import org.jetbrains.kotlin.name.Name
 import org.jetbrains.kotlin.psi.KtFile
 import org.jetbrains.kotlin.psi.hmppModuleName
 import org.jetbrains.kotlin.psi.isCommonSource
@@ -93,49 +87,4 @@ var KtFile.hmppModuleNameCompat: String?
 
 fun CompilerConfigurationExtension.updateFileRegistryCompat(project: Project) {
   updateFileRegistry(project)
-}
-
-/**
- * The project libraries scope, minus the incremental compilation output when there is one, and the
- * incremental compilation context.
- */
-fun prepareLibrariesScopeAndIncrementalContextCompat(
-    projectEnvironment: VfsBasedProjectEnvironment,
-    configuration: CompilerConfiguration,
-    sourceScope: AbstractProjectFileSearchScope,
-): Pair<
-    AbstractProjectFileSearchScope,
-    IncrementalCompilationContext?,
-> = prepareIncrementalCompilationContextAndLibrariesScope(
-    configuration,
-    projectEnvironment,
-    incrementalExcludesScope = sourceScope,
-)
-
-fun prepareJvmSessionsCompat(
-    ktFiles: List<KtFile>,
-    rootModuleName: String,
-    friendPaths: List<String>,
-    librariesScope: AbstractProjectFileSearchScope,
-    configuration: CompilerConfiguration,
-    projectEnvironment: VfsBasedProjectEnvironment,
-    providerAndScopeForIncrementalCompilation: IncrementalCompilationContext?,
-): List<Pair<FirSession, List<KtFile>>> {
-  val libraryList =
-      JvmFrontendPipelinePhase.createLibraryListForJvm(rootModuleName, configuration, friendPaths)
-  return JvmFrontendPipelinePhase.prepareJvmSessions(
-          ktFiles,
-          Name.special("<$rootModuleName>"),
-          configuration,
-          projectEnvironment,
-          librariesScope,
-          libraryList,
-          isCommonSource = { false },
-          isScript = { false },
-          fileBelongsToModule = { file: KtFile, moduleName: String ->
-            file.hmppModuleName == moduleName
-          },
-          incrementalCompilationContext = providerAndScopeForIncrementalCompilation,
-      )
-      .map { (session, sources) -> session to sources }
 }

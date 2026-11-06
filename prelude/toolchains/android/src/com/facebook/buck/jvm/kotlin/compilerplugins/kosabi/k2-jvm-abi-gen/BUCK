@@ -14,11 +14,39 @@ _KOTLIN_FULL_VERSION = read_root_config("kotlin", "kotlin_version", "2.3.21") # 
 
 _KOTLIN_VERSION_PARTS = _KOTLIN_FULL_VERSION.split(".")
 
-KOTLIN_VERSION = (
+_COMPAT_VERSION_MAP = {
+    "2.5.0-Beta2": "2.5.0",
+}
+KOTLIN_VERSION = _COMPAT_VERSION_MAP.get(
+    _KOTLIN_FULL_VERSION,
     _KOTLIN_FULL_VERSION
     if (int(_KOTLIN_VERSION_PARTS[0]), int(_KOTLIN_VERSION_PARTS[1])) >= (2, 4)
-    else _KOTLIN_VERSION_PARTS[0] + "." + _KOTLIN_VERSION_PARTS[1] + ".0"
+    else _KOTLIN_VERSION_PARTS[0] + "." + _KOTLIN_VERSION_PARTS[1] + ".0",
 )
+
+# These adapters retain the same APIs on the selected Beta2; only the classpath seam differs.
+_KOTLIN_25_SHARED_COMPAT_SRCS = [
+    "src/main/kotlin/compilercompat/2.4.21/" + filename
+    for filename in [
+        "DependencyListCompat.kt",
+        "ErrorTypeMetadataCompat.kt",
+        "FirCollectionLiteralCompat.kt",
+        "FirDefaultVisitorVoidCompat.kt",
+        "FirNamedFunctionCopyCompat.kt",
+        "FirProvidedDeclarationsCompat.kt",
+        "FirResultCompat.kt",
+        "FirSourceModuleDataCompat.kt",
+        "FrontendPipelineCompat.kt",
+        "InlineBodyCodegenCompat.kt",
+        "IrAnnotationCompat.kt",
+        "IrNonAbiStripper.kt",
+        "IrVisitorCompat.kt",
+        "JavaClassResolverCompat.kt",
+        "MetadataVersionCompat.kt",
+        "OptInAnnotationsCompat.kt",
+        "PipelineCompat.kt",
+    ]
+]
 
 buck_kotlin_library(
     name = "k2-jvm-abi-gen-lib",
@@ -29,7 +57,8 @@ buck_kotlin_library(
     + (
         glob(["src/main/kotlin/compilercompat/" + KOTLIN_VERSION + "/*.kt"])
         or fail("No k2-jvm-abi-gen compilercompat bucket for Kotlin " + _KOTLIN_FULL_VERSION)
-    ),
+    )
+    + (_KOTLIN_25_SHARED_COMPAT_SRCS if KOTLIN_VERSION == "2.5.0" else []),
     labels = ["codegen_rule"],
     provided_deps = [
         "prelude//toolchains/android/third-party:kotlin-compiler-embeddable",

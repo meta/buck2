@@ -23,6 +23,8 @@ def http_archive_impl(ctx: AnalysisContext) -> list[Provider]:
     # remotely, unless we can defer them. We'll be able to defer if we provide
     # a digest that the daemon's digest config natively supports.
     digest_config = ctx.actions.digest_config()
+
+    # A sha512 cannot name a CAS digest, so a download with only a sha512 stays local.
     prefer_local = True
     if ctx.attrs.sha1 != None and digest_config.allows_sha1():
         prefer_local = False
@@ -41,6 +43,7 @@ def http_archive_impl(ctx: AnalysisContext) -> list[Provider]:
         vpnless_url = vpnless_url,
         sha1 = ctx.attrs.sha1,
         sha256 = ctx.attrs.sha256,
+        sha512 = ctx.attrs.sha512,
         size_bytes = ctx.attrs.size_bytes,
         has_content_based_path = ctx.attrs.has_content_based_path,
     )
@@ -109,6 +112,7 @@ http_archive = prelude_rule(
         # @unsorted-dict-items
         remote_common.urls_arg()
         | remote_common.sha256_arg()
+        | remote_common.sha512_arg()
         | remote_common.unarchive_args()
         | {
             "sha1": attrs.option(attrs.string(), default = None),

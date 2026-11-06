@@ -15,10 +15,13 @@ buck2_core_tests(
         "test_symlink_to_parent_bug",
     ],
     target_extra_attrs = {
-        "test_materializer": {
+        "test_clean_stale": {
             "deps": [
-                "fbcode//buck2/tests/e2e_util:http_server",
+                "fbsource//third-party/rust:jiff",
+                "fbsource//third-party/rust:regex",
             ],
+        },
+        "test_materializer": {
             "env": {
                 # `cpe::x2p` resolves `localhost` incorrectly, and the download test fails.
                 "CPE_RUST_X2P_SUPPORTS_VPNLESS": "0",

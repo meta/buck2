@@ -10,12 +10,14 @@
 
 package com.facebook.buck.jvm.java.lang.model;
 
+import com.facebook.infer.annotation.Nullsafe;
 import com.sun.tools.javac.code.Symbol;
 import java.util.List;
 import javax.lang.model.element.AnnotationMirror;
 import javax.lang.model.element.Element;
 
 /** Helper methods for working with annotations. */
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public class MoreAnnotations {
 
   /**

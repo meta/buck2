@@ -10,9 +10,12 @@
 
 package com.facebook.buck.jvm.java;
 
+import com.facebook.infer.annotation.Nullsafe;
+import javax.annotation.Nullable;
 import javax.tools.StandardJavaFileManager;
 import javax.tools.StandardLocation;
 
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public class PluginLoaderJavaFileManager extends ForwardingStandardJavaFileManager
     implements StandardJavaFileManager {
 
@@ -38,6 +41,7 @@ public class PluginLoaderJavaFileManager extends ForwardingStandardJavaFileManag
   }
 
   @Override
+  @Nullable
   public ClassLoader getClassLoader(Location location) {
     // We only provide the shared classloader if there are plugins defined.
     if (StandardLocation.ANNOTATION_PROCESSOR_PATH.equals(location)

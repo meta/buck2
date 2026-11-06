@@ -11,6 +11,7 @@
 package com.facebook.buck.jvm.java;
 
 import com.facebook.buck.core.filesystems.AbsPath;
+import com.facebook.infer.annotation.Nullsafe;
 import java.io.BufferedReader;
 import java.io.IOException;
 import java.nio.file.Path;
@@ -37,6 +38,7 @@ import javax.tools.JavaFileObject;
  * Remainder of message
  * </pre>
  */
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public class DiagnosticPrettyPrinter {
 
   private DiagnosticPrettyPrinter() {

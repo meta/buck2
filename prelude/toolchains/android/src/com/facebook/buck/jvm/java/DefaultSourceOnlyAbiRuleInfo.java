@@ -12,6 +12,7 @@ package com.facebook.buck.jvm.java;
 
 import com.facebook.buck.jvm.java.abi.source.api.SourceOnlyAbiRuleInfoFactory.SourceOnlyAbiRuleInfo;
 import com.facebook.buck.jvm.java.lang.model.MoreElements;
+import com.facebook.infer.annotation.Nullsafe;
 import java.io.IOException;
 import java.util.EnumSet;
 import java.util.HashMap;
@@ -26,6 +27,7 @@ import javax.tools.JavaFileManager;
 import javax.tools.JavaFileObject;
 import javax.tools.StandardLocation;
 
+@Nullsafe(Nullsafe.Mode.LOCAL)
 class DefaultSourceOnlyAbiRuleInfo implements SourceOnlyAbiRuleInfo {
 
   private final String fullyQualifiedBuildTargetName;

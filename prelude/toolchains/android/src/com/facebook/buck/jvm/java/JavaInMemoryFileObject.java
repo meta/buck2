@@ -13,6 +13,7 @@ package com.facebook.buck.jvm.java;
 import com.facebook.buck.util.zip.CustomZipEntry;
 import com.facebook.buck.util.zip.JarBuilder;
 import com.facebook.buck.util.zip.JarEntrySupplier;
+import com.facebook.infer.annotation.Nullsafe;
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.FileNotFoundException;
@@ -31,6 +32,7 @@ import javax.tools.SimpleJavaFileObject;
  * output stream instead of writing it to disk. Since the Jar can be shared between multiple
  * threads, a semaphore is used to ensure exclusive access to the output stream.
  */
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public class JavaInMemoryFileObject extends JarFileObject {
   // Bump the initial buffer size because usual file sizes using this are way more than 4K and the
   // default buffer size of a ByteArrayOutputStream is just 32

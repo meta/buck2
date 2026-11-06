@@ -20,6 +20,7 @@ buck_java_library(
         "prelude//toolchains/android/src/com/facebook/buck/jvm/java:support",
         "prelude//toolchains/android/src/com/facebook/buck/util/zip:zip",
         "prelude//toolchains/android/third-party:guava",
+        "prelude//toolchains/android/third-party:infer-annotations",
     ],
     exported_deps = [
         "prelude//toolchains/android/src/com/facebook/buck/step/isolatedsteps:isolatedsteps",

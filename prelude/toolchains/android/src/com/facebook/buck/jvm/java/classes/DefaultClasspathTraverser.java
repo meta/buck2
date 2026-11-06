@@ -10,11 +10,13 @@
 
 package com.facebook.buck.jvm.java.classes;
 
+import com.facebook.infer.annotation.Nullsafe;
 import java.io.IOException;
 
 /**
  * @see ClasspathTraversal
  */
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public class DefaultClasspathTraverser implements ClasspathTraverser {
 
   public DefaultClasspathTraverser() {}

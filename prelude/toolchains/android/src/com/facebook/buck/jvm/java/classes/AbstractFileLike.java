@@ -10,6 +10,9 @@
 
 package com.facebook.buck.jvm.java.classes;
 
+import com.facebook.infer.annotation.Nullsafe;
+
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public abstract class AbstractFileLike implements FileLike {
 
   @Override

@@ -12,6 +12,7 @@ package com.facebook.buck.step.isolatedsteps.common;
 
 import com.facebook.buck.core.filesystems.RelPath;
 import com.facebook.buck.step.isolatedsteps.IsolatedStep;
+import com.facebook.infer.annotation.Nullsafe;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableSet;
 
@@ -25,6 +26,7 @@ import com.google.common.collect.ImmutableSet;
  * that generated one of the {@code .class} files, the {@code .class} file corresponding to the
  * deleted {@code .java} file should no longer be there when {@code javac} is run again.
  */
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public final class MakeCleanDirectoryIsolatedStep {
 
   public static ImmutableList<IsolatedStep> of(RelPath path) {

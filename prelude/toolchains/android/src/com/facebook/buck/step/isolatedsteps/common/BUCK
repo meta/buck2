@@ -22,6 +22,7 @@ buck_kotlin_library(
         "prelude//toolchains/android/src/com/facebook/buck/io/file:file",
         "prelude//toolchains/android/src/com/facebook/buck/util/zip:zip",
         "prelude//toolchains/android/third-party:guava",
+        "prelude//toolchains/android/third-party:infer-annotations",
     ],
     exported_deps = [
         "prelude//toolchains/android/src/com/facebook/buck/io/filesystem/impl:utils",

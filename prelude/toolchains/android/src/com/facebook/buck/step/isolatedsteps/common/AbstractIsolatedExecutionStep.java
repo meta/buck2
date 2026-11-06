@@ -13,6 +13,7 @@ package com.facebook.buck.step.isolatedsteps.common;
 import com.facebook.buck.core.build.execution.context.IsolatedExecutionContext;
 import com.facebook.buck.step.StepExecutionResult;
 import com.facebook.buck.step.isolatedsteps.IsolatedStep;
+import com.facebook.infer.annotation.Nullsafe;
 import java.io.IOException;
 
 /**
@@ -21,6 +22,7 @@ import java.io.IOException;
  * #executeIsolatedStep(IsolatedExecutionContext)}. This facilitates the creation of an anonymous
  * implementation of {@link IsolatedStep}.
  */
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public abstract class AbstractIsolatedExecutionStep implements IsolatedStep {
 
   private final String description;

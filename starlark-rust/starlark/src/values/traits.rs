@@ -59,6 +59,7 @@ use crate::values::StringValue;
 use crate::values::Trace;
 use crate::values::Value;
 use crate::values::ValueError;
+use crate::values::ValueTyped;
 use crate::values::demand::Demand;
 use crate::values::error::ControlError;
 use crate::values::function::FUNCTION_TYPE;
@@ -865,9 +866,9 @@ pub trait StarlarkValue<'v>:
     /// representation, otherwise the view the type implements [`StarlarkType`] for.
     type Type: StarlarkType<'v>;
 
-    /// Call `f` on this value as the receiver of its type's methods. The identity for a type
-    /// with one representation; a type with several builds its view here.
-    fn with_type<R>(this: &'v Self, f: impl FnOnce(&Self::Type) -> R) -> R;
+    /// Call `f` on this value as the receiver of its type's methods: the payload itself for a
+    /// type with one representation, the view a type with several builds here.
+    fn with_type<R>(this: ValueTyped<'v, Self>, f: impl FnOnce(&Self::Type) -> R) -> R;
 
     /// [`StarlarkType::TYPE`] of [`Type`](Self::Type), for code generic over representations.
     const TYPE: &'static str = <Self::Type as StarlarkType<'v>>::TYPE;

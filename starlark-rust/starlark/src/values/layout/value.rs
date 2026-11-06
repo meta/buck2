@@ -85,7 +85,6 @@ use crate::values::layout::heap::repr::AValueRepr;
 use crate::values::layout::pointer::Pointer;
 use crate::values::layout::pointer::RawPointer;
 use crate::values::layout::static_string::VALUE_EMPTY_STRING;
-use crate::values::layout::vtable::AValueDyn;
 use crate::values::layout::vtable::AValueDynFull;
 use crate::values::layout::vtable::AValueVTable;
 use crate::values::list::value::VALUE_EMPTY_FROZEN_LIST;
@@ -470,16 +469,13 @@ impl<'v> Value<'v> {
 
     /// Get a pointer to a [`AValue`].
     #[inline]
-    pub(crate) fn get_ref(self) -> AValueDyn<'v> {
-        match self.0.unpack() {
+    pub(crate) fn get_ref(self) -> AValueDynFull<'v> {
+        let avalue = match self.0.unpack() {
             Either::Left(x) => x.unpack(),
             Either::Right(x) => x.as_avalue_dyn(),
-        }
-    }
-
-    #[inline]
-    fn get_ref_full(self) -> AValueDynFull<'v> {
-        unsafe { AValueDynFull::new(self.get_ref(), self) }
+        };
+        // SAFETY: `avalue` was just read from `self`.
+        unsafe { AValueDynFull::new(avalue, self) }
     }
 
     #[inline]
@@ -703,9 +699,7 @@ impl<'v> Value<'v> {
         args: &Arguments<'v, '_>,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> crate::Result<Value<'v>> {
-        eval.with_call_stack(self, location, |eval| {
-            self.get_ref_full().invoke(args, eval)
-        })
+        eval.with_call_stack(self, location, |eval| self.get_ref().invoke(args, eval))
     }
 
     /// Callable parameters if known.

@@ -13,6 +13,7 @@ use dupe::Dupe;
 use starlark::typing::Ty;
 use starlark::values::UnpackValue;
 use starlark::values::Value;
+use starlark::values::ValueTyped;
 use starlark::values::type_repr::StarlarkTypeRepr;
 
 use crate::interpreter::rule_defs::artifact::starlark_artifact::StarlarkArtifact;
@@ -31,8 +32,8 @@ enum UnpackNonPromiseInputArtifactError {
 /// artifact is a conversion error, not a type mismatch.
 #[derive(Debug, Clone, Copy)]
 pub enum UnpackNonPromiseInputArtifact<'v> {
-    Artifact(&'v StarlarkArtifact),
-    DeclaredArtifact(&'v StarlarkDeclaredArtifact<'v>),
+    Artifact(ValueTyped<'v, StarlarkArtifact>),
+    DeclaredArtifact(ValueTyped<'v, StarlarkDeclaredArtifact<'v>>),
 }
 
 impl<'v> StarlarkTypeRepr for UnpackNonPromiseInputArtifact<'v> {

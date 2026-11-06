@@ -111,15 +111,15 @@ impl<'fv> AllocFrozenValue<'fv> for FrozenStarlarkOutputArtifact<'fv> {
 /// and the binding for a native parameter of type `OutputArtifact`.
 #[derive(Debug, Clone, Copy)]
 pub enum StarlarkOutputArtifactUnpack<'v> {
-    Unfrozen(&'v StarlarkOutputArtifact<'v>),
-    Frozen(&'v FrozenStarlarkOutputArtifact<'v>),
+    Unfrozen(ValueTyped<'v, StarlarkOutputArtifact<'v>>),
+    Frozen(ValueTyped<'v, FrozenStarlarkOutputArtifact<'v>>),
 }
 
 impl<'v> StarlarkOutputArtifactUnpack<'v> {
     fn as_artifact_like(self) -> &'v dyn StarlarkArtifactLike<'v> {
         match self {
-            StarlarkOutputArtifactUnpack::Unfrozen(x) => x,
-            StarlarkOutputArtifactUnpack::Frozen(x) => x,
+            StarlarkOutputArtifactUnpack::Unfrozen(x) => x.as_ref(),
+            StarlarkOutputArtifactUnpack::Frozen(x) => x.as_ref(),
         }
     }
 }
@@ -137,11 +137,10 @@ impl<'v> UnpackValue<'v> for StarlarkOutputArtifactUnpack<'v> {
 
     fn unpack_value_impl(value: Value<'v>) -> Result<Option<Self>, Self::Error> {
         Ok(
-            if let Some(x) = value.downcast_ref::<StarlarkOutputArtifact>() {
+            if let Some(x) = ValueTyped::<StarlarkOutputArtifact>::new(value) {
                 Some(StarlarkOutputArtifactUnpack::Unfrozen(x))
             } else {
-                value
-                    .downcast_ref::<FrozenStarlarkOutputArtifact>()
+                ValueTyped::<FrozenStarlarkOutputArtifact>::new(value)
                     .map(StarlarkOutputArtifactUnpack::Frozen)
             },
         )
@@ -151,8 +150,8 @@ impl<'v> UnpackValue<'v> for StarlarkOutputArtifactUnpack<'v> {
 impl<'v> Display for StarlarkOutputArtifactUnpack<'v> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            StarlarkOutputArtifactUnpack::Unfrozen(x) => Display::fmt(x, f),
-            StarlarkOutputArtifactUnpack::Frozen(x) => Display::fmt(x, f),
+            StarlarkOutputArtifactUnpack::Unfrozen(x) => Display::fmt(x.as_ref(), f),
+            StarlarkOutputArtifactUnpack::Frozen(x) => Display::fmt(x.as_ref(), f),
         }
     }
 }
@@ -306,7 +305,7 @@ impl<'v> StarlarkType<'v> for StarlarkOutputArtifactUnpack<'v> {
 impl<'v> StarlarkValue<'v> for StarlarkOutputArtifact<'v> {
     type Type = StarlarkOutputArtifactUnpack<'v>;
 
-    fn with_type<R>(this: &'v Self, f: impl FnOnce(&Self::Type) -> R) -> R {
+    fn with_type<R>(this: ValueTyped<'v, Self>, f: impl FnOnce(&Self::Type) -> R) -> R {
         f(&StarlarkOutputArtifactUnpack::Unfrozen(this))
     }
 
@@ -320,7 +319,7 @@ impl<'v> StarlarkValue<'v> for FrozenStarlarkOutputArtifact<'v> {
     type Canonical = StarlarkOutputArtifact<'v>;
     type Type = StarlarkOutputArtifactUnpack<'v>;
 
-    fn with_type<R>(this: &'v Self, f: impl FnOnce(&Self::Type) -> R) -> R {
+    fn with_type<R>(this: ValueTyped<'v, Self>, f: impl FnOnce(&Self::Type) -> R) -> R {
         f(&StarlarkOutputArtifactUnpack::Frozen(this))
     }
 

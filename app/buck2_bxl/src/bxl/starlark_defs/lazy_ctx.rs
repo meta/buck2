@@ -355,7 +355,7 @@ fn lazy_ctx_methods(builder: &mut MethodsBuilder) {
                 .into());
             }
             ArtifactArg::Artifact(artifact) => {
-                let artifact = LazyBuildArtifact::new(artifact);
+                let artifact = LazyBuildArtifact::new(artifact.as_ref());
                 Ok(StarlarkLazy::new_build_artifact(artifact))
             }
         }

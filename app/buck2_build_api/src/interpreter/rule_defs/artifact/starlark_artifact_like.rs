@@ -26,6 +26,7 @@ use starlark::values::StarlarkType;
 use starlark::values::StringValue;
 use starlark::values::UnpackValue;
 use starlark::values::Value;
+use starlark::values::ValueTyped;
 use starlark::values::list::UnpackList;
 use starlark::values::starlark_value;
 use starlark::values::type_repr::StarlarkTypeRepr;
@@ -129,17 +130,17 @@ pub trait StarlarkInputArtifactLike<'v>: StarlarkArtifactLike<'v> {
 /// binding for a native parameter of type `Artifact`.
 #[derive(Debug, Clone, Copy)]
 pub enum ValueAsInputArtifactLikeUnpack<'v> {
-    Artifact(&'v StarlarkArtifact),
-    DeclaredArtifact(&'v StarlarkDeclaredArtifact<'v>),
-    PromiseArtifact(&'v StarlarkPromiseArtifact),
+    Artifact(ValueTyped<'v, StarlarkArtifact>),
+    DeclaredArtifact(ValueTyped<'v, StarlarkDeclaredArtifact<'v>>),
+    PromiseArtifact(ValueTyped<'v, StarlarkPromiseArtifact>),
 }
 
 impl<'v> ValueAsInputArtifactLikeUnpack<'v> {
     pub fn as_input_artifact_like(self) -> &'v dyn StarlarkInputArtifactLike<'v> {
         match self {
-            ValueAsInputArtifactLikeUnpack::Artifact(x) => x,
-            ValueAsInputArtifactLikeUnpack::DeclaredArtifact(x) => x,
-            ValueAsInputArtifactLikeUnpack::PromiseArtifact(x) => x,
+            ValueAsInputArtifactLikeUnpack::Artifact(x) => x.as_ref(),
+            ValueAsInputArtifactLikeUnpack::DeclaredArtifact(x) => x.as_ref(),
+            ValueAsInputArtifactLikeUnpack::PromiseArtifact(x) => x.as_ref(),
         }
     }
 }
@@ -162,15 +163,16 @@ impl<'v> UnpackValue<'v> for ValueAsInputArtifactLikeUnpack<'v> {
     type Error = Infallible;
 
     fn unpack_value_impl(value: Value<'v>) -> Result<Option<Self>, Self::Error> {
-        Ok(if let Some(x) = value.downcast_ref::<StarlarkArtifact>() {
-            Some(ValueAsInputArtifactLikeUnpack::Artifact(x))
-        } else if let Some(x) = value.downcast_ref::<StarlarkDeclaredArtifact>() {
-            Some(ValueAsInputArtifactLikeUnpack::DeclaredArtifact(x))
-        } else {
-            value
-                .downcast_ref::<StarlarkPromiseArtifact>()
-                .map(ValueAsInputArtifactLikeUnpack::PromiseArtifact)
-        })
+        Ok(
+            if let Some(x) = ValueTyped::<StarlarkArtifact>::new(value) {
+                Some(ValueAsInputArtifactLikeUnpack::Artifact(x))
+            } else if let Some(x) = ValueTyped::<StarlarkDeclaredArtifact>::new(value) {
+                Some(ValueAsInputArtifactLikeUnpack::DeclaredArtifact(x))
+            } else {
+                ValueTyped::<StarlarkPromiseArtifact>::new(value)
+                    .map(ValueAsInputArtifactLikeUnpack::PromiseArtifact)
+            },
+        )
     }
 }
 
@@ -235,8 +237,8 @@ impl<'v> UnpackValue<'v> for &'v dyn StarlarkArtifactLike<'v> {
     fn unpack_value_impl(value: Value<'v>) -> Result<Option<Self>, Self::Error> {
         match ValueAsArtifactLikeUnpack::unpack_value_opt(value) {
             Some(ValueAsArtifactLikeUnpack::OutputArtifact(artifact)) => match artifact {
-                StarlarkOutputArtifactUnpack::Unfrozen(artifact) => Ok(Some(artifact)),
-                StarlarkOutputArtifactUnpack::Frozen(artifact) => Ok(Some(artifact)),
+                StarlarkOutputArtifactUnpack::Unfrozen(artifact) => Ok(Some(artifact.as_ref())),
+                StarlarkOutputArtifactUnpack::Frozen(artifact) => Ok(Some(artifact.as_ref())),
             },
             Some(ValueAsArtifactLikeUnpack::InputArtifact(artifact)) => Ok(Some(artifact)),
             None => Ok(None),

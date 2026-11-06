@@ -716,10 +716,10 @@ impl ImplStarlarkValue {
         syn::parse_quote! {
             #[inline]
             fn with_type<StarlarkWithTypeResult>(
-                this: &#lt Self,
+                this: starlark::values::ValueTyped<#lt, Self>,
                 f: impl FnOnce(&Self::Type) -> StarlarkWithTypeResult,
             ) -> StarlarkWithTypeResult {
-                f(this)
+                f(this.as_ref())
             }
         }
     }

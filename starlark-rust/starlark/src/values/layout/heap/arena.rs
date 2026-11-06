@@ -1034,13 +1034,18 @@ impl<A: ArenaAllocator> Allocative for Arena<A> {
 
 #[cfg(test)]
 mod tests {
+    use std::ptr::NonNull;
+
     use super::*;
+    use crate::values::Value;
     use crate::values::any::StarlarkAny;
     use crate::values::layout::avalues::simple::AValueFrozen;
 
     fn to_repr(x: &AValueHeader) -> String {
         let mut s = String::new();
-        x.unpack().collect_repr(&mut s);
+        // SAFETY: the test allocates frozen values, and `x` is the header of one.
+        let value = unsafe { Value::new_frozen_ptr(NonNull::from(x), false) };
+        value.get_ref().collect_repr(&mut s);
         s
     }
 

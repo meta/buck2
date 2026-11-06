@@ -207,8 +207,8 @@ impl Eq for EnsuredArtifact {}
 /// An `Artifact` that is not a promise artifact; see `UnpackNonPromiseInputArtifact`.
 #[derive(Display)]
 pub(crate) enum ArtifactArg<'v> {
-    Artifact(&'v StarlarkArtifact),
-    DeclaredArtifact(&'v StarlarkDeclaredArtifact<'v>),
+    Artifact(ValueTyped<'v, StarlarkArtifact>),
+    DeclaredArtifact(ValueTyped<'v, StarlarkDeclaredArtifact<'v>>),
 }
 
 impl<'v> StarlarkTypeRepr for ArtifactArg<'v> {
@@ -238,7 +238,7 @@ impl<'v> ArtifactArg<'v> {
     pub(crate) fn into_ensured_artifact(self) -> buck2_error::Result<EnsuredArtifact> {
         match self {
             ArtifactArg::Artifact(artifact) => Ok(EnsuredArtifact {
-                artifact: artifact.dupe(),
+                artifact: artifact.as_ref().dupe(),
                 abs: false,
             }),
             ArtifactArg::DeclaredArtifact(artifact) => Ok(EnsuredArtifact {

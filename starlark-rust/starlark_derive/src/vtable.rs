@@ -132,16 +132,18 @@ impl Gen {
     /// Parse `StarlarkValue` method parameter into vtable `fn` parameter and unpack expr.
     fn vtable_entry_param(&self, span: Span, param: &FnArg) -> syn::Result<VTableFnParam> {
         match param {
+            // The receiver arrives as the `Value`, so that the receiver handed to the method
+            // can carry it; the lifetime is erased like every other parameter's.
             FnArg::Receiver(_) => Ok(VTableFnParam {
                 span,
                 name: syn::parse_quote_spanned! {span=>
                     this
                 },
                 ty: syn::parse_quote_spanned! {span=>
-                    crate::values::layout::vtable::StarlarkValueRawPtr
+                    Value<'v>
                 },
                 unpack: syn::parse_quote_spanned! {span=>
-                    this.value_ref::<T>()
+                    ValueTyped::<T>::new_unchecked(std::mem::transmute::<Value<'_>, Value<'_>>(this))
                 },
             }),
             FnArg::Typed(p) => {
@@ -200,12 +202,17 @@ impl Gen {
                     T::#fn_name(#(#field_init_args),*)
                 },
             ),
-            Dispatch::OnRepresentation => (
-                quote! { StarlarkValue<'v2> },
-                syn::parse_quote_spanned! {method.sig.span()=>
-                    T::#fn_name(#(#field_init_args),*)
-                },
-            ),
+            Dispatch::OnRepresentation => {
+                let (receiver, args) = field_init_args
+                    .split_first()
+                    .expect("a method with a receiver has a receiver");
+                (
+                    quote! { StarlarkValue<'v2> },
+                    syn::parse_quote_spanned! {method.sig.span()=>
+                        T::#fn_name((#receiver).as_ref(), #(#args),*)
+                    },
+                )
+            }
             Dispatch::ViaRepresentation => {
                 let (receiver, args) = field_init_args
                     .split_first()

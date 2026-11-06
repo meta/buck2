@@ -330,7 +330,7 @@ impl<'v> StarlarkValue<'v> for StarlarkDeclaredArtifact<'v> {
     type Canonical = StarlarkArtifact;
     type Type = ValueAsInputArtifactLikeUnpack<'v>;
 
-    fn with_type<R>(this: &'v Self, f: impl FnOnce(&Self::Type) -> R) -> R {
+    fn with_type<R>(this: ValueTyped<'v, Self>, f: impl FnOnce(&Self::Type) -> R) -> R {
         f(&ValueAsInputArtifactLikeUnpack::DeclaredArtifact(this))
     }
 

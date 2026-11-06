@@ -57,6 +57,7 @@ use starlark::values::UnpackValue;
 use starlark::values::Value;
 use starlark::values::ValueError;
 use starlark::values::ValueOf;
+use starlark::values::ValueTyped;
 use starlark::values::list::ListRef;
 use starlark::values::list::UnpackList;
 use starlark::values::starlark_value;
@@ -674,15 +675,15 @@ impl<'v> StarlarkCmdArgs<'v> {
 /// binding for a native parameter of type `cmd_args`.
 #[derive(Debug)]
 pub enum StarlarkCmdArgsUnpack<'v> {
-    Unfrozen(&'v StarlarkCmdArgs<'v>),
-    Frozen(&'v FrozenStarlarkCmdArgs<'v>),
+    Unfrozen(ValueTyped<'v, StarlarkCmdArgs<'v>>),
+    Frozen(ValueTyped<'v, FrozenStarlarkCmdArgs<'v>>),
 }
 
 impl<'v> Display for StarlarkCmdArgsUnpack<'v> {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         match self {
-            StarlarkCmdArgsUnpack::Unfrozen(x) => Display::fmt(x, f),
-            StarlarkCmdArgsUnpack::Frozen(x) => Display::fmt(x, f),
+            StarlarkCmdArgsUnpack::Unfrozen(x) => Display::fmt(x.as_ref(), f),
+            StarlarkCmdArgsUnpack::Frozen(x) => Display::fmt(x.as_ref(), f),
         }
     }
 }
@@ -699,12 +700,10 @@ impl<'v> UnpackValue<'v> for StarlarkCmdArgsUnpack<'v> {
     type Error = Infallible;
 
     fn unpack_value_impl(value: Value<'v>) -> Result<Option<Self>, Self::Error> {
-        Ok(if let Some(x) = value.downcast_ref::<StarlarkCmdArgs>() {
+        Ok(if let Some(x) = ValueTyped::<StarlarkCmdArgs>::new(value) {
             Some(StarlarkCmdArgsUnpack::Unfrozen(x))
         } else {
-            value
-                .downcast_ref::<FrozenStarlarkCmdArgs>()
-                .map(StarlarkCmdArgsUnpack::Frozen)
+            ValueTyped::<FrozenStarlarkCmdArgs>::new(value).map(StarlarkCmdArgsUnpack::Frozen)
         })
     }
 }
@@ -735,7 +734,7 @@ impl<'v> StarlarkType<'v> for StarlarkCmdArgsUnpack<'v> {
 impl<'v> StarlarkValue<'v> for StarlarkCmdArgs<'v> {
     type Type = StarlarkCmdArgsUnpack<'v>;
 
-    fn with_type<R>(this: &'v Self, f: impl FnOnce(&Self::Type) -> R) -> R {
+    fn with_type<R>(this: ValueTyped<'v, Self>, f: impl FnOnce(&Self::Type) -> R) -> R {
         f(&StarlarkCmdArgsUnpack::Unfrozen(this))
     }
 
@@ -749,7 +748,7 @@ impl<'v> StarlarkValue<'v> for FrozenStarlarkCmdArgs<'v> {
     type Canonical = StarlarkCmdArgs<'v>;
     type Type = StarlarkCmdArgsUnpack<'v>;
 
-    fn with_type<R>(this: &'v Self, f: impl FnOnce(&Self::Type) -> R) -> R {
+    fn with_type<R>(this: ValueTyped<'v, Self>, f: impl FnOnce(&Self::Type) -> R) -> R {
         f(&StarlarkCmdArgsUnpack::Frozen(this))
     }
 
@@ -986,7 +985,7 @@ impl<'v> UnpackValue<'v> for StarlarkCommandLineMut<'v> {
             None => Ok(None),
             Some(StarlarkCmdArgsUnpack::Unfrozen(v)) => Ok(Some(Self {
                 value,
-                borrow: v.0.borrow_mut(),
+                borrow: v.as_ref().0.borrow_mut(),
             })),
             // A `cmd_args` all the same; what fails is the mutation.
             Some(StarlarkCmdArgsUnpack::Frozen(_)) => Err(starlark::Error::new_other(

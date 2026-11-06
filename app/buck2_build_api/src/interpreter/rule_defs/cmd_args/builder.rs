@@ -35,7 +35,7 @@ use regex::Regex;
 use starlark::values::ValueOfUnchecked;
 use strong_hash::StrongHash;
 
-use crate::interpreter::rule_defs::artifact::starlark_output_artifact::StarlarkOutputArtifactUnpack;
+use crate::interpreter::rule_defs::artifact::starlark_output_artifact::StarlarkOutputArtifactView;
 use crate::interpreter::rule_defs::cmd_args::options::CommandLineOptionsRef;
 use crate::interpreter::rule_defs::cmd_args::options::OptionsReplacementsRef;
 use crate::interpreter::rule_defs::cmd_args::options::QuoteStyle;
@@ -75,8 +75,8 @@ fn unpack_relative_origin<'v>(
     Ok(match origin {
         RelativeOrigin::OutputArtifact(artifact) => {
             let value = match artifact {
-                StarlarkOutputArtifactUnpack::Frozen(value) => value,
-                StarlarkOutputArtifactUnpack::Unfrozen(_) => {
+                StarlarkOutputArtifactView::Frozen(value) => value,
+                StarlarkOutputArtifactView::Unfrozen(_) => {
                     return Err(internal_error!(
                         "Non-frozen output artifacts can't be added to CLIs"
                     ));

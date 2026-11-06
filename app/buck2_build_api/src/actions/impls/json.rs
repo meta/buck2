@@ -39,7 +39,7 @@ use crate::bxl::select::StarlarkSelectConcat;
 use crate::bxl::select::StarlarkSelectDict;
 use crate::interpreter::rule_defs::artifact::starlark_artifact_like::StarlarkInputArtifactLike;
 use crate::interpreter::rule_defs::artifact::starlark_artifact_like::ValueAsInputArtifactLike;
-use crate::interpreter::rule_defs::artifact::starlark_output_artifact::StarlarkOutputArtifactUnpack;
+use crate::interpreter::rule_defs::artifact::starlark_output_artifact::StarlarkOutputArtifactView;
 use crate::interpreter::rule_defs::artifact_tagging::StarlarkTaggedValue;
 use crate::interpreter::rule_defs::cmd_args::ArtifactPathMapper;
 use crate::interpreter::rule_defs::cmd_args::CommandLineArtifactVisitor;
@@ -119,7 +119,7 @@ fn err<R, E: serde::ser::Error>(res: buck2_error::Result<R>) -> Result<R, E> {
 #[derive(UnpackValue, StarlarkTypeRepr)]
 pub enum JsonArtifact<'v> {
     ValueAsInputArtifactLike(ValueAsInputArtifactLike<'v>),
-    StarlarkOutputArtifact(StarlarkOutputArtifactUnpack<'v>),
+    StarlarkOutputArtifact(StarlarkOutputArtifactView<'v>),
 }
 
 /// Partially unpack the value into JSON writable with `ctx.actions.write_json`.
@@ -214,10 +214,10 @@ impl<'a, 'v> Serialize for SerializeValue<'a, 'v> {
                             }
                             JsonArtifact::StarlarkOutputArtifact(x) => {
                                 let art = match x {
-                                    StarlarkOutputArtifactUnpack::Unfrozen(x) => {
+                                    StarlarkOutputArtifactView::Unfrozen(x) => {
                                         err((*x.inner()).get_bound_artifact())?
                                     }
-                                    StarlarkOutputArtifactUnpack::Frozen(x) => x.inner().artifact(),
+                                    StarlarkOutputArtifactView::Frozen(x) => x.inner().artifact(),
                                 };
 
                                 err(art.resolve_path(

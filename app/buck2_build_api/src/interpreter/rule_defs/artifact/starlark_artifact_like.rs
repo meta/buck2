@@ -39,7 +39,7 @@ use crate::interpreter::rule_defs::artifact::methods::artifact_methods;
 use crate::interpreter::rule_defs::artifact::starlark_artifact::StarlarkArtifact;
 use crate::interpreter::rule_defs::artifact::starlark_declared_artifact::StarlarkDeclaredArtifact;
 use crate::interpreter::rule_defs::artifact::starlark_output_artifact::StarlarkOutputArtifact;
-use crate::interpreter::rule_defs::artifact::starlark_output_artifact::StarlarkOutputArtifactUnpack;
+use crate::interpreter::rule_defs::artifact::starlark_output_artifact::StarlarkOutputArtifactView;
 use crate::interpreter::rule_defs::artifact::starlark_promise_artifact::StarlarkPromiseArtifact;
 use crate::interpreter::rule_defs::cmd_args::CommandLineArgLike;
 
@@ -129,18 +129,18 @@ pub trait StarlarkInputArtifactLike<'v>: StarlarkArtifactLike<'v> {
 /// An `Artifact` in any of its representations: the receiver of the type's methods, and a
 /// binding for a native parameter of type `Artifact`.
 #[derive(Debug, Clone, Copy, StarlarkRepresentations)]
-pub enum ValueAsInputArtifactLikeUnpack<'v> {
+pub enum StarlarkArtifactView<'v> {
     Artifact(ValueTyped<'v, StarlarkArtifact>),
     DeclaredArtifact(ValueTyped<'v, StarlarkDeclaredArtifact<'v>>),
     PromiseArtifact(ValueTyped<'v, StarlarkPromiseArtifact>),
 }
 
-impl<'v> ValueAsInputArtifactLikeUnpack<'v> {
+impl<'v> StarlarkArtifactView<'v> {
     pub fn as_input_artifact_like(self) -> &'v dyn StarlarkInputArtifactLike<'v> {
         match self {
-            ValueAsInputArtifactLikeUnpack::Artifact(x) => x.as_ref(),
-            ValueAsInputArtifactLikeUnpack::DeclaredArtifact(x) => x.as_ref(),
-            ValueAsInputArtifactLikeUnpack::PromiseArtifact(x) => x.as_ref(),
+            StarlarkArtifactView::Artifact(x) => x.as_ref(),
+            StarlarkArtifactView::DeclaredArtifact(x) => x.as_ref(),
+            StarlarkArtifactView::PromiseArtifact(x) => x.as_ref(),
         }
     }
 }
@@ -148,7 +148,7 @@ impl<'v> ValueAsInputArtifactLikeUnpack<'v> {
 starlark::methods_static!(STARLARK_ARTIFACT_METHODS = artifact_methods);
 
 #[starlark_value(type = "Artifact")]
-impl<'v> StarlarkType<'v> for ValueAsInputArtifactLikeUnpack<'v> {
+impl<'v> StarlarkType<'v> for StarlarkArtifactView<'v> {
     fn get_methods() -> Option<&'static Methods> {
         Some(STARLARK_ARTIFACT_METHODS.methods())
     }
@@ -166,7 +166,7 @@ impl<'v> StarlarkTypeRepr for &'v dyn StarlarkInputArtifactLike<'v> {
     type Canonical = StarlarkArtifact;
 
     fn starlark_type_repr() -> Ty {
-        ValueAsInputArtifactLikeUnpack::starlark_type_repr()
+        StarlarkArtifactView::starlark_type_repr()
     }
 }
 
@@ -174,8 +174,7 @@ impl<'v> UnpackValue<'v> for &'v dyn StarlarkInputArtifactLike<'v> {
     type Error = Infallible;
 
     fn unpack_value_impl(value: Value<'v>) -> Result<Option<Self>, Self::Error> {
-        Ok(ValueAsInputArtifactLikeUnpack::unpack_value_opt(value)
-            .map(|x| x.as_input_artifact_like()))
+        Ok(StarlarkArtifactView::unpack_value_opt(value).map(|x| x.as_input_artifact_like()))
     }
 }
 
@@ -184,7 +183,7 @@ pub struct ValueAsInputArtifactLike<'v>(pub &'v dyn StarlarkInputArtifactLike<'v
 
 #[derive(StarlarkTypeRepr, UnpackValue)]
 pub enum ValueAsArtifactLikeUnpack<'v> {
-    OutputArtifact(StarlarkOutputArtifactUnpack<'v>),
+    OutputArtifact(StarlarkOutputArtifactView<'v>),
     InputArtifact(&'v dyn StarlarkInputArtifactLike<'v>),
 }
 
@@ -202,8 +201,8 @@ impl<'v> UnpackValue<'v> for &'v dyn StarlarkArtifactLike<'v> {
     fn unpack_value_impl(value: Value<'v>) -> Result<Option<Self>, Self::Error> {
         match ValueAsArtifactLikeUnpack::unpack_value_opt(value) {
             Some(ValueAsArtifactLikeUnpack::OutputArtifact(artifact)) => match artifact {
-                StarlarkOutputArtifactUnpack::Unfrozen(artifact) => Ok(Some(artifact.as_ref())),
-                StarlarkOutputArtifactUnpack::Frozen(artifact) => Ok(Some(artifact.as_ref())),
+                StarlarkOutputArtifactView::Unfrozen(artifact) => Ok(Some(artifact.as_ref())),
+                StarlarkOutputArtifactView::Frozen(artifact) => Ok(Some(artifact.as_ref())),
             },
             Some(ValueAsArtifactLikeUnpack::InputArtifact(artifact)) => Ok(Some(artifact)),
             None => Ok(None),
@@ -220,10 +219,10 @@ impl<'v> UnpackValue<'v> for &'v dyn StarlarkArtifactLike<'v> {
 pub struct ValueIsInputArtifactAnnotation;
 
 impl StarlarkTypeRepr for ValueIsInputArtifactAnnotation {
-    type Canonical = <ValueAsInputArtifactLikeUnpack<'static> as StarlarkTypeRepr>::Canonical;
+    type Canonical = <StarlarkArtifactView<'static> as StarlarkTypeRepr>::Canonical;
 
     fn starlark_type_repr() -> Ty {
-        ValueAsInputArtifactLikeUnpack::<'static>::starlark_type_repr()
+        StarlarkArtifactView::<'static>::starlark_type_repr()
     }
 }
 
@@ -231,10 +230,8 @@ impl<'v> UnpackValue<'v> for ValueIsInputArtifactAnnotation {
     type Error = Infallible;
 
     fn unpack_value_impl(value: Value<'v>) -> Result<Option<Self>, Self::Error> {
-        Ok(
-            ValueAsInputArtifactLikeUnpack::<'v>::unpack_value_opt(value)
-                .map(|_| ValueIsInputArtifactAnnotation),
-        )
+        Ok(StarlarkArtifactView::<'v>::unpack_value_opt(value)
+            .map(|_| ValueIsInputArtifactAnnotation))
     }
 }
 

@@ -11,7 +11,7 @@
 use std::time::Instant;
 
 use buck2_build_api::actions::query::ActionQueryNode;
-use buck2_build_api::interpreter::rule_defs::artifact::starlark_artifact_like::ValueAsInputArtifactLikeUnpack;
+use buck2_build_api::interpreter::rule_defs::artifact::starlark_artifact_like::StarlarkArtifactView;
 use buck2_build_api::interpreter::rule_defs::cmd_args::value_as::ValueAsCommandLineLike;
 use buck2_core::cells::CellAliasResolver;
 use buck2_core::package::PackageLabel;
@@ -147,13 +147,13 @@ pub(crate) fn register_artifact_function(builder: &mut GlobalsBuilder) {
     ///     ctx.output.print(source_artifact_project_rel_path) # Note this artifact is NOT ensured or materialized
     /// ```
     fn get_path_without_materialization<'v>(
-        #[starlark(require=pos)] this: ValueAsInputArtifactLikeUnpack<'v>,
+        #[starlark(require=pos)] this: StarlarkArtifactView<'v>,
         #[starlark(require=pos)] ctx: &'v BxlContext<'v>,
         #[starlark(require = named, default = false)] abs: bool,
         heap: Heap<'v>,
     ) -> starlark::Result<StringValue<'v>> {
         let path = match this {
-            ValueAsInputArtifactLikeUnpack::Artifact(a) => {
+            StarlarkArtifactView::Artifact(a) => {
                 let artifact = a.artifact();
                 get_artifact_path_display(
                     artifact.get_path(),
@@ -162,7 +162,7 @@ pub(crate) fn register_artifact_function(builder: &mut GlobalsBuilder) {
                     ctx.artifact_fs(),
                 )?
             }
-            ValueAsInputArtifactLikeUnpack::DeclaredArtifact(a) => get_artifact_path_display(
+            StarlarkArtifactView::DeclaredArtifact(a) => get_artifact_path_display(
                 a.get_artifact_path(),
                 abs,
                 ctx.project_fs(),

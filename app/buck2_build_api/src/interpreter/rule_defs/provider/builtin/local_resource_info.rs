@@ -36,7 +36,7 @@ use crate as buck2_build_api;
 use crate::interpreter::rule_defs::cmd_args::CommandLineArgLike;
 use crate::interpreter::rule_defs::cmd_args::FrozenStarlarkCmdArgs;
 use crate::interpreter::rule_defs::cmd_args::StarlarkCmdArgs;
-use crate::interpreter::rule_defs::cmd_args::StarlarkCmdArgsUnpack;
+use crate::interpreter::rule_defs::cmd_args::StarlarkCmdArgsView;
 use crate::interpreter::rule_defs::cmd_args::StarlarkCommandLineValueUnpack;
 use crate::interpreter::rule_defs::cmd_args::value_as::ValueAsCommandLineLike;
 use crate::starlark::values::UnpackValue;
@@ -97,7 +97,7 @@ fn validate_local_resource_info<'v>(info: &LocalResourceInfo<'v>) -> buck2_error
         ));
     }
 
-    let setup = StarlarkCmdArgsUnpack::unpack_value_err(info.setup.get())
+    let setup = StarlarkCmdArgsView::unpack_value_err(info.setup.get())
         .map_err(|_| internal_error!("Validated in constructor"))?;
     if setup.is_empty() {
         return Err(buck2_error::buck2_error!(

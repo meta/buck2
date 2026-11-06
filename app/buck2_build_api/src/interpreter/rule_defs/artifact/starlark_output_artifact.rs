@@ -108,16 +108,16 @@ impl<'fv> AllocFrozenValue<'fv> for FrozenStarlarkOutputArtifact<'fv> {
 /// An `OutputArtifact` in either of its representations: the receiver of the type's methods,
 /// and the binding for a native parameter of type `OutputArtifact`.
 #[derive(Debug, Clone, Copy, StarlarkRepresentations)]
-pub enum StarlarkOutputArtifactUnpack<'v> {
+pub enum StarlarkOutputArtifactView<'v> {
     Unfrozen(ValueTyped<'v, StarlarkOutputArtifact<'v>>),
     Frozen(ValueTyped<'v, FrozenStarlarkOutputArtifact<'v>>),
 }
 
-impl<'v> StarlarkOutputArtifactUnpack<'v> {
+impl<'v> StarlarkOutputArtifactView<'v> {
     fn as_artifact_like(self) -> &'v dyn StarlarkArtifactLike<'v> {
         match self {
-            StarlarkOutputArtifactUnpack::Unfrozen(x) => x.as_ref(),
-            StarlarkOutputArtifactUnpack::Frozen(x) => x.as_ref(),
+            StarlarkOutputArtifactView::Unfrozen(x) => x.as_ref(),
+            StarlarkOutputArtifactView::Frozen(x) => x.as_ref(),
         }
     }
 }
@@ -249,7 +249,7 @@ starlark::methods_static!(
 );
 
 #[starlark_value(type = "OutputArtifact")]
-impl<'v> StarlarkType<'v> for StarlarkOutputArtifactUnpack<'v> {
+impl<'v> StarlarkType<'v> for StarlarkOutputArtifactView<'v> {
     fn get_methods() -> Option<&'static Methods> {
         Some(OUTPUT_ARTIFACT_METHODS.methods())
     }
@@ -265,7 +265,7 @@ impl<'v> StarlarkType<'v> for StarlarkOutputArtifactUnpack<'v> {
 
 #[starlark_value]
 impl<'v> StarlarkValue<'v> for StarlarkOutputArtifact<'v> {
-    type Type = StarlarkOutputArtifactUnpack<'v>;
+    type Type = StarlarkOutputArtifactView<'v>;
 
     fn provide(&'v self, demand: &mut Demand<'_, 'v>) {
         demand.provide_value::<&dyn CommandLineArgLike<'v>>(self);
@@ -275,7 +275,7 @@ impl<'v> StarlarkValue<'v> for StarlarkOutputArtifact<'v> {
 #[starlark_value(frozen_vtable)]
 impl<'v> StarlarkValue<'v> for FrozenStarlarkOutputArtifact<'v> {
     type Canonical = StarlarkOutputArtifact<'v>;
-    type Type = StarlarkOutputArtifactUnpack<'v>;
+    type Type = StarlarkOutputArtifactView<'v>;
 
     fn provide(&'v self, demand: &mut Demand<'_, 'v>) {
         demand.provide_value::<&dyn CommandLineArgLike<'v>>(self);
@@ -321,13 +321,13 @@ impl<'v> StarlarkValue<'v> for FrozenStarlarkOutputArtifact<'v> {
 fn output_artifact_methods(builder: &mut MethodsBuilder) {
     /// Returns the input artifact from which this output artifact was constructed
     fn as_input<'v>(
-        this: StarlarkOutputArtifactUnpack<'v>,
+        this: StarlarkOutputArtifactView<'v>,
     ) -> starlark::Result<
         Either<ValueTyped<'v, StarlarkDeclaredArtifact<'v>>, ValueTyped<'v, StarlarkArtifact>>,
     > {
         Ok(match this {
-            StarlarkOutputArtifactUnpack::Unfrozen(v) => Either::Left(v.inner()),
-            StarlarkOutputArtifactUnpack::Frozen(v) => Either::Right(v.inner()),
+            StarlarkOutputArtifactView::Unfrozen(v) => Either::Left(v.inner()),
+            StarlarkOutputArtifactView::Frozen(v) => Either::Right(v.inner()),
         })
     }
 }

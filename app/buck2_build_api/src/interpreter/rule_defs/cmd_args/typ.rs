@@ -674,16 +674,16 @@ impl<'v> StarlarkCmdArgs<'v> {
 /// A `cmd_args` in either of its representations: the receiver of the type's methods, and the
 /// binding for a native parameter of type `cmd_args`.
 #[derive(Debug, Clone, Copy, StarlarkRepresentations)]
-pub enum StarlarkCmdArgsUnpack<'v> {
+pub enum StarlarkCmdArgsView<'v> {
     Unfrozen(ValueTyped<'v, StarlarkCmdArgs<'v>>),
     Frozen(ValueTyped<'v, FrozenStarlarkCmdArgs<'v>>),
 }
 
-impl<'v> StarlarkCmdArgsUnpack<'v> {
+impl<'v> StarlarkCmdArgsView<'v> {
     pub fn is_empty(&self) -> bool {
         match self {
-            StarlarkCmdArgsUnpack::Unfrozen(x) => x.is_empty(),
-            StarlarkCmdArgsUnpack::Frozen(x) => x.is_empty(),
+            StarlarkCmdArgsView::Unfrozen(x) => x.is_empty(),
+            StarlarkCmdArgsView::Frozen(x) => x.is_empty(),
         }
     }
 }
@@ -691,7 +691,7 @@ impl<'v> StarlarkCmdArgsUnpack<'v> {
 starlark::methods_static!(CMD_ARGS_METHODS = cmd_args_methods);
 
 #[starlark_value(type = "cmd_args")]
-impl<'v> StarlarkType<'v> for StarlarkCmdArgsUnpack<'v> {
+impl<'v> StarlarkType<'v> for StarlarkCmdArgsView<'v> {
     fn get_methods() -> Option<&'static Methods> {
         Some(CMD_ARGS_METHODS.methods())
     }
@@ -699,7 +699,7 @@ impl<'v> StarlarkType<'v> for StarlarkCmdArgsUnpack<'v> {
 
 #[starlark_value]
 impl<'v> StarlarkValue<'v> for StarlarkCmdArgs<'v> {
-    type Type = StarlarkCmdArgsUnpack<'v>;
+    type Type = StarlarkCmdArgsView<'v>;
 
     fn provide(&'v self, demand: &mut Demand<'_, 'v>) {
         demand.provide_value::<&dyn CommandLineArgLike>(self);
@@ -709,7 +709,7 @@ impl<'v> StarlarkValue<'v> for StarlarkCmdArgs<'v> {
 #[starlark_value(frozen_vtable)]
 impl<'v> StarlarkValue<'v> for FrozenStarlarkCmdArgs<'v> {
     type Canonical = StarlarkCmdArgs<'v>;
-    type Type = StarlarkCmdArgsUnpack<'v>;
+    type Type = StarlarkCmdArgsView<'v>;
 
     fn provide(&'v self, demand: &mut Demand<'_, 'v>) {
         demand.provide_value::<&dyn CommandLineArgLike<'v>>(self);
@@ -940,14 +940,14 @@ impl<'v> UnpackValue<'v> for StarlarkCommandLineMut<'v> {
     type Error = starlark::Error;
 
     fn unpack_value_impl(value: Value<'v>) -> Result<Option<Self>, Self::Error> {
-        match StarlarkCmdArgsUnpack::unpack_value_opt(value) {
+        match StarlarkCmdArgsView::unpack_value_opt(value) {
             None => Ok(None),
-            Some(StarlarkCmdArgsUnpack::Unfrozen(v)) => Ok(Some(Self {
+            Some(StarlarkCmdArgsView::Unfrozen(v)) => Ok(Some(Self {
                 value,
                 borrow: v.as_ref().0.borrow_mut(),
             })),
             // A `cmd_args` all the same; what fails is the mutation.
-            Some(StarlarkCmdArgsUnpack::Frozen(_)) => Err(starlark::Error::new_other(
+            Some(StarlarkCmdArgsView::Frozen(_)) => Err(starlark::Error::new_other(
                 ValueError::CannotMutateImmutableValue,
             )),
         }

@@ -17,8 +17,8 @@ use starlark::values::ValueTyped;
 use starlark::values::type_repr::StarlarkTypeRepr;
 
 use crate::interpreter::rule_defs::artifact::starlark_artifact::StarlarkArtifact;
+use crate::interpreter::rule_defs::artifact::starlark_artifact_like::StarlarkArtifactView;
 use crate::interpreter::rule_defs::artifact::starlark_artifact_like::StarlarkInputArtifactLike;
-use crate::interpreter::rule_defs::artifact::starlark_artifact_like::ValueAsInputArtifactLikeUnpack;
 use crate::interpreter::rule_defs::artifact::starlark_declared_artifact::StarlarkDeclaredArtifact;
 
 #[derive(Debug, buck2_error::Error)]
@@ -37,10 +37,10 @@ pub enum UnpackNonPromiseInputArtifact<'v> {
 }
 
 impl<'v> StarlarkTypeRepr for UnpackNonPromiseInputArtifact<'v> {
-    type Canonical = <ValueAsInputArtifactLikeUnpack<'v> as StarlarkTypeRepr>::Canonical;
+    type Canonical = <StarlarkArtifactView<'v> as StarlarkTypeRepr>::Canonical;
 
     fn starlark_type_repr() -> Ty {
-        ValueAsInputArtifactLikeUnpack::starlark_type_repr()
+        StarlarkArtifactView::starlark_type_repr()
     }
 }
 
@@ -48,20 +48,18 @@ impl<'v> UnpackValue<'v> for UnpackNonPromiseInputArtifact<'v> {
     type Error = starlark::Error;
 
     fn unpack_value_impl(value: Value<'v>) -> Result<Option<Self>, Self::Error> {
-        match ValueAsInputArtifactLikeUnpack::unpack_value_opt(value) {
+        match StarlarkArtifactView::unpack_value_opt(value) {
             None => Ok(None),
-            Some(ValueAsInputArtifactLikeUnpack::Artifact(x)) => {
+            Some(StarlarkArtifactView::Artifact(x)) => {
                 Ok(Some(UnpackNonPromiseInputArtifact::Artifact(x)))
             }
-            Some(ValueAsInputArtifactLikeUnpack::DeclaredArtifact(x)) => {
+            Some(StarlarkArtifactView::DeclaredArtifact(x)) => {
                 Ok(Some(UnpackNonPromiseInputArtifact::DeclaredArtifact(x)))
             }
-            Some(ValueAsInputArtifactLikeUnpack::PromiseArtifact(x)) => Err(
-                buck2_error::Error::from(UnpackNonPromiseInputArtifactError::PromiseArtifact(
-                    x.to_string(),
-                ))
-                .into(),
-            ),
+            Some(StarlarkArtifactView::PromiseArtifact(x)) => Err(buck2_error::Error::from(
+                UnpackNonPromiseInputArtifactError::PromiseArtifact(x.to_string()),
+            )
+            .into()),
         }
     }
 }

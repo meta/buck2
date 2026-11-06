@@ -19,6 +19,7 @@ use buck2_common::cas_digest::CasDigest;
 use buck2_core::execution_types::executor_config::RemoteExecutorUseCase;
 use buck2_error::BuckErrorContext;
 use buck2_execute::materialize::http::Checksum;
+use buck2_execute::materialize::http::ChecksumAlgorithm;
 use buck2_hash::buck_mut_insertion_set;
 use starlark::environment::MethodsBuilder;
 use starlark::eval::Evaluator;
@@ -41,13 +42,13 @@ fn download_checksum(
 ) -> buck2_error::Result<Checksum> {
     let mut pairs = Vec::with_capacity(3);
     if let Some(sha1) = sha1 {
-        pairs.push(("sha1", sha1));
+        pairs.push((ChecksumAlgorithm::Sha1, sha1));
     }
     if let Some(sha256) = sha256 {
-        pairs.push(("sha256", sha256));
+        pairs.push((ChecksumAlgorithm::Sha256, sha256));
     }
     if let Some(sha512) = sha512 {
-        pairs.push(("sha512", sha512));
+        pairs.push((ChecksumAlgorithm::Sha512, sha512));
     }
     Checksum::from_pairs(&pairs)
 }
@@ -66,8 +67,8 @@ enum CasArtifactError {
 pub(crate) fn analysis_actions_methods_download(methods: &mut MethodsBuilder) {
     /// Downloads a URL to an output (filename as string or output artifact). The file at the URL
     /// must match every checksum given (`sha1`, `sha256` and/or `sha512`, each as a hex string,
-    /// and at least one is required) or the command will fail. The optional parameter size_bytes
-    /// is checked against the size of the downloaded file. The optional parameter
+    /// and at least one is required) or the command will fail. If `size_bytes` is given, the
+    /// downloaded file must be that size. The optional parameter
     /// is_executable indicates whether the resulting file should be marked with executable
     /// permissions.
     ///
@@ -77,6 +78,10 @@ pub(crate) fn analysis_actions_methods_download(methods: &mut MethodsBuilder) {
     /// only has `sha1` protects against accidental corruption but not against a crafted file. Give
     /// more than one if you have them; the file must match all of them. `sha1` and `sha256` keep
     /// working as before.
+    ///
+    /// A `sha512` alone cannot name the file's digest to the content-addressed store (which uses
+    /// sha1 or sha256), so a download with only a `sha512` cannot be given a content-based output
+    /// path (`has_content_based_path`); add a `sha1` or `sha256` for that.
     ///
     /// ```python
     /// ctx.actions.download_file(
@@ -221,7 +226,6 @@ mod tests {
     #[test]
     fn test_download_checksum_without_sha512_keeps_its_digests() -> buck2_error::Result<()> {
         let only_1 = download_checksum(Some(SHA1), None, None)?;
-        assert!(matches!(only_1, Checksum::Entries(..)));
         assert_eq!(
             (only_1.sha1(), only_1.sha256(), only_1.sha512()),
             (Some(SHA1), None, None)
@@ -242,7 +246,6 @@ mod tests {
     #[test]
     fn test_download_checksum_with_sha512_keeps_every_given_digest() -> buck2_error::Result<()> {
         let only = download_checksum(None, None, Some(SHA512))?;
-        assert!(matches!(only, Checksum::Entries(..)));
         assert_eq!(only.sha512(), Some(SHA512));
         assert_eq!((only.sha1(), only.sha256()), (None, None));
 

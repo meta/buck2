@@ -15,6 +15,7 @@ use std::sync::atomic::AtomicUsize;
 use std::sync::atomic::Ordering;
 use std::time::Duration;
 
+use anyhow::Context as _;
 use buck2_e2e::http::StaticHttpServer;
 use buck2_e2e::http::sha1_hex;
 use buck2_e2e::prelude::*;
@@ -32,12 +33,26 @@ fn configs(
     sha256: Option<&str>,
     size: Option<usize>,
 ) -> Vec<String> {
+    configs_with_sha512(url, sha1, sha256, None, size)
+}
+
+/// [`configs`], with a sha512 as well.
+fn configs_with_sha512(
+    url: &str,
+    sha1: Option<&str>,
+    sha256: Option<&str>,
+    sha512: Option<&str>,
+    size: Option<usize>,
+) -> Vec<String> {
     let mut args = vec!["-c".to_owned(), format!("test.url={url}")];
     if let Some(sha1) = sha1 {
         args.extend(["-c".to_owned(), format!("test.sha1={sha1}")]);
     }
     if let Some(sha256) = sha256 {
         args.extend(["-c".to_owned(), format!("test.sha256={sha256}")]);
+    }
+    if let Some(sha512) = sha512 {
+        args.extend(["-c".to_owned(), format!("test.sha512={sha512}")]);
     }
     if let Some(size) = size {
         args.extend(["-c".to_owned(), format!("test.size_bytes={size}")]);
@@ -47,6 +62,10 @@ fn configs(
 
 fn sha256_hex(content: &[u8]) -> String {
     hex::encode(sha2::Sha256::digest(content))
+}
+
+fn sha512_hex(content: &[u8]) -> String {
+    hex::encode(sha2::Sha512::digest(content))
 }
 
 /// `args`, then each of `configs`, as a command takes them.
@@ -158,12 +177,21 @@ async fn downloads_declared_each_way(buck: &Buck, shape: &str) -> anyhow::Result
     let content = random_string().into_bytes();
     let sha1 = sha1_hex(&content);
     let sha256 = sha256_hex(&content);
+    let sha512 = sha512_hex(&content);
     let declared = match shape {
         "sha1" => configs("", Some(&sha1), None, None),
         "sha256" => configs("", None, Some(&sha256), None),
+        "sha512" => configs_with_sha512("", None, None, Some(&sha512), None),
         "both" => configs("", Some(&sha1), Some(&sha256), None),
         "both_with_size" => configs("", Some(&sha1), Some(&sha256), Some(content.len())),
+        "sha512_with_size" => {
+            configs_with_sha512("", None, None, Some(&sha512), Some(content.len()))
+        }
+        "all_three" => configs_with_sha512("", Some(&sha1), Some(&sha256), Some(&sha512), None),
         "sha1_uppercase" => configs("", Some(&sha1.to_uppercase()), None, None),
+        "sha512_uppercase" => {
+            configs_with_sha512("", None, None, Some(&sha512.to_uppercase()), None)
+        }
         _ => anyhow::bail!("Unknown shape `{shape}`"),
     };
     let declared = &declared[2..];
@@ -202,6 +230,26 @@ async fn test_downloads_declared_each_way_both(buck: &Buck) -> anyhow::Result<()
 #[buck_test(data_dir = "download", skip_for_os = ["windows"])]
 async fn test_downloads_declared_each_way_both_with_size(buck: &Buck) -> anyhow::Result<()> {
     downloads_declared_each_way(buck, "both_with_size").await
+}
+
+#[buck_test(data_dir = "download", skip_for_os = ["windows"])]
+async fn test_downloads_declared_each_way_sha512(buck: &Buck) -> anyhow::Result<()> {
+    downloads_declared_each_way(buck, "sha512").await
+}
+
+#[buck_test(data_dir = "download", skip_for_os = ["windows"])]
+async fn test_downloads_declared_each_way_sha512_with_size(buck: &Buck) -> anyhow::Result<()> {
+    downloads_declared_each_way(buck, "sha512_with_size").await
+}
+
+#[buck_test(data_dir = "download", skip_for_os = ["windows"])]
+async fn test_downloads_declared_each_way_all_three(buck: &Buck) -> anyhow::Result<()> {
+    downloads_declared_each_way(buck, "all_three").await
+}
+
+#[buck_test(data_dir = "download", skip_for_os = ["windows"])]
+async fn test_downloads_declared_each_way_sha512_uppercase(buck: &Buck) -> anyhow::Result<()> {
+    downloads_declared_each_way(buck, "sha512_uppercase").await
 }
 
 #[buck_test(data_dir = "download", skip_for_os = ["windows"])]
@@ -430,6 +478,32 @@ async fn test_declarations_that_cannot_be_right(buck: &Buck) -> anyhow::Result<(
     .await
     .expect_failure()
     .assert_stderr_matches("Invalid digest for `sha1` argument");
+    // A sha512 is 128 hex characters: a sha256 is too short, and `z` is not hex.
+    let sha256 = sha256_hex(&content);
+    buck.build(&with(
+        &["//:download"],
+        &[&configs_with_sha512(&url, None, None, Some(&sha256), None)],
+    ))
+    .await
+    .expect_failure()
+    .assert_stderr_matches(&format!(
+        "Invalid digest for `sha512` argument, expected length of 128 but got 64, digest `{sha256}`"
+    ));
+    buck.build(&with(
+        &["//:download"],
+        &[&configs_with_sha512(
+            &url,
+            None,
+            None,
+            Some(&"z".repeat(128)),
+            None,
+        )],
+    ))
+    .await
+    .expect_failure()
+    .assert_stderr_matches(
+        "Invalid digest for `sha512` argument, expected 0-9 a-z hex characters, but got `z`",
+    );
     // Nothing was fetched for those.
     assert_eq!(server.count("GET", "/file"), 0);
     Ok(())
@@ -463,6 +537,23 @@ async fn test_checksums_the_content_does_not_match(buck: &Buck) -> anyhow::Resul
     .await
     .expect_failure()
     .assert_stderr_matches("Invalid sha256 digest");
+    buck.build(&with(
+        &["//:download"],
+        &[&configs_with_sha512(
+            &url,
+            None,
+            None,
+            Some(&"0".repeat(128)),
+            None,
+        )],
+    ))
+    .await
+    .expect_failure()
+    .assert_stderr_matches(&format!(
+        "Invalid sha512 digest. Expected {}, got {}. URL: {url}",
+        "0".repeat(128),
+        sha512_hex(&content)
+    ));
     // Content the CAS does not have is downloaded, and every checksum named is held
     // against it.
     buck.build(&with(
@@ -477,6 +568,29 @@ async fn test_checksums_the_content_does_not_match(buck: &Buck) -> anyhow::Resul
     .await
     .expect_failure()
     .assert_stderr_matches("Invalid sha256 digest");
+    // Each of the three is enforced when the other two are right.
+    for wrong in ["sha1", "sha256", "sha512"] {
+        let digest = |algorithm: &str, right: String| {
+            if algorithm == wrong {
+                "0".repeat(right.len())
+            } else {
+                right
+            }
+        };
+        buck.build(&with(
+            &["//:download"],
+            &[&configs_with_sha512(
+                &url,
+                Some(&digest("sha1", sha1_hex(&content))),
+                Some(&digest("sha256", sha256_hex(&content))),
+                Some(&digest("sha512", sha512_hex(&content))),
+                None,
+            )],
+        ))
+        .await
+        .expect_failure()
+        .assert_stderr_matches(&format!("Invalid {wrong} digest"));
+    }
     Ok(())
 }
 
@@ -517,6 +631,44 @@ async fn test_a_wrong_size_is_reported_by_the_download(buck: &Buck) -> anyhow::R
             &server.url("/file"),
             Some(&sha1_hex(&content)),
             None,
+            Some(content.len() + 1),
+        )],
+    ))
+    .await
+    .expect_failure()
+    .assert_stderr_matches(&format!(
+        "Downloaded size \\({}\\) does not match expected size \\({}\\)",
+        content.len(),
+        content.len() + 1
+    ));
+    // A sha256 under a digest config that only accepts sha1 declares no metadata, and
+    // `size_bytes` is still checked.
+    use_fbsource_digests(buck)?;
+    buck.build(&with(
+        &["//:download"],
+        &[&configs(
+            &server.url("/file"),
+            None,
+            Some(&sha256_hex(&content)),
+            Some(content.len() + 1),
+        )],
+    ))
+    .await
+    .expect_failure()
+    .assert_stderr_matches(&format!(
+        "Downloaded size \\({}\\) does not match expected size \\({}\\)",
+        content.len(),
+        content.len() + 1
+    ));
+    // A sha512 alone does not name a CAS digest, so `size_bytes` is all there is to check the
+    // size against.
+    buck.build(&with(
+        &["//:download"],
+        &[&configs_with_sha512(
+            &server.url("/file"),
+            None,
+            None,
+            Some(&sha512_hex(&content)),
             Some(content.len() + 1),
         )],
     ))
@@ -773,4 +925,70 @@ async fn test_a_wrong_size_is_a_miss_in_the_cas(buck: &Buck) -> anyhow::Result<(
     ));
     assert_eq!(server.count("GET", "/file"), 2);
     Ok(())
+}
+
+/// A checksum is part of an action, and an action is part of an analysis result, which can be
+/// paged out to disk and back while a daemon runs.
+async fn a_paged_out_download_is_read_back(buck: &Buck, shape: &[&str]) -> anyhow::Result<()> {
+    std::fs::write(
+        buck.settings_home_dir().join(".bucksettings.local.toml"),
+        "[hydration]\nenable_paging = true\npage_out_min_free_disk_gb = 0\n",
+    )?;
+    let content = random_string().into_bytes();
+    let digest = |algorithm: &str, hex: fn(&[u8]) -> String| {
+        shape.contains(&algorithm).then(|| hex(&content))
+    };
+    let server = StaticHttpServer::start([("/file", content.clone())]).await?;
+    let declared = configs_with_sha512(
+        &server.url("/file"),
+        digest("sha1", sha1_hex).as_deref(),
+        digest("sha256", sha256_hex).as_deref(),
+        digest("sha512", sha512_hex).as_deref(),
+        None,
+    );
+    assert_eq!(
+        build_and_read(buck, "//:download", &with(&[], &[&declared])).await?,
+        content
+    );
+
+    buck.debug(&["hydration", "page-out"]).await?;
+    let status = buck.debug(&["hydration", "status"]).await?.stdout;
+    let paged_out: u64 = regex::Regex::new(r"(\d+) paged out")?
+        .captures(&status)
+        .with_context(|| format!("unexpected status output:\n{status}"))?[1]
+        .parse()?;
+    assert!(paged_out > 0, "{status}");
+
+    // A target that reads the download needs its analysis result back, which holds the action
+    // and with it the checksum.
+    let result = buck
+        .build(&with(&["//:copy", "--local-only"], &[&declared]))
+        .await?;
+    assert_eq!(
+        std::fs::read(result.build_report()?.output_for_target("//:copy")?)?,
+        content
+    );
+    let record = result.invocation_record()?;
+    let analysis = &record["page_in_by_key_type"]["AnalysisKey"];
+    assert!(
+        analysis["count"].as_u64().is_some_and(|count| count > 0),
+        "{analysis}"
+    );
+    assert_eq!(server.count("GET", "/file"), 1);
+    Ok(())
+}
+
+#[buck_test(data_dir = "download", skip_for_os = ["windows"], write_invocation_record = true)]
+async fn test_a_paged_out_download_is_read_back_sha1(buck: &Buck) -> anyhow::Result<()> {
+    a_paged_out_download_is_read_back(buck, &["sha1"]).await
+}
+
+#[buck_test(data_dir = "download", skip_for_os = ["windows"], write_invocation_record = true)]
+async fn test_a_paged_out_download_is_read_back_sha512(buck: &Buck) -> anyhow::Result<()> {
+    a_paged_out_download_is_read_back(buck, &["sha512"]).await
+}
+
+#[buck_test(data_dir = "download", skip_for_os = ["windows"], write_invocation_record = true)]
+async fn test_a_paged_out_download_is_read_back_all_three(buck: &Buck) -> anyhow::Result<()> {
+    a_paged_out_download_is_read_back(buck, &["sha1", "sha256", "sha512"]).await
 }

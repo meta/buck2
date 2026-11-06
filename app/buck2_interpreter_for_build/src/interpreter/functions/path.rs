@@ -103,8 +103,35 @@ pub(crate) fn register_path(builder: &mut GlobalsBuilder) {
     /// lives.
     ///
     /// For example, inside `foo//bar/baz/BUCK` the output will be `foo`.
-    /// If that `BUCK` file does a `load("hello//world.bzl", "something")` then
+    /// If that `BUCK` file does a `load("@hello//:world.bzl", "something")` then
     /// the result in that `.bzl` file will also be `foo`.
+    ///
+    /// ### Cell segmentation
+    ///
+    /// Historically, Buck has re-evaluated each .bzl file once per cell it is imported
+    /// into. That meant that `get_cell_name` would be based on where the chain of imports
+    /// started. Re-evaluating came with undesirable behaviour for cross-cell type checking
+    /// so this behaviour can now be disabled, but be aware that this affects get_cell_name().
+    ///
+    /// In the prelude, and when you disable this behaviour for all cells with the
+    /// buckconfig `buck2.disable_cell_segmentation`, the returned cell name depends on
+    /// the function call stack.
+    ///
+    /// ```python
+    /// # root .buckconfig
+    /// [buck2]
+    ///     disable_cell_segmentation = true
+    ///
+    /// # hello//:world.bzl
+    /// HELLO_CELL_NAME = get_cell_name()
+    /// def dynamic_cell_name() -> str:
+    ///     return get_cell_name()
+    ///
+    /// # root//BUCK
+    /// load("@hello//:world.bzl", "HELLO_CELL_NAME", "dynamic_cell_name")
+    /// print(HELLO_CELL_NAME) # hello
+    /// print(dynamic_cell_name()) # root
+    /// ```
     fn get_cell_name(eval: &mut Evaluator) -> starlark::Result<String> {
         Ok(BuildContext::from_context(eval)?
             .cell_info()

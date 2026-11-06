@@ -11,7 +11,12 @@
 use std::io::Write;
 use std::sync::Arc;
 
+use buck2_common::legacy_configs::dice::HasLegacyConfigs;
+use buck2_common::legacy_configs::key::BuckconfigKeyRef;
 use buck2_events::dispatch::console_message;
+use buck2_interpreter::bxl_read_config::BXL_READ_CONFIG;
+use buck2_interpreter::bxl_read_config::BxlConfigValue;
+use futures::FutureExt;
 use starlark::eval::Evaluator;
 use starlark::values::ProvidesStaticType;
 
@@ -83,6 +88,43 @@ impl<'d> BxlEvalExtra<'d> {
         }
         .ok_or_else(|| BxlScopeError::UnavailableOutsideBxl.into())
     }
+}
+
+/// Implementation of [`BXL_READ_CONFIG`]: read a buckconfig value from the cell
+/// that owns the `.bxl`.
+fn bxl_read_config(
+    eval: &mut Evaluator,
+    section: &str,
+    key: &str,
+) -> buck2_error::Result<BxlConfigValue> {
+    let extra = match BxlEvalExtra::from_context(eval) {
+        Ok(extra) => extra,
+        // Not a BXL evaluation; let the caller fall through to its own handling.
+        Err(_) => return Ok(BxlConfigValue::NotBxl),
+    };
+
+    let cell = extra.core.cell_name();
+    let section = section.to_owned();
+    let key = key.to_owned();
+    let value = extra.dice.via(move |dice| {
+        async move {
+            dice.get_legacy_config_property(
+                cell,
+                BuckconfigKeyRef {
+                    section: &section,
+                    property: &key,
+                },
+            )
+            .await
+        }
+        .boxed_local()
+    })?;
+
+    Ok(BxlConfigValue::Bxl(value))
+}
+
+pub(crate) fn init_bxl_read_config() {
+    BXL_READ_CONFIG.init(bxl_read_config);
 }
 
 impl<'e> ErrorPrinter for BxlEvalExtra<'e> {

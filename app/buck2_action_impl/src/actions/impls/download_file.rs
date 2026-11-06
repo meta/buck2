@@ -31,7 +31,6 @@ use buck2_common::io::trace::TracingIoProvider;
 use buck2_common::temp_path::TempPath;
 use buck2_core::category::CategoryRef;
 use buck2_core::content_hash::ContentBasedPathHash;
-use buck2_core::fs::buck_out_path::BuildArtifactPath;
 use buck2_core::fs::project_rel_path::ProjectRelativePathBuf;
 use buck2_error::BuckErrorContext;
 use buck2_error::BuckErrorOptionContext;
@@ -68,19 +67,26 @@ use crate::actions::impls::offline;
 enum DownloadFileActionError {
     #[error("Exactly one output file must be specified for a download file action, got {0}")]
     WrongNumberOfOutputs(usize),
-    #[error(
-        "Downloads using content-based path {0} must supply metadata (usually in the form of a sha1)!"
-    )]
-    ContentBasedPathWithoutMetadata(BuildArtifactPath),
 }
 
-enum DeclaredMetadata {
-    /// The file's digest is known without downloading it.
-    Known(FileMetadata),
-    /// No checksum the digest config accepts, or no size: only a download can tell.
-    Unknown,
-    /// The size had to come from a HEAD request, and that failed.
-    HeadFailed(buck2_error::Error),
+/// The size a download must have: `size_bytes` when it was given, else the declared metadata's
+/// (from the HEAD response). When `size_bytes` was given the metadata's size is `size_bytes`, so
+/// one size is checked and a mismatch is reported once.
+fn expected_size(metadata: Option<&FileMetadata>, size_bytes: Option<u64>) -> Option<u64> {
+    size_bytes.or_else(|| metadata.map(|metadata| metadata.digest.size()))
+}
+
+/// Fails if a size was declared (by `size_bytes` or a HEAD response) and the download has another.
+fn check_downloaded_size(expected: Option<u64>, actual: u64) -> buck2_error::Result<()> {
+    match expected {
+        Some(expected) if expected != actual => Err(buck2_error!(
+            ErrorTag::DownloadSizeMismatch,
+            "Downloaded size ({}) does not match expected size ({})",
+            actual,
+            expected,
+        )),
+        _ => Ok(()),
+    }
 }
 
 #[derive(Debug, Allocative, Pagable)]
@@ -157,13 +163,10 @@ impl DownloadFileAction {
         }
     }
 
-    /// Works out what the downloaded file's metadata will be without downloading it.
-    async fn declared_metadata(
-        &self,
-        client: &HttpClient,
-        digest_config: DigestConfig,
-    ) -> DeclaredMetadata {
-        let digest = if digest_config.cas_digest_config().allows_sha1() {
+    /// The digest of the declared checksum that this action names its output by: the sha1 when
+    /// the digest config accepts sha1, else the sha256 when it accepts sha256.
+    fn declared_digest(&self, digest_config: DigestConfig) -> Option<RawDigest> {
+        if digest_config.cas_digest_config().allows_sha1() {
             self.inner
                 .checksum
                 .sha1()
@@ -175,34 +178,40 @@ impl DownloadFileAction {
                 .and_then(|sha256| RawDigest::parse_sha256(sha256.as_bytes()).ok())
         } else {
             None
-        };
+        }
+    }
 
-        let digest = match digest {
-            Some(digest) => digest,
-            None => return DeclaredMetadata::Unknown,
-        };
-
+    /// Works out what the downloaded file's metadata will be without downloading it: `digest`,
+    /// with the size from `size_bytes` or the HEAD response.
+    async fn declared_metadata(
+        &self,
+        client: &HttpClient,
+        digest: RawDigest,
+        digest_config: DigestConfig,
+    ) -> Option<FileMetadata> {
         let size = match self.inner.size_bytes {
-            Some(s) => Some(s),
+            Some(size) => size,
             None => match self.head_content_length(client).await {
-                Ok(size) => size,
-                Err(e) => return DeclaredMetadata::HeadFailed(e),
+                Ok(size) => size?,
+                Err(e) => {
+                    // Not a soft error: servers legitimately refuse HEAD, and a server that is
+                    // actually down fails the GET that follows.
+                    tracing::debug!(
+                        "HEAD request for `{}` failed, downloading instead: {:#}",
+                        self.url(client),
+                        e
+                    );
+                    return None;
+                }
             },
         };
-
-        match size {
-            Some(size) => {
-                let digest = TrackedFileDigest::new(
-                    FileDigest::new(digest, size),
-                    digest_config.cas_digest_config(),
-                );
-                DeclaredMetadata::Known(FileMetadata {
-                    digest,
-                    is_executable: self.inner.is_executable,
-                })
-            }
-            None => DeclaredMetadata::Unknown,
-        }
+        Some(FileMetadata {
+            digest: TrackedFileDigest::new(
+                FileDigest::new(digest, size),
+                digest_config.cas_digest_config(),
+            ),
+            is_executable: self.inner.is_executable,
+        })
     }
 
     /// The `Content-Length` a HEAD request reports for the URL, if the server sends one.
@@ -335,13 +344,16 @@ impl DownloadFileAction {
         Ok(Some(value))
     }
 
-    /// Puts the content at the output path now, unless the materializer already has exactly this
-    /// content there from an earlier daemon.
+    /// Puts the content on disk now, unless the materializer already has exactly this content at
+    /// the output path from an earlier daemon. A content-based output goes through a temporary
+    /// file under the deferred core, and to the placeholder path under the disk-state core when
+    /// its path is not known before the download.
     async fn download(
         &self,
         ctx: &dyn ActionExecutionCtx,
         client: &HttpClient,
         url: &str,
+        declared: Option<RawDigest>,
         metadata: Option<&FileMetadata>,
     ) -> buck2_error::Result<(ArtifactValue, ActionExecutionKind)> {
         let materializer = ctx.materializer();
@@ -379,6 +391,10 @@ impl DownloadFileAction {
         let path = match (&temp, declared_path) {
             (Some(temp), _) => ctx.fs().fs().relativize(temp.path())?.into_owned(),
             (None, Some(path)) => path,
+            // Under the disk-state core, a content-based output whose path is not known before
+            // the download is written to the placeholder path and reported there, as a run
+            // action's output is. Its consumers find it by digest.
+            (None, None) if is_content_based => self.placeholder_path(ctx)?,
             (None, None) => ctx.fs().resolve_build(self.output().get_path(), None)?,
         };
 
@@ -408,30 +424,31 @@ impl DownloadFileAction {
 
         // RE knows this file by the digest (checksum, size), where the size came from
         // `size_bytes` or the HEAD response rather than from the content. A wrong size would leave
-        // every remote consumer unable to find its input, so it is caught here.
-        if let Some(metadata) = metadata
-            && digest.size() != metadata.digest.size()
-        {
-            return Err(buck2_error!(
-                ErrorTag::DownloadSizeMismatch,
-                "Downloaded size ({}) does not match expected size ({})",
-                digest.size(),
-                metadata.digest.size(),
-            ));
-        }
+        // every remote consumer unable to find its input, so it is caught here. `size_bytes` is
+        // checked whenever it is given, also when no digest could be declared up front (a
+        // sha512-only download, or a checksum the digest config does not accept).
+        check_downloaded_size(
+            expected_size(metadata, self.inner.size_bytes),
+            digest.size(),
+        )?;
 
-        // The declared metadata, when there is any, is the value: the checksum verified the
-        // content and the size was checked above, and a content-based output path was resolved
-        // from it. The digest the download computed is under the digest config's preferred
-        // algorithm, which need not be the checksum's, so it only stands in when nothing was
-        // declared.
-        let value = match metadata {
-            Some(metadata) => ArtifactValue::file(metadata.dupe()),
-            None => ArtifactValue::file(FileMetadata {
-                digest,
-                is_executable: self.inner.is_executable,
-            }),
+        // The value has the declared digest whenever there is one (see `declared_digest`), also
+        // when the size had to come from the download. The checksum verified the content, and the
+        // size was checked above. A content-based path is resolved from the value, so it does not
+        // depend on whether the HEAD request succeeded. The digest the download computed is under
+        // the digest config's preferred algorithm, which need not be the checksum's. It is only
+        // used when there is no declared digest.
+        let digest = match declared {
+            Some(declared) => TrackedFileDigest::new(
+                FileDigest::new(declared, digest.size()),
+                ctx.digest_config().cas_digest_config(),
+            ),
+            None => digest,
         };
+        let value = ArtifactValue::file(FileMetadata {
+            digest,
+            is_executable: self.inner.is_executable,
+        });
         match temp {
             Some(temp) => {
                 let dest = self.output_path(ctx, &value)?;
@@ -578,40 +595,24 @@ impl Action for DownloadFileAction {
 
         let client = ctx.http_client();
         let url = self.url(client);
-        let is_content_based = self.output().get_path().is_content_based_path();
-
-        let metadata = match self.declared_metadata(client, ctx.digest_config()).await {
-            DeclaredMetadata::Known(metadata) => Some(metadata),
-            DeclaredMetadata::Unknown => None,
-            DeclaredMetadata::HeadFailed(e) => {
-                if is_content_based {
-                    return Err(e.into());
-                }
-                // Not a soft error: servers legitimately refuse HEAD, and a server that is
-                // actually down fails the GET that follows.
-                tracing::debug!(
-                    "HEAD request for `{}` failed, downloading instead: {:#}",
-                    url,
-                    e
-                );
-                None
+        let declared = self.declared_digest(ctx.digest_config());
+        let metadata = match declared {
+            Some(digest) => {
+                self.declared_metadata(client, digest, ctx.digest_config())
+                    .await
             }
+            None => None,
         };
-        if metadata.is_none() && is_content_based {
-            return Err(ExecuteError::Error {
-                error: DownloadFileActionError::ContentBasedPathWithoutMetadata(
-                    self.output().get_path().dupe(),
-                )
-                .into(),
-            });
-        }
 
         let (value, execution_kind) = match &metadata {
             Some(metadata) => match self.declare_from_cas(ctx, metadata).await? {
                 Some(value) => (value, ActionExecutionKind::Deferred),
-                None => self.download(ctx, client, url, Some(metadata)).await?,
+                None => {
+                    self.download(ctx, client, url, declared, Some(metadata))
+                        .await?
+                }
             },
-            None => self.download(ctx, client, url, None).await?,
+            None => self.download(ctx, client, url, declared, None).await?,
         };
 
         // If we're tracing I/O, get the materializer to copy to the offline cache
@@ -637,8 +638,46 @@ impl Action for DownloadFileAction {
 
 #[cfg(test)]
 mod tests {
+    use buck2_common::cas_digest::testing;
+
+    use super::*;
+
     // TODO: This needs proper tests, but right now it's kind of a pain to get the
     //       action framework up and running to test actions
     #[test]
     fn downloads_file() {}
+
+    #[test]
+    fn test_check_downloaded_size() {
+        // A wrong size is refused, also when the checksum alone cannot name a CAS digest (a
+        // sha512-only download).
+        let err = check_downloaded_size(Some(6), 7).unwrap_err();
+        assert!(err.has_tag(ErrorTag::DownloadSizeMismatch));
+        assert!(
+            format!("{err:#}").contains("Downloaded size (7) does not match expected size (6)")
+        );
+
+        // A right size, or no declared size, is accepted.
+        check_downloaded_size(Some(6), 6).unwrap();
+        check_downloaded_size(None, 6).unwrap();
+    }
+
+    #[test]
+    fn test_expected_size() {
+        // `size_bytes` is checked whenever it is given, with or without declared metadata (none
+        // is declared for a sha512-only download, or a sha256 under a sha1 digest config).
+        assert_eq!(expected_size(None, Some(6)), Some(6));
+        assert_eq!(expected_size(None, None), None);
+
+        let metadata = FileMetadata {
+            digest: TrackedFileDigest::new(
+                FileDigest::from_content(b"foobar", testing::sha256()),
+                testing::sha256(),
+            ),
+            is_executable: false,
+        };
+        // Metadata carries `size_bytes` when that was given; alone it is the HEAD response's size.
+        assert_eq!(expected_size(Some(&metadata), Some(6)), Some(6));
+        assert_eq!(expected_size(Some(&metadata), None), Some(6));
+    }
 }

@@ -1,3 +1,4 @@
+load("@prelude//python/meta_only:config.bzl", "DEFAULT_PY_VERSION")
 load("@prelude//utils:source_listing.bzl", "source_listing")
 
 oncall("build_infra")
@@ -7,7 +8,18 @@ source_listing()
 prelude = native
 
 prelude.python_bootstrap_binary(
-    name = "create_build",
+    name = "create_build-full",
     main = "create_build.py",
+)
+
+prelude.python_bootstrap_binary_stage0(
+    name = "create_build-construction",
+    interpreter = "fbcode//buck2/platform/python:interpreter-linux-stage0-{}".format(DEFAULT_PY_VERSION),
+    main = "create_build.py",
+)
+
+prelude.alias(
+    name = "create_build",
+    actual = ":create_build-full",
     visibility = ["PUBLIC"],
 )

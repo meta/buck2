@@ -10,6 +10,7 @@ load("@prelude//:prelude_rule.bzl", "make_rules")
 load(
     "@prelude//python_bootstrap:python_bootstrap.bzl",
     python_bootstrap_binary_spec = "python_bootstrap_binary",
+    python_bootstrap_binary_stage0_spec = "python_bootstrap_binary_stage0",
     python_bootstrap_library_spec = "python_bootstrap_library",
 )
 load(":cxx_python_extension.bzl", cxx_python_extension_spec = "cxx_python_extension")
@@ -25,6 +26,7 @@ specs = {
     "prebuilt_python_library": prebuilt_python_library_spec,
     "python_binary": python_binary_spec,
     "python_bootstrap_binary": python_bootstrap_binary_spec,
+    "python_bootstrap_binary_stage0": python_bootstrap_binary_stage0_spec,
     "python_bootstrap_library": python_bootstrap_library_spec,
     "python_library": python_library_spec,
     "python_needed_coverage_test": python_needed_coverage_test_spec,

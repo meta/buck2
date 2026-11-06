@@ -23,7 +23,7 @@ def python_bootstrap_library_impl(ctx: AnalysisContext) -> list[Provider]:
         PythonBootstrapSources(srcs = dedupe(flatten([ctx.attrs.srcs] + [dep[PythonBootstrapSources].srcs for dep in ctx.attrs.deps]))),
     ]
 
-def python_bootstrap_binary_impl(ctx: AnalysisContext) -> list[Provider]:
+def _python_bootstrap_binary_impl(ctx: AnalysisContext, interpreter) -> list[Provider]:
     """
     Declares a Python binary that is intended to be used in scripts that
     bootstrap other aspects of the Buck2 prelude. Python bootstrap binaries do
@@ -59,7 +59,6 @@ def python_bootstrap_binary_impl(ctx: AnalysisContext) -> list[Provider]:
     else:
         run_tree = ctx.actions.symlinked_dir("__%s__" % ctx.attrs.name, run_tree_inputs, has_content_based_path = has_content_based_path)
 
-    interpreter = ctx.attrs._python_bootstrap_toolchain[PythonBootstrapToolchainInfo].interpreter
     main_artifact = run_tree.project(main.short_path)
     run_args = cmd_args(
         [interpreter, run_tree.project(main.short_path)],
@@ -69,6 +68,20 @@ def python_bootstrap_binary_impl(ctx: AnalysisContext) -> list[Provider]:
         DefaultInfo(default_output = main_artifact, other_outputs = [run_tree, interpreter]),
         RunInfo(args = run_args),
     ]
+
+def python_bootstrap_binary_impl(ctx: AnalysisContext) -> list[Provider]:
+    interpreter = ctx.attrs._python_bootstrap_toolchain[PythonBootstrapToolchainInfo].interpreter
+    return _python_bootstrap_binary_impl(ctx, interpreter)
+
+def python_bootstrap_binary_stage0_impl(ctx: AnalysisContext) -> list[Provider]:
+    return _python_bootstrap_binary_impl(ctx, ctx.attrs.interpreter[RunInfo].args)
+
+_python_bootstrap_binary_attrs = {
+    "copy_deps": attrs.bool(default = True),
+    "deps": attrs.list(attrs.dep(providers = [PythonBootstrapSources]), default = []),
+    "has_content_based_path": attrs.bool(default = False),
+    "main": attrs.source(),
+}
 
 python_bootstrap_binary = prelude_rule(
     name = "python_bootstrap_binary",
@@ -84,15 +97,13 @@ python_bootstrap_binary = prelude_rule(
     """,
     examples = None,
     further = None,
-    attrs = {
-        "copy_deps": attrs.bool(default = True),
-        "deps": attrs.list(attrs.dep(providers = [PythonBootstrapSources]), default = []),
-        "has_content_based_path": attrs.bool(default = False),
-        "main": attrs.source(),
-        "_python_bootstrap_toolchain": toolchains_common.python_bootstrap(),
-    }
-    | buck.labels_arg()
-    | buck.contacts_arg(),
+    attrs = _python_bootstrap_binary_attrs | {"_python_bootstrap_toolchain": toolchains_common.python_bootstrap()} | buck.labels_arg() | buck.contacts_arg(),
+)
+
+python_bootstrap_binary_stage0 = prelude_rule(
+    name = "python_bootstrap_binary_stage0",
+    impl = python_bootstrap_binary_stage0_impl,
+    attrs = _python_bootstrap_binary_attrs | {"interpreter": attrs.exec_dep(providers = [RunInfo])} | buck.labels_arg() | buck.contacts_arg(),
 )
 
 python_bootstrap_library = prelude_rule(

@@ -21,16 +21,18 @@ use starlark::values::none::NoneType;
 
 #[derive(Debug, buck2_error::Error)]
 #[buck2(tag = Input)]
-enum DeprecationError {
-    #[error("Deprecation logged from Starlark: {category}: {message}\n{call_stack}")]
-    WithStack {
+enum SoftErrorError {
+    #[error("Error produced by Starlark: {category}: {message}\n{call_stack}")]
+    StarlarkSoftError {
         category: String,
         message: String,
         call_stack: String,
     },
-    #[error("Deprecation logged from Starlark: {category}: {message}")]
-    WithoutStack { category: String, message: String },
-    #[error("Deprecation category must start with `starlark_`, got: `{0}`")]
+    #[error("Error produced by Starlark: {category}: {message}")]
+    StarlarkSoftErrorNoStack { category: String, message: String },
+    #[error(
+        "soft_error originated from starlark should have category starting with `starlark_`, got: `{0}`"
+    )]
     InvalidCategory(String),
     #[error("`owner` must be the unixname of the person driving the removal")]
     MissingOwner,
@@ -38,10 +40,9 @@ enum DeprecationError {
 
 fn validate_category(category: &str) -> starlark::Result<()> {
     if !category.starts_with("starlark_") {
-        return Err(buck2_error::Error::from(DeprecationError::InvalidCategory(
-            category.to_owned(),
-        ))
-        .into());
+        return Err(
+            buck2_error::Error::from(SoftErrorError::InvalidCategory(category.to_owned())).into(),
+        );
     }
 
     validate_logview_category(category).map_err(starlark::Error::from)?;
@@ -60,14 +61,14 @@ fn record_deprecation(
     validate_category(category)?;
 
     let err = if stack {
-        DeprecationError::WithStack {
+        SoftErrorError::StarlarkSoftError {
             category: category.to_owned(),
             message,
             call_stack: eval.call_stack().to_string(),
         }
         .into()
     } else {
-        DeprecationError::WithoutStack {
+        SoftErrorError::StarlarkSoftErrorNoStack {
             category: category.to_owned(),
             message,
         }
@@ -90,7 +91,7 @@ fn record_deprecation(
 }
 
 #[starlark_module]
-pub(crate) fn register_deprecation(builder: &mut GlobalsBuilder) {
+pub(crate) fn register_soft_error(builder: &mut GlobalsBuilder) {
     /// Log a use of a deprecated codepath.
     ///
     /// Invocations of this function are logged by buck2's standard logging facilities. The first
@@ -129,7 +130,7 @@ pub(crate) fn register_deprecation(builder: &mut GlobalsBuilder) {
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<NoneType> {
         if owner.is_empty() {
-            return Err(buck2_error::Error::from(DeprecationError::MissingOwner).into());
+            return Err(buck2_error::Error::from(SoftErrorError::MissingOwner).into());
         }
         record_deprecation(category, message, owner, started, stack, eval)
     }
@@ -139,18 +140,18 @@ pub(crate) fn register_deprecation(builder: &mut GlobalsBuilder) {
 mod tests {
     use starlark::assert::Assert;
 
-    use crate::interpreter::functions::deprecation::register_deprecation;
+    use crate::interpreter::functions::soft_error::register_soft_error;
 
     #[test]
     fn test_deprecation_category_needs_prefix() {
         let mut a = Assert::new();
-        a.globals_add(register_deprecation);
+        a.globals_add(register_soft_error);
         for category in ["no_starlark_prefix", ""] {
             a.fail(
                 &format!(
                     "deprecation('{category}', 'Blah', owner = 'jakobdegen', started = '2026-11-02')"
                 ),
-                "must start with `starlark_`",
+                "should have category starting with `starlark_`",
             );
         }
     }
@@ -158,7 +159,7 @@ mod tests {
     #[test]
     fn test_deprecation_category_is_snake_case() {
         let mut a = Assert::new();
-        a.globals_add(register_deprecation);
+        a.globals_add(register_soft_error);
         for category in ["starlark_", "starlark_has__double", "starlark_has_1number"] {
             a.fail(
                 &format!(
@@ -172,7 +173,7 @@ mod tests {
     #[test]
     fn test_deprecation_requires_owner_and_started() {
         let mut a = Assert::new();
-        a.globals_add(register_deprecation);
+        a.globals_add(register_soft_error);
         a.fail(
             "deprecation('starlark_going_away', 'Blah', started = '2026-10-26')",
             "owner",
@@ -190,7 +191,7 @@ mod tests {
     #[test]
     fn test_deprecation_start_is_a_day() {
         let mut a = Assert::new();
-        a.globals_add(register_deprecation);
+        a.globals_add(register_soft_error);
         a.fail(
             "deprecation('starlark_going_away', 'Blah', owner = 'jakobdegen', started = 'yesterday')",
             "yesterday",

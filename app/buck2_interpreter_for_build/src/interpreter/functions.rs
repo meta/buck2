@@ -9,7 +9,6 @@
  */
 
 pub(crate) mod dedupe;
-pub(crate) mod deprecation;
 pub(crate) mod host_info;
 pub(crate) mod internals;
 pub(crate) mod load_symbols;
@@ -18,5 +17,6 @@ pub(crate) mod read_config;
 pub(crate) mod regex;
 pub(crate) mod sha1;
 pub(crate) mod sha256;
+pub(crate) mod soft_error;
 pub(crate) mod starlark;
 pub(crate) mod xml;

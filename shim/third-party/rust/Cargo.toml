@@ -240,7 +240,7 @@ tokio-stream = { version = "0.1.19", features = ["fs", "io-util", "net", "signal
 tokio-util = { version = "0.7.20", features = ["full"] }
 toml = { version = "1.1.8", features = ["preserve_order"] }
 tonic = { version = "0.14.9", features = ["codegen", "gzip", "tls-native-roots", "tls-ring", "tls-webpki-roots", "transport"] }
-tonic-build = "0.14.6"
+tonic-build = "0.14.9"
 tonic-prost = "0.14.6"
 tonic-prost-build = "0.14.6"
 tower = { version = "0.5.3", features = ["util"] }

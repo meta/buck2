@@ -136,8 +136,8 @@ def process_link_args(
        archive members survive the link.
 
     The only args retained are wasm-ld `--export` args, which carry the same
-    per-program symbol metadata that `symbols.o` does on ELF (see the comment
-    at the branch). All other flags and libraries rustc puts on its link line
+    per-program symbol metadata that `symbols.o` does on ELF, and entry-point
+    args (see the comments at the branches). All other flags and libraries rustc puts on its link line
     are deliberately dropped: the toolchain and the dependency graph are the
     sole owners of the flags and libraries on the cxx-driven link. A
     rustc-synthesized file we don't recognize is an error, not something to
@@ -200,6 +200,11 @@ def process_link_args(
             i += 2
             continue
         elif arg.startswith("--entry="):
+            retained_args.append(arg)
+            i += 1
+            continue
+        # The msvc spellings, which `#![windows_subsystem]` sets.
+        elif arg.startswith("/SUBSYSTEM:") or arg.startswith("/ENTRY:"):
             retained_args.append(arg)
             i += 1
             continue

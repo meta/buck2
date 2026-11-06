@@ -12,6 +12,9 @@ buck_java_library(
         "--add-exports",
         "jdk.compiler/com.sun.tools.javac.code=ALL-UNNAMED",
     ],
+    provided_deps = [
+        "prelude//toolchains/android/third-party:infer-annotations",
+    ],
     visibility = [
         "PUBLIC",
     ],

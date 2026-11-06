@@ -10,8 +10,11 @@
 
 package com.facebook.buck.jvm.java.abi.source.api;
 
+import com.facebook.infer.annotation.Nullsafe;
+
 /**
  * Thrown when a source ABI cannot be generated because the source code will not compile. Correct
  * handling is to simply stop attempting to generate the ABI and allow the compiler to fail.
  */
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public class SourceCodeWillNotCompileException extends RuntimeException {}

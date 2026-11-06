@@ -10,9 +10,11 @@
 
 package com.facebook.buck.jvm.java.abi.source.api;
 
+import com.facebook.infer.annotation.Nullsafe;
 import javax.lang.model.element.Element;
 import javax.lang.model.type.TypeMirror;
 
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public class CannotInferException extends RuntimeException {
   public CannotInferException(String what, Element owner) {
     super(formatMessage(what, owner));

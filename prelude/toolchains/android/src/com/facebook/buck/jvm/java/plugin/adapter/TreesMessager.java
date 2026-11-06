@@ -10,6 +10,7 @@
 
 package com.facebook.buck.jvm.java.plugin.adapter;
 
+import com.facebook.infer.annotation.Nullsafe;
 import com.sun.source.util.TreePath;
 import com.sun.source.util.Trees;
 import java.util.Objects;
@@ -19,6 +20,7 @@ import javax.lang.model.element.AnnotationValue;
 import javax.lang.model.element.Element;
 import javax.tools.Diagnostic;
 
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public class TreesMessager implements Messager {
   private final Trees trees;
 

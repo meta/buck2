@@ -10,6 +10,7 @@
 
 package com.facebook.buck.jvm.java.plugin.adapter;
 
+import com.facebook.infer.annotation.Nullsafe;
 import com.sun.source.util.TaskEvent;
 import com.sun.source.util.TaskListener;
 import java.util.concurrent.CopyOnWriteArraySet;
@@ -18,6 +19,7 @@ import java.util.concurrent.CopyOnWriteArraySet;
  * Multiplexes messages to several other task listeners. Messages are dispatched to listeners in the
  * order in which the listeners were registered.
  */
+@Nullsafe(Nullsafe.Mode.LOCAL)
 class MultiplexingTaskListener implements TaskListener {
   private final CopyOnWriteArraySet<TaskListener> listeners = new CopyOnWriteArraySet<>();
 

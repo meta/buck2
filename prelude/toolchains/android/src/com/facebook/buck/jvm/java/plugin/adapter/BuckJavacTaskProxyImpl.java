@@ -14,6 +14,7 @@ import com.facebook.buck.jvm.java.lang.model.ElementsExtended;
 import com.facebook.buck.jvm.java.plugin.api.BuckJavacTaskListener;
 import com.facebook.buck.jvm.java.plugin.api.BuckJavacTaskProxy;
 import com.facebook.buck.jvm.java.plugin.api.CompilationUnitTreeProxy;
+import com.facebook.infer.annotation.Nullsafe;
 import com.sun.source.util.JavacTask;
 import com.sun.source.util.TaskListener;
 import java.io.IOException;
@@ -33,6 +34,7 @@ import javax.tools.JavaFileObject;
  * NOTE: A Java8 copy of this file exists in ../java8/BuckJavacTaskProxyImpl.java. Please make sure
  * to update the other copy when modifying this file.
  */
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public class BuckJavacTaskProxyImpl implements BuckJavacTaskProxy {
   private final BuckJavacTask javacTask;
 

@@ -10,12 +10,15 @@
 
 package com.facebook.buck.jvm.java.fatjar;
 
+import com.facebook.infer.annotation.Nullsafe;
+
 /**
  * Helps quote arguments when launching a process on Windows.
  *
  * <p>Unix's process spawning syscall accepts an array of arguments, but Windows' equivalent accepts
  * a single string and splits the strings according to some different rules.
  */
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public class WindowsCreateProcessEscape {
   private WindowsCreateProcessEscape() {}
 

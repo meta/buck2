@@ -11,6 +11,7 @@
 package com.facebook.buck.jvm.java.plugin.api;
 
 import com.facebook.buck.util.liteinfersupport.Nullable;
+import com.facebook.infer.annotation.Nullsafe;
 import javax.lang.model.element.TypeElement;
 import javax.tools.JavaFileObject;
 
@@ -19,6 +20,7 @@ import javax.tools.JavaFileObject;
  * accessible from within Buck's class loader. This class is used as a mirror within Buck's class
  * loader for a {@link com.sun.source.util.TaskEvent} within the compiler's.
  */
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public final class TaskEventMirror {
   public enum Kind {
     /** For events related to the parsing of a file. */

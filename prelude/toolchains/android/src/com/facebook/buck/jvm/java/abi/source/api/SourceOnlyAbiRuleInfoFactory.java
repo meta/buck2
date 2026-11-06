@@ -11,11 +11,13 @@
 package com.facebook.buck.jvm.java.abi.source.api;
 
 import com.facebook.buck.util.liteinfersupport.Nullable;
+import com.facebook.infer.annotation.Nullsafe;
 import javax.lang.model.element.Element;
 import javax.lang.model.util.Elements;
 import javax.tools.JavaFileManager;
 
 /** Used to create the SourceOnlyAbiRuleInfo for a target given a JavaFileManager. */
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public interface SourceOnlyAbiRuleInfoFactory {
   SourceOnlyAbiRuleInfo create(JavaFileManager fileManager);
 

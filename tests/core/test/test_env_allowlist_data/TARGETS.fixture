@@ -1,0 +1,20 @@
+load(":rules.bzl", "env_probe_test")
+
+# An empty expected value means "must not be set at all".
+env_probe_test(
+    name = "expect_unset",
+    expect_env = {"BUCK2_E2E_ENV_PROBE": ""},
+)
+
+env_probe_test(
+    name = "expect_set",
+    expect_env = {"BUCK2_E2E_ENV_PROBE": "probe-value"},
+)
+
+env_probe_test(
+    name = "expect_both_set",
+    expect_env = {
+        "BUCK2_E2E_ENV_PROBE": "probe-value",
+        "BUCK2_E2E_ENV_PROBE_2": "probe-value-2",
+    },
+)

@@ -25,6 +25,8 @@ const ENV_ALLOW_LIST: &[&str] = &[
     "TMPDIR",
     // Generally needed to keep systemd working
     "XDG_RUNTIME_DIR",
+    // Nix glibc locale archive
+    "LOCALE_ARCHIVE",
 ];
 
 // The standard (built-in) variables.

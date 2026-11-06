@@ -1,4 +1,4 @@
-load(":defs.bzl", "cp", "cp_via_builtin", "stat_path")
+load(":defs.bzl", "copy_tree", "cp", "cp_via_builtin", "stat_path")
 
 cp(name = "cp", src = "src/link/file")
 
@@ -16,6 +16,12 @@ stat_path(
     name = "stat_symlink",
     path = "src/link",
 )
+
+copy_tree(name = "ancestors", src = "ancestors")
+
+stat_path(name = "loop", path = "loop/a/l1")
+
+stat_path(name = "grow", path = "grow/a/l")
 
 stub(
     name = "symlink_dep",

@@ -9,7 +9,6 @@
  */
 
 use std::convert::Infallible;
-use std::fmt;
 use std::fmt::Display;
 use std::hash::Hash;
 use std::hash::Hasher;
@@ -22,6 +21,7 @@ use buck2_fs::paths::forward_rel_path::ForwardRelativePath;
 use starlark::collections::StarlarkHasher;
 use starlark::environment::Methods;
 use starlark::typing::Ty;
+use starlark::values::StarlarkRepresentations;
 use starlark::values::StarlarkType;
 use starlark::values::StringValue;
 use starlark::values::UnpackValue;
@@ -128,7 +128,7 @@ pub trait StarlarkInputArtifactLike<'v>: StarlarkArtifactLike<'v> {
 
 /// An `Artifact` in any of its representations: the receiver of the type's methods, and a
 /// binding for a native parameter of type `Artifact`.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, StarlarkRepresentations)]
 pub enum ValueAsInputArtifactLikeUnpack<'v> {
     Artifact(ValueTyped<'v, StarlarkArtifact>),
     DeclaredArtifact(ValueTyped<'v, StarlarkDeclaredArtifact<'v>>),
@@ -145,47 +145,12 @@ impl<'v> ValueAsInputArtifactLikeUnpack<'v> {
     }
 }
 
-impl<'v> Display for ValueAsInputArtifactLikeUnpack<'v> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        Display::fmt(self.as_input_artifact_like(), f)
-    }
-}
-
-impl<'v> StarlarkTypeRepr for ValueAsInputArtifactLikeUnpack<'v> {
-    type Canonical = StarlarkArtifact;
-
-    fn starlark_type_repr() -> Ty {
-        <Self as StarlarkType<'v>>::get_type_starlark_repr()
-    }
-}
-
-impl<'v> UnpackValue<'v> for ValueAsInputArtifactLikeUnpack<'v> {
-    type Error = Infallible;
-
-    fn unpack_value_impl(value: Value<'v>) -> Result<Option<Self>, Self::Error> {
-        Ok(
-            if let Some(x) = ValueTyped::<StarlarkArtifact>::new(value) {
-                Some(ValueAsInputArtifactLikeUnpack::Artifact(x))
-            } else if let Some(x) = ValueTyped::<StarlarkDeclaredArtifact>::new(value) {
-                Some(ValueAsInputArtifactLikeUnpack::DeclaredArtifact(x))
-            } else {
-                ValueTyped::<StarlarkPromiseArtifact>::new(value)
-                    .map(ValueAsInputArtifactLikeUnpack::PromiseArtifact)
-            },
-        )
-    }
-}
-
 starlark::methods_static!(STARLARK_ARTIFACT_METHODS = artifact_methods);
 
 #[starlark_value(type = "Artifact")]
 impl<'v> StarlarkType<'v> for ValueAsInputArtifactLikeUnpack<'v> {
     fn get_methods() -> Option<&'static Methods> {
         Some(STARLARK_ARTIFACT_METHODS.methods())
-    }
-
-    fn get_type_starlark_repr() -> Ty {
-        Ty::starlark_value::<StarlarkArtifact>()
     }
 
     fn equals(&self, other: Value<'v>) -> starlark::Result<bool> {

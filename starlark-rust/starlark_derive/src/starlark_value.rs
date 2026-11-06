@@ -269,23 +269,27 @@ impl ImplStarlarkValue {
         })
     }
 
-    /// `get_type_starlark_repr` when the block does not override it: the nominal type of the
-    /// representation. A type with several representations has to say what its type is.
+    /// `get_type_starlark_repr` when the block does not override it: the nominal type, named
+    /// through the representation (for a view, through its canonical representation, which
+    /// `#[derive(StarlarkRepresentations)]` picks).
     fn get_type_starlark_repr(&self) -> syn::Result<Option<syn::ImplItem>> {
         if self.has_fn("get_type_starlark_repr") {
             return Ok(None);
         }
-        match self.impl_of {
-            ImplOf::Value => Ok(Some(syn::parse_quote! {
+        Ok(Some(match self.impl_of {
+            ImplOf::Value => syn::parse_quote! {
                 fn get_type_starlark_repr() -> starlark::typing::Ty {
                     starlark::typing::Ty::starlark_value::<Self>()
                 }
-            })),
-            ImplOf::Type => Err(syn::Error::new_spanned(
-                &self.input.self_ty,
-                "an `impl StarlarkType` must implement `get_type_starlark_repr`",
-            )),
-        }
+            },
+            ImplOf::Type => syn::parse_quote! {
+                fn get_type_starlark_repr() -> starlark::typing::Ty {
+                    starlark::typing::Ty::starlark_value::<
+                        <Self as starlark::values::type_repr::StarlarkTypeRepr>::Canonical,
+                    >()
+                }
+            },
+        }))
     }
 
     fn get_type_value_static(&self) -> syn::Result<syn::ImplItem> {
@@ -689,11 +693,13 @@ impl ImplStarlarkValue {
     fn type_impl(&self, items: Vec<syn::ImplItem>) -> syn::Result<syn::ItemImpl> {
         let lt = &self.lifetime_param;
         let mut type_impl = self.input.clone();
-        let (_, for_token) = type_impl.trait_.take().expect("checked to be a trait impl");
-        type_impl.trait_ = Some((
-            syn::parse_quote! { starlark::values::StarlarkType<#lt> },
-            for_token,
-        ));
+        if self.impl_of == ImplOf::Value {
+            let (_, for_token) = type_impl.trait_.take().expect("checked to be a trait impl");
+            type_impl.trait_ = Some((
+                syn::parse_quote! { starlark::values::StarlarkType<#lt> },
+                for_token,
+            ));
+        }
         type_impl.items = items;
         type_impl.items.splice(
             0..0,
@@ -708,6 +714,21 @@ impl ImplStarlarkValue {
         let has_fn_flags = self.has_fn_flags(&type_impl)?;
         type_impl.items.extend(has_fn_flags);
         Ok(type_impl)
+    }
+
+    /// `with_type` for a representation whose `Type` is a view that
+    /// `#[derive(StarlarkRepresentations)]` wrote.
+    fn with_type_via_from(&self) -> syn::ImplItem {
+        let lt = &self.lifetime_param;
+        syn::parse_quote! {
+            #[inline]
+            fn with_type<StarlarkWithTypeResult>(
+                this: starlark::values::ValueTyped<#lt, Self>,
+                f: impl FnOnce(&Self::Type) -> StarlarkWithTypeResult,
+            ) -> StarlarkWithTypeResult {
+                f(&<Self::Type as std::convert::From<starlark::values::ValueTyped<#lt, Self>>>::from(this))
+            }
+        }
     }
 
     /// `with_type` for a representation that is its own type.
@@ -784,10 +805,16 @@ fn derive_starlark_value_impl(
                 "the `type()` string is the `Type`'s; it is not given on a representation",
             ));
         }
+        let with_type = if impl_starlark_value.has_fn("with_type") {
+            None
+        } else {
+            Some(impl_starlark_value.with_type_via_from())
+        };
         rep_impl.items.splice(
             0..0,
             [please_use_starlark_type_macro]
                 .into_iter()
+                .chain(with_type)
                 .chain(canonical),
         );
         return Ok(quote! {

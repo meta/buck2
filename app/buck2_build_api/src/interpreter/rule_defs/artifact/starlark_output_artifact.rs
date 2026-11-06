@@ -8,7 +8,6 @@
  * above-listed licenses.
  */
 
-use std::convert::Infallible;
 use std::fmt;
 use std::fmt::Debug;
 use std::fmt::Display;
@@ -27,7 +26,6 @@ use starlark::any::ProvidesStaticType;
 use starlark::environment::GlobalsBuilder;
 use starlark::environment::Methods;
 use starlark::environment::MethodsBuilder;
-use starlark::typing::Ty;
 use starlark::values::AllocFrozenValue;
 use starlark::values::AllocValue;
 use starlark::values::Demand;
@@ -38,11 +36,11 @@ use starlark::values::FrozenHeap;
 use starlark::values::Heap;
 use starlark::values::NoSerialize;
 use starlark::values::StarlarkPagable;
+use starlark::values::StarlarkRepresentations;
 use starlark::values::StarlarkType;
 use starlark::values::StarlarkValue;
 use starlark::values::StringValue;
 use starlark::values::Trace;
-use starlark::values::UnpackValue;
 use starlark::values::Value;
 use starlark::values::ValueTyped;
 use starlark::values::starlark_value;
@@ -109,7 +107,7 @@ impl<'fv> AllocFrozenValue<'fv> for FrozenStarlarkOutputArtifact<'fv> {
 
 /// An `OutputArtifact` in either of its representations: the receiver of the type's methods,
 /// and the binding for a native parameter of type `OutputArtifact`.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, StarlarkRepresentations)]
 pub enum StarlarkOutputArtifactUnpack<'v> {
     Unfrozen(ValueTyped<'v, StarlarkOutputArtifact<'v>>),
     Frozen(ValueTyped<'v, FrozenStarlarkOutputArtifact<'v>>),
@@ -120,38 +118,6 @@ impl<'v> StarlarkOutputArtifactUnpack<'v> {
         match self {
             StarlarkOutputArtifactUnpack::Unfrozen(x) => x.as_ref(),
             StarlarkOutputArtifactUnpack::Frozen(x) => x.as_ref(),
-        }
-    }
-}
-
-impl<'v> StarlarkTypeRepr for StarlarkOutputArtifactUnpack<'v> {
-    type Canonical = StarlarkOutputArtifact<'v>;
-
-    fn starlark_type_repr() -> Ty {
-        <Self as StarlarkType<'v>>::get_type_starlark_repr()
-    }
-}
-
-impl<'v> UnpackValue<'v> for StarlarkOutputArtifactUnpack<'v> {
-    type Error = Infallible;
-
-    fn unpack_value_impl(value: Value<'v>) -> Result<Option<Self>, Self::Error> {
-        Ok(
-            if let Some(x) = ValueTyped::<StarlarkOutputArtifact>::new(value) {
-                Some(StarlarkOutputArtifactUnpack::Unfrozen(x))
-            } else {
-                ValueTyped::<FrozenStarlarkOutputArtifact>::new(value)
-                    .map(StarlarkOutputArtifactUnpack::Frozen)
-            },
-        )
-    }
-}
-
-impl<'v> Display for StarlarkOutputArtifactUnpack<'v> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            StarlarkOutputArtifactUnpack::Unfrozen(x) => Display::fmt(x.as_ref(), f),
-            StarlarkOutputArtifactUnpack::Frozen(x) => Display::fmt(x.as_ref(), f),
         }
     }
 }
@@ -288,10 +254,6 @@ impl<'v> StarlarkType<'v> for StarlarkOutputArtifactUnpack<'v> {
         Some(OUTPUT_ARTIFACT_METHODS.methods())
     }
 
-    fn get_type_starlark_repr() -> Ty {
-        Ty::starlark_value::<StarlarkOutputArtifact>()
-    }
-
     fn equals(&self, other: Value<'v>) -> starlark::Result<bool> {
         StarlarkArtifactLike::equals(self.as_artifact_like(), other)
     }
@@ -305,10 +267,6 @@ impl<'v> StarlarkType<'v> for StarlarkOutputArtifactUnpack<'v> {
 impl<'v> StarlarkValue<'v> for StarlarkOutputArtifact<'v> {
     type Type = StarlarkOutputArtifactUnpack<'v>;
 
-    fn with_type<R>(this: ValueTyped<'v, Self>, f: impl FnOnce(&Self::Type) -> R) -> R {
-        f(&StarlarkOutputArtifactUnpack::Unfrozen(this))
-    }
-
     fn provide(&'v self, demand: &mut Demand<'_, 'v>) {
         demand.provide_value::<&dyn CommandLineArgLike<'v>>(self);
     }
@@ -318,10 +276,6 @@ impl<'v> StarlarkValue<'v> for StarlarkOutputArtifact<'v> {
 impl<'v> StarlarkValue<'v> for FrozenStarlarkOutputArtifact<'v> {
     type Canonical = StarlarkOutputArtifact<'v>;
     type Type = StarlarkOutputArtifactUnpack<'v>;
-
-    fn with_type<R>(this: ValueTyped<'v, Self>, f: impl FnOnce(&Self::Type) -> R) -> R {
-        f(&StarlarkOutputArtifactUnpack::Frozen(this))
-    }
 
     fn provide(&'v self, demand: &mut Demand<'_, 'v>) {
         demand.provide_value::<&dyn CommandLineArgLike<'v>>(self);

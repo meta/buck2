@@ -28,6 +28,7 @@ mod bc;
 mod freeze;
 mod module;
 mod pagable_brand;
+mod representations;
 mod serde;
 mod starlark_pagable;
 mod starlark_pagable_panic;
@@ -187,6 +188,17 @@ pub fn derive_starlark_type_repr(input: proc_macro::TokenStream) -> proc_macro::
 #[proc_macro_derive(UnpackValue)]
 pub fn derive_unpack_value(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
     unpack_value::derive_unpack_value(input)
+}
+
+/// Derive the glue of a Starlark type's view over its representations: an enum with one
+/// `ValueTyped<'v, Rep>` variant per representation. Generates `Display`, `From` of each
+/// variant's `ValueTyped` (which `#[starlark_value]` builds a representation's `with_type` on),
+/// `StarlarkTypeRepr` forwarding to the view's `StarlarkType`, and an `UnpackValue` that tries
+/// the representations in order. The first variant's representation is the canonical one, whose
+/// type id is the type's.
+#[proc_macro_derive(StarlarkRepresentations)]
+pub fn derive_starlark_representations(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
+    representations::derive_starlark_representations(input)
 }
 
 /// Derive the `AllocValue` trait.

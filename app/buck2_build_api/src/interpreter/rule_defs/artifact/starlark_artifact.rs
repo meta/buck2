@@ -27,7 +27,6 @@ use starlark::values::StarlarkPagable;
 use starlark::values::StarlarkValue;
 use starlark::values::StringValue;
 use starlark::values::Value;
-use starlark::values::ValueTyped;
 use starlark::values::list::UnpackList;
 use starlark::values::starlark_value;
 use starlark::values::type_repr::StarlarkTypeRepr;
@@ -288,10 +287,6 @@ impl<'v> CommandLineArgLike<'v> for StarlarkArtifact {
 #[starlark_value]
 impl<'v> StarlarkValue<'v> for StarlarkArtifact {
     type Type = ValueAsInputArtifactLikeUnpack<'v>;
-
-    fn with_type<R>(this: ValueTyped<'v, Self>, f: impl FnOnce(&Self::Type) -> R) -> R {
-        f(&ValueAsInputArtifactLikeUnpack::Artifact(this))
-    }
 
     fn provide(&'v self, demand: &mut Demand<'_, 'v>) {
         demand.provide_value::<&dyn CommandLineArgLike>(self);

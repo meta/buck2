@@ -63,6 +63,7 @@ pub use starlark_derive::StarlarkPagable;
 pub use starlark_derive::StarlarkPagablePanic;
 pub use starlark_derive::StarlarkPagableUnsupported;
 pub use starlark_derive::StarlarkPagableViaPagable;
+pub use starlark_derive::StarlarkRepresentations;
 pub use starlark_derive::Trace;
 pub use starlark_derive::UnpackValue;
 pub use starlark_derive::starlark_value;

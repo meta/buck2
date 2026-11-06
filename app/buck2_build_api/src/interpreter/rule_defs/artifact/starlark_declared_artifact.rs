@@ -330,10 +330,6 @@ impl<'v> StarlarkValue<'v> for StarlarkDeclaredArtifact<'v> {
     type Canonical = StarlarkArtifact;
     type Type = ValueAsInputArtifactLikeUnpack<'v>;
 
-    fn with_type<R>(this: ValueTyped<'v, Self>, f: impl FnOnce(&Self::Type) -> R) -> R {
-        f(&ValueAsInputArtifactLikeUnpack::DeclaredArtifact(this))
-    }
-
     fn provide(&'v self, demand: &mut Demand<'_, 'v>) {
         demand.provide_value::<&dyn CommandLineArgLike>(self);
     }

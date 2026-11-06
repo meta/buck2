@@ -11,7 +11,6 @@
 use std::cell::Ref;
 use std::cell::RefCell;
 use std::cell::RefMut;
-use std::convert::Infallible;
 use std::fmt;
 use std::fmt::Debug;
 use std::fmt::Display;
@@ -47,6 +46,7 @@ use starlark::values::Freezer;
 use starlark::values::Heap;
 use starlark::values::NoSerialize;
 use starlark::values::StarlarkPagable;
+use starlark::values::StarlarkRepresentations;
 use starlark::values::StarlarkType;
 use starlark::values::StarlarkValue;
 use starlark::values::StaticFreezePlan;
@@ -673,39 +673,10 @@ impl<'v> StarlarkCmdArgs<'v> {
 
 /// A `cmd_args` in either of its representations: the receiver of the type's methods, and the
 /// binding for a native parameter of type `cmd_args`.
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy, StarlarkRepresentations)]
 pub enum StarlarkCmdArgsUnpack<'v> {
     Unfrozen(ValueTyped<'v, StarlarkCmdArgs<'v>>),
     Frozen(ValueTyped<'v, FrozenStarlarkCmdArgs<'v>>),
-}
-
-impl<'v> Display for StarlarkCmdArgsUnpack<'v> {
-    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        match self {
-            StarlarkCmdArgsUnpack::Unfrozen(x) => Display::fmt(x.as_ref(), f),
-            StarlarkCmdArgsUnpack::Frozen(x) => Display::fmt(x.as_ref(), f),
-        }
-    }
-}
-
-impl<'v> StarlarkTypeRepr for StarlarkCmdArgsUnpack<'v> {
-    type Canonical = StarlarkCmdArgs<'v>;
-
-    fn starlark_type_repr() -> Ty {
-        <Self as StarlarkType<'v>>::get_type_starlark_repr()
-    }
-}
-
-impl<'v> UnpackValue<'v> for StarlarkCmdArgsUnpack<'v> {
-    type Error = Infallible;
-
-    fn unpack_value_impl(value: Value<'v>) -> Result<Option<Self>, Self::Error> {
-        Ok(if let Some(x) = ValueTyped::<StarlarkCmdArgs>::new(value) {
-            Some(StarlarkCmdArgsUnpack::Unfrozen(x))
-        } else {
-            ValueTyped::<FrozenStarlarkCmdArgs>::new(value).map(StarlarkCmdArgsUnpack::Frozen)
-        })
-    }
 }
 
 impl<'v> StarlarkCmdArgsUnpack<'v> {
@@ -724,19 +695,11 @@ impl<'v> StarlarkType<'v> for StarlarkCmdArgsUnpack<'v> {
     fn get_methods() -> Option<&'static Methods> {
         Some(CMD_ARGS_METHODS.methods())
     }
-
-    fn get_type_starlark_repr() -> Ty {
-        Ty::starlark_value::<StarlarkCmdArgs>()
-    }
 }
 
 #[starlark_value]
 impl<'v> StarlarkValue<'v> for StarlarkCmdArgs<'v> {
     type Type = StarlarkCmdArgsUnpack<'v>;
-
-    fn with_type<R>(this: ValueTyped<'v, Self>, f: impl FnOnce(&Self::Type) -> R) -> R {
-        f(&StarlarkCmdArgsUnpack::Unfrozen(this))
-    }
 
     fn provide(&'v self, demand: &mut Demand<'_, 'v>) {
         demand.provide_value::<&dyn CommandLineArgLike>(self);
@@ -747,10 +710,6 @@ impl<'v> StarlarkValue<'v> for StarlarkCmdArgs<'v> {
 impl<'v> StarlarkValue<'v> for FrozenStarlarkCmdArgs<'v> {
     type Canonical = StarlarkCmdArgs<'v>;
     type Type = StarlarkCmdArgsUnpack<'v>;
-
-    fn with_type<R>(this: ValueTyped<'v, Self>, f: impl FnOnce(&Self::Type) -> R) -> R {
-        f(&StarlarkCmdArgsUnpack::Frozen(this))
-    }
 
     fn provide(&'v self, demand: &mut Demand<'_, 'v>) {
         demand.provide_value::<&dyn CommandLineArgLike<'v>>(self);

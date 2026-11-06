@@ -19,6 +19,7 @@ import com.facebook.buck.jvm.kotlin.cd.analytics.KotlinCDAnalytics;
 import com.facebook.buck.jvm.kotlin.kotlinc.Kotlinc;
 import com.facebook.buck.jvm.kotlin.kotlinc.incremental.KotlincMode;
 import com.facebook.buck.step.isolatedsteps.IsolatedStep;
+import com.facebook.infer.annotation.Nullsafe;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.ImmutableSortedSet;
@@ -33,9 +34,10 @@ import javax.annotation.Nullable;
  * steps Later we could move away from KotlinC and explore possibility to use Kotlin Analysis API
  * for output stripped srcs
  */
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public class KosabiStubgenStep extends KotlincStep {
   private final RelPath stubgenDir;
-  private final RelPath stubClassOutputDir;
+  @Nullable private final RelPath stubClassOutputDir;
   private final boolean skipJavaImports;
 
   private final String pluginPath;

@@ -11,9 +11,12 @@
 package com.facebook.buck.jvm.java;
 
 import com.facebook.buck.jvm.java.javax.SynchronizedToolProvider;
+import com.facebook.infer.annotation.Nullsafe;
 import com.google.common.base.MoreObjects;
 import javax.tools.JavaCompiler;
+import org.jspecify.annotations.Nullable;
 
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public class JdkProvidedInMemoryJavac extends Jsr199Javac {
 
   public static final JdkProvidedInMemoryJavac INSTANCE = new JdkProvidedInMemoryJavac();
@@ -37,7 +40,7 @@ public class JdkProvidedInMemoryJavac extends Jsr199Javac {
   }
 
   @Override
-  public boolean equals(Object o) {
+  public boolean equals(@Nullable Object o) {
     if (this == o) {
       return true;
     }

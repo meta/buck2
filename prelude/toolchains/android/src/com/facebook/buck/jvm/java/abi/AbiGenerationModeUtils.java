@@ -11,11 +11,14 @@
 package com.facebook.buck.jvm.java.abi;
 
 import com.facebook.buck.cd.model.java.AbiGenerationMode;
+import com.facebook.infer.annotation.Nullsafe;
 import com.google.common.collect.ImmutableMap;
 import java.util.Map;
 import javax.tools.Diagnostic;
+import org.jspecify.annotations.Nullable;
 
 /** Utilities method for {@link AbiGenerationMode} */
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public class AbiGenerationModeUtils {
 
   private static final Map<AbiGenerationMode, Diagnostic.Kind> DIAGNOSTICS_MAP =
@@ -29,7 +32,7 @@ public class AbiGenerationModeUtils {
     return DIAGNOSTICS_MAP.containsKey(abiGenerationMode);
   }
 
-  public static Diagnostic.Kind getDiagnosticKindForSourceOnlyAbiCompatibility(
+  public static Diagnostic.@Nullable Kind getDiagnosticKindForSourceOnlyAbiCompatibility(
       AbiGenerationMode abiGenerationMode) {
     return DIAGNOSTICS_MAP.get(abiGenerationMode);
   }

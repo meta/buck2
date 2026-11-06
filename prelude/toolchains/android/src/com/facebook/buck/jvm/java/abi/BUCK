@@ -43,6 +43,7 @@ buck_java_library(
         "prelude//toolchains/android/third-party:asm",
         "prelude//toolchains/android/third-party:guava",
         "prelude//toolchains/android/third-party:infer-annotations",
+        "prelude//toolchains/android/third-party:jspecify",
         "prelude//toolchains/android/third-party:jsr305",
     ],
     exported_deps = [

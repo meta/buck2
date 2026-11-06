@@ -221,7 +221,7 @@ syn = { version = "3.0.9", features = ["extra-traits", "fold", "full", "visit", 
 sync_wrapper = "1.0.2"
 synstructure = "0.14.0"
 sys-info = "0.9.1"
-sysinfo = "0.39.6"
+sysinfo = "0.40.1"
 take_mut = "0.2"
 tar = "0.4.46"
 tempfile = "3.27.0"

@@ -46,7 +46,7 @@ pub fn process_start_time(pid: Option<Pid>) -> Option<u64> {
         Some(pid) => sysinfo::Pid::from_u32(pid.to_u32()),
         None => sysinfo::Pid::from_u32(std::process::id()),
     };
-    let mut system = System::new();
+    let mut system = System::new().expect("should be supported on this platform");
     system.refresh_processes_specifics(
         ProcessesToUpdate::Some(&[pid]),
         true,
@@ -84,7 +84,7 @@ pub fn get_sysinfo_status(pid: Pid) -> Option<sysinfo::ProcessStatus> {
 
     let pid = sysinfo::Pid::from_u32(pid.to_u32());
 
-    let mut system = System::new();
+    let mut system = System::new().expect("should be supported on this platform");
     // There is some bug in `sysinfo` so we have to use `refresh_processes_specifics`
     // instead of `refresh_process_specifics`, otherwise we not always get process info.
     system.refresh_processes_specifics(ProcessesToUpdate::All, true, ProcessRefreshKind::nothing());

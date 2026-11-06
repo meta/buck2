@@ -196,7 +196,7 @@ fn get_all_tgids_linux() -> Option<BuckMutSet<sysinfo::Pid>> {
 /// Working directories are only collected when `collect_cwd` is set, as sysinfo has to read
 /// them per-process.
 fn find_buck2_processes(who_is_asking: WhoIsAsking, collect_cwd: bool) -> Vec<ProcessInfo> {
-    let mut system = System::new();
+    let mut system = System::new().expect("should be supported on this platform");
     let linux_tgids =
         get_all_tgids_linux().map(|pids| pids.into_iter().collect::<Vec<sysinfo::Pid>>());
     let processes_to_update = match &linux_tgids {

@@ -274,7 +274,7 @@ fn get_callers_for_kill() -> Vec<String> {
         }
     }
 
-    let mut system = System::new();
+    let mut system = System::new().expect("should be supported on this platform");
     let mut process_tree = Vec::new();
 
     let pid = sysinfo::Pid::from_u32(std::process::id());

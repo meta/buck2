@@ -684,7 +684,7 @@ mod tests {
         let pids: Vec<&str> = out.split('\n').collect();
         let ppid = Pid::from_str(pids.first().internal_error("no ppid")?.trim())?;
         let pid = Pid::from_str(pids.get(1).internal_error("no pid")?.trim())?;
-        let sys = System::new_all();
+        let sys = System::new_all().unwrap();
 
         // we want to check if existed process doesn't have the same parent because of pid reuse
         if let Some(process) = sys.process(pid) {

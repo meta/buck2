@@ -54,7 +54,7 @@ use crate::values::Trace;
 use crate::values::Tracer;
 use crate::values::UnpackValue;
 use crate::values::Value;
-use crate::values::list::UnpackList;
+use crate::values::list::ListRef;
 use crate::values::type_repr::StarlarkTypeRepr;
 use crate::values::typing::TypeCompiled;
 use crate::values::typing::callable::param::StarlarkCallableParamAny;
@@ -112,11 +112,10 @@ See also [`typing.Callable` in the Python documentation][1].
         heap: Heap<'v>,
         _private: Private,
     ) -> crate::Result<Value<'v>> {
-        let param_types = UnpackList::<Value>::unpack_value_err(param_types)?;
+        let param_types = <&ListRef>::unpack_value_err(param_types)?;
         let ret = TypeCompiled::new(ret, heap)?.as_ty().dupe();
         let param_types: Vec<Ty> = param_types
-            .items
-            .into_iter()
+            .iter()
             .map(|p| Ok(TypeCompiled::new(p, heap)?.as_ty().dupe()))
             .collect::<anyhow::Result<Vec<_>>>()?;
 

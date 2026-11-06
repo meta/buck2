@@ -40,7 +40,6 @@ class StubJarClassEntry extends StubJarEntry {
   private final boolean isFilePrivateKotlinClass;
   private final boolean stripPrivateNestedMembers;
   private final Set<String> keptJvmStaticMemberKeys;
-  private final boolean scopeCaptured;
   @Nullable private final String scopeOuterClass;
   private final Set<String> hiddenDeprecatedMethods;
 
@@ -60,7 +59,6 @@ class StubJarClassEntry extends StubJarEntry {
     boolean isFilePrivateKotlinClass = false;
     boolean stripPrivateNestedMembers = false;
     Set<String> keptJvmStaticMemberKeys = Collections.emptySet();
-    boolean scopeCaptured = false;
     String scopeOuterClass = null;
     Set<String> hiddenDeprecatedMethods = Collections.emptySet();
 
@@ -87,8 +85,16 @@ class StubJarClassEntry extends StubJarEntry {
         }
 
         isWithinInlineFunctionScope = inlineFunctionScope.captures(path, classMetadata);
-        scopeCaptured = inlineFunctionScope.isCapturedByOuterScope(classMetadata);
         scopeOuterClass = classMetadata.outerClass;
+        if (scopeOuterClass == null) {
+          // Member classes have no enclosing method, so the OuterClass attribute is absent;
+          // the InnerClasses self-entry names the outer instead. Anonymous and local
+          // classes have no outer name in either place.
+          InnerClassNode self = getInnerClassMetadata(classMetadata);
+          if (self != null) {
+            scopeOuterClass = self.outerName;
+          }
+        }
         inlineFunctions = KotlinMetadataReader.getInlineFunctions(parsedMetadata);
         hiddenDeprecatedMethods =
             new HashSet<>(AbiFilteringClassVisitor.findHiddenDeprecatedMethods(classMetadata));
@@ -154,7 +160,6 @@ class StubJarClassEntry extends StubJarEntry {
           isFilePrivateKotlinClass,
           stripPrivateNestedMembers,
           keptJvmStaticMemberKeys,
-          scopeCaptured,
           scopeOuterClass,
           hiddenDeprecatedMethods);
     }
@@ -172,7 +177,6 @@ class StubJarClassEntry extends StubJarEntry {
       boolean isFilePrivateKotlinClass,
       boolean stripPrivateNestedMembers,
       Set<String> keptJvmStaticMemberKeys,
-      boolean scopeCaptured,
       @Nullable String scopeOuterClass,
       Set<String> hiddenDeprecatedMethods) {
     this.path = path;
@@ -184,7 +188,6 @@ class StubJarClassEntry extends StubJarEntry {
     this.isFilePrivateKotlinClass = isFilePrivateKotlinClass;
     this.stripPrivateNestedMembers = stripPrivateNestedMembers;
     this.keptJvmStaticMemberKeys = keptJvmStaticMemberKeys;
-    this.scopeCaptured = scopeCaptured;
     this.scopeOuterClass = scopeOuterClass;
     this.hiddenDeprecatedMethods = hiddenDeprecatedMethods;
   }
@@ -217,11 +220,6 @@ class StubJarClassEntry extends StubJarEntry {
   @Override
   public Set<String> getReferencedClassNames() {
     return referencedClassNames;
-  }
-
-  @Override
-  public boolean isScopeCaptured() {
-    return scopeCaptured;
   }
 
   @Override

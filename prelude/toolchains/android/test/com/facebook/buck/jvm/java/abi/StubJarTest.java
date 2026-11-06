@@ -8629,6 +8629,96 @@ public class StubJarTest {
   }
 
   @Test
+  public void kotlinExcludesCompanionOfUnreferencedFilePrivateClass() throws IOException {
+    if (!isValidForKotlin()) {
+      return;
+    }
+
+    if (testingMode.equals(MODE_SOURCE_BASED)) {
+      return;
+    }
+
+    // The companion declares its own public visibility, but its outer is a file-private
+    // class nothing references, so the companion is effectively private and both must go.
+    tester = new Tester(Language.KOTLIN);
+    tester
+        .setSourceFile(
+            "A.kt",
+            "package com.example.buck",
+            "open class A {",
+            "  fun publicMethod(): String = \"hello\"",
+            "}",
+            "private data class FilePrivateConfig(",
+            "  val isConfigured: Boolean,",
+            "  val isEnabled: Boolean,",
+            ") {",
+            "  companion object {",
+            "    val DISABLED = FilePrivateConfig(false, false)",
+            "  }",
+            "}")
+        .addExpectedStub("com/example/buck/A")
+        .createAndCheckStubJar();
+  }
+
+  @Test
+  public void kotlinExcludesNestedClassOfUnreferencedFilePrivateClass() throws IOException {
+    if (!isValidForKotlin()) {
+      return;
+    }
+
+    if (testingMode.equals(MODE_SOURCE_BASED)) {
+      return;
+    }
+
+    // Same as above for a plain nested class: unreferenced file-private outer means the
+    // nested class is unreachable however it is declared.
+    tester = new Tester(Language.KOTLIN);
+    tester
+        .setSourceFile(
+            "A.kt",
+            "package com.example.buck",
+            "open class A {",
+            "  fun publicMethod(): String = \"hello\"",
+            "}",
+            "private class FilePrivateOuter {",
+            "  class Nested {",
+            "    fun run(): String = \"nested\"",
+            "  }",
+            "}")
+        .addExpectedStub("com/example/buck/A")
+        .createAndCheckStubJar();
+  }
+
+  @Test
+  public void kotlinKeepsCompanionOfReferencedFilePrivateClass() throws IOException {
+    if (!isValidForKotlin()) {
+      return;
+    }
+
+    if (testingMode.equals(MODE_SOURCE_BASED)) {
+      return;
+    }
+
+    // UsedHolder is kept via A's supertype edge, so its companion must be kept with it.
+    tester = new Tester(Language.KOTLIN);
+    tester
+        .setSourceFile(
+            "A.kt",
+            "package com.example.buck",
+            "@Suppress(\"EXPOSED_SUPER_CLASS\")",
+            "open class A : UsedHolder()",
+            "private open class UsedHolder {",
+            "  companion object {",
+            "    val TAG = \"used\"",
+            "  }",
+            "}")
+        .addExpectedStub("com/example/buck/A")
+        .addExpectedStub("com/example/buck/UsedHolder")
+        .addExpectedStub("com/example/buck/UsedHolder$Companion")
+        .createAndCheckStubJar();
+  }
+
+  @Test
   public void doNotStripClassSuffixIfItDoesNotExist() {
     assertEquals("A.aut", StubJar.pathWithoutClassSuffix(Paths.get("A.aut")));
   }

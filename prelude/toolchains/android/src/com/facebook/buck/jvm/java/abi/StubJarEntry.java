@@ -65,10 +65,6 @@ public abstract class StubJarEntry {
     return Collections.emptySet();
   }
 
-  public boolean isScopeCaptured() {
-    return false;
-  }
-
   @Nullable
   public String getScopeOuterClass() {
     return null;

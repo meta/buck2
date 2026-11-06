@@ -163,14 +163,13 @@ public class StubJar {
       }
       String className = entry.getClassName();
       String scopeOuter = entry.getScopeOuterClass();
-      // Entries visit outer-first, so a scope-captured class whose outer is already deferred
+      // Entries visit outer-first, so a nested class whose outer is already deferred
       // cannot be written yet: it must drop with its outer unless the fixpoint keeps it.
-      boolean scopeDeferred =
-          className != null
-              && entry.isScopeCaptured()
-              && scopeOuter != null
-              && deferredEntries.containsKey(scopeOuter);
-      if ((entry.isFilePrivateKotlinClass() && className != null) || scopeDeferred) {
+      // This covers scope-captured lambdas as well as effectively-private member
+      // classes, such as a public companion nested in a file-private class.
+      boolean outerDeferred =
+          className != null && scopeOuter != null && deferredEntries.containsKey(scopeOuter);
+      if ((entry.isFilePrivateKotlinClass() && className != null) || outerDeferred) {
         deferredEntries.put(className, entry);
       } else {
         entry.write(writer);
@@ -211,10 +210,7 @@ public class StubJar {
         for (Map.Entry<String, StubJarEntry> e : deferredEntries.entrySet()) {
           StubJarEntry deferred = e.getValue();
           String outer = deferred.getScopeOuterClass();
-          if (!deferred.isScopeCaptured()
-              || outer == null
-              || keptNames.contains(e.getKey())
-              || !keptNames.contains(outer)) {
+          if (outer == null || keptNames.contains(e.getKey()) || !keptNames.contains(outer)) {
             continue;
           }
           keptNames.add(e.getKey());

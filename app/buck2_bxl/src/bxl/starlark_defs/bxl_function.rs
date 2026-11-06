@@ -42,8 +42,9 @@ use starlark::values::StarlarkType;
 use starlark::values::StarlarkValue;
 use starlark::values::Trace;
 use starlark::values::Value;
+use starlark::values::ValueOf;
 use starlark::values::ValueTyped;
-use starlark::values::dict::UnpackDictEntries;
+use starlark::values::dict::DictType;
 use starlark::values::starlark_value;
 use starlark::values::typing::StarlarkCallable;
 
@@ -57,7 +58,7 @@ use crate::bxl::starlark_defs::cli_args::CliArgValue;
 pub(crate) fn register_bxl_prefixed_main_function(builder: &mut GlobalsBuilder) {
     fn bxl_main<'v>(
         #[starlark(require = named)] r#impl: StarlarkCallable<'v>,
-        #[starlark(require = named)] cli_args: UnpackDictEntries<&'v str, &'v CliArgs>,
+        #[starlark(require = named)] cli_args: ValueOf<'v, DictType<&'v str, &'v CliArgs>>,
         #[starlark(require = named, default = "")] doc: &str,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<Value<'v>> {
@@ -69,7 +70,7 @@ pub(crate) fn register_bxl_prefixed_main_function(builder: &mut GlobalsBuilder) 
 pub(crate) fn register_bxl_main_function(builder: &mut GlobalsBuilder) {
     fn main<'v>(
         #[starlark(require = named)] r#impl: StarlarkCallable<'v>,
-        #[starlark(require = named)] cli_args: UnpackDictEntries<&'v str, &'v CliArgs>,
+        #[starlark(require = named)] cli_args: ValueOf<'v, DictType<&'v str, &'v CliArgs>>,
         #[starlark(require = named, default = "")] doc: &str,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<Value<'v>> {
@@ -79,7 +80,7 @@ pub(crate) fn register_bxl_main_function(builder: &mut GlobalsBuilder) {
 
 fn bxl_impl<'v>(
     r#impl: StarlarkCallable<'v>,
-    cli_args: UnpackDictEntries<&'v str, &'v CliArgs>,
+    cli_args: ValueOf<'v, DictType<&'v str, &'v CliArgs>>,
     doc: &str,
     eval: &mut Evaluator<'v, '_, '_>,
 ) -> starlark::Result<Value<'v>> {
@@ -98,7 +99,8 @@ fn bxl_impl<'v>(
     let mut unresolved_cli_args = BuckMutInsertionMap::new();
     let mut short_args = BuckMutInsertionSet::new();
 
-    for (arg, def) in cli_args.entries {
+    for entry in cli_args.try_items() {
+        let (arg, def) = entry?;
         if let Some(short) = def.short {
             if short_args.contains(&short) {
                 let buck2_error: buck2_error::Error =

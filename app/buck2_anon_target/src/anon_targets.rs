@@ -110,8 +110,9 @@ use starlark::codemap::FileSpan;
 use starlark::values::DynStarlark;
 use starlark::values::Trace;
 use starlark::values::Value;
+use starlark::values::ValueOf;
 use starlark::values::ValueTyped;
-use starlark::values::dict::UnpackDictEntries;
+use starlark::values::dict::DictType;
 
 use crate::anon_promises::AnonPromises;
 use crate::anon_target_attr::AnonTargetAttr;
@@ -257,7 +258,7 @@ impl AnonTargetKey {
         execution_platform: &ExecutionPlatformResolution,
         uses_execution_groups: bool,
         rule: ValueTyped<'v, FrozenStarlarkRuleCallable<'v>>,
-        attributes: UnpackDictEntries<&'v str, Value<'v>>,
+        attributes: ValueOf<'v, DictType<&'v str, Value<'v>>>,
     ) -> buck2_error::Result<(
         Arc<StarlarkRuleType>,
         TargetLabel,
@@ -272,13 +273,13 @@ impl AnonTargetKey {
 
         let mut name = None;
 
-        let entries = attributes.entries;
         let attrs_spec = rule.attributes();
         let anon_attr_ctx = AnonAttrCtx::new(execution_platform, uses_execution_groups);
 
         let mut provided: BuckMutInsertionMap<&str, Value> =
-            BuckMutInsertionMap::with_capacity(entries.len());
-        for (k, v) in entries {
+            BuckMutInsertionMap::with_capacity(attributes.dict().len());
+        for entry in attributes.try_items() {
+            let (k, v) = entry?;
             if k == "name" {
                 name = Some(Self::coerce_name(v)?);
             } else if is_internal_attr(k) {
@@ -331,7 +332,7 @@ impl AnonTargetKey {
         execution_platform: &ExecutionPlatformResolution,
         uses_execution_groups: bool,
         rule: ValueTyped<'v, FrozenStarlarkRuleCallable<'v>>,
-        attributes: UnpackDictEntries<&'v str, Value<'v>>,
+        attributes: ValueOf<'v, DictType<&'v str, Value<'v>>>,
         owner_key: &BaseDeferredKey,
     ) -> buck2_error::Result<Self> {
         let (rule_type, name, attrs, exec_cfg) = Self::prepare_anon_target_data(
@@ -735,7 +736,7 @@ impl<'v> AnonTargetsRegistry<'v> {
     pub(crate) fn anon_target_key(
         &self,
         rule: ValueTyped<'v, FrozenStarlarkRuleCallable<'v>>,
-        attributes: UnpackDictEntries<&'v str, Value<'v>>,
+        attributes: ValueOf<'v, DictType<&'v str, Value<'v>>>,
         owner_key: &BaseDeferredKey,
         execution_group: Option<&ExecutionGroup>,
     ) -> buck2_error::Result<AnonTargetKey> {

@@ -68,8 +68,9 @@ use starlark::values::StarlarkValue;
 use starlark::values::StringValue;
 use starlark::values::Trace;
 use starlark::values::Value;
+use starlark::values::ValueOf;
 use starlark::values::ValueTyped;
-use starlark::values::dict::UnpackDictEntries;
+use starlark::values::dict::DictType;
 use starlark::values::list::ListType;
 use starlark::values::list::UnpackList;
 use starlark::values::list_or_tuple::UnpackListOrTuple;
@@ -250,7 +251,7 @@ impl<'v> AllocValue<'v> for StarlarkRuleCallable<'v> {
 impl<'v> StarlarkRuleCallable<'v> {
     fn new(
         implementation: RuleImpl<'v>,
-        attrs: UnpackDictEntries<&'v str, &'v StarlarkAttribute>,
+        attrs: ValueOf<'v, DictType<&'v str, &'v StarlarkAttribute>>,
         cfg: Option<ValueAsTransition>,
         supports_incoming_transition: Option<bool>,
         doc: &str,
@@ -279,14 +280,14 @@ impl<'v> StarlarkRuleCallable<'v> {
             ),
         };
 
+        let attrs = attrs.try_items().collect::<starlark::Result<Vec<_>>>()?;
+
         let tool_marks: Vec<(String, ToolMarks)> = attrs
-            .entries
             .iter()
             .map(|(name, attr)| ((*name).to_owned(), attr.tool_marks()))
             .collect();
 
         let exec_compatible_with_attrs: Vec<(String, ExecutionGroup)> = attrs
-            .entries
             .iter()
             .filter_map(|(name, attr)| {
                 Some((
@@ -297,7 +298,6 @@ impl<'v> StarlarkRuleCallable<'v> {
             .collect();
 
         let sorted_validated_attrs = attrs
-            .entries
             .into_iter()
             .sorted_by(|(k1, _), (k2, _)| Ord::cmp(k1, k2))
             .map(|(name, value)| {
@@ -380,7 +380,7 @@ impl<'v> StarlarkRuleCallable<'v> {
 
     fn new_anon_impl(
         implementation: RuleImpl<'v>,
-        attrs: UnpackDictEntries<&'v str, &'v StarlarkAttribute>,
+        attrs: ValueOf<'v, DictType<&'v str, &'v StarlarkAttribute>>,
         doc: &str,
         artifact_promise_mappings: BuckMutInsertionMap<
             StringValue<'v>,
@@ -410,7 +410,7 @@ impl<'v> StarlarkRuleCallable<'v> {
 
     fn new_anon(
         implementation: StarlarkCallable<'v, (Value<'static>,), ListType<Value<'static>>>,
-        attrs: UnpackDictEntries<&'v str, &'v StarlarkAttribute>,
+        attrs: ValueOf<'v, DictType<&'v str, &'v StarlarkAttribute>>,
         doc: &str,
         artifact_promise_mappings: BuckMutInsertionMap<
             StringValue<'v>,
@@ -433,7 +433,7 @@ impl<'v> StarlarkRuleCallable<'v> {
             (Value<'static>, Value<'static>),
             ListType<Value<'static>>,
         >,
-        attrs: UnpackDictEntries<&'v str, &'v StarlarkAttribute>,
+        attrs: ValueOf<'v, DictType<&'v str, &'v StarlarkAttribute>>,
         doc: &str,
         artifact_promise_mappings: BuckMutInsertionMap<
             StringValue<'v>,
@@ -1028,7 +1028,7 @@ pub fn register_rule_function(builder: &mut GlobalsBuilder) {
             (AnalysisContextReprLate,),
             Either<ListType<ProviderReprLate>, StarlarkPromise>,
         >,
-        #[starlark(require = named)] attrs: UnpackDictEntries<&'v str, &'v StarlarkAttribute>,
+        #[starlark(require = named)] attrs: ValueOf<'v, DictType<&'v str, &'v StarlarkAttribute>>,
         #[starlark(require = named)] cfg: Option<ValueAsTransition<'v>>,
         #[starlark(require = named)] supports_incoming_transition: Option<bool>,
         #[starlark(require = named, default = "")] doc: &str,
@@ -1072,7 +1072,7 @@ pub fn register_rule_function(builder: &mut GlobalsBuilder) {
             (Value<'static>,),
             ListType<Value<'static>>,
         >,
-        #[starlark(require = named)] attrs: UnpackDictEntries<&'v str, &'v StarlarkAttribute>,
+        #[starlark(require = named)] attrs: ValueOf<'v, DictType<&'v str, &'v StarlarkAttribute>>,
         #[starlark(require = named, default = "")] doc: &str,
         #[starlark(require = named)] artifact_promise_mappings: BuckMutInsertionMap<
             StringValue<'v>,

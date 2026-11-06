@@ -58,7 +58,7 @@ use starlark::values::UnpackValue;
 use starlark::values::Value;
 use starlark::values::ValueOf;
 use starlark::values::dict::DictRef;
-use starlark::values::dict::UnpackDictEntries;
+use starlark::values::dict::DictType;
 use starlark::values::list::ListRef;
 use starlark::values::list::UnpackList;
 use starlark::values::none::NoneType;
@@ -584,7 +584,7 @@ enum EnsureMultipleArtifactsArg<'v> {
     EnsuredArtifactArgs(UnpackList<ArtifactArg<'v>>),
     ProvidersArtifactIterable(&'v StarlarkProvidersArtifactIterable<'v>),
     BxlBuildResult(&'v StarlarkBxlBuildResult),
-    Dict(UnpackDictEntries<Value<'v>, &'v StarlarkBxlBuildResult>),
+    Dict(ValueOf<'v, DictType<Value<'v>, &'v StarlarkBxlBuildResult>>),
     CmdLine(ValueAsCommandLineLike<'v>),
 }
 
@@ -845,9 +845,9 @@ fn output_stream_methods(builder: &mut MethodsBuilder) {
             }
             EnsureMultipleArtifactsArg::Dict(build_result_dict) => Ok(heap.alloc_dict(
                 build_result_dict
-                    .entries
-                    .into_iter()
-                    .map(|(label, bxl_build_result)| {
+                    .try_items()
+                    .map(|entry| {
+                        let (label, bxl_build_result) = entry?;
                         Ok((
                             label.get_hashed().map_err(|e| {
                                 from_starlark_with_options(

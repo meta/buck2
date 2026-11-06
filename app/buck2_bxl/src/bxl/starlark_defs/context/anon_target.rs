@@ -60,7 +60,7 @@ use starlark::values::StringValue;
 use starlark::values::Value;
 use starlark::values::ValueOf;
 use starlark::values::ValueTyped;
-use starlark::values::dict::UnpackDictEntries;
+use starlark::values::dict::DictType;
 use starlark::values::list::ListType;
 use starlark::values::list::UnpackList;
 use starlark::values::structs::StructRef;
@@ -114,7 +114,7 @@ pub(crate) fn register_anon_rule(globals: &mut GlobalsBuilder) {
             BxlAnonCallbackParamSpec,
             ListType<AbstractProvider>,
         >,
-        #[starlark(require = named)] attrs: UnpackDictEntries<&'v str, &'v StarlarkAttribute>,
+        #[starlark(require = named)] attrs: ValueOf<'v, DictType<&'v str, &'v StarlarkAttribute>>,
         #[starlark(require = named, default = "")] doc: &str,
         #[starlark(require = named, default = BuckMutInsertionMap::default())]
         artifact_promise_mappings: BuckMutInsertionMap<

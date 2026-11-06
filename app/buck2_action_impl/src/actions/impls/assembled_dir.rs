@@ -45,7 +45,8 @@ use pagable::pagable_typetag;
 use starlark::values::OwnedFrozen;
 use starlark::values::Value;
 use starlark::values::ValueError;
-use starlark::values::dict::UnpackDictEntries;
+use starlark::values::ValueOf;
+use starlark::values::dict::DictType;
 
 use crate::actions::impls::cas_probe;
 use crate::actions::impls::cas_probe::SourceFile;
@@ -134,18 +135,16 @@ impl UnregisteredAssembledDirAction {
     // Map each artifact into an optional tuple of (artifact, path) and associated_artifacts, then collect
     // them into an optional tuple of vector and an index set respectively
     fn unpack_args<'v>(
-        srcs: UnpackDictEntries<&'v str, ValueAsInputArtifactLike<'v>>,
+        srcs: ValueOf<'v, DictType<&'v str, ValueAsInputArtifactLike<'v>>>,
         copy: CopyMode,
     ) -> buck2_error::Result<(
         Vec<(ArtifactGroup, Box<ForwardRelativePath>, CopyMode)>,
         BuckMutInsertionSet<ArtifactGroup>,
     )> {
-        // This assignment doesn't look like it should be necessary, but we get an error if we
-        // don't do it.
-        let len = srcs.entries.len();
-        srcs.entries
-            .into_iter()
-            .map(|(k, as_artifact)| {
+        let len = srcs.dict().len();
+        srcs.try_items()
+            .map(|entry| {
+                let (k, as_artifact) = entry?;
                 let associates = as_artifact.0.get_associated_artifacts();
                 buck2_error::Ok((
                     (
@@ -172,7 +171,7 @@ impl UnregisteredAssembledDirAction {
 
     pub(crate) fn new<'v>(
         copy: CopyMode,
-        srcs: UnpackDictEntries<&'v str, ValueAsInputArtifactLike<'v>>,
+        srcs: ValueOf<'v, DictType<&'v str, ValueAsInputArtifactLike<'v>>>,
     ) -> buck2_error::Result<Self> {
         let (mut args, unioned_associated_artifacts) = Self::unpack_args(srcs, copy)
             // FIXME: This warning is talking about the Starlark-level argument name `srcs`.

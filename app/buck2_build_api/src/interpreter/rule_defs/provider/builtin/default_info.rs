@@ -33,7 +33,6 @@ use starlark::values::ValueOf;
 use starlark::values::ValueTyped;
 use starlark::values::dict::AllocDict;
 use starlark::values::dict::DictType;
-use starlark::values::dict::UnpackDictEntries;
 use starlark::values::list::AllocList;
 use starlark::values::list::ListType;
 use starlark::values::none::NoneOr;
@@ -316,9 +315,9 @@ fn default_info_creator(builder: &mut GlobalsBuilder) {
         >,
         #[starlark(default = ValueOf::new_unchecked(Value::new_empty_list()))]
         other_outputs: ValueOf<'v, ListType<ValueAsCommandLineLike<'v>>>,
-        #[starlark(default = UnpackDictEntries::default())] sub_targets: UnpackDictEntries<
-            StringValue<'v>,
-            Value<'v>,
+        #[starlark(default = ValueOf::empty_dict())] sub_targets: ValueOf<
+            'v,
+            DictType<StringValue<'v>, Value<'v>>,
         >,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<DefaultInfo<'v>> {
@@ -337,9 +336,9 @@ fn default_info_creator(builder: &mut GlobalsBuilder) {
         };
 
         let sub_targets = sub_targets
-            .entries
-            .into_iter()
-            .map(|(k, v)| {
+            .try_items()
+            .map(|entry| {
+                let (k, v) = entry?;
                 let collection = ProviderCollection::try_from_value_subtarget(v, heap)?;
                 buck2_error::Ok((
                     ValueOf::from(k),

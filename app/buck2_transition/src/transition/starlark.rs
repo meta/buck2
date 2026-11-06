@@ -58,9 +58,9 @@ use starlark::values::StarlarkValue;
 use starlark::values::StringValue;
 use starlark::values::Trace;
 use starlark::values::Value;
+use starlark::values::ValueOf;
 use starlark::values::ValueTyped;
 use starlark::values::dict::DictType;
-use starlark::values::dict::UnpackDictEntries;
 use starlark::values::list_or_tuple::UnpackListOrTuple;
 use starlark::values::starlark_value;
 use starlark::values::structs::StructRef;
@@ -344,7 +344,7 @@ fn register_transition_function(builder: &mut GlobalsBuilder) {
             TransitionImplParams,
             Either<ImplSingleReturnTy, ImplSplitReturnTy>,
         >,
-        #[starlark(require = named)] refs: UnpackDictEntries<StringValue<'v>, StringValue<'v>>,
+        #[starlark(require = named)] refs: ValueOf<'v, DictType<StringValue<'v>, StringValue<'v>>>,
         #[starlark(require = named)] attrs: Option<UnpackListOrTuple<StringValue<'v>>>,
         #[starlark(require = named, default = false)] split: bool,
         eval: &mut Evaluator<'v, '_, '_>,
@@ -352,9 +352,9 @@ fn register_transition_function(builder: &mut GlobalsBuilder) {
         let implementation = r#impl.0;
 
         let refs = refs
-            .entries
-            .into_iter()
-            .map(|(n, r)| {
+            .try_items()
+            .map(|entry| {
+                let (n, r) = entry?;
                 Ok((
                     n,
                     ProvidersLabelTrace((COERCE_PROVIDERS_LABEL_FOR_BZL.get()?)(eval, &r)?),

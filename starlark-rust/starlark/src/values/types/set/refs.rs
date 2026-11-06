@@ -28,8 +28,8 @@ use crate::typing::Ty;
 use crate::values::UnpackValue;
 use crate::values::Value;
 use crate::values::ValueError;
+use crate::values::set::SetType;
 use crate::values::set::value::SetGen;
-use crate::values::type_repr::SetType;
 use crate::values::type_repr::StarlarkTypeRepr;
 
 /// Define the set type.

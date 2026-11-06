@@ -51,9 +51,9 @@ use crate::values::Value;
 use crate::values::ValueError;
 use crate::values::ValueTyped;
 use crate::values::comparison::equals_small_set;
+use crate::values::set::SetType;
 use crate::values::set::methods;
 use crate::values::starlark_value;
-use crate::values::type_repr::SetType;
 use crate::values::type_repr::StarlarkTypeRepr;
 
 #[derive(

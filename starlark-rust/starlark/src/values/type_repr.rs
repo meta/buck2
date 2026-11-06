@@ -18,8 +18,6 @@
 //! Trait and default implementations of a trait that will show starlark type annotations for a
 //! given type.
 
-use std::marker::PhantomData;
-
 use either::Either;
 pub use starlark_derive::StarlarkTypeRepr;
 
@@ -63,22 +61,6 @@ pub trait StarlarkTypeRepr {
 
     /// The representation of a type that a user would use verbatim in starlark type annotations
     fn starlark_type_repr() -> Ty;
-}
-
-/// A set used just for display purposes.
-///
-/// `SetOf` requires `Unpack` to be implemented, and `Set` does not take type parameters so
-/// we need something for documentation generation.
-pub struct SetType<T: StarlarkTypeRepr> {
-    t: PhantomData<T>,
-}
-
-impl<T: StarlarkTypeRepr> StarlarkTypeRepr for SetType<T> {
-    type Canonical = SetType<T::Canonical>;
-
-    fn starlark_type_repr() -> Ty {
-        Ty::set(T::starlark_type_repr())
-    }
 }
 
 impl<'v, T: StarlarkValue<'v>> StarlarkTypeRepr for T {

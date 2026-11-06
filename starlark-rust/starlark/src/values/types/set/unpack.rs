@@ -18,7 +18,7 @@
 use crate::values::UnpackValue;
 use crate::values::Value;
 use crate::values::set::SetRef;
-use crate::values::type_repr::SetType;
+use crate::values::set::SetType;
 use crate::values::type_repr::StarlarkTypeRepr;
 
 /// Unpack a `Set`.

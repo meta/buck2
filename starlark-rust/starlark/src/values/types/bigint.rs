@@ -33,26 +33,14 @@ use starlark_derive::starlark_value;
 
 use crate as starlark;
 use crate::any::ProvidesStaticType;
-use crate::collections::StarlarkHashValue;
-use crate::collections::StarlarkHasher;
-use crate::private::Private;
-use crate::typing::Ty;
-use crate::typing::TyBasic;
-use crate::typing::TypingBinOp;
 use crate::values::AllocFrozenValue;
 use crate::values::AllocValue;
 use crate::values::FrozenHeap;
 use crate::values::Heap;
 use crate::values::StarlarkValue;
-use crate::values::UnpackValue;
 use crate::values::Value;
-use crate::values::ValueError;
 use crate::values::types::int::inline_int::InlineInt;
-use crate::values::types::int::int_or_big::StarlarkInt;
-use crate::values::types::int::int_or_big::StarlarkIntRef;
-use crate::values::types::num::typecheck::NumTy;
-use crate::values::types::num::typecheck::typecheck_num_bin_op;
-use crate::values::types::num::value::NumRef;
+use crate::values::types::int::view::IntView;
 
 /// `int` implementation for larger integers.
 #[derive(
@@ -198,139 +186,9 @@ impl<'fv> crate::pagable::StarlarkDeserialize<'fv> for StarlarkBigInt {
     }
 }
 
-#[starlark_value(type = "int")]
+#[starlark_value]
 impl<'v> StarlarkValue<'v> for StarlarkBigInt {
-    fn to_bool(&self) -> bool {
-        // `StarlarkBigInt` is non-zero.
-        true
-    }
-
-    fn minus(&self, heap: Heap<'v>) -> starlark::Result<Value<'v>> {
-        Ok(heap.alloc(StarlarkInt::from(-&self.value)))
-    }
-
-    fn plus(&self, heap: Heap<'v>) -> starlark::Result<Value<'v>> {
-        // This unnecessarily allocates, could return `self`.
-        // But practically people rarely write `+NNN` except in constants,
-        // and in constants we fold `+NNN` into `NNN`.
-        Ok(heap.alloc(StarlarkInt::from(self.value.clone())))
-    }
-
-    fn equals(&self, other: Value<'v>) -> crate::Result<bool> {
-        Ok(Some(NumRef::Int(StarlarkIntRef::Big(self))) == other.unpack_num())
-    }
-
-    fn compare(&self, other: Value<'v>) -> crate::Result<Ordering> {
-        match other.unpack_num() {
-            None => ValueError::unsupported_with(self, "compare", other),
-            Some(other) => Ok(NumRef::Int(StarlarkIntRef::Big(self)).cmp(&other)),
-        }
-    }
-
-    fn add(&self, rhs: Value<'v>, heap: Heap<'v>) -> Option<crate::Result<Value<'v>>> {
-        Some(
-            (NumRef::Int(StarlarkIntRef::Big(self)) + rhs.unpack_num()?)
-                .map(|x| heap.alloc(x))
-                .map_err(Into::into),
-        )
-    }
-
-    fn sub(&self, other: Value<'v>, heap: Heap<'v>) -> crate::Result<Value<'v>> {
-        match other.unpack_num() {
-            Some(other) => Ok(heap.alloc((NumRef::Int(StarlarkIntRef::Big(self)) - other)?)),
-            None => ValueError::unsupported_with(self, "-", other),
-        }
-    }
-
-    fn mul(&self, other: Value<'v>, heap: Heap<'v>) -> Option<crate::Result<Value<'v>>> {
-        Some(
-            (NumRef::Int(StarlarkIntRef::Big(self)) * other.unpack_num()?)
-                .map(|x| heap.alloc(x))
-                .map_err(Into::into),
-        )
-    }
-
-    fn div(&self, other: Value<'v>, heap: Heap<'v>) -> crate::Result<Value<'v>> {
-        match other.unpack_num() {
-            Some(other) => Ok(heap.alloc(NumRef::Int(StarlarkIntRef::Big(self)).div(other)?)),
-            None => ValueError::unsupported_with(self, "/", other),
-        }
-    }
-
-    fn floor_div(&self, other: Value<'v>, heap: Heap<'v>) -> crate::Result<Value<'v>> {
-        match other.unpack_num() {
-            Some(rhs) => Ok(heap.alloc(NumRef::Int(StarlarkIntRef::Big(self)).floor_div(rhs)?)),
-            None => ValueError::unsupported_with(self, "//", other),
-        }
-    }
-
-    fn percent(&self, other: Value<'v>, heap: Heap<'v>) -> crate::Result<Value<'v>> {
-        match other.unpack_num() {
-            Some(rhs) => Ok(heap.alloc(NumRef::Int(StarlarkIntRef::Big(self)).percent(rhs)?)),
-            None => ValueError::unsupported_with(self, "%", other),
-        }
-    }
-
-    fn bit_and(&self, other: Value<'v>, heap: Heap<'v>) -> crate::Result<Value<'v>> {
-        let rhs = match StarlarkIntRef::unpack_value_opt(other) {
-            Some(rhs) => rhs,
-            None => return ValueError::unsupported_with(self, "&", other),
-        };
-        Ok(heap.alloc(StarlarkIntRef::Big(self) & rhs))
-    }
-
-    fn bit_xor(&self, other: Value<'v>, heap: Heap<'v>) -> crate::Result<Value<'v>> {
-        let rhs = match StarlarkIntRef::unpack_value_opt(other) {
-            Some(rhs) => rhs,
-            None => return ValueError::unsupported_with(self, "^", other),
-        };
-        Ok(heap.alloc(StarlarkIntRef::Big(self) ^ rhs))
-    }
-
-    fn bit_or(&self, other: Value<'v>, heap: Heap<'v>) -> crate::Result<Value<'v>> {
-        let rhs = match StarlarkIntRef::unpack_value_opt(other) {
-            Some(rhs) => rhs,
-            None => return ValueError::unsupported_with(self, "|", other),
-        };
-        Ok(heap.alloc(StarlarkIntRef::Big(self) | rhs))
-    }
-
-    fn bit_not(&self, heap: Heap<'v>) -> crate::Result<Value<'v>> {
-        Ok(heap.alloc(!StarlarkIntRef::Big(self)))
-    }
-
-    fn left_shift(&self, other: Value<'v>, heap: Heap<'v>) -> crate::Result<Value<'v>> {
-        match StarlarkIntRef::unpack_value_opt(other) {
-            None => ValueError::unsupported_with(self, "<<", other),
-            Some(other) => Ok(heap.alloc(StarlarkIntRef::Big(self).left_shift(other)?)),
-        }
-    }
-
-    fn right_shift(&self, other: Value<'v>, heap: Heap<'v>) -> crate::Result<Value<'v>> {
-        match StarlarkIntRef::unpack_value_opt(other) {
-            None => ValueError::unsupported_with(self, ">>", other),
-            Some(other) => Ok(heap.alloc(StarlarkIntRef::Big(self).right_shift(other)?)),
-        }
-    }
-
-    fn bin_op_ty(op: TypingBinOp, rhs: &TyBasic) -> Option<Ty> {
-        typecheck_num_bin_op(NumTy::Int, op, rhs)
-    }
-
-    fn write_hash(&self, hasher: &mut StarlarkHasher) -> crate::Result<()> {
-        NumRef::Int(StarlarkIntRef::Big(self))
-            .get_hash_64()
-            .hash(hasher);
-        Ok(())
-    }
-
-    fn get_hash(&self, _private: Private) -> crate::Result<StarlarkHashValue> {
-        Ok(NumRef::Int(StarlarkIntRef::Big(self)).get_hash())
-    }
-
-    fn typechecker_ty(&self) -> Option<Ty> {
-        Some(Ty::int())
-    }
+    type Type = IntView<'v>;
 }
 
 #[cfg(test)]
@@ -341,6 +199,7 @@ mod tests {
 
     use crate::assert;
     use crate::collections::StarlarkHasher;
+    use crate::values::Heap;
     use crate::values::StarlarkType;
     use crate::values::float::StarlarkFloat;
     use crate::values::types::bigint::StarlarkBigInt;
@@ -744,9 +603,11 @@ mod tests {
         let mut hash1 = StarlarkHasher::new();
         let mut hash2 = StarlarkHasher::new();
         StarlarkFloat(1e20).write_hash(&mut hash1).unwrap();
-        StarlarkBigInt::unchecked_new(BigInt::from(10).pow(20))
-            .write_hash(&mut hash2)
-            .unwrap();
+        Heap::temp(|heap| {
+            heap.alloc(StarlarkBigInt::unchecked_new(BigInt::from(10).pow(20)))
+                .write_hash(&mut hash2)
+                .unwrap();
+        });
         assert_eq!(hash1.finish(), hash2.finish());
     }
 

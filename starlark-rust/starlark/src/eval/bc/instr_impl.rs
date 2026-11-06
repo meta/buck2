@@ -71,7 +71,6 @@ use crate::eval::runtime::profile::instant::ProfilerInstant;
 use crate::eval::runtime::slots::LocalCapturedSlotId;
 use crate::eval::runtime::slots::LocalSlotId;
 use crate::values::Heap;
-use crate::values::StarlarkType;
 use crate::values::StringValue;
 use crate::values::Value;
 use crate::values::ValueTyped;
@@ -520,7 +519,7 @@ impl<'v> InstrNoFlowImpl<'v> for InstrEqIntImpl {
         let r = if let Some(a) = a.unpack_int_value() {
             a.as_ref() == b.as_ref()
         } else {
-            b.equals(a)?
+            b.to_value().equals(a)?
         };
         frame.set_bc_slot(*target, Value::new_bool(r));
         Ok(())

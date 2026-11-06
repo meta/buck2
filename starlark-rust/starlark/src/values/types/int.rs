@@ -27,5 +27,6 @@ pub(crate) mod inline_int;
 pub(crate) mod int_or_big;
 pub(crate) mod pointer_i32;
 mod tests;
+pub(crate) mod view;
 
 pub use pointer_i32::INT_TYPE;

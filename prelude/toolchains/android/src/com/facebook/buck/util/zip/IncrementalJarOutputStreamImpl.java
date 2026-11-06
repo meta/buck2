@@ -14,6 +14,7 @@ import static java.nio.file.StandardOpenOption.CREATE;
 import static java.nio.file.StandardOpenOption.READ;
 import static java.nio.file.StandardOpenOption.WRITE;
 
+import com.facebook.infer.annotation.Nullsafe;
 import java.io.IOException;
 import java.io.OutputStream;
 import java.nio.channels.Channels;
@@ -27,6 +28,7 @@ import javax.annotation.Nonnull;
  *
  * @see AppendableCentralDirectory
  */
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public class IncrementalJarOutputStreamImpl extends AppendingZipOutputStreamImpl {
 
   /**

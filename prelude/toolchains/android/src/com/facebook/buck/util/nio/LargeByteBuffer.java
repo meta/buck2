@@ -10,6 +10,7 @@
 
 package com.facebook.buck.util.nio;
 
+import com.facebook.infer.annotation.Nullsafe;
 import com.google.common.annotations.VisibleForTesting;
 import java.io.IOException;
 import java.nio.ByteBuffer;
@@ -17,6 +18,7 @@ import java.nio.ByteOrder;
 import java.nio.channels.FileChannel;
 
 /** Provides a ByteBuffer-like object for dealing with very large files. */
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public class LargeByteBuffer {
   public static LargeByteBuffer with(MappableByteBufferHolder byteBufferHolder) throws IOException {
     return new LargeByteBuffer(byteBufferHolder);

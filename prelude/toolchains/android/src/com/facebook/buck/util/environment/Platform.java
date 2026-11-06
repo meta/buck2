@@ -10,6 +10,7 @@
 
 package com.facebook.buck.util.environment;
 
+import com.facebook.infer.annotation.Nullsafe;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.Properties;
@@ -18,6 +19,7 @@ import java.util.Properties;
  * Platform on which Buck is currently running. Limited to the OS kind, e.g. Windows or a kind of
  * Unix (MACOS, LINUX, ...).
  */
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public enum Platform {
   LINUX("Linux", "linux", "linux", PlatformType.UNIX),
   MACOS("Mac OS X", "darwin", "osx", PlatformType.UNIX),

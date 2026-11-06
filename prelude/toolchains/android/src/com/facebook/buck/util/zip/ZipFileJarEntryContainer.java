@@ -10,6 +10,7 @@
 
 package com.facebook.buck.util.zip;
 
+import com.facebook.infer.annotation.Nullsafe;
 import java.io.File;
 import java.io.IOException;
 import java.nio.file.Path;
@@ -20,6 +21,7 @@ import java.util.zip.ZipEntry;
 import javax.annotation.Nullable;
 
 /** Provides all entries of a given zip or jar file, so they can be added to another jar. */
+@Nullsafe(Nullsafe.Mode.LOCAL)
 class ZipFileJarEntryContainer implements JarEntryContainer {
 
   private final Path jarFilePath;

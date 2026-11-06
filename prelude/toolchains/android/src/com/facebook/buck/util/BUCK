@@ -13,6 +13,9 @@ buck_java_library(
     name = "throwing_print_writer",
     srcs = THROWING_PRINT_WRITER_SRCS,
     visibility = ["PUBLIC"],
+    deps = [
+        "prelude//toolchains/android/third-party:infer-annotations",
+    ],
 )
 
 PROCESS_EXECUTOR_SRCS = [

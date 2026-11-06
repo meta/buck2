@@ -16,5 +16,6 @@ buck_java_library(
         "prelude//toolchains/android/src/com/facebook/buck/jvm/java/version/utils:utils",
         "prelude//toolchains/android/src/com/facebook/buck/util:util",
         "prelude//toolchains/android/third-party:guava",
+        "prelude//toolchains/android/third-party:infer-annotations",
     ],
 )

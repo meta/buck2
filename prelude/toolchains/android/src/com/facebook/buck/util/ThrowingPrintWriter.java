@@ -10,6 +10,7 @@
 
 package com.facebook.buck.util;
 
+import com.facebook.infer.annotation.Nullsafe;
 import java.io.IOException;
 import java.io.OutputStream;
 import java.io.OutputStreamWriter;
@@ -24,6 +25,7 @@ import java.nio.charset.Charset;
  * implemented (including primitive overloads to prevent accidental inefficiencies later). Feel free
  * to add more methods, but please don't go beyond what {@link java.io.PrintWriter} itself has.
  */
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public class ThrowingPrintWriter extends OutputStreamWriter {
   public ThrowingPrintWriter(OutputStream out) {
     super(out);

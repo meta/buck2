@@ -148,6 +148,16 @@ impl<'v, T: UnpackValue<'v>> ValueOf<'v, T> {
     {
         Self::new_unchecked(heap.alloc(representation))
     }
+
+    /// A typed value of a representation of `T`, which is a `T` by construction as for
+    /// [`alloc`](Self::alloc).
+    #[inline]
+    pub fn from_representation<R>(value: ValueTyped<'v, R>) -> Self
+    where
+        R: StarlarkValue<'v, Type = T>,
+    {
+        Self::new_unchecked(value.to_value())
+    }
 }
 
 /// A typed value is a `ValueOf` its own binding by construction.

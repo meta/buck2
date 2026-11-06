@@ -7,5 +7,8 @@ buck2_core_tests(
         "test_execution_groups": {
             "use_compiled_buck2_client_and_tpx": True,
         },
+        "test_target_platforms_arg": {
+            "deps": ["fbsource//third-party/rust:regex"],
+        },
     },
 )

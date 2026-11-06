@@ -189,3 +189,18 @@ class SymlinksTest(BuckTestCase):
         setup_symlink(buck.cwd / "testlink", buck.cwd / "symdir")
 
         await buck.targets("//testlink/dir:")
+
+    @buck_test(skip_for_os=["windows"])
+    async def test_output_symlink_to_current_directory(self, buck: Buck) -> None:
+        # An action creates `.` and `./` links in a directory. Publication must preserve the
+        # links and their contents with content-based output paths enabled or disabled.
+        for target in ["//:symlink_dir", "//:symlink_dir_unhashed"]:
+            result = await buck.build(target)
+            out = result.get_build_report().output_for_target("root" + target)
+
+            assert (out / "here").readlink() == Path(".")
+            assert (out / "here" / "x").read_text() == "x"
+            assert (out / "dotslash").readlink() == Path(".")
+            assert (out / "dotslash" / "x").read_text() == "x"
+            assert (out / "d" / "here").readlink() == Path("../x")
+            assert (out / "d" / "here").read_text() == "x"

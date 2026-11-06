@@ -4,6 +4,6 @@ oncall("build_infra")
 
 buck2_e2e_test(
     name = "test_audit_classpath",
-    srcs = ["test_audit_classpath.py"],
+    srcs = ["test_audit_classpath.rs"],
     skip_for_os = ["windows"],
 )

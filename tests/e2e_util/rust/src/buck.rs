@@ -104,6 +104,17 @@ impl Buck {
         )
     }
 
+    /// The buck2 executable commands run.
+    pub fn executable(&self) -> &Path {
+        &self.executable
+    }
+
+    /// The environment variables every command gets, for a process other than buck2 that must
+    /// see what buck2 sees.
+    pub fn envs(&self) -> impl Iterator<Item = (&OsStr, &OsStr)> {
+        self.env.iter().map(|(k, v)| (k.as_os_str(), v.as_os_str()))
+    }
+
     /// A buck2 command. `args` are everything after the executable, subcommand first.
     pub fn command(&self, args: &[&str]) -> BuckCommand<'_> {
         self.command_os(args.iter().map(OsString::from).collect())
@@ -660,5 +671,15 @@ mod tests {
                 .get(OsStr::new("BUCK_WRAPPER_UUID")),
             Some(&OsString::from("mine"))
         );
+    }
+
+    #[test]
+    fn test_envs_are_what_every_command_gets() {
+        let mut buck = buck(false);
+        buck.set_env("KEY", "value");
+        let envs: BTreeMap<&OsStr, &OsStr> = buck.envs().collect();
+        assert_eq!(envs.get(OsStr::new("KEY")), Some(&OsStr::new("value")));
+        assert_eq!(envs.get(OsStr::new("NO_BUCKD")), Some(&OsStr::new("0")));
+        assert_eq!(buck.executable(), Path::new("/bin/buck2"));
     }
 }

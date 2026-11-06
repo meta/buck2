@@ -5,6 +5,7 @@ oncall("build_infra")
 buck2_core_tests(
     target_extra_attrs = {
         "test_console": {
+            "deps": ["fbsource//third-party/rust:regex"],
             "env": {
                 "FIXTURES": "$(location //buck2/tests/core/console/fixtures:fixtures)",
             },

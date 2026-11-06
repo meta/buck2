@@ -17,7 +17,7 @@ use starlark::starlark_simple_value;
 use starlark::values::NoSerialize;
 use starlark::values::ProvidesStaticType;
 use starlark::values::StarlarkValue;
-use starlark::values::Value;
+use starlark::values::ValueTyped;
 use starlark::values::none::NoneOr;
 use starlark::values::starlark_value;
 
@@ -49,13 +49,13 @@ fn starlark_build_result_methods(builder: &mut MethodsBuilder) {
     ///         ctx.output.print(value.artifacts())
     /// ```
     fn artifacts<'v>(
-        this: Value<'v>,
+        this: ValueTyped<'v, StarlarkBxlBuildResult>,
     ) -> starlark::Result<NoneOr<StarlarkProvidersArtifactIterable<'v>>> {
-        match &this.downcast_ref::<StarlarkBxlBuildResult>().unwrap().0 {
+        match &this.as_ref().0 {
             BxlBuildResult::None => Ok(NoneOr::None),
-            BxlBuildResult::Built { .. } => {
-                Ok(NoneOr::Other(StarlarkProvidersArtifactIterable(this)))
-            }
+            BxlBuildResult::Built { .. } => Ok(NoneOr::Other(StarlarkProvidersArtifactIterable(
+                this.to_value(),
+            ))),
         }
     }
 
@@ -69,11 +69,13 @@ fn starlark_build_result_methods(builder: &mut MethodsBuilder) {
     ///         ctx.output.print(value.failures())
     /// ```
     fn failures<'v>(
-        this: Value<'v>,
+        this: ValueTyped<'v, StarlarkBxlBuildResult>,
     ) -> starlark::Result<NoneOr<StarlarkFailedArtifactIterable<'v>>> {
-        match &this.downcast_ref::<StarlarkBxlBuildResult>().unwrap().0 {
+        match &this.as_ref().0 {
             BxlBuildResult::None => Ok(NoneOr::None),
-            BxlBuildResult::Built { .. } => Ok(NoneOr::Other(StarlarkFailedArtifactIterable(this))),
+            BxlBuildResult::Built { .. } => Ok(NoneOr::Other(StarlarkFailedArtifactIterable(
+                this.to_value(),
+            ))),
         }
     }
 }

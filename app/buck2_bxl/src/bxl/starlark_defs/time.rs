@@ -18,7 +18,6 @@ use starlark::starlark_simple_value;
 use starlark::values::NoSerialize;
 use starlark::values::ProvidesStaticType;
 use starlark::values::StarlarkValue;
-use starlark::values::Value;
 use starlark::values::starlark_value;
 
 /// Starlark object for Instant.
@@ -50,9 +49,8 @@ fn starlark_instant_methods(builder: &mut MethodsBuilder) {
     ///     ctx.output.print(time_a)
     ///     ctx.output.print(time_b)
     /// ```
-    fn elapsed_secs<'v>(this: Value<'v>) -> starlark::Result<f64> {
-        let secs =
-            (Instant::now() - this.downcast_ref::<StarlarkInstant>().unwrap().0).as_secs() as f64;
+    fn elapsed_secs(this: &StarlarkInstant) -> starlark::Result<f64> {
+        let secs = (Instant::now() - this.0).as_secs() as f64;
 
         Ok(secs)
     }
@@ -70,9 +68,8 @@ fn starlark_instant_methods(builder: &mut MethodsBuilder) {
     ///     ctx.output.print(time_a)
     ///     ctx.output.print(time_b)
     /// ```
-    fn elapsed_millis<'v>(this: Value<'v>) -> starlark::Result<f64> {
-        let millis =
-            (Instant::now() - this.downcast_ref::<StarlarkInstant>().unwrap().0).as_millis() as f64;
+    fn elapsed_millis(this: &StarlarkInstant) -> starlark::Result<f64> {
+        let millis = (Instant::now() - this.0).as_millis() as f64;
 
         Ok(millis)
     }

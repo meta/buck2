@@ -53,6 +53,9 @@ pub struct RunActionKnobs {
     /// and the traffic to it grows, in steps that are the same on every host. A write within
     /// the share goes through the cache whatever `write_action_cache` says.
     pub write_action_cache_populate: RolloutFraction,
+
+    /// Whether `download_file` uploads the file it downloaded to the CAS.
+    pub upload_downloads_to_cas: bool,
 }
 
 /// How write actions use the action cache; `buck2.write_action_cache`. Whether a miss is

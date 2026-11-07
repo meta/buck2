@@ -48,6 +48,12 @@ something else, this can be configured in `.buckconfig` as follows:
 digest_algorithms = BLAKE3
 ```
 
+When a `download_file` or `http_archive` download has a checksum of the CAS
+digest algorithm, Buck2 uploads the file to the CAS after it fetches it. Other
+machines and remote workers then get the file from the CAS. To disable this, set
+`upload_downloads_to_cas = false` in the `[buck2]` section. `--no-remote-cache`
+also disables it, unless you also give `--write-to-cache-anyway`.
+
 ## RE platform configuration
 
 Next, your build will need an

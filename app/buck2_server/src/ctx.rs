@@ -500,6 +500,7 @@ impl<'a> ServerCommandContext<'a> {
             defer_write_actions: false,
             write_action_cache: WriteActionCacheMode::Off,
             write_action_cache_populate: RolloutFraction::none(),
+            upload_downloads_to_cas: false,
         };
 
         let concurrency = self
@@ -1099,6 +1100,14 @@ impl DiceCommandUpdater<'_, '_> {
                 property: "write_action_cache_populate",
             })?
             .unwrap_or_else(RolloutFraction::none);
+
+        run_action_knobs.upload_downloads_to_cas = root_config
+            .parse::<bool>(BuckconfigKeyRef {
+                section: "buck2",
+                property: "upload_downloads_to_cas",
+            })?
+            .unwrap_or(true)
+            && !self.skip_cache_write;
 
         let output_trees_download_semaphore_size = root_config.parse::<u32>(BuckconfigKeyRef {
             section: "buck2",

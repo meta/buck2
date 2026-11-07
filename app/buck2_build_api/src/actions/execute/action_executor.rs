@@ -697,6 +697,10 @@ impl ActionExecutionCtx for BuckActionExecutionContext<'_, '_> {
         self.executor.invocation_re_settings.may_probe_cas
     }
 
+    fn skip_cache_read(&self) -> bool {
+        self.executor.invocation_re_settings.skip_cache_read
+    }
+
     fn write_action_cache(&self) -> Option<&dyn WriteActionCache> {
         self.executor.command_executor.write_action_cache()
     }

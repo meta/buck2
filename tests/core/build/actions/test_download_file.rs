@@ -675,7 +675,8 @@ async fn test_content_the_cas_holds_needs_no_url(buck: &Buck) -> anyhow::Result<
     assert_eq!(server.count("GET", "/file"), 1);
 
     // A new daemon and a URL nothing answers on: the declaration names content the CAS
-    // holds, so a remote consumer and a local one both get it without the URL.
+    // holds, so a remote consumer and a local one both get it without the URL. Not
+    // under `--no-remote-cache`, which forgoes the CAS's copy too.
     buck.kill().await?;
     let broken = configs(
         "http://localhost:1/file",
@@ -683,11 +684,8 @@ async fn test_content_the_cas_holds_needs_no_url(buck: &Buck) -> anyhow::Result<
         None,
         Some(content.len()),
     );
-    buck.build(&with(
-        &["//:copy", "--remote-only", "--no-remote-cache"],
-        &[&broken],
-    ))
-    .await?;
+    buck.build(&with(&["//:copy", "--remote-only"], &[&broken]))
+        .await?;
     assert_eq!(
         build_and_read(buck, "//:copy_again", &with(&["--local-only"], &[&broken])).await?,
         content
@@ -772,5 +770,40 @@ async fn test_a_wrong_size_is_a_miss_in_the_cas(buck: &Buck) -> anyhow::Result<(
         content.len() + 1
     ));
     assert_eq!(server.count("GET", "/file"), 2);
+    Ok(())
+}
+
+#[buck_test(data_dir = "download", write_invocation_record = true)]
+async fn test_no_remote_cache_downloads_without_asking_the_cas(buck: &Buck) -> anyhow::Result<()> {
+    let content = random_string().into_bytes();
+    let server = StaticHttpServer::start([("/file", content.clone())]).await?;
+    let declared = configs(&server.url("/file"), Some(&sha1_hex(&content)), None, None);
+    buck.build(&with(
+        &["//:copy", "--remote-only", "--no-remote-cache"],
+        &[&declared],
+    ))
+    .await?;
+    assert_eq!(server.count("GET", "/file"), 1);
+
+    // The CAS holds the content now, but the flag forgoes it: the cache may not even be up yet
+    // when the build that starts it runs.
+    let target = "//:download_again";
+    let res = buck
+        .build(&with(&[target, "--no-remote-cache"], &[&declared]))
+        .await?;
+    let output = res.build_report()?.output_for_target(target)?;
+    assert_eq!(std::fs::read(&output)?, content);
+    assert_eq!(server.count("GET", "/file"), 2);
+    let record = res.invocation_record()?;
+    let snapshot = record
+        .get("last_snapshot")
+        .and_then(serde_json::Value::as_object)
+        .ok_or_else(|| anyhow::anyhow!("No `last_snapshot` in the invocation record"))?;
+    assert_eq!(
+        snapshot
+            .get("re_presence_check_rpcs")
+            .map_or(Some(0), serde_json::Value::as_u64),
+        Some(0)
+    );
     Ok(())
 }

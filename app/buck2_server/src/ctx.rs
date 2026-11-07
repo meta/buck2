@@ -1174,6 +1174,7 @@ impl DiceCommandUpdater<'_, '_> {
             may_probe_cas: cas_configured
                 && self.execution_strategy != ExecutionStrategy::LocalOnly
                 && !self.skip_cache_read,
+            skip_cache_read: self.skip_cache_read,
         };
 
         set_fallback_executor_config(&mut data.data, self.executor_config.dupe());

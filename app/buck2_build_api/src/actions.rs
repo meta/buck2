@@ -347,9 +347,13 @@ pub trait ActionExecutionCtx: Send + Sync {
     /// Whether this action may ask the CAS whether it already holds content it would otherwise
     /// produce, a write's or a copy's: false without a CAS, and under `--local-only` and
     /// `--no-remote-cache`, which forgo what remote caches hold. `download_file` asks under
-    /// [`Self::cas_configured`] instead: its content is named by the user's checksum, and the
-    /// CAS serves it in place of the URL rather than in place of a cache.
+    /// [`Self::cas_configured`] and `--local-only` instead: its content is named by the user's
+    /// checksum, and the CAS serves it in place of the URL rather than in place of a cache.
     fn may_probe_cas(&self) -> bool;
+
+    /// `--no-remote-cache`, which unlike `--local-only` also keeps `download_file` from asking
+    /// the CAS for its content.
+    fn skip_cache_read(&self) -> bool;
 
     /// The action cache as write actions use it, under this action's executor configuration;
     /// `None` where that executor reads no cache.

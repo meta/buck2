@@ -257,7 +257,9 @@ fn decode_raw<'v>(
             } else if let Ok(i) = i32::from_str(text) {
                 Ok(heap.alloc(i))
             } else {
-                Ok(heap.alloc(StarlarkInt::from(BigInt::from_str(text)?)))
+                // Not `BigInt::from_str`, which is quadratic in the number of digits.
+                let x = StarlarkInt::from_str_radix(text, 10).map_err(|e| e.into_anyhow())?;
+                Ok(heap.alloc(x))
             }
         }
         _ => Ok(heap.alloc(serde_json::from_str::<serde_json::Value>(text)?)),
@@ -401,6 +403,20 @@ mod tests {
         a.eq(
             "'[' * 50 + '0' + ']' * 50",
             "str(json.decode('[' * 50 + '0' + ']' * 50))",
+        );
+    }
+
+    #[test]
+    fn test_json_decode_long_int() {
+        // Long enough for the digits to be parsed in parts.
+        let a = Assert::new();
+        a.pass(
+            r#"
+digits = "1234567890" * 3000 + "7"
+assert_eq(digits, str(json.decode(digits)))
+assert_eq("-" + digits, str(json.decode("-" + digits)))
+assert_eq(int(digits), json.decode("[" + digits + "]")[0])
+"#,
         );
     }
 

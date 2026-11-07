@@ -19,7 +19,9 @@ use std::sync::OnceLock;
 
 use buck2_build_api::actions::artifact::get_artifact_fs::GetArtifactFs;
 use buck2_build_api::materialize::invocation_re_use_case;
+use buck2_common::dice::data::HasIoProvider;
 use buck2_common::dice::data::HasProjectRoot;
+use buck2_common::events::HasEvents;
 use buck2_common::file_ops::delegate::FileOpsDelegate;
 use buck2_common::file_ops::metadata::FileDigestConfig;
 use buck2_common::file_ops::metadata::FileType;
@@ -308,6 +310,12 @@ async fn download_and_materialize(
     let res = cancellations
         .critical_section(|| download_impl(ctx, setup, path, &*materializer, cancellations))
         .await;
+    ctx.get_dispatcher()
+        .instant_event(buck2_data::ExternalResourceFetch {
+            url: setup.git_origin.to_string(),
+            downloader: buck2_data::ExternalResourceDownloader::UnknownDownloader as i32,
+            success: res.is_ok(),
+        });
 
     // Give up our lock
     drop(semaphore_guard);

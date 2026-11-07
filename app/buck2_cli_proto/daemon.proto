@@ -62,9 +62,40 @@ message KillRequest {
   string reason = 1;
   google.protobuf.Duration timeout = 2;
   repeated string callers = 4;
+  // Before the daemon starts shutting down, it waits up to this long for the
+  // BES server to acknowledge every event and closes every stream. Unset or
+  // zero keeps the fixed five-second attempt the kill always made.
+  google.protobuf.Duration bes_drain_timeout = 5;
 }
 
-message KillResponse {}
+message KillResponse {
+  BesDrainResult bes_drain = 1;
+}
+
+message FlushBesRequest {
+  google.protobuf.Duration timeout = 1;
+}
+
+message BesStreamDrain {
+  enum Outcome {
+    ACKED = 0;
+    // The deadline passed first; the daemon holds the events and goes on
+    // sending them.
+    PENDING = 1;
+    FAILED = 2;
+  }
+  string invocation_id = 1;
+  Outcome outcome = 2;
+  uint64 unacked_events = 3;
+  string error = 4;
+}
+
+message BesDrainResult {
+  bool sink_enabled = 1;
+  repeated BesStreamDrain streams = 2;
+  // Set when the drain itself could not run to its deadline.
+  string error = 3;
+}
 
 message StatusRequest {
   bool snapshot = 1;
@@ -1175,6 +1206,10 @@ service DaemonApi {
   // with -Cprofile-generate.
   rpc Unstable_FlushPgoProfile(UnstableFlushPgoProfileRequest)
       returns (UnstableFlushPgoProfileResponse);
+
+  // Sends the daemon's BES streams what they hold, closes the streams of
+  // finished commands, and waits for the server to acknowledge them.
+  rpc FlushBes(FlushBesRequest) returns (BesDrainResult);
 
   // Requests allocator stats from the daemon.
   rpc Unstable_AllocatorStats(UnstableAllocatorStatsRequest)

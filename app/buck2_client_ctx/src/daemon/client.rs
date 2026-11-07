@@ -650,6 +650,7 @@ impl FlushingBuckdClient<'_> {
         UnstableFlushPgoProfileRequest,
         UnstableFlushPgoProfileResponse
     );
+    debug_method!(flush_bes, FlushBesRequest, BesDrainResult);
     debug_method!(
         unstable_allocator_stats,
         UnstableAllocatorStatsRequest,

@@ -285,7 +285,13 @@ impl BuckSubcommand for InnerCleanCommand {
                 StartupDeadline::duration_from_now(Duration::from_secs(10))?,
             )
             .await?;
-            kill_command_impl(&lock, "`buck2 clean` was invoked", false).await?;
+            kill_command_impl(
+                &lock,
+                "`buck2 clean` was invoked",
+                false,
+                std::time::Duration::ZERO,
+            )
+            .await?;
             Some(lock)
         };
         let disk_lock = TenantDiskLock::acquire(&paths.tenant_paths(), Duration::from_secs(30))

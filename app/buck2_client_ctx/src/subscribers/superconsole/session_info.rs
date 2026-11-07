@@ -36,6 +36,10 @@ impl Component for SessionInfoComponent<'_> {
     fn draw_unchecked(&self, dimensions: Dimensions, mode: DrawMode) -> buck2_error::Result<Lines> {
         let mut headers = Lines::new();
         let mut ids = vec![];
+        if let Some(invocation_url) = self.session_info.invocation_url() {
+            headers.push(Line::unstyled("Build URL:")?);
+            ids.push(Span::new_unstyled(invocation_url)?);
+        }
         if cfg!(fbcode_build) {
             headers.push(Line::unstyled("Buck UI:")?);
             ids.push(Span::new_unstyled(format!(

@@ -72,6 +72,7 @@ AndroidToolchainInfo = provider(
         "proguard_config": provider_field(typing.Any, default = None),
         "proguard_jar": provider_field(typing.Any, default = None),
         "r_dot_java_weight_factor": provider_field(typing.Any, default = None),
+        # @oss-disable[end= ]: "redex_native_class_names": provider_field(typing.Any, default = None),
         "replace_application_id_placeholders": provider_field(typing.Any, default = None),
         "secondary_dex_compression_command": provider_field(typing.Any, default = None),
         "secondary_dex_weight_limit": provider_field(typing.Any, default = None),

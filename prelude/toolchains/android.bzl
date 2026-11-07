@@ -163,6 +163,7 @@ def system_android_toolchain(name, android_sdk_tools_target, jdk_system_image, *
     kwargs["proguard_config"] = "{}[proguard_config]".format(android_sdk_tools_target)
     kwargs["proguard_jar"] = "{}[proguard.jar]".format(android_sdk_tools_target)
     kwargs["r_dot_java_weight_factor"] = 8
+    # @oss-disable[end= ]: kwargs["redex_native_class_names"] = "prelude//android/tools/meta_only:redex_native_class_names"
     kwargs["replace_application_id_placeholders"] = (
         "prelude//toolchains/android/src/com/facebook/buck/android/manifest:replace_application_id_placeholders_binary"
     )
@@ -232,6 +233,7 @@ def system_android_toolchain_rule_impl(ctx):
             proguard_config = ctx.attrs.proguard_config,
             proguard_jar = ctx.attrs.proguard_jar,
             r_dot_java_weight_factor = ctx.attrs.r_dot_java_weight_factor,
+            # @oss-disable[end= ]: redex_native_class_names = ctx.attrs.redex_native_class_names[RunInfo] if ctx.attrs.redex_native_class_names else None,
             replace_application_id_placeholders = ctx.attrs.replace_application_id_placeholders,
             secondary_dex_compression_command = ctx.attrs.secondary_dex_compression_command,
             secondary_dex_weight_limit = ctx.attrs.secondary_dex_weight_limit,
@@ -290,6 +292,7 @@ system_android_toolchain_rule = rule(
         "proguard_config": attrs.source(),
         "proguard_jar": attrs.source(),
         "r_dot_java_weight_factor": attrs.int(),
+        # @oss-disable[end= ]: "redex_native_class_names": attrs.option(attrs.dep(providers = [RunInfo]), default = None),
         "replace_application_id_placeholders": attrs.dep(providers = [RunInfo]),
         "secondary_dex_compression_command": attrs.dep(providers = [RunInfo]),
         "secondary_dex_weight_limit": attrs.int(),

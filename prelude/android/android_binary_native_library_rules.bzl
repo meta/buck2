@@ -37,6 +37,7 @@ load("@prelude//android:voltron.bzl", "ROOT_MODULE", "all_targets_in_root_module
     # @oss-disable[end= ]: "is_middle_gatorade_enabled",
     # @oss-disable[end= ]: "is_monogatorade_enabled",
     # @oss-disable[end= ]: "middle_gatorade_merge_args",
+    # @oss-disable[end= ]: "monogatorade_redex_stand_ins",
     # @oss-disable[end= ]: "monogatorade_whole_app",
     # @oss-disable[end= ]: "relink_for_native_libs",
 # @oss-disable[end= ]: )
@@ -783,6 +784,10 @@ def get_android_binary_native_library_info(
         # Under defer_relink, the relinked libraries that ship, which the library subtargets show.
         deferred_shipped_libs_by_platform = None
 
+        # Under defer_relink, what the APK packages in place of the unrelinked libraries, if anything:
+        # the APK is what Redex reads before the combine step swaps in the relinked libraries.
+        deferred_packaged_libs_by_platform = None
+
         if enable_relinker and not defer_relink:
             unrelinked_shared_libs_by_platform = final_shared_libs_by_platform
             final_shared_libs_by_platform, middle_gatorade_outputs_by_platform = _relink_for_native_libs(
@@ -843,6 +848,11 @@ def get_android_binary_native_library_info(
             final_link_diagnostic_libs_by_platform = relinked_libs_by_platform
             middle_gatorade_relinked_libraries_by_platform = relinked_libs_by_platform
             relinked_libs_for_extra_outputs = relinked_libs_by_platform
+
+            # Under monogatorade nothing else reads a merge link, so the APK packages stand-ins
+            # and only the [unrelinked] and [unrelinked_libs] subtargets link the merge links.
+            # @oss-disable[end= ]: if monogatorade_products != None:
+                # @oss-disable[end= ]: deferred_packaged_libs_by_platform = monogatorade_redex_stand_ins(ctx, final_shared_libs_by_platform, monogatorade_products)
 
             if False: # @oss-enable
             # @oss-disable[end= ]: if is_late_gatorade_enabled(ctx):
@@ -1011,7 +1021,7 @@ def get_android_binary_native_library_info(
         else:
             subtarget_shared_libs_by_platform = _post_native_lib_graph_finalization_steps(
                 ctx,
-                final_shared_libs_by_platform,
+                deferred_packaged_libs_by_platform or final_shared_libs_by_platform,
                 all_prebuilt_native_library_dirs,
                 get_module_from_target,
                 native_cmd_entries = native_cmd_entries,

@@ -300,7 +300,7 @@ impl StreamingCommand for BuildCommand {
                         return_outputs,
                         return_run_args: false,
                     }),
-                    build_opts: Some(self.build_opts.to_proto()),
+                    build_opts: Some(self.build_opts.to_proto(ctx.verbosity)),
                     final_artifact_materializations: materializations as i32,
                     final_artifact_uploads: self.upload_final_artifacts.to_proto() as i32,
                     target_universe: self.target_cfg.target_universe,

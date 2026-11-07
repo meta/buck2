@@ -20,7 +20,7 @@ enum VerbosityError {
     UnknownItem(String),
 }
 
-const VERBOSITY_ITEM_VARIANTS: usize = 7;
+const VERBOSITY_ITEM_VARIANTS: usize = 8;
 
 /// The logging verbosity to use in our various consoles.
 ///
@@ -51,6 +51,9 @@ enum VerbosityLevel {
 pub enum VerbosityItem {
     /// Print stderr for successful commands
     Stderr,
+    /// Print stdout for successful commands. Not part of any level, since it also makes the
+    /// daemon keep stdout that it would otherwise drop.
+    Stdout,
     /// Print full command for failed actions
     FullFailedCommand,
     /// Print all commands that are being executed
@@ -117,6 +120,7 @@ impl VerbosityItem {
     fn from(value: &str) -> buck2_error::Result<Self> {
         let item = match value {
             "stderr" => Self::Stderr,
+            "stdout" => Self::Stdout,
             "full_failed_command" => Self::FullFailedCommand,
             "commands" => Self::Commands,
             "actions" => Self::Actions,
@@ -172,6 +176,11 @@ impl Verbosity {
     /// Whether stderr should be printed to users for successful commands by default.
     pub fn print_success_stderr(self) -> bool {
         self.has(VerbosityItem::Stderr)
+    }
+
+    /// Whether stdout should be printed to users for successful commands.
+    pub fn print_success_stdout(self) -> bool {
+        self.has(VerbosityItem::Stdout)
     }
 
     /// Whether the full command for failed actions should be printed. Otherwise, a truncated command is printed.
@@ -251,6 +260,41 @@ mod tests {
         assert!(verbosity.print_all_actions());
         assert!(!verbosity.print_all_commands());
         assert!(!verbosity.print_success_stderr());
+    }
+
+    #[test]
+    fn test_default_with_stdout() {
+        let verbosity = Verbosity::try_from_cli("1,stdout").unwrap();
+        assert!(verbosity.print_status());
+        assert!(verbosity.print_success_message());
+        assert!(verbosity.print_success_stdout());
+        assert!(!verbosity.print_success_stderr());
+    }
+
+    #[test]
+    fn test_stdout_is_not_part_of_any_level() {
+        for level in 0..=4 {
+            let verbosity = Verbosity::try_from_cli(&level.to_string()).unwrap();
+            assert!(!verbosity.print_success_stdout(), "level {level}");
+        }
+        assert!(Verbosity::try_from_cli("4").unwrap().print_success_stderr());
+        assert!(!Verbosity::default().print_success_stdout());
+    }
+
+    #[test]
+    fn test_all_items_at_once() {
+        let verbosity = Verbosity::try_from_cli(
+            "4,stderr,stdout,full_failed_command,commands,actions,status,stats,success",
+        )
+        .unwrap();
+        assert!(verbosity.print_success_stderr());
+        assert!(verbosity.print_success_stdout());
+        assert!(verbosity.print_failure_full_command());
+        assert!(verbosity.print_all_commands());
+        assert!(verbosity.print_all_actions());
+        assert!(verbosity.print_status());
+        assert!(verbosity.always_print_stats_in_status());
+        assert!(verbosity.print_success_message());
     }
 
     #[test]

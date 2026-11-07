@@ -53,6 +53,10 @@ pub struct RunActionKnobs {
     /// and the traffic to it grows, in steps that are the same on every host. A write within
     /// the share goes through the cache whatever `write_action_cache` says.
     pub write_action_cache_populate: RolloutFraction,
+
+    /// Keep the stdout of successful commands in the `ActionExecutionEnd` event (and so in the
+    /// event log and the console). By default only the stdout of failed commands is kept.
+    pub keep_action_stdout: bool,
 }
 
 /// How write actions use the action cache; `buck2.write_action_cache`. Whether a miss is

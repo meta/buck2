@@ -1041,6 +1041,11 @@ impl<'d> BuckActionExecutor<'d> {
     pub fn invalidation_tracking_enabled(&self) -> bool {
         self.invalidation_tracking_enabled
     }
+
+    /// Whether the stdout of successful commands should be kept in the action's events.
+    pub fn keep_action_stdout(&self) -> bool {
+        self.run_action_knobs.keep_action_stdout
+    }
 }
 
 #[cfg(test)]

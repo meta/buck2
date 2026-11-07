@@ -18,7 +18,7 @@ use dice_core::Cert;
 use dice_core::Change;
 use dice_core::CoreState;
 use dice_core::Env;
-use dice_core::KeyMap;
+use dice_core::KeyVec;
 use dice_core::Lookup;
 use dupe::Dupe;
 use pagable::DataKey;
@@ -308,7 +308,7 @@ pub(crate) struct BackedSnapshot {
 #[derive(Allocative)]
 pub(crate) struct VersionedGraph {
     core: CoreState<DiceEnv>,
-    values: KeyMap<KeyValues>,
+    values: KeyVec<KeyValues>,
     #[allocative(skip)]
     index: PagableIndex,
     /// Which values a page-out writes; see [`PageOutPolicy`].
@@ -319,7 +319,7 @@ impl VersionedGraph {
     pub(crate) fn new() -> Self {
         VersionedGraph {
             core: CoreState::new(),
-            values: KeyMap::default(),
+            values: KeyVec::default(),
             index: PagableIndex::default(),
             page_out_policy: PageOutPolicy::default(),
         }
@@ -368,13 +368,13 @@ impl VersionedGraph {
     }
 
     fn with_values_of<R>(
-        values: &mut KeyMap<KeyValues>,
+        values: &mut KeyVec<KeyValues>,
         index: &mut PagableIndex,
         policy: PageOutPolicy,
         key: DiceKey,
         f: impl FnOnce(&mut KeyValues) -> R,
     ) -> R {
-        let key_values = values.entry(key).or_default();
+        let key_values = values.get_or_insert_with(key, KeyValues::default);
         let before = key_values.contribution(policy);
         let result = f(key_values);
         let after = key_values.contribution(policy);
@@ -641,13 +641,13 @@ impl VersionedGraph {
     /// Every paged-out value, with its key.
     pub(crate) fn paged_out_keys(&self) -> Vec<(DiceKey, DataKey)> {
         let mut out = Vec::with_capacity(self.index.paged_out_count);
-        for (key, kv) in &self.values {
+        for (key, kv) in self.values.iter() {
             if kv.injected {
                 continue;
             }
             for value in kv.values() {
                 if let Some(data_key) = value.data_key() {
-                    out.push((*key, data_key));
+                    out.push((key, data_key));
                 }
             }
         }
@@ -660,18 +660,18 @@ impl VersionedGraph {
         let mut resident = Vec::with_capacity(self.index.resident_count);
         let mut paged_out = Vec::with_capacity(self.index.paged_out_count);
         let mut backed = Vec::with_capacity(self.index.backed_count);
-        for (key, kv) in &self.values {
+        for (key, kv) in self.values.iter() {
             if kv.injected {
                 continue;
             }
             for value in kv.values() {
                 match value {
-                    PagableValue::PagedOut(_) => paged_out.push(*key),
+                    PagableValue::PagedOut(_) => paged_out.push(key),
                     PagableValue::Backed(_) => {
-                        resident.push(*key);
-                        backed.push(*key);
+                        resident.push(key);
+                        backed.push(key);
                     }
-                    _ => resident.push(*key),
+                    _ => resident.push(key),
                 }
             }
         }
@@ -805,7 +805,7 @@ impl VersionedGraph {
         let mut total = Contribution::default();
         let mut candidates = Vec::new();
         let mut backed = Vec::new();
-        for (key, kv) in &self.values {
+        for (key, kv) in self.values.iter() {
             let c = kv.contribution(self.page_out_policy);
             total.resident += c.resident;
             total.paged_out += c.paged_out;
@@ -818,7 +818,7 @@ impl VersionedGraph {
             if c.backed > 0 {
                 backed.push(key.index as usize);
             }
-            for cert in self.core.pinned_certs(*key) {
+            for cert in self.core.pinned_certs(key) {
                 assert!(
                     kv.entry(cert.revision).is_some(),
                     "{key:?} pins a certificate at {:?} but retains no value for it",
@@ -827,7 +827,7 @@ impl VersionedGraph {
             }
             for (revision, _) in &kv.entries {
                 assert!(
-                    self.core.is_referenced(*key, *revision),
+                    self.core.is_referenced(key, *revision),
                     "{key:?} retains {revision:?}, which no claim or assertion names"
                 );
             }

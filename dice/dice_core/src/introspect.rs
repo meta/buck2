@@ -25,7 +25,7 @@ pub struct KeyIntrospection<'a, E: Env> {
 impl<E: Env> CoreState<E> {
     /// The keys the state holds anything for.
     pub fn keys(&self) -> impl Iterator<Item = Key> + '_ {
-        self.slots.keys().copied().chain(
+        self.slots.keys().chain(
             self.assertions
                 .keys()
                 .copied()

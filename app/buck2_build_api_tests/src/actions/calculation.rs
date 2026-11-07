@@ -484,6 +484,7 @@ async fn dice_with_test_file_ops(file_ops: &TestFileOps) -> buck2_error::Result<
         .await
         .unwrap();
     dice.set_cell_resolver(cells)?;
+    dice.set_buck_out_path(None)?;
     dice.set_file_system_baseline(FileSystemBaseline::unique())?;
     Ok(dice.commit().await)
 }

@@ -209,11 +209,15 @@ impl<'v> Display for ResolvedStringWithMacrosPart<'v> {
 )]
 pub struct ResolvedStringWithMacros<'v> {
     parts: MiniBoxSlice<ResolvedStringWithMacrosPart<'v>>,
+    /// Set only for anon-target-compatible args. Boxed because every resolved `attrs.arg()` value
+    /// carries this field, and inline it would take four words.
     #[trace(static)]
     #[freeze(identity)]
     #[starlark_pagable(pagable)]
-    configured_macros: Option<ConfiguredStringWithMacros>,
+    configured_macros: Option<Box<ConfiguredStringWithMacros>>,
 }
+
+size_assert::words_of_type!(ResolvedStringWithMacros, 2);
 
 starlark_complex_value!(pub ResolvedStringWithMacros);
 
@@ -234,7 +238,7 @@ impl<'v> ResolvedStringWithMacros<'v> {
     ) -> Self {
         Self {
             parts: parts.into(),
-            configured_macros: configured_macros.cloned(),
+            configured_macros: configured_macros.cloned().map(Box::new),
         }
     }
 
@@ -248,8 +252,8 @@ impl<'v> ResolvedStringWithMacros<'v> {
         }
     }
 
-    pub fn configured_macros(&self) -> &Option<ConfiguredStringWithMacros> {
-        &self.configured_macros
+    pub fn configured_macros(&self) -> Option<&ConfiguredStringWithMacros> {
+        self.configured_macros.as_deref()
     }
 }
 

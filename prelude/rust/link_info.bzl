@@ -291,9 +291,8 @@ RustOrNativeDependency = record(
 # `info`.
 RustDependency = record(
     info = field(RustLinkInfo | RustProcMacroInfo),
-    # For a proc macro, the label it is listed under in `ctx.plugins` (and so its key in
-    # `get_available_proc_macros`), not that of the alias in `deps`.
-    label = field(ConfiguredProvidersLabel),
+    # For a proc macro, its entry in `ctx.plugins`, so `dep.label` is its key in
+    # `get_available_proc_macros`.
     dep = field(Dependency),
     name = field(None | str | ResolvedStringWithMacros),
     flags = field(list[str]),
@@ -399,7 +398,9 @@ def gather_explicit_sysroot_deps(dep_ctx: DepCollectionContext) -> list[RustOrNa
         )
     return out
 
-def resolve_deps(ctx: AnalysisContext, dep_ctx: DepCollectionContext) -> list[RustOrNativeDependency]:
+# The deps as listed in the target's attrs, so a proc macro appears as its `rust_proc_macro_alias`,
+# whose providers are not the proc macro's. Read dependencies' providers through `resolve_deps`.
+def resolve_listed_deps(ctx: AnalysisContext, dep_ctx: DepCollectionContext) -> list[RustOrNativeDependency]:
     dependencies = _do_resolve_deps(
         deps = ctx.attrs.deps + dep_ctx.linker_deps,
         named_deps = ctx.attrs.named_deps,
@@ -416,29 +417,34 @@ def resolve_deps(ctx: AnalysisContext, dep_ctx: DepCollectionContext) -> list[Ru
 
     return dependencies + gather_explicit_sysroot_deps(dep_ctx)
 
-def resolve_rust_deps_inner(ctx: AnalysisContext, all_deps: list[RustOrNativeDependency]) -> list[RustDependency]:
-    rust_deps = []
+def resolve_deps(ctx: AnalysisContext, dep_ctx: DepCollectionContext) -> list[RustOrNativeDependency]:
     available_proc_macros = get_available_proc_macros(ctx)
-    for dep in all_deps:
+    out = []
+    for dep in resolve_listed_deps(ctx, dep_ctx):
         proc_macro_marker = dep.dep.get(RustProcMacroMarker)
         if proc_macro_marker != None:
-            proc_macro = available_proc_macros[proc_macro_marker.label]
-            label = proc_macro.label
-            info = proc_macro[RustProcMacroInfo]
+            dep = RustOrNativeDependency(
+                dep = available_proc_macros[proc_macro_marker.label],
+                name = dep.name,
+                flags = dep.flags,
+            )
         elif RustProcMacroInfo in dep.dep:
             # Only the alias propagates the proc macro as a plugin, which is
             # what makes it available to this crate's transitive dependents.
             fail("{}: proc macro `{}` must be depended on through its `rust_proc_macro_alias` target".format(ctx.label, dep.dep.label))
-        else:
-            label = dep.dep.label
-            info = dep.dep.get(RustLinkInfo)
-            if info == None:
-                continue
+        out.append(dep)
+    return out
+
+def resolve_rust_deps_inner(all_deps: list[RustOrNativeDependency]) -> list[RustDependency]:
+    rust_deps = []
+    for dep in all_deps:
+        info = dep.dep.get(RustProcMacroInfo) or dep.dep.get(RustLinkInfo)
+        if info == None:
+            continue
 
         rust_deps.append(
             RustDependency(
                 info = info,
-                label = label,
                 dep = dep.dep,
                 name = dep.name,
                 flags = dep.flags,
@@ -448,7 +454,7 @@ def resolve_rust_deps_inner(ctx: AnalysisContext, all_deps: list[RustOrNativeDep
 
 def resolve_rust_deps(ctx: AnalysisContext, dep_ctx: DepCollectionContext) -> list[RustDependency]:
     all_deps = resolve_deps(ctx, dep_ctx)
-    return resolve_rust_deps_inner(ctx, all_deps)
+    return resolve_rust_deps_inner(all_deps)
 
 def get_available_proc_macros(ctx: AnalysisContext) -> dict[TargetLabel, Dependency]:
     return {x.label.raw_target(): x for x in ctx.plugins[RustProcMacroPlugin]}

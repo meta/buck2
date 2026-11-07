@@ -1248,7 +1248,7 @@ def _compute_transitive_deps(
 
     for dep in resolve_rust_deps(ctx, dep_ctx):
         if isinstance(dep.info, RustProcMacroInfo):
-            transitive_proc_macro_deps.add(dep.label.raw_target())
+            transitive_proc_macro_deps.add(dep.dep.label.raw_target())
 
             # We don't want to propagate proc macros directly, and they have no transitive deps
             continue

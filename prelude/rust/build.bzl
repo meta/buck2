@@ -1114,7 +1114,7 @@ def dependency_args(
             if artifact == None:
                 fail(
                     "dependency `{}` was analyzed without a `{}` artifact (toolchain `{}`): `miri`-kind compiles need every dependency built by a toolchain with `miri_driver`".format(
-                        dep.label, dep_metadata_kind.value, toolchain_info.rustc_target_triple or "unknown"
+                        dep.dep.label, dep_metadata_kind.value, toolchain_info.rustc_target_triple or "unknown"
                     )
                 )
             singleton_tset = strategy.singleton_tset[dep_metadata_kind]
@@ -1124,7 +1124,7 @@ def dependency_args(
                 transitive_deps.append(available_proc_macros[label][RustProcMacroInfo].singleton_tset)
 
         args.add(extern_arg(dep.flags, crate, artifact))
-        crate_targets.append((crate, dep.label))
+        crate_targets.append((crate, dep.dep.label))
 
         # Because deps of this *target* can also be transitive deps of this
         # compiler invocation, pass the artifact (under its original crate name)

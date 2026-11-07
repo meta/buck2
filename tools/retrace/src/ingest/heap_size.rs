@@ -184,12 +184,16 @@ fn end_heap(end: &buck2_data::SpanEndEvent) -> Option<usize> {
             success,
             error,
             method,
+            url,
         })) => {
             no_owned_heap(file_count);
             no_owned_heap(total_bytes);
             no_owned_heap(success);
             no_owned_heap(method);
-            path.capacity() + optional_string(action_digest) + optional_string(error)
+            path.capacity()
+                + optional_string(action_digest)
+                + optional_string(error)
+                + optional_string(url)
         }
         _ => return None,
     })
@@ -488,6 +492,7 @@ mod tests {
                 success: false,
                 error: Some(spare("failure")),
                 method: Some(0),
+                url: None,
             })),
         ];
         for data in variants {

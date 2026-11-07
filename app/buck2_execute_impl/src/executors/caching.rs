@@ -23,9 +23,9 @@ use buck2_directory::directory::entry::DirectoryEntry;
 use buck2_error::BuckErrorContext;
 use buck2_events::dispatch::span_async;
 use buck2_execute::digest::CasDigestToReExt;
-use buck2_execute::digest_config::DigestConfig;
 use buck2_execute::directory::ActionDirectoryMember;
 use buck2_execute::directory::directory_to_re_tree;
+use buck2_execute::execute::action_digest::ActionDigest;
 use buck2_execute::execute::action_digest_and_blobs::ActionDigestAndBlobs;
 use buck2_execute::execute::blobs::ActionBlobs;
 use buck2_execute::execute::cache_uploader::CacheUploadInfo;
@@ -38,6 +38,7 @@ use buck2_execute::execute::result::CommandExecutionResult;
 use buck2_execute::materialize::materializer::MaterializationPurpose;
 use buck2_execute::materialize::materializer::MaterializeRequest;
 use buck2_execute::materialize::materializer::Materializer;
+use buck2_execute::re::action_identity::ReActionIdentity;
 use buck2_execute::re::client::ActionCacheWriteType;
 use buck2_execute::re::manager::ManagedRemoteExecutionClient;
 use dupe::Dupe;
@@ -122,7 +123,7 @@ impl CacheUploader {
                 name: Some(info.target.as_proto_action_name()),
                 action_digest: digest_str.clone(),
             },
-            async {
+            async move {
                 let mut file_digests = Vec::new();
                 let mut tree_digests = Vec::new();
 
@@ -144,6 +145,13 @@ impl CacheUploader {
                         return (outcome, None);
                     }
 
+                    let identity = ReActionIdentity::new(
+                        info.target,
+                        None,
+                        info.paths,
+                        Some(digest.raw_digest().to_string()),
+                    );
+
                     // upload Action to CAS.
                     // This is necessary when writing to the ActionCache through CAS, since CAS needs to inspect the Action related to the ActionResult.
                     // Without storing the Action itself to CAS, ActionCache writes would fail.
@@ -153,6 +161,7 @@ impl CacheUploader {
                             vec![],
                             vec![],
                             action_digest_and_blobs.blobs.to_inlined_blobs(),
+                            Some(&identity),
                         )
                         .await
                     {
@@ -167,10 +176,11 @@ impl CacheUploader {
                     // upload ActionResult to ActionCache
                     let mut result: TActionResult2 = match self
                         .upload_files_and_directories(
+                            info,
                             result,
                             &mut file_digests,
                             &mut tree_digests,
-                            info.digest_config,
+                            &digest,
                         )
                         .await
                     {
@@ -185,6 +195,7 @@ impl CacheUploader {
                         .write_action_result(
                             digest,
                             &mut result,
+                            Some(&identity),
                             &self.platform.to_re_platform(),
                             ActionCacheWriteType::LocalCacheUpload,
                         )
@@ -271,6 +282,7 @@ impl CacheUploader {
                             .action_cache(
                                 remote_dep_file_action.action,
                                 &self.platform.to_re_platform(),
+                                None,
                             )
                             .await,
                         Ok(Some(_))
@@ -291,6 +303,12 @@ impl CacheUploader {
                         })?;
 
                     let digest = remote_dep_file_action.action;
+                    let identity = ReActionIdentity::new(
+                        info.target,
+                        None,
+                        info.paths,
+                        Some(digest.raw_digest().to_string()),
+                    );
                     let dep_file_tany = TAny {
                         type_url: REMOTE_DEP_FILE_KEY.to_owned(),
                         value: remote_dep_file.encode_to_vec(),
@@ -306,6 +324,7 @@ impl CacheUploader {
                             vec![],
                             vec![],
                             remote_dep_file_action.blobs.to_inlined_blobs(),
+                            Some(&identity),
                         )
                         .await?;
 
@@ -314,6 +333,7 @@ impl CacheUploader {
                         .write_action_result(
                             digest,
                             action_result,
+                            Some(&identity),
                             &self.platform.to_re_platform(),
                             ActionCacheWriteType::RemoteDepFile,
                         )
@@ -359,16 +379,20 @@ impl CacheUploader {
 
     async fn upload_files_and_directories(
         &self,
+        info: &CacheUploadInfo<'_>,
         result: &CommandExecutionResult,
         file_digests: &mut Vec<TrackedFileDigest>,
         tree_digests: &mut Vec<TrackedFileDigest>,
-        digest_config: DigestConfig,
+        action_digest: &ActionDigest,
     ) -> buck2_error::Result<Result<TActionResult2, CacheUploadOutcome>> {
+        let digest_config = info.digest_config;
         let mut upload_futs = vec![];
         let mut output_files: Vec<TFile> = Vec::new();
         let mut output_directories: Vec<TDirectory2> = Vec::new();
 
         let mut outputs_to_materialize = Vec::new();
+        // Precompute the action_id string once since it's the same for all directory uploads.
+        let action_id = action_digest.raw_digest().to_string();
 
         for output_result in result.resolve_outputs(&self.artifact_fs) {
             let (output, content_path, value) = output_result?;
@@ -405,10 +429,25 @@ impl CacheUploader {
                     };
 
                     file_digests.push(f.digest.dupe());
+                    let action_id = action_id.clone();
                     upload_futs.push(
-                        self.re_client
-                            .upload_files_and_directories(vec![named_digest], vec![], vec![])
-                            .boxed(),
+                        async move {
+                            let identity = ReActionIdentity::new(
+                                info.target,
+                                None,
+                                info.paths,
+                                Some(action_id),
+                            );
+                            self.re_client
+                                .upload_files_and_directories(
+                                    vec![named_digest],
+                                    vec![],
+                                    vec![],
+                                    Some(&identity),
+                                )
+                                .await
+                        }
+                        .boxed(),
                     );
                 }
                 DirectoryEntry::Dir(d) => {
@@ -423,7 +462,16 @@ impl CacheUploader {
                         ..Default::default()
                     });
 
-                    let identity = None; // TODO(#503): implement this
+                    // ReActionIdentity contains references so it cannot be moved into the async
+                    // block. Create it inside the closure instead. The action_id is precomputed
+                    // above to avoid repeated string allocations.
+                    let identity = ReActionIdentity::new(
+                        info.target,
+                        None, // re_action_key not available in cache upload context
+                        info.paths,
+                        Some(action_id.clone()),
+                    );
+
                     let fut = async move {
                         self.re_client
                             .upload(
@@ -432,7 +480,7 @@ impl CacheUploader {
                                 &action_blobs,
                                 &content_path,
                                 &d.dupe().as_immutable(),
-                                identity,
+                                Some(&identity),
                             )
                             .await
                             .map(|_| ())

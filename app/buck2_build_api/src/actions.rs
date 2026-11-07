@@ -283,6 +283,7 @@ pub trait ActionExecutionCtx: Send + Sync {
 
     async fn cache_upload(
         &mut self,
+        request: &CommandExecutionRequest,
         action: &ActionDigestAndBlobs,
         execution_result: &CommandExecutionResult,
         re_result: Option<&mut TActionResult2>,

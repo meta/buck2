@@ -1,0 +1,19 @@
+[package]
+description = "Shared Google protobufs used by Buck2 gRPC clients"
+edition = "2024"
+license = { workspace = true }
+name = "google_grpc_proto"
+repository = { workspace = true }
+version = "0.1.0"
+
+[dependencies]
+prost = { workspace = true }
+prost-types = { workspace = true }
+serde = { workspace = true, features = ["derive"] }
+tonic = { workspace = true }
+tonic-prost = { workspace = true }
+
+buck2_proto_serde = { workspace = true }
+
+[build-dependencies]
+buck2_protoc_dev = { workspace = true }

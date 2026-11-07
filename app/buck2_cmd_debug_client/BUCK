@@ -25,6 +25,7 @@ rust_library(
         "//buck2/app/buck2_event_log:buck2_event_log",
         "//buck2/app/buck2_events:buck2_events",
         "//buck2/app/buck2_fs:buck2_fs",
+        "//buck2/app/buck2_hash:buck2_hash",
         "//buck2/app/buck2_log_common:buck2_log_common",
         "//buck2/app/buck2_offline_archive:buck2_offline_archive",
         "//buck2/app/buck2_wrapper_common:buck2_wrapper_common",

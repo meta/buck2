@@ -226,7 +226,7 @@ where
             .branch(b)
             .rdeps
             .iter()
-            .flat_map(|(dep, dependents)| dependents.iter().map(move |k| (*dep, *k)))
+            .flat_map(|(dep, dependents)| dependents.iter().map(move |k| (dep, *k)))
             .collect();
         assert!(
             actual == expected,

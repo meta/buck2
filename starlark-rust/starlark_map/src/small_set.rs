@@ -102,6 +102,16 @@ impl<T> SmallSet<T> {
     pub fn into_iter_hashed(self) -> IntoIterHashed<T> {
         self.0.into_iter_hashed()
     }
+    /// Compute the difference between `self` and `other` returning a new set.
+    ///
+    /// Given `SmallSet::from_iter([1, 2, 3]).difference_with(&SmallSet::from_iter([2, 4, 5]))`
+    /// this yields `SmallSet::from_iter([1, 3])`.
+    pub fn difference_with(&self, other: &Self) -> SmallSet<T>
+    where
+        T: Eq + Clone,
+    {
+        SmallSet(self.0.difference_with(&other.0))
+    }
 
     /// Iterate over the elements of this set not present in `other`.
     #[inline]

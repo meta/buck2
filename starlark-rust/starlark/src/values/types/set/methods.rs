@@ -322,26 +322,11 @@ pub(crate) fn set_methods(builder: &mut MethodsBuilder) {
         #[starlark(require=pos)] other: ValueOf<'v, StarlarkIter<Value<'v>>>,
         heap: Heap<'v>,
     ) -> starlark::Result<SetData<'v>> {
-        if this.aref.content.is_empty() {
-            other.to_value().iterate(heap)?;
-            return Ok(SetData::default());
-        }
-
         let other_set = SetFromValue::from_value(other, heap)?;
 
-        if other_set.is_empty() {
-            return Ok(SetData {
-                content: this.aref.content.clone(),
-            });
-        }
+        let content = this.aref.content.difference_with(other_set.get());
 
-        let mut data = SetData::default();
-        for elem in this.aref.content.iter_hashed() {
-            if !other_set.contains_hashed(elem.copied()) {
-                data.add_hashed(elem.copied());
-            }
-        }
-        Ok(data)
+        Ok(SetData { content })
     }
 
     /// Test whether every element other iterable is in the set.

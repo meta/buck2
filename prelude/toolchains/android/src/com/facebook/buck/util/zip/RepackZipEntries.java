@@ -15,10 +15,7 @@ import com.google.common.collect.ImmutableSet;
 import com.google.common.hash.Hashing;
 import com.google.common.io.ByteStreams;
 import java.io.BufferedInputStream;
-import java.io.ByteArrayInputStream;
-import java.io.ByteArrayOutputStream;
 import java.io.IOException;
-import java.io.InputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.zip.ZipEntry;
@@ -49,24 +46,18 @@ public class RepackZipEntries {
           customEntry.setCompressionLevel(compressionLevel.getValue());
         }
 
-        InputStream toUse;
         // If we're using STORED files, we must pre-calculate the CRC.
         if (customEntry.getMethod() == ZipEntry.STORED) {
-          try (ByteArrayOutputStream bos = new ByteArrayOutputStream()) {
-            ByteStreams.copy(in, bos);
-            byte[] bytes = bos.toByteArray();
-            customEntry.setCrc(Hashing.crc32().hashBytes(bytes).padToLong());
-            customEntry.setSize(bytes.length);
-            customEntry.setCompressedSize(bytes.length);
-            toUse = new ByteArrayInputStream(bytes);
-          }
+          byte[] bytes = ByteStreams.toByteArray(in);
+          customEntry.setCrc(Hashing.crc32().hashBytes(bytes).padToLong());
+          customEntry.setSize(bytes.length);
+          customEntry.setCompressedSize(bytes.length);
+          out.putNextEntry(customEntry);
+          out.write(bytes);
+          out.closeEntry();
         } else {
-          toUse = in;
+          DeflatedZipEntries.write(out, customEntry, in);
         }
-
-        out.putNextEntry(customEntry);
-        ByteStreams.copy(toUse, out);
-        out.closeEntry();
       }
     }
   }

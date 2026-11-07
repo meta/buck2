@@ -11,6 +11,10 @@
 package com.facebook.buck.android.apk.sdk;
 
 import com.facebook.buck.android.apk.sdk.ApkJarBuilder.IZipEntryFilter.ZipAbortException;
+import com.facebook.buck.util.zip.CustomZipEntry;
+import com.facebook.buck.util.zip.CustomZipOutputStream;
+import com.facebook.buck.util.zip.DeflatedZipEntries;
+import com.facebook.buck.util.zip.ZipOutputStreams;
 import com.facebook.infer.annotation.Nullsafe;
 import com.google.common.collect.ImmutableSet;
 import java.io.BufferedOutputStream;
@@ -22,8 +26,6 @@ import java.io.OutputStream;
 import java.util.Calendar;
 import java.util.Objects;
 import java.util.Set;
-import java.util.jar.JarEntry;
-import java.util.jar.JarOutputStream;
 import java.util.zip.CRC32;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipInputStream;
@@ -33,6 +35,7 @@ import org.jetbrains.annotations.Nullable;
 @Nullsafe(Nullsafe.Mode.LOCAL)
 public class ApkJarBuilder {
   private static final long DOS_FAKE_TIME;
+  private static final int COMPRESSION_LEVEL = 4;
 
   /**
    * {@link java.util.zip.ZipEntry#setTime(long)} is timezone-sensitive. Use this value instead of a
@@ -58,7 +61,7 @@ public class ApkJarBuilder {
           "META-INF/services/kotlin.reflect.jvm.internal.impl.km.internal.extensions.MetadataExtensions",
           "META-INF/services/kotlinx.coroutines.CoroutineExceptionHandler",
           "META-INF/androidx.compose.ui_ui.version");
-  @Nullable private JarOutputStream mOutputJar;
+  @Nullable private CustomZipOutputStream mOutputJar;
   private byte[] mBuffer = new byte[256 * 1024];
   private boolean mPackageMetaInfVersionFiles;
 
@@ -109,8 +112,7 @@ public class ApkJarBuilder {
    * @throws IOException
    */
   public ApkJarBuilder(OutputStream out, boolean packageMetaInfVersionFiles) throws IOException {
-    mOutputJar = new JarOutputStream(new BufferedOutputStream(out));
-    mOutputJar.setLevel(4);
+    mOutputJar = ZipOutputStreams.newOutputStream(new BufferedOutputStream(out));
     mPackageMetaInfVersionFiles = packageMetaInfVersionFiles;
   }
 
@@ -127,7 +129,7 @@ public class ApkJarBuilder {
     try {
 
       // create the zip entry
-      JarEntry entry = new JarEntry(jarPath);
+      CustomZipEntry entry = new CustomZipEntry(jarPath);
       entry.setTime(DOS_FAKE_TIME);
 
       writeEntry(fis, entry);
@@ -145,7 +147,7 @@ public class ApkJarBuilder {
    * @throws IOException
    */
   public void writeStoredFile(File inputFile, String jarPath) throws IOException {
-    JarEntry entry = new JarEntry(jarPath);
+    CustomZipEntry entry = new CustomZipEntry(jarPath);
     entry.setTime(DOS_FAKE_TIME);
     entry.setMethod(ZipEntry.STORED);
     entry.setSize(inputFile.length());
@@ -208,14 +210,14 @@ public class ApkJarBuilder {
           continue;
         }
 
-        JarEntry newEntry;
+        CustomZipEntry newEntry;
 
         // Preserve the STORED method of the input entry.
-        if (entry.getMethod() == JarEntry.STORED) {
-          newEntry = new JarEntry(entry);
+        if (entry.getMethod() == ZipEntry.STORED) {
+          newEntry = new CustomZipEntry(entry);
         } else {
           // Create a new entry so that the compressed len is recomputed.
-          newEntry = new JarEntry(name);
+          newEntry = new CustomZipEntry(name);
         }
 
         newEntry.setTime(DOS_FAKE_TIME);
@@ -269,7 +271,13 @@ public class ApkJarBuilder {
    * @param entry the entry to write in the jar.
    * @throws IOException
    */
-  private void writeEntry(InputStream input, JarEntry entry) throws IOException {
+  private void writeEntry(InputStream input, CustomZipEntry entry) throws IOException {
+    if (entry.getMethod() != ZipEntry.STORED) {
+      entry.setCompressionLevel(COMPRESSION_LEVEL);
+      DeflatedZipEntries.write(Objects.requireNonNull(mOutputJar), entry, input);
+      return;
+    }
+
     // add the entry to the jar archive
     Objects.requireNonNull(mOutputJar).putNextEntry(entry);
 

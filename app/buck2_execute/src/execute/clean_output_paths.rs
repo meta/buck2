@@ -97,7 +97,7 @@ pub fn cleanup_path(fs: &ProjectRoot, path: &ProjectRelativePath) -> buck2_error
 /// used, which a directory never yields to, so racing with the sibling's `mkdir` cannot remove
 /// what the sibling put there.
 fn clear_stale_parent(parent: &AbsNormPath) -> buck2_error::Result<()> {
-    let Err(e) = fs_util::remove_file(parent) else {
+    let Err(e) = fs_util::remove_file_harder(parent) else {
         return Ok(());
     };
     match fs_util::symlink_metadata_if_exists(parent) {

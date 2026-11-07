@@ -661,7 +661,16 @@ pub fn insert_entry<D>(
         ));
         builder.insert(path.into(), entry)?;
     } else {
-        builder.insert(path.into(), entry)?;
+        match entry {
+            // A source directory at the project root, such as `src = "."` in the root package,
+            // has an empty path. `insert` rejects the empty path. The root of the builder is the
+            // project root, so merge the entries of the directory into the builder instead.
+            // The source listing is exhaustive, and `merge` would mark the root of the builder
+            // as exhaustive too. The root also contains `buck-out`, which the listing leaves out.
+            // `merge_entries` keeps the root non-exhaustive.
+            DirectoryEntry::Dir(dir) if path.is_empty() => builder.merge_entries(dir)?,
+            entry => builder.insert(path.into(), entry)?,
+        }
     }
 
     Ok(())
@@ -979,6 +988,45 @@ mod tests {
         relativize_directory(&mut dir, &path("a/d0"), &path("b"))?;
 
         assert_dirs_eq(&dir, &expected_dir);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_insert_dir_at_project_root() -> buck2_error::Result<()> {
+        let digest_config = DigestConfig::testing_default();
+        let file = || FileMetadata::empty(digest_config.cas_digest_config());
+
+        let mut root_dir = ActionDirectoryBuilder::empty_non_exhaustive();
+        insert_file(&mut root_dir, path("f"), file())?;
+        insert_file(&mut root_dir, path("d/f"), file())?;
+        // A source directory listing is exhaustive, like the one for the project root.
+        root_dir.mark_uniformly_exhaustive();
+        let root_dir = root_dir.fingerprint(digest_config.as_directory_serializer());
+
+        let mut builder = ActionDirectoryBuilder::empty_non_exhaustive();
+        insert_file(&mut builder, path("d/f"), file())?;
+        insert_file(&mut builder, path("buck-out/f"), file())?;
+        insert_entry(
+            &mut builder,
+            path(""),
+            DirectoryEntry::Dir(root_dir.into_builder()),
+        )?;
+
+        let mut expected = ActionDirectoryBuilder::empty_non_exhaustive();
+        for p in ["f", "d/f", "buck-out/f"] {
+            insert_file(&mut expected, path(p), file())?;
+        }
+        assert_dirs_eq(&builder, &expected);
+
+        // `buck-out` is not part of the project root listing, so the root of the input tree
+        // must stay non-exhaustive.
+        let fingerprinted = builder
+            .clone()
+            .fingerprint(digest_config.as_directory_serializer());
+        assert!(!fingerprinted.exhaustiveness_hash().is_exhaustive());
+
+        assert!(insert_file(&mut builder, path(""), file()).is_err());
 
         Ok(())
     }

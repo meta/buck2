@@ -129,7 +129,7 @@ libc = "0.2.186"
 libfuzzer-sys = "0.4.13"
 linked-hash-map = { version = "0.5", features = ["serde_impl"] }
 linkme = "0.3.37"
-log = { version = "0.4.34", features = ["kv_unstable", "kv_unstable_std"] }
+log = { version = "0.4.35", features = ["kv_unstable", "kv_unstable_std"] }
 logos = "0.16.1"
 lru = { version = "0.18.5", default-features = false }
 lsp-server = "0.10.0"

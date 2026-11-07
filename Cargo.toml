@@ -367,7 +367,7 @@ enum-map = "3.1.0"
 equivalent = "1.0.3"
 erased-serde = "0.4.11"
 faccess = "0.2.4"
-fancy-regex = "0.19.2"
+fancy-regex = "0.20.0"
 fbinit = "0.2"
 flate2 = { version = "1.1.10", features = ["rust_backend"], default-features = false }
 fnv = "1.0"

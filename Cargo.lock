@@ -2348,7 +2348,7 @@ dependencies = [
  "derive_more 2.1.1",
  "dice_error",
  "dupe",
- "fancy-regex 0.19.2",
+ "fancy-regex 0.20.0",
  "hex",
  "http",
  "hyper",
@@ -2400,7 +2400,7 @@ name = "buck2_errorformat"
 version = "0.1.0"
 dependencies = [
  "buck2_error",
- "fancy-regex 0.19.2",
+ "fancy-regex 0.20.0",
  "nom 8.0.0",
  "tracing",
 ]
@@ -2934,7 +2934,7 @@ dependencies = [
  "dice_futures",
  "dupe",
  "either",
- "fancy-regex 0.19.2",
+ "fancy-regex 0.20.0",
  "futures 0.3.34",
  "itertools 0.15.0",
  "pagable",
@@ -2977,7 +2977,7 @@ dependencies = [
  "dice_futures",
  "dupe",
  "either",
- "fancy-regex 0.19.2",
+ "fancy-regex 0.20.0",
  "futures 0.3.34",
  "glob",
  "hashbrown 0.17.1",
@@ -3184,7 +3184,7 @@ dependencies = [
  "display_container",
  "dupe",
  "enum-iterator",
- "fancy-regex 0.19.2",
+ "fancy-regex 0.20.0",
  "futures 0.3.34",
  "indoc",
  "itertools 0.15.0",
@@ -5435,9 +5435,9 @@ dependencies = [
 
 [[package]]
 name = "fancy-regex"
-version = "0.19.2"
+version = "0.20.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d301f5bf187b3c295fce6468d3875037a0bccc5f6b151c63cac2f85babf21912"
+checksum = "20ed7f62ce0ae0da1a8b93c3c7104ab7e0760a74491e097c701fff966e945390"
 dependencies = [
  "bit-set 0.8.0",
  "regex-automata",
@@ -8271,7 +8271,7 @@ dependencies = [
  "dashmap 6.2.1",
  "dupe",
  "either",
- "fancy-regex 0.19.2",
+ "fancy-regex 0.20.0",
  "indexmap",
  "inventory",
  "num-bigint 0.5.1",

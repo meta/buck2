@@ -35,14 +35,13 @@ use std::num::NonZeroU32;
 use std::ptr;
 use std::ptr::NonNull;
 use std::slice;
-use std::sync::Arc;
 use std::sync::MutexGuard;
-use std::sync::OnceLock;
 
 use allocative::Allocative;
 use allocative::Visitor;
 use bumpalo::Bump;
 use dupe::Dupe;
+use once_cell::race::OnceBox;
 use pagable::PagableDeserialize;
 use pagable::PagableDeserializer;
 use pagable::PagableSerialize;
@@ -215,7 +214,7 @@ pub(crate) struct Arena<A: ArenaAllocator> {
     /// Sizes claimed slots the sentinel vtable cannot size, and excludes new
     /// claims during walks. Set once for a restored heap; never for a heap
     /// built here.
-    deserialization_state: OnceLock<Arc<HeapDeserializationState>>,
+    deserialization_state: OnceBox<HeapDeserializationState>,
 }
 
 /// An entry met while walking an arena, decoded once per step
@@ -604,13 +603,16 @@ impl<A: ArenaAllocator> Arena<A> {
         })
     }
 
-    /// Install the state shared with deserialization exactly once.
-    pub(crate) fn set_deserialization_state(&self, state: Arc<HeapDeserializationState>) {
-        assert!(self.deserialization_state.set(state).is_ok());
+    /// Install the restored heap's deserialization state exactly once.
+    pub(crate) fn set_deserialization_state(&self, state: Box<HeapDeserializationState>) {
+        assert!(
+            self.deserialization_state.set(state).is_ok(),
+            "a deserialized heap state must only be initialized once",
+        );
     }
 
-    fn deserialization_state(&self) -> Option<&HeapDeserializationState> {
-        self.deserialization_state.get().map(Arc::as_ref)
+    pub(crate) fn deserialization_state(&self) -> Option<&HeapDeserializationState> {
+        self.deserialization_state.get()
     }
 
     /// Exclude allocation and sentinel installation while inspecting chunk metadata.
@@ -863,7 +865,7 @@ impl<A: ArenaAllocator> Arena<A> {
         &'a mut self,
         mut f: impl FnMut(AValueHeaderPtr<'a>),
     ) {
-        let sizes = self.deserialization_state.get().map(Arc::as_ref);
+        let sizes = self.deserialization_state.get();
         let _claims_held = sizes.map(HeapDeserializationState::hold_claims);
         // SAFETY: the claim hold excludes restored-heap allocation throughout
         // this walk; exclusive access excludes native-heap allocation.

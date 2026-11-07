@@ -25,16 +25,20 @@ use std::fmt::Debug;
 use std::fmt::Formatter;
 use std::hash::Hash;
 use std::hash::Hasher;
+use std::mem;
+use std::num::NonZeroUsize;
 use std::ops::Deref;
 use std::ptr;
 use std::sync::Arc;
 use std::sync::Mutex;
+use std::sync::MutexGuard;
 use std::sync::OnceLock;
 use std::sync::Weak;
 
 use allocative::Allocative;
 use allocative::FlameGraphBuilder;
 use dupe::Dupe;
+use once_cell::race::OnceBox;
 use pagable::DataKey;
 use pagable::PagableCursor;
 use pagable::PagableDeserialize;
@@ -230,17 +234,98 @@ pub(crate) mod heap_key_index {
 }
 
 /// Identifies one sealing of a heap, see `FrozenFrozenHeap::serialization_nonce`.
-#[derive(Debug, Clone, Copy, Allocative, PagableSerialize, PagableDeserialize)]
-pub(crate) struct HeapSerializationNonce(u128);
+///
+/// A `u128` split into low and high words: a `u128` field would make
+/// `FrozenFrozenHeap` 16-byte aligned. Serialized as the `u128`.
+#[derive(Debug, Clone, Copy, Allocative)]
+pub(crate) struct HeapSerializationNonce([u64; 2]);
 
 impl HeapSerializationNonce {
     fn random() -> Self {
-        Self(rand::rng().random())
+        Self::from_u128(rand::rng().random())
+    }
+
+    fn from_u128(nonce: u128) -> Self {
+        Self([nonce as u64, (nonce >> 64) as u64])
+    }
+
+    fn to_u128(self) -> u128 {
+        u128::from(self.0[0]) | (u128::from(self.0[1]) << 64)
     }
 
     pub(crate) fn to_le_bytes(self) -> [u8; 16] {
-        self.0.to_le_bytes()
+        self.to_u128().to_le_bytes()
     }
+}
+
+impl PagableSerialize for HeapSerializationNonce {
+    fn pagable_serialize(&self, serializer: &mut dyn PagableSerializer) -> pagable::Result<()> {
+        self.to_u128().pagable_serialize(serializer)
+    }
+}
+
+impl<'de> PagableDeserialize<'de> for HeapSerializationNonce {
+    fn pagable_deserialize<D: PagableDeserializer<'de> + ?Sized>(
+        deserializer: &mut D,
+    ) -> pagable::Result<Self> {
+        u128::pagable_deserialize(deserializer).map(Self::from_u128)
+    }
+}
+
+/// An `Option<usize>` in one word: `Some(n)` is stored as `n + 1` and `None` as zero. A heap's
+/// byte count is at most `isize::MAX`, so `n + 1` does not overflow.
+#[derive(Clone, Copy, Allocative)]
+struct PeakAllocatedBytes(Option<NonZeroUsize>);
+
+impl PeakAllocatedBytes {
+    fn new(bytes: Option<usize>) -> Self {
+        Self(bytes.map(|bytes| {
+            NonZeroUsize::new(bytes.wrapping_add(1))
+                .expect("a heap's byte count should be below `usize::MAX`")
+        }))
+    }
+
+    fn get(self) -> Option<usize> {
+        self.0.map(|stored| stored.get() - 1)
+    }
+}
+
+/// Links that only a heap taking part in a page-out or page-in acquires.
+#[derive(Default)]
+struct HeapPagingLinks {
+    /// Heaps retained beyond the ref list: targets of pointers from this heap's
+    /// values that were bound by identity rather than through a ref list, and
+    /// so are held here by the heap that uses them.
+    retained: Vec<OwnedFrozen<()>>,
+    /// Live serialization states this heap is registered with; dropping the
+    /// heap unregisters its chunks from each. Production paging creates at
+    /// most one `StarlarkSerState` per process, but in-process test runners
+    /// (plain `cargo test` runs every test of a binary in one process, each
+    /// test with its own state) can register a shared heap with several live
+    /// states at once. `register_ser_state` prunes dead entries so that a heap
+    /// outliving many states (e.g. a static heap) does not accumulate them.
+    ser_states: Vec<Weak<StarlarkSerState>>,
+}
+
+#[allow(unused)] // Allocative impls are considered unused
+fn visit_paging_links(
+    links: &OnceBox<Mutex<HeapPagingLinks>>,
+    visitor: &mut allocative::Visitor<'_>,
+) {
+    // Counts the box, not the vectors' buffers or what they point to.
+    let mut visitor = visitor.enter_self_sized::<OnceBox<Mutex<HeapPagingLinks>>>();
+    if links.get().is_some() {
+        let mut visitor = visitor.enter_unique(
+            allocative::Key::new("ptr"),
+            mem::size_of::<*const Mutex<HeapPagingLinks>>(),
+        );
+        visitor.visit_simple(
+            allocative::Key::new("HeapPagingLinks"),
+            mem::size_of::<Mutex<HeapPagingLinks>>(),
+        );
+        visitor.exit();
+    }
+    visitor.exit();
 }
 
 /// A sealed frozen heap: no longer allocated on, and shared between threads through
@@ -253,35 +338,32 @@ struct FrozenFrozenHeap {
     // allocations are interchangeable; the nonce prevents independent serializations from
     // sharing a `DataKey`.
     #[allocative(skip)]
-    serialization_nonce: OnceLock<HeapSerializationNonce>,
+    serialization_nonce: HeapSerializationNonce,
     arena: Arena<ChunkAllocator>,
     /// Unset for a heap restored from storage whose header is not loaded:
     /// its dependencies are unknown until something resolves into it.
     refs: LazyHeapRefs,
     // TODO(nero): remove Option here, make it required.
     #[allocative(skip)] // We don't really expect it to be big
-    name: OnceLock<FrozenHeapName>,
-    /// Heaps retained beyond the ref list: targets of pointers from this heap's
-    /// values that were bound by identity rather than through a ref list, and
-    /// so are held here by the heap that uses them. Shared allocations,
-    /// accounted where they are owned.
-    #[allocative(skip)]
-    retained: Mutex<Vec<OwnedFrozen<()>>>,
-    peak_allocated_bytes: Option<usize>,
-    /// Live serialization states this heap is registered with. Production
-    /// paging creates at most one `StarlarkSerState` per process, so at most
-    /// one live entry exists there; multiple live entries occur only under
-    /// in-process test runners (plain `cargo test` runs every test of a
-    /// binary in one process, each test with its own state). Not a
-    /// `OnceLock<Weak<StarlarkSerState>>` because a dead `Weak` could never
-    /// be replaced: a heap that outlives a state (e.g. a static heap) could
-    /// then never register with a later state. `register_ser_state` prunes
-    /// dead entries for the same reason.
-    #[allocative(skip)]
-    ser_states: Mutex<Vec<Weak<StarlarkSerState>>>,
-    #[allocative(skip)]
-    deser_state: OnceLock<Arc<HeapDeserializationState>>,
+    name: Option<FrozenHeapName>,
+    #[allocative(visit = visit_paging_links)]
+    paging_links: OnceBox<Mutex<HeapPagingLinks>>,
+    peak_allocated_bytes: PeakAllocatedBytes,
 }
+
+// `PartialPagableArc` allocates the heap beside a `OnceLock<DataKey>`, after
+// `Arc`'s two counts; that allocation is one per sealed heap, so keep it in
+// jemalloc's 192-byte class on 64-bit targets.
+#[cfg(target_pointer_width = "64")]
+const _: () = {
+    assert!(mem::align_of::<FrozenFrozenHeap>() == mem::align_of::<usize>());
+    assert!(
+        2 * mem::size_of::<usize>()
+            + mem::size_of::<FrozenFrozenHeap>()
+            + mem::size_of::<OnceLock<DataKey>>()
+            <= 192
+    );
+};
 
 /// A heap's dependencies, set once: at seal for a heap built here, when its
 /// header is loaded for a heap restored from storage.
@@ -353,8 +435,8 @@ impl FrozenFrozenHeap {
     /// See [`FrozenHeapArc::heap_ref_id`].
     fn heap_ref_id(&self) -> Option<HeapRefId> {
         Some(HeapRefId::new(
-            self.name.get()?,
-            *self.serialization_nonce.get()?,
+            self.name.as_ref()?,
+            self.serialization_nonce,
         ))
     }
 
@@ -363,15 +445,28 @@ impl FrozenFrozenHeap {
     /// arrive with its data.
     fn new_from_identity(name: FrozenHeapName, nonce: HeapSerializationNonce) -> Self {
         FrozenFrozenHeap {
-            serialization_nonce: OnceLock::from(nonce),
+            serialization_nonce: nonce,
             arena: Arena::default(),
             refs: LazyHeapRefs::default(),
-            name: OnceLock::from(name),
-            retained: Mutex::new(Vec::new()),
-            peak_allocated_bytes: None,
-            ser_states: Mutex::new(Vec::new()),
-            deser_state: OnceLock::new(),
+            name: Some(name),
+            paging_links: OnceBox::new(),
+            peak_allocated_bytes: PeakAllocatedBytes::new(None),
         }
+    }
+
+    /// The paging links, created on first use.
+    fn paging_links(&self) -> MutexGuard<'_, HeapPagingLinks> {
+        self.paging_links
+            .get_or_init(Default::default)
+            .lock()
+            .expect("paging links lock poisoned")
+    }
+
+    /// The paging links, or `None` for a heap that never took part in paging.
+    fn existing_paging_links(&self) -> Option<MutexGuard<'_, HeapPagingLinks>> {
+        self.paging_links
+            .get()
+            .map(|links| links.lock().expect("paging links lock poisoned"))
     }
 
     /// Give a restored heap its deserialization state. `source` is `Some`
@@ -389,18 +484,15 @@ impl FrozenFrozenHeap {
         // SAFETY: `arena_ptr` points into `*heap`, whose arc keeps the state
         // and arena in one allocation lifetime; state lookup retains the heap
         // before borrowing this state.
-        let state = Arc::new(unsafe {
+        let state = Box::new(unsafe {
             HeapDeserializationState::new(scope.dupe(), heap_id, source, arena_ptr)
         });
-        heap.arena.set_deserialization_state(state.dupe());
-        assert!(
-            heap.deser_state.set(state).is_ok(),
-            "a deserialized heap state must only be initialized once",
-        );
+        heap.arena.set_deserialization_state(state);
     }
 
     fn register_ser_state(&self, state: &Arc<StarlarkSerState>) -> pagable::Result<()> {
-        let mut registered = self.ser_states.lock().expect("ser states lock poisoned");
+        let mut links = self.paging_links();
+        let registered = &mut links.ser_states;
         registered.retain(|existing| existing.strong_count() != 0);
         let state = Arc::downgrade(state);
         if !registered
@@ -446,16 +538,13 @@ impl FrozenFrozenHeap {
     fn serialize_inner(&self, serializer: &mut dyn PagableSerializer) -> crate::Result<()> {
         let heap_name = self
             .name
-            .get()
+            .as_ref()
             .expect("The name of the FrozenFrozenHeap should exist in starlark pagable serialize");
         heap_name.pagable_serialize(serializer)?;
-        // A restored heap reuses its data key, so only a heap built here -
-        // whose nonce and refs were set at seal - reaches this point.
-        self.serialization_nonce
-            .get()
-            .expect("a heap serialized from its arena was sealed here")
-            .pagable_serialize(serializer)?;
+        self.serialization_nonce.pagable_serialize(serializer)?;
 
+        // A restored heap reuses its data key, so only a heap built here -
+        // whose refs were set at seal - reaches this point.
         let refs = self.refs.get();
         refs.len().pagable_serialize(serializer)?;
         for heap_ref in refs.iter() {
@@ -627,8 +716,8 @@ pub(crate) fn cached_heap_deserialization_state_retained_bytes(
     // recipe reachable from multiple states from being counted once per heap.
     let mut builder = FlameGraphBuilder::default();
     for heap in &heaps {
-        if let Some(state) = heap.deser_state.get() {
-            builder.visit_root(state.as_ref());
+        if let Some(state) = heap.arena.deserialization_state() {
+            builder.visit_root(state);
         }
     }
     builder.finish().flamegraph().total_size()
@@ -636,20 +725,16 @@ pub(crate) fn cached_heap_deserialization_state_retained_bytes(
 
 impl Drop for FrozenFrozenHeap {
     fn drop(&mut self) {
-        if let Some(state) = self.deser_state.get() {
-            state.unregister_heap(FrozenHeapPtr(self as *const Self as usize));
+        let heap_ptr = FrozenHeapPtr(self as *const Self as usize);
+        if let Some(state) = self.arena.deserialization_state() {
+            state.unregister_heap(heap_ptr);
         }
 
-        let heap_ptr = FrozenHeapPtr(self as *const Self as usize);
-        let chunk_bases = self.arena.allocated_chunk_bases();
-        for state in self
-            .ser_states
-            .get_mut()
-            .expect("ser states lock poisoned")
-            .iter()
-            .filter_map(Weak::upgrade)
-        {
-            state.unregister_heap(heap_ptr, chunk_bases.iter().copied());
+        if let Some(links) = self.existing_paging_links() {
+            let chunk_bases = self.arena.allocated_chunk_bases();
+            for state in links.ser_states.iter().filter_map(Weak::upgrade) {
+                state.unregister_heap(heap_ptr, chunk_bases.iter().copied());
+            }
         }
     }
 }
@@ -690,13 +775,10 @@ impl PagableSerialize for FrozenHeapArc {
         // outside its own data, so page-in can know which heap a slot names
         // without loading its header.
         arc.name
-            .get()
+            .as_ref()
             .ok_or_else(|| pagable::Error::msg("a serialized frozen heap must have a name"))?
             .pagable_serialize(serializer)?;
-        arc.serialization_nonce
-            .get()
-            .expect("a heap sealed here or bound from a slot knows its nonce")
-            .pagable_serialize(serializer)?;
+        arc.serialization_nonce.pagable_serialize(serializer)?;
         let state = StarlarkSerializerImpl::get_or_create_state(serializer);
         state.ensure_chunk_index_registered(self)?;
         serializer.serialize_arc(arc)
@@ -809,7 +891,7 @@ impl FrozenHeapArc {
         let Some(arc) = &self.0 else {
             return Ok(());
         };
-        let Some(state) = arc.deser_state.get() else {
+        let Some(state) = arc.arena.deserialization_state() else {
             return Ok(());
         };
         if state.is_header_loaded() {
@@ -842,8 +924,8 @@ impl FrozenHeapArc {
     /// here, and for a restored one once its header is loaded.
     pub(crate) fn is_header_loaded(&self) -> bool {
         self.0.as_ref().is_none_or(|arc| {
-            arc.deser_state
-                .get()
+            arc.arena
+                .deserialization_state()
                 .is_none_or(|state| state.is_header_loaded())
         })
     }
@@ -851,13 +933,9 @@ impl FrozenHeapArc {
     /// Heaps held beyond the ref list, see [`Self::retain_dependency`].
     #[cfg(all(test, feature = "pagable", fbcode_build))]
     pub(crate) fn retained_beyond_refs(&self) -> Vec<FrozenHeapArc> {
-        self.0.as_ref().map_or_else(Vec::new, |arc| {
-            arc.retained
-                .lock()
-                .expect("retained lock poisoned")
-                .iter()
-                .map(|r| r.heap_arc().dupe())
-                .collect()
+        let links = self.0.as_ref().and_then(|arc| arc.existing_paging_links());
+        links.map_or_else(Vec::new, |links| {
+            links.retained.iter().map(|r| r.heap_arc().dupe()).collect()
         })
     }
 
@@ -867,11 +945,12 @@ impl FrozenHeapArc {
         let Some(arc) = &self.0 else {
             return Vec::new();
         };
-        let retained = arc.retained.lock().expect("retained lock poisoned");
+        let links = arc.existing_paging_links();
+        let retained = links.as_ref().map_or(&[][..], |links| &links.retained);
         arc.refs
             .get()
             .iter()
-            .chain(retained.iter())
+            .chain(retained)
             .map(|r| r.heap_arc().dupe())
             .collect()
     }
@@ -895,9 +974,9 @@ impl FrozenHeapArc {
         if arc.refs.get().iter().any(|r| r.heap_arc() == dep) {
             return;
         }
-        let mut retained = arc.retained.lock().expect("retained lock poisoned");
-        if !retained.iter().any(|r| r.heap_arc() == dep) {
-            retained.push(OwnedFrozen::for_heap(dep.dupe()));
+        let mut links = arc.paging_links();
+        if !links.retained.iter().any(|r| r.heap_arc() == dep) {
+            links.retained.push(OwnedFrozen::for_heap(dep.dupe()));
         }
     }
 }
@@ -989,8 +1068,8 @@ pub(crate) fn deserialize_heap_arc_with_recipe(
     FrozenFrozenHeap::install_deser_state(&heap, &scope, heap_id, None);
     let metadata_start = FrozenFrozenHeap::read_refs_and_body_header(&heap, de, &scope)
         .map_err(|e| e.into_anyhow())?;
-    heap.deser_state
-        .get()
+    heap.arena
+        .deserialization_state()
         .expect("installed above")
         .set_header(recipe, metadata_start);
     scope.register_heap(
@@ -1017,7 +1096,7 @@ fn downcast_heap_arc(arc: &dyn ArcEraseDyn) -> crate::Result<FrozenHeapArc> {
 impl Debug for FrozenFrozenHeap {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         let mut x = f.debug_struct("FrozenHeap");
-        x.field("serialization_nonce", &self.serialization_nonce.get());
+        x.field("serialization_nonce", &self.serialization_nonce);
         x.field("bytes", &self.arena.allocated_bytes());
         x.field("refs", &self.refs.get().len());
         x.field("header_loaded", &self.refs.0.get().is_some());
@@ -1088,14 +1167,12 @@ impl FrozenHeapArc {
         peak_allocated_bytes: Option<usize>,
     ) -> Self {
         Self(Some(PartialPagableArc::new(FrozenFrozenHeap {
-            serialization_nonce: OnceLock::from(HeapSerializationNonce::random()),
+            serialization_nonce: HeapSerializationNonce::random(),
             arena,
             refs: LazyHeapRefs::resident(refs),
-            name: name.map_or_else(OnceLock::new, OnceLock::from),
-            retained: Mutex::new(Vec::new()),
-            peak_allocated_bytes,
-            ser_states: Mutex::new(Vec::new()),
-            deser_state: OnceLock::new(),
+            name,
+            paging_links: OnceBox::new(),
+            peak_allocated_bytes: PeakAllocatedBytes::new(peak_allocated_bytes),
         })))
     }
 
@@ -1116,8 +1193,7 @@ impl FrozenHeapArc {
     pub(crate) fn deser_state(&self) -> Option<&HeapDeserializationState> {
         self.0
             .as_ref()
-            .and_then(|heap| heap.deser_state.get())
-            .map(Arc::as_ref)
+            .and_then(|heap| heap.arena.deserialization_state())
     }
 
     pub(crate) fn register_heap_graph_in_deser_scope(
@@ -1155,7 +1231,7 @@ impl FrozenHeapArc {
     }
 
     pub(crate) fn peak_allocated_bytes(&self) -> Option<usize> {
-        self.0.as_ref().and_then(|a| a.peak_allocated_bytes)
+        self.0.as_ref().and_then(|a| a.peak_allocated_bytes.get())
     }
 
     pub(crate) fn available_bytes(&self) -> usize {
@@ -1169,7 +1245,7 @@ impl FrozenHeapArc {
     }
 
     pub(crate) fn name(&self) -> Option<&FrozenHeapName> {
-        self.0.as_ref().and_then(|a| a.name.get())
+        self.0.as_ref().and_then(|a| a.name.as_ref())
     }
 
     /// The identity pointers into this heap are written against: its name and
@@ -1181,7 +1257,7 @@ impl FrozenHeapArc {
 
     #[cfg(test)]
     pub(crate) fn serialization_nonce(&self) -> Option<HeapSerializationNonce> {
-        self.0.as_ref()?.serialization_nonce.get().copied()
+        Some(self.0.as_ref()?.serialization_nonce)
     }
 
     /// The frozen heaps that this frozen heap depends on. Empty for a heap
@@ -1304,11 +1380,11 @@ impl FrozenFrozenHeap {
         let heap_ptr = self as *const Self as usize;
         let heap_name = self
             .name
-            .get()
+            .as_ref()
             .map(ToString::to_string)
             .unwrap_or_else(|| "<unnamed>".to_owned());
 
-        if let Some(state) = self.deser_state.get() {
+        if let Some(state) = self.arena.deserialization_state() {
             let original_recipe_index = state.original_value_index(raw_ptr)?;
             return Some(FrozenValueLocationDiagnostic {
                 heap_name,
@@ -1403,7 +1479,7 @@ impl FrozenFrozenHeap {
 
         error.with_context(format!(
             "serializing heap `{heap_name}` allocation {heap_ptr:#x} value_index {value_index} type `{value_type}`; source_heap_is_restored={}, direct_ref_count={}; {target_diagnostic}",
-            self.deser_state.get().is_some(),
+            self.arena.deserialization_state().is_some(),
             self.refs.get().len(),
         ))
     }

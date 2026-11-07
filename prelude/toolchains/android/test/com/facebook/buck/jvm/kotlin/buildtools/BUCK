@@ -32,6 +32,7 @@ buck_kotlin_test(
         "prelude//toolchains/android/third-party:kotlinx-coroutines-core-jvm",
     ],
     deps = [
+        # @oss-disable[end= ]: "fbsource//fbandroid/java/com/facebook/kotlin/compilercompat:compilercompat",
         "prelude//toolchains/android/src/com/facebook/buck/core/filesystems:filesystems",
         "prelude//toolchains/android/src/com/facebook/buck/jvm/java:support",
         "prelude//toolchains/android/src/com/facebook/buck/jvm/kotlin/buildtools:buildtools",

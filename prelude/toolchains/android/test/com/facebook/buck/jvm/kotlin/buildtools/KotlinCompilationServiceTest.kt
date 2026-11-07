@@ -18,8 +18,12 @@ import com.facebook.buck.jvm.kotlin.kotlinc.incremental.KotlinSourceChanges
 import com.facebook.buck.jvm.kotlin.kotlinc.incremental.KotlincMode
 import com.facebook.buck.testutil.TemporaryPaths
 import com.google.common.collect.ImmutableList
+import java.io.ByteArrayOutputStream
 import java.io.File
+import java.io.PrintStream
 import java.nio.file.Files
+import java.nio.file.Path
+import java.nio.file.Paths
 import java.nio.file.attribute.FileTime
 import java.util.UUID
 import java.util.jar.JarFile
@@ -488,6 +492,45 @@ internal class KotlinCompilationServiceTest {
     Files.writeString(output, "previous successful report")
     assertEquals(CompilationResult.COMPILATION_ERROR, compile())
     assertEquals("previous successful report", Files.readString(output))
+  }
+
+  @Test
+  fun `compiler messages are printed in the kotlinc CLI format`() {
+    val broken =
+        KotlinSourceFile(sourcesDir.resolve("Broken.kt"), "fun f(): Int {\n  return \"s\"\n}")
+    val deprecated = KotlinSourceFile(
+        sourcesDir.resolve("Deprecated.kt"),
+        "@Deprecated(\"d\") fun old() {}\nfun g() {\n  old()\n}",
+    )
+    fun compile(source: KotlinSourceFile): Pair<CompilationResult, List<String>> {
+      val stdErr = ByteArrayOutputStream()
+      val result =
+          kotlinCompilationService.compile(
+              ProjectId.ProjectUUID(UUID.randomUUID()),
+              createCompilerArgs(listOf(source), classesDir),
+              KotlincMode.NonIncremental,
+              BuckKotlinLogger(PrintStream(stdErr, true), mock()),
+          )
+      return result to stdErr.toString().lines()
+    }
+    // kotlinc prints paths under the working directory relative to it.
+    val cwd = Paths.get("").toAbsolutePath()
+    fun shown(source: KotlinSourceFile): Path =
+        source.absPath.path.let { if (it.startsWith(cwd)) cwd.relativize(it) else it }
+
+    val (errorResult, errorLines) = compile(broken)
+    assertEquals(CompilationResult.COMPILATION_ERROR, errorResult)
+    assertEquals(
+        "${shown(broken)}:2:10: error: return type mismatch: expected 'Int', actual 'String'.",
+        errorLines[0],
+    )
+    assertEquals("  return \"s\"", errorLines[1])
+    assertTrue(errorLines[2], errorLines[2].matches(Regex(" {9}\\^+")))
+
+    val (warningResult, warningLines) = compile(deprecated)
+    assertEquals(CompilationResult.COMPILATION_SUCCESS, warningResult)
+    assertTrue(warningLines[0], warningLines[0].startsWith("${shown(deprecated)}:3:3: warning: "))
+    assertEquals("  old()", warningLines[1])
   }
 
   @Test

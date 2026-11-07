@@ -26,7 +26,8 @@ pub struct RunActionKnobs {
 
     /// Whether to try reading from the action output cache (in buck-out/*/offline-cache)
     /// for network actions (download_file, cas_artifact). Used to support offline
-    /// builds.
+    /// builds. The cache is only populated when tracing I/O
+    /// (`buck2 debug trace-io`), so this is not a general-purpose download cache.
     pub use_network_action_output_cache: bool,
 
     /// Default for per-action `allow_cache_upload`, to make it opt-out instead of opt-in.

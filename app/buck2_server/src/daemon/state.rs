@@ -230,6 +230,12 @@ pub struct RepoState {
     /// download_file have an execution component that is inherently non-local (
     /// e.g. making a HEAD request against the remote artifact to determine if
     /// it needs to be downloaded again).
+    ///
+    /// This is not a general-purpose download cache. The offline cache is only
+    /// populated while I/O is being traced (`buck2 debug trace-io`), so that the
+    /// outputs can be included in the offline archive; it is not filled by
+    /// ordinary builds. To avoid re-downloading outputs that are already on disk
+    /// across daemon restarts, use `buck2.sqlite_materializer_state` instead.
     pub use_network_action_output_cache: bool,
 
     /// Whether a command selecting this repo should ask the client to restart the daemon after an

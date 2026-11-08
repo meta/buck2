@@ -518,7 +518,7 @@ termcolor = "1.0"
 termimad = "0.35.5"
 termios = "0.3"
 termwiz = { git = "https://github.com/wezterm/wezterm.git", rev = "05343b387085842b434d267f91b6b0ec157e4331", features = ["use_serde", "widgets"], default-features = false }
-test-case = "3.4.0"
+test-case = "3.4.1"
 textwrap = { version = "0.16.3", features = ["terminal_size"] }
 thiserror = "2.0.21"
 threadpool = "1.8.1"

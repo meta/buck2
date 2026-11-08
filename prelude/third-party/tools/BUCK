@@ -1,4 +1,4 @@
-load("@prelude//python/meta_only:config.bzl", "DEFAULT_PY_VERSION")
+# @oss-disable[end= ]: load("@prelude//python/meta_only:config.bzl", "DEFAULT_PY_VERSION")
 load("@prelude//utils:source_listing.bzl", "source_listing")
 
 oncall("build_infra")
@@ -12,11 +12,11 @@ prelude.python_bootstrap_binary(
     main = "create_build.py",
 )
 
-prelude.python_bootstrap_binary_stage0(
-    name = "create_build-construction",
-    interpreter = "fbcode//buck2/platform/python:interpreter-linux-stage0-{}".format(DEFAULT_PY_VERSION),
-    main = "create_build.py",
-)
+# @oss-disable[end= ]: prelude.python_bootstrap_binary_stage0(
+    # @oss-disable[end= ]: name = "create_build-construction",
+    # @oss-disable[end= ]: interpreter = "fbcode//buck2/platform/python:interpreter-linux-stage0-{}".format(DEFAULT_PY_VERSION),
+    # @oss-disable[end= ]: main = "create_build.py",
+# @oss-disable[end= ]: )
 
 prelude.alias(
     name = "create_build",

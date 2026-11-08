@@ -238,7 +238,7 @@ tokio-retry = "0.3.2"
 tokio-rustls = { version = "0.26.6", features = ["logging", "ring", "tls12"], default-features = false }
 tokio-stream = { version = "0.1.19", features = ["fs", "io-util", "net", "signal", "sync", "time"] }
 tokio-util = { version = "0.7.20", features = ["full"] }
-toml = { version = "1.1.8", features = ["preserve_order"] }
+toml = { version = "1.2.1", features = ["preserve_order"] }
 tonic = { version = "0.14.9", features = ["codegen", "gzip", "tls-native-roots", "tls-ring", "tls-webpki-roots", "transport"] }
 tonic-build = "0.14.9"
 tonic-prost = "0.14.9"

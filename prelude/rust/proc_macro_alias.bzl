@@ -11,38 +11,33 @@
 load("@prelude//decls:toolchains_common.bzl", "toolchains_common")
 load(":link_info.bzl", "RustProcMacroMarker", "RustProcMacroPlugin")
 
-def _without_top_level_marker_impl(platform: PlatformInfo, refs: struct) -> PlatformInfo:
-    marker = refs.top_level[ConstraintValueInfo].setting.label
-    return PlatformInfo(
-        label = platform.label,
-        configuration = ConfigurationInfo(
-            constraints = {setting: value for setting, value in platform.configuration.constraints.items() if setting != marker},
-            values = platform.configuration.values,
-        ),
-    )
-
-# Configures `actual` the same as when the proc macro is built directly.
-_without_top_level_marker = transition(
-    impl = _without_top_level_marker_impl,
-    refs = {"top_level": "prelude//rust/constraints:proc_macro_alias_top_level[true]"},
-)
-
 def _impl(ctx):
-    # `actual` is only set when the alias is built directly.
-    # `prelude//rust/constraints:proc_macro_alias_top_level[true]` is one of its target modifiers,
-    # and modifiers only apply to top-level targets. Without a cfg_constructor, and thus modifiers
-    # not enabled, `buck2 build :proc_macro` builds nothing.
-    if ctx.attrs.actual:
-        providers = list(ctx.attrs.actual.providers)
-    else:
-        providers = [DefaultInfo()]
+    # FIXME(JakobDegen): The rules themselves do not need any of the exec configured providers.
+    # They only ever access the `RustProcMacroMarker` provider and do everything else through
+    # plugins. However, we cannot return just that provider, since it results in
+    # `buck2 build :proc_macro` building nothing. We would get the right behavior out of the
+    # command line build invocation by taking a regular target dep on the aliased target and
+    # returning those targets. However, that also does not work because it would result the target
+    # configuration for a Rust library needing to be compatible with the target configuration for
+    # its proc macro deps (a Linux-only proc macro should still be usable in a Rust build targeting
+    # Mac).
+    #
+    # Instead, we take an exec dep on the aliased target and return those providers. This is a
+    # compromise solution. The upside is that it avoids introducing any unnecessary compatibility
+    # constraints. The downside is that it's still slightly wrong - because of the exec transition,
+    # the returned artifacts won't correctly obey opt level/sanitizer/platform constraints in the
+    # target configuration. However, this matches the behavior in fbsource today.
+    #
+    # Once config modifiers are implemented and roll out, it should not be too hard to get the fully
+    # correct behavior
+    providers = list(ctx.attrs.actual_exec.providers)
     providers.append(RustProcMacroMarker(label = ctx.attrs.actual_plugin))
     return providers
 
 rust_proc_macro_alias = rule(
     impl = _impl,
     attrs = {
-        "actual": attrs.option(attrs.transition_dep(cfg = _without_top_level_marker), default = None),
+        "actual_exec": attrs.exec_dep(),
         "actual_plugin": attrs.plugin_dep(kind = RustProcMacroPlugin),
         "_rust_toolchain": toolchains_common.rust(),
     },

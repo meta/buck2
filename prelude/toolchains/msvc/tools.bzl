@@ -183,7 +183,7 @@ def _find_roslyn_tools_impl(ctx: AnalysisContext) -> list[Provider]:
 
     cmd = [
         ctx.attrs.vswhere[RunInfo],
-        cmd_args(csc_exe_json.as_output(), format="--csc={}"),
+        cmd_args(csc_exe_json.as_output(), format = "--csc={}"),
     ]
 
     ctx.actions.run(
@@ -204,17 +204,19 @@ def _find_roslyn_tools_impl(ctx: AnalysisContext) -> list[Provider]:
         )
 
     return [
-        DefaultInfo(sub_targets = {
-            "csc.exe": [
-                RunInfo(args = [csc_exe_script]),
-                DefaultInfo(sub_targets = {
-                    "json": [DefaultInfo(default_output = csc_exe_json)],
-                }),
-            ],
-        }),
-        CSharpToolchainInfo(
-            csc = csc_exe_script
+        DefaultInfo(
+            sub_targets = {
+                "csc.exe": [
+                    RunInfo(args = [csc_exe_script]),
+                    DefaultInfo(
+                        sub_targets = {
+                            "json": [DefaultInfo(default_output = csc_exe_json)],
+                        }
+                    ),
+                ],
+            }
         ),
+        CSharpToolchainInfo(csc = csc_exe_script),
     ]
 
 _MSVC_TOOL_ATTRIBUTES = {

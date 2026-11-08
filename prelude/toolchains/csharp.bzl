@@ -44,11 +44,15 @@ system_csharp_toolchain = rule(
       visibility = ["PUBLIC"],
   )""",
     attrs = {
-        "csc": attrs.option(attrs.string(), default = None, doc = "Executable name or a path to the C# compiler frequently referred to as csc.exe. If not provided, the csc compiler is inferred from the CSharpToolchainInfo provided in the _csharp_tools_info attribute."),
+        "csc": attrs.option(
+            attrs.string(),
+            default = None,
+            doc = "Executable name or a path to the C# compiler frequently referred to as csc.exe. If not provided, the csc compiler is inferred from the CSharpToolchainInfo provided in the _csharp_tools_info attribute.",
+        ),
         "framework_dirs": attrs.dict(
             key = attrs.string(),
             value = attrs.one_of(attrs.source(), attrs.string()),
-            doc = "Dictionary of .NET framework assembly directories, where each key is a supported value in `framework_ver` and the value is a path to a directory containing .net assemblies such as System.dll matching the given framework version"
+            doc = "Dictionary of .NET framework assembly directories, where each key is a supported value in `framework_ver` and the value is a path to a directory containing .net assemblies such as System.dll matching the given framework version",
         ),
         "_csharp_tools_info": attrs.exec_dep(providers = [CSharpToolchainInfo], default = "prelude//toolchains/msvc:roslyn_tools"),
     },

@@ -11,31 +11,51 @@ load("@prelude//decls:common.bzl", "buck")
 load("@prelude//decls:toolchains_common.bzl", "toolchains_common")
 load("@prelude//utils:argfile.bzl", "at_argfile")
 load(":csharp_providers.bzl", "DllDepTSet", "DllReference", "DotNetLibraryInfo", "generate_target_tset_children")
-load(":toolchain.bzl", "CSharpToolchainInfo")
 load(":dotnet_common.bzl", "FrameworkVersion")
+load(":toolchain.bzl", "CSharpToolchainInfo")
 
 _CSHARP_LIBRARY_OR_EXE_ATTRIBUTES = {
-    "srcs": attrs.list(attrs.source(), default = [], doc = """
-              The set of C# source files to be compiled, and assembled by this rule.
-              Each element may be either a literal string (representing the path within this package), or a target.
-          """),
-    "framework_ver": attrs.enum(FrameworkVersion, doc = """
-              The version of the .Net framework that this library targets. This is
-              one of """ + ", ".join(FrameworkVersion) + """.
-          """),
-    "deps": attrs.list(attrs.one_of(attrs.dep(providers = [DotNetLibraryInfo]), attrs.string()), default = [], doc = """
-              The set of targets or system-provided assemblies this target depends on. Any
-              values that are targets must be either csharp\\_library or `prebuilt_dotnet_library`
-              instances.
-          """),
-    "compiler_flags": attrs.list(attrs.arg(), default = [], doc = """
-              The set of additional compiler flags.
-          """),
-    "add_hermetic_arguments": attrs.bool(default = True, doc = """
+    "add_hermetic_arguments": attrs.bool(
+        default = True,
+        doc = """
               If true, the following arguments are passed to the compiler: "/noconfig", "/nostdlib" and "/nosdkpath".
               These attributes prevent loading of default assemblies by the compiler so that they can be explicitly
               controlled in Buck2.
-          """),
+          """,
+    ),
+    "compiler_flags": attrs.list(
+        attrs.arg(),
+        default = [],
+        doc = """
+              The set of additional compiler flags.
+          """,
+    ),
+    "deps": attrs.list(
+        attrs.one_of(attrs.dep(providers = [DotNetLibraryInfo]), attrs.string()),
+        default = [],
+        doc = """
+              The set of targets or system-provided assemblies this target depends on. Any
+              values that are targets must be either csharp\\_library or `prebuilt_dotnet_library`
+              instances.
+          """,
+    ),
+    "framework_ver": attrs.enum(
+        FrameworkVersion,
+        doc = """
+              The version of the .Net framework that this library targets. This is
+              one of """
+        + ", ".join(FrameworkVersion)
+        + """.
+          """,
+    ),
+    "srcs": attrs.list(
+        attrs.source(),
+        default = [],
+        doc = """
+              The set of C# source files to be compiled, and assembled by this rule.
+              Each element may be either a literal string (representing the path within this package), or a target.
+          """,
+    ),
 }
 
 def _csharp_library_or_exe_artifact(ctx: AnalysisContext, library_or_exe_name: str, target_type: str) -> (Artifact, list[DllDepTSet]):
@@ -92,12 +112,14 @@ def _csharp_library_or_exe_artifact(ctx: AnalysisContext, library_or_exe_name: s
     # NOTE: This must happen after /out and /target!
     response_file_args.append(ctx.attrs.srcs)
 
-    cmd.append(at_argfile(
-        actions = ctx.actions,
-        name = "csc_args.rsp",
-        args = cmd_args(response_file_args, quote = "shell"),
-        allow_args = True,
-    ))
+    cmd.append(
+        at_argfile(
+            actions = ctx.actions,
+            name = "csc_args.rsp",
+            args = cmd_args(response_file_args, quote = "shell"),
+            allow_args = True,
+        )
+    )
 
     # Run the C# compiler to produce the output artifact.
     ctx.actions.run(cmd, category = "csharp_compile")
@@ -228,11 +250,14 @@ csharp_binary = prelude_rule(
     attrs = (
         # @unsorted-dict-items
         {
-            "exe_name": attrs.string(default = "", doc = """
+            "exe_name": attrs.string(
+                default = "",
+                doc = """
                 The output name of the executable. This allows you to specify the name of
                  the executable exactly. When this is not set, the executable will be named after
                  the short name of the target.
-            """),
+            """,
+            ),
         }
         | _CSHARP_LIBRARY_OR_EXE_ATTRIBUTES
         | buck.licenses_arg()

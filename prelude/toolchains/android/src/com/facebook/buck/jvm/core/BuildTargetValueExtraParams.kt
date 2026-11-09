@@ -13,7 +13,6 @@ package com.facebook.buck.jvm.core
 import com.facebook.buck.core.filesystems.RelPath
 import com.facebook.buck.jvm.cd.serialization.RelPathSerializer
 import com.facebook.buck.util.environment.Platform
-import com.google.common.base.Preconditions
 import com.google.common.base.Strings
 import java.util.Optional
 import java.util.regex.Pattern
@@ -58,19 +57,13 @@ data class BuildTargetValueExtraParams(
 
   /** Returns `gen` directory path for the given `target` and `format` */
   fun getGenPath(format: String): RelPath {
-    Preconditions.checkArgument(
-        !format.startsWith("/"),
-        "format string should not start with a slash",
-    )
+    require(!format.startsWith("/")) { "format string should not start with a slash" }
     return getRelativePath(format, scratchDir.resolveRel("gen"))
   }
 
   /** Returns `gen` directory path for the given `target` and `format` */
   fun getScratchPath(format: String): RelPath {
-    Preconditions.checkArgument(
-        !format.startsWith("/"),
-        "format string should not start with a slash",
-    )
+    require(!format.startsWith("/")) { "format string should not start with a slash" }
     return getRelativePath(format, scratchDir.resolveRel("bin"))
   }
 
@@ -79,10 +72,7 @@ data class BuildTargetValueExtraParams(
   }
 
   fun getBasePath(format: String): RelPath {
-    Preconditions.checkArgument(
-        !format.startsWith("/"),
-        "format string should not start with a slash",
-    )
+    require(!format.startsWith("/")) { "format string should not start with a slash" }
     return basePathForBaseName.resolveRel(formatLastSegment(format, shortNameAndFlavorPostfix))
   }
 
@@ -96,12 +86,13 @@ data class BuildTargetValueExtraParams(
         shortName: String,
         scratchDir: RelPath,
     ): BuildTargetValueExtraParams {
-      Preconditions.checkArgument(
-          shortNameAndFlavorPostfix.startsWith(shortName),
-          "shortNameAndFlavorPostfix:%s should start with shortName:%s",
-          shortNameAndFlavorPostfix,
-          shortName,
-      )
+      require(shortNameAndFlavorPostfix.startsWith(shortName)) {
+        String.format(
+            "shortNameAndFlavorPostfix:%s should start with shortName:%s",
+            shortNameAndFlavorPostfix,
+            shortName,
+        )
+      }
       return BuildTargetValueExtraParams(
           cellRelativeBasePath,
           flavored,
@@ -157,10 +148,7 @@ data class BuildTargetValueExtraParams(
      */
     private fun formatLastSegment(format: String, arg: String): String {
       var format = format
-      Preconditions.checkArgument(
-          !format.startsWith("/"),
-          "format string should not start with a slash",
-      )
+      require(!format.startsWith("/")) { "format string should not start with a slash" }
 
       if (Platform.detect() == Platform.WINDOWS) {
         // TODO(nga): prohibit backslashes in format

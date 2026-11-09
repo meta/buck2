@@ -51,5 +51,4 @@
 ## test\_config\_unification\_rollout
 ## transition
 ## transitive\_set
-## validate\_soft\_error\_category
 ## write\_package\_value

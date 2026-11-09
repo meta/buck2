@@ -38,10 +38,15 @@ public final class DeflatedZipEntries {
    */
   public static void write(CustomZipOutputStream out, CustomZipEntry entry, InputStream data)
       throws IOException {
+    write(out, entry, deflate(data, entry.getCompressionLevel()));
+  }
+
+  /** Deflates {@code data} in memory at {@code level}, as {@link #write} does. */
+  public static Deflated deflate(InputStream data, int level) throws IOException {
     CRC32 crc = new CRC32();
     ByteArrayOutputStream compressed = new ByteArrayOutputStream();
     long size = 0;
-    Deflater deflater = new Deflater(entry.getCompressionLevel(), /* nowrap= */ true);
+    Deflater deflater = new Deflater(level, /* nowrap= */ true);
     try (DeflaterOutputStream deflating =
         new DeflaterOutputStream(compressed, deflater, BUFFER_SIZE)) {
       byte[] buffer = new byte[BUFFER_SIZE];
@@ -53,14 +58,32 @@ public final class DeflatedZipEntries {
     } finally {
       deflater.end();
     }
+    return new Deflated(crc.getValue(), size, compressed);
+  }
 
+  /** Writes an entry whose data {@link #deflate} has already deflated. */
+  public static void write(CustomZipOutputStream out, CustomZipEntry entry, Deflated deflated)
+      throws IOException {
     entry.setMethod(ZipEntry.DEFLATED);
     entry.setRawCopy(true);
-    entry.setCrc(crc.getValue());
-    entry.setSize(size);
-    entry.setCompressedSize(compressed.size());
+    entry.setCrc(deflated.crc);
+    entry.setSize(deflated.size);
+    entry.setCompressedSize(deflated.compressed.size());
     out.putNextEntry(entry);
-    compressed.writeTo(out);
+    deflated.compressed.writeTo(out);
     out.closeEntry();
+  }
+
+  /** An entry's data deflated in memory, with its CRC and uncompressed size. */
+  public static final class Deflated {
+    private final long crc;
+    private final long size;
+    private final ByteArrayOutputStream compressed;
+
+    private Deflated(long crc, long size, ByteArrayOutputStream compressed) {
+      this.crc = crc;
+      this.size = size;
+      this.compressed = compressed;
+    }
   }
 }

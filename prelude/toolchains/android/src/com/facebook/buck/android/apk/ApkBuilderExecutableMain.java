@@ -13,6 +13,7 @@ package com.facebook.buck.android.apk;
 import com.android.apksig.ApkSigner;
 import com.facebook.buck.android.apk.sdk.ApkCreationException;
 import com.facebook.buck.android.apk.sdk.DuplicateFileException;
+import com.facebook.buck.android.apk.sdk.FastPackaging;
 import com.facebook.buck.android.apk.sdk.SealedApkException;
 import com.facebook.buck.android.zipalign.ZipAlign;
 import com.facebook.buck.util.zip.RepackZipEntries;
@@ -42,6 +43,8 @@ import org.kohsuke.args4j.Option;
 /** Main entry point for executing {@link ApkBuilderUtils} calls. */
 @Nullsafe(Nullsafe.Mode.LOCAL)
 public class ApkBuilderExecutableMain {
+  private static final int MAX_COMPRESSION_THREADS = 16;
+
   @Option(name = "--output-apk", required = true)
   private String outputApk;
 
@@ -90,6 +93,18 @@ public class ApkBuilderExecutableMain {
   @Nullable
   private String buildInfoGeneratorArgs = null;
 
+  @Option(
+      name = "--fast-packaging",
+      usage =
+          "Copy deflated entries of zip inputs without recompressing them, and deflate files on"
+              + " --compression-threads threads")
+  private boolean fastPackaging;
+
+  @Option(
+      name = "--compression-threads",
+      usage = "Threads that deflate files with --fast-packaging")
+  private int compressionThreads = 4;
+
   public static void main(String[] args) throws IOException {
     ApkBuilderExecutableMain main = new ApkBuilderExecutableMain();
     CmdLineParser parser = new CmdLineParser(main);
@@ -105,6 +120,13 @@ public class ApkBuilderExecutableMain {
   }
 
   private void run() throws IOException {
+    if (compressionThreads < 1 || compressionThreads > MAX_COMPRESSION_THREADS) {
+      throw new IllegalArgumentException(
+          String.format(
+              "--compression-threads must be between 1 and %d, but was %d",
+              MAX_COMPRESSION_THREADS, compressionThreads));
+    }
+
     String scratchPath = System.getenv("BUCK_SCRATCH_PATH");
     if (scratchPath == null || scratchPath.isEmpty()) {
       throw new IllegalStateException(
@@ -174,7 +196,11 @@ public class ApkBuilderExecutableMain {
           packageMetaInfVersionFiles,
           null,
           excludedResources,
-          archivePath -> matchesAny(uncompressedFilePatterns, archivePath));
+          archivePath -> matchesAny(uncompressedFilePatterns, archivePath),
+          fastPackaging
+              ? FastPackaging.withCompressionThreads(
+                  Math.min(compressionThreads, Runtime.getRuntime().availableProcessors()))
+              : null);
 
       if (compressResourcesDotArsc) {
         Path intermediateApkWithCompressedResources =

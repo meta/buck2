@@ -14,6 +14,7 @@ import static org.junit.Assert.assertArrayEquals;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertNotEquals;
 
+import com.facebook.buck.android.apk.sdk.FastPackaging;
 import com.google.common.collect.ImmutableSet;
 import java.io.IOException;
 import java.io.OutputStream;
@@ -28,6 +29,7 @@ import java.util.zip.Deflater;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipFile;
 import java.util.zip.ZipOutputStream;
+import org.jetbrains.annotations.Nullable;
 import org.junit.Before;
 import org.junit.Rule;
 import org.junit.Test;
@@ -161,7 +163,40 @@ public class ApkBuilderUtilsTest {
     return path;
   }
 
+  @Test
+  public void fastPackagingWritesTheSameBytes() throws Exception {
+    Predicate<String> storedPaths = path -> path.equals(NATIVE_LIB);
+    byte[] legacy = Files.readAllBytes(buildApk(storedPaths, null));
+
+    for (int threads : new int[] {1, 4, 8}) {
+      assertArrayEquals(
+          threads + " threads",
+          legacy,
+          Files.readAllBytes(buildApk(storedPaths, FastPackaging.withCompressionThreads(threads))));
+    }
+  }
+
+  @Test
+  public void fastPackagingKeepsTheApkIndependentOfTheResourceApkLevel() throws Exception {
+    byte[] model = vertices(30_000);
+    byte[] arsc = repeated("resource table\n", 2_000);
+    FastPackaging fast = FastPackaging.withCompressionThreads(4);
+    resourceApk = writeResourceApk("resources-fast.ap_", Deflater.BEST_SPEED, model, arsc);
+    byte[] legacy = Files.readAllBytes(buildApk(path -> false, null));
+    byte[] fromFastResources = Files.readAllBytes(buildApk(path -> false, fast));
+    resourceApk = writeResourceApk("resources-best.ap_", Deflater.BEST_COMPRESSION, model, arsc);
+    byte[] fromBestResources = Files.readAllBytes(buildApk(path -> false, fast));
+
+    assertArrayEquals(legacy, fromFastResources);
+    assertArrayEquals(legacy, fromBestResources);
+  }
+
   private Path buildApk(Predicate<String> storedPaths) throws Exception {
+    return buildApk(storedPaths, null);
+  }
+
+  private Path buildApk(Predicate<String> storedPaths, @Nullable FastPackaging fastPackaging)
+      throws Exception {
     Path apk = tmp.getRoot().toPath().resolve("out-" + System.nanoTime() + ".apk");
     ApkBuilderUtils.buildApk(
         resourceApk,
@@ -177,7 +212,8 @@ public class ApkBuilderUtilsTest {
         false,
         null,
         ImmutableSet.of(),
-        storedPaths);
+        storedPaths,
+        fastPackaging);
     return apk;
   }
 

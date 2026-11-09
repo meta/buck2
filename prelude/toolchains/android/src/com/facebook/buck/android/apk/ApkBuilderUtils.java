@@ -13,6 +13,7 @@ package com.facebook.buck.android.apk;
 import com.facebook.buck.android.apk.sdk.ApkBuilder;
 import com.facebook.buck.android.apk.sdk.ApkCreationException;
 import com.facebook.buck.android.apk.sdk.DuplicateFileException;
+import com.facebook.buck.android.apk.sdk.FastPackaging;
 import com.facebook.buck.android.apk.sdk.SealedApkException;
 import com.facebook.infer.annotation.Nullsafe;
 import com.google.common.collect.ImmutableSet;
@@ -55,6 +56,51 @@ public class ApkBuilderUtils {
           SealedApkException,
           UnrecoverableKeyException,
           DuplicateFileException {
+    buildApk(
+        resourceApk,
+        pathToOutputApkFile,
+        dexFile,
+        assetDirectories,
+        nativeLibraryDirectories,
+        zipFiles,
+        jarFilesThatMayContainResources,
+        pathToKeystore,
+        keystoreProperties,
+        packageMetaInfVersionFiles,
+        output,
+        excludedResources,
+        storedPaths,
+        null);
+  }
+
+  /**
+   * Builds the APK like {@link #buildApk(Path, Path, Path, ImmutableSet, ImmutableSet,
+   * ImmutableSet, ImmutableSet, Path, KeystoreProperties, boolean, PrintStream, ImmutableSet,
+   * Predicate)}, with {@link com.facebook.buck.android.apk.sdk.FastApkJarBuilder} when {@code
+   * fastPackaging} is set.
+   */
+  public static void buildApk(
+      Path resourceApk,
+      Path pathToOutputApkFile,
+      Path dexFile,
+      ImmutableSet<Path> assetDirectories,
+      ImmutableSet<Path> nativeLibraryDirectories,
+      ImmutableSet<Path> zipFiles,
+      ImmutableSet<Path> jarFilesThatMayContainResources,
+      Path pathToKeystore,
+      KeystoreProperties keystoreProperties,
+      boolean packageMetaInfVersionFiles,
+      @Nullable PrintStream output,
+      ImmutableSet<String> excludedResources,
+      Predicate<String> storedPaths,
+      @Nullable FastPackaging fastPackaging)
+      throws IOException,
+          ApkCreationException,
+          KeyStoreException,
+          NoSuchAlgorithmException,
+          SealedApkException,
+          UnrecoverableKeyException,
+          DuplicateFileException {
     ApkBuilder builder =
         new ApkBuilder(
             pathToOutputApkFile.toFile(),
@@ -63,7 +109,8 @@ public class ApkBuilderUtils {
             packageMetaInfVersionFiles,
             output,
             excludedResources,
-            storedPaths);
+            storedPaths,
+            fastPackaging);
     for (Path nativeLibraryDirectory : nativeLibraryDirectories.stream().sorted().toList()) {
       builder.addNativeLibraries(nativeLibraryDirectory.toFile());
     }

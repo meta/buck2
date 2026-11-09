@@ -10,6 +10,7 @@
 
 package com.facebook.buck.installer.android;
 
+import com.facebook.infer.annotation.Nullsafe;
 import com.google.common.annotations.VisibleForTesting;
 import javax.annotation.Nullable;
 import org.kohsuke.args4j.Option;
@@ -19,6 +20,7 @@ import org.kohsuke.args4j.spi.ExplicitBooleanOptionHandler;
  * Constructs the Command Line Options to Support Android Install. The majority of these were copied
  * from {@code com.facebook.buck.cli.TargetDeviceCommandLineOptions}.
  */
+@Nullsafe(Nullsafe.Mode.LOCAL)
 class AndroidCommandLineOptions {
   @VisibleForTesting public static final String EMULATOR_MODE_SHORT_ARG = "-e";
 
@@ -57,6 +59,7 @@ class AndroidCommandLineOptions {
       name = ADB_EXECUTABLE_PATH_LONG_ARG,
       metaVar = "<Adb-executable-path>",
       usage = "Use specified adb executable.")
+  @Nullable
   public String adbExecutablePath;
 
   @VisibleForTesting static final String ADB_THREADS_LONG_ARG = "--adb-threads";
@@ -107,6 +110,7 @@ class AndroidCommandLineOptions {
   private int tcpPort;
 
   @Option(name = "--log-path", usage = "Use this option to set the log path for the install")
+  @Nullable
   private String logPath;
 
   @Option(
@@ -218,6 +222,7 @@ class AndroidCommandLineOptions {
     return tcpPort;
   }
 
+  @Nullable
   public String getLogPath() {
     return logPath;
   }

@@ -8,6 +8,9 @@ source_listing()
 buck_java_library(
     name = "options_handler",
     srcs = glob(["*.java"]),
+    provided_deps = [
+        "prelude//toolchains/android/third-party:infer-annotations",
+    ],
     visibility = [
         "PUBLIC",
     ],

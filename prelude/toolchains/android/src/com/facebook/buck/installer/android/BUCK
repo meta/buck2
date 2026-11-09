@@ -41,6 +41,7 @@ buck_kotlin_library(
         "prelude//toolchains/android/third-party:args4j",
         "prelude//toolchains/android/third-party:guava",
         "prelude//toolchains/android/third-party:infer-annotations",
+        "prelude//toolchains/android/third-party:jspecify",
         "prelude//toolchains/android/third-party:jsr305",
     ],
 )

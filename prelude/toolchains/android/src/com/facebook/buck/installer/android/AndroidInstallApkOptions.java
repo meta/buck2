@@ -13,6 +13,7 @@ package com.facebook.buck.installer.android;
 import com.facebook.buck.util.environment.EnvVariablesProvider;
 import com.facebook.buck.util.environment.Platform;
 import com.facebook.buck.util.json.ObjectMappers;
+import com.facebook.infer.annotation.Nullsafe;
 import com.fasterxml.jackson.core.JsonParser;
 import com.fasterxml.jackson.core.type.TypeReference;
 import java.io.File;
@@ -20,24 +21,27 @@ import java.io.IOException;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.TreeMap;
 import java.util.logging.Logger;
+import org.jspecify.annotations.Nullable;
 
 /**
  * Constructs configurations for an android install that are set in install_android_options.json and
  * sent to the AndroidInstaller
  */
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public class AndroidInstallApkOptions {
   private static final Logger LOG = Logger.getLogger(AndroidInstallApkOptions.class.getName());
   public final String adbExecutable;
   public final boolean apexMode;
 
-  AndroidInstallApkOptions(Path jsonArtifactPath, String adbExecutablePath)
+  AndroidInstallApkOptions(Path jsonArtifactPath, @Nullable String adbExecutablePath)
       throws RuntimeException, IOException {
     JsonParser parser = ObjectMappers.createParser(jsonArtifactPath);
     Map<String, String> jsonData =
-        parser.readValueAs(new TypeReference<TreeMap<String, String>>() {});
+        Objects.requireNonNull(parser.readValueAs(new TypeReference<TreeMap<String, String>>() {}));
     this.adbExecutable = getAdbExecutable(adbExecutablePath);
     this.apexMode = readBoolean(jsonData, "apex_mode");
   }
@@ -60,7 +64,7 @@ public class AndroidInstallApkOptions {
    * 2. adb from PATH
    * 3. /opt/android_sdk/platform-tools/adb
    */
-  private String getAdbExecutable(String adbExecutablePath) {
+  private String getAdbExecutable(@Nullable String adbExecutablePath) {
     String adbExecutable =
         Optional.ofNullable(adbExecutablePath)
             .orElse(getAdbFromPath().orElse("/opt/android_sdk/platform-tools/adb"));

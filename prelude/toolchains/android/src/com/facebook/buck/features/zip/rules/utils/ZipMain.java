@@ -14,6 +14,7 @@ import com.facebook.buck.core.filesystems.AbsPath;
 import com.facebook.buck.core.filesystems.RelPath;
 import com.facebook.buck.util.relativepathmap.RelativePathMapUtils;
 import com.facebook.buck.util.zip.collect.OnDuplicateEntry;
+import com.facebook.infer.annotation.Nullsafe;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.ImmutableSet;
@@ -25,13 +26,16 @@ import java.nio.file.Paths;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.regex.Pattern;
+import org.jspecify.annotations.Nullable;
 import org.kohsuke.args4j.CmdLineException;
 import org.kohsuke.args4j.CmdLineParser;
 import org.kohsuke.args4j.Option;
 import org.kohsuke.args4j.spi.StringArrayOptionHandler;
 
 /** Main entry point for generating Zip files */
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public class ZipMain {
 
   private static final AbsPath CURRENT_DIRECTORY =
@@ -44,13 +48,13 @@ public class ZipMain {
   private OnDuplicateEntry onDuplicateEntry;
 
   @Option(name = "--zip_sources", handler = StringArrayOptionHandler.class)
-  private List<String> zipSources;
+  private @Nullable List<String> zipSources;
 
   @Option(name = "--entries_to_exclude", handler = StringArrayOptionHandler.class)
-  private List<String> entriesToExclude;
+  private @Nullable List<String> entriesToExclude;
 
   @Option(name = "--entries_file")
-  private File entriesFile;
+  private @Nullable File entriesFile;
 
   @Option(name = "--hardcode_permissions_for_deterministic_output")
   private boolean hardcodePermissionsForDeterministicOutput;
@@ -108,7 +112,7 @@ public class ZipMain {
           RelativePathMapUtils.addPathToRelativePathMap(
               CURRENT_DIRECTORY,
               map,
-              zipEntryAbsPath.getPath().getParent(),
+              Objects.requireNonNull(zipEntryAbsPath.getPath().getParent()),
               zipEntryAbsPath,
               zipEntryAbsPath.getFileName());
         }

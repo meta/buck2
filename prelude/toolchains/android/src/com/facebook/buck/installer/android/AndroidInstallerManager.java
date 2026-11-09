@@ -141,7 +141,7 @@ class AndroidInstallerManager implements InstallCommand {
           // Surfaces as an install failure: InstallerService turns this into an error response.
           throw new UncheckedIOException("Could not read install options " + artifactPath, e);
         }
-        LOG.log(Level.INFO, androidArtifacts.getApkOptions().toString());
+        LOG.log(Level.INFO, Objects.requireNonNull(androidArtifacts.getApkOptions()).toString());
         break;
       case "manifest":
         androidArtifacts.setAndroidManifestPath(AbsPath.of(artifactPath));
@@ -226,7 +226,8 @@ class AndroidInstallerManager implements InstallCommand {
               ROOT_PATH,
               options,
               IsolatedApkInfo.of(
-                  androidArtifacts.getAndroidManifestPath(), androidArtifacts.getApk()),
+                  Objects.requireNonNull(androidArtifacts.getAndroidManifestPath()),
+                  Objects.requireNonNull(androidArtifacts.getApk())),
               isolatedExopackageInfo,
               installId,
               installState(installId),
@@ -417,7 +418,7 @@ class AndroidInstallerManager implements InstallCommand {
    * neither adb nor the fix.
    */
   private Optional<InstallError> checkAdbExists(AndroidArtifacts androidArtifacts) {
-    String adbPath = androidArtifacts.getApkOptions().adbExecutable;
+    String adbPath = Objects.requireNonNull(androidArtifacts.getApkOptions()).adbExecutable;
     if (Files.exists(Paths.get(adbPath))) {
       return Optional.empty();
     }
@@ -446,7 +447,7 @@ class AndroidInstallerManager implements InstallCommand {
               AdbHelperFactory.create(
                   LOG,
                   options,
-                  androidArtifacts.getApkOptions(),
+                  Objects.requireNonNull(androidArtifacts.getApkOptions()),
                   options.skipSetDebugApp ? SetDebugAppMode.SKIP : SetDebugAppMode.SET,
                   state.metrics());
           // Asking now is what fixes the set: the helper resolves its devices once, on

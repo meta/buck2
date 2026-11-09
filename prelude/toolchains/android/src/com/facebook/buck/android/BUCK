@@ -49,6 +49,7 @@ buck_kotlin_library(
         "prelude//toolchains/android/src/com/facebook/buck/util/environment:environment",
         "prelude//toolchains/android/third-party:guava",
         "prelude//toolchains/android/third-party:infer-annotations",
+        "prelude//toolchains/android/third-party:jspecify",
         "prelude//toolchains/android/third-party:kotlin-annotations",
         "prelude//toolchains/android/third-party:kotlinx-coroutines-core-jvm",
         "prelude//toolchains/android/third-party:zstd-jni",

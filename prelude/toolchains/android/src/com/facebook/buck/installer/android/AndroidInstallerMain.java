@@ -11,7 +11,9 @@
 package com.facebook.buck.installer.android;
 
 import com.facebook.buck.installer.InstallerServer;
+import com.facebook.infer.annotation.Nullsafe;
 import java.io.IOException;
+import java.util.Objects;
 import java.util.logging.FileHandler;
 import java.util.logging.Level;
 import java.util.logging.Logger; // NOPMD
@@ -24,6 +26,7 @@ import org.kohsuke.args4j.CmdLineParser;
  *
  * <p>Expected usage: {@code this_binary options}.
  */
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public class AndroidInstallerMain {
   static {
     // set java.util.logging (JUL) simple formatter to 1 liner.
@@ -39,7 +42,7 @@ public class AndroidInstallerMain {
     CmdLineParser parser = new CmdLineParser(options);
     try {
       parser.parseArgument(args);
-      Logger.getLogger("").addHandler(getFileHandler(options.getLogPath()));
+      Logger.getLogger("").addHandler(getFileHandler(Objects.requireNonNull(options.getLogPath())));
       Logger logger = getLogger();
       installer.run(options);
       logger.info("server shutdown, exiting");

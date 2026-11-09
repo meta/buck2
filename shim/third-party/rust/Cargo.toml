@@ -255,7 +255,7 @@ twox-hash = "2.1.5"
 typed-arena = "2"
 unicode-segmentation = "1.13.3"
 unicode-width = "0.2.3"
-uuid = { version = "1.28.0", features = ["rng-getrandom", "serde", "v4", "v5", "v6", "v7", "v8"] }
+uuid = { version = "1.29.1", features = ["rng-getrandom", "serde", "v4", "v5", "v6", "v7", "v8"] }
 vec1 = { version = "1.12.1", features = ["serde"] }
 vt100 = "0.16.2"
 walkdir = "2.3"

@@ -116,8 +116,8 @@ impl<'v> WorkerInfo<'v> {
             .collect()
     }
 
-    pub fn concurrency(&self) -> Option<usize> {
-        self.concurrency.map(|v| v.unpack())
+    pub fn concurrency(&self) -> buck2_error::Result<Option<usize>> {
+        Ok(self.concurrency.map(|v| v.try_unpack()).transpose()?)
     }
 
     pub fn streaming(&self) -> bool {
@@ -131,6 +131,7 @@ impl<'v> WorkerInfo<'v> {
 }
 
 fn validate_worker_info<'v>(info: &WorkerInfo<'v>) -> buck2_error::Result<()> {
+    info.concurrency()?;
     if info.exe.unpack().is_empty() {
         return Err(buck2_error::buck2_error!(
             buck2_error::ErrorTag::Input,

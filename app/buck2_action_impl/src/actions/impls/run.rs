@@ -622,7 +622,7 @@ impl RunAction {
                     exe: worker.exe_command_line(),
                     env: worker.env()?,
                     id: WorkerId(worker.id),
-                    concurrency: worker.concurrency(),
+                    concurrency: worker.concurrency()?,
                     streaming: worker.streaming(),
                     supports_bazel_remote_persistent_worker_protocol: worker
                         .supports_bazel_remote_persistent_worker_protocol(),
@@ -638,7 +638,7 @@ impl RunAction {
                     exe: remote_worker.exe_command_line(),
                     env: remote_worker.env()?,
                     id: WorkerId(remote_worker.id),
-                    concurrency: remote_worker.concurrency(),
+                    concurrency: remote_worker.concurrency()?,
                     streaming: false,
                     supports_bazel_remote_persistent_worker_protocol: false,
                 })

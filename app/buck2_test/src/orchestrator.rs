@@ -2687,7 +2687,7 @@ impl<'a> Execute2RequestExpander<'a> {
                     exe: worker_rendered,
                     id: WorkerId(worker.id),
                     env: worker_env?,
-                    concurrency: worker.concurrency(),
+                    concurrency: worker.concurrency()?,
                     streaming: worker.streaming(),
                     remote_key: None,
                     // TODO(ianc): Support input_paths on test workers

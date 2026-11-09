@@ -20,7 +20,6 @@ use std::time::SystemTime;
 use allocative::Allocative;
 use async_trait::async_trait;
 use buck2_build_signals::env::WaitingCategory;
-use buck2_common::file_ops::metadata::FileDigest;
 use buck2_common::file_ops::metadata::FileDigestConfig;
 use buck2_common::file_ops::metadata::FileMetadata;
 use buck2_common::liveliness_observer::LivelinessObserver;
@@ -30,13 +29,11 @@ use buck2_common::local_resource_state::LocalResourceHolder;
 use buck2_core::content_hash::ContentBasedPathHash;
 use buck2_core::execution_types::executor_config::RemoteExecutorUseCase;
 use buck2_core::fs::artifact_path_resolver::ArtifactFs;
-use buck2_core::fs::buck_out_path::BuildArtifactPath;
 use buck2_core::fs::project_rel_path::ProjectRelativePath;
 use buck2_core::fs::project_rel_path::ProjectRelativePathBuf;
 use buck2_core::soft_error_or_panic;
 use buck2_core::tag_error;
 use buck2_core::tag_result;
-use buck2_directory::directory::entry::DirectoryEntry;
 use buck2_error::BuckErrorContext;
 use buck2_error::buck2_error;
 use buck2_events::daemon_id::DaemonId;
@@ -73,6 +70,7 @@ use buck2_execute::execute::result::CommandExecutionResult;
 use buck2_execute::incremental_state::IncrementalRecord;
 use buck2_execute::incremental_state::IncrementalStore;
 use buck2_execute::incremental_state::RecordedOutput;
+use buck2_execute::incremental_state::recorded_values;
 use buck2_execute::knobs::ExecutorGlobalKnobs;
 use buck2_execute::materialize::materializer::DeclareArtifactPayload;
 use buck2_execute::materialize::materializer::MaterializationError;
@@ -1150,8 +1148,9 @@ impl LocalExecutor {
             Some(IncrementalRecord::Outputs(recorded)) => recorded,
         };
         let mut outputs = Vec::new();
-        // Directories known by their fingerprint: where each was left, to ask the materializer.
-        let mut fingerprinted: Vec<(usize, ProjectRelativePathBuf, FileDigest)> = Vec::new();
+        // The recorded outputs, each with where the record left it: a content-based output at
+        // its content path, any other at its output path.
+        let mut left: Vec<(usize, &RecordedOutput, ProjectRelativePathBuf)> = Vec::new();
         for output in request.outputs() {
             let path = output
                 .resolve(
@@ -1165,62 +1164,36 @@ impl LocalExecutor {
                 // it is.
                 continue;
             };
-            let recorded = match recorded.get(artifact.path()) {
-                None => None,
-                Some(RecordedOutput::Value(value)) => Some((
-                    value.dupe(),
-                    self.content_path(artifact, value.content_based_path_hash())?,
-                )),
-                Some(RecordedOutput::DirectoryFingerprint(fingerprint)) => {
-                    let left_at = self
-                        .content_path(
-                            artifact,
-                            ContentBasedPathHash::new(fingerprint.raw_digest().as_bytes())?,
-                        )?
-                        .unwrap_or_else(|| path.clone());
-                    fingerprinted.push((outputs.len(), left_at, fingerprint.dupe()));
-                    None
-                }
-            };
-            outputs.push(IncrementalOutput { path, recorded });
-        }
-        if !fingerprinted.is_empty() {
-            let entries = self
-                .materializer
-                .get_artifact_entries_for_materialized_paths(
-                    fingerprinted
-                        .iter()
-                        .map(|(_, left_at, _)| left_at.clone())
-                        .collect(),
-                    false,
-                )
-                .await?;
-            for ((index, left_at, fingerprint), entry) in fingerprinted.into_iter().zip(entries) {
-                match entry {
-                    Some((_, DirectoryEntry::Dir(dir)))
-                        if *dir.fingerprint().data() == fingerprint =>
-                    {
-                        let output = &mut outputs[index];
-                        let from = (left_at != output.path).then_some(left_at);
-                        output.recorded = Some((ArtifactValue::dir(dir), from));
-                    }
-                    _ => return Ok(IncrementalStart::Clean),
-                }
+            if let Some(recorded) = recorded.get(artifact.path()) {
+                let left_at = if artifact.is_content_based_path() {
+                    self.artifact_fs
+                        .resolve_build(artifact, Some(&recorded.content_based_path_hash()?))?
+                } else {
+                    path.clone()
+                };
+                left.push((outputs.len(), recorded, left_at));
             }
+            outputs.push(IncrementalOutput {
+                path,
+                recorded: None,
+            });
+        }
+        let Some(values) = recorded_values(
+            left.iter()
+                .map(|(_, recorded, left_at)| (*recorded, left_at.clone()))
+                .collect(),
+            self.materializer.as_ref(),
+        )
+        .await?
+        else {
+            return Ok(IncrementalStart::Clean);
+        };
+        for ((index, _, left_at), value) in left.into_iter().zip(values) {
+            let output = &mut outputs[index];
+            let from = (left_at != output.path).then_some(left_at);
+            output.recorded = Some((value, from));
         }
         Ok(IncrementalStart::Outputs(outputs))
-    }
-
-    /// The content-based path of `artifact` for `hash`; `None` for an artifact whose path is not.
-    fn content_path(
-        &self,
-        artifact: &BuildArtifactPath,
-        hash: ContentBasedPathHash,
-    ) -> buck2_error::Result<Option<ProjectRelativePathBuf>> {
-        if !artifact.is_content_based_path() {
-            return Ok(None);
-        }
-        Ok(Some(self.artifact_fs.resolve_build(artifact, Some(&hash))?))
     }
 
     /// Puts an incremental action's previous outputs at its output paths, under the write lease

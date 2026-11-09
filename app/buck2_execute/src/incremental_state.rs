@@ -19,6 +19,8 @@ use std::sync::Arc;
 use allocative::Allocative;
 use buck2_common::file_ops::metadata::FileDigest;
 use buck2_core::content_hash::ContentBasedPathHash;
+use buck2_core::fs::project_rel_path::ProjectRelativePathBuf;
+use buck2_directory::directory::entry::DirectoryEntry;
 use buck2_fs::paths::forward_rel_path::ForwardRelativePathBuf;
 use buck2_hash::BuckFixedSortedMap;
 use dice::UserComputationData;
@@ -29,6 +31,7 @@ use crate::execute::kind::CommandExecutionKind;
 use crate::execute::request::CommandExecutionOutput;
 use crate::execute::result::CommandExecutionResult;
 use crate::execute::result::CommandExecutionStatus;
+use crate::materialize::materializer::Materializer;
 
 /// An incremental action's record, keyed in the store by the action
 /// (`RunActionKey::incremental_state_key`).
@@ -96,6 +99,46 @@ impl RecordedOutput {
             }
         }
     }
+}
+
+/// The values of recorded outputs, in order. A directory the record knows by its fingerprint
+/// alone is asked of `materializer` at the path given with it, where the record left it; `None`
+/// when the materializer no longer holds one of those whole, which leaves nothing to start from.
+pub async fn recorded_values(
+    outputs: Vec<(&RecordedOutput, ProjectRelativePathBuf)>,
+    materializer: &dyn Materializer,
+) -> buck2_error::Result<Option<Vec<ArtifactValue>>> {
+    let mut values = Vec::with_capacity(outputs.len());
+    let mut fingerprinted = Vec::new();
+    for (recorded, left_at) in outputs {
+        match recorded {
+            RecordedOutput::Value(value) => values.push(Some(value.dupe())),
+            RecordedOutput::DirectoryFingerprint(fingerprint) => {
+                fingerprinted.push((values.len(), left_at, fingerprint));
+                values.push(None);
+            }
+        }
+    }
+    if !fingerprinted.is_empty() {
+        let entries = materializer
+            .get_artifact_entries_for_materialized_paths(
+                fingerprinted
+                    .iter()
+                    .map(|(_, left_at, _)| left_at.clone())
+                    .collect(),
+                false,
+            )
+            .await?;
+        for ((index, _, fingerprint), entry) in fingerprinted.into_iter().zip(entries) {
+            match entry {
+                Some((_, DirectoryEntry::Dir(dir))) if dir.fingerprint().data() == fingerprint => {
+                    values[index] = Some(ArtifactValue::dir(dir));
+                }
+                _ => return Ok(None),
+            }
+        }
+    }
+    Ok(values.into_iter().collect())
 }
 
 /// The incremental records, one per action.

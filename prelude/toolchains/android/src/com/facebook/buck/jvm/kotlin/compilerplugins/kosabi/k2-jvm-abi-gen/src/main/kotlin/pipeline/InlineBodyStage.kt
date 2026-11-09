@@ -33,8 +33,11 @@ import org.jetbrains.kotlin.fir.backend.Fir2IrVisitor
 import org.jetbrains.kotlin.fir.backend.FirMetadataSource
 import org.jetbrains.kotlin.fir.declarations.FirDeclaration
 import org.jetbrains.kotlin.fir.declarations.FirFunction
+import org.jetbrains.kotlin.fir.declarations.FirProperty
+import org.jetbrains.kotlin.fir.declarations.FirPropertyAccessor
 import org.jetbrains.kotlin.fir.declarations.FirRegularClass
 import org.jetbrains.kotlin.fir.expressions.FirBlock
+import org.jetbrains.kotlin.fir.symbols.impl.FirPropertyAccessorSymbol
 import org.jetbrains.kotlin.ir.IrElement
 import org.jetbrains.kotlin.ir.declarations.IrClass
 import org.jetbrains.kotlin.ir.declarations.IrDeclaration
@@ -69,6 +72,7 @@ internal class InlineBodyStage : AbiGenStage {
       analysisResults: FrontendOutputCompat,
       sourceFiles: List<KtFile>,
       messageCollector: MessageCollector,
+      pluginTriggerAnnotations: Set<String> = emptySet(),
   ) {
     val stubPaths =
         sourceFiles.filter { it.isStub() }.map { it.viewProvider.virtualFile.path }.toSet()
@@ -79,6 +83,7 @@ internal class InlineBodyStage : AbiGenStage {
           lowerableOnly = true,
           isStubFile = { it.sourceFile?.path in stubPaths },
           isLibraryDeclarationAllowed = { _, _ -> true },
+          pluginTriggerAnnotations = pluginTriggerAnnotations,
       )
       for (firFile in output.fir) {
         if (firFile.sourceFile?.path in stubPaths) continue
@@ -87,7 +92,11 @@ internal class InlineBodyStage : AbiGenStage {
             !rule.isCandidate(it) -> {}
             rule.isKeepable(it) -> keptFirFunctions += it
             else ->
-                skipBody(messageCollector, "${it.symbol.callableId}", "unresolved or not lowerable")
+                skipBody(
+                    messageCollector,
+                    functionDisplayName(it),
+                    rule.keepRejectReason(it) ?: "unresolved or not lowerable",
+                )
           }
         }
       }
@@ -98,10 +107,28 @@ internal class InlineBodyStage : AbiGenStage {
     for (declaration in declarations) {
       when (declaration) {
         is FirFunction -> action(declaration)
+        // Property accessors are functions in FIR but not members of the declaration list:
+        // without this, inline accessors are silently stripped to default stubs.
+        is FirProperty -> {
+          declaration.getter?.let(action)
+          declaration.setter?.let(action)
+        }
         is FirRegularClass -> forEachFunction(declaration.declarations, action)
         else -> {}
       }
     }
+  }
+
+  // Accessor symbols carry no callable id; name them through their property.
+  private fun functionDisplayName(function: FirFunction): String {
+    function.symbol.callableId?.let {
+      return "$it"
+    }
+    val property =
+        (function as? FirPropertyAccessor)?.propertySymbol?.callableId ?: return "<anonymous>"
+    val accessor =
+        if ((function.symbol as? FirPropertyAccessorSymbol)?.isGetter != false) ".get" else ".set"
+    return "$property$accessor"
   }
 
   fun createExtension(messageCollector: MessageCollector): IrGenerationExtension =

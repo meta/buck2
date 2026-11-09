@@ -16,6 +16,7 @@
 
 package com.facebook
 
+import com.facebook.buck.jvm.kotlin.compilerplugins.common.pluginTriggerAnnotations
 import java.io.ByteArrayOutputStream
 import java.io.DataOutputStream
 import java.io.File
@@ -105,6 +106,19 @@ class K2JvmAbiFirAnalysisHandlerExtension(private val outputPath: String) :
 
   private val pipeline = AbiGenPipeline()
 
+  // Annotations a code-rewriting plugin is configured to read in THIS compilation:
+  // allopen's explicit `annotation=` values plus its preset expansions (spring, quarkus,
+  // micronaut, jpa). InlineBodyKeepability subtracts these from its allowlist, so a
+  // configured trigger is rejected even if its package is allowlisted. NoArg and
+  // sam-with-receiver have no jars in third-party and no WA wiring: not read (follow-up
+  // if ever adopted).
+  //
+  // Read reflectively: allopen's key holder is version-skewed (2.3 exposes
+  // ANNOTATION/PRESET, 2.4+ exposes ALLOPEN_ANNOTATION/ALLOPEN_PRESET) while the BUCK
+  // target floats with the toolchain, so a static reference breaks on every bump.
+  // A missing jar (compilers without allopen on the plugin classpath) means its options
+  // cannot exist, and yields no triggers.
+
   override fun isApplicable(configuration: CompilerConfiguration): Boolean {
     return true
   }
@@ -152,7 +166,12 @@ class K2JvmAbiFirAnalysisHandlerExtension(private val outputPath: String) :
       )
 
       // Decide before any FIR cleanup below rewrites declarations.
-      pipeline.inlineBodies.decide(analysisResults, sourceFiles, messageCollector)
+      pipeline.inlineBodies.decide(
+          analysisResults,
+          sourceFiles,
+          messageCollector,
+          pluginTriggerAnnotations(updatedConfiguration),
+      )
 
       // Collect class usage from the resolved FIR tree for dep file tracking.
       // The DependencyTracker compiler plugin's FIR checkers don't run in kosabi's

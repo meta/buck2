@@ -12,6 +12,7 @@
 
 package com.facebook.buck.jvm.kotlin.compilerplugins.common
 
+import com.facebook.kotlin.compilerplugins.common.isSameModuleJava
 import java.util.Collections
 import java.util.IdentityHashMap
 import org.jetbrains.kotlin.descriptors.ClassKind
@@ -24,6 +25,7 @@ import org.jetbrains.kotlin.fir.declarations.FirDeclarationOrigin
 import org.jetbrains.kotlin.fir.declarations.FirFile
 import org.jetbrains.kotlin.fir.declarations.FirFunction
 import org.jetbrains.kotlin.fir.declarations.FirMemberDeclaration
+import org.jetbrains.kotlin.fir.declarations.FirPropertyAccessor
 import org.jetbrains.kotlin.fir.declarations.FirRegularClass
 import org.jetbrains.kotlin.fir.declarations.FirResolvedDeclarationStatus
 import org.jetbrains.kotlin.fir.declarations.FirTypeAlias
@@ -94,15 +96,27 @@ class InlineBodyKeepability(
     private val lowerableOnly: Boolean,
     private val isStubFile: (FirFile) -> Boolean = { false },
     private val isLibraryDeclarationAllowed: (fqName: String, isTopLevelMember: Boolean) -> Boolean,
+    // Annotations named as triggers in this compilation's plugin options
+    // (allopen/noarg/sam-with-receiver `annotation=` values, preset expansions):
+    // rejected even when their package is allowlisted.
+    private val pluginTriggerAnnotations: Set<String> = emptySet(),
 ) {
   private val verdicts = HashMap<FirFunction, Boolean>()
+  private val rejectDetails = HashMap<FirFunction, String>()
   private val inProgress = HashSet<FirFunction>()
 
   /** The functions the applicability check reports as inline functions. */
-  fun isCandidate(function: FirFunction): Boolean =
-      function.symbol is FirNamedFunctionSymbol &&
-          function.isInline &&
-          !function.effectiveVisibility.privateApi
+  fun isCandidate(function: FirFunction): Boolean {
+    if (function.symbol is FirNamedFunctionSymbol) {
+      return function.isInline && !function.effectiveVisibility.privateApi
+    }
+    // Property accessors carry no name; the inline flag lives on the accessors themselves
+    // (an `inline var` with explicit accessors has isInline=false on the property).
+    if (function is FirPropertyAccessor) {
+      return function.isInline && !function.effectiveVisibility.privateApi
+    }
+    return false
+  }
 
   fun isKeepable(function: FirFunction): Boolean {
     verdicts[function]?.let {
@@ -122,11 +136,20 @@ class InlineBodyKeepability(
 
   private fun compute(function: FirFunction): Boolean {
     if (!isCandidate(function) || function.body == null) return false
-    if (lowerableOnly && !hasLowerableShape(function)) return false
+    if (lowerableOnly) {
+      shapeRejectReason(function)?.let {
+        rejectDetails[function] = it
+        return false
+      }
+    }
     val visitor = Visitor(function)
     function.accept(visitor)
+    visitor.rejectDetail?.let { rejectDetails[function] = it }
     return visitor.keepable
   }
+
+  /** Why [isKeepable] last failed for [function], if it recorded one. */
+  fun keepRejectReason(function: FirFunction): String? = rejectDetails[function]
 
   /**
    * Shapes that the ABI cannot carry as one plain method body: `suspend` (a state-machine twin),
@@ -139,8 +162,14 @@ class InlineBodyKeepability(
    * with the same signature (private ones, and protected ones reached through a synthetic
    * accessor).
    */
-  private fun hasLowerableShape(function: FirFunction): Boolean {
-    if (function.isSuspend || function.valueParameters.any { it.defaultValue != null }) return false
+  private fun hasLowerableShape(function: FirFunction): Boolean =
+      shapeRejectReason(function) == null
+
+  private fun shapeRejectReason(function: FirFunction): String? {
+    if (function.isSuspend) return "not lowerable: suspend function"
+    if (function.valueParameters.any { it.defaultValue != null }) {
+      return "not lowerable: default argument values"
+    }
     val owner = function.symbol.callableId?.classId?.let(::regularClass)
     if (
         owner != null &&
@@ -148,14 +177,19 @@ class InlineBodyKeepability(
                 owner.classKind == ClassKind.INTERFACE ||
                 owner.classKind == ClassKind.ANNOTATION_CLASS)
     ) {
-      return false
+      return "not lowerable: member of ${owner.classKind.name.lowercase()} class"
     }
     val signature =
         function.valueParameters.map { it.returnTypeRef } +
             listOfNotNull(function.receiverParameter?.typeRef, function.returnTypeRef)
-    return signature.none {
-      it.coneTypeOrNull?.classId?.let(::regularClass)?.isInlineOrValue == true
+    if (
+        signature.any {
+          it.coneTypeOrNull?.classId?.let(::regularClass)?.isInlineOrValue == true
+        }
+    ) {
+      return "not lowerable: value class in signature"
     }
+    return null
   }
 
   private val FirElement.coneTypeOrNull: ConeKotlinType?
@@ -174,6 +208,10 @@ class InlineBodyKeepability(
       session.symbolProvider.getClassLikeSymbolByClassId(classId)?.fir as? FirRegularClass
 
   private fun isOwn(symbol: FirBasedSymbol<*>, origin: FirDeclarationOrigin): Boolean {
+    if (isSameModuleJava(origin)) return true
+    if (origin is FirDeclarationOrigin.Enhancement) {
+      return ownerOrigin(symbol)?.let(::isSameModuleJava) == true
+    }
     if (!origin.fromSource || origin is FirDeclarationOrigin.Java) return false
     if (origin is FirDeclarationOrigin.Plugin) return false
     val file =
@@ -183,6 +221,12 @@ class InlineBodyKeepability(
           else -> null
         }
     return file != null && !isStubFile(file)
+  }
+
+  // Use-site enhanced copies of Java members carry no module info; attribute to the owner class.
+  private fun ownerOrigin(symbol: FirBasedSymbol<*>): FirDeclarationOrigin? {
+    val ownerClassId = (symbol as? FirCallableSymbol<*>)?.callableId?.classId ?: return null
+    return session.symbolProvider.getClassLikeSymbolByClassId(ownerClassId)?.fir?.origin
   }
 
   private fun isAllowedClass(classId: ClassId): Boolean {
@@ -227,12 +271,15 @@ class InlineBodyKeepability(
 
   private inner class Visitor(private val function: FirFunction) : FirVisitorVoid() {
     var keepable = true
+    // First failing element, for diagnostics.
+    var rejectDetail: String? = null
     // Lambdas passed to an inline parameter of an inline function generate no class.
     private val inlinedLambdas = HashSet<FirAnonymousFunction>()
 
     override fun visitElement(element: FirElement) {
       if (!keepable) return
       keepable = isAllowed(element) && (!lowerableOnly || isLowerable(element))
+      if (!keepable && rejectDetail == null) rejectDetail = describeReject(element)
       element.acceptChildren(this)
     }
 
@@ -287,9 +334,8 @@ class InlineBodyKeepability(
           is FirAnonymousFunction -> element in inlinedLambdas
           is FirFunction -> element === function
           is FirAnnotation ->
-              element.annotationTypeRef.coneTypeOrNull?.classId?.packageFqName?.asString()?.let {
-                it == "kotlin" || it.startsWith("kotlin.")
-              } == true
+              annotationFqn(element)?.let { isKeepableAnnotation(it, pluginTriggerAnnotations) } ==
+                  true
           is FirWhenExpression -> !isWhenOverEnum(element)
           is FirResolvable ->
               (element.calleeReference as? FirResolvedNamedReference)?.resolvedSymbol.let {
@@ -297,6 +343,32 @@ class InlineBodyKeepability(
               }
           else -> true
         }
+
+    private fun annotationFqn(element: FirAnnotation): String? =
+        element.annotationTypeRef.coneTypeOrNull?.classId?.asSingleFqName()?.asString()
+
+    private fun describeReject(element: FirElement): String {
+      if (element is FirAnnotation) {
+        return "not lowerable: annotation '${annotationFqn(element) ?: "unknown"}'"
+      }
+      if (
+          element is FirErrorExpression ||
+              element is FirErrorTypeRef ||
+              (element is FirResolvable && element.calleeReference is FirErrorNamedReference)
+      ) {
+        return "unresolved reference"
+      }
+      return when (element) {
+        is FirCallableReferenceAccess -> "not lowerable: callable reference"
+        is FirAnonymousObject -> "not lowerable: anonymous object"
+        is FirRegularClass -> "not lowerable: local class"
+        is FirAnonymousFunction -> "not lowerable: non-inlined lambda"
+        is FirWhenExpression ->
+            if (isWhenOverEnum(element)) "not lowerable: when over enum"
+            else "not keepable: FirWhenExpression"
+        else -> "not keepable: ${element::class.simpleName}"
+      }
+    }
 
     // Codegen reads a `$WhenMappings` class that it generates next to the caller.
     private fun isWhenOverEnum(expression: FirWhenExpression): Boolean {
@@ -362,8 +434,48 @@ class InlineBodyKeepability(
     }
   }
 
-  private companion object {
+  // Public for tests: the keepability predicate without a compilation.
+  companion object {
     val SYNTHETIC_PACKAGE = FqName("_synthetic")
     val ENUM_ENTRIES_FUNCTION = FqName("kotlin.enums.enumEntries")
+
+    // Package-level allowlist: every annotation in these packages is lint-only — no
+    // code-rewriting compiler plugin reads them, so a kept body means the same in the
+    // source-only ABI and the full compile. Evidence per package:
+    // - androidx.annotation / javax.annotation / org.jetbrains.annotations /
+    //   com.facebook.infer.annotation: zero source references in every Meta kotlinc
+    //   plugin (di, ditransformer, dataclassgenerate, litho-compiler-plugin, whole
+    //   fbandroid/java/com/facebook/kotlin/compilerplugins tree) and in the prelude
+    //   kotlin toolchain; the JetBrains triggers that matter here are option-driven
+    //   (allopen/noarg/sam-with-receiver, covered by the pluginTriggerAnnotations
+    //   subtraction) or hardcoded in banned packages (parcelize/serialization/compose).
+    // Deliberately absent (fail-closed default rejects them): androidx.compose.*,
+    // com.facebook.ultralight.*, com.facebook.litho.annotations.*, kotlinx.serialization.*,
+    // kotlinx.parcelize.*. Mixed packages (e.g. com.whatsapp.annotation, which hosts the
+    // allopen trigger OpenFinalClass) are never listed here — use KEEPABLE_ANNOTATIONS.
+    val KEEPABLE_ANNOTATION_PACKAGES = setOf(
+        // Pre-existing allowance: compiler-blessed annotations (OptIn, Suppress, ...).
+        "kotlin",
+        "androidx.annotation",
+        "javax.annotation",
+        "org.jetbrains.annotations",
+        "com.facebook.infer.annotation",
+    )
+
+    // FQN-level allowlist for harmless annotations inside otherwise-mixed packages.
+    // Empty: add entries only with per-annotation no-reader evidence.
+    val KEEPABLE_ANNOTATIONS = setOf<String>()
+
+    // Whether an annotation may ride along on a kept inline body: allowlisted by
+    // package or FQN, and not named as a trigger in this compilation's plugin options
+    // (an allopen/noarg/sam-with-receiver `annotation=` value or preset expansion).
+    // Unknown packages stay rejected (fail-closed).
+    fun isKeepableAnnotation(annotationFqn: String, pluginTriggers: Set<String>): Boolean {
+      if (annotationFqn in pluginTriggers) return false
+      if (annotationFqn in KEEPABLE_ANNOTATIONS) return true
+      return KEEPABLE_ANNOTATION_PACKAGES.any {
+        annotationFqn == it || annotationFqn.startsWith("$it.")
+      }
+    }
   }
 }

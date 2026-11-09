@@ -16,6 +16,7 @@ import com.facebook.buck.io.file.PathMatcher;
 import com.facebook.buck.io.filesystem.impl.ProjectFilesystemUtils;
 import com.facebook.buck.io.pathformat.PathFormatter;
 import com.facebook.buck.util.ZipFileTraversal;
+import com.facebook.infer.annotation.Nullsafe;
 import com.google.common.collect.ImmutableSet;
 import java.io.IOException;
 import java.io.InputStream;
@@ -26,6 +27,7 @@ import java.nio.file.Path;
 import java.nio.file.SimpleFileVisitor;
 import java.nio.file.attribute.BasicFileAttributes;
 import java.util.Collection;
+import java.util.Objects;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipFile;
 
@@ -38,6 +40,7 @@ import java.util.zip.ZipFile;
  * expand foo.zip and traverse its contents, then list the files recursively in foo/, and finally
  * visit the single file foo.txt.
  */
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public abstract class ClasspathTraversal {
   private final Iterable<Path> paths;
   private final AbsPath rootPath;
@@ -129,7 +132,7 @@ public abstract class ClasspathTraversal {
 
       @Override
       public InputStream getInput() throws IOException {
-        return zipFile.getInputStream(entry);
+        return Objects.requireNonNull(zipFile.getInputStream(entry));
       }
     }
   }

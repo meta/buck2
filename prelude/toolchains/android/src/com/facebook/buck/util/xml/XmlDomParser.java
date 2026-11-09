@@ -10,12 +10,14 @@
 
 package com.facebook.buck.util.xml;
 
+import com.facebook.infer.annotation.Nullsafe;
 import java.io.ByteArrayInputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.Objects;
 import javax.xml.parsers.DocumentBuilder;
 import javax.xml.parsers.DocumentBuilderFactory;
 import javax.xml.parsers.ParserConfigurationException;
@@ -23,6 +25,7 @@ import org.w3c.dom.Document;
 import org.xml.sax.InputSource;
 import org.xml.sax.SAXException;
 
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public class XmlDomParser {
 
   /** Utility class: do not instantiate. */
@@ -55,6 +58,6 @@ public class XmlDomParser {
       throw new RuntimeException(e);
     }
 
-    return docBuilder.parse(xml);
+    return Objects.requireNonNull(docBuilder.parse(xml));
   }
 }

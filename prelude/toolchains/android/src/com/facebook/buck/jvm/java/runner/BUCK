@@ -8,6 +8,9 @@ source_listing()
 buck_java_library(
     name = "runner",
     srcs = glob(["*.java"]),
+    provided_deps = [
+        "prelude//toolchains/android/third-party:infer-annotations",
+    ],
     # We need to support a java_for_tests that points at Java 8 for now.
     # @oss-disable[end= ]: source = "8",
     # @oss-disable[end= ]: target = "8",

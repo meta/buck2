@@ -11,11 +11,14 @@
 package com.facebook.buck.util.nio;
 
 import com.facebook.buck.jvm.java.version.utils.JavaVersionUtils;
+import com.facebook.infer.annotation.Nullsafe;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.nio.ByteBuffer;
+import org.jspecify.annotations.Nullable;
 
 /** Class to unmap ByteBuffer on any Java version. Supports try with resources. */
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public class ByteBufferUnmapper {
   private static final Unmapper unmapper =
       JavaVersionUtils.getMajorVersion() < 9 ? new UnmapperBeforeJava9() : new UnmapperAfterJava9();
@@ -39,7 +42,7 @@ public class ByteBufferUnmapper {
   }
 
   private static class UnmapperAfterJava9 implements Unmapper {
-    private static final Object unsafe;
+    private static final @Nullable Object unsafe;
     private static final Method invokeCleaner;
 
     static {

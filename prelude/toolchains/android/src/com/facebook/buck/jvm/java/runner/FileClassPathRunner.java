@@ -11,6 +11,7 @@
 package com.facebook.buck.jvm.java.runner;
 
 import com.facebook.buck.jvm.java.version.utils.JavaVersionUtils;
+import com.facebook.infer.annotation.Nullsafe;
 import java.io.IOException;
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
@@ -22,6 +23,7 @@ import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Objects;
 import java.util.stream.Collectors;
 
 /**
@@ -46,6 +48,7 @@ import java.util.stream.Collectors;
  * <p>Note: this class only depends on classes present in the JRE, since we don't want to have to
  * push more things on to the classpath when using it.
  */
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public class FileClassPathRunner {
   public static final String CLASSPATH_FILE_PROPERTY = "buck.classpath_file";
   public static final String TESTRUNNER_CLASSES_PROPERTY = "buck.testrunner_classes";
@@ -183,7 +186,7 @@ public class FileClassPathRunner {
     try {
       // use platform class loader on Java 9+ if exists
       Method method = ClassLoader.class.getMethod("getPlatformClassLoader");
-      return (ClassLoader) method.invoke(null);
+      return (ClassLoader) Objects.requireNonNull(method.invoke(null));
     } catch (NoSuchMethodException | IllegalAccessException | InvocationTargetException e) {
       throw new AssertionError("Cannot find platform class loader", e);
     }

@@ -16,6 +16,7 @@ buck_java_library(
     ],
     deps = [
         "prelude//toolchains/android/src/com/facebook/buck/core/filesystems:filesystems",
+        "prelude//toolchains/android/third-party:infer-annotations",
         "prelude//toolchains/android/third-party:jackson-datatype-guava",
         "prelude//toolchains/android/third-party:jackson-datatype-jdk8",
         "prelude//toolchains/android/third-party:jackson-module-kotlin",

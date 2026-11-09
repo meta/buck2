@@ -10,6 +10,7 @@
 
 package com.facebook.buck.testresultsoutput;
 
+import com.facebook.infer.annotation.Nullsafe;
 import com.fasterxml.jackson.core.JsonFactory;
 import com.fasterxml.jackson.core.JsonGenerator;
 import java.io.ByteArrayOutputStream;
@@ -18,6 +19,7 @@ import java.util.Collections;
 import java.util.Map;
 import java.util.Optional;
 import java.util.TreeMap;
+import org.jspecify.annotations.Nullable;
 
 /**
  * TestResultsOutputEvent implements the following thrift schema.
@@ -26,13 +28,14 @@ import java.util.TreeMap;
  * <p>It keeps and serializes events pertaining to the execution of test cases and replicates
  * instead of using the thrift structs directly to avoid the need for a dependency on fbcode.
  */
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public class TestResultsOutputEvent {
   private static final JsonFactory jsonFactory = new JsonFactory();
 
   /** Represents a test event, which can be either a start or finish event. */
   public static class TestEvent {
-    public StartEvent start;
-    public FinishEvent finish;
+    public @Nullable StartEvent start;
+    public @Nullable FinishEvent finish;
   }
 
   /** Represents a start event for a test. */

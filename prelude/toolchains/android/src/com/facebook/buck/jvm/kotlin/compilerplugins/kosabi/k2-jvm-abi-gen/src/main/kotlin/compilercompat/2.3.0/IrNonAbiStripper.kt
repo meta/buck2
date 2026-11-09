@@ -66,6 +66,16 @@ internal class NonAbiDeclarationsStrippingIrExtension(
       return false
     }
 
+    // Keep @Transient and @Volatile in IR: the JVM backend (ClassCodegen.computeFieldFlags)
+    // derives ACC_TRANSIENT/ACC_VOLATILE from these IR annotations. The retention-based strip
+    // below cannot be trusted for them: deserialized stdlib annotation classes (origin
+    // IR_EXTERNAL_DECLARATION_STUB) report @Retention(SOURCE) for kotlin.jvm.Transient, so the
+    // SOURCE check misfires and the field loses its flag (location-style compare failure:
+    // access 1 vs 129). Proven by fixture compare/parcelableTransient.
+    if (annotationFqName == "kotlin.jvm.Transient" || annotationFqName == "kotlin.jvm.Volatile") {
+      return false
+    }
+
     // Strip SOURCE retention annotations (not needed in ABI)
     for (retentionAnnotation in annotationClass.annotations) {
       val retentionClass = retentionAnnotation.symbol.owner.parent as? IrClass ?: continue

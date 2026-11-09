@@ -31,6 +31,7 @@ import com.facebook.buck.step.StepExecutionResults;
 import com.facebook.buck.step.isolatedsteps.IsolatedStep;
 import com.facebook.buck.util.CapturingPrintStream;
 import com.facebook.buck.util.Verbosity;
+import com.facebook.infer.annotation.Nullsafe;
 import com.google.common.annotations.VisibleForTesting;
 import com.google.common.base.Joiner;
 import com.google.common.collect.ImmutableList;
@@ -42,10 +43,12 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.time.Instant;
+import java.util.Objects;
 import java.util.Optional;
 import javax.annotation.Nullable;
 
 /** Kotlin compile Step */
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public class KotlincStep implements IsolatedStep {
   private static final Logger LOG = Logger.get(KotlincStep.class);
 
@@ -474,7 +477,7 @@ public class KotlincStep implements IsolatedStep {
     if (fullErrorMessage.isEmpty()) return false;
 
     int earlyTerminationMessageIndex =
-        fullErrorMessage.indexOf(kosabiEarlyTerminationMessagePrefix);
+        fullErrorMessage.indexOf(Objects.requireNonNull(kosabiEarlyTerminationMessagePrefix));
     if (earlyTerminationMessageIndex >= 0) {
       return true;
     }

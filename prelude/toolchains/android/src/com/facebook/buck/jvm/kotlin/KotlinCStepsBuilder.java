@@ -23,12 +23,16 @@ import com.facebook.buck.jvm.java.CompilerParameters;
 import com.facebook.buck.jvm.kotlin.cd.analytics.KotlinCDAnalytics;
 import com.facebook.buck.jvm.kotlin.kotlinc.Kotlinc;
 import com.facebook.buck.step.isolatedsteps.IsolatedStep;
+import com.facebook.infer.annotation.Nullsafe;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.ImmutableSortedSet;
 import java.nio.file.Path;
+import java.util.Objects;
 import java.util.Optional;
+import org.jspecify.annotations.Nullable;
 
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public class KotlinCStepsBuilder {
 
   static void prepareKotlinCompilation(
@@ -37,7 +41,7 @@ public class KotlinCStepsBuilder {
       BuildTargetValue invokingRule,
       CompilerParameters parameters,
       ImmutableList.Builder<IsolatedStep> steps,
-      ActionMetadata actionMetadata,
+      @Nullable ActionMetadata actionMetadata,
       KotlinExtraParams extraParams,
       String friendPathsArg,
       String kotlinPluginGeneratedFullPath,
@@ -92,7 +96,7 @@ public class KotlinCStepsBuilder {
                 .create(
                     invokingRule.isSourceOnlyAbi(),
                     buildCellRootPath,
-                    kotlinOutputDirectory.getParent().toAbsolutePath(),
+                    Objects.requireNonNull(kotlinOutputDirectory.getParent()).toAbsolutePath(),
                     parameters.getShouldTrackClassUsage(),
                     CompilerOutputPaths.getDepFilePath(
                         parameters.getOutputPaths().getOutputJarDirPath()),

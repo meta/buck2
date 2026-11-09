@@ -28,6 +28,7 @@ import com.facebook.buck.step.isolatedsteps.IsolatedStep;
 import com.facebook.infer.annotation.Nullsafe;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableSortedSet;
+import org.jspecify.annotations.Nullable;
 
 @Nullsafe(Nullsafe.Mode.LOCAL)
 public class JavacStepsBuilder {
@@ -51,7 +52,7 @@ public class JavacStepsBuilder {
       ImmutableList<AbsPath> applicabilityClasspath,
       ImmutableList<RelPath> outputDirectories,
       ImmutableSortedSet.Builder<RelPath> sourceBuilder,
-      JarParameters abiJarParameter) {
+      @Nullable JarParameters abiJarParameter) {
 
     // Note that this filters out only .kt files, so this keeps both .java and .src.zip files.
     ImmutableSortedSet<RelPath> javaSourceFiles =

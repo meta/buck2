@@ -56,6 +56,7 @@ buck_java_library(
         "prelude//toolchains/android/src/com/facebook/buck/jvm/kotlin/cd/workertool/postexecutors:postexecutors",
         "prelude//toolchains/android/third-party:args4j",
         "prelude//toolchains/android/third-party:guava",
+        "prelude//toolchains/android/third-party:infer-annotations",
         "prelude//toolchains/android/third-party:jsr305",
         "prelude//toolchains/android/third-party:protobuf-util",
     ],

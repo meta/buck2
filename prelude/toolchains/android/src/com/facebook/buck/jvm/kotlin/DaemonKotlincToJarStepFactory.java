@@ -40,11 +40,13 @@ import com.facebook.buck.step.isolatedsteps.common.CopyIsolatedStep;
 import com.facebook.buck.step.isolatedsteps.common.MakeCleanDirectoryIsolatedStep;
 import com.facebook.buck.step.isolatedsteps.common.MkdirIsolatedStep;
 import com.facebook.buck.step.isolatedsteps.java.JarDirectoryStep;
+import com.facebook.infer.annotation.Nullsafe;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableList.Builder;
 import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.ImmutableSortedSet;
 import java.nio.file.Path;
+import java.util.Objects;
 import java.util.stream.Collectors;
 import javax.annotation.Nullable;
 
@@ -52,6 +54,7 @@ import javax.annotation.Nullable;
  * Factory that creates Kotlin related compile build steps, but doesn't depend on any internal build
  * graph data structured. Intended to be used from the Daemon worker.
  */
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public class DaemonKotlincToJarStepFactory extends BaseCompileToJarStepFactory<KotlinExtraParams> {
   static final PathMatcher KOTLIN_PATH_MATCHER = FileExtensionMatcher.of("kt");
   static final PathMatcher SRC_ZIP_MATCHER = GlobPatternMatcher.of("**.src.zip");
@@ -328,7 +331,8 @@ public class DaemonKotlincToJarStepFactory extends BaseCompileToJarStepFactory<K
         true);
     steps.add(
         new JarDirectoryStep(
-            abiJarParameters == null ? libraryJarParameters : abiJarParameters,
+            Objects.requireNonNull(
+                abiJarParameters == null ? libraryJarParameters : abiJarParameters),
             ImmutableSet.of(extraParams.getKotlinClassesDir())));
   }
 

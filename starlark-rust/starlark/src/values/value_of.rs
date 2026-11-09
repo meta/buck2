@@ -70,6 +70,7 @@ use crate::values::type_repr::StarlarkTypeRepr;
 #[derive(Clone_, Copy_, Dupe_, Allocative)]
 #[allocative(bound = "")]
 #[derive(pagable::PagablePanic, StarlarkPagable)]
+#[repr(transparent)]
 pub struct ValueOf<'v, T: UnpackValue<'v>>(Value<'v>, PhantomData<fn() -> T>);
 
 impl<'v, T: UnpackValue<'v>> ValueOf<'v, T> {
@@ -97,6 +98,14 @@ impl<'v, T: UnpackValue<'v>> ValueOf<'v, T> {
     #[inline]
     pub fn new_unchecked(value: Value<'v>) -> Self {
         ValueOf(value, PhantomData)
+    }
+
+    /// A slice of values the caller knows to be `T`s, as [`new_unchecked`](Self::new_unchecked)
+    /// knows one, without copying.
+    #[inline]
+    pub fn slice_from_values_unchecked<'a>(values: &'a [Value<'v>]) -> &'a [Self] {
+        // SAFETY: `#[repr(transparent)]` over `Value<'v>` at the same lifetime.
+        unsafe { std::slice::from_raw_parts(values.as_ptr().cast(), values.len()) }
     }
 
     /// The value.
@@ -160,6 +169,31 @@ impl<'v, T: StarlarkValue<'v>> From<ValueTyped<'v, T>> for ValueOf<'v, ValueType
         Self::new_unchecked(value.to_value())
     }
 }
+
+// SAFETY: the static type is the same type with the heap lifetime erased.
+unsafe impl<'v, T> ProvidesStaticType<'v> for ValueOf<'v, T>
+where
+    T: UnpackValue<'v> + ProvidesStaticType<'v>,
+    T::StaticType: UnpackValue<'static>,
+{
+    type StaticType = ValueOf<'static, T::StaticType>;
+}
+
+impl<T> IsStaticType for ValueOf<'static, T>
+where
+    T: UnpackValue<'static> + IsStaticType,
+    for<'lt> T::Reinfect<'lt>: UnpackValue<'lt>,
+{
+    type Reinfect<'lt> = ValueOf<'lt, T::Reinfect<'lt>>;
+}
+
+impl<'v, T: UnpackValue<'v>> PartialEq for ValueOf<'v, T> {
+    fn eq(&self, other: &Self) -> bool {
+        self.0 == other.0
+    }
+}
+
+impl<'v, T: UnpackValue<'v>> Eq for ValueOf<'v, T> {}
 
 impl<'v, T: UnpackValue<'v>> Debug for ValueOf<'v, T> {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {

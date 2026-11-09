@@ -1,0 +1,15 @@
+load("@fbsource//tools/build_defs:rust_library.bzl", "rust_library")
+
+oncall("build_infra")
+
+# Kept to `libc` alone: `buck2_miniperf` depends on this, and every change to its dependencies
+# re-embeds it into `buck2`.
+rust_library(
+    name = "buck2_process_kill",
+    srcs = glob(["src/**/*.rs"]),
+    deps = select({
+        "DEFAULT": [],
+        "ovr_config//os:linux": ["fbsource//third-party/rust:libc"],
+        "ovr_config//os:macos": ["fbsource//third-party/rust:libc"],
+    }),
+)

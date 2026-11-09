@@ -16,6 +16,8 @@ use std::time::Instant;
 
 use buck2_error::BuckErrorContext;
 use buck2_error::BuckErrorOptionContext;
+use buck2_process_kill::ChildState;
+use buck2_process_kill::KillGroupOnDrop;
 use buck2_resource_control::ActionFreezeEvent;
 use buck2_resource_control::ActionFreezeEventReceiver;
 use buck2_resource_control::OrphanProcessInfo;
@@ -26,12 +28,6 @@ use buck2_resource_control::cgroup::NoMemoryMonitoring;
 use buck2_resource_control::path::CgroupPathBuf;
 use futures::StreamExt;
 use futures::pin_mut;
-use nix::errno::Errno;
-use nix::sys::signal;
-use nix::sys::signal::Signal;
-use nix::unistd::Pid;
-use rustix::process::WaitId;
-use rustix::process::WaitIdOptions;
 use tokio::pin;
 use tokio::process::Child;
 use tokio::process::ChildStderr;
@@ -39,7 +35,6 @@ use tokio::process::ChildStdout;
 use tokio::process::Command;
 
 use crate::kill_on_drop::KillDetachedDescendantsOnDrop;
-use crate::kill_on_drop::KillGroupOnDrop;
 use crate::process_group::SpawnError;
 
 pub(crate) struct ProcessCommandImpl {
@@ -61,7 +56,16 @@ impl ProcessCommandImpl {
         let kill_detached_descendants = cfg!(target_os = "linux") && kill_detached_descendants;
         #[cfg(target_os = "linux")]
         if kill_detached_descendants {
-            crate::unix::descendants::adopt_detached_descendants(&mut cmd);
+            // Best effort: a leader that cannot become a subreaper still runs, and its
+            // double-forked descendants are not found. See `set_child_subreaper` for what being
+            // one entails.
+            // SAFETY: `set_child_subreaper` is async-signal-safe.
+            unsafe {
+                cmd.pre_exec(|| {
+                    let _ignored = buck2_process_kill::set_child_subreaper();
+                    Ok(())
+                })
+            };
         }
 
         let cgroup = if let Some(cgroup) = cgroup {
@@ -180,7 +184,6 @@ impl ProcessGroupImpl {
             .id()
             .and_then(|id| id.try_into().ok())
             .internal_error("PID does not fit a i32")?;
-        let pgid = Pid::from_raw(pid);
         // Listed before the leader gets any signal: once it exits, its detached descendants are
         // reparented to init and can no longer be found. Killed when this function returns or its
         // future is dropped, after the group: `kill_on_drop`, declared later, is dropped first.
@@ -189,79 +192,48 @@ impl ProcessGroupImpl {
         } else {
             KillDetachedDescendantsOnDrop::default()
         };
-        let mut kill_on_drop = KillGroupOnDrop(Some(pgid));
+        let mut kill_on_drop = KillGroupOnDrop::new(pid);
 
         if let Some(graceful_shutdown_timeout_s) = graceful_shutdown_timeout_s {
-            terminate_leader(pgid)?;
+            // A leader that is already gone is not an error: the rest of its group still has to
+            // be killed.
+            buck2_process_kill::terminate(pid)
+                .with_buck_error_context(|| format!("Failed to terminate process {pid}"))?;
             wait_for_exit_without_reaping(
-                pgid,
+                pid,
                 Duration::from_secs(graceful_shutdown_timeout_s.into()),
             )
             .await;
             kill_detached.refresh().await;
         }
 
-        kill_on_drop.0 = None;
-        kill_group(pgid)
+        kill_on_drop.disarm();
+        if buck2_process_kill::child_state(pid) == ChildState::Reaped {
+            // Its pid, and so the group id, may be another group's by now.
+            return Ok(());
+        }
+        buck2_process_kill::kill_group(pid)
+            .with_buck_error_context(|| format!("Failed to kill process group {pid}"))
     }
 }
 
-/// Sends `SIGTERM` to the leader of the process group `pgid` alone. A leader that is already gone
-/// is not an error: the rest of its group still has to be killed.
-fn terminate_leader(pgid: Pid) -> buck2_error::Result<()> {
-    match signal::kill(pgid, Signal::SIGTERM) {
-        Ok(()) | Err(Errno::ESRCH) => Ok(()),
-        Err(e) => Err(e).with_buck_error_context(|| format!("Failed to terminate process {pgid}")),
-    }
-}
-
-/// Sends `SIGKILL` to every process in the group `pgid`. An empty group is not an error.
-fn kill_group(pgid: Pid) -> buck2_error::Result<()> {
-    match signal::killpg(pgid, Signal::SIGKILL) {
-        Ok(()) | Err(Errno::ESRCH) => Ok(()),
-        Err(e) => Err(e).with_buck_error_context(|| format!("Failed to kill process group {pgid}")),
-    }
-}
-
-/// Waits up to `timeout` for the child `pid` to exit and returns whether it did, without reaping
-/// it.
+/// Waits up to `timeout` for the child `pid` to exit, without reaping it, and returns its state:
+/// `Running` if it did not exit in time.
 ///
 /// The child is left a zombie so that its pid keeps naming its process group until the caller has
 /// killed the group: once reaped, the pid can be reused, including as the id of a new process group
 /// (buck2 starts every action in its own group), which a later `killpg` would then hit. This is why
-/// it polls `waitid(WNOWAIT)` instead of using `tokio::process::Child::wait`, which reaps.
-async fn wait_for_exit_without_reaping(pid: Pid, timeout: Duration) -> bool {
+/// it polls [`buck2_process_kill::child_state`] instead of using `tokio::process::Child::wait`,
+/// which reaps. Nothing else reaps the leader meanwhile: tokio only does so while its `wait` is
+/// polled, which it is not during a kill.
+async fn wait_for_exit_without_reaping(pid: i32, timeout: Duration) -> ChildState {
     let deadline = Instant::now() + timeout;
     loop {
-        if has_exited(pid) {
-            return true;
-        }
-        if Instant::now() >= deadline {
-            return false;
+        let state = buck2_process_kill::child_state(pid);
+        if state != ChildState::Running || Instant::now() >= deadline {
+            return state;
         }
         tokio::time::sleep(Duration::from_millis(50)).await;
-    }
-}
-
-/// Whether the child `pid` has exited, leaving it unreaped.
-fn has_exited(pid: Pid) -> bool {
-    let Some(pid) = rustix::process::Pid::from_raw(pid.as_raw()) else {
-        return true;
-    };
-    loop {
-        match rustix::process::waitid(
-            WaitId::Pid(pid),
-            WaitIdOptions::EXITED | WaitIdOptions::NOHANG | WaitIdOptions::NOWAIT,
-        ) {
-            // With `NOHANG`, there is no status while the child is still running.
-            Ok(status) => return status.is_some(),
-            Err(rustix::io::Errno::INTR) => {}
-            // Nothing else reaps the leader: tokio only does so while its `wait` is polled, which
-            // it is not during a kill. So no such child means it is gone.
-            Err(rustix::io::Errno::CHILD) => return true,
-            // Unexpected: keep the leader's grace period rather than cut it short.
-            Err(_) => return false,
-        }
     }
 }
 
@@ -281,15 +253,16 @@ mod tests {
             .expect("should spawn sh")
     }
 
-    fn pid_of(child: &StdChild) -> Pid {
-        Pid::from_raw(child.id().try_into().expect("pid should fit an i32"))
+    fn pid_of(child: &StdChild) -> i32 {
+        child.id().try_into().expect("pid should fit an i32")
     }
 
     #[tokio::test]
     async fn test_wait_reports_an_exited_child_and_leaves_it_unreaped() {
         let mut child = spawn_sh("exit 7");
-        assert!(
+        assert_eq!(
             wait_for_exit_without_reaping(pid_of(&child), Duration::from_secs(30)).await,
+            ChildState::Exited,
             "the child exits at once"
         );
         let status = child
@@ -302,23 +275,14 @@ mod tests {
     async fn test_wait_times_out_on_a_running_child() {
         let mut child = spawn_sh("sleep 1000");
         let start = Instant::now();
-        let exited =
-            wait_for_exit_without_reaping(pid_of(&child), Duration::from_millis(300)).await;
+        let state = wait_for_exit_without_reaping(pid_of(&child), Duration::from_millis(300)).await;
         let elapsed = Instant::now() - start;
         let _ignored = child.kill();
         let _ignored = child.wait();
-        assert!(!exited, "the child is still running");
+        assert_eq!(state, ChildState::Running, "the child is still running");
         assert!(
             elapsed >= Duration::from_millis(300),
             "the wait should last the whole timeout, elapsed: {elapsed:?}"
         );
-    }
-
-    #[test]
-    fn test_an_already_reaped_child_counts_as_exited() {
-        let mut child = spawn_sh("true");
-        let pid = pid_of(&child);
-        child.wait().expect("should reap the child");
-        assert!(has_exited(pid), "a child that was reaped is gone");
     }
 }

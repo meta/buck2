@@ -8,8 +8,9 @@
  * above-listed licenses.
  */
 
-//! Guards that `SIGKILL` processes when dropped, so that a kill abandoned midway, for example by
-//! dropping its future during a grace period, still leaves nothing behind.
+//! A guard that `SIGKILL`s a process's detached descendants when dropped, so that a kill abandoned
+//! midway, for example by dropping its future during a grace period, still leaves nothing behind.
+//! The process group itself has [`buck2_process_kill::KillGroupOnDrop`].
 
 #[cfg(target_os = "linux")]
 use std::sync::Arc;
@@ -18,23 +19,8 @@ use std::sync::Mutex;
 #[cfg(target_os = "linux")]
 use std::sync::MutexGuard;
 
-use nix::sys::signal;
-use nix::sys::signal::Signal;
-use nix::unistd::Pid;
-
 #[cfg(target_os = "linux")]
-use crate::unix::descendants::ProcessId;
-
-/// Kills the process group, unless cleared because the caller has sent the final `SIGKILL`.
-pub(crate) struct KillGroupOnDrop(pub(crate) Option<Pid>);
-
-impl Drop for KillGroupOnDrop {
-    fn drop(&mut self) {
-        if let Some(pgid) = self.0 {
-            let _ignored = signal::killpg(pgid, Signal::SIGKILL);
-        }
-    }
-}
+use buck2_process_kill::ProcessId;
 
 /// Kills the descendants of a process that left its process group, such as daemons, as listed
 /// when the guard was created and when it was last refreshed. Only Linux can list them; elsewhere
@@ -64,6 +50,15 @@ fn lock(listing: &Mutex<Listing>) -> MutexGuard<'_, Listing> {
     listing.lock().unwrap_or_else(|e| e.into_inner())
 }
 
+#[cfg(target_os = "linux")]
+fn kill_all(found: &[ProcessId]) {
+    for p in found {
+        if let Err(e) = p.kill() {
+            tracing::warn!("Failed to kill detached descendant {}: {}", p.pid(), e);
+        }
+    }
+}
+
 /// With `group`, a listing abandoned before it finished also kills that process group: its leader
 /// was kept alive until then, since descendants it adopted are reparented to init once it dies.
 #[cfg(target_os = "linux")]
@@ -72,9 +67,9 @@ fn finish_listing(listing: &Mutex<Listing>, found: Vec<ProcessId>, group: Option
     match &mut *listing {
         Listing::Abandoned => {
             if let Some(pgid) = group {
-                let _ignored = signal::killpg(Pid::from_raw(pgid), Signal::SIGKILL);
+                let _ignored = buck2_process_kill::kill_group(pgid);
             }
-            found.iter().for_each(ProcessId::kill);
+            kill_all(&found);
         }
         Listing::Pending(known) | Listing::Done(known) => {
             let mut known = std::mem::take(known);
@@ -102,7 +97,7 @@ impl KillDetachedDescendantsOnDrop {
         };
         // Reads all of `/proc`, so it runs off the async runtime.
         let task = tokio::task::spawn_blocking(move || {
-            let found = crate::unix::descendants::descendants(pgid);
+            let found = buck2_process_kill::descendants(pgid);
             finish_listing(&listing, found, Some(pgid))
         });
         if let Err(e) = task.await {
@@ -141,7 +136,7 @@ impl KillDetachedDescendantsOnDrop {
         let listing = Arc::clone(listing);
         let leader = self.leader;
         let task = tokio::task::spawn_blocking(move || {
-            let found = crate::unix::descendants::descendants_of(leader, &roots);
+            let found = buck2_process_kill::descendants_of(leader, &roots);
             finish_listing(&listing, found, None)
         });
         if let Err(e) = task.await {
@@ -158,9 +153,7 @@ impl Drop for KillDetachedDescendantsOnDrop {
     fn drop(&mut self) {
         if let Some(listing) = self.listing.take() {
             match std::mem::replace(&mut *lock(&listing), Listing::Abandoned) {
-                Listing::Pending(known) | Listing::Done(known) => {
-                    known.iter().for_each(ProcessId::kill)
-                }
+                Listing::Pending(known) | Listing::Done(known) => kill_all(&known),
                 Listing::Abandoned => {}
             }
         }
@@ -192,7 +185,7 @@ mod tests {
     /// This process's child `child`, as `descendants` lists it. Guards in these tests only ever
     /// hold processes the test started, never the other descendants of the test binary.
     fn process_id(child: &Child) -> ProcessId {
-        crate::unix::descendants::descendants(std::process::id() as i32)
+        buck2_process_kill::descendants(std::process::id() as i32)
             .into_iter()
             .find(|p| p.pid() == child.id() as i32)
             .expect("a child should be a descendant")

@@ -81,30 +81,27 @@ fn test_miniperf_forwards_sigterm() -> anyhow::Result<()> {
         .stderr(Stdio::null())
         .process_group(0);
     let mut miniperf = cmd.spawn()?;
-    let _cleanup = KillGroupOnDrop(miniperf.id());
+    let pid = miniperf.id() as i32;
+    // Kills what is left of the group if an assertion fails, so that it does not hold the test's
+    // output open. Dropped while miniperf is unreaped, so the group id is still its own.
+    let cleanup = buck2_process_kill::KillGroupOnDrop::new(pid);
 
     let mut ready = String::new();
     BufReader::new(miniperf.stdout.take().context("no stdout")?).read_line(&mut ready)?;
     assert_eq!(ready.trim(), "ready");
 
-    // ast-grep-ignore: rust/buck2-no-command-new
-    Command::new("kill")
-        .args(["-TERM", &miniperf.id().to_string()])
-        .status()?
-        .exit_ok()?;
+    buck2_process_kill::terminate(pid)?;
 
     let start = Instant::now();
-    let status = loop {
-        if let Some(status) = miniperf.try_wait()? {
-            break status;
-        }
+    while buck2_process_kill::child_state(pid) == buck2_process_kill::ChildState::Running {
         assert!(
             Instant::now() - start < Duration::from_secs(30),
             "miniperf should exit once the command it forwarded SIGTERM to exits"
         );
         std::thread::sleep(Duration::from_millis(50));
-    };
-    status.exit_ok()?;
+    }
+    drop(cleanup);
+    miniperf.wait()?.exit_ok()?;
     assert!(
         marker.exists(),
         "the wrapped command should receive SIGTERM"
@@ -122,18 +119,4 @@ fn test_miniperf_forwards_sigterm() -> anyhow::Result<()> {
     );
 
     Ok(())
-}
-
-/// Kills what is left of a process group when a test ends, so that a failing assertion does not
-/// leave the group holding the test's output open.
-struct KillGroupOnDrop(u32);
-
-impl Drop for KillGroupOnDrop {
-    fn drop(&mut self) {
-        // ast-grep-ignore: rust/buck2-no-command-new
-        let _unused = Command::new("kill")
-            .args(["-KILL", "--", &format!("-{}", self.0)])
-            .stderr(std::process::Stdio::null())
-            .status();
-    }
 }

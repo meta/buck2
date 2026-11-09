@@ -38,6 +38,7 @@ rust_binary(
             "fbsource//third-party/rust:smallvec",
             "fbsource//third-party/rust:thiserror",
             "//buck2/app/buck2_miniperf_proto:buck2_miniperf_proto",
+            "//buck2/app/buck2_process_kill:buck2_process_kill",
         ],
     }),
 )
@@ -65,6 +66,7 @@ rust_library(
             "fbsource//third-party/rust:bincode",
             "fbsource//third-party/rust:tempfile",
             "//buck2/app/buck2_miniperf_proto:buck2_miniperf_proto",
+            "//buck2/app/buck2_process_kill:buck2_process_kill",
         ],
     }),
     test_env = {

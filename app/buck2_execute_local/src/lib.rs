@@ -766,9 +766,8 @@ mod tests {
     /// A process a test expects to go away, killed on drop unless it was seen gone, so that a
     /// failing test does not leave it behind.
     ///
-    /// `kill(pid, 0)` succeeds on a zombie, so the process only counts as gone once reaped. It must
-    /// not be a child of the test process, which never reaps it: once its parent dies, init or a
-    /// subreaper does.
+    /// It must not be a child of the test process, which never reaps it; see
+    /// [`buck2_process_kill::process_is_gone`].
     #[cfg(unix)]
     struct WatchedProcess {
         pid: nix::unistd::Pid,
@@ -788,7 +787,7 @@ mod tests {
         async fn gone_within(&mut self, timeout: Duration) -> bool {
             let start = Instant::now();
             loop {
-                if nix::sys::signal::kill(self.pid, None).is_err() {
+                if buck2_process_kill::process_is_gone(self.pid.as_raw()).unwrap_or(true) {
                     self.gone = true;
                     return true;
                 }

@@ -2002,6 +2002,7 @@ dependencies = [
  "buck2_grpc",
  "buck2_hash",
  "buck2_http",
+ "buck2_process_kill",
  "buck2_settings",
  "buck2_util",
  "buck2_wrapper_common",
@@ -2644,8 +2645,8 @@ dependencies = [
  "buck2_data",
  "buck2_error",
  "buck2_fs",
- "buck2_hash",
  "buck2_miniperf_proto",
+ "buck2_process_kill",
  "buck2_resource_control",
  "buck2_util",
  "buck2_wrapper_common",
@@ -2655,7 +2656,6 @@ dependencies = [
  "libc",
  "nix 0.31.3",
  "pin-project",
- "rustix 1.1.6",
  "sysinfo",
  "take_mut",
  "tempfile",
@@ -3058,6 +3058,7 @@ dependencies = [
  "anyhow",
  "bincode",
  "buck2_miniperf_proto",
+ "buck2_process_kill",
  "libc",
  "perf-event",
  "smallvec",
@@ -3138,6 +3139,13 @@ dependencies = [
  "buck2_util",
  "serde",
  "tempfile",
+]
+
+[[package]]
+name = "buck2_process_kill"
+version = "0.1.0"
+dependencies = [
+ "libc",
 ]
 
 [[package]]

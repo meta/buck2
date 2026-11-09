@@ -79,35 +79,6 @@ fn install_sigterm_forwarding() -> bool {
     installed
 }
 
-/// Waits for the child `pid` to exit without reaping it, so that its pid cannot be reused while
-/// the `SIGTERM` handler may still signal it.
-///
-/// Calls `libc` directly, like the signal handling above, rather than `rustix` or `nix`: miniperf's
-/// dependencies are kept to a minimum (see its BUCK file), since any change to them re-embeds the
-/// binary into buck2.
-fn wait_for_exit_without_reaping(pid: i32) -> std::io::Result<()> {
-    loop {
-        let mut info = MaybeUninit::<libc::siginfo_t>::zeroed();
-        // SAFETY: `info` is a valid, aligned and exclusively owned `siginfo_t` for `waitid` to
-        // write; `pid` is this process's unreaped child and the flags are valid for `waitid`.
-        let res = unsafe {
-            libc::waitid(
-                libc::P_PID,
-                pid as libc::id_t,
-                info.as_mut_ptr(),
-                libc::WEXITED | libc::WNOWAIT,
-            )
-        };
-        if res == 0 {
-            return Ok(());
-        }
-        let err = std::io::Error::last_os_error();
-        if err.kind() != std::io::ErrorKind::Interrupted {
-            return Err(err);
-        }
-    }
-}
-
 /// Runs `cmd`, forwarding `SIGTERM` to it.
 ///
 /// `SIGTERM` is blocked from before the spawn until the handler knows the child's pid, so one that
@@ -139,7 +110,7 @@ fn run_forwarding_sigterm(cmd: &mut Command) -> std::io::Result<std::process::Ex
     if let Some(pid) = forwarding_to {
         // On error (for example if the child was reaped already), `child.wait()` still reports
         // what can be known about it.
-        let _ignored = wait_for_exit_without_reaping(pid);
+        let _ignored = buck2_process_kill::wait_for_child_exit(pid);
         set_sigterm_blocked(true);
         CHILD_PID.store(0, Ordering::Relaxed);
     }

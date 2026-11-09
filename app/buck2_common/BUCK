@@ -110,12 +110,14 @@ rust_library(
             "fbsource//third-party/rust:nix",
             "fbsource//third-party/rust:tower",
             "fbsource//third-party/rust:xattr",
+            "//buck2/app/buck2_process_kill:buck2_process_kill",
         ],
         "ovr_config//os:macos": [
             "fbsource//third-party/rust:hyper-util",
             "fbsource//third-party/rust:nix",
             "fbsource//third-party/rust:tower",
             "fbsource//third-party/rust:xattr",
+            "//buck2/app/buck2_process_kill:buck2_process_kill",
         ],
     }),
 )

@@ -33,13 +33,12 @@ tempfile.workspace = true
 tokio-stream.workspace = true
 
 [target.'cfg(target_os = "linux")'.dependencies]
-buck2_hash.workspace = true
+buck2_process_kill.workspace = true
 nix.workspace = true
-rustix.workspace = true
 
 [target.'cfg(target_os = "macos")'.dependencies]
+buck2_process_kill.workspace = true
 nix.workspace = true
-rustix.workspace = true
 
 [target.'cfg(target_os = "windows")'.dependencies]
 buck2_wrapper_common.workspace = true

@@ -8,6 +8,4 @@
  * above-listed licenses.
  */
 
-#[cfg(target_os = "linux")]
-pub(crate) mod descendants;
 pub(crate) mod process_group;

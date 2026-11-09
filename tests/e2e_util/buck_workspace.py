@@ -11,6 +11,7 @@
 
 import asyncio
 import contextlib
+import faulthandler
 import functools
 import hashlib
 import inspect
@@ -20,6 +21,7 @@ import os
 import platform
 import re
 import shutil
+import signal
 import stat
 import subprocess
 import sys
@@ -35,6 +37,7 @@ from typing import (
     Callable,
     Dict,
     Iterable,
+    Iterator,
     List,
     Optional,
     Sequence,
@@ -291,7 +294,8 @@ async def buck_fixture(  # noqa C901 : "too complex"
         if isolation_prefix is not None:
             buck.set_isolation_prefix(isolation_prefix)
 
-        yield buck
+        with _dump_on_sigterm(buck):
+            yield buck
 
         daemon_panic = None
         if not (marker.allow_daemon_panics or marker.inplace):
@@ -318,6 +322,103 @@ async def buck_fixture(  # noqa C901 : "too complex"
             if marker.setup_eden:
                 _cleanup_eden(eden_dir, project_dir, env)
             shutil.rmtree(base_dir, ignore_errors=True)
+
+
+# How long a timed-out test's `SIGTERM` handler spends writing what buck2 was doing, then killing
+# its daemon. Together well under buck2's test timeout grace period, so the test is not killed
+# before it has stopped its daemon.
+_DUMP_SECONDS = 8
+_KILL_SECONDS = 3
+
+
+def dump_buck_state(buck: Buck, dest: Path, seconds: float = _DUMP_SECONDS) -> None:
+    """
+    Writes what `buck`'s daemon is doing to `dest`: a copy of its latest event log (the running
+    command's, if any) and the output of `buck2 status --snapshot` and `buck2 log what-up`, each
+    stream in its own file. Takes at most about `seconds` and never raises, so that a test about to
+    be killed can call it from a signal handler.
+    """
+    deadline = time.monotonic() + seconds
+
+    def run(cmd: str, *argv: str) -> "subprocess.CompletedProcess[bytes]":
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise subprocess.TimeoutExpired([cmd, *argv], seconds)
+        return buck.run_sync(cmd, *argv, timeout=remaining)
+
+    try:
+        dest.mkdir(parents=True, exist_ok=True)
+        try:
+            log = run("log", "path").stdout.decode().strip()
+            if log:
+                shutil.copy(Path(buck.cwd) / log, dest)
+        except (OSError, subprocess.SubprocessError, UnicodeDecodeError) as e:
+            (dest / "buck2_event_log.error.txt").write_text(f"{e}\n")
+        for name, cmd, argv in [
+            ("buck2_status", "status", ["--snapshot"]),
+            ("buck2_what_up", "log", ["what-up"]),
+        ]:
+            try:
+                result = run(cmd, *argv)
+            except (OSError, subprocess.SubprocessError) as e:
+                (dest / f"{name}.error.txt").write_text(f"{e}\n")
+                continue
+            (dest / f"{name}.txt").write_bytes(result.stdout)
+            if result.stderr:
+                (dest / f"{name}.stderr.txt").write_bytes(result.stderr)
+    except Exception:  # noqa: B902
+        pass
+
+
+@contextlib.contextmanager
+def _dump_on_sigterm(buck: Buck) -> Iterator[None]:
+    """
+    Within the context, a `SIGTERM` (which a test runner may send to a test that timed out before
+    it kills it) prints every thread's stack, writes `buck`'s state to the test's artifacts
+    directory, kills its daemon, and then terminates the test as `SIGTERM` would. The daemon is
+    killed and the test terminated even if writing the state fails.
+    """
+    if platform.system() == "Windows":
+        yield
+        return
+
+    def on_sigterm(signum: int, frame: object) -> None:
+        try:
+            stderr = sys.__stderr__
+            if stderr is not None:
+                faulthandler.dump_traceback(file=stderr, all_threads=True)
+            artifacts = os.environ.get("TEST_RESULT_ARTIFACTS_DIR")
+            if artifacts:
+                dump_buck_state(buck, Path(artifacts))
+                # `os.write`, not `print`: the signal may have interrupted a write to stderr,
+                # which `print` would then fail to reenter.
+                os.write(
+                    2,
+                    f"Timed out: wrote what buck2 was doing to {artifacts}\n".encode(),
+                )
+        except Exception:  # noqa: B902
+            pass
+        finally:
+            with contextlib.suppress(Exception):
+                buck.run_sync("kill", timeout=_KILL_SECONDS)
+            signal.signal(signal.SIGTERM, signal.SIG_DFL)
+            os.kill(os.getpid(), signal.SIGTERM)
+
+    try:
+        previous = signal.signal(signal.SIGTERM, on_sigterm)
+    except ValueError:
+        # Not on the main thread, where only signal handlers can be installed.
+        yield
+        return
+    try:
+        yield
+    finally:
+        signal.signal(signal.SIGTERM, previous)
+        # The test main prints stacks on `SIGTERM` through `faulthandler`, which `signal` neither
+        # sees nor restores: it reports such a handler as `SIG_DFL`.
+        if previous in (signal.SIG_DFL, None) and hasattr(faulthandler, "register"):
+            with contextlib.suppress(ValueError, OSError, AttributeError):
+                faulthandler.register(signal.SIGTERM, all_threads=True, chain=True)
 
 
 def _test_binary_identity() -> str:

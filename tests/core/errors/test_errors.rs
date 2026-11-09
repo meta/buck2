@@ -13,34 +13,6 @@ use regex::NoExpand;
 use regex::Regex;
 
 #[buck_test]
-async fn test_soft_error(buck: &Buck) {
-    buck.targets(&[":"])
-        .await
-        .expect_failure()
-        .assert_stderr_matches("starlark_raised_soft_error.*Will be reported");
-}
-
-#[buck_test(env = [("BUCK2_HARD_ERROR", "false")])]
-async fn test_soft_error_is_silent(buck: &Buck) -> anyhow::Result<()> {
-    let res = buck.targets(&[":", "no_stack:"]).await?;
-    assert!(!res.stderr.contains("starlark_raised_soft_error"));
-    assert!(!res.stderr.contains("starlark_no_stack_soft_error"));
-    Ok(())
-}
-
-#[buck_test(env = [("BUCK2_HARD_ERROR", "false")])]
-async fn test_soft_error_no_stack(buck: &Buck) -> anyhow::Result<()> {
-    buck.targets(&[":"]).await?;
-    let log = buck.log(&["show"]).await?;
-    assert!(log.stdout.contains("Traceback"));
-
-    buck.targets(&["no_stack:"]).await?;
-    let log = buck.log(&["show"]).await?;
-    assert!(!log.stdout.contains("Traceback"));
-    Ok(())
-}
-
-#[buck_test]
 async fn test_deprecation(buck: &Buck) {
     buck.targets(&["deprecation:"])
         .await
@@ -54,6 +26,18 @@ async fn test_deprecation_is_silent(buck: &Buck) -> anyhow::Result<()> {
     assert!(!res.stderr.contains("starlark_deprecation_example"));
     let log = buck.log(&["show"]).await?;
     assert!(log.stdout.contains("starlark_deprecation_example"));
+    Ok(())
+}
+
+#[buck_test(env = [("BUCK2_HARD_ERROR", "false")])]
+async fn test_deprecation_no_stack(buck: &Buck) -> anyhow::Result<()> {
+    buck.targets(&["deprecation:"]).await?;
+    let log = buck.log(&["show"]).await?;
+    assert!(log.stdout.contains("Traceback"));
+
+    buck.targets(&["no_stack:"]).await?;
+    let log = buck.log(&["show"]).await?;
+    assert!(!log.stdout.contains("Traceback"));
     Ok(())
 }
 

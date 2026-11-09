@@ -11,11 +11,17 @@
 package com.facebook.buck.android.apk;
 
 import com.android.apksig.ApkSigner;
+import com.android.apksig.apk.ApkFormatException;
+import com.android.apksig.apk.ApkUtils;
+import com.android.apksig.util.DataSources;
 import com.facebook.buck.android.apk.sdk.ApkCreationException;
 import com.facebook.infer.annotation.Nullsafe;
 import com.google.common.collect.ImmutableList;
 import java.io.File;
+import java.io.IOException;
 import java.io.InputStream;
+import java.io.RandomAccessFile;
+import java.nio.ByteBuffer;
 import java.security.KeyStore;
 import java.security.KeyStoreException;
 import java.security.PrivateKey;
@@ -29,14 +35,29 @@ import java.util.Objects;
 @Nullsafe(Nullsafe.Mode.LOCAL)
 public class ApkSignerUtils {
 
+  /** Android 7.0, the first version that verifies APK Signature Scheme v2. */
+  private static final int FIRST_SDK_WITH_V2_SIGNATURES = 24;
+
   /** Sign the APK using Google's {@link ApkSigner} */
   public static void signApkFile(
       File inputApk, File outputApk, ImmutableList<ApkSigner.SignerConfig> signerConfigs)
       throws ApkCreationException {
+    signApkFile(inputApk, outputApk, signerConfigs, true);
+  }
+
+  /**
+   * Signs the APK with a v2 signature, and with a v1 (JAR) signature when {@code v1SigningEnabled}.
+   */
+  public static void signApkFile(
+      File inputApk,
+      File outputApk,
+      ImmutableList<ApkSigner.SignerConfig> signerConfigs,
+      boolean v1SigningEnabled)
+      throws ApkCreationException {
     ApkSigner.Builder apkSignerBuilder = new ApkSigner.Builder(signerConfigs);
     try {
       apkSignerBuilder
-          .setV1SigningEnabled(true)
+          .setV1SigningEnabled(v1SigningEnabled)
           .setV2SigningEnabled(true)
           .setV3SigningEnabled(false)
           .setInputApk(inputApk)
@@ -45,6 +66,32 @@ public class ApkSignerUtils {
           .sign();
     } catch (Exception e) {
       throw new ApkCreationException(e, "Failed to sign APK");
+    }
+  }
+
+  /**
+   * Whether {@code apk} needs a v1 signature: it does when its {@code minSdkVersion} is below
+   * Android 7.0 (API 24), because older versions verify only v1 signatures, and later versions
+   * ignore the v1 signature of an APK that has a v2 signature. This is the rule {@code apksigner}
+   * and bundletool apply by default. When the manifest cannot be read, the APK is assumed to need
+   * one.
+   */
+  public static boolean needsV1Signature(File apk) {
+    try {
+      return needsV1Signature(getMinSdkVersion(apk));
+    } catch (IOException | ApkFormatException e) {
+      return true;
+    }
+  }
+
+  static boolean needsV1Signature(int minSdkVersion) {
+    return minSdkVersion < FIRST_SDK_WITH_V2_SIGNATURES;
+  }
+
+  static int getMinSdkVersion(File apk) throws IOException, ApkFormatException {
+    try (RandomAccessFile file = new RandomAccessFile(apk, "r")) {
+      ByteBuffer manifest = ApkUtils.getAndroidManifest(DataSources.asDataSource(file));
+      return ApkUtils.getMinSdkVersionFromBinaryAndroidManifest(manifest);
     }
   }
 

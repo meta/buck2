@@ -44,6 +44,7 @@ use buck2_directory::directory::directory_iterator::DirectoryIteratorPathStack;
 use buck2_directory::directory::entry::DirectoryEntry;
 use buck2_directory::directory::walk::unordered_entry_walk;
 use buck2_error::BuckErrorContext;
+use buck2_error::buck2_error;
 use buck2_error::internal_error;
 use buck2_events::dispatch::EventDispatcher;
 use buck2_events::dispatch::current_span;
@@ -447,6 +448,26 @@ impl From<MaterializeEntryError> for SharedMaterializingError {
     }
 }
 
+/// How long to wait for `buck2-dm` to dequeue an `Ensure`. The threshold the
+/// daemon heartbeat uses to call the DICE core thread stalled
+/// (`STALL_THRESHOLD`): this is the same failure, one thread not getting to its
+/// queue.
+const ENSURE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(120);
+
+/// Waits for `buck2-dm` to accept an `Ensure` and hand back its materialization.
+/// If `buck2-dm` is stuck in sqlite/WAL/clean-stale, `Ensure` is never dequeued
+/// and no CAS RPC is sent; the download that follows is bounded by the RE client.
+async fn ensure_accepted<R>(recv: oneshot::Receiver<R>) -> buck2_error::Result<R> {
+    match tokio::time::timeout(ENSURE_TIMEOUT, recv).await {
+        Ok(r) => r.buck_error_context("Receiving materialization future from command thread."),
+        Err(_) => Err(buck2_error!(
+            buck2_error::ErrorTag::MaterializationError,
+            "Materializer did not accept `Ensure` within {:?}; `buck2-dm` may be stuck",
+            ENSURE_TIMEOUT
+        )),
+    }
+}
+
 #[async_trait]
 impl<T: IoHandler + Allocative> Materializer for DeferredMaterializerAccessor<T> {
     async fn prevent_background_cleanup(&self) -> MaterializerBackgroundCleanupGuard {
@@ -514,9 +535,7 @@ impl<T: IoHandler + Allocative> Materializer for DeferredMaterializerAccessor<T>
                     sender,
                 ))
                 .buck_error_context("Sending Ensure() command.")?;
-            let materialization_fut = recv
-                .await
-                .buck_error_context("Receiving materialization future from command thread.")?;
+            let materialization_fut = ensure_accepted(recv).await?;
             Ok(materialization_fut.collect::<Vec<_>>().await)
         };
         let (outputs, results) = futures::future::try_join(prepare, ensure).await?;
@@ -757,9 +776,7 @@ impl<T: IoHandler + Allocative> Materializer for DeferredMaterializerAccessor<T>
                 sender,
             ))
             .buck_error_context("Sending Ensure() command.")?;
-        let materialization_fut = recv
-            .await
-            .buck_error_context("Receiving materialization future from command thread.")?;
+        let materialization_fut = ensure_accepted(recv).await?;
         Ok(materialization_fut)
     }
 
@@ -778,9 +795,7 @@ impl<T: IoHandler + Allocative> Materializer for DeferredMaterializerAccessor<T>
                 sender,
             ))
             .buck_error_context("Sending Ensure() command.")?;
-        let materialization_fut = recv
-            .await
-            .buck_error_context("Receiving materialization future from command thread.")?;
+        let materialization_fut = ensure_accepted(recv).await?;
         Ok(materialization_fut.try_collect().await?)
     }
 

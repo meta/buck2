@@ -1,4 +1,5 @@
 load("@prelude//utils:source_listing.bzl", "source_listing")
+load(":linux_fat_tools.bzl", "define_linux_fat_gen_lpar_bootstrap")
 
 oncall("plf_experience")
 
@@ -61,6 +62,8 @@ prelude.command_alias(
     exe = ":gen_lpar_bootstrap_bin",
     visibility = ["PUBLIC"],
 )
+
+define_linux_fat_gen_lpar_bootstrap()
 
 # Type checking target for Python tool scripts.
 prelude.python_library(

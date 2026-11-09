@@ -31,7 +31,15 @@ AndroidToolchainInfo = provider(
         "android_jar": provider_field(typing.Any, default = None),
         "android_optional_jars": provider_field(typing.Any, default = None),
         "apk_builder": provider_field(typing.Any, default = None),
+        # Threads that deflate APK files when `apk_builder_fast_packaging` is set.
+        "apk_builder_compression_threads": provider_field(int, default = 4),
+        # Package APKs with `FastApkJarBuilder`: copy compressed entries of zip inputs as they are,
+        # and deflate files on `apk_builder_compression_threads` threads.
+        "apk_builder_fast_packaging": provider_field(bool, default = False),
         "apk_module_graph": provider_field(typing.Any, default = None),
+        # `always` signs APKs with v1 and v2 signatures; `min-sdk` adds the v1 signature only when
+        # the APK's minSdkVersion is below 24.
+        "apk_v1_signing_policy": provider_field(str, default = "always"),
         "app_without_resources_stub": provider_field(typing.Any, default = None),
         "build_info_generator": provider_field(typing.Any, default = None),
         "bundle_apks_builder": provider_field(typing.Any, default = None),

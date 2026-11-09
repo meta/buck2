@@ -288,7 +288,20 @@ def build_apk(
             else:
                 fail("Only 'excluded_resources' and 'uncompressed_files' are supported in packaging_options right now!")
 
-    actions.run(apk_builder_args, category = "apk_build", identifier = output_filename, allow_cache_upload = True)
+    weight = 1
+    if android_toolchain.apk_builder_fast_packaging:
+        apk_builder_args.add(
+            "--fast-packaging",
+            "--compression-threads",
+            str(android_toolchain.apk_builder_compression_threads),
+        )
+
+        # The deflate threads run on as many cores when the action runs locally.
+        weight = android_toolchain.apk_builder_compression_threads
+    if android_toolchain.apk_v1_signing_policy != "always":
+        apk_builder_args.add("--v1-signing-policy", android_toolchain.apk_v1_signing_policy)
+
+    actions.run(apk_builder_args, category = "apk_build", identifier = output_filename, allow_cache_upload = True, weight = weight)
 
     return output_apk
 

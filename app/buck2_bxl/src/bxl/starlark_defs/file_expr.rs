@@ -9,11 +9,8 @@
  */
 
 use std::borrow::Cow;
-use std::convert::Infallible;
 use std::path::Path;
 
-use buck2_artifact::artifact::source_artifact::SourceArtifact;
-use buck2_build_api::interpreter::rule_defs::artifact::starlark_artifact::StarlarkArtifact;
 use buck2_build_api::interpreter::rule_defs::artifact::starlark_artifact_like::StarlarkArtifactView;
 use buck2_common::dice::cells::HasCellResolver;
 use buck2_common::dice::data::HasProjectRoot;
@@ -26,41 +23,16 @@ use buck2_fs::paths::abs_path::AbsPath;
 use derive_more::Display;
 use dice::DiceComputations;
 use dupe::Dupe;
-use starlark::typing::Ty;
 use starlark::values::UnpackValue;
-use starlark::values::Value;
 use starlark::values::type_repr::StarlarkTypeRepr;
 
 use crate::bxl::starlark_defs::file_set::StarlarkFileNode;
 
-#[derive(Debug, Display, Clone)]
-pub(crate) struct SourceArtifactUnpack {
-    artifact: SourceArtifact,
-}
-
-impl StarlarkTypeRepr for SourceArtifactUnpack {
-    type Canonical = <StarlarkArtifact as StarlarkTypeRepr>::Canonical;
-
-    fn starlark_type_repr() -> Ty {
-        StarlarkArtifact::starlark_type_repr()
-    }
-}
-
-impl<'v> UnpackValue<'v> for SourceArtifactUnpack {
-    type Error = Infallible;
-
-    fn unpack_value_impl(value: Value<'v>) -> Result<Option<Self>, Self::Error> {
-        let Some(v) = StarlarkArtifactView::unpack_value_opt(value) else {
-            return Ok(None);
-        };
-        let Some(bound_artifact) = v.as_input_artifact_like().get_bound_artifact().ok() else {
-            return Ok(None);
-        };
-        let Some(artifact) = bound_artifact.get_source() else {
-            return Ok(None);
-        };
-        Ok(Some(SourceArtifactUnpack { artifact }))
-    }
+#[derive(Debug, buck2_error::Error)]
+#[buck2(tag = Input)]
+enum FileExprError {
+    #[error("Expected a source artifact, got `{0}`")]
+    NotASourceArtifact(String),
 }
 
 /// FileExpr is just a simple type that can be used in starlark_module
@@ -70,7 +42,7 @@ impl<'v> UnpackValue<'v> for SourceArtifactUnpack {
 #[derive(Debug, Display, Clone, StarlarkTypeRepr, UnpackValue)]
 pub(crate) enum FileExpr<'v> {
     Literal(&'v str),
-    SourceArtifact(SourceArtifactUnpack),
+    SourceArtifact(StarlarkArtifactView<'v>),
     StarlarkFileNode(&'v StarlarkFileNode),
 }
 
@@ -105,7 +77,13 @@ impl<'a> FileExpr<'a> {
                     }
                 }
             }
-            FileExpr::SourceArtifact(val) => Ok(val.artifact.get_path().to_cell_path()),
+            FileExpr::SourceArtifact(artifact) => {
+                let bound = artifact.as_input_artifact_like().get_bound_artifact()?;
+                match bound.get_source() {
+                    Some(source) => Ok(source.get_path().to_cell_path()),
+                    None => Err(FileExprError::NotASourceArtifact(artifact.to_string()).into()),
+                }
+            }
             FileExpr::StarlarkFileNode(val) => Ok(val.0),
         }
     }

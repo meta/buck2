@@ -16,6 +16,7 @@ import com.facebook.buck.core.filesystems.RelPath;
 import com.facebook.buck.io.pathformat.PathFormatter;
 import com.facebook.buck.io.windowsfs.WindowsFS;
 import com.facebook.buck.util.environment.Platform;
+import com.facebook.infer.annotation.Nullsafe;
 import com.google.common.base.Preconditions;
 import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.Streams;
@@ -34,6 +35,7 @@ import java.util.function.Function;
 import javax.annotation.Nullable;
 
 /** Common functions that are done with a {@link Path}. */
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public class MorePaths {
 
   private static final boolean IS_WINDOWS = Platform.detect() == Platform.WINDOWS;
@@ -234,7 +236,8 @@ public class MorePaths {
     if (!path.startsWith("~")) {
       return path;
     }
-    Path homePath = path.getFileSystem().getPath(System.getProperty("user.home"));
+    Path homePath =
+        path.getFileSystem().getPath(Objects.requireNonNull(System.getProperty("user.home")));
     if (path.equals(path.getFileSystem().getPath("~"))) {
       return homePath;
     }
@@ -390,7 +393,7 @@ public class MorePaths {
     try {
       if (IS_WINDOWS) {
         Objects.requireNonNull(winFS);
-        target = MorePaths.normalize(symLink.getParent().resolve(target));
+        target = MorePaths.normalize(Objects.requireNonNull(symLink.getParent()).resolve(target));
         // `isDirectory()` here returns false if target doesn’t exist, causing a problem with
         // Windows build.
         // Ideally we should crash or log if target doesn't exist. More detail can be found at
@@ -402,7 +405,7 @@ public class MorePaths {
     } catch (IllegalArgumentException e) {
       // On windows, if one creates a symlink on a different filesystem, the error is not
       // particularly useful. ("'other' has different root"). Add some extra context
-      if (e.getMessage().endsWith("has different root")) {
+      if (Objects.requireNonNull(e.getMessage()).endsWith("has different root")) {
         String msg = String.format("Could not link %s to %s: %s", target, symLink, e.getMessage());
         throw new IllegalArgumentException(msg, e);
       } else {

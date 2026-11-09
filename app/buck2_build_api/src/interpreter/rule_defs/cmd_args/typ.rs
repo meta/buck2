@@ -187,9 +187,24 @@ impl<'v, F: Fields<'v>> Serialize for FieldsRef<'v, F> {
         /// by routing through this struct.
         #[derive(Serialize)]
         struct Mirror<'v, 'a> {
+            #[serde(serialize_with = "serialize_args_as_display")]
             items: &'a [CommandLineArg<'v>],
+            #[serde(serialize_with = "serialize_args_as_display")]
             hidden: &'a [CommandLineArg<'v>],
             options: Option<CommandLineOptionsRef<'v, 'a>>,
+        }
+
+        fn serialize_args_as_display<S: Serializer>(
+            args: &&[CommandLineArg<'_>],
+            serializer: S,
+        ) -> Result<S::Ok, S::Error> {
+            struct AsDisplay<'a, 'v>(&'a CommandLineArg<'v>);
+            impl Serialize for AsDisplay<'_, '_> {
+                fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+                    serializer.collect_str(self.0)
+                }
+            }
+            serializer.collect_seq(args.iter().map(AsDisplay))
         }
 
         Mirror {
@@ -277,7 +292,7 @@ impl<'v, F: Fields<'v>> CommandLineArgLike<'v> for FieldsRef<'v, F> {
         match self.0.options() {
             None => {
                 for item in self.0.items() {
-                    item.as_command_line_arg().add_to_command_line(fmt)?;
+                    item.unpack().0.add_to_command_line(fmt)?;
                 }
                 Ok(())
             }
@@ -287,7 +302,7 @@ impl<'v, F: Fields<'v>> CommandLineArgLike<'v> for FieldsRef<'v, F> {
                     fmt.push_scope(&options)?;
                 }
                 for item in self.0.items() {
-                    item.as_command_line_arg().add_to_command_line(fmt)?;
+                    item.unpack().0.add_to_command_line(fmt)?;
                 }
                 if options.changes_builder() {
                     fmt.pop_scope();
@@ -307,7 +322,7 @@ impl<'v, F: Fields<'v>> CommandLineArgLike<'v> for FieldsRef<'v, F> {
         ) -> buck2_error::Result<()> {
             for item in items {
                 visitor.push_frame()?;
-                item.as_command_line_arg().visit_artifacts(visitor)?;
+                item.unpack().0.visit_artifacts(visitor)?;
                 visitor.pop_frame();
             }
 
@@ -457,12 +472,12 @@ impl<'v, F: Fields<'v>> CommandLineArgLike<'v> for FieldsRef<'v, F> {
         self.0
             .items()
             .iter()
-            .any(|x| x.as_command_line_arg().contains_arg_attr())
+            .any(|x| x.unpack().0.contains_arg_attr())
             || self
                 .0
                 .hidden()
                 .iter()
-                .any(|x| x.as_command_line_arg().contains_arg_attr())
+                .any(|x| x.unpack().0.contains_arg_attr())
     }
 
     fn visit_write_to_file_macros(
@@ -484,11 +499,13 @@ impl<'v, F: Fields<'v>> CommandLineArgLike<'v> for FieldsRef<'v, F> {
         }
 
         for item in self.0.items() {
-            item.as_command_line_arg()
+            item.unpack()
+                .0
                 .visit_write_to_file_macros(visitor, artifact_path_mapping)?;
         }
         for item in self.0.hidden() {
-            item.as_command_line_arg()
+            item.unpack()
+                .0
                 .visit_write_to_file_macros(visitor, artifact_path_mapping)?;
         }
         Ok(())

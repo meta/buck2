@@ -124,9 +124,7 @@ impl<'v> ResolvedMacro<'v> {
             }
             Self::ArgLike(command_line_like) => {
                 fmt.push_scope_delimiter(" ");
-                command_line_like
-                    .as_command_line_arg()
-                    .add_to_command_line(fmt)?;
+                command_line_like.unpack().0.add_to_command_line(fmt)?;
                 fmt.pop_scope();
             }
             Self::Query(value) => value.add_to_arg(fmt)?,
@@ -157,9 +155,7 @@ impl<'v> ResolvedMacro<'v> {
                 }
             }
             Self::ArgLike(command_line_like) => {
-                command_line_like
-                    .as_command_line_arg()
-                    .visit_artifacts(visitor)?;
+                command_line_like.unpack().0.visit_artifacts(visitor)?;
             }
             Self::Query(value) => value.visit_artifacts(visitor)?,
             Self::Source(artifact) => visitor.visit_input(

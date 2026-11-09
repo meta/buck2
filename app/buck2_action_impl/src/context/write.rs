@@ -412,7 +412,7 @@ pub(crate) fn analysis_actions_methods_write(methods: &mut MethodsBuilder) {
 
         let (content_cli, written_macro_count, mut associated_artifacts) = match content {
             WriteContentArg::CommandLineArg(content) => {
-                let content_arg = content.as_command_line_arg();
+                let content_arg = content.unpack().0;
                 let count = count_write_to_file_macros(allow_args, content_arg)?;
                 let associated_artifacts = get_cli_inputs(with_inputs, content_arg)?;
                 (content, count, associated_artifacts)
@@ -422,7 +422,7 @@ pub(crate) fn analysis_actions_methods_write(methods: &mut MethodsBuilder) {
                 let count = count_write_to_file_macros(allow_args, &cli)?;
                 let associated_artifacts = get_cli_inputs(with_inputs, &cli)?;
                 (
-                    CommandLineArg::from_cmd_args(eval.heap().alloc_typed(cli)),
+                    CommandLineArg::new_err(eval.heap().alloc(cli))?,
                     count,
                     associated_artifacts,
                 )

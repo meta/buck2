@@ -27,6 +27,7 @@ use buck2_fs::fs_util;
 use buck2_fs::paths::abs_norm_path::AbsNormPathBuf;
 use buck2_fs::paths::file_name::FileName;
 use buck2_wrapper_common::BUCKD_LIFECYCLE;
+use buck2_wrapper_common::DAEMONLESS_LOCK;
 use futures::Stream;
 use futures::StreamExt;
 use futures::TryStreamExt;
@@ -150,6 +151,11 @@ impl BuckdLifecycleLock {
                 seen_lifecycle = true;
                 continue;
             }
+            if p.file_name() == DAEMONLESS_LOCK {
+                // A running `--no-buckd` client flocks this file; it needs to survive for the
+                // next daemon-less invocation.
+                continue;
+            }
             if keep_prev {
                 if p.file_name() != Self::BUCKD_PREV_DIR {
                     let file_name = p.file_name();
@@ -178,6 +184,42 @@ impl Drop for BuckdLifecycleLock {
         self.lock_file
             .unlock()
             .expect("Unexpected failure to unlock buckd.lifecycle file.")
+    }
+}
+
+/// Lock for serializing `--no-buckd` invocations.
+///
+/// Without locking, a second invocation would kill whatever daemon `buckd.info` records, which is
+/// the first invocation's in-process daemon. Avoid that by taking an exclusive flock on the daemon
+/// dir, which the caller keeps for the rest of the client process's life: the kernel releases it
+/// when the process exits, crashes, or execs the target in `buck2 run`, i.e. exactly when the
+/// in-process daemon dies. On Windows `buck2 run` keeps the client+daemon alive while the target
+/// runs, so there the slot stays owned by the first invocation.
+///
+/// There is no deadline: a daemon-less build legitimately runs for hours.
+pub async fn acquire_daemonless_slot(daemon_dir: &DaemonDir) -> buck2_error::Result<File> {
+    create_dir_all(&daemon_dir.path)?;
+    let file = File::create(daemon_dir.path.as_path().join(DAEMONLESS_LOCK))?;
+    match file.try_lock() {
+        Ok(()) => return Ok(file),
+        Err(std::fs::TryLockError::WouldBlock) => {}
+        Err(std::fs::TryLockError::Error(e)) => {
+            return Err(e).buck_error_context("Locking the daemon-less slot");
+        }
+    }
+    crate::eprintln!(
+        "Another `--no-buckd` command owns this isolation dir; waiting for it to finish..."
+    )?;
+    let locked = tokio::task::spawn_blocking(move || file.lock().map(|()| file));
+    tokio::select! {
+        locked = locked => Ok(locked
+            .buck_error_context("Daemon-less slot locker thread panicked")?
+            .map_err(std::io::Error::from)
+            .buck_error_context("Locking the daemon-less slot")?),
+        _ = tokio::signal::ctrl_c() => Err(buck2_error::buck2_error!(
+            buck2_error::ErrorTag::Tier0,
+            "Interrupted while waiting for another `--no-buckd` command to finish"
+        )),
     }
 }
 

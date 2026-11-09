@@ -16,7 +16,7 @@ use buck2_core::execution_types::execution_group::ExecutionGroup;
 use buck2_core::provider::label::ConfiguredProvidersLabel;
 use buck2_error::buck2_error;
 use buck2_hash::BuckMutInsertionMap;
-use buck2_interpreter::execution_group::ExecutionGroupArg;
+use buck2_interpreter::execution_group::StarlarkExecutionGroupView;
 use buck2_interpreter::types::configured_providers_label::StarlarkConfiguredProvidersLabel;
 use buck2_test_api::data::TestListingEntry;
 use buck2_test_api::data::TestResultEntry;
@@ -128,7 +128,7 @@ pub struct InternalRunnerTestInfo<'v> {
     /// field works in any rule. A rule that declares named groups but not `DefaultExecGroup` must
     /// set `exec_group` or `default_executor`; `executor_overrides` does not replace them, as the
     /// tests run in the default group whenever no override is picked.
-    exec_group: Option<ValueOf<'v, ExecutionGroupArg>>,
+    exec_group: Option<ValueOf<'v, StarlarkExecutionGroupView<'v>>>,
 
     /// Executors that can be used to override the default executor.
     executor_overrides: Option<
@@ -238,7 +238,7 @@ impl<'v> InternalRunnerTestInfo<'v> {
     pub fn execution_group(&self) -> buck2_error::Result<Option<ExecutionGroup>> {
         match self.exec_group {
             None => Ok(None),
-            Some(exec_group) => Ok(Some(exec_group.try_unpack()?.group)),
+            Some(exec_group) => Ok(Some(exec_group.unpack().expect_bound()?)),
         }
     }
 
@@ -527,14 +527,14 @@ fn internal_runner_test_info_creator(globals: &mut GlobalsBuilder) {
         >,
         #[starlark(default = NoneOr::None)] worker: NoneOr<ValueTyped<'v, WorkerInfo<'v>>>,
         #[starlark(require = named, default = NoneOr::None)] exec_group: NoneOr<
-            ValueOf<'v, ExecutionGroupArg>,
+            ValueOf<'v, StarlarkExecutionGroupView<'v>>,
         >,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<InternalRunnerTestInfo<'v>> {
         let exec_group = exec_group.into_option();
-        let group = exec_group.map(|g| g.try_unpack()).transpose()?;
+        let group = exec_group.map(|g| g.unpack().expect_bound()).transpose()?;
         let default_executor = default_executor_with_execution_group(
-            group.as_ref().map(|g| &g.group),
+            group.as_ref(),
             default_executor.into_option(),
             eval,
         )?;

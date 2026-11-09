@@ -21,7 +21,6 @@ use starlark::environment::GlobalsBuilder;
 use starlark::eval::Evaluator;
 use starlark::starlark_module;
 use starlark::starlark_simple_value;
-use starlark::typing::Ty;
 use starlark::values::AllocValue;
 use starlark::values::Freeze;
 use starlark::values::FreezeError;
@@ -39,7 +38,6 @@ use starlark::values::UnpackValue;
 use starlark::values::Value;
 use starlark::values::ValueTyped;
 use starlark::values::starlark_value;
-use starlark::values::type_repr::StarlarkTypeRepr;
 
 use crate::interpreter::build_context::BuildContext;
 
@@ -158,7 +156,7 @@ impl<'v> StarlarkType<'v> for StarlarkPluginKindView<'v> {
 }
 
 impl StarlarkPluginKindView<'_> {
-    fn expect_bound(&self) -> buck2_error::Result<PluginKind> {
+    pub fn expect_bound(&self) -> buck2_error::Result<PluginKind> {
         match self {
             StarlarkPluginKindView::Unfrozen(v) => v.expect_bound(),
             StarlarkPluginKindView::Frozen(v) => Ok(v.0.dupe()),
@@ -171,31 +169,6 @@ fn plugin_kind_from_value<'v>(v: Value<'v>) -> buck2_error::Result<PluginKind> {
         return Err(PluginKindError::NotAPluginKind(v.to_repr()).into());
     };
     kind.expect_bound()
-}
-
-pub(crate) struct PluginKindArg {
-    pub(crate) plugin_kind: PluginKind,
-}
-
-impl StarlarkTypeRepr for PluginKindArg {
-    type Canonical = <StarlarkPluginKindView<'static> as StarlarkTypeRepr>::Canonical;
-
-    fn starlark_type_repr() -> Ty {
-        StarlarkPluginKindView::starlark_type_repr()
-    }
-}
-
-impl<'v> UnpackValue<'v> for PluginKindArg {
-    type Error = starlark::Error;
-
-    fn unpack_value_impl(value: Value<'v>) -> Result<Option<Self>, Self::Error> {
-        let Some(kind) = StarlarkPluginKindView::unpack_value_opt(value) else {
-            return Ok(None);
-        };
-        Ok(Some(PluginKindArg {
-            plugin_kind: kind.expect_bound()?,
-        }))
-    }
 }
 
 /// The value yielded by `plugins.ALL`

@@ -20,7 +20,7 @@ use buck2_build_api::interpreter::rule_defs::context::AnalysisActions;
 use buck2_fs::paths::forward_rel_path::ForwardRelativePathBuf;
 use buck2_hash::BuckMutInsertionMap;
 use buck2_interpreter::downstream_crate_starlark_defs::REGISTER_BUCK2_ANON_TARGETS_GLOBALS;
-use buck2_interpreter::execution_group::ExecutionGroupArg;
+use buck2_interpreter::execution_group::StarlarkExecutionGroupView;
 use buck2_interpreter::starlark_promise::StarlarkPromise;
 use buck2_interpreter_for_build::rule::FrozenArtifactPromiseMappings;
 use buck2_interpreter_for_build::rule::StarlarkRuleCallableView;
@@ -258,12 +258,15 @@ fn analysis_actions_methods_anon_target(builder: &mut MethodsBuilder) {
         // TODO(nga): this should be either positional or named, not both.
         rule: StarlarkRuleCallableView<'v>,
         attrs: ValueOf<'v, DictType<&'v str, Value<'v>>>,
-        #[starlark(require = named, default = NoneOr::None)] exec_group: NoneOr<ExecutionGroupArg>,
+        #[starlark(require = named, default = NoneOr::None)] exec_group: NoneOr<
+            StarlarkExecutionGroupView<'v>,
+        >,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<StarlarkAnonTarget<'v>> {
         let exec_group = exec_group
             .into_option()
-            .map(|ExecutionGroupArg { group }| group);
+            .map(|group| group.expect_bound())
+            .transpose()?;
         let rule = rule.frozen()?;
         let anon_target_promise = eval.heap().alloc_typed(StarlarkPromise::new_unresolved());
         let mut this = this.state()?;
@@ -293,12 +296,15 @@ fn analysis_actions_methods_anon_target(builder: &mut MethodsBuilder) {
                 ValueOf<'v, DictType<&'v str, Value<'v>>>,
             )>,
         >,
-        #[starlark(require = named, default = NoneOr::None)] exec_group: NoneOr<ExecutionGroupArg>,
+        #[starlark(require = named, default = NoneOr::None)] exec_group: NoneOr<
+            StarlarkExecutionGroupView<'v>,
+        >,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<StarlarkAnonTargets<'v>> {
         let exec_group = exec_group
             .into_option()
-            .map(|ExecutionGroupArg { group }| group);
+            .map(|group| group.expect_bound())
+            .transpose()?;
         let mut this = this.state()?;
         let this = &mut *this;
         let registry = AnonTargetsRegistry::downcast_mut(&mut **this.anon_targets)?;

@@ -15,7 +15,7 @@ use buck2_core::execution_types::execution_group::ExecutionGroup;
 use buck2_core::plugins::PluginKindSet;
 use buck2_error::BuckErrorContext;
 use buck2_interpreter::coerce::COERCE_PROVIDERS_LABEL_FOR_BZL;
-use buck2_interpreter::execution_group::ExecutionGroupArg;
+use buck2_interpreter::execution_group::StarlarkExecutionGroupView;
 use buck2_interpreter::types::provider::callable::ValueAsProviderCallableLike;
 use buck2_interpreter::types::transition::ValueAsTransition;
 use buck2_node::attrs::attr::Attribute;
@@ -48,7 +48,7 @@ use crate::attrs::starlark_attribute::register_attr_type;
 use crate::interpreter::build_context::BuildContext;
 use crate::interpreter::selector::StarlarkSelector;
 use crate::plugins::AllPlugins;
-use crate::plugins::PluginKindArg;
+use crate::plugins::StarlarkPluginKindView;
 
 const OPTION_NONE_EXPLANATION: &str = "`None` as an attribute value always picks the default. For `attrs.option`, if the default isn't `None`, there is no way to express `None`.";
 
@@ -213,7 +213,9 @@ fn attr_module(registry: &mut GlobalsBuilder) {
         >,
         #[starlark(require = named)] default: Option<Value<'v>>,
         #[starlark(require = named, default = "")] doc: &str,
-        #[starlark(require = named, default = NoneOr::None)] exec_group: NoneOr<ExecutionGroupArg>,
+        #[starlark(require = named, default = NoneOr::None)] exec_group: NoneOr<
+            StarlarkExecutionGroupView<'v>,
+        >,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<StarlarkAttribute> {
         let required_providers = dep_like_attr_handle_providers_arg(providers)?;
@@ -222,8 +224,8 @@ fn attr_module(registry: &mut GlobalsBuilder) {
                 AttrType::exec_dep(required_providers),
                 ToolMarks::UNMARKED_EXEC_DEP,
             ),
-            Some(ExecutionGroupArg { group }) => (
-                AttrType::exec_dep_in_group(required_providers, group),
+            Some(group) => (
+                AttrType::exec_dep_in_group(required_providers, group.expect_bound()?),
                 ToolMarks::NONE,
             ),
         };
@@ -237,7 +239,7 @@ fn attr_module(registry: &mut GlobalsBuilder) {
     /// `rule(exec_groups = ...)` (`DefaultExecGroup` is declared implicitly by rules
     /// without named groups). Supplies the constraint labels as strings to the rule.
     fn exec_compatible_with<'v>(
-        #[starlark(require = named)] exec_group: ExecutionGroupArg,
+        #[starlark(require = named)] exec_group: StarlarkExecutionGroupView<'v>,
         #[starlark(require = named)] default: Option<Value<'v>>,
         #[starlark(require = named, default = "")] doc: &str,
         eval: &mut Evaluator<'v, '_, '_>,
@@ -248,7 +250,7 @@ fn attr_module(registry: &mut GlobalsBuilder) {
         let attr = Attribute::attr(eval, default, doc, coercer, ToolMarks::NONE)?;
         Ok(StarlarkAttribute::new_exec_compatible_with(
             attr.clone_attribute(),
-            exec_group.group,
+            exec_group.expect_bound()?,
         ))
     }
 
@@ -268,7 +270,9 @@ fn attr_module(registry: &mut GlobalsBuilder) {
         >,
         #[starlark(require = named)] default: Option<Value<'v>>,
         #[starlark(require = named, default = "")] doc: &str,
-        #[starlark(require = named, default = NoneOr::None)] exec_group: NoneOr<ExecutionGroupArg>,
+        #[starlark(require = named, default = NoneOr::None)] exec_group: NoneOr<
+            StarlarkExecutionGroupView<'v>,
+        >,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<StarlarkAttribute> {
         let required_providers = dep_like_attr_handle_providers_arg(providers)?;
@@ -277,8 +281,8 @@ fn attr_module(registry: &mut GlobalsBuilder) {
                 AttrType::toolchain_dep(required_providers),
                 ToolMarks::UNMARKED_TOOLCHAIN_DEP,
             ),
-            Some(ExecutionGroupArg { group }) => (
-                AttrType::toolchain_dep_in_group(required_providers, group),
+            Some(group) => (
+                AttrType::toolchain_dep_in_group(required_providers, group.expect_bound()?),
                 ToolMarks::NONE,
             ),
         };
@@ -378,7 +382,7 @@ fn attr_module(registry: &mut GlobalsBuilder) {
     ///
     /// See the [`plugins`](../plugins) namespace documentation for a full explanation and examples.
     fn plugin_dep<'v>(
-        #[starlark(require = named)] kind: PluginKindArg,
+        #[starlark(require = named)] kind: StarlarkPluginKindView<'v>,
         #[starlark(require = named)] default: Option<Value<'v>>,
         #[starlark(require = named, default = "")] doc: &str,
         eval: &mut Evaluator<'v, '_, '_>,
@@ -387,7 +391,7 @@ fn attr_module(registry: &mut GlobalsBuilder) {
             eval,
             default,
             doc,
-            AttrType::plugin_dep(kind.plugin_kind),
+            AttrType::plugin_dep(kind.expect_bound()?),
             ToolMarks::NONE,
         )?)
     }
@@ -408,11 +412,11 @@ fn attr_module(registry: &mut GlobalsBuilder) {
         >,
         #[starlark(require = named, default = ValueOf::empty_list())] pulls_plugins: ValueOf<
             'v,
-            ListOrTupleType<PluginKindArg>,
+            ListOrTupleType<StarlarkPluginKindView<'v>>,
         >,
         #[starlark(require = named, default = Either::Left(ValueOf::empty_list()))]
         pulls_and_pushes_plugins: Either<
-            ValueOf<'v, ListOrTupleType<PluginKindArg>>,
+            ValueOf<'v, ListOrTupleType<StarlarkPluginKindView<'v>>>,
             &'v AllPlugins,
         >,
         #[starlark(require = named)] default: Option<Value<'v>>,
@@ -425,11 +429,11 @@ fn attr_module(registry: &mut GlobalsBuilder) {
             Either::Left(pulls_and_pushes_plugins) => {
                 let pulls_and_pushes_plugins: Vec<_> = pulls_and_pushes_plugins
                     .try_items()
-                    .map(|arg| arg.map(|PluginKindArg { plugin_kind }| plugin_kind))
+                    .map(|arg| Ok(arg?.expect_bound()?))
                     .collect::<starlark::Result<_>>()?;
                 let pulls_plugins: Vec<_> = pulls_plugins
                     .try_items()
-                    .map(|arg| arg.map(|PluginKindArg { plugin_kind }| plugin_kind))
+                    .map(|arg| Ok(arg?.expect_bound()?))
                     .collect::<starlark::Result<_>>()?;
                 PluginKindSet::new(pulls_plugins, pulls_and_pushes_plugins)?
             }
@@ -573,17 +577,19 @@ fn attr_module(registry: &mut GlobalsBuilder) {
         #[starlark(require = named)] default: Option<Value<'v>>,
         #[starlark(require = named, default = "")] doc: &str,
         #[starlark(require = named, default = false)] anon_target_compatible: bool,
-        #[starlark(require = named, default = NoneOr::None)] exec_group: NoneOr<ExecutionGroupArg>,
+        #[starlark(require = named, default = NoneOr::None)] exec_group: NoneOr<
+            StarlarkExecutionGroupView<'v>,
+        >,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<StarlarkAttribute> {
         let _unused = json;
-        let (exec_group, marks) = match exec_group.into_option() {
-            Some(ExecutionGroupArg {
-                group: ExecutionGroup::Named(group),
-            }) => (Some(group), ToolMarks::NONE),
-            Some(ExecutionGroupArg {
-                group: ExecutionGroup::Default,
-            }) => (None, ToolMarks::DEFAULT_GROUP_ARG),
+        let exec_group = exec_group
+            .into_option()
+            .map(|group| group.expect_bound())
+            .transpose()?;
+        let (exec_group, marks) = match exec_group {
+            Some(ExecutionGroup::Named(group)) => (Some(group), ToolMarks::NONE),
+            Some(ExecutionGroup::Default) => (None, ToolMarks::DEFAULT_GROUP_ARG),
             None => (None, ToolMarks::UNMARKED_ARG),
         };
         Ok(Attribute::attr(

@@ -20,7 +20,7 @@ use buck2_core::execution_types::execution_group::NamedExecutionGroup;
 use buck2_core::plugins::PluginKind;
 use buck2_error::BuckErrorOptionContext;
 use buck2_hash::BuckMutInsertionMap;
-use buck2_interpreter::execution_group::ExecutionGroupArg;
+use buck2_interpreter::execution_group::StarlarkExecutionGroupView;
 use buck2_interpreter::late_binding_ty::AnalysisContextReprLate;
 use buck2_interpreter::late_binding_ty::ProviderReprLate;
 use buck2_interpreter::starlark_promise::StarlarkPromise;
@@ -86,7 +86,7 @@ use crate::interpreter::extra_value::InterpreterExtraValue;
 use crate::interpreter::module_internals::ModuleInternals;
 use crate::nodes::attr_spec::AttributeSpecExt;
 use crate::nodes::unconfigured::UnsealedTargetNodeExt;
-use crate::plugins::PluginKindArg;
+use crate::plugins::StarlarkPluginKindView;
 
 pub static NAME_ATTRIBUTE_FIELD: &str = "name";
 
@@ -1047,11 +1047,11 @@ pub fn register_rule_function(builder: &mut GlobalsBuilder) {
         #[starlark(require = named, default = false)] is_toolchain_rule: bool,
         #[starlark(require = named, default = ValueOf::empty_list())] uses_plugins: ValueOf<
             'v,
-            ListOrTupleType<PluginKindArg>,
+            ListOrTupleType<StarlarkPluginKindView<'v>>,
         >,
         #[starlark(require = named, default = ValueOf::empty_list())] exec_groups: ValueOf<
             'v,
-            ListOrTupleType<ExecutionGroupArg>,
+            ListOrTupleType<StarlarkExecutionGroupView<'v>>,
         >,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<StarlarkRuleCallable<'v>> {
@@ -1065,11 +1065,11 @@ pub fn register_rule_function(builder: &mut GlobalsBuilder) {
             is_toolchain_rule,
             uses_plugins
                 .try_items()
-                .map(|arg| arg.map(|PluginKindArg { plugin_kind }| plugin_kind))
+                .map(|arg| Ok(arg?.expect_bound()?))
                 .collect::<starlark::Result<_>>()?,
             exec_groups
                 .try_items()
-                .map(|arg| arg.map(|ExecutionGroupArg { group }| group))
+                .map(|arg| Ok(arg?.expect_bound()?))
                 .collect::<starlark::Result<_>>()?,
             None,
             eval,

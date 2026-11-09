@@ -33,7 +33,7 @@ use buck2_execute::artifact::fs::ExecutorFs;
 use buck2_hash::BuckMutInsertionSet;
 use buck2_hash::BuckMutMap;
 use buck2_hash::buck_mut_insertion_set;
-use buck2_interpreter::execution_group::ExecutionGroupArg;
+use buck2_interpreter::execution_group::StarlarkExecutionGroupView;
 use dupe::Dupe;
 use either::Either;
 use sha1::Digest;
@@ -180,10 +180,12 @@ pub(crate) fn analysis_actions_methods_write(methods: &mut MethodsBuilder) {
         #[starlark(require = named, default = NoneOr::None)] has_content_based_path: NoneOr<bool>,
         #[starlark(require = named, default = false)]
         use_dep_files_placeholder_for_content_based_paths: bool,
-        #[starlark(require = named, default = NoneOr::None)] exec_group: NoneOr<ExecutionGroupArg>,
+        #[starlark(require = named, default = NoneOr::None)] exec_group: NoneOr<
+            StarlarkExecutionGroupView<'v>,
+        >,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<impl AllocValue<'v> + use<'v>> {
-        let exec_group = action_execution_group(exec_group);
+        let exec_group = action_execution_group(exec_group)?;
         if dep_files_fingerprint_using_canonical_paths && with_inputs {
             return Err(
                 buck2_error::Error::from(WriteActionError::DepFileFingerprintWithInputs).into(),
@@ -267,10 +269,12 @@ pub(crate) fn analysis_actions_methods_write(methods: &mut MethodsBuilder) {
         #[starlark(require = pos)] output: OutputArtifactArg<'v>,
         #[starlark(require = pos)] content: ValueOf<'v, HmapMappings<'v>>,
         #[starlark(require = named, default = NoneOr::None)] has_content_based_path: NoneOr<bool>,
-        #[starlark(require = named, default = NoneOr::None)] exec_group: NoneOr<ExecutionGroupArg>,
+        #[starlark(require = named, default = NoneOr::None)] exec_group: NoneOr<
+            StarlarkExecutionGroupView<'v>,
+        >,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<impl AllocValue<'v> + use<'v>> {
-        let exec_group = action_execution_group(exec_group);
+        let exec_group = action_execution_group(exec_group)?;
         let mut this = this.state()?;
         check_default_execution_group_declared(this.execution_platform(), &exec_group)?;
         let (declaration, output_artifact) = this.get_or_declare_output(
@@ -334,7 +338,9 @@ pub(crate) fn analysis_actions_methods_write(methods: &mut MethodsBuilder) {
         #[starlark(require = named, default = NoneOr::None)] has_content_based_path: NoneOr<bool>,
         #[starlark(require = named, default = false)]
         use_dep_files_placeholder_for_content_based_paths: bool,
-        #[starlark(require = named, default = NoneOr::None)] exec_group: NoneOr<ExecutionGroupArg>,
+        #[starlark(require = named, default = NoneOr::None)] exec_group: NoneOr<
+            StarlarkExecutionGroupView<'v>,
+        >,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<WriteReturnValue<'v>> {
         fn count_write_to_file_macros(
@@ -394,7 +400,7 @@ pub(crate) fn analysis_actions_methods_write(methods: &mut MethodsBuilder) {
             )
             .into());
         }
-        let exec_group = action_execution_group(exec_group);
+        let exec_group = action_execution_group(exec_group)?;
         let mut this = this.state()?;
         check_default_execution_group_declared(this.execution_platform(), &exec_group)?;
         let (declaration, output_artifact) = this.get_or_declare_output(

@@ -41,7 +41,7 @@ use buck2_fs::paths::forward_rel_path::ForwardRelativePathBuf;
 use buck2_hash::BuckMutInsertionMap;
 use buck2_hash::BuckMutInsertionSet;
 use buck2_hash::BuckMutMap;
-use buck2_interpreter::execution_group::ExecutionGroupArg;
+use buck2_interpreter::execution_group::StarlarkExecutionGroupView;
 use dupe::Dupe;
 use either::Either;
 use host_sharing::WeightClass;
@@ -322,9 +322,11 @@ pub(crate) fn analysis_actions_methods_run(methods: &mut MethodsBuilder) {
         #[starlark(require = named, default = NoneOr::None)] expect_eligible_for_dedupe: NoneOr<
             bool,
         >,
-        #[starlark(require = named, default = NoneOr::None)] exec_group: NoneOr<ExecutionGroupArg>,
+        #[starlark(require = named, default = NoneOr::None)] exec_group: NoneOr<
+            StarlarkExecutionGroupView<'v>,
+        >,
     ) -> starlark::Result<NoneType> {
-        let exec_group = action_execution_group(exec_group);
+        let exec_group = action_execution_group(exec_group)?;
         if incremental_remote_outputs && !no_outputs_cleanup {
             // Precaution to make sure content-based paths are not involved.
             return Err(buck2_error::Error::from(

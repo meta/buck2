@@ -10,15 +10,17 @@
 
 use buck2_core::execution_types::execution::ExecutionPlatformResolution;
 use buck2_core::execution_types::execution_group::ExecutionGroup;
-use buck2_interpreter::execution_group::ExecutionGroupArg;
+use buck2_interpreter::execution_group::StarlarkExecutionGroupView;
 use starlark::values::none::NoneOr;
 
 /// The execution group of an action from its `exec_group` argument: the default group when
 /// it is `None`.
-pub(crate) fn action_execution_group(execution_group: NoneOr<ExecutionGroupArg>) -> ExecutionGroup {
+pub(crate) fn action_execution_group(
+    execution_group: NoneOr<StarlarkExecutionGroupView<'_>>,
+) -> buck2_error::Result<ExecutionGroup> {
     match execution_group.into_option() {
-        None => ExecutionGroup::Default,
-        Some(ExecutionGroupArg { group }) => group,
+        None => Ok(ExecutionGroup::Default),
+        Some(group) => group.expect_bound(),
     }
 }
 

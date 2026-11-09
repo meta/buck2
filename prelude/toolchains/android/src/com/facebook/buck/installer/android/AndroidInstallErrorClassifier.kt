@@ -24,38 +24,28 @@ object AndroidInstallErrorClassifier {
               "`adb shell rm -rf /data/local/tmp/exopackage/<package>`.",
       )
     }
-    for ((pattern, handler) in errorPatterns) {
-      if (input.contains(pattern)) {
-        return handler(input)
-      }
-    }
-    return InstallError(input, AndroidInstallErrorTag.OTHER_INFRA)
-  }
-
-  private val errorPatterns = listOf<Pair<String, (String) -> InstallError>>(
-      "stderr message: " to this::decorateStdErrMessages,
-  )
-
-  private fun decorateStdErrMessages(input: String): InstallError {
-    val message = input.substringAfter("stderr message: ")
     return when {
-      message.contains("Could not find `adb` in PATH") ->
-          createInstallError(AndroidInstallErrorTag.ADB_NOT_FOUND, message)
-      message.contains("Failed to connect to adb.") ->
-          createInstallError(AndroidInstallErrorTag.FAILED_TO_CONNECT_TO_ADB, message)
-      message.contains("Didn't find any attached Android devices/emulators.") ->
-          createInstallError(AndroidInstallErrorTag.DEVICE_NOT_FOUND, message)
-      message.contains("devices match specified device filter") ->
-          createInstallError(AndroidInstallErrorTag.MULTIPLE_DEVICES_MATCH_FILTER, message)
+      input.contains("Could not find `adb` in PATH") ->
+          createInstallError(AndroidInstallErrorTag.ADB_NOT_FOUND, input)
+      input.contains("Failed to connect to adb.") || ADB_SERVER_FAILURE.containsMatchIn(input) ->
+          createInstallError(AndroidInstallErrorTag.FAILED_TO_CONNECT_TO_ADB, input)
+      input.contains("Didn't find any attached Android devices/emulators.") ->
+          createInstallError(AndroidInstallErrorTag.DEVICE_NOT_FOUND, input)
+      input.contains("devices match specified device filter") ->
+          createInstallError(AndroidInstallErrorTag.MULTIPLE_DEVICES_MATCH_FILTER, input)
       Regex("You are trying to install .* onto a device with the following CPU")
-          .containsMatchIn(message) ->
-          createInstallError(AndroidInstallErrorTag.INCOMPATIBLE_ABI, message)
+          .containsMatchIn(input) ->
+          createInstallError(AndroidInstallErrorTag.INCOMPATIBLE_ABI, input)
       Regex("You are trying to install an APK with incompatible native libraries")
-          .containsMatchIn(message) ->
-          createInstallError(AndroidInstallErrorTag.INCOMPATIBLE_NATIVE_LIB, message)
-      else -> createInstallError(AndroidInstallErrorTag.OTHER_INFRA, message)
+          .containsMatchIn(input) ->
+          createInstallError(AndroidInstallErrorTag.INCOMPATIBLE_NATIVE_LIB, input)
+      else -> createInstallError(AndroidInstallErrorTag.OTHER_INFRA, input)
     }
   }
+
+  // These commands name no device, so their failure is the adb server's: it could not be reached or
+  // started.
+  private val ADB_SERVER_FAILURE = Regex("Executing 'adb (devices|start-server)' on null failed")
 
   private fun createInstallError(tag: AndroidInstallErrorTag, msg: String): InstallError {
     return InstallError(msg, tag)

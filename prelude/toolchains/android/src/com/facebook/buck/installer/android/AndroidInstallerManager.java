@@ -93,6 +93,10 @@ class AndroidInstallerManager implements InstallCommand {
       androidArtifacts.recordFileArrival(artifactName, arrivedAt);
 
       if (artifactName.equals("options")) {
+        Optional<InstallError> adbMissing = checkAdbExists(androidArtifacts);
+        if (adbMissing.isPresent()) {
+          return InstallResult.error(adbMissing.get());
+        }
         resolveDevices(installId, androidArtifacts);
       }
       Optional<InstallError> incompatible = checkAbiCompatibility(installId);
@@ -201,14 +205,9 @@ class AndroidInstallerManager implements InstallCommand {
                 installId.getValue(), undelivered));
       }
 
-      String adbPath = androidArtifacts.getApkOptions().adbExecutable;
-      if (!Files.exists(Paths.get(adbPath))) {
-        return InstallResult.error(
-            errorClassifier.fromErrorMessage(
-                String.format(
-                    "Could not find `adb` in PATH, and could not find `adb` "
-                        + "at %s. Please add `adb` to your PATH",
-                    adbPath)));
+      Optional<InstallError> adbMissing = checkAdbExists(androidArtifacts);
+      if (adbMissing.isPresent()) {
+        return InstallResult.error(adbMissing.get());
       }
 
       AdbHelper adbHelper = resolveDevices(installId, androidArtifacts);
@@ -411,6 +410,23 @@ class AndroidInstallerManager implements InstallCommand {
           Optional.of(new IsolatedExopackageInfo(dexInfo, nativeLibsInfo, resourcesInfo));
     }
     return isolatedExopackageInfo;
+  }
+
+  /**
+   * Checked before anything runs adb: running a missing adb fails with a stack trace that names
+   * neither adb nor the fix.
+   */
+  private Optional<InstallError> checkAdbExists(AndroidArtifacts androidArtifacts) {
+    String adbPath = androidArtifacts.getApkOptions().adbExecutable;
+    if (Files.exists(Paths.get(adbPath))) {
+      return Optional.empty();
+    }
+    return Optional.of(
+        errorClassifier.fromErrorMessage(
+            String.format(
+                "Could not find `adb` in PATH, and could not find `adb` "
+                    + "at %s. Please add `adb` to your PATH",
+                adbPath)));
   }
 
   /**

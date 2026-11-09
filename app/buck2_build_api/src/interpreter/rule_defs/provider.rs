@@ -66,6 +66,8 @@ use buck2_core::provider::id::ProviderId;
 use starlark::any::IsStaticType;
 use starlark::any::ProvidesStaticType;
 use starlark::typing::Ty;
+use starlark::values::StarlarkTypeExpr;
+use starlark::values::StarlarkTypeExprStable;
 use starlark::values::StarlarkValue;
 use starlark::values::UnpackValue;
 use starlark::values::Value;
@@ -118,6 +120,16 @@ impl<'v> StarlarkTypeRepr for ValueAsProviderLike<'v> {
         AbstractProvider::starlark_type_repr()
     }
 }
+
+impl<'v> StarlarkTypeExpr<'v> for ValueAsProviderLike<'v> {
+    type Get = Self;
+
+    fn get(value: Value<'v>) -> Option<Self> {
+        ValueAsProviderLike::unpack(value)
+    }
+}
+
+impl<'v> StarlarkTypeExprStable<'v> for ValueAsProviderLike<'v> {}
 
 impl<'v> ValueAsProviderLike<'v> {
     pub(crate) fn unpack(value: Value<'v>) -> Option<Self> {

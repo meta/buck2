@@ -19,6 +19,8 @@ use dupe::Dupe;
 use starlark::any::IsStaticType;
 use starlark::any::ProvidesStaticType;
 use starlark::typing::Ty;
+use starlark::values::StarlarkTypeExpr;
+use starlark::values::StarlarkTypeExprStable;
 use starlark::values::UnpackValue;
 use starlark::values::UnpackValueStable;
 use starlark::values::Value;
@@ -46,6 +48,16 @@ impl<'v> StarlarkTypeRepr for ValueAsCommandLineLike<'v> {
         command_line_arg_like_ty().dupe()
     }
 }
+
+impl<'v> StarlarkTypeExpr<'v> for ValueAsCommandLineLike<'v> {
+    type Get = Self;
+
+    fn get(value: Value<'v>) -> Option<Self> {
+        ValueAsCommandLineLike::unpack(value)
+    }
+}
+
+impl<'v> StarlarkTypeExprStable<'v> for ValueAsCommandLineLike<'v> {}
 
 impl<'v> ValueAsCommandLineLike<'v> {
     pub(crate) fn unpack(value: Value<'v>) -> Option<Self> {

@@ -14,6 +14,8 @@ use std::sync::Arc;
 use buck2_core::configuration::transition::id::TransitionId;
 use starlark::any::ProvidesStaticType;
 use starlark::typing::Ty;
+use starlark::values::StarlarkTypeExpr;
+use starlark::values::StarlarkTypeExprStable;
 use starlark::values::UnpackValue;
 use starlark::values::Value;
 use starlark::values::type_repr::StarlarkTypeRepr;
@@ -39,6 +41,18 @@ impl StarlarkTypeRepr for ValueAsTransition<'_> {
         TransitionReprLate::starlark_type_repr()
     }
 }
+
+impl<'v> StarlarkTypeExpr<'v> for ValueAsTransition<'v> {
+    type Get = Self;
+
+    fn get(value: Value<'v>) -> Option<Self> {
+        value
+            .request_value::<&dyn TransitionValue>()
+            .map(ValueAsTransition)
+    }
+}
+
+impl<'v> StarlarkTypeExprStable<'v> for ValueAsTransition<'v> {}
 
 impl<'v> UnpackValue<'v> for ValueAsTransition<'v> {
     type Error = Infallible;

@@ -10,6 +10,7 @@
 
 package com.facebook.buck.core.util.graph;
 
+import com.facebook.infer.annotation.Nullsafe;
 import com.google.common.base.Preconditions;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
@@ -21,6 +22,7 @@ import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashSet;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.Supplier;
@@ -32,6 +34,7 @@ import java.util.function.Supplier;
  *
  * @param <T> the type of object stored as nodes in this graph
  */
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public final class MutableDirectedGraph<T> implements TraversableGraph<T> {
 
   /**
@@ -117,7 +120,7 @@ public final class MutableDirectedGraph<T> implements TraversableGraph<T> {
     Collection<T> nodesReachableFromTheSpecifiedNode = outgoingEdges.remove(node);
     if (nodesReachableFromTheSpecifiedNode != null) {
       for (T reachableNode : nodesReachableFromTheSpecifiedNode) {
-        incomingEdges.get(reachableNode).remove(node);
+        Objects.requireNonNull(incomingEdges.get(reachableNode)).remove(node);
       }
     }
     return isRemoved;
@@ -153,8 +156,8 @@ public final class MutableDirectedGraph<T> implements TraversableGraph<T> {
    * as unconnected nodes in the graph.
    */
   public void removeEdge(T source, T sink) {
-    outgoingEdges.get(source).remove(sink);
-    incomingEdges.get(sink).remove(source);
+    Objects.requireNonNull(outgoingEdges.get(source)).remove(sink);
+    Objects.requireNonNull(incomingEdges.get(sink)).remove(source);
   }
 
   @Override

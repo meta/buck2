@@ -10,16 +10,19 @@
 
 package com.facebook.buck.core.filesystems;
 
+import com.facebook.infer.annotation.Nullsafe;
 import java.nio.file.FileSystem;
 import java.nio.file.Path;
 import java.util.Objects;
+import org.jspecify.annotations.Nullable;
 
 /** {@link java.nio.file.Path} wrapper object, either absolute or relative. */
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public interface PathWrapper {
   Path getPath();
 
   @Override
-  boolean equals(Object that);
+  boolean equals(@Nullable Object that);
 
   /**
    * This overload should not be used.

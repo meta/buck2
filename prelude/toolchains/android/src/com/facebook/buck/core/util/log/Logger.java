@@ -32,11 +32,13 @@ import static java.util.logging.Level.SEVERE;
 import static java.util.logging.Level.WARNING;
 
 import com.facebook.buck.core.util.log.appendablelogrecord.AppendableLogRecord;
+import com.facebook.infer.annotation.Nullsafe;
 import java.util.logging.Handler;
 import java.util.logging.Level;
 import javax.annotation.Nullable;
 
 @SuppressWarnings("PMD")
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public class Logger {
   private final java.util.logging.Logger logger;
 
@@ -363,6 +365,7 @@ public class Logger {
     return logger.isLoggable(FINE);
   }
 
+  @Nullable
   public Level getLevel() {
     return logger.getLevel();
   }

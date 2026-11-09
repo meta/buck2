@@ -11,6 +11,7 @@ buck_java_library(
     visibility = ["PUBLIC"],
     deps = [
         "prelude//toolchains/android/src/com/facebook/buck/core/util/log/appendablelogrecord:appendablelogrecord",
+        "prelude//toolchains/android/third-party:infer-annotations",
         "prelude//toolchains/android/third-party:jsr305",
     ],
 )

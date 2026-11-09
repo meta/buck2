@@ -26,6 +26,7 @@ import com.google.common.collect.Ordering;
 import java.util.Comparator;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.Objects;
 
 @Nullsafe(Nullsafe.Mode.LOCAL)
 public class ClasspathUtils {
@@ -74,8 +75,7 @@ public class ClasspathUtils {
     RelPath friendPathScratchDir =
         buildTargetValueExtraParams.getScratchPath("__%s_friend_path_jars__");
     friendPathScratchDir =
-        friendPathScratchDir
-            .getParent()
+        Objects.requireNonNull(friendPathScratchDir.getParent())
             .resolveRel(friendPathScratchDir.getFileName().toString().replace(",", "__"));
 
     for (AbsPath friendPath : resolvedFriendPaths) {

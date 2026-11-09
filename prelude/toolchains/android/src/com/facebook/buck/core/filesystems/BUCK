@@ -10,6 +10,7 @@ buck_java_library(
     srcs = glob(["*.java"]),
     provided_deps = [
         "prelude//toolchains/android/third-party:infer-annotations",
+        "prelude//toolchains/android/third-party:jspecify",
     ],
     tests = ["prelude//toolchains/android/test/com/facebook/buck/core/filesystems:filesystems"],
     visibility = [

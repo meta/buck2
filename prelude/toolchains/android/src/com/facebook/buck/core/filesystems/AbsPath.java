@@ -10,6 +10,7 @@
 
 package com.facebook.buck.core.filesystems;
 
+import com.facebook.infer.annotation.Nullsafe;
 import java.io.File;
 import java.io.IOException;
 import java.net.URI;
@@ -17,8 +18,10 @@ import java.nio.file.LinkOption;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.Comparator;
+import org.jspecify.annotations.Nullable;
 
 /** Absolute path. */
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public interface AbsPath extends PathWrapper {
   /**
    * Cosnstruct using {@link java.nio.file.Path} object.
@@ -58,8 +61,7 @@ public interface AbsPath extends PathWrapper {
    * Remove prefix from this path, return {@code null} if this path does not start with given
    * prefix.
    */
-  // @Nullable
-  default RelPath removePrefixIfStartsWith(AbsPath prefix) {
+  default @Nullable RelPath removePrefixIfStartsWith(AbsPath prefix) {
     if (!this.startsWith(prefix)) {
       return null;
     }
@@ -84,7 +86,7 @@ public interface AbsPath extends PathWrapper {
     return AbsPath.of(getPath().resolve(path));
   }
 
-  default AbsPath getParent() {
+  default @Nullable AbsPath getParent() {
     Path parent = getPath().getParent();
     return parent != null ? AbsPath.of(parent) : null;
   }

@@ -10,11 +10,14 @@
 
 package com.facebook.buck.core.filesystems;
 
+import com.facebook.infer.annotation.Nullsafe;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.Comparator;
+import org.jspecify.annotations.Nullable;
 
 /** Relative path. */
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public interface RelPath extends PathWrapper {
 
   /**
@@ -44,7 +47,7 @@ public interface RelPath extends PathWrapper {
     return of(getPath().normalize());
   }
 
-  default RelPath getParent() {
+  default @Nullable RelPath getParent() {
     Path parent = getPath().getParent();
     return parent != null ? RelPath.of(parent) : null;
   }

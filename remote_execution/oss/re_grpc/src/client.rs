@@ -183,6 +183,13 @@ pub struct RECapabilities {
     supported_compressors: Vec<Compressor>,
 }
 
+/// How long an RE call may go without progress: the reply to a unary call, or
+/// the next message of a ByteStream or an `Execute` stream. The same bound
+/// buck2 puts on creating the RE client (`BUCK2_RE_CONNECT_TIMEOUT_S`):
+/// something that normally takes seconds must fail rather than hang everything
+/// waiting on it. A quiet `Execute` stream is resumed rather than failed.
+const RPC_TIMEOUT: Duration = Duration::from_secs(120);
+
 /// Contains runtime options for the remote execution client as set under `buck2_re_client`
 pub struct RERuntimeOpts {
     /// Use the Meta version of the request metadata
@@ -630,21 +637,24 @@ fn is_retryable(err: &anyhow::Error) -> bool {
     false
 }
 
+/// The `tonic::Status` an error chain link is, or wraps in an `io::Error`.
+fn status_of<'a>(cause: &'a (dyn std::error::Error + 'static)) -> Option<&'a tonic::Status> {
+    cause.downcast_ref::<tonic::Status>().or_else(|| {
+        // `io::Error::source()` skips the wrapped error itself.
+        cause
+            .downcast_ref::<std::io::Error>()?
+            .get_ref()?
+            .downcast_ref::<tonic::Status>()
+    })
+}
+
 /// Attaches an RE classification to gRPC errors, preserving the original chain
 /// and any existing `REClientError` classification.
 fn normalize_re_error(err: anyhow::Error) -> anyhow::Error {
     if err.downcast_ref::<REClientError>().is_some() {
         return err;
     }
-    let Some(status) = err.chain().find_map(|cause| {
-        cause.downcast_ref::<tonic::Status>().or_else(|| {
-            // `io::Error::source()` skips the wrapped error itself.
-            cause
-                .downcast_ref::<std::io::Error>()?
-                .get_ref()?
-                .downcast_ref::<tonic::Status>()
-        })
-    }) else {
+    let Some(status) = err.chain().find_map(status_of) else {
         return err;
     };
     let re_error = REClientError {
@@ -668,6 +678,85 @@ fn delay_with_jitter(delay: Duration) -> Duration {
     delay + Duration::from_millis(jitter)
 }
 
+/// Bound a single RPC future on the client.
+///
+/// tonic enforces the `grpc-timeout` header (and `Endpoint::timeout`) only
+/// until the response headers arrive, so a peer that stalls after them never
+/// returns. `Endpoint::timeout` would also fire on `Execute`, which shares the
+/// same frontend address as CAS — so CAS and AC calls wrap here, and `Execute`
+/// does not.
+async fn await_rpc<T>(fut: impl Future<Output = Result<T, tonic::Status>>) -> anyhow::Result<T> {
+    match tokio::time::timeout(RPC_TIMEOUT, fut).await {
+        Ok(res) => res.map_err(Into::into),
+        Err(_) => Err(rpc_timed_out().into()),
+    }
+}
+
+fn rpc_timed_out() -> tonic::Status {
+    tonic::Status::deadline_exceeded(format!("client RPC timeout ({RPC_TIMEOUT:?}) expired"))
+}
+
+/// Fails a ByteStream read that goes `RPC_TIMEOUT` without a message, so a
+/// stream that stalls partway through a blob does not hang the download.
+fn with_message_timeout<T>(
+    stream: impl Stream<Item = Result<T, tonic::Status>> + Unpin,
+) -> impl Stream<Item = Result<T, tonic::Status>> {
+    futures::stream::unfold(Some(stream), |stream| async move {
+        let mut stream = stream?;
+        match tokio::time::timeout(RPC_TIMEOUT, stream.next()).await {
+            Ok(next) => next.map(|item| (item, Some(stream))),
+            Err(_) => Some((Err(rpc_timed_out()), None)),
+        }
+    })
+}
+
+/// The messages of a ByteStream write, noting each one the call takes so
+/// `await_streaming_rpc` can bound the write by progress.
+fn progress_stream<R>(
+    requests: Vec<R>,
+) -> (Arc<tokio::sync::Notify>, impl Stream<Item = R> + use<R>) {
+    let progress = Arc::new(tokio::sync::Notify::new());
+    let requests = futures::stream::iter(requests).inspect({
+        let progress = progress.dupe();
+        move |_| progress.notify_one()
+    });
+    (progress, requests)
+}
+
+/// Bounds a ByteStream write by progress rather than total time: it fails once
+/// `RPC_TIMEOUT` passes without the call taking another message (or, after the
+/// last one, without a reply), so a large blob on a slow link is not held to
+/// the bound of a small one.
+async fn await_streaming_rpc<T>(
+    progress: Arc<tokio::sync::Notify>,
+    call: impl Future<Output = Result<T, tonic::Status>>,
+) -> anyhow::Result<T> {
+    let stalled = async move {
+        while tokio::time::timeout(RPC_TIMEOUT, progress.notified())
+            .await
+            .is_ok()
+        {}
+    };
+    match futures::future::select(Box::pin(call), Box::pin(stalled)).await {
+        futures::future::Either::Left((res, _)) => res.map_err(Into::into),
+        futures::future::Either::Right(((), _)) => Err(rpc_timed_out().into()),
+    }
+}
+
+/// What `retry` retries: everything `is_retryable` does, plus an expired
+/// deadline (`DeadlineExceeded`: ours, see `RPC_TIMEOUT`, or the server's),
+/// including one a ByteStream read reports inside an `io::Error`. CAS/AC only:
+/// on `Execute`, REAPI defines `DEADLINE_EXCEEDED` as the action's own timeout.
+/// tonic reports an expired `grpc-timeout` as Cancelled, which `is_retryable`
+/// already retries.
+fn is_retryable_rpc(err: &anyhow::Error) -> bool {
+    is_retryable(err)
+        || err
+            .chain()
+            .filter_map(status_of)
+            .any(|status| status.code() == tonic::Code::DeadlineExceeded)
+}
+
 /// Retry an RPC on transient connection errors and classify its final error.
 ///
 /// On retryable failure, the closure is called again from scratch — acquiring
@@ -686,7 +775,7 @@ where
     for attempt in 1..=MAX_ATTEMPTS {
         match f().await {
             Ok(v) => return Ok(v),
-            Err(e) if is_retryable(&e) && attempt < MAX_ATTEMPTS => {
+            Err(e) if is_retryable_rpc(&e) && attempt < MAX_ATTEMPTS => {
                 let sleep_for = delay_with_jitter(delay);
                 tracing::debug!(
                     "Transient error (attempt {}/{}), retrying in {:?}: {:#}",
@@ -839,7 +928,9 @@ struct ExecutionStreamState<F> {
 /// from one does not spend the retry budget, only the separate cap on resumes
 /// that report nothing at all. An operation the server finishes with a
 /// transient failure is also started over with `Execute`, and that does spend
-/// the budget.
+/// the budget. Opening a call, and each message after, is bounded by
+/// `RPC_TIMEOUT`. Expiry is `DEADLINE_EXCEEDED`, retried only while resuming,
+/// except that a named operation's quiet stream is resumed as if it had closed.
 fn execution_progress_stream<S, F, Fut>(
     open: F,
     cas_ttl_secs: i64,
@@ -868,7 +959,13 @@ where
 
                 let live = match &mut stream {
                     Some(live) => live,
-                    None => match (state.open)(state.operation.clone()).await {
+                    None => match tokio::time::timeout(
+                        RPC_TIMEOUT,
+                        (state.open)(state.operation.clone()),
+                    )
+                    .await
+                    .unwrap_or_else(|_| Err(rpc_timed_out().into()))
+                    {
                         Ok(opened) => stream.insert(opened),
                         Err(err) => {
                             let err = match &state.operation {
@@ -883,7 +980,16 @@ where
                     },
                 };
 
-                match live.try_next().await {
+                let next = match tokio::time::timeout(RPC_TIMEOUT, live.try_next()).await {
+                    Ok(next) => next,
+                    // `WaitExecution` answers at once, so resuming a quiet stream
+                    // costs a round trip and a dead one runs into the cap on
+                    // empty resumes.
+                    Err(_) if state.operation.is_some() => Ok(None),
+                    // Nothing to resume yet.
+                    Err(_) => Err(rpc_timed_out()),
+                };
+                match next {
                     Ok(Some(msg)) => {
                         if !msg.name.is_empty() {
                             state.operation = Some(msg.name.clone());
@@ -1044,24 +1150,27 @@ impl REClient {
         request: ActionResultRequest,
     ) -> impl Future<Output = anyhow::Result<ActionResultResponse>> + Send + use<'a> {
         let action_digest = tdigest_to(&request.digest);
-        let headers = with_re_metadata((), metadata, self.runtime_opts.use_fbcode_metadata)
-            .into_parts()
-            .0;
+        let headers = with_re_metadata(
+            (),
+            metadata,
+            self.runtime_opts.use_fbcode_metadata,
+            Some(RPC_TIMEOUT),
+        )
+        .into_parts()
+        .0;
         async move {
             retry(|| async {
-                let res = self
-                    .action_cache_client()
-                    .await?
-                    .get_action_result(tonic::Request::from_parts(
-                        headers.clone(),
-                        Default::default(),
-                        GetActionResultRequest {
-                            instance_name: self.instance_name.as_str().to_owned(),
-                            action_digest: Some(action_digest.clone()),
-                            ..Default::default()
-                        },
-                    ))
-                    .await?;
+                let mut client = self.action_cache_client().await?;
+                let res = await_rpc(client.get_action_result(tonic::Request::from_parts(
+                    headers.clone(),
+                    Default::default(),
+                    GetActionResultRequest {
+                        instance_name: self.instance_name.as_str().to_owned(),
+                        action_digest: Some(action_digest.clone()),
+                        ..Default::default()
+                    },
+                )))
+                .await?;
 
                 Ok(ActionResultResponse {
                     action_result: convert_action_result(
@@ -1082,27 +1191,30 @@ impl REClient {
     ) -> impl Future<Output = anyhow::Result<WriteActionResultResponse>> + Send + use<'a> {
         let action_result = convert_t_action_result2(&request.action_result);
         let action_digest = request.action_digest.clone();
-        let headers = with_re_metadata((), metadata, self.runtime_opts.use_fbcode_metadata)
-            .into_parts()
-            .0;
+        let headers = with_re_metadata(
+            (),
+            metadata,
+            self.runtime_opts.use_fbcode_metadata,
+            Some(RPC_TIMEOUT),
+        )
+        .into_parts()
+        .0;
         async move {
             let action_result = action_result?;
             retry(|| async {
-                let res = self
-                    .action_cache_client()
-                    .await?
-                    .update_action_result(tonic::Request::from_parts(
-                        headers.clone(),
-                        Default::default(),
-                        UpdateActionResultRequest {
-                            instance_name: self.instance_name.as_str().to_owned(),
-                            action_digest: Some(tdigest_to(&action_digest)),
-                            action_result: Some(action_result.clone()),
-                            results_cache_policy: None,
-                            ..Default::default()
-                        },
-                    ))
-                    .await?;
+                let mut client = self.action_cache_client().await?;
+                let res = await_rpc(client.update_action_result(tonic::Request::from_parts(
+                    headers.clone(),
+                    Default::default(),
+                    UpdateActionResultRequest {
+                        instance_name: self.instance_name.as_str().to_owned(),
+                        action_digest: Some(tdigest_to(&action_digest)),
+                        action_result: Some(action_result.clone()),
+                        results_cache_policy: None,
+                        ..Default::default()
+                    },
+                )))
+                .await?;
 
                 Ok(WriteActionResultResponse {
                     actual_action_result: convert_action_result(
@@ -1154,17 +1266,24 @@ impl REClient {
             async move {
                 let mut client = execution_client_for(&pool, &engine_address, &interceptor).await?;
 
+                // Execute is long-running; a unary timeout would abort live actions.
                 let stream = match resume {
                     Some(name) => client
                         .wait_execution(with_re_metadata(
                             WaitExecutionRequest { name },
                             &metadata,
                             use_fbcode_metadata,
+                            None,
                         ))
                         .await?
                         .into_inner(),
                     None => client
-                        .execute(with_re_metadata(request, &metadata, use_fbcode_metadata))
+                        .execute(with_re_metadata(
+                            request,
+                            &metadata,
+                            use_fbcode_metadata,
+                            None,
+                        ))
                         .await?
                         .into_inner(),
                 };
@@ -1201,9 +1320,24 @@ impl REClient {
         metadata: &RemoteExecutionMetadata,
         request: UploadRequest,
     ) -> impl Future<Output = anyhow::Result<UploadResponse>> + Send + use<'a> {
-        let headers = with_re_metadata((), metadata, self.runtime_opts.use_fbcode_metadata)
-            .into_parts()
-            .0;
+        let headers = with_re_metadata(
+            (),
+            metadata,
+            self.runtime_opts.use_fbcode_metadata,
+            Some(RPC_TIMEOUT),
+        )
+        .into_parts()
+        .0;
+        let stream_headers = with_re_metadata(
+            (),
+            metadata,
+            self.runtime_opts.use_fbcode_metadata,
+            // A total deadline would hold a large blob to the bound of a small
+            // one; ByteStream progress is bounded client-side instead.
+            None,
+        )
+        .into_parts()
+        .0;
         async move {
             upload_impl(
                 &self.instance_name,
@@ -1214,30 +1348,28 @@ impl REClient {
                 |re_request| {
                     let headers = headers.clone();
                     async move {
-                        let resp = self
-                            .cas_client()
-                            .await?
-                            .batch_update_blobs(tonic::Request::from_parts(
-                                headers,
-                                Default::default(),
-                                re_request,
-                            ))
-                            .await?;
+                        let mut client = self.cas_client().await?;
+                        let resp = await_rpc(client.batch_update_blobs(
+                            tonic::Request::from_parts(headers, Default::default(), re_request),
+                        ))
+                        .await?;
                         Ok(resp.into_inner())
                     }
                 },
                 |segments| {
-                    let headers = headers.clone();
+                    let headers = stream_headers.clone();
                     async move {
-                        let resp = self
-                            .bytestream_client()
-                            .await?
-                            .write(tonic::Request::from_parts(
+                        let mut client = self.bytestream_client().await?;
+                        let (progress, segments) = progress_stream(segments);
+                        let resp = await_streaming_rpc(
+                            progress,
+                            client.write(tonic::Request::from_parts(
                                 headers,
                                 Default::default(),
-                                futures::stream::iter(segments),
-                            ))
-                            .await?;
+                                segments,
+                            )),
+                        )
+                        .await?;
                         Ok(resp.into_inner())
                     }
                 },
@@ -1278,9 +1410,24 @@ impl REClient {
         metadata: &RemoteExecutionMetadata,
         request: DownloadRequest,
     ) -> impl Future<Output = anyhow::Result<DownloadResponse>> + Send + use<'a> {
-        let headers = with_re_metadata((), metadata, self.runtime_opts.use_fbcode_metadata)
-            .into_parts()
-            .0;
+        let headers = with_re_metadata(
+            (),
+            metadata,
+            self.runtime_opts.use_fbcode_metadata,
+            Some(RPC_TIMEOUT),
+        )
+        .into_parts()
+        .0;
+        let stream_headers = with_re_metadata(
+            (),
+            metadata,
+            self.runtime_opts.use_fbcode_metadata,
+            // A total deadline would hold a large blob to the bound of a small
+            // one; ByteStream progress is bounded client-side instead.
+            None,
+        )
+        .into_parts()
+        .0;
         async move {
             download_impl(
                 &self.runtime_opts,
@@ -1291,32 +1438,28 @@ impl REClient {
                 |re_request| {
                     let headers = headers.clone();
                     async move {
-                        let resp = self
-                            .cas_client()
-                            .await?
-                            .batch_read_blobs(tonic::Request::from_parts(
-                                headers,
-                                Default::default(),
-                                re_request,
-                            ))
-                            .await?;
+                        let mut client = self.cas_client().await?;
+                        let resp = await_rpc(client.batch_read_blobs(tonic::Request::from_parts(
+                            headers,
+                            Default::default(),
+                            re_request,
+                        )))
+                        .await?;
                         Ok(resp.into_inner())
                     }
                 },
                 |read_request| {
-                    let headers = headers.clone();
+                    let headers = stream_headers.clone();
                     async move {
-                        let response = self
-                            .bytestream_client()
-                            .await?
-                            .read(tonic::Request::from_parts(
-                                headers,
-                                Default::default(),
-                                read_request,
-                            ))
-                            .await?
-                            .into_inner();
-                        Ok(Box::pin(response.into_stream()))
+                        let mut client = self.bytestream_client().await?;
+                        let response = await_rpc(client.read(tonic::Request::from_parts(
+                            headers,
+                            Default::default(),
+                            read_request,
+                        )))
+                        .await?
+                        .into_inner();
+                        Ok(Box::pin(with_message_timeout(response)))
                     }
                 },
             )
@@ -1358,20 +1501,19 @@ impl REClient {
                 let blob_digests: Vec<_> =
                     digests_to_check.iter().map(tdigest_to).collect::<Vec<_>>();
                 let resp: FindMissingBlobsResponse = retry(|| async {
-                    let resp = self
-                        .cas_client()
-                        .await?
-                        .find_missing_blobs(with_re_metadata(
-                            FindMissingBlobsRequest {
-                                instance_name: self.instance_name.as_str().to_owned(),
-                                blob_digests: blob_digests.clone(),
-                                ..Default::default()
-                            },
-                            metadata,
-                            self.runtime_opts.use_fbcode_metadata,
-                        ))
-                        .await
-                        .context("Failed to request what blobs are not present on remote")?;
+                    let mut client = self.cas_client().await?;
+                    let resp = await_rpc(client.find_missing_blobs(with_re_metadata(
+                        FindMissingBlobsRequest {
+                            instance_name: self.instance_name.as_str().to_owned(),
+                            blob_digests: blob_digests.clone(),
+                            ..Default::default()
+                        },
+                        metadata,
+                        self.runtime_opts.use_fbcode_metadata,
+                        Some(RPC_TIMEOUT),
+                    )))
+                    .await
+                    .context("Failed to request what blobs are not present on remote")?;
                     Ok(resp.into_inner())
                 })
                 .await?;
@@ -2167,6 +2309,7 @@ fn with_re_metadata<T>(
     t: T,
     metadata: &RemoteExecutionMetadata,
     use_fbcode_metadata: bool,
+    timeout: Option<Duration>,
 ) -> tonic::Request<T> {
     // This creates a new Tonic request with attached metadata for the RE
     // backend. There are two cases here we need to support:
@@ -2240,7 +2383,13 @@ fn with_re_metadata<T>(
             "build.bazel.remote.execution.v2.requestmetadata-bin",
             MetadataValue::from_bytes(&encoded),
         );
-    };
+    }
+
+    // Lets servers that honor it give up on the call too. tonic enforces it
+    // only until the response headers arrive; `await_rpc` bounds the rest.
+    if let Some(timeout) = timeout {
+        msg.set_timeout(timeout);
+    }
     msg
 }
 
@@ -2399,6 +2548,78 @@ mod tests {
         let events = execution_progress_stream(open, 0).collect().await;
         let calls = calls.lock().unwrap().clone();
         (events, calls)
+    }
+
+    /// Like `run_scripted`, over streams that send their messages and then go
+    /// quiet rather than close.
+    async fn run_quiet(
+        attempts: Vec<Vec<Operation>>,
+    ) -> (
+        Vec<anyhow::Result<ExecuteWithProgressResponse>>,
+        Vec<Option<String>>,
+    ) {
+        let attempts = Mutex::new(VecDeque::from(attempts));
+        let calls = Mutex::new(Vec::new());
+        let open = |resume: Option<String>| {
+            calls.lock().unwrap().push(resume);
+            let messages = attempts.lock().unwrap().pop_front();
+            async move {
+                let messages = messages.context("opener called more often than scripted")?;
+                anyhow::Ok(
+                    futures::stream::iter(messages.into_iter().map(Ok))
+                        .chain(futures::stream::pending())
+                        .boxed(),
+                )
+            }
+        };
+        let events = execution_progress_stream(open, 0).collect().await;
+        (events, calls.into_inner().unwrap())
+    }
+
+    /// Resuming a quiet stream is free: it outlasts the retry budget.
+    #[tokio::test(start_paused = true)]
+    async fn execution_resumes_a_stream_that_goes_quiet() {
+        let quiet = vec![progress_op(execution_stage::Value::Executing)];
+        let mut attempts = vec![quiet; MAX_EXECUTION_RETRIES as usize + 2];
+        attempts.push(vec![done_op()]);
+        let (events, calls) = run_quiet(attempts).await;
+
+        assert_eq!(calls.len(), MAX_EXECUTION_RETRIES as usize + 3);
+        assert!(calls[1..].iter().all(|c| c.as_deref() == Some(OP)));
+        assert_eq!(stages(&events).last(), Some(&Stage::COMPLETED));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn execution_gives_up_on_a_server_that_stays_quiet() {
+        let mut attempts = vec![vec![progress_op(execution_stage::Value::Executing)]];
+        attempts.extend(std::iter::repeat_n(vec![], MAX_EMPTY_RESUMES as usize));
+        let (events, calls) = run_quiet(attempts).await;
+
+        assert_eq!(calls.len(), MAX_EMPTY_RESUMES as usize + 1);
+        assert!(events.last().unwrap().is_err());
+    }
+
+    /// Before the server names the operation there is nothing to resume.
+    #[tokio::test(start_paused = true)]
+    async fn execution_fails_a_stream_that_goes_quiet_before_naming_the_operation() {
+        let (events, calls) = run_quiet(vec![vec![]]).await;
+
+        assert_eq!(calls, vec![None]);
+        let Some(Err(err)) = events.last() else {
+            panic!("expected the stream to fail");
+        };
+        assert!(format!("{err:#}").contains("client RPC timeout"), "{err:#}");
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn execution_fails_a_call_that_never_opens() {
+        let open = |_| std::future::pending::<anyhow::Result<BoxStream<'static, ScriptedItem>>>();
+        let events: Vec<_> = execution_progress_stream(open, 0).collect().await;
+
+        let [Err(err)] = &events[..] else {
+            panic!("expected one error");
+        };
+        assert!(format!("{err:#}").contains("client RPC timeout"), "{err:#}");
     }
 
     fn stages(events: &[anyhow::Result<ExecuteWithProgressResponse>]) -> Vec<Stage> {
@@ -4063,6 +4284,98 @@ mod tests {
         assert_eq!(substitute_env_vars_impl("foo", getter).unwrap(), "foo");
         assert_eq!(substitute_env_vars_impl("FOO", getter).unwrap(), "FOO");
         assert!(substitute_env_vars_impl("$FOO$BAZ", getter).is_err());
+    }
+
+    #[test]
+    fn test_deadline_exceeded_is_retryable() {
+        let err = anyhow::Error::new(tonic::Status::deadline_exceeded("stuck"));
+        assert!(is_retryable_rpc(&err));
+        let err = anyhow::Error::new(tonic::Status::internal("bug"));
+        assert!(!is_retryable_rpc(&err));
+        // How a ByteStream read reports a stall: inside an `io::Error`.
+        let err = anyhow::Error::new(std::io::Error::other(rpc_timed_out())).context("download");
+        assert!(is_retryable_rpc(&err));
+    }
+
+    #[test]
+    fn test_timeout_expired_is_retryable() {
+        // How a `grpc-timeout` expiry reaches us: Cancelled, with
+        // `TimeoutExpired` kept as the source.
+        let status = tonic::Status::from_error(Box::new(tonic::TimeoutExpired(())));
+        assert_eq!(status.code(), tonic::Code::Cancelled);
+        assert!(is_retryable_rpc(&anyhow::Error::new(status)));
+        let err = anyhow::Error::new(tonic::Status::invalid_argument("bad digest"));
+        assert!(!is_retryable_rpc(&err));
+    }
+
+    #[test]
+    fn test_with_re_metadata_sets_grpc_timeout() {
+        let req = with_re_metadata(
+            (),
+            &RemoteExecutionMetadata::default(),
+            false,
+            Some(Duration::from_secs(30)),
+        );
+        assert_eq!(req.metadata().get("grpc-timeout").unwrap(), "30000000u");
+    }
+
+    #[test]
+    fn test_with_re_metadata_execute_has_no_timeout() {
+        let req = with_re_metadata((), &RemoteExecutionMetadata::default(), false, None);
+        assert!(req.metadata().get("grpc-timeout").is_none());
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn test_await_rpc_times_out() {
+        let err = await_rpc(std::future::pending::<Result<(), tonic::Status>>())
+            .await
+            .unwrap_err();
+        assert!(is_retryable_rpc(&err));
+        let status = err.downcast_ref::<tonic::Status>().unwrap();
+        assert_eq!(status.code(), tonic::Code::DeadlineExceeded);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn test_with_message_timeout_fails_a_stalled_read() {
+        // A message a minute, three minutes in all, then nothing.
+        let stream = futures::stream::iter(1..=3)
+            .then(|i| async move {
+                tokio::time::sleep(Duration::from_secs(60)).await;
+                Ok(i)
+            })
+            .chain(futures::stream::pending())
+            .boxed();
+        let items: Vec<Result<i32, tonic::Status>> = with_message_timeout(stream).collect().await;
+        assert_eq!(items.len(), 4);
+        assert!(items[..3].iter().all(|item| item.is_ok()));
+        assert_eq!(
+            items[3].as_ref().unwrap_err().code(),
+            tonic::Code::DeadlineExceeded
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn test_await_streaming_rpc_bounds_progress_not_total_time() {
+        // Takes a message a minute, three minutes in all: not stalled.
+        let (progress, mut requests) = progress_stream(vec![1, 2, 3]);
+        await_streaming_rpc(progress, async move {
+            while requests.next().await.is_some() {
+                tokio::time::sleep(Duration::from_secs(60)).await;
+            }
+            Ok::<_, tonic::Status>(())
+        })
+        .await
+        .unwrap();
+
+        // Never takes a message: stalled.
+        let (progress, _requests) = progress_stream(vec![1, 2, 3]);
+        let err = await_streaming_rpc(
+            progress,
+            std::future::pending::<Result<(), tonic::Status>>(),
+        )
+        .await
+        .unwrap_err();
+        assert!(is_retryable_rpc(&err));
     }
 }
 

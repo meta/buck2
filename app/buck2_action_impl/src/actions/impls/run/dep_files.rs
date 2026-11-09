@@ -1968,11 +1968,12 @@ pub(crate) async fn read_dep_files(
     materializer: &dyn Materializer,
     re_use_case: RemoteExecutorUseCase,
 ) -> buck2_error::Result<Option<ConcreteDepFiles>> {
-    // NOTE: We only materialize if we haven't computed our signatures yet, since we know we
-    // can't have computed our signatures without having read the dep file already. In an ideal
-    // world this wouldn't be necessary, but in practice contention on the materializer makes
-    // this slower.
-    let _lease = if !has_signatures {
+    // Without computed signatures the dep files have never been read, so they may not be on disk
+    // yet. With them they have been, and the deferred materializer is left alone: contention on it
+    // makes the request slower than the read it would cover. The disk-state materializer keeps
+    // nothing on disk for a reader without a lease, and a lease is cheap there, so it is always
+    // asked.
+    let _lease = if !has_signatures || materializer.is_disk_state() {
         match declared_dep_files
             .materialize(fs, materializer, result, re_use_case)
             .await

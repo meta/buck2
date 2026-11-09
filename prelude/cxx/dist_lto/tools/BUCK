@@ -1,4 +1,5 @@
 load("@prelude//cxx/dist_lto:tools.bzl", "dist_lto_tools")
+load("@prelude//python/meta_only:config.bzl", "DEFAULT_PY_VERSION")
 load("@prelude//utils:source_listing.bzl", "source_listing")
 
 oncall("build_infra")
@@ -63,6 +64,47 @@ prelude.python_bootstrap_binary(
 
 dist_lto_tools(
     name = "dist_lto_tools",
+    visibility = ["PUBLIC"],
+)
+
+CONSTRUCTION_INTERPRETER = "fbcode//buck2/platform/python:interpreter-linux-stage0-{}".format(DEFAULT_PY_VERSION)
+
+[
+    prelude.python_bootstrap_binary_stage0(
+        name = name + "-construction",
+        interpreter = CONSTRUCTION_INTERPRETER,
+        main = name + ".py",
+    )
+    for name in [
+        "dist_lto_archive_mapper",
+        "dist_lto_compiler_stats_merger",
+        "dist_lto_copy",
+        "dist_lto_opt_darwin",
+        "dist_lto_opt_gnu",
+        "dist_lto_planner_darwin",
+        "dist_lto_planner_gnu",
+        "dist_lto_prepare_darwin",
+        "dist_lto_prepare_gnu",
+    ]
+]
+
+dist_lto_tools(
+    name = "dist_lto_tools-construction",
+    archive_mapper = ":dist_lto_archive_mapper-construction",
+    compiler_stats_merger = ":dist_lto_compiler_stats_merger-construction",
+    copy = ":dist_lto_copy-construction",
+    opt = {
+        "darwin": ":dist_lto_opt_darwin-construction",
+        "gnu": ":dist_lto_opt_gnu-construction",
+    },
+    planner = {
+        "darwin": ":dist_lto_planner_darwin-construction",
+        "gnu": ":dist_lto_planner_gnu-construction",
+    },
+    prepare = {
+        "darwin": ":dist_lto_prepare_darwin-construction",
+        "gnu": ":dist_lto_prepare_gnu-construction",
+    },
     visibility = ["PUBLIC"],
 )
 

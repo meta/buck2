@@ -39,6 +39,8 @@ impl ProcessCommandImpl {
     pub(crate) async fn new(
         mut cmd: Command,
         _cgroup: Option<CgroupPathBuf>,
+        // The job object already kills every process the command started.
+        _kill_detached_descendants: bool,
     ) -> buck2_error::Result<Self> {
         // On windows we create suspended process to assign it to a job (group) and then resume.
         // This is necessary because the process might finish before we add it to a job

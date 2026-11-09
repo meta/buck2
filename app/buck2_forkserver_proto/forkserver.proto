@@ -50,6 +50,12 @@ message CommandRequest {
   // Like `graceful_shutdown_timeout_s`, but only when the command hits
   // `timeout`, not when it is cancelled. Used for tests.
   optional uint32 timeout_grace_period_s = 19;
+  // On Linux, make the command a child subreaper and, when it is killed, also
+  // kill its descendants that left its process group, such as daemons. For
+  // commands that do not run in `command_cgroup`, whose cleanup covers them.
+  // The command then adopts its orphaned descendants, which stay zombies until
+  // it exits.
+  optional bool kill_detached_descendants = 20;
 }
 
 message WorkingDirectory {

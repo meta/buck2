@@ -193,6 +193,7 @@ fn spawn_via_forkserver(
             command_cgroup: None,
             network_access: None,
             timeout_grace_period_s: None,
+            kill_detached_descendants: None,
         };
         apply_local_execution_environment(&mut req, &working_directory, env, None);
         let res = forkserver

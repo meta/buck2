@@ -183,8 +183,14 @@ impl LocalExecutor {
         }
     }
 
-    /// How to kill the command. Only tests get a grace period, and only when they time out.
-    fn kill_process(&self, request: &CommandExecutionRequest) -> DefaultKillProcess {
+    /// How to kill the command. Only tests get a grace period, and only when they time out. Tests
+    /// that do not run in an action cgroup also get their detached descendants killed; an action
+    /// cgroup's cleanup already covers those.
+    fn kill_process(
+        &self,
+        request: &CommandExecutionRequest,
+        has_cgroup: bool,
+    ) -> DefaultKillProcess {
         if !request.is_test() {
             return DefaultKillProcess::default();
         }
@@ -194,6 +200,7 @@ impl LocalExecutor {
                 .knobs
                 .test_timeout_grace_period
                 .map(|d| d.as_secs().try_into().unwrap_or(u32::MAX)),
+            kill_detached_descendants: !has_cgroup && self.knobs.kill_detached_test_processes,
         }
     }
 
@@ -391,7 +398,7 @@ impl LocalExecutor {
                         env,
                         request.working_directory(),
                         request.timeout(),
-                        self.kill_process(request),
+                        self.kill_process(request, cgroup.is_some()),
                         request.local_environment_inheritance(),
                         liveliness_observer,
                         request.disable_miniperf(),
@@ -1750,6 +1757,7 @@ mod unix {
             command_cgroup: cgroup_path.map(|p| p.to_string()),
             network_access: network_access.map(|n| n.into()),
             timeout_grace_period_s: kill_process.timeout_grace_period_s,
+            kill_detached_descendants: Some(kill_process.kill_detached_descendants),
         };
         apply_local_execution_environment(&mut req, working_directory, env, env_inheritance);
         forkserver

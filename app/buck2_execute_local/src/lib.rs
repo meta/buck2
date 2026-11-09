@@ -51,6 +51,8 @@ use crate::status_decoder::DecodedStatus;
 use crate::status_decoder::StatusDecoder;
 
 mod interruptible_async_read;
+#[cfg(unix)]
+mod kill_on_drop;
 pub mod process_group;
 pub mod status_decoder;
 
@@ -230,7 +232,8 @@ where
         cmd.stderr(Stdio::piped());
     }
 
-    let cmd = ProcessCommand::new(cmd, cgroup_path).await?;
+    let cmd =
+        ProcessCommand::new(cmd, cgroup_path, kill_process.kill_detached_descendants()).await?;
 
     // Note: Process spawning is a fundamentally asynchronous operation that legitimately might
     // block for a non-zero amount of time. Typically, that would mean that we should
@@ -386,6 +389,12 @@ where
 pub(crate) trait KillProcess {
     /// `timed_out` is whether the command hit its timeout, as opposed to being cancelled.
     async fn kill(self, process: &mut ProcessGroup, timed_out: bool) -> buck2_error::Result<()>;
+
+    /// Whether killing the command also kills its descendants that left its process group. Read
+    /// when the command is spawned, which is when that has to be set up.
+    fn kill_detached_descendants(&self) -> bool {
+        false
+    }
 }
 
 #[derive(Default, Clone, Copy)]
@@ -397,6 +406,10 @@ pub struct DefaultKillProcess {
     /// Like `graceful_shutdown_timeout_s`, but only when the command timed out. Other kills, such
     /// as cancellation or resource control reclaiming memory, use `graceful_shutdown_timeout_s`.
     pub timeout_grace_period_s: Option<u32>,
+    /// Also kill descendants that left the process group, such as daemons. Linux only. The command
+    /// then adopts its orphaned descendants and leaves them zombies until it exits; see
+    /// `adopt_detached_descendants`.
+    pub kill_detached_descendants: bool,
 }
 
 #[async_trait]
@@ -420,7 +433,12 @@ impl KillProcess for DefaultKillProcess {
         } else {
             self.graceful_shutdown_timeout_s
         };
+
         process_group.kill(grace).await
+    }
+
+    fn kill_detached_descendants(&self) -> bool {
+        self.kill_detached_descendants
     }
 }
 
@@ -546,6 +564,7 @@ mod tests {
             DefaultKillProcess {
                 graceful_shutdown_timeout_s: None,
                 timeout_grace_period_s: Some(timeout_grace_period_s),
+                kill_detached_descendants: false,
             },
             None,
             true,
@@ -667,7 +686,7 @@ mod tests {
         file.write_all(b"#!/usr/bin/env bash\ntrue\n").await?;
 
         let cmd = background_command(&bin);
-        let cmd = ProcessCommand::new(cmd, None).await?;
+        let cmd = ProcessCommand::new(cmd, None, false).await?;
         // Sibling tests fork concurrently and hold the inherited write handle
         // until they exec, so dropping ours does not clear ETXTBSY by itself.
         let mut process_group = spawn_retry_txt_busy(cmd, {
@@ -691,7 +710,7 @@ mod tests {
         let bin = tempdir.path().join("bin"); // Does not actually exist
 
         let cmd = background_command(&bin);
-        let cmd = ProcessCommand::new(cmd, None).await?;
+        let cmd = ProcessCommand::new(cmd, None, false).await?;
         let res = spawn_retry_txt_busy(cmd, || async { panic!("Should not be called!") }).await;
         assert!(res.is_err());
 
@@ -881,6 +900,7 @@ mod tests {
             DefaultKillProcess {
                 graceful_shutdown_timeout_s: None,
                 timeout_grace_period_s: Some(30),
+                kill_detached_descendants: false,
             },
             None,
             true,
@@ -922,6 +942,7 @@ mod tests {
             DefaultKillProcess {
                 graceful_shutdown_timeout_s: Some(30),
                 timeout_grace_period_s: None,
+                kill_detached_descendants: false,
             },
             None,
             true,
@@ -935,6 +956,58 @@ mod tests {
         assert!(
             child.gone_within(Duration::from_secs(5)).await,
             "the group should get SIGKILL even though the leader exited within its grace period"
+        );
+        Ok(())
+    }
+
+    /// Runs a command that starts a process in a new session and exits the shell that started
+    /// it, then hangs until it times out. Returns the detached process.
+    #[cfg(target_os = "linux")]
+    async fn time_out_with_detached_process(
+        kill_detached_descendants: bool,
+    ) -> buck2_error::Result<WatchedProcess> {
+        let mut cmd = background_command("sh");
+        cmd.arg("-c")
+            .arg("(setsid sleep 1000 & echo \"detached $!\"); sleep 1000");
+        let stream = spawn_command_and_stream_events(
+            cmd,
+            Some(Duration::from_secs(1)),
+            futures::future::pending(),
+            DefaultStatusDecoder,
+            DefaultKillProcess {
+                graceful_shutdown_timeout_s: None,
+                timeout_grace_period_s: None,
+                kill_detached_descendants,
+            },
+            None,
+            true,
+            None,
+            futures::stream::pending(),
+        )
+        .await?;
+        let CommandResult { status, stdout, .. } = decode_command_event_stream(stream).await?;
+        assert_matches!(status, GatherOutputStatus::TimedOut(..));
+        Ok(WatchedProcess::new(parse_pid(&stdout, "detached ")?))
+    }
+
+    #[cfg(target_os = "linux")]
+    #[tokio::test]
+    async fn test_timeout_kills_detached_descendants() -> buck2_error::Result<()> {
+        let mut detached = time_out_with_detached_process(true).await?;
+        assert!(
+            detached.gone_within(Duration::from_secs(5)).await,
+            "a process the command detached into its own session should be killed with it"
+        );
+        Ok(())
+    }
+
+    #[cfg(target_os = "linux")]
+    #[tokio::test]
+    async fn test_timeout_leaves_detached_descendants_without_opt_in() -> buck2_error::Result<()> {
+        let mut detached = time_out_with_detached_process(false).await?;
+        assert!(
+            !detached.gone_within(Duration::from_secs(1)).await,
+            "without the opt-in, killing the process group does not reach a new session"
         );
         Ok(())
     }

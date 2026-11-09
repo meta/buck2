@@ -46,6 +46,7 @@ rust_library(
         "ovr_config//os:linux": [
             "fbsource//third-party/rust:nix",
             "fbsource//third-party/rust:rustix",
+            "//buck2/app/buck2_hash:buck2_hash",
         ],
         "ovr_config//os:macos": [
             "fbsource//third-party/rust:nix",

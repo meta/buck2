@@ -31,4 +31,10 @@ pub struct ExecutorGlobalKnobs {
     /// How long a local test that hit its timeout gets to exit after `SIGTERM` before it and
     /// everything left in its process group get `SIGKILL`. `None` kills immediately.
     pub test_timeout_grace_period: Option<Duration>,
+
+    /// On Linux, kill the processes a local test left behind outside its process group, such as
+    /// daemons, when it is killed. Only applies to tests that do not run in an action cgroup. Such
+    /// a test adopts its orphaned descendants, which then stay zombies until it exits instead of
+    /// being reaped by init.
+    pub kill_detached_test_processes: bool,
 }

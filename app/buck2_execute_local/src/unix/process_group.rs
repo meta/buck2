@@ -38,19 +38,31 @@ use tokio::process::ChildStderr;
 use tokio::process::ChildStdout;
 use tokio::process::Command;
 
+use crate::kill_on_drop::KillDetachedDescendantsOnDrop;
+use crate::kill_on_drop::KillGroupOnDrop;
 use crate::process_group::SpawnError;
 
 pub(crate) struct ProcessCommandImpl {
     inner: Command,
     cgroup: Option<Cgroup<NoMemoryMonitoring, CgroupKindLeaf>>,
+    kill_detached_descendants: bool,
 }
 
 impl ProcessCommandImpl {
+    /// With `kill_detached_descendants`, killing the process group also kills the leader's
+    /// descendants that left it, such as daemons. Linux only: the leader is spawned as a child
+    /// subreaper for that, so that they stay its descendants.
     pub(crate) async fn new(
         mut cmd: StdCommand,
         cgroup: Option<CgroupPathBuf>,
+        kill_detached_descendants: bool,
     ) -> buck2_error::Result<Self> {
         cmd.process_group(0);
+        let kill_detached_descendants = cfg!(target_os = "linux") && kill_detached_descendants;
+        #[cfg(target_os = "linux")]
+        if kill_detached_descendants {
+            crate::unix::descendants::adopt_detached_descendants(&mut cmd);
+        }
 
         let cgroup = if let Some(cgroup) = cgroup {
             let cgroup = CgroupMinimal::try_from_path(cgroup.clone())
@@ -66,6 +78,7 @@ impl ProcessCommandImpl {
         Ok(Self {
             inner: cmd.into(),
             cgroup,
+            kill_detached_descendants,
         })
     }
 
@@ -75,6 +88,7 @@ impl ProcessCommandImpl {
             Ok(inner) => Ok(ProcessGroupImpl {
                 inner,
                 cgroup: self.cgroup,
+                kill_detached_descendants: self.kill_detached_descendants,
             }),
             Err(e) => Err((e.into(), self)),
         }
@@ -84,6 +98,7 @@ impl ProcessCommandImpl {
 pub(crate) struct ProcessGroupImpl {
     inner: Child,
     cgroup: Option<Cgroup<NoMemoryMonitoring, CgroupKindLeaf>>,
+    kill_detached_descendants: bool,
 }
 
 impl ProcessGroupImpl {
@@ -154,7 +169,8 @@ impl ProcessGroupImpl {
     ///
     /// This holds for every graceful kill: a timed-out test's `timeout_grace_period_s` and a
     /// worker's `graceful_shutdown_timeout_s` alike. If the kill is abandoned before step 3, the
-    /// group still gets `SIGKILL` (see `KillGroupOnDrop`).
+    /// group still gets `SIGKILL` (see `KillGroupOnDrop`). With `kill_detached_descendants`, the
+    /// leader's descendants that left the group are killed too.
     pub(crate) async fn kill(
         &mut self,
         graceful_shutdown_timeout_s: Option<u32>,
@@ -165,6 +181,14 @@ impl ProcessGroupImpl {
             .and_then(|id| id.try_into().ok())
             .internal_error("PID does not fit a i32")?;
         let pgid = Pid::from_raw(pid);
+        // Listed before the leader gets any signal: once it exits, its detached descendants are
+        // reparented to init and can no longer be found. Killed when this function returns or its
+        // future is dropped, after the group: `kill_on_drop`, declared later, is dropped first.
+        let mut kill_detached = if self.kill_detached_descendants {
+            KillDetachedDescendantsOnDrop::of(pid).await
+        } else {
+            KillDetachedDescendantsOnDrop::default()
+        };
         let mut kill_on_drop = KillGroupOnDrop(Some(pgid));
 
         if let Some(graceful_shutdown_timeout_s) = graceful_shutdown_timeout_s {
@@ -174,6 +198,7 @@ impl ProcessGroupImpl {
                 Duration::from_secs(graceful_shutdown_timeout_s.into()),
             )
             .await;
+            kill_detached.refresh().await;
         }
 
         kill_on_drop.0 = None;
@@ -236,18 +261,6 @@ fn has_exited(pid: Pid) -> bool {
             Err(rustix::io::Errno::CHILD) => return true,
             // Unexpected: keep the leader's grace period rather than cut it short.
             Err(_) => return false,
-        }
-    }
-}
-
-/// Kills the process group if a kill is abandoned before its final `SIGKILL`, for example when
-/// the daemon shuts down during a grace period.
-struct KillGroupOnDrop(Option<Pid>);
-
-impl Drop for KillGroupOnDrop {
-    fn drop(&mut self) {
-        if let Some(pgid) = self.0 {
-            let _ignored = signal::killpg(pgid, Signal::SIGKILL);
         }
     }
 }

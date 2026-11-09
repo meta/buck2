@@ -83,6 +83,7 @@ struct ValidatedCommand {
     command_cgroup: Option<CgroupPathBuf>,
     #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
     network_access: Option<buck2_data::NetworkAccess>,
+    kill_detached_descendants: bool,
 }
 
 impl ValidatedCommand {
@@ -99,6 +100,7 @@ impl ValidatedCommand {
             command_cgroup,
             network_access,
             timeout_grace_period_s,
+            kill_detached_descendants,
         } = cmd_request;
 
         let exe = OsStr::from_bytes(&exe);
@@ -138,6 +140,7 @@ impl ValidatedCommand {
                 .map(buck2_data::NetworkAccess::try_from)
                 .transpose()
                 .map_err(|v| internal_error!("Invalid network_access value: {}", v))?,
+            kill_detached_descendants: kill_detached_descendants.unwrap_or(false),
         })
     }
 }
@@ -268,6 +271,7 @@ impl UnixForkserverService {
         let kill_process = DefaultKillProcess {
             graceful_shutdown_timeout_s: validated_cmd.graceful_shutdown_timeout_s,
             timeout_grace_period_s: validated_cmd.timeout_grace_period_s,
+            kill_detached_descendants: validated_cmd.kill_detached_descendants,
         };
         let std_redirects = validated_cmd.std_redirects;
         let cgroup = validated_cmd.command_cgroup.clone();

@@ -2644,6 +2644,7 @@ dependencies = [
  "buck2_data",
  "buck2_error",
  "buck2_fs",
+ "buck2_hash",
  "buck2_miniperf_proto",
  "buck2_resource_control",
  "buck2_util",

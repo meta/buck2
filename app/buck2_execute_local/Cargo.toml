@@ -33,6 +33,7 @@ tempfile.workspace = true
 tokio-stream.workspace = true
 
 [target.'cfg(target_os = "linux")'.dependencies]
+buck2_hash.workspace = true
 nix.workspace = true
 rustix.workspace = true
 

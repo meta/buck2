@@ -84,6 +84,7 @@ use buck2_events::schedule_type::SandcastleScheduleType;
 use buck2_execute::dep_file_state::SetDepFileStore;
 use buck2_execute::execute::blocking::SetBlockingExecutor;
 use buck2_execute::execute::low_pass_filter::LowPassFilter;
+use buck2_execute::incremental_state::SetIncrementalStore;
 use buck2_execute::knobs::ExecutorGlobalKnobs;
 use buck2_execute::materialize::materializer::Materializer;
 use buck2_execute::materialize::materializer::SetMaterializer;
@@ -1230,6 +1231,9 @@ impl DiceCommandUpdater<'_, '_> {
         data.set_http_client(self.cmd_ctx.base_context.daemon.http_client.dupe());
         data.set_materializer(self.cmd_ctx.base_context.repo().materializer.dupe());
         data.set_dep_file_cache(self.cmd_ctx.base_context.repo().dep_file_cache.dupe());
+        data.set_incremental_store(Some(
+            self.cmd_ctx.base_context.repo().incremental_db_state.dupe(),
+        ));
         data.set_dep_file_store(
             self.cmd_ctx
                 .base_context

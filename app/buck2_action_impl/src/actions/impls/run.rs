@@ -94,6 +94,7 @@ use buck2_execute::execute::request::RemoteWorkerSpec;
 use buck2_execute::execute::request::WorkerId;
 use buck2_execute::execute::request::WorkerSpec;
 use buck2_execute::execute::result::CommandExecutionResult;
+use buck2_execute::incremental_state::IncrementalRecord;
 use buck2_execute::materialize::materializer::WriteRequest;
 use buck2_execute::re::client::induced_cache_misses_configured;
 use buck2_execute::re::client::is_induced_cache_miss;
@@ -1371,6 +1372,13 @@ impl RunAction {
             }
         };
 
+        if let Some(key) = req.run_action_key()
+            && let Some(store) = ctx.incremental_store()
+            && let Some(record) = IncrementalRecord::of_result(&result)
+        {
+            store.insert(key, record);
+        }
+
         Ok(ExecuteResult::ExecutedOrReHit {
             result,
             dep_file_bundle,
@@ -1437,18 +1445,9 @@ impl RunAction {
         }
 
         if self.inner.no_outputs_cleanup {
-            if self
-                .outputs
-                .iter()
-                .any(|o| o.get_path().is_content_based_path())
-            {
-                req = req.with_run_action_key(Some(
-                    // Using string representation as it is going to be stored in db which requires it to be a string
-                    // doing it early here prevents us from exposing RunActionKey type
-                    RunActionKey::from_action_execution_target(ctx.target())
-                        .incremental_state_key(),
-                ));
-            }
+            req = req.with_run_action_key(Some(
+                RunActionKey::from_action_execution_target(ctx.target()).incremental_state_key(),
+            ));
         }
 
         Ok(req)

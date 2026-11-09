@@ -673,6 +673,7 @@ impl TenantState {
                     blocking_executor.dupe() as Arc<dyn BlockingExecutor>,
                     root_config,
                     shared.daemon_id,
+                    digest_config,
                 ),
                 maybe_initialize_dep_file_sqlite_db(
                     &disk_state_options,

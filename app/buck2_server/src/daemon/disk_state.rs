@@ -148,6 +148,7 @@ pub(crate) async fn maybe_initialize_incremental_sqlite_db(
     io_executor: Arc<dyn BlockingExecutor>,
     root_config: &LegacyBuckConfig,
     daemon_id: &DaemonId,
+    digest_config: DigestConfig,
 ) -> buck2_error::Result<IncrementalDbState> {
     // Rolling it out by default, but giving an option to disable in case something goes horribly wrong
     if !root_config
@@ -185,6 +186,7 @@ pub(crate) async fn maybe_initialize_incremental_sqlite_db(
         // TODO(minglunli): I'm not convinced we need reject_identity for incremental state. iiuc, this is only used by restarter
         // but incremental state isn't as widely used as materializer so we prob shouldn't restart daemon even if that's out of sync?
         None,
+        digest_config,
     )
     .await?;
     Ok(incremental_db_state)

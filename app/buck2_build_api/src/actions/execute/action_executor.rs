@@ -61,6 +61,8 @@ use buck2_execute::execute::result::CommandExecutionReport;
 use buck2_execute::execute::result::CommandExecutionResult;
 use buck2_execute::execute::result::CommandExecutionStatus;
 use buck2_execute::execute::write_action_cache::WriteActionCache;
+use buck2_execute::incremental_state::HasIncrementalStore;
+use buck2_execute::incremental_state::IncrementalStore;
 use buck2_execute::materialize::materializer::HasMaterializer;
 use buck2_execute::materialize::materializer::Materializer;
 use buck2_execute::output_size::OutputCountAndBytes;
@@ -496,6 +498,7 @@ impl<'d> HasActionExecutor<'d> for DiceComputations<'d> {
         let low_pass_filter = self.per_transaction_data().get_low_pass_filter();
         let dep_file_cache = self.per_transaction_data().get_dep_file_cache();
         let dep_file_store = self.per_transaction_data().get_dep_file_store();
+        let incremental_store = self.per_transaction_data().get_incremental_store();
         let io_provider = self.global_data().get_io_provider();
         let http_client = self.per_transaction_data().get_http_client();
         let mergebase = self.per_transaction_data().get_mergebase();
@@ -522,6 +525,7 @@ impl<'d> HasActionExecutor<'d> for DiceComputations<'d> {
             low_pass_filter,
             dep_file_cache,
             dep_file_store,
+            incremental_store,
             io_provider,
             http_client,
             mergebase,
@@ -543,6 +547,7 @@ pub struct BuckActionExecutor<'d> {
     low_pass_filter: &'d LowPassFilter,
     dep_file_cache: &'d dyn DepFileCache,
     dep_file_store: Option<&'d dyn DepFileStore>,
+    incremental_store: Option<&'d dyn IncrementalStore>,
     io_provider: &'d dyn IoProvider,
     http_client: &'d HttpClient,
     mergebase: &'d Mergebase,
@@ -563,6 +568,7 @@ impl<'d> BuckActionExecutor<'d> {
         low_pass_filter: &'d LowPassFilter,
         dep_file_cache: &'d dyn DepFileCache,
         dep_file_store: Option<&'d dyn DepFileStore>,
+        incremental_store: Option<&'d dyn IncrementalStore>,
         io_provider: &'d dyn IoProvider,
         http_client: &'d HttpClient,
         mergebase: &'d Mergebase,
@@ -581,6 +587,7 @@ impl<'d> BuckActionExecutor<'d> {
             low_pass_filter,
             dep_file_cache,
             dep_file_store,
+            incremental_store,
             io_provider,
             http_client,
             mergebase,
@@ -719,6 +726,10 @@ impl ActionExecutionCtx for BuckActionExecutionContext<'_, '_> {
 
     fn dep_file_store(&self) -> Option<&dyn DepFileStore> {
         self.executor.dep_file_store
+    }
+
+    fn incremental_store(&self) -> Option<&dyn IncrementalStore> {
+        self.executor.incremental_store
     }
 
     fn dep_file_cache(&self) -> &dyn DepFileCache {

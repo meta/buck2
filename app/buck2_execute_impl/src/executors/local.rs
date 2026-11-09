@@ -68,6 +68,8 @@ use buck2_execute::execute::request::ExecutorPreference;
 use buck2_execute::execute::request::NetworkAccess;
 use buck2_execute::execute::result::CommandExecutionMetadata;
 use buck2_execute::execute::result::CommandExecutionResult;
+use buck2_execute::incremental_state::IncrementalRecord;
+use buck2_execute::incremental_state::IncrementalStore;
 use buck2_execute::knobs::ExecutorGlobalKnobs;
 use buck2_execute::materialize::materializer::DeclareArtifactPayload;
 use buck2_execute::materialize::materializer::MaterializationError;
@@ -112,8 +114,6 @@ use tracing::info;
 
 use crate::executors::worker::WorkerHandle;
 use crate::executors::worker::WorkerPool;
-use crate::incremental_actions_helper::get_incremental_path_map;
-use crate::incremental_actions_helper::save_content_based_incremental_state;
 use crate::sqlite::incremental_state_db::IncrementalDbState;
 
 #[derive(Debug, buck2_error::Error)]
@@ -932,17 +932,6 @@ impl LocalExecutor {
             result.outputs_lease = Some(ReadLease::join(published));
         }
 
-        if let Some(run_action_key) = request.run_action_key()
-            && !request.outputs_cleanup
-        {
-            save_content_based_incremental_state(
-                run_action_key.clone(),
-                &self.incremental_db_state,
-                &self.artifact_fs,
-                &result,
-            );
-        }
-
         result
     }
 
@@ -1186,15 +1175,20 @@ impl LocalExecutor {
             .await
             .buck_error_context("Failed to cleanup output directory")?;
 
-        if let Some(state) =
-            get_incremental_path_map(&self.incremental_db_state, request.run_action_key())
+        let record = request
+            .run_action_key()
+            .as_deref()
+            .and_then(|key| self.incremental_db_state.get(key));
+        if let Some(record) = record
+            && let IncrementalRecord::Outputs(recorded_outputs) = &*record
         {
             let mut copy_futs = Vec::new();
 
             for output in declared_content_based_outputs {
-                let p = output.path().to_buf();
-
-                if let Some(content_path) = state.get(&p) {
+                if let Some(recorded) = recorded_outputs.get(output.path()) {
+                    let content_path = self
+                        .artifact_fs
+                        .resolve_build(&output, Some(&recorded.content_based_path_hash()?))?;
                     copy_futs.push(async move {
                         self.blocking_executor
                             .execute_io_inline(|| {
@@ -1567,16 +1561,25 @@ async fn materialize_build_outputs(
     request: &CommandExecutionRequest,
 ) -> buck2_error::Result<Vec<ProjectRelativePathBuf>> {
     let mut paths = vec![];
-    let path_map = get_incremental_path_map(incremental_db_state, request.run_action_key());
+    let record = request
+        .run_action_key()
+        .as_deref()
+        .and_then(|key| incremental_db_state.get(key));
+    let recorded_outputs = match record.as_deref() {
+        Some(IncrementalRecord::Outputs(outputs)) => Some(outputs),
+        Some(IncrementalRecord::Leftovers) | None => None,
+    };
     for output in request.outputs() {
         match output {
             CommandExecutionOutputRef::BuildArtifact { path, .. } => {
                 if path.is_content_based_path() {
-                    if let Some(ref state) = path_map {
-                        let p = path.path().to_buf();
-                        if let Some(content_path) = state.get(&p) {
-                            paths.push(content_path.clone());
-                        }
+                    if let Some(recorded) =
+                        recorded_outputs.and_then(|outputs| outputs.get(path.path()))
+                    {
+                        paths.push(
+                            artifact_fs
+                                .resolve_build(path, Some(&recorded.content_based_path_hash()?))?,
+                        );
                     }
                 } else {
                     paths.push(artifact_fs.resolve_build(path, None)?);

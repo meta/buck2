@@ -64,11 +64,9 @@ use remote_execution::TCode;
 use remote_execution::TCodeReasonGroup;
 use tracing::info;
 
-use crate::incremental_actions_helper::save_content_based_incremental_state;
 use crate::re::download::DownloadResult;
 use crate::re::download::download_action_results;
 use crate::re::paranoid_download::ParanoidDownloader;
-use crate::sqlite::incremental_state_db::IncrementalDbState;
 use crate::storage_resource_exhausted::is_storage_resource_exhausted;
 
 #[derive(Debug, buck2_error::Error)]
@@ -83,7 +81,6 @@ pub struct ReExecutor {
     pub project_fs: ProjectRoot,
     pub revision: Arc<LazyVcsRevision>,
     pub materializer: Arc<dyn Materializer>,
-    pub incremental_db_state: Arc<IncrementalDbState>,
     pub re_client: ManagedRemoteExecutionClient,
     /// For what the executor materializes; the RE request itself runs under `re_client`'s.
     pub invocation_re_use_case: RemoteExecutorUseCase,
@@ -514,17 +511,6 @@ impl PreparedCommandExecutor for ReExecutor {
 
         let DownloadResult::Result(mut res) = res;
         res.action_result = Some(response.execute_response.action_result);
-
-        if let Some(run_action_key) = request.run_action_key()
-            && !request.outputs_cleanup
-        {
-            save_content_based_incremental_state(
-                run_action_key.clone(),
-                &self.incremental_db_state,
-                &self.artifact_fs,
-                &res,
-            );
-        }
 
         res
     }

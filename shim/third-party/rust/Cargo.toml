@@ -28,7 +28,7 @@ annotate-snippets = "0.12.17"
 anstyle-parse = "1.0.0"
 anyhow = "1.0.104"
 anymap3 = "1.1.0"
-arc-swap = { version = "1.9.3", features = ["weak"] }
+arc-swap = { version = "1.9.4", features = ["weak"] }
 argfile = "1.0.0"
 assert_matches = "1.5"
 async-compression = { version = "0.4.52", features = ["brotli", "bzip2", "deflate", "futures-io", "gzip", "tokio", "zlib", "zstd", "zstdmt"] }

@@ -492,7 +492,7 @@ similar = { version = "3.2.1", features = ["bytes", "inline", "unicode"] }
 siphasher = "1.0.4"
 sled = "0.34.7"
 slog = { version = "2.8.2", features = ["max_level_trace", "nested-values"] }
-smallvec = { version = "1.16.4", features = ["const_generics", "impl_bincode", "serde", "specialization", "union", "write"] }
+smallvec = { version = "1.16.5", features = ["const_generics", "impl_bincode", "serde", "specialization", "union", "write"] }
 sorted_vector_map = "0.2.1"
 stacker = "0.1.25"
 starlark = { version = "0.14.2", path = "starlark-rust/starlark", features = ["pagable"] }

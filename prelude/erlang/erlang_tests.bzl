@@ -207,6 +207,7 @@ def _build_erlang_test(ctx: AnalysisContext, dep_info: ErlangDependencyInfo, bin
         use_project_relative_paths = True,
         default_executor = re_executors.default_executor,
         executor_overrides = re_executors.executor_overrides,
+        supports_test_execution_caching = ctx.attrs.supports_test_execution_caching,
     )
     test_info = ErlangTestInfo(
         name = suite_name,

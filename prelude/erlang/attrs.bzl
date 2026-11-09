@@ -516,6 +516,7 @@ rules_attributes = {
                 implicit 'erlang_test' target suite_SUITE will be generated.
             """
         ),
+        "supports_test_execution_caching": attrs.bool(default = True),
         "_artifact_annotation_mfa": attrs.string(default = "artifact_annotations:default_annotation/1"),
         "_cli_lib": attrs.dep(providers = [ErlangAppInfo], default = "prelude//erlang/common_test/test_cli_lib:test_cli_lib"),
         "_ct_opts": attrs.string(default = read_root_config("erlang", "erlang_test_ct_opts", "")),

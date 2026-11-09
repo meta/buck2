@@ -161,7 +161,7 @@ use crate::sqlite::materializer_db::MaterializerStateSqliteDb;
 /// Bump this with any fix that a rollback waited on. Setting the config above every version in
 /// the fleet rolls back; setting it to the fixed version then rolls out again to the binaries
 /// that have the fix, and to no others.
-pub const ROLLOUT_VERSION: u32 = 2;
+pub const ROLLOUT_VERSION: u32 = 3;
 
 /// How often buffered access-time bumps reach sqlite under `AccessTimesUpdates::Full`.
 const ACCESS_TIMES_FLUSH_PERIOD: Duration = Duration::from_secs(5);

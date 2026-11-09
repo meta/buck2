@@ -200,10 +200,11 @@ pub(crate) async fn maybe_initialize_dep_file_sqlite_db(
     daemon_id: &DaemonId,
 ) -> buck2_error::Result<Option<DepFileStateSqliteDb>> {
     // Opt-in (Phase 1), enabled with `buck2.sqlite_dep_file_state = true` -- but only meaningful with
-    // the materializer state db. A cross-restart hit re-validates outputs via
-    // `Materializer::declare_match`, which after a restart only reports a match if the materializer
-    // reloaded its tracked state from sqlite. Without `sqlite_materializer_state` that tree is empty
-    // post-restart, so no reloaded entry could ever hit and persisting them would be pure overhead.
+    // the materializer state db. A cross-restart hit vouches for its outputs through what the
+    // materializer reloaded from sqlite: the deferred core re-declares them at their paths, the
+    // disk-state core takes a locally made output out of the tracked path holding it. Without
+    // `sqlite_materializer_state` that state is empty post-restart, so a reloaded entry could hit
+    // only on CAS content and persisting local entries would be pure overhead.
     let requested = root_config
         .parse(BuckconfigKeyRef {
             section: "buck2",

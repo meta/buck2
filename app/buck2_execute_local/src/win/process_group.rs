@@ -145,7 +145,7 @@ impl ProcessGroupImpl {
 
     // On Windows we use JobObject API to kill the whole process tree
     pub(crate) async fn kill(
-        &self,
+        &mut self,
         _graceful_shutdown_timeout_s: Option<u32>,
     ) -> buck2_error::Result<()> {
         tokio::time::timeout(Duration::from_secs(10), self.job.terminate(0))

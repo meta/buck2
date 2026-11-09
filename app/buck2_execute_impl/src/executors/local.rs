@@ -183,6 +183,20 @@ impl LocalExecutor {
         }
     }
 
+    /// How to kill the command. Only tests get a grace period, and only when they time out.
+    fn kill_process(&self, request: &CommandExecutionRequest) -> DefaultKillProcess {
+        if !request.is_test() {
+            return DefaultKillProcess::default();
+        }
+        DefaultKillProcess {
+            graceful_shutdown_timeout_s: None,
+            timeout_grace_period_s: self
+                .knobs
+                .test_timeout_grace_period
+                .map(|d| d.as_secs().try_into().unwrap_or(u32::MAX)),
+        }
+    }
+
     // Compiler gets confused (on the not(unix) branch only, weirdly) if you use an async fn.
     #[allow(clippy::manual_async_fn)]
     fn exec<'a>(
@@ -192,6 +206,7 @@ impl LocalExecutor {
         env: impl IntoIterator<Item = (impl AsRef<OsStr> + Send, impl AsRef<OsStr> + Send)> + Send + 'a,
         working_directory: &'a ProjectRelativePath,
         timeout: Option<Duration>,
+        kill_process: DefaultKillProcess,
         env_inheritance: Option<&'a EnvironmentInheritance>,
         liveliness_observer: impl LivelinessObserver + 'static,
         disable_miniperf: bool,
@@ -212,6 +227,7 @@ impl LocalExecutor {
                         env,
                         &working_directory,
                         timeout,
+                        kill_process,
                         env_inheritance,
                         liveliness_observer,
                         self.knobs.enable_miniperf && !disable_miniperf,
@@ -244,7 +260,7 @@ impl LocalExecutor {
                         timeout,
                         alive,
                         DefaultStatusDecoder,
-                        DefaultKillProcess::default(),
+                        kill_process,
                         None,
                         true,
                         cgroup,
@@ -375,6 +391,7 @@ impl LocalExecutor {
                         env,
                         request.working_directory(),
                         request.timeout(),
+                        self.kill_process(request),
                         request.local_environment_inheritance(),
                         liveliness_observer,
                         request.disable_miniperf(),
@@ -1706,6 +1723,7 @@ mod unix {
         env: impl IntoIterator<Item = (impl AsRef<OsStr>, impl AsRef<OsStr>)>,
         working_directory: &AbsPath,
         command_timeout: Option<Duration>,
+        kill_process: DefaultKillProcess,
         env_inheritance: Option<&EnvironmentInheritance>,
         liveliness_observer: impl LivelinessObserver + 'static,
         enable_miniperf: bool,
@@ -1728,9 +1746,10 @@ mod unix {
             timeout: command_timeout.map(|d| d.try_into()).transpose()?,
             enable_miniperf,
             std_redirects: None,
-            graceful_shutdown_timeout_s: None,
+            graceful_shutdown_timeout_s: kill_process.graceful_shutdown_timeout_s,
             command_cgroup: cgroup_path.map(|p| p.to_string()),
             network_access: network_access.map(|n| n.into()),
+            timeout_grace_period_s: kill_process.timeout_grace_period_s,
         };
         apply_local_execution_environment(&mut req, working_directory, env, env_inheritance);
         forkserver
@@ -1858,6 +1877,7 @@ mod tests {
                 &BuckMutMap::<String, String>::default(),
                 ProjectRelativePath::empty(),
                 None,
+                DefaultKillProcess::default(),
                 None,
                 NoopLivelinessObserver::create(),
                 false,
@@ -1901,6 +1921,7 @@ mod tests {
                 &BuckMutMap::<String, String>::default(),
                 ProjectRelativePath::empty(),
                 Some(Duration::from_secs(1)),
+                DefaultKillProcess::default(),
                 None,
                 NoopLivelinessObserver::create(),
                 false,
@@ -1928,6 +1949,7 @@ mod tests {
                 &BuckMutMap::<String, String>::default(),
                 ProjectRelativePath::empty(),
                 None,
+                DefaultKillProcess::default(),
                 Some(&EnvironmentInheritance::empty()),
                 NoopLivelinessObserver::create(),
                 false,

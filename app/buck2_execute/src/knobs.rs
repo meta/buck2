@@ -27,4 +27,8 @@ pub struct ExecutorGlobalKnobs {
     /// Maximum duration in seconds that an execution can remain in the RE queue state before local execution is unblocked.
     /// Note this overrides, and should possibly replace, `remote_execution_queue_time_threshold_s` configured per executor.
     pub re_fallback_on_estimated_queue_time_exceeds: Option<Duration>,
+
+    /// How long a local test that hit its timeout gets to exit after `SIGTERM` before it and
+    /// everything left in its process group get `SIGKILL`. `None` kills immediately.
+    pub test_timeout_grace_period: Option<Duration>,
 }

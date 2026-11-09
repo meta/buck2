@@ -9,8 +9,12 @@
  */
 
 use std::env;
+use std::mem::MaybeUninit;
+use std::os::unix::process::CommandExt;
 use std::os::unix::process::ExitStatusExt;
 use std::process::Command;
+use std::sync::atomic::AtomicI32;
+use std::sync::atomic::Ordering;
 
 use anyhow::Context as _;
 use buck2_miniperf_proto::MiniperfCounter;
@@ -19,6 +23,128 @@ use buck2_miniperf_proto::MiniperfOutput;
 use perf_event::Builder;
 use perf_event::events::Hardware;
 use smallvec::SmallVec;
+
+/// PID of the wrapped command, read by the `SIGTERM` handler.
+static CHILD_PID: AtomicI32 = AtomicI32::new(0);
+
+/// Forwards `SIGTERM` to the wrapped command, so that a command buck2 asks to stop gets to clean
+/// up; miniperf itself keeps waiting for it and reports its exit status as usual.
+extern "C" fn forward_sigterm(_signal: libc::c_int) {
+    let pid = CHILD_PID.load(Ordering::Relaxed);
+    if pid > 0 {
+        // SAFETY: `kill` is async-signal-safe.
+        unsafe { libc::kill(pid, libc::SIGTERM) };
+    }
+}
+
+/// Blocks or unblocks `SIGTERM` for the calling thread. Async-signal-safe, so it can run between
+/// fork and exec.
+fn set_sigterm_blocked(blocked: bool) {
+    let mut set = MaybeUninit::<libc::sigset_t>::uninit();
+    // SAFETY: `sigemptyset` initializes the set `set` points to.
+    unsafe { libc::sigemptyset(set.as_mut_ptr()) };
+    // SAFETY: `set` was initialized by `sigemptyset`.
+    let mut set = unsafe { set.assume_init() };
+    // SAFETY: `set` is an initialized signal set and `SIGTERM` is a valid signal number.
+    unsafe { libc::sigaddset(&mut set, libc::SIGTERM) };
+    let how = if blocked {
+        libc::SIG_BLOCK
+    } else {
+        libc::SIG_UNBLOCK
+    };
+    // SAFETY: `set` is an initialized signal set; a null old-set pointer means the previous mask
+    // is not returned, which `pthread_sigmask` allows.
+    unsafe { libc::pthread_sigmask(how, &set, std::ptr::null_mut()) };
+}
+
+/// Installs `forward_sigterm` as the `SIGTERM` handler. Returns whether it was installed; if not,
+/// says so on stderr, since the wrapped command then gets no chance to handle `SIGTERM`.
+fn install_sigterm_forwarding() -> bool {
+    let action = MaybeUninit::<libc::sigaction>::zeroed();
+    // SAFETY: `sigaction` is a plain C struct, for which all zeroes is a valid value: no flags, an
+    // empty mask and a null handler, which is set below.
+    let mut action = unsafe { action.assume_init() };
+    action.sa_sigaction = forward_sigterm as *const () as libc::sighandler_t;
+    action.sa_flags = libc::SA_RESTART;
+    // SAFETY: `action` is a valid `sigaction` whose handler only performs an atomic load and an
+    // async-signal-safe `kill`; a null old-action pointer means the previous action is not
+    // returned, which `sigaction` allows.
+    let installed = unsafe { libc::sigaction(libc::SIGTERM, &action, std::ptr::null_mut()) == 0 };
+    if !installed {
+        eprintln!(
+            "miniperf: failed to forward SIGTERM: {}",
+            std::io::Error::last_os_error()
+        );
+    }
+    installed
+}
+
+/// Waits for the child `pid` to exit without reaping it, so that its pid cannot be reused while
+/// the `SIGTERM` handler may still signal it.
+///
+/// Calls `libc` directly, like the signal handling above, rather than `rustix` or `nix`: miniperf's
+/// dependencies are kept to a minimum (see its BUCK file), since any change to them re-embeds the
+/// binary into buck2.
+fn wait_for_exit_without_reaping(pid: i32) -> std::io::Result<()> {
+    loop {
+        let mut info = MaybeUninit::<libc::siginfo_t>::zeroed();
+        // SAFETY: `info` is a valid, aligned and exclusively owned `siginfo_t` for `waitid` to
+        // write; `pid` is this process's unreaped child and the flags are valid for `waitid`.
+        let res = unsafe {
+            libc::waitid(
+                libc::P_PID,
+                pid as libc::id_t,
+                info.as_mut_ptr(),
+                libc::WEXITED | libc::WNOWAIT,
+            )
+        };
+        if res == 0 {
+            return Ok(());
+        }
+        let err = std::io::Error::last_os_error();
+        if err.kind() != std::io::ErrorKind::Interrupted {
+            return Err(err);
+        }
+    }
+}
+
+/// Runs `cmd`, forwarding `SIGTERM` to it.
+///
+/// `SIGTERM` is blocked from before the spawn until the handler knows the child's pid, so one that
+/// arrives in between is forwarded rather than killing miniperf. The child inherits the signal mask,
+/// so it unblocks `SIGTERM` before exec. Forwarding stops while the exited child is still unreaped,
+/// so it never signals a reused pid. If the handler cannot be installed, `SIGTERM` keeps its default
+/// action, as without forwarding.
+fn run_forwarding_sigterm(cmd: &mut Command) -> std::io::Result<std::process::ExitStatus> {
+    // SAFETY: `set_sigterm_blocked` only calls async-signal-safe functions.
+    unsafe {
+        cmd.pre_exec(|| {
+            set_sigterm_blocked(false);
+            Ok(())
+        });
+    }
+    set_sigterm_blocked(true);
+    let spawned = cmd.spawn();
+    let forwarding_to = spawned
+        .as_ref()
+        .ok()
+        .and_then(|child| i32::try_from(child.id()).ok())
+        .filter(|pid| {
+            CHILD_PID.store(*pid, Ordering::Relaxed);
+            install_sigterm_forwarding()
+        });
+    set_sigterm_blocked(false);
+
+    let mut child = spawned?;
+    if let Some(pid) = forwarding_to {
+        // On error (for example if the child was reaped already), `child.wait()` still reports
+        // what can be known about it.
+        let _ignored = wait_for_exit_without_reaping(pid);
+        set_sigterm_blocked(true);
+        CHILD_PID.store(0, Ordering::Relaxed);
+    }
+    child.wait()
+}
 
 struct Counters {
     user_counter: perf_event::Counter,
@@ -110,10 +236,7 @@ pub fn main() -> anyhow::Result<()> {
 
     let status = args.next().context("No process to run").and_then(|bin| {
         // ast-grep-ignore: rust/buck2-no-command-new
-        Command::new(bin)
-            .args(args)
-            .status()
-            .map_err(anyhow::Error::from)
+        run_forwarding_sigterm(Command::new(bin).args(args)).map_err(anyhow::Error::from)
     });
 
     let counters = counters.and_then(|c| c.collect());

@@ -4,6 +4,7 @@ oncall("build_infra")
 
 buck2_core_tests(
     materializer_variants = [
+        "test_content_based_paths",
         "test_dep_files",
         "test_incremental_actions",
     ],

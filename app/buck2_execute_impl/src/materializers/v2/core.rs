@@ -32,14 +32,11 @@
 //! deadlock: a request's roots are queued in one processor step, so between any two requests the
 //! queue order is the same at every root where they conflict, and the tree only ever makes a
 //! request wait for requests queued before it; the wait-for relation follows queue order and has
-//! no cycles. The one acquisition made while holding roots from an earlier request is `publish`,
-//! for a content-addressed destination: whoever holds that is a downloader or publisher of the
-//! same content, which finishes without waiting, or a reader of it, which consumes this output
-//! and so cannot be producing the outputs held. Anyone adding an acquisition made while holding
-//! has to redo this argument.
+//! no cycles. No acquisition is made while holding roots from an earlier request; anyone adding
+//! one has to redo this argument.
 //!
 //! What is here is the first step of the core: requests whose content is already on disk or in
-//! the CAS, the report, output preparation and publishing, and eager versions of the producer
+//! the CAS, the report, output preparation, and eager versions of the producer
 //! calls the transition still needs. Local copies from other tracked paths, clean-stale and the
 //! stash come in later steps; what is not supported yet fails with an error that names itself
 //! rather than doing something approximate.
@@ -390,22 +387,6 @@ impl<T: IoHandler + Allocative> DiskStateMaterializer<T> {
         Ok((answers, withdraw))
     }
 
-    /// Asks for one want and waits for the grant.
-    async fn acquire_one(
-        &self,
-        path: ProjectRelativePathBuf,
-        want: Want,
-    ) -> buck2_error::Result<Granted> {
-        let (mut answers, withdraw) = self.acquire(vec![(path, want)])?;
-        let granted = answers
-            .pop()
-            .expect("one want")
-            .await
-            .map_err(|_| stopped())?;
-        withdraw.disarm();
-        Ok(granted)
-    }
-
     /// Records `entry` as what the holder put at the guard's root, which it holds in read mode
     /// from then on. Under `readonly_outputs` the root's files lose their write bits first, so
     /// that nothing writes through a name the tree, the index or the stash vouches for; an
@@ -571,9 +552,9 @@ impl<T: IoHandler + Allocative> DiskStateMaterializer<T> {
         }
     }
 
-    /// Records content this daemon produced at the guard's root, an action's output or a
-    /// publish: the stash takes it first, since it is nowhere else, then it is reported as an
-    /// intermediate output. A download is reported through `report` alone: the CAS has it.
+    /// Records content this daemon produced at the guard's root, an action's output: the stash
+    /// takes it first, since it is nowhere else, then it is reported as an intermediate output.
+    /// A download is reported through `report` alone: the CAS has it.
     async fn report_produced(&self, guard: &RootGuard, root: Root) -> buck2_error::Result<()> {
         self.stash(&root).await;
         self.report(guard, root.entry, ArtifactClassification::IntermediateOnly)
@@ -930,59 +911,14 @@ impl<T: IoHandler + Allocative> Materializer for DiskStateMaterializer<T> {
 
     async fn publish(
         &self,
-        lease: &WriteLease,
+        _lease: &WriteLease,
         src: ProjectRelativePathBuf,
-        dest: ProjectRelativePathBuf,
-        value: ArtifactValue,
+        _dest: ProjectRelativePathBuf,
+        _value: ArtifactValue,
     ) -> buck2_error::Result<ReadLease> {
-        if self.roots_of(lease)?.over(&src).is_none() {
-            return Err(internal_error!(
-                "`{src}` was published from outside the write roots of its lease"
-            ));
-        }
-        let entry = value.entry().dupe();
-        let Granted {
-            mut held,
-            exclusions,
-        } = self
-            .acquire_one(dest.clone(), Want::Content(entry.dupe()))
-            .await?;
-        let fs = self.io.fs().dupe();
-        let src_abs = fs.resolve(&src);
-        let dest_abs = fs.resolve(&dest);
-        if !held.guard().holds_for_writing() {
-            // Content-addressed destinations only ever hold one thing; the copy the action just
-            // produced is redundant.
-            self.blocking_executor
-                .execute_io_inline(move || fs_util::remove_all(&src_abs).categorize_internal())
-                .await?;
-            return Ok(ReadLease::new(Roots(vec![held.into_guard()])));
-        }
-        // Content-addressed paths hold one content forever, so nothing is ever tracked strictly
-        // under an untracked one. Were it, the rename would replace what its readers hold.
-        if !exclusions.is_empty() {
-            return Err(internal_error!(
-                "`{dest}` has tracked content under it, which a publish cannot replace: [{}]",
-                exclusions
-                    .iter()
-                    .map(|p| format!("`{p}`"))
-                    .collect::<Vec<_>>()
-                    .join(", ")
-            ));
-        }
-        held.settle_except(None).await;
-        self.blocking_executor
-            .execute_io_inline(move || {
-                if let Some(parent) = dest_abs.parent() {
-                    fs_util::create_dir_all(parent)?;
-                }
-                fs_util::remove_all(&dest_abs).categorize_internal()?;
-                fs_util::rename(&src_abs, &dest_abs).categorize_internal()
-            })
-            .await?;
-        self.report_produced(held.guard(), Root { path: dest, entry })
-            .await?;
-        Ok(ReadLease::new(Roots(vec![held.into_guard()])))
+        Err(internal_error!(
+            "`{src}` was published to the disk-state materializer, which keeps a local output where its run wrote it"
+        ))
     }
 
     /// Paths without values: `ensure_materialized`'s, for the previous outputs of an incremental
@@ -1732,11 +1668,6 @@ impl Roots {
     /// The guard of the root at exactly `path`.
     fn at(&self, path: &ProjectRelativePath) -> Option<&RootGuard> {
         self.0.iter().find(|guard| guard.path() == path)
-    }
-
-    /// The guard of the root at or above `path`.
-    fn over(&self, path: &ProjectRelativePath) -> Option<&RootGuard> {
-        self.0.iter().find(|guard| path.starts_with(guard.path()))
     }
 }
 

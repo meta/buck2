@@ -1554,18 +1554,23 @@ async fn resolve_loaded_outputs(
         let entry = match value {
             StoredOutputValue::Leaf(v) => Plan::Ready((*v).dupe()),
             StoredOutputValue::Directory(fingerprint) => {
-                // A content-based directory path embeds its fingerprint, so we must supply it to
-                // resolve the on-disk path we will query. Deriving the hash from the fingerprint
-                // reproduces the path only because an action's own output values always carry an
-                // inferred hash: an explicit one is set solely on projected artifacts, which are
-                // views onto a base artifact rather than outputs an action declares. The same
-                // assumption lets `StoredOutputValue::Leaf` round-trip without persisting the hash.
-                let content_hash = if path.is_content_based_path() {
+                // The path the run left the directory at, where the materializer is asked for
+                // its tree. The disk-state core leaves a content-based output where the run
+                // wrote it, at the placeholder path; the deferred core publishes it to its
+                // content path, which embeds the fingerprint. Deriving the hash from the
+                // fingerprint reproduces that path only because an action's own output values
+                // always carry an inferred hash: an explicit one is set solely on projected
+                // artifacts, which are views onto a base artifact rather than outputs an action
+                // declares. The same assumption lets `StoredOutputValue::Leaf` round-trip without
+                // persisting the hash.
+                let content_hash = if !path.is_content_based_path() {
+                    None
+                } else if ctx.materializer().is_disk_state() {
+                    Some(ContentBasedPathHash::for_output_artifact())
+                } else {
                     Some(ContentBasedPathHash::new(
                         fingerprint.raw_digest().as_bytes(),
                     )?)
-                } else {
-                    None
                 };
                 let project_path = fs
                     .buck_out_path_resolver()

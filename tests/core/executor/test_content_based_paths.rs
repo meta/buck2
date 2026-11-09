@@ -396,7 +396,9 @@ async fn test_download_with_content_based_path_and_no_metadata(buck: &Buck) {
     );
 }
 
-#[buck_test]
+// The offline build reads the cache the traced build left behind, at paths nothing leases, as
+// the tooling that archives the cache does; strict leases would take them off disk first.
+#[buck_test(strict_leases = false)]
 async fn test_offline_cas_artifact_with_content_based_path(buck: &Buck) -> anyhow::Result<()> {
     hg_init(buck.cwd()).await?;
 
@@ -427,7 +429,8 @@ async fn test_offline_cas_artifact_with_content_based_path(buck: &Buck) -> anyho
     Ok(())
 }
 
-#[buck_test]
+// As above: the offline build reads the cache the traced build left at unleased paths.
+#[buck_test(strict_leases = false)]
 async fn test_offline_download_with_content_based_path(buck: &Buck) -> anyhow::Result<()> {
     let content = archive()?;
     let server = StaticHttpServer::start([("/archive", content.clone())]).await?;
@@ -689,9 +692,10 @@ async fn test_local_action_inputs_have_configuration_path_symlinks(
             let path = entry["path"]
                 .as_str()
                 .expect("what-materialized entries have a path");
+            // The configuration-path symlink: no files, however the materializer logs the
+            // method (a copy under the deferred core, a CAS download under the disk-state one).
             path.contains("run_remote_with_content_based_path")
                 && path.ends_with("out")
-                && entry["method"] == "copy"
                 && entry["file_count"] == 0
         })
         .collect();

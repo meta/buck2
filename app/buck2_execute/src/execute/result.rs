@@ -260,10 +260,29 @@ pub struct CommandExecutionResult {
     /// Data about time spent waiting (not on critical path) during command execution.
     pub waiting_data: WaitingData,
 
-    /// Holds the outputs on disk for the readers that come after the run, the cache upload among
-    /// them. `None` when the run did not report its outputs, or from an executor whose outputs
-    /// are not on this machine's disk.
-    pub outputs_lease: Option<ReadLease>,
+    /// The outputs on this machine's disk, held for the readers that come after the run, the
+    /// cache upload among them. `None` when the run did not report its outputs, or from an
+    /// executor whose outputs are not on this machine's disk.
+    pub held_outputs: Option<HeldOutputs>,
+}
+
+/// A run's outputs on disk, under a lease for their readers.
+#[derive(Debug)]
+pub struct HeldOutputs {
+    pub lease: ReadLease,
+    /// Where a content-based output among them is.
+    pub content_based_at: ContentBasedOutputsAt,
+}
+
+/// Where a local run leaves a content-based output, which it writes at a placeholder path since
+/// the content path is known only once the content is hashed.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum ContentBasedOutputsAt {
+    /// At the placeholder path: the disk-state core's, whose consumers find content by digest.
+    WrittenPath,
+    /// At its content path, published there: the deferred core's, whose consumers copy from the
+    /// declared path, and which keeps no reader out of the placeholder.
+    ContentPath,
 }
 
 impl CommandExecutionResult {
@@ -337,15 +356,11 @@ impl CommandExecutionResult {
     /// Resolves the output path as used by execution, a stable path it can be
     /// accessed at without holding a lock, and the artifact value.
     ///
-    /// For content-based outputs, we resolve the outputs to the placeholder
-    /// paths that are used during execution, so that e.g. remote execution can
-    /// key on a path matching that used by execution.
-    ///
-    /// The [`ResolvedCommandExecutionOutput`] returned by this function is not
-    /// safe to read without holding a `NamedSemaphores` permit for it: when it
-    /// is a [`ContentBasedPathHash::OutputArtifact`] path,
-    /// concurrently-running `run` actions in different configurations may
-    /// overwrite it.
+    /// The outputs, each with the path remote execution names it by, the placeholder path for a
+    /// content-based one, the path its content is at on this machine, and its value. The local
+    /// path is where the run holding the outputs (`held_outputs`) left them, safe to read for as
+    /// long as this result is held; without such a run it is the content path, where a
+    /// materialization puts a content-based output.
     pub fn resolve_outputs<'a>(
         &'a self,
         fs: &'a ArtifactFs,
@@ -356,7 +371,11 @@ impl CommandExecutionResult {
             &'a ArtifactValue,
         )>,
     > + 'a {
-        self.outputs.iter().map(|(output, value)| {
+        let at_written_path = self
+            .held_outputs
+            .as_ref()
+            .is_some_and(|held| held.content_based_at == ContentBasedOutputsAt::WrittenPath);
+        self.outputs.iter().map(move |(output, value)| {
             let has_content_based_path = output.has_content_based_path();
             let resolved = output.as_ref().resolve(
                 fs,
@@ -367,7 +386,7 @@ impl CommandExecutionResult {
                 }
                 .as_ref(),
             )?;
-            let content_path = if has_content_based_path {
+            let local_path = if has_content_based_path && !at_written_path {
                 output
                     .as_ref()
                     .resolve(fs, Some(&value.content_based_path_hash()))?
@@ -375,7 +394,7 @@ impl CommandExecutionResult {
             } else {
                 resolved.path().to_buf()
             };
-            Ok((resolved, content_path, value))
+            Ok((resolved, local_path, value))
         })
     }
 }

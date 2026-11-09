@@ -67,6 +67,8 @@ use buck2_execute::execute::request::ExecutorPreference;
 use buck2_execute::execute::request::NetworkAccess;
 use buck2_execute::execute::result::CommandExecutionMetadata;
 use buck2_execute::execute::result::CommandExecutionResult;
+use buck2_execute::execute::result::ContentBasedOutputsAt;
+use buck2_execute::execute::result::HeldOutputs;
 use buck2_execute::incremental_state::IncrementalRecord;
 use buck2_execute::incremental_state::IncrementalStore;
 use buck2_execute::incremental_state::RecordedOutput;
@@ -631,7 +633,8 @@ impl LocalExecutor {
         // An action with neither outputs nor a scratch path has nothing to report under it.
         let outputs_lease = outputs_lease.unwrap_or_else(WriteLease::noop);
         // Set once the run's outputs have been collected: the leases `publish` returned over
-        // them, which join the outputs lease for the result's readers.
+        // them, none under the disk-state core, which join the outputs lease for the result's
+        // readers.
         let mut published = None;
 
         let mut result = async {
@@ -920,7 +923,10 @@ impl LocalExecutor {
         .await;
         if let Some(mut published) = published {
             published.push(outputs_lease.into_read_lease());
-            result.outputs_lease = Some(ReadLease::join(published));
+            result.held_outputs = Some(HeldOutputs {
+                lease: ReadLease::join(published),
+                content_based_at: self.content_based_outputs_at(),
+            });
         }
 
         result
@@ -975,12 +981,18 @@ impl LocalExecutor {
         for (output, output_path) in entries {
             let value = extract_artifact_value(&builder, &output_path, digest_config)?;
             if let Some(value) = value {
-                if output.as_ref().has_content_based_path() {
-                    // A content-based output is produced at a placeholder path, since its real
-                    // path is only known once the content is hashed, and is published to that
-                    // path now. The placeholder is scratch shared by every configuration of this
-                    // action; `HostSharingRequirements` keeps their runs from overlapping there,
-                    // and this run still holds that permit.
+                // A content-based output is produced at a placeholder path, since its real path
+                // is only known once the content is hashed. The placeholder is scratch shared by
+                // every configuration of this action, which `HostSharingRequirements` keeps from
+                // running at once; this run still holds that permit. The deferred core's
+                // consumers copy from the declared path, and the permit is all that keeps the
+                // next configuration out of the placeholder, so there the output moves to its
+                // content path now. The disk-state core's consumers find content by digest, so
+                // there it is reported where it is, and the lease the result carries keeps the
+                // next configuration out until the result's readers are done.
+                if output.as_ref().has_content_based_path()
+                    && self.content_based_outputs_at() == ContentBasedOutputsAt::ContentPath
+                {
                     let content_path = output
                         .as_ref()
                         .resolve(&self.artifact_fs, Some(&value.content_based_path_hash()))?
@@ -1014,6 +1026,15 @@ impl LocalExecutor {
             },
             published,
         ))
+    }
+
+    /// Where this executor leaves a content-based output once it has hashed it.
+    fn content_based_outputs_at(&self) -> ContentBasedOutputsAt {
+        if self.materializer.is_disk_state() {
+            ContentBasedOutputsAt::WrittenPath
+        } else {
+            ContentBasedOutputsAt::ContentPath
+        }
     }
 
     async fn acquire_worker_permit(
@@ -1148,8 +1169,7 @@ impl LocalExecutor {
             Some(IncrementalRecord::Outputs(recorded)) => recorded,
         };
         let mut outputs = Vec::new();
-        // The recorded outputs, each with where the record left it: a content-based output at
-        // its content path, any other at its output path.
+        // The recorded outputs, each with where the run that made the record left it.
         let mut left: Vec<(usize, &RecordedOutput, ProjectRelativePathBuf)> = Vec::new();
         for output in request.outputs() {
             let path = output
@@ -1165,7 +1185,9 @@ impl LocalExecutor {
                 continue;
             };
             if let Some(recorded) = recorded.get(artifact.path()) {
-                let left_at = if artifact.is_content_based_path() {
+                let left_at = if artifact.is_content_based_path()
+                    && self.content_based_outputs_at() == ContentBasedOutputsAt::ContentPath
+                {
                     self.artifact_fs
                         .resolve_build(artifact, Some(&recorded.content_based_path_hash()?))?
                 } else {

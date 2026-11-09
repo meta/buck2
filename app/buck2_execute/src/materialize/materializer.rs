@@ -447,7 +447,9 @@ pub trait Materializer: TrackedPaths + Allocative + Send + Sync + 'static {
     /// Makes the untracked content an action produced at `src`, which it holds `lease` for, the
     /// artifact at `dest`, described by `value`. The content moves: `src` is the caller's to
     /// produce and not to keep. Returns once `dest` is on disk, with a lease over it for the
-    /// readers that follow.
+    /// readers that follow. The deferred core's: a disk-state materializer refuses it, since its
+    /// consumers find content by digest and a local output stays where its run wrote it,
+    /// reported through [`Materializer::declare_existing`].
     async fn publish(
         &self,
         lease: &WriteLease,

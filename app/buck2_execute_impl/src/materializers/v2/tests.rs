@@ -903,43 +903,6 @@ async fn test_fill_keeps_a_matching_root_and_remakes_any_other() -> buck2_error:
     .await
 }
 
-#[tokio::test]
-async fn test_publish_moves_the_content_and_tracks_it() -> buck2_error::Result<()> {
-    ignore_stack_overflow_checks_for_future(async {
-        let temp = ProjectRootTemp::new()?;
-        let fs = temp.path().dupe();
-        let (dm, io) = make(&fs, None, None);
-        let src = path("buck-out/v2/gen/__action__/out");
-        let dest = path("buck-out/v2/gen/content/abc/out");
-
-        let lease = dm.prepare_outputs(vec![src.clone()]).await?;
-        fs.write_file(&src, "X", false)?;
-        drop(
-            dm.publish(&lease, src.clone(), dest.clone(), file("X"))
-                .await?,
-        );
-        drop(lease);
-        assert!(!fs.resolve(&src).exists());
-        assert_eq!(std::fs::read_to_string(fs.resolve(&dest))?, "X");
-        assert!(dm.has_artifact_at(dest.clone()).await?);
-
-        // The same content published again is redundant: the source goes, the destination stays.
-        let lease = dm.prepare_outputs(vec![src.clone()]).await?;
-        fs.write_file(&src, "X", false)?;
-        drop(
-            dm.publish(&lease, src.clone(), dest.clone(), file("X"))
-                .await?,
-        );
-        drop(lease);
-        assert!(!fs.resolve(&src).exists());
-        assert_eq!(std::fs::read_to_string(fs.resolve(&dest))?, "X");
-        assert_eq!(io.take_log(), vec![]);
-        abort(dm);
-        Ok(())
-    })
-    .await
-}
-
 /// A materializer over a sqlite db, persisting access times as `updates` says.
 fn make_persisting(
     fs: &ProjectRoot,
@@ -1035,29 +998,6 @@ async fn test_a_final_output_materialization_promotes_a_tracked_root() -> buck2_
             .find(|entry| entry.path == p)
             .expect("the root is persisted");
         assert_eq!(entry.classification, ArtifactClassification::FinalOutput);
-        Ok(())
-    })
-    .await
-}
-
-#[tokio::test]
-async fn test_a_published_output_enters_the_store() -> buck2_error::Result<()> {
-    ignore_stack_overflow_checks_for_future(async {
-        let temp = ProjectRootTemp::new()?;
-        let fs = temp.path().dupe();
-        let (dm, _io) = make(&fs, None, None);
-        let src = path("buck-out/v2/gen/__action__/out");
-        let dest = path("buck-out/v2/gen/content/def/out");
-        let lease = dm.prepare_outputs(vec![src.clone()]).await?;
-        fs.write_file(&src, "published here", false)?;
-        // Held as the action's value holds it; the store keeps nothing past the last holder.
-        let published = file("published here");
-        drop(dm.publish(&lease, src, dest, published.dupe()).await?);
-        drop(lease);
-        let copy = fs.resolve(path("buck-out/v2/gen/copy"));
-        assert!(in_store(&dm, b"published here", &copy).await?);
-        drop(published);
-        abort(dm);
         Ok(())
     })
     .await

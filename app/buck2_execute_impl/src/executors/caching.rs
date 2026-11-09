@@ -371,8 +371,8 @@ impl CacheUploader {
         let mut outputs_to_materialize = Vec::new();
 
         for output_result in result.resolve_outputs(&self.artifact_fs) {
-            let (output, content_path, value) = output_result?;
-            outputs_to_materialize.push((content_path.clone(), value.dupe()));
+            let (output, local_path, value) = output_result?;
+            outputs_to_materialize.push((local_path.clone(), value.dupe()));
             match value.entry().as_ref() {
                 DirectoryEntry::Leaf(ActionDirectoryMember::File(f)) => {
                     output_files.push(TFile {
@@ -390,14 +390,11 @@ impl CacheUploader {
                         ..Default::default()
                     });
 
-                    // We use the content-based path so we don't have to
-                    // hold a lock for the placeholder path used by
-                    // execution.
                     let named_digest = NamedDigest {
                         name: self
                             .artifact_fs
                             .fs()
-                            .resolve(&content_path)
+                            .resolve(&local_path)
                             .as_maybe_relativized_str()?
                             .to_owned(),
                         digest: f.digest.to_re(),
@@ -430,7 +427,7 @@ impl CacheUploader {
                                 self.artifact_fs.fs(),
                                 self.materializer.as_ref(),
                                 &action_blobs,
-                                &content_path,
+                                &local_path,
                                 &d.dupe().as_immutable(),
                                 identity,
                             )
@@ -457,7 +454,7 @@ impl CacheUploader {
         let uploads = async {
             // The uploads below read the outputs. The execution that produced them holds them
             // through its result; one that did not, a remote run's say, has them put on disk here.
-            let _outputs_lease = if result.outputs_lease.is_some() {
+            let _outputs_lease = if result.held_outputs.is_some() {
                 None
             } else {
                 let response = self

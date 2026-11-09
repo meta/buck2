@@ -1018,7 +1018,6 @@ public class InstrumentationTestRunner extends DeviceRunner {
         }
       }
 
-      BuckXmlTestRunListener buckXmlListener = new BuckXmlTestRunListener(androidDevice, adbUtils);
       ITestRunListener trimLineListener =
           new ITestRunListener() {
             /**
@@ -1059,28 +1058,12 @@ public class InstrumentationTestRunner extends DeviceRunner {
             public void testRunStopped(long elapsedTime) {}
           };
 
-      buckXmlListener.setReportDir(this.outputDirectory);
-
       List<ITestRunListener> listeners = new ArrayList<ITestRunListener>();
       if (extraListener != null) {
         listeners.add(extraListener);
       }
       listeners.add(trimLineListener);
-      listeners.add(buckXmlListener);
-
-      // Determine the result listener for timeout enforcement.
-      ITestRunListener resultListener = buckXmlListener;
-
-      if (testResultsOutputSender.isPresent()) {
-        InstrumentationTpxStandardOutputTestListener tpxListener =
-            new InstrumentationTpxStandardOutputTestListener(
-                testResultsOutputSender.get(),
-                androidDevice,
-                adbUtils,
-                "true".equals(System.getenv(TEST_RESULT_OS_METADATA_ENABLED_ENV)));
-        listeners.add(tpxListener);
-        resultListener = tpxListener;
-      }
+      ITestRunListener resultListener = addResultListeners(listeners, testResultsOutputSender);
 
       if ("true".equals(System.getenv(PER_TEST_TIMEOUT_ENABLED_ENV))) {
         listeners.add(new InstrumentationTimeoutEnforcingRunListener(resultListener));
@@ -1379,6 +1362,25 @@ public class InstrumentationTestRunner extends DeviceRunner {
   // pull single file
   public void pullFileWithSyncService(String remote, String local) throws Exception {
     pullFile(remote, local);
+  }
+
+  ITestRunListener addResultListeners(
+      List<ITestRunListener> listeners, Optional<TestResultsOutputSender> sender) {
+    if (sender.isPresent()) {
+      ITestRunListener tpxListener =
+          new InstrumentationTpxStandardOutputTestListener(
+              sender.get(),
+              androidDevice,
+              adbUtils,
+              "true".equals(getenv(TEST_RESULT_OS_METADATA_ENABLED_ENV)));
+      listeners.add(tpxListener);
+      return tpxListener;
+    }
+
+    BuckXmlTestRunListener xmlListener = new BuckXmlTestRunListener(androidDevice, adbUtils);
+    xmlListener.setReportDir(outputDirectory);
+    listeners.add(xmlListener);
+    return xmlListener;
   }
 
   // Java has no setenv(), so this is needed to be able to overwrite env vars in tests

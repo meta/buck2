@@ -14,16 +14,20 @@ import com.android.ddmlib.FileListingService;
 import com.android.ddmlib.IDevice;
 import com.android.ddmlib.IShellEnabledDevice;
 import com.android.ddmlib.IShellOutputReceiver;
+import com.android.ddmlib.testrunner.ITestRunListener;
 import com.android.ddmlib.testrunner.InstrumentationResultParser;
 import com.android.ddmlib.testrunner.RemoteAndroidTestRunner;
 import com.facebook.buck.android.TestAndroidDevice;
 import com.facebook.buck.android.TestDevice;
 import com.facebook.buck.android.exopackage.AndroidDevice;
+import com.facebook.buck.testresultsoutput.TestResultsOutputSender;
 import com.facebook.buck.testrunner.reportlayer.LogExtractorReportLayer;
 import com.facebook.buck.testrunner.reportlayer.PerfettoReportLayer;
 import com.facebook.buck.testrunner.reportlayer.TombstonesReportLayer;
 import com.facebook.buck.testrunner.reportlayer.VideoRecordingReportLayer;
 import com.facebook.buck.testutil.TemporaryPaths;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.google.common.collect.ImmutableSet;
 import java.io.ByteArrayInputStream;
 import java.io.File;
@@ -43,8 +47,10 @@ import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.TimeUnit;
+import javax.xml.parsers.DocumentBuilderFactory;
 import org.junit.Assert;
 import org.junit.Rule;
 import org.junit.Test;
@@ -54,6 +60,58 @@ public class InstrumentationTestRunnerTest {
   private Process execProcessOverride = null;
 
   @Rule public final TemporaryPaths tmp = new TemporaryPaths();
+
+  @Test
+  public void structuredResultsReportRunFailureWithoutXml() throws Throwable {
+    Path reportDir = tmp.newFolder("structured_reports").getPath();
+    Path jsonPath = reportDir.resolve("results.json");
+    Map<String, String> env = new HashMap<>();
+    InstrumentationTestRunner runner =
+        createInstrumentationTestRunnerWithDevice(
+            new HashMap<>(), env, "--output", reportDir.toString());
+    List<ITestRunListener> listeners = new ArrayList<>();
+    TestResultsOutputSender sender =
+        TestResultsOutputSender.fromFilePath(jsonPath.toString()).get();
+    try {
+      ITestRunListener resultListener = runner.addResultListeners(listeners, Optional.of(sender));
+      Assert.assertEquals(1, listeners.size());
+      Assert.assertSame(listeners.get(0), resultListener);
+      resultListener.testRunStarted("setup_crash", 0);
+      resultListener.testRunFailed("instrumentation crashed before discovering tests");
+      resultListener.testRunEnded(0, new HashMap<>());
+    } finally {
+      sender.close();
+    }
+
+    JsonNode failure = new ObjectMapper().readTree(Files.readString(jsonPath)).get("run_failure");
+    Assert.assertEquals(2, failure.get("status").asInt());
+    Assert.assertEquals(
+        "instrumentation crashed before discovering tests", failure.get("details").asText());
+    try (var files = Files.list(reportDir)) {
+      Assert.assertEquals(1, files.count());
+    }
+  }
+
+  @Test
+  public void missingStructuredSenderUsesXml() throws Throwable {
+    Path reportDir = tmp.newFolder("xml_reports").getPath();
+    Map<String, String> env = new HashMap<>();
+    InstrumentationTestRunner runner =
+        createInstrumentationTestRunnerWithDevice(
+            new HashMap<>(), env, "--output", reportDir.toString());
+    List<ITestRunListener> listeners = new ArrayList<>();
+    ITestRunListener resultListener = runner.addResultListeners(listeners, Optional.empty());
+    Assert.assertEquals(1, listeners.size());
+    Assert.assertSame(listeners.get(0), resultListener);
+    resultListener.testRunStarted("setup_crash", 0);
+    resultListener.testRunFailed("setup failed");
+    resultListener.testRunEnded(0, new HashMap<>());
+    var document =
+        DocumentBuilderFactory.newInstance()
+            .newDocumentBuilder()
+            .parse(reportDir.resolve(BuckXmlTestRunListener.TEST_RESULT_FILE).toFile());
+    Assert.assertEquals(1, document.getElementsByTagName("failure").getLength());
+  }
 
   @Test
   public void launcherReturnsFailureWhenRunnerThrows() {

@@ -25,6 +25,7 @@ import javax.xml.transform.TransformerException;
 import javax.xml.transform.TransformerFactory;
 import javax.xml.transform.dom.DOMSource;
 import javax.xml.transform.stream.StreamResult;
+import org.jspecify.annotations.Nullable;
 import org.w3c.dom.Document;
 import org.w3c.dom.Element;
 import org.w3c.dom.Node;
@@ -34,6 +35,7 @@ public class BuckXmlTestRunListener extends XmlTestRunListener {
 
   protected static final String TEST_RESULT_FILE = "test_result.xml";
   private String mRunFailureMessage = null;
+  private @Nullable String mRunName = null;
   private File mReportDir;
   private AndroidDevice mAndroidDevice;
   private AdbUtils mAdbUtils;
@@ -51,6 +53,7 @@ public class BuckXmlTestRunListener extends XmlTestRunListener {
 
   @Override
   public void testRunStarted(String runName, int testCount) {
+    mRunName = runName;
     super.testRunStarted(runName, testCount);
   }
 
@@ -82,8 +85,8 @@ public class BuckXmlTestRunListener extends XmlTestRunListener {
       DocumentBuilder docBuilder = docFactory.newDocumentBuilder();
       Document doc = docBuilder.parse(resultFile);
 
-      Node testsuite = doc.getElementsByTagName("testsuite").item(0);
       if (mRunFailureMessage != null) {
+        Node testsuite = getOrCreateTestSuite(doc);
         Element failureNode = doc.createElement("failure");
         failureNode.setTextContent(mRunFailureMessage);
         testsuite.appendChild(failureNode);
@@ -98,6 +101,24 @@ public class BuckXmlTestRunListener extends XmlTestRunListener {
     } catch (IOException | ParserConfigurationException | SAXException | TransformerException e) {
       throw new RuntimeException(e);
     }
+  }
+
+  private Node getOrCreateTestSuite(Document doc) {
+    Node testSuite = doc.getElementsByTagName("testsuite").item(0);
+    if (testSuite != null) {
+      return testSuite;
+    }
+
+    Element syntheticSuite = doc.createElement("testsuite");
+    syntheticSuite.setAttribute("name", mRunName == null ? "instrumentation" : mRunName);
+    syntheticSuite.setAttribute("tests", "0");
+    syntheticSuite.setAttribute("failures", "1");
+    Element root = doc.getDocumentElement();
+    if (root == null) {
+      throw new IllegalStateException("Parsed instrumentation XML has no document element");
+    }
+    root.appendChild(syntheticSuite);
+    return syntheticSuite;
   }
 
   /**

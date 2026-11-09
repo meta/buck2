@@ -8,7 +8,6 @@
  * above-listed licenses.
  */
 
-use std::convert::Infallible;
 use std::fmt;
 use std::fmt::Display;
 use std::sync::Arc;
@@ -36,7 +35,6 @@ use starlark::pagable::SmallMapKeyDeserialize;
 use starlark::pagable::StarlarkDeserialize;
 use starlark::pagable::StarlarkDeserializeContext;
 use starlark::static_starlark_value;
-use starlark::typing::Ty;
 use starlark::values::AllocFrozenValue;
 use starlark::values::AllocValue;
 use starlark::values::Deferred;
@@ -61,7 +59,6 @@ use starlark::values::ValueTyped;
 use starlark::values::list::ListRef;
 use starlark::values::none::NoneOr;
 use starlark::values::starlark_value;
-use starlark::values::type_repr::StarlarkTypeRepr;
 use starlark_map::Hashed;
 
 use crate::actions::impls::json::SerializeOrFail;
@@ -198,22 +195,6 @@ impl<'v> ProviderCollection<'v> {
     #[inline]
     pub fn from_value(x: Value<'v>) -> Option<&'v Self> {
         x.downcast_ref::<ProviderCollection<'v>>()
-    }
-}
-
-impl<'v> StarlarkTypeRepr for &'v ProviderCollection<'v> {
-    type Canonical = ProviderCollection<'v>;
-
-    fn starlark_type_repr() -> Ty {
-        <ProviderCollection as StarlarkValue>::get_type_starlark_repr()
-    }
-}
-
-impl<'v> UnpackValue<'v> for &'v ProviderCollection<'v> {
-    type Error = Infallible;
-
-    fn unpack_value_impl(value: Value<'v>) -> Result<Option<Self>, Self::Error> {
-        Ok(ProviderCollection::from_value(value))
     }
 }
 
@@ -424,7 +405,12 @@ fn provider_collection_methods(builder: &mut MethodsBuilder) {
     }
 }
 
-#[starlark_value(type = "ProviderCollection", frozen_vtable)]
+#[starlark_value(
+    type = "ProviderCollection",
+    frozen_vtable,
+    UnpackValue,
+    StarlarkTypeRepr
+)]
 impl<'v> StarlarkValue<'v> for ProviderCollection<'v> {
     fn at(&self, index: Value<'v>, _heap: Heap<'v>) -> starlark::Result<Value<'v>> {
         match self.get_impl(index, GetOp::At)? {

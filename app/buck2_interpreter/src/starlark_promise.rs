@@ -11,7 +11,6 @@
 //! A type [`StarlarkPromise`] which provides basic promise-like functionality.
 use std::cell::Cell;
 use std::cell::RefCell;
-use std::convert::Infallible;
 use std::mem;
 
 use allocative::Allocative;
@@ -23,20 +22,17 @@ use starlark::environment::Methods;
 use starlark::environment::MethodsBuilder;
 use starlark::eval::Evaluator;
 use starlark::starlark_module;
-use starlark::typing::Ty;
 use starlark::values::AllocValue;
 use starlark::values::Heap;
 use starlark::values::NoSerialize;
 use starlark::values::StarlarkValue;
 use starlark::values::Trace;
-use starlark::values::UnpackValue;
 use starlark::values::Value;
 use starlark::values::ValueOf;
 use starlark::values::ValueTyped;
 use starlark::values::list::AllocList;
 use starlark::values::starlark_value;
 use starlark::values::tuple::TupleType;
-use starlark::values::type_repr::StarlarkTypeRepr;
 use starlark::values::typing::StarlarkCallable;
 
 /// A type that corresponds to a Rust promise.
@@ -285,25 +281,9 @@ impl<'v> AllocValue<'v> for StarlarkPromise<'v> {
     }
 }
 
-impl<'v> StarlarkTypeRepr for &'v StarlarkPromise<'v> {
-    type Canonical = Self;
-
-    fn starlark_type_repr() -> Ty {
-        StarlarkPromise::get_type_starlark_repr()
-    }
-}
-
-impl<'v> UnpackValue<'v> for &'v StarlarkPromise<'v> {
-    type Error = Infallible;
-
-    fn unpack_value_impl(x: Value<'v>) -> Result<Option<Self>, Self::Error> {
-        Ok(StarlarkPromise::from_value(x))
-    }
-}
-
 starlark::methods_static!(PROMISE_METHODS = promise_methods);
 
-#[starlark_value(type = "Promise")]
+#[starlark_value(type = "Promise", UnpackValue, StarlarkTypeRepr)]
 impl<'v> StarlarkValue<'v> for StarlarkPromise<'v> {
     fn get_methods() -> Option<&'static Methods> {
         Some(PROMISE_METHODS.methods())

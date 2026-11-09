@@ -275,7 +275,8 @@ def expand_proc_macros(ctx: bxl.Context, target_analysis: dict[Label, bxl.Analys
 
 # Returns a list of all the expanded targets including any workspaces, followed by just the workspaces
 def expand_targets(ctx: bxl.Context, targets: list[TargetLabel], exclude_workspaces: bool) -> (dict[Label, bxl.AnalysisResult], list[TargetLabel]):
-    target_universe = ctx.target_universe(targets).target_set()
+    # keep_going skips targets that can't be configured here, such as one with an Apple-only toolchain dep on Linux.
+    target_universe = ctx.target_universe(targets, keep_going = True).target_set()
     # Pick up any rule that sets RustAnalyzerTargetKind and so exposes RustAnalyzerInfo, regardless of its rule name.
     # Custom rules that wrap/override our rust_* builtins but don't use the same names will be picked up here.
     attr_target_list = ctx.cquery().attrregexfilter("_rust_analyzer_target_kind", "^(bin|lib|test)$", target_universe)
@@ -342,15 +343,19 @@ def resolve_targets_impl(ctx: bxl.Context) -> None:
     queried_proc_macros = expand_proc_macros(ctx, target_analysis)
     resolved_deps = gather_deps(ctx, target_analysis, workspaces, ctx.cli_args.exclude_workspaces)
 
-    expanded_targets = sorted([t.raw_target() for t in target_analysis.keys()])
-    if not expanded_targets:
-        # ctx.analysis() drops targets that are incompatible with the current buck
-        # configuration (see the `skip_incompatible` keyword argument).
-        #
-        # If we have no expanded targets at all, try to find sufficient metadata about
-        # the requested targets using unconfigured buck targets.
-        expanded_targets = targets
-        resolved_deps = gather_unconfigured_deps(ctx, targets)
+    expanded_targets = [t.raw_target() for t in target_analysis.keys()]
+
+    # Targets that can't be configured here are silently dropped by ctx.analysis() or keep_going, so build their metadata from unconfigured target nodes.
+    configured = set(expanded_targets)
+    configured.update(resolved_deps.keys())
+    dropped = [t for t in targets if t not in configured]
+
+    if dropped:
+        unconfigured_deps = gather_unconfigured_deps(ctx, dropped)
+        resolved_deps.update(unconfigured_deps)
+        expanded_targets.extend(unconfigured_deps.keys())
+
+    expanded_targets = sorted(expanded_targets)
 
     artifact = actions.declare_output("resolve_targets.json", has_content_based_path = False)
     artifacts = actions.write_json(

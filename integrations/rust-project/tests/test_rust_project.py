@@ -230,6 +230,39 @@ class RustProjectTest(BuckTestCase):
         # file is reported.
         assert dep["srcs"] == ["lib_g.rs"], dep["srcs"]
 
+    @buck_test(inplace=True, skip_for_os=["darwin", "windows"])
+    async def test_fallback_incompatible_exec_dep(self, buck: Buck) -> None:
+        result_raw = await buck.bxl(
+            "prelude//rust/rust-analyzer/resolve_deps.bxl:resolve_targets",
+            "--",
+            "--targets",
+            "//buck2/integrations/rust-project/tests/targets/foo:g_with_incompatible_exec_dep",
+        )
+        result: Dict[str, Any] = json.load(open(result_raw.stdout.rstrip()))
+
+        assert len(result["resolved_deps"]) > 0
+
+        dep = list(result["resolved_deps"].values())[0]
+
+        assert dep["crate_root"] == "lib_g.rs"
+
+    @buck_test(inplace=True, skip_for_os=["darwin", "windows"])
+    async def test_fallback_alongside_configured_target(self, buck: Buck) -> None:
+        result_raw = await buck.bxl(
+            "prelude//rust/rust-analyzer/resolve_deps.bxl:resolve_targets",
+            "--",
+            "--targets",
+            "//buck2/integrations/rust-project/tests/targets/foo:f",
+            "//buck2/integrations/rust-project/tests/targets/foo:g_with_compatibility",
+            "--exclude_workspaces=true",
+        )
+        result: Dict[str, Any] = json.load(open(result_raw.stdout.rstrip()))
+
+        assert result["expanded_targets"] == [
+            "fbcode//buck2/integrations/rust-project/tests/targets/foo:f",
+            "fbcode//buck2/integrations/rust-project/tests/targets/foo:g_with_compatibility",
+        ]
+
     # FIXME: Remove once actual tests work on mac and windows
     @buck_test(inplace=True)
     async def test_noop(self, buck: Buck) -> None:

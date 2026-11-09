@@ -20,6 +20,7 @@ use std::time::SystemTime;
 use allocative::Allocative;
 use async_trait::async_trait;
 use buck2_build_signals::env::WaitingCategory;
+use buck2_common::file_ops::metadata::FileDigest;
 use buck2_common::file_ops::metadata::FileDigestConfig;
 use buck2_common::file_ops::metadata::FileMetadata;
 use buck2_common::liveliness_observer::LivelinessObserver;
@@ -35,6 +36,7 @@ use buck2_core::fs::project_rel_path::ProjectRelativePathBuf;
 use buck2_core::soft_error_or_panic;
 use buck2_core::tag_error;
 use buck2_core::tag_result;
+use buck2_directory::directory::entry::DirectoryEntry;
 use buck2_error::BuckErrorContext;
 use buck2_error::buck2_error;
 use buck2_events::daemon_id::DaemonId;
@@ -70,6 +72,7 @@ use buck2_execute::execute::result::CommandExecutionMetadata;
 use buck2_execute::execute::result::CommandExecutionResult;
 use buck2_execute::incremental_state::IncrementalRecord;
 use buck2_execute::incremental_state::IncrementalStore;
+use buck2_execute::incremental_state::RecordedOutput;
 use buck2_execute::knobs::ExecutorGlobalKnobs;
 use buck2_execute::materialize::materializer::DeclareArtifactPayload;
 use buck2_execute::materialize::materializer::MaterializationError;
@@ -580,18 +583,13 @@ impl LocalExecutor {
             async {
                 let start = Instant::now();
 
-                if !request.outputs_cleanup {
-                    // When user requests to not perform a cleanup for a specific action
-                    // output from previous run of that action could actually be used as the
-                    // input during current run (e.g. extra output which is an incremental state describing the actual output).
-                    materialize_build_outputs(
-                        &self.artifact_fs,
-                        &self.incremental_db_state,
-                        self.materializer.as_ref(),
-                        request,
-                    )
-                    .await?;
-                }
+                // An incremental action starts from its record, resolved before the lease
+                // over its outputs is taken (`recorded_outputs`).
+                let incremental = if request.outputs_cleanup {
+                    None
+                } else {
+                    Some(self.recorded_outputs(request).await?)
+                };
 
                 // One request for the inputs' read lease and the outputs' write lease, held
                 // until the outputs have been reported. Everything this run deletes or writes
@@ -607,15 +605,10 @@ impl LocalExecutor {
                 )
                 .await?;
 
-                if !request.outputs_cleanup {
-                    // TODO(minglunli): There might be a dedup opportunity here to save some copying/materialization
-                    // if the paths already exist on disk, should explore that
-                    self.prepare_content_based_incremental_actions(request, cancellations)
-                        .await?;
-                    // The run writes its previous outputs in place, which the store may hold by
-                    // hardlink and the core may have made read-only.
-                    self.materializer
-                        .make_outputs_writable(output_paths(&self.artifact_fs, request)?)
+                if let (Some(start), Some(lease)) =
+                    (incremental, materialized_inputs.outputs.as_ref())
+                {
+                    self.prepare_incremental_outputs(request, start, lease, cancellations)
                         .await?;
                 }
 
@@ -1139,79 +1132,190 @@ impl LocalExecutor {
         }
     }
 
-    async fn prepare_content_based_incremental_actions(
+    /// Resolves an incremental action's record into what its run starts from. Asked before the
+    /// lease over the outputs is taken: a directory the record knows by its fingerprint alone,
+    /// reloaded from sqlite, is asked of the materializer at the path it was left at, which the
+    /// lease displaces, and one the materializer no longer tracks whole makes the run a clean one.
+    async fn recorded_outputs(
         &self,
         request: &CommandExecutionRequest,
-        cancellations: &CancellationContext,
-    ) -> buck2_error::Result<()> {
-        let declared_content_based_outputs: Vec<BuildArtifactPath> = request
-            .outputs()
-            .filter_map(|output| match output {
-                CommandExecutionOutputRef::BuildArtifact { path, .. }
-                    if path.is_content_based_path() =>
-                {
-                    Some(path.clone())
-                }
-                _ => None,
-            })
-            .collect();
-
-        let outputs_to_delete = declared_content_based_outputs
-            .iter()
-            .map(|path| {
-                self.artifact_fs
-                    .resolve_build(path, Some(&ContentBasedPathHash::OutputArtifact))
-            })
-            .collect::<buck2_error::Result<Vec<_>>>()?;
-
-        // Need to clean the placeholder paths before execution as there could be stale outputs that can cause unexpected behavior
-        self.blocking_executor
-            .execute_io(
-                Box::new(CleanOutputPaths {
-                    paths: outputs_to_delete,
-                }),
-                cancellations,
-            )
-            .await
-            .buck_error_context("Failed to cleanup output directory")?;
-
+    ) -> buck2_error::Result<IncrementalStart> {
         let record = request
             .run_action_key()
             .as_deref()
             .and_then(|key| self.incremental_db_state.get(key));
-        if let Some(record) = record
-            && let IncrementalRecord::Outputs(recorded_outputs) = &*record
-        {
-            let mut copy_futs = Vec::new();
-
-            for output in declared_content_based_outputs {
-                if let Some(recorded) = recorded_outputs.get(output.path()) {
-                    let content_path = self
-                        .artifact_fs
-                        .resolve_build(&output, Some(&recorded.content_based_path_hash()?))?;
-                    copy_futs.push(async move {
-                        self.blocking_executor
-                            .execute_io_inline(|| {
-                                self.artifact_fs.fs().copy(
-                                    content_path.clone(),
-                                    self.artifact_fs.resolve_build(
-                                        &output,
-                                        Some(&ContentBasedPathHash::OutputArtifact),
-                                    )?,
-                                )
-                            })
-                            .await
-                    })
+        let recorded = match record.as_deref() {
+            None => return Ok(IncrementalStart::Clean),
+            Some(IncrementalRecord::Leftovers) => return Ok(IncrementalStart::Leftovers),
+            Some(IncrementalRecord::Outputs(recorded)) => recorded,
+        };
+        let mut outputs = Vec::new();
+        // Directories known by their fingerprint: where each was left, to ask the materializer.
+        let mut fingerprinted: Vec<(usize, ProjectRelativePathBuf, FileDigest)> = Vec::new();
+        for output in request.outputs() {
+            let path = output
+                .resolve(
+                    &self.artifact_fs,
+                    Some(&ContentBasedPathHash::for_output_artifact()),
+                )?
+                .into_path();
+            let CommandExecutionOutputRef::BuildArtifact { path: artifact, .. } = output else {
+                // Not the record's: `IncrementalRecord::of_result` names build artifacts only,
+                // and no test command runs without `outputs_cleanup`. A test's path is left as
+                // it is.
+                continue;
+            };
+            let recorded = match recorded.get(artifact.path()) {
+                None => None,
+                Some(RecordedOutput::Value(value)) => Some((
+                    value.dupe(),
+                    self.content_path(artifact, value.content_based_path_hash())?,
+                )),
+                Some(RecordedOutput::DirectoryFingerprint(fingerprint)) => {
+                    let left_at = self
+                        .content_path(
+                            artifact,
+                            ContentBasedPathHash::new(fingerprint.raw_digest().as_bytes())?,
+                        )?
+                        .unwrap_or_else(|| path.clone());
+                    fingerprinted.push((outputs.len(), left_at, fingerprint.dupe()));
+                    None
+                }
+            };
+            outputs.push(IncrementalOutput { path, recorded });
+        }
+        if !fingerprinted.is_empty() {
+            let entries = self
+                .materializer
+                .get_artifact_entries_for_materialized_paths(
+                    fingerprinted
+                        .iter()
+                        .map(|(_, left_at, _)| left_at.clone())
+                        .collect(),
+                    false,
+                )
+                .await?;
+            for ((index, left_at, fingerprint), entry) in fingerprinted.into_iter().zip(entries) {
+                match entry {
+                    Some((_, DirectoryEntry::Dir(dir)))
+                        if *dir.fingerprint().data() == fingerprint =>
+                    {
+                        let output = &mut outputs[index];
+                        let from = (left_at != output.path).then_some(left_at);
+                        output.recorded = Some((ArtifactValue::dir(dir), from));
+                    }
+                    _ => return Ok(IncrementalStart::Clean),
                 }
             }
-
-            // The materialization we do for incremental action outputs is best-effort. The copy
-            // will fail if the materialization failed, and that's okay.
-            buck2_util::future::join_all(copy_futs).await;
         }
-
-        Ok(())
+        Ok(IncrementalStart::Outputs(outputs))
     }
+
+    /// The content-based path of `artifact` for `hash`; `None` for an artifact whose path is not.
+    fn content_path(
+        &self,
+        artifact: &BuildArtifactPath,
+        hash: ContentBasedPathHash,
+    ) -> buck2_error::Result<Option<ProjectRelativePathBuf>> {
+        if !artifact.is_content_based_path() {
+            return Ok(None);
+        }
+        Ok(Some(self.artifact_fs.resolve_build(artifact, Some(&hash))?))
+    }
+
+    /// Puts an incremental action's previous outputs at its output paths, under the write lease
+    /// the run holds over them, all of them or none: a fill that fails, content the CAS no
+    /// longer has, say, makes the run a clean one.
+    async fn prepare_incremental_outputs(
+        &self,
+        request: &CommandExecutionRequest,
+        start: IncrementalStart,
+        lease: &WriteLease,
+        cancellations: &CancellationContext,
+    ) -> buck2_error::Result<()> {
+        let outputs = match start {
+            // The tool's own writes: writable already, and linked to nothing.
+            IncrementalStart::Leftovers => return Ok(()),
+            IncrementalStart::Clean => return self.clean_outputs(request, cancellations).await,
+            IncrementalStart::Outputs(outputs) => outputs,
+        };
+        let mut unrecorded = Vec::new();
+        for output in outputs {
+            let Some((value, from)) = output.recorded else {
+                unrecorded.push(output.path);
+                continue;
+            };
+            if let Err(e) = self
+                .materializer
+                .fill(
+                    lease,
+                    output.path.clone(),
+                    value,
+                    from,
+                    self.invocation_re_use_case,
+                    cancellations,
+                )
+                .await
+            {
+                buck2_core::soft_error!(
+                    "incremental_fill_failed",
+                    e.context(format!(
+                        "Filling `{}` with the action's previous output, so the run starts clean",
+                        output.path
+                    ))
+                );
+                return self.clean_outputs(request, cancellations).await;
+            }
+        }
+        if !unrecorded.is_empty() {
+            self.clean_paths(unrecorded, cancellations).await?;
+        }
+        // The run writes its previous outputs in place, which the store may hold by hardlink
+        // and the core may have made read-only.
+        self.materializer
+            .make_outputs_writable(output_paths(&self.artifact_fs, request)?)
+            .await
+    }
+
+    async fn clean_outputs(
+        &self,
+        request: &CommandExecutionRequest,
+        cancellations: &CancellationContext,
+    ) -> buck2_error::Result<()> {
+        self.clean_paths(output_paths(&self.artifact_fs, request)?, cancellations)
+            .await
+    }
+
+    async fn clean_paths(
+        &self,
+        paths: Vec<ProjectRelativePathBuf>,
+        cancellations: &CancellationContext,
+    ) -> buck2_error::Result<()> {
+        self.blocking_executor
+            .execute_io(Box::new(CleanOutputPaths { paths }), cancellations)
+            .await
+            .buck_error_context("Failed to cleanup output directory")
+    }
+}
+
+/// What an incremental action's run starts from, as its record says.
+enum IncrementalStart {
+    /// Its output paths cleared, as a run with `outputs_cleanup` starts: the action has no
+    /// record, or one that cannot be made good.
+    Clean,
+    /// Whatever is at its output paths, as its last local run left it.
+    Leftovers,
+    /// Each output path holding the value the record has for it, kept where it does already and
+    /// filled where it does not; paths the record lacks cleared.
+    Outputs(Vec<IncrementalOutput>),
+}
+
+/// One output path of an incremental action and what its record has for it.
+struct IncrementalOutput {
+    path: ProjectRelativePathBuf,
+    /// The recorded value and, for a content-based output, the content path it was left at;
+    /// `None` for an output the record lacks.
+    recorded: Option<(ArtifactValue, Option<ProjectRelativePathBuf>)>,
 }
 
 #[async_trait]
@@ -1546,54 +1650,6 @@ async fn check_inputs(
         }
         Err(err) => ControlFlow::Break(manager.error("local_check_inputs", err)),
     }
-}
-
-/// Materialize all output artifact for CommandExecutionRequest.
-///
-/// Note that the outputs could be from the previous run of the same command if cleanup on the action was not performed.
-/// The above is useful when executing incremental actions first remotely and then locally.
-/// In that case output from remote execution which is incremental state should be materialized prior to local execution.
-/// Such incremental state in fact serves as the input while being output as well.
-async fn materialize_build_outputs(
-    artifact_fs: &ArtifactFs,
-    incremental_db_state: &Arc<IncrementalDbState>,
-    materializer: &dyn Materializer,
-    request: &CommandExecutionRequest,
-) -> buck2_error::Result<Vec<ProjectRelativePathBuf>> {
-    let mut paths = vec![];
-    let record = request
-        .run_action_key()
-        .as_deref()
-        .and_then(|key| incremental_db_state.get(key));
-    let recorded_outputs = match record.as_deref() {
-        Some(IncrementalRecord::Outputs(outputs)) => Some(outputs),
-        Some(IncrementalRecord::Leftovers) | None => None,
-    };
-    for output in request.outputs() {
-        match output {
-            CommandExecutionOutputRef::BuildArtifact { path, .. } => {
-                if path.is_content_based_path() {
-                    if let Some(recorded) =
-                        recorded_outputs.and_then(|outputs| outputs.get(path.path()))
-                    {
-                        paths.push(
-                            artifact_fs
-                                .resolve_build(path, Some(&recorded.content_based_path_hash()?))?,
-                        );
-                    }
-                } else {
-                    paths.push(artifact_fs.resolve_build(path, None)?);
-                }
-            }
-            CommandExecutionOutputRef::TestPath { .. } => {}
-        }
-    }
-
-    materializer
-        .ensure_materialized(paths.clone(), MaterializationPurpose::IntermediateOnly)
-        .await?;
-
-    Ok(paths)
 }
 
 /// The command's output paths as `create_output_dirs` prepares them, for the write lease that

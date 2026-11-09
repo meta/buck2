@@ -334,9 +334,9 @@ async fn incremental_action_persist_between_daemon_restart_helper(
     Ok(())
 }
 
-// If we haven't materialized the outputs, then we won't run incrementally on the first run
-// after a daemon restart
-async fn unmaterialized_incremental_action_not_persist_between_daemon_restart_helper(
+// The record outlives the daemon, and a previous output this daemon never materialized comes
+// from the CAS.
+async fn unmaterialized_incremental_action_persist_between_daemon_restart_helper(
     buck: &Buck,
     use_content_based_path: bool,
 ) -> anyhow::Result<()> {
@@ -364,7 +364,40 @@ async fn unmaterialized_incremental_action_not_persist_between_daemon_restart_he
             &content_based_path(use_content_based_path),
         ])
         .await?;
-    assert_eq!(result.stdout, "foo");
+    assert_eq!(result.stdout, "foo bar");
+    Ok(())
+}
+
+// A run starts from all of its previous outputs or from none. A build materializes only the
+// default output of a remote run; the local run that follows finds both.
+async fn incremental_action_starts_from_all_previous_outputs_helper(
+    buck: &Buck,
+    use_content_based_path: bool,
+    restart: bool,
+) -> anyhow::Result<()> {
+    buck.build(&[
+        "root//:incremental_action_with_multiple_outputs",
+        "--remote-only",
+        "-c",
+        &seed(),
+        "-c",
+        &content_based_path(use_content_based_path),
+    ])
+    .await?;
+    if restart {
+        buck.kill().await?;
+    }
+    let result = buck
+        .run(&[
+            "root//:incremental_action_with_multiple_outputs",
+            "--local-only",
+            "-c",
+            &seed(),
+            "-c",
+            &content_based_path(use_content_based_path),
+        ])
+        .await?;
+    assert_eq!(result.stdout, "aabb");
     Ok(())
 }
 
@@ -658,17 +691,45 @@ async fn test_incremental_action_persist_between_daemon_restart_with_content_bas
 }
 
 #[buck_test]
-async fn test_unmaterialized_incremental_action_not_persist_between_daemon_restart(
+async fn test_unmaterialized_incremental_action_persist_between_daemon_restart(
     buck: &Buck,
 ) -> anyhow::Result<()> {
-    unmaterialized_incremental_action_not_persist_between_daemon_restart_helper(buck, false).await
+    unmaterialized_incremental_action_persist_between_daemon_restart_helper(buck, false).await
 }
 
 #[buck_test]
-async fn test_unmaterialized_incremental_action_not_persist_between_daemon_restart_with_content_based_path(
+async fn test_unmaterialized_incremental_action_persist_between_daemon_restart_with_content_based_path(
     buck: &Buck,
 ) -> anyhow::Result<()> {
-    unmaterialized_incremental_action_not_persist_between_daemon_restart_helper(buck, true).await
+    unmaterialized_incremental_action_persist_between_daemon_restart_helper(buck, true).await
+}
+
+#[buck_test]
+async fn test_incremental_action_starts_from_all_previous_outputs(
+    buck: &Buck,
+) -> anyhow::Result<()> {
+    incremental_action_starts_from_all_previous_outputs_helper(buck, false, false).await
+}
+
+#[buck_test]
+async fn test_incremental_action_starts_from_all_previous_outputs_with_content_based_path(
+    buck: &Buck,
+) -> anyhow::Result<()> {
+    incremental_action_starts_from_all_previous_outputs_helper(buck, true, false).await
+}
+
+#[buck_test]
+async fn test_incremental_action_starts_from_all_previous_outputs_after_daemon_restart(
+    buck: &Buck,
+) -> anyhow::Result<()> {
+    incremental_action_starts_from_all_previous_outputs_helper(buck, false, true).await
+}
+
+#[buck_test]
+async fn test_incremental_action_starts_from_all_previous_outputs_after_daemon_restart_with_content_based_path(
+    buck: &Buck,
+) -> anyhow::Result<()> {
+    incremental_action_starts_from_all_previous_outputs_helper(buck, true, true).await
 }
 
 #[buck_test]

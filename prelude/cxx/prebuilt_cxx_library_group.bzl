@@ -566,7 +566,14 @@ prebuilt_cxx_library_group = prelude_rule(
         | buck.labels_arg()
         | buck.contacts_arg()
         | {
-            "_create_third_party_build_root": attrs.default_only(attrs.exec_dep(default = "prelude//third-party/tools:create_build")),
+            "_create_third_party_build_root": attrs.default_only(
+                attrs.exec_dep(
+                    default = select({
+                        "DEFAULT": "prelude//third-party/tools:create_build-full",
+                        "fbcode//buck2/platform/execution/linux_fat/python_runtime:construction": "prelude//third-party/tools:create_build-construction",
+                    })
+                )
+            ),
             "_cxx_toolchain": toolchains_common.cxx(),
         }
     ),

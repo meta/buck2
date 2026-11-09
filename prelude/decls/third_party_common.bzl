@@ -9,7 +9,14 @@
 def _create_third_party_build_root_attr():
     return (
         "_create_third_party_build_root",
-        attrs.default_only(attrs.exec_dep(default = "prelude//third-party/tools:create_build")),
+        attrs.default_only(
+            attrs.exec_dep(
+                default = select({
+                    "DEFAULT": "prelude//third-party/tools:create_build-full",
+                    "fbcode//buck2/platform/execution/linux_fat/python_runtime:construction": "prelude//third-party/tools:create_build-construction",
+                })
+            )
+        ),
     )
 
 def _create_third_party_build_root_attrs():

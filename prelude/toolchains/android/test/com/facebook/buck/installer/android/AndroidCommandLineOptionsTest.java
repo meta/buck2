@@ -10,6 +10,7 @@
 
 package com.facebook.buck.installer.android;
 
+import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertTrue;
@@ -49,6 +50,69 @@ public class AndroidCommandLineOptionsTest {
     new CmdLineParser(options).parseArgument("--force-queryable");
     assertTrue(options.forceQueryable);
     assertFactoryForceQueryable(options, true);
+  }
+
+  @Test
+  public void adbRestartOnFailureDefaultsOnAndCanBeTurnedOff() throws Exception {
+    AndroidCommandLineOptions defaults = new AndroidCommandLineOptions();
+    new CmdLineParser(defaults).parseArgument();
+    assertTrue(defaults.restartAdbOnFailure);
+
+    AndroidCommandLineOptions off = new AndroidCommandLineOptions();
+    new CmdLineParser(off).parseArgument("--adb-restart-on-failure", "false");
+    assertFalse(off.restartAdbOnFailure);
+  }
+
+  @Test
+  public void stagedInstallModeDefaultsOff() throws Exception {
+    AndroidCommandLineOptions defaults = new AndroidCommandLineOptions();
+    new CmdLineParser(defaults).parseArgument();
+    assertFalse(defaults.stagedInstallMode);
+
+    AndroidCommandLineOptions on = new AndroidCommandLineOptions();
+    new CmdLineParser(on).parseArgument("--staged-install-mode", "true");
+    assertTrue(on.stagedInstallMode);
+  }
+
+  @Test
+  public void adbHelperFactoryUsesTheInstallFlags() throws Exception {
+    AndroidCommandLineOptions options = new AndroidCommandLineOptions();
+    new CmdLineParser(options)
+        .parseArgument("--adb-restart-on-failure", "false", "--staged-install-mode", "true");
+    Path installOptions = temporaryFolder.newFile("install-options.json").toPath();
+    Files.writeString(installOptions, "{}");
+    try (AdbHelper helper =
+        AdbHelperFactory.create(
+            Logger.getLogger(AndroidCommandLineOptionsTest.class.getName()),
+            options,
+            new AndroidInstallApkOptions(installOptions, "adb-not-executed"),
+            SetDebugAppMode.SKIP,
+            InstallTimings.NONE)) {
+      assertNotNull(helper);
+      assertTrue(
+          logSink.getRecords().stream()
+              .anyMatch(
+                  record ->
+                      record.getMessage().startsWith("adbOptions: ")
+                          && record.getMessage().contains(", stagedInstallMode=true,")));
+      assertTrue(
+          logSink.getRecords().stream()
+              .anyMatch(record -> record.getMessage().equals("restartAdbOnFailure: false")));
+    }
+  }
+
+  @Test
+  public void laterAdbExecutablePathWins() throws Exception {
+    // `buck2 install` passes the arguments of the toolchain's installer target first and the
+    // arguments after `--` last.
+    AndroidCommandLineOptions options = new AndroidCommandLineOptions();
+    new CmdLineParser(options)
+        .parseArgument(
+            "--adb-executable-path",
+            "/from/buckconfig/adb",
+            "--adb-executable-path",
+            "/from/cli/adb");
+    assertEquals("/from/cli/adb", options.adbExecutablePath);
   }
 
   private void assertFactoryForceQueryable(AndroidCommandLineOptions options, boolean expected)

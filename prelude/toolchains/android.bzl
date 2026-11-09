@@ -130,7 +130,7 @@ def system_android_toolchain(name, android_sdk_tools_target, jdk_system_image, *
     kwargs["generate_build_config"] = "prelude//toolchains/android/src/com/facebook/buck/android/build_config:generate_build_config_binary"
     kwargs["generate_manifest"] = "prelude//toolchains/android/src/com/facebook/buck/android/manifest:generate_manifest_binary"
     kwargs["sort_pre_dexed_files"] = "prelude//android/tools:sort_pre_dexed_files"
-    kwargs["installer"] = "prelude//toolchains/android/src/com/facebook/buck/installer/android:android_installer"
+    kwargs["installer"] = "prelude//toolchains/android/installer:android_installer_with_buckconfig"
     kwargs["instrumentation_test_can_run_locally"] = True
     kwargs["collect_perfetto"] = False
     kwargs["instrumentation_test_runner_classpath"] = [

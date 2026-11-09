@@ -44,13 +44,14 @@ class AdbHelperFactory {
             cliOptions.adbThreadCount,
             cliOptions.adbServerPort,
             cliOptions.multiInstallMode,
-            apkOptions.stagedInstallMode,
+            cliOptions.stagedInstallMode,
             cliOptions.ignoreMissingDevices,
             apkOptions.apexMode,
             cliOptions.restartMode.name(),
             cliOptions.waitForDeviceReady,
             cliOptions.forceQueryable);
     logger.info("adbOptions: " + adbOptions);
+    logger.info("restartAdbOnFailure: " + cliOptions.restartAdbOnFailure);
 
     TargetDeviceOptions targetDeviceOptions =
         new TargetDeviceOptions(
@@ -71,7 +72,7 @@ class AdbHelperFactory {
         targetDeviceOptions,
         new AdbExecutionContext(),
         new IsolatedAndroidInstallerPrinter(logger),
-        apkOptions.restartAdbOnFailure,
+        cliOptions.restartAdbOnFailure,
         setDebugAppMode,
         timings);
   }

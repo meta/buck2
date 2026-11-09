@@ -13,6 +13,7 @@ package com.facebook.buck.installer.android;
 import com.google.common.annotations.VisibleForTesting;
 import javax.annotation.Nullable;
 import org.kohsuke.args4j.Option;
+import org.kohsuke.args4j.spi.ExplicitBooleanOptionHandler;
 
 /**
  * Constructs the Command Line Options to Support Android Install. The majority of these were copied
@@ -76,6 +77,20 @@ class AndroidCommandLineOptions {
       metaVar = "<TCP-port>",
       usage = "Use ADB server with specific TCP port.")
   public int adbServerPort = 0;
+
+  @Option(
+      name = "--adb-restart-on-failure",
+      handler = ExplicitBooleanOptionHandler.class,
+      metaVar = "<true|false>",
+      usage = "Restart the adb server and look again when adb finds no device. Defaults to true.")
+  public boolean restartAdbOnFailure = true;
+
+  @Option(
+      name = "--staged-install-mode",
+      handler = ExplicitBooleanOptionHandler.class,
+      metaVar = "<true|false>",
+      usage = "Install with adb install --staged; the update applies at the next reboot.")
+  public boolean stagedInstallMode;
 
   @VisibleForTesting static final String MULTI_INSTALL_MODE_SHORT_ARG = "-x";
   @VisibleForTesting static final String MULTI_INSTALL_MODE_LONG_ARG = "--all-devices";

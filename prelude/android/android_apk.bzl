@@ -353,23 +353,11 @@ def get_install_info(
     )
 
 def generate_install_config(ctx: AnalysisContext, apex_mode: bool) -> Artifact:
-    data = get_install_config(apex_mode)
-    return ctx.actions.write_json("install_android_options.json", data, has_content_based_path = False)
-
-def get_install_config(apex_mode: bool) -> dict[str, typing.Any]:
-    # TODO: read from toolchains
-    install_config = {
-        "adb_restart_on_failure": read_root_config("adb", "adb_restart_on_failure", "true"),
-        "apex_mode": apex_mode,
-        "multi_install_mode": read_root_config("adb", "multi_install_mode", "false"),
-        "staged_install_mode": read_root_config("adb", "staged_install_mode", None),
-    }
-
-    adb_executable = read_root_config("android", "adb", None)
-    if adb_executable:
-        install_config["adb_executable"] = adb_executable
-
-    return install_config
+    # Only properties of the apk belong here. Install settings are installer flags; the
+    # buckconfig keys for them are read in `prelude//toolchains/android/installer:BUCK`. Starlark
+    # runs a constant-argument `read_root_config` in this module when the module compiles, so
+    # every package would reload when such a key changes.
+    return ctx.actions.write_json("install_android_options.json", {"apex_mode": apex_mode}, has_content_based_path = False)
 
 android_binary = prelude_rule(
     name = "android_binary",

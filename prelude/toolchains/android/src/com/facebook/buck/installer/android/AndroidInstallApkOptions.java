@@ -31,8 +31,6 @@ import java.util.logging.Logger;
 public class AndroidInstallApkOptions {
   private static final Logger LOG = Logger.getLogger(AndroidInstallApkOptions.class.getName());
   public final String adbExecutable;
-  public final boolean restartAdbOnFailure;
-  public final boolean stagedInstallMode;
   public final boolean apexMode;
 
   AndroidInstallApkOptions(Path jsonArtifactPath, String adbExecutablePath)
@@ -40,9 +38,7 @@ public class AndroidInstallApkOptions {
     JsonParser parser = ObjectMappers.createParser(jsonArtifactPath);
     Map<String, String> jsonData =
         parser.readValueAs(new TypeReference<TreeMap<String, String>>() {});
-    this.adbExecutable = getAdbExecutable(adbExecutablePath, jsonData);
-    this.restartAdbOnFailure = readBoolean(jsonData, "adb_restart_on_failure");
-    this.stagedInstallMode = readBoolean(jsonData, "staged_install_mode");
+    this.adbExecutable = getAdbExecutable(adbExecutablePath);
     this.apexMode = readBoolean(jsonData, "apex_mode");
   }
 
@@ -61,16 +57,13 @@ public class AndroidInstallApkOptions {
   /*
    * Here is the order of precedence for adb_executable:
    * 1. --adb-executable-path from command line option
-   * 2. adb_executable from json artifact
-   * 3. adb from PATH
-   * 4. /opt/android_sdk/platform-tools/adb
+   * 2. adb from PATH
+   * 3. /opt/android_sdk/platform-tools/adb
    */
-  private String getAdbExecutable(String adbExecutablePath, Map<String, String> jsonData) {
+  private String getAdbExecutable(String adbExecutablePath) {
     String adbExecutable =
         Optional.ofNullable(adbExecutablePath)
-            .orElse(
-                Optional.ofNullable(jsonData.get("adb_executable"))
-                    .orElse(getAdbFromPath().orElse("/opt/android_sdk/platform-tools/adb")));
+            .orElse(getAdbFromPath().orElse("/opt/android_sdk/platform-tools/adb"));
     LOG.info("adbExecutable: " + adbExecutable);
     return adbExecutable;
   }
@@ -97,10 +90,6 @@ public class AndroidInstallApkOptions {
         + "adbExecutable='"
         + adbExecutable
         + '\''
-        + ", restartAdbOnFailure="
-        + restartAdbOnFailure
-        + ", stagedInstallMode="
-        + stagedInstallMode
         + ", apexMode="
         + apexMode
         + '}';

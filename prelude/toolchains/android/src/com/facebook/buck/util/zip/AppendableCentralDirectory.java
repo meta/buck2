@@ -16,6 +16,7 @@ import static com.facebook.buck.util.zip.ByteIo.readShort;
 import static com.facebook.buck.util.zip.ByteIo.readUnsignedInt;
 import static java.nio.file.StandardOpenOption.READ;
 
+import com.facebook.infer.annotation.Nullsafe;
 import java.io.IOException;
 import java.io.OutputStream;
 import java.nio.ByteBuffer;
@@ -23,11 +24,13 @@ import java.nio.channels.SeekableByteChannel;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.zip.ZipEntry;
+import org.jspecify.annotations.Nullable;
 
 /**
  * Load existing Central Directory header information, such as offset position and previous list of
  * files. It's used to support append operations by preserving header of previous files.
  */
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public class AppendableCentralDirectory extends CentralDirectory {
 
   /** END Header fields, used to locate the ZIP Central Directory. */
@@ -64,7 +67,7 @@ public class AppendableCentralDirectory extends CentralDirectory {
     }
   }
 
-  static Header readHeader(SeekableByteChannel file) throws IOException {
+  static @Nullable Header readHeader(SeekableByteChannel file) throws IOException {
     final long fileSize = file.size();
     // Central Directory header will be on the last 64kb of the file
     final int headerSize = (int) Math.min(fileSize, ZipConstants.END_MAXLEN);

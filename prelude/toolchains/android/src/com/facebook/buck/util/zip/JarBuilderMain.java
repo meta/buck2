@@ -17,6 +17,7 @@ import static java.util.stream.Collectors.toList;
 import com.facebook.buck.core.filesystems.AbsPath;
 import com.facebook.buck.jvm.java.RemoveClassesPatternsMatcher;
 import com.facebook.buck.util.PatternsMatcher;
+import com.facebook.infer.annotation.Nullsafe;
 import com.google.common.annotations.VisibleForTesting;
 import com.google.common.collect.ImmutableSet;
 import java.io.IOException;
@@ -29,33 +30,35 @@ import java.util.function.Predicate;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
+import org.jspecify.annotations.Nullable;
 import org.kohsuke.args4j.CmdLineException;
 import org.kohsuke.args4j.CmdLineParser;
 import org.kohsuke.args4j.Option;
 
 /** Main entry point for executing {@link JarBuilder} calls. */
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public class JarBuilderMain {
 
   @Option(name = "--output", required = true)
   private String output;
 
   @Option(name = "--entries-to-jar")
-  private String entriesToJarFilePath;
+  private @Nullable String entriesToJarFilePath;
 
   @Option(name = "--override-entries-to-jar")
-  private String overrideEntriesToJarFilePath;
+  private @Nullable String overrideEntriesToJarFilePath;
 
   @Option(name = "--class-files", usage = "Format: <name>:<path>")
-  private List<String> classFiles;
+  private @Nullable List<String> classFiles;
 
   @Option(name = "--blocklist-patterns")
-  private String blocklistPatternsFilePath;
+  private @Nullable String blocklistPatternsFilePath;
 
   @Option(name = "--blocklist-patterns-matcher")
-  private String blocklistPatternsMatcher;
+  private @Nullable String blocklistPatternsMatcher;
 
   @Option(name = "--main-class")
-  private String mainClass;
+  private @Nullable String mainClass;
 
   @Option(name = "--manifest-file")
   private List<String> manifestFiles = new ArrayList<>();
@@ -67,7 +70,7 @@ public class JarBuilderMain {
   private boolean hashEntries = false;
 
   @Option(name = "--append-jar")
-  private String appendJar;
+  private @Nullable String appendJar;
 
   @Option(name = "--concat-jars")
   private boolean concatJars = false;
@@ -145,7 +148,7 @@ public class JarBuilderMain {
         .join();
   }
 
-  private Predicate<? super CustomZipEntry> getRemoveEntryPredicate() {
+  private @Nullable Predicate<? super CustomZipEntry> getRemoveEntryPredicate() {
     if (blocklistPatternsFilePath == null) {
       return null;
     }
@@ -177,7 +180,8 @@ public class JarBuilderMain {
     return files.stream().map(file -> root.resolve(file).getPath()).collect(toList());
   }
 
-  private List<AbsPath> readEntriesToJar(final AbsPath root, final String path) throws IOException {
+  private List<AbsPath> readEntriesToJar(final AbsPath root, @Nullable final String path)
+      throws IOException {
     if (path == null) {
       return List.of();
     }

@@ -10,7 +10,9 @@
 
 package com.facebook.buck.util.zip;
 
+import com.facebook.infer.annotation.Nullsafe;
 import java.util.Map;
+import java.util.Objects;
 import java.util.TreeMap;
 import java.util.jar.Attributes;
 import java.util.jar.Manifest;
@@ -21,6 +23,7 @@ import javax.annotation.Nullable;
  * given attribute name. If no specific merger is registered for an attribute, the default merger is
  * used.
  */
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public class JarManifestMerger {
 
   private static final JarManifestMerger INSTANCE = new JarManifestMerger();
@@ -50,7 +53,7 @@ public class JarManifestMerger {
    * @param into The Manifest to modify.
    * @param from The Manifest to copy from.
    */
-  public void merge(Manifest into, Manifest from) {
+  public void merge(Manifest into, @Nullable Manifest from) {
     if (into == null) {
       throw new IllegalArgumentException("into manifest cannot be null");
     }
@@ -89,7 +92,7 @@ public class JarManifestMerger {
     @Override
     public Object merge(@Nullable Object existingValue, Object newValue) {
       if ("true".equalsIgnoreCase(String.valueOf(existingValue))) {
-        return existingValue;
+        return Objects.requireNonNull(existingValue);
       }
       return newValue;
     }

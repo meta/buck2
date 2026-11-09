@@ -14,6 +14,8 @@ import com.facebook.buck.util.function.ThrowingSupplier;
 import com.facebook.infer.annotation.Nullsafe;
 import java.io.IOException;
 import java.io.InputStream;
+import java.util.Objects;
+import org.jspecify.annotations.Nullable;
 
 /**
  * Encapsulates a file or directory to be added as a single entry to a jar by {@link JarBuilder}.
@@ -21,18 +23,19 @@ import java.io.InputStream;
 @Nullsafe(Nullsafe.Mode.LOCAL)
 public class JarEntrySupplier {
   private final CustomZipEntry entry;
-  private final ThrowingSupplier<InputStream, IOException> inputStreamSupplier;
+  private final @Nullable ThrowingSupplier<InputStream, IOException> inputStreamSupplier;
   private final boolean readOnly;
 
   public JarEntrySupplier(
-      CustomZipEntry entry, ThrowingSupplier<InputStream, IOException> inputStreamSupplier) {
+      CustomZipEntry entry,
+      @Nullable ThrowingSupplier<InputStream, IOException> inputStreamSupplier) {
     this(entry, false, inputStreamSupplier);
   }
 
   public JarEntrySupplier(
       CustomZipEntry entry,
       boolean readOnly,
-      ThrowingSupplier<InputStream, IOException> inputStreamSupplier) {
+      @Nullable ThrowingSupplier<InputStream, IOException> inputStreamSupplier) {
     this.entry = entry;
     this.readOnly = readOnly;
     this.inputStreamSupplier = inputStreamSupplier;
@@ -43,7 +46,7 @@ public class JarEntrySupplier {
   }
 
   public ThrowingSupplier<InputStream, IOException> getInputStreamSupplier() {
-    return inputStreamSupplier;
+    return Objects.requireNonNull(inputStreamSupplier);
   }
 
   public boolean isReadOnly() {

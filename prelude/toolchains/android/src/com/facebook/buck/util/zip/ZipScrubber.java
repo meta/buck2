@@ -13,6 +13,7 @@ package com.facebook.buck.util.zip;
 import static java.nio.file.StandardOpenOption.CREATE_NEW;
 
 import com.facebook.buck.util.nio.LargeByteBuffer;
+import com.facebook.infer.annotation.Nullsafe;
 import com.google.common.annotations.VisibleForTesting;
 import com.google.common.base.Preconditions;
 import java.io.IOException;
@@ -27,12 +28,14 @@ import java.util.List;
 import java.util.stream.Collectors;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipOutputStream;
+import org.jspecify.annotations.Nullable;
 import org.kohsuke.args4j.Argument;
 import org.kohsuke.args4j.CmdLineException;
 import org.kohsuke.args4j.CmdLineParser;
 import org.kohsuke.args4j.Option;
 
 /** Tool to eliminate non-deterministic or problematic bits of zip files. */
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public class ZipScrubber {
   private ZipScrubber() {}
 
@@ -234,7 +237,7 @@ public class ZipScrubber {
   }
 
   @Option(name = "--paths-to-scrub")
-  private Path pathsToScrubFile;
+  private @Nullable Path pathsToScrubFile;
 
   @Option(name = "--create-if-not-present")
   private boolean createIfNotPresent;

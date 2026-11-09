@@ -10,6 +10,7 @@
 
 package com.facebook.buck.util.zip;
 
+import com.facebook.infer.annotation.Nullsafe;
 import com.google.common.hash.Hashing;
 import java.io.BufferedOutputStream;
 import java.io.File;
@@ -36,6 +37,7 @@ import javax.annotation.Nullable;
  * the name of the {@link ZipEntry} being stored. Once the stream is closed, these files are spooled
  * off disk and written to the OutputStream given to the constructor.
  */
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public class OverwritingZipOutputStreamImpl implements CustomZipOutputStream.Impl {
   // Attempt to maintain ordering of files that are added.
   private final Map<File, EntryAccounting> entries = new LinkedHashMap<>();
@@ -54,7 +56,7 @@ public class OverwritingZipOutputStreamImpl implements CustomZipOutputStream.Imp
       Path scratchPath =
           Path.of(
               scratchEnv == null || scratchEnv.isEmpty()
-                  ? System.getProperty("java.io.tmpdir")
+                  ? Objects.requireNonNull(System.getProperty("java.io.tmpdir"))
                   : scratchEnv);
       scratchDir = Files.createTempDirectory(scratchPath, "overwritingzip").toFile();
       // Reading the source, it seems like the temp dir isn't scheduled for deletion. We will delete

@@ -21,6 +21,7 @@ import static java.util.stream.Stream.concat;
 
 import com.facebook.buck.core.filesystems.AbsPath;
 import com.facebook.buck.util.zip.DirectoryJarEntryContainer.FileJarEntry;
+import com.facebook.infer.annotation.Nullsafe;
 import com.google.common.annotations.VisibleForTesting;
 import com.google.common.base.Strings;
 import java.io.IOException;
@@ -32,6 +33,7 @@ import java.util.Iterator;
 import java.util.LinkedList;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.TreeSet;
 import java.util.concurrent.CompletableFuture;
 import java.util.function.Supplier;
@@ -48,6 +50,7 @@ import java.util.stream.Stream;
  * @see #computeParallelism(DirectoryJarEntryContainer)
  * @see #buildJar(JarPartition)
  */
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public class DirectoryJarBuilder {
 
   /** Minimum number of bytes, to be compressed that justify another thread to split the work. */
@@ -153,7 +156,8 @@ public class DirectoryJarBuilder {
     directory.getEntries().stream()
         .sorted(comparingLong(FileJarEntry::getFileSize).reversed())
         // distribute them evenly across partitions
-        .forEach(entry -> partitions.add(partitions.pollFirst().add(entry)));
+        .forEach(
+            entry -> partitions.add(Objects.requireNonNull(partitions.pollFirst()).add(entry)));
     // discard empty partitions
     return partitions.stream().filter(JarPartition::hasFiles);
   }
@@ -218,7 +222,7 @@ public class DirectoryJarBuilder {
     final Path scratchDir =
         Path.of(
             Strings.isNullOrEmpty(scratchPath)
-                ? System.getProperty("java.io.tmpdir")
+                ? Objects.requireNonNull(System.getProperty("java.io.tmpdir"))
                 : scratchPath);
     if (!isDirectory(scratchDir)) {
       throw new IOException("Scratch path must be an existing directory: " + scratchDir);

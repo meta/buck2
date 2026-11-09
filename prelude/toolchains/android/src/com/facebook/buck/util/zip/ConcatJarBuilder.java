@@ -22,6 +22,7 @@ import java.util.Collection;
 import java.util.LinkedList;
 import java.util.List;
 import java.util.stream.Collectors;
+import org.jspecify.annotations.Nullable;
 
 /**
  * Class designed to create a new JAR file by concatenating the contents of multiple existing JAR
@@ -38,8 +39,8 @@ public class ConcatJarBuilder extends JarBuilder {
    * Creates a new JAR file at the specified output path by concatenating the contents of multiple
    * input JAR files.
    */
-  protected CustomJarOutputStream getJarOutputStream(final Path appendJar, final Path outputFile)
-      throws IOException {
+  protected CustomJarOutputStream getJarOutputStream(
+      @Nullable final Path appendJar, final Path outputFile) throws IOException {
 
     final ConcatenateJars concatenateJars =
         new ConcatenateJars().removeEntries(getRemoveEntryPredicate());

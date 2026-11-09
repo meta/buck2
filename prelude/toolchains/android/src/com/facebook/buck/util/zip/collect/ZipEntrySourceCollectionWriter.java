@@ -17,6 +17,7 @@ import com.facebook.buck.io.pathformat.PathFormatter;
 import com.facebook.buck.util.zip.CustomZipEntry;
 import com.facebook.buck.util.zip.CustomZipOutputStream;
 import com.facebook.buck.util.zip.ZipOutputStreams;
+import com.facebook.infer.annotation.Nullsafe;
 import com.google.common.collect.HashMultimap;
 import com.google.common.collect.Multimap;
 import com.google.common.io.ByteStreams;
@@ -33,11 +34,13 @@ import java.util.Deque;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipInputStream;
 
 /** Writes a {@link ZipEntrySourceCollection} to a zip file. */
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public class ZipEntrySourceCollectionWriter {
 
   private final AbsPath rootPath;
@@ -58,10 +61,10 @@ public class ZipEntrySourceCollectionWriter {
         .map(ZipEntrySourceFromZip.class::cast)
         .forEach(
             entry ->
-                sourceArchiveEntries
-                    .compute(
-                        entry.getSourceFilePath(),
-                        (k, v) -> (v == null ? HashMultimap.create() : v))
+                Objects.requireNonNull(
+                        sourceArchiveEntries.compute(
+                            entry.getSourceFilePath(),
+                            (k, v) -> (v == null ? HashMultimap.create() : v)))
                     .put(entry.getEntryName(), entry.getEntryPosition()));
 
     Set<Path> seenFiles = new HashSet<>();

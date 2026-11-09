@@ -46,6 +46,43 @@ async fn test_incremental_dir_not_materialized(buck: &Buck) -> anyhow::Result<()
     run_twice(buck, "root//:suite").await
 }
 
+/// Runs `target` once, restarts the daemon, and runs it again: the record of what the action
+/// last produced outlives the daemon, and so do its outputs in the CAS, which an output never
+/// materialized here never left.
+async fn run_twice_across_daemon_restart(buck: &Buck, target: &str) -> anyhow::Result<()> {
+    let result = buck
+        .run(&[target, "-c", &format!("test.seed={}", random_string())])
+        .await?;
+    assert_eq!(result.stdout, "0");
+    buck.kill().await?;
+    let result = buck
+        .run(&[target, "-c", &format!("test.seed={}", random_string())])
+        .await?;
+    assert_eq!(result.stdout, "1");
+    Ok(())
+}
+
+#[buck_test]
+async fn test_incremental_file_materialized_after_daemon_restart(
+    buck: &Buck,
+) -> anyhow::Result<()> {
+    run_twice_across_daemon_restart(buck, "root//:plate").await
+}
+
+#[buck_test]
+async fn test_incremental_dir_materialized_after_daemon_restart(buck: &Buck) -> anyhow::Result<()> {
+    run_twice_across_daemon_restart(buck, "root//:mate").await
+}
+
+// A directory never materialized here has no restart test: the record keeps a directory by its
+// fingerprint, and it comes back only from a materializer that holds the tree.
+#[buck_test]
+async fn test_incremental_file_not_materialized_after_daemon_restart(
+    buck: &Buck,
+) -> anyhow::Result<()> {
+    run_twice_across_daemon_restart(buck, "root//:flute").await
+}
+
 #[buck_test]
 async fn test_remote_cache_is_used(buck: &Buck) -> anyhow::Result<()> {
     let seed = random_string();

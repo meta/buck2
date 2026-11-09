@@ -73,13 +73,14 @@ object ResourceSourceMapExecutableMain {
       output: Path,
       root: Path = Paths.get(".").toAbsolutePath().normalize(),
   ) {
+    val realRoot = root.toRealPath()
     val resourceRoots = readResourceRoots(resourceDirsFile)
     val assetRoots = readRoots(assetDirsFile)
     val lines = TreeSet<String>()
 
     val resourceFiles = resourceRoots.flatMapIndexed { priority, input ->
-      val resourceDir = resolve(root, input.path)
-      val sourceResolver = input.sourcePath?.let { SourceFileResolver(resolve(root, it)) }
+      val resourceDir = resolve(realRoot, input.path)
+      val sourceResolver = input.sourcePath?.let { SourceFileResolver(resolve(realRoot, it)) }
       filesUnder(resourceDir).mapNotNull { (relative, file) ->
         if (relative.nameCount < 2) {
           null
@@ -88,9 +89,9 @@ object ResourceSourceMapExecutableMain {
         }
       }
     }
-    collectResources(root, resourceFiles, lines)
+    collectResources(realRoot, resourceFiles, lines)
     assetRoots.forEachIndexed { priority, input ->
-      collectAssets(root, input, priority, lines)
+      collectAssets(realRoot, input, priority, lines)
     }
     output.parent?.let(Files::createDirectories)
     val contents = lines.joinToString(separator = "\n", postfix = if (lines.isEmpty()) "" else "\n")

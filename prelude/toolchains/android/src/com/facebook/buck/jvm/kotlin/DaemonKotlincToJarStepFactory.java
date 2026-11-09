@@ -292,6 +292,7 @@ public class DaemonKotlincToJarStepFactory extends BaseCompileToJarStepFactory<K
         resolvedJavacOptions,
         parameters.getClasspathEntries(),
         extraParams.getExtraClassPaths(),
+        extraParams.getApplicabilityClasspath(),
         hasKotlinSources
             ? ImmutableList.of(kotlinOutputDirectory, outputDirectory)
             : ImmutableList.of(outputDirectory),

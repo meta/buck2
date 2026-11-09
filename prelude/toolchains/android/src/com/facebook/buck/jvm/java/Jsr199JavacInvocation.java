@@ -10,7 +10,6 @@
 
 package com.facebook.buck.jvm.java;
 
-import static com.facebook.buck.jvm.java.abi.AbiGenerationModeUtils.checkForSourceOnlyAbiCompatibility;
 import static com.facebook.buck.jvm.java.abi.AbiGenerationModeUtils.getDiagnosticKindForSourceOnlyAbiCompatibility;
 import static com.google.common.util.concurrent.MoreExecutors.directExecutor;
 
@@ -27,7 +26,6 @@ import com.facebook.buck.jvm.java.abi.source.api.FrontendOnlyJavacTaskProxy;
 import com.facebook.buck.jvm.java.abi.source.api.SourceOnlyAbiRuleInfoFactory;
 import com.facebook.buck.jvm.java.abi.source.api.StopCompilation;
 import com.facebook.buck.jvm.java.plugin.PluginLoader;
-import com.facebook.buck.jvm.java.plugin.api.BuckJavacTaskListener;
 import com.facebook.buck.jvm.java.plugin.api.BuckJavacTaskProxy;
 import com.facebook.buck.jvm.java.plugin.api.PluginClassLoader;
 import com.facebook.buck.jvm.java.plugin.api.PluginClassLoaderFactory;
@@ -460,6 +458,11 @@ class Jsr199JavacInvocation implements ResolvedJavac.Invocation {
 
         AbsPath ruleCellRoot = context.getRuleCellRoot();
         if (success && buildSuccessful()) {
+          if (abiGenerationMode == AbiGenerationMode.MIGRATING_TO_SOURCE_ONLY
+              && ruleInfoFactory != null
+              && ruleInfoFactory.shouldValidateInheritedMemberTypes()) {
+            reportDiagnosticsToUser();
+          }
           if (classUsageTracker != null) {
             new DefaultClassUsageFileWriter()
                 .writeFile(
@@ -611,19 +614,21 @@ class Jsr199JavacInvocation implements ResolvedJavac.Invocation {
 
           PluginClassLoader pluginLoader = loaderFactory.getPluginClassLoader(javacTask);
 
-          BuckJavacTaskListener taskListener = null;
-          if (checkForSourceOnlyAbiCompatibility(abiGenerationMode)
+          Diagnostic.Kind diagnosticKind =
+              getDiagnosticKindForSourceOnlyAbiCompatibility(abiGenerationMode);
+          if (diagnosticKind != null
               && !generatingSourceOnlyAbi
-              && ruleInfoFactory != null) {
-            taskListener =
-                SourceBasedAbiStubber.newValidatingTaskListener(
+              && ruleInfoFactory != null
+              && ruleInfoFactory.shouldValidateInheritedMemberTypes()) {
+            javacTask.addTaskListener(
+                SourceBasedAbiStubber.newInheritedMemberTypeValidatingTaskListener(
                     pluginLoader,
                     javacTask,
                     ruleInfoFactory.create(fileManager),
                     () ->
                         diagnosticsSnapshot().stream()
                             .anyMatch(diagnostic -> diagnostic.getKind() == Diagnostic.Kind.ERROR),
-                    getDiagnosticKindForSourceOnlyAbiCompatibility(abiGenerationMode));
+                    diagnosticKind));
           }
 
           // Ensure annotation processors are loaded from their own classloader. If we don't do

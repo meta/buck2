@@ -59,6 +59,7 @@ buck_kotlin_library(
         "OptionsConsumer.java",
         "PluginFactory.java",
         "PluginLoaderJavaFileManager.java",
+        "ReducedClasspathSourceOnlyAbiRuleInfoFactory.java",
         "ResolvedJavac.java",
         "ResolvedJavacOptions.kt",
         "ResolvedJavacPluginProperties.java",

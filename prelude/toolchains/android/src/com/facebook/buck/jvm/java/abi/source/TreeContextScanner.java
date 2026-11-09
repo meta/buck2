@@ -11,6 +11,7 @@
 package com.facebook.buck.jvm.java.abi.source;
 
 import com.facebook.infer.annotation.Nullsafe;
+import com.sun.source.tree.ClassTree;
 import com.sun.source.tree.Tree;
 import com.sun.source.util.TreePath;
 import com.sun.source.util.TreeScanner;
@@ -75,20 +76,12 @@ class TreeContextScanner<R, P> extends TreeScanner<R, P> {
     Element previousEnclosingElement = enclosingElement;
 
     currentPath = new TreePath(currentPath, tree);
-    switch (tree.getKind()) {
-      case ANNOTATION_TYPE:
-      case CLASS:
-      case COMPILATION_UNIT:
-      case ENUM:
-      case INTERFACE:
-      case METHOD:
-      case VARIABLE:
-      case TYPE_PARAMETER:
-        enclosingElement = Objects.requireNonNull(trees.getElement(currentPath));
-        break;
-      // $CASES-OMITTED$
-      default:
-        break;
+    if (tree instanceof ClassTree
+        || tree.getKind() == Tree.Kind.COMPILATION_UNIT
+        || tree.getKind() == Tree.Kind.METHOD
+        || tree.getKind() == Tree.Kind.VARIABLE
+        || tree.getKind() == Tree.Kind.TYPE_PARAMETER) {
+      enclosingElement = Objects.requireNonNull(trees.getElement(currentPath));
     }
     try {
       // This super call will actually visit the tree, now with all the context set up

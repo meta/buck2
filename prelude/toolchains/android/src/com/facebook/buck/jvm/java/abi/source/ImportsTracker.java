@@ -28,24 +28,18 @@ import org.jspecify.annotations.Nullable;
 
 /** Simulates import resolution scopes in a source-only ABI classpath. */
 class ImportsTracker {
-  private static class StaticImport {
-    public final TypeElement container;
-    public final Name identifier;
-
-    private StaticImport(TypeElement container, Name identifier) {
-      this.container = container;
-      this.identifier = identifier;
-    }
-  }
-
   private final Map<TypeElement, TreePath> importedTypes = new HashMap<>();
   private final Map<QualifiedNameable, TreePath> importedOwners = new HashMap<>();
   private final Set<TypeElement> staticImportedOwners = new HashSet<>();
-  private final Map<Name, StaticImport> staticImports = new HashMap<>();
+  private final Map<Name, Set<TypeElement>> staticImports = new HashMap<>();
   private final Types types;
+  private final Elements elements;
+  private final PackageElement enclosingPackage;
 
   public ImportsTracker(Elements elements, Types types, PackageElement enclosingPackage) {
     this.types = types;
+    this.elements = elements;
+    this.enclosingPackage = enclosingPackage;
     importMembers(Objects.requireNonNull(elements.getPackageElement("java.lang")), null);
     importMembers(enclosingPackage, null);
   }
@@ -59,8 +53,7 @@ class ImportsTracker {
   }
 
   public void importStatic(TypeElement container, Name identifier) {
-    StaticImport newImport = new StaticImport(container, identifier);
-    staticImports.put(newImport.identifier, newImport);
+    staticImports.computeIfAbsent(identifier, ignored -> new HashSet<>()).add(container);
   }
 
   public void importStaticMembers(TypeElement container) {
@@ -80,15 +73,126 @@ class ImportsTracker {
     if (!element.getModifiers().contains(Modifier.STATIC)) {
       return null;
     }
-
-    StaticImport candidate = staticImports.get(element.getSimpleName());
-
-    if (candidate != null
-        && types.isSubtype(candidate.container.asType(), element.getEnclosingElement().asType())) {
-      return candidate.container;
+    for (TypeElement container : staticImports.getOrDefault(element.getSimpleName(), Set.of())) {
+      if (types.isSubtype(container.asType(), element.getEnclosingElement().asType())) {
+        return container;
+      }
     }
-
     return null;
+  }
+
+  public Set<TypeElement> getOnDemandStaticImportContainers(TypeElement element) {
+    Set<TypeElement> containers = new HashSet<>();
+    if (canStaticallyImport(element)) {
+      containers.addAll(staticImportedOwners);
+      containers.removeIf(owner -> !exposesMember(owner, element));
+    }
+    return containers;
+  }
+
+  @Nullable TypeElement getSingleTypeImport(Name name) {
+    for (TypeElement type : importedTypes.keySet()) {
+      if (type.getSimpleName().contentEquals(name)) {
+        return type;
+      }
+    }
+    return null;
+  }
+
+  Set<TypeElement> getSingleStaticTypeImportContainers(Name name) {
+    return getStaticTypeImportContainers(staticImports.getOrDefault(name, Set.of()), name);
+  }
+
+  Set<TypeElement> getOnDemandStaticTypeImportContainers(Name name) {
+    return getStaticTypeImportContainers(staticImportedOwners, name);
+  }
+
+  private Set<TypeElement> getStaticTypeImportContainers(Set<TypeElement> owners, Name name) {
+    Set<TypeElement> containers = new HashSet<>();
+    for (TypeElement owner : owners) {
+      for (Element candidate : elements.getAllMembers(owner)) {
+        if (candidate instanceof TypeElement
+            && candidate.getSimpleName().contentEquals(name)
+            && canStaticallyImport((TypeElement) candidate)
+            && exposesMember(owner, (TypeElement) candidate)) {
+          containers.add(owner);
+          break;
+        }
+      }
+    }
+    return containers;
+  }
+
+  Set<TypeElement> getOtherStaticallyImportedMemberTypes(TypeElement owner, TypeElement member) {
+    Set<TypeElement> candidates = getOtherMemberTypesWithSameName(owner, member);
+    candidates.removeIf(other -> !canStaticallyImport(other) || !exposesMember(owner, other));
+    return candidates;
+  }
+
+  Set<TypeElement> getOnDemandTypes(Name name) {
+    Set<TypeElement> candidates = new HashSet<>();
+    for (QualifiedNameable owner : importedOwners.keySet()) {
+      if (owner instanceof PackageElement) {
+        TypeElement candidate = getPackageType((PackageElement) owner, name);
+        if (candidate != null && canImport(candidate)) {
+          candidates.add(candidate);
+        }
+      } else {
+        for (Element candidate : owner.getEnclosedElements()) {
+          if (candidate instanceof TypeElement
+              && candidate.getSimpleName().contentEquals(name)
+              && canImport((TypeElement) candidate)) {
+            candidates.add((TypeElement) candidate);
+          }
+        }
+      }
+    }
+    return candidates;
+  }
+
+  @Nullable TypeElement getTopLevelTypeInPackage(Name name) {
+    return getPackageType(enclosingPackage, name);
+  }
+
+  @Nullable
+  private TypeElement getPackageType(PackageElement owner, Name name) {
+    String prefix = owner.isUnnamed() ? "" : owner.getQualifiedName() + ".";
+    return elements.getTypeElement(prefix + name);
+  }
+
+  private boolean canStaticallyImport(TypeElement element) {
+    return element.getModifiers().contains(Modifier.STATIC) && canImport(element);
+  }
+
+  private boolean canImport(TypeElement element) {
+    Set<Modifier> modifiers = element.getModifiers();
+    return !modifiers.contains(Modifier.PRIVATE)
+        && (modifiers.contains(Modifier.PUBLIC)
+            || elements.getPackageOf(element).equals(enclosingPackage));
+  }
+
+  Set<TypeElement> getOtherMemberTypesWithSameName(TypeElement owner, TypeElement member) {
+    Set<TypeElement> candidates = new HashSet<>();
+    for (Element candidate : elements.getAllMembers(owner)) {
+      if (candidate instanceof TypeElement
+          && !candidate.equals(member)
+          && candidate.getSimpleName().contentEquals(member.getSimpleName())) {
+        candidates.add((TypeElement) candidate);
+      }
+    }
+    return candidates;
+  }
+
+  boolean exposesMember(TypeElement owner, TypeElement member) {
+    boolean found = false;
+    for (Element candidate : elements.getAllMembers(owner)) {
+      if (candidate.equals(member)) {
+        found = true;
+      } else if (candidate instanceof TypeElement && elements.hides(candidate, member)) {
+        return false;
+      }
+    }
+    return found;
   }
 
   public boolean isSingleTypeImported(Element element) {

@@ -20,19 +20,26 @@ import com.facebook.buck.cd.model.java.BuildTargetValue.Type;
 import com.facebook.buck.core.filesystems.AbsPath;
 import com.facebook.buck.core.filesystems.RelPath;
 import com.facebook.buck.jvm.core.BuildTargetValue;
+import com.facebook.buck.jvm.java.abi.source.api.SourceOnlyAbiRuleInfoFactory;
 import com.facebook.buck.util.ClassLoaderCache;
 import com.facebook.buck.util.Verbosity;
 import com.google.common.collect.ImmutableList;
+import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.ImmutableSortedSet;
+import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.io.IOException;
+import java.io.PrintStream;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.logging.Level;
+import java.util.zip.ZipEntry;
 import java.util.zip.ZipFile;
+import java.util.zip.ZipOutputStream;
 import javax.tools.ToolProvider;
 import org.junit.Rule;
 import org.junit.Test;
@@ -107,6 +114,248 @@ public class Jsr199JavacTest {
           "Failed to write compiler class-to-source map: " + mapPath,
           failure.getCause().getMessage());
       assertTrue(failure.getCause().getCause() instanceof IOException);
+    }
+  }
+
+  @Test
+  public void validatesInheritedMemberTypesDuringLibraryCompilation() throws Exception {
+    for (boolean available : ImmutableList.of(false, true)) {
+      for (boolean jarClasspath : ImmutableList.of(false, true)) {
+        ByteArrayOutputStream diagnostics = new ByteArrayOutputStream();
+        int result =
+            compileInheritedMember(
+                available, jarClasspath, AbiGenerationMode.SOURCE_ONLY, true, diagnostics);
+        assertEquals(diagnostics.toString(StandardCharsets.UTF_8), available ? 0 : 1, result);
+        if (!available) {
+          assertTrue(
+              diagnostics
+                  .toString(StandardCharsets.UTF_8)
+                  .contains("KOSABI_JASABI_MISSING_SUPERTYPES: dep.External"));
+        }
+      }
+    }
+  }
+
+  @Test
+  public void inheritedMemberValidationRequiresSourceOnlyModeAndReducedClasspath()
+      throws Exception {
+    assertEquals(
+        0,
+        compileInheritedMember(
+            false, false, AbiGenerationMode.CLASS, true, new ByteArrayOutputStream()));
+    assertEquals(
+        0,
+        compileInheritedMember(
+            false, false, AbiGenerationMode.SOURCE_ONLY, false, new ByteArrayOutputStream()));
+  }
+
+  @Test
+  public void inheritedMemberValidationWarnsDuringMigration() throws Exception {
+    ByteArrayOutputStream diagnostics = new ByteArrayOutputStream();
+    assertEquals(
+        0,
+        compileInheritedMember(
+            false, false, AbiGenerationMode.MIGRATING_TO_SOURCE_ONLY, true, diagnostics));
+    assertTrue(
+        diagnostics
+            .toString(StandardCharsets.UTF_8)
+            .contains("KOSABI_JASABI_MISSING_SUPERTYPES: dep.External"));
+  }
+
+  @Test
+  public void testAnnotationProcessingStillValidates() throws Exception {
+    ByteArrayOutputStream diagnostics = new ByteArrayOutputStream();
+    int result =
+        compileInheritedMember(
+            false,
+            false,
+            AbiGenerationMode.SOURCE_ONLY,
+            true,
+            diagnostics,
+            "package p; import dep.External; abstract class Foo implements External { public"
+                + " Entry<String, String> entry; }",
+            true);
+    assertEquals(diagnostics.toString(StandardCharsets.UTF_8), 1, result);
+    assertTrue(diagnostics.toString(StandardCharsets.UTF_8).contains("N5_REVIEW_PROCESSOR_RAN"));
+    assertTrue(
+        diagnostics
+            .toString(StandardCharsets.UTF_8)
+            .contains("KOSABI_JASABI_MISSING_SUPERTYPES: dep.External"));
+  }
+
+  @Test
+  public void testStaticImportsNeedTheirInheritancePath() throws Exception {
+    for (String imported : ImmutableList.of("Entry", "*")) {
+      for (boolean available : ImmutableList.of(false, true)) {
+        ByteArrayOutputStream diagnostics = new ByteArrayOutputStream();
+        int result =
+            compileInheritedMember(
+                available,
+                false,
+                AbiGenerationMode.SOURCE_ONLY,
+                true,
+                diagnostics,
+                "package p; import dep.External; import static dep.External."
+                    + imported
+                    + "; class Foo { public Entry<String, String> entry; }",
+                false);
+        assertEquals(diagnostics.toString(StandardCharsets.UTF_8), available ? 0 : 1, result);
+        if (!available) {
+          assertTrue(
+              diagnostics
+                  .toString(StandardCharsets.UTF_8)
+                  .contains("KOSABI_JASABI_MISSING_SUPERTYPES: dep.External"));
+        }
+      }
+    }
+  }
+
+  @Test
+  public void testRecordsDoNotCrashValidation() throws Exception {
+    ByteArrayOutputStream diagnostics = new ByteArrayOutputStream();
+    assertEquals(
+        0,
+        compileInheritedMember(
+            false,
+            false,
+            AbiGenerationMode.MIGRATING_TO_SOURCE_ONLY,
+            true,
+            diagnostics,
+            "package p; public record Foo(int value) {}",
+            false));
+  }
+
+  private int compileInheritedMember(
+      boolean available,
+      boolean jarClasspath,
+      AbiGenerationMode mode,
+      boolean validate,
+      ByteArrayOutputStream diagnostics)
+      throws Exception {
+    return compileInheritedMember(
+        available,
+        jarClasspath,
+        mode,
+        validate,
+        diagnostics,
+        "package p; import dep.External; abstract class Foo implements External { public"
+            + " Entry<String, String> entry; }",
+        false);
+  }
+
+  private int compileInheritedMember(
+      boolean available,
+      boolean jarClasspath,
+      AbiGenerationMode mode,
+      boolean validate,
+      ByteArrayOutputStream diagnostics,
+      String source,
+      boolean processor)
+      throws Exception {
+    Path root = temporaryFolder.newFolder().toPath();
+    Path dependencies = Files.createDirectory(root.resolve("dependencies"));
+    Path dependencySource = root.resolve("External.java");
+    Files.writeString(
+        dependencySource,
+        "package dep; public interface External extends java.util.Map<String, String> {}");
+    assertEquals(
+        0,
+        ToolProvider.getSystemJavaCompiler()
+            .run(null, null, null, "-d", dependencies.toString(), dependencySource.toString()));
+    Path provider = dependencies;
+    if (jarClasspath) {
+      provider = root.resolve("dependency.jar");
+      try (ZipOutputStream zip = new ZipOutputStream(Files.newOutputStream(provider))) {
+        zip.putNextEntry(new ZipEntry("dep/External.class"));
+        zip.write(Files.readAllBytes(dependencies.resolve("dep/External.class")));
+        zip.closeEntry();
+      }
+    }
+    Files.writeString(root.resolve("Foo.java"), source);
+    Path classes = Files.createDirectory(root.resolve("classes"));
+    CompilerOutputPaths paths =
+        new CompilerOutputPaths(
+            RelPath.get("classes"),
+            RelPath.get("."),
+            Optional.empty(),
+            RelPath.get("annotations"),
+            RelPath.get("srcs"),
+            RelPath.get("working"),
+            Optional.of(RelPath.get("library.jar")),
+            RelPath.get("mapping.json"));
+    SourceOnlyAbiRuleInfoFactory factory =
+        new DefaultSourceOnlyAbiRuleInfoFactory("//:test", false);
+    if (validate) {
+      factory =
+          new ReducedClasspathSourceOnlyAbiRuleInfoFactory(
+              factory,
+              available ? ImmutableList.of(provider) : ImmutableList.of(),
+              ImmutableList.of());
+    }
+    JavacPluginParams annotationProcessors = JavacPluginParams.EMPTY;
+    if (processor) {
+      Path processorSource = root.resolve("NoOpProcessor.java");
+      Files.writeString(
+          processorSource,
+          "public class NoOpProcessor extends javax.annotation.processing.AbstractProcessor {"
+              + " public java.util.Set<String> getSupportedAnnotationTypes() { return"
+              + " java.util.Set.of(\"*\"); } public javax.lang.model.SourceVersion"
+              + " getSupportedSourceVersion() { return"
+              + " javax.lang.model.SourceVersion.latestSupported(); } public boolean"
+              + " process(java.util.Set<? extends javax.lang.model.element.TypeElement>"
+              + " annotations, javax.annotation.processing.RoundEnvironment round) {"
+              + " processingEnv.getMessager().printMessage(javax.tools.Diagnostic.Kind.NOTE,"
+              + " \"N5_REVIEW_PROCESSOR_RAN\"); return false; } }");
+      assertEquals(
+          0,
+          ToolProvider.getSystemJavaCompiler()
+              .run(null, null, null, "-d", dependencies.toString(), processorSource.toString()));
+      annotationProcessors =
+          new JavacPluginParams(
+              ImmutableList.of(
+                  new ResolvedJavacPluginProperties(
+                      false,
+                      false,
+                      true,
+                      true,
+                      ImmutableSortedSet.of("NoOpProcessor"),
+                      ImmutableList.of(RelPath.get("dependencies")),
+                      ImmutableMap.of(),
+                      ImmutableList.of())),
+              ImmutableSortedSet.of());
+    }
+    try (ClassLoaderCache cache = new ClassLoaderCache();
+        PrintStream stderr = new PrintStream(diagnostics, true, StandardCharsets.UTF_8);
+        Jsr199JavacInvocation invocation =
+            new Jsr199JavacInvocation(
+                ToolProvider::getSystemJavaCompiler,
+                new JavacExecutionContext(
+                    stderr,
+                    cache,
+                    Verbosity.STANDARD_INFORMATION,
+                    AbsPath.of(root),
+                    RelPath.get("buck-out")),
+                new BuildTargetValue(Type.LIBRARY, "//:test"),
+                new CompilerOutputPathsValue("//:test", paths, paths, paths),
+                ImmutableList.of(
+                    "-d",
+                    classes.toString(),
+                    "-classpath",
+                    provider.toString(),
+                    processor ? "-proc:full" : "-proc:none"),
+                annotationProcessors,
+                JavacPluginParams.EMPTY,
+                ImmutableSortedSet.orderedBy(RelPath.comparator())
+                    .add(RelPath.get("Foo.java"))
+                    .build(),
+                RelPath.get("srcs"),
+                false,
+                null,
+                null,
+                mode,
+                AbiGenerationMode.CLASS,
+                factory)) {
+      return invocation.buildClasses();
     }
   }
 

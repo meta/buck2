@@ -15,16 +15,20 @@ import com.facebook.buck.jvm.java.abi.source.TreeBackedTypeResolutionSimulator.T
 import com.facebook.buck.jvm.java.abi.source.api.SourceOnlyAbiRuleInfoFactory.SourceOnlyAbiRuleInfo;
 import com.facebook.buck.jvm.java.plugin.adapter.BuckJavacTask;
 import com.facebook.infer.annotation.Nullsafe;
+import com.sun.source.tree.AnnotationTree;
 import com.sun.source.tree.ClassTree;
 import com.sun.source.tree.CompilationUnitTree;
 import com.sun.source.tree.Tree;
 import com.sun.source.util.TreePath;
 import com.sun.source.util.Trees;
+import java.lang.annotation.Retention;
+import java.lang.annotation.RetentionPolicy;
 import java.util.List;
 import java.util.Objects;
 import java.util.stream.Collectors;
 import javax.lang.model.element.Element;
 import javax.lang.model.element.ElementKind;
+import javax.lang.model.element.Modifier;
 import javax.lang.model.element.Name;
 import javax.lang.model.element.PackageElement;
 import javax.lang.model.element.QualifiedNameable;
@@ -65,10 +69,20 @@ class InterfaceValidator {
   private final SourceOnlyAbiRuleInfo ruleInfo;
   private final FileManagerSimulator fileManager;
   private final CompilerTypeResolutionSimulator compilerResolver;
+  private final boolean inheritedMemberTypesOnly;
 
   public InterfaceValidator(
       Diagnostic.Kind messageKind, BuckJavacTask task, SourceOnlyAbiRuleInfo ruleInfo) {
+    this(messageKind, task, ruleInfo, false);
+  }
+
+  public InterfaceValidator(
+      Diagnostic.Kind messageKind,
+      BuckJavacTask task,
+      SourceOnlyAbiRuleInfo ruleInfo,
+      boolean inheritedMemberTypesOnly) {
     this.messageKind = messageKind;
+    this.inheritedMemberTypesOnly = inheritedMemberTypesOnly;
     trees = task.getTrees();
     types = task.getTypes();
     elements = task.getElements();
@@ -90,7 +104,8 @@ class InterfaceValidator {
               ruleInfo,
               fileManager,
               compilerResolver,
-              compilationUnit));
+              compilationUnit,
+              inheritedMemberTypesOnly));
     }
   }
 
@@ -103,6 +118,7 @@ class InterfaceValidator {
     private final CompletionSimulator completer;
     private final CompilerTypeResolutionSimulator compilerResolver;
     private final ImportsTracker imports;
+    private final boolean inheritedMemberTypesOnly;
 
     public ValidatingListener(
         Diagnostic.Kind messageKind,
@@ -112,8 +128,10 @@ class InterfaceValidator {
         SourceOnlyAbiRuleInfo ruleInfo,
         FileManagerSimulator fileManager,
         CompilerTypeResolutionSimulator compilerResolver,
-        CompilationUnitTree compilationUnit) {
+        CompilationUnitTree compilationUnit,
+        boolean inheritedMemberTypesOnly) {
       this.messageKind = messageKind;
+      this.inheritedMemberTypesOnly = inheritedMemberTypesOnly;
       this.trees = trees;
       this.ruleInfo = ruleInfo;
       this.fileManager = fileManager;
@@ -130,6 +148,9 @@ class InterfaceValidator {
 
     @Override
     public void onTypeDeclared(TypeElement type, TreePath path) {
+      if (inheritedMemberTypesOnly) {
+        return;
+      }
       if (type.getKind() == ElementKind.ANNOTATION_TYPE
           && !ruleInfo.ruleIsRequiredForSourceOnlyAbi()) {
         trees.printMessage(
@@ -221,7 +242,7 @@ class InterfaceValidator {
         TreePath leafmostElementPath,
         QualifiedNameable leafmostElement,
         @Nullable Name memberName) {
-      if (leafmostElement.getKind() != ElementKind.PACKAGE) {
+      if (!inheritedMemberTypesOnly && leafmostElement.getKind() != ElementKind.PACKAGE) {
         if (isStatic) {
           CompletedType completedType = completer.complete(leafmostElement, true);
           if (completedType != null
@@ -271,12 +292,76 @@ class InterfaceValidator {
       }
     }
 
+    private boolean isInDiscardedSourceAnnotation(TreePath path) {
+      for (TreePath current = path;
+          current.getParentPath() != null;
+          current = current.getParentPath()) {
+        if (!(current.getLeaf() instanceof AnnotationTree)) {
+          continue;
+        }
+        AnnotationTree annotation = (AnnotationTree) current.getLeaf();
+        // Annotation values and defaults are emitted regardless of their own retention.
+        switch (current.getParentPath().getLeaf().getKind()) {
+          case MODIFIERS:
+          case ANNOTATED_TYPE:
+          case TYPE_PARAMETER:
+          case COMPILATION_UNIT:
+          case PACKAGE:
+            Element element =
+                trees.getElement(new TreePath(current, annotation.getAnnotationType()));
+            if (element == null || element.getKind() != ElementKind.ANNOTATION_TYPE) {
+              return false;
+            }
+            Retention retention = element.getAnnotation(Retention.class);
+            return retention != null && retention.value() == RetentionPolicy.SOURCE;
+          default:
+            break;
+        }
+      }
+      return false;
+    }
+
     @Override
     public void onTypeReferenceFound(
         TypeElement canonicalTypeElement, TreePath path, Element referencingElement) {
+      if (inheritedMemberTypesOnly) {
+        Tree.Kind kind = path.getLeaf().getKind();
+        if ((kind != Tree.Kind.IDENTIFIER && kind != Tree.Kind.MEMBER_SELECT)
+            || isInDiscardedSourceAnnotation(path)) {
+          return;
+        }
+        for (Element scope = referencingElement;
+            scope != null;
+            scope = scope.getEnclosingElement()) {
+          if (scope.getModifiers().contains(Modifier.PRIVATE)) {
+            return;
+          }
+        }
+      }
       compilerResolver.setImports(imports);
       treeBackedResolver.setImports(imports);
       ResolvedType compilerResolvedType = compilerResolver.resolve(path);
+
+      if (inheritedMemberTypesOnly) {
+        if (!compilerResolvedType.missingMemberSupertypes.isEmpty()) {
+          trees.printMessage(
+              messageKind,
+              String.format(
+                  "Inherited member type %s requires missing supertypes during source-only ABI"
+                      + " generation.\n"
+                      + "Use the fully qualified type or add the providers of the following classes"
+                      + " to source_only_abi_deps in %s.\n"
+                      + "KOSABI_JASABI_MISSING_SUPERTYPES: %s",
+                  canonicalTypeElement.getQualifiedName(),
+                  ruleInfo.getRuleName(),
+                  compilerResolvedType.missingMemberSupertypes.stream()
+                      .sorted()
+                      .collect(Collectors.joining(", "))),
+              path.getLeaf(),
+              path.getCompilationUnit());
+        }
+        return;
+      }
 
       if (compilerResolvedType.kind != ResolvedTypeKind.RESOLVED_TYPE) {
         TreeBackedResolvedType treeBackedResolvedType = treeBackedResolver.resolve(path);
@@ -293,6 +378,9 @@ class InterfaceValidator {
     @Override
     public void onConstantReferenceFound(
         VariableElement constant, TreePath path, Element referencingElement) {
+      if (inheritedMemberTypesOnly) {
+        return;
+      }
       TypeElement constantEnclosingType = (TypeElement) constant.getEnclosingElement();
 
       if (fileManager.typeWillBeAvailable(constantEnclosingType)) {

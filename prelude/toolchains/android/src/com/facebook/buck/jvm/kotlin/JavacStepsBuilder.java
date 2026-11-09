@@ -20,8 +20,10 @@ import com.facebook.buck.jvm.java.CompilerOutputPathsValue;
 import com.facebook.buck.jvm.java.CompilerParameters;
 import com.facebook.buck.jvm.java.JarParameters;
 import com.facebook.buck.jvm.java.JavaExtraParams;
+import com.facebook.buck.jvm.java.ReducedClasspathSourceOnlyAbiRuleInfoFactory;
 import com.facebook.buck.jvm.java.ResolvedJavac;
 import com.facebook.buck.jvm.java.ResolvedJavacOptions;
+import com.facebook.buck.jvm.java.abi.source.api.SourceOnlyAbiRuleInfoFactory;
 import com.facebook.buck.step.isolatedsteps.IsolatedStep;
 import com.facebook.infer.annotation.Nullsafe;
 import com.google.common.collect.ImmutableList;
@@ -46,6 +48,7 @@ public class JavacStepsBuilder {
       ResolvedJavacOptions resolvedJavacOptions,
       ImmutableList<RelPath> declaredClasspathEntries,
       ImmutableList<AbsPath> extraClassPaths,
+      ImmutableList<AbsPath> applicabilityClasspath,
       ImmutableList<RelPath> outputDirectories,
       ImmutableSortedSet.Builder<RelPath> sourceBuilder,
       JarParameters abiJarParameter) {
@@ -61,6 +64,23 @@ public class JavacStepsBuilder {
       return;
     }
 
+    SourceOnlyAbiRuleInfoFactory ruleInfoFactory = parameters.getSourceOnlyAbiRuleInfoFactory();
+    if (ruleInfoFactory != null) {
+      ruleInfoFactory =
+          new ReducedClasspathSourceOnlyAbiRuleInfoFactory(
+              ruleInfoFactory,
+              ImmutableList.<AbsPath>builder()
+                  .addAll(applicabilityClasspath)
+                  .addAll(extraClassPaths)
+                  .build()
+                  .stream()
+                  .map(AbsPath::getPath)
+                  .collect(ImmutableList.toImmutableList()),
+              outputDirectories.stream()
+                  .map(dir -> buildCellRootPath.resolve(dir).getPath())
+                  .collect(ImmutableList.toImmutableList()));
+    }
+
     CompilerParameters javacParameters =
         new CompilerParameters(
             javaSourceFiles,
@@ -71,7 +91,7 @@ public class JavacStepsBuilder {
             parameters.getAbiGenerationMode(),
             parameters.getAbiCompatibilityMode(),
             parameters.getShouldTrackClassUsage(),
-            parameters.getSourceOnlyAbiRuleInfoFactory());
+            ruleInfoFactory);
 
     // Indicate no annotation processing required from this factory.  It is already handled by the
     // Kotlin factory, when it resolves javac's options.

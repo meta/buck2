@@ -21,6 +21,11 @@ import org.jspecify.annotations.Nullable;
 public interface SourceOnlyAbiRuleInfoFactory {
   SourceOnlyAbiRuleInfo create(JavaFileManager fileManager);
 
+  /** Opt in only when the actual reduced dependency classpath is available. */
+  default boolean shouldValidateInheritedMemberTypes() {
+    return false;
+  }
+
   /** Provides information related to source-only abi support. */
   interface SourceOnlyAbiRuleInfo {
 

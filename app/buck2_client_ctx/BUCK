@@ -100,6 +100,7 @@ rust_library(
             # @oss-disable[end= ]: "//common/rust/identity:identity_env",
         ],
         "ovr_config//os:macos": [
+            "fbsource//third-party/rust:nix",
             "fbsource//third-party/rust:termios",
         ],
         "ovr_config//os:windows": [

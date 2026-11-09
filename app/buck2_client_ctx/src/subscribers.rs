@@ -19,6 +19,8 @@ pub(crate) mod health_check_subscriber;
 pub(crate) mod observer;
 #[cfg(target_os = "linux")]
 pub(crate) mod oom;
+#[cfg(target_os = "macos")]
+pub(crate) mod oom_macos;
 pub mod re_log;
 pub mod recorder;
 pub(crate) mod simpleconsole;

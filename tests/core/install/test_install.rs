@@ -141,6 +141,13 @@ async fn test_artifact_fails_to_install(buck: &Buck) -> anyhow::Result<()> {
         .await
         .expect_failure();
     res.assert_stderr_matches(r"Interaction with installer failed");
+    // The installer classified this error itself, so its stderr would only repeat it.
+    assert!(
+        !res.stderr.contains("Installer stderr output"),
+        "{}",
+        res.stderr
+    );
+    res.assert_stderr_matches(r"See installer logs at");
     let record = res.invocation_record()?;
     let errors = errors(&record);
     assert_eq!(errors.len(), 1);
@@ -180,6 +187,12 @@ async fn test_fail_to_build_artifact(buck: &Buck) -> anyhow::Result<()> {
         .await
         .expect_failure();
     res.assert_stderr_matches(r"Failed to build");
+    // The build failed, not the installer.
+    assert!(
+        !res.stderr.contains("See installer logs at"),
+        "{}",
+        res.stderr
+    );
     let record = res.invocation_record()?;
     assert_eq!(errors(&record).len(), 1);
     Ok(())
@@ -290,6 +303,8 @@ async fn test_installer_early_exit(buck: &Buck) -> anyhow::Result<()> {
     buck.install(&["root//:installer_early_exit"])
         .await
         .expect_failure()
-        .assert_stderr_matches(r"Installer process exited with status");
+        .assert_stderr_matches(r"Installer process exited with status")
+        // The installer could not report this error, so its stderr is the only explanation.
+        .assert_stderr_matches(r#""-e" is not a valid option"#);
     Ok(())
 }

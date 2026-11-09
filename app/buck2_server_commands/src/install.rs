@@ -913,7 +913,11 @@ async fn handle_install_request(
         }
     };
 
-    result = result.map_err(|err| append_installer_context(err, &stderr_log_path, &log_location));
+    // A build failure is not the installer's: nothing of the installer belongs in its error.
+    if !build_failed.load(Ordering::Relaxed) {
+        result =
+            result.map_err(|err| append_installer_context(err, &stderr_log_path, &log_location));
+    }
 
     get_dispatcher().instant_event(buck2_data::InstallFinished {
         duration: install_duration.and_then(|d| d.try_into().ok()),
@@ -1041,26 +1045,32 @@ fn append_installer_context(
     log_location: &str,
 ) -> buck2_error::Error {
     const MAX_STDERR_BYTES: usize = 16384;
-    let stderr_context = match std::fs::File::open(stderr_log_path.as_path()) {
-        Ok(mut file) => {
-            let mut buf = vec![0u8; MAX_STDERR_BYTES];
-            match file.read(&mut buf) {
-                Ok(n) if n > 0 => {
-                    let output = String::from_utf8_lossy(&buf[..n]);
-                    let trimmed = output.trim();
-                    if trimmed.is_empty() {
-                        None
-                    } else {
-                        Some(format!(
-                            "Installer stderr output:\n{trimmed}\n\n\
-                             Hint: use `--installer-debug` for full output"
-                        ))
+    // An installer that classified its error has already said what went wrong, and its log holds
+    // the rest. Its stderr would only print the installer's own warnings and progress above that.
+    let stderr_context = if classified_by_installer(&err) {
+        None
+    } else {
+        match std::fs::File::open(stderr_log_path.as_path()) {
+            Ok(mut file) => {
+                let mut buf = vec![0u8; MAX_STDERR_BYTES];
+                match file.read(&mut buf) {
+                    Ok(n) if n > 0 => {
+                        let output = String::from_utf8_lossy(&buf[..n]);
+                        let trimmed = output.trim();
+                        if trimmed.is_empty() {
+                            None
+                        } else {
+                            Some(format!(
+                                "Installer stderr output:\n{trimmed}\n\n\
+                                 Hint: use `--installer-debug` for full output"
+                            ))
+                        }
                     }
+                    _ => None,
                 }
-                _ => None,
             }
+            Err(_) => None,
         }
-        Err(_) => None,
     };
 
     let mut context_parts = Vec::new();
@@ -1070,6 +1080,18 @@ fn append_installer_context(
     context_parts.push(format!("See installer logs at: {log_location}"));
 
     err.context(context_parts.join("\n"))
+}
+
+/// `send_file` tags an error that the installer sent with a category with one of these.
+fn classified_by_installer(err: &buck2_error::Error) -> bool {
+    [
+        ErrorTag::InstallerUnknown,
+        ErrorTag::InstallerTier0,
+        ErrorTag::InstallerInput,
+        ErrorTag::InstallerEnvironment,
+    ]
+    .into_iter()
+    .any(|tag| err.has_tag(tag))
 }
 
 #[derive(Debug)]

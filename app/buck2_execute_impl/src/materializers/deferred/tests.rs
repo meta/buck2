@@ -878,6 +878,68 @@ pub(crate) mod state_machine {
     }
 
     #[tokio::test]
+    async fn test_fill_keeps_what_prepare_outputs_displaced() -> buck2_error::Result<()> {
+        ignore_stack_overflow_checks_for_future(async {
+            let io = Arc::new(StubIoHandler::new(temp_root()));
+            let path = make_path("foo/bar");
+            let copy = make_path("foo/copy");
+            let value = ArtifactValue::file(io.digest_config().empty_file());
+            let (dm, _daemon_dispatcher_events) = make_materializer(io.dupe(), None).await;
+            let cancellations = CancellationContext::testing();
+            let fill = async |lease: &WriteLease, path: &ProjectRelativePathBuf, from| {
+                dm.fill(
+                    lease,
+                    path.clone(),
+                    value.dupe(),
+                    from,
+                    RemoteExecutorUseCase::buck2_default(),
+                    &cancellations,
+                )
+                .await
+            };
+
+            // Materialized at the path: the lease keeps what it forgot, and the fill keeps it.
+            let lease = dm.prepare_outputs(vec![path.clone()]).await?;
+            dm.declare_existing(
+                &lease,
+                vec![DeclareArtifactPayload {
+                    path: path.clone(),
+                    artifact: value.dupe(),
+                }],
+            )
+            .await?;
+            drop(lease);
+            io.take_log();
+            let lease = dm.prepare_outputs(vec![path.clone()]).await?;
+            fill(&lease, &path, None).await?;
+            assert_eq!(io.take_log(), &[]);
+            drop(lease);
+
+            // Nothing known at the path any more: declared from the CAS and materialized.
+            let lease = dm.prepare_outputs(vec![path.clone()]).await?;
+            fill(&lease, &path, None).await?;
+            assert_eq!(
+                io.take_log(),
+                &[(Op::Clean, path.clone()), (Op::Materialize, path.clone())]
+            );
+            drop(lease);
+
+            // With a source: a copy from it.
+            let lease = dm.prepare_outputs(vec![copy.clone()]).await?;
+            fill(&lease, &copy, Some(path.clone())).await?;
+            assert_eq!(
+                io.take_log(),
+                &[(Op::Clean, copy.clone()), (Op::Materialize, copy.clone())]
+            );
+            drop(lease);
+
+            dm.abort();
+            Ok(())
+        })
+        .await
+    }
+
+    #[tokio::test]
     async fn test_declare_reuse() -> buck2_error::Result<()> {
         ignore_stack_overflow_checks_for_future(async {
             let (mut dm, _) = make_processor(Default::default());
@@ -1320,7 +1382,7 @@ pub(crate) mod state_machine {
                 EventDispatcher::null(),
                 None,
             ));
-            receiver.await?.await?;
+            receiver.await?.1.await?;
             assert_eq!(*dm.stats.sizes.read(), MaterializerSizeStats::default());
 
             Ok(())

@@ -221,6 +221,9 @@ pub(crate) struct Grant {
     /// root, still running unless they were already cancelled. The holder sees them to their end
     /// before it writes.
     pub(crate) tasks: Vec<Task>,
+    /// For a write: what was tracked at exactly the root before the grant untracked it. `None`
+    /// when nothing was, including a root that had been expanded into roots below it.
+    pub(crate) displaced: Option<DiskEntry>,
 }
 
 /// What an operation did: the grants it produced, each with the reply handle its requester left,
@@ -1090,23 +1093,30 @@ impl<R> DiskTree<R> {
     /// the tasks running on overlapping paths; a read bumps the access time.
     fn grant(&mut self, root: Root, change: &mut TreeChange) -> Grant {
         self.insert_lease(&root.path, root.mode);
-        let (hold, tasks) = match root.mode {
+        let (hold, tasks, displaced) = match root.mode {
             Mode::Read => {
                 if let Some(touched) = self.touch(&root.path, Timestamp::now()) {
                     change.touched.push(touched);
                 }
-                (Hold::Read(ReadHold(root.path)), Vec::new())
+                (Hold::Read(ReadHold(root.path)), Vec::new(), None)
             }
             Mode::Write => {
-                change.extend(self.untrack_except(&root.path, &root.exclusions));
+                let untracked = self.untrack_except(&root.path, &root.exclusions);
+                let displaced = untracked
+                    .removed
+                    .iter()
+                    .find(|(path, _)| *path == root.path)
+                    .map(|(_, tracked)| tracked.entry.dupe());
+                change.extend(untracked);
                 let tasks = self.take_tasks_around(&root.path);
-                (Hold::Write(WriteHold(root.path)), tasks)
+                (Hold::Write(WriteHold(root.path)), tasks, displaced)
             }
         };
         Grant {
             hold,
             exclusions: root.exclusions,
             tasks,
+            displaced,
         }
     }
 
@@ -1451,6 +1461,7 @@ mod tests {
         mode: Mode,
         exclusions: Vec<ProjectRelativePathBuf>,
         tasks: Vec<Task>,
+        displaced: Option<DiskEntry>,
     }
 
     /// A tree with the holds of its requests, by label, so that a test releases and reports by
@@ -1533,6 +1544,7 @@ mod tests {
                 mode,
                 exclusions: grant.exclusions,
                 tasks: grant.tasks,
+                displaced: grant.displaced,
             }
         }
 
@@ -1741,6 +1753,24 @@ mod tests {
         h.report(0, dir(&[("x", "X")]));
         assert_eq!(roots(&h.tree), vec!["d", "e"]);
         h.finish();
+    }
+
+    #[test]
+    fn test_a_write_grant_carries_what_it_displaced() {
+        let mut h = Harness::with(&[("a", "a")]);
+        h.tree
+            .load(path("d"), tracked(dir(&[("x", "x"), ("y", "y")])));
+        // A tracked root: its entry.
+        let displaced = h.granted(0, "a", Want::Write).displaced;
+        assert!(displaced.is_some_and(|entry| entry.matches(&file("a"))));
+        // Nothing tracked: nothing.
+        assert!(h.granted(1, "b", Want::Write).displaced.is_none());
+        // Inside a tracked directory: what the directory held there, the directory expanded.
+        let displaced = h.granted(2, "d/x", Want::Write).displaced;
+        assert!(displaced.is_some_and(|entry| entry.matches(&file("x"))));
+        h.release(2);
+        // The directory, expanded into the roots below it: nothing at exactly the root.
+        assert!(h.granted(3, "d", Want::Write).displaced.is_none());
     }
 
     #[test]

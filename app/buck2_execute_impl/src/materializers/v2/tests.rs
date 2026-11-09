@@ -53,6 +53,7 @@ use buck2_fs::paths::forward_rel_path::ForwardRelativePath;
 use buck2_hash::BuckMutMap;
 use buck2_hash::IntentionallyStdHashMap;
 use buck2_util::threads::ignore_stack_overflow_checks_for_future;
+use dice_futures::cancellation::CancellationContext;
 use dupe::Dupe;
 use jiff::SignedDuration;
 use jiff::Timestamp;
@@ -839,6 +840,63 @@ async fn test_a_request_holds_its_outputs_for_writing() -> buck2_error::Result<(
                 .await
                 .unwrap()?,
         );
+        abort(dm);
+        Ok(())
+    })
+    .await
+}
+
+#[tokio::test]
+async fn test_fill_keeps_a_matching_root_and_remakes_any_other() -> buck2_error::Result<()> {
+    ignore_stack_overflow_checks_for_future(async {
+        let temp = ProjectRootTemp::new()?;
+        let fs = temp.path().dupe();
+        let (dm, io) = make(&fs, None, None);
+        let output = path("buck-out/v2/gen/out");
+        let cancellations = CancellationContext::testing();
+        let fill = async |lease: &WriteLease, value: ArtifactValue| {
+            dm.fill(
+                lease,
+                output.clone(),
+                value,
+                None,
+                RemoteExecutorUseCase::buck2_default(),
+                &cancellations,
+            )
+            .await
+        };
+
+        // Tracked with the wanted content: kept, nothing fetched; the run reports it again.
+        fs.write_file(&output, "old", false)?;
+        drop(report(&dm, &output, file("old")).await?);
+        io.take_log();
+        let lease = dm.prepare_outputs(vec![output.clone()]).await?;
+        fill(&lease, file("old")).await?;
+        assert_eq!(io.take_log(), vec![]);
+        assert_eq!(std::fs::read_to_string(fs.resolve(&output))?, "old");
+        dm.declare_existing(
+            &lease,
+            vec![DeclareArtifactPayload {
+                path: output.clone(),
+                artifact: file("old"),
+            }],
+        )
+        .await?;
+        drop(lease);
+
+        // Tracked with other content: replaced.
+        let lease = dm.prepare_outputs(vec![output.clone()]).await?;
+        fill(&lease, file("new")).await?;
+        assert_eq!(io.take_log(), vec![(Op::Materialize, output.clone())]);
+        drop(lease);
+
+        // Untracked, whatever is there: replaced, what was there gone first.
+        let lease = dm.prepare_outputs(vec![output.clone()]).await?;
+        fs.write_file(&output, "left behind", false)?;
+        fill(&lease, file("new")).await?;
+        assert_eq!(io.take_log(), vec![(Op::Materialize, output.clone())]);
+        assert!(!fs.resolve(&output).exists());
+        drop(lease);
         abort(dm);
         Ok(())
     })

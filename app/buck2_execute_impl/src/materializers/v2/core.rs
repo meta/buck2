@@ -56,6 +56,7 @@ use allocative::FlameGraphBuilder;
 use async_trait::async_trait;
 use buck2_common::file_ops::metadata::FileDigest;
 use buck2_common::file_ops::metadata::TrackedFileDigest;
+use buck2_core::execution_types::executor_config::RemoteExecutorUseCase;
 use buck2_core::fs::project::ProjectRoot;
 use buck2_core::fs::project_rel_path::ProjectRelativePath;
 use buck2_core::fs::project_rel_path::ProjectRelativePathBuf;
@@ -859,6 +860,51 @@ impl<T: IoHandler + Allocative> Materializer for DiskStateMaterializer<T> {
             .await
     }
 
+    async fn fill(
+        &self,
+        lease: &WriteLease,
+        path: ProjectRelativePathBuf,
+        value: ArtifactValue,
+        _from: Option<ProjectRelativePathBuf>,
+        re_use_case: RemoteExecutorUseCase,
+        cancellations: &CancellationContext,
+    ) -> buck2_error::Result<()> {
+        let guard = self.roots_of(lease)?.at(&path).ok_or_else(|| {
+            internal_error!("`{path}` is not a root of the lease it is filled under")
+        })?;
+        if !guard.holds_for_writing() {
+            return Err(internal_error!("`{path}` is not held for writing"));
+        }
+        let entry = value.entry().dupe();
+        if guard
+            .take_displaced()
+            .is_some_and(|displaced| displaced.matches(&entry))
+        {
+            return Ok(());
+        }
+        // The download of a content root with nothing excluded and no report at its end: what is
+        // there goes, and the content comes from the store, a tracked path or the CAS.
+        download_task(
+            self.io.dupe(),
+            self.blocking_executor.dupe(),
+            self.store,
+            self.index.dupe(),
+            self.sender.dupe(),
+            path,
+            entry,
+            Vec::new(),
+            Arc::new(CasDownloadInfo::new_tracked(re_use_case)),
+            get_dispatcher(),
+        )(cancellations)
+        .await
+        .map_err(|e| match e {
+            SharedMaterializingError::Error(e) => e,
+            SharedMaterializingError::NotFound(source) => {
+                MaterializationError::NotFound { source }.into()
+            }
+        })
+    }
+
     async fn publish(
         &self,
         lease: &WriteLease,
@@ -1597,6 +1643,9 @@ pub(crate) struct RootGuard {
     path: ProjectRelativePathBuf,
     /// Empty while a report is in flight, and once released.
     hold: Mutex<Option<Hold>>,
+    /// For a write grant: what was tracked at the root when the grant untracked it, until a
+    /// fill takes it.
+    displaced: Mutex<Option<DiskEntry>>,
 }
 
 impl RootGuard {
@@ -1606,6 +1655,10 @@ impl RootGuard {
 
     fn holds_for_writing(&self) -> bool {
         matches!(&*self.hold.lock(), Some(Hold::Write(_)))
+    }
+
+    fn take_displaced(&self) -> Option<DiskEntry> {
+        self.displaced.lock().take()
     }
 
     /// Takes the write hold out, for a report.
@@ -2171,6 +2224,7 @@ impl Processor {
             sender: self.sender.dupe(),
             path: hold.path().to_buf(),
             hold: Mutex::new(Some(Hold::Read(hold))),
+            displaced: Mutex::new(None),
         }
     }
 
@@ -2222,6 +2276,7 @@ impl Processor {
                     sender: self.sender.dupe(),
                     path: grant.hold.path().to_buf(),
                     hold: Mutex::new(Some(grant.hold)),
+                    displaced: Mutex::new(grant.displaced),
                 }),
                 tasks: grant.tasks,
             },

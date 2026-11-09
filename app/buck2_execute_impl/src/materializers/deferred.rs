@@ -36,6 +36,7 @@ use buck2_common::file_ops::metadata::FileDigest;
 use buck2_common::file_ops::metadata::FileMetadata;
 use buck2_common::file_ops::metadata::TrackedFileDigest;
 use buck2_common::liveliness_observer::LivelinessGuard;
+use buck2_core::execution_types::executor_config::RemoteExecutorUseCase;
 use buck2_core::fs::project::ProjectRoot;
 use buck2_core::fs::project_rel_path::ProjectRelativePathBuf;
 use buck2_directory::directory::directory::Directory;
@@ -74,6 +75,7 @@ use buck2_execute::materialize::materializer::ReadLease;
 use buck2_execute::materialize::materializer::WriteLease;
 use buck2_execute::materialize::materializer::WriteRequest;
 use buck2_execute::re::manager::ReConnectionManager;
+use buck2_hash::BuckMutMap;
 use buck2_hash::BuckMutSet;
 use buck2_util::threads::thread_spawn;
 use derivative::Derivative;
@@ -91,10 +93,13 @@ use tokio::sync::Notify;
 use tokio::sync::mpsc;
 use tokio::sync::oneshot;
 
+use crate::materializers::deferred::artifact_tree::ArtifactMetadata;
 use crate::materializers::deferred::artifact_tree::ArtifactTree;
 use crate::materializers::deferred::artifact_tree::Version;
+use crate::materializers::deferred::artifact_tree::artifact_metadata_matches_entry;
 use crate::materializers::deferred::clean_stale::CleanStaleConfig;
 use crate::materializers::deferred::command_processor::DeferredMaterializerCommandProcessor;
+use crate::materializers::deferred::command_processor::Displaced;
 use crate::materializers::deferred::command_processor::LowPriorityMaterializerCommand;
 use crate::materializers::deferred::command_processor::MaterializerCommand;
 use crate::materializers::deferred::file_tree::FileTree;
@@ -447,6 +452,12 @@ impl From<MaterializeEntryError> for SharedMaterializingError {
     }
 }
 
+/// What a write lease of this core carries: the content that was materialized at each of its
+/// paths when `prepare_outputs` forgot them, for a fill to keep rather than remake.
+struct PreparedOutputs {
+    displaced: Mutex<BuckMutMap<ProjectRelativePathBuf, ArtifactMetadata>>,
+}
+
 #[async_trait]
 impl<T: IoHandler + Allocative> Materializer for DeferredMaterializerAccessor<T> {
     async fn prevent_background_cleanup(&self) -> MaterializerBackgroundCleanupGuard {
@@ -691,8 +702,10 @@ impl<T: IoHandler + Allocative> Materializer for DeferredMaterializerAccessor<T>
         &self,
         paths: Vec<ProjectRelativePathBuf>,
     ) -> buck2_error::Result<WriteLease> {
-        self.invalidate_many(paths).await?;
-        Ok(WriteLease::noop())
+        let displaced = self.invalidate_many(paths).await?;
+        Ok(WriteLease::new(PreparedOutputs {
+            displaced: Mutex::new(displaced.into_iter().collect()),
+        }))
     }
 
     /// This materializer neither shares an inode with buck-out nor makes a file read-only.
@@ -701,6 +714,59 @@ impl<T: IoHandler + Allocative> Materializer for DeferredMaterializerAccessor<T>
         paths: Vec<ProjectRelativePathBuf>,
     ) -> buck2_error::Result<()> {
         self.io.make_outputs_writable(paths).await
+    }
+
+    async fn fill(
+        &self,
+        lease: &WriteLease,
+        path: ProjectRelativePathBuf,
+        value: ArtifactValue,
+        from: Option<ProjectRelativePathBuf>,
+        re_use_case: RemoteExecutorUseCase,
+        _cancellations: &CancellationContext,
+    ) -> buck2_error::Result<()> {
+        let displaced = lease
+            .guard()
+            .and_then(|guard| guard.downcast_ref::<PreparedOutputs>())
+            .and_then(|outputs| outputs.displaced.lock().remove(&path));
+        if displaced
+            .is_some_and(|displaced| artifact_metadata_matches_entry(&displaced, value.entry()))
+        {
+            return Ok(());
+        }
+        let materializer: &dyn Materializer = self;
+        // A source this core knows is copied; one it does not, a content path a previous daemon
+        // left and this one never materialized, say, would fail the copy, and the CAS has the
+        // content if anything does.
+        match from {
+            Some(from) if materializer.has_artifact_at(from.clone()).await? => {
+                materializer
+                    .declare_copy(
+                        path.clone(),
+                        value.dupe(),
+                        vec![CopiedArtifact::new(
+                            from,
+                            path.clone(),
+                            value.entry().dupe().map_dir(|d| d.as_immutable()),
+                            None,
+                        )],
+                    )
+                    .await?
+            }
+            _ => {
+                materializer
+                    .declare_cas_many(
+                        Arc::new(CasDownloadInfo::new_declared(re_use_case)),
+                        vec![DeclareArtifactPayload {
+                            path: path.clone(),
+                            artifact: value,
+                        }],
+                    )
+                    .await?
+            }
+        }
+        self.ensure_materialized(vec![path], MaterializationPurpose::IntermediateOnly)
+            .await
     }
 
     async fn publish(
@@ -887,11 +953,12 @@ impl<T: IoHandler + Allocative> Materializer for DeferredMaterializerAccessor<T>
 }
 
 impl<T: IoHandler + Allocative> DeferredMaterializerAccessor<T> {
-    /// Stops tracking `paths`. Whatever is on disk there is left alone.
+    /// Stops tracking `paths`, leaving whatever is on disk there alone, and returns what was
+    /// materialized at exactly each of them.
     pub(crate) async fn invalidate_many(
         &self,
         paths: Vec<ProjectRelativePathBuf>,
-    ) -> buck2_error::Result<()> {
+    ) -> buck2_error::Result<Displaced> {
         let (sender, recv) = oneshot::channel();
 
         self.command_sender
@@ -903,8 +970,9 @@ impl<T: IoHandler + Allocative> DeferredMaterializerAccessor<T> {
             ))?;
 
         // Wait on future to finish before invalidation can continue.
-        let invalidate_fut = recv.await?;
-        invalidate_fut.await
+        let (displaced, invalidate_fut) = recv.await?;
+        invalidate_fut.await?;
+        Ok(displaced)
     }
 
     /// Spawns the command loop. Dropping the accessor stops the loop; outstanding I/O retains

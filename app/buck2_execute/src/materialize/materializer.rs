@@ -26,6 +26,7 @@ use buck2_error::ErrorTag;
 use buck2_events::dispatch::EventDispatcher;
 use derive_more::Display;
 use dice::UserComputationData;
+use dice_futures::cancellation::CancellationContext;
 use dupe::Dupe;
 use futures::stream::BoxStream;
 use futures::stream::TryStreamExt;
@@ -409,6 +410,24 @@ pub trait Materializer: Allocative + Send + Sync + 'static {
     async fn make_outputs_writable(
         &self,
         paths: Vec<ProjectRelativePathBuf>,
+    ) -> buck2_error::Result<()>;
+
+    /// Puts `value`'s content at `path`, which the caller holds `lease` for in write mode, unless
+    /// the path held exactly that content when the lease took it: an incremental action's
+    /// previous output, which its run writes in place. Whatever else is at the path goes first.
+    /// The content is not tracked: it is the caller's, as its own writes are, until the caller
+    /// reports the path. `from` names a path that held the content when the caller last saw it;
+    /// a materializer that copies by declaration (the deferred core) copies from there, one that
+    /// finds content by digest (the disk-state core) needs no hint. Once it writes, the fill runs
+    /// to its end whatever `cancellations` asks, so that the path is never left half-written.
+    async fn fill(
+        &self,
+        lease: &WriteLease,
+        path: ProjectRelativePathBuf,
+        value: ArtifactValue,
+        from: Option<ProjectRelativePathBuf>,
+        re_use_case: RemoteExecutorUseCase,
+        cancellations: &CancellationContext,
     ) -> buck2_error::Result<()>;
 
     /// Makes the untracked content an action produced at `src`, which it holds `lease` for, the

@@ -212,6 +212,7 @@ mod tests {
             dir.to_owned(),
             BTreeMap::new(),
             false,
+            false,
         )
     }
 

@@ -226,6 +226,7 @@ mod tests {
             std::env::temp_dir(),
             [("PATH".into(), std::env::var_os("PATH").unwrap_or_default())].into(),
             false,
+            false,
         )
     }
 

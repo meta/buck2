@@ -504,6 +504,7 @@ mod tests {
                 dir.to_owned(),
                 BTreeMap::new(),
                 false,
+                false,
             );
             LspClient::start(buck.command(&["-c", script]), dir.to_owned())
         }

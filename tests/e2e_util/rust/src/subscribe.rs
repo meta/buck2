@@ -134,6 +134,7 @@ mod tests {
             dir.to_owned(),
             BTreeMap::new(),
             false,
+            false,
         );
         SubscribeClient::start(buck.command(&["-c", script]))
     }

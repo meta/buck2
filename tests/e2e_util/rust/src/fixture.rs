@@ -44,6 +44,7 @@ pub struct BuckTest {
     skip_for_materializer: Vec<String>,
     allow_soft_errors: bool,
     allow_daemon_panics: bool,
+    strict_leases: bool,
     extra_buck_config: Vec<(String, String, String)>,
     skip_final_kill: bool,
     setup_eden: bool,
@@ -64,6 +65,7 @@ impl BuckTest {
             skip_for_materializer: Vec::new(),
             allow_soft_errors: false,
             allow_daemon_panics: false,
+            strict_leases: true,
             extra_buck_config: Vec::new(),
             skip_final_kill: false,
             setup_eden: false,
@@ -114,6 +116,15 @@ impl BuckTest {
     /// daemon, since `BUCK2_HARD_ERROR` turns those into panics.
     pub fn allow_daemon_panics(mut self, allow_daemon_panics: bool) -> Self {
         self.allow_daemon_panics = allow_daemon_panics;
+        self
+    }
+
+    /// Whether a disk-state twin takes a root off disk the moment its last lease drops, so that a
+    /// reader without one fails here rather than by chance in use. On by default; off for a test
+    /// whose premise is that unleased outputs stay on disk, such as a persisted cache entry served
+    /// across a daemon restart.
+    pub fn strict_leases(mut self, strict_leases: bool) -> Self {
+        self.strict_leases = strict_leases;
         self
     }
 
@@ -432,17 +443,19 @@ impl BuckTest {
         extra_config.push_str("[buck2]\nreadonly_outputs = true\n");
         // A target variant can run its suite against another materializer implementation; see
         // `buck2_core_tests`.
-        match std::env::var("BUCK2_TEST_MATERIALIZER").ok().as_deref() {
-            None => {}
+        let disk_state_materializer = match std::env::var("BUCK2_TEST_MATERIALIZER").ok().as_deref()
+        {
+            None => false,
             Some("v2") => {
                 // Every `ROLLOUT_VERSION` is at least 0.
                 extra_config.push_str("[buck2]\nmaterializer_v2_version = 0\n");
-                // The disk-state twins run strict: a root leaves disk the moment its last lease
-                // does, so a reader without one fails here rather than by chance in use.
-                extra_config.push_str("[buck2]\nmaterializer_strict_leases = true\n");
+                if self.strict_leases {
+                    extra_config.push_str("[buck2]\nmaterializer_strict_leases = true\n");
+                }
+                true
             }
             Some(other) => anyhow::bail!("Unknown `BUCK2_TEST_MATERIALIZER` value `{other}`"),
-        }
+        };
         for (section, key, value) in &self.extra_buck_config {
             extra_config.push_str(&format!("[{section}]\n{key} = {value}\n"));
         }
@@ -465,6 +478,7 @@ impl BuckTest {
             cwd,
             env,
             self.write_invocation_record,
+            disk_state_materializer,
         );
         if let Some(isolation_prefix) = isolation_prefix {
             buck.set_isolation_prefix(isolation_prefix);

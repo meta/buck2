@@ -39,6 +39,7 @@ pub struct Buck {
     env: BTreeMap<OsString, OsString>,
     isolation_prefix: Option<String>,
     write_invocation_record: bool,
+    disk_state_materializer: bool,
 }
 
 macro_rules! subcommands {
@@ -58,6 +59,7 @@ impl Buck {
         cwd: PathBuf,
         env: BTreeMap<OsString, OsString>,
         write_invocation_record: bool,
+        disk_state_materializer: bool,
     ) -> Self {
         let mut buck = Self {
             executable,
@@ -65,9 +67,16 @@ impl Buck {
             env,
             isolation_prefix: None,
             write_invocation_record,
+            disk_state_materializer,
         };
         buck.set_env("NO_BUCKD", "0");
         buck
+    }
+
+    /// Whether commands run against the disk-state materializer, for an assertion on one
+    /// implementation's own state in a test that runs under both; see `buck2_core_tests`.
+    pub fn disk_state_materializer(&self) -> bool {
+        self.disk_state_materializer
     }
 
     /// The project directory commands run in.
@@ -544,6 +553,7 @@ mod tests {
             PathBuf::from("/project"),
             BTreeMap::new(),
             write_invocation_record,
+            false,
         )
     }
 

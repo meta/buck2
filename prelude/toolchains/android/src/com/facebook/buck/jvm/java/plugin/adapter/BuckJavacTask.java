@@ -11,6 +11,7 @@
 package com.facebook.buck.jvm.java.plugin.adapter;
 
 import com.facebook.buck.jvm.java.lang.model.ElementsExtended;
+import com.facebook.infer.annotation.Nullsafe;
 import com.sun.source.util.JavacTask;
 import com.sun.source.util.TaskEvent;
 import com.sun.source.util.TaskListener;
@@ -21,6 +22,7 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 import java.util.function.Consumer;
 import javax.lang.model.element.Element;
@@ -36,6 +38,7 @@ import org.jspecify.annotations.Nullable;
  *   <li>Wraps {@link Elements} with some extended functionality
  * </ul>
  */
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public class BuckJavacTask extends JavacTaskWrapper {
   private final Map<BuckJavacPlugin, String[]> pluginsAndArgs = new LinkedHashMap<>();
   private final MultiplexingTaskListener taskListeners = new MultiplexingTaskListener();
@@ -74,7 +77,7 @@ public class BuckJavacTask extends JavacTaskWrapper {
       @SuppressWarnings("unchecked")
       Iterable<? extends Element> result =
           (Iterable<? extends Element>) inner.getClass().getMethod("enter").invoke(inner);
-      return result;
+      return Objects.requireNonNull(result);
     } catch (IllegalAccessException | NoSuchMethodException e) {
       throw new RuntimeException(e);
     } catch (InvocationTargetException e) {

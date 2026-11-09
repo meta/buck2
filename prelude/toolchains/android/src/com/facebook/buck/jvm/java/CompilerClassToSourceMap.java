@@ -11,6 +11,7 @@
 package com.facebook.buck.jvm.java;
 
 import com.facebook.buck.util.json.ObjectMappers;
+import com.facebook.infer.annotation.Nullsafe;
 import com.fasterxml.jackson.core.type.TypeReference;
 import java.io.IOException;
 import java.nio.file.Files;
@@ -28,6 +29,7 @@ import java.util.stream.Collectors;
  * Compiler output paths relative to the classes directory, and their source paths relative to the
  * cell.
  */
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public final class CompilerClassToSourceMap {
   public static final String JAVA_FILE_NAME = "java-class-to-source.json";
   public static final String KOTLIN_FILE_NAME = "kotlin-class-to-source.json";
@@ -61,7 +63,7 @@ public final class CompilerClassToSourceMap {
   }
 
   public void write(Path output) throws IOException {
-    Files.createDirectories(output.toAbsolutePath().getParent());
+    Files.createDirectories(Objects.requireNonNull(output.toAbsolutePath().getParent()));
     ObjectMappers.WRITER.writeValue(output.toFile(), entries);
   }
 

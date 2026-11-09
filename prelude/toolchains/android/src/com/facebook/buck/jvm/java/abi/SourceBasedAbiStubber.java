@@ -17,6 +17,7 @@ import com.facebook.buck.jvm.java.plugin.api.PluginClassLoader;
 import java.lang.reflect.Constructor;
 import java.util.function.Supplier;
 import javax.tools.Diagnostic;
+import org.jspecify.annotations.Nullable;
 
 public final class SourceBasedAbiStubber {
   public static BuckJavacTaskListener newInheritedMemberTypeValidatingTaskListener(
@@ -24,7 +25,7 @@ public final class SourceBasedAbiStubber {
       BuckJavacTaskProxy task,
       SourceOnlyAbiRuleInfo ruleInfo,
       Supplier<Boolean> errorsExist,
-      Diagnostic.Kind messageKind) {
+      Diagnostic.@Nullable Kind messageKind) {
     try {
       String className = "com.facebook.buck.jvm.java.abi.source.ValidatingTaskListener";
       Class<?> validatingTaskListenerClass = pluginLoader.loadClass(className, Object.class);

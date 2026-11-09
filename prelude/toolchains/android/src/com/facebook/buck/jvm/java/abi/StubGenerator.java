@@ -32,7 +32,7 @@ public class StubGenerator {
   private final boolean includeParameterMetadata;
   private final boolean keepSynthetic;
 
-  private final AbsPath classOutputPath;
+  @Nullable private final AbsPath classOutputPath;
 
   public StubGenerator(
       SourceVersion version,
@@ -43,7 +43,7 @@ public class StubGenerator {
       AbiGenerationMode abiCompatibilityMode,
       boolean includeParameterMetadata,
       boolean keepSynthetic,
-      AbsPath classOutputPath) {
+      @Nullable AbsPath classOutputPath) {
     this.version = version;
     this.elements = elements;
     this.types = types;

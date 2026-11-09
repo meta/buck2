@@ -10,6 +10,7 @@
 
 package com.facebook.buck.jvm.java;
 
+import com.facebook.infer.annotation.Nullsafe;
 import com.google.common.hash.Hashing;
 import com.google.common.hash.HashingInputStream;
 import com.google.common.io.ByteStreams;
@@ -31,6 +32,7 @@ import org.objectweb.asm.ClassVisitor;
 import org.objectweb.asm.util.Textifier;
 import org.objectweb.asm.util.TraceClassVisitor;
 
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public class JarDumper {
   private int asmFlags = 0;
 

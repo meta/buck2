@@ -13,6 +13,7 @@ package com.facebook.buck.jvm.java.plugin.adapter;
 import com.facebook.buck.jvm.java.lang.model.BridgeMethod;
 import com.facebook.buck.jvm.java.lang.model.ElementsExtended;
 import com.facebook.buck.jvm.java.lang.model.MoreElements;
+import com.facebook.infer.annotation.Nullsafe;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
@@ -29,6 +30,7 @@ import javax.lang.model.type.TypeMirror;
 import javax.lang.model.util.ElementFilter;
 import javax.lang.model.util.Types;
 
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public class BridgeMethods {
   private final Map<TypeElement, List<BridgeMethod>> allBridgeMethods = new HashMap<>();
   private final Map<TypeElement, Map<Name, List<BridgeMethod>>> bridgeMethodsByName =
@@ -149,16 +151,13 @@ public class BridgeMethods {
             // that requires bridge methods to be created if a public class inherits a public method
             // from a non-public supertype.
           } else if (languageResolvedMethod == supertypeMethod
-              && languageResolvedMethod.getEnclosingElement() != subclass
-              && !languageResolvedMethod.getModifiers().contains(Modifier.FINAL)
+              && supertypeMethod.getEnclosingElement() != subclass
+              && !supertypeMethod.getModifiers().contains(Modifier.FINAL)
               && !supertypeMethod.getModifiers().contains(Modifier.ABSTRACT)
               && !supertypeMethod.getModifiers().contains(Modifier.DEFAULT)
               && supertypeMethod.getModifiers().contains(Modifier.PUBLIC)
               && subclass.getModifiers().contains(Modifier.PUBLIC)
-              && !languageResolvedMethod
-                  .getEnclosingElement()
-                  .getModifiers()
-                  .contains(Modifier.PUBLIC)) {
+              && !supertypeMethod.getEnclosingElement().getModifiers().contains(Modifier.PUBLIC)) {
             bridgesNeeded.add(new BridgeMethod(supertypeMethod, supertypeMethod));
           }
         }

@@ -10,6 +10,7 @@
 
 package com.facebook.buck.jvm.java.lang.model;
 
+import com.facebook.infer.annotation.Nullsafe;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
@@ -34,6 +35,7 @@ import org.jspecify.annotations.Nullable;
  * More utility functions for working with {@link Element}s, along the lines of those found on
  * {@link javax.lang.model.util.Elements}.
  */
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public final class MoreElements {
 
   private MoreElements() {}

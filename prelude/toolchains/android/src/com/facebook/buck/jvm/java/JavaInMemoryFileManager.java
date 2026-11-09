@@ -83,7 +83,7 @@ public class JavaInMemoryFileManager extends ForwardingJavaFileManager<StandardJ
 
   @Override
   public JavaFileObject getJavaFileForOutput(
-      Location location, String className, JavaFileObject.Kind kind, FileObject sibling)
+      Location location, String className, JavaFileObject.Kind kind, @Nullable FileObject sibling)
       throws IOException {
     // Use the normal FileObject that writes to the disk for source files.
     if (shouldDelegate(location)) {
@@ -108,7 +108,7 @@ public class JavaInMemoryFileManager extends ForwardingJavaFileManager<StandardJ
 
   @Override
   public FileObject getFileForOutput(
-      Location location, String packageName, String relativeName, FileObject sibling)
+      Location location, String packageName, String relativeName, @Nullable FileObject sibling)
       throws IOException {
     if (shouldDelegate(location)) {
       return delegate.getFileForOutput(location, packageName, relativeName, sibling);

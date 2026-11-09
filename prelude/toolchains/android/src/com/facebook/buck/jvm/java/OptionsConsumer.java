@@ -10,8 +10,10 @@
 
 package com.facebook.buck.jvm.java;
 
+import com.facebook.infer.annotation.Nullsafe;
 import java.util.Collection;
 
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public interface OptionsConsumer {
   void addOptionValue(String option, String value);
 

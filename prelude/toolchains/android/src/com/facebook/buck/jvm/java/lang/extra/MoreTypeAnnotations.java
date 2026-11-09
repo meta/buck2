@@ -10,6 +10,7 @@
 
 package com.facebook.buck.jvm.java.lang.extra;
 
+import com.facebook.infer.annotation.Nullsafe;
 import com.sun.tools.javac.code.Attribute;
 import com.sun.tools.javac.code.TypeAnnotationPosition;
 import java.lang.reflect.Constructor;
@@ -30,6 +31,7 @@ import org.objectweb.asm.TypeReference;
  * annotation. It should be compatible with up to JDK 19 but further updates may require revising
  * this code.
  */
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public class MoreTypeAnnotations {
 
   /** Extract and re-encode annotation's position type as ASM's {@link TypeReference}. */
@@ -114,6 +116,7 @@ public class MoreTypeAnnotations {
    * @param encoded binary encoded representation of a type path
    * @return a type path
    */
+  @Nullable
   private static TypePath createTypePath(byte[] encoded) {
     try {
       Constructor<TypePath> ctor = TypePath.class.getDeclaredConstructor(byte[].class, int.class);

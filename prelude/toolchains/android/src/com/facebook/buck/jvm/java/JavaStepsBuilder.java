@@ -19,9 +19,12 @@ import com.facebook.buck.jvm.cd.command.BaseJarCommand;
 import com.facebook.buck.jvm.cd.command.BuildMode;
 import com.facebook.buck.jvm.cd.command.java.BuildJavaCommand;
 import com.facebook.buck.step.isolatedsteps.IsolatedStep;
+import com.facebook.infer.annotation.Nullsafe;
 import com.google.common.collect.ImmutableList;
+import java.util.Objects;
 
 /** Java steps builder */
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public class JavaStepsBuilder implements BuildCommandStepsBuilder {
 
   private final ImmutableList<IsolatedStep> steps;
@@ -115,6 +118,7 @@ public class JavaStepsBuilder implements BuildCommandStepsBuilder {
   private void maybeAddMakeMissingOutputStep(
       BaseJarCommand command, LibraryStepsBuilder javaCompileStepsBuilder) {
 
-    javaCompileStepsBuilder.addMakeMissingOutputsStep(command.getAnnotationPath());
+    javaCompileStepsBuilder.addMakeMissingOutputsStep(
+        Objects.requireNonNull(command.getAnnotationPath()));
   }
 }

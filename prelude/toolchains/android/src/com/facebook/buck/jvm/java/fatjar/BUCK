@@ -33,6 +33,10 @@ buck_java_library(
     srcs = [
         "FatJarMain.java",
     ],
+    provided_deps = [
+        "prelude//toolchains/android/third-party:infer-annotations",
+        "prelude//toolchains/android/third-party:jspecify",
+    ],
     # Maximum compatibility
     # @oss-disable[end= ]: source = "8",
     # @oss-disable[end= ]: target = "8",

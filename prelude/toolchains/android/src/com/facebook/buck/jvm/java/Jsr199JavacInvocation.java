@@ -30,6 +30,7 @@ import com.facebook.buck.jvm.java.plugin.api.BuckJavacTaskProxy;
 import com.facebook.buck.jvm.java.plugin.api.PluginClassLoader;
 import com.facebook.buck.jvm.java.plugin.api.PluginClassLoaderFactory;
 import com.facebook.buck.util.zip.JarBuilder;
+import com.facebook.infer.annotation.Nullsafe;
 import com.google.common.base.Throwables;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableSortedSet;
@@ -65,6 +66,7 @@ import javax.tools.JavaFileObject;
 import javax.tools.StandardJavaFileManager;
 
 /** Jsr199Javac invocation object created during java compilation. */
+@Nullsafe(Nullsafe.Mode.LOCAL)
 class Jsr199JavacInvocation implements ResolvedJavac.Invocation {
 
   private static final Logger LOG = Logger.get(Jsr199JavacInvocation.class);
@@ -271,14 +273,18 @@ class Jsr199JavacInvocation implements ResolvedJavac.Invocation {
                         options.contains("-parameters"),
                         false,
                         isMixedModule
-                            ? abiJarParameters.getEntriesToJar().first().toAbsolutePath()
+                            ? Objects.requireNonNull(abiJarParameters)
+                                .getEntriesToJar()
+                                .first()
+                                .toAbsolutePath()
                             : null);
                 stubGenerator.generate(topLevelTypes);
 
                 if (!isMixedModule) {
-                  jarBuilder.createJarFile(
-                      ProjectFilesystemUtils.getPathForRelativePath(
-                          ruleCellRoot, jarParameters.getJarPath()));
+                  Objects.requireNonNull(jarBuilder)
+                      .createJarFile(
+                          ProjectFilesystemUtils.getPathForRelativePath(
+                              ruleCellRoot, jarParameters.getJarPath()));
                 }
               }
 
@@ -319,9 +325,9 @@ class Jsr199JavacInvocation implements ResolvedJavac.Invocation {
 
       try {
         String threadName = startCompiler(javacTask);
-        return abiResult.get();
+        return Objects.requireNonNull(abiResult.get());
       } catch (ExecutionException e) {
-        Throwables.throwIfUnchecked(e.getCause());
+        Throwables.throwIfUnchecked(Objects.requireNonNull(e.getCause()));
         throw new RuntimeException("Failed to generate abi: %s", e.getCause());
       }
     }
@@ -331,7 +337,7 @@ class Jsr199JavacInvocation implements ResolvedJavac.Invocation {
     }
 
     private void switchToFullJarIfRequested() throws InterruptedException, ExecutionException {
-      if (!shouldCompileFullJar.get()) {
+      if (!Objects.requireNonNull(shouldCompileFullJar.get())) {
         throw new StopCompilation();
       }
     }
@@ -340,9 +346,9 @@ class Jsr199JavacInvocation implements ResolvedJavac.Invocation {
       shouldCompileFullJar.set(true);
       try {
         String threadName = startCompiler(getJavacTask(false));
-        return compilerResult.get();
+        return Objects.requireNonNull(compilerResult.get());
       } catch (ExecutionException e) {
-        Throwables.throwIfUnchecked(e.getCause());
+        Throwables.throwIfUnchecked(Objects.requireNonNull(e.getCause()));
         throw new RuntimeException("Failed to compile", e.getCause());
       }
     }
@@ -425,7 +431,7 @@ class Jsr199JavacInvocation implements ResolvedJavac.Invocation {
       if (compilerThreadName == null) {
         SettableFuture<String> threadName = SettableFuture.create();
         compilerResult.setFuture(executor.submit(() -> runCompilerTask(javacTask, threadName)));
-        compilerThreadName = threadName.get();
+        compilerThreadName = Objects.requireNonNull(threadName.get());
       }
       return compilerThreadName;
     }
@@ -439,8 +445,8 @@ class Jsr199JavacInvocation implements ResolvedJavac.Invocation {
         try {
           success = javacTask.call();
         } catch (IllegalStateException ex) {
-          if (ex.getLocalizedMessage().equals("no source files")
-              || ex.getLocalizedMessage().equals("error: no source files")) {
+          String message = Objects.requireNonNull(ex.getLocalizedMessage());
+          if (message.equals("no source files") || message.equals("error: no source files")) {
             success = true;
           }
         }

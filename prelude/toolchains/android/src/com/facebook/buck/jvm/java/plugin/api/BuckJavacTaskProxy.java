@@ -11,8 +11,10 @@
 package com.facebook.buck.jvm.java.plugin.api;
 
 import com.facebook.buck.jvm.java.lang.model.ElementsExtended;
+import com.facebook.infer.annotation.Nullsafe;
 import java.io.IOException;
 import java.io.Writer;
+import java.util.Objects;
 import java.util.Set;
 import java.util.function.Consumer;
 import javax.annotation.processing.Messager;
@@ -28,6 +30,7 @@ import javax.tools.JavaFileObject;
  * accessible from within Buck's class loader. This interface is used as a proxy within Buck's class
  * loader to allow access to commonly-used methods.
  */
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public interface BuckJavacTaskProxy extends JavaCompiler.CompilationTask {
   static BuckJavacTaskProxy getTask(
       PluginClassLoaderFactory loaderFactory,
@@ -48,7 +51,9 @@ public interface BuckJavacTaskProxy extends JavaCompiler.CompilationTask {
             BuckJavacTaskProxy.class);
 
     try {
-      return proxyImplClass.getConstructor(JavaCompiler.CompilationTask.class).newInstance(task);
+      return Objects.requireNonNull(proxyImplClass)
+          .getConstructor(JavaCompiler.CompilationTask.class)
+          .newInstance(task);
     } catch (ReflectiveOperationException e) {
       throw new RuntimeException(e);
     }

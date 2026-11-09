@@ -43,7 +43,7 @@ public class BaseJavacToJarStepFactory extends BaseCompileToJarStepFactory<JavaE
       ResolvedJavac resolvedJavac,
       @Nullable ActionMetadata actionMetadata,
       JavaExtraParams extraParams,
-      JarParameters abiJarParameters,
+      @Nullable JarParameters abiJarParameters,
       boolean mixedCompilation) {
 
     CompilerOutputPaths outputPath = compilerOutputPathsValue.getByType(invokingRule.getType());

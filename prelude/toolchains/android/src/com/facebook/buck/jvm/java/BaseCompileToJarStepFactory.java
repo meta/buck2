@@ -17,14 +17,17 @@ import com.facebook.buck.step.isolatedsteps.IsolatedStep;
 import com.facebook.buck.step.isolatedsteps.common.MakeCleanDirectoryIsolatedStep;
 import com.facebook.buck.step.isolatedsteps.common.MkdirIsolatedStep;
 import com.facebook.buck.step.isolatedsteps.java.JarDirectoryStep;
+import com.facebook.infer.annotation.Nullsafe;
 import com.google.common.base.Preconditions;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableList.Builder;
 import com.google.common.collect.ImmutableMap;
+import java.util.Objects;
 import java.util.Optional;
 import javax.annotation.Nullable;
 
 /** Provides a base implementation for post compile steps. */
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public abstract class BaseCompileToJarStepFactory<T extends CompileToJarStepFactory.ExtraParams>
     implements CompileToJarStepFactory<T> {
 
@@ -99,7 +102,9 @@ public abstract class BaseCompileToJarStepFactory<T extends CompileToJarStepFact
     steps.addAll(CopyResourcesStep.of(resourcesMap));
 
     if (!emptySources) {
-      steps.add(new MkdirIsolatedStep(outputPaths.getPathToSourcesList().getParent()));
+      steps.add(
+          new MkdirIsolatedStep(
+              Objects.requireNonNull(outputPaths.getPathToSourcesList().getParent())));
       steps.add(new MkdirIsolatedStep(outputPaths.getWorkingDirectory()));
     }
 
@@ -107,7 +112,8 @@ public abstract class BaseCompileToJarStepFactory<T extends CompileToJarStepFact
   }
 
   protected void addJarSetupSteps(JarParameters jarParameters, Builder<IsolatedStep> steps) {
-    steps.add(new MkdirIsolatedStep(jarParameters.getJarPath().getParent()));
+    steps.add(
+        new MkdirIsolatedStep(Objects.requireNonNull(jarParameters.getJarPath().getParent())));
   }
 
   void addJarCreationSteps(
@@ -174,7 +180,7 @@ public abstract class BaseCompileToJarStepFactory<T extends CompileToJarStepFact
       ResolvedJavac resolvedJavac,
       @Nullable ActionMetadata actionMetadata,
       T extraParams,
-      JarParameters abiJarParameters,
+      @Nullable JarParameters abiJarParameters,
       boolean mixedCompilationMode);
 
   public boolean supportsCompilationDaemon() {

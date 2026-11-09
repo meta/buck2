@@ -10,6 +10,7 @@
 
 package com.facebook.buck.jvm.java;
 
+import com.facebook.infer.annotation.Nullsafe;
 import com.google.common.io.CharStreams;
 import java.io.Closeable;
 import java.io.File;
@@ -19,6 +20,7 @@ import java.io.InputStreamReader;
 import java.net.URI;
 import java.net.URISyntaxException;
 import java.nio.charset.StandardCharsets;
+import java.util.Objects;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipFile;
 import javax.annotation.Nullable;
@@ -27,6 +29,7 @@ import javax.tools.JavaCompiler;
 import javax.tools.JavaFileObject;
 import javax.tools.SimpleJavaFileObject;
 
+@Nullsafe(Nullsafe.Mode.LOCAL)
 class ZipEntryJavaFileObject extends SimpleJavaFileObject implements Closeable {
 
   private final ZipFile zipFile;
@@ -65,7 +68,7 @@ class ZipEntryJavaFileObject extends SimpleJavaFileObject implements Closeable {
       return contents;
     }
 
-    try (InputStream inputStream = zipFile.getInputStream(zipEntry);
+    try (InputStream inputStream = Objects.requireNonNull(zipFile.getInputStream(zipEntry));
         InputStreamReader isr = new InputStreamReader(inputStream, StandardCharsets.UTF_8)) {
       contents = CharStreams.toString(isr);
     } catch (IOException e) {

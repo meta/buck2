@@ -10,7 +10,6 @@
 
 use std::cell::RefCell;
 use std::cell::RefMut;
-use std::convert::Infallible;
 use std::fmt;
 use std::fmt::Display;
 use std::fmt::Formatter;
@@ -38,13 +37,11 @@ use starlark::any::ProvidesStaticType;
 use starlark::environment::GlobalsBuilder;
 use starlark::environment::Methods;
 use starlark::environment::MethodsBuilder;
-use starlark::typing::Ty;
 use starlark::values::AllocValue;
 use starlark::values::Heap;
 use starlark::values::NoSerialize;
 use starlark::values::StarlarkValue;
 use starlark::values::Trace;
-use starlark::values::UnpackValue;
 use starlark::values::Value;
 use starlark::values::ValueOf;
 use starlark::values::ValueTyped;
@@ -207,28 +204,6 @@ impl<'v> AllocValue<'v> for AnalysisActions<'v> {
     }
 }
 
-#[allow(dead_code)] // field `0` is never read
-struct RefAnalysisAction<'v>(&'v AnalysisActions<'v>);
-
-impl<'v> StarlarkTypeRepr for RefAnalysisAction<'v> {
-    type Canonical = <AnalysisActions<'v> as StarlarkTypeRepr>::Canonical;
-
-    fn starlark_type_repr() -> Ty {
-        AnalysisActions::starlark_type_repr()
-    }
-}
-
-impl<'v> UnpackValue<'v> for RefAnalysisAction<'v> {
-    type Error = Infallible;
-
-    fn unpack_value_impl(value: Value<'v>) -> Result<Option<Self>, Self::Error> {
-        let Some(analysis_actions) = value.downcast_ref::<AnalysisActions>() else {
-            return Ok(None);
-        };
-        Ok(Some(RefAnalysisAction(analysis_actions)))
-    }
-}
-
 #[derive(ProvidesStaticType, Debug, Trace, NoSerialize, Allocative)]
 pub struct AnalysisContext<'v> {
     attrs: Option<ValueOf<'v, StructRef<'v>>>,
@@ -308,7 +283,7 @@ impl<'v> AnalysisContext<'v> {
 
 starlark::methods_static!(ANALYSIS_CONTEXT_METHODS = analysis_context_methods);
 
-#[starlark_value(type = "AnalysisContext")]
+#[starlark_value(type = "AnalysisContext", StarlarkTypeRepr, UnpackValue)]
 impl<'v> StarlarkValue<'v> for AnalysisContext<'v> {
     fn get_methods() -> Option<&'static Methods> {
         Some(ANALYSIS_CONTEXT_METHODS.methods())
@@ -318,27 +293,6 @@ impl<'v> StarlarkValue<'v> for AnalysisContext<'v> {
 impl<'v> AllocValue<'v> for AnalysisContext<'v> {
     fn alloc_value(self, heap: Heap<'v>) -> Value<'v> {
         heap.alloc_complex_no_freeze(self)
-    }
-}
-
-struct RefAnalysisContext<'v>(&'v AnalysisContext<'v>);
-
-impl<'v> StarlarkTypeRepr for RefAnalysisContext<'v> {
-    type Canonical = <AnalysisContext<'v> as StarlarkTypeRepr>::Canonical;
-
-    fn starlark_type_repr() -> Ty {
-        AnalysisContext::starlark_type_repr()
-    }
-}
-
-impl<'v> UnpackValue<'v> for RefAnalysisContext<'v> {
-    type Error = Infallible;
-
-    fn unpack_value_impl(value: Value<'v>) -> Result<Option<Self>, Self::Error> {
-        let Some(analysis_context) = value.downcast_ref::<AnalysisContext>() else {
-            return Ok(None);
-        };
-        Ok(Some(RefAnalysisContext(analysis_context)))
     }
 }
 
@@ -356,8 +310,8 @@ fn analysis_context_methods(builder: &mut MethodsBuilder) {
     /// As an example, given a rule with the `attrs` argument of `{"foo": attrs.string()}`, this field will be
     /// a `struct` containing a field `foo` of type string.
     #[starlark(attribute)]
-    fn attrs<'v>(this: RefAnalysisContext<'v>) -> starlark::Result<ValueOf<'v, StructRef<'v>>> {
-        Ok(this.0.attrs.ok_or_else(|| {
+    fn attrs<'v>(this: &'v AnalysisContext<'v>) -> starlark::Result<ValueOf<'v, StructRef<'v>>> {
+        Ok(this.attrs.ok_or_else(|| {
             internal_error!("`attrs` is not available for `dynamic_output` or BXL")
         })?)
     }
@@ -366,18 +320,18 @@ fn analysis_context_methods(builder: &mut MethodsBuilder) {
     /// See the `actions` type for the operations that are available.
     #[starlark(attribute)]
     fn actions<'v>(
-        this: RefAnalysisContext<'v>,
+        this: &'v AnalysisContext<'v>,
     ) -> starlark::Result<ValueTyped<'v, AnalysisActions<'v>>> {
-        Ok(this.0.actions)
+        Ok(this.actions)
     }
 
     /// Returns a `label` representing the target, or `None` if being invoked from a
     /// `dynamic_output` in Bxl.
     #[starlark(attribute)]
     fn label<'v>(
-        this: RefAnalysisContext<'v>,
+        this: &'v AnalysisContext<'v>,
     ) -> starlark::Result<NoneOr<ValueTyped<'v, StarlarkConfiguredProvidersLabel>>> {
-        Ok(NoneOr::from_option(this.0.label))
+        Ok(NoneOr::from_option(this.label))
     }
 
     /// An opaque value that can be indexed with a plugin kind to get a list of the available plugin
@@ -385,9 +339,9 @@ fn analysis_context_methods(builder: &mut MethodsBuilder) {
     /// declaration.
     #[starlark(attribute)]
     fn plugins<'v>(
-        this: RefAnalysisContext<'v>,
+        this: &'v AnalysisContext<'v>,
     ) -> starlark::Result<ValueTyped<'v, AnalysisPlugins<'v>>> {
-        Ok(this.0.plugins.ok_or_else(|| {
+        Ok(this.plugins.ok_or_else(|| {
             internal_error!("`plugins` is not available for `dynamic_output` or BXL")
         })?)
     }

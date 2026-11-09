@@ -386,6 +386,7 @@ def prepare_cd_exe(
     extra_jvm_args: list[str],
     extra_jvm_args_target: list[Label],
     java_runtime_version: [int, None],
+    non_worker_jvm_args: list[str] = [],
 ) -> tuple:
     local_only = False
     jvm_args = ["-XX:-MaxFDLimit"] + unsafe_memory_access_jvm_args(java_runtime_version)
@@ -443,7 +444,9 @@ def prepare_cd_exe(
         local_only = True
         jvm_args.extend(["-agentlib:jdwp=transport=dt_socket,server=y,suspend=y,address={}".format(debug_port)])
 
-    non_worker_args = cmd_args([java, jvm_args, "-cp", compiler, "-jar", class_loader_bootstrapper, main_class])
+    # `non_worker_jvm_args` apply only to the one-shot JVM below (remote execution, or no worker), never to a
+    # persistent worker, whose long-lived JVM profits from the full JIT.
+    non_worker_args = cmd_args([java, jvm_args, non_worker_jvm_args, "-cp", compiler, "-jar", class_loader_bootstrapper, main_class])
 
     if local_only or not worker:
         # buck doesn't support the case where remote_worker is provided but worker is not.

@@ -516,6 +516,15 @@ def _encode_kotlin_command(
         incremental_metadata_ignored_inputs_tag = incremental_metadata_ignored_inputs_tag,
     )
 
+def _is_small_compile(srcs: list[Artifact], max_srcs: int) -> bool:
+    if len(srcs) > max_srcs:
+        return False
+    for src in srcs:
+        # A source archive can hold any number of files.
+        if src.extension in (".srcjar", ".zip", ".jar"):
+            return False
+    return True
+
 # buildifier: disable=uninitialized
 # buildifier: disable=unused-variable
 def _define_kotlincd_action(
@@ -564,6 +573,7 @@ def _define_kotlincd_action(
         extra_jvm_args = kotlin_toolchain.kotlincd_jvm_args,
         extra_jvm_args_target = kotlin_toolchain.kotlincd_jvm_args_target,
         java_runtime_version = java_toolchain.java_runtime_version,
+        non_worker_jvm_args = kotlin_toolchain.kotlincd_small_action_jvm_args if _is_small_compile(srcs, kotlin_toolchain.kotlincd_small_action_max_srcs) else [],
     )
 
     args = cmd_args()

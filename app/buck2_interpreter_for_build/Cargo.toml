@@ -48,7 +48,6 @@ sha2.workspace = true
 smallvec.workspace = true
 starlark.workspace = true
 toml.workspace = true
-tracing.workspace = true
 twox-hash.workspace = true
 
 [lints]

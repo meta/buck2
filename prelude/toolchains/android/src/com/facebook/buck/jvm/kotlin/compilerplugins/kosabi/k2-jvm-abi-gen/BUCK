@@ -39,6 +39,7 @@ _KOTLIN_25_SHARED_COMPAT_SRCS = [
         "FrontendPipelineCompat.kt",
         "InlineBodyCodegenCompat.kt",
         "IrAnnotationCompat.kt",
+        "IrGenerationExtensionsCompat.kt",
         "IrNonAbiStripper.kt",
         "IrVisitorCompat.kt",
         "JavaClassResolverCompat.kt",

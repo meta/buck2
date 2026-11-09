@@ -36,6 +36,8 @@ use crate::values::FrozenHeap;
 use crate::values::StarlarkValue;
 use crate::values::UnpackValue;
 use crate::values::Value;
+use crate::values::type_expr::StarlarkTypeExpr;
+use crate::values::type_expr::StarlarkTypeExprStable;
 use crate::values::type_repr::StarlarkTypeRepr;
 
 /// `typing.Iterable[T]`: a type marker, and the check that a value is iterable.
@@ -62,6 +64,16 @@ impl<T: StarlarkTypeRepr> StarlarkTypeRepr for StarlarkIter<T> {
         Ty::iter(T::starlark_type_repr())
     }
 }
+
+impl<'v, T: StarlarkTypeExpr<'v>> StarlarkTypeExpr<'v> for StarlarkIter<T> {
+    type Get = Value<'v>;
+
+    fn get(value: Value<'v>) -> Option<Self::Get> {
+        TyStarlarkValue::is_iterable(&value.vtable().starlark_value.ty).then_some(value)
+    }
+}
+
+impl<'v, T: StarlarkTypeExpr<'v>> StarlarkTypeExprStable<'v> for StarlarkIter<T> {}
 
 #[derive(
     Debug,

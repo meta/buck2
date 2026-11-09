@@ -55,6 +55,8 @@ use crate::values::Tracer;
 use crate::values::UnpackValue;
 use crate::values::Value;
 use crate::values::list::ListRef;
+use crate::values::type_expr::StarlarkTypeExpr;
+use crate::values::type_expr::StarlarkTypeExprStable;
 use crate::values::type_repr::StarlarkTypeRepr;
 use crate::values::typing::TypeCompiled;
 use crate::values::typing::callable::param::StarlarkCallableParamAny;
@@ -226,6 +228,26 @@ impl<'v, P: StarlarkCallableParamSpec, R: StarlarkTypeRepr> StarlarkTypeRepr
     }
 }
 
+impl<'v, P: StarlarkCallableParamSpec, R: StarlarkTypeRepr> StarlarkTypeExpr<'v>
+    for StarlarkCallable<'v, P, R>
+{
+    type Get = Self;
+
+    fn get(value: Value<'v>) -> Option<Self> {
+        value
+            .vtable()
+            .starlark_value
+            .ty
+            .HAS_invoke
+            .then(|| StarlarkCallable::unchecked_new(value))
+    }
+}
+
+impl<'v, P: StarlarkCallableParamSpec, R: StarlarkTypeRepr> StarlarkTypeExprStable<'v>
+    for StarlarkCallable<'v, P, R>
+{
+}
+
 impl<'v, P: StarlarkCallableParamSpec, R: StarlarkTypeRepr> UnpackValue<'v>
     for StarlarkCallable<'v, P, R>
 {
@@ -362,6 +384,21 @@ impl<'v, P: StarlarkCallableParamSpec, R: StarlarkTypeRepr> StarlarkTypeRepr
     fn starlark_type_repr() -> Ty {
         <Self::Canonical as StarlarkTypeRepr>::starlark_type_repr()
     }
+}
+
+impl<'v, P: StarlarkCallableParamSpec, R: StarlarkTypeRepr> StarlarkTypeExpr<'v>
+    for StarlarkCallableChecked<'v, P, R>
+{
+    type Get = Self;
+
+    fn get(value: Value<'v>) -> Option<Self> {
+        Self::unpack_value_impl(value).ok().flatten()
+    }
+}
+
+impl<'v, P: StarlarkCallableParamSpec, R: StarlarkTypeRepr> StarlarkTypeExprStable<'v>
+    for StarlarkCallableChecked<'v, P, R>
+{
 }
 
 #[derive(thiserror::Error, Debug)]

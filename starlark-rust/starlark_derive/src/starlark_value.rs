@@ -238,6 +238,22 @@ impl ImplStarlarkValue {
                 }
             }
 
+            impl<#params> starlark::values::StarlarkTypeExpr<#lt> for &#lt #self_ty
+            #where_clause
+            {
+                type Get = Self;
+
+                #[inline]
+                fn get(value: starlark::values::Value<#lt>) -> Option<Self> {
+                    value.downcast_ref::<#self_ty>()
+                }
+            }
+
+            impl<#params> starlark::values::StarlarkTypeExprStable<#lt> for &#lt #self_ty
+            #where_clause
+            {
+            }
+
             impl<#params> starlark::values::UnpackValue<#lt> for &#lt #self_ty
             #where_clause
             {
@@ -290,6 +306,45 @@ impl ImplStarlarkValue {
                 }
             },
         }))
+    }
+
+    /// `type Get` and `fn get`: the handle a value of the type is read through. A type whose
+    /// representations are not a derived view writes its own.
+    fn get_items(&self) -> syn::Result<Vec<syn::ImplItem>> {
+        let lt = &self.lifetime_param;
+        let written = self.input.items.iter().any(|item| match item {
+            syn::ImplItem::Type(t) => t.ident == "Get",
+            syn::ImplItem::Fn(f) => f.sig.ident == "get",
+            _ => false,
+        });
+        if written {
+            return Ok(Vec::new());
+        }
+        let items: Vec<syn::ImplItem> = match self.impl_of {
+            ImplOf::Value => vec![
+                syn::parse_quote! {
+                    type Get = starlark::values::ValueTyped<#lt, Self>;
+                },
+                syn::parse_quote! {
+                    #[inline]
+                    fn get(value: starlark::values::Value<#lt>) -> Option<Self::Get> {
+                        starlark::values::ValueTyped::new(value)
+                    }
+                },
+            ],
+            ImplOf::Type => vec![
+                syn::parse_quote! {
+                    type Get = Self;
+                },
+                syn::parse_quote! {
+                    #[inline]
+                    fn get(value: starlark::values::Value<#lt>) -> Option<Self::Get> {
+                        <Self as starlark::values::UnpackValue<#lt>>::unpack_value_opt(value)
+                    }
+                },
+            ],
+        };
+        Ok(items)
     }
 
     fn get_type_value_static(&self) -> syn::Result<syn::ImplItem> {
@@ -628,6 +683,7 @@ impl ImplStarlarkValue {
             0..0,
             [self.const_type()?, self.get_type_value_static()?]
                 .into_iter()
+                .chain(self.get_items()?)
                 .chain(self.get_type_starlark_repr()?)
                 .chain(self.attr_ty()?)
                 .chain(self.bit_or()?)

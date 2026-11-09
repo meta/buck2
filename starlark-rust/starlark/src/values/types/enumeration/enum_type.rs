@@ -70,6 +70,8 @@ use crate::values::enumeration::value::EnumValue;
 use crate::values::function::FUNCTION_TYPE;
 use crate::values::index::convert_index;
 use crate::values::list::AllocList;
+use crate::values::type_expr::StarlarkTypeExpr;
+use crate::values::type_expr::StarlarkTypeExprStable;
 use crate::values::type_repr::StarlarkTypeRepr;
 use crate::values::types::type_instance_id::StarlarkTypeIdDomain;
 use crate::values::types::type_instance_id::TypeInstanceId;
@@ -350,6 +352,16 @@ impl<'v> StarlarkTypeRepr for AnyEnumType<'v> {
         <FrozenEnumType<'v> as StarlarkValue<'v>>::get_type_starlark_repr()
     }
 }
+
+impl<'v> StarlarkTypeExpr<'v> for AnyEnumType<'v> {
+    type Get = Self;
+
+    fn get(value: Value<'v>) -> Option<Self> {
+        AnyEnumType::unpack_value_opt(value)
+    }
+}
+
+impl<'v> StarlarkTypeExprStable<'v> for AnyEnumType<'v> {}
 
 impl<'v> UnpackValue<'v> for AnyEnumType<'v> {
     type Error = std::convert::Infallible;

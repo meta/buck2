@@ -215,6 +215,15 @@ starlark::methods_static!(TYPE_COMPILED_METHODS = type_compiled_methods);
 /// The behaviour of a compiled type, whose representations are one per matcher.
 #[starlark_value(type = "type")]
 impl<'v> StarlarkType<'v> for TypeCompiled<'v> {
+    type Get = Self;
+
+    fn get(value: Value<'v>) -> Option<Self> {
+        value
+            .request_value::<&dyn TypeCompiledDyn>()
+            .is_some()
+            .then_some(TypeCompiled(value))
+    }
+
     fn write_hash(&self, hasher: &mut StarlarkHasher) -> crate::Result<()> {
         Hash::hash(self.as_ty(), hasher);
         Ok(())

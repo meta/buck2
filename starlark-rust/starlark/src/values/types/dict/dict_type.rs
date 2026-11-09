@@ -28,6 +28,7 @@ use crate::values::Value;
 use crate::values::ValueOf;
 use crate::values::dict::AllocDict;
 use crate::values::dict::DictRef;
+use crate::values::type_expr::StarlarkTypeExpr;
 use crate::values::type_repr::StarlarkTypeRepr;
 
 /// A dict type marker.
@@ -45,6 +46,14 @@ impl<K: StarlarkTypeRepr, V: StarlarkTypeRepr> StarlarkTypeRepr for DictType<K, 
 
     fn starlark_type_repr() -> Ty {
         Ty::dict(K::starlark_type_repr(), V::starlark_type_repr())
+    }
+}
+
+impl<'v, K: StarlarkTypeExpr<'v>, V: StarlarkTypeExpr<'v>> StarlarkTypeExpr<'v> for DictType<K, V> {
+    type Get = DictRef<'v>;
+
+    fn get(value: Value<'v>) -> Option<Self::Get> {
+        DictRef::from_value(value).filter(|d| d.iter().all(|(k, v)| K::matches(k) && V::matches(v)))
     }
 }
 

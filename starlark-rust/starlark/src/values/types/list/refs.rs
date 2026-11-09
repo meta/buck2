@@ -31,6 +31,8 @@ use crate::values::Value;
 use crate::values::list::value::FrozenListData;
 use crate::values::list::value::ListGen;
 use crate::values::list::value::display_list;
+use crate::values::type_expr::StarlarkTypeExpr;
+use crate::values::type_expr::StarlarkTypeExprStable;
 use crate::values::type_repr::StarlarkTypeRepr;
 use crate::values::types::list::value::ListData;
 
@@ -100,6 +102,17 @@ impl<'v> StarlarkTypeRepr for &'v ListRef<'v> {
         Vec::<Value<'v>>::starlark_type_repr()
     }
 }
+
+impl<'v> StarlarkTypeExpr<'v> for &'v ListRef<'v> {
+    type Get = Self;
+
+    #[inline]
+    fn get(value: Value<'v>) -> Option<Self> {
+        ListRef::from_value(value)
+    }
+}
+
+impl<'v> StarlarkTypeExprStable<'v> for &'v ListRef<'v> {}
 
 impl<'v> UnpackValue<'v> for &'v ListRef<'v> {
     type Error = Infallible;

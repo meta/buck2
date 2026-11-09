@@ -67,6 +67,8 @@ use crate::values::record::Record;
 use crate::values::record::field::Field;
 use crate::values::record::matcher::RecordTypeMatcher;
 use crate::values::record::ty_record_type::TyRecordData;
+use crate::values::type_expr::StarlarkTypeExpr;
+use crate::values::type_expr::StarlarkTypeExprStable;
 use crate::values::type_repr::StarlarkTypeRepr;
 use crate::values::types::type_instance_id::StarlarkTypeIdDomain;
 use crate::values::types::type_instance_id::TypeInstanceId;
@@ -181,6 +183,23 @@ where
     fn starlark_type_repr() -> crate::typing::Ty {
         <RecordTypeGen<'v, V> as StarlarkValue<'v>>::get_type_starlark_repr()
     }
+}
+
+impl<'v, V: RecordVariant> StarlarkTypeExpr<'v> for &'v RecordTypeGen<'v, V>
+where
+    RecordTypeGen<'v, V>: StarlarkValue<'v>,
+{
+    type Get = Self;
+
+    #[inline]
+    fn get(value: Value<'v>) -> Option<Self> {
+        value.downcast_ref::<RecordTypeGen<'v, V>>()
+    }
+}
+
+impl<'v, V: RecordVariant> StarlarkTypeExprStable<'v> for &'v RecordTypeGen<'v, V> where
+    RecordTypeGen<'v, V>: StarlarkValue<'v>
+{
 }
 
 impl<'v, V: RecordVariant> UnpackValue<'v> for &'v RecordTypeGen<'v, V>

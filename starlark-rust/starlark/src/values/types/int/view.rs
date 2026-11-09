@@ -43,8 +43,9 @@ use crate::values::types::num::typecheck::NumTy;
 use crate::values::types::num::typecheck::typecheck_num_bin_op;
 use crate::values::types::num::value::NumRef;
 
-/// An `int` in either of its representations.
-#[doc(hidden)]
+/// An `int` in either of its representations: the type expression for `int`, and what a
+/// [`ValueOf`](crate::values::ValueOf) of it is read through. The fixed-width Rust integers
+/// are conversions from it, which may fail.
 #[derive(Debug, Clone, Copy, StarlarkRepresentations)]
 pub enum IntView<'v> {
     Big(ValueTyped<'v, StarlarkBigInt>),
@@ -60,8 +61,9 @@ impl<'v> IntView<'v> {
         }
     }
 
+    /// The integer, by reference.
     #[inline]
-    fn as_int_ref(self) -> StarlarkIntRef<'v> {
+    pub fn as_int_ref(self) -> StarlarkIntRef<'v> {
         match self {
             IntView::Big(x) => StarlarkIntRef::Big(x.as_ref()),
             IntView::Small(x) => StarlarkIntRef::Small(x.as_ref().get()),

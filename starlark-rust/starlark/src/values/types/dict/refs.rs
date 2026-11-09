@@ -30,6 +30,8 @@ use crate::values::Value;
 use crate::values::ValueError;
 use crate::values::dict::Dict;
 use crate::values::dict::value::DictGen;
+use crate::values::type_expr::StarlarkTypeExpr;
+use crate::values::type_expr::StarlarkTypeExprStable;
 use crate::values::type_repr::StarlarkTypeRepr;
 use crate::values::types::dict::dict_type::DictType;
 
@@ -121,6 +123,17 @@ impl<'v> StarlarkTypeRepr for DictRef<'v> {
         DictType::<Value<'static>, Value<'static>>::starlark_type_repr()
     }
 }
+
+impl<'v> StarlarkTypeExpr<'v> for DictRef<'v> {
+    type Get = Self;
+
+    #[inline]
+    fn get(value: Value<'v>) -> Option<Self> {
+        DictRef::from_value(value)
+    }
+}
+
+impl<'v> StarlarkTypeExprStable<'v> for DictRef<'v> {}
 
 impl<'v> UnpackValue<'v> for DictRef<'v> {
     type Error = Infallible;

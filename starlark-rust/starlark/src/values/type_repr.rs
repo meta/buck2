@@ -30,6 +30,9 @@ use crate::values::string::str_type::StarlarkStr;
 
 /// Provides a starlark type representation, even if StarlarkValue is not implemented.
 ///
+/// This is the `Ty` alone, which a return type needs for the documentation; a type that values
+/// are checked against is a [`StarlarkTypeExpr`](crate::values::StarlarkTypeExpr) as well.
+///
 /// # Derive
 ///
 /// There is `#[derive(StarlarkTypeRepr)]` for enums, for example:

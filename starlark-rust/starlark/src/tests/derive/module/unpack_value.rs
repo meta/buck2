@@ -32,7 +32,7 @@ use crate::values::set::SetType;
 #[starlark_module]
 fn validate_module(builder: &mut GlobalsBuilder) {
     fn with_int<'v>(v: ValueOf<'v, i32>) -> anyhow::Result<(Value<'v>, String)> {
-        Ok((v.to_value(), format!("{}", v.unpack())))
+        Ok((v.to_value(), format!("{}", v.try_unpack().unwrap())))
     }
     fn with_int_list<'v>(v: ValueOf<'v, ListType<i32>>) -> anyhow::Result<(Value<'v>, String)> {
         let repr = v.try_to_vec().unwrap().iter().join(", ");

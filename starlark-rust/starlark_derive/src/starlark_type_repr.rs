@@ -84,7 +84,7 @@ impl StarlarkTypeReprInput {
     }
 }
 
-fn union_type(input: &StarlarkTypeReprInput) -> syn::Result<syn::Type> {
+pub(crate) fn union_type(input: &StarlarkTypeReprInput) -> syn::Result<syn::Type> {
     fn recurse(
         (_, first): &(Option<syn::Ident>, syn::Type),
         rest: &[(Option<syn::Ident>, syn::Type)],

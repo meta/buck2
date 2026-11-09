@@ -41,42 +41,10 @@ fn check_type_agreement<'v, T: UnpackValue<'v>>(
     accepted: bool,
     param_name: Option<&str>,
 ) {
-    use std::collections::HashMap;
-    use std::sync::Arc;
-    use std::sync::Mutex;
-    use std::sync::OnceLock;
-
-    use dupe::Dupe;
-
-    use crate::values::typing::type_compiled::alloc::TypeMatcherAlloc;
     use crate::values::typing::type_compiled::matcher::TypeMatcher;
-    use crate::values::typing::type_compiled::matcher::TypeMatcherBox;
-    use crate::values::typing::type_compiled::matcher::TypeMatcherBoxAlloc;
-
-    // One matcher per Rust type. The key is the type name because `UnpackValue` types carry
-    // `'v`, so they have no `TypeId`.
-    static MATCHERS: OnceLock<Mutex<HashMap<&'static str, Arc<TypeMatcherBox>>>> = OnceLock::new();
 
     let rust_type = std::any::type_name::<T>();
-    let matchers = MATCHERS.get_or_init(Default::default);
-    let matcher = matchers
-        .lock()
-        .unwrap_or_else(|e| e.into_inner())
-        .get(rust_type)
-        .map(Dupe::dupe);
-    let matcher = match matcher {
-        Some(matcher) => matcher,
-        None => {
-            // Built outside the lock: a type repr may do arbitrary work.
-            let matcher = Arc::new(TypeMatcherBoxAlloc.ty(&T::starlark_type_repr()));
-            matchers
-                .lock()
-                .unwrap_or_else(|e| e.into_inner())
-                .entry(rust_type)
-                .or_insert(matcher)
-                .dupe()
-        }
-    };
+    let matcher = type_matcher::<T>();
     let matches = matcher.matches(value);
     if matches != accepted {
         let param = match param_name {
@@ -91,6 +59,49 @@ fn check_type_agreement<'v, T: UnpackValue<'v>>(
             value = value.to_string_for_type_error(),
             accepted = if accepted { "accepted" } else { "rejected" },
         );
+    }
+}
+
+/// The runtime matcher for `T::starlark_type_repr()`, built once per Rust type: what the debug
+/// checks compare an implementation against.
+#[cfg(any(debug_assertions, test))]
+pub(crate) fn type_matcher<T: StarlarkTypeRepr + ?Sized>()
+-> std::sync::Arc<crate::values::typing::type_compiled::matcher::TypeMatcherBox> {
+    use std::collections::HashMap;
+    use std::sync::Arc;
+    use std::sync::Mutex;
+    use std::sync::OnceLock;
+
+    use dupe::Dupe;
+
+    use crate::values::typing::type_compiled::alloc::TypeMatcherAlloc;
+    use crate::values::typing::type_compiled::matcher::TypeMatcherBox;
+    use crate::values::typing::type_compiled::matcher::TypeMatcherBoxAlloc;
+
+    // Keyed by the type name: `TypeId::of` wants `'static`, the handle types carry `'v`, and
+    // `StarlarkTypeRepr` does not require the `ProvidesStaticType` that would erase it. The name
+    // erases lifetimes too, and they cannot change the `Ty`.
+    static MATCHERS: OnceLock<Mutex<HashMap<&'static str, Arc<TypeMatcherBox>>>> = OnceLock::new();
+
+    let rust_type = std::any::type_name::<T>();
+    let matchers = MATCHERS.get_or_init(Default::default);
+    let matcher = matchers
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .get(rust_type)
+        .map(Dupe::dupe);
+    match matcher {
+        Some(matcher) => matcher,
+        None => {
+            // Built outside the lock: a type repr may do arbitrary work.
+            let matcher = Arc::new(TypeMatcherBoxAlloc.ty(&T::starlark_type_repr()));
+            matchers
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .entry(rust_type)
+                .or_insert(matcher)
+                .dupe()
+        }
     }
 }
 

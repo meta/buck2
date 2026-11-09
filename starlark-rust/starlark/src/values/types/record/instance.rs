@@ -44,6 +44,8 @@ use crate::values::record::record_type::RecordTypeError;
 use crate::values::record::record_type::RecordTypeGen;
 use crate::values::record::record_type::RecordTypeView;
 use crate::values::record::record_type::RecordVariant;
+use crate::values::type_expr::StarlarkTypeExpr;
+use crate::values::type_expr::StarlarkTypeExprStable;
 use crate::values::type_repr::StarlarkTypeRepr;
 use crate::values::types::type_instance_id::TypeInstanceId;
 
@@ -198,6 +200,17 @@ impl<'v> StarlarkTypeRepr for &'v Record<'v> {
         <Record as StarlarkValue>::get_type_starlark_repr()
     }
 }
+
+impl<'v> StarlarkTypeExpr<'v> for &'v Record<'v> {
+    type Get = Self;
+
+    #[inline]
+    fn get(value: Value<'v>) -> Option<Self> {
+        Record::from_value(value)
+    }
+}
+
+impl<'v> StarlarkTypeExprStable<'v> for &'v Record<'v> {}
 
 impl<'v> UnpackValue<'v> for &'v Record<'v> {
     type Error = std::convert::Infallible;

@@ -31,6 +31,8 @@ use crate::values::ValueOf;
 use crate::values::starlark_type_id::StarlarkTypeId;
 use crate::values::structs::AllocStruct;
 use crate::values::structs::value::Struct;
+use crate::values::type_expr::StarlarkTypeExpr;
+use crate::values::type_expr::StarlarkTypeExprStable;
 use crate::values::type_repr::StarlarkTypeRepr;
 
 /// Reference to a struct allocated on the heap.
@@ -74,6 +76,17 @@ impl<'v> StarlarkTypeRepr for StructRef<'v> {
         Struct::starlark_type_repr()
     }
 }
+
+impl<'v> StarlarkTypeExpr<'v> for StructRef<'v> {
+    type Get = Self;
+
+    #[inline]
+    fn get(value: Value<'v>) -> Option<Self> {
+        StructRef::from_value(value)
+    }
+}
+
+impl<'v> StarlarkTypeExprStable<'v> for StructRef<'v> {}
 
 impl<'v> UnpackValue<'v> for StructRef<'v> {
     type Error = Infallible;

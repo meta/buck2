@@ -229,6 +229,20 @@ pub trait StarlarkType<'v>: 'v + ProvidesStaticType<'v> + Debug + Display + Size
         panic!("This function is implemented by #[starlark_value] proc macro")
     }
 
+    /// What a value of this type is read through: `ValueTyped<'v, Self>` for a type with one
+    /// representation, the view itself for a type with several.
+    ///
+    /// This can be only implemented by the [`#[starlark_value]`](crate::values::starlark_value)
+    /// proc macro.
+    type Get;
+
+    /// `value` as this type's [`Get`](Self::Get), if it is of this type.
+    ///
+    /// This can be only implemented by the [`#[starlark_value]`](crate::values::starlark_value)
+    /// proc macro.
+    #[starlark_internal_vtable(skip)]
+    fn get(value: Value<'v>) -> Option<Self::Get>;
+
     /// The type as a user would write it in a type annotation. This often will be the same as
     /// [`Self::TYPE`], but in some instances it might be slightly different than what is
     /// returned by `TYPE`.

@@ -24,6 +24,7 @@ use crate::values::UnpackValue;
 use crate::values::Value;
 use crate::values::ValueOf;
 use crate::values::set::SetRef;
+use crate::values::type_expr::StarlarkTypeExpr;
 use crate::values::type_repr::StarlarkTypeRepr;
 
 /// A set type marker.
@@ -40,6 +41,14 @@ impl<T: StarlarkTypeRepr> StarlarkTypeRepr for SetType<T> {
 
     fn starlark_type_repr() -> Ty {
         Ty::set(T::starlark_type_repr())
+    }
+}
+
+impl<'v, T: StarlarkTypeExpr<'v>> StarlarkTypeExpr<'v> for SetType<T> {
+    type Get = SetRef<'v>;
+
+    fn get(value: Value<'v>) -> Option<Self::Get> {
+        SetRef::from_value(value).filter(|s| s.iter().all(|x| T::matches(x)))
     }
 }
 

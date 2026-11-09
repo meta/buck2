@@ -29,6 +29,8 @@ use crate::values::Heap;
 use crate::values::UnpackValue;
 use crate::values::Value;
 use crate::values::none::NoneType;
+use crate::values::type_expr::StarlarkTypeExpr;
+use crate::values::type_expr::StarlarkTypeExprStable;
 use crate::values::type_repr::StarlarkTypeRepr;
 
 /// Equivalent of a Rust [`Option`], where `None`
@@ -83,6 +85,20 @@ impl<T: StarlarkTypeRepr> StarlarkTypeRepr for NoneOr<T> {
         Either::<NoneType, T>::starlark_type_repr()
     }
 }
+
+impl<'v, T: StarlarkTypeExpr<'v>> StarlarkTypeExpr<'v> for NoneOr<T> {
+    type Get = Option<T::Get>;
+
+    fn get(value: Value<'v>) -> Option<Self::Get> {
+        if value.is_none() {
+            Some(None)
+        } else {
+            T::get(value).map(Some)
+        }
+    }
+}
+
+impl<'v, T: StarlarkTypeExprStable<'v>> StarlarkTypeExprStable<'v> for NoneOr<T> {}
 
 impl<'v, T: UnpackValue<'v>> UnpackValue<'v> for NoneOr<T> {
     type Error = <T as UnpackValue<'v>>::Error;

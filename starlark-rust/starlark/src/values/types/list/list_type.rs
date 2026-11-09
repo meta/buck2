@@ -27,6 +27,7 @@ use crate::values::ValueOf;
 use crate::values::list::AllocList;
 use crate::values::list::ListRef;
 use crate::values::tuple::TupleType;
+use crate::values::type_expr::StarlarkTypeExpr;
 use crate::values::type_repr::StarlarkTypeRepr;
 
 /// A list type marker.
@@ -43,6 +44,14 @@ impl<T: StarlarkTypeRepr> StarlarkTypeRepr for ListType<T> {
 
     fn starlark_type_repr() -> Ty {
         Ty::list(T::starlark_type_repr())
+    }
+}
+
+impl<'v, T: StarlarkTypeExpr<'v>> StarlarkTypeExpr<'v> for ListType<T> {
+    type Get = &'v ListRef<'v>;
+
+    fn get(value: Value<'v>) -> Option<Self::Get> {
+        ListRef::from_value(value).filter(|l| l.iter().all(|x| T::matches(x)))
     }
 }
 

@@ -41,7 +41,11 @@ fn named_positional_functions(globals: &mut GlobalsBuilder) {
         #[starlark(args)] star_args: ValueOf<'v, TupleType<i32>>,
         x: i32,
     ) -> anyhow::Result<i32> {
-        Ok(x + star_args.items().sum::<i32>())
+        Ok(x + star_args
+            .try_to_vec()
+            .map_err(|e| e.into_anyhow())?
+            .iter()
+            .sum::<i32>())
     }
 
     // Same as above, but with explicit redundant annotation.
@@ -49,7 +53,11 @@ fn named_positional_functions(globals: &mut GlobalsBuilder) {
         #[starlark(args)] args: ValueOf<'v, TupleType<i32>>,
         #[starlark(require = named)] x: i32,
     ) -> anyhow::Result<i32> {
-        Ok(x + args.items().sum::<i32>())
+        Ok(x + args
+            .try_to_vec()
+            .map_err(|e| e.into_anyhow())?
+            .iter()
+            .sum::<i32>())
     }
 }
 

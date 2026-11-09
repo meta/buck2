@@ -26,6 +26,8 @@ use crate::values::FrozenHeap;
 use crate::values::Heap;
 use crate::values::UnpackValue;
 use crate::values::Value;
+use crate::values::type_expr::StarlarkTypeExpr;
+use crate::values::type_expr::StarlarkTypeExprStable;
 use crate::values::type_repr::StarlarkTypeRepr;
 use crate::values::types::tuple::value::Tuple;
 
@@ -88,6 +90,22 @@ impl<T1: StarlarkTypeRepr, T2: StarlarkTypeRepr> StarlarkTypeRepr for (T1, T2) {
     }
 }
 
+impl<'v, T1: StarlarkTypeExpr<'v>, T2: StarlarkTypeExpr<'v>> StarlarkTypeExpr<'v> for (T1, T2) {
+    type Get = (T1::Get, T2::Get);
+
+    fn get(value: Value<'v>) -> Option<Self::Get> {
+        match Tuple::from_value(value)?.content() {
+            [a, b] => Some((T1::get(*a)?, T2::get(*b)?)),
+            _ => None,
+        }
+    }
+}
+
+impl<'v, T1: StarlarkTypeExprStable<'v>, T2: StarlarkTypeExprStable<'v>> StarlarkTypeExprStable<'v>
+    for (T1, T2)
+{
+}
+
 impl<T1: StarlarkTypeRepr> StarlarkTypeRepr for (T1,) {
     type Canonical = (T1::Canonical,);
 
@@ -108,6 +126,28 @@ impl<T1: StarlarkTypeRepr, T2: StarlarkTypeRepr, T3: StarlarkTypeRepr> StarlarkT
             T3::starlark_type_repr(),
         ])
     }
+}
+
+impl<'v, T1: StarlarkTypeExpr<'v>, T2: StarlarkTypeExpr<'v>, T3: StarlarkTypeExpr<'v>>
+    StarlarkTypeExpr<'v> for (T1, T2, T3)
+{
+    type Get = (T1::Get, T2::Get, T3::Get);
+
+    fn get(value: Value<'v>) -> Option<Self::Get> {
+        match Tuple::from_value(value)?.content() {
+            [a, b, c] => Some((T1::get(*a)?, T2::get(*b)?, T3::get(*c)?)),
+            _ => None,
+        }
+    }
+}
+
+impl<
+    'v,
+    T1: StarlarkTypeExprStable<'v>,
+    T2: StarlarkTypeExprStable<'v>,
+    T3: StarlarkTypeExprStable<'v>,
+> StarlarkTypeExprStable<'v> for (T1, T2, T3)
+{
 }
 
 impl<'v, T1: UnpackValue<'v>, T2: UnpackValue<'v>> UnpackValue<'v> for (T1, T2) {

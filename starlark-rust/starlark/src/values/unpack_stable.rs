@@ -72,12 +72,6 @@ impl<'v> UnpackValueStable<'v> for StructRef<'v> {}
 impl<'v> UnpackValueStable<'v> for &'v str {}
 impl<'v> UnpackValueStable<'v> for String {}
 impl<'v> UnpackValueStable<'v> for bool {}
-impl<'v> UnpackValueStable<'v> for i32 {}
-impl<'v> UnpackValueStable<'v> for u32 {}
-impl<'v> UnpackValueStable<'v> for i64 {}
-impl<'v> UnpackValueStable<'v> for u64 {}
-impl<'v> UnpackValueStable<'v> for usize {}
-impl<'v> UnpackValueStable<'v> for isize {}
 impl<'v> UnpackValueStable<'v> for BigInt {}
 impl<'v> UnpackValueStable<'v> for UnpackFloat {}
 impl<'v> UnpackValueStable<'v> for StarlarkFloat {}

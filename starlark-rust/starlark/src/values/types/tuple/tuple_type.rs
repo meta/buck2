@@ -25,6 +25,7 @@ use crate::values::UnpackValueStable;
 use crate::values::Value;
 use crate::values::ValueOf;
 use crate::values::tuple::TupleRef;
+use crate::values::type_expr::StarlarkTypeExpr;
 use crate::values::type_repr::StarlarkTypeRepr;
 
 /// A tuple type marker: a tuple of any length whose items are all `T`.
@@ -41,6 +42,14 @@ impl<T: StarlarkTypeRepr> StarlarkTypeRepr for TupleType<T> {
 
     fn starlark_type_repr() -> Ty {
         Ty::tuple_of(T::starlark_type_repr())
+    }
+}
+
+impl<'v, T: StarlarkTypeExpr<'v>> StarlarkTypeExpr<'v> for TupleType<T> {
+    type Get = &'v TupleRef<'v>;
+
+    fn get(value: Value<'v>) -> Option<Self::Get> {
+        TupleRef::from_value(value).filter(|t| t.iter().all(|x| T::matches(x)))
     }
 }
 

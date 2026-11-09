@@ -197,11 +197,23 @@ ANDROID_BINARY_BUNDLE_COMMON_ATTRS = (
             default = [],
             doc = "If ['string'] is used, the build will break if multiple string resources with the same name are added in an app's Android Resources. Resource names are name-spaced by resource type, this does not enforce unique names between multiple resource types. AAPT does not enforce this, but you can prevent easy-to-introduce resource bugs by enabling this.",
         ),
-        "build_config_values": attrs.list(attrs.string(), default = [], doc = "See the documentation on the values argument for android_build_config()."),
+        "build_config_values": attrs.list(
+            attrs.string(),
+            default = [],
+            doc = """
+                For APKs and bundles, overrides only fields declared in each package's values or
+                values_file, including the standard DEBUG, IS_EXOPACKAGE and EXOPACKAGE_FLAGS fields.
+                AARs also allow new fields.
+            """,
+        ),
         "build_config_values_file": attrs.option(
             attrs.one_of(attrs.transition_dep(cfg = cpu_transition), attrs.source()),
             default = None,
-            doc = "Overrides build_config_values and matching fields from each android_build_config() rule's values and values_file. Other package fields are retained.",
+            doc = """
+                Overrides build_config_values and matching fields from each android_build_config()
+                rule's values and values_file. Other package fields are retained. As with
+                build_config_values, APKs and bundles omit fields not declared by the package.
+            """,
         ),
         "build_string_source_map": attrs.bool(default = False, doc = ""),
         "compiled_resource_apks": attrs.list(attrs.source(), default = [], doc = ""),

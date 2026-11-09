@@ -38,8 +38,8 @@ public class GenerateBuildConfigExecutableMain {
   @Option(name = "--default-values-file", required = true)
   private List<String> defaultValuesFiles = new ArrayList<>();
 
-  @Option(name = "--values-file")
-  private List<String> valuesFiles = new ArrayList<>();
+  @Option(name = "--override-values-file")
+  private List<String> overrideValuesFiles = new ArrayList<>();
 
   @Option(name = "--output", required = true)
   private String output;
@@ -65,8 +65,8 @@ public class GenerateBuildConfigExecutableMain {
     for (String path : defaultValuesFiles) {
       fields = fields.putAll(readFields(path));
     }
-    for (String path : valuesFiles) {
-      fields = fields.putAll(readFields(path));
+    for (String path : overrideValuesFiles) {
+      fields = fields.overrideExisting(readFields(path));
     }
 
     String java =

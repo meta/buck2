@@ -44,7 +44,7 @@ def android_build_config_impl(ctx: AnalysisContext) -> list[Provider]:
         ctx.attrs.package,
         use_constant_expressions = False,
         default_values_files = default_values_files,
-        values_files = [],
+        override_values_files = [],
     )
 
     providers.append(java_packaging_info)
@@ -66,9 +66,9 @@ def generate_android_build_config(
     java_package: str,
     use_constant_expressions: bool,
     default_values_files: list[Artifact],
-    values_files: list[Artifact],
+    override_values_files: list[Artifact],
 ) -> (JavaLibraryInfo, JavaPackagingInfo, Artifact):
-    build_config_dot_java = _generate_build_config_dot_java(ctx, source, java_package, use_constant_expressions, default_values_files, values_files)
+    build_config_dot_java = _generate_build_config_dot_java(ctx, source, java_package, use_constant_expressions, default_values_files, override_values_files)
 
     compiled_build_config_dot_java = _compile_and_package_build_config_dot_java(ctx, java_package, build_config_dot_java)
     library_output = compiled_build_config_dot_java.classpath_entry
@@ -95,7 +95,7 @@ def _generate_build_config_dot_java(
     java_package: str,
     use_constant_expressions: bool,
     default_values_files: list[Artifact],
-    values_files: list[Artifact],
+    override_values_files: list[Artifact],
 ) -> Artifact:
     generate_build_config_cmd = cmd_args(ctx.attrs._android_toolchain[AndroidToolchainInfo].generate_build_config[RunInfo])
     generate_build_config_cmd.add([
@@ -109,8 +109,8 @@ def _generate_build_config_dot_java(
 
     for values_file in default_values_files:
         generate_build_config_cmd.add(["--default-values-file", values_file])
-    for values_file in values_files:
-        generate_build_config_cmd.add(["--values-file", values_file])
+    for values_file in override_values_files:
+        generate_build_config_cmd.add(["--override-values-file", values_file])
 
     build_config_dot_java = ctx.actions.declare_output(
         _get_output_name(java_package, "BuildConfig.java"),

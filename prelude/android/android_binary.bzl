@@ -328,12 +328,12 @@ def get_build_config_java_libraries(
         if build_config_info.values_file:
             default_values_files.append(build_config_info.values_file)
 
-        values_files = [binary_inline_values_file]
+        override_values_files = [binary_inline_values_file]
         if android_binary_values_file:
-            values_files.append(android_binary_values_file)
+            override_values_files.append(android_binary_values_file)
         if not is_binary:
-            default_values_files.extend(values_files)
-            values_files = []
+            default_values_files.extend(override_values_files)
+            override_values_files = []
         java_libraries.append(
             generate_android_build_config(
                 ctx,
@@ -341,7 +341,7 @@ def get_build_config_java_libraries(
                 java_package,
                 use_constant_expressions = True,
                 default_values_files = default_values_files,
-                values_files = values_files,
+                override_values_files = override_values_files,
             )[1]
         )
 

@@ -22,6 +22,7 @@ use buck2_artifact::artifact::artifact_path::ArtifactPath;
 use buck2_build_api::artifact_groups::ArtifactGroup;
 use buck2_build_api::bxl::build_result::BxlBuildResult;
 use buck2_build_api::interpreter::rule_defs::artifact::starlark_artifact::StarlarkArtifact;
+use buck2_build_api::interpreter::rule_defs::artifact::starlark_artifact_like::StarlarkArtifactView;
 use buck2_build_api::interpreter::rule_defs::cmd_args::CommandLineArgLike;
 use buck2_build_api::interpreter::rule_defs::cmd_args::SimpleCommandLineArtifactVisitor;
 use buck2_build_api::interpreter::rule_defs::cmd_args::StarlarkCommandLineInputs;
@@ -70,7 +71,6 @@ use starlark::values::tuple::TupleRef;
 use starlark::values::tuple::TupleType;
 use starlark::values::type_repr::StarlarkTypeRepr;
 
-use crate::bxl::starlark_defs::artifacts::ArtifactArg;
 use crate::bxl::starlark_defs::artifacts::EnsuredArtifact;
 use crate::bxl::starlark_defs::artifacts::EnsuredArtifactGroup;
 use crate::bxl::starlark_defs::build_result::StarlarkBxlBuildResult;
@@ -581,7 +581,7 @@ impl<'v> AllocValue<'v> for StarlarkOutputStream {
 #[derive(StarlarkTypeRepr, UnpackValue)]
 enum EnsureMultipleArtifactsArg<'v> {
     None(NoneType),
-    EnsuredArtifactArgs(ValueOf<'v, ListType<ArtifactArg<'v>>>),
+    EnsuredArtifactArgs(ValueOf<'v, ListType<StarlarkArtifactView<'v>>>),
     ProvidersArtifactIterable(&'v StarlarkProvidersArtifactIterable<'v>),
     BxlBuildResult(&'v StarlarkBxlBuildResult),
     Dict(ValueOf<'v, DictType<Value<'v>, &'v StarlarkBxlBuildResult>>),
@@ -791,9 +791,9 @@ fn output_stream_methods(builder: &mut MethodsBuilder) {
     /// ```
     fn ensure<'v>(
         this: &StarlarkOutputStream,
-        artifact: ArtifactArg<'v>,
+        artifact: StarlarkArtifactView<'v>,
     ) -> starlark::Result<EnsuredArtifact> {
-        let artifact = artifact.into_ensured_artifact()?;
+        let artifact = EnsuredArtifact::from_artifact(artifact)?;
         this.populate_ensured_artifacts(EnsuredArtifactOrGroup::Artifact(artifact.clone()))?;
 
         Ok(artifact)
@@ -827,7 +827,7 @@ fn output_stream_methods(builder: &mut MethodsBuilder) {
                 let artifacts: Vec<EnsuredArtifact> = list
                     .try_items()
                     .map(|artifact| {
-                        let artifact = artifact?.into_ensured_artifact()?;
+                        let artifact = EnsuredArtifact::from_artifact(artifact?)?;
                         this.populate_ensured_artifacts(EnsuredArtifactOrGroup::Artifact(
                             artifact.clone(),
                         ))?;

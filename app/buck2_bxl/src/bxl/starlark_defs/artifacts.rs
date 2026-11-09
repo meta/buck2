@@ -22,11 +22,9 @@ use buck2_build_api::artifact_groups::ArtifactGroup;
 use buck2_build_api::artifact_groups::ResolvedArtifactGroup;
 use buck2_build_api::artifact_groups::calculation::ArtifactGroupCalculation;
 use buck2_build_api::interpreter::rule_defs::artifact::starlark_artifact::StarlarkArtifact;
+use buck2_build_api::interpreter::rule_defs::artifact::starlark_artifact_like::StarlarkArtifactView;
 use buck2_build_api::interpreter::rule_defs::artifact::starlark_artifact_like::StarlarkInputArtifactLike;
-use buck2_build_api::interpreter::rule_defs::artifact::starlark_declared_artifact::StarlarkDeclaredArtifact;
-use buck2_build_api::interpreter::rule_defs::artifact::unpack_artifact::UnpackNonPromiseInputArtifact;
 use buck2_hash::BuckMutInsertionSet;
-use derive_more::Display;
 use dice::DiceComputations;
 use dupe::Dupe;
 use dupe::IterDupedExt;
@@ -37,7 +35,6 @@ use starlark::collections::StarlarkHasher;
 use starlark::environment::Methods;
 use starlark::environment::MethodsBuilder;
 use starlark::starlark_module;
-use starlark::typing::Ty;
 use starlark::values::AllocValue;
 use starlark::values::Heap;
 use starlark::values::StarlarkValue;
@@ -46,7 +43,6 @@ use starlark::values::UnpackValue;
 use starlark::values::Value;
 use starlark::values::ValueTyped;
 use starlark::values::starlark_value;
-use starlark::values::type_repr::StarlarkTypeRepr;
 
 #[derive(Clone, Debug, Dupe, Trace, ProvidesStaticType, Allocative)]
 #[repr(C)]
@@ -204,52 +200,21 @@ impl PartialEq for EnsuredArtifact {
 
 impl Eq for EnsuredArtifact {}
 
-/// An `Artifact` that is not a promise artifact; see `UnpackNonPromiseInputArtifact`.
-#[derive(Display)]
-pub(crate) enum ArtifactArg<'v> {
-    Artifact(ValueTyped<'v, StarlarkArtifact>),
-    DeclaredArtifact(ValueTyped<'v, StarlarkDeclaredArtifact<'v>>),
-}
-
-impl<'v> StarlarkTypeRepr for ArtifactArg<'v> {
-    type Canonical = <UnpackNonPromiseInputArtifact<'v> as StarlarkTypeRepr>::Canonical;
-
-    fn starlark_type_repr() -> Ty {
-        UnpackNonPromiseInputArtifact::starlark_type_repr()
-    }
-}
-
-impl<'v> UnpackValue<'v> for ArtifactArg<'v> {
-    type Error = <UnpackNonPromiseInputArtifact<'v> as UnpackValue<'v>>::Error;
-
-    fn unpack_value_impl(value: Value<'v>) -> Result<Option<Self>, Self::Error> {
-        Ok(
-            UnpackNonPromiseInputArtifact::unpack_value_impl(value)?.map(|x| match x {
-                UnpackNonPromiseInputArtifact::Artifact(x) => ArtifactArg::Artifact(x),
-                UnpackNonPromiseInputArtifact::DeclaredArtifact(x) => {
-                    ArtifactArg::DeclaredArtifact(x)
-                }
-            }),
-        )
-    }
-}
-
-impl<'v> ArtifactArg<'v> {
-    pub(crate) fn into_ensured_artifact(self) -> buck2_error::Result<EnsuredArtifact> {
-        match self {
-            ArtifactArg::Artifact(artifact) => Ok(EnsuredArtifact {
-                artifact: artifact.as_ref().dupe(),
-                abs: false,
-            }),
-            ArtifactArg::DeclaredArtifact(artifact) => Ok(EnsuredArtifact {
-                artifact: StarlarkArtifact::new(artifact.get_bound_artifact()?),
-                abs: false,
-            }),
-        }
-    }
-}
-
 impl EnsuredArtifact {
+    pub(crate) fn from_artifact(artifact: StarlarkArtifactView<'_>) -> buck2_error::Result<Self> {
+        let artifact = match artifact {
+            StarlarkArtifactView::Artifact(artifact) => artifact.as_ref().dupe(),
+            StarlarkArtifactView::DeclaredArtifact(_)
+            | StarlarkArtifactView::PromiseArtifact(_) => {
+                StarlarkArtifact::new(artifact.non_promise_artifact()?)
+            }
+        };
+        Ok(EnsuredArtifact {
+            artifact,
+            abs: false,
+        })
+    }
+
     pub(crate) fn as_artifact(&self) -> &dyn StarlarkInputArtifactLike<'_> {
         &self.artifact as &dyn StarlarkInputArtifactLike
     }

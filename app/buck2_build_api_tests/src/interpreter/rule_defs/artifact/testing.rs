@@ -22,7 +22,6 @@ use buck2_build_api::interpreter::rule_defs::artifact::output_artifact_like::Out
 use buck2_build_api::interpreter::rule_defs::artifact::starlark_artifact::StarlarkArtifact;
 use buck2_build_api::interpreter::rule_defs::artifact::starlark_artifact_like::StarlarkArtifactView;
 use buck2_build_api::interpreter::rule_defs::artifact::starlark_declared_artifact::StarlarkDeclaredArtifact;
-use buck2_build_api::interpreter::rule_defs::artifact::unpack_artifact::UnpackNonPromiseInputArtifact;
 use buck2_build_api::interpreter::rule_defs::cmd_args::CommandLineBuilder;
 use buck2_core::category::CategoryRef;
 use buck2_core::cells::paths::CellRelativePath;
@@ -195,7 +194,7 @@ pub(crate) fn artifactory(builder: &mut GlobalsBuilder) {
     fn declared_bound_artifact_with_associated_artifacts<'v>(
         // TODO(nga): parameters should be either positional or named, not both.
         artifact: OutputArtifactArg<'v>,
-        associated_artifacts: ValueOf<'v, ListOrTupleType<UnpackNonPromiseInputArtifact<'v>>>,
+        associated_artifacts: ValueOf<'v, ListOrTupleType<StarlarkArtifactView<'v>>>,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<Value<'v>> {
         let target_label = get_label(eval, "//foo:bar")?;
@@ -211,7 +210,7 @@ pub(crate) fn artifactory(builder: &mut GlobalsBuilder) {
         let associated_artifacts = AssociatedArtifacts::from(
             associated_artifacts
                 .try_items()
-                .map(|a| ArtifactGroup::Artifact(a.unwrap().artifact().unwrap())),
+                .map(|a| ArtifactGroup::Artifact(a.unwrap().non_promise_artifact().unwrap())),
         );
         let (declaration, output_artifact) =
             analysis_registry.get_or_declare_output(eval, artifact, OutputType::File, None)?;

@@ -17,6 +17,7 @@ use buck2_artifact::artifact::artifact_type::Artifact;
 use buck2_core::deferred::base_deferred_key::BaseDeferredKey;
 use buck2_fs::paths::file_name::FileName;
 use buck2_fs::paths::forward_rel_path::ForwardRelativePath;
+use dupe::Dupe;
 use starlark::collections::StarlarkHasher;
 use starlark::environment::Methods;
 use starlark::values::StarlarkRepresentations;
@@ -142,6 +143,24 @@ impl<'v> StarlarkArtifactView<'v> {
             StarlarkArtifactView::PromiseArtifact(x) => x.as_ref(),
         }
     }
+
+    /// The bound artifact; a promise artifact is an error even once it has resolved.
+    pub fn non_promise_artifact(self) -> buck2_error::Result<Artifact> {
+        match self {
+            StarlarkArtifactView::Artifact(x) => Ok(x.artifact.dupe()),
+            StarlarkArtifactView::DeclaredArtifact(x) => x.get_bound_artifact(),
+            StarlarkArtifactView::PromiseArtifact(x) => {
+                Err(NonPromiseArtifactError::PromiseArtifact(x.to_string()).into())
+            }
+        }
+    }
+}
+
+#[derive(Debug, buck2_error::Error)]
+#[buck2(tag = Input)]
+enum NonPromiseArtifactError {
+    #[error("Promise artifacts are not accepted here, got `{0}`")]
+    PromiseArtifact(String),
 }
 
 starlark::methods_static!(STARLARK_ARTIFACT_METHODS = artifact_methods);

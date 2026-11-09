@@ -9,6 +9,7 @@
  */
 
 use allocative::Allocative;
+use buck2_build_api::interpreter::rule_defs::artifact::starlark_artifact_like::StarlarkArtifactView;
 use buck2_core::deferred::base_deferred_key::BaseDeferredKey;
 use buck2_dynamic_actions::dynamic_value::StarlarkDynamicValue;
 use derivative::Derivative;
@@ -31,7 +32,6 @@ use starlark::values::ValueTyped;
 use starlark::values::list::ListType;
 use starlark::values::starlark_value;
 
-use crate::bxl::starlark_defs::artifacts::ArtifactArg;
 use crate::bxl::starlark_defs::artifacts::LazyBuildArtifact;
 use crate::bxl::starlark_defs::context::BxlContext;
 use crate::bxl::starlark_defs::lazy_ctx::lazy_uquery_ctx::StarlarkLazyUqueryCtx;
@@ -53,6 +53,8 @@ enum BxlBuildArtifactError {
         "`ctx.lazy.build_artifact()` does not accept declared artifact {0}. Use `ctx.output.ensure()` instead."
     )]
     NotSupportDeclaredArtifact(String),
+    #[error("`ctx.lazy.build_artifact()` does not accept promise artifact {0}")]
+    NotSupportPromiseArtifact(String),
 }
 
 #[derive(Debug, buck2_error::Error)]
@@ -354,20 +356,21 @@ fn lazy_ctx_methods(builder: &mut MethodsBuilder) {
     /// **Attention**: This api does not accept declared artifact. If you want to materialize a declared artifact, use `ctx.output.ensure`.
     fn build_artifact<'v>(
         #[starlark(this)] _this: &'v StarlarkLazyCtx<'v>,
-        // Use `ArtifactArg` instead of `StarlarkArtifact` to avoid the confused type mismatch error "Type of parameter 'artifact' doesn't match, expected 'artifact', actual 'artifact'" when given declared artifacts.
-        #[starlark(require = pos)] artifact: ArtifactArg<'v>,
+        #[starlark(require = pos)] artifact: StarlarkArtifactView<'v>,
     ) -> starlark::Result<StarlarkLazy> {
         match artifact {
-            ArtifactArg::DeclaredArtifact(_) => {
-                return Err(buck2_error::Error::from(
-                    BxlBuildArtifactError::NotSupportDeclaredArtifact(artifact.to_string()),
-                )
-                .into());
-            }
-            ArtifactArg::Artifact(artifact) => {
+            StarlarkArtifactView::Artifact(artifact) => {
                 let artifact = LazyBuildArtifact::new(artifact.as_ref());
                 Ok(StarlarkLazy::new_build_artifact(artifact))
             }
+            StarlarkArtifactView::DeclaredArtifact(_) => Err(buck2_error::Error::from(
+                BxlBuildArtifactError::NotSupportDeclaredArtifact(artifact.to_string()),
+            )
+            .into()),
+            StarlarkArtifactView::PromiseArtifact(_) => Err(buck2_error::Error::from(
+                BxlBuildArtifactError::NotSupportPromiseArtifact(artifact.to_string()),
+            )
+            .into()),
         }
     }
 }

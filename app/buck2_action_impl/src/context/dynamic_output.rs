@@ -10,10 +10,10 @@
 
 use buck2_build_api::dynamic_value::DynamicValue;
 use buck2_build_api::interpreter::rule_defs::artifact::starlark_artifact::StarlarkArtifact;
+use buck2_build_api::interpreter::rule_defs::artifact::starlark_artifact_like::StarlarkArtifactView;
 use buck2_build_api::interpreter::rule_defs::artifact::starlark_artifact_value::StarlarkArtifactValue;
 use buck2_build_api::interpreter::rule_defs::artifact::starlark_declared_artifact::StarlarkDeclaredArtifact;
 use buck2_build_api::interpreter::rule_defs::artifact::starlark_output_artifact::StarlarkOutputArtifact;
-use buck2_build_api::interpreter::rule_defs::artifact::unpack_artifact::UnpackNonPromiseInputArtifact;
 use buck2_build_api::interpreter::rule_defs::context::AnalysisActions;
 use buck2_core::deferred::dynamic::DynamicLambdaResultsKey;
 use buck2_dynamic_actions::attrs::dedupe_output_artifacts;
@@ -101,10 +101,10 @@ pub(crate) fn analysis_actions_methods_dynamic_output(methods: &mut MethodsBuild
         this: &'v AnalysisActions<'v>,
         #[starlark(require = named)] dynamic: ValueOf<
             'v,
-            ListOrTupleType<UnpackNonPromiseInputArtifact<'v>>,
+            ListOrTupleType<StarlarkArtifactView<'v>>,
         >,
         #[starlark(require = named)] inputs: Option<
-            ValueOf<'v, ListOrTupleType<UnpackNonPromiseInputArtifact<'v>>>,
+            ValueOf<'v, ListOrTupleType<StarlarkArtifactView<'v>>>,
         >,
         #[starlark(require = named)] outputs: ValueOf<
             'v,
@@ -132,7 +132,7 @@ pub(crate) fn analysis_actions_methods_dynamic_output(methods: &mut MethodsBuild
         // Conversion
         let artifact_values = dynamic
             .try_items()
-            .map(|x| x?.artifact())
+            .map(|x| x?.non_promise_artifact())
             .collect::<buck2_error::Result<_>>()?;
 
         let attributes = this.attributes;

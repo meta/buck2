@@ -11,10 +11,10 @@
 use allocative::Allocative;
 use buck2_artifact::artifact::artifact_type::Artifact;
 use buck2_build_api::dynamic_value::DynamicValue;
+use buck2_build_api::interpreter::rule_defs::artifact::starlark_artifact_like::StarlarkArtifactView;
 use buck2_build_api::interpreter::rule_defs::artifact::starlark_artifact_value::StarlarkArtifactValue;
 use buck2_build_api::interpreter::rule_defs::artifact::starlark_output_artifact::StarlarkOutputArtifact;
 use buck2_build_api::interpreter::rule_defs::artifact::starlark_output_artifact::StarlarkOutputArtifactView;
-use buck2_build_api::interpreter::rule_defs::artifact::unpack_artifact::UnpackNonPromiseInputArtifact;
 use buck2_core::deferred::dynamic::DynamicLambdaResultsKey;
 use buck2_error::buck2_error;
 use buck2_error::internal_error;
@@ -286,7 +286,7 @@ impl<'v> DynamicAttrType<'v> {
     pub fn callable_param_ty(&self) -> Ty {
         match self {
             DynamicAttrType::Output => StarlarkOutputArtifact::starlark_type_repr(),
-            DynamicAttrType::ArtifactValue => UnpackNonPromiseInputArtifact::starlark_type_repr(),
+            DynamicAttrType::ArtifactValue => StarlarkArtifactView::starlark_type_repr(),
             DynamicAttrType::DynamicValue => StarlarkDynamicValue::starlark_type_repr(),
             DynamicAttrType::Value(ty) => ty.as_ty().dupe(),
             DynamicAttrType::List(item_ty) => Ty::list(item_ty.callable_param_ty()),
@@ -310,8 +310,10 @@ impl<'v> DynamicAttrType<'v> {
                 )))
             }
             DynamicAttrType::ArtifactValue => {
-                let artifact = UnpackNonPromiseInputArtifact::unpack_value_err(value)?;
-                Ok(DynamicAttrValue::ArtifactValue(artifact.artifact()?))
+                let artifact = StarlarkArtifactView::unpack_value_err(value)?;
+                Ok(DynamicAttrValue::ArtifactValue(
+                    artifact.non_promise_artifact()?,
+                ))
             }
             DynamicAttrType::DynamicValue => {
                 let dynamic_value = <&StarlarkDynamicValue>::unpack_value_err(value)?;

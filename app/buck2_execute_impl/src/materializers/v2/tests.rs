@@ -1063,6 +1063,52 @@ async fn test_a_published_output_enters_the_store() -> buck2_error::Result<()> {
     .await
 }
 
+/// The store finds content a tracked path holds out of that path, and content no tracked path
+/// holds not at all.
+#[tokio::test]
+async fn test_the_store_finds_content_out_of_a_tracked_path() -> buck2_error::Result<()> {
+    ignore_stack_overflow_checks_for_future(async {
+        let temp = ProjectRootTemp::new()?;
+        let fs = temp.path().dupe();
+        let (dm, _io) = make(&fs, None, None);
+        let digest = |content: &str| {
+            FileDigest::from_content(
+                content.as_bytes(),
+                DigestConfig::testing_default().cas_digest_config(),
+            )
+        };
+        let p = path("buck-out/v2/gen/out");
+        fs.write_file(&p, "on disk", false)?;
+        // Tracked, with nothing holding its digest: the store let go of the report's copy.
+        drop(report(&dm, &p, file("on disk")).await?);
+        dm.store().flush_collector().await;
+        let copy = fs.resolve(path("buck-out/v2/gen/copy"));
+        assert!(!in_store(&dm, b"on disk", &copy).await?);
+
+        let found = dm.store().find(&digest("on disk"), false, &*dm).await?;
+        assert!(found.is_some());
+        assert!(in_store(&dm, b"on disk", &copy).await?);
+        assert!(
+            dm.store()
+                .find(&digest("nowhere"), false, &*dm)
+                .await?
+                .is_none()
+        );
+        // Held by the store already: nothing to do, and no path needed.
+        std::fs::remove_file(fs.resolve(&p))?;
+        assert!(
+            dm.store()
+                .find(&digest("on disk"), false, &*dm)
+                .await?
+                .is_some()
+        );
+        drop(found);
+        abort(dm);
+        Ok(())
+    })
+    .await
+}
+
 #[tokio::test]
 async fn test_ensuring_paths_without_values_asks_nothing() -> buck2_error::Result<()> {
     ignore_stack_overflow_checks_for_future(async {

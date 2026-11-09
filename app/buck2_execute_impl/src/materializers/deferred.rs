@@ -72,9 +72,11 @@ use buck2_execute::materialize::materializer::Materializer;
 use buck2_execute::materialize::materializer::MaterializerBackgroundCleanupGuard;
 use buck2_execute::materialize::materializer::MaterializerIterItem;
 use buck2_execute::materialize::materializer::ReadLease;
+use buck2_execute::materialize::materializer::TrackedPaths;
 use buck2_execute::materialize::materializer::WriteLease;
 use buck2_execute::materialize::materializer::WriteRequest;
 use buck2_execute::re::manager::ReConnectionManager;
+use buck2_fs::paths::abs_norm_path::AbsNormPathBuf;
 use buck2_hash::BuckMutMap;
 use buck2_hash::BuckMutSet;
 use buck2_util::threads::thread_spawn;
@@ -456,6 +458,17 @@ impl From<MaterializeEntryError> for SharedMaterializingError {
 /// paths when `prepare_outputs` forgot them, for a fill to keep rather than remake.
 struct PreparedOutputs {
     displaced: Mutex<BuckMutMap<ProjectRelativePathBuf, ArtifactMetadata>>,
+}
+
+#[async_trait]
+impl<T: IoHandler + Allocative> TrackedPaths for DeferredMaterializerAccessor<T> {
+    async fn hold_file(
+        &self,
+        _digest: &FileDigest,
+    ) -> buck2_error::Result<Option<(AbsNormPathBuf, ReadLease)>> {
+        // This core knows its paths by declaration, not by digest.
+        Ok(None)
+    }
 }
 
 #[async_trait]

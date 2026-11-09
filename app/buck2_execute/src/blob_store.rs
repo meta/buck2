@@ -63,6 +63,7 @@ use tokio::sync::oneshot;
 use tokio::time::MissedTickBehavior;
 
 use crate::execute::blocking::BlockingExecutor;
+use crate::materialize::materializer::TrackedPaths;
 use crate::re::ttl_refresh::StandaloneTtlRefreshCounters;
 use crate::re::ttl_refresh::TtlRefresher;
 
@@ -324,6 +325,70 @@ impl BlobStore {
         let (done, flushed) = oneshot::channel();
         if attached.collector.send(Collect::Flush(done)).is_ok() {
             let _ignored = flushed.await;
+        }
+    }
+
+    /// Whether the store vouches for `digest` right now: it has the content, or the CAS is
+    /// known to. A value whose digests this holds for satisfies the invariant of design.md.
+    pub fn holds(&self, digest: &FileDigest) -> bool {
+        self.interner.peek(digest).is_some_and(|entry| {
+            entry.stash.is_some()
+                || Timestamp::from_second(entry.expires_secs)
+                    .is_ok_and(|expires| expires > Timestamp::now())
+        })
+    }
+
+    /// A tracked digest the store vouches for, for the content of `digest`, when the content
+    /// can be found: in the store already; in the CAS, asked through the store's presence path,
+    /// which stamps the answer on the digest; or at a tracked path `materializer` holds, out of
+    /// which the store takes it. `None` when it is in none of those. For content a value names
+    /// and nothing holds, one reloaded from disk: what comes back satisfies the invariant of
+    /// design.md for as long as it is held. A CAS that cannot be asked counts as not holding
+    /// the content.
+    pub async fn find(
+        &self,
+        digest: &FileDigest,
+        executable: bool,
+        materializer: &dyn TrackedPaths,
+    ) -> buck2_error::Result<Option<TrackedFileDigest>> {
+        let tracked = self.interner.intern(digest.dupe(), 0);
+        if self.holds(digest) {
+            return Ok(Some(tracked));
+        }
+        if let Some(refresher) = self.refresh.get() {
+            match refresher.check(vec![tracked.dupe()]).await {
+                Ok(presence) if presence.first().is_some_and(|p| p.is_some()) => {
+                    return Ok(Some(tracked));
+                }
+                Ok(_) => {}
+                Err(e) => tracing::debug!("The CAS could not be asked for `{digest}`: {e:#}"),
+            }
+        }
+        let Some((path, lease)) = materializer.hold_file(digest).await? else {
+            return Ok(None);
+        };
+        let inserted = self
+            .insert_files(vec![FileToInsert {
+                path,
+                digest: tracked.dupe(),
+                executable,
+                origin: Origin::BuckOut,
+            }])
+            .await;
+        drop(lease);
+        match inserted {
+            Ok(()) if self.holds(digest) => Ok(Some(tracked)),
+            Ok(()) => Ok(None),
+            // A tracked path that cannot be read is the tree's mistake, not the caller's.
+            Err(e) => {
+                buck2_core::soft_error_or_panic!(
+                    "blob_store_insert_failed",
+                    e.context(format!(
+                        "Putting `{digest}` into the store out of a tracked path"
+                    ))
+                );
+                Ok(None)
+            }
         }
     }
 
@@ -935,6 +1000,7 @@ mod tests {
 
     use super::*;
     use crate::execute::blocking::testing::DummyBlockingExecutor;
+    use crate::materialize::materializer::ReadLease;
     use crate::re::presence::Presence;
     use crate::re::ttl_refresh::PassPresenceChecker;
     use crate::re::ttl_refresh::PresenceChecker;
@@ -1528,6 +1594,75 @@ mod tests {
             }
             Ok(answers)
         }
+    }
+
+    /// A tracked path a materializer hands over, held for reading, which the store reads.
+    struct PathOf {
+        path: AbsNormPathBuf,
+        digest: FileDigest,
+    }
+
+    #[async_trait]
+    impl TrackedPaths for PathOf {
+        async fn hold_file(
+            &self,
+            digest: &FileDigest,
+        ) -> buck2_error::Result<Option<(AbsNormPathBuf, ReadLease)>> {
+            Ok((*digest == self.digest).then(|| (self.path.clone(), ReadLease::noop())))
+        }
+    }
+
+    /// `find` vouches for content the store has, content the CAS has and content a tracked path
+    /// hands over, in that order, and for nothing else.
+    #[tokio::test]
+    async fn test_find_asks_the_store_then_the_cas_then_the_tracked_paths()
+    -> buck2_error::Result<()> {
+        let temp = ProjectRootTemp::new()?;
+        let (store, _table) = store(temp.path());
+        let in_the_cas = digest(b"blob_store test: find, in the CAS");
+        let on_disk = digest(b"blob_store test: find, on disk");
+        let nowhere = digest(b"blob_store test: find, nowhere");
+        let stub = Stub::new({
+            let in_the_cas = in_the_cas.dupe();
+            move |asked| {
+                if *asked == in_the_cas {
+                    Answer::Alive(SignedDuration::from_hours(4))
+                } else {
+                    Answer::Gone
+                }
+            }
+        });
+        assert!(
+            store
+                .refresh
+                .set(TtlRefresher::new(Arc::new(stub.dupe())))
+                .is_ok()
+        );
+        let path = scratch(temp.path(), "on_disk");
+        fs_util::write(&path, b"blob_store test: find, on disk")?;
+        let paths = PathOf {
+            path,
+            digest: on_disk.dupe(),
+        };
+
+        let found = store
+            .find(&in_the_cas, false, &paths)
+            .await?
+            .expect("the CAS has it");
+        assert!(store.holds(&in_the_cas) && found.stash().is_none());
+        let taken = store
+            .find(&on_disk, false, &paths)
+            .await?
+            .expect("a tracked path has it");
+        assert!(taken.stash().is_some());
+        assert!(store.find(&nowhere, false, &paths).await?.is_none());
+        // What the store holds is not asked about again.
+        drop(store.find(&on_disk, false, &paths).await?);
+        drop(store.find(&in_the_cas, false, &paths).await?);
+        let mut asked_once = vec![in_the_cas, on_disk, nowhere];
+        asked_once.sort();
+        assert_eq!(stub.asked(), asked_once);
+        Ok(())
     }
 
     fn refreshing_store(

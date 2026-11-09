@@ -103,12 +103,14 @@ use buck2_execute::materialize::materializer::MaterializerBackgroundCleanupGuard
 use buck2_execute::materialize::materializer::MaterializerEntry;
 use buck2_execute::materialize::materializer::MaterializerIterItem;
 use buck2_execute::materialize::materializer::ReadLease;
+use buck2_execute::materialize::materializer::TrackedPaths;
 use buck2_execute::materialize::materializer::WriteLease;
 use buck2_execute::materialize::materializer::WriteRequest;
 use buck2_execute::re::manager::ReConnectionManager;
 use buck2_fs::error::IoResultExt;
 use buck2_fs::fs_util;
 use buck2_fs::paths::abs_norm_path::AbsNormPath;
+use buck2_fs::paths::abs_norm_path::AbsNormPathBuf;
 use buck2_fs::paths::file_name::FileName;
 use buck2_hash::BuckMutSet;
 use buck2_util::future::join_all;
@@ -640,6 +642,27 @@ fn duplicate(error: &MaterializationError) -> MaterializationError {
                 source: source.dupe(),
             }
         }
+    }
+}
+
+#[async_trait]
+impl<T: IoHandler + Allocative> TrackedPaths for DiskStateMaterializer<T> {
+    /// A read hold on a path holding the digest, which never waits.
+    async fn hold_file(
+        &self,
+        digest: &FileDigest,
+    ) -> buck2_error::Result<Option<(AbsNormPathBuf, ReadLease)>> {
+        // Only what the index has a path for is worth a round trip to the processor.
+        if !self.index.holds(digest) {
+            return Ok(None);
+        }
+        let mut sources = self.sender.hold_sources(vec![digest.dupe()]).await?;
+        Ok(sources.pop().flatten().map(|(path, guard)| {
+            (
+                self.io.fs().resolve(&path),
+                ReadLease::new(Roots(vec![guard])),
+            )
+        }))
     }
 }
 

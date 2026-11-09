@@ -24,6 +24,7 @@ use buck2_directory::directory::entry::DirectoryEntry;
 use buck2_directory::directory::walk::ordered_entry_walk;
 use buck2_error::ErrorTag;
 use buck2_events::dispatch::EventDispatcher;
+use buck2_fs::paths::abs_norm_path::AbsNormPathBuf;
 use derive_more::Display;
 use dice::UserComputationData;
 use dice_futures::cancellation::CancellationContext;
@@ -305,6 +306,19 @@ pub enum HeldContent {
     Missing(WriteLease),
 }
 
+/// The paths a materializer tracks, as the BlobStore takes content out of them
+/// (`BlobStore::find`).
+#[async_trait]
+pub trait TrackedPaths: Send + Sync {
+    /// A tracked path holding a file of `digest`, held for reading until the lease drops;
+    /// `None` when no such path can be held without waiting, or the materializer does not know
+    /// its paths by digest (the deferred core).
+    async fn hold_file(
+        &self,
+        digest: &FileDigest,
+    ) -> buck2_error::Result<Option<(AbsNormPathBuf, ReadLease)>>;
+}
+
 /// A trait providing methods to asynchronously materialize artifacts.
 ///
 /// # Invariants
@@ -331,7 +345,7 @@ pub enum HeldContent {
 /// 4. Declare may delete any existing paths that conflict with the path that was
 ///    declared.
 #[async_trait]
-pub trait Materializer: Allocative + Send + Sync + 'static {
+pub trait Materializer: TrackedPaths + Allocative + Send + Sync + 'static {
     /// Whether this materializer tracks disk state only, so that a producer that can make its
     /// content puts it on disk itself, under `hold_or_take`, and reports it, as a local run does
     /// (`materialize::produce`). The deferred core is declared to instead (`declare_write`,

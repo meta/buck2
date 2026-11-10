@@ -5,11 +5,9 @@ oncall("android_devxx")
 
 source_listing()
 
-KOTLIN_USE_OLD_VERSION = False
-
 buck_java_library(
     name = "kotlin",
-    srcs = (["kotlin-1.4.2/KotlinMetadataReader.java"] if KOTLIN_USE_OLD_VERSION else ["KotlinMetadataReader.java"]) + ["InlineFunctionScope.java"],
+    srcs = glob(["*.java"]),
     tests = [
         "prelude//toolchains/android/test/com/facebook/buck/jvm/java/abi:abi",
     ],

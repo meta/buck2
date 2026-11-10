@@ -21,4 +21,3 @@ mod macro_item;
 mod module;
 mod trace;
 mod unpack_value;
-mod unpack_value_attr;

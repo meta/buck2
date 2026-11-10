@@ -490,7 +490,7 @@ impl<'v> ErrorPrinter for BxlContext<'v> {
 
 starlark::methods_static!(BXL_CONTEXT_METHODS = methods::bxl_context_methods);
 
-#[starlark_value(type = "bxl.Context", StarlarkTypeRepr, UnpackValue, no_freeze)]
+#[starlark_value(type = "bxl.Context", no_freeze)]
 impl<'v> StarlarkValue<'v> for BxlContext<'v> {
     fn get_methods() -> Option<&'static Methods> {
         Some(BXL_CONTEXT_METHODS.methods())

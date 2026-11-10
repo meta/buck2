@@ -149,12 +149,7 @@ impl<'v> EnsuredArtifactGroup<'v> {
 
 starlark::methods_static!(ARTIFACT_GROUP_METHODS = artifact_group_methods);
 
-#[starlark_value(
-    type = "bxl.EnsuredArtifactGroup",
-    StarlarkTypeRepr,
-    UnpackValue,
-    no_freeze
-)]
+#[starlark_value(type = "bxl.EnsuredArtifactGroup", no_freeze)]
 impl<'v> StarlarkValue<'v> for EnsuredArtifactGroup<'v>
 where
     Self: ProvidesStaticType<'v>,
@@ -170,12 +165,7 @@ where
     }
 }
 
-#[starlark_value(
-    type = "bxl.EnsuredArtifactGroupInner",
-    StarlarkTypeRepr,
-    UnpackValue,
-    no_freeze
-)]
+#[starlark_value(type = "bxl.EnsuredArtifactGroupInner", no_freeze)]
 impl<'v> StarlarkValue<'v> for EnsuredArtifactGroupInner
 where
     Self: ProvidesStaticType<'v>,
@@ -285,7 +275,7 @@ impl Serialize for EnsuredArtifactGroupInner {
 
 starlark::methods_static!(ENSURED_ARTIFACT_METHODS = ensured_artifact_methods);
 
-#[starlark_value(type = "bxl.EnsuredArtifact", StarlarkTypeRepr, UnpackValue, no_freeze)]
+#[starlark_value(type = "bxl.EnsuredArtifact", no_freeze)]
 impl<'v> StarlarkValue<'v> for EnsuredArtifact
 where
     Self: ProvidesStaticType<'v>,

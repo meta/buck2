@@ -17,7 +17,6 @@
 
 use quote::quote;
 
-use crate::util::GenericsUtil;
 use crate::v_lifetime::find_v_lifetime;
 use crate::vtable::vtable_has_field_name;
 
@@ -37,10 +36,6 @@ struct StarlarkValueAttrs {
     /// The `type()` string. Required unless the impl is a representation that names its
     /// `Type`, whose string it is then.
     typ: Option<syn::Expr>,
-    /// Accepted and does nothing: `UnpackValue for &T` is a blanket impl.
-    unpack_value: bool,
-    /// Implement `StarlarkTypeRepr` for `&T`.
-    starlark_type_repr: bool,
     vtable: VtableMode,
     alloc: AllocMode,
 }
@@ -119,8 +114,6 @@ impl syn::parse::Parse for StarlarkValueAttrs {
         };
         let mut attrs = StarlarkValueAttrs {
             typ,
-            unpack_value: false,
-            starlark_type_repr: false,
             vtable: VtableMode::Default,
             alloc: AllocMode::Default,
         };
@@ -137,11 +130,7 @@ impl syn::parse::Parse for StarlarkValueAttrs {
                 }
             }
             let name = input.parse::<syn::Ident>()?;
-            if name == "UnpackValue" {
-                attrs.unpack_value = true;
-            } else if name == "StarlarkTypeRepr" {
-                attrs.starlark_type_repr = true;
-            } else if name == "skip_vtable" {
+            if name == "skip_vtable" {
                 attrs.set_vtable_mode(&name, VtableMode::Skip)?;
             } else if name == "no_freeze" {
                 attrs.set_vtable_mode(&name, VtableMode::TyOnly)?;
@@ -169,7 +158,7 @@ impl syn::parse::Parse for StarlarkValueAttrs {
             } else {
                 return Err(syn::Error::new_spanned(
                     name,
-                    "unknown attribute, allowed attributes are `UnpackValue`, `StarlarkTypeRepr`, `skip_vtable`, `no_freeze`, `frozen_vtable`, `alloc = ...`",
+                    "unknown attribute, allowed attributes are `skip_vtable`, `no_freeze`, `frozen_vtable`, `alloc = ...`",
                 ));
             }
         }
@@ -255,33 +244,6 @@ fn is_impl_starlark_value(
 }
 
 impl ImplStarlarkValue {
-    /// Impl `StarlarkTypeRepr for &T`.
-    fn impl_unpack_value(&self) -> syn::Result<proc_macro2::TokenStream> {
-        if !self.attrs.starlark_type_repr {
-            return Ok(proc_macro2::TokenStream::new());
-        }
-
-        GenericsUtil::new(&self.input.generics).assert_only_lifetime_params()?;
-
-        let lt = &self.lifetime_param;
-        let params = &self.input.generics.params;
-        // TODO(nga): where clause is incorrect:
-        //   if there's something `Self: Xxx` constraint, it should be `*Self: Xxx`.
-        let where_clause = &self.input.generics.where_clause;
-        let self_ty = &self.input.self_ty;
-        Ok(quote! {
-            impl<#params> starlark::values::type_repr::StarlarkTypeRepr for &#lt #self_ty
-            #where_clause
-            {
-                type Canonical = #self_ty;
-
-                fn starlark_type_repr() -> starlark::typing::Ty {
-                    <#self_ty as starlark::values::type_repr::StarlarkTypeRepr>::starlark_type_repr()
-                }
-            }
-        })
-    }
-
     fn please_use_starlark_type_macro(&self) -> syn::Result<syn::ImplItem> {
         syn::parse2(quote! {
             fn please_use_starlark_type_macro() {}
@@ -867,14 +829,11 @@ fn derive_starlark_value_impl(
     if impl_starlark_value.impl_of == ImplOf::Type {
         // A type whose representations are elsewhere: nothing is allocated as it, so there is
         // no vtable to register and nothing to unpack.
-        if impl_starlark_value.attrs.unpack_value
-            || impl_starlark_value.attrs.starlark_type_repr
-            || impl_starlark_value.attrs.vtable != VtableMode::Default
-        {
+        if impl_starlark_value.attrs.vtable != VtableMode::Default {
             return Err(syn::Error::new_spanned(
                 &input.self_ty,
-                "an `impl StarlarkType` takes only `type = ...`; unpacking and vtable \
-                 registration are the representations'",
+                "an `impl StarlarkType` takes only `type = ...`; vtable registration is the \
+                 representations'",
             ));
         }
         let type_impl = impl_starlark_value.type_impl(input.items.clone())?;
@@ -917,12 +876,6 @@ fn derive_starlark_value_impl(
                  its own; this belongs on the `impl StarlarkType` of its `Type`",
             ));
         }
-        if impl_starlark_value.attrs.unpack_value || impl_starlark_value.attrs.starlark_type_repr {
-            return Err(syn::Error::new_spanned(
-                &input.self_ty,
-                "one representation of a type cannot be a binding for the type; bind its `Type`",
-            ));
-        }
         if let Some(typ) = &impl_starlark_value.attrs.typ {
             return Err(syn::Error::new_spanned(
                 typ,
@@ -949,7 +902,6 @@ fn derive_starlark_value_impl(
         });
     }
 
-    let impl_unpack_value = impl_starlark_value.impl_unpack_value()?;
     let type_impl = impl_starlark_value.type_impl(ty_items)?;
     let type_self: syn::ImplItem = syn::parse_quote! {
         type Type = Self;
@@ -963,8 +915,6 @@ fn derive_starlark_value_impl(
     );
 
     Ok(quote! {
-        #impl_unpack_value
-
         #type_impl
 
         #rep_impl

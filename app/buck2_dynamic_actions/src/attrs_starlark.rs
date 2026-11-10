@@ -42,13 +42,7 @@ pub struct StarlarkDynamicAttrType<'v> {
     pub ty: DynamicAttrType<'v>,
 }
 
-#[starlark_value(
-    type = "DynamicAttrType",
-    StarlarkTypeRepr,
-    UnpackValue,
-    frozen_vtable,
-    alloc = complex
-)]
+#[starlark_value(type = "DynamicAttrType", frozen_vtable, alloc = complex)]
 impl<'v> StarlarkValue<'v> for StarlarkDynamicAttrType<'v> {}
 
 /// Attributes declared for [`dynamic_actions()`](../#dynamic_actions) functions.

@@ -59,7 +59,7 @@ struct StackFrame {
 
 starlark::methods_static!(STACK_FRAME_METHODS = stack_frame_methods);
 
-#[starlark_value(type = "StackFrame", StarlarkTypeRepr, UnpackValue, no_freeze)]
+#[starlark_value(type = "StackFrame", no_freeze)]
 impl<'v> StarlarkValue<'v> for StackFrame {
     fn get_methods() -> Option<&'static Methods> {
         Some(STACK_FRAME_METHODS.methods())

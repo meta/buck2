@@ -209,8 +209,6 @@ pub fn derive_starlark_representations(input: proc_macro::TokenStream) -> proc_m
 /// is applied to an impl block of `StarlarkValue`.
 ///
 /// `#[starlark_value(type = "name", ...)]` accepts these flags after the required `type`:
-/// - `StarlarkTypeRepr`: implement that trait for `&T`. `UnpackValue` is accepted and does
-///   nothing: `UnpackValue for &T` is a blanket impl.
 /// - `skip_vtable`: register no vtable at all, neither the pagable `AValue` one nor the typing
 ///   one. For types whose frozen canonical form is what gets serialized.
 /// - `no_freeze`: the type is never frozen. Register only the typing vtable, so it need not be

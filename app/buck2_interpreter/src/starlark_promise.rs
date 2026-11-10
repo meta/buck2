@@ -275,7 +275,7 @@ impl<'v> StarlarkPromise<'v> {
 
 starlark::methods_static!(PROMISE_METHODS = promise_methods);
 
-#[starlark_value(type = "Promise", UnpackValue, StarlarkTypeRepr, no_freeze)]
+#[starlark_value(type = "Promise", no_freeze)]
 impl<'v> StarlarkValue<'v> for StarlarkPromise<'v> {
     fn get_methods() -> Option<&'static Methods> {
         Some(PROMISE_METHODS.methods())

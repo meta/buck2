@@ -414,13 +414,7 @@ fn provider_collection_methods(builder: &mut MethodsBuilder) {
     }
 }
 
-#[starlark_value(
-    type = "ProviderCollection",
-    frozen_vtable,
-    UnpackValue,
-    StarlarkTypeRepr,
-    alloc = by_hand
-)]
+#[starlark_value(type = "ProviderCollection", frozen_vtable, alloc = by_hand)]
 impl<'v> StarlarkValue<'v> for ProviderCollection<'v> {
     fn at(&self, index: Value<'v>, _heap: Heap<'v>) -> starlark::Result<Value<'v>> {
         match self.get_impl(index, GetOp::At)? {

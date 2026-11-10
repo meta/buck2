@@ -67,7 +67,7 @@ pub(crate) struct StarlarkCQueryCtx<'v> {
 
 starlark::methods_static!(CQUERY_METHODS = cquery_methods);
 
-#[starlark_value(type = "bxl.CqueryContext", StarlarkTypeRepr, UnpackValue, no_freeze)]
+#[starlark_value(type = "bxl.CqueryContext", no_freeze)]
 impl<'v> StarlarkValue<'v> for StarlarkCQueryCtx<'v> {
     fn get_methods() -> Option<&'static Methods> {
         Some(CQUERY_METHODS.methods())

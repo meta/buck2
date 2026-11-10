@@ -41,7 +41,7 @@ pub struct StarlarkDynamicValue {
 
 starlark::methods_static!(DYNAMIC_VALUE_METHODS = dynamic_value_methods);
 
-#[starlark_value(type = "DynamicValue", StarlarkTypeRepr, UnpackValue)]
+#[starlark_value(type = "DynamicValue")]
 impl<'v> StarlarkValue<'v> for StarlarkDynamicValue {
     fn write_hash(&self, hasher: &mut StarlarkHasher) -> starlark::Result<()> {
         self.dynamic_value.hash(hasher);

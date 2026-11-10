@@ -86,7 +86,7 @@ impl<'v> BxlFilesystem<'v> {
 
 starlark::methods_static!(BXL_FILESYSTEM_METHODS = fs_operations);
 
-#[starlark_value(type = "bxl.Filesystem", StarlarkTypeRepr, UnpackValue, no_freeze)]
+#[starlark_value(type = "bxl.Filesystem", no_freeze)]
 impl<'v> StarlarkValue<'v> for BxlFilesystem<'v> {
     fn get_methods() -> Option<&'static Methods> {
         Some(BXL_FILESYSTEM_METHODS.methods())

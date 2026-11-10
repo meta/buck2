@@ -76,7 +76,7 @@ pub(crate) struct StarlarkAQueryCtx<'v> {
 
 starlark::methods_static!(AQUERY_METHODS = aquery_methods);
 
-#[starlark_value(type = "bxl.AqueryContext", StarlarkTypeRepr, UnpackValue, no_freeze)]
+#[starlark_value(type = "bxl.AqueryContext", no_freeze)]
 impl<'v> StarlarkValue<'v> for StarlarkAQueryCtx<'v> {
     fn get_methods() -> Option<&'static Methods> {
         Some(AQUERY_METHODS.methods())

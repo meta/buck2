@@ -89,7 +89,7 @@ impl<'v> StarlarkActionErrorContext<'v> {
 
 starlark::methods_static!(ACTION_ERROR_CONTEXT_METHODS = action_error_context_methods);
 
-#[starlark_value(type = "ActionErrorCtx", StarlarkTypeRepr, UnpackValue, no_freeze)]
+#[starlark_value(type = "ActionErrorCtx", no_freeze)]
 impl<'v> StarlarkValue<'v> for StarlarkActionErrorContext<'v> {
     fn get_methods() -> Option<&'static Methods> {
         Some(ACTION_ERROR_CONTEXT_METHODS.methods())
@@ -400,7 +400,7 @@ impl StarlarkActionSubError {
 
 starlark::methods_static!(ACTION_SUB_ERROR_METHODS = action_sub_error_methods);
 
-#[starlark_value(type = "ActionSubError", StarlarkTypeRepr, UnpackValue, no_freeze)]
+#[starlark_value(type = "ActionSubError", no_freeze)]
 impl<'v> StarlarkValue<'v> for StarlarkActionSubError {
     fn get_methods() -> Option<&'static Methods> {
         Some(ACTION_SUB_ERROR_METHODS.methods())

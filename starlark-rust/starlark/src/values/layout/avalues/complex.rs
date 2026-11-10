@@ -75,7 +75,7 @@ where
 
 impl<'v> Heap<'v> {
     /// Allocate a value which can be traced (garbage collected) and frozen on the [`Heap`].
-    pub fn alloc_complex<T>(self, x: T) -> Value<'v>
+    pub(crate) fn alloc_complex<T>(self, x: T) -> Value<'v>
     where
         T: ComplexValue<'v>,
         T: HeapSendable<'v>,

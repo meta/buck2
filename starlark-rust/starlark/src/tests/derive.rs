@@ -15,7 +15,6 @@
  * limitations under the License.
  */
 
-mod alloc_value;
 mod docs;
 mod freeze;
 mod macro_item;

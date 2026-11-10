@@ -22,7 +22,6 @@ extern crate proc_macro;
 
 use proc_macro::TokenStream;
 
-mod alloc_value;
 mod any_lifetime;
 mod bc;
 mod freeze;
@@ -204,18 +203,6 @@ pub fn derive_unpack_value(input: proc_macro::TokenStream) -> proc_macro::TokenS
 #[proc_macro_derive(StarlarkRepresentations)]
 pub fn derive_starlark_representations(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
     representations::derive_starlark_representations(input)
-}
-
-/// Derive the `AllocValue` trait.
-#[proc_macro_derive(AllocValue)]
-pub fn derive_alloc_value(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
-    alloc_value::derive_alloc_value(input)
-}
-
-/// Derive the `AllocFrozenValue` trait.
-#[proc_macro_derive(AllocFrozenValue)]
-pub fn derive_alloc_frozen_value(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
-    alloc_value::derive_alloc_frozen_value(input)
 }
 
 /// Generate missing elements of `StarlarkValue` trait when this attribute

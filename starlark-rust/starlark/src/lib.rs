@@ -376,10 +376,12 @@
 //!     // How we add them
 //!     fn add(&self, rhs: Value<'v>, heap: Heap<'v>) -> Option<starlark::Result<Value<'v>>> {
 //!         if let Some(rhs) = rhs.downcast_ref::<Self>() {
-//!             Some(Ok(heap.alloc(Complex {
-//!                 real: self.real + rhs.real,
-//!                 imaginary: self.imaginary + rhs.imaginary,
-//!             })))
+//!             Some(Ok(heap
+//!                 .alloc_representation(Complex {
+//!                     real: self.real + rhs.real,
+//!                     imaginary: self.imaginary + rhs.imaginary,
+//!                 })
+//!                 .to_value()))
 //!         } else {
 //!             None
 //!         }
@@ -392,15 +394,21 @@
 //! let globals = Globals::standard();
 //! Module::with_temp_heap(|module| {
 //!     // We inject some complex numbers into the module before we start.
-//!     let a = module.heap().alloc(Complex {
-//!         real: 1,
-//!         imaginary: 8,
-//!     });
+//!     let a = module
+//!         .heap()
+//!         .alloc_representation(Complex {
+//!             real: 1,
+//!             imaginary: 8,
+//!         })
+//!         .to_value();
 //!     module.set("a", a);
-//!     let b = module.heap().alloc(Complex {
-//!         real: 4,
-//!         imaginary: 2,
-//!     });
+//!     let b = module
+//!         .heap()
+//!         .alloc_representation(Complex {
+//!             real: 4,
+//!             imaginary: 2,
+//!         })
+//!         .to_value();
 //!     module.set("b", b);
 //!     let mut eval = Evaluator::new(&module);
 //!     let res = eval.eval_module(ast, &globals)?;

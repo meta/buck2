@@ -134,38 +134,29 @@ impl<'v, T: AValueSimpleBound<'v>> AValue<'v> for AValueFrozen<T> {
     }
 }
 
+// The strategies are crate-private: a representation outside the crate chooses its strategy
+// in its `AllocRepresentation` impl, through the `Allocator`.
 impl<'fh> FrozenHeap<'fh> {
-    /// Allocate a value on the heap
-    pub fn alloc_simple_typed<T: AValueSimpleBound<'fh>>(self, val: T) -> ValueTyped<'fh, T> {
+    /// Allocate a value at this heap's brand: nothing on a frozen heap is traced or frozen.
+    pub(crate) fn alloc_simple_typed<T: AValueSimpleBound<'fh>>(
+        self,
+        val: T,
+    ) -> ValueTyped<'fh, T> {
         assert!(!T::is_special(Private));
         self.alloc_raw(AValueImpl::<AValueFrozen<T>>::new(val))
     }
 
-    /// Allocate a simple [`StarlarkValue`](crate::values::StarlarkValue) on this heap.
-    ///
-    /// Simple value is any starlark value which:
-    /// * does not need to be traced or frozen, so it can only reference other values at this
-    ///   heap's brand
-    /// * is not special builtin (e.g. `None`)
-    ///
-    /// Under the `pagable` feature, `T` must also be registered via
-    /// [`register_avalue_simple_frozen!`](crate::register_avalue_simple_frozen)
-    /// (bundled into `AValueSimpleBound`).
-    pub fn alloc_simple<T: AValueSimpleBound<'fh>>(self, val: T) -> Value<'fh> {
+    /// [`alloc_simple_typed`](Self::alloc_simple_typed) as a [`Value`].
+    pub(crate) fn alloc_simple<T: AValueSimpleBound<'fh>>(self, val: T) -> Value<'fh> {
         self.alloc_simple_typed(val).to_value()
     }
 }
 
 impl<'v> Heap<'v> {
-    /// Allocate a simple [`StarlarkValue`](crate::values::StarlarkValue) on this heap.
-    ///
-    /// Simple value is any starlark value which:
-    /// * is `'static`: it holds no `Value`s, so it is neither traced nor frozen, and freezing the
-    ///   module moves it to the frozen heap as it is
-    /// * is not special builtin (e.g. `None`)
-    ///
-    /// Being `'static`, it is [`Send`] and [`Sync`] like the contents of every frozen value.
-    pub fn alloc_simple<T: for<'a> AValueSimpleBound<'a>>(self, x: T) -> Value<'v> {
+    /// Allocate a `'static` value: it holds no `Value`s, so it is neither traced nor frozen, and
+    /// freezing the module moves it to the frozen heap as it is. Being `'static`, it is [`Send`]
+    /// and [`Sync`] like the contents of every frozen value.
+    pub(crate) fn alloc_simple<T: for<'a> AValueSimpleBound<'a>>(self, x: T) -> Value<'v> {
         assert!(!T::is_special(Private));
         self.alloc_raw(AValueImpl::<AValueSimple<T>>::new(x))
             .to_value()

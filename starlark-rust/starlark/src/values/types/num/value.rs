@@ -27,6 +27,8 @@ use crate as starlark;
 use crate::collections::StarlarkHashValue;
 use crate::values::AllocFrozenValue;
 use crate::values::AllocValue;
+use crate::values::FrozenHeap;
+use crate::values::Heap;
 use crate::values::UnpackValue;
 use crate::values::Value;
 use crate::values::type_repr::StarlarkTypeRepr;
@@ -67,17 +69,29 @@ impl<'v> UnpackValue<'v> for NumRef<'v> {
     }
 }
 
-#[derive(
-    Debug,
-    derive_more::Display,
-    StarlarkTypeRepr,
-    AllocValue,
-    AllocFrozenValue
-)]
+#[derive(Debug, derive_more::Display, StarlarkTypeRepr)]
 #[doc(hidden)]
 pub enum Num {
     Int(StarlarkInt),
     Float(f64),
+}
+
+impl<'v> AllocValue<'v> for Num {
+    fn alloc_value(self, heap: Heap<'v>) -> Value<'v> {
+        match self {
+            Num::Int(i) => heap.alloc(i),
+            Num::Float(f) => heap.alloc(f),
+        }
+    }
+}
+
+impl<'fv> AllocFrozenValue<'fv> for Num {
+    fn alloc_frozen_value(self, heap: FrozenHeap<'fv>) -> Value<'fv> {
+        match self {
+            Num::Int(i) => heap.alloc(i),
+            Num::Float(f) => heap.alloc(f),
+        }
+    }
 }
 
 impl<'v> NumRef<'v> {

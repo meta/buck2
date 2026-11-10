@@ -55,8 +55,6 @@
 //! `values/layout/heap/branding.rs` explains that discipline, and the `heap` module in
 //! `values/layout/heap.rs` describes the heaps and how values move between them.
 
-pub use starlark_derive::AllocFrozenValue;
-pub use starlark_derive::AllocValue;
 pub use starlark_derive::Freeze;
 pub use starlark_derive::NoSerialize;
 pub use starlark_derive::StarlarkPagable;

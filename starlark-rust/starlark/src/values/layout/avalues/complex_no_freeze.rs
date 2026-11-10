@@ -77,7 +77,7 @@ where
 
 impl<'v> Heap<'v> {
     /// Allocate a value which can be traced (garbage collected), but cannot be frozen.
-    pub fn alloc_complex_no_freeze<T>(self, x: T) -> Value<'v>
+    pub(crate) fn alloc_complex_no_freeze<T>(self, x: T) -> Value<'v>
     where
         T: StarlarkValue<'v> + Trace<'v>,
         T: HeapSendable<'v>,

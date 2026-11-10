@@ -156,12 +156,8 @@ mod imp {
             );
         }
         if let SoftErrorKind::Deprecation { owner, started } = &options.kind {
-            if let Some(owner) = owner {
-                map.insert("deprecation_owner".to_owned(), owner.to_string());
-            }
-            if let Some(started) = started {
-                map.insert("deprecation_started".to_owned(), started.to_string());
-            }
+            map.insert("deprecation_owner".to_owned(), owner.to_string());
+            map.insert("deprecation_started".to_owned(), started.to_string());
         }
         map
     }

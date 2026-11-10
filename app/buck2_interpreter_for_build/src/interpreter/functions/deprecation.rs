@@ -80,8 +80,8 @@ fn record_deprecation(
         (file!(), line!(), column!()),
         StructuredErrorOptions {
             kind: SoftErrorKind::Deprecation {
-                owner: Some(Cow::Owned(owner.to_owned())),
-                started: Some(Cow::Owned(started.to_owned())),
+                owner: Cow::Owned(owner.to_owned()),
+                started: Cow::Owned(started.to_owned()),
             },
             ..Default::default()
         },

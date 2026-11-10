@@ -171,8 +171,8 @@ pub macro deprecation($category:expr, $err:expr, owner: $owner:expr, started: $s
             $category,
             $err,
             kind: $crate::soft_error::SoftErrorKind::Deprecation {
-                owner: Some(::std::borrow::Cow::Borrowed($owner)),
-                started: Some(::std::borrow::Cow::Borrowed($started)),
+                owner: ::std::borrow::Cow::Borrowed($owner),
+                started: ::std::borrow::Cow::Borrowed($started),
             },
             user_facing: false
             $(, $k: $v)*
@@ -187,8 +187,8 @@ pub macro deprecation_or_panic($category:expr, $err:expr, owner: $owner:expr, st
         $category,
         $err,
         kind: $crate::soft_error::SoftErrorKind::Deprecation {
-            owner: Some(::std::borrow::Cow::Borrowed($owner)),
-            started: Some(::std::borrow::Cow::Borrowed($started)),
+            owner: ::std::borrow::Cow::Borrowed($owner),
+            started: ::std::borrow::Cow::Borrowed($started),
         },
         user_facing: false
         $(, $k: $v)*
@@ -283,11 +283,10 @@ pub enum SoftErrorKind {
     /// quiet.
     SoftError,
     /// Something that is being removed was used. `owner` is the person driving the removal and
-    /// `started` the day (`YYYY-MM-DD`) the deprecation went in; both are absent only for
-    /// deprecations declared outside the code, where nothing records them.
+    /// `started` the day (`YYYY-MM-DD`) the deprecation went in.
     Deprecation {
-        owner: Option<Cow<'static, str>>,
-        started: Option<Cow<'static, str>>,
+        owner: Cow<'static, str>,
+        started: Cow<'static, str>,
     },
 }
 
@@ -323,7 +322,7 @@ impl Default for StructuredErrorOptions {
 }
 
 /// What [`soft_error!`] and [`deprecation!`] expand to. Only for reporters whose kind or owner is
-/// known at run time, such as deprecations declared in buckconfig or Starlark.
+/// known at run time, such as the Starlark `deprecation()` builtin.
 pub fn handle_soft_error(
     category: &str,
     err: buck2_error::Error,
@@ -331,11 +330,7 @@ pub fn handle_soft_error(
     options: StructuredErrorOptions,
 ) -> Result<buck2_error::Error, buck2_error::Error> {
     validate_logview_category(category)?;
-    if let SoftErrorKind::Deprecation {
-        started: Some(started),
-        ..
-    } = &options.kind
-    {
+    if let SoftErrorKind::Deprecation { started, .. } = &options.kind {
         validate_deprecation_start(started)?;
     }
 

@@ -18,6 +18,7 @@ import com.facebook.buck.jvm.core.BuildTargetValue;
 import com.facebook.buck.step.StepExecutionResult;
 import com.facebook.buck.step.StepExecutionResults;
 import com.facebook.buck.step.isolatedsteps.IsolatedStep;
+import com.facebook.infer.annotation.Nullsafe;
 import com.google.common.base.Joiner;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableSortedSet;
@@ -32,6 +33,7 @@ import java.util.Optional;
  * Rokoko stubgen step (prototype). Runs stubgen in-worker through JNI. Selected when the {@code
  * rokoko_stubgen_so} Kosabi plugin option is present (i.e. {@code kotlin.stubgen_engine=rokoko}).
  */
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public class RokokoStubgenStep implements IsolatedStep {
   private static final Logger LOG = Logger.get(RokokoStubgenStep.class);
 

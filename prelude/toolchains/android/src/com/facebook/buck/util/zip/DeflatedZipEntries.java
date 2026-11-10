@@ -10,6 +10,7 @@
 
 package com.facebook.buck.util.zip;
 
+import com.facebook.infer.annotation.Nullsafe;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
@@ -27,6 +28,7 @@ import java.util.zip.ZipEntry;
  * and its padding, as the APK signing service does, then moves every later entry, and stored native
  * libraries lose their page alignment.
  */
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public final class DeflatedZipEntries {
   private static final int BUFFER_SIZE = 64 * 1024;
 

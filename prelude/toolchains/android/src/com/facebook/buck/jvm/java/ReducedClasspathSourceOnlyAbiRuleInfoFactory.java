@@ -12,6 +12,7 @@ package com.facebook.buck.jvm.java;
 
 import com.facebook.buck.jvm.java.abi.source.api.SourceOnlyAbiRuleInfoFactory;
 import com.facebook.buck.jvm.java.lang.model.MoreElements;
+import com.facebook.infer.annotation.Nullsafe;
 import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.nio.file.Files;
@@ -27,6 +28,7 @@ import javax.tools.JavaFileManager;
 import org.jspecify.annotations.Nullable;
 
 /** Availability on the reduced dependency classpath and this compilation's generated classes. */
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public final class ReducedClasspathSourceOnlyAbiRuleInfoFactory
     implements SourceOnlyAbiRuleInfoFactory {
   private final SourceOnlyAbiRuleInfoFactory delegate;

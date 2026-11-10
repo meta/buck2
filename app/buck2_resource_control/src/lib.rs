@@ -23,6 +23,8 @@ pub mod cgroup;
 #[cfg(unix)]
 pub mod cgroup_files;
 #[cfg(unix)]
+pub(crate) mod host_swap;
+#[cfg(unix)]
 pub mod memory_tracker;
 pub mod path;
 #[cfg(unix)]

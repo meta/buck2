@@ -42,6 +42,7 @@ impl EventSenderState {
                 allprocs_memory_pressure: 0.0,
                 daemon_memory_current: 0,
                 daemon_swap_current: 0,
+                host_swap: None,
                 time_collected: SystemTime::now(),
             },
             txs: Vec::new(),

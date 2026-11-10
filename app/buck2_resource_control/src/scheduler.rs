@@ -827,6 +827,7 @@ mod tests {
             allprocs_memory_pressure: 80.0,
             daemon_memory_current: 8000,
             daemon_swap_current: 0,
+            host_swap: None,
             time_collected: SystemTime::now(),
         };
         scheduler.update(pressure, UpdateBuilder::new().build(), timeline.secs(0));
@@ -888,6 +889,7 @@ mod tests {
             allprocs_memory_pressure: pressure,
             daemon_memory_current: 0,
             daemon_swap_current: 0,
+            host_swap: None,
             time_collected: SystemTime::now(),
         };
         for i in 1..=60 {
@@ -938,6 +940,7 @@ mod tests {
             allprocs_memory_pressure: 12.0,
             daemon_memory_current: 8000,
             daemon_swap_current: 0,
+            host_swap: None,
             time_collected: SystemTime::now(),
         };
         scheduler.update(
@@ -980,6 +983,7 @@ mod tests {
             allprocs_memory_pressure: 80.0,
             daemon_memory_current: 8000,
             daemon_swap_current: 0,
+            host_swap: None,
             time_collected: SystemTime::now(),
         };
         scheduler.update(
@@ -1030,6 +1034,7 @@ mod tests {
             allprocs_memory_pressure: 0.0,
             daemon_memory_current: 0,
             daemon_swap_current: 0,
+            host_swap: None,
             time_collected: SystemTime::now(),
         };
         scheduler.update(
@@ -1064,6 +1069,7 @@ mod tests {
                 allprocs_swap_current: 0,
                 daemon_memory_current: 0,
                 daemon_swap_current: 0,
+                host_swap: None,
                 time_collected: SystemTime::now(),
             };
             for i in 0..duration {
@@ -1101,6 +1107,7 @@ mod tests {
                 allprocs_swap_current: 0,
                 daemon_memory_current: 0,
                 daemon_swap_current: 0,
+                host_swap: None,
                 time_collected: SystemTime::now(),
             };
             for i in 0..duration {
@@ -1152,6 +1159,7 @@ mod tests {
             allprocs_memory_current: 0,
             daemon_memory_current: 0,
             daemon_swap_current: 0,
+            host_swap: None,
             time_collected: SystemTime::now(),
         };
         let mut now_ms = 0;

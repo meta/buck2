@@ -29,6 +29,8 @@ use tokio_util::sync::CancellationToken;
 use crate::action_scene::ActionScene;
 use crate::buck_cgroup_tree::BuckCgroupTree;
 use crate::cgroup::MemoryPressureHandle;
+use crate::host_swap::HostSwap;
+use crate::host_swap::HostSwapReader;
 use crate::pool::CgroupPool;
 use crate::scheduler::SceneIdRef;
 use crate::scheduler::SceneResourceReading;
@@ -42,6 +44,8 @@ pub struct MemoryReading {
     pub allprocs_memory_pressure: f64,
     pub daemon_memory_current: u64,
     pub daemon_swap_current: u64,
+    /// `None` if it could not be determined
+    pub host_swap: Option<HostSwap>,
     /// Time this data was collected - only for logs
     pub time_collected: SystemTime,
 }
@@ -160,6 +164,7 @@ pub async fn create_memory_tracker(
     let memory_tracker = MemoryTracker {
         handle: handle.dupe(),
         allprocs_memory_pressure_handle: MemoryPressureHandle::new(),
+        host_swap_reader: HostSwapReader::open(),
     };
     const TICK_DURATION: Duration = Duration::from_millis(300);
     memory_tracker.spawn(TICK_DURATION).await?;
@@ -169,6 +174,7 @@ pub async fn create_memory_tracker(
 struct MemoryTracker {
     handle: MemoryTrackerHandle,
     allprocs_memory_pressure_handle: MemoryPressureHandle,
+    host_swap_reader: Option<HostSwapReader>,
 }
 
 impl MemoryTracker {
@@ -194,6 +200,7 @@ impl MemoryTracker {
                 Self::collect_memory_reading(
                     &self.handle,
                     &mut self.allprocs_memory_pressure_handle,
+                    self.host_swap_reader.as_ref(),
                 ),
                 Self::collect_scene_readings(&self.handle)
             );
@@ -215,6 +222,7 @@ impl MemoryTracker {
     async fn collect_memory_reading(
         handle: &MemoryTrackerHandle,
         allprocs_memory_pressure_handle: &mut MemoryPressureHandle,
+        host_swap_reader: Option<&HostSwapReader>,
     ) -> Option<MemoryReading> {
         let Ok((
             allprocs_memory_current,
@@ -222,6 +230,7 @@ impl MemoryTracker {
             allprocs_memory_pressure,
             daemon_memory_current,
             daemon_swap_current,
+            host_swap,
         )) = tokio::try_join!(
             handle.cgroup_tree.allprocs().read_memory_current(),
             handle.cgroup_tree.allprocs().read_swap_current(),
@@ -231,6 +240,12 @@ impl MemoryTracker {
                 .read_memory_pressure_total(allprocs_memory_pressure_handle),
             handle.cgroup_tree.daemon().read_memory_current(),
             handle.cgroup_tree.daemon().read_swap_current(),
+            async {
+                buck2_error::Ok(match host_swap_reader {
+                    Some(reader) => reader.read().await,
+                    None => None,
+                })
+            },
         )
         else {
             return None;
@@ -242,6 +257,7 @@ impl MemoryTracker {
             allprocs_memory_pressure,
             daemon_memory_current,
             daemon_swap_current,
+            host_swap,
             time_collected: SystemTime::now(),
         })
     }

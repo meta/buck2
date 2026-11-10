@@ -15,6 +15,7 @@ import com.facebook.buck.core.filesystems.AbsPath;
 import com.facebook.buck.jvm.java.abi.kotlin.InlineFunctionScope;
 import com.facebook.buck.jvm.java.lang.model.ElementsExtended;
 import com.facebook.buck.util.zip.JarBuilder;
+import com.facebook.infer.annotation.Nullsafe;
 import java.io.IOException;
 import java.nio.file.Path;
 import java.util.ArrayDeque;
@@ -26,6 +27,7 @@ import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 import java.util.TreeSet;
 import java.util.function.Supplier;
@@ -36,6 +38,7 @@ import javax.lang.model.SourceVersion;
 import javax.lang.model.element.Element;
 import javax.lang.model.util.Types;
 
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public class StubJar {
   private final Supplier<LibraryReader> libraryReaderSupplier;
   @Nullable private AbiGenerationMode compatibilityMode = null;
@@ -220,7 +223,7 @@ public class StubJar {
       }
 
       for (String keptName : keptNames) {
-        deferredEntries.get(keptName).write(writer);
+        Objects.requireNonNull(deferredEntries.get(keptName)).write(writer);
       }
     }
   }

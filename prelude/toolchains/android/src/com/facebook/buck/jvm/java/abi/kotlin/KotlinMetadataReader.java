@@ -10,6 +10,7 @@
 
 package com.facebook.buck.jvm.java.abi.kotlin;
 
+import com.facebook.infer.annotation.Nullsafe;
 import com.google.common.collect.ImmutableList;
 import java.util.Arrays;
 import java.util.Collection;
@@ -33,6 +34,7 @@ import kotlin.metadata.jvm.KotlinClassMetadata;
 import org.objectweb.asm.tree.AnnotationNode;
 
 /** Utilities to read Kotlin class metadata. */
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public class KotlinMetadataReader {
 
   /**
@@ -308,7 +310,7 @@ public class KotlinMetadataReader {
   private static void replacePayload(AnnotationNode annotationNode, Metadata rewritten) {
     List<String> d1 = Arrays.asList(rewritten.d1());
     List<String> d2 = Arrays.asList(rewritten.d2());
-    List<Object> values = annotationNode.values;
+    List<Object> values = Objects.requireNonNull(annotationNode.values);
     for (int i = 0; i + 1 < values.size(); i += 2) {
       if ("d1".equals(values.get(i))) {
         values.set(i + 1, d1);
@@ -363,7 +365,7 @@ public class KotlinMetadataReader {
     String packageName = null;
     Integer extraInt = null;
 
-    Iterator<Object> it = node.values.iterator();
+    Iterator<Object> it = Objects.requireNonNull(node.values).iterator();
     while (it.hasNext()) {
       String name = (String) it.next();
       Object value = it.next();

@@ -14,11 +14,13 @@ import com.facebook.buck.jvm.java.abi.source.api.SourceOnlyAbiRuleInfoFactory.So
 import com.facebook.buck.jvm.java.plugin.api.BuckJavacTaskListener;
 import com.facebook.buck.jvm.java.plugin.api.BuckJavacTaskProxy;
 import com.facebook.buck.jvm.java.plugin.api.PluginClassLoader;
+import com.facebook.infer.annotation.Nullsafe;
 import java.lang.reflect.Constructor;
 import java.util.function.Supplier;
 import javax.tools.Diagnostic;
 import org.jspecify.annotations.Nullable;
 
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public final class SourceBasedAbiStubber {
   public static BuckJavacTaskListener newInheritedMemberTypeValidatingTaskListener(
       PluginClassLoader pluginLoader,

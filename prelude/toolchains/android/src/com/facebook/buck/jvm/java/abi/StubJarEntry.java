@@ -28,7 +28,7 @@ public abstract class StubJarEntry {
       Path path,
       @Nullable LibraryReader existingAbiInput,
       Set<String> existingAbiPathStrings,
-      AbiGenerationMode compatibilityMode,
+      @Nullable AbiGenerationMode compatibilityMode,
       @Nullable InlineFunctionScope inlineFunctionScope,
       boolean keepSynthetic)
       throws IOException {

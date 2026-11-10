@@ -13,6 +13,7 @@ package com.facebook.buck.jvm.java.abi;
 import static com.facebook.buck.jvm.java.abi.AbiGenerationModeUtils.usesDependencies;
 
 import com.facebook.buck.cd.model.java.AbiGenerationMode;
+import com.facebook.infer.annotation.Nullsafe;
 import com.facebook.infer.annotation.PropagatesNullable;
 import java.util.Objects;
 import javax.annotation.Nullable;
@@ -28,6 +29,7 @@ import org.objectweb.asm.signature.SignatureWriter;
  * the same details. It allows us to take potentially risky shortcuts in source ABIs without losing
  * the ability to verify them by binary comparison against class ABIs.
  */
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public class SourceAbiCompatibleVisitor extends ClassVisitor {
 
   private final AbiGenerationMode compatibilityMode;
@@ -63,6 +65,7 @@ public class SourceAbiCompatibleVisitor extends ClassVisitor {
   }
 
   @Override
+  @Nullable
   public FieldVisitor visitField(
       int access, String name, String desc, String signature, Object value) {
     return super.visitField(access, name, desc, fixupSignature(signature), value);

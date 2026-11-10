@@ -12,15 +12,18 @@ package com.facebook.buck.jvm.java.abi;
 
 import com.facebook.buck.core.filesystems.AbsPath;
 import com.facebook.buck.util.function.ThrowingSupplier;
+import com.facebook.infer.annotation.Nullsafe;
 import java.io.File;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.nio.file.Path;
+import java.util.Objects;
 
 /*
  * Class to write stub jar entries as class files
  * */
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public class StubClassFileWriter implements StubJarWriter {
 
   private final AbsPath outputPath;
@@ -40,7 +43,9 @@ public class StubClassFileWriter implements StubJarWriter {
 
     try {
       // Ensure parent directory exists, throw if creation fails
-      File parentDir = new File(outputPath.toFile(), relativePath.getParent().toString());
+      File parentDir =
+          new File(
+              outputPath.toFile(), Objects.requireNonNull(relativePath.getParent()).toString());
       if (!parentDir.exists() && !parentDir.mkdirs()) {
         throw new IOException("Failed to create directory: " + parentDir);
       }

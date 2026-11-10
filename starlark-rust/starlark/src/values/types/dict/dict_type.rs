@@ -27,6 +27,7 @@ use crate::values::Heap;
 use crate::values::UnpackValue;
 use crate::values::Value;
 use crate::values::ValueOf;
+use crate::values::dict::DictMut;
 use crate::values::dict::DictRef;
 use crate::values::type_expr::StarlarkTypeExpr;
 use crate::values::type_expr::StarlarkTypeExprStable;
@@ -95,6 +96,11 @@ impl<'v, K: StarlarkTypeExpr<'v>, V: StarlarkTypeExpr<'v>> ValueOf<'v, DictType<
     #[inline]
     pub fn dict(self) -> DictRef<'v> {
         DictRef::from_value(self.to_value()).expect("a value's type does not change")
+    }
+
+    /// The dict, to change it: an error if it is frozen or being iterated.
+    pub fn dict_mut(self) -> crate::Result<DictMut<'v>> {
+        Ok(DictMut::from_value(self.to_value())?)
     }
 
     /// The entries, re-checked unless the dict is frozen, as for

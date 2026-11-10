@@ -384,7 +384,9 @@ mod tests {
     fn alloc_promises(modu: &Module) {
         modu.set(
             "__promises__",
-            modu.heap().alloc_complex_no_freeze(Promises::default()),
+            modu.heap()
+                .alloc_representation(Promises::default())
+                .to_value(),
         )
     }
 

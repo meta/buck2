@@ -713,7 +713,7 @@ impl RecordedAnalysisValues {
                     .map(|(_key, tset)| tset.as_ref().add_to_frozen_heap(heap))
                     .collect();
 
-                heap.alloc_simple_typed(StarlarkAnyComplex {
+                heap.alloc_representation(StarlarkAnyComplex {
                     value: FrozenAnalysisValueStorage {
                         self_key: self_key.dupe(),
                         action_data: BuckMutInsertionMap::new(),

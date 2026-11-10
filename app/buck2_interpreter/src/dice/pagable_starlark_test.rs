@@ -47,8 +47,6 @@ use starlark::pagable::StarlarkDeserializeContext;
 use starlark::pagable::StarlarkSerialize;
 use starlark::pagable::StarlarkSerializeContext;
 use starlark::starlark_simple_value;
-use starlark::values::AllocFrozenValue;
-use starlark::values::FrozenHeap;
 use starlark::values::FrozenHeapName;
 use starlark::values::NoSerialize;
 use starlark::values::OwnedFrozen;
@@ -197,12 +195,6 @@ struct ScopeRootData<'v> {
     target: Value<'v>,
 }
 
-impl<'fv> AllocFrozenValue<'fv> for ScopeRootData<'fv> {
-    fn alloc_frozen_value(self, heap: FrozenHeap<'fv>) -> Value<'fv> {
-        heap.alloc_simple(self)
-    }
-}
-
 #[starlark_value(type = "ScopeRootData", frozen_vtable)]
 impl<'v> StarlarkValue<'v> for ScopeRootData<'v> {}
 
@@ -297,14 +289,18 @@ impl Key for ScopeHeapKey {
         ScopeHeapValue::new(OwnedFrozen::build(
             FrozenHeapName::user("dice_scope_dependency"),
             |heap| match generation {
-                0 => heap.alloc_simple(ScopeLeafData {
-                    flag: true,
-                    count: 111,
-                }),
-                1 => heap.alloc_simple(ScopeLeafData {
-                    flag: false,
-                    count: 222,
-                }),
+                0 => heap
+                    .alloc_representation(ScopeLeafData {
+                        flag: true,
+                        count: 111,
+                    })
+                    .to_value(),
+                1 => heap
+                    .alloc_representation(ScopeLeafData {
+                        flag: false,
+                        count: 222,
+                    })
+                    .to_value(),
                 _ => unreachable!("unexpected heap generation {generation}"),
             },
         ))
@@ -349,11 +345,12 @@ fn make_root(dependency: &OwnedFrozen<Value<'static>>, root_id: u8) -> OwnedFroz
         FrozenHeapName::user(format!("dice_scope_root_{root_id}")),
         |heap| {
             let target = dependency.as_ref().add_to_frozen_heap(heap);
-            heap.alloc_simple(ScopeRootData {
+            heap.alloc_representation(ScopeRootData {
                 label: if root_id == 0 { 10 } else { 20 },
                 gate: PageInGateMarker(root_id == 0),
                 target,
             })
+            .to_value()
         },
     )
 }
@@ -607,10 +604,11 @@ impl Key for CollisionHeapKey {
         ScopeHeapValue::new(OwnedFrozen::build(
             FrozenHeapName::user("dice_collision_dependency"),
             |heap| {
-                heap.alloc_simple(ScopeLeafData {
+                heap.alloc_representation(ScopeLeafData {
                     flag: true,
                     count: 333,
                 })
+                .to_value()
             },
         ))
     }

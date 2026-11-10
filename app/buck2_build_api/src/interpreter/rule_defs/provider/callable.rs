@@ -457,8 +457,8 @@ impl<'v> StarlarkType<'v> for UserProviderCallableView<'v> {
                 id: provider_id.dupe(),
                 signature,
                 data: eval.frozen_heap(|fh, edge| {
-                    let data =
-                        fh.alloc_simple_typed(StarlarkAnyComplex::new(UserProviderCallableData {
+                    let data = fh.alloc_representation(StarlarkAnyComplex::new(
+                        UserProviderCallableData {
                             provider_id,
                             fields: this
                                 .fields
@@ -466,7 +466,8 @@ impl<'v> StarlarkType<'v> for UserProviderCallableView<'v> {
                                 .map(|(name, field)| (name.clone(), field.ty.to_frozen(fh)))
                                 .collect(),
                             ty_provider_type_instance_id,
-                        }));
+                        },
+                    ));
                     let data =
                         FrozenValueTyped::from_typed(data).expect("allocated in a frozen heap");
                     edge.rebrand(data)

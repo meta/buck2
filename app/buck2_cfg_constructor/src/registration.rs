@@ -67,7 +67,7 @@ struct StarlarkCfgConstructor<'v> {
     extra_data: Option<Value<'v>>,
 }
 
-#[starlark_value(type = "StarlarkCfgConstructor", frozen_vtable)]
+#[starlark_value(type = "StarlarkCfgConstructor", frozen_vtable, alloc = complex)]
 impl<'v> StarlarkValue<'v> for StarlarkCfgConstructor<'v> {}
 
 fn make_cfg_constructor(
@@ -134,13 +134,15 @@ pub(crate) fn register_set_cfg_constructor(globals: &mut GlobalsBuilder) {
             );
         }
         package_file_extra.cfg_constructor.get_or_init(|| {
-            eval.heap().alloc_complex(StarlarkCfgConstructor {
-                stage0,
-                stage1,
-                key: key.to_owned(),
-                aliases: aliases.into_option(),
-                extra_data: extra_data.into_option(),
-            })
+            eval.heap()
+                .alloc_representation(StarlarkCfgConstructor {
+                    stage0,
+                    stage1,
+                    key: key.to_owned(),
+                    aliases: aliases.into_option(),
+                    extra_data: extra_data.into_option(),
+                })
+                .to_value()
         });
         Ok(NoneType)
     }

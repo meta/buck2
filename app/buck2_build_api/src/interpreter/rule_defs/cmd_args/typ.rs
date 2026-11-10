@@ -971,8 +971,10 @@ impl<'v> UnpackValue<'v> for StarlarkCommandLineMut<'v> {
 }
 
 impl<'v> AllocValue<'v> for StarlarkCommandLineMut<'v> {
-    fn alloc_value(self, _heap: Heap<'v>) -> Value<'v> {
-        self.value
+    type Type = <StarlarkCmdArgs<'v> as StarlarkValue<'v>>::Type;
+
+    fn alloc_value(self, _heap: Heap<'v>) -> ValueOf<'v, Self::Type> {
+        ValueOf::new_unchecked(self.value)
     }
 }
 

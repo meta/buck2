@@ -35,9 +35,14 @@ use crate::values::AllocValue;
 use crate::values::FrozenHeap;
 use crate::values::Heap;
 use crate::values::Value;
+use crate::values::ValueOf;
 use crate::values::dict::AllocDict;
+use crate::values::dict::DictType;
+use crate::values::float::StarlarkFloat;
+use crate::values::string::str_type::StarlarkStr;
 use crate::values::type_repr::StarlarkTypeRepr;
 use crate::values::types::int::int_or_big::StarlarkInt;
+use crate::values::types::int::view::IntView;
 
 impl StarlarkTypeRepr for serde_json::Number {
     type Canonical = Either<i32, f64>;
@@ -56,15 +61,17 @@ impl<'a> StarlarkTypeRepr for &'a serde_json::Number {
 }
 
 impl<'v, 'a> AllocValue<'v> for &'a serde_json::Number {
-    fn alloc_value(self, heap: Heap<'v>) -> Value<'v> {
+    type Type = Either<IntView<'v>, StarlarkFloat>;
+
+    fn alloc_value(self, heap: Heap<'v>) -> ValueOf<'v, Self::Type> {
         if let Some(x) = self.as_u64() {
-            heap.alloc(x)
+            ValueOf::left(x.alloc_value(heap))
         } else if let Some(x) = self.as_i64() {
-            heap.alloc(x)
+            ValueOf::left(x.alloc_value(heap))
         } else if let Some(x) = self.as_f64() {
-            heap.alloc(x)
+            ValueOf::right(x.alloc_value(heap))
         } else if let Ok(x) = BigInt::from_str(&self.to_string()) {
-            heap.alloc(StarlarkInt::from(x))
+            ValueOf::left(StarlarkInt::from(x).alloc_value(heap))
         } else {
             panic!("Unrepresentable number: {self:?}")
         }
@@ -72,23 +79,25 @@ impl<'v, 'a> AllocValue<'v> for &'a serde_json::Number {
 }
 
 impl<'v> AllocValue<'v> for serde_json::Number {
-    fn alloc_value(self, heap: Heap<'v>) -> Value<'v> {
-        // If you follow this hint, it becomes infinite recursion
-        #[allow(clippy::needless_borrows_for_generic_args)]
-        heap.alloc(&self)
+    type Type = Either<IntView<'v>, StarlarkFloat>;
+
+    fn alloc_value(self, heap: Heap<'v>) -> ValueOf<'v, Self::Type> {
+        (&self).alloc_value(heap)
     }
 }
 
 impl<'fv, 'a> AllocFrozenValue<'fv> for &'a serde_json::Number {
-    fn alloc_frozen_value(self, heap: FrozenHeap<'fv>) -> Value<'fv> {
+    type Type = Either<IntView<'fv>, StarlarkFloat>;
+
+    fn alloc_frozen_value(self, heap: FrozenHeap<'fv>) -> ValueOf<'fv, Self::Type> {
         if let Some(x) = self.as_u64() {
-            heap.alloc(x)
+            ValueOf::left(x.alloc_frozen_value(heap))
         } else if let Some(x) = self.as_i64() {
-            heap.alloc(x)
+            ValueOf::left(x.alloc_frozen_value(heap))
         } else if let Some(x) = self.as_f64() {
-            heap.alloc(x)
+            ValueOf::right(x.alloc_frozen_value(heap))
         } else if let Ok(x) = BigInt::from_str(&self.to_string()) {
-            heap.alloc(StarlarkInt::from(x))
+            ValueOf::left(StarlarkInt::from(x).alloc_frozen_value(heap))
         } else {
             panic!("Unrepresentable number: {self:?}")
         }
@@ -96,10 +105,10 @@ impl<'fv, 'a> AllocFrozenValue<'fv> for &'a serde_json::Number {
 }
 
 impl<'fv> AllocFrozenValue<'fv> for serde_json::Number {
-    fn alloc_frozen_value(self, heap: FrozenHeap<'fv>) -> Value<'fv> {
-        // If you follow this hint, it becomes infinite recursion
-        #[allow(clippy::needless_borrows_for_generic_args)]
-        heap.alloc(&self)
+    type Type = Either<IntView<'fv>, StarlarkFloat>;
+
+    fn alloc_frozen_value(self, heap: FrozenHeap<'fv>) -> ValueOf<'fv, Self::Type> {
+        (&self).alloc_frozen_value(heap)
     }
 }
 
@@ -120,32 +129,36 @@ impl<K: StarlarkTypeRepr, V: StarlarkTypeRepr> StarlarkTypeRepr for serde_json::
 }
 
 impl<'a, 'v> AllocValue<'v> for &'a serde_json::Map<String, serde_json::Value> {
-    fn alloc_value(self, heap: Heap<'v>) -> Value<'v> {
+    type Type = DictType<StarlarkStr, Value<'v>>;
+
+    fn alloc_value(self, heap: Heap<'v>) -> ValueOf<'v, Self::Type> {
         // For some reason `IntoIter` is implemented only for `String, Value` parameters,
         // so this implementation is limited.
-        heap.alloc(AllocDict(self))
+        AllocDict(self).alloc_value(heap)
     }
 }
 
 impl<'v> AllocValue<'v> for serde_json::Map<String, serde_json::Value> {
-    fn alloc_value(self, heap: Heap<'v>) -> Value<'v> {
-        // If you follow this hint, it becomes infinite recursion
-        #[allow(clippy::needless_borrows_for_generic_args)]
-        heap.alloc(&self)
+    type Type = DictType<StarlarkStr, Value<'v>>;
+
+    fn alloc_value(self, heap: Heap<'v>) -> ValueOf<'v, Self::Type> {
+        (&self).alloc_value(heap)
     }
 }
 
 impl<'fv, 'a> AllocFrozenValue<'fv> for &'a serde_json::Map<String, serde_json::Value> {
-    fn alloc_frozen_value(self, heap: FrozenHeap<'fv>) -> Value<'fv> {
-        heap.alloc(AllocDict(self.iter().map(|(k, v)| (k.as_str(), v))))
+    type Type = DictType<StarlarkStr, Value<'fv>>;
+
+    fn alloc_frozen_value(self, heap: FrozenHeap<'fv>) -> ValueOf<'fv, Self::Type> {
+        AllocDict(self.iter().map(|(k, v)| (k.as_str(), v))).alloc_frozen_value(heap)
     }
 }
 
 impl<'fv> AllocFrozenValue<'fv> for serde_json::Map<String, serde_json::Value> {
-    fn alloc_frozen_value(self, heap: FrozenHeap<'fv>) -> Value<'fv> {
-        // If you follow this hint, it becomes infinite recursion
-        #[allow(clippy::needless_borrows_for_generic_args)]
-        heap.alloc(&self)
+    type Type = DictType<StarlarkStr, Value<'fv>>;
+
+    fn alloc_frozen_value(self, heap: FrozenHeap<'fv>) -> ValueOf<'fv, Self::Type> {
+        (&self).alloc_frozen_value(heap)
     }
 }
 
@@ -168,44 +181,48 @@ impl StarlarkTypeRepr for serde_json::Value {
 }
 
 impl<'v, 'a> AllocValue<'v> for &'a serde_json::Value {
-    fn alloc_value(self, heap: Heap<'v>) -> Value<'v> {
-        match self {
+    type Type = Value<'v>;
+
+    fn alloc_value(self, heap: Heap<'v>) -> ValueOf<'v, Self::Type> {
+        ValueOf::from(match self {
             serde_json::Value::Null => Value::new_none(),
             serde_json::Value::Bool(x) => Value::new_bool(*x),
             serde_json::Value::Number(x) => heap.alloc(x),
             serde_json::Value::String(x) => heap.alloc(x.as_str()),
             serde_json::Value::Array(x) => heap.alloc(x.as_slice()),
             serde_json::Value::Object(x) => heap.alloc(x),
-        }
+        })
     }
 }
 
 impl<'v> AllocValue<'v> for serde_json::Value {
-    fn alloc_value(self, heap: Heap<'v>) -> Value<'v> {
-        // If you follow this hint, it becomes infinite recursion
-        #[allow(clippy::needless_borrows_for_generic_args)]
-        heap.alloc(&self)
+    type Type = Value<'v>;
+
+    fn alloc_value(self, heap: Heap<'v>) -> ValueOf<'v, Self::Type> {
+        (&self).alloc_value(heap)
     }
 }
 
 impl<'fv, 'a> AllocFrozenValue<'fv> for &'a serde_json::Value {
-    fn alloc_frozen_value(self, heap: FrozenHeap<'fv>) -> Value<'fv> {
-        match self {
+    type Type = Value<'fv>;
+
+    fn alloc_frozen_value(self, heap: FrozenHeap<'fv>) -> ValueOf<'fv, Self::Type> {
+        ValueOf::from(match self {
             serde_json::Value::Null => Value::new_none(),
             serde_json::Value::Bool(x) => Value::new_bool(*x),
             serde_json::Value::Number(x) => heap.alloc(x),
             serde_json::Value::String(x) => heap.alloc(x.as_str()),
             serde_json::Value::Array(x) => heap.alloc(x.as_slice()),
             serde_json::Value::Object(x) => heap.alloc(x),
-        }
+        })
     }
 }
 
 impl<'fv> AllocFrozenValue<'fv> for serde_json::Value {
-    fn alloc_frozen_value(self, heap: FrozenHeap<'fv>) -> Value<'fv> {
-        // If you follow this hint, it becomes infinite recursion
-        #[allow(clippy::needless_borrows_for_generic_args)]
-        heap.alloc(&self)
+    type Type = Value<'fv>;
+
+    fn alloc_frozen_value(self, heap: FrozenHeap<'fv>) -> ValueOf<'fv, Self::Type> {
+        (&self).alloc_frozen_value(heap)
     }
 }
 

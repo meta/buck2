@@ -28,6 +28,7 @@ use crate::values::FrozenHeap;
 use crate::values::Heap;
 use crate::values::UnpackValue;
 use crate::values::Value;
+use crate::values::ValueOf;
 use crate::values::none::NoneType;
 use crate::values::type_expr::StarlarkTypeExpr;
 use crate::values::type_expr::StarlarkTypeExprStable;
@@ -112,20 +113,38 @@ impl<'v, T: UnpackValue<'v>> UnpackValue<'v> for NoneOr<T> {
     }
 }
 
+impl<'v, T: StarlarkTypeExpr<'v>> ValueOf<'v, NoneOr<T>> {
+    /// `None`.
+    #[inline]
+    pub fn none() -> Self {
+        Self::new_unchecked(Value::new_none())
+    }
+
+    /// A value of `T`, as a value of `None | T`.
+    #[inline]
+    pub fn some(value: ValueOf<'v, T>) -> Self {
+        Self::new_unchecked(value.to_value())
+    }
+}
+
 impl<'v, T: AllocValue<'v>> AllocValue<'v> for NoneOr<T> {
-    fn alloc_value(self, heap: Heap<'v>) -> Value<'v> {
+    type Type = NoneOr<T::Type>;
+
+    fn alloc_value(self, heap: Heap<'v>) -> ValueOf<'v, Self::Type> {
         match self {
-            NoneOr::None => Value::new_none(),
-            NoneOr::Other(x) => x.alloc_value(heap),
+            NoneOr::None => ValueOf::none(),
+            NoneOr::Other(x) => ValueOf::some(x.alloc_value(heap)),
         }
     }
 }
 
 impl<'fv, T: AllocFrozenValue<'fv>> AllocFrozenValue<'fv> for NoneOr<T> {
-    fn alloc_frozen_value(self, heap: FrozenHeap<'fv>) -> Value<'fv> {
+    type Type = NoneOr<T::Type>;
+
+    fn alloc_frozen_value(self, heap: FrozenHeap<'fv>) -> ValueOf<'fv, Self::Type> {
         match self {
-            NoneOr::None => Value::new_none(),
-            NoneOr::Other(x) => x.alloc_frozen_value(heap),
+            NoneOr::None => ValueOf::none(),
+            NoneOr::Other(x) => ValueOf::some(x.alloc_frozen_value(heap)),
         }
     }
 }

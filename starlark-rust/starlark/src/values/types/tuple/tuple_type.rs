@@ -21,6 +21,7 @@ use std::marker::PhantomData;
 use crate as starlark;
 use crate::any::ProvidesStaticType;
 use crate::typing::Ty;
+use crate::values::Heap;
 use crate::values::UnpackValue;
 use crate::values::Value;
 use crate::values::ValueOf;
@@ -71,6 +72,11 @@ impl<'v, T: StarlarkTypeExpr<'v>> UnpackValue<'v> for TupleType<T> {
 }
 
 impl<'v, T: StarlarkTypeExpr<'v>> ValueOf<'v, TupleType<T>> {
+    /// A new tuple of these values.
+    pub fn alloc_tuple(heap: Heap<'v>, items: impl IntoIterator<Item = ValueOf<'v, T>>) -> Self {
+        Self::new_unchecked(heap.alloc_tuple_iter(items.into_iter().map(|x| x.to_value())))
+    }
+
     /// The tuple.
     #[inline]
     pub fn tuple(self) -> &'v TupleRef<'v> {

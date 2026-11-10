@@ -50,12 +50,14 @@ use crate::values::Freezer;
 use crate::values::FrozenHeap;
 use crate::values::Heap;
 use crate::values::HeapEdge;
+use crate::values::StarlarkTypeExpr;
 use crate::values::StarlarkValue;
 use crate::values::StringValue;
 use crate::values::Trace;
 use crate::values::Tracer;
 use crate::values::UnpackValue;
 use crate::values::Value;
+use crate::values::ValueOf;
 use crate::values::alloc_value::AllocStringValue;
 use crate::values::layout::avalue::AValue;
 use crate::values::layout::avalue::AValueImpl;
@@ -397,9 +399,14 @@ impl<'v, T: StarlarkValue<'v>> UnpackValue<'v> for ValueTyped<'v, T> {
     }
 }
 
-impl<'v, T: StarlarkValue<'v>> AllocValue<'v> for ValueTyped<'v, T> {
-    fn alloc_value(self, _heap: Heap<'v>) -> Value<'v> {
-        self.0
+impl<'v, T: StarlarkValue<'v>> AllocValue<'v> for ValueTyped<'v, T>
+where
+    T::Type: StarlarkTypeExpr<'v>,
+{
+    type Type = T::Type;
+
+    fn alloc_value(self, _heap: Heap<'v>) -> ValueOf<'v, Self::Type> {
+        ValueOf::from_representation(self)
     }
 }
 
@@ -465,15 +472,25 @@ impl<'v, T: StarlarkValue<'v>> UnpackValue<'v> for FrozenValueTyped<'v, T> {
     }
 }
 
-impl<'v, T: StarlarkValue<'v>> AllocValue<'v> for FrozenValueTyped<'v, T> {
-    fn alloc_value(self, _heap: Heap<'v>) -> Value<'v> {
-        self.0
+impl<'v, T: StarlarkValue<'v>> AllocValue<'v> for FrozenValueTyped<'v, T>
+where
+    T::Type: StarlarkTypeExpr<'v>,
+{
+    type Type = T::Type;
+
+    fn alloc_value(self, _heap: Heap<'v>) -> ValueOf<'v, Self::Type> {
+        ValueOf::from_representation(self.to_value_typed())
     }
 }
 
-impl<'v, T: StarlarkValue<'v>> AllocFrozenValue<'v> for FrozenValueTyped<'v, T> {
-    fn alloc_frozen_value(self, _heap: FrozenHeap<'v>) -> Value<'v> {
-        self.0
+impl<'v, T: StarlarkValue<'v>> AllocFrozenValue<'v> for FrozenValueTyped<'v, T>
+where
+    T::Type: StarlarkTypeExpr<'v>,
+{
+    type Type = T::Type;
+
+    fn alloc_frozen_value(self, _heap: FrozenHeap<'v>) -> ValueOf<'v, Self::Type> {
+        ValueOf::from_representation(self.to_value_typed())
     }
 }
 

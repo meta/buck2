@@ -407,6 +407,18 @@ impl<'v, TLeft: UnpackValue<'v>, TRight: UnpackValue<'v>> UnpackValue<'v>
 }
 
 impl<'v, A: StarlarkTypeExpr<'v>, B: StarlarkTypeExpr<'v>> ValueOf<'v, Either<A, B>> {
+    /// A value of `A`, as a value of the union.
+    #[inline]
+    pub fn left(value: ValueOf<'v, A>) -> Self {
+        Self::new_unchecked(value.to_value())
+    }
+
+    /// A value of `B`, as a value of the union.
+    #[inline]
+    pub fn right(value: ValueOf<'v, B>) -> Self {
+        Self::new_unchecked(value.to_value())
+    }
+
     /// Which side of the union this value is, trying `A` first as [`get`](ValueOf::get) does,
     /// as handles rather than as [`get`](ValueOf::get)'s `Either` of the sides' handles.
     /// Fallible for the same reason as [`try_get`](ValueOf::try_get).

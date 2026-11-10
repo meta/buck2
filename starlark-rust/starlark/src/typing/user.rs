@@ -416,7 +416,9 @@ mod tests {
     }
 
     impl<'v> AllocValue<'v> for Fruit {
-        fn alloc_value(self, _heap: Heap<'v>) -> Value<'v> {
+        type Type = Self;
+
+        fn alloc_value(self, _heap: Heap<'v>) -> ValueOf<'v, Self::Type> {
             unreachable!("not needed in test")
         }
     }

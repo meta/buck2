@@ -31,6 +31,7 @@ use starlark::typing::Ty;
 use starlark::values::AllocValue;
 use starlark::values::Heap;
 use starlark::values::Value;
+use starlark::values::ValueOf;
 use starlark::values::dict::DictRef;
 use starlark::values::list::ListRef;
 use starlark::values::tuple::TupleRef;
@@ -352,8 +353,10 @@ impl StarlarkTypeRepr for CfgModifiers {
 
 /// The parsed value in the shape the cfg constructor consumes.
 impl<'v> AllocValue<'v> for CfgModifiers {
-    fn alloc_value(self, heap: Heap<'v>) -> Value<'v> {
-        self.render(&mut StarlarkRenderer(heap))
+    type Type = Value<'v>;
+
+    fn alloc_value(self, heap: Heap<'v>) -> ValueOf<'v, Self::Type> {
+        self.render(&mut StarlarkRenderer(heap)).into()
     }
 }
 

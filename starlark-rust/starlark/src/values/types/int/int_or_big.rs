@@ -43,9 +43,11 @@ use crate::values::FrozenHeap;
 use crate::values::Heap;
 use crate::values::UnpackValue;
 use crate::values::Value;
+use crate::values::ValueOf;
 use crate::values::type_repr::StarlarkTypeRepr;
 use crate::values::types::bigint::StarlarkBigInt;
 use crate::values::types::int::inline_int::InlineInt;
+use crate::values::types::int::view::IntView;
 
 #[derive(Debug, thiserror::Error)]
 enum StarlarkIntError {
@@ -71,19 +73,23 @@ pub enum StarlarkInt {
 }
 
 impl<'v> AllocValue<'v> for StarlarkInt {
-    fn alloc_value(self, heap: Heap<'v>) -> Value<'v> {
+    type Type = IntView<'v>;
+
+    fn alloc_value(self, heap: Heap<'v>) -> ValueOf<'v, Self::Type> {
         match self {
-            StarlarkInt::Small(i) => heap.alloc(i),
-            StarlarkInt::Big(b) => heap.alloc_representation(b).to_value(),
+            StarlarkInt::Small(i) => i.alloc_value(heap),
+            StarlarkInt::Big(b) => ValueOf::alloc(heap, b),
         }
     }
 }
 
 impl<'fv> AllocFrozenValue<'fv> for StarlarkInt {
-    fn alloc_frozen_value(self, heap: FrozenHeap<'fv>) -> Value<'fv> {
+    type Type = IntView<'fv>;
+
+    fn alloc_frozen_value(self, heap: FrozenHeap<'fv>) -> ValueOf<'fv, Self::Type> {
         match self {
-            StarlarkInt::Small(i) => heap.alloc(i),
-            StarlarkInt::Big(b) => heap.alloc_representation(b).to_value(),
+            StarlarkInt::Small(i) => i.alloc_frozen_value(heap),
+            StarlarkInt::Big(b) => ValueOf::alloc_frozen(heap, b),
         }
     }
 }

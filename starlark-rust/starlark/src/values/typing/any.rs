@@ -29,7 +29,7 @@ use crate::typing::Ty;
 use crate::values::AllocFrozenValue;
 use crate::values::FrozenHeap;
 use crate::values::StarlarkValue;
-use crate::values::Value;
+use crate::values::ValueOf;
 use crate::values::starlark_value;
 
 #[derive(
@@ -69,8 +69,10 @@ See also [`typing.Any` in the Python documentation][1].
 static_starlark_value!(ANY: TypingAny = TypingAny);
 
 impl<'fv> AllocFrozenValue<'fv> for TypingAny {
-    fn alloc_frozen_value(self, _heap: FrozenHeap<'fv>) -> Value<'fv> {
-        ANY.at().to_value()
+    type Type = Self;
+
+    fn alloc_frozen_value(self, _heap: FrozenHeap<'fv>) -> ValueOf<'fv, Self::Type> {
+        ANY.at().into()
     }
 }
 

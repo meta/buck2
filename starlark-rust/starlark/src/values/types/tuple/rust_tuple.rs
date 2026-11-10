@@ -26,59 +26,81 @@ use crate::values::FrozenHeap;
 use crate::values::Heap;
 use crate::values::UnpackValue;
 use crate::values::Value;
+use crate::values::ValueOf;
 use crate::values::type_expr::StarlarkTypeExpr;
 use crate::values::type_expr::StarlarkTypeExprStable;
 use crate::values::type_repr::StarlarkTypeRepr;
 use crate::values::types::tuple::value::Tuple;
 
 impl<'v, T1: AllocValue<'v>> AllocValue<'v> for (T1,) {
-    fn alloc_value(self, heap: Heap<'v>) -> Value<'v> {
-        heap.alloc_tuple(&[self.0.alloc_value(heap)])
+    type Type = (T1::Type,);
+
+    fn alloc_value(self, heap: Heap<'v>) -> ValueOf<'v, Self::Type> {
+        // The items are the parts' `Type`s by their declarations.
+        ValueOf::new_unchecked(heap.alloc_tuple(&[self.0.alloc_value(heap).to_value()]))
     }
 }
 
 impl<'v, T1: AllocValue<'v>, T2: AllocValue<'v>> AllocValue<'v> for (T1, T2) {
-    fn alloc_value(self, heap: Heap<'v>) -> Value<'v> {
-        heap.alloc_tuple(&[self.0.alloc_value(heap), self.1.alloc_value(heap)])
+    type Type = (T1::Type, T2::Type);
+
+    fn alloc_value(self, heap: Heap<'v>) -> ValueOf<'v, Self::Type> {
+        // The items are the parts' `Type`s by their declarations.
+        ValueOf::new_unchecked(heap.alloc_tuple(&[
+            self.0.alloc_value(heap).to_value(),
+            self.1.alloc_value(heap).to_value(),
+        ]))
     }
 }
 
 impl<'v, T1: AllocValue<'v>, T2: AllocValue<'v>, T3: AllocValue<'v>> AllocValue<'v>
     for (T1, T2, T3)
 {
-    fn alloc_value(self, heap: Heap<'v>) -> Value<'v> {
-        heap.alloc_tuple(&[
-            self.0.alloc_value(heap),
-            self.1.alloc_value(heap),
-            self.2.alloc_value(heap),
-        ])
+    type Type = (T1::Type, T2::Type, T3::Type);
+
+    fn alloc_value(self, heap: Heap<'v>) -> ValueOf<'v, Self::Type> {
+        // The items are the parts' `Type`s by their declarations.
+        ValueOf::new_unchecked(heap.alloc_tuple(&[
+            self.0.alloc_value(heap).to_value(),
+            self.1.alloc_value(heap).to_value(),
+            self.2.alloc_value(heap).to_value(),
+        ]))
     }
 }
 
 impl<'fv, T1: AllocFrozenValue<'fv>> AllocFrozenValue<'fv> for (T1,) {
-    fn alloc_frozen_value(self, heap: FrozenHeap<'fv>) -> Value<'fv> {
-        heap.alloc_tuple(&[self.0.alloc_frozen_value(heap)])
+    type Type = (T1::Type,);
+
+    fn alloc_frozen_value(self, heap: FrozenHeap<'fv>) -> ValueOf<'fv, Self::Type> {
+        // The items are the parts' `Type`s by their declarations.
+        ValueOf::new_unchecked(heap.alloc_tuple(&[self.0.alloc_frozen_value(heap).to_value()]))
     }
 }
 
 impl<'fv, T1: AllocFrozenValue<'fv>, T2: AllocFrozenValue<'fv>> AllocFrozenValue<'fv> for (T1, T2) {
-    fn alloc_frozen_value(self, heap: FrozenHeap<'fv>) -> Value<'fv> {
-        heap.alloc_tuple(&[
-            self.0.alloc_frozen_value(heap),
-            self.1.alloc_frozen_value(heap),
-        ])
+    type Type = (T1::Type, T2::Type);
+
+    fn alloc_frozen_value(self, heap: FrozenHeap<'fv>) -> ValueOf<'fv, Self::Type> {
+        // The items are the parts' `Type`s by their declarations.
+        ValueOf::new_unchecked(heap.alloc_tuple(&[
+            self.0.alloc_frozen_value(heap).to_value(),
+            self.1.alloc_frozen_value(heap).to_value(),
+        ]))
     }
 }
 
 impl<'fv, T1: AllocFrozenValue<'fv>, T2: AllocFrozenValue<'fv>, T3: AllocFrozenValue<'fv>>
     AllocFrozenValue<'fv> for (T1, T2, T3)
 {
-    fn alloc_frozen_value(self, heap: FrozenHeap<'fv>) -> Value<'fv> {
-        heap.alloc_tuple(&[
-            self.0.alloc_frozen_value(heap),
-            self.1.alloc_frozen_value(heap),
-            self.2.alloc_frozen_value(heap),
-        ])
+    type Type = (T1::Type, T2::Type, T3::Type);
+
+    fn alloc_frozen_value(self, heap: FrozenHeap<'fv>) -> ValueOf<'fv, Self::Type> {
+        // The items are the parts' `Type`s by their declarations.
+        ValueOf::new_unchecked(heap.alloc_tuple(&[
+            self.0.alloc_frozen_value(heap).to_value(),
+            self.1.alloc_frozen_value(heap).to_value(),
+            self.2.alloc_frozen_value(heap).to_value(),
+        ]))
     }
 }
 
@@ -113,6 +135,19 @@ impl<T1: StarlarkTypeRepr> StarlarkTypeRepr for (T1,) {
         Ty::tuple(vec![T1::starlark_type_repr()])
     }
 }
+
+impl<'v, T1: StarlarkTypeExpr<'v>> StarlarkTypeExpr<'v> for (T1,) {
+    type Get = (T1::Get,);
+
+    fn get(value: Value<'v>) -> Option<Self::Get> {
+        match Tuple::from_value(value)?.content() {
+            [a] => Some((T1::get(*a)?,)),
+            _ => None,
+        }
+    }
+}
+
+impl<'v, T1: StarlarkTypeExprStable<'v>> StarlarkTypeExprStable<'v> for (T1,) {}
 
 impl<T1: StarlarkTypeRepr, T2: StarlarkTypeRepr, T3: StarlarkTypeRepr> StarlarkTypeRepr
     for (T1, T2, T3)

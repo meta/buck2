@@ -54,6 +54,7 @@ use crate::values::Trace;
 use crate::values::Tracer;
 use crate::values::UnpackValue;
 use crate::values::Value;
+use crate::values::ValueOf;
 use crate::values::list::ListRef;
 use crate::values::type_expr::StarlarkTypeExpr;
 use crate::values::type_expr::StarlarkTypeExprStable;
@@ -130,8 +131,10 @@ See also [`typing.Callable` in the Python documentation][1].
 static_starlark_value!(CALLABLE: TypingCallable = TypingCallable);
 
 impl<'fv> AllocFrozenValue<'fv> for TypingCallable {
-    fn alloc_frozen_value(self, _heap: FrozenHeap<'fv>) -> Value<'fv> {
-        CALLABLE.at().to_value()
+    type Type = Self;
+
+    fn alloc_frozen_value(self, _heap: FrozenHeap<'fv>) -> ValueOf<'fv, Self::Type> {
+        CALLABLE.at().into()
     }
 }
 
@@ -266,8 +269,10 @@ impl<'v, P: StarlarkCallableParamSpec, R: StarlarkTypeRepr> UnpackValue<'v>
 impl<'v, P: StarlarkCallableParamSpec, R: StarlarkTypeRepr> AllocValue<'v>
     for StarlarkCallable<'v, P, R>
 {
-    fn alloc_value(self, _heap: Heap<'v>) -> Value<'v> {
-        self.0
+    type Type = Self;
+
+    fn alloc_value(self, _heap: Heap<'v>) -> ValueOf<'v, Self::Type> {
+        ValueOf::new_unchecked(self.0)
     }
 }
 
@@ -364,8 +369,10 @@ unsafe impl<'v, P: StarlarkCallableParamSpec, R: StarlarkTypeRepr> Trace<'v>
 impl<'v, P: StarlarkCallableParamSpec, R: StarlarkTypeRepr> AllocValue<'v>
     for StarlarkCallableChecked<'v, P, R>
 {
-    fn alloc_value(self, _heap: Heap<'v>) -> Value<'v> {
-        self.0
+    type Type = Self;
+
+    fn alloc_value(self, _heap: Heap<'v>) -> ValueOf<'v, Self::Type> {
+        ValueOf::new_unchecked(self.0)
     }
 }
 

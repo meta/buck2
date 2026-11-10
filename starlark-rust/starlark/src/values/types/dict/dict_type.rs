@@ -18,6 +18,8 @@
 use std::convert::Infallible;
 use std::marker::PhantomData;
 
+use starlark_map::small_map::SmallMap;
+
 use crate as starlark;
 use crate::any::ProvidesStaticType;
 use crate::typing::Ty;
@@ -25,7 +27,6 @@ use crate::values::Heap;
 use crate::values::UnpackValue;
 use crate::values::Value;
 use crate::values::ValueOf;
-use crate::values::dict::AllocDict;
 use crate::values::dict::DictRef;
 use crate::values::type_expr::StarlarkTypeExpr;
 use crate::values::type_expr::StarlarkTypeExprStable;
@@ -86,13 +87,12 @@ impl<'v, K: StarlarkTypeExpr<'v>, V: StarlarkTypeExpr<'v>> ValueOf<'v, DictType<
         heap: Heap<'v>,
         entries: impl IntoIterator<Item = (ValueOf<'v, K>, ValueOf<'v, V>)>,
     ) -> Self {
-        Self::new_unchecked(
-            heap.alloc(AllocDict(
-                entries
-                    .into_iter()
-                    .map(|(k, v)| (k.to_value(), v.to_value())),
-            )),
-        )
+        let entries = entries.into_iter();
+        let mut map = SmallMap::with_capacity(entries.size_hint().0);
+        for (k, v) in entries {
+            map.insert_hashed(k.to_value().get_hashed().unwrap(), v.to_value());
+        }
+        Self::new_unchecked(heap.alloc_dict(map))
     }
 
     /// The dict.

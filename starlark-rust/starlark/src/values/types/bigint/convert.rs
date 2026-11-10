@@ -24,9 +24,11 @@ use crate::values::FrozenHeap;
 use crate::values::Heap;
 use crate::values::UnpackValue;
 use crate::values::Value;
+use crate::values::ValueOf;
 use crate::values::type_repr::StarlarkTypeRepr;
 use crate::values::types::int::int_or_big::StarlarkInt;
 use crate::values::types::int::int_or_big::StarlarkIntRef;
+use crate::values::types::int::view::IntView;
 
 impl StarlarkTypeRepr for u32 {
     type Canonical = <i32 as StarlarkTypeRepr>::Canonical;
@@ -37,16 +39,20 @@ impl StarlarkTypeRepr for u32 {
 }
 
 impl<'v> AllocValue<'v> for u32 {
+    type Type = IntView<'v>;
+
     #[inline]
-    fn alloc_value(self, heap: Heap<'v>) -> Value<'v> {
-        heap.alloc(StarlarkInt::from(self))
+    fn alloc_value(self, heap: Heap<'v>) -> ValueOf<'v, Self::Type> {
+        StarlarkInt::from(self).alloc_value(heap)
     }
 }
 
 impl<'fv> AllocFrozenValue<'fv> for u32 {
+    type Type = IntView<'fv>;
+
     #[inline]
-    fn alloc_frozen_value(self, heap: FrozenHeap<'fv>) -> Value<'fv> {
-        heap.alloc(StarlarkInt::from(self))
+    fn alloc_frozen_value(self, heap: FrozenHeap<'fv>) -> ValueOf<'fv, Self::Type> {
+        StarlarkInt::from(self).alloc_frozen_value(heap)
     }
 }
 
@@ -59,16 +65,20 @@ impl StarlarkTypeRepr for u64 {
 }
 
 impl<'v> AllocValue<'v> for u64 {
+    type Type = IntView<'v>;
+
     #[inline]
-    fn alloc_value(self, heap: Heap<'v>) -> Value<'v> {
-        heap.alloc(StarlarkInt::from(self))
+    fn alloc_value(self, heap: Heap<'v>) -> ValueOf<'v, Self::Type> {
+        StarlarkInt::from(self).alloc_value(heap)
     }
 }
 
 impl<'fv> AllocFrozenValue<'fv> for u64 {
+    type Type = IntView<'fv>;
+
     #[inline]
-    fn alloc_frozen_value(self, heap: FrozenHeap<'fv>) -> Value<'fv> {
-        heap.alloc(StarlarkInt::from(self))
+    fn alloc_frozen_value(self, heap: FrozenHeap<'fv>) -> ValueOf<'fv, Self::Type> {
+        StarlarkInt::from(self).alloc_frozen_value(heap)
     }
 }
 
@@ -81,16 +91,20 @@ impl StarlarkTypeRepr for i64 {
 }
 
 impl<'v> AllocValue<'v> for i64 {
+    type Type = IntView<'v>;
+
     #[inline]
-    fn alloc_value(self, heap: Heap<'v>) -> Value<'v> {
-        heap.alloc(StarlarkInt::from(self))
+    fn alloc_value(self, heap: Heap<'v>) -> ValueOf<'v, Self::Type> {
+        StarlarkInt::from(self).alloc_value(heap)
     }
 }
 
 impl<'fv> AllocFrozenValue<'fv> for i64 {
+    type Type = IntView<'fv>;
+
     #[inline]
-    fn alloc_frozen_value(self, heap: FrozenHeap<'fv>) -> Value<'fv> {
-        heap.alloc(StarlarkInt::from(self))
+    fn alloc_frozen_value(self, heap: FrozenHeap<'fv>) -> ValueOf<'fv, Self::Type> {
+        StarlarkInt::from(self).alloc_frozen_value(heap)
     }
 }
 
@@ -103,16 +117,20 @@ impl StarlarkTypeRepr for usize {
 }
 
 impl<'v> AllocValue<'v> for usize {
+    type Type = IntView<'v>;
+
     #[inline]
-    fn alloc_value(self, heap: Heap<'v>) -> Value<'v> {
-        heap.alloc(StarlarkInt::from(self))
+    fn alloc_value(self, heap: Heap<'v>) -> ValueOf<'v, Self::Type> {
+        StarlarkInt::from(self).alloc_value(heap)
     }
 }
 
 impl<'fv> AllocFrozenValue<'fv> for usize {
+    type Type = IntView<'fv>;
+
     #[inline]
-    fn alloc_frozen_value(self, heap: FrozenHeap<'fv>) -> Value<'fv> {
-        heap.alloc(StarlarkInt::from(self))
+    fn alloc_frozen_value(self, heap: FrozenHeap<'fv>) -> ValueOf<'fv, Self::Type> {
+        StarlarkInt::from(self).alloc_frozen_value(heap)
     }
 }
 
@@ -125,16 +143,20 @@ impl StarlarkTypeRepr for isize {
 }
 
 impl<'v> AllocValue<'v> for isize {
+    type Type = IntView<'v>;
+
     #[inline]
-    fn alloc_value(self, heap: Heap<'v>) -> Value<'v> {
-        heap.alloc(StarlarkInt::from(self))
+    fn alloc_value(self, heap: Heap<'v>) -> ValueOf<'v, Self::Type> {
+        StarlarkInt::from(self).alloc_value(heap)
     }
 }
 
 impl<'fv> AllocFrozenValue<'fv> for isize {
+    type Type = IntView<'fv>;
+
     #[inline]
-    fn alloc_frozen_value(self, heap: FrozenHeap<'fv>) -> Value<'fv> {
-        heap.alloc(StarlarkInt::from(self))
+    fn alloc_frozen_value(self, heap: FrozenHeap<'fv>) -> ValueOf<'fv, Self::Type> {
+        StarlarkInt::from(self).alloc_frozen_value(heap)
     }
 }
 
@@ -147,15 +169,19 @@ impl StarlarkTypeRepr for BigInt {
 }
 
 impl<'v> AllocValue<'v> for BigInt {
+    type Type = IntView<'v>;
+
     #[inline]
-    fn alloc_value(self, heap: Heap<'v>) -> Value<'v> {
-        heap.alloc(StarlarkInt::from(self))
+    fn alloc_value(self, heap: Heap<'v>) -> ValueOf<'v, Self::Type> {
+        StarlarkInt::from(self).alloc_value(heap)
     }
 }
 
 impl<'fv> AllocFrozenValue<'fv> for BigInt {
-    fn alloc_frozen_value(self, heap: FrozenHeap<'fv>) -> Value<'fv> {
-        heap.alloc(StarlarkInt::from(self))
+    type Type = IntView<'fv>;
+
+    fn alloc_frozen_value(self, heap: FrozenHeap<'fv>) -> ValueOf<'fv, Self::Type> {
+        StarlarkInt::from(self).alloc_frozen_value(heap)
     }
 }
 

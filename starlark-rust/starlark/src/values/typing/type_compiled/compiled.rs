@@ -56,6 +56,7 @@ use crate::values::StaticValueRegistered;
 use crate::values::StringValue;
 use crate::values::Trace;
 use crate::values::Value;
+use crate::values::ValueOf;
 use crate::values::ValueTyped;
 use crate::values::dict::DictRef;
 use crate::values::list::ListRef;
@@ -336,8 +337,10 @@ impl<'v> StarlarkTypeRepr for TypeCompiled<'v> {
 }
 
 impl<'v> AllocValue<'v> for TypeCompiled<'v> {
-    fn alloc_value(self, _heap: Heap<'v>) -> Value<'v> {
-        self.0
+    type Type = Self;
+
+    fn alloc_value(self, _heap: Heap<'v>) -> ValueOf<'v, Self::Type> {
+        ValueOf::new_unchecked(self.0)
     }
 }
 

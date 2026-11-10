@@ -77,6 +77,14 @@ impl<'v> StarlarkTypeRepr for StructRef<'v> {
     }
 }
 
+/// The handle to a struct, from the struct it was allocated as.
+impl<'v> From<ValueOf<'v, Struct<'v>>> for ValueOf<'v, StructRef<'v>> {
+    #[inline]
+    fn from(value: ValueOf<'v, Struct<'v>>) -> Self {
+        Self::new_unchecked(value.to_value())
+    }
+}
+
 impl<'v> StarlarkTypeExpr<'v> for StructRef<'v> {
     type Get = Self;
 

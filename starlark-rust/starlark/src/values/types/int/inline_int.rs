@@ -37,9 +37,11 @@ use crate::values::FrozenHeap;
 use crate::values::Heap;
 use crate::values::UnpackValue;
 use crate::values::Value;
+use crate::values::ValueOf;
 use crate::values::int::pointer_i32::PointerI32;
 use crate::values::type_repr::StarlarkTypeRepr;
 use crate::values::types::int::int_or_big::StarlarkInt;
+use crate::values::types::int::view::IntView;
 
 /// Integer which is stored inline in `RawPointer`.
 #[derive(
@@ -360,14 +362,18 @@ impl<'v> UnpackValue<'v> for InlineInt {
 }
 
 impl<'v> AllocValue<'v> for InlineInt {
-    fn alloc_value(self, _heap: Heap<'v>) -> Value<'v> {
-        Value::new_int(self)
+    type Type = IntView<'v>;
+
+    fn alloc_value(self, _heap: Heap<'v>) -> ValueOf<'v, Self::Type> {
+        ValueOf::new_unchecked(Value::new_int(self))
     }
 }
 
 impl<'fv> AllocFrozenValue<'fv> for InlineInt {
-    fn alloc_frozen_value(self, _heap: FrozenHeap<'fv>) -> Value<'fv> {
-        Value::new_int(self)
+    type Type = IntView<'fv>;
+
+    fn alloc_frozen_value(self, _heap: FrozenHeap<'fv>) -> ValueOf<'fv, Self::Type> {
+        ValueOf::new_unchecked(Value::new_int(self))
     }
 }
 

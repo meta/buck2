@@ -25,6 +25,7 @@ use crate::values::AllocValue;
 use crate::values::FrozenHeap;
 use crate::values::Heap;
 use crate::values::Value;
+use crate::values::ValueOf;
 use crate::values::dict::Dict;
 use crate::values::type_repr::StarlarkTypeRepr;
 use crate::values::types::dict::dict_type::DictType;
@@ -75,16 +76,15 @@ where
     K: AllocValue<'v>,
     V: AllocValue<'v>,
 {
-    fn alloc_value(self, heap: Heap<'v>) -> Value<'v> {
-        let iter = self.0.into_iter();
-        let mut map = SmallMap::with_capacity(iter.size_hint().0);
-        for (k, v) in iter {
-            map.insert_hashed(
-                k.alloc_value(heap).get_hashed().unwrap(),
-                v.alloc_value(heap),
-            );
-        }
-        heap.alloc_dict(map)
+    type Type = DictType<K::Type, V::Type>;
+
+    fn alloc_value(self, heap: Heap<'v>) -> ValueOf<'v, Self::Type> {
+        ValueOf::alloc_dict(
+            heap,
+            self.0
+                .into_iter()
+                .map(|(k, v)| (k.alloc_value(heap), v.alloc_value(heap))),
+        )
     }
 }
 
@@ -94,15 +94,18 @@ where
     K: AllocFrozenValue<'fv>,
     V: AllocFrozenValue<'fv>,
 {
-    fn alloc_frozen_value(self, heap: FrozenHeap<'fv>) -> Value<'fv> {
+    type Type = DictType<K::Type, V::Type>;
+
+    fn alloc_frozen_value(self, heap: FrozenHeap<'fv>) -> ValueOf<'fv, Self::Type> {
         let iter = self.0.into_iter();
         let mut map = SmallMap::with_capacity(iter.size_hint().0);
         for (k, v) in iter {
             map.insert_hashed(
-                k.alloc_frozen_value(heap).get_hashed().unwrap(),
-                v.alloc_frozen_value(heap),
+                k.alloc_frozen_value(heap).to_value().get_hashed().unwrap(),
+                v.alloc_frozen_value(heap).to_value(),
             );
         }
-        heap.alloc(Dict::new(map))
+        // The entries are `K::Type` and `V::Type` by their declarations.
+        ValueOf::new_unchecked(heap.alloc(Dict::new(map)))
     }
 }

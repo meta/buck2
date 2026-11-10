@@ -26,7 +26,6 @@ use crate::values::Heap;
 use crate::values::UnpackValue;
 use crate::values::Value;
 use crate::values::ValueOf;
-use crate::values::list::AllocList;
 use crate::values::list::ListRef;
 use crate::values::tuple::TupleType;
 use crate::values::type_expr::StarlarkTypeExpr;
@@ -103,7 +102,7 @@ impl<'v, T: StarlarkTypeExpr<'v> + EmptyListType> ValueOf<'v, T> {
 impl<'v, T: StarlarkTypeExpr<'v>> ValueOf<'v, ListType<T>> {
     /// A new list of these values.
     pub fn alloc_list(heap: Heap<'v>, items: impl IntoIterator<Item = ValueOf<'v, T>>) -> Self {
-        Self::new_unchecked(heap.alloc(AllocList(items.into_iter().map(|x| x.to_value()))))
+        Self::new_unchecked(heap.alloc_list_iter(items.into_iter().map(|x| x.to_value())))
     }
 
     /// The list.

@@ -35,6 +35,7 @@ use crate as starlark;
 use crate::any::IsStaticType;
 use crate::any::ProvidesStaticType;
 use crate::typing::Ty;
+use crate::values::AllocFrozenRepresentation;
 use crate::values::AllocFrozenValue;
 use crate::values::AllocRepresentation;
 use crate::values::AllocValue;
@@ -157,6 +158,16 @@ impl<'v, T: StarlarkTypeExpr<'v>> ValueOf<'v, T> {
         Self::new_unchecked(heap.alloc_representation(builder).to_value())
     }
 
+    /// [`alloc`](Self::alloc) on a frozen heap.
+    #[inline]
+    pub fn alloc_frozen<B>(heap: FrozenHeap<'v>, builder: B) -> Self
+    where
+        B: AllocFrozenRepresentation<'v>,
+        B::Repr: StarlarkValue<'v, Type = T>,
+    {
+        Self::new_unchecked(heap.alloc_representation(builder).to_value())
+    }
+
     /// A typed value of a representation of `T`, which is a `T` by construction as for
     /// [`alloc`](Self::alloc).
     #[inline]
@@ -185,6 +196,14 @@ impl<'v, T: StarlarkValue<'v> + StarlarkType<'v, Get = ValueTyped<'v, T>>> Deref
     #[inline]
     fn deref(&self) -> &T {
         self.as_ref()
+    }
+}
+
+/// Every value is a `typing.Any`.
+impl<'v> From<Value<'v>> for ValueOf<'v, Value<'v>> {
+    #[inline]
+    fn from(value: Value<'v>) -> Self {
+        Self::new_unchecked(value)
     }
 }
 
@@ -253,16 +272,20 @@ impl<'v, T: StarlarkTypeExpr<'v>> UnpackValue<'v> for ValueOf<'v, T> {
 }
 
 impl<'v, T: StarlarkTypeExpr<'v>> AllocValue<'v> for ValueOf<'v, T> {
+    type Type = T;
+
     #[inline]
-    fn alloc_value(self, _heap: Heap<'v>) -> Value<'v> {
-        self.0
+    fn alloc_value(self, _heap: Heap<'v>) -> ValueOf<'v, Self::Type> {
+        self
     }
 }
 
 impl<'fv, T: StarlarkTypeExpr<'fv>> AllocFrozenValue<'fv> for ValueOf<'fv, T> {
+    type Type = T;
+
     #[inline]
-    fn alloc_frozen_value(self, _heap: FrozenHeap<'fv>) -> Value<'fv> {
-        self.0
+    fn alloc_frozen_value(self, _heap: FrozenHeap<'fv>) -> ValueOf<'fv, Self::Type> {
+        self
     }
 }
 

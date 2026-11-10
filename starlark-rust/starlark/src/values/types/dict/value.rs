@@ -46,11 +46,13 @@ use crate::hint::unlikely;
 use crate::static_starlark_value;
 use crate::typing::Ty;
 use crate::util::refcell::unleak_borrow;
+use crate::values::AllocFrozenRepresentation;
 use crate::values::AllocFrozenValue;
 use crate::values::AllocValue;
 use crate::values::Freeze;
 use crate::values::FreezeResult;
 use crate::values::Freezer;
+use crate::values::FrozenAllocator;
 use crate::values::FrozenHeap;
 use crate::values::Heap;
 use crate::values::StarlarkType;
@@ -59,6 +61,7 @@ use crate::values::StaticFreezePlan;
 use crate::values::StringValue;
 use crate::values::Trace;
 use crate::values::Value;
+use crate::values::ValueOf;
 use crate::values::ValueTyped;
 use crate::values::comparison::equals_small_map;
 use crate::values::dict::DictRef;
@@ -133,9 +136,19 @@ static_starlark_value!(
     })
 );
 
+/// Every dict is a `dict[typing.Any, typing.Any]`.
+impl<'v> From<ValueOf<'v, DictView<'v>>> for ValueOf<'v, DictType<Value<'v>, Value<'v>>> {
+    #[inline]
+    fn from(value: ValueOf<'v, DictView<'v>>) -> Self {
+        Self::new_unchecked(value.to_value())
+    }
+}
+
 impl<'v> AllocValue<'v> for Dict<'v> {
-    fn alloc_value(self, heap: Heap<'v>) -> Value<'v> {
-        heap.alloc_complex(DictGen(RefCell::new(self)))
+    type Type = DictType<Value<'v>, Value<'v>>;
+
+    fn alloc_value(self, heap: Heap<'v>) -> ValueOf<'v, Self::Type> {
+        ValueOf::alloc(heap, DictGen(RefCell::new(self))).into()
     }
 }
 
@@ -147,12 +160,10 @@ impl<'v> Heap<'v> {
 }
 
 impl<'fv> AllocFrozenValue<'fv> for Dict<'fv> {
-    fn alloc_frozen_value(self, heap: FrozenHeap<'fv>) -> Value<'fv> {
-        if self.content.is_empty() {
-            VALUE_EMPTY_FROZEN_DICT.at().to_value()
-        } else {
-            heap.alloc_simple_typed(DictGen(self)).to_value()
-        }
+    type Type = DictType<Value<'fv>, Value<'fv>>;
+
+    fn alloc_frozen_value(self, heap: FrozenHeap<'fv>) -> ValueOf<'fv, Self::Type> {
+        ValueOf::alloc_frozen(heap, DictGen(self)).into()
     }
 }
 
@@ -593,6 +604,19 @@ impl<'v> StarlarkType<'v> for DictView<'v> {
 #[starlark_value]
 impl<'v> StarlarkValue<'v> for DictGen<RefCell<Dict<'v>>> {
     type Type = DictView<'v>;
+}
+
+/// The empty frozen dict is a static.
+impl<'fv> AllocFrozenRepresentation<'fv> for DictGen<Dict<'fv>> {
+    type Repr = Self;
+
+    fn alloc_frozen(self, allocator: FrozenAllocator<'fv>) -> ValueTyped<'fv, Self> {
+        if self.0.content.is_empty() {
+            VALUE_EMPTY_FROZEN_DICT.at()
+        } else {
+            allocator.alloc_simple(self)
+        }
+    }
 }
 
 #[starlark_value(alloc = by_hand)]

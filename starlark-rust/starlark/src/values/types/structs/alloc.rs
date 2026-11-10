@@ -24,7 +24,7 @@ use crate::values::AllocFrozenValue;
 use crate::values::AllocValue;
 use crate::values::FrozenHeap;
 use crate::values::Heap;
-use crate::values::Value;
+use crate::values::ValueOf;
 use crate::values::alloc_value::AllocFrozenStringValue;
 use crate::values::alloc_value::AllocStringValue;
 use crate::values::structs::StructRef;
@@ -74,16 +74,18 @@ where
     K: AllocStringValue<'v>,
     V: AllocValue<'v>,
 {
-    fn alloc_value(self, heap: Heap<'v>) -> Value<'v> {
+    type Type = StructRef<'v>;
+
+    fn alloc_value(self, heap: Heap<'v>) -> ValueOf<'v, Self::Type> {
         let iter = self.0.into_iter();
         let mut fields = SmallMap::with_capacity(iter.size_hint().0);
         for (k, v) in iter {
             let k = k.alloc_string_value(heap);
-            let v = v.alloc_value(heap);
+            let v = v.alloc_value(heap).to_value();
             let prev = fields.insert(k, v);
             assert!(prev.is_none(), "non-unique key: {k}");
         }
-        heap.alloc_representation(Struct::new(fields)).to_value()
+        ValueOf::alloc(heap, Struct::new(fields)).into()
     }
 }
 
@@ -93,15 +95,17 @@ where
     K: AllocFrozenStringValue<'fv>,
     V: AllocFrozenValue<'fv>,
 {
-    fn alloc_frozen_value(self, heap: FrozenHeap<'fv>) -> Value<'fv> {
+    type Type = StructRef<'fv>;
+
+    fn alloc_frozen_value(self, heap: FrozenHeap<'fv>) -> ValueOf<'fv, Self::Type> {
         let iter = self.0.into_iter();
         let mut fields = SmallMap::with_capacity(iter.size_hint().0);
         for (k, v) in iter {
             let k = k.alloc_frozen_string_value(heap);
-            let v = v.alloc_frozen_value(heap);
+            let v = v.alloc_frozen_value(heap).to_value();
             let prev = fields.insert(k, v);
             assert!(prev.is_none(), "non-unique key: {k}");
         }
-        heap.alloc_representation(Struct::new(fields)).to_value()
+        ValueOf::alloc_frozen(heap, Struct::new(fields)).into()
     }
 }

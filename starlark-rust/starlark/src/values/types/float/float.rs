@@ -44,6 +44,7 @@ use crate::values::StarlarkValue;
 use crate::values::UnpackValue;
 use crate::values::Value;
 use crate::values::ValueError;
+use crate::values::ValueOf;
 use crate::values::type_repr::StarlarkTypeRepr;
 use crate::values::types::num::typecheck::NumTy;
 use crate::values::types::num::typecheck::typecheck_num_bin_op;
@@ -249,14 +250,18 @@ impl StarlarkTypeRepr for f64 {
 }
 
 impl<'v> AllocValue<'v> for f64 {
-    fn alloc_value(self, heap: Heap<'v>) -> Value<'v> {
-        heap.alloc_representation(StarlarkFloat(self)).to_value()
+    type Type = StarlarkFloat;
+
+    fn alloc_value(self, heap: Heap<'v>) -> ValueOf<'v, Self::Type> {
+        ValueOf::alloc(heap, StarlarkFloat(self))
     }
 }
 
 impl<'fv> AllocFrozenValue<'fv> for f64 {
-    fn alloc_frozen_value(self, heap: FrozenHeap<'fv>) -> Value<'fv> {
-        heap.alloc_representation(StarlarkFloat(self)).to_value()
+    type Type = StarlarkFloat;
+
+    fn alloc_frozen_value(self, heap: FrozenHeap<'fv>) -> ValueOf<'fv, Self::Type> {
+        ValueOf::alloc_frozen(heap, StarlarkFloat(self))
     }
 }
 

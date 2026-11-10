@@ -27,13 +27,17 @@ use crate::values::Heap;
 use crate::values::StringValue;
 use crate::values::UnpackValue;
 use crate::values::Value;
+use crate::values::ValueOf;
 use crate::values::alloc_value::AllocFrozenStringValue;
 use crate::values::alloc_value::AllocStringValue;
+use crate::values::string::str_type::StarlarkStr;
 use crate::values::type_repr::StarlarkTypeRepr;
 
 impl<'fv> AllocFrozenValue<'fv> for String {
-    fn alloc_frozen_value(self, heap: FrozenHeap<'fv>) -> Value<'fv> {
-        self.alloc_frozen_string_value(heap).to_value()
+    type Type = StarlarkStr;
+
+    fn alloc_frozen_value(self, heap: FrozenHeap<'fv>) -> ValueOf<'fv, Self::Type> {
+        self.alloc_frozen_string_value(heap).into()
     }
 }
 
@@ -44,8 +48,10 @@ impl<'fv> AllocFrozenStringValue<'fv> for String {
 }
 
 impl<'fv, 'a> AllocFrozenValue<'fv> for &'a str {
-    fn alloc_frozen_value(self, heap: FrozenHeap<'fv>) -> Value<'fv> {
-        self.alloc_frozen_string_value(heap).to_value()
+    type Type = StarlarkStr;
+
+    fn alloc_frozen_value(self, heap: FrozenHeap<'fv>) -> ValueOf<'fv, Self::Type> {
+        self.alloc_frozen_string_value(heap).into()
     }
 }
 
@@ -56,8 +62,10 @@ impl<'fv, 'a> AllocFrozenStringValue<'fv> for &'a str {
 }
 
 impl<'v> AllocValue<'v> for String {
-    fn alloc_value(self, heap: Heap<'v>) -> Value<'v> {
-        self.alloc_string_value(heap).to_value()
+    type Type = StarlarkStr;
+
+    fn alloc_value(self, heap: Heap<'v>) -> ValueOf<'v, Self::Type> {
+        self.alloc_string_value(heap).into()
     }
 }
 
@@ -76,8 +84,10 @@ impl StarlarkTypeRepr for char {
 }
 
 impl<'v> AllocValue<'v> for char {
-    fn alloc_value(self, heap: Heap<'v>) -> Value<'v> {
-        self.alloc_string_value(heap).to_value()
+    type Type = StarlarkStr;
+
+    fn alloc_value(self, heap: Heap<'v>) -> ValueOf<'v, Self::Type> {
+        self.alloc_string_value(heap).into()
     }
 }
 
@@ -96,8 +106,10 @@ impl StarlarkTypeRepr for &'_ String {
 }
 
 impl<'v> AllocValue<'v> for &'_ String {
-    fn alloc_value(self, heap: Heap<'v>) -> Value<'v> {
-        self.alloc_string_value(heap).to_value()
+    type Type = StarlarkStr;
+
+    fn alloc_value(self, heap: Heap<'v>) -> ValueOf<'v, Self::Type> {
+        self.alloc_string_value(heap).into()
     }
 }
 
@@ -108,8 +120,10 @@ impl<'v> AllocStringValue<'v> for &'_ String {
 }
 
 impl<'v> AllocValue<'v> for &'_ str {
-    fn alloc_value(self, heap: Heap<'v>) -> Value<'v> {
-        self.alloc_string_value(heap).to_value()
+    type Type = StarlarkStr;
+
+    fn alloc_value(self, heap: Heap<'v>) -> ValueOf<'v, Self::Type> {
+        self.alloc_string_value(heap).into()
     }
 }
 

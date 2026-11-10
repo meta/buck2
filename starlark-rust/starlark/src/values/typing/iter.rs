@@ -120,8 +120,10 @@ See also [`typing.Iterable` in the Python documentation][2].
 static_starlark_value!(ITERABLE: TypingIterable = TypingIterable);
 
 impl<'fv> AllocFrozenValue<'fv> for TypingIterable {
-    fn alloc_frozen_value(self, _heap: FrozenHeap<'fv>) -> Value<'fv> {
-        ITERABLE.at().to_value()
+    type Type = Self;
+
+    fn alloc_frozen_value(self, _heap: FrozenHeap<'fv>) -> ValueOf<'fv, Self::Type> {
+        ITERABLE.at().into()
     }
 }
 

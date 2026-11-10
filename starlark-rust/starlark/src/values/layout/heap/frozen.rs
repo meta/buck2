@@ -269,7 +269,7 @@ impl<'fh> FrozenHeap<'fh> {
 
     /// Allocate a new value on this heap.
     pub fn alloc<T: AllocFrozenValue<'fh>>(self, val: T) -> Value<'fh> {
-        val.alloc_frozen_value(self)
+        val.alloc_frozen_value(self).to_value()
     }
 
     /// Allocate a value and return [`ValueTyped`] of it.

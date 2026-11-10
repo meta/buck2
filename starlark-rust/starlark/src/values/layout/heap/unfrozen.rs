@@ -237,7 +237,7 @@ impl<'v> Heap<'v> {
 
     /// Allocate a new value on a [`Heap`].
     pub fn alloc<T: AllocValue<'v>>(self, x: T) -> Value<'v> {
-        x.alloc_value(self)
+        x.alloc_value(self).to_value()
     }
 
     /// Allocate a value and return [`ValueTyped`] of it.

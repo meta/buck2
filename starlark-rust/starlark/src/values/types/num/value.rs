@@ -22,6 +22,7 @@ use std::ops::Mul;
 use std::ops::Sub;
 
 use dupe::Dupe;
+use either::Either;
 
 use crate as starlark;
 use crate::collections::StarlarkHashValue;
@@ -31,10 +32,12 @@ use crate::values::FrozenHeap;
 use crate::values::Heap;
 use crate::values::UnpackValue;
 use crate::values::Value;
+use crate::values::ValueOf;
 use crate::values::type_repr::StarlarkTypeRepr;
 use crate::values::types::float::StarlarkFloat;
 use crate::values::types::int::int_or_big::StarlarkInt;
 use crate::values::types::int::int_or_big::StarlarkIntRef;
+use crate::values::types::int::view::IntView;
 
 #[derive(Debug, thiserror::Error)]
 enum NumError {
@@ -77,19 +80,23 @@ pub enum Num {
 }
 
 impl<'v> AllocValue<'v> for Num {
-    fn alloc_value(self, heap: Heap<'v>) -> Value<'v> {
+    type Type = Either<IntView<'v>, StarlarkFloat>;
+
+    fn alloc_value(self, heap: Heap<'v>) -> ValueOf<'v, Self::Type> {
         match self {
-            Num::Int(i) => heap.alloc(i),
-            Num::Float(f) => heap.alloc(f),
+            Num::Int(i) => ValueOf::left(i.alloc_value(heap)),
+            Num::Float(f) => ValueOf::right(f.alloc_value(heap)),
         }
     }
 }
 
 impl<'fv> AllocFrozenValue<'fv> for Num {
-    fn alloc_frozen_value(self, heap: FrozenHeap<'fv>) -> Value<'fv> {
+    type Type = Either<IntView<'fv>, StarlarkFloat>;
+
+    fn alloc_frozen_value(self, heap: FrozenHeap<'fv>) -> ValueOf<'fv, Self::Type> {
         match self {
-            Num::Int(i) => heap.alloc(i),
-            Num::Float(f) => heap.alloc(f),
+            Num::Int(i) => ValueOf::left(i.alloc_frozen_value(heap)),
+            Num::Float(f) => ValueOf::right(f.alloc_frozen_value(heap)),
         }
     }
 }

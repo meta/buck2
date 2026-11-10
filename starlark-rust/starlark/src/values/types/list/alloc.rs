@@ -23,6 +23,8 @@ use crate::values::AllocValue;
 use crate::values::FrozenHeap;
 use crate::values::Heap;
 use crate::values::Value;
+use crate::values::ValueOf;
+use crate::values::list::ListType;
 use crate::values::type_repr::StarlarkTypeRepr;
 
 /// Utility to allocate a list from iterator.
@@ -62,8 +64,10 @@ where
     L: IntoIterator,
     L::Item: AllocValue<'v>,
 {
-    fn alloc_value(self, heap: Heap<'v>) -> Value<'v> {
-        heap.alloc_list_iter(self.0.into_iter().map(|x| heap.alloc(x)))
+    type Type = ListType<<L::Item as AllocValue<'v>>::Type>;
+
+    fn alloc_value(self, heap: Heap<'v>) -> ValueOf<'v, Self::Type> {
+        ValueOf::alloc_list(heap, self.0.into_iter().map(|x| x.alloc_value(heap)))
     }
 }
 
@@ -72,7 +76,10 @@ where
     L: IntoIterator,
     L::Item: AllocFrozenValue<'fv>,
 {
-    fn alloc_frozen_value(self, heap: FrozenHeap<'fv>) -> Value<'fv> {
-        heap.alloc_list_iter(self.0.into_iter().map(|x| heap.alloc(x)))
+    type Type = ListType<<L::Item as AllocFrozenValue<'fv>>::Type>;
+
+    fn alloc_frozen_value(self, heap: FrozenHeap<'fv>) -> ValueOf<'fv, Self::Type> {
+        // The items are `L::Item::Type` by `L::Item`'s declaration.
+        ValueOf::new_unchecked(heap.alloc_list_iter(self.0.into_iter().map(|x| heap.alloc(x))))
     }
 }

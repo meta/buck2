@@ -44,6 +44,7 @@ use crate::values::StarlarkType;
 use crate::values::StarlarkValue;
 use crate::values::StaticValueRegistered;
 use crate::values::Value;
+use crate::values::ValueOf;
 use crate::values::type_repr::StarlarkTypeRepr;
 use crate::values::typing::TypeType;
 use crate::values::typing::ty::AbstractType;
@@ -230,14 +231,20 @@ impl<T: StarlarkTypeRepr> StarlarkTypeRepr for StarlarkValueAsType<T> {
 }
 
 impl<'v, T: StarlarkTypeRepr> AllocValue<'v> for StarlarkValueAsType<T> {
-    fn alloc_value(self, _heap: Heap<'v>) -> Value<'v> {
-        self.0.at().to_value()
+    type Type = TypeType;
+
+    fn alloc_value(self, _heap: Heap<'v>) -> ValueOf<'v, Self::Type> {
+        // A `StarlarkValueAsType` is a type object.
+        ValueOf::new_unchecked(self.0.at().to_value())
     }
 }
 
 impl<'fv, T: StarlarkTypeRepr> AllocFrozenValue<'fv> for StarlarkValueAsType<T> {
-    fn alloc_frozen_value(self, _heap: FrozenHeap<'fv>) -> Value<'fv> {
-        self.0.at().to_value()
+    type Type = TypeType;
+
+    fn alloc_frozen_value(self, _heap: FrozenHeap<'fv>) -> ValueOf<'fv, Self::Type> {
+        // A `StarlarkValueAsType` is a type object.
+        ValueOf::new_unchecked(self.0.at().to_value())
     }
 }
 
@@ -306,7 +313,7 @@ mod tests {
     use crate::values::AllocValue;
     use crate::values::Heap;
     use crate::values::StarlarkValue;
-    use crate::values::Value;
+    use crate::values::ValueOf;
     use crate::values::types::starlark_value_as_type::tests;
 
     #[derive(
@@ -323,8 +330,10 @@ mod tests {
     impl<'v> StarlarkValue<'v> for StarlarkCompilerArgs {}
 
     impl<'v> AllocValue<'v> for StarlarkCompilerArgs {
-        fn alloc_value(self, heap: Heap<'v>) -> Value<'v> {
-            heap.alloc_simple(self)
+        type Type = Self;
+
+        fn alloc_value(self, heap: Heap<'v>) -> ValueOf<'v, Self::Type> {
+            ValueOf::alloc(heap, self)
         }
     }
 

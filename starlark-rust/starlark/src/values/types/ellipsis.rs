@@ -27,6 +27,7 @@ use crate::values::AllocFrozenValue;
 use crate::values::FrozenHeap;
 use crate::values::StarlarkValue;
 use crate::values::Value;
+use crate::values::ValueOf;
 
 #[derive(
     Allocative,
@@ -51,8 +52,10 @@ impl Ellipsis {
 }
 
 impl<'fv> AllocFrozenValue<'fv> for Ellipsis {
-    fn alloc_frozen_value(self, _heap: FrozenHeap<'fv>) -> Value<'fv> {
-        Ellipsis::new_value()
+    type Type = Self;
+
+    fn alloc_frozen_value(self, _heap: FrozenHeap<'fv>) -> ValueOf<'fv, Self::Type> {
+        VALUE_ELLIPSIS.at().into()
     }
 }
 

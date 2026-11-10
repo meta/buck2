@@ -212,7 +212,8 @@ impl MethodsBuilder {
         value: V,
         docstring: Option<String>,
     ) {
-        let typ = V::starlark_type_repr();
+        let typ =
+            <<V as AllocFrozenValue<'static>>::Type as StarlarkTypeRepr>::starlark_type_repr();
         self.set_attribute_with(name, typ, docstring, |heap| heap.alloc(value))
     }
 

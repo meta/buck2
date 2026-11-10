@@ -26,14 +26,14 @@ use serde::Serializer;
 use starlark::values::UnpackValue;
 use starlark::values::Value;
 use starlark::values::ValueOf;
-use starlark::values::dict::DictRef;
+use starlark::values::dict::DictType;
 use starlark::values::enumeration::EnumValue;
 use starlark::values::int::IntView;
-use starlark::values::list::ListRef;
+use starlark::values::list::ListType;
 use starlark::values::none::NoneType;
 use starlark::values::record::Record;
 use starlark::values::structs::StructRef;
-use starlark::values::tuple::TupleRef;
+use starlark::values::tuple::TupleType;
 use starlark::values::type_repr::StarlarkTypeRepr;
 
 use crate::artifact_groups::ArtifactGroup;
@@ -133,9 +133,9 @@ pub enum JsonUnpack<'v> {
     String(&'v str),
     Number(ValueOf<'v, IntView<'v>>),
     Bool(bool),
-    List(&'v ListRef<'v>),
-    Tuple(&'v TupleRef<'v>),
-    Dict(DictRef<'v>),
+    List(ValueOf<'v, ListType<Value<'v>>>),
+    Tuple(ValueOf<'v, TupleType<Value<'v>>>),
+    Dict(ValueOf<'v, DictType<Value<'v>, Value<'v>>>),
     Struct(StructRef<'v>),
     Record(ValueOf<'v, Record<'v>>),
     Enum(ValueOf<'v, EnumValue<'v>>),
@@ -166,10 +166,15 @@ impl<'a, 'v> Serialize for SerializeValue<'a, 'v> {
             JsonUnpack::Number(x) => serializer
                 .serialize_i64(err(i64::unpack_value_err(x.to_value()).map_err(Into::into))?),
             JsonUnpack::Bool(x) => serializer.serialize_bool(*x),
-            JsonUnpack::List(x) => serializer.collect_seq(x.iter().map(|v| self.with_value(v))),
-            JsonUnpack::Tuple(x) => serializer.collect_seq(x.iter().map(|v| self.with_value(v))),
+            JsonUnpack::List(x) => {
+                serializer.collect_seq(x.list().iter().map(|v| self.with_value(v)))
+            }
+            JsonUnpack::Tuple(x) => {
+                serializer.collect_seq(x.tuple().iter().map(|v| self.with_value(v)))
+            }
             JsonUnpack::Dict(x) => serializer.collect_map(
-                x.iter()
+                x.dict()
+                    .iter()
                     .map(|(k, v)| (self.with_value(k), self.with_value(v))),
             ),
             JsonUnpack::Struct(x) => {
@@ -346,17 +351,17 @@ pub fn visit_json_artifacts<'v>(
         | JsonUnpack::CellPath(_) => {}
 
         JsonUnpack::List(x) => {
-            for x in x.iter() {
+            for x in x.list().iter() {
                 visit_json_artifacts(x, visitor)?;
             }
         }
         JsonUnpack::Tuple(x) => {
-            for x in x.iter() {
+            for x in x.tuple().iter() {
                 visit_json_artifacts(x, visitor)?;
             }
         }
         JsonUnpack::Dict(x) => {
-            for (k, v) in x.iter() {
+            for (k, v) in x.dict().iter() {
                 visit_json_artifacts(k, visitor)?;
                 visit_json_artifacts(v, visitor)?;
             }

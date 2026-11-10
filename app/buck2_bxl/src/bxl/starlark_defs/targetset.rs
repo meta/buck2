@@ -50,14 +50,11 @@ use starlark::values::FreezeResult;
 use starlark::values::Heap;
 use starlark::values::NoSerialize;
 use starlark::values::StarlarkPagable;
-use starlark::values::StarlarkTypeExpr;
-use starlark::values::StarlarkTypeExprStable;
 use starlark::values::StarlarkValue;
 use starlark::values::UnpackValue;
 use starlark::values::Value;
 use starlark::values::ValueError;
 use starlark::values::starlark_value;
-use starlark::values::type_expr::UnionPayload;
 use starlark::values::type_repr::StarlarkTypeRepr;
 use starlark::values::typing::TypeCompiled;
 use starlark::values::typing::TypeInstanceId;
@@ -190,33 +187,6 @@ where
 
     fn starlark_type_repr() -> Ty {
         StarlarkTargetSet::<Node>::starlark_type_repr()
-    }
-}
-
-impl<'v, Node: NodeLike> StarlarkTypeExpr<'v> for &'v StarlarkTargetSet<Node>
-where
-    StarlarkTargetSet<Node>: HasTyVTable,
-{
-    type Get = Self;
-
-    fn get(value: Value<'v>) -> Option<Self> {
-        StarlarkTargetSet::<Node>::from_value(value)
-    }
-}
-
-impl<'v, Node: NodeLike> StarlarkTypeExprStable<'v> for &'v StarlarkTargetSet<Node> where
-    StarlarkTargetSet<Node>: HasTyVTable
-{
-}
-
-impl<'v, Node: NodeLike> UnionPayload<'v> for &'v StarlarkTargetSet<Node>
-where
-    StarlarkTargetSet<Node>: HasTyVTable,
-{
-    type Expr = Self;
-
-    fn from_value(value: Value<'v>) -> Option<Self> {
-        <Self as StarlarkTypeExpr<'v>>::get(value)
     }
 }
 

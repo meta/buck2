@@ -117,14 +117,14 @@ fn call_transition_function<'v>(
         .eval_function(impl_, &[], &args)
         .map_err(buck2_error::Error::from)?;
     if transition.is_split() {
-        match ValueOf::<DictType<&str, &PlatformInfo>>::new(new_platforms) {
+        match ValueOf::<DictType<&str, PlatformInfo>>::new(new_platforms) {
             Some(dict) => {
                 let mut split = BuckMutInsertionMap::new();
-                for entry in dict.try_items() {
+                for entry in dict.iter() {
                     let (k, v) = entry?;
                     let prev = split.insert(
-                        k.to_owned(),
-                        v.to_configuration(conf.exec_marking().dupe())?,
+                        k.get().to_owned(),
+                        v.get().to_configuration(conf.exec_marking().dupe())?,
                     );
                     assert!(prev.is_none());
                 }

@@ -433,9 +433,9 @@ where
 pub(crate) enum RelativeOrigin<'v> {
     OutputArtifact(StarlarkOutputArtifactView<'v>),
     Artifact(StarlarkArtifactView<'v>),
-    CellRoot(&'v CellRoot),
+    CellRoot(ValueOf<'v, CellRoot>),
     /// Bit of a useless variant since this is simply the default, but we allow it for consistency.
-    ProjectRoot(&'v StarlarkProjectRoot),
+    ProjectRoot(ValueOf<'v, StarlarkProjectRoot>),
 }
 
 impl<'v, 'x> CommandLineOptionsRef<'v, 'x> {

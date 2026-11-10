@@ -21,7 +21,6 @@ use starlark::values::StarlarkPagable;
 use starlark::values::Trace;
 use starlark::values::ValueOf;
 use starlark::values::ValueTyped;
-use starlark::values::list::ListRef;
 use starlark::values::type_repr::StarlarkTypeRepr;
 
 use crate as buck2_build_api;
@@ -96,7 +95,7 @@ fn run_info_creator(globals: &mut GlobalsBuilder) {
     #[starlark(as_type = RunInfo<'static>)]
     fn RunInfo<'v>(
         // TODO(nga): make the argument either named or positional.
-        #[starlark(default = StarlarkCommandLineValueUnpack::List(ListRef::empty()))]
+        #[starlark(default = StarlarkCommandLineValueUnpack::List(ValueOf::empty_list()))]
         args: StarlarkCommandLineValueUnpack<'v>,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<RunInfo<'v>> {

@@ -17,10 +17,10 @@ use serde::Serializer;
 use starlark::any::ProvidesStaticType;
 use starlark::values::Freeze;
 use starlark::values::StarlarkPagable;
-use starlark::values::StringValue;
 use starlark::values::Trace;
 use starlark::values::UnpackValue;
-use starlark::values::ValueTyped;
+use starlark::values::ValueOf;
+use starlark::values::string::StarlarkStr;
 use starlark::values::type_repr::StarlarkTypeRepr;
 
 /// Regex argument for `cmd_args.replace_regex`.
@@ -40,8 +40,8 @@ use starlark::values::type_repr::StarlarkTypeRepr;
 pub(crate) enum CmdArgsRegex<'v> {
     /// Deprecated.
     // TODO(nga): migrate, soft error, remove.
-    Str(StringValue<'v>),
-    Regex(ValueTyped<'v, StarlarkBuckRegex>),
+    Str(ValueOf<'v, StarlarkStr>),
+    Regex(ValueOf<'v, StarlarkBuckRegex>),
 }
 
 impl<'v> CmdArgsRegex<'v> {
@@ -70,7 +70,7 @@ impl<'v> Serialize for CmdArgsRegex<'v> {
         S: Serializer,
     {
         match self {
-            Self::Str(s) => serializer.collect_str(s),
+            Self::Str(s) => serializer.collect_str(s.as_str()),
             Self::Regex(r) => serializer.collect_str(r.as_ref().as_str()),
         }
     }

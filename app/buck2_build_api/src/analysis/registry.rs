@@ -85,7 +85,9 @@ use crate::dynamic::storage::DynamicLambdaParamsStorage;
 use crate::dynamic::storage::FrozenDynamicLambdaParamsStorageBox;
 use crate::interpreter::rule_defs::artifact::associated::AssociatedArtifacts;
 use crate::interpreter::rule_defs::artifact::output_artifact_like::OutputArtifactArg;
+use crate::interpreter::rule_defs::artifact::starlark_artifact_like::StarlarkArtifactView;
 use crate::interpreter::rule_defs::artifact::starlark_declared_artifact::StarlarkDeclaredArtifact;
+use crate::interpreter::rule_defs::artifact::starlark_output_artifact::StarlarkOutputArtifactView;
 use crate::interpreter::rule_defs::provider::collection::FrozenProviderCollectionValueRef;
 use crate::interpreter::rule_defs::provider::collection::ProviderCollection;
 use crate::interpreter::rule_defs::transitive_set::FrozenTransitiveSetDefinition;
@@ -225,11 +227,20 @@ impl<'v> AnalysisRegistry<'v> {
                     AssociatedArtifacts::new(),
                 ))
             }
-            OutputArtifactArg::OutputArtifact(output) => output.inner(),
-            OutputArtifactArg::DeclaredArtifact(artifact) => artifact,
-            OutputArtifactArg::WrongArtifact(artifact) => {
-                return Err(artifact.as_input_artifact_like().as_output_error());
-            }
+            OutputArtifactArg::OutputArtifact(output) => match output {
+                StarlarkOutputArtifactView::Unfrozen(output) => output.inner(),
+                StarlarkOutputArtifactView::Frozen(output) => {
+                    return Err(StarlarkArtifactView::Artifact(output.inner())
+                        .as_input_artifact_like()
+                        .as_output_error());
+                }
+            },
+            OutputArtifactArg::Artifact(artifact) => match artifact {
+                StarlarkArtifactView::DeclaredArtifact(artifact) => artifact,
+                StarlarkArtifactView::Artifact(_) | StarlarkArtifactView::PromiseArtifact(_) => {
+                    return Err(artifact.as_input_artifact_like().as_output_error());
+                }
+            },
         };
 
         let output = declared_artifact.output_artifact();

@@ -58,7 +58,6 @@ use starlark::values::Value;
 use starlark::values::ValueError;
 use starlark::values::ValueOf;
 use starlark::values::ValueTyped;
-use starlark::values::list::ListRef;
 use starlark::values::list::ListType;
 use starlark::values::starlark_value;
 use starlark::values::string::StarlarkStr;
@@ -885,7 +884,7 @@ impl<'v> StarlarkCmdArgs<'v> {
 #[derive(UnpackValue, StarlarkTypeRepr)]
 pub enum StarlarkCommandLineValueUnpack<'v> {
     // This should be `list[Self]`, but we cannot express it.
-    List(&'v ListRef<'v>),
+    List(ValueOf<'v, ListType<Value<'v>>>),
     CommandLineArg(CommandLineArg<'v>),
 }
 
@@ -899,7 +898,9 @@ impl<'v> StarlarkCommandLineData<'v> {
         value: StarlarkCommandLineValueUnpack<'v>,
     ) -> buck2_error::Result<()> {
         match value {
-            StarlarkCommandLineValueUnpack::List(values) => self.add_values(values.content())?,
+            StarlarkCommandLineValueUnpack::List(values) => {
+                self.add_values(values.list().content())?
+            }
             StarlarkCommandLineValueUnpack::CommandLineArg(value) => self.items.push(value),
         }
         Ok(())
@@ -932,7 +933,7 @@ impl<'v> StarlarkCommandLineData<'v> {
     fn add_hidden(&mut self, value: StarlarkCommandLineValueUnpack<'v>) -> buck2_error::Result<()> {
         match value {
             StarlarkCommandLineValueUnpack::List(values) => {
-                for value in values.content() {
+                for value in values.list().content() {
                     self.add_hidden(StarlarkCommandLineValueUnpack::unpack_value_err(*value)?)?
                 }
             }

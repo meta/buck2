@@ -423,9 +423,8 @@ impl Scheduler {
     }
 
     /// Whether the system is under memory pressure: on once the short-term pressure average
-    /// rises, off only once both the short- and the long-term average have eased. Latched apart
-    /// from the intent, which flips back and forth while the long-term average catches up with
-    /// sustained pressure; each onset reported here starts an eviction.
+    /// rises, off only once both the short- and the long-term average have eased. Each onset
+    /// reported here starts an eviction.
     pub(crate) fn under_memory_pressure(&self) -> bool {
         self.memory_pressure
     }
@@ -483,23 +482,23 @@ impl Scheduler {
 
         // Consider flipping the intent. In either case if we do, we set the `last_correction_time`,
         // since we don't want to take any action immediately after flipping intent
+        let pressure_high = self
+            .allprocs_memory_pressure
+            .average_over_last(Duration::from_secs(5))
+            > 10.0;
         match self.current_intent {
             CurrentIntent::Decrease => {
-                if self
+                let pressure_settled = self
                     .allprocs_memory_pressure
                     .average_over_last(Duration::from_secs(30))
-                    < 5.0
-                {
+                    < 5.0;
+                if pressure_settled && !pressure_high {
                     self.current_intent = CurrentIntent::Increase;
                     self.last_parallelism_increase_time = now;
                 }
             }
             CurrentIntent::Increase => {
-                if self
-                    .allprocs_memory_pressure
-                    .average_over_last(Duration::from_secs(5))
-                    > 10.0
-                {
+                if pressure_high {
                     self.current_intent = CurrentIntent::Decrease;
                     self.suspend_timing.on_enter_decrease_mode(now);
                 }
@@ -873,10 +872,8 @@ mod tests {
         assert_eq!(scheduler.estimated_memory_cap, 16 << 30);
     }
 
-    /// Once a constant pressure above the decrease threshold follows a quiet period, the intent flips
-    /// between `Decrease` and `Increase` every tick: the 5 s average is above 10 while the 30 s
-    /// average is still below 5, so the conditions for entering and for leaving `Decrease` hold at
-    /// once.
+    /// Once a constant pressure above the decrease threshold follows a quiet period, the intent
+    /// enters `Decrease` as soon as the 5 s average is above 10 and stays there while it is.
     #[test]
     fn test_intent_when_pressure_follows_quiet_period() {
         let (mut scheduler, timeline) = TestTimeline::new();
@@ -903,7 +900,7 @@ mod tests {
         assert_eq!(
             decrease,
             [
-                false, false, false, true, false, true, false, true, false, true, true, true
+                false, false, false, true, true, true, true, true, true, true, true, true
             ]
         );
     }
@@ -1139,8 +1136,8 @@ mod tests {
     }
 
     /// The pressure signal turns on once at the onset of sustained pressure, stays on through
-    /// the intent's flapping while the long-term average catches up and through short dips, and
-    /// turns off once after pressure has subsided; at the production sampling cadence.
+    /// short dips, and turns off once after pressure has subsided; at the production sampling
+    /// cadence.
     #[test]
     fn test_memory_pressure_signal_latches_per_episode() {
         let (mut scheduler, timeline) = TestTimeline::new();
@@ -1178,7 +1175,7 @@ mod tests {
         assert_eq!(
             run(&mut scheduler, 12.0, 40),
             (1, 0),
-            "steady pressure is one onset, however often the intent flips"
+            "steady pressure is one onset"
         );
         assert_eq!(
             run(&mut scheduler, 0.0, 8),

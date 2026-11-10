@@ -235,7 +235,7 @@ internal class NonAbiDeclarationsStrippingIrExtension(
             pluginContext,
             repairLog,
             keptInlineBodies,
-            collectSealedSubclassKeepNames(moduleFragment),
+            collectMustKeepPrivateClassNames(moduleFragment),
         ),
         null,
     )
@@ -249,7 +249,7 @@ internal class NonAbiDeclarationsStrippingIrVisitor(
     private val pluginContext: IrPluginContext,
     private val repairLog: AbiGenRepairLog,
     private val keptInlineBodies: Set<IrSimpleFunction>,
-    private val sealedSubclassKeepNames: Set<String>,
+    private val mustKeepPrivateClassNames: Set<String>,
 ) : IrElementTransformerVoidCompat() {
 
   override fun visitFile(declaration: IrFile): IrFile {
@@ -586,8 +586,8 @@ internal class NonAbiDeclarationsStrippingIrVisitor(
             kind != ClassKind.ENUM_ENTRY &&
             kind != ClassKind.ANNOTATION_CLASS
 
-    // A top-level private class kept as a shell (named by a kept sealed type's metadata,
-    // or carrying JVM-public nests) needs the same member stripping as a private nested
+    // A top-level private class kept as a shell (a must-keep private class, or one
+    // carrying JVM-public nests) needs the same member stripping as a private nested
     // class: its members are unreachable through the private owner, and keeping them leaks
     // `error/NonExistentClass` references into the ABI when their types don't resolve on
     // the ABI classpath. Nested classes still survive via the nested-class rule above, so
@@ -597,7 +597,7 @@ internal class NonAbiDeclarationsStrippingIrVisitor(
             parent !is IrClass &&
             (visibility == DescriptorVisibilities.PRIVATE ||
                 visibility == DescriptorVisibilities.LOCAL) &&
-            isSealedSubclassKeep() &&
+            isMustKeepPrivateClass() &&
             inlineClassRepresentationCompat == null &&
             kind != ClassKind.ENUM_CLASS &&
             kind != ClassKind.ENUM_ENTRY &&
@@ -646,19 +646,19 @@ internal class NonAbiDeclarationsStrippingIrVisitor(
         return@removeAll true
       }
 
-      // A private class named by a kept sealed type's metadata stays as a stub.
-      if (declaration.isSealedSubclassKeep()) return@removeAll false
+      // A must-keep private class (named by kept sealed metadata or annotation literals) stays as a
+      // stub.
+      if (declaration.isMustKeepPrivateClass()) return@removeAll false
 
       // Remove private/local members only (NOT internal - K1 kept internal in ABI)
       declaration.isPrivateOrLocal()
     }
   }
 
-  private fun IrDeclaration.isSealedSubclassKeep(): Boolean {
+  private fun IrDeclaration.isMustKeepPrivateClass(): Boolean {
     if (this !is IrClass) return false
-    // A private class named by a kept sealed type's metadata must stay (as a stub):
-    // dropping it lets consumers compile a non-exhaustive `when`.
-    return sealedSubclassKeepNames.contains(this.kotlinFqName.asString())
+    // A must-keep private class must stay (as a stub): dropping it breaks consumers.
+    return mustKeepPrivateClassNames.contains(this.kotlinFqName.asString())
   }
 
   private fun IrDeclaration.isPropertyDelegateBackingField(): Boolean =

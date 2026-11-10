@@ -102,6 +102,13 @@ load("@prelude//utils:utils.bzl", "dedupe_by_value")
 
 _GATORADE_PHASE_ORDER = ["early", "middle", "late"]
 
+# The `native_library_merge_linker_args` entry for every library that merges
+# two or more targets, in place of the entry for its soname: monogatorade's
+# library synthesis names libraries no entry can name in advance, and one that
+# reuses an old soname holds other code than the old library did. Monogatorade
+# reads the same entry (`kSynthesizedLibraryArgs`).
+_SYNTHESIZED_LIBRARY_LINKER_ARGS = "<synthesized>"
+
 # Native libraries on Android are built for a particular Application Binary Interface (ABI). We
 # package native libraries for one (or more, for multi-arch builds) ABIs into an Android APK.
 #
@@ -2560,7 +2567,9 @@ def _get_merged_linkables_for_platform(
         link_args = [link_args]
         if native_library_merge_linker_args_all:
             link_args += [LinkArgs(flags = native_library_merge_linker_args_all)]
-        if soname in merge_linker_args:
+        if is_actually_merged and _SYNTHESIZED_LIBRARY_LINKER_ARGS in merge_linker_args:
+            link_args += [LinkArgs(flags = merge_linker_args[_SYNTHESIZED_LIBRARY_LINKER_ARGS])]
+        elif soname in merge_linker_args:
             link_args += [LinkArgs(flags = merge_linker_args[soname])]
 
         supports_shlib_interfaces = is_actually_merged or linkable_nodes[group_data.constituents[0]].supports_shlib_interfaces

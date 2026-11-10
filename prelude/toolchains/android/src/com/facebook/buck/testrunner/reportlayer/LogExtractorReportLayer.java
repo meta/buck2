@@ -18,6 +18,7 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Scanner;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -74,14 +75,14 @@ public class LogExtractorReportLayer extends ReportLayer {
   public void report() {
     try {
       Path logcatMainBufferTraPath = this.runner.createPathForLogcatBuffer("main");
-      String logcatMainBufferFile = logcatMainBufferTraPath.toString();
+      String logcatMainBufferFile = Objects.requireNonNull(logcatMainBufferTraPath).toString();
       for (ExtractorConfig extractorConfig : extractors) {
         Path traPath =
             this.runner.createTRAPlainTextLog(
                 extractorConfig.traName, extractorConfig.traDescription);
         Pattern pattern = Pattern.compile(extractorConfig.regex);
 
-        FileWriter writer = new FileWriter(traPath.toFile());
+        FileWriter writer = new FileWriter(Objects.requireNonNull(traPath).toFile());
         Scanner scanner = new Scanner(new File(logcatMainBufferFile));
         while (scanner.hasNextLine()) {
           String line = scanner.nextLine();

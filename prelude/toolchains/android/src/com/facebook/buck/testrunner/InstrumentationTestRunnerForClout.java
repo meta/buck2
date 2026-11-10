@@ -18,6 +18,7 @@ import java.io.File;
 import java.io.IOException;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import org.jspecify.annotations.Nullable;
 
 @Nullsafe(Nullsafe.Mode.LOCAL)
@@ -32,24 +33,24 @@ public class InstrumentationTestRunnerForClout extends InstrumentationTestRunner
       String targetPackageName,
       String testRunner,
       File outputDirectory,
-      String instrumentationApkPath,
-      String apkUnderTestPath,
-      String exopackageLocalPath,
-      String apkUnderTestExopackageLocalPath,
-      String exopackageSecondaryDexLocalPath,
+      @Nullable String instrumentationApkPath,
+      @Nullable String apkUnderTestPath,
+      @Nullable String exopackageLocalPath,
+      @Nullable String apkUnderTestExopackageLocalPath,
+      @Nullable String exopackageSecondaryDexLocalPath,
       boolean attemptUninstallApkUnderTest,
       boolean attemptUninstallInstrumentationApk,
       boolean debug,
       boolean codeCoverage,
-      String codeCoverageOutputFile,
+      @Nullable String codeCoverageOutputFile,
       boolean isSelfInstrumenting,
       Map<String, String> extraInstrumentationArguments,
-      String extraInstrumentationTestListener,
+      @Nullable String extraInstrumentationTestListener,
       Map<String, String> extraFilesToPull,
       Map<String, String> extraDirsToPull,
       boolean clearPackageData,
       boolean disableAnimations,
-      String preTestSetupScript,
+      @Nullable String preTestSetupScript,
       List<String> extraApksToInstall,
       @Nullable Integer userId) {
     super(
@@ -87,10 +88,10 @@ public class InstrumentationTestRunnerForClout extends InstrumentationTestRunner
     InstrumentationTestRunnerForClout runner =
         new InstrumentationTestRunnerForClout(
             deviceArgs,
-            argsParser.packageName,
-            argsParser.targetPackageName,
-            argsParser.testRunner,
-            argsParser.outputDirectory,
+            Objects.requireNonNull(argsParser.packageName),
+            Objects.requireNonNull(argsParser.targetPackageName),
+            Objects.requireNonNull(argsParser.testRunner),
+            Objects.requireNonNull(argsParser.outputDirectory),
             argsParser.instrumentationApkPath,
             argsParser.apkUnderTestPath,
             argsParser.exopackageLocalPath,

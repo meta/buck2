@@ -27,6 +27,7 @@ import com.facebook.buck.testrunner.reportlayer.ReportLayer;
 import com.facebook.buck.testrunner.reportlayer.TombstonesReportLayer;
 import com.facebook.buck.testrunner.reportlayer.VideoRecordingReportLayer;
 import com.facebook.buck.util.escaper.BashEscaper;
+import com.facebook.infer.annotation.Nullsafe;
 import java.io.File;
 import java.io.FileWriter;
 import java.io.IOException;
@@ -42,6 +43,7 @@ import java.util.Arrays;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
@@ -54,6 +56,7 @@ import java.util.stream.Stream;
 import org.jspecify.annotations.Nullable;
 
 /** Logcat buffers that can be collected from the device */
+@Nullsafe(Nullsafe.Mode.LOCAL)
 enum LogcatBuffer {
   MAIN("main"),
   SYSTEM("system"),
@@ -74,6 +77,7 @@ enum LogcatBuffer {
   }
 }
 
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public class InstrumentationTestRunner extends DeviceRunner {
 
   private static final String TEST_RESULT_ARTIFACTS_ENV = "TEST_RESULT_ARTIFACTS_DIR";
@@ -139,12 +143,12 @@ public class InstrumentationTestRunner extends DeviceRunner {
   private final String targetPackageName;
   private final String testRunner;
   private final File outputDirectory;
-  private final String exopackageLocalPath;
+  @Nullable private final String exopackageLocalPath;
   @Nullable private final String exopackageSecondaryDexLocalPath;
   private final boolean attemptUninstallApkUnderTest;
   private final boolean attemptUninstallInstrumentationApk;
   private final Map<String, String> extraInstrumentationArguments;
-  private final String extraInstrumentationTestListener;
+  @Nullable private final String extraInstrumentationTestListener;
   private final Map<String, String> extraFilesToPull;
   private final Map<String, String> extraDirsToPull;
   private final boolean debug;
@@ -157,7 +161,7 @@ public class InstrumentationTestRunner extends DeviceRunner {
   @Nullable private final String apkUnderTestPath;
   @Nullable private final String codeCoverageOutputFile;
   @Nullable private final String apkUnderTestExopackageLocalPath;
-  private final String preTestSetupScript;
+  @Nullable private final String preTestSetupScript;
   private final List<String> apexesToInstall;
 
   @Nullable private final Integer userId;
@@ -223,24 +227,24 @@ public class InstrumentationTestRunner extends DeviceRunner {
       String targetPackageName,
       String testRunner,
       File outputDirectory,
-      String instrumentationApkPath,
-      String apkUnderTestPath,
-      String exopackageLocalPath,
-      String apkUnderTestExopackageLocalPath,
-      String exopackageSecondaryDexLocalPath,
+      @Nullable String instrumentationApkPath,
+      @Nullable String apkUnderTestPath,
+      @Nullable String exopackageLocalPath,
+      @Nullable String apkUnderTestExopackageLocalPath,
+      @Nullable String exopackageSecondaryDexLocalPath,
       boolean attemptUninstallApkUnderTest,
       boolean attemptUninstallInstrumentationApk,
       boolean debug,
       boolean codeCoverage,
-      String codeCoverageOutputFile,
+      @Nullable String codeCoverageOutputFile,
       boolean isSelfInstrumenting,
       Map<String, String> extraInstrumentationArguments,
-      String extraInstrumentationTestListener,
+      @Nullable String extraInstrumentationTestListener,
       Map<String, String> extraFilesToPull,
       Map<String, String> extraDirsToPull,
       boolean clearPackageData,
       boolean disableAnimations,
-      String preTestSetupScript,
+      @Nullable String preTestSetupScript,
       List<String> apexesToInstall,
       @Nullable Integer userId) {
     super(deviceArgs);
@@ -275,18 +279,18 @@ public class InstrumentationTestRunner extends DeviceRunner {
 
   protected static class ArgsParser {
     private final Map<String, String> environment;
-    File outputDirectory = null;
-    DeviceArgs deviceArgs = null;
-    String apkUnderTestPath = null;
-    String packageName = null;
-    String targetPackageName = null;
-    String testRunner = null;
-    String instrumentationApkPath = null;
-    String codeCoverageOutputFile = null;
-    String exopackageLocalPath = null;
-    String apkUnderTestExopackageLocalPath = null;
-    String exopackageSecondaryDexLocalPath = null;
-    String extraInstrumentationTestListener = null;
+    @Nullable File outputDirectory = null;
+    @Nullable DeviceArgs deviceArgs = null;
+    @Nullable String apkUnderTestPath = null;
+    @Nullable String packageName = null;
+    @Nullable String targetPackageName = null;
+    @Nullable String testRunner = null;
+    @Nullable String instrumentationApkPath = null;
+    @Nullable String codeCoverageOutputFile = null;
+    @Nullable String exopackageLocalPath = null;
+    @Nullable String apkUnderTestExopackageLocalPath = null;
+    @Nullable String exopackageSecondaryDexLocalPath = null;
+    @Nullable String extraInstrumentationTestListener = null;
     boolean attemptUninstallApkUnderTest = false;
     boolean attemptUninstallInstrumentationApk = false;
     boolean debug = false;
@@ -301,7 +305,7 @@ public class InstrumentationTestRunner extends DeviceRunner {
     Map<String, String> extraFilesToPull = new HashMap<String, String>();
     Map<String, String> extraDirsToPull = new HashMap<String, String>();
     Map<String, String> logExtractors = new HashMap<String, String>();
-    String preTestSetupScript = null;
+    @Nullable String preTestSetupScript = null;
     List<String> extraApksToInstall = new ArrayList<>();
     @Nullable Integer userId = null;
 
@@ -533,11 +537,11 @@ public class InstrumentationTestRunner extends DeviceRunner {
     argsParser.fromArgs(args);
     InstrumentationTestRunner runner =
         new InstrumentationTestRunner(
-            argsParser.deviceArgs,
-            argsParser.packageName,
-            argsParser.targetPackageName,
-            argsParser.testRunner,
-            argsParser.outputDirectory,
+            Objects.requireNonNull(argsParser.deviceArgs),
+            Objects.requireNonNull(argsParser.packageName),
+            Objects.requireNonNull(argsParser.targetPackageName),
+            Objects.requireNonNull(argsParser.testRunner),
+            Objects.requireNonNull(argsParser.outputDirectory),
             argsParser.instrumentationApkPath,
             argsParser.apkUnderTestPath,
             argsParser.exopackageLocalPath,
@@ -687,9 +691,10 @@ public class InstrumentationTestRunner extends DeviceRunner {
    * {@link RemoteAndroidTestRunner} requires an {@link IDevice} to execute {@code am instrument}.
    * All other device interactions use {@link AndroidDevice} via {@link AdbUtils}.
    */
-  protected IDevice resolveIDevice(String serial) throws InterruptedException {
+  protected @Nullable IDevice resolveIDevice(String serial) throws InterruptedException {
     AndroidDebugBridge.initIfNeeded(/* clientSupport */ false);
-    AndroidDebugBridge adb = AndroidDebugBridge.createBridge(getAdbPath(), false);
+    AndroidDebugBridge adb =
+        AndroidDebugBridge.createBridge(Objects.requireNonNull(getAdbPath()), false);
     if (adb == null) {
       System.err.println("Failed to connect to adb. Make sure adb server is running.");
       System.exit(1);
@@ -759,10 +764,12 @@ public class InstrumentationTestRunner extends DeviceRunner {
 
     // Resolve a ddmlib IDevice solely for RemoteAndroidTestRunner compatibility.
     // All other device interactions use this.androidDevice (AdbUtils-based).
-    IDevice iDevice = resolveIDevice(androidDevice.getSerialNumber());
+    IDevice iDevice = Objects.requireNonNull(resolveIDevice(androidDevice.getSerialNumber()));
 
     if (this.instrumentationApkPath != null) {
       if (this.apkUnderTestPath != null) {
+        String instrumentationApkPath = this.instrumentationApkPath;
+        String apkUnderTestPath = this.apkUnderTestPath;
         // Install both APKs in parallel to improve performance
         ExecutorService executor = Executors.newFixedThreadPool(2);
         try {
@@ -770,7 +777,7 @@ public class InstrumentationTestRunner extends DeviceRunner {
               executor.submit(
                   () -> {
                     try {
-                      installPackage(this.instrumentationApkPath, this.packageName);
+                      installPackage(instrumentationApkPath, this.packageName);
                       return null;
                     } catch (Throwable t) {
                       throw new RuntimeException("Failed to install instrumentation APK", t);
@@ -781,7 +788,7 @@ public class InstrumentationTestRunner extends DeviceRunner {
               executor.submit(
                   () -> {
                     try {
-                      installPackage(this.apkUnderTestPath, this.targetPackageName);
+                      installPackage(apkUnderTestPath, this.targetPackageName);
                       return null;
                     } catch (Throwable t) {
                       throw new RuntimeException("Failed to install APK under test", t);
@@ -1078,7 +1085,7 @@ public class InstrumentationTestRunner extends DeviceRunner {
       }
 
       if (this.disableAnimations) {
-        setAnimationScales(originalWindowAnimationScales);
+        setAnimationScales(Objects.requireNonNull(originalWindowAnimationScales));
       }
 
       if (this.codeCoverageOutputFile != null || (useJaCoCoCoverage && coverageTempDir != null)) {
@@ -1095,7 +1102,7 @@ public class InstrumentationTestRunner extends DeviceRunner {
             executeAdbShellCommand("su root cp " + covFileInEmu + " " + covFileInSdcard);
 
         System.out.println(cpOutput);
-        pullFile(covFileInSdcard, destCovFileInHost);
+        pullFile(covFileInSdcard, Objects.requireNonNull(destCovFileInHost));
 
         String coverageParser = getenv("COVERAGE_PARSER");
         if (coverageParser != null) {
@@ -1198,7 +1205,7 @@ public class InstrumentationTestRunner extends DeviceRunner {
   // probes (empty manifest.jsonl) — surfacing it as INFRA_FAILURE makes the next regression
   // visible in test results instead of waiting for someone to notice missing per-test artifacts.
   private static void maybeEmitPerTestCoverageInfraFailure(
-      String hostPerTestCoverageDir, Optional<TestResultsOutputSender> sender) {
+      @Nullable String hostPerTestCoverageDir, Optional<TestResultsOutputSender> sender) {
     if (hostPerTestCoverageDir == null || !sender.isPresent()) {
       return;
     }
@@ -1238,10 +1245,10 @@ public class InstrumentationTestRunner extends DeviceRunner {
    * create TRA path for logcat buffer
    *
    * @param bufferName name of the buffer
-   * @return path to the tra
+   * @return path to the tra, null if the creation is not successful
    * @throws IOException when fail to create the path
    */
-  public Path createPathForLogcatBuffer(String bufferName) throws IOException {
+  public @Nullable Path createPathForLogcatBuffer(String bufferName) throws IOException {
     return this.createTRALogcatLog(
         String.format("Logcat `%s` Buffer Output", bufferName),
         String.format("logcat_%s_buffer_logs", bufferName));
@@ -1289,14 +1296,14 @@ public class InstrumentationTestRunner extends DeviceRunner {
    * @return Path of the created TRA, null if the creation is not successful
    * @throws IOException the exception may throw from file writing.
    */
-  public Path createTRA(String type, String description, String name) throws IOException {
+  public @Nullable Path createTRA(String type, String description, String name) throws IOException {
     // create the annotation file
     String annotationTemplate =
         String.format("{\"type\": {\"%s\": {}}, \"description\": \"%s\"}", type, description);
     return createTRA(annotationTemplate, name);
   }
 
-  public Path createTRALogcatLog(String description, String name) throws IOException {
+  public @Nullable Path createTRALogcatLog(String description, String name) throws IOException {
     // Use Logcat type(id = 4 https://fburl.com/code/8xzvasdf)
     String annotationTemplate =
         String.format(
@@ -1305,7 +1312,7 @@ public class InstrumentationTestRunner extends DeviceRunner {
     return createTRA(annotationTemplate, name);
   }
 
-  public Path createTRAPlainTextLog(String description, String name) throws IOException {
+  public @Nullable Path createTRAPlainTextLog(String description, String name) throws IOException {
     // Use PLAIN_TEXT type(id = 5 https://fburl.com/code/8xzvasdf)
     String annotationTemplate =
         String.format(
@@ -1314,7 +1321,7 @@ public class InstrumentationTestRunner extends DeviceRunner {
     return createTRA(annotationTemplate, name);
   }
 
-  private Path createTRA(String annotationTemplate, String name) throws IOException {
+  private @Nullable Path createTRA(String annotationTemplate, String name) throws IOException {
     /// get TRA directories
     String testArtifactsPath = getenv(TEST_RESULT_ARTIFACTS_ENV);
     String testArtifactsAnnotationsPath = getenv(TEST_RESULT_ARTIFACTS_ANNOTATIONS_ENV);
@@ -1383,7 +1390,7 @@ public class InstrumentationTestRunner extends DeviceRunner {
   // Java has no setenv(), so this is needed to be able to overwrite env vars in tests
   // the lint suggests to use EnvVariablesProvider, but the
   // compiler cannot find it
-  protected String getenv(String env) {
+  protected @Nullable String getenv(String env) {
     return System.getenv(env);
   }
 
@@ -1467,7 +1474,7 @@ public class InstrumentationTestRunner extends DeviceRunner {
     pushTree(localDir, remoteBase, this::pushFile);
   }
 
-  private String getAppScopedStoragePath(
+  private @Nullable String getAppScopedStoragePath(
       String packageName,
       String targetPackageName,
       boolean isSelfInstrumenting,
@@ -1481,7 +1488,7 @@ public class InstrumentationTestRunner extends DeviceRunner {
     return Paths.get(basePath, fileName).toString();
   }
 
-  private String getAppScopedStoragePath(
+  private @Nullable String getAppScopedStoragePath(
       String packageName,
       String targetPackageName,
       boolean isSelfInstrumenting,
@@ -1552,7 +1559,8 @@ public class InstrumentationTestRunner extends DeviceRunner {
     try {
       Field mParserField = RemoteAndroidTestRunner.class.getDeclaredField("mParser");
       mParserField.setAccessible(true);
-      MultiLineReceiver multiLineReceiver = (MultiLineReceiver) mParserField.get(runner);
+      MultiLineReceiver multiLineReceiver =
+          (MultiLineReceiver) Objects.requireNonNull(mParserField.get(runner));
       multiLineReceiver.setTrimLine(value);
     } catch (NoSuchFieldException | IllegalAccessException e) {
       throw new RuntimeException(e);

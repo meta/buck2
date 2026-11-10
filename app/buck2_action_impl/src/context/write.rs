@@ -46,7 +46,6 @@ use starlark::values::UnpackValue;
 use starlark::values::ValueOf;
 use starlark::values::ValueTyped;
 use starlark::values::none::NoneOr;
-use starlark::values::type_repr::StarlarkTypeRepr;
 
 use crate::actions::impls::dep_file_fingerprint::DepFileFingerprintFormat;
 use crate::actions::impls::dep_file_fingerprint::StarlarkDepFileFingerprint;
@@ -76,7 +75,7 @@ enum WriteActionError {
     DepFileFingerprintWithInputs,
 }
 
-#[derive(UnpackValue, StarlarkTypeRepr)]
+#[derive(UnpackValue)]
 enum WriteContentArg<'v> {
     CommandLineArg(CommandLineArg<'v>),
     StarlarkCommandLineValueUnpack(StarlarkCommandLineValueUnpack<'v>),

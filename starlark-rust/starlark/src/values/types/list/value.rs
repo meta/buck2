@@ -63,7 +63,6 @@ use crate::values::index::apply_slice;
 use crate::values::index::convert_index;
 use crate::values::list::ListRef;
 use crate::values::list::ListType;
-use crate::values::type_repr::StarlarkTypeRepr;
 
 #[derive(Clone, Default, Trace, Debug, ProvidesStaticType, Allocative)]
 #[repr(transparent)]
@@ -254,17 +253,6 @@ impl<'fv, V: AllocFrozenValue<'fv>> AllocFrozenValue<'fv> for Vec<V> {
         ValueOf::new_unchecked(
             heap.alloc_list(&self.into_map(|x| x.alloc_frozen_value(heap).to_value())),
         )
-    }
-}
-
-impl<'a, V: 'a> StarlarkTypeRepr for &'a [V]
-where
-    &'a V: StarlarkTypeRepr,
-{
-    type Canonical = <Vec<&'a V> as StarlarkTypeRepr>::Canonical;
-
-    fn starlark_type_repr() -> Ty {
-        Vec::<&'a V>::starlark_type_repr()
     }
 }
 

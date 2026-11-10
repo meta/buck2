@@ -24,7 +24,6 @@ use std::ops::Sub;
 use dupe::Dupe;
 use either::Either;
 
-use crate as starlark;
 use crate::collections::StarlarkHashValue;
 use crate::values::AllocFrozenValue;
 use crate::values::AllocValue;
@@ -33,7 +32,6 @@ use crate::values::Heap;
 use crate::values::UnpackValue;
 use crate::values::ValueOf;
 use crate::values::ValueTyped;
-use crate::values::type_repr::StarlarkTypeRepr;
 use crate::values::types::float::StarlarkFloat;
 use crate::values::types::int::int_or_big::StarlarkInt;
 use crate::values::types::int::int_or_big::StarlarkIntRef;
@@ -52,7 +50,7 @@ enum NumError {
 /// It's an intermediate representation that facilitates conversions between
 /// numerical types and helps in implementation of arithmetical operations
 /// between them.
-#[derive(Clone, Debug, Dupe, Copy, StarlarkTypeRepr)]
+#[derive(Clone, Debug, Dupe, Copy)]
 #[doc(hidden)]
 pub enum NumRef<'v> {
     Int(StarlarkIntRef<'v>),
@@ -77,7 +75,7 @@ impl<'v> UnpackValue<'v> for NumRef<'v> {
     }
 }
 
-#[derive(Debug, derive_more::Display, StarlarkTypeRepr)]
+#[derive(Debug, derive_more::Display)]
 #[doc(hidden)]
 pub enum Num {
     Int(StarlarkInt),

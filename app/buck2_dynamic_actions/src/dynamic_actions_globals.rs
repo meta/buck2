@@ -21,10 +21,10 @@ use starlark::typing::ParamSpec;
 use starlark::typing::Ty;
 use starlark::util::ArcStr;
 use starlark::values::Heap;
+use starlark::values::StarlarkTypeExpr;
 use starlark::values::ValueOf;
 use starlark::values::ValueTyped;
 use starlark::values::dict::DictType;
-use starlark::values::type_repr::StarlarkTypeRepr;
 use starlark::values::typing::StarlarkCallableChecked;
 
 use crate::attrs::DynamicAttrType;

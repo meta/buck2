@@ -95,7 +95,6 @@ use crate::values::starlark_type_id::StarlarkTypeId;
 use crate::values::string::str_type::StarlarkStr;
 use crate::values::structs::value::Struct;
 use crate::values::tuple::value::VALUE_EMPTY_TUPLE;
-use crate::values::type_repr::StarlarkTypeRepr;
 use crate::values::types::int::inline_int::InlineInt;
 use crate::values::types::int::int_or_big::StarlarkIntRef;
 use crate::values::types::list::value::FrozenListData;
@@ -1172,14 +1171,6 @@ impl<'v> StarlarkDeserialize<'v> for Value<'v> {
         ctx: &mut dyn StarlarkDeserializeContext<'_, 'v>,
     ) -> crate::Result<Self> {
         ctx.deserialize_value()
-    }
-}
-
-impl<'v> StarlarkTypeRepr for Value<'v> {
-    type Canonical = Value<'static>;
-
-    fn starlark_type_repr() -> Ty {
-        Ty::any()
     }
 }
 

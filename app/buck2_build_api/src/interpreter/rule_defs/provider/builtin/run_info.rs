@@ -18,10 +18,10 @@ use starlark::eval::Evaluator;
 use starlark::values::Freeze;
 use starlark::values::OwnedFrozen;
 use starlark::values::StarlarkPagable;
+use starlark::values::StarlarkValue;
 use starlark::values::Trace;
 use starlark::values::ValueOf;
 use starlark::values::ValueTyped;
-use starlark::values::type_repr::StarlarkTypeRepr;
 
 use crate as buck2_build_api;
 use crate::interpreter::rule_defs::cmd_args::ArtifactPathMapper;
@@ -109,7 +109,7 @@ fn run_info_creator(globals: &mut GlobalsBuilder) {
 
 impl<'v> CommandLineArgLike<'v> for RunInfo<'v> {
     fn register_me(&self) {
-        command_line_arg_like_impl!(RunInfo::starlark_type_repr());
+        command_line_arg_like_impl!(RunInfo::get_type_starlark_repr());
     }
 
     fn add_to_command_line(&self, fmt: &mut CommandLineBuilder<'v, '_>) -> buck2_error::Result<()> {

@@ -19,25 +19,15 @@ use std::convert::Infallible;
 
 use num_bigint::BigInt;
 
-use crate::typing::Ty;
 use crate::values::AllocFrozenValue;
 use crate::values::AllocValue;
 use crate::values::FrozenHeap;
 use crate::values::Heap;
 use crate::values::UnpackValue;
 use crate::values::ValueOf;
-use crate::values::type_repr::StarlarkTypeRepr;
 use crate::values::types::int::int_or_big::StarlarkInt;
 use crate::values::types::int::int_or_big::StarlarkIntRef;
 use crate::values::types::int::view::IntView;
-
-impl StarlarkTypeRepr for u32 {
-    type Canonical = <i32 as StarlarkTypeRepr>::Canonical;
-
-    fn starlark_type_repr() -> Ty {
-        i32::starlark_type_repr()
-    }
-}
 
 impl<'v> AllocValue<'v> for u32 {
     type Type = IntView<'v>;
@@ -54,14 +44,6 @@ impl<'fv> AllocFrozenValue<'fv> for u32 {
     #[inline]
     fn alloc_frozen_value(self, heap: FrozenHeap<'fv>) -> ValueOf<'fv, Self::Type> {
         StarlarkInt::from(self).alloc_frozen_value(heap)
-    }
-}
-
-impl StarlarkTypeRepr for u64 {
-    type Canonical = <i32 as StarlarkTypeRepr>::Canonical;
-
-    fn starlark_type_repr() -> Ty {
-        i32::starlark_type_repr()
     }
 }
 
@@ -83,14 +65,6 @@ impl<'fv> AllocFrozenValue<'fv> for u64 {
     }
 }
 
-impl StarlarkTypeRepr for i64 {
-    type Canonical = <i32 as StarlarkTypeRepr>::Canonical;
-
-    fn starlark_type_repr() -> Ty {
-        i32::starlark_type_repr()
-    }
-}
-
 impl<'v> AllocValue<'v> for i64 {
     type Type = IntView<'v>;
 
@@ -106,14 +80,6 @@ impl<'fv> AllocFrozenValue<'fv> for i64 {
     #[inline]
     fn alloc_frozen_value(self, heap: FrozenHeap<'fv>) -> ValueOf<'fv, Self::Type> {
         StarlarkInt::from(self).alloc_frozen_value(heap)
-    }
-}
-
-impl StarlarkTypeRepr for usize {
-    type Canonical = <i32 as StarlarkTypeRepr>::Canonical;
-
-    fn starlark_type_repr() -> Ty {
-        i32::starlark_type_repr()
     }
 }
 
@@ -135,14 +101,6 @@ impl<'fv> AllocFrozenValue<'fv> for usize {
     }
 }
 
-impl StarlarkTypeRepr for isize {
-    type Canonical = <i32 as StarlarkTypeRepr>::Canonical;
-
-    fn starlark_type_repr() -> Ty {
-        i32::starlark_type_repr()
-    }
-}
-
 impl<'v> AllocValue<'v> for isize {
     type Type = IntView<'v>;
 
@@ -158,14 +116,6 @@ impl<'fv> AllocFrozenValue<'fv> for isize {
     #[inline]
     fn alloc_frozen_value(self, heap: FrozenHeap<'fv>) -> ValueOf<'fv, Self::Type> {
         StarlarkInt::from(self).alloc_frozen_value(heap)
-    }
-}
-
-impl StarlarkTypeRepr for BigInt {
-    type Canonical = <i32 as StarlarkTypeRepr>::Canonical;
-
-    fn starlark_type_repr() -> Ty {
-        i32::starlark_type_repr()
     }
 }
 

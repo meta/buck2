@@ -17,7 +17,8 @@
 
 use syn::spanned::Spanned;
 
-use crate::starlark_type_repr::StarlarkTypeReprInput;
+use crate::union_input::UnionInput;
+use crate::union_input::union_type;
 use crate::v_lifetime::find_v_lifetime;
 
 pub(crate) fn derive_unpack_value(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
@@ -34,7 +35,7 @@ pub(crate) fn derive_unpack_value(input: proc_macro::TokenStream) -> proc_macro:
 fn derive_unpack_value_impl(input: syn::DeriveInput) -> syn::Result<proc_macro2::TokenStream> {
     let span = input.ident.span();
 
-    let input = StarlarkTypeReprInput::parse(input, "UnpackValue")?;
+    let input = UnionInput::parse(input, "UnpackValue")?;
 
     let ident = input.ident;
     let lifetime = find_v_lifetime(&input.generics)?;
@@ -67,9 +68,28 @@ fn derive_unpack_value_impl(input: syn::DeriveInput) -> syn::Result<proc_macro2:
         .collect::<Vec<_>>();
 
     let variant_types: Vec<&syn::Type> = input.enum_variants.iter().map(|(_, t)| t).collect();
+    // The union of the variants' type expressions, for the `Ty`.
+    let union_expr = union_type(&UnionInput {
+        ident: ident.clone(),
+        generics: input.generics.clone(),
+        enum_variants: input
+            .enum_variants
+            .iter()
+            .map(|(n, t)| {
+                let expr: syn::Type = syn::parse_quote_spanned! { t.span() =>
+                    <#t as starlark::values::type_expr::UnionPayload<'v>>::Expr
+                };
+                (n.clone(), expr)
+            })
+            .collect(),
+    })?;
 
     let expr_impl: syn::ItemImpl = syn::parse_quote_spanned! { span =>
         impl #impl_generics starlark::values::StarlarkTypeExpr<'v> for #ident #type_generics #where_clause {
+            fn starlark_type_repr() -> starlark::typing::Ty {
+                <#union_expr as starlark::values::StarlarkTypeExpr<'v>>::starlark_type_repr()
+            }
+
             type Get = Self;
 
             fn get(value: starlark::values::Value<'v>) -> std::option::Option<Self> {

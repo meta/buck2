@@ -24,22 +24,17 @@ use crate::values::Value;
 use crate::values::ValueOf;
 use crate::values::type_expr::StarlarkTypeExpr;
 use crate::values::type_expr::StarlarkTypeExprStable;
-use crate::values::type_repr::StarlarkTypeRepr;
 use crate::values::typing::ty::AbstractType;
 
 /// Represent a type of type. (For example, an expression `int` is valid for this type.)
 pub struct TypeType(());
 
-impl StarlarkTypeRepr for TypeType {
-    type Canonical = AbstractType;
-
-    fn starlark_type_repr() -> Ty {
-        <Self::Canonical as StarlarkTypeRepr>::starlark_type_repr()
-    }
-}
-
 impl<'v> StarlarkTypeExpr<'v> for TypeType {
     type Get = TypeType;
+
+    fn starlark_type_repr() -> Ty {
+        AbstractType::starlark_type_repr()
+    }
 
     fn get(value: Value<'v>) -> Option<Self::Get> {
         TyStarlarkValue::is_type_from_vtable(&value.vtable().starlark_value.ty)

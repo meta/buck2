@@ -96,7 +96,7 @@ impl Field {
             }
         };
         syn::parse_quote_spanned! { self.name.span() =>
-            <#ty as starlark::values::type_repr::StarlarkTypeRepr>::starlark_type_repr()
+            <#ty as starlark::values::StarlarkTypeExpr<'v>>::starlark_type_repr()
         }
     }
 

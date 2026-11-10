@@ -10,10 +10,8 @@
 
 use buck2_artifact::artifact::artifact_type::ArtifactErrors;
 use buck2_build_api::dynamic_value::DynamicValue;
-use buck2_build_api::interpreter::rule_defs::artifact::starlark_artifact::StarlarkArtifact;
 use buck2_build_api::interpreter::rule_defs::artifact::starlark_artifact_like::StarlarkArtifactView;
 use buck2_build_api::interpreter::rule_defs::artifact::starlark_artifact_value::StarlarkArtifactValue;
-use buck2_build_api::interpreter::rule_defs::artifact::starlark_declared_artifact::StarlarkDeclaredArtifact;
 use buck2_build_api::interpreter::rule_defs::artifact::starlark_output_artifact::StarlarkOutputArtifact;
 use buck2_build_api::interpreter::rule_defs::artifact::starlark_output_artifact::StarlarkOutputArtifactView;
 use buck2_build_api::interpreter::rule_defs::context::AnalysisActions;
@@ -117,8 +115,8 @@ pub(crate) fn analysis_actions_methods_dynamic_output(methods: &mut MethodsBuild
             'v,
             (
                 Value<'static>,
-                DictType<StarlarkArtifact, StarlarkArtifactValue>,
-                DictType<StarlarkArtifact, StarlarkDeclaredArtifact>,
+                DictType<StarlarkArtifactView<'static>, StarlarkArtifactValue>,
+                DictType<StarlarkArtifactView<'static>, StarlarkArtifactView<'static>>,
             ),
             NoneType,
         >,

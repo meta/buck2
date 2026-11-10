@@ -37,7 +37,6 @@ use starlark::values::ValueTyped;
 use starlark::values::list::ListType;
 use starlark::values::none::NoneOr;
 use starlark::values::starlark_value;
-use starlark::values::type_repr::StarlarkTypeRepr;
 
 use super::file_set::StarlarkFileSet;
 use super::target_list_expr::TargetListExpr;
@@ -647,7 +646,7 @@ fn uquery_methods(builder: &mut MethodsBuilder) {
     }
 }
 
-#[derive(StarlarkTypeRepr, UnpackValue)]
+#[derive(UnpackValue)]
 pub(crate) enum UnpackUnconfiguredQueryArgs<'v> {
     ListOfStrings(ValueOf<'v, ListType<String>>),
     TargetSet(ValueOf<'v, StarlarkTargetSet<TargetNode>>),

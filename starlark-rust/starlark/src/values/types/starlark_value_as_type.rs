@@ -45,7 +45,7 @@ use crate::values::StarlarkValue;
 use crate::values::StaticValueRegistered;
 use crate::values::Value;
 use crate::values::ValueOf;
-use crate::values::type_repr::StarlarkTypeRepr;
+use crate::values::type_expr::StarlarkTypeExpr;
 use crate::values::typing::TypeType;
 use crate::values::typing::ty::AbstractType;
 
@@ -146,38 +146,37 @@ impl Display for StarlarkValueAsTypeStarlarkValue {
 /// // Or standalone:
 /// // starlark::declare_starlark_value_as_type!(TEMPERATURE, StarlarkTemperature);
 /// ```
-pub struct StarlarkValueAsType<T: StarlarkTypeRepr>(
+pub struct StarlarkValueAsType<T>(
     &'static AllocStaticSimple<StarlarkValueAsTypeStarlarkValue>,
     PhantomData<fn(&T)>,
 );
 
 // Manual Clone/Copy implementations
-impl<T: StarlarkTypeRepr> Clone for StarlarkValueAsType<T> {
+impl<T> Clone for StarlarkValueAsType<T> {
     fn clone(&self) -> Self {
         *self
     }
 }
 
-impl<T: StarlarkTypeRepr> Copy for StarlarkValueAsType<T> {}
+impl<T> Copy for StarlarkValueAsType<T> {}
 
-impl<T: StarlarkTypeRepr> Debug for StarlarkValueAsType<T> {
+impl<T> Debug for StarlarkValueAsType<T> {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         f.debug_tuple("StarlarkValueAsType")
-            .field(&T::starlark_type_repr())
+            .field(&self.ty())
             .finish()
     }
 }
 
-impl<T: StarlarkTypeRepr> Display for StarlarkValueAsType<T> {
+impl<T> Display for StarlarkValueAsType<T> {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        Display::fmt(&T::starlark_type_repr(), f)
+        Display::fmt(&self.ty(), f)
     }
 }
 
-impl<T: StarlarkTypeRepr> StarlarkValueAsType<T> {
-    /// Constructor.
-    ///
-    /// Use [`new_no_docs`](Self::new_no_docs) if `T` is not a `StarlarkValue`.
+impl<T> StarlarkValueAsType<T> {
+    /// The type object of `T`'s type, documented from `T`: a representation of the type, or
+    /// the type itself when it has one representation.
     pub const fn new() -> Self
     where
         T: StarlarkValue<'static> + AsTypeStaticRegistered,
@@ -185,7 +184,7 @@ impl<T: StarlarkTypeRepr> StarlarkValueAsType<T> {
         StarlarkValueAsType(
             &const {
                 AllocStaticSimple::alloc(StarlarkValueAsTypeStarlarkValue(
-                    T::starlark_type_repr,
+                    T::get_type_starlark_repr,
                     || DocItem::Type(DocType::from_starlark_value::<T>()),
                 ))
             },
@@ -194,9 +193,10 @@ impl<T: StarlarkTypeRepr> StarlarkValueAsType<T> {
     }
 
     /// Constructor.
+    /// The type object of the type expression `T`, undocumented.
     pub const fn new_no_docs() -> Self
     where
-        T: AsTypeStaticRegistered,
+        T: StarlarkTypeExpr<'static> + AsTypeStaticRegistered,
     {
         StarlarkValueAsType(
             &const {
@@ -220,17 +220,14 @@ impl<T: StarlarkTypeRepr> StarlarkValueAsType<T> {
     pub fn to_value(&self) -> Value<'static> {
         self.0.unpack().to_value()
     }
-}
 
-impl<T: StarlarkTypeRepr> StarlarkTypeRepr for StarlarkValueAsType<T> {
-    type Canonical = <TypeType as StarlarkTypeRepr>::Canonical;
-
-    fn starlark_type_repr() -> Ty {
-        <Self::Canonical as StarlarkTypeRepr>::starlark_type_repr()
+    /// The type this is the type object of.
+    pub fn ty(&self) -> Ty {
+        (self.0.unpack().as_ref().0)()
     }
 }
 
-impl<'v, T: StarlarkTypeRepr> AllocValue<'v> for StarlarkValueAsType<T> {
+impl<'v, T> AllocValue<'v> for StarlarkValueAsType<T> {
     type Type = TypeType;
 
     fn alloc_value(self, _heap: Heap<'v>) -> ValueOf<'v, Self::Type> {
@@ -239,7 +236,7 @@ impl<'v, T: StarlarkTypeRepr> AllocValue<'v> for StarlarkValueAsType<T> {
     }
 }
 
-impl<'fv, T: StarlarkTypeRepr> AllocFrozenValue<'fv> for StarlarkValueAsType<T> {
+impl<'fv, T> AllocFrozenValue<'fv> for StarlarkValueAsType<T> {
     type Type = TypeType;
 
     fn alloc_frozen_value(self, _heap: FrozenHeap<'fv>) -> ValueOf<'fv, Self::Type> {
@@ -257,7 +254,7 @@ impl<'fv, T: StarlarkTypeRepr> AllocFrozenValue<'fv> for StarlarkValueAsType<T> 
 ///
 /// Standalone (outside `#[starlark_module]`):
 /// ```ignore
-/// declare_starlark_value_as_type!(pub MY_INT, StarlarkInt);
+/// declare_starlark_value_as_type!(pub MY_TEMPERATURE, StarlarkTemperature);
 /// declare_starlark_value_as_type!(pub MY_PROVIDER, AbstractProvider, no_docs);
 /// ```
 ///

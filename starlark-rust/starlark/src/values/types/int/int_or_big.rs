@@ -36,7 +36,6 @@ use num_traits::ToPrimitive;
 use num_traits::Zero;
 use starlark_syntax::lexer::TokenInt;
 
-use crate::typing::Ty;
 use crate::values::AllocFrozenValue;
 use crate::values::AllocValue;
 use crate::values::FrozenHeap;
@@ -44,7 +43,6 @@ use crate::values::Heap;
 use crate::values::UnpackValue;
 use crate::values::Value;
 use crate::values::ValueOf;
-use crate::values::type_repr::StarlarkTypeRepr;
 use crate::values::types::bigint::StarlarkBigInt;
 use crate::values::types::int::inline_int::InlineInt;
 use crate::values::types::int::view::IntView;
@@ -91,14 +89,6 @@ impl<'fv> AllocFrozenValue<'fv> for StarlarkInt {
             StarlarkInt::Small(i) => i.alloc_frozen_value(heap),
             StarlarkInt::Big(b) => ValueOf::alloc_frozen(heap, b),
         }
-    }
-}
-
-impl StarlarkTypeRepr for StarlarkInt {
-    type Canonical = Self;
-
-    fn starlark_type_repr() -> Ty {
-        Ty::int()
     }
 }
 
@@ -419,14 +409,6 @@ impl<'v> StarlarkIntRef<'v> {
             StarlarkIntRef::Small(i) => i.abs(),
             StarlarkIntRef::Big(i) => StarlarkInt::from(i.get().abs()),
         }
-    }
-}
-
-impl<'v> StarlarkTypeRepr for StarlarkIntRef<'v> {
-    type Canonical = <StarlarkInt as StarlarkTypeRepr>::Canonical;
-
-    fn starlark_type_repr() -> Ty {
-        StarlarkInt::starlark_type_repr()
     }
 }
 

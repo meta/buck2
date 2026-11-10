@@ -25,7 +25,6 @@ use dice::DiceComputations;
 use dupe::Dupe;
 use starlark::values::UnpackValue;
 use starlark::values::ValueOf;
-use starlark::values::type_repr::StarlarkTypeRepr;
 
 use crate::bxl::starlark_defs::file_set::StarlarkFileNode;
 
@@ -40,7 +39,7 @@ enum FileExprError {
 /// functions for arguments that should be files. It will accept either a
 /// literal (like `//path/to/some/file.txt`) or a `SourceArtifact` via `StarlarkArtifact`
 /// or a `StarlarkFileNode`
-#[derive(Debug, Display, Clone, StarlarkTypeRepr, UnpackValue)]
+#[derive(Debug, Display, Clone, UnpackValue)]
 pub(crate) enum FileExpr<'v> {
     Literal(&'v str),
     SourceArtifact(StarlarkArtifactView<'v>),

@@ -28,28 +28,23 @@ use crate::values::ValueOf;
 use crate::values::tuple::TupleRef;
 use crate::values::type_expr::StarlarkTypeExpr;
 use crate::values::type_expr::StarlarkTypeExprStable;
-use crate::values::type_repr::StarlarkTypeRepr;
 
 /// A tuple type marker: a tuple of any length whose items are all `T`.
 ///
-/// [`StarlarkTypeRepr`] provides `tuple[T, ...]`.
+/// [`StarlarkTypeExpr`] provides `tuple[T, ...]`.
 /// [`UnpackValue`] implementation verifies the types of items.
 #[derive(ProvidesStaticType)]
 pub struct TupleType<T> {
     _item: PhantomData<T>,
 }
 
-impl<T: StarlarkTypeRepr> StarlarkTypeRepr for TupleType<T> {
-    type Canonical = TupleType<T::Canonical>;
+impl<'v, T: StarlarkTypeExpr<'v>> StarlarkTypeExpr<'v> for TupleType<T> {
+    /// The handle: a typed tuple has no cheaper form that keeps `T`.
+    type Get = ValueOf<'v, TupleType<T>>;
 
     fn starlark_type_repr() -> Ty {
         Ty::tuple_of(T::starlark_type_repr())
     }
-}
-
-impl<'v, T: StarlarkTypeExpr<'v>> StarlarkTypeExpr<'v> for TupleType<T> {
-    /// The handle: a typed tuple has no cheaper form that keeps `T`.
-    type Get = ValueOf<'v, TupleType<T>>;
 
     fn get(value: Value<'v>) -> Option<Self::Get> {
         let tuple = TupleRef::from_value(value)?;

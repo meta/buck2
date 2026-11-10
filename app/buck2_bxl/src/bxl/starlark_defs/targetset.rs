@@ -454,7 +454,7 @@ starlark::__starlark_pagable_only! {
         use pagable::PagableSerialize;
         use starlark::values::FrozenHeapName;
         use starlark::values::OwnedFrozen;
-        use starlark::values::type_repr::StarlarkTypeRepr;
+        use starlark::values::StarlarkTypeExpr;
 
         use super::*;
 

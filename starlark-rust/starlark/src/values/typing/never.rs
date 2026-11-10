@@ -49,7 +49,6 @@ use crate::values::FrozenHeap;
 use crate::values::StarlarkValue;
 use crate::values::ValueOf;
 use crate::values::starlark_value;
-use crate::values::type_repr::StarlarkTypeRepr;
 
 #[derive(
     Debug,
@@ -101,14 +100,6 @@ impl<'fv> AllocFrozenValue<'fv> for TypingNever {
 
 /// Never type, can be used as native function return type.
 pub enum StarlarkNever {}
-
-impl StarlarkTypeRepr for StarlarkNever {
-    type Canonical = Self;
-
-    fn starlark_type_repr() -> Ty {
-        Ty::never()
-    }
-}
 
 impl<'v> AllocValue<'v> for StarlarkNever {
     type Type = Self;

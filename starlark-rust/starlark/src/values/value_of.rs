@@ -34,7 +34,6 @@ use starlark_derive::StarlarkPagable;
 use crate as starlark;
 use crate::any::IsStaticType;
 use crate::any::ProvidesStaticType;
-use crate::typing::Ty;
 use crate::values::AllocFrozenRepresentation;
 use crate::values::AllocFrozenValue;
 use crate::values::AllocRepresentation;
@@ -54,7 +53,6 @@ use crate::values::Value;
 use crate::values::ValueTyped;
 use crate::values::type_expr::StarlarkTypeExpr;
 use crate::values::type_expr::StarlarkTypeExprStable;
-use crate::values::type_repr::StarlarkTypeRepr;
 
 /// A [`Value`] known to be of the type `T`: it was checked when it was constructed.
 ///
@@ -261,14 +259,6 @@ impl<'v, T: StarlarkTypeExpr<'v>> Debug for ValueOf<'v, T> {
 impl<'v, T: StarlarkTypeExpr<'v>> Display for ValueOf<'v, T> {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         Display::fmt(&self.0, f)
-    }
-}
-
-impl<'v, T: StarlarkTypeExpr<'v>> StarlarkTypeRepr for ValueOf<'v, T> {
-    type Canonical = T::Canonical;
-
-    fn starlark_type_repr() -> Ty {
-        T::starlark_type_repr()
     }
 }
 

@@ -40,7 +40,6 @@ use starlark::values::Trace;
 use starlark::values::Value;
 use starlark::values::ValueTyped;
 use starlark::values::starlark_value;
-use starlark::values::type_repr::StarlarkTypeRepr;
 use starlark_map::StarlarkHasher;
 
 use crate::interpreter::rule_defs::artifact::methods::any_artifact_methods;
@@ -315,7 +314,7 @@ fn output_artifact_methods(builder: &mut MethodsBuilder) {
 
 impl<'v> CommandLineArgLike<'v> for StarlarkOutputArtifact<'v> {
     fn register_me(&self) {
-        command_line_arg_like_impl!(StarlarkOutputArtifact::starlark_type_repr());
+        command_line_arg_like_impl!(StarlarkOutputArtifact::get_type_starlark_repr());
     }
 
     fn add_to_command_line(
@@ -352,7 +351,7 @@ impl<'v> CommandLineArgLike<'v> for StarlarkOutputArtifact<'v> {
 
 impl<'v> CommandLineArgLike<'v> for FrozenStarlarkOutputArtifact<'v> {
     fn register_me(&self) {
-        command_line_arg_like_impl!(FrozenStarlarkOutputArtifact::starlark_type_repr());
+        command_line_arg_like_impl!(FrozenStarlarkOutputArtifact::get_type_starlark_repr());
     }
 
     fn add_to_command_line(&self, fmt: &mut CommandLineBuilder<'v, '_>) -> buck2_error::Result<()> {

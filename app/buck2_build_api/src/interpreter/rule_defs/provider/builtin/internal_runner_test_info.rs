@@ -37,6 +37,7 @@ use starlark::values::ValueTyped;
 use starlark::values::dict::DictRef;
 use starlark::values::dict::DictType;
 use starlark::values::float::StarlarkFloat;
+use starlark::values::int::IntView;
 use starlark::values::list::ListRef;
 use starlark::values::list::ListType;
 use starlark::values::list_or_tuple::ListOrTupleType;
@@ -178,7 +179,11 @@ pub struct InternalRunnerTestInfo<'v> {
     /// ```
     parse_test_result: ValueOf<
         'v,
-        StarlarkCallable<'v, (String, String, i32), ListType<DictType<String, Value<'static>>>>,
+        StarlarkCallable<
+            'v,
+            (String, String, IntView<'static>),
+            ListType<DictType<String, Value<'static>>>,
+        >,
     >,
 }
 
@@ -503,7 +508,11 @@ fn internal_runner_test_info_creator(globals: &mut GlobalsBuilder) {
         >,
         parse_test_result: ValueOf<
             'v,
-            StarlarkCallable<'v, (String, String, i32), ListType<DictType<String, Value<'static>>>>,
+            StarlarkCallable<
+                'v,
+                (String, String, IntView<'static>),
+                ListType<DictType<String, Value<'static>>>,
+            >,
         >,
         listing_command: TestCommand<'v>,
         #[starlark(default = NoneOr::None)] command: NoneOr<TestCommand<'v>>,

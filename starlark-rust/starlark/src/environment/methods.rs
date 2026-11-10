@@ -36,13 +36,14 @@ use crate::values::Heap;
 use crate::values::OwnedFrozen;
 use crate::values::OwnedFrozenHeap;
 use crate::values::OwnedFrozenRef;
+use crate::values::StarlarkValue;
 use crate::values::Value;
 use crate::values::function::NativeAttribute;
 use crate::values::function::NativeMeth;
 use crate::values::function::NativeMethFn;
 use crate::values::function::NativeMethod;
 use crate::values::layout::heap::name::FrozenHeapName;
-use crate::values::type_repr::StarlarkTypeRepr;
+use crate::values::type_expr::StarlarkTypeExpr;
 use crate::values::types::unbound::UnboundValue;
 
 /// Methods of an object.
@@ -213,7 +214,7 @@ impl MethodsBuilder {
         docstring: Option<String>,
     ) {
         let typ =
-            <<V as AllocFrozenValue<'static>>::Type as StarlarkTypeRepr>::starlark_type_repr();
+            <<V as AllocFrozenValue<'static>>::Type as StarlarkTypeExpr<'static>>::starlark_type_repr();
         self.set_attribute_with(name, typ, docstring, |heap| heap.alloc(value))
     }
 
@@ -227,7 +228,7 @@ impl MethodsBuilder {
         B: for<'fv> AllocFrozenRepresentation<'fv>,
     {
         let typ =
-            <<B as AllocFrozenRepresentation<'static>>::Repr as StarlarkTypeRepr>::starlark_type_repr();
+            <<B as AllocFrozenRepresentation<'static>>::Repr as StarlarkValue<'static>>::get_type_starlark_repr();
         self.set_attribute_with(name, typ, docstring, |heap| {
             heap.alloc_representation(builder).to_value()
         })

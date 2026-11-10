@@ -30,7 +30,6 @@ use itertools::Either;
 use starlark::values::UnpackValue;
 use starlark::values::ValueOf;
 use starlark::values::list::ListType;
-use starlark::values::type_repr::StarlarkTypeRepr;
 
 use crate::bxl::starlark_defs::context::BxlContext;
 use crate::bxl::starlark_defs::nodes::configured::StarlarkConfiguredTargetNode;
@@ -47,7 +46,7 @@ pub(crate) enum ProvidersExpr<P: ProvidersLabelMaybeConfigured> {
 
 /// ProvidersLabelArg is a type that can be used as an argument in starlark api for
 /// an unconfigured provider label
-#[derive(StarlarkTypeRepr, UnpackValue)]
+#[derive(UnpackValue)]
 pub(crate) enum ProvidersLabelArg<'v> {
     Str(&'v str),
     StarlarkTargetLabel(ValueOf<'v, StarlarkTargetLabel>),
@@ -55,13 +54,13 @@ pub(crate) enum ProvidersLabelArg<'v> {
     StarlarkTargetNode(ValueOf<'v, StarlarkTargetNode>),
 }
 
-#[derive(StarlarkTypeRepr, UnpackValue)]
+#[derive(UnpackValue)]
 pub(crate) enum ProvidersLabelListArg<'v> {
     List(ValueOf<'v, ListType<ProvidersLabelArg<'v>>>),
     TargetSet(ValueOf<'v, StarlarkTargetSet<TargetNode>>),
 }
 
-#[derive(StarlarkTypeRepr, UnpackValue)]
+#[derive(UnpackValue)]
 pub(crate) enum ProvidersExprArg<'v> {
     One(ProvidersLabelArg<'v>),
     List(ProvidersLabelListArg<'v>),
@@ -69,7 +68,7 @@ pub(crate) enum ProvidersExprArg<'v> {
 
 /// ConfiguredProvidersLabelArg is a type that can be used as an argument in starlark api for
 /// a configured provider label
-#[derive(StarlarkTypeRepr, UnpackValue)]
+#[derive(UnpackValue)]
 pub(crate) enum ConfiguredProvidersLabelArg<'v> {
     Node(ValueOf<'v, StarlarkConfiguredTargetNode>),
     Label(ValueOf<'v, StarlarkConfiguredTargetLabel>),
@@ -78,7 +77,7 @@ pub(crate) enum ConfiguredProvidersLabelArg<'v> {
 
 /// ConfiguredProvidersLabelListArg is a type that can be used as an argument in starlark api for
 /// a list of configured provider labels
-#[derive(StarlarkTypeRepr, UnpackValue)]
+#[derive(UnpackValue)]
 pub(crate) enum ConfiguredProvidersLabelListArg<'v> {
     List(ValueOf<'v, ListType<ConfiguredProvidersLabelArg<'v>>>),
     TargetSet(ValueOf<'v, StarlarkTargetSet<ConfiguredTargetNode>>),
@@ -86,7 +85,7 @@ pub(crate) enum ConfiguredProvidersLabelListArg<'v> {
 
 /// ConfiguredProvidersExprArg is a type that can be used as an argument in starlark api for
 /// a configured provider label expression (single or list)
-#[derive(StarlarkTypeRepr, UnpackValue)]
+#[derive(UnpackValue)]
 pub(crate) enum ConfiguredProvidersExprArg<'v> {
     One(ConfiguredProvidersLabelArg<'v>),
     List(ConfiguredProvidersLabelListArg<'v>),
@@ -94,20 +93,20 @@ pub(crate) enum ConfiguredProvidersExprArg<'v> {
 
 /// AnyProvidersLabelArg is a type that can be used as an argument in stalark api for
 /// a configured provider label or an unconfigured provider label
-#[derive(StarlarkTypeRepr, UnpackValue)]
+#[derive(UnpackValue)]
 pub(crate) enum AnyProvidersLabelArg<'v> {
     Configured(ConfiguredProvidersLabelArg<'v>),
     Unconfigured(ProvidersLabelArg<'v>),
 }
 
-#[derive(StarlarkTypeRepr, UnpackValue)]
+#[derive(UnpackValue)]
 pub(crate) enum AnyProvidersLabelListArg<'v> {
     StarlarkTargetSet(ValueOf<'v, StarlarkTargetSet<TargetNode>>),
     StarlarkConfiguredTargetSet(ValueOf<'v, StarlarkTargetSet<ConfiguredTargetNode>>),
     List(ValueOf<'v, ListType<AnyProvidersLabelArg<'v>>>),
 }
 
-#[derive(StarlarkTypeRepr, UnpackValue)]
+#[derive(UnpackValue)]
 pub(crate) enum AnyProvidersExprArg<'v> {
     One(AnyProvidersLabelArg<'v>),
     List(AnyProvidersLabelListArg<'v>),

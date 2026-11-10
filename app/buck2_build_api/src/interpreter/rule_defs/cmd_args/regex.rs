@@ -21,11 +21,9 @@ use starlark::values::Trace;
 use starlark::values::UnpackValue;
 use starlark::values::ValueOf;
 use starlark::values::string::StarlarkStr;
-use starlark::values::type_repr::StarlarkTypeRepr;
 
 /// Regex argument for `cmd_args.replace_regex`.
 #[derive(
-    StarlarkTypeRepr,
     UnpackValue,
     Debug,
     Clone,

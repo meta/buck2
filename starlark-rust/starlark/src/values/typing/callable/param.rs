@@ -16,7 +16,7 @@
  */
 
 use crate::typing::ParamSpec;
-use crate::values::type_repr::StarlarkTypeRepr;
+use crate::values::type_expr::StarlarkTypeExpr;
 
 /// Type parameter for [`StarlarkCallable`](crate::values::typing::callable::StarlarkCallable)
 /// describing the expected parameters of the callable.
@@ -43,22 +43,24 @@ impl StarlarkCallableParamSpec for () {
 }
 
 /// Single positional-only parameter.
-impl<A: StarlarkTypeRepr> StarlarkCallableParamSpec for (A,) {
+impl<A: StarlarkTypeExpr<'static>> StarlarkCallableParamSpec for (A,) {
     fn params() -> ParamSpec {
         ParamSpec::pos_only([A::starlark_type_repr()], [])
     }
 }
 
 /// Two positional-only parameters.
-impl<A: StarlarkTypeRepr, B: StarlarkTypeRepr> StarlarkCallableParamSpec for (A, B) {
+impl<A: StarlarkTypeExpr<'static>, B: StarlarkTypeExpr<'static>> StarlarkCallableParamSpec
+    for (A, B)
+{
     fn params() -> ParamSpec {
         ParamSpec::pos_only([A::starlark_type_repr(), B::starlark_type_repr()], [])
     }
 }
 
 /// Three positional-only parameters.
-impl<A: StarlarkTypeRepr, B: StarlarkTypeRepr, C: StarlarkTypeRepr> StarlarkCallableParamSpec
-    for (A, B, C)
+impl<A: StarlarkTypeExpr<'static>, B: StarlarkTypeExpr<'static>, C: StarlarkTypeExpr<'static>>
+    StarlarkCallableParamSpec for (A, B, C)
 {
     fn params() -> ParamSpec {
         ParamSpec::pos_only(
@@ -73,8 +75,12 @@ impl<A: StarlarkTypeRepr, B: StarlarkTypeRepr, C: StarlarkTypeRepr> StarlarkCall
 }
 
 /// Four positional-only parameters.
-impl<A: StarlarkTypeRepr, B: StarlarkTypeRepr, C: StarlarkTypeRepr, D: StarlarkTypeRepr>
-    StarlarkCallableParamSpec for (A, B, C, D)
+impl<
+    A: StarlarkTypeExpr<'static>,
+    B: StarlarkTypeExpr<'static>,
+    C: StarlarkTypeExpr<'static>,
+    D: StarlarkTypeExpr<'static>,
+> StarlarkCallableParamSpec for (A, B, C, D)
 {
     fn params() -> ParamSpec {
         ParamSpec::pos_only(

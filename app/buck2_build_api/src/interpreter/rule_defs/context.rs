@@ -39,6 +39,7 @@ use starlark::environment::Methods;
 use starlark::environment::MethodsBuilder;
 use starlark::values::Heap;
 use starlark::values::NoSerialize;
+use starlark::values::StarlarkTypeExpr;
 use starlark::values::StarlarkValue;
 use starlark::values::Trace;
 use starlark::values::ValueOf;
@@ -46,7 +47,6 @@ use starlark::values::ValueTyped;
 use starlark::values::none::NoneOr;
 use starlark::values::starlark_value;
 use starlark::values::structs::StructRef;
-use starlark::values::type_repr::StarlarkTypeRepr;
 
 use crate::analysis::AnalysisSplitInstants;
 use crate::analysis::anon_promises_dyn::RunAnonPromisesAccessor;
@@ -343,5 +343,7 @@ pub static ANALYSIS_ACTIONS_METHODS_ANON_TARGET: LateBinding<fn(&mut MethodsBuil
     LateBinding::new("ANALYSIS_ACTIONS_METHODS_ANON_TARGET");
 
 pub(crate) fn init_analysis_context_ty() {
-    AnalysisContextReprLate::init(AnalysisContext::starlark_type_repr());
+    AnalysisContextReprLate::init(AnalysisContext::starlark_type_repr(), |value| {
+        AnalysisContext::matches(value)
+    });
 }

@@ -36,7 +36,6 @@ use starlark::values::UnpackValue;
 use starlark::values::Value;
 use starlark::values::ValueOf;
 use starlark::values::string::StarlarkStr;
-use starlark::values::type_repr::StarlarkTypeRepr;
 use strong_hash::StrongHash;
 
 use crate::interpreter::rule_defs::artifact::starlark_artifact_like::StarlarkArtifactView;
@@ -429,7 +428,7 @@ where
 
 // NOTE: This is an enum as opposed to a trait because of the `C` parameter on (which is required
 // because upcasting is not stable).
-#[derive(Display, StarlarkTypeRepr, UnpackValue, ProvidesStaticType)]
+#[derive(Display, UnpackValue, ProvidesStaticType)]
 pub(crate) enum RelativeOrigin<'v> {
     OutputArtifact(StarlarkOutputArtifactView<'v>),
     Artifact(StarlarkArtifactView<'v>),

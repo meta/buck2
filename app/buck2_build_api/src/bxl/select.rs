@@ -47,7 +47,6 @@ use starlark::values::Value;
 use starlark::values::ValueOf;
 use starlark::values::none::NoneOr;
 use starlark::values::starlark_value;
-use starlark::values::type_repr::StarlarkTypeRepr;
 
 use crate::bxl::unconfigured_attribute::ref_to_value;
 
@@ -93,7 +92,7 @@ impl Serialize for StarlarkSelectDict {
     }
 }
 
-#[derive(StarlarkTypeRepr, UnpackValue, derive_more::Display, Clone, Dupe)]
+#[derive(UnpackValue, derive_more::Display, Clone, Dupe)]
 enum SelectDictKeyArg<'v> {
     #[display("{}", _0)]
     Label(ValueOf<'v, StarlarkProvidersLabel>),

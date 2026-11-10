@@ -39,13 +39,13 @@ use starlark::values::NoSerialize;
 use starlark::values::StarlarkPagable;
 use starlark::values::StarlarkRepresentations;
 use starlark::values::StarlarkType;
+use starlark::values::StarlarkTypeExpr;
 use starlark::values::StarlarkValue;
 use starlark::values::Trace;
 use starlark::values::Value;
 use starlark::values::ValueTyped;
 use starlark::values::list::ListType;
 use starlark::values::starlark_value;
-use starlark::values::type_repr::StarlarkTypeRepr;
 use starlark::values::typing::StarlarkCallable;
 use starlark::values::typing::StarlarkCallableParamSpec;
 

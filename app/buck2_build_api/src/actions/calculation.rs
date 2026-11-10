@@ -83,8 +83,8 @@ use crate::deferred::calculation::ActionLookup;
 use crate::deferred::calculation::lookup_deferred_holder;
 use crate::keep_going::KeepGoing;
 use crate::materialize::invocation_re_use_case;
+use crate::starlark::values::StarlarkTypeExpr;
 use crate::starlark::values::UnpackValue;
-use crate::starlark::values::type_repr::StarlarkTypeRepr;
 
 pub struct ActionCalculation;
 
@@ -630,7 +630,7 @@ fn try_run_error_handler(
                                 Err(_) => Data::HandlerInvocationError(format!(
                                     "{}",
                                     ActionErrorHandlerError::TypeError(
-                                        ActionSubErrorResult::starlark_type_repr(),
+                                        <ActionSubErrorResult as UnpackValue>::Type::starlark_type_repr(),
                                         result.get_type().to_owned()
                                     )
                                 )),

@@ -28,7 +28,6 @@ use crate::values::AllocValue;
 use crate::values::Heap;
 use crate::values::Value;
 use crate::values::none::NoneType;
-use crate::values::type_repr::StarlarkTypeRepr;
 
 #[starlark_module]
 fn global_builder<T: Default, U>(globals: &mut GlobalsBuilder)
@@ -40,15 +39,6 @@ where
 
 #[allow(dead_code)]
 struct CustomNone<T>(PhantomData<T>);
-
-impl<T> StarlarkTypeRepr for CustomNone<T> {
-    type Canonical = NoneType;
-
-    /// The representation of a type that a user would use verbatim in starlark type annotations
-    fn starlark_type_repr() -> Ty {
-        NoneType::starlark_type_repr()
-    }
-}
 
 impl<'v, T> AllocValue<'v> for CustomNone<T> {
     fn alloc_value(self, _heap: Heap<'v>) -> ValueOf<'v, Self::Type> {

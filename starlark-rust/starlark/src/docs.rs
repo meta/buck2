@@ -40,7 +40,6 @@ use crate::eval::runtime::params::display::iter_fmt_param_spec;
 use crate::typing::Ty;
 use crate::values::StarlarkValue;
 use crate::values::Trace;
-use crate::values::type_repr::StarlarkTypeRepr;
 
 /// The documentation provided by a user for a specific module, object, function, etc.
 #[derive(Debug, Clone, PartialEq, Trace, Default, Allocative, Pagable)]
@@ -229,7 +228,7 @@ pub struct DocType {
 
 impl DocType {
     pub fn from_starlark_value<T: StarlarkValue<'static>>() -> DocType {
-        let ty = T::starlark_type_repr();
+        let ty = T::get_type_starlark_repr();
         match T::get_methods() {
             Some(methods) => methods.documentation(ty),
             None => DocType {

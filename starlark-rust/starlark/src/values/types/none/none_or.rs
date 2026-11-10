@@ -32,7 +32,6 @@ use crate::values::ValueOf;
 use crate::values::none::NoneType;
 use crate::values::type_expr::StarlarkTypeExpr;
 use crate::values::type_expr::StarlarkTypeExprStable;
-use crate::values::type_repr::StarlarkTypeRepr;
 
 /// Equivalent of a Rust [`Option`], where `None`
 /// is encoded as [`NoneType`](crate::values::none::NoneType).
@@ -79,16 +78,12 @@ impl<T> NoneOr<T> {
     }
 }
 
-impl<T: StarlarkTypeRepr> StarlarkTypeRepr for NoneOr<T> {
-    type Canonical = <Either<NoneType, T> as StarlarkTypeRepr>::Canonical;
+impl<'v, T: StarlarkTypeExpr<'v>> StarlarkTypeExpr<'v> for NoneOr<T> {
+    type Get = Option<T::Get>;
 
     fn starlark_type_repr() -> Ty {
         Either::<NoneType, T>::starlark_type_repr()
     }
-}
-
-impl<'v, T: StarlarkTypeExpr<'v>> StarlarkTypeExpr<'v> for NoneOr<T> {
-    type Get = Option<T::Get>;
 
     fn get(value: Value<'v>) -> Option<Self::Get> {
         if value.is_none() {

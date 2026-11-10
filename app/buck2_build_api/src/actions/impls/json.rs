@@ -34,7 +34,6 @@ use starlark::values::none::NoneType;
 use starlark::values::record::Record;
 use starlark::values::structs::StructRef;
 use starlark::values::tuple::TupleType;
-use starlark::values::type_repr::StarlarkTypeRepr;
 
 use crate::artifact_groups::ArtifactGroup;
 use crate::bxl::select::StarlarkSelectConcat;
@@ -118,7 +117,7 @@ fn err<R, E: serde::ser::Error>(res: buck2_error::Result<R>) -> Result<R, E> {
 /// We want to deal with both normal artifacts, and .as_output() artifacts,
 /// since otherwise the .as_output ones will fall through as a cmd_args
 /// and end up getting wrapped in a list below.
-#[derive(UnpackValue, StarlarkTypeRepr)]
+#[derive(UnpackValue)]
 pub enum JsonArtifact<'v> {
     Artifact(StarlarkArtifactView<'v>),
     StarlarkOutputArtifact(StarlarkOutputArtifactView<'v>),
@@ -127,7 +126,7 @@ pub enum JsonArtifact<'v> {
 /// Partially unpack the value into JSON writable with `ctx.actions.write_json`.
 /// This does not help typechecker much (because it only validates top-level types),
 /// but it provides better documentation.
-#[derive(UnpackValue, StarlarkTypeRepr)]
+#[derive(UnpackValue)]
 pub enum JsonUnpack<'v> {
     None(NoneType),
     String(&'v str),

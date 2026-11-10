@@ -29,7 +29,6 @@ use starlark::values::ValueOf;
 use starlark::values::ValueTyped;
 use starlark::values::list::ListType;
 use starlark::values::starlark_value;
-use starlark::values::type_repr::StarlarkTypeRepr;
 
 use crate::artifact_groups::ArtifactGroup;
 use crate::artifact_groups::promise::PromiseArtifactId;
@@ -181,7 +180,7 @@ impl<'v> StarlarkType<'v> for StarlarkArtifactView<'v> {
 }
 
 /// An `OutputArtifact` or an `Artifact`: the receiver of the methods the two types share.
-#[derive(StarlarkTypeRepr, UnpackValue)]
+#[derive(UnpackValue)]
 pub enum ArtifactOrOutputArtifact<'v> {
     OutputArtifact(StarlarkOutputArtifactView<'v>),
     Artifact(StarlarkArtifactView<'v>),

@@ -16,8 +16,8 @@ use buck2_node::attrs::arena::AttrToken;
 use buck2_node::attrs::attr_type::target_modifiers::TargetModifiersAttrType;
 use buck2_node::attrs::coercion_context::AttrCoercionContext;
 use buck2_node::attrs::configurable::AttrIsConfigurable;
+use starlark::values::StarlarkTypeExpr;
 use starlark::values::Value;
-use starlark::values::type_repr::StarlarkTypeRepr;
 
 use crate::attrs::coerce::AttrTypeCoerce;
 use crate::attrs::coerce::attr_type::ty_maybe_select::TyMaybeSelect;

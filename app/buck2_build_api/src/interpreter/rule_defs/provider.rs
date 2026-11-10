@@ -73,7 +73,6 @@ use starlark::values::UnpackValue;
 use starlark::values::Value;
 use starlark::values::ValueOf;
 use starlark::values::type_expr::UnionPayload;
-use starlark::values::type_repr::StarlarkTypeRepr;
 
 use crate::interpreter::rule_defs::provider::builtin::default_info::DefaultInfo;
 use crate::interpreter::rule_defs::provider::builtin::default_info::DefaultInfoCallable;
@@ -115,16 +114,12 @@ unsafe impl<'v> ProvidesStaticType<'v> for &'v dyn ProviderLike<'v> {
 
 pub struct ValueAsProviderLike<'v>(pub(crate) &'v dyn ProviderLike<'v>);
 
-impl<'v> StarlarkTypeRepr for ValueAsProviderLike<'v> {
-    type Canonical = <AbstractProvider as StarlarkTypeRepr>::Canonical;
+impl<'v> StarlarkTypeExpr<'v> for ValueAsProviderLike<'v> {
+    type Get = Self;
 
     fn starlark_type_repr() -> Ty {
         AbstractProvider::starlark_type_repr()
     }
-}
-
-impl<'v> StarlarkTypeExpr<'v> for ValueAsProviderLike<'v> {
-    type Get = Self;
 
     fn get(value: Value<'v>) -> Option<Self> {
         ValueAsProviderLike::unpack(value)

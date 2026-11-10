@@ -54,10 +54,10 @@ use starlark::environment::GlobalsBuilder;
 use starlark::starlark_module;
 use starlark::values::Heap;
 use starlark::values::OwnedFrozenRef;
+use starlark::values::StarlarkTypeExpr;
 use starlark::values::ValueOf;
 use starlark::values::ValueTyped;
 use starlark::values::dict::DictType;
-use starlark::values::type_repr::StarlarkTypeRepr;
 use starlark::values::typing::StarlarkCallableChecked;
 
 use crate::bxl::eval::LIMITED_EXECUTOR;

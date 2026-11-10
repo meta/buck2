@@ -1036,7 +1036,7 @@ pub fn register_rule_function(builder: &mut GlobalsBuilder) {
         #[starlark(require = named)] r#impl: StarlarkCallableChecked<
             'v,
             (AnalysisContextReprLate,),
-            Either<ListType<ProviderReprLate>, StarlarkPromise>,
+            Either<ListType<ProviderReprLate>, StarlarkPromise<'static>>,
         >,
         #[starlark(require = named)] attrs: ValueOf<'v, DictType<&'v str, StarlarkAttribute>>,
         #[starlark(require = named)] cfg: Option<ValueAsTransition<'v>>,

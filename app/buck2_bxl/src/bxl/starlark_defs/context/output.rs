@@ -69,7 +69,6 @@ use starlark::values::starlark_value;
 use starlark::values::structs::StructRef;
 use starlark::values::tuple::TupleRef;
 use starlark::values::tuple::TupleType;
-use starlark::values::type_repr::StarlarkTypeRepr;
 
 use crate::bxl::starlark_defs::artifacts::EnsuredArtifact;
 use crate::bxl::starlark_defs::artifacts::EnsuredArtifactGroup;
@@ -567,7 +566,7 @@ impl<'v> StarlarkValue<'v> for StarlarkOutputStream {
     }
 }
 
-#[derive(StarlarkTypeRepr, UnpackValue)]
+#[derive(UnpackValue)]
 enum EnsureMultipleArtifactsArg<'v> {
     None(NoneType),
     EnsuredArtifactArgs(ValueOf<'v, ListType<StarlarkArtifactView<'v>>>),

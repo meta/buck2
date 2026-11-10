@@ -24,7 +24,6 @@ use starlark::values::StarlarkValue;
 use starlark::values::Trace;
 use starlark::values::UnpackValue;
 use starlark::values::starlark_value;
-use starlark::values::type_repr::StarlarkTypeRepr;
 
 use super::StarlarkTaggedValue;
 use crate::interpreter::rule_defs::cmd_args::ArtifactPathMapper;
@@ -81,7 +80,7 @@ fn tagged_command_line_methods(_: &mut MethodsBuilder) {}
 
 impl<'v> CommandLineArgLike<'v> for StarlarkTaggedCommandLine<'v> {
     fn register_me(&self) {
-        command_line_arg_like_impl!(StarlarkTaggedCommandLine::starlark_type_repr());
+        command_line_arg_like_impl!(StarlarkTaggedCommandLine::get_type_starlark_repr());
     }
 
     fn add_to_command_line(&self, fmt: &mut CommandLineBuilder<'v, '_>) -> buck2_error::Result<()> {

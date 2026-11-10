@@ -31,8 +31,8 @@ mod provider;
 /// # Field Types
 ///
 /// Return types can be specified directly by adding `#[provider(field_type=SomeIdentifier)]`
-/// to a field. The type `SomeIdentifier` must be one that implements
-/// `starlark::values::type_repr::StarlarkTypeRepr`
+/// to a field. The type `SomeIdentifier` must be a parameter binding (`UnpackValue`), whose
+/// `Type` is documented.
 ///
 /// # Behavior
 ///

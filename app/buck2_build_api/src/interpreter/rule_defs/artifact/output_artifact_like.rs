@@ -9,7 +9,6 @@
  */
 
 use starlark::values::UnpackValue;
-use starlark::values::type_repr::StarlarkTypeRepr;
 
 use crate::interpreter::rule_defs::artifact::starlark_artifact_like::StarlarkArtifactView;
 use crate::interpreter::rule_defs::artifact::starlark_output_artifact::StarlarkOutputArtifactView;
@@ -17,7 +16,7 @@ use crate::interpreter::rule_defs::artifact::starlark_output_artifact::StarlarkO
 /// The output of a new action: a path to declare, or an artifact that is not bound yet. The
 /// bound representations of either type are accepted by the type and rejected where it is used,
 /// so that the error can say that the artifact is bound rather than that it has the wrong type.
-#[derive(StarlarkTypeRepr, UnpackValue)]
+#[derive(UnpackValue)]
 pub enum OutputArtifactArg<'v> {
     Str(&'v str),
     OutputArtifact(StarlarkOutputArtifactView<'v>),

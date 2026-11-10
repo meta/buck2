@@ -27,7 +27,6 @@ use buck2_util::strong_hasher::Blake3StrongHasher;
 use buck2_util::strong_hasher::StrongHash128;
 use dupe::Dupe;
 use pagable::Pagable;
-use starlark::typing::Ty;
 use starlark::values::AllocValue;
 use starlark::values::Heap;
 use starlark::values::Value;
@@ -35,7 +34,6 @@ use starlark::values::ValueOf;
 use starlark::values::dict::DictRef;
 use starlark::values::list::ListRef;
 use starlark::values::tuple::TupleRef;
-use starlark::values::type_repr::StarlarkTypeRepr;
 use static_interner::Intern;
 use static_interner::interner;
 use strong_hash::StrongHash;
@@ -340,14 +338,6 @@ impl CfgModifiers {
                 buck2_error!(buck2_error::ErrorTag::Input, "{what}: `{text}`")
             );
         }
-    }
-}
-
-impl StarlarkTypeRepr for CfgModifiers {
-    type Canonical = <Value<'static> as StarlarkTypeRepr>::Canonical;
-
-    fn starlark_type_repr() -> Ty {
-        Value::starlark_type_repr()
     }
 }
 

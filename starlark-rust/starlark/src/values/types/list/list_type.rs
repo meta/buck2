@@ -30,28 +30,23 @@ use crate::values::list::ListRef;
 use crate::values::tuple::TupleType;
 use crate::values::type_expr::StarlarkTypeExpr;
 use crate::values::type_expr::StarlarkTypeExprStable;
-use crate::values::type_repr::StarlarkTypeRepr;
 
 /// A list type marker.
 ///
-/// [`StarlarkTypeRepr`] provides `list[T]`.
+/// [`StarlarkTypeExpr`] provides `list[T]`.
 /// [`UnpackValue`] implementation verifies the types of items.
 #[derive(ProvidesStaticType)]
 pub struct ListType<T> {
     _item: std::marker::PhantomData<T>,
 }
 
-impl<T: StarlarkTypeRepr> StarlarkTypeRepr for ListType<T> {
-    type Canonical = ListType<T::Canonical>;
+impl<'v, T: StarlarkTypeExpr<'v>> StarlarkTypeExpr<'v> for ListType<T> {
+    /// The handle: a typed list has no cheaper form that keeps `T`.
+    type Get = ValueOf<'v, ListType<T>>;
 
     fn starlark_type_repr() -> Ty {
         Ty::list(T::starlark_type_repr())
     }
-}
-
-impl<'v, T: StarlarkTypeExpr<'v>> StarlarkTypeExpr<'v> for ListType<T> {
-    /// The handle: a typed list has no cheaper form that keeps `T`.
-    type Get = ValueOf<'v, ListType<T>>;
 
     fn get(value: Value<'v>) -> Option<Self::Get> {
         let list = ListRef::from_value(value)?;

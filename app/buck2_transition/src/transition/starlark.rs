@@ -52,6 +52,7 @@ use starlark::values::OwnedFrozen;
 use starlark::values::StarlarkPagable;
 use starlark::values::StarlarkRepresentations;
 use starlark::values::StarlarkType;
+use starlark::values::StarlarkTypeExpr;
 use starlark::values::StarlarkValue;
 use starlark::values::StringValue;
 use starlark::values::Trace;
@@ -63,7 +64,6 @@ use starlark::values::list_or_tuple::ListOrTupleType;
 use starlark::values::starlark_value;
 use starlark::values::string::StarlarkStr;
 use starlark::values::structs::StructRef;
-use starlark::values::type_repr::StarlarkTypeRepr;
 use starlark::values::typing::StarlarkCallableChecked;
 use starlark::values::typing::StarlarkCallableParamSpec;
 
@@ -335,7 +335,7 @@ fn register_transition_function(builder: &mut GlobalsBuilder) {
         #[starlark(require = named)] r#impl: StarlarkCallableChecked<
             'v,
             TransitionImplParams,
-            Either<ImplSingleReturnTy, ImplSplitReturnTy>,
+            Either<ImplSingleReturnTy<'static>, ImplSplitReturnTy<'static>>,
         >,
         #[starlark(require = named)] refs: ValueOf<'v, DictType<StarlarkStr, StarlarkStr>>,
         #[starlark(require = named)] attrs: Option<ValueOf<'v, ListOrTupleType<StarlarkStr>>>,
@@ -389,5 +389,7 @@ fn register_transition_function(builder: &mut GlobalsBuilder) {
 
 pub(crate) fn init_register_transition() {
     REGISTER_BUCK2_TRANSITION_GLOBALS.init(register_transition_function);
-    TransitionReprLate::init(TransitionView::starlark_type_repr());
+    TransitionReprLate::init(TransitionView::starlark_type_repr(), |value| {
+        TransitionView::matches(value)
+    });
 }

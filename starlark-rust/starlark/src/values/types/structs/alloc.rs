@@ -19,7 +19,6 @@ use std::iter;
 
 use starlark_map::small_map::SmallMap;
 
-use crate::typing::Ty;
 use crate::values::AllocFrozenValue;
 use crate::values::AllocValue;
 use crate::values::FrozenHeap;
@@ -29,7 +28,6 @@ use crate::values::alloc_value::AllocFrozenStringValue;
 use crate::values::alloc_value::AllocStringValue;
 use crate::values::structs::StructRef;
 use crate::values::structs::value::Struct;
-use crate::values::type_repr::StarlarkTypeRepr;
 
 /// Utility to allocate a struct on a heap.
 ///
@@ -54,18 +52,6 @@ pub struct AllocStruct<S>(pub S);
 impl AllocStruct<iter::Empty<(String, String)>> {
     /// Allocate an empty struct.
     pub const EMPTY: AllocStruct<iter::Empty<(String, String)>> = AllocStruct(iter::empty());
-}
-
-impl<K, V, S> StarlarkTypeRepr for AllocStruct<S>
-where
-    S: IntoIterator<Item = (K, V)>,
-    V: StarlarkTypeRepr,
-{
-    type Canonical = <StructRef<'static> as StarlarkTypeRepr>::Canonical;
-
-    fn starlark_type_repr() -> Ty {
-        Struct::starlark_type_repr()
-    }
 }
 
 impl<'v, K, V, S> AllocValue<'v> for AllocStruct<S>

@@ -29,7 +29,6 @@ use crate::values::Value;
 use crate::values::ValueOf;
 use crate::values::type_expr::StarlarkTypeExpr;
 use crate::values::type_expr::StarlarkTypeExprStable;
-use crate::values::type_repr::StarlarkTypeRepr;
 use crate::values::types::tuple::value::Tuple;
 
 impl<'v, T1: AllocValue<'v>> AllocValue<'v> for (T1,) {
@@ -104,16 +103,12 @@ impl<'fv, T1: AllocFrozenValue<'fv>, T2: AllocFrozenValue<'fv>, T3: AllocFrozenV
     }
 }
 
-impl<T1: StarlarkTypeRepr, T2: StarlarkTypeRepr> StarlarkTypeRepr for (T1, T2) {
-    type Canonical = (T1::Canonical, T2::Canonical);
+impl<'v, T1: StarlarkTypeExpr<'v>, T2: StarlarkTypeExpr<'v>> StarlarkTypeExpr<'v> for (T1, T2) {
+    type Get = (T1::Get, T2::Get);
 
     fn starlark_type_repr() -> Ty {
         Ty::tuple2(T1::starlark_type_repr(), T2::starlark_type_repr())
     }
-}
-
-impl<'v, T1: StarlarkTypeExpr<'v>, T2: StarlarkTypeExpr<'v>> StarlarkTypeExpr<'v> for (T1, T2) {
-    type Get = (T1::Get, T2::Get);
 
     fn get(value: Value<'v>) -> Option<Self::Get> {
         match Tuple::from_value(value)?.content() {
@@ -128,16 +123,12 @@ impl<'v, T1: StarlarkTypeExprStable<'v>, T2: StarlarkTypeExprStable<'v>> Starlar
 {
 }
 
-impl<T1: StarlarkTypeRepr> StarlarkTypeRepr for (T1,) {
-    type Canonical = (T1::Canonical,);
+impl<'v, T1: StarlarkTypeExpr<'v>> StarlarkTypeExpr<'v> for (T1,) {
+    type Get = (T1::Get,);
 
     fn starlark_type_repr() -> Ty {
         Ty::tuple(vec![T1::starlark_type_repr()])
     }
-}
-
-impl<'v, T1: StarlarkTypeExpr<'v>> StarlarkTypeExpr<'v> for (T1,) {
-    type Get = (T1::Get,);
 
     fn get(value: Value<'v>) -> Option<Self::Get> {
         match Tuple::from_value(value)?.content() {
@@ -149,10 +140,10 @@ impl<'v, T1: StarlarkTypeExpr<'v>> StarlarkTypeExpr<'v> for (T1,) {
 
 impl<'v, T1: StarlarkTypeExprStable<'v>> StarlarkTypeExprStable<'v> for (T1,) {}
 
-impl<T1: StarlarkTypeRepr, T2: StarlarkTypeRepr, T3: StarlarkTypeRepr> StarlarkTypeRepr
-    for (T1, T2, T3)
+impl<'v, T1: StarlarkTypeExpr<'v>, T2: StarlarkTypeExpr<'v>, T3: StarlarkTypeExpr<'v>>
+    StarlarkTypeExpr<'v> for (T1, T2, T3)
 {
-    type Canonical = (T1::Canonical, T2::Canonical, T3::Canonical);
+    type Get = (T1::Get, T2::Get, T3::Get);
 
     fn starlark_type_repr() -> Ty {
         Ty::tuple(vec![
@@ -161,12 +152,6 @@ impl<T1: StarlarkTypeRepr, T2: StarlarkTypeRepr, T3: StarlarkTypeRepr> StarlarkT
             T3::starlark_type_repr(),
         ])
     }
-}
-
-impl<'v, T1: StarlarkTypeExpr<'v>, T2: StarlarkTypeExpr<'v>, T3: StarlarkTypeExpr<'v>>
-    StarlarkTypeExpr<'v> for (T1, T2, T3)
-{
-    type Get = (T1::Get, T2::Get, T3::Get);
 
     fn get(value: Value<'v>) -> Option<Self::Get> {
         match Tuple::from_value(value)?.content() {

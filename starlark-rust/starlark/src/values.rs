@@ -168,7 +168,6 @@ pub(crate) mod thin_box_slice_value;
 mod trace;
 pub(crate) mod traits;
 pub mod type_expr;
-pub mod type_repr;
 pub(crate) mod types;
 pub mod typing;
 mod unpack;

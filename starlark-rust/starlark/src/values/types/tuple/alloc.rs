@@ -17,7 +17,6 @@
 
 use std::iter;
 
-use crate::typing::Ty;
 use crate::values::AllocFrozenValue;
 use crate::values::AllocValue;
 use crate::values::FrozenHeap;
@@ -25,7 +24,6 @@ use crate::values::Heap;
 use crate::values::Value;
 use crate::values::ValueOf;
 use crate::values::tuple::TupleType;
-use crate::values::type_repr::StarlarkTypeRepr;
 
 /// Utility to allocate a tuple.
 ///
@@ -46,18 +44,6 @@ pub struct AllocTuple<T>(pub T);
 impl<'v> AllocTuple<iter::Empty<Value<'v>>> {
     /// Allocate an empty tuple.
     pub const EMPTY: AllocTuple<iter::Empty<Value<'v>>> = AllocTuple(iter::empty());
-}
-
-impl<T> StarlarkTypeRepr for AllocTuple<T>
-where
-    T: IntoIterator,
-    T::Item: StarlarkTypeRepr,
-{
-    type Canonical = <TupleType<T::Item> as StarlarkTypeRepr>::Canonical;
-
-    fn starlark_type_repr() -> Ty {
-        Ty::tuple_of(T::Item::starlark_type_repr())
-    }
 }
 
 impl<'v, T> AllocValue<'v> for AllocTuple<T>

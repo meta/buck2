@@ -24,24 +24,24 @@ use crate::values::Value;
 use crate::values::ValueOf;
 use crate::values::int::IntView;
 use crate::values::string::StarlarkStr;
-use crate::values::type_repr::StarlarkTypeRepr;
+use crate::values::type_expr::StarlarkTypeExpr;
 use crate::values::typing::StarlarkNever;
 
-#[derive(StarlarkTypeRepr, UnpackValue, Eq, PartialEq, Debug)]
+#[derive(UnpackValue, Eq, PartialEq, Debug)]
 enum EmptyEnum {}
 
-#[derive(StarlarkTypeRepr, UnpackValue, Debug)]
+#[derive(UnpackValue, Debug)]
 enum JustInt<'v> {
     Int(IntView<'v>),
 }
 
-#[derive(StarlarkTypeRepr, UnpackValue, Debug)]
+#[derive(UnpackValue, Debug)]
 enum IntOrStr<'v> {
     Int(IntView<'v>),
     Str(ValueOf<'v, StarlarkStr>),
 }
 
-#[derive(StarlarkTypeRepr, UnpackValue, Debug)]
+#[derive(UnpackValue, Debug)]
 struct TransparentIntOrStr<'v>(IntOrStr<'v>);
 
 #[test]
@@ -51,10 +51,10 @@ fn test_starlark_type_repr() {
         EmptyEnum::starlark_type_repr()
     );
 
-    assert_eq!(i32::starlark_type_repr(), JustInt::starlark_type_repr());
+    assert_eq!(IntView::starlark_type_repr(), JustInt::starlark_type_repr());
 
     assert_eq!(
-        Either::<i32, String>::starlark_type_repr(),
+        Either::<IntView, String>::starlark_type_repr(),
         IntOrStr::starlark_type_repr()
     );
 

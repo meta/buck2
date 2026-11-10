@@ -61,7 +61,6 @@ use crate::values::ValueTyped;
 use crate::values::dict::DictRef;
 use crate::values::list::ListRef;
 use crate::values::none::NoneType;
-use crate::values::type_repr::StarlarkTypeRepr;
 use crate::values::types::tuple::value::Tuple;
 use crate::values::typing::type_compiled::factory::TYPE_COMPILED_BOOL;
 use crate::values::typing::type_compiled::factory::TYPE_COMPILED_INT;
@@ -218,6 +217,10 @@ starlark::methods_static!(TYPE_COMPILED_METHODS = type_compiled_methods);
 impl<'v> StarlarkType<'v> for TypeCompiled<'v> {
     type Get = Self;
 
+    fn get_type_starlark_repr() -> Ty {
+        Ty::starlark_value::<TypeCompiledImplAsStarlarkValue<DummyTypeMatcher>>()
+    }
+
     fn get(value: Value<'v>) -> Option<Self> {
         value
             .request_value::<&dyn TypeCompiledDyn>()
@@ -325,14 +328,6 @@ impl<'v> Display for TypeCompiled<'v> {
                 Display::fmt(&self.0, f)
             }
         }
-    }
-}
-
-impl<'v> StarlarkTypeRepr for TypeCompiled<'v> {
-    type Canonical = TypeCompiledImplAsStarlarkValue<DummyTypeMatcher>;
-
-    fn starlark_type_repr() -> Ty {
-        TypeCompiledImplAsStarlarkValue::<DummyTypeMatcher>::starlark_type_repr()
     }
 }
 

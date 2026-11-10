@@ -35,7 +35,6 @@ use starlark::values::StarlarkValue;
 use starlark::values::Trace;
 use starlark::values::Value;
 use starlark::values::starlark_value;
-use starlark::values::type_repr::StarlarkTypeRepr;
 
 use crate::artifact_groups::ArtifactGroup;
 use crate::interpreter::rule_defs::artifact::starlark_artifact::StarlarkArtifact;
@@ -255,7 +254,7 @@ impl<'v> ResolvedStringWithMacros<'v> {
 
 impl<'v> CommandLineArgLike<'v> for ResolvedStringWithMacros<'v> {
     fn register_me(&self) {
-        command_line_arg_like_impl!(ResolvedStringWithMacros::starlark_type_repr());
+        command_line_arg_like_impl!(ResolvedStringWithMacros::get_type_starlark_repr());
     }
 
     fn add_to_command_line(&self, fmt: &mut CommandLineBuilder<'v, '_>) -> buck2_error::Result<()> {

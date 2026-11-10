@@ -33,10 +33,10 @@ mod starlark_pagable;
 mod starlark_pagable_panic;
 mod starlark_pagable_unsupported;
 mod starlark_pagable_via_pagable;
-mod starlark_type_repr;
 mod starlark_value;
 mod trace;
 mod type_matcher;
+mod union_input;
 mod unpack_value;
 mod util;
 mod v_lifetime;
@@ -182,12 +182,6 @@ pub fn derive_no_serialize(input: proc_macro::TokenStream) -> proc_macro::TokenS
     serde::derive_no_serialize(input)
 }
 
-/// Derive the `StarlarkTypeRepr` trait.
-#[proc_macro_derive(StarlarkTypeRepr)]
-pub fn derive_starlark_type_repr(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
-    starlark_type_repr::derive_starlark_type_repr(input)
-}
-
 /// Derive the `UnpackValue` trait.
 #[proc_macro_derive(UnpackValue)]
 pub fn derive_unpack_value(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
@@ -197,9 +191,9 @@ pub fn derive_unpack_value(input: proc_macro::TokenStream) -> proc_macro::TokenS
 /// Derive the glue of a Starlark type's view over its representations: an enum with one
 /// `ValueTyped<'v, Rep>` variant per representation. Generates `ProvidesStaticType`, `Display`,
 /// `From` of each variant's `ValueTyped` (which `#[starlark_value]` builds a representation's
-/// `with_type` on), `StarlarkTypeRepr` forwarding to the view's `StarlarkType`, the view's
-/// `get` (the representations tried in order), and `UnpackValue` of the view as itself. The
-/// first variant's representation is the canonical one, whose type id is the type's.
+/// `with_type` on), the view's `get` (the representations tried in order), and `UnpackValue`
+/// of the view as itself. The first variant's representation is the canonical one, whose type
+/// id is the type's.
 #[proc_macro_derive(StarlarkRepresentations)]
 pub fn derive_starlark_representations(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
     representations::derive_starlark_representations(input)

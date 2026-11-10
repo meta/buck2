@@ -119,19 +119,12 @@ fn derive_starlark_representations_impl(
             }
         )*
 
-        impl #impl_generics starlark::values::type_repr::StarlarkTypeRepr
+        impl #impl_generics starlark::__derive_refs::ViewOfRepresentations<#lt>
             for #ident #type_generics #where_clause
         {
             type Canonical = #canonical;
 
-            fn starlark_type_repr() -> starlark::typing::Ty {
-                <Self as starlark::values::StarlarkType<#lt>>::get_type_starlark_repr()
-            }
-        }
-
-        impl #impl_generics starlark::__derive_refs::ViewOfRepresentations<#lt>
-            for #ident #type_generics #where_clause
-        {
+            #[inline]
             fn from_value(value: starlark::values::Value<#lt>) -> std::option::Option<Self> {
                 #(
                     if let Some(x) = starlark::values::ValueTyped::<#reps>::new(value) {

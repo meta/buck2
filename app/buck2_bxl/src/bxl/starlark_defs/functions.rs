@@ -37,7 +37,6 @@ use starlark::values::ValueTyped;
 use starlark::values::list::ListType;
 use starlark::values::none::NoneType;
 use starlark::values::tuple::TupleType;
-use starlark::values::type_repr::StarlarkTypeRepr;
 
 use super::artifacts::visit_artifact_path_without_associated_deduped;
 use super::context::output::get_artifact_path_display;
@@ -296,7 +295,7 @@ pub(crate) fn register_error_handling_function(builder: &mut GlobalsBuilder) {
     }
 }
 
-#[derive(StarlarkTypeRepr, UnpackValue)]
+#[derive(UnpackValue)]
 pub(crate) enum PackagePathArg<'v> {
     PackagePath(ValueOf<'v, StarlarkPackagePath>),
     Str(&'v str),

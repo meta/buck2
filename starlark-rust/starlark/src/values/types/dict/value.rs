@@ -67,7 +67,6 @@ use crate::values::comparison::equals_small_map;
 use crate::values::dict::DictRef;
 use crate::values::error::ValueError;
 use crate::values::string::str_type::hash_string_value;
-use crate::values::type_repr::StarlarkTypeRepr;
 use crate::values::types::dict::dict_type::DictType;
 
 #[derive(
@@ -107,14 +106,6 @@ impl<'v> Display for Dict<'v> {
 pub struct Dict<'v> {
     /// The data stored by the dictionary. The keys must all be hashable values.
     pub(crate) content: SmallMap<Value<'v>, Value<'v>>,
-}
-
-impl<'v> StarlarkTypeRepr for Dict<'v> {
-    type Canonical = <DictType<Value<'static>, Value<'static>> as StarlarkTypeRepr>::Canonical;
-
-    fn starlark_type_repr() -> Ty {
-        Self::Canonical::starlark_type_repr()
-    }
 }
 
 /// A frozen dict is a `Dict` without the `RefCell`: the two variants differ only in whether

@@ -28,6 +28,7 @@ use starlark::typing::Ty;
 use starlark::values::Freeze;
 use starlark::values::FreezeResult;
 use starlark::values::Freezer;
+use starlark::values::StarlarkTypeExpr;
 use starlark::values::Trace;
 use starlark::values::UnpackValue;
 use starlark::values::Value;
@@ -36,7 +37,6 @@ use starlark::values::ValueTyped;
 use starlark::values::dict::DictRef;
 use starlark::values::list::ListRef;
 use starlark::values::tuple::TupleRef;
-use starlark::values::type_repr::StarlarkTypeRepr;
 use starlark::values::typing::TypeCompiled;
 
 use crate::dynamic_value::StarlarkDynamicValue;
@@ -266,7 +266,7 @@ impl<'v> DynamicAttrType<'v> {
     /// Parameter type of `impl` function.
     pub fn impl_param_ty(&self) -> Ty {
         match self {
-            DynamicAttrType::Output => StarlarkOutputArtifact::starlark_type_repr(),
+            DynamicAttrType::Output => StarlarkOutputArtifactView::starlark_type_repr(),
             DynamicAttrType::ArtifactValue => StarlarkArtifactValue::starlark_type_repr(),
             DynamicAttrType::DynamicValue => StarlarkResolvedDynamicValue::starlark_type_repr(),
             DynamicAttrType::Value(ty) => ty.as_ty().dupe(),
@@ -285,7 +285,7 @@ impl<'v> DynamicAttrType<'v> {
     /// Parameter type of callable created by `dynamic_actions`.
     pub fn callable_param_ty(&self) -> Ty {
         match self {
-            DynamicAttrType::Output => StarlarkOutputArtifact::starlark_type_repr(),
+            DynamicAttrType::Output => StarlarkOutputArtifactView::starlark_type_repr(),
             DynamicAttrType::ArtifactValue => StarlarkArtifactView::starlark_type_repr(),
             DynamicAttrType::DynamicValue => StarlarkDynamicValue::starlark_type_repr(),
             DynamicAttrType::Value(ty) => ty.as_ty().dupe(),

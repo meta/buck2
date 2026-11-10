@@ -39,13 +39,12 @@ use crate::values::Value;
 use crate::values::ValueOf;
 use crate::values::type_expr::StarlarkTypeExpr;
 use crate::values::type_expr::StarlarkTypeExprStable;
-use crate::values::type_repr::StarlarkTypeRepr;
 
 /// `typing.Iterable[T]`: a type marker, and the check that a value is iterable.
 ///
 /// The check is the one the type's matcher does: that the value iterates. What it yields is
 /// not looked at, so `T` is what the caller asserts of the items, not something verified.
-pub struct StarlarkIter<T: StarlarkTypeRepr>(PhantomData<T>);
+pub struct StarlarkIter<T>(PhantomData<T>);
 
 impl<'v, T: StarlarkTypeExpr<'v>> UnpackValue<'v> for StarlarkIter<T> {
     type Type = Self;
@@ -56,17 +55,13 @@ impl<'v, T: StarlarkTypeExpr<'v>> UnpackValue<'v> for StarlarkIter<T> {
     }
 }
 
-impl<T: StarlarkTypeRepr> StarlarkTypeRepr for StarlarkIter<T> {
-    type Canonical = StarlarkIter<T::Canonical>;
+impl<'v, T: StarlarkTypeExpr<'v>> StarlarkTypeExpr<'v> for StarlarkIter<T> {
+    /// The handle, which is what iterates.
+    type Get = ValueOf<'v, StarlarkIter<T>>;
 
     fn starlark_type_repr() -> Ty {
         Ty::iter(T::starlark_type_repr())
     }
-}
-
-impl<'v, T: StarlarkTypeExpr<'v>> StarlarkTypeExpr<'v> for StarlarkIter<T> {
-    /// The handle, which is what iterates.
-    type Get = ValueOf<'v, StarlarkIter<T>>;
 
     fn get(value: Value<'v>) -> Option<Self::Get> {
         TyStarlarkValue::is_iterable(&value.vtable().starlark_value.ty)

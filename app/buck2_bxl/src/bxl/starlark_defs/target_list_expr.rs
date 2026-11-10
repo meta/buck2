@@ -46,7 +46,6 @@ use starlark::values::UnpackValue;
 use starlark::values::Value;
 use starlark::values::ValueOf;
 use starlark::values::list::ListType;
-use starlark::values::type_repr::StarlarkTypeRepr;
 
 use crate::bxl::starlark_defs::context::BxlContext;
 use crate::bxl::starlark_defs::context::BxlContextCoreData;
@@ -111,7 +110,7 @@ fn collect_and_filter_targets<T: ErrorPrinter>(
     filter_incompatible(maybe_compatible, error_printer)
 }
 
-#[derive(StarlarkTypeRepr, UnpackValue)]
+#[derive(UnpackValue)]
 pub(crate) enum TargetNodeOrTargetLabel<'v> {
     TargetNode(ValueOf<'v, StarlarkTargetNode>),
     TargetLabel(ValueOf<'v, StarlarkTargetLabel>),
@@ -126,14 +125,14 @@ impl<'v> TargetNodeOrTargetLabel<'v> {
     }
 }
 
-#[derive(StarlarkTypeRepr, UnpackValue)]
+#[derive(UnpackValue)]
 pub(crate) enum TargetNodeOrTargetLabelOrStr<'v> {
     TargetNode(ValueOf<'v, StarlarkTargetNode>),
     TargetLabel(ValueOf<'v, StarlarkTargetLabel>),
     Str(&'v str),
 }
 
-#[derive(StarlarkTypeRepr, UnpackValue)]
+#[derive(UnpackValue)]
 pub(crate) enum ConfiguredTargetNodeArg<'v> {
     ConfiguredTargetNode(ValueOf<'v, StarlarkConfiguredTargetNode>),
     ConfiguredTargetLabel(ValueOf<'v, StarlarkConfiguredTargetLabel>),
@@ -141,26 +140,26 @@ pub(crate) enum ConfiguredTargetNodeArg<'v> {
     Unconfigured(TargetNodeOrTargetLabel<'v>),
 }
 
-#[derive(StarlarkTypeRepr, UnpackValue)]
+#[derive(UnpackValue)]
 pub(crate) enum TargetSetOrTargetList<'v> {
     TargetSet(ValueOf<'v, StarlarkTargetSet<TargetNode>>),
     TargetList(ValueOf<'v, ListType<TargetNodeOrTargetLabelOrStr<'v>>>),
 }
 
-#[derive(StarlarkTypeRepr, UnpackValue)]
+#[derive(UnpackValue)]
 pub(crate) enum ConfiguredTargetListArg<'v> {
     ConfiguredTargetSet(ValueOf<'v, StarlarkTargetSet<ConfiguredTargetNode>>),
     TargetSet(ValueOf<'v, StarlarkTargetSet<TargetNode>>),
     TargetList(ValueOf<'v, ListType<ConfiguredTargetNodeArg<'v>>>),
 }
 
-#[derive(StarlarkTypeRepr, UnpackValue)]
+#[derive(UnpackValue)]
 pub(crate) enum TargetListExprArg<'v> {
     Target(TargetNodeOrTargetLabelOrStr<'v>),
     List(TargetSetOrTargetList<'v>),
 }
 
-#[derive(StarlarkTypeRepr, UnpackValue)]
+#[derive(UnpackValue)]
 pub(crate) enum ConfiguredTargetListExprArg<'v> {
     Target(ConfiguredTargetNodeArg<'v>),
     List(ValueOf<'v, ConfiguredTargetListArg<'v>>),

@@ -64,7 +64,6 @@ use crate::values::layout::avalue::AValue;
 use crate::values::layout::avalue::AValueImpl;
 use crate::values::layout::heap::repr::AValueRepr;
 use crate::values::string::str_type::StarlarkStr;
-use crate::values::type_repr::StarlarkTypeRepr;
 
 /// [`Value`] wrapper which asserts contained value is of type `<T>`.
 #[derive(Copy_, Clone_, Dupe_, ProvidesStaticType, Allocative)]
@@ -312,7 +311,7 @@ impl<'v, T: StarlarkValue<'v>> FrozenValueTyped<'v, T> {
         value.downcast_ref_err::<T>()?;
         if !value.is_frozen() {
             return Err(crate::Error::new_value(NotFrozenError {
-                expected: T::starlark_type_repr(),
+                expected: T::get_type_starlark_repr(),
                 value: value.to_string_for_type_error(),
             }));
         }
@@ -383,14 +382,6 @@ impl<'v, T: StarlarkValue<'v>> Deref for ValueTyped<'v, T> {
     }
 }
 
-impl<'v, T: StarlarkValue<'v>> StarlarkTypeRepr for ValueTyped<'v, T> {
-    type Canonical = <T as StarlarkTypeRepr>::Canonical;
-
-    fn starlark_type_repr() -> Ty {
-        T::starlark_type_repr()
-    }
-}
-
 /// A parameter of a type with one representation, bound to that representation. A type with
 /// several representations is bound as its view or as a [`ValueOf`]; a specific representation
 /// of it is not a parameter binding.
@@ -420,7 +411,7 @@ struct NotRepresentationError {
 #[cold]
 fn not_representation_error<'v, T: StarlarkValue<'v>>(value: Value<'v>) -> crate::Error {
     crate::Error::new_value(NotRepresentationError {
-        ty: T::starlark_type_repr(),
+        ty: T::get_type_starlark_repr(),
         representation: std::any::type_name::<T>(),
         value: value.to_string_for_type_error(),
     })
@@ -474,14 +465,6 @@ impl<'v> AllocStringValue<'v> for StringValue<'v> {
     }
 }
 
-impl<'v, T: StarlarkValue<'v>> StarlarkTypeRepr for FrozenValueTyped<'v, T> {
-    type Canonical = <T as StarlarkTypeRepr>::Canonical;
-
-    fn starlark_type_repr() -> Ty {
-        T::starlark_type_repr()
-    }
-}
-
 /// A parameter bound to this representation of the type, frozen: an unfrozen value of the type
 /// is of the declared type and fails as a conversion.
 impl<'v, T: StarlarkValue<'v>> UnpackValue<'v> for FrozenValueTyped<'v, T>
@@ -498,7 +481,7 @@ where
         let value = value.to_value();
         if !value.is_frozen() {
             return Err(crate::Error::new_value(NotFrozenError {
-                expected: T::starlark_type_repr(),
+                expected: T::get_type_starlark_repr(),
                 value: value.to_string_for_type_error(),
             }));
         }

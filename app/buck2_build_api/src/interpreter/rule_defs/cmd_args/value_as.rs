@@ -25,7 +25,6 @@ use starlark::values::UnpackValue;
 use starlark::values::Value;
 use starlark::values::ValueOf;
 use starlark::values::type_expr::UnionPayload;
-use starlark::values::type_repr::StarlarkTypeRepr;
 
 use crate::interpreter::rule_defs::cmd_args::CommandLineArgLike;
 use crate::interpreter::rule_defs::cmd_args::command_line_arg_like_type::command_line_arg_like_ty;
@@ -42,16 +41,12 @@ impl IsStaticType for ValueAsCommandLineLike<'static> {
     type Reinfect<'lt> = ValueAsCommandLineLike<'lt>;
 }
 
-impl<'v> StarlarkTypeRepr for ValueAsCommandLineLike<'v> {
-    type Canonical = ValueAsCommandLineLike<'static>;
+impl<'v> StarlarkTypeExpr<'v> for ValueAsCommandLineLike<'v> {
+    type Get = Self;
 
     fn starlark_type_repr() -> Ty {
         command_line_arg_like_ty().dupe()
     }
-}
-
-impl<'v> StarlarkTypeExpr<'v> for ValueAsCommandLineLike<'v> {
-    type Get = Self;
 
     fn get(value: Value<'v>) -> Option<Self> {
         ValueAsCommandLineLike::unpack(value)

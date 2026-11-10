@@ -30,29 +30,24 @@ use crate::values::ValueOf;
 use crate::values::dict::DictRef;
 use crate::values::type_expr::StarlarkTypeExpr;
 use crate::values::type_expr::StarlarkTypeExprStable;
-use crate::values::type_repr::StarlarkTypeRepr;
 
 /// A dict type marker.
 ///
-/// [`StarlarkTypeRepr`] provides `dict[K, V]`.
+/// [`StarlarkTypeExpr`] provides `dict[K, V]`.
 /// [`UnpackValue`] implementation verifies the types of entries and discards them.
 #[derive(ProvidesStaticType)]
-pub struct DictType<K: StarlarkTypeRepr, V: StarlarkTypeRepr> {
+pub struct DictType<K, V> {
     k: PhantomData<K>,
     v: PhantomData<V>,
-}
-
-impl<K: StarlarkTypeRepr, V: StarlarkTypeRepr> StarlarkTypeRepr for DictType<K, V> {
-    type Canonical = DictType<K::Canonical, V::Canonical>;
-
-    fn starlark_type_repr() -> Ty {
-        Ty::dict(K::starlark_type_repr(), V::starlark_type_repr())
-    }
 }
 
 impl<'v, K: StarlarkTypeExpr<'v>, V: StarlarkTypeExpr<'v>> StarlarkTypeExpr<'v> for DictType<K, V> {
     /// The handle: a typed dict has no cheaper form that keeps `K` and `V`.
     type Get = ValueOf<'v, DictType<K, V>>;
+
+    fn starlark_type_repr() -> Ty {
+        Ty::dict(K::starlark_type_repr(), V::starlark_type_repr())
+    }
 
     fn get(value: Value<'v>) -> Option<Self::Get> {
         let dict = DictRef::from_value(value)?;

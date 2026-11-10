@@ -31,7 +31,6 @@ use crate::values::Value;
 use crate::values::ValueOf;
 use crate::values::ValueTyped;
 use crate::values::type_expr::StarlarkTypeExpr;
-use crate::values::type_repr::StarlarkTypeRepr;
 
 /// The error for a value that is not of the type `ty` names.
 #[cold]
@@ -87,7 +86,7 @@ pub(crate) fn changed_since_checked_error<'v, T: StarlarkTypeExpr<'v>>(
 /// The runtime matcher for `T::starlark_type_repr()`, built once per Rust type: what the debug
 /// checks compare an implementation against.
 #[cfg(any(debug_assertions, test))]
-pub(crate) fn type_matcher<T: StarlarkTypeRepr + ?Sized>()
+pub(crate) fn type_matcher<'v, T: StarlarkTypeExpr<'v>>()
 -> std::sync::Arc<crate::values::typing::type_compiled::matcher::TypeMatcherBox> {
     use std::collections::HashMap;
     use std::sync::Arc;
@@ -101,7 +100,7 @@ pub(crate) fn type_matcher<T: StarlarkTypeRepr + ?Sized>()
     use crate::values::typing::type_compiled::matcher::TypeMatcherBoxAlloc;
 
     // Keyed by the type name: `TypeId::of` wants `'static`, the handle types carry `'v`, and
-    // `StarlarkTypeRepr` does not require the `ProvidesStaticType` that would erase it. The name
+    // `StarlarkTypeExpr` does not require the `ProvidesStaticType` that would erase it. The name
     // erases lifetimes too, and they cannot change the `Ty`.
     static MATCHERS: OnceLock<Mutex<HashMap<&'static str, Arc<TypeMatcherBox>>>> = OnceLock::new();
 
@@ -398,7 +397,10 @@ impl<'v, A: StarlarkTypeExpr<'v>, B: StarlarkTypeExpr<'v>> ValueOf<'v, Either<A,
         } else if let Some(b) = ValueOf::<B>::new(value) {
             Ok(Either::Right(b))
         } else {
-            Err(expected_type_error(value, Self::starlark_type_repr))
+            Err(expected_type_error(
+                value,
+                Either::<A, B>::starlark_type_repr,
+            ))
         }
     }
 }

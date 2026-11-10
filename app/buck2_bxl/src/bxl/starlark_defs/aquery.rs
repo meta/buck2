@@ -40,7 +40,6 @@ use starlark::values::ValueTyped;
 use starlark::values::list::ListType;
 use starlark::values::none::NoneOr;
 use starlark::values::starlark_value;
-use starlark::values::type_repr::StarlarkTypeRepr;
 
 use crate::bxl::starlark_defs::context::BxlContext;
 use crate::bxl::starlark_defs::context::ErrorPrinter;
@@ -110,7 +109,7 @@ pub(crate) async fn get_aquery_env(
     .await
 }
 
-#[derive(StarlarkTypeRepr, UnpackValue)]
+#[derive(UnpackValue)]
 enum UnpackActionNodes<'v> {
     ActionQueryNodes(ValueOf<'v, ListType<StarlarkActionQueryNode>>),
     ActionQueryNodesSet(ValueOf<'v, StarlarkTargetSet<ActionQueryNode>>),

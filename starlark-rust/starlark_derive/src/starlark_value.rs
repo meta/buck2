@@ -270,6 +270,7 @@ impl ImplStarlarkValue {
         if self.has_fn("get_type_starlark_repr") {
             return Ok(None);
         }
+        let lt = &self.lifetime_param;
         Ok(Some(match self.impl_of {
             ImplOf::Value => syn::parse_quote! {
                 fn get_type_starlark_repr() -> starlark::typing::Ty {
@@ -279,7 +280,7 @@ impl ImplStarlarkValue {
             ImplOf::Type => syn::parse_quote! {
                 fn get_type_starlark_repr() -> starlark::typing::Ty {
                     starlark::typing::Ty::starlark_value::<
-                        <Self as starlark::values::type_repr::StarlarkTypeRepr>::Canonical,
+                        <Self as starlark::__derive_refs::ViewOfRepresentations<#lt>>::Canonical,
                     >()
                 }
             },
@@ -850,17 +851,6 @@ fn derive_starlark_value_impl(
         .iter()
         .any(|item| matches!(item, syn::ImplItem::Type(t) if t.ident == "Type"));
 
-    if let Some(item) = input
-        .items
-        .iter()
-        .find(|item| matches!(item, syn::ImplItem::Type(t) if t.ident == "Canonical"))
-    {
-        return Err(syn::Error::new_spanned(
-            item,
-            "there is no `Canonical`; a representation of a type with several representations \
-             names the type with `type Type = ...`",
-        ));
-    }
     let please_use_starlark_type_macro = impl_starlark_value.please_use_starlark_type_macro()?;
     let vtable_registration = impl_starlark_value.vtable_registration()?;
     let alloc_impls = impl_starlark_value.alloc_impls();

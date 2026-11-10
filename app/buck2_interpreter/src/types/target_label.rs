@@ -41,7 +41,6 @@ use starlark::values::ValueError;
 use starlark::values::ValueOf;
 use starlark::values::list::ListType;
 use starlark::values::starlark_value;
-use starlark::values::type_repr::StarlarkTypeRepr;
 
 use crate::types::cell_path::StarlarkCellPath;
 use crate::types::configuration::StarlarkConfiguration;
@@ -343,7 +342,7 @@ fn configured_label_methods(builder: &mut MethodsBuilder) {
     }
 }
 
-#[derive(StarlarkTypeRepr, UnpackValue)]
+#[derive(UnpackValue)]
 enum SubtargetNameArg<'v> {
     List(ValueOf<'v, ListType<String>>),
     Str(&'v str),
@@ -374,7 +373,7 @@ fn value_to_providers_name(subtarget_name: SubtargetNameArg) -> buck2_error::Res
     })
 }
 
-#[derive(StarlarkTypeRepr, UnpackValue)]
+#[derive(UnpackValue)]
 pub enum LabelArg<'v> {
     Target(ValueOf<'v, StarlarkTargetLabel>),
     Providers(ValueOf<'v, StarlarkProvidersLabel>),

@@ -24,14 +24,12 @@ use dupe::Dupe;
 use either::Either;
 
 use super::value::SetData;
-use crate::typing::Ty;
 use crate::values::UnpackValue;
 use crate::values::Value;
 use crate::values::ValueError;
 use crate::values::ValueOf;
 use crate::values::set::SetType;
 use crate::values::set::value::SetGen;
-use crate::values::type_repr::StarlarkTypeRepr;
 
 /// Define the set type.
 pub struct SetRef<'v> {
@@ -108,14 +106,6 @@ impl<'v> SetMut<'v> {
                 Err(_) => Err(ValueError::MutationDuringIteration.into()),
             },
         }
-    }
-}
-
-impl<'v> StarlarkTypeRepr for SetRef<'v> {
-    type Canonical = <SetType<Value<'static>> as StarlarkTypeRepr>::Canonical;
-
-    fn starlark_type_repr() -> Ty {
-        <Self::Canonical as StarlarkTypeRepr>::starlark_type_repr()
     }
 }
 

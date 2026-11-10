@@ -20,7 +20,6 @@ use starlark::values::UnpackValue;
 use starlark::values::Value;
 use starlark::values::ValueOf;
 use starlark::values::type_expr::UnionPayload;
-use starlark::values::type_repr::StarlarkTypeRepr;
 
 use crate::late_binding_ty::TransitionReprLate;
 
@@ -36,16 +35,12 @@ unsafe impl<'v> ProvidesStaticType<'v> for &'v dyn TransitionValue {
 /// A value that is a transition, in whichever representation the transition crate gives it.
 pub struct ValueAsTransition<'v>(pub &'v dyn TransitionValue);
 
-impl StarlarkTypeRepr for ValueAsTransition<'_> {
-    type Canonical = TransitionReprLate;
-
-    fn starlark_type_repr() -> Ty {
-        TransitionReprLate::starlark_type_repr()
-    }
-}
-
 impl<'v> StarlarkTypeExpr<'v> for ValueAsTransition<'v> {
     type Get = Self;
+
+    fn starlark_type_repr() -> Ty {
+        TransitionReprLate::ty()
+    }
 
     fn get(value: Value<'v>) -> Option<Self> {
         value

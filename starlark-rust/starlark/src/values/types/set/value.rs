@@ -55,7 +55,6 @@ use crate::values::comparison::equals_small_set;
 use crate::values::set::SetType;
 use crate::values::set::methods;
 use crate::values::starlark_value;
-use crate::values::type_repr::StarlarkTypeRepr;
 
 #[derive(
     Clone,
@@ -140,14 +139,6 @@ impl<'v> AllocValue<'v> for SetData<'v> {
 
     fn alloc_value(self, heap: Heap<'v>) -> ValueOf<'v, Self::Type> {
         ValueOf::alloc(heap, SetGen(RefCell::new(self))).into()
-    }
-}
-
-impl<'v> StarlarkTypeRepr for SetData<'v> {
-    type Canonical = <SetType<Value<'static>> as StarlarkTypeRepr>::Canonical;
-
-    fn starlark_type_repr() -> Ty {
-        SetType::<Value<'v>>::starlark_type_repr()
     }
 }
 

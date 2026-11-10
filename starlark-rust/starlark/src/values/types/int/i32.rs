@@ -15,15 +15,12 @@
  * limitations under the License.
  */
 
-use crate::typing::Ty;
 use crate::values::AllocFrozenValue;
 use crate::values::AllocValue;
 use crate::values::FrozenHeap;
 use crate::values::Heap;
 use crate::values::UnpackValue;
 use crate::values::ValueOf;
-use crate::values::int::pointer_i32::PointerI32;
-use crate::values::type_repr::StarlarkTypeRepr;
 use crate::values::types::int::int_or_big::StarlarkInt;
 use crate::values::types::int::view::IntView;
 
@@ -41,14 +38,6 @@ impl<'fv> AllocFrozenValue<'fv> for i32 {
     #[inline]
     fn alloc_frozen_value(self, heap: FrozenHeap<'fv>) -> ValueOf<'fv, Self::Type> {
         StarlarkInt::from(self).alloc_frozen_value(heap)
-    }
-}
-
-impl StarlarkTypeRepr for i32 {
-    type Canonical = <StarlarkInt as StarlarkTypeRepr>::Canonical;
-
-    fn starlark_type_repr() -> Ty {
-        PointerI32::starlark_type_repr()
     }
 }
 

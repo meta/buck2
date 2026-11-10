@@ -19,7 +19,6 @@
 
 use std::convert::Infallible;
 
-use crate::typing::Ty;
 use crate::values::AllocFrozenValue;
 use crate::values::AllocValue;
 use crate::values::FrozenHeap;
@@ -30,7 +29,6 @@ use crate::values::ValueOf;
 use crate::values::alloc_value::AllocFrozenStringValue;
 use crate::values::alloc_value::AllocStringValue;
 use crate::values::string::str_type::StarlarkStr;
-use crate::values::type_repr::StarlarkTypeRepr;
 
 impl<'fv> AllocFrozenValue<'fv> for String {
     type Type = StarlarkStr;
@@ -74,14 +72,6 @@ impl<'v> AllocStringValue<'v> for String {
     }
 }
 
-impl StarlarkTypeRepr for char {
-    type Canonical = <String as StarlarkTypeRepr>::Canonical;
-
-    fn starlark_type_repr() -> Ty {
-        String::starlark_type_repr()
-    }
-}
-
 impl<'v> AllocValue<'v> for char {
     type Type = StarlarkStr;
 
@@ -93,14 +83,6 @@ impl<'v> AllocValue<'v> for char {
 impl<'v> AllocStringValue<'v> for char {
     fn alloc_string_value(self, heap: Heap<'v>) -> StringValue<'v> {
         heap.alloc_char(self)
-    }
-}
-
-impl StarlarkTypeRepr for &'_ String {
-    type Canonical = <String as StarlarkTypeRepr>::Canonical;
-
-    fn starlark_type_repr() -> Ty {
-        String::starlark_type_repr()
     }
 }
 

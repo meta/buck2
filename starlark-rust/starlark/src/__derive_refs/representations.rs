@@ -17,10 +17,14 @@
 
 //! What `#[derive(StarlarkRepresentations)]` writes for `#[starlark_value]` to read.
 
+use crate::values::StarlarkValue;
 use crate::values::Value;
 
 /// A view over a type's representations, from a value: the representations tried in order.
 /// `#[starlark_value]` on the view's `StarlarkType` impl writes `get` through it.
 pub trait ViewOfRepresentations<'v>: Sized {
+    /// The representation whose type id is the type's: the first variant's.
+    type Canonical: StarlarkValue<'v>;
+
     fn from_value(value: Value<'v>) -> Option<Self>;
 }

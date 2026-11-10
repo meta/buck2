@@ -17,7 +17,6 @@
 
 use std::iter;
 
-use crate::typing::Ty;
 use crate::values::AllocFrozenValue;
 use crate::values::AllocValue;
 use crate::values::FrozenHeap;
@@ -25,7 +24,6 @@ use crate::values::Heap;
 use crate::values::Value;
 use crate::values::ValueOf;
 use crate::values::list::ListType;
-use crate::values::type_repr::StarlarkTypeRepr;
 
 /// Utility to allocate a list from iterator.
 ///
@@ -45,18 +43,6 @@ pub struct AllocList<L>(pub L);
 impl<'v> AllocList<iter::Empty<Value<'v>>> {
     /// Allocate an empty list.
     pub const EMPTY: AllocList<iter::Empty<Value<'v>>> = AllocList(iter::empty());
-}
-
-impl<L> StarlarkTypeRepr for AllocList<L>
-where
-    L: IntoIterator,
-    L::Item: StarlarkTypeRepr,
-{
-    type Canonical = <Vec<L::Item> as StarlarkTypeRepr>::Canonical;
-
-    fn starlark_type_repr() -> Ty {
-        Vec::<L::Item>::starlark_type_repr()
-    }
 }
 
 impl<'v, L> AllocValue<'v> for AllocList<L>

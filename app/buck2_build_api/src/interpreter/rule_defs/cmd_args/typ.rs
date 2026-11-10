@@ -37,7 +37,6 @@ use starlark::environment::Methods;
 use starlark::environment::MethodsBuilder;
 use starlark::eval::Arguments;
 use starlark::static_starlark_value;
-use starlark::typing::Ty;
 use starlark::values::AllocValue;
 use starlark::values::Demand;
 use starlark::values::Freeze;
@@ -62,7 +61,6 @@ use starlark::values::list::ListType;
 use starlark::values::starlark_value;
 use starlark::values::string::StarlarkStr;
 use starlark::values::tuple::TupleType;
-use starlark::values::type_repr::StarlarkTypeRepr;
 
 use crate::artifact_groups::ArtifactGroup;
 use crate::interpreter::rule_defs::artifact::associated::AssociatedArtifacts;
@@ -285,7 +283,7 @@ impl<'v, F: Fields<'v>> FieldsRef<'v, F> {
 
 impl<'v, F: Fields<'v>> CommandLineArgLike<'v> for FieldsRef<'v, F> {
     fn register_me(&self) {
-        command_line_arg_like_impl!(StarlarkCmdArgs::starlark_type_repr());
+        command_line_arg_like_impl!(StarlarkCmdArgs::get_type_starlark_repr());
     }
 
     fn add_to_command_line(&self, fmt: &mut CommandLineBuilder<'v, '_>) -> buck2_error::Result<()> {
@@ -738,7 +736,7 @@ impl<'v> StarlarkValue<'v> for FrozenStarlarkCmdArgs<'v> {
 
 impl<'v> CommandLineArgLike<'v> for StarlarkCmdArgs<'v> {
     fn register_me(&self) {
-        command_line_arg_like_impl!(StarlarkCmdArgs::starlark_type_repr());
+        command_line_arg_like_impl!(StarlarkCmdArgs::get_type_starlark_repr());
     }
 
     fn add_to_command_line(&self, fmt: &mut CommandLineBuilder<'v, '_>) -> buck2_error::Result<()> {
@@ -768,7 +766,7 @@ impl<'v> CommandLineArgLike<'v> for StarlarkCmdArgs<'v> {
 
 impl<'v> CommandLineArgLike<'v> for FrozenStarlarkCmdArgs<'v> {
     fn register_me(&self) {
-        command_line_arg_like_impl!(FrozenStarlarkCmdArgs::starlark_type_repr());
+        command_line_arg_like_impl!(FrozenStarlarkCmdArgs::get_type_starlark_repr());
     }
 
     fn add_to_command_line(&self, fmt: &mut CommandLineBuilder<'v, '_>) -> buck2_error::Result<()> {
@@ -875,7 +873,7 @@ impl<'v> StarlarkCmdArgs<'v> {
     }
 }
 
-#[derive(UnpackValue, StarlarkTypeRepr)]
+#[derive(UnpackValue)]
 pub enum StarlarkCommandLineValueUnpack<'v> {
     // This should be `list[Self]`, but we cannot express it.
     List(ValueOf<'v, ListType<Value<'v>>>),
@@ -942,14 +940,6 @@ impl<'v> StarlarkCommandLineData<'v> {
 struct StarlarkCommandLineMut<'v> {
     value: Value<'v>,
     borrow: RefMut<'v, StarlarkCommandLineData<'v>>,
-}
-
-impl<'v> StarlarkTypeRepr for StarlarkCommandLineMut<'v> {
-    type Canonical = <StarlarkCmdArgs<'v> as StarlarkTypeRepr>::Canonical;
-
-    fn starlark_type_repr() -> Ty {
-        StarlarkCmdArgs::starlark_type_repr()
-    }
 }
 
 impl<'v> UnpackValue<'v> for StarlarkCommandLineMut<'v> {

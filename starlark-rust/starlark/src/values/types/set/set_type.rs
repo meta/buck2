@@ -27,28 +27,23 @@ use crate::values::ValueOf;
 use crate::values::set::SetRef;
 use crate::values::type_expr::StarlarkTypeExpr;
 use crate::values::type_expr::StarlarkTypeExprStable;
-use crate::values::type_repr::StarlarkTypeRepr;
 
 /// A set type marker.
 ///
-/// [`StarlarkTypeRepr`] provides `set[T]`.
+/// [`StarlarkTypeExpr`] provides `set[T]`.
 /// [`UnpackValue`] implementation verifies the types of items.
 #[derive(ProvidesStaticType)]
 pub struct SetType<T> {
     _item: PhantomData<T>,
 }
 
-impl<T: StarlarkTypeRepr> StarlarkTypeRepr for SetType<T> {
-    type Canonical = SetType<T::Canonical>;
+impl<'v, T: StarlarkTypeExpr<'v>> StarlarkTypeExpr<'v> for SetType<T> {
+    /// The handle: a typed set has no cheaper form that keeps `T`.
+    type Get = ValueOf<'v, SetType<T>>;
 
     fn starlark_type_repr() -> Ty {
         Ty::set(T::starlark_type_repr())
     }
-}
-
-impl<'v, T: StarlarkTypeExpr<'v>> StarlarkTypeExpr<'v> for SetType<T> {
-    /// The handle: a typed set has no cheaper form that keeps `T`.
-    type Get = ValueOf<'v, SetType<T>>;
 
     fn get(value: Value<'v>) -> Option<Self::Get> {
         let set = SetRef::from_value(value)?;

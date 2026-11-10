@@ -43,7 +43,6 @@ use crate::values::Value;
 use crate::values::ValueOf;
 use crate::values::index::apply_slice;
 use crate::values::index::convert_index;
-use crate::values::type_repr::StarlarkTypeRepr;
 
 /// The result of calling `type()` on bytes.
 pub const BYTES_TYPE: &str = "bytes";
@@ -65,14 +64,6 @@ pub struct StarlarkBytes {
 
 starlark_simple_value!(StarlarkBytes);
 
-impl StarlarkTypeRepr for &'_ [u8] {
-    type Canonical = StarlarkBytes;
-
-    fn starlark_type_repr() -> Ty {
-        StarlarkBytes::starlark_type_repr()
-    }
-}
-
 impl<'v> AllocValue<'v> for &'_ [u8] {
     type Type = StarlarkBytes;
 
@@ -86,14 +77,6 @@ impl<'fv> AllocFrozenValue<'fv> for &'_ [u8] {
 
     fn alloc_frozen_value(self, heap: FrozenHeap<'fv>) -> ValueOf<'fv, Self::Type> {
         ValueOf::alloc_frozen(heap, StarlarkBytes::new(self))
-    }
-}
-
-impl StarlarkTypeRepr for Vec<u8> {
-    type Canonical = StarlarkBytes;
-
-    fn starlark_type_repr() -> Ty {
-        StarlarkBytes::starlark_type_repr()
     }
 }
 

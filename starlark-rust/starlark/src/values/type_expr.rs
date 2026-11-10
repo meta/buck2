@@ -21,10 +21,13 @@ use std::convert::Infallible;
 
 use either::Either;
 
+use crate::typing::Ty;
+use crate::values::AllocValue;
+use crate::values::Heap;
 use crate::values::StarlarkType;
 use crate::values::Value;
 use crate::values::ValueOf;
-use crate::values::type_repr::StarlarkTypeRepr;
+use crate::values::string::str_type::StarlarkStr;
 
 /// A Rust type that stands for a Starlark type expression.
 ///
@@ -47,9 +50,14 @@ use crate::values::type_repr::StarlarkTypeRepr;
 /// and `bool`, kept because a conversion that cannot fail does not blur the check and their
 /// users are everywhere.
 ///
-/// Not every [`StarlarkTypeRepr`] is one: a return type such as `Vec<T>` has a `Ty` for the
-/// documentation and nothing to test.
-pub trait StarlarkTypeExpr<'v>: StarlarkTypeRepr + Sized {
+/// A Rust type that is only a conversion, such as `i32` or `Vec<T>`, is not one; it names the
+/// type expression it converts from or to as its [`UnpackValue::Type`](crate::values::UnpackValue::Type)
+/// or [`AllocValue::Type`].
+pub trait StarlarkTypeExpr<'v>: Sized {
+    /// The type as a user would write it in a type annotation, which the typechecker and the
+    /// documentation go by, and which [`get`](Self::get) agrees with.
+    fn starlark_type_repr() -> Ty;
+
     /// What a value of this type is read through: `ValueTyped<'v, Foo>` for a nominal type with
     /// one representation, the view for one with several, the untyped collection for a
     /// container (its typed items come from the [`ValueOf`] handle),
@@ -57,8 +65,8 @@ pub trait StarlarkTypeExpr<'v>: StarlarkTypeRepr + Sized {
     type Get;
 
     /// `value` as this type's [`Get`](Self::Get), if it is of this type: exactly what a Starlark
-    /// type annotation of [`starlark_type_repr`](StarlarkTypeRepr::starlark_type_repr) accepts
-    /// at runtime, and nothing stricter.
+    /// type annotation of [`starlark_type_repr`](Self::starlark_type_repr) accepts at runtime,
+    /// and nothing stricter.
     fn get(value: Value<'v>) -> Option<Self::Get>;
 
     /// Whether `value` is of this type.
@@ -77,8 +85,12 @@ pub trait StarlarkTypeExpr<'v>: StarlarkTypeRepr + Sized {
 /// `list` is. A [`ValueOf`] of such a type is read without re-checking.
 pub trait StarlarkTypeExprStable<'v>: StarlarkTypeExpr<'v> {}
 
-impl<'v, T: StarlarkType<'v> + StarlarkTypeRepr> StarlarkTypeExpr<'v> for T {
+impl<'v, T: StarlarkType<'v>> StarlarkTypeExpr<'v> for T {
     type Get = <T as StarlarkType<'v>>::Get;
+
+    fn starlark_type_repr() -> Ty {
+        <T as StarlarkType<'v>>::get_type_starlark_repr()
+    }
 
     #[inline]
     fn get(value: Value<'v>) -> Option<Self::Get> {
@@ -86,10 +98,14 @@ impl<'v, T: StarlarkType<'v> + StarlarkTypeRepr> StarlarkTypeExpr<'v> for T {
     }
 }
 
-impl<'v, T: StarlarkType<'v> + StarlarkTypeRepr> StarlarkTypeExprStable<'v> for T {}
+impl<'v, T: StarlarkType<'v>> StarlarkTypeExprStable<'v> for T {}
 
 impl<'v> StarlarkTypeExpr<'v> for Value<'v> {
     type Get = Value<'v>;
+
+    fn starlark_type_repr() -> Ty {
+        Ty::any()
+    }
 
     #[inline]
     fn get(value: Value<'v>) -> Option<Self::Get> {
@@ -101,6 +117,10 @@ impl<'v> StarlarkTypeExprStable<'v> for Value<'v> {}
 
 impl<'v> StarlarkTypeExpr<'v> for String {
     type Get = String;
+
+    fn starlark_type_repr() -> Ty {
+        StarlarkStr::starlark_type_repr()
+    }
 
     fn get(value: Value<'v>) -> Option<Self::Get> {
         value.unpack_str().map(str::to_owned)
@@ -115,6 +135,10 @@ where
 {
     type Get = &'a str;
 
+    fn starlark_type_repr() -> Ty {
+        StarlarkStr::starlark_type_repr()
+    }
+
     #[inline]
     fn get(value: Value<'v>) -> Option<Self::Get> {
         value.unpack_str()
@@ -127,6 +151,10 @@ impl<'v, TLeft: StarlarkTypeExpr<'v>, TRight: StarlarkTypeExpr<'v>> StarlarkType
     for Either<TLeft, TRight>
 {
     type Get = Either<TLeft::Get, TRight::Get>;
+
+    fn starlark_type_repr() -> Ty {
+        Ty::union2(TLeft::starlark_type_repr(), TRight::starlark_type_repr())
+    }
 
     fn get(value: Value<'v>) -> Option<Self::Get> {
         match TLeft::get(value) {
@@ -184,9 +212,9 @@ union_payload_is_self! {
     impl['v] crate::values::structs::StructRef<'v>;
     impl['v] crate::values::enumeration::AnyEnumType<'v>;
     impl['v] crate::values::typing::TypeType;
-    impl['v, P: crate::values::typing::StarlarkCallableParamSpec, R: StarlarkTypeRepr]
+    impl['v, P: crate::values::typing::StarlarkCallableParamSpec, R: StarlarkTypeExpr<'static>]
         crate::values::typing::StarlarkCallable<'v, P, R>;
-    impl['v, P: crate::values::typing::StarlarkCallableParamSpec, R: StarlarkTypeRepr]
+    impl['v, P: crate::values::typing::StarlarkCallableParamSpec, R: StarlarkTypeExpr<'static>]
         crate::values::typing::StarlarkCallableChecked<'v, P, R>;
 }
 
@@ -204,12 +232,25 @@ impl<'v> UnionPayload<'v> for crate::values::none::NoneType {
 impl<'v> StarlarkTypeExpr<'v> for crate::values::typing::StarlarkNever {
     type Get = Infallible;
 
+    fn starlark_type_repr() -> Ty {
+        Ty::never()
+    }
+
     fn get(_value: Value<'v>) -> Option<Self::Get> {
         None
     }
 }
 
 impl<'v> StarlarkTypeExprStable<'v> for crate::values::typing::StarlarkNever {}
+
+/// Derive macros generate a reference to this method to be able to get the `type_repr` of types
+/// they can't name
+#[doc(hidden)]
+pub fn type_repr_from_attr_impl<'v, T: AllocValue<'v>, V, E>(
+    _f: fn(V, Heap<'v>) -> Result<T, E>,
+) -> Ty {
+    T::Type::starlark_type_repr()
+}
 
 #[cfg(test)]
 mod tests {

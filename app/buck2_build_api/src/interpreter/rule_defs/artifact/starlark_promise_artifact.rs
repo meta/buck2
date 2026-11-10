@@ -34,7 +34,6 @@ use starlark::values::Value;
 use starlark::values::ValueOf;
 use starlark::values::list::ListType;
 use starlark::values::starlark_value;
-use starlark::values::type_repr::StarlarkTypeRepr;
 
 use crate::artifact_groups::ArtifactGroup;
 use crate::artifact_groups::PromiseArtifactWrapper;
@@ -262,7 +261,7 @@ impl<'v> StarlarkInputArtifactLike<'v> for StarlarkPromiseArtifact {
 
 impl<'v> CommandLineArgLike<'v> for StarlarkPromiseArtifact {
     fn register_me(&self) {
-        command_line_arg_like_impl!(StarlarkPromiseArtifact::starlark_type_repr());
+        command_line_arg_like_impl!(StarlarkPromiseArtifact::get_type_starlark_repr());
     }
 
     fn add_to_command_line(&self, fmt: &mut CommandLineBuilder<'v, '_>) -> buck2_error::Result<()> {

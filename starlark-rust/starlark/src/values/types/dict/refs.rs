@@ -24,14 +24,12 @@ use std::ops::Deref;
 use dupe::Dupe;
 use either::Either;
 
-use crate::typing::Ty;
 use crate::values::UnpackValue;
 use crate::values::Value;
 use crate::values::ValueError;
 use crate::values::ValueOf;
 use crate::values::dict::Dict;
 use crate::values::dict::value::DictGen;
-use crate::values::type_repr::StarlarkTypeRepr;
 use crate::values::types::dict::dict_type::DictType;
 
 /// Borrowed `Dict`.
@@ -112,14 +110,6 @@ impl<'v> Deref for DictRef<'v> {
     #[inline]
     fn deref(&self) -> &Self::Target {
         &self.aref
-    }
-}
-
-impl<'v> StarlarkTypeRepr for DictRef<'v> {
-    type Canonical = <DictType<Value<'static>, Value<'static>> as StarlarkTypeRepr>::Canonical;
-
-    fn starlark_type_repr() -> Ty {
-        DictType::<Value<'static>, Value<'static>>::starlark_type_repr()
     }
 }
 

@@ -14,7 +14,7 @@ use starlark::typing::TyStarlarkValue;
 use starlark::typing::TyUser;
 use starlark::typing::TyUserFields;
 use starlark::typing::TyUserParams;
-use starlark::values::type_repr::StarlarkTypeRepr;
+use starlark::values::StarlarkTypeExpr;
 use starlark::values::typing::TypeInstanceId;
 use starlark::values::typing::TypeMatcherFactory;
 

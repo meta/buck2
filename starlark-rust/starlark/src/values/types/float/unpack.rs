@@ -17,25 +17,14 @@
 
 use crate as starlark;
 use crate::any::ProvidesStaticType;
-use crate::typing::Ty;
 use crate::values::UnpackValue;
 use crate::values::ValueOf;
 use crate::values::type_expr::StarlarkTypeExpr;
-use crate::values::type_repr::StarlarkTypeRepr;
-use crate::values::types::num::value::Num;
 use crate::values::types::num::value::NumRef;
 
 /// Unpack `int` or `float` into `f64`.
 #[derive(ProvidesStaticType)]
 pub struct UnpackFloat(pub f64);
-
-impl StarlarkTypeRepr for UnpackFloat {
-    type Canonical = <Num as StarlarkTypeRepr>::Canonical;
-
-    fn starlark_type_repr() -> Ty {
-        <Self::Canonical as StarlarkTypeRepr>::starlark_type_repr()
-    }
-}
 
 impl<'v> UnpackValue<'v> for UnpackFloat {
     type Type = <NumRef<'v> as UnpackValue<'v>>::Type;

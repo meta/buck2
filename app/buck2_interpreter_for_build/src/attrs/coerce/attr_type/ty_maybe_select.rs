@@ -9,7 +9,7 @@
  */
 
 use starlark::typing::Ty;
-use starlark::values::type_repr::StarlarkTypeRepr;
+use starlark::values::StarlarkTypeExpr;
 
 use crate::interpreter::selector::StarlarkSelector;
 

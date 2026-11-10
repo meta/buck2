@@ -13,8 +13,8 @@ use buck2_node::nodes::configured::ConfiguredTargetNode;
 use buck2_node::nodes::unconfigured::TargetNode;
 use starlark::typing::Ty;
 use starlark::values::Heap;
+use starlark::values::StarlarkTypeExpr;
 use starlark::values::Value;
-use starlark::values::type_repr::StarlarkTypeRepr;
 
 use super::nodes::action::StarlarkActionQueryNode;
 use crate::bxl::starlark_defs::nodes::configured::StarlarkConfiguredTargetNode;

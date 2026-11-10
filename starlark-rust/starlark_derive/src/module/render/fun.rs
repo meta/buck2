@@ -248,7 +248,7 @@ pub(crate) fn render_fun(x: StarFun) -> syn::Result<syn::Stmt> {
                     #( #param_types, )*
                 ) -> std::result::Result<T, E>,
             ) -> starlark::typing::Ty {
-                <<T as starlark::values::AllocValue<'v>>::Type as starlark::values::type_repr::StarlarkTypeRepr>::starlark_type_repr()
+                <<T as starlark::values::AllocValue<'v>>::Type as starlark::values::StarlarkTypeExpr<'v>>::starlark_type_repr()
             }
             get_impl(__starlark_invoke_impl)
         }
@@ -490,7 +490,7 @@ fn render_starlark_type(typ: &syn::Type) -> syn::Expr {
     syn::parse_quote! {
         {
             fn get_type_string<'v>() -> starlark::typing::Ty {
-                <<#typ as starlark::values::UnpackValue<'v>>::Type as starlark::values::type_repr::StarlarkTypeRepr>::starlark_type_repr()
+                <<#typ as starlark::values::UnpackValue<'v>>::Type as starlark::values::StarlarkTypeExpr<'v>>::starlark_type_repr()
             }
             get_type_string()
         }

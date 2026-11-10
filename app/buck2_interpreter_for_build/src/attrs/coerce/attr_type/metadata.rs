@@ -20,10 +20,10 @@ use buck2_node::attrs::configurable::AttrIsConfigurable;
 use buck2_node::metadata::key::MetadataKeyRef;
 use buck2_node::metadata::map::MetadataMap;
 use buck2_node::metadata::value::MetadataValue;
+use starlark::values::StarlarkTypeExpr;
 use starlark::values::UnpackValue;
 use starlark::values::Value;
 use starlark::values::dict::DictRef;
-use starlark::values::type_repr::StarlarkTypeRepr;
 
 use crate::attrs::coerce::AttrTypeCoerce;
 use crate::attrs::coerce::attr_type::ty_maybe_select::TyMaybeSelect;

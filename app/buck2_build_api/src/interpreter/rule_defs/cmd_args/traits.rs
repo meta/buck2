@@ -23,8 +23,8 @@ use buck2_interpreter::types::project_root::StarlarkProjectRoot;
 use buck2_interpreter::types::target_label::StarlarkTargetLabel;
 use starlark::any::ProvidesStaticType;
 use starlark::typing::Ty;
+use starlark::values::StarlarkValue;
 use starlark::values::string::StarlarkStr;
-use starlark::values::type_repr::StarlarkTypeRepr;
 
 use crate::artifact_groups::ArtifactGroup;
 use crate::artifact_groups::ArtifactGroupValues;
@@ -261,7 +261,7 @@ impl<'v> CommandLineArgLike<'v> for &str {
 
 impl<'v> CommandLineArgLike<'v> for StarlarkStr {
     fn register_me(&self) {
-        command_line_arg_like_impl!(StarlarkStr::starlark_type_repr());
+        command_line_arg_like_impl!(StarlarkStr::get_type_starlark_repr());
     }
 
     fn add_to_command_line(&self, fmt: &mut CommandLineBuilder<'v, '_>) -> buck2_error::Result<()> {
@@ -284,7 +284,7 @@ impl<'v> CommandLineArgLike<'v> for StarlarkStr {
 
 impl<'v> CommandLineArgLike<'v> for StarlarkTargetLabel {
     fn register_me(&self) {
-        command_line_arg_like_impl!(StarlarkTargetLabel::starlark_type_repr());
+        command_line_arg_like_impl!(StarlarkTargetLabel::get_type_starlark_repr());
     }
 
     fn add_to_command_line(&self, fmt: &mut CommandLineBuilder<'v, '_>) -> buck2_error::Result<()> {
@@ -307,7 +307,7 @@ impl<'v> CommandLineArgLike<'v> for StarlarkTargetLabel {
 
 impl<'v> CommandLineArgLike<'v> for StarlarkConfiguredProvidersLabel {
     fn register_me(&self) {
-        command_line_arg_like_impl!(StarlarkConfiguredProvidersLabel::starlark_type_repr());
+        command_line_arg_like_impl!(StarlarkConfiguredProvidersLabel::get_type_starlark_repr());
     }
 
     fn add_to_command_line(&self, fmt: &mut CommandLineBuilder<'v, '_>) -> buck2_error::Result<()> {
@@ -330,7 +330,7 @@ impl<'v> CommandLineArgLike<'v> for StarlarkConfiguredProvidersLabel {
 
 impl<'v> CommandLineArgLike<'v> for CellRoot {
     fn register_me(&self) {
-        command_line_arg_like_impl!(CellRoot::starlark_type_repr());
+        command_line_arg_like_impl!(CellRoot::get_type_starlark_repr());
     }
 
     fn add_to_command_line(&self, fmt: &mut CommandLineBuilder<'v, '_>) -> buck2_error::Result<()> {
@@ -353,7 +353,7 @@ impl<'v> CommandLineArgLike<'v> for CellRoot {
 
 impl<'v> CommandLineArgLike<'v> for StarlarkProjectRoot {
     fn register_me(&self) {
-        command_line_arg_like_impl!(StarlarkProjectRoot::starlark_type_repr());
+        command_line_arg_like_impl!(StarlarkProjectRoot::get_type_starlark_repr());
     }
 
     fn add_to_command_line(&self, fmt: &mut CommandLineBuilder<'v, '_>) -> buck2_error::Result<()> {

@@ -68,7 +68,7 @@ enum PromiseValue<'v> {
     Resolved(Value<'v>),
     Map(
         ValueTyped<'v, StarlarkPromise<'v>>,
-        StarlarkCallable<'v, (Value<'v>,), Value<'v>>,
+        StarlarkCallable<'v, (Value<'static>,), Value<'static>>,
     ),
     Join(PromiseJoin<'v>),
 }
@@ -157,7 +157,7 @@ impl<'v> StarlarkPromise<'v> {
     }
 
     fn apply(
-        f: StarlarkCallable<'v, (Value<'v>,), Value<'v>>,
+        f: StarlarkCallable<'v, (Value<'static>,), Value<'static>>,
         x: Value<'v>,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> buck2_error::Result<Value<'v>> {
@@ -166,7 +166,7 @@ impl<'v> StarlarkPromise<'v> {
 
     pub fn map(
         x: ValueTyped<'v, StarlarkPromise<'v>>,
-        f: StarlarkCallable<'v, (Value<'v>,), Value<'v>>,
+        f: StarlarkCallable<'v, (Value<'static>,), Value<'static>>,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> buck2_error::Result<ValueTyped<'v, StarlarkPromise<'v>>> {
         match x.get() {
@@ -287,7 +287,7 @@ fn promise_methods(builder: &mut MethodsBuilder) {
     /// Given a promise, apply a function to the value it contains, producing a promise with the resulting value.
     fn map<'v>(
         this: ValueTyped<'v, StarlarkPromise<'v>>,
-        #[starlark(require = pos)] func: StarlarkCallable<'v, (Value<'v>,), Value<'v>>,
+        #[starlark(require = pos)] func: StarlarkCallable<'v, (Value<'static>,), Value<'static>>,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<ValueTyped<'v, StarlarkPromise<'v>>> {
         Ok(StarlarkPromise::map(this, func, eval)?)

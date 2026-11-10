@@ -13,6 +13,7 @@ package com.facebook.buck.jvm.java.abi;
 import com.facebook.buck.cd.model.java.AbiGenerationMode;
 import com.facebook.buck.jvm.java.abi.kotlin.InlineFunctionScope;
 import com.facebook.buck.jvm.java.abi.kotlin.KotlinMetadataReader;
+import com.facebook.infer.annotation.Nullsafe;
 import java.io.ByteArrayInputStream;
 import java.io.IOException;
 import java.io.InputStream;
@@ -21,6 +22,7 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Objects;
 import java.util.Set;
 import org.jspecify.annotations.Nullable;
 import org.objectweb.asm.ClassVisitor;
@@ -30,6 +32,7 @@ import org.objectweb.asm.tree.AnnotationNode;
 import org.objectweb.asm.tree.ClassNode;
 import org.objectweb.asm.tree.InnerClassNode;
 
+@Nullsafe(Nullsafe.Mode.LOCAL)
 class StubJarClassEntry extends StubJarEntry {
   private final Set<String> referencedClassNames;
   private final Path path;
@@ -84,7 +87,8 @@ class StubJarClassEntry extends StubJarEntry {
               new HashSet<>(AbiFilteringClassVisitor.findJvmStaticMemberKeys(classMetadata));
         }
 
-        isWithinInlineFunctionScope = inlineFunctionScope.captures(path, classMetadata);
+        isWithinInlineFunctionScope =
+            Objects.requireNonNull(inlineFunctionScope).captures(path, classMetadata);
         scopeOuterClass = classMetadata.outerClass;
         if (scopeOuterClass == null) {
           // Member classes have no enclosing method, so the OuterClass attribute is absent;
@@ -149,7 +153,7 @@ class StubJarClassEntry extends StubJarEntry {
         || isWithinInlineFunctionScope
         // The synthetic package-info class is how package annotations are recorded; that one is
         // actually used by the compiler
-        || stub.name.endsWith("/package-info")) {
+        || Objects.requireNonNull(stub.name).endsWith("/package-info")) {
       return new StubJarClassEntry(
           path,
           stub,
@@ -213,6 +217,7 @@ class StubJarClassEntry extends StubJarEntry {
   }
 
   @Override
+  @Nullable
   public String getClassName() {
     return stub.name;
   }
@@ -232,7 +237,7 @@ class StubJarClassEntry extends StubJarEntry {
     ClassWriter writer = new ClassWriter(0);
     ClassVisitor visitor = writer;
     if (!isWithinInlineFunctionScope) {
-      visitor = new InnerClassSortingClassVisitor(stub.name, visitor);
+      visitor = new InnerClassSortingClassVisitor(Objects.requireNonNull(stub.name), visitor);
       visitor =
           new AbiFilteringClassVisitor(
               visitor,
@@ -267,7 +272,7 @@ class StubJarClassEntry extends StubJarEntry {
 
   @Nullable
   private static InnerClassNode getInnerClassMetadata(ClassNode node) {
-    String name = node.name;
+    String name = Objects.requireNonNull(node.name);
     return getInnerClassMetadata(node, name);
   }
 
@@ -284,8 +289,8 @@ class StubJarClassEntry extends StubJarEntry {
 
   @Nullable
   private static InnerClassNode getInnerClassMetadata(ClassNode node, String className) {
-    for (InnerClassNode innerClass : node.innerClasses) {
-      if (innerClass.name.equals(className)) {
+    for (InnerClassNode innerClass : Objects.requireNonNull(node.innerClasses)) {
+      if (Objects.requireNonNull(innerClass.name).equals(className)) {
         return innerClass;
       }
     }
@@ -330,14 +335,15 @@ class StubJarClassEntry extends StubJarEntry {
             }
 
             // References to other classes get sorted.
-            return o1.name.compareTo(o2.name);
+            return Objects.requireNonNull(o1.name).compareTo(o2.name);
           });
 
+      ClassVisitor delegate = Objects.requireNonNull(cv);
       for (InnerClassNode innerClass : innerClasses) {
-        innerClass.accept(cv);
+        innerClass.accept(delegate);
       }
 
-      nestMembers.stream().sorted().forEach(nestMember -> cv.visitNestMember(nestMember));
+      nestMembers.stream().sorted().forEach(nestMember -> delegate.visitNestMember(nestMember));
 
       super.visitEnd();
     }

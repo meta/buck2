@@ -10,6 +10,7 @@
 
 package com.facebook.buck.jvm.java.abi;
 
+import com.facebook.infer.annotation.Nullsafe;
 import com.google.common.collect.ImmutableSortedSet;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -32,6 +33,7 @@ import org.objectweb.asm.tree.InnerClassNode;
  * A {@link ClassVisitor} that records references to other classes. This is intended to be driven by
  * another {@link ClassVisitor} which is filtering down to just the ABI of the class.
  */
+@Nullsafe(Nullsafe.Mode.LOCAL)
 class ClassReferenceTracker extends ClassVisitor {
   private Set<String> referencedClassNames = new HashSet<>();
   @Nullable private String className;
@@ -109,7 +111,7 @@ class ClassReferenceTracker extends ClassVisitor {
   }
 
   @Override
-  public FieldVisitor visitField(
+  public @Nullable FieldVisitor visitField(
       int access, String name, String desc, String signature, Object value) {
     if ((access & Opcodes.ACC_ENUM) != 0) {
       // Enum values don't count as references
@@ -186,7 +188,7 @@ class ClassReferenceTracker extends ClassVisitor {
   }
 
   private class TrackingMethodVisitor extends MethodVisitor {
-    public TrackingMethodVisitor(int api, MethodVisitor mv) {
+    public TrackingMethodVisitor(int api, @Nullable MethodVisitor mv) {
       super(api, mv);
     }
 
@@ -213,7 +215,7 @@ class ClassReferenceTracker extends ClassVisitor {
   }
 
   private class TrackingFieldVisitor extends FieldVisitor {
-    public TrackingFieldVisitor(int api, FieldVisitor fv) {
+    public TrackingFieldVisitor(int api, @Nullable FieldVisitor fv) {
       super(api, fv);
     }
 
@@ -233,7 +235,7 @@ class ClassReferenceTracker extends ClassVisitor {
   }
 
   private class TrackingAnnotationVisitor extends AnnotationVisitor {
-    public TrackingAnnotationVisitor(int api, AnnotationVisitor av) {
+    public TrackingAnnotationVisitor(int api, @Nullable AnnotationVisitor av) {
       super(api, av);
     }
 

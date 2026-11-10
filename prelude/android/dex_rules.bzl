@@ -280,11 +280,17 @@ def get_multi_dex(
                 multi_dex_cmd.add("--proguard-configuration-file", proguard_configuration_output_file)
                 multi_dex_cmd.add("--proguard-mapping-file", proguard_mapping_output_file)
 
+            # `multi_dex_command` ends in `-jar <jar>`, so JVM options can't be appended to it.
+            multi_dex_env = {}
+            if android_toolchain.multi_dex_max_heap_size:
+                multi_dex_env["JDK_JAVA_OPTIONS"] = "-Xmx{}".format(android_toolchain.multi_dex_max_heap_size)
+
             ctx.actions.run(
                 multi_dex_cmd,
                 category = "multi_dex",
                 identifier = "{}:{}_module_{}".format(ctx.label.package, ctx.label.name, module),
                 allow_cache_upload = True,
+                env = multi_dex_env,
                 error_handler = android_toolchain.android_error_handler,
             )
 

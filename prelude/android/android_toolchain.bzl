@@ -72,6 +72,8 @@ AndroidToolchainInfo = provider(
         "mergemap_tool": provider_field(typing.Any, default = None),
         "mini_aapt": provider_field(typing.Any, default = None),
         "multi_dex_command": provider_field(typing.Any, default = None),
+        # JVM max heap (`-Xmx` value, e.g. "28g") for `multi_dex_command`. When None, the JVM picks its default.
+        "multi_dex_max_heap_size": provider_field(str | None, default = None),
         "native_libs_as_assets_metadata": provider_field(typing.Any, default = None),
         "optimized_proguard_config": provider_field(typing.Any, default = None),
         "p7zip": provider_field(typing.Any, default = None),

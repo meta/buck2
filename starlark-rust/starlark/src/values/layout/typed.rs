@@ -398,25 +398,6 @@ where
     }
 }
 
-#[derive(thiserror::Error, Debug)]
-#[error(
-    "Value `{value}` is a `{ty}`, but not in the representation `{representation}` the function needs"
-)]
-struct NotRepresentationError {
-    ty: Ty,
-    representation: &'static str,
-    value: String,
-}
-
-#[cold]
-fn not_representation_error<'v, T: StarlarkValue<'v>>(value: Value<'v>) -> crate::Error {
-    crate::Error::new_value(NotRepresentationError {
-        ty: T::get_type_starlark_repr(),
-        representation: std::any::type_name::<T>(),
-        value: value.to_string_for_type_error(),
-    })
-}
-
 impl<'v, T: StarlarkValue<'v>> AllocValue<'v> for ValueTyped<'v, T>
 where
     T::Type: StarlarkTypeExpr<'v>,
@@ -462,30 +443,6 @@ where
 impl<'v> AllocStringValue<'v> for StringValue<'v> {
     fn alloc_string_value(self, _heap: Heap<'v>) -> StringValue<'v> {
         self
-    }
-}
-
-/// A parameter bound to this representation of the type, frozen: an unfrozen value of the type
-/// is of the declared type and fails as a conversion.
-impl<'v, T: StarlarkValue<'v>> UnpackValue<'v> for FrozenValueTyped<'v, T>
-where
-    T::Type: StarlarkTypeExpr<'v>,
-{
-    type Type = T::Type;
-    type Error = crate::Error;
-
-    fn unpack(
-        value: ValueOf<'v, T::Type>,
-        _get: <T::Type as StarlarkTypeExpr<'v>>::Get,
-    ) -> crate::Result<Self> {
-        let value = value.to_value();
-        if !value.is_frozen() {
-            return Err(crate::Error::new_value(NotFrozenError {
-                expected: T::get_type_starlark_repr(),
-                value: value.to_string_for_type_error(),
-            }));
-        }
-        FrozenValueTyped::new_frozen(value).ok_or_else(|| not_representation_error::<T>(value))
     }
 }
 
@@ -649,59 +606,13 @@ impl<'v, T: StarlarkValue<'v>> crate::pagable::StarlarkDeserialize<'v>
 
 #[cfg(test)]
 mod tests {
-    use starlark_derive::starlark_module;
-
-    use crate as starlark;
-    use crate::assert::Assert;
-    use crate::environment::GlobalsBuilder;
-    use crate::eval::Evaluator;
-    use crate::tests::util::TestComplexValue;
     use crate::values::FrozenValueTyped;
-    use crate::values::Heap;
     use crate::values::Value;
-    use crate::values::ValueOf;
     use crate::values::int::pointer_i32::PointerI32;
-    use crate::values::none::NoneType;
 
     #[test]
     fn int() {
         let v = FrozenValueTyped::<PointerI32>::new(Value::testing_new_int(17)).unwrap();
         assert_eq!(17, v.as_ref().get().to_i32());
-    }
-
-    #[test]
-    fn test_unpack_value_for_frozen_value_typed() {
-        #[starlark_module]
-        fn module(globals: &mut GlobalsBuilder) {
-            fn mutable<'v>(heap: Heap<'v>) -> anyhow::Result<ValueOf<'v, TestComplexValue<'v>>> {
-                Ok(ValueOf::alloc(heap, TestComplexValue(Value::new_none())))
-            }
-
-            fn frozen<'v>(eval: &mut Evaluator<'v, '_, '_>) -> anyhow::Result<Value<'v>> {
-                Ok(eval.frozen_heap(|fh, edge| {
-                    edge.rebrand(
-                        fh.alloc_representation(TestComplexValue(Value::new_none()))
-                            .to_value(),
-                    )
-                }))
-            }
-
-            fn takes_frozen_value_typed<'v>(
-                value: FrozenValueTyped<'v, TestComplexValue<'v>>,
-            ) -> anyhow::Result<NoneType> {
-                let _ = value;
-                Ok(NoneType)
-            }
-        }
-
-        let mut a = Assert::new();
-        a.globals_add(module);
-
-        a.pass("takes_frozen_value_typed(frozen())");
-        a.fail("takes_frozen_value_typed(1)", "Type of parameter `value` doesn't match, expected `TestComplexValue`, actual `int (repr: 1)`");
-        a.fail(
-            "takes_frozen_value_typed(mutable())",
-            "Expected frozen value",
-        );
     }
 }

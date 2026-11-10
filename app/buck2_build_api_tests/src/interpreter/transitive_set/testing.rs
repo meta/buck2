@@ -12,8 +12,8 @@ use std::cell::Cell;
 
 use buck2_build_api::artifact_groups::deferred::TransitiveSetIndex;
 use buck2_build_api::artifact_groups::deferred::TransitiveSetKey;
-use buck2_build_api::interpreter::rule_defs::transitive_set::FrozenTransitiveSetDefinition;
 use buck2_build_api::interpreter::rule_defs::transitive_set::TransitiveSet;
+use buck2_build_api::interpreter::rule_defs::transitive_set::TransitiveSetDefinitionView;
 use buck2_build_api::interpreter::rule_defs::transitive_set::TransitiveSetOrdering;
 use buck2_build_api::interpreter::rule_defs::transitive_set::transitive_set_definition::register_transitive_set;
 use buck2_core::deferred::key::DeferredHolderKey;
@@ -27,7 +27,6 @@ use starlark::environment::Module;
 use starlark::eval::Evaluator;
 use starlark::starlark_module;
 use starlark::values::FreezeErrorContext;
-use starlark::values::FrozenValueTyped;
 use starlark::values::OwnedFrozen;
 use starlark::values::Value;
 use starlark::values::ValueTyped;
@@ -37,11 +36,12 @@ use crate::interpreter::rule_defs::artifact::testing::artifactory;
 #[starlark_module]
 pub(crate) fn tset_factory(builder: &mut GlobalsBuilder) {
     fn make_tset<'v>(
-        definition: FrozenValueTyped<'v, FrozenTransitiveSetDefinition<'v>>,
+        definition: TransitiveSetDefinitionView<'v>,
         value: Option<Value<'v>>,
         children: Option<Value<'v>>, // An iterable.
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<ValueTyped<'v, TransitiveSet<'v>>> {
+        let definition = definition.frozen()?;
         // Per thread, so a test's indices start at zero whatever other tests
         // run alongside it: `libtest` runs each test on its own thread, and
         // the test harnesses built on `make_tset` index their sets by

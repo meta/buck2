@@ -56,7 +56,6 @@ public class TestResultsOutputSender implements AutoCloseable {
     return fromEnvName(TEST_RESULTS_OUTPUT_FILE_ENV_NAME);
   }
 
-  @SuppressWarnings("PMD.BlacklistedSystemGetenv")
   private static @Nullable String getEnvValue(String envName) {
     return System.getenv(envName);
   }

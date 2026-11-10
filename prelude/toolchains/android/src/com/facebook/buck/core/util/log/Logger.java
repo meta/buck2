@@ -37,7 +37,6 @@ import java.util.logging.Handler;
 import java.util.logging.Level;
 import org.jspecify.annotations.Nullable;
 
-@SuppressWarnings("PMD")
 @Nullsafe(Nullsafe.Mode.LOCAL)
 public class Logger {
   private final java.util.logging.Logger logger;

@@ -313,7 +313,6 @@ public class InstrumentationTestRunner extends DeviceRunner {
       this.environment = environment;
     }
 
-    @SuppressWarnings("PMD.BlacklistedSystemGetenv")
     void fromArgs(String... args) throws IOException {
 
       for (int i = 0; i < args.length; i++) {
@@ -529,7 +528,6 @@ public class InstrumentationTestRunner extends DeviceRunner {
     reportLayers.add(reportLayer);
   }
 
-  @SuppressWarnings("PMD.BlacklistedSystemGetenv")
   public static InstrumentationTestRunner fromArgs(String... args) throws IOException {
     ArgsParser argsParser = new ArgsParser();
     argsParser.fromArgs(args);
@@ -745,7 +743,6 @@ public class InstrumentationTestRunner extends DeviceRunner {
     }
   }
 
-  @SuppressWarnings({"PMD.BlacklistedSystemGetenv", "PMD.BlacklistedDefaultProcessMethod"})
   public void run() throws Throwable {
     // Proactive timeout: start the timer as early as possible since TPX_TIMEOUT_SEC counts from
     // process start. ADB setup (APK install, directory creation) can consume significant time,
@@ -1250,7 +1247,6 @@ public class InstrumentationTestRunner extends DeviceRunner {
         String.format("logcat_%s_buffer_logs", bufferName));
   }
 
-  @SuppressWarnings("PMD.BlacklistedSystemGetenv")
   private void collectAdbLogs() {
     try {
       StringBuilder allLogOutput = new StringBuilder();
@@ -1387,12 +1383,10 @@ public class InstrumentationTestRunner extends DeviceRunner {
   // Java has no setenv(), so this is needed to be able to overwrite env vars in tests
   // the lint suggests to use EnvVariablesProvider, but the
   // compiler cannot find it
-  @SuppressWarnings("PMD.BlacklistedSystemGetenv")
   protected String getenv(String env) {
     return System.getenv(env);
   }
 
-  @SuppressWarnings("PMD.BlacklistedSystemGetenv")
   protected Map<String, String> getenv() {
     return System.getenv();
   }

@@ -34,7 +34,6 @@ public class ClassLoaderFactory {
 
   private final ClassPathProvider classPathProvider;
 
-  @SuppressWarnings("PMD.BlacklistedSystemGetenv")
   static ClassLoaderFactory withEnv() {
     return new ClassLoaderFactory(System.getenv()::get);
   }

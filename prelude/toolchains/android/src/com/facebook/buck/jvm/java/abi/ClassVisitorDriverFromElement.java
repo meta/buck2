@@ -164,7 +164,7 @@ class ClassVisitorDriverFromElement {
       if (e.getKind().isClass() || classFileVersion >= Opcodes.V1_8) {
         try {
           generateBridges(e, visitor, innerClassesTable);
-        } catch (UnsupportedOperationException | CannotInferException ex) { // NOPMD
+        } catch (UnsupportedOperationException | CannotInferException ex) {
           // Can't generate bridges in source-only mode
         }
       }

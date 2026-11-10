@@ -44,7 +44,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import java.util.function.Function;
 import java.util.logging.Level;
-import java.util.logging.Logger; // NOPMD
+import java.util.logging.Logger;
 import java.util.stream.Collectors;
 
 /**

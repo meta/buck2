@@ -41,7 +41,7 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.logging.Level;
-import java.util.logging.Logger; // NOPMD
+import java.util.logging.Logger;
 
 /**
  * Coordinates an Android Install of an APK. We need three artifacts: the apk,

@@ -36,7 +36,6 @@ public class MorePosixFilePermissionsTest {
   }
 
   // Some examples of converting between unix modes and perm sets.
-  @SuppressWarnings("PMD.AvoidUsingOctalValues")
   private static final ImmutableList<Sample> CONVERSION_SAMPLES =
       ImmutableList.of(
           new Sample(040, Sets.newHashSet(PosixFilePermission.GROUP_READ)),

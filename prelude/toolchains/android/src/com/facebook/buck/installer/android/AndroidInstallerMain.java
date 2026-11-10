@@ -16,7 +16,7 @@ import java.io.IOException;
 import java.util.Objects;
 import java.util.logging.FileHandler;
 import java.util.logging.Level;
-import java.util.logging.Logger; // NOPMD
+import java.util.logging.Logger;
 import java.util.logging.SimpleFormatter;
 import org.kohsuke.args4j.CmdLineException;
 import org.kohsuke.args4j.CmdLineParser;

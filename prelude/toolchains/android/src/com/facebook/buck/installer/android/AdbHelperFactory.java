@@ -19,7 +19,7 @@ import com.facebook.buck.android.exopackage.InstallTimings;
 import com.facebook.buck.android.exopackage.SetDebugAppMode;
 import com.facebook.infer.annotation.Nullsafe;
 import java.util.Optional;
-import java.util.logging.Logger; // NOPMD
+import java.util.logging.Logger;
 
 /**
  * Builds the {@link AdbHelper} for an install.

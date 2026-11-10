@@ -113,7 +113,6 @@ public class PathListing {
     return paths;
   }
 
-  @SuppressWarnings("PMD.EmptyCatchBlock")
   private static ImmutableSortedSet<Path> applyTotalSizeFilter(
       ImmutableSortedSet<Path> paths, FilterMode filterMode, Optional<Long> totalSizeFilter)
       throws IOException {

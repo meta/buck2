@@ -241,7 +241,6 @@ public final class JUnitRunner extends BaseRunner {
     }
   }
 
-  @SuppressWarnings("PMD.BlacklistedSystemGetenv")
   private void setupLogging() {
     // Check if we have robolectric logging to setup
     // get it as a resource to avoid loading the class

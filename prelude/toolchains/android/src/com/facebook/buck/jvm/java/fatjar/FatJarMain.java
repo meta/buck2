@@ -56,7 +56,6 @@ public class FatJarMain {
    * Main method for fat jar. Unpacks artifact and native libraries into a temporary folder and then
    * launches original artifact as java process.
    */
-  @SuppressWarnings("PMD.BlacklistedDefaultProcessMethod")
   public static void main(String[] args) throws Exception {
 
     boolean debug = args.length > 0 && args[0].equals(DEBUG_OPTION);
@@ -338,7 +337,6 @@ public class FatJarMain {
   }
 
   // Avoid using EnvVariablesProvider to avoid extra dependencies.
-  @SuppressWarnings("PMD.BlacklistedSystemGetenv")
   private static @Nullable String getEnvValue(String envVariableName) {
     if (isWindowsOs(getOsPlatform())) {
       return findMapValueIgnoreKeyCase(envVariableName, System.getenv());

@@ -583,8 +583,7 @@ class Jsr199JavacInvocation implements ResolvedJavac.Invocation {
           }
 
           List<String> classNamesForAnnotationProcessing = ImmutableList.of();
-          Writer compilerOutputWriter =
-              new java.io.PrintWriter(context.getStdErr()); // NOPMD required by API
+          Writer compilerOutputWriter = new java.io.PrintWriter(context.getStdErr());
           PluginClassLoaderFactory loaderFactory =
               PluginLoader.newFactory(context.getClassLoaderCache());
 

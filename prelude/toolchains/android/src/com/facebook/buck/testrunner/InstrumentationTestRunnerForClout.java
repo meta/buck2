@@ -80,7 +80,6 @@ public class InstrumentationTestRunnerForClout extends InstrumentationTestRunner
         userId);
   }
 
-  @SuppressWarnings("PMD.BlacklistedSystemGetenv")
   public static InstrumentationTestRunnerForClout fromArgs(String... args) throws IOException {
     ArgsParser argsParser = new ArgsParser();
     argsParser.fromArgs(args);
@@ -122,7 +121,6 @@ public class InstrumentationTestRunnerForClout extends InstrumentationTestRunner
     return runner;
   }
 
-  @SuppressWarnings("PMD.BlacklistedSystemGetenv")
   private @Nullable String getAndroidHome() {
     if (System.getenv().containsKey(ANDROID_HOME)) {
       return System.getenv(ANDROID_HOME);

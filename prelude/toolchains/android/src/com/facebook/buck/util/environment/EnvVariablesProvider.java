@@ -19,7 +19,6 @@ import java.util.Objects;
 @Nullsafe(Nullsafe.Mode.LOCAL)
 public class EnvVariablesProvider {
 
-  @SuppressWarnings("PMD.BlacklistedSystemGetenv")
   public static ImmutableMap<String, String> getSystemEnv() {
     if (Platform.detect().getType() == PlatformType.WINDOWS) {
       return System.getenv().entrySet().stream()

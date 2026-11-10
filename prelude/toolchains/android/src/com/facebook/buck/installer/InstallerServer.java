@@ -31,7 +31,7 @@ import java.time.Instant;
 import java.util.Optional;
 import java.util.concurrent.TimeUnit;
 import java.util.logging.Level;
-import java.util.logging.Logger; // NOPMD
+import java.util.logging.Logger;
 
 @Nullsafe(Nullsafe.Mode.LOCAL)
 public class InstallerServer extends ServerTransportFilter {
@@ -118,7 +118,7 @@ public class InstallerServer extends ServerTransportFilter {
 
   private Server getTCPServer(InstallerService service, int tcpPort) {
     EventLoopGroup group = new NioEventLoopGroup();
-    SocketAddress addr = new InetSocketAddress("127.0.0.1", tcpPort); // NOPMD
+    SocketAddress addr = new InetSocketAddress("127.0.0.1", tcpPort);
 
     Server server =
         NettyServerBuilder.forAddress(addr)

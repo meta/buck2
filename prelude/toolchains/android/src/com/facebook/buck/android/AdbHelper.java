@@ -216,7 +216,6 @@ public class AdbHelper implements AndroidDevicesHelper {
    * is enabled (-x). This flag is used as a marker that user understands that multiple devices will
    * be used to install the apk if needed.
    */
-  @SuppressWarnings("PMD.EmptyCatchBlock")
   @Override
   public synchronized void adbCall(String description, AdbDeviceCallable func, boolean quiet)
       throws InterruptedException {

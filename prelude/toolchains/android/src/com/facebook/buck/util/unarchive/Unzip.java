@@ -175,8 +175,7 @@ public class Unzip {
       ZipArchiveEntry entry)
       throws IOException {
     AbsPath root = creator.getProjectRoot();
-    if (ProjectFilesystemUtils.isFile(
-        root, target, LinkOption.NOFOLLOW_LINKS)) { // NOPMD for clarity pass
+    if (ProjectFilesystemUtils.isFile(root, target, LinkOption.NOFOLLOW_LINKS)) {
     } else if (ProjectFilesystemUtils.exists(root, target, LinkOption.NOFOLLOW_LINKS)) {
       ProjectFilesystemUtils.deleteRecursivelyIfExists(root, target);
     } else if (target.getParent() != null) {

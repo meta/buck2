@@ -20,7 +20,7 @@ import java.util.concurrent.ExecutionException;
 import java.util.concurrent.Future;
 import java.util.function.Function;
 import java.util.logging.Level;
-import java.util.logging.Logger; // NOPMD
+import java.util.logging.Logger;
 
 /**
  * The payloads sent ahead of an install, and the pushes carrying them.

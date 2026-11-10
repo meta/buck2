@@ -39,6 +39,7 @@ use crate::environment::Globals;
 use crate::environment::GlobalsBuilder;
 use crate::environment::Methods;
 use crate::environment::MethodsBuilder;
+use crate::values::Heap;
 use crate::values::StarlarkValue;
 use crate::values::Value;
 use crate::values::ValueOf;
@@ -179,14 +180,15 @@ fn module(builder: &mut GlobalsBuilder) {
         Ok(NoneType)
     }
 
-    fn pos_either_named(
+    fn pos_either_named<'v>(
         #[starlark(require = pos)] a: i32,
         b: i32,
         #[starlark(require = named)] c: i32,
         #[starlark(require = named, default = 0, doc_hidden)] undocumented: i32,
-    ) -> anyhow::Result<Magic> {
+        heap: Heap<'v>,
+    ) -> anyhow::Result<ValueOf<'v, Magic>> {
         let _unused = (a, b, c, undocumented);
-        Ok(Magic)
+        Ok(ValueOf::alloc(heap, Magic))
     }
 }
 
@@ -210,8 +212,8 @@ fn submodule(builder: &mut GlobalsBuilder) {
         Ok(NoneType)
     }
 
-    fn new_obj() -> anyhow::Result<Obj> {
-        Ok(Obj)
+    fn new_obj<'v>(heap: Heap<'v>) -> anyhow::Result<ValueOf<'v, Obj>> {
+        Ok(ValueOf::alloc(heap, Obj))
     }
 }
 

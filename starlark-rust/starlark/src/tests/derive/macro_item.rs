@@ -69,7 +69,7 @@ impl<'v> StarlarkValue<'v> for Example {
 fn test_attribute_from_item_macro() {
     let mut a = Assert::new();
     a.globals_add(|builder| {
-        builder.set(
+        builder.set_representation(
             "example",
             Example {
                 hello: "world".to_owned(),

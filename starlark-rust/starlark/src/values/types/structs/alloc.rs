@@ -83,7 +83,7 @@ where
             let prev = fields.insert(k, v);
             assert!(prev.is_none(), "non-unique key: {k}");
         }
-        heap.alloc(Struct::new(fields))
+        heap.alloc_representation(Struct::new(fields)).to_value()
     }
 }
 
@@ -102,6 +102,6 @@ where
             let prev = fields.insert(k, v);
             assert!(prev.is_none(), "non-unique key: {k}");
         }
-        heap.alloc(Struct::new(fields))
+        heap.alloc_representation(Struct::new(fields)).to_value()
     }
 }

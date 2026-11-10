@@ -21,6 +21,8 @@ use starlark_derive::starlark_module;
 
 use crate as starlark;
 use crate::environment::GlobalsBuilder;
+use crate::values::Heap;
+use crate::values::ValueOf;
 use crate::values::range::Range;
 
 #[starlark_module]
@@ -58,11 +60,12 @@ pub(crate) fn register_range(globals: &mut GlobalsBuilder) {
     /// # "#);
     /// ```
     #[starlark(as_type = Range, speculative_exec_safe)]
-    fn range(
+    fn range<'v>(
         #[starlark(require = pos)] a1: i32,
         #[starlark(require = pos)] a2: Option<i32>,
         #[starlark(require = pos, default = 1)] step: i32,
-    ) -> anyhow::Result<Range> {
+        heap: Heap<'v>,
+    ) -> anyhow::Result<ValueOf<'v, Range>> {
         let start = match a2 {
             None => 0,
             Some(_) => a1,
@@ -76,6 +79,6 @@ pub(crate) fn register_range(globals: &mut GlobalsBuilder) {
                 ));
             }
         };
-        Ok(Range::new(start, stop, step))
+        Ok(ValueOf::alloc(heap, Range::new(start, stop, step)))
     }
 }

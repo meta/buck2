@@ -28,6 +28,7 @@ use crate::docs::DocType;
 use crate::environment::common_documentation;
 use crate::eval::ParametersSpec;
 use crate::typing::Ty;
+use crate::values::AllocFrozenRepresentation;
 use crate::values::AllocFrozenValue;
 use crate::values::FrozenHeap;
 use crate::values::FrozenValueTyped;
@@ -41,6 +42,7 @@ use crate::values::function::NativeMeth;
 use crate::values::function::NativeMethFn;
 use crate::values::function::NativeMethod;
 use crate::values::layout::heap::name::FrozenHeapName;
+use crate::values::type_repr::StarlarkTypeRepr;
 use crate::values::types::unbound::UnboundValue;
 
 /// Methods of an object.
@@ -210,13 +212,40 @@ impl MethodsBuilder {
         value: V,
         docstring: Option<String>,
     ) {
+        let typ = V::starlark_type_repr();
+        self.set_attribute_with(name, typ, docstring, |heap| heap.alloc(value))
+    }
+
+    /// Set a constant value that is a representation, allocated the way it chose to be.
+    pub fn set_attribute_representation<'v, B>(
+        &'v mut self,
+        name: &str,
+        builder: B,
+        docstring: Option<String>,
+    ) where
+        B: for<'fv> AllocFrozenRepresentation<'fv>,
+    {
+        let typ =
+            <<B as AllocFrozenRepresentation<'static>>::Repr as StarlarkTypeRepr>::starlark_type_repr();
+        self.set_attribute_with(name, typ, docstring, |heap| {
+            heap.alloc_representation(builder).to_value()
+        })
+    }
+
+    fn set_attribute_with(
+        &mut self,
+        name: &str,
+        typ: Ty,
+        docstring: Option<String>,
+        alloc: impl for<'fv> FnOnce(FrozenHeap<'fv>) -> Value<'fv>,
+    ) {
         // We want to build an attribute, that ignores its self argument, and does no subsequent allocation.
         let attr = self.heap.with(|heap| {
-            let value = heap.alloc(value);
+            let value = alloc(heap);
             let attr = heap.alloc_simple_typed(NativeAttribute {
                 speculative_exec_safe: true,
                 docstring,
-                typ: V::starlark_type_repr(),
+                typ,
                 data: Some(value),
                 // SAFETY: Set to `Some` immediately above
                 callable: |value, _, _| Ok(unsafe { value.unwrap_unchecked() }),
@@ -433,7 +462,7 @@ mod tests {
         }
 
         let mut a = Assert::new();
-        a.globals_add(|x| x.set("magic", Magic));
+        a.globals_add(|x| x.set_representation("magic", Magic));
         a.pass(
             r#"
 assert_eq(magic.my_type, "magic")

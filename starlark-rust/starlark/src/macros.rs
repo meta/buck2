@@ -18,8 +18,9 @@
 /// Reduce boilerplate when defining a Starlark value that contains other values.
 ///
 /// The type is written once, as `X<'v>`, and freezes to `X<'fv>` — see
-/// [`Freeze`](crate::values::Freeze). The macro defines instances of
-/// [`AllocValue`](crate::values::AllocValue),
+/// [`Freeze`](crate::values::Freeze). The macro registers `X<'fv>` as the frozen form and
+/// defines instances of [`AllocFrozenRepresentation`](crate::values::AllocFrozenRepresentation)
+/// for it, [`AllocValue`](crate::values::AllocValue),
 /// [`AllocFrozenValue`](crate::values::AllocFrozenValue),
 /// [`StarlarkTypeRepr`](crate::values::type_repr::StarlarkTypeRepr) and
 /// [`UnpackValue`](crate::values::UnpackValue) for `&'v X<'v>`, plus a
@@ -44,13 +45,25 @@ macro_rules! starlark_complex_value {
                 }
             }
 
+            impl<'fv> $crate::values::AllocFrozenRepresentation<'fv> for $x<'fv> {
+                type Repr = Self;
+
+                #[inline]
+                fn alloc_frozen(
+                    self,
+                    allocator: $crate::values::FrozenAllocator<'fv>,
+                ) -> $crate::values::ValueTyped<'fv, Self> {
+                    allocator.alloc_simple(self)
+                }
+            }
+
             impl<'fv> $crate::values::AllocFrozenValue<'fv> for $x<'fv> {
                 #[inline]
                 fn alloc_frozen_value(
                     self,
                     heap: $crate::values::FrozenHeap<'fv>,
                 ) -> $crate::values::Value<'fv> {
-                    heap.alloc_simple_typed(self).to_value()
+                    heap.alloc_representation(self).to_value()
                 }
             }
 

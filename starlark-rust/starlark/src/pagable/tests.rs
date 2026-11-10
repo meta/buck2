@@ -2027,7 +2027,7 @@ fn test_static_frozen_value_round_trip() -> crate::Result<()> {
 
 starlark::globals_static!(
     PAGABLE_TEST_STATIC_GLOBALS = |globals| {
-        globals.set(
+        globals.set_representation(
             "global_value",
             SimpleData {
                 flag: true,
@@ -2039,7 +2039,7 @@ starlark::globals_static!(
 
 starlark::methods_static!(
     PAGABLE_TEST_STATIC_METHODS = |methods| {
-        methods.set_attribute(
+        methods.set_attribute_representation(
             "method_value",
             SimpleData {
                 flag: false,
@@ -2103,7 +2103,7 @@ fn test_methods_static_heap_value_round_trip() -> crate::Result<()> {
 fn colliding_static_heap_a() -> OwnedFrozenRef<'static, ()> {
     starlark::globals_static!(
         COLLIDING_STATIC_GLOBALS = |globals| {
-            globals.set(
+            globals.set_representation(
                 "a_value",
                 SimpleData {
                     flag: true,
@@ -2118,7 +2118,7 @@ fn colliding_static_heap_a() -> OwnedFrozenRef<'static, ()> {
 fn colliding_static_heap_b() -> OwnedFrozenRef<'static, ()> {
     starlark::globals_static!(
         COLLIDING_STATIC_GLOBALS = |globals| {
-            globals.set(
+            globals.set_representation(
                 "b_value",
                 SimpleData {
                     flag: false,

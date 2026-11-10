@@ -408,7 +408,7 @@ impl GlobalsBuilder {
                 })
                 .collect();
             // SAFETY: Allocated in `self.heap` just here.
-            unsafe { Self::erase(heap.alloc(Namespace::new(fields))) }
+            unsafe { Self::erase(heap.alloc_representation(Namespace::new(fields)).to_value()) }
         });
         // SAFETY: Allocated in `self.heap` just above.
         unsafe { self.set_inner(name, namespace, doc_hidden) }

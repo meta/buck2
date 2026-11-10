@@ -74,13 +74,15 @@ impl StarlarkTypeRepr for &'_ [u8] {
 
 impl<'v> AllocValue<'v> for &'_ [u8] {
     fn alloc_value(self, heap: Heap<'v>) -> Value<'v> {
-        heap.alloc(StarlarkBytes::new(self))
+        heap.alloc_representation(StarlarkBytes::new(self))
+            .to_value()
     }
 }
 
 impl<'fv> AllocFrozenValue<'fv> for &'_ [u8] {
     fn alloc_frozen_value(self, heap: FrozenHeap<'fv>) -> Value<'fv> {
-        heap.alloc(StarlarkBytes::new(self))
+        heap.alloc_representation(StarlarkBytes::new(self))
+            .to_value()
     }
 }
 
@@ -94,13 +96,15 @@ impl StarlarkTypeRepr for Vec<u8> {
 
 impl<'v> AllocValue<'v> for Vec<u8> {
     fn alloc_value(self, heap: Heap<'v>) -> Value<'v> {
-        heap.alloc(StarlarkBytes::from_vec(self))
+        heap.alloc_representation(StarlarkBytes::from_vec(self))
+            .to_value()
     }
 }
 
 impl<'fv> AllocFrozenValue<'fv> for Vec<u8> {
     fn alloc_frozen_value(self, heap: FrozenHeap<'fv>) -> Value<'fv> {
-        heap.alloc(StarlarkBytes::from_vec(self))
+        heap.alloc_representation(StarlarkBytes::from_vec(self))
+            .to_value()
     }
 }
 
@@ -269,7 +273,9 @@ impl<'v> StarlarkValue<'v> for StarlarkBytes {
         heap: Heap<'v>,
     ) -> crate::Result<Value<'v>> {
         let sliced = apply_slice(&self.content, start, stop, stride)?;
-        Ok(heap.alloc(StarlarkBytes::from_vec(sliced)))
+        Ok(heap
+            .alloc_representation(StarlarkBytes::from_vec(sliced))
+            .to_value())
     }
 
     /// `x in bytes`: supports both int (byte value) and bytes (subsequence).
@@ -305,7 +311,9 @@ impl<'v> StarlarkValue<'v> for StarlarkBytes {
             let mut result = Vec::with_capacity(self.content.len() + other.content.len());
             result.extend_from_slice(&self.content);
             result.extend_from_slice(&other.content);
-            Some(Ok(heap.alloc(StarlarkBytes::from_vec(result))))
+            Some(Ok(heap
+                .alloc_representation(StarlarkBytes::from_vec(result))
+                .to_value()))
         } else {
             None
         }
@@ -320,7 +328,9 @@ impl<'v> StarlarkValue<'v> for StarlarkBytes {
         };
         let count = std::cmp::max(0, l) as usize;
         let result = self.content.repeat(count);
-        Some(Ok(heap.alloc(StarlarkBytes::from_vec(result))))
+        Some(Ok(heap
+            .alloc_representation(StarlarkBytes::from_vec(result))
+            .to_value()))
     }
 
     fn rmul(&self, lhs: Value<'v>, heap: Heap<'v>) -> Option<crate::Result<Value<'v>>> {

@@ -28,6 +28,7 @@ use crate as starlark;
 use crate::assert::Assert;
 use crate::environment::GlobalsBuilder;
 use crate::starlark_simple_value;
+use crate::values::Heap;
 use crate::values::StarlarkValue;
 use crate::values::Value;
 use crate::values::ValueOf;
@@ -145,8 +146,8 @@ impl<'v> StarlarkValue<'v> for Nominal {}
 
 #[starlark_module]
 fn nominal_module(builder: &mut GlobalsBuilder) {
-    fn nominal() -> anyhow::Result<Nominal> {
-        Ok(Nominal)
+    fn nominal<'v>(heap: Heap<'v>) -> anyhow::Result<ValueOf<'v, Nominal>> {
+        Ok(ValueOf::alloc(heap, Nominal))
     }
 
     fn with_nominal<'v>(v: ValueOf<'v, Nominal>) -> anyhow::Result<String> {

@@ -342,11 +342,13 @@ fn test_radd() {
     impl<'v> StarlarkValue<'v> for Select {
         fn radd(&self, lhs: Value<'v>, heap: Heap<'v>) -> Option<crate::Result<Value<'v>>> {
             let lhs: Select = Select::unpack_value(lhs).unwrap().unwrap();
-            Some(Ok(heap.alloc(lhs.add(self))))
+            Some(Ok(heap.alloc_representation(lhs.add(self)).to_value()))
         }
         fn add(&self, rhs: Value<'v>, heap: Heap<'v>) -> Option<crate::Result<Value<'v>>> {
             let rhs: Select = UnpackValue::unpack_value(rhs).unwrap().unwrap();
-            Some(Ok(heap.alloc(self.clone().add(&rhs))))
+            Some(Ok(heap
+                .alloc_representation(self.clone().add(&rhs))
+                .to_value()))
         }
         fn collect_repr(&self, collector: &mut String) {
             write!(collector, "{self}").unwrap()
@@ -355,13 +357,17 @@ fn test_radd() {
 
     #[starlark_module]
     fn module(build: &mut GlobalsBuilder) {
-        fn select<'v>(xs: ValueOf<'v, ListOrTupleType<IntView<'v>>>) -> anyhow::Result<Select> {
-            Ok(Select(
+        fn select<'v>(
+            xs: ValueOf<'v, ListOrTupleType<IntView<'v>>>,
+            heap: Heap<'v>,
+        ) -> anyhow::Result<ValueOf<'v, Select>> {
+            let select = Select(
                 xs.try_items()
                     .map(|x| i32::unpack_value_err(x?.to_value()))
                     .collect::<crate::Result<_>>()
                     .map_err(|e| e.into_anyhow())?,
-            ))
+            );
+            Ok(ValueOf::alloc(heap, select))
         }
     }
 

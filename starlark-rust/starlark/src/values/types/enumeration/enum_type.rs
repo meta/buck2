@@ -226,12 +226,14 @@ impl<'v> EnumType<'v> {
 
         let mut res = SmallMap::with_capacity(elements.len());
         for (i, x) in elements.iter().enumerate() {
-            let v = heap.alloc(EnumValue {
-                id,
-                typ: typ.to_value(),
-                index: i as i32,
-                value: x.to_value(),
-            });
+            let v = heap
+                .alloc_representation(EnumValue {
+                    id,
+                    typ: typ.to_value(),
+                    index: i as i32,
+                    value: x.to_value(),
+                })
+                .to_value();
             if res.insert_hashed(x.to_value().get_hashed()?, v).is_some() {
                 return Err(crate::Error::new_other(EnumError::DuplicateEnumValue(
                     x.to_string(),

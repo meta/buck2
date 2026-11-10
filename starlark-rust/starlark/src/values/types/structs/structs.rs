@@ -37,6 +37,7 @@ use crate::typing::oracle::ctx::TypingOracleCtx;
 use crate::typing::structs::TyStruct;
 use crate::util::arc_str::ArcStr;
 use crate::values::Heap;
+use crate::values::ValueTyped;
 use crate::values::structs::value::Struct;
 
 #[derive(
@@ -85,12 +86,15 @@ pub(crate) fn register_struct(builder: &mut GlobalsBuilder) {
         ty_custom_function = StructType,
         as_type = Struct<'static>,
     )]
-    fn r#struct<'v>(args: &Arguments<'v, '_>, heap: Heap<'v>) -> starlark::Result<Struct<'v>> {
+    fn r#struct<'v>(
+        args: &Arguments<'v, '_>,
+        heap: Heap<'v>,
+    ) -> starlark::Result<ValueTyped<'v, Struct<'v>>> {
         args.no_positional_args(heap)?;
         // TODO(nga): missing optimization: practically most `struct` invocations are
         //   performed with fixed named arguments, e.g. `struct(a = 1, b = 2)`.
         //   In this case we can avoid allocating the map, but instead
         //   allocate field index once at compilation time and store field values in a vector.
-        Ok(Struct::new(args.names_map()?))
+        Ok(heap.alloc_representation(Struct::new(args.names_map()?)))
     }
 }

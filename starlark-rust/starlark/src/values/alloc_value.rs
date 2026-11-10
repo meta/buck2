@@ -21,7 +21,6 @@ use either::Either;
 
 use crate::values::FrozenHeap;
 use crate::values::Heap;
-use crate::values::StringValue;
 use crate::values::Value;
 use crate::values::ValueOf;
 use crate::values::type_expr::StarlarkTypeExpr;
@@ -46,12 +45,6 @@ pub trait AllocValue<'v> {
     ///
     /// Some values are not allocated: an empty string or `None` is a reference to a static.
     fn alloc_value(self, heap: Heap<'v>) -> ValueOf<'v, Self::Type>;
-}
-
-/// Type which allocates a string.
-pub trait AllocStringValue<'v>: AllocValue<'v> + Sized {
-    /// Allocate a string.
-    fn alloc_string_value(self, heap: Heap<'v>) -> StringValue<'v>;
 }
 
 impl<'v> AllocValue<'v> for Value<'v> {
@@ -97,12 +90,6 @@ pub trait AllocFrozenValue<'fv> {
     /// The value, on the frozen heap, as the handle of [`Type`](Self::Type) it is by
     /// construction.
     fn alloc_frozen_value(self, heap: FrozenHeap<'fv>) -> ValueOf<'fv, Self::Type>;
-}
-
-/// Type which allocates a string.
-pub trait AllocFrozenStringValue<'fv>: AllocFrozenValue<'fv> + Sized {
-    /// Allocate a string.
-    fn alloc_frozen_string_value(self, heap: FrozenHeap<'fv>) -> StringValue<'fv>;
 }
 
 impl<'fv> AllocFrozenValue<'fv> for Value<'fv> {

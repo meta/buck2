@@ -24,8 +24,7 @@ use crate::values::AllocValue;
 use crate::values::FrozenHeap;
 use crate::values::Heap;
 use crate::values::ValueOf;
-use crate::values::alloc_value::AllocFrozenStringValue;
-use crate::values::alloc_value::AllocStringValue;
+use crate::values::string::StarlarkStr;
 use crate::values::structs::StructRef;
 use crate::values::structs::value::Struct;
 
@@ -57,7 +56,7 @@ impl AllocStruct<iter::Empty<(String, String)>> {
 impl<'v, K, V, S> AllocValue<'v> for AllocStruct<S>
 where
     S: IntoIterator<Item = (K, V)>,
-    K: AllocStringValue<'v>,
+    K: AllocValue<'v, Type = StarlarkStr>,
     V: AllocValue<'v>,
 {
     type Type = StructRef<'v>;
@@ -66,7 +65,7 @@ where
         let iter = self.0.into_iter();
         let mut fields = SmallMap::with_capacity(iter.size_hint().0);
         for (k, v) in iter {
-            let k = k.alloc_string_value(heap);
+            let k = k.alloc_value(heap).get();
             let v = v.alloc_value(heap).to_value();
             let prev = fields.insert(k, v);
             assert!(prev.is_none(), "non-unique key: {k}");
@@ -78,7 +77,7 @@ where
 impl<'fv, K, V, S> AllocFrozenValue<'fv> for AllocStruct<S>
 where
     S: IntoIterator<Item = (K, V)>,
-    K: AllocFrozenStringValue<'fv>,
+    K: AllocFrozenValue<'fv, Type = StarlarkStr>,
     V: AllocFrozenValue<'fv>,
 {
     type Type = StructRef<'fv>;
@@ -87,7 +86,7 @@ where
         let iter = self.0.into_iter();
         let mut fields = SmallMap::with_capacity(iter.size_hint().0);
         for (k, v) in iter {
-            let k = k.alloc_frozen_string_value(heap);
+            let k = k.alloc_frozen_value(heap).get();
             let v = v.alloc_frozen_value(heap).to_value();
             let prev = fields.insert(k, v);
             assert!(prev.is_none(), "non-unique key: {k}");

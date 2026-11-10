@@ -59,7 +59,6 @@ use crate::values::Tracer;
 use crate::values::UnpackValue;
 use crate::values::Value;
 use crate::values::ValueOf;
-use crate::values::alloc_value::AllocStringValue;
 use crate::values::layout::avalue::AValue;
 use crate::values::layout::avalue::AValueImpl;
 use crate::values::layout::heap::repr::AValueRepr;
@@ -437,12 +436,6 @@ where
         // The freezer hands a frozen value back at `'fv` through its `SealEdge`.
         Ok(FrozenValueTyped::new_err(self.0.freeze(freezer)?)
             .expect("a frozen value's type does not change across brands"))
-    }
-}
-
-impl<'v> AllocStringValue<'v> for StringValue<'v> {
-    fn alloc_string_value(self, _heap: Heap<'v>) -> StringValue<'v> {
-        self
     }
 }
 

@@ -39,7 +39,6 @@ use crate::values::HeapSendable;
 #[cfg(test)]
 use crate::values::OwnedFrozen;
 use crate::values::OwnedFrozenRef;
-use crate::values::StarlarkValue;
 use crate::values::StringValue;
 use crate::values::Trace;
 use crate::values::ValueTyped;
@@ -238,12 +237,6 @@ impl<'v> Heap<'v> {
     /// Allocate a new value on a [`Heap`].
     pub fn alloc<T: AllocValue<'v>>(self, x: T) -> Value<'v> {
         x.alloc_value(self).to_value()
-    }
-
-    /// Allocate a value and return [`ValueTyped`] of it.
-    /// Can fail if the [`AllocValue`] trait generates a different type on the heap.
-    pub fn alloc_typed<T: AllocValue<'v> + StarlarkValue<'v>>(self, x: T) -> ValueTyped<'v, T> {
-        ValueTyped::new(self.alloc(x)).expect("just allocated value must have the right type")
     }
 
     pub(crate) unsafe fn visit_arena(

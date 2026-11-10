@@ -47,14 +47,12 @@ use crate::values::type_repr::StarlarkTypeRepr;
 /// not looked at, so `T` is what the caller asserts of the items, not something verified.
 pub struct StarlarkIter<T: StarlarkTypeRepr>(PhantomData<T>);
 
-impl<'v, T: StarlarkTypeRepr> UnpackValue<'v> for StarlarkIter<T> {
+impl<'v, T: StarlarkTypeExpr<'v>> UnpackValue<'v> for StarlarkIter<T> {
+    type Type = Self;
     type Error = Infallible;
 
-    fn unpack_value_impl(value: Value<'v>) -> Result<Option<Self>, Self::Error> {
-        Ok(
-            TyStarlarkValue::is_iterable(&value.vtable().starlark_value.ty)
-                .then_some(StarlarkIter(PhantomData)),
-        )
+    fn unpack(_value: ValueOf<'v, Self>, _get: ValueOf<'v, Self>) -> Result<Self, Infallible> {
+        Ok(StarlarkIter(PhantomData))
     }
 }
 

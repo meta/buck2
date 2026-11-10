@@ -489,9 +489,8 @@ fn render_option(expr: Option<syn::Expr>) -> syn::Expr {
 fn render_starlark_type(typ: &syn::Type) -> syn::Expr {
     syn::parse_quote! {
         {
-            #[allow(clippy::extra_unused_lifetimes)]
             fn get_type_string<'v>() -> starlark::typing::Ty {
-                <#typ as starlark::values::type_repr::StarlarkTypeRepr>::starlark_type_repr()
+                <<#typ as starlark::values::UnpackValue<'v>>::Type as starlark::values::type_repr::StarlarkTypeRepr>::starlark_type_repr()
             }
             get_type_string()
         }

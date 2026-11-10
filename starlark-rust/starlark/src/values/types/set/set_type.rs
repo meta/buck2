@@ -62,10 +62,11 @@ impl<'v, T: StarlarkTypeExpr<'v>> StarlarkTypeExpr<'v> for SetType<T> {
 impl<'v> StarlarkTypeExprStable<'v> for SetType<Value<'v>> {}
 
 impl<'v, T: StarlarkTypeExpr<'v>> UnpackValue<'v> for SetType<T> {
+    type Type = Self;
     type Error = Infallible;
 
-    fn unpack_value_impl(value: Value<'v>) -> Result<Option<Self>, Self::Error> {
-        Ok(Self::matches(value).then_some(SetType { _item: PhantomData }))
+    fn unpack(_value: ValueOf<'v, Self>, _get: ValueOf<'v, Self>) -> Result<Self, Infallible> {
+        Ok(SetType { _item: PhantomData })
     }
 }
 

@@ -37,9 +37,7 @@ struct StarlarkValueAttrs {
     /// The `type()` string. Required unless the impl is a representation that names its
     /// `Type`, whose string it is then.
     typ: Option<syn::Expr>,
-    /// Implement `UnpackValue` for `&T`.
-    /// Note we are implementing `UnpackValue` for `&T` instead of `T`,
-    /// therefore we use proc macro on impl trait instead of `#[derive]` on struct.
+    /// Accepted and does nothing: `UnpackValue for &T` is a blanket impl.
     unpack_value: bool,
     /// Implement `StarlarkTypeRepr` for `&T`.
     starlark_type_repr: bool,
@@ -257,17 +255,10 @@ fn is_impl_starlark_value(
 }
 
 impl ImplStarlarkValue {
-    /// Impl `UnpackValue for &T`.
+    /// Impl `StarlarkTypeRepr for &T`.
     fn impl_unpack_value(&self) -> syn::Result<proc_macro2::TokenStream> {
-        if !self.attrs.unpack_value && !self.attrs.starlark_type_repr {
+        if !self.attrs.starlark_type_repr {
             return Ok(proc_macro2::TokenStream::new());
-        }
-
-        if !self.attrs.unpack_value || !self.attrs.starlark_type_repr {
-            return Err(syn::Error::new_spanned(
-                &self.input,
-                "`UnpackValue` and `StarlarkTypeRepr` can only be specified together",
-            ));
         }
 
         GenericsUtil::new(&self.input.generics).assert_only_lifetime_params()?;
@@ -286,16 +277,6 @@ impl ImplStarlarkValue {
 
                 fn starlark_type_repr() -> starlark::typing::Ty {
                     <#self_ty as starlark::values::type_repr::StarlarkTypeRepr>::starlark_type_repr()
-                }
-            }
-
-            impl<#params> starlark::values::UnpackValue<#lt> for &#lt #self_ty
-            #where_clause
-            {
-                type Error = std::convert::Infallible;
-
-                fn unpack_value_impl(value: starlark::values::Value<#lt>) -> Result<Option<&#lt #self_ty>, Self::Error> {
-                    std::result::Result::Ok(value.downcast_ref())
                 }
             }
         })
@@ -394,7 +375,7 @@ impl ImplStarlarkValue {
                 syn::parse_quote! {
                     #[inline]
                     fn get(value: starlark::values::Value<#lt>) -> Option<Self::Get> {
-                        <Self as starlark::values::UnpackValue<#lt>>::unpack_value_opt(value)
+                        <Self as starlark::__derive_refs::ViewOfRepresentations<#lt>>::from_value(value)
                     }
                 },
             ],

@@ -15,7 +15,6 @@
  * limitations under the License.
  */
 
-use std::any;
 use std::cmp::Ordering;
 use std::fmt;
 use std::fmt::Debug;
@@ -30,7 +29,6 @@ use dupe::Dupe_;
 use dupe::IterDupedExt;
 use dupe::OptionDupedExt;
 use either::Either;
-use num_bigint::BigInt;
 use serde::Serialize;
 use serde::Serializer;
 use starlark_syntax::value_error;
@@ -335,27 +333,6 @@ impl<'v> Value<'v> {
             Some(NumRef::Float(*float))
         } else {
             None
-        }
-    }
-
-    pub(crate) fn unpack_integer<I>(self) -> crate::Result<Option<I>>
-    where
-        I: TryFrom<i32>,
-        I: TryFrom<&'v BigInt>,
-    {
-        let Some(num) = StarlarkIntRef::unpack_value_opt(self) else {
-            return Ok(None);
-        };
-        let option = match num {
-            StarlarkIntRef::Small(x) => I::try_from(x.to_i32()).ok(),
-            StarlarkIntRef::Big(x) => x.unpack_integer(),
-        };
-        match option {
-            Some(i) => Ok(Some(i)),
-            None => Err(crate::Error::new_value(IntegerTooBigError {
-                integer_type: any::type_name::<I>(),
-                value: num.to_string(),
-            })),
         }
     }
 

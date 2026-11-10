@@ -19,10 +19,9 @@
 ///
 /// The type is written once, as `X<'v>`, and freezes to `X<'fv>` — see
 /// [`Freeze`](crate::values::Freeze). The macro registers `X<'fv>` as the frozen form and
-/// defines instances of [`AllocFrozenRepresentation`](crate::values::AllocFrozenRepresentation)
-/// for it, [`StarlarkTypeRepr`](crate::values::type_repr::StarlarkTypeRepr) and
-/// [`UnpackValue`](crate::values::UnpackValue) for `&'v X<'v>`, plus a
-/// `X::from_value` downcast that matches frozen and unfrozen instances alike. A value is
+/// defines an instance of [`AllocFrozenRepresentation`](crate::values::AllocFrozenRepresentation)
+/// for it, plus a `X::from_value` downcast that matches frozen and unfrozen instances alike. A
+/// value is
 /// allocated with [`Heap::alloc_representation`](crate::values::Heap::alloc_representation).
 ///
 /// Hand-expand it when a piece needs customizing.
@@ -52,28 +51,9 @@ macro_rules! starlark_complex_value {
             impl<'v> $x<'v> {
                 /// Downcast the value.
                 #[inline]
+                #[allow(dead_code)] // A type private to a module may not use it.
                 pub fn from_value(x: $crate::values::Value<'v>) -> Option<&'v Self> {
                     x.downcast_ref::<$x<'v>>()
-                }
-            }
-
-            impl<'v> $crate::values::type_repr::StarlarkTypeRepr for &'v $x<'v> {
-                type Canonical = $x<'v>;
-
-                #[inline]
-                fn starlark_type_repr() -> $crate::typing::Ty {
-                    <$x as $crate::values::StarlarkValue>::get_type_starlark_repr()
-                }
-            }
-
-            impl<'v> $crate::values::UnpackValue<'v> for &'v $x<'v> {
-                type Error = std::convert::Infallible;
-
-                #[inline]
-                fn unpack_value_impl(
-                    x: $crate::values::Value<'v>,
-                ) -> Result<Option<&'v $x<'v>>, Self::Error> {
-                    Ok($x::from_value(x))
                 }
             }
         };
@@ -120,9 +100,8 @@ macro_rules! starlark_complex_value {
 /// }
 /// ```
 ///
-/// The `starlark_simple_value!` macro defines instances of
-/// [`ProvidesStaticType`](crate::values::ProvidesStaticType) and
-/// [`UnpackValue`](crate::values::UnpackValue); the allocation impls come from
+/// The `starlark_simple_value!` macro defines an instance of
+/// [`ProvidesStaticType`](crate::values::ProvidesStaticType); the allocation impls come from
 /// `#[starlark_value]`. It also defines a method:
 ///
 /// ```
@@ -144,27 +123,9 @@ macro_rules! starlark_simple_value {
             impl $x {
                 /// Downcast a value to self type.
                 #[inline]
+                #[allow(dead_code)] // A type private to a module may not use it.
                 pub fn from_value<'v>(x: $crate::values::Value<'v>) -> Option<&'v Self> {
                     x.downcast_ref::<$x>()
-                }
-            }
-
-            impl<'v> $crate::values::type_repr::StarlarkTypeRepr for &'v $x {
-                type Canonical = $x;
-
-                fn starlark_type_repr() -> $crate::typing::Ty {
-                    <$x as $crate::values::StarlarkValue>::get_type_starlark_repr()
-                }
-            }
-
-            impl<'v> $crate::values::UnpackValue<'v> for &'v $x {
-                type Error = std::convert::Infallible;
-
-                #[inline]
-                fn unpack_value_impl(
-                    x: $crate::values::Value<'v>,
-                ) -> std::result::Result<Option<&'v $x>, Self::Error> {
-                    std::result::Result::Ok($x::from_value(x))
                 }
             }
         };

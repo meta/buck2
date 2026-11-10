@@ -31,8 +31,8 @@ use crate::values::AllocValue;
 use crate::values::FrozenHeap;
 use crate::values::Heap;
 use crate::values::UnpackValue;
-use crate::values::Value;
 use crate::values::ValueOf;
+use crate::values::ValueTyped;
 use crate::values::type_repr::StarlarkTypeRepr;
 use crate::values::types::float::StarlarkFloat;
 use crate::values::types::int::int_or_big::StarlarkInt;
@@ -62,13 +62,18 @@ pub enum NumRef<'v> {
 
 /// A conversion from `int | float`, not a type expression: both variants are by value.
 impl<'v> UnpackValue<'v> for NumRef<'v> {
+    type Type = Either<IntView<'v>, StarlarkFloat>;
     type Error = Infallible;
 
-    fn unpack_value_impl(value: Value<'v>) -> Result<Option<Self>, Self::Error> {
-        if let Some(int) = StarlarkIntRef::unpack(value) {
-            return Ok(Some(NumRef::Int(int)));
-        }
-        Ok(StarlarkFloat::unpack_value_opt(value).map(NumRef::Float))
+    #[inline]
+    fn unpack(
+        _value: ValueOf<'v, Self::Type>,
+        get: Either<IntView<'v>, ValueTyped<'v, StarlarkFloat>>,
+    ) -> Result<Self, Infallible> {
+        Ok(match get {
+            Either::Left(int) => NumRef::Int(int.as_int_ref()),
+            Either::Right(float) => NumRef::Float(*float.as_ref()),
+        })
     }
 }
 

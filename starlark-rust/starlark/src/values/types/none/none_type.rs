@@ -41,6 +41,7 @@ use crate::values::StarlarkValue;
 use crate::values::UnpackValue;
 use crate::values::Value;
 use crate::values::ValueOf;
+use crate::values::ValueTyped;
 
 /// Define the None type, use [`NoneType`] in Rust.
 #[derive(
@@ -125,13 +126,14 @@ impl<'fv> AllocFrozenValue<'fv> for NoneType {
 }
 
 impl<'v> UnpackValue<'v> for NoneType {
+    type Type = NoneType;
     type Error = Infallible;
 
-    fn unpack_value_impl(value: Value<'v>) -> Result<Option<Self>, Self::Error> {
-        if value.is_none() {
-            Ok(Some(NoneType))
-        } else {
-            Ok(None)
-        }
+    #[inline]
+    fn unpack(
+        _value: ValueOf<'v, NoneType>,
+        _get: ValueTyped<'v, NoneType>,
+    ) -> Result<Self, Infallible> {
+        Ok(NoneType)
     }
 }

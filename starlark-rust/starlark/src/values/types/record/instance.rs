@@ -44,7 +44,6 @@ use crate::values::record::record_type::RecordTypeError;
 use crate::values::record::record_type::RecordTypeGen;
 use crate::values::record::record_type::RecordTypeView;
 use crate::values::record::record_type::RecordVariant;
-use crate::values::type_repr::StarlarkTypeRepr;
 use crate::values::types::type_instance_id::TypeInstanceId;
 
 #[derive(Debug, thiserror::Error)]
@@ -187,24 +186,6 @@ unsafe impl<'v> TrailingValues<'v> for Record<'v> {
 
     fn content_mut_ptr(&mut self) -> *mut Value<'v> {
         self.content.as_mut_ptr()
-    }
-}
-
-impl<'v> StarlarkTypeRepr for &'v Record<'v> {
-    type Canonical = Record<'v>;
-
-    #[inline]
-    fn starlark_type_repr() -> Ty {
-        <Record as StarlarkValue>::get_type_starlark_repr()
-    }
-}
-
-impl<'v> UnpackValue<'v> for &'v Record<'v> {
-    type Error = std::convert::Infallible;
-
-    #[inline]
-    fn unpack_value_impl(x: Value<'v>) -> Result<Option<&'v Record<'v>>, Self::Error> {
-        Ok(Record::from_value(x))
     }
 }
 

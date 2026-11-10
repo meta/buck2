@@ -66,13 +66,14 @@ impl<'v, K: StarlarkTypeExpr<'v>, V: StarlarkTypeExpr<'v>> StarlarkTypeExpr<'v> 
 impl<'v> StarlarkTypeExprStable<'v> for DictType<Value<'v>, Value<'v>> {}
 
 impl<'v, K: StarlarkTypeExpr<'v>, V: StarlarkTypeExpr<'v>> UnpackValue<'v> for DictType<K, V> {
+    type Type = Self;
     type Error = Infallible;
 
-    fn unpack_value_impl(value: Value<'v>) -> Result<Option<Self>, Self::Error> {
-        Ok(Self::matches(value).then_some(DictType {
+    fn unpack(_value: ValueOf<'v, Self>, _get: ValueOf<'v, Self>) -> Result<Self, Infallible> {
+        Ok(DictType {
             k: PhantomData,
             v: PhantomData,
-        }))
+        })
     }
 }
 

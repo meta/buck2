@@ -177,6 +177,7 @@ mod tests {
     use crate::values::UnpackValue;
     use crate::values::Value;
     use crate::values::ValueOf;
+    use crate::values::ValueTyped;
     use crate::values::none::NoneType;
 
     #[test]
@@ -226,10 +227,14 @@ mod tests {
         }
 
         impl<'v> UnpackValue<'v> for Bool2 {
+            type Type = Self;
             type Error = Infallible;
 
-            fn unpack_value_impl(value: Value<'v>) -> Result<Option<Self>, Self::Error> {
-                Ok(Some(*value.downcast_ref::<Bool2>().unwrap()))
+            fn unpack(
+                _value: ValueOf<'v, Self>,
+                get: ValueTyped<'v, Self>,
+            ) -> Result<Self, Infallible> {
+                Ok(*get.as_ref())
             }
         }
 

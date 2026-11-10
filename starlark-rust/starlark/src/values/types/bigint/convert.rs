@@ -15,6 +15,8 @@
  * limitations under the License.
  */
 
+use std::convert::Infallible;
+
 use num_bigint::BigInt;
 
 use crate::typing::Ty;
@@ -23,7 +25,6 @@ use crate::values::AllocValue;
 use crate::values::FrozenHeap;
 use crate::values::Heap;
 use crate::values::UnpackValue;
-use crate::values::Value;
 use crate::values::ValueOf;
 use crate::values::type_repr::StarlarkTypeRepr;
 use crate::values::types::int::int_or_big::StarlarkInt;
@@ -186,55 +187,63 @@ impl<'fv> AllocFrozenValue<'fv> for BigInt {
 }
 
 impl<'v> UnpackValue<'v> for u32 {
+    type Type = IntView<'v>;
     type Error = crate::Error;
 
-    fn unpack_value_impl(value: Value<'v>) -> crate::Result<Option<u32>> {
-        value.unpack_integer()
+    #[inline]
+    fn unpack(_value: ValueOf<'v, IntView<'v>>, int: IntView<'v>) -> crate::Result<Self> {
+        int.to_integer()
     }
 }
 
 impl<'v> UnpackValue<'v> for u64 {
+    type Type = IntView<'v>;
     type Error = crate::Error;
 
-    fn unpack_value_impl(value: Value<'v>) -> crate::Result<Option<u64>> {
-        value.unpack_integer()
+    #[inline]
+    fn unpack(_value: ValueOf<'v, IntView<'v>>, int: IntView<'v>) -> crate::Result<Self> {
+        int.to_integer()
     }
 }
 
 impl<'v> UnpackValue<'v> for i64 {
+    type Type = IntView<'v>;
     type Error = crate::Error;
 
-    fn unpack_value_impl(value: Value<'v>) -> crate::Result<Option<i64>> {
-        value.unpack_integer()
+    #[inline]
+    fn unpack(_value: ValueOf<'v, IntView<'v>>, int: IntView<'v>) -> crate::Result<Self> {
+        int.to_integer()
     }
 }
 
 impl<'v> UnpackValue<'v> for usize {
+    type Type = IntView<'v>;
     type Error = crate::Error;
 
-    fn unpack_value_impl(value: Value<'v>) -> crate::Result<Option<usize>> {
-        value.unpack_integer()
+    #[inline]
+    fn unpack(_value: ValueOf<'v, IntView<'v>>, int: IntView<'v>) -> crate::Result<Self> {
+        int.to_integer()
     }
 }
 
 impl<'v> UnpackValue<'v> for isize {
+    type Type = IntView<'v>;
     type Error = crate::Error;
 
-    fn unpack_value_impl(value: Value<'v>) -> crate::Result<Option<isize>> {
-        value.unpack_integer()
+    #[inline]
+    fn unpack(_value: ValueOf<'v, IntView<'v>>, int: IntView<'v>) -> crate::Result<Self> {
+        int.to_integer()
     }
 }
 
 impl<'v> UnpackValue<'v> for BigInt {
-    type Error = crate::Error;
+    type Type = IntView<'v>;
+    type Error = Infallible;
 
-    fn unpack_value_impl(value: Value<'v>) -> crate::Result<Option<BigInt>> {
-        let Some(int) = StarlarkIntRef::unpack_value_opt(value) else {
-            return Ok(None);
-        };
-        Ok(match int {
-            StarlarkIntRef::Small(x) => Some(BigInt::from(x.to_i32())),
-            StarlarkIntRef::Big(x) => Some(x.get().to_owned()),
+    fn unpack(_value: ValueOf<'v, IntView<'v>>, int: IntView<'v>) -> Result<Self, Infallible> {
+        Ok(match int.as_int_ref() {
+            StarlarkIntRef::Small(x) => BigInt::from(x.to_i32()),
+            StarlarkIntRef::Big(x) => x.get().to_owned(),
         })
     }
 }

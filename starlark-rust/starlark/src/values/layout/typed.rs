@@ -17,7 +17,6 @@
 
 pub(crate) mod string;
 
-use std::convert::Infallible;
 use std::fmt;
 use std::fmt::Debug;
 use std::fmt::Display;
@@ -62,7 +61,6 @@ use crate::values::alloc_value::AllocStringValue;
 use crate::values::layout::avalue::AValue;
 use crate::values::layout::avalue::AValueImpl;
 use crate::values::layout::heap::repr::AValueRepr;
-use crate::values::starlark_type_id::StarlarkTypeId;
 use crate::values::string::str_type::StarlarkStr;
 use crate::values::type_repr::StarlarkTypeRepr;
 
@@ -391,12 +389,42 @@ impl<'v, T: StarlarkValue<'v>> StarlarkTypeRepr for ValueTyped<'v, T> {
     }
 }
 
-impl<'v, T: StarlarkValue<'v>> UnpackValue<'v> for ValueTyped<'v, T> {
-    type Error = Infallible;
+/// A parameter bound to this representation of the type: a value of the type in another
+/// representation is of the declared type and fails as a conversion.
+impl<'v, T: StarlarkValue<'v>> UnpackValue<'v> for ValueTyped<'v, T>
+where
+    T::Type: StarlarkTypeExpr<'v>,
+{
+    type Type = T::Type;
+    type Error = crate::Error;
 
-    fn unpack_value_impl(value: Value<'v>) -> Result<Option<Self>, Self::Error> {
-        Ok(ValueTyped::new(value))
+    #[inline]
+    fn unpack(
+        value: ValueOf<'v, T::Type>,
+        _get: <T::Type as StarlarkTypeExpr<'v>>::Get,
+    ) -> crate::Result<Self> {
+        let value = value.to_value();
+        ValueTyped::new(value).ok_or_else(|| not_representation_error::<T>(value))
     }
+}
+
+#[derive(thiserror::Error, Debug)]
+#[error(
+    "Value `{value}` is a `{ty}`, but not in the representation `{representation}` the function needs"
+)]
+struct NotRepresentationError {
+    ty: Ty,
+    representation: &'static str,
+    value: String,
+}
+
+#[cold]
+fn not_representation_error<'v, T: StarlarkValue<'v>>(value: Value<'v>) -> crate::Error {
+    crate::Error::new_value(NotRepresentationError {
+        ty: T::starlark_type_repr(),
+        representation: std::any::type_name::<T>(),
+        value: value.to_string_for_type_error(),
+    })
 }
 
 impl<'v, T: StarlarkValue<'v>> AllocValue<'v> for ValueTyped<'v, T>
@@ -455,20 +483,27 @@ impl<'v, T: StarlarkValue<'v>> StarlarkTypeRepr for FrozenValueTyped<'v, T> {
     }
 }
 
-impl<'v, T: StarlarkValue<'v>> UnpackValue<'v> for FrozenValueTyped<'v, T> {
+/// A parameter bound to this representation of the type, frozen: an unfrozen value of the type
+/// is of the declared type and fails as a conversion.
+impl<'v, T: StarlarkValue<'v>> UnpackValue<'v> for FrozenValueTyped<'v, T>
+where
+    T::Type: StarlarkTypeExpr<'v>,
+{
+    type Type = T::Type;
     type Error = crate::Error;
 
-    fn unpack_value_impl(value: Value<'v>) -> crate::Result<Option<Self>> {
-        if value.is_frozen() {
-            Ok(FrozenValueTyped::new_frozen(value))
-        } else if StarlarkTypeId::of::<T>() == value.vtable().starlark_type_id {
-            Err(crate::Error::new_value(NotFrozenError {
+    fn unpack(
+        value: ValueOf<'v, T::Type>,
+        _get: <T::Type as StarlarkTypeExpr<'v>>::Get,
+    ) -> crate::Result<Self> {
+        let value = value.to_value();
+        if !value.is_frozen() {
+            return Err(crate::Error::new_value(NotFrozenError {
                 expected: T::starlark_type_repr(),
                 value: value.to_string_for_type_error(),
-            }))
-        } else {
-            Ok(None)
+            }));
         }
+        FrozenValueTyped::new_frozen(value).ok_or_else(|| not_representation_error::<T>(value))
     }
 }
 

@@ -37,6 +37,7 @@ use starlark::values::StringValue;
 use starlark::values::UnpackValue;
 use starlark::values::Value;
 use starlark::values::ValueOf;
+use starlark::values::ValueTyped;
 use starlark::values::none::NoneOr;
 use starlark::values::starlark_value;
 use starlark::values::structs::AllocStruct;
@@ -66,13 +67,12 @@ impl<'v> StarlarkValue<'v> for StarlarkAction {
     }
 }
 
-impl<'a> UnpackValue<'a> for StarlarkAction {
+impl<'v> UnpackValue<'v> for StarlarkAction {
+    type Type = Self;
     type Error = Infallible;
 
-    fn unpack_value_impl(value: Value<'a>) -> Result<Option<Self>, Self::Error> {
-        Ok(value
-            .downcast_ref::<Self>()
-            .map(|value| Self(value.0.dupe())))
+    fn unpack(_value: ValueOf<'v, Self>, get: ValueTyped<'v, Self>) -> Result<Self, Infallible> {
+        Ok(Self(get.as_ref().0.dupe()))
     }
 }
 
@@ -141,13 +141,12 @@ impl<'v> StarlarkValue<'v> for StarlarkActionQueryNode {
     }
 }
 
-impl<'a> UnpackValue<'a> for StarlarkActionQueryNode {
+impl<'v> UnpackValue<'v> for StarlarkActionQueryNode {
+    type Type = Self;
     type Error = Infallible;
 
-    fn unpack_value_impl(value: Value<'a>) -> Result<Option<Self>, Self::Error> {
-        Ok(value
-            .downcast_ref::<Self>()
-            .map(|value| Self(value.0.dupe())))
+    fn unpack(_value: ValueOf<'v, Self>, get: ValueTyped<'v, Self>) -> Result<Self, Infallible> {
+        Ok(Self(get.as_ref().0.dupe()))
     }
 }
 

@@ -31,6 +31,7 @@ use starlark::values::StringValue;
 use starlark::values::UnpackValue;
 use starlark::values::Value;
 use starlark::values::ValueOf;
+use starlark::values::ValueTyped;
 use starlark::values::list::AllocList;
 use starlark::values::none::NoneOr;
 use starlark::values::starlark_value;
@@ -64,13 +65,12 @@ impl<'v> StarlarkValue<'v> for StarlarkTargetNode {
     }
 }
 
-impl<'a> UnpackValue<'a> for StarlarkTargetNode {
+impl<'v> UnpackValue<'v> for StarlarkTargetNode {
+    type Type = Self;
     type Error = Infallible;
 
-    fn unpack_value_impl(value: Value<'a>) -> Result<Option<Self>, Self::Error> {
-        Ok(value
-            .downcast_ref::<Self>()
-            .map(|value| Self(value.0.dupe())))
+    fn unpack(_value: ValueOf<'v, Self>, get: ValueTyped<'v, Self>) -> Result<Self, Infallible> {
+        Ok(Self(get.as_ref().0.dupe()))
     }
 }
 

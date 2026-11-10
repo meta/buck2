@@ -25,8 +25,11 @@ use either::Either;
 use starlark_syntax::StarlarkResultExt;
 
 use crate::typing::Ty;
+use crate::values::StarlarkType;
+use crate::values::StarlarkValue;
 use crate::values::Value;
 use crate::values::ValueOf;
+use crate::values::ValueTyped;
 use crate::values::type_expr::StarlarkTypeExpr;
 use crate::values::type_repr::StarlarkTypeRepr;
 
@@ -79,39 +82,6 @@ pub(crate) fn changed_since_checked_error<'v, T: StarlarkTypeExpr<'v>>(
         crate::RuntimeTypeErrorKind::ValueUnpack,
         ChangedSinceChecked(T::starlark_type_repr(), value.to_string_for_type_error()),
     )
-}
-
-/// Debug-build check that an unpack agreed with the matcher for its declared type: the value was
-/// accepted, meaning unpacked or rejected only by a conversion error, iff it is of the type.
-///
-/// This is the contract of [`UnpackValue`]; the typechecker and the generated documentation take
-/// it on faith, and nothing else verifies it. A disagreement is a bug in the `UnpackValue` or
-/// `StarlarkTypeRepr` impl rather than in the Starlark program, hence a panic.
-#[cfg(debug_assertions)]
-fn check_type_agreement<'v, T: UnpackValue<'v>>(
-    value: Value<'v>,
-    accepted: bool,
-    param_name: Option<&str>,
-) {
-    use crate::values::typing::type_compiled::matcher::TypeMatcher;
-
-    let rust_type = std::any::type_name::<T>();
-    let matcher = type_matcher::<T>();
-    let matches = matcher.matches(value);
-    if matches != accepted {
-        let param = match param_name {
-            Some(name) => format!("parameter `{name}`"),
-            None => "value".to_owned(),
-        };
-        panic!(
-            "Unpack of {param} disagrees with its declared type: Rust type `{rust_type}` declares \
-             Starlark type `{ty}`, which {matches} `{value}`, but the unpack {accepted} it",
-            ty = T::starlark_type_repr(),
-            matches = if matches { "accepts" } else { "rejects" },
-            value = value.to_string_for_type_error(),
-            accepted = if accepted { "accepted" } else { "rejected" },
-        );
-    }
 }
 
 /// The runtime matcher for `T::starlark_type_repr()`, built once per Rust type: what the debug
@@ -217,116 +187,95 @@ impl<A: UnpackValueErrorInfallible, B: UnpackValueErrorInfallible> UnpackValueEr
     }
 }
 
-/// How to convert a [`Value`] to a Rust type. Required for all arguments in
-/// a [`#[starlark_module]`](macro@crate::starlark_module) definition.
+/// A conversion from a Starlark type to a Rust type: how a parameter of a
+/// [`#[starlark_module]`](macro@crate::starlark_module) function is bound.
 ///
-/// Note for simple references it often can be implemented with `#[starlark_value(UnpackValue)]`,
-/// for example:
+/// [`Type`](Self::Type) is the Starlark type converted from, which is what the typechecker and
+/// the documentation go by, and [`unpack`](Self::unpack) is handed a value already known to be
+/// of it. A conversion can fail, but it cannot accept or reject differently from its type.
 ///
-/// ```
-/// # use allocative::Allocative;
-/// # use starlark::any::ProvidesStaticType;
-/// # use starlark::values::{NoSerialize, StarlarkPagable, StarlarkValue, starlark_value};
-///
-/// #[derive(
-///     Debug,
-///     derive_more::Display,
-///     Allocative,
-///     NoSerialize,
-///     StarlarkPagable,
-///     ProvidesStaticType
-/// )]
-/// struct MySimpleValue;
-///
-/// #[starlark_value(type = "MySimpleValue", UnpackValue, StarlarkTypeRepr)]
-/// impl<'v> StarlarkValue<'v> for MySimpleValue {}
-/// ```
-///
-/// Whereas for types that aren't also [`StarlarkValue`](crate::values::StarlarkValue) you can define:
+/// Most Rust types are conversions from themselves: a [`StarlarkTypeExpr`] whose
+/// [`Get`](StarlarkTypeExpr::Get) is itself, such as a view, a `#[derive(UnpackValue)]` union
+/// or [`Value`], and `&T` for a type `T` with one representation, which a blanket impl covers.
+/// A Rust type that is not a type expression writes the impl:
 ///
 /// ```
 /// # use either::Either;
-/// # use starlark::typing::Ty;
-/// # use starlark::values::{UnpackValue, Value};
-/// # use starlark::values::type_repr::StarlarkTypeRepr;
+/// # use starlark::values::{UnpackValue, ValueOf};
+/// # use starlark::values::int::IntView;
 ///
 /// struct BoolOrInt(i32);
 ///
-/// impl StarlarkTypeRepr for BoolOrInt {
-///     type Canonical = <Either<bool, i32> as StarlarkTypeRepr>::Canonical;
-///
-///     fn starlark_type_repr() -> Ty {
-///         Either::<bool, i32>::starlark_type_repr()
-///     }
-/// }
-///
 /// impl<'v> UnpackValue<'v> for BoolOrInt {
+///     type Type = Either<bool, IntView<'v>>;
 ///     type Error = starlark::Error;
 ///
-///     fn unpack_value_impl(value: Value<'v>) -> starlark::Result<Option<Self>> {
-///         if let Some(x) = value.unpack_bool() {
-///             Ok(Some(BoolOrInt(x as i32)))
-///         } else {
-///             let Some(x) = i32::unpack_value(value)? else {
-///                 return Ok(None);
-///             };
-///             Ok(Some(BoolOrInt(x)))
+///     fn unpack(
+///         _value: ValueOf<'v, Self::Type>,
+///         get: Either<bool, IntView<'v>>,
+///     ) -> starlark::Result<Self> {
+///         match get {
+///             Either::Left(b) => Ok(BoolOrInt(b as i32)),
+///             Either::Right(int) => Ok(BoolOrInt(int.to_integer()?)),
 ///         }
 ///     }
 /// }
 /// ```
-pub trait UnpackValue<'v>: Sized + StarlarkTypeRepr {
-    /// Error returned when type matches, but conversion fails.
+pub trait UnpackValue<'v>: Sized {
+    /// The Starlark type converted from: what a parameter of this Rust type accepts.
+    type Type: StarlarkTypeExpr<'v>;
+
+    /// The error for a value that is of [`Type`](Self::Type) but does not convert, such as an
+    /// `int` that does not fit an `i32`.
     ///
     /// Typically [`starlark::Error`](crate::Error), [`anyhow::Error`], or [`Infallible`].
     type Error: UnpackValueError;
 
-    /// Given a [`Value`], try and unpack it into the given type,
-    /// which may involve some element of conversion.
+    /// Converts `value`, which is of [`Type`](Self::Type), from `get`, what it was read as.
     ///
-    /// Return `None` if the value is not of expected type (as described by [`StarlarkTypeRepr`],
-    /// and return `Err` if the value is of expected type, but conversion cannot be performed.
-    /// For example, when unpacking an integer to `String`, return `None`,
-    /// and when unpacking a large integer to `i32`, return `Err`.
-    ///
-    /// This function is needs to be implemented, but usually not meant to be called directly.
-    /// Consider using [`unpack_value`](UnpackValue::unpack_value),
-    /// [`unpack_value_err`](UnpackValue::unpack_value_err),
-    /// [`unpack_value_opt`](UnpackValue::unpack_value_opt) instead.
-    fn unpack_value_impl(value: Value<'v>) -> Result<Option<Self>, Self::Error>;
+    /// Both are the same value. `get` is the reading that found the value to be of the type,
+    /// handed on because a `ValueOf` of a type that is not
+    /// [`StarlarkTypeExprStable`](crate::values::StarlarkTypeExprStable) cannot be read again
+    /// without the reading possibly failing; with it, a conversion from such a type, and the
+    /// `Either`, `NoneOr` and tuple combinators, stay total. `value` is for a conversion that
+    /// keeps the value or reads it as something else.
+    fn unpack(
+        value: ValueOf<'v, Self::Type>,
+        get: <Self::Type as StarlarkTypeExpr<'v>>::Get,
+    ) -> Result<Self, Self::Error>;
 
-    /// Given a [`Value`], try and unpack it into the given type,
-    /// which may involve some element of conversion.
-    ///
-    /// Return `None` if the value is not of expected type (as described by [`StarlarkTypeRepr`],
-    /// and return `Err` if the value is of expected type, but conversion cannot be performed.
-    /// For example, when unpacking an integer to `String`, return `None`,
-    /// and when unpacking a large integer to `i32`, return `Err`.
-    fn unpack_value(value: Value<'v>) -> Result<Option<Self>, crate::Error> {
-        Self::unpack_value_impl(value).map_err(Self::Error::into_error)
+    /// `value` converted, if it is of [`Type`](Self::Type): `None` if it is not, an error if it
+    /// is but does not convert.
+    fn unpack_value(value: Value<'v>) -> crate::Result<Option<Self>> {
+        match ValueOf::<Self::Type>::new_with_get(value) {
+            None => Ok(None),
+            Some((value, get)) => Self::unpack(value, get)
+                .map(Some)
+                .map_err(Self::Error::into_error),
+        }
     }
 
-    /// Unpack a value if unpacking is infallible.
+    /// [`unpack_value`](Self::unpack_value) for a conversion that cannot fail.
     fn unpack_value_opt(value: Value<'v>) -> Option<Self>
     where
         Self::Error: UnpackValueErrorInfallible,
     {
-        match Self::unpack_value_impl(value) {
-            Ok(x) => x,
+        let (value, get) = ValueOf::<Self::Type>::new_with_get(value)?;
+        match Self::unpack(value, get) {
+            Ok(x) => Some(x),
             Err(e) => Self::Error::into_infallible(e),
         }
     }
 
-    /// Unpack a value, but return error instead of `None` if unpacking fails.
+    /// [`unpack_value`](Self::unpack_value), with an error instead of `None`.
     #[inline]
     fn unpack_value_err(value: Value<'v>) -> crate::Result<Self> {
-        let unpacked = Self::unpack_value(value);
-        #[cfg(debug_assertions)]
-        check_type_agreement::<Self>(value, !matches!(unpacked, Ok(None)), None);
-        unpacked?.ok_or_else(|| expected_type_error(value, Self::starlark_type_repr))
+        Self::unpack_value(value)?
+            .ok_or_else(|| expected_type_error(value, Self::Type::starlark_type_repr))
     }
 
-    /// Unpack value, but instead of `None` return error about incorrect argument type.
+    /// [`unpack_value`](Self::unpack_value), with an error about a parameter's type instead of
+    /// `None`.
     #[inline]
     fn unpack_param(value: Value<'v>) -> crate::Result<Self> {
         #[cold]
@@ -341,13 +290,11 @@ pub trait UnpackValue<'v>: Sized + StarlarkTypeRepr {
             )
         }
 
-        let unpacked = Self::unpack_value(value);
-        #[cfg(debug_assertions)]
-        check_type_agreement::<Self>(value, !matches!(unpacked, Ok(None)), None);
-        unpacked?.ok_or_else(|| error(value, Self::starlark_type_repr))
+        Self::unpack_value(value)?.ok_or_else(|| error(value, Self::Type::starlark_type_repr))
     }
 
-    /// Unpack value, but instead of `None` return error about incorrect named argument type.
+    /// [`unpack_value`](Self::unpack_value), with an error about the named parameter's type
+    /// instead of `None`.
     #[inline]
     fn unpack_named_param(value: Value<'v>, param_name: &str) -> crate::Result<Self> {
         #[cold]
@@ -366,42 +313,64 @@ pub trait UnpackValue<'v>: Sized + StarlarkTypeRepr {
             )
         }
 
-        let unpacked = Self::unpack_value(value);
-        #[cfg(debug_assertions)]
-        check_type_agreement::<Self>(value, !matches!(unpacked, Ok(None)), Some(param_name));
-        unpacked
+        Self::unpack_value(value)
             .into_anyhow_result()
             .with_context(|| {
                 format!(
                     "Error unpacking value for parameter `{}` of type `{}",
                     param_name,
-                    Self::starlark_type_repr()
+                    Self::Type::starlark_type_repr()
                 )
             })?
-            .ok_or_else(|| error(value, param_name, Self::starlark_type_repr))
+            .ok_or_else(|| error(value, param_name, Self::Type::starlark_type_repr))
     }
 }
 
 impl<'v> UnpackValue<'v> for Value<'v> {
+    type Type = Value<'v>;
     type Error = Infallible;
 
-    fn unpack_value_impl(value: Value<'v>) -> Result<Option<Self>, Self::Error> {
-        Ok(Some(value))
+    #[inline]
+    fn unpack(value: ValueOf<'v, Value<'v>>, _get: Value<'v>) -> Result<Self, Infallible> {
+        Ok(value.to_value())
+    }
+}
+
+/// A reference to the one representation of a type, which is what a parameter of a type
+/// declared with [`#[starlark_value]`](crate::values::starlark_value) is bound as. A type with
+/// several representations has no reference to "the" representation; it is bound as its view
+/// or as a [`ValueOf`].
+impl<'v, T> UnpackValue<'v> for &'v T
+where
+    T: StarlarkValue<'v> + StarlarkType<'v, Get = ValueTyped<'v, T>>,
+{
+    type Type = T;
+    type Error = Infallible;
+
+    #[inline]
+    fn unpack(_value: ValueOf<'v, T>, get: ValueTyped<'v, T>) -> Result<Self, Infallible> {
+        Ok(get.as_ref())
     }
 }
 
 impl<'v, TLeft: UnpackValue<'v>, TRight: UnpackValue<'v>> UnpackValue<'v>
     for Either<TLeft, TRight>
 {
+    type Type = Either<TLeft::Type, TRight::Type>;
     type Error = Either<TLeft::Error, TRight::Error>;
 
-    // Only implemented for types that implement [`UnpackValue`]. Nonsensical for other types.
-    fn unpack_value_impl(value: Value<'v>) -> Result<Option<Self>, Self::Error> {
-        match TLeft::unpack_value_impl(value).map_err(Either::Left)? {
-            Some(left) => Ok(Some(Self::Left(left))),
-            _ => Ok(TRight::unpack_value_impl(value)
-                .map_err(Either::Right)?
-                .map(Self::Right)),
+    fn unpack(
+        value: ValueOf<'v, Self::Type>,
+        get: <Self::Type as StarlarkTypeExpr<'v>>::Get,
+    ) -> Result<Self, Self::Error> {
+        let value = value.to_value();
+        match get {
+            Either::Left(left) => TLeft::unpack(ValueOf::new_unchecked(value), left)
+                .map(Either::Left)
+                .map_err(Either::Left),
+            Either::Right(right) => TRight::unpack(ValueOf::new_unchecked(value), right)
+                .map(Either::Right)
+                .map_err(Either::Right),
         }
     }
 }
@@ -434,76 +403,19 @@ impl<'v, A: StarlarkTypeExpr<'v>, B: StarlarkTypeExpr<'v>> ValueOf<'v, Either<A,
     }
 }
 
-#[cfg(all(test, debug_assertions))]
+#[cfg(test)]
 mod tests {
-    use std::convert::Infallible;
-
     use starlark_derive::starlark_module;
 
     use crate as starlark;
     use crate::assert::Assert;
     use crate::environment::GlobalsBuilder;
-    use crate::typing::Ty;
-    use crate::values::UnpackValue;
-    use crate::values::Value;
     use crate::values::ValueTyped;
     use crate::values::none::NoneType;
     use crate::values::record::record_type::FrozenRecordType;
-    use crate::values::type_repr::StarlarkTypeRepr;
-
-    /// Declares `str` but also accepts anything else.
-    struct LooseStr;
-
-    impl StarlarkTypeRepr for LooseStr {
-        type Canonical = <String as StarlarkTypeRepr>::Canonical;
-
-        fn starlark_type_repr() -> Ty {
-            String::starlark_type_repr()
-        }
-    }
-
-    impl<'v> UnpackValue<'v> for LooseStr {
-        type Error = Infallible;
-
-        fn unpack_value_impl(_value: Value<'v>) -> Result<Option<Self>, Self::Error> {
-            Ok(Some(LooseStr))
-        }
-    }
-
-    /// Declares `str` but rejects the empty string.
-    struct StrictStr;
-
-    impl StarlarkTypeRepr for StrictStr {
-        type Canonical = <String as StarlarkTypeRepr>::Canonical;
-
-        fn starlark_type_repr() -> Ty {
-            String::starlark_type_repr()
-        }
-    }
-
-    impl<'v> UnpackValue<'v> for StrictStr {
-        type Error = Infallible;
-
-        fn unpack_value_impl(value: Value<'v>) -> Result<Option<Self>, Self::Error> {
-            Ok(match value.unpack_str() {
-                Some(s) if !s.is_empty() => Some(StrictStr),
-                _ => None,
-            })
-        }
-    }
 
     #[starlark_module]
     fn module(globals: &mut GlobalsBuilder) {
-        fn takes_loose_str(x: LooseStr) -> anyhow::Result<NoneType> {
-            let _ = x;
-            Ok(NoneType)
-        }
-
-        fn takes_strict_str(x: StrictStr) -> anyhow::Result<NoneType> {
-            let _ = x;
-            Ok(NoneType)
-        }
-
         /// A parameter bound to the frozen representation of a type that also has an unfrozen
         /// one.
         fn takes_frozen_record_type<'v>(
@@ -520,34 +432,16 @@ mod tests {
         a
     }
 
+    /// The declared type is the nominal one, so the other representation is of the type and
+    /// fails as a conversion, not as a type mismatch.
     #[test]
-    fn test_agreeing_unpacks_pass() {
-        let a = assert();
-        a.pass("takes_loose_str('x')");
-        a.pass("takes_strict_str('x')");
-    }
-
-    #[test]
-    #[should_panic(
-        expected = "declares Starlark type `str`, which rejects `int (repr: 1)`, but the unpack accepted it"
-    )]
-    fn test_looser_than_declared_type() {
-        assert().pass("takes_loose_str(1)");
-    }
-
-    #[test]
-    #[should_panic(
-        expected = "declares Starlark type `str`, which accepts `string (repr: \"\")`, but the unpack rejected it"
-    )]
-    fn test_stricter_than_declared_type() {
-        assert().fail("takes_strict_str('')", "");
-    }
-
-    #[test]
-    #[should_panic(
-        expected = "which accepts `function (repr: record(a=field(int)))`, but the unpack rejected it"
-    )]
     fn test_representation_specific_binding() {
-        assert().fail("takes_frozen_record_type(record(a=int))", "");
+        let mut a = assert();
+        a.module("rec.star", "R = record(a=int)");
+        a.pass("load('rec.star', 'R')\ntakes_frozen_record_type(R)");
+        a.fail(
+            "takes_frozen_record_type(record(a=int))",
+            "but not in the representation",
+        );
     }
 }

@@ -102,13 +102,18 @@ impl<'v, T: StarlarkTypeExpr<'v>> StarlarkTypeExpr<'v> for NoneOr<T> {
 impl<'v, T: StarlarkTypeExprStable<'v>> StarlarkTypeExprStable<'v> for NoneOr<T> {}
 
 impl<'v, T: UnpackValue<'v>> UnpackValue<'v> for NoneOr<T> {
-    type Error = <T as UnpackValue<'v>>::Error;
+    type Type = NoneOr<T::Type>;
+    type Error = T::Error;
 
-    fn unpack_value_impl(value: Value<'v>) -> Result<Option<Self>, Self::Error> {
-        if value.is_none() {
-            Ok(Some(NoneOr::None))
-        } else {
-            Ok(T::unpack_value_impl(value)?.map(NoneOr::Other))
+    fn unpack(
+        value: ValueOf<'v, Self::Type>,
+        get: Option<<T::Type as StarlarkTypeExpr<'v>>::Get>,
+    ) -> Result<Self, Self::Error> {
+        match get {
+            None => Ok(NoneOr::None),
+            Some(get) => {
+                T::unpack(ValueOf::new_unchecked(value.to_value()), get).map(NoneOr::Other)
+            }
         }
     }
 }

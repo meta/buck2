@@ -129,18 +129,29 @@ fn derive_starlark_representations_impl(
             }
         }
 
-        impl #impl_generics starlark::values::UnpackValue<#lt> for #ident #type_generics #where_clause {
-            type Error = std::convert::Infallible;
-
-            fn unpack_value_impl(
-                value: starlark::values::Value<#lt>,
-            ) -> std::result::Result<std::option::Option<Self>, Self::Error> {
+        impl #impl_generics starlark::__derive_refs::ViewOfRepresentations<#lt>
+            for #ident #type_generics #where_clause
+        {
+            fn from_value(value: starlark::values::Value<#lt>) -> std::option::Option<Self> {
                 #(
                     if let Some(x) = starlark::values::ValueTyped::<#reps>::new(value) {
-                        return Ok(Some(#ident::#variant_idents(x)));
+                        return std::option::Option::Some(#ident::#variant_idents(x));
                     }
                 )*
-                Ok(None)
+                std::option::Option::None
+            }
+        }
+
+        impl #impl_generics starlark::values::UnpackValue<#lt> for #ident #type_generics #where_clause {
+            type Type = Self;
+            type Error = std::convert::Infallible;
+
+            #[inline]
+            fn unpack(
+                _value: starlark::values::ValueOf<#lt, Self>,
+                get: Self,
+            ) -> std::result::Result<Self, Self::Error> {
+                std::result::Result::Ok(get)
             }
         }
     })

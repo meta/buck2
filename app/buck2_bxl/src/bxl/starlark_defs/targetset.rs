@@ -8,7 +8,6 @@
  * above-listed licenses.
  */
 
-use std::convert::Infallible;
 use std::ops::Deref;
 use std::slice;
 use std::sync::OnceLock;
@@ -59,7 +58,6 @@ use starlark::values::Value;
 use starlark::values::ValueError;
 use starlark::values::ValueTyped;
 use starlark::values::starlark_value;
-use starlark::values::type_repr::StarlarkTypeRepr;
 use starlark::values::typing::TypeCompiled;
 use starlark::values::typing::TypeInstanceId;
 
@@ -180,28 +178,6 @@ impl<'v, Node: QueryTarget> Freeze<'v> for StarlarkTargetSet<Node> {
         _freezer: &starlark::values::Freezer<'v, 'fv>,
     ) -> FreezeResult<Self::Frozen<'fv>> {
         Ok(self)
-    }
-}
-
-impl<Node: NodeLike> StarlarkTypeRepr for &StarlarkTargetSet<Node>
-where
-    StarlarkTargetSet<Node>: HasTyVTable,
-{
-    type Canonical = Self;
-
-    fn starlark_type_repr() -> Ty {
-        StarlarkTargetSet::<Node>::starlark_type_repr()
-    }
-}
-
-impl<'v, Node: NodeLike> UnpackValue<'v> for &'v StarlarkTargetSet<Node>
-where
-    StarlarkTargetSet<Node>: HasTyVTable,
-{
-    type Error = Infallible;
-
-    fn unpack_value_impl(x: Value<'v>) -> Result<Option<Self>, Self::Error> {
-        Ok(StarlarkTargetSet::from_value(x))
     }
 }
 
@@ -329,15 +305,6 @@ impl<Node: QueryTarget> Deref for StarlarkTargetSet<Node> {
 
     fn deref(&self) -> &Self::Target {
         &self.0
-    }
-}
-
-impl<Node: NodeLike> StarlarkTargetSet<Node>
-where
-    Self: HasTyVTable,
-{
-    pub(crate) fn from_value<'v>(x: Value<'v>) -> Option<&'v Self> {
-        x.downcast_ref::<Self>()
     }
 }
 
@@ -487,6 +454,7 @@ starlark::__starlark_pagable_only! {
         use pagable::PagableSerialize;
         use starlark::values::FrozenHeapName;
         use starlark::values::OwnedFrozen;
+        use starlark::values::type_repr::StarlarkTypeRepr;
 
         use super::*;
 

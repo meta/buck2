@@ -90,6 +90,16 @@ impl<'v, T: StarlarkTypeExpr<'v>> ValueOf<'v, T> {
         matches.then(|| Self::new_unchecked(value))
     }
 
+    /// `value` and what it is read as, if it is a `T`: [`new`](Self::new) and
+    /// [`get`](Self::get) in one read.
+    #[inline]
+    pub fn new_with_get(value: Value<'v>) -> Option<(Self, T::Get)> {
+        let get = T::get(value);
+        #[cfg(debug_assertions)]
+        crate::values::unpack::check_matches_agreement::<T>(value, get.is_some());
+        get.map(|get| (Self::new_unchecked(value), get))
+    }
+
     /// `value` if it is a `T`, otherwise an error saying what it is instead.
     #[inline]
     pub fn new_err(value: Value<'v>) -> crate::Result<Self> {
@@ -263,11 +273,12 @@ impl<'v, T: StarlarkTypeExpr<'v>> StarlarkTypeRepr for ValueOf<'v, T> {
 }
 
 impl<'v, T: StarlarkTypeExpr<'v>> UnpackValue<'v> for ValueOf<'v, T> {
+    type Type = T;
     type Error = Infallible;
 
     #[inline]
-    fn unpack_value_impl(value: Value<'v>) -> Result<Option<Self>, Self::Error> {
-        Ok(Self::new(value))
+    fn unpack(value: ValueOf<'v, T>, _get: T::Get) -> Result<Self, Infallible> {
+        Ok(value)
     }
 }
 

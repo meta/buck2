@@ -953,17 +953,20 @@ impl<'v> StarlarkTypeRepr for StarlarkCommandLineMut<'v> {
 }
 
 impl<'v> UnpackValue<'v> for StarlarkCommandLineMut<'v> {
+    type Type = StarlarkCmdArgsView<'v>;
     type Error = starlark::Error;
 
-    fn unpack_value_impl(value: Value<'v>) -> Result<Option<Self>, Self::Error> {
-        match StarlarkCmdArgsView::unpack_value_opt(value) {
-            None => Ok(None),
-            Some(StarlarkCmdArgsView::Unfrozen(v)) => Ok(Some(Self {
-                value,
+    fn unpack(
+        value: ValueOf<'v, StarlarkCmdArgsView<'v>>,
+        get: StarlarkCmdArgsView<'v>,
+    ) -> Result<Self, Self::Error> {
+        match get {
+            StarlarkCmdArgsView::Unfrozen(v) => Ok(Self {
+                value: value.to_value(),
                 borrow: v.as_ref().0.borrow_mut(),
-            })),
+            }),
             // A `cmd_args` all the same; what fails is the mutation.
-            Some(StarlarkCmdArgsView::Frozen(_)) => Err(starlark::Error::new_other(
+            StarlarkCmdArgsView::Frozen(_) => Err(starlark::Error::new_other(
                 ValueError::CannotMutateImmutableValue,
             )),
         }

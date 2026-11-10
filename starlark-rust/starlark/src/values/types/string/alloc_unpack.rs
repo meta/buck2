@@ -26,7 +26,6 @@ use crate::values::FrozenHeap;
 use crate::values::Heap;
 use crate::values::StringValue;
 use crate::values::UnpackValue;
-use crate::values::Value;
 use crate::values::ValueOf;
 use crate::values::alloc_value::AllocFrozenStringValue;
 use crate::values::alloc_value::AllocStringValue;
@@ -134,17 +133,21 @@ impl<'v> AllocStringValue<'v> for &'_ str {
 }
 
 impl<'v> UnpackValue<'v> for &'v str {
+    type Type = &'v str;
     type Error = Infallible;
 
-    fn unpack_value_impl(value: Value<'v>) -> Result<Option<Self>, Self::Error> {
-        Ok(value.unpack_str())
+    #[inline]
+    fn unpack(_value: ValueOf<'v, &'v str>, get: &'v str) -> Result<Self, Infallible> {
+        Ok(get)
     }
 }
 
 impl<'v> UnpackValue<'v> for String {
+    type Type = String;
     type Error = Infallible;
 
-    fn unpack_value_impl(value: Value<'v>) -> Result<Option<Self>, Self::Error> {
-        Ok(value.unpack_str().map(ToOwned::to_owned))
+    #[inline]
+    fn unpack(_value: ValueOf<'v, String>, get: String) -> Result<Self, Infallible> {
+        Ok(get)
     }
 }

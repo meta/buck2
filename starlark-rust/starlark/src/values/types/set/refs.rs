@@ -28,6 +28,7 @@ use crate::typing::Ty;
 use crate::values::UnpackValue;
 use crate::values::Value;
 use crate::values::ValueError;
+use crate::values::ValueOf;
 use crate::values::set::SetType;
 use crate::values::set::value::SetGen;
 use crate::values::type_repr::StarlarkTypeRepr;
@@ -119,9 +120,14 @@ impl<'v> StarlarkTypeRepr for SetRef<'v> {
 }
 
 impl<'v> UnpackValue<'v> for SetRef<'v> {
+    type Type = SetType<Value<'v>>;
     type Error = Infallible;
 
-    fn unpack_value_impl(value: Value<'v>) -> Result<Option<SetRef<'v>>, Infallible> {
-        Ok(SetRef::from_value(value))
+    #[inline]
+    fn unpack(
+        _value: ValueOf<'v, Self::Type>,
+        get: ValueOf<'v, Self::Type>,
+    ) -> Result<Self, Infallible> {
+        Ok(get.set())
     }
 }

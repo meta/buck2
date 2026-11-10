@@ -20,6 +20,7 @@
 use std::cmp::Ordering;
 use std::hash::Hasher;
 
+use num_bigint::BigInt;
 use starlark_derive::StarlarkRepresentations;
 use starlark_derive::starlark_value;
 use starlark_map::StarlarkHashValue;
@@ -35,6 +36,7 @@ use crate::values::StarlarkType;
 use crate::values::Value;
 use crate::values::ValueError;
 use crate::values::ValueTyped;
+use crate::values::layout::value::IntegerTooBigError;
 use crate::values::types::bigint::StarlarkBigInt;
 use crate::values::types::int::int_or_big::StarlarkIntRef;
 use crate::values::types::int::pointer_i32::INT_TYPE;
@@ -76,6 +78,23 @@ impl<'v> IntView<'v> {
     #[inline]
     fn num(self) -> NumRef<'v> {
         NumRef::Int(self.as_int_ref())
+    }
+
+    /// The integer as a fixed-width Rust integer, or an error if it does not fit.
+    pub fn to_integer<I>(self) -> crate::Result<I>
+    where
+        I: TryFrom<i32> + TryFrom<&'v BigInt>,
+    {
+        let option = match self.as_int_ref() {
+            StarlarkIntRef::Small(x) => I::try_from(x.to_i32()).ok(),
+            StarlarkIntRef::Big(x) => x.unpack_integer(),
+        };
+        option.ok_or_else(|| {
+            crate::Error::new_value(IntegerTooBigError {
+                integer_type: std::any::type_name::<I>(),
+                value: self.to_string(),
+            })
+        })
     }
 }
 

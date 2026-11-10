@@ -21,6 +21,7 @@ use crate::typing::Ty;
 use crate::typing::TyStarlarkValue;
 use crate::values::UnpackValue;
 use crate::values::Value;
+use crate::values::ValueOf;
 use crate::values::type_expr::StarlarkTypeExpr;
 use crate::values::type_expr::StarlarkTypeExprStable;
 use crate::values::type_repr::StarlarkTypeRepr;
@@ -48,16 +49,13 @@ impl<'v> StarlarkTypeExpr<'v> for TypeType {
 
 impl<'v> StarlarkTypeExprStable<'v> for TypeType {}
 
-/// Validate the value is type.
 impl<'v> UnpackValue<'v> for TypeType {
+    type Type = Self;
     type Error = Infallible;
 
-    fn unpack_value_impl(value: Value<'v>) -> Result<Option<Self>, Self::Error> {
-        if TyStarlarkValue::is_type_from_vtable(&value.vtable().starlark_value.ty) {
-            Ok(Some(TypeType(())))
-        } else {
-            Ok(None)
-        }
+    #[inline]
+    fn unpack(_value: ValueOf<'v, Self>, get: Self) -> Result<Self, Infallible> {
+        Ok(get)
     }
 }
 

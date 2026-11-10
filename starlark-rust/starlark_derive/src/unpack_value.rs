@@ -100,10 +100,15 @@ fn derive_unpack_value_impl(input: syn::DeriveInput) -> syn::Result<proc_macro2:
     };
     let trait_impl: syn::ItemImpl = syn::parse_quote_spanned! { span =>
         impl #impl_generics starlark::values::UnpackValue<'v> for #ident #type_generics #where_clause {
+            type Type = Self;
             type Error = std::convert::Infallible;
 
-            fn unpack_value_impl(value: starlark::values::Value<'v>) -> std::result::Result<std::option::Option<Self>, Self::Error> {
-                std::result::Result::Ok(<Self as starlark::values::StarlarkTypeExpr<'v>>::get(value))
+            #[inline]
+            fn unpack(
+                _value: starlark::values::ValueOf<'v, Self>,
+                get: Self,
+            ) -> std::result::Result<Self, Self::Error> {
+                std::result::Result::Ok(get)
             }
         }
     };

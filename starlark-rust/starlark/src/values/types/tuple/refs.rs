@@ -22,11 +22,10 @@ use std::slice;
 use ref_cast::RefCastCustom;
 use ref_cast::ref_cast_custom;
 
-use crate::typing::Ty;
 use crate::values::UnpackValue;
 use crate::values::Value;
+use crate::values::ValueOf;
 use crate::values::tuple::TupleType;
-use crate::values::type_repr::StarlarkTypeRepr;
 use crate::values::types::tuple::value::Tuple;
 
 /// Reference to tuple data in Starlark heap.
@@ -65,18 +64,15 @@ impl<'v> TupleRef<'v> {
     }
 }
 
-impl<'v> StarlarkTypeRepr for &'v TupleRef<'v> {
-    type Canonical = <TupleType<Value<'static>> as StarlarkTypeRepr>::Canonical;
-
-    fn starlark_type_repr() -> Ty {
-        Ty::any_tuple()
-    }
-}
-
 impl<'v> UnpackValue<'v> for &'v TupleRef<'v> {
+    type Type = TupleType<Value<'v>>;
     type Error = Infallible;
 
-    fn unpack_value_impl(value: Value<'v>) -> Result<Option<Self>, Self::Error> {
-        Ok(TupleRef::from_value(value))
+    #[inline]
+    fn unpack(
+        _value: ValueOf<'v, Self::Type>,
+        get: ValueOf<'v, Self::Type>,
+    ) -> Result<Self, Infallible> {
+        Ok(get.tuple())
     }
 }

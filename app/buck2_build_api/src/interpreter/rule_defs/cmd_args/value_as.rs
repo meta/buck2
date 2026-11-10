@@ -23,6 +23,7 @@ use starlark::values::StarlarkTypeExpr;
 use starlark::values::StarlarkTypeExprStable;
 use starlark::values::UnpackValue;
 use starlark::values::Value;
+use starlark::values::ValueOf;
 use starlark::values::type_expr::UnionPayload;
 use starlark::values::type_repr::StarlarkTypeRepr;
 
@@ -99,9 +100,11 @@ impl<'v> ValueAsCommandLineLike<'v> {
 }
 
 impl<'v> UnpackValue<'v> for ValueAsCommandLineLike<'v> {
+    type Type = Self;
     type Error = Infallible;
 
-    fn unpack_value_impl(value: Value<'v>) -> Result<Option<Self>, Self::Error> {
-        Ok(Self::unpack(value))
+    #[inline]
+    fn unpack(_value: ValueOf<'v, Self>, get: Self) -> Result<Self, Infallible> {
+        Ok(get)
     }
 }

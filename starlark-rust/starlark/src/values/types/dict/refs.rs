@@ -28,6 +28,7 @@ use crate::typing::Ty;
 use crate::values::UnpackValue;
 use crate::values::Value;
 use crate::values::ValueError;
+use crate::values::ValueOf;
 use crate::values::dict::Dict;
 use crate::values::dict::value::DictGen;
 use crate::values::type_repr::StarlarkTypeRepr;
@@ -123,9 +124,14 @@ impl<'v> StarlarkTypeRepr for DictRef<'v> {
 }
 
 impl<'v> UnpackValue<'v> for DictRef<'v> {
+    type Type = DictType<Value<'v>, Value<'v>>;
     type Error = Infallible;
 
-    fn unpack_value_impl(value: Value<'v>) -> Result<Option<DictRef<'v>>, Infallible> {
-        Ok(DictRef::from_value(value))
+    #[inline]
+    fn unpack(
+        _value: ValueOf<'v, Self::Type>,
+        get: ValueOf<'v, Self::Type>,
+    ) -> Result<Self, Infallible> {
+        Ok(get.dict())
     }
 }

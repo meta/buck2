@@ -21,6 +21,7 @@ use std::fmt::Write;
 use allocative::Allocative;
 use anyhow::Context;
 use derive_more::Display;
+use either::Either;
 use starlark_derive::StarlarkPagable;
 use starlark_derive::StarlarkRepresentations;
 use starlark_derive::starlark_module;
@@ -57,6 +58,7 @@ use crate::values::dict::DictType;
 use crate::values::layout::heap::name::StarlarkTestHeapName;
 use crate::values::list_or_tuple::ListOrTupleType;
 use crate::values::none::NoneType;
+use crate::values::type_expr::StarlarkTypeExpr;
 use crate::values::types::int::view::IntView;
 
 #[test]
@@ -310,23 +312,21 @@ fn test_radd() {
     starlark_simple_value!(Select);
 
     impl<'v> UnpackValue<'v> for Select {
+        type Type = Either<Select, ListOrTupleType<IntView<'v>>>;
         type Error = crate::Error;
 
-        fn unpack_value_impl(value: Value<'v>) -> crate::Result<Option<Self>> {
-            match Select::from_value(value) {
-                Some(x) => Ok(Some(x.clone())),
-                None => {
-                    let Some(list_or_tuple) = ValueOf::<ListOrTupleType<IntView>>::new(value)
-                    else {
-                        return Ok(None);
-                    };
-                    Ok(Some(Select(
-                        list_or_tuple
-                            .try_items()
-                            .map(|x| i32::unpack_value_err(x?.to_value()))
-                            .collect::<crate::Result<_>>()?,
-                    )))
-                }
+        fn unpack(
+            value: ValueOf<'v, Self::Type>,
+            get: <Self::Type as StarlarkTypeExpr<'v>>::Get,
+        ) -> crate::Result<Self> {
+            match get {
+                Either::Left(x) => Ok(x.as_ref().clone()),
+                Either::Right(_) => Ok(Select(
+                    ValueOf::<ListOrTupleType<IntView>>::new_unchecked(value.to_value())
+                        .try_items()
+                        .map(|x| x?.to_integer())
+                        .collect::<crate::Result<_>>()?,
+                )),
             }
         }
     }

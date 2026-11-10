@@ -57,7 +57,6 @@ use crate::values::Freezer;
 use crate::values::StarlarkType;
 use crate::values::StarlarkValue;
 use crate::values::Trace;
-use crate::values::UnpackValue;
 use crate::values::Value;
 use crate::values::ValueTyped;
 use crate::values::function::FUNCTION_TYPE;
@@ -65,7 +64,6 @@ use crate::values::record::Record;
 use crate::values::record::field::Field;
 use crate::values::record::matcher::RecordTypeMatcher;
 use crate::values::record::ty_record_type::TyRecordData;
-use crate::values::type_repr::StarlarkTypeRepr;
 use crate::values::types::type_instance_id::StarlarkTypeIdDomain;
 use crate::values::types::type_instance_id::TypeInstanceId;
 use crate::values::typing::type_compiled::type_matcher_factory::TypeMatcherFactory;
@@ -162,30 +160,6 @@ crate::register_simple_vtable_entry!(FrozenRecordType<'static>);
 // SAFETY: The vtable entry is registered above. The deser type id is
 // lifetime-erased, so the `'static` instantiation covers all heap lifetimes.
 unsafe impl<'v> crate::__derive_refs::VtableRegistered for FrozenRecordType<'v> {}
-
-impl<'v, V: RecordVariant> StarlarkTypeRepr for &'v RecordTypeGen<'v, V>
-where
-    RecordTypeGen<'v, V>: StarlarkValue<'v>,
-{
-    type Canonical = <RecordTypeView<'v> as StarlarkTypeRepr>::Canonical;
-
-    #[inline]
-    fn starlark_type_repr() -> crate::typing::Ty {
-        <RecordTypeGen<'v, V> as StarlarkValue<'v>>::get_type_starlark_repr()
-    }
-}
-
-impl<'v, V: RecordVariant> UnpackValue<'v> for &'v RecordTypeGen<'v, V>
-where
-    RecordTypeGen<'v, V>: StarlarkValue<'v>,
-{
-    type Error = std::convert::Infallible;
-
-    #[inline]
-    fn unpack_value_impl(x: Value<'v>) -> Result<Option<Self>, Self::Error> {
-        Ok(x.downcast_ref())
-    }
-}
 
 impl<'v> RecordType<'v> {
     /// Creates a new `RecordType`.

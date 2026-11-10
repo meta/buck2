@@ -18,6 +18,7 @@ use starlark::values::StarlarkTypeExpr;
 use starlark::values::StarlarkTypeExprStable;
 use starlark::values::UnpackValue;
 use starlark::values::Value;
+use starlark::values::ValueOf;
 use starlark::values::type_expr::UnionPayload;
 use starlark::values::type_repr::StarlarkTypeRepr;
 
@@ -64,12 +65,12 @@ impl<'v> UnionPayload<'v> for ValueAsTransition<'v> {
 }
 
 impl<'v> UnpackValue<'v> for ValueAsTransition<'v> {
+    type Type = Self;
     type Error = Infallible;
 
-    fn unpack_value_impl(value: Value<'v>) -> Result<Option<Self>, Self::Error> {
-        Ok(value
-            .request_value::<&dyn TransitionValue>()
-            .map(ValueAsTransition))
+    #[inline]
+    fn unpack(_value: ValueOf<'v, Self>, get: Self) -> Result<Self, Infallible> {
+        Ok(get)
     }
 }
 

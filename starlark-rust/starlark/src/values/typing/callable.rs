@@ -254,15 +254,12 @@ impl<'v, P: StarlarkCallableParamSpec, R: StarlarkTypeRepr> StarlarkTypeExprStab
 impl<'v, P: StarlarkCallableParamSpec, R: StarlarkTypeRepr> UnpackValue<'v>
     for StarlarkCallable<'v, P, R>
 {
+    type Type = Self;
     type Error = Infallible;
 
     #[inline]
-    fn unpack_value_impl(value: Value<'v>) -> Result<Option<Self>, Self::Error> {
-        if value.vtable().starlark_value.ty.HAS_invoke {
-            Ok(Some(StarlarkCallable::unchecked_new(value)))
-        } else {
-            Ok(None)
-        }
+    fn unpack(_value: ValueOf<'v, Self>, get: Self) -> Result<Self, Infallible> {
+        Ok(get)
     }
 }
 
@@ -399,7 +396,7 @@ impl<'v, P: StarlarkCallableParamSpec, R: StarlarkTypeRepr> StarlarkTypeExpr<'v>
     type Get = Self;
 
     fn get(value: Value<'v>) -> Option<Self> {
-        Self::unpack_value_impl(value).ok().flatten()
+        Self::unpack_value(value).ok().flatten()
     }
 }
 
@@ -415,25 +412,25 @@ struct CallableSignatureMismatch {
     actual: Ty,
 }
 
+/// The runtime type `typing.Callable` accepts any callable, so a signature mismatch is a
+/// conversion failure, not a type mismatch.
 impl<'v, P: StarlarkCallableParamSpec, R: StarlarkTypeRepr> UnpackValue<'v>
     for StarlarkCallableChecked<'v, P, R>
 {
+    type Type = StarlarkCallable<'v, P, R>;
     type Error = crate::Error;
 
-    fn unpack_value_impl(value: Value<'v>) -> Result<Option<Self>, Self::Error> {
-        // Check it is a callable first.
-        if StarlarkCallable::<P, R>::unpack_value_opt(value).is_none() {
-            return Ok(None);
-        }
-
+    fn unpack(
+        value: ValueOf<'v, Self::Type>,
+        _get: StarlarkCallable<'v, P, R>,
+    ) -> crate::Result<Self> {
+        let value = value.to_value();
         // We need generic statics to cache this.
         let ty = Ty::callable(P::params(), R::starlark_type_repr());
 
         let actual = Ty::of_value(value);
         match actual.check_intersects(&ty)? {
-            true => Ok(Some(StarlarkCallableChecked(value, PhantomData))),
-            // The runtime type `typing.Callable` accepts any callable, so a signature mismatch
-            // is a conversion failure, not a type mismatch.
+            true => Ok(StarlarkCallableChecked(value, PhantomData)),
             false => Err(crate::Error::new_value(CallableSignatureMismatch {
                 expected: ty,
                 actual,

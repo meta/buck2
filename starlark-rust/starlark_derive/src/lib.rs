@@ -197,9 +197,9 @@ pub fn derive_unpack_value(input: proc_macro::TokenStream) -> proc_macro::TokenS
 /// Derive the glue of a Starlark type's view over its representations: an enum with one
 /// `ValueTyped<'v, Rep>` variant per representation. Generates `ProvidesStaticType`, `Display`,
 /// `From` of each variant's `ValueTyped` (which `#[starlark_value]` builds a representation's
-/// `with_type` on), `StarlarkTypeRepr` forwarding to the view's `StarlarkType`, and an
-/// `UnpackValue` that tries the representations in order. The first variant's representation is the canonical one, whose
-/// type id is the type's.
+/// `with_type` on), `StarlarkTypeRepr` forwarding to the view's `StarlarkType`, the view's
+/// `get` (the representations tried in order), and `UnpackValue` of the view as itself. The
+/// first variant's representation is the canonical one, whose type id is the type's.
 #[proc_macro_derive(StarlarkRepresentations)]
 pub fn derive_starlark_representations(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
     representations::derive_starlark_representations(input)
@@ -209,7 +209,8 @@ pub fn derive_starlark_representations(input: proc_macro::TokenStream) -> proc_m
 /// is applied to an impl block of `StarlarkValue`.
 ///
 /// `#[starlark_value(type = "name", ...)]` accepts these flags after the required `type`:
-/// - `StarlarkTypeRepr`, `UnpackValue` (only together): implement those traits for `&T`.
+/// - `StarlarkTypeRepr`: implement that trait for `&T`. `UnpackValue` is accepted and does
+///   nothing: `UnpackValue for &T` is a blanket impl.
 /// - `skip_vtable`: register no vtable at all, neither the pagable `AValue` one nor the typing
 ///   one. For types whose frozen canonical form is what gets serialized.
 /// - `no_freeze`: the type is never frozen. Register only the typing vtable, so it need not be

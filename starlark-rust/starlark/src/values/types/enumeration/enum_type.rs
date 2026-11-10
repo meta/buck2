@@ -61,6 +61,7 @@ use crate::values::StarlarkValue;
 use crate::values::StringValue;
 use crate::values::UnpackValue;
 use crate::values::Value;
+use crate::values::ValueOf;
 use crate::values::ValueTyped;
 use crate::values::dict::value::ValueStr;
 use crate::values::enumeration::matcher::EnumTypeMatcher;
@@ -352,17 +353,19 @@ impl<'v> StarlarkTypeExpr<'v> for AnyEnumType<'v> {
     type Get = Self;
 
     fn get(value: Value<'v>) -> Option<Self> {
-        AnyEnumType::unpack_value_opt(value)
+        value.request_value()
     }
 }
 
 impl<'v> StarlarkTypeExprStable<'v> for AnyEnumType<'v> {}
 
 impl<'v> UnpackValue<'v> for AnyEnumType<'v> {
+    type Type = Self;
     type Error = std::convert::Infallible;
 
-    fn unpack_value_impl(value: Value<'v>) -> Result<Option<Self>, Self::Error> {
-        Ok(value.request_value())
+    #[inline]
+    fn unpack(_value: ValueOf<'v, Self>, get: Self) -> Result<Self, Self::Error> {
+        Ok(get)
     }
 }
 

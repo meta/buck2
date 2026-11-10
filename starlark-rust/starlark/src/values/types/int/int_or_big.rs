@@ -431,10 +431,12 @@ impl<'v> StarlarkTypeRepr for StarlarkIntRef<'v> {
 }
 
 impl<'v> UnpackValue<'v> for StarlarkIntRef<'v> {
+    type Type = IntView<'v>;
     type Error = Infallible;
 
-    fn unpack_value_impl(value: Value<'v>) -> Result<Option<Self>, Self::Error> {
-        Ok(StarlarkIntRef::unpack(value))
+    #[inline]
+    fn unpack(_value: ValueOf<'v, IntView<'v>>, int: IntView<'v>) -> Result<Self, Infallible> {
+        Ok(int.as_int_ref())
     }
 }
 

@@ -45,6 +45,7 @@ use crate::values::UnpackValue;
 use crate::values::Value;
 use crate::values::ValueError;
 use crate::values::ValueOf;
+use crate::values::ValueTyped;
 use crate::values::type_repr::StarlarkTypeRepr;
 use crate::values::types::num::typecheck::NumTy;
 use crate::values::types::num::typecheck::typecheck_num_bin_op;
@@ -267,13 +268,12 @@ impl<'fv> AllocFrozenValue<'fv> for f64 {
 
 /// Allows only a float - an int will not be accepted.
 impl<'v> UnpackValue<'v> for StarlarkFloat {
+    type Type = Self;
     type Error = Infallible;
 
-    fn unpack_value_impl(value: Value<'v>) -> Result<Option<Self>, Self::Error> {
-        let Some(value) = value.downcast_ref::<StarlarkFloat>() else {
-            return Ok(None);
-        };
-        Ok(Some(*value))
+    #[inline]
+    fn unpack(_value: ValueOf<'v, Self>, get: ValueTyped<'v, Self>) -> Result<Self, Infallible> {
+        Ok(*get.as_ref())
     }
 }
 

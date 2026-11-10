@@ -64,10 +64,11 @@ impl<'v, T: StarlarkTypeExpr<'v>> StarlarkTypeExpr<'v> for TupleType<T> {
 impl<'v, T: StarlarkTypeExprStable<'v>> StarlarkTypeExprStable<'v> for TupleType<T> {}
 
 impl<'v, T: StarlarkTypeExpr<'v>> UnpackValue<'v> for TupleType<T> {
+    type Type = Self;
     type Error = Infallible;
 
-    fn unpack_value_impl(value: Value<'v>) -> Result<Option<Self>, Self::Error> {
-        Ok(Self::matches(value).then_some(TupleType { _item: PhantomData }))
+    fn unpack(_value: ValueOf<'v, Self>, _get: ValueOf<'v, Self>) -> Result<Self, Infallible> {
+        Ok(TupleType { _item: PhantomData })
     }
 }
 

@@ -39,6 +39,7 @@ use crate::values::UnpackValue;
 use crate::values::Value;
 use crate::values::ValueOf;
 use crate::values::int::pointer_i32::PointerI32;
+use crate::values::layout::value::IntegerTooBigError;
 use crate::values::type_repr::StarlarkTypeRepr;
 use crate::values::types::int::int_or_big::StarlarkInt;
 use crate::values::types::int::view::IntView;
@@ -353,11 +354,17 @@ impl StarlarkTypeRepr for InlineInt {
 }
 
 impl<'v> UnpackValue<'v> for InlineInt {
+    type Type = IntView<'v>;
     type Error = crate::Error;
 
-    fn unpack_value_impl(value: Value<'v>) -> crate::Result<Option<Self>> {
-        // TODO(nga): return error on too big integer.
-        Ok(value.0.unpack_int())
+    fn unpack(_value: ValueOf<'v, IntView<'v>>, int: IntView<'v>) -> crate::Result<Self> {
+        match int {
+            IntView::Small(x) => Ok(x.as_ref().get()),
+            IntView::Big(_) => Err(crate::Error::new_value(IntegerTooBigError {
+                integer_type: std::any::type_name::<Self>(),
+                value: int.to_string(),
+            })),
+        }
     }
 }
 

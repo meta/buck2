@@ -185,55 +185,48 @@ impl<
 {
 }
 
+/// The items of a tuple value known to have `N` of them.
+fn items<'v, const N: usize>(value: Value<'v>) -> [Value<'v>; N] {
+    Tuple::from_value(value)
+        .and_then(|t| t.content().try_into().ok())
+        .expect("a value's type and a tuple's length do not change")
+}
+
 impl<'v, T1: UnpackValue<'v>, T2: UnpackValue<'v>> UnpackValue<'v> for (T1, T2) {
+    type Type = (T1::Type, T2::Type);
     type Error = Either<T1::Error, T2::Error>;
 
-    fn unpack_value_impl(value: Value<'v>) -> Result<Option<Self>, Self::Error> {
-        let Some(t) = Tuple::from_value(value) else {
-            return Ok(None);
-        };
-        let [a, b] = t.content() else {
-            return Ok(None);
-        };
-        let [a, b] = [*a, *b];
-        let Some(a) = T1::unpack_value_impl(a).map_err(Either::Left)? else {
-            return Ok(None);
-        };
-        let Some(b) = T2::unpack_value_impl(b).map_err(Either::Right)? else {
-            return Ok(None);
-        };
-        Ok(Some((a, b)))
+    fn unpack(
+        value: ValueOf<'v, Self::Type>,
+        (a, b): <Self::Type as StarlarkTypeExpr<'v>>::Get,
+    ) -> Result<Self, Self::Error> {
+        let [va, vb] = items(value.to_value());
+        Ok((
+            T1::unpack(ValueOf::new_unchecked(va), a).map_err(Either::Left)?,
+            T2::unpack(ValueOf::new_unchecked(vb), b).map_err(Either::Right)?,
+        ))
     }
 }
 
 impl<'v, T1: UnpackValue<'v>, T2: UnpackValue<'v>, T3: UnpackValue<'v>> UnpackValue<'v>
     for (T1, T2, T3)
 {
+    type Type = (T1::Type, T2::Type, T3::Type);
     type Error = Either<T1::Error, Either<T2::Error, T3::Error>>;
 
-    fn unpack_value_impl(value: Value<'v>) -> Result<Option<Self>, Self::Error> {
-        let Some(t) = Tuple::from_value(value) else {
-            return Ok(None);
-        };
-        let [a, b, c] = t.content() else {
-            return Ok(None);
-        };
-        let [a, b, c] = [*a, *b, *c];
-        let Some(a) = T1::unpack_value_impl(a).map_err(Either::Left)? else {
-            return Ok(None);
-        };
-        let Some(b) = T2::unpack_value_impl(b)
-            .map_err(Either::Left)
-            .map_err(Either::Right)?
-        else {
-            return Ok(None);
-        };
-        let Some(c) = T3::unpack_value_impl(c)
-            .map_err(Either::Right)
-            .map_err(Either::Right)?
-        else {
-            return Ok(None);
-        };
-        Ok(Some((a, b, c)))
+    fn unpack(
+        value: ValueOf<'v, Self::Type>,
+        (a, b, c): <Self::Type as StarlarkTypeExpr<'v>>::Get,
+    ) -> Result<Self, Self::Error> {
+        let [va, vb, vc] = items(value.to_value());
+        Ok((
+            T1::unpack(ValueOf::new_unchecked(va), a).map_err(Either::Left)?,
+            T2::unpack(ValueOf::new_unchecked(vb), b)
+                .map_err(Either::Left)
+                .map_err(Either::Right)?,
+            T3::unpack(ValueOf::new_unchecked(vc), c)
+                .map_err(Either::Right)
+                .map_err(Either::Right)?,
+        ))
     }
 }

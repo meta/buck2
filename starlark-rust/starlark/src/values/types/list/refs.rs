@@ -25,13 +25,13 @@ use std::slice;
 use ref_cast::RefCastCustom;
 use ref_cast::ref_cast_custom;
 
-use crate::typing::Ty;
 use crate::values::UnpackValue;
 use crate::values::Value;
+use crate::values::ValueOf;
+use crate::values::list::ListType;
 use crate::values::list::value::FrozenListData;
 use crate::values::list::value::ListGen;
 use crate::values::list::value::display_list;
-use crate::values::type_repr::StarlarkTypeRepr;
 use crate::values::types::list::value::ListData;
 
 /// Reference to list content (mutable or frozen).
@@ -93,18 +93,15 @@ impl<'v> Display for ListRef<'v> {
     }
 }
 
-impl<'v> StarlarkTypeRepr for &'v ListRef<'v> {
-    type Canonical = <Vec<Value<'v>> as StarlarkTypeRepr>::Canonical;
-
-    fn starlark_type_repr() -> Ty {
-        Vec::<Value<'v>>::starlark_type_repr()
-    }
-}
-
 impl<'v> UnpackValue<'v> for &'v ListRef<'v> {
+    type Type = ListType<Value<'v>>;
     type Error = Infallible;
 
-    fn unpack_value_impl(value: Value<'v>) -> Result<Option<Self>, Self::Error> {
-        Ok(ListRef::from_value(value))
+    #[inline]
+    fn unpack(
+        _value: ValueOf<'v, Self::Type>,
+        get: ValueOf<'v, Self::Type>,
+    ) -> Result<Self, Infallible> {
+        Ok(get.list())
     }
 }

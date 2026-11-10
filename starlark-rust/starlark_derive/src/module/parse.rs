@@ -226,11 +226,25 @@ fn parse_visibility(vis: &Visibility) -> syn::Result<()> {
 
 fn parse_const(x: ItemConst) -> syn::Result<StarConst> {
     parse_visibility(&x.vis)?;
+    let mut representation = false;
+    for attr in &x.attrs {
+        if attr.path().is_ident("starlark") {
+            attr.parse_nested_meta(|meta| {
+                if meta.path.is_ident("representation") {
+                    representation = true;
+                    Ok(())
+                } else {
+                    Err(meta.error("Expecting `#[starlark(representation)]`"))
+                }
+            })?;
+        }
+    }
 
     Ok(StarConst {
         name: x.ident,
         ty: *x.ty,
         value: *x.expr,
+        representation,
     })
 }
 

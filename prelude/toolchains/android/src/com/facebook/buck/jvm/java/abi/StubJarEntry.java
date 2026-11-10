@@ -65,6 +65,11 @@ public abstract class StubJarEntry {
     return Collections.emptySet();
   }
 
+  /** Owners of the fields read by the entry's retained method bodies. */
+  public Set<String> getRetainedBodyFieldOwners() {
+    return Collections.emptySet();
+  }
+
   /** Classes the entry's Kotlin metadata lists as sealed subclasses. */
   public List<String> getSealedSubclasses() {
     return Collections.emptyList();

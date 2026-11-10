@@ -28,9 +28,12 @@ import org.jspecify.annotations.Nullable;
 import org.objectweb.asm.ClassVisitor;
 import org.objectweb.asm.ClassWriter;
 import org.objectweb.asm.Opcodes;
+import org.objectweb.asm.tree.AbstractInsnNode;
 import org.objectweb.asm.tree.AnnotationNode;
 import org.objectweb.asm.tree.ClassNode;
+import org.objectweb.asm.tree.FieldInsnNode;
 import org.objectweb.asm.tree.InnerClassNode;
+import org.objectweb.asm.tree.MethodNode;
 
 @Nullsafe(Nullsafe.Mode.LOCAL)
 class StubJarClassEntry extends StubJarEntry {
@@ -46,6 +49,7 @@ class StubJarClassEntry extends StubJarEntry {
   @Nullable private final String scopeOuterClass;
   private final Set<String> hiddenDeprecatedMethods;
   private final List<String> sealedSubclasses;
+  private final Set<String> retainedBodyFieldOwners;
 
   @Nullable
   public static StubJarClassEntry of(
@@ -150,6 +154,9 @@ class StubJarClassEntry extends StubJarEntry {
       }
     }
 
+    Set<String> retainedBodyFieldOwners =
+        isKotlinClass ? collectFieldOwners(stub) : Collections.emptySet();
+
     // Kotlin top functions reside in synthetic classes, we should output ABIs for them.
     if ((isSyntheticClass(stub) && isKotlinModule)
         || !(isSyntheticClass(stub) || isAnonymousOrLocalClass(stub))
@@ -169,7 +176,8 @@ class StubJarClassEntry extends StubJarEntry {
           keptJvmStaticMemberKeys,
           scopeOuterClass,
           hiddenDeprecatedMethods,
-          sealedSubclasses);
+          sealedSubclasses,
+          retainedBodyFieldOwners);
     }
 
     return null;
@@ -187,7 +195,8 @@ class StubJarClassEntry extends StubJarEntry {
       Set<String> keptJvmStaticMemberKeys,
       @Nullable String scopeOuterClass,
       Set<String> hiddenDeprecatedMethods,
-      List<String> sealedSubclasses) {
+      List<String> sealedSubclasses,
+      Set<String> retainedBodyFieldOwners) {
     this.path = path;
     this.stub = stub;
     this.referencedClassNames = referencedClassNames;
@@ -200,6 +209,7 @@ class StubJarClassEntry extends StubJarEntry {
     this.scopeOuterClass = scopeOuterClass;
     this.hiddenDeprecatedMethods = hiddenDeprecatedMethods;
     this.sealedSubclasses = sealedSubclasses;
+    this.retainedBodyFieldOwners = retainedBodyFieldOwners;
   }
 
   @Override
@@ -239,6 +249,11 @@ class StubJarClassEntry extends StubJarEntry {
   }
 
   @Override
+  public Set<String> getRetainedBodyFieldOwners() {
+    return retainedBodyFieldOwners;
+  }
+
+  @Override
   @Nullable
   public String getScopeOuterClass() {
     return scopeOuterClass;
@@ -263,6 +278,18 @@ class StubJarClassEntry extends StubJarEntry {
     stub.accept(visitor);
 
     return new ByteArrayInputStream(writer.toByteArray());
+  }
+
+  private static Set<String> collectFieldOwners(ClassNode stub) {
+    Set<String> owners = new HashSet<>();
+    for (MethodNode method : stub.methods) {
+      for (AbstractInsnNode insn : method.instructions) {
+        if (insn instanceof FieldInsnNode) {
+          owners.add(((FieldInsnNode) insn).owner);
+        }
+      }
+    }
+    return owners;
   }
 
   private static boolean isSyntheticClass(ClassNode node) {

@@ -186,6 +186,7 @@ public class StubJar {
       if (inlineFunctionScope != null) {
         String pathNoSuffix = pathWithoutClassSuffix(path);
         inlineFunctionScope.createScopes(pathNoSuffix, entry.getInlineFunctions());
+        inlineFunctionScope.recordInlineBodyFieldOwners(entry.getRetainedBodyFieldOwners());
         if (entry.extendsInlineFunctionScope()) {
           inlineFunctionScope.extendScope(pathNoSuffix);
         }

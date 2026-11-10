@@ -8817,6 +8817,112 @@ public class StubJarTest {
         .createAndCheckStubJar();
   }
 
+  private static final String WHEN_COLOR_ENUM = "enum class Color { RED, GREEN, BLUE }";
+
+  private static void assertWhenMappingsKept(JarFile jar, String className) throws IOException {
+    JarEntry entry = jar.getJarEntry(className + ".class");
+    assertNotNull(className + " missing from stub", entry);
+    ClassNode node = new ClassNode(Opcodes.ASM9);
+    try (InputStream in = jar.getInputStream(entry)) {
+      new ClassReader(in).accept(node, 0);
+    }
+    assertTrue(
+        className + " keeps $EnumSwitchMapping$0",
+        node.fields.stream().anyMatch(f -> f.name.equals("$EnumSwitchMapping$0")));
+    assertTrue(
+        className + " keeps a <clinit> body",
+        node.methods.stream()
+            .anyMatch(m -> m.name.equals("<clinit>") && m.instructions.size() > 0));
+  }
+
+  @Test
+  public void kotlinKeepsWhenMappingsReferencedByTopLevelInlineFunction() throws IOException {
+    if (!isValidForKotlin() || !testingMode.equals(MODE_JAR_BASED)) {
+      return;
+    }
+
+    // A caller inlining colorName copies its `when` and regenerates AKt$WhenMappings from the
+    // stub's <clinit>; without it kotlinc fails with "Couldn't inline method call".
+    AbsPath stubJar =
+        compileKotlinToStubJar(
+            "A.kt",
+            "package com.example.buck",
+            WHEN_COLOR_ENUM,
+            "@Suppress(\"NOTHING_TO_INLINE\")",
+            "inline fun colorName(c: Color): String = when (c) {",
+            "  Color.RED -> \"r\"",
+            "  Color.GREEN -> \"g\"",
+            "  Color.BLUE -> \"b\"",
+            "}");
+    try (JarFile jar = new JarFile(stubJar.toFile())) {
+      assertWhenMappingsKept(jar, "com/example/buck/AKt$WhenMappings");
+    }
+  }
+
+  @Test
+  public void kotlinKeepsWhenMappingsReferencedByMemberInlineFunction() throws IOException {
+    if (!isValidForKotlin() || !testingMode.equals(MODE_JAR_BASED)) {
+      return;
+    }
+
+    AbsPath stubJar =
+        compileKotlinToStubJar(
+            "A.kt",
+            "package com.example.buck",
+            WHEN_COLOR_ENUM,
+            "class Palette {",
+            "  @Suppress(\"NOTHING_TO_INLINE\")",
+            "  inline fun short(c: Color): Int = when (c) {",
+            "    Color.RED -> 1",
+            "    else -> 2",
+            "  }",
+            "}");
+    try (JarFile jar = new JarFile(stubJar.toFile())) {
+      assertWhenMappingsKept(jar, "com/example/buck/Palette$WhenMappings");
+    }
+  }
+
+  @Test
+  public void kotlinKeepsWhenMappingsReferencedByLambdaInInlineFunction() throws IOException {
+    if (!isValidForKotlin() || !testingMode.equals(MODE_JAR_BASED)) {
+      return;
+    }
+
+    AbsPath stubJar =
+        compileKotlinToStubJar(
+            "A.kt",
+            "package com.example.buck",
+            WHEN_COLOR_ENUM,
+            "inline fun colorTask(c: Color, crossinline sink: (Int) -> Unit): Runnable =",
+            "  Runnable { sink(when (c) { Color.RED -> 1; else -> 2 }) }");
+    try (JarFile jar = new JarFile(stubJar.toFile())) {
+      assertWhenMappingsKept(jar, "com/example/buck/AKt$colorTask$1$WhenMappings");
+    }
+  }
+
+  @Test
+  public void kotlinStripsWhenMappingsNotReferencedByInlineBodies() throws IOException {
+    if (!isValidForKotlin() || !testingMode.equals(MODE_JAR_BASED)) {
+      return;
+    }
+
+    AbsPath stubJar =
+        compileKotlinToStubJar(
+            "A.kt",
+            "package com.example.buck",
+            WHEN_COLOR_ENUM,
+            "fun colorName(c: Color): String = when (c) {",
+            "  Color.RED -> \"r\"",
+            "  else -> \"x\"",
+            "}");
+    try (JarFile jar = new JarFile(stubJar.toFile())) {
+      ClassNode node = readClass(jar, "com/example/buck/AKt$WhenMappings.class");
+      assertTrue(
+          "unreferenced WhenMappings stays stripped: " + methodNames(node),
+          node.fields.isEmpty() && !methodNames(node).contains("<clinit>"));
+    }
+  }
+
   @Test
   public void doNotStripClassSuffixIfItDoesNotExist() {
     assertEquals("A.aut", StubJar.pathWithoutClassSuffix(Paths.get("A.aut")));

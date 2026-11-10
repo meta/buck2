@@ -110,36 +110,53 @@ public class KosabiStubgenStepsBuilder {
           KspStepsBuilder.getKspAnnotationProcessors(
               getAnnotationProcessors(annotationProcessorParams));
 
-      steps.add(
-          new KosabiStubgenStep(
-              invokingRule,
-              outputDirectory.getPath(),
-              sourceFilePaths,
-              pathToSrcsList,
-              allClasspaths,
-              extraParams.getKotlinHomeLibraries(),
-              reportsOutput,
-              kotlinc,
-              ImmutableList.of(),
-              ImmutableList.of(VERBOSE),
-              parameters.getOutputPaths(),
-              parameters.getShouldTrackClassUsage(),
-              buckOut,
-              allKosabiPluginOptionPath.entrySet().stream()
-                  .filter(
-                      entry ->
-                          KosabiConfig.PROPERTY_KOSABI_STUBS_GEN_K2_PLUGIN.equals(entry.getKey()))
-                  .collect(ImmutableMap.toImmutableMap(Map.Entry::getKey, Map.Entry::getValue)),
-              "Terminating compilation. We're done with Stubgen.",
-              compilationClasspathBuilder.build(),
-              extraParams.getShouldVerifySourceOnlyAbiConstraints(),
-              postKotlinCompilationFailureSteps.build(),
-              extraParams.getDepTrackerPlugin(),
-              stubgenOutputDir,
-              stubgenClassOutputDir,
-              kotlinCDAnalytics,
-              languageVersion,
-              kspAnnotationProcessors.isEmpty()));
+      AbsPath rokokoStubgenSo =
+          allKosabiPluginOptionPath.get(KosabiConfig.PROPERTY_ROKOKO_STUBGEN_SO);
+      if (rokokoStubgenSo != null) {
+        // Prototype engine: kotlin.stubgen_engine=rokoko. Runs rokoko stubgen
+        // in-worker through JNI instead of the kotlinc-based stubgen step;
+        // downstream zip/jar steps are unchanged.
+        steps.add(
+            new RokokoStubgenStep(
+                invokingRule,
+                rokokoStubgenSo,
+                sourceFilePaths,
+                compilationClasspathBuilder.build(),
+                stubgenOutputDir,
+                stubgenClassOutputDir,
+                reportsOutput));
+      } else {
+        steps.add(
+            new KosabiStubgenStep(
+                invokingRule,
+                outputDirectory.getPath(),
+                sourceFilePaths,
+                pathToSrcsList,
+                allClasspaths,
+                extraParams.getKotlinHomeLibraries(),
+                reportsOutput,
+                kotlinc,
+                ImmutableList.of(),
+                ImmutableList.of(VERBOSE),
+                parameters.getOutputPaths(),
+                parameters.getShouldTrackClassUsage(),
+                buckOut,
+                allKosabiPluginOptionPath.entrySet().stream()
+                    .filter(
+                        entry ->
+                            KosabiConfig.PROPERTY_KOSABI_STUBS_GEN_K2_PLUGIN.equals(entry.getKey()))
+                    .collect(ImmutableMap.toImmutableMap(Map.Entry::getKey, Map.Entry::getValue)),
+                "Terminating compilation. We're done with Stubgen.",
+                compilationClasspathBuilder.build(),
+                extraParams.getShouldVerifySourceOnlyAbiConstraints(),
+                postKotlinCompilationFailureSteps.build(),
+                extraParams.getDepTrackerPlugin(),
+                stubgenOutputDir,
+                stubgenClassOutputDir,
+                kotlinCDAnalytics,
+                languageVersion,
+                kspAnnotationProcessors.isEmpty()));
+      }
 
       steps.add(
           new ZipIsolatedStep(

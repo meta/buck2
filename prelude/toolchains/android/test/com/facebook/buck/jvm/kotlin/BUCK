@@ -40,6 +40,7 @@ buck_kotlin_test(
         "prelude//toolchains/android/src/com/facebook/buck/util/environment:platform",
         "prelude//toolchains/android/src/com/facebook/buck/util/json:json",
         "prelude//toolchains/android/src/com/facebook/buck/util/unit:unit",
+        "prelude//toolchains/android/test/com/facebook/buck/step:testutil",
         "prelude//toolchains/android/test/com/facebook/buck/testutil:testutil",
         "prelude//toolchains/android/third-party:args4j",
         "prelude//toolchains/android/third-party:asm",

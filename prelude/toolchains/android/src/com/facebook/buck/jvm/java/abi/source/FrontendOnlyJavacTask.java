@@ -66,6 +66,7 @@ public class FrontendOnlyJavacTask extends BuckJavacTask {
 
   @Override
   public Iterable<? extends CompilationUnitTree> parse() throws IOException {
+    prepare();
     if (parsedCompilationUnits == null) {
       parsedCompilationUnits = javacTask.parse();
     }
@@ -156,6 +157,7 @@ public class FrontendOnlyJavacTask extends BuckJavacTask {
 
   @Override
   public Boolean call() {
+    prepare();
     try {
       stopCompilationAfterEnter = true;
       return javacTask.call();

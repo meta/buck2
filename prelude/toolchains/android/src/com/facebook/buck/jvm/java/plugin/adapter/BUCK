@@ -7,8 +7,6 @@ source_listing()
 
 buck_java_library(
     name = "adapter",
-    # We use conditional compilation to support building against both Java 8 and 11, despite
-    # breaking interface changes in the JDK.
     srcs = glob(["*.java"]),
     provided_deps = [
         "prelude//toolchains/android/third-party:infer-annotations",

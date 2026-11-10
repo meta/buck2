@@ -12,8 +12,9 @@ package com.facebook.buck.jvm.java.plugin.adapter;
 
 import com.facebook.buck.jvm.java.lang.model.ElementsExtended;
 import com.facebook.infer.annotation.Nullsafe;
+import com.sun.source.tree.CompilationUnitTree;
+import com.sun.source.tree.Tree;
 import com.sun.source.util.JavacTask;
-import com.sun.source.util.TaskEvent;
 import com.sun.source.util.TaskListener;
 import com.sun.source.util.Trees;
 import java.io.IOException;
@@ -21,12 +22,17 @@ import java.lang.reflect.InvocationTargetException;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 import java.util.function.Consumer;
+import javax.annotation.processing.Processor;
 import javax.lang.model.element.Element;
+import javax.lang.model.type.TypeMirror;
 import javax.lang.model.util.Elements;
+import javax.lang.model.util.Types;
+import javax.tools.JavaFileObject;
 import org.jspecify.annotations.Nullable;
 
 /**
@@ -34,45 +40,36 @@ import org.jspecify.annotations.Nullable;
  *
  * <ul>
  *   <li>Exposes the enter method from JavacTaskImpl
- *   <li>Pre-javac-8 support for addTaskListener/removeTaskListener
+ *   <li>Runs {@link BuckJavacPlugin}s and post-enter callbacks
  *   <li>Wraps {@link Elements} with some extended functionality
  * </ul>
  */
 @Nullsafe(Nullsafe.Mode.LOCAL)
-public class BuckJavacTask extends JavacTaskWrapper {
+public class BuckJavacTask extends JavacTask {
+  protected final JavacTask inner;
+
   private final Map<BuckJavacPlugin, String[]> pluginsAndArgs = new LinkedHashMap<>();
-  private final MultiplexingTaskListener taskListeners = new MultiplexingTaskListener();
-  private final PostEnterTaskListener postEnterTaskListener;
   private final List<Consumer<Set<Element>>> postEnterCallbacks = new ArrayList<>();
 
-  private boolean pluginsInstalled = false;
+  private boolean prepared = false;
 
-  @Nullable private TaskListener singleTaskListener;
   @Nullable private ElementsExtended elements;
 
   public BuckJavacTask(JavacTask inner) {
-    super(inner);
     if (inner instanceof BuckJavacTask) {
       throw new IllegalArgumentException();
     }
+    this.inner = inner;
+  }
 
-    inner.setTaskListener(
-        new TaskListener() {
-          @Override
-          public void started(TaskEvent e) {
-            BuckJavacTask.this.started(e);
-          }
-
-          @Override
-          public void finished(TaskEvent e) {
-            BuckJavacTask.this.finished(e);
-          }
-        });
-
-    postEnterTaskListener = new PostEnterTaskListener(this, this::onPostEnter);
+  @Override
+  public Iterable<? extends CompilationUnitTree> parse() throws IOException {
+    prepare();
+    return inner.parse();
   }
 
   public Iterable<? extends Element> enter() throws IOException {
+    prepare();
     try {
       @SuppressWarnings("unchecked")
       Iterable<? extends Element> result =
@@ -93,42 +90,71 @@ public class BuckJavacTask extends JavacTaskWrapper {
     }
   }
 
-  /**
-   * Sets a {@link TaskListener}. Like {@link JavacTask}'s implementation of this method, the
-   * listener does not replace listeners added with {@link #addTaskListener(TaskListener)}. Instead,
-   * it replaces only the listener provided in the previous call to this method, if any.
-   *
-   * <p>Presumably this behavior was to enable {@link com.sun.source.util.Plugin}s to work properly
-   * with build systems that were written when only a single {@link TaskListener} was supported at a
-   * time.
-   */
   @Override
-  public void setTaskListener(@Nullable TaskListener taskListener) {
-    if (singleTaskListener != null) {
-      removeTaskListener(singleTaskListener);
-    }
-    singleTaskListener = taskListener;
-    if (singleTaskListener != null) {
-      addTaskListener(singleTaskListener);
-    }
+  public Iterable<? extends Element> analyze() throws IOException {
+    prepare();
+    return inner.analyze();
   }
 
   @Override
-  public void addTaskListener(TaskListener taskListener) {
-    taskListeners.addListener(taskListener);
+  public Iterable<? extends JavaFileObject> generate() throws IOException {
+    prepare();
+    return inner.generate();
   }
 
   @Override
-  public void removeTaskListener(TaskListener taskListener) {
-    taskListeners.removeListener(taskListener);
+  public Boolean call() {
+    prepare();
+    return inner.call();
   }
 
   @Override
   public ElementsExtended getElements() {
     if (elements == null) {
-      elements = new ElementsExtendedImpl(super.getElements(), getTypes(), getTrees());
+      elements = new ElementsExtendedImpl(inner.getElements(), getTypes(), getTrees());
     }
     return elements;
+  }
+
+  @Override
+  public Types getTypes() {
+    return inner.getTypes();
+  }
+
+  @Override
+  @Nullable
+  public TypeMirror getTypeMirror(Iterable<? extends Tree> path) {
+    return inner.getTypeMirror(path);
+  }
+
+  @Override
+  public void setTaskListener(TaskListener taskListener) {
+    inner.setTaskListener(taskListener);
+  }
+
+  @Override
+  public void addTaskListener(TaskListener taskListener) {
+    inner.addTaskListener(taskListener);
+  }
+
+  @Override
+  public void removeTaskListener(TaskListener taskListener) {
+    inner.removeTaskListener(taskListener);
+  }
+
+  @Override
+  public void setProcessors(Iterable<? extends Processor> processors) {
+    inner.setProcessors(processors);
+  }
+
+  @Override
+  public void setLocale(Locale locale) {
+    inner.setLocale(locale);
+  }
+
+  @Override
+  public void addModules(Iterable<String> moduleNames) {
+    inner.addModules(moduleNames);
   }
 
   public void addPlugin(BuckJavacPlugin plugin, String... args) {
@@ -143,36 +169,27 @@ public class BuckJavacTask extends JavacTaskWrapper {
     return Trees.instance(inner);
   }
 
-  protected void started(TaskEvent e) {
-    // Initialize plugins just before sending the first event to registered listeners. We do it
-    // this way (rather than initializing plugins just before starting to run the task) because
-    // most plugins will call methods like getElements, which in javac 7 are not safe to call
-    // before the task is actually running.
-    installPlugins();
+  /**
+   * Initializes plugins and registers the post-enter listener before the task starts running.
+   * Plugin listeners therefore receive every event, after the listeners registered before the task
+   * started, and the post-enter callbacks run after all of them. Subclasses that run the inner task
+   * directly must call this first.
+   */
+  protected void prepare() {
+    if (prepared) {
+      return;
+    }
+    prepared = true;
 
-    taskListeners.started(e);
-    postEnterTaskListener.started(e);
-  }
+    for (Map.Entry<BuckJavacPlugin, String[]> pluginAndArgs : pluginsAndArgs.entrySet()) {
+      pluginAndArgs.getKey().init(this, pluginAndArgs.getValue());
+    }
+    pluginsAndArgs.clear();
 
-  protected void finished(TaskEvent e) {
-    taskListeners.finished(e);
-    postEnterTaskListener.finished(e);
+    inner.addTaskListener(new PostEnterTaskListener(this, this::onPostEnter));
   }
 
   protected void onPostEnter(Set<Element> topLevelElements) {
     postEnterCallbacks.forEach(callback -> callback.accept(topLevelElements));
-  }
-
-  private void installPlugins() {
-    if (pluginsInstalled) {
-      return;
-    }
-
-    for (Map.Entry<BuckJavacPlugin, String[]> pluginAndArgs : pluginsAndArgs.entrySet()) {
-      pluginAndArgs.getKey().init(BuckJavacTask.this, pluginAndArgs.getValue());
-    }
-
-    pluginsAndArgs.clear();
-    pluginsInstalled = true;
   }
 }

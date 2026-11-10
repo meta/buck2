@@ -240,6 +240,15 @@ def python_executable_attrs() -> dict[str, Attr]:
             `string`s, or a further `string`-keyed dictionary.""",
             ),
             "native_link_strategy": attrs.option(attrs.enum(NativeLinkStrategy.values()), default = None),
+            "omnibus_linking": attrs.option(
+                attrs.enum(["always", "static_link_style"]),
+                default = None,
+                doc = """
+                When the executable links native deps through omnibus (`merged`): `always`, or only when the
+                target configuration uses a static link style. The python transition switches such executables to
+                the large code model.
+            """,
+            ),
             "opt_by_default_enabled": attrs.bool(default = False),
             "optimize_for_action_throughput": attrs.bool(default = False),
             "package_split_dwarf_dwp": attrs.bool(default = False),

@@ -103,8 +103,51 @@ def _transition_opt_by_default_impl(platform: PlatformInfo, refs: struct, attrs:
         configuration = new_cfg,
     )
 
+def _transition_omnibus_large_code_model_impl(platform: PlatformInfo, refs: struct, attrs: struct) -> PlatformInfo:
+    omnibus_linking = getattr(attrs, "omnibus_linking", None)
+    if omnibus_linking == None:
+        return platform
+
+    constraints = platform.configuration.constraints
+    x86_64 = refs._omnibus__x86_64[ConstraintValueInfo]
+    cpu = constraints.get(x86_64.setting.label)
+    if cpu == None or cpu.label != x86_64.label:
+        return platform
+
+    if omnibus_linking == "static_link_style":
+        static = refs._omnibus__static[ConstraintValueInfo]
+        link_style = constraints.get(static.setting.label)
+        if link_style == None or link_style.label not in [static.label, refs._omnibus__static_pic[ConstraintValueInfo].label]:
+            return platform
+        arvr = refs._omnibus__arvr_enabled[ConstraintValueInfo]
+        arvr_mode = constraints.get(arvr.setting.label)
+        if arvr_mode != None and arvr_mode.label == arvr.label:
+            return platform
+
+    mcmodel_large = refs._omnibus__mcmodel_large[ConstraintValueInfo]
+    mcmodel = constraints.get(mcmodel_large.setting.label)
+    if mcmodel != None and mcmodel.label == mcmodel_large.label:
+        return platform
+
+    constraints = {label: constraint for label, constraint in constraints.items()}
+    constraints[mcmodel_large.setting.label] = mcmodel_large
+    new_cfg = ConfigurationInfo(
+        constraints = constraints,
+        values = platform.configuration.values,
+    )
+
+    return PlatformInfo(
+        label = cfg_name(new_cfg),
+        configuration = new_cfg,
+    )
+
 def _refs():
     return {
+        "_omnibus__arvr_enabled": "@config//build_mode:arvr_mode[enabled]",
+        "_omnibus__mcmodel_large": "@config//toolchain/cxx/constraints:mcmodel-large",
+        "_omnibus__static": "@config//build_mode/constraints:default_link_style[static]",
+        "_omnibus__static_pic": "@config//build_mode/constraints:default_link_style[static_pic]",
+        "_omnibus__x86_64": "@config//cpu/constraints:x86_64",
         "_opt_by_default__dev": "@config//build_mode/constraints:dev",
         "_opt_by_default__dev_san": "@config//build_mode:sanitizer_type[asan-ubsan-dev]",
         "_opt_by_default__execution_platform_marker": "@config//platform/execution/constraints:execution-platform-transitioned",
@@ -119,10 +162,12 @@ def _refs():
 
 def _attrs():
     return {
+        "omnibus_linking": attrs.option(attrs.enum(["always", "static_link_style"]), default = None),
         "opt_by_default_enabled": attrs.bool(default = False),
     }
 
 python_transitions = struct(
+    transition_omnibus_large_code_model_impl = _transition_omnibus_large_code_model_impl,
     transition_opt_by_default_impl = _transition_opt_by_default_impl,
     attrs = _attrs,
     refs = _refs,

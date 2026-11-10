@@ -190,6 +190,7 @@ def _impl(platform: PlatformInfo, refs: struct, attrs: struct) -> PlatformInfo:
 # Its easier to add the opt-by-default specific ones here than vice-versa
 def _python_impl(platform: PlatformInfo, refs: struct, attrs: struct) -> PlatformInfo:
     # @oss-disable[end= ]: platform = python_transitions.transition_opt_by_default_impl(platform, refs, attrs)
+    # @oss-disable[end= ]: platform = python_transitions.transition_omnibus_large_code_model_impl(platform, refs, attrs)
     return _impl(platform, refs, attrs)
 
 _refs = constraint_override_refs()

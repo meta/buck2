@@ -294,7 +294,7 @@ pub(crate) fn register_error_handling_function(builder: &mut GlobalsBuilder) {
 
 #[derive(StarlarkTypeRepr, UnpackValue)]
 pub(crate) enum PackagePathArg<'v> {
-    PackagePath(&'v StarlarkPackagePath),
+    PackagePath(ValueOf<'v, StarlarkPackagePath>),
     Str(&'v str),
 }
 

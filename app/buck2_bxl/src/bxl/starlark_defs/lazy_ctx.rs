@@ -146,12 +146,12 @@ fn lazy_ctx_methods(builder: &mut MethodsBuilder) {
     /// ```
     fn join_all<'v>(
         #[starlark(this)] _this: &'v StarlarkLazyCtx,
-        #[starlark(require = pos)] operations: ValueOf<'v, ListType<&'v StarlarkLazy>>,
+        #[starlark(require = pos)] operations: ValueOf<'v, ListType<StarlarkLazy>>,
     ) -> starlark::Result<StarlarkLazy> {
         Ok(StarlarkLazy::new_batch(
             operations
-                .try_items()
-                .map(|o| starlark::Result::Ok(o?.dupe()))
+                .iter()
+                .map(|o| starlark::Result::Ok(o?.as_ref().dupe()))
                 .collect::<starlark::Result<Vec<_>>>()?,
         ))
     }

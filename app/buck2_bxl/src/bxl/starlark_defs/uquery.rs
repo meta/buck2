@@ -647,7 +647,7 @@ fn uquery_methods(builder: &mut MethodsBuilder) {
 #[derive(StarlarkTypeRepr, UnpackValue)]
 pub(crate) enum UnpackUnconfiguredQueryArgs<'v> {
     ListOfStrings(ValueOf<'v, ListType<String>>),
-    TargetSet(&'v StarlarkTargetSet<TargetNode>),
+    TargetSet(ValueOf<'v, StarlarkTargetSet<TargetNode>>),
 }
 
 impl<'v> UnpackUnconfiguredQueryArgs<'v> {

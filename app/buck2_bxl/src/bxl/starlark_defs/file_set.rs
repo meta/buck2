@@ -50,7 +50,7 @@ use crate::bxl::starlark_defs::context::BxlContextCoreData;
 pub(crate) enum FileSetExpr<'v> {
     Literal(&'v str),
     Literals(ValueOf<'v, ListOrTupleType<&'v str>>),
-    FileSet(&'v StarlarkFileSet),
+    FileSet(ValueOf<'v, StarlarkFileSet>),
 }
 
 impl<'a> FileSetExpr<'a> {
@@ -66,7 +66,7 @@ impl<'a> FileSetExpr<'a> {
                 }
                 Cow::Owned(file_set)
             }
-            FileSetExpr::FileSet(val) => Cow::Borrowed(&val.0),
+            FileSetExpr::FileSet(val) => Cow::Borrowed(&val.as_ref().0),
         };
         Ok(set)
     }

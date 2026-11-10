@@ -24,6 +24,7 @@ use derive_more::Display;
 use dice::DiceComputations;
 use dupe::Dupe;
 use starlark::values::UnpackValue;
+use starlark::values::ValueOf;
 use starlark::values::type_repr::StarlarkTypeRepr;
 
 use crate::bxl::starlark_defs::file_set::StarlarkFileNode;
@@ -43,7 +44,7 @@ enum FileExprError {
 pub(crate) enum FileExpr<'v> {
     Literal(&'v str),
     SourceArtifact(StarlarkArtifactView<'v>),
-    StarlarkFileNode(&'v StarlarkFileNode),
+    StarlarkFileNode(ValueOf<'v, StarlarkFileNode>),
 }
 
 fn parse_cell_path_as_file_expr_literal(

@@ -58,7 +58,7 @@ use crate::bxl::starlark_defs::cli_args::CliArgValue;
 pub(crate) fn register_bxl_prefixed_main_function(builder: &mut GlobalsBuilder) {
     fn bxl_main<'v>(
         #[starlark(require = named)] r#impl: StarlarkCallable<'v>,
-        #[starlark(require = named)] cli_args: ValueOf<'v, DictType<&'v str, &'v CliArgs>>,
+        #[starlark(require = named)] cli_args: ValueOf<'v, DictType<&'v str, CliArgs>>,
         #[starlark(require = named, default = "")] doc: &str,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<Value<'v>> {
@@ -70,7 +70,7 @@ pub(crate) fn register_bxl_prefixed_main_function(builder: &mut GlobalsBuilder) 
 pub(crate) fn register_bxl_main_function(builder: &mut GlobalsBuilder) {
     fn main<'v>(
         #[starlark(require = named)] r#impl: StarlarkCallable<'v>,
-        #[starlark(require = named)] cli_args: ValueOf<'v, DictType<&'v str, &'v CliArgs>>,
+        #[starlark(require = named)] cli_args: ValueOf<'v, DictType<&'v str, CliArgs>>,
         #[starlark(require = named, default = "")] doc: &str,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<Value<'v>> {
@@ -80,7 +80,7 @@ pub(crate) fn register_bxl_main_function(builder: &mut GlobalsBuilder) {
 
 fn bxl_impl<'v>(
     r#impl: StarlarkCallable<'v>,
-    cli_args: ValueOf<'v, DictType<&'v str, &'v CliArgs>>,
+    cli_args: ValueOf<'v, DictType<&'v str, CliArgs>>,
     doc: &str,
     eval: &mut Evaluator<'v, '_, '_>,
 ) -> starlark::Result<Value<'v>> {
@@ -99,7 +99,7 @@ fn bxl_impl<'v>(
     let mut unresolved_cli_args = BuckMutInsertionMap::new();
     let mut short_args = BuckMutInsertionSet::new();
 
-    for entry in cli_args.try_items() {
+    for entry in cli_args.iter() {
         let (arg, def) = entry?;
         if let Some(short) = def.short {
             if short_args.contains(&short) {
@@ -110,7 +110,7 @@ fn bxl_impl<'v>(
                 short_args.insert(short.to_owned());
             }
         }
-        unresolved_cli_args.insert(arg.to_owned(), def.clone());
+        unresolved_cli_args.insert(arg.unpack().to_owned(), def.as_ref().clone());
     }
 
     Ok(eval.heap().alloc(BxlFunction {

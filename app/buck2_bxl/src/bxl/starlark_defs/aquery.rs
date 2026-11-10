@@ -121,7 +121,7 @@ pub(crate) async fn get_aquery_env(
 #[derive(StarlarkTypeRepr, UnpackValue)]
 enum UnpackActionNodes<'v> {
     ActionQueryNodes(ValueOf<'v, ListType<StarlarkActionQueryNode>>),
-    ActionQueryNodesSet(&'v StarlarkTargetSet<ActionQueryNode>),
+    ActionQueryNodesSet(ValueOf<'v, StarlarkTargetSet<ActionQueryNode>>),
     ConfiguredProviders(AnyProvidersExprArg<'v>),
     ConfiguredTargets(ConfiguredTargetListExprArg<'v>),
     StarlarkActions(ValueOf<'v, ListType<StarlarkAction>>),

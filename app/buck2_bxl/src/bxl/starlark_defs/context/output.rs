@@ -582,9 +582,9 @@ impl<'v> AllocValue<'v> for StarlarkOutputStream {
 enum EnsureMultipleArtifactsArg<'v> {
     None(NoneType),
     EnsuredArtifactArgs(ValueOf<'v, ListType<StarlarkArtifactView<'v>>>),
-    ProvidersArtifactIterable(&'v StarlarkProvidersArtifactIterable<'v>),
-    BxlBuildResult(&'v StarlarkBxlBuildResult),
-    Dict(ValueOf<'v, DictType<Value<'v>, &'v StarlarkBxlBuildResult>>),
+    ProvidersArtifactIterable(ValueOf<'v, StarlarkProvidersArtifactIterable<'v>>),
+    BxlBuildResult(ValueOf<'v, StarlarkBxlBuildResult>),
+    Dict(ValueOf<'v, DictType<Value<'v>, StarlarkBxlBuildResult>>),
     CmdLine(ValueAsCommandLineLike<'v>),
 }
 
@@ -689,7 +689,7 @@ fn output_stream_methods(builder: &mut MethodsBuilder) {
         #[starlark(default = " ")] sep: &'v str,
         #[starlark(require = named, default = ValueOf::empty_list())] wait_on: ValueOf<
             'v,
-            ListType<Either<&'v EnsuredArtifact, &'v EnsuredArtifactGroup<'v>>>,
+            ListType<Either<EnsuredArtifact, EnsuredArtifactGroup<'v>>>,
         >,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<NoneType> {
@@ -697,11 +697,15 @@ fn output_stream_methods(builder: &mut MethodsBuilder) {
         let streaming_writer = BxlStreamingWriter::new(&extra.dice);
 
         let wait_on = wait_on
-            .try_to_vec()?
+            .iter()
+            .map(|wait_on| Ok(wait_on?.get()))
+            .collect::<starlark::Result<Vec<_>>>()?
             .into_iter()
             .flat_map(|wait_on| match wait_on {
                 Either::Left(ensured_artifact) => {
-                    vec![EnsuredArtifactOrGroup::Artifact(ensured_artifact.dupe())]
+                    vec![EnsuredArtifactOrGroup::Artifact(
+                        ensured_artifact.as_ref().dupe(),
+                    )]
                 }
                 Either::Right(ensured_group) => ensured_group
                     .inner()
@@ -748,18 +752,22 @@ fn output_stream_methods(builder: &mut MethodsBuilder) {
         #[starlark(require=named, default=true)] pretty: bool,
         #[starlark(require = named, default = ValueOf::empty_list())] wait_on: ValueOf<
             'v,
-            ListType<Either<&'v EnsuredArtifact, &'v EnsuredArtifactGroup<'v>>>,
+            ListType<Either<EnsuredArtifact, EnsuredArtifactGroup<'v>>>,
         >,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<NoneType> {
         let extra = BxlEvalExtra::from_context(eval)?;
         let streaming_writer = BxlStreamingWriter::new(&extra.dice);
         let wait_on = wait_on
-            .try_to_vec()?
+            .iter()
+            .map(|wait_on| Ok(wait_on?.get()))
+            .collect::<starlark::Result<Vec<_>>>()?
             .into_iter()
             .flat_map(|wait_on| match wait_on {
                 Either::Left(ensured_artifact) => {
-                    vec![EnsuredArtifactOrGroup::Artifact(ensured_artifact.dupe())]
+                    vec![EnsuredArtifactOrGroup::Artifact(
+                        ensured_artifact.as_ref().dupe(),
+                    )]
                 }
                 Either::Right(ensured_group) => ensured_group
                     .inner()
@@ -847,16 +855,16 @@ fn output_stream_methods(builder: &mut MethodsBuilder) {
                     this,
                 )?))
             }
-            EnsureMultipleArtifactsArg::BxlBuildResult(bxl_build_result) => {
-                Ok(heap.alloc(get_artifacts_from_bxl_build_result(bxl_build_result, this)?))
-            }
+            EnsureMultipleArtifactsArg::BxlBuildResult(bxl_build_result) => Ok(heap.alloc(
+                get_artifacts_from_bxl_build_result(bxl_build_result.as_ref(), this)?,
+            )),
             EnsureMultipleArtifactsArg::Dict(build_result_dict) => Ok(heap.alloc_dict(
                 build_result_dict
-                    .try_items()
+                    .iter()
                     .map(|entry| {
                         let (label, bxl_build_result) = entry?;
                         Ok((
-                            label.get_hashed().map_err(|e| {
+                            label.to_value().get_hashed().map_err(|e| {
                                 from_starlark_with_options(
                                     e,
                                     buck2_error::starlark_error::NativeErrorHandling::Unknown,
@@ -864,7 +872,7 @@ fn output_stream_methods(builder: &mut MethodsBuilder) {
                                 )
                             })?,
                             heap.alloc(get_artifacts_from_bxl_build_result(
-                                bxl_build_result,
+                                bxl_build_result.as_ref(),
                                 this,
                             )?),
                         ))

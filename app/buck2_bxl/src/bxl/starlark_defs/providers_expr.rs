@@ -50,15 +50,15 @@ pub(crate) enum ProvidersExpr<P: ProvidersLabelMaybeConfigured> {
 #[derive(StarlarkTypeRepr, UnpackValue)]
 pub(crate) enum ProvidersLabelArg<'v> {
     Str(&'v str),
-    StarlarkTargetLabel(&'v StarlarkTargetLabel),
-    StarlarkProvidersLabel(&'v StarlarkProvidersLabel),
-    StarlarkTargetNode(&'v StarlarkTargetNode),
+    StarlarkTargetLabel(ValueOf<'v, StarlarkTargetLabel>),
+    StarlarkProvidersLabel(ValueOf<'v, StarlarkProvidersLabel>),
+    StarlarkTargetNode(ValueOf<'v, StarlarkTargetNode>),
 }
 
 #[derive(StarlarkTypeRepr, UnpackValue)]
 pub(crate) enum ProvidersLabelListArg<'v> {
     List(ValueOf<'v, ListType<ProvidersLabelArg<'v>>>),
-    TargetSet(&'v StarlarkTargetSet<TargetNode>),
+    TargetSet(ValueOf<'v, StarlarkTargetSet<TargetNode>>),
 }
 
 #[derive(StarlarkTypeRepr, UnpackValue)]
@@ -71,9 +71,9 @@ pub(crate) enum ProvidersExprArg<'v> {
 /// a configured provider label
 #[derive(StarlarkTypeRepr, UnpackValue)]
 pub(crate) enum ConfiguredProvidersLabelArg<'v> {
-    Node(&'v StarlarkConfiguredTargetNode),
-    Label(&'v StarlarkConfiguredTargetLabel),
-    ProvidersLabel(&'v StarlarkConfiguredProvidersLabel),
+    Node(ValueOf<'v, StarlarkConfiguredTargetNode>),
+    Label(ValueOf<'v, StarlarkConfiguredTargetLabel>),
+    ProvidersLabel(ValueOf<'v, StarlarkConfiguredProvidersLabel>),
 }
 
 /// ConfiguredProvidersLabelListArg is a type that can be used as an argument in starlark api for
@@ -81,7 +81,7 @@ pub(crate) enum ConfiguredProvidersLabelArg<'v> {
 #[derive(StarlarkTypeRepr, UnpackValue)]
 pub(crate) enum ConfiguredProvidersLabelListArg<'v> {
     List(ValueOf<'v, ListType<ConfiguredProvidersLabelArg<'v>>>),
-    TargetSet(&'v StarlarkTargetSet<ConfiguredTargetNode>),
+    TargetSet(ValueOf<'v, StarlarkTargetSet<ConfiguredTargetNode>>),
 }
 
 /// ConfiguredProvidersExprArg is a type that can be used as an argument in starlark api for
@@ -102,8 +102,8 @@ pub(crate) enum AnyProvidersLabelArg<'v> {
 
 #[derive(StarlarkTypeRepr, UnpackValue)]
 pub(crate) enum AnyProvidersLabelListArg<'v> {
-    StarlarkTargetSet(&'v StarlarkTargetSet<TargetNode>),
-    StarlarkConfiguredTargetSet(&'v StarlarkTargetSet<ConfiguredTargetNode>),
+    StarlarkTargetSet(ValueOf<'v, StarlarkTargetSet<TargetNode>>),
+    StarlarkConfiguredTargetSet(ValueOf<'v, StarlarkTargetSet<ConfiguredTargetNode>>),
     List(ValueOf<'v, ListType<AnyProvidersLabelArg<'v>>>),
 }
 

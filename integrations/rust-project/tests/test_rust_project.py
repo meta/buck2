@@ -195,6 +195,21 @@ class RustProjectTest(BuckTestCase):
         assert dep["source_folder"] is not None
 
     @buck_test(inplace=True, skip_for_os=["darwin", "windows"])
+    async def test_fallback_select_in_list(self, buck: Buck) -> None:
+        result_raw = await buck.bxl(
+            "prelude//rust/rust-analyzer/resolve_deps.bxl:resolve_targets",
+            "--",
+            "--targets",
+            "//buck2/integrations/rust-project/tests/targets/foo:g_with_compatibility",
+        )
+        result: Dict[str, Any] = json.load(open(result_raw.stdout.rstrip()))
+
+        dep = list(result["resolved_deps"].values())[0]
+
+        # The fbcode macros add select()s as elements of `labels`.
+        assert all(isinstance(label, str) for label in dep["labels"]), dep["labels"]
+
+    @buck_test(inplace=True, skip_for_os=["darwin", "windows"])
     async def test_fallback_mapped_srcs(self, buck: Buck) -> None:
         result_raw = await buck.bxl(
             "prelude//rust/rust-analyzer/resolve_deps.bxl:resolve_targets",

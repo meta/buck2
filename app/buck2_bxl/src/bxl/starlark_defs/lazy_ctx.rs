@@ -123,10 +123,13 @@ fn lazy_ctx_methods(builder: &mut MethodsBuilder) {
     /// ```
     fn join<'v>(
         #[starlark(this)] _this: &'v StarlarkLazyCtx,
-        #[starlark(require = pos)] lazy0: &'v StarlarkLazy,
-        #[starlark(require = pos)] lazy1: &'v StarlarkLazy,
+        #[starlark(require = pos)] lazy0: ValueOf<'v, StarlarkLazy>,
+        #[starlark(require = pos)] lazy1: ValueOf<'v, StarlarkLazy>,
     ) -> starlark::Result<StarlarkLazy> {
-        Ok(StarlarkLazy::new_join(lazy0.dupe(), lazy1.dupe()))
+        Ok(StarlarkLazy::new_join(
+            lazy0.as_ref().dupe(),
+            lazy1.as_ref().dupe(),
+        ))
     }
 
     /// Join a list of lazy operations into a single operation that can be evaluated.
@@ -176,7 +179,7 @@ fn lazy_ctx_methods(builder: &mut MethodsBuilder) {
     /// ```
     fn resolve_dynamic_value<'v>(
         #[starlark(this)] _this: &'v StarlarkLazyCtx<'v>,
-        #[starlark(require = pos)] value: &'v StarlarkDynamicValue,
+        #[starlark(require = pos)] value: ValueOf<'v, StarlarkDynamicValue>,
     ) -> starlark::Result<StarlarkLazy> {
         let value = &value.dynamic_value;
         if let BaseDeferredKey::BxlLabel(_) = value.dynamic_lambda_results_key.owner() {

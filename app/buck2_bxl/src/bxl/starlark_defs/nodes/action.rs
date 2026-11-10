@@ -35,7 +35,6 @@ use starlark::values::StarlarkValue;
 use starlark::values::StringValue;
 use starlark::values::UnpackValue;
 use starlark::values::Value;
-use starlark::values::ValueTyped;
 use starlark::values::none::NoneOr;
 use starlark::values::starlark_value;
 use starlark::values::structs::AllocStruct;
@@ -159,25 +158,19 @@ fn action_query_node_value_methods(builder: &mut MethodsBuilder) {
     }
 
     /// Gets optional action from the action query target node.
-    fn action<'v>(
-        this: &StarlarkActionQueryNode,
-        heap: Heap<'v>,
-    ) -> starlark::Result<NoneOr<ValueTyped<'v, StarlarkAction>>> {
-        let action = this.0.action();
-        match action {
-            None => Ok(NoneOr::None),
-            Some(a) => Ok(NoneOr::Other(heap.alloc_typed(StarlarkAction(a.dupe())))),
-        }
+    fn action(this: &StarlarkActionQueryNode) -> starlark::Result<NoneOr<StarlarkAction>> {
+        Ok(NoneOr::from_option(
+            this.0.action().map(|a| StarlarkAction(a.dupe())),
+        ))
     }
 
     /// Gets optional analysis from the action query target node.
-    fn analysis<'v>(
+    fn analysis(
         this: &StarlarkActionQueryNode,
-        heap: Heap<'v>,
-    ) -> starlark::Result<NoneOr<ValueTyped<'v, StarlarkAnalysisResult>>> {
+    ) -> starlark::Result<NoneOr<StarlarkAnalysisResult>> {
         match this.0.analysis_opt() {
-            Some(a) => Ok(NoneOr::Other(heap.alloc_typed(
-                StarlarkAnalysisResult::new(a.analysis_result().lookup(a.target())?),
+            Some(a) => Ok(NoneOr::Other(StarlarkAnalysisResult::new(
+                a.analysis_result().lookup(a.target())?,
             ))),
             None => Ok(NoneOr::None),
         }

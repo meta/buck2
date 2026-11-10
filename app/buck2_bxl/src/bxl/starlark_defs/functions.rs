@@ -149,7 +149,7 @@ pub(crate) fn register_artifact_function(builder: &mut GlobalsBuilder) {
     /// ```
     fn get_path_without_materialization<'v>(
         #[starlark(require=pos)] this: StarlarkArtifactView<'v>,
-        #[starlark(require=pos)] ctx: &'v BxlContext<'v>,
+        #[starlark(require=pos)] ctx: ValueOf<'v, BxlContext<'v>>,
         #[starlark(require = named, default = false)] abs: bool,
         heap: Heap<'v>,
     ) -> starlark::Result<StringValue<'v>> {
@@ -200,7 +200,7 @@ pub(crate) fn register_artifact_function(builder: &mut GlobalsBuilder) {
     /// ```
     fn get_paths_without_materialization<'v>(
         #[starlark(require=pos)] cmd_line: ValueAsCommandLineLike<'v>,
-        #[starlark(require=pos)] ctx: &'v BxlContext<'v>,
+        #[starlark(require=pos)] ctx: ValueOf<'v, BxlContext<'v>>,
         #[starlark(require = named, default = false)] abs: bool,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<Value<'v>> {

@@ -73,6 +73,7 @@ use starlark::values::StringValue;
 use starlark::values::Trace;
 use starlark::values::UnpackValue;
 use starlark::values::Value;
+use starlark::values::ValueOf;
 use starlark::values::ValueTyped;
 use starlark::values::list::AllocList;
 use starlark::values::none::NoneOr;
@@ -437,9 +438,9 @@ fn configured_target_node_value_methods(builder: &mut MethodsBuilder) {
     /// ```
     fn resolved_attrs_lazy<'v>(
         this: ValueTyped<'v, StarlarkConfiguredTargetNode>,
-        ctx: ValueTyped<'v, BxlContext<'v>>,
+        ctx: ValueOf<'v, BxlContext<'v>>,
     ) -> starlark::Result<StarlarkLazyResolvedAttrs<'v>> {
-        Ok(StarlarkLazyResolvedAttrs::new(this, ctx))
+        Ok(StarlarkLazyResolvedAttrs::new(this, ctx.get()))
     }
 
     /// Returns a struct of all the resolved attributes of this target node. The structs fields are the
@@ -466,7 +467,7 @@ fn configured_target_node_value_methods(builder: &mut MethodsBuilder) {
     /// ```
     fn resolved_attrs_eager<'v>(
         this: &'v StarlarkConfiguredTargetNode,
-        ctx: &'v BxlContext<'v>,
+        ctx: ValueOf<'v, BxlContext<'v>>,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<Value<'v>> {
         let configured_node = this.0.as_ref();
@@ -604,7 +605,7 @@ fn configured_target_node_value_methods(builder: &mut MethodsBuilder) {
     fn get_source<'v>(
         this: &StarlarkConfiguredTargetNode,
         path: &str,
-        ctx: &BxlContext<'v>,
+        ctx: ValueOf<'v, BxlContext<'v>>,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<NoneOr<StarlarkArtifact>> {
         let path = Path::new(path);

@@ -731,12 +731,12 @@ pub(crate) fn bxl_context_methods(builder: &mut MethodsBuilder) {
     /// ```
     fn resolve<'v>(
         this: &'v BxlContext<'v>,
-        action_factory: ValueTyped<'v, AnalysisActions<'v>>,
-        promise: ValueTyped<'v, StarlarkPromise<'v>>,
+        action_factory: ValueOf<'v, AnalysisActions<'v>>,
+        promise: ValueOf<'v, StarlarkPromise<'v>>,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<NoneOr<Value<'v>>> {
-        run_anon_target_promises(action_factory, this, eval)?;
-        Ok(match promise.get() {
+        run_anon_target_promises(action_factory.get(), this, eval)?;
+        Ok(match promise.as_ref().get() {
             Some(v) => NoneOr::Other(v),
             None => NoneOr::None,
         })

@@ -198,8 +198,7 @@ pub(crate) struct BxlActions<'v> {
 
 /// Dependencies configured for the bxl action's execution platform, by the label they were
 /// requested as.
-type Deps<'v> =
-    ValueOf<'v, DictType<ValueTyped<'v, StarlarkProvidersLabel>, ValueTyped<'v, Dependency<'v>>>>;
+type Deps<'v> = ValueOf<'v, DictType<StarlarkProvidersLabel, Dependency<'v>>>;
 
 impl<'v> BxlActions<'v> {
     pub(crate) async fn new<'c>(
@@ -260,8 +259,8 @@ async fn alloc_deps<'v>(
             );
 
             buck2_error::Ok((
-                ValueOf::from(heap.alloc_typed(starlark_label)),
-                ValueOf::from(heap.alloc_typed(dependency)),
+                ValueOf::alloc(heap, starlark_label),
+                ValueOf::alloc(heap, dependency),
             ))
         })
         .collect::<Result<_, _>>()?;

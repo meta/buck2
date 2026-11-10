@@ -934,7 +934,7 @@ pub(crate) fn cli_args_module(registry: &mut GlobalsBuilder) {
     ///
     /// Both invocations above yield `[1, 2, 3]` in `ctx.cli_args.numbers`.
     fn list<'v>(
-        #[starlark(require = pos)] inner: &CliArgs,
+        #[starlark(require = pos)] inner: ValueOf<'v, CliArgs>,
         default: Option<Value<'v>>,
         #[starlark(default = "")] doc: &str,
         #[starlark(require = named)] short: Option<Value<'v>>,
@@ -1031,7 +1031,7 @@ pub(crate) fn cli_args_module(registry: &mut GlobalsBuilder) {
     /// buck2 bxl //my.bxl:target -- --message "hello"
     /// ```
     fn option<'v>(
-        inner: &CliArgs,
+        inner: ValueOf<'v, CliArgs>,
         #[starlark(default = "")] doc: &str,
         #[starlark(default = NoneType)] default: Value<'v>,
         #[starlark(require = named)] short: Option<Value<'v>>,

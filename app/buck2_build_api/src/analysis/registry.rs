@@ -568,7 +568,7 @@ impl<'v> AnalysisValueStorage<'v> {
         let res = extra_v.analysis_value_storage.set(
             module
                 .heap()
-                .alloc_typed(StarlarkAnyComplex { value: self }),
+                .alloc_representation(StarlarkAnyComplex { value: self }),
         );
         if res.is_err() {
             return Err(internal_error!("analysis_value_storage is already set"));

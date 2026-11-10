@@ -36,10 +36,11 @@ use num_traits::ToPrimitive;
 use num_traits::Zero;
 use starlark_syntax::lexer::TokenInt;
 
-use crate as starlark;
 use crate::typing::Ty;
 use crate::values::AllocFrozenValue;
 use crate::values::AllocValue;
+use crate::values::FrozenHeap;
+use crate::values::Heap;
 use crate::values::UnpackValue;
 use crate::values::Value;
 use crate::values::type_repr::StarlarkTypeRepr;
@@ -62,20 +63,29 @@ enum StarlarkIntError {
     RightShiftNegative,
 }
 
-#[derive(
-    Debug,
-    Clone,
-    Eq,
-    PartialEq,
-    derive_more::Display,
-    Hash,
-    AllocValue,
-    AllocFrozenValue
-)]
+#[derive(Debug, Clone, Eq, PartialEq, derive_more::Display, Hash)]
 #[doc(hidden)]
 pub enum StarlarkInt {
     Small(InlineInt),
     Big(StarlarkBigInt),
+}
+
+impl<'v> AllocValue<'v> for StarlarkInt {
+    fn alloc_value(self, heap: Heap<'v>) -> Value<'v> {
+        match self {
+            StarlarkInt::Small(i) => heap.alloc(i),
+            StarlarkInt::Big(b) => heap.alloc_representation(b).to_value(),
+        }
+    }
+}
+
+impl<'fv> AllocFrozenValue<'fv> for StarlarkInt {
+    fn alloc_frozen_value(self, heap: FrozenHeap<'fv>) -> Value<'fv> {
+        match self {
+            StarlarkInt::Small(i) => heap.alloc(i),
+            StarlarkInt::Big(b) => heap.alloc_representation(b).to_value(),
+        }
+    }
 }
 
 impl StarlarkTypeRepr for StarlarkInt {

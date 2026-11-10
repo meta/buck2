@@ -30,14 +30,12 @@ use crate::environment::GlobalsBuilder;
 use crate::environment::Methods;
 use crate::environment::MethodsBuilder;
 use crate::eval::Evaluator;
-use crate::values::AllocValue;
-use crate::values::Heap;
 use crate::values::NoSerialize;
 use crate::values::ProvidesStaticType;
 use crate::values::StarlarkPagable;
 use crate::values::StarlarkValue;
 use crate::values::Trace;
-use crate::values::Value;
+use crate::values::ValueOf;
 use crate::values::none::NoneOr;
 use crate::values::starlark_value;
 
@@ -65,12 +63,6 @@ starlark::methods_static!(STACK_FRAME_METHODS = stack_frame_methods);
 impl<'v> StarlarkValue<'v> for StackFrame {
     fn get_methods() -> Option<&'static Methods> {
         Some(STACK_FRAME_METHODS.methods())
-    }
-}
-
-impl<'v> AllocValue<'v> for StackFrame {
-    fn alloc_value(self, heap: Heap<'v>) -> Value<'v> {
-        heap.alloc_complex_no_freeze(self)
     }
 }
 
@@ -123,20 +115,23 @@ pub(crate) fn global(builder: &mut GlobalsBuilder) {
     ///
     /// With `n=0` returns `call_stack_frame` itself.
     /// Returns `None` if `n` is greater than or equal to the stack size.
-    fn call_stack_frame(
+    fn call_stack_frame<'v>(
         #[starlark(require = pos)] n: u32,
-        eval: &mut Evaluator,
-    ) -> anyhow::Result<NoneOr<StackFrame>> {
+        eval: &mut Evaluator<'v, '_, '_>,
+    ) -> anyhow::Result<NoneOr<ValueOf<'v, StackFrame>>> {
         let stack = eval.call_stack();
         let n = n as usize;
         if n >= stack.frames.len() {
             return Ok(NoneOr::None);
         }
         match stack.frames.get(stack.frames.len() - n - 1) {
-            Some(frame) => Ok(NoneOr::Other(StackFrame {
-                name: frame.name.clone(),
-                location: frame.location.clone(),
-            })),
+            Some(frame) => Ok(NoneOr::Other(ValueOf::alloc(
+                eval.heap(),
+                StackFrame {
+                    name: frame.name.clone(),
+                    location: frame.location.clone(),
+                },
+            ))),
 
             None => Ok(NoneOr::None),
         }

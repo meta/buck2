@@ -341,6 +341,7 @@ mod tests {
     use crate::values::Heap;
     use crate::values::StarlarkValue;
     use crate::values::Value;
+    use crate::values::ValueOf;
     use crate::values::typing::TypeInstanceId;
 
     #[derive(
@@ -376,12 +377,6 @@ mod tests {
         ty_fruit_callable: Ty,
         #[starlark_pagable(pagable)]
         ty_fruit: Ty,
-    }
-
-    impl<'v> AllocValue<'v> for FruitCallable {
-        fn alloc_value(self, heap: Heap<'v>) -> Value<'v> {
-            heap.alloc_simple(self)
-        }
     }
 
     #[starlark_value(type = "fruit_callable")]
@@ -445,12 +440,6 @@ mod tests {
     #[display("coin")]
     struct Coin;
 
-    impl<'v> AllocValue<'v> for Coin {
-        fn alloc_value(self, heap: Heap<'v>) -> Value<'v> {
-            heap.alloc_simple(self)
-        }
-    }
-
     #[starlark_value(type = "coin")]
     impl<'v> StarlarkValue<'v> for Coin {
         fn get_type_starlark_repr() -> Ty {
@@ -473,7 +462,7 @@ mod tests {
     #[starlark_module]
     #[starlark_types(AbstractPlant as Plant)]
     fn globals(globals: &mut GlobalsBuilder) {
-        fn fruit(name: String) -> starlark::Result<FruitCallable> {
+        fn fruit<'v>(name: String, heap: Heap<'v>) -> starlark::Result<ValueOf<'v, FruitCallable>> {
             let ty_fruit = Ty::custom(TyUser::new(
                 name.clone(),
                 TyStarlarkValue::new::<Fruit>(),
@@ -495,18 +484,21 @@ mod tests {
                     ..TyUserParams::default()
                 },
             )?);
-            Ok(FruitCallable {
-                name,
-                ty_fruit_callable,
-                ty_fruit,
-            })
+            Ok(ValueOf::alloc(
+                heap,
+                FruitCallable {
+                    name,
+                    ty_fruit_callable,
+                    ty_fruit,
+                },
+            ))
         }
 
         fn mk_fruit() -> anyhow::Result<Fruit> {
             panic!("not needed in test")
         }
 
-        fn mk_coin() -> anyhow::Result<Coin> {
+        fn mk_coin<'v>() -> anyhow::Result<ValueOf<'v, Coin>> {
             panic!("not needed in test")
         }
     }

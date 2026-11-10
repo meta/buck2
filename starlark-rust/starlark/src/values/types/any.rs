@@ -33,8 +33,10 @@
 //!
 //! use starlark::assert::Assert;
 //! use starlark::environment::GlobalsBuilder;
+//! use starlark::values::Heap;
 //! use starlark::values::StarlarkPagablePanic;
 //! use starlark::values::Value;
+//! use starlark::values::ValueOf;
 //! use starlark::values::any::StarlarkAny;
 //!
 //! #[derive(Debug, StarlarkPagablePanic)]
@@ -44,8 +46,11 @@
 //!
 //! #[starlark_module]
 //! fn globals(builder: &mut GlobalsBuilder) {
-//!     fn start() -> anyhow::Result<StarlarkAny<MyInstant>> {
-//!         Ok(StarlarkAny::new(MyInstant(Instant::now())))
+//!     fn start<'v>(heap: Heap<'v>) -> anyhow::Result<ValueOf<'v, StarlarkAny<MyInstant>>> {
+//!         Ok(ValueOf::alloc(
+//!             heap,
+//!             StarlarkAny::new(MyInstant(Instant::now())),
+//!         ))
 //!     }
 //!
 //!     fn elapsed(x: Value) -> anyhow::Result<String> {
@@ -81,10 +86,13 @@ use crate as starlark;
 use crate::any::ProvidesStaticType;
 use crate::pagable::vtable_register::VtableRegistered;
 use crate::typing::starlark_value::TyStarlarkValueVTable;
-use crate::values::AllocValue;
-use crate::values::Heap;
+use crate::values::AllocFrozenRepresentation;
+use crate::values::AllocRepresentation;
+use crate::values::Allocator;
+use crate::values::FrozenAllocator;
 use crate::values::StarlarkValue;
 use crate::values::Value;
+use crate::values::ValueTyped;
 
 /// A type that can be passed around as a Starlark [`Value`], but in most
 /// ways is uninteresting/opaque to Starlark. Constructed with
@@ -182,9 +190,19 @@ macro_rules! register_starlark_any {
     };
 }
 
-impl<'v, T: StarlarkAnyRegistered> AllocValue<'v> for StarlarkAny<T> {
-    fn alloc_value(self, heap: Heap<'v>) -> Value<'v> {
-        heap.alloc_simple(self)
+impl<'v, T: StarlarkAnyRegistered> AllocRepresentation<'v> for StarlarkAny<T> {
+    type Repr = Self;
+
+    fn alloc(self, allocator: Allocator<'v>) -> ValueTyped<'v, Self> {
+        allocator.alloc_simple(self)
+    }
+}
+
+impl<'fv, T: StarlarkAnyRegistered> AllocFrozenRepresentation<'fv> for StarlarkAny<T> {
+    type Repr = Self;
+
+    fn alloc_frozen(self, allocator: FrozenAllocator<'fv>) -> ValueTyped<'fv, Self> {
+        allocator.alloc_simple(self)
     }
 }
 

@@ -35,12 +35,16 @@ use starlark::pagable::SmallMapKeyDeserialize;
 use starlark::pagable::StarlarkDeserialize;
 use starlark::pagable::StarlarkDeserializeContext;
 use starlark::static_starlark_value;
+use starlark::values::AllocFrozenRepresentation;
 use starlark::values::AllocFrozenValue;
+use starlark::values::AllocRepresentation;
 use starlark::values::AllocValue;
+use starlark::values::Allocator;
 use starlark::values::Deferred;
 use starlark::values::Freeze;
 use starlark::values::FreezeResult;
 use starlark::values::Freezer;
+use starlark::values::FrozenAllocator;
 use starlark::values::FrozenHeap;
 use starlark::values::FrozenValueTyped;
 use starlark::values::Heap;
@@ -171,23 +175,41 @@ static_starlark_value!(EMPTY_PROVIDER_COLLECTION: ProviderCollection<'static> = 
 // These are the hand-written equivalents of `starlark_complex_value!`,
 // which we can't use because empty collections should be allocated as the
 // statically interned empty collection.
+impl<'v> AllocRepresentation<'v> for ProviderCollection<'v> {
+    type Repr = Self;
+
+    fn alloc(self, allocator: Allocator<'v>) -> ValueTyped<'v, Self> {
+        if self.providers.is_empty() {
+            ValueTyped::new(EMPTY_PROVIDER_COLLECTION.at().to_value())
+                .expect("the empty provider collection is a provider collection")
+        } else {
+            allocator.alloc_complex(self)
+        }
+    }
+}
+
+impl<'fv> AllocFrozenRepresentation<'fv> for ProviderCollection<'fv> {
+    type Repr = Self;
+
+    fn alloc_frozen(self, allocator: FrozenAllocator<'fv>) -> ValueTyped<'fv, Self> {
+        if self.providers.is_empty() {
+            ValueTyped::new(EMPTY_PROVIDER_COLLECTION.at().to_value())
+                .expect("the empty provider collection is a provider collection")
+        } else {
+            allocator.alloc_simple(self)
+        }
+    }
+}
+
 impl<'v> AllocValue<'v> for ProviderCollection<'v> {
     fn alloc_value(self, heap: Heap<'v>) -> Value<'v> {
-        if self.providers.is_empty() {
-            EMPTY_PROVIDER_COLLECTION.at().to_value()
-        } else {
-            heap.alloc_complex(self)
-        }
+        heap.alloc_representation(self).to_value()
     }
 }
 
 impl<'fv> AllocFrozenValue<'fv> for ProviderCollection<'fv> {
     fn alloc_frozen_value(self, heap: FrozenHeap<'fv>) -> Value<'fv> {
-        if self.providers.is_empty() {
-            EMPTY_PROVIDER_COLLECTION.at().to_value()
-        } else {
-            heap.alloc_simple_typed(self).to_value()
-        }
+        heap.alloc_representation(self).to_value()
     }
 }
 
@@ -409,7 +431,8 @@ fn provider_collection_methods(builder: &mut MethodsBuilder) {
     type = "ProviderCollection",
     frozen_vtable,
     UnpackValue,
-    StarlarkTypeRepr
+    StarlarkTypeRepr,
+    alloc = by_hand
 )]
 impl<'v> StarlarkValue<'v> for ProviderCollection<'v> {
     fn at(&self, index: Value<'v>, _heap: Heap<'v>) -> starlark::Result<Value<'v>> {

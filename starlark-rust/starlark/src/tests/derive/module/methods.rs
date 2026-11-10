@@ -28,8 +28,6 @@ use crate::environment::Methods;
 use crate::environment::MethodsBuilder;
 use crate::eval::Arguments;
 use crate::eval::Evaluator;
-use crate::values::AllocFrozenValue;
-use crate::values::FrozenHeap;
 use crate::values::StarlarkValue;
 use crate::values::Value;
 
@@ -82,16 +80,10 @@ impl<'v> StarlarkValue<'v> for Applaud {
     }
 }
 
-impl<'fv> AllocFrozenValue<'fv> for Applaud {
-    fn alloc_frozen_value(self, heap: FrozenHeap<'fv>) -> Value<'fv> {
-        heap.alloc_simple(self)
-    }
-}
-
 #[test]
 fn test_receiver_can_be_named_anything() {
     let mut a = Assert::new();
-    a.globals_add(|g| g.set("x", Applaud { value: 10 }));
+    a.globals_add(|g| g.set_representation("x", Applaud { value: 10 }));
     a.eq("13", "x.test_method(this=3)");
     a.eq("10", "x.value");
     a.eq("2", "x.callable(1, named=2)");

@@ -292,11 +292,10 @@ mod tests {
             "port".to_owned(),
             Field::new(TypeCompiled::from_ty(&Ty::int(), heap), None),
         );
-        ValueTyped::new_err(heap.alloc(RecordType::new(
+        heap.alloc_representation(RecordType::new(
             fields,
             TypeInstanceId::for_test(&"unnamed_ip_address_record_type"),
-        )))
-        .expect("just allocated a RecordType")
+        ))
     }
 
     fn ip_address_record_type<'v>(module: &Module<'v>) -> ValueTyped<'v, RecordType<'v>> {
@@ -426,11 +425,10 @@ mod tests {
                     Some(heap.alloc(80)),
                 ),
             );
-            let typ = ValueTyped::<RecordType>::new_err(heap.alloc(RecordType::new(
+            let typ = heap.alloc_representation(RecordType::new(
                 fields,
                 TypeInstanceId::for_test(&"ip_address_record_type_with_defaulted_port"),
-            )))
-            .expect("just allocated a RecordType");
+            ));
             let mut eval = Evaluator::new(&module);
             typ.to_value()
                 .export_as("IpAddress", &mut eval)

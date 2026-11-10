@@ -548,15 +548,17 @@ impl GlobalsBuilder {
         let ty = ty.unwrap_or_else(|| components.make_type(as_type_ty.dupe()));
         let value = self.heap.with(|heap| {
             let docs = components.into_docs(as_type, heap);
-            let function = heap.alloc(NativeFunction {
-                function: NativeFunc(f, sig(heap)),
-                name: name.to_owned(),
-                speculative_exec_safe,
-                as_type: as_type_ty,
-                ty,
-                docs,
-                special_builtin_function,
-            });
+            let function = heap
+                .alloc_representation(NativeFunction {
+                    function: NativeFunc(f, sig(heap)),
+                    name: name.to_owned(),
+                    speculative_exec_safe,
+                    as_type: as_type_ty,
+                    ty,
+                    docs,
+                    special_builtin_function,
+                })
+                .to_value();
             // SAFETY: Allocated in `self.heap` just here.
             unsafe { Self::erase(function) }
         });

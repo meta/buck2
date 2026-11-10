@@ -43,8 +43,6 @@ use crate::typing::Ty;
 use crate::typing::callable_param::ParamIsRequired;
 use crate::typing::interface::Interface;
 use crate::util::ArcStr;
-use crate::values::AllocValue;
-use crate::values::Heap;
 use crate::values::StarlarkValue;
 use crate::values::Value;
 use crate::values::ValueOf;
@@ -84,12 +82,6 @@ struct MyCustomType;
 
 #[starlark_value(type = "my_custom_type")]
 impl<'v> StarlarkValue<'v> for MyCustomType {}
-
-impl<'v> AllocValue<'v> for MyCustomType {
-    fn alloc_value(self, heap: Heap<'v>) -> Value<'v> {
-        heap.alloc_simple(self)
-    }
-}
 
 struct NamedXy;
 

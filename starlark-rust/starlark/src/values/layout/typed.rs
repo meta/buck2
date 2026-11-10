@@ -623,7 +623,9 @@ mod tests {
     use crate::eval::Evaluator;
     use crate::tests::util::TestComplexValue;
     use crate::values::FrozenValueTyped;
+    use crate::values::Heap;
     use crate::values::Value;
+    use crate::values::ValueOf;
     use crate::values::int::pointer_i32::PointerI32;
     use crate::values::none::NoneType;
 
@@ -637,13 +639,16 @@ mod tests {
     fn test_unpack_value_for_frozen_value_typed() {
         #[starlark_module]
         fn module(globals: &mut GlobalsBuilder) {
-            fn mutable<'v>() -> anyhow::Result<TestComplexValue<'v>> {
-                Ok(TestComplexValue(Value::new_none()))
+            fn mutable<'v>(heap: Heap<'v>) -> anyhow::Result<ValueOf<'v, TestComplexValue<'v>>> {
+                Ok(ValueOf::alloc(heap, TestComplexValue(Value::new_none())))
             }
 
             fn frozen<'v>(eval: &mut Evaluator<'v, '_, '_>) -> anyhow::Result<Value<'v>> {
                 Ok(eval.frozen_heap(|fh, edge| {
-                    edge.rebrand(fh.alloc(TestComplexValue(Value::new_none())))
+                    edge.rebrand(
+                        fh.alloc_representation(TestComplexValue(Value::new_none()))
+                            .to_value(),
+                    )
                 }))
             }
 

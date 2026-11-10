@@ -92,7 +92,6 @@ use crate::typing::ParamSpec;
 use crate::typing::Ty;
 use crate::typing::callable_param::ParamIsRequired;
 use crate::util::arc_str::ArcStr;
-use crate::values::AllocValue;
 use crate::values::Freeze;
 use crate::values::FreezeResult;
 use crate::values::Freezer;
@@ -710,12 +709,6 @@ impl Display for Def<'_> {
     }
 }
 
-impl<'v> AllocValue<'v> for Def<'v> {
-    fn alloc_value(self, heap: Heap<'v>) -> Value<'v> {
-        heap.alloc_complex(self)
-    }
-}
-
 impl<'v> Def<'v> {
     pub(crate) fn new(
         parameters: ParametersSpec<Value<'v>>,
@@ -729,19 +722,22 @@ impl<'v> Def<'v> {
             .as_ref()
             .map(|copy| eval.clone_slot_capture(copy, &stmt.value))
             .into_boxed_slice();
-        Ok(eval.heap().alloc(Self {
-            parameters,
-            parameter_captures: stmt.value.parameter_captures,
-            return_type,
-            captured,
-            module: AtomicFrozenValueTypedOption::new(eval.top_frame_def_frozen_module(false)?),
-            optimized_on_freeze_stmt: StmtCompiledCell::new(),
-            def_info: stmt,
-        }))
+        Ok(eval
+            .heap()
+            .alloc_representation(Self {
+                parameters,
+                parameter_captures: stmt.value.parameter_captures,
+                return_type,
+                captured,
+                module: AtomicFrozenValueTypedOption::new(eval.top_frame_def_frozen_module(false)?),
+                optimized_on_freeze_stmt: StmtCompiledCell::new(),
+                def_info: stmt,
+            })
+            .to_value())
     }
 }
 
-#[starlark_value(type = FUNCTION_TYPE, frozen_vtable)]
+#[starlark_value(type = FUNCTION_TYPE, frozen_vtable, alloc = complex)]
 impl<'v> StarlarkValue<'v> for Def<'v> {
     fn name_for_call_stack(&self, _me: Value<'v>) -> String {
         self.def_info.value.name.as_str().to_owned()

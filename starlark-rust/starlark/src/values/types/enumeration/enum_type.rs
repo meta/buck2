@@ -51,7 +51,6 @@ use crate::typing::user::TyUser;
 use crate::typing::user::TyUserFields;
 use crate::typing::user::TyUserIndex;
 use crate::typing::user::TyUserParams;
-use crate::values::AllocValue;
 use crate::values::Demand;
 use crate::values::Freeze;
 use crate::values::FreezeResult;
@@ -165,12 +164,6 @@ impl<'v> Freeze<'v> for EnumType<'v> {
     }
 }
 
-impl<'v> AllocValue<'v> for EnumType<'v> {
-    fn alloc_value(self, heap: Heap<'v>) -> Value<'v> {
-        heap.alloc_complex(self)
-    }
-}
-
 // SAFETY: `elements` is written once, in `EnumType::new`, before the value is reachable from
 // anywhere else (see `elements`), so the `UnsafeCell` is shared like the `SmallMap` inside it,
 // whose `Value<'static>`s are `Send + Sync` like the contents of every frozen value. At any
@@ -223,7 +216,7 @@ impl<'v> EnumType<'v> {
     ) -> crate::Result<ValueTyped<'v, EnumType<'v>>> {
         // We are constructing the enum and all elements in one go.
         // They both point at each other, which adds to the complexity.
-        let typ = heap.alloc_typed(EnumType {
+        let typ = heap.alloc_representation(EnumType {
             id,
             ty_enum_data: EnumVariantUnfrozen {
                 data: OnceCell::new(),

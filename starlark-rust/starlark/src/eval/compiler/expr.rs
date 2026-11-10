@@ -865,7 +865,9 @@ impl<'f> ExprCompiled<'f> {
                 None
             }
         } else if let Some(v) = v.downcast_ref::<StarlarkFloat>() {
-            Some(ExprCompiled::Value(heap.alloc(*v)))
+            Some(ExprCompiled::Value(
+                heap.alloc_representation(*v).to_value(),
+            ))
         } else if let Some(v) = v.downcast_ref::<Range>() {
             Some(ExprCompiled::Value(heap.alloc(*v)))
         } else if let Some(v) = ListRef::from_value(v) {

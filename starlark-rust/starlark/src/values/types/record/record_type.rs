@@ -51,11 +51,9 @@ use crate::typing::user::TyUser;
 use crate::typing::user::TyUserFields;
 use crate::typing::user::TyUserParams;
 use crate::util::ArcStr;
-use crate::values::AllocValue;
 use crate::values::Freeze;
 use crate::values::FreezeResult;
 use crate::values::Freezer;
-use crate::values::Heap;
 use crate::values::StarlarkType;
 use crate::values::StarlarkValue;
 use crate::values::Trace;
@@ -164,12 +162,6 @@ crate::register_simple_vtable_entry!(FrozenRecordType<'static>);
 // SAFETY: The vtable entry is registered above. The deser type id is
 // lifetime-erased, so the `'static` instantiation covers all heap lifetimes.
 unsafe impl<'v> crate::__derive_refs::VtableRegistered for FrozenRecordType<'v> {}
-
-impl<'v> AllocValue<'v> for RecordType<'v> {
-    fn alloc_value(self, heap: Heap<'v>) -> Value<'v> {
-        heap.alloc_complex(self)
-    }
-}
 
 impl<'v, V: RecordVariant> StarlarkTypeRepr for &'v RecordTypeGen<'v, V>
 where

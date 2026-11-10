@@ -33,6 +33,7 @@ use crate::environment::GlobalsBuilder;
 use crate::eval::Evaluator;
 use crate::values::FrozenHeap;
 use crate::values::Heap;
+use crate::values::ValueOf;
 use crate::values::any::StarlarkAny;
 
 #[test]
@@ -70,8 +71,8 @@ static DEALLOC_COUNT: LazyLock<AtomicUsize> = LazyLock::new(|| AtomicUsize::new(
 fn test_deallocation() {
     #[starlark_module]
     fn globals(builder: &mut GlobalsBuilder) {
-        fn mk() -> anyhow::Result<StarlarkAny<Dealloc>> {
-            Ok(StarlarkAny::new(Dealloc))
+        fn mk<'v>(heap: Heap<'v>) -> anyhow::Result<ValueOf<'v, StarlarkAny<Dealloc>>> {
+            Ok(ValueOf::alloc(heap, StarlarkAny::new(Dealloc)))
         }
     }
 

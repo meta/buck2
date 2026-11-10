@@ -33,12 +33,7 @@ use starlark_derive::starlark_value;
 
 use crate as starlark;
 use crate::any::ProvidesStaticType;
-use crate::values::AllocFrozenValue;
-use crate::values::AllocValue;
-use crate::values::FrozenHeap;
-use crate::values::Heap;
 use crate::values::StarlarkValue;
-use crate::values::Value;
 use crate::values::types::int::inline_int::InlineInt;
 use crate::values::types::int::view::IntView;
 
@@ -142,18 +137,6 @@ impl Serialize for StarlarkBigInt {
                 })?;
             number.serialize(serializer)
         }
-    }
-}
-
-impl<'v> AllocValue<'v> for StarlarkBigInt {
-    fn alloc_value(self, heap: Heap<'v>) -> Value<'v> {
-        heap.alloc_simple(self)
-    }
-}
-
-impl<'fv> AllocFrozenValue<'fv> for StarlarkBigInt {
-    fn alloc_frozen_value(self, heap: FrozenHeap<'fv>) -> Value<'fv> {
-        heap.alloc_simple(self)
     }
 }
 
@@ -604,7 +587,8 @@ mod tests {
         let mut hash2 = StarlarkHasher::new();
         StarlarkFloat(1e20).write_hash(&mut hash1).unwrap();
         Heap::temp(|heap| {
-            heap.alloc(StarlarkBigInt::unchecked_new(BigInt::from(10).pow(20)))
+            heap.alloc_representation(StarlarkBigInt::unchecked_new(BigInt::from(10).pow(20)))
+                .to_value()
                 .write_hash(&mut hash2)
                 .unwrap();
         });

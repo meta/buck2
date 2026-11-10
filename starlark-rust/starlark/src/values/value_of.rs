@@ -36,6 +36,7 @@ use crate::any::IsStaticType;
 use crate::any::ProvidesStaticType;
 use crate::typing::Ty;
 use crate::values::AllocFrozenValue;
+use crate::values::AllocRepresentation;
 use crate::values::AllocValue;
 use crate::values::Freeze;
 use crate::values::FreezeError;
@@ -148,11 +149,12 @@ impl<'v, T: StarlarkTypeExpr<'v>> ValueOf<'v, T> {
     /// A freshly allocated representation of `T`, where `T` is the nominal type the
     /// representation belongs to: the value is a `T` by construction.
     #[inline]
-    pub fn alloc<R>(heap: Heap<'v>, representation: R) -> Self
+    pub fn alloc<B>(heap: Heap<'v>, builder: B) -> Self
     where
-        R: StarlarkValue<'v, Type = T> + AllocValue<'v>,
+        B: AllocRepresentation<'v>,
+        B::Repr: StarlarkValue<'v, Type = T>,
     {
-        Self::new_unchecked(heap.alloc(representation))
+        Self::new_unchecked(heap.alloc_representation(builder).to_value())
     }
 
     /// A typed value of a representation of `T`, which is a `T` by construction as for

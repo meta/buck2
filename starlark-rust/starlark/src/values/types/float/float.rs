@@ -248,27 +248,15 @@ impl StarlarkTypeRepr for f64 {
     }
 }
 
-impl<'v> AllocValue<'v> for StarlarkFloat {
-    fn alloc_value(self, heap: Heap<'v>) -> Value<'v> {
-        heap.alloc_simple(self)
-    }
-}
-
-impl<'fv> AllocFrozenValue<'fv> for StarlarkFloat {
-    fn alloc_frozen_value(self, heap: FrozenHeap<'fv>) -> Value<'fv> {
-        heap.alloc_simple(self)
-    }
-}
-
 impl<'v> AllocValue<'v> for f64 {
     fn alloc_value(self, heap: Heap<'v>) -> Value<'v> {
-        heap.alloc(StarlarkFloat(self))
+        heap.alloc_representation(StarlarkFloat(self)).to_value()
     }
 }
 
 impl<'fv> AllocFrozenValue<'fv> for f64 {
     fn alloc_frozen_value(self, heap: FrozenHeap<'fv>) -> Value<'fv> {
-        heap.alloc(StarlarkFloat(self))
+        heap.alloc_representation(StarlarkFloat(self)).to_value()
     }
 }
 
@@ -314,11 +302,11 @@ impl<'v> StarlarkValue<'v> for StarlarkFloat {
     }
 
     fn plus(&self, heap: Heap<'v>) -> crate::Result<Value<'v>> {
-        Ok(heap.alloc(*self))
+        Ok(heap.alloc_representation(*self).to_value())
     }
 
     fn minus(&self, heap: Heap<'v>) -> crate::Result<Value<'v>> {
-        Ok(heap.alloc(StarlarkFloat(-self.0)))
+        Ok(heap.alloc_representation(StarlarkFloat(-self.0)).to_value())
     }
 
     fn add(&self, other: Value, heap: Heap<'v>) -> Option<crate::Result<Value<'v>>> {

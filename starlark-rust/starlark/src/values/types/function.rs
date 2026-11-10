@@ -40,9 +40,7 @@ use crate::typing::Ty;
 use crate::typing::TyBasic;
 use crate::typing::arc_ty::ArcTy;
 use crate::typing::tuple::TyTuple;
-use crate::values::AllocFrozenValue;
 use crate::values::Freeze;
-use crate::values::FrozenHeap;
 use crate::values::FrozenValueTyped;
 use crate::values::Heap;
 use crate::values::StarlarkValue;
@@ -122,12 +120,6 @@ pub(crate) struct NativeFunction<'v> {
     pub(crate) docs: DocItem,
     #[starlark_pagable(pagable)]
     pub(crate) special_builtin_function: Option<SpecialBuiltinFunction>,
-}
-
-impl<'fv> AllocFrozenValue<'fv> for NativeFunction<'fv> {
-    fn alloc_frozen_value(self, heap: FrozenHeap<'fv>) -> Value<'fv> {
-        heap.alloc_simple_typed(self).to_value()
-    }
 }
 
 /// Define the function type
@@ -288,12 +280,6 @@ pub(crate) struct NativeMethod<'v> {
     pub(crate) docs: DocItem,
 }
 
-impl<'fv> AllocFrozenValue<'fv> for NativeMethod<'fv> {
-    fn alloc_frozen_value(self, heap: FrozenHeap<'fv>) -> Value<'fv> {
-        heap.alloc_simple_typed(self).to_value()
-    }
-}
-
 #[starlark_value(type = "native_method", frozen_vtable)]
 impl<'v> StarlarkValue<'v> for NativeMethod<'v> {
     fn documentation(&self) -> DocItem {
@@ -333,12 +319,6 @@ pub(crate) struct NativeAttribute<'v> {
     #[starlark_pagable(skip = "{ |_a, _b, _c| { unimplemented!() } }")]
     pub(crate) callable:
         for<'v2> fn(Option<Value<'v2>>, Value<'v2>, Heap<'v2>) -> crate::Result<Value<'v2>>,
-}
-
-impl<'fv> AllocFrozenValue<'fv> for NativeAttribute<'fv> {
-    fn alloc_frozen_value(self, heap: FrozenHeap<'fv>) -> Value<'fv> {
-        heap.alloc_simple_typed(self).to_value()
-    }
 }
 
 impl<'v> NativeAttribute<'v> {

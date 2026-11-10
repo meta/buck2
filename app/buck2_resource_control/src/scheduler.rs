@@ -598,22 +598,27 @@ impl Scheduler {
         }
 
         for _ in 0..suspends_to_issue {
-            let cgroup = self.running_scenes.pop().unwrap();
-
-            let (suspended_cgroup, event_kind) = suspend_scene(cgroup, now);
-
-            // Push it onto the list before emitting the event so that the action count in the event is
-            // correct
-            self.suspended_scenes.push_front(suspended_cgroup);
-            let suspended_cgroup = self.suspended_scenes.front().unwrap();
-
-            self.event_sender_state.send_event(
-                event_kind,
-                Some(&suspended_cgroup.scene),
-                self.running_scenes.len() as u64,
-                self.suspended_scenes.len() as u64,
-            );
+            self.suspend_youngest_scene(now);
         }
+    }
+
+    /// Suspends the most recently started of the running scenes.
+    fn suspend_youngest_scene(&mut self, now: Instant) {
+        let cgroup = self.running_scenes.pop().unwrap();
+
+        let (suspended_cgroup, event_kind) = suspend_scene(cgroup, now);
+
+        // Push it onto the list before emitting the event so that the action count in the event is
+        // correct
+        self.suspended_scenes.push_front(suspended_cgroup);
+        let suspended_cgroup = self.suspended_scenes.front().unwrap();
+
+        self.event_sender_state.send_event(
+            event_kind,
+            Some(&suspended_cgroup.scene),
+            self.running_scenes.len() as u64,
+            self.suspended_scenes.len() as u64,
+        );
     }
 
     fn maybe_increase_running_count(&mut self, now: Instant) {

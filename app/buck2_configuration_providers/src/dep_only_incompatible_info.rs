@@ -29,7 +29,6 @@ use starlark::values::StarlarkPagable;
 use starlark::values::StringValue;
 use starlark::values::Trace;
 use starlark::values::ValueOf;
-use starlark::values::ValueTyped;
 use starlark::values::dict::DictType;
 use starlark::values::list::ListType;
 
@@ -73,8 +72,7 @@ use crate::dep_only_incompatible_rollout::DepOnlyIncompatibleRollout;
 )]
 #[repr(C)]
 pub struct DepOnlyIncompatibleInfo<'v> {
-    pub custom_soft_errors:
-        ValueOf<'v, DictType<StringValue<'v>, ValueTyped<'v, DepOnlyIncompatibleRollout<'v>>>>,
+    pub custom_soft_errors: ValueOf<'v, DictType<StringValue<'v>, DepOnlyIncompatibleRollout<'v>>>,
 }
 
 #[starlark_module]
@@ -83,7 +81,7 @@ fn dep_only_incompatible_info_creator(globals: &mut GlobalsBuilder) {
     fn DepOnlyIncompatibleInfo<'v>(
         #[starlark(require = named)] custom_soft_errors: ValueOf<
             'v,
-            DictType<StringValue<'v>, ValueTyped<'v, DepOnlyIncompatibleRollout<'v>>>,
+            DictType<StringValue<'v>, DepOnlyIncompatibleRollout<'v>>,
         >,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<DepOnlyIncompatibleInfo<'v>> {
@@ -150,7 +148,6 @@ impl<'v> DepOnlyIncompatibleInfo<'v> {
             .iter()
             .map(|entry| {
                 let (category, rollout) = entry?;
-                let rollout = rollout.unpack();
                 Ok((
                     ArcStr::from(category.unpack().as_str()),
                     DepOnlyIncompatibleRolloutPatterns {

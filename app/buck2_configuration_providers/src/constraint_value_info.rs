@@ -26,7 +26,7 @@ use starlark::values::Freeze;
 use starlark::values::Heap;
 use starlark::values::StarlarkPagable;
 use starlark::values::Trace;
-use starlark::values::ValueTyped;
+use starlark::values::ValueOf;
 
 use crate::constraint_setting_info::ConstraintSettingInfo;
 
@@ -44,16 +44,16 @@ use crate::constraint_setting_info::ConstraintSettingInfo;
 )]
 #[repr(C)]
 pub struct ConstraintValueInfo<'v> {
-    setting: ValueTyped<'v, ConstraintSettingInfo<'v>>,
-    label: ValueTyped<'v, StarlarkProvidersLabel>,
+    setting: ValueOf<'v, ConstraintSettingInfo<'v>>,
+    label: ValueOf<'v, StarlarkProvidersLabel>,
 }
 
 impl<'v> ConstraintValueInfo<'v> {
-    pub(crate) fn setting(&self) -> ValueTyped<'v, ConstraintSettingInfo<'v>> {
+    pub(crate) fn setting(&self) -> ValueOf<'v, ConstraintSettingInfo<'v>> {
         self.setting
     }
 
-    pub(crate) fn label(&self) -> ValueTyped<'v, StarlarkProvidersLabel> {
+    pub(crate) fn label(&self) -> ValueOf<'v, StarlarkProvidersLabel> {
         self.label
     }
 
@@ -70,14 +70,14 @@ impl<'v> ConstraintValueInfo<'v> {
     }
 
     pub(crate) fn new(
-        setting: ValueTyped<'v, ConstraintSettingInfo<'v>>,
-        label: ValueTyped<'v, StarlarkProvidersLabel>,
+        setting: ValueOf<'v, ConstraintSettingInfo<'v>>,
+        label: ValueOf<'v, StarlarkProvidersLabel>,
     ) -> ConstraintValueInfo<'v> {
         ConstraintValueInfo { setting, label }
     }
 
     pub(crate) fn default_from_constraint_setting(
-        setting: ValueTyped<'v, ConstraintSettingInfo<'v>>,
+        setting: ValueOf<'v, ConstraintSettingInfo<'v>>,
     ) -> Option<ConstraintValueInfo<'v>> {
         setting
             .default()
@@ -89,11 +89,11 @@ impl<'v> ConstraintValueInfo<'v> {
 fn constraint_value_info_creator(globals: &mut GlobalsBuilder) {
     #[starlark(as_type = ConstraintValueInfo<'static>)]
     fn ConstraintValueInfo<'v>(
-        #[starlark(require = named)] setting: ValueTyped<'v, ConstraintSettingInfo<'v>>,
+        #[starlark(require = named)] setting: ValueOf<'v, ConstraintSettingInfo<'v>>,
         #[starlark(require = named)] label: LabelArg<'v>,
         heap: Heap<'v>,
     ) -> starlark::Result<ConstraintValueInfo<'v>> {
-        let label = heap.alloc_typed(label.to_provider_label());
+        let label = ValueOf::alloc(heap, label.to_provider_label());
         Ok(ConstraintValueInfo::new(setting, label))
     }
 }

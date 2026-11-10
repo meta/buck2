@@ -22,7 +22,7 @@ use starlark::values::Heap;
 use starlark::values::StarlarkPagable;
 use starlark::values::StringValue;
 use starlark::values::Trace;
-use starlark::values::ValueTyped;
+use starlark::values::ValueOf;
 
 use crate::configuration_info::ConfigurationInfo;
 
@@ -39,7 +39,7 @@ use crate::configuration_info::ConfigurationInfo;
 #[repr(C)]
 pub struct PlatformInfo<'v> {
     label: StringValue<'v>,
-    configuration: ValueTyped<'v, ConfigurationInfo<'v>>,
+    configuration: ValueOf<'v, ConfigurationInfo<'v>>,
 }
 
 impl<'v> PlatformInfo<'v> {
@@ -59,10 +59,10 @@ impl<'v> PlatformInfo<'v> {
     ) -> buck2_error::Result<PlatformInfo<'v>> {
         Ok(PlatformInfo {
             label: heap.alloc_str(cfg.label()?),
-            configuration: heap.alloc_typed(ConfigurationInfo::from_configuration_data(
-                cfg.data()?,
+            configuration: ValueOf::alloc(
                 heap,
-            )),
+                ConfigurationInfo::from_configuration_data(cfg.data()?, heap),
+            ),
         })
     }
 }
@@ -72,7 +72,7 @@ fn platform_info_creator(globals: &mut GlobalsBuilder) {
     #[starlark(as_type = PlatformInfo<'static>)]
     fn PlatformInfo<'v>(
         #[starlark(require = named)] label: StringValue<'v>,
-        #[starlark(require = named)] configuration: ValueTyped<'v, ConfigurationInfo<'v>>,
+        #[starlark(require = named)] configuration: ValueOf<'v, ConfigurationInfo<'v>>,
     ) -> starlark::Result<PlatformInfo<'v>> {
         Ok(PlatformInfo {
             label,

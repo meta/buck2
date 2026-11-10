@@ -308,11 +308,14 @@ fn promise_methods(builder: &mut MethodsBuilder) {
     /// those from `p1`, `p2` and `p3` respectively.
     fn join<'v>(
         this: ValueTyped<'v, StarlarkPromise<'v>>,
-        #[starlark(args)] args: ValueOf<'v, TupleType<ValueTyped<'v, StarlarkPromise<'v>>>>,
+        #[starlark(args)] args: ValueOf<'v, TupleType<StarlarkPromise<'v>>>,
         heap: Heap<'v>,
     ) -> starlark::Result<ValueTyped<'v, StarlarkPromise<'v>>> {
-        let args = std::iter::once(this).chain(args.items()).collect();
-        Ok(StarlarkPromise::join(args, heap))
+        let mut promises = vec![this];
+        for arg in args.iter() {
+            promises.push(arg?.get());
+        }
+        Ok(StarlarkPromise::join(promises, heap))
     }
 }
 
@@ -365,7 +368,7 @@ mod tests {
         }
 
         fn promise_validate<'v>(
-            promise: ValueTyped<'v, StarlarkPromise<'v>>,
+            promise: ValueOf<'v, StarlarkPromise<'v>>,
         ) -> starlark::Result<NoneType> {
             promise.validate(|x| {
                 if x.unpack_str() == Some("ok") {

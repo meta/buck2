@@ -27,7 +27,7 @@ use starlark::starlark_module;
 use starlark::values::Freeze;
 use starlark::values::StarlarkPagable;
 use starlark::values::Trace;
-use starlark::values::ValueTyped;
+use starlark::values::ValueOf;
 
 use crate::configuration_info::ConfigurationInfo;
 
@@ -45,11 +45,11 @@ use crate::configuration_info::ConfigurationInfo;
 #[repr(C)]
 pub struct ExecutionPlatformInfo<'v> {
     /// label of the defining rule, used in informative messages
-    label: ValueTyped<'v, StarlarkTargetLabel>,
+    label: ValueOf<'v, StarlarkTargetLabel>,
     /// The configuration of the execution platform
-    configuration: ValueTyped<'v, ConfigurationInfo<'v>>,
+    configuration: ValueOf<'v, ConfigurationInfo<'v>>,
     /// The executor config
-    executor_config: ValueTyped<'v, StarlarkCommandExecutorConfig>,
+    executor_config: ValueOf<'v, StarlarkCommandExecutorConfig>,
 }
 
 impl<'v> ExecutionPlatformInfo<'v> {
@@ -87,9 +87,9 @@ impl<'v> ExecutionPlatformInfo<'v> {
 #[starlark_module]
 fn info_creator(globals: &mut GlobalsBuilder) {
     fn ExecutionPlatformInfo<'v>(
-        #[starlark(require = named)] label: ValueTyped<'v, StarlarkTargetLabel>,
-        #[starlark(require = named)] configuration: ValueTyped<'v, ConfigurationInfo<'v>>,
-        #[starlark(require = named)] executor_config: ValueTyped<'v, StarlarkCommandExecutorConfig>,
+        #[starlark(require = named)] label: ValueOf<'v, StarlarkTargetLabel>,
+        #[starlark(require = named)] configuration: ValueOf<'v, ConfigurationInfo<'v>>,
+        #[starlark(require = named)] executor_config: ValueOf<'v, StarlarkCommandExecutorConfig>,
     ) -> starlark::Result<ExecutionPlatformInfo<'v>> {
         let info = ExecutionPlatformInfo {
             label,

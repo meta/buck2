@@ -51,18 +51,12 @@ use crate::constraint_value_info::ConstraintValueInfo;
 #[derive(Debug, Trace, Freeze, ProvidesStaticType, Allocative, StarlarkPagable)]
 #[repr(C)]
 pub struct ConfigurationInfo<'v> {
-    constraints: ValueOf<
-        'v,
-        DictType<ValueTyped<'v, StarlarkTargetLabel>, ValueTyped<'v, ConstraintValueInfo<'v>>>,
-    >,
+    constraints: ValueOf<'v, DictType<StarlarkTargetLabel, ConstraintValueInfo<'v>>>,
     values: ValueOf<'v, DictType<StringValue<'v>, StringValue<'v>>>,
     root_values: ValueOf<'v, DictType<StringValue<'v>, StringValue<'v>>>,
 }
 
-type Constraints<'v> = ValueOf<
-    'v,
-    DictType<ValueTyped<'v, StarlarkTargetLabel>, ValueTyped<'v, ConstraintValueInfo<'v>>>,
->;
+type Constraints<'v> = ValueOf<'v, DictType<StarlarkTargetLabel, ConstraintValueInfo<'v>>>;
 type Buckconfigs<'v> = ValueOf<'v, DictType<StringValue<'v>, StringValue<'v>>>;
 
 impl<'v> ConfigurationInfo<'v> {
@@ -70,9 +64,9 @@ impl<'v> ConfigurationInfo<'v> {
         let mut constraints = BTreeMap::new();
         for entry in self.constraints.iter() {
             let (key, value) = entry?;
-            let (constraint_key, constraint_value) = value.unpack().to_constraint_key_value();
+            let (constraint_key, constraint_value) = value.to_constraint_key_value();
             debug_assert_eq!(
-                key.unpack().label(),
+                key.label(),
                 &constraint_key.key,
                 "dict key should match constraint setting label"
             );
@@ -100,24 +94,23 @@ impl<'v> ConfigurationInfo<'v> {
     /// Create a provider from configuration data.
     pub fn from_configuration_data(conf: &ConfigurationDataData, heap: Heap<'v>) -> Self {
         let constraints = conf.constraints.iter().map(|(k, v)| {
-            let constraint_setting_label = heap.alloc_typed(StarlarkTargetLabel::new(k.key.dupe()));
+            let constraint_setting_label =
+                ValueOf::alloc(heap, StarlarkTargetLabel::new(k.key.dupe()));
             let default_value = k
                 .default
                 .as_ref()
-                .map(|v| heap.alloc_typed(StarlarkProvidersLabel::new(v.0.dupe())));
-            let constraint_value_label = heap.alloc_typed(StarlarkProvidersLabel::new(v.0.dupe()));
-            let constraint_setting = heap.alloc_typed(ConstraintSettingInfo::new(
-                constraint_setting_label,
-                default_value,
-            ));
-            let constraint_value = heap.alloc_typed(ConstraintValueInfo::new(
-                constraint_setting,
-                constraint_value_label,
-            ));
-            (
-                ValueOf::from(constraint_setting_label),
-                ValueOf::from(constraint_value),
-            )
+                .map(|v| ValueOf::alloc(heap, StarlarkProvidersLabel::new(v.0.dupe())));
+            let constraint_value_label =
+                ValueOf::alloc(heap, StarlarkProvidersLabel::new(v.0.dupe()));
+            let constraint_setting = ValueOf::alloc(
+                heap,
+                ConstraintSettingInfo::new(constraint_setting_label, default_value),
+            );
+            let constraint_value = ValueOf::alloc(
+                heap,
+                ConstraintValueInfo::new(constraint_setting, constraint_value_label),
+            );
+            (constraint_setting_label, constraint_value)
         });
         ConfigurationInfo {
             constraints: ValueOf::alloc_dict(heap, constraints),
@@ -164,11 +157,11 @@ fn copy_constraints<'v>(
     let mut entries = Vec::with_capacity(constraints.dict().len());
     for entry in constraints.iter() {
         let (setting, value) = entry?;
-        if *setting.unpack() != *value.unpack().setting().label() {
+        if *setting != *value.setting().label() {
             return Err(buck2_error::Error::from(
                 ConfigurationInfoError::ConstraintsKeyValueMismatch(
-                    setting.unpack().to_string(),
-                    value.unpack().to_string(),
+                    setting.to_string(),
+                    value.to_string(),
                 ),
             )
             .into());
@@ -275,11 +268,11 @@ fn configuration_info_methods(builder: &mut MethodsBuilder) {
     /// ```
     fn get<'v>(
         this: &ConfigurationInfo<'v>,
-        #[starlark(require = pos)] key: ValueTyped<'v, ConstraintSettingInfo<'v>>,
+        #[starlark(require = pos)] key: ValueOf<'v, ConstraintSettingInfo<'v>>,
         heap: Heap<'v>,
     ) -> starlark::Result<NoneOr<ValueTyped<'v, ConstraintValueInfo<'v>>>> {
         match this.constraints.lookup(key.label().to_value())? {
-            Some(v) => Ok(NoneOr::Other(v.unpack())),
+            Some(v) => Ok(NoneOr::Other(v.get())),
             // if not find in the constraints, we return the default constraint value
             None => Ok(get_default_constraint_value(key, heap)),
         }
@@ -309,11 +302,10 @@ fn configuration_info_methods(builder: &mut MethodsBuilder) {
     /// ```
     fn insert<'v>(
         this: &ConfigurationInfo<'v>,
-        #[starlark(require = pos)] value: ValueTyped<'v, ConstraintValueInfo<'v>>,
+        #[starlark(require = pos)] value: ValueOf<'v, ConstraintValueInfo<'v>>,
         heap: Heap<'v>,
     ) -> starlark::Result<NoneOr<ValueTyped<'v, ConstraintValueInfo<'v>>>> {
-        let constraint_value = value.as_ref();
-        let setting_info = constraint_value.setting();
+        let setting_info = value.setting();
         let label = setting_info.label();
 
         let mut constraints = DictMut::from_value(this.constraints.to_value())?;
@@ -360,7 +352,7 @@ fn configuration_info_methods(builder: &mut MethodsBuilder) {
     /// ```
     fn pop<'v>(
         this: &ConfigurationInfo<'v>,
-        #[starlark(require = pos)] key: ValueTyped<'v, ConstraintSettingInfo<'v>>,
+        #[starlark(require = pos)] key: ValueOf<'v, ConstraintSettingInfo<'v>>,
         heap: Heap<'v>,
     ) -> starlark::Result<NoneOr<ValueTyped<'v, ConstraintValueInfo<'v>>>> {
         let label = key.label();
@@ -413,7 +405,7 @@ fn configuration_info_methods(builder: &mut MethodsBuilder) {
 /// Helper function to get the default constraint value from a constraint setting.
 /// Returns the default constraint value if one exists, otherwise returns None.
 fn get_default_constraint_value<'v>(
-    key: ValueTyped<'v, ConstraintSettingInfo<'v>>,
+    key: ValueOf<'v, ConstraintSettingInfo<'v>>,
     heap: Heap<'v>,
 ) -> NoneOr<ValueTyped<'v, ConstraintValueInfo<'v>>> {
     NoneOr::from_option(

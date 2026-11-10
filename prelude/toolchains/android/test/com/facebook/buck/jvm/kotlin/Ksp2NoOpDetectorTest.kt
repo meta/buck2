@@ -18,6 +18,7 @@ import com.google.devtools.ksp.processing.SymbolProcessorEnvironment
 import com.google.devtools.ksp.processing.SymbolProcessorProvider
 import com.google.devtools.ksp.symbol.KSAnnotated
 import java.io.File
+import java.util.concurrent.TimeUnit
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertSame
 import org.junit.Test
@@ -45,7 +46,13 @@ class Ksp2NoOpDetectorTest {
   }
 
   private val codeGenerator = FakeCodeGenerator()
-  private val detector = Ksp2NoOpDetector()
+  private var now = 0L
+  private val detector = Ksp2NoOpDetector { now }
+
+  private fun advance(ms: Long) {
+    now += TimeUnit.MILLISECONDS.toNanos(ms)
+  }
+
   private val deferred = listOf<KSAnnotated>(mock())
 
   private inner class FakeProcessor(
@@ -90,6 +97,25 @@ class Ksp2NoOpDetectorTest {
   private inner class IdleTriggerProvider : SymbolProcessorProvider {
     override fun create(environment: SymbolProcessorEnvironment) =
         FakeProcessor(listOf("/out/ksp/java/com/facebook/Dummy.java"))
+  }
+
+  /** Takes the given time, on the fake clock, in `create`, in each `process` and in `finish`. */
+  private inner class TimedProvider(
+      private val createMs: Long,
+      private val processMs: Long,
+      private val finishMs: Long,
+  ) : SymbolProcessorProvider {
+    override fun create(environment: SymbolProcessorEnvironment): SymbolProcessor {
+      advance(createMs)
+      return object : SymbolProcessor {
+        override fun process(resolver: Resolver): List<KSAnnotated> {
+          advance(processMs)
+          return emptyList()
+        }
+
+        override fun finish() = advance(finishMs)
+      }
+    }
   }
 
   private fun wrap(vararg providers: SymbolProcessorProvider): List<SymbolProcessor> {
@@ -181,5 +207,42 @@ class Ksp2NoOpDetectorTest {
     processor.process(mock())
 
     assertEquals(1, countOf(ProductiveProvider::class.java))
+  }
+
+  /**
+   * KSP runs processors one at a time, so each call's wall time is the processor's own, and the
+   * step splits into the setup before the first `create`, the processors, and KSP's work around
+   * them.
+   */
+  @Test
+  fun `each processor is credited with its own time and the step splits into phases`() {
+    detector.stepStarted()
+    advance(100)
+    val (timed, idle) =
+        wrap(TimedProvider(createMs = 5, processMs = 30, finishMs = 2), IdleProvider())
+    timed.process(mock())
+    idle.process(mock())
+    advance(10)
+    timed.process(mock())
+    timed.finish()
+    detector.stepFinished()
+
+    assertEquals(
+        Ksp2NoOpDetector.ProcessorTime(createMs = 5, processMs = 60, finishMs = 2, rounds = 2),
+        detector.timesByProcessor.getValue(TimedProvider::class.java.name),
+    )
+    assertEquals(
+        Ksp2NoOpDetector.ProcessorTime(createMs = 0, processMs = 0, finishMs = 0, rounds = 1),
+        detector.timesByProcessor.getValue(IdleProvider::class.java.name),
+    )
+    assertEquals(mapOf("setup" to 100L, "processors" to 67L, "other" to 10L), detector.phasesMs)
+  }
+
+  /** Phases need both step bounds; without them the split would be meaningless, so it is empty. */
+  @Test
+  fun `phases are empty when the step was not bracketed`() {
+    wrap(TimedProvider(createMs = 5, processMs = 0, finishMs = 0))
+
+    assertEquals(emptyMap<String, Long>(), detector.phasesMs)
   }
 }

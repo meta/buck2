@@ -73,7 +73,9 @@ class Ksp2Step(
   override fun executeIsolatedStep(context: IsolatedExecutionContext): StepExecutionResult {
     CapturingPrintStream().use { stderr ->
       try {
+        noOpDetector.stepStarted()
         val (exitCode, elapsed) = measureTimedValue { executeKsp2(stderr, context) }
+        noOpDetector.stepFinished()
         val durationMs = elapsed.inWholeMilliseconds
         // Same shape KotlincStep already emits, so the two steps are greppable together.
         LOG.info(
@@ -100,6 +102,11 @@ class Ksp2Step(
                     PROCESSOR_OUTPUT_EXTRAS_KEY,
                     counts.entries.joinToString(",") { "${it.key}=${it.value}" },
                 )
+                addExtras(
+                    PROCESSOR_TIME_EXTRAS_KEY,
+                    formatProcessorTimes(noOpDetector.timesByProcessor),
+                )
+                formatPhases(noOpDetector.phasesMs)?.let { addExtras(PHASE_EXTRAS_KEY, it) }
               }
             },
         )
@@ -302,6 +309,25 @@ class Ksp2Step(
     private val LOG: Logger = Logger.get(Ksp2Step::class.java)
 
     private const val PROCESSOR_OUTPUT_EXTRAS_KEY = "ksp2_processor_generated_files"
+
+    private const val PROCESSOR_TIME_EXTRAS_KEY = "ksp2_processor_time_ms"
+
+    private const val PHASE_EXTRAS_KEY = "ksp2_phase_ms"
+
+    /**
+     * `provider=create;process;finish;rounds` per provider, joined by `,`: the values use `;` so
+     * that the pairs split like the generated-file counts.
+     */
+    @JvmStatic
+    fun formatProcessorTimes(times: Map<String, Ksp2NoOpDetector.ProcessorTime>): String =
+        times.entries.joinToString(",") { (name, time) ->
+          "$name=${time.createMs};${time.processMs};${time.finishMs};${time.rounds}"
+        }
+
+    /** `setup=…,processors=…,other=…`, or null when the step's phases were not measured. */
+    @JvmStatic
+    fun formatPhases(phases: Map<String, Long>): String? =
+        phases.takeIf { it.isNotEmpty() }?.entries?.joinToString(",") { "${it.key}=${it.value}" }
 
     /**
      * Telemetry records only successful runs that produced counts: an aborted run leaves never-ran

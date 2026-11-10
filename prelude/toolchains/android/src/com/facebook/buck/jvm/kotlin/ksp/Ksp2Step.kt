@@ -74,7 +74,9 @@ class Ksp2Step(
     CapturingPrintStream().use { stderr ->
       try {
         noOpDetector.stepStarted()
-        val (exitCode, elapsed) = measureTimedValue { executeKsp2(stderr, context) }
+        val (timed, cpu) =
+            Ksp2CpuMeter.measure { measureTimedValue { executeKsp2(stderr, context) } }
+        val (exitCode, elapsed) = timed
         noOpDetector.stepFinished()
         val durationMs = elapsed.inWholeMilliseconds
         // Same shape KotlincStep already emits, so the two steps are greppable together.
@@ -91,6 +93,7 @@ class Ksp2Step(
                   this@Ksp2Step::class.java.simpleName,
                   "Ksp2 step duration: $durationMs ms",
               )
+              addExtras(CPU_EXTRAS_KEY, cpu.toExtrasValue())
               val counts = noOpDetector.countsByProcessor
               if (
                   shouldRecordProcessorCounts(
@@ -309,6 +312,8 @@ class Ksp2Step(
     private val LOG: Logger = Logger.get(Ksp2Step::class.java)
 
     private const val PROCESSOR_OUTPUT_EXTRAS_KEY = "ksp2_processor_generated_files"
+
+    private const val CPU_EXTRAS_KEY = "ksp2_cpu"
 
     private const val PROCESSOR_TIME_EXTRAS_KEY = "ksp2_processor_time_ms"
 

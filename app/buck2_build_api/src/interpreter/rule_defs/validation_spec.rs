@@ -109,7 +109,7 @@ impl<'v> StarlarkValidationSpec<'v> {
     }
 
     pub fn validation_result(&self) -> &'v dyn StarlarkInputArtifactLike<'v> {
-        self.validation_result.unpack().as_input_artifact_like()
+        self.validation_result.get().as_input_artifact_like()
     }
 
     pub fn optional(&self) -> bool {

@@ -618,7 +618,7 @@ fn new_attr_value<'v>(
 ) -> buck2_error::Result<Value<'v>> {
     match value {
         DynamicAttrValue::Output(artifact) => {
-            let artifact = match artifact.unpack() {
+            let artifact = match artifact.get() {
                 StarlarkOutputArtifactView::Frozen(artifact) => {
                     artifact.as_ref().as_build_artifact()
                 }

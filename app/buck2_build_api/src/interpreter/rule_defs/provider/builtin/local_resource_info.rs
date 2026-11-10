@@ -88,7 +88,7 @@ fn validate_local_resource_info<'v>(info: &LocalResourceInfo<'v>) -> buck2_error
         ));
     }
 
-    if info.setup.unpack().is_empty() {
+    if info.setup.get().is_empty() {
         return Err(buck2_error::buck2_error!(
             buck2_error::ErrorTag::Input,
             "Value for `setup` field is an empty command line: `{}`",
@@ -135,16 +135,13 @@ impl<'v> LocalResourceInfo<'v> {
             .iter()
             .map(|entry| {
                 let (k, v) = entry?;
-                Ok((
-                    k.unpack().as_str().to_owned(),
-                    v.unpack().as_str().to_owned(),
-                ))
+                Ok((k.get().as_str().to_owned(), v.get().as_str().to_owned()))
             })
             .collect()
     }
 
     pub fn setup_command_line(&self) -> &'v dyn CommandLineArgLike<'v> {
-        self.setup.unpack().as_command_line_arg_like()
+        self.setup.get().as_command_line_arg_like()
     }
 
     pub fn setup_timeout(&self) -> Option<Duration> {

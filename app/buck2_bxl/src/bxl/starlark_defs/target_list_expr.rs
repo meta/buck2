@@ -409,7 +409,7 @@ impl<'v> TargetListExpr<'v, ConfiguredTargetNode> {
         dice: &mut DiceComputations<'_>,
         keep_going: bool,
     ) -> buck2_error::Result<TargetListExpr<'v, ConfiguredTargetNode>> {
-        match value.try_unpack()? {
+        match value.try_get()? {
             ConfiguredTargetListArg::ConfiguredTargetSet(s) => {
                 Ok(Self::TargetSet(Cow::Borrowed(s.as_ref())))
             }

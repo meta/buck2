@@ -292,7 +292,7 @@ impl<'v, F: Fields<'v>> CommandLineArgLike<'v> for FieldsRef<'v, F> {
         match self.0.options() {
             None => {
                 for item in self.0.items() {
-                    item.unpack().0.add_to_command_line(fmt)?;
+                    item.get().0.add_to_command_line(fmt)?;
                 }
                 Ok(())
             }
@@ -302,7 +302,7 @@ impl<'v, F: Fields<'v>> CommandLineArgLike<'v> for FieldsRef<'v, F> {
                     fmt.push_scope(&options)?;
                 }
                 for item in self.0.items() {
-                    item.unpack().0.add_to_command_line(fmt)?;
+                    item.get().0.add_to_command_line(fmt)?;
                 }
                 if options.changes_builder() {
                     fmt.pop_scope();
@@ -322,7 +322,7 @@ impl<'v, F: Fields<'v>> CommandLineArgLike<'v> for FieldsRef<'v, F> {
         ) -> buck2_error::Result<()> {
             for item in items {
                 visitor.push_frame()?;
-                item.unpack().0.visit_artifacts(visitor)?;
+                item.get().0.visit_artifacts(visitor)?;
                 visitor.pop_frame();
             }
 
@@ -469,15 +469,12 @@ impl<'v, F: Fields<'v>> CommandLineArgLike<'v> for FieldsRef<'v, F> {
     }
 
     fn contains_arg_attr(&self) -> bool {
-        self.0
-            .items()
-            .iter()
-            .any(|x| x.unpack().0.contains_arg_attr())
+        self.0.items().iter().any(|x| x.get().0.contains_arg_attr())
             || self
                 .0
                 .hidden()
                 .iter()
-                .any(|x| x.unpack().0.contains_arg_attr())
+                .any(|x| x.get().0.contains_arg_attr())
     }
 
     fn visit_write_to_file_macros(
@@ -499,12 +496,12 @@ impl<'v, F: Fields<'v>> CommandLineArgLike<'v> for FieldsRef<'v, F> {
         }
 
         for item in self.0.items() {
-            item.unpack()
+            item.get()
                 .0
                 .visit_write_to_file_macros(visitor, artifact_path_mapping)?;
         }
         for item in self.0.hidden() {
-            item.unpack()
+            item.get()
                 .0
                 .visit_write_to_file_macros(visitor, artifact_path_mapping)?;
         }

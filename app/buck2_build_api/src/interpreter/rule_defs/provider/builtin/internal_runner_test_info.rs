@@ -219,11 +219,11 @@ impl<'v> InternalRunnerTestInfo<'v> {
 
     pub fn use_project_relative_paths(&self) -> bool {
         self.use_project_relative_paths
-            .map_or_else(buck2_core::is_open_source, |v| v.unpack())
+            .map_or_else(buck2_core::is_open_source, |v| v.get())
     }
 
     pub fn run_from_project_root(&self) -> bool {
-        self.run_from_project_root.is_none_or(|v| v.unpack())
+        self.run_from_project_root.is_none_or(|v| v.get())
     }
 
     pub fn default_executor(&self) -> Option<&'v StarlarkCommandExecutorConfig> {
@@ -233,7 +233,7 @@ impl<'v> InternalRunnerTestInfo<'v> {
     pub fn execution_group(&self) -> buck2_error::Result<Option<ExecutionGroup>> {
         match self.exec_group {
             None => Ok(None),
-            Some(exec_group) => Ok(Some(exec_group.unpack().expect_bound()?)),
+            Some(exec_group) => Ok(Some(exec_group.get().expect_bound()?)),
         }
     }
 
@@ -527,7 +527,7 @@ fn internal_runner_test_info_creator(globals: &mut GlobalsBuilder) {
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<InternalRunnerTestInfo<'v>> {
         let exec_group = exec_group.into_option();
-        let group = exec_group.map(|g| g.unpack().expect_bound()).transpose()?;
+        let group = exec_group.map(|g| g.get().expect_bound()).transpose()?;
         let default_executor = default_executor_with_execution_group(
             group.as_ref(),
             default_executor.into_option(),

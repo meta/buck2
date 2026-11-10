@@ -76,7 +76,7 @@ impl<'v> ExecutionPlatformRegistrationInfo<'v> {
     pub fn fallback(&self) -> buck2_error::Result<ExecutionPlatformFallback> {
         match self.fallback.map(|f| f.split()).transpose()? {
             None => Ok(ExecutionPlatformFallback::UseUnspecifiedExec),
-            Some(Either::Left(word)) => fallback_from_str(word.unpack()),
+            Some(Either::Left(word)) => fallback_from_str(word.get()),
             Some(Either::Right(platform)) => Ok(ExecutionPlatformFallback::Platform(
                 platform.to_execution_platform()?,
             )),
@@ -111,7 +111,7 @@ fn info_creator(globals: &mut GlobalsBuilder) {
     ) -> starlark::Result<ExecutionPlatformRegistrationInfo<'v>> {
         let fallback = fallback.into_option();
         if let Some(Either::Left(word)) = fallback.map(|f| f.split()).transpose()? {
-            fallback_from_str(word.unpack())?;
+            fallback_from_str(word.get())?;
         }
         Ok(ExecutionPlatformRegistrationInfo {
             platforms,

@@ -115,7 +115,7 @@ impl<'v> CommandLineArgLike<'v> for RunInfo<'v> {
 
     fn add_to_command_line(&self, fmt: &mut CommandLineBuilder<'v, '_>) -> buck2_error::Result<()> {
         self.args
-            .unpack()
+            .get()
             .as_command_line_arg_like()
             .add_to_command_line(fmt)
     }
@@ -125,14 +125,14 @@ impl<'v> CommandLineArgLike<'v> for RunInfo<'v> {
         visitor: &mut dyn CommandLineArtifactVisitor<'v>,
     ) -> buck2_error::Result<()> {
         self.args
-            .unpack()
+            .get()
             .as_command_line_arg_like()
             .visit_artifacts(visitor)
     }
 
     fn contains_arg_attr(&self) -> bool {
         self.args
-            .unpack()
+            .get()
             .as_command_line_arg_like()
             .contains_arg_attr()
     }

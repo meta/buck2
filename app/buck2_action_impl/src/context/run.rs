@@ -482,7 +482,7 @@ pub(crate) fn analysis_actions_methods_run(methods: &mut MethodsBuilder) {
             None => None,
             Some(env) => {
                 for entry in env.iter() {
-                    entry?.1.unpack().0.visit_artifacts(&mut artifact_visitor)?;
+                    entry?.1.get().0.visit_artifacts(&mut artifact_visitor)?;
                 }
                 Some(env)
             }
@@ -505,7 +505,7 @@ pub(crate) fn analysis_actions_methods_run(methods: &mut MethodsBuilder) {
         if let Some(dep_files) = dep_files {
             for entry in dep_files.iter() {
                 let (key, tag) = entry?;
-                let key = key.unpack();
+                let key = key.get();
                 let tag = tag.as_ref();
                 let tagged = tagged_outputs.get(tag);
                 let count = tagged.map_or(0, |t| t.len());

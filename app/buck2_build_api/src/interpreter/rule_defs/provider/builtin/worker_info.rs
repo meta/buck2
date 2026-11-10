@@ -103,7 +103,7 @@ fn worker_info_creator(globals: &mut GlobalsBuilder) {
 
 impl<'v> WorkerInfo<'v> {
     pub fn exe_command_line(&self) -> &'v dyn CommandLineArgLike<'v> {
-        self.exe.unpack().as_command_line_arg_like()
+        self.exe.get().as_command_line_arg_like()
     }
 
     pub fn env(&self) -> buck2_error::Result<Vec<(&'v str, &'v dyn CommandLineArgLike<'v>)>> {
@@ -113,7 +113,7 @@ impl<'v> WorkerInfo<'v> {
         env.iter()
             .map(|entry| {
                 let (key, value) = entry?;
-                Ok((key.unpack().as_str(), value.unpack().0))
+                Ok((key.get().as_str(), value.get().0))
             })
             .collect()
     }
@@ -126,18 +126,17 @@ impl<'v> WorkerInfo<'v> {
     }
 
     pub fn streaming(&self) -> bool {
-        self.streaming.is_some_and(|v| v.unpack())
+        self.streaming.is_some_and(|v| v.get())
     }
 
     pub fn supports_bazel_remote_persistent_worker_protocol(&self) -> bool {
-        self.supports_bazel_remote_persistent_worker_protocol
-            .unpack()
+        self.supports_bazel_remote_persistent_worker_protocol.get()
     }
 }
 
 fn validate_worker_info<'v>(info: &WorkerInfo<'v>) -> buck2_error::Result<()> {
     info.concurrency()?;
-    if info.exe.unpack().is_empty() {
+    if info.exe.get().is_empty() {
         return Err(buck2_error::buck2_error!(
             buck2_error::ErrorTag::Input,
             "Value for `exe` field is an empty command line: `{}`",

@@ -260,7 +260,7 @@ impl<'a, 'v> Serialize for SerializeValue<'a, 'v> {
                             // rejected here and needs to be updated if that changes.
                             None,
                         );
-                        err(x.unpack().0.add_to_command_line(&mut fmt))?;
+                        err(x.get().0.add_to_command_line(&mut fmt))?;
 
                         // We change the type, based on the value - singleton = String, otherwise list.
                         // That's a little annoying (type based on value), but otherwise there would be
@@ -384,7 +384,7 @@ pub fn visit_json_artifacts<'v>(
                 .0
                 .visit_artifacts(visitor)?;
         }
-        JsonUnpack::CommandLine(x) => x.unpack().0.visit_artifacts(visitor)?,
+        JsonUnpack::CommandLine(x) => x.get().0.visit_artifacts(visitor)?,
         JsonUnpack::Provider(x) => {
             for (_, v) in x.0.items() {
                 visit_json_artifacts(v, visitor)?;

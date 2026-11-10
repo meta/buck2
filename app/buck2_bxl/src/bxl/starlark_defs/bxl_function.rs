@@ -110,7 +110,7 @@ fn bxl_impl<'v>(
                 short_args.insert(short.to_owned());
             }
         }
-        unresolved_cli_args.insert(arg.unpack().to_owned(), def.as_ref().clone());
+        unresolved_cli_args.insert(arg.get().to_owned(), def.as_ref().clone());
     }
 
     Ok(eval.heap().alloc(BxlFunction {

@@ -110,7 +110,7 @@ fn input_artifact_methods(builder: &mut MethodsBuilder) {
         this: ValueOf<'v, StarlarkArtifactView<'v>>,
     ) -> starlark::Result<StarlarkOutputArtifact<'v>> {
         Ok(this
-            .unpack()
+            .get()
             .as_input_artifact_like()
             .as_output(this.to_value())?)
     }

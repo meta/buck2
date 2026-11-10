@@ -113,8 +113,8 @@ fn coerce_inner<'v>(
                 let mut default = None;
                 for entry in v.iter() {
                     let (k, v) = entry?;
-                    let k = k.unpack().as_str();
-                    let v = v.unpack();
+                    let k = k.get().as_str();
+                    let v = v.get();
                     let v = match default_attr {
                         Some(default_attr) if v.is_none() => {
                             ctx.attr_arena().encode_view(default_attr)?

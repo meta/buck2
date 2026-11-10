@@ -54,7 +54,7 @@ pub fn new_dynamic_actions_callable<'v>(
         .iter()
         .map(|entry| {
             let (name, ty) = entry?;
-            Ok::<_, starlark::Error>((name.unpack(), ty.ty.clone()))
+            Ok::<_, starlark::Error>((name.get(), ty.ty.clone()))
         })
         .collect::<starlark::Result<_>>()?;
 

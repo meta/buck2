@@ -610,7 +610,7 @@ impl RunAction {
                 .iter()
                 .map(|entry| {
                     let (k, v) = entry?;
-                    Ok((k.unpack().as_str(), v.unpack().0))
+                    Ok((k.get().as_str(), v.get().0))
                 })
                 .collect::<buck2_error::Result<Vec<_>>>()?,
         };

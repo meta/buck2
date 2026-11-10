@@ -61,7 +61,7 @@ fn create_assembled_dir_tree<'v>(
         .iter()
         .map(|entry| {
             let (k, entry) = entry?;
-            let k = k.unpack();
+            let k = k.get();
             // The entry constructors (`assembled_dir.copy` / `assembled_dir.symlink`)
             // only accept artifact-like values, so this re-unpack cannot fail.
             let as_artifact =

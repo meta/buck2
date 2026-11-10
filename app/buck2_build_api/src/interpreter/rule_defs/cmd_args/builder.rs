@@ -68,7 +68,7 @@ fn unpack_relative_origin<'v>(
     t: ValueOf<'v, RelativeOrigin<'v>>,
     parents: u32,
 ) -> buck2_error::Result<RelativeToOption> {
-    Ok(match t.unpack() {
+    Ok(match t.get() {
         RelativeOrigin::OutputArtifact(artifact) => {
             let value = match artifact {
                 StarlarkOutputArtifactView::Frozen(value) => value,

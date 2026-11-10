@@ -285,7 +285,7 @@ impl<'v> StarlarkRuleCallable<'v> {
             .iter()
             .map(|entry| {
                 let (name, attr) = entry?;
-                Ok((name.unpack(), attr))
+                Ok((name.get(), attr))
             })
             .collect::<starlark::Result<Vec<_>>>()?;
 

@@ -190,7 +190,7 @@ impl<'v> DefaultInfo<'v> {
         self.default_outputs
             .iter()
             .map(|v| -> buck2_error::Result<StarlarkArtifact> {
-                v?.unpack()
+                v?.get()
                     .as_input_artifact_like()
                     .get_bound_starlark_artifact()
             })
@@ -212,7 +212,7 @@ impl<'v> DefaultInfo<'v> {
             .iter()
             .map(|entry| {
                 let (k, v) = entry?;
-                Ok((k.unpack().as_str(), v.get()))
+                Ok((k.get().as_str(), v.get()))
             })
             .collect()
     }
@@ -228,7 +228,7 @@ impl<'v> DefaultInfo<'v> {
         for output in self.default_outputs.iter() {
             processor(
                 output?
-                    .unpack()
+                    .get()
                     .as_input_artifact_like()
                     .get_bound_artifact()?,
             );
@@ -242,7 +242,7 @@ impl<'v> DefaultInfo<'v> {
     ) -> buck2_error::Result<()> {
         for output in self.default_outputs.iter() {
             let others = output?
-                .unpack()
+                .get()
                 .as_input_artifact_like()
                 .get_associated_artifacts();
             others
@@ -280,10 +280,7 @@ impl<'v> DefaultInfo<'v> {
         }
 
         for output in self.other_outputs.iter() {
-            output?
-                .unpack()
-                .0
-                .visit_artifacts(&mut Visitor(processor))?;
+            output?.get().0.visit_artifacts(&mut Visitor(processor))?;
         }
         Ok(())
     }

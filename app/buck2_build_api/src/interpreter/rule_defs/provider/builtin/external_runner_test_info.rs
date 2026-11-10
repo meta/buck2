@@ -155,11 +155,11 @@ impl<'v> ExternalRunnerTestInfo<'v> {
 
     pub fn use_project_relative_paths(&self) -> bool {
         self.use_project_relative_paths
-            .map_or_else(buck2_core::is_open_source, |v| v.unpack())
+            .map_or_else(buck2_core::is_open_source, |v| v.get())
     }
 
     pub fn run_from_project_root(&self) -> bool {
-        self.run_from_project_root.is_none_or(|v| v.unpack())
+        self.run_from_project_root.is_none_or(|v| v.get())
     }
 
     pub fn default_executor(&self) -> Option<&'v StarlarkCommandExecutorConfig> {
@@ -169,7 +169,7 @@ impl<'v> ExternalRunnerTestInfo<'v> {
     pub fn execution_group(&self) -> buck2_error::Result<Option<ExecutionGroup>> {
         match self.exec_group {
             None => Ok(None),
-            Some(exec_group) => Ok(Some(exec_group.unpack().expect_bound()?)),
+            Some(exec_group) => Ok(Some(exec_group.get().expect_bound()?)),
         }
     }
 
@@ -204,7 +204,7 @@ impl<'v> ExternalRunnerTestInfo<'v> {
 
     pub fn supports_test_execution_caching(&self) -> bool {
         self.supports_test_execution_caching
-            .is_some_and(|v| v.unpack())
+            .is_some_and(|v| v.get())
     }
 
     pub fn visit_artifacts(
@@ -237,7 +237,7 @@ impl<'v> TestCommandMember<'v> {
         {
             return Self::Literal(s);
         }
-        Self::Arglike(arg.unpack().0)
+        Self::Arglike(arg.get().0)
     }
 
     pub fn add_to_command_line(
@@ -278,7 +278,7 @@ pub(super) fn env_entries<'v>(
 ) -> impl Iterator<Item = buck2_error::Result<(&'v str, &'v dyn CommandLineArgLike<'v>)>> + 'v {
     env.into_iter().flat_map(|env| env.iter()).map(|entry| {
         let (key, value) = entry?;
-        Ok((key.unpack().as_str(), value.unpack().0))
+        Ok((key.get().as_str(), value.get().0))
     })
 }
 
@@ -287,7 +287,7 @@ pub(super) fn str_items<'v>(
 ) -> impl Iterator<Item = buck2_error::Result<&'v str>> + 'v {
     list.into_iter()
         .flat_map(|list| list.iter())
-        .map(|item| Ok(item?.unpack().as_str()))
+        .map(|item| Ok(item?.get().as_str()))
 }
 
 pub(super) fn lookup_executor_override<'v>(
@@ -364,7 +364,7 @@ pub(super) fn collect_local_resources<'v>(
         .map(|entry| {
             let (key, label) = entry?;
             Ok((
-                key.unpack().as_str(),
+                key.get().as_str(),
                 label.get().map(|label| label.as_ref().label()),
             ))
         })
@@ -466,7 +466,7 @@ fn external_runner_test_info_creator(globals: &mut GlobalsBuilder) {
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<ExternalRunnerTestInfo<'v>> {
         let exec_group = exec_group.into_option();
-        let group = exec_group.map(|g| g.unpack().expect_bound()).transpose()?;
+        let group = exec_group.map(|g| g.get().expect_bound()).transpose()?;
         let default_executor = default_executor_with_execution_group(
             group.as_ref(),
             default_executor.into_option(),

@@ -125,10 +125,7 @@ fn buckconfig_map<'v>(values: Buckconfigs<'v>) -> buck2_error::Result<BTreeMap<S
         .iter()
         .map(|entry| {
             let (k, v) = entry?;
-            Ok((
-                k.unpack().as_str().to_owned(),
-                v.unpack().as_str().to_owned(),
-            ))
+            Ok((k.get().as_str().to_owned(), v.get().as_str().to_owned()))
         })
         .collect()
 }
@@ -196,13 +193,13 @@ fn configuration_info_creator(globals: &mut GlobalsBuilder) {
         let mut value_keys = BuckMutSet::default();
         for entry in values.iter() {
             let (k, _) = entry?;
-            let k = k.unpack().as_str();
+            let k = k.get().as_str();
             parse_config_section_and_key(k, None)?;
             value_keys.insert(k);
         }
         for entry in root_values.iter() {
             let (k, _) = entry?;
-            let k = k.unpack().as_str();
+            let k = k.get().as_str();
             parse_config_section_and_key(k, None)?;
             if value_keys.contains(k) {
                 return Err(buck2_error::Error::from(

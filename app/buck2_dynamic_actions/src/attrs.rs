@@ -102,7 +102,7 @@ size_assert::words_of_type!(DynamicAttrValue<'static>, 4);
 fn unfrozen_output<'v>(
     output: ValueOf<'v, StarlarkOutputArtifactView<'v>>,
 ) -> buck2_error::Result<ValueTyped<'v, StarlarkOutputArtifact<'v>>> {
-    match output.unpack() {
+    match output.get() {
         StarlarkOutputArtifactView::Unfrozen(output) => Ok(output),
         StarlarkOutputArtifactView::Frozen(_) => Err(internal_error!(
             "Dynamic action outputs are bound before the attributes freeze"

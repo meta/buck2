@@ -230,6 +230,7 @@ internal class NonAbiDeclarationsStrippingIrExtension(
             pluginContext,
             repairLog,
             keptInlineBodies,
+            collectSealedSubclassKeepNames(moduleFragment),
         ),
         null,
     )
@@ -243,6 +244,7 @@ internal class NonAbiDeclarationsStrippingIrVisitor(
     private val pluginContext: IrPluginContext,
     private val repairLog: AbiGenRepairLog,
     private val keptInlineBodies: Set<IrSimpleFunction>,
+    private val sealedSubclassKeepNames: Set<String>,
 ) : IrElementTransformerVoidCompat() {
 
   override fun visitFile(declaration: IrFile): IrFile {
@@ -574,6 +576,23 @@ internal class NonAbiDeclarationsStrippingIrVisitor(
             kind != ClassKind.ENUM_ENTRY &&
             kind != ClassKind.ANNOTATION_CLASS
 
+    // A top-level private class kept as a shell (named by a kept sealed type's metadata,
+    // or carrying JVM-public nests) needs the same member stripping as a private nested
+    // class: its members are unreachable through the private owner, and keeping them leaks
+    // `error/NonExistentClass` references into the ABI when their types don't resolve on
+    // the ABI classpath. Nested classes still survive via the nested-class rule above, so
+    // the shell and its nests stay while the members go.
+    val ownerIsKeptPrivateShell =
+        this is IrClass &&
+            parent !is IrClass &&
+            (visibility == DescriptorVisibilities.PRIVATE ||
+                visibility == DescriptorVisibilities.LOCAL) &&
+            isSealedSubclassKeep() &&
+            inlineClassRepresentation == null &&
+            kind != ClassKind.ENUM_CLASS &&
+            kind != ClassKind.ENUM_ENTRY &&
+            kind != ClassKind.ANNOTATION_CLASS
+
     this.declarations.filterIsInstance<IrProperty>().forEach { property ->
       if (property.isDelegated) property.backingField = null
     }
@@ -609,7 +628,7 @@ internal class NonAbiDeclarationsStrippingIrVisitor(
       // removing them crashes compilation instead of shrinking the ABI.
       // Private members go first, so the exemptions only ever keep non-private ones,
       // matching the general private-member rule below.
-      if (ownerIsPrivateNestedClass) {
+      if (ownerIsPrivateNestedClass || ownerIsKeptPrivateShell) {
         if (declaration.isPrivateOrLocal()) return@removeAll true
         if (declaration.origin == IrDeclarationOrigin.FAKE_OVERRIDE) return@removeAll false
         if ((declaration as? IrProperty)?.isConst == true) return@removeAll false
@@ -617,9 +636,19 @@ internal class NonAbiDeclarationsStrippingIrVisitor(
         return@removeAll true
       }
 
+      // A private class named by a kept sealed type's metadata stays as a stub.
+      if (declaration.isSealedSubclassKeep()) return@removeAll false
+
       // Remove private/local members only (NOT internal - K1 kept internal in ABI)
       declaration.isPrivateOrLocal()
     }
+  }
+
+  private fun IrDeclaration.isSealedSubclassKeep(): Boolean {
+    if (this !is IrClass) return false
+    // A private class named by a kept sealed type's metadata must stay (as a stub):
+    // dropping it lets consumers compile a non-exhaustive `when`.
+    return sealedSubclassKeepNames.contains(this.kotlinFqName.asString())
   }
 
   private fun IrDeclaration.isPropertyDelegateBackingField(): Boolean =

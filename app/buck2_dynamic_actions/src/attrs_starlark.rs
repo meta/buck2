@@ -103,7 +103,7 @@ fn struct_dynattrs(globals: &mut GlobalsBuilder) {
 
     /// Takes a list of values and gives a list to the impl function.
     fn list<'v>(
-        #[starlark(require = pos)] ty: &'v StarlarkDynamicAttrType<'v>,
+        #[starlark(require = pos)] ty: ValueOf<'v, StarlarkDynamicAttrType<'v>>,
     ) -> starlark::Result<StarlarkDynamicAttrType<'v>> {
         let ty = ty.ty.clone();
         Ok(StarlarkDynamicAttrType {
@@ -114,7 +114,7 @@ fn struct_dynattrs(globals: &mut GlobalsBuilder) {
     /// Takes a dict of values and gives it to the impl function.
     fn dict<'v>(
         #[starlark(require = pos)] key: ValueOf<'v, TypeType>,
-        #[starlark(require = pos)] value: &'v StarlarkDynamicAttrType<'v>,
+        #[starlark(require = pos)] value: ValueOf<'v, StarlarkDynamicAttrType<'v>>,
         heap: Heap<'v>,
     ) -> starlark::Result<StarlarkDynamicAttrType<'v>> {
         let key = TypeCompiled::new(key.to_value(), heap)?;
@@ -136,7 +136,7 @@ fn struct_dynattrs(globals: &mut GlobalsBuilder) {
 
     /// Takes either a value or `None` and gives it to the impl function.
     fn option<'v>(
-        #[starlark(require = pos)] ty: &'v StarlarkDynamicAttrType<'v>,
+        #[starlark(require = pos)] ty: ValueOf<'v, StarlarkDynamicAttrType<'v>>,
     ) -> starlark::Result<StarlarkDynamicAttrType<'v>> {
         let ty = ty.ty.clone();
         Ok(StarlarkDynamicAttrType {

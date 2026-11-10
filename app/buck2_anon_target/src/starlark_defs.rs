@@ -14,6 +14,7 @@ use std::fmt::Display;
 
 use allocative::Allocative;
 use buck2_build_api::artifact_groups::promise::PromiseArtifact;
+use buck2_build_api::interpreter::rule_defs::artifact::starlark_artifact_like::StarlarkArtifactView;
 use buck2_build_api::interpreter::rule_defs::artifact::starlark_promise_artifact::StarlarkPromiseArtifact;
 use buck2_build_api::interpreter::rule_defs::context::ANALYSIS_ACTIONS_METHODS_ANON_TARGET;
 use buck2_build_api::interpreter::rule_defs::context::AnalysisActions;
@@ -55,6 +56,8 @@ use crate::anon_targets::AnonTargetsRegistry;
 pub enum AnonTargetsError {
     #[error("artifact with name `{0}` was not found")]
     ArtifactNotFound(String),
+    #[error("Only promise artifacts are accepted here, got `{0}`")]
+    NotPromiseArtifact(String),
 }
 
 #[derive(Debug, NoSerialize, ProvidesStaticType, Trace, Allocative, Clone)]
@@ -246,6 +249,17 @@ pub(crate) fn init_register_anon_target_types() {
     REGISTER_BUCK2_ANON_TARGETS_GLOBALS.init(register_anon_target_types);
 }
 
+fn promise_artifact<'v>(
+    artifact: StarlarkArtifactView<'v>,
+) -> buck2_error::Result<ValueTyped<'v, StarlarkPromiseArtifact>> {
+    match artifact {
+        StarlarkArtifactView::PromiseArtifact(artifact) => Ok(artifact),
+        StarlarkArtifactView::Artifact(_) | StarlarkArtifactView::DeclaredArtifact(_) => {
+            Err(AnonTargetsError::NotPromiseArtifact(artifact.to_string()).into())
+        }
+    }
+}
+
 #[starlark_module]
 fn analysis_actions_methods_anon_target(builder: &mut MethodsBuilder) {
     /// An anonymous target is defined by the hash of its attributes, rather than its name.
@@ -352,9 +366,10 @@ fn analysis_actions_methods_anon_target(builder: &mut MethodsBuilder) {
     fn assert_short_path<'v>(
         this: &AnalysisActions<'v>,
         // TODO(nga): this should be either positional or named, not both.
-        artifact: ValueTyped<'v, StarlarkPromiseArtifact>,
+        artifact: StarlarkArtifactView<'v>,
         short_path: &'v str,
     ) -> starlark::Result<StarlarkPromiseArtifact> {
+        let artifact = promise_artifact(artifact)?;
         let mut this = this.state()?;
         let promise = artifact.artifact.dupe();
 
@@ -371,8 +386,9 @@ fn analysis_actions_methods_anon_target(builder: &mut MethodsBuilder) {
 
     fn assert_has_content_based_path<'v>(
         this: &AnalysisActions<'v>,
-        artifact: ValueTyped<'v, StarlarkPromiseArtifact>,
+        artifact: StarlarkArtifactView<'v>,
     ) -> starlark::Result<StarlarkPromiseArtifact> {
+        let artifact = promise_artifact(artifact)?;
         let mut this = this.state()?;
         let promise = artifact.artifact.dupe();
 

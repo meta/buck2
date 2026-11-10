@@ -16,7 +16,7 @@ use buck2_artifact::artifact::artifact_type::ArtifactErrors;
 use buck2_artifact::artifact::artifact_type::OutputArtifact;
 use buck2_build_api::actions::ActionName;
 use buck2_build_api::artifact_groups::ArtifactGroup;
-use buck2_build_api::interpreter::rule_defs::artifact::starlark_output_artifact::StarlarkOutputArtifact;
+use buck2_build_api::interpreter::rule_defs::artifact::starlark_output_artifact::StarlarkOutputArtifactView;
 use buck2_build_api::interpreter::rule_defs::artifact_tagging::ArtifactTag;
 use buck2_build_api::interpreter::rule_defs::cmd_args::CommandLineArgLike;
 use buck2_build_api::interpreter::rule_defs::cmd_args::CommandLineArtifactVisitor;
@@ -53,7 +53,6 @@ use starlark::starlark_module;
 use starlark::values::StringValue;
 use starlark::values::Value;
 use starlark::values::ValueOf;
-use starlark::values::ValueTyped;
 use starlark::values::dict::DictRef;
 use starlark::values::dict::DictType;
 use starlark::values::list::ListType;
@@ -276,10 +275,7 @@ pub(crate) fn analysis_actions_methods_run(methods: &mut MethodsBuilder) {
             ValueOf<'v, DictType<&'v str, &'v ArtifactTag>>,
         >,
         #[starlark(require = named, default = ValueOf::empty_list())]
-        dep_file_fingerprints: ValueOf<
-            'v,
-            ListOrTupleType<ValueTyped<'v, StarlarkDepFileFingerprint<'v>>>,
-        >,
+        dep_file_fingerprints: ValueOf<'v, ListOrTupleType<StarlarkDepFileFingerprint<'v>>>,
         #[starlark(require = named)] metadata_env_var: Option<String>,
         #[starlark(require = named)] metadata_path: Option<String>,
         #[starlark(require = named, default = ValueOf::empty_list())]
@@ -292,7 +288,7 @@ pub(crate) fn analysis_actions_methods_run(methods: &mut MethodsBuilder) {
         #[starlark(require = named, default = false)] allow_offline_output_cache: bool,
         #[starlark(require = named, default = false)] force_full_hybrid_if_capable: bool,
         #[starlark(require = named)] exe: Option<
-            Either<ValueTyped<'v, WorkerRunInfo<'v>>, ValueTyped<'v, RunInfo<'v>>>,
+            Either<ValueOf<'v, WorkerRunInfo<'v>>, ValueOf<'v, RunInfo<'v>>>,
         >,
         #[starlark(require = named, default = false)] unique_input_inodes: bool,
         #[starlark(require = named, default = NoneOr::None)] error_handler: NoneOr<
@@ -313,11 +309,10 @@ pub(crate) fn analysis_actions_methods_run(methods: &mut MethodsBuilder) {
         #[starlark(require = named, default = NoneOr::None)] meta_internal_extra_params: NoneOr<
             DictRef<'v>,
         >,
-        // Note: Intentionally don't support frozen output artifacts
         #[starlark(require = named, default = ValueOf::empty_list())]
         outputs_for_error_handler: ValueOf<
             'v,
-            ListOrTupleType<ValueTyped<'v, StarlarkOutputArtifact<'v>>>,
+            ListOrTupleType<StarlarkOutputArtifactView<'v>>,
         >,
         #[starlark(require = named, default = NoneOr::None)] expect_eligible_for_dedupe: NoneOr<
             bool,
@@ -440,7 +435,10 @@ pub(crate) fn analysis_actions_methods_run(methods: &mut MethodsBuilder) {
 
         let starlark_args = StarlarkCmdArgs::try_from_value_typed(arguments)?;
         starlark_args.visit_artifacts(&mut artifact_visitor)?;
-        let dep_file_fingerprints = dep_file_fingerprints.try_to_vec()?;
+        let dep_file_fingerprints = dep_file_fingerprints
+            .iter()
+            .map(|fingerprint| Ok(fingerprint?.get()))
+            .collect::<starlark::Result<Vec<_>>>()?;
         for fingerprint in &dep_file_fingerprints {
             fingerprint.as_ref().visit_inputs(&mut artifact_visitor)?;
         }
@@ -575,18 +573,26 @@ pub(crate) fn analysis_actions_methods_run(methods: &mut MethodsBuilder) {
         }
         let heap = eval.heap();
 
-        let outputs_for_error_handler = outputs_for_error_handler.try_to_vec()?;
-        for o in outputs_for_error_handler.iter() {
-            let to_materialize = o.artifact();
-            if !artifacts.declared_outputs.contains(&to_materialize) {
-                return Err(buck2_error::Error::from(
-                    RunActionError::FailedActionArtifactNotDeclared {
-                        path: o.to_string(),
-                    },
-                )
-                .into());
-            }
-        }
+        let outputs_for_error_handler = outputs_for_error_handler
+            .try_items()
+            .map(|o| {
+                let o = o?;
+                match o {
+                    StarlarkOutputArtifactView::Unfrozen(declared)
+                        if artifacts.declared_outputs.contains(&declared.artifact()) =>
+                    {
+                        Ok(declared)
+                    }
+                    // A frozen one was bound by another analysis, so is not this action's
+                    StarlarkOutputArtifactView::Unfrozen(_)
+                    | StarlarkOutputArtifactView::Frozen(_) => Err(buck2_error::Error::from(
+                        RunActionError::FailedActionArtifactNotDeclared {
+                            path: o.to_string(),
+                        },
+                    )),
+                }
+            })
+            .collect::<buck2_error::Result<Vec<_>>>()?;
 
         let starlark_values = heap.alloc(StarlarkRunActionValues {
             exe: heap.alloc_typed(starlark_exe),

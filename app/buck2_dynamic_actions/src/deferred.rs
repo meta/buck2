@@ -25,6 +25,7 @@ use buck2_build_api::dynamic::calculation::dynamic_lambda_result;
 use buck2_build_api::dynamic_value::DynamicValue;
 use buck2_build_api::interpreter::rule_defs::artifact::associated::AssociatedArtifacts;
 use buck2_build_api::interpreter::rule_defs::artifact::starlark_artifact::StarlarkArtifact;
+use buck2_build_api::interpreter::rule_defs::artifact::starlark_artifact_like::StarlarkArtifactView;
 use buck2_build_api::interpreter::rule_defs::artifact::starlark_artifact_value::StarlarkArtifactValue;
 use buck2_build_api::interpreter::rule_defs::artifact::starlark_declared_artifact::StarlarkDeclaredArtifact;
 use buck2_build_api::interpreter::rule_defs::artifact::starlark_output_artifact::FrozenStarlarkOutputArtifact;
@@ -93,12 +94,9 @@ use crate::resolved_dynamic_value::StarlarkResolvedDynamicValue;
 
 /// The materialized inputs of a dynamic action, by artifact.
 pub type ArtifactValues<'v> =
-    ValueOf<'v, DictType<ValueTyped<'v, StarlarkArtifact>, ValueTyped<'v, StarlarkArtifactValue>>>;
+    ValueOf<'v, DictType<StarlarkArtifactView<'v>, StarlarkArtifactValue>>;
 /// The outputs of a dynamic action, declared on its own registry, by the artifact they stand for.
-pub type Outputs<'v> = ValueOf<
-    'v,
-    DictType<ValueTyped<'v, StarlarkArtifact>, ValueTyped<'v, StarlarkDeclaredArtifact<'v>>>,
->;
+pub type Outputs<'v> = ValueOf<'v, DictType<StarlarkArtifactView<'v>, StarlarkArtifactView<'v>>>;
 
 pub enum DynamicLambdaArgs<'v> {
     OldPositional {
@@ -584,12 +582,9 @@ fn artifact_values<'v>(
     }
     Ok(ValueOf::alloc_dict(
         heap,
-        artifact_values_dict.into_iter().map(|(k, v)| {
-            (
-                ValueOf::from(heap.alloc_typed(k)),
-                ValueOf::from(heap.alloc_typed(v)),
-            )
-        }),
+        artifact_values_dict
+            .into_iter()
+            .map(|(k, v)| (ValueOf::alloc(heap, k), ValueOf::alloc(heap, v))),
     ))
 }
 
@@ -604,8 +599,8 @@ fn outputs<'v>(
         let declared = registry.declare_dynamic_output(x.as_ref().as_build_artifact(), heap)?;
         let v = StarlarkDeclaredArtifact::new(None, declared, AssociatedArtifacts::new());
         outputs_dict.push((
-            ValueOf::from(x.as_ref().inner()),
-            ValueOf::from(heap.alloc_typed(v)),
+            ValueOf::from_representation(x.as_ref().inner()),
+            ValueOf::alloc(heap, v),
         ));
     }
 

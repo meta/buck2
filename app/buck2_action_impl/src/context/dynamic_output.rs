@@ -8,12 +8,14 @@
  * above-listed licenses.
  */
 
+use buck2_artifact::artifact::artifact_type::ArtifactErrors;
 use buck2_build_api::dynamic_value::DynamicValue;
 use buck2_build_api::interpreter::rule_defs::artifact::starlark_artifact::StarlarkArtifact;
 use buck2_build_api::interpreter::rule_defs::artifact::starlark_artifact_like::StarlarkArtifactView;
 use buck2_build_api::interpreter::rule_defs::artifact::starlark_artifact_value::StarlarkArtifactValue;
 use buck2_build_api::interpreter::rule_defs::artifact::starlark_declared_artifact::StarlarkDeclaredArtifact;
 use buck2_build_api::interpreter::rule_defs::artifact::starlark_output_artifact::StarlarkOutputArtifact;
+use buck2_build_api::interpreter::rule_defs::artifact::starlark_output_artifact::StarlarkOutputArtifactView;
 use buck2_build_api::interpreter::rule_defs::context::AnalysisActions;
 use buck2_core::deferred::dynamic::DynamicLambdaResultsKey;
 use buck2_dynamic_actions::attrs::dedupe_output_artifacts;
@@ -108,7 +110,7 @@ pub(crate) fn analysis_actions_methods_dynamic_output(methods: &mut MethodsBuild
         >,
         #[starlark(require = named)] outputs: ValueOf<
             'v,
-            ListOrTupleType<ValueTyped<'v, StarlarkOutputArtifact<'v>>>,
+            ListOrTupleType<StarlarkOutputArtifactView<'v>>,
         >,
         #[starlark(require = named)] f: StarlarkCallable<
             'v,
@@ -124,7 +126,17 @@ pub(crate) fn analysis_actions_methods_dynamic_output(methods: &mut MethodsBuild
         let _unused = inputs;
 
         // Parameter validation
-        let outputs = outputs.try_to_vec()?;
+        let outputs = outputs
+            .try_items()
+            .map(|output| match output? {
+                StarlarkOutputArtifactView::Unfrozen(output) => Ok(output),
+                // Already bound, by the analysis that froze it
+                StarlarkOutputArtifactView::Frozen(output) => Err(ArtifactErrors::DuplicateBind(
+                    output.as_build_artifact().dupe().into(),
+                )
+                .into()),
+            })
+            .collect::<buck2_error::Result<Vec<_>>>()?;
         if outputs.is_empty() {
             return Err(buck2_error::Error::from(DynamicOutputError::EmptyOutput).into());
         }
@@ -229,7 +241,7 @@ pub(crate) fn analysis_actions_methods_dynamic_output(methods: &mut MethodsBuild
     /// For a guide on using this with BXL, see [How to run actions based on the content of artifacts](../../../bxl/how_tos/how_to_run_actions_based_on_the_content_of_artifact).
     fn dynamic_output_new<'v>(
         this: &'v AnalysisActions<'v>,
-        #[starlark(require = pos)] dynamic_actions: ValueTyped<'v, StarlarkDynamicActions<'v>>,
+        #[starlark(require = pos)] dynamic_actions: ValueOf<'v, StarlarkDynamicActions<'v>>,
     ) -> starlark::Result<StarlarkDynamicValue> {
         let dynamic_actions = dynamic_actions
             .data

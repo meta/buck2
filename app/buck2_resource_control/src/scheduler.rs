@@ -873,6 +873,41 @@ mod tests {
         assert_eq!(scheduler.estimated_memory_cap, 16 << 30);
     }
 
+    /// Once a constant pressure above the decrease threshold follows a quiet period, the intent flips
+    /// between `Decrease` and `Increase` every tick: the 5 s average is above 10 while the 30 s
+    /// average is still below 5, so the conditions for entering and for leaving `Decrease` hold at
+    /// once.
+    #[test]
+    fn test_intent_when_pressure_follows_quiet_period() {
+        let (mut scheduler, timeline) = TestTimeline::new();
+        let reading = |pressure: f64| MemoryReading {
+            allprocs_memory_current: 0,
+            allprocs_swap_current: 0,
+            allprocs_memory_pressure: pressure,
+            daemon_memory_current: 0,
+            daemon_swap_current: 0,
+            time_collected: SystemTime::now(),
+        };
+        for i in 1..=60 {
+            scheduler.update(reading(0.0), UpdateBuilder::new().build(), timeline.secs(i));
+        }
+        let mut decrease = Vec::new();
+        for i in 61..=72 {
+            scheduler.update(
+                reading(15.0),
+                UpdateBuilder::new().build(),
+                timeline.secs(i),
+            );
+            decrease.push(matches!(scheduler.current_intent, CurrentIntent::Decrease));
+        }
+        assert_eq!(
+            decrease,
+            [
+                false, false, false, true, false, true, false, true, false, true, true, true
+            ]
+        );
+    }
+
     #[test]
     fn test_peak_memory_and_swap() -> buck2_error::Result<()> {
         let (mut scheduler, timeline) = TestTimeline::new();

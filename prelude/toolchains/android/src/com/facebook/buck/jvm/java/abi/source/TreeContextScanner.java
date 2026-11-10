@@ -67,7 +67,7 @@ class TreeContextScanner<R, P> extends TreeScanner<R, P> {
 
   @Override
   @Nullable
-  public R scan(Tree tree, @Nullable P p) {
+  public R scan(@Nullable Tree tree, @Nullable P p) {
     if (tree == null) {
       return null;
     }

@@ -10,6 +10,7 @@
 
 package com.facebook.buck.jvm.java.abi.source;
 
+import com.facebook.infer.annotation.Nullsafe;
 import com.sun.source.util.TreePath;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -27,6 +28,7 @@ import javax.lang.model.util.Types;
 import org.jspecify.annotations.Nullable;
 
 /** Simulates import resolution scopes in a source-only ABI classpath. */
+@Nullsafe(Nullsafe.Mode.LOCAL)
 class ImportsTracker {
   private final Map<TypeElement, TreePath> importedTypes = new HashMap<>();
   private final Map<QualifiedNameable, TreePath> importedOwners = new HashMap<>();
@@ -74,7 +76,8 @@ class ImportsTracker {
       return null;
     }
     for (TypeElement container : staticImports.getOrDefault(element.getSimpleName(), Set.of())) {
-      if (types.isSubtype(container.asType(), element.getEnclosingElement().asType())) {
+      if (types.isSubtype(
+          container.asType(), Objects.requireNonNull(element.getEnclosingElement()).asType())) {
         return container;
       }
     }
@@ -223,7 +226,7 @@ class ImportsTracker {
       return null;
     }
 
-    TypeElement container = (TypeElement) element.getEnclosingElement();
+    TypeElement container = (TypeElement) Objects.requireNonNull(element.getEnclosingElement());
     for (TypeElement staticImportedOwner : staticImportedOwners) {
       if (types.isSubtype(staticImportedOwner.asType(), container.asType())) {
         return staticImportedOwner;

@@ -12,13 +12,16 @@ package com.facebook.buck.jvm.java.abi.source;
 
 import com.facebook.buck.jvm.java.plugin.adapter.BuckJavacPlugin;
 import com.facebook.buck.jvm.java.plugin.adapter.BuckJavacTask;
+import com.facebook.infer.annotation.Nullsafe;
 import com.sun.source.util.TaskEvent;
 import com.sun.source.util.TaskListener;
+import java.util.Objects;
 
 /**
  * Watches the phases of the compiler and keeps our parallel symbol table in sync. Put task
  * listeners that need access to our symbol tables inside this one.
  */
+@Nullsafe(Nullsafe.Mode.LOCAL)
 class EnteringPlugin implements BuckJavacPlugin {
   @Override
   public String getName() {
@@ -64,7 +67,7 @@ class EnteringPlugin implements BuckJavacPlugin {
     @Override
     public void finished(TaskEvent e) {
       if (e.getKind() == TaskEvent.Kind.ENTER) {
-        enter.enter(e.getCompilationUnit());
+        enter.enter(Objects.requireNonNull(e.getCompilationUnit()));
         classesEnteredThisRound += 1;
         entersInProgress -= 1;
 

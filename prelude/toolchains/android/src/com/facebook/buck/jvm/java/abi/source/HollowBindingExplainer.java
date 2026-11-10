@@ -10,6 +10,7 @@
 
 package com.facebook.buck.jvm.java.abi.source;
 
+import com.facebook.infer.annotation.Nullsafe;
 import com.sun.source.tree.ClassTree;
 import com.sun.source.tree.CompilationUnitTree;
 import com.sun.source.tree.IdentifierTree;
@@ -25,6 +26,7 @@ import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 import java.util.TreeSet;
 import javax.lang.model.element.Element;
@@ -40,6 +42,7 @@ import org.jspecify.annotations.Nullable;
  * arguments} naming nothing fixable. The explanation names the unavailable supertypes of the
  * enclosing class and the fix.
  */
+@Nullsafe(Nullsafe.Mode.LOCAL)
 class HollowBindingExplainer {
   static IllegalStateException explain(
       Trees javacTrees,
@@ -56,7 +59,8 @@ class HollowBindingExplainer {
       }
       return new IllegalStateException(buildMessage(javacTrees, treePath, hollowName), cause);
     } catch (RuntimeException e) {
-      return new IllegalStateException(fallbackMessage(treePath, hollowName), cause);
+      return new IllegalStateException(
+          fallbackMessage(Objects.requireNonNull(treePath), hollowName), cause);
     }
   }
 
@@ -117,7 +121,7 @@ class HollowBindingExplainer {
         file, hollowName);
   }
 
-  private static TreePath enclosingClassPath(TreePath path) {
+  private static @Nullable TreePath enclosingClassPath(TreePath path) {
     TreePath current = path;
     while (current != null && !(current.getLeaf() instanceof ClassTree)) {
       current = current.getParentPath();
@@ -189,7 +193,7 @@ class HollowBindingExplainer {
 
   private static void recordBroken(
       TypeMirror mirror,
-      Tree spelling,
+      @Nullable Tree spelling,
       UnitNames names,
       Set<String> broken,
       Set<String> approximate) {
@@ -262,7 +266,7 @@ class HollowBindingExplainer {
     }
 
     /** Fully qualified name for a supertype-clause spelling, or null when unresolvable. */
-    String resolve(Tree spelling) {
+    @Nullable String resolve(Tree spelling) {
       String dotted = dottedName(spelling);
       if (dotted == null || dotted.isEmpty()) {
         return null;
@@ -286,7 +290,7 @@ class HollowBindingExplainer {
       return packageName.isEmpty() ? dotted : packageName + "." + dotted;
     }
 
-    private static String dottedName(Tree spelling) {
+    private static @Nullable String dottedName(Tree spelling) {
       if (spelling instanceof IdentifierTree) {
         return ((IdentifierTree) spelling).getName().toString();
       }

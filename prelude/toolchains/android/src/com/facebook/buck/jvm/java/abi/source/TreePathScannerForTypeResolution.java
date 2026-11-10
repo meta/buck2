@@ -10,6 +10,7 @@
 
 package com.facebook.buck.jvm.java.abi.source;
 
+import com.facebook.infer.annotation.Nullsafe;
 import com.sun.source.tree.AnnotatedTypeTree;
 import com.sun.source.tree.IdentifierTree;
 import com.sun.source.tree.MemberSelectTree;
@@ -30,6 +31,7 @@ import org.jspecify.annotations.Nullable;
  * A {@link TreePathScanner} that forms the scaffolding of any kind of type reference resolution
  * logic. Scans a {@link TreePath} that represents a reference to a type element and
  */
+@Nullsafe(Nullsafe.Mode.LOCAL)
 abstract class TreePathScannerForTypeResolution<R, P> extends TreePathScanner<R, P> {
 
   private final Trees trees;
@@ -111,8 +113,8 @@ abstract class TreePathScannerForTypeResolution<R, P> extends TreePathScanner<R,
 
   @Override
   @Nullable
-  public final R scan(Tree tree, P p) {
-    switch (tree.getKind()) {
+  public final R scan(@Nullable Tree tree, P p) {
+    switch (Objects.requireNonNull(tree).getKind()) {
       case ANNOTATED_TYPE:
       case IDENTIFIER:
       case MEMBER_SELECT:

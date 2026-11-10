@@ -10,6 +10,7 @@
 
 package com.facebook.buck.jvm.java.abi.source;
 
+import com.facebook.infer.annotation.Nullsafe;
 import com.sun.source.tree.AnnotationTree;
 import com.sun.source.tree.ClassTree;
 import com.sun.source.tree.CompilationUnitTree;
@@ -42,6 +43,7 @@ import org.jspecify.annotations.Nullable;
  * Creates {@link TreeBackedElement}s for each element in the {@link CompilationUnitTree}s known to
  * the compiler. This is analogous to the "Enter" phase of javac.
  */
+@Nullsafe(Nullsafe.Mode.LOCAL)
 class TreeBackedEnter {
 
   private final TreeBackedElements elements;
@@ -71,7 +73,7 @@ class TreeBackedEnter {
     @Nullable private TreeBackedPackageElement currentPackage;
 
     private TreeBackedElement getCurrentContext() {
-      return contextStack.peek();
+      return Objects.requireNonNull(contextStack.peek());
     }
 
     private TreePath getCurrentPath() {

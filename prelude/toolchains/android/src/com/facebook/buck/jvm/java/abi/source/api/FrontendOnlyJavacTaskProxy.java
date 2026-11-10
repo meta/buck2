@@ -13,12 +13,15 @@ package com.facebook.buck.jvm.java.abi.source.api;
 import com.facebook.buck.jvm.java.plugin.api.BuckJavacTaskProxy;
 import com.facebook.buck.jvm.java.plugin.api.PluginClassLoader;
 import com.facebook.buck.jvm.java.plugin.api.PluginClassLoaderFactory;
+import com.facebook.infer.annotation.Nullsafe;
 import java.io.Writer;
+import java.util.Objects;
 import javax.tools.DiagnosticListener;
 import javax.tools.JavaCompiler;
 import javax.tools.JavaFileManager;
 import javax.tools.JavaFileObject;
 
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public interface FrontendOnlyJavacTaskProxy extends BuckJavacTaskProxy {
   static FrontendOnlyJavacTaskProxy getTask(
       PluginClassLoaderFactory loaderFactory,
@@ -48,7 +51,9 @@ public interface FrontendOnlyJavacTaskProxy extends BuckJavacTaskProxy {
             FrontendOnlyJavacTaskProxy.class);
 
     try {
-      return proxyImplClass.getConstructor(JavaCompiler.CompilationTask.class).newInstance(task);
+      return Objects.requireNonNull(proxyImplClass)
+          .getConstructor(JavaCompiler.CompilationTask.class)
+          .newInstance(task);
     } catch (ReflectiveOperationException e) {
       throw new RuntimeException(e);
     }

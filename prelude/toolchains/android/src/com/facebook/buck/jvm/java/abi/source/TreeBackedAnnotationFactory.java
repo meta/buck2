@@ -10,6 +10,7 @@
 
 package com.facebook.buck.jvm.java.abi.source;
 
+import com.facebook.infer.annotation.Nullsafe;
 import java.lang.annotation.Annotation;
 import java.lang.reflect.InvocationHandler;
 import java.lang.reflect.InvocationTargetException;
@@ -18,6 +19,7 @@ import java.lang.reflect.Proxy;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import javax.lang.model.AnnotatedConstruct;
 import javax.lang.model.element.AnnotationMirror;
 import javax.lang.model.element.AnnotationValue;
@@ -35,6 +37,7 @@ import org.jspecify.annotations.Nullable;
  * of the annotations instead, bypassing javac's support altogether. However, if the annotation
  * processor requests a field that we can't fake, we have to fall back to the underlying annotation.
  */
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public class TreeBackedAnnotationFactory {
   public static <A extends Annotation> A createOrGetUnderlying(
       TreeBackedAnnotatedConstruct annotatedConstruct,
@@ -96,10 +99,11 @@ public class TreeBackedAnnotationFactory {
         }
         Handler other = (Handler) rawHandler;
         other.populateAnnotation();
-        return annotationCache.equals(other.annotationCache);
+        return Objects.requireNonNull(annotationCache).equals(other.annotationCache);
       }
 
       populateValues();
+      Map<String, AnnotationValue> valueCache = Objects.requireNonNull(this.valueCache);
       if (!valueCache.containsKey(method.getName())) {
         throw new IllegalArgumentException("Unrecognized method: " + method.getName());
       }
@@ -112,7 +116,7 @@ public class TreeBackedAnnotationFactory {
       // Fall back to trying the annotation.
       populateAnnotation();
       try {
-        return method.invoke(annotationCache, args);
+        return Objects.requireNonNull(method.invoke(annotationCache, args));
       } catch (InvocationTargetException e) {
         throw e.getCause();
       }

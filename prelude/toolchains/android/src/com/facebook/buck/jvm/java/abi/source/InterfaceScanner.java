@@ -10,6 +10,7 @@
 
 package com.facebook.buck.jvm.java.abi.source;
 
+import com.facebook.infer.annotation.Nullsafe;
 import com.sun.source.tree.BlockTree;
 import com.sun.source.tree.ClassTree;
 import com.sun.source.tree.CompilationUnitTree;
@@ -38,6 +39,7 @@ import org.jspecify.annotations.Nullable;
  * compilation, to expose references that may be problematic when generating ABIs without
  * dependencies.
  */
+@Nullsafe(Nullsafe.Mode.LOCAL)
 class InterfaceScanner {
   public interface Listener {
     void onTypeDeclared(TypeElement type, TreePath path);

@@ -13,6 +13,7 @@ package com.facebook.buck.jvm.java.abi.source;
 import com.facebook.infer.annotation.Nullsafe;
 import java.util.List;
 import javax.lang.model.element.ExecutableElement;
+import org.jspecify.annotations.Nullable;
 
 /**
  * Interface for {@link ExecutableElement}s that are implemented by something other than javac
@@ -26,7 +27,7 @@ interface ArtificialExecutableElement extends ExecutableElement, ArtificialParam
   // TODO(jkeljo): We should be able to sometimes use the real AnnotationValue, much like we
   // sometimes use real TypeMirrors
   @Override
-  ArtificialAnnotationValue getDefaultValue();
+  @Nullable ArtificialAnnotationValue getDefaultValue();
 
   @Override
   List<? extends ArtificialElement> getEnclosedElements();

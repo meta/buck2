@@ -10,6 +10,7 @@
 
 package com.facebook.buck.jvm.java.abi.source.api;
 
+import com.facebook.infer.annotation.Nullsafe;
 import java.lang.reflect.Field;
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
@@ -29,6 +30,7 @@ import org.jspecify.annotations.Nullable;
  * after annotation processing. We must be careful to not allow it to run further, because the
  * analyze phase will not be happy to have missing types.
  */
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public class ErrorSuppressingDiagnosticListener implements DiagnosticListener<JavaFileObject> {
   private final DiagnosticListener<? super JavaFileObject> inner;
   private JavaCompiler.@Nullable CompilationTask task;
@@ -71,7 +73,7 @@ public class ErrorSuppressingDiagnosticListener implements DiagnosticListener<Ja
     Field nErrorsField = Objects.requireNonNull(this.nErrorsField);
 
     try {
-      int nerrors = (Integer) nErrorsField.get(getLog());
+      int nerrors = (Integer) Objects.requireNonNull(nErrorsField.get(getLog()));
       nerrors -= 1;
       nErrorsField.set(getLog(), nerrors);
     } catch (IllegalAccessException e) {
@@ -91,8 +93,11 @@ public class ErrorSuppressingDiagnosticListener implements DiagnosticListener<Ja
         boolean removed = false;
         for (Object recordedPair : recorded) {
           JavaFileObject fst =
-              (JavaFileObject) Objects.requireNonNull(pairFirstField).get(recordedPair);
-          Integer snd = (Integer) Objects.requireNonNull(pairSecondField).get(recordedPair);
+              (JavaFileObject)
+                  Objects.requireNonNull(Objects.requireNonNull(pairFirstField).get(recordedPair));
+          Integer snd =
+              (Integer)
+                  Objects.requireNonNull(Objects.requireNonNull(pairSecondField).get(recordedPair));
 
           if (snd == diagnostic.getPosition() && fst.getName().equals(file.getName())) {
             removed = recorded.remove(recordedPair);
@@ -117,7 +122,7 @@ public class ErrorSuppressingDiagnosticListener implements DiagnosticListener<Ja
   private Object getLog() {
     try {
       Object context = Objects.requireNonNull(contextField).get(task);
-      return Objects.requireNonNull(instanceMethod).invoke(null, context);
+      return Objects.requireNonNull(Objects.requireNonNull(instanceMethod).invoke(null, context));
     } catch (IllegalAccessException | InvocationTargetException e) {
       throw new RuntimeException(e);
     }
@@ -129,14 +134,16 @@ public class ErrorSuppressingDiagnosticListener implements DiagnosticListener<Ja
       // flag set to a Diagnostic object without copying it first, and then mutate the set
       // such that it contains the "recoverable" flag. That can cause missing class file errors
       // to be reported as recoverable, when they're really not.
-      if (diagnostic.getCode().equals("compiler.err.cant.access")
-          || diagnostic.getCode().equals("compiler.err.proc.messager")) {
+      String code = Objects.requireNonNull(diagnostic.getCode());
+      if (code.equals("compiler.err.cant.access") || code.equals("compiler.err.proc.messager")) {
         return false;
       }
 
       return (boolean)
-          Objects.requireNonNull(isFlagSetMethod)
-              .invoke(Objects.requireNonNull(diagnosticField).get(diagnostic), recoverableError);
+          Objects.requireNonNull(
+              Objects.requireNonNull(isFlagSetMethod)
+                  .invoke(
+                      Objects.requireNonNull(diagnosticField).get(diagnostic), recoverableError));
     } catch (IllegalAccessException | InvocationTargetException e) {
       throw new RuntimeException(e);
     }
@@ -150,9 +157,10 @@ public class ErrorSuppressingDiagnosticListener implements DiagnosticListener<Ja
     try {
       Class<? extends JavaCompiler.CompilationTask> compilerClass =
           Objects.requireNonNull(task).getClass();
-      contextField = compilerClass.getSuperclass().getDeclaredField("context");
+      contextField =
+          Objects.requireNonNull(compilerClass.getSuperclass()).getDeclaredField("context");
       contextField.setAccessible(true);
-      Object context = contextField.get(task);
+      Object context = Objects.requireNonNull(contextField.get(task));
 
       ClassLoader compilerClassLoader = compilerClass.getClassLoader();
       Class<?> logClass = Class.forName("com.sun.tools.javac.util.Log", false, compilerClassLoader);
@@ -171,7 +179,7 @@ public class ErrorSuppressingDiagnosticListener implements DiagnosticListener<Ja
                   false,
                   compilerClassLoader);
       isFlagSetMethod = diagnosticClass.getMethod("isFlagSet", diagnosticFlagClass);
-      for (Enum<?> enumConstant : diagnosticFlagClass.getEnumConstants()) {
+      for (Enum<?> enumConstant : Objects.requireNonNull(diagnosticFlagClass.getEnumConstants())) {
         if (enumConstant.name().equals("RECOVERABLE")) {
           recoverableError = enumConstant;
           break;

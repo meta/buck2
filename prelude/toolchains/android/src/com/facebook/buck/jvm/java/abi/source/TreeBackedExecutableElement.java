@@ -10,6 +10,7 @@
 
 package com.facebook.buck.jvm.java.abi.source;
 
+import com.facebook.infer.annotation.Nullsafe;
 import com.sun.source.tree.MethodTree;
 import com.sun.source.tree.Tree;
 import com.sun.source.tree.VariableTree;
@@ -33,6 +34,7 @@ import org.jspecify.annotations.Nullable;
  * {@link MethodTree}. This results in an incomplete implementation; see documentation for
  * individual methods and {@link com.facebook.buck.jvm.java.abi.source} for more information.
  */
+@Nullsafe(Nullsafe.Mode.LOCAL)
 class TreeBackedExecutableElement extends TreeBackedParameterizable
     implements ArtificialExecutableElement {
   private final ExecutableElement underlyingElement;
@@ -172,7 +174,7 @@ class TreeBackedExecutableElement extends TreeBackedParameterizable
                 underlyingValue,
                 new TreePath(
                     Objects.requireNonNull(getTreePath()),
-                    Objects.requireNonNull(tree).getDefaultValue()),
+                    Objects.requireNonNull(Objects.requireNonNull(tree).getDefaultValue())),
                 getCanonicalizer());
       }
     }
@@ -180,7 +182,7 @@ class TreeBackedExecutableElement extends TreeBackedParameterizable
   }
 
   @Override
-  public <R, P> R accept(ElementVisitor<R, P> v, P p) {
+  public <R, P> R accept(ElementVisitor<R, P> v, @Nullable P p) {
     return v.visitExecutable(this, p);
   }
 }

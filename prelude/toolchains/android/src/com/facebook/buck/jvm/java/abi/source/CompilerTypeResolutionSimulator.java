@@ -11,6 +11,7 @@
 package com.facebook.buck.jvm.java.abi.source;
 
 import com.facebook.buck.jvm.java.lang.model.MoreElements;
+import com.facebook.infer.annotation.Nullsafe;
 import com.facebook.infer.annotation.PropagatesNullable;
 import com.sun.source.tree.AnnotatedTypeTree;
 import com.sun.source.tree.ClassTree;
@@ -37,6 +38,7 @@ import org.jspecify.annotations.Nullable;
  * Simulates how {@code javac} resolves types, at least so far as to determine whether a given
  * resolution would succeed or not under source-only ABI.
  */
+@Nullsafe(Nullsafe.Mode.LOCAL)
 class CompilerTypeResolutionSimulator {
 
   private final Trees trees;
@@ -244,7 +246,7 @@ class CompilerTypeResolutionSimulator {
           MoreElements.getInterfaces(current).forEach(parents::add);
           for (TypeElement parent : parents) {
             boolean available = fileManager.typeWillBeAvailable(parent);
-            Set<String> next = new HashSet<>(missing);
+            Set<String> next = new HashSet<>(Objects.requireNonNull(missing));
             if (!available) {
               next.add(parent.getQualifiedName().toString());
             }

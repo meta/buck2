@@ -16,9 +16,6 @@ use allocative::Allocative;
 use buck2_common::legacy_configs::configs::LegacyBuckConfig;
 use buck2_common::legacy_configs::dice::OpaqueLegacyBuckConfigOnDice;
 use buck2_common::legacy_configs::key::BuckconfigKeyRef;
-use buck2_core::error::SoftErrorKind;
-use buck2_core::error::StructuredErrorOptions;
-use buck2_core::error::handle_soft_error;
 use dice::DiceComputations;
 use hashbrown::HashTable;
 use starlark::any::ProvidesStaticType;
@@ -199,62 +196,15 @@ impl BuckConfigsViewForStarlark for ConfigsOnDiceViewForStarlark<'_, '_> {
         &mut self,
         key: BuckconfigKeyRef,
     ) -> buck2_error::Result<Option<Arc<str>>> {
-        read_config_and_report_deprecated(self.ctx, &self.buckconfig, key)
+        self.buckconfig.lookup(self.ctx, key)
     }
 
     fn read_root_cell_config(
         &mut self,
         key: BuckconfigKeyRef,
     ) -> buck2_error::Result<Option<Arc<str>>> {
-        read_config_and_report_deprecated(self.ctx, &self.root_buckconfig, key)
+        self.root_buckconfig.lookup(self.ctx, key)
     }
-}
-
-#[derive(Debug, buck2_error::Error)]
-#[error("{} is no longer used. {}", .0, .1)]
-#[buck2(tag = Input)]
-struct DeprecatedConfigError(String, Arc<str>);
-
-fn read_config_and_report_deprecated<'d>(
-    ctx: &mut DiceComputations<'d>,
-    config: &OpaqueLegacyBuckConfigOnDice<'d>,
-    key: BuckconfigKeyRef,
-) -> buck2_error::Result<Option<Arc<str>>> {
-    let result = config.lookup(ctx, key)?;
-    let property = format!("{}.{}", key.section, key.property);
-
-    let key = BuckconfigKeyRef {
-        section: "deprecated_config",
-        property: &property,
-    };
-    let msg = config.lookup(ctx, key)?;
-    if let Some(msg) = msg {
-        // soft error category can only contain ascii lowercese characters
-        let section = transform_logview_category(key.section);
-        let prop = transform_logview_category(key.property);
-
-        // Not `deprecation!`: that requires an owner, and a `[deprecated_config]` entry does not
-        // name one.
-        handle_soft_error(
-            format!("deprecated_config_{section}_{prop}").as_str(),
-            DeprecatedConfigError(property, msg).into(),
-            (file!(), line!(), column!()),
-            StructuredErrorOptions {
-                kind: SoftErrorKind::Deprecation {
-                    owner: None,
-                    started: None,
-                },
-                ..Default::default()
-            },
-        )?;
-    }
-    Ok(result)
-}
-
-fn transform_logview_category(s: &str) -> String {
-    s.chars()
-        .filter(|c| c.is_ascii_lowercase() || *c == '_')
-        .collect::<String>()
 }
 
 pub struct LegacyConfigsViewForStarlark {

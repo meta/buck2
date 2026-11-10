@@ -1,6 +1,0 @@
-[repositories]
-    root = ..
-[buildfile]
-    name = TARGETS.fixture
-[deprecated_config]
-    other.config2 = Please use other.config3

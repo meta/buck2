@@ -50,10 +50,11 @@ use crate::values::types::num::value::NumRef;
 /// are conversions from it, which may fail.
 #[derive(Debug, Clone, Copy, StarlarkRepresentations)]
 pub enum IntView<'v> {
+    /// An integer stored inline in the value pointer. First, so that reading an `int` tests
+    /// the common representation first.
+    Small(ValueTyped<'v, PointerI32>),
     /// An integer that does not fit the inline representation.
     Big(ValueTyped<'v, StarlarkBigInt>),
-    /// An integer stored inline in the value pointer.
-    Small(ValueTyped<'v, PointerI32>),
 }
 
 impl<'v> IntView<'v> {

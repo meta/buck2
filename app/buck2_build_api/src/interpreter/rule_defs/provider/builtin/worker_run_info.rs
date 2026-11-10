@@ -43,10 +43,10 @@ use crate::interpreter::rule_defs::provider::builtin::worker_info::WorkerInfo;
 #[repr(C)]
 pub struct WorkerRunInfo<'v> {
     // Configuration needed to spawn a new local worker
-    worker: Option<ValueTyped<'v, WorkerInfo<'v>>>,
+    worker: Option<ValueOf<'v, WorkerInfo<'v>>>,
 
     // Configuration needed to spawn a new remote worker
-    remote_worker: Option<ValueTyped<'v, WorkerInfo<'v>>>,
+    remote_worker: Option<ValueOf<'v, WorkerInfo<'v>>>,
 
     // Command to execute without spawning a worker, when the build environment or configuration does not support workers
     exe: ValueOf<'v, StarlarkCmdArgsView<'v>>,
@@ -57,10 +57,10 @@ fn worker_run_info_creator(globals: &mut GlobalsBuilder) {
     #[starlark(as_type = WorkerRunInfo<'static>)]
     fn WorkerRunInfo<'v>(
         #[starlark(require = named, default = NoneOr::None)] worker: NoneOr<
-            ValueTyped<'v, WorkerInfo<'v>>,
+            ValueOf<'v, WorkerInfo<'v>>,
         >,
         #[starlark(require = named, default = NoneOr::None)] remote_worker: NoneOr<
-            ValueTyped<'v, WorkerInfo<'v>>,
+            ValueOf<'v, WorkerInfo<'v>>,
         >,
         #[starlark(require = named, default = AllocList::EMPTY)] exe: Value<'v>,
         eval: &mut Evaluator<'v, '_, '_>,
@@ -78,11 +78,11 @@ fn worker_run_info_creator(globals: &mut GlobalsBuilder) {
 
 impl<'v> WorkerRunInfo<'v> {
     pub fn worker(&self) -> Option<ValueTyped<'v, WorkerInfo<'v>>> {
-        self.worker
+        self.worker.map(|v| v.get())
     }
 
     pub fn remote_worker(&self) -> Option<ValueTyped<'v, WorkerInfo<'v>>> {
-        self.remote_worker
+        self.remote_worker.map(|v| v.get())
     }
 
     pub fn exe(&self) -> ValueOf<'v, StarlarkCmdArgsView<'v>> {

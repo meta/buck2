@@ -116,7 +116,7 @@ pub struct InternalRunnerTestInfo<'v> {
 
     /// Default executor to use to run tests. If none is
     /// passed we will default to the execution platform.
-    default_executor: Option<ValueTyped<'v, StarlarkCommandExecutorConfig>>,
+    default_executor: Option<ValueOf<'v, StarlarkCommandExecutorConfig>>,
 
     /// The execution group whose execution platform runs the tests when the test runner does not
     /// request an executor. When the analysis of a rule that declares the group creates the test
@@ -131,29 +131,24 @@ pub struct InternalRunnerTestInfo<'v> {
     exec_group: Option<ValueOf<'v, StarlarkExecutionGroupView<'v>>>,
 
     /// Executors that can be used to override the default executor.
-    executor_overrides: Option<
-        ValueOf<'v, DictType<StringValue<'v>, ValueTyped<'v, StarlarkCommandExecutorConfig>>>,
-    >,
+    executor_overrides:
+        Option<ValueOf<'v, DictType<StringValue<'v>, StarlarkCommandExecutorConfig>>>,
 
     /// Mapping from a local resource type to a target with a corresponding provider.
     /// Required types are passed from test runner.
     /// If the value for a corresponding type is omitted it means local resource
     /// should be ignored when executing tests even if those are passed as required from test runner.
-    local_resources: Option<
-        ValueOf<
-            'v,
-            DictType<StringValue<'v>, NoneOr<ValueTyped<'v, StarlarkConfiguredProvidersLabel>>>,
-        >,
-    >,
+    local_resources:
+        Option<ValueOf<'v, DictType<StringValue<'v>, NoneOr<StarlarkConfiguredProvidersLabel>>>>,
 
     /// List of local resource types which should be set up additionally to those which are
     /// passed from test runner. Allows specifying local resources on a per-rule basis.
     required_local_resources:
-        Option<ValueOf<'v, ListOrTupleType<ValueTyped<'v, StarlarkRequiredTestLocalResource>>>>,
+        Option<ValueOf<'v, ListOrTupleType<StarlarkRequiredTestLocalResource>>>,
 
     /// Configuration needed to spawn a new worker. This worker will be used to run every single
     /// command related to test execution, including listing.
-    worker: Option<ValueTyped<'v, WorkerInfo<'v>>>,
+    worker: Option<ValueOf<'v, WorkerInfo<'v>>>,
 
     /// A Starlark callable that parses test listing output into structured test
     /// entries. The callback signature is:
@@ -518,14 +513,14 @@ fn internal_runner_test_info_creator(globals: &mut GlobalsBuilder) {
         #[starlark(default = NoneOr::None)] use_project_relative_paths: NoneOr<ValueOf<'v, bool>>,
         #[starlark(default = NoneOr::None)] run_from_project_root: NoneOr<ValueOf<'v, bool>>,
         #[starlark(default = NoneOr::None)] default_executor: NoneOr<
-            ValueTyped<'v, StarlarkCommandExecutorConfig>,
+            ValueOf<'v, StarlarkCommandExecutorConfig>,
         >,
         #[starlark(default = NoneOr::None)] executor_overrides: NoneOr<ExecutorOverrides<'v>>,
         #[starlark(default = NoneOr::None)] local_resources: NoneOr<LocalResources<'v>>,
         #[starlark(default = NoneOr::None)] required_local_resources: NoneOr<
             RequiredLocalResources<'v>,
         >,
-        #[starlark(default = NoneOr::None)] worker: NoneOr<ValueTyped<'v, WorkerInfo<'v>>>,
+        #[starlark(default = NoneOr::None)] worker: NoneOr<ValueOf<'v, WorkerInfo<'v>>>,
         #[starlark(require = named, default = NoneOr::None)] exec_group: NoneOr<
             ValueOf<'v, StarlarkExecutionGroupView<'v>>,
         >,

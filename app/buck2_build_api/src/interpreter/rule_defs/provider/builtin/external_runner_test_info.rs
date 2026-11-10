@@ -86,7 +86,7 @@ pub struct ExternalRunnerTestInfo<'v> {
 
     /// Default executor to use to run tests. If none is
     /// passed we will default to the execution platform.
-    default_executor: Option<ValueTyped<'v, StarlarkCommandExecutorConfig>>,
+    default_executor: Option<ValueOf<'v, StarlarkCommandExecutorConfig>>,
 
     /// The execution group whose execution platform runs the tests when the test runner does not
     /// request an executor. When the analysis of a rule that declares the group creates the test
@@ -101,29 +101,24 @@ pub struct ExternalRunnerTestInfo<'v> {
     exec_group: Option<ValueOf<'v, StarlarkExecutionGroupView<'v>>>,
 
     /// Executors that Tpx can use to override the default executor.
-    executor_overrides: Option<
-        ValueOf<'v, DictType<StringValue<'v>, ValueTyped<'v, StarlarkCommandExecutorConfig>>>,
-    >,
+    executor_overrides:
+        Option<ValueOf<'v, DictType<StringValue<'v>, StarlarkCommandExecutorConfig>>>,
 
     /// Mapping from a local resource type to a target with a corresponding provider.
     /// Required types are passed from test runner.
     /// If the value for a corresponding type is omitted it means local resource
     /// should be ignored when executing tests even if those are passed as required from test runner.
-    local_resources: Option<
-        ValueOf<
-            'v,
-            DictType<StringValue<'v>, NoneOr<ValueTyped<'v, StarlarkConfiguredProvidersLabel>>>,
-        >,
-    >,
+    local_resources:
+        Option<ValueOf<'v, DictType<StringValue<'v>, NoneOr<StarlarkConfiguredProvidersLabel>>>>,
 
     /// List of local resource types which should be set up additionally to those which are
     /// passed from test runner. Allows specifying local resources on a per-rule basis.
     required_local_resources:
-        Option<ValueOf<'v, ListOrTupleType<ValueTyped<'v, StarlarkRequiredTestLocalResource>>>>,
+        Option<ValueOf<'v, ListOrTupleType<StarlarkRequiredTestLocalResource>>>,
 
     /// Configuration needed to spawn a new worker. This worker will be used to run every single
     /// command related to test execution, including listing.
-    worker: Option<ValueTyped<'v, WorkerInfo<'v>>>,
+    worker: Option<ValueOf<'v, WorkerInfo<'v>>>,
 
     /// Whether test execution results can be read from the remote action cache.
     supports_test_execution_caching: Option<ValueOf<'v, bool>>,
@@ -263,13 +258,11 @@ pub(super) type TestCommand<'v> = ValueOf<'v, ListOrTupleType<ValueAsCommandLine
 pub(super) type TestEnv<'v> = ValueOf<'v, DictType<StringValue<'v>, ValueAsCommandLineLike<'v>>>;
 pub(super) type StrSeq<'v> = ValueOf<'v, ListOrTupleType<StringValue<'v>>>;
 pub(super) type ExecutorOverrides<'v> =
-    ValueOf<'v, DictType<StringValue<'v>, ValueTyped<'v, StarlarkCommandExecutorConfig>>>;
-pub(super) type LocalResources<'v> = ValueOf<
-    'v,
-    DictType<StringValue<'v>, NoneOr<ValueTyped<'v, StarlarkConfiguredProvidersLabel>>>,
->;
+    ValueOf<'v, DictType<StringValue<'v>, StarlarkCommandExecutorConfig>>;
+pub(super) type LocalResources<'v> =
+    ValueOf<'v, DictType<StringValue<'v>, NoneOr<StarlarkConfiguredProvidersLabel>>>;
 pub(super) type RequiredLocalResources<'v> =
-    ValueOf<'v, ListOrTupleType<ValueTyped<'v, StarlarkRequiredTestLocalResource>>>;
+    ValueOf<'v, ListOrTupleType<StarlarkRequiredTestLocalResource>>;
 
 pub(super) fn command_members<'v>(
     command: Option<TestCommand<'v>>,
@@ -304,9 +297,7 @@ pub(super) fn lookup_executor_override<'v>(
     let Some(overrides) = overrides else {
         return Ok(None);
     };
-    Ok(overrides
-        .lookup_str(key)?
-        .map(|config| config.unpack().as_ref()))
+    Ok(overrides.lookup_str(key)?.map(|config| config.as_ref()))
 }
 
 /// The executor for the test info's `default_executor` field. A passed `default_executor` wins,
@@ -322,9 +313,9 @@ pub(super) fn lookup_executor_override<'v>(
 /// rule does not declare that group, whether or not it has `executor_overrides`.
 pub(super) fn default_executor_with_execution_group<'v>(
     exec_group: Option<&ExecutionGroup>,
-    default_executor: Option<ValueTyped<'v, StarlarkCommandExecutorConfig>>,
+    default_executor: Option<ValueOf<'v, StarlarkCommandExecutorConfig>>,
     eval: &mut Evaluator<'v, '_, '_>,
-) -> buck2_error::Result<Option<ValueTyped<'v, StarlarkCommandExecutorConfig>>> {
+) -> buck2_error::Result<Option<ValueOf<'v, StarlarkCommandExecutorConfig>>> {
     if default_executor.is_some() {
         return Ok(default_executor);
     }
@@ -357,9 +348,10 @@ pub(super) fn default_executor_with_execution_group<'v>(
     }
     // Fails when resolution was not performed.
     Ok(resolution.platform_for_group(group)?.map(|platform| {
-        eval.heap().alloc_typed(StarlarkCommandExecutorConfig(
-            platform.executor_config().dupe(),
-        ))
+        ValueOf::alloc(
+            eval.heap(),
+            StarlarkCommandExecutorConfig(platform.executor_config().dupe()),
+        )
     }))
 }
 
@@ -373,10 +365,7 @@ pub(super) fn collect_local_resources<'v>(
             let (key, label) = entry?;
             Ok((
                 key.unpack().as_str(),
-                label
-                    .unpack()
-                    .into_option()
-                    .map(|label| label.as_ref().label()),
+                label.get().map(|label| label.as_ref().label()),
             ))
         })
         .collect()
@@ -388,7 +377,7 @@ pub(super) fn required_local_resource_items<'v>(
     required
         .into_iter()
         .flat_map(|required| required.iter())
-        .map(|resource| Ok(resource?.unpack().as_ref()))
+        .map(|resource| Ok(resource?.as_ref()))
 }
 
 /// Every type in `required_local_resources` must have an entry in `local_resources`.
@@ -455,7 +444,7 @@ fn external_runner_test_info_creator(globals: &mut GlobalsBuilder) {
             ValueOf<'v, bool>,
         >,
         #[starlark(require = named, default = NoneOr::None)] default_executor: NoneOr<
-            ValueTyped<'v, StarlarkCommandExecutorConfig>,
+            ValueOf<'v, StarlarkCommandExecutorConfig>,
         >,
         #[starlark(require = named, default = NoneOr::None)] exec_group: NoneOr<
             ValueOf<'v, StarlarkExecutionGroupView<'v>>,
@@ -470,7 +459,7 @@ fn external_runner_test_info_creator(globals: &mut GlobalsBuilder) {
             RequiredLocalResources<'v>,
         >,
         #[starlark(require = named, default = NoneOr::None)] worker: NoneOr<
-            ValueTyped<'v, WorkerInfo<'v>>,
+            ValueOf<'v, WorkerInfo<'v>>,
         >,
         #[starlark(require = named, default = NoneOr::None)]
         supports_test_execution_caching: NoneOr<ValueOf<'v, bool>>,

@@ -23,7 +23,6 @@ use starlark::values::StarlarkPagable;
 use starlark::values::StringValue;
 use starlark::values::Trace;
 use starlark::values::ValueOf;
-use starlark::values::ValueTyped;
 use starlark::values::dict::DictType;
 
 use crate as buck2_build_api;
@@ -52,7 +51,7 @@ enum InstallInfoProviderErrors {
 #[freeze(validator = validate_install_info)]
 pub struct InstallInfo<'v> {
     // Label for the installer
-    installer: ValueTyped<'v, StarlarkConfiguredProvidersLabel>,
+    installer: ValueOf<'v, StarlarkConfiguredProvidersLabel>,
     // list of files that need to be installed
     files: ValueOf<'v, DictType<StringValue<'v>, StarlarkArtifactView<'v>>>,
 }
@@ -89,7 +88,7 @@ impl<'v> InstallInfo<'v> {
 #[starlark_module]
 fn install_info_creator(globals: &mut GlobalsBuilder) {
     fn InstallInfo<'v>(
-        installer: ValueTyped<'v, StarlarkConfiguredProvidersLabel>,
+        installer: ValueOf<'v, StarlarkConfiguredProvidersLabel>,
         files: ValueOf<'v, DictType<StringValue<'v>, StarlarkArtifactView<'v>>>,
     ) -> starlark::Result<InstallInfo<'v>> {
         let info = InstallInfo { installer, files };

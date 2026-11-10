@@ -133,7 +133,7 @@ pub struct DefaultInfo<'v> {
     /// `ProviderCollection`, this collection must include at least a `DefaultInfo` provider. The
     /// subtargets can have their own subtargets as well, which can be accessed by chaining them,
     /// e.g.: `buck2 build cell//foo:bar[baz][qux]`.
-    sub_targets: ValueOf<'v, DictType<StringValue<'v>, ValueTyped<'v, ProviderCollection<'v>>>>,
+    sub_targets: ValueOf<'v, DictType<StringValue<'v>, ProviderCollection<'v>>>,
     /// A list of `Artifact`s that are built by default if this rule is requested
     /// explicitly (via CLI or `$(location)` etc), or depended on as as a "source"
     /// (i.e., `attrs.source()`).
@@ -181,7 +181,7 @@ impl<'v> DefaultInfo<'v> {
         &self,
         name: &str,
     ) -> buck2_error::Result<Option<ValueTyped<'v, ProviderCollection<'v>>>> {
-        Ok(self.sub_targets.lookup_str(name)?.map(|v| v.unpack()))
+        Ok(self.sub_targets.lookup_str(name)?.map(|v| v.get()))
     }
 
     fn default_outputs_impl(
@@ -212,7 +212,7 @@ impl<'v> DefaultInfo<'v> {
             .iter()
             .map(|entry| {
                 let (k, v) = entry?;
-                Ok((k.unpack().as_str(), v.unpack()))
+                Ok((k.unpack().as_str(), v.get()))
             })
             .collect()
     }
@@ -350,10 +350,7 @@ fn default_info_creator(builder: &mut GlobalsBuilder) {
             .map(|entry| {
                 let (k, v) = entry?;
                 let collection = ProviderCollection::try_from_value_subtarget(v, heap)?;
-                buck2_error::Ok((
-                    ValueOf::from(k),
-                    ValueOf::from(heap.alloc_typed(collection)),
-                ))
+                buck2_error::Ok((ValueOf::from(k), ValueOf::alloc(heap, collection)))
             })
             .collect::<buck2_error::Result<Vec<_>>>()?;
 

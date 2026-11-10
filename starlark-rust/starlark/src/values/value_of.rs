@@ -23,6 +23,7 @@ use std::fmt::Debug;
 use std::fmt::Display;
 use std::fmt::Formatter;
 use std::marker::PhantomData;
+use std::ops::Deref;
 
 use allocative::Allocative;
 use dupe::Clone_;
@@ -42,6 +43,7 @@ use crate::values::FreezeResult;
 use crate::values::Freezer;
 use crate::values::FrozenHeap;
 use crate::values::Heap;
+use crate::values::StarlarkType;
 use crate::values::StarlarkValue;
 use crate::values::Trace;
 use crate::values::Tracer;
@@ -189,6 +191,26 @@ impl<'v, T: StarlarkTypeExpr<'v>> ValueOf<'v, T> {
         R: StarlarkValue<'v, Type = T>,
     {
         Self::new_unchecked(value.to_value())
+    }
+}
+
+impl<'v, T: StarlarkValue<'v> + StarlarkType<'v, Get = ValueTyped<'v, T>>> ValueOf<'v, T> {
+    /// The value's representation, for a type that has exactly one: the handle to such a type
+    /// is the handle to its representation, and derefs to it.
+    #[inline]
+    pub fn as_ref(self) -> &'v T {
+        self.get().as_ref()
+    }
+}
+
+impl<'v, T: StarlarkValue<'v> + StarlarkType<'v, Get = ValueTyped<'v, T>>> Deref
+    for ValueOf<'v, T>
+{
+    type Target = T;
+
+    #[inline]
+    fn deref(&self) -> &T {
+        self.as_ref()
     }
 }
 

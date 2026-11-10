@@ -150,7 +150,9 @@ fn nominal_module(builder: &mut GlobalsBuilder) {
     }
 
     fn with_nominal<'v>(v: ValueOf<'v, Nominal>) -> anyhow::Result<String> {
-        Ok(v.to_value().to_string())
+        let by_deref: &Nominal = &v;
+        assert!(std::ptr::eq(by_deref, v.as_ref()));
+        Ok(by_deref.to_string())
     }
 
     fn with_nominal_list<'v>(v: ValueOf<'v, ListType<Nominal>>) -> anyhow::Result<usize> {

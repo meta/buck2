@@ -1436,6 +1436,49 @@ class MissingConstantDeclarationGenerationExtension(
       // Check if this class is public
       val classVisibility = classDecl.status.visibility
       if (classVisibility == Visibilities.Public || classVisibility == Visibilities.Protected) {
+        // Members the class already inherits need no generated forwarder: the fake
+        // override carries them into the ABI (materialized when the supertype is
+        // stripped). Generating a second declaration lists the signature twice in
+        // metadata and makes consumer overload resolution ambiguous. Keyed by
+        // erased signature, not (name, arity): overloads that differ only in
+        // parameter types are distinct members, and suppressing one for the
+        // other drops a genuinely distinct signature from the ABI.
+        fun erasedSignatureKey(
+            member: FirNamedFunctionCompat,
+        ): Triple<String, Int, List<String>>? {
+          val params = mutableListOf<String>()
+          for (param in member.valueParameters) {
+            val cone = (param.returnTypeRef as? FirResolvedTypeRef)?.coneType ?: return null
+            params.add(
+                if (cone is ConeClassLikeType) cone.lookupTag.classId.asString()
+                else cone.toString(),
+            )
+          }
+          return Triple(member.name.asString(), member.valueParameters.size, params)
+        }
+        val inheritedMembers = mutableSetOf<Triple<String, Int, List<String>>>()
+        for (superTypeRef in classDecl.superTypeRefs) {
+          val superCone =
+              (superTypeRef as? FirResolvedTypeRef)?.coneType as? ConeClassLikeType ?: continue
+          val superSymbol =
+              session.symbolProvider.getClassLikeSymbolByClassId(superCone.lookupTag.classId)
+                  as? FirClassSymbol<*> ?: continue
+          val superDecl = superSymbol.fir as? FirRegularClass ?: continue
+          // Only direct supertypes: a member inherited transitively through a
+          // stripped intermediate is NOT materialized into the class (the
+          // stripper only materializes fake overrides matching a direct
+          // stripped supertype's declared signatures), so suppressing its
+          // forwarder leaves a hole the consumer cannot resolve. The forwarder
+          // stays load-bearing there.
+          for (member in superDecl.declarations) {
+            if (member is FirNamedFunctionCompat) {
+              val visibility = member.status.visibility
+              if (visibility == Visibilities.Public || visibility == Visibilities.Protected) {
+                erasedSignatureKey(member)?.let(inheritedMembers::add)
+              }
+            }
+          }
+        }
         // Find internal interface supertypes
         val interfaceMethodInfos = mutableListOf<InterfaceMethodInfo>()
 
@@ -1460,19 +1503,22 @@ class MissingConstantDeclarationGenerationExtension(
                 val visibility = decl.status.visibility
                 if (visibility == Visibilities.Public || visibility == Visibilities.Protected) {
                   // Check if method is not already declared in the class
+                  val declKey = erasedSignatureKey(decl)
                   val alreadyDeclaredInClass =
-                      classDecl.declarations.any {
-                        it is FirNamedFunctionCompat && it.name == decl.name
-                      }
+                      declKey != null &&
+                          classDecl.declarations.any {
+                            it is FirNamedFunctionCompat && erasedSignatureKey(it) == declKey
+                          }
 
                   // For enums, also check if method is overridden in any enum entry
                   val alreadyDeclaredInEnumEntry =
-                      classDecl.classKind == ClassKind.ENUM_CLASS &&
+                      declKey != null &&
+                          classDecl.classKind == ClassKind.ENUM_CLASS &&
                           classDecl.declarations.any { entry ->
                             if (entry is FirEnumEntry) {
                               val entryInit = entry.initializer as? FirAnonymousObjectExpression
                               entryInit?.anonymousObject?.declarations?.any {
-                                it is FirNamedFunctionCompat && it.name == decl.name
+                                it is FirNamedFunctionCompat && erasedSignatureKey(it) == declKey
                               } ?: false
                             } else {
                               false
@@ -1480,7 +1526,8 @@ class MissingConstantDeclarationGenerationExtension(
                           }
 
                   val alreadyDeclared = alreadyDeclaredInClass || alreadyDeclaredInEnumEntry
-                  if (!alreadyDeclared) {
+                  val alreadyInherited = declKey != null && declKey in inheritedMembers
+                  if (!alreadyDeclared && !alreadyInherited) {
                     // Java-loaded members carry FirJavaTypeRef, whose cone type throws;
                     // without readable types no forwarder can be synthesised, so skip.
                     val returnType =

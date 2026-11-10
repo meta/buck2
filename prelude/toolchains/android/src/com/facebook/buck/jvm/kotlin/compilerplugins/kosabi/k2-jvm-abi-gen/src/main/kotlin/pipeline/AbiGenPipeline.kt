@@ -647,15 +647,16 @@ internal class FirMetadataSanitizerStage(private val repairLog: AbiGenRepairLog)
 
             if (interfaceMethods.isEmpty()) return
 
-            val existingMethodNames =
+            val existingMethodKeys =
                 firClass.declarations
                     .filterIsInstance<FirNamedFunctionCompat>()
-                    .map { it.name.asString() }
+                    .mapNotNull { methodKey(it) }
                     .toSet()
 
             for (interfaceMethod in interfaceMethods) {
               val methodName = interfaceMethod.name.asString()
-              if (methodName in existingMethodNames) continue
+              val interfaceKey = methodKey(interfaceMethod)
+              if (interfaceKey != null && interfaceKey in existingMethodKeys) continue
 
               val copiedMethod = copyPrivateInterfaceMethodToClass(interfaceMethod, firClass)
               if (copiedMethod != null) {
@@ -706,6 +707,28 @@ internal class FirMetadataSanitizerStage(private val repairLog: AbiGenRepairLog)
           }
 
           @OptIn(SymbolInternals::class)
+          // Inherited members match by signature, not name: a class declaring d(Int)
+          // while a stripped private interface supplies d(String) must keep both.
+          // Bails out (null) when a parameter type is not resolved, like
+          // erasedSignatureKey in the handler: two distinct unresolved parameters
+          // must never share a key, so an unkeyable method never matches and is
+          // always materialized.
+          private fun methodKey(fn: FirNamedFunctionCompat): String? = runCatching {
+            val params =
+                fn.valueParameters.map { param ->
+                  val coneType =
+                      (param.returnTypeRef as? org.jetbrains.kotlin.fir.types.FirResolvedTypeRef)
+                          ?.coneType ?: return@runCatching null
+                  if (coneType is org.jetbrains.kotlin.fir.types.ConeClassLikeType) {
+                    coneType.lookupTag.classId.asString()
+                  } else {
+                    coneType.toString()
+                  }
+                }
+            "${fn.name.asString()}(${params.joinToString(",")})"
+          }
+              .getOrNull()
+
           private fun collectMethodsFromPrivateInterfaces(
               session: FirSession,
               interfaceClassIds: Set<ClassId>,

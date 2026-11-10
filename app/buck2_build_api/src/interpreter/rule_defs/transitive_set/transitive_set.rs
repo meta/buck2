@@ -850,7 +850,7 @@ fn transitive_set_methods(builder: &mut MethodsBuilder) {
         heap: Heap<'v>,
     ) -> starlark::Result<ValueTyped<'v, TransitiveSetTraversal<'v>>> {
         Ok(heap.alloc_representation(TransitiveSetTraversal {
-            inner: this.to_value(),
+            inner: this,
             ordering: TransitiveSetOrdering::parse(ordering)?,
         }))
     }

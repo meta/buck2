@@ -9,7 +9,6 @@
  */
 
 use allocative::Allocative;
-use buck2_error::BuckErrorOptionContext;
 use derive_more::Display;
 use dupe::Dupe;
 use starlark::any::ProvidesStaticType;
@@ -89,7 +88,7 @@ impl TransitiveSetOrdering {
 #[display("Traversal({})", inner)]
 #[repr(C)]
 pub struct TransitiveSetTraversal<'v> {
-    pub(super) inner: Value<'v>,
+    pub(super) inner: ValueTyped<'v, TransitiveSet<'v>>,
     pub ordering: TransitiveSetOrdering,
 }
 
@@ -98,9 +97,7 @@ starlark_complex_value!(pub TransitiveSetTraversal);
 #[starlark_value(type = "TransitiveSetIterator")]
 impl<'v> StarlarkValue<'v> for TransitiveSetTraversal<'v> {
     fn iterate_collect(&self, _heap: Heap<'v>) -> starlark::Result<Vec<Value<'v>>> {
-        let tset =
-            TransitiveSet::from_value(self.inner.to_value()).internal_error("Invalid inner")?;
-        Ok(tset.collect_values(self.ordering)?)
+        Ok(self.inner.collect_values(self.ordering)?)
     }
 }
 

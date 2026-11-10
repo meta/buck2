@@ -23,7 +23,6 @@ import java.nio.charset.StandardCharsets;
 import java.util.Objects;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipFile;
-import javax.annotation.concurrent.GuardedBy;
 import javax.tools.JavaCompiler;
 import javax.tools.JavaFileObject;
 import javax.tools.SimpleJavaFileObject;
@@ -35,9 +34,7 @@ class ZipEntryJavaFileObject extends SimpleJavaFileObject implements Closeable {
   private final ZipFile zipFile;
   private final ZipEntry zipEntry;
 
-  @GuardedBy("this")
-  @Nullable
-  private String contents;
+  @Nullable private String contents;
 
   public ZipEntryJavaFileObject(ZipFile zipFile, ZipEntry zipEntry) {
     super(createURIFromEntry(zipEntry), JavaFileObject.Kind.SOURCE);

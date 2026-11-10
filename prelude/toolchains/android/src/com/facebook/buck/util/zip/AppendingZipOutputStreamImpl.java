@@ -20,7 +20,6 @@ import java.util.Objects;
 import java.util.Set;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipException;
-import javax.annotation.Nonnull;
 import org.jspecify.annotations.Nullable;
 
 /**
@@ -98,7 +97,7 @@ class AppendingZipOutputStreamImpl implements CustomZipOutputStream.Impl {
     delegate.close();
   }
 
-  protected @Nonnull CentralDirectory getCentralDirectory() {
+  protected CentralDirectory getCentralDirectory() {
     return new CentralDirectory();
   }
 

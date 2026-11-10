@@ -20,7 +20,6 @@ import java.io.OutputStream;
 import java.nio.channels.Channels;
 import java.nio.channels.FileChannel;
 import java.nio.file.Path;
-import javax.annotation.Nonnull;
 
 /**
  * Alternative implementation to dependency packing, instead of copying several jars which is slow,
@@ -83,7 +82,6 @@ public class IncrementalJarOutputStreamImpl extends AppendingZipOutputStreamImpl
     setCurrentOffset(appendableDirectory.getEntryOffset());
   }
 
-  @Nonnull
   @Override
   protected CentralDirectory getCentralDirectory() {
     return appendableDirectory;

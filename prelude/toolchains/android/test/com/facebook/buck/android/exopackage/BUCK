@@ -27,7 +27,6 @@ buck_kotlin_test(
         "prelude//toolchains/android/test/com/facebook/buck/testutil:testutil",
         "prelude//toolchains/android/test/com/facebook/buck/testutil/integration:util",
         "prelude//toolchains/android/third-party:ddmlib",
-        "prelude//toolchains/android/third-party:jsr305",
         "prelude//toolchains/android/third-party:junit",
         "prelude//toolchains/android/third-party:mockito-kotlin",
     ],

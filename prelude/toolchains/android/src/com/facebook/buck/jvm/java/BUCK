@@ -18,7 +18,6 @@ buck_java_library(
         "prelude//toolchains/android/third-party:guava",
         "prelude//toolchains/android/third-party:infer-annotations",
         "prelude//toolchains/android/third-party:jspecify",
-        "prelude//toolchains/android/third-party:jsr305",
     ],
 )
 
@@ -107,7 +106,6 @@ buck_kotlin_library(
         "prelude//toolchains/android/third-party:jackson-core",
         "prelude//toolchains/android/third-party:jackson-databind",
         "prelude//toolchains/android/third-party:jspecify",
-        "prelude//toolchains/android/third-party:jsr305",
     ],
     exported_deps = [
         "prelude//toolchains/android/src/com/facebook/buck/jvm/core:core",

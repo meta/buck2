@@ -16,7 +16,6 @@ fb_native.java_test(
         "prelude//toolchains/android/src/com/facebook/buck/jvm/java/lang/model:model",
         "prelude//toolchains/android/test/com/facebook/buck/jvm/java/testutil/compiler:compiler",
         "prelude//toolchains/android/third-party:guava",
-        "prelude//toolchains/android/third-party:jsr305",
         "prelude//toolchains/android/third-party:junit",
     ],
 )

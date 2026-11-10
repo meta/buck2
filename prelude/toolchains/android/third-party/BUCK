@@ -383,7 +383,6 @@ buck_java_library(
     exported_deps = [
         ":failureaccess",
         ":guava-jar",
-        ":jsr305",
         ":listenablefuture",
     ],
 )
@@ -722,14 +721,6 @@ third_party_jar(
 # ===   End: jspecify
 
 # === Begin: jsr
-
-third_party_jar(
-    name = "jsr305",
-    # @oss-disable[end= ]: internal_alias = "fbsource//third-party/java/com/google/code/findbugs/jsr305:jsr305__toolchain",
-    sha1 = "25ea2e8b0c338a877313bd4672d3fe056ea78f0d",
-    url = "mvn:com.google.code.findbugs:jsr305:jar:3.0.2",
-    visibility = ["PUBLIC"],
-)
 
 third_party_jar(
     name = "jsr330",

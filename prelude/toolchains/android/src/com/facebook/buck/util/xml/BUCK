@@ -15,6 +15,5 @@ buck_java_library(
     deps = [
         "prelude//toolchains/android/third-party:guava",
         "prelude//toolchains/android/third-party:infer-annotations",
-        "prelude//toolchains/android/third-party:jsr305",
     ],
 )

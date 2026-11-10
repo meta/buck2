@@ -24,7 +24,6 @@ import java.util.Iterator;
 import java.util.List;
 import java.util.Objects;
 import java.util.Set;
-import javax.annotation.concurrent.NotThreadSafe;
 import javax.tools.FileObject;
 import javax.tools.ForwardingJavaFileObject;
 import javax.tools.JavaFileObject;
@@ -32,7 +31,7 @@ import javax.tools.StandardJavaFileManager;
 import javax.tools.StandardLocation;
 import org.jspecify.annotations.Nullable;
 
-@NotThreadSafe
+/** Not thread-safe. */
 @Nullsafe(Nullsafe.Mode.LOCAL)
 class ListenableFileManager extends ForwardingStandardJavaFileManager {
 

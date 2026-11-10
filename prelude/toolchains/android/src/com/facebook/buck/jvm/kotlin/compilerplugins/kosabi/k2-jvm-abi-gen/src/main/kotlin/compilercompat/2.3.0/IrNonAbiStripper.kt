@@ -77,6 +77,13 @@ internal class NonAbiDeclarationsStrippingIrExtension(
       return false
     }
 
+    // Keep @JvmSynthetic: the JVM backend derives ACC_SYNTHETIC from it, and its SOURCE retention
+    // would strip it below. Without the flag, javac sees the member, so the source-only ABI
+    // exposes Kotlin-only API to Java consumers that the class ABI hides.
+    if (annotationFqName == "kotlin.jvm.JvmSynthetic") {
+      return false
+    }
+
     // Strip SOURCE retention annotations (not needed in ABI)
     for (retentionAnnotation in annotationClass.annotations) {
       val retentionClass = retentionAnnotation.symbol.owner.parent as? IrClass ?: continue

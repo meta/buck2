@@ -24,6 +24,7 @@ use crate::scheduler::Scene;
 pub(crate) struct EventSenderState {
     metadata: IntentionallyStdHashMap<String, String>,
     estimated_memory_cap: u64,
+    estimated_swap_cap: Option<u64>,
     memory_reading: MemoryReading,
     last_scheduled_event_time: Option<Instant>,
     txs: Vec<mpsc::UnboundedSender<ResourceControlEventMostly>>,
@@ -35,6 +36,7 @@ impl EventSenderState {
         Self {
             metadata: buck2_events::metadata::collect(daemon_id),
             estimated_memory_cap,
+            estimated_swap_cap: None,
             last_scheduled_event_time: None,
             memory_reading: MemoryReading {
                 allprocs_memory_current: 0,
@@ -63,6 +65,11 @@ impl EventSenderState {
 
     pub(crate) fn update_estimated_memory_cap(&mut self, estimated_memory_cap: u64) {
         self.estimated_memory_cap = estimated_memory_cap;
+    }
+
+    /// The most swap that buck can use, as best we know; `None` if we don't.
+    pub(crate) fn update_estimated_swap_cap(&mut self, estimated_swap_cap: Option<u64>) {
+        self.estimated_swap_cap = estimated_swap_cap;
     }
 
     pub(crate) fn set_tags(&mut self, tags: Vec<String>) {
@@ -115,6 +122,7 @@ impl EventSenderState {
 
             memory_reading: self.memory_reading,
             estimated_memory_cap: self.estimated_memory_cap,
+            estimated_swap_cap: self.estimated_swap_cap,
             actions_suspended,
             actions_running,
 
@@ -138,6 +146,7 @@ pub(crate) struct ResourceControlEventMostly {
 
     memory_reading: MemoryReading,
     estimated_memory_cap: u64,
+    estimated_swap_cap: Option<u64>,
     actions_running: u64,
     actions_suspended: u64,
 
@@ -183,7 +192,7 @@ impl ResourceControlEventMostly {
                 // FIXME(JakobDegen): Replace with more appropriate columns
                 memory_max: Some(self.estimated_memory_cap),
                 memory_high: Some(self.estimated_memory_cap),
-                memory_swap_max: None,
+                memory_swap_max: self.estimated_swap_cap,
                 memory_swap_high: None,
             }),
 

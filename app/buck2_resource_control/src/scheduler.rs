@@ -33,11 +33,13 @@ use crate::scheduler::forecast::PressureForecast;
 use crate::scheduler::suspend_timing::SpreadHalfSuspendTiming;
 use crate::scheduler::suspend_timing::SuspendCandidate;
 use crate::scheduler::suspend_timing::SuspendTiming;
+use crate::scheduler::swap_headroom::SwapHeadroom;
 use crate::scheduler::timeseries::Timeseries;
 
 mod event;
 mod forecast;
 mod suspend_timing;
+mod swap_headroom;
 mod timeseries;
 
 const OOMD_THRESHOLD: f64 = 60.0;
@@ -453,6 +455,13 @@ impl Scheduler {
                 .update_estimated_memory_cap(self.estimated_memory_cap);
         }
 
+        self.event_sender_state.update_estimated_swap_cap(
+            memory_reading
+                .host_swap
+                .and_then(SwapHeadroom::new)
+                .map(|headroom| memory_reading.allprocs_swap_current + headroom.available),
+        );
+
         self.event_sender_state
             .update_memory_reading(MemoryReading {
                 // It's not so clear what we should report as "the memory pressure" in events. Just
@@ -769,7 +778,10 @@ fn wake_scene(
 mod tests {
     use std::time::SystemTime;
 
+    use buck2_wrapper_common::invocation_id::TraceId;
+
     use super::*;
+    use crate::host_swap::HostSwap;
 
     struct UpdateBuilder(BuckMutMap<SceneIdRef, SceneResourceReading>);
 
@@ -1233,5 +1245,41 @@ mod tests {
     fn test_baseline_still_kills_for_very_high_sustained_pressure() {
         let scenario = &[(60, 0.0), (60, 80.0)];
         multi_pressure_level_test(&[], scenario, true);
+    }
+
+    #[test]
+    fn test_reports_how_much_swap_can_be_used() {
+        let (mut scheduler, timeline) = TestTimeline::new();
+        let (event_tx, mut event_rx) = mpsc::unbounded_channel();
+        scheduler.command_started(event_tx);
+        let mut reported = |sec: u64, host_swap: Option<HostSwap>| {
+            scheduler.update(
+                MemoryReading {
+                    allprocs_memory_current: 0,
+                    allprocs_swap_current: 20_000,
+                    allprocs_memory_pressure: 0.0,
+                    daemon_memory_current: 0,
+                    daemon_swap_current: 0,
+                    host_swap,
+                    time_collected: SystemTime::now(),
+                },
+                UpdateBuilder::new().build(),
+                timeline.secs(sec),
+            );
+            event_rx
+                .try_recv()
+                .unwrap()
+                .complete(&TraceId::new())
+                .ancestor_cgroup_constraints
+                .unwrap()
+                .memory_swap_max
+        };
+        assert_eq!(reported(1, None), None);
+        // 90_000 of the host's swap are usable, and 30_000 of those are still free.
+        let host_swap = HostSwap {
+            total: 100_000,
+            free: 40_000,
+        };
+        assert_eq!(reported(2, Some(host_swap)), Some(50_000));
     }
 }

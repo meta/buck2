@@ -24,6 +24,12 @@ pub struct HostSwap {
     pub free: u64,
 }
 
+impl HostSwap {
+    pub(crate) fn used(&self) -> u64 {
+        self.total.saturating_sub(self.free)
+    }
+}
+
 /// Reads [`HostSwap`]; meant for callers that poll it.
 pub(crate) struct HostSwapReader(Arc<File>);
 

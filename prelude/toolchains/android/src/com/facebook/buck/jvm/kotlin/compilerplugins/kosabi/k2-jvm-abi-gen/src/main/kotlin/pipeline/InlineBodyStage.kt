@@ -9,11 +9,16 @@
  */
 
 @file:SuppressWarnings("PackageLocationMismatch")
-@file:OptIn(org.jetbrains.kotlin.fir.declarations.DirectDeclarationsAccess::class)
+@file:OptIn(
+    org.jetbrains.kotlin.fir.declarations.DirectDeclarationsAccess::class,
+    org.jetbrains.kotlin.fir.symbols.SymbolInternals::class,
+)
 
 package com.facebook
 
 import com.facebook.buck.jvm.kotlin.compilerplugins.common.InlineBodyKeepability
+import com.facebook.buck.jvm.kotlin.compilerplugins.common.foldableConstLiteral
+import com.facebook.buck.jvm.kotlin.compilerplugins.common.isFoldableConst
 import com.facebook.buck.jvm.kotlin.compilerplugins.common.isStub
 import java.lang.reflect.InvocationTargetException
 import java.lang.reflect.Modifier
@@ -44,9 +49,18 @@ import org.jetbrains.kotlin.ir.declarations.IrDeclaration
 import org.jetbrains.kotlin.ir.declarations.IrDeclarationParent
 import org.jetbrains.kotlin.ir.declarations.IrFunction
 import org.jetbrains.kotlin.ir.declarations.IrModuleFragment
+import org.jetbrains.kotlin.ir.declarations.IrProperty
 import org.jetbrains.kotlin.ir.declarations.IrSimpleFunction
 import org.jetbrains.kotlin.ir.expressions.IrBlockBody
+import org.jetbrains.kotlin.ir.expressions.IrCall
 import org.jetbrains.kotlin.ir.expressions.IrErrorExpression
+import org.jetbrains.kotlin.ir.expressions.IrExpression
+import org.jetbrains.kotlin.ir.expressions.IrGetField
+import org.jetbrains.kotlin.ir.expressions.impl.IrConstImpl
+import org.jetbrains.kotlin.ir.symbols.IrClassSymbol
+import org.jetbrains.kotlin.ir.types.IrSimpleType
+import org.jetbrains.kotlin.ir.types.IrType
+import org.jetbrains.kotlin.ir.visitors.IrElementTransformerVoid
 import org.jetbrains.kotlin.psi.KtFile
 
 /**
@@ -184,12 +198,103 @@ internal class InlineBodyStage : AbiGenStage {
       skipBody(messageCollector, name, "its IR contains error expressions")
       return
     }
+    foldOwnConsts(body)
     function.body = body
     restoredIrFunctions += function
   }
 
   private fun firFunctionOf(function: IrSimpleFunction): FirFunction? =
       (function.metadata as? FirMetadataSource.Function)?.fir
+
+  // Pre-folds reads of healthy same-module consts to literals in a restored kept body.
+  // Without this, stock ConstEvaluationLowering misfires on a const-read feeding an
+  // interpreted call whose callee abi-gen stubbed to an empty body: the call looks
+  // trivially evaluable, execution yields a non-const, and the evaluated-const tracker
+  // throws "Cannot convert IrExpression to ConstantValue". The literal form compiles
+  // cleanly, and callers inlining this body would fold the const themselves. Reads of
+  // non-literal-initialized consts are left alone (the keep rule already scoped them).
+  private fun foldOwnConsts(body: IrBlockBody) {
+    body.transformChildren(
+        object : IrElementTransformerVoid() {
+          override fun visitGetField(expression: IrGetField): IrExpression {
+            return foldConstRead(expression) ?: super.visitGetField(expression)
+          }
+
+          override fun visitCall(expression: IrCall): IrExpression {
+            return foldConstRead(expression) ?: super.visitCall(expression)
+          }
+        },
+        null,
+    )
+  }
+
+  // Reads of a `const val` usually reach IR as a getter call; field-initializer
+  // positions may carry them as direct field reads instead. Fold either shape.
+  // A healthy const's initializer can reference another healthy const
+  // (`const val DERIVED = BASE`): resolve the chain to its literal, mirroring
+  // the keep gate, or the kept body reaches stock ConstEvaluationLowering with
+  // an unfoldable read and misfires on the stubbed callee.
+  private fun foldConstLiteral(property: FirProperty): Any? = foldableConstLiteral(property)?.value
+
+  private fun foldConstRead(expression: IrCall): IrExpression? {
+    val callee = expression.symbol.owner
+    val property = callee.correspondingPropertySymbol?.owner as? IrProperty ?: return null
+    val fir = (property.metadata as? FirMetadataSource.Property)?.fir ?: return null
+    if (!isFoldableConst(fir)) return null
+    val value = foldConstLiteral(fir) ?: return null
+    return irConstFor(
+        value,
+        expression.type,
+        expression.startOffset,
+        expression.endOffset,
+    )
+  }
+
+  private fun foldConstRead(expression: IrGetField): IrExpression? {
+    val field = expression.symbol.owner
+    val property = field.correspondingPropertySymbol?.owner as? IrProperty ?: return null
+    val fir = (property.metadata as? FirMetadataSource.Property)?.fir ?: return null
+    if (!isFoldableConst(fir)) return null
+    val value = foldConstLiteral(fir) ?: return null
+    return irConstFor(
+        value,
+        expression.type,
+        expression.startOffset,
+        expression.endOffset,
+    )
+  }
+
+  private fun irConstFor(
+      value: Any?,
+      type: IrType,
+      startOffset: Int,
+      endOffset: Int,
+  ): IrExpression? =
+      when (value) {
+        is String -> IrConstImpl.string(startOffset, endOffset, type, value)
+        is Int -> IrConstImpl.int(startOffset, endOffset, type, value)
+        is Long -> {
+          // Raw FIR keeps integer literals as the parsed Long even for Int/Short/Byte
+          // consts; narrow by the const's type like fir2ir toIrConst, or the backend
+          // emits a long where an int is consumed.
+          when (((type as? IrSimpleType)?.classifier as? IrClassSymbol)?.owner?.name?.asString()) {
+            "Int",
+            "UInt" -> IrConstImpl.int(startOffset, endOffset, type, value.toInt())
+            "Short",
+            "UShort" -> IrConstImpl.short(startOffset, endOffset, type, value.toShort())
+            "Byte",
+            "UByte" -> IrConstImpl.byte(startOffset, endOffset, type, value.toByte())
+            else -> IrConstImpl.long(startOffset, endOffset, type, value)
+          }
+        }
+        is Short -> IrConstImpl.short(startOffset, endOffset, type, value)
+        is Byte -> IrConstImpl.byte(startOffset, endOffset, type, value)
+        is Char -> IrConstImpl.char(startOffset, endOffset, type, value)
+        is Boolean -> IrConstImpl.boolean(startOffset, endOffset, type, value)
+        is Float -> IrConstImpl.float(startOffset, endOffset, type, value)
+        is Double -> IrConstImpl.double(startOffset, endOffset, type, value)
+        else -> null
+      }
 
   /**
    * Converts the FIR body of [irFunction] with the components of the module's fir2ir run, so it

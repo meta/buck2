@@ -25,6 +25,7 @@ import org.jetbrains.kotlin.fir.declarations.FirDeclarationOrigin
 import org.jetbrains.kotlin.fir.declarations.FirFile
 import org.jetbrains.kotlin.fir.declarations.FirFunction
 import org.jetbrains.kotlin.fir.declarations.FirMemberDeclaration
+import org.jetbrains.kotlin.fir.declarations.FirProperty
 import org.jetbrains.kotlin.fir.declarations.FirPropertyAccessor
 import org.jetbrains.kotlin.fir.declarations.FirRegularClass
 import org.jetbrains.kotlin.fir.declarations.FirResolvedDeclarationStatus
@@ -40,10 +41,16 @@ import org.jetbrains.kotlin.fir.expressions.FirCall
 import org.jetbrains.kotlin.fir.expressions.FirCallableReferenceAccess
 import org.jetbrains.kotlin.fir.expressions.FirErrorExpression
 import org.jetbrains.kotlin.fir.expressions.FirExpression
+import org.jetbrains.kotlin.fir.expressions.FirFunctionCall
+import org.jetbrains.kotlin.fir.expressions.FirGetClassCall
+import org.jetbrains.kotlin.fir.expressions.FirLiteralExpression
+import org.jetbrains.kotlin.fir.expressions.FirNamedArgumentExpression
 import org.jetbrains.kotlin.fir.expressions.FirQualifiedAccessExpression
 import org.jetbrains.kotlin.fir.expressions.FirResolvable
 import org.jetbrains.kotlin.fir.expressions.FirResolvedQualifier
+import org.jetbrains.kotlin.fir.expressions.FirVarargArgumentsExpression
 import org.jetbrains.kotlin.fir.expressions.FirWhenExpression
+import org.jetbrains.kotlin.fir.expressions.FirWrappedArgumentExpression
 import org.jetbrains.kotlin.fir.expressions.resolvedArgumentMapping
 import org.jetbrains.kotlin.fir.references.FirErrorNamedReference
 import org.jetbrains.kotlin.fir.references.FirResolvedNamedReference
@@ -61,6 +68,7 @@ import org.jetbrains.kotlin.fir.symbols.impl.FirVariableSymbol
 import org.jetbrains.kotlin.fir.types.ConeCapturedType
 import org.jetbrains.kotlin.fir.types.ConeClassLikeType
 import org.jetbrains.kotlin.fir.types.ConeDefinitelyNotNullType
+import org.jetbrains.kotlin.fir.types.ConeErrorType
 import org.jetbrains.kotlin.fir.types.ConeFlexibleType
 import org.jetbrains.kotlin.fir.types.ConeIntegerLiteralType
 import org.jetbrains.kotlin.fir.types.ConeIntersectionType
@@ -157,10 +165,10 @@ class InlineBodyKeepability(
    * value classes or interfaces, and, in the body (see [Visitor]), anonymous objects and local
    * declarations, lambdas that are not inlined, callable references, `when` over an enum and
    * `entries` of a library enum (classes generated next to the caller), non-Kotlin annotations
-   * (compiler plugins rewrite annotated code), reads of own `const val`s and own inline properties,
-   * calls to own inline functions that are not kept, and own declarations the ABI does not carry
-   * with the same signature (private ones, and protected ones reached through a synthetic
-   * accessor).
+   * (compiler plugins rewrite annotated code), reads of own `const val`s whose value did not
+   * survive (unresolvable initializers) and own inline properties, calls to own inline functions
+   * that are not kept, and own declarations the ABI does not carry with the same signature (private
+   * ones, and protected ones reached through a synthetic accessor).
    */
   private fun hasLowerableShape(function: FirFunction): Boolean =
       shapeRejectReason(function) == null
@@ -403,13 +411,18 @@ class InlineBodyKeepability(
       }
       return when (callable) {
         is FirPropertySymbol ->
-            !callable.fir.isConst &&
+            (!callable.fir.isConst || isHealthyConst(callable.fir)) &&
                 callable.fir.getter?.isInline != true &&
                 callable.fir.setter?.isInline != true
         is FirNamedFunctionSymbol -> !callable.fir.isInline || isKeepable(callable.fir)
         else -> true
       }
     }
+
+    // A same-module `const val` read is keepable only when the constant survives into the ABI
+    // with its value; see [isFoldableConst].
+    private fun isHealthyConst(property: FirProperty): Boolean =
+        isFoldableConst(property) && foldableConstLiteral(property) != null
 
     // Only a non-null function-type parameter that is not `vararg`, `noinline` or `crossinline` is
     // inlined; a lambda passed to any other parameter generates a class.
@@ -478,4 +491,106 @@ class InlineBodyKeepability(
       }
     }
   }
+}
+
+// A same-module `const val` read is keepable only when the constant survives into the ABI
+// with its value. The FIR sanitizer clears the initializer of a const whose value cannot be
+// resolved (a kept body reading such a const would inline a zeroed value at callers), so
+// mirror the sanitizer's own health predicate here: an error expression anywhere in the
+// initializer (following const references, which fold from the referenced value) makes the
+// const unfoldable. A healthy const reaches the ABI jar with its ConstantValue, exactly
+// like a dependency const, which the library branch already allows. The abi-gen restore
+// pass also uses this to pre-fold such reads to literals: stock ConstEvaluationLowering
+// misfires on a const-read feeding an interpreted call whose callee abi-gen stubbed to an
+// empty body ("Cannot convert IrExpression to ConstantValue"), while the literal form
+// compiles cleanly.
+fun isFoldableConst(property: FirProperty): Boolean {
+  if (!property.origin.fromSource || !property.isConst) return false
+  val initializer = property.initializer ?: return false
+  return !constInitializerHasErrors(initializer, HashSet())
+}
+
+/** Walks a healthy const to its ultimate literal, following const-to-const chains. */
+fun foldableConstLiteral(property: FirProperty): FirLiteralExpression? {
+  val seen = HashSet<FirPropertySymbol>()
+  var current: FirElement? = property.initializer
+  while (current != null) {
+    when (current) {
+      is FirLiteralExpression -> return current
+      is FirQualifiedAccessExpression -> {
+        val symbol =
+            (current.calleeReference as? FirResolvedNamedReference)?.resolvedSymbol
+                as? FirPropertySymbol ?: return null
+        if (!symbol.fir.isConst || !seen.add(symbol)) return null
+        current = symbol.fir.initializer
+      }
+      else -> return null
+    }
+  }
+  return null
+}
+
+private fun constInitializerHasErrors(
+    element: FirElement,
+    seenConsts: MutableSet<FirPropertySymbol>,
+): Boolean =
+    when (element) {
+      is FirErrorExpression -> true
+      is FirNamedArgumentExpression -> constInitializerHasErrors(element.expression, seenConsts)
+      is FirWrappedArgumentExpression -> constInitializerHasErrors(element.expression, seenConsts)
+      is FirVarargArgumentsExpression ->
+          element.arguments.any { constInitializerHasErrors(it, seenConsts) }
+      is FirGetClassCall ->
+          runCatching {
+                val argument = element.argument
+                if (argument is FirQualifiedAccessExpression) {
+                  argument.resolvedType is ConeErrorType
+                } else {
+                  element.resolvedType is ConeErrorType
+                }
+              }
+              .getOrDefault(true)
+      is FirQualifiedAccessExpression ->
+          runCatching {
+                if (
+                    element.resolvedType is ConeErrorType ||
+                        element.calleeReference is FirErrorNamedReference
+                ) {
+                  return@runCatching true
+                }
+                val calleeRef = element.calleeReference
+                if (calleeRef is FirResolvedNamedReference) {
+                  val symbol = calleeRef.resolvedSymbol
+                  if (symbol is FirPropertySymbol && symbol.fir.isConst) {
+                    if (!seenConsts.add(symbol)) return@runCatching true
+                    val refInitializer = symbol.fir.initializer
+                    if (
+                        refInitializer == null ||
+                            constInitializerHasErrors(refInitializer, seenConsts) ||
+                            isTodoCall(refInitializer)
+                    ) {
+                      return@runCatching true
+                    }
+                    return@runCatching false
+                  }
+                }
+                false
+              }
+              .getOrDefault(true)
+      is FirFunctionCall ->
+          runCatching {
+                element.resolvedType is ConeErrorType ||
+                    element.calleeReference is FirErrorNamedReference
+              }
+              .getOrDefault(true)
+      else -> false
+    }
+
+private fun isTodoCall(element: FirElement): Boolean {
+  if (element !is FirFunctionCall) return false
+  val calleeRef = element.calleeReference
+  if (calleeRef is FirResolvedNamedReference) {
+    return calleeRef.name.asString() == "TODO"
+  }
+  return false
 }

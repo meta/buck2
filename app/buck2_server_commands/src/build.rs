@@ -246,6 +246,7 @@ async fn build(
 
     let (streaming_build_result_tx, streaming_build_result_rx) =
         build::build_report::streaming_build_result_channel(build_opts);
+    let streaming_build_report_final_only = request.streaming_build_report_final_only;
 
     let return_run_args = request
         .response_options
@@ -270,6 +271,7 @@ async fn build(
                 return_run_args,
                 timeout_observer.as_ref(),
                 streaming_build_result_tx,
+                streaming_build_report_final_only,
                 build_start,
                 build_advice.as_ref(),
             )
@@ -454,11 +456,15 @@ async fn build_targets(
     return_run_args: bool,
     timeout_observer: Option<&Arc<dyn LivelinessObserver>>,
     streaming_build_result_tx: Option<UnboundedSender<BuildTargetResult>>,
+    streaming_build_report_final_only: bool,
     build_start: Instant,
     build_advice: Option<&BuildAdviceContext<'_>>,
 ) -> buck2_error::Result<BuildTargetResult> {
-    let (builder, consumer) =
-        AsyncBuildTargetResultBuilder::new(streaming_build_result_tx, build_start);
+    let (builder, consumer) = AsyncBuildTargetResultBuilder::new_with_final_only_streaming(
+        streaming_build_result_tx,
+        build_start,
+        streaming_build_report_final_only,
+    );
     let fut = match target_resolution_config {
         TargetResolutionConfig::Default(global_cfg_options) => {
             let spec = spec.convert_pattern().buck_error_context(

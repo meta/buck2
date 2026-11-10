@@ -10,6 +10,7 @@
 
 use std::collections::BTreeMap;
 use std::collections::BTreeSet;
+use std::fs;
 use std::path::Path;
 
 use anyhow::Context;
@@ -83,6 +84,11 @@ fn error_count(entry: &Value) -> usize {
         .as_array()
         .unwrap_or_else(|| panic!("No `errors` in {entry}"))
         .len()
+}
+
+fn read_json(path: &Path) -> anyhow::Result<Value> {
+    let text = fs::read_to_string(path).with_context(|| format!("Reading `{}`", path.display()))?;
+    Ok(serde_json::from_str(&text)?)
 }
 
 fn results_of(report: &Value) -> &serde_json::Map<String, Value> {
@@ -620,6 +626,53 @@ async fn test_streaming_one_of_each(buck: &Buck, tmp_path: &Path) -> anyhow::Res
         .map(|(key, _)| key)
         .collect();
     assert_eq!(read_success_before_failing, BTreeSet::new());
+    Ok(())
+}
+
+#[buck_test]
+async fn test_streaming_final_only_one_of_each(buck: &Buck, tmp_path: &Path) -> anyhow::Result<()> {
+    let report = tmp_path.join("build-report.json");
+    let streaming_report = tmp_path.join("streaming-final-only-report.jsonl");
+
+    let mut args = vec![
+        "--build-report",
+        report.to_str().unwrap(),
+        "--streaming-build-report",
+        streaming_report.to_str().unwrap(),
+        "--streaming-build-report-final-only",
+    ];
+    args.extend(ONE_OF_EACH);
+    buck.build(&args).await.expect_failure();
+
+    let reports = read_streaming_report(&streaming_report)?;
+    let final_json = read_json(&report)?;
+    let final_results = results_of(&final_json);
+    assert_eq!(final_results.len(), ONE_OF_EACH.len());
+    assert_eq!(
+        reports.len(),
+        final_results.len(),
+        "one terminal line per target"
+    );
+    assert!(
+        reports.iter().all(|line| results_of(line).len() == 1),
+        "{reports:?}"
+    );
+    assert!(
+        reports
+            .iter()
+            .flat_map(|line| results_of(line).values())
+            .all(|entry| {
+                entry["success"] != "IN_PROGRESS"
+                    && configured_of(entry)
+                        .values()
+                        .all(|configured| configured["success"] != "IN_PROGRESS")
+            }),
+        "{reports:?}"
+    );
+    assert_eq!(
+        outcomes(&replay_streaming_report(&reports)),
+        outcomes(final_results)
+    );
     Ok(())
 }
 

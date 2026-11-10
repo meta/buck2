@@ -594,6 +594,73 @@ async fn test_streaming_build_report_finishes_missing_target(
     Ok(())
 }
 
+#[buck_test]
+async fn test_streaming_build_report_final_only(
+    buck: &Buck,
+    tmp_path: &Path,
+) -> anyhow::Result<()> {
+    let streaming_report = tmp_path.join("streaming-final-only-report.jsonl");
+    let final_report = tmp_path.join("final-only-build-report.json");
+
+    buck.build(&[
+        "//:rule1",
+        "//:rule2",
+        "//:rule2[out2]",
+        "--streaming-build-report",
+        streaming_report.to_str().unwrap(),
+        "--streaming-build-report-final-only",
+        "--build-report",
+        final_report.to_str().unwrap(),
+    ])
+    .await?;
+
+    let reports = read_streaming_report(&streaming_report)?;
+    assert_eq!(reports.len(), 2, "one complete line per requested target");
+    assert!(
+        reports
+            .iter()
+            .all(|report| object(report, "results").len() == 1),
+        "{reports:?}"
+    );
+    assert!(
+        reports
+            .iter()
+            .flat_map(|report| object(report, "results").values())
+            .all(|entry| {
+                entry["success"] == "SUCCESS"
+                    && object(entry, "configured")
+                        .values()
+                        .all(|configured| configured["success"] == "SUCCESS")
+            }),
+        "{reports:?}"
+    );
+
+    let streamed_results = replay_streaming_report(&reports);
+    let final_json = read_json(&final_report)?;
+    let final_results = object(&final_json, "results");
+    assert_eq!(
+        streamed_results.keys().collect::<BTreeSet<_>>(),
+        final_results.keys().collect::<BTreeSet<_>>()
+    );
+    for (target, entry) in &streamed_results {
+        assert_eq!(
+            sorted_outputs(entry),
+            sorted_outputs(&final_results[target])
+        );
+        assert_eq!(
+            object(entry, "configured")
+                .iter()
+                .map(|(cfg, configured)| (cfg, sorted_outputs(configured)))
+                .collect::<BTreeMap<_, _>>(),
+            object(&final_results[target], "configured")
+                .iter()
+                .map(|(cfg, configured)| (cfg, sorted_outputs(configured)))
+                .collect::<BTreeMap<_, _>>()
+        );
+    }
+    Ok(())
+}
+
 /// An entry reads `IN_PROGRESS` until its build has finished, then `SUCCESS` for good.
 #[buck_test]
 async fn test_streaming_build_report_in_progress(

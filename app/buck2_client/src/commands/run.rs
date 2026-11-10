@@ -157,6 +157,7 @@ impl StreamingCommand for RunCommand {
                     target_universe: self.target_cfg.target_universe,
                     timeout: None, // TODO: maybe it shouild be supported here?
                     run_args_missing_separator,
+                    streaming_build_report_final_only: false,
                 },
                 events_ctx,
                 ctx.console_interaction_stream(&self.common_opts.console_opts),

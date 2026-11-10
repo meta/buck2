@@ -551,6 +551,10 @@ message BuildRequest {
 
   // Set by `buck2 run` when extra args are passed without `--` separator.
   bool run_args_missing_separator = 13;
+
+  // Emit streaming build report snapshots only when a requested target
+  // finishes, except for the error that stops a fail-fast build.
+  bool streaming_build_report_final_only = 14;
 }
 
 message TestSessionOptions {

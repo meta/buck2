@@ -139,6 +139,11 @@ pub struct BuildCommand {
     #[clap(flatten)]
     build_opts: CommonBuildOptions,
 
+    /// Emit streaming build report snapshots only when a requested target finishes,
+    /// except for the error that stops a fail-fast build.
+    #[clap(long, requires = "streaming_build_report")]
+    streaming_build_report_final_only: bool,
+
     #[clap(flatten)]
     target_cfg: TargetCfgWithUniverseOptions,
 
@@ -306,6 +311,7 @@ impl StreamingCommand for BuildCommand {
                     target_universe: self.target_cfg.target_universe,
                     timeout: self.timeout_options.overall_timeout()?,
                     run_args_missing_separator: false,
+                    streaming_build_report_final_only: self.streaming_build_report_final_only,
                 },
                 events_ctx,
                 ctx.console_interaction_stream(&self.common_opts.console_opts),

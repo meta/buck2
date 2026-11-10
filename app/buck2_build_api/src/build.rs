@@ -145,8 +145,16 @@ pub struct AsyncBuildTargetResultBuilder {
 
 impl AsyncBuildTargetResultBuilder {
     pub fn new(
+        streaming_build_result_tx: Option<UnboundedSender<BuildTargetResult>>,
+        build_start: Instant,
+    ) -> (Self, impl BuildEventConsumer + Clone) {
+        Self::new_with_final_only_streaming(streaming_build_result_tx, build_start, false)
+    }
+
+    pub fn new_with_final_only_streaming(
         mut streaming_build_result_tx: Option<UnboundedSender<BuildTargetResult>>,
         build_start: Instant,
+        streaming_build_report_final_only: bool,
     ) -> (Self, impl BuildEventConsumer + Clone) {
         let (event_tx, event_rx) = tokio::sync::mpsc::unbounded_channel();
         #[derive(Clone)]
@@ -163,9 +171,10 @@ impl AsyncBuildTargetResultBuilder {
         (
             Self {
                 event_rx,
-                builder: BuildTargetResultBuilder::new(
+                builder: BuildTargetResultBuilder::new_with_final_only_streaming(
                     streaming_build_result_tx.take(),
                     build_start,
+                    streaming_build_report_final_only,
                 ),
             },
             EventConsumer { event_tx },
@@ -185,8 +194,9 @@ impl AsyncBuildTargetResultBuilder {
                         Some(event) => {
                             if let FailFastState::Breakpoint(target) = self.builder.event(event)? {
                                 if fail_fast {
-                                    // Analysis errors and validation failures write no streaming
-                                    // line of their own.
+                                    // Analysis errors and validation failures write no
+                                    // incremental line of their own. Final-only mode also
+                                    // suppresses the failing output's incremental line.
                                     self.builder.send_snapshot_for(target);
                                     break;
                                 }
@@ -228,13 +238,22 @@ pub struct BuildTargetResultBuilder {
     /// rest, which would make streaming quadratic in the number of targets.
     finished_builds_by_target: BuckMutMap<TargetLabel, FinishedBuilds>,
     streaming_build_result_tx: Option<UnboundedSender<BuildTargetResult>>,
+    streaming_build_report_final_only: bool,
     build_start: Instant,
 }
 
 impl BuildTargetResultBuilder {
     pub fn new(
+        streaming_build_result_tx: Option<UnboundedSender<BuildTargetResult>>,
+        build_start: Instant,
+    ) -> Self {
+        Self::new_with_final_only_streaming(streaming_build_result_tx, build_start, false)
+    }
+
+    fn new_with_final_only_streaming(
         mut streaming_build_result_tx: Option<UnboundedSender<BuildTargetResult>>,
         build_start: Instant,
+        streaming_build_report_final_only: bool,
     ) -> Self {
         Self {
             res: BuckMutMap::default(),
@@ -245,6 +264,7 @@ impl BuildTargetResultBuilder {
             finished_builds_by_target: BuckMutMap::default(),
             build_failed: false,
             streaming_build_result_tx: streaming_build_result_tx.take(),
+            streaming_build_report_final_only,
             build_start,
         }
     }
@@ -252,6 +272,12 @@ impl BuildTargetResultBuilder {
     fn send_snapshot_for(&self, target: TargetLabel) {
         if let Some(tx) = &self.streaming_build_result_tx {
             let _ignored = tx.send(self.build_for_target(target));
+        }
+    }
+
+    fn send_incremental_snapshot_for(&self, target: TargetLabel) {
+        if !self.streaming_build_report_final_only {
+            self.send_snapshot_for(target);
         }
     }
 
@@ -271,7 +297,7 @@ impl BuildTargetResultBuilder {
                     .or_default()
                     .configured_targets
                     .insert((target, modifiers));
-                self.send_snapshot_for(unconfigured);
+                self.send_incremental_snapshot_for(unconfigured);
                 return Ok(FailFastState::Continue);
             }
             BuildEvent::TargetBuildFinished { target } => {
@@ -336,8 +362,9 @@ impl BuildTargetResultBuilder {
                                 inner: (index, output),
                                 elapsed,
                             });
-                            self.send_snapshot_for(label.target().unconfigured().dupe());
-
+                            self.send_incremental_snapshot_for(
+                                label.target().unconfigured().dupe(),
+                            );
                             is_err
                         }
                     }
@@ -973,6 +1000,7 @@ mod tests {
     use super::BuildEventConsumer;
     use super::BuildTargetResult;
     use super::BuildTargetResultBuilder;
+    use super::ConfiguredBuildEventExecutionVariant;
     use super::ConfiguredBuildEventVariant;
     use super::FailFastState;
 
@@ -994,12 +1022,21 @@ mod tests {
         }
     }
 
-    fn builder_with_sender() -> (
+    fn builder_with_sender(
+        final_only: bool,
+    ) -> (
         BuildTargetResultBuilder,
         UnboundedReceiver<BuildTargetResult>,
     ) {
         let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
-        (BuildTargetResultBuilder::new(Some(tx), Instant::now()), rx)
+        (
+            BuildTargetResultBuilder::new_with_final_only_streaming(
+                Some(tx),
+                Instant::now(),
+                final_only,
+            ),
+            rx,
+        )
     }
 
     fn feed(builder: &mut BuildTargetResultBuilder, event: BuildEvent) {
@@ -1072,24 +1109,182 @@ mod tests {
     }
 
     #[test]
-    fn test_finish_events_send_snapshots() {
+    fn test_finish_events_send_snapshots_in_both_modes() {
         let configured = configured_target("root//pkg:a");
-        let (mut builder, mut rx) = builder_with_sender();
+        for final_only in [false, true] {
+            let (mut builder, mut rx) = builder_with_sender(final_only);
 
-        feed_finish_events(&mut builder, &configured, &macos_arm());
+            feed(&mut builder, configured_finished(&configured, &macos_arm()));
+            let configured_snapshots = sent(&mut rx);
+            assert_eq!(
+                configured_snapshots.len(),
+                usize::from(!final_only),
+                "configured-target completion streams only in incremental mode"
+            );
+            for snapshot in &configured_snapshots {
+                assert_eq!(
+                    snapshot.finished_builds.configured_targets,
+                    BTreeSet::from([(configured.dupe(), macos_arm())])
+                );
+                assert!(
+                    snapshot.finished_builds.targets.is_empty(),
+                    "the configured snapshot must precede target completion"
+                );
+            }
+            feed(
+                &mut builder,
+                BuildEvent::TargetBuildFinished {
+                    target: target(&configured, &macos_arm()),
+                },
+            );
 
-        let snapshots = sent(&mut rx);
-        assert_eq!(snapshots.len(), 2, "one snapshot per finish event");
-        assert_eq!(
-            snapshots[0].finished_builds.configured_targets,
-            BTreeSet::from([(configured.dupe(), macos_arm())])
-        );
-        assert!(
-            snapshots[0].finished_builds.targets.is_empty(),
-            "the first snapshot predates TargetBuildFinished"
-        );
-        assert_recorded(&snapshots[1], &configured, &macos_arm());
-        assert_recorded(&builder.build(), &configured, &macos_arm());
+            let snapshots = sent(&mut rx);
+            assert_eq!(
+                snapshots.len(),
+                1,
+                "target completion streams in both modes"
+            );
+            assert_recorded(&snapshots[0], &configured, &macos_arm());
+            assert_recorded(&builder.build(), &configured, &macos_arm());
+        }
+    }
+
+    #[test]
+    fn test_build_output_snapshots_in_both_modes() {
+        let configured = configured_target("root//pkg:a");
+        let label = ConfiguredProvidersLabel::new(configured.dupe(), ProvidersName::Default);
+        for final_only in [false, true] {
+            let (mut builder, mut rx) = builder_with_sender(final_only);
+            feed(&mut builder, prepared(&label));
+
+            let state = builder
+                .event(BuildEvent::new_configured(
+                    label.dupe(),
+                    ConfiguredBuildEventVariant::Execution(
+                        ConfiguredBuildEventExecutionVariant::BuildOutput {
+                            index: 0,
+                            output: Err(buck2_error!(ErrorTag::Input, "output failed")),
+                        },
+                    ),
+                ))
+                .expect("building an output event should be valid");
+
+            assert!(matches!(state, FailFastState::Breakpoint(_)));
+            let snapshots = sent(&mut rx);
+            assert_eq!(
+                snapshots.len(),
+                usize::from(!final_only),
+                "output events stream only in incremental mode"
+            );
+            for snapshot in &snapshots {
+                assert_eq!(output_error_messages(snapshot, &label), ["output failed"]);
+            }
+            assert_eq!(
+                output_error_messages(&builder.build(), &label),
+                ["output failed"]
+            );
+        }
+    }
+
+    #[test]
+    fn test_streaming_snapshot_cadence_in_both_modes() {
+        let configured = configured_target("root//pkg:a");
+        let label = ConfiguredProvidersLabel::new(configured.dupe(), ProvidersName::Default);
+        for final_only in [false, true] {
+            let (mut builder, mut rx) = builder_with_sender(final_only);
+            feed(&mut builder, prepared(&label));
+
+            let state = builder
+                .event(BuildEvent::new_configured(
+                    label.dupe(),
+                    ConfiguredBuildEventVariant::Execution(
+                        ConfiguredBuildEventExecutionVariant::BuildOutput {
+                            index: 0,
+                            output: Err(buck2_error!(ErrorTag::Input, "output failed")),
+                        },
+                    ),
+                ))
+                .expect("building an output event should be valid");
+            assert!(matches!(state, FailFastState::Breakpoint(_)));
+            assert_eq!(
+                sent(&mut rx).len(),
+                usize::from(!final_only),
+                "the output sends an incremental snapshot only"
+            );
+
+            feed(&mut builder, configured_finished(&configured, &macos_arm()));
+            assert_eq!(
+                sent(&mut rx).len(),
+                usize::from(!final_only),
+                "configured-target completion sends an incremental snapshot only"
+            );
+
+            feed(
+                &mut builder,
+                BuildEvent::TargetBuildFinished {
+                    target: target(&configured, &macos_arm()),
+                },
+            );
+            assert_eq!(
+                sent(&mut rx).len(),
+                1,
+                "target completion sends one snapshot in both modes"
+            );
+        }
+    }
+
+    #[test]
+    fn test_multiple_failures_streaming_in_both_modes() {
+        let configured = configured_target("root//pkg:a");
+        let label = ConfiguredProvidersLabel::new(configured.dupe(), ProvidersName::Default);
+        for final_only in [false, true] {
+            let (mut builder, mut rx) = builder_with_sender(final_only);
+            feed(&mut builder, prepared(&label));
+
+            for (index, message) in [(0, "first failed"), (1, "second failed")] {
+                let state = builder
+                    .event(BuildEvent::new_configured(
+                        label.dupe(),
+                        ConfiguredBuildEventVariant::Execution(
+                            ConfiguredBuildEventExecutionVariant::BuildOutput {
+                                index,
+                                output: Err(buck2_error!(ErrorTag::Input, "{}", message)),
+                            },
+                        ),
+                    ))
+                    .expect("building a failed output event should be valid");
+                assert!(matches!(state, FailFastState::Breakpoint(_)));
+            }
+
+            feed(&mut builder, configured_finished(&configured, &macos_arm()));
+            let intermediate = sent(&mut rx);
+            assert_eq!(
+                intermediate.len(),
+                if final_only { 0 } else { 3 },
+                "incremental mode streams two failures and configured completion; final-only waits"
+            );
+            for (index, snapshot) in intermediate.iter().enumerate() {
+                let expected = if index == 0 {
+                    vec!["first failed"]
+                } else {
+                    vec!["first failed", "second failed"]
+                };
+                assert_eq!(output_error_messages(snapshot, &label), expected);
+            }
+
+            feed(
+                &mut builder,
+                BuildEvent::TargetBuildFinished {
+                    target: target(&configured, &macos_arm()),
+                },
+            );
+            let snapshots = sent(&mut rx);
+            assert_eq!(snapshots.len(), 1, "target completion sends one snapshot");
+            assert_eq!(
+                output_error_messages(&snapshots[0], &label),
+                ["first failed", "second failed"]
+            );
+        }
     }
 
     #[test]
@@ -1098,79 +1293,88 @@ mod tests {
         let b = configured_target("root//pkg:b");
         let a_label = ConfiguredProvidersLabel::new(a.dupe(), ProvidersName::Default);
         let b_label = ConfiguredProvidersLabel::new(b.dupe(), ProvidersName::Default);
-        let (mut builder, mut rx) = builder_with_sender();
-        feed(&mut builder, prepared(&a_label));
-        feed(&mut builder, prepared(&b_label));
-        feed(
-            &mut builder,
-            BuildEvent::OtherError {
-                label: Some(b_label.unconfigured()),
-                err: buck2_error!(ErrorTag::Input, "b failed"),
-            },
-        );
-        feed(
-            &mut builder,
-            BuildEvent::OtherError {
-                label: None,
-                err: buck2_error!(ErrorTag::Input, "no target"),
-            },
-        );
-        feed_finish_events(&mut builder, &b, &macos_arm());
-        let b_snapshots = sent(&mut rx);
-        assert_eq!(b_snapshots.len(), 2, "one snapshot per finish event");
-        for snapshot in &b_snapshots {
-            assert_eq!(labels(snapshot), [&b_label]);
+        for final_only in [false, true] {
+            let (mut builder, mut rx) = builder_with_sender(final_only);
+            feed(&mut builder, prepared(&a_label));
+            feed(&mut builder, prepared(&b_label));
+            feed(
+                &mut builder,
+                BuildEvent::OtherError {
+                    label: Some(b_label.unconfigured()),
+                    err: buck2_error!(ErrorTag::Input, "b failed"),
+                },
+            );
+            feed(
+                &mut builder,
+                BuildEvent::OtherError {
+                    label: None,
+                    err: buck2_error!(ErrorTag::Input, "no target"),
+                },
+            );
+            feed_finish_events(&mut builder, &b, &macos_arm());
+            let expected_snapshots = if final_only { 1 } else { 2 };
+            let b_snapshots = sent(&mut rx);
+            assert_eq!(b_snapshots.len(), expected_snapshots);
+            for snapshot in &b_snapshots {
+                assert_eq!(labels(snapshot), [&b_label]);
+            }
+
+            feed_finish_events(&mut builder, &a, &macos_arm());
+            let a_snapshots = sent(&mut rx);
+            assert_eq!(a_snapshots.len(), expected_snapshots);
+            for snapshot in &a_snapshots {
+                assert_eq!(
+                    labels(snapshot),
+                    [&a_label],
+                    "b's results stay off a's lines"
+                );
+                assert_eq!(
+                    snapshot.other_errors.keys().collect::<Vec<_>>(),
+                    [&None],
+                    "b's error stays off a's lines; an error naming no target is on every line"
+                );
+                assert_eq!(
+                    snapshot.finished_builds.configured_targets,
+                    BTreeSet::from([(a.dupe(), macos_arm())]),
+                    "b's finish events stay off a's lines"
+                );
+            }
+            if !final_only {
+                assert!(
+                    a_snapshots[0].finished_builds.targets.is_empty(),
+                    "configured completion precedes target completion in incremental mode"
+                );
+            }
+            assert_eq!(
+                a_snapshots.last().unwrap().finished_builds.targets,
+                BTreeSet::from([target(&a, &macos_arm())])
+            );
+
+            let result = builder.build();
+            assert_eq!(labels(&result), [&a_label, &b_label]);
+            assert_eq!(
+                result.finished_builds.configured_targets,
+                BTreeSet::from([(a.dupe(), macos_arm()), (b.dupe(), macos_arm())]),
+                "the final result still holds every target's finish events"
+            );
+            assert_eq!(
+                result.finished_builds.targets,
+                BTreeSet::from([target(&a, &macos_arm()), target(&b, &macos_arm())])
+            );
         }
-
-        feed_finish_events(&mut builder, &a, &macos_arm());
-
-        let a_snapshots = sent(&mut rx);
-        assert_eq!(a_snapshots.len(), 2, "one snapshot per finish event");
-        for snapshot in &a_snapshots {
-            assert_eq!(
-                labels(snapshot),
-                [&a_label],
-                "b's results stay off a's lines"
-            );
-            assert_eq!(
-                snapshot.other_errors.keys().collect::<Vec<_>>(),
-                [&None],
-                "b's error stays off a's lines; an error naming no target is on every line"
-            );
-            assert_eq!(
-                snapshot.finished_builds.configured_targets,
-                BTreeSet::from([(a.dupe(), macos_arm())]),
-                "b's finish events stay off a's lines"
-            );
-        }
-        assert!(
-            a_snapshots[0].finished_builds.targets.is_empty(),
-            "the first snapshot predates a's TargetBuildFinished, and b's is not a's"
-        );
-        assert_eq!(
-            a_snapshots[1].finished_builds.targets,
-            BTreeSet::from([target(&a, &macos_arm())])
-        );
-
-        let result = builder.build();
-        assert_eq!(labels(&result), [&a_label, &b_label]);
-        assert_eq!(
-            result.finished_builds.configured_targets,
-            BTreeSet::from([(a.dupe(), macos_arm()), (b.dupe(), macos_arm())]),
-            "the final result still holds every target's finish events"
-        );
-        assert_eq!(
-            result.finished_builds.targets,
-            BTreeSet::from([target(&a, &macos_arm()), target(&b, &macos_arm())])
-        );
     }
 
     async fn wait_for_analysis_error(
+        final_only: bool,
         fail_fast: bool,
         label: &ConfiguredProvidersLabel,
     ) -> (BuildTargetResult, Vec<BuildTargetResult>) {
         let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
-        let (mut builder, consumer) = AsyncBuildTargetResultBuilder::new(Some(tx), Instant::now());
+        let (mut builder, consumer) = AsyncBuildTargetResultBuilder::new_with_final_only_streaming(
+            Some(tx),
+            Instant::now(),
+            final_only,
+        );
         // Fed directly: a second queued event would be handled after `yield_now` is ready, and
         // `select!` could then finish the build future first.
         feed(&mut builder.builder, prepared(&other_label()));
@@ -1205,32 +1409,99 @@ mod tests {
             .collect()
     }
 
+    fn output_error_messages(
+        result: &BuildTargetResult,
+        label: &ConfiguredProvidersLabel,
+    ) -> Vec<String> {
+        result.configured[label]
+            .as_ref()
+            .expect("a build output records a result for its label")
+            .outputs
+            .iter()
+            .filter_map(|output| output.inner.as_ref().err())
+            .map(|error| error.to_string())
+            .collect()
+    }
+
     #[tokio::test]
     async fn test_fail_fast_breakpoint_sends_snapshot() {
         let label =
             ConfiguredProvidersLabel::new(configured_target("root//pkg:a"), ProvidersName::Default);
 
-        let (result, snapshots) = wait_for_analysis_error(true, &label).await;
-        assert_eq!(
-            snapshots.len(),
-            1,
-            "the fail-fast breakpoint sends exactly one snapshot"
-        );
-        assert_eq!(
-            labels(&snapshots[0]),
-            [&label],
-            "the snapshot carries only the target that stopped the build"
-        );
-        assert_eq!(error_messages(&snapshots[0], &label), ["analysis failed"]);
-        assert_eq!(labels(&result), [&label, &other_label()]);
-        assert_eq!(error_messages(&result, &label), ["analysis failed"]);
+        for final_only in [false, true] {
+            let (result, snapshots) = wait_for_analysis_error(final_only, true, &label).await;
+            assert_eq!(
+                snapshots.len(),
+                1,
+                "the fail-fast breakpoint sends exactly one snapshot"
+            );
+            assert_eq!(
+                labels(&snapshots[0]),
+                [&label],
+                "the snapshot carries only the target that stopped the build"
+            );
+            assert_eq!(error_messages(&snapshots[0], &label), ["analysis failed"]);
+            assert_eq!(labels(&result), [&label, &other_label()]);
+            assert_eq!(error_messages(&result, &label), ["analysis failed"]);
 
-        let (result, snapshots) = wait_for_analysis_error(false, &label).await;
-        assert!(
-            snapshots.is_empty(),
-            "without fail-fast, an analysis error writes no streaming line of its own"
-        );
-        assert_eq!(error_messages(&result, &label), ["analysis failed"]);
+            let (result, snapshots) = wait_for_analysis_error(final_only, false, &label).await;
+            assert!(
+                snapshots.is_empty(),
+                "without fail-fast, an analysis error writes no streaming line of its own"
+            );
+            assert_eq!(error_messages(&result, &label), ["analysis failed"]);
+        }
+    }
+
+    #[tokio::test]
+    async fn test_fail_fast_multiple_build_failures_stop_after_first() {
+        let first =
+            ConfiguredProvidersLabel::new(configured_target("root//pkg:a"), ProvidersName::Default);
+        let second =
+            ConfiguredProvidersLabel::new(configured_target("root//pkg:b"), ProvidersName::Default);
+
+        for final_only in [false, true] {
+            let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+            let (mut builder, consumer) =
+                AsyncBuildTargetResultBuilder::new_with_final_only_streaming(
+                    Some(tx),
+                    Instant::now(),
+                    final_only,
+                );
+            feed(&mut builder.builder, prepared(&first));
+            feed(&mut builder.builder, prepared(&second));
+
+            for (label, message) in [(&first, "first failed"), (&second, "second failed")] {
+                consumer.consume(BuildEvent::new_configured(
+                    label.dupe(),
+                    ConfiguredBuildEventVariant::Execution(
+                        ConfiguredBuildEventExecutionVariant::BuildOutput {
+                            index: 0,
+                            output: Err(buck2_error!(ErrorTag::Input, "{}", message)),
+                        },
+                    ),
+                ));
+            }
+
+            let result = builder
+                .wait_for(true, std::future::pending::<()>())
+                .await
+                .expect("the fail-fast build should return its partial result");
+            let snapshots = sent(&mut rx);
+            let expected_snapshots = if final_only { 1 } else { 2 };
+            assert_eq!(
+                snapshots.len(),
+                expected_snapshots,
+                "only the first queued failure is reported"
+            );
+            for snapshot in snapshots {
+                assert_eq!(labels(&snapshot), [&first]);
+                assert_eq!(output_error_messages(&snapshot, &first), ["first failed"]);
+            }
+            assert_eq!(labels(&result), [&first, &second]);
+            assert_eq!(output_error_messages(&result, &first), ["first failed"]);
+            assert!(output_error_messages(&result, &second).is_empty());
+        }
     }
 
     #[test]

@@ -30,17 +30,16 @@ use starlark::values::Trace;
 use starlark::values::Value;
 use starlark::values::ValueError;
 use starlark::values::ValueOf;
-use starlark::values::ValueTyped;
 use starlark::values::dict::DictType;
 use starlark::values::list::ListType;
 use starlark::values::list_or_tuple::ListOrTupleType;
 use starlark::values::none::NoneOr;
 use starlark::values::starlark_value;
 
-use crate::interpreter::rule_defs::artifact::starlark_artifact::StarlarkArtifact;
+use crate::interpreter::rule_defs::artifact::starlark_artifact_like::StarlarkArtifactView;
 use crate::interpreter::rule_defs::artifact::starlark_artifact_value::StarlarkArtifactValue;
 
-pub(crate) type ActionSubErrorResult<'a> = ValueOf<'a, ListType<&'a StarlarkActionSubError>>;
+pub(crate) type ActionSubErrorResult<'a> = ValueOf<'a, ListType<StarlarkActionSubError>>;
 
 #[derive(Debug, buck2_error::Error)]
 #[buck2(tag = Tier0)]
@@ -63,7 +62,7 @@ pub struct StarlarkActionErrorContext<'v> {
 
 /// The outputs an error handler may read, by artifact.
 pub type OutputArtifacts<'v> =
-    ValueOf<'v, DictType<ValueTyped<'v, StarlarkArtifact>, ValueTyped<'v, StarlarkArtifactValue>>>;
+    ValueOf<'v, DictType<StarlarkArtifactView<'v>, StarlarkArtifactValue>>;
 
 impl<'v> StarlarkActionErrorContext<'v> {
     pub(crate) fn new_from_command_execution(

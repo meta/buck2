@@ -44,6 +44,7 @@ use starlark::values::StringValue;
 use starlark::values::Trace;
 use starlark::values::UnpackValue;
 use starlark::values::Value;
+use starlark::values::ValueOf;
 use starlark::values::none::NoneOr;
 use starlark::values::starlark_value;
 use starlark::values::type_repr::StarlarkTypeRepr;
@@ -95,7 +96,7 @@ impl Serialize for StarlarkSelectDict {
 #[derive(StarlarkTypeRepr, UnpackValue, derive_more::Display, Clone, Dupe)]
 enum SelectDictKeyArg<'v> {
     #[display("{}", _0)]
-    Label(&'v StarlarkProvidersLabel),
+    Label(ValueOf<'v, StarlarkProvidersLabel>),
     #[display("{}", _0)]
     Str(&'v str),
 }

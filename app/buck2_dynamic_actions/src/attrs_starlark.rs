@@ -126,9 +126,12 @@ fn struct_dynattrs(globals: &mut GlobalsBuilder) {
 
     /// Takes a tuple and gives it to the impl function.
     fn tuple<'v>(
-        #[starlark(args)] args: ValueOf<'v, TupleType<&'v StarlarkDynamicAttrType<'v>>>,
+        #[starlark(args)] args: ValueOf<'v, TupleType<StarlarkDynamicAttrType<'v>>>,
     ) -> starlark::Result<StarlarkDynamicAttrType<'v>> {
-        let items = args.items().map(|x| x.ty.clone()).collect();
+        let items = args
+            .iter()
+            .map(|x| Ok(x?.ty.clone()))
+            .collect::<starlark::Result<_>>()?;
         Ok(StarlarkDynamicAttrType {
             ty: DynamicAttrType::Tuple(items),
         })

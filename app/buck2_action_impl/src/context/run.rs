@@ -271,15 +271,13 @@ pub(crate) fn analysis_actions_methods_run(methods: &mut MethodsBuilder) {
         #[starlark(require = named, default = false)] always_print_stderr: bool,
         #[starlark(require = named)] weight: Option<u32>,
         #[starlark(require = named)] weight_percentage: Option<u32>,
-        #[starlark(require = named)] dep_files: Option<
-            ValueOf<'v, DictType<&'v str, &'v ArtifactTag>>,
-        >,
+        #[starlark(require = named)] dep_files: Option<ValueOf<'v, DictType<&'v str, ArtifactTag>>>,
         #[starlark(require = named, default = ValueOf::empty_list())]
         dep_file_fingerprints: ValueOf<'v, ListOrTupleType<StarlarkDepFileFingerprint<'v>>>,
         #[starlark(require = named)] metadata_env_var: Option<String>,
         #[starlark(require = named)] metadata_path: Option<String>,
         #[starlark(require = named, default = ValueOf::empty_list())]
-        incremental_metadata_ignore_tags: ValueOf<'v, ListOrTupleType<&'v ArtifactTag>>,
+        incremental_metadata_ignore_tags: ValueOf<'v, ListOrTupleType<ArtifactTag>>,
         // TODO(scottcao): Refactor `no_outputs_cleanup` to `outputs_cleanup`
         #[starlark(require = named, default = false)] no_outputs_cleanup: bool,
         #[starlark(require = named, default = false)] incremental_remote_outputs: bool,
@@ -340,13 +338,13 @@ pub(crate) fn analysis_actions_methods_run(methods: &mut MethodsBuilder) {
 
         impl<'v> RunCommandArtifactVisitor<'v> {
             fn new(
-                dep_files: Option<ValueOf<'v, DictType<&'v str, &'v ArtifactTag>>>,
+                dep_files: Option<ValueOf<'v, DictType<&'v str, ArtifactTag>>>,
             ) -> buck2_error::Result<Self> {
                 let dep_file_artifact_tags = if let Some(dep_files) = dep_files {
                     let mut tags = BuckMutInsertionSet::with_capacity(dep_files.dict().len());
-                    for entry in dep_files.try_items() {
+                    for entry in dep_files.iter() {
                         let (_key, tag) = entry?;
-                        tags.insert(tag);
+                        tags.insert(tag.as_ref());
                     }
                     Some(tags)
                 } else {
@@ -505,8 +503,10 @@ pub(crate) fn analysis_actions_methods_run(methods: &mut MethodsBuilder) {
             BuckMutInsertionMap::new();
 
         if let Some(dep_files) = dep_files {
-            for entry in dep_files.try_items() {
+            for entry in dep_files.iter() {
                 let (key, tag) = entry?;
+                let key = key.unpack();
+                let tag = tag.as_ref();
                 let tagged = tagged_outputs.get(tag);
                 let count = tagged.map_or(0, |t| t.len());
 
@@ -558,8 +558,8 @@ pub(crate) fn analysis_actions_methods_run(methods: &mut MethodsBuilder) {
                     env_var,
                     path,
                     ignore_tags: incremental_metadata_ignore_tags
-                        .try_items()
-                        .map(|x| buck2_error::Ok(x?.dupe()))
+                        .iter()
+                        .map(|x| buck2_error::Ok(x?.as_ref().dupe()))
                         .collect::<buck2_error::Result<_>>()?,
                 })))
             }

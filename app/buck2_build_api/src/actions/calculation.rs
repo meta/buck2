@@ -618,8 +618,9 @@ fn try_run_error_handler(
 
                         let data = match error_handler_result {
                             Ok(result) => match ActionSubErrorResult::unpack_value_err(result)
-                                .and_then(|result| result.try_to_vec())
-                            {
+                                .and_then(|result| {
+                                    result.iter().collect::<starlark::Result<Vec<_>>>()
+                                }) {
                                 Ok(sub_errors) => Data::SubErrors(ActionSubErrors {
                                     sub_errors: sub_errors
                                         .into_iter()

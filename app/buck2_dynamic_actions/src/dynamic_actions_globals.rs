@@ -41,7 +41,7 @@ pub fn new_dynamic_actions_callable<'v>(
         DynamicActionsCallbackParamSpec,
         DynamicActionsCallbackReturnType,
     >,
-    attrs: ValueOf<'v, DictType<String, &'v StarlarkDynamicAttrType<'v>>>,
+    attrs: ValueOf<'v, DictType<String, StarlarkDynamicAttrType<'v>>>,
     callback_param: &DynamicActionsCallbackParam,
 ) -> buck2_error::Result<DynamicActionsCallable<'v>> {
     if attrs.dict().get_str(callback_param.name.as_str()).is_some() {
@@ -51,10 +51,10 @@ pub fn new_dynamic_actions_callable<'v>(
         ));
     }
     let attrs: BuckMutInsertionMap<String, DynamicAttrType<'v>> = attrs
-        .try_items()
+        .iter()
         .map(|entry| {
             let (name, ty) = entry?;
-            Ok::<_, starlark::Error>((name, ty.ty.clone()))
+            Ok::<_, starlark::Error>((name.unpack(), ty.ty.clone()))
         })
         .collect::<starlark::Result<_>>()?;
 
@@ -116,7 +116,7 @@ pub fn register_dynamic_actions(globals: &mut GlobalsBuilder) {
         >,
         #[starlark(require = named)] attrs: ValueOf<
             'v,
-            DictType<String, &'v StarlarkDynamicAttrType<'v>>,
+            DictType<String, StarlarkDynamicAttrType<'v>>,
         >,
     ) -> starlark::Result<DynamicActionsCallable<'v>> {
         Ok(new_dynamic_actions_callable(r#impl, attrs, &P_ACTIONS)?)

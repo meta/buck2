@@ -338,8 +338,8 @@ fn value_to_providers_name(subtarget_name: SubtargetNameArg) -> buck2_error::Res
 
 #[derive(StarlarkTypeRepr, UnpackValue)]
 pub enum LabelArg<'v> {
-    Target(&'v StarlarkTargetLabel),
-    Providers(&'v StarlarkProvidersLabel),
+    Target(ValueOf<'v, StarlarkTargetLabel>),
+    Providers(ValueOf<'v, StarlarkProvidersLabel>),
 }
 
 impl<'v> LabelArg<'v> {

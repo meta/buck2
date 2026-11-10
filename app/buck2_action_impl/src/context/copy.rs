@@ -54,13 +54,14 @@ fn create_assembled_dir_tree<'v>(
     eval: &mut Evaluator<'v, '_, '_>,
     this: &AnalysisActions<'v>,
     output: OutputArtifactArg<'v>,
-    contents: ValueOf<'v, DictType<&'v str, &'v StarlarkAssembledDirEntry<'v>>>,
+    contents: ValueOf<'v, DictType<&'v str, StarlarkAssembledDirEntry<'v>>>,
     has_content_based_path: Option<bool>,
 ) -> buck2_error::Result<ValueTyped<'v, StarlarkDeclaredArtifact<'v>>> {
     let entries = contents
-        .try_items()
+        .iter()
         .map(|entry| {
             let (k, entry) = entry?;
+            let k = k.unpack();
             // The entry constructors (`assembled_dir.copy` / `assembled_dir.symlink`)
             // only accept artifact-like values, so this re-unpack cannot fail.
             let as_artifact =
@@ -263,7 +264,7 @@ pub(crate) fn analysis_actions_methods_copy(methods: &mut MethodsBuilder) {
         #[starlark(require = pos)] output: OutputArtifactArg<'v>,
         #[starlark(require = named)] contents: ValueOf<
             'v,
-            DictType<&'v str, &'v StarlarkAssembledDirEntry<'v>>,
+            DictType<&'v str, StarlarkAssembledDirEntry<'v>>,
         >,
         #[starlark(require = named, default = NoneOr::None)] has_content_based_path: NoneOr<bool>,
         eval: &mut Evaluator<'v, '_, '_>,

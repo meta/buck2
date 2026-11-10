@@ -1827,10 +1827,7 @@ impl Action for RunAction {
         Ok(Some(ValueOf::alloc_dict(
             heap,
             artifact_value_dict.into_iter().map(|(artifact, value)| {
-                (
-                    ValueOf::from(heap.alloc_typed(artifact)),
-                    ValueOf::from(heap.alloc_typed(value)),
-                )
+                (ValueOf::alloc(heap, artifact), ValueOf::alloc(heap, value))
             }),
         )))
     }

@@ -299,7 +299,7 @@ pub(crate) fn register_dynamic_actions(globals: &mut GlobalsBuilder) {
         >,
         #[starlark(require = named)] attrs: ValueOf<
             'v,
-            DictType<String, &'v StarlarkDynamicAttrType<'v>>,
+            DictType<String, StarlarkDynamicAttrType<'v>>,
         >,
     ) -> starlark::Result<DynamicActionsCallable<'v>> {
         Ok(new_dynamic_actions_callable(r#impl, attrs, &P_BXLCTX)?)

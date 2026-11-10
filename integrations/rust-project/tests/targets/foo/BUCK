@@ -81,6 +81,18 @@ rust_library(
     }),
 )
 
+rust_library(
+    name = "g_with_concat_env",
+    srcs = ["lib_g.rs"],
+    crate_root = "lib_g.rs",
+    # buildifier: disable=dict-concatenation
+    env = {"UNIVERSAL": "1"} + select({
+        "DEFAULT": {"DEFAULT_ONLY": "2"},
+        "ovr_config//os:macos": {},
+    }),
+    target_compatible_with = ["ovr_config//cpu/constraints:riscv64"],
+)
+
 rust_binary(
     name = "g_incompatible_tool",
     srcs = ["main.rs"],

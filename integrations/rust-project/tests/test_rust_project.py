@@ -210,6 +210,20 @@ class RustProjectTest(BuckTestCase):
         assert all(isinstance(label, str) for label in dep["labels"]), dep["labels"]
 
     @buck_test(inplace=True, skip_for_os=["darwin", "windows"])
+    async def test_fallback_concat_env(self, buck: Buck) -> None:
+        result_raw = await buck.bxl(
+            "prelude//rust/rust-analyzer/resolve_deps.bxl:resolve_targets",
+            "--",
+            "--targets",
+            "//buck2/integrations/rust-project/tests/targets/foo:g_with_concat_env",
+        )
+        result: Dict[str, Any] = json.load(open(result_raw.stdout.rstrip()))
+
+        dep = list(result["resolved_deps"].values())[0]
+
+        assert dep["env"] == {"UNIVERSAL": "1", "DEFAULT_ONLY": "2"}, dep["env"]
+
+    @buck_test(inplace=True, skip_for_os=["darwin", "windows"])
     async def test_fallback_mapped_srcs(self, buck: Buck) -> None:
         result_raw = await buck.bxl(
             "prelude//rust/rust-analyzer/resolve_deps.bxl:resolve_targets",

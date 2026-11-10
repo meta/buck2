@@ -102,13 +102,20 @@ def _process_target_config(ctx: bxl.Context, target: bxl.ConfiguredTargetNode, a
 
 def _select_assume_default(value):
     """Unwrap select() values, assuming the DEFAULT value is always used."""
-    # A SelectConcat comes from `["a"] + select({"DEFAULT": ["b"], ...})`.
+    # A SelectConcat comes from `["a"] + select({"DEFAULT": ["b"], ...})`, or
+    # `{"K": "v"} + select(...)` for a dict attribute such as `env`.
     if isinstance(value, bxl.SelectConcat):
+        parts = [_select_assume_default(item) for item in value.select_iter()]
+        if parts and isinstance(parts[0], dict):
+            merged = {}
+            for part in parts:
+                merged.update(part)
+            return merged
+
         items = []
-        for raw_item in value.select_iter():
-            unwrapped = _select_assume_default(raw_item)
-            if isinstance(unwrapped, list):
-                items.extend(unwrapped)
+        for part in parts:
+            if isinstance(part, list):
+                items.extend(part)
 
         return items
 

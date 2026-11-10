@@ -25,6 +25,7 @@ use serde_json::Value;
 
 // Taken from data.proto
 const ACTION_EXECUTION_KIND_LOCAL: i64 = 1;
+const ACTION_EXECUTION_KIND_REMOTE: i64 = 2;
 const ACTION_EXECUTION_KIND_ACTION_CACHE: i64 = 3;
 const ACTION_EXECUTION_KIND_SIMPLE: i64 = 4;
 // A write whose content the CAS already holds, which the disk-state core probes for.
@@ -1663,6 +1664,58 @@ async fn test_dep_file_does_not_upload_when_allow_cache_upload_is_true(
     buck.build(&target).await?;
     let uploads = dep_file_uploads(buck).await?;
     assert_eq!(uploads.len(), 0, "{uploads:#?}");
+    Ok(())
+}
+
+/// Runs the action remotely without materializing its outputs, so they exist only in the CAS,
+/// then changes an input its dep file leaves out: the second build is a local dep-file hit.
+#[buck_test(
+    data_dir = "upload_dep_files",
+    env = [("BUCK2_TEST_SKIP_ACTION_CACHE_WRITE", "true")],
+)]
+async fn test_dep_file_hit_on_remote_outputs(buck: &Buck) -> anyhow::Result<()> {
+    let cache_buster = format!("test.cache_buster={}", random_string());
+    let args = [
+        "root//:dep_files",
+        "-c",
+        &cache_buster,
+        "--remote-only",
+        "--no-remote-cache",
+        "--materializations=none",
+    ];
+    buck.build(&args).await?;
+    check_execution_kind(buck, &[ACTION_EXECUTION_KIND_REMOTE], &WRITE_KINDS).await?;
+
+    std::fs::write(buck.cwd().join("unused.1"), "CHANGE")?;
+    buck.build(&args).await?;
+    check_execution_kind(buck, &[ACTION_EXECUTION_KIND_LOCAL_DEP_FILE], &WRITE_KINDS).await?;
+    Ok(())
+}
+
+/// As above, with the outputs of an action cache hit.
+#[buck_test(
+    data_dir = "upload_dep_files",
+    env = [("BUCK2_TEST_SKIP_ACTION_CACHE_WRITE", "true")],
+)]
+async fn test_dep_file_hit_on_action_cache_outputs(buck: &Buck) -> anyhow::Result<()> {
+    let cache_buster = format!("test.cache_buster={}", random_string());
+    let args = [
+        "root//:dep_files",
+        "-c",
+        &cache_buster,
+        "--remote-only",
+        "--materializations=none",
+    ];
+    buck.build(&args).await?;
+    check_execution_kind(buck, &[ACTION_EXECUTION_KIND_REMOTE], &WRITE_KINDS).await?;
+    buck.kill().await?;
+
+    buck.build(&args).await?;
+    check_execution_kind(buck, &[ACTION_EXECUTION_KIND_ACTION_CACHE], &WRITE_KINDS).await?;
+
+    std::fs::write(buck.cwd().join("unused.1"), "CHANGE")?;
+    buck.build(&args).await?;
+    check_execution_kind(buck, &[ACTION_EXECUTION_KIND_LOCAL_DEP_FILE], &WRITE_KINDS).await?;
     Ok(())
 }
 

@@ -108,7 +108,7 @@ public abstract class BaseRunner {
               : result.testClassName);
 
       // name attribute
-      test.setAttribute("name", result.testMethodName);
+      test.setAttribute("name", result.testMethodName == null ? "" : result.testMethodName);
 
       // success attribute
       boolean isSuccess = result.isSuccess();

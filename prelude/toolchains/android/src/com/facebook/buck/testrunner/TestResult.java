@@ -21,7 +21,7 @@ import org.jspecify.annotations.Nullable;
 @Nullsafe(Nullsafe.Mode.LOCAL)
 final class TestResult {
   final String testClassName;
-  final String testMethodName;
+  @Nullable final String testMethodName;
   final long runTime;
   final ResultType type;
   final @Nullable Throwable failure;
@@ -30,7 +30,7 @@ final class TestResult {
 
   public TestResult(
       String testClassName,
-      String testMethodName,
+      @Nullable String testMethodName,
       long runTime,
       ResultType type,
       @Nullable Throwable failure,

@@ -13,7 +13,6 @@ use std::fmt::Display;
 
 use allocative::Allocative;
 use buck2_error::BuckErrorContext;
-use buck2_hash::BuckMutInsertionMap;
 use buck2_interpreter::types::select_fail::StarlarkSelectFail;
 use buck2_interpreter::types::select_incompatible::StarlarkSelectIncompatible;
 use serde::Serialize;
@@ -160,31 +159,28 @@ impl<'v> StarlarkSelector<'v> {
         if let Some(selector) = StarlarkSelector::from_value(val) {
             match *selector {
                 StarlarkSelector::Primary(selector) => {
-                    let selector = selector.dict();
-                    let mut mapped = BuckMutInsertionMap::with_capacity(selector.len());
-                    for (k, v) in selector.iter_hashed() {
-                        if StarlarkSelectFail::from_value(v).is_some()
+                    let mut mapped = Vec::with_capacity(selector.dict().len());
+                    for entry in selector.iter() {
+                        let (k, v) = entry?;
+                        let v = v.to_value();
+                        let v = if StarlarkSelectFail::from_value(v).is_some()
                             || StarlarkSelectIncompatible::from_value(v).is_some()
                         {
                             // mappings don't get applied to SelectFail/SelectIncompatible values.
-                            mapped.insert_hashed(k, v);
+                            v
+                        } else if RECURSE {
+                            Self::select_map::<RECURSE>(eval, v, func)?
                         } else {
-                            mapped.insert_hashed(
-                                k,
-                                if RECURSE {
-                                    Self::select_map::<RECURSE>(eval, v, func)
-                                } else {
-                                    invoke(eval, v, func)
-                                }?,
-                            );
-                        }
+                            invoke(eval, v, func)?
+                        };
+                        mapped.push((k, ValueOf::from(v)));
                     }
                     Ok(eval
                         .heap()
-                        .alloc_representation(StarlarkSelector::new(
-                            ValueOf::unpack_value_err(eval.heap().alloc(mapped))
-                                .internal_error("validated at construction")?,
-                        ))
+                        .alloc_representation(StarlarkSelector::new(ValueOf::alloc_dict(
+                            eval.heap(),
+                            mapped,
+                        )))
                         .to_value())
                 }
                 StarlarkSelector::Sum(left, right) => {

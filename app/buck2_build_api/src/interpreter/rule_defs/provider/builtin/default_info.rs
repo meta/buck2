@@ -197,8 +197,8 @@ impl<'v> DefaultInfo<'v> {
         self.default_outputs_impl().collect()
     }
 
-    pub fn default_outputs_raw(&self) -> Value<'v> {
-        self.default_outputs.to_value()
+    pub fn default_outputs_raw(&self) -> ValueOf<'v, ListType<StarlarkArtifactView<'v>>> {
+        self.default_outputs
     }
 
     pub fn sub_targets(

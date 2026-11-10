@@ -729,8 +729,7 @@ pub mod tester {
                 )
             })?;
 
-            let ret = collection.default_info()?.default_outputs_raw();
-            Ok(ret)
+            Ok(collection.default_info()?.default_outputs_raw().to_value())
         }
 
         fn get_default_info_sub_targets<'v>(value: Value<'v>) -> starlark::Result<Value<'v>> {

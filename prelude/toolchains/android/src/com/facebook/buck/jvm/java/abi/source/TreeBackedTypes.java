@@ -10,6 +10,7 @@
 
 package com.facebook.buck.jvm.java.abi.source;
 
+import com.facebook.infer.annotation.Nullsafe;
 import java.util.Arrays;
 import java.util.List;
 import javax.lang.model.element.Element;
@@ -34,6 +35,7 @@ import org.jspecify.annotations.Nullable;
  * meanings of some names, and thus must be used with care. See documentation for individual methods
  * and {@link com.facebook.buck.jvm.java.abi.source} for more information.
  */
+@Nullsafe(Nullsafe.Mode.LOCAL)
 class TreeBackedTypes implements Types {
 
   private final Types javacTypes;

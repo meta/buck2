@@ -36,6 +36,7 @@ use crate::values::ValueOf;
 use crate::values::list::AllocList;
 use crate::values::list::ListType;
 use crate::values::none::NoneOr;
+use crate::values::string::StarlarkStr;
 use crate::values::string::dot_format;
 use crate::values::tuple::TupleType;
 use crate::values::type_repr::StarlarkTypeRepr;
@@ -987,7 +988,7 @@ pub(crate) fn string_methods(builder: &mut MethodsBuilder) {
         #[starlark(require = pos, default = NoneOr::None)] sep: NoneOr<&str>,
         #[starlark(require = pos, default = NoneOr::None)] maxsplit: NoneOr<i32>,
         heap: Heap<'v>,
-    ) -> anyhow::Result<ValueOf<'v, ListType<StringValue<'v>>>> {
+    ) -> anyhow::Result<ValueOf<'v, ListType<StarlarkStr>>> {
         if sep.into_option() == Some("") {
             return Err(anyhow::anyhow!(
                 "Empty separator cannot be used for splitting"
@@ -1092,7 +1093,7 @@ pub(crate) fn string_methods(builder: &mut MethodsBuilder) {
         #[starlark(require = pos, default = NoneOr::None)] sep: NoneOr<&str>,
         #[starlark(require = pos, default = NoneOr::None)] maxsplit: NoneOr<i32>,
         heap: Heap<'v>,
-    ) -> anyhow::Result<ValueOf<'v, ListType<StringValue<'v>>>> {
+    ) -> anyhow::Result<ValueOf<'v, ListType<StarlarkStr>>> {
         if sep.into_option() == Some("") {
             return Err(anyhow::anyhow!(
                 "Empty separator cannot be used for splitting"

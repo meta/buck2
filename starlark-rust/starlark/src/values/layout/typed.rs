@@ -62,8 +62,6 @@ use crate::values::layout::avalue::AValueImpl;
 use crate::values::layout::heap::repr::AValueRepr;
 use crate::values::starlark_type_id::StarlarkTypeId;
 use crate::values::string::str_type::StarlarkStr;
-use crate::values::type_expr::StarlarkTypeExpr;
-use crate::values::type_expr::StarlarkTypeExprStable;
 use crate::values::type_repr::StarlarkTypeRepr;
 
 /// [`Value`] wrapper which asserts contained value is of type `<T>`.
@@ -391,17 +389,6 @@ impl<'v, T: StarlarkValue<'v>> StarlarkTypeRepr for ValueTyped<'v, T> {
     }
 }
 
-impl<'v, T: StarlarkValue<'v>> StarlarkTypeExpr<'v> for ValueTyped<'v, T> {
-    type Get = Self;
-
-    #[inline]
-    fn get(value: Value<'v>) -> Option<Self> {
-        ValueTyped::new(value)
-    }
-}
-
-impl<'v, T: StarlarkValue<'v>> StarlarkTypeExprStable<'v> for ValueTyped<'v, T> {}
-
 impl<'v, T: StarlarkValue<'v>> UnpackValue<'v> for ValueTyped<'v, T> {
     type Error = Infallible;
 
@@ -460,17 +447,6 @@ impl<'v, T: StarlarkValue<'v>> StarlarkTypeRepr for FrozenValueTyped<'v, T> {
         T::starlark_type_repr()
     }
 }
-
-impl<'v, T: StarlarkValue<'v>> StarlarkTypeExpr<'v> for FrozenValueTyped<'v, T> {
-    type Get = Self;
-
-    #[inline]
-    fn get(value: Value<'v>) -> Option<Self> {
-        FrozenValueTyped::new(value)
-    }
-}
-
-impl<'v, T: StarlarkValue<'v>> StarlarkTypeExprStable<'v> for FrozenValueTyped<'v, T> {}
 
 impl<'v, T: StarlarkValue<'v>> UnpackValue<'v> for FrozenValueTyped<'v, T> {
     type Error = crate::Error;

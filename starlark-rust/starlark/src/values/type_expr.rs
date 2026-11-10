@@ -35,17 +35,17 @@ use crate::values::type_repr::StarlarkTypeRepr;
 /// is `Either<A, B>` or a `#[derive(UnpackValue)]` enum, `None | T` is
 /// [`NoneOr<T>`](crate::values::none::NoneOr), `typing.Any` is [`Value`], and so on. Each
 /// Starlark type has one implementer, so that two Rust spellings never have to be reconciled;
-/// unions are the exception, since a union can be spelled in several orders, and the
-/// handles `ValueTyped<T>` and `&T` keep an impl for one representation until they stop being
-/// bindings.
+/// unions are the exception, since a union can be spelled in several orders. The handles to a
+/// value (`ValueTyped<T>`, `&T`, `ListRef` and the like) are what a type is read through, not
+/// a type.
 ///
 /// Membership and inspection are one operation: [`get`](Self::get) says whether a value is of
 /// the type by producing the handle it is read through, so nothing that is not a type can
 /// implement this. An `int` that may not fit an `i32`, or a plugin kind that must be bound,
 /// is a conversion from a type, which is [`UnpackValue`](crate::values::UnpackValue)'s job.
-/// `&str`, `String` and `bool` are the transitional exceptions: total conversions that keep
-/// an impl so that `ListType<&str>` keeps working until the container helpers take the
-/// conversion as a type argument.
+/// `&str`, `String` and `bool` are the exceptions: total conversions that also stand for `str`
+/// and `bool`, kept because a conversion that cannot fail does not blur the check and their
+/// users are everywhere.
 ///
 /// Not every [`StarlarkTypeRepr`] is one: a return type such as `Vec<T>` has a `Ty` for the
 /// documentation and nothing to test.
@@ -181,14 +181,7 @@ union_payload_is_self! {
     impl['v, 'a] &'a str where ['v: 'a];
     impl['v] String;
     impl['v] bool;
-    impl['v, T: crate::values::StarlarkValue<'v>] crate::values::ValueTyped<'v, T>;
-    impl['v, T: crate::values::StarlarkValue<'v>] crate::values::FrozenValueTyped<'v, T>;
-    impl['v] &'v crate::values::list::ListRef<'v>;
-    impl['v] &'v crate::values::tuple::TupleRef<'v>;
-    impl['v] crate::values::dict::DictRef<'v>;
-    impl['v] crate::values::set::SetRef<'v>;
     impl['v] crate::values::structs::StructRef<'v>;
-    impl['v] &'v crate::values::record::Record<'v>;
     impl['v] crate::values::enumeration::AnyEnumType<'v>;
     impl['v] crate::values::typing::TypeType;
     impl['v, P: crate::values::typing::StarlarkCallableParamSpec, R: StarlarkTypeRepr]

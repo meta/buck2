@@ -71,26 +71,6 @@ macro_rules! starlark_complex_value {
                 }
             }
 
-            impl<'v> $crate::values::StarlarkTypeExpr<'v> for &'v $x<'v> {
-                type Get = Self;
-
-                #[inline]
-                fn get(value: $crate::values::Value<'v>) -> Option<Self> {
-                    $x::from_value(value)
-                }
-            }
-
-            impl<'v> $crate::values::StarlarkTypeExprStable<'v> for &'v $x<'v> {}
-
-            impl<'v> $crate::values::type_expr::UnionPayload<'v> for &'v $x<'v> {
-                type Expr = Self;
-
-                #[inline]
-                fn from_value(value: $crate::values::Value<'v>) -> Option<Self> {
-                    $x::from_value(value)
-                }
-            }
-
             impl<'v> $crate::values::UnpackValue<'v> for &'v $x<'v> {
                 type Error = std::convert::Infallible;
 
@@ -195,26 +175,6 @@ macro_rules! starlark_simple_value {
 
                 fn starlark_type_repr() -> $crate::typing::Ty {
                     <$x as $crate::values::StarlarkValue>::get_type_starlark_repr()
-                }
-            }
-
-            impl<'v> $crate::values::StarlarkTypeExpr<'v> for &'v $x {
-                type Get = Self;
-
-                #[inline]
-                fn get(value: $crate::values::Value<'v>) -> Option<Self> {
-                    $x::from_value(value)
-                }
-            }
-
-            impl<'v> $crate::values::StarlarkTypeExprStable<'v> for &'v $x {}
-
-            impl<'v> $crate::values::type_expr::UnionPayload<'v> for &'v $x {
-                type Expr = Self;
-
-                #[inline]
-                fn from_value(value: $crate::values::Value<'v>) -> Option<Self> {
-                    $x::from_value(value)
                 }
             }
 

@@ -238,33 +238,6 @@ impl ImplStarlarkValue {
                 }
             }
 
-            impl<#params> starlark::values::StarlarkTypeExpr<#lt> for &#lt #self_ty
-            #where_clause
-            {
-                type Get = Self;
-
-                #[inline]
-                fn get(value: starlark::values::Value<#lt>) -> Option<Self> {
-                    value.downcast_ref::<#self_ty>()
-                }
-            }
-
-            impl<#params> starlark::values::StarlarkTypeExprStable<#lt> for &#lt #self_ty
-            #where_clause
-            {
-            }
-
-            impl<#params> starlark::values::type_expr::UnionPayload<#lt> for &#lt #self_ty
-            #where_clause
-            {
-                type Expr = Self;
-
-                #[inline]
-                fn from_value(value: starlark::values::Value<#lt>) -> Option<Self> {
-                    value.downcast_ref::<#self_ty>()
-                }
-            }
-
             impl<#params> starlark::values::UnpackValue<#lt> for &#lt #self_ty
             #where_clause
             {

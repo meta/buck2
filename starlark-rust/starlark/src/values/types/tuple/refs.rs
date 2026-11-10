@@ -26,8 +26,6 @@ use crate::typing::Ty;
 use crate::values::UnpackValue;
 use crate::values::Value;
 use crate::values::tuple::TupleType;
-use crate::values::type_expr::StarlarkTypeExpr;
-use crate::values::type_expr::StarlarkTypeExprStable;
 use crate::values::type_repr::StarlarkTypeRepr;
 use crate::values::types::tuple::value::Tuple;
 
@@ -74,17 +72,6 @@ impl<'v> StarlarkTypeRepr for &'v TupleRef<'v> {
         Ty::any_tuple()
     }
 }
-
-impl<'v> StarlarkTypeExpr<'v> for &'v TupleRef<'v> {
-    type Get = Self;
-
-    #[inline]
-    fn get(value: Value<'v>) -> Option<Self> {
-        TupleRef::from_value(value)
-    }
-}
-
-impl<'v> StarlarkTypeExprStable<'v> for &'v TupleRef<'v> {}
 
 impl<'v> UnpackValue<'v> for &'v TupleRef<'v> {
     type Error = Infallible;

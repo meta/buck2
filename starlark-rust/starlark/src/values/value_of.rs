@@ -186,8 +186,10 @@ impl<'v, T: StarlarkValue<'v> + StarlarkType<'v, Get = ValueTyped<'v, T>>> Deref
     }
 }
 
-/// A typed value is a `ValueOf` its own binding by construction.
-impl<'v, T: StarlarkValue<'v>> From<ValueTyped<'v, T>> for ValueOf<'v, ValueTyped<'v, T>> {
+/// A typed value of a single-representation type is a handle to the type by construction.
+impl<'v, T: StarlarkValue<'v> + StarlarkType<'v, Get = ValueTyped<'v, T>>> From<ValueTyped<'v, T>>
+    for ValueOf<'v, T>
+{
     #[inline]
     fn from(value: ValueTyped<'v, T>) -> Self {
         Self::new_unchecked(value.to_value())

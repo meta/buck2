@@ -29,6 +29,7 @@ use crate::values::Value;
 use crate::values::ValueOf;
 use crate::values::dict::DictMut;
 use crate::values::dict::DictRef;
+use crate::values::dict::DictType;
 use crate::values::list::AllocList;
 use crate::values::list::ListType;
 use crate::values::none::NoneType;
@@ -307,7 +308,10 @@ pub(crate) fn dict_methods(registry: &mut MethodsBuilder) {
     fn update<'v>(
         this: Value<'v>,
         #[starlark(require = pos)] pairs: Option<
-            ValueOf<'v, Either<DictRef<'v>, StarlarkIter<(Value<'v>, Value<'v>)>>>,
+            ValueOf<
+                'v,
+                Either<DictType<Value<'v>, Value<'v>>, StarlarkIter<(Value<'v>, Value<'v>)>>,
+            >,
         >,
         #[starlark(kwargs)] kwargs: DictRef<'v>,
         heap: Heap<'v>,

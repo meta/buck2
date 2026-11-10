@@ -30,8 +30,6 @@ use crate::values::Value;
 use crate::values::ValueError;
 use crate::values::set::SetType;
 use crate::values::set::value::SetGen;
-use crate::values::type_expr::StarlarkTypeExpr;
-use crate::values::type_expr::StarlarkTypeExprStable;
 use crate::values::type_repr::StarlarkTypeRepr;
 
 /// Define the set type.
@@ -119,17 +117,6 @@ impl<'v> StarlarkTypeRepr for SetRef<'v> {
         <Self::Canonical as StarlarkTypeRepr>::starlark_type_repr()
     }
 }
-
-impl<'v> StarlarkTypeExpr<'v> for SetRef<'v> {
-    type Get = Self;
-
-    #[inline]
-    fn get(value: Value<'v>) -> Option<Self> {
-        SetRef::from_value(value)
-    }
-}
-
-impl<'v> StarlarkTypeExprStable<'v> for SetRef<'v> {}
 
 impl<'v> UnpackValue<'v> for SetRef<'v> {
     type Error = Infallible;

@@ -180,6 +180,7 @@ public class StubJar {
           writtenExistingEntries.add(entry);
         } else {
           referencedByWritten.addAll(entry.getReferencedClassNames());
+          referencedByWritten.addAll(entry.getSealedSubclasses());
         }
       }
       if (inlineFunctionScope != null) {
@@ -194,6 +195,7 @@ public class StubJar {
     if (!deferredEntries.isEmpty()) {
       for (StubJarEntry existingEntry : writtenExistingEntries) {
         referencedByWritten.addAll(existingEntry.getReferencedClassNames());
+        referencedByWritten.addAll(existingEntry.getSealedSubclasses());
       }
 
       // keptNames only grows and each pass that changes anything adds to it, so this terminates.
@@ -207,6 +209,7 @@ public class StubJar {
           StubJarEntry deferred = deferredEntries.get(referencedName);
           if (deferred != null && keptNames.add(referencedName)) {
             worklist.addAll(deferred.getReferencedClassNames());
+            worklist.addAll(deferred.getSealedSubclasses());
             changed = true;
           }
         }
@@ -218,6 +221,7 @@ public class StubJar {
           }
           keptNames.add(e.getKey());
           worklist.addAll(deferred.getReferencedClassNames());
+          worklist.addAll(deferred.getSealedSubclasses());
           changed = true;
         }
       }

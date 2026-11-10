@@ -177,6 +177,28 @@ public class KotlinMetadataReader {
   }
 
   /**
+   * JVM internal names of the sealed subclasses listed in a class's metadata. Kotlin consumers
+   * check `when` exhaustiveness against this list, so a listed subclass missing from the ABI makes
+   * a non-exhaustive `when` compile.
+   *
+   * @param parsed the result of {@link #readMetadata}
+   */
+  public static List<String> getSealedSubclasses(ParsedMetadata parsed) {
+    KotlinClassMetadata metadata = parsed.metadata;
+    if (!(metadata instanceof KotlinClassMetadata.Class)) {
+      return ImmutableList.of();
+    }
+    ImmutableList.Builder<String> names = ImmutableList.builder();
+    for (String name : ((KotlinClassMetadata.Class) metadata).getKmClass().getSealedSubclasses()) {
+      // Local class names start with '.'; they cannot be sealed subclasses of another file.
+      if (!name.startsWith(".")) {
+        names.add(name.replace('.', '$'));
+      }
+    }
+    return names.build();
+  }
+
+  /**
    * Checks if a Kotlin class is a private nested class (a member class whose own Kotlin visibility
    * is private). Its members are unreachable: Kotlin consumers see the metadata-private owner, and
    * Java consumers see a non-public nested class. Callers keep the class shell (its file must exist

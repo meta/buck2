@@ -8719,6 +8719,105 @@ public class StubJarTest {
   }
 
   @Test
+  public void kotlinKeepsFilePrivateSubclassOfSealedClass() throws IOException {
+    if (!isValidForKotlin()) {
+      return;
+    }
+
+    if (testingMode.equals(MODE_SOURCE_BASED)) {
+      return;
+    }
+
+    // S's metadata lists Priv1 as a sealed subclass. Without Priv1, a consumer's
+    // `when (s) { is Pub1 -> ... }` compiles as exhaustive and throws
+    // NoWhenBranchMatchedException at runtime.
+    tester = new Tester(Language.KOTLIN);
+    tester
+        .setSourceFile(
+            "A.kt",
+            "package com.example.buck",
+            "sealed class S",
+            "class Pub1 : S()",
+            "private class Priv1 : S()")
+        .addExpectedStub("com/example/buck/S")
+        .addExpectedStub("com/example/buck/Pub1")
+        .addExpectedStub("com/example/buck/Priv1")
+        .createAndCheckStubJar();
+  }
+
+  @Test
+  public void kotlinKeepsFilePrivateImplementationOfSealedInterface() throws IOException {
+    if (!isValidForKotlin()) {
+      return;
+    }
+
+    if (testingMode.equals(MODE_SOURCE_BASED)) {
+      return;
+    }
+
+    tester = new Tester(Language.KOTLIN);
+    tester
+        .setSourceFile(
+            "A.kt",
+            "package com.example.buck",
+            "sealed interface S",
+            "object Pub1 : S",
+            "private object Priv1 : S")
+        .addExpectedStub("com/example/buck/S")
+        .addExpectedStub("com/example/buck/Pub1")
+        .addExpectedStub("com/example/buck/Priv1")
+        .createAndCheckStubJar();
+  }
+
+  @Test
+  public void kotlinKeepsSealedSubclassNestedInFilePrivateClass() throws IOException {
+    if (!isValidForKotlin()) {
+      return;
+    }
+
+    if (testingMode.equals(MODE_SOURCE_BASED)) {
+      return;
+    }
+
+    tester = new Tester(Language.KOTLIN);
+    tester
+        .setSourceFile(
+            "A.kt",
+            "package com.example.buck",
+            "sealed class S",
+            "private class Holder {",
+            "  class Sub : S()",
+            "}")
+        .addExpectedStub("com/example/buck/S")
+        .addExpectedStub("com/example/buck/Holder")
+        .addExpectedStub("com/example/buck/Holder$Sub")
+        .createAndCheckStubJar();
+  }
+
+  @Test
+  public void kotlinExcludesFilePrivateClassOutsideSealedHierarchy() throws IOException {
+    if (!isValidForKotlin()) {
+      return;
+    }
+
+    if (testingMode.equals(MODE_SOURCE_BASED)) {
+      return;
+    }
+
+    tester = new Tester(Language.KOTLIN);
+    tester
+        .setSourceFile(
+            "A.kt",
+            "package com.example.buck",
+            "sealed class S",
+            "class Pub1 : S()",
+            "private class Unrelated")
+        .addExpectedStub("com/example/buck/S")
+        .addExpectedStub("com/example/buck/Pub1")
+        .createAndCheckStubJar();
+  }
+
+  @Test
   public void doNotStripClassSuffixIfItDoesNotExist() {
     assertEquals("A.aut", StubJar.pathWithoutClassSuffix(Paths.get("A.aut")));
   }

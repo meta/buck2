@@ -45,6 +45,7 @@ class StubJarClassEntry extends StubJarEntry {
   private final Set<String> keptJvmStaticMemberKeys;
   @Nullable private final String scopeOuterClass;
   private final Set<String> hiddenDeprecatedMethods;
+  private final List<String> sealedSubclasses;
 
   @Nullable
   public static StubJarClassEntry of(
@@ -64,6 +65,7 @@ class StubJarClassEntry extends StubJarEntry {
     Set<String> keptJvmStaticMemberKeys = Collections.emptySet();
     String scopeOuterClass = null;
     Set<String> hiddenDeprecatedMethods = Collections.emptySet();
+    List<String> sealedSubclasses = Collections.emptyList();
 
     if (isKotlinModule) {
       // Visit the class (skipping code) without filtering, to gather its annotations and class
@@ -100,6 +102,7 @@ class StubJarClassEntry extends StubJarEntry {
           }
         }
         inlineFunctions = KotlinMetadataReader.getInlineFunctions(parsedMetadata);
+        sealedSubclasses = KotlinMetadataReader.getSealedSubclasses(parsedMetadata);
         hiddenDeprecatedMethods =
             new HashSet<>(AbiFilteringClassVisitor.findHiddenDeprecatedMethods(classMetadata));
       }
@@ -165,7 +168,8 @@ class StubJarClassEntry extends StubJarEntry {
           stripPrivateNestedMembers,
           keptJvmStaticMemberKeys,
           scopeOuterClass,
-          hiddenDeprecatedMethods);
+          hiddenDeprecatedMethods,
+          sealedSubclasses);
     }
 
     return null;
@@ -182,7 +186,8 @@ class StubJarClassEntry extends StubJarEntry {
       boolean stripPrivateNestedMembers,
       Set<String> keptJvmStaticMemberKeys,
       @Nullable String scopeOuterClass,
-      Set<String> hiddenDeprecatedMethods) {
+      Set<String> hiddenDeprecatedMethods,
+      List<String> sealedSubclasses) {
     this.path = path;
     this.stub = stub;
     this.referencedClassNames = referencedClassNames;
@@ -194,6 +199,7 @@ class StubJarClassEntry extends StubJarEntry {
     this.keptJvmStaticMemberKeys = keptJvmStaticMemberKeys;
     this.scopeOuterClass = scopeOuterClass;
     this.hiddenDeprecatedMethods = hiddenDeprecatedMethods;
+    this.sealedSubclasses = sealedSubclasses;
   }
 
   @Override
@@ -225,6 +231,11 @@ class StubJarClassEntry extends StubJarEntry {
   @Override
   public Set<String> getReferencedClassNames() {
     return referencedClassNames;
+  }
+
+  @Override
+  public List<String> getSealedSubclasses() {
+    return sealedSubclasses;
   }
 
   @Override
@@ -277,7 +288,7 @@ class StubJarClassEntry extends StubJarEntry {
   }
 
   @Nullable
-  private static AnnotationNode findKotlinMetadataAnnotation(ClassNode node) {
+  static AnnotationNode findKotlinMetadataAnnotation(ClassNode node) {
     if (node.visibleAnnotations == null) {
       return null;
     }

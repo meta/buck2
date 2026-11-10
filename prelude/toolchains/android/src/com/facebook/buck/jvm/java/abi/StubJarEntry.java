@@ -65,6 +65,11 @@ public abstract class StubJarEntry {
     return Collections.emptySet();
   }
 
+  /** Classes the entry's Kotlin metadata lists as sealed subclasses. */
+  public List<String> getSealedSubclasses() {
+    return Collections.emptyList();
+  }
+
   @Nullable
   public String getScopeOuterClass() {
     return null;

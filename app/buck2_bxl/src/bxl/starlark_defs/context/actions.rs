@@ -41,12 +41,10 @@ use starlark::any::ProvidesStaticType;
 use starlark::environment::Methods;
 use starlark::environment::MethodsBuilder;
 use starlark::starlark_module;
-use starlark::values::AllocValue;
 use starlark::values::Heap;
 use starlark::values::NoSerialize;
 use starlark::values::StarlarkValue;
 use starlark::values::Trace;
-use starlark::values::Value;
 use starlark::values::ValueOf;
 use starlark::values::ValueTyped;
 use starlark::values::dict::DictType;
@@ -274,12 +272,6 @@ starlark::methods_static!(BXL_ACTIONS_METHODS = bxl_actions_methods);
 impl<'v> StarlarkValue<'v> for BxlActions<'v> {
     fn get_methods() -> Option<&'static Methods> {
         Some(BXL_ACTIONS_METHODS.methods())
-    }
-}
-
-impl<'v> AllocValue<'v> for BxlActions<'v> {
-    fn alloc_value(self, heap: Heap<'v>) -> Value<'v> {
-        heap.alloc_complex_no_freeze(self)
     }
 }
 

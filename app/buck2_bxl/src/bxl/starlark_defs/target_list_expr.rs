@@ -571,12 +571,14 @@ impl SingleOrCompatibleConfiguredTargets {
         bxl_eval_extra: &BxlEvalExtra,
     ) -> buck2_error::Result<Value<'v>> {
         match self {
-            SingleOrCompatibleConfiguredTargets::Single(node) => {
-                Ok(heap.alloc(StarlarkConfiguredTargetNode(node)))
-            }
+            SingleOrCompatibleConfiguredTargets::Single(node) => Ok(heap
+                .alloc_representation(StarlarkConfiguredTargetNode(node))
+                .to_value()),
             SingleOrCompatibleConfiguredTargets::Compatibles(compatibles) => {
                 let target_set = filter_incompatible(compatibles, bxl_eval_extra)?;
-                Ok(heap.alloc(StarlarkTargetSet(target_set)))
+                Ok(heap
+                    .alloc_representation(StarlarkTargetSet(target_set))
+                    .to_value())
             }
         }
     }

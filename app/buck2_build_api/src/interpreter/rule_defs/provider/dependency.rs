@@ -95,10 +95,10 @@ impl<'v> Dependency<'v> {
         execution_platform: Option<&ExecutionPlatformResolution>,
     ) -> Self {
         Dependency {
-            label: heap.alloc_typed(StarlarkConfiguredProvidersLabel::new(label)),
+            label: heap.alloc_representation(StarlarkConfiguredProvidersLabel::new(label)),
             provider_collection,
             execution_platform: execution_platform
-                .map(|e| heap.alloc_typed(StarlarkExecutionPlatformResolution(e.clone()))),
+                .map(|e| heap.alloc_representation(StarlarkExecutionPlatformResolution(e.clone()))),
         }
     }
 
@@ -218,7 +218,7 @@ fn dependency_methods(builder: &mut MethodsBuilder) {
         this: &Dependency<'v>,
         #[starlark(require = pos)] subtarget: &str,
         heap: Heap<'v>,
-    ) -> starlark::Result<Dependency<'v>> {
+    ) -> starlark::Result<ValueTyped<'v, Dependency<'v>>> {
         let providers = this
             .collection()
             .default_info()?
@@ -231,7 +231,7 @@ fn dependency_methods(builder: &mut MethodsBuilder) {
             lbl.target().dupe(),
             lbl.name().push(ProviderName::new(subtarget.to_owned())?),
         );
-        Ok(Dependency::new(heap, lbl, providers, None))
+        Ok(heap.alloc_representation(Dependency::new(heap, lbl, providers, None)))
     }
 
     /// Gets a specific provider from this dependency by provider type. Returns None if the

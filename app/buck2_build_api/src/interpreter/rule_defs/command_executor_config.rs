@@ -43,6 +43,7 @@ use derive_more::Display;
 use starlark::any::ProvidesStaticType;
 use starlark::environment::GlobalsBuilder;
 use starlark::values::Freeze;
+use starlark::values::Heap;
 use starlark::values::NoSerialize;
 use starlark::values::StarlarkPagable;
 use starlark::values::StarlarkValue;
@@ -232,7 +233,8 @@ pub fn register_command_executor_config(builder: &mut GlobalsBuilder) {
             DictRef<'v>,
         >,
         #[starlark(default = NoneOr::None, require = named)] priority: NoneOr<i32>,
-    ) -> starlark::Result<StarlarkCommandExecutorConfig> {
+        heap: Heap<'v>,
+    ) -> starlark::Result<ValueOf<'v, StarlarkCommandExecutorConfig>> {
         let command_executor_config = {
             let remote_execution_max_input_files_mebibytes: Option<i32> =
                 remote_execution_max_input_files_mebibytes.into_option();
@@ -447,9 +449,10 @@ pub fn register_command_executor_config(builder: &mut GlobalsBuilder) {
             }
         };
 
-        Ok(StarlarkCommandExecutorConfig(Arc::new(
-            command_executor_config,
-        )))
+        Ok(ValueOf::alloc(
+            heap,
+            StarlarkCommandExecutorConfig(Arc::new(command_executor_config)),
+        ))
     }
 }
 

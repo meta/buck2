@@ -42,13 +42,11 @@ use starlark::typing::ParamIsRequired;
 use starlark::typing::ParamSpec;
 use starlark::typing::Ty;
 use starlark::util::ArcStr;
-use starlark::values::AllocValue;
 use starlark::values::Demand;
 use starlark::values::Freeze;
 use starlark::values::FreezeError;
 use starlark::values::FreezeResult;
 use starlark::values::Freezer;
-use starlark::values::Heap;
 use starlark::values::NoSerialize;
 use starlark::values::OwnedFrozen;
 use starlark::values::StarlarkPagable;
@@ -202,12 +200,6 @@ impl<'v> StarlarkValue<'v> for FrozenTransition<'v> {
     }
 }
 
-impl<'v> AllocValue<'v> for Transition<'v> {
-    fn alloc_value(self, heap: Heap<'v>) -> Value<'v> {
-        heap.alloc_complex(self)
-    }
-}
-
 impl<'v> Freeze<'v> for Transition<'v> {
     type Frozen<'fv> = FrozenTransition<'fv>;
 
@@ -349,7 +341,7 @@ fn register_transition_function(builder: &mut GlobalsBuilder) {
         #[starlark(require = named)] attrs: Option<ValueOf<'v, ListOrTupleType<StarlarkStr>>>,
         #[starlark(require = named, default = false)] split: bool,
         eval: &mut Evaluator<'v, '_, '_>,
-    ) -> starlark::Result<Transition<'v>> {
+    ) -> starlark::Result<ValueTyped<'v, Transition<'v>>> {
         let implementation = r#impl.0;
 
         let refs = refs
@@ -384,14 +376,14 @@ fn register_transition_function(builder: &mut GlobalsBuilder) {
 
         validate_transition_impl(implementation, attrs.is_some(), split)?;
 
-        Ok(Transition {
+        Ok(eval.heap().alloc_representation(Transition {
             id: RefCell::new(None),
             path,
             implementation,
             refs,
             attrs,
             split,
-        })
+        }))
     }
 }
 

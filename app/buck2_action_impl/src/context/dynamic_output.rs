@@ -32,6 +32,7 @@ use dupe::Dupe;
 use mini_vec::MiniBoxSlice;
 use starlark::environment::MethodsBuilder;
 use starlark::starlark_module;
+use starlark::values::Heap;
 use starlark::values::Value;
 use starlark::values::ValueOf;
 use starlark::values::ValueTyped;
@@ -242,7 +243,8 @@ pub(crate) fn analysis_actions_methods_dynamic_output(methods: &mut MethodsBuild
     fn dynamic_output_new<'v>(
         this: &'v AnalysisActions<'v>,
         #[starlark(require = pos)] dynamic_actions: ValueOf<'v, StarlarkDynamicActions<'v>>,
-    ) -> starlark::Result<StarlarkDynamicValue> {
+        heap: Heap<'v>,
+    ) -> starlark::Result<ValueOf<'v, StarlarkDynamicValue>> {
         let dynamic_actions = dynamic_actions
             .data
             .try_borrow_mut()
@@ -288,10 +290,13 @@ pub(crate) fn analysis_actions_methods_dynamic_output(methods: &mut MethodsBuild
 
         lambda_params_storage.set_dynamic_actions(key.dupe(), lambda_params)?;
 
-        Ok(StarlarkDynamicValue {
-            dynamic_value: DynamicValue {
-                dynamic_lambda_results_key: key,
+        Ok(ValueOf::alloc(
+            heap,
+            StarlarkDynamicValue {
+                dynamic_value: DynamicValue {
+                    dynamic_lambda_results_key: key,
+                },
             },
-        })
+        ))
     }
 }

@@ -22,7 +22,6 @@ use starlark::environment::Methods;
 use starlark::environment::MethodsBuilder;
 use starlark::eval::Evaluator;
 use starlark::starlark_module;
-use starlark::values::AllocValue;
 use starlark::values::Heap;
 use starlark::values::NoSerialize;
 use starlark::values::StarlarkValue;
@@ -173,9 +172,9 @@ impl<'v> StarlarkPromise<'v> {
         match x.get() {
             Some(x) => Ok(eval
                 .heap()
-                .alloc_typed(Self::new_resolved(Self::apply(f, x, eval)?))),
+                .alloc_representation(Self::new_resolved(Self::apply(f, x, eval)?))),
             _ => {
-                let res = eval.heap().alloc_typed(Self {
+                let res = eval.heap().alloc_representation(Self {
                     value: RefCell::new(PromiseValue::Map(x, f)),
                     ..Self::new_unresolved()
                 });
@@ -191,10 +190,12 @@ impl<'v> StarlarkPromise<'v> {
     ) -> ValueTyped<'v, StarlarkPromise<'v>> {
         let join = PromiseJoin::new(args);
         match join.get() {
-            Some(values) => heap.alloc_typed(Self::new_resolved(heap.alloc(AllocList(values)))),
+            Some(values) => {
+                heap.alloc_representation(Self::new_resolved(heap.alloc(AllocList(values))))
+            }
             None => {
                 let promise = Self::new_unresolved();
-                let value = heap.alloc_typed(promise);
+                let value = heap.alloc_representation(promise);
                 for arg in &join.items {
                     arg.downstream.borrow_mut().push(value);
                 }
@@ -269,15 +270,6 @@ impl<'v> StarlarkPromise<'v> {
     /// Downcast the value.
     pub fn from_value(x: Value<'v>) -> Option<&'v Self> {
         x.downcast_ref()
-    }
-}
-
-// We can't use `starlark_complex_value!` because there is no frozen form of a promise
-
-impl<'v> AllocValue<'v> for StarlarkPromise<'v> {
-    fn alloc_value(self, heap: Heap<'v>) -> Value<'v> {
-        // FIXME: need to be able to freeze things that are resolved
-        heap.alloc_complex_no_freeze(self)
     }
 }
 
@@ -358,13 +350,18 @@ mod tests {
             eval: &mut Evaluator<'v, '_, '_>,
         ) -> starlark::Result<ValueTyped<'v, StarlarkPromise<'v>>> {
             let promises = get_promises(eval.module());
-            let promise = eval.heap().alloc_typed(StarlarkPromise::new_unresolved());
+            let promise = eval
+                .heap()
+                .alloc_representation(StarlarkPromise::new_unresolved());
             promises.0.borrow_mut().push((name, promise));
             Ok(promise)
         }
 
-        fn promise_resolved<'v>(value: Value<'v>) -> starlark::Result<StarlarkPromise<'v>> {
-            Ok(StarlarkPromise::new_resolved(value))
+        fn promise_resolved<'v>(
+            value: Value<'v>,
+            heap: Heap<'v>,
+        ) -> starlark::Result<ValueTyped<'v, StarlarkPromise<'v>>> {
+            Ok(heap.alloc_representation(StarlarkPromise::new_resolved(value)))
         }
 
         fn promise_validate<'v>(

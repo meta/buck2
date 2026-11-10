@@ -11,6 +11,7 @@
 use buck2_node::visibility::StarlarkTargetNameGlob;
 use starlark::environment::GlobalsBuilder;
 use starlark::starlark_module;
+use starlark::values::Heap;
 use starlark::values::ValueOf;
 use starlark::values::list_or_tuple::ListOrTupleType;
 
@@ -50,7 +51,8 @@ pub(crate) fn register_target_name_glob(builder: &mut GlobalsBuilder) {
             'v,
             ListOrTupleType<&'v str>,
         >,
-    ) -> starlark::Result<StarlarkTargetNameGlob> {
+        heap: Heap<'v>,
+    ) -> starlark::Result<ValueOf<'v, StarlarkTargetNameGlob>> {
         let name_globs = name_globs
             .try_items()
             .map(|s| s.map(str::to_owned))
@@ -59,6 +61,9 @@ pub(crate) fn register_target_name_glob(builder: &mut GlobalsBuilder) {
             .try_items()
             .map(|s| s.map(str::to_owned))
             .collect::<starlark::Result<_>>()?;
-        Ok(StarlarkTargetNameGlob::try_new(name_globs, within)?)
+        Ok(ValueOf::alloc(
+            heap,
+            StarlarkTargetNameGlob::try_new(name_globs, within)?,
+        ))
     }
 }

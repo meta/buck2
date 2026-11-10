@@ -27,6 +27,7 @@ use starlark::values::Heap;
 use starlark::values::NoSerialize;
 use starlark::values::StarlarkValue;
 use starlark::values::Value;
+use starlark::values::ValueOf;
 use starlark::values::ValueTyped;
 use starlark::values::starlark_value;
 
@@ -143,9 +144,13 @@ fn starlark_analysis_result_methods(builder: &mut MethodsBuilder) {
     ///         if analysis:
     ///             ctx.output.print(analysis.label())
     /// ```
-    fn label(this: &StarlarkAnalysisResult) -> starlark::Result<StarlarkConfiguredProvidersLabel> {
-        Ok(StarlarkConfiguredProvidersLabel::new(
-            this.lookup.label().dupe(),
+    fn label<'v>(
+        this: &StarlarkAnalysisResult,
+        heap: Heap<'v>,
+    ) -> starlark::Result<ValueOf<'v, StarlarkConfiguredProvidersLabel>> {
+        Ok(ValueOf::alloc(
+            heap,
+            StarlarkConfiguredProvidersLabel::new(this.lookup.label().dupe()),
         ))
     }
 
@@ -166,7 +171,7 @@ fn starlark_analysis_result_methods(builder: &mut MethodsBuilder) {
         this: &'v StarlarkAnalysisResult,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<ValueTyped<'v, Dependency<'v>>> {
-        Ok(eval.heap().alloc_typed(Dependency::new(
+        Ok(eval.heap().alloc_representation(Dependency::new(
             eval.heap(),
             this.lookup.label().dupe(),
             this.lookup

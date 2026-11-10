@@ -14,9 +14,11 @@ use starlark::any::ProvidesStaticType;
 use starlark::environment::GlobalsBuilder;
 use starlark::starlark_module;
 use starlark::values::Freeze;
+use starlark::values::Heap;
 use starlark::values::StarlarkPagable;
 use starlark::values::Trace;
 use starlark::values::ValueOf;
+use starlark::values::ValueTyped;
 use starlark::values::list::ListType;
 use starlark::values::string::StarlarkStr;
 
@@ -46,10 +48,11 @@ fn dep_only_incompatible_custom_soft_error_creator(globals: &mut GlobalsBuilder)
     fn DepOnlyIncompatibleRollout<'v>(
         #[starlark(require = named)] target_patterns: ValueOf<'v, ListType<StarlarkStr>>,
         #[starlark(require = named)] exclusions: ValueOf<'v, ListType<StarlarkStr>>,
-    ) -> starlark::Result<DepOnlyIncompatibleRollout<'v>> {
-        Ok(DepOnlyIncompatibleRollout {
+        heap: Heap<'v>,
+    ) -> starlark::Result<ValueTyped<'v, DepOnlyIncompatibleRollout<'v>>> {
+        Ok(heap.alloc_representation(DepOnlyIncompatibleRollout {
             target_patterns,
             exclusions,
-        })
+        }))
     }
 }

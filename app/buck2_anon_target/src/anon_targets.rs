@@ -577,7 +577,7 @@ impl AnonTargetKey {
                     // into anon targets
                     Some(
                         eval.heap()
-                            .alloc_typed(AnalysisPlugins::new(BuckMutInsertionMap::new()))
+                            .alloc_representation(AnalysisPlugins::new(BuckMutInsertionMap::new()))
                             .into(),
                     ),
                     registry,
@@ -597,7 +597,7 @@ impl AnonTargetKey {
                 .await?;
 
             let res_typed = ProviderCollection::try_from_value(list_res)?;
-            let res = env.heap().alloc(res_typed);
+            let res = env.heap().alloc_representation(res_typed).to_value();
 
             let fulfilled_artifact_mappings = reentrant_eval.with_evaluator(|eval| {
                 let promise_artifact_mappings = rule_impl.promise_artifact_mappings(eval)?;

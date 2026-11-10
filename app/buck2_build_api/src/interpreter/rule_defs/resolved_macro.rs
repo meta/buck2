@@ -402,7 +402,9 @@ mod tests {
     fn test_equals_resolved_string_vs_resolved_string() {
         Heap::temp(|heap| {
             let resolved = make_string_resolved("-resolved-flag");
-            let other_val = heap.alloc(make_string_resolved("-resolved-flag"));
+            let other_val = heap
+                .alloc_representation(make_string_resolved("-resolved-flag"))
+                .to_value();
             assert_eq!(resolved.equals(other_val).unwrap(), true);
         });
     }

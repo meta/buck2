@@ -21,12 +21,10 @@ use starlark::environment::GlobalsBuilder;
 use starlark::eval::Evaluator;
 use starlark::starlark_module;
 use starlark::starlark_simple_value;
-use starlark::values::AllocValue;
 use starlark::values::Freeze;
 use starlark::values::FreezeError;
 use starlark::values::FreezeResult;
 use starlark::values::Freezer;
-use starlark::values::Heap;
 use starlark::values::NoSerialize;
 use starlark::values::ProvidesStaticType;
 use starlark::values::StarlarkPagable;
@@ -90,12 +88,6 @@ impl StarlarkPluginKind {
             InnerStarlarkPluginKind::Unbound(_) => Err(PluginKindError::NotBound.into()),
             InnerStarlarkPluginKind::Bound(kind) => Ok(kind.dupe()),
         }
-    }
-}
-
-impl<'v> AllocValue<'v> for StarlarkPluginKind {
-    fn alloc_value(self, heap: Heap<'v>) -> Value<'v> {
-        heap.alloc_complex(self)
     }
 }
 
@@ -264,14 +256,18 @@ fn register_plugins_methods(r: &mut GlobalsBuilder) {
     /// - `attrs.dep(pulls_plugins = [MyKind])` to pull plugins from deps without propagating
     /// - `attrs.dep(pulls_and_pushes_plugins = [MyKind])` to pull and propagate plugins to rdeps
     /// - `rule(..., uses_plugins = [MyKind])` to access plugins via `ctx.plugins[MyKind]`
-    fn kind<'v>(eval: &mut Evaluator<'v, '_, '_>) -> starlark::Result<StarlarkPluginKind> {
+    fn kind<'v>(
+        eval: &mut Evaluator<'v, '_, '_>,
+    ) -> starlark::Result<ValueTyped<'v, StarlarkPluginKind>> {
         let cell_path = BuildContext::from_context(eval)?
             .starlark_path()
             .path()
             .into_owned();
-        Ok(StarlarkPluginKind(RefCell::new(
-            InnerStarlarkPluginKind::Unbound(cell_path),
-        )))
+        Ok(eval
+            .heap()
+            .alloc_representation(StarlarkPluginKind(RefCell::new(
+                InnerStarlarkPluginKind::Unbound(cell_path),
+            ))))
     }
 
     /// A special value for use with `pulls_and_pushes_plugins`.
@@ -282,6 +278,7 @@ fn register_plugins_methods(r: &mut GlobalsBuilder) {
     ///
     /// This value is not supported on `uses_plugins` at this time, and hence it is not useful on
     /// `pulls_plugins` either.
+    #[starlark(representation)]
     const All: AllPlugins = AllPlugins;
 }
 

@@ -221,7 +221,7 @@ impl<'v> AnalysisRegistry<'v> {
                     },
                     heap,
                 )?;
-                heap.alloc_typed(StarlarkDeclaredArtifact::new(
+                heap.alloc_representation(StarlarkDeclaredArtifact::new(
                     declaration_location,
                     artifact,
                     AssociatedArtifacts::new(),
@@ -318,7 +318,7 @@ impl<'v> AnalysisRegistry<'v> {
             .register_transitive_set(move |key| {
                 let set =
                     TransitiveSet::new_from_values(key.dupe(), definition, value, children, eval)?;
-                Ok(eval.heap().alloc_typed(set))
+                Ok(eval.heap().alloc_representation(set))
             })?)
     }
 
@@ -406,7 +406,7 @@ impl<'v> ArtifactDeclaration<'v> {
         self,
         extra_associated_artifacts: AssociatedArtifacts,
     ) -> ValueTyped<'v, StarlarkDeclaredArtifact<'v>> {
-        self.heap.alloc_typed(
+        self.heap.alloc_representation(
             self.artifact
                 .with_extended_associated_artifacts(extra_associated_artifacts),
         )

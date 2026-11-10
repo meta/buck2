@@ -19,9 +19,11 @@ use starlark::any::ProvidesStaticType;
 use starlark::environment::GlobalsBuilder;
 use starlark::values::Freeze;
 use starlark::values::FreezeError;
+use starlark::values::Heap;
 use starlark::values::StarlarkPagable;
 use starlark::values::Trace;
 use starlark::values::ValueOf;
+use starlark::values::ValueTyped;
 use starlark::values::dict::DictType;
 use starlark::values::string::StarlarkStr;
 
@@ -90,10 +92,11 @@ fn install_info_creator(globals: &mut GlobalsBuilder) {
     fn InstallInfo<'v>(
         installer: ValueOf<'v, StarlarkConfiguredProvidersLabel>,
         files: ValueOf<'v, DictType<StarlarkStr, StarlarkArtifactView<'v>>>,
-    ) -> starlark::Result<InstallInfo<'v>> {
+        heap: Heap<'v>,
+    ) -> starlark::Result<ValueTyped<'v, InstallInfo<'v>>> {
         let info = InstallInfo { installer, files };
         validate_install_info(&info)?;
-        Ok(info)
+        Ok(heap.alloc_representation(info))
     }
 }
 

@@ -92,7 +92,8 @@ async fn eval_pre_constraint_analysis<'v, 'a>(
 
         let legacy_platform = if cfg.is_bound() {
             eval.heap()
-                .alloc(PlatformInfo::from_configuration(cfg, eval.heap())?)
+                .alloc_representation(PlatformInfo::from_configuration(cfg, eval.heap())?)
+                .to_value()
         } else {
             Value::new_none()
         };

@@ -119,7 +119,10 @@ impl AnonTargetAttrResolution for AnonTargetAttr {
             AnonTargetAttr::None => Ok(Value::new_none()),
             AnonTargetAttr::OneOf(box l, _) => l.resolve_single(pkg, anon_resolution_ctx),
             AnonTargetAttr::Dep(d) => Ok(DepAttrType::resolve_single(&mut ctx, d)?),
-            AnonTargetAttr::Artifact(d) => Ok(ctx.heap().alloc(StarlarkArtifact::new(d.dupe()))),
+            AnonTargetAttr::Artifact(d) => Ok(ctx
+                .heap()
+                .alloc_representation(StarlarkArtifact::new(d.dupe()))
+                .to_value()),
             AnonTargetAttr::Arg(a) => Ok(a.resolve(&mut ctx, pkg)?),
             AnonTargetAttr::PromiseArtifact(box promise_artifact_attr) => {
                 let promise_id = promise_artifact_attr.id.dupe();
@@ -173,11 +176,15 @@ impl AnonTargetAttrResolution for AnonTargetAttr {
                 );
                 // To resolve the promise artifact attr, we end up creating a new `StarlarkPromiseArtifact` with the `OnceLock` set
                 // with the artifact that was found from the upstream analysis.
-                Ok(ctx.heap().alloc(fulfilled_promise_artifact))
+                Ok(ctx
+                    .heap()
+                    .alloc_representation(fulfilled_promise_artifact)
+                    .to_value())
             }
-            AnonTargetAttr::Label(label) => {
-                Ok(ctx.heap().alloc(StarlarkProvidersLabel::new(label.dupe())))
-            }
+            AnonTargetAttr::Label(label) => Ok(ctx
+                .heap()
+                .alloc_representation(StarlarkProvidersLabel::new(label.dupe()))
+                .to_value()),
         }
     }
 }

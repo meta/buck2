@@ -18,12 +18,10 @@ use dupe::Dupe;
 use pagable::Pagable;
 use starlark::eval::Evaluator;
 use starlark::starlark_simple_value;
-use starlark::values::AllocValue;
 use starlark::values::Freeze;
 use starlark::values::FreezeError;
 use starlark::values::FreezeResult;
 use starlark::values::Freezer;
-use starlark::values::Heap;
 use starlark::values::NoSerialize;
 use starlark::values::ProvidesStaticType;
 use starlark::values::StarlarkPagable;
@@ -31,7 +29,6 @@ use starlark::values::StarlarkRepresentations;
 use starlark::values::StarlarkType;
 use starlark::values::StarlarkValue;
 use starlark::values::Trace;
-use starlark::values::Value;
 use starlark::values::ValueTyped;
 use starlark::values::starlark_value;
 
@@ -100,12 +97,6 @@ impl StarlarkExecutionGroup {
             InnerStarlarkExecutionGroup::Unbound(_) => Err(ExecutionGroupError::NotBound.into()),
             InnerStarlarkExecutionGroup::Bound(group) => Ok(group.dupe()),
         }
-    }
-}
-
-impl<'v> AllocValue<'v> for StarlarkExecutionGroup {
-    fn alloc_value(self, heap: Heap<'v>) -> Value<'v> {
-        heap.alloc_complex(self)
     }
 }
 

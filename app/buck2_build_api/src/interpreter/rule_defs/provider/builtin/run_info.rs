@@ -98,12 +98,12 @@ fn run_info_creator(globals: &mut GlobalsBuilder) {
         #[starlark(default = StarlarkCommandLineValueUnpack::List(ValueOf::empty_list()))]
         args: StarlarkCommandLineValueUnpack<'v>,
         eval: &mut Evaluator<'v, '_, '_>,
-    ) -> starlark::Result<RunInfo<'v>> {
+    ) -> starlark::Result<ValueTyped<'v, RunInfo<'v>>> {
         let heap = eval.heap();
         let valid_args = StarlarkCmdArgs::try_from_value_typed(args)?;
-        Ok(RunInfo {
+        Ok(heap.alloc_representation(RunInfo {
             args: ValueOf::alloc(heap, valid_args),
-        })
+        }))
     }
 }
 

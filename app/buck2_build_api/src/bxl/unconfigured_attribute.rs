@@ -190,41 +190,58 @@ pub(crate) fn ref_to_value<'v>(
             heap.alloc(res)
         }
         CoercedAttrRefKind::OneOf((_, l)) => ref_to_value(l, owner, pkg, heap)?,
-        CoercedAttrRefKind::Selector(_) => {
-            heap.alloc(StarlarkSelectDict::new(owner.sub(attr), pkg.dupe()))
-        }
-        CoercedAttrRefKind::Concat(_) => {
-            heap.alloc(StarlarkSelectConcat::new(owner.sub(attr), pkg.dupe()))
-        }
-        CoercedAttrRefKind::Dep(d) => heap.alloc(StarlarkProvidersLabel::new(d.dupe())),
-        CoercedAttrRefKind::Label(l) => heap.alloc(StarlarkProvidersLabel::new(l.dupe())),
-        CoercedAttrRefKind::SourceLabel(s) => heap.alloc(StarlarkProvidersLabel::new(s.dupe())),
+        CoercedAttrRefKind::Selector(_) => heap
+            .alloc_representation(StarlarkSelectDict::new(owner.sub(attr), pkg.dupe()))
+            .to_value(),
+        CoercedAttrRefKind::Concat(_) => heap
+            .alloc_representation(StarlarkSelectConcat::new(owner.sub(attr), pkg.dupe()))
+            .to_value(),
+        CoercedAttrRefKind::Dep(d) => heap
+            .alloc_representation(StarlarkProvidersLabel::new(d.dupe()))
+            .to_value(),
+        CoercedAttrRefKind::Label(l) => heap
+            .alloc_representation(StarlarkProvidersLabel::new(l.dupe()))
+            .to_value(),
+        CoercedAttrRefKind::SourceLabel(s) => heap
+            .alloc_representation(StarlarkProvidersLabel::new(s.dupe()))
+            .to_value(),
         CoercedAttrRefKind::ConfigurationDep(c) => {
             // TODO(T198210718)
-            heap.alloc(StarlarkTargetLabel::new(c.target().dupe()))
+            heap.alloc_representation(StarlarkTargetLabel::new(c.target().dupe()))
+                .to_value()
         }
-        CoercedAttrRefKind::SplitTransitionDep(d) => {
-            heap.alloc(StarlarkProvidersLabel::new(d.dupe()))
-        }
-        CoercedAttrRefKind::PluginDep(d) => heap.alloc(StarlarkTargetLabel::new(d.dupe())),
-        CoercedAttrRefKind::SourceFile(f) => heap.alloc(StarlarkArtifact::new(Artifact::from(
-            SourceArtifact::new(SourcePath::new(pkg.to_owned(), f.path().dupe())),
-        ))),
-        CoercedAttrRefKind::SelectFail(message) => {
-            heap.alloc(StarlarkSelectFail::new(heap.alloc_str(message)))
-        }
-        CoercedAttrRefKind::SelectIncompatible(message) => {
-            heap.alloc(StarlarkSelectIncompatible::new(heap.alloc_str(message)))
-        }
+        CoercedAttrRefKind::SplitTransitionDep(d) => heap
+            .alloc_representation(StarlarkProvidersLabel::new(d.dupe()))
+            .to_value(),
+        CoercedAttrRefKind::PluginDep(d) => heap
+            .alloc_representation(StarlarkTargetLabel::new(d.dupe()))
+            .to_value(),
+        CoercedAttrRefKind::SourceFile(f) => heap
+            .alloc_representation(StarlarkArtifact::new(Artifact::from(SourceArtifact::new(
+                SourcePath::new(pkg.to_owned(), f.path().dupe()),
+            ))))
+            .to_value(),
+        CoercedAttrRefKind::SelectFail(message) => heap
+            .alloc_representation(StarlarkSelectFail::new(heap.alloc_str(message)))
+            .to_value(),
+        CoercedAttrRefKind::SelectIncompatible(message) => heap
+            .alloc_representation(StarlarkSelectIncompatible::new(heap.alloc_str(message)))
+            .to_value(),
         // TODO(@wendyy) - this needs better support
-        CoercedAttrRefKind::ExplicitConfiguredDep((label, _)) => {
-            heap.alloc(StarlarkProvidersLabel::new(label.dupe()))
-        }
+        CoercedAttrRefKind::ExplicitConfiguredDep((label, _)) => heap
+            .alloc_representation(StarlarkProvidersLabel::new(label.dupe()))
+            .to_value(),
         CoercedAttrRefKind::TransitionDep((dep, transition)) => {
-            let label = StarlarkProvidersLabel::new(dep.dupe());
+            let label = heap
+                .alloc_representation(StarlarkProvidersLabel::new(dep.dupe()))
+                .to_value();
             match transition {
-                Some(t) => heap.alloc((label, StarlarkProvidersLabel::new(t.dupe()))),
-                None => heap.alloc(label),
+                Some(t) => heap.alloc((
+                    label,
+                    heap.alloc_representation(StarlarkProvidersLabel::new(t.dupe()))
+                        .to_value(),
+                )),
+                None => label,
             }
         }
         CoercedAttrRefKind::Query(q) => heap.alloc(q.query().0),

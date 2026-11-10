@@ -124,7 +124,6 @@ use mini_vec::MiniBoxSlice;
 use pagable::Pagable;
 use pagable::pagable_typetag;
 use serde_json::json;
-use starlark::values::AllocValue;
 use starlark::values::Freeze;
 use starlark::values::FreezeResult;
 use starlark::values::Freezer;
@@ -394,12 +393,6 @@ impl<'v> StarlarkValue<'v> for StarlarkRunActionValues<'v> {
 #[starlark_value(frozen_vtable)]
 impl<'v> StarlarkValue<'v> for FrozenStarlarkRunActionValues<'v> {
     type Type = StarlarkRunActionValuesView<'v>;
-}
-
-impl<'v> AllocValue<'v> for StarlarkRunActionValues<'v> {
-    fn alloc_value(self, heap: Heap<'v>) -> Value<'v> {
-        heap.alloc_complex(self)
-    }
 }
 
 impl<'v> Freeze<'v> for StarlarkRunActionValues<'v> {
@@ -2004,13 +1997,25 @@ mod tests {
             });
             module.set(
                 "visible",
-                module.heap().alloc(StarlarkArtifact::new(visible.dupe())),
+                module
+                    .heap()
+                    .alloc_representation(StarlarkArtifact::new(visible.dupe()))
+                    .to_value(),
             );
             module.set(
                 "hidden",
-                module.heap().alloc(StarlarkArtifact::new(hidden.dupe())),
+                module
+                    .heap()
+                    .alloc_representation(StarlarkArtifact::new(hidden.dupe()))
+                    .to_value(),
             );
-            module.set("tag", module.heap().alloc(ArtifactTag::testing_new()));
+            module.set(
+                "tag",
+                module
+                    .heap()
+                    .alloc_representation(ArtifactTag::testing_new())
+                    .to_value(),
+            );
             let globals = GlobalsBuilder::standard().with(register_cmd_args).build();
             let ast = AstModule::parse(
                 "test.bzl",

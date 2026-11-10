@@ -30,6 +30,7 @@ use starlark::values::StarlarkValue;
 use starlark::values::StringValue;
 use starlark::values::UnpackValue;
 use starlark::values::Value;
+use starlark::values::ValueOf;
 use starlark::values::list::AllocList;
 use starlark::values::none::NoneOr;
 use starlark::values::starlark_value;
@@ -87,22 +88,23 @@ fn target_node_value_methods(builder: &mut MethodsBuilder) {
     ///     ctx.output.print(target_node.attrs.my_attr)
     /// ```
     #[starlark(attribute)]
-    fn attrs<'v>(this: StarlarkTargetNode, heap: Heap<'_>) -> starlark::Result<Value<'v>> {
+    fn attrs<'v>(this: StarlarkTargetNode, heap: Heap<'v>) -> starlark::Result<Value<'v>> {
         let attrs_iter = this.0.owned_attrs(AttrInspectOptions::All);
         let special_attrs_iter = this.0.special_attrs();
+        let pkg = this.0.label().pkg();
         let attrs = attrs_iter
             .map(|(name, value)| -> buck2_error::Result<_> {
-                Ok((
-                    name,
-                    StarlarkCoercedAttr(value, this.0.label().pkg().dupe()),
-                ))
+                Ok((name, StarlarkCoercedAttr(value, pkg.dupe())))
             })
             .chain(special_attrs_iter.map(|(name, attr)| {
                 Ok((
                     name,
-                    StarlarkCoercedAttr(attr.to_owned_coerced()?, this.0.label().pkg().dupe()),
+                    StarlarkCoercedAttr(attr.to_owned_coerced()?, pkg.dupe()),
                 ))
-            }));
+            }))
+            .map(|entry| {
+                entry.map(|(name, attr)| (name, heap.alloc_representation(attr).to_value()))
+            });
 
         Ok(itertools::process_results(attrs, |attrs| {
             heap.alloc(AllocStruct(attrs))
@@ -173,8 +175,14 @@ fn target_node_value_methods(builder: &mut MethodsBuilder) {
     ///     ctx.output.print(target_node.label)
     /// ```
     #[starlark(attribute)]
-    fn label(this: &StarlarkTargetNode) -> starlark::Result<StarlarkTargetLabel> {
-        Ok(this.0.label().dupe().into())
+    fn label<'v>(
+        this: &StarlarkTargetNode,
+        heap: Heap<'v>,
+    ) -> starlark::Result<ValueOf<'v, StarlarkTargetLabel>> {
+        Ok(ValueOf::alloc(
+            heap,
+            StarlarkTargetLabel::new(this.0.label().dupe()),
+        ))
     }
 
     /// Gets the buildfile path from the unconfigured target node.
@@ -186,8 +194,14 @@ fn target_node_value_methods(builder: &mut MethodsBuilder) {
     ///     ctx.output.print(target_node.buildfile_path)
     /// ```
     #[starlark(attribute)]
-    fn buildfile_path(this: &StarlarkTargetNode) -> starlark::Result<StarlarkFileNode> {
-        Ok(StarlarkFileNode(this.0.buildfile_path().path()))
+    fn buildfile_path<'v>(
+        this: &StarlarkTargetNode,
+        heap: Heap<'v>,
+    ) -> starlark::Result<ValueOf<'v, StarlarkFileNode>> {
+        Ok(ValueOf::alloc(
+            heap,
+            StarlarkFileNode(this.0.buildfile_path().path()),
+        ))
     }
 
     /// Gets the fully qualified name of the rule for this unconfigured target node as a
@@ -256,12 +270,12 @@ fn target_node_value_methods(builder: &mut MethodsBuilder) {
     /// ```
     fn deps<'v>(
         this: &'v StarlarkTargetNode,
-    ) -> starlark::Result<AllocList<impl IntoIterator<Item = StarlarkTargetLabel> + 'v>> {
-        Ok(AllocList(
-            this.0
-                .deps()
-                .map(|label| StarlarkTargetLabel::new(label.dupe())),
-        ))
+        heap: Heap<'v>,
+    ) -> starlark::Result<AllocList<impl IntoIterator<Item = ValueOf<'v, StarlarkTargetLabel>> + 'v>>
+    {
+        Ok(AllocList(this.0.deps().map(move |label| {
+            ValueOf::alloc(heap, StarlarkTargetLabel::new(label.dupe()))
+        })))
     }
 
     /// Gets all files which are an immediate input to the rule function and thus are needed to go through analysis.
@@ -275,7 +289,11 @@ fn target_node_value_methods(builder: &mut MethodsBuilder) {
     /// ```
     fn inputs<'v>(
         this: &'v StarlarkTargetNode,
-    ) -> starlark::Result<AllocList<impl IntoIterator<Item = StarlarkCellPath> + 'v>> {
-        Ok(AllocList(this.0.inputs().map(StarlarkCellPath)))
+        heap: Heap<'v>,
+    ) -> starlark::Result<AllocList<impl IntoIterator<Item = ValueOf<'v, StarlarkCellPath>> + 'v>>
+    {
+        Ok(AllocList(this.0.inputs().map(move |path| {
+            ValueOf::alloc(heap, StarlarkCellPath(path))
+        })))
     }
 }

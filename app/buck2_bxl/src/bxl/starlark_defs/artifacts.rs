@@ -35,7 +35,6 @@ use starlark::collections::StarlarkHasher;
 use starlark::environment::Methods;
 use starlark::environment::MethodsBuilder;
 use starlark::starlark_module;
-use starlark::values::AllocValue;
 use starlark::values::Heap;
 use starlark::values::StarlarkValue;
 use starlark::values::Trace;
@@ -124,7 +123,9 @@ pub(crate) struct EnsuredArtifactGroup<'v> {
 impl<'v> EnsuredArtifactGroup<'v> {
     pub(crate) fn new(ags: Vec<ArtifactGroup>, abs: bool, heap: Heap<'v>) -> Self {
         EnsuredArtifactGroup {
-            inner: heap.alloc(EnsuredArtifactGroupInner { ags }),
+            inner: heap
+                .alloc_representation(EnsuredArtifactGroupInner { ags })
+                .to_value(),
 
             abs,
         }
@@ -255,24 +256,6 @@ impl Display for EnsuredArtifactGroupInner {
     }
 }
 
-impl<'v> AllocValue<'v> for EnsuredArtifact {
-    fn alloc_value(self, heap: Heap<'v>) -> Value<'v> {
-        heap.alloc_complex_no_freeze(self)
-    }
-}
-
-impl<'v> AllocValue<'v> for EnsuredArtifactGroup<'v> {
-    fn alloc_value(self, heap: Heap<'v>) -> Value<'v> {
-        heap.alloc_complex_no_freeze(self)
-    }
-}
-
-impl<'v> AllocValue<'v> for EnsuredArtifactGroupInner {
-    fn alloc_value(self, heap: Heap<'v>) -> Value<'v> {
-        heap.alloc_complex_no_freeze(self)
-    }
-}
-
 impl Serialize for EnsuredArtifact {
     fn serialize<S>(&self, s: S) -> Result<S::Ok, S::Error>
     where
@@ -352,7 +335,7 @@ fn ensured_artifact_methods(builder: &mut MethodsBuilder) {
                 abs: true,
             };
 
-            Ok(heap.alloc_typed(artifact))
+            Ok(heap.alloc_representation(artifact))
         }
     }
 
@@ -383,7 +366,7 @@ fn ensured_artifact_methods(builder: &mut MethodsBuilder) {
                 abs: false,
             };
 
-            Ok(heap.alloc_typed(artifact))
+            Ok(heap.alloc_representation(artifact))
         }
     }
 }
@@ -422,7 +405,7 @@ fn artifact_group_methods(builder: &mut MethodsBuilder) {
                 abs: true,
             };
 
-            Ok(heap.alloc_typed(artifact))
+            Ok(heap.alloc_representation(artifact))
         }
     }
 
@@ -453,7 +436,7 @@ fn artifact_group_methods(builder: &mut MethodsBuilder) {
                 abs: false,
             };
 
-            Ok(heap.alloc_typed(artifact))
+            Ok(heap.alloc_representation(artifact))
         }
     }
 }

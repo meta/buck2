@@ -47,6 +47,7 @@ use starlark::values::FreezeError;
 use starlark::values::FreezeResult;
 use starlark::values::Freezer;
 use starlark::values::FrozenValueTyped;
+use starlark::values::Heap;
 use starlark::values::StarlarkPagable;
 use starlark::values::StarlarkValue;
 use starlark::values::ThinBoxSliceValue;
@@ -778,36 +779,38 @@ fn transitive_set_methods(builder: &mut MethodsBuilder) {
         this: ValueTyped<'v, TransitiveSet<'v>>,
         projection: &str,
         #[starlark(require = named, default = "preorder")] ordering: &str,
-    ) -> starlark::Result<TransitiveSetJsonProjection<'v>> {
+        heap: Heap<'v>,
+    ) -> starlark::Result<ValueTyped<'v, TransitiveSetJsonProjection<'v>>> {
         let def = this.definition;
 
         let index = def
             .operations()
             .get_index_of_projection(TransitiveSetProjectionKind::Json, projection)?;
 
-        Ok(TransitiveSetJsonProjection {
+        Ok(heap.alloc_representation(TransitiveSetJsonProjection {
             transitive_set: this,
             projection: index,
             ordering: TransitiveSetOrdering::parse(ordering)?,
-        })
+        }))
     }
 
     fn project_as_args<'v>(
         this: ValueTyped<'v, TransitiveSet<'v>>,
         projection: &str,
         #[starlark(require = named, default = "preorder")] ordering: &str,
-    ) -> starlark::Result<TransitiveSetArgsProjection<'v>> {
+        heap: Heap<'v>,
+    ) -> starlark::Result<ValueTyped<'v, TransitiveSetArgsProjection<'v>>> {
         let def = this.definition;
 
         let index = def
             .operations()
             .get_index_of_projection(TransitiveSetProjectionKind::Args, projection)?;
 
-        Ok(TransitiveSetArgsProjection {
+        Ok(heap.alloc_representation(TransitiveSetArgsProjection {
             transitive_set: this,
             projection: index,
             ordering: TransitiveSetOrdering::parse(ordering)?,
-        })
+        }))
     }
 
     fn reduce<'v>(
@@ -844,11 +847,12 @@ fn transitive_set_methods(builder: &mut MethodsBuilder) {
     fn traverse<'v>(
         this: ValueTyped<'v, TransitiveSet<'v>>,
         #[starlark(require = named, default = "preorder")] ordering: &str,
-    ) -> starlark::Result<TransitiveSetTraversal<'v>> {
-        Ok(TransitiveSetTraversal {
+        heap: Heap<'v>,
+    ) -> starlark::Result<ValueTyped<'v, TransitiveSetTraversal<'v>>> {
+        Ok(heap.alloc_representation(TransitiveSetTraversal {
             inner: this.to_value(),
             ordering: TransitiveSetOrdering::parse(ordering)?,
-        })
+        }))
     }
 
     #[starlark(attribute)]

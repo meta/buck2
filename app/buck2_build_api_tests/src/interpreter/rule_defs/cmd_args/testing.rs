@@ -30,6 +30,7 @@ use buck2_interpreter_for_build::label::testing::label_creator;
 use buck2_util::strong_hasher::Blake3StrongHasher;
 use starlark::environment::GlobalsBuilder;
 use starlark::starlark_module;
+use starlark::values::Heap;
 use starlark::values::UnpackValue;
 use starlark::values::Value;
 use starlark::values::ValueOf;
@@ -109,7 +110,8 @@ pub(crate) fn command_line_stringifier(builder: &mut GlobalsBuilder) {
 pub(crate) fn inputs_helper(builder: &mut GlobalsBuilder) {
     fn make_inputs<'v>(
         values: ValueOf<'v, ListOrTupleType<Value<'v>>>,
-    ) -> starlark::Result<StarlarkCommandLineInputs> {
+        heap: Heap<'v>,
+    ) -> starlark::Result<ValueOf<'v, StarlarkCommandLineInputs>> {
         let mut visitor = SimpleCommandLineArtifactVisitor::new();
         for v in values.try_items() {
             let v = v?;
@@ -117,9 +119,12 @@ pub(crate) fn inputs_helper(builder: &mut GlobalsBuilder) {
             cli.visit_artifacts(&mut visitor)?;
         }
 
-        Ok(StarlarkCommandLineInputs {
-            inputs: visitor.inputs,
-        })
+        Ok(ValueOf::alloc(
+            heap,
+            StarlarkCommandLineInputs {
+                inputs: visitor.inputs,
+            },
+        ))
     }
 }
 

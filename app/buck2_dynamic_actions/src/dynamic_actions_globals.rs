@@ -20,7 +20,9 @@ use starlark::typing::ParamIsRequired;
 use starlark::typing::ParamSpec;
 use starlark::typing::Ty;
 use starlark::util::ArcStr;
+use starlark::values::Heap;
 use starlark::values::ValueOf;
+use starlark::values::ValueTyped;
 use starlark::values::dict::DictType;
 use starlark::values::type_repr::StarlarkTypeRepr;
 use starlark::values::typing::StarlarkCallableChecked;
@@ -118,7 +120,8 @@ pub fn register_dynamic_actions(globals: &mut GlobalsBuilder) {
             'v,
             DictType<String, StarlarkDynamicAttrType<'v>>,
         >,
-    ) -> starlark::Result<DynamicActionsCallable<'v>> {
-        Ok(new_dynamic_actions_callable(r#impl, attrs, &P_ACTIONS)?)
+        heap: Heap<'v>,
+    ) -> starlark::Result<ValueTyped<'v, DynamicActionsCallable<'v>>> {
+        Ok(heap.alloc_representation(new_dynamic_actions_callable(r#impl, attrs, &P_ACTIONS)?))
     }
 }

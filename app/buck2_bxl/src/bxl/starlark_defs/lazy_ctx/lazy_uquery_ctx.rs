@@ -16,9 +16,11 @@ use starlark::environment::Methods;
 use starlark::environment::MethodsBuilder;
 use starlark::starlark_module;
 use starlark::starlark_simple_value;
+use starlark::values::Heap;
 use starlark::values::NoSerialize;
 use starlark::values::StarlarkValue;
 use starlark::values::Trace;
+use starlark::values::ValueOf;
 use starlark::values::none::NoneOr;
 use starlark::values::starlark_value;
 
@@ -81,12 +83,16 @@ fn lazy_uquery_methods(builder: &mut MethodsBuilder) {
         #[starlark(require = pos)] from: TargetListExprArg<'v>,
         #[starlark(require = pos)] to: TargetListExprArg<'v>,
         #[starlark(require = named, default = NoneOr::None)] filter: NoneOr<&'v str>,
-    ) -> starlark::Result<StarlarkLazy> {
+        heap: Heap<'v>,
+    ) -> starlark::Result<ValueOf<'v, StarlarkLazy>> {
         let from = OwnedTargetListExprArg::from_ref(&from)?;
         let to = OwnedTargetListExprArg::from_ref(&to)?;
         let filter = filter.into_option().map(|s| s.to_owned());
         let op = LazyUqueryOperation::AllPaths { from, to, filter };
-        Ok(StarlarkLazy::new_uquery(op, this.allow_partial_graph))
+        Ok(ValueOf::alloc(
+            heap,
+            StarlarkLazy::new_uquery(op, this.allow_partial_graph),
+        ))
     }
 
     /// Computes some dependency path from `from` to `to`, with optional filter.
@@ -100,12 +106,16 @@ fn lazy_uquery_methods(builder: &mut MethodsBuilder) {
         #[starlark(require = pos)] from: TargetListExprArg<'v>,
         #[starlark(require = pos)] to: TargetListExprArg<'v>,
         #[starlark(require = named, default = NoneOr::None)] filter: NoneOr<&'v str>,
-    ) -> starlark::Result<StarlarkLazy> {
+        heap: Heap<'v>,
+    ) -> starlark::Result<ValueOf<'v, StarlarkLazy>> {
         let from = OwnedTargetListExprArg::from_ref(&from)?;
         let to = OwnedTargetListExprArg::from_ref(&to)?;
         let filter = filter.into_option().map(|s| s.to_owned());
         let op = LazyUqueryOperation::SomePath { from, to, filter };
-        Ok(StarlarkLazy::new_uquery(op, this.allow_partial_graph))
+        Ok(ValueOf::alloc(
+            heap,
+            StarlarkLazy::new_uquery(op, this.allow_partial_graph),
+        ))
     }
 
     /// Filters targets by attribute value.
@@ -119,7 +129,8 @@ fn lazy_uquery_methods(builder: &mut MethodsBuilder) {
         #[starlark(require = pos)] attr: &'v str,
         #[starlark(require = pos)] value: &'v str,
         #[starlark(require = pos)] targets: TargetListExprArg<'v>,
-    ) -> starlark::Result<StarlarkLazy> {
+        heap: Heap<'v>,
+    ) -> starlark::Result<ValueOf<'v, StarlarkLazy>> {
         let attr = attr.to_owned();
         let value = value.to_owned();
         let targets = OwnedTargetListExprArg::from_ref(&targets)?;
@@ -128,7 +139,10 @@ fn lazy_uquery_methods(builder: &mut MethodsBuilder) {
             value,
             targets,
         };
-        Ok(StarlarkLazy::new_uquery(op, this.allow_partial_graph))
+        Ok(ValueOf::alloc(
+            heap,
+            StarlarkLazy::new_uquery(op, this.allow_partial_graph),
+        ))
     }
 
     /// Finds input files for the given targets.
@@ -140,10 +154,14 @@ fn lazy_uquery_methods(builder: &mut MethodsBuilder) {
     fn inputs<'v>(
         #[starlark(this)] this: &'v StarlarkLazyUqueryCtx,
         #[starlark(require = pos)] targets: TargetListExprArg<'v>,
-    ) -> starlark::Result<StarlarkLazy> {
+        heap: Heap<'v>,
+    ) -> starlark::Result<ValueOf<'v, StarlarkLazy>> {
         let targets = OwnedTargetListExprArg::from_ref(&targets)?;
         let op = LazyUqueryOperation::Inputs(targets);
-        Ok(StarlarkLazy::new_uquery(op, this.allow_partial_graph))
+        Ok(ValueOf::alloc(
+            heap,
+            StarlarkLazy::new_uquery(op, this.allow_partial_graph),
+        ))
     }
 
     /// Filters targets by rule type using a regex pattern.
@@ -156,11 +174,15 @@ fn lazy_uquery_methods(builder: &mut MethodsBuilder) {
         #[starlark(this)] this: &'v StarlarkLazyUqueryCtx,
         #[starlark(require = pos)] regex: &'v str,
         #[starlark(require = pos)] targets: TargetListExprArg<'v>,
-    ) -> starlark::Result<StarlarkLazy> {
+        heap: Heap<'v>,
+    ) -> starlark::Result<ValueOf<'v, StarlarkLazy>> {
         let regex = regex.to_owned();
         let targets = OwnedTargetListExprArg::from_ref(&targets)?;
         let op = LazyUqueryOperation::Kind { regex, targets };
-        Ok(StarlarkLazy::new_uquery(op, this.allow_partial_graph))
+        Ok(ValueOf::alloc(
+            heap,
+            StarlarkLazy::new_uquery(op, this.allow_partial_graph),
+        ))
     }
 
     /// Finds the [transitive closure](https://en.wikipedia.org/wiki/Transitive_closure) of dependencies.
@@ -174,7 +196,8 @@ fn lazy_uquery_methods(builder: &mut MethodsBuilder) {
         #[starlark(require = pos)] universe: TargetListExprArg<'v>,
         #[starlark(require = pos, default = NoneOr::None)] depth: NoneOr<i32>,
         #[starlark(require = named, default = NoneOr::None)] filter: NoneOr<&'v str>,
-    ) -> starlark::Result<StarlarkLazy> {
+        heap: Heap<'v>,
+    ) -> starlark::Result<ValueOf<'v, StarlarkLazy>> {
         let universe = OwnedTargetListExprArg::from_ref(&universe)?;
         let depth = depth.into_option().into();
         let filter = filter.into_option().map(|s| s.to_owned());
@@ -183,7 +206,10 @@ fn lazy_uquery_methods(builder: &mut MethodsBuilder) {
             depth,
             filter,
         };
-        Ok(StarlarkLazy::new_uquery(op, this.allow_partial_graph))
+        Ok(ValueOf::alloc(
+            heap,
+            StarlarkLazy::new_uquery(op, this.allow_partial_graph),
+        ))
     }
 
     /// Finds the [transitive closure](https://en.wikipedia.org/wiki/Transitive_closure) of reverse dependencies.
@@ -198,7 +224,8 @@ fn lazy_uquery_methods(builder: &mut MethodsBuilder) {
         #[starlark(require = pos)] from: TargetListExprArg<'v>,
         #[starlark(require = pos, default = NoneOr::None)] depth: NoneOr<i32>,
         #[starlark(require = named, default = NoneOr::None)] filter: NoneOr<&'v str>,
-    ) -> starlark::Result<StarlarkLazy> {
+        heap: Heap<'v>,
+    ) -> starlark::Result<ValueOf<'v, StarlarkLazy>> {
         let universe = OwnedTargetListExprArg::from_ref(&universe)?;
         let from = OwnedTargetListExprArg::from_ref(&from)?;
         let depth = depth.into_option().into();
@@ -209,7 +236,10 @@ fn lazy_uquery_methods(builder: &mut MethodsBuilder) {
             depth,
             filter,
         };
-        Ok(StarlarkLazy::new_uquery(op, this.allow_partial_graph))
+        Ok(ValueOf::alloc(
+            heap,
+            StarlarkLazy::new_uquery(op, this.allow_partial_graph),
+        ))
     }
 
     /// Filters targets by name using a regex pattern.
@@ -222,11 +252,15 @@ fn lazy_uquery_methods(builder: &mut MethodsBuilder) {
         #[starlark(this)] this: &'v StarlarkLazyUqueryCtx,
         #[starlark(require = pos)] regex: &'v str,
         #[starlark(require = pos)] targets: TargetListExprArg<'v>,
-    ) -> starlark::Result<StarlarkLazy> {
+        heap: Heap<'v>,
+    ) -> starlark::Result<ValueOf<'v, StarlarkLazy>> {
         let regex = regex.to_owned();
         let targets = OwnedTargetListExprArg::from_ref(&targets)?;
         let op = LazyUqueryOperation::Filter { regex, targets };
-        Ok(StarlarkLazy::new_uquery(op, this.allow_partial_graph))
+        Ok(ValueOf::alloc(
+            heap,
+            StarlarkLazy::new_uquery(op, this.allow_partial_graph),
+        ))
     }
 
     /// Querying the test targets of the given target.
@@ -246,10 +280,14 @@ fn lazy_uquery_methods(builder: &mut MethodsBuilder) {
     fn testsof<'v>(
         #[starlark(this)] this: &'v StarlarkLazyUqueryCtx,
         #[starlark(require = pos)] expr: TargetListExprArg<'v>,
-    ) -> starlark::Result<StarlarkLazy> {
+        heap: Heap<'v>,
+    ) -> starlark::Result<ValueOf<'v, StarlarkLazy>> {
         let expr = OwnedTargetListExprArg::from_ref(&expr)?;
         let op = LazyUqueryOperation::TestsOf(expr);
-        Ok(StarlarkLazy::new_uquery(op, this.allow_partial_graph))
+        Ok(ValueOf::alloc(
+            heap,
+            StarlarkLazy::new_uquery(op, this.allow_partial_graph),
+        ))
     }
 
     /// Finds the build file(s) that define the given targets.
@@ -261,10 +299,14 @@ fn lazy_uquery_methods(builder: &mut MethodsBuilder) {
     fn buildfile<'v>(
         #[starlark(this)] this: &'v StarlarkLazyUqueryCtx,
         #[starlark(require = pos)] targets: TargetListExprArg<'v>,
-    ) -> starlark::Result<StarlarkLazy> {
+        heap: Heap<'v>,
+    ) -> starlark::Result<ValueOf<'v, StarlarkLazy>> {
         let targets = OwnedTargetListExprArg::from_ref(&targets)?;
         let op = LazyUqueryOperation::Buildfile(targets);
-        Ok(StarlarkLazy::new_uquery(op, this.allow_partial_graph))
+        Ok(ValueOf::alloc(
+            heap,
+            StarlarkLazy::new_uquery(op, this.allow_partial_graph),
+        ))
     }
 
     /// Finds the build files of the given targets and their transitive imports.
@@ -276,10 +318,14 @@ fn lazy_uquery_methods(builder: &mut MethodsBuilder) {
     fn allbuildfiles<'v>(
         #[starlark(this)] this: &'v StarlarkLazyUqueryCtx,
         #[starlark(require = pos)] universe: TargetListExprArg<'v>,
-    ) -> starlark::Result<StarlarkLazy> {
+        heap: Heap<'v>,
+    ) -> starlark::Result<ValueOf<'v, StarlarkLazy>> {
         let universe = OwnedTargetListExprArg::from_ref(&universe)?;
         let op = LazyUqueryOperation::AllBuildfiles(universe);
-        Ok(StarlarkLazy::new_uquery(op, this.allow_partial_graph))
+        Ok(ValueOf::alloc(
+            heap,
+            StarlarkLazy::new_uquery(op, this.allow_partial_graph),
+        ))
     }
 
     /// Finds all build files that transitively depend on the given files.
@@ -292,11 +338,15 @@ fn lazy_uquery_methods(builder: &mut MethodsBuilder) {
         #[starlark(this)] this: &'v StarlarkLazyUqueryCtx,
         #[starlark(require = pos)] universe: FileSetExpr<'v>,
         #[starlark(require = pos)] argset: FileSetExpr<'v>,
-    ) -> starlark::Result<StarlarkLazy> {
+        heap: Heap<'v>,
+    ) -> starlark::Result<ValueOf<'v, StarlarkLazy>> {
         let universe = OwnedFileSetExpr::from_ref(&universe)?;
         let argset = OwnedFileSetExpr::from_ref(&argset)?;
         let op = LazyUqueryOperation::Rbuildfiles { universe, argset };
-        Ok(StarlarkLazy::new_uquery(op, this.allow_partial_graph))
+        Ok(ValueOf::alloc(
+            heap,
+            StarlarkLazy::new_uquery(op, this.allow_partial_graph),
+        ))
     }
 
     /// Finds targets that own the specified files.
@@ -309,10 +359,14 @@ fn lazy_uquery_methods(builder: &mut MethodsBuilder) {
     fn owner<'v>(
         #[starlark(this)] this: &'v StarlarkLazyUqueryCtx,
         #[starlark(require = pos)] files: FileSetExpr<'v>,
-    ) -> starlark::Result<StarlarkLazy> {
+        heap: Heap<'v>,
+    ) -> starlark::Result<ValueOf<'v, StarlarkLazy>> {
         let files = OwnedFileSetExpr::from_ref(&files)?;
         let op = LazyUqueryOperation::Owner { files };
-        Ok(StarlarkLazy::new_uquery(op, this.allow_partial_graph))
+        Ok(ValueOf::alloc(
+            heap,
+            StarlarkLazy::new_uquery(op, this.allow_partial_graph),
+        ))
     }
 
     /// Finds targets defined in the specified build files.
@@ -325,10 +379,14 @@ fn lazy_uquery_methods(builder: &mut MethodsBuilder) {
     fn targets_in_buildfile<'v>(
         #[starlark(this)] this: &'v StarlarkLazyUqueryCtx,
         #[starlark(require = pos)] files: FileSetExpr<'v>,
-    ) -> starlark::Result<StarlarkLazy> {
+        heap: Heap<'v>,
+    ) -> starlark::Result<ValueOf<'v, StarlarkLazy>> {
         let files = OwnedFileSetExpr::from_ref(&files)?;
         let op = LazyUqueryOperation::TargetsInBuildfile { files };
-        Ok(StarlarkLazy::new_uquery(op, this.allow_partial_graph))
+        Ok(ValueOf::alloc(
+            heap,
+            StarlarkLazy::new_uquery(op, this.allow_partial_graph),
+        ))
     }
 
     /// Filters targets by attribute value using regex matching.
@@ -342,7 +400,8 @@ fn lazy_uquery_methods(builder: &mut MethodsBuilder) {
         #[starlark(require = pos)] attr: &'v str,
         #[starlark(require = pos)] value: &'v str,
         #[starlark(require = pos)] targets: TargetListExprArg<'v>,
-    ) -> starlark::Result<StarlarkLazy> {
+        heap: Heap<'v>,
+    ) -> starlark::Result<ValueOf<'v, StarlarkLazy>> {
         let attr = attr.to_owned();
         let value = value.to_owned();
         let targets = OwnedTargetListExprArg::from_ref(&targets)?;
@@ -351,7 +410,10 @@ fn lazy_uquery_methods(builder: &mut MethodsBuilder) {
             value,
             targets,
         };
-        Ok(StarlarkLazy::new_uquery(op, this.allow_partial_graph))
+        Ok(ValueOf::alloc(
+            heap,
+            StarlarkLazy::new_uquery(op, this.allow_partial_graph),
+        ))
     }
 
     /// Evaluates a general query string with optional query arguments.
@@ -367,13 +429,17 @@ fn lazy_uquery_methods(builder: &mut MethodsBuilder) {
         #[starlark(require = named, default = NoneOr::None)] query_args: NoneOr<
             UnpackUnconfiguredQueryArgs<'v>,
         >,
-    ) -> starlark::Result<StarlarkLazy> {
+        heap: Heap<'v>,
+    ) -> starlark::Result<ValueOf<'v, StarlarkLazy>> {
         let query = query.to_owned();
         let query_args = match query_args {
             NoneOr::None => Vec::new(),
             NoneOr::Other(query_args) => query_args.into_strings()?,
         };
         let op = LazyUqueryOperation::Eval { query, query_args };
-        Ok(StarlarkLazy::new_uquery(op, this.allow_partial_graph))
+        Ok(ValueOf::alloc(
+            heap,
+            StarlarkLazy::new_uquery(op, this.allow_partial_graph),
+        ))
     }
 }

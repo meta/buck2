@@ -17,6 +17,7 @@ use starlark::any::ProvidesStaticType;
 use starlark::environment::GlobalsBuilder;
 use starlark::values::Freeze;
 use starlark::values::FreezeError;
+use starlark::values::Heap;
 use starlark::values::OwnedFrozen;
 use starlark::values::StarlarkPagable;
 use starlark::values::Trace;
@@ -112,10 +113,11 @@ fn validation_info_creator(globals: &mut GlobalsBuilder) {
     #[starlark(as_type = ValidationInfo<'static>)]
     fn ValidationInfo<'v>(
         #[starlark(require = named)] validations: ValueOf<'v, ListType<StarlarkValidationSpec<'v>>>,
-    ) -> starlark::Result<ValidationInfo<'v>> {
+        heap: Heap<'v>,
+    ) -> starlark::Result<ValueTyped<'v, ValidationInfo<'v>>> {
         let result = ValidationInfo { validations };
         validate_validation_info(&result)?;
-        Ok(result)
+        Ok(heap.alloc_representation(result))
     }
 }
 

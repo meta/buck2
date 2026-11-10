@@ -20,6 +20,7 @@ use starlark::typing::ParamIsRequired;
 use starlark::typing::ParamSpec;
 use starlark::util::ArcStr;
 use starlark::values::Freeze;
+use starlark::values::Heap;
 use starlark::values::OwnedFrozen;
 use starlark::values::StarlarkPagable;
 use starlark::values::Trace;
@@ -83,8 +84,9 @@ fn transition_info_creator(globals: &mut GlobalsBuilder) {
             StarlarkCallableChecked<'v, TransitionImplParams, ImplSingleReturnTy<'static>>,
         >,
         #[starlark(require = named)] attrs: Option<ValueOf<'v, ListOrTupleType<StarlarkStr>>>,
-    ) -> starlark::Result<TransitionInfo<'v>> {
-        Ok(TransitionInfo { r#impl, attrs })
+        heap: Heap<'v>,
+    ) -> starlark::Result<ValueTyped<'v, TransitionInfo<'v>>> {
+        Ok(heap.alloc_representation(TransitionInfo { r#impl, attrs }))
     }
 }
 

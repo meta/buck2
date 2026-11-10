@@ -17,6 +17,7 @@ use buck2_build_api::actions::RegisteredAction;
 use buck2_build_api::actions::query::ActionQueryNode;
 use buck2_build_api::actions::query::OwnedActionAttr;
 use buck2_build_api::interpreter::rule_defs::artifact::starlark_artifact::StarlarkArtifact;
+use buck2_build_api::interpreter::rule_defs::artifact::starlark_artifact_like::StarlarkArtifactView;
 use buck2_core::deferred::base_deferred_key::BaseDeferredKey;
 use buck2_error::buck2_error;
 use buck2_interpreter::types::target_label::StarlarkConfiguredTargetLabel;
@@ -35,6 +36,7 @@ use starlark::values::StarlarkValue;
 use starlark::values::StringValue;
 use starlark::values::UnpackValue;
 use starlark::values::Value;
+use starlark::values::ValueOf;
 use starlark::values::none::NoneOr;
 use starlark::values::starlark_value;
 use starlark::values::structs::AllocStruct;
@@ -85,11 +87,15 @@ fn action_methods(builder: &mut MethodsBuilder) {
     ///     action = ctx.audit().output("buck-out/path/to/__target__/artifact", "your_target_platform")
     ///     ctx.output.print(action.owner())
     /// ```
-    fn owner<'v>(this: StarlarkAction) -> starlark::Result<StarlarkConfiguredTargetLabel> {
+    fn owner<'v>(
+        this: StarlarkAction,
+        heap: Heap<'v>,
+    ) -> starlark::Result<ValueOf<'v, StarlarkConfiguredTargetLabel>> {
         match this.0.owner() {
-            BaseDeferredKey::TargetLabel(label) => {
-                Ok(StarlarkConfiguredTargetLabel::new(label.dupe()))
-            }
+            BaseDeferredKey::TargetLabel(label) => Ok(ValueOf::alloc(
+                heap,
+                StarlarkConfiguredTargetLabel::new(label.dupe()),
+            )),
             _ => Err(buck2_error!(
                 buck2_error::ErrorTag::Input,
                 "BXL and anon targets not supported."
@@ -99,13 +105,16 @@ fn action_methods(builder: &mut MethodsBuilder) {
     }
 
     /// Gets the artifacts built by this action.
-    fn outputs<'v>(this: StarlarkAction) -> starlark::Result<Vec<StarlarkArtifact>> {
+    fn outputs<'v>(
+        this: StarlarkAction,
+        heap: Heap<'v>,
+    ) -> starlark::Result<Vec<ValueOf<'v, StarlarkArtifactView<'v>>>> {
         Ok(this
             .0
             .action()
             .outputs()
             .iter()
-            .map(|a| StarlarkArtifact::new(Artifact::from(a.dupe())))
+            .map(|a| ValueOf::alloc(heap, StarlarkArtifact::new(Artifact::from(a.dupe()))))
             .collect())
     }
 }
@@ -147,10 +156,14 @@ impl<'a> UnpackValue<'a> for StarlarkActionQueryNode {
 fn action_query_node_value_methods(builder: &mut MethodsBuilder) {
     /// Gets the attributes from the action query node. Returns a struct.
     #[starlark(attribute)]
-    fn attrs<'v>(this: StarlarkActionQueryNode, heap: Heap<'_>) -> starlark::Result<Value<'v>> {
+    fn attrs<'v>(this: StarlarkActionQueryNode, heap: Heap<'v>) -> starlark::Result<Value<'v>> {
         let mut result = Vec::new();
         this.0.attrs_for_each(|k, v| {
-            result.push((k.to_owned(), StarlarkActionAttr(v.to_owned())));
+            result.push((
+                k.to_owned(),
+                heap.alloc_representation(StarlarkActionAttr(v.to_owned()))
+                    .to_value(),
+            ));
             buck2_error::Ok(())
         })?;
 
@@ -158,19 +171,26 @@ fn action_query_node_value_methods(builder: &mut MethodsBuilder) {
     }
 
     /// Gets optional action from the action query target node.
-    fn action(this: &StarlarkActionQueryNode) -> starlark::Result<NoneOr<StarlarkAction>> {
+    fn action<'v>(
+        this: &StarlarkActionQueryNode,
+        heap: Heap<'v>,
+    ) -> starlark::Result<NoneOr<ValueOf<'v, StarlarkAction>>> {
         Ok(NoneOr::from_option(
-            this.0.action().map(|a| StarlarkAction(a.dupe())),
+            this.0
+                .action()
+                .map(|a| ValueOf::alloc(heap, StarlarkAction(a.dupe()))),
         ))
     }
 
     /// Gets optional analysis from the action query target node.
-    fn analysis(
+    fn analysis<'v>(
         this: &StarlarkActionQueryNode,
-    ) -> starlark::Result<NoneOr<StarlarkAnalysisResult>> {
+        heap: Heap<'v>,
+    ) -> starlark::Result<NoneOr<ValueOf<'v, StarlarkAnalysisResult>>> {
         match this.0.analysis_opt() {
-            Some(a) => Ok(NoneOr::Other(StarlarkAnalysisResult::new(
-                a.analysis_result().lookup(a.target())?,
+            Some(a) => Ok(NoneOr::Other(ValueOf::alloc(
+                heap,
+                StarlarkAnalysisResult::new(a.analysis_result().lookup(a.target())?),
             ))),
             None => Ok(NoneOr::None),
         }

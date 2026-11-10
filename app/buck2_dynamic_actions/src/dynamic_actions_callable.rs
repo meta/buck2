@@ -30,13 +30,11 @@ use starlark::typing::ParamIsRequired;
 use starlark::typing::ParamSpec;
 use starlark::typing::Ty;
 use starlark::util::ArcStr;
-use starlark::values::AllocValue;
 use starlark::values::Freeze;
 use starlark::values::FreezeError;
 use starlark::values::FreezeResult;
 use starlark::values::Freezer;
 use starlark::values::FrozenValueTyped;
-use starlark::values::Heap;
 use starlark::values::NoSerialize;
 use starlark::values::StarlarkPagable;
 use starlark::values::StarlarkRepresentations;
@@ -186,12 +184,15 @@ impl<'v> StarlarkType<'v> for DynamicActionsCallableView<'v> {
                     values: attr_values.into(),
                 })
             })?;
-        Ok(eval.heap().alloc(StarlarkDynamicActions {
-            data: RefCell::new(Some(StarlarkDynamicActionsData {
-                callable: me,
-                attr_values,
-            })),
-        }))
+        Ok(eval
+            .heap()
+            .alloc_representation(StarlarkDynamicActions {
+                data: RefCell::new(Some(StarlarkDynamicActionsData {
+                    callable: me,
+                    attr_values,
+                })),
+            })
+            .to_value())
     }
 
     fn typechecker_ty(&self) -> Option<Ty> {
@@ -215,12 +216,6 @@ impl<'v> StarlarkValue<'v> for DynamicActionsCallable<'v> {
 #[starlark_value(frozen_vtable)]
 impl<'v> StarlarkValue<'v> for FrozenStarlarkDynamicActionsCallable<'v> {
     type Type = DynamicActionsCallableView<'v>;
-}
-
-impl<'v> AllocValue<'v> for DynamicActionsCallable<'v> {
-    fn alloc_value(self, heap: Heap<'v>) -> Value<'v> {
-        heap.alloc_complex(self)
-    }
 }
 
 impl<'v> Freeze<'v> for DynamicActionsCallable<'v> {

@@ -736,12 +736,6 @@ impl<'v> StarlarkValue<'v> for FrozenStarlarkCmdArgs<'v> {
     }
 }
 
-impl<'v> AllocValue<'v> for StarlarkCmdArgs<'v> {
-    fn alloc_value(self, heap: Heap<'v>) -> Value<'v> {
-        heap.alloc_complex(self)
-    }
-}
-
 impl<'v> CommandLineArgLike<'v> for StarlarkCmdArgs<'v> {
     fn register_me(&self) {
         command_line_arg_like_impl!(StarlarkCmdArgs::starlark_type_repr());
@@ -1040,8 +1034,11 @@ fn cmd_args_methods(builder: &mut MethodsBuilder) {
 
     /// Returns a copy of the `cmd_args` such that any modifications to the original or the returned value will not impact each other.
     /// Note that this is a shallow copy, so any inner `cmd_args` can still be modified.
-    fn copy<'v>(this: Value<'v>) -> starlark::Result<StarlarkCmdArgs<'v>> {
-        Ok(cmd_args(this).copy())
+    fn copy<'v>(
+        this: Value<'v>,
+        heap: Heap<'v>,
+    ) -> starlark::Result<ValueTyped<'v, StarlarkCmdArgs<'v>>> {
+        Ok(heap.alloc_representation(cmd_args(this).copy()))
     }
 
     /// Collect all the inputs (including hidden) referenced by this command line.
@@ -1067,36 +1064,42 @@ fn cmd_args_methods(builder: &mut MethodsBuilder) {
     ///         pass
     /// ```
     #[starlark(attribute)]
-    fn inputs<'v>(this: Value<'v>) -> starlark::Result<StarlarkCommandLineInputs> {
+    fn inputs<'v>(
+        this: Value<'v>,
+        heap: Heap<'v>,
+    ) -> starlark::Result<ValueOf<'v, StarlarkCommandLineInputs>> {
         let mut visitor = SimpleCommandLineArtifactVisitor::new();
         cmd_args(this).visit_artifacts(&mut visitor)?;
-        Ok(StarlarkCommandLineInputs {
-            inputs: visitor.inputs,
-        })
+        Ok(ValueOf::alloc(
+            heap,
+            StarlarkCommandLineInputs {
+                inputs: visitor.inputs,
+            },
+        ))
     }
 
     /// Collect all the outputs (including hidden) referenced by this command line.
     #[starlark(attribute)]
     fn outputs<'v>(
         this: Value<'v>,
-        heap: Heap<'_>,
-    ) -> starlark::Result<Vec<StarlarkOutputArtifact<'v>>> {
+        heap: Heap<'v>,
+    ) -> starlark::Result<Vec<ValueTyped<'v, StarlarkOutputArtifact<'v>>>> {
         let mut visitor = SimpleCommandLineArtifactVisitor::new();
         cmd_args(this).visit_artifacts(&mut visitor)?;
         let mut outputs =
             Vec::with_capacity(visitor.declared_outputs.len() + visitor.frozen_outputs.len());
         for out in visitor.declared_outputs {
-            let declared = heap.alloc_typed(StarlarkDeclaredArtifact::new(
+            let declared = heap.alloc_representation(StarlarkDeclaredArtifact::new(
                 None,
                 (*out).dupe(),
                 AssociatedArtifacts::new(),
             ));
-            outputs.push(StarlarkOutputArtifact::new(declared));
+            outputs.push(heap.alloc_representation(StarlarkOutputArtifact::new(declared)));
         }
         // FIXME(JakobDegen): We should probably not be allowing people to get an `OutputArtifact`
         // for an artifact declared in a downstream action??
         for out in visitor.frozen_outputs {
-            let declared = heap.alloc_typed(StarlarkDeclaredArtifact::new(
+            let declared = heap.alloc_representation(StarlarkDeclaredArtifact::new(
                 None,
                 (*out
                     .allocate_new_output_artifact_for(heap)
@@ -1104,7 +1107,7 @@ fn cmd_args_methods(builder: &mut MethodsBuilder) {
                 .dupe(),
                 AssociatedArtifacts::new(),
             ));
-            outputs.push(StarlarkOutputArtifact::new(declared));
+            outputs.push(heap.alloc_representation(StarlarkOutputArtifact::new(declared)));
         }
         Ok(outputs)
     }
@@ -1230,7 +1233,8 @@ pub fn register_cmd_args(builder: &mut GlobalsBuilder) {
             (CmdArgsRegex<'v>, StringValue<'v>),
             ValueOf<'v, ListType<(CmdArgsRegex<'v>, StarlarkStr)>>,
         >,
-    ) -> starlark::Result<StarlarkCmdArgs<'v>> {
+        heap: Heap<'v>,
+    ) -> starlark::Result<ValueTyped<'v, StarlarkCmdArgs<'v>>> {
         let format = format.filter(|format| format.as_str() != "{}");
         let quote = quote.map(QuoteStyle::parse).transpose()?;
         let mut builder = StarlarkCommandLineData::default();
@@ -1279,7 +1283,7 @@ pub fn register_cmd_args(builder: &mut GlobalsBuilder) {
         if let Some(hidden) = hidden {
             builder.add_hidden(hidden)?;
         }
-        Ok(StarlarkCmdArgs(RefCell::new(builder)))
+        Ok(heap.alloc_representation(StarlarkCmdArgs(RefCell::new(builder))))
     }
 }
 

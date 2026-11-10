@@ -54,12 +54,10 @@ use starlark::eval::ParametersSpec;
 use starlark::starlark_module;
 use starlark::typing::ParamSpec;
 use starlark::typing::Ty;
-use starlark::values::AllocValue;
 use starlark::values::Freeze;
 use starlark::values::FreezeError;
 use starlark::values::FreezeResult;
 use starlark::values::Freezer;
-use starlark::values::Heap;
 use starlark::values::NoSerialize;
 use starlark::values::StarlarkPagable;
 use starlark::values::StarlarkRepresentations;
@@ -242,12 +240,6 @@ enum RuleError {
         first: String,
         second: String,
     },
-}
-
-impl<'v> AllocValue<'v> for StarlarkRuleCallable<'v> {
-    fn alloc_value(self, heap: Heap<'v>) -> Value<'v> {
-        heap.alloc_complex(self)
-    }
 }
 
 impl<'v> StarlarkRuleCallable<'v> {
@@ -1061,8 +1053,8 @@ pub fn register_rule_function(builder: &mut GlobalsBuilder) {
             ListOrTupleType<StarlarkExecutionGroupView<'v>>,
         >,
         eval: &mut Evaluator<'v, '_, '_>,
-    ) -> starlark::Result<StarlarkRuleCallable<'v>> {
-        Ok(StarlarkRuleCallable::new(
+    ) -> starlark::Result<ValueTyped<'v, StarlarkRuleCallable<'v>>> {
+        let rule = StarlarkRuleCallable::new(
             RuleImpl::BuildRule(StarlarkCallable::unchecked_new(r#impl.0)),
             attrs,
             cfg,
@@ -1080,7 +1072,8 @@ pub fn register_rule_function(builder: &mut GlobalsBuilder) {
                 .collect::<starlark::Result<_>>()?,
             None,
             eval,
-        )?)
+        )?;
+        Ok(eval.heap().alloc_representation(rule))
     }
 
     /// Define an anon rule, similar to how a normal rule is defined, except with an extra `artifact_promise_mappings` field. This
@@ -1102,8 +1095,9 @@ pub fn register_rule_function(builder: &mut GlobalsBuilder) {
             >,
         >,
         eval: &mut Evaluator<'v, '_, '_>,
-    ) -> starlark::Result<StarlarkRuleCallable<'v>> {
-        StarlarkRuleCallable::new_anon(r#impl, attrs, doc, artifact_promise_mappings, eval)
-            .map_err(Into::into)
+    ) -> starlark::Result<ValueTyped<'v, StarlarkRuleCallable<'v>>> {
+        let rule =
+            StarlarkRuleCallable::new_anon(r#impl, attrs, doc, artifact_promise_mappings, eval)?;
+        Ok(eval.heap().alloc_representation(rule))
     }
 }

@@ -35,13 +35,10 @@ use starlark::environment::Methods;
 use starlark::environment::MethodsBuilder;
 use starlark::eval::Evaluator;
 use starlark::starlark_module;
-use starlark::values::AllocValue;
-use starlark::values::Heap;
 use starlark::values::NoSerialize;
 use starlark::values::StarlarkValue;
 use starlark::values::StringValue;
 use starlark::values::Trace;
-use starlark::values::Value;
 use starlark::values::ValueOf;
 use starlark::values::ValueTyped;
 use starlark::values::none::NoneOr;
@@ -93,12 +90,6 @@ starlark::methods_static!(BXL_FILESYSTEM_METHODS = fs_operations);
 impl<'v> StarlarkValue<'v> for BxlFilesystem<'v> {
     fn get_methods() -> Option<&'static Methods> {
         Some(BXL_FILESYSTEM_METHODS.methods())
-    }
-}
-
-impl<'v> AllocValue<'v> for BxlFilesystem<'v> {
-    fn alloc_value(self, heap: Heap<'v>) -> Value<'v> {
-        heap.alloc_complex_no_freeze(self)
     }
 }
 
@@ -198,8 +189,9 @@ fn fs_operations(builder: &mut MethodsBuilder) {
         expr: FileExpr<'v>,
         #[starlark(require = named, default = false)] dirs_only: bool,
         eval: &mut Evaluator<'v, '_, '_>,
-    ) -> starlark::Result<StarlarkReadDirSet> {
-        Ok(this.ctx.via_dice(eval, |ctx| {
+    ) -> starlark::Result<ValueOf<'v, StarlarkReadDirSet>> {
+        let heap = eval.heap();
+        let read_dir_set = this.ctx.via_dice(eval, |ctx| {
             ctx.via(|dice| {
                 async {
                     let path = expr.get(dice, this.cell()?).await;
@@ -219,7 +211,8 @@ fn fs_operations(builder: &mut MethodsBuilder) {
                 }
                 .boxed_local()
             })
-        })?)
+        })?;
+        Ok(ValueOf::alloc(heap, read_dir_set))
     }
 
     /// Returns whether the provided path is a dir. Returns false is the dir does not exist.
@@ -358,6 +351,6 @@ fn fs_operations(builder: &mut MethodsBuilder) {
 
         Ok(eval
             .heap()
-            .alloc_typed(StarlarkArtifact::new(SourceArtifact::new(buck_path).into())))
+            .alloc_representation(StarlarkArtifact::new(SourceArtifact::new(buck_path).into())))
     }
 }

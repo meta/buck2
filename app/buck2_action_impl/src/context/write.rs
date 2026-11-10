@@ -86,12 +86,17 @@ type WriteOutput<'v> = Either<
     ValueTyped<'v, StarlarkDeclaredArtifact<'v>>,
     (
         ValueTyped<'v, StarlarkDeclaredArtifact<'v>>,
-        StarlarkDepFileFingerprint<'v>,
+        ValueTyped<'v, StarlarkDepFileFingerprint<'v>>,
     ),
 >;
 
-type WriteReturnValue<'v> =
-    Either<WriteOutput<'v>, (WriteOutput<'v>, Vec<StarlarkDeclaredArtifact<'v>>)>;
+type WriteReturnValue<'v> = Either<
+    WriteOutput<'v>,
+    (
+        WriteOutput<'v>,
+        Vec<ValueTyped<'v, StarlarkDeclaredArtifact<'v>>>,
+    ),
+>;
 
 /// We don't need to run this visitor in order to provide the inputs to the write actions,
 /// because that is done lazily when we run the action.
@@ -237,13 +242,18 @@ pub(crate) fn analysis_actions_methods_write(methods: &mut MethodsBuilder) {
                 absolute,
                 format: DepFileFingerprintFormat::Json { pretty },
             };
-            Ok(Either::Right((value, fingerprint)))
+            Ok(Either::Right((
+                value,
+                eval.heap().alloc_representation(fingerprint),
+            )))
         } else if with_inputs {
             // TODO(nga): we use `AllocValue`, so this function return type for this branch
             //   is `write_json_cli_args`. We want just `cmd_args`,
             //   because users don't care about precise type.
             //   Do it when we migrate to new types not based on strings.
-            Ok(Either::Left(Either::Right(cli)))
+            Ok(Either::Left(Either::Right(
+                eval.heap().alloc_representation(cli),
+            )))
         } else {
             Ok(Either::Left(Either::Left(value)))
         }
@@ -422,7 +432,7 @@ pub(crate) fn analysis_actions_methods_write(methods: &mut MethodsBuilder) {
                 let count = count_write_to_file_macros(allow_args, &cli)?;
                 let associated_artifacts = get_cli_inputs(with_inputs, &cli)?;
                 (
-                    CommandLineArg::new_err(eval.heap().alloc(cli))?,
+                    CommandLineArg::new_err(eval.heap().alloc_representation(cli).to_value())?,
                     count,
                     associated_artifacts,
                 )
@@ -529,14 +539,21 @@ pub(crate) fn analysis_actions_methods_write(methods: &mut MethodsBuilder) {
                     macro_files,
                 },
             };
-            Either::Right((value, fingerprint))
+            Either::Right((value, eval.heap().alloc_representation(fingerprint)))
         } else {
             Either::Left(value)
         };
         if allow_args {
-            let macro_files: Vec<StarlarkDeclaredArtifact> = written_macro_files
+            let macro_files: Vec<ValueTyped<StarlarkDeclaredArtifact>> = written_macro_files
                 .into_iter()
-                .map(|a| StarlarkDeclaredArtifact::new(None, a, AssociatedArtifacts::new()))
+                .map(|a| {
+                    eval.heap()
+                        .alloc_representation(StarlarkDeclaredArtifact::new(
+                            None,
+                            a,
+                            AssociatedArtifacts::new(),
+                        ))
+                })
                 .collect();
             Ok(Either::Right((value, macro_files)))
         } else {

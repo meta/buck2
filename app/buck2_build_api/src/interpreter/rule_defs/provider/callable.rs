@@ -44,16 +44,12 @@ use starlark::type_matcher;
 use starlark::typing::Ty;
 use starlark::typing::TyCallable;
 use starlark::typing::TyStarlarkValue;
-use starlark::values::AllocFrozenValue;
-use starlark::values::AllocValue;
 use starlark::values::Demand;
 use starlark::values::Freeze;
 use starlark::values::FreezeError;
 use starlark::values::FreezeResult;
 use starlark::values::Freezer;
-use starlark::values::FrozenHeap;
 use starlark::values::FrozenValueTyped;
-use starlark::values::Heap;
 use starlark::values::NoSerialize;
 use starlark::values::StarlarkPagable;
 use starlark::values::StarlarkRepresentations;
@@ -337,12 +333,6 @@ impl<'v> ProviderCallableLike for UserProviderCallable<'v> {
     }
 }
 
-impl<'v> AllocValue<'v> for UserProviderCallable<'v> {
-    fn alloc_value(self, heap: Heap<'v>) -> Value<'v> {
-        heap.alloc_complex(self)
-    }
-}
-
 impl<'v> Freeze<'v> for UserProviderCallable<'v> {
     type Frozen<'fv> = FrozenUserProviderCallable<'fv>;
     fn freeze<'fv>(self, freezer: &Freezer<'v, 'fv>) -> FreezeResult<Self::Frozen<'fv>> {
@@ -554,12 +544,6 @@ pub struct FrozenUserProviderCallable<'v> {
     callable: UserProviderCallableNamed<'v>,
 }
 
-impl<'fv> AllocFrozenValue<'fv> for FrozenUserProviderCallable<'fv> {
-    fn alloc_frozen_value(self, heap: FrozenHeap<'fv>) -> Value<'fv> {
-        heap.alloc_simple_typed(self).to_value()
-    }
-}
-
 impl<'v> Display for FrozenUserProviderCallable<'v> {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         user_provider_callable_display(Some(&self.callable.id), &self.fields, f)
@@ -611,7 +595,7 @@ pub fn register_provider(builder: &mut GlobalsBuilder) {
         #[starlark(require=pos)] ty: Value<'v>,
         #[starlark(require=named)] default: Option<Value<'v>>,
         eval: &mut Evaluator<'v, '_, '_>,
-    ) -> starlark::Result<UserProviderField<'v>> {
+    ) -> starlark::Result<ValueTyped<'v, UserProviderField<'v>>> {
         let ty = provider_field_parse_type(ty, eval)?;
         let default = match default {
             None => None,
@@ -644,7 +628,9 @@ pub fn register_provider(builder: &mut GlobalsBuilder) {
                 .into());
             }
         }
-        Ok(UserProviderField { ty, default })
+        Ok(eval
+            .heap()
+            .alloc_representation(UserProviderField { ty, default }))
     }
 
     /// Create a `"provider"` type that can be returned from `rule` implementations.
@@ -669,7 +655,7 @@ pub fn register_provider(builder: &mut GlobalsBuilder) {
             ValueOf<'v, DictType<String, Value<'v>>>,
         >,
         eval: &mut Evaluator<'v, '_, '_>,
-    ) -> starlark::Result<UserProviderCallable<'v>> {
+    ) -> starlark::Result<ValueTyped<'v, UserProviderCallable<'v>>> {
         let docstring = DocString::from_docstring(DocStringKind::Starlark, doc);
         let path = starlark_path_from_build_context(eval)?.path();
 
@@ -703,10 +689,10 @@ pub fn register_provider(builder: &mut GlobalsBuilder) {
                 new_fields
             }
         };
-        Ok(UserProviderCallable::new(
+        Ok(eval.heap().alloc_representation(UserProviderCallable::new(
             path.into_owned(),
             docstring,
             fields,
-        ))
+        )))
     }
 }

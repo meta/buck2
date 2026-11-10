@@ -52,6 +52,7 @@ use starlark::values::NoSerialize;
 use starlark::values::StarlarkValue;
 use starlark::values::Trace;
 use starlark::values::Value;
+use starlark::values::ValueOf;
 use starlark::values::list::AllocList;
 use starlark::values::starlark_value;
 
@@ -119,16 +120,39 @@ impl LazyResult {
         bxl_eval_extra: &BxlEvalExtra,
     ) -> buck2_error::Result<Value<'v>> {
         match self {
-            LazyResult::Analysis(analysis_res) => Ok(heap.alloc(analysis_res)),
-            LazyResult::ConfiguredTargetNode(res) => res.into_value(heap, bxl_eval_extra),
-            LazyResult::UnconfiguredTargetNode(node) => Ok(heap.alloc(node)),
-            LazyResult::UnconfiguredTargetNodeKeepGoing((success_targets, error_packages)) => {
-                Ok(heap.alloc((success_targets, error_packages)))
+            LazyResult::Analysis(analysis_res) => {
+                Ok(heap.alloc_representation(analysis_res).to_value())
             }
-            LazyResult::BuildArtifact(artifact) => Ok(heap.alloc(artifact)),
-            LazyResult::DynamicValue(providers) => Ok(heap.alloc(StarlarkResolvedDynamicValue {
-                value: providers.add_heap_ref(heap),
-            })),
+            LazyResult::ConfiguredTargetNode(res) => res.into_value(heap, bxl_eval_extra),
+            LazyResult::UnconfiguredTargetNode(node) => Ok(match node {
+                Either::Left(node) => heap.alloc_representation(node).to_value(),
+                Either::Right(target_set) => heap.alloc_representation(target_set).to_value(),
+            }),
+            LazyResult::UnconfiguredTargetNodeKeepGoing((success_targets, error_packages)) => {
+                let error_packages = heap.alloc_dict(
+                    error_packages
+                        .into_iter()
+                        .map(|(package, error)| {
+                            Ok((
+                                heap.alloc_representation(package).to_value().get_hashed()?,
+                                heap.alloc_representation(error).to_value(),
+                            ))
+                        })
+                        .collect::<starlark::Result<_>>()?,
+                );
+                Ok(heap.alloc((
+                    heap.alloc_representation(success_targets).to_value(),
+                    error_packages,
+                )))
+            }
+            LazyResult::BuildArtifact(artifact) => {
+                Ok(heap.alloc_representation(artifact).to_value())
+            }
+            LazyResult::DynamicValue(providers) => Ok(heap
+                .alloc_representation(StarlarkResolvedDynamicValue {
+                    value: providers.add_heap_ref(heap),
+                })
+                .to_value()),
             LazyResult::Uquery(res) => res.into_value(heap),
             LazyResult::Cquery(res) => res.into_value(heap),
             LazyResult::Join(res) => Ok(heap.alloc((
@@ -145,7 +169,9 @@ impl LazyResult {
                     Ok(res) => res.into_value(heap, bxl_eval_extra),
                     Err(e) => Err(e),
                 };
-                Ok(heap.alloc(StarlarkResult::from_result(val)))
+                Ok(heap
+                    .alloc_representation(StarlarkResult::from_result(val))
+                    .to_value())
             }
         }
     }
@@ -421,8 +447,11 @@ fn lazy_operation_methods(builder: &mut MethodsBuilder) {
     ///     target = ctx.configured_targets("cell//path/to:target")
     ///     analysis_result = ctx.lazy.analysis(target).catch().resolve()
     /// ```
-    fn catch(this: &StarlarkLazy) -> starlark::Result<StarlarkLazy> {
+    fn catch<'v>(
+        this: &StarlarkLazy,
+        heap: Heap<'v>,
+    ) -> starlark::Result<ValueOf<'v, StarlarkLazy>> {
         let lazy = Arc::new(LazyOperation::Catch(this.lazy.dupe()));
-        Ok(StarlarkLazy { lazy })
+        Ok(ValueOf::alloc(heap, StarlarkLazy { lazy }))
     }
 }

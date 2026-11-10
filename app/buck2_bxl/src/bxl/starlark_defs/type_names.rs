@@ -91,5 +91,6 @@ pub(crate) fn register_bxl_type_names_in_bxl_namespace(globals: &mut GlobalsBuil
         UNCONFIGURED_TARGET_SET_TYPE;
     const ConfiguredTargetSet: StarlarkValueAsType<StarlarkTargetSet<ConfiguredTargetNode>> =
         CONFIGURED_TARGET_SET_TYPE;
+    #[starlark(representation)]
     const TargetSet: StarlarkTargetSetType = StarlarkTargetSetType;
 }

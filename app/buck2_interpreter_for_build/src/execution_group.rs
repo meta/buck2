@@ -14,6 +14,7 @@ use buck2_interpreter::execution_group::StarlarkExecutionGroup;
 use starlark::environment::GlobalsBuilder;
 use starlark::eval::Evaluator;
 use starlark::starlark_module;
+use starlark::values::ValueTyped;
 use starlark::values::starlark_value_as_type::StarlarkValueAsType;
 
 use crate::interpreter::build_context::BuildContext;
@@ -50,18 +51,21 @@ fn register_execution_group_globals(r: &mut GlobalsBuilder) {
     /// `exec_group` only to refer to tools.
     fn exec_group<'v>(
         eval: &mut Evaluator<'v, '_, '_>,
-    ) -> starlark::Result<StarlarkExecutionGroup> {
+    ) -> starlark::Result<ValueTyped<'v, StarlarkExecutionGroup>> {
         let cell_path = BuildContext::from_context(eval)?
             .starlark_path()
             .path()
             .into_owned();
-        Ok(StarlarkExecutionGroup::new_unbound(cell_path))
+        Ok(eval
+            .heap()
+            .alloc_representation(StarlarkExecutionGroup::new_unbound(cell_path)))
     }
 
     /// The execution group of every exec dep, toolchain dep and action that does not specify one.
     /// Its execution platform is the target's execution platform. A rule that declares named
     /// execution groups must list it in `exec_groups` to use it, and must name it on exec deps,
     /// toolchain deps and args that refer to tools.
+    #[starlark(representation)]
     const DefaultExecGroup: FrozenStarlarkExecutionGroup = FrozenStarlarkExecutionGroup::DEFAULT;
 }
 

@@ -24,8 +24,6 @@ use starlark::environment::Methods;
 use starlark::environment::MethodsBuilder;
 use starlark::eval::Evaluator;
 use starlark::starlark_module;
-use starlark::values::AllocValue;
-use starlark::values::Heap;
 use starlark::values::NoSerialize;
 use starlark::values::StarlarkValue;
 use starlark::values::Trace;
@@ -66,12 +64,6 @@ starlark::methods_static!(AUDIT_METHODS = audit_methods);
 impl<'v> StarlarkValue<'v> for StarlarkAuditCtx<'v> {
     fn get_methods() -> Option<&'static Methods> {
         Some(AUDIT_METHODS.methods())
-    }
-}
-
-impl<'v> AllocValue<'v> for StarlarkAuditCtx<'v> {
-    fn alloc_value(self, heap: Heap<'v>) -> Value<'v> {
-        heap.alloc_complex_no_freeze(self)
     }
 }
 
@@ -135,20 +127,22 @@ fn audit_methods(builder: &mut MethodsBuilder) {
                     match output {
                         None => Ok(NoneOr::None),
                         Some(result) => buck2_error::Ok(NoneOr::Other(match result {
-                            AuditOutputResult::Match(action) => heap.alloc(StarlarkAction(
-                                action
-                                    .action()
-                                    .ok_or_else(|| {
-                                        internal_error!("audit_output did not return an action")
-                                    })?
-                                    .dupe(),
-                            )),
-                            AuditOutputResult::MaybeRelevantForConfigurationHashPath(label) => {
-                                heap.alloc(StarlarkTargetLabel::new(label))
-                            }
-                            AuditOutputResult::MatchContentBasedPath(label) => {
-                                heap.alloc(StarlarkTargetLabel::new(label))
-                            }
+                            AuditOutputResult::Match(action) => heap
+                                .alloc_representation(StarlarkAction(
+                                    action
+                                        .action()
+                                        .ok_or_else(|| {
+                                            internal_error!("audit_output did not return an action")
+                                        })?
+                                        .dupe(),
+                                ))
+                                .to_value(),
+                            AuditOutputResult::MaybeRelevantForConfigurationHashPath(label) => heap
+                                .alloc_representation(StarlarkTargetLabel::new(label))
+                                .to_value(),
+                            AuditOutputResult::MatchContentBasedPath(label) => heap
+                                .alloc_representation(StarlarkTargetLabel::new(label))
+                                .to_value(),
                         })),
                     }
                 }

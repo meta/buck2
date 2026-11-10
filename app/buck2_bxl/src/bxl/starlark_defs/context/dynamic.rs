@@ -52,6 +52,7 @@ use dupe::Dupe;
 use itertools::Itertools;
 use starlark::environment::GlobalsBuilder;
 use starlark::starlark_module;
+use starlark::values::Heap;
 use starlark::values::OwnedFrozenRef;
 use starlark::values::ValueOf;
 use starlark::values::ValueTyped;
@@ -200,7 +201,7 @@ impl BxlDynamicOutputEvaluator<'_> {
                         self.dynamic_data,
                     )?;
 
-                    let ctx = ValueTyped::<BxlContext>::new_err(env.heap().alloc(bxl_dynamic_ctx))?;
+                    let ctx = env.heap().alloc_representation(bxl_dynamic_ctx);
 
                     let args = match (
                         &dynamic_lambda_ctx_data.lambda.attr_values,
@@ -301,7 +302,8 @@ pub(crate) fn register_dynamic_actions(globals: &mut GlobalsBuilder) {
             'v,
             DictType<String, StarlarkDynamicAttrType<'v>>,
         >,
-    ) -> starlark::Result<DynamicActionsCallable<'v>> {
-        Ok(new_dynamic_actions_callable(r#impl, attrs, &P_BXLCTX)?)
+        heap: Heap<'v>,
+    ) -> starlark::Result<ValueTyped<'v, DynamicActionsCallable<'v>>> {
+        Ok(heap.alloc_representation(new_dynamic_actions_callable(r#impl, attrs, &P_BXLCTX)?))
     }
 }

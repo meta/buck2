@@ -35,9 +35,11 @@ use starlark::starlark_complex_value;
 use starlark::starlark_module;
 use starlark::starlark_simple_value;
 use starlark::values::Freeze;
+use starlark::values::Heap;
 use starlark::values::StarlarkValue;
 use starlark::values::Trace;
 use starlark::values::Value;
+use starlark::values::ValueOf;
 use starlark::values::none::NoneOr;
 use starlark::values::starlark_value;
 use starlark::values::string::StarlarkStr;
@@ -114,11 +116,17 @@ fn error_methods(builder: &mut MethodsBuilder) {
     /// Action failure details, or `None` when this error was not caused by an action.
     /// Returns a [`bxl.ActionError`](../ActionError) with recorded action diagnostics.
     #[starlark(attribute)]
-    fn action_error(this: &StarlarkError) -> starlark::Result<NoneOr<StarlarkActionError>> {
+    fn action_error<'v>(
+        this: &StarlarkError,
+        heap: Heap<'v>,
+    ) -> starlark::Result<NoneOr<ValueOf<'v, StarlarkActionError>>> {
         Ok(if this.err.action_error().is_some() {
-            NoneOr::Other(StarlarkActionError {
-                err: this.err.dupe(),
-            })
+            NoneOr::Other(ValueOf::alloc(
+                heap,
+                StarlarkActionError {
+                    err: this.err.dupe(),
+                },
+            ))
         } else {
             NoneOr::None
         })
@@ -222,8 +230,13 @@ impl<'v> StarlarkValue<'v> for StarlarkActionError {
 fn action_error_methods(builder: &mut MethodsBuilder) {
     /// The unconfigured target label, or `None` for BXL, anonymous, or unavailable owners.
     #[starlark(attribute)]
-    fn target(this: &StarlarkActionError) -> starlark::Result<NoneOr<StarlarkTargetLabel>> {
-        Ok(NoneOr::from_option(this.target()?))
+    fn target<'v>(
+        this: &StarlarkActionError,
+        heap: Heap<'v>,
+    ) -> starlark::Result<NoneOr<ValueOf<'v, StarlarkTargetLabel>>> {
+        Ok(NoneOr::from_option(
+            this.target()?.map(|label| ValueOf::alloc(heap, label)),
+        ))
     }
 
     /// Command stdout, or `None` when command details are unavailable. Empty streams are `""`.
@@ -332,8 +345,11 @@ fn result_methods(builder: &mut MethodsBuilder) {
 
     /// Unwrap the error, returning the inner error if the result is `Err`.
     /// If the result is an `Ok`, it will fail
-    fn unwrap_err<'v>(this: &'v StarlarkResult<'v>) -> starlark::Result<StarlarkError> {
-        Ok(this.unwrap_err()?)
+    fn unwrap_err<'v>(
+        this: &'v StarlarkResult<'v>,
+        heap: Heap<'v>,
+    ) -> starlark::Result<ValueOf<'v, StarlarkError>> {
+        Ok(ValueOf::alloc(heap, this.unwrap_err()?))
     }
 }
 
@@ -465,7 +481,7 @@ starlark::__starlark_pagable_only! {
                 assert_eq!(serde_json::to_value(&action).expect("serialize action diagnostics"), expected);
                 let owned: OwnedFrozen<Value<'static>> = OwnedFrozen::build(
                     FrozenHeapName::user("action_error_round_trips"),
-                    |heap| heap.alloc(action),
+                    |heap| heap.alloc_representation(action).to_value(),
                 );
                 let restored = round_trip(owned)?;
                 restored.by_ref(|value| {
@@ -511,7 +527,8 @@ starlark::__starlark_pagable_only! {
             let err = test_error();
             let owned: OwnedFrozen<Value<'static>> =
                 OwnedFrozen::build(FrozenHeapName::user("result_err_round_trips"), |heap| {
-                    heap.alloc(StarlarkResult::Err(err.dupe()))
+                    heap.alloc_representation(StarlarkResult::Err(err.dupe()))
+                        .to_value()
                 });
             let expected_display = owned.by_ref(|v| v.to_string());
 
@@ -534,7 +551,8 @@ starlark::__starlark_pagable_only! {
         fn result_ok_round_trips() -> pagable::Result<()> {
             let owned: OwnedFrozen<Value<'static>> =
                 OwnedFrozen::build(FrozenHeapName::user("result_ok_round_trips"), |heap| {
-                    heap.alloc(StarlarkResult::Ok(heap.alloc("payload")))
+                    heap.alloc_representation(StarlarkResult::Ok(heap.alloc("payload")))
+                        .to_value()
                 });
 
             let restored = round_trip(owned)?;
@@ -553,7 +571,8 @@ starlark::__starlark_pagable_only! {
             let err = test_error();
             let owned: OwnedFrozen<Value<'static>> =
                 OwnedFrozen::build(FrozenHeapName::user("error_round_trips"), |heap| {
-                    heap.alloc(StarlarkError::new(err.dupe()))
+                    heap.alloc_representation(StarlarkError::new(err.dupe()))
+                        .to_value()
                 });
             let expected_display = owned.by_ref(|v| v.to_string());
 

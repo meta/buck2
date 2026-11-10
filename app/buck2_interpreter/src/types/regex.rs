@@ -22,6 +22,7 @@ use starlark::starlark_module;
 use starlark::starlark_simple_value;
 use starlark::typing::Ty;
 use starlark::values::Freeze;
+use starlark::values::Heap;
 use starlark::values::NoSerialize;
 use starlark::values::StarlarkValue;
 use starlark::values::ValueOf;
@@ -197,15 +198,17 @@ pub fn register_buck_regex(builder: &mut GlobalsBuilder) {
     fn regex<'v>(
         #[starlark(require = pos)] regex: &str,
         #[starlark(require = named, default = false)] fancy: bool,
-    ) -> starlark::Result<StarlarkBuckRegex> {
-        match fancy {
-            false => Ok(StarlarkBuckRegex::Regular(
+        heap: Heap<'v>,
+    ) -> starlark::Result<ValueOf<'v, StarlarkBuckRegex>> {
+        let regex = match fancy {
+            false => StarlarkBuckRegex::Regular(
                 regex::Regex::new(regex).map_err(buck2_error::Error::from)?,
-            )),
-            true => Ok(StarlarkBuckRegex::Fancy(
+            ),
+            true => StarlarkBuckRegex::Fancy(
                 fancy_regex::Regex::new(regex).map_err(buck2_error::Error::from)?,
-            )),
-        }
+            ),
+        };
+        Ok(ValueOf::alloc(heap, regex))
     }
 }
 

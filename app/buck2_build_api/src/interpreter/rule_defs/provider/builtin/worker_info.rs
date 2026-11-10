@@ -24,6 +24,7 @@ use starlark::values::Trace;
 use starlark::values::UnpackValue;
 use starlark::values::Value;
 use starlark::values::ValueOf;
+use starlark::values::ValueTyped;
 use starlark::values::dict::DictType;
 use starlark::values::int::IntView;
 use starlark::values::list::AllocList;
@@ -84,11 +85,11 @@ fn worker_info_creator(globals: &mut GlobalsBuilder) {
         #[starlark(require = named, default = false)]
         supports_bazel_remote_persistent_worker_protocol: bool,
         eval: &mut Evaluator<'v, '_, '_>,
-    ) -> starlark::Result<WorkerInfo<'v>> {
+    ) -> starlark::Result<ValueTyped<'v, WorkerInfo<'v>>> {
         let heap = eval.heap();
         let valid_exe = StarlarkCmdArgs::try_from_value(exe)?;
         let id = next_id();
-        Ok(WorkerInfo {
+        Ok(heap.alloc_representation(WorkerInfo {
             exe: ValueOf::alloc(heap, valid_exe),
             env: env.into_option(),
             id,
@@ -97,7 +98,7 @@ fn worker_info_creator(globals: &mut GlobalsBuilder) {
             supports_bazel_remote_persistent_worker_protocol: ValueOf::new_unchecked(
                 heap.alloc(supports_bazel_remote_persistent_worker_protocol),
             ),
-        })
+        }))
     }
 }
 

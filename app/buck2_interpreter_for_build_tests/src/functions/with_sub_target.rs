@@ -21,8 +21,8 @@ fn test_with_sub_target() -> buck2_error::Result<()> {
     let mut tester = Tester::new().unwrap();
     tester.additional_globals(|globals| {
         let target = TargetLabel::testing_parse("cell//pkg:target");
-        globals.set("unconf", StarlarkTargetLabel::from(target.dupe()));
-        globals.set(
+        globals.set_representation("unconf", StarlarkTargetLabel::from(target.dupe()));
+        globals.set_representation(
             "conf",
             StarlarkConfiguredTargetLabel::from(target.configure(ConfigurationData::unbound())),
         );

@@ -50,7 +50,6 @@ use starlark::environment::Methods;
 use starlark::environment::MethodsBuilder;
 use starlark::eval::Evaluator;
 use starlark::starlark_module;
-use starlark::values::AllocValue;
 use starlark::values::Heap;
 use starlark::values::NoSerialize;
 use starlark::values::StarlarkValue;
@@ -60,6 +59,7 @@ use starlark::values::Value;
 use starlark::values::ValueOf;
 use starlark::values::dict::DictRef;
 use starlark::values::dict::DictType;
+use starlark::values::list::AllocList;
 use starlark::values::list::ListRef;
 use starlark::values::list::ListType;
 use starlark::values::none::NoneType;
@@ -567,12 +567,6 @@ impl<'v> StarlarkValue<'v> for StarlarkOutputStream {
     }
 }
 
-impl<'v> AllocValue<'v> for StarlarkOutputStream {
-    fn alloc_value(self, heap: Heap<'v>) -> Value<'v> {
-        heap.alloc_complex_no_freeze(self)
-    }
-}
-
 #[derive(StarlarkTypeRepr, UnpackValue)]
 enum EnsureMultipleArtifactsArg<'v> {
     None(NoneType),
@@ -795,11 +789,12 @@ fn output_stream_methods(builder: &mut MethodsBuilder) {
     fn ensure<'v>(
         this: &StarlarkOutputStream,
         artifact: StarlarkArtifactView<'v>,
-    ) -> starlark::Result<EnsuredArtifact> {
+        heap: Heap<'v>,
+    ) -> starlark::Result<ValueOf<'v, EnsuredArtifact>> {
         let artifact = EnsuredArtifact::from_artifact(artifact)?;
         this.populate_ensured_artifacts(EnsuredArtifactOrGroup::Artifact(artifact.clone()))?;
 
-        Ok(artifact)
+        Ok(ValueOf::alloc(heap, artifact))
     }
 
     /// Same as `ensure`, but for multiple artifacts. Will preserve the shape of the inputs (i.e. if the resulting
@@ -825,7 +820,7 @@ fn output_stream_methods(builder: &mut MethodsBuilder) {
         heap: Heap<'v>,
     ) -> starlark::Result<Value<'v>> {
         match artifacts {
-            EnsureMultipleArtifactsArg::None(_) => Ok(heap.alloc(Vec::<EnsuredArtifact>::new())),
+            EnsureMultipleArtifactsArg::None(_) => Ok(alloc_ensured_artifacts(heap, Vec::new())),
             EnsureMultipleArtifactsArg::EnsuredArtifactArgs(list) => {
                 let artifacts: Vec<EnsuredArtifact> = list
                     .try_items()
@@ -839,20 +834,26 @@ fn output_stream_methods(builder: &mut MethodsBuilder) {
                     })
                     .collect::<Result<Vec<_>, _>>()?;
 
-                Ok(heap.alloc(artifacts))
+                Ok(alloc_ensured_artifacts(heap, artifacts))
             }
             EnsureMultipleArtifactsArg::ProvidersArtifactIterable(artifact_gen) => {
-                Ok(heap.alloc(get_artifacts_from_bxl_build_result(
-                    artifact_gen
-                        .0
-                        .downcast_ref::<StarlarkBxlBuildResult>()
-                        .unwrap(),
-                    this,
-                )?))
+                Ok(alloc_ensured_artifacts(
+                    heap,
+                    get_artifacts_from_bxl_build_result(
+                        artifact_gen
+                            .0
+                            .downcast_ref::<StarlarkBxlBuildResult>()
+                            .unwrap(),
+                        this,
+                    )?,
+                ))
             }
-            EnsureMultipleArtifactsArg::BxlBuildResult(bxl_build_result) => Ok(heap.alloc(
-                get_artifacts_from_bxl_build_result(bxl_build_result.as_ref(), this)?,
-            )),
+            EnsureMultipleArtifactsArg::BxlBuildResult(bxl_build_result) => {
+                Ok(alloc_ensured_artifacts(
+                    heap,
+                    get_artifacts_from_bxl_build_result(bxl_build_result.as_ref(), this)?,
+                ))
+            }
             EnsureMultipleArtifactsArg::Dict(build_result_dict) => Ok(heap.alloc_dict(
                 build_result_dict
                     .iter()
@@ -866,10 +867,13 @@ fn output_stream_methods(builder: &mut MethodsBuilder) {
                                     false,
                                 )
                             })?,
-                            heap.alloc(get_artifacts_from_bxl_build_result(
-                                bxl_build_result.as_ref(),
-                                this,
-                            )?),
+                            alloc_ensured_artifacts(
+                                heap,
+                                get_artifacts_from_bxl_build_result(
+                                    bxl_build_result.as_ref(),
+                                    this,
+                                )?,
+                            ),
                         ))
                     })
                     .collect::<buck2_error::Result<_>>()?,
@@ -889,10 +893,20 @@ fn output_stream_methods(builder: &mut MethodsBuilder) {
                     result.push(artifact_group.dupe());
                 }
 
-                Ok(heap.alloc(EnsuredArtifactGroup::new(result, false, heap)))
+                Ok(heap
+                    .alloc_representation(EnsuredArtifactGroup::new(result, false, heap))
+                    .to_value())
             }
         }
     }
+}
+
+fn alloc_ensured_artifacts<'v>(heap: Heap<'v>, artifacts: Vec<EnsuredArtifact>) -> Value<'v> {
+    heap.alloc(AllocList(
+        artifacts
+            .into_iter()
+            .map(|artifact| heap.alloc_representation(artifact).to_value()),
+    ))
 }
 
 pub(crate) fn get_cmd_line_inputs(

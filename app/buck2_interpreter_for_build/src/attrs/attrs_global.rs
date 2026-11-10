@@ -31,6 +31,7 @@ use either::Either;
 use starlark::environment::GlobalsBuilder;
 use starlark::eval::Evaluator;
 use starlark::starlark_module;
+use starlark::values::Heap;
 use starlark::values::StringValue;
 use starlark::values::Value;
 use starlark::values::ValueError;
@@ -170,15 +171,12 @@ fn attr_module(registry: &mut GlobalsBuilder) {
         #[starlark(require = named)] validate: Option<Value<'v>>,
         #[starlark(require = named, default = "")] doc: &str,
         eval: &mut Evaluator<'v, '_, '_>,
-    ) -> starlark::Result<StarlarkAttribute> {
+    ) -> starlark::Result<ValueOf<'v, StarlarkAttribute>> {
         let _unused = validate;
-        Ok(Attribute::attr(
-            eval,
-            default,
-            doc,
-            AttrType::string(),
-            ToolMarks::NONE,
-        )?)
+        Ok(ValueOf::alloc(
+            eval.heap(),
+            Attribute::attr(eval, default, doc, AttrType::string(), ToolMarks::NONE)?,
+        ))
     }
 
     /// Takes a list from the user, supplies a list to the rule.
@@ -187,15 +185,12 @@ fn attr_module(registry: &mut GlobalsBuilder) {
         #[starlark(require = named)] default: Option<Value<'v>>,
         #[starlark(require = named, default = "")] doc: &str,
         eval: &mut Evaluator<'v, '_, '_>,
-    ) -> starlark::Result<StarlarkAttribute> {
+    ) -> starlark::Result<ValueOf<'v, StarlarkAttribute>> {
         let coercer = AttrType::list(inner.coercer_for_inner()?);
-        Ok(Attribute::attr(
-            eval,
-            default,
-            doc,
-            coercer,
-            inner.tool_marks(),
-        )?)
+        Ok(ValueOf::alloc(
+            eval.heap(),
+            Attribute::attr(eval, default, doc, coercer, inner.tool_marks())?,
+        ))
     }
 
     /// Takes a target from the user, as a string, and supplies a dependency to the rule.
@@ -217,7 +212,7 @@ fn attr_module(registry: &mut GlobalsBuilder) {
             StarlarkExecutionGroupView<'v>,
         >,
         eval: &mut Evaluator<'v, '_, '_>,
-    ) -> starlark::Result<StarlarkAttribute> {
+    ) -> starlark::Result<ValueOf<'v, StarlarkAttribute>> {
         let required_providers = dep_like_attr_handle_providers_arg(providers)?;
         let (coercer, marks) = match exec_group.into_option() {
             None => (
@@ -229,7 +224,10 @@ fn attr_module(registry: &mut GlobalsBuilder) {
                 ToolMarks::NONE,
             ),
         };
-        Ok(Attribute::attr(eval, default, doc, coercer, marks)?)
+        Ok(ValueOf::alloc(
+            eval.heap(),
+            Attribute::attr(eval, default, doc, coercer, marks)?,
+        ))
     }
 
     /// Takes a list of constraints from the user that the execution platform of `exec_group`
@@ -243,14 +241,17 @@ fn attr_module(registry: &mut GlobalsBuilder) {
         #[starlark(require = named)] default: Option<Value<'v>>,
         #[starlark(require = named, default = "")] doc: &str,
         eval: &mut Evaluator<'v, '_, '_>,
-    ) -> starlark::Result<StarlarkAttribute> {
+    ) -> starlark::Result<ValueOf<'v, StarlarkAttribute>> {
         let coercer = AttrType::list(AttrType::configuration_dep(
             ConfigurationDepKind::CompatibilityAttribute,
         ));
         let attr = Attribute::attr(eval, default, doc, coercer, ToolMarks::NONE)?;
-        Ok(StarlarkAttribute::new_exec_compatible_with(
-            attr.clone_attribute(),
-            exec_group.expect_bound()?,
+        Ok(ValueOf::alloc(
+            eval.heap(),
+            StarlarkAttribute::new_exec_compatible_with(
+                attr.clone_attribute(),
+                exec_group.expect_bound()?,
+            ),
         ))
     }
 
@@ -274,7 +275,7 @@ fn attr_module(registry: &mut GlobalsBuilder) {
             StarlarkExecutionGroupView<'v>,
         >,
         eval: &mut Evaluator<'v, '_, '_>,
-    ) -> starlark::Result<StarlarkAttribute> {
+    ) -> starlark::Result<ValueOf<'v, StarlarkAttribute>> {
         let required_providers = dep_like_attr_handle_providers_arg(providers)?;
         let (coercer, marks) = match exec_group.into_option() {
             None => (
@@ -286,7 +287,10 @@ fn attr_module(registry: &mut GlobalsBuilder) {
                 ToolMarks::NONE,
             ),
         };
-        Ok(Attribute::attr(eval, default, doc, coercer, marks)?)
+        Ok(ValueOf::alloc(
+            eval.heap(),
+            Attribute::attr(eval, default, doc, coercer, marks)?,
+        ))
     }
 
     fn transition_dep<'v>(
@@ -298,7 +302,7 @@ fn attr_module(registry: &mut GlobalsBuilder) {
         #[starlark(require = named)] default: Option<Value<'v>>,
         #[starlark(require = named, default = "")] doc: &str,
         eval: &mut Evaluator<'v, '_, '_>,
-    ) -> starlark::Result<StarlarkAttribute> {
+    ) -> starlark::Result<ValueOf<'v, StarlarkAttribute>> {
         let required_providers = dep_like_attr_handle_providers_arg(providers)?;
         let label_coercion_ctx = attr_coercion_context_for_bzl(eval)?;
 
@@ -320,9 +324,12 @@ fn attr_module(registry: &mut GlobalsBuilder) {
             }
         };
 
-        Ok(StarlarkAttribute::new(
-            Attribute::new_from_builder(coerced_default, doc, coercer)?,
-            ToolMarks::NONE,
+        Ok(ValueOf::alloc(
+            eval.heap(),
+            StarlarkAttribute::new(
+                Attribute::new_from_builder(coerced_default, doc, coercer)?,
+                ToolMarks::NONE,
+            ),
         ))
     }
 
@@ -334,16 +341,13 @@ fn attr_module(registry: &mut GlobalsBuilder) {
         #[starlark(require = named)] default: Option<Value<'v>>,
         #[starlark(require = named, default = "")] doc: &str,
         eval: &mut Evaluator<'v, '_, '_>,
-    ) -> starlark::Result<StarlarkAttribute> {
+    ) -> starlark::Result<ValueOf<'v, StarlarkAttribute>> {
         let required_providers = dep_like_attr_handle_providers_arg(providers)?;
         let coercer = AttrType::configured_dep(required_providers);
-        Ok(Attribute::attr(
-            eval,
-            default,
-            doc,
-            coercer,
-            ToolMarks::NONE,
-        )?)
+        Ok(ValueOf::alloc(
+            eval.heap(),
+            Attribute::attr(eval, default, doc, coercer, ToolMarks::NONE)?,
+        ))
     }
 
     fn split_transition_dep<'v>(
@@ -355,7 +359,7 @@ fn attr_module(registry: &mut GlobalsBuilder) {
         #[starlark(require = named)] default: Option<Value<'v>>,
         #[starlark(require = named, default = "")] doc: &str,
         eval: &mut Evaluator<'v, '_, '_>,
-    ) -> starlark::Result<StarlarkAttribute> {
+    ) -> starlark::Result<ValueOf<'v, StarlarkAttribute>> {
         let required_providers = dep_like_attr_handle_providers_arg(providers)?;
         let coercer = AttrType::split_transition_dep(required_providers, cfg.transition_id()?);
 
@@ -368,9 +372,12 @@ fn attr_module(registry: &mut GlobalsBuilder) {
             }
         };
 
-        Ok(StarlarkAttribute::new(
-            Attribute::new_from_builder(coerced_default, doc, coercer)?,
-            ToolMarks::NONE,
+        Ok(ValueOf::alloc(
+            eval.heap(),
+            StarlarkAttribute::new(
+                Attribute::new_from_builder(coerced_default, doc, coercer)?,
+                ToolMarks::NONE,
+            ),
         ))
     }
 
@@ -386,14 +393,17 @@ fn attr_module(registry: &mut GlobalsBuilder) {
         #[starlark(require = named)] default: Option<Value<'v>>,
         #[starlark(require = named, default = "")] doc: &str,
         eval: &mut Evaluator<'v, '_, '_>,
-    ) -> starlark::Result<StarlarkAttribute> {
-        Ok(Attribute::attr(
-            eval,
-            default,
-            doc,
-            AttrType::plugin_dep(kind.expect_bound()?),
-            ToolMarks::NONE,
-        )?)
+    ) -> starlark::Result<ValueOf<'v, StarlarkAttribute>> {
+        Ok(ValueOf::alloc(
+            eval.heap(),
+            Attribute::attr(
+                eval,
+                default,
+                doc,
+                AttrType::plugin_dep(kind.expect_bound()?),
+                ToolMarks::NONE,
+            )?,
+        ))
     }
 
     /// Takes a target from the user, as a string, and supplies a dependency to the rule.
@@ -422,7 +432,7 @@ fn attr_module(registry: &mut GlobalsBuilder) {
         #[starlark(require = named)] default: Option<Value<'v>>,
         #[starlark(require = named, default = "")] doc: &str,
         eval: &mut Evaluator<'v, '_, '_>,
-    ) -> starlark::Result<StarlarkAttribute> {
+    ) -> starlark::Result<ValueOf<'v, StarlarkAttribute>> {
         let required_providers = dep_like_attr_handle_providers_arg(providers)?;
         let plugin_kinds = match pulls_and_pushes_plugins {
             Either::Right(_) => PluginKindSet::ALL,
@@ -440,13 +450,10 @@ fn attr_module(registry: &mut GlobalsBuilder) {
         };
 
         let coercer = AttrType::dep(required_providers, plugin_kinds);
-        Ok(Attribute::attr(
-            eval,
-            default,
-            doc,
-            coercer,
-            ToolMarks::NONE,
-        )?)
+        Ok(ValueOf::alloc(
+            eval.heap(),
+            Attribute::attr(eval, default, doc, coercer, ToolMarks::NONE)?,
+        ))
     }
 
     /// Takes most builtin literals and passes them to the rule as a string.
@@ -455,14 +462,11 @@ fn attr_module(registry: &mut GlobalsBuilder) {
         #[starlark(require = named, default = "")] doc: &str,
         #[starlark(require = named)] default: Option<Value<'v>>,
         eval: &mut Evaluator<'v, '_, '_>,
-    ) -> starlark::Result<StarlarkAttribute> {
-        Ok(Attribute::attr(
-            eval,
-            default,
-            doc,
-            AttrType::any(),
-            ToolMarks::NONE,
-        )?)
+    ) -> starlark::Result<ValueOf<'v, StarlarkAttribute>> {
+        Ok(ValueOf::alloc(
+            eval.heap(),
+            Attribute::attr(eval, default, doc, AttrType::any(), ToolMarks::NONE)?,
+        ))
     }
 
     /// Takes a boolean and passes it to the rule as a boolean.
@@ -470,14 +474,11 @@ fn attr_module(registry: &mut GlobalsBuilder) {
         #[starlark(require = named)] default: Option<Value<'v>>,
         #[starlark(require = named, default = "")] doc: &str,
         eval: &mut Evaluator<'v, '_, '_>,
-    ) -> starlark::Result<StarlarkAttribute> {
-        Ok(Attribute::attr(
-            eval,
-            default,
-            doc,
-            AttrType::bool(),
-            ToolMarks::NONE,
-        )?)
+    ) -> starlark::Result<ValueOf<'v, StarlarkAttribute>> {
+        Ok(ValueOf::alloc(
+            eval.heap(),
+            Attribute::attr(eval, default, doc, AttrType::bool(), ToolMarks::NONE)?,
+        ))
     }
 
     /// Takes a value that may be `None` or some inner type, and passes either `None` or the
@@ -491,7 +492,7 @@ fn attr_module(registry: &mut GlobalsBuilder) {
         #[starlark(require = named)] default: Option<Value<'v>>,
         #[starlark(require = named, default = "")] doc: &str,
         eval: &mut Evaluator<'v, '_, '_>,
-    ) -> starlark::Result<StarlarkAttribute> {
+    ) -> starlark::Result<ValueOf<'v, StarlarkAttribute>> {
         let coercer = AttrType::option(inner.coercer_for_inner()?);
         let attr = Attribute::attr(eval, default, doc, coercer, inner.tool_marks())?;
 
@@ -500,7 +501,7 @@ fn attr_module(registry: &mut GlobalsBuilder) {
                 AttrError::OptionDefaultNone(default.as_display_no_ctx().to_string()),
             )
             .into()),
-            _ => Ok(attr),
+            _ => Ok(ValueOf::alloc(eval.heap(), attr)),
         }
     }
 
@@ -513,13 +514,17 @@ fn attr_module(registry: &mut GlobalsBuilder) {
     fn default_only<'v>(
         #[starlark(require = pos)] inner: &StarlarkAttribute,
         #[starlark(require = named, default = "")] doc: &str,
-    ) -> starlark::Result<StarlarkAttribute> {
+        heap: Heap<'v>,
+    ) -> starlark::Result<ValueOf<'v, StarlarkAttribute>> {
         let Some(default) = inner.attribute().default_as_owned().duped() else {
             return Err(buck2_error::Error::from(AttrError::DefaultOnlyMustHaveDefault).into());
         };
-        Ok(StarlarkAttribute::new(
-            Attribute::new_default_only(default, doc, inner.coercer_for_default_only()?),
-            inner.tool_marks(),
+        Ok(ValueOf::alloc(
+            heap,
+            StarlarkAttribute::new(
+                Attribute::new_default_only(default, doc, inner.coercer_for_default_only()?),
+                inner.tool_marks(),
+            ),
         ))
     }
 
@@ -529,14 +534,11 @@ fn attr_module(registry: &mut GlobalsBuilder) {
         #[starlark(require = named)] default: Option<Value<'v>>,
         #[starlark(require = named, default = "")] doc: &str,
         eval: &mut Evaluator<'v, '_, '_>,
-    ) -> starlark::Result<StarlarkAttribute> {
-        Ok(Attribute::attr(
-            eval,
-            default,
-            doc,
-            AttrType::label(),
-            ToolMarks::NONE,
-        )?)
+    ) -> starlark::Result<ValueOf<'v, StarlarkAttribute>> {
+        Ok(ValueOf::alloc(
+            eval.heap(),
+            Attribute::attr(eval, default, doc, AttrType::label(), ToolMarks::NONE)?,
+        ))
     }
 
     /// Takes a dict from the user, supplies a dict to the rule.
@@ -548,15 +550,18 @@ fn attr_module(registry: &mut GlobalsBuilder) {
         #[starlark(require = named)] default: Option<Value<'v>>,
         #[starlark(require = named, default = "")] doc: &str,
         eval: &mut Evaluator<'v, '_, '_>,
-    ) -> starlark::Result<StarlarkAttribute> {
+    ) -> starlark::Result<ValueOf<'v, StarlarkAttribute>> {
         let coercer = AttrType::dict(key.coercer_for_inner()?, value.coercer_for_inner()?, sorted);
-        Ok(Attribute::attr(
-            eval,
-            default,
-            doc,
-            coercer,
-            key.tool_marks().union(value.tool_marks()),
-        )?)
+        Ok(ValueOf::alloc(
+            eval.heap(),
+            Attribute::attr(
+                eval,
+                default,
+                doc,
+                coercer,
+                key.tool_marks().union(value.tool_marks()),
+            )?,
+        ))
     }
 
     /// Takes a command line argument from the user and supplies a `cmd_args` compatible value to the rule.
@@ -581,7 +586,7 @@ fn attr_module(registry: &mut GlobalsBuilder) {
             StarlarkExecutionGroupView<'v>,
         >,
         eval: &mut Evaluator<'v, '_, '_>,
-    ) -> starlark::Result<StarlarkAttribute> {
+    ) -> starlark::Result<ValueOf<'v, StarlarkAttribute>> {
         let _unused = json;
         let exec_group = exec_group
             .into_option()
@@ -592,17 +597,20 @@ fn attr_module(registry: &mut GlobalsBuilder) {
             Some(ExecutionGroup::Default) => (None, ToolMarks::DEFAULT_GROUP_ARG),
             None => (None, ToolMarks::UNMARKED_ARG),
         };
-        Ok(Attribute::attr(
-            eval,
-            default,
-            doc,
-            AttrType::arg_in_group(
-                anon_target_compatible,
-                exec_group,
-                marks == ToolMarks::UNMARKED_ARG,
-            ),
-            marks,
-        )?)
+        Ok(ValueOf::alloc(
+            eval.heap(),
+            Attribute::attr(
+                eval,
+                default,
+                doc,
+                AttrType::arg_in_group(
+                    anon_target_compatible,
+                    exec_group,
+                    marks == ToolMarks::UNMARKED_ARG,
+                ),
+                marks,
+            )?,
+        ))
     }
 
     /// Takes a string from one of the variants given, and gives that string to the rule.
@@ -614,32 +622,38 @@ fn attr_module(registry: &mut GlobalsBuilder) {
         >,
         #[starlark(require = named, default = "")] doc: &str,
         eval: &mut Evaluator<'v, '_, '_>,
-    ) -> starlark::Result<StarlarkAttribute> {
+    ) -> starlark::Result<ValueOf<'v, StarlarkAttribute>> {
         // Value seems to usually be a `[String]`, listing the possible values of the
         // enumeration. Unfortunately, for things like `exported_lang_preprocessor_flags`
         // it ends up being `Type` which doesn't match the data we see.
-        Ok(Attribute::attr(
-            eval,
-            default.map(|v| v.to_value()),
-            doc,
-            AttrType::enumeration(variants.try_to_vec()?)?,
-            ToolMarks::NONE,
-        )?)
+        Ok(ValueOf::alloc(
+            eval.heap(),
+            Attribute::attr(
+                eval,
+                default.map(|v| v.to_value()),
+                doc,
+                AttrType::enumeration(variants.try_to_vec()?)?,
+                ToolMarks::NONE,
+            )?,
+        ))
     }
 
     fn configuration_label<'v>(
         #[starlark(require = named, default = "")] doc: &str,
         eval: &mut Evaluator<'v, '_, '_>,
-    ) -> starlark::Result<StarlarkAttribute> {
+    ) -> starlark::Result<ValueOf<'v, StarlarkAttribute>> {
         // TODO(nga): explain how this is different from `dep`.
         //   This probably meant to be similar to `label`, but not configurable.
-        Ok(Attribute::attr(
-            eval,
-            None,
-            doc,
-            AttrType::dep(ProviderIdSet::EMPTY, PluginKindSet::EMPTY),
-            ToolMarks::NONE,
-        )?)
+        Ok(ValueOf::alloc(
+            eval.heap(),
+            Attribute::attr(
+                eval,
+                None,
+                doc,
+                AttrType::dep(ProviderIdSet::EMPTY, PluginKindSet::EMPTY),
+                ToolMarks::NONE,
+            )?,
+        ))
     }
 
     /// Currently an alias for `attrs.string`.
@@ -647,14 +661,11 @@ fn attr_module(registry: &mut GlobalsBuilder) {
         #[starlark(require = named)] default: Option<Value<'v>>,
         #[starlark(require = named, default = "")] doc: &str,
         eval: &mut Evaluator<'v, '_, '_>,
-    ) -> starlark::Result<StarlarkAttribute> {
-        Ok(Attribute::attr(
-            eval,
-            default,
-            doc,
-            AttrType::string(),
-            ToolMarks::NONE,
-        )?)
+    ) -> starlark::Result<ValueOf<'v, StarlarkAttribute>> {
+        Ok(ValueOf::alloc(
+            eval.heap(),
+            Attribute::attr(eval, default, doc, AttrType::string(), ToolMarks::NONE)?,
+        ))
     }
 
     fn set<'v>(
@@ -663,16 +674,13 @@ fn attr_module(registry: &mut GlobalsBuilder) {
         #[starlark(require = named)] default: Option<Value<'v>>,
         #[starlark(require = named, default = "")] doc: &str,
         eval: &mut Evaluator<'v, '_, '_>,
-    ) -> starlark::Result<StarlarkAttribute> {
+    ) -> starlark::Result<ValueOf<'v, StarlarkAttribute>> {
         let _unused = sorted;
         let coercer = AttrType::list(value_type.coercer_for_inner()?);
-        Ok(Attribute::attr(
-            eval,
-            default,
-            doc,
-            coercer,
-            value_type.tool_marks(),
-        )?)
+        Ok(ValueOf::alloc(
+            eval.heap(),
+            Attribute::attr(eval, default, doc, coercer, value_type.tool_marks())?,
+        ))
     }
 
     fn named_set<'v>(
@@ -681,19 +689,16 @@ fn attr_module(registry: &mut GlobalsBuilder) {
         #[starlark(require = named)] default: Option<Value<'v>>,
         #[starlark(require = named, default = "")] doc: &str,
         eval: &mut Evaluator<'v, '_, '_>,
-    ) -> starlark::Result<StarlarkAttribute> {
+    ) -> starlark::Result<ValueOf<'v, StarlarkAttribute>> {
         let value_coercer = value_type.coercer_for_inner()?;
         let coercer = AttrType::one_of(vec![
             AttrType::dict(AttrType::string(), value_coercer.dupe(), sorted),
             AttrType::list(value_coercer),
         ]);
-        Ok(Attribute::attr(
-            eval,
-            default,
-            doc,
-            coercer,
-            value_type.tool_marks(),
-        )?)
+        Ok(ValueOf::alloc(
+            eval.heap(),
+            Attribute::attr(eval, default, doc, coercer, value_type.tool_marks())?,
+        ))
     }
 
     /// Given a list of alternative attributes, selects the first that matches and gives that to the rule.
@@ -702,7 +707,7 @@ fn attr_module(registry: &mut GlobalsBuilder) {
         #[starlark(require = named)] default: Option<Value<'v>>,
         #[starlark(require = named, default = "")] doc: &str,
         eval: &mut Evaluator<'v, '_, '_>,
-    ) -> starlark::Result<StarlarkAttribute> {
+    ) -> starlark::Result<ValueOf<'v, StarlarkAttribute>> {
         let args = args.iter().collect::<starlark::Result<Vec<_>>>()?;
         let marks = args
             .iter()
@@ -712,7 +717,10 @@ fn attr_module(registry: &mut GlobalsBuilder) {
                 .map(|arg| arg.coercer_for_inner())
                 .collect::<Result<Vec<_>, _>>()?,
         );
-        Ok(Attribute::attr(eval, default, doc, coercer, marks)?)
+        Ok(ValueOf::alloc(
+            eval.heap(),
+            Attribute::attr(eval, default, doc, coercer, marks)?,
+        ))
     }
 
     /// Takes a tuple of values and gives a tuple to the rule.
@@ -721,7 +729,7 @@ fn attr_module(registry: &mut GlobalsBuilder) {
         #[starlark(require = named)] default: Option<Value<'v>>,
         #[starlark(require = named, default = "")] doc: &str,
         eval: &mut Evaluator<'v, '_, '_>,
-    ) -> starlark::Result<StarlarkAttribute> {
+    ) -> starlark::Result<ValueOf<'v, StarlarkAttribute>> {
         let args = args.iter().collect::<starlark::Result<Vec<_>>>()?;
         let marks = args
             .iter()
@@ -731,7 +739,10 @@ fn attr_module(registry: &mut GlobalsBuilder) {
                 .map(|arg| arg.coercer_for_inner())
                 .collect::<Result<Vec<_>, _>>()?,
         );
-        Ok(Attribute::attr(eval, default, doc, coercer, marks)?)
+        Ok(ValueOf::alloc(
+            eval.heap(),
+            Attribute::attr(eval, default, doc, coercer, marks)?,
+        ))
     }
 
     /// Takes an int from the user, supplies an int to the rule.
@@ -739,33 +750,28 @@ fn attr_module(registry: &mut GlobalsBuilder) {
         #[starlark(require = named)] default: Option<Value<'v>>,
         #[starlark(require = named, default = "")] doc: &str,
         eval: &mut Evaluator<'v, '_, '_>,
-    ) -> starlark::Result<StarlarkAttribute> {
-        Ok(Attribute::attr(
-            eval,
-            default,
-            doc,
-            AttrType::int(),
-            ToolMarks::NONE,
-        )?)
+    ) -> starlark::Result<ValueOf<'v, StarlarkAttribute>> {
+        Ok(ValueOf::alloc(
+            eval.heap(),
+            Attribute::attr(eval, default, doc, AttrType::int(), ToolMarks::NONE)?,
+        ))
     }
 
     fn query<'v>(
         #[starlark(require = named, default = "")] doc: &str,
         eval: &mut Evaluator<'v, '_, '_>,
-    ) -> starlark::Result<StarlarkAttribute> {
-        Ok(Attribute::attr(
-            eval,
-            None,
-            doc,
-            AttrType::query(),
-            ToolMarks::NONE,
-        )?)
+    ) -> starlark::Result<ValueOf<'v, StarlarkAttribute>> {
+        Ok(ValueOf::alloc(
+            eval.heap(),
+            Attribute::attr(eval, None, doc, AttrType::query(), ToolMarks::NONE)?,
+        ))
     }
 
     fn versioned<'v>(
         value_type: &StarlarkAttribute,
         #[starlark(require = named, default = "")] doc: &str,
-    ) -> starlark::Result<StarlarkAttribute> {
+        heap: Heap<'v>,
+    ) -> starlark::Result<ValueOf<'v, StarlarkAttribute>> {
         // A versioned field looks like:
         // [ ({"key":"value1"}, arg), ({"key":"value2"}, arg) ]
         let element_type = AttrType::tuple(vec![
@@ -774,9 +780,12 @@ fn attr_module(registry: &mut GlobalsBuilder) {
         ]);
         let coercer = AttrType::list(element_type.dupe());
 
-        Ok(StarlarkAttribute::new(
-            Attribute::new(Some(|b| b.encode_list(&[])), doc, coercer)?,
-            value_type.tool_marks(),
+        Ok(ValueOf::alloc(
+            heap,
+            StarlarkAttribute::new(
+                Attribute::new(Some(|b| b.encode_list(&[])), doc, coercer)?,
+                value_type.tool_marks(),
+            ),
         ))
     }
 
@@ -789,14 +798,17 @@ fn attr_module(registry: &mut GlobalsBuilder) {
         #[starlark(require = named)] default: Option<Value<'v>>,
         #[starlark(require = named, default = "")] doc: &str,
         eval: &mut Evaluator<'v, '_, '_>,
-    ) -> starlark::Result<StarlarkAttribute> {
-        Ok(Attribute::attr(
-            eval,
-            default,
-            doc,
-            AttrType::source(allow_directory),
-            ToolMarks::NONE,
-        )?)
+    ) -> starlark::Result<ValueOf<'v, StarlarkAttribute>> {
+        Ok(ValueOf::alloc(
+            eval.heap(),
+            Attribute::attr(
+                eval,
+                default,
+                doc,
+                AttrType::source(allow_directory),
+                ToolMarks::NONE,
+            )?,
+        ))
     }
 }
 

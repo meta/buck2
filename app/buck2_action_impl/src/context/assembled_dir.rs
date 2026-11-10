@@ -16,12 +16,14 @@ use starlark::environment::GlobalsBuilder;
 use starlark::starlark_complex_value;
 use starlark::starlark_module;
 use starlark::values::Freeze;
+use starlark::values::Heap;
 use starlark::values::NoSerialize;
 use starlark::values::StarlarkPagable;
 use starlark::values::StarlarkValue;
 use starlark::values::Trace;
 use starlark::values::Value;
 use starlark::values::ValueOf;
+use starlark::values::ValueTyped;
 use starlark::values::starlark_value;
 
 /// One entry of `ctx.actions.assembled_dir`: a bound input artifact plus how
@@ -62,11 +64,12 @@ fn assembled_dir_members(globals: &mut GlobalsBuilder) {
     /// against its realpath, outside the directory).
     fn copy<'v>(
         #[starlark(require = pos)] artifact: ValueOf<'v, StarlarkArtifactView<'v>>,
-    ) -> starlark::Result<StarlarkAssembledDirEntry<'v>> {
-        Ok(StarlarkAssembledDirEntry {
+        heap: Heap<'v>,
+    ) -> starlark::Result<ValueTyped<'v, StarlarkAssembledDirEntry<'v>>> {
+        Ok(heap.alloc_representation(StarlarkAssembledDirEntry {
             copy: true,
             artifact: artifact.to_value(),
-        })
+        }))
     }
 
     /// An entry materialized as a symlink pointing at the artifact. Use for
@@ -74,11 +77,12 @@ fn assembled_dir_members(globals: &mut GlobalsBuilder) {
     /// at an immutable (content-based) path -- to avoid duplicating bytes.
     fn symlink<'v>(
         #[starlark(require = pos)] artifact: ValueOf<'v, StarlarkArtifactView<'v>>,
-    ) -> starlark::Result<StarlarkAssembledDirEntry<'v>> {
-        Ok(StarlarkAssembledDirEntry {
+        heap: Heap<'v>,
+    ) -> starlark::Result<ValueTyped<'v, StarlarkAssembledDirEntry<'v>>> {
+        Ok(heap.alloc_representation(StarlarkAssembledDirEntry {
             copy: false,
             artifact: artifact.to_value(),
-        })
+        }))
     }
 }
 

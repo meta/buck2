@@ -244,7 +244,7 @@ fn execute_lambda_inner<'v>(
 
         let providers: ProviderCollection =
             invoke_dynamic_output_lambda(eval, dynamic_lambda_ctx_data.lambda.lambda(), args)?;
-        let providers = eval.heap().alloc_typed(providers);
+        let providers = eval.heap().alloc_representation(providers);
 
         ctx.assert_no_promises()?;
 
@@ -629,12 +629,17 @@ fn new_attr_value<'v>(
                 }
             };
             let declared = registry.declare_dynamic_output(artifact, env.heap())?;
-            let artifact = env.heap().alloc_typed(StarlarkDeclaredArtifact::new(
-                None,
-                declared,
-                AssociatedArtifacts::new(),
-            ));
-            Ok(env.heap().alloc(StarlarkOutputArtifact::new(artifact)))
+            let artifact = env
+                .heap()
+                .alloc_representation(StarlarkDeclaredArtifact::new(
+                    None,
+                    declared,
+                    AssociatedArtifacts::new(),
+                ));
+            Ok(env
+                .heap()
+                .alloc_representation(StarlarkOutputArtifact::new(artifact))
+                .to_value())
         }
         DynamicAttrValue::ArtifactValue(artifact) => {
             let path = artifact.get_path().resolve(
@@ -654,19 +659,25 @@ fn new_attr_value<'v>(
                 .as_ref(),
             )?;
             // `InputArtifactsMaterialized` marker indicates that the artifact is materialized.
-            Ok(env.heap().alloc(StarlarkArtifactValue::new(
-                artifact.dupe(),
-                path.to_owned(),
-                artifact_fs.fs().dupe(),
-            )))
+            Ok(env
+                .heap()
+                .alloc_representation(StarlarkArtifactValue::new(
+                    artifact.dupe(),
+                    path.to_owned(),
+                    artifact_fs.fs().dupe(),
+                ))
+                .to_value())
         }
         DynamicAttrValue::DynamicValue(v) => {
             let v = resolved_dynamic_values
                 .get(v)
                 .internal_error("Missing resolved dynamic value")?;
-            Ok(env.heap().alloc(StarlarkResolvedDynamicValue {
-                value: v.add_heap_ref(env.heap()),
-            }))
+            Ok(env
+                .heap()
+                .alloc_representation(StarlarkResolvedDynamicValue {
+                    value: v.add_heap_ref(env.heap()),
+                })
+                .to_value())
         }
         DynamicAttrValue::Value(v) => Ok(*v),
         DynamicAttrValue::List(xs) => {

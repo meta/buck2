@@ -41,7 +41,7 @@ pub(crate) fn tset_factory(builder: &mut GlobalsBuilder) {
         value: Option<Value<'v>>,
         children: Option<Value<'v>>, // An iterable.
         eval: &mut Evaluator<'v, '_, '_>,
-    ) -> starlark::Result<TransitiveSet<'v>> {
+    ) -> starlark::Result<ValueTyped<'v, TransitiveSet<'v>>> {
         // Per thread, so a test's indices start at zero whatever other tests
         // run alongside it: `libtest` runs each test on its own thread, and
         // the test harnesses built on `make_tset` index their sets by
@@ -64,7 +64,7 @@ pub(crate) fn tset_factory(builder: &mut GlobalsBuilder) {
             eval,
         )?;
 
-        Ok(set)
+        Ok(eval.heap().alloc_representation(set))
     }
 }
 

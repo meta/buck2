@@ -20,6 +20,7 @@ use buck2_core::fs::buck_out_path::BuckOutPathKind;
 use starlark::environment::MethodsBuilder;
 use starlark::eval::Evaluator;
 use starlark::starlark_module;
+use starlark::values::Heap;
 use starlark::values::Value;
 use starlark::values::ValueOf;
 use starlark::values::ValueTyped;
@@ -53,7 +54,7 @@ pub(crate) fn analysis_actions_methods_unsorted(builder: &mut MethodsBuilder) {
         #[starlark(require = named, default = false)] dir: bool,
         #[starlark(require = named)] has_content_based_path: Option<bool>,
         eval: &mut Evaluator<'v, '_, '_>,
-    ) -> starlark::Result<StarlarkDeclaredArtifact<'v>> {
+    ) -> starlark::Result<ValueTyped<'v, StarlarkDeclaredArtifact<'v>>> {
         // We take either one or two positional arguments, namely (filename) or (prefix, filename).
         // The prefix argument is optional, but first, so we pretend the filename is optional
         // and fix them up here.
@@ -82,11 +83,13 @@ pub(crate) fn analysis_actions_methods_unsorted(builder: &mut MethodsBuilder) {
             eval.heap(),
         )?;
 
-        Ok(StarlarkDeclaredArtifact::new(
-            eval.call_stack_top_location(),
-            artifact,
-            AssociatedArtifacts::new(),
-        ))
+        Ok(eval
+            .heap()
+            .alloc_representation(StarlarkDeclaredArtifact::new(
+                eval.call_stack_top_location(),
+                artifact,
+                AssociatedArtifacts::new(),
+            )))
     }
 
     /// Creates a new transitive set. For details, see https://buck2.build/docs/rule_authors/transitive_sets/.
@@ -188,16 +191,28 @@ pub(crate) fn analysis_actions_methods_unsorted(builder: &mut MethodsBuilder) {
     /// - [`ArtifactTag.tag_artifacts()`](../ArtifactTag#artifacttagtag_artifacts): Tag both inputs and outputs
     /// - [`ArtifactTag.tag_inputs()`](../ArtifactTag#artifacttagtag_inputs): Tag only inputs
     /// - [`ctx.actions.run()`](../AnalysisActions#analysisactionsrun): The `dep_files` parameter documentation
-    fn artifact_tag<'v>(this: &AnalysisActions<'v>) -> starlark::Result<ArtifactTag> {
-        Ok(this.state()?.actions.next_artifact_tag())
+    fn artifact_tag<'v>(
+        this: &AnalysisActions<'v>,
+        heap: Heap<'v>,
+    ) -> starlark::Result<ValueOf<'v, ArtifactTag>> {
+        Ok(ValueOf::alloc(
+            heap,
+            this.state()?.actions.next_artifact_tag(),
+        ))
     }
 
     /// Obtain this daemon's digest configuration. This allows rules to discover what digests the
     /// daemon may be able to e.g. defer download because they conform to its RE backend's expected
     /// digest format.
-    fn digest_config<'v>(this: &AnalysisActions<'v>) -> starlark::Result<StarlarkDigestConfig> {
-        Ok(StarlarkDigestConfig {
-            digest_config: this.digest_config,
-        })
+    fn digest_config<'v>(
+        this: &AnalysisActions<'v>,
+        heap: Heap<'v>,
+    ) -> starlark::Result<ValueOf<'v, StarlarkDigestConfig>> {
+        Ok(ValueOf::alloc(
+            heap,
+            StarlarkDigestConfig {
+                digest_config: this.digest_config,
+            },
+        ))
     }
 }

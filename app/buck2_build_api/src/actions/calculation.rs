@@ -612,7 +612,7 @@ fn try_run_error_handler(
 
                         let error_handler_result = eval.eval_function(
                             error_handler.as_ref().add_to_heap(heap),
-                            &[heap.alloc(error_handler_ctx)],
+                            &[heap.alloc_representation(error_handler_ctx).to_value()],
                             &[],
                         );
 

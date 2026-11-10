@@ -197,8 +197,10 @@ pub(crate) fn user_provider_creator<'v>(
             None => Err(UserProviderError::MissingParameter(name.to_owned()).into()),
         })
         .collect::<buck2_error::Result<MiniBoxSlice<Value>>>()?;
-    Ok(heap.alloc(UserProvider {
-        callable,
-        attributes: values,
-    }))
+    Ok(heap
+        .alloc_representation(UserProvider {
+            callable,
+            attributes: values,
+        })
+        .to_value())
 }

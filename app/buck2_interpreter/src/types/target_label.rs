@@ -134,14 +134,26 @@ fn label_methods(builder: &mut MethodsBuilder) {
     }
 
     #[starlark(attribute)]
-    fn path<'v>(this: &StarlarkTargetLabel) -> starlark::Result<StarlarkCellPath> {
-        Ok(StarlarkCellPath(this.label.pkg().to_cell_path()))
+    fn path<'v>(
+        this: &StarlarkTargetLabel,
+        heap: Heap<'v>,
+    ) -> starlark::Result<ValueOf<'v, StarlarkCellPath>> {
+        Ok(ValueOf::alloc(
+            heap,
+            StarlarkCellPath(this.label.pkg().to_cell_path()),
+        ))
     }
 
     /// Returns the PackagePath for this target label.
     #[starlark(attribute)]
-    fn package_path<'v>(this: &StarlarkTargetLabel) -> starlark::Result<StarlarkPackagePath> {
-        Ok(StarlarkPackagePath::new(this.label.pkg().dupe()))
+    fn package_path<'v>(
+        this: &StarlarkTargetLabel,
+        heap: Heap<'v>,
+    ) -> starlark::Result<ValueOf<'v, StarlarkPackagePath>> {
+        Ok(ValueOf::alloc(
+            heap,
+            StarlarkPackagePath::new(this.label.pkg().dupe()),
+        ))
     }
 
     /// Converts a `TargetLabel` into its corresponding `ProvidersLabel` given the subtarget names,
@@ -162,13 +174,14 @@ fn label_methods(builder: &mut MethodsBuilder) {
         // TODO(nga): must be either positional or named.
         #[starlark(default = SubtargetNameArg::List(ValueOf::empty_list()))]
         subtarget_name: SubtargetNameArg<'v>,
-    ) -> starlark::Result<StarlarkProvidersLabel> {
+        heap: Heap<'v>,
+    ) -> starlark::Result<ValueOf<'v, StarlarkProvidersLabel>> {
         let providers_name = value_to_providers_name(subtarget_name)?;
 
-        Ok(StarlarkProvidersLabel::new(ProvidersLabel::new(
-            this.label().dupe(),
-            providers_name,
-        )))
+        Ok(ValueOf::alloc(
+            heap,
+            StarlarkProvidersLabel::new(ProvidersLabel::new(this.label().dupe(), providers_name)),
+        ))
     }
 }
 
@@ -255,26 +268,46 @@ fn configured_label_methods(builder: &mut MethodsBuilder) {
     }
 
     #[starlark(attribute)]
-    fn path<'v>(this: &StarlarkConfiguredTargetLabel) -> starlark::Result<StarlarkCellPath> {
-        Ok(StarlarkCellPath(this.label.pkg().to_cell_path()))
+    fn path<'v>(
+        this: &StarlarkConfiguredTargetLabel,
+        heap: Heap<'v>,
+    ) -> starlark::Result<ValueOf<'v, StarlarkCellPath>> {
+        Ok(ValueOf::alloc(
+            heap,
+            StarlarkCellPath(this.label.pkg().to_cell_path()),
+        ))
     }
 
     /// Returns the PackagePath for this configured target label.
     #[starlark(attribute)]
     fn package_path<'v>(
         this: &StarlarkConfiguredTargetLabel,
-    ) -> starlark::Result<StarlarkPackagePath> {
-        Ok(StarlarkPackagePath::new(this.label.pkg().dupe()))
+        heap: Heap<'v>,
+    ) -> starlark::Result<ValueOf<'v, StarlarkPackagePath>> {
+        Ok(ValueOf::alloc(
+            heap,
+            StarlarkPackagePath::new(this.label.pkg().dupe()),
+        ))
     }
 
-    fn config<'v>(this: &StarlarkConfiguredTargetLabel) -> starlark::Result<StarlarkConfiguration> {
-        Ok(StarlarkConfiguration((this.label.cfg()).dupe()))
+    fn config<'v>(
+        this: &StarlarkConfiguredTargetLabel,
+        heap: Heap<'v>,
+    ) -> starlark::Result<ValueOf<'v, StarlarkConfiguration>> {
+        Ok(ValueOf::alloc(
+            heap,
+            StarlarkConfiguration((this.label.cfg()).dupe()),
+        ))
     }
 
     /// Returns the unconfigured underlying target label.
-    fn raw_target(this: &StarlarkConfiguredTargetLabel) -> starlark::Result<StarlarkTargetLabel> {
-        Ok(StarlarkTargetLabel::new(
-            (*this.label.unconfigured()).dupe(),
+    fn raw_target<'v>(
+        this: &StarlarkConfiguredTargetLabel,
+        heap: Heap<'v>,
+    ) -> starlark::Result<ValueOf<'v, StarlarkTargetLabel>> {
+        Ok(ValueOf::alloc(
+            heap,
+            StarlarkTargetLabel::new((*this.label.unconfigured()).dupe()),
         ))
     }
 
@@ -296,11 +329,16 @@ fn configured_label_methods(builder: &mut MethodsBuilder) {
         // TODO(nga): must be either positional or named.
         #[starlark(default = SubtargetNameArg::List(ValueOf::empty_list()))]
         subtarget_name: SubtargetNameArg<'v>,
-    ) -> starlark::Result<StarlarkConfiguredProvidersLabel> {
+        heap: Heap<'v>,
+    ) -> starlark::Result<ValueOf<'v, StarlarkConfiguredProvidersLabel>> {
         let providers_name = value_to_providers_name(subtarget_name)?;
 
-        Ok(StarlarkConfiguredProvidersLabel::new(
-            ConfiguredProvidersLabel::new(this.label().dupe(), providers_name),
+        Ok(ValueOf::alloc(
+            heap,
+            StarlarkConfiguredProvidersLabel::new(ConfiguredProvidersLabel::new(
+                this.label().dupe(),
+                providers_name,
+            )),
         ))
     }
 }

@@ -96,7 +96,8 @@ fn call_transition_function<'v>(
     let mut args = vec![(
         "platform",
         eval.heap()
-            .alloc(PlatformInfo::from_configuration(conf, eval.heap())?),
+            .alloc_representation(PlatformInfo::from_configuration(conf, eval.heap())?)
+            .to_value(),
     )];
     let impl_ = match transition {
         TransitionData::MagicObject(v) => {

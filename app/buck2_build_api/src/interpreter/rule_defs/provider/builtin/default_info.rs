@@ -9,7 +9,6 @@
  */
 
 use std::fmt::Debug;
-use std::iter;
 use std::ptr;
 
 use allocative::Allocative;
@@ -168,10 +167,8 @@ impl<'v> DefaultInfo<'v> {
     }
 
     pub(crate) fn testing_empty(heap: FrozenHeap<'v>) -> ValueTyped<'v, DefaultInfo<'v>> {
-        heap.alloc_simple_typed(DefaultInfo {
-            sub_targets: ValueOf::new_unchecked(
-                heap.alloc(AllocDict(iter::empty::<(String, ProviderCollection)>())),
-            ),
+        heap.alloc_representation(DefaultInfo {
+            sub_targets: ValueOf::new_unchecked(heap.alloc(AllocDict::EMPTY)),
             default_outputs: ValueOf::new_unchecked(heap.alloc(AllocList::EMPTY)),
             other_outputs: ValueOf::new_unchecked(heap.alloc(AllocList::EMPTY)),
         })
@@ -327,7 +324,7 @@ fn default_info_creator(builder: &mut GlobalsBuilder) {
             DictType<StarlarkStr, Value<'v>>,
         >,
         eval: &mut Evaluator<'v, '_, '_>,
-    ) -> starlark::Result<DefaultInfo<'v>> {
+    ) -> starlark::Result<ValueTyped<'v, DefaultInfo<'v>>> {
         let heap = eval.heap();
 
         // support both list and singular options for now until we migrate all the rules.
@@ -351,10 +348,10 @@ fn default_info_creator(builder: &mut GlobalsBuilder) {
             })
             .collect::<buck2_error::Result<Vec<_>>>()?;
 
-        Ok(DefaultInfo {
+        Ok(heap.alloc_representation(DefaultInfo {
             default_outputs,
             other_outputs,
             sub_targets: ValueOf::alloc_dict(heap, sub_targets),
-        })
+        }))
     }
 }

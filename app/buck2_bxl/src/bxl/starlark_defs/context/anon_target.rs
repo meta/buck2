@@ -124,15 +124,15 @@ pub(crate) fn register_anon_rule(globals: &mut GlobalsBuilder) {
             >,
         >,
         eval: &mut Evaluator<'v, '_, '_>,
-    ) -> starlark::Result<StarlarkRuleCallable<'v>> {
-        StarlarkRuleCallable::new_bxl_anon(
+    ) -> starlark::Result<ValueTyped<'v, StarlarkRuleCallable<'v>>> {
+        let rule = StarlarkRuleCallable::new_bxl_anon(
             StarlarkCallable::unchecked_new(r#impl.0),
             attrs,
             doc,
             artifact_promise_mappings,
             eval,
-        )
-        .map_err(Into::into)
+        )?;
+        Ok(eval.heap().alloc_representation(rule))
     }
 }
 
@@ -299,7 +299,7 @@ async fn eval_bxl_for_anon_target_inner(
                 analysis_registry,
                 attributes,
             )?;
-            let bxl_ctx = ValueTyped::<BxlContext>::new_err(env.heap().alloc(bxl_anon_ctx))?;
+            let bxl_ctx = env.heap().alloc_representation(bxl_anon_ctx);
 
             let list_res = tokio::task::block_in_place(|| -> buck2_error::Result<Value<'_>> {
                 anon_impl.invoke(eval, bxl_ctx, attributes)
@@ -316,7 +316,7 @@ async fn eval_bxl_for_anon_target_inner(
         })?;
 
         let res_typed = ProviderCollection::try_from_value(list_res)?;
-        let res = env.heap().alloc(res_typed);
+        let res = env.heap().alloc_representation(res_typed).to_value();
 
         let fulfilled_artifact_mappings = reentrant_eval.with_evaluator(|eval| {
             let promise_artifact_mappings = anon_impl.promise_artifact_mappings(eval)?;

@@ -92,12 +92,14 @@ impl DepAttrTypeExt for DepAttrType {
         v: FrozenValueTyped<'v, ProviderCollection<'v>>,
         execution_platform_resolution: Option<&ExecutionPlatformResolution>,
     ) -> Value<'v> {
-        env.heap().alloc(Dependency::new(
-            env.heap(),
-            target.clone(),
-            v.to_value_typed(),
-            execution_platform_resolution,
-        ))
+        env.heap()
+            .alloc_representation(Dependency::new(
+                env.heap(),
+                target.clone(),
+                v.to_value_typed(),
+                execution_platform_resolution,
+            ))
+            .to_value()
     }
 
     fn resolve_single_impl<'v>(

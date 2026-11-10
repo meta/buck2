@@ -34,6 +34,7 @@ use starlark::values::StarlarkValue;
 use starlark::values::StringValue;
 use starlark::values::Trace;
 use starlark::values::Value;
+use starlark::values::ValueOf;
 use starlark::values::none::NoneOr;
 use starlark::values::starlark_value;
 
@@ -154,8 +155,14 @@ fn configured_label_methods(builder: &mut MethodsBuilder) {
 
     /// For the label `fbcode//buck2/hello:world (ovr_config//platform/linux:x86_64-fbcode-46b26edb4b80a905)` this gives back `fbcode//buck2/hello`
     #[starlark(attribute)]
-    fn path<'v>(this: &StarlarkConfiguredProvidersLabel) -> starlark::Result<StarlarkCellPath> {
-        Ok(StarlarkCellPath(this.label.target().pkg().to_cell_path()))
+    fn path<'v>(
+        this: &StarlarkConfiguredProvidersLabel,
+        heap: Heap<'v>,
+    ) -> starlark::Result<ValueOf<'v, StarlarkCellPath>> {
+        Ok(ValueOf::alloc(
+            heap,
+            StarlarkCellPath(this.label.target().pkg().to_cell_path()),
+        ))
     }
 
     /// For the label `fbcode//buck2/hello:world (ovr_config//platform/linux:x86_64-fbcode-46b26edb4b80a905)` this gives back `fbcode`
@@ -168,15 +175,25 @@ fn configured_label_methods(builder: &mut MethodsBuilder) {
     #[starlark(attribute)]
     fn package_path<'v>(
         this: &StarlarkConfiguredProvidersLabel,
-    ) -> starlark::Result<StarlarkPackagePath> {
-        Ok(StarlarkPackagePath::new(this.label.target().pkg().dupe()))
+        heap: Heap<'v>,
+    ) -> starlark::Result<ValueOf<'v, StarlarkPackagePath>> {
+        Ok(ValueOf::alloc(
+            heap,
+            StarlarkPackagePath::new(this.label.target().pkg().dupe()),
+        ))
     }
 
     /// Obtain a reference to this target label's cell root. This can be used as if it were an
     /// artifact in places that expect one, such as `cmd_args().relative_to`.
     #[starlark(attribute)]
-    fn cell_root<'v>(this: &StarlarkConfiguredProvidersLabel) -> starlark::Result<CellRoot> {
-        Ok(CellRoot::new(this.label.target().pkg().cell_name()))
+    fn cell_root<'v>(
+        this: &StarlarkConfiguredProvidersLabel,
+        heap: Heap<'v>,
+    ) -> starlark::Result<ValueOf<'v, CellRoot>> {
+        Ok(ValueOf::alloc(
+            heap,
+            CellRoot::new(this.label.target().pkg().cell_name()),
+        ))
     }
 
     /// Obtain a reference to the project's root. This can be used as if it were an artifact in
@@ -184,25 +201,30 @@ fn configured_label_methods(builder: &mut MethodsBuilder) {
     #[starlark(attribute)]
     fn project_root<'v>(
         this: &StarlarkConfiguredProvidersLabel,
-    ) -> starlark::Result<StarlarkProjectRoot> {
-        Ok(StarlarkProjectRoot)
+        heap: Heap<'v>,
+    ) -> starlark::Result<ValueOf<'v, StarlarkProjectRoot>> {
+        Ok(ValueOf::alloc(heap, StarlarkProjectRoot))
     }
 
     /// For the label `fbcode//buck2/hello:world (ovr_config//platform/linux:x86_64-fbcode-46b26edb4b80a905)` this returns the unconfigured underlying target label (`fbcode//buck2/hello:world`)
-    fn raw_target(
+    fn raw_target<'v>(
         this: &StarlarkConfiguredProvidersLabel,
-    ) -> starlark::Result<StarlarkTargetLabel> {
-        Ok(StarlarkTargetLabel::new(
-            (*this.label.target().unconfigured()).dupe(),
+        heap: Heap<'v>,
+    ) -> starlark::Result<ValueOf<'v, StarlarkTargetLabel>> {
+        Ok(ValueOf::alloc(
+            heap,
+            StarlarkTargetLabel::new((*this.label.target().unconfigured()).dupe()),
         ))
     }
 
     /// Returns the underlying configured target label, dropping the sub target
-    fn configured_target(
+    fn configured_target<'v>(
         this: &StarlarkConfiguredProvidersLabel,
-    ) -> starlark::Result<StarlarkConfiguredTargetLabel> {
-        Ok(StarlarkConfiguredTargetLabel::new(
-            (*this.label.target()).dupe(),
+        heap: Heap<'v>,
+    ) -> starlark::Result<ValueOf<'v, StarlarkConfiguredTargetLabel>> {
+        Ok(ValueOf::alloc(
+            heap,
+            StarlarkConfiguredTargetLabel::new((*this.label.target()).dupe()),
         ))
     }
 }
@@ -294,8 +316,14 @@ fn label_methods(builder: &mut MethodsBuilder) {
     }
 
     #[starlark(attribute)]
-    fn path<'v>(this: &StarlarkProvidersLabel) -> starlark::Result<StarlarkCellPath> {
-        Ok(StarlarkCellPath(this.label.target().pkg().to_cell_path()))
+    fn path<'v>(
+        this: &StarlarkProvidersLabel,
+        heap: Heap<'v>,
+    ) -> starlark::Result<ValueOf<'v, StarlarkCellPath>> {
+        Ok(ValueOf::alloc(
+            heap,
+            StarlarkCellPath(this.label.target().pkg().to_cell_path()),
+        ))
     }
 
     #[starlark(attribute)]
@@ -314,13 +342,25 @@ fn label_methods(builder: &mut MethodsBuilder) {
 
     /// Returns the PackagePath for this providers label.
     #[starlark(attribute)]
-    fn package_path<'v>(this: &StarlarkProvidersLabel) -> starlark::Result<StarlarkPackagePath> {
-        Ok(StarlarkPackagePath::new(this.label.target().pkg().dupe()))
+    fn package_path<'v>(
+        this: &StarlarkProvidersLabel,
+        heap: Heap<'v>,
+    ) -> starlark::Result<ValueOf<'v, StarlarkPackagePath>> {
+        Ok(ValueOf::alloc(
+            heap,
+            StarlarkPackagePath::new(this.label.target().pkg().dupe()),
+        ))
     }
 
     /// Returns the unconfigured underlying target label.
-    fn raw_target(this: &StarlarkProvidersLabel) -> starlark::Result<StarlarkTargetLabel> {
-        Ok(StarlarkTargetLabel::new((*this.label.target()).dupe()))
+    fn raw_target<'v>(
+        this: &StarlarkProvidersLabel,
+        heap: Heap<'v>,
+    ) -> starlark::Result<ValueOf<'v, StarlarkTargetLabel>> {
+        Ok(ValueOf::alloc(
+            heap,
+            StarlarkTargetLabel::new((*this.label.target()).dupe()),
+        ))
     }
 }
 
@@ -347,14 +387,18 @@ mod tests {
     use starlark::assert::Assert;
     use starlark::environment::GlobalsBuilder;
     use starlark::starlark_module;
+    use starlark::values::Heap;
+    use starlark::values::ValueOf;
 
     use crate::types::configured_providers_label::StarlarkConfiguredProvidersLabel;
     use crate::types::configured_providers_label::StarlarkProvidersLabel;
 
     #[starlark_module]
     fn register_test_providers_label(globals: &mut GlobalsBuilder) {
-        fn configured_providers_label() -> starlark::Result<StarlarkConfiguredProvidersLabel> {
-            Ok(StarlarkConfiguredProvidersLabel {
+        fn configured_providers_label<'v>(
+            heap: Heap<'v>,
+        ) -> starlark::Result<ValueOf<'v, StarlarkConfiguredProvidersLabel>> {
+            let label = StarlarkConfiguredProvidersLabel {
                 label: ConfiguredProvidersLabel::new(
                     ConfiguredTargetLabel::testing_parse(
                         "foo//bar:baz",
@@ -367,11 +411,14 @@ mod tests {
                         ]),
                     ))),
                 ),
-            })
+            };
+            Ok(ValueOf::alloc(heap, label))
         }
 
-        fn providers_label() -> starlark::Result<StarlarkProvidersLabel> {
-            Ok(StarlarkProvidersLabel {
+        fn providers_label<'v>(
+            heap: Heap<'v>,
+        ) -> starlark::Result<ValueOf<'v, StarlarkProvidersLabel>> {
+            let label = StarlarkProvidersLabel {
                 label: ProvidersLabel::new(
                     TargetLabel::testing_parse("foo//bar:baz"),
                     ProvidersName::NonDefault(triomphe::Arc::new(NonDefaultProvidersName::Named(
@@ -381,7 +428,8 @@ mod tests {
                         ]),
                     ))),
                 ),
-            })
+            };
+            Ok(ValueOf::alloc(heap, label))
         }
     }
 

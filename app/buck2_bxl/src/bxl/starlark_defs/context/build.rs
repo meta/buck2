@@ -83,7 +83,10 @@ impl<'v> StarlarkValue<'v> for StarlarkProvidersArtifactIterable<'v> {
     fn iterate_collect(&self, heap: Heap<'v>) -> starlark::Result<Vec<Value<'v>>> {
         Ok(self
             .iter()
-            .map(|artifact| heap.alloc(StarlarkArtifact::new(artifact.dupe())))
+            .map(|artifact| {
+                heap.alloc_representation(StarlarkArtifact::new(artifact.dupe()))
+                    .to_value()
+            })
             .collect())
     }
 
@@ -91,7 +94,9 @@ impl<'v> StarlarkValue<'v> for StarlarkProvidersArtifactIterable<'v> {
         let i = i32::unpack_value_err(index)?;
         if let Ok(i) = usize::try_from(i) {
             if let Some(artifact) = self.iter().nth(i) {
-                return Ok(heap.alloc(StarlarkArtifact::new(artifact.dupe())));
+                return Ok(heap
+                    .alloc_representation(StarlarkArtifact::new(artifact.dupe()))
+                    .to_value());
             }
         }
         Err(ValueError::IndexOutOfBound(i).into())
@@ -243,11 +248,11 @@ pub(crate) fn build<'v>(
         .map(|(target, result)| {
             (
                 eval.heap()
-                    .alloc_typed(StarlarkConfiguredProvidersLabel::new(target.clone()))
+                    .alloc_representation(StarlarkConfiguredProvidersLabel::new(target.clone()))
                     .hashed()
                     .unwrap(),
                 eval.heap()
-                    .alloc_typed(StarlarkBxlBuildResult(BxlBuildResult::new(
+                    .alloc_representation(StarlarkBxlBuildResult(BxlBuildResult::new(
                         target.clone(),
                         result,
                     ))),

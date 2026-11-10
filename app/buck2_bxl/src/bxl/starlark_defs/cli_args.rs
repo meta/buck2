@@ -305,11 +305,15 @@ impl CliArgValue {
             CliArgValue::String(s) => heap.alloc(s),
             CliArgValue::List(l) => heap.alloc(AllocList(l.iter().map(|v| v.as_starlark(heap)))),
             CliArgValue::None => Value::new_none(),
-            CliArgValue::TargetLabel(t) => heap.alloc(StarlarkTargetLabel::new(t.dupe())),
-            CliArgValue::ConfiguredTargetLabel(c) => {
-                heap.alloc(StarlarkConfiguredTargetLabel::new(c.dupe()))
-            }
-            CliArgValue::ProvidersLabel(p) => heap.alloc(StarlarkProvidersLabel::new(p.clone())),
+            CliArgValue::TargetLabel(t) => heap
+                .alloc_representation(StarlarkTargetLabel::new(t.dupe()))
+                .to_value(),
+            CliArgValue::ConfiguredTargetLabel(c) => heap
+                .alloc_representation(StarlarkConfiguredTargetLabel::new(c.dupe()))
+                .to_value(),
+            CliArgValue::ProvidersLabel(p) => heap
+                .alloc_representation(StarlarkProvidersLabel::new(p.clone()))
+                .to_value(),
             CliArgValue::Json(j) => heap.alloc(j.as_starlark(heap)),
         }
     }
@@ -909,8 +913,12 @@ pub(crate) fn cli_args_module(registry: &mut GlobalsBuilder) {
         default: Option<Value<'v>>,
         #[starlark(default = "")] doc: &str,
         #[starlark(require = named)] short: Option<Value<'v>>,
-    ) -> starlark::Result<CliArgs> {
-        Ok(CliArgs::new(default, doc, CliArgType::string(), short)?)
+        heap: Heap<'v>,
+    ) -> starlark::Result<ValueOf<'v, CliArgs>> {
+        Ok(ValueOf::alloc(
+            heap,
+            CliArgs::new(default, doc, CliArgType::string(), short)?,
+        ))
     }
 
     /// Takes a list of args from cli, and gets a list of the inner type in bxl.
@@ -938,9 +946,13 @@ pub(crate) fn cli_args_module(registry: &mut GlobalsBuilder) {
         default: Option<Value<'v>>,
         #[starlark(default = "")] doc: &str,
         #[starlark(require = named)] short: Option<Value<'v>>,
-    ) -> starlark::Result<CliArgs> {
+        heap: Heap<'v>,
+    ) -> starlark::Result<ValueOf<'v, CliArgs>> {
         let coercer = CliArgType::list(inner.coercer.dupe());
-        Ok(CliArgs::new(default, doc, coercer, short)?)
+        Ok(ValueOf::alloc(
+            heap,
+            CliArgs::new(default, doc, coercer, short)?,
+        ))
     }
 
     /// Accepts "true" or "false" from cli, and gets a `bool` in bxl. Defaults to `false` if
@@ -964,8 +976,12 @@ pub(crate) fn cli_args_module(registry: &mut GlobalsBuilder) {
         #[starlark(default = false)] default: Value<'v>,
         #[starlark(default = "")] doc: &str,
         #[starlark(require = named)] short: Option<Value<'v>>,
-    ) -> starlark::Result<CliArgs> {
-        Ok(CliArgs::new(Some(default), doc, CliArgType::bool(), short)?)
+        heap: Heap<'v>,
+    ) -> starlark::Result<ValueOf<'v, CliArgs>> {
+        Ok(ValueOf::alloc(
+            heap,
+            CliArgs::new(Some(default), doc, CliArgType::bool(), short)?,
+        ))
     }
 
     /// Takes an arg from cli, and gets an `int` in bxl.
@@ -987,8 +1003,12 @@ pub(crate) fn cli_args_module(registry: &mut GlobalsBuilder) {
         default: Option<Value<'v>>,
         #[starlark(default = "")] doc: &str,
         #[starlark(require = named)] short: Option<Value<'v>>,
-    ) -> starlark::Result<CliArgs> {
-        Ok(CliArgs::new(default, doc, CliArgType::int(), short)?)
+        heap: Heap<'v>,
+    ) -> starlark::Result<ValueOf<'v, CliArgs>> {
+        Ok(ValueOf::alloc(
+            heap,
+            CliArgs::new(default, doc, CliArgType::int(), short)?,
+        ))
     }
 
     /// Takes an arg from cli, and gets a `float` in bxl.
@@ -1010,8 +1030,12 @@ pub(crate) fn cli_args_module(registry: &mut GlobalsBuilder) {
         default: Option<Value<'v>>,
         #[starlark(default = "")] doc: &str,
         #[starlark(require = named)] short: Option<Value<'v>>,
-    ) -> starlark::Result<CliArgs> {
-        Ok(CliArgs::new(default, doc, CliArgType::float(), short)?)
+        heap: Heap<'v>,
+    ) -> starlark::Result<ValueOf<'v, CliArgs>> {
+        Ok(ValueOf::alloc(
+            heap,
+            CliArgs::new(default, doc, CliArgType::float(), short)?,
+        ))
     }
 
     /// Takes an arg from cli, and gets the inner type in bxl. If not given, will get `None` in bxl.
@@ -1035,9 +1059,13 @@ pub(crate) fn cli_args_module(registry: &mut GlobalsBuilder) {
         #[starlark(default = "")] doc: &str,
         #[starlark(default = NoneType)] default: Value<'v>,
         #[starlark(require = named)] short: Option<Value<'v>>,
-    ) -> starlark::Result<CliArgs> {
+        heap: Heap<'v>,
+    ) -> starlark::Result<ValueOf<'v, CliArgs>> {
         let coercer = CliArgType::option(inner.coercer.dupe());
-        Ok(CliArgs::new(Some(default), doc, coercer, short)?)
+        Ok(ValueOf::alloc(
+            heap,
+            CliArgs::new(Some(default), doc, coercer, short)?,
+        ))
     }
 
     /// Takes a set of defined values in `variants`, and gets a `str` in bxl.
@@ -1061,16 +1089,20 @@ pub(crate) fn cli_args_module(registry: &mut GlobalsBuilder) {
         default: Option<Value<'v>>,
         #[starlark(default = "")] doc: &str,
         #[starlark(require = named)] short: Option<Value<'v>>,
-    ) -> starlark::Result<CliArgs> {
+        heap: Heap<'v>,
+    ) -> starlark::Result<ValueOf<'v, CliArgs>> {
         // Value seems to usually be a `[String]`, listing the possible values of the
         // enumeration. Unfortunately, for things like `exported_lang_preprocessor_flags`
         // it ends up being `Type` which doesn't match the data we see.
-        Ok(CliArgs::new(
-            default,
-            doc,
-            CliArgType::enumeration(variants.try_items().collect::<starlark::Result<_>>()?),
-            short,
-        )?)
+        Ok(ValueOf::alloc(
+            heap,
+            CliArgs::new(
+                default,
+                doc,
+                CliArgType::enumeration(variants.try_items().collect::<starlark::Result<_>>()?),
+                short,
+            )?,
+        ))
     }
 
     /// Takes an arg from cli, and gets a parsed `TargetLabel` in bxl.
@@ -1093,8 +1125,12 @@ pub(crate) fn cli_args_module(registry: &mut GlobalsBuilder) {
     fn target_label<'v>(
         #[starlark(default = "")] doc: &str,
         #[starlark(require = named)] short: Option<Value<'v>>,
-    ) -> starlark::Result<CliArgs> {
-        Ok(CliArgs::new(None, doc, CliArgType::target_label(), short)?)
+        heap: Heap<'v>,
+    ) -> starlark::Result<ValueOf<'v, CliArgs>> {
+        Ok(ValueOf::alloc(
+            heap,
+            CliArgs::new(None, doc, CliArgType::target_label(), short)?,
+        ))
     }
 
     /// Takes an arg from cli, and gets a parsed `ConfiguredTargetLabel` in bxl.
@@ -1116,13 +1152,12 @@ pub(crate) fn cli_args_module(registry: &mut GlobalsBuilder) {
     fn configured_target_label<'v>(
         #[starlark(default = "")] doc: &str,
         #[starlark(require = named)] short: Option<Value<'v>>,
-    ) -> starlark::Result<CliArgs> {
-        Ok(CliArgs::new(
-            None,
-            doc,
-            CliArgType::configured_target_label(),
-            short,
-        )?)
+        heap: Heap<'v>,
+    ) -> starlark::Result<ValueOf<'v, CliArgs>> {
+        Ok(ValueOf::alloc(
+            heap,
+            CliArgs::new(None, doc, CliArgType::configured_target_label(), short)?,
+        ))
     }
 
     /// Takes an arg from cli, and gets a parsed `ProvidersLabel` in bxl.
@@ -1145,8 +1180,12 @@ pub(crate) fn cli_args_module(registry: &mut GlobalsBuilder) {
     fn sub_target<'v>(
         #[starlark(default = "")] doc: &str,
         #[starlark(require = named)] short: Option<Value<'v>>,
-    ) -> starlark::Result<CliArgs> {
-        Ok(CliArgs::new(None, doc, CliArgType::sub_target(), short)?)
+        heap: Heap<'v>,
+    ) -> starlark::Result<ValueOf<'v, CliArgs>> {
+        Ok(ValueOf::alloc(
+            heap,
+            CliArgs::new(None, doc, CliArgType::sub_target(), short)?,
+        ))
     }
 
     /// Takes an arg from the cli, and treats it as a target pattern.
@@ -1168,8 +1207,12 @@ pub(crate) fn cli_args_module(registry: &mut GlobalsBuilder) {
     fn target_expr<'v>(
         #[starlark(default = "")] doc: &str,
         #[starlark(require = named)] short: Option<Value<'v>>,
-    ) -> starlark::Result<CliArgs> {
-        Ok(CliArgs::new(None, doc, CliArgType::target_expr(), short)?)
+        heap: Heap<'v>,
+    ) -> starlark::Result<ValueOf<'v, CliArgs>> {
+        Ok(ValueOf::alloc(
+            heap,
+            CliArgs::new(None, doc, CliArgType::target_expr(), short)?,
+        ))
     }
 
     /// Takes an arg from the cli, and treats it as a target pattern.
@@ -1192,13 +1235,12 @@ pub(crate) fn cli_args_module(registry: &mut GlobalsBuilder) {
     fn configured_target_expr<'v>(
         #[starlark(default = "")] doc: &str,
         #[starlark(require = named)] short: Option<Value<'v>>,
-    ) -> starlark::Result<CliArgs> {
-        Ok(CliArgs::new(
-            None,
-            doc,
-            CliArgType::configured_target_expr(),
-            short,
-        )?)
+        heap: Heap<'v>,
+    ) -> starlark::Result<ValueOf<'v, CliArgs>> {
+        Ok(ValueOf::alloc(
+            heap,
+            CliArgs::new(None, doc, CliArgType::configured_target_expr(), short)?,
+        ))
     }
 
     /// Takes an arg from cli, and treats it as a sub target pattern.
@@ -1220,13 +1262,12 @@ pub(crate) fn cli_args_module(registry: &mut GlobalsBuilder) {
     fn sub_target_expr<'v>(
         #[starlark(default = "")] doc: &str,
         #[starlark(require = named)] short: Option<Value<'v>>,
-    ) -> starlark::Result<CliArgs> {
-        Ok(CliArgs::new(
-            None,
-            doc,
-            CliArgType::sub_target_expr(),
-            short,
-        )?)
+        heap: Heap<'v>,
+    ) -> starlark::Result<ValueOf<'v, CliArgs>> {
+        Ok(ValueOf::alloc(
+            heap,
+            CliArgs::new(None, doc, CliArgType::sub_target_expr(), short)?,
+        ))
     }
 
     /// Takes an arg from cli, parses it as a JSON string, and returns the parsed object in bxl.
@@ -1249,8 +1290,12 @@ pub(crate) fn cli_args_module(registry: &mut GlobalsBuilder) {
     fn json<'v>(
         #[starlark(default = "")] doc: &str,
         #[starlark(require = named)] short: Option<Value<'v>>,
-    ) -> starlark::Result<CliArgs> {
-        Ok(CliArgs::new(None, doc, CliArgType::json(), short)?)
+        heap: Heap<'v>,
+    ) -> starlark::Result<ValueOf<'v, CliArgs>> {
+        Ok(ValueOf::alloc(
+            heap,
+            CliArgs::new(None, doc, CliArgType::json(), short)?,
+        ))
     }
 
     /// Takes an arg from cli, reads the specified file as JSON, and returns the parsed object in bxl.
@@ -1272,8 +1317,12 @@ pub(crate) fn cli_args_module(registry: &mut GlobalsBuilder) {
     fn json_file<'v>(
         #[starlark(default = "")] doc: &str,
         #[starlark(require = named)] short: Option<Value<'v>>,
-    ) -> starlark::Result<CliArgs> {
-        Ok(CliArgs::new(None, doc, CliArgType::json_file(), short)?)
+        heap: Heap<'v>,
+    ) -> starlark::Result<ValueOf<'v, CliArgs>> {
+        Ok(ValueOf::alloc(
+            heap,
+            CliArgs::new(None, doc, CliArgType::json_file(), short)?,
+        ))
     }
 }
 
@@ -1439,19 +1488,25 @@ mod tests {
             );
 
             assert_eq!(
-                CliArgType::target_label().coerce_value(heap.alloc(StarlarkTargetLabel::new(
-                    TargetLabel::testing_parse("root//foo:bar")
-                )))?,
+                CliArgType::target_label().coerce_value(
+                    heap.alloc_representation(StarlarkTargetLabel::new(
+                        TargetLabel::testing_parse("root//foo:bar")
+                    ))
+                    .to_value()
+                )?,
                 CliArgValue::TargetLabel(TargetLabel::testing_parse("root//foo:bar"))
             );
 
             assert_eq!(
-                CliArgType::configured_target_label().coerce_value(heap.alloc(
-                    StarlarkConfiguredTargetLabel::new(ConfiguredTargetLabel::testing_parse(
-                        "root//foo:bar",
-                        ConfigurationData::testing_new(),
+                CliArgType::configured_target_label().coerce_value(
+                    heap.alloc_representation(StarlarkConfiguredTargetLabel::new(
+                        ConfiguredTargetLabel::testing_parse(
+                            "root//foo:bar",
+                            ConfigurationData::testing_new(),
+                        )
                     ))
-                ))?,
+                    .to_value()
+                )?,
                 CliArgValue::ConfiguredTargetLabel(ConfiguredTargetLabel::testing_parse(
                     "root//foo:bar",
                     ConfigurationData::testing_new(),
@@ -1459,9 +1514,12 @@ mod tests {
             );
 
             assert_eq!(
-                CliArgType::sub_target().coerce_value(heap.alloc(StarlarkProvidersLabel::new(
-                    ProvidersLabel::testing_new("foo", "pkg", "bar", Some(&["a", "b"]))
-                )))?,
+                CliArgType::sub_target().coerce_value(
+                    heap.alloc_representation(StarlarkProvidersLabel::new(
+                        ProvidersLabel::testing_new("foo", "pkg", "bar", Some(&["a", "b"]))
+                    ))
+                    .to_value()
+                )?,
                 CliArgValue::ProvidersLabel(ProvidersLabel::testing_new(
                     "foo",
                     "pkg",

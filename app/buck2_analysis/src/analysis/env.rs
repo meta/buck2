@@ -327,7 +327,7 @@ async fn run_analysis_with_env_underlying(
         let res_typed = ProviderCollection::try_from_value(list_res)?;
         analysis_registry
             .analysis_value_storage
-            .set_result_value(env.heap().alloc_typed(res_typed))?;
+            .set_result_value(env.heap().alloc_representation(res_typed))?;
 
         let finished_eval = reentrant_eval.finish_evaluation();
 

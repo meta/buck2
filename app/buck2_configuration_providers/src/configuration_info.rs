@@ -187,7 +187,7 @@ fn configuration_info_creator(globals: &mut GlobalsBuilder) {
         #[starlark(require = named, default = ValueOf::new_unchecked(Value::new_empty_dict()))]
         root_values: Buckconfigs<'v>,
         eval: &mut Evaluator<'v, '_, '_>,
-    ) -> starlark::Result<ConfigurationInfo<'v>> {
+    ) -> starlark::Result<ValueTyped<'v, ConfigurationInfo<'v>>> {
         let constraints = copy_constraints(constraints, eval.heap())?;
 
         let mut value_keys = BuckMutSet::default();
@@ -209,11 +209,11 @@ fn configuration_info_creator(globals: &mut GlobalsBuilder) {
             }
         }
 
-        Ok(ConfigurationInfo {
+        Ok(eval.heap().alloc_representation(ConfigurationInfo {
             constraints,
             values,
             root_values,
-        })
+        }))
     }
 }
 
@@ -390,12 +390,12 @@ fn configuration_info_methods(builder: &mut MethodsBuilder) {
     fn copy<'v>(
         this: &ConfigurationInfo<'v>,
         heap: Heap<'v>,
-    ) -> starlark::Result<ConfigurationInfo<'v>> {
-        Ok(ConfigurationInfo {
+    ) -> starlark::Result<ValueTyped<'v, ConfigurationInfo<'v>>> {
+        Ok(heap.alloc_representation(ConfigurationInfo {
             constraints: copy_dict(this.constraints, heap)?,
             values: copy_dict(this.values, heap)?,
             root_values: copy_dict(this.root_values, heap)?,
-        })
+        }))
     }
 }
 
@@ -407,7 +407,7 @@ fn get_default_constraint_value<'v>(
 ) -> NoneOr<ValueTyped<'v, ConstraintValueInfo<'v>>> {
     NoneOr::from_option(
         ConstraintValueInfo::default_from_constraint_setting(key)
-            .map(|constraint_value| heap.alloc_typed(constraint_value)),
+            .map(|constraint_value| heap.alloc_representation(constraint_value)),
     )
 }
 

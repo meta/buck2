@@ -28,12 +28,10 @@ use starlark::any::ProvidesStaticType;
 use starlark::environment::GlobalsBuilder;
 use starlark::eval::Evaluator;
 use starlark::starlark_module;
-use starlark::values::AllocValue;
 use starlark::values::Freeze;
 use starlark::values::FreezeError;
 use starlark::values::FreezeResult;
 use starlark::values::Freezer;
-use starlark::values::Heap;
 use starlark::values::NoSerialize;
 use starlark::values::OwnedFrozen;
 use starlark::values::StarlarkPagable;
@@ -113,13 +111,16 @@ fn bxl_impl<'v>(
         unresolved_cli_args.insert(arg.get().to_owned(), def.as_ref().clone());
     }
 
-    Ok(eval.heap().alloc(BxlFunction {
-        bxl_path,
-        id: RefCell::new(None),
-        implementation,
-        cli_args: unresolved_cli_args,
-        docs: Some(doc.to_owned()),
-    }))
+    Ok(eval
+        .heap()
+        .alloc_representation(BxlFunction {
+            bxl_path,
+            id: RefCell::new(None),
+            implementation,
+            cli_args: unresolved_cli_args,
+            docs: Some(doc.to_owned()),
+        })
+        .to_value())
 }
 
 /// Errors around rule declaration, instantiation, validation, etc
@@ -152,12 +153,6 @@ impl<'v> Display for BxlFunction<'v> {
             Some(id) => write!(f, "{}()", id.name),
             None => write!(f, "<unbound bxl>"),
         }
-    }
-}
-
-impl<'v> AllocValue<'v> for BxlFunction<'v> {
-    fn alloc_value(self, heap: Heap<'v>) -> Value<'v> {
-        heap.alloc_complex(self)
     }
 }
 
@@ -320,7 +315,7 @@ starlark::__starlark_pagable_only! {
             let owned: OwnedBxlFunction = OwnedFrozen::build(
                 FrozenHeapName::user("frozen_bxl_function_round_trips"),
                 |heap| {
-                    heap.alloc_simple_typed(FrozenBxlFunction {
+                    heap.alloc_representation(FrozenBxlFunction {
                         implementation: heap.alloc("implementation"),
                         cli_args: BuckMutInsertionMap::new(),
                         bxl_id: Arc::new(expected_label.clone()),

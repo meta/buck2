@@ -18,6 +18,7 @@ use starlark::environment::Methods;
 use starlark::environment::MethodsBuilder;
 use starlark::starlark_module;
 use starlark::starlark_simple_value;
+use starlark::values::Heap;
 use starlark::values::NoSerialize;
 use starlark::values::StarlarkValue;
 use starlark::values::Trace;
@@ -95,7 +96,8 @@ fn lazy_cquery_methods(builder: &mut MethodsBuilder) {
         #[starlark(require = named, default = NoneOr::None)] target_universe: NoneOr<
             ValueOf<'v, ListOrTupleType<String>>,
         >,
-    ) -> starlark::Result<StarlarkLazy> {
+        heap: Heap<'v>,
+    ) -> starlark::Result<ValueOf<'v, StarlarkLazy>> {
         let query_args = match query_args {
             NoneOr::None => Vec::new(),
             NoneOr::Other(query_args) => query_args.into_strings()?,
@@ -104,11 +106,12 @@ fn lazy_cquery_methods(builder: &mut MethodsBuilder) {
             .into_option()
             .map(|list| list.try_to_vec())
             .transpose()?;
-        Ok(StarlarkLazy::new_cquery(LazyCqueryOperation::new_eval(
+        let op = LazyCqueryOperation::new_eval(
             this.global_cfg_options_override.dupe(),
             query.to_owned(),
             query_args,
             target_universe,
-        )))
+        );
+        Ok(ValueOf::alloc(heap, StarlarkLazy::new_cquery(op)))
     }
 }

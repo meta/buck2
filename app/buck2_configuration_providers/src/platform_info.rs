@@ -23,6 +23,7 @@ use starlark::values::StarlarkPagable;
 use starlark::values::StringValue;
 use starlark::values::Trace;
 use starlark::values::ValueOf;
+use starlark::values::ValueTyped;
 
 use crate::configuration_info::ConfigurationInfo;
 
@@ -73,10 +74,11 @@ fn platform_info_creator(globals: &mut GlobalsBuilder) {
     fn PlatformInfo<'v>(
         #[starlark(require = named)] label: StringValue<'v>,
         #[starlark(require = named)] configuration: ValueOf<'v, ConfigurationInfo<'v>>,
-    ) -> starlark::Result<PlatformInfo<'v>> {
-        Ok(PlatformInfo {
+        heap: Heap<'v>,
+    ) -> starlark::Result<ValueTyped<'v, PlatformInfo<'v>>> {
+        Ok(heap.alloc_representation(PlatformInfo {
             label,
             configuration,
-        })
+        }))
     }
 }

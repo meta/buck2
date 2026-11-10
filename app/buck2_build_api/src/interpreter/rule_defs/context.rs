@@ -37,12 +37,10 @@ use starlark::any::ProvidesStaticType;
 use starlark::environment::GlobalsBuilder;
 use starlark::environment::Methods;
 use starlark::environment::MethodsBuilder;
-use starlark::values::AllocValue;
 use starlark::values::Heap;
 use starlark::values::NoSerialize;
 use starlark::values::StarlarkValue;
 use starlark::values::Trace;
-use starlark::values::Value;
 use starlark::values::ValueOf;
 use starlark::values::ValueTyped;
 use starlark::values::none::NoneOr;
@@ -198,12 +196,6 @@ impl<'v> StarlarkValue<'v> for AnalysisActions<'v> {
     }
 }
 
-impl<'v> AllocValue<'v> for AnalysisActions<'v> {
-    fn alloc_value(self, heap: Heap<'v>) -> Value<'v> {
-        heap.alloc_complex_no_freeze(self)
-    }
-}
-
 #[derive(ProvidesStaticType, Debug, Trace, NoSerialize, Allocative)]
 pub struct AnalysisContext<'v> {
     attrs: Option<ValueOf<'v, StructRef<'v>>>,
@@ -238,7 +230,7 @@ impl<'v> AnalysisContext<'v> {
     ) -> Self {
         Self {
             attrs,
-            actions: heap.alloc_typed(AnalysisActions {
+            actions: heap.alloc_representation(AnalysisActions {
                 state: RefCell::new(Some(registry)),
                 attributes: attrs,
                 plugins,
@@ -258,13 +250,13 @@ impl<'v> AnalysisContext<'v> {
         digest_config: DigestConfig,
     ) -> ValueTyped<'v, AnalysisContext<'v>> {
         let label = label.map(|label| {
-            heap.alloc_typed(StarlarkConfiguredProvidersLabel::new(
+            heap.alloc_representation(StarlarkConfiguredProvidersLabel::new(
                 ConfiguredProvidersLabel::new(label, ProvidersName::Default),
             ))
         });
 
         let analysis_context = Self::new(heap, attrs, label, plugins, registry, digest_config);
-        heap.alloc_typed(analysis_context)
+        heap.alloc_representation(analysis_context)
     }
 
     pub fn assert_no_promises(&self) -> buck2_error::Result<()> {
@@ -287,12 +279,6 @@ starlark::methods_static!(ANALYSIS_CONTEXT_METHODS = analysis_context_methods);
 impl<'v> StarlarkValue<'v> for AnalysisContext<'v> {
     fn get_methods() -> Option<&'static Methods> {
         Some(ANALYSIS_CONTEXT_METHODS.methods())
-    }
-}
-
-impl<'v> AllocValue<'v> for AnalysisContext<'v> {
-    fn alloc_value(self, heap: Heap<'v>) -> Value<'v> {
-        heap.alloc_complex_no_freeze(self)
     }
 }
 

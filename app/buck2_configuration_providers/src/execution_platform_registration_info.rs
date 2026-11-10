@@ -18,6 +18,7 @@ use starlark::any::ProvidesStaticType;
 use starlark::environment::GlobalsBuilder;
 use starlark::starlark_module;
 use starlark::values::Freeze;
+use starlark::values::Heap;
 use starlark::values::StarlarkPagable;
 use starlark::values::StringValue;
 use starlark::values::Trace;
@@ -109,15 +110,18 @@ fn info_creator(globals: &mut GlobalsBuilder) {
         #[starlark(require = named, default = NoneOr::None)] exec_marker_constraint: NoneOr<
             StringValue<'v>,
         >,
-    ) -> starlark::Result<ExecutionPlatformRegistrationInfo<'v>> {
+        heap: Heap<'v>,
+    ) -> starlark::Result<ValueTyped<'v, ExecutionPlatformRegistrationInfo<'v>>> {
         let fallback = fallback.into_option();
         if let Some(Either::Left(word)) = fallback.map(|f| f.split()).transpose()? {
             fallback_from_str(word.get())?;
         }
-        Ok(ExecutionPlatformRegistrationInfo {
-            platforms,
-            fallback,
-            exec_marker_constraint: exec_marker_constraint.into_option(),
-        })
+        Ok(
+            heap.alloc_representation(ExecutionPlatformRegistrationInfo {
+                platforms,
+                fallback,
+                exec_marker_constraint: exec_marker_constraint.into_option(),
+            }),
+        )
     }
 }

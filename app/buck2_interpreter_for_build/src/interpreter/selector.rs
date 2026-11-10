@@ -36,7 +36,6 @@ use starlark::values::UnpackValue;
 use starlark::values::Value;
 use starlark::values::ValueOf;
 use starlark::values::dict::DictType;
-use starlark::values::none::NoneOr;
 use starlark::values::starlark_value;
 use starlark::values::string::StarlarkStr;
 
@@ -94,7 +93,8 @@ impl<'v> StarlarkSelector<'v> {
     }
 
     fn sum(left: Value<'v>, right: Value<'v>, heap: Heap<'v>) -> Value<'v> {
-        heap.alloc(StarlarkSelector::Sum(left, right))
+        heap.alloc_representation(StarlarkSelector::Sum(left, right))
+            .to_value()
     }
 
     pub fn from_concat<I>(iter: I, heap: Heap<'v>) -> buck2_error::Result<Value<'v>>
@@ -105,12 +105,12 @@ impl<'v> StarlarkSelector<'v> {
             selector: Option<StarlarkSelector<'v>>,
             values: &mut I,
             heap: Heap<'v>,
-        ) -> buck2_error::Result<NoneOr<StarlarkSelector<'v>>>
+        ) -> buck2_error::Result<Option<StarlarkSelector<'v>>>
         where
             I: Iterator<Item = Value<'v>>,
         {
             match (selector, values.next()) {
-                (None, None) => Ok(NoneOr::None),
+                (None, None) => Ok(None),
                 (None, Some(v)) => {
                     if let Some(next_v) = values.next() {
                         let head = StarlarkSelector::Sum(v, next_v);
@@ -118,18 +118,25 @@ impl<'v> StarlarkSelector<'v> {
                     } else {
                         let v = ValueOf::unpack_value_err(v.to_value())
                             .internal_error("validated at construction")?;
-                        Ok(NoneOr::Other(StarlarkSelector::new(v)))
+                        Ok(Some(StarlarkSelector::new(v)))
                     }
                 }
-                (Some(s), None) => Ok(NoneOr::Other(s)),
+                (Some(s), None) => Ok(Some(s)),
                 (Some(s), Some(v)) => {
-                    let head = Some(StarlarkSelector::Sum(heap.alloc(s), v));
+                    let head = Some(StarlarkSelector::Sum(
+                        heap.alloc_representation(s).to_value(),
+                        v,
+                    ));
                     values_to_selector(head, values, heap)
                 }
             }
         }
-        let selector = values_to_selector(None, &mut iter.into_iter(), heap)?;
-        Ok(heap.alloc(selector))
+        Ok(
+            match values_to_selector(None, &mut iter.into_iter(), heap)? {
+                None => Value::new_none(),
+                Some(selector) => heap.alloc_representation(selector).to_value(),
+            },
+        )
     }
 
     fn select_map<'a, const RECURSE: bool>(
@@ -172,15 +179,21 @@ impl<'v> StarlarkSelector<'v> {
                             );
                         }
                     }
-                    Ok(eval.heap().alloc(StarlarkSelector::new(
-                        ValueOf::unpack_value_err(eval.heap().alloc(mapped))
-                            .internal_error("validated at construction")?,
-                    )))
+                    Ok(eval
+                        .heap()
+                        .alloc_representation(StarlarkSelector::new(
+                            ValueOf::unpack_value_err(eval.heap().alloc(mapped))
+                                .internal_error("validated at construction")?,
+                        ))
+                        .to_value())
                 }
-                StarlarkSelector::Sum(left, right) => Ok(eval.heap().alloc(StarlarkSelector::Sum(
-                    Self::select_map::<RECURSE>(eval, left, func)?,
-                    Self::select_map::<RECURSE>(eval, right, func)?,
-                ))),
+                StarlarkSelector::Sum(left, right) => {
+                    let sum = StarlarkSelector::Sum(
+                        Self::select_map::<RECURSE>(eval, left, func)?,
+                        Self::select_map::<RECURSE>(eval, right, func)?,
+                    );
+                    Ok(eval.heap().alloc_representation(sum).to_value())
+                }
             }
         } else if StarlarkSelectFail::from_value(val).is_some()
             || StarlarkSelectIncompatible::from_value(val).is_some()
@@ -253,17 +266,21 @@ impl<'v> StarlarkValue<'v> for StarlarkSelector<'v> {
     }
 
     fn radd(&self, left: Value<'v>, heap: Heap<'v>) -> Option<starlark::Result<Value<'v>>> {
-        let right = heap.alloc(match self {
-            StarlarkSelector::Primary(x) => StarlarkSelector::Primary(*x),
-            StarlarkSelector::Sum(x, y) => StarlarkSelector::Sum(x.to_value(), y.to_value()),
-        });
+        let right = heap
+            .alloc_representation(match self {
+                StarlarkSelector::Primary(x) => StarlarkSelector::Primary(*x),
+                StarlarkSelector::Sum(x, y) => StarlarkSelector::Sum(x.to_value(), y.to_value()),
+            })
+            .to_value();
         Some(Ok(StarlarkSelector::sum(left, right, heap)))
     }
 
     fn add(&self, other: Value<'v>, heap: Heap<'v>) -> Option<starlark::Result<Value<'v>>> {
         match self {
             Self::Primary(v) => {
-                let this = heap.alloc(StarlarkSelector::new(*v));
+                let this = heap
+                    .alloc_representation(StarlarkSelector::new(*v))
+                    .to_value();
                 Some(Ok(StarlarkSelector::sum(this, other, heap)))
             }
             Self::Sum(l, r) => {
@@ -286,8 +303,9 @@ starlark::methods_static!(SELECTOR_METHODS = selector_methods);
 pub fn register_select(globals: &mut GlobalsBuilder) {
     fn select<'v>(
         #[starlark(require = pos)] d: ValueOf<'v, DictType<StarlarkStr, Value<'v>>>,
-    ) -> starlark::Result<StarlarkSelector<'v>> {
-        Ok(StarlarkSelector::new(d))
+        heap: Heap<'v>,
+    ) -> starlark::Result<ValueOf<'v, StarlarkSelector<'v>>> {
+        Ok(ValueOf::alloc(heap, StarlarkSelector::new(d)))
     }
 
     /// Create a value to be used in select() statements to indicate a failure case.
@@ -310,8 +328,9 @@ pub fn register_select(globals: &mut GlobalsBuilder) {
     /// and if the target is configured such that the iOS case is not selected, the build will not fail.
     fn select_fail<'v>(
         #[starlark(require = pos)] msg: StringValue<'v>,
-    ) -> starlark::Result<StarlarkSelectFail<'v>> {
-        Ok(StarlarkSelectFail::new(msg))
+        heap: Heap<'v>,
+    ) -> starlark::Result<ValueOf<'v, StarlarkSelectFail<'v>>> {
+        Ok(ValueOf::alloc(heap, StarlarkSelectFail::new(msg)))
     }
 
     /// Create a value to be used in select() statements to mark a target as incompatible.
@@ -337,8 +356,9 @@ pub fn register_select(globals: &mut GlobalsBuilder) {
     /// is not selected, the target will build normally.
     fn select_incompatible<'v>(
         #[starlark(require = pos)] msg: StringValue<'v>,
-    ) -> starlark::Result<StarlarkSelectIncompatible<'v>> {
-        Ok(StarlarkSelectIncompatible::new(msg))
+        heap: Heap<'v>,
+    ) -> starlark::Result<ValueOf<'v, StarlarkSelectIncompatible<'v>>> {
+        Ok(ValueOf::alloc(heap, StarlarkSelectIncompatible::new(msg)))
     }
 
     /// Maps a selector.

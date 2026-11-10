@@ -33,6 +33,7 @@ use starlark::values::StringValue;
 use starlark::values::UnpackValue;
 use starlark::values::Value;
 use starlark::values::ValueOf;
+use starlark::values::ValueTyped;
 use starlark::values::list::ListType;
 use starlark::values::none::NoneType;
 use starlark::values::tuple::TupleType;
@@ -64,14 +65,15 @@ pub(crate) fn register_target_function(builder: &mut GlobalsBuilder) {
     /// ```
     fn ctarget_set<'v>(
         nodes: Option<ValueOf<'v, ListType<StarlarkConfiguredTargetNode>>>,
-    ) -> starlark::Result<StarlarkTargetSet<ConfiguredTargetNode>> {
+        heap: Heap<'v>,
+    ) -> starlark::Result<ValueTyped<'v, StarlarkTargetSet<ConfiguredTargetNode>>> {
         let nodes = match nodes {
             Some(nodes) => nodes.try_to_vec()?,
             None => Vec::new(),
         };
-        Ok(StarlarkTargetSet::from_iter(
+        Ok(heap.alloc_representation(StarlarkTargetSet::from_iter(
             nodes.into_iter().map(|node| node.0),
-        ))
+        )))
     }
 
     /// Creates a target set from a list of unconfigured nodes.
@@ -87,14 +89,15 @@ pub(crate) fn register_target_function(builder: &mut GlobalsBuilder) {
     /// ```
     fn utarget_set<'v>(
         nodes: Option<ValueOf<'v, ListType<StarlarkTargetNode>>>,
-    ) -> starlark::Result<StarlarkTargetSet<TargetNode>> {
+        heap: Heap<'v>,
+    ) -> starlark::Result<ValueTyped<'v, StarlarkTargetSet<TargetNode>>> {
         let nodes = match nodes {
             Some(nodes) => nodes.try_to_vec()?,
             None => Vec::new(),
         };
-        Ok(StarlarkTargetSet::from_iter(
+        Ok(heap.alloc_representation(StarlarkTargetSet::from_iter(
             nodes.into_iter().map(|node| node.0),
-        ))
+        )))
     }
 
     /// Creates a target set from a list of action query nodes.
@@ -109,14 +112,15 @@ pub(crate) fn register_target_function(builder: &mut GlobalsBuilder) {
     /// ```
     fn atarget_set<'v>(
         nodes: Option<ValueOf<'v, ListType<StarlarkActionQueryNode>>>,
-    ) -> starlark::Result<StarlarkTargetSet<ActionQueryNode>> {
+        heap: Heap<'v>,
+    ) -> starlark::Result<ValueTyped<'v, StarlarkTargetSet<ActionQueryNode>>> {
         let nodes = match nodes {
             Some(nodes) => nodes.try_to_vec()?,
             None => Vec::new(),
         };
-        Ok(StarlarkTargetSet::from_iter(
+        Ok(heap.alloc_representation(StarlarkTargetSet::from_iter(
             nodes.into_iter().map(|node| node.0),
-        ))
+        )))
     }
 }
 
@@ -258,9 +262,9 @@ pub(crate) fn register_instant_function(builder: &mut GlobalsBuilder) {
     /// ```
     ///
     /// This function is only accessible through Bxl.
-    fn now(eval: &mut Evaluator) -> starlark::Result<StarlarkInstant> {
+    fn now<'v>(eval: &mut Evaluator<'v, '_, '_>) -> starlark::Result<ValueOf<'v, StarlarkInstant>> {
         BxlEvalExtra::from_context(eval)?;
-        Ok(StarlarkInstant(Instant::now()))
+        Ok(ValueOf::alloc(eval.heap(), StarlarkInstant(Instant::now())))
     }
 }
 
@@ -479,13 +483,14 @@ pub(crate) fn register_read_package_visibility_functions(builder: &mut GlobalsBu
     fn read_package_visibility_intersection<'v>(
         #[starlark(require = pos)] package_path: PackagePathArg<'v>,
         eval: &mut Evaluator<'v, '_, '_>,
-    ) -> starlark::Result<Vec<StarlarkVisibilityIntersectionLayer>> {
+    ) -> starlark::Result<Vec<ValueOf<'v, StarlarkVisibilityIntersectionLayer>>> {
         let super_package = read_super_package(package_path, eval)?;
+        let heap = eval.heap();
         Ok(super_package
             .visibility_intersection()
             .layers()
             .iter()
-            .map(|layer| StarlarkVisibilityIntersectionLayer(layer.dupe()))
+            .map(|layer| ValueOf::alloc(heap, StarlarkVisibilityIntersectionLayer(layer.dupe())))
             .collect())
     }
 

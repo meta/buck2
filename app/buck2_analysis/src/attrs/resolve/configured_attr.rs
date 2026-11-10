@@ -151,14 +151,15 @@ impl ConfiguredAttrExt for ConfiguredAttr {
                 SplitTransitionDepAttrType::resolve_single(ctx, d.as_ref())
             }
             ConfiguredAttr::ConfigurationDep(d) => ConfigurationDepAttrType::resolve_single(ctx, d),
-            ConfiguredAttr::PluginDep(d, _) => {
-                Ok(ctx.heap().alloc(StarlarkTargetLabel::new(d.dupe())))
-            }
+            ConfiguredAttr::PluginDep(d, _) => Ok(ctx
+                .heap()
+                .alloc_representation(StarlarkTargetLabel::new(d.dupe()))
+                .to_value()),
             ConfiguredAttr::Dep(d) => DepAttrType::resolve_single(ctx, d),
             ConfiguredAttr::SourceLabel(s) => SourceAttrType::resolve_single_label(ctx, s),
             ConfiguredAttr::Label(label) => {
                 let label = StarlarkConfiguredProvidersLabel::new(label.dupe());
-                Ok(ctx.heap().alloc(label))
+                Ok(ctx.heap().alloc_representation(label).to_value())
             }
             ConfiguredAttr::Arg(arg) => arg.resolve(ctx, pkg),
             ConfiguredAttr::Query(query) => query.resolve(ctx),
@@ -166,8 +167,12 @@ impl ConfiguredAttrExt for ConfiguredAttr {
                 ctx,
                 SourcePath::new(pkg, s.path().dupe()),
             )),
-            ConfiguredAttr::Metadata(..) => Ok(ctx.heap().alloc(OpaqueMetadata)),
-            ConfiguredAttr::TargetModifiers(..) => Ok(ctx.heap().alloc(OpaqueMetadata)),
+            ConfiguredAttr::Metadata(..) => {
+                Ok(ctx.heap().alloc_representation(OpaqueMetadata).to_value())
+            }
+            ConfiguredAttr::TargetModifiers(..) => {
+                Ok(ctx.heap().alloc_representation(OpaqueMetadata).to_value())
+            }
         }
     }
 
@@ -229,19 +234,22 @@ fn configured_attr_to_value<'v>(
                 ));
             }
         },
-        ConfiguredAttr::ExplicitConfiguredDep(d) => heap.alloc(
-            StarlarkConfiguredProvidersLabel::new(d.as_ref().label.dupe()),
-        ),
-        ConfiguredAttr::TransitionDep(t) => {
-            heap.alloc(StarlarkConfiguredProvidersLabel::new(t.dep.dupe()))
-        }
+        ConfiguredAttr::ExplicitConfiguredDep(d) => heap
+            .alloc_representation(StarlarkConfiguredProvidersLabel::new(
+                d.as_ref().label.dupe(),
+            ))
+            .to_value(),
+        ConfiguredAttr::TransitionDep(t) => heap
+            .alloc_representation(StarlarkConfiguredProvidersLabel::new(t.dep.dupe()))
+            .to_value(),
         ConfiguredAttr::SplitTransitionDep(t) => {
             let mut map = BuckMutInsertionMap::with_capacity(t.deps.len());
 
             for (trans, p) in t.deps.iter() {
                 map.insert_hashed(
                     heap.alloc(trans).get_hashed()?,
-                    heap.alloc(StarlarkConfiguredProvidersLabel::new(p.dupe())),
+                    heap.alloc_representation(StarlarkConfiguredProvidersLabel::new(p.dupe()))
+                        .to_value(),
                 );
             }
 
@@ -249,22 +257,29 @@ fn configured_attr_to_value<'v>(
         }
         ConfiguredAttr::ConfigurationDep(c) => {
             // TODO(T198210718)
-            heap.alloc(StarlarkTargetLabel::new(c.target().dupe()))
+            heap.alloc_representation(StarlarkTargetLabel::new(c.target().dupe()))
+                .to_value()
         }
-        ConfiguredAttr::PluginDep(d, _) => heap.alloc(StarlarkTargetLabel::new(d.dupe())),
-        ConfiguredAttr::Dep(d) => heap.alloc(StarlarkConfiguredProvidersLabel::new(d.label.dupe())),
-        ConfiguredAttr::SourceLabel(s) => {
-            heap.alloc(StarlarkConfiguredProvidersLabel::new(s.dupe()))
-        }
-        ConfiguredAttr::Label(l) => heap.alloc(StarlarkConfiguredProvidersLabel::new(l.dupe())),
+        ConfiguredAttr::PluginDep(d, _) => heap
+            .alloc_representation(StarlarkTargetLabel::new(d.dupe()))
+            .to_value(),
+        ConfiguredAttr::Dep(d) => heap
+            .alloc_representation(StarlarkConfiguredProvidersLabel::new(d.label.dupe()))
+            .to_value(),
+        ConfiguredAttr::SourceLabel(s) => heap
+            .alloc_representation(StarlarkConfiguredProvidersLabel::new(s.dupe()))
+            .to_value(),
+        ConfiguredAttr::Label(l) => heap
+            .alloc_representation(StarlarkConfiguredProvidersLabel::new(l.dupe()))
+            .to_value(),
         ConfiguredAttr::Arg(arg) => heap.alloc(arg.to_string()),
         ConfiguredAttr::Query(query) => heap.alloc(&query.query.query),
         ConfiguredAttr::SourceFile(f) => match pkg {
-            PackageLabelOption::PackageLabel(pkg) => {
-                heap.alloc(StarlarkArtifact::new(Artifact::from(SourceArtifact::new(
+            PackageLabelOption::PackageLabel(pkg) => heap
+                .alloc_representation(StarlarkArtifact::new(Artifact::from(SourceArtifact::new(
                     SourcePath::new(pkg.to_owned(), f.path().dupe()),
                 ))))
-            }
+                .to_value(),
             // We don't store package label in transition key for better caching of transition between packages.
             // (This is not inherent requirement,
             // but it was easier to implement this ways,

@@ -24,9 +24,11 @@ use starlark::environment::Methods;
 use starlark::environment::MethodsBuilder;
 use starlark::starlark_module;
 use starlark::starlark_simple_value;
+use starlark::values::Heap;
 use starlark::values::StarlarkPagable;
 use starlark::values::StarlarkValue;
 use starlark::values::Value;
+use starlark::values::ValueOf;
 use starlark::values::starlark_value;
 
 #[derive(
@@ -83,7 +85,11 @@ fn cell_path_methods(builder: &mut MethodsBuilder) {
     /// The path components are
     /// [normalized](https://docs.rs/relative-path/1.9.3/relative_path/struct.RelativePath.html#method.normalize),
     /// e.g. `puppy/../doggy` will become `doggy`.
-    fn add(this: &StarlarkCellPath, arg: &str) -> starlark::Result<StarlarkCellPath> {
+    fn add<'v>(
+        this: &StarlarkCellPath,
+        arg: &str,
+        heap: Heap<'v>,
+    ) -> starlark::Result<ValueOf<'v, StarlarkCellPath>> {
         // FIXME(JakobDegen): `join_normalized` is always wrong
         let p = this
             .0
@@ -91,7 +97,7 @@ fn cell_path_methods(builder: &mut MethodsBuilder) {
             .as_forward_relative_path()
             .join_normalized(arg)?;
         let p = CellPath::new(this.0.cell(), CellRelativePath::new(&p));
-        Ok(StarlarkCellPath(p))
+        Ok(ValueOf::alloc(heap, StarlarkCellPath(p)))
     }
 }
 

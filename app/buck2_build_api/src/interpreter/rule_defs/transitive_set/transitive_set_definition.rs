@@ -33,7 +33,6 @@ use starlark::typing::Ty;
 use starlark::typing::TyStarlarkValue;
 use starlark::typing::TyUser;
 use starlark::typing::TyUserParams;
-use starlark::values::AllocValue;
 use starlark::values::Freeze;
 use starlark::values::FreezeError;
 use starlark::values::FreezeResult;
@@ -236,12 +235,6 @@ impl<'v> TransitiveSetDefinition<'v> {
 
     pub fn has_id(&self) -> bool {
         self.exported.get().is_some()
-    }
-}
-
-impl<'v> AllocValue<'v> for TransitiveSetDefinition<'v> {
-    fn alloc_value(self, heap: Heap<'v>) -> Value<'v> {
-        heap.alloc_complex(self)
     }
 }
 
@@ -464,8 +457,8 @@ pub fn register_transitive_set(builder: &mut GlobalsBuilder) {
         #[starlark(require = named)] reductions: Option<
             ValueOf<'v, DictType<String, Reduction<'v>>>,
         >,
-        eval: &mut Evaluator,
-    ) -> starlark::Result<TransitiveSetDefinition<'v>> {
+        eval: &mut Evaluator<'v, '_, '_>,
+    ) -> starlark::Result<ValueTyped<'v, TransitiveSetDefinition<'v>>> {
         let projections: BuckMutInsertionMap<_, _> = args_projections
             .into_iter()
             .flat_map(|v| v.iter())
@@ -508,20 +501,22 @@ pub fn register_transitive_set(builder: &mut GlobalsBuilder) {
         };
 
         let starlark_path: StarlarkPath = starlark_path_from_build_context(eval)?;
-        Ok(TransitiveSetDefinition::new(
-            match starlark_path {
-                StarlarkPath::LoadFile(import_path) => import_path.clone(),
-                _ => {
-                    return Err(buck2_error::Error::from(
-                        TransitiveSetDefinitionError::TransitiveSetOnlyInBzl,
-                    )
-                    .into());
-                }
-            },
-            TransitiveSetOperations {
-                projections,
-                reductions,
-            },
-        ))
+        Ok(eval
+            .heap()
+            .alloc_representation(TransitiveSetDefinition::new(
+                match starlark_path {
+                    StarlarkPath::LoadFile(import_path) => import_path.clone(),
+                    _ => {
+                        return Err(buck2_error::Error::from(
+                            TransitiveSetDefinitionError::TransitiveSetOnlyInBzl,
+                        )
+                        .into());
+                    }
+                },
+                TransitiveSetOperations {
+                    projections,
+                    reductions,
+                },
+            )))
     }
 }

@@ -47,12 +47,10 @@ use dupe::Dupe;
 use starlark::any::ProvidesStaticType;
 use starlark::environment::Methods;
 use starlark::eval::Evaluator;
-use starlark::values::AllocValue;
 use starlark::values::Heap;
 use starlark::values::NoSerialize;
 use starlark::values::StarlarkValue;
 use starlark::values::Trace;
-use starlark::values::Value;
 use starlark::values::ValueOf;
 use starlark::values::ValueTyped;
 use starlark::values::starlark_value;
@@ -345,7 +343,7 @@ impl<'v> BxlContext<'v> {
     ) -> buck2_error::Result<Self> {
         let root_data = RootBxlContextData {
             cli_args,
-            output_stream: heap.alloc_typed(StarlarkOutputStream::new(
+            output_stream: heap.alloc_representation(StarlarkOutputStream::new(
                 core.project_fs.dupe(),
                 core.artifact_fs.dupe(),
                 stream_state,
@@ -354,7 +352,7 @@ impl<'v> BxlContext<'v> {
         let context_type = BxlContextType::Root(root_data);
 
         Ok(Self {
-            state: heap.alloc_typed(AnalysisActions {
+            state: heap.alloc_representation(AnalysisActions {
                 state: RefCell::new(None),
                 attributes: None,
                 plugins: None,
@@ -373,7 +371,7 @@ impl<'v> BxlContext<'v> {
         dynamic_data: DynamicBxlContextData,
     ) -> buck2_error::Result<Self> {
         Ok(Self {
-            state: heap.alloc_typed(AnalysisActions {
+            state: heap.alloc_representation(AnalysisActions {
                 state: RefCell::new(Some(analysis_registry)),
                 attributes: None,
                 plugins: None,
@@ -392,7 +390,7 @@ impl<'v> BxlContext<'v> {
         attributes: ValueOf<'v, StructRef<'v>>,
     ) -> buck2_error::Result<Self> {
         Ok(Self {
-            state: heap.alloc_typed(AnalysisActions {
+            state: heap.alloc_representation(AnalysisActions {
                 state: RefCell::new(Some(analysis_registry)),
                 attributes: Some(attributes),
                 plugins: None,
@@ -496,11 +494,5 @@ starlark::methods_static!(BXL_CONTEXT_METHODS = methods::bxl_context_methods);
 impl<'v> StarlarkValue<'v> for BxlContext<'v> {
     fn get_methods() -> Option<&'static Methods> {
         Some(BXL_CONTEXT_METHODS.methods())
-    }
-}
-
-impl<'v> AllocValue<'v> for BxlContext<'v> {
-    fn alloc_value(self, heap: Heap<'v>) -> Value<'v> {
-        heap.alloc_complex_no_freeze(self)
     }
 }

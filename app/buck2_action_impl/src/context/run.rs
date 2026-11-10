@@ -595,9 +595,9 @@ pub(crate) fn analysis_actions_methods_run(methods: &mut MethodsBuilder) {
             })
             .collect::<buck2_error::Result<Vec<_>>>()?;
 
-        let starlark_values = heap.alloc(StarlarkRunActionValues {
-            exe: heap.alloc_typed(starlark_exe),
-            args: heap.alloc_typed(starlark_args),
+        let starlark_values = heap.alloc_representation(StarlarkRunActionValues {
+            exe: heap.alloc_representation(starlark_exe),
+            args: heap.alloc_representation(starlark_args),
             dep_file_fingerprints: MiniBoxSlice::from(dep_file_fingerprints),
             env: starlark_env,
             worker: starlark_worker,
@@ -717,7 +717,7 @@ pub(crate) fn analysis_actions_methods_run(methods: &mut MethodsBuilder) {
         this.state()?.register_action_in_group(
             artifacts.declared_outputs,
             action,
-            Some(starlark_values),
+            Some(starlark_values.to_value()),
             error_handler.into_option(),
             exec_group,
             || ActionName {

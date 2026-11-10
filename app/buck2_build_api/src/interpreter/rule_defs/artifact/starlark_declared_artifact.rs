@@ -25,13 +25,11 @@ use buck2_fs::paths::forward_rel_path::ForwardRelativePath;
 use dupe::Dupe;
 use starlark::any::ProvidesStaticType;
 use starlark::codemap::FileSpan;
-use starlark::values::AllocValue;
 use starlark::values::Demand;
 use starlark::values::Freeze;
 use starlark::values::FreezeError;
 use starlark::values::FreezeResult;
 use starlark::values::Freezer;
-use starlark::values::Heap;
 use starlark::values::NoSerialize;
 use starlark::values::StarlarkValue;
 use starlark::values::StringValue;
@@ -315,12 +313,6 @@ impl<'v> Freeze<'v> for StarlarkDeclaredArtifact<'v> {
             artifact,
             associated_artifacts: self.associated_artifacts,
         })
-    }
-}
-
-impl<'v> AllocValue<'v> for StarlarkDeclaredArtifact<'v> {
-    fn alloc_value(self, heap: Heap<'v>) -> Value<'v> {
-        heap.alloc_complex(self)
     }
 }
 

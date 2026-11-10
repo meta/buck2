@@ -56,12 +56,12 @@ use starlark::starlark_module;
 use starlark::typing::ParamIsRequired;
 use starlark::typing::ParamSpec;
 use starlark::util::ArcStr;
-use starlark::values::StringValue;
 use starlark::values::Value;
 use starlark::values::ValueOf;
 use starlark::values::ValueTyped;
 use starlark::values::dict::DictType;
 use starlark::values::list::ListType;
+use starlark::values::string::StarlarkStr;
 use starlark::values::structs::StructRef;
 use starlark::values::type_repr::StarlarkTypeRepr;
 use starlark::values::typing::StarlarkCallable;
@@ -119,7 +119,7 @@ pub(crate) fn register_anon_rule(globals: &mut GlobalsBuilder) {
         artifact_promise_mappings: ValueOf<
             'v,
             DictType<
-                StringValue<'v>,
+                StarlarkStr,
                 StarlarkCallable<'v, (Value<'static>,), ListType<Value<'static>>>,
             >,
         >,

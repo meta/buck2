@@ -25,7 +25,7 @@
 //! #[repr(C)]
 //! pub struct MyProvider<'v> {
 //!    field1: StringValue<'v>,
-//!    field2: ValueOf<'v, ListType<StringValue<'v>>>,
+//!    field2: ValueOf<'v, ListType<StarlarkStr>>,
 //! }
 //!
 //! #[starlark_module]
@@ -33,7 +33,7 @@
 //!    fn NameDoesntMatter<'v>(
 //!        // It's not enforced that the args here match the fields, but it's generally the user expectation that they do.
 //!        field1: StringValue<'v>,
-//!        field2: ValueOf<'v, ListType<StringValue<'v>>>,
+//!        field2: ValueOf<'v, ListType<StarlarkStr>>,
 //!    ) -> starlark::Result<MyProvider<'v>> {
 //!       // Can do some arg validation or computation here, just need to construct the provider.
 //!       Ok(MyProvider {

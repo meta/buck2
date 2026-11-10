@@ -26,11 +26,11 @@ use starlark::eval::Evaluator;
 use starlark::starlark_module;
 use starlark::values::Freeze;
 use starlark::values::StarlarkPagable;
-use starlark::values::StringValue;
 use starlark::values::Trace;
 use starlark::values::ValueOf;
 use starlark::values::dict::DictType;
 use starlark::values::list::ListType;
+use starlark::values::string::StarlarkStr;
 
 use crate::dep_only_incompatible_rollout::DepOnlyIncompatibleRollout;
 
@@ -72,7 +72,7 @@ use crate::dep_only_incompatible_rollout::DepOnlyIncompatibleRollout;
 )]
 #[repr(C)]
 pub struct DepOnlyIncompatibleInfo<'v> {
-    pub custom_soft_errors: ValueOf<'v, DictType<StringValue<'v>, DepOnlyIncompatibleRollout<'v>>>,
+    pub custom_soft_errors: ValueOf<'v, DictType<StarlarkStr, DepOnlyIncompatibleRollout<'v>>>,
 }
 
 #[starlark_module]
@@ -81,7 +81,7 @@ fn dep_only_incompatible_info_creator(globals: &mut GlobalsBuilder) {
     fn DepOnlyIncompatibleInfo<'v>(
         #[starlark(require = named)] custom_soft_errors: ValueOf<
             'v,
-            DictType<StringValue<'v>, DepOnlyIncompatibleRollout<'v>>,
+            DictType<StarlarkStr, DepOnlyIncompatibleRollout<'v>>,
         >,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<DepOnlyIncompatibleInfo<'v>> {
@@ -131,7 +131,7 @@ impl<'v> DepOnlyIncompatibleInfo<'v> {
         cell_resolver: &CellResolver,
         cell_alias_resolver: &CellAliasResolver,
     ) -> buck2_error::Result<DepOnlyIncompatibleCustomSoftErrors> {
-        let patterns = |patterns: ValueOf<'v, ListType<StringValue<'v>>>| {
+        let patterns = |patterns: ValueOf<'v, ListType<StarlarkStr>>| {
             patterns
                 .iter()
                 .map(|pattern| {

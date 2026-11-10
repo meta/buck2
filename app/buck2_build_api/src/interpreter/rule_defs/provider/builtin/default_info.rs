@@ -26,7 +26,6 @@ use starlark::values::FreezeError;
 use starlark::values::FrozenHeap;
 use starlark::values::Heap;
 use starlark::values::StarlarkPagable;
-use starlark::values::StringValue;
 use starlark::values::Trace;
 use starlark::values::Value;
 use starlark::values::ValueOf;
@@ -36,6 +35,7 @@ use starlark::values::dict::DictType;
 use starlark::values::list::AllocList;
 use starlark::values::list::ListType;
 use starlark::values::none::NoneOr;
+use starlark::values::string::StarlarkStr;
 
 use crate as buck2_build_api;
 use crate::artifact_groups::ArtifactGroup;
@@ -133,7 +133,7 @@ pub struct DefaultInfo<'v> {
     /// `ProviderCollection`, this collection must include at least a `DefaultInfo` provider. The
     /// subtargets can have their own subtargets as well, which can be accessed by chaining them,
     /// e.g.: `buck2 build cell//foo:bar[baz][qux]`.
-    sub_targets: ValueOf<'v, DictType<StringValue<'v>, ProviderCollection<'v>>>,
+    sub_targets: ValueOf<'v, DictType<StarlarkStr, ProviderCollection<'v>>>,
     /// A list of `Artifact`s that are built by default if this rule is requested
     /// explicitly (via CLI or `$(location)` etc), or depended on as as a "source"
     /// (i.e., `attrs.source()`).
@@ -324,7 +324,7 @@ fn default_info_creator(builder: &mut GlobalsBuilder) {
         other_outputs: ValueOf<'v, ListType<ValueAsCommandLineLike<'v>>>,
         #[starlark(default = ValueOf::empty_dict())] sub_targets: ValueOf<
             'v,
-            DictType<StringValue<'v>, Value<'v>>,
+            DictType<StarlarkStr, Value<'v>>,
         >,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<DefaultInfo<'v>> {
@@ -343,11 +343,11 @@ fn default_info_creator(builder: &mut GlobalsBuilder) {
         };
 
         let sub_targets = sub_targets
-            .try_items()
+            .iter()
             .map(|entry| {
                 let (k, v) = entry?;
-                let collection = ProviderCollection::try_from_value_subtarget(v, heap)?;
-                buck2_error::Ok((ValueOf::from(k), ValueOf::alloc(heap, collection)))
+                let collection = ProviderCollection::try_from_value_subtarget(v.to_value(), heap)?;
+                buck2_error::Ok((k, ValueOf::alloc(heap, collection)))
             })
             .collect::<buck2_error::Result<Vec<_>>>()?;
 

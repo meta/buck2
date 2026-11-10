@@ -63,6 +63,7 @@ use starlark::values::ValueTyped;
 use starlark::values::dict::DictType;
 use starlark::values::list_or_tuple::ListOrTupleType;
 use starlark::values::starlark_value;
+use starlark::values::string::StarlarkStr;
 use starlark::values::structs::StructRef;
 use starlark::values::type_repr::StarlarkTypeRepr;
 use starlark::values::typing::StarlarkCallableChecked;
@@ -344,20 +345,20 @@ fn register_transition_function(builder: &mut GlobalsBuilder) {
             TransitionImplParams,
             Either<ImplSingleReturnTy, ImplSplitReturnTy>,
         >,
-        #[starlark(require = named)] refs: ValueOf<'v, DictType<StringValue<'v>, StringValue<'v>>>,
-        #[starlark(require = named)] attrs: Option<ValueOf<'v, ListOrTupleType<StringValue<'v>>>>,
+        #[starlark(require = named)] refs: ValueOf<'v, DictType<StarlarkStr, StarlarkStr>>,
+        #[starlark(require = named)] attrs: Option<ValueOf<'v, ListOrTupleType<StarlarkStr>>>,
         #[starlark(require = named, default = false)] split: bool,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<Transition<'v>> {
         let implementation = r#impl.0;
 
         let refs = refs
-            .try_items()
+            .iter()
             .map(|entry| {
                 let (n, r) = entry?;
                 Ok((
-                    n,
-                    ProvidersLabelTrace((COERCE_PROVIDERS_LABEL_FOR_BZL.get()?)(eval, &r)?),
+                    n.get(),
+                    ProvidersLabelTrace((COERCE_PROVIDERS_LABEL_FOR_BZL.get()?)(eval, &r.get())?),
                 ))
             })
             .collect::<buck2_error::Result<_>>()?;
@@ -367,7 +368,13 @@ fn register_transition_function(builder: &mut GlobalsBuilder) {
             .ok_or(buck2_error::Error::from(TransitionError::OnlyBzl))?
             .clone();
 
-        let attrs = attrs.map(|a| a.try_to_vec()).transpose()?;
+        let attrs = attrs
+            .map(|a| {
+                a.iter()
+                    .map(|s| Ok(s?.get()))
+                    .collect::<starlark::Result<Vec<_>>>()
+            })
+            .transpose()?;
         if let Some(attrs) = &attrs {
             let attrs_set: BuckMutSet<StringValue> = attrs.iter().copied().collect();
             if attrs_set.len() != attrs.len() {

@@ -35,9 +35,9 @@ use starlark::values::StringValue;
 use starlark::values::Value;
 use starlark::values::ValueError;
 use starlark::values::ValueOf;
-use starlark::values::ValueTyped;
 use starlark::values::list_or_tuple::ListOrTupleType;
 use starlark::values::none::NoneOr;
+use starlark::values::string::StarlarkStr;
 use starlark::values::tuple::TupleType;
 
 use crate::attrs::coerce::attr_type::AttrTypeExt;
@@ -610,7 +610,7 @@ fn attr_module(registry: &mut GlobalsBuilder) {
     fn r#enum<'v>(
         #[starlark(require = pos)] variants: ValueOf<'v, ListOrTupleType<String>>,
         #[starlark(require = named)] default: Option<
-            ValueOf<'v, Either<StringValue<'v>, ValueTyped<'v, StarlarkSelector<'v>>>>,
+            ValueOf<'v, Either<StarlarkStr, StarlarkSelector<'v>>>,
         >,
         #[starlark(require = named, default = "")] doc: &str,
         eval: &mut Evaluator<'v, '_, '_>,

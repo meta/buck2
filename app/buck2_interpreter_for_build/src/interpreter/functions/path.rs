@@ -11,10 +11,10 @@
 use starlark::environment::GlobalsBuilder;
 use starlark::eval::Evaluator;
 use starlark::starlark_module;
-use starlark::values::StringValue;
 use starlark::values::ValueOf;
 use starlark::values::list::ListType;
 use starlark::values::list_or_tuple::ListOrTupleType;
+use starlark::values::string::StarlarkStr;
 
 use crate::interpreter::build_context::BuildContext;
 use crate::interpreter::globspec::GlobSpec;
@@ -57,13 +57,13 @@ pub(crate) fn register_path(builder: &mut GlobalsBuilder) {
             ListOrTupleType<String>,
         >,
         eval: &mut Evaluator<'v, '_, '_>,
-    ) -> starlark::Result<ValueOf<'v, ListType<StringValue<'v>>>> {
+    ) -> starlark::Result<ValueOf<'v, ListType<StarlarkStr>>> {
         let extra = ModuleInternals::from_context(eval, "glob")?;
         let spec = GlobSpec::new(&include.try_to_vec()?, &exclude.try_to_vec()?)?;
         let heap = eval.heap();
         let res = extra
             .resolve_glob(&spec)
-            .map(|path| ValueOf::from(heap.alloc_str(path.as_str())));
+            .map(|path| ValueOf::from_representation(heap.alloc_str(path.as_str())));
         Ok(ValueOf::alloc_list(heap, res))
     }
 

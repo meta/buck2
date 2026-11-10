@@ -59,6 +59,7 @@ use starlark::values::list::ListType;
 use starlark::values::list_or_tuple::ListOrTupleType;
 use starlark::values::none::NoneOr;
 use starlark::values::none::NoneType;
+use starlark::values::string::StarlarkStr;
 use starlark::values::typing::StarlarkCallable;
 use starlark_map::small_map;
 
@@ -262,7 +263,7 @@ pub(crate) fn analysis_actions_methods_run(methods: &mut MethodsBuilder) {
         #[starlark(require = named)] category: StringValue<'v>,
         #[starlark(require = named, default = NoneOr::None)] identifier: NoneOr<StringValue<'v>>,
         #[starlark(require = named)] env: Option<
-            ValueOf<'v, DictType<StringValue<'v>, ValueAsCommandLineLike<'v>>>,
+            ValueOf<'v, DictType<StarlarkStr, ValueAsCommandLineLike<'v>>>,
         >,
         #[starlark(require = named, default = false)] local_only: bool,
         #[starlark(require = named, default = false)] prefer_local: bool,

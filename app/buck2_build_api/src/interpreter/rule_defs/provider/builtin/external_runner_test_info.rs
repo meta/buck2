@@ -31,6 +31,7 @@ use starlark::values::ValueTyped;
 use starlark::values::dict::DictType;
 use starlark::values::list_or_tuple::ListOrTupleType;
 use starlark::values::none::NoneOr;
+use starlark::values::string::StarlarkStr;
 
 use crate as buck2_build_api;
 use crate::analysis::extra_v::AnalysisExtraValue;
@@ -67,14 +68,14 @@ pub struct ExternalRunnerTestInfo<'v> {
 
     /// The environment for this test. Here again, the external test runner is what gives this
     /// meaning.
-    env: Option<ValueOf<'v, DictType<StringValue<'v>, ValueAsCommandLineLike<'v>>>>,
+    env: Option<ValueOf<'v, DictType<StarlarkStr, ValueAsCommandLineLike<'v>>>>,
 
     /// The labels for this test.
-    labels: Option<ValueOf<'v, ListOrTupleType<StringValue<'v>>>>,
+    labels: Option<ValueOf<'v, ListOrTupleType<StarlarkStr>>>,
 
     /// The contacts for this test. This is largely expected to be an oncall, though it's not
     /// validated in any way.
-    contacts: Option<ValueOf<'v, ListOrTupleType<StringValue<'v>>>>,
+    contacts: Option<ValueOf<'v, ListOrTupleType<StarlarkStr>>>,
 
     /// Whether this test should use relative paths
     use_project_relative_paths: Option<ValueOf<'v, bool>>,
@@ -101,15 +102,14 @@ pub struct ExternalRunnerTestInfo<'v> {
     exec_group: Option<ValueOf<'v, StarlarkExecutionGroupView<'v>>>,
 
     /// Executors that Tpx can use to override the default executor.
-    executor_overrides:
-        Option<ValueOf<'v, DictType<StringValue<'v>, StarlarkCommandExecutorConfig>>>,
+    executor_overrides: Option<ValueOf<'v, DictType<StarlarkStr, StarlarkCommandExecutorConfig>>>,
 
     /// Mapping from a local resource type to a target with a corresponding provider.
     /// Required types are passed from test runner.
     /// If the value for a corresponding type is omitted it means local resource
     /// should be ignored when executing tests even if those are passed as required from test runner.
     local_resources:
-        Option<ValueOf<'v, DictType<StringValue<'v>, NoneOr<StarlarkConfiguredProvidersLabel>>>>,
+        Option<ValueOf<'v, DictType<StarlarkStr, NoneOr<StarlarkConfiguredProvidersLabel>>>>,
 
     /// List of local resource types which should be set up additionally to those which are
     /// passed from test runner. Allows specifying local resources on a per-rule basis.
@@ -255,12 +255,12 @@ impl<'v> TestCommandMember<'v> {
 // over them. (The provider macro reads field types syntactically, so the structs spell them out.)
 
 pub(super) type TestCommand<'v> = ValueOf<'v, ListOrTupleType<ValueAsCommandLineLike<'v>>>;
-pub(super) type TestEnv<'v> = ValueOf<'v, DictType<StringValue<'v>, ValueAsCommandLineLike<'v>>>;
-pub(super) type StrSeq<'v> = ValueOf<'v, ListOrTupleType<StringValue<'v>>>;
+pub(super) type TestEnv<'v> = ValueOf<'v, DictType<StarlarkStr, ValueAsCommandLineLike<'v>>>;
+pub(super) type StrSeq<'v> = ValueOf<'v, ListOrTupleType<StarlarkStr>>;
 pub(super) type ExecutorOverrides<'v> =
-    ValueOf<'v, DictType<StringValue<'v>, StarlarkCommandExecutorConfig>>;
+    ValueOf<'v, DictType<StarlarkStr, StarlarkCommandExecutorConfig>>;
 pub(super) type LocalResources<'v> =
-    ValueOf<'v, DictType<StringValue<'v>, NoneOr<StarlarkConfiguredProvidersLabel>>>;
+    ValueOf<'v, DictType<StarlarkStr, NoneOr<StarlarkConfiguredProvidersLabel>>>;
 pub(super) type RequiredLocalResources<'v> =
     ValueOf<'v, ListOrTupleType<StarlarkRequiredTestLocalResource>>;
 

@@ -74,6 +74,7 @@ use starlark::values::dict::DictType;
 use starlark::values::list::ListType;
 use starlark::values::list_or_tuple::ListOrTupleType;
 use starlark::values::starlark_value;
+use starlark::values::string::StarlarkStr;
 use starlark::values::typing::StarlarkCallable;
 use starlark::values::typing::StarlarkCallableChecked;
 
@@ -392,7 +393,7 @@ impl<'v> StarlarkRuleCallable<'v> {
         artifact_promise_mappings: ValueOf<
             'v,
             DictType<
-                StringValue<'v>,
+                StarlarkStr,
                 StarlarkCallable<'v, (Value<'static>,), ListType<Value<'static>>>,
             >,
         >,
@@ -410,10 +411,10 @@ impl<'v> StarlarkRuleCallable<'v> {
             Vec::new(),
             Some(ArtifactPromiseMappings {
                 mappings: artifact_promise_mappings
-                    .try_items()
+                    .iter()
                     .map(|entry| {
                         let (k, v) = entry?;
-                        Ok::<_, starlark::Error>((k, v.0))
+                        Ok::<_, starlark::Error>((k.get(), v.get().0))
                     })
                     .collect::<starlark::Result<BuckMutInsertionMap<_, _>>>()?,
             }),
@@ -428,7 +429,7 @@ impl<'v> StarlarkRuleCallable<'v> {
         artifact_promise_mappings: ValueOf<
             'v,
             DictType<
-                StringValue<'v>,
+                StarlarkStr,
                 StarlarkCallable<'v, (Value<'static>,), ListType<Value<'static>>>,
             >,
         >,
@@ -454,7 +455,7 @@ impl<'v> StarlarkRuleCallable<'v> {
         artifact_promise_mappings: ValueOf<
             'v,
             DictType<
-                StringValue<'v>,
+                StarlarkStr,
                 StarlarkCallable<'v, (Value<'static>,), ListType<Value<'static>>>,
             >,
         >,
@@ -1096,7 +1097,7 @@ pub fn register_rule_function(builder: &mut GlobalsBuilder) {
         #[starlark(require = named)] artifact_promise_mappings: ValueOf<
             'v,
             DictType<
-                StringValue<'v>,
+                StarlarkStr,
                 StarlarkCallable<'v, (Value<'static>,), ListType<Value<'static>>>,
             >,
         >,

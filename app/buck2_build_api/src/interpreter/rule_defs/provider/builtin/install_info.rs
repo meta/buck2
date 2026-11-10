@@ -20,10 +20,10 @@ use starlark::environment::GlobalsBuilder;
 use starlark::values::Freeze;
 use starlark::values::FreezeError;
 use starlark::values::StarlarkPagable;
-use starlark::values::StringValue;
 use starlark::values::Trace;
 use starlark::values::ValueOf;
 use starlark::values::dict::DictType;
+use starlark::values::string::StarlarkStr;
 
 use crate as buck2_build_api;
 use crate::interpreter::rule_defs::artifact::starlark_artifact_like::StarlarkArtifactView;
@@ -53,7 +53,7 @@ pub struct InstallInfo<'v> {
     // Label for the installer
     installer: ValueOf<'v, StarlarkConfiguredProvidersLabel>,
     // list of files that need to be installed
-    files: ValueOf<'v, DictType<StringValue<'v>, StarlarkArtifactView<'v>>>,
+    files: ValueOf<'v, DictType<StarlarkStr, StarlarkArtifactView<'v>>>,
 }
 
 impl<'v> InstallInfo<'v> {
@@ -89,7 +89,7 @@ impl<'v> InstallInfo<'v> {
 fn install_info_creator(globals: &mut GlobalsBuilder) {
     fn InstallInfo<'v>(
         installer: ValueOf<'v, StarlarkConfiguredProvidersLabel>,
-        files: ValueOf<'v, DictType<StringValue<'v>, StarlarkArtifactView<'v>>>,
+        files: ValueOf<'v, DictType<StarlarkStr, StarlarkArtifactView<'v>>>,
     ) -> starlark::Result<InstallInfo<'v>> {
         let info = InstallInfo { installer, files };
         validate_install_info(&info)?;

@@ -20,7 +20,6 @@ use starlark::eval::Evaluator;
 use starlark::values::Freeze;
 use starlark::values::FreezeError;
 use starlark::values::StarlarkPagable;
-use starlark::values::StringValue;
 use starlark::values::Trace;
 use starlark::values::UnpackValue;
 use starlark::values::Value;
@@ -29,6 +28,7 @@ use starlark::values::dict::DictType;
 use starlark::values::int::IntView;
 use starlark::values::list::AllocList;
 use starlark::values::none::NoneOr;
+use starlark::values::string::StarlarkStr;
 
 use crate as buck2_build_api;
 use crate::interpreter::rule_defs::cmd_args::CommandLineArgLike;
@@ -53,7 +53,7 @@ pub struct WorkerInfo<'v> {
     // Command to spawn a new worker
     pub exe: ValueOf<'v, StarlarkCmdArgsView<'v>>,
     /// Environment for the command that spawns the worker.
-    env: Option<ValueOf<'v, DictType<StringValue<'v>, ValueAsCommandLineLike<'v>>>>,
+    env: Option<ValueOf<'v, DictType<StarlarkStr, ValueAsCommandLineLike<'v>>>>,
     // Maximum number of concurrent commands to execute on a worker instance without queuing
     pub concurrency: Option<ValueOf<'v, IntView<'v>>>,
     // Whether to always run actions using this worker via the streaming API
@@ -75,7 +75,7 @@ fn worker_info_creator(globals: &mut GlobalsBuilder) {
     fn WorkerInfo<'v>(
         #[starlark(default = AllocList::EMPTY)] exe: Value<'v>,
         #[starlark(default = NoneOr::None)] env: NoneOr<
-            ValueOf<'v, DictType<StringValue<'v>, ValueAsCommandLineLike<'v>>>,
+            ValueOf<'v, DictType<StarlarkStr, ValueAsCommandLineLike<'v>>>,
         >,
         #[starlark(require = named, default = NoneOr::None)] concurrency: NoneOr<
             ValueOf<'v, IntView<'v>>,

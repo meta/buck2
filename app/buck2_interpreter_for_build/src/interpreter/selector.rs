@@ -38,6 +38,7 @@ use starlark::values::ValueOf;
 use starlark::values::dict::DictType;
 use starlark::values::none::NoneOr;
 use starlark::values::starlark_value;
+use starlark::values::string::StarlarkStr;
 
 /// Representation of `select()` in Starlark.
 #[derive(Debug, ProvidesStaticType, Trace, Freeze, Allocative, StarlarkPagable)]
@@ -45,7 +46,7 @@ use starlark::values::starlark_value;
 pub enum StarlarkSelector<'v> {
     /// Simplest form, backed by dictionary representation
     /// wrapped into `select` function call.
-    Primary(ValueOf<'v, DictType<StringValue<'v>, Value<'v>>>),
+    Primary(ValueOf<'v, DictType<StarlarkStr, Value<'v>>>),
     Sum(Value<'v>, Value<'v>),
 }
 
@@ -88,7 +89,7 @@ impl<'v> Serialize for StarlarkSelector<'v> {
 starlark_complex_value!(pub StarlarkSelector);
 
 impl<'v> StarlarkSelector<'v> {
-    pub fn new(d: ValueOf<'v, DictType<StringValue<'v>, Value<'v>>>) -> Self {
+    pub fn new(d: ValueOf<'v, DictType<StarlarkStr, Value<'v>>>) -> Self {
         StarlarkSelector::Primary(d)
     }
 
@@ -284,7 +285,7 @@ starlark::methods_static!(SELECTOR_METHODS = selector_methods);
 #[starlark_types(StarlarkSelector<'_> as Select)]
 pub fn register_select(globals: &mut GlobalsBuilder) {
     fn select<'v>(
-        #[starlark(require = pos)] d: ValueOf<'v, DictType<StringValue<'v>, Value<'v>>>,
+        #[starlark(require = pos)] d: ValueOf<'v, DictType<StarlarkStr, Value<'v>>>,
     ) -> starlark::Result<StarlarkSelector<'v>> {
         Ok(StarlarkSelector::new(d))
     }

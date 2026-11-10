@@ -29,7 +29,6 @@ use starlark::values::Freeze;
 use starlark::values::Heap;
 use starlark::values::StarlarkPagable;
 use starlark::values::StarlarkTypeExpr;
-use starlark::values::StringValue;
 use starlark::values::Trace;
 use starlark::values::Value;
 use starlark::values::ValueOf;
@@ -37,6 +36,7 @@ use starlark::values::ValueTyped;
 use starlark::values::dict::DictMut;
 use starlark::values::dict::DictType;
 use starlark::values::none::NoneOr;
+use starlark::values::string::StarlarkStr;
 
 use crate::constraint_setting_info::ConstraintSettingInfo;
 use crate::constraint_value_info::ConstraintValueInfo;
@@ -52,12 +52,12 @@ use crate::constraint_value_info::ConstraintValueInfo;
 #[repr(C)]
 pub struct ConfigurationInfo<'v> {
     constraints: ValueOf<'v, DictType<StarlarkTargetLabel, ConstraintValueInfo<'v>>>,
-    values: ValueOf<'v, DictType<StringValue<'v>, StringValue<'v>>>,
-    root_values: ValueOf<'v, DictType<StringValue<'v>, StringValue<'v>>>,
+    values: ValueOf<'v, DictType<StarlarkStr, StarlarkStr>>,
+    root_values: ValueOf<'v, DictType<StarlarkStr, StarlarkStr>>,
 }
 
 type Constraints<'v> = ValueOf<'v, DictType<StarlarkTargetLabel, ConstraintValueInfo<'v>>>;
-type Buckconfigs<'v> = ValueOf<'v, DictType<StringValue<'v>, StringValue<'v>>>;
+type Buckconfigs<'v> = ValueOf<'v, DictType<StarlarkStr, StarlarkStr>>;
 
 impl<'v> ConfigurationInfo<'v> {
     pub fn to_config_setting_data(&self) -> buck2_error::Result<ConfigSettingData> {
@@ -424,8 +424,8 @@ mod tests {
                 root_values: ValueOf::alloc_dict(
                     heap,
                     [(
-                        ValueOf::from(heap.alloc_str("apple.key")),
-                        ValueOf::from(heap.alloc_str("value")),
+                        ValueOf::from_representation(heap.alloc_str("apple.key")),
+                        ValueOf::from_representation(heap.alloc_str("value")),
                     )],
                 ),
             };

@@ -23,6 +23,7 @@ use starlark::values::Trace;
 use starlark::values::Value;
 use starlark::values::ValueOf;
 use starlark::values::dict::DictType;
+use starlark::values::string::StarlarkStr;
 
 use crate as buck2_build_api;
 use crate::interpreter::rule_defs::cmd_args::value::CommandLineArg;
@@ -62,21 +63,18 @@ use crate::interpreter::rule_defs::cmd_args::value_as::ValueAsCommandLineLike;
 )]
 #[repr(C)]
 pub struct TemplatePlaceholderInfo<'v> {
-    unkeyed_variables: ValueOf<'v, DictType<StringValue<'v>, ValueAsCommandLineLike<'v>>>,
+    unkeyed_variables: ValueOf<'v, DictType<StarlarkStr, ValueAsCommandLineLike<'v>>>,
     keyed_variables: ValueOf<
         'v,
         DictType<
-            StringValue<'v>,
-            Either<
-                ValueAsCommandLineLike<'v>,
-                DictType<StringValue<'v>, ValueAsCommandLineLike<'v>>,
-            >,
+            StarlarkStr,
+            Either<ValueAsCommandLineLike<'v>, DictType<StarlarkStr, ValueAsCommandLineLike<'v>>>,
         >,
     >,
 }
 
 fn collect_variables<'v>(
-    variables: ValueOf<'v, DictType<StringValue<'v>, ValueAsCommandLineLike<'v>>>,
+    variables: ValueOf<'v, DictType<StarlarkStr, ValueAsCommandLineLike<'v>>>,
 ) -> buck2_error::Result<BuckMutInsertionMap<StringValue<'v>, CommandLineArg<'v>>> {
     variables
         .iter()
@@ -121,18 +119,15 @@ fn template_placeholder_info_creator(builder: &mut GlobalsBuilder) {
     #[starlark(as_type = TemplatePlaceholderInfo<'static>)]
     fn TemplatePlaceholderInfo<'v>(
         #[starlark(default = ValueOf::new_unchecked(Value::new_empty_dict()))]
-        unkeyed_variables: ValueOf<
-            'v,
-            DictType<StringValue<'v>, ValueAsCommandLineLike<'v>>,
-        >,
+        unkeyed_variables: ValueOf<'v, DictType<StarlarkStr, ValueAsCommandLineLike<'v>>>,
         #[starlark(default = ValueOf::new_unchecked(Value::new_empty_dict()))]
         keyed_variables: ValueOf<
             'v,
             DictType<
-                StringValue<'v>,
+                StarlarkStr,
                 Either<
                     ValueAsCommandLineLike<'v>,
-                    DictType<StringValue<'v>, ValueAsCommandLineLike<'v>>,
+                    DictType<StarlarkStr, ValueAsCommandLineLike<'v>>,
                 >,
             >,
         >,

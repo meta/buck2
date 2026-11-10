@@ -25,6 +25,7 @@ use starlark::values::ValueOf;
 use starlark::values::ValueTyped;
 use starlark::values::list::ListType;
 use starlark::values::none::NoneOr;
+use starlark::values::string::StarlarkStr;
 
 use crate::execution_platform_info::ExecutionPlatformInfo;
 
@@ -59,14 +60,14 @@ pub struct ExecutionPlatformRegistrationInfo<'v> {
     /// - `"error"`: Fail the build with an error message indicating no compatible platform was found.
     /// - An `ExecutionPlatformInfo`: Use this specific platform as a fallback when no other
     ///   platform from the `platforms` list matches.
-    fallback: Option<ValueOf<'v, Either<StringValue<'v>, ExecutionPlatformInfo<'v>>>>,
+    fallback: Option<ValueOf<'v, Either<StarlarkStr, ExecutionPlatformInfo<'v>>>>,
     /// Optional marker constraint that identifies platforms as execution platforms.
     /// If set, every execution platform in `platforms` will be marked with this constraint,
     /// allowing to distinguish execution platforms from target platforms.
     exec_marker_constraint: Option<StringValue<'v>>,
 }
 
-type Fallback<'v> = ValueOf<'v, Either<StringValue<'v>, ExecutionPlatformInfo<'v>>>;
+type Fallback<'v> = ValueOf<'v, Either<StarlarkStr, ExecutionPlatformInfo<'v>>>;
 
 impl<'v> ExecutionPlatformRegistrationInfo<'v> {
     pub fn platforms(&self) -> buck2_error::Result<Vec<ValueTyped<'v, ExecutionPlatformInfo<'v>>>> {

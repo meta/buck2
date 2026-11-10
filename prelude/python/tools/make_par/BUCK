@@ -93,3 +93,12 @@ prelude.python_test(
     base_module = "",
     resources = ["_lpar_bootstrap.sh.template"],
 )
+
+prelude.python_test(
+    name = "par_builder_test",
+    srcs = {
+        "par_builder.py": "par_builder.py",
+        "tests/par_builder_test.py": "tests/par_builder_test.py",
+    },
+    base_module = "",
+)

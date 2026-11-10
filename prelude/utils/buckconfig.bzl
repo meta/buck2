@@ -162,7 +162,7 @@ read_string = read
 
 def read_choice(
     section: str, field: str, choices: typing.Iterable, default: str | Select | None = None, required: bool = True, root_cell: bool = False
-) -> str | None:
+) -> str | Select | None:
     """Read a string from `.buckconfig` that must be one `choices`."""
 
     val = read(section, field, root_cell = root_cell)

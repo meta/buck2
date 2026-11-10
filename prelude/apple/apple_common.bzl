@@ -218,13 +218,21 @@ def swift_dynamic_replacement_select(enabled, disabled):
 def apple_hot_code_reload_enabled_select(enabled, disabled):
     """`enabled` or `disabled`, as the configuration decides hot code reload:
     what an app build does for it as a whole, such as linking the SwiftUI
-    reload runtime and recording the decision in `BuildInfo.json`. Decided by
-    the `apple.hot_code_reload_enabled` buckconfig (`@fbsource//fbobjc/mode/hot-code-reload`),
-    independently of whether modules are compiled for Swift dynamic
+    reload runtime and recording the decision in `BuildInfo.json`. The
+    `hot_reload` constraint decides when it is set, to `enabled` or `disabled`;
+    the `apple.hot_code_reload_enabled` buckconfig
+    (`@fbsource//fbobjc/mode/hot-code-reload`) is only the fallback for a
+    configuration that leaves the constraint unspecified, so a platform pins the
+    decision and a buckconfig alone cannot override a platform that pins
+    `disabled`. Independent of whether modules are compiled for Swift dynamic
     replacement, which `swift_dynamic_replacement_select` decides."""
     return select({
-        "DEFAULT": disabled,
-        "config//features/apple:hot_code_reload_enabled": enabled,
+        "DEFAULT": select({
+            "DEFAULT": disabled,
+            "config//features/apple:hot_code_reload_enabled": enabled,
+        }),
+        "config//features/apple/constraints:hot_reload[disabled]": disabled,
+        "config//features/apple/constraints:hot_reload[enabled]": enabled,
     })
 
 def get_swift_dynamic_replacement_enabled():

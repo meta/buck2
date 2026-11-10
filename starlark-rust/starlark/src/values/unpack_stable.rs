@@ -35,6 +35,7 @@ use crate::values::none::NoneType;
 use crate::values::set::SetRef;
 use crate::values::structs::StructRef;
 use crate::values::tuple::TupleRef;
+use crate::values::type_expr::StarlarkTypeExpr;
 use crate::values::type_repr::StarlarkTypeRepr;
 use crate::values::types::int::inline_int::InlineInt;
 use crate::values::types::int::int_or_big::StarlarkIntRef;
@@ -61,7 +62,7 @@ impl<'v> UnpackValueStable<'v> for Value<'v> {}
 impl<'v, T: StarlarkValue<'v>> UnpackValueStable<'v> for ValueTyped<'v, T> {}
 impl<'v, T: StarlarkValue<'v>> UnpackValueStable<'v> for FrozenValueTyped<'v, T> {}
 impl<'v, T: StarlarkValue<'v>> UnpackValueStable<'v> for &'v T where &'v T: UnpackValue<'v> {}
-impl<'v, T: UnpackValueStable<'v>> UnpackValueStable<'v> for ValueOf<'v, T> {}
+impl<'v, T: UnpackValueStable<'v> + StarlarkTypeExpr<'v>> UnpackValueStable<'v> for ValueOf<'v, T> {}
 
 impl<'v> UnpackValueStable<'v> for &'v ListRef<'v> {}
 impl<'v> UnpackValueStable<'v> for &'v TupleRef<'v> {}

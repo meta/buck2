@@ -17,6 +17,7 @@
 
 //! `ValueOf`: a value known to be of a Starlark type.
 
+use std::convert::Infallible;
 use std::fmt;
 use std::fmt::Debug;
 use std::fmt::Display;
@@ -48,53 +49,54 @@ use crate::values::UnpackValue;
 use crate::values::UnpackValueStable;
 use crate::values::Value;
 use crate::values::ValueTyped;
+use crate::values::type_expr::StarlarkTypeExpr;
+use crate::values::type_expr::StarlarkTypeExprStable;
 use crate::values::type_repr::StarlarkTypeRepr;
 
-/// A [`Value`] that `T` accepts: it was type-checked when it was constructed.
+/// A [`Value`] known to be of the type `T`: it was checked when it was constructed.
 ///
-/// `T` is any [`UnpackValue`], spelled as a parameter of that type would be: a view or a
-/// [`ValueTyped`](crate::values::ValueTyped) for a nominal type, [`ListType<T>`](crate::values::list::ListType) for `list[T]`,
-/// [`NoneOr<T>`](crate::values::none::NoneOr) for `None | T`, a `#[derive(UnpackValue)]` enum
-/// for a union. A `ValueOf<T>` is an `UnpackValue` (the check is `T`'s) and an `AllocValue`
-/// (the value), so it is both a parameter binding and a return type; and it is the field type
+/// `T` is a [`StarlarkTypeExpr`], spelled as the type is: `Foo` for a nominal type, its view
+/// for a type with several representations, [`ListType<T>`](crate::values::list::ListType)
+/// for `list[T]`, [`NoneOr<T>`](crate::values::none::NoneOr) for `None | T`, a
+/// `#[derive(UnpackValue)]` enum for a union. A `ValueOf<T>` is an `UnpackValue` and an
+/// `AllocValue`, so it is both a parameter binding and a return type; and it is the field type
 /// for a Starlark value that Rust code holds on to, because it freezes to a `ValueOf` at the
-/// frozen brand after checking that the value still is a `T` (a mutable container may have
-/// been changed since it was checked).
+/// frozen brand after checking that the value still is a `T` (a mutable container may have been
+/// changed since it was checked).
 ///
-/// The point is that code which holds a `ValueOf<T>` neither unpacks again on every read nor
-/// asserts a type it already checked. [`unpack`](Self::unpack) gives the `T` back where the
-/// check cannot be invalidated ([`UnpackValueStable`]: the type of a value never changes);
-/// where it can, because `T` looks into a mutable container, [`try_unpack`](Self::try_unpack)
-/// and the container handles' accessors re-check and report an error, which only a value that
-/// is not frozen yet can produce.
+/// The point is that code which holds a `ValueOf<T>` neither re-checks on every read nor
+/// asserts a type it already checked. It is read through [`get`](Self::get), which gives
+/// `T`'s handle ([`StarlarkTypeExpr::Get`]) and cannot fail when the check cannot be
+/// invalidated ([`StarlarkTypeExprStable`]); where it can, because `T` looks into a mutable
+/// container, [`try_get`](Self::try_get) and the container handles' accessors re-check and
+/// report an error, which a frozen value never produces. A single-representation nominal `T`
+/// also derefs to the `T`.
 #[derive(Clone_, Copy_, Dupe_, Allocative)]
 #[allocative(bound = "")]
 #[derive(pagable::PagablePanic, StarlarkPagable)]
 #[repr(transparent)]
-pub struct ValueOf<'v, T: UnpackValue<'v>>(Value<'v>, PhantomData<fn() -> T>);
+pub struct ValueOf<'v, T: StarlarkTypeExpr<'v>>(Value<'v>, PhantomData<fn() -> T>);
 
-impl<'v, T: UnpackValue<'v>> ValueOf<'v, T> {
-    /// `value` if it is a `T`; `None` if it is not (or if it is but does not convert to a `T`,
-    /// which [`new_err`](Self::new_err) distinguishes).
+impl<'v, T: StarlarkTypeExpr<'v>> ValueOf<'v, T> {
+    /// `value` if it is a `T`.
     #[inline]
     pub fn new(value: Value<'v>) -> Option<Self> {
-        match T::unpack_value(value) {
-            Ok(Some(_)) => Some(Self::new_unchecked(value)),
-            Ok(None) | Err(_) => None,
-        }
+        let matches = T::matches(value);
+        #[cfg(debug_assertions)]
+        crate::values::unpack::check_matches_agreement::<T>(value, matches);
+        matches.then(|| Self::new_unchecked(value))
     }
 
-    /// `value` if it is a `T`, otherwise the error that unpacking a `T` would give.
+    /// `value` if it is a `T`, otherwise an error saying what it is instead.
     #[inline]
     pub fn new_err(value: Value<'v>) -> crate::Result<Self> {
-        T::unpack_value_err(value)?;
-        Ok(Self::new_unchecked(value))
+        Self::new(value)
+            .ok_or_else(|| crate::values::unpack::expected_type_error(value, T::starlark_type_repr))
     }
 
     /// `value`, which the caller knows to be a `T`: it was just checked, or just built from
     /// checked parts. Prefer [`alloc`](Self::alloc) and the typed constructors where they apply;
-    /// a wrong claim here is caught by [`unpack`](Self::unpack) or by freezing, not by the
-    /// compiler.
+    /// a wrong claim here is caught by [`get`](Self::get) or by freezing, not by the compiler.
     #[inline]
     pub fn new_unchecked(value: Value<'v>) -> Self {
         ValueOf(value, PhantomData)
@@ -114,8 +116,34 @@ impl<'v, T: UnpackValue<'v>> ValueOf<'v, T> {
         self.0
     }
 
-    /// The `T` this value is, for a `T` whose check cannot be invalidated
-    /// ([`UnpackValueStable`]).
+    /// The handle this value is read through, for a `T` whose check cannot be invalidated
+    /// ([`StarlarkTypeExprStable`]).
+    #[inline]
+    pub fn get(self) -> T::Get
+    where
+        T: StarlarkTypeExprStable<'v>,
+    {
+        match T::get(self.0) {
+            Some(x) => x,
+            None => unreachable!(
+                "`{}` is `StarlarkTypeExprStable`, yet value `{}` stopped being one",
+                T::starlark_type_repr(),
+                self.0,
+            ),
+        }
+    }
+
+    /// The handle this value is read through, re-checked: for a `T` that looks into a mutable
+    /// container, the container may have been changed since the check, and this is where that
+    /// surfaces. Freezing re-checks too, so a frozen `ValueOf` always gives `Ok`.
+    #[inline]
+    pub fn try_get(self) -> crate::Result<T::Get> {
+        T::get(self.0)
+            .ok_or_else(|| crate::values::unpack::changed_since_checked_error::<T>(self.0))
+    }
+
+    /// The `T` this value converts to, for a `T` whose check cannot be invalidated and whose
+    /// conversion cannot fail ([`UnpackValueStable`]).
     #[inline]
     pub fn unpack(self) -> T
     where
@@ -131,16 +159,18 @@ impl<'v, T: UnpackValue<'v>> ValueOf<'v, T> {
         }
     }
 
-    /// The `T` this value is, re-checked: for a `T` that looks into a mutable container, the
-    /// container may have been changed since the check, and this is where that surfaces.
-    /// Freezing re-checks too, so a frozen `ValueOf` always gives `Ok`.
+    /// The `T` this value converts to, re-checked as for [`try_get`](Self::try_get); a
+    /// conversion that fails within the type also surfaces here.
     #[inline]
-    pub fn try_unpack(self) -> crate::Result<T> {
+    pub fn try_unpack(self) -> crate::Result<T>
+    where
+        T: UnpackValue<'v>,
+    {
         T::unpack_value_err(self.0)
     }
 }
 
-impl<'v, T: UnpackValue<'v>> ValueOf<'v, T> {
+impl<'v, T: StarlarkTypeExpr<'v>> ValueOf<'v, T> {
     /// A freshly allocated representation of `T`, where `T` is the nominal type the
     /// representation belongs to: the value is a `T` by construction.
     #[inline]
@@ -173,41 +203,41 @@ impl<'v, T: StarlarkValue<'v>> From<ValueTyped<'v, T>> for ValueOf<'v, ValueType
 // SAFETY: the static type is the same type with the heap lifetime erased.
 unsafe impl<'v, T> ProvidesStaticType<'v> for ValueOf<'v, T>
 where
-    T: UnpackValue<'v> + ProvidesStaticType<'v>,
-    T::StaticType: UnpackValue<'static>,
+    T: StarlarkTypeExpr<'v> + ProvidesStaticType<'v>,
+    T::StaticType: StarlarkTypeExpr<'static>,
 {
     type StaticType = ValueOf<'static, T::StaticType>;
 }
 
 impl<T> IsStaticType for ValueOf<'static, T>
 where
-    T: UnpackValue<'static> + IsStaticType,
-    for<'lt> T::Reinfect<'lt>: UnpackValue<'lt>,
+    T: StarlarkTypeExpr<'static> + IsStaticType,
+    for<'lt> T::Reinfect<'lt>: StarlarkTypeExpr<'lt>,
 {
     type Reinfect<'lt> = ValueOf<'lt, T::Reinfect<'lt>>;
 }
 
-impl<'v, T: UnpackValue<'v>> PartialEq for ValueOf<'v, T> {
+impl<'v, T: StarlarkTypeExpr<'v>> PartialEq for ValueOf<'v, T> {
     fn eq(&self, other: &Self) -> bool {
         self.0 == other.0
     }
 }
 
-impl<'v, T: UnpackValue<'v>> Eq for ValueOf<'v, T> {}
+impl<'v, T: StarlarkTypeExpr<'v>> Eq for ValueOf<'v, T> {}
 
-impl<'v, T: UnpackValue<'v>> Debug for ValueOf<'v, T> {
+impl<'v, T: StarlarkTypeExpr<'v>> Debug for ValueOf<'v, T> {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         f.debug_tuple("ValueOf").field(&self.0).finish()
     }
 }
 
-impl<'v, T: UnpackValue<'v>> Display for ValueOf<'v, T> {
+impl<'v, T: StarlarkTypeExpr<'v>> Display for ValueOf<'v, T> {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         Display::fmt(&self.0, f)
     }
 }
 
-impl<'v, T: UnpackValue<'v>> StarlarkTypeRepr for ValueOf<'v, T> {
+impl<'v, T: StarlarkTypeExpr<'v>> StarlarkTypeRepr for ValueOf<'v, T> {
     type Canonical = T::Canonical;
 
     fn starlark_type_repr() -> Ty {
@@ -215,30 +245,30 @@ impl<'v, T: UnpackValue<'v>> StarlarkTypeRepr for ValueOf<'v, T> {
     }
 }
 
-impl<'v, T: UnpackValue<'v>> UnpackValue<'v> for ValueOf<'v, T> {
-    type Error = T::Error;
+impl<'v, T: StarlarkTypeExpr<'v>> UnpackValue<'v> for ValueOf<'v, T> {
+    type Error = Infallible;
 
     #[inline]
     fn unpack_value_impl(value: Value<'v>) -> Result<Option<Self>, Self::Error> {
-        Ok(T::unpack_value_impl(value)?.map(|_| Self::new_unchecked(value)))
+        Ok(Self::new(value))
     }
 }
 
-impl<'v, T: UnpackValue<'v>> AllocValue<'v> for ValueOf<'v, T> {
+impl<'v, T: StarlarkTypeExpr<'v>> AllocValue<'v> for ValueOf<'v, T> {
     #[inline]
     fn alloc_value(self, _heap: Heap<'v>) -> Value<'v> {
         self.0
     }
 }
 
-impl<'fv, T: UnpackValue<'fv>> AllocFrozenValue<'fv> for ValueOf<'fv, T> {
+impl<'fv, T: StarlarkTypeExpr<'fv>> AllocFrozenValue<'fv> for ValueOf<'fv, T> {
     #[inline]
     fn alloc_frozen_value(self, _heap: FrozenHeap<'fv>) -> Value<'fv> {
         self.0
     }
 }
 
-unsafe impl<'v, T: UnpackValue<'v>> Trace<'v> for ValueOf<'v, T> {
+unsafe impl<'v, T: StarlarkTypeExpr<'v>> Trace<'v> for ValueOf<'v, T> {
     fn trace(&mut self, tracer: &Tracer<'v>) {
         self.0.trace(tracer)
     }
@@ -248,26 +278,20 @@ unsafe impl<'v, T: UnpackValue<'v>> Trace<'v> for ValueOf<'v, T> {
 /// it was checked, and this is the last chance to say so.
 impl<'v, T> Freeze<'v> for ValueOf<'v, T>
 where
-    T: UnpackValue<'v> + ProvidesStaticType<'v>,
+    T: StarlarkTypeExpr<'v> + ProvidesStaticType<'v>,
     T::StaticType: IsStaticType,
-    for<'fv> <T::StaticType as IsStaticType>::Reinfect<'fv>: UnpackValue<'fv>,
+    for<'fv> <T::StaticType as IsStaticType>::Reinfect<'fv>: StarlarkTypeExpr<'fv> + Sized,
 {
     type Frozen<'fv> = ValueOf<'fv, <T::StaticType as IsStaticType>::Reinfect<'fv>>;
 
     fn freeze<'fv>(self, freezer: &Freezer<'v, 'fv>) -> FreezeResult<Self::Frozen<'fv>> {
         let value = self.0.freeze(freezer)?;
-        match <<T::StaticType as IsStaticType>::Reinfect<'fv>>::unpack_value(value) {
-            Ok(Some(_)) => Ok(ValueOf::new_unchecked(value)),
-            Ok(None) => Err(FreezeError::new(format!(
+        ValueOf::new(value).ok_or_else(|| {
+            FreezeError::new(format!(
                 "Value `{value}` of type `{}` was changed after it was checked: it is no longer a `{}`",
                 value.get_type(),
                 T::starlark_type_repr(),
-            ))),
-            Err(e) => Err(FreezeError::new(format!(
-                "Value `{value}` of type `{}` was changed after it was checked: it is no longer a `{}`: {e}",
-                value.get_type(),
-                T::starlark_type_repr(),
-            ))),
-        }
+            ))
+        })
     }
 }

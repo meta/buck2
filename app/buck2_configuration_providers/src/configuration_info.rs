@@ -28,9 +28,9 @@ use starlark::starlark_module;
 use starlark::values::Freeze;
 use starlark::values::Heap;
 use starlark::values::StarlarkPagable;
+use starlark::values::StarlarkTypeExpr;
 use starlark::values::StringValue;
 use starlark::values::Trace;
-use starlark::values::UnpackValue;
 use starlark::values::Value;
 use starlark::values::ValueOf;
 use starlark::values::ValueTyped;
@@ -178,7 +178,7 @@ fn copy_constraints<'v>(
     Ok(ValueOf::alloc_dict(heap, entries))
 }
 
-fn copy_dict<'v, K: UnpackValue<'v>, V: UnpackValue<'v>>(
+fn copy_dict<'v, K: StarlarkTypeExpr<'v>, V: StarlarkTypeExpr<'v>>(
     dict: ValueOf<'v, DictType<K, V>>,
     heap: Heap<'v>,
 ) -> starlark::Result<ValueOf<'v, DictType<K, V>>> {
@@ -278,7 +278,7 @@ fn configuration_info_methods(builder: &mut MethodsBuilder) {
         #[starlark(require = pos)] key: ValueTyped<'v, ConstraintSettingInfo<'v>>,
         heap: Heap<'v>,
     ) -> starlark::Result<NoneOr<ValueTyped<'v, ConstraintValueInfo<'v>>>> {
-        match this.constraints.get(key.label().to_value())? {
+        match this.constraints.lookup(key.label().to_value())? {
             Some(v) => Ok(NoneOr::Other(v.unpack())),
             // if not find in the constraints, we return the default constraint value
             None => Ok(get_default_constraint_value(key, heap)),

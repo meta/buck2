@@ -15,6 +15,8 @@
  * limitations under the License.
  */
 
+use std::convert::Infallible;
+
 use either::Either;
 
 use crate as starlark;
@@ -48,26 +50,22 @@ impl<T: StarlarkTypeRepr> StarlarkTypeRepr for ListType<T> {
 }
 
 impl<'v, T: StarlarkTypeExpr<'v>> StarlarkTypeExpr<'v> for ListType<T> {
-    type Get = &'v ListRef<'v>;
+    /// The handle: a typed list has no cheaper form that keeps `T`.
+    type Get = ValueOf<'v, ListType<T>>;
 
     fn get(value: Value<'v>) -> Option<Self::Get> {
-        ListRef::from_value(value).filter(|l| l.iter().all(|x| T::matches(x)))
+        let list = ListRef::from_value(value)?;
+        list.iter()
+            .all(|x| T::matches(x))
+            .then(|| ValueOf::new_unchecked(value))
     }
 }
 
-impl<'v, T: UnpackValue<'v>> UnpackValue<'v> for ListType<T> {
-    type Error = <T as UnpackValue<'v>>::Error;
+impl<'v, T: StarlarkTypeExpr<'v>> UnpackValue<'v> for ListType<T> {
+    type Error = Infallible;
 
     fn unpack_value_impl(value: Value<'v>) -> Result<Option<Self>, Self::Error> {
-        let Some(list) = ListRef::from_value(value) else {
-            return Ok(None);
-        };
-        for item in list.iter() {
-            if T::unpack_value_impl(item)?.is_none() {
-                return Ok(None);
-            }
-        }
-        Ok(Some(ListType {
+        Ok(Self::matches(value).then_some(ListType {
             _item: std::marker::PhantomData,
         }))
     }
@@ -91,14 +89,14 @@ mod sealed {
     impl<T> Sealed for Either<ListType<T>, TupleType<T>> {}
 }
 
-impl<'v, T: UnpackValue<'v> + EmptyListType> ValueOf<'v, T> {
+impl<'v, T: StarlarkTypeExpr<'v> + EmptyListType> ValueOf<'v, T> {
     /// The empty list.
     pub fn empty_list() -> Self {
         Self::new_unchecked(Value::new_empty_list())
     }
 }
 
-impl<'v, T: UnpackValue<'v>> ValueOf<'v, ListType<T>> {
+impl<'v, T: StarlarkTypeExpr<'v>> ValueOf<'v, ListType<T>> {
     /// A new list of these values.
     pub fn alloc_list(heap: Heap<'v>, items: impl IntoIterator<Item = ValueOf<'v, T>>) -> Self {
         Self::new_unchecked(heap.alloc(AllocList(items.into_iter().map(|x| x.to_value()))))
@@ -126,7 +124,7 @@ impl<'v, T: UnpackValue<'v>> ValueOf<'v, ListType<T>> {
     /// The items, unpacked. Each is re-checked, as for [`iter`](Self::iter).
     pub fn try_items(self) -> impl Iterator<Item = crate::Result<T>> + 'v
     where
-        T: 'v,
+        T: UnpackValue<'v> + 'v,
     {
         self.list().iter().map(T::unpack_value_err)
     }
@@ -134,7 +132,7 @@ impl<'v, T: UnpackValue<'v>> ValueOf<'v, ListType<T>> {
     /// The items, unpacked into a `Vec`, as [`try_items`](Self::try_items) gives them.
     pub fn try_to_vec(self) -> crate::Result<Vec<T>>
     where
-        T: 'v,
+        T: UnpackValue<'v> + 'v,
     {
         self.try_items().collect()
     }

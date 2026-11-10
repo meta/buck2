@@ -46,6 +46,7 @@ use crate::values::dict::DictType;
 use crate::values::list::ListType;
 use crate::values::none::NoneType;
 use crate::values::tuple::TupleType;
+use crate::values::types::int::view::IntView;
 
 fn docs_golden_test(test_file_name: &str, doc: DocItem) -> String {
     assert!(test_file_name.ends_with(".golden.md"));
@@ -203,7 +204,7 @@ fn submodule(builder: &mut GlobalsBuilder) {
     }
 
     fn starlark_kwargs<'v>(
-        #[starlark(kwargs)] kwargs: ValueOf<'v, DictType<String, u32>>,
+        #[starlark(kwargs)] kwargs: ValueOf<'v, DictType<String, IntView<'v>>>,
     ) -> anyhow::Result<NoneType> {
         let _ignore = kwargs;
         Ok(NoneType)

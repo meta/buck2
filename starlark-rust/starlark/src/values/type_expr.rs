@@ -23,6 +23,7 @@ use either::Either;
 
 use crate::values::StarlarkType;
 use crate::values::Value;
+use crate::values::ValueOf;
 use crate::values::type_repr::StarlarkTypeRepr;
 
 /// A Rust type that stands for a Starlark type expression.
@@ -48,10 +49,10 @@ use crate::values::type_repr::StarlarkTypeRepr;
 ///
 /// Not every [`StarlarkTypeRepr`] is one: a return type such as `Vec<T>` has a `Ty` for the
 /// documentation and nothing to test.
-pub trait StarlarkTypeExpr<'v>: StarlarkTypeRepr {
+pub trait StarlarkTypeExpr<'v>: StarlarkTypeRepr + Sized {
     /// What a value of this type is read through: `ValueTyped<'v, Foo>` for a nominal type with
     /// one representation, the view for one with several, the untyped collection for a
-    /// container (its typed items come from the [`ValueOf`](crate::values::ValueOf) handle),
+    /// container (its typed items come from the [`ValueOf`] handle),
     /// `Option<T::Get>` for `NoneOr<T>`, `Either<A::Get, B::Get>` for a union.
     type Get;
 
@@ -73,7 +74,7 @@ pub trait StarlarkTypeExpr<'v>: StarlarkTypeRepr {
 /// immutable value, or a property of its type such as implementing a trait. It does not look
 /// into a mutable container, whose contents Starlark may change later: `list[int]` is a finer
 /// type than the representation `list`, and a check for it is not stable, while a check for
-/// `list` is. A [`ValueOf`](crate::values::ValueOf) of such a type is read without re-checking.
+/// `list` is. A [`ValueOf`] of such a type is read without re-checking.
 pub trait StarlarkTypeExprStable<'v>: StarlarkTypeExpr<'v> {}
 
 impl<'v, T: StarlarkType<'v> + StarlarkTypeRepr> StarlarkTypeExpr<'v> for T {
@@ -108,8 +109,11 @@ impl<'v> StarlarkTypeExpr<'v> for String {
 
 impl<'v> StarlarkTypeExprStable<'v> for String {}
 
-impl<'v> StarlarkTypeExpr<'v> for &'v str {
-    type Get = &'v str;
+impl<'v, 'a> StarlarkTypeExpr<'v> for &'a str
+where
+    'v: 'a,
+{
+    type Get = &'a str;
 
     #[inline]
     fn get(value: Value<'v>) -> Option<Self::Get> {
@@ -117,7 +121,7 @@ impl<'v> StarlarkTypeExpr<'v> for &'v str {
     }
 }
 
-impl<'v> StarlarkTypeExprStable<'v> for &'v str {}
+impl<'v, 'a> StarlarkTypeExprStable<'v> for &'a str where 'v: 'a {}
 
 impl<'v, TLeft: StarlarkTypeExpr<'v>, TRight: StarlarkTypeExpr<'v>> StarlarkTypeExpr<'v>
     for Either<TLeft, TRight>
@@ -135,6 +139,72 @@ impl<'v, TLeft: StarlarkTypeExpr<'v>, TRight: StarlarkTypeExpr<'v>> StarlarkType
 impl<'v, TLeft: StarlarkTypeExprStable<'v>, TRight: StarlarkTypeExprStable<'v>>
     StarlarkTypeExprStable<'v> for Either<TLeft, TRight>
 {
+}
+
+/// What a variant of a `#[derive(UnpackValue)]` union holds: a [`ValueOf`] of a type
+/// expression, or a type expression that is its own [`Get`](StarlarkTypeExpr::Get), such as a
+/// view. The derive reads the type expression off the payload to test the variant.
+pub trait UnionPayload<'v>: Sized {
+    /// The type expression the payload stands for.
+    type Expr: StarlarkTypeExpr<'v>;
+
+    /// The payload, if `value` is of the type.
+    fn from_value(value: Value<'v>) -> Option<Self>;
+}
+
+impl<'v, T: StarlarkTypeExpr<'v>> UnionPayload<'v> for ValueOf<'v, T> {
+    type Expr = T;
+
+    #[inline]
+    fn from_value(value: Value<'v>) -> Option<Self> {
+        ValueOf::new(value)
+    }
+}
+
+/// The type expressions that are their own handle are payloads as themselves. (A blanket impl
+/// over `Get = Self` does not normalize for a `T` that carries `'v`, so each says so.)
+macro_rules! union_payload_is_self {
+    ($(impl[$($g:tt)*] $t:ty $(where [$($w:tt)*])?;)*) => {$(
+        impl<$($g)*> UnionPayload<'v> for $t $(where $($w)*)? {
+            type Expr = $t;
+
+            #[inline]
+            fn from_value(value: Value<'v>) -> Option<Self> {
+                <$t as StarlarkTypeExpr<'v>>::get(value)
+            }
+        }
+    )*};
+}
+
+union_payload_is_self! {
+    impl['v] Value<'v>;
+    impl['v, 'a] &'a str where ['v: 'a];
+    impl['v] String;
+    impl['v] bool;
+    impl['v, T: crate::values::StarlarkValue<'v>] crate::values::ValueTyped<'v, T>;
+    impl['v, T: crate::values::StarlarkValue<'v>] crate::values::FrozenValueTyped<'v, T>;
+    impl['v] &'v crate::values::list::ListRef<'v>;
+    impl['v] &'v crate::values::tuple::TupleRef<'v>;
+    impl['v] crate::values::dict::DictRef<'v>;
+    impl['v] crate::values::set::SetRef<'v>;
+    impl['v] crate::values::structs::StructRef<'v>;
+    impl['v] &'v crate::values::record::Record<'v>;
+    impl['v] crate::values::enumeration::AnyEnumType<'v>;
+    impl['v] crate::values::typing::TypeType;
+    impl['v, P: crate::values::typing::StarlarkCallableParamSpec, R: StarlarkTypeRepr]
+        crate::values::typing::StarlarkCallable<'v, P, R>;
+    impl['v, P: crate::values::typing::StarlarkCallableParamSpec, R: StarlarkTypeRepr]
+        crate::values::typing::StarlarkCallableChecked<'v, P, R>;
+}
+
+/// `None` carries nothing, so the unit value is as good a payload as its handle.
+impl<'v> UnionPayload<'v> for crate::values::none::NoneType {
+    type Expr = crate::values::none::NoneType;
+
+    #[inline]
+    fn from_value(value: Value<'v>) -> Option<Self> {
+        value.is_none().then_some(crate::values::none::NoneType)
+    }
 }
 
 /// `typing.Never`: nothing is of it, so its handle has no values either.

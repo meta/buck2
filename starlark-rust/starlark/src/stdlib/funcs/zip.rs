@@ -87,14 +87,14 @@ pub(crate) fn register_zip(globals: &mut GlobalsBuilder) {
     /// ```
     #[starlark(speculative_exec_safe, ty_custom_function = ZipType)]
     fn zip<'v>(
-        #[starlark(args)] args: ValueOf<'v, TupleType<ValueOf<'v, StarlarkIter<Value<'v>>>>>,
+        #[starlark(args)] args: ValueOf<'v, TupleType<StarlarkIter<Value<'v>>>>,
         heap: Heap<'v>,
     ) -> starlark::Result<Vec<Value<'v>>> {
         let mut v = Vec::new();
         let mut first = true;
-        for arg in args.items() {
+        for arg in args.iter() {
             let mut idx = 0;
-            for e in arg.to_value().iterate(heap)? {
+            for e in arg?.to_value().iterate(heap)? {
                 if first {
                     v.push(heap.alloc((e,)));
                     idx += 1;

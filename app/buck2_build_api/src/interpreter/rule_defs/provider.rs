@@ -71,6 +71,7 @@ use starlark::values::StarlarkTypeExprStable;
 use starlark::values::StarlarkValue;
 use starlark::values::UnpackValue;
 use starlark::values::Value;
+use starlark::values::type_expr::UnionPayload;
 use starlark::values::type_repr::StarlarkTypeRepr;
 
 use crate::interpreter::rule_defs::provider::builtin::default_info::DefaultInfo;
@@ -130,6 +131,14 @@ impl<'v> StarlarkTypeExpr<'v> for ValueAsProviderLike<'v> {
 }
 
 impl<'v> StarlarkTypeExprStable<'v> for ValueAsProviderLike<'v> {}
+
+impl<'v> UnionPayload<'v> for ValueAsProviderLike<'v> {
+    type Expr = Self;
+
+    fn from_value(value: Value<'v>) -> Option<Self> {
+        <Self as StarlarkTypeExpr<'v>>::get(value)
+    }
+}
 
 impl<'v> ValueAsProviderLike<'v> {
     pub(crate) fn unpack(value: Value<'v>) -> Option<Self> {

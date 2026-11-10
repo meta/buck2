@@ -22,6 +22,7 @@ use crate as starlark;
 use crate::environment::GlobalsBuilder;
 use crate::values::Heap;
 use crate::values::ValueOf;
+use crate::values::float::StarlarkFloat;
 use crate::values::int::int_or_big::StarlarkInt;
 use crate::values::int::pointer_i32::PointerI32;
 use crate::values::int::view::IntView;
@@ -80,7 +81,7 @@ pub(crate) fn register_int(globals: &mut GlobalsBuilder) {
     #[starlark(as_type = PointerI32, speculative_exec_safe)]
     fn int<'v>(
         #[starlark(require = pos)] a: Option<
-            ValueOf<'v, Either<Either<NumRef<'v>, bool>, &'v str>>,
+            ValueOf<'v, Either<Either<IntView<'v>, StarlarkFloat>, Either<bool, &'v str>>>,
         >,
         base: Option<i32>,
         heap: Heap<'v>,
@@ -88,9 +89,11 @@ pub(crate) fn register_int(globals: &mut GlobalsBuilder) {
         let Some(a) = a else {
             return Ok(ValueOf::new_unchecked(heap.alloc(0)));
         };
-        let num_or_bool = match a.unpack() {
-            Either::Left(num_or_bool) => num_or_bool,
-            Either::Right(s) => {
+        let num_or_bool = match a.get() {
+            Either::Left(Either::Left(int)) => Either::Left(NumRef::Int(int.as_int_ref())),
+            Either::Left(Either::Right(float)) => Either::Left(NumRef::Float(*float.as_ref())),
+            Either::Right(Either::Left(b)) => Either::Right(b),
+            Either::Right(Either::Right(s)) => {
                 let base = base.unwrap_or(0);
                 if base == 1 || base < 0 || base > 36 {
                     return Err(anyhow::anyhow!(

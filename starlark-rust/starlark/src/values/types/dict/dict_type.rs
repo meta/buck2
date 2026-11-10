@@ -15,9 +15,8 @@
  * limitations under the License.
  */
 
+use std::convert::Infallible;
 use std::marker::PhantomData;
-
-use either::Either;
 
 use crate as starlark;
 use crate::any::ProvidesStaticType;
@@ -50,35 +49,29 @@ impl<K: StarlarkTypeRepr, V: StarlarkTypeRepr> StarlarkTypeRepr for DictType<K, 
 }
 
 impl<'v, K: StarlarkTypeExpr<'v>, V: StarlarkTypeExpr<'v>> StarlarkTypeExpr<'v> for DictType<K, V> {
-    type Get = DictRef<'v>;
+    /// The handle: a typed dict has no cheaper form that keeps `K` and `V`.
+    type Get = ValueOf<'v, DictType<K, V>>;
 
     fn get(value: Value<'v>) -> Option<Self::Get> {
-        DictRef::from_value(value).filter(|d| d.iter().all(|(k, v)| K::matches(k) && V::matches(v)))
+        let dict = DictRef::from_value(value)?;
+        dict.iter()
+            .all(|(k, v)| K::matches(k) && V::matches(v))
+            .then(|| ValueOf::new_unchecked(value))
     }
 }
 
-impl<'v, K: UnpackValue<'v>, V: UnpackValue<'v>> UnpackValue<'v> for DictType<K, V> {
-    type Error = Either<K::Error, V::Error>;
+impl<'v, K: StarlarkTypeExpr<'v>, V: StarlarkTypeExpr<'v>> UnpackValue<'v> for DictType<K, V> {
+    type Error = Infallible;
 
     fn unpack_value_impl(value: Value<'v>) -> Result<Option<Self>, Self::Error> {
-        let Some(dict) = DictRef::from_value(value) else {
-            return Ok(None);
-        };
-        for (k, v) in dict.iter() {
-            if K::unpack_value_impl(k).map_err(Either::Left)?.is_none()
-                || V::unpack_value_impl(v).map_err(Either::Right)?.is_none()
-            {
-                return Ok(None);
-            }
-        }
-        Ok(Some(DictType {
+        Ok(Self::matches(value).then_some(DictType {
             k: PhantomData,
             v: PhantomData,
         }))
     }
 }
 
-impl<'v, K: UnpackValue<'v>, V: UnpackValue<'v>> ValueOf<'v, DictType<K, V>> {
+impl<'v, K: StarlarkTypeExpr<'v>, V: StarlarkTypeExpr<'v>> ValueOf<'v, DictType<K, V>> {
     /// The empty dict.
     pub fn empty_dict() -> Self {
         Self::new_unchecked(Value::new_empty_dict())
@@ -115,7 +108,11 @@ impl<'v, K: UnpackValue<'v>, V: UnpackValue<'v>> ValueOf<'v, DictType<K, V>> {
     }
 
     /// The entries, unpacked. Each is re-checked, as for [`iter`](Self::iter).
-    pub fn try_items(self) -> impl Iterator<Item = crate::Result<(K, V)>> + 'v {
+    pub fn try_items(self) -> impl Iterator<Item = crate::Result<(K, V)>> + 'v
+    where
+        K: UnpackValue<'v>,
+        V: UnpackValue<'v>,
+    {
         self.entries()
             .map(|(k, v)| Ok((K::unpack_value_err(k)?, V::unpack_value_err(v)?)))
     }
@@ -128,12 +125,12 @@ impl<'v, K: UnpackValue<'v>, V: UnpackValue<'v>> ValueOf<'v, DictType<K, V>> {
     }
 
     /// The value at `key`, re-checked unless the dict is frozen.
-    pub fn get(self, key: Value<'v>) -> crate::Result<Option<ValueOf<'v, V>>> {
+    pub fn lookup(self, key: Value<'v>) -> crate::Result<Option<ValueOf<'v, V>>> {
         self.dict().get(key)?.map(|v| self.checked(v)).transpose()
     }
 
     /// The value at a string key, re-checked unless the dict is frozen.
-    pub fn get_str(self, key: &str) -> crate::Result<Option<ValueOf<'v, V>>> {
+    pub fn lookup_str(self, key: &str) -> crate::Result<Option<ValueOf<'v, V>>> {
         self.dict()
             .get_str(key)
             .map(|v| self.checked(v))
@@ -156,7 +153,7 @@ pub struct DictEntries<'v, K, V> {
     _marker: PhantomData<fn() -> (K, V)>,
 }
 
-impl<'v, K: UnpackValue<'v>, V: UnpackValue<'v>> Iterator for DictEntries<'v, K, V> {
+impl<'v, K: StarlarkTypeExpr<'v>, V: StarlarkTypeExpr<'v>> Iterator for DictEntries<'v, K, V> {
     type Item = crate::Result<(ValueOf<'v, K>, ValueOf<'v, V>)>;
 
     fn next(&mut self) -> Option<Self::Item> {

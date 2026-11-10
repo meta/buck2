@@ -45,6 +45,7 @@ use crate::values::dict::DictType;
 use crate::values::list::ListType;
 use crate::values::none::NoneType;
 use crate::values::tuple::TupleType;
+use crate::values::types::int::view::IntView;
 
 #[derive(
     Debug,
@@ -81,7 +82,7 @@ fn globals(builder: &mut GlobalsBuilder) {
         arg_int: i32,
         arg_bool: bool,
         arg_vec: ValueOf<'v, ListType<&'v str>>,
-        arg_dict: ValueOf<'v, DictType<String, (bool, i32)>>,
+        arg_dict: ValueOf<'v, DictType<String, (bool, IntView<'v>)>>,
     ) -> anyhow::Result<NoneType> {
         unimplemented!()
     }

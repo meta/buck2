@@ -30,3 +30,4 @@ mod tests;
 pub(crate) mod view;
 
 pub use pointer_i32::INT_TYPE;
+pub use view::IntView;

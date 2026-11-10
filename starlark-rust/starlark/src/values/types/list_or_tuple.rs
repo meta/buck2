@@ -24,11 +24,12 @@ use crate::values::ValueOf;
 use crate::values::list::ListRef;
 use crate::values::list::ListType;
 use crate::values::tuple::TupleType;
+use crate::values::type_expr::StarlarkTypeExpr;
 
 /// `list[T] | tuple[T, ...]`, the usual type of a parameter that takes a sequence of `T`.
 pub type ListOrTupleType<T> = Either<ListType<T>, TupleType<T>>;
 
-impl<'v, T: UnpackValue<'v>> ValueOf<'v, ListOrTupleType<T>> {
+impl<'v, T: StarlarkTypeExpr<'v>> ValueOf<'v, ListOrTupleType<T>> {
     /// The items, as [`ValueOf<ListType<T>>::iter`](ValueOf::iter) or
     /// [`ValueOf<TupleType<T>>::iter`](ValueOf::iter) gives them.
     pub fn iter(self) -> impl Iterator<Item = crate::Result<ValueOf<'v, T>>> + 'v {
@@ -46,7 +47,7 @@ impl<'v, T: UnpackValue<'v>> ValueOf<'v, ListOrTupleType<T>> {
     /// [`ValueOf<TupleType<T>>::try_items`](ValueOf::try_items) gives them.
     pub fn try_items(self) -> impl Iterator<Item = crate::Result<T>> + 'v
     where
-        T: 'v,
+        T: UnpackValue<'v> + 'v,
     {
         let value = self.to_value();
         if ListRef::from_value(value).is_some() {
@@ -59,7 +60,7 @@ impl<'v, T: UnpackValue<'v>> ValueOf<'v, ListOrTupleType<T>> {
     /// The items, unpacked into a `Vec`, as [`try_items`](Self::try_items) gives them.
     pub fn try_to_vec(self) -> crate::Result<Vec<T>>
     where
-        T: 'v,
+        T: UnpackValue<'v> + 'v,
     {
         self.try_items().collect()
     }

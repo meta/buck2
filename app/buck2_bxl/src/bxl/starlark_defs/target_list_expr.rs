@@ -144,7 +144,7 @@ pub(crate) enum ConfiguredTargetNodeArg<'v> {
 #[derive(StarlarkTypeRepr, UnpackValue)]
 pub(crate) enum TargetSetOrTargetList<'v> {
     TargetSet(&'v StarlarkTargetSet<TargetNode>),
-    TargetList(ValueOf<'v, ListType<ValueOf<'v, TargetNodeOrTargetLabelOrStr<'v>>>>),
+    TargetList(ValueOf<'v, ListType<TargetNodeOrTargetLabelOrStr<'v>>>),
 }
 
 #[derive(StarlarkTypeRepr, UnpackValue)]
@@ -533,9 +533,9 @@ impl<'v> TargetListExpr<'v, TargetNode> {
             TargetSetOrTargetList::TargetList(items) => {
                 let mut resolved = vec![];
 
-                for item in items.try_items() {
+                for item in items.iter() {
                     let item = item?;
-                    let unpacked = Self::unpack_literal(item.unpack(), ctx, dice).await?;
+                    let unpacked = Self::unpack_literal(item.get(), ctx, dice).await?;
 
                     match unpacked {
                         TargetListExpr::One(node) => resolved.push(node),
@@ -822,8 +822,8 @@ impl OwnedTargetListExprArg {
                 }
                 TargetSetOrTargetList::TargetList(list) => {
                     let owned_targets = list
-                        .try_items()
-                        .map(|item| buck2_error::Ok(OwnedTargetNodeArg::from_ref(&item?.unpack())))
+                        .iter()
+                        .map(|item| buck2_error::Ok(OwnedTargetNodeArg::from_ref(&item?.get())))
                         .collect::<buck2_error::Result<_>>()?;
                     OwnedTargetListExprArg::TargetList(owned_targets)
                 }

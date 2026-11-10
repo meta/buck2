@@ -168,7 +168,8 @@ impl<'v> StarlarkIntRef<'v> {
         }
     }
 
-    pub(crate) fn to_f64(self) -> f64 {
+    /// The nearest `f64`, as `float()` computes it.
+    pub fn to_f64(self) -> f64 {
         match self {
             StarlarkIntRef::Small(i) => i.to_f64(),
             StarlarkIntRef::Big(i) => i.to_f64(),

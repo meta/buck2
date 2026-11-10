@@ -21,31 +21,28 @@ use crate as starlark;
 use crate::const_frozen_string;
 use crate::values::UnpackValue;
 use crate::values::Value;
+use crate::values::ValueOf;
+use crate::values::int::IntView;
+use crate::values::string::StarlarkStr;
 use crate::values::type_repr::StarlarkTypeRepr;
 use crate::values::typing::StarlarkNever;
 
 #[derive(StarlarkTypeRepr, UnpackValue, Eq, PartialEq, Debug)]
 enum EmptyEnum {}
 
-#[derive(StarlarkTypeRepr, UnpackValue, Eq, PartialEq, Debug)]
-enum JustInt {
-    Int(i32),
+#[derive(StarlarkTypeRepr, UnpackValue, Debug)]
+enum JustInt<'v> {
+    Int(IntView<'v>),
 }
 
-#[derive(StarlarkTypeRepr, UnpackValue, Eq, PartialEq, Debug)]
-enum IntOrStr {
-    Int(i32),
-    Str(String),
+#[derive(StarlarkTypeRepr, UnpackValue, Debug)]
+enum IntOrStr<'v> {
+    Int(IntView<'v>),
+    Str(ValueOf<'v, StarlarkStr>),
 }
 
-#[derive(StarlarkTypeRepr, UnpackValue, Eq, PartialEq, Debug)]
-enum WithLifetime<'v> {
-    Int(i32),
-    Str(&'v str),
-}
-
-#[derive(StarlarkTypeRepr, UnpackValue, Eq, PartialEq, Debug)]
-struct TransparentIntOrStr(IntOrStr);
+#[derive(StarlarkTypeRepr, UnpackValue, Debug)]
+struct TransparentIntOrStr<'v>(IntOrStr<'v>);
 
 #[test]
 fn test_starlark_type_repr() {
@@ -62,44 +59,46 @@ fn test_starlark_type_repr() {
     );
 
     assert_eq!(
-        Either::<i32, String>::starlark_type_repr(),
-        WithLifetime::starlark_type_repr()
-    );
-
-    assert_eq!(
         IntOrStr::starlark_type_repr(),
         TransparentIntOrStr::starlark_type_repr(),
     );
 }
 
+fn show(v: IntOrStr) -> String {
+    match v {
+        IntOrStr::Int(i) => format!("int {}", i.to_value().unpack_i32().unwrap()),
+        IntOrStr::Str(s) => format!("str {}", s.get().as_str()),
+    }
+}
+
 #[test]
 fn test_unpack_value() {
-    assert_eq!(
-        Some(JustInt::Int(17)),
-        JustInt::unpack_value(Value::testing_new_int(17)).unwrap(),
-    );
+    let JustInt::Int(i) = JustInt::unpack_value(Value::testing_new_int(17))
+        .unwrap()
+        .unwrap();
+    assert_eq!(Some(17), i.to_value().unpack_i32());
+    assert!(JustInt::unpack_value(Value::new_none()).unwrap().is_none());
 
     assert_eq!(
-        Some(IntOrStr::Int(19)),
-        IntOrStr::unpack_value(Value::testing_new_int(19)).unwrap(),
+        "int 19",
+        show(
+            IntOrStr::unpack_value(Value::testing_new_int(19))
+                .unwrap()
+                .unwrap()
+        ),
     );
     assert_eq!(
-        Some(IntOrStr::Str("abc".to_owned())),
-        IntOrStr::unpack_value(const_frozen_string!("abc").at().to_value()).unwrap(),
+        "str abc",
+        show(
+            IntOrStr::unpack_value(const_frozen_string!("abc").at().to_value())
+                .unwrap()
+                .unwrap()
+        ),
     );
+    assert!(IntOrStr::unpack_value(Value::new_none()).unwrap().is_none());
 
-    assert_eq!(
-        Some(WithLifetime::Int(23)),
-        WithLifetime::unpack_value(Value::testing_new_int(23)).unwrap(),
-    );
-
-    assert_eq!(
-        Some(WithLifetime::Str("def")),
-        WithLifetime::unpack_value(const_frozen_string!("def").at().to_value()).unwrap(),
-    );
-
-    assert_eq!(
-        Some(TransparentIntOrStr(IntOrStr::Int(19))),
-        TransparentIntOrStr::unpack_value(Value::testing_new_int(19)).unwrap(),
-    )
+    let TransparentIntOrStr(inner) = TransparentIntOrStr::unpack_value(Value::testing_new_int(19))
+        .unwrap()
+        .unwrap();
+    assert_eq!("int 19", show(inner));
 }

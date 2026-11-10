@@ -220,12 +220,12 @@ pub fn register_command_executor_config(builder: &mut GlobalsBuilder) {
         #[starlark(default = ValueOf::empty_list(), require = named)]
         remote_execution_dependencies: ValueOf<
             'v,
-            ListType<ValueOf<'v, DictType<&'v str, &'v str>>>,
+            ListType<DictType<&'v str, &'v str>>,
         >,
         #[starlark(default = ValueOf::empty_list(), require = named)]
         remote_execution_gang_workers: ValueOf<
             'v,
-            ListType<ValueOf<'v, DictType<&'v str, &'v str>>>,
+            ListType<DictType<&'v str, &'v str>>,
         >,
         #[starlark(default = NoneType, require = named)] remote_execution_dynamic_image: Value<'v>,
         #[starlark(default = NoneOr::None, require = named)] meta_internal_extra_params: NoneOr<
@@ -248,7 +248,7 @@ pub fn register_command_executor_config(builder: &mut GlobalsBuilder) {
                 parse_remote_execution_properties(remote_execution_properties.to_value())?;
 
             let re_dependencies = remote_execution_dependencies
-                .try_items()
+                .iter()
                 .map(|d| {
                     RemoteExecutorDependency::parse(
                         d?.try_items().collect::<starlark::Result<_>>()?,
@@ -257,7 +257,7 @@ pub fn register_command_executor_config(builder: &mut GlobalsBuilder) {
                 .collect::<buck2_error::Result<Vec<RemoteExecutorDependency>>>()?;
 
             let re_gang_workers = remote_execution_gang_workers
-                .try_items()
+                .iter()
                 .map(|w| ReGangWorker::parse(w?.try_items().collect::<starlark::Result<_>>()?))
                 .collect::<buck2_error::Result<Vec<ReGangWorker>>>()?;
 

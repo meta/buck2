@@ -291,10 +291,7 @@ fn analysis_actions_methods_anon_target(builder: &mut MethodsBuilder) {
         // TODO(nga): this should be either positional or named, not both.
         rules: ValueOf<
             'v,
-            ListOrTupleType<(
-                StarlarkRuleCallableView<'v>,
-                ValueOf<'v, DictType<&'v str, Value<'v>>>,
-            )>,
+            ListOrTupleType<(StarlarkRuleCallableView<'v>, DictType<&'v str, Value<'v>>)>,
         >,
         #[starlark(require = named, default = NoneOr::None)] exec_group: NoneOr<
             StarlarkExecutionGroupView<'v>,
@@ -314,9 +311,9 @@ fn analysis_actions_methods_anon_target(builder: &mut MethodsBuilder) {
         let mut promises_to_join = Vec::new();
         let owner_key = this.analysis_value_storage.self_key.owner();
         rules
-            .try_items()
+            .iter()
             .map(|rule| {
-                let (rule, attributes) = rule?;
+                let (rule, attributes) = rule?.try_get()?;
                 let rule = rule.frozen()?;
                 let key =
                     registry.anon_target_key(rule, attributes, owner_key, exec_group.as_ref())?;

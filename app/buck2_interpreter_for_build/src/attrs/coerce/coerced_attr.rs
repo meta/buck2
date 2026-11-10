@@ -106,7 +106,7 @@ fn coerce_inner<'v>(
 
         match *selector {
             StarlarkSelector::Primary(v) => {
-                let has_default = v.get_str("DEFAULT")?.is_some();
+                let has_default = v.lookup_str("DEFAULT")?.is_some();
                 let mut entries =
                     Vec::with_capacity(v.dict().len().saturating_sub(has_default as usize));
 

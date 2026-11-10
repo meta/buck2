@@ -15,6 +15,7 @@
  * limitations under the License.
  */
 
+use std::convert::Infallible;
 use std::marker::PhantomData;
 
 use crate as starlark;
@@ -26,6 +27,7 @@ use crate::values::Value;
 use crate::values::ValueOf;
 use crate::values::tuple::TupleRef;
 use crate::values::type_expr::StarlarkTypeExpr;
+use crate::values::type_expr::StarlarkTypeExprStable;
 use crate::values::type_repr::StarlarkTypeRepr;
 
 /// A tuple type marker: a tuple of any length whose items are all `T`.
@@ -46,30 +48,30 @@ impl<T: StarlarkTypeRepr> StarlarkTypeRepr for TupleType<T> {
 }
 
 impl<'v, T: StarlarkTypeExpr<'v>> StarlarkTypeExpr<'v> for TupleType<T> {
-    type Get = &'v TupleRef<'v>;
+    /// The handle: a typed tuple has no cheaper form that keeps `T`.
+    type Get = ValueOf<'v, TupleType<T>>;
 
     fn get(value: Value<'v>) -> Option<Self::Get> {
-        TupleRef::from_value(value).filter(|t| t.iter().all(|x| T::matches(x)))
+        let tuple = TupleRef::from_value(value)?;
+        tuple
+            .iter()
+            .all(|x| T::matches(x))
+            .then(|| ValueOf::new_unchecked(value))
     }
 }
 
-impl<'v, T: UnpackValue<'v>> UnpackValue<'v> for TupleType<T> {
-    type Error = <T as UnpackValue<'v>>::Error;
+/// A tuple's items are fixed, so the check is as stable as the items' own.
+impl<'v, T: StarlarkTypeExprStable<'v>> StarlarkTypeExprStable<'v> for TupleType<T> {}
+
+impl<'v, T: StarlarkTypeExpr<'v>> UnpackValue<'v> for TupleType<T> {
+    type Error = Infallible;
 
     fn unpack_value_impl(value: Value<'v>) -> Result<Option<Self>, Self::Error> {
-        let Some(tuple) = TupleRef::from_value(value) else {
-            return Ok(None);
-        };
-        for item in tuple.iter() {
-            if T::unpack_value_impl(item)?.is_none() {
-                return Ok(None);
-            }
-        }
-        Ok(Some(TupleType { _item: PhantomData }))
+        Ok(Self::matches(value).then_some(TupleType { _item: PhantomData }))
     }
 }
 
-impl<'v, T: UnpackValue<'v>> ValueOf<'v, TupleType<T>> {
+impl<'v, T: StarlarkTypeExpr<'v>> ValueOf<'v, TupleType<T>> {
     /// The tuple.
     #[inline]
     pub fn tuple(self) -> &'v TupleRef<'v> {
@@ -104,7 +106,7 @@ impl<'v, T: UnpackValue<'v>> ValueOf<'v, TupleType<T>> {
     /// The items, unpacked. Each is re-checked, as for [`iter`](Self::iter).
     pub fn try_items(self) -> impl Iterator<Item = crate::Result<T>> + 'v
     where
-        T: 'v,
+        T: UnpackValue<'v> + 'v,
     {
         self.tuple().iter().map(T::unpack_value_err)
     }
@@ -112,7 +114,7 @@ impl<'v, T: UnpackValue<'v>> ValueOf<'v, TupleType<T>> {
     /// The items, unpacked into a `Vec`, as [`try_items`](Self::try_items) gives them.
     pub fn try_to_vec(self) -> crate::Result<Vec<T>>
     where
-        T: 'v,
+        T: UnpackValue<'v> + 'v,
     {
         self.try_items().collect()
     }

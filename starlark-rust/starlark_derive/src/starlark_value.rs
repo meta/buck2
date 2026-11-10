@@ -254,6 +254,17 @@ impl ImplStarlarkValue {
             {
             }
 
+            impl<#params> starlark::values::type_expr::UnionPayload<#lt> for &#lt #self_ty
+            #where_clause
+            {
+                type Expr = Self;
+
+                #[inline]
+                fn from_value(value: starlark::values::Value<#lt>) -> Option<Self> {
+                    value.downcast_ref::<#self_ty>()
+                }
+            }
+
             impl<#params> starlark::values::UnpackValue<#lt> for &#lt #self_ty
             #where_clause
             {
@@ -306,6 +317,26 @@ impl ImplStarlarkValue {
                 }
             },
         }))
+    }
+
+    /// A view is its own handle, so it is a union payload as itself.
+    fn union_payload_is_self(&self) -> proc_macro2::TokenStream {
+        let lt = &self.lifetime_param;
+        let params = &self.input.generics.params;
+        let where_clause = &self.input.generics.where_clause;
+        let self_ty = &self.input.self_ty;
+        quote! {
+            impl<#params> starlark::values::type_expr::UnionPayload<#lt> for #self_ty
+            #where_clause
+            {
+                type Expr = Self;
+
+                #[inline]
+                fn from_value(value: starlark::values::Value<#lt>) -> Option<Self> {
+                    <Self as starlark::values::StarlarkTypeExpr<#lt>>::get(value)
+                }
+            }
+        }
     }
 
     /// `type Get` and `fn get`: the handle a value of the type is read through. A type whose
@@ -769,7 +800,8 @@ fn derive_starlark_value_impl(
             ));
         }
         let type_impl = impl_starlark_value.type_impl(input.items.clone())?;
-        return Ok(quote! { #type_impl });
+        let union_payload = impl_starlark_value.union_payload_is_self();
+        return Ok(quote! { #type_impl #union_payload });
     }
 
     let (rep_items, ty_items): (Vec<syn::ImplItem>, Vec<syn::ImplItem>) = input

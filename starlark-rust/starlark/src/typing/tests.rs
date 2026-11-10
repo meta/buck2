@@ -51,6 +51,7 @@ use crate::values::ValueOf;
 use crate::values::dict::DictType;
 use crate::values::layout::heap::name::StarlarkTestHeapName;
 use crate::values::none::NoneType;
+use crate::values::types::int::view::IntView;
 use crate::values::typing::StarlarkCallable;
 use crate::values::typing::StarlarkCallableParamSpec;
 use crate::values::typing::StarlarkIter;
@@ -124,7 +125,7 @@ fn register_typecheck_globals(globals: &mut GlobalsBuilder) {
     }
 
     fn accepts_typed_kwargs<'v>(
-        #[starlark(kwargs)] x: ValueOf<'v, DictType<String, u32>>,
+        #[starlark(kwargs)] x: ValueOf<'v, DictType<String, IntView<'v>>>,
     ) -> anyhow::Result<NoneType> {
         let _ignore = x;
         Ok(NoneType)

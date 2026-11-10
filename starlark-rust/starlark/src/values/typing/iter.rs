@@ -36,6 +36,7 @@ use crate::values::FrozenHeap;
 use crate::values::StarlarkValue;
 use crate::values::UnpackValue;
 use crate::values::Value;
+use crate::values::ValueOf;
 use crate::values::type_expr::StarlarkTypeExpr;
 use crate::values::type_expr::StarlarkTypeExprStable;
 use crate::values::type_repr::StarlarkTypeRepr;
@@ -66,10 +67,12 @@ impl<T: StarlarkTypeRepr> StarlarkTypeRepr for StarlarkIter<T> {
 }
 
 impl<'v, T: StarlarkTypeExpr<'v>> StarlarkTypeExpr<'v> for StarlarkIter<T> {
-    type Get = Value<'v>;
+    /// The handle, which is what iterates.
+    type Get = ValueOf<'v, StarlarkIter<T>>;
 
     fn get(value: Value<'v>) -> Option<Self::Get> {
-        TyStarlarkValue::is_iterable(&value.vtable().starlark_value.ty).then_some(value)
+        TyStarlarkValue::is_iterable(&value.vtable().starlark_value.ty)
+            .then(|| ValueOf::new_unchecked(value))
     }
 }
 

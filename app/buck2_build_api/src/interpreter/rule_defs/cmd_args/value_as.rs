@@ -24,6 +24,7 @@ use starlark::values::StarlarkTypeExprStable;
 use starlark::values::UnpackValue;
 use starlark::values::UnpackValueStable;
 use starlark::values::Value;
+use starlark::values::type_expr::UnionPayload;
 use starlark::values::type_repr::StarlarkTypeRepr;
 
 use crate::interpreter::rule_defs::cmd_args::CommandLineArgLike;
@@ -58,6 +59,14 @@ impl<'v> StarlarkTypeExpr<'v> for ValueAsCommandLineLike<'v> {
 }
 
 impl<'v> StarlarkTypeExprStable<'v> for ValueAsCommandLineLike<'v> {}
+
+impl<'v> UnionPayload<'v> for ValueAsCommandLineLike<'v> {
+    type Expr = Self;
+
+    fn from_value(value: Value<'v>) -> Option<Self> {
+        <Self as StarlarkTypeExpr<'v>>::get(value)
+    }
+}
 
 impl<'v> ValueAsCommandLineLike<'v> {
     pub(crate) fn unpack(value: Value<'v>) -> Option<Self> {

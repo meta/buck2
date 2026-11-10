@@ -13,6 +13,7 @@ use std::time::Duration;
 use allocative::Allocative;
 use buck2_build_api_derive::internal_provider;
 use buck2_hash::BuckMutInsertionMap;
+use either::Either;
 use starlark::any::ProvidesStaticType;
 use starlark::environment::GlobalsBuilder;
 use starlark::eval::Evaluator;
@@ -25,7 +26,8 @@ use starlark::values::Trace;
 use starlark::values::ValueOf;
 use starlark::values::ValueTyped;
 use starlark::values::dict::DictType;
-use starlark::values::float::UnpackFloat;
+use starlark::values::float::StarlarkFloat;
+use starlark::values::int::IntView;
 use starlark::values::none::NoneOr;
 
 use crate as buck2_build_api;
@@ -74,7 +76,7 @@ pub struct LocalResourceInfo<'v> {
     /// to keys in setup command JSON output.
     resource_env_vars: ValueOf<'v, DictType<StringValue<'v>, StringValue<'v>>>,
     /// Timeout in seconds for `setup` command.
-    setup_timeout_seconds: Option<ValueOf<'v, UnpackFloat>>,
+    setup_timeout_seconds: Option<ValueOf<'v, Either<IntView<'v>, StarlarkFloat>>>,
 }
 
 fn validate_local_resource_info<'v>(info: &LocalResourceInfo<'v>) -> buck2_error::Result<()> {
@@ -107,7 +109,7 @@ fn local_resource_info_creator(globals: &mut GlobalsBuilder) {
             DictType<StringValue<'v>, StringValue<'v>>,
         >,
         #[starlark(require = named, default = NoneOr::None)] setup_timeout_seconds: NoneOr<
-            ValueOf<'v, UnpackFloat>,
+            ValueOf<'v, Either<IntView<'v>, StarlarkFloat>>,
         >,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<LocalResourceInfo<'v>> {
@@ -146,7 +148,11 @@ impl<'v> LocalResourceInfo<'v> {
     }
 
     pub fn setup_timeout(&self) -> Option<Duration> {
-        self.setup_timeout_seconds
-            .map(|f| Duration::from_secs_f64(f.unpack().0))
+        self.setup_timeout_seconds.map(|f| {
+            Duration::from_secs_f64(match f.get() {
+                Either::Left(i) => i.as_int_ref().to_f64(),
+                Either::Right(f) => f.0,
+            })
+        })
     }
 }

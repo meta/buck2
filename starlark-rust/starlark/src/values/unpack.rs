@@ -27,7 +27,59 @@ use starlark_syntax::StarlarkResultExt;
 use crate::typing::Ty;
 use crate::values::Value;
 use crate::values::ValueOf;
+use crate::values::type_expr::StarlarkTypeExpr;
 use crate::values::type_repr::StarlarkTypeRepr;
+
+/// The error for a value that is not of the type `ty` names.
+#[cold]
+pub(crate) fn expected_type_error(value: Value<'_>, ty: fn() -> Ty) -> crate::Error {
+    #[derive(thiserror::Error, Debug)]
+    #[error("Expected `{0}`, but got `{1}`")]
+    struct IncorrectType(Ty, String);
+
+    crate::Error::new_runtime_type(
+        crate::RuntimeTypeErrorKind::ValueUnpack,
+        IncorrectType(ty(), value.to_string_for_type_error()),
+    )
+}
+
+/// `matched` is what `T::matches` said about `value`; it must be what the declared type says.
+#[cfg(debug_assertions)]
+pub(crate) fn check_matches_agreement<'v, T: StarlarkTypeExpr<'v>>(
+    value: Value<'v>,
+    matched: bool,
+) {
+    use crate::values::typing::type_compiled::matcher::TypeMatcher;
+
+    let by_type = type_matcher::<T>().matches(value);
+    if by_type != matched {
+        panic!(
+            "`get` disagrees with the declared type: Rust type `{rust_type}` declares Starlark \
+             type `{ty}`, which {by_type} `{value}`, but `get` {matched} it",
+            rust_type = std::any::type_name::<T>(),
+            ty = T::starlark_type_repr(),
+            by_type = if by_type { "accepts" } else { "rejects" },
+            value = value.to_string_for_type_error(),
+            matched = if matched { "accepted" } else { "rejected" },
+        );
+    }
+}
+
+/// The error for a `ValueOf<T>` whose value is no longer a `T`: a mutable container that was
+/// changed after it was checked.
+#[cold]
+pub(crate) fn changed_since_checked_error<'v, T: StarlarkTypeExpr<'v>>(
+    value: Value<'v>,
+) -> crate::Error {
+    #[derive(thiserror::Error, Debug)]
+    #[error("Value `{1}` was changed after it was checked: it is no longer a `{0}`")]
+    struct ChangedSinceChecked(Ty, String);
+
+    crate::Error::new_runtime_type(
+        crate::RuntimeTypeErrorKind::ValueUnpack,
+        ChangedSinceChecked(T::starlark_type_repr(), value.to_string_for_type_error()),
+    )
+}
 
 /// Debug-build check that an unpack agreed with the matcher for its declared type: the value was
 /// accepted, meaning unpacked or rejected only by a conversion error, iff it is of the type.
@@ -268,22 +320,10 @@ pub trait UnpackValue<'v>: Sized + StarlarkTypeRepr {
     /// Unpack a value, but return error instead of `None` if unpacking fails.
     #[inline]
     fn unpack_value_err(value: Value<'v>) -> crate::Result<Self> {
-        #[cold]
-        fn error<'v>(value: Value<'v>, ty: fn() -> Ty) -> crate::Error {
-            #[derive(thiserror::Error, Debug)]
-            #[error("Expected `{0}`, but got `{1}`")]
-            struct IncorrectType(Ty, String);
-
-            crate::Error::new_runtime_type(
-                crate::RuntimeTypeErrorKind::ValueUnpack,
-                IncorrectType(ty(), value.to_string_for_type_error()),
-            )
-        }
-
         let unpacked = Self::unpack_value(value);
         #[cfg(debug_assertions)]
         check_type_agreement::<Self>(value, !matches!(unpacked, Ok(None)), None);
-        unpacked?.ok_or_else(|| error(value, Self::starlark_type_repr))
+        unpacked?.ok_or_else(|| expected_type_error(value, Self::starlark_type_repr))
     }
 
     /// Unpack value, but instead of `None` return error about incorrect argument type.
@@ -366,14 +406,18 @@ impl<'v, TLeft: UnpackValue<'v>, TRight: UnpackValue<'v>> UnpackValue<'v>
     }
 }
 
-impl<'v, A: UnpackValue<'v>, B: UnpackValue<'v>> ValueOf<'v, Either<A, B>> {
-    /// Which side of the union this value is, trying `A` first as unpacking does. Fallible for
-    /// the same reason as [`try_unpack`](ValueOf::try_unpack).
+impl<'v, A: StarlarkTypeExpr<'v>, B: StarlarkTypeExpr<'v>> ValueOf<'v, Either<A, B>> {
+    /// Which side of the union this value is, trying `A` first as [`get`](ValueOf::get) does,
+    /// as handles rather than as [`get`](ValueOf::get)'s `Either` of the sides' handles.
+    /// Fallible for the same reason as [`try_get`](ValueOf::try_get).
     pub fn split(self) -> crate::Result<Either<ValueOf<'v, A>, ValueOf<'v, B>>> {
         let value = self.to_value();
-        match A::unpack_value(value)? {
-            Some(_) => Ok(Either::Left(ValueOf::new_unchecked(value))),
-            None => Ok(Either::Right(ValueOf::new_err(value)?)),
+        if let Some(a) = ValueOf::<A>::new(value) {
+            Ok(Either::Left(a))
+        } else if let Some(b) = ValueOf::<B>::new(value) {
+            Ok(Either::Right(b))
+        } else {
+            Err(expected_type_error(value, Self::starlark_type_repr))
         }
     }
 }

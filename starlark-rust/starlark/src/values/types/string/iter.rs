@@ -33,6 +33,7 @@ use crate::values::StarlarkValue;
 use crate::values::StringValue;
 use crate::values::Value;
 use crate::values::ValueOf;
+use crate::values::types::int::view::IntView;
 use crate::values::typing::iter::StarlarkIter;
 
 /// An opaque iterator over a string, produced by elems/codepoints
@@ -68,7 +69,7 @@ pub(crate) fn iterate_chars<'v>(
 pub(crate) fn iterate_codepoints<'v>(
     string: StringValue<'v>,
     heap: Heap<'v>,
-) -> ValueOf<'v, StarlarkIter<u32>> {
+) -> ValueOf<'v, StarlarkIter<IntView<'v>>> {
     ValueOf::new_unchecked(heap.alloc_complex(StringIterable {
         string,
         produce_char: false,

@@ -302,11 +302,11 @@ pub(crate) fn analysis_actions_methods_run(methods: &mut MethodsBuilder) {
         #[starlark(require = named, default = ValueOf::empty_list())]
         remote_execution_dependencies: ValueOf<
             'v,
-            ListType<ValueOf<'v, DictType<&'v str, &'v str>>>,
+            ListType<DictType<&'v str, &'v str>>,
         >,
         #[starlark(require = named, default = ValueOf::empty_list())] re_gang_workers: ValueOf<
             'v,
-            ListType<ValueOf<'v, DictType<&'v str, &'v str>>>,
+            ListType<DictType<&'v str, &'v str>>,
         >,
         #[starlark(default = NoneType, require = named)] remote_execution_dynamic_image: Value<'v>,
         #[starlark(require = named, default = NoneOr::None)] timeout_seconds: NoneOr<u32>,
@@ -604,14 +604,14 @@ pub(crate) fn analysis_actions_methods_run(methods: &mut MethodsBuilder) {
         });
 
         let re_dependencies = remote_execution_dependencies
-            .try_items()
+            .iter()
             .map(|d| {
                 RemoteExecutorDependency::parse(d?.try_items().collect::<starlark::Result<_>>()?)
             })
             .collect::<buck2_error::Result<MiniBoxSlice<RemoteExecutorDependency>>>()?;
 
         let re_gang_workers = re_gang_workers
-            .try_items()
+            .iter()
             .map(|w| ReGangWorker::parse(w?.try_items().collect::<starlark::Result<_>>()?))
             .collect::<buck2_error::Result<MiniBoxSlice<ReGangWorker>>>()?;
 

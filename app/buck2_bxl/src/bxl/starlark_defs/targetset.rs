@@ -57,6 +57,7 @@ use starlark::values::UnpackValue;
 use starlark::values::Value;
 use starlark::values::ValueError;
 use starlark::values::starlark_value;
+use starlark::values::type_expr::UnionPayload;
 use starlark::values::type_repr::StarlarkTypeRepr;
 use starlark::values::typing::TypeCompiled;
 use starlark::values::typing::TypeInstanceId;
@@ -206,6 +207,17 @@ where
 impl<'v, Node: NodeLike> StarlarkTypeExprStable<'v> for &'v StarlarkTargetSet<Node> where
     StarlarkTargetSet<Node>: HasTyVTable
 {
+}
+
+impl<'v, Node: NodeLike> UnionPayload<'v> for &'v StarlarkTargetSet<Node>
+where
+    StarlarkTargetSet<Node>: HasTyVTable,
+{
+    type Expr = Self;
+
+    fn from_value(value: Value<'v>) -> Option<Self> {
+        <Self as StarlarkTypeExpr<'v>>::get(value)
+    }
 }
 
 impl<'v, Node: NodeLike> UnpackValue<'v> for &'v StarlarkTargetSet<Node>

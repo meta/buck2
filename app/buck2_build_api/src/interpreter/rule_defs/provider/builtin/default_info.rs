@@ -181,7 +181,7 @@ impl<'v> DefaultInfo<'v> {
         &self,
         name: &str,
     ) -> buck2_error::Result<Option<ValueTyped<'v, ProviderCollection<'v>>>> {
-        Ok(self.sub_targets.get_str(name)?.map(|v| v.unpack()))
+        Ok(self.sub_targets.lookup_str(name)?.map(|v| v.unpack()))
     }
 
     fn default_outputs_impl(

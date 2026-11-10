@@ -16,6 +16,7 @@
  */
 
 use std::cmp::Ordering;
+use std::convert::Infallible;
 use std::ops::Add;
 use std::ops::Mul;
 use std::ops::Sub;
@@ -27,6 +28,7 @@ use crate::collections::StarlarkHashValue;
 use crate::values::AllocFrozenValue;
 use crate::values::AllocValue;
 use crate::values::UnpackValue;
+use crate::values::Value;
 use crate::values::type_repr::StarlarkTypeRepr;
 use crate::values::types::float::StarlarkFloat;
 use crate::values::types::int::int_or_big::StarlarkInt;
@@ -45,12 +47,24 @@ enum NumError {
 /// It's an intermediate representation that facilitates conversions between
 /// numerical types and helps in implementation of arithmetical operations
 /// between them.
-#[derive(Clone, Debug, Dupe, Copy, StarlarkTypeRepr, UnpackValue)]
+#[derive(Clone, Debug, Dupe, Copy, StarlarkTypeRepr)]
 #[doc(hidden)]
 pub enum NumRef<'v> {
     Int(StarlarkIntRef<'v>),
     // `StarlarkFloat` not `f64` here because `f64` unpacks from `int` too.
     Float(StarlarkFloat),
+}
+
+/// A conversion from `int | float`, not a type expression: both variants are by value.
+impl<'v> UnpackValue<'v> for NumRef<'v> {
+    type Error = Infallible;
+
+    fn unpack_value_impl(value: Value<'v>) -> Result<Option<Self>, Self::Error> {
+        if let Some(int) = StarlarkIntRef::unpack(value) {
+            return Ok(Some(NumRef::Int(int)));
+        }
+        Ok(StarlarkFloat::unpack_value_opt(value).map(NumRef::Float))
+    }
 }
 
 #[derive(

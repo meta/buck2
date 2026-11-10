@@ -39,6 +39,7 @@ use crate::values::none::NoneOr;
 use crate::values::string::dot_format;
 use crate::values::tuple::TupleType;
 use crate::values::type_repr::StarlarkTypeRepr;
+use crate::values::types::int::view::IntView;
 use crate::values::types::string::iter::iterate_chars;
 use crate::values::types::string::iter::iterate_codepoints;
 use crate::values::typing::iter::StarlarkIter;
@@ -217,7 +218,7 @@ pub(crate) fn string_methods(builder: &mut MethodsBuilder) {
     fn codepoints<'v>(
         this: StringValue<'v>,
         heap: Heap<'v>,
-    ) -> anyhow::Result<ValueOf<'v, StarlarkIter<u32>>> {
+    ) -> anyhow::Result<ValueOf<'v, StarlarkIter<IntView<'v>>>> {
         Ok(iterate_codepoints(this, heap))
     }
 

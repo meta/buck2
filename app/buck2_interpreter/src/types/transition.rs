@@ -18,6 +18,7 @@ use starlark::values::StarlarkTypeExpr;
 use starlark::values::StarlarkTypeExprStable;
 use starlark::values::UnpackValue;
 use starlark::values::Value;
+use starlark::values::type_expr::UnionPayload;
 use starlark::values::type_repr::StarlarkTypeRepr;
 
 use crate::late_binding_ty::TransitionReprLate;
@@ -53,6 +54,14 @@ impl<'v> StarlarkTypeExpr<'v> for ValueAsTransition<'v> {
 }
 
 impl<'v> StarlarkTypeExprStable<'v> for ValueAsTransition<'v> {}
+
+impl<'v> UnionPayload<'v> for ValueAsTransition<'v> {
+    type Expr = Self;
+
+    fn from_value(value: Value<'v>) -> Option<Self> {
+        <Self as StarlarkTypeExpr<'v>>::get(value)
+    }
+}
 
 impl<'v> UnpackValue<'v> for ValueAsTransition<'v> {
     type Error = Infallible;

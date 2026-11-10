@@ -26,7 +26,8 @@ use crate::values::StringValue;
 use crate::values::Value;
 use crate::values::ValueOf;
 use crate::values::list_or_tuple::ListOrTupleType;
-use crate::values::typing::StarlarkIter;
+use crate::values::none::NoneType;
+use crate::values::typing::StarlarkCallableChecked;
 
 // The examples from the starlark_module documentation.
 #[test]
@@ -72,7 +73,9 @@ fn test_starlark_methods() {
 fn test_static_allowed() {
     #[starlark_module]
     fn globals(globals: &mut GlobalsBuilder) {
-        fn test<'v>() -> anyhow::Result<ValueOf<'v, StarlarkIter<&'static str>>> {
+        fn test<'v>()
+        -> anyhow::Result<ValueOf<'v, StarlarkCallableChecked<'v, (&'static str,), NoneType>>>
+        {
             panic!()
         }
     }

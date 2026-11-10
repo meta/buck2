@@ -22,9 +22,11 @@ use starlark::values::FreezeError;
 use starlark::values::StarlarkPagable;
 use starlark::values::StringValue;
 use starlark::values::Trace;
+use starlark::values::UnpackValue;
 use starlark::values::Value;
 use starlark::values::ValueOf;
 use starlark::values::dict::DictType;
+use starlark::values::int::IntView;
 use starlark::values::list::AllocList;
 use starlark::values::none::NoneOr;
 
@@ -53,7 +55,7 @@ pub struct WorkerInfo<'v> {
     /// Environment for the command that spawns the worker.
     env: Option<ValueOf<'v, DictType<StringValue<'v>, ValueAsCommandLineLike<'v>>>>,
     // Maximum number of concurrent commands to execute on a worker instance without queuing
-    pub concurrency: Option<ValueOf<'v, usize>>,
+    pub concurrency: Option<ValueOf<'v, IntView<'v>>>,
     // Whether to always run actions using this worker via the streaming API
     pub streaming: Option<ValueOf<'v, bool>>,
     // Bazel remote persistent worker protocol capable worker
@@ -76,7 +78,7 @@ fn worker_info_creator(globals: &mut GlobalsBuilder) {
             ValueOf<'v, DictType<StringValue<'v>, ValueAsCommandLineLike<'v>>>,
         >,
         #[starlark(require = named, default = NoneOr::None)] concurrency: NoneOr<
-            ValueOf<'v, usize>,
+            ValueOf<'v, IntView<'v>>,
         >,
         #[starlark(require = named, default = NoneOr::None)] streaming: NoneOr<ValueOf<'v, bool>>,
         #[starlark(require = named, default = false)]
@@ -117,7 +119,10 @@ impl<'v> WorkerInfo<'v> {
     }
 
     pub fn concurrency(&self) -> buck2_error::Result<Option<usize>> {
-        Ok(self.concurrency.map(|v| v.try_unpack()).transpose()?)
+        Ok(self
+            .concurrency
+            .map(|v| usize::unpack_value_err(v.to_value()))
+            .transpose()?)
     }
 
     pub fn streaming(&self) -> bool {

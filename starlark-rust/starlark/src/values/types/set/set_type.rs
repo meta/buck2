@@ -15,6 +15,7 @@
  * limitations under the License.
  */
 
+use std::convert::Infallible;
 use std::marker::PhantomData;
 
 use crate as starlark;
@@ -45,30 +46,26 @@ impl<T: StarlarkTypeRepr> StarlarkTypeRepr for SetType<T> {
 }
 
 impl<'v, T: StarlarkTypeExpr<'v>> StarlarkTypeExpr<'v> for SetType<T> {
-    type Get = SetRef<'v>;
+    /// The handle: a typed set has no cheaper form that keeps `T`.
+    type Get = ValueOf<'v, SetType<T>>;
 
     fn get(value: Value<'v>) -> Option<Self::Get> {
-        SetRef::from_value(value).filter(|s| s.iter().all(|x| T::matches(x)))
+        let set = SetRef::from_value(value)?;
+        set.iter()
+            .all(|x| T::matches(x))
+            .then(|| ValueOf::new_unchecked(value))
     }
 }
 
-impl<'v, T: UnpackValue<'v>> UnpackValue<'v> for SetType<T> {
-    type Error = <T as UnpackValue<'v>>::Error;
+impl<'v, T: StarlarkTypeExpr<'v>> UnpackValue<'v> for SetType<T> {
+    type Error = Infallible;
 
     fn unpack_value_impl(value: Value<'v>) -> Result<Option<Self>, Self::Error> {
-        let Some(set) = SetRef::from_value(value) else {
-            return Ok(None);
-        };
-        for item in set.iter() {
-            if T::unpack_value_impl(item)?.is_none() {
-                return Ok(None);
-            }
-        }
-        Ok(Some(SetType { _item: PhantomData }))
+        Ok(Self::matches(value).then_some(SetType { _item: PhantomData }))
     }
 }
 
-impl<'v, T: UnpackValue<'v>> ValueOf<'v, SetType<T>> {
+impl<'v, T: StarlarkTypeExpr<'v>> ValueOf<'v, SetType<T>> {
     /// The set.
     #[inline]
     pub fn set(self) -> SetRef<'v> {
@@ -94,7 +91,7 @@ impl<'v, T: UnpackValue<'v>> ValueOf<'v, SetType<T>> {
     /// The items, unpacked. Each is re-checked, as for [`iter`](Self::iter).
     pub fn try_items(self) -> impl Iterator<Item = crate::Result<T>> + 'v
     where
-        T: 'v,
+        T: UnpackValue<'v> + 'v,
     {
         self.items_raw().map(T::unpack_value_err)
     }

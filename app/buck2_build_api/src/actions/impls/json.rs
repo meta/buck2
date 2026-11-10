@@ -25,8 +25,10 @@ use serde::Serialize;
 use serde::Serializer;
 use starlark::values::UnpackValue;
 use starlark::values::Value;
+use starlark::values::ValueOf;
 use starlark::values::dict::DictRef;
 use starlark::values::enumeration::EnumValue;
+use starlark::values::int::IntView;
 use starlark::values::list::ListRef;
 use starlark::values::none::NoneType;
 use starlark::values::record::Record;
@@ -129,7 +131,7 @@ pub enum JsonArtifact<'v> {
 pub enum JsonUnpack<'v> {
     None(NoneType),
     String(&'v str),
-    Number(i64),
+    Number(ValueOf<'v, IntView<'v>>),
     Bool(bool),
     List(&'v ListRef<'v>),
     Tuple(&'v TupleRef<'v>),
@@ -161,7 +163,8 @@ impl<'a, 'v> Serialize for SerializeValue<'a, 'v> {
         match &self.value {
             JsonUnpack::None(_) => serializer.serialize_none(),
             JsonUnpack::String(x) => serializer.serialize_str(x),
-            JsonUnpack::Number(x) => serializer.serialize_i64(*x),
+            JsonUnpack::Number(x) => serializer
+                .serialize_i64(err(i64::unpack_value_err(x.to_value()).map_err(Into::into))?),
             JsonUnpack::Bool(x) => serializer.serialize_bool(*x),
             JsonUnpack::List(x) => serializer.collect_seq(x.iter().map(|v| self.with_value(v))),
             JsonUnpack::Tuple(x) => serializer.collect_seq(x.iter().map(|v| self.with_value(v))),

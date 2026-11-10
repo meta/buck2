@@ -28,6 +28,9 @@ pub(crate) fn derive_unpack_value(input: proc_macro::TokenStream) -> proc_macro:
     }
 }
 
+/// A union of its variants' type expressions: `StarlarkTypeExpr` (the enum is its own `Get`),
+/// `StarlarkTypeExprStable` when every variant's is, and the infallible `UnpackValue` that
+/// binds a parameter of the union type.
 fn derive_unpack_value_impl(input: syn::DeriveInput) -> syn::Result<proc_macro2::TokenStream> {
     let span = input.ident.span();
 
@@ -50,57 +53,68 @@ fn derive_unpack_value_impl(input: syn::DeriveInput) -> syn::Result<proc_macro2:
     let branches: Vec<syn::ExprIf> = input
         .enum_variants
         .iter()
-        .enumerate()
-        .map(|(i, (n, t))| {
-            let mut map_err: syn::Expr = syn::parse_quote_spanned! { t.span() => starlark::__macro_refs::Either::Left(e) };
-            for _ in 0..i {
-                map_err = syn::parse_quote_spanned! { t.span() => starlark::__macro_refs::Either::Right(#map_err) };
-            }
+        .map(|(n, t)| {
             let variant = match n {
-                Some(variant) => quote::quote!{::#variant},
-                None => quote::quote!{},
+                Some(variant) => quote::quote! {::#variant},
+                None => quote::quote! {},
             };
             syn::parse_quote_spanned! { t.span() =>
-                if let Some(x) = <#t as starlark::values::UnpackValue<'v>>::unpack_value_impl(value).map_err(|e| #map_err)? {
-                    return std::result::Result::Ok(Some(#ident #variant(x)));
+                if let Some(x) = <#t as starlark::values::type_expr::UnionPayload<'v>>::from_value(value) {
+                    return std::option::Option::Some(#ident #variant(x));
                 }
             }
         })
         .collect::<Vec<_>>();
 
-    // `Either<A::Error, Either<B::Error, Either<C::Error, Infallible>>>`
-    let mut error: syn::Type = syn::parse_quote_spanned! { span => std::convert::Infallible };
-    for variant in input.enum_variants.iter().rev() {
-        let t = &variant.1;
-        error = syn::parse_quote_spanned! { variant.1.span() =>
-            starlark::__macro_refs::Either<<#t as starlark::values::UnpackValue<'v>>::Error, #error>
-        };
-    }
-
     let variant_types: Vec<&syn::Type> = input.enum_variants.iter().map(|(_, t)| t).collect();
 
-    let trait_impl: syn::ItemImpl = syn::parse_quote_spanned! { span =>
-        #[allow(clippy::all)]
-        impl #impl_generics starlark::values::UnpackValue<'v> for #ident #type_generics #where_clause {
-            type Error = #error;
+    let expr_impl: syn::ItemImpl = syn::parse_quote_spanned! { span =>
+        impl #impl_generics starlark::values::StarlarkTypeExpr<'v> for #ident #type_generics #where_clause {
+            type Get = Self;
 
-            // A variant's error type may be `Infallible`, in which case wrapping the
-            // error in `Either` below is intentionally unreachable.
-            #[allow(unreachable_code)]
-            fn unpack_value_impl(value: starlark::values::Value<'v>) -> std::result::Result<std::option::Option<Self>, Self::Error> {
+            fn get(value: starlark::values::Value<'v>) -> std::option::Option<Self> {
                 #(#branches)*
                 let _unused_when_enum_is_empty = value;
-                std::result::Result::Ok(None)
+                std::option::Option::None
             }
         }
     };
     // Stable iff every variant is; the bounds decide per instantiation.
     let stable_impl: syn::ItemImpl = syn::parse_quote_spanned! { span =>
-        impl #impl_generics starlark::values::UnpackValueStable<'v> for #ident #type_generics
+        impl #impl_generics starlark::values::StarlarkTypeExprStable<'v> for #ident #type_generics
         where
-            #(#variant_types: starlark::values::UnpackValueStable<'v>,)*
+            #(<#variant_types as starlark::values::type_expr::UnionPayload<'v>>::Expr: starlark::values::StarlarkTypeExprStable<'v>,)*
         {
         }
     };
-    Ok(quote::quote_spanned! { span => #trait_impl #stable_impl })
+    // A union is its own handle, so it is a payload of an enclosing union as itself.
+    let payload_impl: syn::ItemImpl = syn::parse_quote_spanned! { span =>
+        impl #impl_generics starlark::values::type_expr::UnionPayload<'v> for #ident #type_generics #where_clause {
+            type Expr = Self;
+
+            #[inline]
+            fn from_value(value: starlark::values::Value<'v>) -> std::option::Option<Self> {
+                <Self as starlark::values::StarlarkTypeExpr<'v>>::get(value)
+            }
+        }
+    };
+    let trait_impl: syn::ItemImpl = syn::parse_quote_spanned! { span =>
+        impl #impl_generics starlark::values::UnpackValue<'v> for #ident #type_generics #where_clause {
+            type Error = std::convert::Infallible;
+
+            fn unpack_value_impl(value: starlark::values::Value<'v>) -> std::result::Result<std::option::Option<Self>, Self::Error> {
+                std::result::Result::Ok(<Self as starlark::values::StarlarkTypeExpr<'v>>::get(value))
+            }
+        }
+    };
+    let unpack_stable_impl: syn::ItemImpl = syn::parse_quote_spanned! { span =>
+        impl #impl_generics starlark::values::UnpackValueStable<'v> for #ident #type_generics
+        where
+            #ident #type_generics: starlark::values::StarlarkTypeExprStable<'v>,
+        {
+        }
+    };
+    Ok(
+        quote::quote_spanned! { span => #expr_impl #stable_impl #payload_impl #trait_impl #unpack_stable_impl },
+    )
 }

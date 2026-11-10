@@ -57,6 +57,7 @@ use crate::values::dict::DictType;
 use crate::values::layout::heap::name::StarlarkTestHeapName;
 use crate::values::list_or_tuple::ListOrTupleType;
 use crate::values::none::NoneType;
+use crate::values::types::int::view::IntView;
 
 #[test]
 fn alias_test() {
@@ -315,10 +316,16 @@ fn test_radd() {
             match Select::from_value(value) {
                 Some(x) => Ok(Some(x.clone())),
                 None => {
-                    let Some(list_or_tuple) = ValueOf::<ListOrTupleType<i32>>::new(value) else {
+                    let Some(list_or_tuple) = ValueOf::<ListOrTupleType<IntView>>::new(value)
+                    else {
                         return Ok(None);
                     };
-                    Ok(Some(Select(list_or_tuple.try_to_vec()?)))
+                    Ok(Some(Select(
+                        list_or_tuple
+                            .try_items()
+                            .map(|x| i32::unpack_value_err(x?.to_value()))
+                            .collect::<crate::Result<_>>()?,
+                    )))
                 }
             }
         }
@@ -348,8 +355,13 @@ fn test_radd() {
 
     #[starlark_module]
     fn module(build: &mut GlobalsBuilder) {
-        fn select<'v>(xs: ValueOf<'v, ListOrTupleType<i32>>) -> anyhow::Result<Select> {
-            Ok(Select(xs.try_to_vec().map_err(|e| e.into_anyhow())?))
+        fn select<'v>(xs: ValueOf<'v, ListOrTupleType<IntView<'v>>>) -> anyhow::Result<Select> {
+            Ok(Select(
+                xs.try_items()
+                    .map(|x| i32::unpack_value_err(x?.to_value()))
+                    .collect::<crate::Result<_>>()
+                    .map_err(|e| e.into_anyhow())?,
+            ))
         }
     }
 

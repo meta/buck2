@@ -305,7 +305,7 @@ pub(super) fn lookup_executor_override<'v>(
         return Ok(None);
     };
     Ok(overrides
-        .get_str(key)?
+        .lookup_str(key)?
         .map(|config| config.unpack().as_ref()))
 }
 

@@ -167,7 +167,7 @@ public class TestResultsOutputSender implements AutoCloseable {
    * @param stacktrace Optional stack trace (can be null).
    */
   public void sendRunFailure(
-      RunFailureStatus status, long time, String details, String stacktrace) {
+      RunFailureStatus status, long time, String details, @Nullable String stacktrace) {
     RunFailureEvent event = new RunFailureEvent(status, time, details, stacktrace);
 
     try {

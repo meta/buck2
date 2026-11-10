@@ -12,6 +12,7 @@ package com.facebook.buck.testrunner;
 
 import com.facebook.buck.testresultsoutput.TestResultsOutputEvent.TestStatus;
 import com.facebook.buck.testresultsoutput.TestResultsOutputSender;
+import com.facebook.infer.annotation.Nullsafe;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
@@ -20,11 +21,13 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
+import org.jspecify.annotations.Nullable;
 
 /**
  * TpxStandardOutputTestListener sends test results to the TPX standard output format. Meant to be
  * shared between different Java test runners that may need to implement specific interfaces.
  */
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public class TpxStandardOutputTestListener {
   private final TestResultsOutputSender sender;
   private final Map<String, String> resultMetadata;
@@ -37,8 +40,8 @@ public class TpxStandardOutputTestListener {
 
   private class TestIdentifierStatus {
     private long startTime;
-    private String trace;
-    private TestStatus status;
+    private @Nullable String trace;
+    private @Nullable TestStatus status;
 
     public TestIdentifierStatus(long startTime) {
       this.startTime = startTime;

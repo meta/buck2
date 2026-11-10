@@ -98,7 +98,7 @@ public class TestResultsOutputEvent {
     public RunFailureStatus status;
     public long time;
     public String details;
-    public String stacktrace;
+    public @Nullable String stacktrace;
 
     /**
      * Creates a new run failure event with the given parameters.
@@ -108,7 +108,8 @@ public class TestResultsOutputEvent {
      * @param details human-readable description of the failure
      * @param stacktrace optional stack trace (can be null)
      */
-    public RunFailureEvent(RunFailureStatus status, long time, String details, String stacktrace) {
+    public RunFailureEvent(
+        RunFailureStatus status, long time, String details, @Nullable String stacktrace) {
       this.status = status;
       this.time = time;
       this.details = details;

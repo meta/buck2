@@ -13,6 +13,7 @@ package com.facebook.buck.testrunner;
 import com.facebook.infer.annotation.Nullsafe;
 import java.io.IOException;
 import java.util.logging.Level;
+import org.jspecify.annotations.Nullable;
 
 /** Record a test execution, saving the standard outputs and duration. */
 @Nullsafe(Nullsafe.Mode.LOCAL)
@@ -64,7 +65,7 @@ class TestRecorder {
    * @param appendLog to indicate the output should append log content as well.
    * @return recorded standard output.
    */
-  public String standardOutputAsString(boolean appendLog) {
+  public @Nullable String standardOutputAsString(boolean appendLog) {
     return stdOut.toString(appendLog, DEBUG_LOGS_HEADER);
   }
 
@@ -74,7 +75,7 @@ class TestRecorder {
    * @param appendLog to indicate the output should append log content as well.
    * @return recorded standard error output.
    */
-  public String standardErrorAsString(boolean appendLog) {
+  public @Nullable String standardErrorAsString(boolean appendLog) {
     return stdErr.toString(appendLog, ERROR_LOGS_HEADER);
   }
 }

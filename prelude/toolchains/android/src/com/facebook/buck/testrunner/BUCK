@@ -120,6 +120,7 @@ buck_kotlin_library(
     ],
     provided_deps = [
         "prelude//toolchains/android/third-party:infer-annotations",
+        "prelude//toolchains/android/third-party:jspecify",
     ],
     resources = glob(["META-INF/**/*"]),
     resources_root = ".",
@@ -216,6 +217,7 @@ buck_java_library(
     target = "11", # @oss-enable
     provided_deps = [
         "prelude//toolchains/android/third-party:infer-annotations",
+        "prelude//toolchains/android/third-party:jspecify",
     ],
     # @oss-disable[end= ]: source = "8",
     # @oss-disable[end= ]: target = "8",

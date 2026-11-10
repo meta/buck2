@@ -10,7 +10,9 @@
 
 package com.facebook.buck.testrunner;
 
+import com.facebook.infer.annotation.Nullsafe;
 import java.util.List;
+import java.util.Objects;
 import java.util.concurrent.Callable;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -36,6 +38,7 @@ import org.junit.runners.model.TestClass;
  * <p>This runner also creates Descriptions that allow JUnitRunner to filter which test-methods to
  * run and should be forced into the test code path whenever test-selectors are in use.
  */
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public class BuckBlockJUnit4ClassRunner extends BlockJUnit4ClassRunner {
 
   private final ThreadLocal<ExecutorService> executor =
@@ -44,7 +47,8 @@ public class BuckBlockJUnit4ClassRunner extends BlockJUnit4ClassRunner {
         protected ExecutorService initialValue() {
           return Executors.newSingleThreadExecutor(
               r -> {
-                Thread newThread = Executors.defaultThreadFactory().newThread(r);
+                Thread newThread =
+                    Objects.requireNonNull(Executors.defaultThreadFactory().newThread(r));
                 newThread.setName(BuckBlockJUnit4ClassRunner.class.getSimpleName());
                 return newThread;
               });
@@ -68,7 +72,7 @@ public class BuckBlockJUnit4ClassRunner extends BlockJUnit4ClassRunner {
     // See https://github.com/junit-team/junit/issues/686 for more context.
     Callable<Object> maker = () -> BuckBlockJUnit4ClassRunner.super.createTest();
 
-    Future<Object> createdTest = executor.get().submit(maker);
+    Future<Object> createdTest = Objects.requireNonNull(executor.get()).submit(maker);
     return createdTest.get();
   }
 
@@ -100,14 +104,15 @@ public class BuckBlockJUnit4ClassRunner extends BlockJUnit4ClassRunner {
    */
   @Override
   protected Statement methodBlock(FrameworkMethod method) {
-    Statement statement = super.methodBlock(method);
+    Statement statement = Objects.requireNonNull(super.methodBlock(method));
 
     // If the test class has a Timeout @Rule, then that should supersede the default timeout. The
     // same applies if it has a timeout value for the @Test annotation.
 
     long timeout = getTimeout(method);
 
-    return new SameThreadFailOnTimeout(executor.get(), timeout, testName(method), statement);
+    return new SameThreadFailOnTimeout(
+        Objects.requireNonNull(executor.get()), timeout, testName(method), statement);
   }
 
   /**

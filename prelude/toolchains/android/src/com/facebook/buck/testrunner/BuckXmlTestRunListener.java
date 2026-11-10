@@ -14,9 +14,11 @@ import com.android.ddmlib.testrunner.TestIdentifier;
 import com.android.ddmlib.testrunner.XmlTestRunListener;
 import com.facebook.buck.android.exopackage.AdbUtils;
 import com.facebook.buck.android.exopackage.AndroidDevice;
+import com.facebook.infer.annotation.Nullsafe;
 import java.io.File;
 import java.io.IOException;
 import java.util.Map;
+import java.util.Objects;
 import javax.xml.parsers.DocumentBuilder;
 import javax.xml.parsers.DocumentBuilderFactory;
 import javax.xml.parsers.ParserConfigurationException;
@@ -31,12 +33,13 @@ import org.w3c.dom.Element;
 import org.w3c.dom.Node;
 import org.xml.sax.SAXException;
 
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public class BuckXmlTestRunListener extends XmlTestRunListener {
 
   protected static final String TEST_RESULT_FILE = "test_result.xml";
-  private String mRunFailureMessage = null;
+  private @Nullable String mRunFailureMessage = null;
   private @Nullable String mRunName = null;
-  private File mReportDir;
+  private @Nullable File mReportDir;
   private AndroidDevice mAndroidDevice;
   private AdbUtils mAdbUtils;
 
@@ -83,13 +86,13 @@ public class BuckXmlTestRunListener extends XmlTestRunListener {
 
       DocumentBuilderFactory docFactory = DocumentBuilderFactory.newInstance();
       DocumentBuilder docBuilder = docFactory.newDocumentBuilder();
-      Document doc = docBuilder.parse(resultFile);
+      Document doc = Objects.requireNonNull(docBuilder.parse(resultFile));
 
       if (mRunFailureMessage != null) {
         Node testsuite = getOrCreateTestSuite(doc);
         Element failureNode = doc.createElement("failure");
         failureNode.setTextContent(mRunFailureMessage);
-        testsuite.appendChild(failureNode);
+        Objects.requireNonNull(testsuite).appendChild(failureNode);
 
         TransformerFactory transformerFactory = TransformerFactory.newInstance();
         Transformer transformer = transformerFactory.newTransformer();
@@ -130,7 +133,7 @@ public class BuckXmlTestRunListener extends XmlTestRunListener {
    * @throws IOException
    */
   @Override
-  protected File getResultFile(File reportDir) {
+  protected File getResultFile(@Nullable File reportDir) {
     return new File(reportDir, TEST_RESULT_FILE);
   }
 }

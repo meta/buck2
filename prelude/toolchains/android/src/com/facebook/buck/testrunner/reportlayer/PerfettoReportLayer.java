@@ -11,14 +11,17 @@
 package com.facebook.buck.testrunner.reportlayer;
 
 import com.facebook.buck.testrunner.InstrumentationTestRunner;
+import com.facebook.infer.annotation.Nullsafe;
 import java.io.File;
 import java.io.FileWriter;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+import org.jspecify.annotations.Nullable;
 
 /** Report layer to collect Perfetto system traces during instrumentation tests. */
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public class PerfettoReportLayer extends ReportLayer {
 
   public static final String ARG = "--collect-perfetto";
@@ -42,7 +45,7 @@ public class PerfettoReportLayer extends ReportLayer {
           + "duration_ms: 600000 "
           + "max_file_size_bytes: 104857600";
 
-  private String perfettoPid = null;
+  private @Nullable String perfettoPid = null;
 
   public PerfettoReportLayer(InstrumentationTestRunner runner) {
     super(runner);

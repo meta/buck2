@@ -10,6 +10,7 @@
 
 package com.facebook.buck.testrunner;
 
+import com.facebook.infer.annotation.Nullsafe;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.PrintStream;
@@ -19,6 +20,7 @@ import java.util.logging.Handler;
 import java.util.logging.Level;
 import java.util.logging.LogManager;
 import java.util.logging.StreamHandler;
+import org.jspecify.annotations.Nullable;
 
 /**
  * Attach a buffered {@code PrintStream} and {@code StreamHandler} to the standards output ( {@code
@@ -27,6 +29,7 @@ import java.util.logging.StreamHandler;
  * @see #stdOut(Level)
  * @see #stdErr(Level)
  */
+@Nullsafe(Nullsafe.Mode.LOCAL)
 class StandardOutputRecorder {
 
   private static final String ENCODING = "UTF-8";
@@ -36,9 +39,9 @@ class StandardOutputRecorder {
   private final Level logLevel;
   private final PrintStream originalOutput;
   private final Consumer<PrintStream> outputRouter;
-  private PrintStream outputStream;
+  private @Nullable PrintStream outputStream;
   private ByteArrayOutputStream outputBuffer, logBuffer;
-  private Handler logHandler;
+  private @Nullable Handler logHandler;
 
   public static StandardOutputRecorder stdOut(Level logLevel) {
     try {
@@ -65,7 +68,7 @@ class StandardOutputRecorder {
     this.logBuffer = new ByteArrayOutputStream();
   }
 
-  private java.util.logging.Logger getLogger() {
+  private java.util.logging.@Nullable Logger getLogger() {
     return LogManager.getLogManager().getLogger("");
   }
 
@@ -122,7 +125,7 @@ class StandardOutputRecorder {
    * @param logHeader Header separating std output from the logger output.
    * @return std output
    */
-  public String toString(boolean appendLog, String logHeader) {
+  public @Nullable String toString(boolean appendLog, String logHeader) {
     try {
       String log = logBuffer.toString(ENCODING);
       String output = outputBuffer.toString(ENCODING);

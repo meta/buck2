@@ -10,6 +10,7 @@
 
 package com.facebook.buck.testrunner;
 
+import com.facebook.infer.annotation.Nullsafe;
 import java.util.Optional;
 import java.util.function.Predicate;
 import org.junit.jupiter.api.extension.ConditionEvaluationResult;
@@ -20,6 +21,7 @@ import org.junit.jupiter.api.extension.ExtensionContext;
  * To be registered as an extension at <code>
  * "META-INF/services/org.junit.jupiter.api.extension.Extension"</code>
  */
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public class SkipTestCondition implements ExecutionCondition {
 
   private static Predicate<ExtensionContext> SKIP_FILTER;

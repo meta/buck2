@@ -16,15 +16,18 @@ import static com.facebook.buck.testrunner.JUnitSupport.jupiterApi;
 import com.facebook.buck.test.result.type.ResultType;
 import com.facebook.buck.test.selectors.TestDescription;
 import com.facebook.buck.test.selectors.TestSelector;
+import com.facebook.infer.annotation.Nullsafe;
 import java.lang.reflect.AnnotatedElement;
 import java.lang.reflect.Field;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.Future;
 import java.util.function.Predicate;
 import java.util.stream.Collectors;
+import org.jspecify.annotations.Nullable;
 import org.junit.jupiter.api.extension.ExtensionContext;
 import org.junit.jupiter.engine.config.JupiterConfiguration;
 import org.junit.jupiter.engine.descriptor.JupiterTestDescriptor;
@@ -60,6 +63,7 @@ import org.junit.platform.launcher.core.LauncherFactory;
  *
  * @see JUnitRunner
  */
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public final class JupiterRunner extends BaseRunner {
 
   public static final String EXTENSIONS_AUTODETECTION_ENABLED =
@@ -272,7 +276,8 @@ public final class JupiterRunner extends BaseRunner {
     }
 
     private boolean excludedBySelector(TestDescription desc) {
-      TestSelector selector = options.getTestSelectorList().findSelector(desc);
+      TestSelector selector =
+          Objects.requireNonNull(options.getTestSelectorList()).findSelector(desc);
       if (selector.isInclusive()) {
         return false;
       }
@@ -375,7 +380,7 @@ public final class JupiterRunner extends BaseRunner {
     private final List<TestResult> testResults = new ArrayList<>();
     private final long startTime = System.currentTimeMillis();
 
-    private TestRecorder testRecorder;
+    private @Nullable TestRecorder testRecorder;
 
     public RecordingListener(JUnitOptions options, TestAnalyzer testAnalyzer) {
       this.options = options;
@@ -456,7 +461,7 @@ public final class JupiterRunner extends BaseRunner {
               null));
     }
 
-    private ResultType getResultType(Status status, Optional<Throwable> failure) {
+    private ResultType getResultType(@Nullable Status status, Optional<Throwable> failure) {
       if (status == TestExecutionResult.Status.SUCCESSFUL) {
         return ResultType.SUCCESS;
       }

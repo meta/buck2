@@ -13,11 +13,14 @@ package com.facebook.buck.testrunner;
 import com.facebook.buck.testrunner.reportlayer.PerfettoReportLayer;
 import com.facebook.buck.testrunner.reportlayer.TombstonesReportLayer;
 import com.facebook.buck.testrunner.reportlayer.VideoRecordingReportLayer;
+import com.facebook.infer.annotation.Nullsafe;
 import java.io.File;
 import java.io.IOException;
 import java.util.List;
 import java.util.Map;
+import org.jspecify.annotations.Nullable;
 
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public class InstrumentationTestRunnerForClout extends InstrumentationTestRunner {
 
   private static final String ANDROID_HOME = "ANDROID_HOME";
@@ -120,7 +123,7 @@ public class InstrumentationTestRunnerForClout extends InstrumentationTestRunner
   }
 
   @SuppressWarnings("PMD.BlacklistedSystemGetenv")
-  private String getAndroidHome() {
+  private @Nullable String getAndroidHome() {
     if (System.getenv().containsKey(ANDROID_HOME)) {
       return System.getenv(ANDROID_HOME);
     } else {

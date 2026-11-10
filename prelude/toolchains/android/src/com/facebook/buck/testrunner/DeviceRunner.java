@@ -13,13 +13,17 @@ package com.facebook.buck.testrunner;
 import com.facebook.buck.android.exopackage.AdbUtils;
 import com.facebook.buck.android.exopackage.AndroidDevice;
 import com.facebook.buck.android.exopackage.AndroidDeviceImpl;
+import com.facebook.infer.annotation.Nullsafe;
 import java.io.IOException;
 import java.net.InetAddress;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.List;
+import java.util.Objects;
+import org.jspecify.annotations.Nullable;
 
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public class DeviceRunner {
 
   private static final String ADB_PATH = "ADB_PATH";
@@ -27,10 +31,13 @@ public class DeviceRunner {
 
   static class DeviceArgs {
     final boolean autoRunOnConnectedDevice;
-    final String deviceSerial;
-    final String adbExecutablePath;
+    final @Nullable String deviceSerial;
+    final @Nullable String adbExecutablePath;
 
-    DeviceArgs(boolean autoRunOnConnectedDevice, String deviceSerial, String adbExecutablePath) {
+    DeviceArgs(
+        boolean autoRunOnConnectedDevice,
+        @Nullable String deviceSerial,
+        @Nullable String adbExecutablePath) {
       this.autoRunOnConnectedDevice = autoRunOnConnectedDevice;
       this.deviceSerial = deviceSerial;
       this.adbExecutablePath = adbExecutablePath;
@@ -42,7 +49,7 @@ public class DeviceRunner {
 
   DeviceRunner(DeviceArgs args) {
     this.deviceArgs = args;
-    this.adbUtils = new AdbUtils(getAdbPath(), 0);
+    this.adbUtils = new AdbUtils(Objects.requireNonNull(getAdbPath()), 0);
   }
 
   static DeviceArgs getDeviceArgs(String[] args) {
@@ -113,8 +120,7 @@ public class DeviceRunner {
    * Returns an {@link AndroidDevice} for the configured device. Uses {@link AdbUtils} for device
    * discovery — no ddmlib dependency.
    */
-  @Nullable
-  AndroidDevice getAndroidDevice(boolean autoRunOnConnectedDevice, String deviceSerial) {
+  @Nullable AndroidDevice getAndroidDevice(boolean autoRunOnConnectedDevice, String deviceSerial) {
     if (autoRunOnConnectedDevice) {
       List<AndroidDevice> devices = adbUtils.getDevices();
       if (devices.isEmpty()) {
@@ -142,7 +148,7 @@ public class DeviceRunner {
     }
   }
 
-  protected String getAdbPath() {
+  protected @Nullable String getAdbPath() {
     return deviceArgs.adbExecutablePath;
   }
 

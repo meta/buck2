@@ -13,6 +13,7 @@ package com.facebook.buck.testrunner;
 import com.facebook.buck.test.result.type.ResultType;
 import com.facebook.buck.test.selectors.TestDescription;
 import com.facebook.buck.test.selectors.TestSelector;
+import com.facebook.infer.annotation.Nullsafe;
 import java.io.ByteArrayOutputStream;
 import java.io.PrintStream;
 import java.io.UnsupportedEncodingException;
@@ -25,6 +26,7 @@ import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 import javax.annotation.Nullable;
@@ -57,6 +59,7 @@ import org.testng.reporters.SuiteHTMLReporter;
 import org.testng.reporters.XMLReporter;
 
 /** Class that runs a set of TestNG tests and writes the results to a directory. */
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public final class TestNGRunner extends BaseRunner {
   private static final boolean TESTNG_ALT_TEST_NAME_GEN_ENABLED;
 
@@ -249,8 +252,8 @@ public final class TestNGRunner extends BaseRunner {
   private static class TestListener implements ITestListener, IConfigurationListener {
     private final List<TestResult> results;
     private boolean mustRestoreStdoutAndStderr;
-    private PrintStream originalOut, originalErr, stdOutStream, stdErrStream;
-    private ByteArrayOutputStream rawStdOutBytes, rawStdErrBytes;
+    @Nullable private PrintStream originalOut, originalErr, stdOutStream, stdErrStream;
+    @Nullable private ByteArrayOutputStream rawStdOutBytes, rawStdErrBytes;
     private Map<IClass, Throwable> failedConfigurationTestClasses = new HashMap<>();
     private Map<String, Integer> testNameCounts = new HashMap<>();
 
@@ -309,21 +312,21 @@ public final class TestNGRunner extends BaseRunner {
         System.setErr(originalErr);
 
         // Get the stdout/stderr written during the test as strings.
-        stdOutStream.flush();
-        stdErrStream.flush();
+        Objects.requireNonNull(stdOutStream).flush();
+        Objects.requireNonNull(stdErrStream).flush();
         mustRestoreStdoutAndStderr = false;
       }
     }
 
-    private void recordResult(ITestResult result, ResultType type, Throwable failure) {
-      String stdOut = streamToString(rawStdOutBytes);
-      String stdErr = streamToString(rawStdErrBytes);
+    private void recordResult(ITestResult result, ResultType type, @Nullable Throwable failure) {
+      String stdOut = streamToString(Objects.requireNonNull(rawStdOutBytes));
+      String stdErr = streamToString(Objects.requireNonNull(rawStdErrBytes));
 
       String className = result.getTestClass().getName();
       String name = result.getName();
       testNameCounts.putIfAbsent(name, 0);
       // Get index by each test method
-      int count = testNameCounts.get(name);
+      int count = Objects.requireNonNull(testNameCounts.get(name));
       String methodName = getTestMethodNameWithParameters(result, count);
       testNameCounts.put(name, count + 1);
 
@@ -332,6 +335,7 @@ public final class TestNGRunner extends BaseRunner {
           new TestResult(className, methodName, runTimeMillis, type, failure, stdOut, stdErr));
     }
 
+    @Nullable
     private String streamToString(ByteArrayOutputStream str) {
       try {
         return str.size() == 0 ? null : str.toString(ENCODING);

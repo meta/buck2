@@ -33,7 +33,6 @@ use starlark::values::Trace;
 use starlark::values::Value;
 use starlark::values::ValueOf;
 use starlark::values::ValueTyped;
-use starlark::values::dict::DictMut;
 use starlark::values::dict::DictType;
 use starlark::values::none::NoneOr;
 use starlark::values::string::StarlarkStr;
@@ -305,7 +304,7 @@ fn configuration_info_methods(builder: &mut MethodsBuilder) {
         let setting_info = value.setting();
         let label = setting_info.label();
 
-        let mut constraints = DictMut::from_value(this.constraints.to_value())?;
+        let mut constraints = this.constraints.dict_mut()?;
 
         let previous = constraints.aref.insert_hashed(
             label
@@ -353,7 +352,7 @@ fn configuration_info_methods(builder: &mut MethodsBuilder) {
         heap: Heap<'v>,
     ) -> starlark::Result<NoneOr<ValueTyped<'v, ConstraintValueInfo<'v>>>> {
         let label = key.label();
-        let mut constraints = DictMut::from_value(this.constraints.to_value())?;
+        let mut constraints = this.constraints.dict_mut()?;
 
         // Remove and return the value
         let removed = constraints.aref.remove_hashed(

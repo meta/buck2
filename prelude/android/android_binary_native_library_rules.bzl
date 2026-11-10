@@ -2247,9 +2247,8 @@ def _run_jni_onload_check(
             output.as_output(),
         ),
         category = "jni_onload_check",
-        # Reads every object that goes into every merged library; running it
-        # remotely avoids shipping them back for a local scan.
-        prefer_remote = True,
+        # No execution preference, like the merged-library links: when a link
+        # runs locally, these objects are already on disk.
     )
 
 def _link_info_object_artifacts(link_info: LinkInfo) -> list[Artifact]:

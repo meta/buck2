@@ -23,7 +23,6 @@ import org.jetbrains.kotlin.backend.common.extensions.IrPluginContext
 import org.jetbrains.kotlin.backend.common.lower.DeclarationIrBuilder
 import org.jetbrains.kotlin.descriptors.ClassKind
 import org.jetbrains.kotlin.descriptors.DescriptorVisibilities
-import org.jetbrains.kotlin.descriptors.Modality
 import org.jetbrains.kotlin.ir.IrBuiltIns
 import org.jetbrains.kotlin.ir.IrElement
 import org.jetbrains.kotlin.ir.IrStatement
@@ -355,7 +354,7 @@ internal class NonAbiDeclarationsStrippingIrVisitor(
   // Convert a fake override to a real method with a stub body.
   private fun materializeFakeOverride(decl: IrSimpleFunction) {
     decl.isFakeOverride = false
-    decl.modality = Modality.FINAL
+    // Keep the FIR modality: forcing FINAL breaks subclasses of open classes.
     decl.origin = IrDeclarationOrigin.DEFINED
     if (decl.body == null) {
       decl.body =

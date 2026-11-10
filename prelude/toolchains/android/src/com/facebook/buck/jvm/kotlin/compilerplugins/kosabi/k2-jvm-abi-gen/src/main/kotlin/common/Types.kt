@@ -18,6 +18,7 @@ package com.facebook
 
 import com.facebook.kotlin.compilercompat.compatValueParameters
 import org.jetbrains.kotlin.GeneratedDeclarationKey
+import org.jetbrains.kotlin.descriptors.Modality
 import org.jetbrains.kotlin.fir.types.ConeKotlinType
 import org.jetbrains.kotlin.ir.declarations.IrSimpleFunction
 import org.jetbrains.kotlin.ir.types.classFqName
@@ -29,6 +30,7 @@ data class InterfaceMethodInfo(
     val name: Name,
     val returnType: ConeKotlinType,
     val valueParameters: List<Pair<Name, ConeKotlinType>>,
+    val modality: Modality,
 )
 
 internal data class MethodSignature(

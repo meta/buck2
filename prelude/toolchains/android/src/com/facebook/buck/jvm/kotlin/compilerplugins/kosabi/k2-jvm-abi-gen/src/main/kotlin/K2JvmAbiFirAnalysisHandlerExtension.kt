@@ -1503,6 +1503,7 @@ class MissingConstantDeclarationGenerationExtension(
                             name = decl.name,
                             returnType = returnType,
                             valueParameters = valueParameters,
+                            modality = decl.status.modality ?: Modality.OPEN,
                         ),
                     )
                   }
@@ -1566,11 +1567,21 @@ class MissingConstantDeclarationGenerationExtension(
       }
     }
 
-    // Set status: public and final (required for enum implementations)
+    // Set status: public; final only for enum implementations (which cannot be
+    // overridden), otherwise the interface member's modality so overridable
+    // forwarders stay non-final like the class ABI. An abstract interface member
+    // becomes an OPEN implementation.
+    val isEnumOwner = (owner as? FirRegularClass)?.classKind == ClassKind.ENUM_CLASS
+    val modality =
+        when {
+          isEnumOwner -> Modality.FINAL
+          methodInfo.modality == Modality.ABSTRACT -> Modality.OPEN
+          else -> methodInfo.modality
+        }
     function.replaceStatus(
         FirResolvedDeclarationStatusImpl(
             Visibilities.Public,
-            Modality.FINAL,
+            modality,
             EffectiveVisibility.Public,
         ),
     )

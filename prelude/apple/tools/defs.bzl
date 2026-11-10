@@ -39,8 +39,8 @@ def apple_oso_scrubber_target():
 
     return select({
         "DEFAULT": default_scrubber,
-        "ovr_config//features/apple/constraints:native_oso_scrubber_disabled": _PYTHON_SCRUBBER,
-        "ovr_config//features/apple/constraints:native_oso_scrubber_enabled": _NATIVE_SCRUBBER,
+        "ovr_config//features/apple/constraints:native_oso_scrubber[disabled]": _PYTHON_SCRUBBER,
+        "ovr_config//features/apple/constraints:native_oso_scrubber[enabled]": _NATIVE_SCRUBBER,
     })
 
 def bundle_telemetry_logger_target():

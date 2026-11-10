@@ -29,6 +29,7 @@ import org.jetbrains.kotlin.backend.common.extensions.IrPluginContext
 import org.jetbrains.kotlin.cli.common.messages.CompilerMessageSeverity
 import org.jetbrains.kotlin.cli.common.messages.MessageCollector
 import org.jetbrains.kotlin.config.KotlinCompilerVersion
+import org.jetbrains.kotlin.fir.FirElement
 import org.jetbrains.kotlin.fir.backend.Fir2IrComponentsStorage
 import org.jetbrains.kotlin.fir.backend.Fir2IrConfiguration
 import org.jetbrains.kotlin.fir.backend.Fir2IrConversionScope
@@ -42,7 +43,10 @@ import org.jetbrains.kotlin.fir.declarations.FirProperty
 import org.jetbrains.kotlin.fir.declarations.FirPropertyAccessor
 import org.jetbrains.kotlin.fir.declarations.FirRegularClass
 import org.jetbrains.kotlin.fir.expressions.FirBlock
+import org.jetbrains.kotlin.fir.expressions.FirFunctionCall
+import org.jetbrains.kotlin.fir.references.FirNamedReference
 import org.jetbrains.kotlin.fir.symbols.impl.FirPropertyAccessorSymbol
+import org.jetbrains.kotlin.fir.visitors.FirVisitorVoid
 import org.jetbrains.kotlin.ir.IrElement
 import org.jetbrains.kotlin.ir.declarations.IrClass
 import org.jetbrains.kotlin.ir.declarations.IrDeclaration
@@ -160,6 +164,34 @@ internal class InlineBodyStage : AbiGenStage {
               },
               null,
           )
+          // Module-scope bodies can carry calls whose callee is an unbound fake override
+          // (inherited member): nothing downstream can resolve the owner and the JVM
+          // backend crashes reading it. Rebind such callees to the matching declared
+          // member of the receiver's class, grounded by the enclosing function's FIR.
+          // Anything still unbound afterwards keeps the previous behavior.
+          val funStack = ArrayDeque<IrSimpleFunction>()
+          moduleFragment.acceptChildren(
+              object : IrElementVisitorVoidCompat() {
+                override fun visitElement(element: IrElement) {
+                  if (element is IrSimpleFunction) funStack.addLast(element)
+                  if (element is IrCall) {
+                    try {
+                      element.symbol.owner
+                    } catch (_: IllegalStateException) {
+                      funStack
+                          .lastOrNull()
+                          ?.let { firFunctionOf(it)?.body }
+                          ?.let { firBody ->
+                            bindCallee(element, firBody, pluginContext)
+                          }
+                    }
+                  }
+                  element.acceptChildren(this, null)
+                  if (element is IrSimpleFunction) funStack.removeLast()
+                }
+              },
+              null,
+          )
         }
       }
 
@@ -237,7 +269,14 @@ internal class InlineBodyStage : AbiGenStage {
   private fun foldConstLiteral(property: FirProperty): Any? = foldableConstLiteral(property)?.value
 
   private fun foldConstRead(expression: IrCall): IrExpression? {
-    val callee = expression.symbol.owner
+    // An unresolvable owner (notably a fake-override callee for an inherited member,
+    // whose owner throws) can never be a same-module const read; leave such calls alone.
+    val callee =
+        try {
+          expression.symbol.owner
+        } catch (_: IllegalStateException) {
+          return null
+        }
     val property = callee.correspondingPropertySymbol?.owner as? IrProperty ?: return null
     val fir = (property.metadata as? FirMetadataSource.Property)?.fir ?: return null
     if (!isFoldableConst(fir)) return null
@@ -333,13 +372,15 @@ internal class InlineBodyStage : AbiGenStage {
                 .getMethod("putParametersInScope", IrFunction::class.java, FirFunction::class.java)
                 .invoke(declarations, irFunction, firFunction)
             val converter = convertToIrBlockBodyMethod()
-            (if (converter.parameterCount == 1) {
-              converter.invoke(storage.fir2IrVisitor, firBody)
-            } else {
-              // The newer API's null prologue is the ordinary block-conversion default.
-              converter.invoke(storage.fir2IrVisitor, firBody, null)
-            })
-                as IrBlockBody
+            val body =
+                (if (converter.parameterCount == 1) {
+                  converter.invoke(storage.fir2IrVisitor, firBody)
+                } else {
+                  // The newer API's null prologue is the ordinary block-conversion default.
+                  converter.invoke(storage.fir2IrVisitor, firBody, null)
+                })
+                    as IrBlockBody
+            body
           } finally {
             skipBodies.setBoolean(configuration, skipped)
             declarations.leaveScope(irFunction.symbol)
@@ -347,6 +388,61 @@ internal class InlineBodyStage : AbiGenStage {
         }
       }
     }
+  }
+
+  // A separately converted body can carry calls whose callee is an unbound fake override
+  // (inherited member): module-scope fake-override binding already ran, so nothing downstream
+  // can resolve the owner and the JVM backend crashes reading it. Rebind such callees to the
+  // matching declared member of the receiver's class, resolved through the plugin context.
+  // Anything still unbound afterwards keeps the previous behavior.
+  // Collects the (declaring class, name) of every resolved function call in a FIR body.
+  // Lowering changes the call count, so IR calls never pair positionally with these;
+  // matching runs by name instead. FIR resolution sees through fake overrides to the
+  // real declaration, so the class only scopes nothing: names match across the set.
+  private fun collectFirCallNames(element: FirElement, out: MutableSet<String>) {
+    if (element is FirFunctionCall) {
+      (element.calleeReference as? FirNamedReference)?.name?.asString()?.let(out::add)
+    }
+    element.acceptChildren(
+        object : FirVisitorVoid() {
+          override fun visitElement(element: FirElement) {
+            collectFirCallNames(element, out)
+          }
+        },
+        null,
+    )
+  }
+
+  private fun bindCallee(
+      call: IrCall,
+      firBody: FirBlock,
+      pluginContext: IrPluginContext,
+  ) {
+    val names = mutableSetOf<String>()
+    collectFirCallNames(firBody, names)
+    if (names.isEmpty()) return
+    // The receiver's class as converted at module scope carries bound declarations,
+    // including its own (bound) fake overrides, which preserve virtual dispatch. Require
+    // a unique name match so overloads never rebind to the wrong target.
+    // (dispatchReceiver.type is an IR type: ConeClassLikeType never matches here.)
+    val receiverType = call.dispatchReceiver?.type as? IrSimpleType ?: return
+    val irClass =
+        try {
+          (receiverType.classifier as? IrClassSymbol)?.owner
+        } catch (_: IllegalStateException) {
+          return
+        } ?: return
+    val target =
+        irClass.declarations
+            .filterIsInstance<IrSimpleFunction>()
+            .filter { it.name.asString() in names }
+            .singleOrNull() ?: return
+    try {
+      target.symbol.owner
+    } catch (_: IllegalStateException) {
+      return
+    }
+    call.symbol = target.symbol
   }
 
   private fun Class<*>.declaredField(name: String) =

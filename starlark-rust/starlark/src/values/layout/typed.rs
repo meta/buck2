@@ -17,6 +17,7 @@
 
 pub(crate) mod string;
 
+use std::convert::Infallible;
 use std::fmt;
 use std::fmt::Debug;
 use std::fmt::Display;
@@ -49,6 +50,7 @@ use crate::values::Freezer;
 use crate::values::FrozenHeap;
 use crate::values::Heap;
 use crate::values::HeapEdge;
+use crate::values::StarlarkType;
 use crate::values::StarlarkTypeExpr;
 use crate::values::StarlarkValue;
 use crate::values::StringValue;
@@ -389,22 +391,19 @@ impl<'v, T: StarlarkValue<'v>> StarlarkTypeRepr for ValueTyped<'v, T> {
     }
 }
 
-/// A parameter bound to this representation of the type: a value of the type in another
-/// representation is of the declared type and fails as a conversion.
-impl<'v, T: StarlarkValue<'v>> UnpackValue<'v> for ValueTyped<'v, T>
+/// A parameter of a type with one representation, bound to that representation. A type with
+/// several representations is bound as its view or as a [`ValueOf`]; a specific representation
+/// of it is not a parameter binding.
+impl<'v, T> UnpackValue<'v> for ValueTyped<'v, T>
 where
-    T::Type: StarlarkTypeExpr<'v>,
+    T: StarlarkValue<'v> + StarlarkType<'v, Get = ValueTyped<'v, T>>,
 {
-    type Type = T::Type;
-    type Error = crate::Error;
+    type Type = T;
+    type Error = Infallible;
 
     #[inline]
-    fn unpack(
-        value: ValueOf<'v, T::Type>,
-        _get: <T::Type as StarlarkTypeExpr<'v>>::Get,
-    ) -> crate::Result<Self> {
-        let value = value.to_value();
-        ValueTyped::new(value).ok_or_else(|| not_representation_error::<T>(value))
+    fn unpack(_value: ValueOf<'v, T>, get: ValueTyped<'v, T>) -> Result<Self, Infallible> {
+        Ok(get)
     }
 }
 

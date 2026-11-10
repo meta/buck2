@@ -410,7 +410,7 @@ mod tests {
     use crate as starlark;
     use crate::assert::Assert;
     use crate::environment::GlobalsBuilder;
-    use crate::values::ValueTyped;
+    use crate::values::FrozenValueTyped;
     use crate::values::none::NoneType;
     use crate::values::record::record_type::FrozenRecordType;
 
@@ -419,7 +419,7 @@ mod tests {
         /// A parameter bound to the frozen representation of a type that also has an unfrozen
         /// one.
         fn takes_frozen_record_type<'v>(
-            x: ValueTyped<'v, FrozenRecordType<'v>>,
+            x: FrozenValueTyped<'v, FrozenRecordType<'v>>,
         ) -> anyhow::Result<NoneType> {
             let _ = x;
             Ok(NoneType)
@@ -432,16 +432,16 @@ mod tests {
         a
     }
 
-    /// The declared type is the nominal one, so the other representation is of the type and
+    /// The declared type is the nominal one, so the unfrozen representation is of the type and
     /// fails as a conversion, not as a type mismatch.
     #[test]
-    fn test_representation_specific_binding() {
+    fn test_frozen_binding() {
         let mut a = assert();
         a.module("rec.star", "R = record(a=int)");
         a.pass("load('rec.star', 'R')\ntakes_frozen_record_type(R)");
         a.fail(
             "takes_frozen_record_type(record(a=int))",
-            "but not in the representation",
+            "Expected frozen value of type",
         );
     }
 }

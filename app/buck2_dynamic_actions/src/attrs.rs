@@ -304,10 +304,9 @@ impl<'v> DynamicAttrType<'v> {
     pub fn coerce(&self, value: Value<'v>) -> buck2_error::Result<DynamicAttrValue<'v>> {
         match self {
             DynamicAttrType::Output => {
-                let artifact = ValueTyped::<StarlarkOutputArtifact<'v>>::unpack_value_err(value)?;
-                Ok(DynamicAttrValue::Output(ValueOf::from_representation(
-                    artifact,
-                )))
+                let artifact = ValueOf::<StarlarkOutputArtifactView>::new_err(value)?;
+                unfrozen_output(artifact)?;
+                Ok(DynamicAttrValue::Output(artifact))
             }
             DynamicAttrType::ArtifactValue => {
                 let artifact = StarlarkArtifactView::unpack_value_err(value)?;

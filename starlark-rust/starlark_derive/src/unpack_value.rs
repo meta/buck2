@@ -107,14 +107,5 @@ fn derive_unpack_value_impl(input: syn::DeriveInput) -> syn::Result<proc_macro2:
             }
         }
     };
-    let unpack_stable_impl: syn::ItemImpl = syn::parse_quote_spanned! { span =>
-        impl #impl_generics starlark::values::UnpackValueStable<'v> for #ident #type_generics
-        where
-            #ident #type_generics: starlark::values::StarlarkTypeExprStable<'v>,
-        {
-        }
-    };
-    Ok(
-        quote::quote_spanned! { span => #expr_impl #stable_impl #payload_impl #trait_impl #unpack_stable_impl },
-    )
+    Ok(quote::quote_spanned! { span => #expr_impl #stable_impl #payload_impl #trait_impl })
 }

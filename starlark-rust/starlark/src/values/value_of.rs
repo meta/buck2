@@ -48,7 +48,6 @@ use crate::values::StarlarkValue;
 use crate::values::Trace;
 use crate::values::Tracer;
 use crate::values::UnpackValue;
-use crate::values::UnpackValueStable;
 use crate::values::Value;
 use crate::values::ValueTyped;
 use crate::values::type_expr::StarlarkTypeExpr;
@@ -142,33 +141,6 @@ impl<'v, T: StarlarkTypeExpr<'v>> ValueOf<'v, T> {
     pub fn try_get(self) -> crate::Result<T::Get> {
         T::get(self.0)
             .ok_or_else(|| crate::values::unpack::changed_since_checked_error::<T>(self.0))
-    }
-
-    /// The `T` this value converts to, for a `T` whose check cannot be invalidated and whose
-    /// conversion cannot fail ([`UnpackValueStable`]).
-    #[inline]
-    pub fn unpack(self) -> T
-    where
-        T: UnpackValueStable<'v>,
-    {
-        match T::unpack_value_err(self.0) {
-            Ok(x) => x,
-            Err(e) => unreachable!(
-                "`{}` is `UnpackValueStable`, yet value `{}` stopped being one: {e}",
-                T::starlark_type_repr(),
-                self.0,
-            ),
-        }
-    }
-
-    /// The `T` this value converts to, re-checked as for [`try_get`](Self::try_get); a
-    /// conversion that fails within the type also surfaces here.
-    #[inline]
-    pub fn try_unpack(self) -> crate::Result<T>
-    where
-        T: UnpackValue<'v>,
-    {
-        T::unpack_value_err(self.0)
     }
 }
 

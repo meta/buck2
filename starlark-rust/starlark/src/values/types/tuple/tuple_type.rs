@@ -22,7 +22,6 @@ use crate as starlark;
 use crate::any::ProvidesStaticType;
 use crate::typing::Ty;
 use crate::values::UnpackValue;
-use crate::values::UnpackValueStable;
 use crate::values::Value;
 use crate::values::ValueOf;
 use crate::values::tuple::TupleRef;
@@ -92,15 +91,15 @@ impl<'v, T: StarlarkTypeExpr<'v>> ValueOf<'v, TupleType<T>> {
         })
     }
 
-    /// The items, unpacked. A tuple does not change, so for a `T` whose check cannot change
-    /// either ([`UnpackValueStable`]) there is nothing to re-check.
-    pub fn items(self) -> impl Iterator<Item = T> + 'v
+    /// The items, read as [`get`](ValueOf::get) reads them. A tuple does not change, so for a
+    /// `T` whose check cannot change either there is nothing that can fail.
+    pub fn items(self) -> impl Iterator<Item = T::Get> + 'v
     where
-        T: UnpackValueStable<'v> + 'v,
+        T: StarlarkTypeExprStable<'v> + 'v,
     {
         self.tuple()
             .iter()
-            .map(|x| ValueOf::<T>::new_unchecked(x).unpack())
+            .map(|x| ValueOf::<T>::new_unchecked(x).get())
     }
 
     /// The items, unpacked. Each is re-checked, as for [`iter`](Self::iter).

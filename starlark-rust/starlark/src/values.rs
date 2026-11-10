@@ -146,7 +146,6 @@ pub use crate::values::types::tuple;
 pub use crate::values::unpack::UnpackValue;
 pub use crate::values::unpack::UnpackValueError;
 pub use crate::values::unpack::UnpackValueErrorInfallible;
-pub use crate::values::unpack_stable::UnpackValueStable;
 pub use crate::values::value_of::ValueOf;
 
 mod alloc_value;
@@ -171,5 +170,4 @@ pub mod type_repr;
 pub(crate) mod types;
 pub mod typing;
 mod unpack;
-mod unpack_stable;
 pub(crate) mod value_of;

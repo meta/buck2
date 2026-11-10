@@ -417,7 +417,7 @@ fn attr_module(registry: &mut GlobalsBuilder) {
         #[starlark(require = named, default = Either::Left(ValueOf::empty_list()))]
         pulls_and_pushes_plugins: Either<
             ValueOf<'v, ListOrTupleType<StarlarkPluginKindView<'v>>>,
-            &'v AllPlugins,
+            ValueOf<'v, AllPlugins>,
         >,
         #[starlark(require = named)] default: Option<Value<'v>>,
         #[starlark(require = named, default = "")] doc: &str,
@@ -698,16 +698,17 @@ fn attr_module(registry: &mut GlobalsBuilder) {
 
     /// Given a list of alternative attributes, selects the first that matches and gives that to the rule.
     fn one_of<'v>(
-        #[starlark(args)] args: ValueOf<'v, TupleType<&'v StarlarkAttribute>>,
+        #[starlark(args)] args: ValueOf<'v, TupleType<StarlarkAttribute>>,
         #[starlark(require = named)] default: Option<Value<'v>>,
         #[starlark(require = named, default = "")] doc: &str,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<StarlarkAttribute> {
+        let args = args.iter().collect::<starlark::Result<Vec<_>>>()?;
         let marks = args
-            .items()
+            .iter()
             .fold(ToolMarks::NONE, |marks, arg| marks.union(arg.tool_marks()));
         let coercer = AttrType::one_of(
-            args.items()
+            args.iter()
                 .map(|arg| arg.coercer_for_inner())
                 .collect::<Result<Vec<_>, _>>()?,
         );
@@ -716,16 +717,17 @@ fn attr_module(registry: &mut GlobalsBuilder) {
 
     /// Takes a tuple of values and gives a tuple to the rule.
     fn tuple<'v>(
-        #[starlark(args)] args: ValueOf<'v, TupleType<&'v StarlarkAttribute>>,
+        #[starlark(args)] args: ValueOf<'v, TupleType<StarlarkAttribute>>,
         #[starlark(require = named)] default: Option<Value<'v>>,
         #[starlark(require = named, default = "")] doc: &str,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<StarlarkAttribute> {
+        let args = args.iter().collect::<starlark::Result<Vec<_>>>()?;
         let marks = args
-            .items()
+            .iter()
             .fold(ToolMarks::NONE, |marks, arg| marks.union(arg.tool_marks()));
         let coercer = AttrType::tuple(
-            args.items()
+            args.iter()
                 .map(|arg| arg.coercer_for_inner())
                 .collect::<Result<Vec<_>, _>>()?,
         );

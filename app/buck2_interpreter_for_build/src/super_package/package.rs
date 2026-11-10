@@ -31,6 +31,7 @@ use starlark::environment::GlobalsBuilder;
 use starlark::eval::Evaluator;
 use starlark::starlark_module;
 use starlark::values::ValueOf;
+use starlark::values::ValueTyped;
 use starlark::values::list_or_tuple::ListOrTupleType;
 use starlark::values::none::NoneOr;
 use starlark::values::none::NoneType;
@@ -79,7 +80,7 @@ enum PackageFileError {
 
 fn add_visibility_pattern<'v>(
     builder: &mut VisibilityWithinViewBuilder,
-    value: Either<&'v str, &'v StarlarkTargetNameGlob>,
+    value: Either<&'v str, ValueTyped<'v, StarlarkTargetNameGlob>>,
     cell_name: CellName,
     cell_resolver: &CellResolver,
     cell_alias_resolver: &CellAliasResolver,
@@ -108,7 +109,7 @@ fn add_visibility_pattern<'v>(
 }
 
 fn parse_visibility<'v>(
-    patterns: &[Either<&'v str, &'v StarlarkTargetNameGlob>],
+    patterns: &[Either<&'v str, ValueTyped<'v, StarlarkTargetNameGlob>>],
     cell_name: CellName,
     cell_resolver: &CellResolver,
     cell_alias_resolver: &CellAliasResolver,
@@ -127,7 +128,7 @@ fn parse_visibility<'v>(
 }
 
 fn parse_within_view<'v>(
-    patterns: &[Either<&'v str, &'v StarlarkTargetNameGlob>],
+    patterns: &[Either<&'v str, ValueTyped<'v, StarlarkTargetNameGlob>>],
     cell_name: CellName,
     cell_resolver: &CellResolver,
     cell_alias_resolver: &CellAliasResolver,
@@ -267,11 +268,11 @@ pub(crate) fn register_package_function(globals: &mut GlobalsBuilder) {
     fn package<'v>(
         #[starlark(require=named, default=false)] inherit: bool,
         #[starlark(require=named, default=NoneOr::None)] visibility: NoneOr<
-            ValueOf<'v, ListOrTupleType<Either<&'v str, &'v StarlarkTargetNameGlob>>>,
+            ValueOf<'v, ListOrTupleType<Either<&'v str, StarlarkTargetNameGlob>>>,
         >,
         #[starlark(require=named, default=ValueOf::empty_list())] within_view: ValueOf<
             'v,
-            ListOrTupleType<Either<&'v str, &'v StarlarkTargetNameGlob>>,
+            ListOrTupleType<Either<&'v str, StarlarkTargetNameGlob>>,
         >,
         #[starlark(require=named, default=ValueOf::empty_list())]
         visibility_exempt_targets: ValueOf<'v, ListOrTupleType<&'v str>>,
@@ -284,9 +285,16 @@ pub(crate) fn register_package_function(globals: &mut GlobalsBuilder) {
         }
         let visibility_provided = visibility
             .into_option()
-            .map(|v| v.try_to_vec())
+            .map(|v| {
+                v.iter()
+                    .map(|p| Ok(p?.get()))
+                    .collect::<starlark::Result<Vec<_>>>()
+            })
             .transpose()?;
-        let within_view = within_view.try_to_vec()?;
+        let within_view = within_view
+            .iter()
+            .map(|p| Ok(p?.get()))
+            .collect::<starlark::Result<Vec<_>>>()?;
         let visibility_exempt_targets = visibility_exempt_targets.try_to_vec()?;
         // Validated regardless of `package_visibility.default_intersection`, so an
         // emergency enforce-to-off flip cannot turn valid PACKAGE files into errors.

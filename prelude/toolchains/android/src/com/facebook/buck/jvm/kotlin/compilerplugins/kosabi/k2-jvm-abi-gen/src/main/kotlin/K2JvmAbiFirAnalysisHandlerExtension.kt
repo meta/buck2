@@ -1481,15 +1481,28 @@ class MissingConstantDeclarationGenerationExtension(
 
                   val alreadyDeclared = alreadyDeclaredInClass || alreadyDeclaredInEnumEntry
                   if (!alreadyDeclared) {
+                    // Java-loaded members carry FirJavaTypeRef, whose cone type throws;
+                    // without readable types no forwarder can be synthesised, so skip.
+                    val returnType =
+                        (decl.returnTypeRef as? FirResolvedTypeRef)?.coneType ?: continue
+                    val valueParameters = mutableListOf<Pair<Name, ConeKotlinType>>()
+                    var typesReadable = true
+                    for (param in decl.valueParameters) {
+                      val paramType =
+                          (param.returnTypeRef as? FirResolvedTypeRef)?.coneType
+                              ?: run {
+                                typesReadable = false
+                                break
+                              }
+                      valueParameters.add(param.name to paramType)
+                    }
+                    if (!typesReadable) continue
                     internalMethodNames.add(decl.name)
                     interfaceMethodInfos.add(
                         InterfaceMethodInfo(
                             name = decl.name,
-                            returnType = decl.returnTypeRef.coneType,
-                            valueParameters =
-                                decl.valueParameters.map { param ->
-                                  param.name to param.returnTypeRef.coneType
-                                },
+                            returnType = returnType,
+                            valueParameters = valueParameters,
                         ),
                     )
                   }

@@ -17,7 +17,7 @@ import java.nio.file.Path;
 import java.util.Collections;
 import java.util.List;
 import java.util.Set;
-import javax.annotation.Nullable;
+import org.jspecify.annotations.Nullable;
 
 /** Write an entry to stub jar by directly copy an existing abi. */
 @Nullsafe(Nullsafe.Mode.LOCAL)

@@ -18,11 +18,11 @@ import com.facebook.infer.annotation.Nullsafe;
 import java.io.IOException;
 import java.util.Objects;
 import java.util.Set;
-import javax.annotation.Nullable;
 import javax.annotation.processing.Messager;
 import javax.lang.model.SourceVersion;
 import javax.lang.model.element.Element;
 import javax.lang.model.util.Types;
+import org.jspecify.annotations.Nullable;
 
 @Nullsafe(Nullsafe.Mode.LOCAL)
 public class StubGenerator {

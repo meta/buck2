@@ -17,7 +17,7 @@ import com.facebook.buck.step.isolatedsteps.IsolatedStep;
 import com.facebook.infer.annotation.Nullsafe;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
-import javax.annotation.Nullable;
+import org.jspecify.annotations.Nullable;
 
 /**
  * Interface for adding the steps for compiling source to producing a JAR, for JVM languages.

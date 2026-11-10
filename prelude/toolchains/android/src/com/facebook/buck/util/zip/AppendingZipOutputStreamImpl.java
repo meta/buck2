@@ -21,7 +21,7 @@ import java.util.Set;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipException;
 import javax.annotation.Nonnull;
-import javax.annotation.Nullable;
+import org.jspecify.annotations.Nullable;
 
 /**
  * A drop-in replacement for (@link java.util.zip.ZipOutStream} that supports the ability to set a

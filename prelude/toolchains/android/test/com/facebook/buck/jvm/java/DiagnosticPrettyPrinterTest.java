@@ -15,10 +15,10 @@ import static org.junit.Assert.assertTrue;
 
 import java.nio.file.Paths;
 import java.util.Locale;
-import javax.annotation.Nullable;
 import javax.tools.Diagnostic;
 import javax.tools.JavaFileObject;
 import javax.tools.SimpleJavaFileObject;
+import org.jspecify.annotations.Nullable;
 import org.junit.Test;
 
 public class DiagnosticPrettyPrinterTest {

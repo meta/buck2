@@ -32,7 +32,7 @@ import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.stream.Collectors;
-import javax.annotation.Nullable;
+import org.jspecify.annotations.Nullable;
 
 @Nullsafe(Nullsafe.Mode.LOCAL)
 public class JavacPipelineState implements AutoCloseable {
@@ -50,7 +50,7 @@ public class JavacPipelineState implements AutoCloseable {
 
   @Nullable private CapturingPrintStream stdout;
   @Nullable private CapturingPrintStream stderr;
-  @Nullable private ResolvedJavac.Invocation invocation;
+  private ResolvedJavac.@Nullable Invocation invocation;
 
   public JavacPipelineState(
       ResolvedJavac resolvedJavac,

@@ -12,6 +12,7 @@ package com.facebook.buck.test.selectors;
 
 import com.facebook.infer.annotation.Nullsafe;
 import java.util.Objects;
+import org.jspecify.annotations.Nullable;
 
 /**
  * A non-JUnit specific way of describing a test-method inside a test-class. This meants that the

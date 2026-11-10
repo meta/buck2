@@ -16,7 +16,7 @@ buck_java_library(
     ],
     deps = [
         "prelude//toolchains/android/third-party:guava",
-        "prelude//toolchains/android/third-party:jsr305",
+        "prelude//toolchains/android/third-party:jspecify",
     ],
     exported_deps = [
         "prelude//toolchains/android/src/com/facebook/buck/android/aapt:r_dot_txt",

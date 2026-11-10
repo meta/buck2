@@ -14,7 +14,7 @@ import com.facebook.infer.annotation.Nullsafe;
 import java.nio.file.Path;
 import java.util.Map;
 import java.util.Objects;
-import javax.annotation.Nullable;
+import org.jspecify.annotations.Nullable;
 
 @Nullsafe(Nullsafe.Mode.LOCAL)
 public class ActionMetadata {

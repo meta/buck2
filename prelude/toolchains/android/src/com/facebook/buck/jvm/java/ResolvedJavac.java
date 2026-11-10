@@ -19,7 +19,7 @@ import com.facebook.infer.annotation.Nullsafe;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableSortedSet;
 import java.util.function.Function;
-import javax.annotation.Nullable;
+import org.jspecify.annotations.Nullable;
 
 /** Interface for a resolved javac tool. */
 @Nullsafe(Nullsafe.Mode.LOCAL)

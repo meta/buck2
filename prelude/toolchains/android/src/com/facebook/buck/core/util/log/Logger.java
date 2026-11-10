@@ -35,7 +35,7 @@ import com.facebook.buck.core.util.log.appendablelogrecord.AppendableLogRecord;
 import com.facebook.infer.annotation.Nullsafe;
 import java.util.logging.Handler;
 import java.util.logging.Level;
-import javax.annotation.Nullable;
+import org.jspecify.annotations.Nullable;
 
 @SuppressWarnings("PMD")
 @Nullsafe(Nullsafe.Mode.LOCAL)

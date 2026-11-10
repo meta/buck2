@@ -34,7 +34,6 @@ buck_java_library(
         "prelude//toolchains/android/src/com/facebook/buck/test/result/type:type",
         "prelude//toolchains/android/src/com/facebook/buck/test/selectors:selectors",
         "prelude//toolchains/android/src/com/facebook/buck/util/environment:platform",
-        "prelude//toolchains/android/third-party:jsr305",
     ],
 )
 
@@ -154,7 +153,6 @@ buck_kotlin_library(
         "prelude//toolchains/android/src/com/facebook/buck/test/selectors:selectors",
         "prelude//toolchains/android/src/com/facebook/buck/testresultsoutput:testresultsoutput",
         "prelude//toolchains/android/third-party:jackson-core",
-        "prelude//toolchains/android/third-party:jsr305",
         "prelude//toolchains/android/third-party:junit",
         "prelude//toolchains/android/third-party:junit-jupiter-engine",
         "prelude//toolchains/android/third-party:junit-platform-launcher",
@@ -239,6 +237,7 @@ buck_java_library(
     target = "11", # @oss-enable
     provided_deps = [
         "prelude//toolchains/android/third-party:infer-annotations",
+        "prelude//toolchains/android/third-party:jspecify",
     ],
     # @oss-disable[end= ]: source = "8",
     # @oss-disable[end= ]: target = "8",
@@ -247,7 +246,6 @@ buck_java_library(
         "prelude//toolchains/android/src/com/facebook/buck/test/result/type:type",
         "prelude//toolchains/android/src/com/facebook/buck/test/selectors:selectors",
         "prelude//toolchains/android/third-party:guice",
-        "prelude//toolchains/android/third-party:jsr305",
         "prelude//toolchains/android/third-party:testng",
         ":base",
     ],

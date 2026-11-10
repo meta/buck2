@@ -13,7 +13,6 @@ package com.facebook.buck.jvm.java.abi;
 import com.facebook.infer.annotation.Nullsafe;
 import java.util.HashSet;
 import java.util.Set;
-import javax.annotation.Nullable;
 import javax.lang.model.element.TypeParameterElement;
 import javax.lang.model.type.ArrayType;
 import javax.lang.model.type.DeclaredType;
@@ -28,6 +27,7 @@ import javax.lang.model.type.TypeVariable;
 import javax.lang.model.type.UnionType;
 import javax.lang.model.type.WildcardType;
 import javax.lang.model.util.AbstractTypeVisitor8;
+import org.jspecify.annotations.Nullable;
 
 /**
  * A scanning visitor of {@link TypeMirror}s for {@link javax.lang.model.SourceVersion#RELEASE_8}.

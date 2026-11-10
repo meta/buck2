@@ -17,7 +17,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.jar.Manifest;
 import java.util.stream.Stream;
-import javax.annotation.Nullable;
+import org.jspecify.annotations.Nullable;
 
 /**
  * Represents a container for entries to be added to a jar file by @{link JarBuilder}. Examples
@@ -52,8 +52,7 @@ public interface JarEntryContainer extends AutoCloseable {
     }
   }
 
-  @Nullable
-  Manifest getManifest() throws IOException;
+  @Nullable Manifest getManifest() throws IOException;
 
   Stream<JarEntrySupplier> stream() throws IOException;
 

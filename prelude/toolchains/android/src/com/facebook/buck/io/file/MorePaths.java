@@ -32,7 +32,7 @@ import java.nio.file.Paths;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.function.Function;
-import javax.annotation.Nullable;
+import org.jspecify.annotations.Nullable;
 
 /** Common functions that are done with a {@link Path}. */
 @Nullsafe(Nullsafe.Mode.LOCAL)

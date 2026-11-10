@@ -11,7 +11,7 @@
 package com.facebook.buck.util.zip;
 
 import com.facebook.infer.annotation.Nullsafe;
-import javax.annotation.Nullable;
+import org.jspecify.annotations.Nullable;
 
 /**
  * Strategy interface for merging manifest attribute values. Implementations define how to compute

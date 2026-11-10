@@ -13,10 +13,10 @@ package com.facebook.buck.jvm.java;
 import com.facebook.infer.annotation.Nullsafe;
 import java.io.File;
 import java.io.IOException;
-import javax.annotation.Nullable;
 import javax.tools.ForwardingJavaFileManager;
 import javax.tools.JavaFileObject;
 import javax.tools.StandardJavaFileManager;
+import org.jspecify.annotations.Nullable;
 
 @Nullsafe(Nullsafe.Mode.LOCAL)
 public class ForwardingStandardJavaFileManager

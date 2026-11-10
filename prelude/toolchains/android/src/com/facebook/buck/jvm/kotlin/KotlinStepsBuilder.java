@@ -25,7 +25,7 @@ import com.facebook.buck.step.isolatedsteps.IsolatedStep;
 import com.facebook.infer.annotation.Nullsafe;
 import com.google.common.collect.ImmutableList;
 import java.util.Objects;
-import javax.annotation.Nullable;
+import org.jspecify.annotations.Nullable;
 
 /** Converts serialized protobuf commands into steps to compile Kotlin targets. */
 @Nullsafe(Nullsafe.Mode.LOCAL)

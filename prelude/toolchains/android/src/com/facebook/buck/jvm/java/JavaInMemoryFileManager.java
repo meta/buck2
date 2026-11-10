@@ -30,11 +30,11 @@ import java.util.HashSet;
 import java.util.Map;
 import java.util.Set;
 import java.util.function.Predicate;
-import javax.annotation.Nullable;
 import javax.tools.FileObject;
 import javax.tools.ForwardingJavaFileManager;
 import javax.tools.JavaFileObject;
 import javax.tools.StandardJavaFileManager;
+import org.jspecify.annotations.Nullable;
 
 /**
  * A {@link StandardJavaFileManager} that creates and writes the content of files directly into a

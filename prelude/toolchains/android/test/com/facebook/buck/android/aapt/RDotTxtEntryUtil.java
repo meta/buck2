@@ -11,7 +11,7 @@
 package com.facebook.buck.android.aapt;
 
 import com.google.common.base.Objects;
-import javax.annotation.Nullable;
+import org.jspecify.annotations.Nullable;
 
 /**
  * Util class for testing {@link RDotTxtEntry} objects. Testing {@link RDotTxtEntry} objects is

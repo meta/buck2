@@ -18,8 +18,8 @@ import com.facebook.infer.annotation.Nullsafe;
 import com.google.common.base.Joiner;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableSortedSet;
-import javax.annotation.Nullable;
 import javax.tools.JavaCompiler;
+import org.jspecify.annotations.Nullable;
 
 /** Command used to compile java libraries with a variety of ways to handle dependencies. */
 @Nullsafe(Nullsafe.Mode.LOCAL)

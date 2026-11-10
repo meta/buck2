@@ -11,9 +11,9 @@
 package com.facebook.buck.jvm.java;
 
 import com.facebook.infer.annotation.Nullsafe;
-import javax.annotation.Nullable;
 import javax.tools.StandardJavaFileManager;
 import javax.tools.StandardLocation;
+import org.jspecify.annotations.Nullable;
 
 @Nullsafe(Nullsafe.Mode.LOCAL)
 public class PluginLoaderJavaFileManager extends ForwardingStandardJavaFileManager

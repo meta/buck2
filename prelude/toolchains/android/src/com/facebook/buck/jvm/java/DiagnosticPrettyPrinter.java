@@ -18,9 +18,9 @@ import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.Locale;
 import java.util.Optional;
-import javax.annotation.Nullable;
 import javax.tools.Diagnostic;
 import javax.tools.JavaFileObject;
+import org.jspecify.annotations.Nullable;
 
 /**
  * Take a {@link Diagnostic} and pretty print it, using the same formatting as you'd find in the

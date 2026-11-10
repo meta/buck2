@@ -21,10 +21,10 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
 import java.util.zip.ZipFile;
-import javax.annotation.Nullable;
 import javax.lang.model.element.Element;
 import javax.lang.model.util.Elements;
 import javax.tools.JavaFileManager;
+import org.jspecify.annotations.Nullable;
 
 /** Availability on the reduced dependency classpath and this compilation's generated classes. */
 public final class ReducedClasspathSourceOnlyAbiRuleInfoFactory

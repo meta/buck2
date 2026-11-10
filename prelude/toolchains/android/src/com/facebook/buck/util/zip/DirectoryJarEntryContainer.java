@@ -30,7 +30,7 @@ import java.util.Objects;
 import java.util.function.Supplier;
 import java.util.jar.Manifest;
 import java.util.stream.Stream;
-import javax.annotation.Nullable;
+import org.jspecify.annotations.Nullable;
 
 /**
  * Provides all files and directories recursively contained in a given directory as entries to be

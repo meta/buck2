@@ -12,7 +12,7 @@ package com.facebook.buck.installer.android;
 
 import com.facebook.infer.annotation.Nullsafe;
 import com.google.common.annotations.VisibleForTesting;
-import javax.annotation.Nullable;
+import org.jspecify.annotations.Nullable;
 import org.kohsuke.args4j.Option;
 import org.kohsuke.args4j.spi.ExplicitBooleanOptionHandler;
 

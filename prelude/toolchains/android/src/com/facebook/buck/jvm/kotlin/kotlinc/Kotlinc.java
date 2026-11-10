@@ -24,7 +24,7 @@ import com.google.common.collect.ImmutableSortedSet;
 import java.io.IOException;
 import java.nio.file.Path;
 import java.util.Optional;
-import javax.annotation.Nullable;
+import org.jspecify.annotations.Nullable;
 
 /** Interface for a kotlin compiler. */
 @Nullsafe(Nullsafe.Mode.LOCAL)

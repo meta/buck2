@@ -20,7 +20,7 @@ import java.net.URLClassLoader;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Optional;
-import javax.annotation.Nullable;
+import org.jspecify.annotations.Nullable;
 
 /**
  * Maintain a cache mapping class paths to class loaders that load from these class paths. The class

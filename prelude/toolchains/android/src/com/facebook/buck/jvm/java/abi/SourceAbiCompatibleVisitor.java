@@ -16,7 +16,7 @@ import com.facebook.buck.cd.model.java.AbiGenerationMode;
 import com.facebook.infer.annotation.Nullsafe;
 import com.facebook.infer.annotation.PropagatesNullable;
 import java.util.Objects;
-import javax.annotation.Nullable;
+import org.jspecify.annotations.Nullable;
 import org.objectweb.asm.ClassVisitor;
 import org.objectweb.asm.FieldVisitor;
 import org.objectweb.asm.MethodVisitor;

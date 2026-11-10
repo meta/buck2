@@ -29,7 +29,7 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
-import javax.annotation.Nullable;
+import org.jspecify.annotations.Nullable;
 import org.testng.IAnnotationTransformer;
 import org.testng.IClass;
 import org.testng.IConfigurationListener;

@@ -16,7 +16,7 @@ import java.util.HashSet;
 import java.util.Map;
 import java.util.Set;
 import java.util.SortedSet;
-import javax.annotation.Nullable;
+import org.jspecify.annotations.Nullable;
 import org.objectweb.asm.AnnotationVisitor;
 import org.objectweb.asm.ClassVisitor;
 import org.objectweb.asm.FieldVisitor;
@@ -166,7 +166,7 @@ class ClassReferenceTracker extends ClassVisitor {
     referencedClassNames.add(className);
   }
 
-  void addReferencedClassNames(@Nullable String[] classNames) {
+  void addReferencedClassNames(String @Nullable [] classNames) {
     if (classNames == null) {
       return;
     }

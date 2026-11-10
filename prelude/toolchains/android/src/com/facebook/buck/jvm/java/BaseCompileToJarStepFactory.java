@@ -24,7 +24,7 @@ import com.google.common.collect.ImmutableList.Builder;
 import com.google.common.collect.ImmutableMap;
 import java.util.Objects;
 import java.util.Optional;
-import javax.annotation.Nullable;
+import org.jspecify.annotations.Nullable;
 
 /** Provides a base implementation for post compile steps. */
 @Nullsafe(Nullsafe.Mode.LOCAL)

@@ -23,7 +23,7 @@ import com.facebook.infer.annotation.Nullsafe;
 import com.google.common.base.Preconditions;
 import java.io.IOException;
 import java.nio.file.Path;
-import javax.annotation.Nullable;
+import org.jspecify.annotations.Nullable;
 
 /** Calculates class abi from the library.jar */
 @Nullsafe(Nullsafe.Mode.LOCAL)

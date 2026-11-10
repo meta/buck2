@@ -16,7 +16,7 @@ import java.util.Objects;
 import java.util.TreeMap;
 import java.util.jar.Attributes;
 import java.util.jar.Manifest;
-import javax.annotation.Nullable;
+import org.jspecify.annotations.Nullable;
 
 /**
  * Registry for manifest attribute mergers. Provides a way to look up the appropriate merger for a

@@ -38,7 +38,6 @@ buck_kotlin_library(
         "prelude//toolchains/android/src/com/facebook/buck/jvm/kotlin/plugin:plugin-loader",
         "prelude//toolchains/android/src/com/facebook/buck/step/isolatedsteps/java:java",
         "prelude//toolchains/android/third-party:guava",
-        "prelude//toolchains/android/third-party:jsr305",
         "prelude//toolchains/android/src/com/facebook/buck/jvm/java/abi/source/api:api",
         # TODO(sergei): util/json is a source of [ObjectMapper] that is very heavy for class loading
         "prelude//toolchains/android/src/com/facebook/buck/util/json:json",

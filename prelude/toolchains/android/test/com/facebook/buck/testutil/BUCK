@@ -35,7 +35,7 @@ buck_java_library(
         "prelude//toolchains/android/third-party:infer-annotations",
         "prelude//toolchains/android/third-party:jackson-annotations",
         "prelude//toolchains/android/third-party:jackson-core",
-        "prelude//toolchains/android/third-party:jsr305",
+        "prelude//toolchains/android/third-party:jspecify",
         "prelude//toolchains/android/third-party:junit",
     ],
     exported_deps = [

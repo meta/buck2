@@ -16,8 +16,8 @@ import com.sun.tools.javac.code.TypeAnnotationPosition;
 import java.lang.reflect.Constructor;
 import java.lang.reflect.InvocationTargetException;
 import java.util.List;
-import javax.annotation.Nullable;
 import javax.lang.model.element.AnnotationMirror;
+import org.jspecify.annotations.Nullable;
 import org.objectweb.asm.TypePath;
 import org.objectweb.asm.TypeReference;
 

@@ -151,7 +151,4 @@ public class DeviceRunner {
   protected @Nullable String getAdbPath() {
     return deviceArgs.adbExecutablePath;
   }
-
-  /** We minimize external dependencies, but we'd like to have {@link javax.annotation.Nullable}. */
-  @interface Nullable {}
 }

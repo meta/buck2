@@ -19,7 +19,7 @@ import java.io.OutputStream;
 import java.util.Objects;
 import java.util.jar.JarFile;
 import java.util.zip.ZipEntry;
-import javax.annotation.Nullable;
+import org.jspecify.annotations.Nullable;
 
 /** Extension of {@link CustomZipOutputStream} with jar-specific functionality. */
 @Nullsafe(Nullsafe.Mode.LOCAL)

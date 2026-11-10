@@ -23,11 +23,11 @@ import java.nio.charset.StandardCharsets;
 import java.util.Objects;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipFile;
-import javax.annotation.Nullable;
 import javax.annotation.concurrent.GuardedBy;
 import javax.tools.JavaCompiler;
 import javax.tools.JavaFileObject;
 import javax.tools.SimpleJavaFileObject;
+import org.jspecify.annotations.Nullable;
 
 @Nullsafe(Nullsafe.Mode.LOCAL)
 class ZipEntryJavaFileObject extends SimpleJavaFileObject implements Closeable {

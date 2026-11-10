@@ -12,6 +12,7 @@ package com.facebook.buck.test.selectors;
 
 import com.facebook.infer.annotation.Nullsafe;
 import java.util.Objects;
+import org.jspecify.annotations.Nullable;
 
 /**
  * A {@link TestDescription} will match if this selector's class-part is identical to the

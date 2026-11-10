@@ -27,7 +27,7 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipException;
-import javax.annotation.Nullable;
+import org.jspecify.annotations.Nullable;
 
 /**
  * An implementation of an {@link OutputStream} for zip files that allows newer entries to overwrite

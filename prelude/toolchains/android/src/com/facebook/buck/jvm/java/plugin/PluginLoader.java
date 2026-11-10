@@ -23,8 +23,8 @@ import java.io.InputStream;
 import java.io.OutputStream;
 import java.net.URL;
 import java.util.Objects;
-import javax.annotation.Nullable;
 import javax.tools.JavaCompiler;
+import org.jspecify.annotations.Nullable;
 
 /**
  * Loads the Buck javac plugin JAR using the {@link ClassLoader} of a particular compiler instance.

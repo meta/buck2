@@ -18,7 +18,7 @@ import java.util.jar.JarFile;
 import java.util.jar.Manifest;
 import java.util.stream.Stream;
 import java.util.zip.ZipEntry;
-import javax.annotation.Nullable;
+import org.jspecify.annotations.Nullable;
 
 /** Provides all entries of a given zip or jar file, so they can be added to another jar. */
 @Nullsafe(Nullsafe.Mode.LOCAL)

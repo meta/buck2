@@ -28,6 +28,7 @@ import org.jetbrains.kotlin.backend.common.lower.DeclarationIrBuilder
 import org.jetbrains.kotlin.descriptors.ClassKind
 import org.jetbrains.kotlin.descriptors.DescriptorVisibilities
 import org.jetbrains.kotlin.descriptors.InlineClassRepresentation
+import org.jetbrains.kotlin.descriptors.Modality
 import org.jetbrains.kotlin.ir.IrBuiltIns
 import org.jetbrains.kotlin.ir.IrElement
 import org.jetbrains.kotlin.ir.IrStatement
@@ -39,6 +40,7 @@ import org.jetbrains.kotlin.ir.expressions.impl.IrConstImpl
 import org.jetbrains.kotlin.ir.expressions.impl.IrGetValueImpl
 import org.jetbrains.kotlin.ir.expressions.impl.IrInstanceInitializerCallImpl
 import org.jetbrains.kotlin.ir.expressions.impl.IrReturnImpl
+import org.jetbrains.kotlin.ir.symbols.IrClassSymbol
 import org.jetbrains.kotlin.ir.symbols.IrReturnTargetSymbol
 import org.jetbrains.kotlin.ir.symbols.UnsafeDuringIrConstructionAPI
 import org.jetbrains.kotlin.ir.types.*
@@ -360,6 +362,10 @@ internal class NonAbiDeclarationsStrippingIrVisitor(
 
   // Convert a fake override to a real method with a stub body.
   private fun materializeFakeOverride(decl: IrSimpleFunction) {
+    // Any's methods always resolve through the present Any supertype: materializing
+    // them would add methods the library jar does not have (and consumers flag the
+    // mismatch). Leave the fake, which the backend skips as in the class ABI.
+    if (decl.isAnyMethod()) return
     decl.isFakeOverride = false
     // Keep the FIR modality: forcing FINAL breaks subclasses of open classes.
     decl.origin = IrDeclarationOrigin.DEFINED
@@ -388,8 +394,16 @@ internal class NonAbiDeclarationsStrippingIrVisitor(
   // True when removeNonPublicApi will drop this class from the ABI, which is the only reason a
   // supertype has to leave a supertype list. Only top-level private classes are dropped; a nested
   // private class is kept, so a `private sealed class`/`sealed interface` and everything nested
-  // under it stays referenceable and must keep appearing as a supertype.
+  // under it stays referenceable and must keep appearing as a supertype. Must-keep classes
+  // stay, so hierarchies keep resolving; interfaces still strip even when kept, because
+  // fake overrides of their members materialize instead.
   private fun isClassAbsentFromAbi(irClass: IrClass): Boolean {
+    if (
+        irClass.kind != ClassKind.INTERFACE &&
+            mustKeepPrivateClassNames.contains(irClass.kotlinFqName.asString())
+    ) {
+      return false
+    }
     var current: IrClass = irClass
     while (true) {
       if (current.visibility == DescriptorVisibilities.LOCAL) {
@@ -661,6 +675,23 @@ internal class NonAbiDeclarationsStrippingIrVisitor(
     return mustKeepPrivateClassNames.contains(this.kotlinFqName.asString())
   }
 
+  private fun IrSimpleFunction.isAnyMethod(): Boolean {
+    if (
+        name.asString() != "equals" &&
+            name.asString() != "hashCode" &&
+            name.asString() != "toString"
+    ) {
+      return false
+    }
+    if (name.asString() != "equals") return compatValueParameters.isEmpty()
+    // An equals overload with a narrower parameter (equals(other: Foo)) does not
+    // override Any.equals; only equals(other: Any?) skips materialization.
+    val paramType = compatValueParameters.singleOrNull()?.type ?: return false
+    return (paramType as? IrSimpleType)?.classifier?.let {
+      (it as? IrClassSymbol)?.owner?.kotlinFqName?.asString()
+    } == "kotlin.Any" && paramType.isNullable()
+  }
+
   private fun IrDeclaration.isPropertyDelegateBackingField(): Boolean =
       this is IrField &&
           visibility == DescriptorVisibilities.PRIVATE &&
@@ -738,6 +769,22 @@ internal class NonAbiDeclarationsStrippingIrVisitor(
       val body = declaration.body
       declaration.body = null
       return super.visitSimpleFunction(declaration).also { declaration.body = body }
+    }
+    // Members of a kept-but-dropped interface cannot carry implementations: the JVM
+    // backend moves interface bodies to DefaultImpls and crashes on the emptied
+    // method. Abstract them; no consumer can implement the private interface anyway.
+    val ownerClass = declaration.parent as? IrClass
+    if (
+        ownerClass != null &&
+            ownerClass.kind == ClassKind.INTERFACE &&
+            ownerClass.isPrivateOrLocal() &&
+            mustKeepPrivateClassNames.contains(ownerClass.kotlinFqName.asString()) &&
+            !declaration.isFakeOverride &&
+            declaration.modality != Modality.ABSTRACT
+    ) {
+      declaration.modality = Modality.ABSTRACT
+      declaration.body = null
+      return super.visitSimpleFunction(declaration)
     }
     if (!declaration.origin.isSynthetic) {
       if (declaration.parent is IrProperty) {

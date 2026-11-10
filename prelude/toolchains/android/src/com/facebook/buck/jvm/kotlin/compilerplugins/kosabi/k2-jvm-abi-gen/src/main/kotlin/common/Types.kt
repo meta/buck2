@@ -18,6 +18,7 @@ package com.facebook
 
 import com.facebook.kotlin.compilercompat.compatValueParameters
 import org.jetbrains.kotlin.GeneratedDeclarationKey
+import org.jetbrains.kotlin.descriptors.ClassKind
 import org.jetbrains.kotlin.descriptors.DescriptorVisibilities
 import org.jetbrains.kotlin.descriptors.Modality
 import org.jetbrains.kotlin.fir.types.ConeKotlinType
@@ -28,12 +29,19 @@ import org.jetbrains.kotlin.ir.declarations.IrConstructor
 import org.jetbrains.kotlin.ir.declarations.IrDeclaration
 import org.jetbrains.kotlin.ir.declarations.IrDeclarationContainer
 import org.jetbrains.kotlin.ir.declarations.IrDeclarationWithVisibility
+import org.jetbrains.kotlin.ir.declarations.IrField
 import org.jetbrains.kotlin.ir.declarations.IrFunction
 import org.jetbrains.kotlin.ir.declarations.IrModuleFragment
+import org.jetbrains.kotlin.ir.declarations.IrParameterKind
 import org.jetbrains.kotlin.ir.declarations.IrProperty
 import org.jetbrains.kotlin.ir.declarations.IrSimpleFunction
+import org.jetbrains.kotlin.ir.declarations.IrTypeParametersContainer
 import org.jetbrains.kotlin.ir.expressions.IrClassReference
+import org.jetbrains.kotlin.ir.types.IrSimpleType
+import org.jetbrains.kotlin.ir.types.IrType
+import org.jetbrains.kotlin.ir.types.IrTypeProjection
 import org.jetbrains.kotlin.ir.types.classFqName
+import org.jetbrains.kotlin.ir.types.classOrNull
 import org.jetbrains.kotlin.ir.util.kotlinFqName
 import org.jetbrains.kotlin.name.Name
 
@@ -69,7 +77,7 @@ internal fun collectMustKeepPrivateClassNames(moduleFragment: IrModuleFragment):
     )
   }
   moduleFragment.files.forEach { file ->
-    file.declarations.forEach { scanDeclarationAnnotations(it, keep, ownerKept = true) }
+    file.declarations.forEach { scanKeptDeclaration(it, keep, ownerKept = true) }
   }
   // JVM-public nests of a private class stay referenceable (Kotlin cannot name them,
   // but same-package Java can, loudly at compile time): keep the outer as a shell, as
@@ -123,13 +131,14 @@ private fun keepSealedSubclasses(classes: List<IrClass>, keep: MutableSet<String
   }
 }
 
-// The stripper keeps a private class as a shell: only its annotations, constructors,
-// nested classes and constants survive.
+// The stripper keeps a private class as a shell: only its annotations, supertypes,
+// constructors, nested classes and constants survive.
 private fun scanKeptPrivateClass(klass: IrClass, keep: MutableSet<String>) {
   scanAnnotationsForClassLiterals(klass, keep)
+  scanSignatures(klass, keep)
   klass.declarations
       .filter { it is IrClass || it is IrConstructor || (it as? IrProperty)?.isConst == true }
-      .forEach { scanDeclarationAnnotations(it, keep, ownerKept = true) }
+      .forEach { scanKeptDeclaration(it, keep, ownerKept = true) }
 }
 
 private fun MutableSet<String>.addWithOuters(klass: IrClass) {
@@ -153,7 +162,7 @@ private fun isKeptOwner(declaration: IrDeclaration): Boolean {
       visibility != DescriptorVisibilities.LOCAL
 }
 
-private fun scanDeclarationAnnotations(
+private fun scanKeptDeclaration(
     declaration: IrDeclaration,
     keep: MutableSet<String>,
     ownerKept: Boolean,
@@ -161,6 +170,7 @@ private fun scanDeclarationAnnotations(
   val kept = ownerKept && isKeptOwner(declaration)
   if (kept) {
     scanAnnotationsForClassLiterals(declaration, keep)
+    scanSignatures(declaration, keep)
     if (declaration is IrFunction) {
       declaration.compatValueParameters.forEach { scanAnnotationsForClassLiterals(it, keep) }
     }
@@ -168,13 +178,59 @@ private fun scanDeclarationAnnotations(
       for (accessor in listOfNotNull(declaration.getter, declaration.setter)) {
         if (!isKeptOwner(accessor)) continue
         scanAnnotationsForClassLiterals(accessor, keep)
+        scanSignatures(accessor, keep)
         accessor.compatValueParameters.forEach { scanAnnotationsForClassLiterals(it, keep) }
       }
-      declaration.backingField?.let { scanAnnotationsForClassLiterals(it, keep) }
+      declaration.backingField?.let {
+        scanAnnotationsForClassLiterals(it, keep)
+        scanSignatures(it, keep)
+      }
     }
   }
   if (declaration is IrDeclarationContainer) {
-    declaration.declarations.forEach { scanDeclarationAnnotations(it, keep, kept) }
+    declaration.declarations.forEach { scanKeptDeclaration(it, keep, kept) }
+  }
+}
+
+private fun scanSignatures(declaration: IrDeclaration, keep: MutableSet<String>) {
+  // Supertypes and signatures name classes consumers must resolve (suppressed
+  // EXPOSED_* or otherwise): keep them as stubs. Supertypes keep class-kind
+  // only: a kept private interface stays on the strip-and-materialize path
+  // (its members materialize into implementers, including enum entries),
+  // while a kept private class must stay a resolvable supertype.
+  if (declaration is IrClass) {
+    declaration.superTypes.forEach { collectClassesFromType(it, keep, classesOnly = true) }
+  }
+  if (declaration is IrSimpleFunction) {
+    collectClassesFromType(declaration.returnType, keep)
+  }
+  if (declaration is IrFunction) {
+    declaration.parameters
+        .filter { it.kind != IrParameterKind.DispatchReceiver }
+        .forEach { collectClassesFromType(it.type, keep) }
+  }
+  if (declaration is IrTypeParametersContainer) {
+    declaration.typeParameters.forEach { parameter ->
+      parameter.superTypes.forEach { collectClassesFromType(it, keep) }
+    }
+  }
+  if (declaration is IrField) {
+    collectClassesFromType(declaration.type, keep)
+  }
+}
+
+private fun collectClassesFromType(
+    type: IrType,
+    keep: MutableSet<String>,
+    classesOnly: Boolean = false,
+) {
+  val referenced = type.classOrNull?.owner as? IrClass
+  if (referenced != null && (!classesOnly || referenced.kind == ClassKind.CLASS)) {
+    keep.addWithOuters(referenced)
+  }
+  // Type arguments are references, not supertypes: they keep every class kind.
+  for (argument in (type as? IrSimpleType)?.arguments.orEmpty()) {
+    (argument as? IrTypeProjection)?.type?.let { collectClassesFromType(it, keep) }
   }
 }
 

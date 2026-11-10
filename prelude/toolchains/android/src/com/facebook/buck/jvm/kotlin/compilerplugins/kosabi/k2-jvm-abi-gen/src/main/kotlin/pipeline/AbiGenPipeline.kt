@@ -75,6 +75,7 @@ import org.jetbrains.kotlin.ir.declarations.IrMetadataSourceOwner
 import org.jetbrains.kotlin.ir.declarations.IrModuleFragment
 import org.jetbrains.kotlin.ir.declarations.IrProperty
 import org.jetbrains.kotlin.ir.declarations.IrSimpleFunction
+import org.jetbrains.kotlin.ir.types.classOrNull
 import org.jetbrains.kotlin.ir.util.kotlinFqName
 import org.jetbrains.kotlin.name.CallableId
 import org.jetbrains.kotlin.name.ClassId
@@ -157,6 +158,9 @@ internal class FirMetadataSanitizerStage(private val repairLog: AbiGenRepairLog)
   fun cleanupFirMetadataSources(moduleFragment: IrModuleFragment, session: FirSession) {
     val THROWS_FQ_NAME = FqName("kotlin.jvm.Throws")
     val THROWS_KOTLIN_FQ_NAME = FqName("kotlin.Throws")
+    // Classes the ABI jar keeps as shells. A private supertype in this set still
+    // resolves for consumers, so the metadata cleanup below must keep naming it.
+    val mustKeepPrivateClassNames = collectMustKeepPrivateClassNames(moduleFragment)
 
     moduleFragment.accept(
         object : IrElementVisitorVoidCompat() {
@@ -171,7 +175,7 @@ internal class FirMetadataSanitizerStage(private val repairLog: AbiGenRepairLog)
 
           override fun visitClass(declaration: IrClass) {
             stripThrowsAndErrorAnnotationsFromDeclaration(declaration)
-            stripPrivateSupertypesFromDeclaration(declaration)
+            stripPrivateSupertypesFromDeclaration(declaration, mustKeepPrivateClassNames)
             stripErrorTypedPrivateMembersFromDeclaration(declaration)
             super.visitClass(declaration)
           }
@@ -560,7 +564,10 @@ internal class FirMetadataSanitizerStage(private val repairLog: AbiGenRepairLog)
           // --- Private supertype stripping helpers ---
 
           @OptIn(SymbolInternals::class)
-          private fun stripPrivateSupertypesFromDeclaration(declaration: IrClass) {
+          private fun stripPrivateSupertypesFromDeclaration(
+              declaration: IrClass,
+              mustKeepPrivateClassNames: Set<String>,
+          ) {
             val metadataSourceOwner = declaration as? IrMetadataSourceOwner ?: return
             val metadataSource = metadataSourceOwner.metadata ?: return
             val firMetadataSource = metadataSource as? FirMetadataSource ?: return
@@ -589,7 +596,9 @@ internal class FirMetadataSanitizerStage(private val repairLog: AbiGenRepairLog)
                   }
 
               val toRemove = superTypeRefs.filter { typeRef ->
-                isPrivateSupertype(typeRef, firClass)
+                isPrivateSupertype(typeRef, firClass) &&
+                    !isRetainedInIrSupertypes(declaration, typeRef) &&
+                    !isKeptShellSupertype(typeRef, mustKeepPrivateClassNames)
               }
 
               for (typeRef in toRemove) {
@@ -631,6 +640,36 @@ internal class FirMetadataSanitizerStage(private val repairLog: AbiGenRepairLog)
             return (coneType as? org.jetbrains.kotlin.fir.types.ConeClassLikeType)
                 ?.lookupTag
                 ?.classId
+          }
+
+          // True when the private supertype survives in the ABI jar as a shell, even
+          // though the IR stripper dropped it from the supertype list (interfaces
+          // strip by design; fake overrides materialize instead). The shell still
+          // resolves for consumers, so the metadata must keep naming it — this is
+          // what production jvm-abi-gen emits (its bytecode implements clause
+          // strips while the metadata supertype stays).
+          private fun isKeptShellSupertype(
+              typeRef: org.jetbrains.kotlin.fir.types.FirTypeRef,
+              mustKeepPrivateClassNames: Set<String>,
+          ): Boolean {
+            val dotted =
+                getPrivateClassIdFromTypeRef(typeRef)?.asString()?.replace('/', '.') ?: return false
+            return mustKeepPrivateClassNames.contains(dotted)
+          }
+
+          // True when the IR stripper kept this supertype on the class (e.g. a
+          // must-keep private superclass). The FIR metadata source must keep the
+          // link too, or consumers cannot resolve inherited members. Anything
+          // the IR dropped stays dropped here.
+          private fun isRetainedInIrSupertypes(
+              declaration: IrClass,
+              typeRef: org.jetbrains.kotlin.fir.types.FirTypeRef,
+          ): Boolean {
+            val classId =
+                getPrivateClassIdFromTypeRef(typeRef)?.asString()?.replace('/', '.') ?: return false
+            return declaration.superTypes.any {
+              it.classOrNull?.owner?.kotlinFqName?.asString() == classId
+            }
           }
 
           @OptIn(SymbolInternals::class)

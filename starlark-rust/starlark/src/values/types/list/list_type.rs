@@ -30,6 +30,7 @@ use crate::values::list::AllocList;
 use crate::values::list::ListRef;
 use crate::values::tuple::TupleType;
 use crate::values::type_expr::StarlarkTypeExpr;
+use crate::values::type_expr::StarlarkTypeExprStable;
 use crate::values::type_repr::StarlarkTypeRepr;
 
 /// A list type marker.
@@ -60,6 +61,9 @@ impl<'v, T: StarlarkTypeExpr<'v>> StarlarkTypeExpr<'v> for ListType<T> {
             .then(|| ValueOf::new_unchecked(value))
     }
 }
+
+/// Every value is a `typing.Any`, so no change to the list's items can invalidate the check.
+impl<'v> StarlarkTypeExprStable<'v> for ListType<Value<'v>> {}
 
 impl<'v, T: StarlarkTypeExpr<'v>> UnpackValue<'v> for ListType<T> {
     type Error = Infallible;

@@ -26,6 +26,7 @@ use crate::values::Value;
 use crate::values::ValueOf;
 use crate::values::set::SetRef;
 use crate::values::type_expr::StarlarkTypeExpr;
+use crate::values::type_expr::StarlarkTypeExprStable;
 use crate::values::type_repr::StarlarkTypeRepr;
 
 /// A set type marker.
@@ -56,6 +57,9 @@ impl<'v, T: StarlarkTypeExpr<'v>> StarlarkTypeExpr<'v> for SetType<T> {
             .then(|| ValueOf::new_unchecked(value))
     }
 }
+
+/// Every value is a `typing.Any`, so no change to the set's items can invalidate the check.
+impl<'v> StarlarkTypeExprStable<'v> for SetType<Value<'v>> {}
 
 impl<'v, T: StarlarkTypeExpr<'v>> UnpackValue<'v> for SetType<T> {
     type Error = Infallible;

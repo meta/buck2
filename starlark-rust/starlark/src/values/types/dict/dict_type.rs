@@ -28,6 +28,7 @@ use crate::values::ValueOf;
 use crate::values::dict::AllocDict;
 use crate::values::dict::DictRef;
 use crate::values::type_expr::StarlarkTypeExpr;
+use crate::values::type_expr::StarlarkTypeExprStable;
 use crate::values::type_repr::StarlarkTypeRepr;
 
 /// A dict type marker.
@@ -59,6 +60,9 @@ impl<'v, K: StarlarkTypeExpr<'v>, V: StarlarkTypeExpr<'v>> StarlarkTypeExpr<'v> 
             .then(|| ValueOf::new_unchecked(value))
     }
 }
+
+/// Every value is a `typing.Any`, so no change to the dict's entries can invalidate the check.
+impl<'v> StarlarkTypeExprStable<'v> for DictType<Value<'v>, Value<'v>> {}
 
 impl<'v, K: StarlarkTypeExpr<'v>, V: StarlarkTypeExpr<'v>> UnpackValue<'v> for DictType<K, V> {
     type Error = Infallible;

@@ -147,6 +147,18 @@ public class StubJar {
                 .collect(Collectors.toSet())
             : Collections.emptySet();
 
+    if (inlineFunctionScope != null) {
+      // Path order is not enclosing-owner order: Compose hoists an inline function's capture-free
+      // lambdas to ComposableSingletons$<File>Kt$lambda$N$1, which sorts before <File>Kt. Create
+      // every owner's scopes first so the capture check never runs ahead of them.
+      for (Path path : paths) {
+        if (input.isClass(path) && !existingAbiPathStrings.contains(path.toString())) {
+          inlineFunctionScope.createScopes(
+              pathWithoutClassSuffix(path), StubJarClassEntry.readInlineFunctions(input, path));
+        }
+      }
+    }
+
     Map<String, StubJarEntry> deferredEntries = new HashMap<>();
     Set<String> referencedByWritten = new HashSet<>();
     List<StubJarEntry> writtenExistingEntries = new ArrayList<>();

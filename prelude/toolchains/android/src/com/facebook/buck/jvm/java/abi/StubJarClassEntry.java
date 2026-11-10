@@ -314,6 +314,17 @@ class StubJarClassEntry extends StubJarEntry {
     return getInnerClassMetadata(node, name);
   }
 
+  static List<String> readInlineFunctions(LibraryReader input, Path path) throws IOException {
+    ClassNode classMetadata = new ClassNode(Opcodes.ASM9);
+    input.visitClass(path, classMetadata, true);
+    AnnotationNode kotlinMetadataAnnotation = findKotlinMetadataAnnotation(classMetadata);
+    if (kotlinMetadataAnnotation == null) {
+      return Collections.emptyList();
+    }
+    return KotlinMetadataReader.getInlineFunctions(
+        KotlinMetadataReader.readMetadata(kotlinMetadataAnnotation));
+  }
+
   @Nullable
   static AnnotationNode findKotlinMetadataAnnotation(ClassNode node) {
     if (node.visibleAnnotations == null) {

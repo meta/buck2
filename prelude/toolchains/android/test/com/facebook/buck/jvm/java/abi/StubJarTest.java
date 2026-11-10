@@ -38,14 +38,17 @@ import com.google.common.io.Files;
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.File;
+import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.InputStreamReader;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
+import java.util.Enumeration;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -8921,6 +8924,70 @@ public class StubJarTest {
           "unreferenced WhenMappings stays stripped: " + methodNames(node),
           node.fields.isEmpty() && !methodNames(node).contains("<clinit>"));
     }
+  }
+
+  @Test
+  public void kotlinKeepsInlineScopeClassThatSortsBeforeItsOwner() throws IOException {
+    if (!isValidForKotlin() || !testingMode.equals(MODE_JAR_BASED)) {
+      return;
+    }
+
+    // Compose hoists capture-free lambdas of an inline function to
+    // ComposableSingletons$<File>Kt$lambda$N$1, whose path sorts before <File>Kt. Renaming the
+    // anonymous class (same length, so constant pools stay valid) reproduces that order without
+    // the Compose plugin.
+    File outputDir = temp.newFolder();
+    AbsPath compiledJar = AbsPath.of(outputDir.toPath()).resolve("compiled.jar");
+    try (KotlinTestCompiler compiler = new KotlinTestCompiler()) {
+      compiler.init();
+      compiler.addSourceFileContents(
+          "A.kt",
+          "package com.example.buck",
+          "inline fun task(): Runnable = object : Runnable {",
+          "  override fun run() {}",
+          "}");
+      compiler.compile();
+      compiler.getClasses().createJar(compiledJar.getPath(), false);
+    }
+
+    byte[] original = "com/example/buck/AKt$task$1".getBytes(StandardCharsets.UTF_8);
+    byte[] renamed = "com/example/buck/AAA$task$1".getBytes(StandardCharsets.UTF_8);
+    AbsPath fullJar = AbsPath.of(outputDir.toPath()).resolve("output.jar");
+    try (JarFile in = new JarFile(compiledJar.toFile());
+        JarOutputStream out = new JarOutputStream(new FileOutputStream(fullJar.toFile()))) {
+      for (Enumeration<JarEntry> entries = in.entries(); entries.hasMoreElements(); ) {
+        JarEntry entry = entries.nextElement();
+        byte[] bytes;
+        try (InputStream stream = in.getInputStream(entry)) {
+          bytes = ByteStreams.toByteArray(stream);
+        }
+        out.putNextEntry(new JarEntry(entry.getName().replace("AKt$task$1", "AAA$task$1")));
+        out.write(replaceAll(bytes, original, renamed));
+        out.closeEntry();
+      }
+    }
+
+    AbsPath stubJar = AbsPath.of(temp.newFolder().toPath()).resolve("stub.jar");
+    new StubJar(fullJar, false).writeTo(stubJar);
+    try (JarFile jar = new JarFile(stubJar.toFile())) {
+      assertNotNull(
+          "anonymous class of an inline function is kept even when it sorts before its owner",
+          jar.getJarEntry("com/example/buck/AAA$task$1.class"));
+    }
+  }
+
+  private static byte[] replaceAll(byte[] bytes, byte[] from, byte[] to) {
+    byte[] result = bytes.clone();
+    for (int i = 0; i + from.length <= result.length; i++) {
+      boolean match = true;
+      for (int j = 0; j < from.length && match; j++) {
+        match = result[i + j] == from[j];
+      }
+      if (match) {
+        System.arraycopy(to, 0, result, i, to.length);
+      }
+    }
+    return result;
   }
 
   @Test

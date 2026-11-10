@@ -15,6 +15,7 @@ import com.facebook.kotlin.compilerplugins.kosabi.common.parseClasspathFileClass
 import com.facebook.kotlin.compilerplugins.kosabi.stubsgen.stub.container.StubsContainer
 import com.facebook.kotlin.compilerplugins.kosabi.stubsgen.stub.container.StubsContainerImpl
 import com.facebook.kotlin.compilerplugins.kosabi.stubsgen.util.JavaSourceInfo
+import com.facebook.kotlin.compilerplugins.kosabi.stubsgen.util.KotlinClasspathDeclarations
 import com.facebook.kotlin.compilerplugins.kosabi.stubsgen.util.calculateQualifierList
 import com.facebook.kotlin.compilerplugins.kosabi.stubsgen.util.declaredTypes
 import com.facebook.kotlin.compilerplugins.kosabi.stubsgen.util.toImportedClass
@@ -49,6 +50,13 @@ import org.jetbrains.kotlin.psi.psiUtil.referenceExpression
 class GenerationContext {
   val projectFiles: Collection<KtFile>
   val stubsContainer: StubsContainer
+  /**
+   * Classpath-provided declarations the entry-name scan cannot see: classes in its skipped jars and
+   * Kotlin top-level declarations (typealiases) recorded only in file facades. Consulted before
+   * fabricating a class stub for an import; lazily built, so merely constructing it costs nothing
+   * on modules with no such imports.
+   */
+  val kotlinClasspathDeclarations: KotlinClasspathDeclarations
   val importedDeclarations: Set<FullTypeQualifier>
   val importedTypes: Set<FullTypeQualifier>
 
@@ -119,6 +127,7 @@ class GenerationContext {
   ) {
     this.projectFiles = projectFiles
     this.stubsContainer = StubsContainerImpl()
+    this.kotlinClasspathDeclarations = KotlinClasspathDeclarations(classpath)
     this.knownGeneratedTypes = knownGeneratedTypes
 
     if (lightweight) {

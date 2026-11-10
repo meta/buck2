@@ -191,7 +191,7 @@ starlark::methods_static!(
     }
 );
 
-#[starlark_value(type = "AnalysisActions", StarlarkTypeRepr, UnpackValue)]
+#[starlark_value(type = "AnalysisActions", StarlarkTypeRepr, UnpackValue, no_freeze)]
 impl<'v> StarlarkValue<'v> for AnalysisActions<'v> {
     fn get_methods() -> Option<&'static Methods> {
         Some(ANALYSIS_ACTIONS_METHODS.methods())
@@ -283,7 +283,7 @@ impl<'v> AnalysisContext<'v> {
 
 starlark::methods_static!(ANALYSIS_CONTEXT_METHODS = analysis_context_methods);
 
-#[starlark_value(type = "AnalysisContext", StarlarkTypeRepr, UnpackValue)]
+#[starlark_value(type = "AnalysisContext", StarlarkTypeRepr, UnpackValue, no_freeze)]
 impl<'v> StarlarkValue<'v> for AnalysisContext<'v> {
     fn get_methods() -> Option<&'static Methods> {
         Some(ANALYSIS_CONTEXT_METHODS.methods())

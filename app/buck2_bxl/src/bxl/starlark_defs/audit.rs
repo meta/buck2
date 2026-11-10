@@ -62,7 +62,7 @@ pub(crate) struct StarlarkAuditCtx<'v> {
 
 starlark::methods_static!(AUDIT_METHODS = audit_methods);
 
-#[starlark_value(type = "bxl.AuditContext", StarlarkTypeRepr, UnpackValue)]
+#[starlark_value(type = "bxl.AuditContext", StarlarkTypeRepr, UnpackValue, no_freeze)]
 impl<'v> StarlarkValue<'v> for StarlarkAuditCtx<'v> {
     fn get_methods() -> Option<&'static Methods> {
         Some(AUDIT_METHODS.methods())

@@ -44,6 +44,27 @@ struct StarlarkValueAttrs {
     /// Implement `StarlarkTypeRepr` for `&T`.
     starlark_type_repr: bool,
     vtable: VtableMode,
+    alloc: AllocMode,
+}
+
+/// How the representation is allocated, which decides the `AllocRepresentation` and
+/// `AllocFrozenRepresentation` impls written next to the type; see
+/// `ImplStarlarkValue::alloc_impls`.
+#[derive(Copy, Clone, PartialEq, Eq)]
+enum AllocMode {
+    /// Decided by the shape of `Self`'s generics and the vtable flags.
+    Default,
+    /// `alloc = simple`: a `'static` representation, on either heap.
+    Simple,
+    /// `alloc = complex`: traced and frozen by its `Freeze` impl; also on the frozen heap when
+    /// `frozen_vtable` says the type is its own frozen form.
+    Complex,
+    /// `no_freeze`: traced, never frozen, and only on the unfrozen heap.
+    ComplexNoFreeze,
+    /// `alloc = frozen`: a frozen form, only on the frozen heap.
+    Frozen,
+    /// `alloc = by_hand`: the representation writes its own impls, as an inline one must.
+    ByHand,
 }
 
 /// Which vtable registrations are emitted next to the impl; see
@@ -55,10 +76,9 @@ enum VtableMode {
     /// `skip_vtable`: register nothing. For types whose frozen representation handles
     /// serialization.
     Skip,
-    /// `ty_vtable_no_freeze`: register only the typing-side vtable (`TyStarlarkValueVTable`);
-    /// skip the pagable `AValue` vtable that would require `T: StarlarkPagable + Sync`.
-    ///
-    /// Use this for types that have no frozen counterpart.
+    /// `no_freeze`: register only the typing-side vtable (`TyStarlarkValueVTable`); skip the
+    /// pagable `AValue` vtable that would require `T: StarlarkPagable + Sync`. The type is
+    /// never frozen, and is allocated so.
     TyOnly,
     /// `frozen_vtable`: a lifetime-parameterized `T<'v>` is its own frozen form, so besides the
     /// typing-side vtable register the pagable `AValue` vtable for `T<'static>`, which is what
@@ -67,11 +87,22 @@ enum VtableMode {
 }
 
 impl StarlarkValueAttrs {
+    fn set_alloc_mode(&mut self, name: &syn::Ident, mode: AllocMode) -> syn::Result<()> {
+        if self.alloc != AllocMode::Default {
+            return Err(syn::Error::new_spanned(
+                name,
+                "at most one of `no_freeze` and `alloc = ...` may be given",
+            ));
+        }
+        self.alloc = mode;
+        Ok(())
+    }
+
     fn set_vtable_mode(&mut self, name: &syn::Ident, mode: VtableMode) -> syn::Result<()> {
         if self.vtable != VtableMode::Default {
             return Err(syn::Error::new_spanned(
                 name,
-                "at most one of `skip_vtable`, `ty_vtable_no_freeze`, `frozen_vtable` may be given",
+                "at most one of `skip_vtable`, `no_freeze`, `frozen_vtable` may be given",
             ));
         }
         self.vtable = mode;
@@ -93,6 +124,7 @@ impl syn::parse::Parse for StarlarkValueAttrs {
             unpack_value: false,
             starlark_type_repr: false,
             vtable: VtableMode::Default,
+            alloc: AllocMode::Default,
         };
 
         loop {
@@ -113,14 +145,33 @@ impl syn::parse::Parse for StarlarkValueAttrs {
                 attrs.starlark_type_repr = true;
             } else if name == "skip_vtable" {
                 attrs.set_vtable_mode(&name, VtableMode::Skip)?;
-            } else if name == "ty_vtable_no_freeze" {
+            } else if name == "no_freeze" {
                 attrs.set_vtable_mode(&name, VtableMode::TyOnly)?;
+                attrs.set_alloc_mode(&name, AllocMode::ComplexNoFreeze)?;
             } else if name == "frozen_vtable" {
                 attrs.set_vtable_mode(&name, VtableMode::Frozen)?;
+            } else if name == "alloc" {
+                input.parse::<syn::Token![=]>()?;
+                let kind = input.parse::<syn::Ident>()?;
+                let mode = if kind == "simple" {
+                    AllocMode::Simple
+                } else if kind == "complex" {
+                    AllocMode::Complex
+                } else if kind == "frozen" {
+                    AllocMode::Frozen
+                } else if kind == "by_hand" {
+                    AllocMode::ByHand
+                } else {
+                    return Err(syn::Error::new_spanned(
+                        kind,
+                        "`alloc` is one of `simple`, `complex`, `frozen`, `by_hand`; a representation that cannot be frozen says `no_freeze`",
+                    ));
+                };
+                attrs.set_alloc_mode(&name, mode)?;
             } else {
                 return Err(syn::Error::new_spanned(
                     name,
-                    "unknown attribute, allowed attributes are `UnpackValue`, `StarlarkTypeRepr`, `skip_vtable`, `ty_vtable_no_freeze`, `frozen_vtable`",
+                    "unknown attribute, allowed attributes are `UnpackValue`, `StarlarkTypeRepr`, `skip_vtable`, `no_freeze`, `frozen_vtable`, `alloc = ...`",
                 ));
             }
         }
@@ -571,7 +622,7 @@ impl ImplStarlarkValue {
     /// The lifetimes-only row is the shape both of a type that freezes to a different type
     /// and of one that is its own frozen form; only the flag tells them apart.
     /// For the first two rows, `skip_vtable` drops all registrations and
-    /// `ty_vtable_no_freeze` the AValue one.
+    /// `no_freeze` the AValue one.
     ///
     /// `is_special` (user-defined `fn is_special`) suppresses the AValue vtable
     /// emit — the user is expected to register AValue externally.
@@ -652,6 +703,79 @@ impl ImplStarlarkValue {
             unsafe impl #impl_generics starlark::__derive_refs::VtableRegistered for #self_ty #where_clause {}
             starlark::register_ty_starlark_value!(#elided_ty);
         }
+    }
+
+    /// The `AllocRepresentation` and `AllocFrozenRepresentation` impls for `Self`, from
+    /// `alloc = ...`, or failing that from the same shape and flags as the vtable
+    /// registration: a type without lifetimes is simple, one with lifetimes is complex, a
+    /// `frozen_vtable` type is a frozen form, `no_freeze` and `is_special` say what they say.
+    /// `skip_vtable` on a type without lifetimes is an unfrozen type whose frozen form is
+    /// another type, so it is complex too.
+    fn alloc_impls(&self) -> proc_macro2::TokenStream {
+        if self.impl_of == ImplOf::Type || self.has_fn("is_special") {
+            return proc_macro2::TokenStream::new();
+        }
+        let mode = match self.attrs.alloc {
+            AllocMode::Default => match (self.generics_shape(), self.attrs.vtable) {
+                (GenericsShape::Other, _) => return proc_macro2::TokenStream::new(),
+                (GenericsShape::None, VtableMode::Default) => AllocMode::Simple,
+                (GenericsShape::None, VtableMode::Skip)
+                | (GenericsShape::LifetimesOnly, VtableMode::Default | VtableMode::Skip) => {
+                    AllocMode::Complex
+                }
+                (_, VtableMode::TyOnly) => AllocMode::ComplexNoFreeze,
+                (_, VtableMode::Frozen) => AllocMode::Frozen,
+            },
+            mode => mode,
+        };
+        let (unfrozen, frozen): (Option<syn::Ident>, bool) = match mode {
+            AllocMode::ByHand => return proc_macro2::TokenStream::new(),
+            AllocMode::Simple => (Some(syn::parse_quote!(alloc_simple)), true),
+            AllocMode::Complex => (
+                Some(syn::parse_quote!(alloc_complex)),
+                self.attrs.vtable == VtableMode::Frozen,
+            ),
+            AllocMode::ComplexNoFreeze => (Some(syn::parse_quote!(alloc_complex_no_freeze)), false),
+            AllocMode::Frozen => (None, true),
+            AllocMode::Default => unreachable!(),
+        };
+        // The impl's own `where` clause is not copied: a `where Self: ProvidesStaticType<'v>`
+        // would make the static type opaque inside the impl and fail the `for<'a>` bound of
+        // `alloc_simple`, and a type with only lifetime parameters needs no clause here.
+        let lt = &self.lifetime_param;
+        let params = &self.input.generics.params;
+        let self_ty = &self.input.self_ty;
+        let unfrozen = unfrozen.map(|strategy| {
+            quote! {
+                impl<#params> starlark::values::AllocRepresentation<#lt> for #self_ty {
+                    type Repr = Self;
+
+                    #[inline]
+                    fn alloc(
+                        self,
+                        allocator: starlark::values::Allocator<#lt>,
+                    ) -> starlark::values::ValueTyped<#lt, Self> {
+                        allocator.#strategy(self)
+                    }
+                }
+            }
+        });
+        let frozen = frozen.then(|| {
+            quote! {
+                impl<#params> starlark::values::AllocFrozenRepresentation<#lt> for #self_ty {
+                    type Repr = Self;
+
+                    #[inline]
+                    fn alloc_frozen(
+                        self,
+                        allocator: starlark::values::FrozenAllocator<#lt>,
+                    ) -> starlark::values::ValueTyped<#lt, Self> {
+                        allocator.alloc_simple(self)
+                    }
+                }
+            }
+        });
+        quote! { #unfrozen #frozen }
     }
 
     /// `Self` with every lifetime replaced by `lifetime`, e.g. `Foo<'v>` → `Foo<'static>`.
@@ -799,6 +923,7 @@ fn derive_starlark_value_impl(
     }
     let please_use_starlark_type_macro = impl_starlark_value.please_use_starlark_type_macro()?;
     let vtable_registration = impl_starlark_value.vtable_registration()?;
+    let alloc_impls = impl_starlark_value.alloc_impls();
     let mut rep_impl = input.clone();
     rep_impl.items = rep_items;
 
@@ -838,6 +963,8 @@ fn derive_starlark_value_impl(
             #rep_impl
 
             #vtable_registration
+
+            #alloc_impls
         });
     }
 
@@ -862,5 +989,7 @@ fn derive_starlark_value_impl(
         #rep_impl
 
         #vtable_registration
+
+        #alloc_impls
     })
 }

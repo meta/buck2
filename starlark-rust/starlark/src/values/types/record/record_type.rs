@@ -454,7 +454,7 @@ impl<'v> StarlarkValue<'v> for RecordType<'v> {
     type Type = RecordTypeView<'v>;
 }
 
-#[starlark_value]
+#[starlark_value(alloc = frozen)]
 impl<'v> StarlarkValue<'v> for FrozenRecordType<'v> {
     type Type = RecordTypeView<'v>;
 }

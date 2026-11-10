@@ -560,12 +560,7 @@ impl StarlarkOutputStream {
 
 starlark::methods_static!(OUTPUT_STREAM_METHODS = output_stream_methods);
 
-#[starlark_value(
-    type = "bxl.OutputStream",
-    StarlarkTypeRepr,
-    UnpackValue,
-    ty_vtable_no_freeze
-)]
+#[starlark_value(type = "bxl.OutputStream", StarlarkTypeRepr, UnpackValue, no_freeze)]
 impl<'v> StarlarkValue<'v> for StarlarkOutputStream {
     fn get_methods() -> Option<&'static Methods> {
         Some(OUTPUT_STREAM_METHODS.methods())

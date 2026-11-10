@@ -386,7 +386,7 @@ impl<'v> StarlarkValue<'v> for SetGen<RefCell<SetData<'v>>> {
     type Type = SetView<'v>;
 }
 
-#[starlark_value]
+#[starlark_value(alloc = by_hand)]
 impl<'v> StarlarkValue<'v> for SetGen<SetData<'v>> {
     type Type = SetView<'v>;
 }

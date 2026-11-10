@@ -956,7 +956,7 @@ pub(crate) struct StarlarkLazyAttrs<'v> {
 
 starlark::methods_static!(LAZY_ATTRS_METHODS = lazy_attrs_methods);
 
-#[starlark_value(type = "bxl.LazyAttrs", StarlarkTypeRepr, UnpackValue)]
+#[starlark_value(type = "bxl.LazyAttrs", StarlarkTypeRepr, UnpackValue, no_freeze)]
 impl<'v> StarlarkValue<'v> for StarlarkLazyAttrs<'v> {
     fn get_methods() -> Option<&'static Methods> {
         Some(LAZY_ATTRS_METHODS.methods())
@@ -1047,7 +1047,12 @@ pub(crate) struct StarlarkLazyResolvedAttrs<'v> {
 
 starlark::methods_static!(LAZY_RESOLVED_ATTRS_METHODS = lazy_resolved_attrs_methods);
 
-#[starlark_value(type = "bxl.LazyResolvedAttrs", StarlarkTypeRepr, UnpackValue)]
+#[starlark_value(
+    type = "bxl.LazyResolvedAttrs",
+    StarlarkTypeRepr,
+    UnpackValue,
+    no_freeze
+)]
 impl<'v> StarlarkValue<'v> for StarlarkLazyResolvedAttrs<'v> {
     fn get_methods() -> Option<&'static Methods> {
         Some(LAZY_RESOLVED_ATTRS_METHODS.methods())

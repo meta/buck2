@@ -47,7 +47,7 @@ struct ValueWithLifetimeParam<'v>(Value<'v>);
 #[display("ValueWithoutParam")]
 struct ValueWithoutParam(String);
 
-#[starlark_value(type = "ValueWithLifetimeParam", StarlarkTypeRepr, UnpackValue)]
+#[starlark_value(type = "ValueWithLifetimeParam", StarlarkTypeRepr, UnpackValue, alloc = by_hand)]
 impl<'v> StarlarkValue<'v> for ValueWithLifetimeParam<'v> {}
 
 #[starlark_value(type = "ValueWithoutParam", StarlarkTypeRepr, UnpackValue)]

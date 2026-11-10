@@ -60,7 +60,7 @@ pub(crate) struct StarlarkTargetUniverse<'v> {
 
 starlark::methods_static!(TARGET_UNIVERSE_METHODS = target_universe_methods);
 
-#[starlark_value(type = "bxl.TargetUniverse", StarlarkTypeRepr, UnpackValue)]
+#[starlark_value(type = "bxl.TargetUniverse", StarlarkTypeRepr, UnpackValue, no_freeze)]
 impl<'v> StarlarkValue<'v> for StarlarkTargetUniverse<'v> {
     fn get_methods() -> Option<&'static Methods> {
         Some(TARGET_UNIVERSE_METHODS.methods())

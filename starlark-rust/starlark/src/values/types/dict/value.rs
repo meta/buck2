@@ -595,7 +595,7 @@ impl<'v> StarlarkValue<'v> for DictGen<RefCell<Dict<'v>>> {
     type Type = DictView<'v>;
 }
 
-#[starlark_value]
+#[starlark_value(alloc = by_hand)]
 impl<'v> StarlarkValue<'v> for DictGen<Dict<'v>> {
     type Type = DictView<'v>;
 }

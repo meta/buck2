@@ -481,7 +481,7 @@ impl<'v> StarlarkValue<'v> for EnumType<'v> {
     }
 }
 
-#[starlark_value]
+#[starlark_value(alloc = frozen)]
 impl<'v> StarlarkValue<'v> for FrozenEnumType<'v> {
     type Type = EnumTypeView<'v>;
 

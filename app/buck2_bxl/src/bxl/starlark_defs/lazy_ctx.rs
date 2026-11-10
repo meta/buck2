@@ -98,7 +98,7 @@ impl<'v> StarlarkLazyCtx<'v> {
 
 starlark::methods_static!(LAZY_CTX_METHODS = lazy_ctx_methods);
 
-#[starlark_value(type = "bxl.LazyContext", StarlarkTypeRepr, UnpackValue)]
+#[starlark_value(type = "bxl.LazyContext", StarlarkTypeRepr, UnpackValue, no_freeze)]
 impl<'v> StarlarkValue<'v> for StarlarkLazyCtx<'v> {
     fn get_methods() -> Option<&'static Methods> {
         Some(LAZY_CTX_METHODS.methods())

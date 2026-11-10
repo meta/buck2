@@ -34,7 +34,7 @@ use crate::values::layout::avalue::AValueImpl;
 use crate::values::layout::avalue::heap_copy_impl;
 use crate::values::layout::heap::repr::AValueRepr;
 
-struct AValueComplex<T>(PhantomData<T>);
+pub(crate) struct AValueComplex<T>(PhantomData<T>);
 
 impl<'v, T> AValue<'v> for AValueComplex<T>
 where

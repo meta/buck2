@@ -49,7 +49,7 @@ pub struct StarlarkDynamicActions<'v> {
 starlark::methods_static!(DYNAMIC_ACTIONS_METHODS = dynamic_actions_methods);
 
 // TODO(nero): the type name is not aligan with the registered type `DynamicActions`, fix it.
-#[starlark_value(type = "DynamicAction")]
+#[starlark_value(type = "DynamicAction", no_freeze)]
 impl<'v> StarlarkValue<'v> for StarlarkDynamicActions<'v> {
     // Used to add type documentation to the generated documentation
     fn get_methods() -> Option<&'static Methods> {

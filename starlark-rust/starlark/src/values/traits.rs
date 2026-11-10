@@ -109,7 +109,7 @@ use crate::values::layout::vtable::StarlarkValueRawPtr;
 /// )]
 /// struct One<'v>(Value<'v>);
 ///
-/// #[starlark_value(type = "one")]
+/// #[starlark_value(type = "one", frozen_vtable)]
 /// impl<'v> StarlarkValue<'v> for One<'v> {}
 ///
 /// impl<'v> Freeze<'v> for One<'v> {

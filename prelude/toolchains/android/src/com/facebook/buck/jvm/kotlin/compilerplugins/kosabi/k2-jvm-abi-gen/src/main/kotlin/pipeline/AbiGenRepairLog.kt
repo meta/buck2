@@ -86,6 +86,7 @@ data class DiscardedInitializer(
     val detail: String,
     val isConst: Boolean = false,
     val consumerVisible: Boolean = true,
+    val unresolvedSymbols: List<String> = emptyList(),
 )
 
 /**
@@ -148,9 +149,10 @@ class AbiGenRepairLog {
       detail: String,
       isConst: Boolean = false,
       consumerVisible: Boolean = true,
+      unresolvedSymbols: List<String> = emptyList(),
   ) {
     clearedPropertyInitializers.add(
-        DiscardedInitializer(owner, detail, isConst, consumerVisible),
+        DiscardedInitializer(owner, detail, isConst, consumerVisible, unresolvedSymbols),
     )
   }
 

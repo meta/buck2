@@ -40,6 +40,7 @@ import org.jetbrains.kotlin.fir.declarations.utils.isConst
 import org.jetbrains.kotlin.fir.expressions.FirAnnotation
 import org.jetbrains.kotlin.fir.expressions.FirAnnotationCall
 import org.jetbrains.kotlin.fir.expressions.FirErrorExpression
+import org.jetbrains.kotlin.fir.expressions.FirFunctionCall
 import org.jetbrains.kotlin.fir.expressions.FirGetClassCall
 import org.jetbrains.kotlin.fir.expressions.FirNamedArgumentExpression
 import org.jetbrains.kotlin.fir.expressions.FirQualifiedAccessExpression
@@ -48,6 +49,7 @@ import org.jetbrains.kotlin.fir.expressions.FirWrappedArgumentExpression
 import org.jetbrains.kotlin.fir.expressions.impl.FirResolvedArgumentList
 import org.jetbrains.kotlin.fir.moduleData
 import org.jetbrains.kotlin.fir.references.FirErrorNamedReference
+import org.jetbrains.kotlin.fir.references.FirNamedReference
 import org.jetbrains.kotlin.fir.references.FirResolvedNamedReference
 import org.jetbrains.kotlin.fir.resolve.providers.symbolProvider
 import org.jetbrains.kotlin.fir.serialization.providedDeclarationsForMetadataService
@@ -977,7 +979,9 @@ internal class FirMetadataSanitizerStage(private val repairLog: AbiGenRepairLog)
           // A const val that loses its initializer is emitted without a ConstantValue attribute,
           // so consumers that constant-fold it fail during their own compile rather than here.
           // That reasoning only applies to a constant a consumer can actually see, hence the
-          // visibility, which [ValidationStage] filters on.
+          // visibility, which [ValidationStage] filters on. The unresolved symbols are recorded
+          // so the validation error can name them and tooling can resolve their providers.
+          val unresolved = collectUnresolvedSymbols(initializer)
           repairLog.recordClearedPropertyInitializer(
               owner,
               if (property.isConst) "const val, no ConstantValue will be emitted"
@@ -987,6 +991,7 @@ internal class FirMetadataSanitizerStage(private val repairLog: AbiGenRepairLog)
                   property.status.visibility != Visibilities.Private &&
                       property.status.visibility != Visibilities.PrivateToThis &&
                       property.status.visibility != Visibilities.Local,
+              unresolvedSymbols = unresolved,
           )
         } catch (e: Exception) {
           repairLog.recordFailedRepair(
@@ -996,6 +1001,48 @@ internal class FirMetadataSanitizerStage(private val repairLog: AbiGenRepairLog)
         }
       }
       super.visitProperty(property)
+    }
+
+    // Dotted source paths (`a.B.C`) of references the frontend could not resolve, innermost
+    // qualifier first, capped so one broken expression cannot flood the repair log. A call whose
+    // callee is missing only because an argument is already an error (the `times` in
+    // `5 * <error>`) names no provider, so it is skipped; its erroneous arguments are still
+    // visited and collected on their own.
+    private fun collectUnresolvedSymbols(root: FirElement): List<String> {
+      val out = LinkedHashSet<String>()
+      root.accept(
+          object : FirDefaultVisitorVoid() {
+            override fun visitElement(element: FirElement) {
+              if (
+                  element is FirQualifiedAccessExpression &&
+                      element.calleeReference is FirErrorNamedReference &&
+                      !(element is FirFunctionCall &&
+                          (element.argumentList.arguments + element.explicitReceiver).any {
+                            it != null && hasErrorExpressionRecursive(it)
+                          })
+              ) {
+                dottedPath(element)?.let(out::add)
+              }
+              element.acceptChildren(this)
+            }
+          },
+      )
+      return out.take(3)
+    }
+
+    // Null when the callee cannot be named (not a FirNamedReference): the caller
+    // drops it, so the "could not name" branch handles it instead of printing "?".
+    private fun dottedPath(access: FirQualifiedAccessExpression): String? {
+      val parts = mutableListOf(
+          (access.calleeReference as? FirNamedReference)?.name?.asString() ?: return null,
+      )
+      var receiver = access.explicitReceiver
+      while (receiver is FirQualifiedAccessExpression) {
+        val name = (receiver.calleeReference as? FirNamedReference)?.name?.asString() ?: break
+        parts.add(0, name)
+        receiver = receiver.explicitReceiver
+      }
+      return parts.joinToString(".")
     }
 
     override fun visitRegularClass(regularClass: FirRegularClass) {
@@ -1342,6 +1389,52 @@ internal class ValidationStage(private val repairLog: AbiGenRepairLog) : AbiGenS
       )
     }
 
+    // Assertion 2 (unconditional): no *consumer-visible* const val silently lost its
+    // ConstantValue attribute. Unlike every other assertion here this one runs even when
+    // validation is off, because a valueless public const is never a correct ABI: any consumer
+    // that constant-folds it crashes in the IR interpreter (InterpreterMethodNotFoundError)
+    // during its own compile, far from the cause. Failing here names the defining target.
+    //
+    // The visibility filter is not a convenience. Every one of the 12 constants this assertion
+    // named on its first repo-wide run was a `private const val` initialised from a constant
+    // declared in another buck target. A private companion constant takes part in no consumer's
+    // constant folding, so the message's own justification - "consumers that constant-fold it fail
+    // during their own compile" - cannot apply to it. Reporting those is a false positive, and
+    // since `warn` is fatal under `-Werror` a false positive here is a broken build. What they do
+    // expose is real but narrower, and belongs to a different check: Kosabi's const resolver is
+    // source-local and cannot read a constant's value off a dependency's ABI.
+    for (cleared in repairLog.clearedPropertyInitializers) {
+      if (!cleared.isConst) continue
+      if (!cleared.consumerVisible) continue
+      val symbols = cleared.unresolvedSymbols
+      // The compiler has no view of the build graph, so the provider buck target behind each
+      // symbol cannot be resolved here; tooling resolves it from the machine-readable marker
+      // (kosabi_sodeps.py auto-applies the edge). Never print a guessed target.
+      val symbolText =
+          if (symbols.isEmpty()) "unresolvable references the sanitizer could not name"
+          else "unresolved ${symbols.joinToString()}"
+      messageCollector.report(
+          // Escape hatch: warn mode downgrades this to a warning (buckconfig
+          // `kotlin.kosabi_abi_validation_mode` or per-target `abiValidationMode=warn`).
+          // Every other mode fails loud: a valueless public const is never a correct ABI.
+          if (policy == AbiRepairPolicy.WARN) CompilerMessageSeverity.WARNING
+          else CompilerMessageSeverity.ERROR,
+          "Kosabi ABI validation: `${cleared.owner}` is a const val whose initializer could not " +
+              "be resolved ($symbolText) and was discarded. It will be emitted without a " +
+              "ConstantValue attribute, so consumers that constant-fold it fail during their own " +
+              "compile. To fix, resolve the provider buck target of each symbol (e.g. with " +
+              "`buck2 uquery \"owner(<file>)\"` or kosabi_sodeps.py) and add it to THIS target's " +
+              "`source_only_abi_deps`. The provider cannot be resolved here: the compiler has " +
+              "no view of the build graph, so no target is named or guessed. An explicit " +
+              "`source_only_abi_deps` edge adds the provider for this consumer only. " +
+              "`required_for_source_only_abi = True` on the provider instead adds its ABI jar " +
+              "(its source-only ABI when the provider is source_only) for every eligible " +
+              "consumer that depends on it. " +
+              "KOSABI_MISSING_CONST_DEP const=`${cleared.owner}` " +
+              "symbols=`${symbols.joinToString("|")}` fix=`ADD_SOURCE_ONLY_ABI_DEP`",
+      )
+    }
+
     if (policy == AbiRepairPolicy.OFF) return
 
     // Always emitted, including at zero, so that "no repairs happened" is distinguishable from
@@ -1361,27 +1454,6 @@ internal class ValidationStage(private val repairLog: AbiGenRepairLog) : AbiGenS
               "with an assumed type of `String`. Neither its type nor its value could be " +
               "established, so if the real constant is not a String this ABI is wrong in a way " +
               "that will not surface until a consumer compiles against it.",
-      )
-    }
-
-    // Assertion 2: no *consumer-visible* const val silently lost its ConstantValue attribute.
-    //
-    // The visibility filter is not a convenience. Every one of the 12 constants this assertion
-    // named on its first repo-wide run was a `private const val` initialised from a constant
-    // declared in another buck target. A private companion constant takes part in no consumer's
-    // constant folding, so the message's own justification - "consumers that constant-fold it fail
-    // during their own compile" - cannot apply to it. Reporting those is a false positive, and
-    // since `warn` is fatal under `-Werror` a false positive here is a broken build. What they do
-    // expose is real but narrower, and belongs to a different check: Kosabi's const resolver is
-    // source-local and cannot read a constant's value off a dependency's ABI.
-    for (cleared in repairLog.clearedPropertyInitializers) {
-      if (!cleared.isConst) continue
-      if (!cleared.consumerVisible) continue
-      messageCollector.report(
-          severity,
-          "Kosabi ABI validation: `${cleared.owner}` is a const val whose initializer could not " +
-              "be resolved and was discarded. It will be emitted without a ConstantValue " +
-              "attribute, so consumers that constant-fold it fail during their own compile.",
       )
     }
 

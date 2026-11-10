@@ -231,6 +231,22 @@ class RustProjectTest(BuckTestCase):
         assert dep["srcs"] == ["lib_g.rs"], dep["srcs"]
 
     @buck_test(inplace=True, skip_for_os=["darwin", "windows"])
+    async def test_fallback_nested_select_deps(self, buck: Buck) -> None:
+        result_raw = await buck.bxl(
+            "prelude//rust/rust-analyzer/resolve_deps.bxl:resolve_targets",
+            "--",
+            "--targets",
+            "//buck2/integrations/rust-project/tests/targets/foo:g_with_nested_select_deps",
+        )
+        result: Dict[str, Any] = json.load(open(result_raw.stdout.rstrip()))
+
+        dep = list(result["resolved_deps"].values())[0]
+
+        assert dep["deps"] == [
+            "fbcode//buck2/integrations/rust-project/tests/targets/foo:f"
+        ], dep["deps"]
+
+    @buck_test(inplace=True, skip_for_os=["darwin", "windows"])
     async def test_fallback_incompatible_exec_dep(self, buck: Buck) -> None:
         result_raw = await buck.bxl(
             "prelude//rust/rust-analyzer/resolve_deps.bxl:resolve_targets",

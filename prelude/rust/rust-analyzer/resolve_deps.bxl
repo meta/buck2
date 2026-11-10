@@ -115,7 +115,7 @@ def _select_assume_default(value):
         return items
 
     if isinstance(value, bxl.SelectDict):
-        return value.get_select_entry("DEFAULT")
+        return _select_assume_default(value.get_select_entry("DEFAULT"))
 
     return value
 

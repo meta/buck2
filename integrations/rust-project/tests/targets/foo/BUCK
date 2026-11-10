@@ -67,6 +67,20 @@ rust_library(
     target_compatible_with = ["ovr_config//cpu/constraints:riscv64"],
 )
 
+rust_library(
+    name = "g_with_nested_select_deps",
+    srcs = ["lib_g.rs"],
+    crate_root = "lib_g.rs",
+    target_compatible_with = ["ovr_config//cpu/constraints:riscv64"],
+    deps = select({
+        "DEFAULT": [":f"] + select({
+            "DEFAULT": [],
+            "ovr_config//os:macos": [":e"],
+        }),
+        "ovr_config//os:macos": [],
+    }),
+)
+
 rust_binary(
     name = "g_incompatible_tool",
     srcs = ["main.rs"],

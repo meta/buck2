@@ -66,6 +66,12 @@ pub trait AllocFrozenRepresentation<'fv>: Sized {
 pub struct Allocator<'v>(Heap<'v>);
 
 impl<'v> Allocator<'v> {
+    /// For the representations starlark allocates by hand on behalf of a payload it does not
+    /// own; everything else gets an allocator from `alloc_representation`.
+    pub(crate) fn new(heap: Heap<'v>) -> Self {
+        Allocator(heap)
+    }
+
     /// The heap, for the values a representation holds.
     #[inline]
     pub fn heap(self) -> Heap<'v> {

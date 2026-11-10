@@ -1088,7 +1088,10 @@ public class InstrumentationTestRunner extends DeviceRunner {
         setAnimationScales(Objects.requireNonNull(originalWindowAnimationScales));
       }
 
-      if (this.codeCoverageOutputFile != null || (useJaCoCoCoverage && coverageTempDir != null)) {
+      boolean shouldPullLegacyCoverageFile =
+          this.codeCoverageOutputFile != null
+              || (hostPerTestCoverageDir == null && useJaCoCoCoverage && coverageTempDir != null);
+      if (shouldPullLegacyCoverageFile) {
         String destCovFileInHost = this.codeCoverageOutputFile;
 
         if (coverageTempDir != null) {

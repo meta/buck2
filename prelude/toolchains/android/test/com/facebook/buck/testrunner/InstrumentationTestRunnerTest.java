@@ -556,6 +556,35 @@ public class InstrumentationTestRunnerTest {
   }
 
   @Test
+  public void perTestCoverageDoesNotPullLegacyCoverageFile() throws Throwable {
+    ArrayList<String> capturedShellCommands = new ArrayList<>();
+    Path hostCoverageDir = tmp.newFolder("wrapper_per_test_coverage").getPath();
+    Path legacyCoverageDir = tmp.newFolder("legacy_coverage").getPath();
+    String deviceCoverageDir =
+        "/sdcard/Android/data/com.example/files/Download/test_result/per_test_coverage/";
+
+    Map<String, String> env = new HashMap<>();
+    env.put(InstrumentationTestRunner.PER_TEST_COVERAGE_ENABLED_ENV, "true");
+    env.put(InstrumentationTestRunner.PER_TEST_COVERAGE_DIR_ENV, hostCoverageDir.toString());
+    env.put("USE_JACOCO_COVERAGE", "1");
+    env.put("COVERAGE_COLLECTION_TMPDIR", legacyCoverageDir.toString());
+
+    Map<Path, byte[]> filesOnDevice = new HashMap<>();
+    filesOnDevice.put(
+        Paths.get(deviceCoverageDir, "manifest.jsonl"), "{\"test\":\"example\"}\n".getBytes());
+
+    InstrumentationTestRunner runner =
+        createInstrumentationTestRunnerWithDeviceForSdk(
+            "30", capturedShellCommands, filesOnDevice, env, new HashMap<>());
+    runner.run();
+
+    Assert.assertFalse(
+        capturedShellCommands.contains(
+            "su root cp /data/data/com.example/files/coverage.ec /sdcard/coverage.ec"));
+    Assert.assertTrue(Files.exists(hostCoverageDir.resolve("manifest.jsonl")));
+  }
+
+  @Test
   public void perTestCoverageFallsBackToTestArtifactsDir() throws Throwable {
     ArrayList<String> capturedShellCommands = new ArrayList<>();
     Path artifactsDir = tmp.newFolder("test_artifacts").getPath();

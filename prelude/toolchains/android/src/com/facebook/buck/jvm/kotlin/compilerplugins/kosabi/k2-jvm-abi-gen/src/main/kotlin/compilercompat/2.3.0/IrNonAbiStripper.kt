@@ -52,6 +52,18 @@ internal class NonAbiDeclarationsStrippingIrExtension(
     private val keptInlineBodies: Set<IrSimpleFunction>,
 ) : IrGenerationExtension {
 
+  private companion object {
+    // ACC_SYNTHETIC (ClassCodegen, FunctionCodegen), ACC_STRICT and ACC_SYNCHRONIZED
+    // (FunctionCodegen), and the DefaultImpls decision (InterfaceLowering, JvmCachedDeclarations).
+    val BACKEND_READ_SOURCE_ANNOTATIONS = setOf(
+        "kotlin.jvm.JvmSynthetic",
+        "kotlin.jvm.Strictfp",
+        "kotlin.jvm.Synchronized",
+        "kotlin.jvm.JvmDefaultWithCompatibility",
+        "kotlin.jvm.JvmDefaultWithoutCompatibility",
+    )
+  }
+
   private fun shouldStripAnnotation(annotation: IrConstructorCall): Boolean {
     val annotationClass = annotation.symbol.owner.parent as? IrClass ?: return false
     val annotationFqName = annotationClass.kotlinFqName.asString()
@@ -77,10 +89,9 @@ internal class NonAbiDeclarationsStrippingIrExtension(
       return false
     }
 
-    // Keep @JvmSynthetic: the JVM backend derives ACC_SYNTHETIC from it, and its SOURCE retention
-    // would strip it below. Without the flag, javac sees the member, so the source-only ABI
-    // exposes Kotlin-only API to Java consumers that the class ABI hides.
-    if (annotationFqName == "kotlin.jvm.JvmSynthetic") {
+    // Keep SOURCE-retention annotations that the JVM backend reads to shape bytecode; the
+    // retention strip below would otherwise change the emitted ABI.
+    if (annotationFqName in BACKEND_READ_SOURCE_ANNOTATIONS) {
       return false
     }
 

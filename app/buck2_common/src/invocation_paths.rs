@@ -42,6 +42,8 @@ pub struct InvocationPaths {
     pub roots: InvocationRoots,
     #[allocative(skip)]
     daemon_compatibility: Arc<Mutex<Option<DaemonCompatibilityKey>>>,
+    #[allocative(skip)]
+    tenant_generation: Arc<Mutex<Option<u64>>>,
 
     /// The isolation dir is a relative path used to create unique directories for
     /// a tenant's on-disk state. This allows multiple isolated tenants to use the
@@ -308,6 +310,7 @@ impl InvocationPaths {
             roots,
             isolation,
             daemon_compatibility: Arc::new(Mutex::new(None)),
+            tenant_generation: Arc::new(Mutex::new(None)),
         }
     }
 
@@ -316,6 +319,20 @@ impl InvocationPaths {
             .daemon_compatibility
             .lock()
             .unwrap_or_else(|error| error.into_inner()) = Some(key);
+    }
+
+    pub fn select_tenant_generation(&self, generation: u64) {
+        *self
+            .tenant_generation
+            .lock()
+            .unwrap_or_else(|error| error.into_inner()) = Some(generation);
+    }
+
+    pub fn tenant_generation(&self) -> Option<u64> {
+        *self
+            .tenant_generation
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
     }
 
     pub fn unidaemon_key(&self) -> Option<DaemonCompatibilityKey> {
@@ -605,6 +622,12 @@ pub const UNIDAEMON_NAMESPACES_DIR: &str = ".unidaemons";
 pub fn unidaemon_prototype_enabled() -> buck2_error::Result<bool> {
     if !buck2_env!("BUCK2_UNIDAEMON", type=bool, default=false)? {
         return Ok(false);
+    }
+    if !cfg!(target_os = "linux") {
+        return Err(buck2_error::buck2_error!(
+            buck2_error::ErrorTag::Input,
+            "Daemon sharing currently requires Linux"
+        ));
     }
     if !buck2_env!("BUCK2_SHARE_DAEMON", type=bool, default=false)? {
         return Err(buck2_error::buck2_error!(

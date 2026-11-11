@@ -1034,6 +1034,8 @@ struct TenantStateRegistry {
     next_generation: AtomicU64,
     #[allocative(skip)]
     draining: AtomicBool,
+    #[allocative(skip)]
+    evictions: StdMutex<BuckMutMap<(TenantKey, u64), TenantEviction>>,
 }
 
 struct TenantStateSlot<T: Allocative> {
@@ -1113,6 +1115,7 @@ impl TenantStateRegistry {
             )]),
             next_generation: AtomicU64::new(2),
             draining: AtomicBool::new(false),
+            evictions: StdMutex::new(BuckMutMap::default()),
         })
     }
 
@@ -1250,11 +1253,27 @@ impl TenantStateRegistry {
             .flatten()
     }
 
-    fn evict(&self, key: &TenantKey) -> Option<TenantEviction> {
+    fn evict_generation(&self, key: &TenantKey, expected: Option<u64>) -> Option<TenantEviction> {
+        let started = Instant::now();
         let mut tenants = self
             .tenants
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let mut evictions = self
+            .evictions
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        if let Some(expected) = expected {
+            if let Some(eviction) = evictions.get(&(key.clone(), expected)) {
+                return Some(eviction.clone());
+            }
+            if !tenants
+                .get(key)
+                .is_some_and(|entry| entry.generation == expected)
+            {
+                return None;
+            }
+        }
         let entry = tenants.remove(key)?;
         entry.cancellation.cancel();
         if let Some(state) = entry.state.get() {
@@ -1264,11 +1283,17 @@ impl TenantStateRegistry {
         if final_tenant {
             self.draining.store(true, Ordering::Release);
         }
-        Some(TenantEviction {
+        let watchdog = Arc::new(super::proxies::TenantEvictionWatchdog::default());
+        let eviction = TenantEviction {
             generation: entry.generation,
             final_tenant,
-            completed: Self::finish_eviction(vec![entry]),
-        })
+            completed: Self::finish_eviction(vec![entry], Some(watchdog.clone())),
+            started,
+            watchdog,
+        };
+        evictions.retain(|_, previous| previous.completed.clone().now_or_never().is_none());
+        evictions.insert((key.clone(), eviction.generation), eviction.clone());
+        Some(eviction)
     }
 
     fn evict_project(
@@ -1276,10 +1301,15 @@ impl TenantStateRegistry {
         project_root: &AbsNormPath,
         isolation: Option<&FileName>,
     ) -> ProjectTenantEviction {
+        let started = Instant::now();
         let mut tenants = self
             .tenants
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let mut evictions = self
+            .evictions
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
         let mut generations = Vec::new();
         let mut evicted = Vec::new();
         tenants.retain(|key, entry| {
@@ -1300,30 +1330,86 @@ impl TenantStateRegistry {
         if final_tenant {
             self.draining.store(true, Ordering::Release);
         }
+        // The evictions are recorded per generation like any other, so that a registration of
+        // one of these tenants waits for them and a fenced request for a generation joins them.
+        // No request of its own bounds a project eviction; a fenced request for one of its
+        // generations arms the shared watchdog with its budget, which then bounds the whole
+        // eviction.
+        let watchdog = Arc::new(super::proxies::TenantEvictionWatchdog::default());
+        let keys: Vec<_> = evicted
+            .iter()
+            .map(|entry| (entry.spec.key().clone(), entry.generation))
+            .collect();
+        let completed = Self::finish_eviction(evicted, Some(watchdog.clone()));
+        evictions.retain(|_, previous| previous.completed.clone().now_or_never().is_none());
+        for (key, generation) in keys {
+            evictions.insert(
+                (key, generation),
+                TenantEviction {
+                    generation,
+                    final_tenant,
+                    completed: completed.clone(),
+                    started,
+                    watchdog: watchdog.clone(),
+                },
+            );
+        }
         ProjectTenantEviction {
             generations,
             final_tenant,
-            completed: Self::finish_eviction(evicted),
+            completed,
         }
     }
 
+    /// Cancels the generations and waits for their work to stop.
     fn finish_eviction(
         entries: Vec<Arc<TenantStateSlot<TenantState>>>,
+        watchdog: Option<Arc<super::proxies::TenantEvictionWatchdog>>,
     ) -> Shared<BoxFuture<'static, ()>> {
         let scopes = entries
             .iter()
             .map(|entry| entry.cancellation.clone())
             .collect::<Vec<_>>();
-        drop(entries);
+        let gate = buck2_env!(
+            "BUCK2_TEST_UNIDAEMON_EVICTION_GATE",
+            applicability = testing
+        )
+        .ok()
+        .flatten()
+        .and_then(|gate| gate.split_once(','))
+        .filter(|(isolation, _)| {
+            entries
+                .iter()
+                .any(|entry| entry.spec.key().isolation().as_str() == *isolation)
+        })
+        .map(|(_, path)| path.to_owned());
         let cleanup = tokio::spawn(async move {
+            if let Some(gate) = gate {
+                tokio::fs::write(format!("{gate}.started"), b"evicting")
+                    .await
+                    .expect("publish eviction test marker");
+                while !std::path::Path::new(&format!("{gate}.release")).exists() {
+                    tokio::time::sleep(Duration::from_millis(10)).await;
+                }
+            }
+            drop(entries);
             futures::stream::iter(scopes)
                 .map(|scope| async move { scope.wait().await })
                 .buffer_unordered(16)
                 .collect::<Vec<_>>()
                 .await;
+            if let Some(watchdog) = watchdog {
+                watchdog.complete();
+            }
         });
         cleanup
-            .map(|result| result.expect("Tenant cancellation cleanup should finish"))
+            .map(|result| {
+                // The task does not finish when the runtime shuts down with the daemon, or when
+                // it panicked; a waiter outside the runtime must not turn either into an abort.
+                if let Err(error) = result {
+                    tracing::warn!("Tenant cancellation cleanup did not finish: {error:#}");
+                }
+            })
             .boxed()
             .shared()
     }
@@ -1377,10 +1463,13 @@ pub struct TenantStateInfo {
     pub initialized: bool,
 }
 
+#[derive(Clone)]
 pub struct TenantEviction {
     pub generation: u64,
     pub final_tenant: bool,
     pub(crate) completed: Shared<BoxFuture<'static, ()>>,
+    pub(crate) started: Instant,
+    pub(crate) watchdog: Arc<super::proxies::TenantEvictionWatchdog>,
 }
 
 pub struct ProjectTenantEviction {
@@ -1613,17 +1702,16 @@ impl DaemonStateData {
             .await;
     }
 
-    pub fn evict_tenant_for_client_context(
+    pub fn evict_tenant_generation(
         &self,
         client_context: &ClientContext,
+        generation: Option<u64>,
     ) -> buck2_error::Result<Option<TenantEviction>> {
-        let paths = tenant_paths_from_client_context(client_context)?.ok_or_else(|| {
-            buck2_error!(
-                ErrorTag::Input,
-                "Tenant eviction requires an explicit tenant identity"
-            )
-        })?;
-        Ok(self.tenants.evict(&TenantKey::from_tenant_paths(&paths)))
+        let paths = tenant_paths_from_client_context(client_context)?
+            .internal_error("Tenant eviction requires an identity")?;
+        Ok(self
+            .tenants
+            .evict_generation(&TenantKey::from_tenant_paths(&paths), generation))
     }
 
     pub fn evict_project_tenants_for_client_context(

@@ -501,6 +501,8 @@ pub struct DaemonStartupConfig {
 /// Any difference requires a new daemon; Buck Settings have a separate compatibility check.
 #[derive(Allocative, Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct DaemonStartupOptions {
+    #[serde(default)]
+    pub unidaemon: bool,
     /// Share one DICE engine across isolated tenant roots for this daemon's lifetime.
     pub share_dice: bool,
     pub num_tokio_workers: Option<usize>,
@@ -563,8 +565,16 @@ impl DaemonStartupConfig {
                     property: "share_dice",
                 })?
                 .unwrap_or(false),
+            unidaemon: crate::invocation_paths::unidaemon_prototype_enabled()?,
             num_tokio_workers: settings.daemon.num_tokio_workers(&mut buckconfig)?,
-            daemon_buster: settings.daemon.buster(&mut buckconfig)?,
+            daemon_buster: {
+                let buster = settings.daemon.buster(&mut buckconfig)?;
+                if crate::invocation_paths::unidaemon_prototype_enabled()? {
+                    Some(format!("shared-daemon-v1:{}", buster.unwrap_or_default()))
+                } else {
+                    buster
+                }
+            },
             digest_algorithms: settings.digest.algorithms(&mut buckconfig)?,
             source_digest_algorithm: settings.digest.source_algorithm(&mut buckconfig)?,
             paranoid,
@@ -624,6 +634,7 @@ impl DaemonStartupConfig {
 
     pub fn testing_empty() -> Self {
         let startup_options = DaemonStartupOptions {
+            unidaemon: false,
             share_dice: false,
             num_tokio_workers: None,
             daemon_buster: None,

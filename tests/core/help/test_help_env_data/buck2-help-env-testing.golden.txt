@@ -74,6 +74,7 @@ BUCK2_TEST_SKIP_DICE_CLEAR_ON_MERGEBASE_CHANGE bool                   false
 BUCK2_TEST_STDIN_BUFFER_SIZE                   usize
 BUCK2_TEST_TOMBSTONED_DIGESTS                  BuckMutSet<FileDigest>
 BUCK2_TEST_TPX_USE_TCP                         bool                   false
+BUCK2_TEST_UNIDAEMON_EVICTION_GATE             String
 BUCK2_TEST_WRITE_ACTION_CACHE_KEY_DUMP         String
 BUCK2_UNIDAEMON                                bool                   false
 BUCK2_WATCHMAN_TIMEOUT                         u64                    57

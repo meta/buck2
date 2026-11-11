@@ -1857,24 +1857,52 @@ impl DaemonApi for BuckdServer {
         &self,
         req: Request<EvictTenantRequest>,
     ) -> Result<Response<EvictTenantResponse>, Status> {
-        self.check_if_accepting_requests()?;
+        let req = req.into_inner();
+        if req.expected_generation.is_none() {
+            self.check_if_accepting_requests()?;
+        }
+        let timeout = req.eviction_timeout_ms.map(Duration::from_millis);
         let context = req
-            .into_inner()
             .context
             .ok_or_else(|| Status::invalid_argument("missing tenant client context"))?;
         let eviction = self
             .0
             .daemon_state
             .data()
-            .evict_tenant_for_client_context(&context)
+            .evict_tenant_generation(&context, req.expected_generation)
             .map_err(|e| Status::invalid_argument(format!("{e:#}")))?;
         let shutting_down = eviction
             .as_ref()
             .is_some_and(|eviction| eviction.final_tenant);
-        if shutting_down {
+        // The watchdog stops the whole process tree, which is only a fallback for a shared
+        // daemon; an unshared daemon's eviction is its shutdown.
+        if let (Some(eviction), Some(timeout)) = (&eviction, timeout)
+            && buck2_common::invocation_paths::unidaemon_prototype_enabled().unwrap_or(false)
+        {
+            super::proxies::arm_tenant_eviction_watchdog(eviction, timeout);
+        }
+        if shutting_down && req.expected_generation.is_none() && timeout.is_none() {
             self.shutdown_after_final_tenant_eviction();
         }
-        if let Some(eviction) = &eviction {
+        if shutting_down && (req.expected_generation.is_some() || timeout.is_some()) {
+            // A fenced or bounded eviction of the final tenant shuts the daemon down once the
+            // eviction completes, whether or not this request waits for it.
+            let completed = eviction.as_ref().map(|eviction| eviction.completed.clone());
+            let server = BuckdServer(self.0.dupe());
+            let shutdown = async move {
+                if let Some(completed) = completed {
+                    completed.await;
+                }
+                server.shutdown_after_final_tenant_eviction();
+            };
+            if req.wait_for_completion.unwrap_or(true) {
+                shutdown.await;
+            } else {
+                tokio::spawn(shutdown);
+            }
+        } else if req.wait_for_completion.unwrap_or(true)
+            && let Some(eviction) = &eviction
+        {
             eviction.completed.clone().await;
         }
         Ok(Response::new(EvictTenantResponse {

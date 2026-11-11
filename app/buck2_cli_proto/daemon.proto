@@ -91,6 +91,8 @@ message StatusResponse {
   optional TokioRuntimeMetrics tokio_runtime_metrics = 17;
   optional string allprocs_cgroup_path = 18;
   repeated buck.subscription.ActiveCommand active_commands = 19;
+  // Set by a tenant proxy: the generation of the tenant it represents.
+  optional uint64 tenant_generation = 20;
 }
 
 message TokioRuntimeMetrics {
@@ -134,6 +136,7 @@ message TenantIdentity {
 }
 
 message ClientContext {
+  optional uint64 tenant_generation = 1001;
   reserved 5, 21;
   // `AbsNormPath`.
   string working_dir = 1;
@@ -907,6 +910,9 @@ message UnstableRegisterTenantResponse {
 
 message EvictTenantRequest {
   ClientContext context = 1;
+  optional uint64 expected_generation = 2;
+  optional uint64 eviction_timeout_ms = 3;
+  optional bool wait_for_completion = 4;
 }
 
 message EvictTenantResponse {

@@ -9,6 +9,7 @@
  */
 
 use async_trait::async_trait;
+use buck2_cli_proto::EvictTenantRequest;
 use buck2_cli_proto::UnstableListTenantsRequest;
 use buck2_client_ctx::client_ctx::ClientCommandContext;
 use buck2_client_ctx::common::BuckArgMatches;
@@ -23,6 +24,12 @@ use buck2_client_ctx::streaming::StreamingCommand;
 
 #[derive(Debug, clap::Parser)]
 pub struct TenantsCommand {
+    #[clap(long, hide = true)]
+    evict_generation: Option<u64>,
+    #[clap(long, hide = true)]
+    eviction_timeout_ms: Option<u64>,
+    #[clap(long, hide = true)]
+    no_wait: bool,
     /// Emit a stable JSON representation for tooling.
     #[clap(long)]
     json: bool,
@@ -43,9 +50,25 @@ impl StreamingCommand for TenantsCommand {
         self,
         buckd: &mut BuckdClientConnector,
         _matches: BuckArgMatches<'_>,
-        _ctx: &mut ClientCommandContext<'_>,
+        ctx: &mut ClientCommandContext<'_>,
         events_ctx: &mut EventsCtx,
     ) -> ExitResult {
+        if let Some(generation) = self.evict_generation {
+            let result = buckd
+                .with_flushing()
+                .evict_tenant(
+                    EvictTenantRequest {
+                        context: Some(ctx.empty_client_context(Self::COMMAND_NAME)?),
+                        expected_generation: Some(generation),
+                        eviction_timeout_ms: self.eviction_timeout_ms,
+                        wait_for_completion: Some(!self.no_wait),
+                    },
+                    events_ctx,
+                )
+                .await?;
+            buck2_client_ctx::println!("{}", serde_json::to_string(&result)?)?;
+            return ExitResult::success();
+        }
         let response = buckd
             .with_flushing()
             .unstable_list_tenants(UnstableListTenantsRequest {}, events_ctx)

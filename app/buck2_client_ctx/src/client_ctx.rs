@@ -390,6 +390,7 @@ impl<'a> ClientCommandContext<'a> {
         });
 
         Ok(ClientContext {
+            tenant_generation: None,
             working_dir: self
                 .working_dir
                 .path()

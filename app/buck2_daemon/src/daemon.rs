@@ -640,6 +640,12 @@ impl DaemonCommand {
         in_process: bool,
         ready: Box<dyn FnOnce() + Send>,
     ) -> buck2_error::Result<()> {
+        if in_process && unidaemon_prototype_enabled()? {
+            return Err(buck2_error!(
+                ErrorTag::Input,
+                "Daemon sharing requires an external daemon"
+            ));
+        }
         if unidaemon_prototype_enabled()? {
             // The same inputs the client hashed, so the daemon serves the namespace the client
             // is waiting on.

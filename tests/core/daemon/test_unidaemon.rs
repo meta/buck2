@@ -16,6 +16,8 @@ use buck2_e2e::prelude::*;
 use common_unidaemon::assert_daemon_exits;
 use common_unidaemon::bool_cases;
 use common_unidaemon::daemon_pid;
+use common_unidaemon::debug_tenants;
+use common_unidaemon::generation_of;
 use common_unidaemon::isolated_buck;
 use common_unidaemon::unidaemon_checkouts;
 use regex::Regex;
@@ -137,3 +139,27 @@ bool_cases! { [buck, tmp_path] unidaemon_incompatible_settings_select_another_pr
     #[buck_test(data_dir = "test_daemon_data", skip_for_os = ["windows", "darwin"])]
     fn test_unidaemon_incompatible_settings_select_another_process_True(true);
 }}
+
+#[buck_test(data_dir = "test_daemon_data", skip_for_os = ["windows", "darwin"])]
+async fn test_unidaemon_unawaited_final_eviction_stops_daemon(
+    buck: &Buck,
+    tmp_path: &Path,
+) -> anyhow::Result<()> {
+    let tenant = unidaemon_checkouts(buck, tmp_path, false)?.swap_remove(0);
+    tenant.build(&["//:tenant_value"]).await?;
+    let pid = daemon_pid(&tenant).await?;
+    let entries = debug_tenants(&tenant).await?;
+    let [entry] = entries.as_slice() else {
+        anyhow::bail!("Expected one tenant, got {entries:?}");
+    };
+    tenant
+        .debug(&[
+            "tenants",
+            "--evict-generation",
+            &generation_of(entry)?.to_string(),
+            "--no-wait",
+        ])
+        .await?;
+    assert_daemon_exits(pid).await;
+    Ok(())
+}

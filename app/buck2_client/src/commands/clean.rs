@@ -261,6 +261,7 @@ impl BuckSubcommand for InnerCleanCommand {
                         .evict_tenant(
                             EvictTenantRequest {
                                 context: Some(ctx.empty_client_context(Self::COMMAND_NAME)?),
+                                ..Default::default()
                             },
                             events_ctx,
                         )

@@ -21,6 +21,7 @@ pub mod cas_digest;
 pub mod chunk_reader;
 pub mod client_utils;
 pub mod convert;
+pub mod daemon_compatibility;
 pub mod daemon_dir;
 pub mod dice;
 pub mod events;

@@ -31,6 +31,7 @@ pub use buck2_wrapper_common::DEFAULT_ISOLATION_DIR;
 use buck2_wrapper_common::kill::process_exists;
 use buck2_wrapper_common::pid::Pid;
 
+use crate::daemon_compatibility::DaemonCompatibilityKey;
 use crate::daemon_dir::DaemonDir;
 use crate::invocation_roots::InvocationRoots;
 
@@ -327,6 +328,17 @@ impl InvocationPaths {
         Ok(DaemonDir { path })
     }
 
+    pub fn unidaemon_dir(&self, key: &DaemonCompatibilityKey) -> buck2_error::Result<DaemonDir> {
+        Ok(DaemonDir {
+            path: self
+                .roots
+                .common_buckd_dir()?
+                .join(FileName::unchecked_new(".unidaemons"))
+                .join(key.file_name())
+                .join(FileName::unchecked_new(DEFAULT_ISOLATION_DIR)),
+        })
+    }
+
     pub fn daemon_dir(&self) -> buck2_error::Result<DaemonDir> {
         if let Some(group) = self.shared_daemon_group()? {
             return Ok(DaemonDir {
@@ -569,6 +581,8 @@ mod tests {
     use buck2_fs::paths::file_name::FileNameBuf;
     use buck2_fs::paths::forward_rel_path::ForwardRelativePath;
 
+    use crate::daemon_compatibility::DaemonCompatibilityKey;
+    use crate::init::DaemonStartupConfig;
     use crate::invocation_paths::InvocationPaths;
     use crate::invocation_roots::InvocationRoots;
 
@@ -613,6 +627,26 @@ mod tests {
             other_paths.daemon_dir().unwrap().path,
         );
         assert_ne!(paths.buck_out_path(), other_paths.buck_out_path());
+
+        // A unidaemon directory depends on neither the checkout nor the isolation directory.
+        let key = DaemonCompatibilityKey::new(
+            "release-a",
+            None,
+            &DaemonStartupConfig::testing_empty().serialize().unwrap(),
+            false,
+        );
+        let mut other_checkout = other_paths;
+        let other_root = if cfg!(windows) {
+            "C:\\other\\project"
+        } else {
+            "/other/project"
+        };
+        other_checkout.roots.project_root =
+            ProjectRoot::new_unchecked(AbsNormPathBuf::try_from(other_root.to_owned()).unwrap());
+        assert_eq!(
+            paths.unidaemon_dir(&key).unwrap().path,
+            other_checkout.unidaemon_dir(&key).unwrap().path,
+        );
 
         let expected_path = if cfg!(windows) {
             "C:\\my\\project"

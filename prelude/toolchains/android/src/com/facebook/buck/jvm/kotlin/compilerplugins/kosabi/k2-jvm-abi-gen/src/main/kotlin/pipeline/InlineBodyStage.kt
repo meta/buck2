@@ -10,6 +10,7 @@
 
 @file:SuppressWarnings("PackageLocationMismatch")
 @file:OptIn(
+    com.facebook.DeprecatedForRemovalCompilerApiCompat::class,
     org.jetbrains.kotlin.fir.declarations.DirectDeclarationsAccess::class,
     org.jetbrains.kotlin.fir.symbols.SymbolInternals::class,
 )
@@ -20,6 +21,7 @@ import com.facebook.buck.jvm.kotlin.compilerplugins.common.InlineBodyKeepability
 import com.facebook.buck.jvm.kotlin.compilerplugins.common.foldableConstLiteral
 import com.facebook.buck.jvm.kotlin.compilerplugins.common.isFoldableConst
 import com.facebook.buck.jvm.kotlin.compilerplugins.common.isStub
+import com.facebook.kotlin.compilercompat.compatValueParameters
 import java.lang.reflect.InvocationTargetException
 import java.lang.reflect.Modifier
 import java.util.Collections
@@ -43,6 +45,7 @@ import org.jetbrains.kotlin.fir.declarations.FirProperty
 import org.jetbrains.kotlin.fir.declarations.FirPropertyAccessor
 import org.jetbrains.kotlin.fir.declarations.FirRegularClass
 import org.jetbrains.kotlin.fir.expressions.FirBlock
+import org.jetbrains.kotlin.fir.expressions.FirExpression
 import org.jetbrains.kotlin.fir.expressions.FirFunctionCall
 import org.jetbrains.kotlin.fir.references.FirNamedReference
 import org.jetbrains.kotlin.fir.symbols.impl.FirPropertyAccessorSymbol
@@ -232,11 +235,174 @@ internal class InlineBodyStage : AbiGenStage {
     }
     foldOwnConsts(body)
     function.body = body
+    if (!restoreDefaultValues(pluginContext, function, firFunction, messageCollector, name)) return
     restoredIrFunctions += function
   }
 
   private fun firFunctionOf(function: IrSimpleFunction): FirFunction? =
       (function.metadata as? FirMetadataSource.Function)?.fir
+
+  // Restores the parameter defaults the body-skipping conversion stubbed: the backend builds the
+  // `$default` bridge from them. Anything unconvertible keeps the old behavior: a loud skip.
+  @Suppress(
+      "OPT_IN_USAGE_ERROR",
+  ) // IrFunction.valueParameters is JetBrains-deprecated; no stable replacement yet.
+  private fun restoreDefaultValues(
+      pluginContext: IrPluginContext,
+      function: IrFunction,
+      firFunction: FirFunction,
+      messageCollector: MessageCollector,
+      name: String,
+  ): Boolean {
+    val firDefaults = firFunction.valueParameters.map { it.defaultValue }
+    if (firDefaults.all { it == null }) {
+      // No defaults in FIR: clear any skip-stubs so a plain function results.
+      function.compatValueParameters.forEach { it.defaultValue = null }
+      return true
+    }
+    if (firDefaults.size != function.compatValueParameters.size) {
+      skipBody(messageCollector, name, "its parameter list changed shape during conversion")
+      return false
+    }
+    val converter =
+        defaultExpressionConverter()
+            ?: run {
+              skipBody(messageCollector, name, "its default values need a newer fir2ir bridge")
+              return false
+            }
+    val restored =
+        try {
+          convertDefaults(pluginContext, function, firFunction, firDefaults, converter)
+        } catch (e: Throwable) {
+          val cause = (e as? InvocationTargetException)?.targetException ?: e
+          if (isKosabiCompilerInternalsFailure(e)) {
+            reportCompilerInternalsFailure(messageCollector, cause)
+          } else if (e is Exception) {
+            skipBody(messageCollector, name, "converting a default value to IR failed: $cause")
+          } else {
+            throw e
+          }
+          return false
+        }
+    if (!restored) {
+      skipBody(messageCollector, name, "a default value did not convert cleanly")
+      return false
+    }
+    return true
+  }
+
+  // Entry to fir2ir's expression converter across compiler versions (via its `$default` bridge
+  // when it has trailing defaulted parameters). Null keeps the old behavior: a loud skip.
+  private fun defaultExpressionConverter(): ((Any, Any) -> IrExpression?)? {
+    val visitorClass = Fir2IrVisitor::class.java
+    val instance =
+        visitorClass.methods.singleOrNull {
+          it.name.startsWith("convertToIrExpression\$") &&
+              !it.name.endsWith("\$default") &&
+              !Modifier.isStatic(it.modifiers) &&
+              it.returnType == IrExpression::class.java &&
+              it.parameterTypes.isNotEmpty() &&
+              it.parameterTypes[0] == FirExpression::class.java
+        } ?: return null
+    if (instance.parameterTypes.size == 1) {
+      return { visitor, expression -> instance.invoke(visitor, expression) as? IrExpression }
+    }
+    val bridge =
+        visitorClass.methods.singleOrNull {
+          it.name == instance.name + "\$default" &&
+              Modifier.isStatic(it.modifiers) &&
+              it.returnType == IrExpression::class.java &&
+              it.parameterTypes.size == instance.parameterTypes.size + 3 &&
+              it.parameterTypes[0] == visitorClass &&
+              it.parameterTypes.drop(1).dropLast(2) == instance.parameterTypes.toList() &&
+              it.parameterTypes[instance.parameterTypes.size + 1] == Int::class.javaPrimitiveType &&
+              it.parameterTypes[instance.parameterTypes.size + 2] == Any::class.java
+        } ?: return null
+    // Mask out every trailing parameter so the bridge substitutes its own defaults; the dummy
+    // arguments are never read, they only satisfy the JVM signature (primitives need real zeros).
+    val mask = ((1 shl instance.parameterTypes.size) - 1) xor 1
+    val dummies: List<Any?> =
+        instance.parameterTypes.drop(1).map {
+          when (it) {
+            Boolean::class.javaPrimitiveType -> false
+            Int::class.javaPrimitiveType -> 0
+            Long::class.javaPrimitiveType -> 0L
+            else -> null
+          }
+        }
+    return { visitor, expression ->
+      bridge.invoke(null, visitor, expression, *dummies.toTypedArray(), mask, null) as? IrExpression
+    }
+  }
+
+  @Suppress("OPT_IN_USAGE_ERROR") // See restoreDefaultValues.
+  private fun convertDefaults(
+      pluginContext: IrPluginContext,
+      irFunction: IrFunction,
+      firFunction: FirFunction,
+      firDefaults: List<org.jetbrains.kotlin.fir.expressions.FirExpression?>,
+      converter: (Any, Any) -> IrExpression?,
+  ): Boolean {
+    val storage =
+        Fir2IrPluginContext::class.java.declaredField("c").get(pluginContext)
+            as Fir2IrComponentsStorage
+    val scope =
+        Fir2IrComponentsStorage::class.java.declaredField("conversionScope").get(storage)
+            as Fir2IrConversionScope
+    val skipBodies = Fir2IrConfiguration::class.java.declaredField("skipBodies")
+    val parents =
+        generateSequence(irFunction.parent) { (it as? IrDeclaration)?.parent }.toList().asReversed()
+    return withParents(scope, parents, 0) {
+      scope.withParent(irFunction) {
+        scope.withFunction(irFunction) {
+          val declarations = storage.declarationStorage
+          val configuration = storage.configuration
+          val skipped = skipBodies.getBoolean(configuration)
+          skipBodies.setBoolean(configuration, false)
+          try {
+            declarations.enterScope(irFunction.symbol)
+            Fir2IrDeclarationStorage::class
+                .java
+                .getMethod("putParametersInScope", IrFunction::class.java, FirFunction::class.java)
+                .invoke(declarations, irFunction, firFunction)
+            var ok = true
+            for ((index, firDefault) in firDefaults.withIndex()) {
+              val irParameter = irFunction.compatValueParameters[index]
+              if (firDefault == null) {
+                irParameter.defaultValue = null
+                continue
+              }
+              val converted = converter.invoke(storage.fir2IrVisitor, firDefault) as? IrExpression
+              if (converted == null) {
+                ok = false
+                break
+              }
+              var hasError = converted is IrErrorExpression
+              converted.acceptChildren(
+                  object : IrElementVisitorVoidCompat() {
+                    override fun visitElement(element: IrElement) {
+                      if (element is IrErrorExpression) hasError = true
+                      element.acceptChildren(this, null)
+                    }
+                  },
+                  null,
+              )
+              if (hasError) {
+                ok = false
+                break
+              }
+              irParameter.defaultValue =
+                  pluginContext.irFactory.createExpressionBody(-1, -1, converted)
+            }
+            ok
+          } finally {
+            skipBodies.setBoolean(configuration, skipped)
+            declarations.leaveScope(irFunction.symbol)
+          }
+        }
+      }
+    }
+  }
 
   // Pre-folds reads of healthy same-module consts to literals in a restored kept body.
   // Without this, stock ConstEvaluationLowering misfires on a const-read feeding an
@@ -361,12 +527,12 @@ internal class InlineBodyStage : AbiGenStage {
       scope.withParent(irFunction) {
         scope.withFunction(irFunction) {
           val declarations = storage.declarationStorage
-          declarations.enterScope(irFunction.symbol)
           // Lambdas in the body are converted through the member generator, which reads skipBodies.
           val configuration = storage.configuration
           val skipped = skipBodies.getBoolean(configuration)
           skipBodies.setBoolean(configuration, false)
           try {
+            declarations.enterScope(irFunction.symbol)
             Fir2IrDeclarationStorage::class
                 .java
                 .getMethod("putParametersInScope", IrFunction::class.java, FirFunction::class.java)

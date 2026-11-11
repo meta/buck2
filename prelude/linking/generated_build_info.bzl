@@ -173,6 +173,7 @@ def _generate_build_info_data(
         ctx.actions.run(
             command,
             category = "generate_build_info_json",
+            env = {"LC_ALL": "C"},
             local_only = spec["local_only"],
             allow_cache_upload = spec["allow_cache_upload"],
         )

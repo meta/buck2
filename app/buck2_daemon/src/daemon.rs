@@ -117,6 +117,12 @@ pub struct DaemonCommand {
     daemon_id: String,
 
     #[clap(long, hide = true)]
+    tenant_proxy_file: Option<PathBuf>,
+
+    #[clap(long, hide = true)]
+    tenant_proxy_fd: Option<i32>,
+
+    #[clap(long, hide = true)]
     started_for_clean_stale: bool,
 }
 
@@ -133,6 +139,8 @@ impl DaemonCommand {
             has_cgroup: false,
             daemon_originating_cgroup: None,
             daemon_id: DaemonId::new().to_string(),
+            tenant_proxy_file: None,
+            tenant_proxy_fd: None,
             started_for_clean_stale: false,
         }
     }
@@ -640,6 +648,16 @@ impl DaemonCommand {
         in_process: bool,
         ready: Box<dyn FnOnce() + Send>,
     ) -> buck2_error::Result<()> {
+        if let Some(path) = &self.tenant_proxy_file {
+            #[cfg(target_os = "linux")]
+            return buck2_tenant_proxy::run(path, self.tenant_proxy_fd);
+            #[cfg(not(target_os = "linux"))]
+            return Err(buck2_error!(
+                ErrorTag::Input,
+                "Tenant proxy requires Linux: {}",
+                path.display()
+            ));
+        }
         if in_process && unidaemon_prototype_enabled()? {
             return Err(buck2_error!(
                 ErrorTag::Input,

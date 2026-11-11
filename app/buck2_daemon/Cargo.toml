@@ -38,6 +38,7 @@ buck2_certs.workspace = true
 fbinit.workspace = true
 
 [target.'cfg(target_os = "linux")'.dependencies]
+buck2_tenant_proxy.workspace = true
 nix.workspace = true
 
 [target.'cfg(target_os = "macos")'.dependencies]

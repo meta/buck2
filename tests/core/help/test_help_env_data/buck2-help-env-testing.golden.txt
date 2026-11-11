@@ -65,6 +65,8 @@ BUCK2_TEST_LOW_PASS_FILTER_CAPACITY            usize
 BUCK2_TEST_MANIFOLD_CHUNK_BYTES                u64
 BUCK2_TEST_MANIFOLD_TTL_S                      u64
 BUCK2_TEST_ONLY_REMOTE_DEP_FILE_CACHE          bool                   false
+BUCK2_TEST_PROXY_BEFORE_EVICT                  String
+BUCK2_TEST_PROXY_CLOSE_LIVENESS                String
 BUCK2_TEST_RESOURCE_CONTROL_CONFIG             String
 BUCK2_TEST_RE_QUEUE_ESTIMATE_S                 u64
 BUCK2_TEST_SETTINGS_HOME_DIR                   String

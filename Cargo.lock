@@ -2204,6 +2204,7 @@ dependencies = [
  "buck2_resource_control",
  "buck2_server",
  "buck2_settings",
+ "buck2_tenant_proxy",
  "buck2_util",
  "buck2_wrapper_common",
  "clap",
@@ -3528,6 +3529,29 @@ dependencies = [
  "derive_more 2.1.1",
  "prost",
  "serde",
+ "tonic",
+ "tonic-prost",
+]
+
+[[package]]
+name = "buck2_tenant_proxy"
+version = "0.1.0"
+dependencies = [
+ "buck2_cli_proto",
+ "buck2_client_ctx",
+ "buck2_common",
+ "buck2_core",
+ "buck2_error",
+ "buck2_fs",
+ "buck2_server",
+ "buck2_util",
+ "buck2_wrapper_common",
+ "libc",
+ "nix 0.31.3",
+ "rand 0.10.3",
+ "serde_json",
+ "tokio",
+ "tokio-stream",
  "tonic",
  "tonic-prost",
 ]

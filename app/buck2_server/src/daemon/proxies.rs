@@ -18,10 +18,24 @@ use std::time::Instant;
 
 use buck2_cli_proto::DaemonProcessInfo;
 use buck2_common::daemon_compatibility::TenantProxySpec;
+use buck2_core::buck2_env;
 use buck2_util::threads::thread_spawn;
 use futures::future::BoxFuture;
 
 use crate::daemon::state::TenantEviction;
+
+/// Test gate of a tenant proxy, `<isolation>,<path>`: before forwarding a `Kill` for that tenant,
+/// the proxy writes `<path>.started` and waits for `<path>.release`. Declared here rather than in
+/// the Linux-only proxy crate so that `buck2 help-env` lists it on every platform.
+pub fn proxy_before_evict_gate() -> buck2_error::Result<Option<&'static str>> {
+    buck2_env!("BUCK2_TEST_PROXY_BEFORE_EVICT", applicability = testing)
+}
+
+/// Test gate of a tenant proxy, `<isolation>,<path>`: while `<path>` exists, that tenant's proxy
+/// closes its liveness socket. Declared here for the same reason as [`proxy_before_evict_gate`].
+pub fn proxy_close_liveness_gate() -> buck2_error::Result<Option<&'static str>> {
+    buck2_env!("BUCK2_TEST_PROXY_CLOSE_LIVENESS", applicability = testing)
+}
 
 /// The budget of an eviction the daemon starts on its own, when a proxy's liveness is lost. A
 /// released client hard-kills a proxy `GRACEFUL_SHUTDOWN_TIMEOUT` (four seconds, in

@@ -145,6 +145,7 @@ members = [
   "app/buck2_settings",
   "app/buck2_settings_derive",
   "app/buck2_subscription_proto",
+  "app/buck2_tenant_proxy",
   "app/buck2_test",
   "app/buck2_test_api",
   "app/buck2_test_proto",
@@ -320,6 +321,7 @@ buck2_settings = { path = "app/buck2_settings" }
 buck2_settings_derive = { path = "app/buck2_settings_derive" }
 buck2_sketches = { path = "buck2_sketches" }
 buck2_subscription_proto = { path = "app/buck2_subscription_proto" }
+buck2_tenant_proxy = { path = "app/buck2_tenant_proxy" }
 buck2_test = { path = "app/buck2_test" }
 buck2_test_api = { path = "app/buck2_test_api" }
 buck2_test_proto = { path = "app/buck2_test_proto" }

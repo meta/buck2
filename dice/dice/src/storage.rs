@@ -42,6 +42,7 @@ use pagable::storage::support::SerializerForPaging;
 use pagable::storage::traits::ArcSerCache;
 use pagable::storage::traits::CommitFrontier;
 use pagable::storage::traits::DeserializedArcCache;
+use pagable::storage::traits::EvictExpiredStats;
 use pagable::storage::traits::PagableStorage;
 use pagable::storage::traits::PageOutError;
 use pagable::storage::traits::WriteTicket;
@@ -468,7 +469,7 @@ impl DiceStorage {
         // processed every one, or the arcs of late evictions stay pinned until
         // the next sweep. State requests are FIFO, so any round trip is the barrier.
         let _ = state_handle.pagable_node_counts().await;
-        self.release_after_evictions();
+        let _ = self.release_after_evictions();
         // The append-only store only changes here; refresh the cached size so the
         // command-end path reports it without a filesystem walk.
         self.refresh_db_size_bytes().await;
@@ -496,6 +497,7 @@ impl DiceStorage {
         // Bounded by what was backed at the start. Computations run meanwhile, and values that
         // become backed in the meantime, read back by a computation or written by a page-out, are
         // likely in use. They are left for the next eviction.
+        let start = Instant::now();
         self.paging_memory.record_eviction();
         let snapshot = state_handle.backed_snapshot().await;
         let mut evicted = 0;
@@ -504,15 +506,32 @@ impl DiceStorage {
                 .evict_backed(keys.to_vec(), snapshot.cutoff)
                 .await;
         }
-        self.release_after_evictions();
+        let graph_done = Instant::now();
+        let (freed_bytes, arcs) = self.release_after_evictions();
+        self.paging_memory.record_evicted(0, freed_bytes);
+        tracing::info!(
+            values_evicted = evicted,
+            graph_ms = (graph_done - start).as_millis() as u64,
+            cleanup_ms = graph_done.elapsed().as_millis() as u64,
+            arc_cache_passes = arcs.passes,
+            arc_cache_removed = arcs.removed,
+            cleanup_freed_bytes = freed_bytes,
+            "Evicted backed DICE values",
+        );
         evicted
     }
 
     /// Frees what evictions the core has applied left behind: the backend's caches and the
-    /// arc-cache bindings whose values the evictions dropped.
-    fn release_after_evictions(&self) {
+    /// arc-cache bindings whose values the evictions dropped. Records the memory this frees as
+    /// offloaded and returns it, with what the arc-cache sweep did.
+    fn release_after_evictions(&self) -> (i64, EvictExpiredStats) {
+        // Runs on this thread alone, so the window sees only these frees.
+        let window = AllocWindow::open();
         self.storage.release_memory();
-        self.storage.arc_cache().evict_expired();
+        let arcs = self.storage.arc_cache().evict_expired();
+        let freed_bytes = window.net_freed();
+        self.paging_memory.record_offloaded(freed_bytes);
+        (freed_bytes, arcs)
     }
 
     fn page_out_chunk(
@@ -997,6 +1016,9 @@ fn dir_size_bytes(path: &Path) -> std::io::Result<u64> {
     }
     Ok(total)
 }
+
+#[cfg(test)]
+mod cleanup_tests;
 
 #[cfg(test)]
 mod tests {

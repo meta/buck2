@@ -67,9 +67,9 @@ class ClassReferenceTracker extends ClassVisitor {
       int version,
       int access,
       String name,
-      String signature,
-      String superName,
-      String[] interfaces) {
+      @Nullable String signature,
+      @Nullable String superName,
+      String @Nullable [] interfaces) {
     className = name;
     if (superName != null) {
       addReferencedClassName(superName);
@@ -104,7 +104,7 @@ class ClassReferenceTracker extends ClassVisitor {
 
   @Override
   public AnnotationVisitor visitTypeAnnotation(
-      int typeRef, TypePath typePath, String desc, boolean visible) {
+      int typeRef, @Nullable TypePath typePath, String desc, boolean visible) {
     visitDescriptor(desc);
     return new TrackingAnnotationVisitor(
         api, super.visitTypeAnnotation(typeRef, typePath, desc, visible));
@@ -112,7 +112,7 @@ class ClassReferenceTracker extends ClassVisitor {
 
   @Override
   public @Nullable FieldVisitor visitField(
-      int access, String name, String desc, String signature, Object value) {
+      int access, String name, String desc, @Nullable String signature, @Nullable Object value) {
     if ((access & Opcodes.ACC_ENUM) != 0) {
       // Enum values don't count as references
       return super.visitField(access, name, desc, signature, value);
@@ -126,7 +126,11 @@ class ClassReferenceTracker extends ClassVisitor {
 
   @Override
   public MethodVisitor visitMethod(
-      int access, String name, String desc, String signature, String[] exceptions) {
+      int access,
+      String name,
+      String desc,
+      @Nullable String signature,
+      String @Nullable [] exceptions) {
     visitType(Type.getMethodType(desc));
     visitSignature(signature);
     addReferencedClassNames(exceptions);
@@ -200,7 +204,7 @@ class ClassReferenceTracker extends ClassVisitor {
 
     @Override
     public AnnotationVisitor visitTypeAnnotation(
-        int typeRef, TypePath typePath, String desc, boolean visible) {
+        int typeRef, @Nullable TypePath typePath, String desc, boolean visible) {
       visitDescriptor(desc);
       return new TrackingAnnotationVisitor(
           api, super.visitTypeAnnotation(typeRef, typePath, desc, visible));
@@ -227,7 +231,7 @@ class ClassReferenceTracker extends ClassVisitor {
 
     @Override
     public AnnotationVisitor visitTypeAnnotation(
-        int typeRef, TypePath typePath, String desc, boolean visible) {
+        int typeRef, @Nullable TypePath typePath, String desc, boolean visible) {
       visitDescriptor(desc);
       return new TrackingAnnotationVisitor(
           api, super.visitTypeAnnotation(typeRef, typePath, desc, visible));
@@ -240,7 +244,7 @@ class ClassReferenceTracker extends ClassVisitor {
     }
 
     @Override
-    public void visit(String name, Object value) {
+    public void visit(@Nullable String name, Object value) {
       if (value instanceof Type) {
         visitDescriptor(((Type) value).getDescriptor());
       }
@@ -248,18 +252,18 @@ class ClassReferenceTracker extends ClassVisitor {
     }
 
     @Override
-    public void visitEnum(String name, String desc, String value) {
+    public void visitEnum(@Nullable String name, String desc, String value) {
       visitDescriptor(desc);
       super.visitEnum(name, desc, value);
     }
 
     @Override
-    public AnnotationVisitor visitArray(String name) {
+    public AnnotationVisitor visitArray(@Nullable String name) {
       return new TrackingAnnotationVisitor(api, super.visitArray(name));
     }
 
     @Override
-    public AnnotationVisitor visitAnnotation(String name, String desc) {
+    public AnnotationVisitor visitAnnotation(@Nullable String name, String desc) {
       visitDescriptor(desc);
       return new TrackingAnnotationVisitor(api, super.visitAnnotation(name, desc));
     }

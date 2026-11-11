@@ -8,15 +8,55 @@
  * above-listed licenses.
  */
 
+use std::sync::Arc;
 use std::sync::Condvar;
 use std::sync::Mutex;
 use std::sync::OnceLock;
+use std::sync::atomic::AtomicBool;
 use std::time::Duration;
 use std::time::Instant;
 
+use buck2_cli_proto::DaemonProcessInfo;
+use buck2_common::daemon_compatibility::TenantProxySpec;
 use buck2_util::threads::thread_spawn;
+use futures::future::BoxFuture;
 
 use crate::daemon::state::TenantEviction;
+
+/// The budget of an eviction the daemon starts on its own, when a proxy's liveness is lost. A
+/// released client hard-kills a proxy `GRACEFUL_SHUTDOWN_TIMEOUT` (four seconds, in
+/// `buck2_client_ctx::daemon::client::kill`) after sending Kill and then starts a daemon of its
+/// own over the tenant's outputs, so the daemon must have released them, or be gone, by then;
+/// the rest of the four seconds is left for the forced tree kill that follows an overrun.
+pub const PROXY_EVICTION_TIMEOUT: Duration = Duration::from_millis(3500);
+
+pub struct ProxyEviction {
+    pub completed: BoxFuture<'static, buck2_error::Result<()>>,
+    pub recovery_allowed: Arc<AtomicBool>,
+    pub final_tenant: bool,
+}
+
+#[derive(Clone)]
+pub struct ProxySupervisor {
+    pub runtime: tokio::runtime::Handle,
+    pub begin_eviction: Arc<
+        dyn Fn(TenantProxySpec, bool) -> buck2_error::Result<Option<ProxyEviction>> + Send + Sync,
+    >,
+    /// Registers a fresh generation of the tenant that `previous` served, and launches its proxy.
+    /// Returns the new proxy's connection record, or `None` if the tenant needs no replacement.
+    pub register_replacement: Arc<
+        dyn Fn(
+                TenantProxySpec,
+            ) -> BoxFuture<'static, buck2_error::Result<Option<DaemonProcessInfo>>>
+            + Send
+            + Sync,
+    >,
+}
+
+pub type ProxyLauncher = fn(
+    TenantProxySpec,
+    ProxySupervisor,
+) -> BoxFuture<'static, buck2_error::Result<DaemonProcessInfo>>;
 
 #[derive(Default)]
 struct WatchdogState {
@@ -70,6 +110,10 @@ impl TenantEvictionWatchdog {
     }
 }
 
+pub static LAUNCH_PROXY: OnceLock<ProxyLauncher> = OnceLock::new();
+/// Tells the proxy of `(project root, isolation, generation)` that its generation has been
+/// evicted, once the generation's work has stopped.
+pub static RETIRE_PROXY: OnceLock<fn(&str, &str, u64)> = OnceLock::new();
 pub static EMERGENCY_SHUTDOWN: OnceLock<fn() -> !> = OnceLock::new();
 
 /// Starts the deadline by which an eviction must complete before the daemon ends itself.

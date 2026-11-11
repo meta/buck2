@@ -53,6 +53,7 @@ use buck2_core::fs::project::ProjectRoot;
 use buck2_core::logging::LogConfigurationReloadHandle;
 use buck2_core::pattern::unparsed::UnparsedPatternPredicate;
 use buck2_error::BuckErrorContext;
+use buck2_error::BuckErrorOptionContext;
 use buck2_error::ErrorTag;
 use buck2_error::buck2_error;
 use buck2_events::Event;
@@ -135,6 +136,7 @@ use crate::daemon::dice::TenantDiceProvider;
 use crate::daemon::multi_event_stream::MultiEventStream;
 use crate::daemon::server_allocative::spawn_allocative;
 use crate::daemon::state::DaemonState;
+use crate::daemon::state::Registrant;
 use crate::file_status::file_status_command;
 use crate::hydration::hydration_command;
 use crate::new_generic::new_generic_command;
@@ -385,6 +387,9 @@ pub(crate) struct BuckdServerData {
     #[allocative(skip)]
     process_info: DaemonProcessInfo,
     base_daemon_constraints: buck2_cli_proto::DaemonConstraints,
+    /// Whether the daemon's tenants record I/O traces: a startup choice that every tenant's I/O
+    /// provider is built from, so it is known before any tenant initializes.
+    enable_trace_io: bool,
     start_time: prost_types::Timestamp,
     start_instant: Instant,
     daemon_shutdown: DaemonShutdown,
@@ -408,6 +413,56 @@ pub(crate) struct BuckdServerData {
 #[derive(Allocative)]
 pub struct BuckdServer(Arc<BuckdServerData>);
 
+/// A reserved tenant generation whose registration has not run to completion. Dropping it with
+/// the registration unfinished, as a client's disconnect does, evicts the generation when this
+/// was its last registrant and it never initialized, so that it does not stay registered without
+/// a client or a tenant; a generation that other clients are registering, or that already serves
+/// clients, stays.
+struct PendingRegistration {
+    server: Option<BuckdServer>,
+    registrant: Option<Registrant>,
+    context: ClientContext,
+    generation: u64,
+    published: bool,
+}
+
+impl PendingRegistration {
+    fn disarm(&mut self) {
+        self.server = None;
+        if let Some(registrant) = self.registrant.take() {
+            registrant.leave();
+        }
+    }
+}
+
+impl Drop for PendingRegistration {
+    fn drop(&mut self) {
+        let Some(server) = self.server.take() else {
+            return;
+        };
+        let unclaimed = self
+            .registrant
+            .take()
+            .is_some_and(|registrant| registrant.leave());
+        tracing::info!(
+            generation = self.generation,
+            unclaimed,
+            "Tenant registration dropped before it completed"
+        );
+        if !unclaimed {
+            return;
+        }
+        let context = std::mem::take(&mut self.context);
+        let generation = self.generation;
+        let published = self.published;
+        server.0.rt.clone().spawn(async move {
+            server
+                .evict_failed_registration(&context, generation, published)
+                .await;
+        });
+    }
+}
+
 impl BuckdServer {
     fn shutdown_after_final_tenant_eviction(&self) {
         self.0
@@ -420,6 +475,239 @@ impl BuckdServer {
             },
             None,
         );
+    }
+
+    /// The spec of the proxy for a tenant generation, from what is known before the tenant
+    /// initializes. The I/O provider and the materializer state identity come out of
+    /// initialization, and clients take them from the daemon, not the proxy.
+    fn tenant_proxy_spec(
+        &self,
+        context: &ClientContext,
+        generation: u64,
+    ) -> buck2_error::Result<buck2_common::daemon_compatibility::TenantProxySpec> {
+        let mut constraints = self.0.base_daemon_constraints.clone();
+        constraints.extra = Some(buck2_cli_proto::ExtraDaemonConstraints {
+            trace_io_enabled: self.0.enable_trace_io,
+            materializer_state_identity: None,
+        });
+        let key = buck2_common::daemon_compatibility::DaemonCompatibilityKey::new(
+            &constraints.version,
+            constraints.user_version.as_deref(),
+            constraints
+                .daemon_startup_config
+                .as_deref()
+                .internal_error("Daemon constraints lack a startup config")?,
+            self.0.enable_trace_io,
+        );
+        Ok(buck2_common::daemon_compatibility::TenantProxySpec {
+            reference: buck2_common::daemon_compatibility::UnidaemonTenantReference {
+                compatibility_key: key,
+                daemon_id: constraints.daemon_id.clone(),
+                generation,
+            },
+            tenant: context
+                .tenant_identity
+                .clone()
+                .internal_error("Client context lacks a tenant identity")?,
+            daemon: self.0.process_info.clone(),
+            constraints,
+            io_provider: None,
+        })
+    }
+
+    /// Registers the tenant addressed by `context`. With `proxy`, the tenant's proxy is
+    /// published before the tenant initializes, so that a `kill` that arrives during
+    /// initialization reaches the tenant through the proxy as it does afterwards. Returns the
+    /// generation and the proxy's connection record.
+    async fn register_tenant_with_proxy(
+        &self,
+        context: &ClientContext,
+    ) -> Result<(u64, Option<DaemonProcessInfo>), Status> {
+        let data = self.0.daemon_state.data().clone();
+        let reservation = data
+            .reserve_tenant_for_client_context(context)
+            .map_err(|error| Status::failed_precondition(format!("{error:#}")))?;
+        let generation = reservation.generation();
+        let mut pending = PendingRegistration {
+            server: Some(BuckdServer(self.0.dupe())),
+            registrant: Some(reservation.registrant()),
+            context: context.clone(),
+            generation,
+            published: false,
+        };
+        let mut published = None;
+        // Until a launcher is installed, a tenant is served without a proxy.
+        if let Some(launch) = super::proxies::LAUNCH_PROXY.get() {
+            // An evicted generation's proxy owns the tenant's directory until its eviction
+            // completes, so the replacement's proxy cannot publish before then.
+            data.wait_for_earlier_evictions(&reservation).await;
+            let spec = self
+                .tenant_proxy_spec(context, generation)
+                .map_err(|error| Status::internal(format!("{error:#}")))?;
+            match launch(spec, self.proxy_supervisor()).await {
+                Ok(info) => {
+                    pending.published = true;
+                    published = Some(info);
+                }
+                Err(error) => {
+                    pending.disarm();
+                    self.evict_failed_registration(context, generation, false)
+                        .await;
+                    return Err(Status::internal(format!(
+                        "Launching tenant proxy: {error:#}"
+                    )));
+                }
+            }
+        }
+        match data.register_reserved_tenant(reservation).await {
+            Ok(generation) => {
+                pending.disarm();
+                Ok((generation, published))
+            }
+            Err(error) => {
+                pending.disarm();
+                if published.is_some() {
+                    self.evict_failed_registration(context, generation, true)
+                        .await;
+                }
+                Err(Status::failed_precondition(format!("{error:#}")))
+            }
+        }
+    }
+
+    /// Evicts a generation whose registration failed. The eviction retires the generation's
+    /// proxy; a proxy that published after the generation was already evicted is retired here,
+    /// as nothing else would. The proxy of a final tenant is left to exit with the daemon. No
+    /// watchdog bounds the eviction: no client waits for it, and it completes once the tenant's
+    /// initialization, which cannot be interrupted, has returned.
+    async fn evict_failed_registration(
+        &self,
+        context: &ClientContext,
+        generation: u64,
+        published: bool,
+    ) {
+        let mut daemon_exits = false;
+        match self
+            .0
+            .daemon_state
+            .data()
+            .evict_tenant_generation(context, Some(generation))
+        {
+            Ok(Some(eviction)) => {
+                eviction.completed.await;
+                daemon_exits = eviction.final_tenant;
+                if daemon_exits {
+                    self.shutdown_after_final_tenant_eviction();
+                }
+            }
+            Ok(None) => {}
+            Err(error) => {
+                tracing::warn!(generation, "Evicting a failed registration: {error:#}");
+            }
+        }
+        if published
+            && !daemon_exits
+            && let (Some(retire), Some(identity)) = (
+                super::proxies::RETIRE_PROXY.get(),
+                context.tenant_identity.clone(),
+            )
+        {
+            if let Err(error) = tokio::task::spawn_blocking(move || {
+                retire(&identity.project_root, &identity.isolation, generation)
+            })
+            .await
+            {
+                tracing::warn!(
+                    generation,
+                    "Retiring the proxy of a failed registration: {error:#}"
+                );
+            }
+        }
+    }
+
+    fn proxy_supervisor(&self) -> super::proxies::ProxySupervisor {
+        let weak = Arc::downgrade(&self.0);
+        let replacement = weak.clone();
+        super::proxies::ProxySupervisor {
+            runtime: self.0.rt.clone(),
+            begin_eviction: Arc::new(move |spec, recovery_allowed| {
+                let Some(inner) = weak.upgrade() else {
+                    return Ok(None);
+                };
+                let server = BuckdServer(inner);
+                let context = ClientContext {
+                    working_dir: spec.tenant.project_root.clone(),
+                    tenant_identity: Some(spec.tenant),
+                    command_name: "proxy-liveness-loss".to_owned(),
+                    ..Default::default()
+                };
+                let Some(eviction) = server.0.daemon_state.data().evict_tenant_after_proxy_loss(
+                    &context,
+                    spec.reference.generation,
+                    recovery_allowed,
+                )?
+                else {
+                    return Ok(None);
+                };
+                super::proxies::arm_tenant_eviction_watchdog(
+                    &eviction,
+                    super::proxies::PROXY_EVICTION_TIMEOUT,
+                );
+                let final_tenant = eviction.final_tenant;
+                let recovery_allowed = eviction.recovery_allowed.clone();
+                Ok(Some(super::proxies::ProxyEviction {
+                    final_tenant,
+                    recovery_allowed,
+                    completed: async move {
+                        eviction.completed.await;
+                        if final_tenant {
+                            server.shutdown_after_final_tenant_eviction();
+                        }
+                        Ok(())
+                    }
+                    .boxed(),
+                }))
+            }),
+            register_replacement: Arc::new(move |previous| {
+                let weak = replacement.clone();
+                async move {
+                    let Some(inner) = weak.upgrade() else {
+                        return Ok(None);
+                    };
+                    let server = BuckdServer(inner);
+                    server
+                        .check_if_accepting_requests()
+                        .map_err(buck2_error::Error::from)?;
+                    let context = ClientContext {
+                        working_dir: previous.tenant.project_root.clone(),
+                        tenant_identity: Some(previous.tenant),
+                        command_name: "recover-tenant-proxy".to_owned(),
+                        ..Default::default()
+                    };
+                    if server
+                        .0
+                        .daemon_state
+                        .data()
+                        .tenant_generation_for_client_context(&context)?
+                        .is_some()
+                    {
+                        return Ok(None);
+                    }
+                    let (_, published) = server
+                        .register_tenant_with_proxy(&context)
+                        .await
+                        .map_err(|status| {
+                            buck2_error::buck2_error!(
+                                buck2_error::ErrorTag::Input,
+                                "{}",
+                                status.message()
+                            )
+                        })?;
+                    Ok(published)
+                }
+                .boxed()
+            }),
+        }
     }
 
     #[tracing::instrument(name = "daemon_listener", skip_all)]
@@ -490,6 +778,7 @@ impl BuckdServer {
         )?;
         let in_process = init_ctx.in_process;
 
+        let enable_trace_io = init_ctx.enable_trace_io;
         let daemon_state = Arc::new(
             DaemonState::new(
                 fb,
@@ -510,6 +799,7 @@ impl BuckdServer {
             stop_accepting_requests: AtomicBool::new(false),
             process_info,
             base_daemon_constraints,
+            enable_trace_io,
             start_time: prost_types::Timestamp {
                 seconds: now.as_secs() as i64,
                 nanos: now.subsec_nanos() as i32,
@@ -1841,13 +2131,7 @@ impl DaemonApi for BuckdServer {
             .into_inner()
             .context
             .ok_or_else(|| Status::invalid_argument("missing tenant client context"))?;
-        let generation = self
-            .0
-            .daemon_state
-            .data()
-            .register_tenant_for_client_context(&context)
-            .await
-            .map_err(|error| Status::failed_precondition(format!("{error:#}")))?;
+        let (generation, _) = self.register_tenant_with_proxy(&context).await?;
         Ok(Response::new(
             buck2_cli_proto::UnstableRegisterTenantResponse { generation },
         ))

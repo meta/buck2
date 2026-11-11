@@ -16,6 +16,7 @@ use std::sync::Mutex as StdMutex;
 use std::sync::Weak;
 use std::sync::atomic::AtomicBool;
 use std::sync::atomic::AtomicU64;
+use std::sync::atomic::AtomicUsize;
 use std::sync::atomic::Ordering;
 use std::time::Duration;
 use std::time::Instant;
@@ -115,6 +116,7 @@ use buck2_server_ctx::concurrency::ConcurrencyHandler;
 use buck2_server_ctx::ctx::LockedPreviousCommandData;
 use buck2_settings::DaemonBuckSettings;
 use buck2_settings::PackageVisibilityDefaultIntersection;
+use buck2_util::future::join_all;
 use buck2_wrapper_common::invocation_id::TraceId;
 use dice::Dice;
 use dice::EvictionPolicy;
@@ -1038,12 +1040,54 @@ struct TenantStateRegistry {
     evictions: StdMutex<BuckMutMap<(TenantKey, u64), TenantEviction>>,
 }
 
+/// A tenant generation in the registry whose state has not been initialized by the caller yet.
+pub(crate) struct TenantReservation {
+    paths: TenantPaths,
+    entry: Arc<TenantStateSlot<TenantState>>,
+}
+
+impl TenantReservation {
+    pub(crate) fn generation(&self) -> u64 {
+        self.entry.generation
+    }
+
+    /// Attaches a registrant to the generation for as long as the registration runs.
+    pub(crate) fn registrant(&self) -> Registrant {
+        Registrant::attach(&self.entry)
+    }
+}
+
+/// A client registering a generation. Clients of one tenant may register concurrently and share
+/// a generation, and a generation whose registration completed serves clients that are not
+/// registering it, so a registration that does not complete may only evict a generation that
+/// no registrant and no tenant state holds.
+pub(crate) struct Registrant<T: Allocative = TenantState> {
+    entry: Arc<TenantStateSlot<T>>,
+}
+
+impl<T: Allocative> Registrant<T> {
+    fn attach(entry: &Arc<TenantStateSlot<T>>) -> Self {
+        entry.registrants.fetch_add(1, Ordering::AcqRel);
+        Self {
+            entry: entry.clone(),
+        }
+    }
+
+    /// Detaches from the generation. Returns whether it was the last registrant of a generation
+    /// whose state never initialized, which nothing else will evict.
+    pub(crate) fn leave(self) -> bool {
+        let remaining = self.entry.registrants.fetch_sub(1, Ordering::AcqRel) - 1;
+        remaining == 0 && self.entry.state.get().is_none()
+    }
+}
+
 struct TenantStateSlot<T: Allocative> {
     spec: TenantSpec,
     generation: u64,
     state: OnceCell<Arc<T>>,
     disk_ownership: Arc<Semaphore>,
     cancellation: Arc<CancellationScope>,
+    registrants: AtomicUsize,
 }
 
 impl<T: Allocative> Allocative for TenantStateSlot<T> {
@@ -1071,6 +1115,7 @@ impl<T: Allocative> TenantStateSlot<T> {
             state: OnceCell::new(),
             disk_ownership,
             cancellation,
+            registrants: AtomicUsize::new(0),
         }
     }
 
@@ -1122,12 +1167,41 @@ impl TenantStateRegistry {
     async fn get_or_create<F, Fut>(
         &self,
         spec: TenantSpec,
+        _allow_registration: bool,
+        _expected_generation: Option<u64>,
         create: F,
     ) -> buck2_error::Result<Arc<TenantState>>
     where
         F: FnOnce(Arc<Semaphore>, Arc<CancellationScope>) -> Fut + Send + 'static,
         Fut: Future<Output = buck2_error::Result<Arc<TenantState>>> + Send + 'static,
     {
+        let entry = self.reserve(&spec)?;
+        self.initialize(entry, create).await
+    }
+
+    /// The completion of every eviction of an earlier generation of the tenant that is still
+    /// running.
+    fn pending_evictions(
+        &self,
+        key: &TenantKey,
+        before_generation: u64,
+    ) -> Vec<Shared<BoxFuture<'static, ()>>> {
+        self.evictions
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .iter()
+            .filter(|((evicted, generation), eviction)| {
+                evicted == key
+                    && *generation < before_generation
+                    && eviction.completed.clone().now_or_never().is_none()
+            })
+            .map(|(_, eviction)| eviction.completed.clone())
+            .collect()
+    }
+
+    /// The registry's entry for the tenant, created with a new generation if it has none. The
+    /// entry's state is initialized by [`Self::initialize`].
+    fn reserve(&self, spec: &TenantSpec) -> buck2_error::Result<Arc<TenantStateSlot<TenantState>>> {
         let key = spec.key().clone();
         let requested_spec = spec.clone();
         let entry = {
@@ -1157,7 +1231,7 @@ impl TenantStateRegistry {
                             gate
                         });
                     Arc::new(TenantStateSlot::new(
-                        spec,
+                        spec.clone(),
                         generation,
                         disk_ownership,
                         Arc::new(CancellationScope::new()),
@@ -1172,7 +1246,20 @@ impl TenantStateRegistry {
                 key
             ));
         }
+        Ok(entry)
+    }
 
+    /// Waits for the entry's tenant state, initializing it if no one has.
+    async fn initialize<F, Fut>(
+        &self,
+        entry: Arc<TenantStateSlot<TenantState>>,
+        create: F,
+    ) -> buck2_error::Result<Arc<TenantState>>
+    where
+        F: FnOnce(Arc<Semaphore>, Arc<CancellationScope>) -> Fut + Send + 'static,
+        Fut: Future<Output = buck2_error::Result<Arc<TenantState>>> + Send + 'static,
+    {
+        let key = entry.spec.key().clone();
         let state = entry
             .get_or_try_init(|| async {
                 let disk_ownership = entry.disk_ownership.clone();
@@ -1254,6 +1341,15 @@ impl TenantStateRegistry {
     }
 
     fn evict_generation(&self, key: &TenantKey, expected: Option<u64>) -> Option<TenantEviction> {
+        self.evict_generation_with_recovery(key, expected, false)
+    }
+
+    fn evict_generation_with_recovery(
+        &self,
+        key: &TenantKey,
+        expected: Option<u64>,
+        recovery_allowed: bool,
+    ) -> Option<TenantEviction> {
         let started = Instant::now();
         let mut tenants = self
             .tenants
@@ -1265,6 +1361,9 @@ impl TenantStateRegistry {
             .unwrap_or_else(|error| error.into_inner());
         if let Some(expected) = expected {
             if let Some(eviction) = evictions.get(&(key.clone(), expected)) {
+                if !recovery_allowed {
+                    eviction.recovery_allowed.store(false, Ordering::Release);
+                }
                 return Some(eviction.clone());
             }
             if !tenants
@@ -1279,6 +1378,9 @@ impl TenantStateRegistry {
         if let Some(state) = entry.state.get() {
             state.dice_manager.retire();
         }
+        // A generation that never finished initializing has no tenant to give back: the client
+        // that registered it gets the failure and decides whether to try again.
+        let recovery_allowed = recovery_allowed && entry.state.get().is_some();
         let final_tenant = tenants.is_empty();
         if final_tenant {
             self.draining.store(true, Ordering::Release);
@@ -1287,9 +1389,10 @@ impl TenantStateRegistry {
         let eviction = TenantEviction {
             generation: entry.generation,
             final_tenant,
-            completed: Self::finish_eviction(vec![entry], Some(watchdog.clone())),
+            completed: Self::finish_eviction(vec![entry], Some(watchdog.clone()), !final_tenant),
             started,
             watchdog,
+            recovery_allowed: Arc::new(AtomicBool::new(recovery_allowed)),
         };
         evictions.retain(|_, previous| previous.completed.clone().now_or_never().is_none());
         evictions.insert((key.clone(), eviction.generation), eviction.clone());
@@ -1340,7 +1443,7 @@ impl TenantStateRegistry {
             .iter()
             .map(|entry| (entry.spec.key().clone(), entry.generation))
             .collect();
-        let completed = Self::finish_eviction(evicted, Some(watchdog.clone()));
+        let completed = Self::finish_eviction(evicted, Some(watchdog.clone()), !final_tenant);
         evictions.retain(|_, previous| previous.completed.clone().now_or_never().is_none());
         for (key, generation) in keys {
             evictions.insert(
@@ -1351,6 +1454,7 @@ impl TenantStateRegistry {
                     completed: completed.clone(),
                     started,
                     watchdog: watchdog.clone(),
+                    recovery_allowed: Arc::new(AtomicBool::new(false)),
                 },
             );
         }
@@ -1361,10 +1465,13 @@ impl TenantStateRegistry {
         }
     }
 
-    /// Cancels the generations and waits for their work to stop.
+    /// Cancels the generations and waits for their work to stop. With `retire_proxies`, their
+    /// proxies are then told to exit; an eviction the daemon exits with leaves its proxies to exit
+    /// when they see the daemon gone, so that a client waiting for a proxy waits for the daemon too.
     fn finish_eviction(
         entries: Vec<Arc<TenantStateSlot<TenantState>>>,
         watchdog: Option<Arc<super::proxies::TenantEvictionWatchdog>>,
+        retire_proxies: bool,
     ) -> Shared<BoxFuture<'static, ()>> {
         let scopes = entries
             .iter()
@@ -1392,12 +1499,33 @@ impl TenantStateRegistry {
                     tokio::time::sleep(Duration::from_millis(10)).await;
                 }
             }
+            let proxies: Vec<_> = entries
+                .iter()
+                .map(|entry| {
+                    (
+                        entry.spec.key().project_root().to_string(),
+                        entry.spec.key().isolation().to_string(),
+                        entry.generation,
+                    )
+                })
+                .collect();
             drop(entries);
             futures::stream::iter(scopes)
                 .map(|scope| async move { scope.wait().await })
                 .buffer_unordered(16)
                 .collect::<Vec<_>>()
                 .await;
+            if let (true, Some(retire)) = (retire_proxies, super::proxies::RETIRE_PROXY.get()) {
+                if let Err(error) = tokio::task::spawn_blocking(move || {
+                    for (project_root, isolation, generation) in &proxies {
+                        retire(project_root, isolation, *generation);
+                    }
+                })
+                .await
+                {
+                    tracing::warn!("Proxy retirement did not finish: {error:#}");
+                }
+            }
             if let Some(watchdog) = watchdog {
                 watchdog.complete();
             }
@@ -1470,6 +1598,7 @@ pub struct TenantEviction {
     pub(crate) completed: Shared<BoxFuture<'static, ()>>,
     pub(crate) started: Instant,
     pub(crate) watchdog: Arc<super::proxies::TenantEvictionWatchdog>,
+    pub(crate) recovery_allowed: Arc<AtomicBool>,
 }
 
 pub struct ProjectTenantEviction {
@@ -1610,6 +1739,15 @@ impl DaemonStateData {
         self: &Arc<Self>,
         client_context: &ClientContext,
     ) -> buck2_error::Result<Arc<TenantState>> {
+        self.tenant_for_client_context_impl(client_context, false)
+            .await
+    }
+
+    async fn tenant_for_client_context_impl(
+        self: &Arc<Self>,
+        client_context: &ClientContext,
+        register: bool,
+    ) -> buck2_error::Result<Arc<TenantState>> {
         let Some(paths) = tenant_paths_from_client_context(client_context)? else {
             return self.tenant_for_legacy_client();
         };
@@ -1617,16 +1755,21 @@ impl DaemonStateData {
         let data = self.dupe();
 
         self.tenants
-            .get_or_create(spec, move |disk_ownership, cancellation| async move {
-                data.tenant_state_factory
-                    .create(
-                        paths,
-                        data.repo_shared_services(),
-                        disk_ownership,
-                        cancellation,
-                    )
-                    .await
-            })
+            .get_or_create(
+                spec,
+                register,
+                client_context.tenant_generation,
+                move |disk_ownership, cancellation| async move {
+                    data.tenant_state_factory
+                        .create(
+                            paths,
+                            data.repo_shared_services(),
+                            disk_ownership,
+                            cancellation,
+                        )
+                        .await
+                },
+            )
             .await
     }
 
@@ -1645,7 +1788,53 @@ impl DaemonStateData {
         self: &Arc<Self>,
         client_context: &ClientContext,
     ) -> buck2_error::Result<u64> {
-        let state = self.tenant_for_client_context(client_context).await?;
+        let reservation = self.reserve_tenant_for_client_context(client_context)?;
+        self.register_reserved_tenant(reservation).await
+    }
+
+    /// Gives the tenant addressed by a registering client its generation without initializing
+    /// it, so that the generation can be published before the initialization that a kill of it
+    /// has to wait for.
+    pub(crate) fn reserve_tenant_for_client_context(
+        &self,
+        client_context: &ClientContext,
+    ) -> buck2_error::Result<TenantReservation> {
+        let paths = tenant_paths_from_client_context(client_context)?
+            .internal_error("Tenant registration requires an identity")?;
+        let spec = TenantSpec::from_tenant_paths(&paths);
+        let entry = self.tenants.reserve(&spec)?;
+        Ok(TenantReservation { paths, entry })
+    }
+
+    /// Waits until earlier generations of a reserved tenant have finished being evicted, which
+    /// includes their proxies having exited and released the tenant's directory.
+    pub(crate) async fn wait_for_earlier_evictions(&self, reservation: &TenantReservation) {
+        let pending = self
+            .tenants
+            .pending_evictions(reservation.entry.spec.key(), reservation.generation());
+        join_all(pending).await;
+    }
+
+    /// Initializes a reserved tenant and returns its generation.
+    pub(crate) async fn register_reserved_tenant(
+        self: &Arc<Self>,
+        reservation: TenantReservation,
+    ) -> buck2_error::Result<u64> {
+        let TenantReservation { paths, entry } = reservation;
+        let data = self.dupe();
+        let state = self
+            .tenants
+            .initialize(entry, move |disk_ownership, cancellation| async move {
+                data.tenant_state_factory
+                    .create(
+                        paths,
+                        data.repo_shared_services(),
+                        disk_ownership,
+                        cancellation,
+                    )
+                    .await
+            })
+            .await?;
         let key = TenantKey::from_tenant_paths(&state.repo.paths);
         let tenants = self
             .tenants
@@ -1712,6 +1901,36 @@ impl DaemonStateData {
         Ok(self
             .tenants
             .evict_generation(&TenantKey::from_tenant_paths(&paths), generation))
+    }
+
+    pub fn evict_tenant_after_proxy_loss(
+        &self,
+        context: &ClientContext,
+        generation: u64,
+        recovery_allowed: bool,
+    ) -> buck2_error::Result<Option<TenantEviction>> {
+        let paths = tenant_paths_from_client_context(context)?
+            .internal_error("Proxy eviction requires an identity")?;
+        Ok(self.tenants.evict_generation_with_recovery(
+            &TenantKey::from_tenant_paths(&paths),
+            Some(generation),
+            recovery_allowed,
+        ))
+    }
+
+    pub fn tenant_generation_for_client_context(
+        &self,
+        context: &ClientContext,
+    ) -> buck2_error::Result<Option<u64>> {
+        let paths = tenant_paths_from_client_context(context)?
+            .internal_error("Tenant lookup requires an identity")?;
+        Ok(self
+            .tenants
+            .tenants
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .get(&TenantKey::from_tenant_paths(&paths))
+            .map(|entry| entry.generation))
     }
 
     pub fn evict_project_tenants_for_client_context(
@@ -2277,6 +2496,28 @@ mod tests {
         let second = second?;
         assert!(Arc::ptr_eq(&first, &second));
         assert_eq!(init_count.load(Ordering::Relaxed), 1);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn last_registrant_of_an_uninitialized_generation_evicts_it() -> buck2_error::Result<()> {
+        let entry = Arc::new(TenantStateSlot::<usize>::new(
+            tenant_spec(),
+            1,
+            Arc::new(Semaphore::new(1)),
+            Arc::new(CancellationScope::new()),
+        ));
+        let first = Registrant::attach(&entry);
+        let second = Registrant::attach(&entry);
+        assert!(!first.leave(), "another client is still registering");
+        assert!(second.leave(), "the last registrant leaves nothing behind");
+
+        let registrant = Registrant::attach(&entry);
+        entry.get_or_try_init(|| async { Ok(Arc::new(1)) }).await?;
+        assert!(
+            !registrant.leave(),
+            "an initialized generation serves clients that are not registering it"
+        );
         Ok(())
     }
 

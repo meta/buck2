@@ -232,7 +232,9 @@ impl TenantDiskLock {
         tokio::time::timeout(timeout, async {
             loop {
                 if let Some(mut lock) = Self::try_acquire(paths).await? {
-                    if buck2_env!("BUCK2_SHARE_DAEMON", type=bool, default=false)? {
+                    if buck2_env!("BUCK2_SHARE_DAEMON", type=bool, default=false)?
+                        && !unidaemon_prototype_enabled()?
+                    {
                         let legacy_dir = paths.unshared_daemon_dir()?;
                         let Some(file) = Self::try_lock_file(&legacy_dir.path.join(FileName::unchecked_new("buckd.lifecycle"))).await? else {
                             tokio::time::sleep(Duration::from_millis(50)).await;

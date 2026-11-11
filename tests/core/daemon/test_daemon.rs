@@ -38,6 +38,7 @@ use common_unidaemon::path_str;
 use common_unidaemon::pid_of;
 use common_unidaemon::start_generation;
 use common_unidaemon::status_json;
+use common_unidaemon::tenant_entry;
 use common_unidaemon::tenant_generation;
 use common_unidaemon::wait_for_evicted_generation;
 use common_unidaemon::wait_for_marker;
@@ -1442,6 +1443,83 @@ async fn config_value(tenant: &Buck, config: &Path) -> anyhow::Result<String> {
         .context("No `tenant.value`")?
         .to_owned())
 }
+
+/// A client killed while its tenant initializes leaves the generation to a client that joined it.
+/// Alone, it leaves the generation to the next client when the daemon did not notice its
+/// departure, and the daemon evicts the generation once the initialization ends when it did, so
+/// that the next client registers a fresh one. The daemon survives an initialization longer than
+/// the proxy-loss budget either way.
+async fn client_killed_during_tenant_initialization_leaves_the_tenant_usable(
+    buck: &mut Buck,
+    tmp_path: &Path,
+    joined: bool,
+) -> anyhow::Result<()> {
+    let gate = tmp_path.join("initialization");
+    buck.set_env(
+        "BUCK2_TEST_BLOCK_TENANT_INITIALIZATION",
+        format!("initializing,{}", gate.display()),
+    );
+    let buck = &*buck;
+    buck.targets(&["//:rule"]).await?;
+    let pid = daemon_pid(buck).await?;
+    let tenant = isolated_buck(buck, "initializing");
+    let mut first = Some(tenant.targets(&["//:rule"]).spawn());
+    let mut joiner = None;
+    let result = async {
+        wait_for_marker(&tmp_path.join("initialization.started"), &mut first).await?;
+        let generation = tenant_generation(&debug_tenants(buck).await?, "initializing")?;
+        if joined {
+            joiner = Some(tenant.targets(&["//:rule"]).spawn());
+            tokio::time::sleep(Duration::from_secs(1)).await;
+        }
+        let _killed = first
+            .take()
+            .expect("the first client is running")
+            .kill()
+            .await;
+        // Longer than the proxy-loss eviction budget, which does not apply here.
+        tokio::time::sleep(Duration::from_secs(5)).await;
+        assert!(daemon_is_alive(pid));
+        touch(&tmp_path.join("initialization.release"))?;
+        if let Some(joiner) = joiner.take() {
+            wait_within(joiner, THIRTY_SECONDS).await??;
+        }
+        tenant.targets(&["//:rule"]).await?;
+        let entries = debug_tenants(buck).await?;
+        let entry = tenant_entry(&entries, "initializing")?;
+        assert!(truthy(&entry["initialized"]));
+        if joined {
+            assert_eq!(generation_of(entry)?, generation);
+        } else {
+            assert!(generation_of(entry)? >= generation);
+        }
+        assert_eq!(daemon_pid(buck).await?, pid);
+        anyhow::Ok(())
+    }
+    .await;
+    touch(&tmp_path.join("initialization.release"))?;
+    if let Some(first) = first.take() {
+        let _ignored = first.kill().await;
+    }
+    if let Some(joiner) = joiner.take() {
+        let _ignored = wait_within(joiner, THIRTY_SECONDS).await;
+    }
+    let killed = async {
+        tenant.kill().await?;
+        buck.kill().await?;
+        anyhow::Ok(())
+    }
+    .await;
+    result?;
+    killed
+}
+
+bool_cases! { [mut buck, tmp_path] client_killed_during_tenant_initialization_leaves_the_tenant_usable {
+    #[buck_test(skip_for_os = ["windows"], env = [("BUCK2_SHARE_DAEMON", "true")])]
+    fn test_client_killed_during_tenant_initialization_leaves_the_tenant_usable_False(false);
+    #[buck_test(skip_for_os = ["windows"], env = [("BUCK2_SHARE_DAEMON", "true")])]
+    fn test_client_killed_during_tenant_initialization_leaves_the_tenant_usable_True(true);
+}}
 
 async fn isolated_tenants_share_daemon_without_sharing_config(
     buck: &Buck,

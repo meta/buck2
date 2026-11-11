@@ -34,6 +34,28 @@ use serde::Serialize;
 #[serde(try_from = "String", into = "String")]
 pub struct DaemonCompatibilityKey(FileNameBuf);
 
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct UnidaemonTenantReference {
+    pub compatibility_key: DaemonCompatibilityKey,
+    pub daemon_id: String,
+    pub generation: u64,
+}
+
+/// The launch input of a tenant proxy, in the tenant's daemon directory beside the connection
+/// files the proxy publishes there.
+pub const TENANT_PROXY_SPEC_FILE: &str = "proxy-spec.json";
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct TenantProxySpec {
+    pub reference: UnidaemonTenantReference,
+    pub tenant: buck2_cli_proto::TenantIdentity,
+    pub daemon: buck2_cli_proto::DaemonProcessInfo,
+    pub constraints: buck2_cli_proto::DaemonConstraints,
+    /// Absent until the tenant initializes; only `status` shows it, and clients get it from the
+    /// daemon.
+    pub io_provider: Option<String>,
+}
+
 impl DaemonCompatibilityKey {
     /// `daemon_startup_config` is the serialized `DaemonStartupConfig` a daemon is started with
     /// and reports in its constraints, so equal keys imply the startup constraints a client

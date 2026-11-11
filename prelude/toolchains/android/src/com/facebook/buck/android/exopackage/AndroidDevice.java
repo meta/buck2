@@ -154,8 +154,6 @@ public interface AndroidDevice {
 
   void uninstallPackage(String packageName) throws Exception;
 
-  String getApkManifestDigest(String packagePath) throws Exception;
-
   String getContentHash(String path) throws Exception;
 
   /** How the apk installed for a package compares with a local apk. */

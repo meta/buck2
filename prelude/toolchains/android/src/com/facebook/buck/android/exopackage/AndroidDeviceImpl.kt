@@ -200,26 +200,84 @@ class AndroidDeviceImpl(val serial: String, val adbUtils: AdbUtils) : AndroidDev
       apk: File,
       exact: Boolean,
   ): AndroidDevice.InstalledApk {
-    val installedApkPath =
-        getPackageInfo(packageName).map { it.apkPath }.orElse(null)
-            ?: return AndroidDevice.InstalledApk.ABSENT
-    if (!exact) {
+    if (exact) {
+      val installedApkPath =
+          getPackageInfo(packageName).map { it.apkPath }.orElse(null)
+              ?: return AndroidDevice.InstalledApk.ABSENT
+      return compareContentHash(installedApkPath, apk)
+    }
+    val installed = readInstalledApk(packageName)
+    val installedApkPath = installed.path ?: return AndroidDevice.InstalledApk.ABSENT
+    if (installed.manifestDigest != null) {
       try {
-        val installedDigest = getApkManifestDigest(installedApkPath)
         val localDigest = ContentDigests.getJarManifestDigest(apk.path)
-        LOG.info("Installed APK manifest digest: $installedDigest, local: $localDigest")
-        return if (installedDigest == localDigest) AndroidDevice.InstalledApk.SAME
+        LOG.info("Installed APK manifest digest: ${installed.manifestDigest}, local: $localDigest")
+        return if (installed.manifestDigest == localDigest) AndroidDevice.InstalledApk.SAME
         else AndroidDevice.InstalledApk.DIFFERENT
       } catch (e: Exception) {
-        // Any failure to get both digests (no `unzip` on the device, an unexpected `.SF`, a local
-        // apk without a v1 signature) only means the cheap comparison is unavailable.
-        LOG.info("Could not compare APK manifest digests; comparing content hashes: ${e.message}")
+        // A local apk without a v1 signature only means the cheap comparison is unavailable.
+        LOG.info(
+            "Could not read the local APK manifest digest; comparing content hashes: ${e.message}",
+        )
       }
+    } else {
+      LOG.info("Could not read the installed APK manifest digest; comparing content hashes")
     }
+    return compareContentHash(installedApkPath, apk)
+  }
+
+  private fun compareContentHash(installedApkPath: String, apk: File): AndroidDevice.InstalledApk {
     val installedHash = getContentHash(installedApkPath)
     return if (installedHash.equals(ContentDigests.getContentHash(apk), ignoreCase = true))
         AndroidDevice.InstalledApk.SAME
     else AndroidDevice.InstalledApk.DIFFERENT
+  }
+
+  /** The base apk installed for a package, and the manifest digest from its signature file. */
+  private data class InstalledApkInfo(val path: String?, val manifestDigest: String?)
+
+  /**
+   * The base apk installed for [packageName] and its manifest digest, read in one adb call. The
+   * path is null if the package is not installed; the digest is null whenever it cannot be read:
+   * API 27 and below ship no `unzip`, and an apk signed without v1 has no signature file. Throws
+   * [AdbCommandFailedException] if the read did not run.
+   */
+  private fun readInstalledApk(packageName: String): InstalledApkInfo {
+    // Interpolated into a shell command.
+    require(PACKAGE_NAME_PATTERN.matches(packageName)) { "Not a package name: $packageName" }
+    // `pm path` prints one `package:<path>` line per installed apk, base first, and nothing for a
+    // package that is not installed. Failing is the normal answer for an absent package, so the
+    // exit status says nothing; the output does.
+    val output = executeAdbShellCommand(
+        "for l in \$(pm path $packageName); do case \$l in package:*) p=\${l#package:}; break;; " +
+            "esac; done; echo path:\$p; [ -n \"\$p\" ] && " +
+            "e=\$(unzip -l \$p | grep -E -o 'META-INF/[A-Z]+\\.SF' | head -n 1) && " +
+            "[ -n \"\$e\" ] && unzip -p \$p \$e | " +
+            "grep -E 'SHA1-Digest-Manifest:|SHA-256-Digest-Manifest:'",
+        ignoreFailure = true,
+    )
+    val lines = output.lineSequence().map { it.trim() }
+    // The shell prints the line whether or not the package is installed, so without it adb never
+    // ran the shell: the device is unreachable, not the package absent.
+    // Sample output:
+    // path:/data/app/~~Gh3MOkxaUsVYrhFZfl3NDA==/com.facebook.katana-zgS2JLHjTQj7ORFmV8IQzA==/base.apk
+    // SHA-256-Digest-Manifest: TeTQY5Ep68Fgo+lZsGuwXdTZ+Vae3HQo8ScyKH2fjB8=
+    val pathLine =
+        lines.firstOrNull { it.startsWith("path:") }
+            ?: throw AdbCommandFailedException(
+                "Could not read the installed apk of $packageName: \"$output\"",
+            )
+    val path = pathLine.removePrefix("path:").takeIf { it.isNotEmpty() }
+    // The first digest, as `ContentDigests.getJarManifestDigest` reads it locally.
+    val digest =
+        lines
+            .firstOrNull {
+              it.startsWith("SHA1-Digest-Manifest:") || it.startsWith("SHA-256-Digest-Manifest:")
+            }
+            ?.substringAfter(":")
+            ?.trim()
+            ?.takeIf { it.matches(Regex("[A-Za-z0-9+/]+={0,2}")) }
+    return InstalledApkInfo(path, digest)
   }
 
   @Throws(Exception::class)
@@ -557,31 +615,6 @@ class AndroidDeviceImpl(val serial: String, val adbUtils: AdbUtils) : AndroidDev
   @Throws(Exception::class)
   override fun uninstallPackage(packageName: String) {
     executeAdbCommandCatching("uninstall $packageName", "Failed to uninstall $packageName.")
-  }
-
-  @Throws(Exception::class)
-  override fun getApkManifestDigest(packagePath: String): String {
-    val entry: String =
-        executeAdbShellCommand("unzip -l $packagePath | grep -E -o 'META-INF/[A-Z]+\\.SF'").trim()
-    // API 27 and below ship no `unzip`, and the shell reports that on stdout.
-    if (!entry.matches(Regex("META-INF/[A-Z]+\\.SF"))) {
-      throw AdbCommandFailedException("No signature file found in $packagePath: \"$entry\"")
-    }
-    val result: String = executeAdbShellCommand(
-        "unzip -p $packagePath $entry | grep -E 'SHA1-Digest-Manifest:|SHA-256-Digest-Manifest:'",
-    )
-    // The first digest, as `ContentDigests.getJarManifestDigest` reads it locally.
-    val digest =
-        result
-            .lineSequence()
-            .firstOrNull { it.isNotBlank() }
-            .orEmpty()
-            .substringAfter(":", "")
-            .trim()
-    if (!digest.matches(Regex("[A-Za-z0-9+/]+={0,2}"))) {
-      throw AdbCommandFailedException("No manifest digest found in $packagePath: \"$result\"")
-    }
-    return digest
   }
 
   @Throws(Exception::class)

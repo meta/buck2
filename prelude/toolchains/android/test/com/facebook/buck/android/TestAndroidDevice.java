@@ -69,11 +69,6 @@ public class TestAndroidDevice implements AndroidDevice {
   }
 
   @Override
-  public String getApkManifestDigest(String packagePath) throws Exception {
-    throw new UnsupportedOperationException();
-  }
-
-  @Override
   public String getContentHash(String path) throws Exception {
     throw new UnsupportedOperationException();
   }

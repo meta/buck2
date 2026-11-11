@@ -31,7 +31,8 @@ def android_instrumentation_apk_impl(ctx: AnalysisContext):
     # jar preprocessing cannot be used when the jars were dexed already, so we have to disable predex when we want to preprocess the jars.
     disable_pre_dex = ctx.attrs.disable_pre_dex or ctx.attrs.preprocess_java_classes_bash
 
-    apk_under_test_info = ctx.attrs.apk[AndroidApkUnderTestInfo]
+    apk_under_test_info = ctx.attrs.apk.get(AndroidApkUnderTestInfo)
+    expect(apk_under_test_info != None, "APK-under-test must provide AndroidApkUnderTestInfo")
 
     expect(
         ctx.attrs.min_sdk_version == apk_under_test_info.min_sdk_version,
@@ -188,7 +189,11 @@ This will lead to overbuilding and is not supported. Configuration {} not found 
     return (
         [
             AndroidApkInfo(apk = output_apk, materialized_artifacts = materialized_artifacts, manifest = resources_info.manifest),
-            AndroidInstrumentationApkInfo(apk_under_test = ctx.attrs.apk[AndroidApkInfo].apk, is_self_instrumenting = is_self_instrumenting),
+            AndroidInstrumentationApkInfo(
+                apk_under_test = ctx.attrs.apk[AndroidApkInfo].apk,
+                is_self_instrumenting = is_self_instrumenting,
+                resource_source_infos = resources_info.unfiltered_resource_infos if is_self_instrumenting else apk_under_test_info.resource_source_infos,
+            ),
             DefaultInfo(default_output = output_apk, other_outputs = materialized_artifacts, sub_targets = sub_targets | class_to_srcs_subtargets),
             class_to_srcs,
         ]

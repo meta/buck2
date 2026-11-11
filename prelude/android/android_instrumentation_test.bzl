@@ -7,8 +7,9 @@
 # above-listed licenses.
 
 load("@prelude//:prelude_rule.bzl", "prelude_rule")
-load("@prelude//android:android_providers.bzl", "AndroidApkExopackageInfo", "AndroidApkInfo", "AndroidInstrumentationApkInfo")
+load("@prelude//android:android_providers.bzl", "AndroidApkExopackageInfo", "AndroidApkInfo", "AndroidApkUnderTestInfo", "AndroidInstrumentationApkInfo")
 load("@prelude//android:android_toolchain.bzl", "AndroidToolchainInfo")
+load("@prelude//android:resource_source_map.bzl", "create_resource_source_map")
 load("@prelude//decls:common.bzl", "buck")
 load("@prelude//decls:test_common.bzl", "test_common")
 load("@prelude//decls:toolchains_common.bzl", "toolchains_common")
@@ -65,7 +66,7 @@ def android_instrumentation_test_impl(ctx: AnalysisContext):
 
     classpath_args = cmd_args()
     classpath_args.add("-classpath")
-    env = ctx.attrs.env or {}
+    env = dict(ctx.attrs.env or {})
     extra_classpath = []
     if ctx.attrs.instrumentation_test_listener != None:
         extra_classpath.extend([
@@ -102,7 +103,30 @@ def android_instrumentation_test_impl(ctx: AnalysisContext):
         cmd.extend(["--apk-under-test-path", instrumentation_apk_info.apk_under_test])
     if ctx.attrs.is_self_instrumenting:
         cmd.extend(["--is-self-instrumenting"])
-    extra_instrumentation_args = ctx.attrs.extra_instrumentation_args
+
+    extra_instrumentation_args = dict(ctx.attrs.extra_instrumentation_args or {})
+    resource_source_map_jar = env.pop("ANDROID_RESOURCE_SOURCE_MAP_JAR", None)
+    apk_under_test_info = ctx.attrs.apk.get(AndroidApkUnderTestInfo)
+    resource_source_infos = (
+        instrumentation_apk_info.resource_source_infos
+        if instrumentation_apk_info != None and instrumentation_apk_info.resource_source_infos != None
+        else apk_under_test_info.resource_source_infos
+        if apk_under_test_info != None
+        else []
+    )
+    if resource_source_map_jar:
+        resource_source_map = create_resource_source_map(
+            ctx,
+            resource_source_infos or [],
+            resource_source_map_jar,
+            name = "instrumentation_resource_source_map",
+        )
+        env["ANDROID_RESOURCE_SOURCE_MAP"] = resource_source_map
+        resource_usage_extension = "com.facebook.testing.instrumentation.resourceusage.InstrumentationResourceUsage"
+        existing_extensions = extra_instrumentation_args.get("PER_TEST_COVERAGE_EXTENSION_CLASSES")
+        extra_instrumentation_args["PER_TEST_COVERAGE_EXTENSION_CLASSES"] = (
+            resource_usage_extension if not existing_extensions else existing_extensions + "," + resource_usage_extension
+        )
     if extra_instrumentation_args:
         for arg_name, arg_value in extra_instrumentation_args.items():
             cmd.extend(

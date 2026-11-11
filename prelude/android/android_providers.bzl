@@ -176,6 +176,7 @@ AndroidApkUnderTestInfo = provider(
         "prebuilt_native_library_dirs": provider_field(typing.Any, default = None),  # set(TargetLabel)
         "primary_platform": provider_field(typing.Any, default = None),  # str
         "resource_infos": provider_field(typing.Any, default = None),  # set(TargetLabel)
+        "resource_source_infos": provider_field(typing.Any, default = None),  # list(AndroidResourceInfo)
         "r_dot_java_packages": provider_field(typing.Any, default = None),  # set(str)
         "shared_libraries": provider_field(typing.Any, default = None),  # set(TargetLabel)
         # Merge map delegate
@@ -194,6 +195,7 @@ AndroidInstrumentationApkInfo = provider(
     fields = {
         "apk_under_test": provider_field(typing.Any, default = None),  # "artifact"
         "is_self_instrumenting": provider_field(bool, default = False),
+        "resource_source_infos": provider_field(typing.Any, default = None),  # list(AndroidResourceInfo)
     },
 )
 

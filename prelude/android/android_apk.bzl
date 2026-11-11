@@ -137,6 +137,7 @@ def android_apk_impl(ctx: AnalysisContext) -> list[Provider]:
         platforms = android_binary_info.deps_by_platform.keys(),
         primary_platform = android_binary_info.primary_platform,
         resource_infos = set([info.raw_target for info in resources_info.unfiltered_resource_infos]),
+        resource_source_infos = resources_info.unfiltered_resource_infos,
         r_dot_java_packages = set([info.specified_r_dot_java_package for info in resources_info.unfiltered_resource_infos if info.specified_r_dot_java_package]),
         shared_libraries = set(native_library_info.shared_libraries),
         # Merge map delegate

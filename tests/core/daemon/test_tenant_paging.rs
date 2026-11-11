@@ -268,7 +268,6 @@ async fn tenant_paging_storage_lifetime(
 #[buck_test(
     data_dir = "test_daemon_data",
     skip_for_os = ["windows"],
-    allow_soft_errors = true,
     env = [("BUCK2_SHARE_DAEMON", "true")],
 )]
 #[expect(
@@ -285,7 +284,6 @@ async fn test_tenant_paging_storage_lifetime_False(
 #[buck_test(
     data_dir = "test_daemon_data",
     skip_for_os = ["windows"],
-    allow_soft_errors = true,
     env = [("BUCK2_SHARE_DAEMON", "true")],
 )]
 #[expect(

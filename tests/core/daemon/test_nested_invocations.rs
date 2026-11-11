@@ -10,6 +10,7 @@
 
 use std::ffi::OsString;
 use std::path::Path;
+use std::path::PathBuf;
 
 use buck2_e2e::prelude::*;
 
@@ -137,5 +138,25 @@ async fn test_trace_io_mismatch(buck: &Buck, tmp_path: &Path) -> anyhow::Result<
         res.stdout
             .contains("daemon constraint mismatch during nested invocation: Trace IO mismatch")
     );
+    Ok(())
+}
+
+#[buck_test(allow_soft_errors = true, skip_for_os = ["windows", "darwin"], share_daemon = true)]
+async fn test_same_state_under_sharing(buck: &Buck) -> anyhow::Result<()> {
+    // A buck2 run by an action reads the same user-level config as its parent, so under a
+    // sharing rollout it is a client of the same shared daemon and tenant.
+    buck.build(&["root//:nested_normal", "-c", &nested_buck2_path(buck)])
+        .env("SANDCASTLE_ID", "")
+        .await?;
+    let result = buck
+        .build(&["root//:nested_daemon_dir", "-c", &nested_buck2_path(buck)])
+        .env("SANDCASTLE_ID", "")
+        .await?;
+    let nested = result
+        .build_report()?
+        .output_for_target("root//:nested_daemon_dir")?;
+    let nested = PathBuf::from(std::fs::read_to_string(nested)?.trim());
+    assert_eq!(nested, buck.daemon_dir().await?);
+    assert!(nested.iter().any(|part| part == ".unidaemons"));
     Ok(())
 }

@@ -2279,3 +2279,24 @@ fn namespace_name(tmp_path: &Path) -> anyhow::Result<String> {
         .to_string_lossy()
         .into_owned())
 }
+
+#[buck_test(data_dir = "test_daemon_data", skip_for_os = ["windows", "darwin"], share_daemon = true)]
+async fn test_checkout_buckconfig_local_opts_out_of_external_sharing(
+    buck: &Buck,
+) -> anyhow::Result<()> {
+    // The rollout turns sharing on from a user-level config file (the GK experiments file); a
+    // checkout's `.buckconfig.local` must still be able to turn it off.
+    std::fs::write(
+        buck.cwd().join(".buckconfig.local"),
+        "[buck2]\nshare_daemon = false\n",
+    )?;
+    buck.targets(&["//:rule"]).await?;
+    let root = PathBuf::from(buck.root(&["--kind", "daemon"]).await?.stdout.trim());
+    assert!(
+        !root.iter().any(|part| part == ".unidaemons"),
+        "{}",
+        root.display()
+    );
+    assert_eq!(root, buck.daemon_dir().await?);
+    Ok(())
+}

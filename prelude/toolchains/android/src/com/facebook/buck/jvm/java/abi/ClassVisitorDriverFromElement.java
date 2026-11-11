@@ -15,6 +15,7 @@ import com.facebook.buck.jvm.java.lang.extra.MoreTypeAnnotations;
 import com.facebook.buck.jvm.java.lang.model.BridgeMethod;
 import com.facebook.buck.jvm.java.lang.model.ElementsExtended;
 import com.facebook.buck.jvm.java.lang.model.MoreElements;
+import com.facebook.infer.annotation.Nullsafe;
 import com.google.common.collect.HashMultimap;
 import com.google.common.collect.Multimap;
 import java.util.List;
@@ -48,6 +49,7 @@ import org.objectweb.asm.Opcodes;
 import org.objectweb.asm.TypePath;
 import org.objectweb.asm.TypeReference;
 
+@Nullsafe(Nullsafe.Mode.LOCAL)
 class ClassVisitorDriverFromElement {
 
   private final DescriptorFactory descriptorFactory;
@@ -93,8 +95,11 @@ class ClassVisitorDriverFromElement {
 
   private interface VisitorWithTypeAnnotations {
 
-    AnnotationVisitor visitTypeAnnotation(
-        final int typeRef, final TypePath typePath, final String descriptor, final boolean visible);
+    @Nullable AnnotationVisitor visitTypeAnnotation(
+        final int typeRef,
+        final @Nullable TypePath typePath,
+        final String descriptor,
+        final boolean visible);
   }
 
   private class ElementVisitorAdapter extends ElementScanner8<Void, ClassVisitor> {
@@ -177,7 +182,7 @@ class ClassVisitorDriverFromElement {
     private void visitNestHost(TypeElement e, ClassVisitor visitor) {
       TypeElement nestHost = e;
       while (nestHost.getNestingKind().isNested()) {
-        nestHost = (TypeElement) nestHost.getEnclosingElement();
+        nestHost = (TypeElement) Objects.requireNonNull(nestHost.getEnclosingElement());
       }
 
       visitor.visitNestHost(descriptorFactory.getInternalName(nestHost));
@@ -288,7 +293,7 @@ class ClassVisitorDriverFromElement {
           visitor.visitMethod(
               accessFlagsUtils.getAccessFlags(e),
               e.getSimpleName().toString(),
-              descriptorFactory.getDescriptor(e),
+              Objects.requireNonNull(descriptorFactory.getDescriptor(e)),
               signatureFactory.getSignature(e),
               exceptions);
 
@@ -356,10 +361,11 @@ class ClassVisitorDriverFromElement {
         //       for the synthetic parameter. See comment in <code>visitParameters</code>.
         visitAnnotationValues(
             annotationMirror,
-            methodVisitor.visitParameterAnnotation(
-                index,
-                descriptorFactory.getDescriptor(annotationMirror.getAnnotationType()),
-                MoreElements.isRuntimeRetention(annotationMirror)));
+            Objects.requireNonNull(
+                methodVisitor.visitParameterAnnotation(
+                    index,
+                    descriptorFactory.getDescriptor(annotationMirror.getAnnotationType()),
+                    MoreElements.isRuntimeRetention(annotationMirror))));
       }
     }
 
@@ -387,7 +393,8 @@ class ClassVisitorDriverFromElement {
         return;
       }
 
-      AnnotationVisitor annotationVisitor = methodVisitor.visitAnnotationDefault();
+      AnnotationVisitor annotationVisitor =
+          Objects.requireNonNull(methodVisitor.visitAnnotationDefault());
       visitAnnotationValue(null, defaultValue, annotationVisitor);
       annotationVisitor.visitEnd();
     }
@@ -399,12 +406,13 @@ class ClassVisitorDriverFromElement {
       }
 
       FieldVisitor fieldVisitor =
-          classVisitor.visitField(
-              accessFlagsUtils.getAccessFlags(e),
-              e.getSimpleName().toString(),
-              descriptorFactory.getDescriptor(e),
-              signatureFactory.getSignature(e),
-              e.getConstantValue());
+          Objects.requireNonNull(
+              classVisitor.visitField(
+                  accessFlagsUtils.getAccessFlags(e),
+                  e.getSimpleName().toString(),
+                  Objects.requireNonNull(descriptorFactory.getDescriptor(e)),
+                  signatureFactory.getSignature(e),
+                  e.getConstantValue()));
       visitAnnotations(e, fieldVisitor::visitAnnotation);
       visitTypeAnnotations(e, fieldVisitor::visitTypeAnnotation);
       fieldVisitor.visitEnd();
@@ -455,11 +463,12 @@ class ClassVisitorDriverFromElement {
         }
 
         AnnotationVisitor annotationVisitor =
-            visitor.visitTypeAnnotation(
-                typeRef.getValue(),
-                MoreTypeAnnotations.getAnnotationTypePath(annotation),
-                descriptorFactory.getDescriptor(annotation.getAnnotationType()),
-                MoreElements.isRuntimeRetention(annotation));
+            Objects.requireNonNull(
+                visitor.visitTypeAnnotation(
+                    typeRef.getValue(),
+                    MoreTypeAnnotations.getAnnotationTypePath(annotation),
+                    descriptorFactory.getDescriptor(annotation.getAnnotationType()),
+                    MoreElements.isRuntimeRetention(annotation)));
         visitAnnotationValues(annotation, annotationVisitor);
         annotationVisitor.visitEnd();
       } catch (CannotInferException e) {
@@ -518,8 +527,9 @@ class ClassVisitorDriverFromElement {
       @Override
       public Void visitAnnotation(AnnotationMirror value, Void aVoid) {
         AnnotationVisitor annotationValueVisitor =
-            visitor.visitAnnotation(
-                name, descriptorFactory.getDescriptor(value.getAnnotationType()));
+            Objects.requireNonNull(
+                visitor.visitAnnotation(
+                    name, descriptorFactory.getDescriptor(value.getAnnotationType())));
         visitAnnotationValues(value, annotationValueVisitor);
         annotationValueVisitor.visitEnd();
         return null;
@@ -527,7 +537,7 @@ class ClassVisitorDriverFromElement {
 
       @Override
       public Void visitArray(List<? extends AnnotationValue> listValue, Void aVoid) {
-        AnnotationVisitor arrayMemberVisitor = visitor.visitArray(name);
+        AnnotationVisitor arrayMemberVisitor = Objects.requireNonNull(visitor.visitArray(name));
         listValue.forEach(
             annotationValue -> visitAnnotationValue(null, annotationValue, arrayMemberVisitor));
         arrayMemberVisitor.visitEnd();

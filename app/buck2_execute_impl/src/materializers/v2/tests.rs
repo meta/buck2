@@ -1716,6 +1716,13 @@ async fn test_content_tracked_elsewhere_is_copied_rather_than_downloaded() -> bu
         {
             use std::os::unix::fs::PermissionsExt;
             assert!(std::fs::metadata(&a)?.permissions().mode() & 0o111 != 0);
+            // The paths it could have come from keep the mode they were tracked with.
+            for holder in [&first, &second] {
+                let mode = std::fs::metadata(temp.path().resolve(holder))?
+                    .permissions()
+                    .mode();
+                assert!(mode & 0o111 == 0, "`{holder}` became executable");
+            }
         }
         assert!(
             !temp

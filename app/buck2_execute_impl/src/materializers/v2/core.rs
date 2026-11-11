@@ -53,6 +53,7 @@ use allocative::FlameGraphBuilder;
 use async_trait::async_trait;
 use buck2_common::file_ops::metadata::FileDigest;
 use buck2_common::file_ops::metadata::TrackedFileDigest;
+use buck2_common::io::fs::is_executable;
 use buck2_core::execution_types::executor_config::RemoteExecutorUseCase;
 use buck2_core::fs::project::ProjectRoot;
 use buck2_core::fs::project_rel_path::ProjectRelativePath;
@@ -106,6 +107,7 @@ use buck2_execute::materialize::materializer::WriteRequest;
 use buck2_execute::re::manager::ReConnectionManager;
 use buck2_fs::error::IoResultExt;
 use buck2_fs::fs_util;
+use buck2_fs::fs_util::Linked;
 use buck2_fs::paths::abs_norm_path::AbsNormPath;
 use buck2_fs::paths::abs_norm_path::AbsNormPathBuf;
 use buck2_fs::paths::file_name::FileName;
@@ -1433,9 +1435,11 @@ fn wanted_files(
     files
 }
 
-/// Puts a copy of the tracked file at `source` at `dest`, with the mode asked for: a clone where
-/// the filesystem has them, never a hardlink, so that nothing later written in place at one path
-/// reaches the other. Leaves nothing behind on failure.
+/// Puts the content of the tracked file at `source` at `dest`, with the mode asked for: a clone
+/// where the filesystem has them, else a hardlink when the source has that mode, else a copy. Two
+/// tracked paths may share an inode because nothing writes a tracked file in place: an
+/// incremental action, which does write its previous outputs, is given inodes of its own for
+/// them first (`make_outputs_writable`). Leaves nothing behind on failure.
 fn copy_from_disk(
     fs: &ProjectRoot,
     source: &ProjectRelativePath,
@@ -1447,8 +1451,19 @@ fn copy_from_disk(
         if let Some(parent) = dest.parent() {
             fs_util::create_dir_all(parent)?;
         }
-        fs_util::reflink_or_copy(&source, &dest).categorize_internal()?;
-        fs_util::set_executable(&dest, executable).categorize_internal()?;
+        // A hardlink has its source's mode, so only a source with the mode asked for is linked.
+        // Windows keeps no executable bit to differ in.
+        let source_executable = is_executable(&fs_util::metadata(&source).categorize_internal()?);
+        let made_a_file = if source_executable == executable || cfg!(windows) {
+            fs_util::reflink_or_hardlink_or_copy(&source, &dest).categorize_internal()?
+                != Linked::Hardlinked
+        } else {
+            fs_util::reflink_or_copy(&source, &dest).categorize_internal()?;
+            true
+        };
+        if made_a_file {
+            fs_util::set_executable(&dest, executable).categorize_internal()?;
+        }
         buck2_error::Ok(())
     })();
     if copied.is_err() {

@@ -97,8 +97,8 @@ mod tests {
             "/project"
         };
 
-        InvocationPaths {
-            roots: InvocationRoots {
+        InvocationPaths::new(
+            InvocationRoots {
                 project_root: ProjectRoot::new_unchecked(
                     AbsNormPathBuf::try_from(project_root.to_owned())
                         .expect("test project root should be absolute and normalized"),
@@ -107,9 +107,9 @@ mod tests {
                     .expect("test cwd should be project-relative")
                     .to_buf(),
             },
-            isolation: FileNameBuf::try_from(isolation.to_owned())
+            FileNameBuf::try_from(isolation.to_owned())
                 .expect("test isolation should be a file name"),
-        }
+        )
     }
 
     #[test]

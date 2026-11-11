@@ -15,10 +15,23 @@ use buck2_error::ErrorTag;
 use buck2_error::buck2_error;
 use buck2_fs::paths::file_name::FileName;
 use buck2_fs::paths::file_name::FileNameBuf;
+use serde::Deserialize;
+use serde::Serialize;
 
 /// A client-computable namespace for daemons with equal startup constraints.
-#[derive(Allocative, Clone, Debug, PartialEq, Eq, Hash, derive_more::Display)]
+#[derive(
+    Allocative,
+    Clone,
+    Debug,
+    PartialEq,
+    Eq,
+    Hash,
+    Serialize,
+    Deserialize,
+    derive_more::Display
+)]
 #[display("{}", _0)]
+#[serde(try_from = "String", into = "String")]
 pub struct DaemonCompatibilityKey(FileNameBuf);
 
 impl DaemonCompatibilityKey {
@@ -72,6 +85,19 @@ impl FromStr for DaemonCompatibilityKey {
     }
 }
 
+impl TryFrom<String> for DaemonCompatibilityKey {
+    type Error = buck2_error::Error;
+
+    fn try_from(value: String) -> Result<Self, Self::Error> {
+        value.parse()
+    }
+}
+
+impl From<DaemonCompatibilityKey> for String {
+    fn from(key: DaemonCompatibilityKey) -> Self {
+        key.to_string()
+    }
+}
 #[cfg(test)]
 mod tests {
     use super::*;

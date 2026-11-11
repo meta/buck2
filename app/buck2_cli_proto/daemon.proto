@@ -897,6 +897,14 @@ message UnstableListTenantsResponse {
   repeated UnstableTenantInfo tenants = 1;
 }
 
+message UnstableRegisterTenantRequest {
+  ClientContext context = 1;
+}
+
+message UnstableRegisterTenantResponse {
+  uint64 generation = 1;
+}
+
 message EvictTenantRequest {
   ClientContext context = 1;
 }
@@ -1185,6 +1193,8 @@ service DaemonApi {
       returns (UnstableAllocatorStatsResponse);
   rpc Unstable_ListTenants(UnstableListTenantsRequest)
       returns (UnstableListTenantsResponse);
+  rpc Unstable_RegisterTenant(UnstableRegisterTenantRequest)
+      returns (UnstableRegisterTenantResponse);
   rpc EvictTenant(EvictTenantRequest) returns (EvictTenantResponse);
   rpc EvictProjectTenants(EvictProjectTenantsRequest)
       returns (EvictProjectTenantsResponse);

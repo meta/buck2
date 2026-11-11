@@ -22,71 +22,28 @@ use buck2_e2e::BuckOutput;
 use buck2_e2e::BuckProcess;
 use buck2_e2e::prelude::*;
 use buck2_e2e::process::daemon_is_alive;
-use buck2_e2e::process::wait_for_exit;
 use buck2_e2e::utils::file_id;
 use buck2_e2e::utils::filter_events;
+use common_unidaemon::THIRTY_SECONDS;
+use common_unidaemon::assert_daemon_exits;
+use common_unidaemon::bool_cases;
+use common_unidaemon::cases;
+use common_unidaemon::daemon_pid;
+use common_unidaemon::debug_tenants;
+use common_unidaemon::generation_of;
+use common_unidaemon::isolated_buck;
+use common_unidaemon::isolation_of;
+use common_unidaemon::materializer_identity;
+use common_unidaemon::path_str;
+use common_unidaemon::pid_of;
+use common_unidaemon::start_generation;
+use common_unidaemon::status_json;
+use common_unidaemon::tenant_generation;
+use common_unidaemon::wait_for_evicted_generation;
+use common_unidaemon::wait_for_marker;
 use regex::Regex;
 use serde_json::Value;
 use serde_json::json;
-
-const THIRTY_SECONDS: Duration = Duration::from_secs(30);
-
-/// A test for each case of a parametrized Python test, named as the Python harness named
-/// the case, running the test's body with the test's fixture (`[buck]`, `[mut buck]`,
-/// `[buck, tmp_path]` or `[mut buck, tmp_path]`) and the case's arguments.
-macro_rules! cases {
-    ([buck] $body:ident { $($(#[$attr:meta])* fn $name:ident($($arg:expr),*);)* }) => {
-        $(
-            $(#[$attr])*
-            async fn $name(buck: &Buck) -> anyhow::Result<()> {
-                $body(buck, $($arg),*).await
-            }
-        )*
-    };
-    ([mut buck] $body:ident { $($(#[$attr:meta])* fn $name:ident($($arg:expr),*);)* }) => {
-        $(
-            $(#[$attr])*
-            async fn $name(buck: &mut Buck) -> anyhow::Result<()> {
-                $body(buck, $($arg),*).await
-            }
-        )*
-    };
-    ([buck, tmp_path] $body:ident { $($(#[$attr:meta])* fn $name:ident($($arg:expr),*);)* }) => {
-        $(
-            $(#[$attr])*
-            async fn $name(buck: &Buck, tmp_path: &Path) -> anyhow::Result<()> {
-                $body(buck, tmp_path, $($arg),*).await
-            }
-        )*
-    };
-    ([mut buck, tmp_path] $body:ident { $($(#[$attr:meta])* fn $name:ident($($arg:expr),*);)* }) => {
-        $(
-            $(#[$attr])*
-            async fn $name(buck: &mut Buck, tmp_path: &Path) -> anyhow::Result<()> {
-                $body(buck, tmp_path, $($arg),*).await
-            }
-        )*
-    };
-}
-
-/// [`cases!`] whose names carry Python's `False` and `True`.
-macro_rules! bool_cases {
-    ($fixture:tt $body:ident { $($(#[$attr:meta])* fn $name:ident($($arg:expr),*);)* }) => {
-        cases! {
-            $fixture $body {
-                $(
-                    $(#[$attr])*
-                    #[expect(non_snake_case, reason = "named like the Python harness's parametrized case")]
-                    fn $name($($arg),*);
-                )*
-            }
-        }
-    };
-}
-
-fn path_str(path: &Path) -> &str {
-    path.to_str().expect("a UTF-8 path")
-}
 
 /// Whether Python takes `value` as true.
 fn truthy(value: &Value) -> bool {
@@ -98,24 +55,6 @@ fn truthy(value: &Value) -> bool {
         Value::Array(a) => !a.is_empty(),
         Value::Object(o) => !o.is_empty(),
     }
-}
-
-/// `status["process_info"]["pid"]` of a `buck2 status` or `buck2 server --status`.
-fn pid_of(status: &Value) -> anyhow::Result<u32> {
-    let pid = status
-        .get("process_info")
-        .and_then(|info| info.get("pid"))
-        .and_then(Value::as_u64)
-        .with_context(|| format!("No `process_info.pid` in {status}"))?;
-    Ok(u32::try_from(pid)?)
-}
-
-async fn status_json(buck: &Buck) -> anyhow::Result<Value> {
-    Ok(serde_json::from_str(&buck.status(&[]).await?.stdout)?)
-}
-
-async fn daemon_pid(buck: &Buck) -> anyhow::Result<u32> {
-    pid_of(&status_json(buck).await?)
 }
 
 async fn server_status_pid(buck: &Buck) -> anyhow::Result<u32> {
@@ -166,49 +105,8 @@ fn remove_file_if_exists(path: &Path) -> anyhow::Result<()> {
     }
 }
 
-fn isolated_buck(buck: &Buck, isolation: &str) -> Buck {
-    let mut isolated = buck.clone();
-    isolated.set_isolation_prefix(isolation);
-    isolated
-}
-
-/// The entries of `buck2 debug tenants --json`.
-async fn debug_tenants(buck: &Buck) -> anyhow::Result<Vec<Value>> {
-    Ok(serde_json::from_str(
-        &buck.debug(&["tenants", "--json"]).await?.stdout,
-    )?)
-}
-
-fn isolation_of(entry: &Value) -> anyhow::Result<&str> {
-    entry
-        .get("isolation")
-        .and_then(Value::as_str)
-        .with_context(|| format!("No `isolation` in {entry}"))
-}
-
-fn generation_of(entry: &Value) -> anyhow::Result<u64> {
-    entry
-        .get("generation")
-        .and_then(Value::as_u64)
-        .with_context(|| format!("No `generation` in {entry}"))
-}
-
 fn isolations(entries: &[Value]) -> anyhow::Result<Vec<&str>> {
     entries.iter().map(isolation_of).collect()
-}
-
-fn tenant_entry<'a>(entries: &'a [Value], isolation: &str) -> anyhow::Result<&'a Value> {
-    for entry in entries {
-        if isolation_of(entry)? == isolation {
-            return Ok(entry);
-        }
-    }
-    anyhow::bail!("No tenant `{isolation}` in {entries:?}")
-}
-
-/// The generation of the tenant `isolation`.
-fn tenant_generation(entries: &[Value], isolation: &str) -> anyhow::Result<u64> {
-    generation_of(tenant_entry(entries, isolation)?)
 }
 
 /// What the Python tests' `asyncio.wait_for(asyncio.shield(build), timeout=30)` gave: the
@@ -244,43 +142,6 @@ fn assert_evicted(outcome: Result<BuckOutput, BuckError>) {
     assert!(error.to_string().contains("evicted"), "{error}");
 }
 
-/// Waits up to 30 seconds for `path`, failing if `build` exits first.
-async fn wait_for_marker(path: &Path, build: &mut Option<BuckProcess>) -> anyhow::Result<()> {
-    tokio::time::timeout(THIRTY_SECONDS, async {
-        while !path.exists() {
-            let process = build.as_mut().expect("the build is running");
-            if process.try_wait().is_some() {
-                build.take().expect("the build is running").wait().await?;
-                anyhow::bail!("Build exited without creating {}", path.display());
-            }
-            tokio::time::sleep(Duration::from_millis(50)).await;
-        }
-        Ok(())
-    })
-    .await
-    .with_context(|| format!("Timed out waiting for {}", path.display()))?
-}
-
-fn start_generation(buck: &Buck, directory: &Path, value: &str) -> anyhow::Result<BuckProcess> {
-    let config = directory.join(format!("{value}.bcfg"));
-    std::fs::write(
-        &config,
-        format!(
-            "[generation]\nstarted = {}\nrelease = {}\nvalue = {value}\n",
-            directory.join(format!("{value}.started")).display(),
-            directory.join(format!("{value}.release")).display(),
-        ),
-    )?;
-    Ok(buck
-        .build(&[
-            "//:generation",
-            "--config-file",
-            path_str(&config),
-            "--no-remote-cache",
-        ])
-        .spawn())
-}
-
 fn generation_output(result: &BuckOutput) -> anyhow::Result<PathBuf> {
     result.build_report()?.output_for_target("//:generation")
 }
@@ -314,43 +175,6 @@ async fn wait_for_tenant_generation(
     })
     .await
     .context("Timed out waiting for a new tenant generation")?
-}
-
-async fn wait_for_evicted_generation(
-    buck: &Buck,
-    isolation: &str,
-    generation: u64,
-) -> anyhow::Result<()> {
-    tokio::time::timeout(THIRTY_SECONDS, async {
-        loop {
-            let mut present = false;
-            for entry in debug_tenants(buck).await? {
-                if isolation_of(&entry)? == isolation && generation_of(&entry)? == generation {
-                    present = true;
-                }
-            }
-            if !present {
-                return anyhow::Ok(());
-            }
-            tokio::time::sleep(Duration::from_millis(50)).await;
-        }
-    })
-    .await
-    .context("Timed out waiting for the tenant generation to be evicted")?
-}
-
-fn materializer_identity(buck: &Buck, isolation: &str) -> anyhow::Result<rusqlite::types::Value> {
-    let db = buck
-        .cwd()
-        .join("buck-out")
-        .join(isolation)
-        .join("cache/materializer_state/db.sqlite");
-    let connection = rusqlite::Connection::open(db)?;
-    Ok(connection.query_row(
-        "SELECT value FROM created_by WHERE key = 'timestamp_on_initialization'",
-        [],
-        |row| row.get(0),
-    )?)
 }
 
 async fn exited_process_pid() -> anyhow::Result<u32> {
@@ -428,13 +252,6 @@ async fn assert_tenant_cached_paths(tenants: &[(&Buck, &str)]) -> anyhow::Result
     }
     assert_eq!(outputs.len(), tenants.len());
     Ok(())
-}
-
-async fn assert_daemon_exits(pid: u32) {
-    assert!(
-        wait_for_exit(pid, Duration::from_secs(10)).await,
-        "Daemon survived final tenant eviction"
-    );
 }
 
 async fn assert_tenant_dice_graphs(

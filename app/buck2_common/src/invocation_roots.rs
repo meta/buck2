@@ -115,7 +115,7 @@ pub fn get_invocation_paths_result(
     isolation: FileNameBuf,
 ) -> InvocationPathsResult {
     match get_roots(from) {
-        Ok(Some(roots)) => InvocationPathsResult::Paths(InvocationPaths { roots, isolation }),
+        Ok(Some(roots)) => InvocationPathsResult::Paths(InvocationPaths::new(roots, isolation)),
         Ok(None) => {
             InvocationPathsResult::OutsideOfRepo(BuckCliError::NoBuckRoot(from.to_owned()).into())
         }

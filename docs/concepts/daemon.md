@@ -40,6 +40,21 @@ repository's tenants instead of killing processes. Incompatible startup
 settings or binaries are reported without restarting the daemon; stop the
 affected daemon's tenants explicitly before changing these settings.
 
+### Compatibility discovery under sharing
+
+With `BUCK2_SHARE_DAEMON=true`, `BUCK2_UNIDAEMON=true` enables discovery
+using a BLAKE3 hash of binary version, user version, startup configuration and
+trace-I/O mode. Matching tenants across checkouts select the same namespace;
+incompatible settings select different processes. Leave `BUCK2_DAEMON_GROUP`
+unset in this mode.
+
+Every command, including `kill` and `clean`, addresses the namespace of the
+client's own constraints, so a tenant served by a daemon of another key is out
+of their reach, as it is out of a legacy client's. Discovery currently uses
+the existing shared-tenant eviction and disk ownership protocol. Evict a tenant
+before changing its routing configuration. Legacy proxy interoperability and
+automatic migration are subsequent implementation steps.
+
 To also share across checkouts, set `BUCK2_DAEMON_GROUP` to the same name in
 each checkout. A group name must be a single valid filename component. Each
 tenant still uses its own checkout's files, configuration and outputs, so

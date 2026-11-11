@@ -340,6 +340,7 @@ impl BuckTest {
         };
 
         set("BUCK2_SHARE_DAEMON", "false");
+        set("BUCK2_UNIDAEMON", "false");
         if cfg!(windows) {
             set("CI", "true");
         } else {

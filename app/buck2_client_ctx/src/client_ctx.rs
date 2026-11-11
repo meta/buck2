@@ -23,6 +23,7 @@ use buck2_cli_proto::client_context::PreemptibleWhen as GrpcPreemptibleWhen;
 use buck2_common::argv::Argv;
 use buck2_common::init::LogDownloadMethod;
 use buck2_common::invocation_paths::InvocationPaths;
+use buck2_common::invocation_paths::unidaemon_prototype_enabled;
 use buck2_common::invocation_paths_result::InvocationPathsResult;
 use buck2_core::error::buck2_hard_error_env;
 use buck2_core::error::buck2_show_soft_errors_env;
@@ -48,6 +49,8 @@ use crate::common::HostPlatformOverride;
 use crate::common::PreemptibleWhen;
 use crate::common::ui::CommonConsoleOptions;
 use crate::console_interaction_stream::ConsoleInteractionStream;
+use crate::daemon::client::connect::DaemonConstraintsRequest;
+use crate::daemon::client::connect::DesiredTraceIoState;
 use crate::daemon_constraints::get_possibly_nested_invocation_daemon_uuid;
 use crate::events_ctx::EventsCtx;
 use crate::exit_result::ExitResult;
@@ -171,7 +174,10 @@ impl<'a> ClientCommandContext<'a> {
 
     pub fn paths(&self) -> buck2_error::Result<&InvocationPaths> {
         match &self.paths {
-            InvocationPathsResult::Paths(p) => Ok(p),
+            InvocationPathsResult::Paths(p) => {
+                self.select_unidaemon_namespace(p)?;
+                Ok(p)
+            }
             InvocationPathsResult::OutsideOfRepo(e) | InvocationPathsResult::OtherError(e) => {
                 Err(e.dupe())
             }
@@ -180,10 +186,28 @@ impl<'a> ClientCommandContext<'a> {
 
     pub fn maybe_paths(&self) -> buck2_error::Result<Option<&InvocationPaths>> {
         match &self.paths {
-            InvocationPathsResult::Paths(p) => Ok(Some(p)),
+            InvocationPathsResult::Paths(p) => {
+                self.select_unidaemon_namespace(p)?;
+                Ok(Some(p))
+            }
             InvocationPathsResult::OutsideOfRepo(_) => Ok(None), // commands like log don't need a root but still need to create an invocation record
             InvocationPathsResult::OtherError(e) => Err(e.dupe()),
         }
+    }
+
+    /// Under daemon sharing a client addresses the namespace its own constraints hash to,
+    /// before it has talked to any daemon. The key here takes the trace-I/O state as whatever
+    /// a running daemon has; a command that may start a daemon hashes again when it connects,
+    /// with the trace-I/O state it was asked for, which can name another namespace.
+    fn select_unidaemon_namespace(&self, paths: &InvocationPaths) -> buck2_error::Result<()> {
+        if paths.unidaemon_key().is_none() && unidaemon_prototype_enabled()? {
+            let constraints = DaemonConstraintsRequest::new(
+                self.immediate_config,
+                DesiredTraceIoState::Existing,
+            )?;
+            paths.select_unidaemon(constraints.compatibility_key()?);
+        }
+        Ok(())
     }
 
     /// Loads settings for the invocation's repository without parsing its build configuration.

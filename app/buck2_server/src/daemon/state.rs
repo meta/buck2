@@ -1552,6 +1552,33 @@ impl DaemonStateData {
         }
     }
 
+    pub async fn register_tenant_for_client_context(
+        self: &Arc<Self>,
+        client_context: &ClientContext,
+    ) -> buck2_error::Result<u64> {
+        let state = self.tenant_for_client_context(client_context).await?;
+        let key = TenantKey::from_tenant_paths(&state.repo.paths);
+        let tenants = self
+            .tenants
+            .tenants
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        let slot = tenants.get(&key).ok_or_else(|| {
+            buck2_error!(ErrorTag::Input, "Tenant was evicted during registration")
+        })?;
+        if !slot
+            .state
+            .get()
+            .is_some_and(|registered| Arc::ptr_eq(registered, &state))
+        {
+            return Err(buck2_error!(
+                ErrorTag::Input,
+                "Tenant generation changed during registration"
+            ));
+        }
+        Ok(slot.generation)
+    }
+
     fn tenant_for_legacy_client(&self) -> buck2_error::Result<Arc<TenantState>> {
         self.tenants.legacy_tenant().ok_or_else(|| {
             buck2_error!(

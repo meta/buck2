@@ -1832,6 +1832,27 @@ impl DaemonApi for BuckdServer {
         Ok(Response::new(UnstableListTenantsResponse { tenants }))
     }
 
+    async fn unstable_register_tenant(
+        &self,
+        req: Request<buck2_cli_proto::UnstableRegisterTenantRequest>,
+    ) -> Result<Response<buck2_cli_proto::UnstableRegisterTenantResponse>, Status> {
+        self.check_if_accepting_requests()?;
+        let context = req
+            .into_inner()
+            .context
+            .ok_or_else(|| Status::invalid_argument("missing tenant client context"))?;
+        let generation = self
+            .0
+            .daemon_state
+            .data()
+            .register_tenant_for_client_context(&context)
+            .await
+            .map_err(|error| Status::failed_precondition(format!("{error:#}")))?;
+        Ok(Response::new(
+            buck2_cli_proto::UnstableRegisterTenantResponse { generation },
+        ))
+    }
+
     async fn evict_tenant(
         &self,
         req: Request<EvictTenantRequest>,

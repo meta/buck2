@@ -15,6 +15,8 @@ use std::borrow::Cow;
 use std::fs::File;
 use std::fs::TryLockError;
 use std::io::ErrorKind;
+use std::sync::Arc;
+use std::sync::Mutex;
 use std::time::Duration;
 
 use allocative::Allocative;
@@ -38,6 +40,8 @@ use crate::invocation_roots::InvocationRoots;
 #[derive(Clone, Allocative)]
 pub struct InvocationPaths {
     pub roots: InvocationRoots,
+    #[allocative(skip)]
+    daemon_compatibility: Arc<Mutex<Option<DaemonCompatibilityKey>>>,
 
     /// The isolation dir is a relative path used to create unique directories for
     /// a tenant's on-disk state. This allows multiple isolated tenants to use the
@@ -81,13 +85,13 @@ impl TenantPaths {
 
     /// A persistent lock file outside the tenant's disposable output and daemon directories.
     pub fn disk_ownership_lock_path(&self) -> buck2_error::Result<AbsNormPathBuf> {
-        let paths = InvocationPaths {
-            roots: InvocationRoots {
+        let paths = InvocationPaths::new(
+            InvocationRoots {
                 project_root: self.project_root.clone(),
                 cwd: ProjectRelativePath::empty().to_buf(),
             },
-            isolation: self.isolation.clone(),
-        };
+            self.isolation.clone(),
+        );
         Ok(paths
             .project_daemon_dir()?
             .path
@@ -97,13 +101,13 @@ impl TenantPaths {
 
     /// The daemon directory used by clients without shared daemon routing.
     pub fn unshared_daemon_dir(&self) -> buck2_error::Result<DaemonDir> {
-        let paths = InvocationPaths {
-            roots: InvocationRoots {
+        let paths = InvocationPaths::new(
+            InvocationRoots {
                 project_root: self.project_root.clone(),
                 cwd: ProjectRelativePath::empty().to_buf(),
             },
-            isolation: self.isolation.clone(),
-        };
+            self.isolation.clone(),
+        );
         Ok(DaemonDir {
             path: paths.project_daemon_dir()?.path.join(&self.isolation),
         })
@@ -299,6 +303,28 @@ impl TenantDiskLock {
 }
 
 impl InvocationPaths {
+    pub fn new(roots: InvocationRoots, isolation: FileNameBuf) -> Self {
+        Self {
+            roots,
+            isolation,
+            daemon_compatibility: Arc::new(Mutex::new(None)),
+        }
+    }
+
+    pub fn select_unidaemon(&self, key: DaemonCompatibilityKey) {
+        *self
+            .daemon_compatibility
+            .lock()
+            .unwrap_or_else(|error| error.into_inner()) = Some(key);
+    }
+
+    pub fn unidaemon_key(&self) -> Option<DaemonCompatibilityKey> {
+        self.daemon_compatibility
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .clone()
+    }
+
     /// Returns the stable tenant paths, excluding the invocation cwd.
     pub fn tenant_paths(&self) -> TenantPaths {
         TenantPaths::new(self.project_root().clone(), self.isolation.clone())
@@ -333,13 +359,16 @@ impl InvocationPaths {
             path: self
                 .roots
                 .common_buckd_dir()?
-                .join(FileName::unchecked_new(".unidaemons"))
+                .join(FileName::unchecked_new(UNIDAEMON_NAMESPACES_DIR))
                 .join(key.file_name())
                 .join(FileName::unchecked_new(DEFAULT_ISOLATION_DIR)),
         })
     }
 
     pub fn daemon_dir(&self) -> buck2_error::Result<DaemonDir> {
+        if let Some(key) = self.unidaemon_key() {
+            return self.unidaemon_dir(&key);
+        }
         if let Some(group) = self.shared_daemon_group()? {
             return Ok(DaemonDir {
                 path: self
@@ -569,6 +598,29 @@ impl InvocationPaths {
 /// recreated on daemon start.
 pub const RESERVED_BUCK_OUT_PREFIX: &str = "._buck2";
 
+/// Under the common daemon directory, the directory holding one shared-daemon namespace per
+/// compatibility key.
+pub const UNIDAEMON_NAMESPACES_DIR: &str = ".unidaemons";
+
+pub fn unidaemon_prototype_enabled() -> buck2_error::Result<bool> {
+    if !buck2_env!("BUCK2_UNIDAEMON", type=bool, default=false)? {
+        return Ok(false);
+    }
+    if !buck2_env!("BUCK2_SHARE_DAEMON", type=bool, default=false)? {
+        return Err(buck2_error::buck2_error!(
+            buck2_error::ErrorTag::Input,
+            "BUCK2_UNIDAEMON requires BUCK2_SHARE_DAEMON=true"
+        ));
+    }
+    if buck2_env!("BUCK2_DAEMON_GROUP")?.is_some() {
+        return Err(buck2_error::buck2_error!(
+            buck2_error::ErrorTag::Input,
+            "BUCK2_UNIDAEMON selects groups by compatibility; unset BUCK2_DAEMON_GROUP"
+        ));
+    }
+    Ok(true)
+}
+
 #[cfg(test)]
 mod tests {
     use std::ffi::OsStr;
@@ -593,15 +645,15 @@ mod tests {
         } else {
             "/my/project"
         };
-        let paths = InvocationPaths {
-            roots: InvocationRoots {
+        let paths = InvocationPaths::new(
+            InvocationRoots {
                 project_root: ProjectRoot::new_unchecked(
                     AbsNormPathBuf::try_from(project_root.to_owned()).unwrap(),
                 ),
                 cwd: ProjectRelativePath::empty().to_buf(),
             },
-            isolation: FileNameBuf::unchecked_new("isolation"),
-        };
+            FileNameBuf::unchecked_new("isolation"),
+        );
 
         let expected_path = if cfg!(windows) {
             ".buck\\buckd\\C\\my\\project\\isolation"
@@ -618,10 +670,10 @@ mod tests {
             .as_os_str()
         );
 
-        let other_paths = InvocationPaths {
-            roots: paths.roots.clone(),
-            isolation: FileNameBuf::unchecked_new("other-isolation"),
-        };
+        let other_paths = InvocationPaths::new(
+            paths.roots.clone(),
+            FileNameBuf::unchecked_new("other-isolation"),
+        );
         assert_ne!(
             paths.daemon_dir().unwrap().path,
             other_paths.daemon_dir().unwrap().path,

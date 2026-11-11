@@ -17,3 +17,19 @@ rust_library(
         "fbsource//third-party/rust:tokio",
     ],
 )
+
+# Helpers shared by the daemon test suites that exercise daemon sharing; see `unidaemon/lib.rs`.
+rust_library(
+    name = "unidaemon",
+    srcs = glob(["unidaemon/*.rs"]),
+    autocargo = {"ignore_rule": True},
+    crate = "common_unidaemon",
+    crate_root = "unidaemon/lib.rs",
+    deps = [
+        "fbcode//buck2/tests/e2e_util/rust:buck2_e2e",
+        "fbsource//third-party/rust:anyhow",
+        "fbsource//third-party/rust:rusqlite",
+        "fbsource//third-party/rust:serde_json",
+        "fbsource//third-party/rust:tokio",
+    ],
+)

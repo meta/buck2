@@ -30,6 +30,7 @@ BUCK2_SHARE_DAEMON               bool                  false
 BUCK2_SHOW_SOFT_ERRORS           String
 BUCK2_TEST_BLOCK_ON_UPLOAD       bool                  false
 BUCK2_TEST_TPX_USE_TCP           bool                  false
+BUCK2_UNIDAEMON                  bool                  false
 BUCK2_WATCHMAN_TIMEOUT           u64                   57
 BUCKD_LAUNCH_TIMEOUT             u64
 BUCKD_STARTUP_INIT_TIMEOUT       u64

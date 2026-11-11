@@ -29,10 +29,12 @@ use buck2_common::client_utils::RetryError;
 use buck2_common::client_utils::get_channel_tcp;
 use buck2_common::client_utils::get_channel_uds;
 use buck2_common::client_utils::retrying;
+use buck2_common::daemon_compatibility::DaemonCompatibilityKey;
 use buck2_common::daemon_dir::DaemonDir;
 use buck2_common::init::DaemonStartupConfig;
 use buck2_common::invocation_paths::InvocationPaths;
 use buck2_common::invocation_paths::TenantDiskLock;
+use buck2_common::invocation_paths::unidaemon_prototype_enabled;
 use buck2_core::buck2_env;
 use buck2_core::soft_error_or_panic;
 use buck2_data::DaemonWasStartedReason;
@@ -159,6 +161,15 @@ impl ConstraintUnsatisfiedReason {
 }
 
 impl DaemonConstraintsRequest {
+    pub(crate) fn compatibility_key(&self) -> buck2_error::Result<DaemonCompatibilityKey> {
+        Ok(DaemonCompatibilityKey::new(
+            &self.version,
+            self.user_version.as_deref(),
+            &self.daemon_startup_config.serialize()?,
+            self.is_trace_io_requested(),
+        ))
+    }
+
     pub fn new(
         immediate_config: &ImmediateConfigContext<'_>,
         desired_trace_io_state: DesiredTraceIoState,
@@ -830,6 +841,20 @@ impl BootstrapBuckdClient {
         events_ctx: &'a mut EventsCtx,
     ) -> LocalBoxFuture<'a, buck2_error::Result<Self>> {
         Box::pin(async move {
+            if unidaemon_prototype_enabled()? {
+                match &options {
+                    // `ClientCommandContext::paths` selected the namespace of the client's own
+                    // constraints.
+                    BuckdConnectOptions::ExistingOnly => {
+                        paths
+                            .unidaemon_key()
+                            .internal_error("No unidaemon namespace selected for this tenant")?;
+                    }
+                    BuckdConnectOptions::Options(options) => {
+                        paths.select_unidaemon(options.constraints.compatibility_key()?);
+                    }
+                }
+            }
             let daemon_dir = paths.daemon_dir()?;
 
             fs_util::create_dir_all(&daemon_dir.path)
@@ -853,7 +878,29 @@ impl BootstrapBuckdClient {
                     .await
                     .tag([ErrorTag::DaemonConnect]))
             } else {
-                res
+                let mut client = res?;
+                if paths.unidaemon_key().is_some() {
+                    if let BuckdConnectOptions::Options(options) = &options {
+                        client
+                            .client
+                            .unstable_register_tenant(tonic::Request::new(
+                                buck2_cli_proto::UnstableRegisterTenantRequest {
+                                    context: Some(buck2_cli_proto::ClientContext {
+                                        working_dir: paths.project_root().root().to_string(),
+                                        tenant_identity: Some(buck2_cli_proto::TenantIdentity {
+                                            project_root: paths.project_root().root().to_string(),
+                                            isolation: paths.isolation.to_string(),
+                                        }),
+                                        command_name: "register-unidaemon".to_owned(),
+                                        trace_id: options.trace_id.to_string(),
+                                        ..Default::default()
+                                    }),
+                                },
+                            ))
+                            .await?;
+                    }
+                }
+                Ok(client)
             }
         })
     }

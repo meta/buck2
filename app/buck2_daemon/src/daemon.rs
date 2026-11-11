@@ -21,9 +21,11 @@ use buck2_cli_proto::DaemonProcessInfo;
 use buck2_client_ctx::daemon_constraints::gen_daemon_constraints;
 use buck2_client_ctx::version::BuckVersion;
 use buck2_common::buckd_connection::ConnectionType;
+use buck2_common::daemon_compatibility::DaemonCompatibilityKey;
 use buck2_common::daemon_dir::DaemonDir;
 use buck2_common::init::DaemonStartupConfig;
 use buck2_common::invocation_paths::InvocationPaths;
+use buck2_common::invocation_paths::unidaemon_prototype_enabled;
 use buck2_common::memory;
 use buck2_core::buck2_env;
 use buck2_core::logging::LogConfigurationReloadHandle;
@@ -638,6 +640,16 @@ impl DaemonCommand {
         in_process: bool,
         ready: Box<dyn FnOnce() + Send>,
     ) -> buck2_error::Result<()> {
+        if unidaemon_prototype_enabled()? {
+            // The same inputs the client hashed, so the daemon serves the namespace the client
+            // is waiting on.
+            paths.select_unidaemon(DaemonCompatibilityKey::new(
+                &buck2_client_ctx::daemon_constraints::version()?,
+                buck2_client_ctx::daemon_constraints::user_version()?.as_deref(),
+                &self.daemon_startup_config.serialize()?,
+                self.enable_trace_io,
+            ));
+        }
         let daemon_dir = paths.daemon_dir()?;
         if !daemon_dir.path.is_dir() {
             fs_util::create_dir_all(&daemon_dir.path)?;
@@ -791,13 +803,13 @@ mod tests {
         let listener = tokio::net::TcpListener::from_std(listener).unwrap();
         let listener = tokio_stream::wrappers::TcpListenerStream::new(listener);
 
-        let invocation_paths = InvocationPaths {
-            roots: InvocationRoots {
+        let invocation_paths = InvocationPaths::new(
+            InvocationRoots {
                 project_root: project_root.path().dupe(),
                 cwd: ProjectRelativePath::empty().to_buf(),
             },
-            isolation: FileNameBuf::try_from("v2".to_owned()).unwrap(),
-        };
+            FileNameBuf::try_from("v2".to_owned()).unwrap(),
+        );
 
         // NOTE: This disables the forkserver since it uses the current
         // executable and that's not gonna be available in a test like this.

@@ -19,8 +19,8 @@ buck2_core_tests(
             "deps": [
                 "fbsource//third-party/rust:flate2",
                 "fbsource//third-party/rust:regex",
-                "fbsource//third-party/rust:rusqlite",
                 "fbsource//third-party/rust:uuid",
+                "//buck2/tests/core/common:unidaemon",
             ],
         },
         "test_daemon_killed_on_checkout_removal": {
@@ -50,6 +50,14 @@ buck2_core_tests(
         },
         "test_tenant_recovery": {
             "data": ":test_daemon_data",
+            "require_nano_prelude": True,
+        },
+        "test_unidaemon": {
+            "data": ":test_daemon_data",
+            "deps": [
+                "fbsource//third-party/rust:regex",
+                "//buck2/tests/core/common:unidaemon",
+            ],
             "require_nano_prelude": True,
         },
     },

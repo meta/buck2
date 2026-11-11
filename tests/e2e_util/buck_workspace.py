@@ -94,6 +94,7 @@ async def buck_fixture(  # noqa C901 : "too complex"
     env.pop("BUCK2_DAEMON_UUID", None)
     env.pop("BUCK2_DAEMON_USER_VERSION", None)
     env["BUCK2_SHARE_DAEMON"] = "false"
+    env["BUCK2_UNIDAEMON"] = "false"
     env.pop("BUCK2_DAEMON_GROUP", None)
     # This is necessary for static linking on Linux.
     if platform.system() != "Windows":

@@ -2521,7 +2521,7 @@ def rust_link_binary(
             # The link is local only so the fbcode linker wrapper can stamp
             # build info from the repo (D115067153); dwp needs no repo and is
             # memory-hungry enough that pinning it to the link's host thrashes
-            # small workers. Let it schedule anywhere, matching the
+            # small arches. Let it schedule anywhere, matching the
             # rustc-linked path, which runs dwp with no preference.
             dwp_execution_preference = LinkExecutionPreference("any"),
             category_suffix = "rust_binary",

@@ -172,6 +172,18 @@ RustProcMacroInfo = provider(
     },
 )
 
+RustProcMacroArchVariant = record(
+    dylib = field(Artifact),
+    singleton_tset = field(TransitiveDeps),
+)
+
+RustProcMacroArchInfo = provider(
+    fields = {
+        "arch_variants": dict[str, RustProcMacroArchVariant],
+        "crate": CrateName,
+    },
+)
+
 # Information which is keyed on link_style
 RustLinkStrategyInfo = record(
     # Path to the rlib, rmeta, dylib, etc.

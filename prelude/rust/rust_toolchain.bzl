@@ -47,6 +47,8 @@ RustArchToolchainVariant = record(
     arch_triple = field(str),
     implicit_bootstrap_sysroot = field(Artifact | None),
     runtime_and_plugin_inputs = field(list[Artifact | cmd_args]),
+    archiver = field(cmd_args | None),
+    archiver_deterministic = field(bool),
     plain_env = field(dict[str, typing.Any]),
     path_env = field(dict[str, typing.Any]),
 )

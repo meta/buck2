@@ -39,6 +39,7 @@ pub struct TenantProxy {
     /// the way that daemon derives its own.
     pub key: DaemonCompatibilityKey,
     pub daemon_id: String,
+    pub user_version: Option<String>,
     pub generation: u64,
     /// Whether that daemon records I/O traces, which its namespace key also encodes.
     pub trace_io_enabled: bool,
@@ -84,18 +85,20 @@ pub async fn probe_slot_dir(directory: &DaemonDir) -> buck2_error::Result<SlotOw
                     extra.trace_io_enabled,
                 ),
                 constraints.daemon_id.clone(),
+                constraints.user_version.clone(),
                 extra.trace_io_enabled,
             )),
             _ => None,
         }
     };
-    let Some((key, daemon_id, trace_io_enabled)) = proxied else {
+    let Some((key, daemon_id, user_version, trace_io_enabled)) = proxied else {
         return Ok(SlotOwner::Legacy(client));
     };
     Ok(SlotOwner::Proxy(TenantProxy {
         client,
         key,
         daemon_id,
+        user_version,
         generation,
         trace_io_enabled,
     }))

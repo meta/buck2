@@ -207,6 +207,12 @@ impl DaemonConstraintsRequest {
     /// serve either way, on the state of the daemon that serves the tenant under sharing, so that
     /// the request hashes to that daemon's namespace. Without a proxy to follow it settles on no
     /// tracing, as a daemon started for it would.
+    ///
+    /// A client that an action runs with its own isolation directory has no proxy to follow
+    /// either: it inherits the daemon's user version from its environment but not its trace
+    /// state, so under a tracing daemon it hashes to the non-tracing namespace and starts a
+    /// second shared daemon there. Nested clients under tracing are rare; this is left as is
+    /// until it matters.
     pub(crate) fn settle_trace_io(&mut self, proxy: Option<&TenantProxy>) {
         if let DesiredTraceIoState::Existing = self.desired_trace_io_state {
             self.desired_trace_io_state = match proxy {
@@ -517,6 +523,16 @@ impl<'a> BuckdLifecycle<'a> {
         }
 
         let mut daemon_env_vars = Vec::new();
+        if self.paths.unidaemon_key().is_some() {
+            daemon_env_vars.push((
+                OsStr::new("ENABLE_TRACE_IO"),
+                OsString::from(if constraints.is_trace_io_requested() {
+                    "true"
+                } else {
+                    "false"
+                }),
+            ));
+        }
 
         daemon_env_vars.push((OsStr::new("RUST_BACKTRACE"), OsString::from("1")));
 
@@ -836,7 +852,6 @@ impl BuckdChannel {
         let daemon_status = get_daemon_status(&mut client)
             .await
             .buck_error_context("Error obtaining daemon status")?;
-
         Ok(BootstrapBuckdClient {
             info,
             daemon_dir,
@@ -920,6 +935,14 @@ impl BootstrapBuckdClient {
                         // daemon of its namespace; the proxy of a daemon that is gone is killed
                         // below and does not decide the trace state either.
                         let proxy = match proxy {
+                            // The daemon this command runs under is alive by construction, so its
+                            // proxy is never mistaken for a stale one and killed from inside it.
+                            Some(proxy)
+                                if get_possibly_nested_invocation_daemon_uuid().as_deref()
+                                    == Some(proxy.daemon_id.as_str()) =>
+                            {
+                                Some(proxy)
+                            }
                             Some(proxy)
                                 if establish_connection_existing(
                                     &paths.unidaemon_dir(&proxy.key)?,
@@ -935,6 +958,9 @@ impl BootstrapBuckdClient {
                         };
                         options.constraints.settle_trace_io(proxy);
                         let key = options.constraints.compatibility_key()?;
+                        if let Some(proxy) = proxy {
+                            refuse_moving_parent_tenant(&options.constraints, proxy, &key)?;
+                        }
                         let reuse = proxy.is_some_and(|proxy| proxy.key == key);
                         drop(slot);
                         if !reuse && let Some(lifecycle) = &tenant_lifecycle {
@@ -1169,6 +1195,31 @@ pub async fn shared_daemon_is_inactive(daemon_dir: &DaemonDir) -> buck2_error::R
     .buck_error_context(
         "Cannot verify shared daemon inactivity; restore consistent buckd.info and buckd.pid before retrying",
     )
+}
+
+/// A client that an action runs must not move the tenant its parent's command runs in: the
+/// daemon would evict the tenant and cancel that command. `proxy` is the live proxy of the
+/// tenant's own daemon directory and `key` the namespace this client's constraints hash to.
+fn refuse_moving_parent_tenant(
+    request: &DaemonConstraintsRequest,
+    proxy: &TenantProxy,
+    key: &DaemonCompatibilityKey,
+) -> buck2_error::Result<()> {
+    if get_possibly_nested_invocation_daemon_uuid().as_deref() != Some(proxy.daemon_id.as_str())
+        || proxy.key == *key
+    {
+        return Ok(());
+    }
+    let reason = if proxy.client.daemon_constraints().version != request.version {
+        ConstraintUnsatisfiedReason::Version
+    } else if proxy.user_version != request.user_version {
+        ConstraintUnsatisfiedReason::UserVersion
+    } else if proxy.trace_io_enabled != request.is_trace_io_requested() {
+        ConstraintUnsatisfiedReason::TraceIo
+    } else {
+        ConstraintUnsatisfiedReason::StartupConfig
+    };
+    Err(BuckdConnectError::NestedConstraintMismatch { reason }.into())
 }
 
 async fn establish_connection(

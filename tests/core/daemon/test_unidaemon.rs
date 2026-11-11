@@ -1721,3 +1721,123 @@ cases! { [buck] unidaemon_corruption_recovery_scope {
     #[expect(non_snake_case, reason = "named like the Python harness's parametrized case")]
     fn test_unidaemon_corruption_recovery_scope_True_True_materializer_deadline("materializer-deadline", true, true);
 }}
+
+async fn unidaemon_client_without_trace_preference_follows_its_proxy(
+    buck: &Buck,
+    tmp_path: &Path,
+    share_dice: bool,
+) -> anyhow::Result<()> {
+    let tenants = unidaemon_checkouts(buck, tmp_path, share_dice)?;
+    let result = async {
+        tenants[0].debug(&["trace-io", "enable"]).await?;
+        let traced = daemon_id(&tenants[0]).await?;
+        let traced_key = namespace_key(&tenants[0]).await?;
+        // A command of the same tenant with no preference follows its proxy into the traced
+        // namespace instead of hashing to the untraced one.
+        tenants[0].build(&["//:tenant_value"]).await?;
+        assert_eq!(daemon_id(&tenants[0]).await?, traced);
+        assert_eq!(namespace_key(&tenants[0]).await?, traced_key);
+        let status = status_json(&tenants[0]).await?;
+        assert!(truthy(
+            &status["daemon_constraints"]["extra"]["trace_io_enabled"]
+        ));
+        // A tenant with no proxy to follow starts without tracing, in its own namespace.
+        assert!(!proxy_slot(&tenants[1]).join("buckd.info").exists());
+        tenants[1].build(&["//:tenant_value"]).await?;
+        assert_ne!(daemon_id(&tenants[1]).await?, traced);
+        assert_ne!(namespace_key(&tenants[1]).await?, traced_key);
+        let status = status_json(&tenants[1]).await?;
+        assert!(!truthy(
+            &status["daemon_constraints"]["extra"]["trace_io_enabled"]
+        ));
+        anyhow::Ok(())
+    }
+    .await;
+    let killed = kill_all(&tenants).await;
+    result?;
+    killed
+}
+
+bool_cases! { [buck, tmp_path] unidaemon_client_without_trace_preference_follows_its_proxy {
+    #[buck_test(data_dir = "test_daemon_data", skip_for_os = ["windows", "darwin"], allow_soft_errors = true)]
+    fn test_unidaemon_client_without_trace_preference_follows_its_proxy_False(false);
+    #[buck_test(data_dir = "test_daemon_data", skip_for_os = ["windows", "darwin"], allow_soft_errors = true)]
+    fn test_unidaemon_client_without_trace_preference_follows_its_proxy_True(true);
+}}
+
+async fn unidaemon_nested_client_inherits_parent_user_version(
+    buck: &Buck,
+    tmp_path: &Path,
+    share_dice: bool,
+) -> anyhow::Result<()> {
+    let mut tenants = unidaemon_checkouts(buck, tmp_path, share_dice)?;
+    tenants[0].set_env("SANDCASTLE_ID", "parent-job");
+    tenants[1].set_env("SANDCASTLE_ID", "nested-job");
+    let config = tenants[1].cwd().join(".buckconfig");
+    let original = std::fs::read_to_string(&config)?;
+    let parent_config = tenants[0].cwd().join(".buckconfig");
+    let parent_original = std::fs::read_to_string(&parent_config)?;
+    let result = async {
+        tenants[0].build(&["//:tenant_value"]).await?;
+        let parent = daemon_id(&tenants[0]).await?;
+        let parent_key = namespace_key(&tenants[0]).await?;
+        // What the parent's daemon exports to the actions it runs.
+        tenants[1].set_env("BUCK2_DAEMON_UUID", &parent);
+        tenants[1].set_env("BUCK2_DAEMON_USER_VERSION", "parent-job");
+        tenants[1].build(&["//:tenant_value"]).await?;
+        assert_eq!(daemon_id(&tenants[1]).await?, parent);
+        assert_eq!(namespace_key(&tenants[1]).await?, parent_key);
+        // Still nested, a client with its own user version must not move the tenant.
+        tenants[1].remove_env("BUCK2_DAEMON_USER_VERSION");
+        tenants[1]
+            .build(&["//:tenant_value"])
+            .await
+            .expect_failure()
+            .assert_stderr_matches(
+                "constraint mismatch during nested invocation: User version mismatch",
+            );
+        // Outside any action, the client's own user version selects another namespace.
+        tenants[1].remove_env("BUCK2_DAEMON_UUID");
+        tenants[1].build(&["//:tenant_value"]).await?;
+        assert_ne!(daemon_id(&tenants[1]).await?, parent);
+        assert_ne!(namespace_key(&tenants[1]).await?, parent_key);
+        // Nested in a tenant the parent's daemon does not serve, an incompatible client gets
+        // a daemon of its own.
+        tenants[1].set_env("BUCK2_DAEMON_UUID", &parent);
+        tenants[1].set_env("BUCK2_DAEMON_USER_VERSION", "parent-job");
+        std::fs::write(
+            &config,
+            format!("{original}\n[buck2]\nshare_dice = {}\n", !share_dice),
+        )?;
+        tenants[1].build(&["//:tenant_value"]).await?;
+        assert_ne!(daemon_id(&tenants[1]).await?, parent);
+        // Nested in the parent's own tenant, it must not replace the parent's daemon.
+        tenants[0].set_env("BUCK2_DAEMON_UUID", &parent);
+        tenants[0].set_env("BUCK2_DAEMON_USER_VERSION", "parent-job");
+        std::fs::write(
+            &parent_config,
+            format!("{parent_original}\n[buck2]\nshare_dice = {}\n", !share_dice),
+        )?;
+        let nested = tenants[0].build(&["//:tenant_value"]).await;
+        std::fs::write(&parent_config, &parent_original)?;
+        tenants[0].remove_env("BUCK2_DAEMON_UUID");
+        tenants[0].remove_env("BUCK2_DAEMON_USER_VERSION");
+        nested
+            .expect_failure()
+            .assert_stderr_matches("constraint mismatch during nested invocation");
+        assert_eq!(daemon_id(&tenants[0]).await?, parent);
+        anyhow::Ok(())
+    }
+    .await;
+    std::fs::write(&config, &original)?;
+    let killed = kill_all(&tenants).await;
+    result?;
+    killed
+}
+
+bool_cases! { [buck, tmp_path] unidaemon_nested_client_inherits_parent_user_version {
+    #[buck_test(data_dir = "test_daemon_data", skip_for_os = ["windows", "darwin"])]
+    fn test_unidaemon_nested_client_inherits_parent_user_version_False(false);
+    #[buck_test(data_dir = "test_daemon_data", skip_for_os = ["windows", "darwin"])]
+    fn test_unidaemon_nested_client_inherits_parent_user_version_True(true);
+}}

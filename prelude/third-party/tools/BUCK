@@ -10,12 +10,25 @@ prelude = native
 prelude.python_bootstrap_binary(
     name = "create_build-full",
     main = "create_build.py",
+    visibility = ["PUBLIC"],
 )
+
+# @oss-disable[end= ]: prelude.constraint_setting(
+    # @oss-disable[end= ]: name = "purpose",
+    # @oss-disable[end= ]: visibility = ["PUBLIC"],
+# @oss-disable[end= ]: )
+
+# @oss-disable[end= ]: prelude.constraint_value(
+    # @oss-disable[end= ]: name = "construction",
+    # @oss-disable[end= ]: constraint_setting = ":purpose",
+    # @oss-disable[end= ]: visibility = ["PUBLIC"],
+# @oss-disable[end= ]: )
 
 # @oss-disable[end= ]: prelude.python_bootstrap_binary_stage0(
     # @oss-disable[end= ]: name = "create_build-construction",
     # @oss-disable[end= ]: interpreter = "fbcode//buck2/platform/python:interpreter-linux-stage0-{}".format(DEFAULT_PY_VERSION),
     # @oss-disable[end= ]: main = "create_build.py",
+    # @oss-disable[end= ]: visibility = ["PUBLIC"],
 # @oss-disable[end= ]: )
 
 prelude.alias(

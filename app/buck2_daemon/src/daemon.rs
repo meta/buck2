@@ -257,46 +257,6 @@ fn verify_buck_out_dir(paths: &InvocationPaths) -> buck2_error::Result<()> {
     Ok(())
 }
 
-/// Removes the forkserver state that shared daemons of other namespaces left in this checkout
-/// when they did not exit normally. A namespace whose lifetime lock is free has no daemon
-/// running or starting: a daemon takes the lock before it launches its forkserver, and this
-/// daemon holds its own. Best effort, as the state only costs disk space.
-fn remove_stale_shared_forkserver_state(paths: &InvocationPaths, own: &DaemonCompatibilityKey) {
-    let root = paths.shared_forkserver_state_root();
-    let entries = match fs_util::read_dir_if_exists(&root) {
-        Ok(Some(entries)) => entries,
-        Ok(None) => return,
-        Err(error) => {
-            tracing::info!("Left shared forkserver state under `{root}` in place: {error:#}");
-            return;
-        }
-    };
-    for entry in entries {
-        let Some(key) = entry
-            .ok()
-            .and_then(|entry| entry.file_name().into_string().ok())
-            .and_then(|name| name.parse::<DaemonCompatibilityKey>().ok())
-        else {
-            continue;
-        };
-        if key == *own {
-            continue;
-        }
-        let state = root.join(key.file_name());
-        match UnidaemonLifetimeLock::is_held_blocking(paths, &key) {
-            Ok(false) => {
-                if let Err(error) = fs_util::remove_all(&state) {
-                    tracing::info!("Left forkserver state `{state}` in place: {error:?}");
-                }
-            }
-            Ok(true) => {}
-            Err(error) => {
-                tracing::info!("Left forkserver state `{state}` in place: {error:#}");
-            }
-        }
-    }
-}
-
 /// Removes the namespace directory of a shared daemon that has exited normally, so that no record
 /// names it, and the daemon's forkserver state, which nothing else removes; a daemon that failed
 /// leaves its error report there for its client to read. The daemon still holds the namespace's
@@ -819,7 +779,6 @@ impl DaemonCommand {
                     key,
                     Duration::from_secs(10),
                 )?);
-                remove_stale_shared_forkserver_state(&paths, key);
             }
             self.run(log_reload_handle, paths, in_process, ready)
         })();

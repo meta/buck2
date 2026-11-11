@@ -2238,7 +2238,7 @@ async fn test_shared_forkserver_state_goes_with_its_daemon(
 }
 
 #[buck_test(data_dir = "test_daemon_data", skip_for_os = ["windows", "darwin"])]
-async fn test_shared_daemon_removes_stale_forkserver_state_of_other_namespaces(
+async fn test_shared_daemon_leaves_forkserver_state_of_other_namespaces(
     buck: &Buck,
     tmp_path: &Path,
 ) -> anyhow::Result<()> {
@@ -2248,17 +2248,17 @@ async fn test_shared_daemon_removes_stale_forkserver_state_of_other_namespaces(
         .join("buck-out")
         .join("._buck2")
         .join("forkserver");
-    // A namespace no daemon holds, as a daemon that did not exit normally leaves it.
-    let stale = root.join("0".repeat(64));
-    std::fs::create_dir_all(&stale)?;
-    std::fs::write(stale.join("miniperf"), "left behind")?;
+    // Another namespace's state, whose daemon may run under another home.
+    let other = root.join("0".repeat(64));
+    std::fs::create_dir_all(&other)?;
+    std::fs::write(other.join("miniperf"), "another daemon's")?;
     let result = async {
         tenant.build(&["//:tenant_value"]).await?;
         let key = namespace_name(tmp_path)?;
         assert!(root.join(&key).is_dir());
         assert!(
-            !stale.exists(),
-            "the starting daemon removed the state of a namespace without a daemon"
+            other.join("miniperf").exists(),
+            "the starting daemon left another namespace's state alone"
         );
         anyhow::Ok(())
     }

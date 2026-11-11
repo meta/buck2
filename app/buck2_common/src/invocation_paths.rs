@@ -272,14 +272,6 @@ impl UnidaemonLifetimeLock {
         tokio::task::spawn_blocking(move || Self::is_held_at(&path)).await?
     }
 
-    /// [`Self::is_held`] for a caller outside a runtime, such as a starting daemon.
-    pub fn is_held_blocking(
-        paths: &InvocationPaths,
-        key: &DaemonCompatibilityKey,
-    ) -> buck2_error::Result<bool> {
-        Self::is_held_at(&paths.unidaemon_lifetime_lock_path(key)?)
-    }
-
     fn is_held_at(path: &AbsNormPathBuf) -> buck2_error::Result<bool> {
         let file = match File::open(path) {
             Ok(file) => file,
@@ -747,7 +739,9 @@ impl InvocationPaths {
 
     /// Private executable state for the daemon's forkserver, under execution-allowlisted
     /// buck-out. A shared daemon keeps it beside its working directory, so that `buck2 clean` of
-    /// a tenant leaves it intact, under its namespace, which at most one live daemon has.
+    /// a tenant leaves it intact, under its namespace. As with an unshared daemon's state, which
+    /// daemons under different homes started over one checkout and isolation directory share, a
+    /// daemon only ever touches its own directory.
     pub fn forkserver_state_dir(&self) -> buck2_error::Result<AbsNormPathBuf> {
         if !self.routing()?.is_shared() {
             return Ok(self

@@ -152,9 +152,31 @@ object ResourceSourceMapFormat {
     }
   }
 
+  /** Format: `I\tid\ttype\tname`. */
+  data class IdRow(
+      val id: String,
+      val type: String,
+      val name: String,
+  ) : Row {
+    override fun serialize(): String =
+        listOf(TAG, id, type, name).joinToString(DELIMITER.toString())
+
+    companion object {
+      private const val TAG = "I"
+
+      internal fun parse(fields: List<String>): IdRow? {
+        if (fields.size != 4 || fields[0] != TAG) return null
+        return IdRow(fields[1], fields[2], fields[3])
+      }
+    }
+  }
+
   fun parse(line: String): Row? {
     val fields = line.split(DELIMITER)
-    return ResourceRow.parse(fields) ?: AssetRow.parse(fields) ?: FileRow.parse(fields)
+    return ResourceRow.parse(fields)
+        ?: AssetRow.parse(fields)
+        ?: FileRow.parse(fields)
+        ?: IdRow.parse(fields)
   }
 
   fun encodeField(value: String): String =

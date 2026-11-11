@@ -13,7 +13,7 @@ def _target_build_file_path(target):
     package = target.package + "/" if target.package else ""
     return cell + package + "BUCK"
 
-def create_resource_source_map(ctx: AnalysisContext, resource_infos: list, tool, name: str = "resource_source_map", category = None) -> Artifact:
+def create_resource_source_map(ctx: AnalysisContext, resource_infos: list, tool, name: str = "resource_source_map", category = None, r_dot_txt = None) -> Artifact:
     resource_infos_with_res = [resource for resource in resource_infos if resource.res != None]
     resource_dirs = [
         cmd_args([resource.res, resource.source_res or resource.res, _target_build_file_path(resource.raw_target)], delimiter = "\t")
@@ -34,12 +34,14 @@ def create_resource_source_map(ctx: AnalysisContext, resource_infos: list, tool,
         asset_dirs_file,
         "--output",
         output.as_output(),
+        ["--r-dot-txt", r_dot_txt] if r_dot_txt else [],
     ])
     command.add(
         cmd_args(
             hidden = [resource.res for resource in resource_infos_with_res]
             + [resource.source_res for resource in resource_infos_with_res if resource.source_res != None]
             + [asset for asset, _ in asset_infos]
+            + ([r_dot_txt] if r_dot_txt else [])
         )
     )
     ctx.actions.run(command, category = category or name, allow_cache_upload = True)

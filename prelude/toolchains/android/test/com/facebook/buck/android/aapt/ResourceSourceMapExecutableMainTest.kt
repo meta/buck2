@@ -491,6 +491,33 @@ class ResourceSourceMapExecutableMainTest {
     assertEquals(assetRow, ResourceSourceMapFormat.parse(assetRow.serialize()))
   }
 
+  @Test
+  fun `resource ids preserve type and name`() {
+    val resourceDirs = temporaryFolder.newFile("resource-dirs").toPath()
+    val assetDirs = temporaryFolder.newFile("asset-dirs").toPath()
+    val rDotTxt = temporaryFolder.newFile("R.txt").toPath()
+    Files.write(
+        rDotTxt,
+        listOf(
+            "int string title 0x7f120001",
+            "int color accent 0x7f060002",
+            "int[] styleable Example { 0x7f010001 }",
+        ),
+        StandardCharsets.UTF_8,
+    )
+    val output = temporaryFolder.newFile("source-map").toPath()
+
+    ResourceSourceMapExecutableMain.generate(resourceDirs, assetDirs, output, rDotTxt = rDotTxt)
+
+    assertEquals(
+        listOf(
+            "I\t0x7f060002\tcolor\taccent",
+            "I\t0x7f120001\tstring\ttitle",
+        ),
+        Files.readAllLines(output, StandardCharsets.UTF_8),
+    )
+  }
+
   private fun assetSourceMapRow(
       priority: Int,
       path: String,

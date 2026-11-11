@@ -193,6 +193,7 @@ This will lead to overbuilding and is not supported. Configuration {} not found 
                 apk_under_test = ctx.attrs.apk[AndroidApkInfo].apk,
                 is_self_instrumenting = is_self_instrumenting,
                 resource_source_infos = resources_info.unfiltered_resource_infos if is_self_instrumenting else apk_under_test_info.resource_source_infos,
+                resource_id_map = resources_info.r_dot_txt if is_self_instrumenting else apk_under_test_info.resource_id_map,
             ),
             DefaultInfo(default_output = output_apk, other_outputs = materialized_artifacts, sub_targets = sub_targets | class_to_srcs_subtargets),
             class_to_srcs,

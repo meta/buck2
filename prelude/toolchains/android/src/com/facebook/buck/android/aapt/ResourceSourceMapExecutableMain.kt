@@ -10,6 +10,7 @@
 
 package com.facebook.buck.android.aapt
 
+import com.facebook.buck.android.aapt.RDotTxtEntry.IdType
 import com.facebook.buck.android.aapt.RDotTxtEntry.RType
 import com.facebook.buck.core.filesystems.AbsPath
 import com.facebook.buck.core.filesystems.RelPath
@@ -57,7 +58,7 @@ object ResourceSourceMapExecutableMain {
   private fun run(args: Array<String>) {
     val options = Options()
     CmdLineParser(options).parseArgument(*args)
-    generate(options.resourceDirs, options.assetDirs, options.output)
+    generate(options.resourceDirs, options.assetDirs, options.output, rDotTxt = options.rDotTxt)
   }
 
   private fun outputPath(args: Array<String>): Path? {
@@ -72,6 +73,7 @@ object ResourceSourceMapExecutableMain {
       assetDirsFile: Path,
       output: Path,
       root: Path = Paths.get(".").toAbsolutePath().normalize(),
+      rDotTxt: Path? = null,
   ) {
     val realRoot = root.toRealPath()
     val resourceRoots = readResourceRoots(resourceDirsFile)
@@ -93,9 +95,25 @@ object ResourceSourceMapExecutableMain {
     assetRoots.forEachIndexed { priority, input ->
       collectAssets(realRoot, input, priority, lines)
     }
+    if (rDotTxt != null) collectResourceIds(rDotTxt, lines)
     output.parent?.let(Files::createDirectories)
     val contents = lines.joinToString(separator = "\n", postfix = if (lines.isEmpty()) "" else "\n")
     Files.writeString(output, contents, StandardCharsets.UTF_8)
+  }
+
+  private fun collectResourceIds(rDotTxt: Path, output: MutableSet<String>) {
+    Files.readAllLines(rDotTxt, StandardCharsets.UTF_8).forEach { line ->
+      val entry = RDotTxtEntry.parse(line).orElse(null) ?: return@forEach
+      if (entry.idType != IdType.INT || entry.type == RType.STYLEABLE) return@forEach
+      output.add(
+          ResourceSourceMapFormat.IdRow(
+                  entry.idValue,
+                  entry.type.name.lowercase(Locale.ROOT),
+                  entry.name,
+              )
+              .serialize(),
+      )
+    }
   }
 
   private fun readRoots(path: Path): List<InputRoot> =
@@ -346,5 +364,7 @@ object ResourceSourceMapExecutableMain {
     @field:Option(name = "--asset-dirs", required = true) lateinit var assetDirs: Path
 
     @field:Option(name = "--output", required = true) lateinit var output: Path
+
+    @field:Option(name = "--r-dot-txt") var rDotTxt: Path? = null
   }
 }

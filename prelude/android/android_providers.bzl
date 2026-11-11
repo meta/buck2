@@ -85,6 +85,8 @@ AndroidBinaryResourcesInfo = record(
     proguard_config_file = Artifact,
     # R.java jars containing all the linked resources
     r_dot_java_infos = list[RDotJavaInfo],
+    # R.txt containing the final linked resource IDs
+    r_dot_txt = Artifact,
     # directory containing filtered string resources files
     string_source_map = Artifact | None,
     # directory containing filtered string resources files for Voltron language packs
@@ -177,6 +179,7 @@ AndroidApkUnderTestInfo = provider(
         "primary_platform": provider_field(typing.Any, default = None),  # str
         "resource_infos": provider_field(typing.Any, default = None),  # set(TargetLabel)
         "resource_source_infos": provider_field(typing.Any, default = None),  # list(AndroidResourceInfo)
+        "resource_id_map": provider_field(Artifact | None, default = None),
         "r_dot_java_packages": provider_field(typing.Any, default = None),  # set(str)
         "shared_libraries": provider_field(typing.Any, default = None),  # set(TargetLabel)
         # Merge map delegate
@@ -195,6 +198,7 @@ AndroidInstrumentationApkInfo = provider(
     fields = {
         "apk_under_test": provider_field(typing.Any, default = None),  # "artifact"
         "is_self_instrumenting": provider_field(bool, default = False),
+        "resource_id_map": provider_field(Artifact | None, default = None),
         "resource_source_infos": provider_field(typing.Any, default = None),  # list(AndroidResourceInfo)
     },
 )

@@ -605,23 +605,17 @@ impl LocalExecutor {
                 )
                 .await?;
 
-                if let (Some(start), Some(lease)) =
-                    (incremental, materialized_inputs.outputs.as_ref())
-                {
-                    self.prepare_incremental_outputs(request, start, lease, cancellations)
-                        .await?;
-                }
-
-                buck2_error::Ok((materialized_inputs, Instant::now() - start))
+                buck2_error::Ok((materialized_inputs, incremental, Instant::now() - start))
             },
         )
         .boxed()
         .await;
 
-        let (materialized_inputs, input_materialization_duration) = match executor_stage_result {
-            Ok(x) => x,
-            Err(e) => return manager.error("materialize_inputs_failed", e),
-        };
+        let (materialized_inputs, incremental, mut input_materialization_duration) =
+            match executor_stage_result {
+                Ok(x) => x,
+                Err(e) => return manager.error("materialize_inputs_failed", e),
+            };
         // The command reads its inputs until its outputs have been hashed, which is the end of
         // this function; its hold on the outputs lasts as long.
         let MaterializedInputPaths {
@@ -642,6 +636,28 @@ impl LocalExecutor {
 
             // TODO: Release here.
             let manager = manager.claim().boxed().await;
+
+            if let Some(incremental) = incremental {
+                let start = Instant::now();
+                let prepared = executor_stage_async(
+                    buck2_data::LocalStage {
+                        stage: Some(buck2_data::LocalMaterializeInputs {}.into()),
+                    },
+                    self.prepare_incremental_outputs(
+                        &manager,
+                        request,
+                        incremental,
+                        &outputs_lease,
+                        cancellations,
+                    ),
+                )
+                .boxed()
+                .await;
+                if let Err(e) = prepared {
+                    return manager.error("prepare_incremental_outputs_failed", e);
+                }
+                input_materialization_duration += Instant::now() - start;
+            }
 
             info!(
                 "Local execution command line:\n```\n$ {}\n```",
@@ -1220,9 +1236,12 @@ impl LocalExecutor {
 
     /// Puts an incremental action's previous outputs at its output paths, under the write lease
     /// the run holds over them, all of them or none: a fill that fails, content the CAS no
-    /// longer has, say, makes the run a clean one.
+    /// longer has, say, makes the run a clean one. It writes at the output paths, so it takes
+    /// the run's claim: until then another executor may still win the action and declare its
+    /// own outputs there.
     async fn prepare_incremental_outputs(
         &self,
+        _claimed: &CommandExecutionManagerWithClaim,
         request: &CommandExecutionRequest,
         start: IncrementalStart,
         lease: &WriteLease,

@@ -14,6 +14,11 @@ def _get_meta_specific_xcode_arg_substitutions():
 
 XCODE_ARGSFILES_SUB_TARGET = "xcode-argsfiles"
 
+# The compile flags of the Xcode argsfiles as JSON, by source extension and contributing layer
+# (`get_xcode_compiler_flags_output`): what a project generator reads instead of recomposing
+# the flags from the attributes.
+XCODE_COMPILER_FLAGS_SUB_TARGET = "xcode-compiler-flags"
+
 XCODE_ARG_SUBSTITUTIONS = [
     (regex("-filter-error=.+"), "-fcolor-diagnostics"),
     (regex("-filter-ignore=.+"), "-fcolor-diagnostics"),

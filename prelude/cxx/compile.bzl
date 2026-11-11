@@ -2240,6 +2240,16 @@ def _mk_argsfiles(
     argsfiles = []
     args_list = []
 
+    # The arguments by contributing layer, for `CompileArgsfile.layers` (Xcode argsfiles alone).
+    layers = {}
+
+    def add_layer(name: str, args):
+        if not is_xcode_argsfile:
+            return
+        if name in layers:
+            fail("compile flags layer `{}` added twice for `{}`; each layer of the argsfile is recorded once".format(name, ext.value))
+        layers[name] = create_cmd_args(is_nasm, is_xcode_argsfile, args)
+
     def mk_argsfile(filename: str, args, absolute: bool = False, use_dep_files_placeholder_for_content_based_paths: bool = False) -> Artifact:
         content = create_cmd_args(is_nasm, is_xcode_argsfile, args)
         argsfile, _ = actions.write(
@@ -2332,6 +2342,7 @@ def _mk_argsfiles(
 
         argsfiles.append(compiler_info_argsfile)
         args_list.append(compiler_info_flags)
+        add_layer("toolchain", compiler_info_flags)
 
     make_toolchain_argsfile()
 
@@ -2355,12 +2366,14 @@ def _mk_argsfiles(
             )
         argsfiles.append(compiler_type_argsfile_artifact)
         args_list.append(compiler_type_flags)
+        add_layer("compiler_type", compiler_type_flags)
 
     make_compiler_type_argsfile()
 
     def make_cxx_flags_argsfile():
         flag_deps = impl_params.cxx_flags
         if not flag_deps:
+            add_layer("cxx_flags", [])
             return
 
         flags = cxx_flags_tset(actions, flag_deps)
@@ -2388,6 +2401,7 @@ def _mk_argsfiles(
 
         argsfiles.append(argsfile_with_artifacts(argsfile, projection))
         args_list.append(projection)
+        add_layer("cxx_flags", projection)
 
     make_cxx_flags_argsfile()
 
@@ -2413,6 +2427,7 @@ def _mk_argsfiles(
             )
         )
         args_list.extend(deps_args)
+        add_layer("deps", deps_args)
 
     make_deps_argsfile()
 
@@ -2435,6 +2450,7 @@ def _mk_argsfiles(
         target_argsfile_filename = filename_prefix + "target_cxx_args"
         argsfiles.append(mk_argsfile(target_argsfile_filename, target_args))
         args_list.append(target_args)
+        add_layer("target", target_args)
 
     make_target_argsfile()
 
@@ -2560,6 +2576,7 @@ def _mk_argsfiles(
         args = args,
         args_without_file_prefix_args = args_without_file_prefix_args,
         file_prefix_specs = file_prefix_specs[0] if file_prefix_specs else None,
+        layers = layers if is_xcode_argsfile else None,
     )
 
 def _mk_header_units_argsfile(

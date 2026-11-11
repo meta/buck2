@@ -49,6 +49,7 @@ load(
 load(
     "@prelude//ide_integrations/xcode:argsfiles.bzl",
     "XCODE_ARGSFILES_SUB_TARGET",
+    "XCODE_COMPILER_FLAGS_SUB_TARGET",
 )
 load(
     "@prelude//ide_integrations/xcode:data.bzl",
@@ -143,6 +144,7 @@ load(
     ":argsfiles.bzl",
     "ARGSFILES_SUBTARGET",
     "get_argsfiles_output",
+    "get_xcode_compiler_flags_output",
 )
 load(":bitcode.bzl", "BitcodeBundle", "BitcodeBundleInfo", "BitcodeTSet", "make_bitcode_bundle")
 load(
@@ -615,6 +617,9 @@ def cxx_library_parameterized(ctx: AnalysisContext, impl_params: CxxRuleConstruc
         sub_targets[ARGSFILES_SUBTARGET] = [get_argsfiles_output(ctx, compiled_srcs.compile_cmds.argsfiles.relative, ARGSFILES_SUBTARGET)]
     if impl_params.generate_sub_targets.xcode_data:
         sub_targets[XCODE_ARGSFILES_SUB_TARGET] = [get_argsfiles_output(ctx, compiled_srcs.compile_cmds.argsfiles.xcode, XCODE_ARGSFILES_SUB_TARGET)]
+        sub_targets[XCODE_COMPILER_FLAGS_SUB_TARGET] = [
+            get_xcode_compiler_flags_output(ctx, compiled_srcs.compile_cmds.argsfiles.xcode, XCODE_COMPILER_FLAGS_SUB_TARGET)
+        ]
 
     if impl_params.generate_sub_targets.clang_remarks:
         if compiled_srcs.non_pic and compiled_srcs.non_pic.clang_remarks:

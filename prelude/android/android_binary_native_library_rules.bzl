@@ -56,6 +56,7 @@ load("@prelude//cxx:link_types.bzl", "link_options")
 load(
     "@prelude//cxx:symbols.bzl",
     "extract_defined_syms",
+    "extract_symbol_names",
     "extract_undefined_syms",
 )
 load("@prelude//java:java_library.bzl", "compile_to_jar")  # @unused
@@ -94,6 +95,7 @@ load(
 )
 load("@prelude//linking:strip.bzl", "strip_object")
 load("@prelude//linking:types.bzl", "Linkage")
+load("@prelude//os_lookup:defs.bzl", "Os", "OsLookup")
 load("@prelude//utils:argfile.bzl", "argfile")
 load("@prelude//utils:arglike.bzl", "ArgLike")
 load("@prelude//utils:expect.bzl", "expect")
@@ -2949,6 +2951,10 @@ def _bolt_libraries(
 #    only if they are caused by the relinker changes themselves).
 # 5. extract the list of undefined symbols in the relinked libs (i.e. those symbols needed from dependencies and what had been
 #    used in (1) above from higher nodes).
+#
+# A library that is not relinked (a prebuilt shared library or a packaged executable) has no relink whose undefined symbols
+# (5) would record its imports. Each of its strong imports is charged to the first of its DT_NEEDED libraries that exports
+# the name, the library the dynamic loader binds it in, and that library keeps it in (2).
 
 def relink_libraries(
     ctx: AnalysisContext, libraries_by_platform: dict[str, dict[str, SharedLibrary]], native_cmd_entries = None
@@ -2986,6 +2992,12 @@ def relink_libraries(
                 for dep in solib.shlib_deps:
                     shlib_graph[soname].append(dep)
                     rev_shlib_graph.setdefault(dep, []).append(soname)
+        provided_symbols_files = {
+            soname: extract_provided_symbols(ctx, cxx_toolchain, solib.lib.output)
+            for soname, solib in shared_libraries.items()
+            if soname not in unsupported_libs
+        }
+        unrelinked_imports = _unrelinked_imports(ctx, cxx_toolchain, platform, shared_libraries, unsupported_libs, provided_symbols_files)
         needed_symbols_files = {}
         for soname in pre_order_traversal(shlib_graph):
             if soname in unsupported_libs:
@@ -2995,7 +3007,7 @@ def relink_libraries(
             original_shared_library = shared_libraries[soname]
             output_path = "xdso-dce-relinker-libs/{}/{}".format(platform, soname)
 
-            provided_symbols_file = extract_provided_symbols(ctx, cxx_toolchain, original_shared_library.lib.output)
+            provided_symbols_file = provided_symbols_files[soname]
             needed_symbols_for_this = [needed_symbols_files.get(rdep) for rdep in rev_shlib_graph[soname]]
             relinker_version_script = ctx.actions.declare_output(output_path + ".relinker.version_script", has_content_based_path = False)
             create_relinker_version_script(
@@ -3004,6 +3016,8 @@ def relink_libraries(
                 relinker_allowlist = [regex(s) for s in ctx.attrs.relinker_whitelist],
                 provided_symbols = provided_symbols_file,
                 needed_symbols = needed_symbols_for_this,
+                unrelinked_imports = unrelinked_imports,
+                soname = soname,
             )
             relinker_link_args = (
                 original_shared_library.link_args
@@ -3058,14 +3072,142 @@ def _relink_for_native_libs(
 def extract_provided_symbols(ctx: AnalysisContext, toolchain: CxxToolchainInfo, lib: Artifact) -> Artifact:
     return extract_defined_syms(ctx, toolchain, lib, "relinker_extract_provided_symbols")
 
+def _unrelinked_imports(
+    ctx: AnalysisContext,
+    cxx_toolchain: CxxToolchainInfo,
+    platform: str,
+    shared_libraries: dict[str, SharedLibrary],
+    unsupported_libs: dict[str, bool],
+    provided_symbols_files: dict[str, Artifact],
+) -> Artifact | None:
+    """Charges each strong import of a library that is not relinked to the
+    first of its DT_NEEDED libraries that exports the name, and returns a file
+    of `<soname> <symbol>` lines. None when there is no such library, or no
+    objdump or bash to read DT_NEEDED with.
+    """
+    objdump = cxx_toolchain.binary_utilities_info.objdump
+
+    # _needed_libraries runs bash, which a Windows execution platform lacks.
+    exec_is_windows = hasattr(ctx.attrs, "_exec_os_type") and ctx.attrs._exec_os_type[OsLookup].os == Os("windows")
+    if not unsupported_libs or not provided_symbols_files or objdump == None or exec_is_windows:
+        return None
+
+    unrelinked = []
+    for soname in unsupported_libs:
+        lib = shared_libraries[soname].lib.output
+
+        # Named by platform and soname: a prebuilt's artifact path carries no
+        # configuration, so two ABIs can share it.
+        name = paths.join("xdso-dce-relinker-libs", platform, "unrelinked", soname)
+        unrelinked.append(
+            struct(
+                needed = _needed_libraries(ctx, objdump, name, lib),
+                imports = extract_symbol_names(
+                    ctx = ctx,
+                    cxx_toolchain = cxx_toolchain,
+                    name = name + ".imports",
+                    objects = [lib],
+                    dynamic = True,
+                    global_only = True,
+                    undefined_only = True,
+                    undefined_weak = False,
+                    category = "relinker_unrelinked_imports",
+                    identifier = name,
+                ),
+                exports = extract_symbol_names(
+                    ctx = ctx,
+                    cxx_toolchain = cxx_toolchain,
+                    name = name + ".exports",
+                    objects = [lib],
+                    dynamic = True,
+                    global_only = True,
+                    defined_only = True,
+                    category = "relinker_unrelinked_exports",
+                    identifier = name,
+                ),
+                soname = soname,
+            )
+        )
+    output = ctx.actions.declare_output(paths.join("xdso-dce-relinker-libs", platform, "unrelinked_imports"), has_content_based_path = False)
+
+    def read_names(artifacts, artifact):
+        return {symbol: True for symbol in artifacts[artifact].read_string().splitlines()}
+
+    def read_needed(ctx, artifacts, outputs):
+        needed = {u.soname: artifacts[u.needed].read_string().splitlines() for u in unrelinked}
+
+        # Only the relinked libraries an unrelinked library names in DT_NEEDED
+        # can be charged, so the version scripts wait for no other link.
+        providers = {dep: True for deps in needed.values() for dep in deps if dep in provided_symbols_files}
+
+        def charge(ctx, artifacts, outputs):
+            provided = {dep: read_names(artifacts, provided_symbols_files[dep]) for dep in providers}
+            unrelinked_exports = {u.soname: read_names(artifacts, u.exports) for u in unrelinked}
+            charged = {}
+            for u in unrelinked:
+                for symbol in artifacts[u.imports].read_string().splitlines():
+                    for dep in needed[u.soname]:
+                        if symbol in unrelinked_exports.get(dep, {}):
+                            break
+                        if symbol in provided.get(dep, {}):
+                            charged["{} {}".format(dep, symbol)] = True
+                            break
+            ctx.actions.write(outputs[output], sorted(charged.keys()))
+
+        ctx.actions.dynamic_output(
+            dynamic = [provided_symbols_files[dep] for dep in providers] + [u.imports for u in unrelinked] + [u.exports for u in unrelinked],
+            inputs = [],
+            outputs = [outputs[output].as_output()],
+            f = charge,
+        )
+
+    ctx.actions.dynamic_output(
+        dynamic = [u.needed for u in unrelinked],
+        inputs = [],
+        outputs = [output.as_output()],
+        f = read_needed,
+    )
+    return output
+
+def _needed_libraries(ctx: AnalysisContext, objdump: typing.Any, name: str, lib: Artifact) -> Artifact:
+    # DT_NEEDED in load order, one soname per line.
+    output = ctx.actions.declare_output(name + ".needed", has_content_based_path = False)
+    ctx.actions.run(
+        [
+            "/usr/bin/env",
+            "bash",
+            "-c",
+            cmd_args(output.as_output(), format = 'set -euo pipefail; "$1" -p "$2" | sed -n \'s/^ *NEEDED *//p\' > {}'),
+            "",
+            objdump,
+            lib,
+        ],
+        category = "relinker_unrelinked_needed",
+        identifier = name,
+    )
+    return output
+
 def create_relinker_version_script(
-    actions: AnalysisActions, relinker_allowlist: list[regex], output: Artifact, provided_symbols: Artifact, needed_symbols: list[Artifact]
+    actions: AnalysisActions,
+    relinker_allowlist: list[regex],
+    output: Artifact,
+    provided_symbols: Artifact,
+    needed_symbols: list[Artifact],
+    unrelinked_imports: Artifact | None = None,
+    soname: str | None = None,
 ):
+    # unrelinked_imports, when given, holds `<soname> <symbol>` lines; the
+    # symbols charged to this library's soname are needed too.
     def create_version_script(ctx, artifacts, outputs):
         all_needed_symbols = {}
         for symbols_file in needed_symbols:
             for line in artifacts[symbols_file].read_string().splitlines():
                 all_needed_symbols[line] = True
+        if unrelinked_imports:
+            prefix = soname + " "
+            for line in artifacts[unrelinked_imports].read_string().splitlines():
+                if line.startswith(prefix):
+                    all_needed_symbols[line[len(prefix) :]] = True
 
         symbols_to_keep = []
         for symbol in artifacts[provided_symbols].read_string().splitlines():
@@ -3096,7 +3238,12 @@ def create_relinker_version_script(
         version_script += "};\n"
         ctx.actions.write(outputs[output], version_script)
 
-    actions.dynamic_output(dynamic = needed_symbols + [provided_symbols], inputs = [], outputs = [output.as_output()], f = create_version_script)
+    actions.dynamic_output(
+        dynamic = needed_symbols + [provided_symbols] + ([unrelinked_imports] if unrelinked_imports else []),
+        inputs = [],
+        outputs = [output.as_output()],
+        f = create_version_script,
+    )
 
 def extract_undefined_symbols(ctx: AnalysisContext, toolchain: CxxToolchainInfo, lib: Artifact) -> Artifact:
     return extract_undefined_syms(ctx, toolchain, lib, "relinker_extract_undefined_symbols")

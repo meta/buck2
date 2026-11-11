@@ -522,7 +522,7 @@ impl BuckdServer {
     async fn register_tenant_with_proxy(
         &self,
         context: &ClientContext,
-    ) -> Result<(u64, Option<DaemonProcessInfo>), Status> {
+    ) -> Result<(u64, DaemonProcessInfo), Status> {
         let data = self.0.daemon_state.data().clone();
         let reservation = data
             .reserve_tenant_for_client_context(context)
@@ -535,30 +535,29 @@ impl BuckdServer {
             generation,
             published: false,
         };
-        let mut published = None;
-        // Until a launcher is installed, a tenant is served without a proxy.
-        if let Some(launch) = super::proxies::LAUNCH_PROXY.get() {
-            // An evicted generation's proxy owns the tenant's directory until its eviction
-            // completes, so the replacement's proxy cannot publish before then.
-            data.wait_for_earlier_evictions(&reservation).await;
-            let spec = self
-                .tenant_proxy_spec(context, generation)
-                .map_err(|error| Status::internal(format!("{error:#}")))?;
-            match launch(spec, self.proxy_supervisor()).await {
-                Ok(info) => {
-                    pending.published = true;
-                    published = Some(info);
-                }
-                Err(error) => {
-                    pending.disarm();
-                    self.evict_failed_registration(context, generation, false)
-                        .await;
-                    return Err(Status::internal(format!(
-                        "Launching tenant proxy: {error:#}"
-                    )));
-                }
+        let launch = super::proxies::LAUNCH_PROXY
+            .get()
+            .ok_or_else(|| Status::unimplemented("Tenant proxy launcher is not installed"))?;
+        // An evicted generation's proxy owns the tenant's directory until its eviction
+        // completes, so the replacement's proxy cannot publish before then.
+        data.wait_for_earlier_evictions(&reservation).await;
+        let spec = self
+            .tenant_proxy_spec(context, generation)
+            .map_err(|error| Status::internal(format!("{error:#}")))?;
+        let published = match launch(spec, self.proxy_supervisor()).await {
+            Ok(info) => {
+                pending.published = true;
+                info
             }
-        }
+            Err(error) => {
+                pending.disarm();
+                self.evict_failed_registration(context, generation, false)
+                    .await;
+                return Err(Status::internal(format!(
+                    "Launching tenant proxy: {error:#}"
+                )));
+            }
+        };
         match data.register_reserved_tenant(reservation).await {
             Ok(generation) => {
                 pending.disarm();
@@ -566,10 +565,8 @@ impl BuckdServer {
             }
             Err(error) => {
                 pending.disarm();
-                if published.is_some() {
-                    self.evict_failed_registration(context, generation, true)
-                        .await;
-                }
+                self.evict_failed_registration(context, generation, true)
+                    .await;
                 Err(Status::failed_precondition(format!("{error:#}")))
             }
         }
@@ -663,7 +660,6 @@ impl BuckdServer {
                         if final_tenant {
                             server.shutdown_after_final_tenant_eviction();
                         }
-                        Ok(())
                     }
                     .boxed(),
                 }))
@@ -703,7 +699,7 @@ impl BuckdServer {
                                 status.message()
                             )
                         })?;
-                    Ok(published)
+                    Ok(Some(published))
                 }
                 .boxed()
             }),

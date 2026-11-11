@@ -134,6 +134,21 @@ pub(crate) fn slot_record(directory: &DaemonDir) -> Option<DaemonProcessInfo> {
         .and_then(|file| serde_json::from_reader::<_, DaemonProcessInfo>(file).ok())
 }
 
+/// Whether the slot still belongs to the proxy of `spec` running as `pid`: its record names that
+/// process and its spec file still describes that generation, so a replacement that has written
+/// its own spec but not yet published is not mistaken for it.
+pub(crate) fn slot_matches(spec: &TenantProxySpec, directory: &DaemonDir, pid: i64) -> bool {
+    let slot_spec = File::open(
+        directory
+            .path
+            .join(FileName::unchecked_new(TENANT_PROXY_SPEC_FILE)),
+    )
+    .ok()
+    .and_then(|file| serde_json::from_reader::<_, TenantProxySpec>(file).ok());
+    slot_spec.is_some_and(|slot_spec| slot_spec.reference == spec.reference)
+        && slot_record(directory).is_some_and(|info| info.pid == pid)
+}
+
 #[cfg(test)]
 mod tests {
     use std::fs::File;

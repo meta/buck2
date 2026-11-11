@@ -3543,9 +3543,11 @@ dependencies = [
  "buck2_core",
  "buck2_error",
  "buck2_fs",
+ "buck2_hash",
  "buck2_server",
  "buck2_util",
  "buck2_wrapper_common",
+ "futures 0.3.34",
  "libc",
  "nix 0.31.3",
  "rand 0.10.3",
@@ -3554,6 +3556,7 @@ dependencies = [
  "tokio-stream",
  "tonic",
  "tonic-prost",
+ "tracing",
 ]
 
 [[package]]

@@ -45,7 +45,7 @@ pub fn proxy_close_liveness_gate() -> buck2_error::Result<Option<&'static str>> 
 pub const PROXY_EVICTION_TIMEOUT: Duration = Duration::from_millis(3500);
 
 pub struct ProxyEviction {
-    pub completed: BoxFuture<'static, buck2_error::Result<()>>,
+    pub completed: BoxFuture<'static, ()>,
     pub recovery_allowed: Arc<AtomicBool>,
     pub final_tenant: bool,
 }

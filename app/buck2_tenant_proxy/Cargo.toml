@@ -14,9 +14,11 @@ buck2_common.workspace = true
 buck2_core.workspace = true
 buck2_error.workspace = true
 buck2_fs.workspace = true
+buck2_hash.workspace = true
 buck2_server.workspace = true
 buck2_util.workspace = true
 buck2_wrapper_common.workspace = true
+futures.workspace = true
 libc.workspace = true
 nix.workspace = true
 rand.workspace = true
@@ -25,6 +27,7 @@ tokio.workspace = true
 tokio-stream.workspace = true
 tonic.workspace = true
 tonic-prost.workspace = true
+tracing.workspace = true
 
 [lints]
 workspace = true

@@ -53,6 +53,10 @@ buck2_core_tests(
             "require_nano_prelude": True,
         },
         "test_unidaemon": {
+            "compatible_with": [
+                "ovr_config//os:linux",
+                "ovr_config//os:macos",
+            ],
             "data": ":test_daemon_data",
             "deps": [
                 "fbsource//third-party/rust:regex",

@@ -17,9 +17,16 @@
 
 #![cfg(target_os = "linux")]
 
+mod emergency;
 mod events;
+mod launch;
 mod process;
+mod registry;
 mod server;
 mod slot;
+mod supervisor;
 
+pub use emergency::emergency_exit;
+pub use launch::launch;
 pub use process::run;
+pub use registry::retire;

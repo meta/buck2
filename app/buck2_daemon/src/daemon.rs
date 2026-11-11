@@ -123,6 +123,9 @@ pub struct DaemonCommand {
     tenant_proxy_fd: Option<i32>,
 
     #[clap(long, hide = true)]
+    unidaemon_reap: Option<u32>,
+
+    #[clap(long, hide = true)]
     started_for_clean_stale: bool,
 }
 
@@ -141,6 +144,7 @@ impl DaemonCommand {
             daemon_id: DaemonId::new().to_string(),
             tenant_proxy_file: None,
             tenant_proxy_fd: None,
+            unidaemon_reap: None,
             started_for_clean_stale: false,
         }
     }
@@ -286,6 +290,18 @@ impl DaemonCommand {
             started_for_clean_stale: self.started_for_clean_stale,
             in_process,
         };
+
+        #[cfg(target_os = "linux")]
+        if server_init_ctx
+            .daemon_startup_config
+            .startup_options
+            .unidaemon
+        {
+            buck2_server::daemon::proxies::LAUNCH_PROXY.get_or_init(|| buck2_tenant_proxy::launch);
+            buck2_server::daemon::proxies::RETIRE_PROXY.get_or_init(|| buck2_tenant_proxy::retire);
+            buck2_server::daemon::proxies::EMERGENCY_SHUTDOWN
+                .get_or_init(|| buck2_tenant_proxy::emergency_exit);
+        }
 
         let span = tracing::info_span!("daemon_listener");
         let span_guard = span.enter();
@@ -648,6 +664,34 @@ impl DaemonCommand {
         in_process: bool,
         ready: Box<dyn FnOnce() + Send>,
     ) -> buck2_error::Result<()> {
+        if let Some(pid) = self.unidaemon_reap {
+            #[cfg(target_os = "linux")]
+            {
+                // SAFETY: `getppid` has no preconditions and cannot fail.
+                if unsafe { libc::getppid() } as u32 != pid {
+                    return Err(buck2_error!(
+                        ErrorTag::Input,
+                        "Emergency reaper must target its parent"
+                    ));
+                }
+                if !buck2_wrapper_common::kill::kill_unidaemon_tree_within(
+                    buck2_wrapper_common::pid::Pid::from_u32(pid)?,
+                    0,
+                    Duration::from_secs(10),
+                ) {
+                    return Err(buck2_error!(
+                        ErrorTag::Input,
+                        "Emergency reaper could not confirm that daemon `{pid}` exited"
+                    ));
+                }
+                return Ok(());
+            }
+            #[cfg(not(target_os = "linux"))]
+            return Err(buck2_error!(
+                ErrorTag::Input,
+                "Emergency reaper requires Linux: cannot reap `{pid}`"
+            ));
+        }
         if let Some(path) = &self.tenant_proxy_file {
             #[cfg(target_os = "linux")]
             return buck2_tenant_proxy::run(path, self.tenant_proxy_fd);

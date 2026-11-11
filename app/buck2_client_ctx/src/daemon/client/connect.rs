@@ -74,6 +74,10 @@ use crate::daemon::client::BuckdClientConnector;
 use crate::daemon::client::BuckdLifecycleLock;
 use crate::daemon::client::kill;
 use crate::daemon::client::kill::hard_kill_until;
+use crate::daemon::client::namespaces::prune_exited_unidaemon_namespaces;
+use crate::daemon::client::tenant_slot::SlotOwner;
+use crate::daemon::client::tenant_slot::TenantProxy;
+use crate::daemon::client::tenant_slot::probe_slot;
 use crate::daemon::daemon_windows::spawn_background_process_on_windows;
 use crate::daemon_constraints;
 use crate::daemon_constraints::get_possibly_nested_invocation_daemon_uuid;
@@ -162,6 +166,17 @@ impl ConstraintUnsatisfiedReason {
 
 impl DaemonConstraintsRequest {
     pub(crate) fn compatibility_key(&self) -> buck2_error::Result<DaemonCompatibilityKey> {
+        if self.daemon_startup_config.startup_options.unidaemon
+            && self
+                .daemon_startup_config
+                .startup_options
+                .runs_disk_state_materializer()
+        {
+            return Err(buck2_error!(
+                ErrorTag::Input,
+                "Daemon sharing currently requires the deferred materializer"
+            ));
+        }
         Ok(DaemonCompatibilityKey::new(
             &self.version,
             self.user_version.as_deref(),
@@ -186,6 +201,19 @@ impl DaemonConstraintsRequest {
 
     fn is_trace_io_requested(&self) -> bool {
         matches!(self.desired_trace_io_state, DesiredTraceIoState::Enabled)
+    }
+
+    /// Settles a request with no trace-I/O preference, which a daemon of the tenant's own would
+    /// serve either way, on the state of the daemon that serves the tenant under sharing, so that
+    /// the request hashes to that daemon's namespace. Without a proxy to follow it settles on no
+    /// tracing, as a daemon started for it would.
+    pub(crate) fn settle_trace_io(&mut self, proxy: Option<&TenantProxy>) {
+        if let DesiredTraceIoState::Existing = self.desired_trace_io_state {
+            self.desired_trace_io_state = match proxy {
+                Some(proxy) if proxy.trace_io_enabled => DesiredTraceIoState::Enabled,
+                _ => DesiredTraceIoState::Disabled,
+            };
+        }
     }
 
     fn satisfied(
@@ -814,6 +842,7 @@ impl BuckdChannel {
             daemon_dir,
             client,
             constraints: daemon_status.constraints,
+            tenant_generation: daemon_status.tenant_generation,
             daemon_start_instant: daemon_status.start_instant,
         })
     }
@@ -827,33 +856,97 @@ pub struct BootstrapBuckdClient {
     client: DaemonApiClient<InterceptedService<Channel, BuckAddAuthTokenInterceptor>>,
     /// The constraints for the daemon we're connected to.
     constraints: buck2_cli_proto::DaemonConstraints,
+    tenant_generation: Option<u64>,
     daemon_start_instant: Option<Instant>,
 }
 
 impl BootstrapBuckdClient {
+    /// The constraints the daemon reported when this client connected.
+    pub fn daemon_constraints(&self) -> &buck2_cli_proto::DaemonConstraints {
+        &self.constraints
+    }
+
+    /// The tenant generation a proxy reports; a daemon of its own reports none.
+    pub fn tenant_generation(&self) -> Option<u64> {
+        self.tenant_generation
+    }
+
     /// Boxed and not inlinable: this is the entry point to the daemon connection and start-up
     /// logic, and an `async fn` here would be instantiated afresh in every command crate. See
     /// `buck2_event_log::read` for the mechanism.
     #[inline(never)]
     pub fn connect<'a>(
         paths: &'a InvocationPaths,
-        options: BuckdConnectOptions,
+        mut options: BuckdConnectOptions,
         events_ctx: &'a mut EventsCtx,
     ) -> LocalBoxFuture<'a, buck2_error::Result<Self>> {
         Box::pin(async move {
-            if unidaemon_prototype_enabled()? {
-                match &options {
-                    // `ClientCommandContext::paths` selected the namespace of the client's own
-                    // constraints.
-                    BuckdConnectOptions::ExistingOnly => {
-                        paths
-                            .unidaemon_key()
-                            .internal_error("No unidaemon namespace selected for this tenant")?;
-                    }
+            let prototype = unidaemon_prototype_enabled()?;
+            let tenant_lifecycle =
+                if prototype && matches!(&options, BuckdConnectOptions::Options(_)) {
+                    Some(
+                        BuckdLifecycleLock::lock_with_timeout(
+                            paths.tenant_paths().unshared_daemon_dir()?,
+                            StartupDeadline::duration_from_now(buckd_startup_init_timeout()?)?,
+                        )
+                        .await?,
+                    )
+                } else {
+                    None
+                };
+            if prototype {
+                let slot = probe_slot(paths).await?;
+                let key = match &mut options {
+                    BuckdConnectOptions::ExistingOnly => match slot {
+                        SlotOwner::Proxy(proxy) => {
+                            paths.select_tenant_generation(proxy.generation);
+                            proxy.key
+                        }
+                        _ => {
+                            return Err(buck2_error!(
+                                ErrorTag::Input,
+                                "No unidaemon is registered for this tenant"
+                            ));
+                        }
+                    },
                     BuckdConnectOptions::Options(options) => {
-                        paths.select_unidaemon(options.constraints.compatibility_key()?);
+                        let proxy = match &slot {
+                            SlotOwner::Proxy(proxy) => Some(proxy),
+                            _ => None,
+                        };
+                        // The slot's proxy stands for this tenant only while it represents the
+                        // daemon of its namespace; the proxy of a daemon that is gone is killed
+                        // below and does not decide the trace state either.
+                        let proxy = match proxy {
+                            Some(proxy)
+                                if establish_connection_existing(
+                                    &paths.unidaemon_dir(&proxy.key)?,
+                                )
+                                .await
+                                .is_ok_and(|daemon| {
+                                    daemon.constraints.daemon_id == proxy.daemon_id
+                                }) =>
+                            {
+                                Some(proxy)
+                            }
+                            _ => None,
+                        };
+                        options.constraints.settle_trace_io(proxy);
+                        let key = options.constraints.compatibility_key()?;
+                        let reuse = proxy.is_some_and(|proxy| proxy.key == key);
+                        drop(slot);
+                        if !reuse && let Some(lifecycle) = &tenant_lifecycle {
+                            kill::kill_command_impl(
+                                lifecycle,
+                                "client expected different buckd constraints",
+                                true,
+                            )
+                            .await?;
+                        }
+                        key
                     }
-                }
+                };
+                paths.select_unidaemon(key);
             }
             let daemon_dir = paths.daemon_dir()?;
 
@@ -879,9 +972,16 @@ impl BootstrapBuckdClient {
                     .tag([ErrorTag::DaemonConnect]))
             } else {
                 let mut client = res?;
+                // The lock covers changes of the tenant directory's owner, and the daemon this
+                // command may have just started is one: until the tenant's proxy owns the
+                // directory, a client of any release that finds it vacant starts a daemon of its
+                // own over the tenant's outputs. Registration publishes the proxy under the lock
+                // and then waits for the tenant to initialize, which may take long, so the lock is
+                // released only here.
+                drop(tenant_lifecycle);
                 if paths.unidaemon_key().is_some() {
                     if let BuckdConnectOptions::Options(options) = &options {
-                        client
+                        let response = client
                             .client
                             .unstable_register_tenant(tonic::Request::new(
                                 buck2_cli_proto::UnstableRegisterTenantRequest {
@@ -897,7 +997,10 @@ impl BootstrapBuckdClient {
                                     }),
                                 },
                             ))
-                            .await?;
+                            .await?
+                            .into_inner();
+                        paths.select_tenant_generation(response.generation);
+                        prune_exited_unidaemon_namespaces(paths).await;
                     }
                 }
                 Ok(client)
@@ -1493,6 +1596,7 @@ pub fn remove_in_process_daemon_info(daemon_dir: &DaemonDir) {
 
 struct DaemonStatus {
     constraints: buck2_cli_proto::DaemonConstraints,
+    tenant_generation: Option<u64>,
     start_instant: Option<Instant>,
 }
 
@@ -1529,6 +1633,7 @@ async fn get_daemon_status(
 
     Ok(DaemonStatus {
         constraints: status.daemon_constraints.unwrap_or_default(),
+        tenant_generation: status.tenant_generation,
         start_instant,
     })
 }

@@ -67,9 +67,13 @@ impl RootCommand {
         _matches: BuckArgMatches<'_>,
         ctx: ClientCommandContext<'_>,
     ) -> buck2_error::Result<()> {
-        let root = if matches!(self.kind, RootKind::Daemon) {
-            ctx.paths()?.daemon_dir()?.path
-        } else {
+        if matches!(self.kind, RootKind::Daemon) {
+            let daemon_dir =
+                ctx.with_runtime(|ctx| async move { ctx.resolve_tenant_daemon_dir().await })?;
+            buck2_client_ctx::println!("{}", daemon_dir.path.to_string_lossy())?;
+            return Ok(());
+        }
+        let root = {
             let working_dir_data;
             let imm_ctx_data;
             let (roots, imm_ctx) = match self.dir.clone() {

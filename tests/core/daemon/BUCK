@@ -62,6 +62,12 @@ buck2_core_tests(
                 "fbsource//third-party/rust:regex",
                 "//buck2/tests/core/common:unidaemon",
             ],
+            # A released buck2 for the cross-release cases: always a release other than the
+            # one under test. The tests run it with unshared routing, which treats a tenant
+            # proxy's directory as it treats any daemon's, so they hold once this release ships.
+            "env": {
+                "BUCK2_TEST_LEGACY_BINARY": "$(location fbsource//tools/buck2-versions:stable)",
+            },
             "require_nano_prelude": True,
         },
     },

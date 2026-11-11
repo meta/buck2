@@ -51,6 +51,20 @@ impl BuckSubcommand for KillCommand {
         events_ctx: &mut EventsCtx,
     ) -> ExitResult {
         let paths = ctx.paths()?;
+        if buck2_common::invocation_paths::unidaemon_prototype_enabled()? {
+            let lifecycle = BuckdLifecycleLock::lock_with_timeout(
+                paths.tenant_paths().unshared_daemon_dir()?,
+                StartupDeadline::duration_from_now(Duration::from_secs(10))?,
+            )
+            .await?;
+            return buck2_client_ctx::daemon::client::kill::kill_command_impl(
+                &lifecycle,
+                "`buck kill` was invoked",
+                false,
+            )
+            .await
+            .into();
+        }
         let daemon_dir = paths.daemon_dir()?;
 
         if !buck2_env!("BUCK2_SHARE_DAEMON", type=bool, default=false)? {

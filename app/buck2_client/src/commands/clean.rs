@@ -226,9 +226,14 @@ impl BuckSubcommand for InnerCleanCommand {
     ) -> ExitResult {
         let paths = ctx.paths()?;
         let buck_out_dir = paths.buck_out_path();
-        let daemon_dir = paths.daemon_dir()?;
+        let prototype = buck2_common::invocation_paths::unidaemon_prototype_enabled()?;
+        let daemon_dir = if prototype {
+            paths.tenant_paths().unshared_daemon_dir()?
+        } else {
+            paths.daemon_dir()?
+        };
         let sharing = buck2_env!("BUCK2_SHARE_DAEMON", type=bool, default=false)?;
-        let metadata_to_clean = (!sharing).then(|| daemon_dir.clone());
+        let metadata_to_clean = (!sharing || prototype).then(|| daemon_dir.clone());
         let trash_dir = paths.trash_dir();
         let console = &self.common_opts.console_opts.final_console();
 
@@ -252,7 +257,7 @@ impl BuckSubcommand for InnerCleanCommand {
 
         // Kill the daemon and make sure a new daemon does not spin up while we're performing clean up operations
         // This will ensure we have exclusive access to the directories in question
-        let lifecycle = if sharing {
+        let lifecycle = if sharing && !prototype {
             match establish_connection_existing(&daemon_dir).await {
                 Ok(client) => {
                     client

@@ -86,7 +86,6 @@ use buck2_execute_impl::materializers::deferred::DeferredMaterializer;
 use buck2_execute_impl::materializers::deferred::DeferredMaterializerConfigs;
 use buck2_execute_impl::materializers::deferred::TtlRefreshConfiguration;
 use buck2_execute_impl::materializers::deferred::clean_stale::CleanStaleConfig;
-use buck2_execute_impl::materializers::v2::core as disk_state;
 use buck2_execute_impl::materializers::v2::core::DiskStateMaterializer;
 use buck2_execute_impl::re::paranoid_download::ParanoidDownloader;
 use buck2_execute_impl::sqlite::dep_file_state_db::PersistedDepFileStore;
@@ -547,8 +546,7 @@ impl TenantState {
         let disk_state_core = init_ctx
             .daemon_startup_config
             .startup_options
-            .materializer_v2_version
-            .is_some_and(|wanted| disk_state::ROLLOUT_VERSION >= wanted);
+            .runs_disk_state_materializer();
         let deferred_materializer_configs = {
             let defer_write_actions = root_config
                 .parse::<RolloutPercentage>(BuckconfigKeyRef {
@@ -1167,15 +1165,15 @@ impl TenantStateRegistry {
     async fn get_or_create<F, Fut>(
         &self,
         spec: TenantSpec,
-        _allow_registration: bool,
-        _expected_generation: Option<u64>,
+        allow_registration: bool,
+        expected_generation: Option<u64>,
         create: F,
     ) -> buck2_error::Result<Arc<TenantState>>
     where
         F: FnOnce(Arc<Semaphore>, Arc<CancellationScope>) -> Fut + Send + 'static,
         Fut: Future<Output = buck2_error::Result<Arc<TenantState>>> + Send + 'static,
     {
-        let entry = self.reserve(&spec)?;
+        let entry = self.reserve(&spec, allow_registration, expected_generation)?;
         self.initialize(entry, create).await
     }
 
@@ -1201,7 +1199,12 @@ impl TenantStateRegistry {
 
     /// The registry's entry for the tenant, created with a new generation if it has none. The
     /// entry's state is initialized by [`Self::initialize`].
-    fn reserve(&self, spec: &TenantSpec) -> buck2_error::Result<Arc<TenantStateSlot<TenantState>>> {
+    fn reserve(
+        &self,
+        spec: &TenantSpec,
+        allow_registration: bool,
+        expected_generation: Option<u64>,
+    ) -> buck2_error::Result<Arc<TenantStateSlot<TenantState>>> {
         let key = spec.key().clone();
         let requested_spec = spec.clone();
         let entry = {
@@ -1214,6 +1217,18 @@ impl TenantStateRegistry {
                     ErrorTag::Input,
                     "The daemon is shutting down after its final tenant was evicted"
                 ));
+            }
+            if buck2_common::invocation_paths::unidaemon_prototype_enabled()? && !allow_registration
+            {
+                let current = tenants
+                    .get(&key)
+                    .ok_or_else(|| buck2_error!(ErrorTag::Input, "Tenant requires registration"))?;
+                if expected_generation != Some(current.generation) {
+                    return Err(buck2_error!(
+                        ErrorTag::Input,
+                        "Command addressed an evicted tenant generation"
+                    ));
+                }
             }
             tenants
                 .entry(key.clone())
@@ -1802,7 +1817,7 @@ impl DaemonStateData {
         let paths = tenant_paths_from_client_context(client_context)?
             .internal_error("Tenant registration requires an identity")?;
         let spec = TenantSpec::from_tenant_paths(&paths);
-        let entry = self.tenants.reserve(&spec)?;
+        let entry = self.tenants.reserve(&spec, true, None)?;
         Ok(TenantReservation { paths, entry })
     }
 

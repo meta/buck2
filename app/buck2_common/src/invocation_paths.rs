@@ -620,6 +620,8 @@ pub const RESERVED_BUCK_OUT_PREFIX: &str = "._buck2";
 /// Under the common daemon directory, the directory holding one shared-daemon namespace per
 /// compatibility key.
 pub const UNIDAEMON_NAMESPACES_DIR: &str = ".unidaemons";
+/// Beside [`UNIDAEMON_NAMESPACES_DIR`]: the lifecycle locks of the namespaces, named by their key.
+pub const UNIDAEMON_LOCKS_DIR: &str = ".unidaemon_locks";
 
 pub fn unidaemon_prototype_enabled() -> buck2_error::Result<bool> {
     if !buck2_env!("BUCK2_UNIDAEMON", type=bool, default=false)? {

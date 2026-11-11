@@ -96,6 +96,9 @@ async def buck_fixture(  # noqa C901 : "too complex"
     env["BUCK2_SHARE_DAEMON"] = "false"
     env["BUCK2_UNIDAEMON"] = "false"
     env.pop("BUCK2_DAEMON_GROUP", None)
+    env.pop("BUCK2_TEST_UNIDAEMON_EVICTION_GATE", None)
+    env.pop("BUCK2_TEST_PROXY_BEFORE_EVICT", None)
+    env.pop("BUCK2_TEST_PROXY_CLOSE_LIVENESS", None)
     # This is necessary for static linking on Linux.
     if platform.system() != "Windows":
         env["BUCKD_STARTUP_TIMEOUT"] = "120"
@@ -265,7 +268,7 @@ async def buck_fixture(  # noqa C901 : "too complex"
         # see `buck2_core_tests`.
         materializer = os.environ.get("BUCK2_TEST_MATERIALIZER")
         if materializer == "v2":
-            # Every `ROLLOUT_VERSION` is at least 0.
+            # Every `MATERIALIZER_V2_ROLLOUT_VERSION` is at least 0.
             extra_config_lines.append("[buck2]\nmaterializer_v2_version = 0\n")
             # The disk-state twins run strict: a root leaves disk the moment its last lease
             # does, so a reader without one fails here rather than by chance in use.

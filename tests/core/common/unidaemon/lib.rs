@@ -191,6 +191,10 @@ pub fn generation_of(entry: &Value) -> anyhow::Result<u64> {
         .with_context(|| format!("No `generation` in {entry}"))
 }
 
+pub fn isolations(entries: &[Value]) -> anyhow::Result<Vec<&str>> {
+    entries.iter().map(isolation_of).collect()
+}
+
 pub fn tenant_entry<'a>(entries: &'a [Value], isolation: &str) -> anyhow::Result<&'a Value> {
     for entry in entries {
         if isolation_of(entry)? == isolation {

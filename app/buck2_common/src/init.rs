@@ -511,8 +511,8 @@ pub struct DaemonStartupOptions {
     pub source_digest_algorithm: Option<String>,
     pub paranoid: bool,
     pub materializations: Option<String>,
-    /// `buck2.materializer_v2_version`: the daemon runs the disk-state materializer when its
-    /// `ROLLOUT_VERSION` is at least this, and the deferred one when this is unset.
+    /// `buck2.materializer_v2_version`: the daemon runs the disk-state materializer when
+    /// `MATERIALIZER_V2_ROLLOUT_VERSION` is at least this, and the deferred one when this is unset.
     pub materializer_v2_version: Option<u32>,
     pub http: HttpConfig,
     pub resource_control: ResourceControlConfig,
@@ -521,6 +521,24 @@ pub struct DaemonStartupOptions {
     pub daemon_idle_timeout_s: Option<u64>,
     /// Pagable DICE storage settings, or `None` when paging is disabled.
     pub hydration: Option<HydrationConfig>,
+}
+
+/// Rolls the disk-state materializer out: a daemon runs it when `buck2.materializer_v2_version`
+/// is set to at most this value, and the deferred materializer otherwise. It lives here rather
+/// than with the materializer because the client reads it too: which materializer a daemon
+/// would run is part of its compatibility key, decided before any daemon runs.
+///
+/// Bump this with any fix that a rollback waited on. Setting the config above every version in
+/// the fleet rolls back; setting it to the fixed version then rolls out again to the binaries
+/// that have the fix, and to no others.
+pub const MATERIALIZER_V2_ROLLOUT_VERSION: u32 = 3;
+
+impl DaemonStartupOptions {
+    /// Whether the daemon runs the disk-state materializer rather than the deferred one.
+    pub fn runs_disk_state_materializer(&self) -> bool {
+        self.materializer_v2_version
+            .is_some_and(|wanted| MATERIALIZER_V2_ROLLOUT_VERSION >= wanted)
+    }
 }
 
 impl DaemonStartupConfig {

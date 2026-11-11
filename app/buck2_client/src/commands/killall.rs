@@ -113,6 +113,47 @@ impl KillallCommand {
         events_ctx: &mut EventsCtx,
     ) -> ExitResult {
         let context = ctx.empty_client_context(Self::COMMAND_NAME)?;
+        if buck2_common::invocation_paths::unidaemon_prototype_enabled()? {
+            let legacy = ctx.paths()?.tenant_paths().unshared_daemon_dir()?;
+            let root = legacy
+                .path
+                .parent()
+                .internal_error("Legacy slot lacks parent")?;
+            if root.exists() {
+                for entry in std::fs::read_dir(root)? {
+                    let entry = entry?;
+                    if !entry.file_type()?.is_dir()
+                        || self
+                            .in_isolation_dir
+                            .as_ref()
+                            .is_some_and(|name| entry.file_name() != std::ffi::OsStr::new(name))
+                    {
+                        continue;
+                    }
+                    let dir = DaemonDir {
+                        path: entry.path().try_into()?,
+                    };
+                    if !dir.buckd_info().exists() {
+                        continue;
+                    }
+                    let lifecycle =
+                        buck2_client_ctx::daemon::client::BuckdLifecycleLock::lock_with_timeout(
+                            dir,
+                            buck2_client_ctx::startup_deadline::StartupDeadline::duration_from_now(
+                                std::time::Duration::from_secs(10),
+                            )?,
+                        )
+                        .await?;
+                    buck2_client_ctx::daemon::client::kill::kill_command_impl(
+                        &lifecycle,
+                        "Repository tenant eviction",
+                        false,
+                    )
+                    .await?;
+                }
+            }
+            return ExitResult::success();
+        }
         let daemon_dir = ctx.paths()?.daemon_dir()?;
         let root = daemon_dir
             .path

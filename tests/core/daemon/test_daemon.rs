@@ -1362,10 +1362,6 @@ async fn eviction_during_generation_initialization(
         client = Some(tenant.kill().spawn());
         wait_for_evicted_generation(buck, "initializing", generation).await?;
         new = Some(start_generation(&tenant, tmp_path, "new")?);
-        let pending = wait_for_tenant_generation(buck, "initializing", generation).await?;
-        assert!(!truthy(
-            pending.get("initialized").context("No `initialized`")?
-        ));
         assert!(!tmp_path.join("new.started").exists());
         assert!(
             client
@@ -1376,7 +1372,13 @@ async fn eviction_during_generation_initialization(
             "Eviction returned before its I/O released ownership"
         );
         if disconnect_client {
+            // Without the kill holding the tenant directory's lock, the replacement
+            // registers its generation and waits in the daemon for the evicted one.
             let _ignored = client.take().expect("eviction is running").kill().await;
+            let pending = wait_for_tenant_generation(buck, "initializing", generation).await?;
+            assert!(!truthy(
+                pending.get("initialized").context("No `initialized`")?
+            ));
         }
         buck.targets(&["//:rule"]).await?;
         assert!(!tmp_path.join("new.started").exists());

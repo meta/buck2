@@ -19,8 +19,11 @@ use buck2_cli_proto::new_generic::NewGenericRequest;
 use buck2_cli_proto::new_generic::NewGenericResponse;
 use buck2_cli_proto::*;
 use buck2_common::daemon_dir::DaemonDir;
+use buck2_common::invocation_paths::UNIDAEMON_LOCKS_DIR;
+use buck2_common::invocation_paths::UNIDAEMON_NAMESPACES_DIR;
 use buck2_data::error::ErrorTag;
 use buck2_error::BuckErrorContext;
+use buck2_error::BuckErrorOptionContext;
 use buck2_event_log::stream_value::StreamValue;
 use buck2_fs::error::IoResultExt;
 use buck2_fs::fs_util;
@@ -48,6 +51,8 @@ use crate::events_ctx::PartialResultHandler;
 
 pub mod connect;
 pub mod kill;
+pub mod namespaces;
+pub mod tenant_slot;
 
 use crate::startup_deadline::StartupDeadline;
 
@@ -82,6 +87,7 @@ impl BuckdClientConnector {
 pub struct BuckdLifecycleLock {
     daemon_dir: DaemonDir,
     lock_file: File,
+    external_lifecycle: bool,
 }
 
 #[derive(Debug, buck2_error::Error)]
@@ -104,7 +110,30 @@ impl BuckdLifecycleLock {
             deadline: StartupDeadline,
         ) -> buck2_error::Result<BuckdLifecycleLock> {
             create_dir_all(&daemon_dir.path)?;
-            let lifecycle_path = daemon_dir.path.as_path().join(BUCKD_LIFECYCLE);
+            let compatibility = daemon_dir.path.parent().filter(|parent| {
+                parent.parent().is_some_and(|root| {
+                    root.file_name() == Some(std::ffi::OsStr::new(UNIDAEMON_NAMESPACES_DIR))
+                })
+            });
+            let external_lifecycle = compatibility.is_some();
+            let lifecycle_path = if let Some(namespace) = compatibility {
+                let root = namespace
+                    .parent()
+                    .and_then(|root| root.parent())
+                    .internal_error("Compatibility namespace has no root")?;
+                let locks = root.join(FileName::unchecked_new(UNIDAEMON_LOCKS_DIR));
+                create_dir_all(&locks)?;
+                locks
+                    .join(FileName::from_os_string(
+                        &namespace
+                            .file_name()
+                            .internal_error("Namespace has no name")?
+                            .to_os_string(),
+                    )?)
+                    .into_path_buf()
+            } else {
+                daemon_dir.path.as_path().join(BUCKD_LIFECYCLE)
+            };
             let file = File::create(lifecycle_path)?;
             let fileref = &file;
             deadline
@@ -117,10 +146,12 @@ impl BuckdLifecycleLock {
                     || async { Ok(fileref.try_lock().map_err(std::io::Error::from)?) },
                 )
                 .await?;
+            create_dir_all(&daemon_dir.path)?;
 
             Ok(BuckdLifecycleLock {
                 lock_file: file,
                 daemon_dir,
+                external_lifecycle,
             })
         }
 
@@ -161,7 +192,7 @@ impl BuckdLifecycleLock {
                 fs_util::remove_all(p.path()).categorize_internal()?;
             }
         }
-        if !seen_lifecycle {
+        if !seen_lifecycle && !self.external_lifecycle {
             // Self-check.
             return Err(LifecycleError::MissingLifecycle(self.daemon_dir.path.clone()).into());
         }

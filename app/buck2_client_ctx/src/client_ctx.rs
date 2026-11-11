@@ -21,6 +21,7 @@ use buck2_cli_proto::client_context::HostArchOverride as GrpcHostArchOverride;
 use buck2_cli_proto::client_context::HostPlatformOverride as GrpcHostPlatformOverride;
 use buck2_cli_proto::client_context::PreemptibleWhen as GrpcPreemptibleWhen;
 use buck2_common::argv::Argv;
+use buck2_common::daemon_dir::DaemonDir;
 use buck2_common::init::LogDownloadMethod;
 use buck2_common::invocation_paths::InvocationPaths;
 use buck2_common::invocation_paths::unidaemon_prototype_enabled;
@@ -51,6 +52,8 @@ use crate::common::ui::CommonConsoleOptions;
 use crate::console_interaction_stream::ConsoleInteractionStream;
 use crate::daemon::client::connect::DaemonConstraintsRequest;
 use crate::daemon::client::connect::DesiredTraceIoState;
+use crate::daemon::client::tenant_slot::SlotOwner;
+use crate::daemon::client::tenant_slot::probe_slot;
 use crate::daemon_constraints::get_possibly_nested_invocation_daemon_uuid;
 use crate::events_ctx::EventsCtx;
 use crate::exit_result::ExitResult;
@@ -208,6 +211,20 @@ impl<'a> ClientCommandContext<'a> {
             paths.select_unidaemon(constraints.compatibility_key()?);
         }
         Ok(())
+    }
+
+    /// The directory of the daemon that serves this tenant, for commands that read it without
+    /// connecting. Under the unidaemon prototype that is the namespace the tenant's proxy reports,
+    /// or, without a proxy, the namespace of this client's own constraints.
+    pub async fn resolve_tenant_daemon_dir(&self) -> buck2_error::Result<DaemonDir> {
+        let paths = self.paths()?;
+        if unidaemon_prototype_enabled()?
+            && let SlotOwner::Proxy(proxy) = probe_slot(paths).await?
+        {
+            paths.select_tenant_generation(proxy.generation);
+            paths.select_unidaemon(proxy.key);
+        }
+        paths.daemon_dir()
     }
 
     /// Loads settings for the invocation's repository without parsing its build configuration.
@@ -390,7 +407,9 @@ impl<'a> ClientCommandContext<'a> {
         });
 
         Ok(ClientContext {
-            tenant_generation: None,
+            tenant_generation: self
+                .maybe_paths()?
+                .and_then(|paths| paths.tenant_generation()),
             working_dir: self
                 .working_dir
                 .path()

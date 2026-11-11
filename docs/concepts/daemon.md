@@ -40,20 +40,46 @@ repository's tenants instead of killing processes. Incompatible startup
 settings or binaries are reported without restarting the daemon; stop the
 affected daemon's tenants explicitly before changing these settings.
 
-### Compatibility discovery under sharing
+### Shared daemons and tenant proxies
 
 With `BUCK2_SHARE_DAEMON=true`, `BUCK2_UNIDAEMON=true` enables discovery
 using a BLAKE3 hash of binary version, user version, startup configuration and
-trace-I/O mode. Matching tenants across checkouts select the same namespace;
-incompatible settings select different processes. Leave `BUCK2_DAEMON_GROUP`
-unset in this mode.
+trace-I/O mode. Matching tenants across checkouts select the same namespace.
+Changing compatibility settings moves the selected tenant to another process
+while its siblings remain usable. Leave `BUCK2_DAEMON_GROUP` unset.
 
-Every command, including `kill` and `clean`, addresses the namespace of the
-client's own constraints, so a tenant served by a daemon of another key is out
-of their reach, as it is out of a legacy client's. Discovery currently uses
-the existing shared-tenant eviction and disk ownership protocol. Evict a tenant
-before changing its routing configuration. Legacy proxy interoperability and
-automatic migration are subsequent implementation steps.
+Sharing requires Linux and the deferred materializer. Set
+`materializer = deferred` in the `[buck2]` section of each test checkout's
+`.buckconfig`. Use a private daemon home
+with `BUCK2_TEST_HOME_DIR` when experimenting.
+
+A tenant's own daemon directory holds a small proxy whose authenticated Status
+and Kill methods represent that tenant to clients of every release. An older
+client kills it as it kills any daemon, which evicts the tenant. A newer client
+connects to it the same way to learn which namespace and generation serve the
+tenant, registers explicitly with the shared daemon, and sends its generation
+with every command. Migration and clean hold the legacy lifecycle lock while
+changing the directory's owner; a command that may start a daemon holds it until
+the daemon is up and releases it before registering, since the proxy publishes
+under it and the tenant then initializes. Eviction cancels tenant work and
+waits for its disk ownership to drain.
+
+Kill arms an independent daemon watchdog before acknowledgement. The proxy has
+its own fallback at 3 seconds from receiving Kill. Failed eviction can terminate
+the entire unidaemon and its action descendants, including other tenants. After
+final-tenant eviction, the proxy waits for the unidaemon to exit before releasing
+the slot. A monitoring socket verifies proxy identity before metadata publication.
+Unexpected liveness loss immediately retires and evicts the generation. After a
+crash or a broken liveness link, automatic recovery creates a fresh generation
+once cleanup is done and the slot still names the lost proxy. A proxy stopped
+with `SIGKILL` or `SIGTERM`, as `buck2 killall` does, stays stopped: its tenant
+retires and its connection files are removed, and the next command registers
+the tenant again. Normal Kill suppresses recovery. Kill and EOF share the first
+eviction's deadline; later notifications cannot extend it.
+
+Lifecycle outcomes are appended to `unidaemon-events.jsonl` in the parent of the
+legacy isolation directories. Records include eviction, verified forced exit,
+proxy death and respawn; eviction timing starts when the proxy receives Kill.
 
 To also share across checkouts, set `BUCK2_DAEMON_GROUP` to the same name in
 each checkout. A group name must be a single valid filename component. Each

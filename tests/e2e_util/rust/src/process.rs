@@ -81,6 +81,12 @@ pub enum Signal {
     Terminate,
     /// `SIGKILL`.
     Kill,
+    /// `SIGABRT`, as a crashing process gets.
+    Abort,
+    /// `SIGSTOP`: the process stops responding until it gets `Continue`.
+    Stop,
+    /// `SIGCONT`.
+    Continue,
 }
 
 #[cfg(unix)]
@@ -90,6 +96,9 @@ impl Signal {
             Self::Interrupt => libc::SIGINT,
             Self::Terminate => libc::SIGTERM,
             Self::Kill => libc::SIGKILL,
+            Self::Abort => libc::SIGABRT,
+            Self::Stop => libc::SIGSTOP,
+            Self::Continue => libc::SIGCONT,
         }
     }
 }

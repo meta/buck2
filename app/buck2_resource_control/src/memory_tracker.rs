@@ -39,7 +39,14 @@ use crate::scheduler::Scheduler;
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub struct MemoryReading {
     pub allprocs_memory_current: u64,
+    /// The part of `allprocs_memory_current` that is page cache which the kernel can drop
+    pub allprocs_page_cache: u64,
+    /// The part of `allprocs_page_cache` that the kernel has seen in repeated use, which it drops
+    /// last
+    pub allprocs_page_cache_active: u64,
     pub allprocs_swap_current: u64,
+    /// How many times so far the kernel wanted to move memory of buck's to swap and couldn't
+    pub allprocs_swap_failures: u64,
     /// The average "full" memory pressure since the last sample
     pub allprocs_memory_pressure: f64,
     pub daemon_memory_current: u64,
@@ -55,7 +62,10 @@ impl MemoryReading {
     pub(crate) fn zero() -> Self {
         Self {
             allprocs_memory_current: 0,
+            allprocs_page_cache: 0,
+            allprocs_page_cache_active: 0,
             allprocs_swap_current: 0,
+            allprocs_swap_failures: 0,
             allprocs_memory_pressure: 0.0,
             daemon_memory_current: 0,
             daemon_swap_current: 0,
@@ -241,14 +251,18 @@ impl MemoryTracker {
     ) -> Option<MemoryReading> {
         let Ok((
             allprocs_memory_current,
+            allprocs_memory_stat,
             allprocs_swap_current,
+            allprocs_swap_events,
             allprocs_memory_pressure,
             daemon_memory_current,
             daemon_swap_current,
             host_swap,
         )) = tokio::try_join!(
             handle.cgroup_tree.allprocs().read_memory_current(),
+            handle.cgroup_tree.allprocs().read_memory_stat(),
             handle.cgroup_tree.allprocs().read_swap_current(),
+            handle.cgroup_tree.allprocs().read_swap_events(),
             handle
                 .cgroup_tree
                 .allprocs()
@@ -268,7 +282,10 @@ impl MemoryTracker {
 
         Some(MemoryReading {
             allprocs_memory_current,
+            allprocs_page_cache: allprocs_memory_stat.page_cache(),
+            allprocs_page_cache_active: allprocs_memory_stat.active_file,
             allprocs_swap_current,
+            allprocs_swap_failures: allprocs_swap_events.fail,
             allprocs_memory_pressure,
             daemon_memory_current,
             daemon_swap_current,

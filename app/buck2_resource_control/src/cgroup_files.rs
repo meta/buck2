@@ -178,6 +178,11 @@ impl CgroupFile {
             .buck_error_context("Failed to parse memory.stat")
     }
 
+    pub(crate) async fn read_swap_events(&self) -> buck2_error::Result<SwapEvents> {
+        SwapEvents::parse(&self.read_to_string().await?)
+            .buck_error_context("Failed to parse memory.swap.events")
+    }
+
     pub(crate) async fn read_max_or_int(&self) -> buck2_error::Result<Option<u64>> {
         let (data, filled) = self.read_to_short_buf().await?;
         let data = &data[..filled];
@@ -221,6 +226,30 @@ impl CgroupFile {
     }
 }
 
+/// Calls `entry` with each key and value of a file in what the kernel calls the flat keyed format:
+/// one `KEY VALUE` pair per line.
+fn parse_flat_keyed(content: &str, mut entry: impl FnMut(&str, u64)) -> buck2_error::Result<()> {
+    for line in content.lines() {
+        let mut parts = line.split_whitespace();
+        let key = parts
+            .next()
+            .with_internal_error(|| format!("Invalid line: '{}' (no key)", line))?;
+        let value = parts
+            .next()
+            .with_internal_error(|| format!("Invalid line: '{}' (no value)", line))?
+            .parse::<u64>()
+            .with_buck_error_context(|| format!("Invalid line: '{}' (invalid value)", line))?;
+        if parts.next().is_some() {
+            return Err(buck2_error::internal_error!(
+                "Invalid line: '{}' (too many parts)",
+                line
+            ));
+        }
+        entry(key, value);
+    }
+    Ok(())
+}
+
 /// A few interesting values from memory.stat
 #[derive(Debug, Default)]
 pub struct MemoryStat {
@@ -239,37 +268,45 @@ pub struct MemoryStat {
 impl MemoryStat {
     fn parse(content: &str) -> buck2_error::Result<Self> {
         let mut res = MemoryStat::default();
+        parse_flat_keyed(content, |key, value| match key {
+            "anon" => res.anon = value,
+            "inactive_anon" => res.inactive_anon = value,
+            "active_anon" => res.active_anon = value,
+            "file" => res.file = value,
+            "active_file" => res.active_file = value,
+            "inactive_file" => res.inactive_file = value,
+            "kernel" => res.kernel = value,
+            // Ignore other keys
+            _ => {}
+        })?;
+        Ok(res)
+    }
 
-        for line in content.lines() {
-            let mut parts = line.split_whitespace();
-            let key = parts
-                .next()
-                .with_internal_error(|| format!("Invalid line: '{}' (no key)", line))?;
-            let value = parts
-                .next()
-                .with_internal_error(|| format!("Invalid line: '{}' (no value)", line))?
-                .parse::<u64>()
-                .with_buck_error_context(|| format!("Invalid line: '{}' (invalid value)", line))?;
-            if parts.next().is_some() {
-                return Err(buck2_error::internal_error!(
-                    "Invalid line: '{}' (too many parts)",
-                    line
-                ));
+    /// The page cache that the kernel can drop to make room.
+    ///
+    /// Less than `file`, which also counts tmpfs and shared memory. Those can only make room by
+    /// going to swap, like anonymous memory.
+    pub fn page_cache(&self) -> u64 {
+        self.active_file + self.inactive_file
+    }
+}
+
+/// A few interesting values from memory.swap.events
+#[derive(Debug, Default)]
+pub struct SwapEvents {
+    /// How many times the kernel wanted to move memory to swap and couldn't, be it because of a
+    /// swap limit on this cgroup or one above it, or because the system is out of swap.
+    pub fail: u64,
+}
+
+impl SwapEvents {
+    fn parse(content: &str) -> buck2_error::Result<Self> {
+        let mut res = SwapEvents::default();
+        parse_flat_keyed(content, |key, value| {
+            if key == "fail" {
+                res.fail = value;
             }
-
-            match key {
-                "anon" => res.anon = value,
-                "inactive_anon" => res.inactive_anon = value,
-                "active_anon" => res.active_anon = value,
-                "file" => res.file = value,
-                "active_file" => res.active_file = value,
-                "inactive_file" => res.inactive_file = value,
-                "kernel" => res.kernel = value,
-                // Ignore other keys
-                _ => {}
-            }
-        }
-
+        })?;
         Ok(res)
     }
 }
@@ -342,6 +379,7 @@ impl ResourcePressure {
 #[cfg(test)]
 mod tests {
     use crate::cgroup_files::MemoryStat;
+    use crate::cgroup_files::SwapEvents;
 
     #[test]
     fn test_parse_memory_stat() {
@@ -378,6 +416,13 @@ slab 262144"#;
         assert_eq!(stat.active_anon, 524288);
         assert_eq!(stat.inactive_file, 1048576);
         assert_eq!(stat.active_file, 1048576);
+        assert_eq!(stat.page_cache(), 2 * 1048576);
+    }
+
+    #[test]
+    fn test_parse_swap_events() {
+        let events = SwapEvents::parse("high 0\nmax 12\nfail 34\n").unwrap();
+        assert_eq!(events.fail, 34);
     }
 
     #[test]

@@ -302,7 +302,7 @@ RustOrNativeDependency = record(
 # A Rust crate among a crate's dependencies: a library or a proc macro, told apart by the type of
 # `info`.
 RustDependency = record(
-    info = field(RustLinkInfo | RustProcMacroInfo),
+    info = field(RustLinkInfo | RustProcMacroInfo | RustProcMacroArchInfo),
     # For a proc macro, its entry in `ctx.plugins`, so `dep.label` is its key in
     # `get_available_proc_macros`.
     dep = field(Dependency),
@@ -435,8 +435,9 @@ def resolve_deps(ctx: AnalysisContext, dep_ctx: DepCollectionContext) -> list[Ru
     for dep in resolve_listed_deps(ctx, dep_ctx):
         proc_macro_marker = dep.dep.get(RustProcMacroMarker)
         if proc_macro_marker != None:
+            proc_macro = available_proc_macros[proc_macro_marker.label]
             dep = RustOrNativeDependency(
-                dep = available_proc_macros[proc_macro_marker.label],
+                dep = proc_macro,
                 name = dep.name,
                 flags = dep.flags,
             )

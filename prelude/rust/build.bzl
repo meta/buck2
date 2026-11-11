@@ -12,6 +12,7 @@ load(
     "make_artifact_tset",
     "project_artifacts",
 )
+load("@prelude//:asserts.bzl", "asserts")
 load("@prelude//:local_only.bzl", "link_cxx_binary_locally")
 load("@prelude//:paths.bzl", "paths")
 load("@prelude//:resources.bzl", "create_resource_db", "gather_resources")
@@ -127,6 +128,7 @@ load(
     "RustArtifact",
     "RustCxxLinkGroupInfo",  # @unused Used as a type
     "RustDependency",
+    "RustProcMacroArchInfo",
     "RustProcMacroInfo",
     "TransitiveDeps",
     "attr_crate",
@@ -231,6 +233,7 @@ def generate_rustdoc(
                 variant.rustdoc,
                 "--rustc-action-separator",
                 rustdoc_args,
+                common_args.arch_dependency_args[arch],
                 hidden = variant.runtime_and_plugin_inputs,
             )
             arch_commands[arch] = RustArchCommand(
@@ -262,6 +265,11 @@ def generate_rustdoc_coverage(
     default_roots: list[str],
 ) -> Artifact:
     toolchain_info = compile_ctx.toolchain_info
+    if compile_ctx.arch_toolchain_info != None:
+        asserts.true(
+            toolchain_info.rustdoc == None,
+            "dual-arch rustdoc coverage needs rustdoc unset",
+        )
 
     if not toolchain_info.nightly_features:
         fail("Doc coverage uses the unstable `--show-coverage` flag and requires a toolchain with `nightly_features = True`")
@@ -330,6 +338,11 @@ def generate_rustdoc_test(
     default_roots: list[str],
 ) -> cmd_args:
     toolchain_info = compile_ctx.toolchain_info
+    if compile_ctx.arch_toolchain_info != None:
+        asserts.true(
+            toolchain_info.compiler == None and toolchain_info.rustdoc == None,
+            "dual-arch rustdoc test needs compiler and rustdoc unset",
+        )
 
     if not toolchain_info.nightly_features:
         fail("Doctests use the unstable `--test-runtool` flag and require a toolchain with `nightly_features = True`")
@@ -978,6 +991,7 @@ def rust_compile(
         prefix = "{}/{}".format(common_args.subdir, common_args.tempfile),
         rustc_bin = rustc_bin,
         rustc_args = cmd_args(rustc_cmd, emit_op.args),
+        arch_dependency_args = common_args.arch_dependency_args,
         required_outputs = [emit_op.output] if emit_op.output else [],
         is_clippy = emit.value == "clippy",
         infallible_diagnostics = infallible_diagnostics,
@@ -1117,6 +1131,7 @@ def dependency_args(
     dep_link_strategy: LinkStrategy,
     dep_metadata_kind: MetadataKind,
     is_rustdoc_test: bool,
+    arch: str | None = None,
     cwd: Artifact | None = None,
 ) -> (cmd_args, cmd_args, list[(CrateName, Label)]):
     args = cmd_args()
@@ -1132,7 +1147,14 @@ def dependency_args(
         else:
             crate = dep.info.crate
 
-        if isinstance(dep.info, RustProcMacroInfo):
+        if isinstance(dep.info, RustProcMacroArchInfo):
+            asserts.true(arch != None)
+            variant = dep.info.arch_variants[arch]
+            artifact = variant.dylib
+            singleton_tset = variant.singleton_tset
+            transitive_artifacts = None
+        elif isinstance(dep.info, RustProcMacroInfo):
+            asserts.false(arch)
             artifact = dep.info.dylib
             singleton_tset = dep.info.singleton_tset
             transitive_artifacts = None
@@ -1155,7 +1177,12 @@ def dependency_args(
             transitive_artifacts = strategy.transitive_deps[dep_metadata_kind]
 
             for label in strategy.transitive_proc_macro_deps:
-                transitive_deps.append(available_proc_macros[label][RustProcMacroInfo].singleton_tset)
+                proc_macro = available_proc_macros[label]
+                if arch == None:
+                    transitive_deps.append(proc_macro[RustProcMacroInfo].singleton_tset)
+                else:
+                    arch_info = proc_macro.get(RustProcMacroArchInfo)
+                    transitive_deps.append(arch_info.arch_variants[arch].singleton_tset)
 
         args.add(extern_arg(dep.flags, crate, artifact))
         crate_targets.append((crate, dep.dep.label))
@@ -1170,7 +1197,7 @@ def dependency_args(
         if transitive_artifacts != None:
             transitive_deps.append(transitive_artifacts)
 
-    prefix = "{}-deps{}".format(subdir, dep_metadata_kind.value)
+    prefix = "{}-{}-deps{}".format(subdir, arch, dep_metadata_kind.value)
     transitive_deps = ctx.actions.tset(TransitiveDeps, children = transitive_deps)
     argsfile = symlinked_dirs(ctx, internal_tools_info, transitive_dependency_dirs, prefix, transitive_deps, cwd)
 
@@ -1451,37 +1478,54 @@ def _compute_common_args(
     dependency_args_key = (crate_type, params.dep_link_strategy, dep_metadata_kind, is_rustdoc_test)
     cached_dependency_args = compile_ctx.dependency_args.get(dependency_args_key)
     if cached_dependency_args == None:
-        dep_args, dep_argsfiles, crate_map = dependency_args(
-            ctx = ctx,
-            internal_tools_info = compile_ctx.internal_tools_info,
-            transitive_dependency_dirs = compile_ctx.transitive_dependency_dirs,
-            toolchain_info = compile_ctx.toolchain_info,
-            deps = resolve_rust_deps(ctx, dep_ctx),
-            subdir = subdir,
-            dep_link_strategy = params.dep_link_strategy,
-            dep_metadata_kind = dep_metadata_kind,
-            is_rustdoc_test = is_rustdoc_test,
-        )
-
-        dep_args.add(
-            cmd_args(
-                hidden = compile_ctx.transitive_srcs.project_as_args("artifacts") if compile_ctx else [],
+        arch_args = None
+        if compile_ctx.arch_toolchain_info == None:
+            dep_args, dep_argsfiles, crate_map = dependency_args(
+                ctx = ctx,
+                internal_tools_info = compile_ctx.internal_tools_info,
+                transitive_dependency_dirs = compile_ctx.transitive_dependency_dirs,
+                toolchain_info = compile_ctx.toolchain_info,
+                deps = resolve_rust_deps(ctx, dep_ctx),
+                subdir = subdir,
+                dep_link_strategy = params.dep_link_strategy,
+                dep_metadata_kind = dep_metadata_kind,
+                is_rustdoc_test = is_rustdoc_test,
             )
-        )
+            dep_args.add(cmd_args(hidden = compile_ctx.transitive_srcs.project_as_args("artifacts")))
+            dep_args.add(dep_argsfiles)
+            if crate_type == CrateType("proc-macro"):
+                dep_args.add("--extern=proc_macro")
+        else:
+            dep_args = cmd_args()
+            arch_args = {}
+            crate_map = None
+            resolved_deps = resolve_rust_deps(ctx, dep_ctx)
+            for arch in compile_ctx.arch_toolchain_info.arch_variants:
+                arch_dep_args, arch_dep_argsfiles, arch_crate_map = dependency_args(
+                    ctx = ctx,
+                    internal_tools_info = compile_ctx.internal_tools_info,
+                    transitive_dependency_dirs = compile_ctx.transitive_dependency_dirs,
+                    toolchain_info = compile_ctx.toolchain_info,
+                    deps = resolved_deps,
+                    subdir = subdir,
+                    dep_link_strategy = params.dep_link_strategy,
+                    dep_metadata_kind = dep_metadata_kind,
+                    is_rustdoc_test = is_rustdoc_test,
+                    arch = arch,
+                )
+                arch_dep_args.add(cmd_args(hidden = compile_ctx.transitive_srcs.project_as_args("artifacts")), arch_dep_argsfiles)
+                if crate_type == CrateType("proc-macro"):
+                    arch_dep_args.add("--extern=proc_macro")
+                if crate_map != None and crate_map != arch_crate_map:
+                    fail("{} proc-macro arch variants produced different crate maps".format(ctx.label))
+                crate_map = arch_crate_map
+                arch_args[arch] = arch_dep_args
 
-        # Add dep_argsfiles to dep_args because rustc_action supports nested @argfiles.
-        dep_args.add(dep_argsfiles)
-
-        if crate_type == CrateType("proc-macro"):
-            dep_args.add("--extern=proc_macro")
-
-        cached_dependency_args = DependencyArgsInfo(
-            args = dep_args,
-            crate_map = crate_map,
-        )
+        cached_dependency_args = DependencyArgsInfo(args = dep_args, arch_args = arch_args, crate_map = crate_map)
         compile_ctx.dependency_args[dependency_args_key] = cached_dependency_args
 
     dep_args = cached_dependency_args.args
+    arch_dependency_args = cached_dependency_args.arch_args
     crate_map = cached_dependency_args.crate_map
 
     toolchain_info = compile_ctx.toolchain_info
@@ -1626,6 +1670,7 @@ def _compute_common_args(
 
     common_args = CommonArgsInfo(
         args = args,
+        arch_dependency_args = arch_dependency_args,
         subdir = subdir,
         tempfile = tempfile,
         crate_type = crate_type,
@@ -1645,7 +1690,7 @@ def rust_compile_invalidation_inputs(
     default_roots: list[str],
     incremental_enabled: bool,
 ) -> cmd_args:
-    return _compute_common_args(
+    common_args = _compute_common_args(
         ctx = ctx,
         compile_ctx = compile_ctx,
         dep_ctx = compile_ctx.dep_ctx,
@@ -1656,7 +1701,8 @@ def rust_compile_invalidation_inputs(
         incremental_enabled = incremental_enabled,
         is_rustdoc_test = False,
         profile_mode = None,
-    ).args
+    )
+    return cmd_args(common_args.args, hidden = common_args.arch_dependency_args.values() if common_args.arch_dependency_args != None else [])
 
 def _host_agnostic_proc_macro(crate_type: CrateType, emit: Emit, is_rustdoc_test: bool, incremental_enabled: bool) -> bool:
     return crate_type == CrateType("proc-macro") and emit != Emit("clippy") and not is_rustdoc_test and not incremental_enabled
@@ -2007,6 +2053,7 @@ def _rustc_invoke(
     prefix: str,
     rustc_bin: cmd_args | RunInfo | dict[str, RunInfo] | None,
     rustc_args: cmd_args,
+    arch_dependency_args: dict[str, cmd_args] | None,
     required_outputs: list[Artifact],
     is_clippy: bool,
     infallible_diagnostics: bool,
@@ -2103,6 +2150,7 @@ def _rustc_invoke(
                 arch_programs[arch],
                 "--rustc-action-separator",
                 rustc_args,
+                arch_dependency_args[arch] if arch_dependency_args != None else [],
                 hidden = hidden,
             )
             arch_commands[arch] = RustArchCommand(

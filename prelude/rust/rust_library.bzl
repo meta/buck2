@@ -118,6 +118,7 @@ load(
     "RustLinkStrategyInfo",
     "RustLinkableGraphs",
     "RustNativeLinkDeps",
+    "RustProcMacroArchInfo",
     "RustProcMacroInfo",
     "TransitiveDeps",
     "attr_crate",
@@ -1247,7 +1248,7 @@ def _compute_transitive_deps(
     transitive_proc_macro_deps = set()
 
     for dep in resolve_rust_deps(ctx, dep_ctx):
-        if isinstance(dep.info, RustProcMacroInfo):
+        if isinstance(dep.info, RustProcMacroInfo) or isinstance(dep.info, RustProcMacroArchInfo):
             transitive_proc_macro_deps.add(dep.dep.label.raw_target())
 
             # We don't want to propagate proc macros directly, and they have no transitive deps

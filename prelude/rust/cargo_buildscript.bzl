@@ -19,6 +19,7 @@
 #     buildscript_genrule = "buildscript_run"
 #
 
+load("@prelude//:asserts.bzl", "asserts")
 load("@prelude//cxx:cxx_toolchain_types.bzl", "CxxToolchainInfo")
 load(
     "@prelude//cxx:preprocessor.bzl",
@@ -30,12 +31,19 @@ load("@prelude//decls:common.bzl", "buck")
 load("@prelude//decls:toolchains_common.bzl", "toolchains_common")
 load("@prelude//linking:link_info.bzl", "LinkInfosTSet", "LinkStrategy", "MergedLinkInfo")
 load("@prelude//os_lookup:defs.bzl", "Os", "OsLookup", "ScriptLanguage")
-load("@prelude//rust:rust_toolchain.bzl", "RustToolchainInfo")
+load(
+    "@prelude//rust:rust_toolchain.bzl",
+    "RustArchRunInfo",
+    "RustToolchainInfo",
+    "get_rust_arch_toolchain_info",
+    "require_rust_arch_variants",
+)
 load("@prelude//rust:targets.bzl", "targets")
 load("@prelude//rust/buildscript:buildscript_platform.bzl", "transition_alias")
 load("@prelude//rust/tools:attrs.bzl", "RustInternalToolsInfo")
 load("@prelude//utils:cmd_script.bzl", "cmd_script")
 load("@prelude//utils:selects.bzl", "selects")
+load(":arch_action.bzl", "rust_arch_program_action")
 load(":build.bzl", "dependency_args")
 load(":build_params.bzl", "MetadataKind")
 load(
@@ -54,11 +62,13 @@ load(
 )
 load(":rust_toolchain.bzl", "PanicRuntime")
 
-def _make_rustc_shim(ctx: AnalysisContext, cwd: Artifact) -> cmd_args:
+def _make_rustc_shim(ctx: AnalysisContext, cwd: Artifact, arch: str | None = None) -> cmd_args:
     # Build scripts expect to receive a `rustc` which "just works." However,
     # our rustc sometimes has no sysroot available, so we need to make a shim
     # which supplies the sysroot deps if necessary
-    toolchain_info = ctx.attrs._rust_toolchain[RustToolchainInfo]
+    toolchain = ctx.attrs._rust_toolchain
+    toolchain_info = toolchain[RustToolchainInfo]
+    arch_info = get_rust_arch_toolchain_info(toolchain, ctx.label)
     explicit_sysroot_deps = toolchain_info.explicit_sysroot_deps
     if explicit_sysroot_deps:
         dep_ctx = DepCollectionContext(
@@ -80,12 +90,15 @@ def _make_rustc_shim(ctx: AnalysisContext, cwd: Artifact) -> cmd_args:
             dep_link_strategy = DEFAULT_STATIC_LINK_STRATEGY,
             dep_metadata_kind = MetadataKind("full"),
             is_rustdoc_test = False,
+            arch = arch,
             cwd = cwd,
         )
 
         null_path = "nul" if ctx.attrs._exec_os_type[OsLookup].os == Os("windows") else "/dev/null"
         dep_args = cmd_args("--sysroot=" + null_path, dep_args, relative_to = cwd)
-        dep_file, _ = ctx.actions.write("rustc_dep_file", dep_args, allow_args = True, has_content_based_path = False)
+        dep_file, _ = ctx.actions.write(
+            "rustc_dep_file" if arch == None else "rustc_dep_file_{}".format(arch), dep_args, allow_args = True, has_content_based_path = False
+        )
         sysroot_args = cmd_args(
             cmd_args("@", dep_file, delimiter = "", hidden = dep_args),
             # add dep_argsfiles as a separate argument because rustc does NOT support nested @argsfiles
@@ -94,10 +107,11 @@ def _make_rustc_shim(ctx: AnalysisContext, cwd: Artifact) -> cmd_args:
     else:
         sysroot_args = cmd_args()
 
+    compiler = toolchain_info.compiler if arch == None else arch_info.arch_variants[arch].compiler
     shim = cmd_script(
         actions = ctx.actions,
-        name = "__rustc_shim",
-        cmd = cmd_args(toolchain_info.compiler, sysroot_args, relative_to = cwd),
+        name = "__rustc_shim" if arch == None else "__rustc_shim_{}".format(arch),
+        cmd = cmd_args(compiler, sysroot_args, relative_to = cwd),
         language = ctx.attrs._exec_os_type[OsLookup].script,
     )
 
@@ -225,7 +239,9 @@ def _make_cc_shim(ctx: AnalysisContext, name: str, cmd: cmd_args) -> cmd_args:
 
 def _cargo_buildscript_impl(ctx: AnalysisContext) -> list[Provider]:
     cxx_toolchain_info = ctx.attrs._cxx_toolchain[CxxToolchainInfo]
-    rust_toolchain_info = ctx.attrs._rust_toolchain[RustToolchainInfo]
+    rust_toolchain = ctx.attrs._rust_toolchain
+    rust_toolchain_info = rust_toolchain[RustToolchainInfo]
+    arch_toolchain_info = get_rust_arch_toolchain_info(rust_toolchain, ctx.label)
 
     cwd = ctx.actions.declare_output("cwd", dir = True, has_content_based_path = True)
     out_dir = ctx.actions.declare_output("OUT_DIR", dir = True, has_content_based_path = True)
@@ -236,9 +252,7 @@ def _cargo_buildscript_impl(ctx: AnalysisContext) -> list[Provider]:
     else:
         manifest_dir = ctx.actions.symlinked_dir("manifest_dir", ctx.attrs.filegroup_for_manifest_dir, has_content_based_path = True)
 
-    cmd = [
-        ctx.attrs.runner[RunInfo],
-        cmd_args("--buildscript=", ctx.attrs.buildscript[RunInfo], delimiter = ""),
+    base_cmd = [
         cmd_args("--rustc-cfg=", ctx.attrs.rustc_cfg[DefaultInfo].default_outputs[0], delimiter = ""),
         cmd_args("--manifest-dir=", manifest_dir, delimiter = ""),
         cmd_args("--create-cwd=", cwd.as_output(), delimiter = ""),
@@ -246,41 +260,44 @@ def _cargo_buildscript_impl(ctx: AnalysisContext) -> list[Provider]:
     ]
 
     if ctx.attrs.rustc_link_lib:
-        cmd.append("--rustc-link-lib")
+        base_cmd.append("--rustc-link-lib")
     if ctx.attrs.rustc_link_search:
-        cmd.append("--rustc-link-search")
+        base_cmd.append("--rustc-link-search")
 
     # See https://doc.rust-lang.org/cargo/reference/environment-variables.html#environment-variables-cargo-sets-for-build-scripts
 
-    env = {}
-    env["CARGO"] = "/bin/false"
-    env["CARGO_PKG_NAME"] = ctx.attrs.package_name
-    env["CARGO_PKG_VERSION"] = ctx.attrs.version
-    env["OUT_DIR"] = out_dir.as_output()
-    env["RUSTC"] = _make_rustc_shim(ctx, cwd)
-    env["RUSTC_LINKER"] = "/bin/false"
-    env["RUST_BACKTRACE"] = "1"
+    rule_env = {}
+    rule_env["CARGO"] = "/bin/false"
+    rule_env["CARGO_PKG_NAME"] = ctx.attrs.package_name
+    rule_env["CARGO_PKG_VERSION"] = ctx.attrs.version
+    rule_env["OUT_DIR"] = out_dir.as_output()
+    if arch_toolchain_info == None:
+        rule_env["RUSTC"] = _make_rustc_shim(ctx, cwd)
+    rule_env["RUSTC_LINKER"] = "/bin/false"
+    rule_env["RUST_BACKTRACE"] = "1"
 
     if rust_toolchain_info.rustc_target_triple:
-        env["TARGET"] = rust_toolchain_info.rustc_target_triple
+        rule_env["TARGET"] = rust_toolchain_info.rustc_target_triple
     else:
-        cmd.append(cmd_args("--rustc-host-tuple=", ctx.attrs.rustc_host_tuple[DefaultInfo].default_outputs[0], delimiter = ""))
+        base_cmd.append(cmd_args("--rustc-host-tuple=", ctx.attrs.rustc_host_tuple[DefaultInfo].default_outputs[0], delimiter = ""))
 
     # \037 == \x1f == the magic delimiter specified in the environment variable
     # reference above.
-    env["CARGO_ENCODED_RUSTFLAGS"] = cmd_args(
+    rule_env["CARGO_ENCODED_RUSTFLAGS"] = cmd_args(
         rust_toolchain_info.rustc_flags,
         "-Cunsafe-allow-abi-mismatch=sanitizer",
         delimiter = "\037",
     )
 
-    host_triple = targets.exec_triple(ctx)
-    if host_triple:
-        env["HOST"] = host_triple
+    host_triple = None
+    if arch_toolchain_info == None:
+        host_triple = targets.exec_triple(ctx)
+        if host_triple:
+            rule_env["HOST"] = host_triple
 
     for feature in ctx.attrs.features:
         upper_feature = feature.upper().replace("-", "_")
-        env["CARGO_FEATURE_{}".format(upper_feature)] = "1"
+        rule_env["CARGO_FEATURE_{}".format(upper_feature)] = "1"
 
     for flag in rust_toolchain_info.rustc_flags:
         if isinstance(flag, ResolvedStringWithMacros):
@@ -288,7 +305,7 @@ def _cargo_buildscript_impl(ctx: AnalysisContext) -> list[Provider]:
         if flag.startswith("-Copt-level="):
             opt_level = flag.removeprefix("-Copt-level=")
             if opt_level.isdigit():
-                env["OPT_LEVEL"] = opt_level
+                rule_env["OPT_LEVEL"] = opt_level
 
     # C and C++ compilers for bindgen.
     target_triple = get_target_triple(ctx)
@@ -306,7 +323,7 @@ def _cargo_buildscript_impl(ctx: AnalysisContext) -> list[Provider]:
     sanitizer_flags = ["-fno-sanitize=all"]
     cc_is_clang = cxx_toolchain_info.c_compiler_info.compiler_type.startswith("clang")
     cxx_is_clang = cxx_toolchain_info.cxx_compiler_info.compiler_type.startswith("clang")
-    env["LD"] = _make_cc_shim(
+    rule_env["LD"] = _make_cc_shim(
         ctx = ctx,
         name = "__ld_shim",
         cmd = cmd_args(
@@ -321,7 +338,7 @@ def _cargo_buildscript_impl(ctx: AnalysisContext) -> list[Provider]:
         name = "__cc_shim",
         cmd = cmd_args(
             cxx_toolchain_info.c_compiler_info.compiler,
-            cmd_args(env["LD"], format = "--ld-path={}") if cc_is_clang else cmd_args(),
+            cmd_args(rule_env["LD"], format = "--ld-path={}") if cc_is_clang else cmd_args(),
             cxx_toolchain_info.c_compiler_info.preprocessor_flags,
             cxx_toolchain_info.c_compiler_info.compiler_flags,
             deps_preprocessor_flags,
@@ -331,13 +348,13 @@ def _cargo_buildscript_impl(ctx: AnalysisContext) -> list[Provider]:
             ["--target={}".format(target_triple)] if target_triple else [],
         ),
     )
-    env["CC"] = cc_shim
-    env["CXX"] = _make_cc_shim(
+    rule_env["CC"] = cc_shim
+    rule_env["CXX"] = _make_cc_shim(
         ctx = ctx,
         name = "__cxx_shim",
         cmd = cmd_args(
             cxx_toolchain_info.cxx_compiler_info.compiler,
-            cmd_args(env["LD"], format = "--ld-path={}") if cxx_is_clang else cmd_args(),
+            cmd_args(rule_env["LD"], format = "--ld-path={}") if cxx_is_clang else cmd_args(),
             cxx_toolchain_info.cxx_compiler_info.preprocessor_flags,
             cxx_toolchain_info.cxx_compiler_info.compiler_flags,
             deps_preprocessor_flags,
@@ -347,7 +364,7 @@ def _cargo_buildscript_impl(ctx: AnalysisContext) -> list[Provider]:
             ["--target={}".format(target_triple)] if target_triple else [],
         ),
     )
-    env["AR"] = _make_cc_shim(
+    rule_env["AR"] = _make_cc_shim(
         ctx = ctx,
         name = "__ar_shim",
         cmd = cmd_args(cxx_toolchain_info.linker_info.archiver),
@@ -356,7 +373,7 @@ def _cargo_buildscript_impl(ctx: AnalysisContext) -> list[Provider]:
     # Environment variables specified in the target's attributes get priority
     # over all the above.
     for k, v in ctx.attrs.env.items():
-        env[k] = cmd_args(v, relative_to = cwd)
+        rule_env[k] = cmd_args(v, relative_to = cwd)
 
     # A target that blanks CC leaves cc-rs with a `<target>-gcc` PATH lookup
     # when cross-compiling, which exists nowhere. Re-export the shim as
@@ -376,13 +393,50 @@ def _cargo_buildscript_impl(ctx: AnalysisContext) -> list[Provider]:
         and "CC_{}".format(rust_target_triple) not in ctx.attrs.env
         and "CC_{}".format(rust_target_triple.replace("-", "_")) not in ctx.attrs.env
     ):
-        env["TARGET_CC"] = cc_shim
+        rule_env["TARGET_CC"] = cc_shim
 
-    ctx.actions.run(
-        cmd,
-        env = env,
-        category = "buildscript",
-    )
+    if arch_toolchain_info == None:
+        if ctx.attrs.buildscript == None:
+            fail("{} scalar build script is missing its executable".format(ctx.label))
+        ctx.actions.run(
+            cmd_args(ctx.attrs.runner[RunInfo], cmd_args("--buildscript=", ctx.attrs.buildscript[RunInfo], delimiter = ""), base_cmd),
+            env = rule_env,
+            category = "buildscript",
+        )
+    else:
+        asserts.true(
+            ctx.attrs.buildscript_arch != None,
+            "{} dual-arch build script needs buildscript_arch".format(ctx.label),
+        )
+        buildscript_variants = require_rust_arch_variants(ctx.attrs.buildscript_arch[RustArchRunInfo].arch_variants, ctx.label)
+        arch_programs = {}
+        for arch, variant in arch_toolchain_info.arch_variants.items():
+            env = (
+                rule_env
+                | variant.plain_env
+                | variant.path_env
+                | {
+                    "HOST": variant.arch_triple,
+                    "RUSTC": _make_rustc_shim(ctx, cwd, arch = arch),
+                }
+            )
+            cmd = cmd_args(
+                "/usr/bin/env",
+                [cmd_args(key, "=", value, delimiter = "") for key, value in env.items()],
+                ctx.attrs.runner[RunInfo],
+                cmd_args("--buildscript=", buildscript_variants[arch], delimiter = ""),
+                base_cmd,
+                hidden = variant.runtime_and_plugin_inputs,
+            )
+            arch_programs[arch] = RunInfo(args = cmd)
+        ctx.actions.run(
+            rust_arch_program_action(
+                actions = ctx.actions,
+                path = "buildscript-arch-action",
+                archs = arch_programs,
+            ),
+            category = "buildscript",
+        )
 
     return [
         DefaultInfo(
@@ -397,7 +451,8 @@ def _cargo_buildscript_impl(ctx: AnalysisContext) -> list[Provider]:
 _cargo_buildscript_rule = rule(
     impl = _cargo_buildscript_impl,
     attrs = {
-        "buildscript": attrs.exec_dep(providers = [RunInfo]),
+        "buildscript": attrs.option(attrs.exec_dep(providers = [RunInfo]), default = None),
+        "buildscript_arch": attrs.option(attrs.dep(providers = [RustArchRunInfo]), default = None),
         "cxx_deps": attrs.list(attrs.dep(), default = []),
         "cxx_flags": attrs.list(attrs.arg(), default = []),
         "env": attrs.dict(key = attrs.string(), value = attrs.arg(), default = {}),
@@ -435,6 +490,7 @@ def buildscript_run(
     # target or subtarget containing crate, e.g. ":serde.git[serde]"
     manifest_dir = None,
     buildscript_compatible_with = None,
+    arch_buildscript_rule = None,
     **kwargs,
 ):
     kwargs = apply_platform_attrs(platform, kwargs)
@@ -478,7 +534,10 @@ def buildscript_run(
 
     _cargo_buildscript_rule(
         name = name,
+        # Single-arch build script by default; arch selection via the
+        # qualification constraint lands later in the stack.
         buildscript = buildscript_rule,
+        buildscript_arch = arch_buildscript_rule,
         package_name = package_name,
         version = version,
         filegroup_for_manifest_dir = filegroup_for_manifest_dir,

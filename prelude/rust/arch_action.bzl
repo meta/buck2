@@ -8,7 +8,7 @@
 
 load("@prelude//:command_alias.bzl", "command_alias")
 load("@prelude//os_lookup:defs.bzl", "Os", "OsLookup", "ScriptLanguage")
-load(":rust_toolchain.bzl", "require_rust_arch_variants")
+load(":rust_toolchain.bzl", "RustArchRunInfo", "require_rust_arch_variants")
 
 # One complete invocation of rustc_action.py (or a protocol-compatible tool).
 # wrapper_argfile is a cmd_args so it retains every artifact written into it.
@@ -39,3 +39,20 @@ def rust_arch_program_action(*, actions: AnalysisActions, path: str, archs: dict
         has_content_based_path = True,
     )
     return output.cmd
+
+def _arch_run_aggregate_impl(ctx: AnalysisContext) -> list[Provider]:
+    variants = require_rust_arch_variants(ctx.attrs.arch_variants, ctx.label)
+    return [
+        DefaultInfo(default_outputs = [output for dep in variants.values() for output in dep[DefaultInfo].default_outputs]),
+        RustArchRunInfo(arch_variants = {arch: dep[RunInfo] for arch, dep in variants.items()}),
+    ]
+
+rust_arch_run_aggregate = rule(
+    impl = _arch_run_aggregate_impl,
+    attrs = {
+        "arch_variants": attrs.dict(
+            key = attrs.string(),
+            value = attrs.dep(providers = [DefaultInfo, RunInfo]),
+        ),
+    },
+)

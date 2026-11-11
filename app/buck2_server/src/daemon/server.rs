@@ -1599,7 +1599,7 @@ impl DaemonApi for BuckdServer {
                 // A process-state rejection covers shared services. Retire all generations and
                 // revoke proxy recovery before acknowledging Kill; the watchdog also covers
                 // cleanup already in progress. Finer failure scopes can be handled separately.
-                let evictions = self.0.daemon_state.data().evict_all_tenants();
+                let evictions = self.0.daemon_state.data().evict_all_tenants("kill");
                 let budget = timeout
                     .unwrap_or(super::proxies::PROXY_EVICTION_TIMEOUT)
                     .min(super::proxies::PROXY_EVICTION_TIMEOUT);

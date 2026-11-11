@@ -741,6 +741,23 @@ pub const UNIDAEMON_NAMESPACES_DIR: &str = ".unidaemons";
 /// Beside [`UNIDAEMON_NAMESPACES_DIR`]: the lifecycle locks of the namespaces, named by their key.
 pub const UNIDAEMON_LOCKS_DIR: &str = ".unidaemon_locks";
 
+/// How clients of this process select their daemon, as reported in command telemetry.
+///
+/// `unshared` is the one-daemon-per-isolation model. The others share one process across
+/// isolation directories, named groups of checkouts, or compatible checkouts respectively.
+pub fn daemon_routing() -> buck2_error::Result<&'static str> {
+    if unidaemon_prototype_enabled()? {
+        return Ok("unidaemon");
+    }
+    if !buck2_env!("BUCK2_SHARE_DAEMON", type=bool, default=false)? {
+        return Ok("unshared");
+    }
+    if buck2_env!("BUCK2_DAEMON_GROUP")?.is_some() {
+        return Ok("group");
+    }
+    Ok("shared")
+}
+
 pub fn unidaemon_prototype_enabled() -> buck2_error::Result<bool> {
     if !buck2_env!("BUCK2_UNIDAEMON", type=bool, default=false)? {
         return Ok(false);

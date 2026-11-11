@@ -53,6 +53,7 @@ use buck2_common::file_ops::baseline::SetFileSystemBaseline;
 use buck2_common::file_ops::io::initialize_read_dir_cache;
 use buck2_common::http::SetHttpClient;
 use buck2_common::ignores::ignore_set::IgnoreSet;
+use buck2_common::invocation_paths::daemon_routing;
 use buck2_common::io::trace::TracingIoProvider;
 use buck2_common::legacy_configs::agent_context::AgentContextSchema;
 use buck2_common::legacy_configs::cells::BuckConfigBasedCells;
@@ -60,6 +61,7 @@ use buck2_common::legacy_configs::configs::LegacyBuckConfig;
 use buck2_common::legacy_configs::dice::HasInjectedLegacyConfigs;
 use buck2_common::legacy_configs::file_ops::ConfigPath;
 use buck2_common::legacy_configs::key::BuckconfigKeyRef;
+use buck2_common::tenant::tenant_instance_id;
 use buck2_core::buck2_env;
 use buck2_core::cells::name::CellName;
 use buck2_core::execution_types::executor_config::CommandExecutorConfig;
@@ -1521,6 +1523,33 @@ impl ServerCommandContextTrait for ServerCommandContext<'_> {
                 "daemon_originating_cgroup".to_owned(),
                 originating_cgroup.clone(),
             );
+        }
+
+        let tenant_generation = &self.base_context.tenant.generation;
+        let tenant_id = tenant_generation.key().telemetry_id();
+        metadata.insert(
+            "tenant_instance_id".to_owned(),
+            tenant_instance_id(
+                &self.base_context.daemon.daemon_id.to_string(),
+                &tenant_id,
+                tenant_generation.number(),
+            ),
+        );
+        metadata.insert("tenant_id".to_owned(), tenant_id);
+        metadata.insert(
+            "tenant_generation".to_owned(),
+            tenant_generation.number().to_string(),
+        );
+        metadata.insert(
+            "tenant_count".to_owned(),
+            self.base_context
+                .daemon
+                .initialized_tenant_count()
+                .to_string(),
+        );
+        metadata.insert("daemon_routing".to_owned(), daemon_routing()?.to_owned());
+        if let Some(reason) = tenant_generation.take_started_reason() {
+            metadata.insert("tenant_started_reason".to_owned(), reason.to_owned());
         }
 
         if let Some(agent_identity) = buck2_events::metadata::agent_identity_from_env() {

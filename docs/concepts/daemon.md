@@ -110,6 +110,24 @@ evict its existing tenants.
 Command event logs include
 a `dice-sharing:true` or `dice-sharing:false` tag.
 
+Command metadata identifies the tenant a command ran against, so telemetry
+that used to key on `daemon_uuid` can key on a tenant instead:
+
+- `daemon_routing`: `unshared`, `shared`, `group`, or `unidaemon`.
+- `tenant_id`: stable hash of the checkout root and isolation directory.
+- `tenant_generation`: the generation the command ran against. Generations come from one
+  counter per daemon, so a recreated tenant gets a higher number, but numbers are not consecutive
+  for one tenant.
+- `tenant_instance_id`: hash of the daemon id, tenant id, and generation. In
+  an unshared daemon this is one-to-one with `daemon_uuid`.
+- `tenant_count`: initialized tenants in the daemon when the command started.
+  Process-wide measurements such as daemon memory cover all of them.
+- `tenant_started_reason`: on the first command of a generation only.
+  `initial`, `joined`, or `recreated:<command>` naming what evicted the
+  previous generation, such as `recreated:kill`.
+
+Heartbeat snapshots carry `tenant_uptime_s` alongside `daemon_uptime_s`.
+
 Cycle detection is always enabled in both modes. Shared engines require
 compatible paging, digest configuration, and Buck settings.
 Paging storage is scoped to the daemon: it lives under the daemon state

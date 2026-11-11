@@ -185,6 +185,9 @@ pub(crate) struct PersistedDepFileCache {
 pub struct TenantState {
     pub repo: Arc<RepoState>,
 
+    /// Which generation of which tenant this is. Reported in command telemetry.
+    pub(crate) generation: Arc<TenantGeneration>,
+
     pub(crate) cancellation: Arc<CancellationScope>,
 
     /// The DICE graph and the command concurrency state for this tenant.
@@ -194,6 +197,61 @@ pub struct TenantState {
     pub(crate) eviction_gate: Arc<EvictionGate>,
     #[allocative(skip)]
     disk_ownership: Arc<Semaphore>,
+}
+
+/// Identity of one tenant generation.
+///
+/// A generation is created when a tenant joins the daemon and retired when it is evicted; a tenant
+/// that returns after eviction gets a new generation. Telemetry keyed by this identity partitions
+/// commands by build state the way `daemon_uuid` did while a daemon served exactly one tenant.
+#[derive(Allocative)]
+pub(crate) struct TenantGeneration {
+    key: TenantKey,
+    number: u64,
+    /// `initial` for the tenant the daemon started with, `joined` for a tenant added to a running
+    /// daemon, or `recreated:<what evicted the previous generation>`.
+    started_reason: String,
+    #[allocative(skip)]
+    created: Instant,
+    #[allocative(skip)]
+    started_reported: AtomicBool,
+}
+
+impl TenantGeneration {
+    const INITIAL_NUMBER: u64 = 1;
+
+    fn new(key: TenantKey, number: u64, started_reason: String) -> Self {
+        Self {
+            key,
+            number,
+            started_reason,
+            created: Instant::now(),
+            started_reported: AtomicBool::new(false),
+        }
+    }
+
+    fn initial(key: TenantKey) -> Self {
+        Self::new(key, Self::INITIAL_NUMBER, "initial".to_owned())
+    }
+
+    pub(crate) fn key(&self) -> &TenantKey {
+        &self.key
+    }
+
+    pub(crate) fn number(&self) -> u64 {
+        self.number
+    }
+
+    pub(crate) fn created(&self) -> Instant {
+        self.created
+    }
+
+    /// The reason this generation exists, returned to the first caller only. Mirrors
+    /// `daemon_was_started`, which only the command that started a daemon reports.
+    pub(crate) fn take_started_reason(&self) -> Option<&str> {
+        (!self.started_reported.swap(true, Ordering::AcqRel))
+            .then_some(self.started_reason.as_str())
+    }
 }
 
 /// Services and caches associated with a repository-backed tenant.
@@ -322,6 +380,7 @@ struct TenantStateInit<'a> {
     shared: DaemonSharedServices<'a>,
     disk_ownership: Arc<Semaphore>,
     cancellation: Arc<CancellationScope>,
+    generation: Arc<TenantGeneration>,
     dice_provider: &'a TenantDiceProvider,
 }
 
@@ -362,6 +421,7 @@ struct TenantStateFactory {
 struct TenantStateOwnership {
     disk_ownership: Arc<Semaphore>,
     cancellation: Arc<CancellationScope>,
+    generation: Arc<TenantGeneration>,
     reject_materializer_state: Option<SqliteIdentity>,
 }
 
@@ -394,6 +454,7 @@ impl TenantStateFactory {
         let TenantStateOwnership {
             disk_ownership,
             cancellation,
+            generation,
             reject_materializer_state,
         } = ownership;
         let mut init_ctx = self.init_ctx.clone();
@@ -411,6 +472,7 @@ impl TenantStateFactory {
             shared,
             disk_ownership,
             cancellation,
+            generation,
             dice_provider: &self.dice_provider,
         })
         .await
@@ -430,6 +492,7 @@ impl TenantState {
             shared,
             disk_ownership,
             cancellation,
+            generation,
             dice_provider,
         } = init;
         let lifetime = cancellation.register()?;
@@ -963,6 +1026,7 @@ impl TenantState {
 
         Ok(Arc::new(Self {
             repo,
+            generation,
             dice_manager,
             eviction_gate,
             disk_ownership,
@@ -1042,6 +1106,9 @@ struct TenantStateRegistry {
     draining: AtomicBool,
     #[allocative(skip)]
     evictions: StdMutex<BuckMutMap<(TenantKey, u64), TenantEviction>>,
+    /// What last evicted each tenant key, reported by the next generation of that tenant.
+    #[allocative(skip)]
+    eviction_reasons: StdMutex<BuckMutMap<TenantKey, String>>,
 }
 
 /// A tenant generation in the registry whose state has not been initialized by the caller yet.
@@ -1088,6 +1155,7 @@ impl<T: Allocative> Registrant<T> {
 struct TenantStateSlot<T: Allocative> {
     spec: TenantSpec,
     generation: u64,
+    identity: Arc<TenantGeneration>,
     state: OnceCell<Arc<T>>,
     disk_ownership: Arc<Semaphore>,
     cancellation: Arc<CancellationScope>,
@@ -1109,13 +1177,14 @@ impl<T: Allocative> Allocative for TenantStateSlot<T> {
 impl<T: Allocative> TenantStateSlot<T> {
     fn new(
         spec: TenantSpec,
-        generation: u64,
+        identity: Arc<TenantGeneration>,
         disk_ownership: Arc<Semaphore>,
         cancellation: Arc<CancellationScope>,
     ) -> Self {
         Self {
             spec,
-            generation,
+            generation: identity.number(),
+            identity,
             state: OnceCell::new(),
             disk_ownership,
             cancellation,
@@ -1143,7 +1212,7 @@ impl TenantStateRegistry {
         let disk_ownership = initial_tenant.disk_ownership.clone();
         let entry = Arc::new(TenantStateSlot::new(
             spec.clone(),
-            1,
+            initial_tenant.generation.dupe(),
             disk_ownership.clone(),
             initial_tenant.cancellation.clone(),
         ));
@@ -1162,9 +1231,10 @@ impl TenantStateRegistry {
             dice_engines: StdMutex::new(vec![Arc::downgrade(
                 initial_tenant.dice_manager.unsafe_dice(),
             )]),
-            next_generation: AtomicU64::new(2),
+            next_generation: AtomicU64::new(TenantGeneration::INITIAL_NUMBER + 1),
             draining: AtomicBool::new(false),
             evictions: StdMutex::new(BuckMutMap::default()),
+            eviction_reasons: StdMutex::new(BuckMutMap::default()),
         })
     }
 
@@ -1176,7 +1246,9 @@ impl TenantStateRegistry {
         create: F,
     ) -> buck2_error::Result<Arc<TenantState>>
     where
-        F: FnOnce(Arc<Semaphore>, Arc<CancellationScope>) -> Fut + Send + 'static,
+        F: FnOnce(Arc<Semaphore>, Arc<CancellationScope>, Arc<TenantGeneration>) -> Fut
+            + Send
+            + 'static,
         Fut: Future<Output = buck2_error::Result<Arc<TenantState>>> + Send + 'static,
     {
         let entry = self.reserve(&spec, allow_registration, expected_generation)?;
@@ -1240,6 +1312,17 @@ impl TenantStateRegistry {
                 .entry(key.clone())
                 .or_insert_with(|| {
                     let generation = self.next_generation.fetch_add(1, Ordering::Relaxed);
+                    // Consumed here: the reason names the eviction this generation replaces,
+                    // and a later generation joining a vacated slot is a plain join.
+                    let started_reason = match self
+                        .eviction_reasons
+                        .lock()
+                        .unwrap_or_else(|poisoned| poisoned.into_inner())
+                        .remove(&key)
+                    {
+                        Some(evicted_by) => format!("recreated:{evicted_by}"),
+                        None => "joined".to_owned(),
+                    };
                     let mut owners = self
                         .disk_owners
                         .lock()
@@ -1253,7 +1336,11 @@ impl TenantStateRegistry {
                         });
                     Arc::new(TenantStateSlot::new(
                         spec.clone(),
-                        generation,
+                        Arc::new(TenantGeneration::new(
+                            key.clone(),
+                            generation,
+                            started_reason,
+                        )),
                         disk_ownership,
                         Arc::new(CancellationScope::new()),
                     ))
@@ -1277,7 +1364,9 @@ impl TenantStateRegistry {
         create: F,
     ) -> buck2_error::Result<Arc<TenantState>>
     where
-        F: FnOnce(Arc<Semaphore>, Arc<CancellationScope>) -> Fut + Send + 'static,
+        F: FnOnce(Arc<Semaphore>, Arc<CancellationScope>, Arc<TenantGeneration>) -> Fut
+            + Send
+            + 'static,
         Fut: Future<Output = buck2_error::Result<Arc<TenantState>>> + Send + 'static,
     {
         let key = entry.spec.key().clone();
@@ -1285,12 +1374,15 @@ impl TenantStateRegistry {
             .get_or_try_init(|| async {
                 let disk_ownership = entry.disk_ownership.clone();
                 let cancellation = entry.cancellation.clone();
+                let identity = entry.identity.dupe();
                 let (initialize, _) =
                     entry
                         .cancellation
                         .spawn(&Handle::current(), move |context| {
                             context
-                                .critical_section(move || create(disk_ownership, cancellation))
+                                .critical_section(move || {
+                                    create(disk_ownership, cancellation, identity)
+                                })
                                 .boxed()
                         });
                 let state = initialize.await.map_err(|error| {
@@ -1348,10 +1440,7 @@ impl TenantStateRegistry {
             .tenants
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
-        let initialized_tenant_count = tenants
-            .values()
-            .filter(|entry| entry.is_initialized())
-            .count();
+        let initialized_tenant_count = Self::count_initialized(&tenants);
         (initialized_tenant_count == 1)
             .then(|| {
                 tenants
@@ -1361,13 +1450,37 @@ impl TenantStateRegistry {
             .flatten()
     }
 
-    fn evict_generation(&self, key: &TenantKey, expected: Option<u64>) -> Option<TenantEviction> {
+    fn count_initialized(
+        tenants: &BuckMutMap<TenantKey, Arc<TenantStateSlot<TenantState>>>,
+    ) -> usize {
+        tenants
+            .values()
+            .filter(|entry| entry.is_initialized())
+            .count()
+    }
+
+    fn initialized_count(&self) -> usize {
+        Self::count_initialized(
+            &self
+                .tenants
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner()),
+        )
+    }
+
+    fn evict_generation(
+        &self,
+        key: &TenantKey,
+        expected: Option<u64>,
+        reason: &str,
+    ) -> Option<TenantEviction> {
         self.evict_generation_impl(
             key,
             expected,
             GenerationEviction::Retire {
                 recovery_allowed: false,
             },
+            reason,
         )
     }
 
@@ -1376,6 +1489,7 @@ impl TenantStateRegistry {
         key: &TenantKey,
         expected: Option<u64>,
         intent: GenerationEviction,
+        reason: &str,
     ) -> Option<TenantEviction> {
         let (recovery_allowed, drains) = match intent {
             GenerationEviction::Retire { recovery_allowed } => (recovery_allowed, true),
@@ -1405,6 +1519,7 @@ impl TenantStateRegistry {
             }
         }
         let entry = tenants.remove(key)?;
+        self.record_eviction_reason(key, reason);
         entry.cancellation.cancel();
         if let Some(state) = entry.state.get() {
             state.dice_manager.retire();
@@ -1430,10 +1545,19 @@ impl TenantStateRegistry {
         Some(eviction)
     }
 
+    /// Must be called with the `tenants` lock held so a replacement cannot register in between.
+    fn record_eviction_reason(&self, key: &TenantKey, reason: &str) {
+        self.eviction_reasons
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .insert(key.clone(), reason.to_owned());
+    }
+
     fn evict_project(
         &self,
         project_root: &AbsNormPath,
         isolation: Option<&FileName>,
+        reason: &str,
     ) -> ProjectTenantEviction {
         let started = Instant::now();
         let mut tenants = self
@@ -1450,6 +1574,7 @@ impl TenantStateRegistry {
             let matches = key.project_root() == project_root
                 && isolation.is_none_or(|isolation| key.isolation() == isolation);
             if matches {
+                self.record_eviction_reason(key, reason);
                 entry.cancellation.cancel();
                 evicted.push(entry.clone());
                 if let Some(state) = entry.state.get() {
@@ -1496,7 +1621,7 @@ impl TenantStateRegistry {
         }
     }
 
-    fn evict_all(&self) -> Vec<TenantEviction> {
+    fn evict_all(&self, reason: &str) -> Vec<TenantEviction> {
         let started = Instant::now();
         let mut tenants = self
             .tenants
@@ -1508,6 +1633,7 @@ impl TenantStateRegistry {
             .unwrap_or_else(|error| error.into_inner());
         self.draining.store(true, Ordering::Release);
         for (key, entry) in tenants.drain() {
+            self.record_eviction_reason(&key, reason);
             entry.cancellation.cancel();
             if let Some(state) = entry.state.get() {
                 state.dice_manager.retire();
@@ -1684,6 +1810,15 @@ pub struct ProjectTenantEviction {
     pub generations: Vec<u64>,
     pub final_tenant: bool,
     pub(crate) completed: Shared<BoxFuture<'static, ()>>,
+}
+
+/// The command that evicted a tenant, as reported by the tenant's next generation.
+fn eviction_reason(client_context: &ClientContext) -> &str {
+    if client_context.command_name.is_empty() {
+        "unknown"
+    } else {
+        &client_context.command_name
+    }
 }
 
 fn tenant_paths_from_client_context(
@@ -1864,7 +1999,7 @@ impl DaemonStateData {
                 spec,
                 register,
                 client_context.tenant_generation,
-                move |disk_ownership, cancellation| async move {
+                move |disk_ownership, cancellation, generation| async move {
                     data.tenant_state_factory
                         .create(
                             paths,
@@ -1872,6 +2007,7 @@ impl DaemonStateData {
                             TenantStateOwnership {
                                 disk_ownership,
                                 cancellation,
+                                generation,
                                 reject_materializer_state,
                             },
                         )
@@ -1943,19 +2079,23 @@ impl DaemonStateData {
         let data = self.dupe();
         let state = self
             .tenants
-            .initialize(entry, move |disk_ownership, cancellation| async move {
-                data.tenant_state_factory
-                    .create(
-                        paths,
-                        data.repo_shared_services(),
-                        TenantStateOwnership {
-                            disk_ownership,
-                            cancellation,
-                            reject_materializer_state,
-                        },
-                    )
-                    .await
-            })
+            .initialize(
+                entry,
+                move |disk_ownership, cancellation, generation| async move {
+                    data.tenant_state_factory
+                        .create(
+                            paths,
+                            data.repo_shared_services(),
+                            TenantStateOwnership {
+                                disk_ownership,
+                                cancellation,
+                                generation,
+                                reject_materializer_state,
+                            },
+                        )
+                        .await
+                },
+            )
             .await?;
         let key = TenantKey::from_tenant_paths(&state.repo.paths);
         let tenants = self
@@ -1979,8 +2119,13 @@ impl DaemonStateData {
         Ok(slot.generation)
     }
 
-    pub(crate) fn evict_all_tenants(&self) -> Vec<TenantEviction> {
-        self.tenants.evict_all()
+    pub(crate) fn evict_all_tenants(&self, reason: &str) -> Vec<TenantEviction> {
+        self.tenants.evict_all(reason)
+    }
+
+    /// Tenants whose state is ready to serve commands.
+    pub fn initialized_tenant_count(&self) -> usize {
+        self.tenants.initialized_count()
     }
 
     fn tenant_for_legacy_client(&self) -> buck2_error::Result<Arc<TenantState>> {
@@ -2024,9 +2169,11 @@ impl DaemonStateData {
     ) -> buck2_error::Result<Option<TenantEviction>> {
         let paths = tenant_paths_from_client_context(client_context)?
             .internal_error("Tenant eviction requires an identity")?;
-        Ok(self
-            .tenants
-            .evict_generation(&TenantKey::from_tenant_paths(&paths), generation))
+        Ok(self.tenants.evict_generation(
+            &TenantKey::from_tenant_paths(&paths),
+            generation,
+            eviction_reason(client_context),
+        ))
     }
 
     pub fn evict_tenant_after_proxy_loss(
@@ -2041,6 +2188,7 @@ impl DaemonStateData {
             &TenantKey::from_tenant_paths(&paths),
             Some(generation),
             GenerationEviction::Retire { recovery_allowed },
+            "proxy-loss",
         ))
     }
 
@@ -2057,6 +2205,7 @@ impl DaemonStateData {
             &TenantKey::from_tenant_paths(&paths),
             Some(generation),
             GenerationEviction::Replace,
+            eviction_reason(client_context),
         ))
     }
 
@@ -2086,9 +2235,11 @@ impl DaemonStateData {
                 "Repository tenant eviction requires an explicit tenant identity"
             )
         })?;
-        Ok(self
-            .tenants
-            .evict_project(paths.project_root().root(), isolation.as_deref()))
+        Ok(self.tenants.evict_project(
+            paths.project_root().root(),
+            isolation.as_deref(),
+            eviction_reason(client_context),
+        ))
     }
 
     pub fn tenants(&self) -> Vec<TenantStateInfo> {
@@ -2275,6 +2426,9 @@ impl DaemonState {
                 final_artifact_materialization,
                 runtime: tenant_state_rt,
             };
+            let generation = Arc::new(TenantGeneration::initial(TenantKey::from_tenant_paths(
+                &paths,
+            )));
             let tenant = tenant_state_factory
                 .create_with_loaded_config(
                     paths,
@@ -2289,6 +2443,7 @@ impl DaemonState {
                     TenantStateOwnership {
                         disk_ownership: Arc::new(Semaphore::new(1)),
                         cancellation: Arc::new(CancellationScope::new()),
+                        generation,
                         reject_materializer_state: None,
                     },
                 )
@@ -2617,14 +2772,20 @@ mod tests {
         ))
     }
 
-    #[tokio::test]
-    async fn tenant_entry_initializes_once() -> buck2_error::Result<()> {
-        let entry = TenantStateSlot::<usize>::new(
-            tenant_spec(),
-            1,
+    fn test_slot() -> TenantStateSlot<usize> {
+        let spec = tenant_spec();
+        let generation = Arc::new(TenantGeneration::initial(spec.key().clone()));
+        TenantStateSlot::new(
+            spec,
+            generation,
             Arc::new(Semaphore::new(1)),
             Arc::new(CancellationScope::new()),
-        );
+        )
+    }
+
+    #[tokio::test]
+    async fn tenant_entry_initializes_once() -> buck2_error::Result<()> {
+        let entry = test_slot();
         let init_count = AtomicUsize::new(0);
         let first = entry.get_or_try_init(|| async {
             init_count.fetch_add(1, Ordering::Relaxed);
@@ -2646,12 +2807,7 @@ mod tests {
 
     #[tokio::test]
     async fn last_registrant_of_an_uninitialized_generation_evicts_it() -> buck2_error::Result<()> {
-        let entry = Arc::new(TenantStateSlot::<usize>::new(
-            tenant_spec(),
-            1,
-            Arc::new(Semaphore::new(1)),
-            Arc::new(CancellationScope::new()),
-        ));
+        let entry = Arc::new(test_slot());
         let first = Registrant::attach(&entry);
         let second = Registrant::attach(&entry);
         assert!(!first.leave(), "another client is still registering");
@@ -2668,12 +2824,7 @@ mod tests {
 
     #[tokio::test]
     async fn tenant_entry_retries_failed_initialization() -> buck2_error::Result<()> {
-        let entry = TenantStateSlot::<usize>::new(
-            tenant_spec(),
-            1,
-            Arc::new(Semaphore::new(1)),
-            Arc::new(CancellationScope::new()),
-        );
+        let entry = test_slot();
         let first = entry
             .get_or_try_init(|| async {
                 Err(buck2_error!(

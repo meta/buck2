@@ -1568,6 +1568,87 @@ bool_cases! { [buck, tmp_path] isolated_tenants_share_daemon_without_sharing_con
     fn test_isolated_tenants_share_daemon_without_sharing_config_True(true);
 }}
 
+/// The tenant telemetry of one build: the invocation record's string metadata.
+async fn tenant_telemetry(tenant: &Buck) -> anyhow::Result<BTreeMap<String, String>> {
+    let record = tenant
+        .build(&["//:tenant_value"])
+        .await?
+        .invocation_record()?;
+    record["metadata"]["strings"]
+        .as_object()
+        .context("No `metadata.strings` in the invocation record")?
+        .iter()
+        .map(|(key, value)| {
+            Ok((
+                key.clone(),
+                value
+                    .as_str()
+                    .with_context(|| format!("`{key}` is not a string"))?
+                    .to_owned(),
+            ))
+        })
+        .collect::<anyhow::Result<_>>()
+}
+
+#[buck_test(write_invocation_record = true)]
+async fn test_unshared_daemon_reports_single_tenant_telemetry(buck: &Buck) -> anyhow::Result<()> {
+    let telemetry = tenant_telemetry(buck).await?;
+    assert_eq!(telemetry["daemon_routing"], "unshared");
+    assert_eq!(telemetry["tenant_count"], "1");
+    assert_eq!(telemetry["tenant_generation"], "1");
+    assert_eq!(telemetry["tenant_started_reason"], "initial");
+    assert!(!telemetry["tenant_id"].is_empty());
+    assert!(!telemetry["tenant_instance_id"].is_empty());
+    Ok(())
+}
+
+#[buck_test(write_invocation_record = true, env = [("BUCK2_SHARE_DAEMON", "true")])]
+async fn test_isolated_tenants_report_tenant_telemetry(buck: &Buck) -> anyhow::Result<()> {
+    let tenant_one = isolated_buck(buck, "tenant-one");
+    let tenant_two = isolated_buck(buck, "tenant-two");
+    let result = async {
+        let first = tenant_telemetry(&tenant_one).await?;
+        let second = tenant_telemetry(&tenant_two).await?;
+        let pid = daemon_pid(&tenant_one).await?;
+
+        assert_eq!(first["daemon_uuid"], second["daemon_uuid"]);
+        assert_eq!(first["daemon_routing"], "shared");
+        assert_ne!(first["tenant_id"], second["tenant_id"]);
+        assert_ne!(first["tenant_instance_id"], second["tenant_instance_id"]);
+        assert_eq!(first["tenant_generation"], "1");
+        assert_eq!(second["tenant_generation"], "2");
+        assert_eq!(first["tenant_count"], "1");
+        assert_eq!(second["tenant_count"], "2");
+        assert_eq!(first["tenant_started_reason"], "initial");
+        assert_eq!(second["tenant_started_reason"], "joined");
+
+        let repeat = tenant_telemetry(&tenant_one).await?;
+        assert_eq!(repeat["tenant_instance_id"], first["tenant_instance_id"]);
+        assert!(!repeat.contains_key("tenant_started_reason"));
+
+        tenant_one.kill().await?;
+        let recreated = tenant_telemetry(&tenant_one).await?;
+        assert_eq!(recreated["daemon_uuid"], first["daemon_uuid"]);
+        assert_eq!(recreated["tenant_id"], first["tenant_id"]);
+        assert_ne!(recreated["tenant_instance_id"], first["tenant_instance_id"]);
+        assert_eq!(recreated["tenant_generation"], "3");
+        assert_eq!(recreated["tenant_count"], "2");
+        assert_eq!(recreated["tenant_started_reason"], "recreated:kill");
+        anyhow::Ok(pid)
+    }
+    .await;
+    let killed = async {
+        tenant_one.kill().await?;
+        tenant_two.kill().await?;
+        anyhow::Ok(())
+    }
+    .await;
+    let pid = result?;
+    killed?;
+    assert_daemon_exits(pid).await;
+    Ok(())
+}
+
 #[buck_test(env = [("BUCK2_SHARE_DAEMON", "true")])]
 async fn test_unreachable_shared_daemon_is_not_killed(buck: &Buck) -> anyhow::Result<()> {
     buck.targets(&["//:rule"]).await?;

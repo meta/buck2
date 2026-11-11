@@ -1602,6 +1602,11 @@ message Snapshot {
   // materializer's declared artifacts. Always populated by current daemons;
   // absent in event logs recorded by older daemons that pre-date this field.
   optional StandaloneTtlRefreshStats standalone_ttl_refresh = 3002;
+
+  // Time since this command's tenant generation was created. Equals
+  // `daemon_uptime_s` for the tenant a daemon started with; a tenant that
+  // joined a shared daemon later, or was recreated after eviction, is younger.
+  optional uint64 tenant_uptime_s = 3003;
 }
 
 message StandaloneTtlRefreshStats {

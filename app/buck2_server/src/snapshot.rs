@@ -540,6 +540,8 @@ impl SnapshotCollector {
             snapshot.buck2_system_cpu_us = system_cpu_us;
         }
         snapshot.daemon_uptime_s = (Instant::now() - self.daemon.start_time).as_secs();
+        snapshot.tenant_uptime_s =
+            Some((Instant::now() - self.tenant.generation.created()).as_secs());
         snapshot.buck2_rss = process_stats.rss_bytes;
         let allocator_stats = get_allocator_stats().ok();
         if let Some(alloc_stats) = allocator_stats {

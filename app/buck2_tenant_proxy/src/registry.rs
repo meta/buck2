@@ -226,10 +226,10 @@ pub(crate) fn proxy_key(spec: &TenantProxySpec) -> ProxyKey {
     )
 }
 
-/// How long a retired proxy gets to exit before the eviction completes without it. A released
-/// client hard-kills the proxy four seconds after sending Kill, so a proxy still around after
-/// this has at most the remaining second anyway; waiting longer would only delay the eviction's
-/// completion, not change the proxy's fate.
+/// How long a retired proxy gets to exit before the eviction completes without it. A proxy told
+/// to exit does so at once; one that has not after this long is wedged, and the client that
+/// asked for the eviction stops it when its own grace runs out, so waiting longer would only
+/// delay the eviction's completion, not change the proxy's fate.
 const PROXY_RETIREMENT_TIMEOUT: Duration = Duration::from_secs(3);
 
 /// Tells the proxy of an evicted generation to exit and waits, briefly, until it has. The proxy

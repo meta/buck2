@@ -216,7 +216,7 @@ impl DaemonConstraintsRequest {
         }
     }
 
-    fn satisfied(
+    pub(crate) fn satisfied(
         &self,
         daemon: &buck2_cli_proto::DaemonConstraints,
     ) -> Result<(), ConstraintUnsatisfiedReason> {
@@ -936,10 +936,10 @@ impl BootstrapBuckdClient {
                         let reuse = proxy.is_some_and(|proxy| proxy.key == key);
                         drop(slot);
                         if !reuse && let Some(lifecycle) = &tenant_lifecycle {
-                            kill::kill_command_impl(
+                            kill::kill_unidaemon_tenant(
                                 lifecycle,
-                                "client expected different buckd constraints",
-                                true,
+                                kill::TenantShutdownCommand::Replace,
+                                None,
                             )
                             .await?;
                         }
@@ -1036,8 +1036,23 @@ impl BootstrapBuckdClient {
         }
     }
 
+    pub(crate) fn process_info(&self) -> &DaemonProcessInfo {
+        &self.info
+    }
+
     pub(crate) async fn kill(&mut self, reason: &str) -> buck2_error::Result<Pid> {
         kill::kill(&mut self.client, &self.info, reason).await?;
+        Pid::from_i64(self.info.pid)
+    }
+
+    /// Kills with `graceful` as the shutdown grace instead of the default, for a daemon or proxy
+    /// that this client knows needs longer and is prepared to wait for.
+    pub(crate) async fn kill_with_timeout(
+        &mut self,
+        reason: &str,
+        graceful: Duration,
+    ) -> buck2_error::Result<Pid> {
+        kill::kill_with_timeout(&mut self.client, &self.info, reason, graceful).await?;
         Pid::from_i64(self.info.pid)
     }
 

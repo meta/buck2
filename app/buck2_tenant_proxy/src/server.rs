@@ -91,6 +91,13 @@ pub(crate) struct ProxyState {
     pub(crate) monitor: Mutex<UnixStream>,
 }
 
+/// How long an eviction request waits for the daemon to accept it: all of `budget` but the second
+/// kept for the forced exit, or half of a budget too short to spare a second. The daemon is
+/// always asked before it is forced.
+fn accept_window(budget: Duration) -> Duration {
+    budget.saturating_sub(Duration::from_secs(1).min(budget / 2))
+}
+
 impl ProxyState {
     fn authorize<T>(&self, request: &Request<T>) -> Result<(), Status> {
         if request
@@ -226,12 +233,13 @@ impl ProxyState {
             .timeout
             .and_then(|value| Duration::try_from(value).ok())
             .unwrap_or(Duration::from_secs(4));
-        // A released client kills this proxy when its timeout runs out, counted from its own
-        // send; leave a second for the forced tree kill and for the delay before this request
-        // arrived.
+        // The client kills this proxy when its timeout runs out, counted from its own send: a
+        // released client's four seconds, or the longer grace a client of this release sends
+        // and waits for. Leave a second for the forced tree kill and for the delay before this
+        // request arrived, but always ask the daemon before forcing it.
         let budget = timeout
             .saturating_sub(Duration::from_secs(1))
-            .min(Duration::from_secs(3));
+            .max(Duration::from_secs(1));
         let watch = self.clone();
         thread_spawn("buck2-proxy-eviction-watchdog", move || {
             std::thread::sleep(budget);
@@ -274,8 +282,8 @@ impl ProxyState {
     }
 
     /// Asks the shared daemon to evict this proxy's generation within `budget`, without waiting
-    /// for the eviction to complete. The request itself gets at most two seconds of the budget,
-    /// so that a daemon that does not answer still leaves time for the forced exit.
+    /// for the eviction to complete. The request itself gets the budget less the second kept
+    /// for the forced exit, so that a daemon that does not answer still leaves time for it.
     async fn forward_eviction(
         self: &Arc<Self>,
         request: &KillRequest,
@@ -307,7 +315,7 @@ impl ProxyState {
                 .into_inner();
             Ok::<_, buck2_error::Error>((client, response))
         };
-        match tokio::time::timeout(Duration::from_secs(2).min(budget), begin).await {
+        match tokio::time::timeout(accept_window(budget), begin).await {
             Ok(Ok((client, response))) => {
                 self.record("daemon-switch-armed", &request.reason);
                 if response.evicted {
@@ -535,4 +543,27 @@ where
 }
 impl tonic::server::NamedService for ProxyService {
     const NAME: &'static str = "buck.daemon.DaemonApi";
+}
+
+#[cfg(test)]
+mod tests {
+    use std::time::Duration;
+
+    use crate::server::accept_window;
+
+    #[test]
+    fn accept_window_leaves_time_to_force_without_skipping_the_daemon() {
+        assert_eq!(
+            accept_window(Duration::from_secs(10)),
+            Duration::from_secs(9)
+        );
+        assert_eq!(
+            accept_window(Duration::from_secs(3)),
+            Duration::from_secs(2)
+        );
+        assert_eq!(
+            accept_window(Duration::from_secs(1)),
+            Duration::from_millis(500)
+        );
+    }
 }

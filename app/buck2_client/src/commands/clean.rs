@@ -29,7 +29,9 @@ use buck2_client_ctx::common::ui::ConsoleType;
 use buck2_client_ctx::daemon::client::BuckdLifecycleLock;
 use buck2_client_ctx::daemon::client::connect::establish_connection_existing;
 use buck2_client_ctx::daemon::client::connect::shared_daemon_is_inactive;
+use buck2_client_ctx::daemon::client::kill::TenantShutdownCommand;
 use buck2_client_ctx::daemon::client::kill::kill_command_impl;
+use buck2_client_ctx::daemon::client::kill::kill_unidaemon_tenant;
 use buck2_client_ctx::events_ctx::EventsCtx;
 use buck2_client_ctx::exit_result::ExitResult;
 use buck2_client_ctx::final_console::FinalConsole;
@@ -291,7 +293,11 @@ impl BuckSubcommand for InnerCleanCommand {
                 StartupDeadline::duration_from_now(Duration::from_secs(10))?,
             )
             .await?;
-            kill_command_impl(&lock, "`buck2 clean` was invoked", false).await?;
+            if prototype {
+                kill_unidaemon_tenant(&lock, TenantShutdownCommand::Clean, None).await?;
+            } else {
+                kill_command_impl(&lock, "`buck2 clean` was invoked", false).await?;
+            }
             Some(lock)
         };
         let disk_lock = TenantDiskLock::acquire(&paths.tenant_paths(), Duration::from_secs(30))

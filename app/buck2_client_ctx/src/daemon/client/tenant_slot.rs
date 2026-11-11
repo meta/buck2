@@ -14,6 +14,7 @@
 
 use buck2_cli_proto::DaemonProcessInfo;
 use buck2_common::daemon_compatibility::DaemonCompatibilityKey;
+use buck2_common::daemon_dir::DaemonDir;
 use buck2_common::invocation_paths::InvocationPaths;
 
 use crate::daemon::client::connect::BootstrapBuckdClient;
@@ -47,15 +48,19 @@ pub struct TenantProxy {
 /// reports its shared daemon's constraints and its tenant generation; a daemon of the tenant's own
 /// reports no generation. Hold the directory's lifecycle lock while acting on the answer.
 pub async fn probe_slot(paths: &InvocationPaths) -> buck2_error::Result<SlotOwner> {
-    let directory = paths.tenant_paths().unshared_daemon_dir()?;
-    let Some(record) = BuckdProcessInfo::load_if_exists(&directory)? else {
+    probe_slot_dir(&paths.tenant_paths().unshared_daemon_dir()?).await
+}
+
+/// [`probe_slot`] for a tenant directory the caller has already resolved.
+pub async fn probe_slot_dir(directory: &DaemonDir) -> buck2_error::Result<SlotOwner> {
+    let Some(record) = BuckdProcessInfo::load_if_exists(directory)? else {
         return Ok(SlotOwner::Vacant);
     };
     if !record.may_be_running()? {
         return Ok(SlotOwner::Vacant);
     }
     let info = record.info.clone();
-    let client = match establish_connection_existing(&directory).await {
+    let client = match establish_connection_existing(directory).await {
         Ok(client) => client,
         Err(error) => {
             tracing::debug!(

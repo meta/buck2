@@ -65,7 +65,9 @@ under it and the tenant then initializes. Eviction cancels tenant work and
 waits for its disk ownership to drain.
 
 Kill arms an independent daemon watchdog before acknowledgement. The proxy has
-its own fallback at 3 seconds from receiving Kill. Failed eviction can terminate
+its own fallback one second before the killing client's grace runs out: three
+seconds after a released client's Kill, longer for a client of this release,
+which gives the eviction its own budget. Failed eviction can terminate
 the entire unidaemon and its action descendants, including other tenants. After
 final-tenant eviction, the proxy waits for the unidaemon to exit before releasing
 the slot. A monitoring socket verifies proxy identity before metadata publication.

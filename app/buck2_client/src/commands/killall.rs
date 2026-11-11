@@ -144,10 +144,10 @@ impl KillallCommand {
                             )?,
                         )
                         .await?;
-                    buck2_client_ctx::daemon::client::kill::kill_command_impl(
+                    buck2_client_ctx::daemon::client::kill::kill_unidaemon_tenant(
                         &lifecycle,
-                        "Repository tenant eviction",
-                        false,
+                        buck2_client_ctx::daemon::client::kill::TenantShutdownCommand::Repository,
+                        None,
                     )
                     .await?;
                 }

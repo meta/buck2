@@ -24,6 +24,7 @@ use buck2_e2e::prelude::*;
 use buck2_e2e::process::Signal;
 use buck2_e2e::process::daemon_is_alive;
 use buck2_e2e::process::send_signal;
+use buck2_e2e::utils::file_id;
 use common_unidaemon::THIRTY_SECONDS;
 use common_unidaemon::assert_daemon_exits;
 use common_unidaemon::bool_cases;
@@ -732,7 +733,8 @@ async fn test_unidaemon_proxy_death_before_forwarding_kill(
         victim.build(&["//:tenant_value"]).await?;
         let daemon = daemon_pid(&victim).await?;
         let pid = proxy_pid(&victim)?;
-        killing = Some(victim.kill().spawn());
+        let legacy = legacy_buck(&victim, &legacy_executable(buck, tmp_path)?);
+        killing = Some(legacy.kill().spawn());
         wait_for_path(&tmp_path.join("before-forward.started")).await?;
         kill_process(pid, Signal::Kill)?;
         let _outcome = wait_within(killing.take().unwrap(), Duration::from_secs(10)).await?;
@@ -987,18 +989,30 @@ async fn unidaemon_eviction_fallback_terminates_writers(
     victim.build(&["//:tenant_value"]).await?;
     let daemon = daemon_pid(&victim).await?;
     let proxy = proxy_pid(&victim)?;
-    let cleaner = &victim;
+    // The fallback under test is the proxy's: it serves clients that kill through the
+    // tenant's own daemon directory, as a released client does and as a client of this release
+    // does with its longer grace.
+    let compatible = failure == "compatible-unresponsive-daemon";
+    let unresponsive = compatible || failure == "unresponsive-daemon";
+    let cleaner = if compatible {
+        victim.clone()
+    } else {
+        legacy_buck(&victim, &legacy_executable(buck, &tmp_path)?)
+    };
+    let cleaner = &cleaner;
+    // A released client gives the proxy four seconds; this release's gives it eleven.
+    let grace = Duration::from_secs(if compatible { 11 } else { 4 });
     let mut writer = Some(start_generation(&tenants[1], &tmp_path, "old")?);
     let mut cleaning = None;
     let result = async {
         wait_for_marker(&tmp_path.join("old.started"), &mut writer).await?;
         let writer_pid = pid_file(&tmp_path.join("old.started.pid"))?;
-        if failure == "unresponsive-daemon" {
+        if unresponsive {
             kill_process(daemon, Signal::Stop)?;
         }
         let start = Instant::now();
         cleaning = Some(cleaner.clean(&[]).spawn());
-        if failure != "unresponsive-daemon" {
+        if !unresponsive {
             tokio::time::timeout(Duration::from_secs(3), async {
                 while !tmp_path.join("eviction.started").exists() {
                     if cleaning.as_mut().unwrap().try_wait().is_some() {
@@ -1015,8 +1029,11 @@ async fn unidaemon_eviction_fallback_terminates_writers(
         if failure == "proxy-death" {
             kill_process(proxy, Signal::Kill)?;
         }
-        let outcome =
-            tokio::time::timeout(Duration::from_secs(8), cleaning.take().unwrap().wait()).await;
+        let outcome = tokio::time::timeout(
+            grace + Duration::from_secs(4),
+            cleaning.take().unwrap().wait(),
+        )
+        .await;
         let Ok(outcome) = outcome else {
             eprintln!(
                 "daemon_alive={} proxy_alive={} writer_alive={} root={}",
@@ -1028,18 +1045,21 @@ async fn unidaemon_eviction_fallback_terminates_writers(
             if let Ok(events) = unidaemon_events(&victim) {
                 eprintln!("{events:#?}");
             }
-            anyhow::bail!("Legacy clean did not finish within 8s");
+            anyhow::bail!(
+                "Clean did not finish within {:?}",
+                grace + Duration::from_secs(4)
+            );
         };
         outcome?;
         let elapsed = start.elapsed();
         assert!(
-            elapsed < Duration::from_secs(10),
-            "Legacy clean did not finish: {elapsed:?}"
+            elapsed < grace + Duration::from_secs(6),
+            "Clean did not finish: {elapsed:?}"
         );
         if failure != "proxy-death" {
             assert!(
                 process_terminated(writer_pid),
-                "Legacy clean returned with a live output writer"
+                "Clean returned with a live output writer"
             );
         }
         assert_daemon_exits(daemon).await;
@@ -1063,10 +1083,11 @@ async fn unidaemon_eviction_fallback_terminates_writers(
                 !exits.is_empty(),
                 "Missing verified daemon termination telemetry"
             );
+            let within = grace.as_millis() as u64;
             assert!(
                 exits
                     .iter()
-                    .all(|row| row["elapsed_ms"].as_u64().is_some_and(|ms| ms < 4000)),
+                    .all(|row| row["elapsed_ms"].as_u64().is_some_and(|ms| ms < within)),
                 "{exits:?}"
             );
         }
@@ -1101,6 +1122,8 @@ cases! { [buck] unidaemon_eviction_fallback_terminates_writers {
     fn test_unidaemon_eviction_fallback_terminates_writers_proxy_death("proxy-death");
     #[buck_test(data_dir = "test_daemon_data", skip_for_os = ["windows", "darwin"])]
     fn test_unidaemon_eviction_fallback_terminates_writers_unresponsive_daemon("unresponsive-daemon");
+    #[buck_test(data_dir = "test_daemon_data", skip_for_os = ["windows", "darwin"])]
+    fn test_unidaemon_eviction_fallback_terminates_writers_compatible_unresponsive_daemon("compatible-unresponsive-daemon");
 }}
 
 #[buck_test(data_dir = "test_daemon_data", skip_for_os = ["windows", "darwin"])]
@@ -1257,3 +1280,174 @@ async fn test_unidaemon_concurrent_first_commands_share_a_generation(
     killed?;
     Ok(())
 }
+
+/// A client of the same release stops its tenant through the tenant's proxy, as a released
+/// client does, with its own longer budget: the command returns once the eviction has
+/// completed, and the proxy has removed its connection files.
+async fn unidaemon_compatible_client_evicts_through_proxy(
+    buck: &Buck,
+    tmp_path: &Path,
+    operation: &str,
+    share_dice: bool,
+) -> anyhow::Result<()> {
+    let mut tenants = unidaemon_checkouts(buck, tmp_path, share_dice)?;
+    let mut victim = isolated_buck(&tenants[0], "direct");
+    let gate = tmp_path.join("eviction");
+    let forwarding = tmp_path.join("proxy-forward");
+    {
+        let [one, two] = tenants.as_mut_slice() else {
+            unreachable!()
+        };
+        let mut all = [one, two, &mut victim];
+        set_gate(
+            &mut all,
+            "BUCK2_TEST_UNIDAEMON_EVICTION_GATE",
+            "direct",
+            &gate,
+        );
+        set_gate(
+            &mut all,
+            "BUCK2_TEST_PROXY_BEFORE_EVICT",
+            "direct",
+            &forwarding,
+        );
+    }
+    let mut writer = None;
+    let mut retiring = None;
+    let result = async {
+        for tenant in [&tenants[1], &victim] {
+            tenant.build(&["//:tenant_value"]).await?;
+        }
+        let daemon = daemon_pid(&victim).await?;
+        let slot = proxy_slot(&victim);
+        let generation = tenant_generation_via(&tenants[1], &victim).await?;
+        let proxy = proxy_pid(&victim)?;
+        let inode = file_id(&slot.join("buckd.lifecycle"))?;
+        writer = Some(start_generation(&victim, tmp_path, "old")?);
+        wait_for_marker(&tmp_path.join("old.started"), &mut writer).await?;
+        let writer_pid = pid_file(&tmp_path.join("old.started.pid"))?;
+        let sentinel = victim.cwd().join("buck-out/direct/preserved");
+        std::fs::write(&sentinel, "old generation")?;
+        retiring = Some(match operation {
+            "kill" => victim.kill().spawn(),
+            "clean" => victim.clean(&[]).spawn(),
+            _ => victim.clean(&["--background"]).spawn(),
+        });
+        // The proxy receives the Kill and forwards it as an eviction of its generation.
+        wait_for_path(&tmp_path.join("proxy-forward.started")).await?;
+        assert!(retiring.as_mut().unwrap().try_wait().is_none());
+        touch(&tmp_path.join("proxy-forward.release"))?;
+        wait_for_path(&tmp_path.join("eviction.started")).await?;
+        assert!(retiring.as_mut().unwrap().try_wait().is_none());
+        assert!(!process_terminated(proxy));
+        assert!(sentinel.exists());
+        touch(&tmp_path.join("eviction.release"))?;
+        let result = wait_within(retiring.take().unwrap(), Duration::from_secs(15)).await??;
+        assert!(result.stderr.contains("Evicted tenant generation"));
+        assert!(process_terminated(writer_pid));
+        assert!(process_terminated(proxy));
+        finish(writer.take()).await;
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        assert!(!slot.join("buckd.info").exists());
+        assert!(!slot.join("buckd.pid").exists());
+        assert!(!slot.join("proxy-spec.json").exists());
+        assert_eq!(file_id(&slot.join("buckd.lifecycle"))?, inode);
+        assert_eq!(sentinel.exists(), operation == "kill");
+        assert!(has_event(
+            &unidaemon_events(&victim)?,
+            "eviction-start",
+            Some(generation)
+        ));
+        victim.build(&["//:tenant_value"]).await?;
+        assert!(tenant_generation_via(&tenants[1], &victim).await? > generation);
+        assert_eq!(daemon_pid(&tenants[1]).await?, daemon);
+        anyhow::Ok(())
+    }
+    .await;
+    touch(&tmp_path.join("eviction.release"))?;
+    touch(&tmp_path.join("proxy-forward.release"))?;
+    touch(&tmp_path.join("old.release"))?;
+    finish(writer).await;
+    finish(retiring).await;
+    let killed = kill_all([&victim, &tenants[0], &tenants[1]]).await;
+    result?;
+    killed
+}
+
+cases! { [buck, tmp_path] unidaemon_compatible_client_evicts_through_proxy {
+    #[buck_test(data_dir = "test_daemon_data", skip_for_os = ["windows", "darwin"])]
+    #[expect(non_snake_case, reason = "named like the Python harness's parametrized case")]
+    fn test_unidaemon_compatible_client_evicts_through_proxy_False_kill("kill", false);
+    #[buck_test(data_dir = "test_daemon_data", skip_for_os = ["windows", "darwin"])]
+    #[expect(non_snake_case, reason = "named like the Python harness's parametrized case")]
+    fn test_unidaemon_compatible_client_evicts_through_proxy_False_clean("clean", false);
+    #[buck_test(data_dir = "test_daemon_data", skip_for_os = ["windows", "darwin"])]
+    #[expect(non_snake_case, reason = "named like the Python harness's parametrized case")]
+    fn test_unidaemon_compatible_client_evicts_through_proxy_False_background_clean("background-clean", false);
+    #[buck_test(data_dir = "test_daemon_data", skip_for_os = ["windows", "darwin"])]
+    #[expect(non_snake_case, reason = "named like the Python harness's parametrized case")]
+    fn test_unidaemon_compatible_client_evicts_through_proxy_True_kill("kill", true);
+    #[buck_test(data_dir = "test_daemon_data", skip_for_os = ["windows", "darwin"])]
+    #[expect(non_snake_case, reason = "named like the Python harness's parametrized case")]
+    fn test_unidaemon_compatible_client_evicts_through_proxy_True_clean("clean", true);
+    #[buck_test(data_dir = "test_daemon_data", skip_for_os = ["windows", "darwin"])]
+    #[expect(non_snake_case, reason = "named like the Python harness's parametrized case")]
+    fn test_unidaemon_compatible_client_evicts_through_proxy_True_background_clean("background-clean", true);
+}}
+
+async fn unidaemon_incompatible_client_evicts_through_proxy(
+    buck: &Buck,
+    tmp_path: &Path,
+    operation: &str,
+) -> anyhow::Result<()> {
+    let mut tenants = unidaemon_checkouts(buck, tmp_path, false)?;
+    let mut victim = isolated_buck(&tenants[0], "incompatible");
+    let forwarding = tmp_path.join("proxy-forward");
+    {
+        let [one, two] = tenants.as_mut_slice() else {
+            unreachable!()
+        };
+        let mut all = [one, two, &mut victim];
+        set_gate(
+            &mut all,
+            "BUCK2_TEST_PROXY_BEFORE_EVICT",
+            "incompatible",
+            &forwarding,
+        );
+    }
+    let config = victim.cwd().join(".buckconfig");
+    let original = std::fs::read_to_string(&config)?;
+    let mut retiring = None;
+    let result = async {
+        for tenant in [&tenants[1], &victim] {
+            tenant.build(&["//:tenant_value"]).await?;
+        }
+        let daemon = daemon_pid(&victim).await?;
+        std::fs::write(&config, format!("{original}\n[buck2]\nshare_dice = true\n"))?;
+        retiring = Some(if operation == "kill" {
+            victim.kill().spawn()
+        } else {
+            victim.clean(&[]).spawn()
+        });
+        wait_for_path(&tmp_path.join("proxy-forward.started")).await?;
+        assert!(retiring.as_mut().unwrap().try_wait().is_none());
+        touch(&tmp_path.join("proxy-forward.release"))?;
+        wait_within(retiring.take().unwrap(), Duration::from_secs(10)).await??;
+        assert_eq!(daemon_pid(&tenants[1]).await?, daemon);
+        anyhow::Ok(())
+    }
+    .await;
+    std::fs::write(&config, &original)?;
+    touch(&tmp_path.join("proxy-forward.release"))?;
+    finish(retiring).await;
+    let killed = kill_all([&victim, &tenants[0], &tenants[1]]).await;
+    result?;
+    killed
+}
+
+cases! { [buck, tmp_path] unidaemon_incompatible_client_evicts_through_proxy {
+    #[buck_test(data_dir = "test_daemon_data", skip_for_os = ["windows", "darwin"])]
+    fn test_unidaemon_incompatible_client_evicts_through_proxy_kill("kill");
+    #[buck_test(data_dir = "test_daemon_data", skip_for_os = ["windows", "darwin"])]
+    fn test_unidaemon_incompatible_client_evicts_through_proxy_clean("clean");
+}}

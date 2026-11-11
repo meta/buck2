@@ -19,7 +19,9 @@ use buck2_client_ctx::daemon::client::BuckdLifecycleLock;
 use buck2_client_ctx::daemon::client::connect::BuckdConnectOptions;
 use buck2_client_ctx::daemon::client::connect::connect_buckd;
 use buck2_client_ctx::daemon::client::connect::shared_daemon_is_inactive;
+use buck2_client_ctx::daemon::client::kill::TenantShutdownCommand;
 use buck2_client_ctx::daemon::client::kill::kill_command_impl;
+use buck2_client_ctx::daemon::client::kill::kill_unidaemon_tenant;
 use buck2_client_ctx::events_ctx::EventsCtx;
 use buck2_client_ctx::exit_result::ExitResult;
 use buck2_client_ctx::startup_deadline::StartupDeadline;
@@ -57,13 +59,9 @@ impl BuckSubcommand for KillCommand {
                 StartupDeadline::duration_from_now(Duration::from_secs(10))?,
             )
             .await?;
-            return buck2_client_ctx::daemon::client::kill::kill_command_impl(
-                &lifecycle,
-                "`buck kill` was invoked",
-                false,
-            )
-            .await
-            .into();
+            return kill_unidaemon_tenant(&lifecycle, TenantShutdownCommand::Kill, None)
+                .await
+                .into();
         }
         let daemon_dir = paths.daemon_dir()?;
 

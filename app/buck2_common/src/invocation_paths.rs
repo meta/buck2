@@ -199,9 +199,29 @@ pub struct TenantDiskLock {
     _legacy_lifecycle: Option<File>,
 }
 
+/// Another process still owned a tenant's disk state when [`TenantDiskLock::wait_for`] stopped
+/// waiting.
+#[derive(Debug, buck2_error::Error)]
+#[buck2(tag = BuckdLifecycleLock)]
+#[error(
+    "Timed out waiting for exclusive use of `{buck_out}`: another process still owns it, either a Buck2 daemon or a running `buck2 clean`. Wait for it to finish, or stop the daemon (for example with `buck2 killall`), then retry."
+)]
+pub struct TenantDiskStillOwned {
+    pub buck_out: AbsNormPathBuf,
+}
+
 impl TenantDiskLock {
     /// Waits for disk ownership without interrupting the existing owner.
     pub async fn acquire(paths: &TenantPaths, timeout: Duration) -> buck2_error::Result<Self> {
+        Ok(Self::wait_for(paths, timeout).await??)
+    }
+
+    /// Like [`acquire`](Self::acquire), but tells a wait that ran out, while another process still
+    /// owned the disk state, from other failures.
+    pub async fn wait_for(
+        paths: &TenantPaths,
+        timeout: Duration,
+    ) -> buck2_error::Result<Result<Self, TenantDiskStillOwned>> {
         tokio::time::timeout(timeout, async {
             loop {
                 if let Some(mut lock) = Self::try_acquire(paths).await? {
@@ -238,13 +258,14 @@ impl TenantDiskLock {
             }
         })
         .await
-        .map_err(|_elapsed| {
-            buck2_error::buck2_error!(
-                buck2_error::ErrorTag::BuckdLifecycleLock,
-                "Timed out waiting for exclusive use of `{}`: another process still owns it, either a Buck2 daemon or a running `buck2 clean`. Wait for it to finish, or stop the daemon (for example with `buck2 killall`), then retry.",
-                paths.buck_out_path()
-            )
-        })?
+        .map_or_else(
+            |_elapsed| {
+                Ok(Err(TenantDiskStillOwned {
+                    buck_out: paths.buck_out_path(),
+                }))
+            },
+            |lock| Ok(Ok(lock?)),
+        )
     }
 
     async fn try_acquire(paths: &TenantPaths) -> buck2_error::Result<Option<Self>> {

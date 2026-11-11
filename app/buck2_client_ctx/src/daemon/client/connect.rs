@@ -1041,6 +1041,7 @@ async fn establish_connection_inner(
 
     // Even if we didn't connect before, it's possible that we just raced with another invocation
     // starting the server, so we try to connect again while holding the lock.
+    let mut unstopped_daemon = None;
     let daemon_was_started_reason = {
         match BuckdProcessInfo::load_if_exists(&daemon_dir) {
             Ok(Some(buckd_info)) => {
@@ -1134,13 +1135,16 @@ async fn establish_connection_inner(
                                     explain_failed_to_connect_reason(reason)
                                 ))
                                 .await?;
-                            if let Err(error) = hard_kill_until(&buckd_info.info, &deadline).await {
-                                events_ctx
-                                    .eprintln(&format!(
-                                        "{}",
-                                        BuckdConnectError::DaemonKillFailed { error }
-                                    ))
-                                    .await?;
+                            // Half the remaining time. The other half is for waiting until the
+                            // daemon releases its outputs (`start_new_buckd_and_connect`), so a
+                            // daemon that dies late still lets the command start, and one that
+                            // never dies leaves time to be named in the error there.
+                            if let Err(error) =
+                                hard_kill_until(&buckd_info.info, &deadline.half()?).await
+                            {
+                                let error = BuckdConnectError::DaemonKillFailed { error };
+                                events_ctx.eprintln(&format!("{error}")).await?;
+                                unstopped_daemon = Some((buckd_info.info.pid, error));
                             }
                         }
 
@@ -1187,6 +1191,7 @@ async fn establish_connection_inner(
                     options,
                     events_ctx,
                     daemon_was_started_reason,
+                    unstopped_daemon,
                 )
             },
         )
@@ -1200,6 +1205,7 @@ async fn start_new_buckd_and_connect(
     options: &BuckdConnectDaemonOptions,
     events_ctx: &mut EventsCtx,
     daemon_was_started_reason: buck2_data::DaemonWasStartedReason,
+    unstopped_daemon: Option<(i64, BuckdConnectError)>,
 ) -> buck2_error::Result<BootstrapBuckdClient> {
     let constraints = &options.constraints;
 
@@ -1210,9 +1216,22 @@ async fn start_new_buckd_and_connect(
     // new daemon cannot start until it has. A running `buck2 clean` holds the lifecycle lock, so
     // it has finished by now.
     if !buck2_env!("BUCK2_SHARE_DAEMON", type=bool, default=false)? {
+        // All the remaining time: when the previous daemon was killed above, that is the half the
+        // kill left.
         let wait =
             deadline.rem_duration("waiting for the previous daemon to release its outputs")?;
-        drop(TenantDiskLock::acquire(&paths.tenant_paths(), wait).await?);
+        let lock = TenantDiskLock::wait_for(&paths.tenant_paths(), wait).await?;
+        if let (Err(_), Some((pid, kill_error))) = (&lock, unstopped_daemon) {
+            // Only this command knows which process failed to stop: `buckd.info` is gone, so
+            // later commands report the plain timeout.
+            return Err(BuckdConnectError::UnstoppedDaemonOwnsOutputs {
+                pid,
+                buck_out: paths.buck_out_path(),
+                error: kill_error.into(),
+            }
+            .into());
+        }
+        drop(lock?);
     }
 
     // Now there's definitely no server that can be connected to
@@ -1543,6 +1562,18 @@ enum BuckdConnectError {
     #[buck2(tag = DaemonKillFailed)]
     DaemonKillFailed {
         #[source]
+        error: buck2_error::Error,
+    },
+    #[error(
+        "The previous buck2 daemon, recorded as pid {pid}, could not be stopped, and `{buck_out}` is still owned by a daemon, so no new daemon can start without risking corrupted outputs. \
+        Check what pid {pid} is before acting on it (`ps -o user,stat,args -p {pid}`): if it was recorded inside a container it may name an unrelated process here. \
+        If it is a buck2 daemon for this repo, it may belong to another user, or be stuck in the kernel on a hung filesystem (`stat` shows `D`); stop it and retry. \
+        To keep working meanwhile, pass a different `--isolation-dir`. Kill error: {error:#}"
+    )]
+    #[buck2(tag = BuckdLifecycleLock)]
+    UnstoppedDaemonOwnsOutputs {
+        pid: i64,
+        buck_out: AbsNormPathBuf,
         error: buck2_error::Error,
     },
 }

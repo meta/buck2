@@ -606,6 +606,45 @@ async fn test_recovers_when_daemon_pid_cannot_be_killed(buck: &Buck) -> anyhow::
     Ok(())
 }
 
+#[buck_test(skip_for_os = ["windows"])]
+async fn test_unkillable_daemon_that_owns_outputs_is_named(buck: &Buck) -> anyhow::Result<()> {
+    // When the daemon that could not be killed still owns buck-out, no new daemon may
+    // start; the error must say which process it is and how to get going again.
+    buck.targets(&["//:rule"]).await?;
+    let daemon_dir = buck.daemon_dir().await?;
+    let mut info: Value =
+        serde_json::from_str(&std::fs::read_to_string(daemon_dir.join("buckd.info"))?)?;
+    buck.kill().await?;
+
+    info["pid"] = json!(9999999999999u64);
+    std::fs::write(daemon_dir.join("buckd.info"), serde_json::to_string(&info)?)?;
+    let locks_dir = daemon_dir
+        .parent()
+        .context("the daemon directory has a parent")?
+        .join("._buck2_tenant_locks");
+    std::fs::create_dir_all(&locks_dir)?;
+    let lock_path = locks_dir.join(
+        daemon_dir
+            .file_name()
+            .context("the daemon directory has a name")?,
+    );
+    // Stands in for the unkillable daemon, which would still hold this lock.
+    let lock = std::fs::OpenOptions::new()
+        .append(true)
+        .create(true)
+        .open(&lock_path)?;
+    lock.lock()?;
+    buck.targets(&["//:rule"])
+        .env("BUCKD_STARTUP_TIMEOUT", "3")
+        .env("BUCKD_STARTUP_INIT_TIMEOUT", "3")
+        .await
+        .expect_failure()
+        .assert_stderr_matches("recorded as pid 9999999999999, could not be stopped");
+    drop(lock);
+    buck.targets(&["//:rule"]).await?;
+    Ok(())
+}
+
 fn ps(field: &str, pid: u32) -> anyhow::Result<String> {
     let output = std::process::Command::new("ps")
         .args(["-o", field, &pid.to_string()])

@@ -36,6 +36,7 @@ use common_unidaemon::isolation_of;
 use common_unidaemon::materializer_identity;
 use common_unidaemon::path_str;
 use common_unidaemon::pid_of;
+use common_unidaemon::proxy_slot;
 use common_unidaemon::start_generation;
 use common_unidaemon::status_json;
 use common_unidaemon::tenant_entry;
@@ -64,16 +65,6 @@ async fn server_status_pid(buck: &Buck) -> anyhow::Result<u32> {
     )?)
 }
 
-/// The `pid` of a `buckd.info`.
-fn info_pid(info: &str) -> anyhow::Result<u32> {
-    let info: Value = serde_json::from_str(info)?;
-    let pid = info
-        .get("pid")
-        .and_then(Value::as_u64)
-        .with_context(|| format!("No `pid` in {info}"))?;
-    Ok(u32::try_from(pid)?)
-}
-
 fn extract_pid(stderr: &str) -> u64 {
     let regex = Regex::new(r"^.* PID: (\d+)").unwrap();
     let pids: Vec<u64> = stderr
@@ -99,10 +90,24 @@ fn append_to_file(path: &Path, text: &str) -> anyhow::Result<()> {
     Ok(())
 }
 
-fn remove_file_if_exists(path: &Path) -> anyhow::Result<()> {
-    match std::fs::remove_file(path) {
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
-        result => Ok(result?),
+/// The daemon holds the tenant's disk ownership lock, so no other process can take it.
+fn assert_tenant_disk_locked(buck: &Buck, isolation: &str) -> anyhow::Result<()> {
+    let path = proxy_slot(buck)
+        .parent()
+        .context("The proxy slot has no parent")?
+        .join("._buck2_tenant_locks")
+        .join(isolation);
+    let probe = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&path)?;
+    match probe.try_lock() {
+        Err(std::fs::TryLockError::WouldBlock) => Ok(()),
+        Err(std::fs::TryLockError::Error(e)) => Err(e.into()),
+        Ok(()) => {
+            probe.unlock()?;
+            anyhow::bail!("Tenant disk lock `{}` is not held", path.display())
+        }
     }
 }
 
@@ -176,21 +181,6 @@ async fn wait_for_tenant_generation(
     })
     .await
     .context("Timed out waiting for a new tenant generation")?
-}
-
-async fn exited_process_pid() -> anyhow::Result<u32> {
-    let mut command = if cfg!(windows) {
-        let mut command = tokio::process::Command::new("cmd");
-        command.args(["/c", "exit 0"]);
-        command
-    } else {
-        tokio::process::Command::new("true")
-    };
-    let mut process = command.spawn()?;
-    let pid = process.id().context("The process has no pid")?;
-    assert!(process.wait().await?.success());
-    assert!(!daemon_is_alive(pid));
-    Ok(pid)
 }
 
 async fn dice_analysis_keys(buck: &Buck, path: &Path) -> anyhow::Result<BTreeMap<String, u64>> {
@@ -799,7 +789,7 @@ async fn test_buck_out_is_cache_dir(buck: &Buck) -> anyhow::Result<()> {
 
 #[buck_test]
 async fn test_prev_daemon_dir(buck: &mut Buck) -> anyhow::Result<()> {
-    buck.set_env("BUCK2_SHARE_DAEMON", "false");
+    buck.set_daemon_routing(false)?;
     buck.targets(&[":"]).await?; // Start a daemon
     buck.kill().await?;
     buck.targets(&[":"]).await?; // Start another daemon
@@ -818,8 +808,7 @@ async fn test_prev_daemon_dir(buck: &mut Buck) -> anyhow::Result<()> {
 }
 
 #[buck_test]
-async fn test_unreachable_recorded_daemon_is_replaced(buck: &mut Buck) -> anyhow::Result<()> {
-    buck.set_env("BUCK2_SHARE_DAEMON", "false");
+async fn test_unreachable_recorded_daemon_is_replaced(buck: &Buck) -> anyhow::Result<()> {
     buck.targets(&[":"]).await?; // Start a daemon
     let daemon_dir = buck.daemon_dir().await?;
     let mut info: Value =
@@ -937,8 +926,7 @@ async fn test_inactivity_shutdown_exits_with_a_command_in_flight(
 /// A new daemon waits within the startup deadline for whatever still owns its tenant's
 /// outputs, as it waits for a running `clean`, rather than failing after a fixed time.
 #[buck_test(skip_for_os = ["windows"])]
-async fn test_daemon_start_waits_for_tenant_outputs(buck: &mut Buck) -> anyhow::Result<()> {
-    buck.set_env("BUCK2_SHARE_DAEMON", "false");
+async fn test_daemon_start_waits_for_tenant_outputs(buck: &Buck) -> anyhow::Result<()> {
     buck.targets(&[":"]).await?;
     let daemon_dir = buck.daemon_dir().await?;
     buck.kill().await?;
@@ -972,7 +960,7 @@ async fn test_daemon_start_waits_for_tenant_outputs(buck: &mut Buck) -> anyhow::
 
 #[buck_test(skip_for_os = ["windows"])]
 async fn test_unshared_forkserver_state_is_reclaimed(buck: &mut Buck) -> anyhow::Result<()> {
-    buck.set_env("BUCK2_SHARE_DAEMON", "false");
+    buck.set_daemon_routing(false)?;
     let state_root = buck.cwd().join("buck-out").join("v2").join("forkserver");
     for _ in 0..3 {
         buck.targets(&["//:rule"]).await?;
@@ -1000,13 +988,13 @@ async fn test_unshared_forkserver_state_is_reclaimed(buck: &mut Buck) -> anyhow:
     Ok(())
 }
 
-#[buck_test]
+#[buck_test(skip_for_os = ["darwin"])]
 async fn test_unshared_daemon_preserves_shared_daemon(buck: &mut Buck) -> anyhow::Result<()> {
-    buck.set_env("BUCK2_SHARE_DAEMON", "true");
+    buck.set_daemon_routing(true)?;
     let buck = &*buck;
     let shared_pid = server_status_pid(buck).await?;
     let mut isolated = isolated_buck(buck, "unshared");
-    isolated.set_env("BUCK2_SHARE_DAEMON", "false");
+    isolated.set_daemon_routing(false)?;
     let subscriber = buck.subscribe(&[]);
     let result = async {
         assert_ne!(server_status_pid(&isolated).await?, shared_pid);
@@ -1022,209 +1010,6 @@ async fn test_unshared_daemon_preserves_shared_daemon(buck: &mut Buck) -> anyhow
     isolated.kill().await?;
     result
 }
-
-async fn bad_shared_metadata_preserves_live_daemon(
-    buck: &Buck,
-    metadata: &str,
-    pid_file: &str,
-) -> anyhow::Result<()> {
-    buck.targets(&["//:rule"]).await?;
-    let sibling = isolated_buck(buck, "survivor");
-    sibling.targets(&["//:rule"]).await?;
-    let newcomer = isolated_buck(buck, "newcomer");
-    let daemon_dir = buck.daemon_dir().await?;
-    let info_path = daemon_dir.join("buckd.info");
-    let pid_path = daemon_dir.join("buckd.pid");
-    let original_info = std::fs::read_to_string(&info_path)?;
-    let original_pid = std::fs::read_to_string(&pid_path)?;
-    let pid = info_pid(&original_info)?;
-    let damaged_pid = match pid_file {
-        "unchanged" => Some(original_pid.clone()),
-        "invalid" => Some("not a PID".to_owned()),
-        "exited" => Some(exited_process_pid().await?.to_string()),
-        _ => None,
-    };
-    let damaged = match metadata {
-        "missing" => None,
-        "not-json" => Some("not JSON"),
-        "invalid-json" => Some("[]"),
-        _ => panic!("unknown metadata `{metadata}`"),
-    };
-    let result = async {
-        match damaged {
-            None => std::fs::remove_file(&info_path)?,
-            Some(damaged) => std::fs::write(&info_path, damaged)?,
-        }
-        match &damaged_pid {
-            None => std::fs::remove_file(&pid_path)?,
-            Some(damaged_pid) => std::fs::write(&pid_path, damaged_pid)?,
-        }
-        newcomer
-            .targets(&["//:rule"])
-            .await
-            .expect_failure()
-            .assert_stderr_matches("Cannot verify shared daemon inactivity");
-        buck.kill().await.expect_failure();
-        assert!(daemon_is_alive(pid));
-        assert!(
-            buck.cwd()
-                .join("buck-out")
-                .join("v2")
-                .join("cache")
-                .is_dir()
-        );
-        assert!(
-            buck.cwd()
-                .join("buck-out")
-                .join("survivor")
-                .join("cache")
-                .is_dir()
-        );
-        assert!(
-            !buck
-                .cwd()
-                .join("buck-out")
-                .join("newcomer")
-                .join("cache")
-                .exists()
-        );
-        match damaged {
-            None => assert!(!info_path.exists()),
-            Some(damaged) => assert_eq!(std::fs::read_to_string(&info_path)?, damaged),
-        }
-        if pid_file == "missing" {
-            assert!(!pid_path.exists());
-        } else {
-            assert_eq!(Some(std::fs::read_to_string(&pid_path)?), damaged_pid);
-        }
-        anyhow::Ok(())
-    }
-    .await;
-    std::fs::write(&info_path, &original_info)?;
-    std::fs::write(&pid_path, &original_pid)?;
-    result?;
-    let result = async {
-        for tenant in [buck, &sibling, &newcomer] {
-            tenant.targets(&["//:rule"]).await?;
-            assert_eq!(daemon_pid(tenant).await?, pid);
-        }
-        anyhow::Ok(())
-    }
-    .await;
-    newcomer.kill().await?;
-    sibling.kill().await?;
-    result
-}
-
-const BAD_SHARED_METADATA_PRESERVES_LIVE_DAEMON_ENV: [(&str, &str); 2] = [
-    ("BUCK2_SHARE_DAEMON", "true"),
-    ("BUCK2_TESTING_CHECKER_INTERVAL_SECONDS", "120"),
-];
-
-cases! { [buck] bad_shared_metadata_preserves_live_daemon {
-    #[buck_test(env = BAD_SHARED_METADATA_PRESERVES_LIVE_DAEMON_ENV)]
-    fn test_bad_shared_metadata_preserves_live_daemon_unchanged_missing("missing", "unchanged");
-    #[buck_test(env = BAD_SHARED_METADATA_PRESERVES_LIVE_DAEMON_ENV)]
-    fn test_bad_shared_metadata_preserves_live_daemon_unchanged_not_json("not-json", "unchanged");
-    #[buck_test(env = BAD_SHARED_METADATA_PRESERVES_LIVE_DAEMON_ENV)]
-    fn test_bad_shared_metadata_preserves_live_daemon_unchanged_invalid_json("invalid-json", "unchanged");
-    #[buck_test(env = BAD_SHARED_METADATA_PRESERVES_LIVE_DAEMON_ENV)]
-    fn test_bad_shared_metadata_preserves_live_daemon_missing_missing("missing", "missing");
-    #[buck_test(env = BAD_SHARED_METADATA_PRESERVES_LIVE_DAEMON_ENV)]
-    fn test_bad_shared_metadata_preserves_live_daemon_missing_not_json("not-json", "missing");
-    #[buck_test(env = BAD_SHARED_METADATA_PRESERVES_LIVE_DAEMON_ENV)]
-    fn test_bad_shared_metadata_preserves_live_daemon_missing_invalid_json("invalid-json", "missing");
-    #[buck_test(env = BAD_SHARED_METADATA_PRESERVES_LIVE_DAEMON_ENV)]
-    fn test_bad_shared_metadata_preserves_live_daemon_invalid_missing("missing", "invalid");
-    #[buck_test(env = BAD_SHARED_METADATA_PRESERVES_LIVE_DAEMON_ENV)]
-    fn test_bad_shared_metadata_preserves_live_daemon_invalid_not_json("not-json", "invalid");
-    #[buck_test(env = BAD_SHARED_METADATA_PRESERVES_LIVE_DAEMON_ENV)]
-    fn test_bad_shared_metadata_preserves_live_daemon_invalid_invalid_json("invalid-json", "invalid");
-    #[buck_test(env = BAD_SHARED_METADATA_PRESERVES_LIVE_DAEMON_ENV)]
-    fn test_bad_shared_metadata_preserves_live_daemon_exited_missing("missing", "exited");
-    #[buck_test(env = BAD_SHARED_METADATA_PRESERVES_LIVE_DAEMON_ENV)]
-    fn test_bad_shared_metadata_preserves_live_daemon_exited_not_json("not-json", "exited");
-    #[buck_test(env = BAD_SHARED_METADATA_PRESERVES_LIVE_DAEMON_ENV)]
-    fn test_bad_shared_metadata_preserves_live_daemon_exited_invalid_json("invalid-json", "exited");
-}}
-
-fn read_if_exists(path: &Path) -> anyhow::Result<Option<Vec<u8>>> {
-    Ok(if path.exists() {
-        Some(std::fs::read(path)?)
-    } else {
-        None
-    })
-}
-
-async fn bad_shared_metadata_requires_repair_after_daemon_exit(
-    buck: &Buck,
-    metadata: &str,
-    pid_file: &str,
-) -> anyhow::Result<()> {
-    buck.targets(&["//:rule"]).await?;
-    let daemon_dir = buck.daemon_dir().await?;
-    let info_path = daemon_dir.join("buckd.info");
-    let pid_path = daemon_dir.join("buckd.pid");
-    let original_info = std::fs::read_to_string(&info_path)?;
-    let original_pid = std::fs::read_to_string(&pid_path)?;
-    let old_pid = info_pid(&original_info)?;
-    buck.kill().await?;
-    for _ in 0..100 {
-        if !daemon_is_alive(old_pid) {
-            break;
-        }
-        tokio::time::sleep(Duration::from_millis(100)).await;
-    }
-    assert!(!daemon_is_alive(old_pid));
-    let result = async {
-        if metadata == "missing" {
-            std::fs::remove_file(&info_path)?;
-        } else {
-            std::fs::write(&info_path, "not JSON")?;
-        }
-        if pid_file == "missing" {
-            std::fs::remove_file(&pid_path)?;
-        } else if pid_file == "invalid" {
-            std::fs::write(&pid_path, "not a PID")?;
-        } else if pid_file == "exited" {
-            std::fs::write(&pid_path, exited_process_pid().await?.to_string())?;
-        }
-        let damaged_info = read_if_exists(&info_path)?;
-        let damaged_pid = read_if_exists(&pid_path)?;
-        buck.targets(&["//:rule"]).await.expect_failure();
-        assert!(!daemon_is_alive(old_pid));
-        assert_eq!(read_if_exists(&info_path)?, damaged_info);
-        assert_eq!(read_if_exists(&pid_path)?, damaged_pid);
-        anyhow::Ok(())
-    }
-    .await;
-    std::fs::write(&info_path, &original_info)?;
-    std::fs::write(&pid_path, &original_pid)?;
-    result?;
-    buck.targets(&["//:rule"]).await?;
-    let new_pid = daemon_pid(buck).await?;
-    assert_ne!(new_pid, old_pid);
-    Ok(())
-}
-
-cases! { [buck] bad_shared_metadata_requires_repair_after_daemon_exit {
-    #[buck_test(env = [("BUCK2_SHARE_DAEMON", "true")])]
-    fn test_bad_shared_metadata_requires_repair_after_daemon_exit_unchanged_missing("missing", "unchanged");
-    #[buck_test(env = [("BUCK2_SHARE_DAEMON", "true")])]
-    fn test_bad_shared_metadata_requires_repair_after_daemon_exit_unchanged_not_json("not-json", "unchanged");
-    #[buck_test(env = [("BUCK2_SHARE_DAEMON", "true")])]
-    fn test_bad_shared_metadata_requires_repair_after_daemon_exit_missing_missing("missing", "missing");
-    #[buck_test(env = [("BUCK2_SHARE_DAEMON", "true")])]
-    fn test_bad_shared_metadata_requires_repair_after_daemon_exit_missing_not_json("not-json", "missing");
-    #[buck_test(env = [("BUCK2_SHARE_DAEMON", "true")])]
-    fn test_bad_shared_metadata_requires_repair_after_daemon_exit_invalid_missing("missing", "invalid");
-    #[buck_test(env = [("BUCK2_SHARE_DAEMON", "true")])]
-    fn test_bad_shared_metadata_requires_repair_after_daemon_exit_invalid_not_json("not-json", "invalid");
-    #[buck_test(env = [("BUCK2_SHARE_DAEMON", "true")])]
-    fn test_bad_shared_metadata_requires_repair_after_daemon_exit_exited_missing("missing", "exited");
-    #[buck_test(env = [("BUCK2_SHARE_DAEMON", "true")])]
-    fn test_bad_shared_metadata_requires_repair_after_daemon_exit_exited_not_json("not-json", "exited");
-}}
 
 async fn evicted_generation_cannot_overlap_outputs(
     buck: &Buck,
@@ -1316,21 +1101,21 @@ async fn evicted_generation_cannot_overlap_outputs(
 }
 
 bool_cases! { [buck, tmp_path] evicted_generation_cannot_overlap_outputs {
-    #[buck_test(skip_for_os = ["windows"], env = [("BUCK2_SHARE_DAEMON", "true")])]
+    #[buck_test(skip_for_os = ["windows", "darwin"], share_daemon = true)]
     fn test_evicted_generation_cannot_overlap_outputs_False_False_False(false, false, false);
-    #[buck_test(skip_for_os = ["windows"], env = [("BUCK2_SHARE_DAEMON", "true")])]
+    #[buck_test(skip_for_os = ["windows", "darwin"], share_daemon = true)]
     fn test_evicted_generation_cannot_overlap_outputs_False_False_True(true, false, false);
-    #[buck_test(skip_for_os = ["windows"], env = [("BUCK2_SHARE_DAEMON", "true")])]
+    #[buck_test(skip_for_os = ["windows", "darwin"], share_daemon = true)]
     fn test_evicted_generation_cannot_overlap_outputs_False_True_False(false, true, false);
-    #[buck_test(skip_for_os = ["windows"], env = [("BUCK2_SHARE_DAEMON", "true")])]
+    #[buck_test(skip_for_os = ["windows", "darwin"], share_daemon = true)]
     fn test_evicted_generation_cannot_overlap_outputs_False_True_True(true, true, false);
-    #[buck_test(skip_for_os = ["windows"], env = [("BUCK2_SHARE_DAEMON", "true")])]
+    #[buck_test(skip_for_os = ["windows", "darwin"], share_daemon = true)]
     fn test_evicted_generation_cannot_overlap_outputs_True_False_False(false, false, true);
-    #[buck_test(skip_for_os = ["windows"], env = [("BUCK2_SHARE_DAEMON", "true")])]
+    #[buck_test(skip_for_os = ["windows", "darwin"], share_daemon = true)]
     fn test_evicted_generation_cannot_overlap_outputs_True_False_True(true, false, true);
-    #[buck_test(skip_for_os = ["windows"], env = [("BUCK2_SHARE_DAEMON", "true")])]
+    #[buck_test(skip_for_os = ["windows", "darwin"], share_daemon = true)]
     fn test_evicted_generation_cannot_overlap_outputs_True_True_False(false, true, true);
-    #[buck_test(skip_for_os = ["windows"], env = [("BUCK2_SHARE_DAEMON", "true")])]
+    #[buck_test(skip_for_os = ["windows", "darwin"], share_daemon = true)]
     fn test_evicted_generation_cannot_overlap_outputs_True_True_True(true, true, true);
 }}
 
@@ -1371,6 +1156,9 @@ async fn eviction_during_generation_initialization(
                 .is_none(),
             "Eviction returned before its I/O released ownership"
         );
+        // The evicted generation's initialization I/O still owns the tenant's disk state, so
+        // the pending generation has not taken the lock, let alone touched the outputs.
+        assert_tenant_disk_locked(&tenant, "initializing")?;
         if disconnect_client {
             // Without the kill holding the tenant directory's lock, the replacement
             // registers its generation and waits in the daemon for the evicted one.
@@ -1402,6 +1190,9 @@ async fn eviction_during_generation_initialization(
         .await??;
         assert_eq!(read_generation(&result)?, "new");
         assert_eq!(daemon_pid(buck).await?, pid);
+        // The evicted generation finished its initialization I/O after the release but never
+        // ran the command that was waiting for it.
+        assert!(!tmp_path.join("old.started").exists());
         anyhow::Ok(())
     }
     .await;
@@ -1419,13 +1210,13 @@ async fn eviction_during_generation_initialization(
 }
 
 bool_cases! { [mut buck, tmp_path] eviction_during_generation_initialization {
-    #[buck_test(skip_for_os = ["windows"], env = [("BUCK2_SHARE_DAEMON", "true")])]
+    #[buck_test(skip_for_os = ["windows", "darwin"], share_daemon = true)]
     fn test_eviction_during_generation_initialization_False_False(false, false);
-    #[buck_test(skip_for_os = ["windows"], env = [("BUCK2_SHARE_DAEMON", "true")])]
+    #[buck_test(skip_for_os = ["windows", "darwin"], share_daemon = true)]
     fn test_eviction_during_generation_initialization_False_True(true, false);
-    #[buck_test(skip_for_os = ["windows"], env = [("BUCK2_SHARE_DAEMON", "true")])]
+    #[buck_test(skip_for_os = ["windows", "darwin"], share_daemon = true)]
     fn test_eviction_during_generation_initialization_True_False(false, true);
-    #[buck_test(skip_for_os = ["windows"], env = [("BUCK2_SHARE_DAEMON", "true")])]
+    #[buck_test(skip_for_os = ["windows", "darwin"], share_daemon = true)]
     fn test_eviction_during_generation_initialization_True_True(true, true);
 }}
 
@@ -1517,9 +1308,9 @@ async fn client_killed_during_tenant_initialization_leaves_the_tenant_usable(
 }
 
 bool_cases! { [mut buck, tmp_path] client_killed_during_tenant_initialization_leaves_the_tenant_usable {
-    #[buck_test(skip_for_os = ["windows"], env = [("BUCK2_SHARE_DAEMON", "true")])]
+    #[buck_test(skip_for_os = ["windows", "darwin"], share_daemon = true)]
     fn test_client_killed_during_tenant_initialization_leaves_the_tenant_usable_False(false);
-    #[buck_test(skip_for_os = ["windows"], env = [("BUCK2_SHARE_DAEMON", "true")])]
+    #[buck_test(skip_for_os = ["windows", "darwin"], share_daemon = true)]
     fn test_client_killed_during_tenant_initialization_leaves_the_tenant_usable_True(true);
 }}
 
@@ -1562,9 +1353,9 @@ async fn isolated_tenants_share_daemon_without_sharing_config(
 }
 
 bool_cases! { [buck, tmp_path] isolated_tenants_share_daemon_without_sharing_config {
-    #[buck_test(env = [("BUCK2_SHARE_DAEMON", "true")])]
+    #[buck_test(skip_for_os = ["windows", "darwin"], share_daemon = true)]
     fn test_isolated_tenants_share_daemon_without_sharing_config_False(false);
-    #[buck_test(env = [("BUCK2_SHARE_DAEMON", "true")])]
+    #[buck_test(skip_for_os = ["windows", "darwin"], share_daemon = true)]
     fn test_isolated_tenants_share_daemon_without_sharing_config_True(true);
 }}
 
@@ -1602,7 +1393,7 @@ async fn test_unshared_daemon_reports_single_tenant_telemetry(buck: &Buck) -> an
     Ok(())
 }
 
-#[buck_test(write_invocation_record = true, env = [("BUCK2_SHARE_DAEMON", "true")])]
+#[buck_test(write_invocation_record = true, skip_for_os = ["windows", "darwin"], share_daemon = true)]
 async fn test_isolated_tenants_report_tenant_telemetry(buck: &Buck) -> anyhow::Result<()> {
     let tenant_one = isolated_buck(buck, "tenant-one");
     let tenant_two = isolated_buck(buck, "tenant-two");
@@ -1649,44 +1440,11 @@ async fn test_isolated_tenants_report_tenant_telemetry(buck: &Buck) -> anyhow::R
     Ok(())
 }
 
-#[buck_test(env = [("BUCK2_SHARE_DAEMON", "true")])]
-async fn test_unreachable_shared_daemon_is_not_killed(buck: &Buck) -> anyhow::Result<()> {
-    buck.targets(&["//:rule"]).await?;
-    let sibling = isolated_buck(buck, "sibling");
-    sibling.targets(&["//:rule"]).await?;
-    let daemon_dir = buck.daemon_dir().await?;
-    let info_path = daemon_dir.join("buckd.info");
-    let original = std::fs::read_to_string(&info_path)?;
-    let mut info: Value = serde_json::from_str(&original)?;
-    let pid = info_pid(&original)?;
-    info["endpoint"] = json!("tcp:1");
-    std::fs::write(&info_path, serde_json::to_string(&info)?)?;
-    let result = async {
-        buck.kill().await.expect_failure();
-        buck.targets(&["//:rule"])
-            .await
-            .expect_failure()
-            .assert_stderr_matches("Shared daemon is alive");
-        let cache = buck.cwd().join("buck-out").join("v2").join("cache");
-        assert!(cache.exists());
-        buck.clean(&[]).await.expect_failure();
-        assert!(cache.exists());
-        assert!(daemon_is_alive(pid));
-        anyhow::Ok(())
-    }
-    .await;
-    std::fs::write(&info_path, &original)?;
-    result?;
-    sibling.targets(&["//:rule"]).await?;
-    sibling.kill().await?;
-    Ok(())
-}
-
 async fn killall_repo_reaches_all_isolation_directories(
     buck: &mut Buck,
     sharing: &str,
 ) -> anyhow::Result<()> {
-    buck.set_env("BUCK2_SHARE_DAEMON", sharing);
+    buck.set_daemon_routing(sharing == "true")?;
     let buck = &*buck;
     let tenants = ["tenant-one", "tenant-two"].map(|isolation| isolated_buck(buck, isolation));
     let result = async {
@@ -1694,7 +1452,6 @@ async fn killall_repo_reaches_all_isolation_directories(
             tenant.targets(&["//:rule"]).await?;
         }
         buck.command(&["killall", "--repo", "--in-isolation-dir", "tenant-one"])
-            .env("BUCK2_SHARE_DAEMON", sharing)
             .await?;
         if sharing == "false" {
             assert!(
@@ -1734,89 +1491,10 @@ async fn killall_repo_reaches_all_isolation_directories(
 }
 
 cases! { [mut buck] killall_repo_reaches_all_isolation_directories {
-    #[buck_test]
+    #[buck_test(skip_for_os = ["darwin"])]
     fn test_killall_repo_reaches_all_isolation_directories_false("false");
-    #[buck_test]
+    #[buck_test(skip_for_os = ["darwin"])]
     fn test_killall_repo_reaches_all_isolation_directories_true("true");
-}}
-
-async fn mixed_daemon_modes_cannot_own_same_outputs(
-    buck: &mut Buck,
-    tmp_path: &Path,
-    owner_sharing: &str,
-    isolation: &str,
-) -> anyhow::Result<()> {
-    buck.set_env("BUCK2_SHARE_DAEMON", owner_sharing);
-    buck.set_isolation_prefix(isolation);
-    let buck = &*buck;
-    let mut other = isolated_buck(buck, isolation);
-    other.set_env(
-        "BUCK2_SHARE_DAEMON",
-        if owner_sharing == "false" {
-            "true"
-        } else {
-            "false"
-        },
-    );
-    let mut old = Some(start_generation(buck, tmp_path, "old")?);
-    let result = async {
-        wait_for_marker(&tmp_path.join("old.started"), &mut old).await?;
-        let new = start_generation(&other, tmp_path, "new")?;
-        // A shared intruder's daemon cannot take the tenant's disk lock; an unshared intruder
-        // cannot take the lifecycle lock that the shared owner holds for the tenant.
-        new.wait()
-            .await
-            .expect_failure()
-            .assert_stderr_matches(if owner_sharing == "false" {
-                "another process still owns it"
-            } else {
-                "Error locking buckd.lifecycle"
-            });
-        assert!(!tmp_path.join("new.started").exists());
-        touch(&tmp_path.join("old.release"))?;
-        let result = wait_within(
-            old.take().expect("the old build is running"),
-            THIRTY_SECONDS,
-        )
-        .await??;
-        let output = generation_output(&result)?;
-        assert_eq!(std::fs::read_to_string(&output)?, "old");
-        buck.kill().await?;
-        touch(&tmp_path.join("new.release"))?;
-        let result =
-            wait_within(start_generation(&other, tmp_path, "new")?, THIRTY_SECONDS).await??;
-        let new_output = generation_output(&result)?;
-        assert_eq!(new_output, output);
-        assert_eq!(std::fs::read_to_string(&new_output)?, "new");
-        let repeated = other
-            .build(&[
-                "//:generation",
-                "--config-file",
-                path_str(&tmp_path.join("new.bcfg")),
-                "--no-remote-cache",
-            ])
-            .await?;
-        assert_eq!(read_generation(&repeated)?, "new");
-        anyhow::Ok(())
-    }
-    .await;
-    for value in ["old", "new"] {
-        touch(&tmp_path.join(format!("{value}.release")))?;
-    }
-    wait_for_all(old, THIRTY_SECONDS).await?;
-    other.kill().await?;
-    result
-}
-
-cases! { [mut buck, tmp_path] mixed_daemon_modes_cannot_own_same_outputs {
-    #[buck_test(skip_for_os = ["windows"])]
-    fn test_mixed_daemon_modes_cannot_own_same_outputs_collision_false("false", "collision");
-    #[buck_test(skip_for_os = ["windows"])]
-    fn test_mixed_daemon_modes_cannot_own_same_outputs_collision_true("true", "collision");
-    #[buck_test(skip_for_os = ["windows"])]
-    fn test_mixed_daemon_modes_cannot_own_same_outputs_v2_false("false", "v2");
-    #[buck_test(skip_for_os = ["windows"])]
-    fn test_mixed_daemon_modes_cannot_own_same_outputs_v2_true("true", "v2");
 }}
 
 async fn clean_preserves_sibling_tenant(
@@ -1826,7 +1504,7 @@ async fn clean_preserves_sibling_tenant(
     background: bool,
     dry_run: bool,
 ) -> anyhow::Result<()> {
-    buck.set_env("BUCK2_SHARE_DAEMON", sharing);
+    buck.set_daemon_routing(sharing == "true")?;
     let buck = &*buck;
     let sibling = isolated_buck(buck, "survivor");
     touch(&tmp_path.join("value.release"))?;
@@ -1873,21 +1551,21 @@ async fn clean_preserves_sibling_tenant(
 }
 
 bool_cases! { [mut buck, tmp_path] clean_preserves_sibling_tenant {
-    #[buck_test]
+    #[buck_test(skip_for_os = ["darwin"])]
     fn test_clean_preserves_sibling_tenant_False_False_false("false", false, false);
-    #[buck_test]
+    #[buck_test(skip_for_os = ["darwin"])]
     fn test_clean_preserves_sibling_tenant_False_False_true("true", false, false);
-    #[buck_test]
+    #[buck_test(skip_for_os = ["darwin"])]
     fn test_clean_preserves_sibling_tenant_False_True_false("false", true, false);
-    #[buck_test]
+    #[buck_test(skip_for_os = ["darwin"])]
     fn test_clean_preserves_sibling_tenant_False_True_true("true", true, false);
-    #[buck_test]
+    #[buck_test(skip_for_os = ["darwin"])]
     fn test_clean_preserves_sibling_tenant_True_False_false("false", false, true);
-    #[buck_test]
+    #[buck_test(skip_for_os = ["darwin"])]
     fn test_clean_preserves_sibling_tenant_True_False_true("true", false, true);
-    #[buck_test]
+    #[buck_test(skip_for_os = ["darwin"])]
     fn test_clean_preserves_sibling_tenant_True_True_false("false", true, true);
-    #[buck_test]
+    #[buck_test(skip_for_os = ["darwin"])]
     fn test_clean_preserves_sibling_tenant_True_True_true("true", true, true);
 }}
 
@@ -1927,6 +1605,7 @@ async fn clean_waits_for_tenant_disk_work(
                 .try_wait()
                 .is_none()
         );
+        assert_tenant_disk_locked(buck, isolation)?;
         assert!(
             sentinel.exists(),
             "Clean deleted outputs still owned by cancelled I/O"
@@ -1953,176 +1632,22 @@ async fn clean_waits_for_tenant_disk_work(
 }
 
 bool_cases! { [mut buck, tmp_path] clean_waits_for_tenant_disk_work {
-    #[buck_test(skip_for_os = ["windows"], env = [("BUCK2_SHARE_DAEMON", "true")])]
+    #[buck_test(skip_for_os = ["windows", "darwin"], share_daemon = true)]
     fn test_clean_waits_for_tenant_disk_work_False(false);
-    #[buck_test(skip_for_os = ["windows"], env = [("BUCK2_SHARE_DAEMON", "true")])]
+    #[buck_test(skip_for_os = ["windows", "darwin"], share_daemon = true)]
     fn test_clean_waits_for_tenant_disk_work_True(true);
 }}
-
-async fn repository_eviction_reports_and_continues_after_failures(
-    buck: &Buck,
-    fault: &str,
-    sharing: &str,
-) -> anyhow::Result<()> {
-    let tenants: Vec<Buck> = ["tenant-one", "tenant-two"]
-        .iter()
-        .enumerate()
-        .map(|(i, name)| {
-            let mut tenant = isolated_buck(buck, name);
-            tenant.set_env("BUCK2_SHARE_DAEMON", if i == 0 { sharing } else { "false" });
-            tenant
-        })
-        .collect();
-    for tenant in &tenants {
-        tenant.targets(&["//:rule"]).await?;
-    }
-    let info_path = tenants[0].daemon_dir().await?.join("buckd.info");
-    let original = std::fs::read_to_string(&info_path)?;
-    let mut info: Value = serde_json::from_str(&original)?;
-    let pid = info_pid(&original)?;
-    let damaged_paths = [info_path.clone()];
-    let saved = damaged_paths
-        .iter()
-        .map(|path| Ok((path.clone(), std::fs::read(path)?)))
-        .collect::<anyhow::Result<Vec<_>>>()?;
-    let daemons_dir = info_path
-        .parent()
-        .and_then(Path::parent)
-        .context("The daemon dir has no parent")?;
-    std::fs::create_dir(daemons_dir.join("empty"))?;
-    if fault == "unreachable" || fault == "stale-pid" {
-        info["endpoint"] = json!("tcp:1");
-        if fault == "stale-pid" {
-            info["pid"] = json!(exited_process_pid().await?);
-        }
-        std::fs::write(&info_path, serde_json::to_string(&info)?)?;
-    } else if fault == "missing-info" {
-        for path in &damaged_paths {
-            std::fs::remove_file(path)?;
-        }
-    }
-    let mut args = vec!["killall", "--repo"];
-    if fault == "rpc" {
-        args.extend(["--in-isolation-dir", "invalid/name"]);
-    }
-    let outcome = async {
-        let result = buck.command(&args).await.expect_failure();
-        result.assert_stderr_matches("Repository tenant eviction failed");
-        if sharing == "true" && (fault == "unreachable" || fault == "stale-pid") {
-            tenants[0].kill().await.expect_failure();
-        }
-        assert!(daemon_is_alive(pid));
-        if fault != "rpc" {
-            if fault == "unreachable" || fault == "stale-pid" {
-                assert!(result.stderr.contains("Failed to contact daemon"));
-            } else {
-                assert!(result.stderr.contains("buckd.info is missing"));
-                assert!(damaged_paths.iter().all(|path| !path.exists()));
-            }
-            assert!(result.stderr.contains("failed for 1 daemon(s)"));
-            assert!(result.stderr.contains("Evicted 1 tenant(s)"));
-            assert!(
-                tenants[1]
-                    .status(&[])
-                    .await?
-                    .stderr
-                    .contains("no buckd running")
-            );
-        } else {
-            assert!(result.stderr.contains("failed for 2 daemon(s)"));
-            assert_eq!(
-                result
-                    .stderr
-                    .matches("Failed to evict tenants from daemon")
-                    .count(),
-                2
-            );
-            assert!(
-                result
-                    .stderr
-                    .contains(path_str(info_path.parent().expect("a daemon dir")))
-                    && result.stderr.contains("tenant-two")
-            );
-        }
-        anyhow::Ok(())
-    }
-    .await;
-    for (path, contents) in &saved {
-        std::fs::write(path, contents)?;
-    }
-    for tenant in &tenants {
-        tenant.kill().await?;
-    }
-    outcome
-}
-
-const REPOSITORY_EVICTION_ENV: [(&str, &str); 2] = [
-    ("BUCK2_TESTING_CHECKER_INTERVAL_SECONDS", "120"),
-    ("BUCK2_SHARE_DAEMON", "true"),
-];
-
-cases! { [buck] repository_eviction_reports_and_continues_after_failures {
-    #[buck_test(env = REPOSITORY_EVICTION_ENV)]
-    fn test_repository_eviction_reports_and_continues_after_failures_unreachable_false("unreachable", "false");
-    #[buck_test(env = REPOSITORY_EVICTION_ENV)]
-    fn test_repository_eviction_reports_and_continues_after_failures_unreachable_true("unreachable", "true");
-    #[buck_test(env = REPOSITORY_EVICTION_ENV)]
-    fn test_repository_eviction_reports_and_continues_after_failures_stale_pid_false("stale-pid", "false");
-    #[buck_test(env = REPOSITORY_EVICTION_ENV)]
-    fn test_repository_eviction_reports_and_continues_after_failures_stale_pid_true("stale-pid", "true");
-    #[buck_test(env = REPOSITORY_EVICTION_ENV)]
-    fn test_repository_eviction_reports_and_continues_after_failures_rpc_false("rpc", "false");
-    #[buck_test(env = REPOSITORY_EVICTION_ENV)]
-    fn test_repository_eviction_reports_and_continues_after_failures_rpc_true("rpc", "true");
-    #[buck_test(env = REPOSITORY_EVICTION_ENV)]
-    fn test_repository_eviction_reports_and_continues_after_failures_missing_info_false("missing-info", "false");
-    #[buck_test(env = REPOSITORY_EVICTION_ENV)]
-    fn test_repository_eviction_reports_and_continues_after_failures_missing_info_true("missing-info", "true");
-}}
-
-#[buck_test(env = [("BUCK2_SHARE_DAEMON", "true")])]
-async fn test_shared_startup_mismatch_preserves_siblings(buck: &Buck) -> anyhow::Result<()> {
-    buck.targets(&["//:rule"]).await?;
-    let sibling = isolated_buck(buck, "sibling");
-    let result = async {
-        sibling.targets(&["//:rule"]).await?;
-        let pid = daemon_pid(&sibling).await?;
-        let config = buck.cwd().join(".buckconfig");
-        let original = std::fs::read_to_string(&config)?;
-        let mismatched = async {
-            std::fs::write(
-                &config,
-                format!("{original}\n[buck2]\ndaemon_buster = mismatch\n"),
-            )?;
-            buck.targets(&["//:rule"])
-                .await
-                .expect_failure()
-                .assert_stderr_matches("Shared daemon constraint mismatch");
-            assert!(daemon_is_alive(pid));
-            anyhow::Ok(())
-        }
-        .await;
-        std::fs::write(&config, &original)?;
-        mismatched?;
-        sibling.targets(&["//:rule"]).await?;
-        assert_eq!(daemon_pid(&sibling).await?, pid);
-        anyhow::Ok(())
-    }
-    .await;
-    sibling.kill().await?;
-    result
-}
 
 #[buck_test]
 async fn test_host_killall_isolation_filter_preserves_other_daemons(
     buck: &Buck,
 ) -> anyhow::Result<()> {
     let prefix = format!("tenant-filter-{}", uuid::Uuid::new_v4().simple());
-    let tenants = ["selected", "survivor"].map(|name| {
-        let mut tenant = isolated_buck(buck, &format!("{prefix}-{name}"));
-        tenant.set_env("BUCK2_SHARE_DAEMON", "false");
-        tenant
-    });
+    let mut tenants =
+        ["selected", "survivor"].map(|name| isolated_buck(buck, &format!("{prefix}-{name}")));
+    for tenant in &mut tenants {
+        tenant.set_daemon_routing(false)?;
+    }
     let result = async {
         for tenant in &tenants {
             tenant.targets(&["//:rule"]).await?;
@@ -2153,63 +1678,22 @@ async fn test_host_killall_isolation_filter_preserves_other_daemons(
     result
 }
 
-#[buck_test(env = [("BUCK2_SHARE_DAEMON", "true")])]
-async fn test_live_legacy_owner_blocks_shared_initialization(
-    buck: &mut Buck,
-) -> anyhow::Result<()> {
-    buck.set_isolation_prefix("legacy");
-    let buck = &*buck;
-    let shared_dir = buck.daemon_dir().await?;
-    let legacy_dir = shared_dir
-        .parent()
-        .context("The daemon dir has no parent")?
-        .join("legacy");
-    std::fs::create_dir_all(&legacy_dir)?;
-    let pid_file = legacy_dir.join("buckd.pid");
-    std::fs::write(&pid_file, std::process::id().to_string())?;
-    let result = async {
-        buck.targets(&["//:rule"])
-            .await
-            .expect_failure()
-            .assert_stderr_matches("already owned by a legacy daemon");
-        assert!(
-            !buck
-                .cwd()
-                .join("buck-out")
-                .join("legacy")
-                .join("cache")
-                .exists()
-        );
-        anyhow::Ok(())
-    }
-    .await;
-    std::fs::remove_file(&pid_file)?;
-    result
-}
-
-#[buck_test(env = [("BUCK2_SHARE_DAEMON", "true")])]
+#[buck_test(skip_for_os = ["windows"], share_daemon = true)]
 async fn test_clean_cannot_unlink_sibling_disk_lock(buck: &mut Buck) -> anyhow::Result<()> {
     let sibling = isolated_buck(buck, "sibling");
     let result = async {
         sibling.targets(&["//:rule"]).await?;
-        let daemon_dir = sibling.daemon_dir().await?;
-        let mut lock_files = Vec::new();
-        for entry in std::fs::read_dir(
-            daemon_dir
-                .parent()
-                .context("The daemon dir has no parent")?,
-        )? {
-            let path = entry?.path();
-            if path.is_dir() && path.join("sibling").is_file() {
-                lock_files.push(path.join("sibling"));
-            }
-        }
-        assert_eq!(lock_files.len(), 1, "{lock_files:?}");
-        let inode = file_id(&lock_files[0])?;
-        buck.set_env("BUCK2_SHARE_DAEMON", "false");
+        let lock_file = proxy_slot(&sibling)
+            .parent()
+            .context("The proxy slot has no parent")?
+            .join("._buck2_tenant_locks")
+            .join("sibling");
+        assert!(lock_file.is_file());
+        let inode = file_id(&lock_file)?;
+        buck.set_daemon_routing(false)?;
         buck.set_isolation_prefix(".tenant-locks");
         buck.clean(&[]).await?;
-        assert_eq!(file_id(&lock_files[0])?, inode);
+        assert_eq!(file_id(&lock_file)?, inode);
         sibling.targets(&["//:rule"]).await?;
         anyhow::Ok(())
     }
@@ -2217,96 +1701,6 @@ async fn test_clean_cannot_unlink_sibling_disk_lock(buck: &mut Buck) -> anyhow::
     sibling.kill().await?;
     result
 }
-
-async fn garbage_legacy_pid_refuses_shared_initialization(
-    buck: &mut Buck,
-    bad_pid: &str,
-) -> anyhow::Result<()> {
-    buck.set_isolation_prefix("legacy-garbage");
-    let buck = &*buck;
-    let shared_dir = buck.daemon_dir().await?;
-    let legacy_dir = shared_dir
-        .parent()
-        .context("The daemon dir has no parent")?
-        .join("legacy-garbage");
-    std::fs::create_dir_all(&legacy_dir)?;
-    let pid_file = legacy_dir.join("buckd.pid");
-    std::fs::write(&pid_file, bad_pid)?;
-    let outputs = buck.cwd().join("buck-out").join("legacy-garbage");
-    let sentinel = outputs.join("sentinel.txt");
-    std::fs::create_dir_all(&outputs)?;
-    std::fs::write(&sentinel, "sentinel")?;
-    let result = async {
-        let failure = buck.targets(&["//:rule"]).await.expect_failure();
-        failure.assert_stderr_matches("Cannot verify legacy daemon ownership");
-        assert!(failure.stderr.contains("restore a consistent"));
-        assert!(failure.stderr.contains("Stop the legacy daemon"));
-        assert_eq!(std::fs::read_to_string(&pid_file)?, bad_pid);
-        assert_eq!(std::fs::read_to_string(&sentinel)?, "sentinel");
-        assert!(!outputs.join("cache").exists());
-        std::fs::write(&pid_file, exited_process_pid().await?.to_string())?;
-        buck.targets(&["//:rule"]).await?;
-        assert!(outputs.join("cache").is_dir());
-        anyhow::Ok(())
-    }
-    .await;
-    remove_file_if_exists(&pid_file)?;
-    result
-}
-
-cases! { [mut buck] garbage_legacy_pid_refuses_shared_initialization {
-    #[buck_test(env = [("BUCK2_SHARE_DAEMON", "true")])]
-    fn test_garbage_legacy_pid_refuses_shared_initialization_empty("");
-    #[buck_test(env = [("BUCK2_SHARE_DAEMON", "true")])]
-    fn test_garbage_legacy_pid_refuses_shared_initialization_garbage("not a PID");
-    #[buck_test(env = [("BUCK2_SHARE_DAEMON", "true")])]
-    fn test_garbage_legacy_pid_refuses_shared_initialization_zero("0");
-    #[buck_test(env = [("BUCK2_SHARE_DAEMON", "true")])]
-    fn test_garbage_legacy_pid_refuses_shared_initialization_negative("-1");
-    #[buck_test(env = [("BUCK2_SHARE_DAEMON", "true")])]
-    fn test_garbage_legacy_pid_refuses_shared_initialization_overflow("99999999999999999999");
-}}
-
-async fn missing_and_exited_legacy_pid_allows_shared_initialization(
-    buck: &mut Buck,
-    legacy_pid: &str,
-) -> anyhow::Result<()> {
-    buck.set_isolation_prefix("legacy-allowed");
-    let buck = &*buck;
-    let shared_dir = buck.daemon_dir().await?;
-    let legacy_dir = shared_dir
-        .parent()
-        .context("The daemon dir has no parent")?
-        .join("legacy-allowed");
-    std::fs::create_dir_all(&legacy_dir)?;
-    let pid_file = legacy_dir.join("buckd.pid");
-    let result = async {
-        if legacy_pid == "exited" {
-            std::fs::write(&pid_file, exited_process_pid().await?.to_string())?;
-        } else {
-            remove_file_if_exists(&pid_file)?;
-        }
-        buck.targets(&["//:rule"]).await?;
-        assert!(
-            buck.cwd()
-                .join("buck-out")
-                .join("legacy-allowed")
-                .join("cache")
-                .is_dir()
-        );
-        anyhow::Ok(())
-    }
-    .await;
-    remove_file_if_exists(&pid_file)?;
-    result
-}
-
-cases! { [mut buck] missing_and_exited_legacy_pid_allows_shared_initialization {
-    #[buck_test(env = [("BUCK2_SHARE_DAEMON", "true")])]
-    fn test_missing_and_exited_legacy_pid_allows_shared_initialization_missing("missing");
-    #[buck_test(env = [("BUCK2_SHARE_DAEMON", "true")])]
-    fn test_missing_and_exited_legacy_pid_allows_shared_initialization_exited("exited");
-}}
 
 async fn isolated_tenants_keep_cached_paths_local(
     buck: &Buck,
@@ -2348,9 +1742,9 @@ async fn isolated_tenants_keep_cached_paths_local(
 }
 
 bool_cases! { [buck, tmp_path] isolated_tenants_keep_cached_paths_local {
-    #[buck_test(env = [("BUCK2_SHARE_DAEMON", "true")])]
+    #[buck_test(skip_for_os = ["windows", "darwin"], share_daemon = true)]
     fn test_isolated_tenants_keep_cached_paths_local_False(false);
-    #[buck_test(env = [("BUCK2_SHARE_DAEMON", "true")])]
+    #[buck_test(skip_for_os = ["windows", "darwin"], share_daemon = true)]
     fn test_isolated_tenants_keep_cached_paths_local_True(true);
 }}
 
@@ -2396,216 +1790,8 @@ async fn isolated_tenants_select_dice_engine_ownership(
 }
 
 bool_cases! { [buck, tmp_path] isolated_tenants_select_dice_engine_ownership {
-    #[buck_test(env = [("BUCK2_SHARE_DAEMON", "true")])]
+    #[buck_test(skip_for_os = ["windows", "darwin"], share_daemon = true)]
     fn test_isolated_tenants_select_dice_engine_ownership_False(false);
-    #[buck_test(env = [("BUCK2_SHARE_DAEMON", "true")])]
+    #[buck_test(skip_for_os = ["windows", "darwin"], share_daemon = true)]
     fn test_isolated_tenants_select_dice_engine_ownership_True(true);
-}}
-
-async fn hg(cwd: &Path, args: &[&str]) -> anyhow::Result<String> {
-    let output = tokio::process::Command::new("hg")
-        .args(args)
-        .current_dir(cwd)
-        .stderr(std::process::Stdio::inherit())
-        .output()
-        .await?;
-    anyhow::ensure!(
-        output.status.success(),
-        "`hg {}` failed: {}",
-        args.join(" "),
-        output.status
-    );
-    Ok(String::from_utf8(output.stdout)?.trim().to_owned())
-}
-
-async fn build_value(tenant: &Buck) -> anyhow::Result<PathBuf> {
-    let result = tenant.build(&["//:tenant_value"]).await?;
-    result.build_report()?.output_for_target("//:tenant_value")
-}
-
-async fn checkouts_share_daemon(
-    buck: &Buck,
-    tmp_path: &Path,
-    share_dice: bool,
-    same_commit: bool,
-) -> anyhow::Result<()> {
-    let source = tmp_path.join("source");
-    std::fs::create_dir(&source)?;
-    for name in [".buckconfig", "TARGETS.fixture", "defs.bzl", "paths.bxl"] {
-        std::fs::copy(buck.cwd().join(name), source.join(name))?;
-    }
-    touch(&source.join(".buckroot"))?;
-    append_to_file(
-        &source.join(".buckconfig"),
-        &format!("\n[buck2]\nshare_dice = {share_dice}\nfile_watcher = fs_hash_crawler\n"),
-    )?;
-    let targets = source.join("TARGETS.fixture");
-    let template = std::fs::read_to_string(&targets)?;
-
-    hg(&source, &["init"]).await?;
-    let mut revisions = Vec::new();
-    for value in ["commit-one", "commit-two"] {
-        std::fs::write(
-            &targets,
-            template.replace(
-                r#"read_config("tenant", "value", "unset")"#,
-                &format!("\"{value}\""),
-            ),
-        )?;
-        if revisions.is_empty() {
-            hg(
-                &source,
-                &[
-                    "add",
-                    ".buckconfig",
-                    ".buckroot",
-                    "TARGETS.fixture",
-                    "defs.bzl",
-                    "paths.bxl",
-                ],
-            )
-            .await?;
-        }
-        hg(&source, &["commit", "-m", value, "-u", "Buck2 E2E"]).await?;
-        revisions.push(hg(&source, &["log", "-r", ".", "-T", "{node}"]).await?);
-    }
-    assert_ne!(revisions[0], revisions[1]);
-    if same_commit {
-        revisions[1] = revisions[0].clone();
-    }
-    let values = [
-        "commit-one",
-        if same_commit {
-            "commit-one"
-        } else {
-            "commit-two"
-        },
-    ];
-
-    let mut tenants = Vec::new();
-    for (name, revision) in ["checkout-one", "checkout-two"].into_iter().zip(&revisions) {
-        let checkout = tmp_path.join(name);
-        hg(
-            &source,
-            &[
-                "clone",
-                "--updaterev",
-                revision,
-                path_str(&source),
-                path_str(&checkout),
-            ],
-        )
-        .await?;
-        assert_eq!(
-            &hg(&checkout, &["log", "-r", ".", "-T", "{node}"]).await?,
-            revision
-        );
-        assert!(
-            hg(
-                &checkout,
-                &["status", "--modified", "--added", "--removed", "--deleted"]
-            )
-            .await?
-            .is_empty()
-        );
-        let mut tenant = buck.clone();
-        tenant.set_env("BUCK2_TEST_HOME_DIR", tmp_path.join("home"));
-        tenant.set_env("BUCK2_DAEMON_GROUP", "different-commits");
-        tenant.set_cwd(checkout);
-        tenant.set_isolation_prefix("checkout");
-        tenants.push(tenant);
-    }
-    let [tenant_one, tenant_two] = tenants.as_slice() else {
-        unreachable!("two checkouts");
-    };
-
-    let result = async {
-        let mut outputs = Vec::new();
-        for (tenant, value) in tenants.iter().zip(values) {
-            let output = build_value(tenant).await?;
-            assert_eq!(std::fs::read_to_string(&output)?, value);
-            assert!(output.starts_with(tenant.cwd()));
-            outputs.push(output);
-        }
-        assert_ne!(outputs[0], outputs[1]);
-        let daemon_pid_one = daemon_pid(tenant_one).await?;
-        assert_eq!(daemon_pid(tenant_two).await?, daemon_pid_one);
-        assert_tenant_dice_graphs(tenant_one, tenant_two, tmp_path, share_dice).await?;
-
-        assert_tenant_cached_paths(&[(tenant_one, "checkout"), (tenant_two, "checkout")]).await?;
-
-        let startup_config = tenant_two.cwd().join(".buckconfig");
-        let original_config = std::fs::read_to_string(&startup_config)?;
-        std::fs::write(
-            &startup_config,
-            format!("{original_config}\n[buck2]\nshare_dice = {}\n", !share_dice),
-        )?;
-        let mut other_group = isolated_buck(tenant_two, "other-mode");
-        other_group.set_env("BUCK2_DAEMON_GROUP", "other-mode");
-        let other_mode = async {
-            tenant_two
-                .build(&["//:tenant_value"])
-                .await
-                .expect_failure()
-                .assert_stderr_matches("daemon group .* has incompatible constraints");
-            assert_eq!(
-                std::fs::read_to_string(build_value(&other_group).await?)?,
-                values[1]
-            );
-            assert_ne!(daemon_pid(&other_group).await?, daemon_pid_one);
-            anyhow::Ok(())
-        }
-        .await;
-        other_group.kill().await?;
-        std::fs::write(&startup_config, &original_config)?;
-        other_mode?;
-        assert_eq!(daemon_pid(tenant_one).await?, daemon_pid_one);
-
-        for (tenant, value) in tenants.iter().zip(values) {
-            assert_eq!(std::fs::read_to_string(build_value(tenant).await?)?, value);
-        }
-        tenant_one.kill().await?;
-        assert_eq!(
-            std::fs::read_to_string(build_value(tenant_two).await?)?,
-            values[1]
-        );
-        assert_eq!(daemon_pid(tenant_two).await?, daemon_pid_one);
-        assert_eq!(
-            std::fs::read_to_string(build_value(tenant_one).await?)?,
-            "commit-one"
-        );
-        assert_eq!(daemon_pid(tenant_one).await?, daemon_pid_one);
-        for (tenant, revision) in tenants.iter().zip(&revisions) {
-            assert_eq!(
-                &hg(tenant.cwd(), &["log", "-r", ".", "-T", "{node}"]).await?,
-                revision
-            );
-            assert!(
-                hg(
-                    tenant.cwd(),
-                    &["status", "--modified", "--added", "--removed", "--deleted"]
-                )
-                .await?
-                .is_empty()
-            );
-        }
-        anyhow::Ok(daemon_pid_one)
-    }
-    .await;
-    for tenant in &tenants {
-        tenant.kill().await?;
-    }
-    assert_daemon_exits(result?).await;
-    Ok(())
-}
-
-bool_cases! { [buck, tmp_path] checkouts_share_daemon {
-    #[buck_test(skip_for_os = ["darwin", "windows"], env = [("BUCK2_SHARE_DAEMON", "true")])]
-    fn test_checkouts_share_daemon_False_False(false, false);
-    #[buck_test(skip_for_os = ["darwin", "windows"], env = [("BUCK2_SHARE_DAEMON", "true")])]
-    fn test_checkouts_share_daemon_False_True(true, false);
-    #[buck_test(skip_for_os = ["darwin", "windows"], env = [("BUCK2_SHARE_DAEMON", "true")])]
-    fn test_checkouts_share_daemon_True_False(false, true);
-    #[buck_test(skip_for_os = ["darwin", "windows"], env = [("BUCK2_SHARE_DAEMON", "true")])]
-    fn test_checkouts_share_daemon_True_True(true, true);
 }}

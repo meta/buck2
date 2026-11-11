@@ -106,10 +106,10 @@ async fn test_external_buckconfigs(buck: &Buck, tmp_path: &Path) -> anyhow::Resu
         extra_external_config(buck).as_str()
     );
     let values = external_path_configs["values"].as_array().unwrap();
-    assert_eq!(values.len(), 3);
+    assert_eq!(values.len(), 4);
 
-    // Our tests inject file_watcher and readonly_outputs to external configs in test setup
-    // stage
+    // Our tests inject file_watcher, readonly_outputs and share_daemon to external configs in
+    // test setup stage
     assert_config_value(
         &values[0],
         "buck2",
@@ -118,8 +118,9 @@ async fn test_external_buckconfigs(buck: &Buck, tmp_path: &Path) -> anyhow::Resu
         false,
     );
     assert_config_value(&values[1], "buck2", "readonly_outputs", "true", false);
+    assert_config_value(&values[2], "buck2", "share_daemon", "false", false);
     assert_config_value(
-        &values[2],
+        &values[3],
         "external_path_configs_section",
         "external_path_configs_key",
         "external_path_configs_value",
@@ -335,14 +336,18 @@ async fn test_log_external_configs(buck: &Buck) -> anyhow::Result<()> {
         .collect();
     let extra_external_config = extra_external_config(buck);
     let expected = [
-        // Our tests inject file_watcher and readonly_outputs to external configs in test setup
-        // stage
+        // Our tests inject file_watcher, readonly_outputs and share_daemon to external configs in
+        // test setup stage
         ExternalConfigsLog {
             descriptor: "buck2.file_watcher = fs_hash_crawler",
             origin: Some(&extra_external_config),
         },
         ExternalConfigsLog {
             descriptor: "buck2.readonly_outputs = true",
+            origin: Some(&extra_external_config),
+        },
+        ExternalConfigsLog {
+            descriptor: "buck2.share_daemon = false",
             origin: Some(&extra_external_config),
         },
         ExternalConfigsLog {
@@ -359,7 +364,7 @@ async fn test_log_external_configs(buck: &Buck) -> anyhow::Result<()> {
             origin: Some("cli"),
         },
     ];
-    assert_eq!(external_configs.len(), 5);
+    assert_eq!(external_configs.len(), 6);
 
     for (s, e) in external_configs.iter().zip(&expected) {
         assert_eq!(s.descriptor, e.descriptor);

@@ -28,6 +28,7 @@ use buck2_cli_proto::unstable_dice_dump_request::DiceDumpFormat;
 use buck2_common::cancellation::CancellationScope;
 use buck2_common::cas_digest::DigestAlgorithm;
 use buck2_common::cas_digest::DigestAlgorithmFamily;
+use buck2_common::daemon_routing::DaemonRouting;
 use buck2_common::ignores::ignore_set::IgnoreSet;
 use buck2_common::ignores::ignore_set::compute_ignore_set;
 use buck2_common::init::DaemonStartupConfig;
@@ -1109,6 +1110,8 @@ struct TenantStateRegistry {
     /// What last evicted each tenant key, reported by the next generation of that tenant.
     #[allocative(skip)]
     eviction_reasons: StdMutex<BuckMutMap<TenantKey, String>>,
+    /// Under daemon sharing a command must name a registered tenant generation.
+    unidaemon: bool,
 }
 
 /// A tenant generation in the registry whose state has not been initialized by the caller yet.
@@ -1207,7 +1210,7 @@ impl<T: Allocative> TenantStateSlot<T> {
 }
 
 impl TenantStateRegistry {
-    async fn new(initial_tenant: Arc<TenantState>) -> buck2_error::Result<Self> {
+    async fn new(initial_tenant: Arc<TenantState>, unidaemon: bool) -> buck2_error::Result<Self> {
         let spec = TenantSpec::from_tenant_paths(&initial_tenant.repo.paths);
         let disk_ownership = initial_tenant.disk_ownership.clone();
         let entry = Arc::new(TenantStateSlot::new(
@@ -1235,6 +1238,7 @@ impl TenantStateRegistry {
             draining: AtomicBool::new(false),
             evictions: StdMutex::new(BuckMutMap::default()),
             eviction_reasons: StdMutex::new(BuckMutMap::default()),
+            unidaemon,
         })
     }
 
@@ -1296,8 +1300,7 @@ impl TenantStateRegistry {
                     "The daemon is shutting down after its final tenant was evicted"
                 ));
             }
-            if buck2_common::invocation_paths::unidaemon_prototype_enabled()? && !allow_registration
-            {
+            if self.unidaemon && !allow_registration {
                 let current = tenants
                     .get(&key)
                     .ok_or_else(|| buck2_error!(ErrorTag::Input, "Tenant requires registration"))?;
@@ -1939,6 +1942,16 @@ impl DaemonStateData {
             .daemon_buck_settings()
     }
 
+    /// How clients select this daemon, fixed at startup.
+    pub(crate) fn routing(&self) -> &DaemonRouting {
+        &self
+            .tenant_state_factory
+            .init_ctx
+            .daemon_startup_config
+            .startup_options
+            .routing
+    }
+
     /// The metadata of an initialized tenant generation.
     pub(crate) fn proxy_metadata(
         &self,
@@ -2466,7 +2479,13 @@ impl DaemonState {
                 .daemon_buck_settings()
                 .package_visibility
                 .default_intersection();
-            let tenants = TenantStateRegistry::new(tenant).await?;
+            let unidaemon = tenant_state_factory
+                .init_ctx
+                .daemon_startup_config
+                .startup_options
+                .routing
+                .is_shared();
+            let tenants = TenantStateRegistry::new(tenant, unidaemon).await?;
             Ok(Arc::new(DaemonStateData {
                 tenants,
                 tenant_state_factory,

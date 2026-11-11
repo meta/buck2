@@ -489,12 +489,11 @@ fn kill_process(pid: u32, signal: Signal) -> anyhow::Result<()> {
 
 /// A client of the released buck2 the test target supplies as `BUCK2_TEST_LEGACY_BINARY`, routed
 /// without sharing, for the tenant's checkout and isolation.
-fn legacy_buck(tenant: &Buck, executable: &Path) -> Buck {
+fn legacy_buck(tenant: &Buck, executable: &Path) -> anyhow::Result<Buck> {
     let mut legacy = tenant.clone();
     legacy.set_executable(executable);
-    legacy.set_env("BUCK2_UNIDAEMON", "false");
-    legacy.set_env("BUCK2_SHARE_DAEMON", "false");
-    legacy
+    legacy.set_daemon_routing(false)?;
+    Ok(legacy)
 }
 
 /// The released buck2 the test target supplies as `BUCK2_TEST_LEGACY_BINARY`, as the harness
@@ -665,7 +664,7 @@ async fn unidaemon_loss_recovery_respects_legacy_slot_owner(
             &close,
         );
     }
-    let legacy = legacy_buck(&victim, &executable);
+    let legacy = legacy_buck(&victim, &executable)?;
     let mut transition = None;
     let result = async {
         tenants[1].build(&["//:tenant_value"]).await?;
@@ -736,7 +735,7 @@ async fn test_unidaemon_proxy_death_before_forwarding_kill(
         victim.build(&["//:tenant_value"]).await?;
         let daemon = daemon_pid(&victim).await?;
         let pid = proxy_pid(&victim)?;
-        let legacy = legacy_buck(&victim, &legacy_executable(buck, tmp_path)?);
+        let legacy = legacy_buck(&victim, &legacy_executable(buck, tmp_path)?)?;
         killing = Some(legacy.kill().spawn());
         wait_for_path(&tmp_path.join("before-forward.started")).await?;
         kill_process(pid, Signal::Kill)?;
@@ -1000,7 +999,7 @@ async fn unidaemon_eviction_fallback_terminates_writers(
     let cleaner = if compatible {
         victim.clone()
     } else {
-        legacy_buck(&victim, &legacy_executable(buck, &tmp_path)?)
+        legacy_buck(&victim, &legacy_executable(buck, &tmp_path)?)?
     };
     let cleaner = &cleaner;
     // A released client gives the proxy four seconds; this release's gives it eleven.
@@ -1136,7 +1135,7 @@ async fn test_unidaemon_legacy_client_build_kill_clean_and_return(
 ) -> anyhow::Result<()> {
     let executable = legacy_executable(buck, tmp_path)?;
     let tenants = unidaemon_checkouts(buck, tmp_path, false)?;
-    let legacy = legacy_buck(&tenants[0], &executable);
+    let legacy = legacy_buck(&tenants[0], &executable)?;
     let result = async {
         for tenant in &tenants {
             tenant.build(&["//:tenant_value"]).await?;
@@ -2088,6 +2087,116 @@ async fn test_unidaemon_exited_daemon_removes_its_namespace(
     }
     .await;
     let killed = tenant.kill().await;
+    result?;
+    killed?;
+    Ok(())
+}
+
+#[buck_test(data_dir = "test_daemon_data", skip_for_os = ["windows", "darwin"])]
+async fn test_commands_without_daemon_routing_work_under_sharing(
+    buck: &Buck,
+    tmp_path: &Path,
+) -> anyhow::Result<()> {
+    let tenant = unidaemon_checkouts(buck, tmp_path, false)?.swap_remove(0);
+    let result = async {
+        tenant.build(&["//:tenant_value"]).await?;
+        // These commands never select a daemon, so they skip the routing; none of them may
+        // depend on it.
+        tenant.root(&[]).await?;
+        tenant.root(&["--kind", "project"]).await?;
+        tenant.log(&["last"]).await?;
+        tenant.log(&["what-ran"]).await?;
+        tenant.debug(&["exe"]).await?;
+        tenant.debug(&["internal-version"]).await?;
+        tenant.help_env(&[]).await?;
+        anyhow::Ok(())
+    }
+    .await;
+    let killed = tenant.kill().await;
+    result?;
+    killed?;
+    Ok(())
+}
+
+#[buck_test(data_dir = "test_daemon_data", skip_for_os = ["windows", "darwin"])]
+async fn test_root_reports_shared_daemon_dir(buck: &Buck, tmp_path: &Path) -> anyhow::Result<()> {
+    let tenant = unidaemon_checkouts(buck, tmp_path, false)?.swap_remove(0);
+    let result = async {
+        tenant.build(&["//:tenant_value"]).await?;
+        let root = PathBuf::from(tenant.root(&["--kind", "daemon"]).await?.stdout.trim());
+        assert_eq!(root, tenant.daemon_dir().await?);
+        assert!(root.iter().any(|part| part == ".unidaemons"));
+        anyhow::Ok(())
+    }
+    .await;
+    let killed = tenant.kill().await;
+    result?;
+    killed?;
+    Ok(())
+}
+
+#[buck_test(data_dir = "test_daemon_data", skip_for_os = ["windows", "darwin"], share_daemon = true)]
+async fn test_killall_repo_reports_damaged_slot_metadata(buck: &Buck) -> anyhow::Result<()> {
+    let tenant = isolated_buck(buck, "tenant-one");
+    let result = async {
+        tenant.targets(&["//:rule"]).await?;
+        let slots = proxy_slot(&tenant)
+            .parent()
+            .context("The proxy slot has no parent")?
+            .to_path_buf();
+        // A pid of a process that exited, as a daemon that died while starting leaves, is
+        // debris; a live one without a record is an owner `killall` cannot reach.
+        let exited = slots.join("exited");
+        std::fs::create_dir(&exited)?;
+        std::fs::write(exited.join("buckd.pid"), "999999999")?;
+        let live = slots.join("live");
+        std::fs::create_dir(&live)?;
+        std::fs::write(live.join("buckd.pid"), std::process::id().to_string())?;
+        let failure = buck.command(&["killall", "--repo"]).await.expect_failure();
+        failure.assert_stderr_matches("Repository tenant eviction failed for 1 tenant");
+        assert!(
+            failure
+                .stderr
+                .contains(&format!("`{}`: its owner is running", live.display())),
+            "{}",
+            failure.stderr
+        );
+        assert!(!failure.stderr.contains(path_str(&exited)));
+        assert!(failure.stderr.contains("Evicted 1 tenant(s)"));
+        anyhow::Ok(())
+    }
+    .await;
+    let killed = tenant.kill().await;
+    result?;
+    killed?;
+    Ok(())
+}
+
+#[buck_test(data_dir = "test_daemon_data", skip_for_os = ["windows", "darwin"], share_daemon = true)]
+async fn test_killall_repo_evicts_remaining_tenants_after_a_failure(
+    buck: &Buck,
+) -> anyhow::Result<()> {
+    let tenants = ["tenant-one", "tenant-two"].map(|name| isolated_buck(buck, name));
+    let mut lock = None;
+    let result = async {
+        for tenant in &tenants {
+            tenant.targets(&["//:rule"]).await?;
+        }
+        let path = proxy_slot(&tenants[0]).join("buckd.lifecycle");
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o0))?;
+        lock = Some(path);
+        let failure = buck.command(&["killall", "--repo"]).await.expect_failure();
+        failure.assert_stderr_matches("Repository tenant eviction failed for 1 tenant");
+        assert!(failure.stderr.contains("Evicted 1 tenant(s)"));
+        let registered = debug_tenants(&tenants[0]).await?;
+        assert_eq!(isolations(&registered)?, ["tenant-one"]);
+        anyhow::Ok(())
+    }
+    .await;
+    if let Some(lock) = &lock {
+        std::fs::set_permissions(lock, std::fs::Permissions::from_mode(0o644))?;
+    }
+    let killed = kill_all(&tenants).await;
     result?;
     killed?;
     Ok(())

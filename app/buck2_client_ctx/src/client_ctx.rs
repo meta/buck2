@@ -24,7 +24,6 @@ use buck2_common::argv::Argv;
 use buck2_common::daemon_dir::DaemonDir;
 use buck2_common::init::LogDownloadMethod;
 use buck2_common::invocation_paths::InvocationPaths;
-use buck2_common::invocation_paths::unidaemon_prototype_enabled;
 use buck2_common::invocation_paths_result::InvocationPathsResult;
 use buck2_core::error::buck2_hard_error_env;
 use buck2_core::error::buck2_show_soft_errors_env;
@@ -203,7 +202,7 @@ impl<'a> ClientCommandContext<'a> {
     /// a running daemon has; a command that may start a daemon hashes again when it connects,
     /// with the trace-I/O state it was asked for, which can name another namespace.
     fn select_unidaemon_namespace(&self, paths: &InvocationPaths) -> buck2_error::Result<()> {
-        if paths.unidaemon_key().is_none() && unidaemon_prototype_enabled()? {
+        if paths.unidaemon_key().is_none() && paths.shares_daemon() {
             let constraints = DaemonConstraintsRequest::new(
                 self.immediate_config,
                 DesiredTraceIoState::Existing,
@@ -214,11 +213,11 @@ impl<'a> ClientCommandContext<'a> {
     }
 
     /// The directory of the daemon that serves this tenant, for commands that read it without
-    /// connecting. Under the unidaemon prototype that is the namespace the tenant's proxy reports,
+    /// connecting. Under daemon sharing that is the namespace the tenant's proxy reports,
     /// or, without a proxy, the namespace of this client's own constraints.
     pub async fn resolve_tenant_daemon_dir(&self) -> buck2_error::Result<DaemonDir> {
         let paths = self.paths()?;
-        if unidaemon_prototype_enabled()?
+        if paths.routing()?.is_shared()
             && let SlotOwner::Proxy(proxy) = probe_slot(paths).await?
         {
             paths.select_tenant_generation(proxy.generation);

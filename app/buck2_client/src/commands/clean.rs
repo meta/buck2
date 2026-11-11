@@ -18,7 +18,6 @@ use std::time::Duration;
 use std::time::Instant;
 
 use buck2_agent_interactive::Advice;
-use buck2_cli_proto::EvictTenantRequest;
 use buck2_client_ctx::client_ctx::BuckSubcommand;
 use buck2_client_ctx::client_ctx::ClientCommandContext;
 use buck2_client_ctx::common::BuckArgMatches;
@@ -27,8 +26,6 @@ use buck2_client_ctx::common::CommonEventLogOptions;
 use buck2_client_ctx::common::target_cfg::TargetCfgUnusedOptions;
 use buck2_client_ctx::common::ui::ConsoleType;
 use buck2_client_ctx::daemon::client::BuckdLifecycleLock;
-use buck2_client_ctx::daemon::client::connect::establish_connection_existing;
-use buck2_client_ctx::daemon::client::connect::shared_daemon_is_inactive;
 use buck2_client_ctx::daemon::client::kill::TenantShutdownCommand;
 use buck2_client_ctx::daemon::client::kill::kill_command_impl;
 use buck2_client_ctx::daemon::client::kill::kill_unidaemon_tenant;
@@ -39,7 +36,6 @@ use buck2_client_ctx::startup_deadline::StartupDeadline;
 use buck2_client_ctx::subscribers::superconsole::StatefulSuperConsole;
 use buck2_common::daemon_dir::DaemonDir;
 use buck2_common::invocation_paths::TenantDiskLock;
-use buck2_core::buck2_env;
 use buck2_error::BuckErrorContext;
 use buck2_error::ErrorTag;
 use buck2_fs::error::IoError;
@@ -63,7 +59,8 @@ use crate::commands::clean_stale::parse_clean_stale_args;
 ///
 /// The command also kills the buck2 daemon.
 ///
-/// With `BUCK2_SHARE_DAEMON=true`, it evicts the selected tenant from the shared daemon instead.
+/// Under daemon sharing (`buck2.share_daemon`), it evicts the selected tenant from the shared
+/// daemon instead.
 #[derive(Debug, clap::Parser)]
 pub struct CleanCommand {
     #[clap(
@@ -228,14 +225,15 @@ impl BuckSubcommand for InnerCleanCommand {
     ) -> ExitResult {
         let paths = ctx.paths()?;
         let buck_out_dir = paths.buck_out_path();
-        let prototype = buck2_common::invocation_paths::unidaemon_prototype_enabled()?;
-        let daemon_dir = if prototype {
+        let sharing = paths.routing()?.is_shared();
+        // A shared tenant's own directory holds its proxy; the shared daemon's namespace is not
+        // this tenant's to delete.
+        let daemon_dir = if sharing {
             paths.tenant_paths().unshared_daemon_dir()?
         } else {
             paths.daemon_dir()?
         };
-        let sharing = buck2_env!("BUCK2_SHARE_DAEMON", type=bool, default=false)?;
-        let metadata_to_clean = (!sharing || prototype).then(|| daemon_dir.clone());
+        let metadata_to_clean = Some(daemon_dir.clone());
         let trash_dir = paths.trash_dir();
         let console = &self.common_opts.console_opts.final_console();
 
@@ -259,47 +257,17 @@ impl BuckSubcommand for InnerCleanCommand {
 
         // Kill the daemon and make sure a new daemon does not spin up while we're performing clean up operations
         // This will ensure we have exclusive access to the directories in question
-        let lifecycle = if sharing && !prototype {
-            match establish_connection_existing(&daemon_dir).await {
-                Ok(client) => {
-                    client
-                        .to_connector()
-                        .with_flushing()
-                        .evict_tenant(
-                            EvictTenantRequest {
-                                context: Some(ctx.empty_client_context(Self::COMMAND_NAME)?),
-                                ..Default::default()
-                            },
-                            events_ctx,
-                        )
-                        .await?;
-                    None
-                }
-                Err(error) => {
-                    let lock = BuckdLifecycleLock::lock_with_timeout(
-                        daemon_dir.clone(),
-                        StartupDeadline::duration_from_now(Duration::from_secs(10))?,
-                    )
-                    .await?;
-                    if !shared_daemon_is_inactive(&daemon_dir).await? {
-                        return error.into();
-                    }
-                    Some(lock)
-                }
-            }
+        let lifecycle = BuckdLifecycleLock::lock_with_timeout(
+            daemon_dir.clone(),
+            StartupDeadline::duration_from_now(Duration::from_secs(10))?,
+        )
+        .await?;
+        if sharing {
+            kill_unidaemon_tenant(&lifecycle, TenantShutdownCommand::Clean, None).await?;
         } else {
-            let lock = BuckdLifecycleLock::lock_with_timeout(
-                daemon_dir.clone(),
-                StartupDeadline::duration_from_now(Duration::from_secs(10))?,
-            )
-            .await?;
-            if prototype {
-                kill_unidaemon_tenant(&lock, TenantShutdownCommand::Clean, None).await?;
-            } else {
-                kill_command_impl(&lock, "`buck2 clean` was invoked", false).await?;
-            }
-            Some(lock)
-        };
+            kill_command_impl(&lifecycle, "`buck2 clean` was invoked", false).await?;
+        }
+        let lifecycle = Some(lifecycle);
         let disk_lock = TenantDiskLock::acquire(&paths.tenant_paths(), Duration::from_secs(30))
             .await
             .buck_error_context("Waiting for tenant disk work to drain; no files were deleted")?;

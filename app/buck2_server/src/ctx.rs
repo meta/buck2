@@ -53,7 +53,6 @@ use buck2_common::file_ops::baseline::SetFileSystemBaseline;
 use buck2_common::file_ops::io::initialize_read_dir_cache;
 use buck2_common::http::SetHttpClient;
 use buck2_common::ignores::ignore_set::IgnoreSet;
-use buck2_common::invocation_paths::daemon_routing;
 use buck2_common::io::trace::TracingIoProvider;
 use buck2_common::legacy_configs::agent_context::AgentContextSchema;
 use buck2_common::legacy_configs::cells::BuckConfigBasedCells;
@@ -1547,7 +1546,10 @@ impl ServerCommandContextTrait for ServerCommandContext<'_> {
                 .initialized_tenant_count()
                 .to_string(),
         );
-        metadata.insert("daemon_routing".to_owned(), daemon_routing()?.to_owned());
+        metadata.insert(
+            "daemon_routing".to_owned(),
+            self.base_context.daemon.routing().name().to_owned(),
+        );
         if let Some(reason) = tenant_generation.take_started_reason() {
             metadata.insert("tenant_started_reason".to_owned(), reason.to_owned());
         }

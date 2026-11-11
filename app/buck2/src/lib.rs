@@ -55,6 +55,7 @@ use buck2_cmd_log_client::LogCommand;
 use buck2_cmd_rage_client::rage::RageCommand;
 use buck2_cmd_starlark_client::StarlarkCommand;
 use buck2_common::argv::Argv;
+use buck2_common::daemon_routing::DaemonRouting;
 use buck2_common::invocation_paths::RESERVED_BUCK_OUT_PREFIX;
 use buck2_common::invocation_paths_result::InvocationPathsResult;
 use buck2_common::invocation_roots::get_invocation_paths_result;
@@ -467,6 +468,33 @@ pub(crate) enum CommandKind {
 }
 
 impl CommandKind {
+    /// Whether the command may contact, start or manage a daemon, and so needs the daemon
+    /// routing from the root buckconfig. The daemon process takes its routing from its startup
+    /// config, and helpers such as the event-log uploaders run for every command; parsing the
+    /// root buckconfig in them would only cost time.
+    fn selects_daemon(&self) -> bool {
+        match self {
+            #[cfg(not(client_only))]
+            CommandKind::Daemon(_)
+            | CommandKind::Forkserver(_)
+            | CommandKind::InternalTestRunner(_) => false,
+            CommandKind::Root(root) => root.prints_daemon_dir(),
+            CommandKind::HelpEnv(_)
+            | CommandKind::Init(_)
+            | CommandKind::Completion(_)
+            | CommandKind::Log(_) => false,
+            CommandKind::Debug(
+                DebugCommand::PersistEventLogs(_)
+                | DebugCommand::UploadReLogs(_)
+                | DebugCommand::Exe(_)
+                | DebugCommand::InternalVersion(_)
+                | DebugCommand::ChromeTrace(_)
+                | DebugCommand::LogPerf(_),
+            ) => false,
+            _ => true,
+        }
+    }
+
     pub(crate) fn exec(
         self,
         process: ProcessContext<'_>,
@@ -478,6 +506,20 @@ impl CommandKind {
         let paths_result = get_invocation_paths_result(
             &process.shared.working_dir,
             common_opts.isolation_dir.clone(),
+            || {
+                if !self.selects_daemon() {
+                    return None;
+                }
+                Some(match immediate_config.daemon_startup_config() {
+                    // An in-process daemon serves this command alone.
+                    Ok(_) if common_opts.no_buckd => DaemonRouting::Unshared,
+                    Ok(config) => config.startup_options.routing,
+                    // Commands that need a daemon report this error when they build the startup
+                    // config; the others (`clean`, `kill`) keep working on the unshared paths, as
+                    // they did before routing was configurable.
+                    Err(_) => DaemonRouting::Unshared,
+                })
+            },
         );
 
         // Handle the daemon command earlier: it wants to fork, but the things we do below might
@@ -553,8 +595,10 @@ impl CommandKind {
                 if buck2_env!("BUCK_LOG")?.is_none() {
                     shared.log_reload_handle.update_log_filter("warn")?;
                 }
+                let mut daemon_startup_config = immediate_config.daemon_startup_config()?.clone();
+                daemon_startup_config.startup_options.routing = DaemonRouting::Unshared;
                 buck2_daemon::no_buckd::start_in_process_daemon(
-                    immediate_config.daemon_startup_config()?,
+                    &daemon_startup_config,
                     paths.clone().get_result()?,
                     runtime,
                 )?

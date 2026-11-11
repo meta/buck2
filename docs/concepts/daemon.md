@@ -23,53 +23,52 @@ file system that are specified in the `[project].ignore` setting of
 You can see detailed information about the status of the daemon by running
 `buck2 status`.
 
-## Experimental daemon sharing
+## Daemon sharing
 
-Daemon sharing is opt-in and off by default. `BUCK2_SHARE_DAEMON=true` lets
-tenants in different isolation directories share a daemon while retaining
-separate output and cache state.
+Daemon sharing is opt-in and off by default. `[buck2] share_daemon = true` in
+the root `.buckconfig` lets compatible tenants share one daemon while retaining
+separate output and cache state. The key accepts a hostname share such as
+`hostname:0.1`, which enables sharing on that fraction of hosts for A/B
+testing; every client of a host then agrees on its routing. Hosts that cannot
+run a shared daemon (today: anything but Linux, or a non-deferred materializer)
+keep one daemon per isolation directory whatever the share says, as does
+`--no-buckd`. The `daemon_routing` command metadata records the mode in use.
 
-In this mode `buck2 kill` evicts the selected `(project root, isolation
-directory)` tenant from the daemon and cancels its work. Eviction waits for
-cancellation and cleanup before returning. A later command can recreate the
-tenant only after the old generation releases its output and cache
-directories. Other tenants continue running; the daemon shuts down after its
-final tenant is evicted. `buck2 clean` uses the same ownership lock while
+A tenant is a `(project root, isolation directory)` pair. Clients select the
+shared daemon by a compatibility key, a BLAKE3 hash of the binary version, user
+version, startup configuration and trace-I/O mode, and the daemon's connection
+information lives in a namespace directory named by that key. Tenants with the
+same key share a daemon across isolation directories and across checkouts;
+a client whose key differs never sees that daemon's files. Each tenant also
+keeps a small proxy in its usual daemon directory whose authenticated Status
+and Kill methods represent the tenant, so a client of another release, old or
+new, evicts the tenant the way it kills any daemon, and then joins or starts a
+daemon for its own key. A client of the same release connects to the same proxy
+to learn which namespace and generation serve the tenant, and sends that
+generation with every command; the proxy's connection files are the only
+record of the tenant. Routing is a daemon startup setting, so a daemon only
+serves tenants routed the same way.
+
+`buck2 kill` evicts the selected tenant from the daemon and cancels its work.
+Eviction waits for cancellation and cleanup before returning. A later command
+can recreate the tenant only after the old generation releases its output and
+cache directories. Other tenants continue running; the daemon shuts down after
+its final tenant is evicted. `buck2 clean` uses the same ownership lock while
 deleting the selected tenant's state, and `buck2 killall --repo` evicts the
-repository's tenants instead of killing processes. Incompatible startup
-settings or binaries are reported without restarting the daemon; stop the
-affected daemon's tenants explicitly before changing these settings.
-
-### Shared daemons and tenant proxies
-
-With `BUCK2_SHARE_DAEMON=true`, `BUCK2_UNIDAEMON=true` enables discovery
-using a BLAKE3 hash of binary version, user version, startup configuration and
-trace-I/O mode. Matching tenants across checkouts select the same namespace.
-Changing compatibility settings moves the selected tenant to another process
-while its siblings remain usable. Leave `BUCK2_DAEMON_GROUP` unset.
-
-Sharing requires Linux and the deferred materializer. Set
-`materializer = deferred` in the `[buck2]` section of each test checkout's
-`.buckconfig`. Use a private daemon home
-with `BUCK2_TEST_HOME_DIR` when experimenting.
-
-A tenant's own daemon directory holds a small proxy whose authenticated Status
-and Kill methods represent that tenant to clients of every release. An older
-client kills it as it kills any daemon, which evicts the tenant. A newer client
-connects to it the same way to learn which namespace and generation serve the
-tenant, registers explicitly with the shared daemon, and sends its generation
-with every command. Migration and clean hold the legacy lifecycle lock while
-changing the directory's owner; a command that may start a daemon holds it until
-the daemon is up and releases it before registering, since the proxy publishes
-under it and the tenant then initializes. Eviction cancels tenant work and
-waits for its disk ownership to drain.
+repository's tenants instead of killing processes.
 
 Kill arms an independent daemon watchdog before acknowledgement. The proxy has
 its own fallback one second before the killing client's grace runs out: three
 seconds after a released client's Kill, longer for a client of this release,
 which gives the eviction its own budget. Failed eviction can terminate
-the entire unidaemon and its action descendants, including other tenants. After
-final-tenant eviction, the proxy waits for the unidaemon to exit before releasing
+the entire daemon and its action descendants, including other tenants. This is
+deliberate. Released clients do not know tenants exist: they start a daemon of
+their own over a tenant's outputs four seconds after asking the slot's owner to
+stop, or at once when that owner is dead. By then the shared daemon must have
+released those outputs or not be running, so an eviction that overruns its
+budget, a proxy that is lost, or an eviction the daemon cannot start ends the
+whole daemon rather than risk two daemons writing one buck-out. After
+final-tenant eviction, the proxy waits for the daemon to exit before releasing
 the slot. A monitoring socket verifies proxy identity before metadata publication.
 Unexpected liveness loss immediately retires and evicts the generation. After a
 crash or a broken liveness link, automatic recovery creates a fresh generation
@@ -79,19 +78,9 @@ retires and its connection files are removed, and the next command registers
 the tenant again. Normal Kill suppresses recovery. Kill and EOF share the first
 eviction's deadline; later notifications cannot extend it.
 
-Lifecycle outcomes are appended to `unidaemon-events.jsonl` in the parent of the
-legacy isolation directories. Records include eviction, verified forced exit,
+Lifecycle outcomes are appended to `unidaemon-events.jsonl` in the parent of
+the tenant daemon directories. Records include eviction, verified forced exit,
 proxy death and respawn; eviction timing starts when the proxy receives Kill.
-
-To also share across checkouts, set `BUCK2_DAEMON_GROUP` to the same name in
-each checkout. A group name must be a single valid filename component. Each
-tenant still uses its own checkout's files, configuration and outputs, so
-checkouts may stay on different commits.
-
-Daemon groups require compatible startup configuration and binary versions.
-An incompatible invocation fails without restarting the group's daemon.
-Use different group names for A/B instances with different startup settings,
-or evict all tenants in a group before changing those settings.
 
 `[buck2] share_dice = false` (the default) creates a separate DICE engine for
 each tenant. Setting it to `true` shares one engine within the daemon. Each
@@ -102,18 +91,15 @@ Watchman can use a shared mergebase when they have recorded the checkout's
 differences from it; watchers without that guarantee use a unique baseline.
 Artifact filesystem state also identifies the checkout's project root.
 
-The client selects this setting at daemon startup. It is part of the daemon
-configuration checked on connection. Changing it restarts an unshared daemon.
-A shared daemon reports the mismatch instead of restarting, so stop its tenants
-with `buck2 killall --repo` first; for a named group, choose a new group or
-evict its existing tenants.
+The client selects this setting at daemon startup. It is part of the
+compatibility key, so changing it selects another shared daemon.
 Command event logs include
 a `dice-sharing:true` or `dice-sharing:false` tag.
 
 Command metadata identifies the tenant a command ran against, so telemetry
 that used to key on `daemon_uuid` can key on a tenant instead:
 
-- `daemon_routing`: `unshared`, `shared`, `group`, or `unidaemon`.
+- `daemon_routing`: `unshared` or `shared`.
 - `tenant_id`: stable hash of the checkout root and isolation directory.
 - `tenant_generation`: the generation the command ran against. Generations come from one
   counter per daemon, so a recreated tenant gets a higher number, but numbers are not consecutive

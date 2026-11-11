@@ -117,6 +117,7 @@ mod tests {
     use buck2_fs::paths::file_name::FileNameBuf;
 
     use super::*;
+    use crate::daemon_routing::DaemonRouting;
     use crate::invocation_roots::InvocationRoots;
 
     fn paths(cwd: &str, isolation: &str) -> InvocationPaths {
@@ -138,6 +139,7 @@ mod tests {
             },
             FileNameBuf::try_from(isolation.to_owned())
                 .expect("test isolation should be a file name"),
+            Some(DaemonRouting::Unshared),
         )
     }
 

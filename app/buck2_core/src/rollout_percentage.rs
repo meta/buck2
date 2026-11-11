@@ -72,6 +72,13 @@ impl RolloutPercentage {
         }
     }
 
+    /// Whether every roll on one host answers the same. False for the `daemon:<value>` form,
+    /// which rolls afresh each time, so it cannot configure anything that several processes on
+    /// a host must agree on.
+    pub fn is_stable_per_host(&self) -> bool {
+        !matches!(self.inner, Inner::Rate(_))
+    }
+
     pub fn never() -> Self {
         Self::from_bool(false)
     }

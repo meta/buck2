@@ -14,6 +14,12 @@
     "value": "true"
   },
   {
+    "key": "share_daemon",
+    "origin": "tmp-path/extra.bcfg",
+    "section": "buck2",
+    "value": "false"
+  },
+  {
     "origin": "config-file",
     "path": "my_mode.bcfg"
   },

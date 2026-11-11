@@ -35,7 +35,6 @@ use buck2_common::init::DaemonStartupConfig;
 use buck2_common::invocation_paths::InvocationPaths;
 use buck2_common::invocation_paths::TenantDiskLock;
 use buck2_common::invocation_paths::UnidaemonLifetimeLock;
-use buck2_common::invocation_paths::unidaemon_prototype_enabled;
 use buck2_core::buck2_env;
 use buck2_core::soft_error_or_panic;
 use buck2_data::DaemonWasStartedReason;
@@ -167,17 +166,6 @@ impl ConstraintUnsatisfiedReason {
 
 impl DaemonConstraintsRequest {
     pub(crate) fn compatibility_key(&self) -> buck2_error::Result<DaemonCompatibilityKey> {
-        if self.daemon_startup_config.startup_options.unidaemon
-            && self
-                .daemon_startup_config
-                .startup_options
-                .runs_disk_state_materializer()
-        {
-            return Err(buck2_error!(
-                ErrorTag::Input,
-                "Daemon sharing currently requires the deferred materializer"
-            ));
-        }
         Ok(DaemonCompatibilityKey::new(
             &self.version,
             self.user_version.as_deref(),
@@ -482,7 +470,7 @@ impl<'a> BuckdLifecycle<'a> {
     }
 
     async fn clean_daemon_dir(&self) -> buck2_error::Result<()> {
-        if buck2_env!("BUCK2_SHARE_DAEMON", type=bool, default=false)?
+        if self.paths.routing()?.is_shared()
             && !daemon_dir_is_inactive(self.paths, self.lock.daemon_dir()).await?
         {
             return Err(if self.paths.unidaemon_key().is_some() {
@@ -861,6 +849,7 @@ impl BuckdChannel {
         let daemon_status = get_daemon_status(&mut client)
             .await
             .buck_error_context("Error obtaining daemon status")?;
+
         Ok(BootstrapBuckdClient {
             info,
             daemon_dir,
@@ -905,21 +894,21 @@ impl BootstrapBuckdClient {
         events_ctx: &'a mut EventsCtx,
     ) -> LocalBoxFuture<'a, buck2_error::Result<Self>> {
         Box::pin(async move {
-            let prototype = unidaemon_prototype_enabled()?;
-            let tenant_lifecycle =
-                if prototype && matches!(&options, BuckdConnectOptions::Options(_)) {
-                    Some(
-                        BuckdLifecycleLock::lock_with_timeout(
-                            paths.tenant_paths().unshared_daemon_dir()?,
-                            StartupDeadline::duration_from_now(buckd_startup_init_timeout()?)?,
-                        )
-                        .await?,
+            let shared = paths.routing()?.is_shared();
+            let tenant_lifecycle = if shared && matches!(&options, BuckdConnectOptions::Options(_))
+            {
+                Some(
+                    BuckdLifecycleLock::lock_with_timeout(
+                        paths.tenant_paths().unshared_daemon_dir()?,
+                        StartupDeadline::duration_from_now(buckd_startup_init_timeout()?)?,
                     )
-                } else {
-                    None
-                };
+                    .await?,
+                )
+            } else {
+                None
+            };
             let mut slot_daemon_id = None;
-            if prototype {
+            if shared {
                 let slot = probe_slot(paths).await?;
                 let key = match &mut options {
                     BuckdConnectOptions::ExistingOnly => match slot {
@@ -1334,14 +1323,6 @@ async fn establish_connection_inner(
                             Err(reason) => reason,
                         };
 
-                        if let Some(group) = paths.shared_daemon_group()? {
-                            return Err(BuckdConnectError::GroupConstraintMismatch {
-                                group: group.to_string(),
-                                reason,
-                            }
-                            .into());
-                        }
-
                         if is_nested_invocation(
                             get_possibly_nested_invocation_daemon_uuid().as_ref(),
                             &client.constraints,
@@ -1367,16 +1348,10 @@ async fn establish_connection_inner(
                             // generation and reset only that database.
                             return Ok(client);
                         }
+                        // A shared daemon's namespace is keyed by the compatibility key, so the
+                        // only mismatches a client meets there report unhealthy runtime state.
                         let corruption_restart = paths.unidaemon_key().is_some()
                             && matches!(reason, ConstraintUnsatisfiedReason::RejectDaemonId);
-                        if buck2_env!("BUCK2_SHARE_DAEMON", type=bool, default=false)?
-                            && !corruption_restart
-                        {
-                            return Err(buck2_error!(
-                                ErrorTag::Input,
-                                "Shared daemon constraint mismatch: {reason}. Stop its tenants with `buck2 killall --repo` before changing daemon startup settings or binaries."
-                            ));
-                        }
 
                         // A rejected daemon id reports process-wide state: the forkserver, the
                         // working directory and digest tracking are shared, as is DICE when
@@ -1417,7 +1392,7 @@ async fn establish_connection_inner(
                         reason.to_daemon_was_started_reason()
                     }
                     Err(reason) => {
-                        if buck2_env!("BUCK2_SHARE_DAEMON", type=bool, default=false)?
+                        if paths.routing()?.is_shared()
                             && match paths.unidaemon_key() {
                                 Some(key) => UnidaemonLifetimeLock::is_held(paths, &key).await?,
                                 None => buckd_info.may_be_running()?,
@@ -1440,7 +1415,7 @@ async fn establish_connection_inner(
                         // cmdline) before signalling, and any gap in that check is a
                         // cross-user kill primitive. Until that is designed carefully, we accept
                         // that these daemons cannot be removed from here.
-                        if !buck2_env!("BUCK2_SHARE_DAEMON", type=bool, default=false)? {
+                        if !paths.routing()?.is_shared() {
                             events_ctx
                                 .eprintln(&format!(
                                     "Could not connect to buck2 daemon ({}), killing daemon..",
@@ -1527,7 +1502,7 @@ async fn start_new_buckd_and_connect(
     // A previous daemon of this isolation directory may still be releasing its outputs, and the
     // new daemon cannot start until it has. A running `buck2 clean` holds the lifecycle lock, so
     // it has finished by now.
-    if !buck2_env!("BUCK2_SHARE_DAEMON", type=bool, default=false)? {
+    if !paths.routing()?.is_shared() {
         // All the remaining time: when the previous daemon was killed above, that is the half the
         // kill left.
         let wait =
@@ -1864,14 +1839,6 @@ enum BuckdConnectError {
     #[error("buck2 daemon constraint mismatch during nested invocation: {reason}")]
     #[buck2(tag = DaemonNestedConstraintsMismatch)]
     NestedConstraintMismatch { reason: ConstraintUnsatisfiedReason },
-    #[error(
-        "buck2 daemon group `{group}` has incompatible constraints: {reason}. Choose a different BUCK2_DAEMON_GROUP or stop the existing group's tenants before changing its daemon configuration."
-    )]
-    #[buck2(tag = Input)]
-    GroupConstraintMismatch {
-        group: String,
-        reason: ConstraintUnsatisfiedReason,
-    },
     #[error("buckd info {path} does not exist")]
     #[buck2(tag = BuckdInfoMissing)]
     BuckdInfoMissing { path: AbsNormPathBuf },
@@ -1955,12 +1922,9 @@ async fn daemon_connect_error(
 
         classify_server_stderr(error, &stderr, disk_near_full)
     };
-    if matches!(
-        buck2_env!("BUCK2_SHARE_DAEMON", type=bool, default=false),
-        Ok(true)
-    ) {
+    if paths.routing().is_ok_and(|routing| routing.is_shared()) {
         return error.context(
-            "Failed to connect to shared buck daemon. Restore consistent buckd.info and buckd.pid before retrying if metadata is damaged.",
+            "Failed to connect to the shared buck daemon. `buck2 killall` stops a daemon that is stuck.",
         );
     }
     let delete_command = if cfg!(windows) {

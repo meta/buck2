@@ -62,6 +62,11 @@ pub struct RootCommand {
 }
 
 impl RootCommand {
+    /// Whether this prints the daemon directory, which depends on the daemon routing.
+    pub fn prints_daemon_dir(&self) -> bool {
+        matches!(self.kind, RootKind::Daemon)
+    }
+
     pub fn exec(
         self,
         _matches: BuckArgMatches<'_>,

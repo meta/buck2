@@ -29,7 +29,6 @@ use buck2_common::daemon_dir::DaemonDir;
 use buck2_common::init::DaemonStartupConfig;
 use buck2_common::invocation_paths::InvocationPaths;
 use buck2_common::invocation_paths::UnidaemonLifetimeLock;
-use buck2_common::invocation_paths::unidaemon_prototype_enabled;
 use buck2_common::memory;
 use buck2_core::buck2_env;
 use buck2_core::logging::LogConfigurationReloadHandle;
@@ -326,7 +325,8 @@ impl DaemonCommand {
         if server_init_ctx
             .daemon_startup_config
             .startup_options
-            .unidaemon
+            .routing
+            .is_shared()
         {
             buck2_server::daemon::proxies::LAUNCH_PROXY.get_or_init(|| buck2_tenant_proxy::launch);
             buck2_server::daemon::proxies::RETIRE_PROXY.get_or_init(|| buck2_tenant_proxy::retire);
@@ -695,6 +695,10 @@ impl DaemonCommand {
         in_process: bool,
         ready: Box<dyn FnOnce() + Send>,
     ) -> buck2_error::Result<()> {
+        // The client that started this daemon chose its routing; serve under that choice even if
+        // the configuration changed since.
+        let paths = paths.with_routing(self.daemon_startup_config.startup_options.routing);
+        let unidaemon = paths.routing()?.is_shared();
         if let Some(pid) = self.unidaemon_reap {
             #[cfg(target_os = "linux")]
             {
@@ -733,7 +737,6 @@ impl DaemonCommand {
                 path.display()
             ));
         }
-        let unidaemon = unidaemon_prototype_enabled()?;
         if in_process && unidaemon {
             return Err(buck2_error!(
                 ErrorTag::Input,
@@ -887,6 +890,7 @@ mod tests {
     use buck2_cli_proto::PingRequest;
     use buck2_client_ctx::daemon::client::connect::new_daemon_api_client;
     use buck2_client_ctx::daemon_constraints::gen_daemon_constraints;
+    use buck2_common::daemon_routing::DaemonRouting;
     use buck2_common::init::DaemonStartupConfig;
     use buck2_common::invocation_paths::InvocationPaths;
     use buck2_common::invocation_roots::InvocationRoots;
@@ -927,6 +931,7 @@ mod tests {
                 cwd: ProjectRelativePath::empty().to_buf(),
             },
             FileNameBuf::try_from("v2".to_owned()).unwrap(),
+            Some(DaemonRouting::Unshared),
         );
 
         // NOTE: This disables the forkserver since it uses the current

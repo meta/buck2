@@ -1595,7 +1595,7 @@ impl DaemonApi for BuckdServer {
                 callers: req.callers,
             };
 
-            if buck2_common::invocation_paths::unidaemon_prototype_enabled()? {
+            if self.0.daemon_state.data().routing().is_shared() {
                 // A process-state rejection covers shared services. Retire all generations and
                 // revoke proxy recovery before acknowledging Kill; the watchdog also covers
                 // cleanup already in progress. Finer failure scopes can be handled separately.
@@ -2224,7 +2224,7 @@ impl DaemonApi for BuckdServer {
         // The watchdog stops the whole process tree, which is only a fallback for a shared
         // daemon; an unshared daemon's eviction is its shutdown.
         if let (Some(eviction), Some(timeout)) = (&eviction, timeout)
-            && buck2_common::invocation_paths::unidaemon_prototype_enabled().unwrap_or(false)
+            && self.0.daemon_state.data().routing().is_shared()
         {
             super::proxies::arm_tenant_eviction_watchdog(eviction, timeout);
         }

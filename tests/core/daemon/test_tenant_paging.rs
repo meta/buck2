@@ -152,7 +152,7 @@ async fn tenant_paging_storage_lifetime(
     let mut sibling = buck.clone();
     sibling.set_isolation_prefix("survivor");
     let mut other = buck.clone();
-    other.set_env("BUCK2_SHARE_DAEMON", "false");
+    other.set_daemon_routing(false)?;
     other.set_isolation_prefix("other");
     let result = async {
         assert_eq!(tenant_value(tenant, &initial_config).await?, "initial");
@@ -267,8 +267,8 @@ async fn tenant_paging_storage_lifetime(
 
 #[buck_test(
     data_dir = "test_daemon_data",
-    skip_for_os = ["windows"],
-    env = [("BUCK2_SHARE_DAEMON", "true")],
+    skip_for_os = ["windows", "darwin"],
+    share_daemon = true,
 )]
 #[expect(
     non_snake_case,
@@ -283,8 +283,8 @@ async fn test_tenant_paging_storage_lifetime_False(
 
 #[buck_test(
     data_dir = "test_daemon_data",
-    skip_for_os = ["windows"],
-    env = [("BUCK2_SHARE_DAEMON", "true")],
+    skip_for_os = ["windows", "darwin"],
+    share_daemon = true,
 )]
 #[expect(
     non_snake_case,

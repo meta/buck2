@@ -114,11 +114,12 @@ impl CheckoutPair {
         std::fs::write(
             &override_config,
             format!(
-                "{}\n[buck2]\nfile_watcher = {}\nallow_eden_io = {}\nuse_eden_thrift_read = true\nshare_dice = {}\n\n[smoke]\nstarted = {}\nrelease = {}\n",
+                "{}\n[buck2]\nfile_watcher = {}\nallow_eden_io = {}\nuse_eden_thrift_read = true\nshare_dice = {}\nshare_daemon = {}\n\n[smoke]\nstarted = {}\nrelease = {}\n",
                 std::fs::read_to_string(&current)?,
                 provider.config_name(),
                 provider == Provider::EdenFs,
                 mode == DaemonMode::SharedDice,
+                mode.unidaemon(),
                 workspace.join("writer.started").display(),
                 workspace.join("writer.release").display(),
             ),
@@ -147,8 +148,6 @@ impl CheckoutPair {
             tenant.set_isolation_prefix("tenant");
             tenant.set_env("BUCK2_TEST_HOME_DIR", workspace.join("home"));
             tenant.set_env("BUCK2_TEST_EXTRA_EXTERNAL_CONFIG", &override_config);
-            tenant.set_env("BUCK2_SHARE_DAEMON", mode.unidaemon().to_string());
-            tenant.set_env("BUCK2_UNIDAEMON", mode.unidaemon().to_string());
             tenants.push(tenant);
         }
         Ok(Self {

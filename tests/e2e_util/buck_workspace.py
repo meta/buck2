@@ -93,9 +93,6 @@ async def buck_fixture(  # noqa C901 : "too complex"
     # a test runs are not run by that daemon's actions and must not be nested in it.
     env.pop("BUCK2_DAEMON_UUID", None)
     env.pop("BUCK2_DAEMON_USER_VERSION", None)
-    env["BUCK2_SHARE_DAEMON"] = "false"
-    env["BUCK2_UNIDAEMON"] = "false"
-    env.pop("BUCK2_DAEMON_GROUP", None)
     env.pop("BUCK2_TEST_UNIDAEMON_EVICTION_GATE", None)
     env.pop("BUCK2_TEST_PROXY_BEFORE_EVICT", None)
     env.pop("BUCK2_TEST_PROXY_CLOSE_LIVENESS", None)
@@ -267,6 +264,8 @@ async def buck_fixture(  # noqa C901 : "too complex"
         # A target variant can run its suite against another materializer implementation;
         # see `buck2_core_tests`.
         materializer = os.environ.get("BUCK2_TEST_MATERIALIZER")
+        # Each test gets its own daemons; the Rust harness has the opt-in to sharing.
+        extra_config_lines.append(_daemon_routing_config(share_daemon=False))
         if materializer == "v2":
             # Every `MATERIALIZER_V2_ROLLOUT_VERSION` is at least 0.
             extra_config_lines.append("[buck2]\nmaterializer_v2_version = 0\n")
@@ -1170,6 +1169,15 @@ def env(key: str, value: str) -> Callable[..., Any]:
         return decorator(wrapped, fn)
 
     return inner_decorator
+
+
+_DAEMON_ROUTING_MARKER = "# daemon routing, appended by the test harness\n"
+
+
+def _daemon_routing_config(*, share_daemon: bool) -> str:
+    return (
+        f"{_DAEMON_ROUTING_MARKER}[buck2]\nshare_daemon = {str(share_daemon).lower()}\n"
+    )
 
 
 def windows_cmd_option(key: WindowsCmdOption, value: bool) -> Callable[..., Any]:

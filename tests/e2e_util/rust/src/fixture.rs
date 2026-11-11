@@ -28,6 +28,7 @@ use sha2::Digest;
 use sha2::Sha256;
 
 use crate::buck::Buck;
+use crate::buck::daemon_routing_config;
 use crate::eden::Eden;
 use crate::eden::run;
 use crate::macro_support::BoxFuture;
@@ -52,6 +53,7 @@ pub struct BuckTest {
     setup_eden: bool,
     disable_daemon_cgroup: bool,
     write_invocation_record: bool,
+    share_daemon: bool,
     env: Vec<(String, String)>,
 }
 
@@ -73,6 +75,7 @@ impl BuckTest {
             setup_eden: false,
             disable_daemon_cgroup: true,
             write_invocation_record: false,
+            share_daemon: false,
             env: Vec::new(),
         }
     }
@@ -162,6 +165,13 @@ impl BuckTest {
     }
 
     /// Has every command write an invocation record; see [`crate::BuckOutput::invocation_record`].
+    /// Routes the test's `buck` to the shared daemon of its repository; see
+    /// [`Buck::set_daemon_routing`].
+    pub fn share_daemon(mut self, share_daemon: bool) -> Self {
+        self.share_daemon = share_daemon;
+        self
+    }
+
     pub fn write_invocation_record(mut self, write_invocation_record: bool) -> Self {
         self.write_invocation_record = write_invocation_record;
         self
@@ -341,8 +351,6 @@ impl BuckTest {
             env.insert(key.into(), value.into());
         };
 
-        set("BUCK2_SHARE_DAEMON", "false");
-        set("BUCK2_UNIDAEMON", "false");
         if cfg!(windows) {
             set("CI", "true");
         } else {
@@ -380,7 +388,6 @@ impl BuckTest {
         // clients a test runs are not run by that daemon's actions and must not be nested in it.
         env.remove(OsStr::new("BUCK2_DAEMON_UUID"));
         env.remove(OsStr::new("BUCK2_DAEMON_USER_VERSION"));
-        env.remove(OsStr::new("BUCK2_DAEMON_GROUP"));
         // Windows uses blocking threads for subprocess I/O, so buck2 gets no limit.
         env.remove(OsStr::new("BUCK2_MAX_BLOCKING_THREADS"))
             .context("`BUCK2_MAX_BLOCKING_THREADS` is not set; the buck e2e test macros set it")?;
@@ -444,6 +451,8 @@ impl BuckTest {
 
         // Core tests run with read-only outputs, under either materializer.
         extra_config.push_str("[buck2]\nreadonly_outputs = true\n");
+        // Each test gets its own daemons unless it opts into sharing with `share_daemon`.
+        extra_config.push_str(&daemon_routing_config(false));
         // A target variant can run its suite against another materializer implementation; see
         // `buck2_core_tests`.
         let disk_state_materializer = match std::env::var("BUCK2_TEST_MATERIALIZER").ok().as_deref()
@@ -488,6 +497,9 @@ impl BuckTest {
         }
         for (key, value) in &self.env {
             buck.set_env(key, value);
+        }
+        if self.share_daemon {
+            buck.set_daemon_routing(true)?;
         }
         Ok(buck)
     }

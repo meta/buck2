@@ -20,7 +20,6 @@ use std::sync::Mutex;
 use std::time::Duration;
 
 use allocative::Allocative;
-use buck2_core::buck2_env;
 use buck2_core::fs::project::ProjectRoot;
 use buck2_core::fs::project_rel_path::ProjectRelativePath;
 use buck2_core::fs::project_rel_path::ProjectRelativePathBuf;
@@ -31,11 +30,10 @@ use buck2_fs::paths::file_name::FileName;
 use buck2_fs::paths::file_name::FileNameBuf;
 use buck2_fs::paths::forward_rel_path::ForwardRelativePath;
 pub use buck2_wrapper_common::DEFAULT_ISOLATION_DIR;
-use buck2_wrapper_common::kill::process_exists;
-use buck2_wrapper_common::pid::Pid;
 
 use crate::daemon_compatibility::DaemonCompatibilityKey;
 use crate::daemon_dir::DaemonDir;
+use crate::daemon_routing::DaemonRouting;
 use crate::invocation_roots::InvocationRoots;
 
 #[derive(Clone, Allocative)]
@@ -50,9 +48,9 @@ pub struct InvocationPaths {
     /// a tenant's on-disk state. This allows multiple isolated tenants to use the
     /// same project root.
     ///
-    /// With `BUCK2_SHARE_DAEMON=true`, daemon metadata is shared across isolation directories for
-    /// the same project. `BUCK2_DAEMON_GROUP` also shares metadata across project roots in that
-    /// group. The tenant's buck-out remains `<projectroot>/buck-out/<isolationdir>/`.
+    /// Under shared [`DaemonRouting`], the daemon serving the tenant lives in a namespace keyed by
+    /// the client's compatibility key, and this directory holds the tenant's proxy. The tenant's
+    /// buck-out remains `<projectroot>/buck-out/<isolationdir>/`.
     ///
     /// Any tenant-specific on-disk state from the daemon (including build outputs and similar)
     /// should only be written or read from directories that include this component.
@@ -68,6 +66,11 @@ pub struct InvocationPaths {
     ///    eventually are not allowed, the most pragmatic approach currently is to support them
     ///    but push them into isolated, temporary daemons.
     pub isolation: FileNameBuf,
+
+    /// How this invocation's client selects its daemon. Read from the root buckconfig before
+    /// any daemon is contacted, so every path that depends on it agrees across clients. `None`
+    /// for commands that never select a daemon, which then skip parsing the root buckconfig.
+    routing: Option<DaemonRouting>,
 }
 
 /// Paths whose lifetime is tied to a tenant rather than an individual invocation.
@@ -88,13 +91,7 @@ impl TenantPaths {
 
     /// A persistent lock file outside the tenant's disposable output and daemon directories.
     pub fn disk_ownership_lock_path(&self) -> buck2_error::Result<AbsNormPathBuf> {
-        let paths = InvocationPaths::new(
-            InvocationRoots {
-                project_root: self.project_root.clone(),
-                cwd: ProjectRelativePath::empty().to_buf(),
-            },
-            self.isolation.clone(),
-        );
+        let paths = self.unshared_invocation_paths();
         Ok(paths
             .project_daemon_dir()?
             .path
@@ -104,16 +101,23 @@ impl TenantPaths {
 
     /// The daemon directory used by clients without shared daemon routing.
     pub fn unshared_daemon_dir(&self) -> buck2_error::Result<DaemonDir> {
-        let paths = InvocationPaths::new(
+        let paths = self.unshared_invocation_paths();
+        Ok(DaemonDir {
+            path: paths.project_daemon_dir()?.path.join(&self.isolation),
+        })
+    }
+
+    /// Invocation paths for this tenant under unshared routing, for the paths that do not depend
+    /// on routing.
+    fn unshared_invocation_paths(&self) -> InvocationPaths {
+        InvocationPaths::new(
             InvocationRoots {
                 project_root: self.project_root.clone(),
                 cwd: ProjectRelativePath::empty().to_buf(),
             },
             self.isolation.clone(),
-        );
-        Ok(DaemonDir {
-            path: paths.project_daemon_dir()?.path.join(&self.isolation),
-        })
+            Some(DaemonRouting::Unshared),
+        )
     }
 
     /// Returns the tenant's project root.
@@ -308,8 +312,6 @@ impl UnidaemonLifetimeLock {
 pub struct TenantDiskLock {
     #[allocative(skip)]
     _file: File,
-    #[allocative(skip)]
-    _legacy_lifecycle: Option<File>,
 }
 
 /// Another process still owned a tenant's disk state when [`TenantDiskLock::wait_for`] stopped
@@ -337,36 +339,7 @@ impl TenantDiskLock {
     ) -> buck2_error::Result<Result<Self, TenantDiskStillOwned>> {
         tokio::time::timeout(timeout, async {
             loop {
-                if let Some(mut lock) = Self::try_acquire(paths).await? {
-                    if buck2_env!("BUCK2_SHARE_DAEMON", type=bool, default=false)?
-                        && !unidaemon_prototype_enabled()?
-                    {
-                        let legacy_dir = paths.unshared_daemon_dir()?;
-                        let Some(file) = Self::try_lock_file(&legacy_dir.path.join(FileName::unchecked_new("buckd.lifecycle"))).await? else {
-                            tokio::time::sleep(Duration::from_millis(50)).await;
-                            continue;
-                        };
-                        lock._legacy_lifecycle = Some(file);
-                        match tokio::fs::read_to_string(legacy_dir.buckd_pid()).await {
-                            Ok(pid) => {
-                                let trimmed = pid.trim();
-                                let raw: i64 = trimmed.parse().buck_error_context(format!(
-                                    "Cannot verify legacy daemon ownership at `{legacy_dir}`; refusing shared initialization. Garbage `buckd.pid` does not prove ownership ended. Stop the legacy daemon and restore a consistent `buckd.pid` before sharing."
-                                ))?;
-                                let legacy_pid = Pid::from_i64(raw).buck_error_context(format!(
-                                    "Cannot verify legacy daemon ownership at `{legacy_dir}`; refusing shared initialization. Invalid PID `{trimmed}` does not prove ownership ended. Stop the legacy daemon and restore a consistent `buckd.pid` before sharing."
-                                ))?;
-                                if process_exists(legacy_pid)? {
-                                    return Err(buck2_error::buck2_error!(
-                                        buck2_error::ErrorTag::Input,
-                                        "Tenant disk state is already owned by a legacy daemon at `{legacy_dir}`. Stop it before enabling daemon sharing."
-                                    ));
-                                }
-                            }
-                            Err(error) if error.kind() == ErrorKind::NotFound => {}
-                            Err(error) => return Err(error.into()),
-                        }
-                    }
+                if let Some(lock) = Self::try_acquire(paths).await? {
                     break buck2_error::Ok(lock);
                 }
                 tokio::time::sleep(Duration::from_millis(50)).await;
@@ -386,10 +359,7 @@ impl TenantDiskLock {
     async fn try_acquire(paths: &TenantPaths) -> buck2_error::Result<Option<Self>> {
         Ok(Self::try_lock_file(&paths.disk_ownership_lock_path()?)
             .await?
-            .map(|file| Self {
-                _file: file,
-                _legacy_lifecycle: None,
-            }))
+            .map(|file| Self { _file: file }))
     }
 
     async fn try_lock_file(path: &AbsNormPathBuf) -> buck2_error::Result<Option<File>> {
@@ -413,13 +383,37 @@ impl TenantDiskLock {
 }
 
 impl InvocationPaths {
-    pub fn new(roots: InvocationRoots, isolation: FileNameBuf) -> Self {
+    pub fn new(
+        roots: InvocationRoots,
+        isolation: FileNameBuf,
+        routing: Option<DaemonRouting>,
+    ) -> Self {
         Self {
             roots,
             isolation,
+            routing,
             daemon_compatibility: Arc::new(Mutex::new(None)),
             tenant_generation: Arc::new(Mutex::new(None)),
         }
+    }
+
+    /// The same paths under another routing, as a daemon applies the routing it was started with.
+    pub fn with_routing(self, routing: DaemonRouting) -> Self {
+        Self {
+            routing: Some(routing),
+            ..self
+        }
+    }
+
+    pub fn routing(&self) -> buck2_error::Result<DaemonRouting> {
+        self.routing
+            .internal_error("Daemon routing is not resolved for this command")
+    }
+
+    /// Whether this command addresses a shared daemon. A command that never selects a daemon
+    /// leaves routing unresolved and addresses none.
+    pub fn shares_daemon(&self) -> bool {
+        self.routing.is_some_and(|routing| routing.is_shared())
     }
 
     pub fn select_unidaemon(&self, key: DaemonCompatibilityKey) {
@@ -506,35 +500,9 @@ impl InvocationPaths {
         if let Some(key) = self.unidaemon_key() {
             return self.unidaemon_dir(&key);
         }
-        if let Some(group) = self.shared_daemon_group()? {
-            return Ok(DaemonDir {
-                path: self
-                    .roots
-                    .common_buckd_dir()?
-                    .join(FileName::unchecked_new(".groups"))
-                    .join(group)
-                    .join(FileName::unchecked_new(DEFAULT_ISOLATION_DIR)),
-            });
-        }
-        let isolation = if buck2_env!("BUCK2_SHARE_DAEMON", type=bool, default=false)? {
-            FileName::unchecked_new("._buck2_shared")
-        } else {
-            &self.isolation
-        };
         Ok(DaemonDir {
-            path: self.project_daemon_dir()?.path.join(isolation),
+            path: self.project_daemon_dir()?.path.join(&self.isolation),
         })
-    }
-
-    pub fn shared_daemon_group(&self) -> buck2_error::Result<Option<FileNameBuf>> {
-        // Groups only exist among shared daemons; without sharing the variable is ignored.
-        if !buck2_env!("BUCK2_SHARE_DAEMON", type=bool, default=false)? {
-            return Ok(None);
-        }
-        let Some(group) = buck2_env!("BUCK2_DAEMON_GROUP")? else {
-            return Ok(None);
-        };
-        Ok(Some(FileName::new(group)?.to_owned()))
     }
 
     pub fn project_root(&self) -> &ProjectRoot {
@@ -647,13 +615,11 @@ impl InvocationPaths {
     /// tenant, so it lives outside the tenant output directories; an unshared daemon runs in
     /// the tenant's buck-out.
     pub fn daemon_working_dir(&self) -> buck2_error::Result<AbsNormPathBuf> {
-        Ok(
-            if buck2_env!("BUCK2_SHARE_DAEMON", type=bool, default=false)? {
-                self.daemon_state_dir()
-            } else {
-                self.buck_out_path()
-            },
-        )
+        Ok(if self.routing()?.is_shared() {
+            self.daemon_state_dir()
+        } else {
+            self.buck_out_path()
+        })
     }
 
     /// Daemon-scoped paged DICE storage, outside every disposable tenant tree.
@@ -741,48 +707,6 @@ pub const UNIDAEMON_NAMESPACES_DIR: &str = ".unidaemons";
 /// Beside [`UNIDAEMON_NAMESPACES_DIR`]: the lifecycle locks of the namespaces, named by their key.
 pub const UNIDAEMON_LOCKS_DIR: &str = ".unidaemon_locks";
 
-/// How clients of this process select their daemon, as reported in command telemetry.
-///
-/// `unshared` is the one-daemon-per-isolation model. The others share one process across
-/// isolation directories, named groups of checkouts, or compatible checkouts respectively.
-pub fn daemon_routing() -> buck2_error::Result<&'static str> {
-    if unidaemon_prototype_enabled()? {
-        return Ok("unidaemon");
-    }
-    if !buck2_env!("BUCK2_SHARE_DAEMON", type=bool, default=false)? {
-        return Ok("unshared");
-    }
-    if buck2_env!("BUCK2_DAEMON_GROUP")?.is_some() {
-        return Ok("group");
-    }
-    Ok("shared")
-}
-
-pub fn unidaemon_prototype_enabled() -> buck2_error::Result<bool> {
-    if !buck2_env!("BUCK2_UNIDAEMON", type=bool, default=false)? {
-        return Ok(false);
-    }
-    if !cfg!(target_os = "linux") {
-        return Err(buck2_error::buck2_error!(
-            buck2_error::ErrorTag::Input,
-            "Daemon sharing currently requires Linux"
-        ));
-    }
-    if !buck2_env!("BUCK2_SHARE_DAEMON", type=bool, default=false)? {
-        return Err(buck2_error::buck2_error!(
-            buck2_error::ErrorTag::Input,
-            "BUCK2_UNIDAEMON requires BUCK2_SHARE_DAEMON=true"
-        ));
-    }
-    if buck2_env!("BUCK2_DAEMON_GROUP")?.is_some() {
-        return Err(buck2_error::buck2_error!(
-            buck2_error::ErrorTag::Input,
-            "BUCK2_UNIDAEMON selects groups by compatibility; unset BUCK2_DAEMON_GROUP"
-        ));
-    }
-    Ok(true)
-}
-
 #[cfg(test)]
 mod tests {
     use std::ffi::OsStr;
@@ -796,6 +720,7 @@ mod tests {
     use buck2_fs::paths::forward_rel_path::ForwardRelativePath;
 
     use crate::daemon_compatibility::DaemonCompatibilityKey;
+    use crate::daemon_routing::DaemonRouting;
     use crate::init::DaemonStartupConfig;
     use crate::invocation_paths::InvocationPaths;
     use crate::invocation_roots::InvocationRoots;
@@ -815,6 +740,7 @@ mod tests {
                 cwd: ProjectRelativePath::empty().to_buf(),
             },
             FileNameBuf::unchecked_new("isolation"),
+            Some(DaemonRouting::Unshared),
         );
 
         let expected_path = if cfg!(windows) {
@@ -835,12 +761,41 @@ mod tests {
         let other_paths = InvocationPaths::new(
             paths.roots.clone(),
             FileNameBuf::unchecked_new("other-isolation"),
+            Some(DaemonRouting::Unshared),
         );
         assert_ne!(
             paths.daemon_dir().unwrap().path,
             other_paths.daemon_dir().unwrap().path,
         );
         assert_ne!(paths.buck_out_path(), other_paths.buck_out_path());
+
+        // A shared daemon outlives any one tenant's buck-out, so it works outside them; until a
+        // namespace is selected, the tenant's own directory holds its proxy.
+        let shared = InvocationPaths::new(
+            paths.roots.clone(),
+            FileNameBuf::unchecked_new("isolation"),
+            Some(DaemonRouting::Shared),
+        );
+        assert_eq!(
+            shared.daemon_dir().unwrap().path,
+            paths.daemon_dir().unwrap().path
+        );
+        assert_eq!(
+            shared.daemon_working_dir().unwrap(),
+            shared.daemon_state_dir()
+        );
+        assert_eq!(paths.daemon_working_dir().unwrap(), paths.buck_out_path());
+
+        // Commands that never select a daemon leave routing unresolved; anything that depends on
+        // it reports that instead of guessing.
+        let unrouted = InvocationPaths::new(
+            paths.roots.clone(),
+            FileNameBuf::unchecked_new("isolation"),
+            None,
+        );
+        assert!(unrouted.routing().is_err());
+        assert!(unrouted.daemon_working_dir().is_err());
+        assert_eq!(unrouted.buck_out_path(), paths.buck_out_path());
 
         // A unidaemon directory depends on neither the checkout nor the isolation directory.
         let key = DaemonCompatibilityKey::new(

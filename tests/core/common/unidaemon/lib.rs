@@ -163,8 +163,7 @@ pub fn unidaemon_checkouts(
             tenant.set_cwd(checkout);
             tenant.set_isolation_prefix("tenant");
             tenant.set_env("BUCK2_TEST_HOME_DIR", tmp_path.join("home"));
-            tenant.set_env("BUCK2_SHARE_DAEMON", "true");
-            tenant.set_env("BUCK2_UNIDAEMON", "true");
+            tenant.set_daemon_routing(true)?;
             Ok(tenant)
         })
         .collect()

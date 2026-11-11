@@ -31,6 +31,7 @@ use dupe::Dupe;
 use serde::Deserialize;
 use serde::Serialize;
 
+use crate::daemon_routing::DaemonRouting;
 use crate::legacy_configs::configs::LegacyBuckConfig;
 use crate::legacy_configs::key::BuckconfigKeyRef;
 
@@ -501,8 +502,10 @@ pub struct DaemonStartupConfig {
 /// Any difference requires a new daemon; Buck Settings have a separate compatibility check.
 #[derive(Allocative, Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct DaemonStartupOptions {
+    /// How clients select this daemon; a daemon serves only tenants routed the same way.
+    /// Absent from the startup options of older daemons, which were all unshared.
     #[serde(default)]
-    pub unidaemon: bool,
+    pub routing: DaemonRouting,
     /// Share one DICE engine across isolated tenant roots for this daemon's lifetime.
     pub share_dice: bool,
     pub num_tokio_workers: Option<usize>,
@@ -576,18 +579,20 @@ impl DaemonStartupConfig {
             }
         };
 
+        let routing = DaemonRouting::from_config(config)?;
+        let shared = routing.is_shared();
         let startup_options = DaemonStartupOptions {
+            routing,
             share_dice: config
                 .parse(BuckconfigKeyRef {
                     section: "buck2",
                     property: "share_dice",
                 })?
                 .unwrap_or(false),
-            unidaemon: crate::invocation_paths::unidaemon_prototype_enabled()?,
             num_tokio_workers: settings.daemon.num_tokio_workers(&mut buckconfig)?,
             daemon_buster: {
                 let buster = settings.daemon.buster(&mut buckconfig)?;
-                if crate::invocation_paths::unidaemon_prototype_enabled()? {
+                if shared {
                     Some(format!("shared-daemon-v1:{}", buster.unwrap_or_default()))
                 } else {
                     buster
@@ -652,7 +657,7 @@ impl DaemonStartupConfig {
 
     pub fn testing_empty() -> Self {
         let startup_options = DaemonStartupOptions {
-            unidaemon: false,
+            routing: DaemonRouting::Unshared,
             share_dice: false,
             num_tokio_workers: None,
             daemon_buster: None,
@@ -711,6 +716,22 @@ mod tests {
         let deserialized = DaemonStartupConfig::deserialize(&serialized)?;
         assert_eq!(deserialized.startup_options, config.startup_options);
         assert_eq!(deserialized.daemon_buck_settings(), &settings.daemon);
+        Ok(())
+    }
+
+    #[test]
+    fn daemon_routing_is_a_daemon_startup_option() -> buck2_error::Result<()> {
+        let empty = parse(&[("config", "")], "config")?;
+        let unshared = DaemonStartupConfig::new(&empty, &DaemonBuckSettings::default(), false)?;
+        assert_eq!(unshared.startup_options.routing, DaemonRouting::Unshared);
+        let configured = parse(&[("config", "[buck2]\nshare_daemon = true")], "config")?;
+        let shared = DaemonStartupConfig::new(&configured, &DaemonBuckSettings::default(), false)?;
+        if cfg!(target_os = "linux") {
+            assert_eq!(shared.startup_options.routing, DaemonRouting::Shared);
+            assert_ne!(unshared.startup_options, shared.startup_options);
+        }
+        let deserialized = DaemonStartupConfig::deserialize(&shared.serialize()?)?;
+        assert_eq!(deserialized.startup_options, shared.startup_options);
         Ok(())
     }
 

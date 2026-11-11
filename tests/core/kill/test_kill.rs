@@ -29,7 +29,7 @@ fn sqlite_state_config() -> Vec<(&'static str, &'static str, &'static str)> {
 
 #[buck_test(
     extra_buck_config = sqlite_state_config(),
-    env = [("BUCK2_TEST_FAIL_BUCKD_AUTH", "true"), ("BUCK2_SHARE_DAEMON", "false")],
+    env = [("BUCK2_TEST_FAIL_BUCKD_AUTH", "true")],
 )]
 async fn test_kill_error(buck: &Buck) -> anyhow::Result<()> {
     // Performing a build should fail, since we will not be able to authenticate to the

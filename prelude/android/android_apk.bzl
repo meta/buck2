@@ -141,6 +141,7 @@ def android_apk_impl(ctx: AnalysisContext) -> list[Provider]:
         resource_id_map = resources_info.r_dot_txt,
         r_dot_java_packages = set([info.specified_r_dot_java_package for info in resources_info.unfiltered_resource_infos if info.specified_r_dot_java_package]),
         shared_libraries = set(native_library_info.shared_libraries),
+        shipped_merged_libs = native_library_info.shipped_merged_libs,
         # Merge map delegate
         native_library_merge_sequence = ctx.attrs.native_library_merge_sequence,
         native_library_merge_code_generator = ctx.attrs.native_library_merge_code_generator,

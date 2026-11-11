@@ -149,6 +149,7 @@ This will lead to overbuilding and is not supported. Configuration {} not found 
         filtered_deps_by_platform,
         prebuilt_native_library_dirs_to_exclude = apk_under_test_info.prebuilt_native_library_dirs if not is_self_instrumenting else set(),
         shared_libraries_to_exclude = apk_under_test_info.shared_libraries if not is_self_instrumenting else set(),
+        apk_under_test_shipped_merged_libs = apk_under_test_info.shipped_merged_libs if not is_self_instrumenting else None,
         native_library_merge_glue = apk_under_test_info.native_library_merge_glue,
         native_library_merge_code_generator = apk_under_test_info.native_library_merge_code_generator,
         native_library_merge_linker_args_all = apk_under_test_info.native_library_merge_linker_args_all,

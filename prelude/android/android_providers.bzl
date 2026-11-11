@@ -52,6 +52,7 @@ AndroidBinaryNativeLibsInfo = record(
     # Indicates which shared lib producing targets are included in the binary. Used by instrumentation tests
     # to exclude those from the test apk.
     shared_libraries = list[TargetLabel],
+    shipped_merged_libs = field(Artifact | None, None),
     exopackage_info = [ExopackageNativeInfo, None],
     root_module_native_lib_assets = list[Artifact],
     non_root_module_native_lib_assets = list[Artifact],
@@ -182,6 +183,7 @@ AndroidApkUnderTestInfo = provider(
         "resource_id_map": provider_field(Artifact | None, default = None),
         "r_dot_java_packages": provider_field(typing.Any, default = None),  # set(str)
         "shared_libraries": provider_field(typing.Any, default = None),  # set(TargetLabel)
+        "shipped_merged_libs": provider_field(Artifact | None, default = None),
         # Merge map delegate
         "native_library_merge_code_generator": provider_field(typing.Any, default = None),
         "native_library_merge_glue": provider_field(typing.Any, default = None),

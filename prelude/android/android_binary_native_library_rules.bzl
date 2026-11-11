@@ -133,16 +133,31 @@ _SYNTHESIZED_LIBRARY_LINKER_ARGS = "<synthesized>"
 #    module) are controlled by `package_voltron_asset_libraries` and `can_be_asset` flags.
 #    Similarly, the metadata for each module is stored at `assets/<module_name>/libs.txt`.
 
-def _merged_lib_provided_by_apk_under_test(merged_lib, shared_libraries_to_exclude: set) -> bool:
+def _merged_lib_provided_by_apk_under_test(soname: str, merged_lib, apk_under_test_shipped: dict[str, typing.Any]) -> bool:
     # True when every primary constituent of a merged library is provided by the
     # apk-under-test, so the instrumentation APK can drop its own copy and resolve
     # the library at runtime from the apk-under-test instead.
-    if not shared_libraries_to_exclude or not merged_lib.primary_constituents:
+    if soname not in apk_under_test_shipped or not merged_lib.primary_constituents:
         return False
-    for constituent in merged_lib.primary_constituents:
-        if constituent.raw_target() not in shared_libraries_to_exclude:
+    missing = {str(constituent.raw_target()): True for constituent in merged_lib.primary_constituents}
+    visited = {soname: True}
+    frontier = [soname]
+    for _ in range(len(apk_under_test_shipped)):
+        next_frontier = []
+        for name in frontier:
+            shipped_lib = apk_under_test_shipped[name]
+            for constituent in shipped_lib["constituents"]:
+                missing.pop(constituent, None)
+            if not missing:
+                return True
+            for dep in shipped_lib["deps"]:
+                if dep in apk_under_test_shipped and dep not in visited:
+                    visited[dep] = True
+                    next_frontier.append(dep)
+        if not next_frontier:
             return False
-    return True
+        frontier = next_frontier
+    return False
 
 # [relinked_libs] and [relinked_libs_manifest] when no relink is deferred: there is nothing to swap
 # in after packaging, so the step that does the swap (relinked_libs_combine_rule) copies its input.
@@ -225,6 +240,7 @@ def get_android_binary_native_library_info(
     apk_module_graph_file: Artifact | None = None,
     prebuilt_native_library_dirs_to_exclude: set[TargetLabel] = set(),
     shared_libraries_to_exclude: set[TargetLabel] = set(),
+    apk_under_test_shipped_merged_libs: Artifact | None = None,
     native_library_merge_sequence: list | None = None,
     native_library_merge_glue: dict | None = None,
     native_library_merge_map: dict | None = None,
@@ -413,6 +429,13 @@ def get_android_binary_native_library_info(
     if has_native_merging or enable_relinker:
         native_merge_debug = ctx.actions.declare_output("native_merge_debug", dir = True, has_content_based_path = False)
         dynamic_outputs.append(native_merge_debug)
+
+    shipped_merged_libs = None
+    if has_native_merging:
+        shipped_merged_libs = ctx.actions.declare_output("shipped_merged_libs.json", has_content_based_path = False)
+        dynamic_outputs.append(shipped_merged_libs)
+        if apk_under_test_shipped_merged_libs:
+            dynamic_inputs.append(apk_under_test_shipped_merged_libs)
 
     # Argsfiles referenced by [native_build_commands][compile] entries, attached as other_outputs
     # below. Keyed by the Artifact, not short_path: short_path is only the extension-based filename
@@ -705,27 +728,42 @@ def get_android_binary_native_library_info(
                     outputs[jni_onload_check_report],
                 )
 
-            # Merged libraries are assembled from the full linkable graph, so unlike the
-            # non-merging path (which filters via get_default_shared_libs) they do not
-            # otherwise honor shared_libraries_to_exclude. Drop any merged library whose
-            # primary constituents are all provided by the apk-under-test: re-emitting it
-            # would ship a duplicate merged .so that loads alongside the apk-under-test's
-            # copy in the instrumentation process and re-runs its link_whole static
-            # initializers. shared_libraries_to_exclude is empty for non-instrumentation
-            # binaries, so this is a no-op there.
+            apk_under_test_shipped = artifacts[apk_under_test_shipped_merged_libs].read_json() if apk_under_test_shipped_merged_libs else {}
+            dropped_by_platform = {
+                platform: [
+                    soname
+                    for soname, d in merged_shared_libs.items()
+                    if _merged_lib_provided_by_apk_under_test(soname, d, apk_under_test_shipped.get(platform, {}))
+                ]
+                for platform, merged_shared_libs in merged_shared_libs_by_platform.items()
+            }
             final_shared_libs_by_platform = {
-                platform: {
-                    soname: d.lib for soname, d in merged_shared_libs.items() if not _merged_lib_provided_by_apk_under_test(d, shared_libraries_to_exclude)
-                }
+                platform: {soname: d.lib for soname, d in merged_shared_libs.items() if soname not in dropped_by_platform[platform]}
                 for platform, merged_shared_libs in merged_shared_libs_by_platform.items()
             }
 
             # The libraries that ship still link against a dropped library, and
             # monogatorade's whole-app step linked it like any other.
             excluded_shared_libs_by_platform = {
-                platform: {soname: d.lib for soname, d in merged_shared_libs.items() if _merged_lib_provided_by_apk_under_test(d, shared_libraries_to_exclude)}
+                platform: {soname: d.lib for soname, d in merged_shared_libs.items() if soname in dropped_by_platform[platform]}
                 for platform, merged_shared_libs in merged_shared_libs_by_platform.items()
             }
+
+            excluded_resources = (getattr(ctx.attrs, "packaging_options", None) or {}).get("excluded_resources", [])
+            ctx.actions.write_json(
+                outputs[shipped_merged_libs],
+                {
+                    platform: {
+                        soname: {
+                            "constituents": [str(constituent.raw_target()) for constituent in d.primary_constituents],
+                            "deps": d.lib.shlib_deps or [],
+                        }
+                        for soname, d in merged_shared_libs.items()
+                        if soname in final_shared_libs_by_platform[platform] and soname not in excluded_resources and is_root_module(d.apk_module)
+                    }
+                    for platform, merged_shared_libs in merged_shared_libs_by_platform.items()
+                },
+            )
         elif enable_relinker:
             final_shared_libs_by_platform, native_library_merge_debug_outputs = _create_all_relinkable_links(
                 ctx,
@@ -1226,6 +1264,7 @@ def get_android_binary_native_library_info(
         shipped = AndroidBinaryNativeLibsInfo(
             prebuilt_native_library_dirs = all_prebuilt_native_library_dirs,
             shared_libraries = included_shared_lib_targets,
+            shipped_merged_libs = shipped_merged_libs,
             native_libs_for_primary_apk = [outs["native_libs"], outs["native_libs_always_in_primary_apk"]],
             exopackage_info = None,
             root_module_native_lib_assets = [
@@ -1242,6 +1281,7 @@ def get_android_binary_native_library_info(
     return AndroidBinaryNativeLibsInfo(
         prebuilt_native_library_dirs = all_prebuilt_native_library_dirs,
         shared_libraries = included_shared_lib_targets,
+        shipped_merged_libs = shipped_merged_libs,
         native_libs_for_primary_apk = native_libs_for_primary_apk,
         exopackage_info = exopackage_info,
         root_module_native_lib_assets = [native_lib_assets_for_primary_apk, stripped_native_linkable_assets_for_primary_apk, root_module_metadata_assets],

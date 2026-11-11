@@ -177,8 +177,8 @@ pub struct DiskStateMaterializer<T: IoHandler + Allocative + 'static = DefaultIo
     #[allocative(skip)]
     thread: Option<std::thread::JoinHandle<()>>,
     io: Arc<T>,
-    /// The BlobStore, whose stash the daemon attached: what it holds of a root is linked out of
-    /// it before the CAS is asked for the rest.
+    /// The BlobStore, whose stash the daemon attached: what it holds of a root, and no tracked
+    /// path does, is put on disk out of it before the CAS is asked for the rest.
     store: &'static BlobStore,
     /// Which tracked paths hold which file digests, the processor's to keep and the download
     /// tasks' to read (`index.rs`).
@@ -889,7 +889,7 @@ impl<T: IoHandler + Allocative> Materializer for DiskStateMaterializer<T> {
             return Ok(());
         }
         // The download of a content root with nothing excluded and no report at its end: what is
-        // there goes, and the content comes from the store, a tracked path or the CAS.
+        // there goes, and the content comes from a tracked path, the store or the CAS.
         download_task(
             self.io.dupe(),
             self.blocking_executor.dupe(),
@@ -1269,7 +1269,9 @@ impl RequestPlan {
 
 /// The IO of a content root this request has to write: whatever is there and not wanted goes,
 /// entry by entry where something under the root is excluded, and the rest is put there, file by
-/// file from the stash, then from a tracked path holding the same content, then from the CAS.
+/// file from a tracked path holding the same content, then from the store, then from the CAS.
+/// The tracked path comes first because it is read under a hold the processor grants, which
+/// nothing can take the file out from under; the store's files are the collector's to remove.
 fn download_task<T: IoHandler>(
     io: Arc<T>,
     blocking_executor: Arc<dyn BlockingExecutor>,
@@ -1299,32 +1301,7 @@ fn download_task<T: IoHandler>(
                 .map_err(SharedMaterializingError::Error)?;
 
             let mut served: Vec<ProjectRelativePathBuf> = Vec::new();
-            let (stashed, mut rest): (Vec<WantedFile>, Vec<WantedFile>) =
-                wanted_files(&root, &entry, &exclusions)
-                    .into_iter()
-                    .partition(|wanted| wanted.digest.stash().is_some());
-            if !stashed.is_empty() {
-                let answers = store
-                    .materialize(
-                        stashed
-                            .iter()
-                            .map(|wanted| FileToLink {
-                                digest: wanted.digest.dupe(),
-                                executable: wanted.executable,
-                                dest: io.fs().resolve(&wanted.path),
-                            })
-                            .collect(),
-                    )
-                    .await
-                    .map_err(SharedMaterializingError::Error)?;
-                for (wanted, answered) in stashed.into_iter().zip(answers) {
-                    if answered {
-                        served.push(wanted.path);
-                    } else {
-                        rest.push(wanted);
-                    }
-                }
-            }
+            let mut rest = wanted_files(&root, &entry, &exclusions);
             // Only what the index has a path for is worth a round trip to the processor: a
             // path holding the content, held for reading for the length of the copy. A hold
             // that never waits cannot close a cycle with the write lease this task runs under.
@@ -1341,23 +1318,23 @@ fn download_task<T: IoHandler>(
                     )
                     .await
                     .map_err(SharedMaterializingError::Error)?;
-                let copies: Vec<(WantedFile, ProjectRelativePathBuf, RootGuard)> = indexed
-                    .into_iter()
-                    .zip(sources)
-                    .filter_map(|(wanted, source)| {
-                        source.map(|(path, guard)| (wanted, path, guard))
-                    })
-                    .collect();
+                let mut copies: Vec<(WantedFile, ProjectRelativePathBuf, RootGuard)> = Vec::new();
+                for (wanted, source) in indexed.into_iter().zip(sources) {
+                    match source {
+                        Some((path, guard)) => copies.push((wanted, path, guard)),
+                        None => rest.push(wanted),
+                    }
+                }
                 if !copies.is_empty() {
                     let fs = io.fs().dupe();
-                    let copied = blocking_executor
+                    let (copied, missed) = blocking_executor
                         .execute_io_inline(move || {
-                            let mut copied = Vec::new();
+                            let (mut copied, mut missed) = (Vec::new(), Vec::new());
                             for (wanted, source, guard) in copies {
                                 match copy_from_disk(&fs, &source, &wanted.path, wanted.executable)
                                 {
                                     Ok(()) => copied.push(wanted.path),
-                                    // A miss: the CAS is asked.
+                                    // A miss: the store is asked, then the CAS.
                                     Err(e) => {
                                         buck2_core::soft_error_or_panic!(
                                             "disk_state_materializer_copy_failed",
@@ -1366,11 +1343,12 @@ fn download_task<T: IoHandler>(
                                                 wanted.path
                                             ))
                                         );
+                                        missed.push(wanted);
                                     }
                                 }
                                 drop(guard);
                             }
-                            Ok(copied)
+                            Ok((copied, missed))
                         })
                         .await
                         .map_err(SharedMaterializingError::Error)?;
@@ -1379,7 +1357,34 @@ fn download_task<T: IoHandler>(
                         .copied_from_disk
                         .fetch_add(copied.len() as u64, Ordering::Relaxed);
                     served.extend(copied);
+                    rest.extend(missed);
                 }
+            }
+            // What no tracked path gave and the store holds: a stash file, or a deferred write
+            // that has never been on disk.
+            let stashed: Vec<WantedFile> = rest
+                .extract_if(.., |wanted| wanted.digest.stash().is_some())
+                .collect();
+            if !stashed.is_empty() {
+                let answers = store
+                    .materialize(
+                        stashed
+                            .iter()
+                            .map(|wanted| FileToLink {
+                                digest: wanted.digest.dupe(),
+                                executable: wanted.executable,
+                                dest: io.fs().resolve(&wanted.path),
+                            })
+                            .collect(),
+                    )
+                    .await
+                    .map_err(SharedMaterializingError::Error)?;
+                served.extend(
+                    stashed
+                        .into_iter()
+                        .zip(answers)
+                        .filter_map(|(wanted, answered)| answered.then_some(wanted.path)),
+                );
             }
             if matches!(entry, DirectoryEntry::Leaf(_)) && !served.is_empty() {
                 return Ok(());

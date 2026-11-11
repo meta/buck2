@@ -1622,11 +1622,21 @@ async fn test_content_the_store_has_is_linked_rather_than_downloaded() -> buck2_
         assert!(dm.has_artifact_at(p).await?);
 
         // A directory with one file the store has and one it lacks: the served file is linked,
-        // and the structure and the other file are the CAS's.
+        // and the structure and the other file are the CAS's. Content of its own, which no
+        // tracked path holds.
+        let in_dir = b"from the store, in a directory";
+        let held_in_dir =
+            TrackedFileDigest::from_content(in_dir, CasDigestConfig::testing_default());
+        dm.store()
+            .insert_bytes(in_dir.to_vec(), &held_in_dir, false)
+            .await?;
         let d = path("buck-out/v2/gen/dir");
         materialize_ok(
             &dm,
-            vec![(d.clone(), dir(&[("a", "from the store"), ("b", "not")]))],
+            vec![(
+                d.clone(),
+                dir(&[("a", "from the store, in a directory"), ("b", "not")]),
+            )],
         )
         .await?;
         assert_eq!(io.take_log(), vec![(Op::Materialize, d.clone())]);
@@ -1635,8 +1645,9 @@ async fn test_content_the_store_has_is_linked_rather_than_downloaded() -> buck2_
                 temp.path()
                     .resolve(d.join(ForwardRelativePath::unchecked_new("a")))
             )?,
-            "from the store"
+            "from the store, in a directory"
         );
+        assert_eq!(dm.store().stats().served, 2);
         assert!(
             !temp
                 .path()
@@ -1649,8 +1660,7 @@ async fn test_content_the_store_has_is_linked_rather_than_downloaded() -> buck2_
     .await
 }
 
-/// Content tracked at another path is copied from there before the CAS is asked, when the stash
-/// does not have it: content the CAS holds, say, which the stash lets go of.
+/// Content tracked at another path comes from there, and the CAS is not asked.
 #[tokio::test]
 async fn test_content_tracked_elsewhere_is_copied_rather_than_downloaded() -> buck2_error::Result<()>
 {
@@ -1730,6 +1740,57 @@ async fn test_content_tracked_elsewhere_is_copied_rather_than_downloaded() -> bu
                 .resolve(d.join(ForwardRelativePath::unchecked_new("b")))
                 .exists()
         );
+        abort(dm);
+        Ok(())
+    })
+    .await
+}
+
+/// Content a tracked path holds comes from that path even where the store holds it too, and
+/// from the store when the path turns out not to have it.
+#[tokio::test]
+async fn test_a_tracked_path_is_asked_before_the_store() -> buck2_error::Result<()> {
+    ignore_stack_overflow_checks_for_future(async {
+        let temp = ProjectRootTemp::new()?;
+        let (dm, io) = make(temp.path(), None, None);
+        let out = path("buck-out/v2/gen/out");
+        // Held as the action's value holds it, so that the store keeps its copy.
+        let built = file("tracked, and in the store too");
+        drop(
+            write_and_report(
+                &dm,
+                temp.path(),
+                &out,
+                "tracked, and in the store too",
+                &built,
+            )
+            .await?,
+        );
+        let DirectoryEntry::Leaf(ActionDirectoryMember::File(metadata)) = built.entry() else {
+            panic!("a file");
+        };
+        assert!(metadata.digest.stash().is_some());
+
+        let second = path("buck-out/v2/gen/second");
+        materialize_ok(&dm, vec![(second.clone(), built.dupe())]).await?;
+        assert_eq!(io.take_log(), vec![]);
+        assert_eq!(
+            std::fs::read_to_string(temp.path().resolve(&second))?,
+            "tracked, and in the store too"
+        );
+        assert_eq!(dm.store().stats().served, 0);
+
+        // The first tracked path loses its file behind the core's back: the copy from it
+        // fails, which is a soft error, and the store gives the content.
+        std::fs::remove_file(temp.path().resolve(&out))?;
+        let third = path("buck-out/v2/gen/third");
+        materialize_ok(&dm, vec![(third.clone(), built.dupe())]).await?;
+        assert_eq!(io.take_log(), vec![]);
+        assert_eq!(
+            std::fs::read_to_string(temp.path().resolve(&third))?,
+            "tracked, and in the store too"
+        );
+        assert_eq!(dm.store().stats().served, 1);
         abort(dm);
         Ok(())
     })

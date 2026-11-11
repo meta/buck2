@@ -1236,4 +1236,25 @@ mod tests {
         };
         assert_eq!(reported(2, Some(host_swap)), Some(50_000));
     }
+
+    #[test]
+    fn test_reports_page_cache_and_swap_failures() {
+        let (mut scheduler, timeline) = TestTimeline::new();
+        let (event_tx, mut event_rx) = mpsc::unbounded_channel();
+        scheduler.command_started(event_tx);
+        scheduler.update(
+            MemoryReading {
+                allprocs_page_cache: 3_000,
+                allprocs_page_cache_active: 2_000,
+                allprocs_swap_failures: 7,
+                ..MemoryReading::zero()
+            },
+            UpdateBuilder::new().build(),
+            timeline.secs(1),
+        );
+        let event = event_rx.try_recv().unwrap().complete(&TraceId::new());
+        assert_eq!(event.allprocs_page_cache, 3_000);
+        assert_eq!(event.allprocs_page_cache_active, 2_000);
+        assert_eq!(event.allprocs_swap_failures, 7);
+    }
 }

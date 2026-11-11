@@ -1182,6 +1182,15 @@ message ResourceControlEvent {
   uint64 allprocs_memory_current = 6;
   uint64 allprocs_memory_pressure = 7;
   uint64 allprocs_memory_swap_current = 12;
+  // The part of `allprocs_memory_current` that is page cache which the kernel
+  // can drop
+  uint64 allprocs_page_cache = 20;
+  // The part of `allprocs_page_cache` that the kernel has seen in repeated use,
+  // which it drops last
+  uint64 allprocs_page_cache_active = 21;
+  // How many times so far the kernel wanted to move memory of these processes
+  // to swap and couldn't
+  uint64 allprocs_swap_failures = 22;
 
   // Memory information regarding the buck2 daemon cgroup
   uint64 daemon_memory_current = 17;

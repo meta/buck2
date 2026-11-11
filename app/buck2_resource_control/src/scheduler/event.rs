@@ -162,6 +162,9 @@ impl ResourceControlEventMostly {
 
             allprocs_memory_current: self.memory_reading.allprocs_memory_current,
             allprocs_memory_swap_current: self.memory_reading.allprocs_swap_current,
+            allprocs_page_cache: self.memory_reading.allprocs_page_cache,
+            allprocs_page_cache_active: self.memory_reading.allprocs_page_cache_active,
+            allprocs_swap_failures: self.memory_reading.allprocs_swap_failures,
             allprocs_memory_pressure: self.memory_reading.allprocs_memory_pressure.round() as u64,
 
             daemon_memory_current: self.memory_reading.daemon_memory_current,

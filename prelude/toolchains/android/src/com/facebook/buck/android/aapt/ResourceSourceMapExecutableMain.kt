@@ -27,7 +27,7 @@ import java.util.concurrent.Executors
 import org.kohsuke.args4j.CmdLineParser
 import org.kohsuke.args4j.Option
 
-/** Builds source provenance for the resources packaged into a Robolectric test. */
+/** Builds source provenance for resources packaged into an Android test target. */
 object ResourceSourceMapExecutableMain {
   private const val MAX_RESOURCE_WORKERS = 8
 
@@ -39,7 +39,7 @@ object ResourceSourceMapExecutableMain {
     } catch (failure: Throwable) {
       if (failure is VirtualMachineError || failure is ThreadDeath) throw failure
       System.err.println(
-          "Robolectric resource source-map generation failed; " +
+          "Android resource source-map generation failed; " +
               "continuing coverage with resource attribution disabled.",
       )
       failure.printStackTrace(System.err)
@@ -155,42 +155,64 @@ object ResourceSourceMapExecutableMain {
     val sourceFiles =
         file.sourceResolver?.resolve(file.relative).orEmpty().ifEmpty { listOf(file.path) }
     try {
-      return resourceLines(root, file, sourceFiles)
+      val sources = sourceFiles.map { sourcePath(root, it, file.ownerBuildFile) }.distinct()
+      val lines = ArrayList<String>()
+      sources.forEach { source ->
+        lines.add(
+            ResourceSourceMapFormat.FileRow(
+                    file.priority,
+                    "res/${PathFormatter.pathWithUnixSeparators(file.relative)}",
+                    source,
+                    file.ownerBuildFile,
+                )
+                .serialize(),
+        )
+      }
+      lines.addAll(resourceSymbolLinesOrEmpty(file, sources))
+      return lines
     } catch (failure: Throwable) {
       if (failure is VirtualMachineError || failure is ThreadDeath) throw failure
       System.err.println(
-          "Failed to map Robolectric resource file ${file.path}; skipping this file.",
+          "Failed to map Android resource file ${file.path}; skipping this file.",
       )
       failure.printStackTrace(System.err)
       return emptyList()
     }
   }
 
-  private fun resourceLines(root: Path, file: ResourceFile, sourceFiles: List<Path>): List<String> {
-    val miniAapt = MiniAapt(ImmutableSet.of())
-    miniAapt.processAllFilesIncludingExcludedFromBuckResourceMap(
-        ImmutableMap.of(file.relative, file.path),
-    )
-    val sources = sourceFiles.map { sourcePath(root, it, file.ownerBuildFile) }.distinct()
-    val qualifiers = qualifiers(file.relative.getName(0).toString())
-    return miniAapt.resourceCollector.resources.flatMap { entry ->
-      // Styleables are generated arrays and indices, not runtime resource-table entries. MiniAapt
-      // emits their underlying attributes separately as R.attr entries.
-      if (entry.type == RType.STYLEABLE) {
-        emptyList()
-      } else {
-        sources.map { source ->
-          ResourceSourceMapFormat.ResourceRow(
-                  file.priority,
-                  entry.type.name.lowercase(Locale.ROOT),
-                  entry.name,
-                  qualifiers,
-                  source,
-                  file.ownerBuildFile,
-              )
-              .serialize()
+  private fun resourceSymbolLinesOrEmpty(file: ResourceFile, sources: List<String>): List<String> {
+    try {
+      val miniAapt = MiniAapt(ImmutableSet.of())
+      miniAapt.processAllFilesIncludingExcludedFromBuckResourceMap(
+          ImmutableMap.of(file.relative, file.path),
+      )
+      val qualifiers = qualifiers(file.relative.getName(0).toString())
+      return miniAapt.resourceCollector.resources.flatMap { entry ->
+        // Styleables are generated arrays and indices, not runtime resource-table entries. MiniAapt
+        // emits their underlying attributes separately as R.attr entries.
+        if (entry.type == RType.STYLEABLE) {
+          emptyList()
+        } else {
+          sources.map { source ->
+            ResourceSourceMapFormat.ResourceRow(
+                    file.priority,
+                    entry.type.name.lowercase(Locale.ROOT),
+                    entry.name,
+                    qualifiers,
+                    source,
+                    file.ownerBuildFile,
+                )
+                .serialize()
+          }
         }
       }
+    } catch (failure: Throwable) {
+      if (failure is VirtualMachineError || failure is ThreadDeath) throw failure
+      System.err.println(
+          "Failed to extract Android resource symbols from ${file.path}; keeping its file mapping.",
+      )
+      failure.printStackTrace(System.err)
+      return emptyList()
     }
   }
 
@@ -207,18 +229,20 @@ object ResourceSourceMapExecutableMain {
         } catch (failure: Throwable) {
           if (failure is VirtualMachineError || failure is ThreadDeath) throw failure
           System.err.println(
-              "Failed to enumerate Robolectric asset directory $assetDir; skipping this directory.",
+              "Failed to enumerate Android asset directory $assetDir; skipping this directory.",
           )
           failure.printStackTrace(System.err)
           return
         }
     for ((relative, file) in assetFiles) {
       try {
+        val path = PathFormatter.pathWithUnixSeparators(relative)
+        val source = sourcePath(root, file, input.ownerBuildFile)
         output.add(
             ResourceSourceMapFormat.AssetRow(
                     priority,
-                    PathFormatter.pathWithUnixSeparators(relative),
-                    sourcePath(root, file, input.ownerBuildFile),
+                    path,
+                    source,
                     input.ownerBuildFile,
                 )
                 .serialize(),
@@ -226,7 +250,7 @@ object ResourceSourceMapExecutableMain {
       } catch (failure: Throwable) {
         if (failure is VirtualMachineError || failure is ThreadDeath) throw failure
         System.err.println(
-            "Failed to map Robolectric asset file $file; skipping this file.",
+            "Failed to map Android asset file $file; skipping this file.",
         )
         failure.printStackTrace(System.err)
       }

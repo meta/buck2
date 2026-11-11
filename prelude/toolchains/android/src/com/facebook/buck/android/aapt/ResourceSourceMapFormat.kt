@@ -108,9 +108,53 @@ object ResourceSourceMapFormat {
     }
   }
 
+  /** Format: `F\tpriority\tencodedPath\tencodedSource\tencodedOwnerBuildFile`. */
+  data class FileRow(
+      val priority: Int,
+      val path: String,
+      val source: String,
+      val ownerBuildFile: String,
+  ) : Row {
+    override fun serialize(): String = listOf(
+        TAG,
+        priority.toString(),
+        encodeField(path),
+        encodeField(source),
+        encodeField(ownerBuildFile),
+    )
+        .joinToString(DELIMITER.toString())
+
+    companion object {
+      private const val TAG = "F"
+
+      private enum class Attribute {
+        TAG,
+        PRIORITY,
+        PATH,
+        SOURCE,
+        OWNER_BUILD_FILE,
+      }
+
+      internal fun parse(fields: List<String>): FileRow? {
+        if (fields.size != Attribute.entries.size || fields[Attribute.TAG.ordinal] != TAG)
+            return null
+        return try {
+          FileRow(
+              fields[Attribute.PRIORITY.ordinal].toIntOrNull() ?: return null,
+              decodeField(fields[Attribute.PATH.ordinal]),
+              decodeField(fields[Attribute.SOURCE.ordinal]),
+              decodeField(fields[Attribute.OWNER_BUILD_FILE.ordinal]),
+          )
+        } catch (_: IllegalArgumentException) {
+          null
+        }
+      }
+    }
+  }
+
   fun parse(line: String): Row? {
     val fields = line.split(DELIMITER)
-    return ResourceRow.parse(fields) ?: AssetRow.parse(fields)
+    return ResourceRow.parse(fields) ?: AssetRow.parse(fields) ?: FileRow.parse(fields)
   }
 
   fun encodeField(value: String): String =

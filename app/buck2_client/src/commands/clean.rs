@@ -35,7 +35,7 @@ use buck2_client_ctx::final_console::FinalConsole;
 use buck2_client_ctx::startup_deadline::StartupDeadline;
 use buck2_client_ctx::subscribers::superconsole::StatefulSuperConsole;
 use buck2_common::daemon_dir::DaemonDir;
-use buck2_common::invocation_paths::TenantDiskLock;
+use buck2_common::invocation_paths::TenantDiskForCleanup;
 use buck2_error::BuckErrorContext;
 use buck2_error::ErrorTag;
 use buck2_fs::error::IoError;
@@ -205,7 +205,7 @@ impl CleanCommand {
 
 struct CleanGuard {
     lifecycle: Option<BuckdLifecycleLock>,
-    disk_lock: Arc<TenantDiskLock>,
+    disk_lock: Arc<TenantDiskForCleanup>,
 }
 
 struct InnerCleanCommand {
@@ -268,7 +268,7 @@ impl BuckSubcommand for InnerCleanCommand {
             kill_command_impl(&lifecycle, "`buck2 clean` was invoked", false).await?;
         }
         let lifecycle = Some(lifecycle);
-        let disk_lock = TenantDiskLock::acquire(&paths.tenant_paths(), Duration::from_secs(30))
+        let disk_lock = TenantDiskForCleanup::take(&paths.tenant_paths(), Duration::from_secs(30))
             .await
             .buck_error_context("Waiting for tenant disk work to drain; no files were deleted")?;
         let guard = CleanGuard {

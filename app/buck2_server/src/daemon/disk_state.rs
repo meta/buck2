@@ -11,7 +11,7 @@
 use std::sync::Arc;
 
 use allocative::Allocative;
-use buck2_common::invocation_paths::TenantPaths;
+use buck2_common::invocation_paths::LeasedTenantPaths;
 use buck2_common::legacy_configs::configs::LegacyBuckConfig;
 use buck2_common::legacy_configs::key::BuckconfigKeyRef;
 use buck2_core::rollout_percentage::RolloutPercentage;
@@ -94,7 +94,7 @@ fn sqlite_db_setup_metadata_and_versions(
 
 pub(crate) async fn maybe_initialize_materializer_sqlite_db(
     options: &DiskStateOptions,
-    paths: TenantPaths,
+    paths: &LeasedTenantPaths,
     io_executor: Arc<dyn BlockingExecutor>,
     root_config: &LegacyBuckConfig,
     deferred_materializer_configs: &DeferredMaterializerConfigs,
@@ -144,7 +144,7 @@ pub(crate) async fn maybe_initialize_materializer_sqlite_db(
 }
 
 pub(crate) async fn maybe_initialize_incremental_sqlite_db(
-    paths: TenantPaths,
+    paths: &LeasedTenantPaths,
     io_executor: Arc<dyn BlockingExecutor>,
     root_config: &LegacyBuckConfig,
     daemon_id: &DaemonId,
@@ -194,7 +194,7 @@ pub(crate) async fn maybe_initialize_incremental_sqlite_db(
 
 pub(crate) async fn maybe_initialize_dep_file_sqlite_db(
     options: &DiskStateOptions,
-    paths: TenantPaths,
+    paths: &LeasedTenantPaths,
     io_executor: Arc<dyn BlockingExecutor>,
     root_config: &LegacyBuckConfig,
     daemon_id: &DaemonId,

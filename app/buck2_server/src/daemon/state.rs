@@ -35,7 +35,7 @@ use buck2_common::init::DaemonStartupConfig;
 use buck2_common::init::SystemWarningConfig;
 use buck2_common::init::Timeout;
 use buck2_common::invocation_paths::InvocationPaths;
-use buck2_common::invocation_paths::TenantDiskLock;
+use buck2_common::invocation_paths::LeasedTenantPaths;
 use buck2_common::invocation_paths::TenantPaths;
 use buck2_common::io::IoProvider;
 use buck2_common::io::trace::TracingIoProvider;
@@ -261,8 +261,12 @@ impl TenantGeneration {
 /// That ownership boundary leaves room for selected repository services to be shared later.
 #[derive(Allocative)]
 pub struct RepoState {
-    /// Stable paths used by tenant services. Invocation cwd is not stored here.
-    pub paths: TenantPaths,
+    /// Stable paths used by tenant services, with the generation's ownership of the directories
+    /// they name. Every clone holds that ownership, so the generation's eviction completes only
+    /// once the last holder is dropped: nothing may keep an `Arc<TenantState>` beyond the
+    /// commands it serves, or `kill` waits for the eviction deadline instead. Invocation cwd is
+    /// not stored here.
+    pub paths: LeasedTenantPaths,
 
     /// Synced every time we run a command.
     /// None under `--no-buckd`: the daemon serves exactly one command, so there is nothing to
@@ -496,14 +500,13 @@ impl TenantState {
             generation,
             dice_provider,
         } = init;
-        let lifetime = cancellation.register()?;
-        let permit = disk_ownership
-            .clone()
-            .acquire_owned()
-            .await
-            .internal_error("Tenant disk ownership gate should remain open")?;
-        let process_lock = TenantDiskLock::acquire(&paths, Duration::from_secs(10)).await?;
-        let disk_lease = Arc::new((permit, process_lock, lifetime));
+        let paths = LeasedTenantPaths::acquire(
+            paths,
+            disk_ownership.dupe(),
+            &cancellation,
+            Duration::from_secs(10),
+        )
+        .await?;
         let buck_out_path = paths.buck_out_path();
         tokio::fs::create_dir_all(&buck_out_path)
             .await
@@ -578,7 +581,7 @@ impl TenantState {
         let disk_state_options = DiskStateOptions::new(root_config)?;
         let blocking_executor = with_lifetime_guard(
             shared.blocking_executor_factory.for_project(fs.dupe()),
-            disk_lease,
+            paths.lease(),
             Some(cancellation.observer()),
         );
 
@@ -730,7 +733,7 @@ impl TenantState {
                 }),
                 maybe_initialize_materializer_sqlite_db(
                     &disk_state_options,
-                    paths.clone(),
+                    &paths,
                     blocking_executor.dupe() as Arc<dyn BlockingExecutor>,
                     root_config,
                     &deferred_materializer_configs,
@@ -739,7 +742,7 @@ impl TenantState {
                     shared.daemon_id,
                 ),
                 maybe_initialize_incremental_sqlite_db(
-                    paths.clone(),
+                    &paths,
                     blocking_executor.dupe() as Arc<dyn BlockingExecutor>,
                     root_config,
                     shared.daemon_id,
@@ -747,7 +750,7 @@ impl TenantState {
                 ),
                 maybe_initialize_dep_file_sqlite_db(
                     &disk_state_options,
-                    paths.clone(),
+                    &paths,
                     blocking_executor.dupe() as Arc<dyn BlockingExecutor>,
                     root_config,
                     shared.daemon_id,
@@ -1776,7 +1779,8 @@ pub(crate) struct TenantStatusMetadata {
 impl TenantStatusMetadata {
     fn new(repo: &RepoState) -> Self {
         Self {
-            paths: repo.paths.clone(),
+            // Status outlives evicted generations and must not delay their replacement.
+            paths: repo.paths.without_lease(),
             io_provider: repo.io.name().to_owned(),
             trace_io_enabled: TracingIoProvider::from_io(&*repo.io).is_some(),
             materializer_state_identity: repo.materializer_state_identity.clone(),

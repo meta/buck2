@@ -15,6 +15,7 @@ use std::borrow::Cow;
 use std::fs::File;
 use std::fs::TryLockError;
 use std::io::ErrorKind;
+use std::ops::Deref;
 use std::sync::Arc;
 use std::sync::Mutex;
 use std::time::Duration;
@@ -30,7 +31,12 @@ use buck2_fs::paths::file_name::FileName;
 use buck2_fs::paths::file_name::FileNameBuf;
 use buck2_fs::paths::forward_rel_path::ForwardRelativePath;
 pub use buck2_wrapper_common::DEFAULT_ISOLATION_DIR;
+use dupe::Dupe;
+use tokio::sync::OwnedSemaphorePermit;
+use tokio::sync::Semaphore;
 
+use crate::cancellation::CancellationScope;
+use crate::cancellation::CancellationScopeGuard;
 use crate::daemon_compatibility::DaemonCompatibilityKey;
 use crate::daemon_dir::DaemonDir;
 use crate::daemon_routing::DaemonRouting;
@@ -97,6 +103,15 @@ impl TenantPaths {
             .path
             .join(FileName::unchecked_new("._buck2_tenant_locks"))
             .join(&self.isolation))
+    }
+
+    /// Waits until no process owns the tenant's directories, for up to `timeout`. A client starts
+    /// an unshared daemon over them only once a previous owner has finished releasing them.
+    pub async fn wait_until_disk_unowned(
+        &self,
+        timeout: Duration,
+    ) -> buck2_error::Result<Result<(), TenantDiskStillOwned>> {
+        Ok(TenantDiskLock::wait_for(self, timeout).await?.map(drop))
     }
 
     /// The daemon directory used by clients without shared daemon routing.
@@ -314,9 +329,10 @@ impl UnidaemonLifetimeLock {
     }
 }
 
-/// Exclusive disk ownership shared by tenant generations and cleanup clients.
+/// The OS file lock behind a tenant's disk ownership, taken by a generation through
+/// [`LeasedTenantPaths`] and by cleanup through [`TenantDiskForCleanup`].
 #[derive(Allocative)]
-pub struct TenantDiskLock {
+struct TenantDiskLock {
     #[allocative(skip)]
     _file: File,
 }
@@ -334,13 +350,13 @@ pub struct TenantDiskStillOwned {
 
 impl TenantDiskLock {
     /// Waits for disk ownership without interrupting the existing owner.
-    pub async fn acquire(paths: &TenantPaths, timeout: Duration) -> buck2_error::Result<Self> {
+    async fn acquire(paths: &TenantPaths, timeout: Duration) -> buck2_error::Result<Self> {
         Ok(Self::wait_for(paths, timeout).await??)
     }
 
     /// Like [`acquire`](Self::acquire), but tells a wait that ran out, while another process still
     /// owned the disk state, from other failures.
-    pub async fn wait_for(
+    async fn wait_for(
         paths: &TenantPaths,
         timeout: Duration,
     ) -> buck2_error::Result<Result<Self, TenantDiskStillOwned>> {
@@ -386,6 +402,94 @@ impl TenantDiskLock {
             Err(TryLockError::Error(error)) => Err(error.into()),
         }
         .buck_error_context(format!("Locking tenant disk state at `{path}`"))
+    }
+}
+
+/// Exclusive ownership of a tenant's output and cache directories by a process that is not
+/// serving the tenant, held while deleting them. Taking it waits for the owning generation's
+/// disk work to drain, and no daemon can take the directories until it is dropped.
+#[derive(Allocative)]
+pub struct TenantDiskForCleanup {
+    _lock: TenantDiskLock,
+}
+
+impl TenantDiskForCleanup {
+    pub async fn take(paths: &TenantPaths, timeout: Duration) -> buck2_error::Result<Self> {
+        Ok(Self {
+            _lock: TenantDiskLock::acquire(paths, timeout).await?,
+        })
+    }
+}
+
+/// One generation's ownership of a tenant's output and cache directories.
+///
+/// The permit serializes generations of the tenant within this daemon, the file lock serializes
+/// them across daemons, and the scope registration keeps the generation's eviction incomplete
+/// while the lease exists. Held through [`LeasedTenantPaths`] and by the blocking executor that
+/// runs the generation's I/O, so the lease outlives every reader of the paths and every request
+/// in flight.
+pub struct TenantDiskLease {
+    _permit: OwnedSemaphorePermit,
+    _lock: TenantDiskLock,
+    _lifetime: Arc<CancellationScopeGuard>,
+}
+
+/// A tenant's paths, obtainable only with the tenant's disk lease.
+///
+/// Daemon code reaches a tenant's output and cache directories through these paths, so a
+/// generation cannot touch them before it owns them, and a replacement generation cannot own them
+/// until every holder of this value and every I/O its executor retains are gone. Cloning shares
+/// the lease; [`Self::without_lease`] is for records that must not keep the generation's disk
+/// state alive.
+#[derive(Clone, Allocative)]
+pub struct LeasedTenantPaths {
+    paths: TenantPaths,
+    #[allocative(skip)]
+    lease: Arc<TenantDiskLease>,
+}
+
+impl LeasedTenantPaths {
+    /// Takes the tenant's disk ownership for a generation of `scope`, waiting for the previous
+    /// owner within this daemon and for up to `lock_timeout` for one in another process.
+    pub async fn acquire(
+        paths: TenantPaths,
+        gate: Arc<Semaphore>,
+        scope: &CancellationScope,
+        lock_timeout: Duration,
+    ) -> buck2_error::Result<Self> {
+        let lifetime = scope.register()?;
+        let permit = gate
+            .acquire_owned()
+            .await
+            .internal_error("Tenant disk ownership gate should remain open")?;
+        let lock = TenantDiskLock::acquire(&paths, lock_timeout).await?;
+        Ok(Self {
+            paths,
+            lease: Arc::new(TenantDiskLease {
+                _permit: permit,
+                _lock: lock,
+                _lifetime: lifetime,
+            }),
+        })
+    }
+
+    /// The lease itself, for an executor to retain while it runs the generation's I/O.
+    pub fn lease(&self) -> Arc<TenantDiskLease> {
+        self.lease.dupe()
+    }
+
+    /// The paths alone. The result keeps no disk ownership alive, so it suits status records and
+    /// other bookkeeping that must not delay a replacement generation; it must not be used for I/O.
+    pub fn without_lease(&self) -> TenantPaths {
+        self.paths.clone()
+    }
+}
+
+impl Deref for LeasedTenantPaths {
+    type Target = TenantPaths;
+
+    fn deref(&self) -> &TenantPaths {
+        &self.paths
     }
 }
 

@@ -33,7 +33,6 @@ use buck2_common::daemon_compatibility::DaemonCompatibilityKey;
 use buck2_common::daemon_dir::DaemonDir;
 use buck2_common::init::DaemonStartupConfig;
 use buck2_common::invocation_paths::InvocationPaths;
-use buck2_common::invocation_paths::TenantDiskLock;
 use buck2_common::invocation_paths::UnidaemonLifetimeLock;
 use buck2_core::buck2_env;
 use buck2_core::soft_error_or_panic;
@@ -1507,8 +1506,8 @@ async fn start_new_buckd_and_connect(
         // kill left.
         let wait =
             deadline.rem_duration("waiting for the previous daemon to release its outputs")?;
-        let lock = TenantDiskLock::wait_for(&paths.tenant_paths(), wait).await?;
-        if let (Err(_), Some((pid, kill_error))) = (&lock, unstopped_daemon) {
+        let unowned = paths.tenant_paths().wait_until_disk_unowned(wait).await?;
+        if let (Err(_), Some((pid, kill_error))) = (&unowned, unstopped_daemon) {
             // Only this command knows which process failed to stop: `buckd.info` is gone, so
             // later commands report the plain timeout.
             return Err(BuckdConnectError::UnstoppedDaemonOwnsOutputs {
@@ -1518,7 +1517,7 @@ async fn start_new_buckd_and_connect(
             }
             .into());
         }
-        drop(lock?);
+        unowned?;
     }
 
     // Now there's definitely no server that can be connected to

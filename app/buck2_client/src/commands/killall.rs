@@ -167,14 +167,24 @@ impl KillallCommand {
             let shown = dir.to_string();
             if !dir.buckd_info().exists() {
                 // An evicted tenant's slot keeps only its lock and logs, and a daemon that died
-                // while starting may leave just its pid. A live process named by the pid with no
-                // record saying how to reach it is an owner this command cannot evict.
+                // while starting may leave just its pid. A live process named by the pid, unless it
+                // started well after the pid was recorded, with no record saying how to reach it
+                // is an owner this command cannot evict.
+                let recorded_at = std::fs::metadata(dir.buckd_pid().as_path())
+                    .and_then(|metadata| metadata.modified())
+                    .ok();
                 let live_owner = std::fs::read_to_string(dir.buckd_pid().as_path())
                     .ok()
                     .and_then(|pid| pid.trim().parse::<i64>().ok())
+                    .filter(|pid| *pid > 0)
                     .and_then(|pid| buck2_wrapper_common::pid::Pid::from_i64(pid).ok())
                     .is_some_and(|pid| {
-                        buck2_wrapper_common::kill::process_exists(pid).unwrap_or(false)
+                        buck2_wrapper_common::kill::recorded_process_may_be_running(
+                            pid,
+                            0,
+                            recorded_at,
+                        )
+                        .unwrap_or(false)
                     });
                 if live_owner {
                     failures += 1;

@@ -50,6 +50,7 @@ use buck2_settings::BuckSettingChange;
 use buck2_util::truncate::truncate;
 use buck2_wrapper_common::invocation_id::TraceId;
 use buck2_wrapper_common::kill::process_exists;
+use buck2_wrapper_common::kill::recorded_process_may_be_running;
 use buck2_wrapper_common::pid::Pid;
 use dupe::Dupe;
 use futures::FutureExt;
@@ -943,7 +944,8 @@ pub async fn establish_connection_existing(
         .await
 }
 
-/// Checks for an empty daemon directory or consistent metadata naming an exited process.
+/// Checks for an empty daemon directory or consistent metadata naming a daemon that is no longer
+/// running, judged as [`BuckdProcessInfo::may_be_running`] does.
 /// Hold lifecycle coordination when using the result to change daemon state.
 pub async fn shared_daemon_is_inactive(daemon_dir: &DaemonDir) -> buck2_error::Result<bool> {
     let daemon_dir = daemon_dir.clone();
@@ -958,12 +960,11 @@ pub async fn shared_daemon_is_inactive(daemon_dir: &DaemonDir) -> buck2_error::R
             .iter()
             .any(|path| path.exists()));
         };
-        let pid = info.pid()?;
-        let recorded_pid: u32 = fs_util::read_to_string(daemon_dir.buckd_pid())
+        let recorded_pid: i64 = fs_util::read_to_string(daemon_dir.buckd_pid())
             .categorize_internal()?
             .trim()
             .parse()?;
-        Ok(recorded_pid == pid.to_u32() && !process_exists(pid)?)
+        Ok(recorded_pid == info.info.pid && !info.may_be_running()?)
     })
     .await?
     .buck_error_context(
@@ -1109,7 +1110,7 @@ async fn establish_connection_inner(
                     }
                     Err(reason) => {
                         if buck2_env!("BUCK2_SHARE_DAEMON", type=bool, default=false)?
-                            && process_exists(buckd_info.pid()?)?
+                            && buckd_info.may_be_running()?
                         {
                             return Err(buck2_error!(
                                 ErrorTag::Input,
@@ -1410,6 +1411,18 @@ impl<'a> BuckdProcessInfo<'a> {
         self.info.pid_start_time != 0
             && buck2_wrapper_common::kill::process_start_time(Some(pid))
                 == Some(self.info.pid_start_time)
+    }
+
+    /// Whether the recorded daemon may still be running: `false` only when its process is gone or
+    /// the recorded pid now names another process. Unlike
+    /// [`recorded_daemon_is_running`](Self::recorded_daemon_is_running), which decides whether
+    /// the pid may be killed, a record without a start time counts as running unless the process
+    /// with its pid started well after the record was written.
+    pub fn may_be_running(&self) -> buck2_error::Result<bool> {
+        let recorded_at = fs_util::metadata(self.daemon_dir.buckd_info())
+            .ok()
+            .and_then(|metadata| metadata.modified().ok());
+        recorded_process_may_be_running(self.pid()?, self.info.pid_start_time, recorded_at)
     }
 
     pub fn pid(&self) -> buck2_error::Result<Pid> {

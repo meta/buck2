@@ -229,6 +229,38 @@ refuses_uncertain_metadata_cases! {
         => ("killall", true, "mismatched-pid");
 }
 
+#[buck_test(
+    data_dir = "test_daemon_data",
+    skip_for_os = ["windows"],
+    env = [("BUCK2_SHARE_DAEMON", "true")],
+)]
+async fn test_shared_recovery_treats_reused_pid_as_exited(buck: &Buck) -> anyhow::Result<()> {
+    buck.targets(&["//:rule"]).await?;
+    let daemon_dir = buck.daemon_dir().await?;
+    let info_path = daemon_dir.join("buckd.info");
+    let mut info: Value = serde_json::from_str(&std::fs::read_to_string(&info_path)?)?;
+    buck.kill().await?;
+    wait_for_daemon_exit(info_pid(&info.to_string())?).await;
+    // A process that took the exited daemon's pid: same pid, a start time an hour apart. It is
+    // killed when dropped, on any exit from the test.
+    let mut unrelated = tokio::process::Command::new("sleep")
+        .arg("1000")
+        .kill_on_drop(true)
+        .spawn()?;
+    let unrelated_pid = unrelated.id().unwrap();
+    info["pid"] = unrelated_pid.into();
+    info["pid_start_time"] = (info["pid_start_time"].as_u64().unwrap() - 3600).into();
+    std::fs::write(&info_path, serde_json::to_string(&info)?)?;
+    std::fs::write(daemon_dir.join("buckd.pid"), unrelated_pid.to_string())?;
+    buck.targets(&["//:rule"]).await?;
+    assert_ne!(status_pid(buck).await?, unrelated_pid);
+    assert!(
+        unrelated.try_wait()?.is_none(),
+        "the unrelated process was left alone"
+    );
+    Ok(())
+}
+
 async fn shared_recovery_accepts_consistent_exited_metadata(
     buck: &Buck,
     command: &str,

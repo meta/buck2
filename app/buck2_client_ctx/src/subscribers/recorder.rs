@@ -1345,13 +1345,9 @@ impl InvocationRecorder {
             memory_max_anon_forkserver_actions: self.memory_max_anon_forkserver_actions,
             memory_max_total_allprocs: self.memory_max_total_allprocs,
             memory_max_total_forkserver_actions: self.memory_max_total_forkserver_actions,
-            memory_max_swap_bytes_allprocs: self.memory_max_swap_bytes_allprocs.unwrap_or(0),
-            memory_max_pressure_10s_avg_allprocs: self
-                .memory_max_pressure_10s_avg_allprocs
-                .unwrap_or(0.0),
-            memory_max_pressure_60s_avg_allprocs: self
-                .memory_max_pressure_60s_avg_allprocs
-                .unwrap_or(0.0),
+            memory_max_swap_bytes_allprocs: self.memory_max_swap_bytes_allprocs,
+            memory_max_pressure_10s_avg_allprocs: self.memory_max_pressure_10s_avg_allprocs,
+            memory_max_pressure_60s_avg_allprocs: self.memory_max_pressure_60s_avg_allprocs,
             command_options: self.command_options,
             io_copy_count,
             io_symlink_count,

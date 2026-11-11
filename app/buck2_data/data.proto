@@ -3852,13 +3852,13 @@ message InvocationRecord {
 
   // Peak swap usage (bytes) of all Buck2 processes during the invocation,
   // from allprocs cgroup memory.swap.current.
-  uint64 memory_max_swap_bytes_allprocs = 434;
+  optional uint64 memory_max_swap_bytes_allprocs = 434;
   // Peak memory pressure (PSI full avg10 %) of all Buck2
   // processes during the invocation, from allprocs cgroup memory.pressure.
-  double memory_max_pressure_10s_avg_allprocs = 435;
+  optional double memory_max_pressure_10s_avg_allprocs = 435;
   // Peak memory pressure (PSI full avg60 %) of all Buck2
   // processes during the invocation, from allprocs cgroup memory.pressure.
-  double memory_max_pressure_60s_avg_allprocs = 436;
+  optional double memory_max_pressure_60s_avg_allprocs = 436;
 
   // Agent context entries passed via --agent-context.
   repeated AgentContextEntry agent_context = 437;

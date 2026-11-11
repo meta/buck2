@@ -68,8 +68,10 @@ Command event logs include
 a `dice-sharing:true` or `dice-sharing:false` tag.
 
 Cycle detection is always enabled in both modes. Shared engines require
-compatible paging, digest configuration, and Buck settings. Paging
-uses the initial tenant's DICE storage path for the lifetime of the daemon.
+compatible paging, digest configuration, and Buck settings.
+Paging storage is scoped to the daemon: it lives under the daemon state
+directory of the checkout that started the daemon, keyed by the daemon id,
+outside every disposable tenant tree.
 Evicting a tenant releases its roots after admitted commands finish; other
 tenants keep running on the shared engine.
 

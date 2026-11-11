@@ -110,6 +110,12 @@ class PostEnterCanonicalizer {
       return null;
     }
 
+    // A type-use annotation wraps the tree of the type it annotates, e.g. `String @A []`.
+    while (treePath != null && treePath.getLeaf().getKind() == Tree.Kind.ANNOTATED_TYPE) {
+      treePath =
+          new TreePath(treePath, ((AnnotatedTypeTree) treePath.getLeaf()).getUnderlyingType());
+    }
+
     Tree tree = treePath == null ? null : treePath.getLeaf();
     TypeMirror canonicalType;
     switch (typeMirror.getKind()) {

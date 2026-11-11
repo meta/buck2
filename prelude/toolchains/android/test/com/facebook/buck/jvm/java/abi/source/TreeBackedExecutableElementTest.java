@@ -174,6 +174,54 @@ public class TreeBackedExecutableElementTest extends CompilerTreeApiParameterize
   }
 
   @Test
+  public void testTypeUseAnnotatedArrayParameter() throws IOException {
+    compile(
+        Joiner.on('\n')
+            .join(
+                "import java.lang.annotation.*;",
+                "abstract class Foo {",
+                "  public abstract void foo(String @Anno [] strings);",
+                "}",
+                "@Target(ElementType.TYPE_USE)",
+                "@interface Anno { }"));
+
+    TypeMirror stringArrayType =
+        types.getArrayType(elements.getTypeElement("java.lang.String").asType());
+
+    ExecutableElement method = findMethod("foo", elements.getTypeElement("Foo"));
+    assertSameType(stringArrayType, findParameter("strings", method).asType());
+  }
+
+  @Test
+  public void testTypeUseAnnotatedTypeArgumentsParameter() throws IOException {
+    compile(
+        Joiner.on('\n')
+            .join(
+                "import java.lang.annotation.*;",
+                "import java.util.List;",
+                "abstract class Foo {",
+                "  public abstract void foo(List<@Anno List<String>> lists, List<@Anno ? extends"
+                    + " Number> numbers);",
+                "}",
+                "@Target(ElementType.TYPE_USE)",
+                "@interface Anno { }"));
+
+    TypeElement list = elements.getTypeElement("java.util.List");
+    TypeMirror listOfListOfString =
+        types.getDeclaredType(
+            list,
+            types.getDeclaredType(list, elements.getTypeElement("java.lang.String").asType()));
+    TypeMirror listOfExtendsNumber =
+        types.getDeclaredType(
+            list,
+            types.getWildcardType(elements.getTypeElement("java.lang.Number").asType(), null));
+
+    ExecutableElement method = findMethod("foo", elements.getTypeElement("Foo"));
+    assertSameType(listOfListOfString, findParameter("lists", method).asType());
+    assertSameType(listOfExtendsNumber, findParameter("numbers", method).asType());
+  }
+
+  @Test
   public void testNotDefault() throws IOException {
     compile(Joiner.on('\n').join("interface Foo {", "  void foo();", "}"));
 

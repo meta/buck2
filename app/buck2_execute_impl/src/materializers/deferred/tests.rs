@@ -939,6 +939,116 @@ pub(crate) mod state_machine {
         .await
     }
 
+    /// A filled path is its caller's to write, so once the caller is gone without reporting
+    /// it, the same value declared there has to be fetched again.
+    #[tokio::test]
+    async fn test_fill_forgets_what_it_fetched() -> buck2_error::Result<()> {
+        ignore_stack_overflow_checks_for_future(async {
+            let io = Arc::new(StubIoHandler::new(temp_root()));
+            let path = make_path("foo/bar");
+            let value = ArtifactValue::file(io.digest_config().empty_file());
+            let (dm, _daemon_dispatcher_events) = make_materializer(io.dupe(), None).await;
+
+            let lease = dm.prepare_outputs(vec![path.clone()]).await?;
+            dm.fill(
+                &lease,
+                path.clone(),
+                value.dupe(),
+                None,
+                RemoteExecutorUseCase::buck2_default(),
+                &CancellationContext::testing(),
+            )
+            .await?;
+            drop(lease);
+            io.take_log();
+
+            dm.declare_cas_many_impl(
+                Arc::new(CasDownloadInfo::new_declared(
+                    RemoteExecutorUseCase::buck2_default(),
+                )),
+                vec![DeclareArtifactPayload {
+                    path: path.clone(),
+                    artifact: value,
+                }],
+            )
+            .await?;
+            dm.ensure_materialized(vec![path], MaterializationPurpose::IntermediateOnly)
+                .await?;
+            // Bug: the fill left the path tracked, so the content is taken to be there still.
+            assert_eq!(io.take_log(), &[]);
+
+            dm.abort();
+            Ok(())
+        })
+        .await
+    }
+
+    #[tokio::test]
+    async fn test_fill_forgets_what_it_failed_to_fetch() -> buck2_error::Result<()> {
+        ignore_stack_overflow_checks_for_future(async {
+            let io = Arc::new(StubIoHandler::new(temp_root()));
+            let path = make_path("foo/bar");
+            let value = ArtifactValue::file(io.digest_config().empty_file());
+            let (dm, _daemon_dispatcher_events) = make_materializer(io.dupe(), None).await;
+
+            io.set_fail_on(vec![path.clone()]);
+            let lease = dm.prepare_outputs(vec![path.clone()]).await?;
+            let filled = dm
+                .fill(
+                    &lease,
+                    path.clone(),
+                    value,
+                    None,
+                    RemoteExecutorUseCase::buck2_default(),
+                    &CancellationContext::testing(),
+                )
+                .await;
+            assert!(filled.is_err());
+            // Bug: the declaration the fill fetched through is left behind.
+            assert!(dm.has_artifact_at(path).await?);
+
+            dm.abort();
+            Ok(())
+        })
+        .await
+    }
+
+    #[tokio::test]
+    async fn test_fill_forgets_what_it_was_fetching_when_dropped() -> buck2_error::Result<()> {
+        ignore_stack_overflow_checks_for_future(async {
+            let started = Arc::new(tokio::sync::Semaphore::new(0));
+            let mut io = StubIoHandler::new(temp_root());
+            io.block_materialization = Some(started.clone());
+            let path = make_path("foo/bar");
+            let value = ArtifactValue::file(io.digest_config().empty_file());
+            let (dm, _daemon_dispatcher_events) = make_materializer(Arc::new(io), None).await;
+
+            let lease = dm.prepare_outputs(vec![path.clone()]).await?;
+            let cancellations = CancellationContext::testing();
+            {
+                let fill = dm.fill(
+                    &lease,
+                    path.clone(),
+                    value,
+                    None,
+                    RemoteExecutorUseCase::buck2_default(),
+                    &cancellations,
+                );
+                futures::pin_mut!(fill);
+                tokio::select! {
+                    _ = &mut fill => panic!("The stub never finishes a materialization"),
+                    started = started.acquire() => started.unwrap().forget(),
+                }
+            }
+            // Bug: the declaration the fill was fetching through is left behind.
+            assert!(dm.has_artifact_at(path).await?);
+
+            dm.abort();
+            Ok(())
+        })
+        .await
+    }
+
     #[tokio::test]
     async fn test_declare_reuse() -> buck2_error::Result<()> {
         ignore_stack_overflow_checks_for_future(async {

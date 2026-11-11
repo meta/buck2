@@ -758,6 +758,59 @@ async fn test_incremental_action_multi_outputs_with_daemon_restart_and_content_b
     incremental_action_multi_outputs_with_daemon_restart_helper(buck, true).await
 }
 
+// A previous output fetched for a local run is that run's to write. When the run removes it and
+// fails, the same output from the next remote run still has to reach disk. A content-based
+// output has no twin here: it is read at its content path, which no run writes.
+#[buck_test]
+async fn test_incremental_action_output_removed_by_failed_run(buck: &Buck) -> anyhow::Result<()> {
+    let target = "root//:basic_incremental_action";
+    let content_based_path = content_based_path(false);
+    buck.build(&[
+        target,
+        "--remote-only",
+        "-c",
+        &seed(),
+        "-c",
+        &content_based_path,
+        "--materializations",
+        "none",
+    ])
+    .await?;
+
+    buck.build(&[
+        target,
+        "--local-only",
+        "-c",
+        &seed(),
+        "-c",
+        &content_based_path,
+        "-c",
+        "test.remove_output_and_fail=true",
+    ])
+    .await
+    .expect_failure();
+
+    let result = buck
+        .run(&[
+            target,
+            "--remote-only",
+            "-c",
+            &seed(),
+            "-c",
+            &content_based_path,
+        ])
+        .await;
+    if std::env::var_os("BUCK2_TEST_MATERIALIZER").is_none() {
+        // Bug: the deferred core still vouches for the output it fetched for the failed run.
+        result
+            .expect_failure()
+            .assert_stderr_matches("No such file or directory");
+    } else {
+        assert_eq!(result?.stdout, "foo");
+    }
+    Ok(())
+}
+
 #[buck_test(extra_buck_config = [("buck2", "sqlite_incremental_state", "false")])]
 async fn test_incremental_action_db_disabled(buck: &Buck) -> anyhow::Result<()> {
     basic_incremental_action_local_only_helper(buck, true).await

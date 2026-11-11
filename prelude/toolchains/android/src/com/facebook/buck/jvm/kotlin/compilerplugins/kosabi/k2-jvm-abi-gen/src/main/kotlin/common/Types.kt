@@ -28,6 +28,8 @@ import org.jetbrains.kotlin.ir.declarations.IrClass
 import org.jetbrains.kotlin.ir.declarations.IrConstructor
 import org.jetbrains.kotlin.ir.declarations.IrDeclaration
 import org.jetbrains.kotlin.ir.declarations.IrDeclarationContainer
+import org.jetbrains.kotlin.ir.declarations.IrDeclarationOrigin
+import org.jetbrains.kotlin.ir.declarations.IrDeclarationWithName
 import org.jetbrains.kotlin.ir.declarations.IrDeclarationWithVisibility
 import org.jetbrains.kotlin.ir.declarations.IrField
 import org.jetbrains.kotlin.ir.declarations.IrFunction
@@ -193,6 +195,9 @@ private fun scanKeptDeclaration(
 }
 
 private fun scanSignatures(declaration: IrDeclaration, keep: MutableSet<String>) {
+  // A delegate backing field is always dropped (its type would dangle), so its
+  // type must not confer keep: the field dies with the class that names it.
+  if (declaration.isDelegateBackingField()) return
   // Supertypes and signatures name classes consumers must resolve (suppressed
   // EXPOSED_* or otherwise): keep them as stubs. Supertypes keep class-kind
   // only: a kept private interface stays on the strip-and-materialize path
@@ -257,6 +262,17 @@ private fun IrClass.isDroppedVisibility(): Boolean {
   return visibility == DescriptorVisibilities.PRIVATE ||
       visibility == DescriptorVisibilities.PRIVATE_TO_THIS ||
       visibility == DescriptorVisibilities.LOCAL
+}
+
+// A synthesized delegate backing field (`by lazy` property delegates and
+// `$$delegate_N` interface-delegation fields) is always dropped from the ABI,
+// so it must neither survive stripping nor confer keep through its type.
+internal fun IrDeclaration.isDelegateBackingField(): Boolean {
+  if (this !is IrField) return false
+  if (visibility != DescriptorVisibilities.PRIVATE) return false
+  if (origin == IrDeclarationOrigin.PROPERTY_DELEGATE) return true
+  return origin == IrDeclarationOrigin.DELEGATE ||
+      (this as IrDeclarationWithName).name.asString().startsWith("\$\$delegate_")
 }
 
 internal data class MethodSignature(

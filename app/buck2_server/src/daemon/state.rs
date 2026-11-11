@@ -359,13 +359,18 @@ struct TenantStateFactory {
     runtime: Handle,
 }
 
+struct TenantStateOwnership {
+    disk_ownership: Arc<Semaphore>,
+    cancellation: Arc<CancellationScope>,
+    reject_materializer_state: Option<SqliteIdentity>,
+}
+
 impl TenantStateFactory {
     async fn create(
         &self,
         paths: TenantPaths,
         shared: DaemonSharedServices<'_>,
-        disk_ownership: Arc<Semaphore>,
-        cancellation: Arc<CancellationScope>,
+        ownership: TenantStateOwnership,
     ) -> buck2_error::Result<Arc<TenantState>> {
         let fs = paths.project_root().clone();
         let legacy_cells = BuckConfigBasedCells::parse_with_config_args(&fs, &[]).await?;
@@ -374,15 +379,8 @@ impl TenantStateFactory {
             .parse_single_cell(cells.root_cell(), &fs)
             .await?;
 
-        self.create_with_loaded_config(
-            paths,
-            &legacy_cells,
-            root_config,
-            shared,
-            disk_ownership,
-            cancellation,
-        )
-        .await
+        self.create_with_loaded_config(paths, &legacy_cells, root_config, shared, ownership)
+            .await
     }
 
     async fn create_with_loaded_config(
@@ -391,13 +389,21 @@ impl TenantStateFactory {
         legacy_cells: &BuckConfigBasedCells,
         root_config: &LegacyBuckConfig,
         shared: DaemonSharedServices<'_>,
-        disk_ownership: Arc<Semaphore>,
-        cancellation: Arc<CancellationScope>,
+        ownership: TenantStateOwnership,
     ) -> buck2_error::Result<Arc<TenantState>> {
+        let TenantStateOwnership {
+            disk_ownership,
+            cancellation,
+            reject_materializer_state,
+        } = ownership;
+        let mut init_ctx = self.init_ctx.clone();
+        if reject_materializer_state.is_some() {
+            init_ctx.reject_materializer_state = reject_materializer_state;
+        }
         TenantState::create(TenantStateInit {
             fb: self.fb,
             paths,
-            init_ctx: &self.init_ctx,
+            init_ctx: &init_ctx,
             legacy_cells,
             root_config,
             final_artifact_materialization: self.final_artifact_materialization,
@@ -1356,15 +1362,25 @@ impl TenantStateRegistry {
     }
 
     fn evict_generation(&self, key: &TenantKey, expected: Option<u64>) -> Option<TenantEviction> {
-        self.evict_generation_with_recovery(key, expected, false)
+        self.evict_generation_impl(
+            key,
+            expected,
+            GenerationEviction::Retire {
+                recovery_allowed: false,
+            },
+        )
     }
 
-    fn evict_generation_with_recovery(
+    fn evict_generation_impl(
         &self,
         key: &TenantKey,
         expected: Option<u64>,
-        recovery_allowed: bool,
+        intent: GenerationEviction,
     ) -> Option<TenantEviction> {
+        let (recovery_allowed, drains) = match intent {
+            GenerationEviction::Retire { recovery_allowed } => (recovery_allowed, true),
+            GenerationEviction::Replace => (false, false),
+        };
         let started = Instant::now();
         let mut tenants = self
             .tenants
@@ -1396,7 +1412,7 @@ impl TenantStateRegistry {
         // A generation that never finished initializing has no tenant to give back: the client
         // that registered it gets the failure and decides whether to try again.
         let recovery_allowed = recovery_allowed && entry.state.get().is_some();
-        let final_tenant = tenants.is_empty();
+        let final_tenant = drains && tenants.is_empty();
         if final_tenant {
             self.draining.store(true, Ordering::Release);
         }
@@ -1478,6 +1494,45 @@ impl TenantStateRegistry {
             final_tenant,
             completed,
         }
+    }
+
+    fn evict_all(&self) -> Vec<TenantEviction> {
+        let started = Instant::now();
+        let mut tenants = self
+            .tenants
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        let mut evictions = self
+            .evictions
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        self.draining.store(true, Ordering::Release);
+        for (key, entry) in tenants.drain() {
+            entry.cancellation.cancel();
+            if let Some(state) = entry.state.get() {
+                state.dice_manager.retire();
+            }
+            let watchdog = Arc::new(super::proxies::TenantEvictionWatchdog::default());
+            evictions.insert(
+                (key, entry.generation),
+                TenantEviction {
+                    generation: entry.generation,
+                    // The whole-daemon shutdown waits for every generation before exiting.
+                    final_tenant: false,
+                    completed: Self::finish_eviction(vec![entry], Some(watchdog.clone()), false),
+                    started,
+                    watchdog,
+                    recovery_allowed: Arc::new(AtomicBool::new(false)),
+                },
+            );
+        }
+        evictions
+            .values()
+            .map(|eviction| {
+                eviction.recovery_allowed.store(false, Ordering::Release);
+                eviction.clone()
+            })
+            .collect()
     }
 
     /// Cancels the generations and waits for their work to stop. With `retire_proxies`, their
@@ -1604,6 +1659,15 @@ pub struct TenantStateInfo {
     pub key: TenantKey,
     pub generation: u64,
     pub initialized: bool,
+}
+
+/// Whether the daemon may drain when the evicted generation was its last tenant.
+#[derive(Clone, Copy)]
+enum GenerationEviction {
+    /// The tenant is leaving the daemon.
+    Retire { recovery_allowed: bool },
+    /// The same tenant registers again as soon as the eviction completes.
+    Replace,
 }
 
 #[derive(Clone)]
@@ -1740,6 +1804,31 @@ impl DaemonStateData {
             .daemon_buck_settings()
     }
 
+    /// The metadata of an initialized tenant generation.
+    pub(crate) fn proxy_metadata(
+        &self,
+        context: &ClientContext,
+        generation: u64,
+    ) -> buck2_error::Result<TenantStatusMetadata> {
+        let paths = tenant_paths_from_client_context(context)?
+            .internal_error("Tenant metadata requires an identity")?;
+        let key = TenantKey::from_tenant_paths(&paths);
+        let tenants = self
+            .tenants
+            .tenants
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        let slot = tenants
+            .get(&key)
+            .filter(|slot| slot.generation == generation)
+            .internal_error("Tenant generation changed")?;
+        let state = slot
+            .state
+            .get()
+            .internal_error("Tenant is not initialized")?;
+        Ok(TenantStatusMetadata::new(&state.repo))
+    }
+
     fn repo_shared_services(&self) -> DaemonSharedServices<'_> {
         DaemonSharedServices {
             blocking_executor_factory: &self.blocking_executor_factory,
@@ -1754,7 +1843,7 @@ impl DaemonStateData {
         self: &Arc<Self>,
         client_context: &ClientContext,
     ) -> buck2_error::Result<Arc<TenantState>> {
-        self.tenant_for_client_context_impl(client_context, false)
+        self.tenant_for_client_context_impl(client_context, false, None)
             .await
     }
 
@@ -1762,6 +1851,7 @@ impl DaemonStateData {
         self: &Arc<Self>,
         client_context: &ClientContext,
         register: bool,
+        reject_materializer_state: Option<SqliteIdentity>,
     ) -> buck2_error::Result<Arc<TenantState>> {
         let Some(paths) = tenant_paths_from_client_context(client_context)? else {
             return self.tenant_for_legacy_client();
@@ -1779,8 +1869,11 @@ impl DaemonStateData {
                         .create(
                             paths,
                             data.repo_shared_services(),
-                            disk_ownership,
-                            cancellation,
+                            TenantStateOwnership {
+                                disk_ownership,
+                                cancellation,
+                                reject_materializer_state,
+                            },
                         )
                         .await
                 },
@@ -1803,8 +1896,18 @@ impl DaemonStateData {
         self: &Arc<Self>,
         client_context: &ClientContext,
     ) -> buck2_error::Result<u64> {
+        self.register_tenant_with_rejected_materializer(client_context, None)
+            .await
+    }
+
+    pub(crate) async fn register_tenant_with_rejected_materializer(
+        self: &Arc<Self>,
+        client_context: &ClientContext,
+        reject_materializer_state: Option<SqliteIdentity>,
+    ) -> buck2_error::Result<u64> {
         let reservation = self.reserve_tenant_for_client_context(client_context)?;
-        self.register_reserved_tenant(reservation).await
+        self.register_reserved_tenant(reservation, reject_materializer_state)
+            .await
     }
 
     /// Gives the tenant addressed by a registering client its generation without initializing
@@ -1834,6 +1937,7 @@ impl DaemonStateData {
     pub(crate) async fn register_reserved_tenant(
         self: &Arc<Self>,
         reservation: TenantReservation,
+        reject_materializer_state: Option<SqliteIdentity>,
     ) -> buck2_error::Result<u64> {
         let TenantReservation { paths, entry } = reservation;
         let data = self.dupe();
@@ -1844,8 +1948,11 @@ impl DaemonStateData {
                     .create(
                         paths,
                         data.repo_shared_services(),
-                        disk_ownership,
-                        cancellation,
+                        TenantStateOwnership {
+                            disk_ownership,
+                            cancellation,
+                            reject_materializer_state,
+                        },
                     )
                     .await
             })
@@ -1870,6 +1977,10 @@ impl DaemonStateData {
             ));
         }
         Ok(slot.generation)
+    }
+
+    pub(crate) fn evict_all_tenants(&self) -> Vec<TenantEviction> {
+        self.tenants.evict_all()
     }
 
     fn tenant_for_legacy_client(&self) -> buck2_error::Result<Arc<TenantState>> {
@@ -1926,10 +2037,26 @@ impl DaemonStateData {
     ) -> buck2_error::Result<Option<TenantEviction>> {
         let paths = tenant_paths_from_client_context(context)?
             .internal_error("Proxy eviction requires an identity")?;
-        Ok(self.tenants.evict_generation_with_recovery(
+        Ok(self.tenants.evict_generation_impl(
             &TenantKey::from_tenant_paths(&paths),
             Some(generation),
-            recovery_allowed,
+            GenerationEviction::Retire { recovery_allowed },
+        ))
+    }
+
+    /// Evicts a tenant generation that the caller registers again as soon as the eviction
+    /// completes, so the daemon keeps serving even when the generation was its last tenant.
+    pub fn evict_tenant_generation_for_replacement(
+        &self,
+        client_context: &ClientContext,
+        generation: u64,
+    ) -> buck2_error::Result<Option<TenantEviction>> {
+        let paths = tenant_paths_from_client_context(client_context)?
+            .internal_error("Tenant replacement requires an identity")?;
+        Ok(self.tenants.evict_generation_impl(
+            &TenantKey::from_tenant_paths(&paths),
+            Some(generation),
+            GenerationEviction::Replace,
         ))
     }
 
@@ -2159,8 +2286,11 @@ impl DaemonState {
                         memory_tracker: memory_tracker.as_ref(),
                         daemon_id: &daemon_id,
                     },
-                    Arc::new(Semaphore::new(1)),
-                    Arc::new(CancellationScope::new()),
+                    TenantStateOwnership {
+                        disk_ownership: Arc::new(Semaphore::new(1)),
+                        cancellation: Arc::new(CancellationScope::new()),
+                        reject_materializer_state: None,
+                    },
                 )
                 .await?;
 

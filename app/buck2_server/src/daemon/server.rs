@@ -261,7 +261,7 @@ pub struct BuckdServerInitPreferences {
     pub in_process: bool,
 }
 
-#[derive(Allocative)]
+#[derive(Allocative, Clone)]
 pub(crate) struct TenantStateInitPreferences {
     pub(crate) enable_trace_io: bool,
     pub(crate) reject_materializer_state: Option<SqliteIdentity>,
@@ -465,9 +465,9 @@ impl Drop for PendingRegistration {
 
 impl BuckdServer {
     fn shutdown_after_final_tenant_eviction(&self) {
-        self.0
-            .stop_accepting_requests
-            .store(true, Ordering::Release);
+        if self.0.stop_accepting_requests.swap(true, Ordering::AcqRel) {
+            return;
+        }
         self.0.daemon_shutdown.start_shutdown(
             buck2_data::DaemonShutdown {
                 reason: "The final tenant was evicted".to_owned(),
@@ -522,6 +522,7 @@ impl BuckdServer {
     async fn register_tenant_with_proxy(
         &self,
         context: &ClientContext,
+        reject_materializer_state: Option<SqliteIdentity>,
     ) -> Result<(u64, DaemonProcessInfo), Status> {
         let data = self.0.daemon_state.data().clone();
         let reservation = data
@@ -558,7 +559,10 @@ impl BuckdServer {
                 )));
             }
         };
-        match data.register_reserved_tenant(reservation).await {
+        match data
+            .register_reserved_tenant(reservation, reject_materializer_state)
+            .await
+        {
             Ok(generation) => {
                 pending.disarm();
                 Ok((generation, published))
@@ -690,7 +694,7 @@ impl BuckdServer {
                         return Ok(None);
                     }
                     let (_, published) = server
-                        .register_tenant_with_proxy(&context)
+                        .register_tenant_with_proxy(&context, None)
                         .await
                         .map_err(|status| {
                             buck2_error::buck2_error!(
@@ -1591,7 +1595,32 @@ impl DaemonApi for BuckdServer {
                 callers: req.callers,
             };
 
-            self.0.daemon_shutdown.start_shutdown(reason, timeout);
+            if buck2_common::invocation_paths::unidaemon_prototype_enabled()? {
+                // A process-state rejection covers shared services. Retire all generations and
+                // revoke proxy recovery before acknowledging Kill; the watchdog also covers
+                // cleanup already in progress. Finer failure scopes can be handled separately.
+                let evictions = self.0.daemon_state.data().evict_all_tenants();
+                let budget = timeout
+                    .unwrap_or(super::proxies::PROXY_EVICTION_TIMEOUT)
+                    .min(super::proxies::PROXY_EVICTION_TIMEOUT);
+                for eviction in &evictions {
+                    super::proxies::arm_tenant_eviction_watchdog(eviction, budget);
+                }
+                crate::active_commands::broadcast_shutdown(&reason);
+                let data = self.0.clone();
+                self.0.rt.spawn(async move {
+                    futures::stream::iter(evictions)
+                        .map(|eviction| eviction.completed)
+                        .buffer_unordered(16)
+                        .collect::<Vec<_>>()
+                        .await;
+                    // Every generation's work has drained, so the daemon shuts down normally;
+                    // an eviction that does not drain is ended by its watchdog instead.
+                    data.daemon_shutdown.start_shutdown(reason, timeout);
+                });
+            } else {
+                self.0.daemon_shutdown.start_shutdown(reason, timeout);
+            }
             Ok(KillResponse {})
         })
         .await
@@ -2123,13 +2152,51 @@ impl DaemonApi for BuckdServer {
         req: Request<buck2_cli_proto::UnstableRegisterTenantRequest>,
     ) -> Result<Response<buck2_cli_proto::UnstableRegisterTenantResponse>, Status> {
         self.check_if_accepting_requests()?;
+        let req = req.into_inner();
         let context = req
-            .into_inner()
             .context
             .ok_or_else(|| Status::invalid_argument("missing tenant client context"))?;
-        let (generation, _) = self.register_tenant_with_proxy(&context).await?;
+        // A rejected materializer database belongs to one generation of the tenant. That
+        // generation is evicted, bounded as a client's direct eviction is, so that the
+        // registration below creates one with a fresh database. The daemon keeps serving
+        // through the eviction even when the generation was its only tenant.
+        if let Some(rejected) = &req.reject_materializer_state {
+            let data = self.0.daemon_state.data();
+            let current = data
+                .tenant_generation_for_client_context(&context)
+                .map_err(|error| Status::failed_precondition(format!("{error:#}")))?;
+            // A generation whose metadata cannot be read is still initializing or already
+            // replaced, so it is not the one that produced the rejected database.
+            if let Some(generation) = current
+                && data
+                    .proxy_metadata(&context, generation)
+                    .ok()
+                    .and_then(|metadata| metadata.materializer_state_identity)
+                    .is_some_and(|identity| identity.to_string() == *rejected)
+                && let Some(eviction) = data
+                    .evict_tenant_generation_for_replacement(&context, generation)
+                    .map_err(|error| Status::internal(format!("{error:#}")))?
+            {
+                super::proxies::arm_tenant_eviction_watchdog(&eviction, Duration::from_secs(10));
+                eviction.completed.await;
+            }
+        }
+        let (generation, _) = self
+            .register_tenant_with_proxy(&context, req.reject_materializer_state.map(Into::into))
+            .await?;
+        let materializer_state_identity = self
+            .0
+            .daemon_state
+            .data()
+            .proxy_metadata(&context, generation)
+            .map_err(|error| Status::failed_precondition(format!("{error:#}")))?
+            .materializer_state_identity
+            .map(|identity| identity.to_string());
         Ok(Response::new(
-            buck2_cli_proto::UnstableRegisterTenantResponse { generation },
+            buck2_cli_proto::UnstableRegisterTenantResponse {
+                generation,
+                materializer_state_identity,
+            },
         ))
     }
 

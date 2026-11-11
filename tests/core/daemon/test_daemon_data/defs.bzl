@@ -83,3 +83,18 @@ nested_buck = rule(
     impl = _nested_buck_impl,
     attrs = {},
 )
+
+def _restart_copy_impl(ctx: AnalysisContext) -> list[Provider]:
+    out = ctx.actions.declare_output("out", has_content_based_path = False)
+    ctx.actions.run(
+        ["cp", ctx.attrs.src, out.as_output()],
+        category = "restart_copy",
+        local_only = ctx.attrs.local_only,
+        env = {"CACHE_BUSTER": str(ctx.attrs.local_only)},
+    )
+    return [DefaultInfo(default_output = out)]
+
+restart_copy = rule(
+    impl = _restart_copy_impl,
+    attrs = {"local_only": attrs.bool(default = False), "src": attrs.source()},
+)

@@ -894,6 +894,7 @@ impl BootstrapBuckdClient {
                 } else {
                     None
                 };
+            let mut slot_daemon_id = None;
             if prototype {
                 let slot = probe_slot(paths).await?;
                 let key = match &mut options {
@@ -914,6 +915,7 @@ impl BootstrapBuckdClient {
                             SlotOwner::Proxy(proxy) => Some(proxy),
                             _ => None,
                         };
+                        slot_daemon_id = proxy.map(|proxy| proxy.daemon_id.clone());
                         // The slot's proxy stands for this tenant only while it represents the
                         // daemon of its namespace; the proxy of a daemon that is gone is killed
                         // below and does not decide the trace state either.
@@ -972,15 +974,39 @@ impl BootstrapBuckdClient {
                     .tag([ErrorTag::DaemonConnect]))
             } else {
                 let mut client = res?;
-                // The lock covers changes of the tenant directory's owner, and the daemon this
-                // command may have just started is one: until the tenant's proxy owns the
-                // directory, a client of any release that finds it vacant starts a daemon of its
-                // own over the tenant's outputs. Registration publishes the proxy under the lock
-                // and then waits for the tenant to initialize, which may take long, so the lock is
-                // released only here.
-                drop(tenant_lifecycle);
                 if paths.unidaemon_key().is_some() {
                     if let BuckdConnectOptions::Options(options) = &options {
+                        if let Some(rejected) = &options.constraints.reject_daemon {
+                            // The slot's proxy stood for the daemon that was just replaced.
+                            if client.constraints.daemon_id != *rejected
+                                && slot_daemon_id.as_deref() == Some(rejected.as_str())
+                                && let Some(lifecycle) = &tenant_lifecycle
+                            {
+                                // A sibling command may have registered with the replacement
+                                // and published a new proxy by now, which is left alone. A proxy
+                                // that could not be stopped is found by the next command's
+                                // connect, standing for a daemon that is gone, and killed there.
+                                if let Err(error) = kill::kill_unidaemon_tenant(
+                                    lifecycle,
+                                    kill::TenantShutdownCommand::Rejected,
+                                    Some(rejected),
+                                )
+                                .await
+                                {
+                                    tracing::warn!(
+                                        "Could not stop the rejected daemon's proxy in `{}`: {error:#}",
+                                        lifecycle.daemon_dir()
+                                    );
+                                }
+                            }
+                        }
+                        // The lock covers changes of the tenant directory's owner, and the daemon
+                        // this command may have just started is one: until the tenant's proxy
+                        // owns the directory, a client of any release that finds it vacant starts
+                        // a daemon of its own over the tenant's outputs. Registration publishes
+                        // the proxy under the lock and then waits for the tenant to initialize,
+                        // which may take long, so the lock is released only here.
+                        drop(tenant_lifecycle);
                         let response = client
                             .client
                             .unstable_register_tenant(tonic::Request::new(
@@ -995,10 +1021,18 @@ impl BootstrapBuckdClient {
                                         trace_id: options.trace_id.to_string(),
                                         ..Default::default()
                                     }),
+                                    reject_materializer_state: options
+                                        .constraints
+                                        .reject_materializer_state
+                                        .clone(),
                                 },
                             ))
                             .await?
                             .into_inner();
+                        if let Some(extra) = &mut client.constraints.extra {
+                            extra.materializer_state_identity =
+                                response.materializer_state_identity;
+                        }
                         paths.select_tenant_generation(response.generation);
                         prune_exited_unidaemon_namespaces(paths).await;
                     }
@@ -1054,6 +1088,10 @@ impl BootstrapBuckdClient {
     ) -> buck2_error::Result<Pid> {
         kill::kill_with_timeout(&mut self.client, &self.info, reason, graceful).await?;
         Pid::from_i64(self.info.pid)
+    }
+
+    async fn stop_unidaemon(&mut self) -> buck2_error::Result<()> {
+        kill::stop_unidaemon(&mut self.client, &self.info).await
     }
 
     async fn kill_for_constraints_mismatch(&mut self) -> buck2_error::Result<Pid> {
@@ -1241,29 +1279,58 @@ async fn establish_connection_inner(
                             }
                         }
 
-                        if buck2_env!("BUCK2_SHARE_DAEMON", type=bool, default=false)? {
+                        if paths.unidaemon_key().is_some()
+                            && matches!(reason, ConstraintUnsatisfiedReason::SqliteIdentity)
+                        {
+                            // Materializer state belongs to the tenant: registering below with
+                            // the rejected identity has the daemon replace this tenant's
+                            // generation and reset only that database.
+                            return Ok(client);
+                        }
+                        let corruption_restart = paths.unidaemon_key().is_some()
+                            && matches!(reason, ConstraintUnsatisfiedReason::RejectDaemonId);
+                        if buck2_env!("BUCK2_SHARE_DAEMON", type=bool, default=false)?
+                            && !corruption_restart
+                        {
                             return Err(buck2_error!(
                                 ErrorTag::Input,
                                 "Shared daemon constraint mismatch: {reason}. Stop its tenants with `buck2 killall --repo` before changing daemon startup settings or binaries."
                             ));
                         }
 
-                        let message = match reason {
-                            ConstraintUnsatisfiedReason::BuckSettings { .. } => {
-                                format!("{reason}; restarting daemon...")
-                            }
-                            _ => format!(
-                                "buck2 daemon constraint mismatch: {reason}; killing daemon..."
-                            ),
-                        };
-                        events_ctx.eprintln(&message).await?;
+                        // A rejected daemon id reports process-wide state: the forkserver, the
+                        // working directory and digest tracking are shared, as is DICE when
+                        // enabled, so the whole daemon is replaced.
+                        if corruption_restart {
+                            events_ctx
+                                .eprintln(
+                                    "Restarting rejected unidaemon; all tenants will be evicted",
+                                )
+                                .await?;
+                            deadline
+                                .run(
+                                    "stopping rejected unidaemon and its actions",
+                                    client.stop_unidaemon(),
+                                )
+                                .await?;
+                        } else {
+                            let message = match reason {
+                                ConstraintUnsatisfiedReason::BuckSettings { .. } => {
+                                    format!("{reason}; restarting daemon...")
+                                }
+                                _ => format!(
+                                    "buck2 daemon constraint mismatch: {reason}; killing daemon..."
+                                ),
+                            };
+                            events_ctx.eprintln(&message).await?;
 
-                        deadline
-                            .run(
-                                "sending kill command to the Buck daemon",
-                                client.kill_for_constraints_mismatch(),
-                            )
-                            .await?;
+                            deadline
+                                .run(
+                                    "sending kill command to the Buck daemon",
+                                    client.kill_for_constraints_mismatch(),
+                                )
+                                .await?;
+                        }
 
                         events_ctx.eprintln("Starting new buck2 daemon...").await?;
 

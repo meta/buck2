@@ -16,11 +16,23 @@ use std::io::ErrorKind;
 use std::time::Duration;
 
 use buck2_cli_proto::DaemonProcessInfo;
+use buck2_cli_proto::KillRequest;
+use buck2_cli_proto::daemon_api_client::DaemonApiClient;
 use buck2_common::daemon_compatibility::TENANT_PROXY_SPEC_FILE;
 use buck2_common::daemon_dir::DaemonDir;
+#[cfg(target_os = "linux")]
+use buck2_error::ErrorTag;
+#[cfg(target_os = "linux")]
+use buck2_error::buck2_error;
 use buck2_fs::paths::file_name::FileName;
+use buck2_wrapper_common::kill;
+use buck2_wrapper_common::pid::Pid;
+use tonic::Request;
+use tonic::codegen::InterceptedService;
+use tonic::transport::Channel;
 
 use crate::daemon::client::BuckdLifecycleLock;
+use crate::daemon::client::connect::BuckAddAuthTokenInterceptor;
 use crate::daemon::client::connect::BuckdProcessInfo;
 use crate::daemon::client::tenant_slot::SlotOwner;
 use crate::daemon::client::tenant_slot::probe_slot_dir;
@@ -30,6 +42,78 @@ use crate::daemon::client::tenant_slot::probe_slot_dir;
 /// second of it for forcing the daemon; every caller here holds the tenant directory's lock for
 /// the whole eviction, so nothing forces a deadline that short.
 const EVICTION_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// Stops a shared daemon whose process-wide state is corrupt, together with its actions: the
+/// forkserver and working directory are shared by every tenant, so nothing of it may survive into
+/// the replacement. `client` is the channel this client already holds to the daemon of its
+/// namespace and `info` that daemon's own connection record; the daemon is addressed as the
+/// client found it, not through the tenant's directory, whose proxy is one of its casualties.
+pub(crate) async fn stop_unidaemon(
+    client: &mut DaemonApiClient<InterceptedService<Channel, BuckAddAuthTokenInterceptor>>,
+    info: &DaemonProcessInfo,
+) -> buck2_error::Result<()> {
+    let callers = tokio::task::spawn_blocking(super::get_callers_for_kill).await?;
+    let started = std::time::Instant::now();
+    let request = client.kill(Request::new(KillRequest {
+        reason: "Client reported corrupted daemon state".to_owned(),
+        timeout: Some(super::GRACEFUL_SHUTDOWN_TIMEOUT.try_into()?),
+        callers,
+    }));
+    match tokio::time::timeout(super::KILL_REQUEST_TIMEOUT, request).await {
+        Ok(Ok(_)) => {
+            let remaining = super::GRACEFUL_SHUTDOWN_TIMEOUT
+                .saturating_sub(std::time::Instant::now() - started);
+            if matches!(
+                tokio::time::timeout(remaining, wait_for_exit(info)).await,
+                Ok(Ok(()))
+            ) {
+                return Ok(());
+            }
+        }
+        Ok(Err(error)) => tracing::warn!(%error, "Unidaemon shutdown request failed"),
+        Err(error) => tracing::warn!(%error, "Unidaemon shutdown request timed out"),
+    }
+    #[cfg(not(target_os = "linux"))]
+    return super::hard_kill(info).await;
+    #[cfg(target_os = "linux")]
+    {
+        let info = info.clone();
+        tokio::task::spawn_blocking(move || -> buck2_error::Result<()> {
+            if kill::kill_unidaemon_tree(
+                Pid::from_i64(info.pid)?,
+                info.pid_start_time,
+                super::FORCE_SHUTDOWN_TIMEOUT,
+            )? {
+                return Ok(());
+            }
+            Err(buck2_error!(
+                ErrorTag::DaemonWontDieFromKill,
+                "Could not verify termination of rejected unidaemon {} and its actions",
+                info.pid
+            ))
+        })
+        .await??;
+        Ok(())
+    }
+}
+
+async fn wait_for_exit(info: &DaemonProcessInfo) -> buck2_error::Result<()> {
+    let pid = Pid::from_i64(info.pid)?;
+    loop {
+        let start_time = info.pid_start_time;
+        // Judged as every reader of a connection record judges its process: a recorded start
+        // time identifies it within the tolerance for clock adjustment, and one the daemon could
+        // not record leaves the pid to speak for it, within the caller's timeout.
+        let alive = tokio::task::spawn_blocking(move || {
+            kill::recorded_process_may_be_running(pid, start_time, None)
+        })
+        .await??;
+        if !alive {
+            return Ok(());
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+}
 
 /// The command stopping a tenant.
 #[derive(Clone, Copy)]

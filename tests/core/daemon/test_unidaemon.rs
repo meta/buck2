@@ -25,6 +25,7 @@ use buck2_e2e::process::Signal;
 use buck2_e2e::process::daemon_is_alive;
 use buck2_e2e::process::send_signal;
 use buck2_e2e::utils::file_id;
+use buck2_e2e::utils::remove_output;
 use common_unidaemon::THIRTY_SECONDS;
 use common_unidaemon::assert_daemon_exits;
 use common_unidaemon::bool_cases;
@@ -35,6 +36,7 @@ use common_unidaemon::generation_of;
 use common_unidaemon::isolated_buck;
 use common_unidaemon::isolation_of;
 use common_unidaemon::isolations;
+use common_unidaemon::materializer_identity;
 use common_unidaemon::path_str;
 use common_unidaemon::pid_of;
 use common_unidaemon::proxy_slot;
@@ -1450,4 +1452,272 @@ cases! { [buck, tmp_path] unidaemon_incompatible_client_evicts_through_proxy {
     fn test_unidaemon_incompatible_client_evicts_through_proxy_kill("kill");
     #[buck_test(data_dir = "test_daemon_data", skip_for_os = ["windows", "darwin"])]
     fn test_unidaemon_incompatible_client_evicts_through_proxy_clean("clean");
+}}
+
+async fn daemon_id(tenant: &Buck) -> anyhow::Result<String> {
+    let status = status_json(tenant).await?;
+    Ok(status["daemon_constraints"]["daemon_id"]
+        .as_str()
+        .context("No `daemon_constraints.daemon_id`")?
+        .to_owned())
+}
+
+/// The compatibility namespace serving `tenant`, as `debug daemon-dir` resolves it.
+async fn namespace_key(tenant: &Buck) -> anyhow::Result<String> {
+    let daemon_dir = tenant.daemon_dir().await?;
+    let namespace = daemon_dir.parent().context("the daemon dir has a parent")?;
+    anyhow::ensure!(
+        namespace.parent().and_then(Path::file_name) == Some(".unidaemons".as_ref()),
+        "{} is not in a namespace",
+        daemon_dir.display()
+    );
+    Ok(namespace
+        .file_name()
+        .context("the namespace has a name")?
+        .to_string_lossy()
+        .into_owned())
+}
+
+/// The namespace, daemon and generation serving `tenant`, as its proxy reports them.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct TenantRecord {
+    compatibility_key: String,
+    daemon_id: String,
+    generation: u64,
+}
+
+async fn tenant_record(tenant: &Buck) -> anyhow::Result<TenantRecord> {
+    Ok(TenantRecord {
+        compatibility_key: namespace_key(tenant).await?,
+        daemon_id: daemon_id(tenant).await?,
+        generation: tenant_generation_via(tenant, tenant).await?,
+    })
+}
+
+fn forkserver_pid(status: &Value) -> anyhow::Result<u32> {
+    Ok(u32::try_from(
+        status["forkserver_pid"]
+            .as_u64()
+            .context("No `forkserver_pid`")?,
+    )?)
+}
+
+/// Process-wide corruption, a dead forkserver here, replaces the shared daemon. A corrupt
+/// materializer database belongs to one tenant: that tenant's generation is replaced in
+/// the running daemon while the other tenant's work goes on. A generation that cannot
+/// drain within the eviction deadline brings the daemon's watchdog down on the whole
+/// daemon.
+async fn unidaemon_corruption_recovery_scope(
+    buck: &Buck,
+    failure: &str,
+    share_dice: bool,
+    trace_io: bool,
+) -> anyhow::Result<()> {
+    let tmp_path = buck.cwd().parent().unwrap().join("corruption");
+    std::fs::create_dir(&tmp_path)?;
+    let mut tenants = unidaemon_checkouts(buck, &tmp_path, share_dice)?;
+    let gate = tmp_path.join("eviction");
+    for tenant in &mut tenants {
+        let config = tenant.cwd().join(".buckconfig");
+        std::fs::write(
+            &config,
+            std::fs::read_to_string(&config)?.replace("execution_platforms = root//:platforms", "")
+                + "\n[buck2]\nrestarter = true\nforkserver = true\n",
+        )?;
+        std::fs::write(tenant.cwd().join("restart-source"), "materializer recovery")?;
+        let targets = tenant.cwd().join("TARGETS.fixture");
+        std::fs::write(
+            &targets,
+            std::fs::read_to_string(&targets)?
+                + "\nload(\":defs.bzl\", \"restart_copy\")\n\
+                   restart_copy(name = \"restart_seed\", src = \"restart-source\")\n\
+                   restart_copy(name = \"restart_producer\", src = \":restart_seed\")\n\
+                   restart_copy(name = \"restart_consumer\", src = \":restart_producer\", local_only = True)\n",
+        )?;
+        tenant.set_env(
+            "BUCK2_TEST_UNIDAEMON_EVICTION_GATE",
+            format!("tenant,{}", gate.display()),
+        );
+    }
+    let mut writer = None;
+    let mut rebuilding = None;
+    let result = async {
+        if trace_io {
+            for tenant in &tenants {
+                tenant.debug(&["trace-io", "enable"]).await?;
+            }
+        }
+        let mut outputs = Vec::new();
+        for tenant in &tenants {
+            let result = tenant.build(&["//:restart_producer"]).await?;
+            outputs.push(
+                result
+                    .build_report()?
+                    .output_for_target("//:restart_producer")?,
+            );
+        }
+        let status = status_json(&tenants[0]).await?;
+        let daemon = pid_of(&status)?;
+        let forkserver = forkserver_pid(&status)?;
+        let mut owners = Vec::new();
+        for tenant in &tenants {
+            owners.push(tenant_record(tenant).await?);
+        }
+        let proxies = [proxy_pid(&tenants[0])?, proxy_pid(&tenants[1])?];
+        let identities = [
+            materializer_identity(&tenants[0], "tenant")?,
+            materializer_identity(&tenants[1], "tenant")?,
+        ];
+        assert_ne!(identities[0], identities[1]);
+        assert_eq!(
+            forkserver_pid(&status_json(&tenants[1]).await?)?,
+            forkserver
+        );
+        if failure == "forkserver" {
+            kill_process(forkserver, Signal::Kill)?;
+            wait_for_terminated(forkserver, Duration::from_secs(3)).await?;
+        } else {
+            writer = Some(start_generation(&tenants[0], &tmp_path, "old")?);
+            wait_for_marker(&tmp_path.join("old.started"), &mut writer).await?;
+            remove_output(&outputs[1])?;
+        }
+        rebuilding = Some(tenants[1].build(&["//:restart_consumer"]).spawn());
+        tokio::time::timeout(Duration::from_secs(10), async {
+            while !tmp_path.join("eviction.started").exists() {
+                if rebuilding.as_mut().unwrap().try_wait().is_some() {
+                    let result = rebuilding.take().unwrap().wait().await?;
+                    anyhow::bail!(
+                        "Build completed without corruption recovery: {}",
+                        result.stderr
+                    );
+                }
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+            anyhow::Ok(())
+        })
+        .await
+        .context("The eviction did not start")??;
+        assert!(rebuilding.as_mut().unwrap().try_wait().is_none());
+        assert!(!process_terminated(daemon));
+        if failure == "materializer-deadline" {
+            // The eviction never drains, so the daemon's watchdog stops the daemon under the
+            // command that asked for the recovery; the next command gets a fresh daemon.
+            let outcome = wait_within(rebuilding.take().unwrap(), THIRTY_SECONDS).await?;
+            assert!(outcome.is_err(), "{outcome:?}");
+            wait_for_terminated(daemon, Duration::from_secs(3)).await?;
+            for proxy in proxies {
+                wait_for_terminated(proxy, Duration::from_secs(3)).await?;
+            }
+            // The database is still the corrupt one; the next command that needs the
+            // missing output recovers it in a fresh daemon, with the eviction left to drain.
+            touch(&tmp_path.join("eviction.release"))?;
+            let result = tenants[1].build(&["//:restart_consumer"]).await?;
+            assert!(result.stderr.contains("Your command will now restart"));
+            assert_ne!(materializer_identity(&tenants[1], "tenant")?, identities[1]);
+            assert_ne!(daemon_pid(&tenants[1]).await?, daemon);
+            return anyhow::Ok(());
+        }
+        touch(&tmp_path.join("eviction.release"))?;
+        let result = wait_within(rebuilding.take().unwrap(), Duration::from_secs(20)).await??;
+        assert!(result.stderr.contains("Your command will now restart"));
+        let replacement = tenant_record(&tenants[1]).await?;
+        assert_eq!(replacement.compatibility_key, owners[1].compatibility_key);
+        if failure == "forkserver" {
+            assert!(result.stderr.contains("Restarting rejected unidaemon"));
+            assert!(process_terminated(daemon));
+            for proxy in proxies {
+                wait_for_terminated(proxy, Duration::from_secs(3)).await?;
+            }
+            assert_ne!(replacement.daemon_id, owners[1].daemon_id);
+            tenants[0].build(&["//:tenant_value"]).await?;
+            assert_eq!(materializer_identity(&tenants[0], "tenant")?, identities[0]);
+            let replacement_status = status_json(&tenants[0]).await?;
+            assert_ne!(pid_of(&replacement_status)?, daemon);
+            assert_ne!(forkserver_pid(&replacement_status)?, forkserver);
+            let other = status_json(&tenants[1]).await?;
+            if trace_io {
+                // The client that replaced the daemon settled on its proxy while the proxy
+                // still stood for the traced daemon, so its replacement traces too. The other
+                // tenant's proxy died with the daemon, so with no preference of its own it
+                // continues without tracing, in the namespace of that state.
+                assert_ne!(pid_of(&other)?, pid_of(&replacement_status)?);
+                assert!(truthy(
+                    &other["daemon_constraints"]["extra"]["trace_io_enabled"]
+                ));
+                assert!(!truthy(
+                    &replacement_status["daemon_constraints"]["extra"]["trace_io_enabled"]
+                ));
+            } else {
+                assert_eq!(pid_of(&other)?, pid_of(&replacement_status)?);
+            }
+        } else {
+            assert!(!result.stderr.contains("Restarting rejected unidaemon"));
+            assert!(!process_terminated(daemon));
+            // Only the corrupt tenant's generation went, with its proxy; the other tenant's
+            // action kept running.
+            wait_for_terminated(proxies[1], Duration::from_secs(3)).await?;
+            assert!(!process_terminated(proxies[0]));
+            assert!(!process_terminated(pid_file(
+                &tmp_path.join("old.started.pid")
+            )?));
+            assert_eq!(replacement.daemon_id, owners[1].daemon_id);
+            assert!(replacement.generation > owners[1].generation);
+            assert_ne!(materializer_identity(&tenants[1], "tenant")?, identities[1]);
+            touch(&tmp_path.join("old.release"))?;
+            finish(writer.take()).await;
+            tenants[0].build(&["//:tenant_value"]).await?;
+            assert_eq!(materializer_identity(&tenants[0], "tenant")?, identities[0]);
+            let status = status_json(&tenants[0]).await?;
+            assert_eq!(pid_of(&status)?, daemon);
+            assert_eq!(forkserver_pid(&status)?, forkserver);
+        }
+        anyhow::Ok(())
+    }
+    .await;
+    touch(&tmp_path.join("eviction.release"))?;
+    touch(&tmp_path.join("old.release"))?;
+    finish(writer).await;
+    finish(rebuilding).await;
+    let killed = kill_all(&tenants).await;
+    result?;
+    killed
+}
+
+cases! { [buck] unidaemon_corruption_recovery_scope {
+    #[buck_test(data_dir = "test_daemon_data", skip_for_os = ["windows", "darwin"], allow_soft_errors = true)]
+    #[expect(non_snake_case, reason = "named like the Python harness's parametrized case")]
+    fn test_unidaemon_corruption_recovery_scope_False_False_forkserver("forkserver", false, false);
+    #[buck_test(data_dir = "test_daemon_data", skip_for_os = ["windows", "darwin"], allow_soft_errors = true)]
+    #[expect(non_snake_case, reason = "named like the Python harness's parametrized case")]
+    fn test_unidaemon_corruption_recovery_scope_False_False_materializer("materializer", false, false);
+    #[buck_test(data_dir = "test_daemon_data", skip_for_os = ["windows", "darwin"], allow_soft_errors = true)]
+    #[expect(non_snake_case, reason = "named like the Python harness's parametrized case")]
+    fn test_unidaemon_corruption_recovery_scope_False_False_materializer_deadline("materializer-deadline", false, false);
+    #[buck_test(data_dir = "test_daemon_data", skip_for_os = ["windows", "darwin"], allow_soft_errors = true)]
+    #[expect(non_snake_case, reason = "named like the Python harness's parametrized case")]
+    fn test_unidaemon_corruption_recovery_scope_False_True_forkserver("forkserver", true, false);
+    #[buck_test(data_dir = "test_daemon_data", skip_for_os = ["windows", "darwin"], allow_soft_errors = true)]
+    #[expect(non_snake_case, reason = "named like the Python harness's parametrized case")]
+    fn test_unidaemon_corruption_recovery_scope_False_True_materializer("materializer", true, false);
+    #[buck_test(data_dir = "test_daemon_data", skip_for_os = ["windows", "darwin"], allow_soft_errors = true)]
+    #[expect(non_snake_case, reason = "named like the Python harness's parametrized case")]
+    fn test_unidaemon_corruption_recovery_scope_False_True_materializer_deadline("materializer-deadline", true, false);
+    #[buck_test(data_dir = "test_daemon_data", skip_for_os = ["windows", "darwin"], allow_soft_errors = true)]
+    #[expect(non_snake_case, reason = "named like the Python harness's parametrized case")]
+    fn test_unidaemon_corruption_recovery_scope_True_False_forkserver("forkserver", false, true);
+    #[buck_test(data_dir = "test_daemon_data", skip_for_os = ["windows", "darwin"], allow_soft_errors = true)]
+    #[expect(non_snake_case, reason = "named like the Python harness's parametrized case")]
+    fn test_unidaemon_corruption_recovery_scope_True_False_materializer("materializer", false, true);
+    #[buck_test(data_dir = "test_daemon_data", skip_for_os = ["windows", "darwin"], allow_soft_errors = true)]
+    #[expect(non_snake_case, reason = "named like the Python harness's parametrized case")]
+    fn test_unidaemon_corruption_recovery_scope_True_False_materializer_deadline("materializer-deadline", false, true);
+    #[buck_test(data_dir = "test_daemon_data", skip_for_os = ["windows", "darwin"], allow_soft_errors = true)]
+    #[expect(non_snake_case, reason = "named like the Python harness's parametrized case")]
+    fn test_unidaemon_corruption_recovery_scope_True_True_forkserver("forkserver", true, true);
+    #[buck_test(data_dir = "test_daemon_data", skip_for_os = ["windows", "darwin"], allow_soft_errors = true)]
+    #[expect(non_snake_case, reason = "named like the Python harness's parametrized case")]
+    fn test_unidaemon_corruption_recovery_scope_True_True_materializer("materializer", true, true);
+    #[buck_test(data_dir = "test_daemon_data", skip_for_os = ["windows", "darwin"], allow_soft_errors = true)]
+    #[expect(non_snake_case, reason = "named like the Python harness's parametrized case")]
+    fn test_unidaemon_corruption_recovery_scope_True_True_materializer_deadline("materializer-deadline", true, true);
 }}

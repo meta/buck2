@@ -34,6 +34,7 @@ use crate::startup_deadline::StartupDeadline;
 mod unidaemon;
 pub use unidaemon::TenantShutdownCommand;
 pub use unidaemon::kill_unidaemon_tenant;
+pub(crate) use unidaemon::stop_unidaemon;
 
 const GRACEFUL_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(4);
 /// Kill request does not wait for the process to exit.

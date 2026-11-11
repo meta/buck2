@@ -902,10 +902,12 @@ message UnstableListTenantsResponse {
 
 message UnstableRegisterTenantRequest {
   ClientContext context = 1;
+  optional string reject_materializer_state = 2;
 }
 
 message UnstableRegisterTenantResponse {
   uint64 generation = 1;
+  optional string materializer_state_identity = 2;
 }
 
 message EvictTenantRequest {

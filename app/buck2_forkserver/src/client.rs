@@ -31,7 +31,6 @@ use tonic::Request;
 use tonic::transport::Channel;
 
 use crate::convert::decode_event_stream;
-use crate::state_dir::ForkserverStateDir;
 
 #[derive(Clone, Dupe, Allocative)]
 pub struct ForkserverClient {
@@ -49,8 +48,6 @@ enum ForkserverError {
 
 #[derive(Allocative)]
 struct ForkserverClientInner {
-    #[allocative(skip)]
-    _state_dir: Arc<ForkserverStateDir>,
     /// Error from the forkserver process, if any.
     #[allocative(skip)]
     error: Arc<ArcSwapOption<buck2_error::Error>>,
@@ -60,16 +57,16 @@ struct ForkserverClientInner {
 }
 
 impl ForkserverClient {
-    pub(crate) async fn new(
-        mut child: Child,
-        connection: impl Future<Output = buck2_error::Result<Channel>>,
-        state_dir: Arc<ForkserverStateDir>,
-    ) -> buck2_error::Result<Self> {
+    pub(crate) async fn new(mut child: Child, channel: Channel) -> buck2_error::Result<Self> {
+        let rpc = buck2_forkserver_proto::forkserver_client::ForkserverClient::new(channel)
+            .max_encoding_message_size(usize::MAX)
+            .max_decoding_message_size(usize::MAX);
+
         let pid = child.id().expect("Child has not been polled");
 
         let error = Arc::new(ArcSwapOption::empty());
 
-        tokio::task::spawn(buck2_util::async_move_clone!(error, state_dir, {
+        tokio::task::spawn(buck2_util::async_move_clone!(error, {
             let err = match child.wait().await {
                 Ok(status) => ForkserverError::Exited(status),
                 Err(e) => ForkserverError::WaitError(e),
@@ -77,23 +74,10 @@ impl ForkserverClient {
 
             let err = buck2_error::Error::from(err).context("Forkserver is unavailable");
             error.swap(Some(Arc::new(err)));
-            drop(state_dir);
         }));
 
-        let channel = connection
-            .await
-            .buck_error_context("Error connecting to Forkserver")?;
-        let rpc = buck2_forkserver_proto::forkserver_client::ForkserverClient::new(channel)
-            .max_encoding_message_size(usize::MAX)
-            .max_decoding_message_size(usize::MAX);
-
         Ok(Self {
-            inner: Arc::new(ForkserverClientInner {
-                error,
-                pid,
-                rpc,
-                _state_dir: state_dir,
-            }),
+            inner: Arc::new(ForkserverClientInner { error, pid, rpc }),
         })
     }
 
@@ -158,71 +142,5 @@ impl ForkserverClient {
             .await?;
 
         Ok(())
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use std::process::Stdio;
-    use std::sync::atomic::AtomicU8;
-    use std::sync::atomic::Ordering;
-
-    use buck2_fs::paths::abs_norm_path::AbsNormPathBuf;
-    use buck2_util::process::async_background_command;
-    use tokio::io::AsyncWriteExt;
-
-    use super::*;
-    use crate::state_dir::CLEANUP_PENDING;
-    use crate::state_dir::CleanupOutcome;
-    use crate::state_dir::await_cleanup_and_reclaim;
-
-    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-    async fn cancelled_connection_keeps_state_until_child_exits() {
-        let root = tempfile::tempdir().unwrap();
-        let root_path = AbsNormPathBuf::new(root.path().to_owned()).unwrap();
-        let path = AbsNormPathBuf::new(root.path().join("forkserver")).unwrap();
-        let probe = Arc::new(AtomicU8::new(CLEANUP_PENDING));
-        let owned_path = path.clone();
-        let owned_probe = probe.clone();
-        let state_dir = Arc::new(
-            tokio::task::spawn_blocking(move || {
-                ForkserverStateDir::create_with_probe(&owned_path, owned_probe)
-            })
-            .await
-            .unwrap()
-            .unwrap(),
-        );
-        let mut child = async_background_command("/bin/sh")
-            .args(["-c", "read release"])
-            .stdin(Stdio::piped())
-            .kill_on_drop(true)
-            .spawn()
-            .unwrap();
-        let mut release = child.stdin.take().unwrap();
-        let mut connecting = Box::pin(ForkserverClient::new(
-            child,
-            std::future::pending(),
-            state_dir,
-        ));
-        assert!(futures::poll!(&mut connecting).is_pending());
-        drop(connecting);
-        let check_path = path.clone();
-        assert!(
-            tokio::task::spawn_blocking(move || check_path.exists())
-                .await
-                .unwrap()
-        );
-        assert_eq!(
-            probe.load(Ordering::SeqCst),
-            CLEANUP_PENDING,
-            "state must survive until child exits"
-        );
-
-        release.write_all(b"go\n").await.unwrap();
-        let outcome = await_cleanup_and_reclaim(probe, path, root_path).await;
-        assert!(matches!(
-            outcome,
-            CleanupOutcome::Removed | CleanupOutcome::Deferred
-        ));
     }
 }

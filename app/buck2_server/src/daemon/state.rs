@@ -2420,7 +2420,7 @@ impl DaemonState {
             tracing::info!("Launching forkserver...");
             let forkserver = maybe_launch_forkserver(
                 root_config,
-                &invocation_paths.forkserver_state_dir(&daemon_id.to_string())?,
+                &invocation_paths,
                 memory_tracker.as_ref().map(|m| &m.cgroup_tree),
                 &invocation_paths.isolation,
             )

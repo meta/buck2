@@ -959,32 +959,16 @@ async fn test_daemon_start_waits_for_tenant_outputs(buck: &Buck) -> anyhow::Resu
 }
 
 #[buck_test(skip_for_os = ["windows"])]
-async fn test_unshared_forkserver_state_is_reclaimed(buck: &mut Buck) -> anyhow::Result<()> {
+async fn test_unshared_forkserver_state_lives_in_buck_out(buck: &mut Buck) -> anyhow::Result<()> {
     buck.set_daemon_routing(false)?;
-    let state_root = buck.cwd().join("buck-out").join("v2").join("forkserver");
-    for _ in 0..3 {
-        buck.targets(&["//:rule"]).await?;
-        let mut states = Vec::new();
-        for entry in std::fs::read_dir(&state_root)? {
-            let path = entry?.path();
-            if path.is_dir() {
-                states.push(path);
-            }
-        }
-        assert_eq!(states.len(), 1, "{states:?}");
-        let state = &states[0];
-        assert!(state.is_dir());
-        buck.kill().await?;
-        for _ in 0..100 {
-            if !state.exists() {
-                break;
-            }
-            tokio::time::sleep(Duration::from_millis(50)).await;
-        }
-        assert!(!state.exists());
-    }
-    buck.clean(&[]).await?;
-    assert!(!state_root.exists());
+    buck.targets(&["//:rule"]).await?;
+    assert!(
+        buck.cwd()
+            .join("buck-out")
+            .join("v2")
+            .join("forkserver")
+            .is_dir()
+    );
     Ok(())
 }
 

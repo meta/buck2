@@ -254,25 +254,32 @@ impl UnidaemonLifetimeLock {
         key: &DaemonCompatibilityKey,
     ) -> buck2_error::Result<bool> {
         let path = paths.unidaemon_lifetime_lock_path(key)?;
-        tokio::task::spawn_blocking(move || {
-            let file = match File::open(&path) {
-                Ok(file) => file,
-                Err(error) if error.kind() == ErrorKind::NotFound => return Ok(false),
-                Err(error) => {
-                    return Err(
-                        buck2_error::Error::from(error).context(format!("Probing `{path}`"))
-                    );
-                }
-            };
-            match file.try_lock_shared() {
-                Ok(()) => Ok(false),
-                Err(TryLockError::WouldBlock) => Ok(true),
-                Err(TryLockError::Error(error)) => {
-                    Err(buck2_error::Error::from(error).context(format!("Probing `{path}`")))
-                }
+        tokio::task::spawn_blocking(move || Self::is_held_at(&path)).await?
+    }
+
+    /// [`Self::is_held`] for a caller outside a runtime, such as a starting daemon.
+    pub fn is_held_blocking(
+        paths: &InvocationPaths,
+        key: &DaemonCompatibilityKey,
+    ) -> buck2_error::Result<bool> {
+        Self::is_held_at(&paths.unidaemon_lifetime_lock_path(key)?)
+    }
+
+    fn is_held_at(path: &AbsNormPathBuf) -> buck2_error::Result<bool> {
+        let file = match File::open(path) {
+            Ok(file) => file,
+            Err(error) if error.kind() == ErrorKind::NotFound => return Ok(false),
+            Err(error) => {
+                return Err(buck2_error::Error::from(error).context(format!("Probing `{path}`")));
             }
-        })
-        .await?
+        };
+        match file.try_lock_shared() {
+            Ok(()) => Ok(false),
+            Err(TryLockError::WouldBlock) => Ok(true),
+            Err(TryLockError::Error(error)) => {
+                Err(buck2_error::Error::from(error).context(format!("Probing `{path}`")))
+            }
+        }
     }
 
     /// Whether the lock is free, waiting up to `timeout` for a daemon that holds it to exit. A
@@ -634,14 +641,26 @@ impl InvocationPaths {
         Ok(self.shared_dice_state_dir().join(FileName::new(daemon_id)?))
     }
 
-    /// Private executable state for one forkserver, under execution-allowlisted buck-out.
-    /// It is a sibling of the daemon's working directory so that `buck2 clean` of a shared
-    /// tenant leaves the daemon-wide forkserver intact.
-    pub fn forkserver_state_dir(&self, daemon_id: &str) -> buck2_error::Result<AbsNormPathBuf> {
-        Ok(self
-            .daemon_working_dir()?
+    /// Private executable state for the daemon's forkserver, under execution-allowlisted
+    /// buck-out. A shared daemon keeps it beside its working directory, so that `buck2 clean` of
+    /// a tenant leaves it intact, under its namespace, which at most one live daemon has.
+    pub fn forkserver_state_dir(&self) -> buck2_error::Result<AbsNormPathBuf> {
+        if !self.routing()?.is_shared() {
+            return Ok(self
+                .buck_out_path()
+                .join(FileName::unchecked_new("forkserver")));
+        }
+        let key = self
+            .unidaemon_key()
+            .internal_error("A shared daemon serves a namespace")?;
+        Ok(self.shared_forkserver_state_root().join(key.file_name()))
+    }
+
+    /// Forkserver state of the shared daemons started from this checkout, one entry per
+    /// namespace.
+    pub fn shared_forkserver_state_root(&self) -> AbsNormPathBuf {
+        self.daemon_state_dir()
             .join(FileName::unchecked_new("forkserver"))
-            .join(FileName::new(daemon_id)?))
     }
 
     fn materializer_state_dir_name(&self) -> &FileName {

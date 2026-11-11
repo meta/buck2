@@ -8,16 +8,16 @@
  * above-listed licenses.
  */
 
+use buck2_common::invocation_paths::InvocationPaths;
 use buck2_common::legacy_configs::configs::LegacyBuckConfig;
 use buck2_execute_impl::executors::local::ForkserverAccess;
-use buck2_fs::paths::abs_norm_path::AbsNormPath;
 use buck2_fs::paths::file_name::FileNameBuf;
 use buck2_resource_control::buck_cgroup_tree::BuckCgroupTree;
 
 #[cfg(unix)]
 pub async fn maybe_launch_forkserver(
     root_config: &LegacyBuckConfig,
-    forkserver_state_dir: &AbsNormPath,
+    paths: &InvocationPaths,
     cgroup_tree: Option<&BuckCgroupTree>,
     isolation_dir: &FileNameBuf,
 ) -> buck2_error::Result<ForkserverAccess> {
@@ -36,6 +36,7 @@ pub async fn maybe_launch_forkserver(
         return Ok(ForkserverAccess::None);
     }
 
+    let state_dir = paths.forkserver_state_dir()?;
     let exe = std::env::current_exe().buck_error_context("Cannot access current_exe")?;
     Ok(ForkserverAccess::Client(
         buck2_forkserver::launch::launch_forkserver(
@@ -43,7 +44,7 @@ pub async fn maybe_launch_forkserver(
             // `--isolation-dir` is not read by the forkserver itself; it is carried on the
             // command line so that `buck2 killall --isolation-dir` can attribute the process.
             &["forkserver", "--isolation-dir", isolation_dir.as_str()],
-            forkserver_state_dir,
+            &state_dir,
             cgroup_tree,
         )
         .await?,
@@ -53,7 +54,7 @@ pub async fn maybe_launch_forkserver(
 #[cfg(not(unix))]
 pub async fn maybe_launch_forkserver(
     _root_config: &LegacyBuckConfig,
-    _forkserver_state_dir: &AbsNormPath,
+    _paths: &InvocationPaths,
     _cgroup_tree: Option<&BuckCgroupTree>,
     _isolation_dir: &FileNameBuf,
 ) -> buck2_error::Result<ForkserverAccess> {

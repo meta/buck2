@@ -28,10 +28,6 @@ rand.workspace = true
 tokio.workspace = true
 tokio-stream.workspace = true
 tonic.workspace = true
-tracing.workspace = true
-
-[dev-dependencies]
-tempfile.workspace = true
 
 [target.'cfg(target_os = "linux")'.dependencies]
 buck2_embedded_section.workspace = true

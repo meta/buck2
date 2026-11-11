@@ -41,6 +41,7 @@ use buck2_events::daemon_id::DaemonId;
 use buck2_events::daemon_id::set_daemon_id_for_panics;
 use buck2_fs::error::IoResultExt;
 use buck2_fs::fs_util;
+use buck2_fs::paths::abs_norm_path::AbsNormPath;
 use buck2_fs::paths::forward_rel_path::ForwardRelativePath;
 use buck2_resource_control::buck_cgroup_tree::PreppedBuckCgroups;
 use buck2_server::daemon::daemon_tcp::create_listener;
@@ -256,14 +257,57 @@ fn verify_buck_out_dir(paths: &InvocationPaths) -> buck2_error::Result<()> {
     Ok(())
 }
 
+/// Removes the forkserver state that shared daemons of other namespaces left in this checkout
+/// when they did not exit normally. A namespace whose lifetime lock is free has no daemon
+/// running or starting: a daemon takes the lock before it launches its forkserver, and this
+/// daemon holds its own. Best effort, as the state only costs disk space.
+fn remove_stale_shared_forkserver_state(paths: &InvocationPaths, own: &DaemonCompatibilityKey) {
+    let root = paths.shared_forkserver_state_root();
+    let entries = match fs_util::read_dir_if_exists(&root) {
+        Ok(Some(entries)) => entries,
+        Ok(None) => return,
+        Err(error) => {
+            tracing::info!("Left shared forkserver state under `{root}` in place: {error:#}");
+            return;
+        }
+    };
+    for entry in entries {
+        let Some(key) = entry
+            .ok()
+            .and_then(|entry| entry.file_name().into_string().ok())
+            .and_then(|name| name.parse::<DaemonCompatibilityKey>().ok())
+        else {
+            continue;
+        };
+        if key == *own {
+            continue;
+        }
+        let state = root.join(key.file_name());
+        match UnidaemonLifetimeLock::is_held_blocking(paths, &key) {
+            Ok(false) => {
+                if let Err(error) = fs_util::remove_all(&state) {
+                    tracing::info!("Left forkserver state `{state}` in place: {error:?}");
+                }
+            }
+            Ok(true) => {}
+            Err(error) => {
+                tracing::info!("Left forkserver state `{state}` in place: {error:#}");
+            }
+        }
+    }
+}
+
 /// Removes the namespace directory of a shared daemon that has exited normally, so that no record
-/// names it; a daemon that failed leaves its error report there for its client to read. The
-/// daemon still holds the namespace's lifetime lock here, so no replacement runs yet; a client
-/// that holds the lifecycle lock is about to start one over the directory and keeps it, which is
-/// why this is best effort. The namespace's lock files stay: unlinking one while a daemon of the
-/// key waits on it would leave that daemon holding a lock on an unlinked file, which every later
-/// probe reads as "no daemon".
-fn remove_exited_namespace(daemon_dir: &DaemonDir) {
+/// names it, and the daemon's forkserver state, which nothing else removes; a daemon that failed
+/// leaves its error report there for its client to read. The daemon still holds the namespace's
+/// lifetime lock here, so no replacement runs yet; a client that holds the lifecycle lock is
+/// about to start one over the directory and keeps it, which is why this is best effort. The
+/// namespace's lock files stay: unlinking one while a daemon of the key waits on it would leave
+/// that daemon holding a lock on an unlinked file, which every later probe reads as "no daemon".
+fn remove_exited_namespace(daemon_dir: &DaemonDir, forkserver_state: &AbsNormPath) {
+    if let Err(error) = fs_util::remove_all(forkserver_state) {
+        tracing::info!("Left forkserver state `{forkserver_state}` in place: {error:?}");
+    }
     let removed = new_tokio_runtime("buck2-daemon-exit")
         .enable_all()
         .build()
@@ -762,6 +806,9 @@ impl DaemonCommand {
             fs_util::create_dir_all(&daemon_dir.path)?;
         }
 
+        let forkserver_state = unidaemon
+            .then(|| paths.forkserver_state_dir())
+            .transpose()?;
         let res = (move || {
             if let Some(key) = &key {
                 // Released by the kernel when the process exits, and only then; see
@@ -772,6 +819,7 @@ impl DaemonCommand {
                     key,
                     Duration::from_secs(10),
                 )?);
+                remove_stale_shared_forkserver_state(&paths, key);
             }
             self.run(log_reload_handle, paths, in_process, ready)
         })();
@@ -781,8 +829,8 @@ impl DaemonCommand {
                 serde_json::to_string(&buck2_data::ErrorReport::from(err))?,
             )
             .categorize_internal()?;
-        } else if unidaemon {
-            remove_exited_namespace(&daemon_dir);
+        } else if let Some(forkserver_state) = &forkserver_state {
+            remove_exited_namespace(&daemon_dir, forkserver_state);
         }
         // Flush PGO profile data on all daemon exit paths (graceful kill,
         // dir mismatch, inactivity timeout, errors).

@@ -2201,3 +2201,81 @@ async fn test_killall_repo_evicts_remaining_tenants_after_a_failure(
     killed?;
     Ok(())
 }
+
+#[buck_test(data_dir = "test_daemon_data", skip_for_os = ["windows", "darwin"])]
+async fn test_shared_forkserver_state_goes_with_its_daemon(
+    buck: &Buck,
+    tmp_path: &Path,
+) -> anyhow::Result<()> {
+    let tenant = unidaemon_checkouts(buck, tmp_path, false)?.swap_remove(0);
+    let root = tenant
+        .cwd()
+        .join("buck-out")
+        .join("._buck2")
+        .join("forkserver");
+    let result = async {
+        tenant.build(&["//:tenant_value"]).await?;
+        let key = namespace_name(tmp_path)?;
+        assert!(root.join(&key).is_dir());
+        let entries: Vec<String> = std::fs::read_dir(&root)?
+            .map(|entry| Ok(entry?.file_name().to_string_lossy().into_owned()))
+            .collect::<anyhow::Result<_>>()?;
+        assert_eq!(entries, [key.clone()]);
+        let pid = daemon_pid(&tenant).await?;
+        tenant.kill().await?;
+        assert_daemon_exits(pid).await;
+        assert!(
+            !root.join(&key).exists(),
+            "the exited daemon removed its forkserver state"
+        );
+        anyhow::Ok(())
+    }
+    .await;
+    let killed = tenant.kill().await;
+    result?;
+    killed?;
+    Ok(())
+}
+
+#[buck_test(data_dir = "test_daemon_data", skip_for_os = ["windows", "darwin"])]
+async fn test_shared_daemon_removes_stale_forkserver_state_of_other_namespaces(
+    buck: &Buck,
+    tmp_path: &Path,
+) -> anyhow::Result<()> {
+    let tenant = unidaemon_checkouts(buck, tmp_path, false)?.swap_remove(0);
+    let root = tenant
+        .cwd()
+        .join("buck-out")
+        .join("._buck2")
+        .join("forkserver");
+    // A namespace no daemon holds, as a daemon that did not exit normally leaves it.
+    let stale = root.join("0".repeat(64));
+    std::fs::create_dir_all(&stale)?;
+    std::fs::write(stale.join("miniperf"), "left behind")?;
+    let result = async {
+        tenant.build(&["//:tenant_value"]).await?;
+        let key = namespace_name(tmp_path)?;
+        assert!(root.join(&key).is_dir());
+        assert!(
+            !stale.exists(),
+            "the starting daemon removed the state of a namespace without a daemon"
+        );
+        anyhow::Ok(())
+    }
+    .await;
+    let killed = tenant.kill().await;
+    result?;
+    killed?;
+    Ok(())
+}
+
+/// The name of the one namespace under the test's home: its compatibility key.
+fn namespace_name(tmp_path: &Path) -> anyhow::Result<String> {
+    Ok(only_unidaemon_namespace(tmp_path)?
+        .parent()
+        .context("the namespace's `v2` has a parent")?
+        .file_name()
+        .context("the namespace has a name")?
+        .to_string_lossy()
+        .into_owned())
+}

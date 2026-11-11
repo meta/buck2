@@ -36,8 +36,6 @@ import org.jetbrains.kotlin.fir.declarations.utils.isInline
 import org.jetbrains.kotlin.fir.declarations.utils.isInlineOrValue
 import org.jetbrains.kotlin.fir.declarations.utils.isSuspend
 import org.jetbrains.kotlin.fir.expressions.FirAnnotation
-import org.jetbrains.kotlin.fir.expressions.FirAnonymousFunctionExpression
-import org.jetbrains.kotlin.fir.expressions.FirCall
 import org.jetbrains.kotlin.fir.expressions.FirCallableReferenceAccess
 import org.jetbrains.kotlin.fir.expressions.FirErrorExpression
 import org.jetbrains.kotlin.fir.expressions.FirExpression
@@ -51,7 +49,6 @@ import org.jetbrains.kotlin.fir.expressions.FirResolvedQualifier
 import org.jetbrains.kotlin.fir.expressions.FirVarargArgumentsExpression
 import org.jetbrains.kotlin.fir.expressions.FirWhenExpression
 import org.jetbrains.kotlin.fir.expressions.FirWrappedArgumentExpression
-import org.jetbrains.kotlin.fir.expressions.resolvedArgumentMapping
 import org.jetbrains.kotlin.fir.references.FirErrorNamedReference
 import org.jetbrains.kotlin.fir.references.FirResolvedNamedReference
 import org.jetbrains.kotlin.fir.resolve.providers.firProvider
@@ -79,7 +76,6 @@ import org.jetbrains.kotlin.fir.types.ConeTypeParameterType
 import org.jetbrains.kotlin.fir.types.FirErrorTypeRef
 import org.jetbrains.kotlin.fir.types.FirResolvedTypeRef
 import org.jetbrains.kotlin.fir.types.coneType
-import org.jetbrains.kotlin.fir.types.isMarkedNullable
 import org.jetbrains.kotlin.fir.types.resolvedType
 import org.jetbrains.kotlin.fir.unwrapFakeOverrides
 import org.jetbrains.kotlin.fir.visitors.FirVisitorVoid
@@ -162,15 +158,14 @@ class InlineBodyKeepability(
   /**
    * Shapes that the ABI cannot carry as one plain method body: `suspend` (a state-machine twin),
    * value classes in the signature (mangled names), members of value classes or interfaces, and, in
-   * the body (see [Visitor]), anonymous objects and local declarations, lambdas that are not
-   * inlined, callable references, `when` over an enum and `entries` of a library enum (classes
-   * generated next to the caller), non-Kotlin annotations (compiler plugins rewrite annotated
-   * code), reads of own `const val`s whose value did not survive (unresolvable initializers) and
-   * own inline properties, calls to own inline functions that are not kept, and own declarations
-   * the ABI does not carry with the same signature (private ones, and protected ones reached
-   * through a synthetic accessor). Default argument values are checked by the same visitor as
-   * ordinary body expressions instead (safe ones are kept with real values; the backend emits the
-   * `$default` bridge from them).
+   * the body (see [Visitor]), anonymous objects and local declarations, callable references, `when`
+   * over an enum and `entries` of a library enum (classes generated next to the caller), non-Kotlin
+   * annotations (compiler plugins rewrite annotated code), reads of own `const val`s whose value
+   * did not survive (unresolvable initializers) and own inline properties, calls to own inline
+   * functions that are not kept, and own declarations the ABI does not carry with the same
+   * signature (private ones, and protected ones reached through a synthetic accessor). Default
+   * argument values are checked by the same visitor as ordinary body expressions instead (safe ones
+   * are kept with real values; the backend emits the `$default` bridge from them).
    */
   private fun hasLowerableShape(function: FirFunction): Boolean =
       shapeRejectReason(function) == null
@@ -282,8 +277,6 @@ class InlineBodyKeepability(
     var keepable = true
     // First failing element, for diagnostics.
     var rejectDetail: String? = null
-    // Lambdas passed to an inline parameter of an inline function generate no class.
-    private val inlinedLambdas = HashSet<FirAnonymousFunction>()
 
     override fun visitElement(element: FirElement) {
       if (!keepable) return
@@ -326,7 +319,6 @@ class InlineBodyKeepability(
       val callableId = callable.callableId ?: return false
       // `when`, `try`, `!!` and `?:` resolve through synthetic calls that generate no call.
       if (callableId.packageName == SYNTHETIC_PACKAGE) return true
-      if (resolvable is FirCall) markInlinedLambdas(resolvable, callable)
       if (callable.origin.fromSource) return isOwn(callable, callable.origin)
       val classId =
           callableId.classId
@@ -340,7 +332,10 @@ class InlineBodyKeepability(
           is FirRegularClass,
           is FirTypeAlias,
           is FirCallableReferenceAccess -> false
-          is FirAnonymousFunction -> element in inlinedLambdas
+          // Lambdas generate a synthetic class in the ABI jar, which is self-contained: the
+          // visitor above already checks the lambda's contents with the same rules as the body,
+          // and the backend emits the class exactly as the full compile does.
+          is FirAnonymousFunction -> true
           is FirFunction -> element === function
           is FirAnnotation ->
               annotationFqn(element)?.let { isKeepableAnnotation(it, pluginTriggerAnnotations) } ==
@@ -371,7 +366,6 @@ class InlineBodyKeepability(
         is FirCallableReferenceAccess -> "not lowerable: callable reference"
         is FirAnonymousObject -> "not lowerable: anonymous object"
         is FirRegularClass -> "not lowerable: local class"
-        is FirAnonymousFunction -> "not lowerable: non-inlined lambda"
         is FirWhenExpression ->
             if (isWhenOverEnum(element)) "not lowerable: when over enum"
             else "not keepable: FirWhenExpression"
@@ -424,28 +418,6 @@ class InlineBodyKeepability(
     // with its value; see [isFoldableConst].
     private fun isHealthyConst(property: FirProperty): Boolean =
         isFoldableConst(property) && foldableConstLiteral(property) != null
-
-    // Only a non-null function-type parameter that is not `vararg`, `noinline` or `crossinline` is
-    // inlined; a lambda passed to any other parameter generates a class.
-    private fun markInlinedLambdas(call: FirCall, callee: FirCallableSymbol<*>) {
-      if ((callee as? FirNamedFunctionSymbol)?.fir?.isInline != true) return
-      for ((argument, parameter) in call.resolvedArgumentMapping.orEmpty()) {
-        if (parameter.isNoinline || parameter.isCrossinline || parameter.isVararg) continue
-        val type = parameter.returnTypeRef.coneTypeOrNull
-        val classId = (type as? ConeClassLikeType)?.lookupTag?.classId
-        if (
-            type == null ||
-                type.isMarkedNullable ||
-                classId?.packageFqName?.asString() != "kotlin" ||
-                !classId.shortClassName.asString().startsWith("Function")
-        ) {
-          continue
-        }
-        (argument as? FirAnonymousFunctionExpression)?.let {
-          inlinedLambdas += it.anonymousFunction
-        }
-      }
-    }
   }
 
   // Public for tests: the keepability predicate without a compilation.

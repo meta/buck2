@@ -88,6 +88,8 @@ def _produce_proj_artifact_with_async_cxx_toolchain(bxl_ctx, actions, fbsource: 
     else:
         platform = compiler_type
 
+    clang_compiler = cxx_toolchain.cxx_compiler_info.compiler if fbsource and platform == CLANG_WINDOWS else None
+
     cxxflags_artifact, cxxflags_macro_artifacts = actions.write(
         "cxxflags", cxx_toolchain.cxx_compiler_info.compiler_flags, allow_args = True, has_content_based_path = False
     )
@@ -98,7 +100,9 @@ def _produce_proj_artifact_with_async_cxx_toolchain(bxl_ctx, actions, fbsource: 
 
     ldflags_artifact, ldflags_macro_artifacts = actions.write("ldflags", cxx_toolchain.linker_info.linker_flags, allow_args = True, has_content_based_path = False)
 
-    def dyn_output_continuation(ctx, dynamic: dict[Artifact, ArtifactValue], outputs: dict[Artifact, typing.Any], platform = platform) -> None:
+    def dyn_output_continuation(
+        ctx, dynamic: dict[Artifact, ArtifactValue], outputs: dict[Artifact, typing.Any], platform = platform, clang_compiler = clang_compiler
+    ) -> None:
         """async continuation/callback for the `dynamic_output` call that reads the cxx_toolchain flags from materialized artifacts and continues to produce the final project file artifact.
 
         The cxx_toolchain flags are stored in `dynamic` and are now readable becuase their artifacts were materialized by the `dynamic_output`.
@@ -116,7 +120,15 @@ def _produce_proj_artifact_with_async_cxx_toolchain(bxl_ctx, actions, fbsource: 
         actions = ctx.bxl_actions().actions
         hidden_artifacts = cxxflags_macro_artifacts + cxxppflags_macro_artifacts + ldflags_macro_artifacts
         _produce_proj_artifact(
-            ctx, actions, fbsource, cxx_toolchain_flags, outputs[output_artifact], root = root, platform = platform, hidden_artifacts = hidden_artifacts
+            ctx,
+            actions,
+            fbsource,
+            cxx_toolchain_flags,
+            outputs[output_artifact],
+            root = root,
+            platform = platform,
+            hidden_artifacts = hidden_artifacts,
+            clang_compiler = clang_compiler,
         )
 
     dyn_artifacts = [
@@ -150,6 +162,7 @@ def _produce_proj_artifact(
     root: str,
     platform: str,
     hidden_artifacts: None | list[Artifact] = None,
+    clang_compiler = None,
 ):
     """Produce the <Project> file output artifact"""
     compiler_settings = _get_compiler_settings(cxx_toolchain_flags)
@@ -168,8 +181,46 @@ def _produce_proj_artifact(
     linker_settings_content = gen_linker_settings(linker_settings)
 
     toolchains_props = ""
+    vc_targets_props = ""
     if fbsource and platform != CLANG:
-        toolchains_props = '        <Import Project="$(RepoRoot)\\third-party\\toolchains\\visual_studio\\toolchain.props"/>'
+        toolchain_sheet = "toolchain.props"
+        if platform in [VS2022, CLANG_WINDOWS]:
+            toolchain_sheet = "toolchain_vs2022.props"
+            vc_targets_props = """    <PropertyGroup>
+        <VCTargetsPath>$(RepoRoot)\\third-party\\toolchains\\visual_studio\\14.39.33519\\MSBuild\\Microsoft\\VC\\v170\\</VCTargetsPath>
+    </PropertyGroup>"""
+        toolchains_props = '        <Import Project="$(RepoRoot)\\third-party\\toolchains\\visual_studio\\{}"/>'.format(toolchain_sheet)
+
+    llvm_props = ""
+    compiler_paths = ""
+    if fbsource and platform == VS2022:
+        compiler_paths = h(
+            "PropertyGroup",
+            [h("ClCompilerPath", "$([System.String]::Copy('$(PlatformExecutablePath)').Split(';')[0])cl.exe", indent_level = 2)],
+            indent_level = 1,
+        )
+    if clang_compiler != None:
+        # The selected Windows LLVM compiler is in <version>/windows-*/bin/.
+        llvm_props = h(
+            "PropertyGroup",
+            [
+                h("LLVMInstallDir", cmd_args("$(RepoRoot)\\", cmd_args(clang_compiler, parent = 2), delimiter = ""), indent_level = 2),
+                h("LLVMToolsVersion", cmd_args(clang_compiler, parent = 3, replace_regex = [(r".*[/\\]", ""), (r"\..*", "")]), indent_level = 2),
+                h("ClangAnalysisToolsPath", "$(LLVMInstallDir)\\bin", indent_level = 2),
+            ],
+            indent_level = 1,
+        )
+        compiler_paths = h(
+            "PropertyGroup",
+            [
+                h("ExecutablePath", "$(LLVMInstallDir)\\bin;$(ExecutablePath)", indent_level = 2),
+                h("IncludePath", "$(LLVMInstallDir)\\lib\\clang\\$(LLVMIncludeVersion)\\include;$(IncludePath)", indent_level = 2),
+                h("CLToolPath", "$(LLVMInstallDir)\\bin", indent_level = 2),
+                h("LinkToolPath", "$(LLVMInstallDir)\\bin", indent_level = 2),
+                h("LibToolPath", "$(LLVMInstallDir)\\bin", indent_level = 2),
+            ],
+            indent_level = 1,
+        )
 
     absolutize_path_exe = _get_path(ABSOLUTIZE_PATH_EXE, bxl_ctx)
     vs_buck_build_props_path = _get_path(VS_BUCK_BUILD_PROPS, bxl_ctx)
@@ -179,6 +230,8 @@ def _produce_proj_artifact(
         """<?xml version="1.0" encoding="utf-8"?>
 <Project ToolsVersion="4.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
 """,
+        vc_targets_props,
+        llvm_props,
         """    <ImportGroup Label="PropertySheets">""",
         """        <Import Project="$(VCTargetsPath)\\Microsoft.Cpp.default.props" />""",
         """    </ImportGroup>""",
@@ -195,6 +248,7 @@ def _produce_proj_artifact(
         """        <Import Condition="exists('$(UserRootDir)\\Microsoft.Cpp.$(Platform).user.props')" Label="LocalAppDataPlatform" Project="$(UserRootDir)\\Microsoft.Cpp.$(Platform).user.props"/>""",
         toolchains_props,
         """    </ImportGroup>""",
+        compiler_paths,
         """    <ItemDefinitionGroup>""",
         compiler_settings_content,
         linker_settings_content,

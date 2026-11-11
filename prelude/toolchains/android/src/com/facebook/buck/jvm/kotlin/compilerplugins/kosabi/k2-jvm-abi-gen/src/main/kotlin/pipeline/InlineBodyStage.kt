@@ -22,6 +22,8 @@ import com.facebook.buck.jvm.kotlin.compilerplugins.common.foldableConstLiteral
 import com.facebook.buck.jvm.kotlin.compilerplugins.common.isFoldableConst
 import com.facebook.buck.jvm.kotlin.compilerplugins.common.isStub
 import com.facebook.kotlin.compilercompat.compatValueParameters
+import com.facebook.kotlin.compilercompat.getValueArgumentCompat
+import com.facebook.kotlin.compilercompat.valueArgumentsCountCompat
 import java.lang.reflect.InvocationTargetException
 import java.lang.reflect.Modifier
 import java.util.Collections
@@ -65,8 +67,10 @@ import org.jetbrains.kotlin.ir.expressions.IrExpression
 import org.jetbrains.kotlin.ir.expressions.IrGetField
 import org.jetbrains.kotlin.ir.expressions.impl.IrConstImpl
 import org.jetbrains.kotlin.ir.symbols.IrClassSymbol
+import org.jetbrains.kotlin.ir.symbols.IrTypeParameterSymbol
 import org.jetbrains.kotlin.ir.types.IrSimpleType
 import org.jetbrains.kotlin.ir.types.IrType
+import org.jetbrains.kotlin.ir.util.kotlinFqName
 import org.jetbrains.kotlin.ir.visitors.IrElementTransformerVoid
 import org.jetbrains.kotlin.psi.KtFile
 
@@ -246,7 +250,7 @@ internal class InlineBodyStage : AbiGenStage {
   // `$default` bridge from them. Anything unconvertible keeps the old behavior: a loud skip.
   @Suppress(
       "OPT_IN_USAGE_ERROR",
-  ) // IrFunction.valueParameters is JetBrains-deprecated; no stable replacement yet.
+  ) // compatValueParameters carries a removal deprecation on the 2.3 bucket.
   private fun restoreDefaultValues(
       pluginContext: IrPluginContext,
       function: IrFunction,
@@ -443,7 +447,15 @@ internal class InlineBodyStage : AbiGenStage {
         } catch (_: IllegalStateException) {
           return null
         }
-    val property = callee.correspondingPropertySymbol?.owner as? IrProperty ?: return null
+    // The corresponding property's owner throws the same way for fake overrides (2.4 binds
+    // them lazily); a const read is always a plain declared property.
+    val property =
+        try {
+          callee.correspondingPropertySymbol?.owner
+        } catch (_: IllegalStateException) {
+          null
+        }
+            as? IrProperty ?: return null
     val fir = (property.metadata as? FirMetadataSource.Property)?.fir ?: return null
     if (!isFoldableConst(fir)) return null
     val value = foldConstLiteral(fir) ?: return null
@@ -456,8 +468,21 @@ internal class InlineBodyStage : AbiGenStage {
   }
 
   private fun foldConstRead(expression: IrGetField): IrExpression? {
-    val field = expression.symbol.owner
-    val property = field.correspondingPropertySymbol?.owner as? IrProperty ?: return null
+    // Field reads resolve the same way: a fake-override field (inherited const) has no
+    // owner in 2.4 and is never a foldable same-module const read.
+    val field =
+        try {
+          expression.symbol.owner
+        } catch (_: IllegalStateException) {
+          return null
+        }
+    val property =
+        try {
+          field.correspondingPropertySymbol?.owner
+        } catch (_: IllegalStateException) {
+          null
+        }
+            as? IrProperty ?: return null
     val fir = (property.metadata as? FirMetadataSource.Property)?.fir ?: return null
     if (!isFoldableConst(fir)) return null
     val value = foldConstLiteral(fir) ?: return null
@@ -598,17 +623,107 @@ internal class InlineBodyStage : AbiGenStage {
         } catch (_: IllegalStateException) {
           return
         } ?: return
-    val target =
+    val sameNamed =
         irClass.declarations
             .filterIsInstance<IrSimpleFunction>()
             .filter { it.name.asString() in names }
-            .singleOrNull() ?: return
-    try {
-      target.symbol.owner
-    } catch (_: IllegalStateException) {
+            .filter {
+              try {
+                it.symbol.owner
+                true
+              } catch (_: IllegalStateException) {
+                false
+              }
+            }
+    // A single same-named bound member rebinds exactly (no overload, no wrong target).
+    if (sameNamed.size <= 1) {
+      val target = sameNamed.singleOrNull() ?: return
+      call.symbol = target.symbol
       return
     }
+    // Overloads share the name: match the call's arity and argument types against the
+    // candidates, then prefer the fake override, whose overridden chain preserves virtual
+    // dispatch through the receiver's class. The unbound original cannot supply its own
+    // chain, so matching runs candidate-side; anything still ambiguous keeps the previous
+    // behavior (no rebind).
+    val target = matchBySignature(call, sameNamed) ?: return
     call.symbol = target.symbol
+  }
+
+  @Suppress("OPT_IN_USAGE_ERROR")
+  private fun matchBySignature(
+      call: IrCall,
+      candidates: List<IrSimpleFunction>,
+  ): IrSimpleFunction? {
+    val argCount = call.valueArgumentsCountCompat
+    val arityOk = candidates.filter { fn ->
+      val params = fn.compatValueParameters
+      argCount <= params.size &&
+          (argCount == params.size || params.drop(argCount).all { it.defaultValue != null })
+    }
+    if (arityOk.isEmpty()) return null
+    val argTypes = (0 until argCount).map { call.getValueArgumentCompat(it)?.type }
+    val typeOk = arityOk.filter { fn ->
+      (0 until argCount).all { i -> isApplicable(argTypes[i], fn.compatValueParameters[i].type) }
+    }
+    if (typeOk.size == 1) return typeOk[0]
+    if (typeOk.isEmpty()) return null
+    // Several overloads share the erased signature: keep virtual dispatch by taking the
+    // unique fake override, which routes through the receiver's overridden chain.
+    return typeOk.filter { it.isFakeOverride }.singleOrNull()
+  }
+
+  private fun isApplicable(argType: IrType?, paramType: IrType?): Boolean {
+    if (argType == null || paramType == null) return false
+    if (argType == paramType) return true
+    val paramClassifier = (paramType as? IrSimpleType)?.classifier
+    if (paramClassifier is IrTypeParameterSymbol) {
+      return try {
+        val upperBounds = paramClassifier.owner.superTypes
+        upperBounds.isNotEmpty() && upperBounds.all { isSubtypeOf(argType, it) }
+      } catch (_: IllegalStateException) {
+        false
+      }
+    }
+    return isSubtypeOf(argType, paramType)
+  }
+
+  private fun isSubtypeOf(argType: IrType, targetType: IrType): Boolean {
+    if (argType == targetType) return true
+    val target = erasedName(targetType) ?: return false
+    if (erasedName(argType) == target) return true
+    // Transitive supertype walk, depth-capped; an unreadable owner declines to match.
+    val seen = mutableSetOf<String>()
+    var frontier = supertypesOf(argType)
+    repeat(8) {
+      if (frontier.isEmpty()) return false
+      val next = mutableListOf<IrType>()
+      for (superType in frontier) {
+        val name = erasedName(superType) ?: continue
+        if (name == target) return true
+        if (seen.add(name)) next.addAll(supertypesOf(superType))
+      }
+      frontier = next
+    }
+    return false
+  }
+
+  private fun supertypesOf(type: IrType): List<IrType> =
+      try {
+        val classifier = (type as? IrSimpleType)?.classifier as? IrClassSymbol ?: return emptyList()
+        classifier.owner.superTypes
+      } catch (_: IllegalStateException) {
+        emptyList()
+      }
+
+  private fun erasedName(type: IrType): String? {
+    val classifier = (type as? IrSimpleType)?.classifier as? IrClassSymbol ?: return null
+    // The classifier owner may be unbound; a throwing read just declines to match.
+    return try {
+      classifier.owner.kotlinFqName.asString()
+    } catch (_: IllegalStateException) {
+      null
+    }
   }
 
   private fun Class<*>.declaredField(name: String) =

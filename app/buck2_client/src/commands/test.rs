@@ -31,7 +31,6 @@ use buck2_client_ctx::exit_result::ExitResult;
 use buck2_client_ctx::final_console::FinalConsole;
 use buck2_client_ctx::output_destination_arg::OutputDestinationArg;
 use buck2_client_ctx::path_arg::PathArg;
-use buck2_client_ctx::stdio::eprint_line;
 use buck2_client_ctx::streaming::StreamingCommand;
 use buck2_client_ctx::subscribers::superconsole::test::TestCounterColumn;
 use buck2_client_ctx::subscribers::superconsole::test::span_from_build_failure_count;
@@ -512,7 +511,7 @@ impl StreamingCommand for TestCommand {
             line.push(Span::new_unstyled_lossy(". "));
         }
         line.push(span_from_build_failure_count(build_error_count)?);
-        eprint_line(&line)?;
+        console.print_line(&line)?;
 
         print_error_counter(&console, listing_failed, "LISTINGS FAILED", "⚠")?;
         print_error_counter(&console, failed, "TESTS FAILED", "✗")?;

@@ -8,6 +8,7 @@
  * above-listed licenses.
  */
 
+use superconsole::Line;
 use superconsole::style::Color;
 use superconsole::style::ContentStyle;
 use superconsole::style::StyledContent;
@@ -75,5 +76,14 @@ impl FinalConsole {
     /// Print a string directly to stderr with no extra formatting
     pub fn print_stderr(&self, message: &str) -> buck2_error::Result<()> {
         crate::eprintln!("{}", message)
+    }
+
+    /// Print the given line to stderr, with its styling if possible
+    pub fn print_line(&self, line: &Line) -> buck2_error::Result<()> {
+        if self.is_tty {
+            crate::eprintln!("{}", line.render())
+        } else {
+            crate::eprintln!("{}", line.to_unstyled())
+        }
     }
 }

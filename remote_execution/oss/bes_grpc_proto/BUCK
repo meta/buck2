@@ -1,0 +1,17 @@
+load("@fbcode//buck2:proto_defs.bzl", "rust_protobuf_library")
+
+oncall("build_infra")
+
+rust_protobuf_library(
+    name = "bes_grpc_proto",
+    srcs = glob(["src/**/*.rs"]),
+    build_env = {
+        "GOOGLE_PROTO_ROOT": "$(location //remote_execution/oss/google_grpc_proto:google_grpc_proto_sources)",
+    },
+    build_script = "build.rs",
+    protos = glob(["proto/**/*.proto"]),
+    deps = [
+        "fbsource//third-party/rust:prost-types",
+        "//buck2/remote_execution/oss/google_grpc_proto:google_grpc_proto",
+    ],
+)

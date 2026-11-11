@@ -13,22 +13,102 @@ use std::time::SystemTime;
 
 use async_trait::async_trait;
 use buck2_cli_proto::command_result;
-use buck2_events::sink::remote::ScribeConfig;
+use buck2_common::invocation_paths::InvocationPaths;
+use buck2_events::sink::remote::RemoteEventConfig;
+use buck2_events::sink::remote::RemoteEventSink;
+#[cfg(fbcode_build)]
 use buck2_events::sink::remote::new_remote_event_sink_if_enabled;
 use buck2_wrapper_common::invocation_id::TraceId;
 use dupe::Dupe;
 use fbinit::FacebookInit;
 
+use crate::remote_sink_config;
 use crate::subscribers::subscriber::EventSubscriber;
 
 pub struct BuildGraphStats {
-    fb: FacebookInit,
     trace_id: TraceId,
+    sink: Option<RemoteEventSink>,
 }
 
 impl BuildGraphStats {
-    pub fn new(fb: FacebookInit, trace_id: TraceId) -> Self {
-        Self { fb, trace_id }
+    pub fn new_with_paths(
+        fb: FacebookInit,
+        trace_id: TraceId,
+        paths: Option<&InvocationPaths>,
+    ) -> Self {
+        let config = remote_sink_config::with_buckconfig_overrides(
+            paths,
+            RemoteEventConfig {
+                buffer_size: 1,
+                retry_backoff: Duration::from_millis(100),
+                retry_attempts: 2,
+                #[cfg(not(fbcode_build))]
+                retry_window: Duration::from_secs(
+                    buck2_events::sink::remote::DEFAULT_RETRY_WINDOW_SECS,
+                ),
+                #[cfg(not(fbcode_build))]
+                replay_spill_dir: None,
+                #[cfg(not(fbcode_build))]
+                replay_spill_max_bytes: buck2_events::sink::remote::DEFAULT_REPLAY_SPILL_MAX_BYTES,
+                message_batch_size: None,
+                #[cfg(fbcode_build)]
+                thrift_timeout: Duration::from_secs(1),
+                #[cfg(not(fbcode_build))]
+                grpc_timeout: Duration::from_secs(10),
+                #[cfg(not(fbcode_build))]
+                bes_backend: None,
+                #[cfg(not(fbcode_build))]
+                bes_headers: Vec::new(),
+                bes_tls: Default::default(),
+                #[cfg(not(fbcode_build))]
+                build_metadata: Vec::new(),
+                #[cfg(not(fbcode_build))]
+                event_format: Default::default(),
+                #[cfg(not(fbcode_build))]
+                bazel_artifact_upload: true,
+                #[cfg(not(fbcode_build))]
+                upload_successful_action_events: true,
+                #[cfg(not(fbcode_build))]
+                bazel_artifact_upload_backend: None,
+                #[cfg(not(fbcode_build))]
+                re_client_cas_address: None,
+                #[cfg(not(fbcode_build))]
+                bazel_artifact_upload_instance_name: None,
+                #[cfg(not(fbcode_build))]
+                re_client_instance_name: None,
+                #[cfg(not(fbcode_build))]
+                bazel_artifact_uri_authority: None,
+                #[cfg(not(fbcode_build))]
+                bazel_artifact_upload_max_bytes: 10 * 1024 * 1024,
+                #[cfg(not(fbcode_build))]
+                channel: Default::default(),
+            },
+        );
+
+        let sink = {
+            #[cfg(fbcode_build)]
+            {
+                match new_remote_event_sink_if_enabled(fb, config) {
+                    Ok(sink) => sink,
+                    Err(e) => {
+                        tracing::warn!("Failed to create remote sink for BuildGraphStats: {:#}", e);
+                        None
+                    }
+                }
+            }
+            #[cfg(not(fbcode_build))]
+            {
+                let _ = fb;
+                drop(config);
+                // OSS BES uploads are owned by the daemon-side sink.
+                // Opening a second client-side stream with the same invocation
+                // ID causes BuildBuddy to cancel the original channel and mark
+                // the invocation disconnected.
+                None
+            }
+        };
+
+        Self { trace_id, sink }
     }
 
     async fn handle_build_response(
@@ -77,17 +157,7 @@ impl BuildGraphStats {
     }
 
     async fn send_events(&self, events: Vec<buck2_events::BuckEvent>) {
-        #[allow(unreachable_patterns)]
-        if let Ok(Some(sink)) = new_remote_event_sink_if_enabled(
-            self.fb,
-            ScribeConfig {
-                buffer_size: 1,
-                retry_backoff: Duration::from_millis(100),
-                retry_attempts: 2,
-                message_batch_size: None,
-                thrift_timeout: Duration::from_secs(1),
-            },
-        ) {
+        if let Some(sink) = self.sink.as_ref() {
             tracing::info!("Sending events to Scribe: {:?}", &events);
             let _res = sink.send_messages_now(events).await;
         } else {
@@ -136,7 +206,7 @@ mod tests {
         };
 
         let uuid = TraceId::new();
-        let handler = BuildGraphStats::new(fb, uuid.dupe());
+        let handler = BuildGraphStats::new_with_paths(fb, uuid.dupe(), None);
         let events = handler.build_graph_stats_from_build_response(&res);
 
         let event_expected = buck2_data::BuckEvent {
@@ -176,7 +246,7 @@ mod tests {
         };
 
         let uuid = TraceId::new();
-        let handler = BuildGraphStats::new(fb, uuid.dupe());
+        let handler = BuildGraphStats::new_with_paths(fb, uuid.dupe(), None);
         let events = handler.build_graph_stats_from_build_response(&res);
 
         assert_eq!(events.len(), 0);
@@ -203,7 +273,7 @@ mod tests {
         };
 
         let uuid = TraceId::new();
-        let handler = BuildGraphStats::new(fb, uuid.dupe());
+        let handler = BuildGraphStats::new_with_paths(fb, uuid.dupe(), None);
         let events = handler.build_graph_stats_from_build_response(&res);
 
         let build_target = buck2_data::BuildTarget {

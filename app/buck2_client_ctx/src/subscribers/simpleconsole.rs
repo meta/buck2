@@ -200,6 +200,8 @@ pub struct SimpleConsole<E> {
     health_check_reports_receiver: Option<Receiver<Vec<DisplayReport>>>,
     health_warning_backoff: HealthWarningBackoff,
     pub(crate) output_limit: ConsoleOutputLimit,
+    streaming_results_start_line_emitted: bool,
+    streaming_results_end_line_emitted: bool,
 }
 
 impl<E> SimpleConsole<E>
@@ -211,13 +213,14 @@ where
         verbosity: Verbosity,
         expect_spans: bool,
         health_check_reports_receiver: Option<Receiver<Vec<DisplayReport>>>,
+        bes_results_url: Option<String>,
     ) -> Self {
         let now = Instant::now();
         SimpleConsole {
             tty_mode: TtyMode::Enabled,
             verbosity,
             expect_spans,
-            observer: EventObserver::new(trace_id),
+            observer: EventObserver::new(trace_id, bes_results_url),
             action_errors: Vec::new(),
             last_print_time: now,
             waiting_line: WaitingLineThrottle::new(is_agent_invocation(), now),
@@ -225,6 +228,8 @@ where
             health_check_reports_receiver,
             health_warning_backoff: HealthWarningBackoff::new(now),
             output_limit: ConsoleOutputLimit::new(),
+            streaming_results_start_line_emitted: false,
+            streaming_results_end_line_emitted: false,
         }
     }
 
@@ -233,13 +238,14 @@ where
         verbosity: Verbosity,
         expect_spans: bool,
         health_check_reports_receiver: Option<Receiver<Vec<DisplayReport>>>,
+        bes_results_url: Option<String>,
     ) -> Self {
         let now = Instant::now();
         SimpleConsole {
             tty_mode: TtyMode::Disabled,
             verbosity,
             expect_spans,
-            observer: EventObserver::new(trace_id),
+            observer: EventObserver::new(trace_id, bes_results_url),
             action_errors: Vec::new(),
             last_print_time: now,
             waiting_line: WaitingLineThrottle::new(is_agent_invocation(), now),
@@ -247,6 +253,8 @@ where
             health_check_reports_receiver,
             health_warning_backoff: HealthWarningBackoff::new(now),
             output_limit: ConsoleOutputLimit::new(),
+            streaming_results_start_line_emitted: false,
+            streaming_results_end_line_emitted: false,
         }
     }
 
@@ -256,6 +264,7 @@ where
         verbosity: Verbosity,
         expect_spans: bool,
         health_check_reports_receiver: Option<Receiver<Vec<DisplayReport>>>,
+        bes_results_url: Option<String>,
     ) -> Self {
         match SuperConsole::compatible() {
             true => Self::with_tty(
@@ -263,18 +272,38 @@ where
                 verbosity,
                 expect_spans,
                 health_check_reports_receiver,
+                bes_results_url,
             ),
             false => Self::without_tty(
                 trace_id,
                 verbosity,
                 expect_spans,
                 health_check_reports_receiver,
+                bes_results_url,
             ),
         }
     }
 
     pub(crate) fn observer(&self) -> &EventObserver<E> {
         &self.observer
+    }
+
+    pub(crate) fn command_start_streaming_results_line(&mut self) -> Option<String> {
+        if cfg!(fbcode_build) || self.streaming_results_start_line_emitted {
+            return None;
+        }
+        let line = self.observer().session_info().streaming_results_line()?;
+        self.streaming_results_start_line_emitted = true;
+        Some(line)
+    }
+
+    pub(crate) fn command_end_streaming_results_line(&mut self) -> Option<String> {
+        if cfg!(fbcode_build) || self.streaming_results_end_line_emitted {
+            return None;
+        }
+        let line = self.observer().session_info().streaming_results_line()?;
+        self.streaming_results_end_line_emitted = true;
+        Some(line)
     }
 
     pub(crate) async fn update_event_observer(
@@ -497,6 +526,12 @@ where
                 event.trace_id()?
             )?;
         } else {
+            if let Some(build_url) = self.observer().session_info().invocation_url() {
+                echo!("Build URL: {}", build_url)?;
+            }
+            if let Some(streaming_results_line) = self.command_start_streaming_results_line() {
+                echo!("{}", streaming_results_line)?;
+            }
             echo!("Build ID: {}", event.trace_id()?)?;
         }
         self.notify_printed();
@@ -541,6 +576,10 @@ where
 
         if let Some(test_session) = &self.observer().session_info().test_session {
             echo!("Test session: {}", test_session.info)?;
+        }
+
+        if let Some(streaming_results_line) = self.command_end_streaming_results_line() {
+            echo!("{}", streaming_results_line)?;
         }
 
         Ok(())

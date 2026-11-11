@@ -26,6 +26,7 @@ buck2_events.workspace = true
 buck2_fs.workspace = true
 buck2_hash.workspace = true
 buck2_health_check.workspace = true
+buck2_re_configuration.workspace = true
 buck2_resource_control.workspace = true
 buck2_settings.workspace = true
 buck2_util.workspace = true

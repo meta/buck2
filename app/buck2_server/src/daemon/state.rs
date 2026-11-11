@@ -1436,6 +1436,10 @@ pub struct DaemonStateData {
     /// A unique identifier for this instance of the daemon
     pub daemon_id: DaemonId,
 
+    /// The CI job identity this daemon serves, exported to actions so that clients they run
+    /// find this daemon.
+    pub user_version: Option<String>,
+
     /// Cgroup path of the process that launched this daemon before Buck moved the daemon into its
     /// managed cgroup.
     pub daemon_originating_cgroup: Option<String>,
@@ -1470,6 +1474,7 @@ fn _assert_send_sync(
         spawner,
         memory_tracker,
         daemon_id,
+        user_version,
         daemon_originating_cgroup,
         named_semaphores_for_run_actions,
         package_visibility_default_intersection,
@@ -1487,6 +1492,7 @@ fn _assert_send_sync(
     assert(spawner);
     assert(memory_tracker);
     assert(daemon_id);
+    assert(user_version);
     assert(daemon_originating_cgroup);
     assert(named_semaphores_for_run_actions);
     assert(package_visibility_default_intersection);
@@ -1641,6 +1647,7 @@ impl DaemonState {
         working_directory: WorkingDirectory,
         cgroup_tree: Option<BuckCgroupTree>,
         daemon_id: DaemonId,
+        user_version: Option<String>,
     ) -> Result<Self, buck2_error::Error> {
         let data = Self::init_data(
             fb,
@@ -1650,6 +1657,7 @@ impl DaemonState {
             final_artifact_materialization,
             cgroup_tree,
             daemon_id,
+            user_version,
         )
         .await
         .map_err(|e| {
@@ -1679,6 +1687,7 @@ impl DaemonState {
         final_artifact_materialization: FinalArtifactMaterialization,
         cgroup_tree: Option<BuckCgroupTree>,
         daemon_id: DaemonId,
+        user_version: Option<String>,
     ) -> buck2_error::Result<Arc<DaemonStateData>> {
         if buck2_env!(
             "BUCK2_TEST_INIT_DAEMON_ERROR",
@@ -1835,6 +1844,7 @@ impl DaemonState {
                 spawner: Arc::new(BuckSpawner::new(daemon_state_data_rt)),
                 memory_tracker,
                 daemon_id: daemon_id.dupe(),
+                user_version,
                 daemon_originating_cgroup,
                 named_semaphores_for_run_actions: Arc::new(NamedSemaphores::new()),
                 package_visibility_default_intersection,

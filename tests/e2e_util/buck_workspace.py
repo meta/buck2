@@ -89,6 +89,10 @@ async def buck_fixture(  # noqa C901 : "too complex"
     test_executable = os.environ["TEST_EXECUTABLE"]
 
     env: Dict[str, str] = {**os.environ}
+    # The buck2 running this test exports its own daemon to the test's environment; the clients
+    # a test runs are not run by that daemon's actions and must not be nested in it.
+    env.pop("BUCK2_DAEMON_UUID", None)
+    env.pop("BUCK2_DAEMON_USER_VERSION", None)
     env["BUCK2_SHARE_DAEMON"] = "false"
     env.pop("BUCK2_DAEMON_GROUP", None)
     # This is necessary for static linking on Linux.

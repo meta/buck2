@@ -150,6 +150,7 @@ pub struct LocalExecutor {
     worker_pool: Option<Arc<WorkerPool>>,
     memory_tracker: Option<MemoryTrackerHandle>,
     daemon_id: DaemonId,
+    user_version: Option<String>,
     /// Attributed with the CAS traffic that materializing this executor's inputs causes. The
     /// buck2 invocation's, not that of any RE work the action's configuration involves.
     invocation_re_use_case: RemoteExecutorUseCase,
@@ -168,6 +169,7 @@ impl LocalExecutor {
         worker_pool: Option<Arc<WorkerPool>>,
         memory_tracker: Option<MemoryTrackerHandle>,
         daemon_id: DaemonId,
+        user_version: Option<String>,
         invocation_re_use_case: RemoteExecutorUseCase,
     ) -> Self {
         Self {
@@ -182,6 +184,7 @@ impl LocalExecutor {
             worker_pool,
             memory_tracker,
             daemon_id,
+            user_version,
             invocation_re_use_case,
         }
     }
@@ -721,6 +724,12 @@ impl LocalExecutor {
             }));
             let daemon_id = self.daemon_id.to_string();
             env.push(("BUCK2_DAEMON_UUID", StrOrOsStr::from(&*daemon_id)));
+            if let Some(user_version) = &self.user_version {
+                env.push((
+                    "BUCK2_DAEMON_USER_VERSION",
+                    StrOrOsStr::from(user_version.as_str()),
+                ));
+            }
             env.push(("BUCK_BUILD_ID", StrOrOsStr::from(build_id)));
 
             let liveliness_observer = manager.inner.liveliness_observer.dupe().and(cancellation);
@@ -1940,6 +1949,7 @@ mod tests {
             None,
             None,
             DaemonId::new(),
+            None,
             RemoteExecutorUseCase::buck2_default(),
         );
 

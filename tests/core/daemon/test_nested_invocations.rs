@@ -8,6 +8,7 @@
  * above-listed licenses.
  */
 
+use std::ffi::OsString;
 use std::path::Path;
 
 use buck2_e2e::prelude::*;
@@ -24,6 +25,36 @@ fn nested_buck2_path(buck: &Buck) -> String {
 async fn test_same_state(buck: &Buck) -> anyhow::Result<()> {
     buck.build(&["root//:nested_normal", "-c", &nested_buck2_path(buck)])
         .env("SANDCASTLE_ID", "")
+        .await?;
+    Ok(())
+}
+
+#[buck_test(allow_soft_errors = true)]
+async fn test_same_state_without_user_version(buck: &mut Buck) -> anyhow::Result<()> {
+    // The daemon has no user version while the nested client's action sets `SANDCASTLE_ID`;
+    // the nested client must take the daemon's absence of one rather than compute its own.
+    let user_version_vars: Vec<OsString> = buck
+        .envs()
+        .map(|(name, _)| name.to_owned())
+        .filter(|name| {
+            let name = name.to_string_lossy();
+            name.starts_with("SANDCASTLE_") || name.starts_with("SKYCASTLE_")
+        })
+        .collect();
+    for name in user_version_vars {
+        buck.remove_env(name);
+    }
+    buck.build(&["root//:nested_normal", "-c", &nested_buck2_path(buck)])
+        .await?;
+    Ok(())
+}
+
+#[buck_test(allow_soft_errors = true)]
+async fn test_same_state_different_user_version(buck: &Buck) -> anyhow::Result<()> {
+    // The nested client runs with `SANDCASTLE_ID` empty; it must still use the daemon that
+    // runs its action rather than restart it.
+    buck.build(&["root//:nested_normal", "-c", &nested_buck2_path(buck)])
+        .env("SANDCASTLE_ID", "12345")
         .await?;
     Ok(())
 }

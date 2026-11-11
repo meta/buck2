@@ -500,6 +500,7 @@ impl BuckdServer {
                 cwd,
                 cgroup_tree,
                 daemon_id,
+                base_daemon_constraints.user_version.clone(),
             )
             .await?,
         );

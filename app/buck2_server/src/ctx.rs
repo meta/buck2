@@ -1226,6 +1226,7 @@ impl DiceCommandUpdater<'_, '_> {
             self.cmd_ctx.base_context.repo().incremental_db_state.dupe(),
             output_trees_download_config.dupe(),
             self.cmd_ctx.base_context.daemon.daemon_id.dupe(),
+            self.cmd_ctx.base_context.daemon.user_version.clone(),
         )));
         data.set_blocking_executor(self.cmd_ctx.base_context.repo().blocking_executor.dupe());
         data.set_http_client(self.cmd_ctx.base_context.daemon.http_client.dupe());

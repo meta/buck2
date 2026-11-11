@@ -373,6 +373,10 @@ impl BuckTest {
             set("BUCK2_TEST_DISABLE_DAEMON_CGROUP", "true");
         }
         set("BUCK2_TEST_SKIP_DEFAULT_EXTERNAL_CONFIG", "true");
+        // The buck2 running this test exports its own daemon to the test's environment; the
+        // clients a test runs are not run by that daemon's actions and must not be nested in it.
+        env.remove(OsStr::new("BUCK2_DAEMON_UUID"));
+        env.remove(OsStr::new("BUCK2_DAEMON_USER_VERSION"));
         env.remove(OsStr::new("BUCK2_DAEMON_GROUP"));
         // Windows uses blocking threads for subprocess I/O, so buck2 gets no limit.
         env.remove(OsStr::new("BUCK2_MAX_BLOCKING_THREADS"))

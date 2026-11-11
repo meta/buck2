@@ -50,6 +50,7 @@ use buck2_events::dispatch::EventDispatcher;
 use buck2_events::dispatch::current_span;
 use buck2_events::dispatch::get_dispatcher;
 use buck2_events::dispatch::get_dispatcher_opt;
+use buck2_events::span::SpanId;
 use buck2_execute::artifact_value::ArtifactValue;
 use buck2_execute::digest_config::DigestConfig;
 use buck2_execute::directory::ActionDirectoryEntry;
@@ -460,6 +461,58 @@ struct PreparedOutputs {
     displaced: Mutex<BuckMutMap<ProjectRelativePathBuf, ArtifactMetadata>>,
 }
 
+/// Stops tracking the path a `fill` declared in order to fetch it, however the fill ends: with
+/// [`ForgetFilled::now`] where the fill can wait for it, and from `drop` where its caller
+/// dropped it mid-fetch.
+struct ForgetFilled<'a, T: IoHandler + 'static> {
+    materializer: &'a DeferredMaterializerAccessor<T>,
+    /// `None` once forgotten.
+    path: Option<ProjectRelativePathBuf>,
+    dispatcher: EventDispatcher,
+    span: Option<SpanId>,
+}
+
+impl<'a, T: IoHandler + Allocative> ForgetFilled<'a, T> {
+    fn new(
+        materializer: &'a DeferredMaterializerAccessor<T>,
+        path: ProjectRelativePathBuf,
+    ) -> Self {
+        Self {
+            materializer,
+            path: Some(path),
+            dispatcher: get_dispatcher(),
+            span: current_span(),
+        }
+    }
+
+    /// Returns once the path is untracked and nothing the tree started there still runs. After
+    /// a failed fetch that includes the clean the tree answers the failure with, which would
+    /// otherwise delete under the caller.
+    async fn now(mut self) -> buck2_error::Result<()> {
+        let path = self.path.take().expect("Forgotten only here and in `drop`");
+        self.materializer.invalidate_many(vec![path]).await?;
+        Ok(())
+    }
+}
+
+impl<T: IoHandler + 'static> Drop for ForgetFilled<'_, T> {
+    fn drop(&mut self) {
+        if let Some(path) = self.path.take() {
+            let (sender, _) = oneshot::channel();
+            // Fails only once the command loop is gone, and its tree with it.
+            let _ignored =
+                self.materializer
+                    .command_sender
+                    .send(MaterializerCommand::InvalidateFilePaths(
+                        vec![path],
+                        sender,
+                        self.dispatcher.dupe(),
+                        self.span,
+                    ));
+        }
+    }
+}
+
 #[async_trait]
 impl<T: IoHandler + Allocative> TrackedPaths for DeferredMaterializerAccessor<T> {
     async fn hold_file(
@@ -748,6 +801,10 @@ impl<T: IoHandler + Allocative> Materializer for DeferredMaterializerAccessor<T>
             return Ok(());
         }
         let materializer: &dyn Materializer = self;
+        // This core fetches only what is declared, so the content is declared, materialized and
+        // forgotten again: the path is the caller's to write once this returns, and an entry
+        // left here would vouch for the fetched content over whatever the caller makes of it.
+        let forget = ForgetFilled::new(self, path.clone());
         // A source this core knows is copied; one it does not, a content path a previous daemon
         // left and this one never materialized, say, would fail the copy, and the CAS has the
         // content if anything does.
@@ -778,8 +835,11 @@ impl<T: IoHandler + Allocative> Materializer for DeferredMaterializerAccessor<T>
                     .await?
             }
         }
-        self.ensure_materialized(vec![path], MaterializationPurpose::IntermediateOnly)
-            .await
+        let filled = self
+            .ensure_materialized(vec![path], MaterializationPurpose::IntermediateOnly)
+            .await;
+        let forgotten = forget.now().await;
+        filled.and(forgotten)
     }
 
     async fn publish(

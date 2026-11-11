@@ -799,15 +799,8 @@ async fn test_incremental_action_output_removed_by_failed_run(buck: &Buck) -> an
             "-c",
             &content_based_path,
         ])
-        .await;
-    if std::env::var_os("BUCK2_TEST_MATERIALIZER").is_none() {
-        // Bug: the deferred core still vouches for the output it fetched for the failed run.
-        result
-            .expect_failure()
-            .assert_stderr_matches("No such file or directory");
-    } else {
-        assert_eq!(result?.stdout, "foo");
-    }
+        .await?;
+    assert_eq!(result.stdout, "foo");
     Ok(())
 }
 

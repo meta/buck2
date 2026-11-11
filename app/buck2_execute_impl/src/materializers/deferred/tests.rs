@@ -898,18 +898,22 @@ pub(crate) mod state_machine {
                 .await
             };
 
+            let report = async |path: &ProjectRelativePathBuf| {
+                let lease = dm.prepare_outputs(vec![path.clone()]).await?;
+                dm.declare_existing(
+                    &lease,
+                    vec![DeclareArtifactPayload {
+                        path: path.clone(),
+                        artifact: value.dupe(),
+                    }],
+                )
+                .await?;
+                io.take_log();
+                buck2_error::Ok(())
+            };
+
             // Materialized at the path: the lease keeps what it forgot, and the fill keeps it.
-            let lease = dm.prepare_outputs(vec![path.clone()]).await?;
-            dm.declare_existing(
-                &lease,
-                vec![DeclareArtifactPayload {
-                    path: path.clone(),
-                    artifact: value.dupe(),
-                }],
-            )
-            .await?;
-            drop(lease);
-            io.take_log();
+            report(&path).await?;
             let lease = dm.prepare_outputs(vec![path.clone()]).await?;
             fill(&lease, &path, None).await?;
             assert_eq!(io.take_log(), &[]);
@@ -924,7 +928,8 @@ pub(crate) mod state_machine {
             );
             drop(lease);
 
-            // With a source: a copy from it.
+            // With a source this core tracks: a copy from it.
+            report(&path).await?;
             let lease = dm.prepare_outputs(vec![copy.clone()]).await?;
             fill(&lease, &copy, Some(path.clone())).await?;
             assert_eq!(
@@ -972,10 +977,12 @@ pub(crate) mod state_machine {
                 }],
             )
             .await?;
-            dm.ensure_materialized(vec![path], MaterializationPurpose::IntermediateOnly)
+            dm.ensure_materialized(vec![path.clone()], MaterializationPurpose::IntermediateOnly)
                 .await?;
-            // Bug: the fill left the path tracked, so the content is taken to be there still.
-            assert_eq!(io.take_log(), &[]);
+            assert_eq!(
+                io.take_log(),
+                &[(Op::Clean, path.clone()), (Op::Materialize, path)]
+            );
 
             dm.abort();
             Ok(())
@@ -1004,8 +1011,7 @@ pub(crate) mod state_machine {
                 )
                 .await;
             assert!(filled.is_err());
-            // Bug: the declaration the fill fetched through is left behind.
-            assert!(dm.has_artifact_at(path).await?);
+            assert!(!dm.has_artifact_at(path).await?);
 
             dm.abort();
             Ok(())
@@ -1040,8 +1046,7 @@ pub(crate) mod state_machine {
                     started = started.acquire() => started.unwrap().forget(),
                 }
             }
-            // Bug: the declaration the fill was fetching through is left behind.
-            assert!(dm.has_artifact_at(path).await?);
+            assert!(!dm.has_artifact_at(path).await?);
 
             dm.abort();
             Ok(())

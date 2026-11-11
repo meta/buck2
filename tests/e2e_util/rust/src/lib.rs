@@ -49,6 +49,7 @@ extern crate self as buck2_e2e;
 pub mod ansi;
 pub mod approx;
 mod buck;
+pub mod eden;
 mod fixture;
 pub mod golden;
 pub mod http;

@@ -71,5 +71,15 @@ buck2_core_tests(
             },
             "require_nano_prelude": True,
         },
+        "test_unidaemon_watchers": {
+            "compatible_with": [
+                "ovr_config//os:linux",
+                "ovr_config//os:macos",
+            ],
+            "deps": [
+                "fbsource//third-party/rust:flate2",
+                "//buck2/tests/core/common:unidaemon",
+            ],
+        },
     },
 )

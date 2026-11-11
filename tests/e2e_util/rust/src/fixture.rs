@@ -28,6 +28,8 @@ use sha2::Digest;
 use sha2::Sha256;
 
 use crate::buck::Buck;
+use crate::eden::Eden;
+use crate::eden::run;
 use crate::macro_support::BoxFuture;
 use crate::macro_support::Fixture;
 use crate::macro_support::TestResult;
@@ -401,17 +403,13 @@ impl BuckTest {
             ensure_fseventsd_running(base_dir.parent().unwrap_or(base_dir));
         }
         if self.setup_eden {
-            let eden = Eden {
-                dir: base_dir.join("eden"),
-                project_dir: project_dir.clone(),
-                env: env.clone(),
-            };
+            let eden = Eden::new(base_dir.join("eden"), env.clone());
             LEFTOVERS.with_borrow_mut(|leftovers| {
                 if let Some(leftovers) = leftovers {
-                    leftovers.eden = Some(eden.clone());
+                    leftovers.eden = Some((eden.clone(), project_dir.clone()));
                 }
             });
-            eden.mount()?;
+            eden.start(&project_dir)?;
         }
         let (cwd, isolation_prefix) = if self.inplace == Some(true) {
             // Not true of every Linux host, but the tests rely on it.
@@ -523,94 +521,6 @@ impl BuckTest {
     }
 }
 
-/// An EdenFS checkout of an empty repository, with a daemon of its own.
-#[derive(Clone)]
-struct Eden {
-    dir: PathBuf,
-    project_dir: PathBuf,
-    env: BTreeMap<OsString, OsString>,
-}
-
-impl Eden {
-    /// Starts the daemon in `dir` and mounts the checkout at `project_dir`.
-    fn mount(&self) -> anyhow::Result<()> {
-        for sub in ["config", "etc", "home"] {
-            fs::create_dir_all(self.dir.join(sub))?;
-        }
-        run(&mut self.eden(["start"]))?;
-
-        let repo = self.dir.join("temp_repo");
-        run(self.command("hg").arg("init").arg(&repo))?;
-        // The redirection is set up when the checkout is mounted. The number of APFS volumes macOS
-        // can have is limited, and cleaning disk image redirections up is not trivial, so it is a
-        // symlink there.
-        let redirection = if cfg!(target_os = "macos") {
-            "symlink"
-        } else {
-            "bind"
-        };
-        fs::write(
-            repo.join(".eden-redirections"),
-            format!("[redirections]\n\"buck-out\" = \"{redirection}\"\n"),
-        )?;
-        // Keeps the repository clean when EdenFS creates the redirection.
-        fs::write(repo.join(".gitignore"), "/buck-out\n")?;
-        run(self
-            .command("hg")
-            .args(["commit", "--addremove", "-m", "init"])
-            .current_dir(&repo))?;
-
-        let mut clone = self.eden(["clone"]);
-        clone
-            .arg(&repo)
-            .arg(&self.project_dir)
-            .args(["--allow-empty-repo", "--case-insensitive"]);
-        if cfg!(windows) {
-            clone.arg("--enable-windows-symlinks");
-        }
-        run(&mut clone)
-    }
-
-    /// Unmounts the checkout and stops the daemon, as well as they go.
-    fn remove(&self) {
-        let mut remove = self.eden(["remove"]);
-        remove.arg(&self.project_dir).arg("-y");
-        let _ignored = remove.status();
-        let _ignored = self.eden(["shutdown"]).status();
-    }
-
-    fn command(&self, program: &str) -> std::process::Command {
-        let mut command = std::process::Command::new(program);
-        command
-            .env_clear()
-            .envs(&self.env)
-            .stdout(std::io::stderr())
-            .stderr(std::io::stderr());
-        command
-    }
-
-    fn eden<'a>(&self, args: impl IntoIterator<Item = &'a str>) -> std::process::Command {
-        let mut command = self.command("eden");
-        command
-            .arg("--config-dir")
-            .arg(self.dir.join("config"))
-            .arg("--home-dir")
-            .arg(self.dir.join("home"))
-            .arg("--etc-eden-dir")
-            .arg(self.dir.join("etc"))
-            .args(args);
-        command
-    }
-}
-
-fn run(command: &mut std::process::Command) -> anyhow::Result<()> {
-    let status = command
-        .status()
-        .with_context(|| format!("Running {command:?}"))?;
-    anyhow::ensure!(status.success(), "{command:?} failed: {status}");
-    Ok(())
-}
-
 /// Sandcastle Mac VMs boot with fseventsd disabled and ship a script that starts it, which sudo
 /// allows. A failure is reported, and the next test in this process tries again.
 fn ensure_fseventsd_running(lock_dir: &Path) {
@@ -688,7 +598,8 @@ struct Leftovers {
     base_dir: PathBuf,
     /// `buck2 kill`, unless the test keeps its daemon.
     kill: Option<std::process::Command>,
-    eden: Option<Eden>,
+    /// The EdenFS daemon and the project mounted on it.
+    eden: Option<(Eden, PathBuf)>,
 }
 
 thread_local! {
@@ -715,8 +626,8 @@ impl Leftovers {
             );
             return;
         }
-        if let Some(eden) = &self.eden {
-            eden.remove();
+        if let Some((eden, project_dir)) = &self.eden {
+            eden.shutdown(project_dir);
         }
         remove_dir_all(&self.base_dir);
     }

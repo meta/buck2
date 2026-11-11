@@ -1,0 +1,14 @@
+load(":defs.bzl", "copy_file", "writer")
+
+copy_file(name = "one_probe", src = "src.txt")
+copy_file(name = "two_probe", src = "src.txt")
+
+writer(
+    name = "writer",
+    started = read_config("smoke", "started", "unset"),
+    release = read_config("smoke", "release", "unset"),
+)
+
+platform(name = "platform")
+execution_platform(name = "exec_platform", platform = ":platform", local_enabled = True)
+execution_platforms(name = "platforms", platforms = [":exec_platform"])

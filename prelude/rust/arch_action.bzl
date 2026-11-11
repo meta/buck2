@@ -19,7 +19,11 @@ RustArchCommand = record(
 
 def rust_arch_action(*, actions: AnalysisActions, path: str, arch_commands: dict[str, RustArchCommand]) -> cmd_args:
     require_rust_arch_variants(arch_commands, path)
-    branches = {arch: RunInfo(args = cmd_args(command.wrapper, command.wrapper_argfile)) for arch, command in arch_commands.items()}
+    archs = {arch: RunInfo(args = cmd_args(command.wrapper, command.wrapper_argfile)) for arch, command in arch_commands.items()}
+    return rust_arch_program_action(actions = actions, path = path, archs = archs)
+
+def rust_arch_program_action(*, actions: AnalysisActions, path: str, archs: dict[str, RunInfo]) -> cmd_args:
+    require_rust_arch_variants(archs, path)
     output = command_alias(
         actions = actions,
         path = path,
@@ -28,7 +32,7 @@ def rust_arch_action(*, actions: AnalysisActions, path: str, arch_commands: dict
             os = Os("fat_linux"),
             script = ScriptLanguage("sh"),
         ),
-        base = {"Linux": branches},
+        base = {"Linux": archs},
         args = cmd_args(),
         env = {},
         labels = [],

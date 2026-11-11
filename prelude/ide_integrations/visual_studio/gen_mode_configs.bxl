@@ -7,7 +7,7 @@
 # above-listed licenses.
 
 load("@prelude//cxx:cxx_toolchain_types.bzl", "CxxToolchainInfo")
-load("constants.bxl", "CLANG", "CLANG_WINDOWS", "LANGUAGE_STANDARD", "TOOLSET", "VS2019", "VS2022")
+load("constants.bxl", "CLANG", "CLANG_WINDOWS", "LANGUAGE_STANDARD", "TOOLSET", "VS2022")
 load("flags_parser_utils.bxl", "get_compiler_settings_from_flags", "get_linker_settings_from_flags")
 load("get_compiler_settings.bxl", "gen_compiler_settings")
 load("get_linker_settings.bxl", "gen_linker_settings")
@@ -22,10 +22,6 @@ LANGUAGE_STANDARD_AND_TOOLSET_MAP = {
     CLANG_WINDOWS: {
         LANGUAGE_STANDARD: "stdcpp20",
         TOOLSET: "ClangCL",
-    },
-    VS2019: {
-        LANGUAGE_STANDARD: "stdcpp17",
-        TOOLSET: "v142",
     },
     VS2022: {
         LANGUAGE_STANDARD: "stdcpp20",
@@ -84,7 +80,7 @@ def _produce_proj_artifact_with_async_cxx_toolchain(bxl_ctx, actions, fbsource: 
     cxx_toolchain = cxx_toolchain_analysis_result.providers().get(CxxToolchainInfo)
     compiler_type = cxx_toolchain.cxx_compiler_info.compiler_type
     if compiler_type == "windows":
-        platform = "vs" + bxl_ctx.cli_args.vs_version_year
+        platform = VS2022
     else:
         platform = compiler_type
 
@@ -183,13 +179,10 @@ def _produce_proj_artifact(
     toolchains_props = ""
     vc_targets_props = ""
     if fbsource and platform != CLANG:
-        toolchain_sheet = "toolchain.props"
-        if platform in [VS2022, CLANG_WINDOWS]:
-            toolchain_sheet = "toolchain_vs2022.props"
-            vc_targets_props = """    <PropertyGroup>
+        vc_targets_props = """    <PropertyGroup>
         <VCTargetsPath>$(RepoRoot)\\third-party\\toolchains\\visual_studio\\14.39.33519\\MSBuild\\Microsoft\\VC\\v170\\</VCTargetsPath>
     </PropertyGroup>"""
-        toolchains_props = '        <Import Project="$(RepoRoot)\\third-party\\toolchains\\visual_studio\\{}"/>'.format(toolchain_sheet)
+        toolchains_props = '        <Import Project="$(RepoRoot)\\third-party\\toolchains\\visual_studio\\toolchain_vs2022.props"/>'
 
     llvm_props = ""
     compiler_paths = ""
@@ -274,9 +267,10 @@ main = bxl_main(
         "mode_name": cli_args.string(
             doc = "Single mode file to generate projects for.",
         ),
-        "vs_version_year": cli_args.string(
+        "vs_version_year": cli_args.enum(
+            ["2022"],
             default = "2022",
-            doc = "Generate mode configs for Visual Studio <vs_version_year> projects",
+            doc = "Visual Studio IDE version for generated mode configs.",
         ),
     },
 )

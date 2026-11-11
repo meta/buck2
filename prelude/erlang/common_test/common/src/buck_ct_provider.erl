@@ -33,7 +33,7 @@ behavior module defining callbacks for buck2 test providers
 
 -type buck_ct_provider() :: {atom(), state()}.
 
--type init_argument_type() :: any().
+-type init_argument_type() :: term().
 
 % ------------------- Behaviors Callbacks -------------------------
 
@@ -112,7 +112,7 @@ Handles the execution of the method on a provider and dealing with the result.
 Skip if the method is undefined, updates the state or crash according to the return result
 of the method.
 """.
--spec execute_method_on_provider(atom(), atom(), any(), [any()]) -> {atom(), term()}.
+-spec execute_method_on_provider(atom(), atom(), term(), [term()]) -> buck_ct_provider().
 execute_method_on_provider(Method, ProviderName, ProviderState, Args) ->
     try safely_execute(ProviderName, Method, Args ++ [ProviderState]) of
         undefined_method ->
@@ -164,7 +164,7 @@ execute_method_on_provider(Method, ProviderName, ProviderState, Args) ->
 -doc """
 Executes the method if this one is exported, otherwise return undefined_method.
 """.
--spec safely_execute(atom(), atom(), [any()]) -> undefined_method | any().
+-spec safely_execute(atom(), atom(), [term()]) -> undefined_method | term().
 safely_execute(Module, Method, Args) ->
     Module:module_info(),
     case erlang:function_exported(Module, Method, length(Args)) of

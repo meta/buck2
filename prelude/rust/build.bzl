@@ -198,32 +198,56 @@ def generate_rustdoc(
     if toolchain_info.rust_target_path != None:
         path_env["RUST_TARGET_PATH"] = toolchain_info.rust_target_path[DefaultInfo].default_outputs[0]
 
-    rustdoc_cmd = cmd_args(
-        toolchain_info.rustdoc,
-        "--rustc-action-separator",
+    rustdoc_args = cmd_args(
         toolchain_info.rustdoc_flags,
         ctx.attrs.rustdoc_flags,
         common_args.args,
         cmd_args(output.as_output(), format = "--out-dir={}"),
-        hidden = [toolchain_info.rustdoc, compile_ctx.symlinked_srcs],
+        hidden = [compile_ctx.symlinked_srcs],
     )
 
     if document_private_items:
-        rustdoc_cmd.add("--document-private-items")
+        rustdoc_args.add("--document-private-items")
 
-    rustdoc_cmd_action = cmd_args(
+    rustdoc_common = cmd_args(
         [cmd_args("--env=", k, "=", v, delimiter = "") for k, v in plain_env.items()],
         [cmd_args("--path-env=", k, "=", v, delimiter = "") for k, v in path_env.items()],
-        rustdoc_cmd,
     )
-
-    rustdoc_cmd = _long_command(
-        ctx = ctx,
-        exe = compile_ctx.internal_tools_info.rustc_action,
-        args = rustdoc_cmd_action,
-        argfile_name = "{}.args".format(subdir),
-        has_content_based_path = use_cbp,
-    )
+    if compile_ctx.arch_toolchain_info == None:
+        rustdoc_cmd = _long_command(
+            ctx = ctx,
+            exe = compile_ctx.internal_tools_info.rustc_action,
+            args = cmd_args(rustdoc_common, toolchain_info.rustdoc, "--rustc-action-separator", rustdoc_args, hidden = toolchain_info.rustdoc),
+            argfile_name = "{}.args".format(subdir),
+            has_content_based_path = use_cbp,
+        )
+    else:
+        arch_commands = {}
+        for arch, variant in compile_ctx.arch_toolchain_info.arch_variants.items():
+            args = cmd_args(
+                [cmd_args("--env=", key, "=", value, delimiter = "") for key, value in variant.plain_env.items()],
+                [cmd_args("--path-env=", key, "=", value, delimiter = "") for key, value in variant.path_env.items()],
+                rustdoc_common,
+                variant.rustdoc,
+                "--rustc-action-separator",
+                rustdoc_args,
+                hidden = variant.runtime_and_plugin_inputs,
+            )
+            arch_commands[arch] = RustArchCommand(
+                wrapper = compile_ctx.internal_tools_info.rustc_action,
+                wrapper_argfile = at_argfile(
+                    actions = ctx.actions,
+                    name = "{}-{}.args".format(subdir, arch),
+                    args = args,
+                    allow_args = True,
+                    has_content_based_path = use_cbp,
+                ),
+            )
+        rustdoc_cmd = rust_arch_action(
+            actions = ctx.actions,
+            path = "{}-arch-action".format(subdir),
+            arch_commands = arch_commands,
+        )
 
     ctx.actions.run(rustdoc_cmd, category = "rustdoc")
 
@@ -740,12 +764,19 @@ def rust_compile(
         extra_flags,
     )
 
-    # TODO: dual-arch clippy/miri assembly is not available yet.
+    # TODO: dual-arch miri assembly is not available yet.
     rustc_bin = None
     if compile_ctx.arch_toolchain_info != None:
-        if emit in [Emit("clippy"), Emit("miri")]:
-            fail("{} dual-arch {} assembly is not available yet".format(ctx.label, emit.value))
-        rustc_bin = {arch: variant.compiler for arch, variant in compile_ctx.arch_toolchain_info.arch_variants.items()}
+        if emit == Emit("miri"):
+            fail("{} dual-arch miri assembly is not available yet".format(ctx.label))
+        if emit == Emit("clippy"):
+            if toolchain_info.explicit_sysroot_deps == None and toolchain_info.sysroot_path == None:
+                fail("{} dual-arch clippy requires an explicit target sysroot".format(ctx.label))
+            rustc_bin = {}
+            for arch, variant in compile_ctx.arch_toolchain_info.arch_variants.items():
+                rustc_bin[arch] = variant.clippy_driver
+        else:
+            rustc_bin = {arch: variant.compiler for arch, variant in compile_ctx.arch_toolchain_info.arch_variants.items()}
     elif emit == Emit("clippy"):
         rustc_bin = compile_ctx.clippy_wrapper
     elif emit == Emit("miri"):
@@ -2053,6 +2084,7 @@ def _rustc_invoke(
             env_args = cmd_args(
                 [cmd_args("--env=", key, "=", value, delimiter = "") for key, value in variant.plain_env.items()],
                 [cmd_args("--path-env=", key, "=", value, delimiter = "") for key, value in variant.path_env.items()],
+                ["--env=__CLIPPY_INTERNAL_TESTS=true"] if is_clippy else [],
             )
             strip = cmd_args()
             if strip_dwo_members != None:

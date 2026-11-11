@@ -34,7 +34,6 @@ load("@prelude//android:voltron.bzl", "ROOT_MODULE", "all_targets_in_root_module
     # @oss-disable[end= ]: "gatorade_deferred_libs",
     # @oss-disable[end= ]: "gatorade_libraries",
     # @oss-disable[end= ]: "is_late_gatorade_enabled",
-    # @oss-disable[end= ]: "is_middle_gatorade_enabled",
     # @oss-disable[end= ]: "is_monogatorade_enabled",
     # @oss-disable[end= ]: "middle_gatorade_merge_args",
     # @oss-disable[end= ]: "monogatorade_redex_stand_ins",
@@ -443,12 +442,12 @@ def get_android_binary_native_library_info(
         jni_onload_check_report = ctx.actions.declare_output("jni_onload_check.json", has_content_based_path = False)
         dynamic_outputs.append(jni_onload_check_report)
 
-    middle_relink_check_report = None
+    relink_check_report = None
 
     if False: # @oss-enable
-    # @oss-disable[end= ]: if enable_relinker and is_middle_gatorade_enabled(ctx):
-        middle_relink_check_report = ctx.actions.declare_output("middle_relink_check.json", has_content_based_path = False)
-        dynamic_outputs.append(middle_relink_check_report)
+    # @oss-disable[end= ]: if enable_relinker:
+        relink_check_report = ctx.actions.declare_output("relink_check.json", has_content_based_path = False)
+        dynamic_outputs.append(relink_check_report)
 
     relinked_libs_output = None
     relinked_libs_manifest = None
@@ -803,7 +802,7 @@ def get_android_binary_native_library_info(
                 ctx,
                 final_shared_libs_by_platform,
                 native_cmd_entries,
-                outputs[middle_relink_check_report] if middle_relink_check_report else None,
+                outputs[relink_check_report] if relink_check_report else None,
                 monogatorade_products,
                 excluded_shared_libs_by_platform,
             )
@@ -847,7 +846,7 @@ def get_android_binary_native_library_info(
                 ctx,
                 final_shared_libs_by_platform,
                 native_cmd_entries,
-                outputs[middle_relink_check_report] if middle_relink_check_report else None,
+                outputs[relink_check_report] if relink_check_report else None,
                 monogatorade_products,
                 excluded_shared_libs_by_platform,
             )
@@ -1143,10 +1142,10 @@ def get_android_binary_native_library_info(
         # without building the whole apk.
         enhance_ctx.debug_output("jni_onload_check", jni_onload_check_report)
 
-    if middle_relink_check_report:
-        # Readable on its own: which relinked libraries' imports were checked,
-        # and any import whose provider's relink does not export it.
-        enhance_ctx.debug_output("middle_relink_check", middle_relink_check_report)
+    if relink_check_report:
+        # Readable on its own: which libraries' imports were checked, and any
+        # import whose provider's relink does not export it.
+        enhance_ctx.debug_output("relink_check", relink_check_report)
 
     enhance_ctx.debug_output("linker_argsfiles", linker_argsfiles)
     enhance_ctx.debug_output("linker_commands", linker_commands)
@@ -1195,11 +1194,11 @@ def get_android_binary_native_library_info(
     enhance_ctx.debug_output("unstripped_native_libraries_files", unstripped_native_libraries_files)
     if relinked_libs_output:
         # The combine genrule reads this through `$(location)`, which also
-        # builds other_outputs, so a failing middle_relink_check fails it.
+        # builds other_outputs, so a failing relink check fails it.
         enhance_ctx.debug_output(
             "relinked_libs",
             relinked_libs_output,
-            other_outputs = [middle_relink_check_report] if middle_relink_check_report else [],
+            other_outputs = [relink_check_report] if relink_check_report else [],
         )
     if relinked_libs_manifest:
         enhance_ctx.debug_output("relinked_libs_manifest", relinked_libs_manifest)
@@ -1238,7 +1237,7 @@ def get_android_binary_native_library_info(
             generated_java_code = generated_java_code,
             unstripped_shared_libraries = unstripped_native_libraries_files,
             # The package of the relinked libraries carries the relink check.
-            validation_outputs = [report for report in [jni_onload_check_report, middle_relink_check_report] if report],
+            validation_outputs = [report for report in [jni_onload_check_report, relink_check_report] if report],
         )
     return AndroidBinaryNativeLibsInfo(
         prebuilt_native_library_dirs = all_prebuilt_native_library_dirs,
@@ -1252,7 +1251,7 @@ def get_android_binary_native_library_info(
         # Packaging adds validation_outputs as hidden inputs. A deferred relink's
         # check must not become one, or the package Redex starts from would wait
         # for every relink; [relinked_libs] carries it to the combine step.
-        validation_outputs = [report for report in [jni_onload_check_report, None if defer_relink else middle_relink_check_report] if report],
+        validation_outputs = [report for report in [jni_onload_check_report, None if defer_relink else relink_check_report] if report],
         shipped = shipped,
     )
 

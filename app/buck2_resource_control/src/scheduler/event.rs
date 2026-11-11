@@ -38,15 +38,7 @@ impl EventSenderState {
             estimated_memory_cap,
             estimated_swap_cap: None,
             last_scheduled_event_time: None,
-            memory_reading: MemoryReading {
-                allprocs_memory_current: 0,
-                allprocs_swap_current: 0,
-                allprocs_memory_pressure: 0.0,
-                daemon_memory_current: 0,
-                daemon_swap_current: 0,
-                host_swap: None,
-                time_collected: SystemTime::now(),
-            },
+            memory_reading: MemoryReading::zero(),
             txs: Vec::new(),
             tags: Vec::new(),
         }

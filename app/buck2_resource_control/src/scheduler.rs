@@ -776,8 +776,6 @@ fn wake_scene(
 
 #[cfg(test)]
 mod tests {
-    use std::time::SystemTime;
-
     use buck2_wrapper_common::invocation_id::TraceId;
 
     use super::*;
@@ -835,12 +833,9 @@ mod tests {
         let (mut scheduler, timeline) = TestTimeline::new();
         let pressure = MemoryReading {
             allprocs_memory_current: 10000,
-            allprocs_swap_current: 0,
             allprocs_memory_pressure: 80.0,
             daemon_memory_current: 8000,
-            daemon_swap_current: 0,
-            host_swap: None,
-            time_collected: SystemTime::now(),
+            ..MemoryReading::zero()
         };
         scheduler.update(pressure, UpdateBuilder::new().build(), timeline.secs(0));
         scheduler.update(pressure, UpdateBuilder::new().build(), timeline.secs(60));
@@ -896,13 +891,8 @@ mod tests {
     fn test_intent_when_pressure_follows_quiet_period() {
         let (mut scheduler, timeline) = TestTimeline::new();
         let reading = |pressure: f64| MemoryReading {
-            allprocs_memory_current: 0,
-            allprocs_swap_current: 0,
             allprocs_memory_pressure: pressure,
-            daemon_memory_current: 0,
-            daemon_swap_current: 0,
-            host_swap: None,
-            time_collected: SystemTime::now(),
+            ..MemoryReading::zero()
         };
         for i in 1..=60 {
             scheduler.update(reading(0.0), UpdateBuilder::new().build(), timeline.secs(i));
@@ -948,12 +938,9 @@ mod tests {
 
         let dummy_memory_reading = MemoryReading {
             allprocs_memory_current: 10000,
-            allprocs_swap_current: 0,
             allprocs_memory_pressure: 12.0,
             daemon_memory_current: 8000,
-            daemon_swap_current: 0,
-            host_swap: None,
-            time_collected: SystemTime::now(),
+            ..MemoryReading::zero()
         };
         scheduler.update(
             dummy_memory_reading,
@@ -991,12 +978,9 @@ mod tests {
         // another 40 seconds of observed pressure after entering decrease mode.
         let memory_reading = MemoryReading {
             allprocs_memory_current: 10000,
-            allprocs_swap_current: 0,
             allprocs_memory_pressure: 80.0,
             daemon_memory_current: 8000,
-            daemon_swap_current: 0,
-            host_swap: None,
-            time_collected: SystemTime::now(),
+            ..MemoryReading::zero()
         };
         scheduler.update(
             memory_reading,
@@ -1040,17 +1024,8 @@ mod tests {
         let cgroup_1_res = scheduler.scene_finished(scene1, timeline.secs(110));
         assert!(cgroup_1_res.suspend_duration.is_none());
 
-        let memory_reading_2 = MemoryReading {
-            allprocs_memory_current: 0,
-            allprocs_swap_current: 0,
-            allprocs_memory_pressure: 0.0,
-            daemon_memory_current: 0,
-            daemon_swap_current: 0,
-            host_swap: None,
-            time_collected: SystemTime::now(),
-        };
         scheduler.update(
-            memory_reading_2,
+            MemoryReading::zero(),
             UpdateBuilder::new().build(),
             timeline.secs(115),
         );
@@ -1076,13 +1051,7 @@ mod tests {
         for (duration, level) in pre_start_durations_and_levels.iter().copied() {
             let reading = MemoryReading {
                 allprocs_memory_pressure: level,
-                // Killing is entirely pressure based so we don't care about these
-                allprocs_memory_current: 0,
-                allprocs_swap_current: 0,
-                daemon_memory_current: 0,
-                daemon_swap_current: 0,
-                host_swap: None,
-                time_collected: SystemTime::now(),
+                ..MemoryReading::zero()
             };
             for i in 0..duration {
                 scheduler.update(
@@ -1114,13 +1083,7 @@ mod tests {
         for (duration, level) in durations_and_levels.iter().copied() {
             let reading = MemoryReading {
                 allprocs_memory_pressure: level,
-                // Killing is entirely pressure based so we don't care about these
-                allprocs_memory_current: 0,
-                allprocs_swap_current: 0,
-                daemon_memory_current: 0,
-                daemon_swap_current: 0,
-                host_swap: None,
-                time_collected: SystemTime::now(),
+                ..MemoryReading::zero()
             };
             for i in 0..duration {
                 scheduler.update(
@@ -1167,12 +1130,7 @@ mod tests {
         let (mut scheduler, timeline) = TestTimeline::new();
         let reading = |level: f64| MemoryReading {
             allprocs_memory_pressure: level,
-            allprocs_swap_current: 0,
-            allprocs_memory_current: 0,
-            daemon_memory_current: 0,
-            daemon_swap_current: 0,
-            host_swap: None,
-            time_collected: SystemTime::now(),
+            ..MemoryReading::zero()
         };
         let mut now_ms = 0;
         let mut was_on = false;
@@ -1255,13 +1213,9 @@ mod tests {
         let mut reported = |sec: u64, host_swap: Option<HostSwap>| {
             scheduler.update(
                 MemoryReading {
-                    allprocs_memory_current: 0,
                     allprocs_swap_current: 20_000,
-                    allprocs_memory_pressure: 0.0,
-                    daemon_memory_current: 0,
-                    daemon_swap_current: 0,
                     host_swap,
-                    time_collected: SystemTime::now(),
+                    ..MemoryReading::zero()
                 },
                 UpdateBuilder::new().build(),
                 timeline.secs(sec),

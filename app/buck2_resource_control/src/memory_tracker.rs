@@ -50,6 +50,21 @@ pub struct MemoryReading {
     pub time_collected: SystemTime,
 }
 
+impl MemoryReading {
+    /// What a buck that uses no memory at all would read.
+    pub(crate) fn zero() -> Self {
+        Self {
+            allprocs_memory_current: 0,
+            allprocs_swap_current: 0,
+            allprocs_memory_pressure: 0.0,
+            daemon_memory_current: 0,
+            daemon_swap_current: 0,
+            host_swap: None,
+            time_collected: SystemTime::now(),
+        }
+    }
+}
+
 pub type MemoryTrackerHandle = Arc<MemoryTrackerSharedState>;
 
 #[derive(Allocative)]

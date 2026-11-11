@@ -9,7 +9,11 @@
  */
 
 use std::env;
+use std::fs::File;
+use std::io::Read;
 use std::mem::MaybeUninit;
+use std::os::fd::FromRawFd;
+use std::os::fd::IntoRawFd;
 use std::os::unix::process::CommandExt;
 use std::os::unix::process::ExitStatusExt;
 use std::process::Command;
@@ -21,6 +25,7 @@ use buck2_miniperf_proto::MiniperfCounter;
 use buck2_miniperf_proto::MiniperfCounters;
 use buck2_miniperf_proto::MiniperfOutput;
 use perf_event::Builder;
+use perf_event::ReadFormat;
 use perf_event::events::Hardware;
 use smallvec::SmallVec;
 
@@ -117,9 +122,9 @@ fn run_forwarding_sigterm(cmd: &mut Command) -> std::io::Result<std::process::Ex
     child.wait()
 }
 
-struct Counters {
-    user_counter: perf_event::Counter,
-    kernel_counter: perf_event::Counter,
+struct Counters<R = File> {
+    user_counter: R,
+    kernel_counter: R,
 }
 
 #[derive(thiserror::Error, Debug)]
@@ -133,7 +138,10 @@ impl Counters {
     fn open() -> Result<Self, CounterError> {
         // NOTE: Kernel is not enabled here: we want to report only userspace cycles.
         let mut user_counter_builder = Builder::new().kind(Hardware::INSTRUCTIONS);
-        user_counter_builder.inherit(true).enable_on_exec(true);
+        user_counter_builder
+            .inherit(true)
+            .enable_on_exec(true)
+            .read_format(ReadFormat::TOTAL_TIME_ENABLED | ReadFormat::TOTAL_TIME_RUNNING);
         let user_counter = user_counter_builder.build().map_err(|error| CounterError {
             stage: "open user",
             error: error.into(),
@@ -144,7 +152,8 @@ impl Counters {
             .include_kernel()
             .exclude_user(true)
             .inherit(true)
-            .enable_on_exec(true);
+            .enable_on_exec(true)
+            .read_format(ReadFormat::TOTAL_TIME_ENABLED | ReadFormat::TOTAL_TIME_RUNNING);
 
         let kernel_counter = kernel_counter.build().map_err(|error| CounterError {
             stage: "open kernel",
@@ -152,40 +161,96 @@ impl Counters {
         })?;
 
         Ok(Self {
-            user_counter,
-            kernel_counter,
+            user_counter: into_file(user_counter),
+            kernel_counter: into_file(kernel_counter),
         })
     }
+}
 
+impl<R: Read> Counters<R> {
     fn collect(mut self) -> Result<MiniperfCounters, CounterError> {
-        let user_value = self
-            .user_counter
-            .read_count_and_time()
-            .map_err(|error| CounterError {
+        let user_instructions =
+            read_counter(&mut self.user_counter).map_err(|error| CounterError {
                 stage: "collect user",
                 error: error.into(),
             })?;
 
-        let kernel_value =
-            self.kernel_counter
-                .read_count_and_time()
-                .map_err(|error| CounterError {
-                    stage: "collect kernel",
-                    error: error.into(),
-                })?;
+        let kernel_instructions =
+            read_counter(&mut self.kernel_counter).map_err(|error| CounterError {
+                stage: "collect kernel",
+                error: error.into(),
+            })?;
 
         Ok(MiniperfCounters {
-            user_instructions: MiniperfCounter {
-                count: user_value.count,
-                time_enabled: user_value.time_enabled,
-                time_running: user_value.time_running,
-            },
-            kernel_instructions: MiniperfCounter {
-                count: kernel_value.count,
-                time_enabled: kernel_value.time_enabled,
-                time_running: kernel_value.time_running,
-            },
+            user_instructions,
+            kernel_instructions,
         })
+    }
+}
+
+/// Size of a read with `TOTAL_TIME_ENABLED | TOTAL_TIME_RUNNING`: the count,
+/// `time_enabled` and `time_running`, each a native-endian `u64`.
+const COUNTER_READ_SIZE: usize = 3 * size_of::<u64>();
+
+/// Transfers ownership of the counter's file descriptor.
+fn into_file(counter: perf_event::Counter) -> File {
+    // SAFETY: `into_raw_fd` relinquishes ownership of an open descriptor, which `File` takes over.
+    unsafe { File::from_raw_fd(counter.into_raw_fd()) }
+}
+
+#[derive(thiserror::Error, Debug)]
+enum CounterReadError {
+    #[error(transparent)]
+    Io(#[from] std::io::Error),
+    #[error(
+        "Kernel reported `time_running` ({time_running} ns) exceeding `time_enabled` ({time_enabled} ns), count {count}"
+    )]
+    RunningExceedsEnabled {
+        count: u64,
+        time_enabled: u64,
+        time_running: u64,
+    },
+}
+
+/// Reads a counter, rejecting values that cannot be scaled for multiplexing.
+///
+/// `perf_event::Counter::read_count_and_time` panics on inconsistent kernel timing. These reads
+/// must return an error instead so that miniperf can still report the wrapped command's status.
+fn read_counter(counter: &mut impl Read) -> Result<MiniperfCounter, CounterReadError> {
+    let mut buf = [0; COUNTER_READ_SIZE];
+    counter.read_exact(&mut buf)?;
+    let field = |index: usize| {
+        let start = index * size_of::<u64>();
+        u64::from_ne_bytes(
+            buf[start..start + size_of::<u64>()]
+                .try_into()
+                .expect("should be a `u64`-sized slice"),
+        )
+    };
+    let (count, time_enabled, time_running) = (field(0), field(1), field(2));
+    if time_running > time_enabled {
+        return Err(CounterReadError::RunningExceedsEnabled {
+            count,
+            time_enabled,
+            time_running,
+        });
+    }
+    Ok(MiniperfCounter {
+        count,
+        time_enabled,
+        time_running,
+    })
+}
+
+fn collect_output<R: Read>(
+    status: anyhow::Result<std::process::ExitStatus>,
+    counters: Result<Counters<R>, CounterError>,
+) -> MiniperfOutput {
+    MiniperfOutput {
+        raw_exit_code: status.map(|s| s.into_raw()).map_err(|e| e.to_string()),
+        counters: counters
+            .and_then(|c| c.collect())
+            .map_err(|e| e.to_string()),
     }
 }
 
@@ -210,12 +275,7 @@ pub fn main() -> anyhow::Result<()> {
         run_forwarding_sigterm(Command::new(bin).args(args)).map_err(anyhow::Error::from)
     });
 
-    let counters = counters.and_then(|c| c.collect());
-
-    let output = MiniperfOutput {
-        raw_exit_code: status.map(|s| s.into_raw()).map_err(|e| e.to_string()),
-        counters: counters.map_err(|e| e.to_string()),
-    };
+    let output = collect_output(status, counters);
 
     // Stack allocate in the happy path.
     let mut buff = SmallVec::<[u8; MiniperfOutput::EXPECTED_SIZE]>::new();
@@ -226,4 +286,122 @@ pub fn main() -> anyhow::Result<()> {
     std::fs::write(&out, &buff).with_context(|| format!("Failed to write to `{out:?}`"))?;
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn encode(values: [u64; 3]) -> Vec<u8> {
+        values
+            .iter()
+            .flat_map(|value| value.to_ne_bytes())
+            .collect()
+    }
+
+    #[test]
+    fn test_read_counter() {
+        for (count, time_enabled, time_running) in [
+            (123, 100, 50),
+            (123, 100, 100),
+            (0, 0, 0),
+            (u64::MAX, u64::MAX, u64::MAX),
+        ] {
+            assert_eq!(
+                read_counter(&mut encode([count, time_enabled, time_running]).as_slice()).unwrap(),
+                MiniperfCounter {
+                    count,
+                    time_enabled,
+                    time_running,
+                }
+            );
+        }
+    }
+
+    #[test]
+    fn test_read_counter_rejects_running_longer_than_enabled() {
+        let error = read_counter(&mut encode([123, 100, 101]).as_slice()).unwrap_err();
+        assert!(
+            matches!(
+                error,
+                CounterReadError::RunningExceedsEnabled {
+                    count: 123,
+                    time_enabled: 100,
+                    time_running: 101,
+                }
+            ),
+            "Inconsistent times should be an error carrying the values read, got {error:?}"
+        );
+        assert_eq!(
+            error.to_string(),
+            "Kernel reported `time_running` (101 ns) exceeding `time_enabled` (100 ns), count 123"
+        );
+    }
+
+    #[test]
+    fn test_read_counter_reports_short_read() {
+        let buf = encode([123, 100, 50]);
+        let error = read_counter(&mut &buf[..COUNTER_READ_SIZE - 1]).unwrap_err();
+        assert!(
+            matches!(&error, CounterReadError::Io(e) if e.kind() == std::io::ErrorKind::UnexpectedEof),
+            "A short read should be an I/O error, got {error:?}"
+        );
+    }
+
+    #[test]
+    fn test_collect_output_keeps_exit_status_when_counter_times_are_inconsistent() {
+        let user = encode([10, 100, 100]);
+        let kernel = encode([20, 100, 101]);
+        for raw_exit_code in [0, 3 << 8, libc::SIGTERM] {
+            let output = collect_output(
+                Ok(std::process::ExitStatus::from_raw(raw_exit_code)),
+                Ok(Counters {
+                    user_counter: user.as_slice(),
+                    kernel_counter: kernel.as_slice(),
+                }),
+            );
+            let bytes = bincode::serde::encode_to_vec(&output, bincode::config::legacy()).unwrap();
+            let (output, _) = bincode::serde::decode_from_slice::<MiniperfOutput, _>(
+                &bytes,
+                bincode::config::legacy(),
+            )
+            .unwrap();
+
+            assert_eq!(
+                output.raw_exit_code,
+                Ok(raw_exit_code),
+                "The wrapped command's exit status should survive a bad counter read"
+            );
+            assert_eq!(
+                output.counters.err().as_deref(),
+                Some(
+                    "Error at collect kernel: Kernel reported `time_running` (101 ns) exceeding `time_enabled` (100 ns), count 20"
+                ),
+                "The counter error should name the stage and the values read"
+            );
+        }
+    }
+
+    #[test]
+    fn test_collect_output_keeps_spawn_error_when_user_counter_times_are_inconsistent() {
+        let user = encode([10, 0, 1]);
+        let kernel = encode([20, 100, 100]);
+        let output = collect_output(
+            Err(anyhow::anyhow!("Failed to spawn command")),
+            Ok(Counters {
+                user_counter: user.as_slice(),
+                kernel_counter: kernel.as_slice(),
+            }),
+        );
+        assert_eq!(
+            output.raw_exit_code.err().as_deref(),
+            Some("Failed to spawn command")
+        );
+        assert_eq!(
+            output.counters.err().as_deref(),
+            Some(
+                "Error at collect user: Kernel reported `time_running` (1 ns) exceeding `time_enabled` (0 ns), count 10"
+            )
+        );
+    }
 }

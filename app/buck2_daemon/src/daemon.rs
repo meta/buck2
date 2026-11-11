@@ -18,13 +18,17 @@ use std::time::Duration;
 #[cfg(all(fbcode_build, target_os = "linux"))]
 use bpfjailer_client_rs::SOCK_PATHS as BPFJAILER_SOCK_PATHS;
 use buck2_cli_proto::DaemonProcessInfo;
+use buck2_client_ctx::daemon::client::BuckdLifecycleLock;
+use buck2_client_ctx::daemon::client::namespaces::remove_unidaemon_namespace_dir;
 use buck2_client_ctx::daemon_constraints::gen_daemon_constraints;
+use buck2_client_ctx::startup_deadline::StartupDeadline;
 use buck2_client_ctx::version::BuckVersion;
 use buck2_common::buckd_connection::ConnectionType;
 use buck2_common::daemon_compatibility::DaemonCompatibilityKey;
 use buck2_common::daemon_dir::DaemonDir;
 use buck2_common::init::DaemonStartupConfig;
 use buck2_common::invocation_paths::InvocationPaths;
+use buck2_common::invocation_paths::UnidaemonLifetimeLock;
 use buck2_common::invocation_paths::unidaemon_prototype_enabled;
 use buck2_common::memory;
 use buck2_core::buck2_env;
@@ -251,6 +255,33 @@ fn verify_buck_out_dir(paths: &InvocationPaths) -> buck2_error::Result<()> {
     }
 
     Ok(())
+}
+
+/// Removes the namespace directory of a shared daemon that has exited normally, so that no record
+/// names it; a daemon that failed leaves its error report there for its client to read. The
+/// daemon still holds the namespace's lifetime lock here, so no replacement runs yet; a client
+/// that holds the lifecycle lock is about to start one over the directory and keeps it, which is
+/// why this is best effort. The namespace's lock files stay: unlinking one while a daemon of the
+/// key waits on it would leave that daemon holding a lock on an unlinked file, which every later
+/// probe reads as "no daemon".
+fn remove_exited_namespace(daemon_dir: &DaemonDir) {
+    let removed = new_tokio_runtime("buck2-daemon-exit")
+        .enable_all()
+        .build()
+        .map_err(buck2_error::Error::from)
+        .and_then(|runtime| {
+            runtime.block_on(async {
+                let lifecycle = BuckdLifecycleLock::lock_with_timeout(
+                    daemon_dir.clone(),
+                    StartupDeadline::duration_from_now(Duration::from_millis(100))?,
+                )
+                .await?;
+                remove_unidaemon_namespace_dir(&lifecycle).await
+            })
+        });
+    if let Err(error) = removed {
+        tracing::info!("Left namespace directory `{daemon_dir}` in place: {error:#}");
+    }
 }
 
 impl DaemonCommand {
@@ -702,34 +733,53 @@ impl DaemonCommand {
                 path.display()
             ));
         }
-        if in_process && unidaemon_prototype_enabled()? {
+        let unidaemon = unidaemon_prototype_enabled()?;
+        if in_process && unidaemon {
             return Err(buck2_error!(
                 ErrorTag::Input,
                 "Daemon sharing requires an external daemon"
             ));
         }
-        if unidaemon_prototype_enabled()? {
+        let key = if unidaemon {
             // The same inputs the client hashed, so the daemon serves the namespace the client
             // is waiting on.
-            paths.select_unidaemon(DaemonCompatibilityKey::new(
+            let key = DaemonCompatibilityKey::new(
                 &buck2_client_ctx::daemon_constraints::version()?,
                 buck2_client_ctx::daemon_constraints::user_version()?.as_deref(),
                 &self.daemon_startup_config.serialize()?,
                 self.enable_trace_io,
-            ));
-        }
+            );
+            paths.select_unidaemon(key.clone());
+            Some(key)
+        } else {
+            None
+        };
         let daemon_dir = paths.daemon_dir()?;
         if !daemon_dir.path.is_dir() {
             fs_util::create_dir_all(&daemon_dir.path)?;
         }
 
-        let res = self.run(log_reload_handle, paths, in_process, ready);
+        let res = (move || {
+            if let Some(key) = &key {
+                // Released by the kernel when the process exits, and only then; see
+                // `UnidaemonLifetimeLock`. Taken where a failure is reported to the client like
+                // any other failure to start.
+                std::mem::forget(UnidaemonLifetimeLock::acquire(
+                    &paths,
+                    key,
+                    Duration::from_secs(10),
+                )?);
+            }
+            self.run(log_reload_handle, paths, in_process, ready)
+        })();
         if let Err(err) = res.as_ref() {
             fs_util::write(
                 daemon_dir.buckd_error_log(),
                 serde_json::to_string(&buck2_data::ErrorReport::from(err))?,
             )
             .categorize_internal()?;
+        } else if unidaemon {
+            remove_exited_namespace(&daemon_dir);
         }
         // Flush PGO profile data on all daemon exit paths (graceful kill,
         // dir mismatch, inactivity timeout, errors).

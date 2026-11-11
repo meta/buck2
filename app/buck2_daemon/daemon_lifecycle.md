@@ -25,10 +25,18 @@ and the endpoint it is serving on (along with some other information) to the
 "buckd.info" file in the daemon dir, overwriting whatever was there. Once that
 is done, the server is ready to be used.
 
-The daemon holds no lock of its own: nothing daemon-side prevents a second
+A daemon of its own holds no lock: nothing daemon-side prevents a second
 daemon from starting over the same daemon directory. Exclusivity relies on the
 client-side lifecycle lock described below, plus the periodic self-check in
-point 2 here.
+point 2 here. A unidaemon additionally holds an exclusive lock on
+`.unidaemon_locks/<key>.alive` from before it writes to its namespace until it
+exits; a second daemon of the namespace cannot acquire it, and clients probe it
+to tell a running daemon from damaged metadata. A unidaemon that exits normally
+removes its namespace directory; `buck2 killall`, and a client that has just
+registered, remove the namespace directories of daemons that have exited, as
+judged by that lock. The lock files themselves stay: unlinking one while a
+daemon of the key waits on it would leave that daemon holding a lock on an
+unlinked file.
 
 With `BUCK2_SHARE_DAEMON=true`, isolation directories within a repository share
 the reserved `._buck2_shared` daemon directory and retain separate output and

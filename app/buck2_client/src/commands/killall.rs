@@ -16,6 +16,7 @@ use buck2_client_ctx::common::BuckArgMatches;
 use buck2_client_ctx::common::CommonEventLogOptions;
 use buck2_client_ctx::daemon::client::connect::establish_connection_existing;
 use buck2_client_ctx::daemon::client::connect::shared_daemon_is_inactive;
+use buck2_client_ctx::daemon::client::namespaces::prune_exited_unidaemon_namespaces;
 use buck2_client_ctx::events_ctx::EventsCtx;
 use buck2_client_ctx::exit_result::ExitResult;
 use buck2_common::daemon_dir::DaemonDir;
@@ -34,7 +35,8 @@ use walkdir::WalkDir;
 /// By default this kills every buck2 process regardless of repository or isolation dir.
 /// Passing `--in-isolation-dir` narrows the kill to processes using that isolation dir, and
 /// `--repo` narrows it to processes running in the current repository. Processes that
-/// cannot be checked against the requested filter are skipped and reported.
+/// cannot be checked against the requested filter are skipped and reported. The connection
+/// information of shared daemons that have exited is removed afterwards.
 ///
 /// With `BUCK2_SHARE_DAEMON=true`, `--repo` instead evicts the current repository's tenants
 /// from their daemons without stopping a daemon that still serves other tenants. Combine it
@@ -97,8 +99,19 @@ impl BuckSubcommand for KillallCommand {
         .ok_or(buck2_error::buck2_error!(
             buck2_error::ErrorTag::KillAll,
             "Killall command failed"
-        ))
-        .into()
+        ))?;
+        // The connection information of the shared daemons that were just killed names nothing
+        // any more; a daemon this could not kill is still judged live and kept. The kill has
+        // succeeded by now, so a repository whose configuration cannot be read keeps its stale
+        // connection information rather than failing the command.
+        match ctx.maybe_paths() {
+            Ok(Some(paths)) => prune_exited_unidaemon_namespaces(paths, None).await,
+            Ok(None) => {}
+            Err(error) => {
+                tracing::warn!("Could not prune exited unidaemon namespaces: {error:#}");
+            }
+        }
+        ExitResult::success()
     }
 
     fn event_log_opts(&self) -> &CommonEventLogOptions {

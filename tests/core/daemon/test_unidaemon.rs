@@ -37,6 +37,7 @@ use common_unidaemon::isolated_buck;
 use common_unidaemon::isolation_of;
 use common_unidaemon::isolations;
 use common_unidaemon::materializer_identity;
+use common_unidaemon::only_unidaemon_namespace;
 use common_unidaemon::path_str;
 use common_unidaemon::pid_of;
 use common_unidaemon::proxy_slot;
@@ -1841,3 +1842,253 @@ bool_cases! { [buck, tmp_path] unidaemon_nested_client_inherits_parent_user_vers
     #[buck_test(data_dir = "test_daemon_data", skip_for_os = ["windows", "darwin"])]
     fn test_unidaemon_nested_client_inherits_parent_user_version_True(true);
 }}
+
+/// A sleeping process with a pid of its own, killed when dropped.
+fn sleeper() -> anyhow::Result<(tokio::process::Child, u32)> {
+    let child = tokio::process::Command::new("sleep")
+        .arg("1000")
+        .kill_on_drop(true)
+        .spawn()?;
+    let pid = child.id().context("The process has no pid")?;
+    Ok((child, pid))
+}
+
+/// The start time of the process `pid`, as buck2 records it in `buckd.info`.
+fn process_start_time(pid: u32) -> anyhow::Result<u64> {
+    let pid = sysinfo::Pid::from_u32(pid);
+    let mut system = sysinfo::System::new()?;
+    system.refresh_processes_specifics(
+        sysinfo::ProcessesToUpdate::Some(&[pid]),
+        true,
+        sysinfo::ProcessRefreshKind::nothing(),
+    );
+    Ok(system
+        .process(pid)
+        .with_context(|| format!("No process {pid}"))?
+        .start_time())
+}
+
+async fn exited_process_pid() -> anyhow::Result<u32> {
+    let mut process = tokio::process::Command::new("true").spawn()?;
+    let pid = process.id().context("The process has no pid")?;
+    assert!(process.wait().await?.success());
+    assert!(!daemon_is_alive(pid));
+    Ok(pid)
+}
+
+fn namespace_record(pid: u32, pid_start_time: u64) -> String {
+    serde_json::json!({
+        "pid": pid,
+        "endpoint": "tcp:127.0.0.1:0",
+        "version": "other",
+        "auth_token": "",
+        "pid_start_time": pid_start_time,
+    })
+    .to_string()
+}
+
+async fn unidaemon_exited_namespace_restarts_whatever_its_metadata(
+    buck: &Buck,
+    tmp_path: &Path,
+    leftover: &str,
+) -> anyhow::Result<()> {
+    let tenant = unidaemon_checkouts(buck, tmp_path, false)?.swap_remove(0);
+    let (mut unrelated, unrelated_pid) = sleeper()?;
+    let result = async {
+        tenant.build(&["//:tenant_value"]).await?;
+        let pid = daemon_pid(&tenant).await?;
+        let namespace = only_unidaemon_namespace(tmp_path)?;
+        // Only a daemon that dies leaves its metadata behind; one that exits removes it.
+        kill_process(pid, Signal::Kill)?;
+        wait_for_terminated(pid, Duration::from_secs(3)).await?;
+        wait_for_missing_path(&proxy_slot(&tenant).join("buckd.info")).await?;
+        if leftover == "reused-pid" {
+            // A process took the exited daemon's pid: same pid, a start time an hour apart.
+            let info_path = namespace.join("buckd.info");
+            let mut info: Value = serde_json::from_str(&std::fs::read_to_string(&info_path)?)?;
+            info["pid"] = unrelated_pid.into();
+            info["pid_start_time"] = (info["pid_start_time"].as_u64().unwrap() - 3600).into();
+            std::fs::write(&info_path, serde_json::to_string(&info)?)?;
+            std::fs::write(namespace.join("buckd.pid"), unrelated_pid.to_string())?;
+        } else {
+            // A daemon that exited before writing its pid and connection records.
+            std::fs::remove_file(namespace.join("buckd.info"))?;
+            std::fs::remove_file(namespace.join("buckd.pid"))?;
+            touch(&namespace.join("buckd.stdout"))?;
+        }
+        tenant.build(&["//:tenant_value"]).await?;
+        assert_ne!(daemon_pid(&tenant).await?, pid);
+        assert!(
+            unrelated.try_wait()?.is_none(),
+            "the unrelated process was left alone"
+        );
+        anyhow::Ok(())
+    }
+    .await;
+    let killed = tenant.kill().await;
+    result?;
+    killed?;
+    Ok(())
+}
+
+cases! { [buck, tmp_path] unidaemon_exited_namespace_restarts_whatever_its_metadata {
+    #[buck_test(data_dir = "test_daemon_data", skip_for_os = ["windows", "darwin"])]
+    fn test_unidaemon_exited_namespace_restarts_whatever_its_metadata_reused_pid("reused-pid");
+    #[buck_test(data_dir = "test_daemon_data", skip_for_os = ["windows", "darwin"])]
+    fn test_unidaemon_exited_namespace_restarts_whatever_its_metadata_logs_only("logs-only");
+}}
+
+#[buck_test(data_dir = "test_daemon_data", skip_for_os = ["windows", "darwin"])]
+async fn test_unidaemon_live_namespace_with_damaged_metadata_is_left_alone(
+    buck: &Buck,
+    tmp_path: &Path,
+) -> anyhow::Result<()> {
+    let mut tenants = unidaemon_checkouts(buck, tmp_path, false)?;
+    for tenant in &mut tenants {
+        // Keep the daemon from noticing its removed `buckd.pid` and exiting mid-test.
+        tenant.set_env("BUCK2_TESTING_CHECKER_INTERVAL_SECONDS", "600");
+    }
+    let mut pid = None;
+    let result = async {
+        tenants[0].build(&["//:tenant_value"]).await?;
+        let daemon = daemon_pid(&tenants[0]).await?;
+        pid = Some(daemon);
+        let namespace = only_unidaemon_namespace(tmp_path)?;
+        for name in ["buckd.info", "buckd.pid"] {
+            std::fs::remove_file(namespace.join(name))?;
+        }
+        tenants[1]
+            .build(&["//:tenant_value"])
+            .await
+            .expect_failure()
+            .assert_stderr_matches("connection records are missing");
+        assert!(daemon_is_alive(daemon), "the running daemon was left alone");
+        assert!(
+            !namespace.join("buckd.info").exists(),
+            "no second daemon was started in the namespace"
+        );
+        anyhow::Ok(())
+    }
+    .await;
+    let killed = kill_all(&tenants).await;
+    if let Some(pid) = pid
+        && daemon_is_alive(pid)
+    {
+        let _ignored = kill_process(pid, Signal::Kill);
+    }
+    result?;
+    killed
+}
+
+#[buck_test(data_dir = "test_daemon_data", skip_for_os = ["windows", "darwin"])]
+async fn test_unidaemon_pruning_spares_a_live_daemon_without_the_lifetime_lock(
+    buck: &Buck,
+    tmp_path: &Path,
+) -> anyhow::Result<()> {
+    let tenant = unidaemon_checkouts(buck, tmp_path, false)?.swap_remove(0);
+    let sibling = tmp_path
+        .join("home")
+        .join(".buck")
+        .join("buckd")
+        .join(".unidaemons")
+        .join("0".repeat(64))
+        .join("v2");
+    std::fs::create_dir_all(&sibling)?;
+    // A running daemon of a release that does not take the lifetime lock.
+    let (_other_release, other_pid) = sleeper()?;
+    let result = async {
+        std::fs::write(
+            sibling.join("buckd.info"),
+            namespace_record(other_pid, process_start_time(other_pid)?),
+        )?;
+        std::fs::write(sibling.join("buckd.pid"), other_pid.to_string())?;
+        tenant.build(&["//:tenant_value"]).await?;
+        tenant.build(&["//:tenant_value"]).await?;
+        assert!(
+            sibling.join("buckd.info").exists(),
+            "the live namespace was left alone"
+        );
+        anyhow::Ok(())
+    }
+    .await;
+    let killed = tenant.kill().await;
+    result?;
+    killed?;
+    Ok(())
+}
+
+#[buck_test(data_dir = "test_daemon_data", skip_for_os = ["windows", "darwin"])]
+async fn test_unidaemon_damaged_sibling_namespace_does_not_fail_commands(
+    buck: &Buck,
+    tmp_path: &Path,
+) -> anyhow::Result<()> {
+    let tenant = unidaemon_checkouts(buck, tmp_path, false)?.swap_remove(0);
+    let sibling = tmp_path
+        .join("home")
+        .join(".buck")
+        .join("buckd")
+        .join(".unidaemons")
+        .join("0".repeat(64))
+        .join("v2");
+    std::fs::create_dir_all(&sibling)?;
+    // Records of an exited daemon, with its `buckd.pid` lost.
+    std::fs::write(
+        sibling.join("buckd.info"),
+        namespace_record(exited_process_pid().await?, 1),
+    )?;
+    let result = async {
+        tenant.build(&["//:tenant_value"]).await?;
+        tenant.build(&["//:tenant_value"]).await?;
+        assert!(!sibling.exists(), "the exited sibling namespace was pruned");
+        anyhow::Ok(())
+    }
+    .await;
+    let killed = tenant.kill().await;
+    result?;
+    killed?;
+    Ok(())
+}
+
+#[buck_test(data_dir = "test_daemon_data", skip_for_os = ["windows", "darwin"])]
+async fn test_unidaemon_exited_daemon_removes_its_namespace(
+    buck: &Buck,
+    tmp_path: &Path,
+) -> anyhow::Result<()> {
+    let tenant = unidaemon_checkouts(buck, tmp_path, false)?.swap_remove(0);
+    let locks = tmp_path
+        .join("home")
+        .join(".buck")
+        .join("buckd")
+        .join(".unidaemon_locks");
+    let result = async {
+        tenant.build(&["//:tenant_value"]).await?;
+        let namespace = only_unidaemon_namespace(tmp_path)?
+            .parent()
+            .unwrap()
+            .to_path_buf();
+        let lock = locks.join(format!(
+            "{}.alive",
+            namespace.file_name().unwrap().to_string_lossy()
+        ));
+        assert!(lock.exists());
+        let pid = daemon_pid(&tenant).await?;
+        tenant.kill().await?;
+        assert_daemon_exits(pid).await;
+        assert!(
+            !namespace.exists(),
+            "the exited daemon removed its namespace"
+        );
+        assert!(lock.exists(), "lock files stay");
+        tenant.build(&["//:tenant_value"]).await?;
+        assert_eq!(
+            only_unidaemon_namespace(tmp_path)?.parent().unwrap(),
+            namespace
+        );
+        anyhow::Ok(())
+    }
+    .await;
+    let killed = tenant.kill().await;
+    result?;
+    killed?;
+    Ok(())
+}

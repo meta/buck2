@@ -34,6 +34,7 @@ use buck2_common::daemon_dir::DaemonDir;
 use buck2_common::init::DaemonStartupConfig;
 use buck2_common::invocation_paths::InvocationPaths;
 use buck2_common::invocation_paths::TenantDiskLock;
+use buck2_common::invocation_paths::UnidaemonLifetimeLock;
 use buck2_common::invocation_paths::unidaemon_prototype_enabled;
 use buck2_core::buck2_env;
 use buck2_core::soft_error_or_panic;
@@ -482,12 +483,20 @@ impl<'a> BuckdLifecycle<'a> {
 
     async fn clean_daemon_dir(&self) -> buck2_error::Result<()> {
         if buck2_env!("BUCK2_SHARE_DAEMON", type=bool, default=false)?
-            && !shared_daemon_is_inactive(self.lock.daemon_dir()).await?
+            && !daemon_dir_is_inactive(self.paths, self.lock.daemon_dir()).await?
         {
-            return Err(buck2_error!(
-                ErrorTag::Input,
-                "Cannot verify shared daemon inactivity; no metadata was changed. Restore consistent buckd.info and buckd.pid before retrying."
-            ));
+            return Err(if self.paths.unidaemon_key().is_some() {
+                buck2_error!(
+                    ErrorTag::Input,
+                    "A daemon of this unidaemon namespace is still running, but its connection \
+                     records are missing; no metadata was changed. `buck2 killall` stops it."
+                )
+            } else {
+                buck2_error!(
+                    ErrorTag::Input,
+                    "Cannot verify shared daemon inactivity; no metadata was changed. Restore consistent buckd.info and buckd.pid before retrying."
+                )
+            });
         }
         self.lock
             .clean_daemon_dir(true)
@@ -1060,7 +1069,8 @@ impl BootstrapBuckdClient {
                                 response.materializer_state_identity;
                         }
                         paths.select_tenant_generation(response.generation);
-                        prune_exited_unidaemon_namespaces(paths).await;
+                        let current = paths.unidaemon_key();
+                        prune_exited_unidaemon_namespaces(paths, current.as_ref()).await;
                     }
                 }
                 Ok(client)
@@ -1167,6 +1177,25 @@ pub async fn establish_connection_existing(
             },
         )
         .await
+}
+
+/// How long a namespace daemon that was just stopped may keep its lifetime lock after its process
+/// was seen to go: the kernel releases the lock as the last of the daemon's threads ends.
+const LIFETIME_LOCK_RELEASE_GRACE: Duration = Duration::from_secs(5);
+
+/// Whether no daemon runs in the invocation's daemon directory: for a unidaemon namespace, whether
+/// its [`UnidaemonLifetimeLock`] is free, allowing a stopped daemon a moment to release it;
+/// otherwise [`shared_daemon_is_inactive`].
+async fn daemon_dir_is_inactive(
+    paths: &InvocationPaths,
+    daemon_dir: &DaemonDir,
+) -> buck2_error::Result<bool> {
+    match paths.unidaemon_key() {
+        Some(key) => {
+            UnidaemonLifetimeLock::wait_until_free(paths, &key, LIFETIME_LOCK_RELEASE_GRACE).await
+        }
+        None => shared_daemon_is_inactive(daemon_dir).await,
+    }
 }
 
 /// Checks for an empty daemon directory or consistent metadata naming a daemon that is no longer
@@ -1389,11 +1418,14 @@ async fn establish_connection_inner(
                     }
                     Err(reason) => {
                         if buck2_env!("BUCK2_SHARE_DAEMON", type=bool, default=false)?
-                            && buckd_info.may_be_running()?
+                            && match paths.unidaemon_key() {
+                                Some(key) => UnidaemonLifetimeLock::is_held(paths, &key).await?,
+                                None => buckd_info.may_be_running()?,
+                            }
                         {
                             return Err(buck2_error!(
                                 ErrorTag::Input,
-                                "Shared daemon is alive but could not be contacted: {}. No daemon was killed.",
+                                "Shared daemon is alive but could not be contacted: {}. No daemon was killed; if it does not recover, `buck2 killall` stops it.",
                                 explain_failed_to_connect_reason(reason)
                             ));
                         }

@@ -60,6 +60,7 @@ buck2_core_tests(
             "data": ":test_daemon_data",
             "deps": [
                 "fbsource//third-party/rust:regex",
+                "fbsource//third-party/rust:sysinfo",
                 "//buck2/tests/core/common:unidaemon",
             ],
             # A released buck2 for the cross-release cases: always a release other than the

@@ -25,6 +25,7 @@ use buck2_core::fs::project::ProjectRoot;
 use buck2_core::fs::project_rel_path::ProjectRelativePath;
 use buck2_core::fs::project_rel_path::ProjectRelativePathBuf;
 use buck2_error::BuckErrorContext;
+use buck2_error::BuckErrorOptionContext;
 use buck2_fs::paths::abs_norm_path::AbsNormPathBuf;
 use buck2_fs::paths::file_name::FileName;
 use buck2_fs::paths::file_name::FileNameBuf;
@@ -194,6 +195,111 @@ impl TenantPaths {
             FileName::unchecked_new("incremental_state"),
             FileName::unchecked_new("dep_file_state"),
         ]
+    }
+}
+
+/// An exclusive lock a unidaemon holds for its whole lifetime, taken before it writes anything to
+/// its namespace. The kernel releases it when the daemon exits however it exits, so whether it is
+/// held tells a client whether a daemon of the namespace is running, whatever the namespace's
+/// metadata says: a crash before `buckd.info` is written, damaged metadata, and a recorded pid
+/// that another process has since taken all leave the answer right.
+///
+/// The lock file lives beside the namespace's lifecycle lock, outside the daemon directory that
+/// cleanup clears. The descriptor is close-on-exec, so processes the daemon spawns do not keep it.
+pub struct UnidaemonLifetimeLock {
+    _file: File,
+}
+
+impl UnidaemonLifetimeLock {
+    /// Takes the lock for the calling daemon, waiting out clients that are probing it. Fails if
+    /// another daemon of the namespace holds it.
+    pub fn acquire(
+        paths: &InvocationPaths,
+        key: &DaemonCompatibilityKey,
+        timeout: Duration,
+    ) -> buck2_error::Result<Self> {
+        let path = paths.unidaemon_lifetime_lock_path(key)?;
+        let file = Self::open(&path)?;
+        let deadline = std::time::Instant::now() + timeout;
+        loop {
+            match file.try_lock() {
+                Ok(()) => return Ok(Self { _file: file }),
+                Err(TryLockError::WouldBlock) if std::time::Instant::now() < deadline => {
+                    std::thread::sleep(Duration::from_millis(10));
+                }
+                Err(TryLockError::WouldBlock) => {
+                    return Err(buck2_error::buck2_error!(
+                        buck2_error::ErrorTag::Input,
+                        "Another daemon of unidaemon namespace `{key}` is running (`{path}` is locked)"
+                    ));
+                }
+                Err(TryLockError::Error(error)) => {
+                    return Err(
+                        buck2_error::Error::from(error).context(format!("Locking `{path}`"))
+                    );
+                }
+            }
+        }
+    }
+
+    /// Whether a daemon of the namespace holds the lock. A probe takes the lock shared, so
+    /// concurrent probes never mistake each other for a daemon, and does not create the lock
+    /// file: a namespace whose daemon never created it has no daemon that holds it.
+    pub async fn is_held(
+        paths: &InvocationPaths,
+        key: &DaemonCompatibilityKey,
+    ) -> buck2_error::Result<bool> {
+        let path = paths.unidaemon_lifetime_lock_path(key)?;
+        tokio::task::spawn_blocking(move || {
+            let file = match File::open(&path) {
+                Ok(file) => file,
+                Err(error) if error.kind() == ErrorKind::NotFound => return Ok(false),
+                Err(error) => {
+                    return Err(
+                        buck2_error::Error::from(error).context(format!("Probing `{path}`"))
+                    );
+                }
+            };
+            match file.try_lock_shared() {
+                Ok(()) => Ok(false),
+                Err(TryLockError::WouldBlock) => Ok(true),
+                Err(TryLockError::Error(error)) => {
+                    Err(buck2_error::Error::from(error).context(format!("Probing `{path}`")))
+                }
+            }
+        })
+        .await?
+    }
+
+    /// Whether the lock is free, waiting up to `timeout` for a daemon that holds it to exit. A
+    /// daemon releases the lock only as its process ends, after it has removed its connection
+    /// records, so a client that has seen the process go can still find the lock held for a
+    /// moment.
+    pub async fn wait_until_free(
+        paths: &InvocationPaths,
+        key: &DaemonCompatibilityKey,
+        timeout: Duration,
+    ) -> buck2_error::Result<bool> {
+        let deadline = std::time::Instant::now() + timeout;
+        loop {
+            if !Self::is_held(paths, key).await? {
+                return Ok(true);
+            }
+            if std::time::Instant::now() >= deadline {
+                return Ok(false);
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    }
+
+    fn open(path: &AbsNormPathBuf) -> buck2_error::Result<File> {
+        std::fs::create_dir_all(path.parent().internal_error("Lock file has a parent")?)?;
+        Ok(std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .truncate(false)
+            .open(path)?)
     }
 }
 
@@ -371,6 +477,18 @@ impl InvocationPaths {
 
         let path = self.roots.common_buckd_dir()?.join(root_relative.as_ref());
         Ok(DaemonDir { path })
+    }
+
+    /// See [`UnidaemonLifetimeLock`].
+    pub fn unidaemon_lifetime_lock_path(
+        &self,
+        key: &DaemonCompatibilityKey,
+    ) -> buck2_error::Result<AbsNormPathBuf> {
+        Ok(self
+            .roots
+            .common_buckd_dir()?
+            .join(FileName::unchecked_new(UNIDAEMON_LOCKS_DIR))
+            .join(FileName::new(&format!("{key}.alive"))?))
     }
 
     pub fn unidaemon_dir(&self, key: &DaemonCompatibilityKey) -> buck2_error::Result<DaemonDir> {

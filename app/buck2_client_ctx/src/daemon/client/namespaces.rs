@@ -15,24 +15,24 @@
 use std::time::Duration;
 
 use buck2_common::daemon_compatibility::DaemonCompatibilityKey;
+use buck2_common::daemon_dir::DaemonDir;
 use buck2_common::invocation_paths::InvocationPaths;
 use buck2_common::invocation_paths::UNIDAEMON_NAMESPACES_DIR;
+use buck2_common::invocation_paths::UnidaemonLifetimeLock;
 use buck2_error::BuckErrorOptionContext;
 use buck2_fs::paths::file_name::FileName;
-use buck2_wrapper_common::kill::process_exists;
 
 use crate::daemon::client::BuckdLifecycleLock;
 use crate::daemon::client::connect::BuckdProcessInfo;
-use crate::daemon::client::connect::shared_daemon_is_inactive;
 use crate::startup_deadline::StartupDeadline;
 
-/// Removes the namespace directories of shared daemons that have exited. Housekeeping: nothing
-/// the client is connected to depends on it, so a namespace it cannot judge or remove is left in
-/// place.
-pub(crate) async fn prune_exited_unidaemon_namespaces(paths: &InvocationPaths) {
-    let Some(current) = paths.unidaemon_key() else {
-        return;
-    };
+/// Removes the namespace directories of shared daemons that have exited, except `keep`.
+/// Housekeeping: nothing the caller depends on is in them, so a namespace it cannot judge or
+/// remove is left in place.
+pub async fn prune_exited_unidaemon_namespaces(
+    paths: &InvocationPaths,
+    keep: Option<&DaemonCompatibilityKey>,
+) {
     let Ok(root) = paths
         .roots
         .common_buckd_dir()
@@ -51,7 +51,7 @@ pub(crate) async fn prune_exited_unidaemon_namespaces(paths: &InvocationPaths) {
         else {
             continue;
         };
-        if key == current {
+        if keep == Some(&key) {
             continue;
         }
         if let Err(error) = prune_exited_unidaemon_namespace(paths, &key).await {
@@ -65,10 +65,7 @@ async fn prune_exited_unidaemon_namespace(
     key: &DaemonCompatibilityKey,
 ) -> buck2_error::Result<()> {
     let dir = paths.unidaemon_dir(key)?;
-    let Some(info) = BuckdProcessInfo::load_if_exists(&dir)? else {
-        return Ok(());
-    };
-    if process_exists(info.pid()?)? {
+    if unidaemon_namespace_may_be_live(paths, key, &dir).await? {
         return Ok(());
     }
     let Ok(lifecycle) = BuckdLifecycleLock::lock_with_timeout(
@@ -79,10 +76,21 @@ async fn prune_exited_unidaemon_namespace(
     else {
         return Ok(());
     };
-    if !shared_daemon_is_inactive(&dir).await? {
+    // Starters hold the lifecycle lock, so asking again under it catches a daemon started since.
+    if unidaemon_namespace_may_be_live(paths, key, &dir).await? {
         return Ok(());
     }
+    remove_unidaemon_namespace_dir(&lifecycle).await
+}
+
+/// Removes the namespace daemon directory that `lifecycle` locks, and the namespace with it when
+/// nothing else is left there. The caller has established that no daemon of the namespace is
+/// running, or is that daemon on its way out.
+pub async fn remove_unidaemon_namespace_dir(
+    lifecycle: &BuckdLifecycleLock,
+) -> buck2_error::Result<()> {
     lifecycle.clean_daemon_dir(false)?;
+    let dir = lifecycle.daemon_dir();
     tokio::fs::remove_dir_all(&dir.path).await?;
     let _ignored = tokio::fs::remove_dir(
         dir.path
@@ -91,4 +99,22 @@ async fn prune_exited_unidaemon_namespace(
     )
     .await;
     Ok(())
+}
+
+/// Whether a daemon may still run in the namespace: one holds its lifetime lock, or its record
+/// names a process that may be running, as it does for a daemon of a release without the lock.
+async fn unidaemon_namespace_may_be_live(
+    paths: &InvocationPaths,
+    key: &DaemonCompatibilityKey,
+    dir: &DaemonDir,
+) -> buck2_error::Result<bool> {
+    if UnidaemonLifetimeLock::is_held(paths, key).await? {
+        return Ok(true);
+    }
+    match BuckdProcessInfo::load_if_exists(dir) {
+        Ok(Some(info)) => info.may_be_running(),
+        Ok(None) => Ok(false),
+        // A record that cannot be read is no evidence that its daemon is gone.
+        Err(_) => Ok(true),
+    }
 }

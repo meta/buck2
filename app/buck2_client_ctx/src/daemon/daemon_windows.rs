@@ -17,6 +17,7 @@ pub(crate) fn spawn_background_process_on_windows<'a>(
     _exe: &Path,
     _args: impl IntoIterator<Item = &'a str>,
     _daemon_env_vars: &[(&OsStr, &OsStr)],
+    _daemon_env_removals: &[&str],
 ) -> buck2_error::Result<()> {
     #[derive(Debug, buck2_error::Error)]
     #[error("not Windows")]
@@ -32,6 +33,7 @@ pub(crate) fn spawn_background_process_on_windows<'a>(
     exe: &Path,
     args: impl IntoIterator<Item = &'a str>,
     daemon_env_vars: &[(&OsStr, &OsStr)],
+    daemon_env_removals: &[&str],
 ) -> buck2_error::Result<()> {
     use std::ffi::OsString;
     use std::ffi::c_void;
@@ -132,14 +134,16 @@ pub(crate) fn spawn_background_process_on_windows<'a>(
 
     fn make_envp(
         extra_env_vars: &[(&OsStr, &OsStr)],
+        removed_env_vars: &[&str],
     ) -> buck2_error::Result<(*mut c_void, Box<[u16]>)> {
-        if extra_env_vars.is_empty() {
+        if extra_env_vars.is_empty() && removed_env_vars.is_empty() {
             Ok((ptr::null_mut(), Box::new([])))
         } else {
             let mut env: BuckMutMap<_, _> = std::env::vars_os().collect();
             for (key, val) in extra_env_vars.iter() {
                 env.insert(OsString::from(key), OsString::from(val));
             }
+            env.retain(|key, _| !removed_env_vars.iter().any(|r| key.eq_ignore_ascii_case(r)));
             // On Windows we pass an "environment block" which is not a char**, but
             // rather a concatenation of null-terminated k=v\0 sequences, with a final
             // \0 to terminate.
@@ -178,7 +182,7 @@ pub(crate) fn spawn_background_process_on_windows<'a>(
     let mut pinfo: PROCESS_INFORMATION = unsafe { mem::zeroed() };
     let creation_flags = CREATE_NEW_PROCESS_GROUP | DETACHED_PROCESS | CREATE_UNICODE_ENVIRONMENT;
 
-    let (envp, _data) = make_envp(daemon_env_vars)?;
+    let (envp, _data) = make_envp(daemon_env_vars, daemon_env_removals)?;
 
     let status = unsafe {
         CreateProcessW(
@@ -223,6 +227,7 @@ mod tests {
             &env::current_dir().unwrap(),
             &cmd_exe_path,
             ["/c", "echo test"],
+            [].as_slice(),
             [].as_slice(),
         )
         .unwrap();

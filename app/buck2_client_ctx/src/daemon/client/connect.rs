@@ -568,6 +568,11 @@ impl<'a> BuckdLifecycle<'a> {
             );
         }
 
+        #[cfg(fbcode_build)]
+        let daemon_env_removals = art_cli_lite_rs_native::detach_env("cli.buck2d");
+        #[cfg(not(fbcode_build))]
+        let daemon_env_removals: Vec<&str> = Vec::new();
+
         if cfg!(unix) {
             // On Unix we spawn a process which forks and exits, and here we wait for that spawned
             // process to terminate. That process is usually the Buck daemon executable, but may be
@@ -579,13 +584,19 @@ impl<'a> BuckdLifecycle<'a> {
                 executable,
                 args,
                 &daemon_env_vars,
+                &daemon_env_removals,
                 &constraints.daemon_startup_config,
                 &daemon_id,
                 deadline,
             )
             .await
         } else {
-            self.start_server_windows(args, &daemon_env_vars, &constraints.daemon_startup_config)
+            self.start_server_windows(
+                args,
+                &daemon_env_vars,
+                &daemon_env_removals,
+                &constraints.daemon_startup_config,
+            )
         }
     }
 
@@ -593,6 +604,7 @@ impl<'a> BuckdLifecycle<'a> {
         &self,
         mut args: Vec<&str>,
         daemon_env_vars: &[(&OsStr, OsString)],
+        daemon_env_removals: &[&str],
         daemon_startup_config: &DaemonStartupConfig,
     ) -> buck2_error::Result<()> {
         let daemon_startup_config = daemon_startup_config.serialize()?;
@@ -606,6 +618,7 @@ impl<'a> BuckdLifecycle<'a> {
                 .iter()
                 .map(|(key, value)| (*key, value.as_os_str()))
                 .collect::<Vec<_>>(),
+            daemon_env_removals,
         )
     }
 
@@ -614,6 +627,7 @@ impl<'a> BuckdLifecycle<'a> {
         executable: OsString,
         args: Vec<Cow<'_, str>>,
         daemon_env_vars: &[(&OsStr, OsString)],
+        daemon_env_removals: &[&str],
         daemon_startup_config: &DaemonStartupConfig,
         daemon_id: &DaemonId,
         deadline: &StartupDeadline,
@@ -665,6 +679,9 @@ impl<'a> BuckdLifecycle<'a> {
 
         for (key, val) in daemon_env_vars {
             cmd.env(key, val);
+        }
+        for key in daemon_env_removals {
+            cmd.env_remove(key);
         }
 
         // For Unix, set a daemon process title

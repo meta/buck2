@@ -257,7 +257,7 @@ class RustProjectTest(BuckTestCase):
 
         # Generated srcs have no path until they're built, so only the plain source
         # file is reported.
-        assert dep["srcs"] == ["lib_g.rs"], dep["srcs"]
+        assert [Path(src).name for src in dep["srcs"]] == ["lib_g.rs"], dep["srcs"]
 
     @buck_test(inplace=True, skip_for_os=["darwin", "windows"])
     async def test_fallback_nested_select_deps(self, buck: Buck) -> None:

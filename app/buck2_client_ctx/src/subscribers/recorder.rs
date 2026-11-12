@@ -47,6 +47,8 @@ use buck2_error::Tier;
 use buck2_error::buck2_error;
 use buck2_error::classify::ERROR_TAG_UNCLASSIFIED;
 use buck2_error::classify::ErrorLike;
+#[cfg(fbcode_build)]
+use buck2_error::classify::best_error;
 use buck2_error::classify::source_area;
 use buck2_error::internal_error;
 use buck2_error::source_location::SourceLocation;
@@ -122,6 +124,8 @@ pub struct InvocationRecorder {
     write_to_path: Option<AbsPathBuf>,
     command_name: Option<&'static str>,
     cli_args: Vec<String>,
+    #[cfg(fbcode_build)]
+    expanded_command: String,
     representative_config_flags: Vec<String>,
     isolation_dir: Option<String>,
     start_time: SystemTime,
@@ -360,6 +364,8 @@ impl InvocationRecorder {
             write_to_path: None,
             command_name: None,
             cli_args: args,
+            #[cfg(fbcode_build)]
+            expanded_command: String::new(),
             representative_config_flags: Vec::new(),
             isolation_dir: None,
             start_time,
@@ -606,6 +612,42 @@ impl InvocationRecorder {
             .map(|settings| settings.snapshot().hash);
 
         self.command_name = Some(command_name);
+        #[cfg(fbcode_build)]
+        {
+            self.expanded_command = ctx.argv.expanded_argv.args().join(" ");
+        }
+    }
+
+    #[cfg(fbcode_build)]
+    pub(crate) fn log_artillery_trace(&self, result: &ExitResult) {
+        if result.exit_code().is_none() && self.command_name != Some("run")
+            || self.should_restart && !result.is_success() && !crate::stdio::has_written_to_stdout()
+        {
+            return;
+        }
+        art_cli_lite_rs_native::trace_cli("cli.buck2");
+        if !art_cli_lite_rs_native::process_may_be_tracing() {
+            return;
+        }
+        art_cli_lite_rs_native::annotate("buck2.uuid", &self.trace_id.to_string());
+        if let Some(command) = self.command_name {
+            art_cli_lite_rs_native::annotate("buck2.command", command);
+            art_cli_lite_rs_native::annotate("buck2.expanded_command", &self.expanded_command);
+        }
+        art_cli_lite_rs_native::annotate("buck2.exit_result_name", result.name());
+        if let Some(code) = result.exit_code() {
+            art_cli_lite_rs_native::exit_code(code.exit_code() as i32);
+        }
+        if let Some(error) = best_error(&result.get_all_errors()) {
+            art_cli_lite_rs_native::annotate(
+                "buck2.best_error_tag",
+                error
+                    .best_tag()
+                    .map_or(ERROR_TAG_UNCLASSIFIED, |tag| tag.as_str_name()),
+            );
+            art_cli_lite_rs_native::annotate("buck2.error_category", &error.category().to_string());
+        }
+        art_cli_lite_rs_native::finish();
     }
 
     pub(crate) fn update_for_command(

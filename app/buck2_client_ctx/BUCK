@@ -69,6 +69,7 @@ rust_library(
         "fbsource//third-party/rust:toml",
         "fbsource//third-party/rust:tonic",
         "fbsource//third-party/rust:tracing",
+        # @oss-disable[end= ]: "//artillery/artillery2/api/cpp/cli_lite/rust_native:art_cli_lite_rs_native",
         "//buck2/app/buck2_action_parallelism:buck2_action_parallelism",
         "//buck2/app/buck2_agent_interactive:buck2_agent_interactive",
         "//buck2/app/buck2_build_info:buck2_build_info",

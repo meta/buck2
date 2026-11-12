@@ -763,6 +763,12 @@ impl EventsCtx {
         result: ExitResult,
         runtime: &Runtime,
     ) -> ExitResult {
+        #[cfg(fbcode_build)]
+        if self.log_invocation_record
+            && let Some(recorder) = &self.recorder
+        {
+            recorder.log_artillery_trace(&result);
+        }
         runtime.block_on(async move {
             let buck_log_dir = self.buck_log_dir.take();
             let command_report_path = self.command_report_path.take();

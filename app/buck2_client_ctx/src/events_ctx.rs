@@ -718,7 +718,7 @@ impl EventsCtx {
 
     pub async fn finalize(mut self) -> Vec<String> {
         let mut errors = self.finalize_subscribers().await;
-        errors.extend(self.finalize_recorder().await);
+        errors.extend(self.finalize_recorder(None).await);
         errors
     }
 
@@ -747,11 +747,22 @@ impl EventsCtx {
     }
 
     /// Sends the invocation record, if this command logs one.
-    async fn finalize_recorder(self) -> Vec<String> {
+    async fn finalize_recorder(
+        self,
+        #[cfg_attr(
+            not(fbcode_build),
+            expect(unused_variables, reason = "used only by fbcode builds")
+        )]
+        result: Option<&mut ExitResult>,
+    ) -> Vec<String> {
         let mut errors = Vec::new();
         if self.log_invocation_record
             && let Some(recorder) = self.recorder
         {
+            #[cfg(fbcode_build)]
+            if let Some(result) = result {
+                recorder.log_artillery_trace(result);
+            }
             Self::finalize_one(recorder, &mut errors).await;
         }
         errors
@@ -760,19 +771,9 @@ impl EventsCtx {
     pub fn finalize_events(
         mut self,
         trace_id: TraceId,
-        result: ExitResult,
+        mut result: ExitResult,
         runtime: &Runtime,
     ) -> ExitResult {
-        #[cfg(fbcode_build)]
-        let result = {
-            let mut result = result;
-            if self.log_invocation_record
-                && let Some(recorder) = &self.recorder
-            {
-                recorder.log_artillery_trace(&mut result);
-            }
-            result
-        };
         runtime.block_on(async move {
             let buck_log_dir = self.buck_log_dir.take();
             let command_report_path = self.command_report_path.take();
@@ -793,7 +794,9 @@ impl EventsCtx {
 
             // The invocation record must not be starved by a slow log upload, so it gets its
             // own budget rather than whatever the other subscribers left of theirs.
-            match tokio::time::timeout(logging_timeout, self.finalize_recorder()).await {
+            match tokio::time::timeout(logging_timeout, self.finalize_recorder(Some(&mut result)))
+                .await
+            {
                 Ok(errors) => finalizing_errors.extend(errors),
                 Err(_) => finalizing_errors.push(format!(
                     "Timeout after {:?} waiting for the invocation record",

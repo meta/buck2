@@ -1,4 +1,5 @@
 load("@prelude//toolchains/android/tools:build_rules.bzl", "buck_java_binary", "buck_kotlin_library")
+load("@prelude//toolchains/android/tools:kotlin_utils.bzl", "kotlin_version_at_least")
 load("@prelude//utils:source_listing.bzl", "source_listing")
 
 oncall("android_devxx")
@@ -75,6 +76,8 @@ buck_java_binary(
 buck_kotlin_library(
     name = "stubsgen-cli-lib",
     srcs = glob(["cli/**/*.kt"]),
+    # `CompilerConfiguration()` is an `@Internals` opt-in from Kotlin 2.4.
+    extra_kotlinc_arguments = ["-opt-in=org.jetbrains.kotlin.config.CompilerConfiguration.Internals"] if kotlin_version_at_least(2, 4) else [],
     labels = ["codegen_rule"],
     visibility = ["PUBLIC"],
     deps = [

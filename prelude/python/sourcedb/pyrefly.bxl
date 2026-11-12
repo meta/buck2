@@ -31,6 +31,8 @@ _MODULE_SUFFIXES = set([
 _CATCH_ALL_STUB_CONTENT = "from typing import Any\n\ndef __getattr__(name: str) -> Any: ...\n"
 
 _MANIFESTLESS_RULE_TYPES = set([
+    "_source_directory",
+    "_sv_filelist",
     "forward",
     "command_alias",
     "export_file",

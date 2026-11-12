@@ -468,6 +468,7 @@ def _main(ctx: bxl.Context) -> None:
 
         if (
             x.rule_type.endswith(":alias")
+            or x.rule_type.endswith(":configured_alias")
             or x.rule_type.endswith("_fbcode_configured_alias")
             or x.rule_type.endswith(":build_mode_alias")
             or x.rule_type.endswith(":_sanitizer_alias")

@@ -15,21 +15,27 @@ behavior module defining callbacks for buck2 test providers
 -export([
     do_init/2,
     do_pre_listing/1,
-    do_post_listing/1,
+    do_post_listing/2,
     do_pre_running/1,
     do_post_running/1,
     do_terminate/1
 ]).
 -optional_callbacks([
-    init/2, pre_listing/1, post_listing/1, pre_running/1, post_running/1, terminate/1
+    init/2, pre_listing/1, post_listing/2, pre_running/1, post_running/1, terminate/1
 ]).
+
+-export_type([test_names/0]).
 
 -include("buck_ct_records.hrl").
 -include_lib("kernel/include/logger.hrl").
 
+-type test_names() :: [binary()].
+
 -type state() :: term().
 
 -type return_type() :: {ok, state()} | {error, term()}.
+
+-type return_type(Result) :: {ok, Result, state()} | {error, term()}.
 
 -type buck_ct_provider() :: {atom(), state()}.
 
@@ -43,8 +49,10 @@ behavior module defining callbacks for buck2 test providers
 %%% Executed before listing and updates the state of the provider
 -callback pre_listing(state()) -> return_type().
 
-%%% Executed after listing and updatess the state of the provider
--callback post_listing(state()) -> return_type().
+%%% Executed after listing and updates the tests and state of the provider
+-callback post_listing(TestNames, State) -> return_type(test_names()) when
+    TestNames :: test_names(),
+    State :: state().
 
 %%% Executed before running the tests and updates the state of the provider
 -callback pre_running(state()) -> return_type().
@@ -77,9 +85,22 @@ do_pre_listing({ProviderName, ProviderState}) ->
 Handles calling the post_listing method on providers.
 Calls the post_listing method if this one is present and updates the state.
 """.
--spec do_post_listing(buck_ct_provider()) -> buck_ct_provider().
-do_post_listing({ProviderName, ProviderState}) ->
-    execute_method_on_provider(post_listing, ProviderName, ProviderState, []).
+-spec do_post_listing({ProviderName, ProviderState}, TestNames) -> {buck_ct_provider(), test_names()} when
+    ProviderName :: module(),
+    ProviderState :: state(),
+    TestNames :: test_names().
+do_post_listing({ProviderName, ProviderState}, TestNames) ->
+    Result = execute_method_on_provider_with_result(
+        post_listing, ProviderName, ProviderState, [TestNames], {ok, TestNames, ProviderState}
+    ),
+    case Result of
+        {ok, FilteredTestNames, NewState} when is_list(FilteredTestNames) ->
+            KnownTestNames = maps:from_keys(TestNames, true),
+            ValidatedTestNames = validate_test_names(ProviderName, FilteredTestNames, KnownTestNames),
+            {{ProviderName, NewState}, ValidatedTestNames};
+        OtherReturn ->
+            error({invalid_post_listing_return, ProviderName, OtherReturn, ~"expected {ok, [binary()], State}"})
+    end.
 
 -doc """
 Handles calling the pre_running method on providers.
@@ -107,33 +128,41 @@ do_terminate({ProviderName, ProviderState}) ->
 
 % ------------------- Helpers Methods -------------------------
 
+-spec validate_test_names(ProviderName, TestNames, KnownTestNames) -> test_names() when
+    ProviderName :: module(),
+    TestNames :: [term()],
+    KnownTestNames :: #{binary() => true}.
+validate_test_names(_ProviderName, [], _KnownTestNames) ->
+    [];
+validate_test_names(ProviderName, [TestName | TestNames], KnownTestNames) when
+    is_binary(TestName), is_map_key(TestName, KnownTestNames)
+->
+    [TestName | validate_test_names(ProviderName, TestNames, KnownTestNames)];
+validate_test_names(ProviderName, [TestName | _TestNames], _KnownTestNames) when is_binary(TestName) ->
+    error({unknown_test_name_from_provider, ProviderName, TestName});
+validate_test_names(ProviderName, [TestName | _TestNames], _KnownTestNames) ->
+    error({invalid_test_name_from_provider, ProviderName, TestName, ~"expected a binary"}).
+
 -doc """
 Handles the execution of the method on a provider and dealing with the result.
 Skip if the method is undefined, updates the state or crash according to the return result
 of the method.
 """.
--spec execute_method_on_provider(atom(), atom(), term(), [term()]) -> buck_ct_provider().
+-spec execute_method_on_provider(Method, ProviderName, ProviderState, Args) -> buck_ct_provider() when
+    Method :: init | pre_listing | pre_running | post_running | terminate,
+    ProviderName :: module(),
+    ProviderState :: state(),
+    Args :: [term()].
 execute_method_on_provider(Method, ProviderName, ProviderState, Args) ->
-    try safely_execute(ProviderName, Method, Args ++ [ProviderState]) of
-        undefined_method ->
-            State =
-                case Method of
-                    init -> #{};
-                    _ -> ProviderState
-                end,
-            {ProviderName, State};
+    DefaultState =
+        case Method of
+            init -> #{};
+            _ -> ProviderState
+        end,
+    Result = execute_method_on_provider_with_result(Method, ProviderName, ProviderState, Args, {ok, DefaultState}),
+    case Result of
         {ok, NewState} ->
             {ProviderName, NewState};
-        {error, Reason} ->
-            ErrorMsg = unicode:characters_to_list(
-                io_lib:format(
-                    "Method ~tp on provider ~tp with state ~tp ~n returned with error ~tp ~n", [
-                        Method, ProviderName, ProviderState, Reason
-                    ]
-                )
-            ),
-            ?LOG_ERROR(ErrorMsg),
-            throw({error_in_provider, {ProviderName, Reason}});
         OtherReturn ->
             case Method of
                 terminate ->
@@ -147,6 +176,30 @@ execute_method_on_provider(Method, ProviderName, ProviderState, Args) ->
                     ),
                     {ProviderName, ProviderState}
             end
+    end.
+
+-spec execute_method_on_provider_with_result(Method, ProviderName, ProviderState, Args, DefaultResult) -> term() when
+    Method :: atom(),
+    ProviderName :: module(),
+    ProviderState :: state(),
+    Args :: [term()],
+    DefaultResult :: term().
+execute_method_on_provider_with_result(Method, ProviderName, ProviderState, Args, DefaultResult) ->
+    try safely_execute(ProviderName, Method, Args ++ [ProviderState]) of
+        undefined_method ->
+            DefaultResult;
+        {error, Reason} ->
+            ErrorMsg = unicode:characters_to_list(
+                io_lib:format(
+                    "Method ~tp on provider ~tp with state ~tp ~n returned with error ~tp ~n", [
+                        Method, ProviderName, ProviderState, Reason
+                    ]
+                )
+            ),
+            ?LOG_ERROR(ErrorMsg),
+            throw({error_in_provider, {ProviderName, Reason}});
+        Result ->
+            Result
     catch
         Class:Reason:StackTrace ->
             ErrorMsg = unicode:characters_to_list(

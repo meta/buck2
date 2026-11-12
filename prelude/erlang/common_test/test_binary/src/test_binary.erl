@@ -226,9 +226,20 @@ get_listing(TestInfo, OutputDir) ->
     HookModules = get_hooks(TestInfo),
     Providers1 = [buck_ct_provider:do_pre_listing(Provider) || Provider <- Providers0],
     Listing = list_test:list_tests(Suite, HookModules),
-    Providers2 = [buck_ct_provider:do_post_listing(Provider) || Provider <- Providers1],
+    TestNames = [TestCase#test_spec_test_info.name || TestCase <- Listing#test_spec_test_case.testcases],
+    {Providers2, FilteredTestNames} = lists:mapfoldl(
+        fun buck_ct_provider:do_post_listing/2,
+        TestNames,
+        Providers1
+    ),
     [buck_ct_provider:do_terminate(Provider) || Provider <- Providers2],
-    Listing.
+    SelectedTestNames = maps:from_keys(FilteredTestNames, true),
+    TestCases = [
+        TestCase
+     || TestCase <- Listing#test_spec_test_case.testcases,
+        is_map_key(TestCase#test_spec_test_info.name, SelectedTestNames)
+    ],
+    Listing#test_spec_test_case{testcases = TestCases}.
 
 %% rudimantary implementation for running tests with buck2 open-sourced test runner
 

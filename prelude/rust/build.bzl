@@ -489,14 +489,13 @@ def generate_rustdoc_test(
     if toolchain_info.rust_target_path != None:
         path_env["RUST_TARGET_PATH"] = toolchain_info.rust_target_path[DefaultInfo].default_outputs[0]
 
-    rustdoc_cmd = cmd_args(
+    rustdoc_env = cmd_args(
         [cmd_args("--env=", k, "=", v, delimiter = "") for k, v in plain_env.items()],
         [cmd_args("--path-env=", k, "=", v, delimiter = "") for k, v in path_env.items()],
-        toolchain_info.rustdoc,
-        "--rustc-action-separator",
+    )
+    rustdoc_args = cmd_args(
         "--test",
         unstable_options,
-        cmd_args("--test-builder=", toolchain_info.compiler, delimiter = ""),
         toolchain_info.rustdoc_flags,
         ctx.attrs.rustdoc_flags,
         common_args.args,
@@ -524,13 +523,49 @@ def generate_rustdoc_test(
             executable_args.runtime_files,
         ],
     )
+    use_cbp = getattr(ctx.attrs, "use_content_based_paths", False)
+    if compile_ctx.arch_toolchain_info == None:
+        return _long_command(
+            ctx = ctx,
+            exe = internal_tools_info.rustc_action,
+            args = cmd_args(
+                rustdoc_env,
+                toolchain_info.rustdoc,
+                "--rustc-action-separator",
+                cmd_args("--test-builder=", toolchain_info.compiler, delimiter = ""),
+                rustdoc_args,
+            ),
+            argfile_name = "{}.args".format(common_args.subdir),
+            has_content_based_path = use_cbp,
+        )
 
-    return _long_command(
-        ctx = ctx,
-        exe = internal_tools_info.rustc_action,
-        args = rustdoc_cmd,
-        argfile_name = "{}.args".format(common_args.subdir),
-        has_content_based_path = getattr(ctx.attrs, "use_content_based_paths", False),
+    arch_commands = {}
+    for arch, variant in compile_ctx.arch_toolchain_info.arch_variants.items():
+        args = cmd_args(
+            [cmd_args("--env=", key, "=", value, delimiter = "") for key, value in variant.plain_env.items()],
+            [cmd_args("--path-env=", key, "=", value, delimiter = "") for key, value in variant.path_env.items()],
+            rustdoc_env,
+            variant.rustdoc,
+            "--rustc-action-separator",
+            cmd_args("--test-builder=", variant.compiler, delimiter = ""),
+            rustdoc_args,
+            common_args.arch_dependency_args[arch],
+            hidden = variant.runtime_and_plugin_inputs,
+        )
+        arch_commands[arch] = RustArchCommand(
+            wrapper = internal_tools_info.rustc_action,
+            wrapper_argfile = at_argfile(
+                actions = ctx.actions,
+                name = "{}-doctest-{}.args".format(common_args.subdir, arch),
+                args = args,
+                allow_args = True,
+                has_content_based_path = use_cbp,
+            ),
+        )
+    return rust_arch_action(
+        actions = ctx.actions,
+        path = "{}-doctest-arch-action".format(common_args.subdir),
+        arch_commands = arch_commands,
     )
 
 def _archiver_command(ctx: AnalysisContext, compile_ctx: CompileContext, subdir: str, archive_cbp: bool) -> cmd_args:

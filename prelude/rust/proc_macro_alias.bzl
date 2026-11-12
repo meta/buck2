@@ -39,11 +39,6 @@ def _impl(ctx):
     # Once config modifiers are implemented and roll out, it should not be too hard to get the fully
     # correct behavior
     providers = list(ctx.attrs.actual_exec.providers)
-    exec_arch_info = ctx.attrs.actual_exec.get(RustProcMacroArchInfo)
-    if exec_arch_info != None:
-        require_rust_arch_variants(exec_arch_info.arch_variants, ctx.label)
-        if ctx.attrs.actual_exec.label.raw_target() != ctx.attrs.actual_plugin:
-            fail("{} dual-arch proc macro must use the same logical target for actual_exec and actual_plugin".format(ctx.label))
     providers.append(RustProcMacroMarker(label = ctx.attrs.actual_plugin))
     return providers
 
@@ -63,6 +58,8 @@ def _arch_aggregate_impl(ctx: AnalysisContext) -> list[Provider]:
     outputs = []
     for arch, dep in variants.items():
         info = dep[RustProcMacroInfo]
+        if info.crate.dynamic != None:
+            fail("{} dual-arch proc-macro aggregate does not support dynamic crate names".format(ctx.label))
         if crate != None and crate.simple != info.crate.simple:
             fail("{} proc-macro arch variants have different crate identities".format(ctx.label))
         crate = info.crate

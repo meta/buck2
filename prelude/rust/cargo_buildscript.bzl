@@ -519,8 +519,9 @@ def buildscript_run(
             return "{}-{}".format(name, plat)
 
     for i, plat in enumerate(get_reindeer_platform_names()):
+        platform_target = platform_buildscript_build_name(plat)
         transition_alias(
-            name = platform_buildscript_build_name(plat),
+            name = platform_target,
             actual = buildscript_rule,
             incoming_transition = "prelude//rust/buildscript:buildscript_platform_transition[{}]".format(i),
             target_compatible_with = buildscript_compatible_with,

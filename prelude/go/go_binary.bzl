@@ -8,6 +8,7 @@
 
 load("@prelude//:artifacts.bzl", "single_artifact")
 load("@prelude//:prelude_rule.bzl", "prelude_rule")
+load("@prelude//:resources.bzl", "create_relocatable_resources_info", "create_resource_db")
 load("@prelude//cxx:attrs.bzl", "BUILD_INFO_ATTR", "cxx_common")
 load("@prelude//decls:common.bzl", "buck")
 load("@prelude//decls:toolchains_common.bzl", "toolchains_common")
@@ -79,8 +80,11 @@ def go_binary_impl(ctx: AnalysisContext) -> list[Provider]:
     runtime_files = list(runtime_files)
     other_outputs = runtime_files + external_debug_info
 
-    for resource in from_named_set(ctx.attrs.resources).values():
+    named_resources = from_named_set(ctx.attrs.resources)
+    resources = {}
+    for alias, resource in named_resources.items():
         resource = single_artifact(resource)
+        resources[alias] = resource
 
         runtime_files.append(resource.default_output)
         runtime_files.extend(resource.nondebug_runtime_files)
@@ -88,13 +92,49 @@ def go_binary_impl(ctx: AnalysisContext) -> list[Provider]:
         other_outputs.append(resource.default_output)
         other_outputs.extend(resource.other_outputs)
 
+    # Relocatable manifest + contents dir so distributors (e.g. fbpkg with
+    # package_resources=True) can ship resources alongside the binary, plus
+    # the working-dir resource DB (<name>.resources.json) so runtimes that
+    # execute the binary with its runtime files materialized (buck2 run,
+    # genrules) resolve aliases exe-adjacent. Mirrors
+    # rust_binary/cxx_executable. Exposed as the "resources" subtarget so the
+    # mapping is inspectable.
+    relocatable_resources_json = None
+    relocatable_resources_contents = None
+    sub_targets = {}
+    if resources:
+        resource_db = create_resource_db(
+            ctx = ctx,
+            name = ctx.label.name + ".resources.json",
+            binary = bin,
+            resources = resources,
+        )
+        runtime_files.append(resource_db)
+        other_outputs.append(resource_db)
+        relocatable_resources_json, relocatable_resources_contents = create_relocatable_resources_info(
+            ctx = ctx,
+            name = ctx.label.name,
+            resources = resources,
+        )
+        sub_targets["resources"] = [
+            DefaultInfo(
+                default_output = relocatable_resources_json,
+                other_outputs = [relocatable_resources_contents],
+            ),
+        ]
+
     return [
         DefaultInfo(
             default_output = bin,
             other_outputs = other_outputs,
+            sub_targets = sub_targets,
         ),
         RunInfo(args = cmd_args(bin, hidden = other_outputs)),
-        DistInfo(nondebug_runtime_files = runtime_files),
+        DistInfo(
+            nondebug_runtime_files = runtime_files,
+            relocatable_resources_json = relocatable_resources_json,
+            relocatable_resources_contents = relocatable_resources_contents,
+        ),
         GoTestInfo(
             deps = ctx.attrs.deps,
             srcs = ctx.attrs.srcs,
@@ -195,8 +235,11 @@ go_binary = prelude_rule(
                 sorted = True,
                 default = [],
                 doc = """
-                Static files to be symlinked into the working directory of the binary. You can access these
-                 by opening the files as relative paths, e.g. `ioutil.ReadFile("testdata/input")`.
+                Static files provided as runtime files of the binary, materialized
+                 alongside its outputs. Accepts a list, with entries named by their
+                 short path, or a dict mapping an alias to each entry; aliases
+                 identify the entry in the `<binary>.resources.json` manifest,
+                 resolved relative to the directory containing the binary.
             """,
             ),
             "_build_info": BUILD_INFO_ATTR,

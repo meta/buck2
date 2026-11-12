@@ -1,8 +1,14 @@
 load("@fbcode//buck2/tests/prelude:py_assertion.bzl", "py_assertion")
+load("@fbcode_macros//build_defs:export_files.bzl", "export_file")
 
 oncall("golang")
 
 prelude = native
+
+export_file(
+    name = "testdata_input",
+    src = "testdata/input.txt",
+)
 
 prelude.go_binary(
     name = "bin",
@@ -16,7 +22,7 @@ prelude.go_binary(
     name = "bin_dict_resources",
     srcs = ["main.go"],
     resources = {
-        "testdata/input.txt": "testdata/input.txt",
+        "renamed/input.txt": ":testdata_input",
     },
     deps = [
         "//buck2/tests/prelude/go/binary/library:lib",
@@ -30,6 +36,31 @@ prelude.go_binary(
     deps = [
         "//buck2/tests/prelude/go/binary/library:lib",
     ],
+)
+py_assertion(
+    name = "check_dict_resources_manifest",
+    script = """
+import json
+import sys
+manifest = json.load(open(sys.argv[1]))
+assert manifest == {
+    "renamed/input.txt": "__bin_dict_resources__resources/renamed__input.txt/input.txt",
+}, manifest
+""",
+    script_args = ["$(location :bin_dict_resources[resources])"],
+)
+
+py_assertion(
+    name = "check_list_resources_manifest",
+    script = """
+import json
+import sys
+manifest = json.load(open(sys.argv[1]))
+assert manifest == {
+    "testdata/input.txt": "__bin_list_resources__resources/testdata__input.txt/input.txt",
+}, manifest
+""",
+    script_args = ["$(location :bin_list_resources[resources])"],
 )
 
 py_assertion(

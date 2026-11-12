@@ -13,6 +13,10 @@
 pub(crate) mod channel;
 pub mod error_on_event;
 pub mod null;
+#[cfg(not(fbcode_build))]
+pub mod otel;
+#[cfg(not(fbcode_build))]
+pub(crate) mod otel_record;
 pub mod remote;
 #[cfg(fbcode_build)]
 pub(crate) mod scribe;

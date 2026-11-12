@@ -171,9 +171,6 @@ def gather_unconfigured_deps(ctx: bxl.Context, targets: list[TargetLabel]) -> di
             else:
                 mapped_srcs[package_dir + "/" + src.short_path] = dst
 
-        abs_buildfile_path = ctx.root() + "/" + target.buildfile_path.cell + "/" + target.buildfile_path.path
-        source_folder = abs_buildfile_path.removesuffix("/TARGETS").removesuffix("/BUCK")
-
         crate_root = _get_attr_no_select(target, "crate_root")
         if not crate_root:
             for src in srcs:
@@ -206,7 +203,7 @@ def gather_unconfigured_deps(ctx: bxl.Context, targets: list[TargetLabel]) -> di
             "proc_macro": _get_attr_no_select(target, "proc_macro"),
             "project_relative_buildfile": ctx.fs.project_rel_path(target.buildfile_path),
             "rustc_flags": _get_attr_no_select(target, "rustc_flags"),
-            "source_folder": source_folder,
+            "source_folder": package_dir,
             "srcs": srcs,
             "tests": tests,
         }

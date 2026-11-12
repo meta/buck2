@@ -50,7 +50,7 @@ CommonArgsInfo = record(
     crate_type = field(CrateType),
     params = field(BuildParams),
     emit = field(Emit),
-    crate_map = field(list[(CrateName, Label)]),
+    crate_map_args = field(cmd_args),
 )
 
 DependencyArgsInfo = record(
@@ -68,6 +68,10 @@ CompileContext = record(
     common_args = field(dict[(CrateType, Emit, LinkStrategy, bool, bool, bool, bool, ProfileMode), CommonArgsInfo]),
     # Memoized dependency args for reuse across emits with the same inputs.
     dependency_args = field(dict[(CrateType, LinkStrategy, MetadataKind, bool), DependencyArgsInfo]),
+    # Memoized `--crate-map` args, one `cmd_args` shared by every invocation;
+    # keyed by whether the crate is compiled as a rustdoc test, which is the
+    # only thing that changes its dependencies.
+    crate_map_args = field(dict[bool, cmd_args]),
     # Memoized environment classifications for reuse across multiple emits,
     # keyed by the environment's origin. A record field cannot be reassigned,
     # so the memo lives in a dict even while "rustc" is its only key.
@@ -156,6 +160,7 @@ def compile_context(ctx: AnalysisContext, binary: bool = False) -> CompileContex
         clippy_wrapper = clippy_wrapper,
         common_args = {},
         dependency_args = {},
+        crate_map_args = {},
         processed_env = {},
         cxx_toolchain_info = cxx_toolchain_info,
         dep_ctx = dep_ctx,

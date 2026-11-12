@@ -1052,7 +1052,7 @@ def rust_compile(
         is_clippy = emit.value == "clippy",
         infallible_diagnostics = infallible_diagnostics,
         allow_cache_upload = allow_cache_upload and emit != Emit("clippy"),
-        crate_map = common_args.crate_map,
+        crate_map_args = common_args.crate_map_args,
         env = emit_op.env,
         incremental_enabled = incremental_enabled,
         profile_mode = profile_mode,
@@ -1582,7 +1582,11 @@ def _compute_common_args(
 
     dep_args = cached_dependency_args.args
     arch_dependency_args = cached_dependency_args.arch_args
-    crate_map = cached_dependency_args.crate_map
+
+    crate_map_args = compile_ctx.crate_map_args.get(is_rustdoc_test)
+    if crate_map_args == None:
+        crate_map_args = cmd_args([crate_map_arg(k, v) for k, v in cached_dependency_args.crate_map])
+        compile_ctx.crate_map_args[is_rustdoc_test] = crate_map_args
 
     toolchain_info = compile_ctx.toolchain_info
     edition = ctx.attrs.edition or toolchain_info.default_edition or fail("missing 'edition' attribute, and there is no 'default_edition' set by the toolchain")
@@ -1732,7 +1736,7 @@ def _compute_common_args(
         crate_type = crate_type,
         params = params,
         emit = emit,
-        crate_map = crate_map,
+        crate_map_args = crate_map_args,
     )
 
     compile_ctx.common_args[args_key] = common_args
@@ -2115,7 +2119,7 @@ def _rustc_invoke(
     infallible_diagnostics: bool,
     allow_cache_upload: bool,
     incremental_enabled: bool,
-    crate_map: list[(CrateName, Label)],
+    crate_map_args: cmd_args,
     env: dict[str, str | ResolvedStringWithMacros | Artifact],
     profile_mode: ProfileMode | None,
     strip_dwo_members: cmd_args | None,
@@ -2153,8 +2157,7 @@ def _rustc_invoke(
         hidden = [compile_ctx.transitive_srcs.project_as_args("artifacts")] + ([rustc_bin] if arch_programs == None else []),
     )
 
-    for k, v in crate_map:
-        compile_cmd.add(crate_map_arg(k, v))
+    compile_cmd.add(crate_map_args)
     for k, v in plain_env.items():
         compile_cmd.add(cmd_args("--env=", k, "=", v, delimiter = ""))
     for k, v in path_env.items():

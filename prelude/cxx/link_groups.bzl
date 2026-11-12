@@ -379,6 +379,9 @@ def create_debug_linkable_entries(
     root: Label | None,
     with_extras: bool = False,
     root_link_info: LinkInfo | None = None,
+    *,
+    entry_cache: dict[(Label | str, LibOutputStyle, bool), LinkGroupsDebugLinkableEntry] | None = None,
+    prefer_optimized: bool = False,
 ) -> list[LinkGroupsDebugLinkableEntry]:
     """
     The entries of `[link-groups-info]`. With `with_extras` (xcode data
@@ -386,6 +389,8 @@ def create_debug_linkable_entries(
     the linker is given for it (`root_link_info` is what the root is linked
     with, when there is a root); otherwise `extras` is None.
     """
+    if entry_cache == None:
+        entry_cache = {}
     entries = []
     if root:
         root_entry = LinkGroupsDebugLinkableEntry(
@@ -401,17 +406,21 @@ def create_debug_linkable_entries(
         entries.append(root_entry)
 
     for key, link_info in labels_to_links_map.items():
-        link_groups_linkable_info = LinkGroupsDebugLinkableEntry(
-            name = link_info.link_name if type(link_info.link_name) == "string" else link_info.link_name.raw_target(),
-            output_style = link_info.output_style,
-            extras = LinkGroupsDebugLinkableEntryExtras(
-                label = _entry_label(key, link_info),
-                outputs = link_info_outputs(link_info.link_info),
+        cache_key = (link_info.link_name, link_info.output_style, prefer_optimized)
+        entry = entry_cache.get(cache_key)
+        if entry == None:
+            entry = LinkGroupsDebugLinkableEntry(
+                name = link_info.link_name if type(link_info.link_name) == "string" else link_info.link_name.raw_target(),
+                output_style = link_info.output_style,
+                extras = LinkGroupsDebugLinkableEntryExtras(
+                    label = _entry_label(key, link_info),
+                    outputs = link_info_outputs(link_info.link_info),
+                )
+                if with_extras
+                else None,
             )
-            if with_extras
-            else None,
-        )
-        entries.append(link_groups_linkable_info)
+            entry_cache[cache_key] = entry
+        entries.append(entry)
 
     return entries
 
@@ -1217,6 +1226,7 @@ def create_link_groups(
     targets_consumed_by_link_groups = {}
     linked_link_groups = {}
     link_groups_debug_info = {}
+    debug_entry_cache = {}
     undefined_symfiles = []
     global_symfiles = []
     roots = _find_all_relevant_roots(
@@ -1306,6 +1316,8 @@ def create_link_groups(
                 root_label,
                 debug_linkable_extras,
                 root_link_info = created_link_group.root_link_info,
+                entry_cache = debug_entry_cache,
+                prefer_optimized = link_group_spec.group.attrs.prefer_optimized_experimental,
             ),
         )
 

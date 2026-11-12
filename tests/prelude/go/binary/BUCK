@@ -12,6 +12,26 @@ prelude.go_binary(
     ],
 )
 
+prelude.go_binary(
+    name = "bin_dict_resources",
+    srcs = ["main.go"],
+    resources = {
+        "testdata/input.txt": "testdata/input.txt",
+    },
+    deps = [
+        "//buck2/tests/prelude/go/binary/library:lib",
+    ],
+)
+
+prelude.go_binary(
+    name = "bin_list_resources",
+    srcs = ["main.go"],
+    resources = ["testdata/input.txt"],
+    deps = [
+        "//buck2/tests/prelude/go/binary/library:lib",
+    ],
+)
+
 py_assertion(
     name = "check_output",
     script = """

@@ -11,6 +11,13 @@ prelude.go_test(
     resources = ["testdata/input"],
 )
 
+prelude.go_test(
+    name = "test_dict",
+    srcs = ["resources_dict_test.go"],
+    # @oss-disable[end= ]: env = {"GO_TEST2JSON_TOOL": "$(exe_target fbsource//third-party/go-toolchain:test2json)"},
+    resources = {"renamed/input": "testdata/input"},
+)
+
 py_assertion(
     name = "check_output",
     script = """
@@ -19,4 +26,14 @@ import sys
 assert "PASS" in subprocess.check_output([sys.argv[1]]).decode()
 """,
     script_args = ["$(location_exec :test)"],
+)
+
+py_assertion(
+    name = "check_dict_output",
+    script = """
+import subprocess
+import sys
+assert "PASS" in subprocess.check_output([sys.argv[1]]).decode()
+""",
+    script_args = ["$(location_exec :test_dict)"],
 )

@@ -161,10 +161,11 @@ def go_test_impl(ctx: AnalysisContext) -> list[Provider]:
         external_linker_flags = ctx.attrs.external_linker_flags,
     )
 
-    # As per v1, copy in resources next to binary.
+    # Copy resources next to the binary. Dict keys are the copy
+    # destination; list entries are named by their short path.
     copied_resources = []
-    for resource in ctx.attrs.resources:
-        copied_resources.append(ctx.actions.copy_file(resource.short_path, resource, has_content_based_path = False))
+    for name, resource in from_named_set(ctx.attrs.resources).items():
+        copied_resources.append(ctx.actions.copy_file(name, resource, has_content_based_path = False))
 
     run_cmd = cmd_args(bin, hidden = [runtime_files, external_debug_info] + copied_resources)
 
@@ -356,13 +357,16 @@ go_test = prelude_rule(
                 Test coverage functionality will be included in the executable.
             """,
             ),
-            "resources": attrs.list(
+            "resources": attrs.named_set(
                 attrs.source(allow_directory = True),
+                sorted = True,
                 default = [],
                 doc = """
-                Static files that are symlinked into the working directory of the
-                 test. You can access these files in your test by opening them using
-                 relative paths, such as `ioutil.ReadFile("testdata/input")`.
+                Static files copied next to the test executable and symlinked into
+                 the working directory of the test. Pass a list to name entries by
+                 their short path, or a dict to choose each entry's destination
+                 path explicitly. Open them using relative paths, e.g.
+                 `os.ReadFile("testdata/input")`.
             """,
             ),
             "_build_info": BUILD_INFO_ATTR,

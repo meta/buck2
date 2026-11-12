@@ -79,7 +79,7 @@ def go_binary_impl(ctx: AnalysisContext) -> list[Provider]:
     runtime_files = list(runtime_files)
     other_outputs = runtime_files + external_debug_info
 
-    for resource in ctx.attrs.resources:
+    for resource in from_named_set(ctx.attrs.resources).values():
         resource = single_artifact(resource)
 
         runtime_files.append(resource.default_output)
@@ -190,8 +190,9 @@ go_binary = prelude_rule(
                 to collect coverage data.
             """,
             ),
-            "resources": attrs.list(
+            "resources": attrs.named_set(
                 attrs.one_of(attrs.dep(), attrs.source(allow_directory = True)),
+                sorted = True,
                 default = [],
                 doc = """
                 Static files to be symlinked into the working directory of the binary. You can access these

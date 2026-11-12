@@ -19,14 +19,13 @@ load(
 load("@prelude//linking:execution_preference.bzl", "LinkExecutionPreference")
 load(
     "@prelude//linking:link_info.bzl",
-    "Archive",
-    "ArchiveContentsType",
     "ArchiveLinkable",
     "DepMetadata",
     "LinkArgs",
     "LinkInfo",  # @unused Used as a type
     "ObjectsLinkable",
     "SharedLibLinkable",
+    "new_archive",
 )
 load(
     ":link_types.bzl",
@@ -183,10 +182,10 @@ def _decode_linkable(spec, artifacts, artifact_cursor: list[int]) -> typing.Any:
         hidden = artifacts[hidden_start : hidden_start + num_hidden]
         artifact_cursor[0] += 1 + num_external_objects + num_hidden
         return ArchiveLinkable(
-            archive = Archive(
+            archive = new_archive(
                 artifact = archive_artifact,
+                archive_contents_type = archive_contents_type,
                 external_objects = external_objects,
-                archive_contents_type = ArchiveContentsType(archive_contents_type),
                 hidden = hidden,
             ),
             link_whole = link_whole,

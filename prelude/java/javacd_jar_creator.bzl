@@ -94,9 +94,10 @@ def create_jar_artifact_javacd(
 
     uses_content_based_paths = java_toolchain.uses_content_based_paths
 
-    should_create_class_abi = (
-        not additional_compiled_srcs and not is_creating_subtarget and (abi_generation_mode == AbiGenerationMode("class") or not is_building_android_binary)
-    )
+    # Only class-mode targets create the class ABI inline. For other modes,
+    # `create_abi` in `generate_abi_jars` creates it when needed. This keeps the
+    # javacd action key the same in APK and non-APK builds.
+    should_create_class_abi = not additional_compiled_srcs and not is_creating_subtarget and abi_generation_mode == AbiGenerationMode("class")
     if should_create_class_abi:
         class_abi_jar = declare_prefixed_output(actions, actions_identifier, "class-abi.jar", uses_content_based_paths)
         class_abi_output_dir = declare_prefixed_output(actions, actions_identifier, "class_abi_dir", uses_content_based_paths, dir = True)

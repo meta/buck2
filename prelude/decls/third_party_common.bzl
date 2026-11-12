@@ -13,7 +13,7 @@ def _create_third_party_build_root_attr():
             attrs.exec_dep(
                 default = select({
                     "DEFAULT": "prelude//third-party/tools:create_build-full",
-                    # @oss-disable[end= ]: "prelude//third-party/tools:construction": "prelude//third-party/tools:create_build-construction",
+                    # @oss-disable[end= ]: "prelude//third-party/tools:purpose[construction]": "prelude//third-party/tools:create_build-construction",
                 })
             )
         ),

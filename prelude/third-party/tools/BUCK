@@ -13,14 +13,10 @@ prelude.python_bootstrap_binary(
     visibility = ["PUBLIC"],
 )
 
-# @oss-disable[end= ]: prelude.constraint_setting(
+# @oss-disable[end= ]: prelude.constraint(
     # @oss-disable[end= ]: name = "purpose",
-    # @oss-disable[end= ]: visibility = ["PUBLIC"],
-# @oss-disable[end= ]: )
-
-# @oss-disable[end= ]: prelude.constraint_value(
-    # @oss-disable[end= ]: name = "construction",
-    # @oss-disable[end= ]: constraint_setting = ":purpose",
+    # @oss-disable[end= ]: default = "full",
+    # @oss-disable[end= ]: values = ["construction", "full"],
     # @oss-disable[end= ]: visibility = ["PUBLIC"],
 # @oss-disable[end= ]: )
 

@@ -778,7 +778,6 @@ def rust_compile(
     )
 
     # TODO: dual-arch miri assembly is not available yet.
-    rustc_bin = None
     if compile_ctx.arch_toolchain_info != None:
         if emit == Emit("miri"):
             fail("{} dual-arch miri assembly is not available yet".format(ctx.label))

@@ -6,7 +6,7 @@
 # of this source tree. You may select, at your option, one of the
 # above-listed licenses.
 
-load(":manifest.bzl", "ManifestInfo")
+load(":manifest.bzl", "ManifestInfo", "new_manifest_info")
 load(":toolchain.bzl", "PythonToolchainInfo")
 
 def compile_manifests(ctx: AnalysisContext, manifests: list[ManifestInfo], mode: str = "UNCHECKED_HASH") -> ManifestInfo:
@@ -44,7 +44,7 @@ def compile_manifests(ctx: AnalysisContext, manifests: list[ManifestInfo], mode:
     hidden = []
     for manifest in manifests:
         cmd.append(manifest.manifest)
-        hidden.extend([a for a, _ in manifest.artifacts])
+        hidden.append(manifest.hidden_args)
     ctx.actions.run(
         cmd_args(cmd, hidden = hidden),
         env = env,
@@ -52,4 +52,4 @@ def compile_manifests(ctx: AnalysisContext, manifests: list[ManifestInfo], mode:
         identifier = mode,
         error_handler = ctx.attrs._python_toolchain[PythonToolchainInfo].python_error_handler,
     )
-    return ManifestInfo(manifest = bytecode_manifest.without_associated_artifacts(), artifacts = [(output, "bytecode")])
+    return new_manifest_info(manifest = bytecode_manifest.without_associated_artifacts(), artifacts = [(output, "bytecode")])

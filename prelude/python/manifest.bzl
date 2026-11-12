@@ -24,7 +24,16 @@ ManifestInfo = record(
     manifest = field(Artifact),
     # All artifacts that are referenced in the manifest.
     artifacts = field(list[[Artifact, ArgLike]]),
+    # `artifacts` as one `cmd_args` of hidden inputs, shared by every action that reads the manifest.
+    hidden_args = field(cmd_args),
 )
+
+def new_manifest_info(manifest: Artifact, artifacts: list[(Artifact | ArgLike, str)]) -> ManifestInfo:
+    return ManifestInfo(
+        manifest = manifest,
+        artifacts = artifacts,
+        hidden_args = cmd_args(hidden = [a for a, _ in artifacts]),
+    )
 
 def _write_manifest(ctx: AnalysisContext, name: str, entries: list[(str, Artifact, str)]) -> Artifact:
     """
@@ -36,7 +45,7 @@ def create_manifest_for_entries(ctx: AnalysisContext, name: str, entries: list[(
     """
     Generate a source manifest for the given list of sources.
     """
-    return ManifestInfo(
+    return new_manifest_info(
         manifest = _write_manifest(ctx, name, entries),
         artifacts = [(a, dest) for dest, a, _ in entries],
     )
@@ -59,7 +68,7 @@ def create_manifest_for_shared_libs(actions: AnalysisActions, name: str, shared_
     """
     Generate a source manifest for the given list of sources.
     """
-    return ManifestInfo(
+    return new_manifest_info(
         manifest = gen_shared_libs_action(
             actions = actions,
             out = name + ".manifest",
@@ -87,7 +96,7 @@ def create_manifest_for_source_dir(ctx: AnalysisContext, param: str, extracted: 
     ctx.actions.run(cmd, category = "py_source_manifest", identifier = param)
 
     # TODO: enumerate directory?
-    return ManifestInfo(manifest = manifest.without_associated_artifacts(), artifacts = [(extracted, param)])
+    return new_manifest_info(manifest = manifest.without_associated_artifacts(), artifacts = [(extracted, param)])
 
 def create_manifest_for_extensions(
     ctx: AnalysisContext,
@@ -100,13 +109,16 @@ def create_manifest_for_extensions(
         entries.append((dest, lib.output, str(label.raw_target())))
         if dwp and lib.dwp != None:
             entries.append((dest + ".dwp", lib.dwp, str(label.raw_target()) + ".dwp"))
-    manifest = create_manifest_for_entries(ctx, "extensions", entries)
+    artifacts = [(a, dest) for dest, a, _ in entries]
 
     # Include external debug paths, even though they're not explicitly listed
     # in the manifest, as python packaging may also consume debug paths which
     # were referenced in native code.
     for name, (lib, _) in extensions.items():
         for dbginfo in project_artifacts(ctx.actions, lib.external_debug_info):
-            manifest.artifacts.append((dbginfo, name))
+            artifacts.append((dbginfo, name))
 
-    return manifest
+    return new_manifest_info(
+        manifest = _write_manifest(ctx, "extensions", entries),
+        artifacts = artifacts,
+    )

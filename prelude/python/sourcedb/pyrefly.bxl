@@ -88,7 +88,7 @@ def _append_or_default_if_module(
 def _list_targets(ctx: bxl.Context) -> bxl.TargetSet[bxl.ConfiguredTargetNode]:
     cquery = ctx.cquery()
     uquery = ctx.uquery()
-    files = cquery.deps(ctx.target_universe(uquery.owner(ctx.cli_args.file)).target_set(), 0)
+    files = cquery.deps(ctx.target_universe(uquery.owner(ctx.cli_args.file), keep_going = True).target_set(), 0)
     targets = cquery.eval("kind('python_library|alias|genrule', %s)", ctx.cli_args.target)
     res = files
     for target in targets.values():

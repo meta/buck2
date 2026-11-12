@@ -10,9 +10,8 @@
 
 package com.facebook.buck.jvm.java;
 
-import com.facebook.buck.util.json.ObjectMappers;
+import com.facebook.buck.util.json.JsonStringListMaps;
 import com.facebook.infer.annotation.Nullsafe;
-import com.fasterxml.jackson.core.type.TypeReference;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -64,19 +63,13 @@ public final class CompilerClassToSourceMap {
 
   public void write(Path output) throws IOException {
     Files.createDirectories(Objects.requireNonNull(output.toAbsolutePath().getParent()));
-    ObjectMappers.WRITER.writeValue(output.toFile(), entries);
+    JsonStringListMaps.write(output, entries);
   }
 
   public static CompilerClassToSourceMap read(Path input) throws IOException {
     CompilerClassToSourceMap result = new CompilerClassToSourceMap();
-    Map<String, Set<String>> values =
-        ObjectMappers.readValue(input, new TypeReference<Map<String, Set<String>>>() {});
-    if (values == null
-        || values.values().stream()
-            .anyMatch(sources -> sources == null || sources.stream().anyMatch(Objects::isNull))) {
-      throw new IOException("Invalid null value in class-to-source map: " + input);
-    }
-    values.forEach((classFile, sources) -> result.entries.put(classFile, new TreeSet<>(sources)));
+    JsonStringListMaps.read(input)
+        .forEach((classFile, sources) -> result.entries.put(classFile, new TreeSet<>(sources)));
     return result;
   }
 

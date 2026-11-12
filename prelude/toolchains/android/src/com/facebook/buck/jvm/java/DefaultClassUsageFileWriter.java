@@ -13,7 +13,7 @@ package com.facebook.buck.jvm.java;
 import com.facebook.buck.core.filesystems.AbsPath;
 import com.facebook.buck.core.filesystems.RelPath;
 import com.facebook.buck.io.filesystem.impl.ProjectFilesystemUtils;
-import com.facebook.buck.util.json.ObjectMappers;
+import com.facebook.buck.util.json.JsonStringListMaps;
 import com.facebook.infer.annotation.Nullsafe;
 import com.google.common.base.Preconditions;
 import com.google.common.collect.ImmutableMap;
@@ -42,8 +42,8 @@ public class DefaultClassUsageFileWriter implements ClassUsageFileWriter {
           "directory must exist: %s",
           parent);
 
-      ObjectMappers.WRITER.writeValue(
-          rootPath.resolve(relativePath).toFile(),
+      JsonStringListMaps.write(
+          rootPath.resolve(relativePath).getPath(),
           relativizeMap(classUsages, rootPath, configuredBuckOut));
     } catch (IOException e) {
       throw new RuntimeException("Unable to write used classes file.", e);

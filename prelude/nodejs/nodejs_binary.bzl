@@ -234,9 +234,9 @@ def nodejs_command(ctx: AnalysisContext, args: cmd_args, env: dict[str, ArgLike]
         labels = ctx.attrs.labels,
     )
 
-def build_nodejs_command(ctx: AnalysisContext, bundled_node: (str, Artifact) | None = None) -> struct:
-    """Runs `main`, or the `library`'s entry, with `node_args` and `args`."""
-    staged = stage_nodejs_entries(ctx, [ctx.attrs.main] if ctx.attrs.main != None else [], bundled_node = bundled_node, directory_main = True)
+def build_nodejs_command(ctx: AnalysisContext, bundled_node: (str, Artifact) | None = None, stage: bool = False) -> struct:
+    """Runs `main`, or the `library`'s entry, with `node_args` and `args`. `stage` runs it from `[dir]` even without deps, trees or a `resources` dict."""
+    staged = stage_nodejs_entries(ctx, [ctx.attrs.main] if ctx.attrs.main != None else [], bundled_node = bundled_node, directory_main = True, stage = stage)
     args = cmd_args(ctx.attrs.node_args, staged.entries[0].path, ctx.attrs.args, hidden = staged.hidden)
     return struct(dir = staged.dir, merged = staged.runtime, output = nodejs_command(ctx, args, staged.env), env = staged.env, resources = staged.resources)
 

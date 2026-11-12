@@ -186,9 +186,23 @@ function parseArgs(argv) {
       case '--framework':
         options.framework = value(arg);
         break;
-      case '--test-file':
-        options.files.push({name: value(arg), path: value(arg)});
+      case '--test-files': {
+        const listing = value(arg);
+        for (const line of fs.readFileSync(listing, 'utf8').split('\n')) {
+          if (line === '') {
+            continue;
+          }
+          const tab = line.indexOf('\t');
+          if (tab === -1) {
+            throw new AdapterError(`malformed ${listing} line: ${line}`);
+          }
+          options.files.push({
+            name: line.slice(0, tab),
+            path: path.join(path.dirname(listing), line.slice(tab + 1)),
+          });
+        }
         break;
+      }
       case '--filter':
         options.filters.push(value(arg));
         break;
@@ -259,6 +273,14 @@ function parseArgs(argv) {
     if (options.coveragePaths !== undefined) {
       throw new AdapterError('--coverage-paths requires --framework jest or vitest');
     }
+  } else {
+    // Jest and Vitest run from `root`, so relative paths would break.
+    const absolute = file => (file === undefined ? undefined : path.resolve(file));
+    options.jest = absolute(options.jest);
+    options.vitest = absolute(options.vitest);
+    options.root = absolute(options.root);
+    options.config = absolute(options.config);
+    options.files = options.files.map(file => ({...file, path: path.resolve(file.path)}));
   }
   return options;
 }
@@ -430,7 +452,7 @@ function linePrefixer(stream, prefix) {
   };
 }
 
-function spawnNode(nodeArgs, args, {prefix, onStdout} = {}) {
+function spawnNode(nodeArgs, args, {prefix, onStdout, cwd} = {}) {
   const started = Date.now();
   return new Promise(resolve => {
     const output = [];
@@ -471,7 +493,7 @@ function spawnNode(nodeArgs, args, {prefix, onStdout} = {}) {
     const child = childProcess.spawn(
       process.execPath,
       [...process.execArgv, ...nodeArgs, ...args],
-      {stdio: ['ignore', 'pipe', 'pipe']},
+      {cwd, stdio: ['ignore', 'pipe', 'pipe']},
     );
     children.add(child);
     child.stdout.on('data', chunk => {
@@ -751,13 +773,13 @@ async function runNodeTests(options, runs, workDir) {
   return {results: resultsByRun.flat(), runFailures: []};
 }
 
-function jestArgs(options) {
+function jestArgs(options, config = options.config) {
   return [
     path.join(options.jest, 'jest', 'bin', 'jest.js'),
     '--ci',
     '--watchman=false',
     '--config',
-    options.config ?? JSON.stringify({rootDir: options.root}),
+    config ?? JSON.stringify({rootDir: options.root}),
     ...options.args,
   ];
 }
@@ -799,6 +821,7 @@ async function jestTestFiles(options) {
       ...options.files.map(file => file.path),
     ],
     {
+      cwd: options.root,
       onStdout: chunk => {
         stdout.push(chunk);
         process.stderr.write(chunk);
@@ -889,13 +912,13 @@ function jestTestResults(file, suite, endedTime) {
   });
 }
 
-async function runJestGroup(options, group, reportFile, coverageDirectory) {
+async function runJestGroup(options, group, reportFile, coverageDirectory, config) {
   const files = group.runs.map(run => run.file);
   const patterns = group.runs.flatMap(run =>
     run.whole ? [] : run.filters.map(filter => namePattern(run.file, filter, true)),
   );
   const outcome = await spawnNode(options.nodeArgs, [
-    ...jestArgs(options),
+    ...jestArgs(options, config),
     '--json',
     `--outputFile=${reportFile}`,
     ...(patterns.length > 0 ? ['--testNamePattern', patterns.join('|')] : []),
@@ -908,7 +931,7 @@ async function runJestGroup(options, group, reportFile, coverageDirectory) {
         ]),
     '--runTestsByPath',
     ...files.map(file => file.path),
-  ]);
+  ], {cwd: options.root});
   const endedTime = Date.now();
   let report;
   let readError;
@@ -1035,7 +1058,11 @@ async function runJestGroup(options, group, reportFile, coverageDirectory) {
 }
 
 async function runJestTests(options, runs, workDir) {
-  const coverage = coveragePlan(workDir);
+  const coverage = coveragePlan(options, workDir);
+  const config =
+    coverage?.selected === undefined || coverage.skip
+      ? undefined
+      : writeSelectiveJestConfig(options, coverage.selected, workDir);
   // Jest applies a test name pattern to every file it runs, so only the files
   // run whole share a run. Each run already uses a worker per core but one, so
   // the runs go one at a time.
@@ -1057,7 +1084,8 @@ async function runJestTests(options, runs, workDir) {
         options,
         group,
         path.join(workDir, `jest-${index}.json`),
-        coverage?.directory(index),
+        coverage === undefined || coverage.skip ? undefined : coverage.directory(index),
+        config,
       );
       results.push(...outcome.results);
       runFailures.push(...outcome.runFailures);
@@ -1092,7 +1120,7 @@ async function vitestTestFiles(options, workDir) {
     `--json=${listFile}`,
     '--filesOnly',
     ...options.files.map(file => file.path),
-  ]);
+  ], {cwd: options.root});
   if (outcome.error !== undefined || outcome.code !== 0) {
     throw new AdapterError(processDetails('vitest list', outcome, true));
   }
@@ -1137,7 +1165,7 @@ function readVitestReport(reportFile) {
   return report;
 }
 
-function coveragePlan(workDir) {
+function coveragePlan(options, workDir) {
   const output = process.env.COVERAGE_COLLECTION_OUTPUT_FILE;
   if (!output) {
     return undefined;
@@ -1145,10 +1173,154 @@ function coveragePlan(workDir) {
   const reportsDirectory = path.resolve(
     process.env.COVERAGE_COLLECTION_TMPDIR ?? path.join(workDir, 'coverage'),
   );
+  const selected = selectedCoverageFiles(options);
   return {
     output: path.resolve(output),
     directory: index => path.join(reportsDirectory, String(index)),
+    selected,
+    skip: selected !== undefined && selected.length === 0,
   };
+}
+
+/** A `coverage_paths` entry as `coverageFilepath` compares it; `''` names nothing. */
+function normalizedCoveragePath(selected) {
+  const normalized = path.posix.normalize(selected).replace(/\/+$/, '');
+  return normalized === '.' ? '' : normalized;
+}
+
+/** The staged absolute paths `coverage_paths` names, or undefined without it. */
+function selectedCoverageFiles(options) {
+  if (options.coveragePaths === undefined) {
+    return undefined;
+  }
+  const base = (options.coveragePrefix ?? '').replace(/\/+$/, '');
+  return options.coveragePaths
+    .map(normalizedCoveragePath)
+    .filter(selected => {
+      if (
+        selected === '..' ||
+        selected.startsWith('../') ||
+        path.posix.isAbsolute(selected)
+      ) {
+        return false;
+      }
+      return base === ''
+        ? selected !== ''
+        : selected === base ||
+            selected.startsWith(`${base}/`) ||
+            (selected !== '' && base.startsWith(`${selected}/`));
+    })
+    .map(selected => {
+      if (base === '') {
+        return path.join(options.root, selected);
+      }
+      // The prefix, or a folder above it, names the whole staged tree.
+      return selected.startsWith(`${base}/`)
+        ? path.join(options.root, selected.slice(base.length + 1))
+        : options.root;
+    });
+}
+
+function coverageGlobs(selected, root) {
+  return selected.flatMap(file => {
+    const relative = path.relative(root, file).split(path.sep).join('/');
+    return relative === '' ? ['**'] : [relative, `${relative}/**`];
+  });
+}
+
+/**
+ * Writes a Jest config that wraps the target's and instruments only the
+ * selected files, in every project. Returns its path.
+ */
+function writeSelectiveJestConfig(options, selected, workDir) {
+  const file = path.join(workDir, 'selective-coverage.jest.config.js');
+  fs.writeFileSync(
+    file,
+    `'use strict';
+const path = require('node:path');
+const {pathToFileURL} = require('node:url');
+const BASE = ${JSON.stringify(options.config ?? null)};
+const ROOT = ${JSON.stringify(options.root)};
+const NODE_MODULES = ${JSON.stringify(options.jest)};
+const SELECTED = ${JSON.stringify(selected)};
+const coverageGlobs = ${coverageGlobs.toString()};
+function jestConfig() {
+  for (const candidate of [
+    () => path.join(NODE_MODULES, 'jest-config'),
+    () => require.resolve('jest-config', {paths: [path.join(NODE_MODULES, 'jest')]}),
+  ]) {
+    try {
+      return require(candidate());
+    } catch {
+      // Not installed there.
+    }
+  }
+  return undefined;
+}
+async function load() {
+  if (BASE === null) {
+    return {};
+  }
+  // Jest's own reader handles every config form it accepts: ESM, TypeScript
+  // and the \`jest\` key of a \`package.json\`.
+  const reader = jestConfig()?.readInitialOptions;
+  if (typeof reader === 'function') {
+    return (await reader(BASE, {skipMultipleConfigError: true})).config;
+  }
+  let loaded;
+  try {
+    loaded = require(BASE);
+  } catch (error) {
+    if (error.code !== 'ERR_REQUIRE_ESM' && error.code !== 'ERR_REQUIRE_ASYNC_MODULE') {
+      throw error;
+    }
+    loaded = await import(pathToFileURL(BASE).href);
+  }
+  if (loaded.__esModule || Object.prototype.toString.call(loaded) === '[object Module]') {
+    loaded = loaded.default;
+  }
+  if (path.basename(BASE) === 'package.json') {
+    loaded = loaded.jest ?? {};
+  }
+  return typeof loaded === 'function' ? loaded() : loaded;
+}
+module.exports = async () => {
+  const base = await load();
+  const configDir = BASE === null ? ROOT : path.dirname(BASE);
+  const rootDir = path.resolve(configDir, base.rootDir ?? '.');
+  const config = {...base, rootDir};
+  const roots = [rootDir];
+  const globs = [...(base.collectCoverageFrom ?? [])];
+  if (Array.isArray(base.projects)) {
+    // An inline project's \`rootDir\` defaults to the config file's directory,
+    // which is no longer the target's, so each gets its own explicitly. Like
+    // Jest, a relative one resolves against the working directory.
+    config.projects = base.projects.map(project => {
+      if (typeof project === 'string') {
+        return project;
+      }
+      const projectRoot = project.rootDir
+        ? path.resolve(project.rootDir.replace(/<rootDir>/g, configDir))
+        : configDir;
+      roots.push(projectRoot);
+      globs.push(...(project.collectCoverageFrom ?? []));
+      return {...project, rootDir: projectRoot};
+    });
+  }
+  // Jest instruments by the top-level \`collectCoverageFrom\` alone, matched
+  // against a file's path from its own project's \`rootDir\`, so the selection
+  // is spelled from every root. Negations go last: the last match wins.
+  config.collectCoverageFrom = [
+    ...new Set([
+      ...roots.flatMap(root => coverageGlobs(SELECTED, root)),
+      ...globs.filter(glob => glob.startsWith('!')),
+    ]),
+  ];
+  return config;
+};
+`,
+  );
+  return file;
 }
 
 function coverageFilepath(sourcePath, options) {
@@ -1174,11 +1346,13 @@ function coverageFilepath(sourcePath, options) {
       : `${options.coveragePrefix.replace(/\/+$/, '')}/${staged}`;
   if (
     options.coveragePaths !== undefined &&
-    !options.coveragePaths.some(
-      selected =>
-        filepath === selected ||
-        filepath.startsWith(`${selected.replace(/\/+$/, '')}/`),
-    )
+    !options.coveragePaths.some(selected => {
+      const trimmed = normalizedCoveragePath(selected);
+      return (
+        trimmed !== '' &&
+        (filepath === trimmed || filepath.startsWith(`${trimmed}/`))
+      );
+    })
   ) {
     return undefined;
   }
@@ -1191,7 +1365,7 @@ function writeCoverage(options, plan, runCount) {
   }
   const runFailures = [];
   const hitsByFile = new Map();
-  for (let index = 0; index < runCount; index++) {
+  for (let index = 0; index < (plan.skip ? 0 : runCount); index++) {
     let input;
     try {
       input = JSON.parse(
@@ -1256,7 +1430,7 @@ function writeCoverage(options, plan, runCount) {
   return runFailures;
 }
 
-async function runVitestGroup(options, group, reportFile, coverageDirectory) {
+async function runVitestGroup(options, group, reportFile, coverageDirectory, include) {
   const files = group.runs.map(run => run.file);
   const patterns = group.runs.flatMap(run =>
     run.whole ? [] : run.filters.map(filter => namePattern(run.file, filter, true)),
@@ -1274,9 +1448,10 @@ async function runVitestGroup(options, group, reportFile, coverageDirectory) {
           '--coverage.reporter=json',
           `--coverage.reportsDirectory=${coverageDirectory}`,
           '--coverage.reportOnFailure=true',
+          ...(include ?? []).map(glob => `--coverage.include=${glob}`),
         ]),
     ...files.map(file => file.path),
-  ]);
+  ], {cwd: options.root});
   const endedTime = Date.now();
   let report;
   let readError;
@@ -1396,7 +1571,9 @@ async function runVitestGroup(options, group, reportFile, coverageDirectory) {
 }
 
 async function runVitestTests(options, runs, workDir) {
-  const coverage = coveragePlan(workDir);
+  const coverage = coveragePlan(options, workDir);
+  const include =
+    coverage?.selected === undefined ? undefined : coverageGlobs(coverage.selected, options.root);
   const groups = [];
   const whole = runs.filter(run => run.whole);
   if (whole.length > 0) {
@@ -1415,7 +1592,8 @@ async function runVitestTests(options, runs, workDir) {
         options,
         group,
         path.join(workDir, `vitest-${index}.json`),
-        coverage?.directory(index),
+        coverage === undefined || coverage.skip ? undefined : coverage.directory(index),
+        include,
       );
       results.push(...outcome.results);
       runFailures.push(...outcome.runFailures);

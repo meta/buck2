@@ -26,6 +26,15 @@ buck2_core_tests(
         "test_daemon_killed_on_checkout_removal": {
             "deps": ["fbsource//third-party/rust:regex"],
         },
+        "test_snoop": {
+            "compatible_with": [
+                "ovr_config//os:linux",
+                "ovr_config//os:macos",
+            ],
+            "data": ":test_daemon_data",
+            "deps": ["//buck2/tests/core/common:unidaemon"],
+            "require_nano_prelude": True,
+        },
         "test_tenant_paging": {
             "data": ":test_daemon_data",
             "deps": ["fbsource//third-party/rust:rusqlite"],

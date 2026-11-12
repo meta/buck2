@@ -479,10 +479,8 @@ impl CommandKind {
             | CommandKind::Forkserver(_)
             | CommandKind::InternalTestRunner(_) => false,
             CommandKind::Root(root) => root.prints_daemon_dir(),
-            CommandKind::HelpEnv(_)
-            | CommandKind::Init(_)
-            | CommandKind::Completion(_)
-            | CommandKind::Log(_) => false,
+            CommandKind::Log(log) => log.connects_to_daemon(),
+            CommandKind::HelpEnv(_) | CommandKind::Init(_) | CommandKind::Completion(_) => false,
             CommandKind::Debug(
                 DebugCommand::PersistEventLogs(_)
                 | DebugCommand::UploadReLogs(_)

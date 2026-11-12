@@ -229,7 +229,9 @@ async fn subscribe_to_active_commands(
 ) {
     loop {
         if let Some(mut buckd) = buckd.take() {
-            subscription_impl(&mut buckd, client_context.clone(), &live).await;
+            let mut client_context = client_context.clone();
+            client_context.tenant_generation = paths.tenant_generation();
+            subscription_impl(&mut buckd, client_context, &live).await;
             *live.lock().expect(LOCK_MSG) = None;
         }
         tokio::time::sleep(SUBSCRIPTION_RETRY_INTERVAL).await;

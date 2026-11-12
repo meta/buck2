@@ -146,6 +146,10 @@ pub enum LogCommand {
 }
 
 impl LogCommand {
+    pub fn connects_to_daemon(&self) -> bool {
+        matches!(self, Self::Snoop(_))
+    }
+
     pub fn exec(
         self,
         matches: BuckArgMatches<'_>,

@@ -104,6 +104,13 @@ def _make_rustc_shim(ctx: AnalysisContext, cwd: Artifact, arch: str | None = Non
             # add dep_argsfiles as a separate argument because rustc does NOT support nested @argsfiles
             dep_argsfiles,
         )
+    elif arch != None:
+        sysroot_args = cmd_args(
+            "--sysroot=",
+            toolchain_info.sysroot_path,
+            delimiter = "",
+            hidden = toolchain_info.sysroot_path,
+        )
     else:
         sysroot_args = cmd_args()
 

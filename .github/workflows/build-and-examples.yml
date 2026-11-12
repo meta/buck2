@@ -11,8 +11,10 @@ env:
   # costs time and disk.
   CARGO_INCREMENTAL: 0
 
+# build_buck2.yml documents the repository variable BUCK2_RELEASE_TARGETS.
 jobs:
   macos-build-examples:
+    if: vars.BUCK2_RELEASE_TARGETS == '' || contains(vars.BUCK2_RELEASE_TARGETS, '-apple-darwin')
     runs-on: macos-15
     steps:
     - uses: actions/checkout@v6
@@ -43,6 +45,7 @@ jobs:
     - uses: ./.github/actions/setup_reindeer
     - uses: ./.github/actions/build_bootstrap
   linux-build-examples:
+    if: vars.BUCK2_RELEASE_TARGETS == '' || contains(vars.BUCK2_RELEASE_TARGETS, '-linux-')
     runs-on: ubuntu-26.04
     steps:
     - uses: actions/checkout@v6
@@ -85,6 +88,7 @@ jobs:
   # fall back to the standard GitHub-hosted runner there so the job doesn't
   # sit queued forever waiting for a runner that isn't available.
   windows-build-examples:
+    if: vars.BUCK2_RELEASE_TARGETS == '' || contains(vars.BUCK2_RELEASE_TARGETS, '-windows-')
     runs-on: ${{ github.repository_owner == 'meta' && 'windows-8-core' || 'windows-latest' }}
     steps:
       - uses: actions/checkout@v6

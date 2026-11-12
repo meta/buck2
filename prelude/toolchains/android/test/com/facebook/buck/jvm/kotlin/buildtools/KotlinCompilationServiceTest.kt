@@ -630,7 +630,7 @@ internal class KotlinCompilationServiceTest {
         CompilationService.loadImplementation(javaClass.classLoader).getCompilerVersion(),
     )
     val expectedGeneratorVersion =
-        if (compilerVersion == "2.5.0-Beta2") compilerVersion else "2.0.20"
+        if (compilerVersion in setOf("2.5.0-Beta2", "2.5.0-RC")) compilerVersion else "2.0.20"
     val generatorVersion =
         JarFile(checkNotNull(System.getenv("CP_SNAPSHOT_GENERATOR_JAR"))).use { jar ->
           jar.getInputStream(jar.getJarEntry("META-INF/compiler.version")).bufferedReader().use {

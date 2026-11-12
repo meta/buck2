@@ -1,4 +1,5 @@
-load("@prelude//python/meta_only:config.bzl", "DEFAULT_PY_VERSION")
+# @oss-disable[end= ]: load("@prelude//python/meta_only:config.bzl", "DEFAULT_PY_VERSION")
+load("@prelude//python:typing.bzl", "DEFAULT_PY_VERSION") # @oss-enable
 load("@prelude//utils:source_listing.bzl", "source_listing")
 load(":defs.bzl", "cxx_hacks", "cxx_internal_tools")
 

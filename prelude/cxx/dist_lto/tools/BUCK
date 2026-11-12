@@ -1,5 +1,6 @@
 load("@prelude//cxx/dist_lto:tools.bzl", "dist_lto_tools")
-load("@prelude//python/meta_only:config.bzl", "DEFAULT_PY_VERSION")
+# @oss-disable[end= ]: load("@prelude//python/meta_only:config.bzl", "DEFAULT_PY_VERSION")
+load("@prelude//python:typing.bzl", "DEFAULT_PY_VERSION") # @oss-enable
 load("@prelude//utils:source_listing.bzl", "source_listing")
 
 oncall("build_infra")

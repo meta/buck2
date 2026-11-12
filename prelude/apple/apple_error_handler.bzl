@@ -70,7 +70,7 @@ def _add_category_strings(ctx: ActionErrorCtx, stderr: str, errors: list[ActionS
             continue
 
         subcategory = None
-        remediation = None
+        remediation = enricher.message
         if enricher.subcategory_extractor:
             subcategory = enricher.subcategory_extractor(stderr)
             if subcategory and enricher.subcategory_remediations and subcategory in enricher.subcategory_remediations:
@@ -79,7 +79,6 @@ def _add_category_strings(ctx: ActionErrorCtx, stderr: str, errors: list[ActionS
         errors.append(
             ctx.new_sub_error(
                 category = "apple_" + enricher.category,
-                message = enricher.message,
                 subcategory = subcategory,
                 remediation = remediation,
                 show_in_stderr = remediation != None,

@@ -9,6 +9,7 @@
  */
 
 use std::convert::Infallible;
+use std::ffi::OsStr;
 use std::ffi::OsString;
 use std::fmt::Display;
 use std::io;
@@ -139,6 +140,14 @@ impl ExitResult {
             }),
             stdout: Vec::new(),
             emitted_errors: Vec::new(),
+        }
+    }
+
+    /// The program this result will exec and the environment changes applied to it.
+    pub fn exec_environment(&mut self) -> Option<(&OsStr, &mut ExecEnvironment)> {
+        match &mut self.variant {
+            ExitResultVariant::Exec(args) => Some((&args.prog, &mut args.environment)),
+            _ => None,
         }
     }
 

@@ -619,7 +619,7 @@ impl InvocationRecorder {
     }
 
     #[cfg(fbcode_build)]
-    pub(crate) fn log_artillery_trace(&self, result: &ExitResult) {
+    pub(crate) fn log_artillery_trace(&self, result: &mut ExitResult) {
         if result.exit_code().is_none() && self.command_name != Some("run")
             || self.should_restart && !result.is_success() && !crate::stdio::has_written_to_stdout()
         {
@@ -647,7 +647,16 @@ impl InvocationRecorder {
             );
             art_cli_lite_rs_native::annotate("buck2.error_category", &error.category().to_string());
         }
-        art_cli_lite_rs_native::finish();
+        match result.exec_environment() {
+            Some((prog, environment)) => {
+                environment
+                    .set
+                    .extend(art_cli_lite_rs_native::outgoing_exec(
+                        &prog.to_string_lossy(),
+                    ))
+            }
+            None => art_cli_lite_rs_native::finish(),
+        }
     }
 
     pub(crate) fn update_for_command(

@@ -1280,6 +1280,71 @@ async fn test_dep_file_hit_across_configurations(buck: &Buck) -> anyhow::Result<
     Ok(())
 }
 
+/// Builds `app:simple_dep_file` under `platform`. Its dep file lists `used_input1` (through two
+/// symlinks), so a change to `used_input1_contents` is a change that the dep-file check of an older
+/// entry does not excuse.
+async fn build_simple_dep_file_for_platform(
+    buck: &Buck,
+    platform: &str,
+    used_input1_contents: &str,
+) -> anyhow::Result<()> {
+    buck.build(&[
+        "app:simple_dep_file",
+        "--target-platforms",
+        &format!("root//platforms:{platform}"),
+        "-c",
+        &format!("test.used_input1_contents={used_input1_contents}"),
+        "--local-only",
+        "--no-remote-cache",
+    ])
+    .await?;
+    Ok(())
+}
+
+#[buck_test(
+    // test uses symlinks that mess up with eden symlink redirection on MacOS
+    setup_eden = false,
+    data_dir = "dep_files",
+    skip_for_os = ["windows"],
+)]
+async fn test_dep_file_hit_across_configurations_with_stale_entry(
+    buck: &Buck,
+) -> anyhow::Result<()> {
+    // TODO(T297763500): This test documents a BUG and asserts the buggy behavior, so it must be
+    // updated once the task is fixed.
+    //
+    // platform_b holds its own entry when platform_a builds the action with a changed input, as a
+    // test's configuration does when an edited library is built in its default configuration
+    // before the test runs. platform_b's entry is then stale and platform_a's is identical.
+    let old_contents = random_string();
+    let new_contents = random_string();
+    build_simple_dep_file_for_platform(buck, "platform_b", &old_contents).await?;
+    check_execution_kind(buck, &[ACTION_EXECUTION_KIND_LOCAL], &WRITE_KINDS).await?;
+    build_simple_dep_file_for_platform(buck, "platform_a", &new_contents).await?;
+    check_execution_kind(buck, &[ACTION_EXECUTION_KIND_LOCAL], &WRITE_KINDS).await?;
+
+    // platform_a's identical entry should serve this build. Instead the identical-action lookup
+    // stops at platform_b's own entry, whose dep-file check then misses on `used_input1`, and the
+    // action executes again.
+    build_simple_dep_file_for_platform(buck, "platform_b", &new_contents).await?;
+    check_execution_kind(buck, &[ACTION_EXECUTION_KIND_LOCAL], &WRITE_KINDS).await?;
+    check_match_dep_files_events(
+        buck,
+        &[
+            MatchDepFilesEvent {
+                remote_cache: false,
+                checking_filtered_inputs: false,
+            },
+            MatchDepFilesEvent {
+                remote_cache: false,
+                checking_filtered_inputs: true,
+            },
+        ],
+    )
+    .await?;
+    Ok(())
+}
+
 #[buck_test(setup_eden = false, data_dir = "dep_files", skip_for_os = ["windows"])]
 async fn test_no_cross_config_hit_without_content_based_paths(buck: &Buck) -> anyhow::Result<()> {
     // The mirror of `test_dep_file_hit_across_configurations`: with non-content-based paths the

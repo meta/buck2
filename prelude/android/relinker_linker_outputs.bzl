@@ -68,6 +68,35 @@ def _preinline_ir_flags_factory() -> typing.Callable:
 
     return factory
 
+def _cir_opt_report_outputs_factory(output_path: str) -> typing.Callable:
+    """Factory for the relinker ClangIR optimization report outputs."""
+
+    def factory(ctx: AnalysisContext) -> ExtraLinkerOutputs:
+        stats_file = ctx.actions.declare_output(output_path + ".cir-stats", has_content_based_path = False)
+        remarks_file = ctx.actions.declare_output(output_path + ".cir-remarks.jsonl", has_content_based_path = False)
+        return ExtraLinkerOutputs(
+            artifacts = {"cir-opt-remarks": remarks_file, "cir-opt-stats": stats_file},
+            # Keyed by the output type, which is what the [relinker_extra_outputs]
+            # sub-target looks up.
+            providers = {"cir-opt-report": [DefaultInfo(default_outputs = [stats_file, remarks_file])]},
+        )
+
+    return factory
+
+def _cir_opt_report_flags_factory() -> typing.Callable:
+    """Factory for the relinker ClangIR optimization report linker flags.
+
+    lld reads the .cir_opportunity sections of the library's objects, the LTO
+    output included, and writes the summed counters and the remark sites."""
+
+    def factory(_ctx: AnalysisContext, outputs: dict[str, Artifact]) -> list[ArgLike]:
+        return [
+            cmd_args(outputs["cir-opt-stats"].as_output(), format = "-Wl,--cir-opt-stats={}"),
+            cmd_args(outputs["cir-opt-remarks"].as_output(), format = "-Wl,--cir-opt-remarks={}"),
+        ]
+
+    return factory
+
 def _get_extra_relinker_output_types(ctx: AnalysisContext) -> list[str]:
     """Get list of enabled extra relinker output types from attribute."""
     return getattr(ctx.attrs, "extra_relinker_outputs", [])
@@ -98,6 +127,10 @@ def get_extra_relinker_args(ctx: AnalysisContext, output_path: str, soname: str 
                 result = _preinline_ir_outputs_factory(output_path)(ctx)
                 artifacts |= result.artifacts
                 providers |= result.providers
+            elif output_type == "cir-opt-report":
+                result = _cir_opt_report_outputs_factory(output_path)(ctx)
+                artifacts |= result.artifacts
+                providers |= result.providers
         return ExtraLinkerOutputs(artifacts = artifacts, providers = providers)
 
     def combined_flags_factory(ctx: AnalysisContext, outputs: dict[str, Artifact]) -> list[ArgLike]:
@@ -107,6 +140,8 @@ def get_extra_relinker_args(ctx: AnalysisContext, output_path: str, soname: str 
                 flags += _llvm_stats_flags_factory()(ctx, outputs)
             elif output_type == "preinline-ir":
                 flags += _preinline_ir_flags_factory()(ctx, outputs)
+            elif output_type == "cir-opt-report":
+                flags += _cir_opt_report_flags_factory()(ctx, outputs)
         return flags
 
     return {

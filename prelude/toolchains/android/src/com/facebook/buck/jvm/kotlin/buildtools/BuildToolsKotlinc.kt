@@ -56,14 +56,15 @@ class BuildToolsKotlinc : Kotlinc {
       classToSourceMapPath: Path?,
   ): Int {
     val argsStart = System.nanoTime()
-    val compilerArgs = buildCompilerArgs(
-        ruleCellRoot,
-        kotlinSourceFilePaths,
-        workingDirectory,
-        invokingRule,
-        options,
-        kotlinCDLoggingContext,
-    )
+    val (compilerArgs, expandedSources) =
+        buildCompilerArgs(
+            ruleCellRoot,
+            kotlinSourceFilePaths,
+            workingDirectory,
+            invokingRule,
+            options,
+            kotlinCDLoggingContext,
+        )
     val argsMs = (System.nanoTime() - argsStart) / 1_000_000
 
     LOG.info(
@@ -118,8 +119,24 @@ class BuildToolsKotlinc : Kotlinc {
     val gcDeltaMs = gcAfter.first - gcBefore.first
     val gcDeltaCount = gcAfter.second - gcBefore.second
 
+    // After compiling, so that counting uses lexer classes the compiler has already loaded.
+    val tokenCountStart = System.nanoTime()
+    try {
+      val tokenCounts =
+          SourceTokenCounter.countTokens(expandedSources, ruleCellRoot.path, classLoader)
+      kotlinCDLoggingContext.numKotlinTokens = tokenCounts.kotlinTokens
+      kotlinCDLoggingContext.numJavaTokens = tokenCounts.javaTokens
+    } catch (e: Exception) {
+      // Token counting is best-effort telemetry; don't fail the build
+      kotlinCDLoggingContext.addExtras(
+          BuildToolsKotlinc::class.java.simpleName,
+          "Token counting failed: ${e.cause ?: e}",
+      )
+    }
+    val tokenCountMs = (System.nanoTime() - tokenCountStart) / 1_000_000
+
     LOG.info(
-        "KOTLINCD_TIMING|${invokingRule.fullyQualifiedName}|args_ms=$argsMs|classloader_ms=$classLoaderMs|service_load_ms=$serviceLoadMs|compile_ms=$compileMs|gc_time_ms=$gcDeltaMs|gc_count=$gcDeltaCount",
+        "KOTLINCD_TIMING|${invokingRule.fullyQualifiedName}|args_ms=$argsMs|classloader_ms=$classLoaderMs|service_load_ms=$serviceLoadMs|compile_ms=$compileMs|gc_time_ms=$gcDeltaMs|gc_count=$gcDeltaCount|token_count_ms=$tokenCountMs",
     )
 
     return result.toExitCode.code
@@ -152,6 +169,7 @@ class BuildToolsKotlinc : Kotlinc {
     )
   }
 
+  /** Returns the compiler arguments and the expanded source paths. */
   private fun buildCompilerArgs(
       ruleCellRoot: AbsPath,
       kotlinSourceFilePaths: ImmutableSortedSet<RelPath>,
@@ -159,7 +177,7 @@ class BuildToolsKotlinc : Kotlinc {
       invokingRule: BuildTargetValue,
       options: List<String>,
       kotlinCDLoggingContext: KotlinCDLoggingContext,
-  ): List<String> {
+  ): Pair<List<String>, List<Path>> {
     val expandStart = System.nanoTime()
     val expandedSources: ImmutableList<Path> = getExpandedSourcePathsOrThrow(
         ruleCellRoot,
@@ -184,18 +202,6 @@ class BuildToolsKotlinc : Kotlinc {
           )
         }
 
-    try {
-      val tokenCounts = SourceTokenCounter.countTokens(expandedSources, ruleCellRoot.path)
-      kotlinCDLoggingContext.numKotlinTokens = tokenCounts.kotlinTokens
-      kotlinCDLoggingContext.numJavaTokens = tokenCounts.javaTokens
-    } catch (e: Exception) {
-      // Token counting is best-effort telemetry; don't fail the build
-      kotlinCDLoggingContext.addExtras(
-          BuildToolsKotlinc::class.java.simpleName,
-          "Token counting failed: ${e.message}",
-      )
-    }
-
     val resolvedExpandedSources = expandedSources.map { path ->
       ruleCellRoot.resolve(path).toString()
     }
@@ -214,7 +220,7 @@ class BuildToolsKotlinc : Kotlinc {
       }
 
       addAll(resolvedExpandedSources)
-    }
+    } to expandedSources
   }
 
   private fun getExpandedSourcePathsOrThrow(

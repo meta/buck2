@@ -17,6 +17,5 @@ buck_kotlin_library(
     deps = [
         "prelude//toolchains/android/src/com/facebook/buck/core/filesystems:filesystems",
         "prelude//toolchains/android/src/com/facebook/buck/jvm/cd/command/kotlin:language-version",
-        "prelude//toolchains/android/third-party:kotlin-compiler",
     ],
 )

@@ -25,8 +25,6 @@ object AndroidInstallErrorClassifier {
       )
     }
     return when {
-      input.contains("Could not find `adb` in PATH") ->
-          createInstallError(AndroidInstallErrorTag.ADB_NOT_FOUND, input)
       input.contains("Failed to connect to adb.") || ADB_SERVER_FAILURE.containsMatchIn(input) ->
           createInstallError(AndroidInstallErrorTag.FAILED_TO_CONNECT_TO_ADB, input)
       input.contains("Didn't find any attached Android devices/emulators.") ->

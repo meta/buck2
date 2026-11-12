@@ -422,12 +422,27 @@ class AndroidInstallerManager implements InstallCommand {
     if (Files.exists(Paths.get(adbPath))) {
       return Optional.empty();
     }
-    return Optional.of(
-        errorClassifier.fromErrorMessage(
-            String.format(
-                "Could not find `adb` in PATH, and could not find `adb` "
-                    + "at %s. Please add `adb` to your PATH",
-                adbPath)));
+    return Optional.of(adbNotFound(adbPath, options.adbExecutablePath != null));
+  }
+
+  @VisibleForTesting
+  static InstallError adbNotFound(String adbPath, boolean pathGiven) {
+    if (pathGiven) {
+      return new InstallError(
+          String.format(
+              "Could not find `adb` at %s, the path given with %s or the buckconfig key"
+                  + " `android.adb`.",
+              adbPath, AndroidCommandLineOptions.ADB_EXECUTABLE_PATH_LONG_ARG),
+          AndroidInstallErrorTag.ADB_NOT_FOUND);
+    }
+    return new InstallError(
+        String.format(
+            "Could not find `adb` in PATH, and could not find `adb` at %s. The PATH searched is"
+                + " the one the buck2 daemon started with, which can differ from this command's."
+                + " Pass the location of `adb` instead: `buck2 install <target> -- %s"
+                + " <absolute-path-to-adb>`.",
+            adbPath, AndroidCommandLineOptions.ADB_EXECUTABLE_PATH_LONG_ARG),
+        AndroidInstallErrorTag.ADB_NOT_FOUND);
   }
 
   /**

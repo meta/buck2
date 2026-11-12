@@ -41,14 +41,6 @@ public class AndroidInstallErrorClassifierTest {
   }
 
   @Test
-  public void missingAdbIsAdbNotFound() {
-    assertClassified(
-        AndroidInstallErrorTag.ADB_NOT_FOUND,
-        "Could not find `adb` in PATH, and could not find `adb` at"
-            + " /opt/android_sdk/platform-tools/adb. Please add `adb` to your PATH");
-  }
-
-  @Test
   public void adbServerThatCannotStartIsFailedToConnectToAdb() {
     assertClassified(
         AndroidInstallErrorTag.FAILED_TO_CONNECT_TO_ADB,

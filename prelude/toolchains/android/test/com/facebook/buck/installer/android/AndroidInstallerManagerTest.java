@@ -11,6 +11,7 @@
 package com.facebook.buck.installer.android;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
 
 import com.facebook.buck.installer.InstallError;
@@ -43,6 +44,38 @@ public class AndroidInstallerManagerTest {
     InstallError error = result.getInstallError();
     assertEquals(Set.of(AndroidInstallErrorTag.ADB_NOT_FOUND), error.getTags());
     assertTrue(
-        error.getMessage(), error.getMessage().contains("could not find `adb` at " + missingAdb));
+        error.getMessage(),
+        error
+            .getMessage()
+            .contains(
+                "Could not find `adb` at "
+                    + missingAdb
+                    + ", the path given with --adb-executable-path or the buckconfig key"
+                    + " `android.adb`."));
+    assertFalse(error.getMessage(), error.getMessage().contains("PATH"));
+  }
+
+  /** A PATH change does not reach a running buck2 daemon, so the error names the flag. */
+  @Test
+  public void adbMissingFromDefaultLocationsNamesTheDaemonPathAndTheFlag() {
+    InstallError error =
+        AndroidInstallerManager.adbNotFound("/opt/android_sdk/platform-tools/adb", false);
+
+    assertEquals(Set.of(AndroidInstallErrorTag.ADB_NOT_FOUND), error.getTags());
+    String message = error.getMessage();
+    assertTrue(
+        message,
+        message.contains(
+            "Could not find `adb` in PATH, and could not find `adb` at"
+                + " /opt/android_sdk/platform-tools/adb."));
+    assertTrue(
+        message,
+        message.contains(
+            "The PATH searched is the one the buck2 daemon started with, which can differ from"
+                + " this command's."));
+    assertTrue(
+        message,
+        message.contains(
+            "`buck2 install <target> -- --adb-executable-path <absolute-path-to-adb>`"));
   }
 }

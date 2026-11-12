@@ -9,7 +9,6 @@
  */
 
 @file:SuppressWarnings("PackageLocationMismatch")
-@file:Suppress("OPT_IN_USAGE_ERROR")
 @file:OptIn(
     com.facebook.DeprecatedForRemovalCompilerApiCompat::class,
     com.facebook.DirectDeclarationsAccessCompat::class,

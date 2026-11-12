@@ -1,0 +1,68 @@
+name: "Publish DotSlash files"
+description: "Adds DotSlash files for the built release targets to a tag"
+inputs:
+  tag:
+    description: "tag to add the DotSlash files to"
+    required: true
+  github_token:
+    # Composite workflows do not have access to secrets so they have to be passed in
+    description: "GitHub Token"
+    required: true
+  release_targets:
+    description: "the value of the BUCK2_RELEASE_TARGETS repository variable (see build_buck2.yml)"
+    required: false
+    default: ""
+
+runs:
+  using: "composite"
+  steps:
+    # A fork that sets BUCK2_RELEASE_TARGETS builds only some platforms.
+    # dotslash-publish-release fails when a platform in its config matches no release asset,
+    # so this step writes a copy of the config without the platforms that weren't built.
+    - name: Select the built platforms
+      id: select
+      if: inputs.release_targets != ''
+      shell: bash
+      run: |
+        config="$RUNNER_TEMP/dotslash-config.json"
+        # publish_tag downloads the release assets into `artifacts`.
+        assets=$(find artifacts -type f -printf '%f\n' | jq -Rsc 'split("\n") | map(select(. != ""))')
+        filtered=$(jq --argjson assets "$assets" '
+          .outputs |= map_values(.platforms |= with_entries(
+            select(.value.regex as $regex | any($assets[]; test($regex)))
+          ))
+        ' .github/dotslash-config.json)
+        # The script uploads a DotSlash file even when none of its platforms were built.
+        # A DotSlash file without platforms runs nowhere, so we leave it out of the config.
+        for output in $(jq -r '.outputs | to_entries[] | select(.value.platforms == {}) | .key' <<< "$filtered"); do
+          echo "::warning::BUCK2_RELEASE_TARGETS builds no platform of the DotSlash file $output, so it is not published. On Linux, DotSlash uses the musl builds."
+        done
+        jq '.outputs |= with_entries(select(.value.platforms != {}))' <<< "$filtered" > "$config"
+        jq -r '.outputs | to_entries[] | "\(.key): \(.value.platforms | keys | join(" "))"' "$config"
+        echo "config=$config" >> "$GITHUB_OUTPUT"
+        echo "outputs=$(jq '.outputs | length' "$config")" >> "$GITHUB_OUTPUT"
+    - uses: facebook/dotslash-publish-release@v1
+      if: inputs.release_targets == ''
+      env:
+        GITHUB_TOKEN: ${{ inputs.github_token }}
+      with:
+        config: .github/dotslash-config.json
+        tag: ${{ inputs.tag }}
+    # The facebook/dotslash-publish-release action reads its config from the repository
+    # through the GitHub API and has no input to pass a local file. This step therefore runs
+    # the action's script from the commit of its v1 tag with `--local-config`. The script
+    # fails on a config without outputs.
+    - name: Publish DotSlash files for the built platforms
+      if: inputs.release_targets != '' && steps.select.outputs.outputs != '0'
+      shell: bash
+      env:
+        CONFIG: ${{ steps.select.outputs.config }}
+        GITHUB_TOKEN: ${{ inputs.github_token }}
+        TAG: ${{ inputs.tag }}
+      run: |
+        python3 -m venv "$RUNNER_TEMP/dotslash-venv"
+        "$RUNNER_TEMP/dotslash-venv/bin/pip" install --quiet blake3==1.0.11
+        curl --retry 5 -fsSL -o "$RUNNER_TEMP/process_config.py" \
+          https://raw.githubusercontent.com/facebook/dotslash-publish-release/2539c4d8ae00a42773306c8731d2dd3724d979d2/process_config.py
+        "$RUNNER_TEMP/dotslash-venv/bin/python" "$RUNNER_TEMP/process_config.py" \
+          --local-config --config "$CONFIG" --tag "$TAG" --upload

@@ -53,9 +53,8 @@ jobs:
         with:
           tag: ${{ needs.set_version_info.outputs.tag }}
           github_token: ${{ secrets.GITHUB_TOKEN }}
-      - uses: facebook/dotslash-publish-release@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - uses: ./.github/actions/publish_dotslash
         with:
-          config: .github/dotslash-config.json
           tag: ${{ needs.set_version_info.outputs.tag }}
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          release_targets: ${{ vars.BUCK2_RELEASE_TARGETS }}

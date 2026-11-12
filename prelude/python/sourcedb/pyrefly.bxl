@@ -37,6 +37,7 @@ _MANIFESTLESS_RULE_TYPES = set([
     "command_alias",
     "export_file",
     "filegroup",
+    "sh_binary",
 ])
 
 def _rule_has_no_manifest(rule_type: str) -> bool:

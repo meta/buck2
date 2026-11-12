@@ -176,6 +176,7 @@ struct JoinCore<F: Future, M: Outcomes<F>> {
 enum Entry<F, K> {
     Running(F),
     Done(K),
+    Taken,
 }
 
 impl<F: Future, M: Outcomes<F>> JoinCore<F, M> {
@@ -266,18 +267,19 @@ impl<F: Future, M: Outcomes<F>> JoinCore<F, M> {
         }
 
         if self.remaining == 0 {
-            let out = std::mem::take(&mut self.entries)
-                .into_iter()
-                .map(|e| match e {
-                    Entry::Done(r) => r,
-                    Entry::Running(_) => {
+            let mut entries = std::mem::take(&mut self.entries);
+            let mut out = Vec::with_capacity(entries.len());
+            for e in entries.iter_mut() {
+                match std::mem::replace(e, Entry::Taken) {
+                    Entry::Done(r) => out.push(r),
+                    Entry::Running(_) | Entry::Taken => {
                         // This would mean that we have a bug somewhere and miscounted `remaining`.
                         // `abort` because the pin contract of the future has been violated at this
                         // point and there's nothing else to do
                         std::process::abort()
                     }
-                })
-                .collect();
+                }
+            }
             Poll::Ready(Ok(out))
         } else {
             Poll::Pending
@@ -682,6 +684,49 @@ mod tests {
             poll_once(&mut j, &waker),
             Poll::Ready((0..100u32).map(|i| i * 2).collect::<Vec<_>>())
         );
+    }
+
+    /// Outputs are moved out exactly once for joins on both sides of `MiniVec`'s inline limit.
+    ///
+    /// `MiniVec` stores up to `MAX_INLINE_CAP` (14) elements inline and converts those into a
+    /// `Vec` without copying. Wider arrays use an extended layout with a heap header that `Vec`
+    /// cannot adopt. The widths below cover the last inline size, the first extended size and a
+    /// much wider join.
+    #[test]
+    fn test_wide_join_outputs_are_not_dropped_or_leaked() {
+        struct Counted(Arc<AtomicUsize>);
+        impl Drop for Counted {
+            fn drop(&mut self) {
+                self.0.fetch_add(1, Ordering::SeqCst);
+            }
+        }
+
+        for n in [14, 15, 100] {
+            let drops = Arc::new(AtomicUsize::new(0));
+            let futs: Vec<_> = (0..n)
+                .map(|_| {
+                    let drops = drops.clone();
+                    async move { Counted(drops) }
+                })
+                .collect();
+            let mut j = Box::pin(join_all(futs));
+            let waker = Waker::from(Arc::new(CountingWaker(AtomicUsize::new(0))));
+            let Poll::Ready(out) = poll_once(&mut j, &waker) else {
+                panic!("not ready")
+            };
+            assert_eq!(out.len(), n);
+            assert_eq!(
+                drops.load(Ordering::SeqCst),
+                0,
+                "output dropped during assembly, n={n}"
+            );
+            drop(out);
+            assert_eq!(
+                drops.load(Ordering::SeqCst),
+                n,
+                "output leaked or double dropped, n={n}"
+            );
+        }
     }
 
     #[test]

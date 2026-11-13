@@ -676,7 +676,6 @@ apple_library = prelude_rule(
         | apple_common.uses_cxx_explicit_modules_arg()
         | apple_common.uses_modules_arg()
         | {
-            "bridging_header": attrs.option(attrs.source(), default = None),
             "can_be_asset": attrs.option(attrs.bool(), default = None),
             "cxx_runtime_type": attrs.option(attrs.enum(CxxRuntimeType), default = None),
             "dist_thin_lto_codegen_flags": attrs.list(attrs.arg(), default = []),

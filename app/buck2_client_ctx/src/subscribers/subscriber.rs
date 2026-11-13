@@ -15,7 +15,6 @@ use buck2_events::BuckEvent;
 
 use crate::console_interaction_stream::ConsoleInteraction;
 use crate::exit_result::ExitResult;
-use crate::subscribers::observer::ErrorObserver;
 use crate::ticker::Tick;
 
 /// Visitor trait.  Implement this to subscribe to the event streams.
@@ -77,9 +76,6 @@ pub trait EventSubscriber: Send {
         None
     }
 
-    fn as_error_observer(&self) -> Option<&dyn ErrorObserver> {
-        None
-    }
     fn handle_stream_end(&mut self) {}
     fn handle_daemon_connection_failure(&mut self) {}
     fn handle_daemon_started(&mut self, _reason: buck2_data::DaemonWasStartedReason) {}

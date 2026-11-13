@@ -16,7 +16,6 @@ use buck2_error::ExitCode;
 
 use crate::daemon::client::connect::DaemonConstraintsRequest;
 use crate::exit_result::ExitResult;
-use crate::subscribers::observer::ErrorObserver;
 
 /// The state of restarting a command, in one attempt at it. A command is restarted at most
 /// once.
@@ -29,20 +28,26 @@ pub enum RestartState {
     Restarted(RestartRequest),
 }
 
-/// Decides whether a command is restarted, when its first attempt has run.
+/// Watches the first attempt at a command, to decide whether the command is restarted.
 #[derive(Default)]
 pub struct Restarter {
     /// `FORCE_WANT_RESTART`: restart the command whatever its result.
     force: bool,
     /// The daemon the command runs against, once it has connected to one.
     daemon: Option<buck2_cli_proto::DaemonConstraints>,
+    /// `[buck2] restarter`, as the daemon reports it.
+    restarter_is_enabled: bool,
+    /// Whether a soft error reported the daemon's in-memory state as corrupted.
+    daemon_in_memory_state_is_corrupted: bool,
+    /// Whether a soft error reported the daemon's materializer state as corrupted.
+    daemon_materializer_state_is_corrupted: bool,
 }
 
 impl Restarter {
     pub fn try_new() -> buck2_error::Result<Self> {
         Ok(Self {
             force: buck2_env!("FORCE_WANT_RESTART", bool)?,
-            daemon: None,
+            ..Self::default()
         })
     }
 
@@ -51,41 +56,46 @@ impl Restarter {
         self.daemon = Some(daemon.clone());
     }
 
+    pub(crate) fn handle_event(&mut self, event: &buck2_data::instant_event::Data) {
+        match event {
+            buck2_data::instant_event::Data::RestartConfiguration(conf) => {
+                self.restarter_is_enabled = conf.enable_restarter;
+            }
+            buck2_data::instant_event::Data::StructuredError(err)
+                if err.soft_error_category.is_some() =>
+            {
+                self.daemon_in_memory_state_is_corrupted |= err.daemon_in_memory_state_is_corrupted;
+                self.daemon_materializer_state_is_corrupted |=
+                    err.daemon_materializer_state_is_corrupted;
+            }
+            _ => {}
+        }
+    }
+
     /// Whether to restart the command, which had `result`: the restart is forced, or the
     /// command failed on corrupted state with the restarter on, and the user did not
     /// interrupt it.
-    pub(crate) fn should_restart<'a>(
-        &self,
-        observers: impl Iterator<Item = &'a dyn ErrorObserver>,
-        result: &ExitResult,
-    ) -> Option<RestartRequest> {
-        let mut reject_daemon = None;
-        let mut reject_materializer_state = None;
-        let mut restarter_is_enabled = false;
-        for observer in observers {
-            if observer.daemon_in_memory_state_is_corrupted() {
-                reject_daemon = self.daemon.as_ref().map(|daemon| daemon.daemon_id.clone());
-            }
-
-            if observer.daemon_materializer_state_is_corrupted() {
-                reject_materializer_state = self
-                    .daemon
-                    .as_ref()
-                    .and_then(|daemon| daemon.extra.as_ref())
-                    .and_then(|extra| extra.materializer_state_identity.clone());
-            }
-
-            if observer.restarter_is_enabled() {
-                restarter_is_enabled = true;
-            }
-        }
+    pub(crate) fn should_restart(&self, result: &ExitResult) -> Option<RestartRequest> {
+        let daemon = self.daemon.as_ref();
+        let reject_daemon = if self.daemon_in_memory_state_is_corrupted {
+            daemon.map(|daemon| daemon.daemon_id.clone())
+        } else {
+            None
+        };
+        let reject_materializer_state = if self.daemon_materializer_state_is_corrupted {
+            daemon
+                .and_then(|daemon| daemon.extra.as_ref())
+                .and_then(|extra| extra.materializer_state_identity.clone())
+        } else {
+            None
+        };
         let found_corrupted_state = reject_daemon.is_some() || reject_materializer_state.is_some();
         let interrupted_by_user = matches!(result.exit_code(), Some(ExitCode::SignalInterrupt));
 
         let should_restart = self.force
             || (!result.is_success()
                 && !interrupted_by_user
-                && restarter_is_enabled
+                && self.restarter_is_enabled
                 && found_corrupted_state);
         should_restart.then_some(RestartRequest {
             reject_daemon,
@@ -112,50 +122,57 @@ impl RestartRequest {
 mod tests {
     use super::*;
 
-    /// What the events of an attempt reported.
-    struct Observed {
-        restarter_is_enabled: bool,
+    fn error(
+        soft: bool,
         daemon_state_is_corrupted: bool,
         materializer_state_is_corrupted: bool,
+    ) -> buck2_data::instant_event::Data {
+        buck2_data::StructuredError {
+            soft_error_category: soft.then(buck2_data::SoftError::default),
+            daemon_in_memory_state_is_corrupted: daemon_state_is_corrupted,
+            daemon_materializer_state_is_corrupted: materializer_state_is_corrupted,
+            ..Default::default()
+        }
+        .into()
     }
 
-    impl ErrorObserver for Observed {
-        fn daemon_in_memory_state_is_corrupted(&self) -> bool {
-            self.daemon_state_is_corrupted
-        }
-
-        fn daemon_materializer_state_is_corrupted(&self) -> bool {
-            self.materializer_state_is_corrupted
-        }
-
-        fn restarter_is_enabled(&self) -> bool {
-            self.restarter_is_enabled
-        }
-    }
-
+    /// The events of an attempt.
     fn observed(
         restarter_is_enabled: bool,
         daemon_state_is_corrupted: bool,
         materializer_state_is_corrupted: bool,
-    ) -> Observed {
-        Observed {
-            restarter_is_enabled,
-            daemon_state_is_corrupted,
-            materializer_state_is_corrupted,
+    ) -> Vec<buck2_data::instant_event::Data> {
+        let enabled = buck2_data::RestartConfiguration {
+            enable_restarter: restarter_is_enabled,
+        };
+        vec![
+            enabled.into(),
+            error(
+                true,
+                daemon_state_is_corrupted,
+                materializer_state_is_corrupted,
+            ),
+        ]
+    }
+
+    fn after(mut restarter: Restarter, events: &[buck2_data::instant_event::Data]) -> Restarter {
+        for event in events {
+            restarter.handle_event(event);
         }
+        restarter
     }
 
     fn should_restart(
         force: bool,
-        observed: Observed,
+        observed: Vec<buck2_data::instant_event::Data>,
         result: ExitResult,
     ) -> Option<RestartRequest> {
         let restarter = Restarter {
             force,
             daemon: Some(daemon()),
+            ..Default::default()
         };
-        let observers: [&dyn ErrorObserver; 1] = [&observed];
-        restarter.should_restart(observers.into_iter(), &result)
+        after(restarter, &observed).should_restart(&result)
     }
 
     fn daemon() -> buck2_cli_proto::DaemonConstraints {
@@ -230,12 +247,15 @@ mod tests {
             ),
             None
         );
-
-        let observed = observed(true, true, true);
-        let observers: [&dyn ErrorObserver; 1] = [&observed];
         assert_eq!(
-            Restarter::default().should_restart(observers.into_iter(), &failed()),
+            after(Restarter::default(), &observed(true, true, true)).should_restart(&failed()),
             None
         );
+    }
+
+    #[test]
+    fn test_ignores_corruption_that_no_soft_error_reports() {
+        let events = [observed(true, false, false), vec![error(false, true, true)]].concat();
+        assert_eq!(should_restart(false, events, failed()), None);
     }
 }

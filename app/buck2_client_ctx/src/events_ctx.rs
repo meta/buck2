@@ -49,7 +49,6 @@ use crate::exit_result::ExitResult;
 use crate::file_tailers::tailers::FileTailers;
 use crate::restarter::RestartRequest;
 use crate::restarter::RestartState;
-use crate::subscribers::observer::ErrorObserver;
 use crate::subscribers::recorder::InvocationRecorder;
 use crate::subscribers::subscriber::EventSubscriber;
 use crate::ticker::Tick;
@@ -585,6 +584,11 @@ impl EventsCtx {
             .map(|mut event| {
                 let timestamp = event.timestamp();
                 if let buck2_data::buck_event::Data::Instant(instant_event) = event.data_mut() {
+                    if let RestartState::Watching(restarter) = &mut self.restart_state
+                        && let Some(data) = &instant_event.data
+                    {
+                        restarter.handle_event(data);
+                    }
                     match &mut instant_event.data {
                         Some(buck2_data::instant_event::Data::Snapshot(snapshot)) => {
                             let now = SystemTime::now();
@@ -705,10 +709,6 @@ impl EventsCtx {
         self.for_each_subscriber(|subscriber| subscriber.handle_exit_result(exit_result));
     }
 
-    pub(crate) fn error_observers(&self) -> impl Iterator<Item = &dyn ErrorObserver> {
-        self.recorder.iter().filter_map(|r| r.as_error_observer())
-    }
-
     pub(crate) async fn eprintln(&mut self, message: &str) -> buck2_error::Result<()> {
         self.try_for_each_subscriber(|s| {
             // TODO(nga): this is not a tailer.
@@ -777,9 +777,7 @@ impl EventsCtx {
         runtime: &Runtime,
     ) -> (ExitResult, Option<RestartRequest>) {
         let restart_request = match &self.restart_state {
-            RestartState::Watching(restarter) => {
-                restarter.should_restart(self.error_observers(), &result)
-            }
+            RestartState::Watching(restarter) => restarter.should_restart(&result),
             RestartState::NoRestart | RestartState::Restarted(_) => None,
         };
         if restart_request.is_some()

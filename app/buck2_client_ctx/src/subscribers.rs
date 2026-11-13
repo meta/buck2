@@ -16,7 +16,6 @@ pub(crate) mod emit_event;
 pub(crate) mod errorconsole;
 pub mod event_log;
 pub(crate) mod health_check_subscriber;
-pub(crate) mod observer;
 #[cfg(target_os = "linux")]
 pub(crate) mod oom;
 // Only the internal RE client writes REClientFolly.log for this subscriber to upload.

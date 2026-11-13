@@ -97,6 +97,30 @@ pub fn display_configured_target_label(
     }
 }
 
+/// Format a test suite name for display in the console.
+///
+/// Either `$suite`, `$target`, or `$target ($suite)` depending on which information is present.
+fn display_test_suite(
+    target: Option<&ConfiguredTargetLabel>,
+    suite: &str,
+    opts: TargetDisplayOptions,
+) -> buck2_error::Result<String> {
+    let Some(target) = target else {
+        // If we don't have a target name, the suite is fine.
+        return Ok(suite.to_owned());
+    };
+    let unconfigured = target
+        .label
+        .as_ref()
+        .ok_or(ParseEventError::InvalidConfiguredTargetLabel)?;
+    let label = display_configured_target_label(target, opts)?;
+    if suite.is_empty() || suite == unconfigured.name {
+        Ok(label)
+    } else {
+        Ok(format!("{label} ({suite})"))
+    }
+}
+
 fn display_configured_target_label_opt(
     ctl: Option<&ConfiguredTargetLabel>,
     opts: TargetDisplayOptions,
@@ -413,7 +437,14 @@ pub fn display_event(
                 Ok(EventDisplay::bare(stage))
             }
             Data::TestDiscovery(discovery) => Ok(EventDisplay::labeled(
-                format!("Test {}", discovery.suite_name),
+                format!(
+                    "Test {}",
+                    display_test_suite(
+                        discovery.target_label.as_ref(),
+                        &discovery.suite_name,
+                        opts,
+                    )?
+                ),
                 "discovering tests",
             )),
             Data::TestRun(start) => match &start.suite {
@@ -430,7 +461,14 @@ pub fn display_event(
                         }
                     };
                     Ok(EventDisplay::labeled(
-                        format!("Test {}", suite.suite_name),
+                        format!(
+                            "Test {}",
+                            display_test_suite(
+                                suite.target_label.as_ref(),
+                                &suite.suite_name,
+                                opts,
+                            )?
+                        ),
                         tests,
                     ))
                 }
@@ -1416,6 +1454,115 @@ mod tests {
     use buck2_wrapper_common::invocation_id::TraceId;
 
     use super::*;
+
+    fn test_target() -> ConfiguredTargetLabel {
+        ConfiguredTargetLabel {
+            label: Some(buck2_data::TargetLabel {
+                package: "my_cell//my_package".into(),
+                name: "my_test".into(),
+            }),
+            configuration: Some(buck2_data::Configuration {
+                full_name: "cfg".into(),
+            }),
+            execution_configuration: None,
+        }
+    }
+
+    fn test_span_start(data: Data) -> BuckEvent {
+        BuckEvent::new(
+            UNIX_EPOCH,
+            TraceId::new(),
+            Some(SpanId::next()),
+            None,
+            SpanStartEvent { data: Some(data) }.into(),
+        )
+    }
+
+    #[test]
+    fn test_suite_displays_full_target_label() -> buck2_error::Result<()> {
+        let display = display_test_suite(
+            Some(&test_target()),
+            "my_test",
+            TargetDisplayOptions::for_console(false),
+        )?;
+        assert_eq!(display, "my_cell//my_package:my_test");
+        Ok(())
+    }
+
+    #[test]
+    fn test_suite_displays_configuration_when_requested() -> buck2_error::Result<()> {
+        let display = display_test_suite(
+            Some(&test_target()),
+            "my_test",
+            TargetDisplayOptions::for_console(true),
+        )?;
+        assert_eq!(display, "my_cell//my_package:my_test (cfg)");
+        Ok(())
+    }
+
+    #[test]
+    fn test_suite_preserves_subtarget_name() -> buck2_error::Result<()> {
+        let display = display_test_suite(
+            Some(&test_target()),
+            "my_test[debug]",
+            TargetDisplayOptions::for_console(false),
+        )?;
+        assert_eq!(display, "my_cell//my_package:my_test (my_test[debug])");
+        Ok(())
+    }
+
+    #[test]
+    fn test_suite_preserves_distinct_suite_name() -> buck2_error::Result<()> {
+        let display = display_test_suite(
+            Some(&test_target()),
+            "named suite",
+            TargetDisplayOptions::for_console(false),
+        )?;
+        assert_eq!(display, "my_cell//my_package:my_test (named suite)");
+        Ok(())
+    }
+
+    #[test]
+    fn test_suite_falls_back_to_suite_name_without_target() -> buck2_error::Result<()> {
+        let display = display_test_suite(
+            None,
+            "legacy suite",
+            TargetDisplayOptions::for_console(false),
+        )?;
+        assert_eq!(display, "legacy suite");
+        Ok(())
+    }
+
+    #[test]
+    fn test_discovery_displays_target_and_discovery_message() -> buck2_error::Result<()> {
+        let event = test_span_start(Data::TestDiscovery(buck2_data::TestDiscoveryStart {
+            suite_name: "my_test".into(),
+            target_label: Some(test_target()),
+        }));
+        let display = display_event(&event, TargetDisplayOptions::for_console(false))?;
+        assert_eq!(
+            display.to_string(),
+            "Test my_cell//my_package:my_test -- discovering tests"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn test_run_displays_target_and_test_case_names() -> buck2_error::Result<()> {
+        let event = test_span_start(Data::TestRun(buck2_data::TestRunStart {
+            suite: Some(buck2_data::TestSuite {
+                suite_name: "my_test".into(),
+                test_names: vec!["first_case".into(), "second_case".into()],
+                target_label: Some(test_target()),
+            }),
+        }));
+        let display = display_event(&event, TargetDisplayOptions::for_console(false))?;
+        assert_eq!(
+            display.to_string(),
+            "Test my_cell//my_package:my_test -- first_case second_case"
+        );
+        Ok(())
+    }
 
     fn executor_stage_event(stage: buck2_data::executor_stage_start::Stage) -> BuckEvent {
         BuckEvent::new(

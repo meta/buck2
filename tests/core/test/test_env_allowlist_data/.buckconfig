@@ -1,0 +1,15 @@
+[buildfile]
+name=TARGETS.fixture
+
+[repositories]
+root = .
+nano_prelude = nano_prelude
+
+[cell_aliases]
+prelude = nano_prelude
+
+[external_cells]
+nano_prelude = bundled
+
+[build]
+execution_platforms = root//platforms:platforms

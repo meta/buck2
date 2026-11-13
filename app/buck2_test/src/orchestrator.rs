@@ -1990,6 +1990,30 @@ impl BuckTestOrchestrator<'_> {
         })
     }
 
+    /// Environment variables to inherit into test processes on top of the built-in allowlist,
+    /// specified in the root cell's `[test] env_allowlist` buckconfig. The built-in list is
+    /// deliberately minimal, and this is the escape hatch for passing variables which shouldn't
+    /// invaliate test executions (tracing context, proxy settings, and so on).
+    ///
+    /// Note that inherited variables are deliberately not part of the action digest, so changing
+    /// the *value* of one of these will not invalidate test executions. Changing the config itself
+    /// will, since reading it here records a dependency edge.
+    async fn extra_test_env_allowlist(
+        dice: &mut DiceComputations<'_>,
+    ) -> buck2_error::Result<Vec<String>> {
+        let root_cell = dice.get_cell_resolver().await?.root_cell();
+        Ok(dice
+            .parse_legacy_config_list_property::<String>(
+                root_cell,
+                BuckconfigKeyRef {
+                    section: "test",
+                    property: "env_allowlist",
+                },
+            )
+            .await?
+            .unwrap_or_default())
+    }
+
     async fn create_command_execution_request(
         dice: &mut DiceComputations<'_>,
         cwd: ProjectRelativePathBuf,
@@ -2042,9 +2066,12 @@ impl BuckTestOrchestrator<'_> {
             .get::<HasResourceControl>()
             .unwrap()
             .0;
+        let extra_env_allowlist = Self::extra_test_env_allowlist(dice).await?;
         request = request
             .with_working_directory(cwd)
-            .with_local_environment_inheritance(EnvironmentInheritance::test_allowlist())
+            .with_local_environment_inheritance(EnvironmentInheritance::test_allowlist_with_extra(
+                &extra_env_allowlist,
+            ))
             .with_disable_miniperf(!has_resource_control)
             .with_worker(worker)
             .with_remote_execution_custom_image(re_dynamic_image)

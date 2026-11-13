@@ -17,7 +17,6 @@ import java.nio.file.Path;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
-import java.util.Optional;
 import org.jetbrains.annotations.Nullable;
 
 @Nullsafe(Nullsafe.Mode.LOCAL)
@@ -57,11 +56,12 @@ public interface AndroidDevice {
   /**
    * Install an APK on the device with optional user targeting, then confirm it actually landed.
    *
-   * <p>After installing, the on-device apk is read back and compared to {@code apk}; if the package
-   * is missing or the on-device apk is stale (which adb can report as success, notably under {@code
-   * --fastdeploy}, where the real failure only reaches logcat), the install is retried without
-   * {@code --fastdeploy}. The call fails if the apk still does not match. Staged installs are not
-   * verified, since they are not applied until reboot.
+   * <p>After installing, the on-device apk is compared to {@code apk} by signature manifest digest
+   * (see {@link #compareInstalledApk}); if the package is missing or the on-device apk is stale
+   * (which adb can report as success, notably under {@code --fastdeploy}, where the real failure
+   * only reaches logcat), the install is retried without {@code --fastdeploy}. The call fails if
+   * the apk still does not match. Staged installs are not verified, since they are not applied
+   * until reboot.
    *
    * @param apk The APK file to install
    * @param installViaSd Whether to install via SD card
@@ -150,8 +150,6 @@ public interface AndroidDevice {
 
   void stopPackage(String packageName) throws Exception;
 
-  Optional<PackageInfo> getPackageInfo(String packageName) throws Exception;
-
   void uninstallPackage(String packageName) throws Exception;
 
   String getContentHash(String path) throws Exception;
@@ -164,12 +162,11 @@ public interface AndroidDevice {
   }
 
   /**
-   * Compares the apk installed for {@code packageName} with {@code apk}. With {@code exact}, the
-   * comparison is byte-for-byte (MD5 of the whole apk); otherwise it compares the apks' signature
-   * manifest digests, falling back to MD5 whenever either digest cannot be read. Throws {@link
-   * AdbCommandFailedException} if the installed apk cannot be read.
+   * Compares the apk installed for {@code packageName} with {@code apk} by the apks' signature
+   * manifest digests, falling back to MD5 of the whole apk whenever either digest cannot be read.
+   * Throws {@link AdbCommandFailedException} if the installed apk cannot be read.
    */
-  InstalledApk compareInstalledApk(String packageName, File apk, boolean exact) throws Exception;
+  InstalledApk compareInstalledApk(String packageName, File apk) throws Exception;
 
   ImmutableSortedSet<Path> listDirRecursive(Path dirPath) throws Exception;
 

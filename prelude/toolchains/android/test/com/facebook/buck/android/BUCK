@@ -67,10 +67,21 @@ buck_java_test(
     srcs = glob(
         STANDARD_TEST_SRCS,
     ),
+    # manifest_digest/, for ContentDigestsTest:
+    # - base.apk, string.apk, drawable.apk: unsigned apks from aapt2 34.0.0, `aapt2 compile` of
+    #   res/values/strings.xml and a 1x1 res/drawable/icon.png, then `aapt2 link -I android.jar`
+    #   (android-34) with one manifest: package com.example.digest, minSdkVersion 21, label
+    #   @string/app_name, icon @drawable/icon. base.apk: app_name "Digest" and a red icon;
+    #   string.apk: app_name "Digest 2"; drawable.apk: a blue icon.
+    # - keystore.p12: keytool -genkeypair -keystore keystore.p12 -storetype pkcs12
+    #   -storepass android -keypass android -alias test -keyalg RSA -keysize 2048
+    #   -validity 36500 -dname "CN=Buck test"
+    resources = glob(["manifest_digest/*"]),
     deps = [
         "prelude//toolchains/android/src/com/facebook/buck/android:helpers",
         "prelude//toolchains/android/src/com/facebook/buck/android:manifest_utils",
         "prelude//toolchains/android/src/com/facebook/buck/android:utils_api",
+        "prelude//toolchains/android/src/com/facebook/buck/android/apk:apk",
         "prelude//toolchains/android/src/com/facebook/buck/android/device:device",
         "prelude//toolchains/android/src/com/facebook/buck/core/build/execution/context:context",
         "prelude//toolchains/android/src/com/facebook/buck/installer/android:installer_android_lib",
@@ -84,5 +95,8 @@ buck_java_test(
         "prelude//toolchains/android/third-party:ddmlib",
         "prelude//toolchains/android/third-party:junit",
         "prelude//toolchains/android/third-party:mockito",
+        # Types in the signatures of ApkSignerUtils, which ContentDigestsTest calls.
+        "prelude//toolchains/android/src/com/facebook/buck/android/apk/sdk:apk_builder",
+        "prelude//toolchains/android/third-party/aosp:apksig",
     ],
 )

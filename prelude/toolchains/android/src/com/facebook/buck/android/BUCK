@@ -101,7 +101,6 @@ UTILS_API_SRCS = [
     "exopackage/AndroidIntent.java",
     "exopackage/InstallTimings.java",
     "IsolatedApkInfo.java",
-    "exopackage/PackageInfo.java",
 ]
 
 buck_kotlin_library(

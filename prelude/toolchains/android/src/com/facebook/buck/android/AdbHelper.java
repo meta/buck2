@@ -1049,7 +1049,7 @@ public class AdbHelper implements AndroidDevicesHelper {
       throws Exception {
     AndroidDevice.InstalledApk installed;
     try {
-      installed = device.compareInstalledApk(packageName, apk, /* exact= */ false);
+      installed = device.compareInstalledApk(packageName, apk);
     } catch (AdbCommandFailedException e) {
       LOG.info("Could not read the installed APK.  Must re-install: %s", e.getMessage());
       return true;

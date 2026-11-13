@@ -72,8 +72,7 @@ class AndroidDeviceImplTest {
 
   /** Stubs the post-install verification so the on-device apk matches [apkFile]. */
   private fun stubInstallVerified(sdk: String = "34") {
-    whenever(mockAdbUtils.executeAdbShellCommand("pm path $packageName", serialNumber))
-        .thenReturn("package:$onDeviceApkPath")
+    stubInstalledApk("path:$onDeviceApkPath")
     whenever(mockAdbUtils.executeAdbShellCommand("md5sum $onDeviceApkPath", serialNumber))
         .thenReturn("${md5Hex(apkFile)}  $onDeviceApkPath")
     whenever(
@@ -777,20 +776,8 @@ class AndroidDeviceImplTest {
 
     assertEquals(
         AndroidDevice.InstalledApk.ABSENT,
-        androidDevice.compareInstalledApk(packageName, apkFile, false),
+        androidDevice.compareInstalledApk(packageName, apkFile),
     )
-  }
-
-  @Test
-  fun testCompareInstalledApkExactComparesContentHashOnly() {
-    stubInstallVerified()
-
-    assertEquals(
-        AndroidDevice.InstalledApk.SAME,
-        androidDevice.compareInstalledApk(packageName, apkFile, true),
-    )
-    verify(mockAdbUtils, never())
-        .executeAdbShellCommand(argThat { startsWith(installedApkQueryPrefix) }, any(), any())
   }
 
   /** Without the `path:` line the shell never ran: a read failure, not an absent package. */
@@ -799,7 +786,7 @@ class AndroidDeviceImplTest {
     stubInstalledApk("")
 
     try {
-      androidDevice.compareInstalledApk(packageName, apkFile, false)
+      androidDevice.compareInstalledApk(packageName, apkFile)
       fail("Expected AdbCommandFailedException")
     } catch (e: AdbCommandFailedException) {
       assertTrue(e.message!!.contains(packageName))
@@ -813,7 +800,7 @@ class AndroidDeviceImplTest {
 
     assertEquals(
         AndroidDevice.InstalledApk.SAME,
-        androidDevice.compareInstalledApk(packageName, apkFile, false),
+        androidDevice.compareInstalledApk(packageName, apkFile),
     )
   }
 
@@ -825,7 +812,7 @@ class AndroidDeviceImplTest {
 
     assertEquals(
         AndroidDevice.InstalledApk.DIFFERENT,
-        androidDevice.compareInstalledApk(packageName, apkFile, false),
+        androidDevice.compareInstalledApk(packageName, apkFile),
     )
   }
 
@@ -851,7 +838,7 @@ class AndroidDeviceImplTest {
 
     assertEquals(
         AndroidDevice.InstalledApk.SAME,
-        androidDevice.compareInstalledApk(packageName, apkFile, false),
+        androidDevice.compareInstalledApk(packageName, apkFile),
     )
     verify(mockAdbUtils, times(1))
         .executeAdbShellCommand(argThat { startsWith(installedApkQueryPrefix) }, any(), any())
@@ -867,21 +854,41 @@ class AndroidDeviceImplTest {
 
     assertEquals(
         AndroidDevice.InstalledApk.DIFFERENT,
-        androidDevice.compareInstalledApk(packageName, apkFile, false),
+        androidDevice.compareInstalledApk(packageName, apkFile),
     )
     verify(mockAdbUtils, never())
         .executeAdbShellCommand(argThat { startsWith("md5sum") }, any(), any())
   }
 
   @Test
-  fun testGetPackageInfo() {
-    whenever(mockAdbUtils.executeAdbShellCommand("pm path com.test.app", serialNumber))
-        .thenReturn("package:/data/app/com.test.app-1/base.apk")
+  fun testInstallIsVerifiedByManifestDigestWithoutReadingTheApkBack() {
+    writeApkWithManifestDigest("bG9jYWw=")
+    whenever(mockAdbUtils.executeAdbShellCommand("getprop ro.build.version.sdk", serialNumber))
+        .thenReturn("28")
+    whenever(mockAdbUtils.executeAdbCommand("install -r -d ${apkFile.absolutePath}", serialNumber))
+        .thenReturn("Success")
+    stubInstalledApk("path:$onDeviceApkPath\nSHA-256-Digest-Manifest: bG9jYWw=")
 
-    val result = androidDevice.getPackageInfo("com.test.app")
+    assertTrue(androidDevice.installApkOnDevice(apkFile, false, false, false, false, packageName))
+    verify(mockAdbUtils, never())
+        .executeAdbShellCommand(argThat { startsWith("md5sum") }, any(), any())
+  }
 
-    assertTrue(result.isPresent)
-    assertEquals("/data/app/com.test.app-1/base.apk", result.get().apkPath)
+  @Test
+  fun testInstallFailsWhenTheInstalledManifestDigestDiffers() {
+    writeApkWithManifestDigest("bG9jYWw=")
+    whenever(mockAdbUtils.executeAdbShellCommand("getprop ro.build.version.sdk", serialNumber))
+        .thenReturn("28")
+    whenever(mockAdbUtils.executeAdbCommand("install -r -d ${apkFile.absolutePath}", serialNumber))
+        .thenReturn("Success")
+    stubInstalledApk("path:$onDeviceApkPath\nSHA-256-Digest-Manifest: b2xk")
+
+    try {
+      androidDevice.installApkOnDevice(apkFile, false, false, false, false, packageName)
+      fail("Expected AndroidInstallException")
+    } catch (e: AndroidInstallException) {
+      assertEquals(setOf(AndroidInstallErrorTag.INSTALLED_APK_MISMATCH), e.installError.tags)
+    }
   }
 
   @Test
@@ -905,7 +912,7 @@ class AndroidDeviceImplTest {
 
     assertEquals(
         AndroidDevice.InstalledApk.SAME,
-        androidDevice.compareInstalledApk(packageName, apkFile, false),
+        androidDevice.compareInstalledApk(packageName, apkFile),
     )
   }
 
@@ -963,7 +970,7 @@ class AndroidDeviceImplTest {
 
     assertEquals(
         AndroidDevice.InstalledApk.SAME,
-        androidDevice.compareInstalledApk(packageName, apkFile, false),
+        androidDevice.compareInstalledApk(packageName, apkFile),
     )
     verify(mockAdbUtils, never())
         .executeAdbShellCommand(argThat { startsWith("md5sum") }, any(), any())
@@ -976,7 +983,7 @@ class AndroidDeviceImplTest {
 
     assertEquals(
         AndroidDevice.InstalledApk.ABSENT,
-        androidDevice.compareInstalledApk(packageName, apkFile, false),
+        androidDevice.compareInstalledApk(packageName, apkFile),
     )
   }
 
@@ -991,7 +998,7 @@ class AndroidDeviceImplTest {
 
     assertEquals(
         AndroidDevice.InstalledApk.SAME,
-        androidDevice.compareInstalledApk(packageName, apkFile, false),
+        androidDevice.compareInstalledApk(packageName, apkFile),
     )
     verify(mockAdbUtils).executeAdbShellCommand("md5sum $onDeviceApkPath", serialNumber)
   }
@@ -1013,7 +1020,7 @@ class AndroidDeviceImplTest {
 
     assertEquals(
         AndroidDevice.InstalledApk.SAME,
-        androidDevice.compareInstalledApk(packageName, apkFile, false),
+        androidDevice.compareInstalledApk(packageName, apkFile),
     )
     verify(mockAdbUtils, never())
         .executeAdbShellCommand(argThat { startsWith("md5sum") }, any(), any())
@@ -1524,8 +1531,7 @@ class AndroidDeviceImplTest {
         .thenReturn("Success")
     whenever(mockAdbUtils.executeAdbCommand("install -r -d ${apkFile.absolutePath}", serialNumber))
         .thenReturn("Success")
-    whenever(mockAdbUtils.executeAdbShellCommand("pm path $packageName", serialNumber))
-        .thenReturn("package:$onDeviceApkPath")
+    stubInstalledApk("path:$onDeviceApkPath")
     // First read (after --fastdeploy) is stale; second read (after plain install) matches.
     whenever(mockAdbUtils.executeAdbShellCommand("md5sum $onDeviceApkPath", serialNumber))
         .thenReturn("stalehash  $onDeviceApkPath")
@@ -1550,8 +1556,7 @@ class AndroidDeviceImplTest {
     whenever(mockAdbUtils.executeAdbCommand("install -r -d ${apkFile.absolutePath}", serialNumber))
         .thenReturn("Success")
     // adb reports success but the on-device apk never matches the local apk.
-    whenever(mockAdbUtils.executeAdbShellCommand("pm path $packageName", serialNumber))
-        .thenReturn("package:$onDeviceApkPath")
+    stubInstalledApk("path:$onDeviceApkPath")
     whenever(mockAdbUtils.executeAdbShellCommand("md5sum $onDeviceApkPath", serialNumber))
         .thenReturn(
             "00000000000000000000000000000000  $onDeviceApkPath",
@@ -1573,8 +1578,7 @@ class AndroidDeviceImplTest {
     whenever(mockAdbUtils.executeAdbCommand("install -r -d ${apkFile.absolutePath}", serialNumber))
         .thenReturn("Success")
     // `pm path` prints nothing for a package that is not installed.
-    whenever(mockAdbUtils.executeAdbShellCommand("pm path $packageName", serialNumber))
-        .thenReturn("")
+    stubInstalledApk("path:")
 
     try {
       androidDevice.installApkOnDevice(apkFile, false, false, false, false, packageName)
@@ -1586,21 +1590,20 @@ class AndroidDeviceImplTest {
   }
 
   @Test
-  fun testInstallVerifiesBaseApkWhenPmPathReturnsSplits() {
+  fun testInstallFailsWithAdbErrorWhenTheInstalledApkCannotBeRead() {
     whenever(mockAdbUtils.executeAdbShellCommand("getprop ro.build.version.sdk", serialNumber))
         .thenReturn("28")
     whenever(mockAdbUtils.executeAdbCommand("install -r -d ${apkFile.absolutePath}", serialNumber))
         .thenReturn("Success")
-    // Split install: `pm path` returns the base apk plus config splits, one per line. Verification
-    // must hash the base apk (first line) and not choke on the multi-line output.
-    whenever(mockAdbUtils.executeAdbShellCommand("pm path $packageName", serialNumber))
-        .thenReturn(
-            "package:$onDeviceApkPath\npackage:/data/app/com.test.app-1/split_config.arm64_v8a.apk",
-        )
-    whenever(mockAdbUtils.executeAdbShellCommand("md5sum $onDeviceApkPath", serialNumber))
-        .thenReturn("${md5Hex(apkFile)}  $onDeviceApkPath")
+    // adb could not reach the device, so the shell printed nothing.
+    stubInstalledApk("")
 
-    assertTrue(androidDevice.installApkOnDevice(apkFile, false, false, false, false, packageName))
+    try {
+      androidDevice.installApkOnDevice(apkFile, false, false, false, false, packageName)
+      fail("Expected AndroidInstallException")
+    } catch (e: AndroidInstallException) {
+      assertEquals(setOf(AndroidInstallErrorTag.ADB_COMMAND_FAILED), e.installError.tags)
+    }
   }
 
   @Test
@@ -1609,8 +1612,7 @@ class AndroidDeviceImplTest {
         .thenReturn("28")
     whenever(mockAdbUtils.executeAdbCommand("install -r -d ${apkFile.absolutePath}", serialNumber))
         .thenReturn("Success")
-    whenever(mockAdbUtils.executeAdbShellCommand("pm path $packageName", serialNumber))
-        .thenReturn("package:$onDeviceApkPath")
+    stubInstalledApk("path:$onDeviceApkPath")
     // md5sum reports an error on stdout while adb still exits 0, so the first token is not a
     // digest. This must be classified as a read failure, not an apk mismatch.
     whenever(mockAdbUtils.executeAdbShellCommand("md5sum $onDeviceApkPath", serialNumber))
@@ -1683,8 +1685,7 @@ class AndroidDeviceImplTest {
     val plainInstall = "install -r -d ${apkFile.absolutePath}"
     whenever(mockAdbUtils.executeAdbCommand(fastInstall, serialNumber))
         .thenReturn("Performing Streamed Install")
-    whenever(mockAdbUtils.executeAdbShellCommand("pm path $packageName", serialNumber))
-        .thenReturn("package:$onDeviceApkPath")
+    stubInstalledApk("path:$onDeviceApkPath")
     whenever(mockAdbUtils.executeAdbShellCommand("md5sum $onDeviceApkPath", serialNumber))
         .thenReturn("stalehash  $onDeviceApkPath")
     doAnswer {
@@ -1741,8 +1742,7 @@ class AndroidDeviceImplTest {
     doReturn("Success")
         .whenever(mockAdbUtils)
         .executeAdbCommand(eq("uninstall com.meta.ar.helixserver"), eq(serialNumber), any())
-    whenever(mockAdbUtils.executeAdbShellCommand("pm path $packageName", serialNumber))
-        .thenReturn("package:$onDeviceApkPath")
+    stubInstalledApk("path:$onDeviceApkPath")
     // Stale after --fastdeploy (triggers fallback); matches after the plain reinstall.
     whenever(mockAdbUtils.executeAdbShellCommand("md5sum $onDeviceApkPath", serialNumber))
         .thenReturn("stalehash  $onDeviceApkPath")

@@ -552,7 +552,7 @@ public class AdbHelperTest {
   @Test
   public void testPlainInstallInstallsWhenTheInstalledApkCannotBeRead() throws Exception {
     AndroidDeviceImpl device = deviceWithInstalledApk(/* sameApk= */ true);
-    when(device.compareInstalledApk(eq("com.example.app"), any(File.class), eq(false)))
+    when(device.compareInstalledApk(eq("com.example.app"), any(File.class)))
         .thenThrow(new AdbCommandFailedException("md5sum: base.apk: Permission denied"));
 
     installPlainApk(/* restartApp= */ false);
@@ -759,7 +759,7 @@ public class AdbHelperTest {
   private AndroidDeviceImpl deviceWithInstalledApk(boolean sameApk) throws Exception {
     AndroidDeviceImpl device = createRealDevice("one", "device");
     when(device.setDebugAppPackageName("com.example.app")).thenReturn(true);
-    when(device.compareInstalledApk(eq("com.example.app"), any(File.class), eq(false)))
+    when(device.compareInstalledApk(eq("com.example.app"), any(File.class)))
         .thenReturn(
             sameApk ? AndroidDevice.InstalledApk.SAME : AndroidDevice.InstalledApk.DIFFERENT);
     when(device.installApkOnDevice(

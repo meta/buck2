@@ -12,14 +12,12 @@ package com.facebook.buck.android;
 
 import com.facebook.buck.android.exopackage.AndroidDevice;
 import com.facebook.buck.android.exopackage.AndroidIntent;
-import com.facebook.buck.android.exopackage.PackageInfo;
 import com.google.common.collect.ImmutableSortedSet;
 import java.io.File;
 import java.nio.file.Path;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
-import java.util.Optional;
 import org.jspecify.annotations.Nullable;
 
 /** Basic implementation of AndroidDevice for mocking purposes. */
@@ -59,11 +57,6 @@ public class TestAndroidDevice implements AndroidDevice {
   }
 
   @Override
-  public Optional<PackageInfo> getPackageInfo(String packageName) throws Exception {
-    throw new UnsupportedOperationException();
-  }
-
-  @Override
   public void uninstallPackage(String packageName) throws Exception {
     throw new UnsupportedOperationException();
   }
@@ -74,8 +67,7 @@ public class TestAndroidDevice implements AndroidDevice {
   }
 
   @Override
-  public InstalledApk compareInstalledApk(String packageName, File apk, boolean exact)
-      throws Exception {
+  public InstalledApk compareInstalledApk(String packageName, File apk) throws Exception {
     throw new UnsupportedOperationException();
   }
 

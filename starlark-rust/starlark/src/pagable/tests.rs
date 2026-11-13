@@ -119,7 +119,7 @@ impl ErasingHeap {
     }
 
     fn alloc_str(&self, s: &str) -> Value<'static> {
-        self.with(|heap| erase(heap.alloc_str(s).to_value()))
+        self.with(|heap| erase(heap.alloc(s).to_value()))
     }
 
     /// Bring an erased value back to the heap's brand, for allocating values that hold it.

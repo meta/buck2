@@ -602,7 +602,7 @@ impl<'v> Module<'v> {
     /// Modifying these variables while executing is ongoing can have
     /// surprising effects.
     pub fn set(&self, name: &str, value: Value<'v>) {
-        let name = self.frozen_heap(|fh, edge| edge.rebrand(fh.alloc_str(name)));
+        let name = self.frozen_heap(|fh, edge| edge.rebrand(fh.alloc(name)));
         let slot = self.names.add_name(name);
         let slots = self.slots();
         slots.ensure_slot(slot);

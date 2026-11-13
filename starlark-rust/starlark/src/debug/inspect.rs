@@ -130,7 +130,7 @@ mod tests {
         ) -> anyhow::Result<Dict<'v>> {
             let mut sm = SmallMap::new();
             for (k, v) in eval.local_variables() {
-                sm.insert_hashed(eval.heap().alloc_str(&k).get_hashed_value(), v);
+                sm.insert_hashed(eval.heap().alloc(&k).get_hashed_value(), v);
             }
             Ok(Dict::new(sm))
         }

@@ -642,8 +642,8 @@ b1 and b2 and b3
     #[test]
     fn test_get_str() -> crate::Result<()> {
         Heap::temp(|heap| {
-            let k1 = heap.alloc_str("hello").get_hashed_value();
-            let k2 = heap.alloc_str("world").get_hashed_value();
+            let k1 = heap.alloc("hello").get_hashed_value();
+            let k2 = heap.alloc("world").get_hashed_value();
             let mut sm = SmallMap::new();
             sm.insert_hashed(k1, heap.alloc(12i32).to_value());
             sm.insert_hashed(k2, heap.alloc(56i32).to_value());

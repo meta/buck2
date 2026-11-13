@@ -240,7 +240,7 @@ mod tests {
     fn test_allocation_size() {
         FrozenHeap::temp(|heap| {
             heap.alloc_any_array_value(&[1, 2, 3]);
-            let quake = heap.alloc_str("quake");
+            let quake = heap.alloc("quake");
             // Test array allocation did not overwrite the string.
             assert_eq!(quake.as_str(), "quake");
         });

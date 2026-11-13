@@ -622,7 +622,7 @@ mod tests {
             assert!(p.no_named_args().is_ok());
             assert_eq!(p.len().unwrap(), 0);
             let mut sm = SmallMap::new();
-            sm.insert_hashed(heap.alloc_str("test").get_hashed_value(), Value::new_none());
+            sm.insert_hashed(heap.alloc("test").get_hashed_value(), Value::new_none());
             p.0.kwargs = Some(heap.alloc(Dict::new(sm)).to_value());
             assert!(p.no_named_args().is_err());
             assert_eq!(p.len().unwrap(), 1);
@@ -631,7 +631,7 @@ mod tests {
             p.0.kwargs = None;
             let named = [Value::new_none()];
             p.0.named = &named;
-            let names = [(Symbol::new("test"), heap.alloc_str("test"))];
+            let names = [(Symbol::new("test"), heap.alloc("test"))];
             p.0.names = ArgNames::new_check_unique(&names).unwrap();
             assert!(p.no_named_args().is_err());
             assert_eq!(p.len().unwrap(), 1);

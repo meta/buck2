@@ -294,7 +294,7 @@ impl<'a, 'v, 'f, 'g> ModuleScopeBuilder<'a, 'v, 'f, 'g> {
         for (name, vis) in module.all_names_and_visibilities() {
             // The scope names its bindings with strings interned at `'f`; a module name lives in
             // that heap already or in one it references, so this is a lookup or a small copy.
-            let name = frozen_heap.alloc_str(name.as_str());
+            let name = frozen_heap.alloc(name.as_str());
             let (binding_id, _binding) = scope_data.new_binding(
                 name,
                 BindingSource::FromModule,
@@ -460,7 +460,7 @@ impl<'f> ModuleScopeBuilder<'_, '_, 'f, '_> {
             .set_param_count(params.len().try_into().unwrap());
         let mut locals: SmallMap<StringValue<'f>, _> = SmallMap::new();
         for p in params {
-            let name = frozen_heap.alloc_str(&p.ident);
+            let name = frozen_heap.alloc(p.ident.as_str());
             // Subtle invariant: the slots for the params must be ordered and at the
             // beginning
             let binding_id = scope_data
@@ -696,7 +696,7 @@ impl<'f> ModuleScopeBuilder<'_, '_, 'f, '_> {
 
     fn resolve_ident(&mut self, scope: ResolveIdentScope, ident: &mut CstIdent<'f>) {
         assert!(ident.node.payload.is_none());
-        let resolved = match self.get_name(self.frozen_heap.alloc_str(&ident.node.ident)) {
+        let resolved = match self.get_name(self.frozen_heap.alloc(ident.node.ident.as_str())) {
             None => {
                 // Must be a global, since we know all variables
                 match self.globals.get_global(&ident.node.ident) {
@@ -1009,7 +1009,7 @@ impl AssignIdentCollect for AssignIdent {
             };
         }
         assign_ident_impl(
-            frozen_heap.alloc_str(&assign.node.ident),
+            frozen_heap.alloc(assign.node.ident.as_str()),
             assign.span,
             &mut assign.node.payload,
             in_loop,

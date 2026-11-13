@@ -1202,7 +1202,7 @@ mod tests {
     #[test]
     fn test_downcast_ref() {
         Heap::temp(|heap| {
-            let string = heap.alloc_str("asd").to_value();
+            let string = heap.alloc("asd").to_value();
             let none = Value::new_none();
             let integer = Value::testing_new_int(17);
 
@@ -1236,7 +1236,7 @@ mod tests {
         assert!(Value::new_none().is_frozen());
         assert!(Value::testing_new_int(10).is_frozen());
         Heap::temp(|heap| {
-            assert!(!heap.alloc_str("unfrozen").to_value().is_frozen());
+            assert!(!heap.alloc("unfrozen").to_value().is_frozen());
             assert!(
                 !heap
                     .alloc(AllocList([Value::new_none()]))

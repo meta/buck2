@@ -313,9 +313,7 @@ mod tests {
             freezer
                 .freeze(value)
                 .expect_err("the dynamic freeze plan should fail");
-            let following = freezer
-                .frozen_heap()
-                .alloc_str("after failed dynamic freeze");
+            let following = freezer.frozen_heap().alloc("after failed dynamic freeze");
             assert_eq!("after failed dynamic freeze", following.as_str());
         });
     }
@@ -334,7 +332,7 @@ mod tests {
             // heap must remain allocatable, walkable, and droppable.
             let following = freezer
                 .frozen_heap()
-                .alloc_str("after panicking dynamic freeze");
+                .alloc("after panicking dynamic freeze");
             assert_eq!("after panicking dynamic freeze", following.as_str());
         });
     }
@@ -350,7 +348,7 @@ mod tests {
                 .freeze(value)
                 .expect_err("the dynamic freeze plan should fail");
 
-            let following = heap.alloc_str("after the failed freeze").to_value();
+            let following = heap.alloc("after the failed freeze").to_value();
             std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| freezer.freeze(following)))
                 .expect_err("freezing through an abandoned freezer should panic");
         });
@@ -371,7 +369,7 @@ mod tests {
                 "unexpected error: {}",
                 error.err_msg
             );
-            let following = freezer.frozen_heap().alloc_str("after the failed freeze");
+            let following = freezer.frozen_heap().alloc("after the failed freeze");
             assert_eq!("after the failed freeze", following.as_str());
         });
     }

@@ -276,7 +276,7 @@ mod tests {
             heap.alloc_list(&[]),
             Value::testing_new_int(17),
             const_frozen_string!("frozen").at().to_value(),
-            heap.alloc_str("unfrozen").to_value(),
+            heap.alloc("unfrozen").to_value(),
         ]
     }
 
@@ -327,9 +327,9 @@ mod tests {
         FrozenHeap::temp(|frozen_heap| {
             Heap::temp(|heap| {
                 let s: [_; 16] = ["", "abc", "def", "ghijkl"].repeat(4).try_into().unwrap();
-                let s = s.map(|s| heap.alloc_str(s).to_value());
+                let s = s.map(|s| heap.alloc(s).to_value());
                 across_lengths(s);
-                let s = s.map(|s| frozen_heap.alloc_str(s.unpack_str().unwrap()).to_value());
+                let s = s.map(|s| frozen_heap.alloc(s.unpack_str().unwrap()).to_value());
                 across_lengths(s);
             });
         });

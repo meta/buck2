@@ -178,7 +178,7 @@ impl<'v, 'a, 'e> Evaluator<'v, 'a, 'e> {
         positional: &[Value<'v>],
         named: &[(&str, Value<'v>)],
     ) -> crate::Result<Value<'v>> {
-        let names = named.map(|(s, _)| (Symbol::new(s), self.heap().alloc_str(s)));
+        let names = named.map(|(s, _)| (Symbol::new(s), self.heap().alloc(*s)));
         let named = named.map(|x| x.1);
         let params = Arguments(ArgumentsFull {
             pos: positional,

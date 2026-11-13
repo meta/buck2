@@ -653,7 +653,7 @@ mod tests {
     #[test]
     fn test_resident_value() {
         Heap::temp(|heap| {
-            let value = heap.alloc_str("resident").to_value();
+            let value = heap.alloc("resident").to_value();
             let deferred = Deferred::new(value);
             assert!(deferred.peek().unwrap().ptr_eq(value));
             assert!(deferred.read().unwrap().ptr_eq(value));
@@ -681,7 +681,7 @@ mod tests {
     fn test_resident_slice() {
         Heap::temp(|heap| {
             let values = [
-                heap.alloc_str("a").to_value(),
+                heap.alloc("a").to_value(),
                 Value::testing_new_int(1),
                 heap.alloc_list(&[]),
             ];
@@ -696,7 +696,7 @@ mod tests {
     #[test]
     fn test_resident_typed_is_one_word() {
         FrozenHeap::temp(|heap| {
-            let s = heap.alloc_str("typed");
+            let s = heap.alloc("typed");
             let typed: ValueTyped<crate::values::string::str_type::StarlarkStr> =
                 ValueTyped::new(s.to_value()).unwrap();
             let deferred = Deferred::new(typed);
@@ -711,7 +711,7 @@ mod tests {
         // (under ASAN a double free or a leak fails the test).
         Heap::temp(|heap| {
             let values: Vec<_> = (0..4)
-                .map(|i| heap.alloc_str(&i.to_string()).to_value())
+                .map(|i| heap.alloc(i.to_string()).to_value())
                 .collect();
             let deferred = Deferred::new(ThinBoxSliceValue::from_iter(values));
             assert_eq!(deferred.len(), 4);

@@ -38,7 +38,7 @@
 //! # use crate::values::tuple::AllocTuple;
 //! Heap::temp(|heap1| {
 //!     Heap::temp(|heap2| {
-//!         let s1: Value<'_> = heap1.alloc_str("abc").to_value();
+//!         let s1: Value<'_> = heap1.alloc("abc").to_value();
 //!         let v: Value<'_> = heap2.alloc(AllocTuple([s1]));
 //!     })
 //! })

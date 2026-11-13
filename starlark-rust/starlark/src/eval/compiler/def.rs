@@ -342,7 +342,7 @@ impl<'f, T> ParametersCompiled<'f, T> {
                 let (name, ty) = x.name_ty();
                 ty.map(|ty| ParameterTypeCompiled {
                     slot: LocalSlotId(i as u32),
-                    name: heap.alloc_str(&name.name),
+                    name: heap.alloc(name.name.as_str()),
                     ty,
                 })
             })
@@ -563,7 +563,7 @@ impl<'fm> Compiler<'_, '_, '_, '_, 'fm> {
     ) -> Result<ExprCompiled<'fm>, CompilerInternalError> {
         let file = self.codemap.file_span(suite.span);
         let function_name = ArcStr::from(format!("{}.{}", file.file.filename(), name).as_str());
-        let name = self.fh.alloc_str(name);
+        let name = self.fh.alloc(name);
 
         let DefParams { params, indices } = match DefParams::unpack(params, &self.codemap) {
             Ok(def_params) => def_params,

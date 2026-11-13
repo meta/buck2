@@ -64,7 +64,7 @@ mod tests {
         FrozenHeap::temp(|heap| {
             let mut intern = StringValueInterner::default();
 
-            let xx1 = intern.intern(Hashed::new("xx"), || heap.alloc_str("xx"));
+            let xx1 = intern.intern(Hashed::new("xx"), || heap.alloc("xx"));
             let xx2 = intern.intern(Hashed::new("xx"), || {
                 panic!("alloc_str should be only called once")
             });
@@ -77,7 +77,7 @@ mod tests {
         Heap::temp(|heap1| {
             let mut intern = StringValueInterner::default();
 
-            let xx1 = intern.intern(Hashed::new("xx"), || heap1.alloc_str("xx"));
+            let xx1 = intern.intern(Hashed::new("xx"), || heap1.alloc("xx"));
             let xx2 = intern.intern(Hashed::new("xx"), || {
                 panic!("alloc_str should be only called once")
             });

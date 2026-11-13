@@ -166,7 +166,7 @@ fn pretty_repr<'v>(
 
     let mut s = eval.string_pool.alloc();
     write!(s, "{a:#}").unwrap();
-    let r = eval.heap().alloc_str(&s);
+    let r = eval.heap().alloc(&s);
     eval.string_pool.release(s);
     Ok(r)
 }

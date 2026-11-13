@@ -64,7 +64,7 @@ fn test_starlark_methods() {
             #[starlark(require = named, default = 3)] index: i32,
             heap: Heap<'v>,
         ) -> anyhow::Result<StringValue<'v>> {
-            Ok(heap.alloc_str(&format!("{this} {index}")))
+            Ok(heap.alloc(format!("{this} {index}")))
         }
     }
 

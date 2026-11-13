@@ -395,12 +395,13 @@ mod tests {
     use crate::assert::Assert;
     use crate::environment::GlobalsBuilder;
     use crate::values::StringValue;
+    use crate::values::string::AllocStrIntern;
 
     #[test]
     fn test_string_reallocated_on_heap() {
         Heap::temp(|heap| {
-            let first = heap.alloc_str("xx");
-            let second = heap.alloc_str("xx");
+            let first = heap.alloc("xx");
+            let second = heap.alloc("xx");
             assert!(
                 !first.to_value().ptr_eq(second.to_value()),
                 "Plain allocations should recreate values. Note assertion negation."
@@ -411,8 +412,8 @@ mod tests {
     #[test]
     fn test_interned_string_equal() {
         Heap::temp(|heap| {
-            let first = heap.alloc_str_intern("xx");
-            let second = heap.alloc_str_intern("xx");
+            let first = heap.alloc(AllocStrIntern("xx"));
+            let second = heap.alloc(AllocStrIntern("xx"));
             assert!(
                 first.to_value().ptr_eq(second.to_value()),
                 "Interned allocations should be equal."
@@ -423,7 +424,7 @@ mod tests {
     #[starlark_module]
     fn validate_str_interning(globals: &mut GlobalsBuilder) {
         fn append_x<'v>(str: StringValue<'v>, heap: Heap<'v>) -> anyhow::Result<StringValue<'v>> {
-            Ok(heap.alloc_str_intern(&(str.as_str().to_owned() + "x")))
+            Ok(heap.alloc(AllocStrIntern(&(str.as_str().to_owned() + "x"))))
         }
     }
 

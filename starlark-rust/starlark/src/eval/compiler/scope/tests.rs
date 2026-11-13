@@ -217,8 +217,8 @@ def f():
 fn existing_module_with_names() {
     FrozenHeap::temp(|frozen_heap| {
         let module = MutableNames::new();
-        module.add_name(frozen_heap.alloc_str("x"));
-        module.add_name(frozen_heap.alloc_str("y"));
+        module.add_name(frozen_heap.alloc("x"));
+        module.add_name(frozen_heap.alloc("y"));
         test_with_module("x = y", "0:m=0+ 1:m=1 | x:0 y:1", &module, frozen_heap);
     });
 }

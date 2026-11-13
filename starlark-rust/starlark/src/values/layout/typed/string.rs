@@ -111,17 +111,17 @@ mod tests {
         let expected = Hashed::new("xyz").hash();
 
         Heap::temp(|heap| {
-            let s: StringValue = heap.alloc_str("xyz");
+            let s: StringValue = heap.alloc("xyz");
             assert_eq!(expected, Hashed::new(s).hash());
             assert_eq!(expected, s.get_hashed().hash());
-            let v: Value = heap.alloc_str("xyz").to_value();
+            let v: Value = heap.alloc("xyz").to_value();
             assert_eq!(expected, v.get_hashed().unwrap().hash());
         });
 
         FrozenHeap::temp(|heap| {
-            let fs: StringValue = heap.alloc_str("xyz");
+            let fs: StringValue = heap.alloc("xyz");
             assert_eq!(expected, Hashed::new(fs).hash());
-            let fv: Value = heap.alloc_str("xyz").to_value();
+            let fv: Value = heap.alloc("xyz").to_value();
             assert_eq!(expected, fv.get_hashed().unwrap().hash());
         });
     }

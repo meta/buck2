@@ -506,7 +506,7 @@ impl GlobalsBuilder {
                 // SAFETY: Allocated in `self.heap` just here.
                 let name = self
                     .heap
-                    .with(|heap| unsafe { Self::erase(heap.alloc_str(name)) });
+                    .with(|heap| unsafe { Self::erase(heap.alloc(name)) });
                 fields.insert(name, value)
             }
         };

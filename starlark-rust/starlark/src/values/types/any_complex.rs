@@ -335,7 +335,7 @@ mod tests {
     fn test_any_complex() {
         Module::with_temp_heap(|module| {
             let data = StarlarkAnyComplex::new(UnfrozenData {
-                string: module.heap().alloc_str("aaa"),
+                string: module.heap().alloc("aaa"),
                 other: module.heap().alloc(AllocList([1, 2])).to_value(),
             })
             .alloc_retyped_by_freeze(module.heap())

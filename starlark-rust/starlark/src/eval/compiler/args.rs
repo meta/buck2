@@ -206,7 +206,7 @@ impl<'fm> Compiler<'_, '_, '_, '_, 'fm> {
             match &x.node {
                 ArgumentP::Positional(x) => res.pos_named.push(self.expr(x)?),
                 ArgumentP::Named(name, value) => {
-                    let fv = self.fh.alloc_str(name.node.as_str());
+                    let fv = self.fh.alloc(name.node.as_str());
                     res.names.push((Symbol::new(&name.node), fv));
                     res.pos_named.push(self.expr(value)?);
                 }

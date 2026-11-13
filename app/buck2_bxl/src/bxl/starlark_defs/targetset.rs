@@ -64,7 +64,7 @@ use starlark::values::typing::TypeInstanceId;
 use crate::bxl::starlark_defs::alloc_node::AllocNode;
 
 pub(crate) trait NodeLike =
-    QueryTarget + std::fmt::Debug + Eq + Dupe + AllocNode + Allocative + Pagable + TargetSetNode;
+    QueryTarget + std::fmt::Debug + Dupe + AllocNode + Allocative + Pagable + TargetSetNode;
 
 /// Node kinds a `target_set` can hold.
 pub(crate) trait TargetSetNode {

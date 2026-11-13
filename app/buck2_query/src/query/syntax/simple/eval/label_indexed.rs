@@ -69,9 +69,23 @@ impl<'a, T: LabeledNode> Hash for LabelIndexer<'a, T> {
 
 /// This is a Set that contains `LabeledNode`s, but for all trait operation like `Eq`, `Ord` all
 /// operate only on the `NodeRef` of the `LabeledNode`.
-#[derive(Debug, Clone, Eq, PartialEq, Hash, Allocative, Pagable)]
+#[derive(Debug, Clone, Allocative, Pagable)]
 pub struct LabelIndexedSet<T: LabeledNode> {
     nodes: BuckMutInsertionSet<LabelIndexed<T>>,
+}
+
+impl<T: LabeledNode> PartialEq for LabelIndexedSet<T> {
+    fn eq(&self, other: &Self) -> bool {
+        self.nodes == other.nodes
+    }
+}
+
+impl<T: LabeledNode> Eq for LabelIndexedSet<T> {}
+
+impl<T: LabeledNode> Hash for LabelIndexedSet<T> {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.nodes.hash(state)
+    }
 }
 
 impl<T: LabeledNode> LabelIndexedSet<T> {

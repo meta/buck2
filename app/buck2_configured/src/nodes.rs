@@ -1628,7 +1628,11 @@ impl Key for ConfiguredTargetNodeKey {
 
     fn equality_behavior() -> EqualityBehavior<Self::Value> {
         EqualityBehavior::Compare(|x, y| match (x, y) {
-            (ResultMaybeCompatible::Compatible(x), ResultMaybeCompatible::Compatible(y)) => x == y,
+            // A node whose body cannot be read counts as changed. The failed read is
+            // recorded where it happens and reported when the command ends.
+            (ResultMaybeCompatible::Compatible(x), ResultMaybeCompatible::Compatible(y)) => {
+                x.try_eq(y).unwrap_or(false)
+            }
             (ResultMaybeCompatible::Incompatible(x), ResultMaybeCompatible::Incompatible(y)) => {
                 x == y
             }

@@ -122,11 +122,11 @@ fn compute_configured_graph_sketch_impl<'a>(
 ) -> usize {
     let mut queue = vec![node];
     let mut visited: BuckMutSet<_> = BuckMutSet::default();
-    visited.insert(node);
+    visited.insert(node.label());
 
     while let Some(item) = queue.pop() {
         for d in item.deps() {
-            if visited.insert(d) {
+            if visited.insert(d.label()) {
                 queue.push(d);
             }
         }
@@ -331,12 +331,12 @@ pub(crate) struct LoadGraphPropertiesKey {
 fn collect_transitive_packages(root: &ConfiguredTargetNode) -> BuckMutSet<PackageLabel> {
     let mut packages = BuckMutSet::default();
     let mut visited = BuckMutSet::default();
-    visited.insert(root);
+    visited.insert(root.label());
     let mut queue = vec![root];
     while let Some(node) = queue.pop() {
         packages.insert(node.label().pkg());
         for dep in node.deps() {
-            if visited.insert(dep) {
+            if visited.insert(dep.label()) {
                 queue.push(dep);
             }
         }

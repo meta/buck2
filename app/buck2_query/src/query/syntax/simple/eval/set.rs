@@ -25,10 +25,18 @@ use crate::query::syntax::simple::eval::file_set::FileSet;
 use crate::query::syntax::simple::eval::label_indexed;
 use crate::query::syntax::simple::eval::label_indexed::LabelIndexedSet;
 
-#[derive(Debug, Eq, PartialEq, Clone, Allocative, Pagable)]
+#[derive(Debug, Clone, Allocative, Pagable)]
 pub struct TargetSet<T: QueryTarget> {
     targets: LabelIndexedSet<T>,
 }
+
+impl<T: QueryTarget> PartialEq for TargetSet<T> {
+    fn eq(&self, other: &Self) -> bool {
+        self.targets == other.targets
+    }
+}
+
+impl<T: QueryTarget> Eq for TargetSet<T> {}
 
 impl<T: QueryTarget> TargetSet<T> {
     pub fn new() -> Self {

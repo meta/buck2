@@ -35,13 +35,19 @@ use buck2_core::provider::label::ProvidersLabel;
 use buck2_core::provider::label::ProvidersName;
 use buck2_core::target::configured_target_label::ConfiguredTargetLabel;
 use buck2_core::target::label::label::TargetLabel;
+use buck2_error::BuckErrorContext;
 use buck2_hash::BuckFixedSortedMap;
 use buck2_hash::BuckMutInsertionSet;
 use buck2_util::arc_str::ArcStr;
 use dupe::Dupe;
 use either::Either;
 use mini_vec::MiniBoxSlice;
+use pagable::DeferredValue;
 use pagable::Pagable;
+use pagable::PagableDeserialize;
+use pagable::PagableDeserializer;
+use pagable::PagableSerialize;
+use starlark::pagable::DeferredFieldReadsEnabled;
 use starlark_map::Hashed;
 use starlark_map::StarlarkHashValue;
 use strong_hash::StrongHash;
@@ -89,13 +95,14 @@ use crate::rule_type::StarlarkRuleType;
 /// the kind of rule. Its accessors are on the node itself. Everything else (the unconfigured
 /// node, what its attributes are configured against, the execution platform and the plugins)
 /// is the body, reached through [`ConfiguredTargetNode::body`]. Reaching the body is a
-/// separate, fallible step because it is the part that can be stored apart from the node.
+/// separate, fallible step because it is stored apart from the node: a node paged back in
+/// from storage has its header, and reads its body from storage when it is first asked for.
 ///
 /// Most information (like attribute values) is constructed when requested and not stored
 /// in the node, instead the body just stores the base TargetNode and a configuration for
 /// resolving the attributes. This saves memory, but users should try avoid repeatedly
 /// requesting the same information.
-#[derive(Debug, Clone, Eq, PartialEq, Hash, Allocative, Pagable)]
+#[derive(Debug, Clone, Allocative, Pagable)]
 pub struct ConfiguredTargetNode(triomphe::Arc<ConfiguredTargetNodeData>);
 
 // SAFETY: `_assert_send_sync` requires the only field to be `Send + Sync`, so these
@@ -139,16 +146,37 @@ fn actual_attr(forwarded: &ConfiguredTargetNode) -> ConfiguredAttrFull<'static> 
 #[derive(Allocative, Pagable)]
 struct ConfiguredTargetNodeData {
     label: Hashed<ConfiguredTargetLabel>,
-    /// Hash of every other field, taken when the node is built.
+    /// Hash of the label, the deps and the body, taken when the node is built.
     hash: StarlarkHashValue,
     /// Whether this is a forward node: one that stands for its only dep, the same target in
     /// another configuration. Its only attribute is a configured dep on that node.
     forward: bool,
+    /// The rule type and kind of the body's unconfigured node, copied here because they are
+    /// read while walking the graph.
+    underlying_rule_type: RuleType,
+    rule_kind: RuleKind,
     // all_deps includes regular deps and transitioned deps,
     // and includes exec deps and configuration deps.
     // TODO(cjhopman): Should this be a diff against the node's deps?
     all_deps: ConfiguredTargetNodeDeps,
-    body: ConfiguredTargetNodeBody,
+    body: DeferredConfiguredTargetNodeBody,
+}
+
+/// A node's body: resident in a node that was built, and read from storage on first use in a
+/// node that was paged back in.
+#[derive(Allocative, PagableSerialize)]
+struct DeferredConfiguredTargetNodeBody(DeferredValue<triomphe::Arc<ConfiguredTargetNodeBody>>);
+
+impl<'de> PagableDeserialize<'de> for DeferredConfiguredTargetNodeBody {
+    fn pagable_deserialize<D: PagableDeserializer<'de> + ?Sized>(
+        deserializer: &mut D,
+    ) -> pagable::Result<Self> {
+        let enabled = deserializer
+            .storage_context()
+            .get::<DeferredFieldReadsEnabled>()
+            .is_some();
+        Ok(Self(DeferredValue::deserialize_arc(deserializer, enabled)?))
+    }
 }
 
 /// The part of a node that walking the graph does not need.
@@ -179,13 +207,37 @@ impl ConfiguredTargetNodeData {
             label,
             hash,
             forward,
+            underlying_rule_type: body.target_node.rule_type().clone(),
+            rule_kind: body.target_node.rule_kind(),
             all_deps,
-            body,
+            body: DeferredConfiguredTargetNodeBody(DeferredValue::new(triomphe::Arc::new(body))),
         }
     }
 
+    /// Equal headers do not settle equality: the hash is 32 bits and covers only the labels
+    /// of the deps. The bodies settle it, so they are read if they are needed.
+    fn try_eq(&self, other: &Self) -> buck2_error::Result<bool> {
+        if std::ptr::eq(self, other) {
+            return Ok(true);
+        }
+        if self.hash != other.hash
+            || self.label != other.label
+            || self.forward != other.forward
+            || self.all_deps != other.all_deps
+        {
+            return Ok(false);
+        }
+        Ok(self.body()? == other.body()?)
+    }
+
     fn body(&self) -> buck2_error::Result<&ConfiguredTargetNodeBody> {
-        Ok(&self.body)
+        let body = self.body.0.read().with_buck_error_context(|| {
+            format!(
+                "Failed to restore the body of configured target node `{}`",
+                self.label.key()
+            )
+        })?;
+        Ok(body)
     }
 
     fn rule_type(&self) -> &RuleType {
@@ -197,11 +249,11 @@ impl ConfiguredTargetNodeData {
     }
 
     fn underlying_rule_type(&self) -> &RuleType {
-        self.body.target_node.rule_type()
+        &self.underlying_rule_type
     }
 
     fn rule_kind(&self) -> RuleKind {
-        self.body.target_node.rule_kind()
+        self.rule_kind
     }
 
     fn forward_target(&self) -> Option<&ConfiguredTargetNode> {
@@ -210,31 +262,6 @@ impl ConfiguredTargetNodeData {
         } else {
             None
         }
-    }
-}
-
-impl PartialEq for ConfiguredTargetNodeData {
-    fn eq(&self, other: &Self) -> bool {
-        let ConfiguredTargetNodeData {
-            label,
-            hash,
-            forward,
-            all_deps,
-            body,
-        } = self;
-        *hash == other.hash
-            && *label == other.label
-            && *forward == other.forward
-            && *all_deps == other.all_deps
-            && *body == other.body
-    }
-}
-
-impl Eq for ConfiguredTargetNodeData {}
-
-impl Hash for ConfiguredTargetNodeData {
-    fn hash<H: Hasher>(&self, state: &mut H) {
-        self.hash.hash(state);
     }
 }
 
@@ -470,6 +497,12 @@ impl ConfiguredTargetNode {
 
     pub fn ptr_eq(&self, other: &Self) -> bool {
         triomphe::Arc::ptr_eq(&self.0, &other.0)
+    }
+
+    /// Whether the nodes are equal: they are one allocation, or their labels, their deps (by
+    /// allocation) and their bodies are equal. Fails if a body is needed and cannot be read.
+    pub fn try_eq(&self, other: &Self) -> buck2_error::Result<bool> {
+        self.0.try_eq(&other.0)
     }
 }
 
@@ -988,6 +1021,9 @@ impl<'a> ConfiguredTargetNodeBodyRef<'a> {
         });
     }
 }
+
+#[cfg(test)]
+mod body_tests;
 
 #[cfg(test)]
 mod tests {

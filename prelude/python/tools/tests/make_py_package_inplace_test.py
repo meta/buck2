@@ -215,3 +215,29 @@ class TrampolineRuntimeTest(unittest.TestCase):
             )
             self.assertEqual(proc.returncode, 0, proc.stderr)
             self.assertIn("ran with PYTHONPATH", proc.stdout)
+
+
+@unittest.skipIf(sys.version_info < (3, 11), "PYTHONSAFEPATH is 3.11+")
+class SafePathTest(unittest.TestCase):
+    """The startup code drops the cwd entry that `-c` adds to `sys.path`."""
+
+    @staticmethod
+    def _launch(tmpdir: str, env: dict[str, str]) -> "subprocess.CompletedProcess[str]":
+        root = Path(tmpdir)
+        tree = root / "out/bin#link-tree"
+        tree.mkdir(parents=True)
+        (tree / "stub_runner.py").write_text(STUB_RUNNER, encoding="utf8")
+        (tree / "app.py").write_text(APP, encoding="utf8")
+        pex = _make_bootstrapper(root, sys.executable)
+        return subprocess.run(
+            [str(pex)],
+            capture_output=True,
+            encoding="utf8",
+            env={"PATH": os.environ.get("PATH", "/usr/bin:/bin"), **env},
+        )
+
+    def test_safe_path_fails_the_assert(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            proc = self._launch(tmpdir, {"PYTHONSAFEPATH": "1"})
+        self.assertNotEqual(proc.returncode, 0)
+        self.assertIn("AssertionError", proc.stderr)

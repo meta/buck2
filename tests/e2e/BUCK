@@ -9,6 +9,12 @@ buck2_e2e_test(
 )
 
 buck2_e2e_test(
+    name = "test_prelude_python_launcher",
+    srcs = ["test_prelude_python_launcher.rs"],
+    data_dir = "test_prelude_python_launcher_data",
+)
+
+buck2_e2e_test(
     name = "test_prelude_rules",
     srcs = ["test_prelude_rules.rs"],
     data_dir = "test_prelude_rules_data",

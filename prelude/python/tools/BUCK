@@ -251,3 +251,13 @@ prelude.python_test(
     ],
     base_module = "",
 )
+
+prelude.python_test(
+    name = "make_py_package_inplace_test",
+    srcs = [
+        "make_py_package_inplace.py",
+        "tests/make_py_package_inplace_test.py",
+    ],
+    base_module = "",
+    resources = ["run_inplace.py.in"],
+)

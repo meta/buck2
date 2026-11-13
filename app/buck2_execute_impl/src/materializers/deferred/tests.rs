@@ -190,10 +190,13 @@ pub(crate) mod state_machine {
     use buck2_execute::directory::ActionSharedDirectory;
     use buck2_execute::directory::INTERNER;
     use buck2_execute::execute::blocking::IoRequest;
+    use buck2_fs::fs_util::DiskSpaceStats;
     use buck2_fs::fs_util::ReadDir;
+    use buck2_fs::fs_util::disk_space_stats;
     use buck2_fs::fs_util::uncategorized as fs_util;
     use buck2_fs::paths::RelativePathBuf;
     use buck2_fs::paths::abs_norm_path::AbsNormPathBuf;
+    use buck2_fs::paths::abs_path::AbsPathBuf;
     use buck2_fs::paths::forward_rel_path::ForwardRelativePath;
     use buck2_hash::IntentionallyStdHashMap;
     use buck2_util::threads::ignore_stack_overflow_checks_for_current_thread;
@@ -455,6 +458,13 @@ pub(crate) mod state_machine {
                 buck2_error::ErrorTag::Tier0,
                 "The IO stub cannot upload `{path}`"
             ))
+        }
+
+        async fn synced_disk_space_stats(
+            self: &Arc<Self>,
+            path: Arc<AbsPathBuf>,
+        ) -> buck2_error::Result<DiskSpaceStats> {
+            disk_space_stats(&*path)
         }
 
         fn read_dir(&self, path: &AbsNormPathBuf) -> buck2_error::Result<ReadDir> {

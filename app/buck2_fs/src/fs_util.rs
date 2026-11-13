@@ -1257,6 +1257,37 @@ pub fn disk_space_stats<P: AsRef<AbsPath>>(path: P) -> buck2_error::Result<DiskS
     disk_space_stats_impl(path.as_ref())
 }
 
+/// Writes out what the filesystem holding `path` has pending, so that `disk_space_stats` counts
+/// the space that deletions on it freed. Without a per-filesystem sync (macOS), every filesystem
+/// is synced. Does nothing on Windows, whose free space already counts deletions.
+pub fn sync_filesystem<P: AsRef<AbsPath>>(path: P) -> buck2_error::Result<()> {
+    #[cfg(target_os = "linux")]
+    fn sync_filesystem_impl(path: &AbsPath) -> buck2_error::Result<()> {
+        use std::os::fd::AsRawFd;
+
+        let file = File::open(path.as_maybe_relativized())
+            .map_err(|e| IoError::new_with_path("open", path, e).categorize_internal())?;
+        if unsafe { libc::syncfs(file.as_raw_fd()) } != 0 {
+            let e = io::Error::last_os_error();
+            return Err(IoError::new_with_path("syncfs", path, e).categorize_internal());
+        }
+        Ok(())
+    }
+
+    #[cfg(all(unix, not(target_os = "linux")))]
+    fn sync_filesystem_impl(_path: &AbsPath) -> buck2_error::Result<()> {
+        unsafe { libc::sync() };
+        Ok(())
+    }
+
+    #[cfg(windows)]
+    fn sync_filesystem_impl(_path: &AbsPath) -> buck2_error::Result<()> {
+        Ok(())
+    }
+
+    sync_filesystem_impl(path.as_ref())
+}
+
 pub struct FileWriteGuard {
     file: File,
     _guard: IoCounterGuard,

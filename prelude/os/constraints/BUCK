@@ -36,3 +36,9 @@ constraint_with_aliases(
     ],
     visibility = ["PUBLIC"],
 )
+
+constraint_value(
+    name = "unknown",
+    constraint_setting = ":os",
+    visibility = ["PUBLIC"],
+)

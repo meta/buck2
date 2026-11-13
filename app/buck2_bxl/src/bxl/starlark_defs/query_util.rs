@@ -41,7 +41,7 @@ where
                 .into_iter()
                 .map(|(q, res)| {
                     Ok((
-                        heap.alloc(q).get_hashed().map_err(|e| {
+                        heap.alloc(q).to_value().get_hashed().map_err(|e| {
                             from_starlark_with_options(
                                 e,
                                 buck2_error::starlark_error::NativeErrorHandling::Unknown,

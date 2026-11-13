@@ -51,7 +51,7 @@ pub fn parse_positional_kwargs_alloc<'v, 'a, const R: usize, const O: usize>(
 ) -> crate::Result<([Value<'v>; R], [Option<Value<'v>>; O], Value<'v>)> {
     let (required, optional) = args.optional(heap)?;
     let kwargs = args.names_map()?;
-    let kwargs = heap.alloc(kwargs);
+    let kwargs = heap.alloc(kwargs).to_value();
     Ok((required, optional, kwargs))
 }
 

@@ -154,23 +154,29 @@ pub(crate) fn ref_to_value<'v>(
 ) -> buck2_error::Result<Value<'v>> {
     Ok(match attr.kind() {
         CoercedAttrRefKind::None => Value::new_none(),
-        CoercedAttrRefKind::Bool(b) => heap.alloc(b),
-        CoercedAttrRefKind::Int(i) => heap.alloc(i),
-        CoercedAttrRefKind::String(s) | CoercedAttrRefKind::EnumVariant(s) => heap.alloc(s),
+        CoercedAttrRefKind::Bool(b) => heap.alloc(b).to_value(),
+        CoercedAttrRefKind::Int(i) => heap.alloc(i).to_value(),
+        CoercedAttrRefKind::String(s) | CoercedAttrRefKind::EnumVariant(s) => {
+            heap.alloc(s).to_value()
+        }
         // Mirrors `Display for StringWithMacros`: a simple arg renders as its
         // text, a macro-bearing one as its parts with `$(...)` wrappers.
-        CoercedAttrRefKind::ArgSimple(s) => heap.alloc(s),
-        CoercedAttrRefKind::Arg(parts) => heap.alloc(parts.to_string()),
-        CoercedAttrRefKind::List(seq) => heap.alloc(
-            seq.iter()
-                .map(|v| ref_to_value(v, owner, pkg.dupe(), heap))
-                .collect::<buck2_error::Result<Vec<_>>>()?,
-        ),
-        CoercedAttrRefKind::Tuple(seq) => heap.alloc(AllocTuple(
-            seq.iter()
-                .map(|v| ref_to_value(v, owner, pkg.dupe(), heap))
-                .collect::<buck2_error::Result<Vec<_>>>()?,
-        )),
+        CoercedAttrRefKind::ArgSimple(s) => heap.alloc(s).to_value(),
+        CoercedAttrRefKind::Arg(parts) => heap.alloc(parts.to_string()).to_value(),
+        CoercedAttrRefKind::List(seq) => heap
+            .alloc(
+                seq.iter()
+                    .map(|v| ref_to_value(v, owner, pkg.dupe(), heap))
+                    .collect::<buck2_error::Result<Vec<_>>>()?,
+            )
+            .to_value(),
+        CoercedAttrRefKind::Tuple(seq) => heap
+            .alloc(AllocTuple(
+                seq.iter()
+                    .map(|v| ref_to_value(v, owner, pkg.dupe(), heap))
+                    .collect::<buck2_error::Result<Vec<_>>>()?,
+            ))
+            .to_value(),
         CoercedAttrRefKind::Dict(pairs) => {
             let mut res = BuckMutInsertionMap::with_capacity(pairs.len());
             for (k, v) in pairs.iter() {
@@ -187,7 +193,7 @@ pub(crate) fn ref_to_value<'v>(
                     ref_to_value(v, owner, pkg.dupe(), heap)?,
                 );
             }
-            heap.alloc(res)
+            heap.alloc(res).to_value()
         }
         CoercedAttrRefKind::OneOf((_, l)) => ref_to_value(l, owner, pkg, heap)?,
         CoercedAttrRefKind::Selector(_) => heap
@@ -236,21 +242,23 @@ pub(crate) fn ref_to_value<'v>(
                 .alloc_representation(StarlarkProvidersLabel::new(dep.dupe()))
                 .to_value();
             match transition {
-                Some(t) => heap.alloc((
-                    label,
-                    heap.alloc_representation(StarlarkProvidersLabel::new(t.dupe()))
-                        .to_value(),
-                )),
+                Some(t) => heap
+                    .alloc((
+                        label,
+                        heap.alloc_representation(StarlarkProvidersLabel::new(t.dupe()))
+                            .to_value(),
+                    ))
+                    .to_value(),
                 None => label,
             }
         }
-        CoercedAttrRefKind::Query(q) => heap.alloc(q.query().0),
+        CoercedAttrRefKind::Query(q) => heap.alloc(q.query().0).to_value(),
         CoercedAttrRefKind::Modifiers(m) => m.alloc_starlark(heap),
         CoercedAttrRefKind::Visibility(VisibilitySpecification(specs))
         | CoercedAttrRefKind::WithinView(WithinViewSpecification(specs)) => {
             pattern_list_to_value(specs, heap)?
         }
-        CoercedAttrRefKind::Metadata(data) => heap.alloc(data.to_value()),
+        CoercedAttrRefKind::Metadata(data) => heap.alloc(data.to_value()).to_value(),
     })
 }
 
@@ -259,13 +267,13 @@ fn pattern_list_to_value<'v>(
     heap: Heap<'v>,
 ) -> buck2_error::Result<Value<'v>> {
     Ok(match specs {
-        VisibilityPatternList::Public => heap.alloc(AllocList(["PUBLIC"])),
-        VisibilityPatternList::List(specs) => {
-            heap.alloc(AllocList(specs.iter().map(|s| match s {
-                VisibilityPattern::Parsed(p) => heap.alloc(p.to_string()),
+        VisibilityPatternList::Public => heap.alloc(AllocList(["PUBLIC"])).to_value(),
+        VisibilityPatternList::List(specs) => heap
+            .alloc(AllocList(specs.iter().map(|s| match s {
+                VisibilityPattern::Parsed(p) => heap.alloc(p.to_string()).to_value(),
                 VisibilityPattern::TargetNameGlob(r) => r.alloc_starlark_value(heap),
             })))
-        }
+            .to_value(),
         VisibilityPatternList::Intersection(_) => {
             return Err(internal_error!(
                 "Intersection visibility cannot be serialized as attribute"

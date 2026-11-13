@@ -44,7 +44,7 @@ fn visibility_intersection_layer_methods(builder: &mut MethodsBuilder) {
         this: &StarlarkVisibilityIntersectionLayer,
         heap: Heap<'v>,
     ) -> starlark::Result<Value<'v>> {
-        Ok(heap.alloc(this.0.patterns().to_json()))
+        Ok(heap.alloc(this.0.patterns().to_json()).to_value())
     }
 
     /// Package patterns whose targets skip this layer.

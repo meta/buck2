@@ -780,7 +780,7 @@ impl<'v> ParametersSpec<Value<'v>> {
                     Some(kwargs) => Dict::from_string_keyed(kwargs),
                     None => Dict::default(),
                 };
-                heap.alloc(kwargs)
+                heap.alloc(kwargs).to_value()
             }
         }
 

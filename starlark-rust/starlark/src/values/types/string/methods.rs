@@ -1005,10 +1005,8 @@ pub(crate) fn string_methods(builder: &mut MethodsBuilder) {
         };
         Ok(match sep.into_option() {
             None => match maxsplit {
-                None => ValueOf::new_unchecked(heap.alloc(AllocList(this.split_whitespace()))),
-                Some(maxsplit) => {
-                    ValueOf::new_unchecked(heap.alloc(rsplitn_whitespace(this, maxsplit)))
-                }
+                None => heap.alloc(AllocList(this.split_whitespace())),
+                Some(maxsplit) => heap.alloc(rsplitn_whitespace(this, maxsplit)),
             },
             Some(sep) => {
                 let mut v: Vec<_> = match maxsplit {
@@ -1016,7 +1014,7 @@ pub(crate) fn string_methods(builder: &mut MethodsBuilder) {
                     Some(maxsplit) => this.rsplitn(maxsplit, sep).collect(),
                 };
                 v.reverse();
-                ValueOf::new_unchecked(heap.alloc(AllocList(v)))
+                heap.alloc(AllocList(v))
             }
         })
     }
@@ -1109,10 +1107,8 @@ pub(crate) fn string_methods(builder: &mut MethodsBuilder) {
             }
         };
         Ok(match (sep.into_option(), maxsplit) {
-            (None, None) => ValueOf::new_unchecked(heap.alloc(AllocList(this.split_whitespace()))),
-            (None, Some(maxsplit)) => {
-                ValueOf::new_unchecked(heap.alloc(AllocList(splitn_whitespace(this, maxsplit))))
-            }
+            (None, None) => heap.alloc(AllocList(this.split_whitespace())),
+            (None, Some(maxsplit)) => heap.alloc(AllocList(splitn_whitespace(this, maxsplit))),
             (Some(sep), None) => {
                 if sep.len() == 1 {
                     // If we are searching for a 1-byte string, we can provide a much faster path.
@@ -1126,14 +1122,12 @@ pub(crate) fn string_methods(builder: &mut MethodsBuilder) {
                             .map(|x| unsafe { std::str::from_utf8_unchecked(x) }),
                     );
                     debug_assert_eq!(res.len(), count + 1);
-                    ValueOf::new_unchecked(heap.alloc(AllocList(res)))
+                    heap.alloc(AllocList(res))
                 } else {
-                    ValueOf::new_unchecked(heap.alloc(AllocList(this.split(sep))))
+                    heap.alloc(AllocList(this.split(sep)))
                 }
             }
-            (Some(sep), Some(maxsplit)) => {
-                ValueOf::new_unchecked(heap.alloc(AllocList(this.splitn(maxsplit, sep))))
-            }
+            (Some(sep), Some(maxsplit)) => heap.alloc(AllocList(this.splitn(maxsplit, sep))),
         })
     }
 

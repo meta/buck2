@@ -786,11 +786,15 @@ mod tests {
     #[test]
     fn test_parse_remote_execution_properties_with_multiple_values() -> buck2_error::Result<()> {
         BuckStarlarkModule::with_profiling(|module| {
-            let architectures = module.heap().alloc(AllocList(["x86_64", "aarch64"]));
-            let platform = module.heap().alloc("linux-remote-execution");
+            let architectures = module
+                .heap()
+                .alloc(AllocList(["x86_64", "aarch64"]))
+                .to_value();
+            let platform = module.heap().alloc("linux-remote-execution").to_value();
             let properties = module
                 .heap()
-                .alloc(AllocDict([("arch", architectures), ("platform", platform)]));
+                .alloc(AllocDict([("arch", architectures), ("platform", platform)]))
+                .to_value();
 
             let properties = parse_remote_execution_properties(properties)
                 .expect("Properties should parse")
@@ -821,14 +825,18 @@ mod tests {
     fn test_parse_meta_internal_extra_params_cancel_on_client_disconnect() -> buck2_error::Result<()>
     {
         Heap::temp(|heap| {
-            let params = heap.alloc(AllocDict([("cancel_on_client_disconnect", true)]));
+            let params = heap
+                .alloc(AllocDict([("cancel_on_client_disconnect", true)]))
+                .to_value();
             let params = parse_meta_internal_extra_params(DictRef::from_value(params))?;
             assert!(params.cancel_on_client_disconnect);
 
-            let params = heap.alloc(AllocDict([(
-                "allow_unsandboxed_action_cache_uploads",
-                true,
-            )]));
+            let params = heap
+                .alloc(AllocDict([(
+                    "allow_unsandboxed_action_cache_uploads",
+                    true,
+                )]))
+                .to_value();
             let params = parse_meta_internal_extra_params(DictRef::from_value(params))?;
             assert!(!params.cancel_on_client_disconnect, "defaults to false");
             Ok(())
@@ -841,10 +849,12 @@ mod tests {
                 ("name", heap.alloc("xlformers_msl_rl_conda")),
                 ("uuid", heap.alloc(uuid)),
             ]));
-            let params = heap.alloc(AllocDict([(
-                "remote_execution_caf_fbpkgs",
-                heap.alloc(AllocList([fbpkg])),
-            )]));
+            let params = heap
+                .alloc(AllocDict([(
+                    "remote_execution_caf_fbpkgs",
+                    heap.alloc(AllocList([fbpkg])),
+                )]))
+                .to_value();
             let params = parse_meta_internal_extra_params(DictRef::from_value(params))?;
             Ok(params
                 .remote_execution_caf_fbpkgs

@@ -166,7 +166,7 @@ fn action_query_node_value_methods(builder: &mut MethodsBuilder) {
             buck2_error::Ok(())
         })?;
 
-        Ok(heap.alloc(AllocStruct(result)))
+        Ok(heap.alloc(AllocStruct(result)).to_value())
     }
 
     /// Gets optional action from the action query target node.

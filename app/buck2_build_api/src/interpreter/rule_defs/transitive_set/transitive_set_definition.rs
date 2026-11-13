@@ -325,7 +325,7 @@ impl<'v> StarlarkType<'v> for TransitiveSetDefinitionView<'v> {
                 .map_or("TransitiveSetDefinition", |exported| {
                     exported.id.name.as_str()
                 });
-            Some(heap.alloc(typ))
+            Some(heap.alloc(typ).to_value())
         } else {
             None
         }

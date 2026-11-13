@@ -448,7 +448,7 @@ fn configured_target_node_value_methods(builder: &mut MethodsBuilder) {
             )
             .map(|(name, attr)| (name, heap.alloc_representation(attr).to_value()));
 
-        Ok(heap.alloc(AllocStruct(attrs)))
+        Ok(heap.alloc(AllocStruct(attrs)).to_value())
     }
 
     /// Returns a `lazy_attrs` object that you can call `get()` on that gets an attr one at a time.
@@ -573,7 +573,7 @@ fn configured_target_node_value_methods(builder: &mut MethodsBuilder) {
             ));
         }
 
-        Ok(eval.heap().alloc(AllocStruct(resolved_attrs)))
+        Ok(eval.heap().alloc(AllocStruct(resolved_attrs)).to_value())
     }
 
     /// Skip incoming transition forward node.

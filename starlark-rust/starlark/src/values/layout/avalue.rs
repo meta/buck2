@@ -567,12 +567,12 @@ mod tests {
         // Empty dictionaries freeze to one statically allocated value.
 
         Module::with_temp_heap(|module| {
-            let d0 = module.heap().alloc(AllocDict::EMPTY);
-            let d1 = module.heap().alloc(AllocDict::EMPTY);
+            let d0 = module.heap().alloc(AllocDict::EMPTY).to_value();
+            let d1 = module.heap().alloc(AllocDict::EMPTY).to_value();
             // Pointers are not equal.
             assert_ne!(d0.0.raw(), d1.0.raw());
 
-            module.set_extra_value(module.heap().alloc((d0, d1)));
+            module.set_extra_value(module.heap().alloc((d0, d1)).to_value());
 
             let module = module.freeze_named(StarlarkTestHeapName::frozen_heap_name())?;
             module.extra_value().unwrap().by_ref(|extra| {

@@ -62,9 +62,9 @@ impl<'v> ValueOf<'v, StructRef<'v>> {
     /// A new struct of these fields.
     pub fn alloc_struct<S>(heap: Heap<'v>, fields: AllocStruct<S>) -> Self
     where
-        AllocStruct<S>: AllocValue<'v>,
+        AllocStruct<S>: AllocValue<'v, Type = StructRef<'v>>,
     {
-        Self::new_unchecked(heap.alloc(fields))
+        heap.alloc(fields)
     }
 }
 

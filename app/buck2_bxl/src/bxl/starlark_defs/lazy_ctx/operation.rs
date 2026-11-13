@@ -140,10 +140,12 @@ impl LazyResult {
                         })
                         .collect::<starlark::Result<_>>()?,
                 );
-                Ok(heap.alloc((
-                    heap.alloc_representation(success_targets).to_value(),
-                    error_packages,
-                )))
+                Ok(heap
+                    .alloc((
+                        heap.alloc_representation(success_targets).to_value(),
+                        error_packages,
+                    ))
+                    .to_value())
             }
             LazyResult::BuildArtifact(artifact) => {
                 Ok(heap.alloc_representation(artifact).to_value())
@@ -155,15 +157,19 @@ impl LazyResult {
                 .to_value()),
             LazyResult::Uquery(res) => res.into_value(heap),
             LazyResult::Cquery(res) => res.into_value(heap),
-            LazyResult::Join(res) => Ok(heap.alloc((
-                res.0.into_value(heap, bxl_eval_extra)?,
-                res.1.into_value(heap, bxl_eval_extra)?,
-            ))),
-            LazyResult::Batch(res) => Ok(heap.alloc(AllocList(
-                res.into_iter()
-                    .map(|v| v.into_value(heap, bxl_eval_extra))
-                    .collect::<buck2_error::Result<Vec<_>>>()?,
-            ))),
+            LazyResult::Join(res) => Ok(heap
+                .alloc((
+                    res.0.into_value(heap, bxl_eval_extra)?,
+                    res.1.into_value(heap, bxl_eval_extra)?,
+                ))
+                .to_value()),
+            LazyResult::Batch(res) => Ok(heap
+                .alloc(AllocList(
+                    res.into_iter()
+                        .map(|v| v.into_value(heap, bxl_eval_extra))
+                        .collect::<buck2_error::Result<Vec<_>>>()?,
+                ))
+                .to_value()),
             LazyResult::Catch(res) => {
                 let val = match *res {
                     Ok(res) => res.into_value(heap, bxl_eval_extra),

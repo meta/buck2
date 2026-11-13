@@ -245,10 +245,16 @@ impl JsonCliArgValueData {
         match self {
             Self::Bool(b) => Value::new_bool(*b),
             // Verified when we constructed these from the `serde_json::Value`s
-            Self::Float(i) => heap.alloc(i.parse::<f64>().expect("already verified")),
-            Self::Int(i) => heap.alloc(BigInt::from(i.parse::<i64>().expect("already verified"))),
-            Self::String(s) => heap.alloc(s),
-            Self::List(l) => heap.alloc(AllocList(l.iter().map(|v| v.as_starlark(heap)))),
+            Self::Float(i) => heap
+                .alloc(i.parse::<f64>().expect("already verified"))
+                .to_value(),
+            Self::Int(i) => heap
+                .alloc(BigInt::from(i.parse::<i64>().expect("already verified")))
+                .to_value(),
+            Self::String(s) => heap.alloc(s).to_value(),
+            Self::List(l) => heap
+                .alloc(AllocList(l.iter().map(|v| v.as_starlark(heap))))
+                .to_value(),
             Self::None => Value::new_none(),
             Self::Object(mp) => {
                 let mut res = BuckMutInsertionMap::with_capacity(mp.len());
@@ -258,7 +264,7 @@ impl JsonCliArgValueData {
                         v.as_starlark(heap),
                     );
                 }
-                heap.alloc(res)
+                heap.alloc(res).to_value()
             }
         }
     }
@@ -301,10 +307,14 @@ impl CliArgValue {
     pub(crate) fn as_starlark<'v>(&self, heap: Heap<'v>) -> Value<'v> {
         match self {
             CliArgValue::Bool(b) => Value::new_bool(*b),
-            CliArgValue::Int(i) => heap.alloc(i.clone()),
-            CliArgValue::Float(f) => heap.alloc(f.parse::<f64>().expect("already verified")),
-            CliArgValue::String(s) => heap.alloc(s),
-            CliArgValue::List(l) => heap.alloc(AllocList(l.iter().map(|v| v.as_starlark(heap)))),
+            CliArgValue::Int(i) => heap.alloc(i.clone()).to_value(),
+            CliArgValue::Float(f) => heap
+                .alloc(f.parse::<f64>().expect("already verified"))
+                .to_value(),
+            CliArgValue::String(s) => heap.alloc(s).to_value(),
+            CliArgValue::List(l) => heap
+                .alloc(AllocList(l.iter().map(|v| v.as_starlark(heap))))
+                .to_value(),
             CliArgValue::None => Value::new_none(),
             CliArgValue::TargetLabel(t) => heap
                 .alloc_representation(StarlarkTargetLabel::new(t.dupe()))
@@ -315,7 +325,7 @@ impl CliArgValue {
             CliArgValue::ProvidersLabel(p) => heap
                 .alloc_representation(StarlarkProvidersLabel::new(p.clone()))
                 .to_value(),
-            CliArgValue::Json(j) => heap.alloc(j.as_starlark(heap)),
+            CliArgValue::Json(j) => heap.alloc(j.as_starlark(heap)).to_value(),
         }
     }
 }
@@ -1445,17 +1455,17 @@ mod tests {
             );
 
             assert_eq!(
-                CliArgType::int().coerce_value(heap.alloc(42))?,
+                CliArgType::int().coerce_value(heap.alloc(42i32).to_value())?,
                 CliArgValue::Int(BigInt::from(42))
             );
 
             assert_eq!(
-                CliArgType::float().coerce_value(heap.alloc(4.2))?,
+                CliArgType::float().coerce_value(heap.alloc(4.2).to_value())?,
                 CliArgValue::Float("4.2".to_owned())
             );
 
             assert_eq!(
-                CliArgType::string().coerce_value(heap.alloc("foobar"))?,
+                CliArgType::string().coerce_value(heap.alloc("foobar").to_value())?,
                 CliArgValue::String("foobar".to_owned())
             );
 
@@ -1465,7 +1475,7 @@ mod tests {
                     "b".to_owned(),
                     "c".to_owned()
                 ]))
-                .coerce_value(heap.alloc("a"))?,
+                .coerce_value(heap.alloc("a").to_value())?,
                 CliArgValue::String("a".to_owned())
             );
 
@@ -1485,7 +1495,8 @@ mod tests {
             );
 
             assert_eq!(
-                CliArgType::list(CliArgType::int()).coerce_value(heap.alloc(vec![1, 4, 2]))?,
+                CliArgType::list(CliArgType::int())
+                    .coerce_value(heap.alloc(vec![1i32, 4i32, 2i32]).to_value())?,
                 CliArgValue::List(vec![
                     CliArgValue::Int(BigInt::from(1)),
                     CliArgValue::Int(BigInt::from(4)),

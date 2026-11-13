@@ -96,10 +96,10 @@ pub(crate) fn register_zip(globals: &mut GlobalsBuilder) {
             let mut idx = 0;
             for e in arg?.to_value().iterate(heap)? {
                 if first {
-                    v.push(heap.alloc((e,)));
+                    v.push(heap.alloc((e,)).to_value());
                     idx += 1;
                 } else if idx < v.len() {
-                    v[idx] = v[idx].add(heap.alloc((e,)), heap)?;
+                    v[idx] = v[idx].add(heap.alloc((e,)).to_value(), heap)?;
                     idx += 1;
                 }
             }

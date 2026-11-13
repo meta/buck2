@@ -165,10 +165,13 @@ async fn do_apply_transition(
             provider.with_evaluator(&module, cancellation.into(), |eval, _| {
                 eval.set_print_handler(&print);
                 eval.set_soft_error_handler(&Buck2StarlarkSoftErrorHandler);
-                let refs = module.heap().alloc(AllocStruct(
-                    refs.iter()
-                        .map(|(s, v)| (*s, v.add_heap_ref(module.heap()))),
-                ));
+                let refs = module
+                    .heap()
+                    .alloc(AllocStruct(
+                        refs.iter()
+                            .map(|(s, v)| (*s, v.add_heap_ref(module.heap()))),
+                    ))
+                    .to_value();
                 let attrs = match (transition.attr_names(), attrs) {
                     (Some(names), Some(values)) => {
                         let mut attrs = Vec::new();
@@ -191,7 +194,7 @@ async fn do_apply_transition(
                             };
                             attrs.push((name, value));
                         }
-                        Some(module.heap().alloc(AllocStruct(attrs)))
+                        Some(module.heap().alloc(AllocStruct(attrs)).to_value())
                     }
                     (None, None) => None,
                     (Some(_), None) | (None, Some(_)) => {

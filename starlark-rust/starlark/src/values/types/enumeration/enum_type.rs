@@ -487,8 +487,8 @@ fn enum_type_methods(builder: &mut MethodsBuilder) {
     #[starlark(attribute)]
     fn r#type<'v>(this: AnyEnumType<'v>, heap: Heap<'_>) -> starlark::Result<Value<'v>> {
         match this.ty_enum_data() {
-            Some(ty_enum_type) => Ok(heap.alloc(ty_enum_type.name.as_str())),
-            None => Ok(heap.alloc(EnumValue::TYPE)),
+            Some(ty_enum_type) => Ok(heap.alloc(ty_enum_type.name.as_str()).to_value()),
+            None => Ok(heap.alloc(EnumValue::TYPE).to_value()),
         }
     }
 

@@ -130,20 +130,20 @@ impl<'v> StarlarkType<'v> for IntView<'v> {
     }
 
     fn minus(&self, heap: Heap<'v>) -> crate::Result<Value<'v>> {
-        Ok(heap.alloc(-self.as_int_ref()))
+        Ok(heap.alloc(-self.as_int_ref()).to_value())
     }
 
     fn add(&self, other: Value<'v>, heap: Heap<'v>) -> Option<crate::Result<Value<'v>>> {
         Some(
             (self.num() + other.unpack_num()?)
-                .map(|x| heap.alloc(x))
+                .map(|x| heap.alloc(x).to_value())
                 .map_err(Into::into),
         )
     }
 
     fn sub(&self, other: Value<'v>, heap: Heap<'v>) -> crate::Result<Value<'v>> {
         match other.unpack_num() {
-            Some(other) => Ok(heap.alloc((self.num() - other)?)),
+            Some(other) => Ok(heap.alloc((self.num() - other)?).to_value()),
             None => ValueError::unsupported_with(self, "-", other),
         }
     }
@@ -151,28 +151,28 @@ impl<'v> StarlarkType<'v> for IntView<'v> {
     fn mul(&self, other: Value<'v>, heap: Heap<'v>) -> Option<crate::Result<Value<'v>>> {
         Some(
             (self.num() * other.unpack_num()?)
-                .map(|x| heap.alloc(x))
+                .map(|x| heap.alloc(x).to_value())
                 .map_err(Into::into),
         )
     }
 
     fn div(&self, other: Value<'v>, heap: Heap<'v>) -> crate::Result<Value<'v>> {
         match other.unpack_num() {
-            Some(other) => Ok(heap.alloc(self.num().div(other)?)),
+            Some(other) => Ok(heap.alloc(self.num().div(other)?).to_value()),
             None => ValueError::unsupported_with(self, "/", other),
         }
     }
 
     fn percent(&self, other: Value<'v>, heap: Heap<'v>) -> crate::Result<Value<'v>> {
         match other.unpack_num() {
-            Some(other) => Ok(heap.alloc(self.num().percent(other)?)),
+            Some(other) => Ok(heap.alloc(self.num().percent(other)?).to_value()),
             None => ValueError::unsupported_with(self, "%", other),
         }
     }
 
     fn floor_div(&self, other: Value<'v>, heap: Heap<'v>) -> crate::Result<Value<'v>> {
         match other.unpack_num() {
-            Some(other) => Ok(heap.alloc(self.num().floor_div(other)?)),
+            Some(other) => Ok(heap.alloc(self.num().floor_div(other)?).to_value()),
             None => ValueError::unsupported_with(self, "//", other),
         }
     }
@@ -181,7 +181,7 @@ impl<'v> StarlarkType<'v> for IntView<'v> {
         match (self.as_int_ref(), StarlarkIntRef::unpack(other)) {
             (_, None) => ValueError::unsupported_with(self, "&", other),
             (StarlarkIntRef::Small(a), Some(StarlarkIntRef::Small(b))) => Ok(Value::new_int(a & b)),
-            (a, Some(b)) => Ok(heap.alloc(a & b)),
+            (a, Some(b)) => Ok(heap.alloc(a & b).to_value()),
         }
     }
 
@@ -189,7 +189,7 @@ impl<'v> StarlarkType<'v> for IntView<'v> {
         match (self.as_int_ref(), StarlarkIntRef::unpack(other)) {
             (_, None) => ValueError::unsupported_with(self, "|", other),
             (StarlarkIntRef::Small(a), Some(StarlarkIntRef::Small(b))) => Ok(Value::new_int(a | b)),
-            (a, Some(b)) => Ok(heap.alloc(a | b)),
+            (a, Some(b)) => Ok(heap.alloc(a | b).to_value()),
         }
     }
 
@@ -197,28 +197,28 @@ impl<'v> StarlarkType<'v> for IntView<'v> {
         match (self.as_int_ref(), StarlarkIntRef::unpack(other)) {
             (_, None) => ValueError::unsupported_with(self, "^", other),
             (StarlarkIntRef::Small(a), Some(StarlarkIntRef::Small(b))) => Ok(Value::new_int(a ^ b)),
-            (a, Some(b)) => Ok(heap.alloc(a ^ b)),
+            (a, Some(b)) => Ok(heap.alloc(a ^ b).to_value()),
         }
     }
 
     fn bit_not(&self, heap: Heap<'v>) -> crate::Result<Value<'v>> {
         match self.as_int_ref() {
             StarlarkIntRef::Small(a) => Ok(Value::new_int(!a)),
-            big => Ok(heap.alloc(!big)),
+            big => Ok(heap.alloc(!big).to_value()),
         }
     }
 
     fn left_shift(&self, other: Value<'v>, heap: Heap<'v>) -> crate::Result<Value<'v>> {
         match StarlarkIntRef::unpack(other) {
             None => ValueError::unsupported_with(self, "<<", other),
-            Some(other) => Ok(heap.alloc(self.as_int_ref().left_shift(other)?)),
+            Some(other) => Ok(heap.alloc(self.as_int_ref().left_shift(other)?).to_value()),
         }
     }
 
     fn right_shift(&self, other: Value<'v>, heap: Heap<'v>) -> crate::Result<Value<'v>> {
         match StarlarkIntRef::unpack(other) {
             None => ValueError::unsupported_with(self, ">>", other),
-            Some(other) => Ok(heap.alloc(self.as_int_ref().right_shift(other)?)),
+            Some(other) => Ok(heap.alloc(self.as_int_ref().right_shift(other)?).to_value()),
         }
     }
 

@@ -181,7 +181,7 @@ mod tests {
                 .ok()
             );
             // Errors
-            assert!(convert_index(heap.alloc("a"), 7).is_err());
+            assert!(convert_index(heap.alloc("a").to_value(), 7).is_err());
             assert!(convert_index(Value::testing_new_int(8), 7).is_err()); // 8 > 7 = len
             assert!(convert_index(Value::testing_new_int(-8), 7).is_err()); // -8 + 7 = -1 < 0
         });

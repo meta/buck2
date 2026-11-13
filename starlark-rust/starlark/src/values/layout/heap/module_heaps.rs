@@ -191,7 +191,7 @@ mod tests {
         let expected = "a string that lives on a heap of its own".repeat(8);
         let foreign =
             OwnedFrozen::<Value<'static>>::build(StarlarkTestHeapName::frozen_heap_name(), |fh| {
-                fh.alloc(expected.as_str())
+                fh.alloc(expected.as_str()).to_value()
             });
         let root = Heap::temp(|heap| {
             let heaps = ModuleHeaps::new(heap);
@@ -218,6 +218,7 @@ mod tests {
                         .repeat(8)
                         .as_str(),
                 )
+                .to_value()
             });
         let other =
             OwnedFrozen::<Value<'static>>::build(StarlarkTestHeapName::frozen_heap_name(), |fh| {
@@ -226,6 +227,7 @@ mod tests {
                         .repeat(8)
                         .as_str(),
                 )
+                .to_value()
             });
         Heap::temp(|heap| {
             let heaps = ModuleHeaps::new(heap);
@@ -260,13 +262,17 @@ mod tests {
                         .repeat(8)
                         .as_str(),
                 )
+                .to_value()
             });
         Heap::temp(|heap| {
             let heaps = ModuleHeaps::new(heap);
             heaps.frozen_heap(|fh, edge, seal_edge| {
-                let from_builder = edge.rebrand(fh.alloc("allocated on the builder".repeat(8)));
+                let from_builder =
+                    edge.rebrand(fh.alloc("allocated on the builder".repeat(8)).to_value());
                 let from_owner = foreign.as_ref().add_to_heap(heap);
-                let unfrozen = heap.alloc("allocated on the value heap".repeat(8));
+                let unfrozen = heap
+                    .alloc("allocated on the value heap".repeat(8))
+                    .to_value();
                 assert!(
                     seal_edge
                         .rebrand(from_builder)
@@ -307,7 +313,7 @@ mod unwind_tests {
             let expected = "a string that lives on the module's frozen heap".repeat(8);
             let s =
                 heaps.frozen_heap(|fh, edge, _seal_edge| edge.rebrand(fh.alloc(expected.as_str())));
-            let list = heap.alloc(vec![s]);
+            let list = heap.alloc(vec![s]).to_value();
             let references_before = heap.referenced_heaps().len();
             let unwound = catch_unwind(AssertUnwindSafe(|| {
                 heaps.seal_with::<Value<'static>, ()>(None, |_freezer, _edge, _seal_edge| {

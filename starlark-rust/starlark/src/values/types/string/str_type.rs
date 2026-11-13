@@ -279,7 +279,7 @@ impl<'v> StarlarkValue<'v> for StarlarkStr {
         if i >= 0 {
             match fast_string::at(self, CharIndex(i as usize)) {
                 None => Err(ValueError::IndexOutOfBound(i).into()),
-                Some(c) => Ok(heap.alloc(c)),
+                Some(c) => Ok(heap.alloc(c).to_value()),
             }
         } else {
             let len_chars = fast_string::len(self);
@@ -288,9 +288,13 @@ impl<'v> StarlarkValue<'v> for StarlarkStr {
                 Err(ValueError::IndexOutOfBound(i).into())
             } else if len_chars.0 == self.len() {
                 // We are a 7bit ASCII string, so take the fast-path
-                Ok(heap.alloc(self.as_bytes()[(len_chars - ind).0] as char))
+                Ok(heap
+                    .alloc(self.as_bytes()[(len_chars - ind).0] as char)
+                    .to_value())
             } else {
-                Ok(heap.alloc(fast_string::at(self, len_chars - ind).unwrap()))
+                Ok(heap
+                    .alloc(fast_string::at(self, len_chars - ind).unwrap())
+                    .to_value())
             }
         }
     }
@@ -316,7 +320,7 @@ impl<'v> StarlarkValue<'v> for StarlarkStr {
             // The stride case is super rare and super complex, so let's do something inefficient but safe
             let xs = s.chars().collect::<Vec<_>>();
             let xs = apply_slice(&xs, start, stop, stride)?;
-            return Ok(heap.alloc(xs.into_iter().collect::<String>()));
+            return Ok(heap.alloc(xs.into_iter().collect::<String>()).to_value());
         }
 
         #[inline(always)]
@@ -357,7 +361,7 @@ impl<'v> StarlarkValue<'v> for StarlarkStr {
         for _i in 0..l {
             result.push_str(self)
         }
-        Some(Ok(heap.alloc(result)))
+        Some(Ok(heap.alloc(result).to_value()))
     }
 
     fn rmul(&self, lhs: Value<'v>, heap: Heap<'v>) -> Option<crate::Result<Value<'v>>> {
@@ -365,7 +369,7 @@ impl<'v> StarlarkValue<'v> for StarlarkStr {
     }
 
     fn percent(&self, other: Value<'v>, heap: Heap<'v>) -> crate::Result<Value<'v>> {
-        Ok(heap.alloc(interpolation::percent(self, other)?))
+        Ok(heap.alloc(interpolation::percent(self, other)?).to_value())
     }
 
     fn typechecker_ty(&self) -> Option<Ty> {
@@ -461,7 +465,7 @@ mod tests {
             for x in EXAMPLES {
                 assert_eq!(
                     heap.alloc_str(x).get_hashed().hash(),
-                    heap.alloc(*x).get_hashed().unwrap().hash()
+                    heap.alloc(*x).to_value().get_hashed().unwrap().hash()
                 );
             }
         });
@@ -472,7 +476,7 @@ mod tests {
     #[test]
     fn test_zero_length_string_hash_is_not_zero() {
         Heap::temp(|heap| {
-            assert_ne!(0, heap.alloc("").get_hash().unwrap().get());
+            assert_ne!(0, heap.alloc("").to_value().get_hash().unwrap().get());
         });
     }
 
@@ -572,22 +576,23 @@ len("😿") == 1
         fn test_str(str: &str) -> crate::Result<()> {
             Heap::temp(|heap| {
                 let chars = str.chars().collect::<Vec<char>>();
-                let val = heap.alloc(str);
+                let val = heap.alloc(str).to_value();
                 let len = chars.len() as i32;
                 assert_eq!(val.length()?, len);
                 for (i, char) in chars.iter().enumerate() {
                     let char_str = char.to_string();
                     assert_eq!(
-                        val.at(heap.alloc(i), heap)?.unpack_str(),
+                        val.at(heap.alloc(i).to_value(), heap)?.unpack_str(),
                         Some(char_str.as_str())
                     );
                     assert_eq!(
-                        val.at(heap.alloc(-len + (i as i32)), heap)?.unpack_str(),
+                        val.at(heap.alloc(-len + (i as i32)).to_value(), heap)?
+                            .unpack_str(),
                         Some(char_str.as_str())
                     );
                 }
-                assert!(val.at(heap.alloc(len), heap).is_err());
-                assert!(val.at(heap.alloc(-(len + 1)), heap).is_err());
+                assert!(val.at(heap.alloc(len).to_value(), heap).is_err());
+                assert!(val.at(heap.alloc(-(len + 1)).to_value(), heap).is_err());
                 Ok(())
             })
         }

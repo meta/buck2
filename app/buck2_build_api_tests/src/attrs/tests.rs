@@ -239,7 +239,9 @@ fn test_concat_option_one_of() {
 #[test]
 fn test_any() -> buck2_error::Result<()> {
     Heap::temp(|heap| {
-        let value = heap.alloc(vec!["//some:target", "cell1//named:target[foo]"]);
+        let value = heap
+            .alloc(vec!["//some:target", "cell1//named:target[foo]"])
+            .to_value();
         let attr = AttrType::any();
 
         let coerced = coercion_ctx().coerce_sealed(&attr, value)?;
@@ -274,7 +276,7 @@ fn test_any() -> buck2_error::Result<()> {
             .require_compatible()?;
         assert_eq!("True", configured.as_display_no_ctx().to_string());
 
-        let value = heap.alloc(42);
+        let value = heap.alloc(42i32).to_value();
         let coerced = coercion_ctx().coerce_sealed(&attr, value)?;
         assert_eq!("42", coerced.as_ref().as_display_no_ctx().to_string());
         let configured = coerced
@@ -292,7 +294,7 @@ fn test_option() -> buck2_error::Result<()> {
     Heap::temp(|heap| {
         let attr = AttrType::option(AttrType::list(AttrType::string()));
 
-        let value = heap.alloc(vec!["string1", "string2"]);
+        let value = heap.alloc(vec!["string1", "string2"]).to_value();
         let coerced = coercion_ctx().coerce_sealed(&attr, value)?;
         assert_eq!(
             "[\"string1\", \"string2\"]",
@@ -382,8 +384,8 @@ fn test_dict() -> buck2_error::Result<()> {
 #[test]
 fn test_one_of() -> buck2_error::Result<()> {
     Heap::temp(|heap| {
-        let value = heap.alloc("one");
-        let values = heap.alloc(vec!["test", "extra"]);
+        let value = heap.alloc("one").to_value();
+        let values = heap.alloc(vec!["test", "extra"]).to_value();
 
         let attr = AttrType::one_of(vec![AttrType::string(), AttrType::list(AttrType::string())]);
         let coerced = coercion_ctx().coerce_sealed(&attr, value)?;
@@ -419,7 +421,9 @@ fn test_one_of() -> buck2_error::Result<()> {
 #[test]
 fn test_label() -> buck2_error::Result<()> {
     Heap::temp(|heap| {
-        let value = heap.alloc(vec!["//some:target", "cell1//named:target[foo]"]);
+        let value = heap
+            .alloc(vec!["//some:target", "cell1//named:target[foo]"])
+            .to_value();
 
         let attr = AttrType::list(AttrType::dep(ProviderIdSet::EMPTY, PluginKindSet::EMPTY));
 
@@ -633,7 +637,7 @@ fn test_dep_requires_providers() -> buck2_error::Result<()> {
         let (mut resolution_ctx, provider_ids) = resolution_ctx_with_providers(&env);
 
         Heap::temp(|heap| {
-            let foo_only = heap.alloc("//sub/dir:foo[foo_only]");
+            let foo_only = heap.alloc("//sub/dir:foo[foo_only]").to_value();
 
             let attr = AttrType::dep(provider_ids.dupe(), PluginKindSet::EMPTY);
             let coerced = coercion_ctx().coerce_sealed(&attr, foo_only)?;
@@ -650,7 +654,7 @@ fn test_dep_requires_providers() -> buck2_error::Result<()> {
                     .contains("Attribute requires a dep that provides `BarInfo`")
             );
 
-            let foo_and_bar = heap.alloc("//sub/dir:foo[foo_and_bar]");
+            let foo_and_bar = heap.alloc("//sub/dir:foo[foo_and_bar]").to_value();
 
             let attr = AttrType::dep(provider_ids, PluginKindSet::EMPTY);
             let coerced = coercion_ctx().coerce_sealed(&attr, foo_and_bar)?;
@@ -670,7 +674,7 @@ fn test_dep_requires_providers() -> buck2_error::Result<()> {
 #[test]
 fn test_source_missing() {
     Heap::temp(|heap| {
-        let value = heap.alloc(vec!["foo/bar.cpp"]);
+        let value = heap.alloc(vec!["foo/bar.cpp"]).to_value();
         let attr = AttrType::list(AttrType::source(false));
 
         // FIXME: T85510500 Enable this test properly once we can error out on missing files
@@ -690,11 +694,13 @@ fn test_source_missing() {
 #[test]
 fn test_source_label() -> buck2_error::Result<()> {
     Heap::temp(|heap| {
-        let value = heap.alloc(vec![
-            "//some:target",
-            "cell1//named:target[foo]",
-            "foo/bar.cpp",
-        ]);
+        let value = heap
+            .alloc(vec![
+                "//some:target",
+                "cell1//named:target[foo]",
+                "foo/bar.cpp",
+            ])
+            .to_value();
 
         let attr = AttrType::list(AttrType::source(false));
 
@@ -884,7 +890,7 @@ fn test_source_label_resolution() -> buck2_error::Result<()> {
 fn test_single_source_label_fails_if_multiple_returned() -> buck2_error::Result<()> {
     Module::with_temp_heap(|env| {
         Heap::temp(|heap| {
-            let value = heap.alloc("//sub/dir:foo[multiple]");
+            let value = heap.alloc("//sub/dir:foo[multiple]").to_value();
 
             let attr = AttrType::source(false);
             let coerced = coercion_ctx().coerce_sealed(&attr, value)?;
@@ -907,7 +913,9 @@ fn test_single_source_label_fails_if_multiple_returned() -> buck2_error::Result<
 #[test]
 fn test_arg() -> buck2_error::Result<()> {
     Heap::temp(|heap| {
-        let value = heap.alloc("$(exe //some:exe) --file=$(location \"//some:location\")");
+        let value = heap
+            .alloc("$(exe //some:exe) --file=$(location \"//some:location\")")
+            .to_value();
 
         let attr = AttrType::arg(false);
 

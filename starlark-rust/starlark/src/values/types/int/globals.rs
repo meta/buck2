@@ -88,7 +88,7 @@ pub(crate) fn register_int(globals: &mut GlobalsBuilder) {
         heap: Heap<'v>,
     ) -> starlark::Result<ValueOf<'v, IntView<'v>>> {
         let Some(a) = a else {
-            return Ok(ValueOf::new_unchecked(heap.alloc(0)));
+            return Ok(heap.alloc(0));
         };
         let num_or_bool = match a.get() {
             Either::Left(Either::Left(int)) => Either::Left(NumRef::Int(int.as_int_ref())),
@@ -152,7 +152,7 @@ pub(crate) fn register_int(globals: &mut GlobalsBuilder) {
 
                 let x = StarlarkInt::from_str_radix(s, base)?;
                 let x = if negate { -x } else { x };
-                return Ok(ValueOf::new_unchecked(heap.alloc(x)));
+                return Ok(heap.alloc(x));
             }
         };
 
@@ -166,10 +166,10 @@ pub(crate) fn register_int(globals: &mut GlobalsBuilder) {
 
         match num_or_bool {
             Either::Left(NumRef::Int(_)) => Ok(ValueOf::new_unchecked(a.to_value())),
-            Either::Left(NumRef::Float(f)) => Ok(ValueOf::new_unchecked(
-                heap.alloc(StarlarkInt::from_f64_exact(f.0.trunc())?),
-            )),
-            Either::Right(b) => Ok(ValueOf::new_unchecked(heap.alloc(b as i32))),
+            Either::Left(NumRef::Float(f)) => {
+                Ok(heap.alloc(StarlarkInt::from_f64_exact(f.0.trunc())?))
+            }
+            Either::Right(b) => Ok(heap.alloc(b as i32)),
         }
     }
 }

@@ -88,23 +88,23 @@ impl AnonTargetAttrResolution for AnonTargetAttr {
         let mut ctx = &anon_resolution_ctx.rule_analysis_attr_resolution_ctx;
         match self {
             AnonTargetAttr::Bool(v) => Ok(Value::new_bool(v.0)),
-            AnonTargetAttr::Int(v) => Ok(ctx.heap().alloc(*v)),
+            AnonTargetAttr::Int(v) => Ok(ctx.heap().alloc(*v).to_value()),
             AnonTargetAttr::String(v) | AnonTargetAttr::EnumVariant(v) => {
-                Ok(ctx.heap().alloc(v.as_str()))
+                Ok(ctx.heap().alloc(v.as_str()).to_value())
             }
             AnonTargetAttr::List(list) => {
                 let mut values = Vec::with_capacity(list.len());
                 for v in list.iter() {
                     values.append(&mut v.resolve(pkg, anon_resolution_ctx)?);
                 }
-                Ok(ctx.heap().alloc(values))
+                Ok(ctx.heap().alloc(values).to_value())
             }
             AnonTargetAttr::Tuple(list) => {
                 let mut values = Vec::with_capacity(list.len());
                 for v in list.iter() {
                     values.append(&mut v.resolve(pkg, anon_resolution_ctx)?);
                 }
-                Ok(ctx.heap().alloc(AllocTuple(values)))
+                Ok(ctx.heap().alloc(AllocTuple(values)).to_value())
             }
             AnonTargetAttr::Dict(dict) => {
                 let mut res = BuckMutInsertionMap::with_capacity(dict.len());
@@ -114,7 +114,7 @@ impl AnonTargetAttrResolution for AnonTargetAttr {
                         v.resolve_single(pkg, anon_resolution_ctx)?,
                     );
                 }
-                Ok(ctx.heap().alloc(res))
+                Ok(ctx.heap().alloc(res).to_value())
             }
             AnonTargetAttr::None => Ok(Value::new_none()),
             AnonTargetAttr::OneOf(box l, _) => l.resolve_single(pkg, anon_resolution_ctx),

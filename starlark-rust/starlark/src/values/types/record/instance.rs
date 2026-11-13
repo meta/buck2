@@ -296,8 +296,15 @@ mod tests {
             assert_eq!(2, typ.as_ref().len(), "`IpAddress` has two fields");
             assert!(!typ.as_ref().is_empty(), "`IpAddress` has fields");
 
-            let record = Record::alloc(heap, typ, &[heap.alloc("localhost"), heap.alloc(80)])
-                .expect("values match the field types");
+            let record = Record::alloc(
+                heap,
+                typ,
+                &[
+                    heap.alloc("localhost").to_value(),
+                    heap.alloc(80i32).to_value(),
+                ],
+            )
+            .expect("values match the field types");
             assert_eq!(
                 Some("localhost"),
                 record
@@ -324,7 +331,7 @@ mod tests {
             let typ = ip_address_record_type(&module);
 
             assert!(
-                Record::alloc(heap, typ, &[heap.alloc("localhost")]).is_err(),
+                Record::alloc(heap, typ, &[heap.alloc("localhost").to_value()]).is_err(),
                 "one value for two fields should be rejected"
             );
         });
@@ -337,7 +344,12 @@ mod tests {
             let typ = ip_address_record_type(&module);
 
             assert!(
-                Record::alloc(heap, typ, &[heap.alloc(1), heap.alloc(80)]).is_err(),
+                Record::alloc(
+                    heap,
+                    typ,
+                    &[heap.alloc(1i32).to_value(), heap.alloc(80i32).to_value()]
+                )
+                .is_err(),
                 "an int is not a valid `host`"
             );
         });
@@ -350,7 +362,15 @@ mod tests {
             let typ = unnamed_ip_address_record_type(heap);
 
             assert!(
-                Record::alloc(heap, typ, &[heap.alloc("localhost"), heap.alloc(80)]).is_err(),
+                Record::alloc(
+                    heap,
+                    typ,
+                    &[
+                        heap.alloc("localhost").to_value(),
+                        heap.alloc(80i32).to_value()
+                    ]
+                )
+                .is_err(),
                 "records of a type that was never assigned a name cannot be created"
             );
         });
@@ -376,8 +396,15 @@ mod tests {
             let typ = ValueTyped::<FrozenRecordType>::new_err(typ)
                 .expect("the frozen module symbol is a frozen record type");
 
-            let record = Record::alloc(heap, typ, &[heap.alloc("localhost"), heap.alloc(80)])
-                .expect("values match the field types");
+            let record = Record::alloc(
+                heap,
+                typ,
+                &[
+                    heap.alloc("localhost").to_value(),
+                    heap.alloc(80i32).to_value(),
+                ],
+            )
+            .expect("values match the field types");
             assert_eq!(
                 Some(80),
                 record
@@ -403,7 +430,7 @@ mod tests {
                 "port".to_owned(),
                 Field::new(
                     TypeCompiled::from_ty(&Ty::int(), heap),
-                    Some(heap.alloc(80)),
+                    Some(heap.alloc(80i32).to_value()),
                 ),
             );
             let typ = heap.alloc_representation(RecordType::new(
@@ -416,11 +443,19 @@ mod tests {
                 .expect("assigning a name to a record type does not fail");
 
             assert!(
-                Record::alloc(heap, typ, &[heap.alloc("localhost")]).is_err(),
+                Record::alloc(heap, typ, &[heap.alloc("localhost").to_value()]).is_err(),
                 "defaults are not applied, so a value for `port` is still required"
             );
             assert!(
-                Record::alloc(heap, typ, &[heap.alloc("localhost"), heap.alloc(8080)]).is_ok(),
+                Record::alloc(
+                    heap,
+                    typ,
+                    &[
+                        heap.alloc("localhost").to_value(),
+                        heap.alloc(8080i32).to_value()
+                    ]
+                )
+                .is_ok(),
                 "explicitly passing a value for the defaulted field works"
             );
         });

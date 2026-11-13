@@ -412,7 +412,7 @@ mod tests {
     fn test_equals_resolved_string_vs_non_string_value() {
         Heap::temp(|heap| {
             let resolved = make_string_resolved("-Wno-error");
-            let int_val = heap.alloc(42);
+            let int_val = heap.alloc(42i32).to_value();
             assert_eq!(resolved.equals(int_val).unwrap(), false);
         });
     }
@@ -427,7 +427,7 @@ mod tests {
                 )],
                 None,
             );
-            let int_val = heap.alloc(42);
+            let int_val = heap.alloc(42i32).to_value();
             assert_eq!(resolved.equals(int_val).unwrap(), false);
         });
     }

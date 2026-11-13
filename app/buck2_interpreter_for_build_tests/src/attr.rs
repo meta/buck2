@@ -165,16 +165,19 @@ fn attr_coercer_coerces() -> buck2_error::Result<()> {
         );
 
         let label_value1 =
-            coercer_ctx.coerce_sealed(&label_coercer, heap.alloc("root//foo:bar"))?;
-        let label_value2 =
-            coercer_ctx.coerce_sealed(&label_coercer, heap.alloc("root//foo:bar[baz]"))?;
-        let label_value3 = coercer_ctx.coerce_sealed(&label_coercer, heap.alloc(":bar"))?;
-        let label_value4 = coercer_ctx.coerce_sealed(&label_coercer, heap.alloc(":bar[baz]"))?;
+            coercer_ctx.coerce_sealed(&label_coercer, heap.alloc("root//foo:bar").to_value())?;
+        let label_value2 = coercer_ctx
+            .coerce_sealed(&label_coercer, heap.alloc("root//foo:bar[baz]").to_value())?;
+        let label_value3 =
+            coercer_ctx.coerce_sealed(&label_coercer, heap.alloc(":bar").to_value())?;
+        let label_value4 =
+            coercer_ctx.coerce_sealed(&label_coercer, heap.alloc(":bar[baz]").to_value())?;
         let invalid_label_value1 =
-            coercer_ctx.coerce_sealed(&label_coercer, heap.alloc("root//foo/..."));
+            coercer_ctx.coerce_sealed(&label_coercer, heap.alloc("root//foo/...").to_value());
         let invalid_label_value2 =
-            coercer_ctx.coerce_sealed(&label_coercer, heap.alloc("root//foo:"));
-        let invalid_label_value3 = coercer_ctx.coerce_sealed(&label_coercer, heap.alloc("1"));
+            coercer_ctx.coerce_sealed(&label_coercer, heap.alloc("root//foo:").to_value());
+        let invalid_label_value3 =
+            coercer_ctx.coerce_sealed(&label_coercer, heap.alloc("1").to_value());
 
         assert_eq!(
             "root//foo:bar",
@@ -196,14 +199,17 @@ fn attr_coercer_coerces() -> buck2_error::Result<()> {
         assert!(invalid_label_value2.is_err());
         assert!(invalid_label_value3.is_err());
 
-        let string_value1 = coercer_ctx.coerce_sealed(&string_coercer, heap.alloc("str"))?;
+        let string_value1 =
+            coercer_ctx.coerce_sealed(&string_coercer, heap.alloc("str").to_value())?;
         assert_eq!("str", value_to_string(&string_value1, package.dupe())?);
 
-        let enum_valid1 = coercer_ctx.coerce_sealed(&enum_coercer, heap.alloc("red"))?;
-        let enum_valid2 = coercer_ctx.coerce_sealed(&enum_coercer, heap.alloc("green"))?;
-        let enum_valid3 = coercer_ctx.coerce_sealed(&enum_coercer, heap.alloc("RED"))?;
-        let enum_invalid1 = coercer_ctx.coerce_sealed(&enum_coercer, heap.alloc("orange"));
-        let enum_invalid2 = coercer_ctx.coerce_sealed(&enum_coercer, heap.alloc(false));
+        let enum_valid1 = coercer_ctx.coerce_sealed(&enum_coercer, heap.alloc("red").to_value())?;
+        let enum_valid2 =
+            coercer_ctx.coerce_sealed(&enum_coercer, heap.alloc("green").to_value())?;
+        let enum_valid3 = coercer_ctx.coerce_sealed(&enum_coercer, heap.alloc("RED").to_value())?;
+        let enum_invalid1 =
+            coercer_ctx.coerce_sealed(&enum_coercer, heap.alloc("orange").to_value());
+        let enum_invalid2 = coercer_ctx.coerce_sealed(&enum_coercer, heap.alloc(false).to_value());
         assert_eq!("red", value_to_string(&enum_valid1, package.dupe())?);
         assert_eq!("green", value_to_string(&enum_valid2, package.dupe())?);
         assert_eq!("red", value_to_string(&enum_valid3, package.dupe())?);
@@ -228,12 +234,14 @@ fn any_nested_dict_is_interned() -> buck2_error::Result<()> {
         let first = attr.coerce(
             AttrIsConfigurable::Yes,
             &ctx,
-            heap.alloc(AllocList([AllocDict([("key", 1)])])),
+            heap.alloc(AllocList([AllocDict([("key", 1i32)])]))
+                .to_value(),
         )?;
         let second = attr.coerce(
             AttrIsConfigurable::Yes,
             &ctx,
-            heap.alloc(AllocList([AllocDict([("key", 1)])])),
+            heap.alloc(AllocList([AllocDict([("key", 1i32)])]))
+                .to_value(),
         )?;
         assert_eq!(first, second);
         assert_eq!(first.word(), second.word());

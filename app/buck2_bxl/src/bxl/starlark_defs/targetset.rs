@@ -348,11 +348,11 @@ impl<'v> StarlarkValue<'v> for StarlarkTargetSetType {
         let node_ty = TypeCompiled::new(index, heap)?;
         let node_ty = node_ty.as_ty();
         if *node_ty == TargetNode::starlark_ty() {
-            Ok(heap.alloc(UNCONFIGURED_TARGET_SET_TYPE))
+            Ok(heap.alloc(UNCONFIGURED_TARGET_SET_TYPE).to_value())
         } else if *node_ty == ConfiguredTargetNode::starlark_ty() {
-            Ok(heap.alloc(CONFIGURED_TARGET_SET_TYPE))
+            Ok(heap.alloc(CONFIGURED_TARGET_SET_TYPE).to_value())
         } else if *node_ty == ActionQueryNode::starlark_ty() {
-            Ok(heap.alloc(ACTION_QUERY_TARGET_SET_TYPE))
+            Ok(heap.alloc(ACTION_QUERY_TARGET_SET_TYPE).to_value())
         } else {
             Err(
                 buck2_error::Error::from(TargetSetTypeError::UnsupportedNodeType(node_ty.dupe()))

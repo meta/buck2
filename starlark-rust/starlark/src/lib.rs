@@ -311,8 +311,12 @@
 //!     let heap = module.heap();
 //!     let res = eval.eval_function(
 //!         quad,
-//!         &[heap.alloc(4), heap.alloc(2), heap.alloc(1)],
-//!         &[("x", heap.alloc(8))],
+//!         &[
+//!             heap.alloc(4i32).to_value(),
+//!             heap.alloc(2i32).to_value(),
+//!             heap.alloc(1i32).to_value(),
+//!         ],
+//!         &[("x", heap.alloc(8i32).to_value())],
 //!     )?;
 //!     assert_eq!(res.unpack_i32(), Some(273));
 //!     starlark::Result::Ok(())

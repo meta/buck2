@@ -118,9 +118,9 @@ fn starlark_analysis_result_methods(builder: &mut MethodsBuilder) {
         let mut result = Vec::new();
         for entry in collection.as_ref().iter_providers() {
             let (id, value) = entry?;
-            let name = heap.alloc(id.name.as_str());
+            let name = heap.alloc(id.name.as_str()).to_value();
             let path = match &id.path {
-                Some(p) => heap.alloc(p.to_string()),
+                Some(p) => heap.alloc(p.to_string()).to_value(),
                 None => Value::new_none(),
             };
             let info = heap.alloc(starlark::values::structs::AllocStruct([
@@ -130,7 +130,7 @@ fn starlark_analysis_result_methods(builder: &mut MethodsBuilder) {
             ]));
             result.push(info);
         }
-        Ok(heap.alloc(result))
+        Ok(heap.alloc(result).to_value())
     }
 
     /// Gets the configured providers label for this analysis result.

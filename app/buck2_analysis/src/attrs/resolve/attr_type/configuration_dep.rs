@@ -19,7 +19,7 @@ pub(crate) trait ConfigurationDepAttrTypeExt {
         ctx: &mut dyn AttrResolutionContext<'v>,
         label: &ProvidersLabel,
     ) -> buck2_error::Result<Value<'v>> {
-        Ok(ctx.heap().alloc(label.to_string()))
+        Ok(ctx.heap().alloc(label.to_string()).to_value())
     }
 }
 

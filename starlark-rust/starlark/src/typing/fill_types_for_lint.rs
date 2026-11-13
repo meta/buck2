@@ -167,7 +167,9 @@ impl<'a, 'v, 'f> GlobalTypesBuilder<'a, 'v, 'f> {
 
     fn expr_literal(&mut self, literal: &AstLiteral) -> Result<GlobalValue<'v>, InternalError> {
         match literal {
-            AstLiteral::String(s) => Ok(GlobalValue::value(self.heap.alloc(s.node.as_str()))),
+            AstLiteral::String(s) => Ok(GlobalValue::value(
+                self.heap.alloc(s.node.as_str()).to_value(),
+            )),
             // Not used in type expressions.
             _ => Ok(GlobalValue::any()),
         }
@@ -176,7 +178,9 @@ impl<'a, 'v, 'f> GlobalTypesBuilder<'a, 'v, 'f> {
     fn tuple(&mut self, xs: &[CstExpr<'f>]) -> Result<GlobalValue<'v>, InternalError> {
         let xs = xs.try_map(|x| self.expr_spanned(x))?;
         if let Ok(xs) = xs.try_map(|v| v.value.ok_or(())) {
-            Ok(GlobalValue::value(self.heap.alloc(AllocTuple(xs))))
+            Ok(GlobalValue::value(
+                self.heap.alloc(AllocTuple(xs)).to_value(),
+            ))
         } else {
             Ok(GlobalValue::any())
         }

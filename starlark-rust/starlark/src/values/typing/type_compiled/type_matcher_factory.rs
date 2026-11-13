@@ -176,7 +176,7 @@ mod tests {
         let a = TypeMatcherFactory::pagable_deserialize(&mut de).unwrap();
         let b = TypeMatcherFactory::pagable_deserialize(&mut de).unwrap();
         Heap::temp(|heap| {
-            let int_val = heap.alloc(42i32);
+            let int_val = heap.alloc(42i32).to_value();
             assert!(a.factory.matcher_box().0.matches_dyn(int_val));
             assert!(b.factory.matcher_box().0.matches_dyn(int_val));
         });

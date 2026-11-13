@@ -91,6 +91,6 @@ where
             );
         }
         // The entries are `K::Type` and `V::Type` by their declarations.
-        ValueOf::new_unchecked(heap.alloc(Dict::new(map)))
+        ValueOf::new_unchecked(heap.alloc(Dict::new(map)).to_value())
     }
 }

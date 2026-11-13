@@ -265,7 +265,7 @@ impl Fixture {
                 label: 2,
                 target: b,
             });
-            let diamond = heap.alloc(AllocTuple([dependent, b]));
+            let diamond = heap.alloc(AllocTuple([dependent, b])).to_value();
             let healthy = heap.alloc_simple(SimpleData {
                 flag: true,
                 count: 17,

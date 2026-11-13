@@ -47,6 +47,14 @@ pub trait AllocValue<'v> {
     fn alloc_value(self, heap: Heap<'v>) -> ValueOf<'v, Self::Type>;
 }
 
+impl<'v> Heap<'v> {
+    /// Allocate a new value on a [`Heap`]: the value, on the heap, as the handle of the
+    /// builder's [`Type`](AllocValue::Type).
+    pub fn alloc<T: AllocValue<'v>>(self, x: T) -> ValueOf<'v, T::Type> {
+        x.alloc_value(self)
+    }
+}
+
 impl<'v> AllocValue<'v> for Value<'v> {
     type Type = Value<'v>;
 
@@ -90,6 +98,14 @@ pub trait AllocFrozenValue<'fv> {
     /// The value, on the frozen heap, as the handle of [`Type`](Self::Type) it is by
     /// construction.
     fn alloc_frozen_value(self, heap: FrozenHeap<'fv>) -> ValueOf<'fv, Self::Type>;
+}
+
+impl<'fh> FrozenHeap<'fh> {
+    /// Allocate a new value on this heap: the value, on the heap, as the handle of the
+    /// builder's [`Type`](AllocFrozenValue::Type).
+    pub fn alloc<T: AllocFrozenValue<'fh>>(self, val: T) -> ValueOf<'fh, T::Type> {
+        val.alloc_frozen_value(self)
+    }
 }
 
 impl<'fv> AllocFrozenValue<'fv> for Value<'fv> {

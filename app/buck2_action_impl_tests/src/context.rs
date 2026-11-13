@@ -84,14 +84,17 @@ fn run_ctx_test(
                 .alloc_representation(AnalysisPlugins::new(BuckMutInsertionMap::new()))
                 .into();
 
-            let ctx = eval.heap().alloc(AnalysisContext::prepare(
-                eval.heap(),
-                Some(attributes),
-                Some(label),
-                Some(plugins),
-                registry,
-                DigestConfig::testing_default(),
-            ));
+            let ctx = eval
+                .heap()
+                .alloc(AnalysisContext::prepare(
+                    eval.heap(),
+                    Some(attributes),
+                    Some(label),
+                    Some(plugins),
+                    registry,
+                    DigestConfig::testing_default(),
+                ))
+                .to_value();
 
             let returned = eval.eval_function(test_function, &[ctx], &[]);
             result_handler(returned)

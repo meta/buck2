@@ -240,7 +240,7 @@ pub(crate) fn register_artifact_function(builder: &mut GlobalsBuilder) {
                 .boxed_local()
             })
         })?;
-        Ok(heap.alloc(paths))
+        Ok(heap.alloc(paths).to_value())
     }
 }
 
@@ -401,7 +401,10 @@ pub(crate) fn register_read_package_visibility_functions(builder: &mut GlobalsBu
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<Value<'v>> {
         let super_package = read_super_package(package_path, eval)?;
-        Ok(eval.heap().alloc(super_package.visibility().to_json()))
+        Ok(eval
+            .heap()
+            .alloc(super_package.visibility().to_json())
+            .to_value())
     }
 
     /// Read the `within_view` declared via `package()` in the `PACKAGE` files for the
@@ -428,7 +431,10 @@ pub(crate) fn register_read_package_visibility_functions(builder: &mut GlobalsBu
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<Value<'v>> {
         let super_package = read_super_package(package_path, eval)?;
-        Ok(eval.heap().alloc(super_package.within_view().to_json()))
+        Ok(eval
+            .heap()
+            .alloc(super_package.within_view().to_json())
+            .to_value())
     }
 
     /// Read the visibility intersection propagated from `enforce_visibility_intersection()` in
@@ -458,7 +464,8 @@ pub(crate) fn register_read_package_visibility_functions(builder: &mut GlobalsBu
         let super_package = read_super_package(package_path, eval)?;
         Ok(eval
             .heap()
-            .alloc(super_package.visibility_intersection().to_legacy_json()))
+            .alloc(super_package.visibility_intersection().to_legacy_json())
+            .to_value())
     }
 
     /// Read the per-layer visibility intersection propagated from
@@ -519,6 +526,9 @@ pub(crate) fn register_read_package_visibility_functions(builder: &mut GlobalsBu
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<Value<'v>> {
         let super_package = read_super_package(package_path, eval)?;
-        Ok(eval.heap().alloc(super_package.within_view_cap().to_json()))
+        Ok(eval
+            .heap()
+            .alloc(super_package.within_view_cap().to_json())
+            .to_value())
     }
 }

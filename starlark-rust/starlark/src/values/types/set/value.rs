@@ -323,13 +323,13 @@ impl<'v> StarlarkType<'v> for SetView<'v> {
             .map_or_else(|| ValueError::unsupported_with(self, "|", rhs), Ok)?;
         let content = self.content();
         if content.is_empty() {
-            return Ok(heap.alloc((*rhs.aref).clone()));
+            return Ok(heap.alloc((*rhs.aref).clone()).to_value());
         }
         let mut items = content.clone();
         for h in rhs.aref.iter_hashed() {
             items.insert_hashed(h);
         }
-        Ok(heap.alloc(SetData { content: items }))
+        Ok(heap.alloc(SetData { content: items }).to_value())
     }
 
     // Set intersection
@@ -340,7 +340,7 @@ impl<'v> StarlarkType<'v> for SetView<'v> {
         let mut items = SmallSet::new();
         let content = self.content();
         if content.is_empty() {
-            return Ok(heap.alloc(SetData { content: items }));
+            return Ok(heap.alloc(SetData { content: items }).to_value());
         }
 
         for h in rhs.aref.iter_hashed() {
@@ -349,7 +349,7 @@ impl<'v> StarlarkType<'v> for SetView<'v> {
             }
         }
 
-        Ok(heap.alloc(SetData { content: items }))
+        Ok(heap.alloc(SetData { content: items }).to_value())
     }
 
     // Set symmetric difference
@@ -358,7 +358,7 @@ impl<'v> StarlarkType<'v> for SetView<'v> {
             .map_or_else(|| ValueError::unsupported_with(self, "^", rhs), Ok)?;
 
         let items = self.content().symmetric_difference(&rhs.aref.content);
-        Ok(heap.alloc(SetData { content: items }))
+        Ok(heap.alloc(SetData { content: items }).to_value())
     }
 
     // Set difference
@@ -371,7 +371,7 @@ impl<'v> StarlarkType<'v> for SetView<'v> {
         let content = content.difference_with(&rhs.aref.content);
         let data = SetData { content };
 
-        Ok(heap.alloc(data))
+        Ok(heap.alloc(data).to_value())
     }
 
     fn typechecker_ty(&self) -> Option<Ty> {

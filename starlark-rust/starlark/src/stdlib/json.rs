@@ -134,10 +134,10 @@ impl<'v, 'a> AllocValue<'v> for &'a serde_json::Value {
         ValueOf::from(match self {
             serde_json::Value::Null => Value::new_none(),
             serde_json::Value::Bool(x) => Value::new_bool(*x),
-            serde_json::Value::Number(x) => heap.alloc(x),
-            serde_json::Value::String(x) => heap.alloc(x.as_str()),
-            serde_json::Value::Array(x) => heap.alloc(x.as_slice()),
-            serde_json::Value::Object(x) => heap.alloc(x),
+            serde_json::Value::Number(x) => heap.alloc(x).to_value(),
+            serde_json::Value::String(x) => heap.alloc(x.as_str()).to_value(),
+            serde_json::Value::Array(x) => heap.alloc(x.as_slice()).to_value(),
+            serde_json::Value::Object(x) => heap.alloc(x).to_value(),
         })
     }
 }
@@ -157,10 +157,10 @@ impl<'fv, 'a> AllocFrozenValue<'fv> for &'a serde_json::Value {
         ValueOf::from(match self {
             serde_json::Value::Null => Value::new_none(),
             serde_json::Value::Bool(x) => Value::new_bool(*x),
-            serde_json::Value::Number(x) => heap.alloc(x),
-            serde_json::Value::String(x) => heap.alloc(x.as_str()),
-            serde_json::Value::Array(x) => heap.alloc(x.as_slice()),
-            serde_json::Value::Object(x) => heap.alloc(x),
+            serde_json::Value::Number(x) => heap.alloc(x).to_value(),
+            serde_json::Value::String(x) => heap.alloc(x.as_str()).to_value(),
+            serde_json::Value::Array(x) => heap.alloc(x.as_slice()).to_value(),
+            serde_json::Value::Object(x) => heap.alloc(x).to_value(),
         })
     }
 }
@@ -203,7 +203,7 @@ fn decode_raw<'v>(
                 .into_iter()
                 .map(|item| decode_raw(item, heap, remaining_depth))
                 .collect::<anyhow::Result<Vec<_>>>()?;
-            Ok(heap.alloc(items))
+            Ok(heap.alloc(items).to_value())
         }
         Some(b'{') => {
             let remaining_depth = nested()?;
@@ -211,22 +211,24 @@ fn decode_raw<'v>(
                 .into_iter()
                 .map(|(key, member)| Ok((key, decode_raw(member, heap, remaining_depth)?)))
                 .collect::<anyhow::Result<Vec<_>>>()?;
-            Ok(heap.alloc(AllocDict(members)))
+            Ok(heap.alloc(AllocDict(members)).to_value())
         }
-        Some(b'"') => Ok(heap.alloc(serde_json::from_str::<String>(text)?)),
+        Some(b'"') => Ok(heap.alloc(serde_json::from_str::<String>(text)?).to_value()),
         // A number is an integer unless it has a fraction or an exponent.
         Some(b'-' | b'0'..=b'9') => {
             if text.bytes().any(|c| matches!(c, b'.' | b'e' | b'E')) {
-                Ok(heap.alloc(serde_json::from_str::<f64>(text)?))
+                Ok(heap.alloc(serde_json::from_str::<f64>(text)?).to_value())
             } else if let Ok(i) = i32::from_str(text) {
-                Ok(heap.alloc(i))
+                Ok(heap.alloc(i).to_value())
             } else {
                 // Not `BigInt::from_str`, which is quadratic in the number of digits.
                 let x = StarlarkInt::from_str_radix(text, 10).map_err(|e| e.into_anyhow())?;
-                Ok(heap.alloc(x))
+                Ok(heap.alloc(x).to_value())
             }
         }
-        _ => Ok(heap.alloc(serde_json::from_str::<serde_json::Value>(text)?)),
+        _ => Ok(heap
+            .alloc(serde_json::from_str::<serde_json::Value>(text)?)
+            .to_value()),
     }
 }
 

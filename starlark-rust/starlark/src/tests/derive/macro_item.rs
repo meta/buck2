@@ -35,7 +35,7 @@ macro_rules! export_hello_attribute {
             heap: starlark::values::Heap<'v>,
         ) -> Option<starlark::values::Value<'v>> {
             match attr {
-                "hello" => Some(heap.alloc(&self.hello)),
+                "hello" => Some(heap.alloc(&self.hello).to_value()),
                 _ => None,
             }
         }

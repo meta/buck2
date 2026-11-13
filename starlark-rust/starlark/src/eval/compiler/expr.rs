@@ -911,7 +911,7 @@ impl<'f> ExprCompiled<'f> {
         heap: FrozenHeap<'f>,
     ) -> ExprCompiled<'f> {
         if let Ok(elems) = elems.try_map(|e| e.as_value().ok_or(())) {
-            ExprCompiled::Value(heap.alloc(AllocTuple(elems)))
+            ExprCompiled::Value(heap.alloc(AllocTuple(elems)).to_value())
         } else {
             ExprCompiled::Tuple(elems)
         }
@@ -1122,13 +1122,13 @@ trait AstLiteralCompile {
 impl AstLiteralCompile for AstLiteral {
     fn compile<'f>(&self, heap: FrozenHeap<'f>) -> Value<'f> {
         match self {
-            AstLiteral::Int(i) => heap.alloc(StarlarkInt::from(i.node.clone())),
-            AstLiteral::Float(f) => heap.alloc(f.node),
-            AstLiteral::String(x) => heap.alloc(x.node.as_str()),
+            AstLiteral::Int(i) => heap.alloc(StarlarkInt::from(i.node.clone())).to_value(),
+            AstLiteral::Float(f) => heap.alloc(f.node).to_value(),
+            AstLiteral::String(x) => heap.alloc(x.node.as_str()).to_value(),
             AstLiteral::Bytes(b) => heap
                 .alloc_representation(StarlarkBytes::new(&b.node))
                 .to_value(),
-            AstLiteral::Ellipsis => heap.alloc(Ellipsis),
+            AstLiteral::Ellipsis => heap.alloc(Ellipsis).to_value(),
         }
     }
 }
@@ -1394,7 +1394,7 @@ impl<'v, 'a, 'e, 'fm> Compiler<'v, 'a, 'e, '_, 'fm> {
                     // Note there's const propagation for `+` on compiled expressions,
                     // but special handling of `+` on AST might be slightly more efficient
                     // (no unnecessary allocations on the heap). So keep it.
-                    let val = self.fh.alloc(x);
+                    let val = self.fh.alloc(x).to_value();
                     ExprCompiled::Value(val)
                 } else {
                     let right = if *op == BinOp::In || *op == BinOp::NotIn {
@@ -1513,7 +1513,7 @@ impl<'v, 'a, 'e, 'fm> Compiler<'v, 'a, 'e, '_, 'fm> {
 
                 // Desugar f"foo{x}bar{y}" to "foo{}bar{}.format(x, y)"
                 let format = IrSpanned {
-                    node: ExprCompiled::Value(self.fh.alloc(format.node.as_str())),
+                    node: ExprCompiled::Value(self.fh.alloc(format.node.as_str()).to_value()),
                     span: fstring_span,
                 };
                 let method = IrSpanned {

@@ -139,14 +139,17 @@ impl<'v> StarlarkFailedArtifactIterable<'v> {
 #[starlark_value(type = "bxl.FailedArtifactsIterable")]
 impl<'v> StarlarkValue<'v> for StarlarkFailedArtifactIterable<'v> {
     fn iterate_collect(&self, heap: Heap<'v>) -> starlark::Result<Vec<Value<'v>>> {
-        Ok(self.iter().map(|e| heap.alloc(format!("{e}"))).collect())
+        Ok(self
+            .iter()
+            .map(|e| heap.alloc(format!("{e}")).to_value())
+            .collect())
     }
 
     fn at(&self, index: Value<'v>, heap: Heap<'v>) -> starlark::Result<Value<'v>> {
         let i = i32::unpack_value_err(index)?;
         if let Ok(i) = usize::try_from(i) {
             if let Some(e) = self.iter().nth(i) {
-                return Ok(heap.alloc(format!("{e}")));
+                return Ok(heap.alloc(format!("{e}")).to_value());
             }
         }
         Err(ValueError::IndexOutOfBound(i).into())

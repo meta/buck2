@@ -227,13 +227,26 @@ mod tests {
     #[test]
     fn test_format_capture() {
         Heap::temp(|heap| {
-            let original_args = [heap.alloc("1"), heap.alloc("2"), heap.alloc("3")];
+            let original_args = [
+                heap.alloc("1").to_value(),
+                heap.alloc("2").to_value(),
+                heap.alloc("3").to_value(),
+            ];
             let mut args = FormatArgs::new(original_args.iter().copied());
             let mut kwargs = SmallMap::new();
 
-            kwargs.insert_hashed(heap.alloc_str("a").get_hashed_value(), heap.alloc("x"));
-            kwargs.insert_hashed(heap.alloc_str("b").get_hashed_value(), heap.alloc("y"));
-            kwargs.insert_hashed(heap.alloc_str("c").get_hashed_value(), heap.alloc("z"));
+            kwargs.insert_hashed(
+                heap.alloc_str("a").get_hashed_value(),
+                heap.alloc("x").to_value(),
+            );
+            kwargs.insert_hashed(
+                heap.alloc_str("b").get_hashed_value(),
+                heap.alloc("y").to_value(),
+            );
+            kwargs.insert_hashed(
+                heap.alloc_str("c").get_hashed_value(),
+                heap.alloc("z").to_value(),
+            );
             let kwargs = Dict::new(kwargs);
             assert_eq!(
                 format_capture_for_test("", FormatConv::Str, &mut args, &kwargs).unwrap(),

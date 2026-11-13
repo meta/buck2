@@ -360,7 +360,7 @@ mod tests {
     fn debug() {
         Heap::temp(|heap| {
             let array = heap.alloc_array(10);
-            array.push(heap.alloc(23));
+            array.push(heap.alloc(23i32).to_value());
             // Just check it does not crash.
             drop(array.to_string());
         });
@@ -370,7 +370,7 @@ mod tests {
     fn display() {
         Heap::temp(|heap| {
             let array = heap.alloc_array(10);
-            array.push(heap.alloc(29));
+            array.push(heap.alloc(29i32).to_value());
             array.push(Value::new_none());
             assert_eq!("array([29, None], cap=10)", array.to_string());
         });
@@ -380,9 +380,9 @@ mod tests {
     fn push() {
         Heap::temp(|heap| {
             let array = heap.alloc_array(10);
-            array.push(heap.alloc(17));
-            array.push(heap.alloc(19));
-            assert_eq!(heap.alloc(19), array.content()[1]);
+            array.push(heap.alloc(17i32).to_value());
+            array.push(heap.alloc(19i32).to_value());
+            assert_eq!(heap.alloc(19i32).to_value(), array.content()[1]);
         });
     }
 }

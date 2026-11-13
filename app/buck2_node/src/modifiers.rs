@@ -673,19 +673,21 @@ impl<'v> ModifierRenderer for StarlarkRenderer<'v> {
     }
 
     fn list(&mut self, items: Vec<Value<'v>>) -> Value<'v> {
-        self.0.alloc(items)
+        self.0.alloc(items).to_value()
     }
 
     fn dict(&mut self, entries: Vec<(String, Value<'v>)>) -> Value<'v> {
-        self.0.alloc(
-            entries
-                .into_iter()
-                .collect::<BuckMutInsertionMap<String, Value<'v>>>(),
-        )
+        self.0
+            .alloc(
+                entries
+                    .into_iter()
+                    .collect::<BuckMutInsertionMap<String, Value<'v>>>(),
+            )
+            .to_value()
     }
 
     fn raw_json(&mut self, json: &str) -> Value<'v> {
-        self.0.alloc(JsonRenderer.raw_json(json))
+        self.0.alloc(JsonRenderer.raw_json(json)).to_value()
     }
 }
 
@@ -798,7 +800,7 @@ mod tests {
                 written,
                 "BXL and rules see the value as written"
             );
-            let parsed = heap.alloc(m).to_json_value().unwrap();
+            let parsed = heap.alloc(m).to_value().to_json_value().unwrap();
             assert_eq!(parsed[0], json!("root//os:linux"));
             assert_eq!(
                 parsed[1].as_object().unwrap().len(),
@@ -822,13 +824,23 @@ mod tests {
             let cells = cells();
             let labels = ModifierLabelParser::new(&cells);
             assert_eq!(
-                CfgModifiers::from_target(heap.alloc(AllocTuple(["cfg//os:linux"])), &labels),
-                CfgModifiers::from_target(heap.alloc(vec!["cfg//os:linux"]), &labels),
+                CfgModifiers::from_target(
+                    heap.alloc(AllocTuple(["cfg//os:linux"])).to_value(),
+                    &labels
+                ),
+                CfgModifiers::from_target(heap.alloc(vec!["cfg//os:linux"]).to_value(), &labels),
             );
-            assert!(CfgModifiers::from_target(heap.alloc(AllocTuple::EMPTY), &labels).is_empty());
+            assert!(
+                CfgModifiers::from_target(heap.alloc(AllocTuple::EMPTY).to_value(), &labels)
+                    .is_empty()
+            );
             assert_eq!(
-                CfgModifiers::from_package(heap.alloc(AllocTuple::EMPTY), &labels, None),
-                CfgModifiers::from_package(heap.alloc(Vec::<&str>::new()), &labels, None),
+                CfgModifiers::from_package(heap.alloc(AllocTuple::EMPTY).to_value(), &labels, None),
+                CfgModifiers::from_package(
+                    heap.alloc(Vec::<&str>::new()).to_value(),
+                    &labels,
+                    None
+                ),
             );
         });
     }

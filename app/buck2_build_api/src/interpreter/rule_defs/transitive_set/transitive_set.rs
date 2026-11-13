@@ -590,7 +590,7 @@ impl<'v> TransitiveSet<'v> {
                             })
                         })
                         .collect::<Result<Vec<_>, _>>()?;
-                    let children_values = eval.heap().alloc(AllocList(children_values));
+                    let children_values = eval.heap().alloc(AllocList(children_values)).to_value();
 
                     let value = value.unwrap_or_else(Value::new_none);
 

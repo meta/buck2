@@ -110,7 +110,7 @@ impl ErasingHeap {
     }
 
     fn alloc<T: for<'fh> AllocFrozenValue<'fh>>(&self, x: T) -> Value<'static> {
-        self.with(|heap| erase(heap.alloc(x)))
+        self.with(|heap| erase(heap.alloc(x).to_value()))
     }
 
     fn alloc_simple<T: for<'fh> AValueSimpleBound<'fh>>(&self, x: T) -> Value<'static> {
@@ -144,11 +144,16 @@ impl ErasingHeap {
     }
 
     fn alloc_list(&self, elems: &[Value<'static>]) -> Value<'static> {
-        self.with(|heap| erase(heap.alloc(AllocList(Self::restore(heap, elems)))))
+        self.with(|heap| erase(heap.alloc(AllocList(Self::restore(heap, elems))).to_value()))
     }
 
     fn alloc_tuple(&self, elems: &[Value<'static>]) -> Value<'static> {
-        self.with(|heap| erase(heap.alloc(AllocTuple(Self::restore(heap, elems)))))
+        self.with(|heap| {
+            erase(
+                heap.alloc(AllocTuple(Self::restore(heap, elems)))
+                    .to_value(),
+            )
+        })
     }
 
     fn alloc_any_value<T: StarlarkAnyRegistered>(&self, x: T) -> Value<'static> {
@@ -535,7 +540,7 @@ impl<'v> StarlarkValue<'v> for BrandedData<'v> {}
 fn test_frozen_vtable_flag_round_trip() -> crate::Result<()> {
     let heap = ErasingHeap::new();
     let root = heap.with(|heap| {
-        let inner = heap.alloc("inner");
+        let inner = heap.alloc("inner").to_value();
         erase(heap.alloc_simple(BrandedData {
             label: "branded".to_owned(),
             inner,
@@ -6205,7 +6210,7 @@ fn test_module_root_without_heap_identity() -> pagable::Result<()> {
     use crate::pagable::serialized_frozen_value::SerializedFrozenValue;
 
     let owner = OwnedFrozen::<Value>::build(TestHeapName::heap_name("module_root"), |heap| {
-        heap.alloc("value")
+        heap.alloc("value").to_value()
     });
     let heap_id = owner.heap_arc().heap_ref_id().unwrap();
     let name = owner.name().unwrap();
@@ -6358,8 +6363,8 @@ def many_locals():
             )
         };
 
-        let two = eval.heap().alloc(2);
-        let three = eval.heap().alloc(3);
+        let two = eval.heap().alloc(2i32).to_value();
+        let three = eval.heap().alloc(3i32).to_value();
         assert_eq!(
             eval.eval_function(get_fn("add")?, &[two, three], &[])?
                 .unpack_i32(),
@@ -6368,7 +6373,7 @@ def many_locals():
         );
 
         // for-loop / LoopDepth; 0+1+2+3+4 == 10.
-        let five = eval.heap().alloc(5);
+        let five = eval.heap().alloc(5i32).to_value();
         assert_eq!(
             eval.eval_function(get_fn("use_loop")?, &[five], &[])?
                 .unpack_i32(),

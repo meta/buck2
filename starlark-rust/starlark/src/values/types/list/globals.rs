@@ -117,15 +117,15 @@ pub(crate) fn register_list(globals: &mut GlobalsBuilder) {
         #[starlark(require = pos)] a: Option<ValueOf<'v, StarlarkIter<Value<'v>>>>,
         heap: Heap<'v>,
     ) -> starlark::Result<ValueOf<'v, ListType<Value<'v>>>> {
-        Ok(ValueOf::new_unchecked(if let Some(a) = a {
+        Ok(if let Some(a) = a {
             if let Some(xs) = ListRef::from_value(a.to_value()) {
-                heap.alloc_list(xs.content())
+                ValueOf::new_unchecked(heap.alloc_list(xs.content()))
             } else {
                 let it = a.to_value().iterate(heap)?;
                 heap.alloc(AllocList(it))
             }
         } else {
             heap.alloc(AllocList::EMPTY)
-        }))
+        })
     }
 }

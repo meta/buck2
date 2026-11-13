@@ -109,7 +109,7 @@ pub(crate) fn dict_methods(registry: &mut MethodsBuilder) {
         this: DictRef<'v>,
         heap: Heap<'v>,
     ) -> anyhow::Result<ValueOf<'v, ListType<(Value<'v>, Value<'v>)>>> {
-        Ok(ValueOf::new_unchecked(heap.alloc(AllocList(this.iter()))))
+        Ok(heap.alloc(AllocList(this.iter())))
     }
 
     /// [dict.keys](
@@ -130,7 +130,7 @@ pub(crate) fn dict_methods(registry: &mut MethodsBuilder) {
         this: DictRef<'v>,
         heap: Heap<'v>,
     ) -> anyhow::Result<ValueOf<'v, ListType<Value<'v>>>> {
-        Ok(ValueOf::new_unchecked(heap.alloc(AllocList(this.keys()))))
+        Ok(heap.alloc(AllocList(this.keys())))
     }
 
     /// [dict.pop](

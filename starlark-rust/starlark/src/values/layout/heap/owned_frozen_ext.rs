@@ -518,7 +518,7 @@ mod tests {
     fn test_owned_frozen_ref() {
         let owned: OwnedFrozen<Value<'static>> = OwnedFrozen::build(
             crate::values::layout::heap::name::StarlarkTestHeapName::frozen_heap_name(),
-            |heap| heap.alloc("contents"),
+            |heap| heap.alloc("contents").to_value(),
         );
 
         let r = owned.as_ref();
@@ -552,7 +552,7 @@ mod tests {
     fn test_deferred_owned_frozen_resident() {
         let owned: OwnedFrozen<Value<'static>> =
             OwnedFrozen::build(StarlarkTestHeapName::frozen_heap_name(), |heap| {
-                heap.alloc("contents")
+                heap.alloc("contents").to_value()
             });
         let owner = owned.owner().to_owned();
         let deferred = DeferredOwnedFrozen::new(owned);
@@ -592,7 +592,7 @@ mod tests {
     fn test_deferred_owned_frozen_by_ref() {
         let owned: OwnedFrozen<Value<'static>> =
             OwnedFrozen::build(StarlarkTestHeapName::frozen_heap_name(), |heap| {
-                heap.alloc("contents")
+                heap.alloc("contents").to_value()
             });
         let deferred = DeferredOwnedFrozen::new(owned);
         let prefix = String::from("read: ");
@@ -646,11 +646,13 @@ mod tests {
                 |heap| {
                     heap.alloc_simple_typed(StarlarkAnyComplex {
                         value: DeferredTestFields {
-                            value: Deferred::new(heap.alloc("single")),
-                            optional: Deferred::new(present.then(|| heap.alloc("optional"))),
+                            value: Deferred::new(heap.alloc("single").to_value()),
+                            optional: Deferred::new(
+                                present.then(|| heap.alloc("optional").to_value()),
+                            ),
                             children: Deferred::new(
                                 (0..count)
-                                    .map(|i| heap.alloc(format!("child-{i}")))
+                                    .map(|i| heap.alloc(format!("child-{i}")).to_value())
                                     .collect(),
                             ),
                             tail: 0x12345678,
@@ -1105,7 +1107,7 @@ mod tests {
 
             let source: OwnedFrozen<Value<'static>> =
                 OwnedFrozen::build(StarlarkTestHeapName::frozen_heap_name(), |heap| {
-                    heap.alloc("wrong root type")
+                    heap.alloc("wrong root type").to_value()
                 });
             let mut ser = TestingSerializer::new();
             source.pagable_serialize(&mut ser).unwrap();
@@ -1234,9 +1236,9 @@ mod tests {
                         value: ResidentFields {
                             optional: Deferred::new(present.then(Value::new_none)),
                             children: Deferred::new(ThinBoxSliceValue::from_iter([
-                                heap.alloc("a"),
-                                heap.alloc("b"),
-                                heap.alloc("c"),
+                                heap.alloc("a").to_value(),
+                                heap.alloc("b").to_value(),
+                                heap.alloc("c").to_value(),
                             ])),
                         },
                     })

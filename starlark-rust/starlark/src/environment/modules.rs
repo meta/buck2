@@ -802,7 +802,7 @@ x = f(1)
     /// A value of the module's frozen heap, stored in a list on the value heap.
     fn frozen_heap_string_in_value_heap<'v>(module: &Module<'v>, expected: &str) -> Value<'v> {
         let s = module.frozen_heap(|fh, edge| edge.rebrand(fh.alloc(expected)));
-        module.heap().alloc(vec![s])
+        module.heap().alloc(vec![s]).to_value()
     }
 
     fn assert_list_of_string(list: Value, expected: &str) {

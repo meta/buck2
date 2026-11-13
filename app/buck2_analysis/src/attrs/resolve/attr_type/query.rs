@@ -52,6 +52,6 @@ impl ConfiguredQueryAttrExt for QueryAttr<ConfiguredProvidersLabel> {
                 None,
             ));
         }
-        Ok(ctx.heap().alloc(dependencies))
+        Ok(ctx.heap().alloc(dependencies).to_value())
     }
 }

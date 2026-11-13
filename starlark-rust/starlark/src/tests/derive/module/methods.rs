@@ -76,7 +76,7 @@ impl<'v> StarlarkValue<'v> for Applaud {
         args: &Arguments<'v, '_>,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> crate::Result<Value<'v>> {
-        Ok(eval.heap().alloc(args.len()?))
+        Ok(eval.heap().alloc(args.len()?).to_value())
     }
 }
 

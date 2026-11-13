@@ -312,7 +312,7 @@ mod tests {
                 .heap()
                 .alloc_representation(StarlarkAnyComplex::new(UnfrozenData {
                     string: module.heap().alloc_str("aaa"),
-                    other: module.heap().alloc(AllocList([1, 2])),
+                    other: module.heap().alloc(AllocList([1, 2])).to_value(),
                 }))
                 .to_value();
 

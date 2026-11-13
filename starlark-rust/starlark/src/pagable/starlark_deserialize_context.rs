@@ -2191,7 +2191,7 @@ mod tests {
     fn registered_native_heap(scope: &StarlarkDeserScope) -> OwnedFrozen<Value<'static>> {
         let heap: OwnedFrozen<Value<'static>> =
             OwnedFrozen::build(StarlarkTestHeapName::frozen_heap_name(), |heap| {
-                heap.alloc("native")
+                heap.alloc("native").to_value()
             });
         assert!(heap.heap_arc().deser_state().is_none());
         scope

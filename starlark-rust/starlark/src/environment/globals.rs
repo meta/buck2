@@ -501,7 +501,7 @@ impl GlobalsBuilder {
         // SAFETY: Allocated in `self.heap` just here.
         let value = self
             .heap
-            .with(|heap| unsafe { Self::erase(heap.alloc(value)) });
+            .with(|heap| unsafe { Self::erase(heap.alloc(value).to_value()) });
         // SAFETY: Allocated in `self.heap` just above.
         unsafe { self.set_inner(name, value, false) }
     }

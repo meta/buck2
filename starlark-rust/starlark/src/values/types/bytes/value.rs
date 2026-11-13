@@ -249,7 +249,7 @@ impl<'v> StarlarkValue<'v> for StarlarkBytes {
     /// `bytes[i]` returns the integer value of byte at index `i`.
     fn at(&self, index: Value<'v>, heap: Heap<'v>) -> crate::Result<Value<'v>> {
         let i = convert_index(index, self.content.len() as i32)? as usize;
-        Ok(heap.alloc(self.content[i] as i32))
+        Ok(heap.alloc(self.content[i] as i32).to_value())
     }
 
     /// `bytes[i:j:k]` returns a new bytes object.

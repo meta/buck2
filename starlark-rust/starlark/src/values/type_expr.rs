@@ -240,17 +240,17 @@ mod tests {
         vec![
             Value::new_none(),
             Value::new_bool(true),
-            heap.alloc(1),
-            heap.alloc(BigInt::from(1u64 << 40)),
-            heap.alloc(1.5),
-            heap.alloc("s"),
-            heap.alloc(vec![1, 2]),
-            heap.alloc(vec!["a"]),
-            heap.alloc(Vec::<i32>::new()),
-            heap.alloc(AllocDict([(1, "a")])),
-            heap.alloc(AllocDict([("a", 1)])),
-            heap.alloc((1, 2)),
-            heap.alloc((1, "a")),
+            heap.alloc(1i32).to_value(),
+            heap.alloc(BigInt::from(1u64 << 40)).to_value(),
+            heap.alloc(1.5).to_value(),
+            heap.alloc("s").to_value(),
+            heap.alloc(vec![1i32, 2i32]).to_value(),
+            heap.alloc(vec!["a"]).to_value(),
+            heap.alloc(Vec::<i32>::new()).to_value(),
+            heap.alloc(AllocDict([(1i32, "a")])).to_value(),
+            heap.alloc(AllocDict([("a", 1i32)])).to_value(),
+            heap.alloc((1i32, 2i32)).to_value(),
+            heap.alloc((1i32, "a")).to_value(),
         ]
     }
 

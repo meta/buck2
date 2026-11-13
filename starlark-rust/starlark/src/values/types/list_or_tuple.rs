@@ -81,11 +81,17 @@ mod tests {
             ValueOf::<ListOrTupleType<StarlarkStr>>::new(v).map(|v| v.try_to_vec::<&str>().unwrap())
         }
         Heap::temp(|heap| {
-            assert_eq!(Some(vec!["a", "b"]), unpack(heap.alloc(vec!["a", "b"])));
-            assert_eq!(Some(vec!["a", "b"]), unpack(heap.alloc(("a", "b"))));
-            assert_eq!(None, unpack(heap.alloc(vec![1, 2])));
-            assert_eq!(None, unpack(heap.alloc((1, 2))));
-            assert_eq!(None, unpack(heap.alloc(1)));
+            assert_eq!(
+                Some(vec!["a", "b"]),
+                unpack(heap.alloc(vec!["a", "b"]).to_value())
+            );
+            assert_eq!(
+                Some(vec!["a", "b"]),
+                unpack(heap.alloc(("a", "b")).to_value())
+            );
+            assert_eq!(None, unpack(heap.alloc(vec![1i32, 2i32]).to_value()));
+            assert_eq!(None, unpack(heap.alloc((1i32, 2i32)).to_value()));
+            assert_eq!(None, unpack(heap.alloc(1i32).to_value()));
         });
     }
 }

@@ -294,7 +294,7 @@ impl<'v> InternalRunnerTestInfo<'v> {
                 .parse_test_listing
                 .to_value();
 
-            let listing_arg = heap.alloc(listing_content);
+            let listing_arg = heap.alloc(listing_content).to_value();
             let result = eval
                 .eval_function(callback, &[listing_arg], &[])
                 .map_err(|e| buck2_error!(buck2_error::ErrorTag::Input, "{}", e))?;
@@ -379,9 +379,9 @@ impl<'v> InternalRunnerTestInfo<'v> {
                 .parse_test_result
                 .to_value();
 
-            let stdout_arg = heap.alloc(stdout);
-            let stderr_arg = heap.alloc(stderr);
-            let exit_code_arg = heap.alloc(exit_code);
+            let stdout_arg = heap.alloc(stdout).to_value();
+            let stderr_arg = heap.alloc(stderr).to_value();
+            let exit_code_arg = heap.alloc(exit_code).to_value();
             let result = eval
                 .eval_function(callback, &[stdout_arg, stderr_arg, exit_code_arg], &[])
                 .map_err(|e| buck2_error!(buck2_error::ErrorTag::Input, "{}", e))?;

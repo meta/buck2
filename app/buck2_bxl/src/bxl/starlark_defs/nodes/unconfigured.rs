@@ -107,7 +107,7 @@ fn target_node_value_methods(builder: &mut MethodsBuilder) {
             });
 
         Ok(itertools::process_results(attrs, |attrs| {
-            heap.alloc(AllocStruct(attrs))
+            heap.alloc(AllocStruct(attrs)).to_value()
         })?)
     }
 

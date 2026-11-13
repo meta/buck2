@@ -141,9 +141,9 @@ impl Display for PathSegment {
 impl PathSegment {
     fn get<'v>(&self, v: &Value<'v>, heap: Heap<'v>) -> crate::Result<Value<'v>> {
         match self {
-            PathSegment::Index(i) => v.at(heap.alloc(*i), heap),
+            PathSegment::Index(i) => v.at(heap.alloc(*i).to_value(), heap),
             PathSegment::Attr(key) => v.get_attr_error(key.as_str(), heap),
-            PathSegment::Key(i) => v.at(heap.alloc(i.to_owned()), heap),
+            PathSegment::Key(i) => v.at(heap.alloc(i.to_owned()).to_value(), heap),
         }
     }
 }
@@ -315,7 +315,7 @@ impl InspectVariableInfo {
         Ok(Self {
             sub_values: (0..len)
                 .map(|i| {
-                    let index = heap.alloc(i);
+                    let index = heap.alloc(i).to_value();
                     v.at(index, heap)
                         .map(|v| Variable::from_value(PathSegment::Index(i), v))
                 })

@@ -215,7 +215,7 @@ impl MethodsBuilder {
     ) {
         let typ =
             <<V as AllocFrozenValue<'static>>::Type as StarlarkTypeExpr<'static>>::starlark_type_repr();
-        self.set_attribute_with(name, typ, docstring, |heap| heap.alloc(value))
+        self.set_attribute_with(name, typ, docstring, |heap| heap.alloc(value).to_value())
     }
 
     /// Set a constant value that is a representation, allocated the way it chose to be.

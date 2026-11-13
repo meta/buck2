@@ -249,7 +249,7 @@ fn render_attr(x: StarAttr, generics: &StarGenerics) -> syn::Stmt {
         #where_clause
         {
             #unpack
-            Ok(heap.alloc(#name_inner #turbofish(this, heap)?))
+            Ok(heap.alloc(#name_inner #turbofish(this, heap)?).to_value())
         }
     };
 

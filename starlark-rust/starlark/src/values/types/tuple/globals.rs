@@ -60,7 +60,7 @@ pub(crate) fn register_tuple(globals: &mut GlobalsBuilder) {
             let it = a.to_value().iterate(heap)?;
             Ok(ValueOf::new_unchecked(heap.alloc_tuple_iter(it)))
         } else {
-            Ok(ValueOf::new_unchecked(heap.alloc(AllocTuple::EMPTY)))
+            Ok(heap.alloc(AllocTuple::EMPTY))
         }
     }
 }

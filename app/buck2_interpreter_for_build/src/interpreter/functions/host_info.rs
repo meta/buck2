@@ -33,7 +33,7 @@ fn new_struct<'fv, V: AllocFrozenValue<'fv> + Copy>(
     heap: FrozenHeap<'fv>,
     values: &[(&str, V)],
 ) -> Value<'fv> {
-    heap.alloc(AllocStruct(values.iter().copied()))
+    heap.alloc(AllocStruct(values.iter().copied())).to_value()
 }
 
 fn new_host_info(
@@ -76,7 +76,7 @@ fn new_host_info(
 
         let xcode = {
             let mk_value = |sel: fn(&XcodeVersionInfo) -> &String| match xcode_info {
-                Some(i) => heap.alloc(sel(i).as_str()),
+                Some(i) => heap.alloc(sel(i).as_str()).to_value(),
                 None => Value::new_none(),
             };
 

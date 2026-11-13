@@ -317,7 +317,7 @@ starlark::__starlark_pagable_only! {
                 FrozenHeapName::user("frozen_bxl_function_round_trips"),
                 |heap| {
                     heap.alloc_representation(FrozenBxlFunction {
-                        implementation: heap.alloc("implementation"),
+                        implementation: heap.alloc("implementation").to_value(),
                         cli_args: BuckMutInsertionMap::new(),
                         bxl_id: Arc::new(expected_label.clone()),
                         docs: Some("test docs".to_owned()),

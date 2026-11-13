@@ -142,7 +142,9 @@
 //! use starlark::values::Value;
 //!
 //! let owned: OwnedFrozen<Value<'static>> =
-//!     OwnedFrozen::build(FrozenHeapName::user("example"), |heap| heap.alloc("a value"));
+//!     OwnedFrozen::build(FrozenHeapName::user("example"), |heap| {
+//!         heap.alloc("a value").to_value()
+//!     });
 //! Module::with_temp_heap(|module| {
 //!     module.set("x", owned.as_ref().value());
 //! });
@@ -158,7 +160,7 @@
 //! # use starlark::values::Value;
 //! let owned: OwnedFrozen<Value<'static>> =
 //!     OwnedFrozen::build(FrozenHeapName::user("example"), |heap| {
-//!         heap.alloc("a value")
+//!         heap.alloc("a value").to_value()
 //!     });
 //! Module::with_temp_heap(|module| {
 //!     module.set("x", owned.as_ref().add_to_heap(module.heap()));

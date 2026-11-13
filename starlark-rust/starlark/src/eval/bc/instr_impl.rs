@@ -907,7 +907,7 @@ pub(crate) type InstrLen = InstrUnOp<InstrLenImpl>;
 impl InstrUnOpImpl for InstrLenImpl {
     #[inline(always)]
     fn eval<'v>(v: Value<'v>, heap: Heap<'v>) -> crate::Result<Value<'v>> {
-        Ok(heap.alloc(v.length()?))
+        Ok(heap.alloc(v.length()?).to_value())
     }
 }
 
@@ -1081,7 +1081,7 @@ impl<'v> InstrNoFlowImpl<'v> for InstrDictNewImpl {
         target: &BcSlotOut,
     ) -> crate::Result<()> {
         let dict = eval.heap().alloc(Dict::default());
-        frame.set_bc_slot(*target, dict);
+        frame.set_bc_slot(*target, dict.to_value());
         Ok(())
     }
 }
@@ -1437,7 +1437,7 @@ impl<'v> InstrNoFlowImpl<'v> for InstrDefImpl {
             def_data.info,
             eval,
         )?);
-        frame.set_bc_slot(*target, def);
+        frame.set_bc_slot(*target, def.to_value());
         Ok(())
     }
 }

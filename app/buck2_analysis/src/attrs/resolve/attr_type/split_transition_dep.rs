@@ -44,6 +44,6 @@ impl SplitTransitionDepAttrTypeExt for SplitTransitionDepAttrType {
                 )?,
             );
         }
-        Ok(ctx.heap().alloc(res))
+        Ok(ctx.heap().alloc(res).to_value())
     }
 }

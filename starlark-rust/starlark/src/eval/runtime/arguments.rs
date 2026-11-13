@@ -533,7 +533,7 @@ mod tests {
                         .collect::<Vec<_>>();
                     let empty_args = args.is_empty();
                     p.0.pos = &pos;
-                    p.0.args = Some(heap.alloc(args));
+                    p.0.args = Some(heap.alloc(args).to_value());
                     op(&p);
                     if empty_args {
                         p.0.args = None;
@@ -618,12 +618,12 @@ mod tests {
             // Test lots of forms of kwargs work properly
             p.0.kwargs = Some(Value::new_none());
             assert!(p.no_named_args().is_err());
-            p.0.kwargs = Some(heap.alloc(Dict::default()));
+            p.0.kwargs = Some(heap.alloc(Dict::default()).to_value());
             assert!(p.no_named_args().is_ok());
             assert_eq!(p.len().unwrap(), 0);
             let mut sm = SmallMap::new();
             sm.insert_hashed(heap.alloc_str("test").get_hashed_value(), Value::new_none());
-            p.0.kwargs = Some(heap.alloc(Dict::new(sm)));
+            p.0.kwargs = Some(heap.alloc(Dict::new(sm)).to_value());
             assert!(p.no_named_args().is_err());
             assert_eq!(p.len().unwrap(), 1);
 

@@ -66,6 +66,8 @@ where
 
     fn alloc_frozen_value(self, heap: FrozenHeap<'fv>) -> ValueOf<'fv, Self::Type> {
         // The items are `L::Item::Type` by `L::Item`'s declaration.
-        ValueOf::new_unchecked(heap.alloc_list_iter(self.0.into_iter().map(|x| heap.alloc(x))))
+        ValueOf::new_unchecked(
+            heap.alloc_list_iter(self.0.into_iter().map(|x| heap.alloc(x).to_value())),
+        )
     }
 }

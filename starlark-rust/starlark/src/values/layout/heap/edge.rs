@@ -188,10 +188,10 @@ mod tests {
         let none: ValueTyped<'static, NoneType> = none.at();
         Heap::temp(|outer| {
             let v1 = at_brand(outer, none);
-            let list1 = outer.alloc(AllocList([v1]));
+            let list1 = outer.alloc(AllocList([v1])).to_value();
             Heap::temp(|inner| {
                 let v2 = at_brand(inner, none);
-                let list2 = inner.alloc(AllocList([v2]));
+                let list2 = inner.alloc(AllocList([v2])).to_value();
                 assert!(v1.ptr_eq(none.to_value()));
                 assert!(v2.ptr_eq(none.to_value()));
                 assert!(ListRef::from_value(list1).unwrap().content()[0].is_none());

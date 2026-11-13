@@ -87,17 +87,21 @@ mod tests {
     #[test]
     fn test_alloc_tuple() {
         Heap::temp(|heap| {
-            let a = heap.alloc(AllocTuple([""; 0]));
-            let b = heap.alloc(AllocTuple([1, 2, 3].iter().copied().filter(|_| false)));
+            let a = heap.alloc(AllocTuple([""; 0])).to_value();
+            let b = heap
+                .alloc(AllocTuple([1, 2, 3].iter().copied().filter(|_| false)))
+                .to_value();
             assert_eq!(0, TupleRef::from_value(a).unwrap().content().len());
             assert!(a.ptr_eq(b));
 
             // Fixed length iterator.
-            let c = heap.alloc(AllocTuple([1, 2]));
+            let c = heap.alloc(AllocTuple([1, 2])).to_value();
             assert_eq!(2, TupleRef::from_value(c).unwrap().content().len());
 
             // Iterator of unknown length.
-            let d = heap.alloc(AllocTuple([1, 2, 3].iter().copied().filter(|c| *c > 1)));
+            let d = heap
+                .alloc(AllocTuple([1, 2, 3].iter().copied().filter(|c| *c > 1)))
+                .to_value();
             assert_eq!(2, TupleRef::from_value(d).unwrap().content().len());
         });
     }
@@ -105,17 +109,21 @@ mod tests {
     #[test]
     fn test_alloc_frozen_tuple() {
         FrozenHeap::temp(|heap| {
-            let a = heap.alloc(AllocTuple([""; 0]));
-            let b = heap.alloc(AllocTuple([1, 2, 3].iter().copied().filter(|_| false)));
+            let a = heap.alloc(AllocTuple([""; 0])).to_value();
+            let b = heap
+                .alloc(AllocTuple([1, 2, 3].iter().copied().filter(|_| false)))
+                .to_value();
             assert_eq!(0, TupleRef::from_value(a).unwrap().content().len());
             assert!(a.ptr_eq(b));
 
             // Fixed length iterator.
-            let c = heap.alloc(AllocTuple([1, 2]));
+            let c = heap.alloc(AllocTuple([1, 2])).to_value();
             assert_eq!(2, TupleRef::from_value(c).unwrap().content().len());
 
             // Iterator of unknown length.
-            let d = heap.alloc(AllocTuple([1, 2, 3].iter().copied().filter(|c| *c > 1)));
+            let d = heap
+                .alloc(AllocTuple([1, 2, 3].iter().copied().filter(|c| *c > 1)))
+                .to_value();
             assert_eq!(2, TupleRef::from_value(d).unwrap().content().len());
         });
     }

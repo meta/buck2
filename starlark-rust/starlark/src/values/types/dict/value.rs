@@ -146,7 +146,7 @@ impl<'v> AllocValue<'v> for Dict<'v> {
 impl<'v> Heap<'v> {
     /// Allocate a dictionary with pre-allocated and pre-hashed keys and values.
     pub fn alloc_dict(self, content: SmallMap<Value<'v>, Value<'v>>) -> Value<'v> {
-        self.alloc(Dict::new(content))
+        self.alloc(Dict::new(content)).to_value()
     }
 }
 
@@ -571,7 +571,7 @@ impl<'v> StarlarkType<'v> for DictView<'v> {
             .map_or_else(|| ValueError::unsupported_with(self, "|", rhs), Ok)?;
         let content = self.content();
         if content.is_empty() {
-            return Ok(heap.alloc((*rhs).clone()));
+            return Ok(heap.alloc((*rhs).clone()).to_value());
         }
         // Might be faster if we preallocate the capacity, but then copying in the LHS
         // is more expensive and might oversize given the behaviour on duplicates.
@@ -580,7 +580,7 @@ impl<'v> StarlarkType<'v> for DictView<'v> {
         for (k, v) in rhs.iter_hashed() {
             items.insert_hashed(k, v);
         }
-        Ok(heap.alloc(Dict::new(items)))
+        Ok(heap.alloc(Dict::new(items)).to_value())
     }
 
     fn typechecker_ty(&self) -> Option<Ty> {
@@ -652,12 +652,15 @@ b1 and b2 and b3
             let k1 = heap.alloc_str("hello").get_hashed_value();
             let k2 = heap.alloc_str("world").get_hashed_value();
             let mut sm = SmallMap::new();
-            sm.insert_hashed(k1, heap.alloc(12));
-            sm.insert_hashed(k2, heap.alloc(56));
+            sm.insert_hashed(k1, heap.alloc(12i32).to_value());
+            sm.insert_hashed(k2, heap.alloc(56i32).to_value());
             let d = Dict::new(sm);
 
-            assert_eq!(d.get(heap.alloc("hello"))?.unwrap().unpack_i32(), Some(12));
-            assert_eq!(d.get(heap.alloc("foo"))?, None);
+            assert_eq!(
+                d.get(heap.alloc("hello").to_value())?.unwrap().unpack_i32(),
+                Some(12)
+            );
+            assert_eq!(d.get(heap.alloc("foo").to_value())?, None);
             assert_eq!(d.get_str("hello").unwrap().unpack_i32(), Some(12));
             assert_eq!(d.get_str("foo"), None);
             Ok(())

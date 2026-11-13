@@ -695,7 +695,7 @@ fn new_attr_value<'v>(
                     )
                 })
                 .collect::<buck2_error::Result<Vec<_>>>()?;
-            Ok(env.heap().alloc(AllocList(xs)))
+            Ok(env.heap().alloc(AllocList(xs)).to_value())
         }
         DynamicAttrValue::Dict(xs) => {
             let mut r = BuckMutInsertionMap::with_capacity(xs.len());
@@ -719,7 +719,7 @@ fn new_attr_value<'v>(
                     ));
                 }
             }
-            Ok(env.heap().alloc(AllocDict(r)))
+            Ok(env.heap().alloc(AllocDict(r)).to_value())
         }
         DynamicAttrValue::Tuple(xs) => {
             let xs = xs
@@ -736,7 +736,7 @@ fn new_attr_value<'v>(
                     )
                 })
                 .collect::<buck2_error::Result<Vec<_>>>()?;
-            Ok(env.heap().alloc(AllocTuple(xs)))
+            Ok(env.heap().alloc(AllocTuple(xs)).to_value())
         }
         DynamicAttrValue::Option(option) => match option {
             Some(v) => new_attr_value(

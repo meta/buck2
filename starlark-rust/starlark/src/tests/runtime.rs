@@ -218,7 +218,7 @@ f()
 #[test]
 fn test_display_debug() {
     Heap::temp(|heap| {
-        let val = heap.alloc((vec![1, 2], "test", true));
+        let val = heap.alloc((vec![1, 2], "test", true)).to_value();
         assert_eq!(format!("{val}"), "([1, 2], \"test\", True)");
         assert_eq!(val.to_repr(), "([1, 2], \"test\", True)");
         assert_eq!(val.to_str(), "([1, 2], \"test\", True)");
@@ -226,7 +226,7 @@ fn test_display_debug() {
             format!("{val:?}"),
             "Value(TupleGen { content: [Value(ListGen(ListData { content: Cell { value: ValueTyped(Value(Array { len: 2, capacity: 4, iter_count: 0, content: [Value(1), Value(2)] })) } })), Value(\"test\"), Value(StarlarkBool(true))] })"
         );
-        let v = heap.alloc("test");
+        let v = heap.alloc("test").to_value();
         assert_eq!(format!("{v}"), "\"test\"");
         assert_eq!(v.to_repr(), "\"test\"");
         assert_eq!(v.to_str(), "test");
@@ -235,7 +235,7 @@ fn test_display_debug() {
     });
 
     FrozenHeap::temp(|frozen_heap| {
-        let v = frozen_heap.alloc("test");
+        let v = frozen_heap.alloc("test").to_value();
         assert!(v.is_frozen());
         assert_eq!(format!("{v}"), "\"test\"");
         assert_eq!(v.to_repr(), "\"test\"");

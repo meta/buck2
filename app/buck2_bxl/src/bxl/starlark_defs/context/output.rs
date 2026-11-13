@@ -906,6 +906,7 @@ fn alloc_ensured_artifacts<'v>(heap: Heap<'v>, artifacts: Vec<EnsuredArtifact>) 
             .into_iter()
             .map(|artifact| heap.alloc_representation(artifact).to_value()),
     ))
+    .to_value()
 }
 
 pub(crate) fn get_cmd_line_inputs(

@@ -811,7 +811,7 @@ impl<'v> Value<'v> {
             if let Some(rs) = other.unpack_inline_int() {
                 // On overflow take the slow path below.
                 if let Some(sum) = ls.checked_add(rs) {
-                    return Ok(heap.alloc(sum));
+                    return Ok(heap.alloc(sum).to_value());
                 }
             }
         }
@@ -1226,7 +1226,7 @@ mod tests {
     #[test]
     fn test_unpack_i32() {
         Heap::temp(|heap| {
-            let value = heap.alloc(i32::MAX);
+            let value = heap.alloc(i32::MAX).to_value();
             assert_eq!(Some(i32::MAX), value.unpack_i32());
         });
     }
@@ -1237,14 +1237,19 @@ mod tests {
         assert!(Value::testing_new_int(10).is_frozen());
         Heap::temp(|heap| {
             assert!(!heap.alloc_str("unfrozen").to_value().is_frozen());
-            assert!(!heap.alloc(AllocList([Value::new_none()])).is_frozen());
+            assert!(
+                !heap
+                    .alloc(AllocList([Value::new_none()]))
+                    .to_value()
+                    .is_frozen()
+            );
         });
     }
 
     #[test]
     fn test_unpack_bigint() {
         Heap::temp(|heap| {
-            let value = heap.alloc(BigInt::from(i64::MAX));
+            let value = heap.alloc(BigInt::from(i64::MAX)).to_value();
             assert_eq!(None, value.unpack_i32());
             assert_eq!(
                 Some(BigInt::from(i64::MAX)),
@@ -1270,7 +1275,7 @@ mod tests {
         );
 
         Heap::temp(|heap| {
-            let list = heap.alloc(AllocList(0..12345));
+            let list = heap.alloc(AllocList(0..12345)).to_value();
             assert_eq!(
                 "list (repr: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10,<<...>>42, 12343, 12344])",
                 list.to_string_for_type_error(),

@@ -551,7 +551,7 @@ starlark::__starlark_pagable_only! {
         fn result_ok_round_trips() -> pagable::Result<()> {
             let owned: OwnedFrozen<Value<'static>> =
                 OwnedFrozen::build(FrozenHeapName::user("result_ok_round_trips"), |heap| {
-                    heap.alloc_representation(StarlarkResult::Ok(heap.alloc("payload")))
+                    heap.alloc_representation(StarlarkResult::Ok(heap.alloc("payload").to_value()))
                         .to_value()
                 });
 

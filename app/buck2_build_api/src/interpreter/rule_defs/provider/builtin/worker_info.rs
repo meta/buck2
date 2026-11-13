@@ -96,7 +96,8 @@ fn worker_info_creator(globals: &mut GlobalsBuilder) {
             concurrency: concurrency.into_option(),
             streaming: streaming.into_option(),
             supports_bazel_remote_persistent_worker_protocol: ValueOf::new_unchecked(
-                heap.alloc(supports_bazel_remote_persistent_worker_protocol),
+                heap.alloc(supports_bazel_remote_persistent_worker_protocol)
+                    .to_value(),
             ),
         }))
     }

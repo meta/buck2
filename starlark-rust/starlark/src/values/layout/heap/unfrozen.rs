@@ -34,7 +34,6 @@ use dupe::Dupe;
 
 use crate::collections::StarlarkHashValue;
 use crate::eval::runtime::profile::instant::ProfilerInstant;
-use crate::values::AllocValue;
 use crate::values::HeapSendable;
 #[cfg(test)]
 use crate::values::OwnedFrozen;
@@ -232,11 +231,6 @@ impl<'v> Heap<'v> {
             let value = Value::new_ptr(NonNull::new_unchecked(v), true);
             StringValue::new_unchecked(value)
         }
-    }
-
-    /// Allocate a new value on a [`Heap`].
-    pub fn alloc<T: AllocValue<'v>>(self, x: T) -> Value<'v> {
-        x.alloc_value(self).to_value()
     }
 
     pub(crate) unsafe fn visit_arena(

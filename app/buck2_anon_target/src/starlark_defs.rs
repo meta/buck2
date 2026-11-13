@@ -220,11 +220,13 @@ fn anon_targets_methods(builder: &mut MethodsBuilder) {
         this: &StarlarkAnonTargets<'v>,
         heap: Heap<'v>,
     ) -> starlark::Result<Value<'v>> {
-        Ok(heap.alloc(AllocList(
-            this.anon_targets
-                .iter()
-                .map(|a| heap.alloc_representation(a.clone()).to_value()),
-        )))
+        Ok(heap
+            .alloc(AllocList(
+                this.anon_targets
+                    .iter()
+                    .map(|a| heap.alloc_representation(a.clone()).to_value()),
+            ))
+            .to_value())
     }
 
     /// Returns the promise that maps to the result of the joined anon rules.

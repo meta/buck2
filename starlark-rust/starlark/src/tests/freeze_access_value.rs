@@ -42,7 +42,7 @@ impl<'v> Freeze<'v> for Test<Value<'v>> {
 #[test]
 fn test() -> anyhow::Result<()> {
     Freezer::testing_temp(|heap, freezer| {
-        let list = heap.alloc(vec![1i32, 2i32]);
+        let list = heap.alloc(vec![1i32, 2i32]).to_value();
         let t = Test { field: list };
         list.freeze(freezer)?;
         t.freeze(freezer)?;

@@ -190,9 +190,8 @@ impl<'v> StarlarkPromise<'v> {
     ) -> ValueTyped<'v, StarlarkPromise<'v>> {
         let join = PromiseJoin::new(args);
         match join.get() {
-            Some(values) => {
-                heap.alloc_representation(Self::new_resolved(heap.alloc(AllocList(values))))
-            }
+            Some(values) => heap
+                .alloc_representation(Self::new_resolved(heap.alloc(AllocList(values)).to_value())),
             None => {
                 let promise = Self::new_unresolved();
                 let value = heap.alloc_representation(promise);
@@ -258,7 +257,7 @@ impl<'v> StarlarkPromise<'v> {
                     join.resolve_one();
                     if let Some(elems) = join.get() {
                         drop(borrow);
-                        d.resolve_rec(eval.heap().alloc(AllocList(elems)), eval)?;
+                        d.resolve_rec(eval.heap().alloc(AllocList(elems)).to_value(), eval)?;
                     }
                 }
                 _ => panic!("Impossible to reach a downstream promise that is not a map or join"),
@@ -406,7 +405,7 @@ mod tests {
         let res = eval.eval_module(ast, &globals)?;
         let promises = get_promises(modu);
         for (key, promise) in promises.0.borrow().iter() {
-            promise.resolve(modu.heap().alloc(key), &mut eval)?;
+            promise.resolve(modu.heap().alloc(key).to_value(), &mut eval)?;
         }
         Ok(res)
     }

@@ -69,7 +69,7 @@ impl<'v, 'fv> Freezer<'v, 'fv> {
 
     /// Allocate a new value while freezing. Usually not a great idea.
     pub fn alloc<T: AllocFrozenValue<'fv>>(&self, val: T) -> Value<'fv> {
-        self.heap.alloc(val)
+        self.heap.alloc(val).to_value()
     }
 
     /// Freeze a nested value while freezing yourself.

@@ -229,7 +229,7 @@ mod tests {
         // Test
         // ast-grep-ignore: rust/buck2-no-starlark-module
         Module::with_temp_heap(|m| {
-            m.set("name", m.heap().alloc(name.to_string()));
+            m.set("name", m.heap().alloc(name.to_string()).to_value());
             m.freeze_named(Buck2TestHeapName::frozen_heap_name())
         })
         .unwrap()

@@ -82,13 +82,18 @@ impl<'v> StarlarkValue<'v> for StringIterable<'v> {
     unsafe fn iterate(&self, _me: Value<'v>, heap: Heap<'v>) -> crate::Result<Value<'v>> {
         // Lazy implementation: we allocate a tuple and then iterate over it.
         let iter = if self.produce_char {
-            heap.alloc_tuple_iter(self.string.as_str().chars().map(|c| heap.alloc(c)))
+            heap.alloc_tuple_iter(
+                self.string
+                    .as_str()
+                    .chars()
+                    .map(|c| heap.alloc(c).to_value()),
+            )
         } else {
             heap.alloc_tuple_iter(
                 self.string
                     .as_str()
                     .chars()
-                    .map(|c| heap.alloc(u32::from(c))),
+                    .map(|c| heap.alloc(u32::from(c)).to_value()),
             )
         };
         Ok(iter)

@@ -156,7 +156,9 @@ impl<'v> StarlarkValue<'v> for Range {
         // The element itself fits in `i32`, but `step * index` can leave the range
         // on the way there, so compute in `i64` like `slice` and the iterator do.
         let element = self.start as i64 + self.step.get() as i64 * index as i64;
-        Ok(heap.alloc(i32::try_from(element).map_err(|_| ValueError::IntegerOverflow)?))
+        Ok(heap
+            .alloc(i32::try_from(element).map_err(|_| ValueError::IntegerOverflow)?)
+            .to_value())
     }
 
     fn equals(&self, other: Value) -> crate::Result<bool> {
@@ -228,7 +230,7 @@ impl<'v> StarlarkValue<'v> for Range {
             return None;
         }
 
-        Some(heap.alloc(rem_range.start))
+        Some(heap.alloc(rem_range.start).to_value())
     }
 
     unsafe fn iter_size_hint(&self, index: usize) -> (usize, Option<usize>) {
@@ -394,7 +396,7 @@ mod tests {
                 let full: Vec<Value> = x.iterate(heap).unwrap().collect();
                 assert_eq!(x.length().unwrap(), full.len() as i32);
                 for (i, v) in full.iter().enumerate() {
-                    assert_eq!(x.at(heap.alloc(i), heap).unwrap(), *v);
+                    assert_eq!(x.at(heap.alloc(i).to_value(), heap).unwrap(), *v);
                 }
             }
 

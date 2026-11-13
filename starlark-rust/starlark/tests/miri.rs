@@ -74,7 +74,7 @@ fn none_type() {
 #[test]
 fn list_allocation() {
     Heap::temp(|heap| {
-        let value = heap.alloc(AllocList([1, 2, 3]));
+        let value = heap.alloc(AllocList([1i32, 2, 3])).to_value();
         let list = ListRef::from_value(value).unwrap();
         assert_eq!(list.len(), 3);
         assert_eq!(list[1].unpack_i32(), Some(2));
@@ -84,7 +84,7 @@ fn list_allocation() {
 #[test]
 fn tuple_allocation() {
     Heap::temp(|heap| {
-        let value = heap.alloc(AllocTuple([1, 2]));
+        let value = heap.alloc(AllocTuple([1i32, 2])).to_value();
         let tuple = TupleRef::from_value(value).unwrap();
         assert_eq!(tuple.content().len(), 2);
         assert_eq!(tuple.content()[1].unpack_i32(), Some(2));
@@ -94,7 +94,7 @@ fn tuple_allocation() {
 #[test]
 fn single_character_module_name() {
     Module::with_temp_heap(|module| {
-        let value = module.heap().alloc("value");
+        let value = module.heap().alloc("value").to_value();
         module.set("x", value);
         assert_eq!(module.get("x").unwrap().unpack_str(), Some("value"));
         module.freeze_named(FrozenHeapName::user("miri")).unwrap();

@@ -101,12 +101,14 @@ async fn eval_pre_constraint_analysis<'v, 'a>(
 
         let package_cfg_modifiers = eval
             .heap()
-            .alloc(NoneOr::from_option(package_cfg_modifiers.copied()));
+            .alloc(NoneOr::from_option(package_cfg_modifiers.copied()))
+            .to_value();
         let target_cfg_modifiers = eval
             .heap()
-            .alloc(NoneOr::from_option(target_cfg_modifiers.copied()));
-        let cli_modifiers = eval.heap().alloc(cli_modifiers);
-        let rule_name = eval.heap().alloc(rule_type.name());
+            .alloc(NoneOr::from_option(target_cfg_modifiers.copied()))
+            .to_value();
+        let cli_modifiers = eval.heap().alloc(cli_modifiers).to_value();
+        let rule_name = eval.heap().alloc(rule_type.name()).to_value();
         let aliases = match aliases {
             Some(v) => v,
             None => Value::new_none(),
@@ -115,7 +117,7 @@ async fn eval_pre_constraint_analysis<'v, 'a>(
             Some(v) => v,
             None => Value::new_none(),
         };
-        let configuring_exec_dep = eval.heap().alloc(configuring_exec_dep);
+        let configuring_exec_dep = eval.heap().alloc(configuring_exec_dep).to_value();
 
         // TODO: should eventually accept cli modifiers and target modifiers (T163570597)
         let pre_constraint_analysis_args = vec![
@@ -193,14 +195,16 @@ fn eval_post_constraint_analysis<'v>(
         let post_constraint_analysis_args = vec![
             (
                 "refs",
-                eval.heap().alloc(
-                    refs_providers_map
-                        .into_iter()
-                        .map(|(label, providers)| {
-                            (label, providers.add_heap_ref(eval.heap()).to_value())
-                        })
-                        .collect::<BuckMutInsertionMap<String, Value<'_>>>(),
-                ),
+                eval.heap()
+                    .alloc(
+                        refs_providers_map
+                            .into_iter()
+                            .map(|(label, providers)| {
+                                (label, providers.add_heap_ref(eval.heap()).to_value())
+                            })
+                            .collect::<BuckMutInsertionMap<String, Value<'_>>>(),
+                    )
+                    .to_value(),
             ),
             ("params", params),
         ];

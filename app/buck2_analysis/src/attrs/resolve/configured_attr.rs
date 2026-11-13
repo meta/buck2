@@ -106,23 +106,23 @@ impl ConfiguredAttrExt for ConfiguredAttr {
     ) -> buck2_error::Result<Value<'v>> {
         match self {
             ConfiguredAttr::Bool(v) => Ok(Value::new_bool(v.0)),
-            ConfiguredAttr::Int(v) => Ok(ctx.heap().alloc(*v)),
+            ConfiguredAttr::Int(v) => Ok(ctx.heap().alloc(*v).to_value()),
             ConfiguredAttr::String(v) | ConfiguredAttr::EnumVariant(v) => {
-                Ok(ctx.heap().alloc(v.as_str()))
+                Ok(ctx.heap().alloc(v.as_str()).to_value())
             }
             ConfiguredAttr::List(list) => {
                 let mut values = Vec::with_capacity(list.len());
                 for v in list.iter() {
                     values.append(&mut v.resolve(pkg, ctx)?);
                 }
-                Ok(ctx.heap().alloc(values))
+                Ok(ctx.heap().alloc(values).to_value())
             }
             ConfiguredAttr::Tuple(list) => {
                 let mut values = Vec::with_capacity(list.len());
                 for v in list.iter() {
                     values.push(v.resolve_single(pkg, ctx)?);
                 }
-                Ok(ctx.heap().alloc(AllocTuple(values)))
+                Ok(ctx.heap().alloc(AllocTuple(values)).to_value())
             }
             ConfiguredAttr::Dict(dict) => {
                 let mut res = BuckMutInsertionMap::with_capacity(dict.len());
@@ -132,7 +132,7 @@ impl ConfiguredAttrExt for ConfiguredAttr {
                         v.resolve_single(pkg, ctx)?,
                     );
                 }
-                Ok(ctx.heap().alloc(res))
+                Ok(ctx.heap().alloc(res).to_value())
             }
             ConfiguredAttr::None => Ok(Value::new_none()),
             ConfiguredAttr::OneOf(box l, _) => l.resolve_single(pkg, ctx),
@@ -192,19 +192,25 @@ fn configured_attr_to_value<'v>(
     heap: Heap<'v>,
 ) -> buck2_error::Result<Value<'v>> {
     Ok(match this {
-        ConfiguredAttr::Bool(v) => heap.alloc(v.0),
-        ConfiguredAttr::Int(v) => heap.alloc(*v),
-        ConfiguredAttr::String(s) | ConfiguredAttr::EnumVariant(s) => heap.alloc(s.as_str()),
-        ConfiguredAttr::List(list) => heap.alloc(
-            list.iter()
-                .map(|v| configured_attr_to_value(v, pkg, heap))
-                .collect::<Result<Vec<_>, _>>()?,
-        ),
-        ConfiguredAttr::Tuple(v) => heap.alloc(AllocTuple(
-            v.iter()
-                .map(|v| configured_attr_to_value(v, pkg, heap))
-                .collect::<Result<Vec<_>, _>>()?,
-        )),
+        ConfiguredAttr::Bool(v) => heap.alloc(v.0).to_value(),
+        ConfiguredAttr::Int(v) => heap.alloc(*v).to_value(),
+        ConfiguredAttr::String(s) | ConfiguredAttr::EnumVariant(s) => {
+            heap.alloc(s.as_str()).to_value()
+        }
+        ConfiguredAttr::List(list) => heap
+            .alloc(
+                list.iter()
+                    .map(|v| configured_attr_to_value(v, pkg, heap))
+                    .collect::<Result<Vec<_>, _>>()?,
+            )
+            .to_value(),
+        ConfiguredAttr::Tuple(v) => heap
+            .alloc(AllocTuple(
+                v.iter()
+                    .map(|v| configured_attr_to_value(v, pkg, heap))
+                    .collect::<Result<Vec<_>, _>>()?,
+            ))
+            .to_value(),
         ConfiguredAttr::Dict(map) => {
             let mut res = BuckMutInsertionMap::with_capacity(map.len());
 
@@ -215,19 +221,19 @@ fn configured_attr_to_value<'v>(
                 );
             }
 
-            heap.alloc(res)
+            heap.alloc(res).to_value()
         }
         ConfiguredAttr::None => Value::new_none(),
         ConfiguredAttr::OneOf(box l, _) => configured_attr_to_value(l, pkg, heap)?,
         ConfiguredAttr::Visibility(VisibilitySpecification(specs))
         | ConfiguredAttr::WithinView(WithinViewSpecification(specs)) => match specs {
-            VisibilityPatternList::Public => heap.alloc(AllocList(["PUBLIC"])),
-            VisibilityPatternList::List(specs) => {
-                heap.alloc(AllocList(specs.iter().map(|s| match s {
-                    VisibilityPattern::Parsed(p) => heap.alloc(p.to_string()),
+            VisibilityPatternList::Public => heap.alloc(AllocList(["PUBLIC"])).to_value(),
+            VisibilityPatternList::List(specs) => heap
+                .alloc(AllocList(specs.iter().map(|s| match s {
+                    VisibilityPattern::Parsed(p) => heap.alloc(p.to_string()).to_value(),
                     VisibilityPattern::TargetNameGlob(record) => record.alloc_starlark_value(heap),
                 })))
-            }
+                .to_value(),
             VisibilityPatternList::Intersection(_) => {
                 return Err(internal_error!(
                     "Intersection visibility cannot be serialized as attribute"
@@ -247,13 +253,13 @@ fn configured_attr_to_value<'v>(
 
             for (trans, p) in t.deps.iter() {
                 map.insert_hashed(
-                    heap.alloc(trans).get_hashed()?,
+                    heap.alloc(trans).to_value().get_hashed()?,
                     heap.alloc_representation(StarlarkConfiguredProvidersLabel::new(p.dupe()))
                         .to_value(),
                 );
             }
 
-            heap.alloc(map)
+            heap.alloc(map).to_value()
         }
         ConfiguredAttr::ConfigurationDep(c) => {
             // TODO(T198210718)
@@ -272,8 +278,8 @@ fn configured_attr_to_value<'v>(
         ConfiguredAttr::Label(l) => heap
             .alloc_representation(StarlarkConfiguredProvidersLabel::new(l.dupe()))
             .to_value(),
-        ConfiguredAttr::Arg(arg) => heap.alloc(arg.to_string()),
-        ConfiguredAttr::Query(query) => heap.alloc(&query.query.query),
+        ConfiguredAttr::Arg(arg) => heap.alloc(arg.to_string()).to_value(),
+        ConfiguredAttr::Query(query) => heap.alloc(&query.query.query).to_value(),
         ConfiguredAttr::SourceFile(f) => match pkg {
             PackageLabelOption::PackageLabel(pkg) => heap
                 .alloc_representation(StarlarkArtifact::new(Artifact::from(SourceArtifact::new(
@@ -290,7 +296,7 @@ fn configured_attr_to_value<'v>(
                 return Err(ConfiguredAttrError::SourceFileToStarlarkValue(f.path().dupe()).into());
             }
         },
-        ConfiguredAttr::Metadata(data) => heap.alloc(data.to_value()),
+        ConfiguredAttr::Metadata(data) => heap.alloc(data.to_value()).to_value(),
         ConfiguredAttr::TargetModifiers(data) => data.alloc_starlark(heap),
     })
 }

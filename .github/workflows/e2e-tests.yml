@@ -1,0 +1,75 @@
+name: e2e tests
+on:
+  # A run takes half an hour or more on the 16-core runner: too long and too
+  # costly for every pull request or push.
+  schedule:
+    - cron: '0 7 * * *'
+  workflow_dispatch: # allows manual triggering
+
+permissions:
+  contents: read
+
+concurrency:
+  group: e2e-tests-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  # As in build-with-buck2.yml, whose steps this job starts with.
+  CARGO_INCREMENTAL: 0
+  CARGO_PROFILE_DEV_DEBUG: line-tables-only
+
+jobs:
+  # buck2's e2e tests (`tests/core`, the isolated `tests/e2e` modules and
+  # `tests/select_type_params`), built and run by the Cargo-built buck2 against
+  # the buck2 it builds. The tests that need Meta's infrastructure are ignored
+  # outside Meta (`meta_only` in `tests/e2e_util/rust`).
+  linux-e2e-tests:
+    # Forks don't get the nightly run, or the Meta larger runner.
+    if: github.repository_owner == 'meta' || github.event_name == 'workflow_dispatch'
+    runs-on: ${{ github.repository_owner == 'meta' && '16-core-ubuntu' || 'ubuntu-latest' }}
+    timeout-minutes: 120
+    steps:
+    - uses: actions/checkout@v6
+    - uses: ./.github/actions/setup_rust_toolchain
+    - uses: ./.github/actions/build_debug
+    - uses: ./.github/actions/setup_reindeer
+    # The tests' actions run `fbpython`, Meta's name for Python 3; the
+    # completion tests run fish and zsh, `debug thread-dump` LLDB, and the file
+    # watcher tests make Sapling repositories and use Watchman.
+    - name: Install the tools the tests run
+      env:
+        GH_TOKEN: ${{ github.token }}
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y clang fish zsh lldb
+        gh release download --repo facebook/sapling --pattern "*Ubuntu$(lsb_release -rs).deb" --dir "$RUNNER_TEMP/sapling"
+        sudo apt-get install -y "$RUNNER_TEMP"/sapling/*.deb
+        mkdir -p "$RUNNER_TEMP/bin"
+        ln -s "$(command -v python3)" "$RUNNER_TEMP/bin/fbpython"
+        echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
+      shell: bash
+    # As Watchman's install.md has it for the Linux release.
+    - name: Install Watchman
+      env:
+        GH_TOKEN: ${{ github.token }}
+        WATCHMAN_RELEASE: v2026.07.27.00
+      run: |
+        gh release download "$WATCHMAN_RELEASE" --repo facebook/watchman --pattern "watchman-$WATCHMAN_RELEASE-linux.zip" --dir "$RUNNER_TEMP"
+        unzip -q "$RUNNER_TEMP/watchman-$WATCHMAN_RELEASE-linux.zip" -d "$RUNNER_TEMP"
+        cd "$RUNNER_TEMP/watchman-$WATCHMAN_RELEASE-linux"
+        sudo mkdir -p /usr/local/bin /usr/local/lib /usr/local/var/run/watchman
+        sudo cp bin/* /usr/local/bin
+        sudo cp -r lib/. /usr/local/lib
+        sudo chmod 755 /usr/local/bin/watchman
+        sudo chmod 2777 /usr/local/var/run/watchman
+        watchman --version
+      shell: bash
+    # The open source test runner runs each test target's binary once, with all
+    # its test cases: buck2 runs a binary per core, each with 4 test cases at a
+    # time, and gives a binary 30 minutes.
+    - name: Run the e2e tests
+      run: >-
+        "$RUNNER_TEMP/artifacts/buck2" test
+        //tests/core/... //tests/e2e/... //tests/select_type_params/...
+        -- --timeout=1800 --env RUST_TEST_THREADS=4
+      shell: bash

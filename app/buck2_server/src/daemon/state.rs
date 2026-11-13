@@ -13,6 +13,7 @@ use std::path::Path;
 use std::str::FromStr;
 use std::sync::Arc;
 use std::sync::Mutex as StdMutex;
+use std::sync::OnceLock;
 use std::sync::Weak;
 use std::sync::atomic::AtomicBool;
 use std::sync::atomic::AtomicU64;
@@ -29,6 +30,7 @@ use buck2_common::cancellation::CancellationScope;
 use buck2_common::cas_digest::DigestAlgorithm;
 use buck2_common::cas_digest::DigestAlgorithmFamily;
 use buck2_common::daemon_routing::DaemonRouting;
+use buck2_common::file_ops::metadata::TrackedFileDigest;
 use buck2_common::ignores::ignore_set::IgnoreSet;
 use buck2_common::ignores::ignore_set::compute_ignore_set;
 use buck2_common::init::DaemonStartupConfig;
@@ -49,6 +51,7 @@ use buck2_common::tenant::TenantKey;
 use buck2_common::tenant::TenantSpec;
 use buck2_core::buck2_env;
 use buck2_core::cells::name::CellName;
+use buck2_core::execution_types::executor_config::RemoteExecutorUseCase;
 use buck2_core::facebook_only;
 use buck2_core::fs::project::ProjectRoot;
 use buck2_core::fs::project_rel_path::ProjectRelativePathBuf;
@@ -78,6 +81,8 @@ use buck2_execute::materialize::materializer::Materializer;
 use buck2_execute::re::client::init_induced_cache_misses;
 use buck2_execute::re::invocation_re_settings::invocation_re_use_case;
 use buck2_execute::re::manager::ReConnectionManager;
+use buck2_execute::re::ttl_refresh::PassPresenceChecker;
+use buck2_execute::re::ttl_refresh::PresenceChecker;
 use buck2_execute::re::ttl_refresh::ReChecker;
 use buck2_execute::re::ttl_refresh::StandaloneTtlRefreshCounters;
 use buck2_execute::re::ttl_refresh::TtlRefresher;
@@ -332,6 +337,9 @@ pub struct RepoState {
     /// use the same connection. Once there are no active build commands, the connection is
     /// terminated.
     pub re_client_manager: Arc<ReConnectionManager>,
+    /// The use case this repo's own RE traffic runs under, such as the daemon's TTL refresh
+    /// when it asks the CAS through this repo's connection.
+    pub(crate) re_use_case: RemoteExecutorUseCase,
 
     /// Executor for blocking I/O against this repo's project root.
     pub blocking_executor: Arc<dyn BlockingExecutor>,
@@ -1019,6 +1027,7 @@ impl TenantState {
             dep_file_cache,
             paranoid,
             re_client_manager,
+            re_use_case: invocation_re_use_case(root_config)?,
             blocking_executor,
             buckconfig_metadata: parse_buckconfig_metadata(root_config),
             tags,
@@ -1236,6 +1245,26 @@ impl<T: Allocative> TenantStateSlot<T> {
 }
 
 impl TenantStateRegistry {
+    /// An initialized tenant the daemon serves, if it has one: the initial tenant while it is
+    /// registered, else any other.
+    ///
+    /// The initial tenant is matched by address, not by upgrading the weak reference: an
+    /// upgrade could be the last strong reference to an evicted tenant, whose state must not
+    /// drop under the registry lock.
+    fn live_tenant(&self) -> Option<Arc<TenantState>> {
+        let tenants = self
+            .tenants
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let initial = Weak::as_ptr(&self.initial_state);
+        tenants
+            .values()
+            .filter_map(|slot| slot.state.get())
+            .find(|state| std::ptr::eq(Arc::as_ptr(state), initial))
+            .or_else(|| tenants.values().find_map(|slot| slot.state.get()))
+            .cloned()
+    }
+
     async fn new(initial_tenant: Arc<TenantState>, unidaemon: bool) -> buck2_error::Result<Self> {
         let spec = TenantSpec::from_tenant_paths(&initial_tenant.repo.paths);
         let disk_ownership = initial_tenant.disk_ownership.clone();
@@ -1866,6 +1895,49 @@ fn tenant_paths_from_client_context(
         ProjectRoot::new_unchecked(project_root),
         isolation,
     )))
+}
+
+/// Asks the CAS through whichever tenant the daemon serves at the time of the pass. The walk
+/// over the digest interner is the daemon's, not a tenant's: a shared daemon outlives the
+/// tenant it started with, and that tenant's RE connection and log directory go with it when
+/// it is cleaned.
+struct LiveTenantPresenceChecker {
+    data: Arc<OnceLock<Weak<DaemonStateData>>>,
+}
+
+impl PresenceChecker for LiveTenantPresenceChecker {
+    fn begin_pass(&self) -> Box<dyn PassPresenceChecker> {
+        let tenant = self
+            .data
+            .get()
+            .and_then(Weak::upgrade)
+            .and_then(|data| data.tenants.live_tenant());
+        match tenant {
+            Some(tenant) => ReChecker::new(
+                tenant.repo.re_client_manager.dupe(),
+                tenant.repo.re_use_case,
+            )
+            .begin_pass(),
+            None => Box::new(NoTenantPresenceChecker),
+        }
+    }
+}
+
+/// A pass between tenants: the daemon is starting or draining, and the walk tries again next
+/// time.
+struct NoTenantPresenceChecker;
+
+#[async_trait::async_trait]
+impl PassPresenceChecker for NoTenantPresenceChecker {
+    async fn check(
+        &self,
+        _digests: Vec<TrackedFileDigest>,
+    ) -> buck2_error::Result<Vec<buck2_execute::re::presence::Presence>> {
+        Err(buck2_error!(
+            ErrorTag::Tier0,
+            "The daemon serves no tenant to ask the CAS through"
+        ))
+    }
 }
 
 /// DaemonStateData is the main shared data across all commands and repos. It's lazily initialized
@@ -2504,14 +2576,14 @@ impl DaemonState {
                 )
                 .await?;
 
-            // One walk over the process-wide digest interner, on the first tenant's RE
-            // connection and cadence: the BlobStore's, which refreshes CAS TTLs and drops what
-            // nothing holds.
+            // One walk over the process-wide digest interner, at the first tenant's cadence
+            // and through the RE connection of whichever tenant is live when a pass runs: the
+            // BlobStore's, which refreshes CAS TTLs and drops what nothing holds.
+            let daemon_state_data = Arc::new(OnceLock::new());
             let standalone_ttl_refresh = BlobStore::global().start_refresh(
-                TtlRefresher::new(Arc::new(ReChecker::new(
-                    tenant.repo.re_client_manager.dupe(),
-                    invocation_re_use_case(root_config)?,
-                ))),
+                TtlRefresher::new(Arc::new(LiveTenantPresenceChecker {
+                    data: daemon_state_data.dupe(),
+                })),
                 tenant.repo.ttl_refresh_frequency,
             );
 
@@ -2522,7 +2594,7 @@ impl DaemonState {
                 .package_visibility
                 .default_intersection();
             let tenants = TenantStateRegistry::new(tenant, unidaemon).await?;
-            Ok(Arc::new(DaemonStateData {
+            let data = Arc::new(DaemonStateData {
                 tenants,
                 tenant_state_factory,
                 blocking_executor_factory,
@@ -2538,7 +2610,9 @@ impl DaemonState {
                 named_semaphores_for_run_actions: Arc::new(NamedSemaphores::new()),
                 package_visibility_default_intersection,
                 standalone_ttl_refresh,
-            }))
+            });
+            let _ignored = daemon_state_data.set(Arc::downgrade(&data));
+            Ok(data)
         };
         let daemon_listener_span = tracing::Span::current();
         rt.spawn(init_fut.instrument(daemon_listener_span)).await?

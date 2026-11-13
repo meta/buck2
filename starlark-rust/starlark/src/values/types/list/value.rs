@@ -33,8 +33,6 @@ use serde::Serialize;
 use starlark_derive::StarlarkRepresentations;
 use starlark_derive::Trace;
 use starlark_derive::starlark_value;
-use starlark_syntax::slice_vec_ext::SliceExt;
-use starlark_syntax::slice_vec_ext::VecExt;
 
 use crate as starlark;
 use crate::any::ProvidesStaticType;
@@ -44,16 +42,12 @@ use crate::hint::unlikely;
 use crate::private::Private;
 use crate::static_starlark_value;
 use crate::typing::Ty;
-use crate::values::AllocFrozenValue;
-use crate::values::AllocValue;
-use crate::values::FrozenHeap;
 use crate::values::Heap;
 use crate::values::StarlarkType;
 use crate::values::StarlarkValue;
 use crate::values::StringValue;
 use crate::values::UnpackValue;
 use crate::values::Value;
-use crate::values::ValueOf;
 use crate::values::ValueTyped;
 use crate::values::array::Array;
 use crate::values::comparison::compare_slice;
@@ -62,7 +56,6 @@ use crate::values::error::ValueError;
 use crate::values::index::apply_slice;
 use crate::values::index::convert_index;
 use crate::values::list::ListRef;
-use crate::values::list::ListType;
 
 #[derive(Clone, Default, Trace, Debug, ProvidesStaticType, Allocative)]
 #[repr(transparent)]
@@ -234,50 +227,6 @@ impl<'v> ListData<'v> {
 
     pub(crate) fn remove(&self, index: usize) -> Value<'v> {
         self.content.get().remove(index)
-    }
-}
-
-impl<'v, V: AllocValue<'v>> AllocValue<'v> for Vec<V> {
-    type Type = ListType<V::Type>;
-
-    fn alloc_value(self, heap: Heap<'v>) -> ValueOf<'v, Self::Type> {
-        ValueOf::alloc_list(heap, self.into_iter().map(|x| x.alloc_value(heap)))
-    }
-}
-
-impl<'fv, V: AllocFrozenValue<'fv>> AllocFrozenValue<'fv> for Vec<V> {
-    type Type = ListType<V::Type>;
-
-    fn alloc_frozen_value(self, heap: FrozenHeap<'fv>) -> ValueOf<'fv, Self::Type> {
-        // The items are `V::Type` by `V`'s declaration.
-        ValueOf::new_unchecked(
-            heap.alloc_list(&self.into_map(|x| x.alloc_frozen_value(heap).to_value())),
-        )
-    }
-}
-
-impl<'a, 'v, V: 'a> AllocValue<'v> for &'a [V]
-where
-    &'a V: AllocValue<'v>,
-{
-    type Type = ListType<<&'a V as AllocValue<'v>>::Type>;
-
-    fn alloc_value(self, heap: Heap<'v>) -> ValueOf<'v, Self::Type> {
-        ValueOf::alloc_list(heap, self.iter().map(|x| x.alloc_value(heap)))
-    }
-}
-
-impl<'fv, 'a, V: 'a> AllocFrozenValue<'fv> for &'a [V]
-where
-    &'a V: AllocFrozenValue<'fv>,
-{
-    type Type = ListType<<&'a V as AllocFrozenValue<'fv>>::Type>;
-
-    fn alloc_frozen_value(self, heap: FrozenHeap<'fv>) -> ValueOf<'fv, Self::Type> {
-        // The items are `V::Type` by `V`'s declaration.
-        ValueOf::new_unchecked(
-            heap.alloc_list(&self.map(|x| x.alloc_frozen_value(heap).to_value())),
-        )
     }
 }
 

@@ -33,14 +33,10 @@ use crate as starlark;
 use crate::environment::Methods;
 use crate::starlark_simple_value;
 use crate::typing::Ty;
-use crate::values::AllocFrozenValue;
-use crate::values::AllocValue;
-use crate::values::FrozenHeap;
 use crate::values::Heap;
 use crate::values::StarlarkValue;
 use crate::values::UnpackValue;
 use crate::values::Value;
-use crate::values::ValueOf;
 use crate::values::index::apply_slice;
 use crate::values::index::convert_index;
 
@@ -63,38 +59,6 @@ pub struct StarlarkBytes {
 }
 
 starlark_simple_value!(StarlarkBytes);
-
-impl<'v> AllocValue<'v> for &'_ [u8] {
-    type Type = StarlarkBytes;
-
-    fn alloc_value(self, heap: Heap<'v>) -> ValueOf<'v, Self::Type> {
-        ValueOf::alloc(heap, StarlarkBytes::new(self))
-    }
-}
-
-impl<'fv> AllocFrozenValue<'fv> for &'_ [u8] {
-    type Type = StarlarkBytes;
-
-    fn alloc_frozen_value(self, heap: FrozenHeap<'fv>) -> ValueOf<'fv, Self::Type> {
-        ValueOf::alloc_frozen(heap, StarlarkBytes::new(self))
-    }
-}
-
-impl<'v> AllocValue<'v> for Vec<u8> {
-    type Type = StarlarkBytes;
-
-    fn alloc_value(self, heap: Heap<'v>) -> ValueOf<'v, Self::Type> {
-        ValueOf::alloc(heap, StarlarkBytes::from_vec(self))
-    }
-}
-
-impl<'fv> AllocFrozenValue<'fv> for Vec<u8> {
-    type Type = StarlarkBytes;
-
-    fn alloc_frozen_value(self, heap: FrozenHeap<'fv>) -> ValueOf<'fv, Self::Type> {
-        ValueOf::alloc_frozen(heap, StarlarkBytes::from_vec(self))
-    }
-}
 
 impl StarlarkBytes {
     /// Create a new bytes value from a byte slice.

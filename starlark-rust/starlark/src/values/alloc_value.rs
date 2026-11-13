@@ -32,9 +32,13 @@ use crate::values::type_expr::StarlarkTypeExpr;
 /// and what [`Heap::alloc`] takes.
 ///
 /// A representation of a Starlark type makes a value of that type, through the impl every
-/// [`AllocRepresentation`] gets below. Everything else is a conversion written by hand: `char`
-/// makes a `str`, `Vec<T>` a `list`, `StarlarkInt` an inline `int` or a big one.
-/// [`ValueOf::alloc`] is the same entry by type.
+/// [`AllocRepresentation`] gets below. Everything else is a recipe that says which type it
+/// makes: a handle, a scalar with one obvious Starlark type (`char` makes a `str`, `StarlarkInt`
+/// an inline `int` or a big one), a Rust tuple, `Either`, `NoneOr`, or an `Alloc*` type in the
+/// module of the type it makes ([`AllocList`](crate::values::list::AllocList),
+/// [`AllocDict`](crate::values::dict::AllocDict)). A Rust collection is not a recipe, because
+/// which Starlark type a `Vec` or a map should become is a guess: wrap it in the recipe of
+/// the type that is meant. [`ValueOf::alloc`] is the same entry by type.
 pub trait AllocValue<'v> {
     /// The Starlark type of the value this makes, which is what a native function returning
     /// `Self` is documented and type-checked as. A conversion that can make several types names

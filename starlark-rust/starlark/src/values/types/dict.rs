@@ -23,7 +23,6 @@ mod dict_type;
 pub(crate) mod globals;
 pub(crate) mod methods;
 mod refs;
-mod traits;
 pub(crate) mod value;
 
 pub use crate::values::dict::alloc::AllocDict;

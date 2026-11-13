@@ -191,7 +191,7 @@ impl<'v> Dict<'v> {
     }
 
     /// This function is deprecated.
-    /// Use [`AllocDict`](crate::values::dict::AllocDict) or [`SmallMap`]
+    /// Use [`AllocDict`](crate::values::dict::AllocDict)
     /// to allocate a new dictionary on the heap.
     pub fn new(content: SmallMap<Value<'v>, Value<'v>>) -> Self {
         Self { content }

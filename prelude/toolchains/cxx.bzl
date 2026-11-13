@@ -18,6 +18,8 @@ load(
     "DepTrackingMode",
     "LinkerInfo",
     "LinkerType",
+    "ObjcCompilerInfo",
+    "ObjcxxCompilerInfo",
     "PicBehavior",
     "RcCompilerInfo",
     "RuntimeDependencyHandling",
@@ -144,6 +146,27 @@ def _cxx_toolchain_from_cxx_tools_info(ctx: AnalysisContext, cxx_tools_info: Cxx
     else:
         cpp_dep_tracking_mode = DepTrackingMode("none")
 
+    # Only enable objc on targets which have an objc runtime.
+    if ctx.attrs.objc_supported:
+        objc_compiler_info = ObjcCompilerInfo(
+            compiler = _run_info(cxx_tools_info.compiler),
+            preprocessor_flags = [],
+            compiler_flags = ctx.attrs.c_flags,
+            compiler_type = cxx_tools_info.compiler_type,
+            supports_content_based_paths = ctx.attrs.supports_content_based_paths,
+        )
+        objcxx_compiler_info = ObjcxxCompilerInfo(
+            compiler = _run_info(cxx_tools_info.cxx_compiler),
+            preprocessor_flags = [],
+            compiler_flags = ctx.attrs.cxx_flags,
+            compiler_type = cxx_tools_info.compiler_type,
+            supports_two_phase_compilation = supports_two_phase_compilation,
+            supports_content_based_paths = ctx.attrs.supports_content_based_paths,
+        )
+    else:
+        objc_compiler_info = None
+        objcxx_compiler_info = None
+
     return [
         DefaultInfo(),
         CxxToolchainInfo(
@@ -203,6 +226,8 @@ def _cxx_toolchain_from_cxx_tools_info(ctx: AnalysisContext, cxx_tools_info: Cxx
                 compiler_type = cxx_tools_info.compiler_type,
                 supports_content_based_paths = ctx.attrs.supports_content_based_paths,
             ),
+            objc_compiler_info = objc_compiler_info,
+            objcxx_compiler_info = objcxx_compiler_info,
             as_compiler_info = CCompilerInfo(
                 compiler = _run_info(cxx_tools_info.compiler),
                 compiler_type = cxx_tools_info.compiler_type,
@@ -237,6 +262,19 @@ def _cxx_toolchain_from_cxx_tools_info(ctx: AnalysisContext, cxx_tools_info: Cxx
 def _run_info(args):
     return None if args == None else RunInfo(args = [args])
 
+def _objc_supported_arg():
+    return attrs.bool(
+        default = select({
+            "DEFAULT": False,
+            "config//os:macos": True,
+        }),
+        doc = """
+        Whether `.m`/`.mm` sources can be compiled with this system toolchain.
+        This is only correct to enable for system toolchains that can compile Objective-C.
+        By default, it's enabled on macOS.
+        """,
+    )
+
 system_cxx_toolchain = rule(
     impl = _system_cxx_toolchain_impl,
     attrs = {
@@ -254,6 +292,7 @@ system_cxx_toolchain = rule(
         "link_ordering": attrs.option(attrs.enum(LinkOrdering.values()), default = None),
         "link_style": attrs.string(default = "shared"),
         "linker": attrs.option(attrs.string(), default = None),
+        "objc_supported": _objc_supported_arg(),
         "post_link_flags": attrs.list(attrs.arg(), default = []),
         "rc_compiler": attrs.option(attrs.string(), default = None),
         "rc_flags": attrs.list(attrs.arg(), default = []),
@@ -291,6 +330,7 @@ cxx_tools_info_toolchain = rule(
             The default value of the `link_style` attribute for rules that use this toolchain.
             """,
         ),
+        "objc_supported": _objc_supported_arg(),
         "post_link_flags": attrs.list(attrs.arg(), default = []),
         "rc_flags": attrs.list(attrs.arg(), default = []),
         "supports_content_based_paths": attrs.bool(default = False),

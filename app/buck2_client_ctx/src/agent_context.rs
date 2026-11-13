@@ -80,11 +80,16 @@ impl AgentContextEntry {
     /// Claude Code/Gemini/Codex, Devmate extension) and provides an
     /// unambiguous signal that an AI agent is the originator.
     pub fn from_env() -> buck2_error::Result<Vec<Self>> {
-        let Some(meta) = buck2_env!("CODING_AGENT_METADATA")? else {
+        let Some(meta) = coding_agent_metadata_env()? else {
             return Ok(vec![]);
         };
         Ok(parse_agent_env_metadata(&meta))
     }
+}
+
+/// The `CODING_AGENT_METADATA` environment variable that AI agent launchers set.
+pub fn coding_agent_metadata_env() -> buck2_error::Result<Option<&'static str>> {
+    buck2_env!("CODING_AGENT_METADATA")
 }
 
 /// Parses the env var value (comma-separated key=value pairs) and returns

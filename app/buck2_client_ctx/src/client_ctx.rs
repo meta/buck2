@@ -39,6 +39,7 @@ use superconsole::Stdin;
 use tokio::runtime::Runtime;
 
 use crate::agent_context::AgentContext;
+use crate::agent_context::coding_agent_metadata_env;
 use crate::agent_invocation_info::AgentInvocationInfo;
 use crate::client_metadata::ClientMetadata;
 use crate::common::BuckArgMatches;
@@ -442,6 +443,7 @@ impl<'a> ClientCommandContext<'a> {
             tenant_identity,
             invocation_settings: None,
             dice_settings: None,
+            coding_agent_metadata: coding_agent_metadata_env()?.map(str::to_owned),
         })
     }
 

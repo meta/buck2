@@ -308,3 +308,102 @@ async fn test_outputs_of_a_local_run_are_on_disk(buck: &Buck) -> anyhow::Result<
     assert_eq!(written, ["list", "run"]);
     Ok(())
 }
+
+const CODING_AGENT_METADATA: &str = "CODING_AGENT_METADATA";
+
+/// Takes the `CODING_AGENT_METADATA` values that local test runs recorded since the last call.
+fn take_recorded_coding_agent_metadata(buck: &Buck) -> anyhow::Result<Vec<String>> {
+    let mut paths = Vec::new();
+    find_files(
+        &buck.cwd().join("buck-out").join("v2").join("test"),
+        "coding_agent_metadata",
+        &mut paths,
+    )?;
+    let mut recorded = paths
+        .iter()
+        .map(|path| {
+            let value = std::fs::read_to_string(path)?;
+            std::fs::remove_file(path)?;
+            Ok(value)
+        })
+        .collect::<std::io::Result<Vec<_>>>()?;
+    recorded.sort();
+    Ok(recorded)
+}
+
+/// The pid of the daemon that serves `buck`.
+async fn daemon_pid(buck: &Buck) -> anyhow::Result<Value> {
+    let status: Value = serde_json::from_str(&buck.status(&[]).await?.stdout)?;
+    Ok(status["process_info"]["pid"].clone())
+}
+
+#[buck_test]
+async fn test_local_tests_inherit_the_coding_agent_metadata_of_each_command(
+    buck: &Buck,
+) -> anyhow::Result<()> {
+    let mut buck = buck.clone();
+    buck.remove_env(CODING_AGENT_METADATA);
+    let args = [
+        "-c",
+        "buck2.tests_inherit_client_coding_agent_metadata=true",
+        "-c",
+        "test.local_enabled=true",
+        "-c",
+        "test.remote_enabled=false",
+        "//:records_coding_agent_metadata",
+    ];
+    // The daemon keeps the environment of the first command, so each value must come per command.
+    let mut pids = Vec::new();
+    for metadata in ["id=agent,session_id=first", "id=agent,session_id=second"] {
+        buck.test(&args)
+            .env(CODING_AGENT_METADATA, metadata)
+            .await?;
+        assert_eq!(take_recorded_coding_agent_metadata(&buck)?, [metadata]);
+        pids.push(daemon_pid(&buck).await?);
+    }
+    buck.test(&args).await?;
+    assert_eq!(take_recorded_coding_agent_metadata(&buck)?, ["<unset>"]);
+    pids.push(daemon_pid(&buck).await?);
+    assert!(pids[0].is_u64(), "No daemon pid in `buck2 status`");
+    assert!(
+        pids.iter().all(|pid| *pid == pids[0]),
+        "Daemon pids differ: {pids:?}"
+    );
+    Ok(())
+}
+
+#[buck_test]
+async fn test_local_tests_inherit_no_coding_agent_metadata_by_default(
+    buck: &Buck,
+) -> anyhow::Result<()> {
+    buck.test(&[
+        "-c",
+        "test.local_enabled=true",
+        "-c",
+        "test.remote_enabled=false",
+        "//:records_coding_agent_metadata",
+    ])
+    .env(CODING_AGENT_METADATA, "id=agent,session_id=first")
+    .await?;
+    assert_eq!(take_recorded_coding_agent_metadata(buck)?, ["<unset>"]);
+    Ok(())
+}
+
+#[buck_test]
+async fn test_test_env_overrides_the_clients_coding_agent_metadata(
+    buck: &Buck,
+) -> anyhow::Result<()> {
+    buck.test(&[
+        "-c",
+        "buck2.tests_inherit_client_coding_agent_metadata=true",
+        "-c",
+        "test.local_enabled=true",
+        "-c",
+        "test.remote_enabled=false",
+        "//:sets_coding_agent_metadata",
+    ])
+    .env(CODING_AGENT_METADATA, "id=agent,session_id=first")
+    .await?;
+    assert_eq!(take_recorded_coding_agent_metadata(buck)?, ["id=rule"]);
+    Ok(())
+}

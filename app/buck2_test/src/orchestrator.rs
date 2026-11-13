@@ -108,6 +108,7 @@ use buck2_execute::execute::cache_uploader::CacheUploadInfo;
 use buck2_execute::execute::cache_uploader::NoOpCacheUploader;
 use buck2_execute::execute::claim::MutexClaimManager;
 use buck2_execute::execute::command_executor::CommandExecutor;
+use buck2_execute::execute::environment_inheritance::ClientCodingAgentMetadata;
 use buck2_execute::execute::environment_inheritance::EnvironmentInheritance;
 use buck2_execute::execute::kind::CommandExecutionKind;
 use buck2_execute::execute::manager::CommandExecutionManager;
@@ -2045,9 +2046,18 @@ impl BuckTestOrchestrator<'_> {
             .get::<HasResourceControl>()
             .unwrap()
             .0;
+        let coding_agent_metadata = dice
+            .per_transaction_data()
+            .data
+            .get::<ClientCodingAgentMetadata>()
+            .map(Dupe::dupe)
+            .unwrap_or_default();
         request = request
             .with_working_directory(cwd)
-            .with_local_environment_inheritance(EnvironmentInheritance::test_allowlist())
+            .with_local_environment_inheritance(
+                EnvironmentInheritance::test_allowlist()
+                    .with_client_coding_agent_metadata(coding_agent_metadata),
+            )
             .with_disable_miniperf(!has_resource_control)
             .with_worker(worker)
             .with_remote_execution_custom_image(re_dynamic_image)

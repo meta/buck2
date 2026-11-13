@@ -84,6 +84,7 @@ use buck2_events::metadata;
 use buck2_events::schedule_type::SandcastleScheduleType;
 use buck2_execute::dep_file_state::SetDepFileStore;
 use buck2_execute::execute::blocking::SetBlockingExecutor;
+use buck2_execute::execute::environment_inheritance::ClientCodingAgentMetadata;
 use buck2_execute::execute::low_pass_filter::LowPassFilter;
 use buck2_execute::incremental_state::SetIncrementalStore;
 use buck2_execute::knobs::ExecutorGlobalKnobs;
@@ -310,6 +311,9 @@ pub struct ServerCommandContext<'a> {
     /// Agent context key=value pairs from --agent-context.
     pub(crate) agent_context: Vec<buck2_data::AgentContextEntry>,
 
+    /// The client's `CODING_AGENT_METADATA`, for its local tests.
+    client_coding_agent_metadata: Option<String>,
+
     cancellations: &'a CancellationContext,
 
     preemptible: PreemptibleWhen,
@@ -452,6 +456,7 @@ impl<'a> ServerCommandContext<'a> {
             command_name: client_context.command_name.clone(),
             sanitized_argv: client_context.sanitized_argv.clone(),
             agent_context: client_context.agent_context.clone(),
+            client_coding_agent_metadata: client_context.coding_agent_metadata.clone(),
             debugger_handle,
             cancellations,
             preemptible: client_context.preemptible(),
@@ -1065,6 +1070,19 @@ impl DiceCommandUpdater<'_, '_> {
         data.set(self.cmd_ctx.events().dupe());
         data.set(HasResourceControl(
             self.cmd_ctx.base_context.daemon.memory_tracker.is_some(),
+        ));
+
+        let tests_inherit_client_coding_agent_metadata = root_config
+            .parse::<bool>(BuckconfigKeyRef {
+                section: "buck2",
+                property: "tests_inherit_client_coding_agent_metadata",
+            })?
+            .unwrap_or(false);
+        data.set(ClientCodingAgentMetadata::new(
+            self.cmd_ctx
+                .client_coding_agent_metadata
+                .as_deref()
+                .filter(|_| tests_inherit_client_coding_agent_metadata),
         ));
 
         let mut run_action_knobs = self.run_action_knobs.dupe();

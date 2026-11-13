@@ -34,4 +34,7 @@ object K2JvmAbiConfigurationKeys {
 
   val SHALLOW_CLASS_USAGE: CompilerConfigurationKey<Boolean> =
       CompilerConfigurationKey.create("shallow class usage for K2 JVM ABI dep files")
+
+  val SKIP_NON_ABI_BODIES: CompilerConfigurationKey<Boolean> =
+      CompilerConfigurationKey.create("skip resolving bodies the source-only ABI never reads")
 }

@@ -77,6 +77,9 @@ message KotlinExtraParams {
   // dependency was missing from the source-only ABI classpath: off, warn,
   // or error (fails the compilation instead of emitting a knowingly-wrong ABI).
   string kosabiAbiValidationMode = 33;
+  // `option=value` pairs passed to the K2 JVM ABI gen plugin of source-only ABI
+  // actions, set by toolchain kill switches. Empty by default.
+  repeated string kosabiJvmAbiGenOptions = 40;
 }
 
 message PluginParams {

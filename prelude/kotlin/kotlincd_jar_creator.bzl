@@ -287,6 +287,7 @@ def create_jar_artifact_kotlincd(
             incremental_state_dir = None,
             language_version = language_version,
             source_only_abi_applicability_classpath = cmd_args(),
+            kosabi_jvm_abi_gen_options = kotlin_toolchain.kosabi_jvm_abi_gen_options,
         )
 
         # kotlincd does not support source abi
@@ -399,6 +400,7 @@ def _encode_kotlin_extra_params(
     incremental_state_dir: Artifact | None,
     language_version: str,
     source_only_abi_applicability_classpath: cmd_args = cmd_args(),
+    kosabi_jvm_abi_gen_options: list[str] = [],
 ):
     kosabiPluginOptionsMap = {}
 
@@ -438,6 +440,7 @@ def _encode_kotlin_extra_params(
         shouldKotlincRunIncrementally = should_kotlinc_run_incrementally,
         shouldKosabiUseShallowClassUsage = kotlin_toolchain.kosabi_shallow_class_usage,
         kosabiAbiValidationMode = kotlin_toolchain.kosabi_abi_validation_mode,
+        kosabiJvmAbiGenOptions = kosabi_jvm_abi_gen_options,
         incrementalStateDir = incremental_state_dir.as_output() if incremental_state_dir else None,
         languageVersion = language_version,
         javaBinary = cmd_args(kotlin_toolchain.java_binary_for_kotlincd[RunInfo], delimiter = " ") if kotlin_toolchain.java_binary_for_kotlincd else "",

@@ -1333,7 +1333,12 @@ class K2JvmAbiFirAnalysisHandlerExtension(private val outputPath: String) :
       // Skip checkers - ABI generation only needs resolved types, and third-party
       // plugin checkers (like Litho K2) crash on unresolved references from stubs.
       val firFiles = session.buildFirFromKtFiles(sources)
-      val (scopeSession, fir) = session.runResolution(firFiles)
+      val (scopeSession, fir) =
+          if (configuration.get(K2JvmAbiConfigurationKeys.SKIP_NON_ABI_BODIES) != false) {
+            session.runResolutionSkippingNonAbiBodies(firFiles)
+          } else {
+            session.runResolution(firFiles)
+          }
       // Constants are synthesised lazily during resolution, so this is the earliest point at
       // which the full set is known. Reporting here rather than in ValidationStage keeps the
       // signal even when a later phase fails.

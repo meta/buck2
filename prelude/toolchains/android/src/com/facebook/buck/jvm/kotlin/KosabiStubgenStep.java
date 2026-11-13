@@ -100,7 +100,10 @@ public class KosabiStubgenStep extends KotlincStep {
         false,
         // ABI validation mode for jvm-abi-gen repairs
         // not part of stubsgen, since jvm-abi-gen doesn't run on stubsgen steps
-        "off");
+        "off",
+        // jvm-abi-gen kill switch options
+        // not part of stubsgen, since jvm-abi-gen doesn't run on stubsgen steps
+        ImmutableList.of());
     this.stubgenDir = stubgenDir;
     this.stubClassOutputDir = stubClassOutputDir;
     this.skipJavaImports = skipJavaImports;

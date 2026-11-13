@@ -109,7 +109,8 @@ public class KotlinCStepsBuilder {
             kotlincLanguageVersion,
             kotlincLanguageVersion.getSupportsK2(),
             extraParams.getShouldKosabiUseShallowClassUsage(),
-            extraParams.getKosabiAbiValidationMode());
+            extraParams.getKosabiAbiValidationMode(),
+            extraParams.getKosabiJvmAbiGenOptions());
     steps.add(kotlincStep);
   }
 

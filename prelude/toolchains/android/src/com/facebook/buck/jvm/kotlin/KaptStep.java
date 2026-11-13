@@ -76,7 +76,10 @@ public class KaptStep extends KotlincStep {
         false,
         // ABI validation mode for jvm-abi-gen repairs
         // not part of KAPT, since jvm-abi-gen doesn't run on KAPT steps
-        "off");
+        "off",
+        // jvm-abi-gen kill switch options
+        // not part of KAPT, since jvm-abi-gen doesn't run on KAPT steps
+        ImmutableList.of());
   }
 
   @Override

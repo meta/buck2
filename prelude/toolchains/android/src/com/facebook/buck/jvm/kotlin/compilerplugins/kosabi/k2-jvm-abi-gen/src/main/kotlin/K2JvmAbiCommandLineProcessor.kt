@@ -77,6 +77,14 @@ class K2JvmAbiCommandLineProcessor : CommandLineProcessor {
             "for the target's own supertype chain only. Default is false.",
         false,
     )
+
+    val SKIP_NON_ABI_BODIES_OPTION: CliOption = CliOption(
+        "skipNonAbiBodies",
+        "<boolean>",
+        "Skip resolving the function, accessor, constructor and init bodies that the " +
+            "source-only ABI never reads. Default is true; false restores full body resolution.",
+        false,
+    )
   }
 
   override val pluginId: String
@@ -91,6 +99,7 @@ class K2JvmAbiCommandLineProcessor : CommandLineProcessor {
         ENABLE_COMPOSE_ABI_EMULATION_OPTION,
         ABI_VALIDATION_MODE_OPTION,
         SHALLOW_CLASS_USAGE_OPTION,
+        SKIP_NON_ABI_BODIES_OPTION,
     )
 
   override fun processOption(
@@ -115,6 +124,8 @@ class K2JvmAbiCommandLineProcessor : CommandLineProcessor {
           configuration.put(K2JvmAbiConfigurationKeys.ABI_VALIDATION_MODE, value)
       SHALLOW_CLASS_USAGE_OPTION ->
           configuration.put(K2JvmAbiConfigurationKeys.SHALLOW_CLASS_USAGE, value == "true")
+      SKIP_NON_ABI_BODIES_OPTION ->
+          configuration.put(K2JvmAbiConfigurationKeys.SKIP_NON_ABI_BODIES, value != "false")
       else -> throw CliOptionProcessingException("Unknown option: ${option.optionName}")
     }
   }

@@ -43,6 +43,7 @@ data class KotlinExtraParams(
     val applicabilityClasspath: ImmutableList<AbsPath> = ImmutableList.of(),
     val shouldKosabiUseShallowClassUsage: Boolean = false,
     val kosabiAbiValidationMode: String = "off",
+    val kosabiJvmAbiGenOptions: ImmutableList<String> = ImmutableList.of(),
 ) : CompileToJarStepFactory.ExtraParams {
 
   val shouldActionRunIncrementally: Boolean = shouldKotlincRunIncrementally

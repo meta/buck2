@@ -50,8 +50,10 @@ impl Restarter {
             }
         }
 
-        if self.should_restart() {
-            events_ctx.handle_should_restart();
+        if self.should_restart()
+            && let Some(recorder) = events_ctx.recorder.as_mut()
+        {
+            recorder.set_should_restart();
         }
     }
 

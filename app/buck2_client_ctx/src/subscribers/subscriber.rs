@@ -83,7 +83,6 @@ pub trait EventSubscriber: Send {
     fn handle_stream_end(&mut self) {}
     fn handle_daemon_connection_failure(&mut self) {}
     fn handle_daemon_started(&mut self, _reason: buck2_data::DaemonWasStartedReason) {}
-    fn handle_should_restart(&mut self) {}
 
     fn handle_exit_result(&mut self, _result: &ExitResult) {}
 

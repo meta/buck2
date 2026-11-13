@@ -659,6 +659,11 @@ impl InvocationRecorder {
         }
     }
 
+    /// An attempt that is itself a restart is not restarted again, so it does not record this.
+    pub(crate) fn set_should_restart(&mut self) {
+        self.should_restart = self.restarted_trace_id.is_none();
+    }
+
     pub(crate) fn update_for_command(
         &mut self,
         ctx: &ClientCommandContext<'_>,
@@ -2952,10 +2957,6 @@ impl EventSubscriber for InvocationRecorder {
 
     fn handle_daemon_started(&mut self, daemon_was_started: buck2_data::DaemonWasStartedReason) {
         self.daemon_was_started = Some(daemon_was_started);
-    }
-
-    fn handle_should_restart(&mut self) {
-        self.should_restart = self.restarted_trace_id.is_none();
     }
 }
 

@@ -78,7 +78,7 @@ use nom::sequence::pair;
 use nom::sequence::preceded;
 use nom::sequence::terminated;
 use nom_language::error::VerboseError;
-use nom_language::error::convert_error;
+use nom_language::error::VerboseErrorKind;
 use variant_name::VariantName;
 
 use crate::span::Span;
@@ -155,9 +155,10 @@ impl Display for Expr<'_> {
                 f.write_str(")")?;
             }
             Expr::BinaryOpSequence(left, exprs) => {
-                // prints exprs.len() leading '('
-                // see https://stackoverflow.com/questions/35280798/printing-a-character-a-variable-number-of-times-with-println
-                write!(f, "{1:(<0$} {2}", exprs.len(), "", left)?;
+                for _ in exprs {
+                    f.write_str("(")?;
+                }
+                write!(f, " {left}")?;
                 for e in exprs {
                     write!(f, " {} {})", e.0, e.1)?;
                 }
@@ -230,15 +231,67 @@ where
     }
 }
 
-/// nom's convert_error requires that the error's type be very str-like and Span isn't. So, we convert the Span error into a &str error.
-fn convert_to_str_error(err: VerboseError<Span<'_>>) -> VerboseError<&str> {
-    VerboseError {
-        errors: err
-            .errors
-            .into_iter()
-            .map(|(span, kind)| (span.fragment(), kind))
-            .collect::<Vec<_>>(),
-    }
+/// The line of `input` that contains `offset`, and below it a caret that points at `offset`. Of a
+/// long line, only the part around `offset` is shown.
+fn excerpt_at(input: &str, offset: usize) -> String {
+    const CONTEXT_LEN: usize = 100;
+    const OMITTED: &str = "<<omitted>>";
+
+    let (before, after) = input.split_at(offset);
+    let before = before.rfind('\n').map_or(before, |i| &before[i + 1..]);
+    let after = after.find('\n').map_or(after, |i| &after[..i]).trim_end();
+
+    let before_start = before.ceil_char_boundary(before.len().saturating_sub(CONTEXT_LEN));
+    let after_end = after.floor_char_boundary(CONTEXT_LEN);
+    let omitted_before = if before_start > 0 { OMITTED } else { "" };
+    let omitted_after = if after_end < after.len() { OMITTED } else { "" };
+    let before = &before[before_start..];
+    let after = &after[..after_end];
+
+    let caret_indent = " ".repeat(omitted_before.len() + before.chars().count());
+    format!("{omitted_before}{before}{after}{omitted_after}\n{caret_indent}^\n")
+}
+
+/// Renders a parse error in the format of `nom_language::error::convert_error`.
+fn render_error(input: &str, err: &VerboseError<Span<'_>>) -> String {
+    // `convert_error` itself is not usable on queries, which can be megabytes long: it shows the
+    // whole line that an error is on, and it panics on an error that is more than `u16::MAX`
+    // bytes into its line.
+    err.errors
+        .iter()
+        .enumerate()
+        .map(|(i, (span, kind))| {
+            if input.is_empty() {
+                return match kind {
+                    VerboseErrorKind::Char(c) => {
+                        format!("{i}: expected '{c}', got empty input\n\n")
+                    }
+                    VerboseErrorKind::Context(s) => format!("{i}: in {s}, got empty input\n\n"),
+                    VerboseErrorKind::Nom(e) => format!("{i}: in {e:?}, got empty input\n\n"),
+                };
+            }
+
+            let offset = span.location_offset();
+            let line_number = input[..offset].matches('\n').count() + 1;
+            let excerpt = excerpt_at(input, offset);
+            match kind {
+                VerboseErrorKind::Char(c) => match span.fragment().chars().next() {
+                    Some(actual) => format!(
+                        "{i}: at line {line_number}:\n{excerpt}expected '{c}', found {actual}\n\n"
+                    ),
+                    None => format!(
+                        "{i}: at line {line_number}:\n{excerpt}expected '{c}', got end of input\n\n"
+                    ),
+                },
+                VerboseErrorKind::Context(s) => {
+                    format!("{i}: at line {line_number}, in {s}:\n{excerpt}\n")
+                }
+                VerboseErrorKind::Nom(e) => {
+                    format!("{i}: at line {line_number}, in {e:?}:\n{excerpt}\n")
+                }
+            }
+        })
+        .collect()
 }
 
 /// Parses a query string into a SpannedExpr. Requires that the entire input is consumed.
@@ -254,13 +307,10 @@ pub fn parse_expr(input: &str) -> buck2_error::Result<SpannedExpr<'_>> {
                     "if fast parse didn't succeed, slow parse should not succeed as well"
                 ),
                 Err(nom::Err::Failure(err)) | Err(nom::Err::Error(err)) => {
-                    // TODO(cjhopman): Do better error message conversion. The default nom one is rather verbose and references line
+                    // TODO(cjhopman): Do better error message conversion. The nom format is rather verbose and references line
                     // numbers (which generally are meaningless in this context where we have a single line). It'd also be nice if we
                     // could keep the error information rather than just stringifying it here.
-                    Err(
-                        ParseError::NomError(convert_error(input, convert_to_str_error(err)))
-                            .into(),
-                    )
+                    Err(ParseError::NomError(render_error(input, &err)).into())
                 }
                 Err(nom::Err::Incomplete(..)) => unreachable!(),
             }
@@ -584,6 +634,92 @@ mod tests {
         assert!(parse_expr("kind(2é, //foo:bar)").is_err());
         assert!(parse_expr("kind(é, //foo:bar)").is_err());
         assert!(parse_expr("kind('2é', //foo:bar)").is_ok());
+        Ok(())
+    }
+
+    fn parse_error(input: &str) -> String {
+        parse_expr(input).unwrap_err().to_string()
+    }
+
+    #[test]
+    fn test_parse_error() {
+        assert_eq!(
+            parse_error("deps(set(a b=c))"),
+            "0: at line 1:\n\
+             deps(set(a b=c))\n\
+             \x20           ^\n\
+             expected ')', found =\n\
+             \n\
+             1: at line 1, in expression:\n\
+             deps(set(a b=c))\n\
+             \x20    ^\n\
+             \n\
+             2: at line 1, in expression:\n\
+             deps(set(a b=c))\n\
+             ^\n\
+             \n",
+        );
+        assert_eq!(
+            parse_error("deps(\n  set('é' b=c)\n)"),
+            "0: at line 2:\n\
+             \x20 set('é' b=c)\n\
+             \x20          ^\n\
+             expected ')', found =\n\
+             \n\
+             1: at line 1, in expression:\n\
+             deps(\n\
+             \x20    ^\n\
+             \n\
+             2: at line 1, in expression:\n\
+             deps(\n\
+             ^\n\
+             \n",
+        );
+        assert_eq!(
+            parse_error(""),
+            "0: in TakeWhile1, got empty input\n\
+             \n\
+             1: in Alt, got empty input\n\
+             \n\
+             2: in Alt, got empty input\n\
+             \n\
+             3: in expression, got empty input\n\
+             \n",
+        );
+    }
+
+    #[test]
+    fn test_parse_error_far_into_long_line() {
+        let filler = "a ".repeat(50_000);
+        let query = format!("set({filler}b=c {filler})");
+        let offset = query.find('=').unwrap();
+        assert_eq!(
+            parse_error(&query),
+            format!(
+                "0: at line 1:\n\
+                 <<omitted>>{}<<omitted>>\n\
+                 {}^\n\
+                 expected ')', found =\n\
+                 \n\
+                 1: at line 1, in expression:\n\
+                 {}<<omitted>>\n\
+                 ^\n\
+                 \n",
+                &query[offset - 100..offset + 100],
+                " ".repeat("<<omitted>>".len() + 100),
+                &query[..100],
+            ),
+        );
+    }
+
+    #[test]
+    fn test_display_long_binary_op_sequence() -> buck2_error::Result<()> {
+        let ops = 70_000;
+        let displayed = parse_expr(&format!("a{}", " + a".repeat(ops)))?.to_string();
+        assert_eq!(
+            displayed,
+            format!("{} 'a'{}", "(".repeat(ops), " + 'a')".repeat(ops)),
+        );
         Ok(())
     }
 

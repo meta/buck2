@@ -320,6 +320,7 @@ fn re_create_action(
 
         #[allow(unused_mut)]
         let mut action = RE::Action {
+            platform: Some(platform.clone()),
             input_root_digest: Some(input_digest.to_grpc()),
             command_digest: Some(action_and_blobs.add_command(&command).to_grpc()),
             timeout: timeout
@@ -340,7 +341,7 @@ fn re_create_action(
     let mut command = RE::Command {
         arguments: command_args,
         #[allow(deprecated)]
-        platform: Some(platform),
+        platform: Some(platform.clone()),
         working_directory: working_directory.as_str().to_owned(),
         environment_variables: environment
             .iter()
@@ -403,6 +404,7 @@ fn re_create_action(
     let mut action_and_blobs = ActionDigestAndBlobsBuilder::new(digest_config);
 
     let mut action = RE::Action {
+        platform: Some(platform),
         input_root_digest: Some(input_digest.to_grpc()),
         command_digest: Some(action_and_blobs.add_command(&command).to_grpc()),
         timeout: timeout

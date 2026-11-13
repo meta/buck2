@@ -63,6 +63,7 @@ load(":xcode.bzl", "apple_populate_xcode_attributes")
 load(":xctest_swift_support.bzl", "XCTestSwiftSupportInfo")
 
 _XCTOOLCHAIN_SUB_TARGET = "xctoolchain"
+_XCTOOLCHAIN_FULL_SUB_TARGET = "xctoolchain-full"
 
 def apple_test_impl(ctx: AnalysisContext) -> [list[Provider], Promise]:
     def get_apple_test_providers(deps_providers) -> list[Provider]:
@@ -229,6 +230,8 @@ def apple_test_impl(ctx: AnalysisContext) -> [list[Provider], Promise]:
         ]
 
         sub_targets[_XCTOOLCHAIN_SUB_TARGET] = ctx.attrs._apple_xctoolchain.providers
+        if ctx.attrs._apple_xctoolchain_full != None:
+            sub_targets[_XCTOOLCHAIN_FULL_SUB_TARGET] = ctx.attrs._apple_xctoolchain_full.providers
 
         return (
             filter(

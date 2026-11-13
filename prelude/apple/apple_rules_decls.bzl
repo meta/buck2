@@ -88,6 +88,7 @@ load(
     "get_apple_resources_toolchain_attr",
     "get_apple_xctoolchain_attr",
     "get_apple_xctoolchain_bundle_id_attr",
+    "get_apple_xctoolchain_full_attr",
     "get_enable_library_evolution",
     "get_incremental_split_actions_attrs",
     "get_incremental_swiftmodule_action_attrs",
@@ -392,6 +393,7 @@ apple_binary = prelude_rule(
             "swift_version": attrs.enum(SwiftVersion, default = SwiftVersion[0]),
             "_apple_xctoolchain": get_apple_xctoolchain_attr(),
             "_apple_xctoolchain_bundle_id": get_apple_xctoolchain_bundle_id_attr(),
+            "_apple_xctoolchain_full": get_apple_xctoolchain_full_attr(),
             "_enable_library_evolution": get_enable_library_evolution(),
             "_swift_enable_testing": attrs.default_only(attrs.bool(default = False)),
             VALIDATION_DEPS_ATTR_NAME: VALIDATION_DEPS_ATTR_TYPE,
@@ -728,6 +730,7 @@ apple_library = prelude_rule(
             "use_archive": attrs.option(attrs.bool(), default = None),
             "_apple_xctoolchain": get_apple_xctoolchain_attr(),
             "_apple_xctoolchain_bundle_id": get_apple_xctoolchain_bundle_id_attr(),
+            "_apple_xctoolchain_full": get_apple_xctoolchain_full_attr(),
             "_enable_library_evolution": get_enable_library_evolution(),
             "_swift_enable_testing": attrs.bool(
                 default = select({

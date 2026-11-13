@@ -39,6 +39,9 @@ def get_apple_xctoolchain_attr():
 def get_apple_xctoolchain_bundle_id_attr():
     return attrs.toolchain_dep(default = "toolchains//:apple-xctoolchain-bundle-id", exec_group = DefaultExecGroup)
 
+def get_apple_xctoolchain_full_attr():
+    return attrs.option(attrs.toolchain_dep(exec_group = DefaultExecGroup), default = None)
+
 def get_enable_library_evolution():
     return attrs.bool(
         default = select({
@@ -163,6 +166,7 @@ def _apple_bundle_like_common_attrs():
         "versioned_macos_bundle": get_versioned_macos_bundle_attr(),
         "_apple_xctoolchain": get_apple_xctoolchain_attr(),
         "_apple_xctoolchain_bundle_id": get_apple_xctoolchain_bundle_id_attr(),
+        "_apple_xctoolchain_full": get_apple_xctoolchain_full_attr(),
         "_bundling_cache_buster": attrs.option(attrs.string(), default = None),
         "_bundling_log_file_enabled": attrs.bool(default = False),
         "_bundling_log_file_level": attrs.option(attrs.string(), default = None),

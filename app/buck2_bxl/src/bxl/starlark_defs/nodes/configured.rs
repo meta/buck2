@@ -1017,18 +1017,13 @@ fn lazy_attrs_methods(builder: &mut MethodsBuilder) {
                 heap,
                 StarlarkConfiguredAttr(attr.value, pkg.dupe()),
             )),
-            None => {
-                // Check special attrs
-                let special_attrs = body.special_attrs().collect::<BuckMutMap<_, _>>();
-                let attr = special_attrs.get(attr);
-                match attr {
-                    None => NoneOr::None,
-                    Some(attr) => NoneOr::Other(ValueOf::alloc(
-                        heap,
-                        StarlarkConfiguredAttr(attr.clone(), pkg.dupe()),
-                    )),
-                }
-            }
+            None => match body.special_attr_or_none(attr) {
+                None => NoneOr::None,
+                Some(attr) => NoneOr::Other(ValueOf::alloc(
+                    heap,
+                    StarlarkConfiguredAttr(attr, pkg.dupe()),
+                )),
+            },
         })
     }
 }

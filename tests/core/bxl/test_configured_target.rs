@@ -31,6 +31,19 @@ async fn test_configured_targets_with_modifiers(buck: &Buck) -> anyhow::Result<(
 }
 
 #[buck_test(data_dir = "")]
+async fn test_lazy_attrs_special_lookup(buck: &Buck) -> anyhow::Result<()> {
+    let result = buck
+        .bxl(&["//bxl/configured_target.bxl:lazy_attrs_special_lookup"])
+        .await?;
+    assert!(
+        result
+            .stdout
+            .contains("lazy special attributes match eager values")
+    );
+    Ok(())
+}
+
+#[buck_test(data_dir = "")]
 async fn test_strip_cfg(buck: &Buck) -> anyhow::Result<()> {
     buck.bxl(&["//bxl/configured_target.bxl:strip_cfg"]).await?;
     Ok(())

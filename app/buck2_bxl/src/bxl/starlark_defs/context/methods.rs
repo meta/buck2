@@ -43,6 +43,7 @@ use starlark::values::Value;
 use starlark::values::ValueOf;
 use starlark::values::ValueTyped;
 use starlark::values::dict::AllocDict;
+use starlark::values::dict::DictType;
 use starlark::values::list::AllocList;
 use starlark::values::list::ListType;
 use starlark::values::none::NoneOr;
@@ -809,7 +810,7 @@ pub(crate) fn bxl_context_methods(builder: &mut MethodsBuilder) {
     fn instant_event<'v>(
         this: &'v BxlContext<'v>,
         #[starlark(require = named)] id: &str,
-        #[starlark(require = named)] metadata: Value<'v>,
+        #[starlark(require = named)] metadata: ValueOf<'v, DictType<StarlarkStr, Value<'v>>>,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<NoneType> {
         let parser = StarlarkUserEventParser {

@@ -862,14 +862,12 @@ impl<'v> ParametersSpec<Value<'v>> {
             match DictRef::from_value(param_kwargs) {
                 Some(y) => {
                     for (k, v) in y.iter_hashed() {
-                        match StringValue::new(*k.key()) {
+                        match StringValue::new_with_get(*k.key()) {
                             None => return Err(FunctionError::KwargsKeyIsNotString.into()),
-                            Some(s) => {
-                                let repeat = match self
-                                    .prototype
-                                    .names
-                                    .get_hashed_string_value(Hashed::new_unchecked(k.hash(), s))
-                                {
+                            Some((s, str)) => {
+                                let repeat = match self.prototype.names.get_hashed_starlark_str(
+                                    Hashed::new_unchecked(k.hash(), str.as_ref()),
+                                ) {
                                     None => kwargs.insert(Hashed::new_unchecked(k.hash(), s), v),
                                     Some(i) => {
                                         let this_slot = &mut slots[*i as usize];

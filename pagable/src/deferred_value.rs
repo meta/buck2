@@ -36,6 +36,7 @@ use crate::PagableSerializer;
 use crate::arc_erase::ArcErase;
 use crate::arc_erase::ArcEraseDyn;
 use crate::arc_erase::deserialize_arc;
+use crate::read_failures::DeferredReadError;
 use crate::read_failures::DeferredReadFailures;
 use crate::read_failures::ReadRefused;
 use crate::storage::data::DataKey;
@@ -211,21 +212,22 @@ impl<T, M> DeferredValue<T, M> {
     ///
     /// Fails without loading when called while this thread is restoring another
     /// value, because such a read could deadlock; see `HeldCell` in this module.
-    pub fn read(&self) -> crate::Result<&T> {
+    pub fn read(&self) -> Result<&T, DeferredReadError> {
         match &self.0 {
             DeferredValueState::Ready(value) => Ok(value),
             DeferredValueState::Pending(pending) => match pending.value.get() {
                 Some(value) => Ok(value),
                 None => {
                     if holding_cell() {
-                        return Err(anyhow::Error::new(ReadRefused(
+                        return Err(ReadRefused(
                             "Cold deferred field read while this thread is restoring another value; refused because it could deadlock",
-                        )));
+                        )
+                        .into());
                     }
-                    blocking(|| {
+                    Ok(blocking(|| {
                         let _held = HeldCell::enter();
                         pending.value.get_or_try_init(|| pending.load())
-                    })
+                    })?)
                 }
             },
         }

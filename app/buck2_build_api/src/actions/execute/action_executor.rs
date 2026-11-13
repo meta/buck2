@@ -31,8 +31,6 @@ use buck2_core::fs::artifact_path_resolver::ArtifactFs;
 use buck2_core::fs::buck_out_path::BuildArtifactPath;
 use buck2_data::SchedulingMode;
 use buck2_error::BuckErrorContext;
-use buck2_error::ErrorTag;
-use buck2_error::conversion::from_any_with_tag;
 use buck2_events::dispatch::EventDispatcher;
 use buck2_execute::artifact::fs::ExecutorFs;
 use buck2_execute::artifact_value::ArtifactValue;
@@ -155,7 +153,6 @@ impl DiceActionOutputs {
         self.0
             .read()
             .map(ActionOutputs::ref_cast)
-            .map_err(|error| from_any_with_tag(error, ErrorTag::Environment))
             .buck_error_context("Failed to restore action outputs")
     }
 }

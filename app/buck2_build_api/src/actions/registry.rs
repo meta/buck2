@@ -427,9 +427,7 @@ impl<'de> PagableDeserialize<'de> for DeferredRegisteredAction {
 
 impl DeferredRegisteredAction {
     fn read(&self) -> buck2_error::Result<&Arc<RegisteredAction>> {
-        self.0.read().map_err(|error| {
-            buck2_error::conversion::from_any_with_tag(error, buck2_error::ErrorTag::Environment)
-        })
+        Ok(self.0.read()?)
     }
 }
 

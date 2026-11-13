@@ -54,6 +54,48 @@ pub fn is_transient_read_error(error: &anyhow::Error) -> bool {
     error.downcast_ref::<ReadTimedOut>().is_some() || error.downcast_ref::<ReadRefused>().is_some()
 }
 
+/// Why a deferred field could not be read: the error of
+/// [`DeferredValue::read`](crate::DeferredValue::read).
+///
+/// A type of its own, so that a caller's error type can convert from it and
+/// say what failed. Converting it to [`crate::Error`] gives the underlying
+/// error unchanged, so [`is_transient_read_error`] and downcasts see what the
+/// read failed with.
+pub struct DeferredReadError(crate::Error);
+
+impl From<crate::Error> for DeferredReadError {
+    fn from(error: crate::Error) -> Self {
+        Self(error)
+    }
+}
+
+impl From<ReadRefused> for DeferredReadError {
+    fn from(error: ReadRefused) -> Self {
+        Self(crate::Error::new(error))
+    }
+}
+
+impl fmt::Debug for DeferredReadError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        fmt::Debug::fmt(&self.0, f)
+    }
+}
+
+impl fmt::Display for DeferredReadError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        fmt::Display::fmt(&self.0, f)
+    }
+}
+
+// Deliberately not a `std::error::Error`. If it were, `crate::Error` would
+// convert from it by wrapping it, and the underlying error would be out of
+// reach of a downcast.
+impl From<DeferredReadError> for crate::Error {
+    fn from(error: DeferredReadError) -> Self {
+        error.0
+    }
+}
+
 /// A read that gave up waiting for storage.
 #[derive(Debug)]
 pub struct ReadTimedOut {
@@ -111,5 +153,20 @@ mod tests {
 
         failures.record_error("arc c", &anyhow::anyhow!("no row"));
         assert_eq!(failures.snapshot(), ["arc c: no row"]);
+    }
+
+    #[test]
+    fn deferred_read_error_shows_and_converts_to_the_underlying_error() {
+        let error = DeferredReadError::from(timed_out().context("while restoring"));
+        assert_eq!(error.to_string(), "while restoring");
+        assert!(
+            format!("{error:#}").starts_with("while restoring: read of key "),
+            "{error:#}"
+        );
+        let error: anyhow::Error = error.into();
+        assert!(
+            is_transient_read_error(&error),
+            "the conversion does not hide what the read failed with"
+        );
     }
 }

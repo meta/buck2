@@ -39,9 +39,11 @@ use crate::values::traits::ComplexValue;
 /// (records, tuples, strings) is built from a recipe.
 ///
 /// `#[starlark_value]` writes the impl for a by-value representation from the shape of the
-/// type and its flags; an inline representation writes its own. Nothing here allocates
-/// implicitly: a Rust value that is not a representation reaches the heap through
-/// [`AllocValue`](crate::values::AllocValue), whose impls are written by hand.
+/// type and its flags; an inline representation writes its own. Every impl is an
+/// [`AllocValue`](crate::values::AllocValue) of the representation's type, so a caller
+/// allocates through [`Heap::alloc`] or [`ValueOf::alloc`](crate::values::ValueOf::alloc) and
+/// gets the handle of the type; [`Heap::alloc_representation`] is for the caller that wants
+/// the [`ValueTyped`] of this representation.
 pub trait AllocRepresentation<'v>: Sized {
     /// The representation this builds.
     type Repr: StarlarkValue<'v>;
@@ -127,7 +129,8 @@ impl<'fv> FrozenAllocator<'fv> {
 }
 
 impl<'v> Heap<'v> {
-    /// Allocate a representation the way it chose to be allocated.
+    /// Allocate a representation the way it chose to be allocated, as the typed value of that
+    /// representation; [`Heap::alloc`] gives the handle of its type instead.
     #[inline]
     pub fn alloc_representation<B: AllocRepresentation<'v>>(
         self,
@@ -138,7 +141,8 @@ impl<'v> Heap<'v> {
 }
 
 impl<'fv> FrozenHeap<'fv> {
-    /// Allocate a representation the way it chose to be allocated.
+    /// Allocate a representation the way it chose to be allocated, as the typed value of that
+    /// representation; [`FrozenHeap::alloc`] gives the handle of its type instead.
     #[inline]
     pub fn alloc_representation<B: AllocFrozenRepresentation<'fv>>(
         self,

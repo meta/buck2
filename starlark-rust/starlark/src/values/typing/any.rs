@@ -26,10 +26,12 @@ use crate::docs::DocString;
 use crate::docs::DocType;
 use crate::static_starlark_value;
 use crate::typing::Ty;
-use crate::values::AllocFrozenValue;
-use crate::values::FrozenHeap;
+use crate::values::AllocFrozenRepresentation;
+use crate::values::AllocRepresentation;
+use crate::values::Allocator;
+use crate::values::FrozenAllocator;
 use crate::values::StarlarkValue;
-use crate::values::ValueOf;
+use crate::values::ValueTyped;
 use crate::values::starlark_value;
 
 #[derive(
@@ -43,7 +45,7 @@ use crate::values::starlark_value;
 #[display("{}", Self::TYPE)]
 pub(crate) struct TypingAny;
 
-#[starlark_value(type = "typing.Any")]
+#[starlark_value(type = "typing.Any", alloc = by_hand)]
 impl<'v> StarlarkValue<'v> for TypingAny {
     fn documentation(&self) -> DocItem {
         DocItem::Type(DocType {
@@ -68,11 +70,20 @@ See also [`typing.Any` in the Python documentation][1].
 
 static_starlark_value!(ANY: TypingAny = TypingAny);
 
-impl<'fv> AllocFrozenValue<'fv> for TypingAny {
-    type Type = Self;
+/// The one static, which is immortal: nothing is allocated.
+impl<'v> AllocRepresentation<'v> for TypingAny {
+    type Repr = Self;
 
-    fn alloc_frozen_value(self, _heap: FrozenHeap<'fv>) -> ValueOf<'fv, Self::Type> {
-        ANY.at().into()
+    fn alloc(self, _allocator: Allocator<'v>) -> ValueTyped<'v, Self> {
+        ANY.at()
+    }
+}
+
+impl<'fv> AllocFrozenRepresentation<'fv> for TypingAny {
+    type Repr = Self;
+
+    fn alloc_frozen(self, _allocator: FrozenAllocator<'fv>) -> ValueTyped<'fv, Self> {
+        ANY.at()
     }
 }
 

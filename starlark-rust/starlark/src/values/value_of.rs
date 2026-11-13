@@ -34,9 +34,7 @@ use starlark_derive::StarlarkPagable;
 use crate as starlark;
 use crate::any::IsStaticType;
 use crate::any::ProvidesStaticType;
-use crate::values::AllocFrozenRepresentation;
 use crate::values::AllocFrozenValue;
-use crate::values::AllocRepresentation;
 use crate::values::AllocValue;
 use crate::values::Freeze;
 use crate::values::FreezeError;
@@ -154,26 +152,21 @@ impl<'v, T: StarlarkTypeExpr<'v>> ValueOf<'v, T> {
     }
 }
 
-impl<'v, T: StarlarkTypeExpr<'v>> ValueOf<'v, T> {
-    /// A freshly allocated representation of `T`, where `T` is the nominal type the
-    /// representation belongs to: the value is a `T` by construction.
+impl<'v, T: StarlarkType<'v>> ValueOf<'v, T> {
+    /// A value of `T` made from `builder`: a representation of `T`, or anything else that
+    /// makes one. The value is a `T` by construction.
     #[inline]
-    pub fn alloc<B>(heap: Heap<'v>, builder: B) -> Self
-    where
-        B: AllocRepresentation<'v>,
-        B::Repr: StarlarkValue<'v, Type = T>,
-    {
-        Self::new_unchecked(heap.alloc_representation(builder).to_value())
+    pub fn alloc(heap: Heap<'v>, builder: impl AllocValue<'v, Type = T>) -> Self {
+        heap.alloc(builder)
     }
 
     /// [`alloc`](Self::alloc) on a frozen heap.
     #[inline]
-    pub fn alloc_frozen<B>(heap: FrozenHeap<'v>, builder: B) -> Self
-    where
-        B: AllocFrozenRepresentation<'v>,
-        B::Repr: StarlarkValue<'v, Type = T>,
-    {
-        Self::new_unchecked(heap.alloc_representation(builder).to_value())
+    pub fn alloc_frozen(
+        heap: FrozenHeap<'v>,
+        builder: impl AllocFrozenValue<'v, Type = T>,
+    ) -> Self {
+        heap.alloc(builder)
     }
 
     /// A typed value of a representation of `T`, which is a `T` by construction as for

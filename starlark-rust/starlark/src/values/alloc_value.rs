@@ -19,21 +19,22 @@
 
 use either::Either;
 
+use crate::values::AllocFrozenRepresentation;
+use crate::values::AllocRepresentation;
 use crate::values::FrozenHeap;
 use crate::values::Heap;
+use crate::values::StarlarkValue;
 use crate::values::Value;
 use crate::values::ValueOf;
 use crate::values::type_expr::StarlarkTypeExpr;
 
-/// A Rust value that converts into a Starlark [`Value`] on a [`Heap`]: what a native function
-/// returns and what [`Heap::alloc`] takes.
+/// A Rust value that makes a Starlark [`Value`] on a [`Heap`]: what a native function returns
+/// and what [`Heap::alloc`] takes.
 ///
-/// This is a conversion, not a Starlark type: `char` implements it to make a `str`, `Vec<T>`
-/// to make a `list`, `StarlarkInt` to pick between an
-/// inline `int` and a big one. A representation of a Starlark type is allocated with
-/// [`Heap::alloc_representation`] and returned from a native function as the
-/// [`ValueOf`] or [`ValueTyped`](crate::values::ValueTyped) it was allocated as, so it needs
-/// no impl here.
+/// A representation of a Starlark type makes a value of that type, through the impl every
+/// [`AllocRepresentation`] gets below. Everything else is a conversion written by hand: `char`
+/// makes a `str`, `Vec<T>` a `list`, `StarlarkInt` an inline `int` or a big one.
+/// [`ValueOf::alloc`] is the same entry by type.
 pub trait AllocValue<'v> {
     /// The Starlark type of the value this makes, which is what a native function returning
     /// `Self` is documented and type-checked as. A conversion that can make several types names
@@ -52,6 +53,16 @@ impl<'v> Heap<'v> {
     /// builder's [`Type`](AllocValue::Type).
     pub fn alloc<T: AllocValue<'v>>(self, x: T) -> ValueOf<'v, T::Type> {
         x.alloc_value(self)
+    }
+}
+
+/// A representation makes a value of its type, allocated the way it chose to be.
+impl<'v, B: AllocRepresentation<'v>> AllocValue<'v> for B {
+    type Type = <B::Repr as StarlarkValue<'v>>::Type;
+
+    #[inline]
+    fn alloc_value(self, heap: Heap<'v>) -> ValueOf<'v, Self::Type> {
+        ValueOf::from_representation(heap.alloc_representation(self))
     }
 }
 
@@ -89,8 +100,8 @@ impl<'fv, A: AllocFrozenValue<'fv>, B: AllocFrozenValue<'fv>> AllocFrozenValue<'
     }
 }
 
-/// [`AllocValue`] for a [`FrozenHeap`]: a conversion into a frozen [`Value`]. A representation
-/// is allocated with [`FrozenHeap::alloc_representation`] instead.
+/// [`AllocValue`] for a [`FrozenHeap`]: a representation that can live on one
+/// ([`AllocFrozenRepresentation`]) is one, as is a conversion into a frozen [`Value`].
 pub trait AllocFrozenValue<'fv> {
     /// The Starlark type of the value this makes, as [`AllocValue::Type`].
     type Type: StarlarkTypeExpr<'fv>;
@@ -105,6 +116,16 @@ impl<'fh> FrozenHeap<'fh> {
     /// builder's [`Type`](AllocFrozenValue::Type).
     pub fn alloc<T: AllocFrozenValue<'fh>>(self, val: T) -> ValueOf<'fh, T::Type> {
         val.alloc_frozen_value(self)
+    }
+}
+
+/// A representation makes a value of its type, allocated the way it chose to be.
+impl<'fv, B: AllocFrozenRepresentation<'fv>> AllocFrozenValue<'fv> for B {
+    type Type = <B::Repr as StarlarkValue<'fv>>::Type;
+
+    #[inline]
+    fn alloc_frozen_value(self, heap: FrozenHeap<'fv>) -> ValueOf<'fv, Self::Type> {
+        ValueOf::from_representation(heap.alloc_representation(self))
     }
 }
 

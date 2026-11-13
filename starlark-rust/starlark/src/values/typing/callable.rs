@@ -42,12 +42,14 @@ use crate::typing::ParamSpec;
 use crate::typing::Ty;
 use crate::typing::TyBasic;
 use crate::typing::callable::TyCallable;
-use crate::values::AllocFrozenValue;
+use crate::values::AllocFrozenRepresentation;
+use crate::values::AllocRepresentation;
 use crate::values::AllocValue;
+use crate::values::Allocator;
 use crate::values::Freeze;
 use crate::values::FreezeResult;
 use crate::values::Freezer;
-use crate::values::FrozenHeap;
+use crate::values::FrozenAllocator;
 use crate::values::Heap;
 use crate::values::StarlarkValue;
 use crate::values::Trace;
@@ -55,6 +57,7 @@ use crate::values::Tracer;
 use crate::values::UnpackValue;
 use crate::values::Value;
 use crate::values::ValueOf;
+use crate::values::ValueTyped;
 use crate::values::list::ListRef;
 use crate::values::type_expr::StarlarkTypeExpr;
 use crate::values::type_expr::StarlarkTypeExprStable;
@@ -73,7 +76,7 @@ use crate::values::typing::callable::param::StarlarkCallableParamSpec;
 #[display("{}", Self::TYPE)]
 pub(crate) struct TypingCallable;
 
-#[starlark_value(type = "typing.Callable")]
+#[starlark_value(type = "typing.Callable", alloc = by_hand)]
 impl<'v> StarlarkValue<'v> for TypingCallable {
     fn documentation(&self) -> DocItem {
         DocItem::Type(DocType {
@@ -129,11 +132,20 @@ See also [`typing.Callable` in the Python documentation][1].
 
 static_starlark_value!(CALLABLE: TypingCallable = TypingCallable);
 
-impl<'fv> AllocFrozenValue<'fv> for TypingCallable {
-    type Type = Self;
+/// The one static, which is immortal: nothing is allocated.
+impl<'v> AllocRepresentation<'v> for TypingCallable {
+    type Repr = Self;
 
-    fn alloc_frozen_value(self, _heap: FrozenHeap<'fv>) -> ValueOf<'fv, Self::Type> {
-        CALLABLE.at().into()
+    fn alloc(self, _allocator: Allocator<'v>) -> ValueTyped<'v, Self> {
+        CALLABLE.at()
+    }
+}
+
+impl<'fv> AllocFrozenRepresentation<'fv> for TypingCallable {
+    type Repr = Self;
+
+    fn alloc_frozen(self, _allocator: FrozenAllocator<'fv>) -> ValueTyped<'fv, Self> {
+        CALLABLE.at()
     }
 }
 

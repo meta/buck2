@@ -337,7 +337,6 @@ mod tests {
     use crate::typing::TyUser;
     use crate::typing::callable::TyCallable;
     use crate::typing::user::TyUserParams;
-    use crate::values::AllocValue;
     use crate::values::Heap;
     use crate::values::StarlarkValue;
     use crate::values::Value;
@@ -413,14 +412,6 @@ mod tests {
     )]
     struct Fruit {
         name: String,
-    }
-
-    impl<'v> AllocValue<'v> for Fruit {
-        type Type = Self;
-
-        fn alloc_value(self, _heap: Heap<'v>) -> ValueOf<'v, Self::Type> {
-            unreachable!("not needed in test")
-        }
     }
 
     #[starlark_value(type = "fruit")]

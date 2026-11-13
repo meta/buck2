@@ -31,12 +31,15 @@ use crate::docs::DocType;
 use crate::static_starlark_value;
 use crate::typing::Ty;
 use crate::typing::TyStarlarkValue;
-use crate::values::AllocFrozenValue;
-use crate::values::FrozenHeap;
+use crate::values::AllocFrozenRepresentation;
+use crate::values::AllocRepresentation;
+use crate::values::Allocator;
+use crate::values::FrozenAllocator;
 use crate::values::StarlarkValue;
 use crate::values::UnpackValue;
 use crate::values::Value;
 use crate::values::ValueOf;
+use crate::values::ValueTyped;
 use crate::values::type_expr::StarlarkTypeExpr;
 use crate::values::type_expr::StarlarkTypeExprStable;
 
@@ -82,7 +85,7 @@ impl<'v, T: StarlarkTypeExpr<'v>> StarlarkTypeExprStable<'v> for StarlarkIter<T>
 #[display("{}", Self::TYPE)]
 pub(crate) struct TypingIterable;
 
-#[starlark_value(type = "typing.Iterable")]
+#[starlark_value(type = "typing.Iterable", alloc = by_hand)]
 impl<'v> StarlarkValue<'v> for TypingIterable {
     fn documentation(&self) -> DocItem {
         DocItem::Type(DocType {
@@ -112,11 +115,20 @@ See also [`typing.Iterable` in the Python documentation][2].
 
 static_starlark_value!(ITERABLE: TypingIterable = TypingIterable);
 
-impl<'fv> AllocFrozenValue<'fv> for TypingIterable {
-    type Type = Self;
+/// The one static, which is immortal: nothing is allocated.
+impl<'v> AllocRepresentation<'v> for TypingIterable {
+    type Repr = Self;
 
-    fn alloc_frozen_value(self, _heap: FrozenHeap<'fv>) -> ValueOf<'fv, Self::Type> {
-        ITERABLE.at().into()
+    fn alloc(self, _allocator: Allocator<'v>) -> ValueTyped<'v, Self> {
+        ITERABLE.at()
+    }
+}
+
+impl<'fv> AllocFrozenRepresentation<'fv> for TypingIterable {
+    type Repr = Self;
+
+    fn alloc_frozen(self, _allocator: FrozenAllocator<'fv>) -> ValueTyped<'fv, Self> {
+        ITERABLE.at()
     }
 }
 

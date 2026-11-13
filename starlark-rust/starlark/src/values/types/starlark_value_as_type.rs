@@ -307,10 +307,7 @@ mod tests {
     use crate as starlark;
     use crate::assert::Assert;
     use crate::environment::GlobalsBuilder;
-    use crate::values::AllocValue;
-    use crate::values::Heap;
     use crate::values::StarlarkValue;
-    use crate::values::ValueOf;
     use crate::values::types::starlark_value_as_type::tests;
 
     #[derive(
@@ -325,14 +322,6 @@ mod tests {
 
     #[starlark_value(type = "compiler_args")]
     impl<'v> StarlarkValue<'v> for StarlarkCompilerArgs {}
-
-    impl<'v> AllocValue<'v> for StarlarkCompilerArgs {
-        type Type = Self;
-
-        fn alloc_value(self, heap: Heap<'v>) -> ValueOf<'v, Self::Type> {
-            ValueOf::alloc(heap, self)
-        }
-    }
 
     #[starlark_module]
     #[starlark_types(StarlarkCompilerArgs as CompilerArgs)]

@@ -445,11 +445,14 @@ pub trait Materializer: TrackedPaths + Allocative + Send + Sync + 'static {
     ) -> buck2_error::Result<()>;
 
     /// Makes the untracked content an action produced at `src`, which it holds `lease` for, the
-    /// artifact at `dest`, described by `value`. The content moves: `src` is the caller's to
-    /// produce and not to keep. Returns once `dest` is on disk, with a lease over it for the
-    /// readers that follow. The deferred core's: a disk-state materializer refuses it, since its
-    /// consumers find content by digest and a local output stays where its run wrote it,
-    /// reported through [`Materializer::declare_existing`].
+    /// artifact at `dest`, described by `value`. Returns once `dest` is on disk, with a lease
+    /// over it for the readers that follow. The deferred core's: a disk-state materializer
+    /// refuses it, since its consumers find content by digest and a local output stays where its
+    /// run wrote it, reported through [`Materializer::declare_existing`]. The deferred core copies
+    /// `src` to `dest` and keeps `src` and its record, which the next incremental run of an
+    /// action reuses. A caller that writes `src` only once drops the record with
+    /// [`Materializer::prepare_outputs`] and then deletes the file, once the publish has
+    /// succeeded. After a failure, the next copy to `dest` reads `src` again.
     async fn publish(
         &self,
         lease: &WriteLease,

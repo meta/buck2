@@ -28,10 +28,13 @@ use buck2_common::file_ops::metadata::FileDigest;
 use buck2_common::file_ops::metadata::FileMetadata;
 use buck2_common::file_ops::metadata::TrackedFileDigest;
 use buck2_common::io::trace::TracingIoProvider;
+use buck2_common::temp_path::TempPath;
 use buck2_core::category::CategoryRef;
+use buck2_core::content_hash::ContentBasedPathHash;
 use buck2_core::fs::buck_out_path::BuildArtifactPath;
 use buck2_core::fs::project_rel_path::ProjectRelativePathBuf;
 use buck2_error::BuckErrorContext;
+use buck2_error::BuckErrorOptionContext;
 use buck2_error::ErrorTag;
 use buck2_error::buck2_error;
 use buck2_error::conversion::from_any_with_tag;
@@ -45,7 +48,10 @@ use buck2_execute::materialize::http::http_head;
 use buck2_execute::materialize::materializer::CasDownloadInfo;
 use buck2_execute::materialize::materializer::DeclareArtifactPayload;
 use buck2_execute::materialize::materializer::DeclareMatchOutcome;
+use buck2_execute::materialize::materializer::WriteLease;
 use buck2_execute::re::presence::NegativeCache;
+use buck2_fs::error::IoResultExt;
+use buck2_fs::fs_util;
 use buck2_hash::BuckMutInsertionSet;
 use buck2_http::HttpClient;
 use dupe::Dupe;
@@ -229,6 +235,17 @@ impl DownloadFileAction {
             })
     }
 
+    /// Where a run action produces this output before it knows the content-based path.
+    fn placeholder_path(
+        &self,
+        ctx: &dyn ActionExecutionCtx,
+    ) -> buck2_error::Result<ProjectRelativePathBuf> {
+        ctx.fs().resolve_build(
+            self.output().get_path(),
+            Some(&ContentBasedPathHash::for_output_artifact()),
+        )
+    }
+
     fn output_path(
         &self,
         ctx: &dyn ActionExecutionCtx,
@@ -328,8 +345,9 @@ impl DownloadFileAction {
         metadata: Option<&FileMetadata>,
     ) -> buck2_error::Result<(ArtifactValue, ActionExecutionKind)> {
         let materializer = ctx.materializer();
+        let is_content_based = self.output().get_path().is_content_based_path();
 
-        let path = match metadata {
+        let declared_path = match metadata {
             Some(metadata) => {
                 let value = ArtifactValue::file(metadata.dupe());
                 let path = self.output_path(ctx, &value)?;
@@ -339,14 +357,34 @@ impl DownloadFileAction {
                 {
                     return Ok((value, ActionExecutionKind::Simple));
                 }
-                path
+                Some(path)
             }
-            None => ctx.fs().resolve_build(self.output().get_path(), None)?,
+            None => None,
         };
 
-        // Whatever is at the path is stale or untracked; the `declare_existing` below replaces
-        // the materializer's record of it, so the disk has to be cleared to match. The lease is
-        // held until that report is in.
+        // The deferred core gives two configurations of this action no exclusive access to the
+        // content-based path. A download straight to it can rewrite the file while the consumers
+        // of the other configuration read it. Under the deferred core, a content-based download
+        // goes to a file with a random name next to the placeholder path and is published from
+        // there, the way a run action's content-based output is.
+        let temp = if is_content_based && !materializer.is_disk_state() {
+            let placeholder = self.placeholder_path(ctx)?;
+            let dir = placeholder
+                .parent()
+                .internal_error("A placeholder path has no parent")?;
+            Some(TempPath::new_in(&ctx.fs().fs().resolve(dir))?)
+        } else {
+            None
+        };
+        let path = match (&temp, declared_path) {
+            (Some(temp), _) => ctx.fs().fs().relativize(temp.path())?.into_owned(),
+            (None, Some(path)) => path,
+            (None, None) => ctx.fs().resolve_build(self.output().get_path(), None)?,
+        };
+
+        // Whatever is at the path is stale or untracked, so the disk is cleared before the download
+        // writes there. The lease is held until the download is recorded at the path or published
+        // from it.
         let output_lease = materializer.prepare_outputs(vec![path.clone()]).await?;
         ctx.blocking_executor()
             .execute_io(
@@ -394,17 +432,84 @@ impl DownloadFileAction {
                 is_executable: self.inner.is_executable,
             }),
         };
-        materializer
-            .declare_existing(
-                &output_lease,
-                vec![DeclareArtifactPayload {
-                    path,
-                    artifact: value.dupe(),
-                }],
-            )
-            .await?;
+        match temp {
+            Some(temp) => {
+                let dest = self.output_path(ctx, &value)?;
+                // From here on the materializer reads the file, so `temp` must not delete it.
+                temp.keep();
+                self.publish(ctx, output_lease, path, dest, value.dupe())
+                    .await?
+            }
+            None => {
+                materializer
+                    .declare_existing(
+                        &output_lease,
+                        vec![DeclareArtifactPayload {
+                            path,
+                            artifact: value.dupe(),
+                        }],
+                    )
+                    .await?
+            }
+        }
 
         Ok((value, ActionExecutionKind::Simple))
+    }
+
+    /// Makes the download at `path`, which `lease` holds, the output at its content-based path
+    /// `dest`, under the deferred core.
+    async fn publish(
+        &self,
+        ctx: &dyn ActionExecutionCtx,
+        lease: WriteLease,
+        path: ProjectRelativePathBuf,
+        dest: ProjectRelativePathBuf,
+        value: ArtifactValue,
+    ) -> buck2_error::Result<()> {
+        // `buck2 clean --stale` deletes untracked files under `art/`, also while the download
+        // runs. Unless `buck2.readonly_outputs` is set, the deferred core records `path` without
+        // looking at it. A copy from a missing file would then fail for every configuration until
+        // the daemon restarts. A run action finds a missing output when it hashes its outputs
+        // from disk. This check is the download's equivalent, and it narrows the window to the
+        // time between the check and the publish.
+        fs_util::symlink_metadata(ctx.fs().fs().resolve(&path))
+            .categorize_internal()
+            .buck_error_context("The downloaded file is missing")?;
+
+        // After a failed copy, the next copy to `dest` reads `path` again, so `path` stays tracked
+        // until `buck2 clean --stale` removes it. The publish and the removal after a successful
+        // copy run in a critical section. A cancellation would otherwise skip the removal and
+        // leave a tracked copy of the download until `buck2 clean --stale` removes it.
+        let materializer = ctx.materializer();
+        ctx.cancellation_context()
+            .critical_section(|| async move {
+                drop(
+                    materializer
+                        .publish(&lease, path.clone(), dest, value)
+                        .await?,
+                );
+                // Once the publish returns, the copy at `dest` has finished, and the materializer
+                // resolves `dest` to itself rather than to `path`. Failures are only logged,
+                // because the output is in place at `dest`.
+                if let Err(e) = materializer.prepare_outputs(vec![path.clone()]).await {
+                    tracing::debug!("Failed to untrack `{}`: {:#}", path, e);
+                    return Ok(());
+                }
+                if let Err(e) = ctx
+                    .blocking_executor()
+                    .execute_io(
+                        Box::new(CleanOutputPaths {
+                            paths: vec![path.clone()],
+                        }),
+                        ctx.cancellation_context(),
+                    )
+                    .await
+                {
+                    tracing::debug!("Failed to delete `{}`: {:#}", path, e);
+                }
+                Ok(())
+            })
+            .await
     }
 
     /// Execute this action for offline builds (e.g. no network).

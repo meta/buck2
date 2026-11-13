@@ -559,6 +559,46 @@ async fn test_a_content_based_path_under_a_different_preferred_digest(
     Ok(())
 }
 
+/// The files in the placeholder directories (`output_artifacts`) under `dir`.
+fn files_in_placeholder_dirs(dir: &std::path::Path) -> anyhow::Result<Vec<std::path::PathBuf>> {
+    let mut files = Vec::new();
+    for entry in std::fs::read_dir(dir)? {
+        let entry = entry?;
+        let file_type = entry.file_type()?;
+        if file_type.is_dir() {
+            files.extend(files_in_placeholder_dirs(&entry.path())?);
+        } else if file_type.is_file() && dir.file_name().is_some_and(|n| n == "output_artifacts") {
+            files.push(entry.path());
+        }
+    }
+    Ok(files)
+}
+
+#[buck_test(data_dir = "download", skip_for_os = ["windows"])]
+async fn test_a_content_based_download_leaves_no_temporary_file(buck: &Buck) -> anyhow::Result<()> {
+    // A content-based download can go to a temporary file in the placeholder directory of its
+    // output and be published from there. Download a file declared by its sha256, check that
+    // the output holds the content, and check that no file is left in a placeholder directory.
+    append_buckconfig(buck, "[buck2]\ndigest_algorithms = SHA256\n")?;
+    let content = random_string().into_bytes();
+    let server = StaticHttpServer::start([("/file", content.clone())]).await?;
+    let declared = configs(
+        &server.url("/file"),
+        None,
+        Some(&sha256_hex(&content)),
+        None,
+    );
+    assert_eq!(
+        build_and_read(buck, "//:content_based", &with(&[], &[&declared])).await?,
+        content
+    );
+    assert_eq!(
+        files_in_placeholder_dirs(&buck.cwd().join("buck-out"))?,
+        Vec::<std::path::PathBuf>::new()
+    );
+    Ok(())
+}
+
 async fn fetches_once_across_restarts(buck: &Buck, digest_algorithm: &str) -> anyhow::Result<()> {
     append_buckconfig(
         buck,

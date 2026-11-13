@@ -852,7 +852,9 @@ impl<T: IoHandler + Allocative> Materializer for DeferredMaterializerAccessor<T>
         // This materializer keeps `dest` as a copy of `src` rather than moving the content, and
         // makes the copy right away so that it happens while the caller still guarantees `src`
         // is intact. Moving would need writers serialized against readers of `dest`, which
-        // nothing here provides; that is a property of the rewritten materializer.
+        // nothing here provides; that is a property of the rewritten materializer. `src` stays
+        // tracked: the next incremental run of the action that owns it finds its record and
+        // skips the copy (`fill`).
         self.declare_existing(
             lease,
             vec![DeclareArtifactPayload {

@@ -20,12 +20,17 @@ Test structure:
   - EndToEndToolTest: integration tests running the tool as a subprocess
 """
 
+from __future__ import annotations
+
+import inspect
 import json
 import os
 import subprocess
 import tempfile
 import unittest
+from importlib.resources import as_file, files
 
+from android.tools import sort_pre_dexed_files
 from android.tools.filter_dex import _parse_ref_counts
 from android.tools.sort_pre_dexed_files import (
     _flatten_groups,
@@ -34,19 +39,12 @@ from android.tools.sort_pre_dexed_files import (
 )
 from android.tools.tests.generate_mobileconfig_fixture import fixture_expectations
 
-# Path to the tool script, relative to the link-tree layout
-_TOOL_MODULE_PATH = os.path.join(
-    os.path.dirname(__file__), "..", "sort_pre_dexed_files.py"
-)
-
 _DEFAULT_WEIGHT_LIMIT = 12 * 1024 * 1024  # 12 MiB, matches Buck default
 
 # Raw pre_dex counts and expectations are captured together by
 # generate_mobileconfig_fixture.py. Its recipe pins the build's weight estimate,
 # fb4a's 5 MiB limit and independently reviewed group boundaries.
-_MOBILECONFIG_FIXTURE_PATH = os.path.join(
-    os.path.dirname(__file__), "testdata", "mobileconfig_definition_lib_ref_count"
-)
+_MOBILECONFIG_FIXTURE_NAME: str = "mobileconfig_definition_lib_ref_count"
 
 _DEFAULT_REF_COUNTS = {
     "method_ref_count": "0",
@@ -78,10 +76,11 @@ def _sort(filter_data, lib_metadata, target_to_module=None, **kwargs):
 
 class MobileConfigFixtureTest(unittest.TestCase):
     def test_checked_in_expectations_are_reproducible(self):
-        with open(_MOBILECONFIG_FIXTURE_PATH + ".txt") as f:
-            ref_counts = f.read()
-        with open(_MOBILECONFIG_FIXTURE_PATH + ".json") as f:
-            fixture = json.load(f)
+        testdata = files("android.tools.tests").joinpath("testdata")
+        ref_counts = testdata.joinpath(_MOBILECONFIG_FIXTURE_NAME + ".txt").read_text()
+        fixture = json.loads(
+            testdata.joinpath(_MOBILECONFIG_FIXTURE_NAME + ".json").read_text()
+        )
         self.assertEqual(
             fixture_expectations(
                 ref_counts,
@@ -423,11 +422,16 @@ class SortPreDexedFilesTest(unittest.TestCase):
     def test_real_mobileconfig_ref_counts_split_only_the_overflowing_chunk(self):
         """The pinned build forms a fitting first run and an overflowing tail.
         Only the tail is split, matching the fixture's reviewed expectations."""
-        with open(_MOBILECONFIG_FIXTURE_PATH + ".json") as f:
-            fixture = json.load(f)
-        method_ref_count, field_ref_count, type_ref_count, class_ref_counts = (
-            _parse_ref_counts(_MOBILECONFIG_FIXTURE_PATH + ".txt")
+        testdata = files("android.tools.tests").joinpath("testdata")
+        fixture = json.loads(
+            testdata.joinpath(_MOBILECONFIG_FIXTURE_NAME + ".json").read_text()
         )
+        with as_file(
+            testdata.joinpath(_MOBILECONFIG_FIXTURE_NAME + ".txt")
+        ) as ref_count_path:
+            method_ref_count, field_ref_count, type_ref_count, class_ref_counts = (
+                _parse_ref_counts(ref_count_path)
+            )
         # filter_dex lists classes in pre-dex class name order, with a .class suffix.
         classes = sorted(class_ref_counts, key=lambda name: name.removesuffix(".class"))
         filter_data = {
@@ -736,11 +740,17 @@ class EndToEndToolTest(unittest.TestCase):
         with open(metadata_path, "w") as f:
             json.dump(lib_metadata, f)
 
+        # Packaged tests may load source through a process-local /proc/self/fd path.
+        # Materialize the tool so the subprocess does not depend on the parent's fd.
+        tool_path = os.path.join(tmpdir, "sort_pre_dexed_files.py")
+        with open(tool_path, "w") as f:
+            f.write(inspect.getsource(sort_pre_dexed_files))
+
         # Build command
         output_path = os.path.join(tmpdir, "plan.json")
         cmd = [
-            "python3",
-            _TOOL_MODULE_PATH,
+            "fbpython",
+            tool_path,
             "--filter-dex-outputs",
             *filter_paths,
             "--lib-metadata",

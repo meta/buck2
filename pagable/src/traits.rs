@@ -451,8 +451,11 @@ static_assertions::assert_impl_all!(dyn PagableDeserializer<'static>: PagableDes
 
 #[cfg(test)]
 mod tests {
+    #[cfg(not(miri))]
     use std::sync::Barrier;
+    #[cfg(not(miri))]
     use std::sync::atomic::AtomicUsize;
+    #[cfg(not(miri))]
     use std::sync::atomic::Ordering;
 
     use super::*;
@@ -472,11 +475,9 @@ mod tests {
         assert!(Arc::ptr_eq(&state, &context.get_or_init(|| TestState(2)),));
     }
 
+    // `parking_lot` contention uses exposed provenance and platform APIs unsupported by Miri.
+    #[cfg(not(miri))]
     #[test]
-    #[cfg_attr(
-        miri,
-        ignore = "parking_lot contention uses exposed provenance and platform APIs unsupported by Miri"
-    )]
     fn storage_context_initializes_state_once_concurrently() {
         const THREADS: usize = 8;
 

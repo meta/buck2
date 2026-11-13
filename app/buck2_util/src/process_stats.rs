@@ -165,10 +165,12 @@ mod proc_self_stat {
 #[cfg(test)]
 mod tests {
     use crate::process_stats::proc_self_stat::ProcSelfStat;
+    #[cfg(not(miri))]
     use crate::process_stats::process_stats;
 
+    // Calls `getrusage`, which Miri does not implement.
+    #[cfg(not(miri))]
     #[test]
-    #[cfg_attr(miri, ignore = "calls `getrusage`, which Miri does not implement")]
     fn test_process_stats() {
         let process_stats = process_stats();
         if cfg!(unix) {
@@ -205,8 +207,9 @@ mod tests {
         assert_eq!(215, ProcSelfStat::parse(stat).unwrap().rss);
     }
 
+    // Reads `/proc`, which Miri's isolation hides.
+    #[cfg(not(miri))]
     #[test]
-    #[cfg_attr(miri, ignore = "reads `/proc`, which Miri's isolation hides")]
     fn test_proc_self_stat_read() {
         if cfg!(target_os = "linux") {
             // Read it here too, so that a failure says which step failed.

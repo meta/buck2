@@ -1527,11 +1527,9 @@ mod tests {
         assert!(v.is_extended());
     }
 
+    // With panic=abort the panic kills the in-process Miri harness.
+    #[cfg(not(all(miri, panic = "abort")))]
     #[test]
-    #[cfg_attr(
-        all(miri, panic = "abort"),
-        ignore = "with panic=abort the panic kills the in-process Miri harness"
-    )]
     #[should_panic(expected = "insertion index")]
     fn insert_out_of_bounds_panics() {
         let mut v: MiniVec<u32> = (0..3).collect();

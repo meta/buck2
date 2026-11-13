@@ -72,12 +72,12 @@ impl Iterator for NetworkInterfaceTable<'_> {
     }
 }
 
-#[cfg(test)]
+// Miri does not implement `GetIfTable2`.
+#[cfg(all(test, not(miri)))]
 mod tests {
     use super::*;
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn test_network_interface_table_creation() {
         // This test checks if the NetworkInterfaceTable can be created without crashing.
         let result = NetworkInterfaceTable::new();

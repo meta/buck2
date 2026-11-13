@@ -204,11 +204,9 @@ mod inner {
             Ok(())
         }
 
+        // Tokio's IO driver is epoll, kqueue or IOCP by OS, and Miri models only epoll.
+        #[cfg(any(not(miri), target_os = "linux"))]
         #[tokio::test]
-        #[cfg_attr(
-            all(miri, not(target_os = "linux")),
-            ignore = "tokio's IO driver is epoll, kqueue or IOCP by OS, and Miri models only epoll"
-        )]
         async fn test_pagable_arc_refcounts() -> anyhow::Result<()> {
             let storage =
                 PagableStorageHandle::new(std::sync::Arc::new(EmptyPagableStorage::new()));
@@ -243,11 +241,9 @@ mod inner {
             Ok(())
         }
 
+        // Tokio's IO driver is epoll, kqueue or IOCP by OS, and Miri models only epoll.
+        #[cfg(any(not(miri), target_os = "linux"))]
         #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-        #[cfg_attr(
-            all(miri, not(target_os = "linux")),
-            ignore = "tokio's IO driver is epoll, kqueue or IOCP by OS, and Miri models only epoll"
-        )]
         async fn test_pagable_arc_paging() -> anyhow::Result<()> {
             let mut backing_storage = InMemoryPagableStorage::new();
             let storage = PagableStorageHandle::new(backing_storage.handle());
@@ -276,11 +272,9 @@ mod inner {
             Ok(())
         }
 
+        // Tokio's IO driver is epoll, kqueue or IOCP by OS, and Miri models only epoll.
+        #[cfg(any(not(miri), target_os = "linux"))]
         #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-        #[cfg_attr(
-            all(miri, not(target_os = "linux")),
-            ignore = "tokio's IO driver is epoll, kqueue or IOCP by OS, and Miri models only epoll"
-        )]
         async fn test_pagable_arc_shared_arc() -> anyhow::Result<()> {
             let mut backing_storage = InMemoryPagableStorage::new();
             let storage = PagableStorageHandle::new(backing_storage.handle());
@@ -304,11 +298,9 @@ mod inner {
             Ok(())
         }
 
+        // With panic=abort the panic kills the in-process Miri harness.
+        #[cfg(not(all(miri, panic = "abort")))]
         #[test]
-        #[cfg_attr(
-            all(miri, panic = "abort"),
-            ignore = "with panic=abort the panic kills the in-process Miri harness"
-        )]
         #[should_panic]
         fn test_panic_on_serialize() {
             let t = TestPanic(());
@@ -316,22 +308,18 @@ mod inner {
             t.pagable_serialize(&mut serializer).unwrap();
         }
 
+        // With panic=abort the panic kills the in-process Miri harness.
+        #[cfg(not(all(miri, panic = "abort")))]
         #[test]
-        #[cfg_attr(
-            all(miri, panic = "abort"),
-            ignore = "with panic=abort the panic kills the in-process Miri harness"
-        )]
         #[should_panic]
         fn test_panic_on_deserialize() {
             let mut deserializer = TestingDeserializer::new(&[]);
             let _ = TestPanic::<()>::pagable_deserialize(&mut deserializer).unwrap();
         }
 
+        // Tokio's IO driver is epoll, kqueue or IOCP by OS, and Miri models only epoll.
+        #[cfg(any(not(miri), target_os = "linux"))]
         #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-        #[cfg_attr(
-            all(miri, not(target_os = "linux")),
-            ignore = "tokio's IO driver is epoll, kqueue or IOCP by OS, and Miri models only epoll"
-        )]
         async fn test_pagable_arc() -> anyhow::Result<()> {
             let mut backing_storage = InMemoryPagableStorage::new();
             let storage = PagableStorageHandle::new(backing_storage.handle());

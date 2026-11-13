@@ -605,6 +605,7 @@ impl Drop for SharedHandle {
 mod tests {
     use std::future::poll_fn;
     use std::sync::Arc;
+    #[cfg(not(miri))]
     use std::sync::atomic::AtomicBool;
     use std::sync::atomic::AtomicUsize;
     use std::sync::atomic::Ordering;
@@ -1010,8 +1011,9 @@ mod tests {
     /// (e.g. a branch future that self-wakes every poll) pins one worker
     /// thread and cannot be interrupted by a same-task timeout, so the timeout
     /// must live on a separate task to observe it.
+    // Stress test, far too slow interpreted.
+    #[cfg(not(miri))]
     #[test]
-    #[cfg_attr(miri, ignore = "stress test, far too slow interpreted")]
     fn stress_join_all_concurrent_completion() {
         let rt = tokio::runtime::Builder::new_multi_thread()
             .worker_threads(8)
@@ -1058,8 +1060,9 @@ mod tests {
         });
     }
 
+    // Stress test, far too slow interpreted.
+    #[cfg(not(miri))]
     #[test]
-    #[cfg_attr(miri, ignore = "stress test, far too slow interpreted")]
     fn stress_try_join_all_error_cancels() {
         let rt = tokio::runtime::Builder::new_multi_thread()
             .worker_threads(8)
@@ -1104,11 +1107,13 @@ mod tests {
     /// This is the interesting case for the `woken` bookkeeping: `JoinCore::poll` releases
     /// the lock before draining, so a branch waking itself during the drain races whatever
     /// the drain is doing to that branch's record.
+    #[cfg(not(miri))]
     struct SelfWakingBranch {
         idx: usize,
         left: u32,
     }
 
+    #[cfg(not(miri))]
     impl Future for SelfWakingBranch {
         type Output = usize;
 
@@ -1125,16 +1130,19 @@ mod tests {
 
     /// A branch woken entirely from outside, so that its wakes can be issued in parallel
     /// with the drain rather than from inside it.
+    #[cfg(not(miri))]
     struct Slot {
         done: AtomicBool,
         waker: Mutex<Option<Waker>>,
     }
 
+    #[cfg(not(miri))]
     struct Driven {
         idx: usize,
         slot: Arc<Slot>,
     }
 
+    #[cfg(not(miri))]
     impl Future for Driven {
         type Output = usize;
 
@@ -1175,8 +1183,9 @@ mod tests {
     /// captures.
     ///
     /// A dropped wake shows up as a hang rather than a wrong answer, hence the timeouts.
+    // Stress test, far too slow interpreted.
+    #[cfg(not(miri))]
     #[test]
-    #[cfg_attr(miri, ignore = "stress test, far too slow interpreted")]
     fn stress_wide_join_scaling_and_contention() {
         const SELF_WAKES: u32 = 2;
         const DRIVER_THREADS: usize = 8;

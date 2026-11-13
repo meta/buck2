@@ -446,12 +446,10 @@ mod tests {
         Ok(())
     }
 
+    // Tokio's IO driver is epoll, kqueue or IOCP by OS, and Miri models only epoll.
+    #[cfg(any(not(miri), target_os = "linux"))]
     #[cfg(feature = "tokio")]
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-    #[cfg_attr(
-        all(miri, not(target_os = "linux")),
-        ignore = "tokio's IO driver is epoll, kqueue or IOCP by OS, and Miri models only epoll"
-    )]
     async fn multi_thread_runtime_reads_on_a_worker() -> crate::Result<()> {
         let value = DeferredValue::pending(|| Ok(17));
         // The test body runs on the thread driving `block_on`, where `block_in_place` just
@@ -463,12 +461,10 @@ mod tests {
         Ok(())
     }
 
+    // Tokio's IO driver is epoll, kqueue or IOCP by OS, and Miri models only epoll.
+    #[cfg(any(not(miri), target_os = "linux"))]
     #[cfg(feature = "tokio")]
     #[tokio::test]
-    #[cfg_attr(
-        all(miri, not(target_os = "linux")),
-        ignore = "tokio's IO driver is epoll, kqueue or IOCP by OS, and Miri models only epoll"
-    )]
     async fn single_thread_runtime_rejects_unresolved_reads() -> crate::Result<()> {
         let value = DeferredValue::pending(|| Ok(17));
         assert!(value.read().is_err());

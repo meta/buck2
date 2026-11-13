@@ -32,9 +32,9 @@ use crate::values::ValueOf;
 ///
 /// The implementers are the statically nameable part of Starlark's type language, realized in
 /// Rust's: a nominal type is its [`StarlarkType`] impl (a single-representation type is its
-/// own, a type with several representations is its view), `list[T]` is
-/// [`ListType<T>`](crate::values::list::ListType) and the other containers likewise, `A | B`
-/// is `Either<A, B>` or a `#[derive(UnpackValue)]` enum, `None | T` is
+/// own, a type with several representations is its view, `bool` is the Rust `bool`),
+/// `list[T]` is [`ListType<T>`](crate::values::list::ListType) and the other containers
+/// likewise, `A | B` is `Either<A, B>` or a `#[derive(UnpackValue)]` enum, `None | T` is
 /// [`NoneOr<T>`](crate::values::none::NoneOr), `typing.Any` is [`Value`], and so on. Each
 /// Starlark type has one implementer, so that two Rust spellings never have to be reconciled;
 /// unions are the exception, since a union can be spelled in several orders. The handles to a
@@ -45,8 +45,6 @@ use crate::values::ValueOf;
 /// the type by producing the handle it is read through, so nothing that is not a type can
 /// implement this. An `int` that may not fit an `i32`, or a plugin kind that must be bound,
 /// is a conversion from a type, which is [`UnpackValue`](crate::values::UnpackValue)'s job.
-/// `bool` is the exception: a total conversion that also stands for `bool`, kept because a
-/// conversion that cannot fail does not blur the check and its users are everywhere.
 ///
 /// A Rust type that is only a conversion, such as `i32` or `Vec<T>`, is not one; it names the
 /// type expression it converts from or to as its [`UnpackValue::Type`](crate::values::UnpackValue::Type)
@@ -172,7 +170,6 @@ macro_rules! union_payload_is_self {
 
 union_payload_is_self! {
     impl['v] Value<'v>;
-    impl['v] bool;
     impl['v] crate::values::enumeration::AnyEnumType<'v>;
     impl['v] crate::values::typing::TypeType;
     impl['v, P: crate::values::typing::StarlarkCallableParamSpec, R: StarlarkTypeExpr<'static>]

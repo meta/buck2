@@ -20,7 +20,7 @@ use starlark_derive::starlark_module;
 use crate as starlark;
 use crate::environment::GlobalsBuilder;
 use crate::values::Value;
-use crate::values::bool::StarlarkBool;
+use crate::values::types::bool::value::StarlarkBool;
 
 #[starlark_module]
 pub(crate) fn register_bool(globals: &mut GlobalsBuilder) {

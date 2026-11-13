@@ -15,7 +15,8 @@
  * limitations under the License.
  */
 
-//! The boolean type (`False` and `True`).
+//! The boolean type (`False` and `True`), which in Rust is `bool`: a
+//! [`ValueOf<'v, bool>`](crate::values::ValueOf) is a Starlark `bool`, read as a Rust one.
 //!
 //! Can be created with [`Value::new_bool`](crate::values::Value::new_bool)
 //! and unwrapped with [`Value::unpack_bool`](crate::values::Value::unpack_bool).
@@ -24,9 +25,7 @@
 
 mod alloc;
 pub(crate) mod globals;
-mod type_repr;
 mod unpack;
 pub(crate) mod value;
 
 pub use value::BOOL_TYPE;
-pub use value::StarlarkBool;

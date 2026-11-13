@@ -21,10 +21,9 @@ use crate::values::FrozenHeap;
 use crate::values::Heap;
 use crate::values::Value;
 use crate::values::ValueOf;
-use crate::values::types::bool::StarlarkBool;
 
 impl<'v> AllocValue<'v> for bool {
-    type Type = StarlarkBool;
+    type Type = bool;
 
     fn alloc_value(self, _heap: Heap<'v>) -> ValueOf<'v, Self::Type> {
         ValueOf::new_unchecked(Value::new_bool(self))
@@ -32,7 +31,7 @@ impl<'v> AllocValue<'v> for bool {
 }
 
 impl<'fv> AllocFrozenValue<'fv> for bool {
-    type Type = StarlarkBool;
+    type Type = bool;
 
     fn alloc_frozen_value(self, _heap: FrozenHeap<'fv>) -> ValueOf<'fv, Self::Type> {
         ValueOf::new_unchecked(Value::new_bool(self))

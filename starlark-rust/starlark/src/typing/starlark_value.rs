@@ -40,7 +40,6 @@ use crate::typing::error::TypingNoContextError;
 use crate::typing::ty::TypeRenderConfig;
 use crate::values::StarlarkType;
 use crate::values::StarlarkValue;
-use crate::values::bool::StarlarkBool;
 use crate::values::dict::value::FrozenDict;
 use crate::values::float::StarlarkFloat;
 use crate::values::list::value::FrozenList;
@@ -52,6 +51,7 @@ use crate::values::traits::StarlarkTypeVTable;
 use crate::values::traits::StarlarkTypeVTableGet;
 use crate::values::tuple::value::Tuple;
 use crate::values::types::bigint::StarlarkBigInt;
+use crate::values::types::bool::value::StarlarkBool;
 use crate::values::typing::type_compiled::alloc::TypeMatcherAlloc;
 use crate::values::typing::type_compiled::matchers::StarlarkTypeIdMatcher;
 

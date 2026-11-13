@@ -50,7 +50,7 @@ use crate::typing::structs::TyStruct;
 use crate::typing::tuple::TyTuple;
 use crate::values::StarlarkValue;
 use crate::values::Value;
-use crate::values::bool::StarlarkBool;
+use crate::values::types::bool::value::StarlarkBool;
 use crate::values::typing::never::TypingNever;
 
 /// A typing operation wasn't able to produce a precise result,

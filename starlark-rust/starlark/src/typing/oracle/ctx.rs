@@ -151,7 +151,7 @@ impl<'a> TypingOracleCtx<'a> {
     /// `{1: "a"} == {1.0: "a"}` are all `True` — so the widening recurses through
     /// element types.
     ///
-    /// `bool` is deliberately not widened: `StarlarkBool` has no `equals` override and
+    /// `bool` is deliberately not widened: it has no `equals` override and
     /// `True.unpack_num()` is `None`, so `True == 1` really is `False` and flagging
     /// `bool == int` is correct.
     ///

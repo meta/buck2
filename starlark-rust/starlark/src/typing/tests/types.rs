@@ -269,7 +269,7 @@ def f(x: int, y: str) -> bool:
 #[test]
 fn test_equality_bool_int_still_rejected() {
     let a = Assert::new();
-    // `True == 1` really is `False` in this implementation (StarlarkBool has no
+    // `True == 1` really is `False` in this implementation (`bool` has no
     // `equals` override, and `True.unpack_num()` is `None`), so bool is correctly
     // left out of the numeric widening and the comparison stays a type error.
     a.fail(

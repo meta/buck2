@@ -24,6 +24,8 @@ use buck2_build_info::Buck2BuildInfo;
 use buck2_client_ctx::argfiles::StdinArgfile;
 use buck2_client_ctx::events_ctx::EventsCtx;
 use buck2_client_ctx::exit_result::ExitResult;
+use buck2_client_ctx::restarter::RestartRequest;
+use buck2_client_ctx::restarter::RestartState;
 use buck2_client_ctx::restarter::Restarter;
 use buck2_client_ctx::stdio;
 use buck2_client_ctx::subscribers::recorder::InvocationRecorder;
@@ -111,16 +113,23 @@ fn print_retry() -> buck2_error::Result<()> {
     Ok(())
 }
 
+/// Makes one attempt at the command. Returns a `RestartRequest` if it is to be restarted.
 fn exec_with_logging(
     trace_id: TraceId,
     start_time: SystemTime,
     restarted_trace_id: Option<TraceId>,
+    restart_state: RestartState,
     shared: buck2_error::Result<SharedProcessContext>,
     runtime: &mut ClientRuntime,
-) -> (Option<SharedProcessContext>, ExitResult) {
+) -> (
+    Option<SharedProcessContext>,
+    ExitResult,
+    Option<RestartRequest>,
+) {
     let args = std::env::args().collect::<Vec<String>>();
     let recorder = InvocationRecorder::new(trace_id.dupe(), restarted_trace_id, start_time, args);
     let mut events_ctx = EventsCtx::new(Some(recorder), vec![]);
+    events_ctx.restart_state = restart_state;
     let (shared, res) = match shared {
         Ok(mut shared) => {
             let res = exec(ProcessContext {
@@ -134,11 +143,11 @@ fn exec_with_logging(
         }
         Err(e) => (None, e.into()),
     };
-    let res = match runtime.get_or_init() {
+    let (res, restart_request) = match runtime.get_or_init() {
         Ok(runtime) => events_ctx.finalize_events(trace_id, res, runtime),
-        Err(e) => e.into(),
+        Err(e) => (e.into(), None),
     };
-    (shared, res)
+    (shared, res, restart_request)
 }
 
 // As this main() is used as the entry point for the `buck daemon` command,
@@ -206,25 +215,26 @@ fn main() -> ! {
             working_dir: AbsWorkingDir::current_dir()?,
             args: std::env::args().collect::<Vec<String>>(),
             stdin_argfile: StdinArgfile::default(),
-            restarter: Restarter::try_new()?,
         })
     }
 
     fn main_with_result() -> ExitResult {
         let start_time = SystemTime::now();
         let first_trace_id = TraceId::from_env_or_new()?;
+        let restarter = Restarter::try_new()?;
         let mut runtime = ClientRuntime::new();
         let shared = init_shared_context();
-        let (shared, res) = exec_with_logging(
+        let (shared, res, restart_request) = exec_with_logging(
             first_trace_id.dupe(),
             start_time,
             None,
+            RestartState::Watching(restarter),
             shared,
             &mut runtime,
         );
 
         if let Some(shared) = shared {
-            maybe_restart(first_trace_id, res, shared, &mut runtime)
+            maybe_restart(first_trace_id, res, restart_request, shared, &mut runtime)
         } else {
             res
         }
@@ -234,15 +244,16 @@ fn main() -> ! {
     fn maybe_restart(
         first_trace_id: TraceId,
         initial_result: ExitResult,
+        restart_request: Option<RestartRequest>,
         shared: SharedProcessContext,
         runtime: &mut ClientRuntime,
     ) -> ExitResult {
         let restart_start_time = SystemTime::now();
 
-        if !shared.restarter.should_restart(&initial_result) {
+        let Some(restart_request) = restart_request else {
             tracing::debug!("No restart was requested");
             return initial_result;
-        }
+        };
 
         if stdio::has_written_to_stdout() {
             tracing::debug!("Cannot restart: wrote to stdout");
@@ -254,10 +265,11 @@ fn main() -> ! {
             return initial_result;
         }
 
-        let (_, res) = exec_with_logging(
+        let (_, res, _) = exec_with_logging(
             TraceId::new(),
             restart_start_time,
             Some(first_trace_id),
+            RestartState::Restarted(restart_request),
             Ok(shared),
             runtime,
         );

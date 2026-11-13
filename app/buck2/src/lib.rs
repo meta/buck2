@@ -621,7 +621,6 @@ impl CommandKind {
             argv,
             trace_id.dupe(),
             &mut shared.stdin,
-            &mut shared.restarter,
             runtime,
             common_opts.oncall,
             common_opts.client_metadata,

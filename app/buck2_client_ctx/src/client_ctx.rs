@@ -57,7 +57,6 @@ use crate::daemon_constraints::get_possibly_nested_invocation_daemon_uuid;
 use crate::events_ctx::EventsCtx;
 use crate::exit_result::ExitResult;
 use crate::immediate_config::ImmediateConfigContext;
-use crate::restarter::Restarter;
 use crate::streaming::StreamingCommand;
 
 pub struct ClientCommandContext<'a> {
@@ -75,7 +74,6 @@ pub struct ClientCommandContext<'a> {
     pub(crate) argv: Argv,
     pub trace_id: TraceId,
     stdin: &'a mut Stdin,
-    pub(crate) restarter: &'a mut Restarter,
     runtime: &'a Runtime,
     oncall: Option<String>,
     pub(crate) client_metadata: Vec<ClientMetadata>,
@@ -130,7 +128,6 @@ impl<'a> ClientCommandContext<'a> {
         argv: Argv,
         trace_id: TraceId,
         stdin: &'a mut Stdin,
-        restarter: &'a mut Restarter,
         runtime: &'a Runtime,
         oncall: Option<String>,
         client_metadata: Vec<ClientMetadata>,
@@ -148,7 +145,6 @@ impl<'a> ClientCommandContext<'a> {
             argv,
             trace_id,
             stdin,
-            restarter,
             runtime,
             oncall,
             client_metadata,

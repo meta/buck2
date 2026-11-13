@@ -42,6 +42,7 @@ use crate::daemon::client::connect::remove_in_process_daemon_info;
 use crate::events_ctx::EventsCtx;
 use crate::exit_result::ExitResult;
 use crate::path_arg::PathArg;
+use crate::restarter::RestartState;
 use crate::signal_handler::with_simple_sigint_handler;
 use crate::subscribers::build_graph_stats::BuildGraphStats;
 use crate::subscribers::build_id_writer::BuildIdWriter;
@@ -249,7 +250,9 @@ impl<T: StreamingCommand> BuckSubcommand for T {
             } else {
                 let mut req =
                     DaemonConstraintsRequest::new(ctx.immediate_config, T::trace_io(&self))?;
-                ctx.restarter.apply_to_constraints(&mut req);
+                if let RestartState::Restarted(restart_request) = &events_ctx.restart_state {
+                    restart_request.apply_to_constraints(&mut req);
+                }
                 BuckdConnectOptions::Options(BuckdConnectDaemonOptions {
                     constraints: req,
                     daemon_startup_mode: T::daemon_startup_mode(),
@@ -292,14 +295,12 @@ impl<T: StreamingCommand> BuckSubcommand for T {
             events_ctx.daemon_pid = Some(buckd.daemon_pid);
             events_ctx.cgroup_path_of_buck2_daemon = buckd.cgroup_path_of_buck2_daemon.clone();
             events_ctx.daemon_start_instant = buckd.daemon_start_instant;
+            if let RestartState::Watching(restarter) = &mut events_ctx.restart_state {
+                restarter.connected(buckd.daemon_constraints());
+            }
 
-            let command_result = self
-                .exec_impl(&mut buckd, matches, &mut ctx, events_ctx)
-                .await;
-
-            ctx.restarter.observe(&buckd, events_ctx, &command_result);
-
-            command_result
+            self.exec_impl(&mut buckd, matches, &mut ctx, events_ctx)
+                .await
         };
 
         // FIXME: move this into client_ctx

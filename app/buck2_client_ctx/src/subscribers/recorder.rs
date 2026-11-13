@@ -659,9 +659,8 @@ impl InvocationRecorder {
         }
     }
 
-    /// An attempt that is itself a restart is not restarted again, so it does not record this.
     pub(crate) fn set_should_restart(&mut self) {
-        self.should_restart = self.restarted_trace_id.is_none();
+        self.should_restart = true;
     }
 
     pub(crate) fn update_for_command(

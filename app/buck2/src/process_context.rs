@@ -14,7 +14,6 @@ use std::time::SystemTime;
 
 use buck2_client_ctx::argfiles::StdinArgfile;
 use buck2_client_ctx::events_ctx::EventsCtx;
-use buck2_client_ctx::restarter::Restarter;
 use buck2_client_ctx::tokio_runtime_setup::client_tokio_runtime;
 use buck2_core::logging::LogConfigurationReloadHandle;
 use buck2_fs::working_dir::AbsWorkingDir;
@@ -38,7 +37,6 @@ pub struct SharedProcessContext {
     pub working_dir: AbsWorkingDir,
     pub args: Vec<String>,
     pub stdin_argfile: StdinArgfile,
-    pub restarter: Restarter,
 }
 
 pub struct ClientRuntime(pub OnceLock<Runtime>);

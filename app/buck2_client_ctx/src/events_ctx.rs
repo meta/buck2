@@ -47,6 +47,8 @@ use crate::daemon::client::NoPartialResultHandler;
 use crate::daemon::client::tonic_status_to_error;
 use crate::exit_result::ExitResult;
 use crate::file_tailers::tailers::FileTailers;
+use crate::restarter::RestartRequest;
+use crate::restarter::RestartState;
 use crate::subscribers::observer::ErrorObserver;
 use crate::subscribers::recorder::InvocationRecorder;
 use crate::subscribers::subscriber::EventSubscriber;
@@ -475,6 +477,8 @@ pub struct EventsCtx {
     /// `get_console_with_root`. Defaults to `false` for non-streaming entry
     /// points (e.g. log replay) that don't go through that path.
     pub used_superconsole: bool,
+    /// The state of restarting the command, in this attempt at it.
+    pub restart_state: RestartState,
 }
 
 impl EventsCtx {
@@ -493,6 +497,7 @@ impl EventsCtx {
             cgroup_path_of_buck2_daemon: None,
             daemon_start_instant: None,
             used_superconsole: false,
+            restart_state: RestartState::NoRestart,
         }
     }
 
@@ -764,12 +769,25 @@ impl EventsCtx {
         errors
     }
 
+    /// Returns a `RestartRequest` if the command is to be restarted.
     pub fn finalize_events(
         mut self,
         trace_id: TraceId,
         mut result: ExitResult,
         runtime: &Runtime,
-    ) -> ExitResult {
+    ) -> (ExitResult, Option<RestartRequest>) {
+        let restart_request = match &self.restart_state {
+            RestartState::Watching(restarter) => {
+                restarter.should_restart(self.error_observers(), &result)
+            }
+            RestartState::NoRestart | RestartState::Restarted(_) => None,
+        };
+        if restart_request.is_some()
+            && let Some(recorder) = self.recorder.as_mut()
+        {
+            recorder.set_should_restart();
+        }
+
         runtime.block_on(async move {
             let buck_log_dir = self.buck_log_dir.take();
             let command_report_path = self.command_report_path.take();
@@ -807,7 +825,7 @@ impl EventsCtx {
                 command_report_path,
                 finalizing_errors,
             );
-            result
+            (result, restart_request)
         })
     }
 }
@@ -867,7 +885,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = AbsPathBuf::new(dir.path().join("command_report.json")).unwrap();
         ctx.command_report_path = Some(path.clone());
-        let res = ctx.finalize_events(TraceId::new(), ExitResult::success(), &runtime);
+        let (res, _) = ctx.finalize_events(TraceId::new(), ExitResult::success(), &runtime);
         assert!(res.is_success());
         let report: serde_json::Value =
             serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();

@@ -45,6 +45,7 @@ use starlark::values::ValueTyped;
 use starlark::values::list::ListType;
 use starlark::values::none::NoneOr;
 use starlark::values::none::NoneType;
+use starlark::values::string::StarlarkStr;
 use starlark::values::structs::StructRef;
 
 use crate::bxl::starlark_defs::analysis_result::StarlarkAnalysisResult;
@@ -151,7 +152,7 @@ pub(crate) fn bxl_context_methods(builder: &mut MethodsBuilder) {
         #[starlark(default = ValueAsStarlarkTargetLabel::NONE)]
         target_platform: ValueAsStarlarkTargetLabel<'v>,
         #[starlark(require = named, default = NoneOr::None)] modifiers: NoneOr<
-            ValueOf<'v, ListType<String>>,
+            ValueOf<'v, ListType<StarlarkStr>>,
         >,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<
@@ -161,7 +162,10 @@ pub(crate) fn bxl_context_methods(builder: &mut MethodsBuilder) {
         >,
     > {
         let cli_modifiers = match modifiers.into_option() {
-            Some(cli_modifiers) => cli_modifiers.try_to_vec()?,
+            Some(cli_modifiers) => cli_modifiers
+                .try_items::<&str>()
+                .map(|s| s.map(str::to_owned))
+                .collect::<starlark::Result<Vec<_>>>()?,
             None => Vec::new(),
         };
         let global_cfg_options = this.resolve_global_cfg_options(target_platform, cli_modifiers)?;
@@ -300,11 +304,14 @@ pub(crate) fn bxl_context_methods(builder: &mut MethodsBuilder) {
         #[starlark(require = named, default = false)] keep_going: bool,
         #[starlark(require = named, default = ValueOf::empty_list())] modifiers: ValueOf<
             'v,
-            ListType<String>,
+            ListType<StarlarkStr>,
         >,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<ValueOf<'v, StarlarkTargetUniverse<'v>>> {
-        let modifiers = modifiers.try_to_vec()?;
+        let modifiers = modifiers
+            .try_items::<&str>()
+            .map(|s| s.map(str::to_owned))
+            .collect::<starlark::Result<Vec<_>>>()?;
         let global_cfg_options = this.resolve_global_cfg_options(target_platform, modifiers)?;
 
         let heap = eval.heap();

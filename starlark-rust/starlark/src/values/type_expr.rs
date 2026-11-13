@@ -27,7 +27,6 @@ use crate::values::Heap;
 use crate::values::StarlarkType;
 use crate::values::Value;
 use crate::values::ValueOf;
-use crate::values::string::str_type::StarlarkStr;
 
 /// A Rust type that stands for a Starlark type expression.
 ///
@@ -46,9 +45,8 @@ use crate::values::string::str_type::StarlarkStr;
 /// the type by producing the handle it is read through, so nothing that is not a type can
 /// implement this. An `int` that may not fit an `i32`, or a plugin kind that must be bound,
 /// is a conversion from a type, which is [`UnpackValue`](crate::values::UnpackValue)'s job.
-/// `&str`, `String` and `bool` are the exceptions: total conversions that also stand for `str`
-/// and `bool`, kept because a conversion that cannot fail does not blur the check and their
-/// users are everywhere.
+/// `bool` is the exception: a total conversion that also stands for `bool`, kept because a
+/// conversion that cannot fail does not blur the check and its users are everywhere.
 ///
 /// A Rust type that is only a conversion, such as `i32` or `Vec<T>`, is not one; it names the
 /// type expression it converts from or to as its [`UnpackValue::Type`](crate::values::UnpackValue::Type)
@@ -115,38 +113,6 @@ impl<'v> StarlarkTypeExpr<'v> for Value<'v> {
 
 impl<'v> StarlarkTypeExprStable<'v> for Value<'v> {}
 
-impl<'v> StarlarkTypeExpr<'v> for String {
-    type Get = String;
-
-    fn starlark_type_repr() -> Ty {
-        StarlarkStr::starlark_type_repr()
-    }
-
-    fn get(value: Value<'v>) -> Option<Self::Get> {
-        value.unpack_str().map(str::to_owned)
-    }
-}
-
-impl<'v> StarlarkTypeExprStable<'v> for String {}
-
-impl<'v, 'a> StarlarkTypeExpr<'v> for &'a str
-where
-    'v: 'a,
-{
-    type Get = &'a str;
-
-    fn starlark_type_repr() -> Ty {
-        StarlarkStr::starlark_type_repr()
-    }
-
-    #[inline]
-    fn get(value: Value<'v>) -> Option<Self::Get> {
-        value.unpack_str()
-    }
-}
-
-impl<'v, 'a> StarlarkTypeExprStable<'v> for &'a str where 'v: 'a {}
-
 impl<'v, TLeft: StarlarkTypeExpr<'v>, TRight: StarlarkTypeExpr<'v>> StarlarkTypeExpr<'v>
     for Either<TLeft, TRight>
 {
@@ -206,8 +172,6 @@ macro_rules! union_payload_is_self {
 
 union_payload_is_self! {
     impl['v] Value<'v>;
-    impl['v, 'a] &'a str where ['v: 'a];
-    impl['v] String;
     impl['v] bool;
     impl['v] crate::values::structs::StructRef<'v>;
     impl['v] crate::values::enumeration::AnyEnumType<'v>;
@@ -308,20 +272,18 @@ mod tests {
             let vs = values(heap);
             agrees::<bool>(&vs);
             agrees::<NoneType>(&vs);
-            agrees::<String>(&vs);
-            agrees::<&str>(&vs);
             agrees::<StarlarkStr>(&vs);
             agrees::<IntView>(&vs);
             agrees::<Value>(&vs);
             agrees::<ListType<IntView>>(&vs);
-            agrees::<ListType<String>>(&vs);
-            agrees::<DictType<IntView, String>>(&vs);
-            agrees::<DictType<String, IntView>>(&vs);
+            agrees::<ListType<StarlarkStr>>(&vs);
+            agrees::<DictType<IntView, StarlarkStr>>(&vs);
+            agrees::<DictType<StarlarkStr, IntView>>(&vs);
             agrees::<TupleType<IntView>>(&vs);
             agrees::<(IntView, IntView)>(&vs);
-            agrees::<(IntView, String)>(&vs);
-            agrees::<NoneOr<String>>(&vs);
-            agrees::<Either<bool, String>>(&vs);
+            agrees::<(IntView, StarlarkStr)>(&vs);
+            agrees::<NoneOr<StarlarkStr>>(&vs);
+            agrees::<Either<bool, StarlarkStr>>(&vs);
             agrees::<StarlarkIter<IntView>>(&vs);
         });
     }

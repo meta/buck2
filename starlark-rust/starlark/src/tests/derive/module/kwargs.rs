@@ -24,6 +24,7 @@ use crate::environment::GlobalsBuilder;
 use crate::values::UnpackValue;
 use crate::values::ValueOf;
 use crate::values::dict::DictType;
+use crate::values::string::StarlarkStr;
 use crate::values::types::int::view::IntView;
 
 #[starlark_module]
@@ -31,13 +32,13 @@ fn test_kwargs_module(globals: &mut GlobalsBuilder) {
     fn pos_kwargs<'v>(
         #[starlark(require = pos)] a: u32,
         #[starlark(require = pos)] b: bool,
-        #[starlark(kwargs)] kwargs: ValueOf<'v, DictType<String, IntView<'v>>>,
+        #[starlark(kwargs)] kwargs: ValueOf<'v, DictType<StarlarkStr, IntView<'v>>>,
     ) -> anyhow::Result<String> {
         let kwargs = kwargs
-            .try_items::<String, IntView>()
+            .try_items::<&str, IntView>()
             .map(|entry| {
                 let (k, v) = entry?;
-                Ok((k, u64::unpack_value_err(v.to_value())?))
+                Ok((k.to_owned(), u64::unpack_value_err(v.to_value())?))
             })
             .collect::<crate::Result<SmallMap<_, _>>>()
             .map_err(|e| e.into_anyhow())?;
@@ -47,13 +48,13 @@ fn test_kwargs_module(globals: &mut GlobalsBuilder) {
     fn pos_named_kwargs<'v>(
         #[starlark(require = pos)] a: u32,
         #[starlark(require = named)] b: bool,
-        #[starlark(kwargs)] kwargs: ValueOf<'v, DictType<String, IntView<'v>>>,
+        #[starlark(kwargs)] kwargs: ValueOf<'v, DictType<StarlarkStr, IntView<'v>>>,
     ) -> anyhow::Result<String> {
         let kwargs = kwargs
-            .try_items::<String, IntView>()
+            .try_items::<&str, IntView>()
             .map(|entry| {
                 let (k, v) = entry?;
-                Ok((k, u64::unpack_value_err(v.to_value())?))
+                Ok((k.to_owned(), u64::unpack_value_err(v.to_value())?))
             })
             .collect::<crate::Result<SmallMap<_, _>>>()
             .map_err(|e| e.into_anyhow())?;

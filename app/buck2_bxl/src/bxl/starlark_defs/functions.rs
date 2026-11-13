@@ -36,6 +36,7 @@ use starlark::values::ValueOf;
 use starlark::values::ValueTyped;
 use starlark::values::list::ListType;
 use starlark::values::none::NoneType;
+use starlark::values::string::StarlarkStr;
 use starlark::values::tuple::TupleType;
 
 use super::artifacts::visit_artifact_path_without_associated_deduped;
@@ -298,7 +299,7 @@ pub(crate) fn register_error_handling_function(builder: &mut GlobalsBuilder) {
 #[derive(UnpackValue)]
 pub(crate) enum PackagePathArg<'v> {
     PackagePath(ValueOf<'v, StarlarkPackagePath>),
-    Str(&'v str),
+    Str(ValueOf<'v, StarlarkStr>),
 }
 
 impl<'v> PackagePathArg<'v> {
@@ -307,7 +308,7 @@ impl<'v> PackagePathArg<'v> {
             PackagePathArg::PackagePath(package_path) => Ok(package_path.pkg().dupe()),
             PackagePathArg::Str(pkg_str) => {
                 // TODO(nero): add support for relative path
-                parse_package(pkg_str, cell_alias_resolver)
+                parse_package(pkg_str.as_str(), cell_alias_resolver)
             }
         }
     }

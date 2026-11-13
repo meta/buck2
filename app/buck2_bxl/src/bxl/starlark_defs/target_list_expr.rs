@@ -46,6 +46,7 @@ use starlark::values::UnpackValue;
 use starlark::values::Value;
 use starlark::values::ValueOf;
 use starlark::values::list::ListType;
+use starlark::values::string::StarlarkStr;
 
 use crate::bxl::starlark_defs::context::BxlContext;
 use crate::bxl::starlark_defs::context::BxlContextCoreData;
@@ -129,14 +130,14 @@ impl<'v> TargetNodeOrTargetLabel<'v> {
 pub(crate) enum TargetNodeOrTargetLabelOrStr<'v> {
     TargetNode(ValueOf<'v, StarlarkTargetNode>),
     TargetLabel(ValueOf<'v, StarlarkTargetLabel>),
-    Str(&'v str),
+    Str(ValueOf<'v, StarlarkStr>),
 }
 
 #[derive(UnpackValue)]
 pub(crate) enum ConfiguredTargetNodeArg<'v> {
     ConfiguredTargetNode(ValueOf<'v, StarlarkConfiguredTargetNode>),
     ConfiguredTargetLabel(ValueOf<'v, StarlarkConfiguredTargetLabel>),
-    Str(&'v str),
+    Str(ValueOf<'v, StarlarkStr>),
     Unconfigured(TargetNodeOrTargetLabel<'v>),
 }
 
@@ -313,7 +314,8 @@ impl<'v> TargetListExpr<'v, ConfiguredTargetNode> {
                 ))))
             }
             ConfiguredTargetNodeArg::Str(s) => {
-                Self::unpack_string_literal(s, global_cfg_options, ctx, dice, keep_going).await
+                Self::unpack_string_literal(s.as_str(), global_cfg_options, ctx, dice, keep_going)
+                    .await
             }
             ConfiguredTargetNodeArg::Unconfigured(label) => dice
                 .get_configured_target(label.label(), global_cfg_options)
@@ -497,6 +499,7 @@ impl<'v> TargetListExpr<'v, TargetNode> {
                 TargetExpr::Label(Cow::Borrowed(target.as_ref().label())),
             )),
             TargetNodeOrTargetLabelOrStr::Str(s) => {
+                let s = s.get().as_str();
                 match ParsedPattern::<TargetPatternExtra>::parse_relaxed(
                     ctx.target_alias_resolver(),
                     // TODO(nga): Parse relaxed relative to cell root is incorrect.
@@ -699,7 +702,7 @@ impl OwnedConfiguredTargetNodeArg {
                 OwnedConfiguredTargetNodeArg::ConfiguredTargetLabel(label.as_ref().dupe())
             }
             ConfiguredTargetNodeArg::Str(str) => {
-                OwnedConfiguredTargetNodeArg::String(str.to_owned())
+                OwnedConfiguredTargetNodeArg::String(str.as_str().to_owned())
             }
             ConfiguredTargetNodeArg::Unconfigured(unconfigured) => {
                 OwnedConfiguredTargetNodeArg::Unconfigured(OwnedTargetNodeOrTargetLabel::from_ref(
@@ -751,7 +754,9 @@ impl OwnedTargetNodeArg {
             TargetNodeOrTargetLabelOrStr::TargetLabel(label) => OwnedTargetNodeArg::Unconfigured(
                 OwnedTargetNodeOrTargetLabel::TargetLabel(label.as_ref().dupe()),
             ),
-            TargetNodeOrTargetLabelOrStr::Str(str) => OwnedTargetNodeArg::String(str.to_owned()),
+            TargetNodeOrTargetLabelOrStr::Str(str) => {
+                OwnedTargetNodeArg::String(str.as_str().to_owned())
+            }
         }
     }
 

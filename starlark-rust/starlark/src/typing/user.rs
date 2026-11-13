@@ -464,11 +464,11 @@ mod tests {
     #[starlark_module]
     #[starlark_types(AbstractPlant as Plant)]
     fn globals(globals: &mut GlobalsBuilder) {
-        fn fruit<'v>(name: String, heap: Heap<'v>) -> starlark::Result<ValueOf<'v, FruitCallable>> {
+        fn fruit<'v>(name: &str, heap: Heap<'v>) -> starlark::Result<ValueOf<'v, FruitCallable>> {
             let ty_fruit = Ty::custom(TyUser::new(
-                name.clone(),
+                name.to_owned(),
                 TyStarlarkValue::new::<Fruit>(),
-                TypeInstanceId::for_test(&("fruit", name.as_str())),
+                TypeInstanceId::for_test(&("fruit", name)),
                 TyUserParams {
                     supertypes: AbstractPlant::get_type_starlark_repr()
                         .iter_union()
@@ -479,7 +479,7 @@ mod tests {
             let ty_fruit_callable = Ty::custom(TyUser::new(
                 format!("fruit[{name}]"),
                 TyStarlarkValue::new::<FruitCallable>(),
-                TypeInstanceId::for_test(&("fruit_callable", name.as_str())),
+                TypeInstanceId::for_test(&("fruit_callable", name)),
                 TyUserParams {
                     callable: Some(TyCallable::new(ParamSpec::empty(), ty_fruit.clone())),
 
@@ -489,7 +489,7 @@ mod tests {
             Ok(ValueOf::alloc(
                 heap,
                 FruitCallable {
-                    name,
+                    name: name.to_owned(),
                     ty_fruit_callable,
                     ty_fruit,
                 },

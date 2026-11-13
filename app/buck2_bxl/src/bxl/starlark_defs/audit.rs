@@ -34,6 +34,7 @@ use starlark::values::dict::AllocDict;
 use starlark::values::list_or_tuple::ListOrTupleType;
 use starlark::values::none::NoneOr;
 use starlark::values::starlark_value;
+use starlark::values::string::StarlarkStr;
 
 use crate::bxl::starlark_defs::context::BxlContext;
 use crate::bxl::starlark_defs::nodes::action::StarlarkAction;
@@ -170,12 +171,15 @@ fn audit_methods(builder: &mut MethodsBuilder) {
         // TODO(nga): parameters should be either positional or named, not both.
         #[starlark(default = ValueOf::empty_list())] aliases_to_resolve: ValueOf<
             'v,
-            ListOrTupleType<String>,
+            ListOrTupleType<StarlarkStr>,
         >,
         #[starlark(require = named, default = false)] aliases: bool,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<AllocDict<impl Iterator<Item = (String, String)> + use<>>> {
-        let aliases_to_resolve = aliases_to_resolve.try_to_vec()?;
+        let aliases_to_resolve = aliases_to_resolve
+            .try_items::<&str>()
+            .map(|s| s.map(str::to_owned))
+            .collect::<starlark::Result<Vec<_>>>()?;
         Ok(this.ctx.via_dice(eval, |ctx| {
             ctx.via(|ctx| {
                 async {

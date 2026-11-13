@@ -113,7 +113,7 @@ pub(crate) fn register_anon_rule(globals: &mut GlobalsBuilder) {
             BxlAnonCallbackParamSpec,
             ListType<AbstractProvider>,
         >,
-        #[starlark(require = named)] attrs: ValueOf<'v, DictType<&'v str, StarlarkAttribute>>,
+        #[starlark(require = named)] attrs: ValueOf<'v, DictType<StarlarkStr, StarlarkAttribute>>,
         #[starlark(require = named, default = "")] doc: &str,
         #[starlark(require = named, default = ValueOf::empty_dict())]
         artifact_promise_mappings: ValueOf<

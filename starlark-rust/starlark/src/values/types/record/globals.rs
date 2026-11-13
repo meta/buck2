@@ -30,6 +30,7 @@ use crate::values::ValueTyped;
 use crate::values::dict::DictType;
 use crate::values::record::field::Field;
 use crate::values::record::record_type::RecordType;
+use crate::values::string::StarlarkStr;
 use crate::values::types::record::record_type::RecordTypeView;
 use crate::values::types::type_instance_id::StarlarkTypeIdDomain;
 use crate::values::types::type_instance_id::TypeInstanceId;
@@ -65,18 +66,18 @@ pub(crate) fn register_record(builder: &mut GlobalsBuilder) {
     ///
     /// Records are stored deduplicating their field names, making them more memory efficient than dictionaries.
     fn record<'v>(
-        #[starlark(kwargs)] kwargs: ValueOf<'v, DictType<String, Value<'v>>>,
+        #[starlark(kwargs)] kwargs: ValueOf<'v, DictType<StarlarkStr, Value<'v>>>,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> anyhow::Result<ValueOf<'v, RecordTypeView<'v>>> {
         // Every Value must either be a field or a value (the type)
         let mut mp = SmallMap::with_capacity(kwargs.dict().len());
-        for item in kwargs.try_items() {
+        for item in kwargs.try_items::<&str, Value>() {
             let (k, v) = item.map_err(|e| e.into_anyhow())?;
             let field = match Field::from_value(v) {
                 None => Field::new(TypeCompiled::new(v, eval.heap())?, None),
                 Some(v) => v.dupe(),
             };
-            mp.insert(k, field);
+            mp.insert(k.to_owned(), field);
         }
         let id = TypeInstanceId::from_def_site(StarlarkTypeIdDomain::Record, eval)
             .map_err(|e| e.into_anyhow())?;

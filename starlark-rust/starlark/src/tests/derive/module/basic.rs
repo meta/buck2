@@ -25,8 +25,10 @@ use crate::values::Heap;
 use crate::values::StringValue;
 use crate::values::Value;
 use crate::values::ValueOf;
+use crate::values::int::IntView;
 use crate::values::list_or_tuple::ListOrTupleType;
 use crate::values::none::NoneType;
+use crate::values::string::StarlarkStr;
 use crate::values::typing::StarlarkCallableChecked;
 
 // The examples from the starlark_module documentation.
@@ -36,7 +38,7 @@ fn test_starlark_module() {
     fn global(builder: &mut GlobalsBuilder) {
         fn cc_binary<'v>(
             name: &str,
-            srcs: ValueOf<'v, ListOrTupleType<&'v str>>,
+            srcs: ValueOf<'v, ListOrTupleType<StarlarkStr>>,
         ) -> anyhow::Result<String> {
             // real implementation may write it to a global variable
             let srcs = srcs.try_to_vec::<&str>().map_err(|e| e.into_anyhow())?;
@@ -74,7 +76,7 @@ fn test_static_allowed() {
     #[starlark_module]
     fn globals(globals: &mut GlobalsBuilder) {
         fn test<'v>()
-        -> anyhow::Result<ValueOf<'v, StarlarkCallableChecked<'v, (&'static str,), NoneType>>>
+        -> anyhow::Result<ValueOf<'v, StarlarkCallableChecked<'v, (IntView<'static>,), NoneType>>>
         {
             panic!()
         }

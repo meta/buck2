@@ -47,6 +47,7 @@ use starlark::values::Value;
 use starlark::values::ValueError;
 use starlark::values::ValueOf;
 use starlark::values::dict::DictType;
+use starlark::values::string::StarlarkStr;
 
 use crate::actions::impls::cas_probe;
 use crate::actions::impls::cas_probe::SourceFile;
@@ -135,7 +136,7 @@ impl UnregisteredAssembledDirAction {
     // Map each artifact into an optional tuple of (artifact, path) and associated_artifacts, then collect
     // them into an optional tuple of vector and an index set respectively
     fn unpack_args<'v>(
-        srcs: ValueOf<'v, DictType<&'v str, StarlarkArtifactView<'v>>>,
+        srcs: ValueOf<'v, DictType<StarlarkStr, StarlarkArtifactView<'v>>>,
         copy: CopyMode,
     ) -> buck2_error::Result<(
         Vec<(ArtifactGroup, Box<ForwardRelativePath>, CopyMode)>,
@@ -172,7 +173,7 @@ impl UnregisteredAssembledDirAction {
 
     pub(crate) fn new<'v>(
         copy: CopyMode,
-        srcs: ValueOf<'v, DictType<&'v str, StarlarkArtifactView<'v>>>,
+        srcs: ValueOf<'v, DictType<StarlarkStr, StarlarkArtifactView<'v>>>,
     ) -> buck2_error::Result<Self> {
         let (mut args, unioned_associated_artifacts) = Self::unpack_args(srcs, copy)
             // FIXME: This warning is talking about the Starlark-level argument name `srcs`.

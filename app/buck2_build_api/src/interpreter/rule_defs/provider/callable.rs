@@ -66,6 +66,7 @@ use starlark::values::dict::DictType;
 use starlark::values::list::ListRef;
 use starlark::values::list_or_tuple::ListOrTupleType;
 use starlark::values::starlark_value;
+use starlark::values::string::StarlarkStr;
 use starlark::values::typing::TypeCompiled;
 use starlark::values::typing::TypeInstanceId;
 use starlark::values::typing::TypeMatcher;
@@ -652,8 +653,8 @@ pub fn register_provider(builder: &mut GlobalsBuilder) {
     fn provider<'v>(
         #[starlark(require=named, default = "")] doc: &str,
         #[starlark(require=named)] fields: Either<
-            ValueOf<'v, ListOrTupleType<String>>,
-            ValueOf<'v, DictType<String, Value<'v>>>,
+            ValueOf<'v, ListOrTupleType<StarlarkStr>>,
+            ValueOf<'v, DictType<StarlarkStr, Value<'v>>>,
         >,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<ValueTyped<'v, UserProviderCallable<'v>>> {
@@ -662,7 +663,10 @@ pub fn register_provider(builder: &mut GlobalsBuilder) {
 
         let fields = match fields {
             Either::Left(fields) => {
-                let fields = fields.try_to_vec::<String>()?;
+                let fields = fields
+                    .try_items::<&str>()
+                    .map(|s| s.map(str::to_owned))
+                    .collect::<starlark::Result<Vec<String>>>()?;
                 let new_fields: BuckMutInsertionMap<String, UserProviderField<'v>> = fields
                     .iter()
                     .map(|name| (name.clone(), UserProviderField::default()))
@@ -677,8 +681,9 @@ pub fn register_provider(builder: &mut GlobalsBuilder) {
             }
             Either::Right(fields) => {
                 let mut new_fields = BuckMutInsertionMap::with_capacity(fields.dict().len());
-                for entry in fields.try_items::<String, Value>() {
+                for entry in fields.try_items::<&str, Value>() {
                     let (name, field) = entry?;
+                    let name = name.to_owned();
                     if let Some(field) = field.downcast_ref::<UserProviderField>() {
                         new_fields.insert(name, field.dupe());
                     } else {

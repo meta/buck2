@@ -52,6 +52,7 @@ use starlark::values::Value;
 use starlark::values::ValueOf;
 use starlark::values::list_or_tuple::ListOrTupleType;
 use starlark::values::none::NoneOr;
+use starlark::values::string::StarlarkStr;
 
 use crate::registration::init_registration;
 
@@ -129,15 +130,20 @@ async fn eval_pre_constraint_analysis<'v, 'a>(
         ];
 
         // Type check + unpack
-        let (refs, params) =
-            <(ValueOf<ListOrTupleType<String>>, Value)>::unpack_value_err(eval.eval_function(
+        let (refs, params) = <(ValueOf<ListOrTupleType<StarlarkStr>>, Value)>::unpack_value_err(
+            eval.eval_function(
                 cfg_constructor_pre_constraint_analysis,
                 &[],
                 &pre_constraint_analysis_args,
-            )?)?;
+            )?,
+        )?;
 
         // `params` Value lives on eval.heap() so we need to move eval out of the closure to keep it alive
-        Ok((refs.try_to_vec()?, params))
+        let refs = refs
+            .try_items::<&str>()
+            .map(|s| s.map(str::to_owned))
+            .collect::<starlark::Result<Vec<_>>>()?;
+        Ok((refs, params))
     })
 }
 

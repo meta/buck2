@@ -35,6 +35,7 @@ use starlark::values::UnpackValue;
 use starlark::values::Value;
 use starlark::values::ValueOf;
 use starlark::values::list_or_tuple::ListOrTupleType;
+use starlark::values::string::StarlarkStr;
 
 use crate::interpreter::rule_defs::artifact::testing::artifactory;
 
@@ -86,9 +87,11 @@ pub(crate) fn command_line_stringifier(builder: &mut GlobalsBuilder) {
     }
 
     /// A hash of `parts` in order, in hex; prefix-free, so moving a boundary changes it.
-    fn blake3_hex<'v>(parts: ValueOf<'v, ListOrTupleType<String>>) -> starlark::Result<String> {
+    fn blake3_hex<'v>(
+        parts: ValueOf<'v, ListOrTupleType<StarlarkStr>>,
+    ) -> starlark::Result<String> {
         let mut hasher = Blake3StrongHasher::new();
-        for part in parts.try_items::<String>() {
+        for part in parts.try_items::<&str>() {
             let part = part?;
             hasher.write_usize(part.len());
             hasher.write(part.as_bytes());

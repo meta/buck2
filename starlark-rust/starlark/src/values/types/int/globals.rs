@@ -26,6 +26,7 @@ use crate::values::float::StarlarkFloat;
 use crate::values::int::int_or_big::StarlarkInt;
 use crate::values::int::pointer_i32::PointerI32;
 use crate::values::int::view::IntView;
+use crate::values::string::StarlarkStr;
 use crate::values::types::num::value::NumRef;
 
 #[starlark_module]
@@ -81,7 +82,7 @@ pub(crate) fn register_int(globals: &mut GlobalsBuilder) {
     #[starlark(as_type = PointerI32, speculative_exec_safe)]
     fn int<'v>(
         #[starlark(require = pos)] a: Option<
-            ValueOf<'v, Either<Either<IntView<'v>, StarlarkFloat>, Either<bool, &'v str>>>,
+            ValueOf<'v, Either<Either<IntView<'v>, StarlarkFloat>, Either<bool, StarlarkStr>>>,
         >,
         base: Option<i32>,
         heap: Heap<'v>,
@@ -94,6 +95,7 @@ pub(crate) fn register_int(globals: &mut GlobalsBuilder) {
             Either::Left(Either::Right(float)) => Either::Left(NumRef::Float(*float.as_ref())),
             Either::Right(Either::Left(b)) => Either::Right(b),
             Either::Right(Either::Right(s)) => {
+                let s = s.as_str();
                 let base = base.unwrap_or(0);
                 if base == 1 || base < 0 || base > 36 {
                     return Err(anyhow::anyhow!(

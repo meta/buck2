@@ -53,6 +53,7 @@ use starlark::values::UnpackValue;
 use starlark::values::Value;
 use starlark::values::dict::DictRef;
 use starlark::values::dict::DictType;
+use starlark::values::string::StarlarkStr;
 
 use crate::actions::impls::produce;
 use crate::actions::impls::write::CommandLineContentBasedInputVisitor;
@@ -68,7 +69,7 @@ enum WriteHmapActionValidationError {
 
 /// Header map entries: include name to `(artifact, path below it)`.
 /// An empty path means the artifact itself.
-pub(crate) type HmapMappings<'v> = DictType<&'v str, (StarlarkArtifactView<'v>, &'v str)>;
+pub(crate) type HmapMappings<'v> = DictType<StarlarkStr, (StarlarkArtifactView<'v>, StarlarkStr)>;
 
 fn for_each_mapping<'v>(
     mappings: Value<'v>,

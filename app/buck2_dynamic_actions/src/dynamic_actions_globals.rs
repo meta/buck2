@@ -25,6 +25,7 @@ use starlark::values::StarlarkTypeExpr;
 use starlark::values::ValueOf;
 use starlark::values::ValueTyped;
 use starlark::values::dict::DictType;
+use starlark::values::string::StarlarkStr;
 use starlark::values::typing::StarlarkCallableChecked;
 
 use crate::attrs::DynamicAttrType;
@@ -43,7 +44,7 @@ pub fn new_dynamic_actions_callable<'v>(
         DynamicActionsCallbackParamSpec,
         DynamicActionsCallbackReturnType,
     >,
-    attrs: ValueOf<'v, DictType<String, StarlarkDynamicAttrType<'v>>>,
+    attrs: ValueOf<'v, DictType<StarlarkStr, StarlarkDynamicAttrType<'v>>>,
     callback_param: &DynamicActionsCallbackParam,
 ) -> buck2_error::Result<DynamicActionsCallable<'v>> {
     if attrs.dict().get_str(callback_param.name.as_str()).is_some() {
@@ -56,7 +57,7 @@ pub fn new_dynamic_actions_callable<'v>(
         .iter()
         .map(|entry| {
             let (name, ty) = entry?;
-            Ok::<_, starlark::Error>((name.get(), ty.ty.clone()))
+            Ok::<_, starlark::Error>((name.as_str().to_owned(), ty.ty.clone()))
         })
         .collect::<starlark::Result<_>>()?;
 
@@ -118,7 +119,7 @@ pub fn register_dynamic_actions(globals: &mut GlobalsBuilder) {
         >,
         #[starlark(require = named)] attrs: ValueOf<
             'v,
-            DictType<String, StarlarkDynamicAttrType<'v>>,
+            DictType<StarlarkStr, StarlarkDynamicAttrType<'v>>,
         >,
         heap: Heap<'v>,
     ) -> starlark::Result<ValueTyped<'v, DynamicActionsCallable<'v>>> {

@@ -58,6 +58,7 @@ use crate::values::dict::DictType;
 use crate::values::layout::heap::name::StarlarkTestHeapName;
 use crate::values::list_or_tuple::ListOrTupleType;
 use crate::values::none::NoneType;
+use crate::values::string::StarlarkStr;
 use crate::values::type_expr::StarlarkTypeExpr;
 use crate::values::types::int::view::IntView;
 
@@ -1049,9 +1050,9 @@ animal("Joe")
         let mut eval = Evaluator::new(&m);
         let ast = AstModule::parse("code.bzl", code.to_owned(), &Dialect::Standard).unwrap();
         let res: Value = eval.eval_module(ast, &globals).unwrap();
-        let animal: SmallMap<String, Value> = ValueOf::<DictType<String, Value>>::new_err(res)
+        let animal: SmallMap<&str, Value> = ValueOf::<DictType<StarlarkStr, Value>>::new_err(res)
             .unwrap()
-            .try_items::<String, Value>()
+            .try_items::<&str, Value>()
             .collect::<crate::Result<_>>()
             .unwrap();
         println!("animal = {animal:?}");

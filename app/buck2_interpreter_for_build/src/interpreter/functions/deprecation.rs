@@ -51,7 +51,7 @@ fn validate_category(category: &str) -> starlark::Result<()> {
 
 fn record_deprecation(
     category: &str,
-    message: String,
+    message: &str,
     owner: &str,
     started: &str,
     stack: bool,
@@ -62,14 +62,14 @@ fn record_deprecation(
     let err = if stack {
         DeprecationError::WithStack {
             category: category.to_owned(),
-            message,
+            message: message.to_owned(),
             call_stack: eval.call_stack().to_string(),
         }
         .into()
     } else {
         DeprecationError::WithoutStack {
             category: category.to_owned(),
-            message,
+            message: message.to_owned(),
         }
         .into()
     };
@@ -122,7 +122,7 @@ pub(crate) fn register_deprecation(builder: &mut GlobalsBuilder) {
     /// ```
     fn deprecation<'v>(
         #[starlark(require = pos)] category: &str,
-        #[starlark(require = pos)] message: String,
+        #[starlark(require = pos)] message: &str,
         #[starlark(require = named)] owner: &str,
         #[starlark(require = named)] started: &str,
         #[starlark(require = named, default = true)] stack: bool,

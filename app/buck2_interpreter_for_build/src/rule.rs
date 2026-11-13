@@ -245,7 +245,7 @@ enum RuleError {
 impl<'v> StarlarkRuleCallable<'v> {
     fn new(
         implementation: RuleImpl<'v>,
-        attrs: ValueOf<'v, DictType<&'v str, StarlarkAttribute>>,
+        attrs: ValueOf<'v, DictType<StarlarkStr, StarlarkAttribute>>,
         cfg: Option<ValueAsTransition>,
         supports_incoming_transition: Option<bool>,
         doc: &str,
@@ -278,7 +278,7 @@ impl<'v> StarlarkRuleCallable<'v> {
             .iter()
             .map(|entry| {
                 let (name, attr) = entry?;
-                Ok((name.get(), attr))
+                Ok((name.get().as_str(), attr))
             })
             .collect::<starlark::Result<Vec<_>>>()?;
 
@@ -380,7 +380,7 @@ impl<'v> StarlarkRuleCallable<'v> {
 
     fn new_anon_impl(
         implementation: RuleImpl<'v>,
-        attrs: ValueOf<'v, DictType<&'v str, StarlarkAttribute>>,
+        attrs: ValueOf<'v, DictType<StarlarkStr, StarlarkAttribute>>,
         doc: &str,
         artifact_promise_mappings: ValueOf<
             'v,
@@ -416,7 +416,7 @@ impl<'v> StarlarkRuleCallable<'v> {
 
     fn new_anon(
         implementation: StarlarkCallable<'v, (Value<'static>,), ListType<Value<'static>>>,
-        attrs: ValueOf<'v, DictType<&'v str, StarlarkAttribute>>,
+        attrs: ValueOf<'v, DictType<StarlarkStr, StarlarkAttribute>>,
         doc: &str,
         artifact_promise_mappings: ValueOf<
             'v,
@@ -442,7 +442,7 @@ impl<'v> StarlarkRuleCallable<'v> {
             (Value<'static>, Value<'static>),
             ListType<Value<'static>>,
         >,
-        attrs: ValueOf<'v, DictType<&'v str, StarlarkAttribute>>,
+        attrs: ValueOf<'v, DictType<StarlarkStr, StarlarkAttribute>>,
         doc: &str,
         artifact_promise_mappings: ValueOf<
             'v,
@@ -1038,7 +1038,7 @@ pub fn register_rule_function(builder: &mut GlobalsBuilder) {
             (AnalysisContextReprLate,),
             Either<ListType<ProviderReprLate>, StarlarkPromise<'static>>,
         >,
-        #[starlark(require = named)] attrs: ValueOf<'v, DictType<&'v str, StarlarkAttribute>>,
+        #[starlark(require = named)] attrs: ValueOf<'v, DictType<StarlarkStr, StarlarkAttribute>>,
         #[starlark(require = named)] cfg: Option<ValueAsTransition<'v>>,
         #[starlark(require = named)] supports_incoming_transition: Option<bool>,
         #[starlark(require = named, default = "")] doc: &str,
@@ -1085,7 +1085,7 @@ pub fn register_rule_function(builder: &mut GlobalsBuilder) {
             (Value<'static>,),
             ListType<Value<'static>>,
         >,
-        #[starlark(require = named)] attrs: ValueOf<'v, DictType<&'v str, StarlarkAttribute>>,
+        #[starlark(require = named)] attrs: ValueOf<'v, DictType<StarlarkStr, StarlarkAttribute>>,
         #[starlark(require = named, default = "")] doc: &str,
         #[starlark(require = named)] artifact_promise_mappings: ValueOf<
             'v,

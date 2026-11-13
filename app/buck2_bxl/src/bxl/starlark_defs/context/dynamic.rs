@@ -58,6 +58,7 @@ use starlark::values::StarlarkTypeExpr;
 use starlark::values::ValueOf;
 use starlark::values::ValueTyped;
 use starlark::values::dict::DictType;
+use starlark::values::string::StarlarkStr;
 use starlark::values::typing::StarlarkCallableChecked;
 
 use crate::bxl::eval::LIMITED_EXECUTOR;
@@ -300,7 +301,7 @@ pub(crate) fn register_dynamic_actions(globals: &mut GlobalsBuilder) {
         >,
         #[starlark(require = named)] attrs: ValueOf<
             'v,
-            DictType<String, StarlarkDynamicAttrType<'v>>,
+            DictType<StarlarkStr, StarlarkDynamicAttrType<'v>>,
         >,
         heap: Heap<'v>,
     ) -> starlark::Result<ValueTyped<'v, DynamicActionsCallable<'v>>> {

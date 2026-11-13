@@ -118,12 +118,12 @@ fn validate_module(builder: &mut GlobalsBuilder) {
         Ok((v.to_value(), repr))
     }
     fn with_either<'v>(
-        v: Either<i32, Either<String, ValueOf<'v, ListType<IntView<'v>>>>>,
+        v: Either<i32, Either<&str, ValueOf<'v, ListType<IntView<'v>>>>>,
     ) -> anyhow::Result<String> {
         match v {
             Either::Left(i) => Ok(i.to_string()),
             Either::Right(nested) => match nested {
-                Either::Left(s) => Ok(s),
+                Either::Left(s) => Ok(s.to_owned()),
                 Either::Right(l) => Ok(l.to_value().to_repr()),
             },
         }

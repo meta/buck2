@@ -56,6 +56,7 @@ use starlark::values::list::ListType;
 use starlark::values::none::NoneOr;
 use starlark::values::none::NoneType;
 use starlark::values::starlark_value;
+use starlark::values::string::StarlarkStr;
 
 #[derive(Debug, buck2_error::Error)]
 #[buck2(tag = Input)]
@@ -227,12 +228,12 @@ pub fn register_command_executor_config(builder: &mut GlobalsBuilder) {
         #[starlark(default = ValueOf::empty_list(), require = named)]
         remote_execution_dependencies: ValueOf<
             'v,
-            ListType<DictType<&'v str, &'v str>>,
+            ListType<DictType<StarlarkStr, StarlarkStr>>,
         >,
         #[starlark(default = ValueOf::empty_list(), require = named)]
         remote_execution_gang_workers: ValueOf<
             'v,
-            ListType<DictType<&'v str, &'v str>>,
+            ListType<DictType<StarlarkStr, StarlarkStr>>,
         >,
         #[starlark(default = NoneType, require = named)] remote_execution_dynamic_image: Value<'v>,
         #[starlark(default = NoneOr::None, require = named)] meta_internal_extra_params: NoneOr<

@@ -25,6 +25,7 @@ use dice::DiceComputations;
 use dupe::Dupe;
 use starlark::values::UnpackValue;
 use starlark::values::ValueOf;
+use starlark::values::string::StarlarkStr;
 
 use crate::bxl::starlark_defs::file_set::StarlarkFileNode;
 
@@ -41,7 +42,7 @@ enum FileExprError {
 /// or a `StarlarkFileNode`
 #[derive(Debug, Display, Clone, UnpackValue)]
 pub(crate) enum FileExpr<'v> {
-    Literal(&'v str),
+    Literal(ValueOf<'v, StarlarkStr>),
     SourceArtifact(StarlarkArtifactView<'v>),
     StarlarkFileNode(ValueOf<'v, StarlarkFileNode>),
 }
@@ -61,6 +62,7 @@ impl<'a> FileExpr<'a> {
     ) -> buck2_error::Result<CellPath> {
         match self {
             FileExpr::Literal(val) => {
+                let val = val.get().as_str();
                 let cell_alias_resolver =
                     dice.get_cell_alias_resolver(cell_instance.name()).await?;
                 match parse_cell_path_as_file_expr_literal(val, &cell_alias_resolver)? {

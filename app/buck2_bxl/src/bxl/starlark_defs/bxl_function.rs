@@ -44,6 +44,7 @@ use starlark::values::ValueOf;
 use starlark::values::ValueTyped;
 use starlark::values::dict::DictType;
 use starlark::values::starlark_value;
+use starlark::values::string::StarlarkStr;
 use starlark::values::typing::StarlarkCallable;
 
 use crate::bxl::eval::CliResolutionCtx;
@@ -56,7 +57,7 @@ use crate::bxl::starlark_defs::cli_args::CliArgValue;
 pub(crate) fn register_bxl_prefixed_main_function(builder: &mut GlobalsBuilder) {
     fn bxl_main<'v>(
         #[starlark(require = named)] r#impl: StarlarkCallable<'v>,
-        #[starlark(require = named)] cli_args: ValueOf<'v, DictType<&'v str, CliArgs>>,
+        #[starlark(require = named)] cli_args: ValueOf<'v, DictType<StarlarkStr, CliArgs>>,
         #[starlark(require = named, default = "")] doc: &str,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<Value<'v>> {
@@ -68,7 +69,7 @@ pub(crate) fn register_bxl_prefixed_main_function(builder: &mut GlobalsBuilder) 
 pub(crate) fn register_bxl_main_function(builder: &mut GlobalsBuilder) {
     fn main<'v>(
         #[starlark(require = named)] r#impl: StarlarkCallable<'v>,
-        #[starlark(require = named)] cli_args: ValueOf<'v, DictType<&'v str, CliArgs>>,
+        #[starlark(require = named)] cli_args: ValueOf<'v, DictType<StarlarkStr, CliArgs>>,
         #[starlark(require = named, default = "")] doc: &str,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<Value<'v>> {
@@ -78,7 +79,7 @@ pub(crate) fn register_bxl_main_function(builder: &mut GlobalsBuilder) {
 
 fn bxl_impl<'v>(
     r#impl: StarlarkCallable<'v>,
-    cli_args: ValueOf<'v, DictType<&'v str, CliArgs>>,
+    cli_args: ValueOf<'v, DictType<StarlarkStr, CliArgs>>,
     doc: &str,
     eval: &mut Evaluator<'v, '_, '_>,
 ) -> starlark::Result<Value<'v>> {
@@ -108,7 +109,7 @@ fn bxl_impl<'v>(
                 short_args.insert(short.to_owned());
             }
         }
-        unresolved_cli_args.insert(arg.get().to_owned(), def.as_ref().clone());
+        unresolved_cli_args.insert(arg.as_str().to_owned(), def.as_ref().clone());
     }
 
     Ok(eval

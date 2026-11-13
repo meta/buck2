@@ -41,6 +41,7 @@ use starlark::values::ValueError;
 use starlark::values::ValueOf;
 use starlark::values::list::ListType;
 use starlark::values::starlark_value;
+use starlark::values::string::StarlarkStr;
 
 use crate::types::cell_path::StarlarkCellPath;
 use crate::types::configuration::StarlarkConfiguration;
@@ -344,21 +345,22 @@ fn configured_label_methods(builder: &mut MethodsBuilder) {
 
 #[derive(UnpackValue)]
 enum SubtargetNameArg<'v> {
-    List(ValueOf<'v, ListType<String>>),
-    Str(&'v str),
+    List(ValueOf<'v, ListType<StarlarkStr>>),
+    Str(ValueOf<'v, StarlarkStr>),
 }
 
 fn value_to_providers_name(subtarget_name: SubtargetNameArg) -> buck2_error::Result<ProvidersName> {
     let subtarget = match subtarget_name {
         SubtargetNameArg::List(list) => list
-            .try_items()
+            .try_items::<&str>()
             .map(|name| {
-                ProviderName::new(name?).buck_error_context("for parameter `subtarget_name`")
+                ProviderName::new(name?.to_owned())
+                    .buck_error_context("for parameter `subtarget_name`")
             })
             .collect::<buck2_error::Result<Vec<_>>>()?,
         SubtargetNameArg::Str(str) => {
             vec![
-                ProviderName::new(str.to_owned())
+                ProviderName::new(str.as_str().to_owned())
                     .buck_error_context("for parameter `subtarget_name`")?,
             ]
         }

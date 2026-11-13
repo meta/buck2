@@ -54,7 +54,7 @@ fn test_starlark_type_repr() {
     assert_eq!(IntView::starlark_type_repr(), JustInt::starlark_type_repr());
 
     assert_eq!(
-        Either::<IntView, String>::starlark_type_repr(),
+        Either::<IntView, StarlarkStr>::starlark_type_repr(),
         IntOrStr::starlark_type_repr()
     );
 

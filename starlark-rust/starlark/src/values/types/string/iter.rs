@@ -33,6 +33,7 @@ use crate::values::StarlarkValue;
 use crate::values::StringValue;
 use crate::values::Value;
 use crate::values::ValueOf;
+use crate::values::string::StarlarkStr;
 use crate::values::types::int::view::IntView;
 use crate::values::typing::iter::StarlarkIter;
 
@@ -59,7 +60,7 @@ starlark_complex_value!(StringIterable);
 pub(crate) fn iterate_chars<'v>(
     string: StringValue<'v>,
     heap: Heap<'v>,
-) -> ValueOf<'v, StarlarkIter<String>> {
+) -> ValueOf<'v, StarlarkIter<StarlarkStr>> {
     ValueOf::new_unchecked(heap.alloc_complex(StringIterable {
         string,
         produce_char: true,

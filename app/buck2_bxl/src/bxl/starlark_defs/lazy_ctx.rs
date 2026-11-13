@@ -29,6 +29,7 @@ use starlark::values::ValueOf;
 use starlark::values::ValueTyped;
 use starlark::values::list::ListType;
 use starlark::values::starlark_value;
+use starlark::values::string::StarlarkStr;
 
 use crate::bxl::starlark_defs::artifacts::LazyBuildArtifact;
 use crate::bxl::starlark_defs::context::BxlContext;
@@ -253,13 +254,17 @@ fn lazy_ctx_methods(builder: &mut MethodsBuilder) {
         target_platform: ValueAsStarlarkTargetLabel<'v>,
         #[starlark(require = named, default = ValueOf::empty_list())] modifiers: ValueOf<
             'v,
-            ListType<String>,
+            ListType<StarlarkStr>,
         >,
         heap: Heap<'v>,
     ) -> starlark::Result<ValueOf<'v, StarlarkLazy>> {
+        let modifiers = modifiers
+            .try_items::<&str>()
+            .map(|s| s.map(str::to_owned))
+            .collect::<starlark::Result<Vec<_>>>()?;
         let global_cfg_options = this
             .ctx
-            .resolve_global_cfg_options(target_platform, modifiers.try_to_vec()?);
+            .resolve_global_cfg_options(target_platform, modifiers);
         let owned = OwnedConfiguredTargetNodeArg::from_ref(expr);
         Ok(ValueOf::alloc(
             heap,
@@ -356,13 +361,17 @@ fn lazy_ctx_methods(builder: &mut MethodsBuilder) {
         target_platform: ValueAsStarlarkTargetLabel<'v>,
         #[starlark(require = named, default = ValueOf::empty_list())] modifiers: ValueOf<
             'v,
-            ListType<String>,
+            ListType<StarlarkStr>,
         >,
         heap: Heap<'v>,
     ) -> starlark::Result<ValueOf<'v, StarlarkLazyCqueryCtx>> {
+        let modifiers = modifiers
+            .try_items::<&str>()
+            .map(|s| s.map(str::to_owned))
+            .collect::<starlark::Result<Vec<_>>>()?;
         let global_cfg_options = this
             .ctx
-            .resolve_global_cfg_options(target_platform, modifiers.try_to_vec()?)?;
+            .resolve_global_cfg_options(target_platform, modifiers)?;
         Ok(ValueOf::alloc(
             heap,
             StarlarkLazyCqueryCtx::new(global_cfg_options),

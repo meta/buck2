@@ -272,7 +272,7 @@ pub(crate) static IMPL_ATTRS_PARAM: ParamNameAndType = ParamNameAndType {
 };
 
 pub(crate) type ImplSingleReturnTy<'v> = PlatformInfo<'v>;
-type ImplSplitReturnTy<'v> = DictType<String, PlatformInfo<'v>>;
+type ImplSplitReturnTy<'v> = DictType<StarlarkStr, PlatformInfo<'v>>;
 
 struct TransitionImplParams;
 

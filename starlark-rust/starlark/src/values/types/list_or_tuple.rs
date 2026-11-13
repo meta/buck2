@@ -73,11 +73,12 @@ mod tests {
     use crate::values::Value;
     use crate::values::ValueOf;
     use crate::values::list_or_tuple::ListOrTupleType;
+    use crate::values::string::StarlarkStr;
 
     #[test]
     fn test_unpack() {
         fn unpack<'v>(v: Value<'v>) -> Option<Vec<&'v str>> {
-            ValueOf::<ListOrTupleType<&'v str>>::new(v).map(|v| v.try_to_vec().unwrap())
+            ValueOf::<ListOrTupleType<StarlarkStr>>::new(v).map(|v| v.try_to_vec::<&str>().unwrap())
         }
         Heap::temp(|heap| {
             assert_eq!(Some(vec!["a", "b"]), unpack(heap.alloc(vec!["a", "b"])));

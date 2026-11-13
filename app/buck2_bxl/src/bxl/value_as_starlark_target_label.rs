@@ -22,11 +22,12 @@ use dupe::Dupe;
 use starlark::values::UnpackValue;
 use starlark::values::ValueOf;
 use starlark::values::none::NoneType;
+use starlark::values::string::StarlarkStr;
 
 #[derive(UnpackValue)]
 pub(crate) enum ValueAsStarlarkTargetLabel<'v> {
     None(NoneType),
-    Str(&'v str),
+    Str(ValueOf<'v, StarlarkStr>),
     TargetLabel(ValueOf<'v, StarlarkTargetLabel>),
 }
 
@@ -44,6 +45,7 @@ impl<'v> ValueAsStarlarkTargetLabel<'v> {
         match self {
             ValueAsStarlarkTargetLabel::None(_) => Ok(default_target_platform),
             ValueAsStarlarkTargetLabel::Str(s) => {
+                let s = s.get().as_str();
                 Ok(Some(
                     ParsedPattern::<TargetPatternExtra>::parse_relaxed(
                         target_alias_resolver,

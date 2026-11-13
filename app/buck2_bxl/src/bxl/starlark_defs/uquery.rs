@@ -37,6 +37,7 @@ use starlark::values::ValueTyped;
 use starlark::values::list::ListType;
 use starlark::values::none::NoneOr;
 use starlark::values::starlark_value;
+use starlark::values::string::StarlarkStr;
 
 use super::file_set::StarlarkFileSet;
 use super::target_list_expr::TargetListExpr;
@@ -648,14 +649,17 @@ fn uquery_methods(builder: &mut MethodsBuilder) {
 
 #[derive(UnpackValue)]
 pub(crate) enum UnpackUnconfiguredQueryArgs<'v> {
-    ListOfStrings(ValueOf<'v, ListType<String>>),
+    ListOfStrings(ValueOf<'v, ListType<StarlarkStr>>),
     TargetSet(ValueOf<'v, StarlarkTargetSet<TargetNode>>),
 }
 
 impl<'v> UnpackUnconfiguredQueryArgs<'v> {
     pub(crate) fn into_strings(self) -> buck2_error::Result<Vec<String>> {
         Ok(match self {
-            UnpackUnconfiguredQueryArgs::ListOfStrings(list) => list.try_to_vec()?,
+            UnpackUnconfiguredQueryArgs::ListOfStrings(list) => list
+                .try_items::<&str>()
+                .map(|s| s.map(str::to_owned))
+                .collect::<starlark::Result<Vec<_>>>()?,
             UnpackUnconfiguredQueryArgs::TargetSet(set) => {
                 // TODO - we really should change eval_query() to handle this, but escaping the unconfigured target label for now
                 // as a quick solution.

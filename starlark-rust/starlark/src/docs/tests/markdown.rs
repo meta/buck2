@@ -46,6 +46,7 @@ use crate::values::ValueOf;
 use crate::values::dict::DictType;
 use crate::values::list::ListType;
 use crate::values::none::NoneType;
+use crate::values::string::StarlarkStr;
 use crate::values::tuple::TupleType;
 use crate::values::types::int::view::IntView;
 
@@ -134,7 +135,7 @@ fn module(builder: &mut GlobalsBuilder) {
     ///
     /// # Returns
     /// The string 'func1'
-    fn func1(foo: String) -> anyhow::Result<String> {
+    fn func1(foo: &str) -> anyhow::Result<String> {
         let _ignore = foo;
         Ok("func1".to_owned())
     }
@@ -171,9 +172,9 @@ fn module(builder: &mut GlobalsBuilder) {
     fn with_defaults<'v>(
         #[starlark(default = ValueOf::empty_list())] explicit_default: ValueOf<
             'v,
-            ListType<String>,
+            ListType<StarlarkStr>,
         >,
-        hidden_default: Option<ValueOf<'v, ListType<String>>>,
+        hidden_default: Option<ValueOf<'v, ListType<StarlarkStr>>>,
         #[starlark(default = "my_default")] string_default: &str,
     ) -> anyhow::Result<NoneType> {
         let _unused = (explicit_default, hidden_default, string_default);
@@ -199,14 +200,14 @@ fn submodule(builder: &mut GlobalsBuilder) {
     }
 
     fn starlark_args<'v>(
-        #[starlark(args)] args: ValueOf<'v, TupleType<String>>,
+        #[starlark(args)] args: ValueOf<'v, TupleType<StarlarkStr>>,
     ) -> anyhow::Result<NoneType> {
         let _ignore = args;
         Ok(NoneType)
     }
 
     fn starlark_kwargs<'v>(
-        #[starlark(kwargs)] kwargs: ValueOf<'v, DictType<String, IntView<'v>>>,
+        #[starlark(kwargs)] kwargs: ValueOf<'v, DictType<StarlarkStr, IntView<'v>>>,
     ) -> anyhow::Result<NoneType> {
         let _ignore = kwargs;
         Ok(NoneType)
@@ -267,7 +268,7 @@ fn object(builder: &mut MethodsBuilder) {
     ///
     /// # Returns
     /// The string 'func1'
-    fn func1<'v>(this: Value<'v>, foo: String) -> anyhow::Result<String> {
+    fn func1<'v>(this: Value<'v>, foo: &str) -> anyhow::Result<String> {
         let _ignore = (this, foo);
         Ok("func1".to_owned())
     }

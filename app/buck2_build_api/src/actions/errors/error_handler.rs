@@ -34,6 +34,7 @@ use starlark::values::list::ListType;
 use starlark::values::list_or_tuple::ListOrTupleType;
 use starlark::values::none::NoneOr;
 use starlark::values::starlark_value;
+use starlark::values::string::StarlarkStr;
 
 use crate::interpreter::rule_defs::artifact::starlark_artifact_like::StarlarkArtifactView;
 use crate::interpreter::rule_defs::artifact::starlark_artifact_value::StarlarkArtifactValue;
@@ -209,33 +210,33 @@ fn action_error_context_methods(builder: &mut MethodsBuilder) {
     /// section.
     fn new_sub_error<'v>(
         #[starlark(this)] _this: &'v StarlarkActionErrorContext,
-        #[starlark(require = named)] category: String,
-        #[starlark(require = named, default = NoneOr::None)] message: NoneOr<String>,
-        #[starlark(require = named, default = NoneOr::None)] file: NoneOr<String>,
+        #[starlark(require = named)] category: &str,
+        #[starlark(require = named, default = NoneOr::None)] message: NoneOr<&str>,
+        #[starlark(require = named, default = NoneOr::None)] file: NoneOr<&str>,
         #[starlark(require = named, default = NoneOr::None)] lnum: NoneOr<u64>,
         #[starlark(require = named, default = NoneOr::None)] end_lnum: NoneOr<u64>,
         #[starlark(require = named, default = NoneOr::None)] col: NoneOr<u64>,
         #[starlark(require = named, default = NoneOr::None)] end_col: NoneOr<u64>,
-        #[starlark(require = named, default = NoneOr::None)] error_type: NoneOr<String>,
+        #[starlark(require = named, default = NoneOr::None)] error_type: NoneOr<&str>,
         #[starlark(require = named, default = NoneOr::None)] error_number: NoneOr<u64>,
         #[starlark(require = named, default = false)] show_in_stderr: bool,
-        #[starlark(require = named, default = NoneOr::None)] subcategory: NoneOr<String>,
-        #[starlark(require = named, default = NoneOr::None)] remediation: NoneOr<String>,
+        #[starlark(require = named, default = NoneOr::None)] subcategory: NoneOr<&str>,
+        #[starlark(require = named, default = NoneOr::None)] remediation: NoneOr<&str>,
         heap: Heap<'v>,
     ) -> starlark::Result<ValueOf<'v, StarlarkActionSubError>> {
         let sub_error = StarlarkActionSubError {
-            category: RefCell::new(category),
-            message: message.into_option(),
-            file: file.into_option(),
+            category: RefCell::new(category.to_owned()),
+            message: message.into_option().map(str::to_owned),
+            file: file.into_option().map(str::to_owned),
             lnum: lnum.into_option(),
             end_lnum: end_lnum.into_option(),
             col: col.into_option(),
             end_col: end_col.into_option(),
-            error_type: error_type.into_option(),
+            error_type: error_type.into_option().map(str::to_owned),
             error_number: error_number.into_option(),
             show_in_stderr: RefCell::new(show_in_stderr),
-            subcategory: RefCell::new(subcategory.into_option()),
-            remediation: RefCell::new(remediation.into_option()),
+            subcategory: RefCell::new(subcategory.into_option().map(str::to_owned)),
+            remediation: RefCell::new(remediation.into_option().map(str::to_owned)),
         };
         Ok(ValueOf::alloc(heap, sub_error))
     }
@@ -258,21 +259,26 @@ fn action_error_context_methods(builder: &mut MethodsBuilder) {
     /// file locations when successfully parsed from the error text.
     fn parse_with_errorformat<'v>(
         #[starlark(this)] _this: &'v StarlarkActionErrorContext,
-        #[starlark(require = named)] category: String,
-        #[starlark(require = named)] error: String,
-        #[starlark(require = named)] errorformats: ValueOf<'v, ListOrTupleType<String>>,
+        #[starlark(require = named)] category: &str,
+        #[starlark(require = named)] error: &str,
+        #[starlark(require = named)] errorformats: ValueOf<'v, ListOrTupleType<StarlarkStr>>,
         heap: Heap<'v>,
     ) -> starlark::Result<Vec<ValueOf<'v, StarlarkActionSubError>>> {
-        let error_lines = buck2_errorformat::split_lines(&error);
-        let error_entries =
-            buck2_errorformat::parse_error_format(errorformats.try_to_vec()?, error_lines)
-                .map_err(buck2_error::Error::from)?;
+        let error_lines = buck2_errorformat::split_lines(error);
+        let error_entries = buck2_errorformat::parse_error_format(
+            errorformats
+                .try_items::<&str>()
+                .map(|s| s.map(str::to_owned))
+                .collect::<starlark::Result<_>>()?,
+            error_lines,
+        )
+        .map_err(buck2_error::Error::from)?;
         let res = error_entries
             .into_iter()
             .map(|e| {
                 ValueOf::alloc(
                     heap,
-                    StarlarkActionSubError::from_errorformat_entry(e, category.clone()),
+                    StarlarkActionSubError::from_errorformat_entry(e, category.to_owned()),
                 )
             })
             .collect();

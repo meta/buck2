@@ -62,7 +62,7 @@ impl<'v> StarlarkValue<'v> for StarlarkRequiredTestLocalResource {
 pub fn register_required_test_local_resource(builder: &mut GlobalsBuilder) {
     #[starlark(as_type = StarlarkRequiredTestLocalResource)]
     fn RequiredTestLocalResource<'v>(
-        #[starlark(require = pos)] name: String,
+        #[starlark(require = pos)] name: &str,
         #[starlark(require = named, default = true)] listing: bool,
         #[starlark(require = named, default = true)] execution: bool,
         heap: Heap<'v>,
@@ -76,7 +76,7 @@ pub fn register_required_test_local_resource(builder: &mut GlobalsBuilder) {
         Ok(ValueOf::alloc(
             heap,
             StarlarkRequiredTestLocalResource {
-                name,
+                name: name.to_owned(),
                 listing,
                 execution,
             },

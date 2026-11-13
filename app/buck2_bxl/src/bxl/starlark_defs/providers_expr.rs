@@ -30,6 +30,7 @@ use itertools::Either;
 use starlark::values::UnpackValue;
 use starlark::values::ValueOf;
 use starlark::values::list::ListType;
+use starlark::values::string::StarlarkStr;
 
 use crate::bxl::starlark_defs::context::BxlContext;
 use crate::bxl::starlark_defs::nodes::configured::StarlarkConfiguredTargetNode;
@@ -48,7 +49,7 @@ pub(crate) enum ProvidersExpr<P: ProvidersLabelMaybeConfigured> {
 /// an unconfigured provider label
 #[derive(UnpackValue)]
 pub(crate) enum ProvidersLabelArg<'v> {
-    Str(&'v str),
+    Str(ValueOf<'v, StarlarkStr>),
     StarlarkTargetLabel(ValueOf<'v, StarlarkTargetLabel>),
     StarlarkProvidersLabel(ValueOf<'v, StarlarkProvidersLabel>),
     StarlarkTargetNode(ValueOf<'v, StarlarkTargetNode>),
@@ -281,6 +282,7 @@ impl<P: ProvidersLabelMaybeConfigured> ProvidersExpr<P> {
     ) -> buck2_error::Result<ProvidersLabel> {
         match arg {
             ProvidersLabelArg::Str(s) => {
+                let s = s.get().as_str();
                 Ok(ParsedPattern::<ProvidersPatternExtra>::parse_relaxed(
                     ctx.target_alias_resolver(),
                     // TODO(nga): Parse relaxed relative to cell root is incorrect.

@@ -26,6 +26,7 @@ use starlark::values::ValueOf;
 use starlark::values::list_or_tuple::ListOrTupleType;
 use starlark::values::none::NoneOr;
 use starlark::values::starlark_value;
+use starlark::values::string::StarlarkStr;
 
 use crate::bxl::starlark_defs::lazy_ctx::operation::StarlarkLazy;
 use crate::bxl::starlark_defs::lazy_ctx::operation::cquery::LazyCqueryOperation;
@@ -94,7 +95,7 @@ fn lazy_cquery_methods(builder: &mut MethodsBuilder) {
             UnpackUnconfiguredQueryArgs<'v>,
         >,
         #[starlark(require = named, default = NoneOr::None)] target_universe: NoneOr<
-            ValueOf<'v, ListOrTupleType<String>>,
+            ValueOf<'v, ListOrTupleType<StarlarkStr>>,
         >,
         heap: Heap<'v>,
     ) -> starlark::Result<ValueOf<'v, StarlarkLazy>> {
@@ -104,7 +105,11 @@ fn lazy_cquery_methods(builder: &mut MethodsBuilder) {
         };
         let target_universe = target_universe
             .into_option()
-            .map(|list| list.try_to_vec())
+            .map(|list| {
+                list.try_items::<&str>()
+                    .map(|s| s.map(str::to_owned))
+                    .collect::<starlark::Result<Vec<_>>>()
+            })
             .transpose()?;
         let op = LazyCqueryOperation::new_eval(
             this.global_cfg_options_override.dupe(),

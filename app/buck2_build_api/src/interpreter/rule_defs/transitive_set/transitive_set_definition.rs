@@ -51,6 +51,7 @@ use starlark::values::ValueTyped;
 use starlark::values::dict::DictType;
 use starlark::values::list::ListType;
 use starlark::values::starlark_value;
+use starlark::values::string::StarlarkStr;
 use starlark::values::typing::StarlarkCallableChecked;
 use starlark::values::typing::TypeInstanceId;
 use starlark::values::typing::TypeMatcherFactory;
@@ -449,13 +450,13 @@ impl<'v> TransitiveSetDefinitionLike<'v> for FrozenTransitiveSetDefinition<'v> {
 pub fn register_transitive_set(builder: &mut GlobalsBuilder) {
     fn transitive_set<'v>(
         #[starlark(require = named)] args_projections: Option<
-            ValueOf<'v, DictType<String, Projection<'v>>>,
+            ValueOf<'v, DictType<StarlarkStr, Projection<'v>>>,
         >,
         #[starlark(require = named)] json_projections: Option<
-            ValueOf<'v, DictType<String, Projection<'v>>>,
+            ValueOf<'v, DictType<StarlarkStr, Projection<'v>>>,
         >,
         #[starlark(require = named)] reductions: Option<
-            ValueOf<'v, DictType<String, Reduction<'v>>>,
+            ValueOf<'v, DictType<StarlarkStr, Reduction<'v>>>,
         >,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<ValueTyped<'v, TransitiveSetDefinition<'v>>> {
@@ -465,7 +466,7 @@ pub fn register_transitive_set(builder: &mut GlobalsBuilder) {
             .map(|entry| {
                 let (k, v) = entry?;
                 Ok::<_, starlark::Error>((
-                    k.get(),
+                    k.as_str().to_owned(),
                     TransitiveSetProjectionSpec {
                         kind: TransitiveSetProjectionKind::Args,
                         projection: v,
@@ -479,7 +480,7 @@ pub fn register_transitive_set(builder: &mut GlobalsBuilder) {
                     .map(|entry| {
                         let (k, v) = entry?;
                         Ok::<_, starlark::Error>((
-                            k.get(),
+                            k.as_str().to_owned(),
                             TransitiveSetProjectionSpec {
                                 kind: TransitiveSetProjectionKind::Json,
                                 projection: v,
@@ -494,7 +495,7 @@ pub fn register_transitive_set(builder: &mut GlobalsBuilder) {
                 .iter()
                 .map(|entry| {
                     let (k, v) = entry?;
-                    Ok::<_, starlark::Error>((k.get(), v))
+                    Ok::<_, starlark::Error>((k.as_str().to_owned(), v))
                 })
                 .collect::<starlark::Result<_>>()?,
             None => BuckMutInsertionMap::new(),

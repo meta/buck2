@@ -101,8 +101,8 @@ fn rsplitn_whitespace(s: &str, maxsplit: usize) -> Vec<String> {
 
 #[derive(UnpackValue)]
 enum StringOrTuple<'v> {
-    String(&'v str),
-    Tuple(ValueOf<'v, TupleType<&'v str>>),
+    String(ValueOf<'v, StarlarkStr>),
+    Tuple(ValueOf<'v, TupleType<StarlarkStr>>),
 }
 
 /// A letter with a case: upper, lower, or titlecase such as `ǅ`, which is neither but maps to
@@ -168,7 +168,7 @@ pub(crate) fn string_methods(builder: &mut MethodsBuilder) {
     fn elems<'v>(
         this: StringValue<'v>,
         heap: Heap<'v>,
-    ) -> anyhow::Result<ValueOf<'v, StarlarkIter<String>>> {
+    ) -> anyhow::Result<ValueOf<'v, StarlarkIter<StarlarkStr>>> {
         Ok(iterate_chars(this, heap))
     }
 
@@ -287,8 +287,8 @@ pub(crate) fn string_methods(builder: &mut MethodsBuilder) {
             None => return Ok(false),
         };
         match suffix {
-            StringOrTuple::String(x) => Ok(haystack.ends_with(x)),
-            StringOrTuple::Tuple(xs) => Ok(xs.items().any(|x| haystack.ends_with(x))),
+            StringOrTuple::String(x) => Ok(haystack.ends_with(x.as_str())),
+            StringOrTuple::Tuple(xs) => Ok(xs.items().any(|x| haystack.ends_with(x.as_str()))),
         }
     }
 
@@ -676,7 +676,7 @@ pub(crate) fn string_methods(builder: &mut MethodsBuilder) {
     #[starlark(speculative_exec_safe)]
     fn join<'v>(
         this: &str,
-        #[starlark(require = pos)] to_join: ValueOf<'v, StarlarkIter<String>>,
+        #[starlark(require = pos)] to_join: ValueOf<'v, StarlarkIter<StarlarkStr>>,
         heap: Heap<'v>,
     ) -> starlark::Result<StringValue<'v>> {
         #[inline(always)]
@@ -1221,8 +1221,8 @@ pub(crate) fn string_methods(builder: &mut MethodsBuilder) {
             None => return Ok(false),
         };
         match prefix {
-            StringOrTuple::String(x) => Ok(haystack.starts_with(x)),
-            StringOrTuple::Tuple(xs) => Ok(xs.items().any(|x| haystack.starts_with(x))),
+            StringOrTuple::String(x) => Ok(haystack.starts_with(x.as_str())),
+            StringOrTuple::Tuple(xs) => Ok(xs.items().any(|x| haystack.starts_with(x.as_str()))),
         }
     }
 

@@ -9,6 +9,8 @@
  */
 
 use starlark::values::UnpackValue;
+use starlark::values::ValueOf;
+use starlark::values::string::StarlarkStr;
 
 use crate::interpreter::rule_defs::artifact::starlark_artifact_like::StarlarkArtifactView;
 use crate::interpreter::rule_defs::artifact::starlark_output_artifact::StarlarkOutputArtifactView;
@@ -18,7 +20,7 @@ use crate::interpreter::rule_defs::artifact::starlark_output_artifact::StarlarkO
 /// so that the error can say that the artifact is bound rather than that it has the wrong type.
 #[derive(UnpackValue)]
 pub enum OutputArtifactArg<'v> {
-    Str(&'v str),
+    Str(ValueOf<'v, StarlarkStr>),
     OutputArtifact(StarlarkOutputArtifactView<'v>),
     Artifact(StarlarkArtifactView<'v>),
 }

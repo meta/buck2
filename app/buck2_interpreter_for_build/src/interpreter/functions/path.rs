@@ -51,17 +51,17 @@ pub(crate) fn register_path(builder: &mut GlobalsBuilder) {
     /// Currently `glob` is evaluated case-insensitively on all file systems, but we expect
     /// that to change to case sensitive in the near future.
     fn glob<'v>(
-        include: ValueOf<'v, ListOrTupleType<String>>,
+        include: ValueOf<'v, ListOrTupleType<StarlarkStr>>,
         #[starlark(require = named, default = ValueOf::empty_list())] exclude: ValueOf<
             'v,
-            ListOrTupleType<String>,
+            ListOrTupleType<StarlarkStr>,
         >,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<ValueOf<'v, ListType<StarlarkStr>>> {
         let extra = ModuleInternals::from_context(eval, "glob")?;
         let spec = GlobSpec::new(
-            &include.try_to_vec::<String>()?,
-            &exclude.try_to_vec::<String>()?,
+            &include.try_to_vec::<&str>()?,
+            &exclude.try_to_vec::<&str>()?,
         )?;
         let heap = eval.heap();
         let res = extra

@@ -30,11 +30,13 @@ use either::Either;
 use starlark::environment::GlobalsBuilder;
 use starlark::eval::Evaluator;
 use starlark::starlark_module;
+use starlark::values::StringValue;
 use starlark::values::ValueOf;
 use starlark::values::ValueTyped;
 use starlark::values::list_or_tuple::ListOrTupleType;
 use starlark::values::none::NoneOr;
 use starlark::values::none::NoneType;
+use starlark::values::string::StarlarkStr;
 
 use crate::interpreter::build_context::BuildContext;
 use crate::super_package::eval_ctx::PackageFileEvalCtx;
@@ -268,14 +270,14 @@ pub(crate) fn register_package_function(globals: &mut GlobalsBuilder) {
     fn package<'v>(
         #[starlark(require=named, default=false)] inherit: bool,
         #[starlark(require=named, default=NoneOr::None)] visibility: NoneOr<
-            ValueOf<'v, ListOrTupleType<Either<&'v str, StarlarkTargetNameGlob>>>,
+            ValueOf<'v, ListOrTupleType<Either<StarlarkStr, StarlarkTargetNameGlob>>>,
         >,
         #[starlark(require=named, default=ValueOf::empty_list())] within_view: ValueOf<
             'v,
-            ListOrTupleType<Either<&'v str, StarlarkTargetNameGlob>>,
+            ListOrTupleType<Either<StarlarkStr, StarlarkTargetNameGlob>>,
         >,
         #[starlark(require=named, default=ValueOf::empty_list())]
-        visibility_exempt_targets: ValueOf<'v, ListOrTupleType<&'v str>>,
+        visibility_exempt_targets: ValueOf<'v, ListOrTupleType<StarlarkStr>>,
         eval: &mut Evaluator,
     ) -> starlark::Result<NoneType> {
         let build_context = BuildContext::from_context(eval)?;
@@ -287,15 +289,15 @@ pub(crate) fn register_package_function(globals: &mut GlobalsBuilder) {
             .into_option()
             .map(|v| {
                 v.iter()
-                    .map(|p| Ok(p?.get()))
+                    .map(|p| Ok(p?.get().map_left(StringValue::as_str)))
                     .collect::<starlark::Result<Vec<_>>>()
             })
             .transpose()?;
         let within_view = within_view
             .iter()
-            .map(|p| Ok(p?.get()))
+            .map(|p| Ok(p?.get().map_left(StringValue::as_str)))
             .collect::<starlark::Result<Vec<_>>>()?;
-        let visibility_exempt_targets = visibility_exempt_targets.try_to_vec()?;
+        let visibility_exempt_targets = visibility_exempt_targets.try_to_vec::<&str>()?;
         // Validated regardless of `package_visibility.default_intersection`, so an
         // emergency enforce-to-off flip cannot turn valid PACKAGE files into errors.
         if visibility_provided.is_none() && !visibility_exempt_targets.is_empty() {

@@ -616,7 +616,7 @@ fn attr_module(registry: &mut GlobalsBuilder) {
     /// Takes a string from one of the variants given, and gives that string to the rule.
     /// Strings are matched case-insensitively, and always passed to the rule lowercase.
     fn r#enum<'v>(
-        #[starlark(require = pos)] variants: ValueOf<'v, ListOrTupleType<String>>,
+        #[starlark(require = pos)] variants: ValueOf<'v, ListOrTupleType<StarlarkStr>>,
         #[starlark(require = named)] default: Option<
             ValueOf<'v, Either<StarlarkStr, StarlarkSelector<'v>>>,
         >,
@@ -632,7 +632,12 @@ fn attr_module(registry: &mut GlobalsBuilder) {
                 eval,
                 default.map(|v| v.to_value()),
                 doc,
-                AttrType::enumeration(variants.try_to_vec()?)?,
+                AttrType::enumeration(
+                    variants
+                        .try_items::<&str>()
+                        .map(|s| s.map(str::to_owned))
+                        .collect::<starlark::Result<_>>()?,
+                )?,
                 ToolMarks::NONE,
             )?,
         ))

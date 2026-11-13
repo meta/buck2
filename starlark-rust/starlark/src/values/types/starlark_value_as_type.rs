@@ -337,8 +337,8 @@ mod tests {
     #[starlark_module]
     #[starlark_types(StarlarkCompilerArgs as CompilerArgs)]
     fn compiler_args_globals(globals: &mut GlobalsBuilder) {
-        fn compiler_args(x: String) -> anyhow::Result<StarlarkCompilerArgs> {
-            Ok(tests::StarlarkCompilerArgs(x))
+        fn compiler_args(x: &str) -> anyhow::Result<StarlarkCompilerArgs> {
+            Ok(tests::StarlarkCompilerArgs(x.to_owned()))
         }
     }
 

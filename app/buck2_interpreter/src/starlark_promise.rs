@@ -346,14 +346,14 @@ mod tests {
     #[starlark_module]
     fn helpers(builder: &mut GlobalsBuilder) {
         fn promise_unresolved<'v>(
-            name: String,
+            name: &str,
             eval: &mut Evaluator<'v, '_, '_>,
         ) -> starlark::Result<ValueTyped<'v, StarlarkPromise<'v>>> {
             let promises = get_promises(eval.module());
             let promise = eval
                 .heap()
                 .alloc_representation(StarlarkPromise::new_unresolved());
-            promises.0.borrow_mut().push((name, promise));
+            promises.0.borrow_mut().push((name.to_owned(), promise));
             Ok(promise)
         }
 

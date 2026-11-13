@@ -32,6 +32,7 @@ use starlark::values::int::IntView;
 use starlark::values::list::ListType;
 use starlark::values::none::NoneType;
 use starlark::values::record::Record;
+use starlark::values::string::StarlarkStr;
 use starlark::values::structs::StructRef;
 use starlark::values::tuple::TupleType;
 
@@ -129,7 +130,7 @@ pub enum JsonArtifact<'v> {
 #[derive(UnpackValue)]
 pub enum JsonUnpack<'v> {
     None(NoneType),
-    String(&'v str),
+    String(ValueOf<'v, StarlarkStr>),
     Number(ValueOf<'v, IntView<'v>>),
     Bool(bool),
     List(ValueOf<'v, ListType<Value<'v>>>),
@@ -161,7 +162,7 @@ impl<'a, 'v> Serialize for SerializeValue<'a, 'v> {
         err(check_stack_overflow())?;
         match &self.value {
             JsonUnpack::None(_) => serializer.serialize_none(),
-            JsonUnpack::String(x) => serializer.serialize_str(x),
+            JsonUnpack::String(x) => serializer.serialize_str(x.as_str()),
             JsonUnpack::Number(x) => serializer
                 .serialize_i64(err(i64::unpack_value_err(x.to_value()).map_err(Into::into))?),
             JsonUnpack::Bool(x) => serializer.serialize_bool(*x),

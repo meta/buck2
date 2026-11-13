@@ -211,7 +211,7 @@ impl<'v> AnalysisRegistry<'v> {
             OutputArtifactArg::Str(path) => {
                 let artifact = self.declare_output(
                     None,
-                    path,
+                    path.as_str(),
                     output_type,
                     declaration_location.dupe(),
                     match has_content_based_path {

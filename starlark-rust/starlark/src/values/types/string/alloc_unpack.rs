@@ -25,6 +25,7 @@ use crate::values::FrozenHeap;
 use crate::values::Heap;
 use crate::values::UnpackValue;
 use crate::values::ValueOf;
+use crate::values::ValueTyped;
 use crate::values::string::str_type::StarlarkStr;
 
 impl<'fv> AllocFrozenValue<'fv> for String {
@@ -76,21 +77,14 @@ impl<'v> AllocValue<'v> for &'_ str {
 }
 
 impl<'v> UnpackValue<'v> for &'v str {
-    type Type = &'v str;
+    type Type = StarlarkStr;
     type Error = Infallible;
 
     #[inline]
-    fn unpack(_value: ValueOf<'v, &'v str>, get: &'v str) -> Result<Self, Infallible> {
-        Ok(get)
-    }
-}
-
-impl<'v> UnpackValue<'v> for String {
-    type Type = String;
-    type Error = Infallible;
-
-    #[inline]
-    fn unpack(_value: ValueOf<'v, String>, get: String) -> Result<Self, Infallible> {
-        Ok(get)
+    fn unpack(
+        _value: ValueOf<'v, StarlarkStr>,
+        get: ValueTyped<'v, StarlarkStr>,
+    ) -> Result<Self, Infallible> {
+        Ok(get.as_ref().as_str())
     }
 }

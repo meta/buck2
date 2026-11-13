@@ -272,11 +272,13 @@ pub(crate) fn analysis_actions_methods_run(methods: &mut MethodsBuilder) {
         #[starlark(require = named, default = false)] always_print_stderr: bool,
         #[starlark(require = named)] weight: Option<u32>,
         #[starlark(require = named)] weight_percentage: Option<u32>,
-        #[starlark(require = named)] dep_files: Option<ValueOf<'v, DictType<&'v str, ArtifactTag>>>,
+        #[starlark(require = named)] dep_files: Option<
+            ValueOf<'v, DictType<StarlarkStr, ArtifactTag>>,
+        >,
         #[starlark(require = named, default = ValueOf::empty_list())]
         dep_file_fingerprints: ValueOf<'v, ListOrTupleType<StarlarkDepFileFingerprint<'v>>>,
-        #[starlark(require = named)] metadata_env_var: Option<String>,
-        #[starlark(require = named)] metadata_path: Option<String>,
+        #[starlark(require = named)] metadata_env_var: Option<&str>,
+        #[starlark(require = named)] metadata_path: Option<&str>,
         #[starlark(require = named, default = ValueOf::empty_list())]
         incremental_metadata_ignore_tags: ValueOf<'v, ListOrTupleType<ArtifactTag>>,
         // TODO(scottcao): Refactor `no_outputs_cleanup` to `outputs_cleanup`
@@ -297,11 +299,11 @@ pub(crate) fn analysis_actions_methods_run(methods: &mut MethodsBuilder) {
         #[starlark(require = named, default = ValueOf::empty_list())]
         remote_execution_dependencies: ValueOf<
             'v,
-            ListType<DictType<&'v str, &'v str>>,
+            ListType<DictType<StarlarkStr, StarlarkStr>>,
         >,
         #[starlark(require = named, default = ValueOf::empty_list())] re_gang_workers: ValueOf<
             'v,
-            ListType<DictType<&'v str, &'v str>>,
+            ListType<DictType<StarlarkStr, StarlarkStr>>,
         >,
         #[starlark(default = NoneType, require = named)] remote_execution_dynamic_image: Value<'v>,
         #[starlark(require = named, default = NoneOr::None)] timeout_seconds: NoneOr<u32>,
@@ -339,7 +341,7 @@ pub(crate) fn analysis_actions_methods_run(methods: &mut MethodsBuilder) {
 
         impl<'v> RunCommandArtifactVisitor<'v> {
             fn new(
-                dep_files: Option<ValueOf<'v, DictType<&'v str, ArtifactTag>>>,
+                dep_files: Option<ValueOf<'v, DictType<StarlarkStr, ArtifactTag>>>,
             ) -> buck2_error::Result<Self> {
                 let dep_file_artifact_tags = if let Some(dep_files) = dep_files {
                     let mut tags = BuckMutInsertionSet::with_capacity(dep_files.dict().len());
@@ -506,7 +508,7 @@ pub(crate) fn analysis_actions_methods_run(methods: &mut MethodsBuilder) {
         if let Some(dep_files) = dep_files {
             for entry in dep_files.iter() {
                 let (key, tag) = entry?;
-                let key = key.get();
+                let key = key.get().as_str();
                 let tag = tag.as_ref();
                 let tagged = tagged_outputs.get(tag);
                 let count = tagged.map_or(0, |t| t.len());
@@ -553,10 +555,10 @@ pub(crate) fn analysis_actions_methods_run(methods: &mut MethodsBuilder) {
 
         let metadata_param = match (metadata_env_var, metadata_path) {
             (Some(env_var), Some(path)) => {
-                let path: ForwardRelativePathBuf = path.try_into()?;
+                let path: ForwardRelativePathBuf = path.to_owned().try_into()?;
                 this.state()?.claim_output_path(eval, &path)?;
                 buck2_error::Ok(Some(Box::new(MetadataParameter {
-                    env_var,
+                    env_var: env_var.to_owned(),
                     path,
                     ignore_tags: incremental_metadata_ignore_tags
                         .iter()

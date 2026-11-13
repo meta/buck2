@@ -47,6 +47,7 @@ use starlark::values::Value;
 use starlark::values::ValueOf;
 use starlark::values::none::NoneOr;
 use starlark::values::starlark_value;
+use starlark::values::string::StarlarkStr;
 
 use crate::bxl::unconfigured_attribute::ref_to_value;
 
@@ -97,7 +98,7 @@ enum SelectDictKeyArg<'v> {
     #[display("{}", _0)]
     Label(ValueOf<'v, StarlarkProvidersLabel>),
     #[display("{}", _0)]
-    Str(&'v str),
+    Str(ValueOf<'v, StarlarkStr>),
 }
 
 impl StarlarkSelectDict {
@@ -129,6 +130,7 @@ impl StarlarkSelectDict {
                 .find(|(k, _)| *k == label.label())
                 .map(|(_, v)| v),
             SelectDictKeyArg::Str(key) => {
+                let key = key.get().as_str();
                 if key == CoercedSelectorKeyRef::DEFAULT_KEY_STR {
                     default
                 } else {

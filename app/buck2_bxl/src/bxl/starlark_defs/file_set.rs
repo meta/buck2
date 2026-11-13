@@ -37,6 +37,7 @@ use starlark::values::ValueError;
 use starlark::values::ValueOf;
 use starlark::values::list_or_tuple::ListOrTupleType;
 use starlark::values::starlark_value;
+use starlark::values::string::StarlarkStr;
 
 use crate::bxl::starlark_defs::context::BxlContext;
 use crate::bxl::starlark_defs::context::BxlContextCoreData;
@@ -47,8 +48,8 @@ use crate::bxl::starlark_defs::context::BxlContextCoreData;
 /// bxl functions that return them).
 #[derive(UnpackValue)]
 pub(crate) enum FileSetExpr<'v> {
-    Literal(&'v str),
-    Literals(ValueOf<'v, ListOrTupleType<&'v str>>),
+    Literal(ValueOf<'v, StarlarkStr>),
+    Literals(ValueOf<'v, ListOrTupleType<StarlarkStr>>),
     FileSet(ValueOf<'v, StarlarkFileSet>),
 }
 
@@ -56,11 +57,11 @@ impl<'a> FileSetExpr<'a> {
     pub(crate) async fn get(self, bxl: &BxlContext<'_>) -> buck2_error::Result<Cow<'a, FileSet>> {
         let set = match self {
             FileSetExpr::Literal(val) => Cow::Owned(FileSet::from_iter([FileNode(
-                bxl.parse_query_file_literal(val)?,
+                bxl.parse_query_file_literal(val.as_str())?,
             )])),
             FileSetExpr::Literals(val) => {
                 let mut file_set = FileSet::new(BuckMutInsertionSet::default());
-                for arg in val.try_items() {
+                for arg in val.try_items::<&str>() {
                     file_set.insert(FileNode(bxl.parse_query_file_literal(arg?)?));
                 }
                 Cow::Owned(file_set)
@@ -81,11 +82,11 @@ pub(crate) enum OwnedFileSetExpr {
 impl OwnedFileSetExpr {
     pub(crate) fn from_ref(expr: &FileSetExpr) -> buck2_error::Result<Self> {
         Ok(match expr {
-            FileSetExpr::Literal(val) => Self::Literal(val.to_string()),
+            FileSetExpr::Literal(val) => Self::Literal(val.as_str().to_owned()),
             FileSetExpr::Literals(val) => Self::Literals(
                 val.try_items::<&str>()
-                    .map(|s| buck2_error::Ok(s?.to_owned()))
-                    .collect::<buck2_error::Result<_>>()?,
+                    .map(|s| s.map(str::to_owned))
+                    .collect::<starlark::Result<_>>()?,
             ),
             FileSetExpr::FileSet(val) => Self::FileSet(val.0.clone()),
         })

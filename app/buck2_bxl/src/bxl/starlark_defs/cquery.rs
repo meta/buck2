@@ -35,6 +35,7 @@ use starlark::values::ValueTyped;
 use starlark::values::list_or_tuple::ListOrTupleType;
 use starlark::values::none::NoneOr;
 use starlark::values::starlark_value;
+use starlark::values::string::StarlarkStr;
 
 use crate::bxl::starlark_defs::context::BxlContext;
 use crate::bxl::starlark_defs::file_set::FileSetExpr;
@@ -554,7 +555,7 @@ fn cquery_methods(builder: &mut MethodsBuilder) {
         query: &'v str,
         #[starlark(default = NoneOr::None)] query_args: NoneOr<UnpackUnconfiguredQueryArgs<'v>>,
         #[starlark(default = NoneOr::None)] target_universe: NoneOr<
-            ValueOf<'v, ListOrTupleType<String>>,
+            ValueOf<'v, ListOrTupleType<StarlarkStr>>,
         >,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<Value<'v>> {
@@ -565,7 +566,11 @@ fn cquery_methods(builder: &mut MethodsBuilder) {
 
         let target_universe = target_universe
             .into_option()
-            .map(|v| v.try_to_vec())
+            .map(|v| {
+                v.try_items::<&str>()
+                    .map(|s| s.map(str::to_owned))
+                    .collect::<starlark::Result<Vec<_>>>()
+            })
             .transpose()?;
         let heap = eval.heap();
 

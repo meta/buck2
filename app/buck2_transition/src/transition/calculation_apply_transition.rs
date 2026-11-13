@@ -52,6 +52,7 @@ use starlark::values::UnpackValue;
 use starlark::values::Value;
 use starlark::values::ValueOf;
 use starlark::values::dict::DictType;
+use starlark::values::string::StarlarkStr;
 use starlark::values::structs::AllocStruct;
 
 use crate::transition::calculation_fetch_transition::FetchTransition;
@@ -118,13 +119,13 @@ fn call_transition_function<'v>(
         .eval_function(impl_, &[], &args)
         .map_err(buck2_error::Error::from)?;
     if transition.is_split() {
-        match ValueOf::<DictType<&str, PlatformInfo>>::new(new_platforms) {
+        match ValueOf::<DictType<StarlarkStr, PlatformInfo>>::new(new_platforms) {
             Some(dict) => {
                 let mut split = BuckMutInsertionMap::new();
                 for entry in dict.iter() {
                     let (k, v) = entry?;
                     let prev = split.insert(
-                        k.get().to_owned(),
+                        k.as_str().to_owned(),
                         v.get().to_configuration(conf.exec_marking().dupe())?,
                     );
                     assert!(prev.is_none());

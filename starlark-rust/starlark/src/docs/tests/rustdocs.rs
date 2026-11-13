@@ -44,6 +44,7 @@ use crate::values::ValueTyped;
 use crate::values::dict::DictType;
 use crate::values::list::ListType;
 use crate::values::none::NoneType;
+use crate::values::string::StarlarkStr;
 use crate::values::tuple::TupleType;
 use crate::values::types::int::view::IntView;
 
@@ -81,8 +82,8 @@ fn globals(builder: &mut GlobalsBuilder) {
     fn simple<'v>(
         arg_int: i32,
         arg_bool: bool,
-        arg_vec: ValueOf<'v, ListType<&'v str>>,
-        arg_dict: ValueOf<'v, DictType<String, (bool, IntView<'v>)>>,
+        arg_vec: ValueOf<'v, ListType<StarlarkStr>>,
+        arg_dict: ValueOf<'v, DictType<StarlarkStr, (bool, IntView<'v>)>>,
     ) -> anyhow::Result<NoneType> {
         unimplemented!()
     }
@@ -192,7 +193,7 @@ fn object(builder: &mut MethodsBuilder) {
     ///
     /// # Returns
     /// The string 'func1'
-    fn func1<'v>(this: Value<'v>, foo: String) -> anyhow::Result<String> {
+    fn func1<'v>(this: Value<'v>, foo: &str) -> anyhow::Result<String> {
         let _ignore = (this, foo);
         Ok("func1".to_owned())
     }
@@ -228,7 +229,7 @@ fn module(builder: &mut GlobalsBuilder) {
     ///
     /// # Returns
     /// The string 'func1'
-    fn func1(foo: String) -> anyhow::Result<String> {
+    fn func1(foo: &str) -> anyhow::Result<String> {
         let _ignore = foo;
         Ok("func1".to_owned())
     }

@@ -14,6 +14,7 @@ use starlark::starlark_module;
 use starlark::values::Heap;
 use starlark::values::ValueOf;
 use starlark::values::list_or_tuple::ListOrTupleType;
+use starlark::values::string::StarlarkStr;
 
 #[starlark_module]
 pub(crate) fn register_target_name_glob(builder: &mut GlobalsBuilder) {
@@ -46,19 +47,19 @@ pub(crate) fn register_target_name_glob(builder: &mut GlobalsBuilder) {
     /// ```
     #[starlark(as_type = StarlarkTargetNameGlob)]
     fn target_name_glob<'v>(
-        #[starlark(require = pos)] name_globs: ValueOf<'v, ListOrTupleType<&'v str>>,
+        #[starlark(require = pos)] name_globs: ValueOf<'v, ListOrTupleType<StarlarkStr>>,
         #[starlark(require = named, default = ValueOf::empty_list())] within: ValueOf<
             'v,
-            ListOrTupleType<&'v str>,
+            ListOrTupleType<StarlarkStr>,
         >,
         heap: Heap<'v>,
     ) -> starlark::Result<ValueOf<'v, StarlarkTargetNameGlob>> {
         let name_globs = name_globs
-            .try_items()
+            .try_items::<&str>()
             .map(|s| s.map(str::to_owned))
             .collect::<starlark::Result<_>>()?;
         let within = within
-            .try_items()
+            .try_items::<&str>()
             .map(|s| s.map(str::to_owned))
             .collect::<starlark::Result<_>>()?;
         Ok(ValueOf::alloc(

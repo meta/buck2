@@ -448,6 +448,7 @@ mod tests {
     use crate::environment::GlobalsBuilder;
     use crate::values::int::IntView;
     use crate::values::none::NoneType;
+    use crate::values::string::StarlarkStr;
     use crate::values::typing::StarlarkCallable;
     use crate::values::typing::StarlarkCallableChecked;
 
@@ -493,7 +494,7 @@ def bar():
     #[starlark_module]
     fn my_module(globals: &mut GlobalsBuilder) {
         fn accept_f(
-            #[starlark(require=pos)] _x: StarlarkCallable<(String,), IntView<'static>>,
+            #[starlark(require=pos)] _x: StarlarkCallable<(StarlarkStr,), IntView<'static>>,
         ) -> anyhow::Result<NoneType> {
             Ok(NoneType)
         }

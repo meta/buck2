@@ -161,8 +161,10 @@ pub struct InternalRunnerTestInfo<'v> {
     ///         "filter": str     — argument to select this test for execution
     ///     """
     /// ```
-    parse_test_listing:
-        ValueOf<'v, StarlarkCallable<'v, (String,), ListType<DictType<String, Value<'static>>>>>,
+    parse_test_listing: ValueOf<
+        'v,
+        StarlarkCallable<'v, (StarlarkStr,), ListType<DictType<StarlarkStr, Value<'static>>>>,
+    >,
 
     /// A Starlark callable that parses test execution output into structured
     /// per-test results. The callback signature is:
@@ -181,8 +183,8 @@ pub struct InternalRunnerTestInfo<'v> {
         'v,
         StarlarkCallable<
             'v,
-            (String, String, IntView<'static>),
-            ListType<DictType<String, Value<'static>>>,
+            (StarlarkStr, StarlarkStr, IntView<'static>),
+            ListType<DictType<StarlarkStr, Value<'static>>>,
         >,
     >,
 }
@@ -504,14 +506,14 @@ fn internal_runner_test_info_creator(globals: &mut GlobalsBuilder) {
         r#type: StringValue<'v>,
         parse_test_listing: ValueOf<
             'v,
-            StarlarkCallable<'v, (String,), ListType<DictType<String, Value<'static>>>>,
+            StarlarkCallable<'v, (StarlarkStr,), ListType<DictType<StarlarkStr, Value<'static>>>>,
         >,
         parse_test_result: ValueOf<
             'v,
             StarlarkCallable<
                 'v,
-                (String, String, IntView<'static>),
-                ListType<DictType<String, Value<'static>>>,
+                (StarlarkStr, StarlarkStr, IntView<'static>),
+                ListType<DictType<StarlarkStr, Value<'static>>>,
             >,
         >,
         listing_command: TestCommand<'v>,

@@ -70,6 +70,7 @@ use starlark::values::list::ListRef;
 use starlark::values::list_or_tuple::ListOrTupleType;
 use starlark::values::none::NoneType;
 use starlark::values::starlark_value;
+use starlark::values::string::StarlarkStr;
 use variant_name::VariantName;
 
 use crate::bxl::eval::CliResolutionCtx;
@@ -1085,7 +1086,7 @@ pub(crate) fn cli_args_module(registry: &mut GlobalsBuilder) {
     /// buck2 bxl //my.bxl:target -- --mode debug
     /// ```
     fn r#enum<'v>(
-        #[starlark(require = pos)] variants: ValueOf<'v, ListOrTupleType<String>>,
+        #[starlark(require = pos)] variants: ValueOf<'v, ListOrTupleType<StarlarkStr>>,
         default: Option<Value<'v>>,
         #[starlark(default = "")] doc: &str,
         #[starlark(require = named)] short: Option<Value<'v>>,
@@ -1099,7 +1100,12 @@ pub(crate) fn cli_args_module(registry: &mut GlobalsBuilder) {
             CliArgs::new(
                 default,
                 doc,
-                CliArgType::enumeration(variants.try_items().collect::<starlark::Result<_>>()?),
+                CliArgType::enumeration(
+                    variants
+                        .try_items::<&str>()
+                        .map(|s| s.map(str::to_owned))
+                        .collect::<starlark::Result<_>>()?,
+                ),
                 short,
             )?,
         ))

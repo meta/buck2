@@ -28,6 +28,7 @@ use starlark::values::ValueOf;
 use starlark::values::ValueTyped;
 use starlark::values::list_or_tuple::ListOrTupleType;
 use starlark::values::string::StarlarkStr;
+use starlark::values::typing::StarlarkCallable;
 use starlark::values::typing::StarlarkCallableChecked;
 use starlark::values::typing::StarlarkCallableParamSpec;
 
@@ -68,7 +69,7 @@ impl StarlarkCallableParamSpec for TransitionImplParams {
 #[repr(C)]
 pub(crate) struct TransitionInfo<'v> {
     pub(crate) r#impl:
-        ValueOf<'v, StarlarkCallableChecked<'v, TransitionImplParams, ImplSingleReturnTy<'static>>>,
+        ValueOf<'v, StarlarkCallable<'v, TransitionImplParams, ImplSingleReturnTy<'static>>>,
     pub(crate) attrs: Option<ValueOf<'v, ListOrTupleType<StarlarkStr>>>,
 }
 
@@ -79,14 +80,18 @@ pub(crate) type OwnedTransitionInfo = OwnedFrozen<ValueTyped<'static, Transition
 fn transition_info_creator(globals: &mut GlobalsBuilder) {
     #[starlark(as_type = TransitionInfo<'static>)]
     fn TransitionInfo<'v>(
-        #[starlark(require = named)] r#impl: ValueOf<
+        #[starlark(require = named)] r#impl: StarlarkCallableChecked<
             'v,
-            StarlarkCallableChecked<'v, TransitionImplParams, ImplSingleReturnTy<'static>>,
+            TransitionImplParams,
+            ImplSingleReturnTy<'static>,
         >,
         #[starlark(require = named)] attrs: Option<ValueOf<'v, ListOrTupleType<StarlarkStr>>>,
         heap: Heap<'v>,
     ) -> starlark::Result<ValueOf<'v, TransitionInfo<'v>>> {
-        Ok(heap.alloc(TransitionInfo { r#impl, attrs }))
+        Ok(heap.alloc(TransitionInfo {
+            r#impl: heap.alloc(r#impl.to_unchecked()),
+            attrs,
+        }))
     }
 }
 

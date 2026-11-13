@@ -50,11 +50,8 @@ async fn test_construction_validation_bad_return_type(buck: &Buck) {
 
 #[buck_test]
 async fn test_construction_validation_bad_return_type_vnew(buck: &Buck) {
-    // FIXME: The function is a `typing.Callable`; what is wrong is its signature.
     buck.targets(&["//bad_return_type_vnew:"])
         .await
         .expect_failure()
-        .assert_stderr_matches(
-            r"Type of parameter `impl` doesn't match, expected `typing.Callable",
-        );
+        .assert_stderr_matches(r"does not match the expected signature");
 }

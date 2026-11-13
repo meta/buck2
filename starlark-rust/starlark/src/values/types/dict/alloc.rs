@@ -26,6 +26,7 @@ use crate::values::Heap;
 use crate::values::Value;
 use crate::values::ValueOf;
 use crate::values::dict::Dict;
+use crate::values::type_expr::StarlarkTypeExpr;
 use crate::values::types::dict::dict_type::DictType;
 
 /// Utility to allocate a dict from iterator.
@@ -51,8 +52,35 @@ use crate::values::types::dict::dict_type::DictType;
 pub struct AllocDict<D>(pub D);
 
 impl<'v> AllocDict<iter::Empty<(Value<'v>, Value<'v>)>> {
-    /// Allocate an empty dict.
+    /// A new empty dict whose keys and values are `typing.Any`, for where the result is used
+    /// untyped (`heap.alloc(AllocDict::EMPTY).to_value()`). [`empty`](AllocDict::empty) is the
+    /// one for a typed field or return.
     pub const EMPTY: AllocDict<iter::Empty<(Value<'v>, Value<'v>)>> = AllocDict(iter::empty());
+}
+
+impl<'v, K: StarlarkTypeExpr<'v>, V: StarlarkTypeExpr<'v>>
+    AllocDict<iter::Empty<(ValueOf<'v, K>, ValueOf<'v, V>)>>
+{
+    /// A new empty dict of the key and value types the context asks for:
+    ///
+    /// ```
+    /// use starlark::values::Heap;
+    /// use starlark::values::ValueOf;
+    /// use starlark::values::dict::AllocDict;
+    /// use starlark::values::dict::DictType;
+    /// use starlark::values::string::StarlarkStr;
+    ///
+    /// Heap::temp(|heap| {
+    ///     let env: ValueOf<DictType<StarlarkStr, StarlarkStr>> = heap.alloc(AllocDict::empty());
+    ///     assert!(env.dict().is_empty());
+    /// });
+    /// ```
+    ///
+    /// Where nothing asks for the types, use [`EMPTY`](AllocDict::EMPTY). Both allocate; the
+    /// immutable empty dict that needs no heap is [`ValueOf::empty_dict`].
+    pub fn empty() -> Self {
+        AllocDict(iter::empty())
+    }
 }
 
 impl<'v, D, K, V> AllocValue<'v> for AllocDict<D>
@@ -92,5 +120,33 @@ where
         }
         // The entries are `K::Type` and `V::Type` by their declarations.
         ValueOf::new_unchecked(heap.alloc(Dict::new(map)).to_value())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::values::FrozenHeap;
+    use crate::values::Heap;
+    use crate::values::ValueOf;
+    use crate::values::dict::AllocDict;
+    use crate::values::dict::DictType;
+    use crate::values::string::StarlarkStr;
+
+    #[test]
+    fn test_empty_takes_its_types_from_the_context() {
+        fn env<'v>(heap: Heap<'v>) -> ValueOf<'v, DictType<StarlarkStr, StarlarkStr>> {
+            heap.alloc(AllocDict::empty())
+        }
+        Heap::temp(|heap| {
+            let dict = env(heap);
+            assert!(dict.dict().is_empty());
+            // A new dict each time, not the immutable constant.
+            assert!(!dict.to_value().is_frozen());
+            assert!(!dict.to_value().ptr_eq(env(heap).to_value()));
+        });
+        FrozenHeap::temp(|heap| {
+            let dict: ValueOf<DictType<StarlarkStr, StarlarkStr>> = heap.alloc(AllocDict::empty());
+            assert!(dict.dict().is_empty());
+        });
     }
 }

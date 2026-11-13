@@ -24,6 +24,7 @@ use crate::values::Heap;
 use crate::values::Value;
 use crate::values::ValueOf;
 use crate::values::list::ListType;
+use crate::values::type_expr::StarlarkTypeExpr;
 
 /// Utility to allocate a list from iterator.
 ///
@@ -41,8 +42,33 @@ use crate::values::list::ListType;
 pub struct AllocList<L>(pub L);
 
 impl<'v> AllocList<iter::Empty<Value<'v>>> {
-    /// Allocate an empty list.
+    /// A new empty list whose items are `typing.Any`, for where the result is used untyped
+    /// (`heap.alloc(AllocList::EMPTY).to_value()`). [`empty`](AllocList::empty) is the one for
+    /// a typed field or return.
     pub const EMPTY: AllocList<iter::Empty<Value<'v>>> = AllocList(iter::empty());
+}
+
+impl<'v, T: StarlarkTypeExpr<'v>> AllocList<iter::Empty<ValueOf<'v, T>>> {
+    /// A new empty list of the item type the context asks for:
+    ///
+    /// ```
+    /// use starlark::values::Heap;
+    /// use starlark::values::ValueOf;
+    /// use starlark::values::list::AllocList;
+    /// use starlark::values::list::ListType;
+    /// use starlark::values::string::StarlarkStr;
+    ///
+    /// Heap::temp(|heap| {
+    ///     let names: ValueOf<ListType<StarlarkStr>> = heap.alloc(AllocList::empty());
+    ///     assert!(names.list().is_empty());
+    /// });
+    /// ```
+    ///
+    /// Where nothing asks for an item type, use [`EMPTY`](AllocList::EMPTY). Both allocate; the
+    /// immutable empty list that needs no heap is [`ValueOf::empty_list`].
+    pub fn empty() -> Self {
+        AllocList(iter::empty())
+    }
 }
 
 impl<'v, L> AllocValue<'v> for AllocList<L>
@@ -69,5 +95,33 @@ where
         ValueOf::new_unchecked(
             heap.alloc_list_iter(self.0.into_iter().map(|x| heap.alloc(x).to_value())),
         )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::values::FrozenHeap;
+    use crate::values::Heap;
+    use crate::values::ValueOf;
+    use crate::values::list::AllocList;
+    use crate::values::list::ListType;
+    use crate::values::string::StarlarkStr;
+
+    #[test]
+    fn test_empty_takes_its_item_type_from_the_context() {
+        fn names<'v>(heap: Heap<'v>) -> ValueOf<'v, ListType<StarlarkStr>> {
+            heap.alloc(AllocList::empty())
+        }
+        Heap::temp(|heap| {
+            let list = names(heap);
+            assert!(list.list().is_empty());
+            // A new list each time, not the immutable constant.
+            assert!(!list.to_value().is_frozen());
+            assert!(!list.to_value().ptr_eq(names(heap).to_value()));
+        });
+        FrozenHeap::temp(|heap| {
+            let list: ValueOf<ListType<StarlarkStr>> = heap.alloc(AllocList::empty());
+            assert!(list.list().is_empty());
+        });
     }
 }

@@ -127,24 +127,27 @@ fn anon_target_methods(builder: &mut MethodsBuilder) {
         this: &StarlarkAnonTarget<'v>,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<Value<'v>> {
-        Ok(eval.heap().alloc_dict(
-            this.artifacts
-                .iter()
-                .map(|(k, v)| {
-                    Ok((
-                        k.to_value().get_hashed()?,
-                        eval.heap()
-                            .alloc(StarlarkPromiseArtifact::new(
-                                eval.call_stack_top_location(),
-                                v.dupe(),
-                                None,
-                                false,
-                            ))
-                            .to_value(),
-                    ))
-                })
-                .collect::<starlark::Result<_>>()?,
-        ))
+        Ok(eval
+            .heap()
+            .alloc(
+                this.artifacts
+                    .iter()
+                    .map(|(k, v)| {
+                        Ok((
+                            k.to_value().get_hashed()?,
+                            eval.heap()
+                                .alloc(StarlarkPromiseArtifact::new(
+                                    eval.call_stack_top_location(),
+                                    v.dupe(),
+                                    None,
+                                    false,
+                                ))
+                                .to_value(),
+                        ))
+                    })
+                    .collect::<starlark::Result<BuckMutInsertionMap<Value, Value>>>()?,
+            )
+            .to_value())
     }
 
     /// Gets a specific `StarlarkPromiseArtifact` by name. Returns an error if the name was not found in the

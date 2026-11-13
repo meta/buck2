@@ -33,6 +33,7 @@ use buck2_core::fs::project::ProjectRoot;
 use buck2_error::BuckErrorContext;
 use buck2_error::buck2_error;
 use buck2_error::starlark_error::from_starlark_with_options;
+use buck2_hash::BuckMutInsertionMap;
 use buck2_hash::BuckMutInsertionSet;
 use buck2_server_ctx::bxl::BxlStreamingTracker;
 use buck2_server_ctx::bxl::GetBxlStreamingTracker;
@@ -853,30 +854,32 @@ fn output_stream_methods(builder: &mut MethodsBuilder) {
                     get_artifacts_from_bxl_build_result(bxl_build_result.as_ref(), this)?,
                 ))
             }
-            EnsureMultipleArtifactsArg::Dict(build_result_dict) => Ok(heap.alloc_dict(
-                build_result_dict
-                    .iter()
-                    .map(|entry| {
-                        let (label, bxl_build_result) = entry?;
-                        Ok((
-                            label.to_value().get_hashed().map_err(|e| {
-                                from_starlark_with_options(
-                                    e,
-                                    buck2_error::starlark_error::NativeErrorHandling::Unknown,
-                                    false,
-                                )
-                            })?,
-                            alloc_ensured_artifacts(
-                                heap,
-                                get_artifacts_from_bxl_build_result(
-                                    bxl_build_result.as_ref(),
-                                    this,
-                                )?,
-                            ),
-                        ))
-                    })
-                    .collect::<buck2_error::Result<_>>()?,
-            )),
+            EnsureMultipleArtifactsArg::Dict(build_result_dict) => Ok(heap
+                .alloc(
+                    build_result_dict
+                        .iter()
+                        .map(|entry| {
+                            let (label, bxl_build_result) = entry?;
+                            Ok((
+                                label.to_value().get_hashed().map_err(|e| {
+                                    from_starlark_with_options(
+                                        e,
+                                        buck2_error::starlark_error::NativeErrorHandling::Unknown,
+                                        false,
+                                    )
+                                })?,
+                                alloc_ensured_artifacts(
+                                    heap,
+                                    get_artifacts_from_bxl_build_result(
+                                        bxl_build_result.as_ref(),
+                                        this,
+                                    )?,
+                                ),
+                            ))
+                        })
+                        .collect::<buck2_error::Result<BuckMutInsertionMap<Value, Value>>>()?,
+                )
+                .to_value()),
             EnsureMultipleArtifactsArg::CmdLine(cmd_line) => {
                 // TODO(nga): we should not be doing that here.
                 //   If we pass random string to this function,

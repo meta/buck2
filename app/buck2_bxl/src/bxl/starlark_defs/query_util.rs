@@ -9,6 +9,7 @@
  */
 
 use buck2_error::starlark_error::from_starlark_with_options;
+use buck2_hash::BuckMutInsertionMap;
 use buck2_query::query::syntax::simple::eval::values::QueryEvaluationResult;
 use buck2_query::query::syntax::simple::eval::values::QueryEvaluationValue;
 use starlark::typing::HasTyVTable;
@@ -35,30 +36,32 @@ where
                 heap.alloc(StarlarkFileSet::from(files)).to_value()
             }
         },
-        QueryEvaluationResult::Multiple(multi) => heap.alloc_dict(
-            multi
-                .0
-                .into_iter()
-                .map(|(q, res)| {
-                    Ok((
-                        heap.alloc(q).to_value().get_hashed().map_err(|e| {
-                            from_starlark_with_options(
-                                e,
-                                buck2_error::starlark_error::NativeErrorHandling::Unknown,
-                                false,
-                            )
-                        })?,
-                        match res? {
-                            QueryEvaluationValue::TargetSet(targets) => {
-                                heap.alloc(StarlarkTargetSet::from(targets)).to_value()
-                            }
-                            QueryEvaluationValue::FileSet(files) => {
-                                heap.alloc(StarlarkFileSet::from(files)).to_value()
-                            }
-                        },
-                    ))
-                })
-                .collect::<buck2_error::Result<_>>()?,
-        ),
+        QueryEvaluationResult::Multiple(multi) => heap
+            .alloc(
+                multi
+                    .0
+                    .into_iter()
+                    .map(|(q, res)| {
+                        Ok((
+                            heap.alloc(q).to_value().get_hashed().map_err(|e| {
+                                from_starlark_with_options(
+                                    e,
+                                    buck2_error::starlark_error::NativeErrorHandling::Unknown,
+                                    false,
+                                )
+                            })?,
+                            match res? {
+                                QueryEvaluationValue::TargetSet(targets) => {
+                                    heap.alloc(StarlarkTargetSet::from(targets)).to_value()
+                                }
+                                QueryEvaluationValue::FileSet(files) => {
+                                    heap.alloc(StarlarkFileSet::from(files)).to_value()
+                                }
+                            },
+                        ))
+                    })
+                    .collect::<buck2_error::Result<BuckMutInsertionMap<Value, Value>>>()?,
+            )
+            .to_value(),
     })
 }

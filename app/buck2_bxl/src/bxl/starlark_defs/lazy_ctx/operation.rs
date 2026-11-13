@@ -127,17 +127,19 @@ impl LazyResult {
                 Either::Right(target_set) => heap.alloc(target_set).to_value(),
             }),
             LazyResult::UnconfiguredTargetNodeKeepGoing((success_targets, error_packages)) => {
-                let error_packages = heap.alloc_dict(
-                    error_packages
-                        .into_iter()
-                        .map(|(package, error)| {
-                            Ok((
-                                heap.alloc(package).to_value().get_hashed()?,
-                                heap.alloc(error).to_value(),
-                            ))
-                        })
-                        .collect::<starlark::Result<_>>()?,
-                );
+                let error_packages = heap
+                    .alloc(
+                        error_packages
+                            .into_iter()
+                            .map(|(package, error)| {
+                                Ok((
+                                    heap.alloc(package).to_value().get_hashed()?,
+                                    heap.alloc(error).to_value(),
+                                ))
+                            })
+                            .collect::<starlark::Result<BuckMutInsertionMap<Value, Value>>>()?,
+                    )
+                    .to_value();
                 Ok(heap
                     .alloc((heap.alloc(success_targets).to_value(), error_packages))
                     .to_value())

@@ -27,6 +27,7 @@ use crate::values::Heap;
 use crate::values::UnpackValue;
 use crate::values::Value;
 use crate::values::ValueOf;
+use crate::values::dict::Dict;
 use crate::values::dict::DictMut;
 use crate::values::dict::DictRef;
 use crate::values::type_expr::StarlarkTypeExpr;
@@ -89,7 +90,7 @@ impl<'v, K: StarlarkTypeExpr<'v>, V: StarlarkTypeExpr<'v>> ValueOf<'v, DictType<
         for (k, v) in entries {
             map.insert_hashed(k.to_value().get_hashed().unwrap(), v.to_value());
         }
-        Self::new_unchecked(heap.alloc_dict(map))
+        Self::new_unchecked(heap.alloc(Dict::new(map)).to_value())
     }
 
     /// The dict.

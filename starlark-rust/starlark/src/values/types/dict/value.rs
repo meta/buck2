@@ -143,13 +143,6 @@ impl<'v> AllocValue<'v> for Dict<'v> {
     }
 }
 
-impl<'v> Heap<'v> {
-    /// Allocate a dictionary with pre-allocated and pre-hashed keys and values.
-    pub fn alloc_dict(self, content: SmallMap<Value<'v>, Value<'v>>) -> Value<'v> {
-        self.alloc(Dict::new(content)).to_value()
-    }
-}
-
 impl<'fv> AllocFrozenValue<'fv> for Dict<'fv> {
     type Type = DictType<Value<'fv>, Value<'fv>>;
 

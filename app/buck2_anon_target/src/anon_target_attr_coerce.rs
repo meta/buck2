@@ -45,7 +45,6 @@ use dupe::Dupe;
 use dupe::IterDupedExt;
 use starlark::values::UnpackValue;
 use starlark::values::Value;
-use starlark::values::dict::Dict;
 use starlark::values::dict::DictRef;
 use starlark::values::list::ListRef;
 use starlark::values::string::STRING_TYPE;
@@ -386,7 +385,7 @@ fn to_anon_target_dict(
         }
         Ok(AnonTargetAttr::Dict(DictLiteral(res.into())))
     } else {
-        Err(AnonTargetCoercionError::type_error(Dict::TYPE, value).into())
+        Err(AnonTargetCoercionError::type_error("dict", value).into())
     }
 }
 

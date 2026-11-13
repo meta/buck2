@@ -1,5 +1,5 @@
 load("@prelude//utils:source_listing.bzl", "source_listing")
-load(":tools.bzl", "find_msvc_tools")
+load(":tools.bzl", "find_msvc_tools", "find_roslyn_tools")
 
 oncall("build_infra")
 
@@ -19,6 +19,12 @@ python_bootstrap_binary(
 
 find_msvc_tools(
     name = "msvc_tools",
+    target_compatible_with = ["config//os:windows"],
+    visibility = ["PUBLIC"],
+)
+
+find_roslyn_tools(
+    name = "roslyn_tools",
     target_compatible_with = ["config//os:windows"],
     visibility = ["PUBLIC"],
 )

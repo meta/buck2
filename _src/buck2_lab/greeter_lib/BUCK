@@ -1,0 +1,27 @@
+# @nolint
+
+# @oss-disable[end= ]: load("@fbsource//tools/build_defs:rust_library.bzl", "rust_library")
+# @oss-disable[end= ]: load("@fbsource//tools/build_defs:rust_unittest.bzl", "rust_unittest")
+
+oncall("build_infra")
+
+rust_library(
+    name = "library",
+    srcs = ["src/lib.rs"],
+    visibility = ["PUBLIC"],
+    deps = [
+        # @oss-disable[end= ]: "fbcode//buck2/docs/buck2_lab/logging_lib:logging_lib",
+        "//docs/buck2_lab/logging_lib:logging_lib",  # @oss-enable
+    ],
+)
+
+# @oss-disable: _target = rust_unittest
+_target = rust_test  # @oss-enable
+
+_target(
+    name = "test",
+    srcs = ["tests/test.rs"],
+    deps = [
+        ":library",
+    ],
+)

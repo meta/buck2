@@ -1,0 +1,9 @@
+# @oss-disable[end= ]: load("@fbsource//tools/build_defs:rust_library.bzl", "rust_library")
+
+oncall("build_infra")
+
+rust_library(
+    name = "logging_lib",
+    srcs = ["src/lib.rs"],
+    visibility = ["PUBLIC"],
+)

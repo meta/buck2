@@ -28,6 +28,7 @@ use pagable::PagableDeserialize;
 use pagable::PagableSerialize;
 use strong_hash::StrongHash;
 
+use super::IntoIter;
 use super::MiniVec;
 
 impl<T> Default for MiniVec<T> {
@@ -117,10 +118,10 @@ impl<'a, T> IntoIterator for &'a mut MiniVec<T> {
 
 impl<T> IntoIterator for MiniVec<T> {
     type Item = T;
-    type IntoIter = std::vec::IntoIter<T>;
+    type IntoIter = IntoIter<T>;
     #[inline]
     fn into_iter(self) -> Self::IntoIter {
-        self.into_vec().into_iter()
+        IntoIter::new(self)
     }
 }
 

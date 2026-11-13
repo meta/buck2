@@ -12,6 +12,7 @@
 
 mod drain;
 mod impls;
+mod into_iter;
 
 use std::alloc;
 use std::alloc::Layout;
@@ -24,6 +25,7 @@ use std::slice;
 
 use allocative::Allocative;
 pub use drain::Drain;
+pub use into_iter::IntoIter;
 
 use crate::packed_ptr::PackedPtr;
 

@@ -59,4 +59,5 @@ pub mod size_assert;
 
 pub use mini_box_slice::MiniBoxSlice;
 pub use mini_vec::Drain;
+pub use mini_vec::IntoIter;
 pub use mini_vec::MiniVec;

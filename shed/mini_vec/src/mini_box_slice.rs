@@ -24,6 +24,7 @@ use pagable::PagableDeserialize;
 use pagable::PagableSerialize;
 use strong_hash::StrongHash;
 
+use crate::IntoIter;
 use crate::MiniVec;
 
 /// A `Box<[T]>`-like sequence whose stack footprint is a single machine word.
@@ -210,10 +211,10 @@ impl<'a, T> IntoIterator for &'a MiniBoxSlice<T> {
 
 impl<T> IntoIterator for MiniBoxSlice<T> {
     type Item = T;
-    type IntoIter = std::vec::IntoIter<T>;
+    type IntoIter = IntoIter<T>;
     #[inline]
     fn into_iter(self) -> Self::IntoIter {
-        self.into_vec().into_iter()
+        self.0.into_iter()
     }
 }
 

@@ -39,6 +39,8 @@ pub struct Restarter {
     restarter_is_enabled: bool,
     /// Whether a soft error reported the daemon's in-memory state as corrupted.
     daemon_in_memory_state_is_corrupted: bool,
+    /// The error that the first such soft error reported, if it carried one.
+    triggering_error: Option<Box<buck2_data::ErrorReport>>,
     /// Whether a soft error reported the daemon's materializer state as corrupted.
     daemon_materializer_state_is_corrupted: bool,
 }
@@ -49,6 +51,11 @@ impl Restarter {
             force: buck2_env!("FORCE_WANT_RESTART", bool)?,
             ..Self::default()
         })
+    }
+
+    /// The error that the daemon reported its in-memory state as corrupted with.
+    pub(crate) fn triggering_error(&self) -> Option<&buck2_data::ErrorReport> {
+        self.triggering_error.as_deref()
     }
 
     /// Called when the command has connected to `daemon`.
@@ -65,6 +72,9 @@ impl Restarter {
                 if err.soft_error_category.is_some() =>
             {
                 self.daemon_in_memory_state_is_corrupted |= err.daemon_in_memory_state_is_corrupted;
+                if self.triggering_error.is_none() {
+                    self.triggering_error = err.error.clone();
+                }
                 self.daemon_materializer_state_is_corrupted |=
                     err.daemon_materializer_state_is_corrupted;
             }

@@ -145,6 +145,46 @@ class DebugRestartTest(TestCase):
             self.assertNotEqual(await daemon_id(buck), old)
 
     @buck_test(inplace=False, write_invocation_record=True, allow_soft_errors=True)
+    async def test_command_interrupted_by_the_replacement_fails_with_the_reported_error(
+        self, buck: Buck
+    ) -> None:
+        old = await self.boot(buck)
+        async with (
+            commands(buck, fail_first=True) as failing,
+            commands(buck) as waiting,
+        ):
+            failed = failing.start("failing")
+            interrupted = waiting.start("interrupted")
+            await asyncio.gather(
+                failing.gate.wait_started("failing"),
+                waiting.gate.wait_started("interrupted"),
+            )
+            await self.request_restart(buck, "replace-the-daemon")
+            # Running the failed command again replaces the daemon, which interrupts the
+            # other command while its action waits at the gate.
+            failing.gate.release()
+            results = await asyncio.wait_for(
+                asyncio.gather(failed, interrupted), TIMEOUT
+            )
+            result = results[1]
+            self.assertEqual(result.stderr.count(RETRY_NOTICE), 1)
+            # The second attempt overwrote the first attempt's invocation record. Its command
+            # report holds the same errors.
+            record = result.invocation_record()
+            logs = buck.cwd / "buck-out" / (buck.isolation_prefix or "v2") / "log"
+            report = json.loads(
+                (
+                    logs / record["restarted_trace_id"] / "command_report.json"
+                ).read_text()
+            )
+            self.assertEqual(len(report["error_messages"]), 1)
+            self.assertIn(
+                "Daemon restart requested: replace-the-daemon",
+                report["error_messages"][0],
+            )
+            self.assertNotEqual(await daemon_id(buck), old)
+
+    @buck_test(inplace=False, write_invocation_record=True, allow_soft_errors=True)
     async def test_command_that_succeeds_after_the_request_is_not_restarted(
         self, buck: Buck
     ) -> None:

@@ -319,6 +319,7 @@ fn main() -> io::Result<()> {
         .boxed("InstantEvent.data.rage_result")
         .boxed("InstantEvent.data.resource_control_event")
         .boxed("InstantEvent.data.snapshot")
+        .boxed("StructuredError.error")
         .extern_path(".buck.host_sharing", "::buck2_host_sharing_proto")
         .compile(proto_files, &includes)
 }

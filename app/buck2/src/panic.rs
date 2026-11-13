@@ -184,7 +184,7 @@ mod imp {
         context: &Arc<SoftErrorContext>,
         options: StructuredErrorOptions,
     ) {
-        let event = panic_payload(
+        let mut event = panic_payload(
             Some(location),
             format!("Soft Error: {category}: {err:#}"),
             Vec::new(),
@@ -195,6 +195,9 @@ mod imp {
                 is_deprecation: matches!(&options.kind, SoftErrorKind::Deprecation { .. }),
             }),
         );
+        if options.daemon_in_memory_state_is_corrupted {
+            event.error = Some(Box::new(err.into()));
+        }
 
         // The report goes out once. A command's event stream reaches Scribe on its own; only a
         // report with no command behind it is written directly.
@@ -253,6 +256,7 @@ mod imp {
             daemon_in_memory_state_is_corrupted: options.daemon_in_memory_state_is_corrupted,
             daemon_materializer_state_is_corrupted: options.daemon_materializer_state_is_corrupted,
             action_cache_is_corrupted: options.action_cache_is_corrupted,
+            error: None,
         }
     }
 

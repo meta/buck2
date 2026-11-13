@@ -322,7 +322,16 @@ impl<'a> DaemonEventsCtx<'a> {
                 // certain) the daemon shutdown is the cause for us to simply claim it is.
                 tracing::debug!("Original unpack_stream error was: {:#}", e);
 
-                return Err(BuckdCommunicationError::InterruptedByDaemonShutdown(shutdown).into());
+                // A daemon that reported its state as corrupted is shut down to be replaced.
+                // The command fails with the error it reported.
+                let triggering_error = match &self.inner.restart_state {
+                    RestartState::Watching(restarter) => restarter.triggering_error(),
+                    RestartState::NoRestart | RestartState::Restarted(_) => None,
+                };
+                return Err(match triggering_error {
+                    Some(error) => error.clone().into(),
+                    None => BuckdCommunicationError::InterruptedByDaemonShutdown(shutdown).into(),
+                });
             }
             (Err(e), None) => return Err(e),
         };
@@ -845,11 +854,21 @@ mod tests {
     use std::time::SystemTime;
 
     use async_trait::async_trait;
+    use buck2_cli_proto::StatusResponse;
+    use buck2_error::ErrorTag;
+    use buck2_error::buck2_error;
+    use buck2_event_log::stream_value::StreamValue;
     use buck2_fs::paths::abs_path::AbsPathBuf;
     use buck2_wrapper_common::invocation_id::TraceId;
+    use futures::stream;
 
+    use crate::command_outcome::CommandOutcome;
+    use crate::daemon::client::NoPartialResultHandler;
+    use crate::events_ctx::DaemonEventsCtx;
     use crate::events_ctx::EventsCtx;
     use crate::exit_result::ExitResult;
+    use crate::restarter::RestartState;
+    use crate::restarter::Restarter;
     use crate::subscribers::recorder::InvocationRecorder;
     use crate::subscribers::subscriber::EventSubscriber;
 
@@ -904,6 +923,63 @@ mod tests {
             "{errors:?}"
         );
         assert!(errors[0].contains("Scribe sink not enabled"), "{errors:?}");
+    }
+
+    /// The error of the first attempt at a command whose stream carries `events` and ends
+    /// without a result.
+    fn interrupted_after(events: Vec<buck2_data::instant_event::Data>) -> buck2_error::Error {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        let events = events.into_iter().map(|data| {
+            buck2_error::Ok(StreamValue::Event(Box::new(buck2_data::BuckEvent {
+                timestamp: Some(SystemTime::now().into()),
+                trace_id: TraceId::new().to_string(),
+                span_id: 0,
+                parent_id: 0,
+                data: Some(buck2_data::InstantEvent { data: Some(data) }.into()),
+            })))
+        });
+        let mut ctx = EventsCtx::new(None, vec![]);
+        ctx.restart_state = RestartState::Watching(Restarter::default());
+        let outcome: buck2_error::Result<CommandOutcome<StatusResponse>> =
+            runtime.block_on(async {
+                DaemonEventsCtx::without_tailers(&mut ctx)
+                    .unpack_stream(&mut NoPartialResultHandler, stream::iter(events), None)
+                    .await
+            });
+        outcome
+            .err()
+            .expect("A stream without a result is an error")
+    }
+
+    #[test]
+    fn test_interrupted_command_fails_with_the_error_the_daemon_reported() {
+        let shutdown = buck2_data::DaemonShutdown {
+            reason: "killed".to_owned(),
+            callers: Vec::new(),
+        };
+        let reported = buck2_error!(ErrorTag::TestOnly, "the forkserver is gone");
+        let corrupted = buck2_data::StructuredError {
+            soft_error_category: Some(buck2_data::SoftError::default()),
+            daemon_in_memory_state_is_corrupted: true,
+            error: Some(Box::new((&reported).into())),
+            ..Default::default()
+        };
+
+        let error = interrupted_after(vec![corrupted.into(), shutdown.clone().into()]);
+        assert!(error.has_tag(ErrorTag::TestOnly), "{error:?}");
+        assert!(
+            !error.has_tag(ErrorTag::InterruptedByDaemonShutdown),
+            "{error:?}"
+        );
+
+        let error = interrupted_after(vec![shutdown.into()]);
+        assert!(
+            error.has_tag(ErrorTag::InterruptedByDaemonShutdown),
+            "{error:?}"
+        );
     }
 
     /// A subscriber that takes longer than the cleanup budget is reported as a timeout, and the

@@ -173,16 +173,24 @@ class AndroidInstall {
     } catch (AndroidInstallException exc) {
       return new InstallResult(deviceInfos, Optional.of(exc.getInstallError()));
     } catch (Exception err) {
-      String errMsg = err.getMessage();
+      String errMsg = failureMessage(err);
       logger.log(
           Level.SEVERE,
           String.format("Error while installing %s. Error message: %s", installId, errMsg),
           err);
       return new InstallResult(
           deviceInfos,
-          Optional.of(Objects.requireNonNull(errMsg))
-              .map(AndroidInstallErrorClassifier.INSTANCE::fromErrorMessage));
+          Optional.of(AndroidInstallErrorClassifier.INSTANCE.fromErrorMessage(errMsg)));
     }
+  }
+
+  /**
+   * What a failed install reports. An exception without a message, such as the {@link
+   * InterruptedException} of a step stopped at its time limit, is named by its class.
+   */
+  static String failureMessage(Exception err) {
+    String message = err.getMessage();
+    return message != null ? message : err.toString();
   }
 
   static String formatCompletionMessage(

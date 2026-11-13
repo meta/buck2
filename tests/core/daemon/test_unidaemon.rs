@@ -2300,3 +2300,93 @@ async fn test_checkout_buckconfig_local_opts_out_of_external_sharing(
     assert_eq!(root, buck.daemon_dir().await?);
     Ok(())
 }
+
+/// Under the disk-state materializer the stash is the daemon's, not the first tenant's: it takes
+/// the first tenant's outputs under the daemon's state directory, the first tenant's `clean`
+/// leaves it in place for the tenants that remain, and it goes with the daemon. (These checkouts
+/// crawl the filesystem, so their engine shares no baseline and the second tenant computes its
+/// own outputs rather than being served the first's; serving out of the stash is the
+/// materializer suites' to cover.)
+#[buck_test(
+    data_dir = "test_daemon_data",
+    skip_for_os = ["windows", "darwin"],
+    skip_for_materializer = ["deferred"]
+)]
+async fn test_unidaemon_disk_state_stash_outlives_its_first_tenant(
+    buck: &Buck,
+    tmp_path: &Path,
+) -> anyhow::Result<()> {
+    let tenants = unidaemon_checkouts(buck, tmp_path, true)?;
+    for tenant in &tenants {
+        std::fs::write(tenant.cwd().join("restart-source"), "stashed content")?;
+        let targets = tenant.cwd().join("TARGETS.fixture");
+        std::fs::write(
+            &targets,
+            std::fs::read_to_string(&targets)?
+                + "\nload(\":defs.bzl\", \"restart_copy\")\n\
+                   restart_copy(name = \"copy\", src = \"restart-source\", local_only = True)\n",
+        )?;
+    }
+    let [one, two] = tenants.as_slice() else {
+        anyhow::bail!("Expected two tenants");
+    };
+    let result = async {
+        let output = one
+            .build(&["//:copy"])
+            .await?
+            .build_report()?
+            .output_for_target("//:copy")?;
+        assert_eq!(std::fs::read_to_string(&output)?, "stashed content");
+        let pid = daemon_pid(one).await?;
+        let stash = one
+            .cwd()
+            .join("buck-out/._buck2/stash")
+            .join(namespace_name(tmp_path)?)
+            .join("stash");
+        assert!(stash.is_dir(), "{}", stash.display());
+        assert!(
+            has_a_file(&stash)?,
+            "the stash took nothing of `{}`",
+            output.display()
+        );
+        assert!(!one.cwd().join("buck-out/tenant/stash").exists());
+        assert!(!two.cwd().join("buck-out/tenant/stash").exists());
+
+        // The second tenant joins before the first leaves, or the daemon would exit with it.
+        two.build(&["//:tenant_value"]).await?;
+        one.command(&["clean"]).await?;
+        assert!(!output.exists(), "{}", output.display());
+        assert!(stash.is_dir(), "{}", stash.display());
+
+        let output = two
+            .build(&["//:copy"])
+            .await?
+            .build_report()?
+            .output_for_target("//:copy")?;
+        assert_eq!(std::fs::read_to_string(output)?, "stashed content");
+        assert_eq!(daemon_pid(two).await?, pid);
+        anyhow::Ok((pid, stash))
+    }
+    .await;
+    let killed = two.kill().await;
+    let (pid, stash) = result?;
+    killed?;
+    assert_daemon_exits(pid).await;
+    assert!(!stash.parent().unwrap().exists(), "{}", stash.display());
+    Ok(())
+}
+
+/// Whether any file is under `dir`.
+fn has_a_file(dir: &Path) -> anyhow::Result<bool> {
+    for entry in std::fs::read_dir(dir)? {
+        let entry = entry?;
+        if entry.file_type()?.is_dir() {
+            if has_a_file(&entry.path())? {
+                return Ok(true);
+            }
+        } else {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}

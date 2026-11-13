@@ -3,6 +3,10 @@ load("@fbcode//buck2/tests:buck_e2e.bzl", "buck2_core_tests")
 oncall("build_infra")
 
 buck2_core_tests(
+    materializer_variants = [
+        "test_tenant_paging",
+        "test_unidaemon",
+    ],
     target_extra_attrs = {
         "test_agent_host_guard": {
             "compatible_with": [

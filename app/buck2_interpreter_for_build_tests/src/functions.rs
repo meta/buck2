@@ -10,5 +10,6 @@
 
 mod host_info;
 mod load_symbols;
+mod load_visibility;
 mod read_config;
 mod with_sub_target;

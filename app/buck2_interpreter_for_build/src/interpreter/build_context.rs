@@ -47,6 +47,8 @@ enum BuildContextError {
         "`{0}()` can only be called from a package file context; current file context is {1:?}"
     )]
     NotPackageFile(String, StarlarkFileType),
+    #[error("`{0}()` can only be called from a `.bzl` file; current file context is {1:?}")]
+    NotBzlFile(String, StarlarkFileType),
     #[error("Expecting package file context, but current file context is {0:?}")]
     NotPackageFileNoFunction(StarlarkFileType),
     #[error("Package can only be fetched from a build file")]
@@ -140,6 +142,13 @@ impl PerFileTypeContext {
         match self {
             PerFileTypeContext::Package(ctx) => Ok(ctx),
             x => Err(BuildContextError::NotPackageFileNoFunction(x.file_type()).into()),
+        }
+    }
+
+    pub(crate) fn require_bzl(&self, function_name: &str) -> buck2_error::Result<&BzlEvalCtx> {
+        match self {
+            PerFileTypeContext::Bzl(ctx) => Ok(ctx),
+            x => Err(BuildContextError::NotBzlFile(function_name.to_owned(), x.file_type()).into()),
         }
     }
 }

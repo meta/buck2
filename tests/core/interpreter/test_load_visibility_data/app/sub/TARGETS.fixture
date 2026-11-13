@@ -1,0 +1,8 @@
+# `//app/sub` is within `//app/...`, so it may load `vis.bzl`; `pub.bzl` and
+# `default.bzl` are public.
+
+load("//lib/default.bzl", "DSYM")
+load("//lib/pub.bzl", "PSYM")
+load("//lib/vis.bzl", "SYM")
+
+_all = (SYM, PSYM, DSYM)

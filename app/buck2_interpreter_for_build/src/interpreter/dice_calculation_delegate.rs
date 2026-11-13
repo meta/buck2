@@ -64,6 +64,8 @@ use starlark::values::FrozenHeapName;
 use crate::interpreter::buckconfig::ConfigsOnDiceViewForStarlark;
 use crate::interpreter::cell_info::InterpreterCellInfo;
 use crate::interpreter::check_starlark_stack_size::check_starlark_stack_size;
+use crate::interpreter::extra_value::FrozenInterpreterExtraValue;
+use crate::interpreter::functions::load_visibility::LoadVisibilityError;
 use crate::interpreter::global_interpreter_state::HasGlobalInterpreterState;
 use crate::interpreter::interpreter_for_dir::InterpreterForDir;
 use crate::interpreter::interpreter_for_dir::ParseData;
@@ -279,7 +281,95 @@ impl<'c, 'd: 'c> DiceCalculationDelegate<'c, 'd> {
     ) -> buck2_error::Result<(AstModule, ModuleDeps)> {
         let ParseData(ast, imports) = self.parse_file(starlark_file).await??;
         let deps = Self::eval_deps(self.ctx, &imports).await?;
+        self.check_load_visibility(starlark_file, &imports, &deps)
+            .await?;
         Ok((ast, deps))
+    }
+
+    /// Enforce load visibility declared via the `visibility()` builtin: a `.bzl`
+    /// file with a non-public `visibility()` may only be `load()`ed from its own
+    /// package or from packages that its visibility list matches. See the
+    /// `visibility()` builtin for what a file's package is. Can be disabled with
+    /// `buck2.check_load_visibility = false`.
+    async fn check_load_visibility(
+        &mut self,
+        starlark_file: StarlarkPath<'_>,
+        imports: &[(Option<FileSpan>, OwnedStarlarkModulePath)],
+        deps: &ModuleDeps,
+    ) -> buck2_error::Result<()> {
+        if !self
+            .ctx
+            .get_global_interpreter_state()
+            .await?
+            .check_load_visibility
+        {
+            return Ok(());
+        }
+
+        // `imports` and `deps` are in the same order (`eval_deps` maps over
+        // `imports`), so zipping pairs each load with its resolved module.
+        let mut restricted = Vec::new();
+        for ((span, _), module) in imports.iter().zip(deps.0.iter()) {
+            // Only `.bzl` files declare load visibility, and one that never calls
+            // `visibility()` is public.
+            let StarlarkModulePath::LoadFile(imp) = module.path() else {
+                continue;
+            };
+            if let Some(visibility) = FrozenInterpreterExtraValue::load_visibility(module.env())?
+                && !visibility.is_public()
+            {
+                restricted.push((span, *imp.path(), visibility));
+            }
+        }
+        if restricted.is_empty() {
+            return Ok(());
+        }
+
+        let loader = *starlark_file.path();
+        let loader_package = match starlark_file {
+            StarlarkPath::BuildFile(path) => Some(path.package()),
+            _ => {
+                DicePackageListingResolver(self.ctx)
+                    .find_enclosing_package(loader)
+                    .await?
+            }
+        };
+
+        for (span, loaded, visibility) in restricted {
+            let error = match loader_package {
+                Some(loader_package) => {
+                    if visibility.matches_package(loader_package.to_cell_path())
+                        || DicePackageListingResolver(self.ctx)
+                            .find_enclosing_package(loaded)
+                            .await?
+                            == Some(loader_package)
+                    {
+                        continue;
+                    }
+                    LoadVisibilityError::NotVisible {
+                        loader,
+                        loaded,
+                        visibility: visibility.to_string(),
+                        pattern: format!("{loader_package}:"),
+                    }
+                }
+                None => LoadVisibilityError::NotVisibleNoPackage {
+                    loader,
+                    loaded,
+                    visibility: visibility.to_string(),
+                },
+            };
+            return Err(buck2_error::Error::from(error)).with_buck_error_context(|| {
+                format!(
+                    "From load at {}",
+                    span.as_ref().map_or("implicit location".to_owned(), |s| s
+                        .resolve()
+                        .begin_file_line()
+                        .to_string())
+                )
+            });
+        }
+        Ok(())
     }
 
     pub fn prepare_eval_with_content(

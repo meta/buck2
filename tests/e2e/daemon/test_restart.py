@@ -35,6 +35,11 @@ def admin_client(buck: Buck) -> Buck:
     return client
 
 
+def restart_error(reason: str) -> str:
+    """The error `buck2 debug restart` provides, which the interrupted commands fail with."""
+    return f"Daemon restart requested: {reason}"
+
+
 async def daemon_id(buck: Buck) -> str:
     status = json.loads((await buck.status()).stdout)
     return status["daemon_constraints"]["daemon_id"]
@@ -42,13 +47,10 @@ async def daemon_id(buck: Buck) -> str:
 
 class Gate:
     """A directory that the action of a gated command waits in. The first attempt at a tag
-    marks itself started and waits to be released, and then fails if the gate is
-    `fail_first`. Later attempts finish at once."""
+    marks itself started and waits to be released. Later attempts finish at once."""
 
-    def __init__(self, directory: Path, fail_first: bool = False) -> None:
+    def __init__(self, directory: Path) -> None:
         self.directory = directory
-        if fail_first:
-            (directory / "fail").touch()
 
     def release(self) -> None:
         (self.directory / "released").touch()
@@ -60,13 +62,14 @@ class Gate:
 
 
 def gated_command(
-    buck: Buck, gate: Gate, tag: str
+    buck: Buck, gate: Gate, tag: str, *, streaming: bool = False
 ) -> Process[BuckResult, BuckException]:
-    """A command whose action waits at the gate. It writes nothing to stdout, which
-    would keep its client from running it again."""
+    """A command that prints `done:<tag>` to stdout once its action has passed the gate. With
+    `streaming` it prints `prefix:<tag>` first, before it runs the action."""
+    label = "streaming" if streaming else "gated"
     python = shutil.which("fbpython") or sys.executable
     return buck.bxl(
-        "root//restart.bxl:gated",
+        f"root//restart.bxl:{label}",
         "--local-only",
         "--no-remote-cache",
         "--",
@@ -84,6 +87,7 @@ class RunningCommands:
         self.buck = buck
         self.gate = gate
         self.futures: list[asyncio.Future[BuckResult]] = []
+        self.raw: list[asyncio.subprocess.Process] = []
 
     def start(self, tag: str) -> asyncio.Future[BuckResult]:
         future = asyncio.ensure_future(gated_command(self.buck, self.gate, tag))
@@ -92,6 +96,10 @@ class RunningCommands:
 
     async def close(self) -> None:
         self.gate.release()
+        for process in self.raw:
+            if process.returncode is None:
+                process.kill()
+            await process.wait()
         await asyncio.wait_for(admin_client(self.buck).kill(), 30)
         results = await asyncio.wait_for(
             asyncio.gather(*self.futures, return_exceptions=True), 30
@@ -104,18 +112,16 @@ class RunningCommands:
 
 
 @asynccontextmanager
-async def commands(
-    buck: Buck, fail_first: bool = False
-) -> AsyncIterator[RunningCommands]:
+async def commands(buck: Buck) -> AsyncIterator[RunningCommands]:
     with tempfile.TemporaryDirectory() as directory:
-        running = RunningCommands(buck, Gate(Path(directory), fail_first))
+        running = RunningCommands(buck, Gate(Path(directory)))
         try:
             yield running
         finally:
             await running.close()
 
 
-class DebugRestartTest(TestCase):
+class CoordinatedRestartTest(TestCase):
     async def boot(self, buck: Buck) -> str:
         """Starts the daemon, and returns its id."""
         await buck.targets("//:ok")
@@ -126,88 +132,98 @@ class DebugRestartTest(TestCase):
             admin_client(buck).debug("restart", f"--reason={reason}"), TIMEOUT
         )
 
-    @buck_test(inplace=False, write_invocation_record=True, allow_soft_errors=True)
-    async def test_command_that_fails_after_the_request_restarts_on_a_new_daemon(
-        self, buck: Buck
+    def assert_retried(
+        self, buck: Buck, result: BuckResult, tag: str, reason: str
     ) -> None:
-        old = await self.boot(buck)
-        async with commands(buck, fail_first=True) as running:
-            pending = running.start("failing")
-            await running.gate.wait_started("failing")
-            await self.request_restart(buck, "failing-command")
-            # The request only has the daemon report its state. Nothing kills the daemon
-            # until a command that failed is run again.
-            self.assertEqual(await daemon_id(buck), old)
-            running.gate.release()
-            result = await asyncio.wait_for(pending, TIMEOUT)
-            self.assertEqual(result.stderr.count(RETRY_NOTICE), 1)
-            self.assertIsNotNone(result.invocation_record()["restarted_trace_id"])
-            self.assertNotEqual(await daemon_id(buck), old)
+        self.assertEqual(result.stdout.count(f"done:{tag}"), 1)
+        self.assertEqual(result.stderr.count(RETRY_NOTICE), 1)
+        record = result.invocation_record()
+        self.assertIsNotNone(record["restarted_trace_id"])
+        self.assertNotEqual(record["trace_id"], record["restarted_trace_id"])
+        # Only the first attempt asks for a restart.
+        self.assertFalse(record["should_restart"])
+        # The retry overwrote the first attempt's invocation record. Its command report holds
+        # the same errors: the one the command that requested the restart provided.
+        logs = buck.cwd / "buck-out" / (buck.isolation_prefix or "v2") / "log"
+        report = json.loads(
+            (logs / record["restarted_trace_id"] / "command_report.json").read_text()
+        )
+        self.assertEqual(len(report["error_messages"]), 1)
+        self.assertIn(restart_error(reason), report["error_messages"][0])
+
+    def assert_failed_with_restart_error(
+        self, error: BuckException, reason: str
+    ) -> None:
+        """A command the restart interrupted, and that was not retried, reports the same
+        invocation record as the first attempt of one that was."""
+        self.assertNotIn(RETRY_NOTICE, error.stderr)
+        record = error.invocation_record()
+        self.assertIsNone(record["restarted_trace_id"])
+        reported = record.single_error()
+        self.assertIn(restart_error(reason), reported["message"])
+        self.assertIn("INTERRUPTED_BY_DAEMON_SHUTDOWN", reported["tags"])
 
     @buck_test(inplace=False, write_invocation_record=True, allow_soft_errors=True)
-    async def test_command_interrupted_by_the_replacement_fails_with_the_reported_error(
+    async def test_interrupted_commands_retry_on_one_replacement(
         self, buck: Buck
     ) -> None:
         old = await self.boot(buck)
-        async with (
-            commands(buck, fail_first=True) as failing,
-            commands(buck) as waiting,
-        ):
-            failed = failing.start("failing")
-            interrupted = waiting.start("interrupted")
-            await asyncio.gather(
-                failing.gate.wait_started("failing"),
-                waiting.gate.wait_started("interrupted"),
-            )
-            await self.request_restart(buck, "replace-the-daemon")
-            # Running the failed command again replaces the daemon, which interrupts the
-            # other command while its action waits at the gate.
-            failing.gate.release()
-            results = await asyncio.wait_for(
-                asyncio.gather(failed, interrupted), TIMEOUT
-            )
-            result = results[1]
-            self.assertEqual(result.stderr.count(RETRY_NOTICE), 1)
-            # The second attempt overwrote the first attempt's invocation record. Its command
-            # report holds the same errors.
-            record = result.invocation_record()
-            logs = buck.cwd / "buck-out" / (buck.isolation_prefix or "v2") / "log"
-            report = json.loads(
-                (
-                    logs / record["restarted_trace_id"] / "command_report.json"
-                ).read_text()
-            )
-            self.assertEqual(len(report["error_messages"]), 1)
-            self.assertIn(
-                "Daemon restart requested: replace-the-daemon",
-                report["error_messages"][0],
-            )
-            self.assertNotEqual(await daemon_id(buck), old)
-
-    @buck_test(inplace=False, write_invocation_record=True, allow_soft_errors=True)
-    async def test_command_that_succeeds_after_the_request_is_not_restarted(
-        self, buck: Buck
-    ) -> None:
-        old = await self.boot(buck)
+        tags = ["client-a", "client-b", "client-c"]
         async with commands(buck) as running:
-            pending = running.start("succeeding")
-            await running.gate.wait_started("succeeding")
-            await self.request_restart(buck, "succeeding-command")
-            running.gate.release()
-            result = await asyncio.wait_for(pending, TIMEOUT)
-            self.assertNotIn(RETRY_NOTICE, result.stderr)
-            self.assertEqual(await daemon_id(buck), old)
+            pending = [running.start(tag) for tag in tags]
+            await asyncio.gather(*(running.gate.wait_started(tag) for tag in tags))
+            await self.request_restart(buck, "concurrent-clients")
+            results = await asyncio.wait_for(asyncio.gather(*pending), TIMEOUT)
+            for tag, result in zip(tags, results):
+                self.assert_retried(buck, result, tag, "concurrent-clients")
+            replacement = await daemon_id(buck)
+            self.assertNotEqual(replacement, old)
+            # A command that the restart did not interrupt uses the same replacement.
+            await buck.targets("//:ok")
+            self.assertEqual(await daemon_id(buck), replacement)
 
     @buck_test(inplace=False, write_invocation_record=True, allow_soft_errors=True)
-    async def test_restarter_off_does_not_restart(self, buck: Buck) -> None:
+    async def test_stdout_already_delivered_refuses_retry(self, buck: Buck) -> None:
+        await self.boot(buck)
+        async with commands(buck) as running:
+            request = gated_command(buck, running.gate, "stdout", streaming=True)
+            process = await request.start()
+            running.raw.append(process)
+            assert process.stdout is not None
+            prefix = await asyncio.wait_for(process.stdout.readline(), TIMEOUT)
+            self.assertEqual(prefix, b"prefix:stdout\n")
+            # start() consumed the creation coroutine; finish the same raw process,
+            # retaining the harness's result/exception and invocation-record handling.
+            pending = asyncio.ensure_future(
+                request._get_result_or_raise_exception(process)
+            )
+            running.futures.append(pending)
+            await running.gate.wait_started("stdout")
+            await self.request_restart(buck, "stdout-not-replayable")
+            error = await expect_failure(asyncio.wait_for(pending, TIMEOUT))
+            self.assertNotIn("done:stdout", error.stdout)
+            self.assert_failed_with_restart_error(error, "stdout-not-replayable")
+            # The client asked to restart, as for any restart, and then could not.
+            self.assertTrue(error.invocation_record()["should_restart"])
+
+    @buck_test(inplace=False, write_invocation_record=True, allow_soft_errors=True)
+    async def test_restarter_off_does_not_retry(self, buck: Buck) -> None:
         (buck.cwd / ".buckconfig.local").write_text("[buck2]\n  restarter = false\n")
-        old = await self.boot(buck)
-        async with commands(buck, fail_first=True) as running:
+        await self.boot(buck)
+        async with commands(buck) as running:
             pending = running.start("restarter-off")
             await running.gate.wait_started("restarter-off")
             await self.request_restart(buck, "restarter-off")
-            running.gate.release()
+            error = await expect_failure(asyncio.wait_for(pending, TIMEOUT))
+            self.assert_failed_with_restart_error(error, "restarter-off")
+            self.assertFalse(error.invocation_record()["should_restart"])
+
+    @buck_test(inplace=False, write_invocation_record=True)
+    async def test_ordinary_kill_does_not_retry(self, buck: Buck) -> None:
+        await self.boot(buck)
+        async with commands(buck) as running:
+            pending = running.start("ordinary-kill")
+            await running.gate.wait_started("ordinary-kill")
+            await admin_client(buck).kill()
             error = await expect_failure(asyncio.wait_for(pending, TIMEOUT))
             self.assertNotIn(RETRY_NOTICE, error.stderr)
-            self.assertFalse(error.invocation_record()["should_restart"])
-            self.assertEqual(await daemon_id(buck), old)

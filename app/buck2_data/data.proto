@@ -872,12 +872,16 @@ message StructuredError {
   bool action_cache_is_corrupted = 10;
   reserved 11;
   // The error the soft error reported, if it has
-  // `daemon_in_memory_state_is_corrupted`. A command that was sent it, and that
-  // the daemon then shutting down interrupts, fails with it.
+  // `daemon_in_memory_state_is_corrupted` or `daemon_restart_requested`. A
+  // command that was sent it, and that the daemon then shutting down
+  // interrupts, fails with it.
   //
   // We should consider setting this on every soft error, and using it to
   // replace `payload`, `location`, the flags above, etc.
   ErrorReport error = 12;
+  // The daemon is to be replaced now. A daemon that can restart itself sends
+  // this to every running command and shuts down.
+  bool daemon_restart_requested = 13;
 }
 
 message CriticalPathEntry {

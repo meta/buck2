@@ -195,8 +195,19 @@ mod imp {
                 is_deprecation: matches!(&options.kind, SoftErrorKind::Deprecation { .. }),
             }),
         );
-        if options.daemon_in_memory_state_is_corrupted {
+        if options.daemon_in_memory_state_is_corrupted || options.daemon_restart_requested {
             event.error = Some(Box::new(err.into()));
+        }
+
+        // Every command hears that the daemon is restarting, not only the one that reports it:
+        // each one's client runs it again on the new daemon.
+        #[cfg(not(client_only))]
+        if options.daemon_restart_requested {
+            if !buck2_server::active_commands::broadcast_instant_event(&event) {
+                write_to_scribe(fb, event);
+            }
+            buck2_server::daemon::server::restart_daemon(err);
+            return;
         }
 
         // The report goes out once. A command's event stream reaches Scribe on its own; only a
@@ -257,6 +268,7 @@ mod imp {
             daemon_materializer_state_is_corrupted: options.daemon_materializer_state_is_corrupted,
             action_cache_is_corrupted: options.action_cache_is_corrupted,
             error: None,
+            daemon_restart_requested: options.daemon_restart_requested,
         }
     }
 

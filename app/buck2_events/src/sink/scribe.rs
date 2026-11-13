@@ -137,6 +137,7 @@ impl RemoteEventSink {
                                 daemon_materializer_state_is_corrupted: false,
                                 action_cache_is_corrupted: false,
                                 error: None,
+                                daemon_restart_requested: false,
                             }
                             .into(),
                         ),

@@ -299,6 +299,9 @@ pub struct StructuredErrorOptions {
     pub daemon_in_memory_state_is_corrupted: bool,
     pub daemon_materializer_state_is_corrupted: bool,
     pub action_cache_is_corrupted: bool,
+    /// Replace the daemon now: every running command is sent the report, and the daemon shuts
+    /// down. An in-process daemon is not shut down.
+    pub daemon_restart_requested: bool,
     // By default, we only get a handful of traces per error category in Logview.
     // This key, if specified, enables logging one trace per unique key using
     // the "trace cut" feature of Logview. Note that the dimensionality of this
@@ -316,6 +319,7 @@ impl Default for StructuredErrorOptions {
             daemon_in_memory_state_is_corrupted: false,
             daemon_materializer_state_is_corrupted: false,
             action_cache_is_corrupted: false,
+            daemon_restart_requested: false,
             low_cardinality_key_for_additional_logview_samples: None,
         }
     }

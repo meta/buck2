@@ -21,8 +21,8 @@ use buck2_client_ctx::events_ctx::EventsCtx;
 use buck2_client_ctx::exit_result::ExitResult;
 use buck2_client_ctx::streaming::StreamingCommand;
 
-/// Has the daemon report its in-memory state as corrupted, as it does when it finds that
-/// itself. A running command that then fails is restarted on a new daemon.
+/// Has the daemon restart, as it does when it finds that it has to. Running commands are
+/// interrupted, and restarted on the new daemon.
 #[derive(Debug, clap::Parser)]
 pub struct RestartCommand {
     #[arg(long, default_value = "Explicit daemon restart")]

@@ -17,12 +17,12 @@ if not started.exists():
         if not gate.exists():
             sys.exit("the gate is gone")
         time.sleep(0.05)
-    if (gate / "fail").exists():
-        sys.exit("the gate fails the first attempt")
 pathlib.Path(sys.argv[3]).write_text("ready")
 """
 
-def _gated(ctx):
+def _run(ctx, streaming):
+    if streaming:
+        ctx.output.stream("prefix:" + ctx.cli_args.tag)
     actions = ctx.bxl_actions().actions
     output = actions.declare_output("gate-" + ctx.cli_args.tag, has_content_based_path = False)
     actions.run(
@@ -31,12 +31,20 @@ def _gated(ctx):
         local_only = True,
     )
     ctx.output.ensure(output)
+    ctx.output.print("done:" + ctx.cli_args.tag)
 
-gated = bxl_main(
-    impl = _gated,
-    cli_args = {
-        "gate": cli_args.string(),
-        "python": cli_args.string(),
-        "tag": cli_args.string(),
-    },
-)
+def _gated(ctx):
+    _run(ctx, False)
+
+def _streaming(ctx):
+    _run(ctx, True)
+
+_CLI_ARGS = {
+    "gate": cli_args.string(),
+    "python": cli_args.string(),
+    "tag": cli_args.string(),
+}
+
+gated = bxl_main(impl = _gated, cli_args = _CLI_ARGS)
+
+streaming = bxl_main(impl = _streaming, cli_args = _CLI_ARGS)

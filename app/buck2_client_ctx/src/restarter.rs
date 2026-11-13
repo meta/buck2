@@ -37,7 +37,8 @@ pub struct Restarter {
     daemon: Option<buck2_cli_proto::DaemonConstraints>,
     /// `[buck2] restarter`, as the daemon reports it.
     restarter_is_enabled: bool,
-    /// Whether a soft error reported the daemon's in-memory state as corrupted.
+    /// Whether a soft error reported the daemon's in-memory state as corrupted, or the daemon
+    /// as restarting.
     daemon_in_memory_state_is_corrupted: bool,
     /// The error that the first such soft error reported, if it carried one.
     triggering_error: Option<Box<buck2_data::ErrorReport>>,
@@ -71,7 +72,8 @@ impl Restarter {
             buck2_data::instant_event::Data::StructuredError(err)
                 if err.soft_error_category.is_some() =>
             {
-                self.daemon_in_memory_state_is_corrupted |= err.daemon_in_memory_state_is_corrupted;
+                self.daemon_in_memory_state_is_corrupted |=
+                    err.daemon_in_memory_state_is_corrupted || err.daemon_restart_requested;
                 if self.triggering_error.is_none() {
                     self.triggering_error = err.error.clone();
                 }
@@ -264,6 +266,20 @@ mod tests {
         assert_eq!(
             after(Restarter::default(), &observed(true, true, true)).should_restart(&failed()),
             None
+        );
+    }
+
+    #[test]
+    fn test_restarts_a_failed_command_away_from_a_restarting_daemon() {
+        let restarting = buck2_data::StructuredError {
+            soft_error_category: Some(buck2_data::SoftError::default()),
+            daemon_restart_requested: true,
+            ..Default::default()
+        };
+        let events = [observed(true, false, false), vec![restarting.into()]].concat();
+        assert_eq!(
+            should_restart(false, events, failed()),
+            rejects(true, false)
         );
     }
 

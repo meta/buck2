@@ -15,6 +15,7 @@ use std::marker::PhantomData;
 use std::path::Path;
 use std::pin::Pin;
 use std::sync::Arc;
+use std::sync::Weak;
 use std::sync::atomic::AtomicBool;
 use std::sync::atomic::Ordering;
 use std::task::Context;
@@ -114,6 +115,7 @@ use futures::channel::mpsc::UnboundedSender;
 use futures::future::BoxFuture;
 use futures::stream;
 use pagable::DeferredReadFailures;
+use parking_lot::Mutex;
 use rand::Rng as _;
 use rand::SeedableRng;
 use tokio::runtime::Handle;
@@ -404,7 +406,7 @@ pub(crate) struct BuckdServerData {
     enable_trace_io: bool,
     start_time: prost_types::Timestamp,
     start_instant: Instant,
-    daemon_shutdown: DaemonShutdown,
+    daemon_shutdown: Arc<DaemonShutdown>,
     daemon_state: Arc<DaemonState>,
     #[allocative(skip)]
     cert_state: CertState,
@@ -416,6 +418,26 @@ pub(crate) struct BuckdServerData {
     log_reload_handle: Arc<dyn LogConfigurationReloadHandle>,
     #[allocative(skip)]
     rt: Handle,
+}
+
+/// How long a daemon that is restarting gives its commands to hear of it.
+const RESTART_TIMEOUT: Duration = Duration::from_secs(1);
+
+/// The shutdown of the daemon that this process runs. An in-process daemon's is not kept
+/// here: its client is the only one that could start another.
+static DAEMON_SHUTDOWN: Mutex<Weak<DaemonShutdown>> = Mutex::new(Weak::new());
+
+/// Shuts the daemon down for `error`, for its clients to start another. An in-process daemon
+/// is left running.
+pub fn restart_daemon(error: &buck2_error::Error) {
+    let Some(daemon_shutdown) = DAEMON_SHUTDOWN.lock().upgrade() else {
+        return;
+    };
+    let shutdown = buck2_data::DaemonShutdown {
+        reason: format!("{error:#}"),
+        callers: Vec::new(),
+    };
+    daemon_shutdown.start_shutdown(shutdown, Some(RESTART_TIMEOUT));
 }
 
 /// The BuckdServer implements the DaemonApi.
@@ -804,6 +826,13 @@ impl BuckdServer {
         );
 
         let auth_token = process_info.auth_token.clone();
+        let daemon_shutdown = Arc::new(DaemonShutdown {
+            started: AtomicBool::new(false),
+            shutdown_channel,
+        });
+        if !in_process {
+            *DAEMON_SHUTDOWN.lock() = Arc::downgrade(&daemon_shutdown);
+        }
         let api_server = BuckdServer(Arc::new(BuckdServerData {
             process_info,
             base_daemon_constraints,
@@ -813,10 +842,7 @@ impl BuckdServer {
                 nanos: now.subsec_nanos() as i32,
             },
             start_instant: Instant::now(),
-            daemon_shutdown: DaemonShutdown {
-                started: AtomicBool::new(false),
-                shutdown_channel,
-            },
+            daemon_shutdown,
             daemon_state: daemon_state.clone(),
             cert_state,
             inactivity_config: inactivity_config.clone(),
@@ -1590,11 +1616,10 @@ impl DaemonApi for BuckdServer {
             "Daemon restart requested: {}",
             req.into_inner().reason
         );
-        // Reported outside any command, so every running command is sent it.
         let _reported = tag_error!(
             "daemon_restart_requested",
             error,
-            daemon_in_memory_state_is_corrupted: true,
+            daemon_restart_requested: true,
             task: false
         );
         Ok(Response::new(RestartResponse {}))

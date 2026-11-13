@@ -161,18 +161,22 @@ impl<'v> AValue<'v> for StarlarkStrAValue {
     }
 }
 
+// The string type's allocation primitives. Everything that is not the string type itself
+// allocates through `heap.alloc(..)`: a `&str` or a `String`, or one of the recipes in
+// `values::string`, which are how these are reached from outside the crate.
+
 impl<'fh> FrozenHeap<'fh> {
     /// Allocate a string on this heap.
     ///
     /// Frozen heaps always intern: equal strings share one allocation, which is worth its lookup
     /// for strings that are kept for the heap's lifetime. [`Heap`] leaves the choice to the
     /// caller, see [`Heap::alloc_str`] and [`Heap::alloc_str_intern`].
-    pub fn alloc_str(self, x: &str) -> StringValue<'fh> {
+    pub(crate) fn alloc_str(self, x: &str) -> StringValue<'fh> {
         self.alloc_str_hashed(Hashed::new(x))
     }
 
     /// Allocate prehashed string.
-    pub fn alloc_str_hashed(self, s: Hashed<&str>) -> StringValue<'fh> {
+    pub(crate) fn alloc_str_hashed(self, s: Hashed<&str>) -> StringValue<'fh> {
         if let Some(s) = constant_string(*s) {
             return s.at();
         }
@@ -191,7 +195,7 @@ impl<'fh> FrozenHeap<'fh> {
 
 impl<'v> Heap<'v> {
     /// Allocate a string on the heap, without interning it; see [`Heap::alloc_str_intern`].
-    pub fn alloc_str(self, x: &str) -> StringValue<'v> {
+    pub(crate) fn alloc_str(self, x: &str) -> StringValue<'v> {
         if let Some(x) = constant_string(x) {
             x.at()
         } else {
@@ -204,7 +208,7 @@ impl<'v> Heap<'v> {
     /// Allocate a string on the heap, sharing the allocation with any equal string interned on
     /// it before. Prefer this for strings that are allocated repeatedly and kept alive.
     /// [`FrozenHeap::alloc_str`] always interns.
-    pub fn alloc_str_intern(self, x: &str) -> StringValue<'v> {
+    pub(crate) fn alloc_str_intern(self, x: &str) -> StringValue<'v> {
         if let Some(x) = constant_string(x) {
             x.at()
         } else {
@@ -218,7 +222,7 @@ impl<'v> Heap<'v> {
     }
 
     /// Allocate a string on the heap, based on two concatenated strings.
-    pub fn alloc_str_concat(self, x: &str, y: &str) -> StringValue<'v> {
+    pub(crate) fn alloc_str_concat(self, x: &str, y: &str) -> StringValue<'v> {
         if x.is_empty() {
             self.alloc_str(y)
         } else if y.is_empty() {
@@ -232,7 +236,7 @@ impl<'v> Heap<'v> {
     }
 
     /// Allocate a string on the heap, based on three concatenated strings.
-    pub fn alloc_str_concat3(self, x: &str, y: &str, z: &str) -> StringValue<'v> {
+    pub(crate) fn alloc_str_concat3(self, x: &str, y: &str, z: &str) -> StringValue<'v> {
         if x.is_empty() {
             self.alloc_str_concat(y, z)
         } else if y.is_empty() {

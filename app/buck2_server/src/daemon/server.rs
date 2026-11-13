@@ -2995,6 +2995,7 @@ mod tests {
 
     use super::*;
     use crate::active_commands::ActiveCommandDropGuard;
+    use crate::active_commands::REGISTRY_TEST_LOCK;
 
     /// These tests drive the shutdown signal to completion inside the test binary, under
     /// `tokio::time::pause`. A watchdog would sleep against the wall clock the paused deadline has
@@ -3121,6 +3122,7 @@ mod tests {
 
     #[tokio::test(flavor = "multi_thread")]
     async fn test_streaming_reports_command_dropped_before_its_result() {
+        let _registry = REGISTRY_TEST_LOCK.lock().await;
         let (started_send, started_recv) = oneshot::channel();
         let (_park_send, park_recv) = oneshot::channel::<()>();
         let (dropped_send, dropped_recv) = oneshot::channel::<()>();
@@ -3163,6 +3165,7 @@ mod tests {
 
     #[tokio::test(flavor = "multi_thread")]
     async fn test_streaming_does_not_report_completed_command_again() {
+        let _registry = REGISTRY_TEST_LOCK.lock().await;
         let (dropped_send, dropped_recv) = oneshot::channel::<()>();
         let mut command = StreamingCommand::start(move |dispatcher| {
             async move {
@@ -3190,6 +3193,7 @@ mod tests {
 
     #[tokio::test(flavor = "multi_thread")]
     async fn test_streaming_does_not_report_command_cancelled_after_its_result() {
+        let _registry = REGISTRY_TEST_LOCK.lock().await;
         let (release_send, release_recv) = std::sync::mpsc::channel::<()>();
         let (dropped_send, dropped_recv) = oneshot::channel::<()>();
         let mut command = StreamingCommand::start(move |dispatcher| {
@@ -3222,6 +3226,7 @@ mod tests {
 
     #[tokio::test(flavor = "multi_thread")]
     async fn test_streaming_reports_command_admitted_after_scope_closed() {
+        let _registry = REGISTRY_TEST_LOCK.lock().await;
         let scope = CancellationScope::new();
         scope.cancel();
         let command = StreamingCommand::start_in(scope, |_| {
@@ -3394,6 +3399,7 @@ mod tests {
 
         use super::super::*;
         use crate::active_commands::ActiveCommandDropGuard;
+        use crate::active_commands::REGISTRY_TEST_LOCK;
 
         /// Records every `CommandResult` dispatched for a command, in front of the sink the
         /// command's client reads from.
@@ -3523,6 +3529,7 @@ mod tests {
 
         #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
         async fn a_completed_command_reports_once() {
+            let _registry = REGISTRY_TEST_LOCK.lock().await;
             let scope = CancellationScope::new();
             let command = CommandUnderTest::new();
             let dispatcher = command.dispatcher.dupe();
@@ -3541,6 +3548,7 @@ mod tests {
         /// the crash that fast-reverted the 2026-11-02 buck2 bump (D129074969).
         #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
         async fn a_client_that_disconnects_after_its_result_does_not_get_a_second_one() {
+            let _registry = REGISTRY_TEST_LOCK.lock().await;
             let scope = CancellationScope::new();
             let (release, released) = mpsc::channel::<()>();
             let command = CommandUnderTest::new();
@@ -3569,6 +3577,7 @@ mod tests {
         /// body still completes, so its result is the only one.
         #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
         async fn a_cancel_during_the_reporting_poll_does_not_add_a_result() {
+            let _registry = REGISTRY_TEST_LOCK.lock().await;
             let scope = CancellationScope::new();
             let (started, polling) = oneshot::channel::<()>();
             let (release, released) = mpsc::channel::<()>();
@@ -3596,6 +3605,7 @@ mod tests {
         /// cancellation is the one result.
         #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
         async fn a_client_that_disconnects_mid_command_gets_one_result() {
+            let _registry = REGISTRY_TEST_LOCK.lock().await;
             let scope = CancellationScope::new();
             let command = CommandUnderTest::new();
             let (response, dispatched) =
@@ -3612,6 +3622,7 @@ mod tests {
         /// client is told once that its command stopped.
         #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
         async fn an_evicted_command_tells_its_client_once() {
+            let _registry = REGISTRY_TEST_LOCK.lock().await;
             let scope = CancellationScope::new();
             let command = CommandUnderTest::new();
             let (mut response, dispatched) =
@@ -3629,6 +3640,7 @@ mod tests {
         /// client is told once.
         #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
         async fn a_command_admitted_after_eviction_tells_its_client_once() {
+            let _registry = REGISTRY_TEST_LOCK.lock().await;
             let scope = CancellationScope::new();
             scope.cancel();
             let ran = Arc::new(AtomicBool::new(false));

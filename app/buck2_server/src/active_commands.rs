@@ -318,6 +318,11 @@ impl ActiveCommand {
     }
 }
 
+/// `cargo test` runs the tests of this crate on threads of one process, which has one registry
+/// of active commands. A test that registers a command holds this until the command is gone.
+#[cfg(test)]
+pub(crate) static REGISTRY_TEST_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
 #[cfg(test)]
 mod tests {
     use std::time::SystemTime;
@@ -329,8 +334,6 @@ mod tests {
     use buck2_hash::IntentionallyStdHashMap;
 
     use super::*;
-
-    static TEST_MUTEX: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
     #[test]
     fn test_active_command_state() {
@@ -497,7 +500,7 @@ mod tests {
 
     #[test]
     fn test_multiple_active_commands() {
-        let _guard = TEST_MUTEX.lock().unwrap();
+        let _guard = REGISTRY_TEST_LOCK.blocking_lock();
         let (dispatcher1, mut source1, id1) = create_dispatcher();
         let _active1 = ActiveCommand::new(&dispatcher1, Vec::new());
 
@@ -520,7 +523,7 @@ mod tests {
 
     #[test]
     fn soft_error_context_routes_to_owning_command() -> buck2_error::Result<()> {
-        let _guard = TEST_MUTEX.lock().unwrap();
+        let _guard = REGISTRY_TEST_LOCK.blocking_lock();
         let first_context = Arc::new(SoftErrorContext::new("", "")?);
         let second_context = Arc::new(SoftErrorContext::new("", "")?);
 
@@ -549,7 +552,7 @@ mod tests {
 
     #[test]
     fn soft_error_context_does_not_route_after_owner_finishes() -> buck2_error::Result<()> {
-        let _guard = TEST_MUTEX.lock().unwrap();
+        let _guard = REGISTRY_TEST_LOCK.blocking_lock();
         let context = Arc::new(SoftErrorContext::new("", "")?);
 
         let (owner_dispatcher, mut owner_source, _) = create_dispatcher();

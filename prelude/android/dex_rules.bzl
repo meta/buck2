@@ -467,6 +467,8 @@ def _filter_pre_dexed_libs(
         [lib.ref_count for lib in pre_dexed_libs],
         "--synthetic-contexts",
         [lib.synthetic_contexts for lib in pre_dexed_libs],
+        "--dex-units",
+        [lib.dex_units for lib in pre_dexed_libs],
         "--output",
         weight_estimate_and_filtered_class_names_file.as_output(),
     ])
@@ -889,7 +891,7 @@ def _merge_dexes(
     d8_cmd.add(_DEX_MERGE_OPTIONS)
 
     if class_names_to_include:
-        d8_cmd.add(["--primary-dex-class-names-path", class_names_to_include])
+        d8_cmd.add(["--pre-dex-class-names-path", class_names_to_include])
 
     if secondary_output_dex_file:
         d8_cmd.add(["--secondary-output-dex-file", secondary_output_dex_file.as_output()])

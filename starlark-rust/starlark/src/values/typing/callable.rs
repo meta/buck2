@@ -308,10 +308,13 @@ impl<'v, P: StarlarkCallableParamSpec, R: StarlarkTypeExpr<'static>> Freeze<'v>
     }
 }
 
-/// More strict version of [`StarlarkCallable`].
+/// A callable whose signature has been checked: the conversion from
+/// [`StarlarkCallable<P, R>`](StarlarkCallable) that fails for a callable with another
+/// signature.
 ///
-/// This checks not only that the value is callable,
-/// but also that it is a callable with the correct signature.
+/// This is a parameter binding and not a type: `typing.Callable[P, R]` accepts every callable
+/// at runtime, so there is no type for this to be a [`ValueOf`] of. Hold the checked callable
+/// as the [`StarlarkCallable`] it is ([`to_unchecked`](Self::to_unchecked)).
 ///
 /// The implementation uses starlark-rust typechecker with all its limitations.
 /// For example, if there are optional parameters in both value-def and this signature,
@@ -345,19 +348,6 @@ impl<'v, P: StarlarkCallableParamSpec, R: StarlarkTypeExpr<'static>> Dupe
 {
 }
 
-// SAFETY: as for `StarlarkCallable`.
-unsafe impl<'v, P: StarlarkCallableParamSpec + 'static, R: StarlarkTypeExpr<'static> + 'static>
-    ProvidesStaticType<'v> for StarlarkCallableChecked<'v, P, R>
-{
-    type StaticType = StarlarkCallableChecked<'static, P, R>;
-}
-
-impl<P: StarlarkCallableParamSpec + 'static, R: StarlarkTypeExpr<'static> + 'static> IsStaticType
-    for StarlarkCallableChecked<'static, P, R>
-{
-    type Reinfect<'lt> = StarlarkCallableChecked<'lt, P, R>;
-}
-
 impl<'v, P: StarlarkCallableParamSpec, R: StarlarkTypeExpr<'static>> Debug
     for StarlarkCallableChecked<'v, P, R>
 {
@@ -381,7 +371,7 @@ unsafe impl<'v, P: StarlarkCallableParamSpec, R: StarlarkTypeExpr<'static>> Trac
 impl<'v, P: StarlarkCallableParamSpec, R: StarlarkTypeExpr<'static>> AllocValue<'v>
     for StarlarkCallableChecked<'v, P, R>
 {
-    type Type = Self;
+    type Type = StarlarkCallable<'v, P, R>;
 
     fn alloc_value(self, _heap: Heap<'v>) -> ValueOf<'v, Self::Type> {
         ValueOf::new_unchecked(self.0)
@@ -395,25 +385,6 @@ impl<'v, P: StarlarkCallableParamSpec, R: StarlarkTypeExpr<'static>>
     pub fn to_unchecked(self) -> StarlarkCallable<'v, P, R> {
         StarlarkCallable::unchecked_new(self.0)
     }
-}
-
-impl<'v, P: StarlarkCallableParamSpec, R: StarlarkTypeExpr<'static>> StarlarkTypeExpr<'v>
-    for StarlarkCallableChecked<'v, P, R>
-{
-    type Get = Self;
-
-    fn starlark_type_repr() -> Ty {
-        StarlarkCallable::<'v, P, R>::starlark_type_repr()
-    }
-
-    fn get(value: Value<'v>) -> Option<Self> {
-        Self::unpack_value(value).ok().flatten()
-    }
-}
-
-impl<'v, P: StarlarkCallableParamSpec, R: StarlarkTypeExpr<'static>> StarlarkTypeExprStable<'v>
-    for StarlarkCallableChecked<'v, P, R>
-{
 }
 
 #[derive(thiserror::Error, Debug)]

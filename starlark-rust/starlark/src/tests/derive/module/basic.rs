@@ -29,7 +29,7 @@ use crate::values::int::IntView;
 use crate::values::list_or_tuple::ListOrTupleType;
 use crate::values::none::NoneType;
 use crate::values::string::StarlarkStr;
-use crate::values::typing::StarlarkCallableChecked;
+use crate::values::typing::StarlarkCallable;
 
 // The examples from the starlark_module documentation.
 #[test]
@@ -76,7 +76,7 @@ fn test_static_allowed() {
     #[starlark_module]
     fn globals(globals: &mut GlobalsBuilder) {
         fn test<'v>()
-        -> anyhow::Result<ValueOf<'v, StarlarkCallableChecked<'v, (IntView<'static>,), NoneType>>>
+        -> anyhow::Result<ValueOf<'v, StarlarkCallable<'v, (IntView<'static>,), NoneType>>>
         {
             panic!()
         }

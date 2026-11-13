@@ -174,8 +174,6 @@ union_payload_is_self! {
     impl['v] crate::values::typing::TypeType;
     impl['v, P: crate::values::typing::StarlarkCallableParamSpec, R: StarlarkTypeExpr<'static>]
         crate::values::typing::StarlarkCallable<'v, P, R>;
-    impl['v, P: crate::values::typing::StarlarkCallableParamSpec, R: StarlarkTypeExpr<'static>]
-        crate::values::typing::StarlarkCallableChecked<'v, P, R>;
 }
 
 /// `None` carries nothing, so the unit value is as good a payload as its handle.

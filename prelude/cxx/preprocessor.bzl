@@ -266,7 +266,7 @@ def _format_include_arg(flag: str, path: cmd_args, compiler_type: str) -> list[c
         return [shared if shared != None else cmd_args(flag), path]
 
 def format_system_include_arg(path: cmd_args, compiler_type: str) -> list[cmd_args]:
-    if compiler_type == "windows":
+    if compiler_type in ["windows", "clang_cl"]:
         return [cmd_args(path, format = "/external:I{}")]
     else:
         return [_INCLUDE_FLAG_ARGS["-isystem"], path]

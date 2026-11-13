@@ -20,6 +20,7 @@
 use dupe::Dupe;
 
 use crate::private::Private;
+use crate::values::FreezePreservesType;
 use crate::values::FrozenHeap;
 use crate::values::Heap;
 use crate::values::StarlarkValue;
@@ -88,8 +89,19 @@ impl<'v> Allocator<'v> {
     }
 
     /// A representation that holds `Value`s: traced, and frozen by its
-    /// [`Freeze`](crate::values::Freeze) impl.
+    /// [`Freeze`](crate::values::Freeze) impl into a representation of the same type.
     pub fn alloc_complex<T>(self, x: T) -> ValueTyped<'v, T>
+    where
+        T: ComplexValue<'v> + HeapSendable<'v> + FreezePreservesType<'v>,
+    {
+        self.alloc_complex_any_frozen_type(x)
+    }
+
+    /// [`alloc_complex`](Self::alloc_complex) without [`FreezePreservesType`], for
+    /// [`StarlarkAnyComplex::alloc_retyped_by_freeze`][exception] alone.
+    ///
+    /// [exception]: crate::values::any_complex::StarlarkAnyComplex::alloc_retyped_by_freeze
+    pub(crate) fn alloc_complex_any_frozen_type<T>(self, x: T) -> ValueTyped<'v, T>
     where
         T: ComplexValue<'v> + HeapSendable<'v>,
     {

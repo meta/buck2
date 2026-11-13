@@ -418,7 +418,7 @@ where
 
     fn freeze<'fv>(self, freezer: &Freezer<'v, 'fv>) -> FreezeResult<Self::Frozen<'fv>> {
         Ok(ValueTyped::new_err(self.0.freeze(freezer)?)
-            .expect("Freezing a value is known to be well-behaved"))
+            .expect("a value freezes into its representation's `Freeze::Frozen`"))
     }
 }
 

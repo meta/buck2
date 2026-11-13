@@ -565,12 +565,9 @@ impl<'v> AnalysisValueStorage<'v> {
     /// Write self to `module` extra value.
     fn write_to_module(self, module: &Module<'v>) -> buck2_error::Result<()> {
         let extra_v = AnalysisExtraValue::get_or_init(module)?;
-        let res = extra_v.analysis_value_storage.set(
-            module
-                .heap()
-                .alloc(StarlarkAnyComplex { value: self })
-                .get(),
-        );
+        let res = extra_v
+            .analysis_value_storage
+            .set(StarlarkAnyComplex { value: self }.alloc_retyped_by_freeze(module.heap()));
         if res.is_err() {
             return Err(internal_error!("analysis_value_storage is already set"));
         }

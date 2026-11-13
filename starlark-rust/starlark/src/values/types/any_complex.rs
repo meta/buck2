@@ -34,7 +34,9 @@ use crate::typing::starlark_value::TyStarlarkValueVTable;
 use crate::values::AllocFrozenRepresentation;
 use crate::values::AllocRepresentation;
 use crate::values::Allocator;
+use crate::values::ComplexValue;
 use crate::values::Freeze;
+use crate::values::FreezePreservesType;
 use crate::values::FreezeResult;
 use crate::values::Freezer;
 use crate::values::FrozenAllocator;
@@ -174,7 +176,8 @@ impl<'fv, T: crate::pagable::StarlarkDeserialize<'fv>> crate::pagable::StarlarkD
 ///   the frozen-heap vtable. Use for a `T` that is stored on frozen heaps: one that is its own
 ///   frozen form, or one that another type freezes into.
 /// - `register_starlark_any_complex!(T, frozen FrozenT)` — both of the above in one call, for
-///   a `T` that freezes into a different `FrozenT`.
+///   a `T` that freezes into a different `FrozenT`. Such a `T` is allocated with
+///   [`StarlarkAnyComplex::alloc_retyped_by_freeze`].
 ///
 /// ```ignore
 /// register_starlark_any_complex!(frozen Foo<'_>);
@@ -209,19 +212,42 @@ macro_rules! register_starlark_any_complex {
 impl<T> StarlarkAnyComplex<T> {
     /// Allocate as a value that cannot be frozen, for a payload without a
     /// [`Freeze`](crate::values::Freeze) impl; freezing the module that holds it is an error.
-    /// A payload that freezes is allocated through
-    /// [`alloc`](crate::values::Heap::alloc) instead.
+    /// A payload that is its own frozen form is allocated through
+    /// [`alloc`](crate::values::Heap::alloc) instead, and one that freezes into another
+    /// payload type through [`alloc_retyped_by_freeze`](Self::alloc_retyped_by_freeze).
     pub fn alloc_no_freeze<'v>(self, heap: Heap<'v>) -> ValueTyped<'v, Self>
     where
         Self: StarlarkValue<'v> + Trace<'v> + HeapSendable<'v>,
     {
         Allocator::new(heap).alloc_complex_no_freeze(self)
     }
+
+    /// Allocate a payload that freezes into another payload type, as
+    /// `register_starlark_any_complex!(T, frozen FrozenT)` declares one.
+    ///
+    /// `StarlarkAnyComplex<T>` is a Starlark type of its own for each `T`, so such a value is
+    /// of another type once it is frozen: the one exception to
+    /// [`FreezePreservesType`](crate::values::FreezePreservesType). That is why this gives
+    /// the handle of the representation, which freezes into the frozen representation's, and
+    /// there is no handle of the type to be had: it would not survive the freeze.
+    //
+    // FIXME(JakobDegen): This exists because `StarlarkAnyComplex` does not line up with how
+    // Starlark types work everywhere else. It is one Starlark type per payload type, while a
+    // payload and the different payload it freezes into are really two representations of one
+    // type, as a mutable and a frozen list are. Making them one type means naming the
+    // wrapper's type after the frozen payload, which needs payloads that never freeze to move
+    // to a wrapper of their own first.
+    pub fn alloc_retyped_by_freeze<'v>(self, heap: Heap<'v>) -> ValueTyped<'v, Self>
+    where
+        Self: ComplexValue<'v> + HeapSendable<'v>,
+    {
+        Allocator::new(heap).alloc_complex_any_frozen_type(self)
+    }
 }
 
 impl<'v, T> AllocRepresentation<'v> for StarlarkAnyComplex<T>
 where
-    Self: StarlarkValue<'v> + HeapSendable<'v>,
+    Self: StarlarkValue<'v> + HeapSendable<'v> + FreezePreservesType<'v>,
     T: Trace<'v> + ProvidesStaticType<'v> + Freeze<'v>,
     for<'fv> StarlarkAnyComplex<T::Frozen<'fv>>: AValueSimpleBound<'fv>,
     for<'fv> StarlarkAnyComplex<T::Frozen<'fv>>:
@@ -308,13 +334,12 @@ mod tests {
     #[test]
     fn test_any_complex() {
         Module::with_temp_heap(|module| {
-            let data = module
-                .heap()
-                .alloc(StarlarkAnyComplex::new(UnfrozenData {
-                    string: module.heap().alloc_str("aaa"),
-                    other: module.heap().alloc(AllocList([1, 2])).to_value(),
-                }))
-                .to_value();
+            let data = StarlarkAnyComplex::new(UnfrozenData {
+                string: module.heap().alloc_str("aaa"),
+                other: module.heap().alloc(AllocList([1, 2])).to_value(),
+            })
+            .alloc_retyped_by_freeze(module.heap())
+            .to_value();
 
             assert_eq!(
                 const_frozen_string!("aaa").at(),

@@ -76,6 +76,7 @@ pub use crate::values::deferred::DeferredWord;
 pub use crate::values::demand::Demand;
 pub use crate::values::error::ValueError;
 pub use crate::values::freeze::Freeze;
+pub use crate::values::freeze::FreezePreservesType;
 pub use crate::values::freeze::StaticFreezePlan;
 pub use crate::values::freeze_dynamic::FreezeDynamic;
 pub use crate::values::freeze_dynamic::FreezePlan;

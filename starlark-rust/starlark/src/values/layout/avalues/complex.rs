@@ -20,6 +20,7 @@ use std::mem;
 
 use crate::private::Private;
 use crate::values::ComplexValue;
+use crate::values::FreezePreservesType;
 use crate::values::FreezeResult;
 use crate::values::Freezer;
 use crate::values::Heap;
@@ -77,7 +78,7 @@ impl<'v> Heap<'v> {
     /// Allocate a value which can be traced (garbage collected) and frozen on the [`Heap`].
     pub(crate) fn alloc_complex<T>(self, x: T) -> Value<'v>
     where
-        T: ComplexValue<'v>,
+        T: ComplexValue<'v> + FreezePreservesType<'v>,
         T: HeapSendable<'v>,
     {
         assert!(!T::is_special(Private));
@@ -103,6 +104,7 @@ mod tests {
     use crate::values::FreezeDynamic;
     use crate::values::FreezeError;
     use crate::values::FreezePlan;
+    use crate::values::FreezePreservesType;
     use crate::values::FreezeResult;
     use crate::values::FreezeSlot;
     use crate::values::FreezeTarget;
@@ -234,6 +236,9 @@ mod tests {
         /// the slot.
         Unpublished,
     }
+
+    /// Every target of `DynamicPlan` is a `DynamicFreezeTargetView`, as the source is.
+    impl<'v> FreezePreservesType<'v> for FreezeDynamicValue<'v> {}
 
     impl<'v> FreezeDynamic<'v> for FreezeDynamicValue<'v> {
         type Plan<'fv> = DynamicPlan;

@@ -36,9 +36,6 @@ pub struct TupleRef<'v> {
 }
 
 impl<'v> TupleRef<'v> {
-    /// `type(())`, which is `"tuple"`.
-    pub const TYPE: &'static str = Tuple::<'v>::TYPE;
-
     #[ref_cast_custom]
     fn new(slice: &'v [Value<'v>]) -> &'v TupleRef<'v>;
 

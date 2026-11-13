@@ -42,9 +42,6 @@ pub struct ListRef<'v> {
 }
 
 impl<'v> ListRef<'v> {
-    /// `type([])`, which is `"list"`.
-    pub const TYPE: &'static str = ListData::TYPE;
-
     #[ref_cast_custom]
     pub(crate) fn new<'a>(slice: &'a [Value<'v>]) -> &'a ListRef<'v>;
 

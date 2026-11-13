@@ -130,7 +130,7 @@ impl<'a> LegacyBuckConfigsForStarlark<'a> {
         }
         // The frozen heap, so that freezing the module does not copy the strings; the module
         // keeps them either way.
-        .map(|v| eval.frozen_heap(|fh, edge| edge.rebrand(fh.alloc_str(&v))));
+        .map(|v| eval.frozen_heap(|fh, edge| edge.rebrand(fh.alloc(&*v))));
 
         cache.insert_unique(
             hash,

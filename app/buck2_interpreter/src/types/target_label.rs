@@ -41,6 +41,7 @@ use starlark::values::ValueError;
 use starlark::values::ValueOf;
 use starlark::values::list::ListType;
 use starlark::values::starlark_value;
+use starlark::values::string::AllocStrIntern;
 use starlark::values::string::StarlarkStr;
 
 use crate::types::cell_path::StarlarkCellPath;
@@ -120,7 +121,9 @@ fn label_methods(builder: &mut MethodsBuilder) {
         this: &StarlarkTargetLabel,
         heap: Heap<'v>,
     ) -> starlark::Result<StringValue<'v>> {
-        Ok(heap.alloc_str_intern(this.label.pkg().cell_relative_path().as_str()))
+        Ok(heap.alloc(AllocStrIntern(
+            this.label.pkg().cell_relative_path().as_str(),
+        )))
     }
 
     #[starlark(attribute)]
@@ -254,7 +257,9 @@ fn configured_label_methods(builder: &mut MethodsBuilder) {
         this: &StarlarkConfiguredTargetLabel,
         heap: Heap<'v>,
     ) -> starlark::Result<StringValue<'v>> {
-        Ok(heap.alloc_str_intern(this.label.pkg().cell_relative_path().as_str()))
+        Ok(heap.alloc(AllocStrIntern(
+            this.label.pkg().cell_relative_path().as_str(),
+        )))
     }
 
     #[starlark(attribute)]

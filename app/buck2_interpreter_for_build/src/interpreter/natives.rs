@@ -49,7 +49,7 @@ pub(crate) fn register_module_natives(globals: &mut GlobalsBuilder) {
         let internals = ModuleInternals::from_context(eval, "read_oncall")?;
         match internals.get_oncall() {
             None => Ok(NoneOr::None),
-            Some(oncall) => Ok(NoneOr::Other(eval.heap().alloc_str(oncall.as_str()))),
+            Some(oncall) => Ok(NoneOr::Other(eval.heap().alloc(oncall.as_str()))),
         }
     }
 

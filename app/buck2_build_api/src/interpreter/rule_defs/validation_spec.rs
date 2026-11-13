@@ -26,6 +26,7 @@ use starlark::values::StringValue;
 use starlark::values::Trace;
 use starlark::values::ValueOf;
 use starlark::values::starlark_value;
+use starlark::values::string::AllocStrIntern;
 
 use crate::interpreter::rule_defs::artifact::starlark_artifact_like::StarlarkArtifactView;
 use crate::interpreter::rule_defs::artifact::starlark_artifact_like::StarlarkInputArtifactLike;
@@ -157,7 +158,7 @@ fn validation_spec_methods(builder: &mut MethodsBuilder) {
         this: &'v StarlarkValidationSpec,
         heap: Heap<'v>,
     ) -> starlark::Result<StringValue<'v>> {
-        Ok(heap.alloc_str_intern(this.name()))
+        Ok(heap.alloc(AllocStrIntern(this.name())))
     }
 
     #[starlark(attribute)]

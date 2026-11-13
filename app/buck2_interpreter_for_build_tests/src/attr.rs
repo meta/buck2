@@ -260,7 +260,7 @@ fn coerce_memo_keys_every_input() -> buck2_error::Result<()> {
 
     FrozenHeap::temp(|frozen| {
         let ctx = coercion_ctx_listing(PackageListing::testing_files(&["foo.cpp"]));
-        let value = frozen.alloc_str("foo.cpp").to_value();
+        let value = frozen.alloc("foo.cpp").to_value();
         let string = AttrType::string();
         let source = AttrType::source(false);
         let default_a = OwnedCoercedAttr::new_with(|b| b.encode_int(1))?;

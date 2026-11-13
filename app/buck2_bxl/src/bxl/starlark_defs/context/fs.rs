@@ -262,7 +262,7 @@ fn fs_operations(builder: &mut MethodsBuilder) {
     ) -> starlark::Result<StringValue<'v>> {
         Ok(eval
             .heap()
-            .alloc_str(this.project_relative_path(expr, eval)?.as_str()))
+            .alloc(this.project_relative_path(expr, eval)?.as_str()))
     }
 
     /// Returns the absolute path, given the file expression. Use at your own risk, as the current working directory
@@ -280,7 +280,7 @@ fn fs_operations(builder: &mut MethodsBuilder) {
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<StringValue<'v>> {
         let abs_norm_path = this.resolve(expr, eval)?;
-        Ok(eval.heap().alloc_str(abs_norm_path.as_abs_path().to_str()?))
+        Ok(eval.heap().alloc(abs_norm_path.as_abs_path().to_str()?))
     }
 
     /// Returns the source artifact for a path and an optional target hint (unconfigured target label or node)

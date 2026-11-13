@@ -180,7 +180,7 @@ pub(crate) fn register_artifact_function(builder: &mut GlobalsBuilder) {
             }
         };
 
-        Ok(heap.alloc_str(&path))
+        Ok(heap.alloc(&path))
     }
 
     /// The output paths of a `cmd_args()` inputs. The output paths will be returned as a list.

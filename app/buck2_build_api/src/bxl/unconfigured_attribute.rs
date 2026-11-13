@@ -226,10 +226,10 @@ pub(crate) fn ref_to_value<'v>(
             ))))
             .to_value(),
         CoercedAttrRefKind::SelectFail(message) => heap
-            .alloc(StarlarkSelectFail::new(heap.alloc_str(message)))
+            .alloc(StarlarkSelectFail::new(heap.alloc(message)))
             .to_value(),
         CoercedAttrRefKind::SelectIncompatible(message) => heap
-            .alloc(StarlarkSelectIncompatible::new(heap.alloc_str(message)))
+            .alloc(StarlarkSelectIncompatible::new(heap.alloc(message)))
             .to_value(),
         // TODO(@wendyy) - this needs better support
         CoercedAttrRefKind::ExplicitConfiguredDep((label, _)) => heap

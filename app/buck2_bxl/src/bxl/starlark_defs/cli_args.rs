@@ -260,7 +260,7 @@ impl JsonCliArgValueData {
                 let mut res = BuckMutInsertionMap::with_capacity(mp.len());
                 for (k, v) in mp.into_iter() {
                     res.insert_hashed(
-                        heap.alloc_str(k).to_value().get_hashed().unwrap(),
+                        heap.alloc(k).to_value().get_hashed().unwrap(),
                         v.as_starlark(heap),
                     );
                 }

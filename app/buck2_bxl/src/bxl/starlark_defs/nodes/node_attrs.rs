@@ -17,6 +17,7 @@ use starlark::values::Heap;
 use starlark::values::StringValue;
 use starlark::values::Value;
 use starlark::values::none::NoneOr;
+use starlark::values::string::AllocStrIntern;
 
 use crate::bxl::starlark_defs::nodes::configured::StarlarkConfiguredTargetNode;
 use crate::bxl::starlark_defs::nodes::unconfigured::StarlarkTargetNode;
@@ -49,7 +50,7 @@ impl NodeAttributeGetter for StarlarkTargetNode {
         let attrs_iter = node.owned_attrs(AttrInspectOptions::All);
         attrs_iter
             .map(|(name, attr)| {
-                let name = heap.alloc_str_intern(name);
+                let name = heap.alloc(AllocStrIntern(name));
                 let value = attr.to_value(pkg, heap)?;
                 Ok((name, value))
             })
@@ -81,7 +82,7 @@ impl NodeAttributeGetter for StarlarkConfiguredTargetNode {
         let attrs_iter = node.attrs(AttrInspectOptions::All);
         attrs_iter
             .map(|attr| {
-                let name = heap.alloc_str_intern(attr.name);
+                let name = heap.alloc(AllocStrIntern(attr.name));
                 let value = attr.value.to_value(pkg, heap)?;
                 Ok((name, value))
             })

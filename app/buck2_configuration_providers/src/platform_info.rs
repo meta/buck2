@@ -58,7 +58,7 @@ impl<'v> PlatformInfo<'v> {
         heap: Heap<'v>,
     ) -> buck2_error::Result<PlatformInfo<'v>> {
         Ok(PlatformInfo {
-            label: heap.alloc_str(cfg.label()?),
+            label: heap.alloc(cfg.label()?),
             configuration: ValueOf::alloc(
                 heap,
                 ConfigurationInfo::from_configuration_data(cfg.data()?, heap),

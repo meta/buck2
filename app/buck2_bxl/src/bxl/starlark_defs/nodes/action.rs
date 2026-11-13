@@ -231,6 +231,6 @@ impl<'v> StarlarkValue<'v> for StarlarkActionAttr {
 fn action_attr_methods(builder: &mut MethodsBuilder) {
     /// Returns the value of this attribute.
     fn value<'v>(this: &StarlarkActionAttr, heap: Heap<'v>) -> starlark::Result<StringValue<'v>> {
-        Ok(heap.alloc_str(&this.0.0))
+        Ok(heap.alloc(&this.0.0))
     }
 }

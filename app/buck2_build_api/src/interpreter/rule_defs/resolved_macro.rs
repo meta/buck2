@@ -383,7 +383,7 @@ mod tests {
     fn test_equals_matching_string() {
         Heap::temp(|heap| {
             let resolved = make_string_resolved("-matching-flag");
-            let str_val = heap.alloc_str("-matching-flag").to_value();
+            let str_val = heap.alloc("-matching-flag").to_value();
             assert_eq!(resolved.equals(str_val).unwrap(), true);
         });
     }
@@ -392,7 +392,7 @@ mod tests {
     fn test_equals_non_matching_string() {
         Heap::temp(|heap| {
             let resolved = make_string_resolved("-resolved-flag");
-            let str_val = heap.alloc_str("-str-flag").to_value();
+            let str_val = heap.alloc("-str-flag").to_value();
             assert_eq!(resolved.equals(str_val).unwrap(), false);
         });
     }

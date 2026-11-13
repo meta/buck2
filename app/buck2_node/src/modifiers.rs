@@ -669,7 +669,7 @@ impl<'v> ModifierRenderer for StarlarkRenderer<'v> {
     }
 
     fn string(&mut self, s: &str) -> Value<'v> {
-        self.0.alloc_str(s).to_value()
+        self.0.alloc(s).to_value()
     }
 
     fn list(&mut self, items: Vec<Value<'v>>) -> Value<'v> {

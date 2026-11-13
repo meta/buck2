@@ -20,6 +20,7 @@ use starlark::values::StringValue;
 use starlark::values::ValueOf;
 use starlark::values::list::ListType;
 use starlark::values::none::NoneOr;
+use starlark::values::string::AllocStrConcat;
 
 use crate::interpreter::rule_defs::artifact::starlark_artifact::StarlarkArtifact;
 use crate::interpreter::rule_defs::artifact::starlark_artifact_like::ArtifactOrOutputArtifact;
@@ -54,7 +55,7 @@ pub(crate) fn any_artifact_methods(builder: &mut MethodsBuilder) {
     ) -> starlark::Result<StringValue<'v>> {
         Ok(this
             .as_artifact_like()
-            .with_filename(&|filename| heap.alloc_str(filename.as_str()))?)
+            .with_filename(&|filename| heap.alloc(filename.as_str()))?)
     }
 
     /// The file extension of this artifact. e.g. for an artifact at foo/bar.sh,
@@ -67,8 +68,8 @@ pub(crate) fn any_artifact_methods(builder: &mut MethodsBuilder) {
         Ok(this
             .as_artifact_like()
             .with_filename(&|filename| match filename.extension() {
-                None => heap.alloc_str(""),
-                Some(x) => heap.alloc_str_concat(".", x),
+                None => heap.alloc(""),
+                Some(x) => heap.alloc(AllocStrConcat(".", x)),
             })?)
     }
 
@@ -108,7 +109,7 @@ pub(crate) fn any_artifact_methods(builder: &mut MethodsBuilder) {
     ) -> starlark::Result<StringValue<'v>> {
         Ok(this
             .as_artifact_like()
-            .with_short_path(&|short_path| heap.alloc_str(short_path.as_str()))?)
+            .with_short_path(&|short_path| heap.alloc(short_path.as_str()))?)
     }
 }
 

@@ -37,6 +37,7 @@ use starlark::values::Value;
 use starlark::values::ValueOf;
 use starlark::values::none::NoneOr;
 use starlark::values::starlark_value;
+use starlark::values::string::AllocStrIntern;
 
 use crate::types::cell_path::StarlarkCellPath;
 use crate::types::cell_root::CellRoot;
@@ -124,7 +125,9 @@ fn configured_label_methods(builder: &mut MethodsBuilder) {
         this: &'v StarlarkConfiguredProvidersLabel,
         heap: Heap<'v>,
     ) -> starlark::Result<StringValue<'v>> {
-        Ok(heap.alloc_str_intern(this.label.target().pkg().cell_relative_path().as_str()))
+        Ok(heap.alloc(AllocStrIntern(
+            this.label.target().pkg().cell_relative_path().as_str(),
+        )))
     }
 
     /// For the label `fbcode//buck2/hello:world (ovr_config//platform/linux:x86_64-fbcode-46b26edb4b80a905)` this gives back `world`
@@ -337,7 +340,9 @@ fn label_methods(builder: &mut MethodsBuilder) {
         this: &'v StarlarkProvidersLabel,
         heap: Heap<'v>,
     ) -> starlark::Result<StringValue<'v>> {
-        Ok(heap.alloc_str_intern(this.label.target().pkg().cell_relative_path().as_str()))
+        Ok(heap.alloc(AllocStrIntern(
+            this.label.target().pkg().cell_relative_path().as_str(),
+        )))
     }
 
     /// Returns the PackagePath for this providers label.

@@ -83,6 +83,7 @@ use starlark::values::ValueTyped;
 use starlark::values::list::AllocList;
 use starlark::values::none::NoneOr;
 use starlark::values::starlark_value;
+use starlark::values::string::AllocStrIntern;
 use starlark::values::structs::AllocStruct;
 
 use super::node_attrs::NodeAttributeGetter;
@@ -611,7 +612,7 @@ fn configured_target_node_value_methods(builder: &mut MethodsBuilder) {
         this: &'v StarlarkConfiguredTargetNode,
         heap: Heap<'v>,
     ) -> starlark::Result<StringValue<'v>> {
-        Ok(heap.alloc_str_intern(this.0.rule_type().to_string().as_str()))
+        Ok(heap.alloc(AllocStrIntern(this.0.rule_type().to_string().as_str())))
     }
 
     /// Gets the targets' corresponding rule's kind which is one of
@@ -630,7 +631,7 @@ fn configured_target_node_value_methods(builder: &mut MethodsBuilder) {
         this: &'v StarlarkConfiguredTargetNode,
         heap: Heap<'v>,
     ) -> starlark::Result<StringValue<'v>> {
-        Ok(heap.alloc_str_intern(this.0.rule_kind().as_str()))
+        Ok(heap.alloc(AllocStrIntern(this.0.rule_kind().as_str())))
     }
 
     /// Returns all source `Artifact`s exist in this target's attributes.
@@ -754,7 +755,7 @@ fn configured_target_node_value_methods(builder: &mut MethodsBuilder) {
         heap: Heap<'v>,
     ) -> starlark::Result<NoneOr<StringValue<'v>>> {
         match this.body()?.oncall() {
-            Some(oncall) => Ok(NoneOr::Other(heap.alloc_str_intern(oncall))),
+            Some(oncall) => Ok(NoneOr::Other(heap.alloc(AllocStrIntern(oncall)))),
             None => Ok(NoneOr::None),
         }
     }

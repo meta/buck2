@@ -16,6 +16,7 @@ use buck2_build_api::actions::impls::json::JsonUnpack;
 use buck2_build_api::artifact_groups::ArtifactGroup;
 use buck2_build_api::interpreter::rule_defs::artifact::associated::AssociatedArtifacts;
 use buck2_build_api::interpreter::rule_defs::artifact::output_artifact_like::OutputArtifactArg;
+use buck2_build_api::interpreter::rule_defs::artifact::starlark_artifact_like::StarlarkArtifactView;
 use buck2_build_api::interpreter::rule_defs::artifact::starlark_declared_artifact::StarlarkDeclaredArtifact;
 use buck2_build_api::interpreter::rule_defs::artifact_tagging::ArtifactTag;
 use buck2_build_api::interpreter::rule_defs::cmd_args::ArtifactPathMapper;
@@ -89,13 +90,8 @@ type WriteOutput<'v> = Either<
     ),
 >;
 
-type WriteReturnValue<'v> = Either<
-    WriteOutput<'v>,
-    (
-        WriteOutput<'v>,
-        Vec<ValueTyped<'v, StarlarkDeclaredArtifact<'v>>>,
-    ),
->;
+type WriteReturnValue<'v> =
+    Either<WriteOutput<'v>, (WriteOutput<'v>, Vec<ValueOf<'v, StarlarkArtifactView<'v>>>)>;
 
 /// We don't need to run this visitor in order to provide the inputs to the write actions,
 /// because that is done lazily when we run the action.
@@ -538,15 +534,14 @@ pub(crate) fn analysis_actions_methods_write(methods: &mut MethodsBuilder) {
             Either::Left(value)
         };
         if allow_args {
-            let macro_files: Vec<ValueTyped<StarlarkDeclaredArtifact>> = written_macro_files
+            let macro_files: Vec<_> = written_macro_files
                 .into_iter()
                 .map(|a| {
-                    eval.heap()
-                        .alloc_representation(StarlarkDeclaredArtifact::new(
-                            None,
-                            a,
-                            AssociatedArtifacts::new(),
-                        ))
+                    eval.heap().alloc(StarlarkDeclaredArtifact::new(
+                        None,
+                        a,
+                        AssociatedArtifacts::new(),
+                    ))
                 })
                 .collect();
             Ok(Either::Right((value, macro_files)))

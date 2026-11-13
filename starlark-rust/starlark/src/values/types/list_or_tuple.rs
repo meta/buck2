@@ -72,6 +72,7 @@ mod tests {
     use crate::values::Heap;
     use crate::values::Value;
     use crate::values::ValueOf;
+    use crate::values::list::AllocList;
     use crate::values::list_or_tuple::ListOrTupleType;
     use crate::values::string::StarlarkStr;
 
@@ -83,13 +84,16 @@ mod tests {
         Heap::temp(|heap| {
             assert_eq!(
                 Some(vec!["a", "b"]),
-                unpack(heap.alloc(vec!["a", "b"]).to_value())
+                unpack(heap.alloc(AllocList(vec!["a", "b"])).to_value())
             );
             assert_eq!(
                 Some(vec!["a", "b"]),
                 unpack(heap.alloc(("a", "b")).to_value())
             );
-            assert_eq!(None, unpack(heap.alloc(vec![1i32, 2i32]).to_value()));
+            assert_eq!(
+                None,
+                unpack(heap.alloc(AllocList(vec![1i32, 2i32])).to_value())
+            );
             assert_eq!(None, unpack(heap.alloc((1i32, 2i32)).to_value()));
             assert_eq!(None, unpack(heap.alloc(1i32).to_value()));
         });

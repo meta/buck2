@@ -42,6 +42,7 @@ use crate::values::Value;
 use crate::values::ValueOf;
 use crate::values::ValueTyped;
 use crate::values::dict::DictType;
+use crate::values::list::AllocList;
 use crate::values::list::ListType;
 use crate::values::none::NoneType;
 use crate::values::string::StarlarkStr;
@@ -93,7 +94,7 @@ fn globals(builder: &mut GlobalsBuilder) {
         arg1: Option<Value<'v>>,
         #[starlark(default = NoneType)] arg2: Value<'v>,
         eval: &mut Evaluator<'v, '_, '_>,
-    ) -> anyhow::Result<Vec<String>> {
+    ) -> anyhow::Result<AllocList<Vec<String>>> {
         unimplemented!()
     }
 

@@ -35,6 +35,7 @@ use crate::values::FrozenHeap;
 use crate::values::Heap;
 use crate::values::ValueOf;
 use crate::values::any::StarlarkAny;
+use crate::values::list::AllocList;
 
 #[test]
 fn test_garbage_collect() {
@@ -218,7 +219,7 @@ f()
 #[test]
 fn test_display_debug() {
     Heap::temp(|heap| {
-        let val = heap.alloc((vec![1, 2], "test", true)).to_value();
+        let val = heap.alloc((AllocList([1, 2]), "test", true)).to_value();
         assert_eq!(format!("{val}"), "([1, 2], \"test\", True)");
         assert_eq!(val.to_repr(), "([1, 2], \"test\", True)");
         assert_eq!(val.to_str(), "([1, 2], \"test\", True)");

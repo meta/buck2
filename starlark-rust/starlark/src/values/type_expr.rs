@@ -224,6 +224,7 @@ mod tests {
     use crate::values::Value;
     use crate::values::dict::AllocDict;
     use crate::values::dict::DictType;
+    use crate::values::list::AllocList;
     use crate::values::list::ListType;
     use crate::values::none::NoneOr;
     use crate::values::none::NoneType;
@@ -243,9 +244,9 @@ mod tests {
             heap.alloc(BigInt::from(1u64 << 40)).to_value(),
             heap.alloc(1.5).to_value(),
             heap.alloc("s").to_value(),
-            heap.alloc(vec![1i32, 2i32]).to_value(),
-            heap.alloc(vec!["a"]).to_value(),
-            heap.alloc(Vec::<i32>::new()).to_value(),
+            heap.alloc(AllocList(vec![1i32, 2i32])).to_value(),
+            heap.alloc(AllocList(vec!["a"])).to_value(),
+            heap.alloc(AllocList(Vec::<i32>::new())).to_value(),
             heap.alloc(AllocDict([(1i32, "a")])).to_value(),
             heap.alloc(AllocDict([("a", 1i32)])).to_value(),
             heap.alloc((1i32, 2i32)).to_value(),

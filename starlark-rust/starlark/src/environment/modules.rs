@@ -735,6 +735,7 @@ mod tests {
     use crate::values::Trace;
     use crate::values::Value;
     use crate::values::layout::heap::name::StarlarkTestHeapName;
+    use crate::values::list::AllocList;
     use crate::values::list::ListRef;
     use crate::values::starlark_value;
 
@@ -779,7 +780,7 @@ x = f(1)
                 Ok(17)
             }
 
-            const BAR: Vec<String> = Vec::new();
+            const BAR: AllocList<Vec<String>> = AllocList(Vec::new());
         }
 
         let mut globals = GlobalsBuilder::new();
@@ -802,7 +803,7 @@ x = f(1)
     /// A value of the module's frozen heap, stored in a list on the value heap.
     fn frozen_heap_string_in_value_heap<'v>(module: &Module<'v>, expected: &str) -> Value<'v> {
         let s = module.frozen_heap(|fh, edge| edge.rebrand(fh.alloc(expected)));
-        module.heap().alloc(vec![s]).to_value()
+        module.heap().alloc(AllocList(vec![s])).to_value()
     }
 
     fn assert_list_of_string(list: Value, expected: &str) {

@@ -1006,7 +1006,7 @@ pub(crate) fn string_methods(builder: &mut MethodsBuilder) {
         Ok(match sep.into_option() {
             None => match maxsplit {
                 None => heap.alloc(AllocList(this.split_whitespace())),
-                Some(maxsplit) => heap.alloc(rsplitn_whitespace(this, maxsplit)),
+                Some(maxsplit) => heap.alloc(AllocList(rsplitn_whitespace(this, maxsplit))),
             },
             Some(sep) => {
                 let mut v: Vec<_> = match maxsplit {
@@ -1155,7 +1155,7 @@ pub(crate) fn string_methods(builder: &mut MethodsBuilder) {
         this: &str,
         #[starlark(require = pos, default = false)] keepends: bool,
         heap: Heap<'v>,
-    ) -> anyhow::Result<Vec<StringValue<'v>>> {
+    ) -> anyhow::Result<AllocList<Vec<StringValue<'v>>>> {
         let mut s = this;
         let mut lines: Vec<StringValue> = Vec::new();
         loop {
@@ -1171,14 +1171,14 @@ pub(crate) fn string_methods(builder: &mut MethodsBuilder) {
                     lines.push(heap.alloc_str(s.get(..y).unwrap()))
                 }
                 if x == s.len() {
-                    return Ok(lines);
+                    return Ok(AllocList(lines));
                 }
                 s = s.get(x..).unwrap();
             } else {
                 if !s.is_empty() {
                     lines.push(heap.alloc_str(s));
                 }
-                return Ok(lines);
+                return Ok(AllocList(lines));
             }
         }
     }

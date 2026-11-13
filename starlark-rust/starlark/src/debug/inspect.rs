@@ -118,11 +118,14 @@ mod tests {
     use crate::environment::GlobalsBuilder;
     use crate::eval::Evaluator;
     use crate::values::dict::Dict;
+    use crate::values::list::AllocList;
 
     #[starlark_module]
     fn debugger(builder: &mut GlobalsBuilder) {
-        fn debug_inspect_stack(eval: &mut Evaluator) -> anyhow::Result<Vec<String>> {
-            Ok(eval.call_stack().into_frames().map(ToString::to_string))
+        fn debug_inspect_stack(eval: &mut Evaluator) -> anyhow::Result<AllocList<Vec<String>>> {
+            Ok(AllocList(
+                eval.call_stack().into_frames().map(ToString::to_string),
+            ))
         }
 
         fn debug_inspect_variables<'v>(

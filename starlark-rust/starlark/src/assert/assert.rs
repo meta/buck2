@@ -46,6 +46,7 @@ use crate::values::OwnedFrozen;
 use crate::values::Value;
 use crate::values::ValueOf;
 use crate::values::layout::heap::name::StarlarkTestHeapName;
+use crate::values::list::AllocList;
 use crate::values::none::NoneType;
 use crate::values::structs::AllocStruct;
 use crate::values::tuple::TupleType;
@@ -155,7 +156,7 @@ fn asserts_star(builder: &mut crate::environment::GlobalsBuilder) {
 #[starlark_module]
 pub(crate) fn test_functions(builder: &mut GlobalsBuilder) {
     // Used by one of the test methods in Go
-    const fibonacci: Vec<i32> = vec![0, 1, 1, 2, 3, 5, 8, 13, 21, 34, 55, 89];
+    const fibonacci: AllocList<[i32; 12]> = AllocList([0, 1, 1, 2, 3, 5, 8, 13, 21, 34, 55, 89]);
 
     // Approximate version of a method used by the Go test suite
     fn hasfields<'v>() -> anyhow::Result<impl AllocValue<'v>> {

@@ -26,6 +26,7 @@ use crate::eval::Evaluator;
 use crate::values::StringValue;
 use crate::values::Value;
 use crate::values::ValueOf;
+use crate::values::list::AllocList;
 use crate::values::none::NoneOr;
 use crate::values::none::NoneType;
 use crate::values::tuple::TupleType;
@@ -48,7 +49,7 @@ pub fn filter(builder: &mut GlobalsBuilder) {
         #[starlark(require = pos)] func: NoneOr<StarlarkCallable<'v>>,
         #[starlark(require = pos)] seq: ValueOf<'v, StarlarkIter<Value<'v>>>,
         eval: &mut Evaluator<'v, '_, '_>,
-    ) -> starlark::Result<Vec<Value<'v>>> {
+    ) -> starlark::Result<AllocList<Vec<Value<'v>>>> {
         let mut res = Vec::new();
 
         for v in seq.to_value().iterate(eval.heap())? {
@@ -65,7 +66,7 @@ pub fn filter(builder: &mut GlobalsBuilder) {
                 }
             }
         }
-        Ok(res)
+        Ok(AllocList(res))
     }
 }
 
@@ -83,13 +84,13 @@ pub fn map(builder: &mut GlobalsBuilder) {
         #[starlark(require = pos)] func: StarlarkCallable<'v>,
         #[starlark(require = pos)] seq: ValueOf<'v, StarlarkIter<Value<'v>>>,
         eval: &mut Evaluator<'v, '_, '_>,
-    ) -> starlark::Result<Vec<Value<'v>>> {
+    ) -> starlark::Result<AllocList<Vec<Value<'v>>>> {
         let it = seq.to_value().iterate(eval.heap())?;
         let mut res = Vec::with_capacity(it.size_hint().0);
         for v in it {
             res.push(func.0.invoke_pos(&[v], eval)?);
         }
-        Ok(res)
+        Ok(AllocList(res))
     }
 }
 

@@ -302,6 +302,7 @@ mod unwind_tests {
     use crate::values::Heap;
     use crate::values::Value;
     use crate::values::layout::heap::module_heaps::ModuleHeaps;
+    use crate::values::list::AllocList;
     use crate::values::list::ListRef;
 
     /// The value heap can hold pointers into the frozen heap before it is sealed, so a panic
@@ -313,7 +314,7 @@ mod unwind_tests {
             let expected = "a string that lives on the module's frozen heap".repeat(8);
             let s =
                 heaps.frozen_heap(|fh, edge, _seal_edge| edge.rebrand(fh.alloc(expected.as_str())));
-            let list = heap.alloc(vec![s]).to_value();
+            let list = heap.alloc(AllocList(vec![s])).to_value();
             let references_before = heap.referenced_heaps().len();
             let unwound = catch_unwind(AssertUnwindSafe(|| {
                 heaps.seal_with::<Value<'static>, ()>(None, |_freezer, _edge, _seal_edge| {

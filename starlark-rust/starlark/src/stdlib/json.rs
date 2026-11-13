@@ -37,6 +37,7 @@ use crate::values::ValueOf;
 use crate::values::dict::AllocDict;
 use crate::values::dict::DictType;
 use crate::values::float::StarlarkFloat;
+use crate::values::list::AllocList;
 use crate::values::string::str_type::StarlarkStr;
 use crate::values::types::int::int_or_big::StarlarkInt;
 use crate::values::types::int::view::IntView;
@@ -136,7 +137,7 @@ impl<'v, 'a> AllocValue<'v> for &'a serde_json::Value {
             serde_json::Value::Bool(x) => Value::new_bool(*x),
             serde_json::Value::Number(x) => heap.alloc(x).to_value(),
             serde_json::Value::String(x) => heap.alloc(x.as_str()).to_value(),
-            serde_json::Value::Array(x) => heap.alloc(x.as_slice()).to_value(),
+            serde_json::Value::Array(x) => heap.alloc(AllocList(x)).to_value(),
             serde_json::Value::Object(x) => heap.alloc(x).to_value(),
         })
     }
@@ -159,7 +160,7 @@ impl<'fv, 'a> AllocFrozenValue<'fv> for &'a serde_json::Value {
             serde_json::Value::Bool(x) => Value::new_bool(*x),
             serde_json::Value::Number(x) => heap.alloc(x).to_value(),
             serde_json::Value::String(x) => heap.alloc(x.as_str()).to_value(),
-            serde_json::Value::Array(x) => heap.alloc(x.as_slice()).to_value(),
+            serde_json::Value::Array(x) => heap.alloc(AllocList(x)).to_value(),
             serde_json::Value::Object(x) => heap.alloc(x).to_value(),
         })
     }
@@ -203,7 +204,7 @@ fn decode_raw<'v>(
                 .into_iter()
                 .map(|item| decode_raw(item, heap, remaining_depth))
                 .collect::<anyhow::Result<Vec<_>>>()?;
-            Ok(heap.alloc(items).to_value())
+            Ok(heap.alloc(AllocList(items)).to_value())
         }
         Some(b'{') => {
             let remaining_depth = nested()?;

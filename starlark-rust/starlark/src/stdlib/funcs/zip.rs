@@ -32,6 +32,7 @@ use crate::typing::function::TyCustomFunctionImpl;
 use crate::values::Heap;
 use crate::values::Value;
 use crate::values::ValueOf;
+use crate::values::list::AllocList;
 use crate::values::tuple::TupleType;
 use crate::values::typing::StarlarkIter;
 
@@ -89,7 +90,7 @@ pub(crate) fn register_zip(globals: &mut GlobalsBuilder) {
     fn zip<'v>(
         #[starlark(args)] args: ValueOf<'v, TupleType<StarlarkIter<Value<'v>>>>,
         heap: Heap<'v>,
-    ) -> starlark::Result<Vec<Value<'v>>> {
+    ) -> starlark::Result<AllocList<Vec<Value<'v>>>> {
         let mut v = Vec::new();
         let mut first = true;
         for arg in args.iter() {
@@ -106,6 +107,6 @@ pub(crate) fn register_zip(globals: &mut GlobalsBuilder) {
             v.truncate(idx);
             first = false;
         }
-        Ok(v)
+        Ok(AllocList(v))
     }
 }

@@ -503,6 +503,7 @@ impl<'v, 'a> Arguments<'v, 'a> {
 mod tests {
     use super::*;
     use crate::const_frozen_string;
+    use crate::values::list::AllocList;
 
     #[test]
     fn function_errors_are_runtime_type_errors() {
@@ -533,7 +534,7 @@ mod tests {
                         .collect::<Vec<_>>();
                     let empty_args = args.is_empty();
                     p.0.pos = &pos;
-                    p.0.args = Some(heap.alloc(args).to_value());
+                    p.0.args = Some(heap.alloc(AllocList(args)).to_value());
                     op(&p);
                     if empty_args {
                         p.0.args = None;

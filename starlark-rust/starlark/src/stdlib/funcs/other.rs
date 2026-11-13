@@ -136,8 +136,8 @@ pub(crate) fn register_other(builder: &mut GlobalsBuilder) {
     /// # "#);
     /// ```
     #[starlark(speculative_exec_safe)]
-    fn dir(#[starlark(require = pos)] x: Value) -> anyhow::Result<Vec<String>> {
-        Ok(x.dir_attr())
+    fn dir(#[starlark(require = pos)] x: Value) -> anyhow::Result<AllocList<Vec<String>>> {
+        Ok(AllocList(x.dir_attr()))
     }
 
     /// [enumerate](
@@ -307,10 +307,10 @@ pub(crate) fn register_other(builder: &mut GlobalsBuilder) {
     fn reversed<'v>(
         #[starlark(require = pos)] a: ValueOf<'v, StarlarkIter<Value<'v>>>,
         heap: Heap<'v>,
-    ) -> starlark::Result<Vec<Value<'v>>> {
+    ) -> starlark::Result<AllocList<Vec<Value<'v>>>> {
         let mut v: Vec<Value> = a.to_value().iterate(heap)?.collect();
         v.reverse();
-        Ok(v)
+        Ok(AllocList(v))
     }
 
     /// [sorted](

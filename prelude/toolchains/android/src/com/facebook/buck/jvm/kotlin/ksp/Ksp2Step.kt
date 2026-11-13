@@ -40,6 +40,7 @@ import java.nio.charset.StandardCharsets
 import java.nio.file.Path
 import java.util.Optional
 import java.util.ServiceLoader
+import java.util.concurrent.TimeUnit
 import kotlin.time.measureTimedValue
 
 class Ksp2Step(
@@ -68,6 +69,9 @@ class Ksp2Step(
 ) : IsolatedStep {
 
   private val noOpDetector = Ksp2NoOpDetector()
+
+  /** What the processor's [KspInertShortcut] did in this step, for telemetry; null without one. */
+  private var inertShortcutResult: String? = null
 
   @Throws(IOException::class, InterruptedException::class)
   override fun executeIsolatedStep(context: IsolatedExecutionContext): StepExecutionResult {
@@ -111,6 +115,7 @@ class Ksp2Step(
                 )
                 formatPhases(noOpDetector.phasesMs)?.let { addExtras(PHASE_EXTRAS_KEY, it) }
               }
+              inertShortcutResult?.let { addExtras(INERT_SHORTCUT_EXTRAS_KEY, it) }
             },
         )
         return when (exitCode) {
@@ -177,6 +182,78 @@ class Ksp2Step(
     )
     val sourceFilePathsResolved = sourceFilePathsExpanded.map { rootPath.resolve(it).toFile() }
 
+    val outputDirs =
+        KspInertShortcut.OutputDirs(
+            rootPath.resolve(kspClassesOutput).toFile(),
+            rootPath.resolve(kspKotlinOutput).toFile(),
+            rootPath.resolve(kspJavaOutput).toFile(),
+        )
+    val reportFile = apOptions[FILE_ACCESS_HISTORY_REPORT_OPTION]?.let { File(it) }
+    val askStart = System.nanoTime()
+    val lookup =
+        KspInertShortcut.lookup(
+            processorClassloader,
+            processorProviders.map { it::class.java.name },
+            sourceFilePathsResolved,
+            apOptions,
+        )
+    val askMs = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - askStart)
+    if (lookup is KspInertShortcut.Lookup.Failed) {
+      inertShortcutResult = "error: ${lookup.error.toString().take(200)}; ask $askMs ms"
+      logger.info(
+          "KOTLINCD_KSP_INERT_SHORTCUT|error|${invokingRule.fullyQualifiedName}|${lookup.error}",
+      )
+    }
+    val shortcut = (lookup as? KspInertShortcut.Lookup.Found)?.shortcut
+    val answer = (lookup as? KspInertShortcut.Lookup.Found)?.answer
+    if (shortcut != null && answer != null) {
+      val outcome =
+          answer.declined?.let { "declined: ${it.take(200)}" } ?: shortcut.mode.name.lowercase()
+      inertShortcutResult = "$outcome; ask $askMs ms"
+      if (answer.declined == null && shortcut.mode == KspInertShortcut.Mode.SKIP) {
+        val written =
+            KspInertShortcut.guarded(
+                { error ->
+                  // `write` is all or nothing: KSP2 runs on the directories as they were.
+                  inertShortcutResult = "skip-error: ${error.toString().take(200)}; ask $askMs ms"
+                  logger.info(
+                      "KOTLINCD_KSP_INERT_SHORTCUT|skip-error|${invokingRule.fullyQualifiedName}|$error",
+                  )
+                  false
+                },
+            ) {
+              shortcut.write(answer, outputDirs, reportFile)
+              true
+            }
+        if (written) {
+          logger.info("KOTLINCD_KSP_INERT_SHORTCUT|skip|${invokingRule.fullyQualifiedName}")
+          return KotlinSymbolProcessing.ExitCode.OK
+        }
+      }
+    }
+    // Only a comparison (verify or shadow, with an answer) reads the report before KSP2 runs; a
+    // failed read is recorded and skips the comparison, never the step.
+    var compare =
+        shortcut != null &&
+            answer != null &&
+            answer.declined == null &&
+            shortcut.mode != KspInertShortcut.Mode.SKIP
+    val reportBefore =
+        if (!compare) {
+          null
+        } else {
+          KspInertShortcut.guarded(
+              { error ->
+                compare = false
+                inertShortcutResult =
+                    "${shortcut!!.mode.name.lowercase()}-error: report ${error.toString().take(200)}; ask $askMs ms"
+                null
+              },
+          ) {
+            reportFile?.takeIf { it.exists() }?.readText(StandardCharsets.UTF_8)
+          }
+        }
+
     // Build KSP config
     val kspConfig =
         KSPJvmConfig.Builder()
@@ -233,7 +310,48 @@ class Ksp2Step(
     // Run!
     val kotlinSymbolProcessing =
         KotlinSymbolProcessing(kspConfig, noOpDetector.wrap(processorProviders), logger)
-    return kotlinSymbolProcessing.execute()
+    val exitCode = kotlinSymbolProcessing.execute()
+    if (shortcut == null || shortcut.mode == KspInertShortcut.Mode.SKIP) {
+      return exitCode
+    }
+    if (!compare || answer == null) {
+      return exitCode
+    }
+    val mode = shortcut.mode.name.lowercase()
+    if (exitCode != KotlinSymbolProcessing.ExitCode.OK) {
+      inertShortcutResult = "$mode-not-compared: KSP exit $exitCode; ask $askMs ms"
+      return exitCode
+    }
+    val compareStart = System.nanoTime()
+    val comparison =
+        KspInertShortcut.guarded(
+            { error ->
+              // Only `verify` may fail the step, and only on a real mismatch.
+              inertShortcutResult = "$mode-error: ${error.toString().take(200)}; ask $askMs ms"
+              logger.info(
+                  "KOTLINCD_KSP_INERT_SHORTCUT|compare-error|${invokingRule.fullyQualifiedName}|$error",
+              )
+              null
+            },
+        ) {
+          shortcut.compare(answer, outputDirs, reportFile, reportBefore)
+        } ?: return exitCode
+    val compareMs = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - compareStart)
+    val timing = "ask $askMs ms; compare $compareMs ms"
+    if (comparison.mismatch == null) {
+      inertShortcutResult = "$mode-ok; dep file ${comparison.depFile}; $timing"
+      return exitCode
+    }
+    val mismatchLine =
+        "${KspInertShortcut.MISMATCH}|${invokingRule.fullyQualifiedName}|${comparison.mismatch}"
+    inertShortcutResult = "$mode-mismatch: ${comparison.mismatch.take(300)}; $timing"
+    if (shortcut.mode == KspInertShortcut.Mode.VERIFY) {
+      stdErr.println(mismatchLine)
+      return KotlinSymbolProcessing.ExitCode.PROCESSING_ERROR
+    }
+    // Shadow: KSP2's own outputs stand; the mismatch is only recorded.
+    logger.info(mismatchLine)
+    return exitCode
   }
 
   private fun getApOptions(): MutableMap<String, String> {
@@ -246,7 +364,7 @@ class Ksp2Step(
     apOptions["cp"] = allClasspath.replace(',', '-')
 
     if (shouldTrackClassUsage) {
-      apOptions["fileAccessHistoryReportFile"] = rootPath.resolve(kspDepFilePath).toString()
+      apOptions[FILE_ACCESS_HISTORY_REPORT_OPTION] = rootPath.resolve(kspDepFilePath).toString()
     }
 
     if (invokingRule.isSourceOnlyAbi) {
@@ -333,6 +451,10 @@ class Ksp2Step(
     @JvmStatic
     fun formatPhases(phases: Map<String, Long>): String? =
         phases.takeIf { it.isNotEmpty() }?.entries?.joinToString(",") { "${it.key}=${it.value}" }
+
+    private const val INERT_SHORTCUT_EXTRAS_KEY = "ksp2_inert_shortcut"
+
+    private const val FILE_ACCESS_HISTORY_REPORT_OPTION = "fileAccessHistoryReportFile"
 
     /**
      * Telemetry records only successful runs that produced counts: an aborted run leaves never-ran

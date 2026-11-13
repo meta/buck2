@@ -43,9 +43,9 @@ ROOT_MODULE: str = "dex"
 # upper bound — the actual merged DEX has fewer refs because shared
 # dependencies are deduplicated.
 #
-# The merge step uses ["--no-desugar", "--no-optimize"], so D8 performs a
-# pure mechanical merge with no synthetic generation. Merged refs are
-# always <= sum of input refs, never more.
+# Finalization may deduplicate or rename existing synthetics even when
+# desugaring is disabled. The final merge must still reject a group that
+# produces more than one DEX file.
 DEX_REF_LIMIT: int = 65536
 
 # Each secondary dex merge also gets a canary interface: no methods or fields, and up to two
@@ -188,6 +188,7 @@ def _assign_to_dex(
     current_method_refs_map: dict[str, int],
     current_field_refs_map: dict[str, int],
     current_type_refs_map: dict[str, int],
+    reserved_types: int,
 ) -> None:
     """Assign a lib's classes to a dex group, starting a new group if limits exceeded."""
     if len(dex_class_names) == 0:
@@ -206,7 +207,7 @@ def _assign_to_dex(
             should_start_new_dex = True
         if current_field_refs + field_ref_count > DEX_REF_LIMIT:
             should_start_new_dex = True
-        if current_type_refs + type_ref_count > DEX_REF_LIMIT:
+        if current_type_refs + type_ref_count + reserved_types > DEX_REF_LIMIT:
             should_start_new_dex = True
 
     # Guard: only split when dex_weight_limit is not None.
@@ -347,6 +348,7 @@ def _organize_lib(
                 current_method_refs_map,
                 current_field_refs_map,
                 current_type_refs_map,
+                reserved_types,
             )
     else:
         _assign_to_dex(
@@ -364,6 +366,50 @@ def _organize_lib(
             current_method_refs_map,
             current_field_refs_map,
             current_type_refs_map,
+            reserved_types,
+        )
+
+
+def _organize_dex_units(
+    dest: list[DexGroup],
+    module: str,
+    lib_id: str,
+    dex_units: list[DexUnit],
+    current_size_map: dict[str, int],
+    current_inputs_map: dict[str, DexGroup],
+    dex_weight_limit: int | None,
+    current_method_refs_map: dict[str, int],
+    current_field_refs_map: dict[str, int],
+    current_type_refs_map: dict[str, int],
+    reserved_types: int,
+) -> None:
+    for unit in dex_units:
+        for ref_kind, count, limit in (
+            ("method_ref_count", unit["method_ref_count"], DEX_REF_LIMIT),
+            ("field_ref_count", unit["field_ref_count"], DEX_REF_LIMIT),
+            ("type_ref_count", unit["type_ref_count"], DEX_REF_LIMIT - reserved_types),
+        ):
+            if count > limit:
+                raise ValueError(
+                    f"Indivisible dex unit in {lib_id} ({unit['class_names']!r}) "
+                    f"exceeds DEX 64K {ref_kind} limit: {count} > {limit}"
+                )
+        _assign_to_dex(
+            dest,
+            module,
+            lib_id,
+            unit["weight_estimate"],
+            unit["class_names"],
+            current_size_map,
+            current_inputs_map,
+            dex_weight_limit,
+            unit["method_ref_count"],
+            unit["field_ref_count"],
+            unit["type_ref_count"],
+            current_method_refs_map,
+            current_field_refs_map,
+            current_type_refs_map,
+            reserved_types,
         )
 
 
@@ -410,6 +456,42 @@ def _sort_pre_dexed_files(
                 "secondary_groups": [],
             }
 
+        module_inputs = sorted_inputs[module]
+        if "dex_units" in filter_info:
+            units = filter_info["dex_units"]
+            primary_units = [unit for unit in units if unit["primary"]]
+            secondary_units = [unit for unit in units if not unit["primary"]]
+            if module != ROOT_MODULE:
+                secondary_units += primary_units
+                primary_units = []
+            _organize_dex_units(
+                module_inputs["primary_groups"],
+                module,
+                identifier,
+                primary_units,
+                current_primary_dex_size,
+                current_primary_dex_inputs,
+                weight_limit if enable_bootstrap_dexes else None,
+                current_primary_method_refs,
+                current_primary_field_refs,
+                current_primary_type_refs,
+                0,
+            )
+            _organize_dex_units(
+                module_inputs["secondary_groups"],
+                module,
+                identifier,
+                secondary_units,
+                current_secondary_dex_size,
+                current_secondary_dex_inputs,
+                weight_limit,
+                current_secondary_method_refs,
+                current_secondary_field_refs,
+                current_secondary_type_refs,
+                CANARY_TYPE_REF_COUNT,
+            )
+            continue
+
         primary_dex_class_names: list[str] = filter_info["primary_dex_class_names"]
         secondary_dex_class_names: list[str] = filter_info["secondary_dex_class_names"]
         weight_estimate = int(filter_info["weight_estimate"])
@@ -417,8 +499,6 @@ def _sort_pre_dexed_files(
         lib_field_refs = int(filter_info["field_ref_count"])
         lib_type_refs = int(filter_info["type_ref_count"])
         class_ref_counts = filter_info.get("class_ref_counts", {})
-
-        module_inputs = sorted_inputs[module]
 
         if len(primary_dex_class_names) > 0 and module != ROOT_MODULE:
             # Non-root modules shouldn't have primary dex classes; move to secondary
@@ -474,7 +554,7 @@ def _flatten_groups(groups: list[DexGroup]) -> list[FlatGroup]:
     """Convert list of [{id, class_names}, ...] to {lib_ids: [...], class_names: [...]}."""
     result: list[FlatGroup] = []
     for group in groups:
-        lib_ids: list[str] = [str(entry["id"]) for entry in group]
+        lib_ids = list(dict.fromkeys(entry["id"] for entry in group))
         class_names: list[str] = []
         for entry in group:
             class_names.extend(entry["class_names"])

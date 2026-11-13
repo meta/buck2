@@ -6,12 +6,31 @@
 # of this source tree. You may select, at your option, one of the
 # above-listed licenses.
 
+"""Classify pre-dexed library classes for Buck's primary/secondary dex planning.
+
+merge_pre_dexed_libs invokes this tool in batches with per-library class names,
+weights, reference counts, and primary-dex patterns. The JSON output feeds
+sort_pre_dexed_files.py, which packs classes into final dex groups. This tool
+classifies metadata; it does not read or split dex bytecode.
+
+With --dex-units, each library also supplies a TSV manifest of indivisible
+class-owned dex units, including synthetic companions and measured counts. If
+any member or its synthesizing context matches a primary pattern, the whole
+unit is primary. Unit membership and counts are forwarded for atomic packing.
+
+Without --dex-units, the legacy path classifies individual class names and
+forwards library totals plus any available per-class reference counts. In both
+modes, optional --synthetic-contexts metadata lets synthetics follow their
+synthesizing context into primary dex without parsing D8's mangled names.
+"""
+
 from __future__ import annotations
 
 import argparse
 import json
 import pathlib
 import re
+from collections.abc import Iterable
 from typing import TypedDict
 
 
@@ -135,6 +154,13 @@ def _parse_args():
         help="a path to a synthetic-to-context file (one '<synthetic> <context>' pair per line)",
     )
     parser.add_argument(
+        "--dex-units",
+        type=pathlib.Path,
+        nargs="+",
+        default=[],
+        help="per-library TSV files describing indivisible class-owned dex units",
+    )
+    parser.add_argument(
         "--output",
         type=pathlib.Path,
         required=True,
@@ -214,6 +240,76 @@ def _belongs_in_primary_dex(java_class, class_name_filter, synthetic_to_context)
     )
 
 
+def _parse_dex_unit(line: str, location: str) -> DexUnit:
+    parts = line.split("\t")
+    if len(parts) < 6:
+        raise ValueError(
+            f"Expected owner, four counts and members in {location}: {line!r}"
+        )
+    owner = parts[0]
+    members = parts[5:]
+    for name in [owner, *members]:
+        # Validate nonempty slash-separated internal-name components and reject
+        # common malformed formats (dots, descriptors, arrays, or whitespace).
+        # This is a format sanity check, not Java source-identifier validation.
+        if re.fullmatch(r"[^.;\[\s/]+(?:/[^.;\[\s/]+)*", name) is None:
+            raise ValueError(f"Invalid internal class name in {location}: {name!r}")
+    if owner not in members:
+        raise ValueError(f"Dex unit owner {owner!r} is not among members in {location}")
+    if len(set(members)) != len(members):
+        raise ValueError(f"Duplicate dex unit members in {location}: {members!r}")
+    if any(re.fullmatch(r"[0-9]+", value) is None for value in parts[1:5]):
+        raise ValueError(
+            f"Expected non-negative integer counts in {location}: {parts[1:5]!r}"
+        )
+    weight, methods, fields, types = map(int, parts[1:5])
+    return {
+        "class_names": [member + ".class" for member in members],
+        "primary": False,
+        "weight_estimate": weight,
+        "method_ref_count": methods,
+        "field_ref_count": fields,
+        "type_ref_count": types,
+    }
+
+
+def _parse_dex_units(
+    dex_units_path: pathlib.Path,
+    all_class_names: Iterable[str],
+    class_name_filter: ClassNameFilter,
+    synthetic_to_context: dict[str, str],
+) -> list[DexUnit]:
+    units: list[DexUnit] = []
+    seen_members = set()
+    with open(dex_units_path) as dex_units_file:
+        for line_number, line in enumerate(dex_units_file, 1):
+            line = line.rstrip("\r\n")
+            if not line:
+                continue
+            location = f"{dex_units_path}:{line_number}"
+            unit = _parse_dex_unit(line, location)
+            members = [name.removesuffix(".class") for name in unit["class_names"]]
+            overlap = seen_members.intersection(members)
+            if overlap:
+                raise ValueError(
+                    f"Members appear in multiple dex units in {location}: {sorted(overlap)!r}"
+                )
+            seen_members.update(members)
+            unit["primary"] = any(
+                _belongs_in_primary_dex(member, class_name_filter, synthetic_to_context)
+                for member in members
+            )
+            units.append(unit)
+    expected_members = set(all_class_names)
+    if seen_members != expected_members:
+        raise ValueError(
+            f"Dex unit members do not match class names in {dex_units_path}: "
+            f"missing={sorted(expected_members - seen_members)!r}, "
+            f"unexpected={sorted(seen_members - expected_members)!r}"
+        )
+    return units
+
+
 def main():
     args = _parse_args()
 
@@ -228,6 +324,7 @@ def main():
     weight_estimate_paths = args.weight_estimates
     ref_count_paths = args.ref_counts
     synthetic_contexts_paths = args.synthetic_contexts
+    dex_units_paths = args.dex_units
     output = args.output
 
     assert len(dex_target_identifiers) == len(class_names_paths), (
@@ -245,6 +342,11 @@ def main():
     assert not synthetic_contexts_paths or len(dex_target_identifiers) == len(
         synthetic_contexts_paths
     ), "Must provide same number of synthetic context files as dex target identifiers!"
+
+    if dex_units_paths and len(dex_units_paths) != len(dex_target_identifiers):
+        raise ValueError(
+            "Must provide same number of dex unit files as dex target identifiers!"
+        )
 
     json_output = {}
     for i in range(len(dex_target_identifiers)):
@@ -267,12 +369,33 @@ def main():
             else {}
         )
 
+        dex_units = (
+            _parse_dex_units(
+                dex_units_paths[i],
+                all_class_names,
+                class_name_filter,
+                synthetic_to_context,
+            )
+            if dex_units_paths
+            else None
+        )
+        primary_unit_members = {
+            name
+            for unit in dex_units or []
+            if unit["primary"]
+            for name in unit["class_names"]
+        }
         primary_dex_class_names = []
         secondary_dex_class_names = []
         for java_class in all_class_names:
-            if _belongs_in_primary_dex(
-                java_class, class_name_filter, synthetic_to_context
-            ):
+            is_primary = (
+                java_class + ".class" in primary_unit_members
+                if dex_units is not None
+                else _belongs_in_primary_dex(
+                    java_class, class_name_filter, synthetic_to_context
+                )
+            )
+            if is_primary:
                 primary_dex_class_names.append(java_class + ".class")
             else:
                 secondary_dex_class_names.append(java_class + ".class")
@@ -287,6 +410,8 @@ def main():
         }
         if class_ref_counts:
             json_output[dex_target_name]["class_ref_counts"] = class_ref_counts
+        if dex_units is not None:
+            json_output[dex_target_name]["dex_units"] = dex_units
 
     with open(output, "w") as output_file:
         json.dump(json_output, output_file, indent=4)

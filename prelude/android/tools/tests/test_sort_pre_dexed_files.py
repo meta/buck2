@@ -31,11 +31,12 @@ import unittest
 from importlib.resources import as_file, files
 
 from android.tools import sort_pre_dexed_files
-from android.tools.filter_dex import _parse_ref_counts
+from android.tools.filter_dex import _parse_ref_counts, DexUnit
 from android.tools.sort_pre_dexed_files import (
     _flatten_groups,
     _parse_module_graph,
     _sort_pre_dexed_files,
+    FilterDexInfo,
 )
 from android.tools.tests.generate_mobileconfig_fixture import fixture_expectations
 
@@ -601,6 +602,400 @@ class SortPreDexedFilesTest(unittest.TestCase):
         self.assertEqual(result["dex"]["secondary_groups"][0][0]["id"], "lib1")
 
 
+def _unit(
+    class_names: list[str],
+    primary: bool = False,
+    weight_estimate: int = 1,
+    method_ref_count: int = 0,
+    field_ref_count: int = 0,
+    type_ref_count: int = 0,
+) -> DexUnit:
+    return {
+        "class_names": class_names,
+        "primary": primary,
+        "weight_estimate": weight_estimate,
+        "method_ref_count": method_ref_count,
+        "field_ref_count": field_ref_count,
+        "type_ref_count": type_ref_count,
+    }
+
+
+def _unit_filter_info(units: list[DexUnit]) -> FilterDexInfo:
+    return {
+        "primary_dex_class_names": [
+            name for unit in units if unit["primary"] for name in unit["class_names"]
+        ],
+        "secondary_dex_class_names": [
+            name
+            for unit in units
+            if not unit["primary"]
+            for name in unit["class_names"]
+        ],
+        "weight_estimate": str(sum(unit["weight_estimate"] for unit in units)),
+        "method_ref_count": str(sum(unit["method_ref_count"] for unit in units)),
+        "field_ref_count": str(sum(unit["field_ref_count"] for unit in units)),
+        "type_ref_count": str(sum(unit["type_ref_count"] for unit in units)),
+        "dex_units": units,
+    }
+
+
+class DexUnitPackingTest(unittest.TestCase):
+    def test_context_and_multiple_companions_survive_weight_splitting(self) -> None:
+        companions = ["a/Context.class", "z/one.class", "z/two.class", "z/three.class"]
+        units = [
+            _unit(["a/Before.class"], weight_estimate=500),
+            _unit(companions, weight_estimate=1500),
+            _unit(["a/After.class"], weight_estimate=500),
+        ]
+        result = _sort(
+            {"lib": _unit_filter_info(units)}, {"lib": "//app:lib"}, weight_limit=1000
+        )
+        self.assertEqual(
+            _flatten_groups(result["dex"]["secondary_groups"]),
+            [
+                {"lib_ids": ["lib"], "class_names": ["a/Before.class"]},
+                {"lib_ids": ["lib"], "class_names": companions},
+                {"lib_ids": ["lib"], "class_names": ["a/After.class"]},
+            ],
+        )
+        self.assertEqual(result["dex"]["primary_groups"], [])
+
+    def test_bootstrap_splits_only_between_primary_units(self) -> None:
+        units = [
+            _unit(
+                ["a/Context.class", "z/one.class", "z/two.class"],
+                primary=True,
+                weight_estimate=600,
+            ),
+            _unit(
+                ["a/Other.class", "z/three.class"], primary=True, weight_estimate=600
+            ),
+        ]
+        result = _sort(
+            {"lib": _unit_filter_info(units)},
+            {"lib": "//app:lib"},
+            weight_limit=1000,
+            enable_bootstrap_dexes=True,
+        )
+        self.assertEqual(
+            _flatten_groups(result["dex"]["primary_groups"]),
+            [
+                {"lib_ids": ["lib"], "class_names": units[0]["class_names"]},
+                {"lib_ids": ["lib"], "class_names": units[1]["class_names"]},
+            ],
+        )
+
+    def test_measured_unit_refs_pack_skewed_units_for_each_ref_limit(self) -> None:
+        for ref_kind in ("method_ref_count", "field_ref_count", "type_ref_count"):
+            with self.subTest(ref_kind=ref_kind):
+                units = [
+                    _unit(
+                        [f"a/Owner{i}.class", f"z/companion{i}.class"],
+                        **{ref_kind: count},
+                    )
+                    for i, count in enumerate([40000, 20000, 10000, 55000])
+                ]
+                result = _sort({"lib": _unit_filter_info(units)}, {"lib": "//app:lib"})
+                groups = _flatten_groups(result["dex"]["secondary_groups"])
+                self.assertEqual(
+                    groups,
+                    [
+                        {
+                            "lib_ids": ["lib"],
+                            "class_names": units[0]["class_names"]
+                            + units[1]["class_names"],
+                        },
+                        {
+                            "lib_ids": ["lib"],
+                            "class_names": units[2]["class_names"]
+                            + units[3]["class_names"],
+                        },
+                    ],
+                )
+                for group in groups:
+                    total = sum(
+                        unit[ref_kind]
+                        for unit in units
+                        if unit["class_names"][0] in group["class_names"]
+                    )
+                    self.assertLessEqual(total, 65536)
+
+    def test_exact_ref_limit_fits_and_next_reference_spills(self) -> None:
+        units = [
+            _unit(["a/Full.class"], method_ref_count=65536),
+            _unit(["a/Zero.class"]),
+            _unit(["a/Next.class"], method_ref_count=1),
+        ]
+        result = _sort({"lib": _unit_filter_info(units)}, {"lib": "//app:lib"})
+        self.assertEqual(
+            _flatten_groups(result["dex"]["secondary_groups"]),
+            [
+                {"lib_ids": ["lib"], "class_names": ["a/Full.class", "a/Zero.class"]},
+                {"lib_ids": ["lib"], "class_names": ["a/Next.class"]},
+            ],
+        )
+
+    def test_secondary_unit_packing_reserves_canary_types_in_every_group(self) -> None:
+        units = [
+            _unit([f"a/Owner{i}.class"], type_ref_count=count)
+            for i, count in enumerate([30000, 35534, 1, 65533])
+        ]
+        result = _sort({"lib": _unit_filter_info(units)}, {"lib": "//app:lib"})
+        self.assertEqual(
+            _flatten_groups(result["dex"]["secondary_groups"]),
+            [
+                {
+                    "lib_ids": ["lib"],
+                    "class_names": units[0]["class_names"] + units[1]["class_names"],
+                },
+                {
+                    "lib_ids": ["lib"],
+                    "class_names": units[2]["class_names"] + units[3]["class_names"],
+                },
+            ],
+        )
+
+    def test_secondary_unit_must_fit_with_its_canary(self) -> None:
+        for count in (65535, 65536):
+            for primary, module in ((False, "dex"), (True, "feature")):
+                with self.subTest(count=count, primary=primary, module=module):
+                    unit = _unit(
+                        ["a/Owner.class", "z/companion.class"],
+                        primary=primary,
+                        type_ref_count=count,
+                    )
+                    with self.assertRaisesRegex(
+                        ValueError, f"64K type_ref_count limit: {count} > 65534"
+                    ):
+                        _sort(
+                            {"lib": _unit_filter_info([unit])},
+                            {"lib": "//app:lib"},
+                            {"//app:lib": module},
+                        )
+
+    def test_primary_and_bootstrap_units_do_not_reserve_canary_types(self) -> None:
+        units = [
+            _unit(["a/Full.class"], primary=True, type_ref_count=65535),
+            _unit(["a/Last.class"], primary=True, type_ref_count=1),
+        ]
+        for bootstrap in (False, True):
+            with self.subTest(bootstrap=bootstrap):
+                result = _sort(
+                    {"lib": _unit_filter_info(units)},
+                    {"lib": "//app:lib"},
+                    enable_bootstrap_dexes=bootstrap,
+                )
+                self.assertEqual(
+                    _flatten_groups(result["dex"]["primary_groups"]),
+                    [
+                        {
+                            "lib_ids": ["lib"],
+                            "class_names": ["a/Full.class", "a/Last.class"],
+                        }
+                    ],
+                )
+
+    def test_units_and_legacy_libs_share_the_secondary_canary_budget(self) -> None:
+        result = _sort(
+            {
+                "units": _unit_filter_info(
+                    [_unit(["a/A.class"], type_ref_count=30000)]
+                ),
+                "legacy": {
+                    "primary_dex_class_names": [],
+                    "secondary_dex_class_names": ["b/Old.class"],
+                    "weight_estimate": "1",
+                    "type_ref_count": "35535",
+                },
+                "last": _unit_filter_info([_unit(["c/C.class"], type_ref_count=29999)]),
+            },
+            {"units": "//app:units", "legacy": "//app:legacy", "last": "//app:last"},
+        )
+        self.assertEqual(
+            _flatten_groups(result["dex"]["secondary_groups"]),
+            [
+                {"lib_ids": ["units"], "class_names": ["a/A.class"]},
+                {
+                    "lib_ids": ["legacy", "last"],
+                    "class_names": ["b/Old.class", "c/C.class"],
+                },
+            ],
+        )
+
+    def test_primary_and_secondary_use_their_own_unit_counts(self) -> None:
+        info = _unit_filter_info(
+            [
+                _unit(["a/Primary.class"], primary=True, method_ref_count=50000),
+                _unit(["a/Secondary.class"], method_ref_count=10000),
+            ]
+        )
+        other = _unit_filter_info(
+            [_unit(["b/Secondary.class"], method_ref_count=50000)]
+        )
+        result = _sort(
+            {"lib": info, "other": other}, {"lib": "//app:lib", "other": "//app:other"}
+        )
+        self.assertEqual(
+            _flatten_groups(result["dex"]["primary_groups"]),
+            [
+                {"lib_ids": ["lib"], "class_names": ["a/Primary.class"]},
+            ],
+        )
+        self.assertEqual(
+            _flatten_groups(result["dex"]["secondary_groups"]),
+            [
+                {
+                    "lib_ids": ["lib", "other"],
+                    "class_names": ["a/Secondary.class", "b/Secondary.class"],
+                },
+            ],
+        )
+
+    def test_primary_does_not_split_without_bootstrap(self) -> None:
+        units = [
+            _unit(
+                ["a/Context.class", "z/one.class", "z/two.class"],
+                primary=True,
+                weight_estimate=1500,
+                method_ref_count=40000,
+            ),
+            _unit(
+                ["a/Other.class"],
+                primary=True,
+                weight_estimate=1500,
+                method_ref_count=40000,
+            ),
+        ]
+        result = _sort(
+            {"lib": _unit_filter_info(units)}, {"lib": "//app:lib"}, weight_limit=1000
+        )
+        self.assertEqual(
+            _flatten_groups(result["dex"]["primary_groups"]),
+            [
+                {
+                    "lib_ids": ["lib"],
+                    "class_names": units[0]["class_names"] + units[1]["class_names"],
+                },
+            ],
+        )
+        self.assertEqual(result["dex"]["secondary_groups"], [])
+
+    def test_oversized_unit_reference_counts_are_explicit_errors(self) -> None:
+        for ref_kind in ("method_ref_count", "field_ref_count", "type_ref_count"):
+            for primary, bootstrap in [(False, False), (True, False), (True, True)]:
+                with self.subTest(
+                    ref_kind=ref_kind, primary=primary, bootstrap=bootstrap
+                ):
+                    unit = _unit(
+                        ["a/Owner.class", "z/one.class"],
+                        primary=primary,
+                        **{ref_kind: 65537},
+                    )
+                    limit = (
+                        65534 if ref_kind == "type_ref_count" and not primary else 65536
+                    )
+                    with self.assertRaisesRegex(
+                        ValueError,
+                        f"Indivisible dex unit in lib.*a/Owner.class.*64K {ref_kind}.*65537 > {limit}",
+                    ):
+                        _sort(
+                            {"lib": _unit_filter_info([unit])},
+                            {"lib": "//app:lib"},
+                            enable_bootstrap_dexes=bootstrap,
+                        )
+
+    def test_non_root_primary_units_route_to_secondary_atomically(self) -> None:
+        primary = _unit(
+            ["a/Context.class", "z/one.class", "z/two.class"],
+            primary=True,
+            weight_estimate=600,
+        )
+        secondary = _unit(["a/Other.class"], weight_estimate=600)
+        result = _sort(
+            {
+                "feature": _unit_filter_info([primary, secondary]),
+                "root": _unit_filter_info([_unit(["b/Root.class"], primary=True)]),
+            },
+            {"root": "//app:root", "feature": "//app:feature"},
+            {"//app:feature": "feature"},
+            weight_limit=1000,
+            enable_bootstrap_dexes=True,
+        )
+        self.assertEqual(list(result), ["dex", "feature"])
+        self.assertEqual(result["feature"]["primary_groups"], [])
+        self.assertEqual(
+            _flatten_groups(result["feature"]["secondary_groups"]),
+            [
+                {"lib_ids": ["feature"], "class_names": secondary["class_names"]},
+                {"lib_ids": ["feature"], "class_names": primary["class_names"]},
+            ],
+        )
+        self.assertEqual(
+            _flatten_groups(result["dex"]["primary_groups"]),
+            [
+                {"lib_ids": ["root"], "class_names": ["b/Root.class"]},
+            ],
+        )
+
+    def test_library_metadata_and_producer_unit_order_are_preserved(self) -> None:
+        first_units = [
+            _unit(["a/Second.class"], weight_estimate=600),
+            _unit(["a/First.class"], weight_estimate=600),
+        ]
+        result = _sort(
+            {
+                "b": _unit_filter_info([_unit(["b/Owner.class"], weight_estimate=600)]),
+                "a": _unit_filter_info(first_units),
+            },
+            {"a": "//app:a", "b": "//app:b"},
+            weight_limit=1000,
+        )
+        self.assertEqual(
+            _flatten_groups(result["dex"]["secondary_groups"]),
+            [
+                {"lib_ids": ["a"], "class_names": ["a/Second.class"]},
+                {"lib_ids": ["a"], "class_names": ["a/First.class"]},
+                {"lib_ids": ["b"], "class_names": ["b/Owner.class"]},
+            ],
+        )
+
+    def test_new_units_and_legacy_libs_share_packing_counters(self) -> None:
+        result = _sort(
+            {
+                "units": _unit_filter_info(
+                    [
+                        _unit(["a/A.class"], method_ref_count=20000),
+                        _unit(["a/B.class"], method_ref_count=20000),
+                    ]
+                ),
+                "legacy": {
+                    "primary_dex_class_names": [],
+                    "secondary_dex_class_names": ["b/Old.class"],
+                    "weight_estimate": "1",
+                    "method_ref_count": "20000",
+                },
+                "last": _unit_filter_info(
+                    [_unit(["c/C.class"], method_ref_count=10000)]
+                ),
+            },
+            {"units": "//app:units", "legacy": "//app:legacy", "last": "//app:last"},
+        )
+        self.assertEqual(
+            _flatten_groups(result["dex"]["secondary_groups"]),
+            [
+                {
+                    "lib_ids": ["units", "legacy"],
+                    "class_names": ["a/A.class", "a/B.class", "b/Old.class"],
+                },
+                {"lib_ids": ["last"], "class_names": ["c/C.class"]},
+            ],
+        )
+
+    def test_empty_unit_array_produces_no_groups(self) -> None:
+        result = _sort({"lib": _unit_filter_info([])}, {"lib": "//app:lib"})
+        self.assertEqual(result["dex"], {"primary_groups": [], "secondary_groups": []})
+
+
 class FlattenGroupsTest(unittest.TestCase):
     """Unit tests for _flatten_groups — converts the internal per-entry
     representation [{id, class_names}, ...] into the plan JSON format
@@ -635,6 +1030,32 @@ class FlattenGroupsTest(unittest.TestCase):
         self.assertEqual(len(result), 2)
         self.assertEqual(result[0]["lib_ids"], ["lib1"])
         self.assertEqual(result[1]["lib_ids"], ["lib2"])
+
+    def test_repeated_library_ids_are_unique_without_losing_members(self):
+        result = _flatten_groups(
+            [
+                [
+                    {"id": "lib1", "class_names": ["a/Owner.class", "z/one.class"]},
+                    {"id": "lib2", "class_names": ["b/Owner.class"]},
+                    {"id": "lib1", "class_names": ["a/Other.class", "z/two.class"]},
+                ]
+            ]
+        )
+        self.assertEqual(
+            result,
+            [
+                {
+                    "lib_ids": ["lib1", "lib2"],
+                    "class_names": [
+                        "a/Owner.class",
+                        "z/one.class",
+                        "b/Owner.class",
+                        "a/Other.class",
+                        "z/two.class",
+                    ],
+                }
+            ],
+        )
 
     def test_empty_groups(self):
         self.assertEqual(_flatten_groups([]), [])
@@ -904,3 +1325,35 @@ class EndToEndToolTest(unittest.TestCase):
             module = plan["modules"][0]
             # 600 + 600 > 1000 -> 2 primary groups
             self.assertEqual(len(module["primary_groups"]), 2)
+
+    def test_unit_plan_uses_measured_refs_and_unique_library_ids(self):
+        units = [
+            _unit(
+                ["a/Context.class", "z/one.class", "z/two.class"], field_ref_count=40000
+            ),
+            _unit(["a/Other.class"], field_ref_count=20000),
+            _unit(["a/Last.class", "z/three.class"], field_ref_count=10000),
+        ]
+        with tempfile.TemporaryDirectory() as tmpdir:
+            plan = self._run_tool(
+                tmpdir,
+                filter_data_files=[{"lib": _unit_filter_info(units)}],
+                lib_metadata={"lib": "//app:lib"},
+            )
+        self.assertEqual(
+            plan["modules"],
+            [
+                {
+                    "module": "dex",
+                    "primary_groups": [],
+                    "secondary_groups": [
+                        {
+                            "lib_ids": ["lib"],
+                            "class_names": units[0]["class_names"]
+                            + units[1]["class_names"],
+                        },
+                        {"lib_ids": ["lib"], "class_names": units[2]["class_names"]},
+                    ],
+                }
+            ],
+        )

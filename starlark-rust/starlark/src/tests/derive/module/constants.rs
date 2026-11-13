@@ -47,7 +47,6 @@ impl<'v> StarlarkValue<'v> for Marker {}
 fn constants(globals: &mut GlobalsBuilder) {
     const ANSWER: i32 = 42;
 
-    #[starlark(representation)]
     const MARKER: Marker = Marker;
 }
 

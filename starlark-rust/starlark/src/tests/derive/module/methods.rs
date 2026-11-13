@@ -83,7 +83,7 @@ impl<'v> StarlarkValue<'v> for Applaud {
 #[test]
 fn test_receiver_can_be_named_anything() {
     let mut a = Assert::new();
-    a.globals_add(|g| g.set_representation("x", Applaud { value: 10 }));
+    a.globals_add(|g| g.set("x", Applaud { value: 10 }));
     a.eq("13", "x.test_method(this=3)");
     a.eq("10", "x.value");
     a.eq("2", "x.callable(1, named=2)");

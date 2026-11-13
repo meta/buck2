@@ -106,9 +106,6 @@ pub(crate) struct StarConst {
     pub name: Ident,
     pub ty: Type,
     pub value: Expr,
-    /// `#[starlark(representation)]`: the value is a representation, put on the heap as it is
-    /// rather than converted through `AllocFrozenValue`.
-    pub representation: bool,
 }
 
 #[derive(Debug)]

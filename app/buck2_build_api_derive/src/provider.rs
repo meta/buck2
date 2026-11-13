@@ -739,7 +739,7 @@ impl ProviderCodegen {
             },
             syn::parse_quote_spanned! { self.span=>
                 fn register_provider(builder: &mut starlark::environment::GlobalsBuilder) {
-                    builder.set_representation(#name_str, #callable_name::new());
+                    builder.set(#name_str, #callable_name::new());
                 }
             },
         ])

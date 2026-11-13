@@ -278,7 +278,6 @@ fn register_plugins_methods(r: &mut GlobalsBuilder) {
     ///
     /// This value is not supported on `uses_plugins` at this time, and hence it is not useful on
     /// `pulls_plugins` either.
-    #[starlark(representation)]
     const All: AllPlugins = AllPlugins;
 }
 

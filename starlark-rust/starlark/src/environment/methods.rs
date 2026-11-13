@@ -28,7 +28,6 @@ use crate::docs::DocType;
 use crate::environment::common_documentation;
 use crate::eval::ParametersSpec;
 use crate::typing::Ty;
-use crate::values::AllocFrozenRepresentation;
 use crate::values::AllocFrozenValue;
 use crate::values::FrozenHeap;
 use crate::values::FrozenValueTyped;
@@ -36,7 +35,6 @@ use crate::values::Heap;
 use crate::values::OwnedFrozen;
 use crate::values::OwnedFrozenHeap;
 use crate::values::OwnedFrozenRef;
-use crate::values::StarlarkValue;
 use crate::values::Value;
 use crate::values::function::NativeAttribute;
 use crate::values::function::NativeMeth;
@@ -216,22 +214,6 @@ impl MethodsBuilder {
         let typ =
             <<V as AllocFrozenValue<'static>>::Type as StarlarkTypeExpr<'static>>::starlark_type_repr();
         self.set_attribute_with(name, typ, docstring, |heap| heap.alloc(value).to_value())
-    }
-
-    /// Set a constant value that is a representation, allocated the way it chose to be.
-    pub fn set_attribute_representation<'v, B>(
-        &'v mut self,
-        name: &str,
-        builder: B,
-        docstring: Option<String>,
-    ) where
-        B: for<'fv> AllocFrozenRepresentation<'fv>,
-    {
-        let typ =
-            <<B as AllocFrozenRepresentation<'static>>::Repr as StarlarkValue<'static>>::get_type_starlark_repr();
-        self.set_attribute_with(name, typ, docstring, |heap| {
-            heap.alloc_representation(builder).to_value()
-        })
     }
 
     fn set_attribute_with(
@@ -464,7 +446,7 @@ mod tests {
         }
 
         let mut a = Assert::new();
-        a.globals_add(|x| x.set_representation("magic", Magic));
+        a.globals_add(|x| x.set("magic", Magic));
         a.pass(
             r#"
 assert_eq(magic.my_type, "magic")

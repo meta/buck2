@@ -46,7 +46,6 @@ use crate::register_starlark_any;
 use crate::stdlib;
 pub use crate::stdlib::LibraryExtension;
 use crate::typing::Ty;
-use crate::values::AllocFrozenRepresentation;
 use crate::values::AllocFrozenValue;
 use crate::values::FrozenHeap;
 use crate::values::HeapEdge;
@@ -479,21 +478,6 @@ impl GlobalsBuilder {
         // SAFETY: `set_inner`'s contract: every stored value is in `self.heap`, which was just
         // sealed into `heap`, or in a heap it references.
         unsafe { Globals::from_parts(heap, variables, variable_names, self.docstring) }
-    }
-
-    /// Set a value in the [`GlobalsBuilder`] that is a representation, allocated the way it
-    /// chose to be.
-    pub fn set_representation<'v, B: for<'fv> AllocFrozenRepresentation<'fv>>(
-        &'v mut self,
-        name: &str,
-        builder: B,
-    ) {
-        // SAFETY: Allocated in `self.heap` just here.
-        let value = self
-            .heap
-            .with(|heap| unsafe { Self::erase(heap.alloc_representation(builder).to_value()) });
-        // SAFETY: Allocated in `self.heap` just above.
-        unsafe { self.set_inner(name, value, false) }
     }
 
     /// Set a value in the [`GlobalsBuilder`].

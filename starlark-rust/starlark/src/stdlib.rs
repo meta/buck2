@@ -240,9 +240,7 @@ mod tests {
 
         #[starlark_module]
         fn globals(builder: &mut GlobalsBuilder) {
-            #[starlark(representation)]
             const True2: Bool2 = Bool2(true);
-            #[starlark(representation)]
             const False2: Bool2 = Bool2(false);
         }
 

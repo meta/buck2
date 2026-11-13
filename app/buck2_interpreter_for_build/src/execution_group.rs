@@ -65,7 +65,6 @@ fn register_execution_group_globals(r: &mut GlobalsBuilder) {
     /// Its execution platform is the target's execution platform. A rule that declares named
     /// execution groups must list it in `exec_groups` to use it, and must name it on exec deps,
     /// toolchain deps and args that refer to tools.
-    #[starlark(representation)]
     const DefaultExecGroup: FrozenStarlarkExecutionGroup = FrozenStarlarkExecutionGroup::DEFAULT;
 }
 

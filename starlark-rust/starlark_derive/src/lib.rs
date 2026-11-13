@@ -89,10 +89,8 @@ mod vtable;
 /// Multiple attributes can be specified either separately `#[starlark(require = named)] #[starlark(default = "")]` or
 /// separated with a comman `#[starlark(require = named, default = "")]`.
 ///
-/// A `const NAME: T = value;` item defines the global `NAME` as `value` converted through
-/// `AllocFrozenValue`. With `#[starlark(representation)]` on the constant, `T` is a
-/// representation of a Starlark type, put on the heap as it is through
-/// `AllocFrozenRepresentation`.
+/// A `const NAME: T = value;` item defines the global `NAME` as `value` allocated through
+/// `AllocFrozenValue`.
 ///
 /// There are two special arguments, distinguished by their type, which provides access to interpreter state:
 ///

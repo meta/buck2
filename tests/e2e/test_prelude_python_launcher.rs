@@ -42,17 +42,6 @@ async fn interpreter() -> anyhow::Result<String> {
     .await
 }
 
-/// Whether the interpreter reads `PYTHONSAFEPATH`, which Python 3.11 added; an older one ignores
-/// it.
-async fn reads_safe_path(interpreter: &str) -> anyhow::Result<bool> {
-    let flag = python_prints(
-        interpreter,
-        "import sys\nprint(hasattr(sys.flags, 'safe_path'))",
-    )
-    .await?;
-    Ok(flag == "True")
-}
-
 async fn launcher(buck: &Buck, interpreter: &str) -> anyhow::Result<PathBuf> {
     let res = buck
         .build_without_report(&[
@@ -74,26 +63,20 @@ async fn run(launcher: &Path, env: &[(&str, &str)]) -> anyhow::Result<Output> {
 
 // prelude/python/tools/run_inplace.py.in
 #[buck_test(inplace = false, skip_for_os = ["windows"])]
-async fn test_launcher_fails_under_pythonsafepath(buck: &Buck) -> anyhow::Result<()> {
-    let interpreter = interpreter().await?;
-    let launcher = launcher(buck, &interpreter).await?;
-    let proc = run(&launcher, &[]).await?;
-    let stdout = String::from_utf8_lossy(&proc.stdout);
-    assert!(
-        stdout.starts_with("app ran from "),
-        "{stdout}\n{}",
-        String::from_utf8_lossy(&proc.stderr)
-    );
-
-    // The startup code asserts that `-c` put the cwd first on `sys.path` before it drops
-    // that entry; `PYTHONSAFEPATH` keeps the cwd off `sys.path`.
-    let proc = run(&launcher, &[("PYTHONSAFEPATH", "1")]).await?;
-    let stderr = String::from_utf8_lossy(&proc.stderr);
-    if reads_safe_path(&interpreter).await? {
-        assert!(!proc.status.success());
-        assert!(stderr.contains("AssertionError"), "{stderr}");
-    } else {
-        assert!(proc.status.success(), "{stderr}");
+async fn test_launcher_runs_under_pythonsafepath(buck: &Buck) -> anyhow::Result<()> {
+    let launcher = launcher(buck, &interpreter().await?).await?;
+    // The startup code drops the cwd entry that `-c` puts first on `sys.path` only when it
+    // is there; `PYTHONSAFEPATH` keeps it off, and the link tree comes first either way.
+    for env in [&[][..], &[("PYTHONSAFEPATH", "1")]] {
+        let proc = run(&launcher, env).await?;
+        let stdout = String::from_utf8_lossy(&proc.stdout);
+        assert!(
+            proc.status.success(),
+            "{}",
+            String::from_utf8_lossy(&proc.stderr)
+        );
+        assert!(stdout.starts_with("app ran from "), "{stdout}");
+        assert!(stdout.trim().ends_with("app#link-tree"), "{stdout}");
     }
     Ok(())
 }

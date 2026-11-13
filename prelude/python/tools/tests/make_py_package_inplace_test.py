@@ -236,8 +236,8 @@ class SafePathTest(unittest.TestCase):
             env={"PATH": os.environ.get("PATH", "/usr/bin:/bin"), **env},
         )
 
-    def test_safe_path_fails_the_assert(self) -> None:
+    def test_safe_path_is_respected(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             proc = self._launch(tmpdir, {"PYTHONSAFEPATH": "1"})
-        self.assertNotEqual(proc.returncode, 0)
-        self.assertIn("AssertionError", proc.stderr)
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertIn("ran with PYTHONPATH", proc.stdout)

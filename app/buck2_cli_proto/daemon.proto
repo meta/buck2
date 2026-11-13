@@ -487,6 +487,10 @@ message CommonBuildOptions {
   /// Materializes outputs for failed actions which ran on RE.
   bool materialize_failed_outputs = 20;
 
+  /// Keep the stdout of successful commands in `ActionExecutionEnd` events.
+  /// By default it is only kept for failed commands.
+  bool keep_action_stdout = 21;
+
   // These should possibly be deleted and never become real options. Let's not
   // pollute the low ids (and then forever need a comment about them). The only
   // one of these that might stick around is print_build_report, it's unclear if

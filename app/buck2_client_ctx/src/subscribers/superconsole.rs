@@ -1038,36 +1038,51 @@ impl StatefulSuperConsoleImpl {
             return Ok(());
         }
 
+        if let Some(stdout) = display::success_stdout(action, self.verbosity)? {
+            self.emit_success_output(action, "stdout", stdout)?;
+        }
         if let Some(stderr) = display::success_stderr(action, self.verbosity)? {
-            match self.state.simple_console.output_limit.emit(stderr.len()) {
-                EmitResult::Emit => {
-                    let mut lines = vec![];
-                    let display_platform = self.state.config.display_platform;
-                    let action_id = StyledContent::new(
-                        ContentStyle {
-                            attributes: Attribute::Bold.into(),
-                            ..Default::default()
-                        },
-                        format!(
-                            "stderr for {}:",
-                            display::display_action_identity(
-                                action.key.as_ref(),
-                                action.name.as_ref(),
-                                TargetDisplayOptions::for_console(display_platform),
-                            )?
-                        ),
-                    );
-                    lines.push(Line::from_iter([Span::new_styled_lossy(action_id)]));
-                    lines.extend(Lines::from_colored_multiline_string(stderr));
-                    self.canvas.emit(Lines(lines));
-                }
-                EmitResult::Exceeded(msg) => {
-                    self.canvas.emit(Lines(vec![Line::sanitized(msg)]));
-                }
-                EmitResult::Skipped => {}
-            }
+            self.emit_success_output(action, "stderr", stderr)?;
         }
 
+        Ok(())
+    }
+
+    /// Print one output stream (`stdout` or `stderr`) of a successful action.
+    fn emit_success_output(
+        &mut self,
+        action: &buck2_data::ActionExecutionEnd,
+        stream_name: &str,
+        output: &str,
+    ) -> buck2_error::Result<()> {
+        match self.state.simple_console.output_limit.emit(output.len()) {
+            EmitResult::Emit => {
+                let mut lines = vec![];
+                let display_platform = self.state.config.display_platform;
+                let action_id = StyledContent::new(
+                    ContentStyle {
+                        attributes: Attribute::Bold.into(),
+                        ..Default::default()
+                    },
+                    format!(
+                        "{} for {}:",
+                        stream_name,
+                        display::display_action_identity(
+                            action.key.as_ref(),
+                            action.name.as_ref(),
+                            TargetDisplayOptions::for_console(display_platform),
+                        )?
+                    ),
+                );
+                lines.push(Line::from_iter([Span::new_styled_lossy(action_id)]));
+                lines.extend(Lines::from_colored_multiline_string(output));
+                self.canvas.emit(Lines(lines));
+            }
+            EmitResult::Exceeded(msg) => {
+                self.canvas.emit(Lines(vec![Line::sanitized(msg)]));
+            }
+            EmitResult::Skipped => {}
+        }
         Ok(())
     }
 

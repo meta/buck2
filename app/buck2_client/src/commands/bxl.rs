@@ -111,7 +111,7 @@ impl StreamingCommand for BxlCommand {
                     context: Some(context),
                     bxl_label: self.bxl_opts.bxl_label,
                     bxl_args: self.bxl_opts.bxl_args,
-                    build_opts: Some(self.bxl_opts.build_opts.to_proto()),
+                    build_opts: Some(self.bxl_opts.build_opts.to_proto(ctx.verbosity)),
                     target_cfg: Some(self.target_cfg.target_cfg()),
                     final_artifact_materializations: self.bxl_opts.materializations.to_proto()
                         as i32,

@@ -27,6 +27,14 @@ then we strip out any color within the error messages.
 All console options will output the build result, whether succeeded or not, to
 stdout. Note that action execution stderr is hidden if the build succeeded.
 
+The output of successful actions can be shown with verbosity items: `-v 1,stderr`
+prints their stderr, and `-v 1,stdout` prints their stdout. Buck2 does not keep
+the stdout of successful actions by default, so `-v stdout` also asks the daemon
+to keep it. To keep it in the [event log](logging.md) without printing it, pass
+`--keep-action-stdout`. Either way, only actions that execute during the command
+are affected, and the stdout of actions run by persistent workers is not
+captured.
+
 The simple and superconsole will also print metadata about the build itself,
 such as the Buck2 UUID, the percentage of cache hits, and the number of action
 commands ran. In addition, they will print the event spans detected within the

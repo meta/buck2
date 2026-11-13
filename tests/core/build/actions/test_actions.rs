@@ -428,6 +428,25 @@ async fn test_exit_code(buck: &Buck) {
     }
 }
 
+/// A local action that leaves a symlink whose target buck2 cannot represent (a backslash on Unix)
+/// fails with an error instead of panicking the daemon.
+#[buck_test(data_dir = "actions", skip_for_os = ["windows"])]
+async fn test_output_symlink_target_with_backslash(buck: &Buck) -> anyhow::Result<()> {
+    buck.build(&["//run_bad:run_symlink_with_backslash"])
+        .await
+        .expect_failure()
+        .assert_stderr_matches("contains a backslash");
+
+    // The daemon is still there: the next command does not have to start a new one.
+    let result = buck.targets(&["//run_bad:"]).await?;
+    assert!(
+        !result.stderr.contains("Starting new buck2 daemon"),
+        "{}",
+        result.stderr
+    );
+    Ok(())
+}
+
 #[buck_test(data_dir = "actions")]
 async fn test_artifact_cycle(buck: &Buck) {
     buck.build(&["//run_invalid:artifact_cycle"])

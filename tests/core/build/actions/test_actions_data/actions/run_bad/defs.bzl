@@ -26,3 +26,14 @@ def _run_odd_exit_code_impl(ctx: AnalysisContext) -> list[Provider]:
     return [DefaultInfo(default_output = out)]
 
 run_odd_exit_code = rule(impl = _run_odd_exit_code_impl, attrs = {"exit_code": attrs.string(default = "1")})
+
+def _run_symlink_with_backslash_impl(ctx: AnalysisContext) -> list[Provider]:
+    out = ctx.actions.declare_output("out", has_content_based_path = False)
+    ctx.actions.run(
+        cmd_args("fbpython", "-c", "import os, sys; os.symlink(r'a\\b', sys.argv[1])", out.as_output()),
+        category = "test",
+        local_only = True,
+    )
+    return [DefaultInfo(default_output = out)]
+
+run_symlink_with_backslash = rule(impl = _run_symlink_with_backslash_impl, attrs = {})

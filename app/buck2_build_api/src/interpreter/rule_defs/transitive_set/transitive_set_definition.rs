@@ -43,8 +43,10 @@ use starlark::values::StarlarkPagable;
 use starlark::values::StarlarkPagableViaPagable;
 use starlark::values::StarlarkRepresentations;
 use starlark::values::StarlarkType;
+use starlark::values::StarlarkTypeExpr;
 use starlark::values::StarlarkValue;
 use starlark::values::Trace;
+use starlark::values::UnpackValue;
 use starlark::values::Value;
 use starlark::values::ValueOf;
 use starlark::values::ValueTyped;
@@ -52,7 +54,9 @@ use starlark::values::dict::DictType;
 use starlark::values::list::ListType;
 use starlark::values::starlark_value;
 use starlark::values::string::StarlarkStr;
+use starlark::values::typing::StarlarkCallable;
 use starlark::values::typing::StarlarkCallableChecked;
+use starlark::values::typing::StarlarkCallableParamSpec;
 use starlark::values::typing::TypeInstanceId;
 use starlark::values::typing::TypeMatcherFactory;
 use strong_hash::StrongHash;
@@ -105,14 +109,27 @@ impl TransitiveSetProjectionKind {
 }
 
 /// The type of a projection: `def(value) -> cmd_args | json`.
-pub type Projection<'v> = StarlarkCallableChecked<'v, (Value<'static>,), Value<'static>>;
-/// A projection, checked.
+pub type Projection<'v> = StarlarkCallable<'v, (Value<'static>,), Value<'static>>;
+/// A projection of a definition; `transitive_set()` checked its signature.
 pub type ProjectionCallable<'v> = ValueOf<'v, Projection<'v>>;
 /// The type of a reduction: `def(children, value) -> value`.
 pub type Reduction<'v> =
-    StarlarkCallableChecked<'v, (ListType<Value<'static>>, Value<'static>), Value<'static>>;
-/// A reduction, checked.
+    StarlarkCallable<'v, (ListType<Value<'static>>, Value<'static>), Value<'static>>;
+/// A reduction of a definition; `transitive_set()` checked its signature.
 pub type ReductionCallable<'v> = ValueOf<'v, Reduction<'v>>;
+
+/// `callable`, the entry `name` of `transitive_set()`'s parameter `param`, if its signature is
+/// the one its type declares. `typing.Callable[..]` accepts every callable at runtime, so this
+/// is what rejects a projection or a reduction with the wrong signature.
+fn check_signature<'v, P: StarlarkCallableParamSpec, R: StarlarkTypeExpr<'static>>(
+    param: &str,
+    name: &str,
+    callable: ValueOf<'v, StarlarkCallable<'v, P, R>>,
+) -> starlark::Result<ValueOf<'v, StarlarkCallable<'v, P, R>>> {
+    StarlarkCallableChecked::unpack(callable, callable.get())
+        .map_err(|e| e.with_context(format!("Invalid `{param}` entry `{name}`")))?;
+    Ok(callable)
+}
 
 #[derive(Debug, Clone, Trace, Freeze, Allocative, StarlarkPagable)]
 pub struct TransitiveSetProjectionSpec<'v> {
@@ -469,7 +486,7 @@ pub fn register_transitive_set(builder: &mut GlobalsBuilder) {
                     k.as_str().to_owned(),
                     TransitiveSetProjectionSpec {
                         kind: TransitiveSetProjectionKind::Args,
-                        projection: v,
+                        projection: check_signature("args_projections", k.as_str(), v)?,
                     },
                 ))
             })
@@ -483,7 +500,7 @@ pub fn register_transitive_set(builder: &mut GlobalsBuilder) {
                             k.as_str().to_owned(),
                             TransitiveSetProjectionSpec {
                                 kind: TransitiveSetProjectionKind::Json,
-                                projection: v,
+                                projection: check_signature("json_projections", k.as_str(), v)?,
                             },
                         ))
                     }),
@@ -495,7 +512,10 @@ pub fn register_transitive_set(builder: &mut GlobalsBuilder) {
                 .iter()
                 .map(|entry| {
                     let (k, v) = entry?;
-                    Ok::<_, starlark::Error>((k.as_str().to_owned(), v))
+                    Ok::<_, starlark::Error>((
+                        k.as_str().to_owned(),
+                        check_signature("reductions", k.as_str(), v)?,
+                    ))
                 })
                 .collect::<starlark::Result<_>>()?,
             None => BuckMutInsertionMap::new(),

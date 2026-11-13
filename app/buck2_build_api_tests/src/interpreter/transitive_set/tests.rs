@@ -94,13 +94,7 @@ fn test_define_transitive_set_projections() -> buck2_error::Result<()> {
     Ok(())
 }
 
-// With debug assertions, starlark checks what a conversion accepts against the type it
-// declares, and panics here: the FIXME below is such a disagreement.
 #[test]
-#[cfg_attr(
-    debug_assertions,
-    should_panic(expected = "`get` disagrees with the declared type")
-)]
 fn test_define_transitive_set_wrong_signature() {
     for (param, bad) in [
         ("args_projections", "def bad(_value, _extra):"),
@@ -127,9 +121,12 @@ fn test_define_transitive_set_wrong_signature() {
             .run_starlark_bzl_test(&contents)
             .unwrap_err();
         let err = format!("{err:?}");
-        // FIXME: The dict is of the type; what is wrong is the signature of an entry.
         assert!(
-            err.contains(&format!("Type of parameter `{param}` doesn't match")),
+            err.contains(&format!("Invalid `{param}` entry `foo`")),
+            "{err}"
+        );
+        assert!(
+            err.contains("does not match the expected signature"),
             "{err}"
         );
     }

@@ -57,11 +57,14 @@ import org.jetbrains.kotlin.fir.symbols.FirBasedSymbol
 import org.jetbrains.kotlin.fir.symbols.impl.FirAnonymousFunctionSymbol
 import org.jetbrains.kotlin.fir.symbols.impl.FirCallableSymbol
 import org.jetbrains.kotlin.fir.symbols.impl.FirClassLikeSymbol
+import org.jetbrains.kotlin.fir.symbols.impl.FirConstructorSymbol
 import org.jetbrains.kotlin.fir.symbols.impl.FirNamedFunctionSymbol
 import org.jetbrains.kotlin.fir.symbols.impl.FirPropertySymbol
+import org.jetbrains.kotlin.fir.symbols.impl.FirTypeAliasSymbol
 import org.jetbrains.kotlin.fir.symbols.impl.FirTypeParameterSymbol
 import org.jetbrains.kotlin.fir.symbols.impl.FirValueParameterSymbol
 import org.jetbrains.kotlin.fir.symbols.impl.FirVariableSymbol
+import org.jetbrains.kotlin.fir.types.AbbreviatedTypeAttribute
 import org.jetbrains.kotlin.fir.types.ConeCapturedType
 import org.jetbrains.kotlin.fir.types.ConeClassLikeType
 import org.jetbrains.kotlin.fir.types.ConeDefinitelyNotNullType
@@ -92,7 +95,7 @@ import org.jetbrains.kotlin.name.FqName
  * k2-jvm-abi-gen can emit as a plain method body: see [hasLowerableShape].
  *
  * @param isLibraryDeclarationAllowed called with the fully qualified name of a library class, or of
- *   a top-level library function or property (then `isTopLevelMember` is true).
+ *   a top-level library function, property or typealias (then `isTopLevelMember` is true).
  * @param isStubFile true for the Kosabi stub files of the ABI compilation.
  */
 class InlineBodyKeepability(
@@ -243,7 +246,55 @@ class InlineBodyKeepability(
       val private = (symbol.fir as? FirMemberDeclaration)?.effectiveVisibility?.privateApi != false
       return isOwn(symbol, symbol.origin) && !(lowerableOnly && private)
     }
-    return isLibraryDeclarationAllowed(classId.asSingleFqName().asString(), false)
+    // A typealias has no class file: the reduced classpath provides it through a file facade, like
+    // a top-level member.
+    return isLibraryDeclarationAllowed(
+        classId.asSingleFqName().asString(),
+        symbol is FirTypeAliasSymbol,
+    )
+  }
+
+  /**
+   * Whether source-only ABI generation resolves the typealiases written in [typeRef]. The body sees
+   * the expanded types, but an alias that does not resolve there is replaced by a class stub
+   * fabricated for its name. Inferred types also carry the aliases of library signatures, which
+   * this module never wrote and which never get a stub, so only written types are checked.
+   */
+  private fun isAllowedWrittenAliases(typeRef: FirResolvedTypeRef): Boolean =
+      typeRef.delegatedTypeRef == null || isAllowedAliases(typeRef.coneType)
+
+  private fun isAllowedAliases(type: ConeKotlinType): Boolean =
+      when (type) {
+        is ConeClassLikeType -> {
+          // The arguments of an expansion are not written; those of the alias are.
+          val alias = type.attributes[AbbreviatedTypeAttribute::class]?.coneType
+          (alias == null || isAllowedAlias(alias)) &&
+              (alias ?: type).typeArguments.all {
+                (it as? ConeKotlinTypeProjection)?.type?.let(::isAllowedAliases) != false
+              }
+        }
+        else -> true
+      }
+
+  /** A constructor called through a typealias writes the alias at the call site. */
+  private fun isAllowedConstructorAlias(call: FirFunctionCall): Boolean {
+    val callee = (call.calleeReference as? FirResolvedNamedReference)?.resolvedSymbol
+    if (callee !is FirConstructorSymbol) return true
+    return call.resolvedType.attributes[AbbreviatedTypeAttribute::class]
+        ?.coneType
+        ?.let(::isAllowedAlias) != false
+  }
+
+  private fun isAllowedAlias(abbreviation: ConeKotlinType): Boolean {
+    val classId = (abbreviation as ConeClassLikeType).lookupTag.classId
+    // The written alias resolved with the type, so the lookup finds it.
+    val symbol =
+        checkNotNull(session.symbolProvider.getClassLikeSymbolByClassId(classId)) { "$classId" }
+    if (symbol.origin.fromSource) return isOwn(symbol, symbol.origin)
+    return isLibraryDeclarationAllowed(
+        classId.asSingleFqName().asString(),
+        symbol is FirTypeAliasSymbol,
+    )
   }
 
   private fun isAllowedType(
@@ -288,7 +339,9 @@ class InlineBodyKeepability(
     private fun isAllowed(element: FirElement): Boolean =
         element !is FirErrorExpression &&
             element !is FirErrorTypeRef &&
-            (element !is FirResolvedTypeRef || isAllowedType(element.coneType)) &&
+            (element !is FirResolvedTypeRef ||
+                (isAllowedType(element.coneType) && isAllowedWrittenAliases(element))) &&
+            (element !is FirFunctionCall || isAllowedConstructorAlias(element)) &&
             (element !is FirExpression ||
                 runCatching { element.resolvedType }.getOrNull()?.let(::isAllowedType) == true) &&
             (element !is FirQualifiedAccessExpression ||

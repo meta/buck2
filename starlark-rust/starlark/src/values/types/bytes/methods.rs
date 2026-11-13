@@ -57,10 +57,10 @@ pub(crate) fn bytes_methods(builder: &mut MethodsBuilder) {
         this: &'v StarlarkBytes,
         heap: Heap<'v>,
     ) -> anyhow::Result<ValueOf<'v, StarlarkIter<StarlarkBytes>>> {
-        let it = this.as_bytes().iter().map(|&b| {
-            heap.alloc_representation(StarlarkBytes::new(&[b]))
-                .to_value()
-        });
+        let it = this
+            .as_bytes()
+            .iter()
+            .map(|&b| heap.alloc(StarlarkBytes::new(&[b])).to_value());
         Ok(ValueOf::new_unchecked(heap.alloc_tuple_iter(it)))
     }
 }

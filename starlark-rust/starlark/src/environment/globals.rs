@@ -407,7 +407,7 @@ impl GlobalsBuilder {
                 })
                 .collect();
             // SAFETY: Allocated in `self.heap` just here.
-            unsafe { Self::erase(heap.alloc_representation(Namespace::new(fields)).to_value()) }
+            unsafe { Self::erase(heap.alloc(Namespace::new(fields)).to_value()) }
         });
         // SAFETY: Allocated in `self.heap` just above.
         unsafe { self.set_inner(name, namespace, doc_hidden) }
@@ -533,7 +533,7 @@ impl GlobalsBuilder {
         let value = self.heap.with(|heap| {
             let docs = components.into_docs(as_type, heap);
             let function = heap
-                .alloc_representation(NativeFunction {
+                .alloc(NativeFunction {
                     function: NativeFunc(f, sig(heap)),
                     name: name.to_owned(),
                     speculative_exec_safe,

@@ -26,7 +26,6 @@ use crate::environment::GlobalsBuilder;
 use crate::eval::Evaluator;
 use crate::values::Value;
 use crate::values::ValueOf;
-use crate::values::ValueTyped;
 use crate::values::dict::DictType;
 use crate::values::record::field::Field;
 use crate::values::record::record_type::RecordType;
@@ -98,15 +97,13 @@ pub(crate) fn register_record(builder: &mut GlobalsBuilder) {
         #[starlark(require = pos)] typ: Value<'v>,
         default: Option<Value<'v>>,
         eval: &mut Evaluator<'v, '_, '_>,
-    ) -> starlark::Result<ValueTyped<'v, Field<'v>>> {
+    ) -> starlark::Result<ValueOf<'v, Field<'v>>> {
         // We compile the type even if we don't have a default to raise the error sooner
         let compiled = TypeCompiled::new(typ, eval.heap())?;
         if let Some(d) = default {
             compiled.check_type(d, Some("default"))?;
         }
-        Ok(eval
-            .heap()
-            .alloc_representation(Field::new(compiled, default)))
+        Ok(eval.heap().alloc(Field::new(compiled, default)))
     }
 }
 

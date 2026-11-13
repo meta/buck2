@@ -49,7 +49,7 @@ use crate::values::StarlarkValue;
 use crate::values::StringValue;
 use crate::values::Trace;
 use crate::values::Value;
-use crate::values::ValueTyped;
+use crate::values::ValueOf;
 use crate::values::dict::DictRef;
 use crate::values::function::FUNCTION_TYPE;
 use crate::values::types::tuple::value::Tuple;
@@ -75,7 +75,7 @@ pub fn partial(builder: &mut GlobalsBuilder) {
         #[starlark(args)] args: Value<'v>,
         #[starlark(kwargs)] kwargs: DictRef<'v>,
         heap: Heap<'v>,
-    ) -> anyhow::Result<ValueTyped<'v, Partial<'v>>> {
+    ) -> anyhow::Result<ValueOf<'v, Partial<'v>>> {
         debug_assert!(Tuple::from_value(args).is_some());
         let names: Vec<_> = kwargs
             .keys()
@@ -90,7 +90,7 @@ pub fn partial(builder: &mut GlobalsBuilder) {
             })
             .collect();
         let names_index = build_names_index(names.iter().map(|(s, _)| s));
-        Ok(heap.alloc_representation(Partial {
+        Ok(heap.alloc(Partial {
             func,
             pos: args,
             named: kwargs.values().collect(),

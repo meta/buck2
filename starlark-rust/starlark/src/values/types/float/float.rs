@@ -298,11 +298,11 @@ impl<'v> StarlarkValue<'v> for StarlarkFloat {
     }
 
     fn plus(&self, heap: Heap<'v>) -> crate::Result<Value<'v>> {
-        Ok(heap.alloc_representation(*self).to_value())
+        Ok(heap.alloc(*self).to_value())
     }
 
     fn minus(&self, heap: Heap<'v>) -> crate::Result<Value<'v>> {
-        Ok(heap.alloc_representation(StarlarkFloat(-self.0)).to_value())
+        Ok(heap.alloc(StarlarkFloat(-self.0)).to_value())
     }
 
     fn add(&self, other: Value, heap: Heap<'v>) -> Option<crate::Result<Value<'v>>> {

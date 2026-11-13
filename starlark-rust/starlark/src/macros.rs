@@ -22,7 +22,7 @@
 /// defines an instance of [`AllocFrozenRepresentation`](crate::values::AllocFrozenRepresentation)
 /// for it, plus a `X::from_value` downcast that matches frozen and unfrozen instances alike. A
 /// value is
-/// allocated with [`Heap::alloc_representation`](crate::values::Heap::alloc_representation).
+/// allocated with [`Heap::alloc`](crate::values::Heap::alloc).
 ///
 /// Hand-expand it when a piece needs customizing.
 #[macro_export]
@@ -93,9 +93,7 @@ macro_rules! starlark_complex_value {
 ///     // We can choose to implement whichever methods we want.
 ///     // All other operations will result in runtime errors.
 ///     fn plus(&self, heap: Heap<'v>) -> starlark::Result<Value<'v>> {
-///         Ok(heap
-///             .alloc_representation(MyObject(self.0.to_uppercase()))
-///             .to_value())
+///         Ok(heap.alloc(MyObject(self.0.to_uppercase())).to_value())
 ///     }
 /// }
 /// ```

@@ -587,7 +587,7 @@ mod tests {
         let mut hash2 = StarlarkHasher::new();
         StarlarkFloat(1e20).write_hash(&mut hash1).unwrap();
         Heap::temp(|heap| {
-            heap.alloc_representation(StarlarkBigInt::unchecked_new(BigInt::from(10).pow(20)))
+            heap.alloc(StarlarkBigInt::unchecked_new(BigInt::from(10).pow(20)))
                 .to_value()
                 .write_hash(&mut hash2)
                 .unwrap();

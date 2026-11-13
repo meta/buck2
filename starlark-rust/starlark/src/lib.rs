@@ -381,7 +381,7 @@
 //!     fn add(&self, rhs: Value<'v>, heap: Heap<'v>) -> Option<starlark::Result<Value<'v>>> {
 //!         if let Some(rhs) = rhs.downcast_ref::<Self>() {
 //!             Some(Ok(heap
-//!                 .alloc_representation(Complex {
+//!                 .alloc(Complex {
 //!                     real: self.real + rhs.real,
 //!                     imaginary: self.imaginary + rhs.imaginary,
 //!                 })
@@ -400,7 +400,7 @@
 //!     // We inject some complex numbers into the module before we start.
 //!     let a = module
 //!         .heap()
-//!         .alloc_representation(Complex {
+//!         .alloc(Complex {
 //!             real: 1,
 //!             imaginary: 8,
 //!         })
@@ -408,7 +408,7 @@
 //!     module.set("a", a);
 //!     let b = module
 //!         .heap()
-//!         .alloc_representation(Complex {
+//!         .alloc(Complex {
 //!             real: 4,
 //!             imaginary: 2,
 //!         })

@@ -54,9 +54,7 @@ pub(crate) fn register_bytes(globals: &mut GlobalsBuilder) {
             return Ok(x);
         }
         if let Some(s) = x.unpack_str() {
-            return Ok(heap
-                .alloc_representation(StarlarkBytes::new(s.as_bytes()))
-                .to_value());
+            return Ok(heap.alloc(StarlarkBytes::new(s.as_bytes())).to_value());
         }
         // Try iterating as a sequence of ints
         let mut result = Vec::new();
@@ -83,8 +81,6 @@ pub(crate) fn register_bytes(globals: &mut GlobalsBuilder) {
                 }
             }
         }
-        Ok(heap
-            .alloc_representation(StarlarkBytes::from_vec(result))
-            .to_value())
+        Ok(heap.alloc(StarlarkBytes::from_vec(result)).to_value())
     }
 }

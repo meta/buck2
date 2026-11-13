@@ -210,7 +210,7 @@ impl<T> StarlarkAnyComplex<T> {
     /// Allocate as a value that cannot be frozen, for a payload without a
     /// [`Freeze`](crate::values::Freeze) impl; freezing the module that holds it is an error.
     /// A payload that freezes is allocated through
-    /// [`alloc_representation`](crate::values::Heap::alloc_representation) instead.
+    /// [`alloc`](crate::values::Heap::alloc) instead.
     pub fn alloc_no_freeze<'v>(self, heap: Heap<'v>) -> ValueTyped<'v, Self>
     where
         Self: StarlarkValue<'v> + Trace<'v> + HeapSendable<'v>,
@@ -310,7 +310,7 @@ mod tests {
         Module::with_temp_heap(|module| {
             let data = module
                 .heap()
-                .alloc_representation(StarlarkAnyComplex::new(UnfrozenData {
+                .alloc(StarlarkAnyComplex::new(UnfrozenData {
                     string: module.heap().alloc_str("aaa"),
                     other: module.heap().alloc(AllocList([1, 2])).to_value(),
                 }))

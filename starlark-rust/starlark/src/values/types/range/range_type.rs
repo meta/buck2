@@ -216,7 +216,7 @@ impl<'v> StarlarkValue<'v> for Range {
                 Range::new(first, stop, NonZeroI32::new(step).unwrap())
             }
         };
-        Ok(heap.alloc_representation(range).to_value())
+        Ok(heap.alloc(range).to_value())
     }
 
     unsafe fn iterate(&self, me: Value<'v>, _heap: Heap<'v>) -> crate::Result<Value<'v>> {

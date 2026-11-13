@@ -343,13 +343,11 @@ fn test_radd() {
     impl<'v> StarlarkValue<'v> for Select {
         fn radd(&self, lhs: Value<'v>, heap: Heap<'v>) -> Option<crate::Result<Value<'v>>> {
             let lhs: Select = Select::unpack_value(lhs).unwrap().unwrap();
-            Some(Ok(heap.alloc_representation(lhs.add(self)).to_value()))
+            Some(Ok(heap.alloc(lhs.add(self)).to_value()))
         }
         fn add(&self, rhs: Value<'v>, heap: Heap<'v>) -> Option<crate::Result<Value<'v>>> {
             let rhs: Select = UnpackValue::unpack_value(rhs).unwrap().unwrap();
-            Some(Ok(heap
-                .alloc_representation(self.clone().add(&rhs))
-                .to_value()))
+            Some(Ok(heap.alloc(self.clone().add(&rhs)).to_value()))
         }
         fn collect_repr(&self, collector: &mut String) {
             write!(collector, "{self}").unwrap()

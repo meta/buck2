@@ -227,7 +227,7 @@ impl<'v> EnumType<'v> {
         let mut res = SmallMap::with_capacity(elements.len());
         for (i, x) in elements.iter().enumerate() {
             let v = heap
-                .alloc_representation(EnumValue {
+                .alloc(EnumValue {
                     id,
                     typ: typ.to_value(),
                     index: i as i32,

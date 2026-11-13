@@ -724,7 +724,7 @@ impl<'v> Def<'v> {
             .into_boxed_slice();
         Ok(eval
             .heap()
-            .alloc_representation(Self {
+            .alloc(Self {
                 parameters,
                 parameter_captures: stmt.value.parameter_captures,
                 return_type,

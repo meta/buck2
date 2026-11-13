@@ -43,9 +43,10 @@ jobs:
       run: |
         sudo apt-get update
         sudo apt-get install -y clang fish zsh lldb
-        gh release download --repo facebook/sapling --pattern "*Ubuntu$(lsb_release -rs).deb" --dir "$RUNNER_TEMP/sapling"
-        sudo apt-get install -y "$RUNNER_TEMP"/sapling/*.deb
-        mkdir -p "$RUNNER_TEMP/bin"
+        gh release download --repo meta/sapling --pattern "sapling-*-linux-x64.tar.xz" --dir "$RUNNER_TEMP"
+        mkdir -p "$RUNNER_TEMP/sapling" "$RUNNER_TEMP/bin"
+        tar -xJf "$RUNNER_TEMP"/sapling-*-linux-x64.tar.xz -C "$RUNNER_TEMP/sapling"
+        ln -s "$RUNNER_TEMP/sapling/sl" "$RUNNER_TEMP/bin/sl"
         ln -s "$(command -v python3)" "$RUNNER_TEMP/bin/fbpython"
         echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
       shell: bash
@@ -55,7 +56,7 @@ jobs:
         GH_TOKEN: ${{ github.token }}
         WATCHMAN_RELEASE: v2026.07.27.00
       run: |
-        gh release download "$WATCHMAN_RELEASE" --repo facebook/watchman --pattern "watchman-$WATCHMAN_RELEASE-linux.zip" --dir "$RUNNER_TEMP"
+        gh release download "$WATCHMAN_RELEASE" --repo meta/watchman --pattern "watchman-$WATCHMAN_RELEASE-linux.zip" --dir "$RUNNER_TEMP"
         unzip -q "$RUNNER_TEMP/watchman-$WATCHMAN_RELEASE-linux.zip" -d "$RUNNER_TEMP"
         cd "$RUNNER_TEMP/watchman-$WATCHMAN_RELEASE-linux"
         sudo mkdir -p /usr/local/bin /usr/local/lib /usr/local/var/run/watchman

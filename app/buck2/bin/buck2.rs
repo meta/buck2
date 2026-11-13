@@ -21,6 +21,7 @@ use buck2::process_context::ProcessContext;
 use buck2::process_context::SharedProcessContext;
 use buck2_build_info::BUCK2_BUILD_INFO;
 use buck2_build_info::Buck2BuildInfo;
+use buck2_client_ctx::argfiles::StdinArgfile;
 use buck2_client_ctx::events_ctx::EventsCtx;
 use buck2_client_ctx::exit_result::ExitResult;
 use buck2_client_ctx::restarter::Restarter;
@@ -204,6 +205,7 @@ fn main() -> ! {
             stdin: Stdin::new(stdin_buffer_size),
             working_dir: AbsWorkingDir::current_dir()?,
             args: std::env::args().collect::<Vec<String>>(),
+            stdin_argfile: StdinArgfile::default(),
             restarter: Restarter::new(),
             force_want_restart: buck2_env!("FORCE_WANT_RESTART", bool)?,
         })

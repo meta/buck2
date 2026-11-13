@@ -42,6 +42,19 @@ async fn test_restart(buck: &Buck) {
     assert_eq!(res.stderr.matches("Unknown target `invalid`").count(), 2);
 }
 
+/// Stdin can be read only once, so a restarted command gets the `@-` arguments it read the
+/// first time.
+#[buck_test]
+async fn test_restart_keeps_stdin_argfile(buck: &Buck) {
+    let res = buck
+        .targets(&["@-"])
+        .stdin("//:invalid\n")
+        .env("FORCE_WANT_RESTART", "true")
+        .await
+        .expect_failure();
+    assert_eq!(res.stderr.matches("Unknown target `invalid`").count(), 2);
+}
+
 #[buck_test(allow_soft_errors = true)]
 async fn test_restart_materializer_corruption(buck: &Buck) -> anyhow::Result<()> {
     let stage1 = "//:stage1";

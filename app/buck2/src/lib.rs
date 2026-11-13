@@ -273,6 +273,7 @@ pub fn exec(process: ProcessContext<'_>) -> ExitResult {
         process.shared.args.to_vec(),
         &mut immediate_config,
         &cwd,
+        &process.shared.stdin_argfile,
     )
     .buck_error_context("Error expanding argsfiles")?;
 

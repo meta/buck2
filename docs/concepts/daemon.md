@@ -30,9 +30,9 @@ the root `.buckconfig` lets compatible tenants share one daemon while retaining
 separate output and cache state. The key accepts a hostname share such as
 `hostname:0.1`, which enables sharing on that fraction of hosts for A/B
 testing; every client of a host then agrees on its routing. Hosts that cannot
-run a shared daemon (today: anything but Linux, or a non-deferred materializer)
-keep one daemon per isolation directory whatever the share says, as does
-`--no-buckd`. The `daemon_routing` command metadata records the mode in use.
+run a shared daemon (today: anything but Linux) keep one daemon per isolation
+directory whatever the share says, as does `--no-buckd`. The `daemon_routing`
+command metadata records the mode in use.
 
 A tenant is a `(project root, isolation directory)` pair. Clients select the
 shared daemon by a compatibility key, a BLAKE3 hash of the binary version, user
@@ -118,7 +118,10 @@ Cycle detection is always enabled in both modes. Shared engines require
 compatible paging, digest configuration, and Buck settings.
 Paging storage is scoped to the daemon: it lives under the daemon state
 directory of the checkout that started the daemon, keyed by the daemon id,
-outside every disposable tenant tree.
+outside every disposable tenant tree. So is the disk-state materializer's
+stash of local content, keyed by namespace next to the forkserver state, so
+that cleaning or evicting any tenant leaves what the others are served from in
+place; the CAS TTL refresh runs through whichever tenant is live.
 Evicting a tenant releases its roots after admitted commands finish; other
 tenants keep running on the shared engine.
 

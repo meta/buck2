@@ -267,7 +267,7 @@ async def buck_fixture(  # noqa C901 : "too complex"
         # Each test gets its own daemons; the Rust harness has the opt-in to sharing.
         extra_config_lines.append(_daemon_routing_config(share_daemon=False))
         if materializer == "v2":
-            # Every `MATERIALIZER_V2_ROLLOUT_VERSION` is at least 0.
+            # Every `ROLLOUT_VERSION` is at least 0.
             extra_config_lines.append("[buck2]\nmaterializer_v2_version = 0\n")
             # The disk-state twins run strict: a root leaves disk the moment its last lease
             # does, so a reader without one fails here rather than by chance in use.

@@ -92,6 +92,7 @@ use buck2_execute_impl::materializers::deferred::DeferredMaterializer;
 use buck2_execute_impl::materializers::deferred::DeferredMaterializerConfigs;
 use buck2_execute_impl::materializers::deferred::TtlRefreshConfiguration;
 use buck2_execute_impl::materializers::deferred::clean_stale::CleanStaleConfig;
+use buck2_execute_impl::materializers::v2::core as disk_state;
 use buck2_execute_impl::materializers::v2::core::DiskStateMaterializer;
 use buck2_execute_impl::re::paranoid_download::ParanoidDownloader;
 use buck2_execute_impl::sqlite::dep_file_state_db::PersistedDepFileStore;
@@ -646,7 +647,8 @@ impl TenantState {
         let disk_state_core = init_ctx
             .daemon_startup_config
             .startup_options
-            .runs_disk_state_materializer();
+            .materializer_v2_version
+            .is_some_and(|wanted| disk_state::ROLLOUT_VERSION >= wanted);
         let deferred_materializer_configs = {
             let defer_write_actions = root_config
                 .parse::<RolloutPercentage>(BuckconfigKeyRef {

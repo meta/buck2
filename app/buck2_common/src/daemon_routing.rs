@@ -13,7 +13,6 @@ use buck2_core::rollout_percentage::RolloutPercentage;
 use serde::Deserialize;
 use serde::Serialize;
 
-use crate::init::MATERIALIZER_V2_ROLLOUT_VERSION;
 use crate::legacy_configs::configs::LegacyBuckConfig;
 use crate::legacy_configs::key::BuckconfigKeyRef;
 
@@ -63,22 +62,17 @@ impl DaemonRouting {
                 "`buck2.share_daemon` must be a bool or a `hostname:<fraction>`: every client on a host must select the same daemon"
             ));
         }
-        if share_daemon.roll() && Self::host_supports_sharing(config)? {
+        if share_daemon.roll() && Self::host_supports_sharing() {
             Ok(Self::Shared)
         } else {
             Ok(Self::Unshared)
         }
     }
 
-    /// Shared daemons run on Linux with the deferred materializer.
-    fn host_supports_sharing(config: &LegacyBuckConfig) -> buck2_error::Result<bool> {
-        let disk_state_materializer = config
-            .parse::<u32>(BuckconfigKeyRef {
-                section: "buck2",
-                property: "materializer_v2_version",
-            })?
-            .is_some_and(|wanted| MATERIALIZER_V2_ROLLOUT_VERSION >= wanted);
-        Ok(cfg!(target_os = "linux") && !disk_state_materializer)
+    /// Shared daemons run on Linux, under either materializer: which one is part of the daemon's
+    /// startup configuration, and so of its compatibility key.
+    fn host_supports_sharing() -> bool {
+        cfg!(target_os = "linux")
     }
 
     pub fn is_shared(&self) -> bool {
@@ -128,22 +122,10 @@ mod tests {
             routing("[buck2]\nshare_daemon = hostname:1.0").unwrap(),
             expected
         );
-        // A rollout version above this binary's leaves the deferred materializer in place.
-        assert_eq!(
-            routing(&format!(
-                "[buck2]\nshare_daemon = true\nmaterializer_v2_version = {}",
-                MATERIALIZER_V2_ROLLOUT_VERSION + 1
-            ))
-            .unwrap(),
-            expected
-        );
-    }
-
-    #[test]
-    fn unsupported_hosts_stay_unshared() {
+        // The materializer selects the daemon, not the routing.
         assert_eq!(
             routing("[buck2]\nshare_daemon = true\nmaterializer_v2_version = 0").unwrap(),
-            DaemonRouting::Unshared
+            expected
         );
     }
 

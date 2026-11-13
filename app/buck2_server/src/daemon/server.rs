@@ -221,6 +221,8 @@ impl DaemonInactivityConfig {
 
 #[derive(Allocative)]
 struct DaemonShutdown {
+    /// Whether a shutdown was triggered.
+    started: AtomicBool,
     /// This channel is used to trigger a graceful shutdown of the grpc server. After
     /// an item is sent on this channel, the server will start rejecting new requests
     /// and once current requests are finished the server will shutdown. The item is
@@ -233,9 +235,15 @@ impl DaemonShutdown {
     /// Trigger a graceful server shutdown with a timeout. Once the timeout expires,
     /// `spawn_shutdown_watchdog` takes the process down whether or not the drain finished.
     ///
+    /// A daemon shuts down once: only the first call does anything.
+    ///
     /// As we might be processing a `kill()` (or other) request, we cannot wait for the server to actually
     /// shutdown (as it will wait for current requests to finish), so this returns immediately.
     fn start_shutdown(&self, reason: buck2_data::DaemonShutdown, timeout: Option<Duration>) {
+        if self.started.swap(true, Ordering::Relaxed) {
+            return;
+        }
+
         // The daemon's stderr is `buckd.stderr`, which the client tails into the console and the
         // invocation record and `rage` collects: it is where a daemon's last words are looked
         // for, so the reason goes there directly.
@@ -247,6 +255,11 @@ impl DaemonShutdown {
 
         // Ignore errors on shutdown_channel as that would mean we've already started shutdown;
         let _ = self.shutdown_channel.unbounded_send(shutdown_deadline);
+    }
+
+    /// Whether a shutdown was triggered. The daemon then takes no new commands.
+    fn has_started(&self) -> bool {
+        self.started.load(Ordering::Relaxed)
     }
 }
 
@@ -382,8 +395,6 @@ impl Interceptor for BuckCheckAuthTokenInterceptor {
 
 #[derive(Allocative)]
 pub(crate) struct BuckdServerData {
-    /// The flag that is set to true when server is shutting down.
-    stop_accepting_requests: AtomicBool,
     #[allocative(skip)]
     process_info: DaemonProcessInfo,
     base_daemon_constraints: buck2_cli_proto::DaemonConstraints,
@@ -465,9 +476,6 @@ impl Drop for PendingRegistration {
 
 impl BuckdServer {
     fn shutdown_after_final_tenant_eviction(&self) {
-        if self.0.stop_accepting_requests.swap(true, Ordering::AcqRel) {
-            return;
-        }
         self.0.daemon_shutdown.start_shutdown(
             buck2_data::DaemonShutdown {
                 reason: "The final tenant was evicted".to_owned(),
@@ -796,7 +804,6 @@ impl BuckdServer {
 
         let auth_token = process_info.auth_token.clone();
         let api_server = BuckdServer(Arc::new(BuckdServerData {
-            stop_accepting_requests: AtomicBool::new(false),
             process_info,
             base_daemon_constraints,
             enable_trace_io,
@@ -805,7 +812,10 @@ impl BuckdServer {
                 nanos: now.subsec_nanos() as i32,
             },
             start_instant: Instant::now(),
-            daemon_shutdown: DaemonShutdown { shutdown_channel },
+            daemon_shutdown: DaemonShutdown {
+                started: AtomicBool::new(false),
+                shutdown_channel,
+            },
             daemon_state: daemon_state.clone(),
             cert_state,
             inactivity_config: inactivity_config.clone(),
@@ -1243,7 +1253,7 @@ impl BuckdServer {
     /// Checks if the server is accepting requests.
     #[allow(clippy::result_large_err)]
     fn check_if_accepting_requests(&self) -> Result<(), Status> {
-        if self.0.stop_accepting_requests.load(Ordering::Relaxed) {
+        if self.0.daemon_shutdown.has_started() {
             Err(Status::failed_precondition(
                 "Failed to run command, `buckd` is shutting down soon!",
             ))
@@ -1580,10 +1590,6 @@ impl DaemonApi for BuckdServer {
         }
 
         self.oneshot(req, KillRunCommandOptions, move |req| async move {
-            self.0
-                .stop_accepting_requests
-                .store(true, Ordering::Relaxed);
-
             let timeout = req
                 .timeout
                 .as_ref()

@@ -6,8 +6,6 @@
 # of this source tree. You may select, at your option, one of the
 # above-listed licenses.
 
-# pyre-strict
-
 """
 Sorts pre-dexed libraries into primary/secondary dex groups for an Android APK.
 
@@ -30,7 +28,10 @@ from __future__ import annotations
 import argparse
 import json
 import pathlib
-from typing import Optional, TypedDict
+from typing import NotRequired, Optional, TYPE_CHECKING, TypedDict
+
+if TYPE_CHECKING:
+    from android.tools.filter_dex import DexUnit
 
 
 ROOT_MODULE: str = "dex"
@@ -51,9 +52,13 @@ DEX_REF_LIMIT: int = 65536
 # types (the canary and java/lang/Object).
 CANARY_TYPE_REF_COUNT: int = 2
 
+
 # Type aliases for the data structures used throughout.
-# A single entry in a dex group: {"id": <lib_id>, "class_names": [<class>, ...]}
-DexEntry = dict[str, object]
+class DexEntry(TypedDict):
+    id: str
+    class_names: list[str]
+
+
 # A group is a list of DexEntry dicts that will be merged into one .dex file.
 DexGroup = list[DexEntry]
 # Per-module sorting result before flattening.
@@ -72,6 +77,7 @@ class FilterDexInfo(_OptionalFilterDexInfo):
     method_ref_count: str
     field_ref_count: str
     type_ref_count: str
+    dex_units: NotRequired[list[DexUnit]]
 
 
 # Filter dex data: identifier -> filter info
@@ -471,7 +477,6 @@ def _flatten_groups(groups: list[DexGroup]) -> list[FlatGroup]:
         lib_ids: list[str] = [str(entry["id"]) for entry in group]
         class_names: list[str] = []
         for entry in group:
-            # pyre-ignore[6]: entry["class_names"] is always list[str]
             class_names.extend(entry["class_names"])
         result.append({"lib_ids": lib_ids, "class_names": class_names})
     return result

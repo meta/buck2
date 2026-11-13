@@ -6,11 +6,23 @@
 # of this source tree. You may select, at your option, one of the
 # above-listed licenses.
 
+from __future__ import annotations
 
 import argparse
 import json
 import pathlib
 import re
+from typing import TypedDict
+
+
+class DexUnit(TypedDict):
+    class_names: list[str]
+    primary: bool
+    weight_estimate: int
+    method_ref_count: int
+    field_ref_count: int
+    type_ref_count: int
+
 
 PREFIX_MARKER = "^"
 SUFFIX_MARKER = "^"

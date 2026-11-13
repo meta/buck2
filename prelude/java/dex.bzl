@@ -37,6 +37,7 @@ DexLibraryInfo = provider(
         # as its context class, and D8 reports the pairing because the synthetic's name is
         # mangled in a format it does not treat as stable.
         "synthetic_contexts": provider_field(typing.Any, default = None),  # ["artifact", None]
+        "dex_units": provider_field(typing.Any, default = None),  # ["artifact", None]
     },
 )
 

@@ -407,7 +407,7 @@ macro_rules! impl_bc_instr_arg_for_value_typed {
     };
 }
 
-impl_bc_instr_arg_for_value_typed!(StarlarkStr, PointerI32, Def<'v>, NativeFunction<'v>);
+impl_bc_instr_arg_for_value_typed!(PointerI32, Def<'v>, NativeFunction<'v>);
 
 impl<'v> BcInstrArg<'v> for ValueOf<'v, StarlarkStr> {
     fn fmt_append(

@@ -406,7 +406,7 @@ impl<'v> StarlarkRuleCallable<'v> {
                     .iter()
                     .map(|entry| {
                         let (k, v) = entry?;
-                        Ok::<_, starlark::Error>((k.get(), v.get().0))
+                        Ok::<_, starlark::Error>((k, v.get().0))
                     })
                     .collect::<starlark::Result<BuckMutInsertionMap<_, _>>>()?,
             }),

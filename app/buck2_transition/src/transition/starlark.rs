@@ -349,7 +349,7 @@ fn register_transition_function(builder: &mut GlobalsBuilder) {
             .map(|entry| {
                 let (n, r) = entry?;
                 Ok((
-                    n.get(),
+                    n,
                     ProvidersLabelTrace((COERCE_PROVIDERS_LABEL_FOR_BZL.get()?)(eval, &r.get())?),
                 ))
             })

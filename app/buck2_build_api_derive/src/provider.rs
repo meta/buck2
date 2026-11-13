@@ -266,30 +266,30 @@ impl ProviderCodegen {
             (false, ident, args)
         };
 
-        let typed = |optional| {
+        let of = |optional| {
             if optional {
-                FieldKind::OptionTyped
+                FieldKind::OptionOf
             } else {
-                FieldKind::Typed
+                FieldKind::Of
             }
         };
-        // `StringValue<'v>` is `ValueTyped<'v, StarlarkStr>` under its usual name.
+        // `StringValue<'v>` is `ValueOf<'v, StarlarkStr>` under its usual name.
         let (kind, field_type): (FieldKind, syn::Type) = if ident == "StringValue" {
             let [syn::GenericArgument::Lifetime(_)] = Vec::from_iter(&args.args).as_slice() else {
                 return Err(err());
             };
             (
-                typed(optional),
+                of(optional),
                 syn::parse_quote! { starlark::values::string::StarlarkStr },
             )
         } else {
-            let kind = if ident == "ValueTyped" {
-                typed(optional)
-            } else if ident == "ValueOf" {
+            let kind = if ident == "ValueOf" {
+                of(optional)
+            } else if ident == "ValueTyped" {
                 if optional {
-                    FieldKind::OptionOf
+                    FieldKind::OptionTyped
                 } else {
-                    FieldKind::Of
+                    FieldKind::Typed
                 }
             } else {
                 return Err(err());

@@ -20,20 +20,18 @@ use std::hash::Hash;
 use std::hash::Hasher;
 
 use crate::collections::Hashed;
-use crate::values::FreezeResult;
-use crate::values::Freezer;
 use crate::values::Value;
 use crate::values::ValueOf;
-use crate::values::ValueTyped;
 use crate::values::layout::static_string::VALUE_EMPTY_STRING;
 use crate::values::string::str_type::StarlarkStr;
 
-/// Convenient type alias.
+/// The handle to a Starlark `str`: the [`ValueOf`] of [`StarlarkStr`], with the operations
+/// that only strings have.
 ///
-/// We use `ValueTyped<StarlarkStr>` often, but also we define more operations
-/// on `ValueTyped<StarlarkStr>` than on generic `ValueTyped<T>`.
-///
-/// Note there's a macro `const_frozen_string!` to statically allocate a `StringValue<'static>`:
+/// One is made by allocating a Rust string (`heap.alloc("magic")`), by [`ValueOf::new`] from a
+/// [`Value`] that is a string, or statically by `const_frozen_string!`; it is read with
+/// [`as_str`](ValueOf::as_str). It is `Hash`, `Ord` and `Borrow<str>` by its content, so it is a
+/// map key that a `&str` looks up.
 ///
 /// ```
 /// use starlark::const_frozen_string;
@@ -42,60 +40,7 @@ use crate::values::string::str_type::StarlarkStr;
 /// let s: StringValue<'static> = const_frozen_string!("magic");
 /// assert_eq!("magic", s.as_str());
 /// ```
-pub type StringValue<'v> = ValueTyped<'v, StarlarkStr>;
-
-impl<'v> Borrow<str> for StringValue<'v> {
-    fn borrow(&self) -> &str {
-        self.as_str()
-    }
-}
-
-impl<'v> Default for StringValue<'v> {
-    fn default() -> Self {
-        VALUE_EMPTY_STRING.erase().at()
-    }
-}
-
-impl<'v> StringValue<'v> {
-    /// Freeze the string into the [`Freezer`]'s heap.
-    pub fn freeze<'fv>(self, freezer: &Freezer<'v, 'fv>) -> FreezeResult<StringValue<'fv>> {
-        // SAFETY: Freezing a string yields a string.
-        Ok(unsafe { StringValue::new_unchecked(freezer.freeze(self.to_value())?) })
-    }
-
-    /// Get self along with the hash.
-    pub fn get_hashed(self) -> Hashed<Self> {
-        Hashed::new_unchecked(self.get_hash(), self)
-    }
-
-    /// Get the string reference along with the hash.
-    pub fn get_hashed_str(self) -> Hashed<&'v str> {
-        Hashed::new_unchecked(self.get_hash(), self.as_str())
-    }
-
-    /// Get the [`Value`] along with the hash.
-    pub fn get_hashed_value(self) -> Hashed<Value<'v>> {
-        Hashed::new_unchecked(self.get_hash(), self.to_value())
-    }
-}
-
-impl<'v> Hash for StringValue<'v> {
-    fn hash<H: Hasher>(&self, state: &mut H) {
-        self.as_ref().hash(state)
-    }
-}
-
-impl<'v> PartialOrd for StringValue<'v> {
-    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-        Some(self.cmp(other))
-    }
-}
-
-impl<'v> Ord for StringValue<'v> {
-    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        self.as_ref().cmp(other.as_ref())
-    }
-}
+pub type StringValue<'v> = ValueOf<'v, StarlarkStr>;
 
 impl<'v> ValueOf<'v, StarlarkStr> {
     /// The Rust string.
@@ -128,7 +73,7 @@ impl<'v> Borrow<str> for ValueOf<'v, StarlarkStr> {
 
 impl<'v> Default for ValueOf<'v, StarlarkStr> {
     fn default() -> Self {
-        VALUE_EMPTY_STRING.erase().at().into()
+        VALUE_EMPTY_STRING.erase().at()
     }
 }
 
@@ -168,7 +113,7 @@ mod tests {
         Heap::temp(|heap| {
             let s: StringValue = heap.alloc_str("xyz");
             assert_eq!(expected, Hashed::new(s).hash());
-            assert_eq!(s.get_hashed().hash(), s.hashed().unwrap().hash());
+            assert_eq!(expected, s.get_hashed().hash());
             let v: Value = heap.alloc_str("xyz").to_value();
             assert_eq!(expected, v.get_hashed().unwrap().hash());
         });

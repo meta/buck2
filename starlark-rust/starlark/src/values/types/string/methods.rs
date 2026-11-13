@@ -788,9 +788,9 @@ pub(crate) fn string_methods(builder: &mut MethodsBuilder) {
         if let Some(offset) = this.find(needle.as_str()) {
             let offset2 = offset + needle.len();
             Ok((
-                heap.alloc_str(this.get(..offset).unwrap()),
+                heap.alloc_str(this.as_str().get(..offset).unwrap()),
                 needle,
-                heap.alloc_str(this.get(offset2..).unwrap()),
+                heap.alloc_str(this.as_str().get(offset2..).unwrap()),
             ))
         } else {
             let empty = StringValue::default();
@@ -956,9 +956,9 @@ pub(crate) fn string_methods(builder: &mut MethodsBuilder) {
         if let Some(offset) = this.rfind(needle.as_str()) {
             let offset2 = offset + needle.len();
             Ok((
-                heap.alloc_str(this.get(..offset).unwrap()),
+                heap.alloc_str(this.as_str().get(..offset).unwrap()),
                 needle,
-                heap.alloc_str(this.get(offset2..).unwrap()),
+                heap.alloc_str(this.as_str().get(offset2..).unwrap()),
             ))
         } else {
             let empty = StringValue::default();

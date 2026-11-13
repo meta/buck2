@@ -81,7 +81,7 @@ fn collect_variables<'v>(
         .iter()
         .map(|entry| {
             let (k, v) = entry?;
-            Ok((k.get(), v))
+            Ok((k, v))
         })
         .collect()
 }
@@ -109,7 +109,7 @@ impl<'v> TemplatePlaceholderInfo<'v> {
                     Either::Left(arg) => Either::Left(arg),
                     Either::Right(dict) => Either::Right(collect_variables(dict)?),
                 };
-                Ok((k.get(), v))
+                Ok((k, v))
             })
             .collect()
     }

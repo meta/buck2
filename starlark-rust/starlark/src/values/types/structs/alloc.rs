@@ -64,7 +64,7 @@ where
         let iter = self.0.into_iter();
         let mut fields = SmallMap::with_capacity(iter.size_hint().0);
         for (k, v) in iter {
-            let k = k.alloc_value(heap).get();
+            let k = k.alloc_value(heap);
             let v = v.alloc_value(heap).to_value();
             let prev = fields.insert(k, v);
             assert!(prev.is_none(), "non-unique key: {k}");
@@ -85,7 +85,7 @@ where
         let iter = self.0.into_iter();
         let mut fields = SmallMap::with_capacity(iter.size_hint().0);
         for (k, v) in iter {
-            let k = k.alloc_frozen_value(heap).get();
+            let k = k.alloc_frozen_value(heap);
             let v = v.alloc_frozen_value(heap).to_value();
             let prev = fields.insert(k, v);
             assert!(prev.is_none(), "non-unique key: {k}");

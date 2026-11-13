@@ -37,7 +37,6 @@ use serde::Serialize;
 use starlark_map::Hashed;
 
 use crate as starlark;
-use crate::any::AnyLifetime;
 use crate::any::IsStaticType;
 use crate::any::ProvidesStaticType;
 use crate::any::ReinfectStatic;
@@ -53,7 +52,6 @@ use crate::values::HeapEdge;
 use crate::values::StarlarkType;
 use crate::values::StarlarkTypeExpr;
 use crate::values::StarlarkValue;
-use crate::values::StringValue;
 use crate::values::Trace;
 use crate::values::Tracer;
 use crate::values::UnpackValue;
@@ -62,7 +60,6 @@ use crate::values::ValueOf;
 use crate::values::layout::avalue::AValue;
 use crate::values::layout::avalue::AValueImpl;
 use crate::values::layout::heap::repr::AValueRepr;
-use crate::values::string::str_type::StarlarkStr;
 
 /// [`Value`] wrapper which asserts contained value is of type `<T>`.
 #[derive(Copy_, Clone_, Dupe_, ProvidesStaticType, Allocative)]
@@ -134,20 +131,7 @@ impl<'v, T: StarlarkValue<'v>> Serialize for FrozenValueTyped<'v, T> {
 
 impl<'v, T: StarlarkValue<'v>> PartialEq for ValueTyped<'v, T> {
     fn eq(&self, other: &Self) -> bool {
-        // Poor man specialization.
-        if T::static_type_id() == StarlarkStr::static_type_id() {
-            // SAFETY: just checked type ids.
-            let (this, other) = unsafe {
-                (
-                    StringValue::new_unchecked(self.0),
-                    StringValue::new_unchecked(other.0),
-                )
-            };
-            this.0.ptr_eq(other.0) || StarlarkStr::eq(this.as_ref(), other.as_ref())
-        } else {
-            // Slow comparison with virtual call.
-            self.0 == other.0
-        }
+        self.0 == other.0
     }
 }
 
@@ -344,14 +328,6 @@ impl<'v, T: StarlarkValue<'v>> FrozenValueTyped<'v, T> {
     #[inline]
     pub fn as_ref(self) -> &'v T {
         self.to_value_typed().as_ref()
-    }
-}
-
-impl<'v> ValueTyped<'v, StarlarkStr> {
-    /// Get the Rust string reference.
-    #[inline]
-    pub fn as_str(self) -> &'v str {
-        self.as_ref().as_str()
     }
 }
 

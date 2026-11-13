@@ -56,7 +56,7 @@ pub(crate) fn register_enum(builder: &mut GlobalsBuilder) {
     ) -> starlark::Result<Value<'v>> {
         // Every Value must either be a field or a value (the type)
         let id = TypeInstanceId::from_def_site(StarlarkTypeIdDomain::Enum, eval)?;
-        Ok(EnumType::new(args.items().collect(), eval.heap(), id)?.to_value())
+        Ok(EnumType::new(args.items().map(ValueOf::from).collect(), eval.heap(), id)?.to_value())
     }
 }
 

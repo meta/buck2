@@ -1,0 +1,9 @@
+version = 3
+
+[[package]]
+name = "serde"
+version = "1.0.0"
+
+[[package]]
+name = "toml"
+version = "0.8.0"

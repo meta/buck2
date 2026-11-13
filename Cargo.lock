@@ -2980,6 +2980,7 @@ dependencies = [
  "fancy-regex 0.20.0",
  "futures 0.3.34",
  "glob",
+ "globset",
  "hashbrown 0.17.1",
  "hex",
  "indoc",

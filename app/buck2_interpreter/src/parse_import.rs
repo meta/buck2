@@ -10,6 +10,7 @@
 
 //! Parses imports for load_file() calls in build files.
 
+use buck2_core::bzl::ImportFormat;
 use buck2_core::bzl::ImportPath;
 use buck2_core::cells::CellAliasResolver;
 use buck2_core::cells::build_file_cell::BuildFileCell;
@@ -18,6 +19,40 @@ use buck2_core::cells::cell_path_with_allowed_relative_dir::CellPathWithAllowedR
 use buck2_core::pattern::parse_package::parse_cell_path;
 use buck2_fs::paths::RelativePath;
 use buck2_fs::paths::file_name::FileName;
+
+/// Strip a `?as=toml` or `?as=json` hint from a load string, e.g.
+/// `load(":blah.lock?as=toml", "value")`.
+///
+/// A `?` suffix we don't understand is an error here rather than left on the
+/// path, where it would resurface as a complaint about the path instead.
+pub fn strip_format_hint(import: &str) -> buck2_error::Result<(&str, Option<ImportFormat>)> {
+    let Some((base, query)) = import.split_once('?') else {
+        return Ok((import, None));
+    };
+    let Some(hint) = query.strip_prefix("as=") else {
+        return Err(ImportParseError::UnknownLoadOption {
+            option: query.to_owned(),
+            import: import.to_owned(),
+        }
+        .into());
+    };
+    match ImportFormat::parse(hint) {
+        // Starlark files have `.bzl` to say so. `?as=bzl` would make any
+        // extension evaluable as code, including `.bxl`, which `load()` may not
+        // reach.
+        Some(ImportFormat::Bzl) => Err(ImportParseError::ImportFormatNotRequestable {
+            format: ImportFormat::Bzl.as_str(),
+            import: import.to_owned(),
+        }
+        .into()),
+        Some(format) => Ok((base, Some(format))),
+        None => Err(ImportParseError::UnknownImportFormat {
+            format: hint.to_owned(),
+            import: import.to_owned(),
+        }
+        .into()),
+    }
+}
 
 #[derive(buck2_error::Error, Debug)]
 #[buck2(input)]
@@ -36,6 +71,17 @@ enum ImportParseError {
         "Unable to parse import spec. Expected format `(@<cell>)//package/name:filename.bzl` or `:filename.bzl`, but got a path. Got `{0}`"
     )]
     NotAFileName(String),
+    #[error("Unknown import format `{format}` in `{import}`. Expected `?as=json` or `?as=toml`")]
+    UnknownImportFormat { format: String, import: String },
+    #[error(
+        "Import format `{format}` cannot be requested with `?as=` (in `{import}`). Name the file `.{format}` instead; `?as=` is for `json` and `toml` only"
+    )]
+    ImportFormatNotRequestable {
+        format: &'static str,
+        import: String,
+    },
+    #[error("Unknown import option `?{option}` in `{import}`. Expected `?as=json` or `?as=toml`")]
+    UnknownLoadOption { option: String, import: String },
 }
 
 pub enum RelativeImports<'a> {
@@ -441,5 +487,41 @@ mod tests {
             }
         };
         Ok(())
+    }
+
+    #[test]
+    fn test_strip_format_hint() {
+        assert_eq!((":a.bzl", None), strip_format_hint(":a.bzl").unwrap());
+        assert_eq!(
+            (":Cargo.lock", Some(ImportFormat::Toml)),
+            strip_format_hint(":Cargo.lock?as=toml").unwrap()
+        );
+        assert_eq!(
+            ("cell//pkg:Pipfile.lock", Some(ImportFormat::Json)),
+            strip_format_hint("cell//pkg:Pipfile.lock?as=json").unwrap()
+        );
+    }
+
+    #[test]
+    fn test_strip_format_hint_rejects_an_unknown_hint() {
+        // A hint we don't understand must be an error naming the hint, not silently
+        // left on the path to resurface as a confusing "invalid import path".
+        for (import, wanted) in [
+            (":a.bzl?as=zorba", "Unknown import format `zorba`"),
+            (":a.bzl?other=1", "Unknown import option `?other=1`"),
+            (":a.bzl?", "Unknown import option `?`"),
+            // `bzl` is a format, but not one `?as=` will hand out.
+            (
+                ":rules.bzl.in?as=bzl",
+                "Import format `bzl` cannot be requested with `?as=`",
+            ),
+        ] {
+            let e = strip_format_hint(import).expect_err(import);
+            let e = format!("{e:#}");
+            assert!(
+                e.contains(wanted),
+                "`{import}` gave `{e}`, wanted `{wanted}`"
+            );
+        }
     }
 }

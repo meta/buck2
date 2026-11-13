@@ -1262,33 +1262,35 @@ impl LocalExecutor {
             IncrementalStart::Clean => return self.clean_outputs(request, cancellations).await,
             IncrementalStart::Outputs(outputs) => outputs,
         };
+        let mut recorded = Vec::new();
         let mut unrecorded = Vec::new();
         for output in outputs {
-            let Some((value, from)) = output.recorded else {
-                unrecorded.push(output.path);
-                continue;
-            };
-            if let Err(e) = self
-                .materializer
+            match output.recorded {
+                Some((value, from)) => recorded.push((output.path, value, from)),
+                None => unrecorded.push(output.path),
+            }
+        }
+        let filled = fill_each(recorded, |(path, value, from)| async move {
+            self.materializer
                 .fill(
                     lease,
-                    output.path.clone(),
+                    path.clone(),
                     value,
                     from,
                     self.invocation_re_use_case,
                     cancellations,
                 )
                 .await
-            {
-                buck2_core::soft_error!(
-                    "incremental_fill_failed",
-                    e.context(format!(
-                        "Filling `{}` with the action's previous output, so the run starts clean",
-                        output.path
-                    ))
-                );
-                return self.clean_outputs(request, cancellations).await;
-            }
+                .with_buck_error_context(|| {
+                    format!(
+                        "Filling `{path}` with the action's previous output, so the run starts clean"
+                    )
+                })
+        })
+        .await;
+        if let Err(e) = filled {
+            buck2_core::soft_error!("incremental_fill_failed", e);
+            return self.clean_outputs(request, cancellations).await;
         }
         if !unrecorded.is_empty() {
             self.clean_paths(unrecorded, cancellations).await?;
@@ -1319,6 +1321,20 @@ impl LocalExecutor {
             .await
             .buck_error_context("Failed to cleanup output directory")
     }
+}
+
+/// Fills each output in turn, up to the first that fails, whose error is the answer.
+async fn fill_each<T, F>(
+    outputs: impl IntoIterator<Item = T>,
+    fill: impl Fn(T) -> F,
+) -> buck2_error::Result<()>
+where
+    F: Future<Output = buck2_error::Result<()>>,
+{
+    for output in outputs {
+        fill(output).await?;
+    }
+    Ok(())
 }
 
 /// What an incremental action's run starts from, as its record says.
@@ -1897,6 +1913,7 @@ mod unix {
 
 #[cfg(test)]
 mod tests {
+    use std::cell::Cell;
     use std::str;
 
     use assert_matches::assert_matches;
@@ -1907,9 +1924,11 @@ mod tests {
     use buck2_core::fs::buck_out_path::BuckOutPathResolver;
     use buck2_core::fs::project::ProjectRoot;
     use buck2_core::fs::project::ProjectRootTemp;
+    use buck2_error::internal_error;
     use buck2_execute::execute::blocking::testing::DummyBlockingExecutor;
     use buck2_hash::BuckMutMap;
     use host_sharing::HostSharingStrategy;
+    use tokio::sync::Semaphore;
 
     use super::*;
     use crate::materializers::deferred::NoDiskDeferredMaterializer;
@@ -2053,5 +2072,67 @@ mod tests {
         assert_eq!(stdout, b"\n");
 
         Ok(())
+    }
+
+    /// Fills that wait at a gate, which counts the ones that got to it.
+    struct Gate {
+        started: Cell<usize>,
+        open: Semaphore,
+    }
+
+    impl Gate {
+        fn new() -> Self {
+            Self {
+                started: Cell::new(0),
+                open: Semaphore::new(0),
+            }
+        }
+
+        async fn fill(&self) -> buck2_error::Result<()> {
+            self.started.set(self.started.get() + 1);
+            self.open.acquire().await.expect("never closed").forget();
+            Ok(())
+        }
+
+        fn let_through(&self, fills: usize) {
+            self.open.add_permits(fills);
+        }
+    }
+
+    #[tokio::test]
+    async fn test_fills_are_made_one_at_a_time() {
+        let gate = Gate::new();
+        let fills = fill_each(0..3, |_| gate.fill());
+        futures::pin_mut!(fills);
+
+        assert!(futures::poll!(&mut fills).is_pending());
+        assert_eq!(gate.started.get(), 1);
+
+        gate.let_through(1);
+        assert!(futures::poll!(&mut fills).is_pending());
+        assert_eq!(gate.started.get(), 2);
+
+        gate.let_through(2);
+        assert!(fills.await.is_ok());
+        assert_eq!(gate.started.get(), 3);
+    }
+
+    #[tokio::test]
+    async fn test_no_fill_is_started_after_one_failed() {
+        let started = Cell::new(0);
+        let filled = fill_each(0..3, |output| {
+            started.set(started.get() + 1);
+            async move {
+                if output == 1 {
+                    Err(internal_error!("The fill of `{output}` failed"))
+                } else {
+                    Ok(())
+                }
+            }
+        })
+        .await;
+
+        assert!(filled.is_err());
+        assert_eq!(started.get(), 2);
     }
 }

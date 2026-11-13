@@ -1,9 +1,9 @@
 name: e2e tests
 on:
-  # A run takes half an hour or more on the 16-core runner: too long and too
-  # costly for every pull request or push.
-  schedule:
-    - cron: '0 7 * * *'
+  push:
+    branches:
+      - main
+  pull_request:
   workflow_dispatch: # allows manual triggering
 
 permissions:
@@ -11,7 +11,7 @@ permissions:
 
 concurrency:
   group: e2e-tests-${{ github.ref }}
-  cancel-in-progress: false
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
   # As in build-with-buck2.yml, whose steps this job starts with.
@@ -24,7 +24,8 @@ jobs:
   # the buck2 it builds. The tests that need Meta's infrastructure are ignored
   # outside Meta (`meta_only` in `tests/e2e_util/rust`).
   linux-e2e-tests:
-    # Forks don't get the nightly run, or the Meta larger runner.
+    # A fork has no Meta larger runner, and its standard runner is too small
+    # for this suite: there it runs on demand only.
     if: github.repository_owner == 'meta' || github.event_name == 'workflow_dispatch'
     runs-on: ${{ github.repository_owner == 'meta' && '16-core-ubuntu' || 'ubuntu-latest' }}
     timeout-minutes: 120

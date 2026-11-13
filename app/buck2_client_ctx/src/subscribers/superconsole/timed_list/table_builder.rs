@@ -139,7 +139,7 @@ pub(crate) struct SummaryRow {
 impl SummaryRow {
     fn line(&self) -> Line {
         let summary = format!(
-            "{}/{} running tasks shown",
+            "{}/{} running actions shown",
             self.visible_roots, self.total_roots
         );
         Line::from_iter([Span::new_styled_lossy(summary.italic())])

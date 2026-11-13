@@ -1,0 +1,12 @@
+import os
+import sys
+
+MAIN_MODULE = <MAIN_MODULE>
+MAIN_FUNCTION = <MAIN_FUNCTION>
+RUNTIME_ENV = <RUNTIME_ENV>
+
+for k, v in RUNTIME_ENV.items():
+    os.environ[k] = v
+
+from <MAIN_RUNNER_MODULE> import <MAIN_RUNNER_FUNCTION> as _run_as_main
+_run_as_main(MAIN_MODULE, MAIN_FUNCTION)

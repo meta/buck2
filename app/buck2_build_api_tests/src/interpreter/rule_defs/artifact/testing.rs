@@ -217,7 +217,7 @@ pub(crate) fn artifactory(builder: &mut GlobalsBuilder) {
 
         let associated_artifacts = AssociatedArtifacts::from(
             associated_artifacts
-                .try_items()
+                .try_items::<StarlarkArtifactView>()
                 .map(|a| ArtifactGroup::Artifact(a.unwrap().non_promise_artifact().unwrap())),
         );
         let (declaration, output_artifact) =

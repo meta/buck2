@@ -113,14 +113,15 @@ impl<'v, K: StarlarkTypeExpr<'v>, V: StarlarkTypeExpr<'v>> ValueOf<'v, DictType<
         }
     }
 
-    /// The entries, unpacked. Each is re-checked, as for [`iter`](Self::iter).
-    pub fn try_items(self) -> impl Iterator<Item = crate::Result<(K, V)>> + 'v
+    /// The entries, each converted by `K2`, a conversion from `K`, and `V2`, a conversion from
+    /// `V`. Each is re-checked, as for [`iter`](Self::iter).
+    pub fn try_items<K2, V2>(self) -> impl Iterator<Item = crate::Result<(K2, V2)>> + 'v
     where
-        K: UnpackValue<'v>,
-        V: UnpackValue<'v>,
+        K2: UnpackValue<'v, Type = K>,
+        V2: UnpackValue<'v, Type = V>,
     {
         self.entries()
-            .map(|(k, v)| Ok((K::unpack_value_err(k)?, V::unpack_value_err(v)?)))
+            .map(|(k, v)| Ok((K2::unpack_value_err(k)?, V2::unpack_value_err(v)?)))
     }
 
     fn entries(self) -> Entries<'v> {

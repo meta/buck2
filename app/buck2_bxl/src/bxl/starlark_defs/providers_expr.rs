@@ -136,7 +136,7 @@ impl<'v> ConfiguredProvidersExprArg<'v> {
             }
             ConfiguredProvidersExprArg::List(ConfiguredProvidersLabelListArg::List(list)) => {
                 ProvidersExpr::Iterable(
-                    list.try_items()
+                    list.try_items::<ConfiguredProvidersLabelArg>()
                         .map(|arg| buck2_error::Ok(arg?.configured_providers_label()))
                         .collect::<buck2_error::Result<_>>()?,
                 )

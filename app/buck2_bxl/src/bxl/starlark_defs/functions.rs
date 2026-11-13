@@ -67,7 +67,7 @@ pub(crate) fn register_target_function(builder: &mut GlobalsBuilder) {
         heap: Heap<'v>,
     ) -> starlark::Result<ValueTyped<'v, StarlarkTargetSet<ConfiguredTargetNode>>> {
         let nodes = match nodes {
-            Some(nodes) => nodes.try_to_vec()?,
+            Some(nodes) => nodes.try_to_vec::<StarlarkConfiguredTargetNode>()?,
             None => Vec::new(),
         };
         Ok(heap.alloc_representation(StarlarkTargetSet::from_iter(
@@ -91,7 +91,7 @@ pub(crate) fn register_target_function(builder: &mut GlobalsBuilder) {
         heap: Heap<'v>,
     ) -> starlark::Result<ValueTyped<'v, StarlarkTargetSet<TargetNode>>> {
         let nodes = match nodes {
-            Some(nodes) => nodes.try_to_vec()?,
+            Some(nodes) => nodes.try_to_vec::<StarlarkTargetNode>()?,
             None => Vec::new(),
         };
         Ok(heap.alloc_representation(StarlarkTargetSet::from_iter(
@@ -114,7 +114,7 @@ pub(crate) fn register_target_function(builder: &mut GlobalsBuilder) {
         heap: Heap<'v>,
     ) -> starlark::Result<ValueTyped<'v, StarlarkTargetSet<ActionQueryNode>>> {
         let nodes = match nodes {
-            Some(nodes) => nodes.try_to_vec()?,
+            Some(nodes) => nodes.try_to_vec::<StarlarkActionQueryNode>()?,
             None => Vec::new(),
         };
         Ok(heap.alloc_representation(StarlarkTargetSet::from_iter(

@@ -662,7 +662,7 @@ pub fn register_provider(builder: &mut GlobalsBuilder) {
 
         let fields = match fields {
             Either::Left(fields) => {
-                let fields = fields.try_to_vec()?;
+                let fields = fields.try_to_vec::<String>()?;
                 let new_fields: BuckMutInsertionMap<String, UserProviderField<'v>> = fields
                     .iter()
                     .map(|name| (name.clone(), UserProviderField::default()))
@@ -677,7 +677,7 @@ pub fn register_provider(builder: &mut GlobalsBuilder) {
             }
             Either::Right(fields) => {
                 let mut new_fields = BuckMutInsertionMap::with_capacity(fields.dict().len());
-                for entry in fields.try_items() {
+                for entry in fields.try_items::<String, Value>() {
                     let (name, field) = entry?;
                     if let Some(field) = field.downcast_ref::<UserProviderField>() {
                         new_fields.insert(name, field.dupe());

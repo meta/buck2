@@ -59,7 +59,10 @@ pub(crate) fn register_path(builder: &mut GlobalsBuilder) {
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<ValueOf<'v, ListType<StarlarkStr>>> {
         let extra = ModuleInternals::from_context(eval, "glob")?;
-        let spec = GlobSpec::new(&include.try_to_vec()?, &exclude.try_to_vec()?)?;
+        let spec = GlobSpec::new(
+            &include.try_to_vec::<String>()?,
+            &exclude.try_to_vec::<String>()?,
+        )?;
         let heap = eval.heap();
         let res = extra
             .resolve_glob(&spec)

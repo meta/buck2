@@ -259,14 +259,20 @@ pub fn register_command_executor_config(builder: &mut GlobalsBuilder) {
                 .iter()
                 .map(|d| {
                     RemoteExecutorDependency::parse(
-                        d?.try_items().collect::<starlark::Result<_>>()?,
+                        d?.try_items::<&str, &str>()
+                            .collect::<starlark::Result<_>>()?,
                     )
                 })
                 .collect::<buck2_error::Result<Vec<RemoteExecutorDependency>>>()?;
 
             let re_gang_workers = remote_execution_gang_workers
                 .iter()
-                .map(|w| ReGangWorker::parse(w?.try_items().collect::<starlark::Result<_>>()?))
+                .map(|w| {
+                    ReGangWorker::parse(
+                        w?.try_items::<&str, &str>()
+                            .collect::<starlark::Result<_>>()?,
+                    )
+                })
                 .collect::<buck2_error::Result<Vec<ReGangWorker>>>()?;
 
             let re_dynamic_image = parse_custom_re_image(

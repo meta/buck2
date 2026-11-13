@@ -88,12 +88,13 @@ impl<'v, T: StarlarkTypeExpr<'v>> ValueOf<'v, SetType<T>> {
         })
     }
 
-    /// The items, unpacked. Each is re-checked, as for [`iter`](Self::iter).
-    pub fn try_items(self) -> impl Iterator<Item = crate::Result<T>> + 'v
+    /// The items, each converted by `U`, a conversion from `T`. Each is re-checked, as for
+    /// [`iter`](Self::iter).
+    pub fn try_items<U>(self) -> impl Iterator<Item = crate::Result<U>> + 'v
     where
-        T: UnpackValue<'v> + 'v,
+        U: UnpackValue<'v, Type = T> + 'v,
     {
-        self.items_raw().map(T::unpack_value_err)
+        self.items_raw().map(U::unpack_value_err)
     }
 
     fn items_raw(self) -> Items<'v> {

@@ -88,7 +88,7 @@ pub(crate) fn command_line_stringifier(builder: &mut GlobalsBuilder) {
     /// A hash of `parts` in order, in hex; prefix-free, so moving a boundary changes it.
     fn blake3_hex<'v>(parts: ValueOf<'v, ListOrTupleType<String>>) -> starlark::Result<String> {
         let mut hasher = Blake3StrongHasher::new();
-        for part in parts.try_items() {
+        for part in parts.try_items::<String>() {
             let part = part?;
             hasher.write_usize(part.len());
             hasher.write(part.as_bytes());

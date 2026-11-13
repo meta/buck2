@@ -132,14 +132,14 @@ async fn unpack_action_nodes<'v>(
     let providers = match expr {
         UnpackActionNodes::ActionQueryNodes(action_nodes) => {
             return action_nodes
-                .try_items()
+                .try_items::<StarlarkActionQueryNode>()
                 .map(|v| buck2_error::Ok(v?.0))
                 .collect();
         }
         UnpackActionNodes::ActionQueryNodesSet(action_nodes) => return Ok(action_nodes.0.clone()),
         UnpackActionNodes::StarlarkActions(actions) => {
             let action_keys: Vec<ActionKey> = actions
-                .try_items()
+                .try_items::<StarlarkAction>()
                 .map(|starlark_action| buck2_error::Ok(starlark_action?.0.key().dupe()))
                 .collect::<buck2_error::Result<_>>()?;
 

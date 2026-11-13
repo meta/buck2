@@ -131,7 +131,7 @@ fn dep_like_attr_handle_providers_arg<'v>(
 ) -> buck2_error::Result<ProviderIdSet> {
     Ok(ProviderIdSet::from(
         providers
-            .try_items()
+            .try_items::<Value>()
             .map(|v| match v?.as_provider_callable() {
                 Some(callable) => buck2_error::Ok(callable.id()?.dupe()),
                 None => Err(
@@ -438,11 +438,11 @@ fn attr_module(registry: &mut GlobalsBuilder) {
             Either::Right(_) => PluginKindSet::ALL,
             Either::Left(pulls_and_pushes_plugins) => {
                 let pulls_and_pushes_plugins: Vec<_> = pulls_and_pushes_plugins
-                    .try_items()
+                    .try_items::<StarlarkPluginKindView>()
                     .map(|arg| Ok(arg?.expect_bound()?))
                     .collect::<starlark::Result<_>>()?;
                 let pulls_plugins: Vec<_> = pulls_plugins
-                    .try_items()
+                    .try_items::<StarlarkPluginKindView>()
                     .map(|arg| Ok(arg?.expect_bound()?))
                     .collect::<starlark::Result<_>>()?;
                 PluginKindSet::new(pulls_plugins, pulls_and_pushes_plugins)?

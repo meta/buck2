@@ -20,7 +20,6 @@ use starlark_derive::starlark_module;
 use crate as starlark;
 use crate::assert::Assert;
 use crate::environment::GlobalsBuilder;
-use crate::values::UnpackValue;
 use crate::values::ValueOf;
 use crate::values::tuple::TupleType;
 use crate::values::types::int::view::IntView;
@@ -44,8 +43,7 @@ fn named_positional_functions(globals: &mut GlobalsBuilder) {
         x: i32,
     ) -> anyhow::Result<i32> {
         Ok(x + star_args
-            .try_items()
-            .map(|arg| i32::unpack_value_err(arg?.to_value()))
+            .try_items::<i32>()
             .sum::<crate::Result<i32>>()
             .map_err(|e| e.into_anyhow())?)
     }
@@ -56,8 +54,7 @@ fn named_positional_functions(globals: &mut GlobalsBuilder) {
         #[starlark(require = named)] x: i32,
     ) -> anyhow::Result<i32> {
         Ok(x + args
-            .try_items()
-            .map(|arg| i32::unpack_value_err(arg?.to_value()))
+            .try_items::<i32>()
             .sum::<crate::Result<i32>>()
             .map_err(|e| e.into_anyhow())?)
     }

@@ -46,7 +46,7 @@ fn validate_module(builder: &mut GlobalsBuilder) {
     fn with_int_list<'v>(
         v: ValueOf<'v, ListType<IntView<'v>>>,
     ) -> anyhow::Result<(Value<'v>, String)> {
-        let repr = v.try_to_vec().unwrap().iter().join(", ");
+        let repr = v.try_to_vec::<IntView>().unwrap().iter().join(", ");
         Ok((v.to_value(), repr))
     }
     fn with_list_list<'v>(
@@ -55,7 +55,7 @@ fn validate_module(builder: &mut GlobalsBuilder) {
         let repr = v
             .iter()
             .map(Result::unwrap)
-            .map(|l| l.try_to_vec().unwrap().iter().join(", "))
+            .map(|l| l.try_to_vec::<IntView>().unwrap().iter().join(", "))
             .join(" + ");
         Ok((v.to_value(), repr))
     }
@@ -66,7 +66,7 @@ fn validate_module(builder: &mut GlobalsBuilder) {
             .iter()
             .map(Result::unwrap)
             .map(|l| {
-                l.try_items()
+                l.try_items::<IntView, IntView>()
                     .map(Result::unwrap)
                     .map(|(k, v)| format!("{k}: {v}"))
                     .join(", ")
@@ -78,7 +78,7 @@ fn validate_module(builder: &mut GlobalsBuilder) {
         v: ValueOf<'v, DictType<IntView<'v>, IntView<'v>>>,
     ) -> anyhow::Result<(Value<'v>, String)> {
         let repr = v
-            .try_items()
+            .try_items::<IntView, IntView>()
             .map(Result::unwrap)
             .map(|(k, v)| format!("{k}: {v}"))
             .join(" + ");
@@ -90,7 +90,13 @@ fn validate_module(builder: &mut GlobalsBuilder) {
         let repr = v
             .iter()
             .map(Result::unwrap)
-            .map(|(k, v)| format!("{}: {}", k.get(), v.try_to_vec().unwrap().iter().join(", ")))
+            .map(|(k, v)| {
+                format!(
+                    "{}: {}",
+                    k.get(),
+                    v.try_to_vec::<IntView>().unwrap().iter().join(", ")
+                )
+            })
             .join(" + ");
         Ok((v.to_value(), repr))
     }
@@ -102,7 +108,7 @@ fn validate_module(builder: &mut GlobalsBuilder) {
             .map(Result::unwrap)
             .map(|(k, v)| {
                 let inner_repr = v
-                    .try_items()
+                    .try_items::<IntView, IntView>()
                     .map(Result::unwrap)
                     .map(|(k2, v2)| format!("{k2}:{v2}"))
                     .join(", ");
@@ -123,7 +129,7 @@ fn validate_module(builder: &mut GlobalsBuilder) {
         }
     }
     fn with_set<'v>(v: ValueOf<'v, SetType<IntView<'v>>>) -> anyhow::Result<(Value<'v>, String)> {
-        let repr = v.try_items().map(Result::unwrap).join(", ");
+        let repr = v.try_items::<IntView>().map(Result::unwrap).join(", ");
         Ok((v.to_value(), repr))
     }
 }

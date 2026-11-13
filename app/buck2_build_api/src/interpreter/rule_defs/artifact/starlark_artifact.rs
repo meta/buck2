@@ -229,7 +229,7 @@ impl<'v> StarlarkInputArtifactLike<'v> for StarlarkArtifact {
         artifacts: ValueOf<'v, ListType<StarlarkArtifactView<'v>>>,
     ) -> buck2_error::Result<EitherStarlarkInputArtifact<'v>> {
         let artifacts = artifacts
-            .try_items()
+            .try_items::<StarlarkArtifactView>()
             .map(|a| a?.as_input_artifact_like().get_artifact_group())
             .collect::<buck2_error::Result<Vec<_>>>()?;
 

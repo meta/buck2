@@ -39,7 +39,7 @@ fn test_starlark_module() {
             srcs: ValueOf<'v, ListOrTupleType<&'v str>>,
         ) -> anyhow::Result<String> {
             // real implementation may write it to a global variable
-            let srcs = srcs.try_to_vec().map_err(|e| e.into_anyhow())?;
+            let srcs = srcs.try_to_vec::<&str>().map_err(|e| e.into_anyhow())?;
             Ok(format!("{name:?} {srcs:?}"))
         }
     }

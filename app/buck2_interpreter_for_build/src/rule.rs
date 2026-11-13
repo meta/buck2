@@ -1063,11 +1063,11 @@ pub fn register_rule_function(builder: &mut GlobalsBuilder) {
             is_configuration_rule,
             is_toolchain_rule,
             uses_plugins
-                .try_items()
+                .try_items::<StarlarkPluginKindView>()
                 .map(|arg| Ok(arg?.expect_bound()?))
                 .collect::<starlark::Result<_>>()?,
             exec_groups
-                .try_items()
+                .try_items::<StarlarkExecutionGroupView>()
                 .map(|arg| Ok(arg?.expect_bound()?))
                 .collect::<starlark::Result<_>>()?,
             None,

@@ -142,7 +142,7 @@ pub(crate) fn analysis_actions_methods_dynamic_output(methods: &mut MethodsBuild
 
         // Conversion
         let artifact_values = dynamic
-            .try_items()
+            .try_items::<StarlarkArtifactView>()
             .map(|x| x?.non_promise_artifact())
             .collect::<buck2_error::Result<_>>()?;
 

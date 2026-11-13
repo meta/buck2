@@ -34,7 +34,7 @@ fn test_kwargs_module(globals: &mut GlobalsBuilder) {
         #[starlark(kwargs)] kwargs: ValueOf<'v, DictType<String, IntView<'v>>>,
     ) -> anyhow::Result<String> {
         let kwargs = kwargs
-            .try_items()
+            .try_items::<String, IntView>()
             .map(|entry| {
                 let (k, v) = entry?;
                 Ok((k, u64::unpack_value_err(v.to_value())?))
@@ -50,7 +50,7 @@ fn test_kwargs_module(globals: &mut GlobalsBuilder) {
         #[starlark(kwargs)] kwargs: ValueOf<'v, DictType<String, IntView<'v>>>,
     ) -> anyhow::Result<String> {
         let kwargs = kwargs
-            .try_items()
+            .try_items::<String, IntView>()
             .map(|entry| {
                 let (k, v) = entry?;
                 Ok((k, u64::unpack_value_err(v.to_value())?))

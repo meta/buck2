@@ -83,7 +83,7 @@ impl OwnedFileSetExpr {
         Ok(match expr {
             FileSetExpr::Literal(val) => Self::Literal(val.to_string()),
             FileSetExpr::Literals(val) => Self::Literals(
-                val.try_items()
+                val.try_items::<&str>()
                     .map(|s| buck2_error::Ok(s?.to_owned()))
                     .collect::<buck2_error::Result<_>>()?,
             ),

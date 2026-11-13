@@ -323,7 +323,7 @@ fn test_radd() {
                 Either::Left(x) => Ok(x.as_ref().clone()),
                 Either::Right(_) => Ok(Select(
                     ValueOf::<ListOrTupleType<IntView>>::new_unchecked(value.to_value())
-                        .try_items()
+                        .try_items::<IntView>()
                         .map(|x| x?.to_integer())
                         .collect::<crate::Result<_>>()?,
                 )),
@@ -362,8 +362,7 @@ fn test_radd() {
             heap: Heap<'v>,
         ) -> anyhow::Result<ValueOf<'v, Select>> {
             let select = Select(
-                xs.try_items()
-                    .map(|x| i32::unpack_value_err(x?.to_value()))
+                xs.try_items::<i32>()
                     .collect::<crate::Result<_>>()
                     .map_err(|e| e.into_anyhow())?,
             );
@@ -1052,7 +1051,7 @@ animal("Joe")
         let res: Value = eval.eval_module(ast, &globals).unwrap();
         let animal: SmallMap<String, Value> = ValueOf::<DictType<String, Value>>::new_err(res)
             .unwrap()
-            .try_items()
+            .try_items::<String, Value>()
             .collect::<crate::Result<_>>()
             .unwrap();
         println!("animal = {animal:?}");

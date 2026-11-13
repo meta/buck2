@@ -104,18 +104,19 @@ impl<'v, T: StarlarkTypeExpr<'v>> ValueOf<'v, TupleType<T>> {
             .map(|x| ValueOf::<T>::new_unchecked(x).get())
     }
 
-    /// The items, unpacked. Each is re-checked, as for [`iter`](Self::iter).
-    pub fn try_items(self) -> impl Iterator<Item = crate::Result<T>> + 'v
+    /// The items, each converted by `U`, a conversion from `T`. Each is re-checked, as for
+    /// [`iter`](Self::iter).
+    pub fn try_items<U>(self) -> impl Iterator<Item = crate::Result<U>> + 'v
     where
-        T: UnpackValue<'v> + 'v,
+        U: UnpackValue<'v, Type = T> + 'v,
     {
-        self.tuple().iter().map(T::unpack_value_err)
+        self.tuple().iter().map(U::unpack_value_err)
     }
 
-    /// The items, unpacked into a `Vec`, as [`try_items`](Self::try_items) gives them.
-    pub fn try_to_vec(self) -> crate::Result<Vec<T>>
+    /// The items, converted into a `Vec`, as [`try_items`](Self::try_items) gives them.
+    pub fn try_to_vec<U>(self) -> crate::Result<Vec<U>>
     where
-        T: UnpackValue<'v> + 'v,
+        U: UnpackValue<'v, Type = T> + 'v,
     {
         self.try_items().collect()
     }

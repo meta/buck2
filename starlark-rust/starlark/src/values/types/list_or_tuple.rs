@@ -43,24 +43,25 @@ impl<'v, T: StarlarkTypeExpr<'v>> ValueOf<'v, ListOrTupleType<T>> {
         }
     }
 
-    /// The items, unpacked, as [`ValueOf<ListType<T>>::try_items`](ValueOf::try_items) or
+    /// The items, each converted by `U`, a conversion from `T`, as
+    /// [`ValueOf<ListType<T>>::try_items`](ValueOf::try_items) or
     /// [`ValueOf<TupleType<T>>::try_items`](ValueOf::try_items) gives them.
-    pub fn try_items(self) -> impl Iterator<Item = crate::Result<T>> + 'v
+    pub fn try_items<U>(self) -> impl Iterator<Item = crate::Result<U>> + 'v
     where
-        T: UnpackValue<'v> + 'v,
+        U: UnpackValue<'v, Type = T> + 'v,
     {
         let value = self.to_value();
         if ListRef::from_value(value).is_some() {
-            Either::Left(ValueOf::<ListType<T>>::new_unchecked(value).try_items())
+            Either::Left(ValueOf::<ListType<T>>::new_unchecked(value).try_items::<U>())
         } else {
-            Either::Right(ValueOf::<TupleType<T>>::new_unchecked(value).try_items())
+            Either::Right(ValueOf::<TupleType<T>>::new_unchecked(value).try_items::<U>())
         }
     }
 
-    /// The items, unpacked into a `Vec`, as [`try_items`](Self::try_items) gives them.
-    pub fn try_to_vec(self) -> crate::Result<Vec<T>>
+    /// The items, converted into a `Vec`, as [`try_items`](Self::try_items) gives them.
+    pub fn try_to_vec<U>(self) -> crate::Result<Vec<U>>
     where
-        T: UnpackValue<'v> + 'v,
+        U: UnpackValue<'v, Type = T> + 'v,
     {
         self.try_items().collect()
     }

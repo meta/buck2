@@ -613,13 +613,21 @@ pub(crate) fn analysis_actions_methods_run(methods: &mut MethodsBuilder) {
         let re_dependencies = remote_execution_dependencies
             .iter()
             .map(|d| {
-                RemoteExecutorDependency::parse(d?.try_items().collect::<starlark::Result<_>>()?)
+                RemoteExecutorDependency::parse(
+                    d?.try_items::<&str, &str>()
+                        .collect::<starlark::Result<_>>()?,
+                )
             })
             .collect::<buck2_error::Result<MiniBoxSlice<RemoteExecutorDependency>>>()?;
 
         let re_gang_workers = re_gang_workers
             .iter()
-            .map(|w| ReGangWorker::parse(w?.try_items().collect::<starlark::Result<_>>()?))
+            .map(|w| {
+                ReGangWorker::parse(
+                    w?.try_items::<&str, &str>()
+                        .collect::<starlark::Result<_>>()?,
+                )
+            })
             .collect::<buck2_error::Result<MiniBoxSlice<ReGangWorker>>>()?;
 
         let re_custom_image = parse_custom_re_image(

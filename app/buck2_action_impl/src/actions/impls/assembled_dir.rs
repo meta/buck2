@@ -142,7 +142,7 @@ impl UnregisteredAssembledDirAction {
         BuckMutInsertionSet<ArtifactGroup>,
     )> {
         let len = srcs.dict().len();
-        srcs.try_items()
+        srcs.try_items::<&str, StarlarkArtifactView>()
             .map(|entry| {
                 let (k, as_artifact) = entry?;
                 let as_artifact = as_artifact.as_input_artifact_like();

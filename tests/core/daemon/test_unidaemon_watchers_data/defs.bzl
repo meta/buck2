@@ -18,7 +18,7 @@ def _writer_impl(ctx: AnalysisContext) -> list[Provider]:
         [
             "fbpython",
             "-c",
-            "import os, pathlib, sys, time; out, started, release = sys.argv[1:]; pathlib.Path(started).write_text(str(os.getpid()));\nwhile not pathlib.Path(release).exists():\n pathlib.Path(out).write_text('running'); time.sleep(0.05)\npathlib.Path(out).write_text('finished')",
+            "import os, pathlib, sys, time; out, started, release = sys.argv[1:]; tmp = started + '.tmp'; pathlib.Path(tmp).write_text(str(os.getpid())); os.replace(tmp, started);\nwhile not pathlib.Path(release).exists():\n pathlib.Path(out).write_text('running'); time.sleep(0.05)\npathlib.Path(out).write_text('finished')",
             out.as_output(),
             ctx.attrs.started,
             ctx.attrs.release,

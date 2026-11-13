@@ -8348,6 +8348,7 @@ dependencies = [
  "bytemuck",
  "bytesize",
  "pagable",
+ "parking_lot 0.13.0",
  "rusqlite",
  "sled",
  "tokio",

@@ -66,6 +66,11 @@ const BUSY_TIMEOUT: Duration = Duration::from_secs(10);
 /// so lengthening the timeout instead would hide how often the tail is hit.
 const BUSY_READ_RETRIES: u32 = 2;
 
+/// What SQLite reports when its wait for the shard's lock runs out.
+fn busy_error() -> rusqlite::Error {
+    rusqlite::Error::SqliteFailure(rusqlite::ffi::Error::new(rusqlite::ffi::SQLITE_BUSY), None)
+}
+
 fn is_busy(error: &rusqlite::Error) -> bool {
     matches!(
         error,
@@ -299,8 +304,13 @@ impl ShardWriteState {
 
 struct ConnectionPool {
     readwrite: Mutex<Connection>,
-    readers: Vec<Mutex<Connection>>,
+    /// `parking_lot`, for a lock that gives up after a time: a read does not wait for a
+    /// reader connection without limit.
+    readers: Vec<parking_lot::Mutex<Connection>>,
     next_reader: AtomicUsize,
+    /// How long a read waits for the shard, in milliseconds: for a reader connection, and
+    /// then for SQLite's lock on the file. `BUSY_TIMEOUT`, except in tests.
+    read_timeout_ms: AtomicU64,
 }
 
 impl ConnectionPool {
@@ -325,13 +335,14 @@ impl ConnectionPool {
             )?;
             Self::init_pragmas(&reader)?;
             reader.prepare_cached(FETCH_SQL)?;
-            readers.push(Mutex::new(reader));
+            readers.push(parking_lot::Mutex::new(reader));
         }
 
         Ok(Self {
             readwrite: Mutex::new(writer),
             readers,
             next_reader: AtomicUsize::new(0),
+            read_timeout_ms: AtomicU64::new(BUSY_TIMEOUT.as_millis() as u64),
         })
     }
 
@@ -347,7 +358,7 @@ impl ConnectionPool {
 
     /// Pragmas for the writer connection only; readers keep the defaults.
     fn init_writer_pragmas(conn: &Connection) -> anyhow::Result<()> {
-        // Measurement probe. The default page cache (~16MB) is far below the
+        // Measurement probe. The default page cache (~2MiB) is far below the
         // per-shard index working set at tens of millions of rows, so
         // transactions spill and rewrite the same index pages many times.
         // Writer-only: sizing every reader's cache too would multiply the
@@ -366,16 +377,27 @@ impl ConnectionPool {
     }
 
     /// Round-robin with try_lock to skip connections held by other threads.
-    /// Blocks on a reader if all readers are busy.
-    fn get_reader(&self) -> MutexGuard<'_, Connection> {
+    /// Waits for a reader if all readers are busy, and gives up when the wait runs out.
+    fn get_reader(&self) -> Option<parking_lot::MutexGuard<'_, Connection>> {
         let start = self.next_reader.fetch_add(1, Ordering::Relaxed);
         let len = self.readers.len();
         for i in 0..len {
-            if let Ok(guard) = self.readers[(start + i) % len].try_lock() {
-                return guard;
+            if let Some(guard) = self.readers[(start + i) % len].try_lock() {
+                return Some(guard);
             }
         }
-        self.readers[start % len].lock().expect("lock poisoned")
+        let timeout = Duration::from_millis(self.read_timeout_ms.load(Ordering::Relaxed));
+        self.readers[start % len].try_lock_for(timeout)
+    }
+
+    #[cfg(test)]
+    fn set_read_timeout(&self, timeout: Duration) -> anyhow::Result<()> {
+        self.read_timeout_ms
+            .store(timeout.as_millis() as u64, Ordering::Relaxed);
+        for reader in &self.readers {
+            reader.lock().busy_timeout(timeout)?;
+        }
+        Ok(())
     }
 }
 
@@ -712,7 +734,13 @@ impl SqliteBackedPagableStorage {
         let shard = self.shard_for(key);
         let (key_lo, key_hi) = data_key_parts(*key);
         let read_once = || -> Result<Option<Vec<u8>>, (&'static str, rusqlite::Error)> {
-            let conn = shard.inner.conns.get_reader();
+            // No reader connection in time. Reported as SQLite reports a lock it could not
+            // get, so that it is retried and counted the same way.
+            let conn = shard
+                .inner
+                .conns
+                .get_reader()
+                .ok_or_else(|| ("wait for a reader connection", busy_error()))?;
             let mut stmt = conn.prepare_cached(FETCH_SQL).map_err(|e| ("prepare", e))?;
             stmt.query_row(rusqlite::params![key_lo, key_hi], |row| row.get(0))
                 .optional()
@@ -764,9 +792,8 @@ impl SqliteBackedPagableStorage {
                 let _unused = conn.execute_batch("PRAGMA shrink_memory;");
             }
             for reader in &shard.inner.conns.readers {
-                if let Ok(conn) = reader.lock() {
-                    let _unused = conn.execute_batch("PRAGMA shrink_memory;");
-                }
+                let conn = reader.lock();
+                let _unused = conn.execute_batch("PRAGMA shrink_memory;");
             }
         }
     }
@@ -1113,12 +1140,10 @@ mod tests {
         storage.flush()?;
         let shard = storage.shard_for(&key);
         // The production timeout would make this test take that long.
-        for reader in &shard.inner.conns.readers {
-            reader
-                .lock()
-                .unwrap()
-                .busy_timeout(Duration::from_millis(50))?;
-        }
+        shard
+            .inner
+            .conns
+            .set_read_timeout(Duration::from_millis(50))?;
 
         let writer = shard.inner.conns.readwrite.lock().unwrap();
         writer.execute_batch("BEGIN EXCLUSIVE;")?;
@@ -1141,6 +1166,38 @@ mod tests {
         Ok(())
     }
 
+    /// A read that cannot get a reader connection gives up after the same
+    /// waits as one that meets SQLite's lock, and the readers are usable
+    /// afterwards.
+    #[test]
+    fn sqlite_read_gives_up_waiting_for_a_reader_connection() -> anyhow::Result<()> {
+        let dir = TempStorageDir::new("reader_wait")?;
+        let storage = SqliteBackedPagableStorage::try_new(&dir.path)?;
+        let key = storage.store_data(pagable_data(b"waited", Vec::new()))?;
+        storage.flush()?;
+        let shard = storage.shard_for(&key);
+        shard
+            .inner
+            .conns
+            .set_read_timeout(Duration::from_millis(50))?;
+
+        let readers = &shard.inner.conns.readers;
+        let held: Vec<_> = readers.iter().map(|reader| reader.lock()).collect();
+        let error = storage
+            .fetch_data_blocking(&key)
+            .err()
+            .expect("a read gives up when every reader is held");
+        drop(held);
+        assert!(
+            format!("{error:#}").contains("gave up after 3 waits"),
+            "the error counts every wait: {error:#}"
+        );
+        assert!(pagable::is_transient_read_error(&error));
+        assert_eq!(storage.busy_read_retries(), 2);
+        assert_eq!(storage.fetch_data_blocking(&key)?.data, b"waited");
+        Ok(())
+    }
+
     /// A read that meets the lock while a commit is in progress succeeds once
     /// the commit is done, on one of its retries.
     #[test]
@@ -1150,12 +1207,10 @@ mod tests {
         let key = storage.store_data(pagable_data(b"retried", Vec::new()))?;
         storage.flush()?;
         let shard = storage.shard_for(&key);
-        for reader in &shard.inner.conns.readers {
-            reader
-                .lock()
-                .unwrap()
-                .busy_timeout(Duration::from_millis(50))?;
-        }
+        shard
+            .inner
+            .conns
+            .set_read_timeout(Duration::from_millis(50))?;
 
         let writer = shard.inner.conns.readwrite.lock().unwrap();
         writer.execute_batch("BEGIN EXCLUSIVE;")?;

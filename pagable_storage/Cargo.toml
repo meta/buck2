@@ -14,6 +14,7 @@ async-trait.workspace = true
 bytemuck = "1.25"
 bytesize.workspace = true
 pagable.workspace = true
+parking_lot.workspace = true
 rusqlite = { version = "0.40.0", features = ["bundled", "limits"] }
 sled.workspace = true
 tokio = { workspace = true, optional = true }

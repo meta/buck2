@@ -42,6 +42,7 @@ rust_library(
         "fbsource//third-party/rust:async-trait",
         "fbsource//third-party/rust:bytemuck",
         "fbsource//third-party/rust:bytesize",
+        "fbsource//third-party/rust:parking_lot",
         "fbsource//third-party/rust:rusqlite",
         "fbsource//third-party/rust:sled",
         "fbsource//third-party/rust:tokio",

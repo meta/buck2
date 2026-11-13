@@ -138,6 +138,7 @@ transitive-only refs).
 |---|---|---|---|
 | `kotlin.kosabi_shallow_class_usage` (bool, default off) | `shouldKosabiUseShallowClassUsage` (32) | `plugin:com.facebook.k2.jvm.abi.gen:shallowClassUsage=true` | `K2JvmAbiConfigurationKeys.SHALLOW_CLASS_USAGE` |
 | `kotlin.kosabi_abi_validation_mode` (`off`/`warn`/`error`, default `off`) | `kosabiAbiValidationMode` (33) | `plugin:com.facebook.k2.jvm.abi.gen:abiValidationMode=<mode>` | `K2JvmAbiConfigurationKeys.ABI_VALIDATION_MODE` |
+| `kotlin.kosabi_kept_body_stub_check` (bool, default on) | `disableKosabiKeptBodyStubCheck` (36) | `plugin:com.facebook.k2.jvm.abi.gen:keptBodyStubCheck=false` | `K2JvmAbiConfigurationKeys.KEPT_BODY_STUB_CHECK` |
 
 `abiValidationMode` reports ABI content repaired because a dep was missing
 from the source-only classpath: `warn` reports each repair, `error` fails the

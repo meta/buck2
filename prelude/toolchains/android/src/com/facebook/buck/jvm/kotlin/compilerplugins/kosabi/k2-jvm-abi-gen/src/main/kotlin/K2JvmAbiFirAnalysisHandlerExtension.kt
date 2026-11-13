@@ -634,6 +634,7 @@ class K2JvmAbiFirAnalysisHandlerExtension(private val outputPath: String) :
         messageCollector,
         AbiRepairPolicy.parse(configuration.get(K2JvmAbiConfigurationKeys.ABI_VALIDATION_MODE)),
         AbiValidationInputs(outputFiles, configuration.jvmClasspathRoots),
+        keptBodyStubCheck = configuration.get(K2JvmAbiConfigurationKeys.KEPT_BODY_STUB_CHECK, true),
     )
 
     // Generate .kotlin_module file

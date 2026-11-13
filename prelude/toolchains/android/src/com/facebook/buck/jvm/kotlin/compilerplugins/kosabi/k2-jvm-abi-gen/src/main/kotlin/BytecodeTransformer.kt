@@ -28,7 +28,6 @@ import org.jetbrains.org.objectweb.asm.MethodVisitor
 import org.jetbrains.org.objectweb.asm.Opcodes
 import org.jetbrains.org.objectweb.asm.tree.ClassNode
 import org.jetbrains.org.objectweb.asm.tree.LineNumberNode
-import org.jetbrains.org.objectweb.asm.tree.MethodNode
 
 /** Transforms class file bytecode. Returns null if no transformation was needed. */
 interface BytecodeTransformer {
@@ -348,12 +347,10 @@ class StubLineNumberStripper : BytecodeTransformer {
     if (node.outerClass != null) {
       return null
     }
-    val inline = inlineSignatures(node) ?: return null
-    val signatures = inline.mapTo(HashSet()) { it.name + it.descriptor }
-    val names = inline.mapTo(HashSet()) { it.name }
+    val isKept = keptInlineMethodPredicate(node) ?: return null
     var stripped = false
     for (method in node.methods) {
-      if (method.name + method.desc in signatures || method.isVariantOf(names)) {
+      if (isKept(method.name, method.desc)) {
         continue
       }
       val instructions = method.instructions.iterator()
@@ -372,9 +369,19 @@ class StubLineNumberStripper : BytecodeTransformer {
     return writer.toByteArray()
   }
 
-  /** Whether this is the `$default` or `$$forInline` method of a function named in [names]. */
-  private fun MethodNode.isVariantOf(names: Set<String>): Boolean = VARIANT_SUFFIXES.any {
-    name.endsWith(it) && name.removeSuffix(it) in names
+  /**
+   * Whether a method of [node], given by JVM name and descriptor, keeps its line numbers: an inline
+   * function or accessor, or the `$default` or `$$forInline` method of one. Null leaves the class
+   * unchanged.
+   */
+  internal fun keptInlineMethodPredicate(node: ClassNode): ((String, String) -> Boolean)? {
+    val inline = inlineSignatures(node) ?: return null
+    val signatures = inline.mapTo(HashSet()) { it.name + it.descriptor }
+    val names = inline.mapTo(HashSet()) { it.name }
+    return { name, descriptor ->
+      name + descriptor in signatures ||
+          VARIANT_SUFFIXES.any { name.endsWith(it) && name.removeSuffix(it) in names }
+    }
   }
 
   /** The inline functions and accessors of [node], or null to leave the class unchanged. */

@@ -103,7 +103,9 @@ public class KosabiStubgenStep extends KotlincStep {
         "off",
         // jvm-abi-gen kill switch options
         // not part of stubsgen, since jvm-abi-gen doesn't run on stubsgen steps
-        ImmutableList.of());
+        ImmutableList.of(),
+        // The kept-body check is part of jvm-abi-gen, which does not run here
+        false);
     this.stubgenDir = stubgenDir;
     this.stubClassOutputDir = stubClassOutputDir;
     this.skipJavaImports = skipJavaImports;

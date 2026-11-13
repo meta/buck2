@@ -24,6 +24,7 @@ KotlinToolchainInfo = provider(
         "kosabi_jvm_abi_gen_k2_plugin": provider_field(typing.Any, default = None),
         # `option=value` pairs for the K2 JVM ABI gen plugin of source-only ABI actions.
         "kosabi_jvm_abi_gen_options": provider_field(list[str], default = []),
+        "kosabi_kept_body_stub_check": provider_field(bool, default = True),
         "kosabi_shallow_class_usage": provider_field(bool, default = False),
         "kosabi_stubgen_engine": provider_field(str, default = "kotlinc"),
         "kosabi_stubs_gen_k2_plugin": provider_field(typing.Any, default = None),

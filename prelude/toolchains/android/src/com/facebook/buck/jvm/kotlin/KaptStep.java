@@ -79,7 +79,9 @@ public class KaptStep extends KotlincStep {
         "off",
         // jvm-abi-gen kill switch options
         // not part of KAPT, since jvm-abi-gen doesn't run on KAPT steps
-        ImmutableList.of());
+        ImmutableList.of(),
+        // The kept-body check is part of jvm-abi-gen, which does not run here
+        false);
   }
 
   @Override

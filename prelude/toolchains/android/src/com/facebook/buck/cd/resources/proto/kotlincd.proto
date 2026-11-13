@@ -80,6 +80,11 @@ message KotlinExtraParams {
   // `option=value` pairs passed to the K2 JVM ABI gen plugin of source-only ABI
   // actions, set by toolchain kill switches. Empty by default.
   repeated string kosabiJvmAbiGenOptions = 40;
+
+  // Turns off the K2 JVM ABI gen check that fails a source-only ABI whose kept
+  // inline bodies name a class that only a Kosabi stub provides. Unset (false)
+  // keeps the check on.
+  bool disableKosabiKeptBodyStubCheck = 36;
 }
 
 message PluginParams {

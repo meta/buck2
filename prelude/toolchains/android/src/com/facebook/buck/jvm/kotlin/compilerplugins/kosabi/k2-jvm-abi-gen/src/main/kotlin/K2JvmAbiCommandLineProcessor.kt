@@ -93,6 +93,14 @@ class K2JvmAbiCommandLineProcessor : CommandLineProcessor {
             "source-only ABI never reads. Default is true; false restores full body resolution.",
         false,
     )
+
+    val KEPT_BODY_STUB_CHECK_OPTION: CliOption = CliOption(
+        "keptBodyStubCheck",
+        "<boolean>",
+        "Fail the source-only ABI when a kept inline body names a class that only a Kosabi " +
+            "stub provides. Default is true; false turns the check off.",
+        false,
+    )
   }
 
   override val pluginId: String
@@ -109,6 +117,7 @@ class K2JvmAbiCommandLineProcessor : CommandLineProcessor {
         ABI_VALIDATION_MODE_OPTION,
         SHALLOW_CLASS_USAGE_OPTION,
         SKIP_NON_ABI_BODIES_OPTION,
+        KEPT_BODY_STUB_CHECK_OPTION,
     )
 
   override fun processOption(
@@ -137,6 +146,8 @@ class K2JvmAbiCommandLineProcessor : CommandLineProcessor {
           configuration.put(K2JvmAbiConfigurationKeys.SHALLOW_CLASS_USAGE, value == "true")
       SKIP_NON_ABI_BODIES_OPTION ->
           configuration.put(K2JvmAbiConfigurationKeys.SKIP_NON_ABI_BODIES, value != "false")
+      KEPT_BODY_STUB_CHECK_OPTION ->
+          configuration.put(K2JvmAbiConfigurationKeys.KEPT_BODY_STUB_CHECK, value != "false")
       else -> throw CliOptionProcessingException("Unknown option: ${option.optionName}")
     }
   }

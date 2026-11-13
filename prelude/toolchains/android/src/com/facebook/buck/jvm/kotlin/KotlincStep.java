@@ -91,6 +91,7 @@ public class KotlincStep implements IsolatedStep {
   private final boolean shouldKosabiUseShallowClassUsage;
   private final String kosabiAbiValidationMode;
   private final ImmutableList<String> kosabiJvmAbiGenOptions;
+  private final boolean disableKosabiKeptBodyStubCheck;
 
   private static final String COMPOSE_PLUGIN_PATH_FRAGMENT = "compose-compiler-plugin";
 
@@ -121,7 +122,8 @@ public class KotlincStep implements IsolatedStep {
       boolean shouldKosabiJvmAbiGenUseK2,
       boolean shouldKosabiUseShallowClassUsage,
       String kosabiAbiValidationMode,
-      ImmutableList<String> kosabiJvmAbiGenOptions) {
+      ImmutableList<String> kosabiJvmAbiGenOptions,
+      boolean disableKosabiKeptBodyStubCheck) {
     this.invokingRule = invokingRule;
     this.outputDirectory = outputDirectory;
     this.sourceFilePaths = sourceFilePaths;
@@ -149,6 +151,7 @@ public class KotlincStep implements IsolatedStep {
     this.shouldKosabiUseShallowClassUsage = shouldKosabiUseShallowClassUsage;
     this.kosabiAbiValidationMode = kosabiAbiValidationMode;
     this.kosabiJvmAbiGenOptions = kosabiJvmAbiGenOptions;
+    this.disableKosabiKeptBodyStubCheck = disableKosabiKeptBodyStubCheck;
   }
 
   @Override
@@ -459,6 +462,10 @@ public class KotlincStep implements IsolatedStep {
       for (String option : kosabiJvmAbiGenOptions) {
         builder.add(PLUGIN);
         builder.add("plugin:com.facebook.k2.jvm.abi.gen:" + option);
+      }
+      if (disableKosabiKeptBodyStubCheck) {
+        builder.add(PLUGIN);
+        builder.add("plugin:com.facebook.k2.jvm.abi.gen:keptBodyStubCheck=false");
       }
     }
 

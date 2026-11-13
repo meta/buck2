@@ -96,6 +96,11 @@ import org.jetbrains.org.objectweb.asm.Type
 import org.jetbrains.org.objectweb.asm.TypePath
 import org.jetbrains.org.objectweb.asm.signature.SignatureReader
 import org.jetbrains.org.objectweb.asm.signature.SignatureVisitor
+import org.jetbrains.org.objectweb.asm.tree.ClassNode
+import org.jetbrains.org.objectweb.asm.tree.LdcInsnNode
+import org.jetbrains.org.objectweb.asm.tree.MethodInsnNode
+import org.jetbrains.org.objectweb.asm.tree.MethodNode
+import org.jetbrains.org.objectweb.asm.tree.TypeInsnNode
 
 fun errorTypedApiPositions(
     isProperty: Boolean,
@@ -1417,6 +1422,7 @@ internal class ValidationStage(private val repairLog: AbiGenRepairLog) : AbiGenS
       messageCollector: MessageCollector,
       policy: AbiRepairPolicy,
       inputs: AbiValidationInputs,
+      keptBodyStubCheck: Boolean = true,
   ) {
     // The literal-NEC invariant is not a repair-policy diagnostic and is checked whatever
     // `abiValidationMode` says. An ABI that ships `error/NonExistentClass` cannot be linked
@@ -1448,6 +1454,34 @@ internal class ValidationStage(private val repairLog: AbiGenRepairLog) : AbiGenS
               "If it was inferred from an expression body, spell the type explicitly " +
               "instead. If it is a nested generic arg of an inherited default method, " +
               "add an explicit override spelling the full signature (see T290092261).",
+      )
+    }
+
+    // Unconditional for the same reason: callers copy a kept inline body into their own code, so a
+    // class that only a Kosabi stub provides fails them at run time (NoClassDefFoundError), far
+    // from the target that published it.
+    // As for Assertion 2, warn mode reports this as a warning, which `-Werror` still makes fatal.
+    // The switch is buckconfig `kotlin.kosabi_kept_body_stub_check` (default on).
+    val keptBodySeverity =
+        if (policy == AbiRepairPolicy.WARN) CompilerMessageSeverity.WARNING
+        else CompilerMessageSeverity.ERROR
+    val keptBodyReferences =
+        if (keptBodyStubCheck) {
+          findKeptInlineBodyStubReferences(inputs, messageCollector, keptBodySeverity)
+        } else {
+          emptySet()
+        }
+    for (reference in keptBodyReferences) {
+      messageCollector.report(
+          keptBodySeverity,
+          "Kosabi inline bodies: the kept body of inline function `${reference.function}` " +
+              "references `${reference.className}`, which only a Kosabi stub provides: neither " +
+              "this ABI jar nor any non-stub classpath root has that class, so callers that " +
+              "inline the body can fail at run time (NoClassDefFoundError, or NoSuchMethodError " +
+              "from a member the stub guessed). If the name is a typealias, write the class it " +
+              "expands to; if it is a class of another target, add that target to this " +
+              "target's `source_only_abi_deps`; otherwise remove `inline` or make the function " +
+              "private.",
       )
     }
 
@@ -1602,6 +1636,122 @@ internal class ValidationStage(private val repairLog: AbiGenRepairLog) : AbiGenS
               "type so source-only ABI does not publish a phantom descriptor.",
       )
     }
+  }
+
+  private data class KeptBodyReference(val function: String, val className: String)
+
+  private val lineNumberStripper = StubLineNumberStripper()
+
+  /**
+   * The class constants of kept inline bodies that only the stub classpath declares: no emitted
+   * class and no non-stub classpath root provides them. A kept body is a method whose line numbers
+   * [StubLineNumberStripper] keeps, or any method of a local or anonymous class declared in one,
+   * which callers copy along with it.
+   */
+  private fun findKeptInlineBodyStubReferences(
+      inputs: AbiValidationInputs,
+      messageCollector: MessageCollector,
+      severity: CompilerMessageSeverity,
+  ): Set<KeptBodyReference> {
+    val (stubRoots, realRoots) = inputs.classpathRoots.partition { it.isStubClasspathRoot() }
+    if (stubRoots.isEmpty()) return emptySet()
+    val classFiles = inputs.outputFiles.filter { it.relativePath.endsWith(".class") }
+    val emitted = classFiles.mapTo(HashSet()) { classNameFromRelativePath(it.relativePath) }
+    val references =
+        collectKeptInlineBodyClassReferences(classFiles).filterTo(linkedSetOf()) {
+          it.className !in emitted
+        }
+    if (references.isEmpty()) return emptySet()
+    val checkName = "the kept inline body check"
+    val stubDeclared =
+        collectClassesFromClasspath(stubRoots, messageCollector, severity, checkName)
+            ?: return emptySet()
+    val candidates = references.filterTo(linkedSetOf()) { it.className in stubDeclared }
+    if (candidates.isEmpty()) return emptySet()
+    val realClasses =
+        collectClassesFromClasspath(realRoots, messageCollector, severity, checkName)
+            ?: return emptySet()
+    return candidates.filterTo(linkedSetOf()) { it.className !in realClasses }
+  }
+
+  private fun collectKeptInlineBodyClassReferences(
+      classFiles: List<AbiValidationOutputFile>,
+  ): Set<KeptBodyReference> {
+    val headers = classFiles.map { file ->
+      ClassNode().also {
+        ClassReader(file.bytes)
+            .accept(it, ClassReader.SKIP_CODE or ClassReader.SKIP_DEBUG or ClassReader.SKIP_FRAMES)
+      }
+    }
+    val keptMethods = HashMap<String, (String, String) -> Boolean>()
+    for (node in headers) {
+      // Only local and anonymous classes have an EnclosingMethod attribute.
+      if (node.outerClass != null) continue
+      val isKept = lineNumberStripper.keptInlineMethodPredicate(node) ?: continue
+      if (node.methods.any { isKept(it.name, it.desc) }) keptMethods[node.name] = isKept
+    }
+    // Local and anonymous classes declared in a kept body, by the kept function they come from.
+    val copiedClasses = HashMap<String, String>()
+    do {
+      val before = copiedClasses.size
+      for (node in headers) {
+        val outer = node.outerClass ?: continue
+        if (node.name in copiedClasses) continue
+        val outerMethod = node.outerMethod
+        val function =
+            copiedClasses[outer]
+                ?: outerMethod
+                    ?.takeIf { keptMethods[outer]?.invoke(it, node.outerMethodDesc) == true }
+                    ?.let { keptFunctionName(outer, it) }
+                ?: continue
+        copiedClasses[node.name] = function
+      }
+    } while (copiedClasses.size != before)
+
+    val references = linkedSetOf<KeptBodyReference>()
+    for ((index, header) in headers.withIndex()) {
+      val copiedFrom = copiedClasses[header.name]
+      val isKept = keptMethods[header.name]
+      if (copiedFrom == null && isKept == null) continue
+      val node = ClassNode()
+      ClassReader(classFiles[index].bytes).accept(node, ClassReader.SKIP_FRAMES)
+      for (method in node.methods) {
+        val function =
+            copiedFrom
+                ?: keptFunctionName(node.name, method.name).takeIf {
+                  isKept?.invoke(method.name, method.desc) == true
+                }
+                ?: continue
+        method.classConstants().forEach { references += KeptBodyReference(function, it) }
+      }
+    }
+    return references
+  }
+
+  /** The inline function a kept method belongs to: its `$default` method shares it. */
+  private fun keptFunctionName(owner: String, method: String): String =
+      "${owner.replace('/', '.')}.${method.removeSuffix("\$default")}"
+
+  /** The classes this method's code names through class constants, as dotted binary names. */
+  private fun MethodNode.classConstants(): Set<String> {
+    val classes = linkedSetOf<String>()
+    fun addType(type: Type) {
+      val element = if (type.sort == Type.ARRAY) type.elementType else type
+      if (element.sort == Type.OBJECT) classes += element.internalName.replace('/', '.')
+    }
+    fun addInternalName(name: String?) {
+      if (name == null) return
+      addType(Type.getObjectType(name))
+    }
+    tryCatchBlocks.orEmpty().forEach { addInternalName(it.type) }
+    for (instruction in instructions) {
+      when (instruction) {
+        is TypeInsnNode -> addInternalName(instruction.desc)
+        is MethodInsnNode -> addInternalName(instruction.owner)
+        is LdcInsnNode -> (instruction.cst as? Type)?.let(::addType)
+      }
+    }
+    return classes
   }
 
   private fun findStubOnlyDescriptorLeaks(
@@ -2420,6 +2570,7 @@ internal class ValidationStage(private val repairLog: AbiGenRepairLog) : AbiGenS
       classpathRoots: List<File>,
       messageCollector: MessageCollector,
       severity: CompilerMessageSeverity,
+      checkName: String = "same-package phantom detection",
   ): Set<String>? {
     val classes = linkedSetOf<String>()
     for (root in classpathRoots) {
@@ -2447,7 +2598,7 @@ internal class ValidationStage(private val repairLog: AbiGenRepairLog) : AbiGenS
       } catch (failure: Exception) {
         messageCollector.report(
             severity,
-            "Kosabi ABI validation: same-package phantom detection could not complete because " +
+            "Kosabi ABI validation: $checkName could not complete because " +
                 "classpath root `$root` could not be read: $failure",
         )
         return null

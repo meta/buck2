@@ -40,4 +40,7 @@ object K2JvmAbiConfigurationKeys {
 
   val SKIP_NON_ABI_BODIES: CompilerConfigurationKey<Boolean> =
       CompilerConfigurationKey.create("skip resolving bodies the source-only ABI never reads")
+
+  val KEPT_BODY_STUB_CHECK: CompilerConfigurationKey<Boolean> =
+      CompilerConfigurationKey.create("kept inline body stub-only class check")
 }

@@ -14,6 +14,7 @@ constraint_with_aliases(
         "arm64": "arm64",
         "x86_32": "x86_32",
         "x86_64": "x86_64",
+        "wasm32": "wasm32",
     },
     default = "unspecified",
     values = [

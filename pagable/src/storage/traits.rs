@@ -219,6 +219,9 @@ impl DeserializedArcCache {
         key: DataKey,
         page_in: impl FnOnce() -> Result<Box<dyn ArcEraseDyn>, E>,
     ) -> Result<Box<dyn ArcEraseDyn>, E> {
+        if let Some(live) = self.get(&type_id, &key) {
+            return Ok(live);
+        }
         let gate = Arc::new(Mutex::new(()));
         // Locked before it is published and until the binding is, so waiters
         // block on it and find the binding when they retry.

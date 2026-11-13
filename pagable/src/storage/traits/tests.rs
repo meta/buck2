@@ -1017,6 +1017,60 @@ fn downcast_partial_arc(arc: &dyn ArcEraseDyn) -> &PartialPagableArc<ResidentArc
 }
 
 #[test]
+fn repeated_live_cache_hits_keep_standard_arc_identity_without_loading() {
+    let cache = DeserializedArcCache::new();
+    let key = DataKey::testing_new(1);
+    let type_id = TypeId::of::<Arc<u64>>();
+    let arc = Arc::new(42u64);
+    let loads = AtomicUsize::new(0);
+    drop(
+        cache
+            .get_or_page_in(type_id, key, || {
+                loads.fetch_add(1, Ordering::SeqCst);
+                Ok::<_, anyhow::Error>(Box::new(arc.dupe()))
+            })
+            .expect("initial load"),
+    );
+    for _ in 0..100 {
+        let selected = cache
+            .get_or_page_in(type_id, key, || {
+                loads.fetch_add(1, Ordering::SeqCst);
+                Err::<Box<dyn ArcEraseDyn>, _>(anyhow::anyhow!("live hit must not load"))
+            })
+            .expect("live hit");
+        assert_eq!(selected.identity(), ArcErase::identity(&arc));
+    }
+    assert_eq!(loads.load(Ordering::SeqCst), 1);
+    assert_eq!(cache.len(), 1);
+}
+
+#[test]
+fn repeated_live_cache_hits_keep_native_arc_identity_without_loading() {
+    let cache = DeserializedArcCache::new();
+    let key = DataKey::testing_new(1);
+    let type_id = TypeId::of::<triomphe::Arc<u64>>();
+    let arc = triomphe::Arc::new(42u64);
+    drop(
+        cache
+            .get_or_page_in(type_id, key, || {
+                Ok::<_, anyhow::Error>(Box::new(arc.clone()))
+            })
+            .expect("initial load"),
+    );
+    for _ in 0..100 {
+        let selected = cache
+            .get_or_page_in(type_id, key, || {
+                Err::<Box<dyn ArcEraseDyn>, _>(anyhow::anyhow!("live hit must not load"))
+            })
+            .expect("live hit");
+        assert_eq!(selected.identity(), ArcErase::identity(&arc));
+    }
+    assert_eq!(cache.len(), 1);
+    drop(arc);
+    assert_eq!(cache.evict_expired().removed, 1);
+}
+
+#[test]
 fn live_resident_arc_takes_precedence_over_deserialized_arc() {
     let cache = DeserializedArcCache::new();
     let key = DataKey::testing_new(1);

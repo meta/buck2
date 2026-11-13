@@ -1323,18 +1323,20 @@ impl LocalExecutor {
     }
 }
 
-/// Fills each output in turn, up to the first that fails, whose error is the answer.
+/// Fills every output at once, as input materialization fetches its roots, and answers with
+/// the first error once every fill has ended. None is abandoned over another's failure: a fill
+/// dropped part-way may go on writing under the lease.
 async fn fill_each<T, F>(
-    outputs: impl IntoIterator<Item = T>,
+    outputs: impl IntoIterator<Item = T, IntoIter: ExactSizeIterator>,
     fill: impl Fn(T) -> F,
 ) -> buck2_error::Result<()>
 where
     F: Future<Output = buck2_error::Result<()>>,
 {
-    for output in outputs {
-        fill(output).await?;
-    }
-    Ok(())
+    buck2_util::future::join_all(outputs.into_iter().map(fill))
+        .await
+        .into_iter()
+        .collect()
 }
 
 /// What an incremental action's run starts from, as its record says.
@@ -2100,39 +2102,37 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_fills_are_made_one_at_a_time() {
+    async fn test_fills_are_made_at_once() {
         let gate = Gate::new();
         let fills = fill_each(0..3, |_| gate.fill());
         futures::pin_mut!(fills);
 
         assert!(futures::poll!(&mut fills).is_pending());
-        assert_eq!(gate.started.get(), 1);
+        assert_eq!(gate.started.get(), 3);
 
-        gate.let_through(1);
+        gate.let_through(3);
+        assert!(fills.await.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_a_failed_fill_waits_for_the_others() {
+        let gate = Gate::new();
+        let fills = fill_each(0..3, |output| {
+            let gate = &gate;
+            async move {
+                if output == 0 {
+                    Err(internal_error!("The fill of `{output}` failed"))
+                } else {
+                    gate.fill().await
+                }
+            }
+        });
+        futures::pin_mut!(fills);
+
         assert!(futures::poll!(&mut fills).is_pending());
         assert_eq!(gate.started.get(), 2);
 
         gate.let_through(2);
-        assert!(fills.await.is_ok());
-        assert_eq!(gate.started.get(), 3);
-    }
-
-    #[tokio::test]
-    async fn test_no_fill_is_started_after_one_failed() {
-        let started = Cell::new(0);
-        let filled = fill_each(0..3, |output| {
-            started.set(started.get() + 1);
-            async move {
-                if output == 1 {
-                    Err(internal_error!("The fill of `{output}` failed"))
-                } else {
-                    Ok(())
-                }
-            }
-        })
-        .await;
-
-        assert!(filled.is_err());
-        assert_eq!(started.get(), 2);
+        assert!(fills.await.is_err());
     }
 }

@@ -108,7 +108,7 @@ def maybe_create_class_to_source_map_debuginfo(actions: AnalysisActions, name: s
     cmd = cmd_args(java_toolchain.gen_class_to_source_map_debuginfo[RunInfo])
     cmd.add("gen")
     cmd.add("-o", output.as_output())
-    cmd.add(at_argfile(actions = actions, name = "sourcefiles.txt", args = srcs))
+    cmd.add(at_argfile(actions = actions, name = "sourcefiles.txt", args = srcs, has_content_based_path = True))
     actions.run(cmd, category = "class_to_srcs_map_debuginfo")
     return output
 

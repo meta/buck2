@@ -2906,6 +2906,33 @@ mod tests {
     }
 
     #[test]
+    fn clean_on_a_disk_that_frees_less_than_it_deletes() {
+        // Three retained artifacts of 300 bytes on a 1000-byte disk with 100 bytes free, so a 50%
+        // threshold needs 400 more.
+        let mut paths = vec![
+            retained("a", 100, 300),
+            retained("b", 200, 300),
+            retained("c", 300, 300),
+        ];
+        let result = apply_adaptive_low_disk(&mut paths, 100, 1000, &adaptive_params(50.0));
+        assert_eq!(result.outcome, AdaptiveOutcome::SatisfiedByStaleDeletion);
+        assert!(is_stale(&paths[0], 300) && is_stale(&paths[1], 300));
+
+        // Deleting `a` and `b` frees only 200 of their 600 logical bytes on a filesystem that
+        // compresses them, leaving the disk at 300 free, 200 short of 500. The clean promotes only
+        // once, from the projection: `c` stays retained, and the clean reports success with no
+        // shortfall while the disk is still short.
+        assert!(
+            is_retained(&paths[2]),
+            "`c` currently stays retained although the disk is still short"
+        );
+        assert_eq!(
+            result.shortfall_bytes, 0,
+            "the shortfall currently comes from the projection, not the disk"
+        );
+    }
+
+    #[test]
     fn threshold_already_met_is_noop() {
         let mut paths = vec![retained("a", 100, 50)];
         // 60% free, threshold 50% -> already above, do nothing.

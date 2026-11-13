@@ -131,3 +131,20 @@ fn symlink_dir(target: &str, link: &std::path::Path) -> std::io::Result<()> {
     // As Python's `os.symlink`, which makes a file symlink unless told otherwise.
     std::os::windows::fs::symlink_file(target, link)
 }
+
+#[buck_test]
+async fn test_typecheck_bundled_cell(buck: &Buck) -> anyhow::Result<()> {
+    // Bundled cells have no files on disk. Typechecking must read their materialized files
+    // when a project file loads them and when a bundled file is checked directly.
+    buck.starlark(&["typecheck", "uses_prelude.bzl"]).await?;
+    buck.starlark(&["typecheck", "nano_prelude/prelude.bzl"])
+        .await?;
+    Ok(())
+}
+
+#[buck_test]
+async fn test_lint_bundled_cell(buck: &Buck) -> anyhow::Result<()> {
+    // A bundled cell has no directory on disk. Linting the cell must materialize its files.
+    buck.starlark(&["lint", "nano_prelude"]).await?;
+    Ok(())
+}

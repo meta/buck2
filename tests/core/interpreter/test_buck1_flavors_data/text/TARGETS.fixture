@@ -1,0 +1,8 @@
+consumer(
+    name = "shell_command",
+    dep_or_string = """
+        echo "status: [$STATUS]"
+        # A comment, not a flavor.
+        rm -rf "$DIR"
+    """,
+)

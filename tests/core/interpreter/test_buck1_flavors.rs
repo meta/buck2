@@ -46,6 +46,15 @@ async fn test_hash_in_file_name_is_not_a_flavor(buck: &Buck) -> anyhow::Result<(
     Ok(())
 }
 
+#[buck_test(env = [("BUCK2_HARD_ERROR", "false")])]
+async fn test_hash_in_text_is_not_a_flavor(buck: &Buck) -> anyhow::Result<()> {
+    // `attrs.one_of(attrs.dep(), attrs.string())` probes the shell command as a label first.
+    buck.build(&["root//text:shell_command"]).await?;
+    let log = buck.log(&["show"]).await?;
+    assert!(!log.stdout.contains("Soft Error: legacy_flavor"));
+    Ok(())
+}
+
 #[buck_test(env = [("BUCK2_HARD_ERROR", "only=platform_flavor")])]
 async fn test_platform_flavor_hard_error(buck: &Buck) -> anyhow::Result<()> {
     buck.uquery(&["root//platform:platform_flavor"])

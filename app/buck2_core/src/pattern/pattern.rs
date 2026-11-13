@@ -115,6 +115,22 @@ pub fn display_precise_pattern<'a, T: PatternType>(
     }
 }
 
+/// Whether `name#flavors` has the shape of a buck1 flavored target: a target name followed by a
+/// comma-separated list of flavor names.
+///
+/// `attrs.one_of(attrs.dep(), attrs.string())` probes every string as a label first, so text
+/// that only happens to contain a `:` and a `#`, such as a shell command with a comment, gets
+/// here too.
+fn is_buck1_flavored_target(name: &str, flavors: &str) -> bool {
+    TargetNameRef::new(name).is_ok()
+        && flavors.split(',').all(|flavor| {
+            !flavor.is_empty()
+                && flavor
+                    .bytes()
+                    .all(|c| c.is_ascii_alphanumeric() || matches!(c, b'-' | b'_' | b'.'))
+        })
+}
+
 /// Extract provider name from a target pattern.
 ///
 /// `full_pattern` is the pattern `s` was cut from, for error messages.
@@ -122,7 +138,9 @@ pub(crate) fn split_providers_name<'a>(
     s: &'a str,
     full_pattern: &str,
 ) -> buck2_error::Result<(&'a str, ProvidersName)> {
-    if let Some((t, flavors)) = split1_opt_ascii(s, AsciiChar::new('#')) {
+    if let Some((t, flavors)) = split1_opt_ascii(s, AsciiChar::new('#'))
+        && is_buck1_flavored_target(t, flavors)
+    {
         let name = map_flavors(flavors, full_pattern)?;
         Ok((t, name))
     } else if let Some((t, p)) = split1_opt_ascii(s, AsciiChar::new('[')) {
@@ -1294,6 +1312,7 @@ mod tests {
     use crate::pattern::pattern::ParsedPatternWithModifiers;
     use crate::pattern::pattern::TargetParsingRel;
     use crate::pattern::pattern::TargetPatternParseError;
+    use crate::pattern::pattern::split_providers_name;
     use crate::pattern::pattern_type::ConfigurationPredicate;
     use crate::pattern::pattern_type::ConfiguredProvidersPatternExtra;
     use crate::pattern::pattern_type::ConfiguredTargetPatternExtra;
@@ -1939,6 +1958,27 @@ mod tests {
             )
             .to_string(),
         );
+        Ok(())
+    }
+
+    #[test]
+    fn hash_in_text_is_not_a_flavor() -> buck2_error::Result<()> {
+        for text in ["target#not a flavor", "not a target#flavor", "target#"] {
+            assert_eq!(
+                (text, ProvidersName::Default),
+                split_providers_name(text, text)?,
+            );
+        }
+
+        let shell = "echo \"status: [$STATUS]\"\n# A comment.\nrm -rf \"$DIR\"";
+        let err = ParsedPattern::<ProvidersPatternExtra>::parse_precise(
+            shell,
+            CellName::testing_new("root"),
+            &resolver(),
+            &alias_resolver(),
+        )
+        .expect_err("a shell command is not a label");
+        assert!(!format!("{err:?}").contains("buck1 flavor"), "{err:?}");
         Ok(())
     }
 

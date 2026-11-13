@@ -24,5 +24,6 @@ consumer = rule(
         "dep": attrs.option(attrs.dep(), default = None),
         # Like `python_library.resources`: a string that is not a label falls through to a file.
         "dep_or_file": attrs.option(attrs.one_of(attrs.dep(), attrs.source()), default = None),
+        "dep_or_string": attrs.option(attrs.one_of(attrs.dep(), attrs.string()), default = None),
     },
 )

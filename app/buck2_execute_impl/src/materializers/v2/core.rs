@@ -1124,8 +1124,12 @@ impl<T: IoHandler + Allocative> Materializer for DiskStateMaterializer<T> {
 
 impl<T: IoHandler + Allocative> Drop for DiskStateMaterializer<T> {
     fn drop(&mut self) {
-        // The processor ends once every sender is gone, which is when the last lease has been
-        // released; the daemon exits without waiting for it, like the old core's.
+        // The processor holds a sender of its own, for the guards it hands out, so it does not
+        // end with the materializer's; it is told to. What it drops with its tree, the tasks and
+        // IO of its roots, holds the tenant's disk lease, which the tenant's eviction waits for.
+        // A guard that outlives it, a lease a shared engine still keeps, finds it stopped. The
+        // daemon exits without waiting for the thread, like the old core's.
+        let _ignored = self.sender.send(Command::Abort);
         let _ignored = self.thread.take();
     }
 }
@@ -1836,7 +1840,7 @@ enum Command {
     },
     /// Anything that needs the state and no IO.
     Sync(Box<dyn FnOnce(&mut Processor) + Send>),
-    #[cfg(test)]
+    /// Ends the processor with whatever it holds: the materializer is gone.
     Abort,
 }
 
@@ -2178,7 +2182,6 @@ impl Processor {
                 let _ignored = reply.send(held);
             }
             Command::Sync(f) => f(self),
-            #[cfg(test)]
             Command::Abort => return false,
         }
         true

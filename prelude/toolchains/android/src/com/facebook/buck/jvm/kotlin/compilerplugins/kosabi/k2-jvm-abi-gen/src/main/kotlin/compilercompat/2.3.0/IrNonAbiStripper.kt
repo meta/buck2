@@ -284,10 +284,12 @@ internal class NonAbiDeclarationsStrippingIrVisitor(
     // dangle. Internal supertypes are kept because source-only ABI is consumed within the same
     // module, where internal types are accessible. Stripping them would cause Java consumers
     // to see "incompatible types" errors when a public class implements an internal interface.
-    val strippedSupertypes =
+    // Members materialize from a wider set (areMembersAbsentFromAbi): a kept private interface
+    // stays a supertype, but the shell the ABI keeps carries none of its members.
+    val supertypesWithoutAbiMembers =
         declaration.superTypes.filter { superType ->
           val superClass = superType.classOrNull?.owner ?: return@filter false
-          isClassAbsentFromAbi(superClass)
+          areMembersAbsentFromAbi(superClass)
         }
 
     declaration.superTypes =
@@ -296,11 +298,11 @@ internal class NonAbiDeclarationsStrippingIrVisitor(
           !isClassAbsentFromAbi(superClass)
         }
 
-    // For each stripped supertype that was an interface, convert fake override methods
+    // For each such supertype that is an interface, convert fake override methods
     // that implement that interface to real methods with stub bodies.
     // This is needed because the JVM backend skips generating bytecode for fake overrides.
-    if (strippedSupertypes.isNotEmpty()) {
-      convertFakeOverridesFromStrippedSupertypes(declaration, strippedSupertypes)
+    if (supertypesWithoutAbiMembers.isNotEmpty()) {
+      convertFakeOverridesFromStrippedSupertypes(declaration, supertypesWithoutAbiMembers)
     }
 
     // Also convert fake override methods that override non-public API methods.
@@ -321,13 +323,14 @@ internal class NonAbiDeclarationsStrippingIrVisitor(
       if (!decl.isFakeOverride) continue
       if (!decl.visibility.isPublicAPI) continue
 
-      // Materialize only when the declaring class is gone from the ABI. If it survives -- any
+      // Materialize only when the ABI drops the declaring class's members: the class is gone, or
+      // it is a kept private interface shell. If the class survives with its members -- any
       // nested private class does -- the fake override still resolves, and emitting a body here
       // would add a method the library jar does not have.
       val shouldMaterialize =
           decl.overriddenSymbols.any { overriddenSymbol ->
             val overriddenParent = overriddenSymbol.owner.parent as? IrClass
-            overriddenParent != null && isClassAbsentFromAbi(overriddenParent)
+            overriddenParent != null && areMembersAbsentFromAbi(overriddenParent)
           }
 
       if (shouldMaterialize) {
@@ -405,23 +408,37 @@ internal class NonAbiDeclarationsStrippingIrVisitor(
   }
 
   // True when removeNonPublicApi will drop this class from the ABI, which is the only reason a
-  // supertype has to leave a supertype list. Only top-level private classes are dropped; a nested
-  // private class is kept, so a `private sealed class`/`sealed interface` and everything nested
-  // under it stays referenceable and must keep appearing as a supertype. Must-keep classes
-  // stay, so hierarchies keep resolving; interfaces still strip even when kept, because
-  // fake overrides of their members materialize instead.
+  // supertype has to leave a supertype list. Only top-level private classes are dropped, and a
+  // must-keep one stays as a shell; a nested class survives with its outermost class, so a
+  // `private sealed class`/`sealed interface` and everything nested under it stays referenceable
+  // and must keep appearing as a supertype.
   private fun isClassAbsentFromAbi(irClass: IrClass): Boolean {
-    if (
-        irClass.kind != ClassKind.INTERFACE &&
-            mustKeepPrivateClassNames.contains(irClass.kotlinFqName.asString())
-    ) {
-      return false
-    }
     var current: IrClass = irClass
     while (true) {
       if (current.visibility == DescriptorVisibilities.LOCAL) {
         return true
       }
+      val outer = current.parent as? IrClass
+      if (outer == null) {
+        return current.visibility == DescriptorVisibilities.PRIVATE &&
+            !mustKeepPrivateClassNames.contains(current.kotlinFqName.asString())
+      }
+      current = outer
+    }
+  }
+
+  // True when implementers must materialize fake overrides of this class's members: the class is
+  // absent from the ABI, or it is an interface under a private top-level class. A kept private
+  // interface stays a supertype, but the shell the ABI keeps carries none of its members.
+  private fun areMembersAbsentFromAbi(irClass: IrClass): Boolean {
+    if (isClassAbsentFromAbi(irClass)) {
+      return true
+    }
+    if (irClass.kind != ClassKind.INTERFACE) {
+      return false
+    }
+    var current: IrClass = irClass
+    while (true) {
       val outer = current.parent as? IrClass
       if (outer == null) {
         return current.visibility == DescriptorVisibilities.PRIVATE

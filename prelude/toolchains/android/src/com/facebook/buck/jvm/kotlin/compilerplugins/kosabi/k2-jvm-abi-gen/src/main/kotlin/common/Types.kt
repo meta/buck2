@@ -200,9 +200,10 @@ private fun scanSignatures(declaration: IrDeclaration, keep: MutableSet<String>)
   if (declaration.isDelegateBackingField()) return
   // Supertypes and signatures name classes consumers must resolve (suppressed
   // EXPOSED_* or otherwise): keep them as stubs. Supertypes keep class-kind
-  // only: a kept private interface stays on the strip-and-materialize path
-  // (its members materialize into implementers, including enum entries),
-  // while a kept private class must stay a resolvable supertype.
+  // only: a private interface named only as a supertype stays on the
+  // strip-and-materialize path (its members materialize into implementers,
+  // including enum entries), while a kept private class must stay a
+  // resolvable supertype.
   if (declaration is IrClass) {
     declaration.superTypes.forEach { collectClassesFromType(it, keep, classesOnly = true) }
   }

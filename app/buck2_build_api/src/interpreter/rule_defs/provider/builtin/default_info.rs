@@ -160,9 +160,9 @@ fn validate_default_info<'v>(info: &DefaultInfo<'v>) -> buck2_error::Result<()> 
 impl<'v> DefaultInfo<'v> {
     pub fn empty(heap: Heap<'v>) -> Self {
         DefaultInfo {
-            sub_targets: ValueOf::alloc_dict(heap, []),
-            default_outputs: ValueOf::alloc_list(heap, []),
-            other_outputs: ValueOf::alloc_list(heap, []),
+            sub_targets: heap.alloc(AllocDict::empty()),
+            default_outputs: heap.alloc(AllocList::empty()),
+            other_outputs: heap.alloc(AllocList::empty()),
         }
     }
 
@@ -330,8 +330,8 @@ fn default_info_creator(builder: &mut GlobalsBuilder) {
         // support both list and singular options for now until we migrate all the rules.
         let default_outputs = match (default_outputs.into_option(), default_output.into_option()) {
             (Some(list), None) => list,
-            (None, Some(default_output)) => ValueOf::alloc_list(heap, [default_output]),
-            (None, None) => ValueOf::alloc_list(heap, []),
+            (None, Some(default_output)) => heap.alloc(AllocList([default_output])),
+            (None, None) => heap.alloc(AllocList::empty()),
             (Some(_), Some(_)) => {
                 return Err(
                     buck2_error::Error::from(DefaultOutputError::ConflictingArguments).into(),
@@ -351,7 +351,7 @@ fn default_info_creator(builder: &mut GlobalsBuilder) {
         Ok(heap.alloc(DefaultInfo {
             default_outputs,
             other_outputs,
-            sub_targets: ValueOf::alloc_dict(heap, sub_targets),
+            sub_targets: heap.alloc(AllocDict(sub_targets)),
         }))
     }
 }

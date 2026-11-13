@@ -12,6 +12,7 @@ use starlark::environment::GlobalsBuilder;
 use starlark::eval::Evaluator;
 use starlark::starlark_module;
 use starlark::values::ValueOf;
+use starlark::values::list::AllocList;
 use starlark::values::list::ListType;
 use starlark::values::list_or_tuple::ListOrTupleType;
 use starlark::values::string::StarlarkStr;
@@ -67,7 +68,7 @@ pub(crate) fn register_path(builder: &mut GlobalsBuilder) {
         let res = extra
             .resolve_glob(&spec)
             .map(|path| heap.alloc(path.as_str()));
-        Ok(ValueOf::alloc_list(heap, res))
+        Ok(heap.alloc(AllocList(res)))
     }
 
     /// `package_name()` can only be called in buildfiles (e.g. BUCK files) or PACKAGE files, and returns the name of the package.

@@ -34,6 +34,7 @@ use starlark::values::Trace;
 use starlark::values::UnpackValue;
 use starlark::values::Value;
 use starlark::values::ValueOf;
+use starlark::values::dict::AllocDict;
 use starlark::values::dict::DictType;
 use starlark::values::starlark_value;
 use starlark::values::string::StarlarkStr;
@@ -173,10 +174,7 @@ impl<'v> StarlarkSelector<'v> {
                     }
                     Ok(eval
                         .heap()
-                        .alloc(StarlarkSelector::new(ValueOf::alloc_dict(
-                            eval.heap(),
-                            mapped,
-                        )))
+                        .alloc(StarlarkSelector::new(eval.heap().alloc(AllocDict(mapped))))
                         .to_value())
                 }
                 StarlarkSelector::Sum(left, right) => {

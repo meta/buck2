@@ -28,6 +28,7 @@ use starlark::values::Freeze;
 use starlark::values::StarlarkPagable;
 use starlark::values::Trace;
 use starlark::values::ValueOf;
+use starlark::values::dict::AllocDict;
 use starlark::values::dict::DictType;
 use starlark::values::list::ListType;
 use starlark::values::string::StarlarkStr;
@@ -94,7 +95,7 @@ fn dep_only_incompatible_info_creator(globals: &mut GlobalsBuilder) {
             entries.push((category, rollout));
         }
         Ok(eval.heap().alloc(DepOnlyIncompatibleInfo {
-            custom_soft_errors: ValueOf::alloc_dict(eval.heap(), entries),
+            custom_soft_errors: eval.heap().alloc(AllocDict(entries)),
         }))
     }
 }

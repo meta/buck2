@@ -47,6 +47,7 @@ use starlark::values::StarlarkValue;
 use starlark::values::Trace;
 use starlark::values::ValueOf;
 use starlark::values::ValueTyped;
+use starlark::values::dict::AllocDict;
 use starlark::values::dict::DictType;
 use starlark::values::starlark_value;
 use strong_hash::StrongHash;
@@ -263,7 +264,7 @@ async fn alloc_deps<'v>(
         })
         .collect::<Result<_, _>>()?;
 
-    Ok(ValueOf::alloc_dict(heap, deps))
+    Ok(heap.alloc(AllocDict(deps)))
 }
 
 starlark::methods_static!(BXL_ACTIONS_METHODS = bxl_actions_methods);

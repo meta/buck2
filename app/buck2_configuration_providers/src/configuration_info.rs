@@ -33,6 +33,7 @@ use starlark::values::Trace;
 use starlark::values::Value;
 use starlark::values::ValueOf;
 use starlark::values::ValueTyped;
+use starlark::values::dict::AllocDict;
 use starlark::values::dict::DictType;
 use starlark::values::none::NoneOr;
 use starlark::values::string::StarlarkStr;
@@ -112,9 +113,9 @@ impl<'v> ConfigurationInfo<'v> {
             (constraint_setting_label, constraint_value)
         });
         ConfigurationInfo {
-            constraints: ValueOf::alloc_dict(heap, constraints),
-            values: ValueOf::alloc_dict(heap, []),
-            root_values: ValueOf::alloc_dict(heap, []),
+            constraints: heap.alloc(AllocDict(constraints)),
+            values: heap.alloc(AllocDict::empty()),
+            root_values: heap.alloc(AllocDict::empty()),
         }
     }
 }
@@ -164,17 +165,16 @@ fn copy_constraints<'v>(
         }
         entries.push((setting, value));
     }
-    Ok(ValueOf::alloc_dict(heap, entries))
+    Ok(heap.alloc(AllocDict(entries)))
 }
 
 fn copy_dict<'v, K: StarlarkTypeExpr<'v>, V: StarlarkTypeExpr<'v>>(
     dict: ValueOf<'v, DictType<K, V>>,
     heap: Heap<'v>,
 ) -> starlark::Result<ValueOf<'v, DictType<K, V>>> {
-    Ok(ValueOf::alloc_dict(
-        heap,
+    Ok(heap.alloc(AllocDict(
         dict.iter().collect::<starlark::Result<Vec<_>>>()?,
-    ))
+    )))
 }
 
 #[starlark_module]
@@ -418,12 +418,10 @@ mod tests {
     fn to_configuration_data_rejects_root_buckconfigs_with_clear_error() {
         Heap::temp(|heap| {
             let info = ConfigurationInfo {
-                constraints: ValueOf::alloc_dict(heap, []),
-                values: ValueOf::alloc_dict(heap, []),
-                root_values: ValueOf::alloc_dict(
-                    heap,
-                    [(heap.alloc("apple.key"), heap.alloc("value"))],
-                ),
+                constraints: heap.alloc(AllocDict::empty()),
+                values: heap.alloc(AllocDict::empty()),
+                root_values: heap
+                    .alloc(AllocDict([(heap.alloc("apple.key"), heap.alloc("value"))])),
             };
 
             let Err(err) = info.to_configuration_data() else {

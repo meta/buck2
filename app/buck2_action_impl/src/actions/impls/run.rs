@@ -140,6 +140,7 @@ use starlark::values::Trace;
 use starlark::values::Value;
 use starlark::values::ValueOf;
 use starlark::values::ValueTyped;
+use starlark::values::dict::AllocDict;
 use starlark::values::dict::DictType;
 use starlark::values::starlark_value;
 use starlark::values::string::StarlarkStr;
@@ -1818,12 +1819,11 @@ impl Action for RunAction {
             artifact_value_dict.push((artifact, artifact_value));
         }
 
-        Ok(Some(ValueOf::alloc_dict(
-            heap,
+        Ok(Some(heap.alloc(AllocDict(
             artifact_value_dict.into_iter().map(|(artifact, value)| {
                 (ValueOf::alloc(heap, artifact), ValueOf::alloc(heap, value))
             }),
-        )))
+        ))))
     }
 
     async fn execute(

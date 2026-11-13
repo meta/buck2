@@ -168,9 +168,9 @@ impl<'v> DefaultInfo<'v> {
 
     pub(crate) fn testing_empty(heap: FrozenHeap<'v>) -> ValueOf<'v, DefaultInfo<'v>> {
         heap.alloc(DefaultInfo {
-            sub_targets: ValueOf::new_unchecked(heap.alloc(AllocDict::EMPTY).to_value()),
-            default_outputs: ValueOf::new_unchecked(heap.alloc(AllocList::EMPTY).to_value()),
-            other_outputs: ValueOf::new_unchecked(heap.alloc(AllocList::EMPTY).to_value()),
+            sub_targets: ValueOf::empty_dict(),
+            default_outputs: ValueOf::empty_list(),
+            other_outputs: ValueOf::empty_list(),
         })
     }
 

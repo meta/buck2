@@ -25,6 +25,7 @@ use buck2_interpreter_for_build::interpreter::globals::starlark_library_extensio
 use buck2_server_ctx::ctx::ServerCommandContextTrait;
 use dice::DiceTransaction;
 use starlark::docs::DocItem;
+use starlark::docs::DocString;
 use starlark::docs::multipage::DocModuleInfo;
 use starlark::docs::multipage::render_markdown_multipage;
 use starlark::environment::Globals;
@@ -97,9 +98,18 @@ pub(crate) async fn docs_starlark_builtins(
         .build()
         .documentation();
 
-    let Some(DocItem::Module(bxl)) = bxl.members.shift_remove("bxl") else {
+    let Some(DocItem::Module(mut bxl)) = bxl.members.shift_remove("bxl") else {
         return Err(internal_error!("bxl namespace should exist"));
     };
+
+    bxl.docs = Some(DocString {
+        summary: "APIs exposed by the `bxl` global object in BXL files.".to_owned(),
+        details: Some(
+            "Every BXL file has access to the `bxl` global object. Its members are called as `bxl.<member>`, for example `bxl.main(...)`."
+                .to_owned(),
+        ),
+        examples: None,
+    });
 
     let modules_infos = vec![
         DocModuleInfo {

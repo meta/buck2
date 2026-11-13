@@ -66,6 +66,9 @@ pub(crate) fn register_bxl_prefixed_main_function(builder: &mut GlobalsBuilder) 
 
 #[starlark_module]
 pub(crate) fn register_bxl_main_function(builder: &mut GlobalsBuilder) {
+    /// Declares the entry point for a BXL script.
+    ///
+    /// `bxl.main` is equivalent to the legacy top-level `bxl_main` function.
     fn main<'v>(
         #[starlark(require = named)] r#impl: StarlarkCallable<'v>,
         #[starlark(require = named)] cli_args: ValueOf<'v, DictType<&'v str, CliArgs>>,

@@ -159,17 +159,6 @@ impl<Node: QueryTarget + 'static> IsStaticType for StarlarkTargetSet<Node> {
     type Reinfect<'lt> = Self;
 }
 
-impl<Node: QueryTarget + AllocNode> StarlarkTargetSet<Node> {
-    pub(crate) fn iter<'a, 'v>(&'a self, heap: Heap<'v>) -> impl Iterator<Item = Value<'v>> + 'a
-    where
-        'v: 'a,
-    {
-        self.0
-            .iter()
-            .map(move |target_node| target_node.dupe().alloc(heap))
-    }
-}
-
 impl<'v, Node: QueryTarget> Freeze<'v> for StarlarkTargetSet<Node> {
     type Frozen<'fv> = StarlarkTargetSet<Node>;
 
@@ -235,7 +224,7 @@ where
     }
 
     fn iterate_collect(&self, heap: Heap<'v>) -> starlark::Result<Vec<Value<'v>>> {
-        Ok(self.iter(heap).collect())
+        Ok(Node::alloc_all(self.0.iter(), heap))
     }
 
     fn at(&self, index: Value<'v>, heap: Heap<'v>) -> starlark::Result<Value<'v>> {

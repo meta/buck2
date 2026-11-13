@@ -1,0 +1,13 @@
+load("//:rules.bzl", "analysis_node")
+
+[
+    analysis_node(
+        name = "fan_{}".format(i),
+    )
+    for i in range(40)
+]
+
+analysis_node(
+    name = "fan_root",
+    deps = [":fan_{}".format(i) for i in range(40)],
+)

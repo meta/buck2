@@ -15,6 +15,7 @@ use std::hash::Hasher;
 use std::iter;
 use std::sync::Arc;
 use std::sync::LazyLock;
+use std::sync::Mutex;
 
 use allocative::Allocative;
 use buck2_core::build_file_path::BuildFilePath;
@@ -41,6 +42,7 @@ use buck2_hash::BuckFixedSortedMap;
 use buck2_hash::BuckMutInsertionSet;
 use buck2_util::arc_str::ArcStr;
 use dupe::Dupe;
+use dupe::IterDupedExt;
 use either::Either;
 use mini_vec::MiniBoxSlice;
 use pagable::DeferredValue;
@@ -528,6 +530,88 @@ impl ConfiguredTargetNode {
     /// allocation) and their bodies are equal. Fails if a body is needed and cannot be read.
     pub fn try_eq(&self, other: &Self) -> buck2_error::Result<bool> {
         self.0.try_eq(&other.0)
+    }
+}
+
+/// Reads bodies ahead of a caller that works through an ordered collection of nodes and reads
+/// the bodies of some of them, such as a script looping over a target set.
+///
+/// When the caller asks for a body that is not in memory, the bodies of the nodes after it are
+/// read with it, several at a time ([`ConfiguredTargetNode::prefetch_bodies`]). How many
+/// depends on what the caller did with the last such read:
+///
+/// - The first covers a few nodes.
+/// - A caller that asks next for the body of the node where the last one ended is working
+///   through the nodes, so the next covers twice as many. It soon finds the bodies ahead of
+///   it in memory.
+/// - A caller that asks for a body anywhere else skipped nodes, and may skip those after it
+///   too, so the next covers a few nodes again. A caller that reads the body of one node in
+///   many has that few bodies read for each one it uses, not all of them.
+///
+/// A caller that stops early has had about as many bodies read again as it used; one that
+/// asks for no body causes no read.
+#[derive(Debug, Allocative)]
+pub struct ConfiguredTargetNodeBodyReadAhead {
+    nodes: Vec<ConfiguredTargetNode>,
+    #[allocative(skip)]
+    last: Mutex<LastReadAhead>,
+}
+
+/// The last read of bodies ahead of a caller: the index after the last node it covered, and
+/// how many nodes it covered. Both 0 before the first.
+#[derive(Debug, Default)]
+struct LastReadAhead {
+    end: usize,
+    window: usize,
+}
+
+impl ConfiguredTargetNodeBodyReadAhead {
+    const FIRST_WINDOW: usize = 16;
+
+    pub fn new(nodes: Vec<ConfiguredTargetNode>) -> Self {
+        Self {
+            nodes,
+            last: Mutex::default(),
+        }
+    }
+
+    /// A read-ahead over `nodes`, or `None` if the body of every one of them is in memory:
+    /// there is then nothing to read ahead, and no reason to hold the nodes.
+    pub fn if_any_body_unread<'a>(
+        nodes: impl Iterator<Item = &'a ConfiguredTargetNode> + Clone,
+    ) -> Option<Self> {
+        nodes
+            .clone()
+            .any(|node| !node.0.body.0.is_resolved())
+            .then(|| Self::new(nodes.duped().collect()))
+    }
+
+    pub fn nodes(&self) -> &[ConfiguredTargetNode] {
+        &self.nodes
+    }
+
+    /// The body of the node at `index`. If it is not in memory, it is read together with the
+    /// bodies of the nodes after it.
+    pub fn body(&self, index: usize) -> buck2_error::Result<ConfiguredTargetNodeBodyRef<'_>> {
+        let node = &self.nodes[index];
+        if !node.0.body.0.is_resolved() {
+            let end = {
+                let mut last = self
+                    .last
+                    .lock()
+                    .expect("read-ahead state should not be poisoned");
+                let reads_on = last.window > 0 && index == last.end;
+                last.window = if reads_on {
+                    last.window.saturating_mul(2)
+                } else {
+                    Self::FIRST_WINDOW
+                };
+                last.end = index.saturating_add(last.window).min(self.nodes.len());
+                last.end
+            };
+            ConfiguredTargetNode::prefetch_bodies(&self.nodes[index..end])?;
+        }
+        node.body()
     }
 }
 

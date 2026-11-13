@@ -11,6 +11,7 @@
 use buck2_build_api::actions::query::ActionQueryNode;
 use buck2_node::nodes::configured::ConfiguredTargetNode;
 use buck2_node::nodes::unconfigured::TargetNode;
+use dupe::Dupe;
 use starlark::typing::Ty;
 use starlark::values::Heap;
 use starlark::values::StarlarkTypeExpr;
@@ -26,6 +27,17 @@ pub(crate) trait AllocNode {
     fn starlark_ty() -> Ty;
 
     fn alloc(self, heap: Heap<'_>) -> Value<'_>;
+
+    /// The values of `nodes`, the nodes of a target set a script is iterating, in order.
+    fn alloc_all<'a, 'v>(
+        nodes: impl Iterator<Item = &'a Self> + Clone,
+        heap: Heap<'v>,
+    ) -> Vec<Value<'v>>
+    where
+        Self: Dupe + 'a,
+    {
+        nodes.map(|node| node.dupe().alloc(heap)).collect()
+    }
 }
 
 impl AllocNode for TargetNode {
@@ -45,8 +57,17 @@ impl AllocNode for ConfiguredTargetNode {
     }
 
     fn alloc(self, heap: Heap<'_>) -> Value<'_> {
-        heap.alloc_representation(StarlarkConfiguredTargetNode(self))
+        heap.alloc_representation(StarlarkConfiguredTargetNode::new(self))
             .to_value()
+    }
+
+    fn alloc_all<'a, 'v>(
+        nodes: impl Iterator<Item = &'a Self> + Clone,
+        heap: Heap<'v>,
+    ) -> Vec<Value<'v>> {
+        StarlarkConfiguredTargetNode::all_in_set(nodes)
+            .map(|node| heap.alloc_representation(node).to_value())
+            .collect()
     }
 }
 

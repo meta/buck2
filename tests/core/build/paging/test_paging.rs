@@ -618,6 +618,49 @@ async fn test_page_out_bxl_dynamic_callback_after_page_in_True(buck: &Buck) -> a
     page_out_bxl_dynamic_callback_after_page_in(buck, true).await
 }
 
+async fn bxl_reads_attrs_of_paged_out_target_set(
+    buck: &Buck,
+    defer_field_reads: bool,
+) -> anyhow::Result<()> {
+    hydration_settings(buck, &[("defer_field_reads", Bool(defer_field_reads))])?;
+    // `node_attrs.bxl` loops over a set of 41 configured nodes and reads attributes of each.
+    let resident = buck
+        .bxl(&["//node_attrs.bxl:main", "--", "--run", "resident"])
+        .await?;
+    assert_eq!(resident.stdout.lines().count(), 41, "{}", resident.stdout);
+    assert!(
+        resident.stdout.contains("root//fan:fan_root fan_root 40"),
+        "{}",
+        resident.stdout
+    );
+
+    buck.debug(&["hydration", "page-out"]).await?;
+    assert!(paged_out_count(buck).await? > 0);
+
+    // The same loop over nodes read back from storage sees the same attributes.
+    let paged = buck
+        .bxl(&["//node_attrs.bxl:main", "--", "--run", "paged"])
+        .await?;
+    assert!(
+        paged_in_count(&paged)? > 0,
+        "the second run reads the nodes back from storage"
+    );
+    assert_eq!(paged.stdout, resident.stdout);
+    Ok(())
+}
+
+#[buck_test(data_dir = "paging", write_invocation_record = true)]
+#[expect(non_snake_case, reason = "the Python harness's name for the case")]
+async fn test_bxl_reads_attrs_of_paged_out_target_set_False(buck: &Buck) -> anyhow::Result<()> {
+    bxl_reads_attrs_of_paged_out_target_set(buck, false).await
+}
+
+#[buck_test(data_dir = "paging", write_invocation_record = true)]
+#[expect(non_snake_case, reason = "the Python harness's name for the case")]
+async fn test_bxl_reads_attrs_of_paged_out_target_set_True(buck: &Buck) -> anyhow::Result<()> {
+    bxl_reads_attrs_of_paged_out_target_set(buck, true).await
+}
+
 async fn page_in_shared_anon_target(buck: &Buck, defer_field_reads: bool) -> anyhow::Result<()> {
     hydration_settings(buck, &[("defer_field_reads", Bool(defer_field_reads))])?;
     // Bound post-page-out commands because the old typetag mismatch hung hydration.

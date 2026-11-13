@@ -183,7 +183,7 @@ pub(crate) fn bxl_context_methods(builder: &mut MethodsBuilder) {
                         if let Some(node) = result.iter().next() {
                             Ok(Either::Left(NoneOr::Other(ValueOf::alloc(
                                 heap,
-                                StarlarkConfiguredTargetNode(node.dupe()),
+                                StarlarkConfiguredTargetNode::new(node.dupe()),
                             ))))
                         } else {
                             Ok(Either::Left(NoneOr::None))

@@ -571,7 +571,7 @@ impl SingleOrCompatibleConfiguredTargets {
     ) -> buck2_error::Result<Value<'v>> {
         match self {
             SingleOrCompatibleConfiguredTargets::Single(node) => Ok(heap
-                .alloc_representation(StarlarkConfiguredTargetNode(node))
+                .alloc_representation(StarlarkConfiguredTargetNode::new(node))
                 .to_value()),
             SingleOrCompatibleConfiguredTargets::Compatibles(compatibles) => {
                 let target_set = filter_incompatible(compatibles, bxl_eval_extra)?;

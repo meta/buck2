@@ -1,0 +1,29 @@
+# Copyright (c) Meta Platforms, Inc. and affiliates.
+#
+# This source code is dual-licensed under either the MIT license found in the
+# LICENSE-MIT file in the root directory of this source tree or the Apache
+# License, Version 2.0 found in the LICENSE-APACHE file in the root directory
+# of this source tree. You may select, at your option, one of the
+# above-listed licenses.
+
+def _main(ctx: bxl.Context):
+    # `--run` is not read. It makes each run a different BXL, so that the script runs again.
+    lines = []
+    for node in ctx.cquery().deps("root//fan:fan_root"):
+        attrs = node.attrs_lazy()
+        lines.append(
+            "{} {} {}".format(
+                node.label.raw_target(),
+                attrs.get("name").value(),
+                len(attrs.get("deps").value()),
+            )
+        )
+    for line in sorted(lines):
+        ctx.output.print(line)
+
+main = bxl_main(
+    cli_args = {
+        "run": cli_args.string(),
+    },
+    impl = _main,
+)

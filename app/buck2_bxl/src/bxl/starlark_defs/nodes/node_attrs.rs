@@ -64,7 +64,7 @@ impl NodeAttributeGetter for StarlarkTargetNode {
 
 impl NodeAttributeGetter for StarlarkConfiguredTargetNode {
     fn get_attr<'v>(&self, key: &str, heap: Heap<'v>) -> buck2_error::Result<NoneOr<Value<'v>>> {
-        let node = self.0.body()?;
+        let node = self.body()?;
         let pkg = PackageLabelOption::PackageLabel(node.label().pkg());
         match node.get(key, AttrInspectOptions::All) {
             Some(attr) => Ok(NoneOr::Other(attr.value.to_value(pkg, heap)?)),
@@ -76,7 +76,7 @@ impl NodeAttributeGetter for StarlarkConfiguredTargetNode {
         &self,
         heap: Heap<'v>,
     ) -> buck2_error::Result<BuckMutInsertionMap<StringValue<'v>, Value<'v>>> {
-        let node = self.0.body()?;
+        let node = self.body()?;
         let pkg = PackageLabelOption::PackageLabel(node.label().pkg());
         let attrs_iter = node.attrs(AttrInspectOptions::All);
         attrs_iter
@@ -90,6 +90,6 @@ impl NodeAttributeGetter for StarlarkConfiguredTargetNode {
 
     fn has_attr(&self, key: &str) -> buck2_error::Result<bool> {
         // attr coercion here is somewhat expensive, we need a more efficient way to check if an attr exists
-        Ok(self.0.body()?.get(key, AttrInspectOptions::All).is_some())
+        Ok(self.body()?.get(key, AttrInspectOptions::All).is_some())
     }
 }

@@ -361,6 +361,184 @@ fn prefetch_bodies_leaves_an_unreadable_body_for_body_to_report() -> buck2_error
     Ok(())
 }
 
+/// 200 restored nodes with no body in memory, behind a read-ahead.
+fn restored_read_ahead(probe: &Probe) -> buck2_error::Result<ConfiguredTargetNodeBodyReadAhead> {
+    let deps: Vec<_> = (0..200)
+        .map(|i| node(&format!("cell//pkg:dep{i}"), &format!("dep{i}"), Vec::new()))
+        .collect();
+    let key = probe.store(&node("cell//pkg:root", "root", deps))?;
+    let restored: ConfiguredTargetNode = probe.restore_fresh(key)?;
+    assert!(!restored.deps().iter().any(body_is_resident));
+    Ok(ConfiguredTargetNodeBodyReadAhead::new(
+        restored.deps().to_vec(),
+    ))
+}
+
+/// How many of the first nodes have their body in memory, checking no later node does.
+fn resident_prefix(read_ahead: &ConfiguredTargetNodeBodyReadAhead) -> usize {
+    let nodes = read_ahead.nodes();
+    let resident = nodes
+        .iter()
+        .take_while(|node| body_is_resident(node))
+        .count();
+    assert!(
+        !nodes[resident..].iter().any(body_is_resident),
+        "bodies are read in one run from the front"
+    );
+    resident
+}
+
+#[test]
+fn read_ahead_reads_twice_as_many_bodies_each_time_it_runs_out() -> buck2_error::Result<()> {
+    let probe = Probe::new(true);
+    let read_ahead = restored_read_ahead(&probe)?;
+
+    // What a loop over the nodes that reads every body sees: (index of a body that was not
+    // in memory, bodies in memory after reading it).
+    let mut misses = Vec::new();
+    for index in 0..read_ahead.nodes().len() {
+        let missed = !body_is_resident(&read_ahead.nodes()[index]);
+        let value = read_ahead
+            .body(index)?
+            .get("value", AttrInspectOptions::All)
+            .expect("every probe node has `value`")
+            .value;
+        assert_eq!(value, value_attr(&read_ahead.nodes()[index])?);
+        if missed {
+            misses.push((index, resident_prefix(&read_ahead)));
+        }
+    }
+    assert_eq!(misses, [(0, 16), (16, 48), (48, 112), (112, 200)]);
+    Ok(())
+}
+
+#[test]
+fn read_ahead_is_made_only_for_nodes_with_a_body_left_to_read() -> buck2_error::Result<()> {
+    let built: Vec<_> = (0..4)
+        .map(|i| node(&format!("cell//pkg:dep{i}"), &format!("dep{i}"), Vec::new()))
+        .collect();
+    assert!(ConfiguredTargetNodeBodyReadAhead::if_any_body_unread(built.iter()).is_none());
+
+    let probe = Probe::new(true);
+    let restored = restored_read_ahead(&probe)?;
+    let nodes = restored.nodes();
+    let read_ahead = ConfiguredTargetNodeBodyReadAhead::if_any_body_unread(nodes.iter())
+        .expect("no body of these nodes is in memory");
+    assert_eq!(read_ahead.nodes().len(), nodes.len());
+
+    // One unread body is enough, and none is too few.
+    ConfiguredTargetNode::prefetch_bodies(&nodes[..nodes.len() - 1])?;
+    assert!(ConfiguredTargetNodeBodyReadAhead::if_any_body_unread(nodes.iter()).is_some());
+    ConfiguredTargetNode::prefetch_bodies(nodes)?;
+    assert!(ConfiguredTargetNodeBodyReadAhead::if_any_body_unread(nodes.iter()).is_none());
+    Ok(())
+}
+
+#[test]
+fn read_ahead_reads_nothing_until_a_body_is_asked_for() -> buck2_error::Result<()> {
+    let probe = Probe::new(true);
+    let read_ahead = restored_read_ahead(&probe)?;
+    let reads_before = probe.storage.reads();
+
+    // A loop that only looks at headers.
+    for node in read_ahead.nodes() {
+        assert_eq!(node.rule_kind(), RuleKind::Normal);
+        assert!(node.label().name().as_str().starts_with("dep"));
+    }
+    assert_eq!(probe.storage.reads(), reads_before);
+    assert_eq!(resident_prefix(&read_ahead), 0);
+
+    // One body from the middle: it and the few after it are read, nothing before it.
+    read_ahead.body(100)?;
+    let nodes = read_ahead.nodes();
+    assert!(!nodes[..100].iter().any(body_is_resident));
+    assert!(nodes[100..116].iter().all(body_is_resident));
+    assert!(!nodes[116..].iter().any(body_is_resident));
+
+    // A body that is in memory is served without a read.
+    let reads_before = probe.storage.reads();
+    read_ahead.body(105)?;
+    assert_eq!(probe.storage.reads(), reads_before);
+
+    // A body from somewhere else does not continue the read before it: as few are read.
+    read_ahead.body(0)?;
+    assert!(nodes[..16].iter().all(body_is_resident));
+    assert!(!nodes[16..100].iter().any(body_is_resident));
+    Ok(())
+}
+
+#[test]
+fn read_ahead_stays_small_for_a_caller_that_reads_one_body_in_many() -> buck2_error::Result<()> {
+    let probe = Probe::new(true);
+    let read_ahead = restored_read_ahead(&probe)?;
+    let nodes = read_ahead.nodes();
+
+    // What a loop over the nodes that reads the body of every 25th sees.
+    for index in (0..nodes.len()).step_by(25) {
+        assert!(!body_is_resident(&nodes[index]), "node {index}");
+        read_ahead.body(index)?;
+    }
+    // 16 bodies for each one it used, where reading twice as many each time would have read
+    // 162 of the 200 for the 8 it used.
+    for (index, node) in nodes.iter().enumerate() {
+        assert_eq!(body_is_resident(node), index % 25 < 16, "node {index}");
+    }
+    Ok(())
+}
+
+#[test]
+fn read_ahead_starts_small_after_a_skipped_node_and_grows_again() -> buck2_error::Result<()> {
+    let probe = Probe::new(true);
+    let read_ahead = restored_read_ahead(&probe)?;
+    let nodes = read_ahead.nodes();
+    let resident = || -> Vec<usize> {
+        (0..nodes.len())
+            .filter(|index| body_is_resident(&nodes[*index]))
+            .collect()
+    };
+
+    read_ahead.body(0)?;
+    read_ahead.body(16)?;
+    assert_eq!(resident(), (0..48).collect::<Vec<_>>());
+
+    // The caller leaves out node 48, where the last read ended.
+    read_ahead.body(49)?;
+    assert_eq!(resident(), (0..48).chain(49..65).collect::<Vec<_>>());
+
+    // It reads on from where that one ended.
+    read_ahead.body(65)?;
+    assert_eq!(resident(), (0..48).chain(49..97).collect::<Vec<_>>());
+    Ok(())
+}
+
+#[test]
+fn read_ahead_fails_only_the_read_of_an_unreadable_body() -> buck2_error::Result<()> {
+    let probe = Probe::new(true);
+    let deps: Vec<_> = (0..8)
+        .map(|i| node(&format!("cell//pkg:dep{i}"), &format!("dep{i}"), Vec::new()))
+        .collect();
+    let dep_key = probe.store(&deps[5])?;
+    let key = probe.store(&node("cell//pkg:root", "root", deps))?;
+    probe.storage.fail_reads_of(Some(probe.body_key(dep_key)?));
+    let restored: ConfiguredTargetNode = probe.restore_fresh(key)?;
+    let read_ahead = ConfiguredTargetNodeBodyReadAhead::new(restored.deps().to_vec());
+
+    // The unreadable body is one of those read with this one. That is not this read's
+    // failure.
+    read_ahead.body(0)?;
+    for (i, dep) in restored.deps().iter().enumerate() {
+        assert_eq!(body_is_resident(dep), i != 5, "dep{i}");
+    }
+    read_ahead.body(4)?;
+    let error = read_ahead.body(5).expect_err("this one is unreadable");
+    assert!(
+        format!("{error:#}")
+            .contains("Failed to restore the body of configured target node `cell//pkg:dep5"),
+        "{error:#}"
+    );
+    Ok(())
+}
+
 #[test]
 fn an_unreadable_body_is_an_error_and_leaves_the_header_usable() -> buck2_error::Result<()> {
     let probe = Probe::new(true);

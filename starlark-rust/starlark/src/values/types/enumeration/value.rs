@@ -38,6 +38,7 @@ use crate::values::StarlarkValue;
 use crate::values::UnpackValue;
 use crate::values::Value;
 use crate::values::enumeration::enum_type::AnyEnumType;
+use crate::values::enumeration::enum_type::EnumTypeView;
 use crate::values::types::type_instance_id::TypeInstanceId;
 
 /// A value from an enumeration.
@@ -94,7 +95,7 @@ impl<'v> EnumValue<'v> {
 
     fn get_enum_type(&self) -> AnyEnumType<'v> {
         // Safe to unwrap because we always ensure typ is EnumType
-        AnyEnumType::unpack_value_err(self.typ).unwrap()
+        EnumTypeView::unpack_value_err(self.typ).unwrap().as_dyn()
     }
 }
 

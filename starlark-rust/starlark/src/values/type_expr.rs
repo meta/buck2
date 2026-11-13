@@ -170,7 +170,6 @@ macro_rules! union_payload_is_self {
 
 union_payload_is_self! {
     impl['v] Value<'v>;
-    impl['v] crate::values::enumeration::AnyEnumType<'v>;
     impl['v] crate::values::typing::TypeType;
     impl['v, P: crate::values::typing::StarlarkCallableParamSpec, R: StarlarkTypeExpr<'static>]
         crate::values::typing::StarlarkCallable<'v, P, R>;

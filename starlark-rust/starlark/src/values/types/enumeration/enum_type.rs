@@ -51,7 +51,6 @@ use crate::typing::user::TyUser;
 use crate::typing::user::TyUserFields;
 use crate::typing::user::TyUserIndex;
 use crate::typing::user::TyUserParams;
-use crate::values::Demand;
 use crate::values::Freeze;
 use crate::values::FreezeResult;
 use crate::values::Freezer;
@@ -59,9 +58,7 @@ use crate::values::Heap;
 use crate::values::StarlarkType;
 use crate::values::StarlarkValue;
 use crate::values::StringValue;
-use crate::values::UnpackValue;
 use crate::values::Value;
-use crate::values::ValueOf;
 use crate::values::ValueTyped;
 use crate::values::dict::value::ValueStr;
 use crate::values::enumeration::matcher::EnumTypeMatcher;
@@ -70,8 +67,6 @@ use crate::values::enumeration::value::EnumValue;
 use crate::values::function::FUNCTION_TYPE;
 use crate::values::index::convert_index;
 use crate::values::list::AllocList;
-use crate::values::type_expr::StarlarkTypeExpr;
-use crate::values::type_expr::StarlarkTypeExprStable;
 use crate::values::types::type_instance_id::StarlarkTypeIdDomain;
 use crate::values::types::type_instance_id::TypeInstanceId;
 use crate::values::typing::type_compiled::type_matcher_factory::TypeMatcherFactory;
@@ -337,32 +332,6 @@ impl<'v, V: EnumVariant + ?Sized> EnumTypeGen<'v, V> {
 
 starlark::methods_static!(ENUM_TYPE_METHODS = enum_type_methods);
 
-pub(crate) type AnyEnumType<'v> = &'v EnumTypeGen<'v, dyn EnumVariant>;
-
-impl<'v> StarlarkTypeExpr<'v> for AnyEnumType<'v> {
-    type Get = Self;
-
-    fn starlark_type_repr() -> Ty {
-        <FrozenEnumType<'v> as StarlarkValue<'v>>::get_type_starlark_repr()
-    }
-
-    fn get(value: Value<'v>) -> Option<Self> {
-        value.request_value()
-    }
-}
-
-impl<'v> StarlarkTypeExprStable<'v> for AnyEnumType<'v> {}
-
-impl<'v> UnpackValue<'v> for AnyEnumType<'v> {
-    type Type = Self;
-    type Error = std::convert::Infallible;
-
-    #[inline]
-    fn unpack(_value: ValueOf<'v, Self>, get: Self) -> Result<Self, Self::Error> {
-        Ok(get)
-    }
-}
-
 /// An enum type in either of its representations.
 #[derive(Debug, Clone, Copy, StarlarkRepresentations)]
 pub(crate) enum EnumTypeView<'v> {
@@ -370,8 +339,11 @@ pub(crate) enum EnumTypeView<'v> {
     Unfrozen(ValueTyped<'v, EnumType<'v>>),
 }
 
+/// The data of an enum type, whichever representation holds it.
+pub(crate) type AnyEnumType<'v> = &'v EnumTypeGen<'v, dyn EnumVariant>;
+
 impl<'v> EnumTypeView<'v> {
-    fn as_dyn(self) -> AnyEnumType<'v> {
+    pub(crate) fn as_dyn(self) -> AnyEnumType<'v> {
         match self {
             EnumTypeView::Frozen(x) => x.as_ref(),
             EnumTypeView::Unfrozen(x) => x.as_ref(),
@@ -467,35 +439,27 @@ impl<'v> StarlarkType<'v> for EnumTypeView<'v> {
 #[starlark_value]
 impl<'v> StarlarkValue<'v> for EnumType<'v> {
     type Type = EnumTypeView<'v>;
-
-    fn provide(&'v self, demand: &mut Demand<'_, 'v>) {
-        demand.provide_value::<AnyEnumType<'v>>(self);
-    }
 }
 
 #[starlark_value(alloc = frozen)]
 impl<'v> StarlarkValue<'v> for FrozenEnumType<'v> {
     type Type = EnumTypeView<'v>;
-
-    fn provide(&'v self, demand: &mut Demand<'_, 'v>) {
-        demand.provide_value::<AnyEnumType<'v>>(self);
-    }
 }
 
 #[starlark_module]
 fn enum_type_methods(builder: &mut MethodsBuilder) {
     #[starlark(attribute)]
-    fn r#type<'v>(this: AnyEnumType<'v>, heap: Heap<'_>) -> starlark::Result<Value<'v>> {
-        match this.ty_enum_data() {
+    fn r#type<'v>(this: EnumTypeView<'v>, heap: Heap<'_>) -> starlark::Result<Value<'v>> {
+        match this.as_dyn().ty_enum_data() {
             Some(ty_enum_type) => Ok(heap.alloc(ty_enum_type.name.as_str()).to_value()),
             None => Ok(heap.alloc(EnumValue::TYPE).to_value()),
         }
     }
 
     fn values<'v>(
-        this: AnyEnumType<'v>,
+        this: EnumTypeView<'v>,
     ) -> starlark::Result<AllocList<impl Iterator<Item = Value<'v>>>> {
-        Ok(AllocList(this.elements().keys().copied()))
+        Ok(AllocList(this.as_dyn().elements().keys().copied()))
     }
 }
 

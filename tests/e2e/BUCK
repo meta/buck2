@@ -25,11 +25,11 @@ buck2_e2e_test(
     srcs = ["test_prelude_tools.rs"],
     data_dir = "test_prelude_tools_data",
     # The clang of the fbcode platform, for the tests that compile with a real clang; they run
-    # on Linux only.
+    # on Linux only. Open source has none: the tests take clang from `PATH` there.
     env = {
-        "CLANG": select({
-            "DEFAULT": "",
-            "ovr_config//os:linux": "$(location fbcode//third-party-buck/platform010/build/llvm-fb/21:bin/clang)",
-        }),
+        # @oss-disable[end= ]: "CLANG": select({
+            # @oss-disable[end= ]: "DEFAULT": "",
+            # @oss-disable[end= ]: "ovr_config//os:linux": "$(location fbcode//third-party-buck/platform010/build/llvm-fb/21:bin/clang)",
+        # @oss-disable[end= ]: }),
     },
 )

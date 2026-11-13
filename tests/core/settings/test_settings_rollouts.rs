@@ -21,7 +21,10 @@ fn array(value: &Value) -> impl Iterator<Item = &Value> {
 }
 
 // The unknown key below is reported as a soft error.
-#[buck_test(allow_soft_errors = true)]
+#[buck_test(
+    allow_soft_errors = true,
+    meta_only = "settings rollouts, which only Meta's build reads"
+)]
 async fn test_stanza_selection_and_per_key_tolerance(buck: &Buck) -> anyhow::Result<()> {
     let report_before = report(buck).await?;
     let version = array(&report_before["sections"])

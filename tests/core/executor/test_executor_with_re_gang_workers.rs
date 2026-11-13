@@ -16,7 +16,7 @@ use buck2_e2e::utils::read_what_ran;
 use serde_json::Value;
 
 /// Test that a target with two gang workers builds successfully on RE.
-#[buck_test]
+#[buck_test(meta_only = "remote execution")]
 async fn test_target_with_two_gang_workers(buck: &Buck) -> anyhow::Result<()> {
     let result = buck
         .build(&[

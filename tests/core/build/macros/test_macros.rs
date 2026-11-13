@@ -9,6 +9,7 @@
  */
 
 use buck2_e2e::prelude::*;
+use buck2_e2e::utils::is_open_source;
 
 #[buck_test]
 async fn test_run_with_source_macros(buck: &Buck) -> anyhow::Result<()> {
@@ -29,10 +30,16 @@ async fn test_run_with_source_macros(buck: &Buck) -> anyhow::Result<()> {
 
 #[buck_test]
 async fn test_no_dep_in_source(buck: &Buck) {
+    // Open source buck2 rejects the source when it loads the package.
+    let error = if is_open_source() {
+        "Source file `:trivial` does not exist as a member of package `root//dep_as_source`"
+    } else {
+        "File not found: `root//dep_as_source/:trivial`"
+    };
     buck.build(&["//dep_as_source:uses_dep"])
         .await
         .expect_failure()
-        .assert_stderr_matches("File not found: `root//dep_as_source/:trivial`");
+        .assert_stderr_matches(error);
 }
 
 async fn unrecognized_macro_fails_loading(

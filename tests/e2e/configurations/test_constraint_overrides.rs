@@ -218,6 +218,8 @@ async fn test_python_constraint_override_registry(buck: &Buck) -> anyhow::Result
     std::fs::write(
         &config,
         std::fs::read_to_string(&config)?
+            // `config` becomes a cell of its own instead of an alias of the prelude.
+            .replace("  config = prelude\n", "")
             .replace(
                 "  prelude = prelude",
                 "  prelude = prelude\n  config = configuration",

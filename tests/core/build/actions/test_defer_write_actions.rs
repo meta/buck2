@@ -98,7 +98,7 @@ async fn test_the_disk_state_core_keeps_the_content_in_memory(buck: &Buck) -> an
     Ok(())
 }
 
-#[buck_test(write_invocation_record = true)]
+#[buck_test(write_invocation_record = true, meta_only = "remote execution")]
 async fn test_a_deferred_write_is_uploaded_for_a_remote_action(buck: &Buck) -> anyhow::Result<()> {
     let content = random_string();
     let content_config = format!("test.content={content}");

@@ -541,9 +541,12 @@ async fn test_profile_patterns_flame(buck: &Buck, tmp_path: &Path) -> anyhow::Re
     ])
     .await?;
 
-    golden(
-        &profile_pattern_files(tmp_path)?,
-        "profile_patterns_flame.golden",
-    );
+    // A time profile leaves out frames under a millisecond, so whether a `.profile` file has any
+    // data depends on how fast buck2 is: optimized, it usually has none; open source's debug build
+    // has some.
+    let files = profile_pattern_files(tmp_path)?
+        .replace(".profile: True", ".profile: <ANY>")
+        .replace(".profile: False", ".profile: <ANY>");
+    golden(&files, "profile_patterns_flame.golden");
     Ok(())
 }

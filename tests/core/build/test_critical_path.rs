@@ -395,7 +395,7 @@ async fn test_dynamic_input(buck: &Buck) -> anyhow::Result<()> {
     Ok(())
 }
 
-#[buck_test]
+#[buck_test(meta_only = "Meta's invocation metadata")]
 async fn test_critical_path_metadata(buck: &Buck) -> anyhow::Result<()> {
     buck.build(&[
         "//:step_0",
@@ -536,7 +536,7 @@ async fn test_critical_path_top_level_targets(buck: &Buck) -> anyhow::Result<()>
     Ok(())
 }
 
-#[buck_test]
+#[buck_test(meta_only = "tpx: open source's test runner does not list tests before running them")]
 async fn test_critical_path_test_entries(buck: &Buck) -> anyhow::Result<()> {
     buck.test(&["//:long_running_test"]).await?;
 

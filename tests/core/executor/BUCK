@@ -48,7 +48,7 @@ buck2_core_tests(
         "test_outputs_ordering": {
             "deps": ["fbsource//third-party/rust:regex"],
             "env": {
-                "RECLI": "$(location fbsource//xplat/remote_execution/dotslash:recli)",
+                # @oss-disable[end= ]: "RECLI": "$(location fbsource//xplat/remote_execution/dotslash:recli)",
             },
         },
     },

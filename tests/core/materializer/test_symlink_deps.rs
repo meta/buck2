@@ -56,7 +56,7 @@ async fn test_symlinked_dir_to_artifact_across_restart(buck: &Buck) -> anyhow::R
     Ok(())
 }
 
-#[buck_test(skip_for_os = ["windows"])]
+#[buck_test(skip_for_os = ["windows"], meta_only = "remote execution: only remote actions' outputs are materialized lazily")]
 async fn test_restarted_daemon_materializes_symlink_and_its_target(
     buck: &Buck,
 ) -> anyhow::Result<()> {

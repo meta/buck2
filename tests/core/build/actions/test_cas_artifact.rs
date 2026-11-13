@@ -34,7 +34,7 @@ async fn test_cas_artifact_expiration_out_of_range(buck: &Buck) {
         );
 }
 
-#[buck_test]
+#[buck_test(meta_only = "remote execution")]
 async fn test_cas_artifact_missing_digest_is_a_clear_error(buck: &Buck) {
     let content = random_string();
     let digest = format!("{}:{}", sha1_hex(content.as_bytes()), content.len());
@@ -48,7 +48,7 @@ async fn test_cas_artifact_missing_digest_is_a_clear_error(buck: &Buck) {
     .assert_stderr_matches(&not_found(&digest));
 }
 
-#[buck_test]
+#[buck_test(meta_only = "remote execution")]
 async fn test_cas_artifact_from_another_namespace_is_copied_into_the_daemons(
     buck: &Buck,
 ) -> anyhow::Result<()> {
@@ -111,7 +111,7 @@ async fn test_cas_artifact_from_another_namespace_is_copied_into_the_daemons(
     Ok(())
 }
 
-#[buck_test]
+#[buck_test(meta_only = "remote execution")]
 async fn test_cas_artifact_larger_than_an_inline_rpc_is_copied(buck: &Buck) -> anyhow::Result<()> {
     // As above, with a blob well past what any RPC inlines, so the copy has to go through the
     // file-shaped download and upload.
@@ -163,7 +163,7 @@ async fn test_cas_artifact_larger_than_an_inline_rpc_is_copied(buck: &Buck) -> a
     Ok(())
 }
 
-#[buck_test(data_dir = "sha1_under_blake3")]
+#[buck_test(data_dir = "sha1_under_blake3", meta_only = "remote execution")]
 async fn test_cas_artifact_with_a_sha1_digest_reconciles_under_a_blake3_daemon(
     buck: &Buck,
 ) -> anyhow::Result<()> {

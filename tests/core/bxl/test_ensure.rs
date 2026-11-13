@@ -43,7 +43,7 @@ fn test_bxl_artifact_path_cmd_args_helper(
     }
 }
 
-#[buck_test]
+#[buck_test(meta_only = "remote execution: only remote actions' outputs are materialized lazily")]
 async fn test_bxl_ensure_no_materialization(buck: &Buck) -> anyhow::Result<()> {
     let result = buck
         .bxl(&[
@@ -252,7 +252,7 @@ async fn test_bxl_artifact_path_cmd_args(buck: &Buck) -> anyhow::Result<()> {
 }
 
 /// Test that BXL fails when trying to ensure a failed build artifact.
-#[buck_test(allow_soft_errors = true, skip_for_os = ["darwin", "windows"])]
+#[buck_test(allow_soft_errors = true, skip_for_os = ["darwin", "windows"], meta_only = "remote execution")]
 async fn test_bxl_ensure_failures(buck: &Buck, tmp_path: &Path) -> anyhow::Result<()> {
     let report = tmp_path.join("build-report.json");
 

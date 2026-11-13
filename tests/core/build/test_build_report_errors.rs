@@ -148,7 +148,7 @@ fn message_key(error: &Value) -> &str {
         .unwrap_or_else(|| panic!("No `message_content` in {error}"))
 }
 
-#[buck_test]
+#[buck_test(meta_only = "remote execution")]
 async fn test_action_fail_one(buck: &Buck, tmp_path: &Path) -> anyhow::Result<()> {
     build_report_test(
         buck,
@@ -159,7 +159,7 @@ async fn test_action_fail_one(buck: &Buck, tmp_path: &Path) -> anyhow::Result<()
     .await
 }
 
-#[buck_test]
+#[buck_test(meta_only = "remote execution")]
 async fn test_action_fail_two(buck: &Buck, tmp_path: &Path) -> anyhow::Result<()> {
     build_report_test(
         buck,
@@ -170,7 +170,7 @@ async fn test_action_fail_two(buck: &Buck, tmp_path: &Path) -> anyhow::Result<()
     .await
 }
 
-#[buck_test]
+#[buck_test(meta_only = "remote execution")]
 async fn test_action_fail_shared_dep(buck: &Buck, tmp_path: &Path) -> anyhow::Result<()> {
     build_report_test(
         buck,
@@ -181,7 +181,7 @@ async fn test_action_fail_shared_dep(buck: &Buck, tmp_path: &Path) -> anyhow::Re
     .await
 }
 
-#[buck_test]
+#[buck_test(meta_only = "remote execution")]
 async fn test_action_fail_shared_across_targets(
     buck: &Buck,
     tmp_path: &Path,
@@ -217,7 +217,7 @@ async fn test_analysis_fail_multi(buck: &Buck, tmp_path: &Path) -> anyhow::Resul
     .await
 }
 
-#[buck_test]
+#[buck_test(meta_only = "remote execution")]
 async fn test_analysis_and_action(buck: &Buck, tmp_path: &Path) -> anyhow::Result<()> {
     build_report_test(
         buck,
@@ -278,12 +278,12 @@ async fn test_partially_missing(buck: &Buck, tmp_path: &Path) -> anyhow::Result<
     .await
 }
 
-#[buck_test]
+#[buck_test(meta_only = "remote execution")]
 async fn test_one_of_each(buck: &Buck, tmp_path: &Path) -> anyhow::Result<()> {
     build_report_test(buck, tmp_path, "test_one_of_each", &ONE_OF_EACH).await
 }
 
-#[buck_test]
+#[buck_test(meta_only = "remote execution")]
 async fn test_no_terminal_colors(buck: &Buck, tmp_path: &Path) -> anyhow::Result<()> {
     build_report_test(
         buck,
@@ -296,7 +296,7 @@ async fn test_no_terminal_colors(buck: &Buck, tmp_path: &Path) -> anyhow::Result
 
 // TODO fix on windows and mac
 #[cfg(not(any(windows, target_os = "macos")))]
-#[buck_test]
+#[buck_test(meta_only = "remote execution")]
 async fn test_action_fail_with_stdout_stderr(buck: &Buck, tmp_path: &Path) -> anyhow::Result<()> {
     build_report_test(
         buck,
@@ -308,7 +308,7 @@ async fn test_action_fail_with_stdout_stderr(buck: &Buck, tmp_path: &Path) -> an
 }
 
 #[cfg(not(any(windows, target_os = "macos")))]
-#[buck_test]
+#[buck_test(meta_only = "remote execution")]
 async fn test_action_fail_infra(buck: &Buck, tmp_path: &Path) -> anyhow::Result<()> {
     build_report_test(
         buck,
@@ -350,7 +350,7 @@ async fn test_action_fail_many_with_error_handler(
 }
 
 #[cfg(not(any(windows, target_os = "macos")))]
-#[buck_test]
+#[buck_test(meta_only = "remote execution")]
 async fn test_action_fail_one_with_error_handler_no_op(
     buck: &Buck,
     tmp_path: &Path,
@@ -365,7 +365,7 @@ async fn test_action_fail_one_with_error_handler_no_op(
 }
 
 #[cfg(not(any(windows, target_os = "macos")))]
-#[buck_test]
+#[buck_test(meta_only = "remote execution")]
 async fn test_stderr_with_empty_error_diagnostics(buck: &Buck) {
     let result = buck
         .build(&["//fail_action:fail_one_with_error_handler_no_op"])
@@ -379,7 +379,7 @@ async fn test_stderr_with_empty_error_diagnostics(buck: &Buck) {
 }
 
 #[cfg(not(any(windows, target_os = "macos")))]
-#[buck_test]
+#[buck_test(meta_only = "remote execution")]
 async fn test_stderr_with_error_diagnostics(buck: &Buck) {
     let result = buck
         .build(&["//fail_action:error_handler_produced_multiple_categories"])
@@ -393,7 +393,7 @@ async fn test_stderr_with_error_diagnostics(buck: &Buck) {
 }
 
 #[cfg(not(any(windows, target_os = "macos")))]
-#[buck_test]
+#[buck_test(meta_only = "remote execution")]
 async fn test_stderr_with_no_error_diagnostics(buck: &Buck) {
     let result = buck
         .build(&["//fail_action:fail_script"])
@@ -407,7 +407,7 @@ async fn test_stderr_with_no_error_diagnostics(buck: &Buck) {
 }
 
 #[cfg(not(any(windows, target_os = "macos")))]
-#[buck_test]
+#[buck_test(meta_only = "remote execution")]
 async fn test_stderr_could_not_produce_error_diagnostics(buck: &Buck) {
     let result = buck
         .build(&["//fail_action:error_handler_failed"])
@@ -421,7 +421,7 @@ async fn test_stderr_could_not_produce_error_diagnostics(buck: &Buck) {
 }
 
 #[cfg(not(any(windows, target_os = "macos")))]
-#[buck_test]
+#[buck_test(meta_only = "remote execution")]
 async fn test_action_fail_error_handler_with_output_remote_only(
     buck: &Buck,
     tmp_path: &Path,
@@ -457,7 +457,7 @@ async fn test_action_fail_error_handler_with_output_local_only(
 }
 
 #[cfg(not(any(windows, target_os = "macos")))]
-#[buck_test]
+#[buck_test(meta_only = "remote execution")]
 async fn test_action_fail_error_handler_with_output_content_based_path_remote_only(
     buck: &Buck,
     tmp_path: &Path,
@@ -497,7 +497,7 @@ async fn test_action_fail_error_handler_with_output_content_based_path_local_onl
 }
 
 #[cfg(not(any(windows, target_os = "macos")))]
-#[buck_test]
+#[buck_test(meta_only = "remote execution")]
 async fn test_action_fail_error_handler_output_not_written_remote_only(
     buck: &Buck,
     tmp_path: &Path,

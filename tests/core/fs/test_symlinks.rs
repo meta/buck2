@@ -144,7 +144,7 @@ async fn test_symlinks_external(buck: &Buck, tmp_path: &Path) -> anyhow::Result<
     Ok(())
 }
 
-#[buck_test(extra_buck_config = [("buck2", "use_correct_source_symlink_reading", "true")])]
+#[buck_test(extra_buck_config = [("buck2", "use_correct_source_symlink_reading", "true")], meta_only = "remote execution")]
 async fn test_no_read_through_symlinks(buck: &Buck) -> anyhow::Result<()> {
     let res = buck
         .build_without_report(&["//:stat_symlink", "--out", "-", "--remote-only"])
@@ -169,7 +169,7 @@ async fn test_no_read_through_symlinks(buck: &Buck) -> anyhow::Result<()> {
     Ok(())
 }
 
-#[buck_test(extra_buck_config = [("buck2", "use_correct_source_symlink_reading", "true")])]
+#[buck_test(extra_buck_config = [("buck2", "use_correct_source_symlink_reading", "true")], meta_only = "remote execution")]
 async fn test_no_read_through_source_symlinks_to_file(buck: &Buck) -> anyhow::Result<()> {
     let res = buck
         .build_without_report(&["//:stat_symlink", "--out", "-", "--remote-only"])

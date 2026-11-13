@@ -505,26 +505,26 @@ async fn test_basic_incremental_action_local_only_with_content_based_path(
     basic_incremental_action_local_only_helper(buck, true).await
 }
 
-#[buck_test]
+#[buck_test(meta_only = "remote execution")]
 async fn test_incremental_action_from_remote_action(buck: &Buck) -> anyhow::Result<()> {
     incremental_action_from_remote_action_helper(buck, false).await
 }
 
-#[buck_test]
+#[buck_test(meta_only = "remote execution")]
 async fn test_incremental_action_from_remote_action_with_content_based_path(
     buck: &Buck,
 ) -> anyhow::Result<()> {
     incremental_action_from_remote_action_helper(buck, true).await
 }
 
-#[buck_test]
+#[buck_test(meta_only = "remote execution")]
 async fn test_incremental_action_with_non_incremental_remote_action_inbetween(
     buck: &Buck,
 ) -> anyhow::Result<()> {
     incremental_action_with_non_incremental_remote_action_inbetween_helper(buck, false).await
 }
 
-#[buck_test]
+#[buck_test(meta_only = "remote execution")]
 async fn test_incremental_action_with_non_incremental_remote_action_inbetween_with_content_based_path(
     buck: &Buck,
 ) -> anyhow::Result<()> {
@@ -545,24 +545,24 @@ async fn test_incremental_action_with_non_incremental_local_action_inbetween_wit
     incremental_action_with_non_incremental_local_action_inbetween_helper(buck, true).await
 }
 
-#[buck_test]
+#[buck_test(meta_only = "remote execution")]
 async fn test_basic_incremental_action_cached(buck: &Buck) -> anyhow::Result<()> {
     basic_incremental_action_cached_helper(buck, false).await
 }
 
-#[buck_test]
+#[buck_test(meta_only = "remote execution")]
 async fn test_basic_incremental_action_cached_with_content_based_path(
     buck: &Buck,
 ) -> anyhow::Result<()> {
     basic_incremental_action_cached_helper(buck, true).await
 }
 
-#[buck_test]
+#[buck_test(meta_only = "remote execution")]
 async fn test_basic_incremental_action_after_cache_hit(buck: &Buck) -> anyhow::Result<()> {
     basic_incremental_action_after_cache_hit_helper(buck, false).await
 }
 
-#[buck_test]
+#[buck_test(meta_only = "remote execution")]
 async fn test_basic_incremental_action_after_cache_hit_with_content_based_path(
     buck: &Buck,
 ) -> anyhow::Result<()> {
@@ -690,42 +690,42 @@ async fn test_incremental_action_persist_between_daemon_restart_with_content_bas
     incremental_action_persist_between_daemon_restart_helper(buck, true).await
 }
 
-#[buck_test]
+#[buck_test(meta_only = "remote execution")]
 async fn test_unmaterialized_incremental_action_persist_between_daemon_restart(
     buck: &Buck,
 ) -> anyhow::Result<()> {
     unmaterialized_incremental_action_persist_between_daemon_restart_helper(buck, false).await
 }
 
-#[buck_test]
+#[buck_test(meta_only = "remote execution")]
 async fn test_unmaterialized_incremental_action_persist_between_daemon_restart_with_content_based_path(
     buck: &Buck,
 ) -> anyhow::Result<()> {
     unmaterialized_incremental_action_persist_between_daemon_restart_helper(buck, true).await
 }
 
-#[buck_test]
+#[buck_test(meta_only = "remote execution")]
 async fn test_incremental_action_starts_from_all_previous_outputs(
     buck: &Buck,
 ) -> anyhow::Result<()> {
     incremental_action_starts_from_all_previous_outputs_helper(buck, false, false).await
 }
 
-#[buck_test]
+#[buck_test(meta_only = "remote execution")]
 async fn test_incremental_action_starts_from_all_previous_outputs_with_content_based_path(
     buck: &Buck,
 ) -> anyhow::Result<()> {
     incremental_action_starts_from_all_previous_outputs_helper(buck, true, false).await
 }
 
-#[buck_test]
+#[buck_test(meta_only = "remote execution")]
 async fn test_incremental_action_starts_from_all_previous_outputs_after_daemon_restart(
     buck: &Buck,
 ) -> anyhow::Result<()> {
     incremental_action_starts_from_all_previous_outputs_helper(buck, false, true).await
 }
 
-#[buck_test]
+#[buck_test(meta_only = "remote execution")]
 async fn test_incremental_action_starts_from_all_previous_outputs_after_daemon_restart_with_content_based_path(
     buck: &Buck,
 ) -> anyhow::Result<()> {
@@ -761,7 +761,7 @@ async fn test_incremental_action_multi_outputs_with_daemon_restart_and_content_b
 // A previous output fetched for a local run is that run's to write. When the run removes it and
 // fails, the same output from the next remote run still has to reach disk. A content-based
 // output has no twin here: it is read at its content path, which no run writes.
-#[buck_test]
+#[buck_test(meta_only = "remote execution")]
 async fn test_incremental_action_output_removed_by_failed_run(buck: &Buck) -> anyhow::Result<()> {
     let target = "root//:basic_incremental_action";
     let content_based_path = content_based_path(false);

@@ -132,7 +132,7 @@ async fn test_build_modifiers_report(buck: &Buck, tmp_path: &Path) -> anyhow::Re
     .await
 }
 
-#[buck_test]
+#[buck_test(meta_only = "remote execution")]
 async fn test_build_modifiers_report_error_failures_includes_modifiers(
     buck: &Buck,
     tmp_path: &Path,
@@ -162,7 +162,7 @@ async fn test_build_modifiers_report_package_pattern(
     .await
 }
 
-#[buck_test]
+#[buck_test(meta_only = "remote execution")]
 async fn test_build_modifiers_report_recursive_pattern(
     buck: &Buck,
     tmp_path: &Path,

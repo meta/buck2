@@ -16,6 +16,10 @@ use std::process::ExitStatus;
 
 use anyhow::Context;
 
+/// The `--config` value giving `sl commit` a user name, which CI hosts and a new Sapling install
+/// lack.
+pub const SL_USER: &str = "ui.username=buck2 e2e <buck2-e2e@example.com>";
+
 /// Runs `args` in `cwd` and gives its exit status, whatever it is, as `subprocess.run` without
 /// `check`.
 pub async fn run(args: &[&str], cwd: &Path) -> anyhow::Result<ExitStatus> {

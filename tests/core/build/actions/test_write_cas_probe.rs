@@ -87,7 +87,7 @@ async fn written_without_a_probe(buck: &Buck, flags: &[&str]) -> anyhow::Result<
     Ok(())
 }
 
-#[buck_test(write_invocation_record = true)]
+#[buck_test(write_invocation_record = true, meta_only = "remote execution")]
 async fn test_write_whose_content_the_cas_lacks_is_written(buck: &Buck) -> anyhow::Result<()> {
     let content = random_string();
     let content_config = format!("test.content={content}");
@@ -104,7 +104,7 @@ async fn test_write_whose_content_the_cas_lacks_is_written(buck: &Buck) -> anyho
     Ok(())
 }
 
-#[buck_test(write_invocation_record = true)]
+#[buck_test(write_invocation_record = true, meta_only = "remote execution")]
 async fn test_write_whose_content_the_cas_has_is_not_written(buck: &Buck) -> anyhow::Result<()> {
     let content = random_string();
     let content_config = format!("test.content={content}");
@@ -139,7 +139,7 @@ async fn test_write_whose_content_the_cas_has_is_not_written(buck: &Buck) -> any
     Ok(())
 }
 
-#[buck_test(write_invocation_record = true)]
+#[buck_test(write_invocation_record = true, meta_only = "remote execution")]
 async fn test_write_whose_content_the_cas_lacks_is_uploaded_when_there_is_no_room(
     buck: &Buck,
 ) -> anyhow::Result<()> {
@@ -175,7 +175,7 @@ async fn test_write_whose_content_the_cas_lacks_is_uploaded_when_there_is_no_roo
     Ok(())
 }
 
-#[buck_test(write_invocation_record = true, skip_for_materializer = ["deferred"])]
+#[buck_test(write_invocation_record = true, skip_for_materializer = ["deferred"], meta_only = "remote execution")]
 async fn test_copy_of_a_source_file_the_cas_has_is_not_made(buck: &Buck) -> anyhow::Result<()> {
     let content = random_string();
     std::fs::write(buck.cwd().join("src.txt"), &content)?;
@@ -219,7 +219,7 @@ async fn test_copy_of_a_source_file_the_cas_has_is_not_made(buck: &Buck) -> anyh
     Ok(())
 }
 
-#[buck_test(write_invocation_record = true, skip_for_materializer = ["deferred"])]
+#[buck_test(write_invocation_record = true, skip_for_materializer = ["deferred"], meta_only = "remote execution")]
 async fn test_copy_of_a_source_file_the_cas_lacks_is_uploaded_when_there_is_no_room(
     buck: &Buck,
 ) -> anyhow::Result<()> {
@@ -256,7 +256,7 @@ async fn test_copy_of_a_source_file_the_cas_lacks_is_uploaded_when_there_is_no_r
     Ok(())
 }
 
-#[buck_test(write_invocation_record = true, skip_for_materializer = ["deferred"])]
+#[buck_test(write_invocation_record = true, skip_for_materializer = ["deferred"], meta_only = "remote execution")]
 async fn test_copied_dir_of_a_source_file_the_cas_has_is_not_made(
     buck: &Buck,
 ) -> anyhow::Result<()> {
@@ -304,7 +304,7 @@ async fn test_copied_dir_of_a_source_file_the_cas_has_is_not_made(
     Ok(())
 }
 
-#[buck_test(write_invocation_record = true, skip_for_materializer = ["deferred"])]
+#[buck_test(write_invocation_record = true, skip_for_materializer = ["deferred"], meta_only = "remote execution")]
 async fn test_copied_dir_stashes_only_the_files_the_cas_lacks(buck: &Buck) -> anyhow::Result<()> {
     // The probe asks about a copied directory's files one at a time: the directory itself is
     // in the CAS only if some action uploaded it in this exact shape, while its files are
@@ -359,7 +359,7 @@ async fn test_copied_dir_stashes_only_the_files_the_cas_lacks(buck: &Buck) -> an
     Ok(())
 }
 
-#[buck_test(write_invocation_record = true, skip_for_materializer = ["deferred"])]
+#[buck_test(write_invocation_record = true, skip_for_materializer = ["deferred"], meta_only = "remote execution")]
 async fn test_copied_dir_uploads_the_files_the_cas_lacks_when_there_is_no_room(
     buck: &Buck,
 ) -> anyhow::Result<()> {
@@ -415,7 +415,7 @@ async fn test_copied_dir_uploads_the_files_the_cas_lacks_when_there_is_no_room(
     Ok(())
 }
 
-#[buck_test(write_invocation_record = true, skip_for_materializer = ["deferred"])]
+#[buck_test(write_invocation_record = true, skip_for_materializer = ["deferred"], meta_only = "remote execution")]
 async fn test_copies_probe_whatever_the_write_knob_says(buck: &Buck) -> anyhow::Result<()> {
     // The knob is the write's: with it off, a write is made without asking...
     let knob_off = ["-c", "buck2.write_cas_probe=false"];
@@ -448,7 +448,7 @@ async fn test_copies_probe_whatever_the_write_knob_says(buck: &Buck) -> anyhow::
     Ok(())
 }
 
-#[buck_test(write_invocation_record = true, skip_for_materializer = ["v2"])]
+#[buck_test(write_invocation_record = true, skip_for_materializer = ["v2"], meta_only = "remote execution")]
 async fn test_the_deferred_materializer_copies_without_a_probe(buck: &Buck) -> anyhow::Result<()> {
     // A copy under the deferred materializer is made when something needs the file, so there
     // is nothing for a hit to spare: neither a copy nor a `copied_dir` asks, with the knob
@@ -482,7 +482,7 @@ async fn test_the_deferred_materializer_copies_without_a_probe(buck: &Buck) -> a
     Ok(())
 }
 
-#[buck_test(write_invocation_record = true, skip_for_materializer = ["deferred"])]
+#[buck_test(write_invocation_record = true, skip_for_materializer = ["deferred"], meta_only = "remote execution")]
 async fn test_content_already_on_disk_is_copied_rather_than_downloaded(
     buck: &Buck,
 ) -> anyhow::Result<()> {

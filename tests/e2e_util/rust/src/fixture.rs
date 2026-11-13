@@ -81,7 +81,8 @@ impl BuckTest {
     }
 
     /// Whether the test runs in the repository instead of a project of its own. Tests outside
-    /// `tests/core` must say; `tests/core` tests always get a project of their own.
+    /// `tests/core` must say; `tests/core` tests always get a project of their own. An inplace
+    /// test runs only in Meta's repository; see [`BuckTest::meta_only`].
     pub fn inplace(mut self, inplace: bool) -> Self {
         self.inplace = Some(inplace);
         self
@@ -90,6 +91,13 @@ impl BuckTest {
     /// The subdirectory of the target's test data to set the project up from, instead of all of it.
     pub fn data_dir(mut self, data_dir: &str) -> Self {
         self.data_dir = Some(data_dir.to_owned());
+        self
+    }
+
+    /// The test needs Meta's repository or infrastructure (remote execution, EdenFS, Manifold,
+    /// internal tools), for the reason given. Outside Meta's repository, `#[buck_test]` marks
+    /// it `#[ignore]`, as it does a test that sets `inplace = true` or `setup_eden`.
+    pub fn meta_only(self, _reason: &str) -> Self {
         self
     }
 
@@ -378,6 +386,9 @@ impl BuckTest {
         set("BUCK2_WATCHMAN_TIMEOUT", "30");
         set("BUCK2_RUNTIME_THREADS", "8");
         set("BUCK2_IGNORE_VERSION_EXTRACTION_FAILURE", "true");
+        // The fixtures and goldens have the digests of Meta's default algorithm, SHA1; open source
+        // buck2 defaults to SHA256.
+        set("BUCK_DEFAULT_DIGEST_ALGORITHM", "SHA1");
         set("SUPERCONSOLE_TESTING_WIDTH", "100");
         set("SUPERCONSOLE_TESTING_HEIGHT", "100");
         if self.disable_daemon_cgroup {

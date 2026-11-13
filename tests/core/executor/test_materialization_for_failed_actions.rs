@@ -138,7 +138,10 @@ async fn check_materialized_outputs_defined_by_run_action(buck: &Buck) -> anyhow
     Ok(())
 }
 
-#[buck_test(data_dir = "materialize_inputs_for_failed_actions")]
+#[buck_test(
+    data_dir = "materialize_inputs_for_failed_actions",
+    meta_only = "remote execution: materializes what failed remote actions used and produced"
+)]
 async fn test_materialize_inputs_for_failed_actions(buck: &Buck) -> anyhow::Result<()> {
     buck.build(&[
         "//:action_fail",
@@ -153,7 +156,10 @@ async fn test_materialize_inputs_for_failed_actions(buck: &Buck) -> anyhow::Resu
     check_materialize_inputs_for_failed_actions(buck).await
 }
 
-#[buck_test(data_dir = "materialize_inputs_for_failed_actions")]
+#[buck_test(
+    data_dir = "materialize_inputs_for_failed_actions",
+    meta_only = "remote execution: materializes what failed remote actions used and produced"
+)]
 async fn test_materialize_inputs_for_failed_actions_content_hash(
     buck: &Buck,
 ) -> anyhow::Result<()> {
@@ -173,7 +179,8 @@ async fn test_materialize_inputs_for_failed_actions_content_hash(
 
 #[buck_test(
     skip_for_os = ["windows"],
-    data_dir = "materialize_outputs_for_failed_actions"
+    data_dir = "materialize_outputs_for_failed_actions",
+    meta_only = "remote execution: materializes what failed remote actions used and produced",
 )]
 async fn test_materialize_outputs_for_failed_actions(buck: &Buck) -> anyhow::Result<()> {
     buck.build(&[
@@ -188,7 +195,8 @@ async fn test_materialize_outputs_for_failed_actions(buck: &Buck) -> anyhow::Res
 
 #[buck_test(
     skip_for_os = ["windows"],
-    data_dir = "materialize_outputs_for_failed_actions"
+    data_dir = "materialize_outputs_for_failed_actions",
+    meta_only = "remote execution: materializes what failed remote actions used and produced",
 )]
 async fn test_materialize_outputs_for_failed_actions_content_hash(
     buck: &Buck,
@@ -217,7 +225,8 @@ async fn test_undeclared_outputs_to_materialize_will_fail(buck: &Buck) {
 
 #[buck_test(
     skip_for_os = ["windows"],
-    data_dir = "materialize_outputs_for_failed_actions"
+    data_dir = "materialize_outputs_for_failed_actions",
+    meta_only = "remote execution: materializes what failed remote actions used and produced",
 )]
 async fn test_materialize_outputs_defined_by_run_action(buck: &Buck) -> anyhow::Result<()> {
     buck.build(&["//:action_fail", "--remote-only", "--no-remote-cache"])
@@ -228,7 +237,8 @@ async fn test_materialize_outputs_defined_by_run_action(buck: &Buck) -> anyhow::
 
 #[buck_test(
     skip_for_os = ["windows"],
-    data_dir = "materialize_outputs_for_failed_actions"
+    data_dir = "materialize_outputs_for_failed_actions",
+    meta_only = "remote execution: materializes what failed remote actions used and produced",
 )]
 async fn test_materialize_outputs_defined_by_run_action_content_hash(
     buck: &Buck,

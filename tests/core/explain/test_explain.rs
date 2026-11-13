@@ -45,7 +45,7 @@ fn output_path(tmp_path: &Path) -> String {
 #[buck_test]
 async fn test_dummy_to_make_this_file_not_empty_on_windows(_buck: &Buck) {}
 
-#[buck_test(skip_for_os = ["windows"])]
+#[buck_test(skip_for_os = ["windows"], meta_only = "buck2 explain")]
 async fn test_explain(buck: &Buck, tmp_path: &Path) -> anyhow::Result<()> {
     let output = output_path(tmp_path);
     buck.build(&["//:simple"]).await?;
@@ -76,7 +76,7 @@ async fn test_explain_no_cell(buck: &Buck, tmp_path: &Path) -> anyhow::Result<()
     Ok(())
 }
 
-#[buck_test(skip_for_os = ["windows"])]
+#[buck_test(skip_for_os = ["windows"], meta_only = "buck2 explain")]
 async fn test_explain_universe(buck: &Buck, tmp_path: &Path) -> anyhow::Result<()> {
     let output = output_path(tmp_path);
     // check no universe fails for both
@@ -115,6 +115,7 @@ async fn test_explain_only_builds(buck: &Buck, tmp_path: &Path) -> anyhow::Resul
     skip_for_os = ["windows"],
     // 1 day
     env = [("BUCK2_TEST_MANIFOLD_TTL_S", "84000")],
+    meta_only = "Manifold, where `buck2 explain --upload` uploads",
 )]
 async fn test_explain_upload(buck: &Buck) -> anyhow::Result<()> {
     let uuid = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee";

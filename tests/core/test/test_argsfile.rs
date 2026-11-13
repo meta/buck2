@@ -53,7 +53,7 @@ async fn argsfile_test(buck: &Buck, targets: &[&str], remote: bool) -> anyhow::R
     Ok(())
 }
 
-#[buck_test]
+#[buck_test(meta_only = "tpx")]
 async fn test_runner_argsfile_reaches_the_test_locally(buck: &Buck) -> anyhow::Result<()> {
     argsfile_test(
         buck,
@@ -63,7 +63,7 @@ async fn test_runner_argsfile_reaches_the_test_locally(buck: &Buck) -> anyhow::R
     .await
 }
 
-#[buck_test]
+#[buck_test(meta_only = "remote execution")]
 async fn test_runner_argsfile_reaches_the_test_remotely(buck: &Buck) -> anyhow::Result<()> {
     // No `argsfile_absolute`: a test that takes absolute paths can only run locally.
     argsfile_test(buck, &["//:argsfile", "//:inline"], true).await

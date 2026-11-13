@@ -63,6 +63,8 @@ async fn exec_python(path: &Path, name: &str) -> anyhow::Result<Value> {
 // prelude/python/tools/make_py_package_manifest_module.py
 #[buck_test(inplace = false)]
 async fn test_manifest_module_lists_import_names(buck: &Buck) -> anyhow::Result<()> {
+    // The project's `BUCK` file lists the header as a source.
+    write_spaced_header(buck)?;
     let module = output(buck, "root//:manifest_module").await?;
     assert_eq!(
         exec_python(&module, "modules").await?,

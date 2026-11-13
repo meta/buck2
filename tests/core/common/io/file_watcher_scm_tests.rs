@@ -15,6 +15,7 @@ use std::path::Path;
 
 use buck2_e2e::Buck;
 
+use crate::cmd::SL_USER;
 use crate::cmd::output;
 use crate::cmd::run;
 use crate::file_watcher::FileWatcherProvider;
@@ -32,7 +33,19 @@ async fn create_and_commit(cwd: &Path, name: &str, message: &str) -> anyhow::Res
         .open(cwd.join("files").join(name))?;
 
     // Commit it
-    run(&["sl", "commit", "--addremove", "-m", message], cwd).await?;
+    run(
+        &[
+            "sl",
+            "commit",
+            "--addremove",
+            "-m",
+            message,
+            "--config",
+            SL_USER,
+        ],
+        cwd,
+    )
+    .await?;
     output(&["sl", "whereami"], cwd).await
 }
 

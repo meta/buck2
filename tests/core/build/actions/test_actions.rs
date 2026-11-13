@@ -281,7 +281,7 @@ async fn test_local_action_records_hostname(buck: &Buck) -> anyhow::Result<()> {
     Ok(())
 }
 
-#[buck_test(data_dir = "actions")]
+#[buck_test(data_dir = "actions", meta_only = "remote execution")]
 async fn test_remote_action_records_no_hostname(buck: &Buck) -> anyhow::Result<()> {
     // A remotely-executed action does not run on the daemon host, so its
     // ActionExecutionEnd event must not carry a hostname on the success path.
@@ -378,7 +378,11 @@ async fn test_anon_targets_differing_in_a_label_get_distinct_outputs(
 
 // The missing use case is served from the fallback, which is the
 // `cas_artifact_canonical_check_failed` soft error.
-#[buck_test(data_dir = "actions", allow_soft_errors = true)]
+#[buck_test(
+    data_dir = "actions",
+    allow_soft_errors = true,
+    meta_only = "remote execution"
+)]
 async fn test_cas_artifact(buck: &Buck) -> anyhow::Result<()> {
     // The digests in `//cas_artifact:` require the buckconfig.
     // NB: cannot use `extra_buck_config` attrib of `#[buck_test]`

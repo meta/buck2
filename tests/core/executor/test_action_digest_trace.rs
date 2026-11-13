@@ -31,7 +31,7 @@ fn trace_events(traces: &[Value]) -> Vec<Value> {
 }
 
 /// Test that cache miss events are traced.
-#[buck_test(env = [("BUCK2_ACTION_DIGEST_TRACE_LG_SAMPLE_RATE", "0")])] // Sample all digests
+#[buck_test(env = [("BUCK2_ACTION_DIGEST_TRACE_LG_SAMPLE_RATE", "0")], meta_only = "remote execution")] // Sample all digests
 async fn test_action_digest_trace_cache_miss(buck: &Buck) -> anyhow::Result<()> {
     // Make sure action is not cached by using a random input
     std::fs::write(buck.cwd().join("input.txt"), random_string())?;
@@ -58,7 +58,7 @@ async fn test_action_digest_trace_cache_miss(buck: &Buck) -> anyhow::Result<()> 
 }
 
 /// Test that cache hit events are traced.
-#[buck_test(env = [("BUCK2_ACTION_DIGEST_TRACE_LG_SAMPLE_RATE", "0")])] // Sample all digests
+#[buck_test(env = [("BUCK2_ACTION_DIGEST_TRACE_LG_SAMPLE_RATE", "0")], meta_only = "remote execution")] // Sample all digests
 async fn test_action_digest_trace_cache_hit(buck: &Buck) -> anyhow::Result<()> {
     // First build to populate cache
     std::fs::write(buck.cwd().join("input.txt"), random_string())?;
@@ -88,7 +88,7 @@ async fn test_action_digest_trace_cache_hit(buck: &Buck) -> anyhow::Result<()> {
 }
 
 /// Test that sampling works - with very high rate, nothing should be sampled.
-#[buck_test(env = [("BUCK2_ACTION_DIGEST_TRACE_LG_SAMPLE_RATE", "64")])] // Sample rate so high nothing is sampled
+#[buck_test(env = [("BUCK2_ACTION_DIGEST_TRACE_LG_SAMPLE_RATE", "64")], meta_only = "remote execution")] // Sample rate so high nothing is sampled
 async fn test_action_digest_trace_sampling(buck: &Buck) -> anyhow::Result<()> {
     std::fs::write(buck.cwd().join("input.txt"), random_string())?;
 

@@ -26,22 +26,30 @@ async fn run_twice(buck: &Buck, target: &str) -> anyhow::Result<()> {
     Ok(())
 }
 
-#[buck_test]
+#[buck_test(
+    meta_only = "broken in open source since D131177544: a rerun asks for a remote execution engine"
+)]
 async fn test_incremental_file_materialized(buck: &Buck) -> anyhow::Result<()> {
     run_twice(buck, "root//:plate").await
 }
 
-#[buck_test]
+#[buck_test(
+    meta_only = "broken in open source since D131177544: a rerun asks for a remote execution engine"
+)]
 async fn test_incremental_dir_materialized(buck: &Buck) -> anyhow::Result<()> {
     run_twice(buck, "root//:mate").await
 }
 
-#[buck_test]
+#[buck_test(
+    meta_only = "broken in open source since D131177544: a rerun asks for a remote execution engine"
+)]
 async fn test_incremental_file_not_materialized(buck: &Buck) -> anyhow::Result<()> {
     run_twice(buck, "root//:flute").await
 }
 
-#[buck_test]
+#[buck_test(
+    meta_only = "broken in open source since D131177544: a rerun asks for a remote execution engine"
+)]
 async fn test_incremental_dir_not_materialized(buck: &Buck) -> anyhow::Result<()> {
     run_twice(buck, "root//:suite").await
 }
@@ -62,28 +70,34 @@ async fn run_twice_across_daemon_restart(buck: &Buck, target: &str) -> anyhow::R
     Ok(())
 }
 
-#[buck_test]
+#[buck_test(
+    meta_only = "broken in open source since D131177544: a rerun asks for a remote execution engine"
+)]
 async fn test_incremental_file_materialized_after_daemon_restart(
     buck: &Buck,
 ) -> anyhow::Result<()> {
     run_twice_across_daemon_restart(buck, "root//:plate").await
 }
 
-#[buck_test]
+#[buck_test(
+    meta_only = "broken in open source since D131177544: a rerun asks for a remote execution engine"
+)]
 async fn test_incremental_dir_materialized_after_daemon_restart(buck: &Buck) -> anyhow::Result<()> {
     run_twice_across_daemon_restart(buck, "root//:mate").await
 }
 
 // A directory never materialized here has no restart test: the record keeps a directory by its
 // fingerprint, and it comes back only from a materializer that holds the tree.
-#[buck_test]
+#[buck_test(
+    meta_only = "broken in open source since D131177544: a rerun asks for a remote execution engine"
+)]
 async fn test_incremental_file_not_materialized_after_daemon_restart(
     buck: &Buck,
 ) -> anyhow::Result<()> {
     run_twice_across_daemon_restart(buck, "root//:flute").await
 }
 
-#[buck_test]
+#[buck_test(meta_only = "remote execution")]
 async fn test_remote_cache_is_used(buck: &Buck) -> anyhow::Result<()> {
     let seed = random_string();
     let result = buck

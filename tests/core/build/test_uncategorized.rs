@@ -189,7 +189,7 @@ async fn test_projected_artifacts_check_c_b_local(buck: &Buck) -> anyhow::Result
     test_projected_artifacts(buck, "//:check_c_b_local").await
 }
 
-#[buck_test(data_dir = "upload_all_actions")]
+#[buck_test(data_dir = "upload_all_actions", meta_only = "remote execution")]
 async fn test_upload_all_actions(buck: &Buck) -> anyhow::Result<()> {
     std::fs::write(buck.cwd().join("src"), random_string())?;
 
@@ -376,7 +376,7 @@ async fn test_cleanup(buck: &Buck) -> anyhow::Result<()> {
     Ok(())
 }
 
-#[buck_test(data_dir = "log_action_keys")]
+#[buck_test(data_dir = "log_action_keys", meta_only = "remote execution")]
 async fn test_log_action_keys(buck: &Buck) -> anyhow::Result<()> {
     async fn read_action_keys(buck: &Buck) -> anyhow::Result<Vec<(String, String)>> {
         let out = read_what_ran(buck, &[]).await?;

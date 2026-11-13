@@ -13,7 +13,7 @@ use std::collections::BTreeMap;
 use buck2_e2e::prelude::*;
 use buck2_e2e::utils::random_string;
 
-#[buck_test]
+#[buck_test(meta_only = "remote execution")]
 async fn test_what_uploaded_csv(buck: &Buck) -> anyhow::Result<()> {
     // Use a random content on every test invocation to make sure we actually get uploads
     let content = &random_string()[..20];
@@ -54,7 +54,7 @@ async fn test_what_uploaded_csv(buck: &Buck) -> anyhow::Result<()> {
     Ok(())
 }
 
-#[buck_test]
+#[buck_test(meta_only = "remote execution")]
 async fn test_what_uploaded_aggregated(buck: &Buck) -> anyhow::Result<()> {
     // Use a random content on every test invocation to make sure we actually get uploads
     let content = &random_string()[..20];

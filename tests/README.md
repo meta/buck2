@@ -16,7 +16,12 @@ This directory contains tests for buck2. Primary constituents:
    Trendsetters are welcome to try it.
  - An assortment of other things that mostly shouldn't be here.
 
-`core` and `prelude` tests are visible in open source but not executed there.
+The Rust tests of `core`, `e2e` and `select_type_params` also run in open source, against the
+buck2 built there (see `buck_e2e.bzl`). A test that needs Meta's infrastructure, such as remote
+execution, says so with `meta_only = "<what it needs>"` (`#[buck_test(...)]`, or `buck2_e2e_test`
+for all of a target's tests), and open source skips it. Where open source buck2 behaves
+differently, a test expects either with `buck2_e2e::utils::is_open_source()`. `prelude` tests are
+visible in open source but not executed there.
 
 ## Writing a test
 

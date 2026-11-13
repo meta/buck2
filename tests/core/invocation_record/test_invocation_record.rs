@@ -106,7 +106,7 @@ async fn test_has_no_command_result(buck: &Buck) -> anyhow::Result<()> {
 }
 
 // TODO(T154836632)
-#[buck_test(skip_for_os = ["windows"], write_invocation_record = true)]
+#[buck_test(skip_for_os = ["windows"], write_invocation_record = true, meta_only = "Meta's invocation metadata")]
 async fn test_metadata(buck: &Buck) -> anyhow::Result<()> {
     // Start the daemon
     let res = buck.build(&[]).await?;
@@ -214,9 +214,10 @@ async fn test_client_metadata_debug(buck: &Buck) -> anyhow::Result<()> {
     // buck.debug() doesn't start the daemon, so we need to start it with a build
     buck.build(&[]).await?;
 
+    // `debug tenants` works in every build of buck2, unlike `debug allocator-stats`.
     let res = buck
         .debug(&[
-            "allocator-stats",
+            "tenants",
             "--client-metadata=foo=bar",
             "--client-metadata=id=baz",
         ])

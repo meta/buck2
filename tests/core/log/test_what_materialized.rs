@@ -13,7 +13,7 @@ use std::collections::BTreeMap;
 use buck2_e2e::prelude::*;
 use serde_json::Value;
 
-#[buck_test]
+#[buck_test(meta_only = "remote execution")]
 async fn test_what_materialized_csv(buck: &Buck) -> anyhow::Result<()> {
     buck.build(&["//:my_rule"]).await?;
     let out = buck.log(&["what-materialized", "--format", "csv"]).await?;
@@ -47,7 +47,7 @@ async fn test_what_materialized_csv(buck: &Buck) -> anyhow::Result<()> {
     Ok(())
 }
 
-#[buck_test]
+#[buck_test(meta_only = "remote execution")]
 async fn test_what_materialized_sorted(buck: &Buck) -> anyhow::Result<()> {
     buck.build(&["//:my_rule"]).await?;
     let out = buck
@@ -69,7 +69,7 @@ async fn test_what_materialized_sorted(buck: &Buck) -> anyhow::Result<()> {
     Ok(())
 }
 
-#[buck_test]
+#[buck_test(meta_only = "remote execution")]
 async fn test_what_materialized_aggregated(buck: &Buck) -> anyhow::Result<()> {
     buck.build(&["//:my_rule"]).await?;
     // buck2 log what-materialized --aggregate-by-ext has the following output:

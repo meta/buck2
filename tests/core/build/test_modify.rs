@@ -75,7 +75,10 @@ async fn test_modify_directory(buck: &Buck) -> anyhow::Result<()> {
     Ok(())
 }
 
-#[buck_test(data_dir = "modify_file_during_build")]
+#[buck_test(
+    data_dir = "modify_file_during_build",
+    meta_only = "remote execution: the change is caught when buck2 uploads the file to RE"
+)]
 async fn test_modify_file_during_build(buck: &Buck) -> anyhow::Result<()> {
     // We need to write some random stuff to the file first so that Buck will
     // have to attempt to upload it to RE (which will fail because by that time
@@ -89,7 +92,10 @@ async fn test_modify_file_during_build(buck: &Buck) -> anyhow::Result<()> {
     Ok(())
 }
 
-#[buck_test(data_dir = "modify_file_during_build")]
+#[buck_test(
+    data_dir = "modify_file_during_build",
+    meta_only = "remote execution: the change is caught when buck2 uploads the file to RE"
+)]
 async fn test_file_notify(buck: &Buck) -> anyhow::Result<()> {
     // We need to write some random stuff to the file first so that Buck will
     // have to attempt to upload it to RE (which will fail because by that time

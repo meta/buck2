@@ -10,7 +10,7 @@
 
 use buck2_e2e::prelude::*;
 
-#[buck_test]
+#[buck_test(meta_only = "BLAKE3-KEYED digests")]
 async fn test_blake3(buck: &Buck) -> anyhow::Result<()> {
     buck.build(&["//:cp"]).await?;
     Ok(())

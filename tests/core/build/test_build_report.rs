@@ -865,7 +865,7 @@ async fn test_streaming_build_report_overwrites_existing_file(
     Ok(())
 }
 
-#[buck_test(data_dir = "re_platform_names")]
+#[buck_test(data_dir = "re_platform_names", meta_only = "remote execution")]
 async fn test_build_report_re_platform_names(buck: &Buck, tmp_path: &Path) -> anyhow::Result<()> {
     let report = tmp_path.join("build-report.json");
 

@@ -73,7 +73,7 @@ async fn test_artifact_eq_bug(buck: &Buck) -> anyhow::Result<()> {
 /// use the initial build to calibrate for host speed. With the O(N^2) behavior
 /// the rebuild is one to two orders of magnitude slower than the initial build
 /// instead.
-#[buck_test(data_dir = "many_rebound_outputs", skip_for_os = ["windows"])]
+#[buck_test(data_dir = "many_rebound_outputs", skip_for_os = ["windows"], meta_only = "an optimized buck2: open source tests a debug build, whose first build here outlasts the daemon's 630 s limit")]
 async fn test_many_rebound_outputs_incremental_rebuild(buck: &Buck) -> anyhow::Result<()> {
     let start = Instant::now();
     buck.build(&["root//:check"]).await?;

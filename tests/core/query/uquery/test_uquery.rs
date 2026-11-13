@@ -13,10 +13,13 @@
 //! then you will need to update isolated_targets in buck2/test/targets/TARGETS.
 //! Otherwise the test will fail because it cannot recognize the new directory.
 
+use std::io::Write;
+
 use anyhow::Context;
 use buck2_e2e::BuckOutput;
 use buck2_e2e::manifold::Bucket;
 use buck2_e2e::prelude::*;
+use buck2_e2e::utils::is_open_source;
 use buck2_e2e::utils::replace_hash;
 
 #[buck_test(data_dir = "bxl_simple")]
@@ -263,9 +266,21 @@ async fn test_uquery_owner_file_created(buck: &Buck) -> anyhow::Result<()> {
 async fn test_query_owner_with_explicit_package_boundary_violation(
     buck: &Buck,
 ) -> anyhow::Result<()> {
-    let result = buck
-        .uquery(&["owner(package_boundary_violation/bin)"])
-        .await?;
+    // Only this test has the target: open source buck2 does not load a package with it.
+    let mut targets = std::fs::OpenOptions::new()
+        .append(true)
+        .open(buck.cwd().join("TARGETS.fixture"))?;
+    targets.write_all(
+        b"\nfoo_binary(name = \"package_boundary_violation\", srcs = [\"package_boundary_violation/bin\"])\n",
+    )?;
+    let query = buck.uquery(&["owner(package_boundary_violation/bin)"]);
+    if is_open_source() {
+        query.await.expect_failure().assert_stderr_matches(
+            "Source file `package_boundary_violation/bin` does not exist as a member of package `root//`",
+        );
+        return Ok(());
+    }
+    let result = query.await?;
     assert!(
         result
             .stdout
@@ -577,7 +592,10 @@ async fn test_dot_compact(buck: &Buck) -> anyhow::Result<()> {
     Ok(())
 }
 
-#[buck_test(data_dir = "bxl_simple")]
+#[buck_test(
+    data_dir = "bxl_simple",
+    meta_only = "Manifold, where the test reads the HTML output from"
+)]
 async fn test_html(buck: &Buck) -> anyhow::Result<()> {
     let uuid = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee";
     buck.uquery(&[
@@ -724,6 +742,29 @@ async fn test_directory_source(buck: &Buck) -> anyhow::Result<()> {
         result.stdout,
         "dir/file1.txt\ndir/subdir/file2.txt\ndir/subdir/file3.txt\n"
     );
+
+    // Open source buck2 rejects these sources when it loads their packages.
+    if is_open_source() {
+        buck.build(&["does_not_exist:"])
+            .await
+            .expect_failure()
+            .assert_stderr_matches(
+                "Source file `does_not_exist` does not exist as a member of package `root//does_not_exist`",
+            );
+        buck.build(&["subpackage:"])
+            .await
+            .expect_failure()
+            .assert_stderr_matches(
+                "Source file `subpackage` does not exist as a member of package `root//subpackage`",
+            );
+        buck.build(&["dir_with_subpackage:"])
+            .await
+            .expect_failure()
+            .assert_stderr_matches(
+                "Directory `dir_with_subpackage` of package `root//dir_with_subpackage` may not cover any subpackages",
+            );
+        return Ok(());
+    }
 
     // A source that does not exist is only an error once something needs it
     buck.build(&["does_not_exist:"])

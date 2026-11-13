@@ -15,8 +15,11 @@ use proc_macro2::TokenStream as TokenStream2;
 use quote::format_ident;
 use quote::quote;
 use quote::quote_spanned;
+use syn::Expr;
+use syn::ExprLit;
 use syn::FnArg;
 use syn::ItemFn;
+use syn::Lit;
 use syn::Meta;
 use syn::Pat;
 use syn::Token;
@@ -32,6 +35,41 @@ pub fn buck_test(attr: TokenStream, item: TokenStream) -> TokenStream {
     expand(options, function)
         .unwrap_or_else(syn::Error::into_compile_error)
         .into()
+}
+
+/// Why a test with this option runs only in Meta's repository, if it does: see
+/// `BuckTest::meta_only`.
+fn meta_only_reason(option: &Meta) -> syn::Result<Option<String>> {
+    let (name, value) = match option {
+        Meta::Path(path) => (path.get_ident(), None),
+        Meta::NameValue(name_value) => (name_value.path.get_ident(), Some(&name_value.value)),
+        Meta::List(_) => return Ok(None),
+    };
+    let Some(name) = name else {
+        return Ok(None);
+    };
+    // A bare option is `true`, as in `expand`.
+    let enabled = value.is_none_or(
+        |value| matches!(value, Expr::Lit(ExprLit { lit: Lit::Bool(b), .. }) if b.value),
+    );
+    Ok(match (name.to_string().as_str(), value) {
+        (
+            "meta_only",
+            Some(Expr::Lit(ExprLit {
+                lit: Lit::Str(reason),
+                ..
+            })),
+        ) => Some(reason.value()),
+        ("meta_only", _) => {
+            return Err(syn::Error::new(
+                option.span(),
+                "`meta_only` takes the reason, as `meta_only = \"needs remote execution\"`",
+            ));
+        }
+        ("inplace", _) if enabled => Some("runs in fbsource".to_owned()),
+        ("setup_eden", _) if enabled => Some("needs EdenFS".to_owned()),
+        _ => None,
+    })
 }
 
 fn expand(options: Punctuated<Meta, Token![,]>, function: ItemFn) -> syn::Result<TokenStream2> {
@@ -67,7 +105,11 @@ fn expand(options: Punctuated<Meta, Token![,]>, function: ItemFn) -> syn::Result
         module_path!(),
         stringify!(#name)
     ));
+    let mut meta_only = None;
     for option in options {
+        if let Some(reason) = meta_only_reason(&option)? {
+            meta_only.get_or_insert(reason);
+        }
         builder = match option {
             Meta::Path(path) => {
                 let method = path.require_ident()?;
@@ -148,8 +190,14 @@ fn expand(options: Punctuated<Meta, Token![,]>, function: ItemFn) -> syn::Result
 
     let attrs = &function.attrs;
     let vis = &function.vis;
+    // Outside Meta's repository, buck2 builds without `fbcode_build`.
+    let ignore = meta_only.map(|reason| {
+        let reason = format!("needs Meta's repository or infrastructure: {reason}");
+        quote!(#[cfg_attr(not(fbcode_build), ignore = #reason)])
+    });
     Ok(quote! {
         #[test]
+        #ignore
         #(#attrs)*
         #vis fn #name() -> ::buck2_e2e::__macro_support::TestResult {
             #body
@@ -167,4 +215,38 @@ fn expand(options: Punctuated<Meta, Token![,]>, function: ItemFn) -> syn::Result
             #builder.run(__buck_test_call)
         }
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use syn::parse_quote;
+
+    use super::*;
+
+    fn reason(option: Meta) -> Option<String> {
+        meta_only_reason(&option).expect("a valid option")
+    }
+
+    #[test]
+    fn test_inplace_and_setup_eden_imply_meta_only_however_spelled() {
+        let runs_in_fbsource = Some("runs in fbsource".to_owned());
+        let needs_eden = Some("needs EdenFS".to_owned());
+        assert_eq!(reason(parse_quote!(inplace)), runs_in_fbsource);
+        assert_eq!(reason(parse_quote!(inplace = true)), runs_in_fbsource);
+        assert_eq!(reason(parse_quote!(inplace = false)), None);
+        assert_eq!(reason(parse_quote!(setup_eden)), needs_eden);
+        assert_eq!(reason(parse_quote!(setup_eden = true)), needs_eden);
+        assert_eq!(reason(parse_quote!(setup_eden = false)), None);
+    }
+
+    #[test]
+    fn test_meta_only_takes_a_reason() {
+        assert_eq!(
+            reason(parse_quote!(meta_only = "needs remote execution")),
+            Some("needs remote execution".to_owned())
+        );
+        assert!(meta_only_reason(&parse_quote!(meta_only)).is_err());
+        assert!(meta_only_reason(&parse_quote!(meta_only = true)).is_err());
+        assert_eq!(reason(parse_quote!(timeout = 60)), None);
+    }
 }

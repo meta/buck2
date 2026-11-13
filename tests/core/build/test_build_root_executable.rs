@@ -20,7 +20,7 @@ async fn test_build_root_executable_local(buck: &Buck) -> anyhow::Result<()> {
     Ok(())
 }
 
-#[buck_test]
+#[buck_test(meta_only = "remote execution")]
 async fn test_build_root_executable_remote(buck: &Buck) -> anyhow::Result<()> {
     buck.build(&[":top", "--remote-only"]).await?;
     Ok(())

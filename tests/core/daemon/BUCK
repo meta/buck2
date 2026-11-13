@@ -59,7 +59,7 @@ buck2_core_tests(
             # one under test. The tests run it with unshared routing, which treats a tenant
             # proxy's directory as it treats any daemon's, so they hold once this release ships.
             "env": {
-                "BUCK2_TEST_LEGACY_BINARY": "$(location fbsource//tools/buck2-versions:stable)",
+                # @oss-disable[end= ]: "BUCK2_TEST_LEGACY_BINARY": "$(location fbsource//tools/buck2-versions:stable)",
             },
             "require_nano_prelude": True,
         },

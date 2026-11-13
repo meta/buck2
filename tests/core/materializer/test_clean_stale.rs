@@ -604,7 +604,7 @@ async fn test_clean_stale_cli_adaptive_min_ttl_protects_recent(buck: &Buck) -> a
     Ok(())
 }
 
-#[buck_test(skip_for_materializer = ["v2"])]
+#[buck_test(skip_for_materializer = ["v2"], meta_only = "remote execution")]
 async fn test_adaptive_unmaterializes_active_remote_intermediate(
     buck: &Buck,
 ) -> anyhow::Result<()> {
@@ -638,7 +638,7 @@ async fn test_adaptive_unmaterializes_active_remote_intermediate(
     Ok(())
 }
 
-#[buck_test(skip_for_materializer = ["v2"])]
+#[buck_test(skip_for_materializer = ["v2"], meta_only = "remote execution")]
 async fn test_adaptive_unmaterializes_active_write_intermediate(buck: &Buck) -> anyhow::Result<()> {
     configure_active_unmaterialization(buck, true, false)?;
     // This build materializes `root//:write` as intermediate artifact
@@ -720,7 +720,7 @@ async fn test_adaptive_unmaterialization_fails_for_modified_local_intermediate(
     Ok(())
 }
 
-#[buck_test(skip_for_materializer = ["v2"])]
+#[buck_test(skip_for_materializer = ["v2"], meta_only = "remote execution")]
 async fn test_adaptive_unmaterializes_active_local_copy_intermediate(
     buck: &Buck,
 ) -> anyhow::Result<()> {
@@ -756,7 +756,7 @@ async fn test_adaptive_unmaterializes_active_local_copy_intermediate(
     Ok(())
 }
 
-#[buck_test(skip_for_materializer = ["v2"])]
+#[buck_test(skip_for_materializer = ["v2"], meta_only = "remote execution")]
 async fn test_adaptive_unmaterializes_active_local_action_intermediate(
     buck: &Buck,
 ) -> anyhow::Result<()> {

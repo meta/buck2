@@ -169,17 +169,17 @@ async fn requires_client_opt_in(buck: &mut Buck, allowlist: Option<&str>) -> any
     Ok(())
 }
 
-#[buck_test(skip_for_os = ["windows"])]
+#[buck_test(skip_for_os = ["windows"], meta_only = "Meta's HTTP proxy allowlist")]
 async fn test_requires_client_opt_in_unset(buck: &mut Buck) -> anyhow::Result<()> {
     requires_client_opt_in(buck, None).await
 }
 
-#[buck_test(skip_for_os = ["windows"])]
+#[buck_test(skip_for_os = ["windows"], meta_only = "Meta's HTTP proxy allowlist")]
 async fn test_requires_client_opt_in_empty(buck: &mut Buck) -> anyhow::Result<()> {
     requires_client_opt_in(buck, Some("")).await
 }
 
-#[buck_test(skip_for_os = ["windows"])]
+#[buck_test(skip_for_os = ["windows"], meta_only = "Meta's HTTP proxy allowlist")]
 async fn test_requires_client_opt_in_whitespace(buck: &mut Buck) -> anyhow::Result<()> {
     requires_client_opt_in(buck, Some("   ")).await
 }
@@ -396,7 +396,7 @@ async fn test_invalid_proxy_values_are_rejected_malformed(buck: &mut Buck) -> an
     invalid_proxy_values_are_rejected(buck, &[("HTTP_PROXY", "not a valid proxy")]).await
 }
 
-#[buck_test(skip_for_os = ["windows"])]
+#[buck_test(skip_for_os = ["windows"], meta_only = "Meta's HTTP proxy allowlist")]
 async fn test_empty_allowlist_ignores_invalid_proxy_values(buck: &mut Buck) -> anyhow::Result<()> {
     set_up(buck);
     configure(buck, Some(""), "SHA256")?;
@@ -420,7 +420,7 @@ async fn test_empty_allowlist_ignores_invalid_proxy_values(buck: &mut Buck) -> a
     Ok(())
 }
 
-#[buck_test(skip_for_os = ["windows"])]
+#[buck_test(skip_for_os = ["windows"], meta_only = "Meta's HTTP proxy allowlist")]
 async fn test_same_daemon_routes_allowed_and_other_hosts(buck: &mut Buck) -> anyhow::Result<()> {
     set_up(buck);
     configure(buck, Some(" EXAMPLE.com. , 127.0.0.1 "), "SHA256")?;
@@ -513,13 +513,13 @@ async fn redirect_uses_destination_allowlist(
     Ok(())
 }
 
-#[buck_test(skip_for_os = ["windows"])]
+#[buck_test(skip_for_os = ["windows"], meta_only = "Meta's HTTP proxy allowlist")]
 #[expect(non_snake_case, reason = "the Python harness's name for the case")]
 async fn test_redirect_uses_destination_allowlist_True(buck: &mut Buck) -> anyhow::Result<()> {
     redirect_uses_destination_allowlist(buck, true).await
 }
 
-#[buck_test(skip_for_os = ["windows"])]
+#[buck_test(skip_for_os = ["windows"], meta_only = "Meta's HTTP proxy allowlist")]
 #[expect(non_snake_case, reason = "the Python harness's name for the case")]
 async fn test_redirect_uses_destination_allowlist_False(buck: &mut Buck) -> anyhow::Result<()> {
     redirect_uses_destination_allowlist(buck, false).await
@@ -590,7 +590,7 @@ async fn test_proxy_environment_changes_require_manual_restart(
     Ok(())
 }
 
-#[buck_test(skip_for_os = ["windows"])]
+#[buck_test(skip_for_os = ["windows"], meta_only = "Meta's HTTP proxy allowlist")]
 async fn test_checkout_local_allowlist_restarts_existing_daemon(
     buck: &mut Buck,
 ) -> anyhow::Result<()> {
@@ -620,7 +620,7 @@ async fn test_checkout_local_allowlist_restarts_existing_daemon(
     Ok(())
 }
 
-#[buck_test(skip_for_os = ["windows"])]
+#[buck_test(skip_for_os = ["windows"], meta_only = "Meta's HTTP proxy allowlist")]
 async fn test_empty_allowlist_ignores_proxy_environment_changes(
     buck: &mut Buck,
 ) -> anyhow::Result<()> {

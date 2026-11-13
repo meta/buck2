@@ -220,7 +220,7 @@ async fn test_write_json_with_content_based_path(buck: &Buck) -> anyhow::Result<
         .await
 }
 
-#[buck_test]
+#[buck_test(meta_only = "remote execution")]
 async fn test_run_remote_with_content_based_path(buck: &Buck) -> anyhow::Result<()> {
     let target = "root//:run_remote_with_content_based_path";
 
@@ -267,7 +267,7 @@ async fn test_run_remote_with_content_based_path(buck: &Buck) -> anyhow::Result<
     Ok(())
 }
 
-#[buck_test]
+#[buck_test(meta_only = "remote execution")]
 async fn test_identical_dep_file_hit_with_content_based_path(buck: &Buck) -> anyhow::Result<()> {
     let target = "root//:run_remote_with_content_based_path";
 
@@ -308,7 +308,7 @@ async fn test_symlink_with_content_based_path(buck: &Buck) -> anyhow::Result<()>
         .await
 }
 
-#[buck_test]
+#[buck_test(meta_only = "remote execution")]
 async fn test_symlink_and_copy_with_content_based_path(buck: &Buck) -> anyhow::Result<()> {
     let target = "root//:symlink_and_copy_with_content_based_path";
     build_target_with_different_platforms_and_verify_output_paths_are_identical(buck, target, &[])
@@ -358,7 +358,7 @@ async fn test_assembled_dir_with_content_based_path(buck: &Buck) -> anyhow::Resu
     Ok(())
 }
 
-#[buck_test]
+#[buck_test(meta_only = "remote execution")]
 async fn test_cas_artifact_with_content_based_path(buck: &Buck) -> anyhow::Result<()> {
     build_target_with_different_platforms_and_verify_output_paths_are_identical(
         buck,
@@ -398,7 +398,7 @@ async fn test_download_with_content_based_path_and_no_metadata(buck: &Buck) {
 
 // The offline build reads the cache the traced build left behind, at paths nothing leases, as
 // the tooling that archives the cache does; strict leases would take them off disk first.
-#[buck_test(strict_leases = false)]
+#[buck_test(strict_leases = false, meta_only = "remote execution")]
 async fn test_offline_cas_artifact_with_content_based_path(buck: &Buck) -> anyhow::Result<()> {
     hg_init(buck.cwd()).await?;
 
@@ -502,7 +502,7 @@ async fn test_dynamic_new_with_content_based_path(buck: &Buck) -> anyhow::Result
     .await
 }
 
-#[buck_test]
+#[buck_test(meta_only = "remote execution")]
 async fn test_projection_with_content_based_path(buck: &Buck) -> anyhow::Result<()> {
     build_target_with_different_platforms_and_verify_output_paths_are_identical(
         buck,
@@ -512,7 +512,7 @@ async fn test_projection_with_content_based_path(buck: &Buck) -> anyhow::Result<
     .await
 }
 
-#[buck_test]
+#[buck_test(meta_only = "remote execution")]
 async fn test_ignore_artifacts_content_based_input_is_not_materialized_but_path_is_real(
     buck: &Buck,
 ) -> anyhow::Result<()> {
@@ -531,7 +531,7 @@ async fn test_ignore_artifacts_content_based_input_is_not_materialized_but_path_
     Ok(())
 }
 
-#[buck_test]
+#[buck_test(meta_only = "remote execution")]
 async fn test_ignore_artifacts_content_based_input_content_change_reruns_consumer(
     buck: &Buck,
 ) -> anyhow::Result<()> {
@@ -580,7 +580,7 @@ async fn test_ignore_artifacts_rejects_hidden_content_based_artifact(buck: &Buck
     );
 }
 
-#[buck_test]
+#[buck_test(meta_only = "remote execution")]
 async fn test_ignore_artifacts_nested_under_hidden_is_not_a_dependency(
     buck: &Buck,
 ) -> anyhow::Result<()> {
@@ -595,7 +595,7 @@ async fn test_ignore_artifacts_nested_under_hidden_is_not_a_dependency(
     Ok(())
 }
 
-#[buck_test]
+#[buck_test(meta_only = "remote execution")]
 async fn test_ignore_artifacts_does_not_depend_on_static_path_artifacts(
     buck: &Buck,
 ) -> anyhow::Result<()> {
@@ -610,7 +610,7 @@ async fn test_ignore_artifacts_does_not_depend_on_static_path_artifacts(
     Ok(())
 }
 
-#[buck_test]
+#[buck_test(meta_only = "remote execution")]
 async fn test_salt_hidden_is_a_content_dependency(buck: &Buck) -> anyhow::Result<()> {
     let target = "root//:salt_hidden_dependency";
     // The remote action asserts the hidden stamp is absent from its input tree.
@@ -673,7 +673,7 @@ async fn test_sets_inconsistent_params(buck: &Buck) {
     );
 }
 
-#[buck_test]
+#[buck_test(meta_only = "remote execution")]
 async fn test_local_action_inputs_have_configuration_path_symlinks(
     buck: &Buck,
 ) -> anyhow::Result<()> {
@@ -707,7 +707,7 @@ async fn test_local_action_inputs_have_configuration_path_symlinks(
     Ok(())
 }
 
-#[buck_test]
+#[buck_test(meta_only = "remote execution")]
 async fn test_output_symlink_is_updated(buck: &Buck) -> anyhow::Result<()> {
     let target = "root//:run_remote_with_content_based_path";
 
@@ -753,7 +753,7 @@ async fn test_argsfile_with_incorrectly_declared_output(buck: &Buck) {
         .assert_stderr_matches("error: Artifact must be bound by now");
 }
 
-#[buck_test]
+#[buck_test(meta_only = "remote execution")]
 async fn test_run_action_with_incremental_metadata(buck: &Buck) -> anyhow::Result<()> {
     let target = "root//:incremental_action";
 
@@ -831,7 +831,7 @@ async fn test_pass_cbp_promise_artifact_to_anon_target(buck: &Buck) -> anyhow::R
     Ok(())
 }
 
-#[buck_test]
+#[buck_test(meta_only = "remote execution")]
 async fn test_run_with_anon_non_cbp_dep_eligible_for_dedupe(buck: &Buck) -> anyhow::Result<()> {
     buck.build(&[
         "root//:run_with_anon_non_cbp_dep",
@@ -846,7 +846,7 @@ async fn test_run_with_anon_non_cbp_dep_eligible_for_dedupe(buck: &Buck) -> anyh
     Ok(())
 }
 
-#[buck_test]
+#[buck_test(meta_only = "remote execution")]
 async fn test_run_with_symlink_to_non_content_based_input_eligible_for_dedupe_bug(
     buck: &Buck,
 ) -> anyhow::Result<()> {
@@ -884,7 +884,7 @@ async fn test_run_with_symlink_to_non_content_based_input_eligible_for_dedupe_bu
     Ok(())
 }
 
-#[buck_test]
+#[buck_test(meta_only = "remote execution")]
 async fn test_not_eligible_for_dedupe(buck: &Buck) -> anyhow::Result<()> {
     buck.build(&[
         "root//:not_eligible_for_dedupe",
@@ -979,7 +979,7 @@ async fn test_expect_eligible_for_dedupe_ineligible_output(buck: &Buck) {
     );
 }
 
-#[buck_test]
+#[buck_test(meta_only = "remote execution")]
 async fn test_execution_platform_returns_unknown_eligibility(buck: &Buck) -> anyhow::Result<()> {
     // When an action's owner is configured for an execution platform (i.e. via
     // exec_dep), eligible_for_dedupe will return EXECUTION_PLATFORM_UNKNOWN_ELIGIBILITY
@@ -1016,7 +1016,7 @@ async fn test_execution_platform_returns_unknown_eligibility(buck: &Buck) -> any
     Ok(())
 }
 
-#[buck_test]
+#[buck_test(meta_only = "remote execution: its execution platform is remote-enabled")]
 async fn test_failing_run_with_run_info(buck: &Buck) {
     let failure = buck
         .build(&[

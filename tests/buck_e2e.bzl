@@ -17,6 +17,7 @@ load("@fbsource//tools/build_defs/testinfra:network_access_utils.bzl", "network_
 load("@fbsource//tools/build_defs/xplat:shims.bzl", "xplat_shims")
 load("@fbsource//tools/target_determinator/macros:ci.bzl", "ci")
 load("@fbsource//tools/target_determinator/macros:ci_hint.bzl", "ci_hint")
+load("@prelude//:is_full_meta_repo.bzl", "is_full_meta_repo")
 
 def buck_e2e_test(
     name,
@@ -42,16 +43,24 @@ def buck_e2e_test(
     remote_execution = None,
     network_access = None,
     visibility = None,
+    meta_only = False,
 ):
     """
     Custom macro for buck2/buckaemon end-to-end tests.
 
     The test is a `python_unittest` on the Python harness (`e2e_util/buck_workspace.py`), or, if
     `srcs` are Rust, a `rust_unittest` on the Rust harness (`e2e_util/rust`) whose crate root is
-    the first of `srcs`.
+    the first of `srcs`. Open source has no Python harness, and does not get its tests.
+
+    meta_only:
+        Whether all of the target's tests need Meta's infrastructure or repository. Open source
+        does not get the target. For some of a target's tests, see `BuckTest::meta_only`.
     """
     srcs = srcs or []
     is_rust = _is_rust_test(name, srcs)
+    if (meta_only or not is_rust) and not is_full_meta_repo():
+        return
+    e2e_flavor = _e2e_flavor()
     labels = labels or []
     deps = deps or []
     cfg_modifiers = cfg_modifiers or []
@@ -71,9 +80,6 @@ def buck_e2e_test(
     # Having it enabled has significant negative impact on Starlark evaluation performance.
     env["RUST_LIB_BACKTRACE"] = "0"
 
-    # For autodeps
-    read_package_value = getattr(native, "read_package_value", None)
-    e2e_flavor = read_package_value and read_package_value("buck2_e2e_test.flavor")
     if e2e_flavor == "isolated":
         env["BUCK2_E2E_TEST_FLAVOR"] = "isolated"
         serialize_test_cases = serialize_test_cases or False
@@ -238,6 +244,19 @@ def buck_e2e_test(
             default_target_platform = platform_utils.get_cxx_platform_for_current_buildfile().target_platform,
         )
 
+def _e2e_flavor():
+    # For autodeps
+    read_package_value = getattr(native, "read_package_value", None)
+    flavor = read_package_value and read_package_value("buck2_e2e_test.flavor")
+    if flavor == None and not is_full_meta_repo():
+        # Open source does not get the `PACKAGE` files that set the flavor.
+        package = native.package_name()
+        if package.startswith("tests/core/"):
+            return "isolated"
+        if package.startswith("tests/e2e/") or package == "tests/e2e":
+            return "buck2_non_isolated"
+    return flavor
+
 def _is_rust_test(name, srcs):
     rust = [src for src in srcs if src.endswith(".rs")]
     if rust and len(rust) != len(srcs):
@@ -288,6 +307,7 @@ def buck2_e2e_test(
     remote_execution = None,
     network_access = None,
     visibility = None,
+    meta_only = False,
 ):
     """
     Custom macro for buck2 end-to-end tests. All tests are run against buck2 compiled in-repo (compiled buck2).
@@ -313,6 +333,8 @@ def buck2_e2e_test(
         test_with_deployed_buck2 is True. This is useful for tests that don't need the version
         dependency for Target Determinator purposes (e.g., bxl tests that test Starlark logic).
         Default is False.
+    meta_only:
+        Whether the test needs Meta's infrastructure or repository; see `buck_e2e_test`.
     """
     kwargs = {
         "base_module": base_module,
@@ -324,6 +346,7 @@ def buck2_e2e_test(
         "data_dir": data_dir,
         "heavyweight_threads": heavyweight_threads,
         "labels": labels,
+        "meta_only": meta_only,
         "network_access": network_access,
         "remote_execution": remote_execution,
         "require_nano_prelude": require_nano_prelude,
@@ -338,6 +361,10 @@ def buck2_e2e_test(
     if not test_with_compiled_buck2 and not test_with_deployed_buck2:
         fail("Must set one of `test_with_compiled_buck2` or `test_with_deployed_buck2` for " + name)
 
+    # Open source has no deployed buck2.
+    with_deployed_buck2 = test_with_deployed_buck2 and is_full_meta_repo()
+    with_reverted_buck2 = test_with_reverted_buck2 and is_full_meta_repo()
+
     # soft errors should always be allowed on tests with deployed buck2, or with reverted buck
     deployed_env = dict(env)
     deployed_env["BUCK2_HARD_ERROR"] = "false"
@@ -347,7 +374,7 @@ def buck2_e2e_test(
 
         # TODO(ctolliday) use BUCK2_HARD_ERROR=panic
         compiled_env["BUCK2_HARD_ERROR"] = "true"
-        compiled_env["BUCK2_TPX"] = "$BUCK2_BINARY_DIR/buck2-tpx"
+        # @oss-disable[end= ]: compiled_env["BUCK2_TPX"] = "$BUCK2_BINARY_DIR/buck2-tpx"
 
         # The coverage wrapper maps profiles only against the test's own executable and
         # `LLVM_COVERAGE_ADDITIONAL_OBJECT_PATHS`. Each branch lists the binaries the test runs;
@@ -378,12 +405,12 @@ def buck2_e2e_test(
             cfg_modifiers = buck2_modifiers()
             + [
                 # Always run these tests under rust opt build
-                "ovr_config//build_mode:opt",
+                # @oss-disable[end= ]: "ovr_config//build_mode:opt",
             ],
             **kwargs,
         )
 
-    if test_with_deployed_buck2:
+    if with_deployed_buck2:
         deps = deps or []
 
         # Add a buck2 version file as dep so we can run deployed buck2 tests on version bumps.
@@ -392,7 +419,7 @@ def buck2_e2e_test(
             deps += ["fbsource//tools/buck2-versions:stable"]
         buck_e2e_test(name = name, env = deployed_env, executable = "buck2", skip_for_os = skip_for_os, deps = deps, **kwargs)
 
-    if test_with_reverted_buck2:
+    if with_reverted_buck2:
         previous_env = dict(deployed_env)
         previous_env["BUCK2_CHANNEL"] = "previous"
         buck_e2e_test(name = name + "_with_reverted_buck2", env = previous_env, executable = "buck2", skip_for_os = skip_for_os, deps = deps, **kwargs)

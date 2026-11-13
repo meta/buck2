@@ -22,6 +22,7 @@ use buck2_e2e::golden::sanitize_daemon_stderr;
 use buck2_e2e::golden::sanitize_stacktrace;
 use buck2_e2e::golden::sanitize_stderr;
 use buck2_e2e::prelude::*;
+use buck2_e2e::utils::is_open_source;
 use serde_json::Value;
 
 async fn wait_for_daemon_pid(buck: &Buck) -> anyhow::Result<u32> {
@@ -447,17 +448,19 @@ async fn test_daemon_abort(buck: &Buck) -> anyhow::Result<()> {
     let category_key = string(&error["category_key"]);
     let message = string(&error["message"]);
 
-    if cfg!(windows) {
+    if cfg!(windows) || is_open_source() {
+        // Only folly's signal handler, which open source buck2 does not have, reports the signal.
         // TODO get windows to dump a stack trace / detect signals
         assert!(message.contains("buckd stderr is empty"), "{message}");
         assert_eq!(category_key, "DAEMON_DISCONNECT");
-    } else {
-        // Messages from folly's signal handler.
-        assert!(message.contains("*** Aborted at"), "{message}");
-        assert!(message.contains("*** Signal 6 (SIGABRT)"), "{message}");
-        assert!(category_key.starts_with("SERVER_SIGABRT"), "{category_key}");
-        assert_eq!(error["best_tag"], "SERVER_SIGABRT");
+        return Ok(());
     }
+
+    // Messages from folly's signal handler.
+    assert!(message.contains("*** Aborted at"), "{message}");
+    assert!(message.contains("*** Signal 6 (SIGABRT)"), "{message}");
+    assert!(category_key.starts_with("SERVER_SIGABRT"), "{category_key}");
+    assert_eq!(error["best_tag"], "SERVER_SIGABRT");
 
     if cfg!(target_os = "linux") {
         assert!(message.contains("\n    @ "), "{message}");
@@ -694,7 +697,7 @@ async fn test_build_file_race(buck: &Buck) -> anyhow::Result<()> {
     Ok(())
 }
 
-#[buck_test(write_invocation_record = true)]
+#[buck_test(write_invocation_record = true, meta_only = "remote execution")]
 async fn test_download_failure(buck: &Buck) -> anyhow::Result<()> {
     // Upload action if necessary
     buck.build(&["//:run_action", "--remote-only"]).await?;
@@ -720,7 +723,7 @@ async fn test_download_failure(buck: &Buck) -> anyhow::Result<()> {
 
 // The disk-state core downloads tracked values, whose misses are the CAS's failure; a digest the
 // user got wrong is caught by `cas_artifact`'s presence check at action time instead.
-#[buck_test(write_invocation_record = true, skip_for_materializer = ["v2"])]
+#[buck_test(write_invocation_record = true, skip_for_materializer = ["v2"], meta_only = "remote execution")]
 async fn test_declared_artifact_download_failure(buck: &Buck) -> anyhow::Result<()> {
     let res = buck
         .build(&["//:declared_file"])
@@ -734,7 +737,7 @@ async fn test_declared_artifact_download_failure(buck: &Buck) -> anyhow::Result<
     Ok(())
 }
 
-#[buck_test(write_invocation_record = true)]
+#[buck_test(write_invocation_record = true, meta_only = "remote execution")]
 async fn test_declared_tree_download_failure(buck: &Buck) -> anyhow::Result<()> {
     fs::OpenOptions::new()
         .append(true)
@@ -753,7 +756,7 @@ async fn test_declared_tree_download_failure(buck: &Buck) -> anyhow::Result<()> 
     Ok(())
 }
 
-#[buck_test(write_invocation_record = true)]
+#[buck_test(write_invocation_record = true, meta_only = "remote execution")]
 async fn test_re_execute_failure(buck: &Buck) -> anyhow::Result<()> {
     // Upload action if necessary
     buck.build(&["//:run_action", "--remote-only"]).await?;
@@ -769,7 +772,7 @@ async fn test_re_execute_failure(buck: &Buck) -> anyhow::Result<()> {
     Ok(())
 }
 
-#[buck_test(write_invocation_record = true)]
+#[buck_test(write_invocation_record = true, meta_only = "remote execution")]
 async fn test_local_incompatible(buck: &Buck) -> anyhow::Result<()> {
     let res = buck
         .build(&["//:local_run_action", "--remote-only", "--no-remote-cache"])
@@ -920,7 +923,7 @@ async fn test_nix_errno(buck: &Buck) -> anyhow::Result<()> {
     Ok(())
 }
 
-#[buck_test(skip_for_os = ["darwin", "windows"], write_invocation_record = true)]
+#[buck_test(skip_for_os = ["darwin", "windows"], write_invocation_record = true, meta_only = "remote execution")]
 async fn test_re_logs_permission_denied(buck: &Buck) -> anyhow::Result<()> {
     // Start daemon to create buck-out/v2 with correct permissions
     buck.targets(&[":"]).await?;

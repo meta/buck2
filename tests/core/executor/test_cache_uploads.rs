@@ -56,14 +56,14 @@ async fn assert_upload_attempted(buck: &Buck, count: usize) -> anyhow::Result<()
     Ok(())
 }
 
-#[buck_test]
+#[buck_test(meta_only = "remote execution")]
 async fn test_re_uploads(buck: &Buck) -> anyhow::Result<()> {
     let text = format!("write.text={}", random_string());
     buck.build(&["root//:write", "-c", &text]).await?;
     assert_locally_executed_upload_attempted(buck, 1).await
 }
 
-#[buck_test]
+#[buck_test(meta_only = "remote execution")]
 async fn test_re_uploads_dir(buck: &Buck) -> anyhow::Result<()> {
     let text = format!("write.text={}", random_string());
     buck.build(&["root//:write_in_dir", "-c", &text]).await?;
@@ -77,7 +77,7 @@ async fn test_re_uploads_limit(buck: &Buck) -> anyhow::Result<()> {
     assert_locally_executed_upload_attempted(buck, 0).await
 }
 
-#[buck_test]
+#[buck_test(meta_only = "remote execution")]
 async fn test_re_uploads_default(buck: &Buck) -> anyhow::Result<()> {
     let text = format!("write.text={}", random_string());
     buck.build(&["root//:write_default", "-c", &text]).await?;

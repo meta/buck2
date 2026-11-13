@@ -133,7 +133,14 @@ impl CheckoutPair {
                 // that soft error into a daemon crash.
                 for args in [
                     vec!["init", path_str(&root)],
-                    vec!["commit", "--addremove", "-m", "init"],
+                    vec![
+                        "commit",
+                        "--addremove",
+                        "-m",
+                        "init",
+                        "--config",
+                        "ui.username=buck2 e2e <buck2-e2e@example.com>",
+                    ],
                 ] {
                     let status = tokio::process::Command::new("sl")
                         .args(&args)

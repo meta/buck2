@@ -71,7 +71,7 @@ async fn run_test_and_check_discovery_presence(
     Ok(())
 }
 
-#[buck_test]
+#[buck_test(meta_only = "tpx")]
 async fn test_discovery_output_dir(buck: &Buck) -> anyhow::Result<()> {
     let args = ["//:ok"];
     run_test_and_check_discovery_presence(buck, TestDiscovery::Executed, &args).await?;
@@ -94,14 +94,14 @@ async fn test_discovery_output_dir(buck: &Buck) -> anyhow::Result<()> {
     Ok(())
 }
 
-#[buck_test]
+#[buck_test(meta_only = "tpx")]
 async fn test_discovery_cached_on_dice(buck: &Buck) -> anyhow::Result<()> {
     let args = ["//:ok"];
     run_test_and_check_discovery_presence(buck, TestDiscovery::Executed, &args).await?;
     run_test_and_check_discovery_presence(buck, TestDiscovery::Skipped, &args).await
 }
 
-#[buck_test]
+#[buck_test(meta_only = "tpx")]
 async fn test_failed_discovery_not_cached_on_dice(buck: &Buck) -> anyhow::Result<()> {
     let args = ["//:bad"];
     buck.test(&args)
@@ -121,7 +121,7 @@ async fn test_failed_discovery_not_cached_on_dice(buck: &Buck) -> anyhow::Result
     Ok(())
 }
 
-#[buck_test]
+#[buck_test(meta_only = "tpx")]
 async fn test_listing_uncacheable(buck: &Buck) -> anyhow::Result<()> {
     let seed = format!("test.seed={}", random_string());
     let args = [
@@ -145,7 +145,7 @@ async fn test_listing_uncacheable(buck: &Buck) -> anyhow::Result<()> {
     Ok(())
 }
 
-#[buck_test]
+#[buck_test(meta_only = "remote execution")]
 async fn test_discovery_cached_on_re(buck: &Buck) -> anyhow::Result<()> {
     let seed = format!("test.seed={}", random_string());
     let args = [
@@ -177,7 +177,7 @@ async fn test_discovery_cached_on_re(buck: &Buck) -> anyhow::Result<()> {
     run_test_and_check_discovery_presence(buck, TestDiscovery::Cached, &args).await
 }
 
-#[buck_test(env = [("BUCK2_TEST_SKIP_ACTION_CACHE_WRITE", "true")])]
+#[buck_test(env = [("BUCK2_TEST_SKIP_ACTION_CACHE_WRITE", "true")], meta_only = "tpx")]
 async fn test_local_discovery_uploaded_to_cache(buck: &Buck) -> anyhow::Result<()> {
     let seed = format!("test.seed={}", random_string());
     let args = [

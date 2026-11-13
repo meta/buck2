@@ -1136,7 +1136,8 @@ async fn test_provider_and_action_reads_skip_unrelated_actions_True(
 #[buck_test(
     data_dir = "paging",
     write_invocation_record = true,
-    allow_soft_errors = true
+    allow_soft_errors = true,
+    meta_only = "Starlark heaps page in lazily only in Meta's build: the published `pagable` crate lacks heap-key lookups"
 )]
 async fn test_cached_build_metadata_skips_configured_graph(buck: &Buck) -> anyhow::Result<()> {
     hydration_settings(

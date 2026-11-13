@@ -1,4 +1,4 @@
-load("//rules:rules.bzl", "foo_binary", "foo_genrule")
+load("//rules:rules.bzl", "foo_genrule")
 
 stub(
     name = "bin",
@@ -20,11 +20,5 @@ foo_genrule(
 foo_genrule(
     name = "genrule_binary",
     cmd = "",
-    visibility = ["PUBLIC"],
-)
-
-foo_binary(
-    name = "package_boundary_violation",
-    srcs = ["package_boundary_violation/bin"],
     visibility = ["PUBLIC"],
 )

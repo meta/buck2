@@ -22,10 +22,12 @@ buck2_core_tests(
         },
         "test_paranoid": {
             "data": "//buck2/tests/targets:isolated_targets",
+            # The targets are fbsource's.
+            "meta_only": True,
         },
         "test_uncategorized": {
             "env": {
-                "RECLI": "$(location fbsource//xplat/remote_execution/dotslash:recli)",
+                # @oss-disable[end= ]: "RECLI": "$(location fbsource//xplat/remote_execution/dotslash:recli)",
             },
         },
     },

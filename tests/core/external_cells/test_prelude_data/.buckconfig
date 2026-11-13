@@ -3,6 +3,7 @@
   prelude = prelude
 
 [cell_aliases]
+  config = prelude
   ovr_config = prelude
   # Just have to exist, not actually used for this test
   toolchains = root

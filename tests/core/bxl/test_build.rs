@@ -106,7 +106,7 @@ async fn test_bxl_build_order(buck: &Buck) -> anyhow::Result<()> {
     Ok(())
 }
 
-#[buck_test]
+#[buck_test(meta_only = "remote execution: only remote actions' outputs are materialized lazily")]
 async fn test_bxl_build_no_materialization(buck: &Buck) -> anyhow::Result<()> {
     let result = buck
         .bxl(&[

@@ -70,7 +70,7 @@ async fn test_restart_materializer_corruption(buck: &Buck) -> anyhow::Result<()>
     Ok(())
 }
 
-#[buck_test(allow_soft_errors = true)]
+#[buck_test(allow_soft_errors = true, meta_only = "remote execution")]
 async fn test_restart_cas_missing(buck: &Buck) -> anyhow::Result<()> {
     // Make sure Buck is not running.
     buck.kill().await?;
@@ -130,7 +130,7 @@ async fn test_restart_forkserver_crash(buck: &Buck) -> anyhow::Result<()> {
     Ok(())
 }
 
-#[buck_test]
+#[buck_test(meta_only = "remote execution: the tombstoned digest is a remote action's output")]
 async fn test_restart_disabled(buck: &Buck) -> anyhow::Result<()> {
     // Ensure no daemon
     buck.kill().await?;

@@ -9,4 +9,10 @@
 def _get_cxx_platform_for_base_path(_base_path):
     return struct(target_platform = None)
 
-platform_utils = struct(get_cxx_platform_for_base_path = _get_cxx_platform_for_base_path)
+def _get_cxx_platform_for_current_buildfile():
+    return struct(target_platform = None)
+
+platform_utils = struct(
+    get_cxx_platform_for_base_path = _get_cxx_platform_for_base_path,
+    get_cxx_platform_for_current_buildfile = _get_cxx_platform_for_current_buildfile,
+)

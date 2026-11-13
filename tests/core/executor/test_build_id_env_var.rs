@@ -32,7 +32,7 @@ async fn test_build_id_env_var_is_set_locally(buck: &Buck) -> anyhow::Result<()>
     Ok(())
 }
 
-#[buck_test]
+#[buck_test(meta_only = "remote execution")]
 async fn test_build_id_env_var_is_set_remotely(buck: &Buck) -> anyhow::Result<()> {
     let result = buck
         .build(&[

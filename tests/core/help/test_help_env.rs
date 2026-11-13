@@ -10,7 +10,7 @@
 
 use buck2_e2e::prelude::*;
 
-#[buck_test]
+#[buck_test(meta_only = "Meta's help text")]
 async fn test_help(buck: &Buck) -> anyhow::Result<()> {
     let result = buck.help_env(&[]).await?;
     golden(&result.stdout, "buck2-help-env.golden.txt");

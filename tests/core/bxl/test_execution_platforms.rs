@@ -44,7 +44,7 @@ async fn test_bxl_exec_platform_dynamic_output(buck: &Buck) -> anyhow::Result<()
     Ok(())
 }
 
-#[buck_test]
+#[buck_test(meta_only = "remote execution")]
 async fn test_bxl_execution_platforms(buck: &Buck) -> anyhow::Result<()> {
     let result = buck
         .bxl(&[

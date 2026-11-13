@@ -9,9 +9,19 @@
  */
 
 use buck2_e2e::prelude::*;
+use buck2_e2e::utils::is_open_source;
 
+/// Meta's buck2 tolerates a missing source file when it loads the package, for misconfigured
+/// sparse checkouts; open source buck2 rejects it.
 #[buck_test]
-async fn test_missing_source_file_is_tolerated_at_load_time(buck: &Buck) -> anyhow::Result<()> {
-    buck.uquery(&["//package1:"]).await?;
+async fn test_missing_source_file_at_load_time(buck: &Buck) -> anyhow::Result<()> {
+    let query = buck.uquery(&["//package1:"]);
+    if is_open_source() {
+        query.await.expect_failure().assert_stderr_matches(
+            "Source file `non_existent_source_file.txt` does not exist as a member of package `prelude//package1`",
+        );
+    } else {
+        query.await?;
+    }
     Ok(())
 }

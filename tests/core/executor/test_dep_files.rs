@@ -1473,6 +1473,7 @@ async fn test_dep_file_hit_with_action_key_change(buck: &Buck) -> anyhow::Result
         "BUCK2_TEST_TOMBSTONED_DIGESTS",
         "e537c6611d7e2ba1c9b71248f7a0ca506e5a0f9a:78",
     )],
+    meta_only = "remote execution",
 )]
 async fn test_dep_files_ignore_missing_digests(buck: &Buck, tmp_path: &Path) -> anyhow::Result<()> {
     buck.build(&["app:app"]).await?;
@@ -1537,6 +1538,7 @@ async fn test_mismatched_outputs_dep_files(buck: &Buck) -> anyhow::Result<()> {
         ("BUCK_LOG", "buck2_execute_impl::executors::caching=debug"),
         ("BUCK2_TEST_SKIP_ACTION_CACHE_WRITE", "true"),
     ],
+    meta_only = "remote execution",
 )]
 async fn test_re_dep_file_uploads_same_key(buck: &Buck) -> anyhow::Result<()> {
     // Test all the cases where the remote dep file key should stay the same
@@ -1582,6 +1584,7 @@ async fn test_re_dep_file_uploads_same_key(buck: &Buck) -> anyhow::Result<()> {
         ("BUCK_LOG", "buck2_execute_impl::executors::caching=debug"),
         ("BUCK2_TEST_SKIP_ACTION_CACHE_WRITE", "true"),
     ],
+    meta_only = "remote execution",
 )]
 async fn test_re_dep_file_uploads_different_key(buck: &Buck) -> anyhow::Result<()> {
     // TODO: Mergebase is currently not set in this test.
@@ -1708,6 +1711,7 @@ async fn test_local_dep_file_upload_follows_cache_upload_permission(
         ("BUCK_LOG", "buck2_execute_impl::executors::caching=debug"),
         ("BUCK2_TEST_SKIP_ACTION_CACHE_WRITE", "true"),
     ],
+    meta_only = "remote execution",
 )]
 async fn test_dep_file_does_not_upload_when_allow_cache_upload_is_true(
     buck: &Buck,
@@ -1737,6 +1741,7 @@ async fn test_dep_file_does_not_upload_when_allow_cache_upload_is_true(
 #[buck_test(
     data_dir = "upload_dep_files",
     env = [("BUCK2_TEST_SKIP_ACTION_CACHE_WRITE", "true")],
+    meta_only = "remote execution",
 )]
 async fn test_dep_file_hit_on_remote_outputs(buck: &Buck) -> anyhow::Result<()> {
     let cache_buster = format!("test.cache_buster={}", random_string());
@@ -1761,6 +1766,7 @@ async fn test_dep_file_hit_on_remote_outputs(buck: &Buck) -> anyhow::Result<()> 
 #[buck_test(
     data_dir = "upload_dep_files",
     env = [("BUCK2_TEST_SKIP_ACTION_CACHE_WRITE", "true")],
+    meta_only = "remote execution",
 )]
 async fn test_dep_file_hit_on_action_cache_outputs(buck: &Buck) -> anyhow::Result<()> {
     let cache_buster = format!("test.cache_buster={}", random_string());
@@ -1791,6 +1797,7 @@ async fn test_dep_file_hit_on_action_cache_outputs(buck: &Buck) -> anyhow::Resul
         ("BUCK2_TEST_SKIP_ACTION_CACHE_WRITE", "true"),
         ("BUCK2_TEST_ONLY_REMOTE_DEP_FILE_CACHE", "true"),
     ],
+    meta_only = "remote execution",
 )]
 async fn test_only_do_cache_lookup_when_dep_file_upload_is_enabled(
     buck: &Buck,
@@ -1835,6 +1842,7 @@ async fn test_only_do_cache_lookup_when_dep_file_upload_is_enabled(
         ("BUCK_LOG", "buck2_execute_impl::executors::caching=debug"),
         ("BUCK2_TEST_SKIP_ACTION_CACHE_WRITE", "true"),
     ],
+    meta_only = "remote execution",
 )]
 async fn test_re_dep_file_remote_upload(buck: &Buck) -> anyhow::Result<()> {
     let cache_buster = format!("test.cache_buster={}", random_string());
@@ -1864,6 +1872,7 @@ async fn test_re_dep_file_remote_upload(buck: &Buck) -> anyhow::Result<()> {
         ),
         ("BUCK2_TEST_SKIP_ACTION_CACHE_WRITE", "true"),
     ],
+    meta_only = "remote execution",
 )]
 async fn test_re_dep_file_cache_hit_upload(buck: &Buck) -> anyhow::Result<()> {
     // The upload is skipped when the dep file entry already exists, so the key must be fresh.
@@ -2147,12 +2156,20 @@ async fn test_flush_dep_files(buck: &Buck) -> anyhow::Result<()> {
     Ok(())
 }
 
-#[buck_test(data_dir = "upload_dep_files", allow_soft_errors = false)]
+#[buck_test(
+    data_dir = "upload_dep_files",
+    allow_soft_errors = false,
+    meta_only = "remote execution"
+)]
 async fn test_input_cannot_be_normalized_and_hard_error(buck: &Buck) -> anyhow::Result<()> {
     run_test_input_cannot_be_normalized(buck, false).await
 }
 
-#[buck_test(data_dir = "upload_dep_files", allow_soft_errors = true)]
+#[buck_test(
+    data_dir = "upload_dep_files",
+    allow_soft_errors = true,
+    meta_only = "remote execution"
+)]
 async fn test_input_cannot_be_normalized(buck: &Buck) -> anyhow::Result<()> {
     run_test_input_cannot_be_normalized(buck, true).await
 }

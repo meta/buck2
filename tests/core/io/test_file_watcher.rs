@@ -14,6 +14,7 @@ use buck2_e2e::prelude::*;
     setup_eden = false,
     extra_buck_config = [("buck2", "file_watcher", "edenfs")],
     env = [("BUCK2_HARD_ERROR", "false")],
+    meta_only = "Meta's EdenFS-to-Watchman fallback",
 )]
 async fn test_watchman_fallback(buck: &Buck) -> anyhow::Result<()> {
     let res = buck.targets(&["root//:"]).await?;
@@ -29,6 +30,7 @@ async fn test_watchman_fallback(buck: &Buck) -> anyhow::Result<()> {
 #[buck_test(
     setup_eden = false,
     extra_buck_config = [("buck2", "file_watcher", "edenfs")],
+    meta_only = "EdenFS",
 )]
 async fn test_eden_fail(buck: &Buck) {
     let res = buck.targets(&["root//:"]).await.expect_failure();

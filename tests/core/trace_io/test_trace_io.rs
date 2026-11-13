@@ -417,7 +417,7 @@ async fn test_fake_offline_http_archive_uses_offline_cache(buck: &Buck) -> anyho
     Ok(())
 }
 
-#[buck_test(skip_for_os = ["windows"])]
+#[buck_test(skip_for_os = ["windows"], meta_only = "BLAKE3-KEYED digests")]
 async fn test_includes_cas_artifact_in_manifest(buck: &Buck) -> anyhow::Result<()> {
     hg_init(buck.cwd())?;
 
@@ -440,7 +440,7 @@ async fn test_includes_cas_artifact_in_manifest(buck: &Buck) -> anyhow::Result<(
 }
 
 // Ensure offline-cache buck-out dir is _not_ created when not doing I/O tracing.
-#[buck_test(skip_for_os = ["windows"])]
+#[buck_test(skip_for_os = ["windows"], meta_only = "BLAKE3-KEYED digests")]
 async fn test_no_tracing_does_not_write_offline_cache_for_cas_artifact(
     buck: &Buck,
 ) -> anyhow::Result<()> {
@@ -460,6 +460,7 @@ async fn test_no_tracing_does_not_write_offline_cache_for_cas_artifact(
     skip_for_os = ["windows"],
     extra_buck_config = [("buck2", "sqlite_materializer_state", "false")],
     env = [("BUCK_LOG", "buck2_execute_impl::materializers=trace")],
+    meta_only = "BLAKE3-KEYED digests",
 )]
 async fn test_fake_offline_cas_artifact_uses_offline_cache(buck: &Buck) -> anyhow::Result<()> {
     hg_init(buck.cwd())?;

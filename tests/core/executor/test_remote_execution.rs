@@ -46,7 +46,7 @@ async fn assert_re_use_case(buck: &Buck, expected_use_case: &str) -> anyhow::Res
     Ok(())
 }
 
-#[buck_test(env = [("BUCK2_TEST_FAIL_CONNECT", "true")])]
+#[buck_test(env = [("BUCK2_TEST_FAIL_CONNECT", "true")], meta_only = "remote execution")]
 async fn test_re_connection_failure_no_retry(buck: &Buck) {
     let out = buck
         .build(&["root//:simple", "--remote-only", "--no-remote-cache"])
@@ -57,7 +57,7 @@ async fn test_re_connection_failure_no_retry(buck: &Buck) {
     assert!(!out.stderr.contains("retrying after sleeping"));
 }
 
-#[buck_test]
+#[buck_test(meta_only = "remote execution")]
 async fn test_re_use_case_override_with_arg(buck: &Buck) -> anyhow::Result<()> {
     // Make sure action is not cached
     std::fs::write(buck.cwd().join("input.txt"), random_string())?;
@@ -77,7 +77,7 @@ async fn test_re_use_case_override_with_arg(buck: &Buck) -> anyhow::Result<()> {
     assert_re_use_case(buck, "buck2-user").await
 }
 
-#[buck_test]
+#[buck_test(meta_only = "remote execution")]
 async fn test_re_use_case_override_with_config(buck: &Buck) -> anyhow::Result<()> {
     // Make sure action is not cached
     std::fs::write(buck.cwd().join("input.txt"), random_string())?;
@@ -95,7 +95,7 @@ async fn test_re_use_case_override_with_config(buck: &Buck) -> anyhow::Result<()
     assert_re_use_case(buck, "buck2-user").await
 }
 
-#[buck_test]
+#[buck_test(meta_only = "remote execution")]
 async fn test_re_use_case_override_with_external_config(
     buck: &Buck,
     tmp_path: &Path,
@@ -123,7 +123,7 @@ async fn test_re_use_case_override_with_external_config(
     assert_re_use_case(buck, "buck2-user").await
 }
 
-#[buck_test]
+#[buck_test(meta_only = "remote execution")]
 async fn test_re_use_case_override_with_external_config_source(
     buck: &Buck,
     tmp_path: &Path,
@@ -145,7 +145,7 @@ async fn test_re_use_case_override_with_external_config_source(
     assert_re_use_case(buck, "buck2-user").await
 }
 
-#[buck_test(write_invocation_record = true)]
+#[buck_test(write_invocation_record = true, meta_only = "remote execution")]
 async fn test_re_over_quota_reports_exceeded_quotas(buck: &mut Buck) -> anyhow::Result<()> {
     let exceeded_quota = "worker_units:global:buck2-testing:linux-remote-execution";
     buck.set_env("BUCK2_TEST_INJECTED_RE_EXCEEDED_QUOTAS", exceeded_quota);

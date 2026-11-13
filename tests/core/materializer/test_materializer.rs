@@ -80,6 +80,7 @@ async fn test_modify_dep_materialization(buck: &Buck) -> anyhow::Result<()> {
     data_dir = "deferred_materializer_matching_artifact_optimization",
     skip_for_materializer = ["v2"],
     env = [("BUCK_LOG", "buck2_execute_impl::materializers=trace")],
+    meta_only = "remote execution: only remote actions' outputs are materialized lazily",
 )]
 async fn test_matching_artifact_optimization(buck: &Buck) -> anyhow::Result<()> {
     let target = "root//:copy";
@@ -151,6 +152,7 @@ async fn test_cache_directory_cleanup(buck: &Buck) -> anyhow::Result<()> {
     data_dir = "deferred_materializer_matching_artifact_optimization",
     skip_for_materializer = ["v2"],
     env = [("BUCK_LOG", "buck2_execute_impl::materializers=trace")],
+    meta_only = "remote execution: only remote actions' outputs are materialized lazily",
 )]
 async fn test_sqlite_materializer_state_matching_artifact_optimization(
     buck: &Buck,
@@ -213,6 +215,7 @@ async fn test_download_file_not_repeated_after_restart(buck: &Buck) -> anyhow::R
     data_dir = "deferred_materializer_matching_artifact_optimization",
     skip_for_materializer = ["v2"],
     env = [("BUCK_LOG", "buck2_execute_impl::materializers=trace")],
+    meta_only = "remote execution: only remote actions' outputs are materialized lazily",
 )]
 async fn test_sqlite_materializer_state_disabled(buck: &Buck) -> anyhow::Result<()> {
     disable_sqlite_materializer_state(buck);

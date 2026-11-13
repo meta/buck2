@@ -26,7 +26,7 @@ async fn test_symlink_preserves_empty_directory_local(buck: &Buck) -> anyhow::Re
     Ok(())
 }
 
-#[buck_test(skip_for_os = ["windows"])]
+#[buck_test(skip_for_os = ["windows"], meta_only = "remote execution")]
 async fn test_symlink_preserves_empty_directory_remote(buck: &Buck) -> anyhow::Result<()> {
     let result = buck.build(&["//:dog_and_bone", "--prefer-remote"]).await?;
     let out = result

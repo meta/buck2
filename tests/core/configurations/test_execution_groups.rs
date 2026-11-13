@@ -305,7 +305,7 @@ async fn test_rule_without_groups_has_no_group_platforms(buck: &Buck) -> anyhow:
 }
 
 // Runs `python3` tool scripts locally and on a Linux RE platform.
-#[buck_test(skip_for_os = ["windows"])]
+#[buck_test(skip_for_os = ["windows"], meta_only = "remote execution")]
 async fn test_actions_run_on_group_platform(buck: &Buck) -> anyhow::Result<()> {
     buck.build(&[
         "root//groups:bundle",
@@ -413,7 +413,7 @@ async fn test_aquery_execution_group_golden(buck: &Buck) -> anyhow::Result<()> {
     Ok(())
 }
 
-#[buck_test(skip_for_os = ["windows"])]
+#[buck_test(skip_for_os = ["windows"], meta_only = "remote execution")]
 async fn test_action_execution_event_records_execution_group(buck: &Buck) -> anyhow::Result<()> {
     buck.build(&["root//groups:binary", "--no-remote-cache"])
         .await?;
@@ -453,7 +453,7 @@ async fn test_action_execution_event_records_execution_group(buck: &Buck) -> any
 }
 
 // Runs `python3` tool scripts locally and on a Linux RE platform.
-#[buck_test(skip_for_os = ["windows"])]
+#[buck_test(skip_for_os = ["windows"], meta_only = "remote execution")]
 async fn test_dynamic_output_actions_run_on_group_platform(buck: &Buck) -> anyhow::Result<()> {
     buck.build(&["root//groups:dynamic_binary", "--no-remote-cache"])
         .await?;

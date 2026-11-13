@@ -15,6 +15,7 @@ use std::path::Path;
 use anyhow::Context;
 use buck2_e2e::golden::sanitize_stderr;
 use buck2_e2e::prelude::*;
+use buck2_e2e::utils::is_open_source;
 
 const SHOW_IGNORED_READS: (&str, &str) = ("BUCK2_SHOW_SOFT_ERRORS", "only=path_check_ignored_read");
 
@@ -154,10 +155,17 @@ async fn test_source_ignored(buck: &Buck) -> anyhow::Result<()> {
         buck.cwd().join("TARGETS.fixture"),
         "load(\":defs.bzl\", \"cp\")\ncp(name = \"cp\", src = \"ignored_src\")\n",
     )?;
-    let res = buck
+    let build = buck
         .build(&["//:cp"])
-        .env(SHOW_IGNORED_READS.0, SHOW_IGNORED_READS.1)
-        .await?;
+        .env(SHOW_IGNORED_READS.0, SHOW_IGNORED_READS.1);
+    // Open source buck2 does not load a package with a source that is ignored.
+    if is_open_source() {
+        build.await.expect_failure().assert_stderr_matches(
+            "Source file `ignored_src` does not exist as a member of package `root//`",
+        );
+        return Ok(());
+    }
+    let res = build.await?;
     assert!(
         res.stderr
             .contains("`ignored_src` matches the `project.ignore` pattern `ignored*`"),
@@ -188,10 +196,16 @@ async fn test_source_ignored_behind_symlink(buck: &Buck) -> anyhow::Result<()> {
         buck.cwd().join("TARGETS.fixture"),
         "load(\":defs.bzl\", \"cp\")\ncp(name = \"cp\", src = \"ignored_dir/link/f\")\n",
     )?;
-    let res = buck
+    let build = buck
         .build(&["//:cp"])
-        .env(SHOW_IGNORED_READS.0, SHOW_IGNORED_READS.1)
-        .await?;
+        .env(SHOW_IGNORED_READS.0, SHOW_IGNORED_READS.1);
+    if is_open_source() {
+        build.await.expect_failure().assert_stderr_matches(
+            "Source file `ignored_dir/link/f` does not exist as a member of package `root//`",
+        );
+        return Ok(());
+    }
+    let res = build.await?;
     assert_eq!(
         res.stderr
             .matches("matches the `project.ignore` pattern")

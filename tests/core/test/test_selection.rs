@@ -16,7 +16,7 @@ async fn test_ok(buck: &Buck) -> anyhow::Result<()> {
     Ok(())
 }
 
-#[buck_test]
+#[buck_test(meta_only = "tpx")]
 async fn test_fail(buck: &Buck) {
     buck.test(&["//:fail"])
         .await
@@ -24,7 +24,7 @@ async fn test_fail(buck: &Buck) {
         .assert_stderr_matches("Fail: root//:fail - unmanaged");
 }
 
-#[buck_test]
+#[buck_test(meta_only = "tpx")]
 async fn test_tests_attribute(buck: &Buck) {
     buck.test(&["//:noop_references_fail"])
         .await
@@ -32,7 +32,7 @@ async fn test_tests_attribute(buck: &Buck) {
         .assert_stderr_matches("Fail: root//:fail - unmanaged");
 }
 
-#[buck_test]
+#[buck_test(meta_only = "tpx")]
 async fn test_tests_attribute_transitive(buck: &Buck) {
     buck.test(&["//:noop_transitively_references_fail"])
         .await
@@ -46,7 +46,7 @@ async fn test_tests_attribute_cycle(buck: &Buck) -> anyhow::Result<()> {
     Ok(())
 }
 
-#[buck_test]
+#[buck_test(meta_only = "tpx")]
 async fn test_tests_attribute_self_transition(buck: &Buck) {
     buck.test(&["//:noop_self_transition_references_fail"])
         .await

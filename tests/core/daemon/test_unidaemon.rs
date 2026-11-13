@@ -708,13 +708,13 @@ async fn unidaemon_loss_recovery_respects_legacy_slot_owner(
 }
 
 cases! { [buck, tmp_path] unidaemon_loss_recovery_respects_legacy_slot_owner {
-    #[buck_test(data_dir = "test_daemon_data", skip_for_os = ["windows", "darwin"])]
+    #[buck_test(data_dir = "test_daemon_data", skip_for_os = ["windows", "darwin"], meta_only = "Meta's released buck2")]
     fn test_unidaemon_loss_recovery_respects_legacy_slot_owner_clean("clean");
-    #[buck_test(data_dir = "test_daemon_data", skip_for_os = ["windows", "darwin"])]
+    #[buck_test(data_dir = "test_daemon_data", skip_for_os = ["windows", "darwin"], meta_only = "Meta's released buck2")]
     fn test_unidaemon_loss_recovery_respects_legacy_slot_owner_startup("startup");
 }}
 
-#[buck_test(data_dir = "test_daemon_data", skip_for_os = ["windows", "darwin"])]
+#[buck_test(data_dir = "test_daemon_data", skip_for_os = ["windows", "darwin"], meta_only = "Meta's released buck2")]
 async fn test_unidaemon_proxy_death_before_forwarding_kill(
     buck: &Buck,
     tmp_path: &Path,
@@ -1118,17 +1118,17 @@ async fn unidaemon_eviction_fallback_terminates_writers(
 }
 
 cases! { [buck] unidaemon_eviction_fallback_terminates_writers {
-    #[buck_test(data_dir = "test_daemon_data", skip_for_os = ["windows", "darwin"])]
+    #[buck_test(data_dir = "test_daemon_data", skip_for_os = ["windows", "darwin"], meta_only = "Meta's released buck2")]
     fn test_unidaemon_eviction_fallback_terminates_writers_deadline("deadline");
-    #[buck_test(data_dir = "test_daemon_data", skip_for_os = ["windows", "darwin"])]
+    #[buck_test(data_dir = "test_daemon_data", skip_for_os = ["windows", "darwin"], meta_only = "Meta's released buck2")]
     fn test_unidaemon_eviction_fallback_terminates_writers_proxy_death("proxy-death");
-    #[buck_test(data_dir = "test_daemon_data", skip_for_os = ["windows", "darwin"])]
+    #[buck_test(data_dir = "test_daemon_data", skip_for_os = ["windows", "darwin"], meta_only = "Meta's released buck2")]
     fn test_unidaemon_eviction_fallback_terminates_writers_unresponsive_daemon("unresponsive-daemon");
     #[buck_test(data_dir = "test_daemon_data", skip_for_os = ["windows", "darwin"])]
     fn test_unidaemon_eviction_fallback_terminates_writers_compatible_unresponsive_daemon("compatible-unresponsive-daemon");
 }}
 
-#[buck_test(data_dir = "test_daemon_data", skip_for_os = ["windows", "darwin"])]
+#[buck_test(data_dir = "test_daemon_data", skip_for_os = ["windows", "darwin"], meta_only = "Meta's released buck2")]
 async fn test_unidaemon_legacy_client_build_kill_clean_and_return(
     buck: &Buck,
     tmp_path: &Path,
@@ -1690,7 +1690,7 @@ cases! { [buck] unidaemon_corruption_recovery_scope {
     #[buck_test(data_dir = "test_daemon_data", skip_for_os = ["windows", "darwin"], allow_soft_errors = true)]
     #[expect(non_snake_case, reason = "named like the Python harness's parametrized case")]
     fn test_unidaemon_corruption_recovery_scope_False_False_materializer("materializer", false, false);
-    #[buck_test(data_dir = "test_daemon_data", skip_for_os = ["windows", "darwin"], allow_soft_errors = true)]
+    #[buck_test(data_dir = "test_daemon_data", skip_for_os = ["windows", "darwin"], allow_soft_errors = true, meta_only = "remote execution: the fresh daemon takes the producer from the action cache instead of rerunning it")]
     #[expect(non_snake_case, reason = "named like the Python harness's parametrized case")]
     fn test_unidaemon_corruption_recovery_scope_False_False_materializer_deadline("materializer-deadline", false, false);
     #[buck_test(data_dir = "test_daemon_data", skip_for_os = ["windows", "darwin"], allow_soft_errors = true)]
@@ -1699,7 +1699,7 @@ cases! { [buck] unidaemon_corruption_recovery_scope {
     #[buck_test(data_dir = "test_daemon_data", skip_for_os = ["windows", "darwin"], allow_soft_errors = true)]
     #[expect(non_snake_case, reason = "named like the Python harness's parametrized case")]
     fn test_unidaemon_corruption_recovery_scope_False_True_materializer("materializer", true, false);
-    #[buck_test(data_dir = "test_daemon_data", skip_for_os = ["windows", "darwin"], allow_soft_errors = true)]
+    #[buck_test(data_dir = "test_daemon_data", skip_for_os = ["windows", "darwin"], allow_soft_errors = true, meta_only = "remote execution: the fresh daemon takes the producer from the action cache instead of rerunning it")]
     #[expect(non_snake_case, reason = "named like the Python harness's parametrized case")]
     fn test_unidaemon_corruption_recovery_scope_False_True_materializer_deadline("materializer-deadline", true, false);
     #[buck_test(data_dir = "test_daemon_data", skip_for_os = ["windows", "darwin"], allow_soft_errors = true)]
@@ -1708,7 +1708,7 @@ cases! { [buck] unidaemon_corruption_recovery_scope {
     #[buck_test(data_dir = "test_daemon_data", skip_for_os = ["windows", "darwin"], allow_soft_errors = true)]
     #[expect(non_snake_case, reason = "named like the Python harness's parametrized case")]
     fn test_unidaemon_corruption_recovery_scope_True_False_materializer("materializer", false, true);
-    #[buck_test(data_dir = "test_daemon_data", skip_for_os = ["windows", "darwin"], allow_soft_errors = true)]
+    #[buck_test(data_dir = "test_daemon_data", skip_for_os = ["windows", "darwin"], allow_soft_errors = true, meta_only = "remote execution: the fresh daemon takes the producer from the action cache instead of rerunning it")]
     #[expect(non_snake_case, reason = "named like the Python harness's parametrized case")]
     fn test_unidaemon_corruption_recovery_scope_True_False_materializer_deadline("materializer-deadline", false, true);
     #[buck_test(data_dir = "test_daemon_data", skip_for_os = ["windows", "darwin"], allow_soft_errors = true)]
@@ -1717,7 +1717,7 @@ cases! { [buck] unidaemon_corruption_recovery_scope {
     #[buck_test(data_dir = "test_daemon_data", skip_for_os = ["windows", "darwin"], allow_soft_errors = true)]
     #[expect(non_snake_case, reason = "named like the Python harness's parametrized case")]
     fn test_unidaemon_corruption_recovery_scope_True_True_materializer("materializer", true, true);
-    #[buck_test(data_dir = "test_daemon_data", skip_for_os = ["windows", "darwin"], allow_soft_errors = true)]
+    #[buck_test(data_dir = "test_daemon_data", skip_for_os = ["windows", "darwin"], allow_soft_errors = true, meta_only = "remote execution: the fresh daemon takes the producer from the action cache instead of rerunning it")]
     #[expect(non_snake_case, reason = "named like the Python harness's parametrized case")]
     fn test_unidaemon_corruption_recovery_scope_True_True_materializer_deadline("materializer-deadline", true, true);
 }}
@@ -2048,7 +2048,11 @@ async fn test_unidaemon_damaged_sibling_namespace_does_not_fail_commands(
     Ok(())
 }
 
-#[buck_test(data_dir = "test_daemon_data", skip_for_os = ["windows", "darwin"])]
+#[buck_test(
+    data_dir = "test_daemon_data",
+    skip_for_os = ["windows", "darwin"],
+    meta_only = "flaky outside Meta: the daemon's best-effort namespace removal at exit can miss its 100 ms lock"
+)]
 async fn test_unidaemon_exited_daemon_removes_its_namespace(
     buck: &Buck,
     tmp_path: &Path,

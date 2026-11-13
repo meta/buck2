@@ -83,7 +83,7 @@ async fn test_projected_subpath_changes_between_builds(buck: &Buck) -> anyhow::R
     Ok(())
 }
 
-#[buck_test]
+#[buck_test(meta_only = "remote execution: only remote actions' outputs are materialized lazily")]
 async fn test_projection_consumed_after_daemon_restart(buck: &Buck) -> anyhow::Result<()> {
     // Declare the directory artifact without putting it on disk, so that the
     // work of materializing it falls to the restarted daemon.

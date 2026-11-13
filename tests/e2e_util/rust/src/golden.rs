@@ -247,8 +247,44 @@ pub fn sanitize_remote_action_origin(s: &str) -> String {
         .into_owned()
 }
 
+/// Rewrites what open source buck2 prints differently from Meta's buck2 into Meta's form, so that
+/// one golden serves both. In Meta's repository, it returns `s` as it is.
+pub fn as_meta_output(s: &str) -> String {
+    if cfg!(fbcode_build) {
+        s.to_owned()
+    } else {
+        open_source_output_as_meta(s)
+    }
+}
+
+/// Open source buck2 prints the build ID where Meta's prints a link to it, and links its own
+/// documentation where Meta's links an internal page.
+fn open_source_output_as_meta(s: &str) -> String {
+    static REPLACEMENTS: LazyLock<Vec<(Regex, &'static str)>> = LazyLock::new(|| {
+        [
+            (
+                r"Build ID: ([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b)",
+                "Buck UI: https://www.internalfb.com/buck2/$1",
+            ),
+            (
+                r"https://buck2\.build/docs/users/faq/starlark_peak_mem\b",
+                "https://fburl.com/starlark_peak_mem_warning",
+            ),
+        ]
+        .into_iter()
+        .map(|(pattern, replacement)| (Regex::new(pattern).unwrap(), replacement))
+        .collect()
+    });
+    REPLACEMENTS
+        .iter()
+        .fold(s.to_owned(), |s, (regex, replacement)| {
+            regex.replace_all(&s, *replacement).into_owned()
+        })
+}
+
 /// Makes buck2's stderr comparable between runs: drops the log lines that vary, and replaces
-/// timestamps, ids, daemon details, statistics and hashes with placeholders.
+/// timestamps, ids, daemon details, statistics and hashes with placeholders. Open source buck2's
+/// output becomes Meta's (see [`as_meta_output`]).
 pub fn sanitize_stderr(s: &str) -> String {
     static REPLACEMENTS: LazyLock<Vec<(Regex, &'static str)>> = LazyLock::new(|| {
         [
@@ -277,8 +313,9 @@ pub fn sanitize_stderr(s: &str) -> String {
         .map(|(pattern, replacement)| (Regex::new(pattern).unwrap(), replacement))
         .collect()
     });
-    let mut s =
-        sanitize_remote_action_origin(&strip_jemalloc_invalid_conf(&strip_glog_lines(s)));
+    let mut s = sanitize_remote_action_origin(&strip_jemalloc_invalid_conf(&strip_glog_lines(
+        &as_meta_output(s),
+    )));
     for (regex, replacement) in REPLACEMENTS.iter() {
         s = regex.replace_all(&s, NoExpand(replacement)).into_owned();
     }
@@ -562,16 +599,30 @@ mod tests {
     }
 
     #[test]
+    fn test_open_source_output_is_made_meta() {
+        assert_eq!(
+            open_source_output_as_meta(concat!(
+                "\x1b[1GBuild ID: 01234567-89ab-cdef-0123-456789abcdef\x1b[K\n",
+                "See https://buck2.build/docs/users/faq/starlark_peak_mem for tips.\n",
+            )),
+            concat!(
+                "\x1b[1GBuck UI: https://www.internalfb.com/buck2/01234567-89ab-cdef-0123-456789abcdef\x1b[K\n",
+                "See https://fburl.com/starlark_peak_mem_warning for tips.\n",
+            )
+        );
+    }
+
+    #[test]
     fn test_stderr_details_get_placeholders() {
         assert_eq!(
             sanitize_stderr(concat!(
-                "[2024-01-01T00:00:00.000-00:00] Build ID: 01234567-89ab-cdef-0123-456789abcdef\n",
+                "[2024-01-01T00:00:00.000-00:00] Buck UI: https://www.internalfb.com/buck2/01234567-89ab-cdef-0123-456789abcdef\n",
                 "    pid: 1234\n",
                 "Commands: 4 (cached: 1)\n",
                 "thread 'main' (42) panicked at src/main.rs:1:1\n",
             )),
             concat!(
-                "[<TIMESTAMP>] Build ID: <UUID>\n",
+                "[<TIMESTAMP>] Buck UI: https://www.internalfb.com/buck2/<UUID>\n",
                 "    pid: <PID>\n",
                 "Commands: <COMMAND_STATS>\n",
                 "thread 'main' (<THREAD_ID>) panicked at <PATH>\n",

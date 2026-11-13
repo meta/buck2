@@ -99,7 +99,7 @@ const GOLDEN_KEYS: [(&str, &str); 2] = [
     ),
 ];
 
-#[buck_test(write_invocation_record = true)]
+#[buck_test(write_invocation_record = true, meta_only = "remote execution")]
 async fn test_miss_is_written_when_there_is_room_for_it(buck: &Buck) -> anyhow::Result<()> {
     let content = random_string();
     let content_config = format!("test.content={content}");
@@ -129,7 +129,7 @@ async fn test_miss_is_written_when_there_is_room_for_it(buck: &Buck) -> anyhow::
     Ok(())
 }
 
-#[buck_test(write_invocation_record = true)]
+#[buck_test(write_invocation_record = true, meta_only = "remote execution")]
 async fn test_miss_is_uploaded_when_there_is_no_room_for_it(buck: &Buck) -> anyhow::Result<()> {
     let content = random_string();
     let content_config = format!("test.content={content}");
@@ -162,7 +162,11 @@ async fn test_miss_is_uploaded_when_there_is_no_room_for_it(buck: &Buck) -> anyh
 }
 
 // The populate failure where the cache cannot be written is a (quiet) soft error.
-#[buck_test(write_invocation_record = true, allow_soft_errors = true)]
+#[buck_test(
+    write_invocation_record = true,
+    allow_soft_errors = true,
+    meta_only = "remote execution"
+)]
 async fn test_recorded_content_is_not_written_again(buck: &Buck) -> anyhow::Result<()> {
     let content = random_string();
     let content_config = format!("test.content={content}");
@@ -222,7 +226,11 @@ async fn test_recorded_content_is_not_written_again(buck: &Buck) -> anyhow::Resu
     Ok(())
 }
 
-#[buck_test(write_invocation_record = true, allow_soft_errors = true)]
+#[buck_test(
+    write_invocation_record = true,
+    allow_soft_errors = true,
+    meta_only = "remote execution"
+)]
 async fn test_different_content_is_a_miss(buck: &Buck) -> anyhow::Result<()> {
     let recorded = random_string();
     buck.build(&[
@@ -259,7 +267,11 @@ async fn test_different_content_is_a_miss(buck: &Buck) -> anyhow::Result<()> {
     Ok(())
 }
 
-#[buck_test(write_invocation_record = true, allow_soft_errors = true)]
+#[buck_test(
+    write_invocation_record = true,
+    allow_soft_errors = true,
+    meta_only = "remote execution"
+)]
 async fn test_verify_checks_a_hit_against_the_render(buck: &Buck) -> anyhow::Result<()> {
     let content = random_string();
     let content_config = format!("test.content={content}");
@@ -290,7 +302,11 @@ async fn test_verify_checks_a_hit_against_the_render(buck: &Buck) -> anyhow::Res
     Ok(())
 }
 
-#[buck_test(write_invocation_record = true, allow_soft_errors = true)]
+#[buck_test(
+    write_invocation_record = true,
+    allow_soft_errors = true,
+    meta_only = "remote execution"
+)]
 async fn test_transitive_set_projection_is_served(buck: &Buck) -> anyhow::Result<()> {
     let content = random_string();
     let content_config = format!("test.content={content}");
@@ -362,7 +378,7 @@ async fn test_a_key_outside_the_share_is_a_plain_write(buck: &Buck) -> anyhow::R
     Ok(())
 }
 
-#[buck_test(write_invocation_record = true)]
+#[buck_test(write_invocation_record = true, meta_only = "remote execution")]
 async fn test_nothing_is_recorded_where_local_results_are_not_published(
     buck: &Buck,
 ) -> anyhow::Result<()> {
@@ -402,7 +418,7 @@ async fn test_nothing_is_recorded_where_local_results_are_not_published(
     Ok(())
 }
 
-#[buck_test]
+#[buck_test(meta_only = "remote execution")]
 async fn test_keys_are_golden(buck: &Buck) -> anyhow::Result<()> {
     let dump = buck.cwd().join("keys.txt");
     buck.build(&[

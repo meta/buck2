@@ -74,7 +74,7 @@ fn check_help<'a>(
     .boxed_local()
 }
 
-#[buck_test]
+#[buck_test(meta_only = "Meta's help text")]
 async fn test_help(buck: &Buck) -> anyhow::Result<()> {
     let semaphore = Semaphore::new(10);
     let total = check_help(buck, &semaphore, Vec::new()).await?;

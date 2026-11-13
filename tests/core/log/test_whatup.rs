@@ -11,6 +11,7 @@
 use std::fmt::Write;
 use std::path::Path;
 
+use buck2_e2e::golden::as_meta_output;
 use buck2_e2e::prelude::*;
 use serde_json::Value;
 
@@ -40,7 +41,10 @@ async fn test_whatup_command(buck: &Buck, tmp_path: &Path) -> anyhow::Result<()>
     std::fs::write(&log_file, truncated)?;
 
     let ext = buck.log(&["whatup", log_file.to_str().unwrap()]).await?;
-    golden(&ext.stderr, "at_analysis_start.stderr.golden");
+    golden(
+        &as_meta_output(&ext.stderr),
+        "at_analysis_start.stderr.golden",
+    );
     Ok(())
 }
 
@@ -74,6 +78,9 @@ async fn test_whatup_after_command(buck: &Buck) -> anyhow::Result<()> {
     let ext = buck
         .log(&["whatup", LOG_SOURCE, "--after", &action_start.to_string()])
         .await?;
-    golden(&ext.stderr, "after_rule_execution.stderr.golden");
+    golden(
+        &as_meta_output(&ext.stderr),
+        "after_rule_execution.stderr.golden",
+    );
     Ok(())
 }

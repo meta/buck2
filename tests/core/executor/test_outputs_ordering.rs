@@ -119,7 +119,7 @@ async fn test_local_action(buck: &Buck) -> anyhow::Result<()> {
     Ok(())
 }
 
-#[buck_test]
+#[buck_test(meta_only = "remote execution")]
 async fn test_remote_action(buck: &Buck) -> anyhow::Result<()> {
     buck.build(&[
         "//:foo",

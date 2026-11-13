@@ -68,7 +68,7 @@ async fn test_build_local(buck: &Buck) -> anyhow::Result<()> {
     Ok(())
 }
 
-#[buck_test]
+#[buck_test(meta_only = "remote execution")]
 async fn test_build_remote(buck: &Buck) -> anyhow::Result<()> {
     let result = buck
         .build_without_report(&[

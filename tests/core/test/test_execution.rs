@@ -40,7 +40,7 @@ fn find_files(dir: &Path, name: &str, found: &mut Vec<PathBuf>) -> std::io::Resu
 
 // Running a test more than once reuses its key in the critical path graph, which is the
 // `critical_path_duplicate_key` soft error.
-#[buck_test(allow_soft_errors = true)]
+#[buck_test(allow_soft_errors = true, meta_only = "remote execution")]
 async fn test_stable_action_digest_with_deterministic_paths(buck: &Buck) -> anyhow::Result<()> {
     let args = [
         "-c",
@@ -86,7 +86,7 @@ async fn test_stable_action_digest_with_deterministic_paths(buck: &Buck) -> anyh
 
 // Running a test more than once reuses its key in the critical path graph, which is the
 // `critical_path_duplicate_key` soft error.
-#[buck_test(allow_soft_errors = true)]
+#[buck_test(allow_soft_errors = true, meta_only = "tpx")]
 async fn test_stress_runs_have_different_action_digests(buck: &Buck) -> anyhow::Result<()> {
     buck.test(&[
         "-c",
@@ -123,7 +123,7 @@ async fn test_stress_runs_have_different_action_digests(buck: &Buck) -> anyhow::
     Ok(())
 }
 
-#[buck_test]
+#[buck_test(meta_only = "remote execution")]
 async fn test_remote_test_execution_cached(buck: &Buck) -> anyhow::Result<()> {
     let args = [
         "-c",
@@ -152,7 +152,7 @@ async fn test_remote_test_execution_cached(buck: &Buck) -> anyhow::Result<()> {
 
 // Running a test more than once reuses its key in the critical path graph, which is the
 // `critical_path_duplicate_key` soft error.
-#[buck_test(allow_soft_errors = true)]
+#[buck_test(allow_soft_errors = true, meta_only = "tpx")]
 async fn test_remote_test_execution_not_cached_for_stress_runs(buck: &Buck) -> anyhow::Result<()> {
     let args = [
         "-c",
@@ -220,7 +220,7 @@ async fn test_local_test_execution_not_cached(buck: &Buck) -> anyhow::Result<()>
 
 // Running a test more than once reuses its key in the critical path graph, which is the
 // `critical_path_duplicate_key` soft error.
-#[buck_test(allow_soft_errors = true)]
+#[buck_test(allow_soft_errors = true, meta_only = "remote execution")]
 async fn test_remote_test_execution_not_cached_with_no_remote_cache(
     buck: &Buck,
 ) -> anyhow::Result<()> {
@@ -250,7 +250,7 @@ async fn test_remote_test_execution_not_cached_with_no_remote_cache(
     Ok(())
 }
 
-#[buck_test]
+#[buck_test(meta_only = "tpx")]
 async fn test_remote_test_execution_not_cached_with_disable_flag(
     buck: &Buck,
 ) -> anyhow::Result<()> {
@@ -281,7 +281,7 @@ async fn test_remote_test_execution_not_cached_with_disable_flag(
     Ok(())
 }
 
-#[buck_test]
+#[buck_test(meta_only = "tpx")]
 async fn test_outputs_of_a_local_run_are_on_disk(buck: &Buck) -> anyhow::Result<()> {
     // The test runner reads a test's outputs out of process, so after a local run Buck asks
     // the materializer for them by value; the only copy of what the test wrote is the one on

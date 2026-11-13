@@ -81,7 +81,7 @@ async fn test_instruction_count_disabled(buck: &Buck) -> anyhow::Result<()> {
     Ok(())
 }
 
-#[buck_test(skip_for_os = ["windows", "darwin"], disable_daemon_cgroup = false)]
+#[buck_test(skip_for_os = ["windows", "darwin"], disable_daemon_cgroup = false, meta_only = "miniperf, which records the execution stats, is only in Meta's Linux build")]
 async fn test_instruction_count_enabled(buck: &Buck) -> anyhow::Result<()> {
     let cache_buster = format!("test.cache_buster={}", random_string());
     let helper_bin_flags = helper_bin_flags(buck);
@@ -115,7 +115,7 @@ async fn test_instruction_count_enabled(buck: &Buck) -> anyhow::Result<()> {
     Ok(())
 }
 
-#[buck_test(skip_for_os = ["windows", "darwin"], disable_daemon_cgroup = false)]
+#[buck_test(skip_for_os = ["windows", "darwin"], disable_daemon_cgroup = false, meta_only = "remote execution")]
 async fn test_instruction_count_remote(buck: &Buck) -> anyhow::Result<()> {
     let helper_bin_flags = helper_bin_flags(buck);
     buck.build(&[

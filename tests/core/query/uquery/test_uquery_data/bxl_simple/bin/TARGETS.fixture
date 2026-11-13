@@ -33,7 +33,7 @@ foo_binary(
         "//lib:lib3",
     ],
     srcs = [
-        "kind",
+        "dir_srcs/src.txt",
     ],
     cmd = ["$(exe //:bin)", "$(location //:data)"],
 )

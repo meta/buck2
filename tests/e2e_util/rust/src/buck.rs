@@ -259,7 +259,7 @@ impl Buck {
 
     /// `buck2 test <args>`. The test results go to `testOutput.xml` in the working directory unless
     /// `args` name another file with `--xml`. With `BUCK2_TPX` set, the tests run with that test
-    /// executor; under tpx, disabled tests run too.
+    /// executor; under tpx, which is the default in Meta's repository, disabled tests run too.
     pub fn test(&self, args: &[&str]) -> BuckCommand<'_> {
         let separator = args.iter().position(|a| *a == "--").unwrap_or(args.len());
         let (buck_args, test_args) = args.split_at(separator);
@@ -284,7 +284,12 @@ impl Buck {
         argv.extend(buck_args.iter().map(OsString::from));
         argv.push("--".into());
         argv.extend(test_args.iter().map(OsString::from));
-        if executor.as_ref().is_none_or(|e| e.contains("tpx")) {
+        let tpx = match &executor {
+            Some(executor) => executor.contains("tpx"),
+            // Open source buck2 runs tests with its own runner.
+            None => cfg!(fbcode_build),
+        };
+        if tpx {
             argv.push("--run-disabled".into());
         }
         self.command_os(argv)

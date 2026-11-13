@@ -143,7 +143,7 @@ async fn test_bxl_aquery_attrfilter(buck: &Buck) -> anyhow::Result<()> {
     Ok(())
 }
 
-#[buck_test]
+#[buck_test(meta_only = "remote execution")]
 async fn test_bxl_aquery_deps(buck: &Buck) -> anyhow::Result<()> {
     let stdout = buck.bxl(&["//:aquery.bxl:deps"]).await?.stdout;
 

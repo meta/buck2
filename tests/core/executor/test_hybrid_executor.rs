@@ -61,7 +61,7 @@ async fn first_commands(buck: &Buck) -> anyhow::Result<Vec<Value>> {
     .context("No action execution with commands in the event log")
 }
 
-#[buck_test]
+#[buck_test(meta_only = "remote execution")]
 async fn test_hybrid_executor_threshold(buck: &Buck) -> anyhow::Result<()> {
     buck.build(&[
         "root//executor_threshold_tests/...",
@@ -113,12 +113,12 @@ async fn hybrid_executor_fallbacks(buck: &Buck, low_pass_filter: &str) -> anyhow
     Ok(())
 }
 
-#[buck_test]
+#[buck_test(meta_only = "remote execution")]
 async fn test_hybrid_executor_fallbacks_true(buck: &Buck) -> anyhow::Result<()> {
     hybrid_executor_fallbacks(buck, "true").await
 }
 
-#[buck_test]
+#[buck_test(meta_only = "remote execution")]
 async fn test_hybrid_executor_fallbacks_false(buck: &Buck) -> anyhow::Result<()> {
     hybrid_executor_fallbacks(buck, "false").await
 }
@@ -231,21 +231,21 @@ async fn hybrid_executor_cancels_local_execution(buck: &Buck, target: &str) -> a
     Ok(())
 }
 
-#[buck_test]
+#[buck_test(meta_only = "remote execution")]
 async fn test_hybrid_executor_cancels_local_execution_slower_locally(
     buck: &Buck,
 ) -> anyhow::Result<()> {
     hybrid_executor_cancels_local_execution(buck, "slower_locally").await
 }
 
-#[buck_test]
+#[buck_test(meta_only = "remote execution")]
 async fn test_hybrid_executor_cancels_local_execution_slower_locally_force_full_hybrid(
     buck: &Buck,
 ) -> anyhow::Result<()> {
     hybrid_executor_cancels_local_execution(buck, "slower_locally_force_full_hybrid").await
 }
 
-#[buck_test]
+#[buck_test(meta_only = "remote execution")]
 async fn test_hybrid_executor_logging(buck: &Buck) -> anyhow::Result<()> {
     buck.build(&[
         "root//executor_fallback_tests:local_only",
@@ -344,7 +344,7 @@ async fn test_hybrid_executor_prefer_remote_local_fallback(buck: &Buck) -> anyho
     Ok(())
 }
 
-#[buck_test]
+#[buck_test(meta_only = "remote execution")]
 async fn test_hybrid_executor_prefer_remote(buck: &Buck) -> anyhow::Result<()> {
     // Build execution is sequential and remote first with --prefer-remote
     // using an action that succeeds slowly on RE and fails fast locally
@@ -359,7 +359,7 @@ async fn test_hybrid_executor_prefer_remote(buck: &Buck) -> anyhow::Result<()> {
     Ok(())
 }
 
-#[buck_test]
+#[buck_test(meta_only = "remote execution")]
 async fn test_executor_preference_priority(buck: &Buck) -> anyhow::Result<()> {
     buck.build(&[
         "root//executor_preference_tests:",
@@ -371,7 +371,7 @@ async fn test_executor_preference_priority(buck: &Buck) -> anyhow::Result<()> {
     Ok(())
 }
 
-#[buck_test]
+#[buck_test(meta_only = "remote execution")]
 async fn test_executor_preference_with_remote_args(buck: &Buck) -> anyhow::Result<()> {
     buck.build(&[
         "root//executor_preference_prefer_remote_arg_tests:",
@@ -428,7 +428,7 @@ async fn test_local_only(buck: &Buck) -> anyhow::Result<()> {
     Ok(())
 }
 
-#[buck_test]
+#[buck_test(meta_only = "remote execution")]
 async fn test_remote_only(buck: &Buck) -> anyhow::Result<()> {
     let cache_buster = format!("test.cache_buster={}", random_string());
     let args = [
@@ -530,7 +530,7 @@ async fn scheduling_mode(buck: &Buck) -> anyhow::Result<Value> {
     Ok(actions[0]["scheduling_mode"].clone())
 }
 
-#[buck_test(write_invocation_record = true)]
+#[buck_test(write_invocation_record = true, meta_only = "remote execution")]
 async fn test_hybrid_executor_remote_queuing_fallback(buck: &Buck) -> anyhow::Result<()> {
     let record = build_for_record(
         buck,

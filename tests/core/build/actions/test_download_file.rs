@@ -530,7 +530,7 @@ async fn test_a_wrong_size_is_reported_by_the_download(buck: &Buck) -> anyhow::R
     Ok(())
 }
 
-#[buck_test(data_dir = "download", skip_for_os = ["windows"])]
+#[buck_test(data_dir = "download", skip_for_os = ["windows"], meta_only = "BLAKE3-KEYED digests")]
 async fn test_a_content_based_path_under_a_different_preferred_digest(
     buck: &Buck,
 ) -> anyhow::Result<()> {
@@ -602,7 +602,7 @@ async fn test_fetches_once_across_restarts_SHA256(buck: &Buck) -> anyhow::Result
     fetches_once_across_restarts(buck, "SHA256").await
 }
 
-#[buck_test(data_dir = "download")]
+#[buck_test(data_dir = "download", meta_only = "remote execution")]
 async fn test_is_uploaded_from_disk(buck: &mut Buck) -> anyhow::Result<()> {
     let content = random_string().into_bytes();
     // Force the uploader to treat the download as missing from the CAS even if it is there.
@@ -625,7 +625,7 @@ async fn test_is_uploaded_from_disk(buck: &mut Buck) -> anyhow::Result<()> {
     Ok(())
 }
 
-#[buck_test(data_dir = "download")]
+#[buck_test(data_dir = "download", meta_only = "remote execution")]
 async fn test_uses_the_cas_when_it_has_the_content(buck: &Buck) -> anyhow::Result<()> {
     let content = random_string().into_bytes();
     let server = StaticHttpServer::start([("/file", content.clone())]).await?;
@@ -656,7 +656,7 @@ async fn test_uses_the_cas_when_it_has_the_content(buck: &Buck) -> anyhow::Resul
     Ok(())
 }
 
-#[buck_test(data_dir = "download")]
+#[buck_test(data_dir = "download", meta_only = "remote execution")]
 async fn test_content_the_cas_holds_needs_no_url(buck: &Buck) -> anyhow::Result<()> {
     let content = random_string().into_bytes();
     let server = StaticHttpServer::start([("/file", content.clone())]).await?;
@@ -696,7 +696,7 @@ async fn test_content_the_cas_holds_needs_no_url(buck: &Buck) -> anyhow::Result<
     Ok(())
 }
 
-#[buck_test(data_dir = "download")]
+#[buck_test(data_dir = "download", meta_only = "remote execution")]
 async fn test_a_second_checksum_is_not_checked_against_content_the_cas_serves(
     buck: &Buck,
 ) -> anyhow::Result<()> {
@@ -737,7 +737,7 @@ async fn test_a_second_checksum_is_not_checked_against_content_the_cas_serves(
     Ok(())
 }
 
-#[buck_test(data_dir = "download")]
+#[buck_test(data_dir = "download", meta_only = "remote execution")]
 async fn test_a_wrong_size_is_a_miss_in_the_cas(buck: &Buck) -> anyhow::Result<()> {
     let content = random_string().into_bytes();
     let server = StaticHttpServer::start([("/file", content.clone())]).await?;

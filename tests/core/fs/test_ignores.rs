@@ -8,8 +8,11 @@
  * above-listed licenses.
  */
 
+use std::io::Write;
+
 use buck2_e2e::BuckOutput;
 use buck2_e2e::prelude::*;
+use buck2_e2e::utils::is_open_source;
 
 /// The `srcs` of the one target printed with `--output-attribute srcs`, as project paths.
 fn srcs(res: &BuckOutput) -> anyhow::Result<Vec<String>> {
@@ -48,17 +51,23 @@ async fn test_unignored_file(buck: &Buck) -> anyhow::Result<()> {
     // `!shown/*.gen` and `!shown/*.gen/keep` un-ignore one file. The rest of the directory
     // stays ignored, in globs as in explicit reads.
     buck.build(&["//:keep"]).await?;
-    let res = buck.build(&["//:other"]).await.expect_failure();
-    assert!(
-        res.stderr
-            .contains("`shown/x.gen/other` matches the `project.ignore` pattern `**/*.gen/**`"),
-        "{}",
-        res.stderr
-    );
     let res = buck
         .targets(&["//:globbed", "--output-attribute", "srcs"])
         .await?;
     assert_eq!(srcs(&res)?, ["shown/x.gen/keep"]);
+
+    // Open source buck2 does not load a package with a source that is ignored.
+    let mut targets = std::fs::OpenOptions::new()
+        .append(true)
+        .open(buck.cwd().join("TARGETS.fixture"))?;
+    targets.write_all(b"\ncp(name = \"other\", src = \"shown/x.gen/other\")\n")?;
+    let res = buck.build(&["//:other"]).await.expect_failure();
+    let error = if is_open_source() {
+        "Source file `shown/x.gen/other` does not exist as a member of package `root//`"
+    } else {
+        "`shown/x.gen/other` matches the `project.ignore` pattern `**/*.gen/**`"
+    };
+    assert!(res.stderr.contains(error), "{}", res.stderr);
     Ok(())
 }
 

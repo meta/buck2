@@ -31,13 +31,13 @@ async fn test_output_when_no_error_handler_used(buck: &Buck) {
     );
 }
 
-#[buck_test]
+#[buck_test(meta_only = "remote execution")]
 async fn test_error_handler_succeed_on_nonetype(buck: &Buck) -> anyhow::Result<()> {
     buck.build(&["//:error_handler_nonetype"]).await?;
     Ok(())
 }
 
-#[buck_test]
+#[buck_test(meta_only = "remote execution: its execution platform is remote-enabled")]
 async fn test_output_for_error_handler_with_errorformat(buck: &Buck) {
     let failure = buck
         .build(&["//:error_handler_with_errorformat"])

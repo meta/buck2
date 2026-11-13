@@ -12,6 +12,7 @@
 
 use buck2_e2e::Buck;
 
+use crate::cmd::SL_USER;
 use crate::cmd::output;
 use crate::cmd::run;
 use crate::cmd::run_checked;
@@ -30,7 +31,19 @@ pub enum FileSystemType {
 pub async fn setup_file_watcher_test(buck: &Buck) -> anyhow::Result<()> {
     // Fails on eden because the repo exists, that's ok
     run(&["sl", "init"], buck.cwd()).await?;
-    run(&["sl", "commit", "--addremove", "-m", "temp"], buck.cwd()).await?;
+    run(
+        &[
+            "sl",
+            "commit",
+            "--addremove",
+            "-m",
+            "temp",
+            "--config",
+            SL_USER,
+        ],
+        buck.cwd(),
+    )
+    .await?;
     run_checked(&["sl", "bookmark", "main"], buck.cwd()).await?;
 
     let sl_status = output(&["sl", "status"], buck.cwd()).await?;
@@ -61,7 +74,7 @@ pub async fn run_aba_test(buck: &Buck) -> anyhow::Result<()> {
     run_checked(&["sl", "mv", "files/abc", "files/d/"], buck.cwd()).await?;
     assert_eq!(get_files(buck).await?, ["files/d/abc", "files/d/empty"]);
 
-    run_checked(&["sl", "shelve"], buck.cwd()).await?;
+    run_checked(&["sl", "shelve", "--config", SL_USER], buck.cwd()).await?;
     assert_eq!(get_files(buck).await?, ["files/abc", "files/d/empty"]);
     Ok(())
 }

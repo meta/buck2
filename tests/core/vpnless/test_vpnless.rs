@@ -33,7 +33,7 @@ async fn test_vpnless_disabled_by_host(buck: &Buck) -> anyhow::Result<()> {
     ("CPE_RUST_X2P_SUPPORTS_VPNLESS", "1"),
     // Need to set this so Windows doesn't go down the unix socket codepath.
     ("CPE_RUST_X2P_HTTP1_PROXY_PORT", "5555"),
-])]
+], meta_only = "vpnless")]
 async fn test_vpnless_enabled(buck: &Buck) -> anyhow::Result<()> {
     // Get a daemon to start
     buck.build(&[]).await?;

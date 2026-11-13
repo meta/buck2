@@ -15,7 +15,7 @@ use buck2_e2e::utils::random_string;
 use buck2_e2e::utils::read_what_ran;
 use serde_json::Value;
 
-#[buck_test]
+#[buck_test(meta_only = "remote execution")]
 async fn test_executor_with_dependencies(buck: &Buck) -> anyhow::Result<()> {
     // Smoke test: run on RE and correctly pass the `remote_execution_dependencies` parameter specified in the platform
     // The RE external dependency (https://fburl.com/wiki/e55nloow) is purposefully wrong as the smc_tier is non existent,
@@ -36,7 +36,7 @@ async fn test_executor_with_dependencies(buck: &Buck) -> anyhow::Result<()> {
     Ok(())
 }
 
-#[buck_test]
+#[buck_test(meta_only = "remote execution")]
 async fn test_good_target_with_dependencies(buck: &Buck) -> anyhow::Result<()> {
     let result = buck
         .build(&[

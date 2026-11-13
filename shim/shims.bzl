@@ -256,9 +256,14 @@ def rust_binary(name, edition = None, rustc_flags = [], deps = [], resources = {
         **_drop_fbcode_only_rust_attrs(kwargs),
     )
 
-def rust_unittest(name, edition = None, rustc_flags = [], deps = [], resources = {}, visibility = ["PUBLIC"], **kwargs):
+def rust_unittest(name, edition = None, rustc_flags = [], deps = [], resources = {}, env = {}, run_env = {}, visibility = ["PUBLIC"], **kwargs):
     deps = _fix_deps(deps)
     resources = _maybe_select_map(resources, _fix_resources)
+
+    # fbcode's `remote_execution = False` keeps a test off remote execution,
+    # which open source tests never use.
+    if kwargs.get("remote_execution") == False:
+        kwargs.pop("remote_execution")
 
     prelude.rust_test(
         name = name,
@@ -266,6 +271,8 @@ def rust_unittest(name, edition = None, rustc_flags = [], deps = [], resources =
         rustc_flags = rustc_flags + [_CFG_BUCK_BUILD],
         deps = deps,
         resources = resources,
+        env = _fix_env(env),
+        run_env = _fix_env(run_env),
         visibility = visibility,
         **_drop_fbcode_only_rust_attrs(kwargs),
     )
@@ -415,12 +422,55 @@ def _fix_mapped_srcs(xs: dict[str, str]):
     # it should be.
     return {translate_target(k): v for (k, v) in xs.items()}
 
+# The macros whose argument is a target, as in `$(location //foo:bar)`.
+_TARGET_MACROS = ["exe", "exe_target", "location", "location_exec"]
+
+def _fix_env(env):
+    return {k: _maybe_select_map(v, _fix_macros) for k, v in (env or {}).items()}
+
+def _fix_macros(value):
+    """Rewrites the targets of the macros in a string, as `_fix_deps` does deps."""
+    if type(value) != "string":
+        return value
+    out = []
+    rest = value
+    for _ in range(len(value)):
+        start = rest.find("$(")
+        if start == -1:
+            break
+        end = _closing_paren(rest, start + 1)
+        if end == -1:
+            break
+        macro, _, arg = rest[start + 2 : end].partition(" ")
+        if "$(" in arg:
+            arg = _fix_macros(arg)
+        elif macro in _TARGET_MACROS and arg:
+            arg = translate_target(arg.strip())
+        out.append(rest[:start] + "$(" + macro + (" " + arg if arg else "") + ")")
+        rest = rest[end + 1 :]
+    return "".join(out) + rest
+
+def _closing_paren(s, open_index):
+    """The index of the `)` that closes the `(` at `open_index`, or -1."""
+    depth = 0
+    for i in range(open_index, len(s)):
+        if s[i] == "(":
+            depth += 1
+        elif s[i] == ")":
+            depth -= 1
+            if depth == 0:
+                return i
+    return -1
+
 def _fix_deps(xs):
     if is_select(xs):
         return select_map(xs, lambda child_targets: _fix_deps(child_targets))
     return map(translate_target, xs)
 
 def _fix_resources(resources):
+    if resources == None:
+        return {}
+
     if is_list(resources):
         return [translate_target(r) for r in resources]
 

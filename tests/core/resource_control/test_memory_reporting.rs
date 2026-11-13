@@ -53,7 +53,7 @@ async fn get_matching_details(buck: &Buck) -> anyhow::Result<Value> {
     panic!("did not find the expected target");
 }
 
-#[buck_test(skip_for_os = ["windows", "darwin"], disable_daemon_cgroup = false)]
+#[buck_test(skip_for_os = ["windows", "darwin"], disable_daemon_cgroup = false, meta_only = "miniperf, which records the execution stats, is only in Meta's Linux build")]
 async fn test_memory_reporting_disabled(buck: &Buck) -> anyhow::Result<()> {
     let args = use_some_memory_args(buck);
     buck.build(&args.iter().map(String::as_str).collect::<Vec<_>>())

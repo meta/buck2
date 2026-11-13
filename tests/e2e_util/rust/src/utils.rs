@@ -21,6 +21,12 @@ use serde_json::Value;
 
 use crate::Buck;
 
+/// Whether the buck2 under test is open source's. It behaves differently from Meta's in places,
+/// such as rejecting a source file its package does not have when the package is loaded.
+pub fn is_open_source() -> bool {
+    !cfg!(fbcode_build)
+}
+
 /// The values at `path` in the events of the last command's event log (`buck2 log show`), for each
 /// event that has one.
 pub async fn filter_events(buck: &Buck, path: &[&str]) -> anyhow::Result<Vec<Value>> {

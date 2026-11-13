@@ -8,6 +8,8 @@ buck2_core_tests(
             "env": {
                 "MANIFOLD_CLI": "$(exe_target fbcode//manifold/clients/cli:manifold)",
             },
+            # The logs go to Manifold.
+            "meta_only": True,
         },
         "test_user_event_log": {
             "deps": ["fbsource//third-party/rust:regex"],

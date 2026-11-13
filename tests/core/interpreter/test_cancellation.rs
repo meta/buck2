@@ -11,6 +11,34 @@
 use std::time::Duration;
 
 use buck2_e2e::prelude::*;
+use serde_json::Value;
+
+/// Whether the daemon runs a command, as `buck2 status` lists it; not while there is no daemon.
+async fn has_active_command(buck: &Buck) -> bool {
+    let Ok(output) = buck.status(&[]).await else {
+        return false;
+    };
+    serde_json::from_str::<Value>(&output.stdout)
+        .ok()
+        .and_then(|status| {
+            status
+                .get("active_commands")?
+                .as_array()
+                .map(|a| !a.is_empty())
+        })
+        .unwrap_or(false)
+}
+
+/// Waits until the daemon runs a command.
+async fn wait_for_active_command(buck: &Buck) -> anyhow::Result<()> {
+    for _ in 0..1200 {
+        if has_active_command(buck).await {
+            return Ok(());
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    anyhow::bail!("The first command never showed up in `active_commands`")
+}
 
 async fn test_cancellation_impl(buck: &Buck, stage: &str) -> anyhow::Result<()> {
     let loop_config = format!("should.loop={stage}");
@@ -32,10 +60,9 @@ async fn test_cancellation_impl(buck: &Buck, stage: &str) -> anyhow::Result<()> 
         _ => buck.build(&["--preemptible=always", "--config", &loop_config, ":target"]),
     };
 
-    // We need to give time to the above to start executing. On a heavily loaded
-    // system we could still fail this race condition.
+    // The second command must start while the first one runs.
     let aproc = aproc.spawn();
-    tokio::time::sleep(Duration::from_secs(2)).await;
+    wait_for_active_command(buck).await?;
 
     let b = buck.build(&[":target"]).await?;
     let a = match aproc.wait().await {

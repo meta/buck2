@@ -170,6 +170,7 @@ struct InterpreterLoadResolver {
     config: Arc<InterpreterForDir>,
     loader_file_type: StarlarkFileType,
     build_file_cell: BuildFileCell,
+    cell_segmentation: bool,
 }
 
 #[derive(Debug, buck2_error::Error)]
@@ -258,7 +259,11 @@ impl LoadResolver for InterpreterLoadResolver {
                 }
             }
         }
-        let import_path = ImportPath::new_with_build_file_cells(path, self.build_file_cell)?;
+        let import_path = ImportPath::new_with_build_file_cells(
+            path,
+            self.build_file_cell,
+            self.cell_segmentation,
+        )?;
         Ok(match import_path.path().path().extension() {
             Some("json") => OwnedStarlarkModulePath::JsonFile(import_path),
             Some("toml") => OwnedStarlarkModulePath::TomlFile(import_path),
@@ -401,6 +406,7 @@ impl InterpreterForDir {
             config: self.dupe(),
             loader_file_type: current_file_path.file_type(),
             build_file_cell: current_file_path.build_file_cell(),
+            cell_segmentation: self.implicit_import_paths.cell_segmentation,
         }
     }
 

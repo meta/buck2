@@ -61,6 +61,7 @@ use crate::values::OwnedFrozenHeap;
 use crate::values::OwnedFrozenRef;
 use crate::values::StarlarkValue;
 use crate::values::Value;
+use crate::values::ValueOf;
 use crate::values::ValueTyped;
 use crate::values::any::StarlarkAny;
 use crate::values::any::StarlarkAnyRegistered;
@@ -1539,6 +1540,62 @@ fn test_owned_frozen_typed_round_trip() -> crate::Result<()> {
         assert_eq!(v.as_ref().flag, false);
         assert_eq!(v.as_ref().count, 99);
     });
+
+    Ok(())
+}
+
+#[test]
+fn test_owned_frozen_handle_round_trip() -> crate::Result<()> {
+    let owned: OwnedFrozen<ValueOf<SimpleData>> =
+        OwnedFrozen::build(TestHeapName::heap_name("test_owned_handle"), |heap| {
+            heap.alloc(SimpleData {
+                flag: true,
+                count: 7,
+            })
+        });
+
+    let mut ser = pagable::testing::TestingSerializer::new();
+    owned
+        .pagable_serialize(&mut ser)
+        .map_err(crate::Error::new_other)?;
+    let bytes = ser.finish();
+
+    let mut de = pagable::testing::TestingDeserializer::new(&bytes);
+    let restored = <OwnedFrozen<ValueOf<SimpleData>>>::pagable_deserialize(&mut de)
+        .map_err(crate::Error::new_other)?;
+
+    restored.by_ref(|v| {
+        assert_eq!(v.flag, true);
+        assert_eq!(v.count, 7);
+    });
+
+    Ok(())
+}
+
+/// The handle's type is checked when the root comes back, as a `ValueTyped` root's is.
+#[test]
+fn test_owned_frozen_handle_rejects_another_type() -> crate::Result<()> {
+    let owned: OwnedFrozen<ValueOf<SimpleData>> =
+        OwnedFrozen::build(TestHeapName::heap_name("test_owned_handle_type"), |heap| {
+            heap.alloc(SimpleData {
+                flag: true,
+                count: 7,
+            })
+        });
+
+    let mut ser = pagable::testing::TestingSerializer::new();
+    owned
+        .pagable_serialize(&mut ser)
+        .map_err(crate::Error::new_other)?;
+    let bytes = ser.finish();
+
+    let mut de = pagable::testing::TestingDeserializer::new(&bytes);
+    let err = <OwnedFrozen<ValueOf<TestStackFrame>>>::pagable_deserialize(&mut de)
+        .expect_err("a `SimpleData` is not a `TestStackFrame`");
+    assert!(
+        err.to_string().contains("TestStackFrame"),
+        "unexpected error: {err}"
+    );
 
     Ok(())
 }

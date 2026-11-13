@@ -313,10 +313,10 @@ starlark::__starlark_pagable_only! {
                 bxl_path: BxlFilePath::testing_new("cell", "dir/test.bxl"),
                 name: "main".to_owned(),
             };
-            let owned: OwnedBxlFunction = OwnedFrozen::build(
+            let owned: OwnedFrozen<ValueOf<BxlFunctionView>> = OwnedFrozen::build(
                 FrozenHeapName::user("frozen_bxl_function_round_trips"),
                 |heap| {
-                    heap.alloc_representation(FrozenBxlFunction {
+                    heap.alloc(FrozenBxlFunction {
                         implementation: heap.alloc("implementation").to_value(),
                         cli_args: BuckMutInsertionMap::new(),
                         bxl_id: Arc::new(expected_label.clone()),
@@ -329,10 +329,13 @@ starlark::__starlark_pagable_only! {
             owned.pagable_serialize(&mut serializer)?;
             let bytes = serializer.finish();
             let mut deserializer = pagable::testing::TestingDeserializer::new(&bytes);
-            let restored = OwnedBxlFunction::pagable_deserialize(&mut deserializer)?;
+            let restored =
+                OwnedFrozen::<ValueOf<BxlFunctionView>>::pagable_deserialize(&mut deserializer)?;
 
             restored.by_ref(|f| {
-                let f = f.as_ref();
+                let BxlFunctionView::Frozen(f) = f.get() else {
+                    panic!("expected the frozen representation, got `{f}`");
+                };
                 assert_eq!(f.implementation.unpack_str(), Some("implementation"));
                 assert!(f.cli_args.is_empty());
                 assert_eq!(f.bxl_id.as_ref(), &expected_label);

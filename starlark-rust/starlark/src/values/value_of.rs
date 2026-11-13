@@ -29,6 +29,7 @@ use allocative::Allocative;
 use dupe::Clone_;
 use dupe::Copy_;
 use dupe::Dupe_;
+use serde::Serialize;
 use starlark_derive::StarlarkPagable;
 
 use crate as starlark;
@@ -252,6 +253,15 @@ impl<'v, T: StarlarkTypeExpr<'v>> Debug for ValueOf<'v, T> {
 impl<'v, T: StarlarkTypeExpr<'v>> Display for ValueOf<'v, T> {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         Display::fmt(&self.0, f)
+    }
+}
+
+impl<'v, T: StarlarkTypeExpr<'v>> Serialize for ValueOf<'v, T> {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        self.0.serialize(serializer)
     }
 }
 

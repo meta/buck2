@@ -38,8 +38,10 @@ use crate::values::HeapSendable;
 use crate::values::HeapSyncable;
 use crate::values::OwnedFrozen;
 use crate::values::OwnedFrozenRef;
+use crate::values::StarlarkTypeExpr;
 use crate::values::StarlarkValue;
 use crate::values::Value;
+use crate::values::ValueOf;
 use crate::values::ValueTyped;
 use crate::values::layout::heap::sealed::FrozenHeapArc;
 
@@ -203,8 +205,8 @@ where
 
 /// The wire format for every `OwnedFrozen` is the owner heap followed by the frozen value.
 ///
-/// It is shared by the `Value` and `ValueTyped` forms so the two can be swapped at a field
-/// without a format change.
+/// It is shared by the `Value`, `ValueTyped` and `ValueOf` forms so they can be swapped at a
+/// field without a format change.
 fn serialize_owned_frozen(
     owner: &FrozenHeapArc,
     value: &impl StarlarkSerialize,
@@ -439,6 +441,31 @@ where
     ) -> pagable::Result<Self> {
         deserialize_owned_frozen(deserializer)?
             .downcast_starlark::<T>()
+            .map_err(|e| anyhow::anyhow!("OwnedFrozen deserialization: {e}"))
+    }
+}
+
+impl<T> PagableSerialize for OwnedFrozen<ValueOf<'static, T>>
+where
+    T: StarlarkTypeExpr<'static> + IsStaticType,
+    for<'fv> T::Reinfect<'fv>: StarlarkTypeExpr<'fv> + Sized,
+{
+    fn pagable_serialize(&self, serializer: &mut dyn PagableSerializer) -> pagable::Result<()> {
+        self.by_ref(|v| serialize_owned_frozen(self.heap_arc(), v, serializer))
+    }
+}
+
+impl<'de, T> PagableDeserialize<'de> for OwnedFrozen<ValueOf<'static, T>>
+where
+    T: StarlarkTypeExpr<'static> + IsStaticType,
+    for<'fv> T::Reinfect<'fv>: StarlarkTypeExpr<'fv> + Sized,
+    for<'fv> ValueOf<'fv, T::Reinfect<'fv>>: HeapSendable<'fv> + HeapSyncable<'fv>,
+{
+    fn pagable_deserialize<D: PagableDeserializer<'de> + ?Sized>(
+        deserializer: &mut D,
+    ) -> pagable::Result<Self> {
+        deserialize_owned_frozen(deserializer)?
+            .try_map::<ValueOf<'static, T>, crate::Error, _>(|v| ValueOf::new_err(v))
             .map_err(|e| anyhow::anyhow!("OwnedFrozen deserialization: {e}"))
     }
 }

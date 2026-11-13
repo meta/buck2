@@ -1,0 +1,5 @@
+# @nolint
+
+load(":bad_return_type_vnew.bzl", "inf")
+
+_keep_import = inf

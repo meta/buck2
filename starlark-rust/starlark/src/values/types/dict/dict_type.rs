@@ -18,16 +18,12 @@
 use std::convert::Infallible;
 use std::marker::PhantomData;
 
-use starlark_map::small_map::SmallMap;
-
 use crate as starlark;
 use crate::any::ProvidesStaticType;
 use crate::typing::Ty;
-use crate::values::Heap;
 use crate::values::UnpackValue;
 use crate::values::Value;
 use crate::values::ValueOf;
-use crate::values::dict::Dict;
 use crate::values::dict::DictMut;
 use crate::values::dict::DictRef;
 use crate::values::type_expr::StarlarkTypeExpr;
@@ -78,19 +74,6 @@ impl<'v, K: StarlarkTypeExpr<'v>, V: StarlarkTypeExpr<'v>> ValueOf<'v, DictType<
     /// The empty dict.
     pub fn empty_dict() -> Self {
         Self::new_unchecked(Value::new_empty_dict())
-    }
-
-    /// A new dict of these entries.
-    pub fn alloc_dict(
-        heap: Heap<'v>,
-        entries: impl IntoIterator<Item = (ValueOf<'v, K>, ValueOf<'v, V>)>,
-    ) -> Self {
-        let entries = entries.into_iter();
-        let mut map = SmallMap::with_capacity(entries.size_hint().0);
-        for (k, v) in entries {
-            map.insert_hashed(k.to_value().get_hashed().unwrap(), v.to_value());
-        }
-        Self::new_unchecked(heap.alloc(Dict::new(map)).to_value())
     }
 
     /// The dict.

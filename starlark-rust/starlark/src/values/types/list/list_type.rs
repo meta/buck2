@@ -22,7 +22,6 @@ use either::Either;
 use crate as starlark;
 use crate::any::ProvidesStaticType;
 use crate::typing::Ty;
-use crate::values::Heap;
 use crate::values::UnpackValue;
 use crate::values::Value;
 use crate::values::ValueOf;
@@ -96,11 +95,6 @@ impl<'v, T: StarlarkTypeExpr<'v> + EmptyListType> ValueOf<'v, T> {
 }
 
 impl<'v, T: StarlarkTypeExpr<'v>> ValueOf<'v, ListType<T>> {
-    /// A new list of these values.
-    pub fn alloc_list(heap: Heap<'v>, items: impl IntoIterator<Item = ValueOf<'v, T>>) -> Self {
-        Self::new_unchecked(heap.alloc_list_iter(items.into_iter().map(|x| x.to_value())))
-    }
-
     /// The list.
     #[inline]
     pub fn list(self) -> &'v ListRef<'v> {

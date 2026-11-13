@@ -92,12 +92,16 @@ where
     type Type = DictType<K::Type, V::Type>;
 
     fn alloc_value(self, heap: Heap<'v>) -> ValueOf<'v, Self::Type> {
-        ValueOf::alloc_dict(
-            heap,
-            self.0
-                .into_iter()
-                .map(|(k, v)| (k.alloc_value(heap), v.alloc_value(heap))),
-        )
+        let iter = self.0.into_iter();
+        let mut map = SmallMap::with_capacity(iter.size_hint().0);
+        for (k, v) in iter {
+            map.insert_hashed(
+                k.alloc_value(heap).to_value().get_hashed().unwrap(),
+                v.alloc_value(heap).to_value(),
+            );
+        }
+        // The entries are `K::Type` and `V::Type` by their declarations.
+        ValueOf::new_unchecked(heap.alloc(Dict::new(map)).to_value())
     }
 }
 

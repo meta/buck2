@@ -79,7 +79,10 @@ where
     type Type = ListType<<L::Item as AllocValue<'v>>::Type>;
 
     fn alloc_value(self, heap: Heap<'v>) -> ValueOf<'v, Self::Type> {
-        ValueOf::alloc_list(heap, self.0.into_iter().map(|x| x.alloc_value(heap)))
+        // The items are `L::Item::Type` by `L::Item`'s declaration.
+        ValueOf::new_unchecked(
+            heap.alloc_list_iter(self.0.into_iter().map(|x| heap.alloc(x).to_value())),
+        )
     }
 }
 
@@ -103,6 +106,7 @@ mod tests {
     use crate::values::FrozenHeap;
     use crate::values::Heap;
     use crate::values::ValueOf;
+    use crate::values::int::IntView;
     use crate::values::list::AllocList;
     use crate::values::list::ListType;
     use crate::values::string::StarlarkStr;
@@ -122,6 +126,14 @@ mod tests {
         FrozenHeap::temp(|heap| {
             let list: ValueOf<ListType<StarlarkStr>> = heap.alloc(AllocList::empty());
             assert!(list.list().is_empty());
+        });
+    }
+
+    #[test]
+    fn test_alloc_by_type() {
+        Heap::temp(|heap| {
+            let list = ValueOf::<ListType<IntView>>::alloc(heap, AllocList([1, 2, 3]));
+            assert_eq!(3, list.list().content().len());
         });
     }
 }

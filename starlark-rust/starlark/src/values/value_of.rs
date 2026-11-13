@@ -162,11 +162,10 @@ impl<'v, T: StarlarkTypeExpr<'v>> ValueOf<'v, T> {
         T::get(self.0)
             .ok_or_else(|| crate::values::unpack::changed_since_checked_error::<T>(self.0))
     }
-}
 
-impl<'v, T: StarlarkType<'v>> ValueOf<'v, T> {
     /// A value of `T` made from `builder`: a representation of `T`, or anything else that
-    /// makes one. The value is a `T` by construction.
+    /// makes one. The value is a `T` by construction. This is [`Heap::alloc`] with the type
+    /// named, for where the type is not clear from the builder.
     #[inline]
     pub fn alloc(heap: Heap<'v>, builder: impl AllocValue<'v, Type = T>) -> Self {
         heap.alloc(builder)
@@ -180,7 +179,9 @@ impl<'v, T: StarlarkType<'v>> ValueOf<'v, T> {
     ) -> Self {
         heap.alloc(builder)
     }
+}
 
+impl<'v, T: StarlarkType<'v>> ValueOf<'v, T> {
     /// A typed value of a representation of `T`, which is a `T` by construction as for
     /// [`alloc`](Self::alloc).
     #[inline]

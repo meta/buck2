@@ -54,7 +54,10 @@ where
     type Type = TupleType<<T::Item as AllocValue<'v>>::Type>;
 
     fn alloc_value(self, heap: Heap<'v>) -> ValueOf<'v, Self::Type> {
-        ValueOf::alloc_tuple(heap, self.0.into_iter().map(|x| x.alloc_value(heap)))
+        // The items are `T::Item::Type` by `T::Item`'s declaration.
+        ValueOf::new_unchecked(
+            heap.alloc_tuple_iter(self.0.into_iter().map(|x| heap.alloc(x).to_value())),
+        )
     }
 }
 

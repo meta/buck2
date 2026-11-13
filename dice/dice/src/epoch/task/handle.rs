@@ -58,6 +58,12 @@ impl<T> Drop for DiceTaskHandle<'_, T> {
             Some(Err(token)) => {
                 completion_handle.cancelled(token);
             }
+            // A panic in the key's computation drops the handle without a result. A cancelled task
+            // never gets a value, so its waiters would wait forever. Poison the task instead, so
+            // that the waiters panic too.
+            None if std::thread::panicking() => {
+                completion_handle.poisoned();
+            }
             None => {
                 completion_handle.cancelled(WorkerCancelled);
             }

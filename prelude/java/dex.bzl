@@ -59,7 +59,7 @@ def get_dex_produced_from_java_library(
     d8_cmd.add(["--file-to-dex", jar_to_dex])
     d8_cmd.add(["--android-jar", dex_toolchain.android_jar])
 
-    d8_cmd.add(["--intermediate", "--no-optimize", "--force-jumbo"])
+    d8_cmd.add(["--intermediate", "--file-per-class-file", "--no-optimize", "--force-jumbo"])
     if not needs_desugar:
         d8_cmd.add("--no-desugar")
     else:
@@ -86,6 +86,9 @@ def get_dex_produced_from_java_library(
     synthetic_contexts_file = ctx.actions.declare_output(prefix + "_synthetic_contexts.txt", has_content_based_path = True)
     d8_cmd.add(["--synthetic-contexts-path", synthetic_contexts_file.as_output()])
 
+    dex_units_file = ctx.actions.declare_output(prefix + "_dex_units.txt", has_content_based_path = True)
+    d8_cmd.add(["--dex-units-path", dex_units_file.as_output()])
+
     min_sdk_version = ctx.attrs.min_sdk_version
     if min_sdk_version:
         d8_cmd.add(["--min-sdk-version", str(min_sdk_version)])
@@ -106,4 +109,5 @@ def get_dex_produced_from_java_library(
         weight_estimate = weight_estimate_file,
         ref_count = ref_count_file,
         synthetic_contexts = synthetic_contexts_file,
+        dex_units = dex_units_file,
     )

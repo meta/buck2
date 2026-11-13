@@ -118,7 +118,7 @@ impl ServerAuditSubcommand for AuditExecutionPlatformResolutionCommand {
                         }
                         ResultMaybeCompatible::Compatible(node) => node.dupe(),
                     };
-                    let resolution = configured_node.execution_platform_resolution();
+                    let resolution = configured_node.body()?.execution_platform_resolution();
                     let group_deps = GroupDeps::collect(&configured_node);
                     match resolution.platform() {
                         Ok(platform) => {
@@ -251,7 +251,7 @@ impl ConfiguredAttrTraversal for GroupDeps {
 impl GroupDeps {
     fn collect(node: &ConfiguredTargetNode) -> buck2_error::Result<Self> {
         let mut deps = Self::default();
-        for attr in node.attrs(AttrInspectOptions::All) {
+        for attr in node.body()?.attrs(AttrInspectOptions::All) {
             attr.traverse(node.label().pkg(), &mut deps)?;
         }
         Ok(deps)

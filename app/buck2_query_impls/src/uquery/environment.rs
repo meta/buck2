@@ -469,11 +469,11 @@ pub(crate) async fn allbuildfiles<T: QueryTarget>(
     let mut top_level_imports = Vec::<ImportPath>::new();
 
     for target in universe.iter() {
-        paths.insert(FileNode(target.dupe().buildfile_path().path()));
+        paths.insert(FileNode(target.buildfile_path()?.path()));
 
         let eval_result = delegate
             .ctx()
-            .get_interpreter_results(target.buildfile_path().package())
+            .get_interpreter_results(target.buildfile_path()?.package())
             .await?; // TODO: no longer use eval_build_file, just parse imports directly (will solve async issue too)
 
         top_level_imports.extend(eval_result.imports().iter().cloned());

@@ -188,6 +188,7 @@ async fn test_get_node() -> buck2_error::Result<()> {
         .dupe();
 
     let node_attrs: BuckMutInsertionMap<_, _> = node
+        .body()?
         .attrs(AttrInspectOptions::All)
         .filter_map(|a| {
             if is_internal_attr(a.name) {
@@ -207,6 +208,7 @@ async fn test_get_node() -> buck2_error::Result<()> {
         .dupe();
 
     let node_attrs: BuckMutInsertionMap<_, _> = node
+        .body()?
         .attrs(AttrInspectOptions::All)
         .filter_map(|a| {
             if is_internal_attr(a.name) {

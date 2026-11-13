@@ -93,14 +93,17 @@ pub trait QueryTarget: LabeledNode + Dupe + Send + Sync + 'static {
     }
 
     /// Returns the input files for this node.
-    fn inputs_for_each<E, F: FnMut(CellPath) -> Result<(), E>>(&self, func: F) -> Result<(), E>;
+    fn inputs_for_each<E: From<buck2_error::Error>, F: FnMut(CellPath) -> Result<(), E>>(
+        &self,
+        func: F,
+    ) -> Result<(), E>;
 
     fn rule_type(&self) -> Cow<'_, str>;
 
     fn name(&self) -> Cow<'_, str>;
 
     /// Return the path to the buildfile that defines this target, e.g. `fbcode//foo/bar/TARGETS`
-    fn buildfile_path(&self) -> &BuildFilePath;
+    fn buildfile_path(&self) -> buck2_error::Result<&BuildFilePath>;
 
     fn deps<'a>(&'a self) -> impl Iterator<Item = &'a Self::Key> + Send + 'a;
 
@@ -112,8 +115,10 @@ pub trait QueryTarget: LabeledNode + Dupe + Send + Sync + 'static {
 
     fn toolchain_deps<'a>(&'a self) -> impl Iterator<Item = &'a Self::Key> + Send + 'a;
 
-    fn tests<'a>(&'a self) -> Option<impl Iterator<Item = Self::Key> + Send + 'a> {
-        None::<iter::Empty<Self::Key>>
+    fn tests<'a>(
+        &'a self,
+    ) -> buck2_error::Result<Option<impl Iterator<Item = Self::Key> + Send + 'a>> {
+        Ok(None::<iter::Empty<Self::Key>>)
     }
 
     fn attr_any_matches(
@@ -295,7 +300,7 @@ pub trait QueryEnvironment: Send + Sync {
             .iter()
             .map(|target| {
                 let tests = target
-                    .tests()
+                    .tests()?
                     .ok_or(QueryError::FunctionUnimplemented("testsof"))?;
 
                 buck2_error::Ok((target, tests))
@@ -333,7 +338,7 @@ pub trait QueryEnvironment: Send + Sync {
             .iter()
             .map(|target| {
                 let tests = target
-                    .tests()
+                    .tests()?
                     .ok_or(QueryError::FunctionUnimplemented("testsof"))?;
 
                 buck2_error::Ok((target, tests))

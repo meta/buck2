@@ -163,7 +163,7 @@ fn target_node_value_methods(builder: &mut MethodsBuilder) {
         this: &StarlarkTargetNode,
         #[starlark(require=pos)] key: &str,
     ) -> starlark::Result<bool> {
-        Ok(NodeAttributeGetter::has_attr(this, key))
+        Ok(NodeAttributeGetter::has_attr(this, key)?)
     }
 
     /// Gets the label from the unconfigured target node.

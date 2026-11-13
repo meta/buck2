@@ -214,7 +214,7 @@ impl FileHasher for PathsAndContentsHasher {
 pub(crate) trait TargetHashingTargetNode: QueryTarget {
     /// We only hash this node, not its dependencies.
     /// Importantly, we look at the nodes after configuration (for the configured case).
-    fn target_hash<H: Hasher>(&self, state: &mut H);
+    fn target_hash<H: Hasher>(&self, state: &mut H) -> buck2_error::Result<()>;
 
     // Takes in Target Nodes and returns a new set of (un)Configured
     // Target Nodes based on type of hashing specified.
@@ -230,8 +230,9 @@ pub(crate) trait TargetHashingTargetNode: QueryTarget {
 
 #[async_trait]
 impl TargetHashingTargetNode for ConfiguredTargetNode {
-    fn target_hash<H: Hasher>(&self, state: &mut H) {
-        self.target_hash(state)
+    fn target_hash<H: Hasher>(&self, state: &mut H) -> buck2_error::Result<()> {
+        self.body()?.target_hash(state);
+        Ok(())
     }
 
     async fn get_target_nodes(
@@ -251,8 +252,9 @@ impl TargetHashingTargetNode for ConfiguredTargetNode {
 
 #[async_trait]
 impl TargetHashingTargetNode for TargetNode {
-    fn target_hash<H: Hasher>(&self, state: &mut H) {
-        self.target_hash(state)
+    fn target_hash<H: Hasher>(&self, state: &mut H) -> buck2_error::Result<()> {
+        self.target_hash(state);
+        Ok(())
     }
 
     async fn get_target_nodes(
@@ -329,7 +331,7 @@ impl TargetHashes {
                     |_| {
                         async move {
                             let mut hasher = TargetHashes::new_hasher(use_fast_hash);
-                            TargetHashes::hash_node(&target, &mut *hasher);
+                            TargetHashes::hash_node(&target, &mut *hasher)?;
 
                             let mut input_futs = Vec::new();
                             if let Some(file_hasher) = file_hasher {
@@ -414,7 +416,7 @@ impl TargetHashes {
                 async move {
                     let hash_result: buck2_error::Result<BuckTargetHash> = try {
                         let mut hasher = TargetHashes::new_hasher(use_fast_hash);
-                        TargetHashes::hash_node(&target, &mut *hasher);
+                        TargetHashes::hash_node(&target, &mut *hasher)?;
 
                         if let Some(file_hasher) = file_hasher {
                             let mut input_futs = Vec::new();
@@ -450,7 +452,8 @@ impl TargetHashes {
 
     pub fn compute_immediate_one(node: &TargetNode, use_fast_hash: bool) -> BuckTargetHash {
         let mut hasher = TargetHashes::new_hasher(use_fast_hash);
-        TargetHashes::hash_node(node, &mut *hasher);
+        let mut state: &mut dyn BuckTargetHasher = &mut *hasher;
+        node.target_hash(&mut state);
         hasher.finish_u128()
     }
 
@@ -504,8 +507,11 @@ impl TargetHashes {
         }
     }
 
-    fn hash_node<T: TargetHashingTargetNode>(node: &T, mut hasher: &mut dyn BuckTargetHasher) {
-        node.target_hash(&mut hasher);
+    fn hash_node<T: TargetHashingTargetNode>(
+        node: &T,
+        mut hasher: &mut dyn BuckTargetHasher,
+    ) -> buck2_error::Result<()> {
+        node.target_hash(&mut hasher)
     }
 
     fn hash_deps(

@@ -30,8 +30,8 @@ use crate::query::printer::ShouldPrintProviders;
 use crate::query::query_target_ext::QueryCommandTarget;
 
 impl QueryCommandTarget for ActionQueryNode {
-    fn call_stack(&self) -> Option<String> {
-        None
+    fn call_stack(&self) -> buck2_error::Result<Option<String>> {
+        Ok(None)
     }
 
     fn attr_to_string_alternate(&self, _options: AttrFmtOptions, attr: &Self::Attr<'_>) -> String {

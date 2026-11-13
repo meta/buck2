@@ -184,6 +184,10 @@ impl ConfiguredTargetNodeData {
         }
     }
 
+    fn body(&self) -> buck2_error::Result<&ConfiguredTargetNodeBody> {
+        Ok(&self.body)
+    }
+
     fn rule_type(&self) -> &RuleType {
         if self.forward {
             &RuleType::Forward
@@ -558,7 +562,10 @@ impl<'a> ConfiguredTargetNodeRef<'a> {
     /// See [`ConfiguredTargetNode::body`].
     #[inline]
     pub fn body(self) -> buck2_error::Result<ConfiguredTargetNodeBodyRef<'a>> {
-        Ok(self.resident_body())
+        Ok(ConfiguredTargetNodeBodyRef {
+            node: self,
+            body: self.0.get().body()?,
+        })
     }
 
     #[inline]
@@ -982,196 +989,6 @@ impl<'a> ConfiguredTargetNodeBodyRef<'a> {
     }
 }
 
-/// Accessors for what is in the body, for callers that do not go through
-/// [`ConfiguredTargetNode::body`] yet.
-impl ConfiguredTargetNode {
-    pub fn execution_platform_resolution(&self) -> &ExecutionPlatformResolution {
-        self.as_ref().execution_platform_resolution()
-    }
-
-    pub fn inputs(&self) -> impl Iterator<Item = CellPath> + '_ {
-        self.as_ref().inputs()
-    }
-
-    #[inline]
-    pub fn queries(
-        &self,
-    ) -> impl Iterator<Item = (String, ResolvedQueryLiterals<ConfiguredProvidersLabel>)> + '_ {
-        self.as_ref().queries()
-    }
-
-    /// Return the `tests` declared for this target configured in same target platform as this target.
-    pub fn tests(&self) -> impl Iterator<Item = ConfiguredProvidersLabel> + use<> {
-        self.as_ref().resident_body().tests()
-    }
-
-    pub fn target_node(&self) -> &TargetNode {
-        self.as_ref().resident_body().target_node()
-    }
-
-    pub fn buildfile_path(&self) -> &BuildFilePath {
-        self.as_ref().buildfile_path()
-    }
-
-    pub fn is_visible_to(&self, target: &TargetLabel) -> buck2_error::Result<bool> {
-        self.as_ref().resident_body().is_visible_to(target)
-    }
-
-    pub fn not_visible_to_error(
-        &self,
-        consumer: TargetLabel,
-    ) -> crate::visibility::VisibilityError {
-        self.as_ref().resident_body().not_visible_to_error(consumer)
-    }
-
-    #[inline]
-    pub fn special_attr_or_none(&self, key: &str) -> Option<ConfiguredAttr> {
-        self.as_ref().special_attr_or_none(key)
-    }
-
-    #[inline]
-    pub fn special_attrs(&self) -> impl Iterator<Item = (&str, ConfiguredAttr)> {
-        self.as_ref().special_attrs()
-    }
-
-    #[inline]
-    pub fn oncall(&self) -> Option<&str> {
-        self.as_ref().oncall()
-    }
-
-    pub fn attrs(
-        &self,
-        opts: AttrInspectOptions,
-    ) -> impl ExactSizeIterator<Item = ConfiguredAttrFull<'_>> + '_ {
-        self.as_ref().attrs(opts)
-    }
-
-    pub fn get<'a>(
-        &'a self,
-        attr: &str,
-        opts: AttrInspectOptions,
-    ) -> Option<ConfiguredAttrFull<'a>> {
-        self.as_ref().get(attr, opts)
-    }
-
-    pub fn call_stack(&self) -> Option<String> {
-        self.as_ref().resident_body().call_stack()
-    }
-
-    pub fn root_location(&self) -> Option<StarlarkTargetCallStackRoot> {
-        self.as_ref().resident_body().root_location()
-    }
-
-    /// Hash the fields that impact how this target is built.
-    /// Don't do any recursive hashing of the dependencies.
-    /// Hashes the attributes _after_ configuration, so changing unconfigured branches that
-    /// are not taken will not change the hash.
-    pub fn target_hash<H: Hasher>(&self, state: &mut H) {
-        self.as_ref().resident_body().target_hash(state)
-    }
-
-    /// Hash this target's unconfigured label, rule type, and configured attributes.
-    ///
-    /// Configurations are omitted from labels stored in attribute values. Consequently, changing
-    /// configuration does not affect this hash unless it changes a configured attribute on this
-    /// target. Dependency contents and other node metadata are not included.
-    pub fn target_hash_without_configured_labels<H: Hasher>(&self, state: &mut H) {
-        self.as_ref()
-            .resident_body()
-            .target_hash_without_configured_labels(state)
-    }
-
-    #[inline]
-    pub fn execution_platform(&self) -> buck2_error::Result<&ExecutionPlatform> {
-        self.as_ref().resident_body().execution_platform()
-    }
-
-    #[inline]
-    pub fn uses_plugins(&self) -> &[PluginKind] {
-        self.as_ref().uses_plugins()
-    }
-
-    pub fn plugin_lists(&self) -> &PluginLists {
-        self.as_ref().plugin_lists()
-    }
-}
-
-/// Accessors for what is in the body, for callers that do not go through
-/// [`ConfiguredTargetNodeRef::body`] yet.
-impl<'a> ConfiguredTargetNodeRef<'a> {
-    fn resident_body(self) -> ConfiguredTargetNodeBodyRef<'a> {
-        ConfiguredTargetNodeBodyRef {
-            node: self,
-            body: &self.0.get().body,
-        }
-    }
-
-    pub fn oncall(self) -> Option<&'a str> {
-        self.resident_body().oncall()
-    }
-
-    pub fn special_attr_or_none(&self, key: &str) -> Option<ConfiguredAttr> {
-        self.resident_body().special_attr_or_none(key)
-    }
-
-    pub fn special_attrs(self) -> impl Iterator<Item = (&'a str, ConfiguredAttr)> {
-        self.resident_body().special_attrs()
-    }
-
-    pub fn attrs(
-        self,
-        opts: AttrInspectOptions,
-    ) -> impl ExactSizeIterator<Item = ConfiguredAttrFull<'a>> + 'a {
-        self.resident_body().attrs(opts)
-    }
-
-    pub fn filter_attrs(
-        self,
-        opts: AttrInspectOptions,
-        filter: impl Fn(&str, &Attribute) -> bool + 'a,
-    ) -> impl Iterator<Item = ConfiguredAttrFull<'a>> + 'a {
-        self.resident_body().filter_attrs(opts, filter)
-    }
-
-    pub fn get(self, attr: &str, opts: AttrInspectOptions) -> Option<ConfiguredAttrFull<'a>> {
-        self.resident_body().get(attr, opts)
-    }
-
-    pub(crate) fn attr_matches(
-        self,
-        key: &str,
-        filter: &dyn Fn(&str) -> buck2_error::Result<bool>,
-    ) -> buck2_error::Result<bool> {
-        self.resident_body().attr_matches(key, filter)
-    }
-
-    pub fn inputs(self) -> impl Iterator<Item = CellPath> + 'a {
-        self.resident_body().inputs()
-    }
-
-    pub fn queries(
-        self,
-    ) -> impl Iterator<Item = (String, ResolvedQueryLiterals<ConfiguredProvidersLabel>)> + 'a {
-        self.resident_body().queries()
-    }
-
-    pub fn execution_platform_resolution(self) -> &'a ExecutionPlatformResolution {
-        self.resident_body().execution_platform_resolution()
-    }
-
-    pub fn uses_plugins(self) -> &'a [PluginKind] {
-        self.resident_body().uses_plugins()
-    }
-
-    pub fn plugin_lists(self) -> &'a PluginLists {
-        self.resident_body().plugin_lists()
-    }
-
-    pub fn buildfile_path(self) -> &'a BuildFilePath {
-        self.resident_body().buildfile_path()
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use std::collections::BTreeMap;
@@ -1289,7 +1106,7 @@ mod tests {
             ConfigurationData::unspecified(),
         ] {
             let node = node(cfg.dupe(), attrs.clone());
-            let queries: Vec<_> = node.queries().collect();
+            let queries: Vec<_> = node.body().unwrap().queries().collect();
             assert_eq!(queries.len(), 1);
             assert_query(&queries[0], "deps(root//pkg:dep)", &attr_query, &cfg);
         }
@@ -1326,7 +1143,7 @@ mod tests {
                     .unwrap(),
             )],
         );
-        let queries: Vec<_> = node.queries().collect();
+        let queries: Vec<_> = node.body().unwrap().queries().collect();
         assert_eq!(queries.len(), 3);
         for (actual, (reprint, expected)) in queries.iter().zip([
             ("deps(root//pkg:dep, 1)", first),
@@ -1382,7 +1199,9 @@ mod tests {
 
     fn target_hash_without_configured_labels(node: &ConfiguredTargetNode) -> u64 {
         let mut hasher = DefaultHasher::new();
-        node.target_hash_without_configured_labels(&mut hasher);
+        node.body()
+            .unwrap()
+            .target_hash_without_configured_labels(&mut hasher);
         hasher.finish()
     }
 
@@ -1477,7 +1296,9 @@ mod tests {
 
         for (node, expected) in [(&linux, "same"), (&macos, "same"), (&windows, "changed")] {
             assert_eq!(
-                node.get("value", AttrInspectOptions::All)
+                node.body()
+                    .unwrap()
+                    .get("value", AttrInspectOptions::All)
                     .expect("value attribute exists")
                     .value,
                 ConfiguredAttr::String(StringLiteral(expected.into())),
@@ -1538,8 +1359,18 @@ mod tests {
         let second = configured_node_with_dep(dep, ConfigurationData::unspecified());
         let changed = configured_node_with_dep(changed_dep, ConfigurationData::unspecified());
         assert_ne!(
-            first.get("dep", AttrInspectOptions::All).unwrap().value,
-            second.get("dep", AttrInspectOptions::All).unwrap().value,
+            first
+                .body()
+                .unwrap()
+                .get("dep", AttrInspectOptions::All)
+                .unwrap()
+                .value,
+            second
+                .body()
+                .unwrap()
+                .get("dep", AttrInspectOptions::All)
+                .unwrap()
+                .value,
             "the configured dep labels should differ in configuration",
         );
 

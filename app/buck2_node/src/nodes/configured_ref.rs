@@ -115,8 +115,8 @@ impl QueryTarget for ConfiguredGraphNodeRef {
         Cow::Borrowed(self.0.label().name().as_str())
     }
 
-    fn buildfile_path(&self) -> &BuildFilePath {
-        self.0.buildfile_path()
+    fn buildfile_path(&self) -> buck2_error::Result<&BuildFilePath> {
+        Ok(self.0.body()?.buildfile_path())
     }
 
     fn deps(&self) -> impl Iterator<Item = &Self::Key> + Send + '_ {
@@ -157,7 +157,7 @@ impl QueryTarget for ConfiguredGraphNodeRef {
         key: &str,
         filter: &dyn Fn(&str) -> buck2_error::Result<bool>,
     ) -> buck2_error::Result<bool> {
-        self.0.as_ref().attr_matches(key, filter)
+        self.0.body()?.attr_matches(key, filter)
     }
 
     fn special_attrs_for_each<
@@ -167,7 +167,7 @@ impl QueryTarget for ConfiguredGraphNodeRef {
         &self,
         mut func: F,
     ) -> Result<(), E> {
-        for (name, attr) in self.0.special_attrs() {
+        for (name, attr) in self.0.body()?.special_attrs() {
             func(name, &attr)?;
         }
         Ok(())
@@ -180,7 +180,7 @@ impl QueryTarget for ConfiguredGraphNodeRef {
         &self,
         mut func: F,
     ) -> Result<(), E> {
-        for a in self.0.attrs(AttrInspectOptions::All) {
+        for a in self.0.body()?.attrs(AttrInspectOptions::All) {
             func(a.name, &a.value)?;
         }
         Ok(())
@@ -193,7 +193,7 @@ impl QueryTarget for ConfiguredGraphNodeRef {
         &self,
         mut func: F,
     ) -> Result<(), E> {
-        for a in self.0.attrs(AttrInspectOptions::DefinedOnly) {
+        for a in self.0.body()?.attrs(AttrInspectOptions::DefinedOnly) {
             func(a.name, &a.value)?;
         }
         Ok(())
@@ -206,17 +206,18 @@ impl QueryTarget for ConfiguredGraphNodeRef {
     ) -> buck2_error::Result<R> {
         Ok(func(
             self.0
+                .body()?
                 .get(key, AttrInspectOptions::All)
                 .as_ref()
                 .map(|a| &a.value),
         ))
     }
 
-    fn inputs_for_each<E, F: FnMut(CellPath) -> Result<(), E>>(
+    fn inputs_for_each<E: From<buck2_error::Error>, F: FnMut(CellPath) -> Result<(), E>>(
         &self,
         mut func: F,
     ) -> Result<(), E> {
-        for input in self.0.inputs() {
+        for input in self.0.body()?.inputs() {
             func(input)?;
         }
         Ok(())
@@ -227,15 +228,15 @@ impl QueryTarget for ConfiguredGraphNodeRef {
         key: &str,
         mut func: F,
     ) -> buck2_error::Result<R> {
+        let body = self.0.body()?;
         Ok(
-            match self
-                .0
+            match body
                 .get(key, AttrInspectOptions::All)
                 .as_ref()
                 .map(|a| &a.value)
             {
                 Some(attr) => func(Some(attr)),
-                None => func(self.special_attr_or_none(key).as_ref()),
+                None => func(body.special_attr_or_none(key).as_ref()),
             },
         )
     }

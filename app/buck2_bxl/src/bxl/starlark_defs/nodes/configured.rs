@@ -283,7 +283,7 @@ fn configured_target_node_value_methods(builder: &mut MethodsBuilder) {
     ) -> starlark::Result<ValueOf<'v, StarlarkFileNode>> {
         Ok(ValueOf::alloc(
             heap,
-            StarlarkFileNode(this.0.buildfile_path().path()),
+            StarlarkFileNode(this.0.body()?.buildfile_path().path()),
         ))
     }
 
@@ -338,7 +338,7 @@ fn configured_target_node_value_methods(builder: &mut MethodsBuilder) {
         this: &StarlarkConfiguredTargetNode,
         #[starlark(require=pos)] key: &str,
     ) -> starlark::Result<bool> {
-        Ok(NodeAttributeGetter::has_attr(this, key))
+        Ok(NodeAttributeGetter::has_attr(this, key)?)
     }
 
     /// Returns a struct of all the attributes of this target node. The structs fields are the
@@ -371,8 +371,9 @@ fn configured_target_node_value_methods(builder: &mut MethodsBuilder) {
         this: &StarlarkConfiguredTargetNode,
         heap: Heap<'v>,
     ) -> starlark::Result<Value<'v>> {
-        let attrs_iter = this.0.attrs(AttrInspectOptions::All);
-        let special_attrs_iter = this.0.special_attrs();
+        let body = this.0.body()?;
+        let attrs_iter = body.attrs(AttrInspectOptions::All);
+        let special_attrs_iter = body.special_attrs();
 
         let pkg = this.0.label().pkg();
         let attrs = attrs_iter
@@ -494,10 +495,13 @@ fn configured_target_node_value_methods(builder: &mut MethodsBuilder) {
             module: eval.module(),
             dep_analysis_results: get_deps_from_analysis_results(dep_analysis?)?,
             query_results,
-            execution_platform_resolution: configured_node.execution_platform_resolution().clone(),
+            execution_platform_resolution: configured_node
+                .body()?
+                .execution_platform_resolution()
+                .clone(),
         };
 
-        let attrs_iter = this.0.attrs(AttrInspectOptions::All);
+        let attrs_iter = this.0.body()?.attrs(AttrInspectOptions::All);
         let mut resolved_attrs = Vec::with_capacity(attrs_iter.len());
 
         for a in attrs_iter {
@@ -598,7 +602,7 @@ fn configured_target_node_value_methods(builder: &mut MethodsBuilder) {
             }
         }
         let mut traversal = InputsCollector { inputs: Vec::new() };
-        for a in this.0.attrs(AttrInspectOptions::All) {
+        for a in this.0.body()?.attrs(AttrInspectOptions::All) {
             a.traverse(this.0.label().pkg(), &mut traversal)?;
         }
         Ok(traversal
@@ -665,7 +669,7 @@ fn configured_target_node_value_methods(builder: &mut MethodsBuilder) {
             found: None,
             target: cell_path,
         };
-        for a in this.0.attrs(AttrInspectOptions::All) {
+        for a in this.0.body()?.attrs(AttrInspectOptions::All) {
             a.traverse(this.0.label().pkg(), &mut traversal)?;
 
             if let Some(found) = traversal.found {
@@ -688,7 +692,7 @@ fn configured_target_node_value_methods(builder: &mut MethodsBuilder) {
         this: &'v StarlarkConfiguredTargetNode,
         heap: Heap<'v>,
     ) -> starlark::Result<NoneOr<StringValue<'v>>> {
-        match this.0.oncall() {
+        match this.0.body()?.oncall() {
             Some(oncall) => Ok(NoneOr::Other(heap.alloc_str_intern(oncall))),
             None => Ok(NoneOr::None),
         }
@@ -1007,34 +1011,25 @@ fn lazy_attrs_methods(builder: &mut MethodsBuilder) {
         heap: Heap<'v>,
     ) -> starlark::Result<NoneOr<ValueOf<'v, StarlarkConfiguredAttr>>> {
         let pkg = this.configured_target_node.0.label().pkg();
-        Ok(
-            match this
-                .configured_target_node
-                .0
-                .get(attr, AttrInspectOptions::All)
-            {
-                Some(attr) => NoneOr::Other(ValueOf::alloc(
-                    heap,
-                    StarlarkConfiguredAttr(attr.value, pkg.dupe()),
-                )),
-                None => {
-                    // Check special attrs
-                    let special_attrs = this
-                        .configured_target_node
-                        .0
-                        .special_attrs()
-                        .collect::<BuckMutMap<_, _>>();
-                    let attr = special_attrs.get(attr);
-                    match attr {
-                        None => NoneOr::None,
-                        Some(attr) => NoneOr::Other(ValueOf::alloc(
-                            heap,
-                            StarlarkConfiguredAttr(attr.clone(), pkg.dupe()),
-                        )),
-                    }
+        let body = this.configured_target_node.0.body()?;
+        Ok(match body.get(attr, AttrInspectOptions::All) {
+            Some(attr) => NoneOr::Other(ValueOf::alloc(
+                heap,
+                StarlarkConfiguredAttr(attr.value, pkg.dupe()),
+            )),
+            None => {
+                // Check special attrs
+                let special_attrs = body.special_attrs().collect::<BuckMutMap<_, _>>();
+                let attr = special_attrs.get(attr);
+                match attr {
+                    None => NoneOr::None,
+                    Some(attr) => NoneOr::Other(ValueOf::alloc(
+                        heap,
+                        StarlarkConfiguredAttr(attr.clone(), pkg.dupe()),
+                    )),
                 }
-            },
-        )
+            }
+        })
     }
 }
 
@@ -1086,13 +1081,15 @@ impl<'v> StarlarkLazyResolvedAttrs<'v> {
     fn resolution_ctx<'a, 'e, 'c>(
         &'c self,
         eval: &'c mut Evaluator<'v, 'a, 'e>,
-    ) -> LazyAttrResolutionContext<'v, 'a, 'e, 'c> {
-        LazyAttrResolutionContext {
+    ) -> buck2_error::Result<LazyAttrResolutionContext<'v, 'a, 'e, 'c>> {
+        let configured_node = &self.configured_node.as_ref().0;
+        Ok(LazyAttrResolutionContext {
             eval,
-            configured_node: &self.configured_node.as_ref().0,
+            configured_node,
+            execution_platform_resolution: configured_node.body()?.execution_platform_resolution(),
             ctx: self.bxl_context.as_ref(),
             cache: self.resolution_ctx_data.borrow_mut(),
-        }
+        })
     }
 }
 
@@ -1115,30 +1112,25 @@ fn lazy_resolved_attrs_methods(builder: &mut MethodsBuilder) {
         attr: &str,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<NoneOr<Value<'v>>> {
-        Ok(
-            match this.configured_node.0.get(attr, AttrInspectOptions::All) {
-                Some(attr) => NoneOr::Other(attr.value.resolve_single(
-                    this.configured_node.0.label().pkg(),
-                    &mut this.resolution_ctx(eval),
-                )?),
-                None => {
-                    // Check special attrs
-                    let special_attrs = this
-                        .configured_node
-                        .0
-                        .special_attrs()
-                        .collect::<BuckMutMap<_, _>>();
-                    let attr = special_attrs.get(attr);
-                    match attr {
-                        None => NoneOr::None,
-                        Some(attr) => NoneOr::Other(attr.resolve_single(
-                            this.configured_node.0.label().pkg(),
-                            &mut this.resolution_ctx(eval),
-                        )?),
-                    }
+        let body = this.configured_node.0.body()?;
+        Ok(match body.get(attr, AttrInspectOptions::All) {
+            Some(attr) => NoneOr::Other(attr.value.resolve_single(
+                this.configured_node.0.label().pkg(),
+                &mut this.resolution_ctx(eval)?,
+            )?),
+            None => {
+                // Check special attrs
+                let special_attrs = body.special_attrs().collect::<BuckMutMap<_, _>>();
+                let attr = special_attrs.get(attr);
+                match attr {
+                    None => NoneOr::None,
+                    Some(attr) => NoneOr::Other(attr.resolve_single(
+                        this.configured_node.0.label().pkg(),
+                        &mut this.resolution_ctx(eval)?,
+                    )?),
                 }
-            },
-        )
+            }
+        })
     }
 }
 

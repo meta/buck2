@@ -28,6 +28,7 @@ pub fn plugins_to_starlark_value<'v>(
     ctx: &mut dyn AttrResolutionContext<'v>,
 ) -> buck2_error::Result<ValueTyped<'v, AnalysisPlugins<'v>>> {
     let mut plugins = BuckMutInsertionMap::new();
+    let node = node.body()?;
     let execution_platform_resolution = node.execution_platform_resolution();
 
     for kind in node.uses_plugins().iter().duped() {

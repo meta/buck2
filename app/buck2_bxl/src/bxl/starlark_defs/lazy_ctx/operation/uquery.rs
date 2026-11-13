@@ -297,7 +297,7 @@ impl LazyUqueryOperation {
             LazyUqueryOperation::Buildfile(expr) => {
                 let target_set = expr.to_unconfigured_target_set(core_data, dice).await?;
 
-                let res = target_set.buildfile();
+                let res = target_set.buildfile()?;
 
                 Ok(LazyUqueryResult::Buildfile(StarlarkFileSet::from(res)))
             }

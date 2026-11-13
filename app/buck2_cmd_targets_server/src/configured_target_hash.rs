@@ -143,7 +143,8 @@ impl ConfiguredTargetHashes {
         options: &ConfiguredTargetHashOptions,
     ) -> buck2_error::Result<ConfiguredTargetHash> {
         let mut hasher = H::new();
-        node.target_hash_without_configured_labels(&mut hasher);
+        node.body()?
+            .target_hash_without_configured_labels(&mut hasher);
 
         let depends_on = options
             .require_hash_change_deps

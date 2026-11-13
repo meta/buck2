@@ -1596,6 +1596,7 @@ impl BuckTestOrchestrator<'_> {
         let executor_config = match executor_override {
             Some(o) => o,
             None => test_target_node
+                .body()?
                 .execution_platform_resolution()
                 .executor_config()
                 .buck_error_context("Error accessing executor config")?,
@@ -1784,6 +1785,7 @@ impl BuckTestOrchestrator<'_> {
         ) {
             (None, None | Some(ExecutionGroup::Default))
                 if !node
+                    .body()?
                     .execution_platform_resolution()
                     .default_execution_group_declared() =>
             {
@@ -1793,7 +1795,8 @@ impl BuckTestOrchestrator<'_> {
                 ));
             }
             (None, Some(group)) => Some(
-                node.execution_platform_resolution()
+                node.body()?
+                    .execution_platform_resolution()
                     .executor_config_for_group(&group)
                     .with_buck_error_context(|| {
                         format!(

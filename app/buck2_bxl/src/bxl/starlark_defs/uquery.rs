@@ -431,7 +431,7 @@ fn uquery_methods(builder: &mut MethodsBuilder) {
                 dice.via(|dice| {
                     async {
                         let targets = unpack_targets(this, dice, targets).await?;
-                        Ok(targets.buildfile())
+                        targets.buildfile()
                     }
                     .boxed_local()
                 })

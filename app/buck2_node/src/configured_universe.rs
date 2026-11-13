@@ -277,7 +277,7 @@ impl CqueryUniverse {
                 Some(package_data) => package_data,
             };
             for node in package_data.values().flatten() {
-                if node.0.inputs().contains(path) {
+                if node.0.body()?.inputs().contains(path) {
                     nodes.push(node.0.to_owned());
                 }
             }

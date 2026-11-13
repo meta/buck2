@@ -484,11 +484,13 @@ impl ErrorsAndIncompatibilities {
                 if CheckVisibility::No == check_visibility {
                     return Some(dep);
                 }
-                match check_dep_visibility(
-                    dep.target_node(),
-                    *target_label.unconfigured(),
-                    package_visibility,
-                ) {
+                match dep.body().and_then(|body| {
+                    check_dep_visibility(
+                        body.target_node(),
+                        *target_label.unconfigured(),
+                        package_visibility,
+                    )
+                }) {
                     Ok(()) => {
                         return Some(dep);
                     }
@@ -644,7 +646,7 @@ pub(crate) async fn gather_deps(
         };
 
         if !plugin_kind_sets.is_empty() {
-            for (kind, plugins) in dep.plugin_lists().iter_by_kind() {
+            for (kind, plugins) in dep.body()?.plugin_lists().iter_by_kind() {
                 let Some(should_propagate) = plugin_kind_sets
                     .iter()
                     .filter_map(|set| set.get(kind))
@@ -969,6 +971,7 @@ fn verify_transitioned_attrs(
     pre_transition_config: &ConfigurationData,
     node: &ConfiguredTargetNode,
 ) -> buck2_error::Result<()> {
+    let node = node.body()?;
     for (attr, attr_value) in pre_transition_attrs {
         let transition_configured_attr =
             node.get(attr, AttrInspectOptions::All).ok_or_else(|| {

@@ -1398,26 +1398,39 @@ impl<'a, 'e> TestDriver<'a, 'e> {
                 }
             };
 
-            let oncall = node.oncall().map(|s| s.to_owned());
+            let oncall = match node.body() {
+                Ok(body) => body.oncall().map(|s| s.to_owned()),
+                Err(e) => {
+                    return ControlFlow::Break(create_and_map_configured_build_error(
+                        label, e, modifiers,
+                    ));
+                }
+            };
 
             // Build and then test this: it's compatible.
             let mut work = vec![TestDriverTask::BuildTarget {
-                label,
+                label: label.dupe(),
                 modifiers: modifiers.dupe(),
                 test_config_unification_rollout,
                 oncall,
                 tenting_acl_names: tenting_acl_names.dupe(),
             }];
 
-            // If this node is a forward, it'll get flattened when we do analysis and run the
-            // test later, but its `tests` attribute here will not be, and that means we'll
-            // just ignore it (since we don't traverse `tests` recursively). So ... just
-            // flatten it?
-            let node = node.forward_target().unwrap_or(&node);
-
             // Look up `tests` in the target we're testing, and if we find any tests, add them to the test backlog.
             if !state.ignore_tests_attribute {
-                for test in node.tests() {
+                // If this node is a forward, it'll get flattened when we do analysis and run the
+                // test later, but its `tests` attribute here will not be, and that means we'll
+                // just ignore it (since we don't traverse `tests` recursively). So ... just
+                // flatten it?
+                let tests = match node.unwrap_forward().body() {
+                    Ok(body) => body.tests(),
+                    Err(e) => {
+                        return ControlFlow::Break(create_and_map_configured_build_error(
+                            label, e, modifiers,
+                        ));
+                    }
+                };
+                for test in tests {
                     work.push(TestDriverTask::ConfigureTarget {
                         label_with_modifiers: ProvidersLabelWithModifiers {
                             providers_label: test.unconfigured(),

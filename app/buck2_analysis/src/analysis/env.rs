@@ -265,7 +265,7 @@ async fn run_analysis_with_env_underlying(
                 module: &env,
                 dep_analysis_results,
                 query_results: analysis_env.query_results,
-                execution_platform_resolution: node.execution_platform_resolution().clone(),
+                execution_platform_resolution: node.body()?.execution_platform_resolution().clone(),
             };
 
             (
@@ -292,7 +292,7 @@ async fn run_analysis_with_env_underlying(
             // so a test runs with it even when another rule returns the test info.
             if AnalysisExtraValue::get_or_init(eval.module())?
                 .execution_platform_resolution
-                .set(node.execution_platform_resolution().dupe())
+                .set(node.body()?.execution_platform_resolution().dupe())
                 .is_err()
             {
                 return Err(internal_error!("execution platform resolution set twice").into());

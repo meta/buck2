@@ -72,12 +72,12 @@ impl<T: QueryTarget> TargetSet<T> {
         Ok(Self { targets })
     }
 
-    pub fn buildfile(&self) -> FileSet {
+    pub fn buildfile(&self) -> buck2_error::Result<FileSet> {
         let mut files = BuckMutInsertionSet::default();
         for target in self.targets.iter() {
-            files.insert(FileNode(target.buildfile_path().path()));
+            files.insert(FileNode(target.buildfile_path()?.path()));
         }
-        FileSet::new(files)
+        Ok(FileSet::new(files))
     }
 
     pub fn inputs(&self) -> buck2_error::Result<FileSet> {

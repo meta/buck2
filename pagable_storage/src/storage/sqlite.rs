@@ -161,6 +161,26 @@ fn queue_depth() -> usize {
     static DEPTH: OnceLock<usize> = OnceLock::new();
     *DEPTH.get_or_init(|| parse_positive_env("BUCK2_PAGABLE_QUEUE_DEPTH", DEFAULT_QUEUE_DEPTH))
 }
+
+/// Whether a reader connection keeps its read transaction open between lookups.
+///
+/// Without one, every lookup of a row begins and ends its own transaction: SQLite takes and
+/// releases the shared file lock, checks for a journal to roll back, and re-reads the start
+/// of the file to learn whether its cached pages are still valid. With one open, the next
+/// lookup on that connection does none of that. The transaction belongs to the connection;
+/// nothing is shared between connections.
+///
+/// An open read transaction holds the shared file lock, which the writer cannot commit
+/// under, so the writer ends the readers' transactions first; see
+/// [`ConnectionPool::pause_readers`].
+///
+/// `BUCK2_PAGABLE_RETAIN_READ_TRANSACTIONS=0` turns this off.
+fn retain_read_transactions() -> bool {
+    static RETAIN: OnceLock<bool> = OnceLock::new();
+    *RETAIN.get_or_init(|| {
+        env::var_os("BUCK2_PAGABLE_RETAIN_READ_TRANSACTIONS").is_none_or(|value| value != "0")
+    })
+}
 const INSERT_BATCH_ROWS: usize = 8;
 const INSERT_COLUMNS: usize = 3;
 const INSERT_SINGLE_SQL: &str =
@@ -304,8 +324,8 @@ impl ShardWriteState {
 
 struct ConnectionPool {
     readwrite: Mutex<Connection>,
-    /// `parking_lot`, for a lock that gives up after a time: a read does not wait for a
-    /// reader connection without limit.
+    /// `parking_lot`, for a lock that gives up after a time: the writer holds every reader
+    /// for the length of a write batch, and a read does not wait for it without limit.
     readers: Vec<parking_lot::Mutex<Connection>>,
     next_reader: AtomicUsize,
     /// How long a read waits for the shard, in milliseconds: for a reader connection, and
@@ -374,6 +394,30 @@ impl ConnectionPool {
 
     fn get_readwrite(&self) -> MutexGuard<'_, Connection> {
         self.readwrite.lock().expect("lock poisoned")
+    }
+
+    /// Ends the read transaction of every reader and returns the readers, locked. Call with
+    /// the writer mutex held, and hold the result until the write has committed: a reader
+    /// that began a new transaction before then would hold the shared file lock again, and
+    /// the writer cannot commit under it.
+    fn pause_readers(&self) -> anyhow::Result<Vec<parking_lot::MutexGuard<'_, Connection>>> {
+        if !retain_read_transactions() {
+            return Ok(Vec::new());
+        }
+        let readers: Vec<_> = self.readers.iter().map(|reader| reader.lock()).collect();
+        for reader in &readers {
+            Self::end_read_transaction(reader)?;
+        }
+        Ok(readers)
+    }
+
+    fn end_read_transaction(conn: &Connection) -> rusqlite::Result<()> {
+        if !conn.is_autocommit() {
+            // Nothing to write on a connection that only reads: this releases the shared
+            // lock, if the connection holds it, and switches it back to autocommit mode.
+            conn.execute_batch("COMMIT")?;
+        }
+        Ok(())
     }
 
     /// Round-robin with try_lock to skip connections held by other threads.
@@ -651,10 +695,10 @@ impl ShardInner {
         items.sort_unstable_by_key(|(key, _bytes)| key.get());
 
         let mut conn = self.conns.get_readwrite();
+        // Declared before the transaction, so released after it has committed.
+        let _readers = self.conns.pause_readers()?;
         let tx = conn.transaction()?;
-        {
-            self.insert.insert_items(&tx, items, &self.stop_write)?;
-        }
+        self.insert.insert_items(&tx, items, &self.stop_write)?;
         tx.commit()?;
         Ok(())
     }
@@ -734,13 +778,19 @@ impl SqliteBackedPagableStorage {
         let shard = self.shard_for(key);
         let (key_lo, key_hi) = data_key_parts(*key);
         let read_once = || -> Result<Option<Vec<u8>>, (&'static str, rusqlite::Error)> {
-            // No reader connection in time. Reported as SQLite reports a lock it could not
-            // get, so that it is retried and counted the same way.
+            // No reader in time means a write batch has them all. That is the same wait,
+            // for the same write, as SQLite's for the file's lock, and is reported as one.
             let conn = shard
                 .inner
                 .conns
                 .get_reader()
                 .ok_or_else(|| ("wait for a reader connection", busy_error()))?;
+            if retain_read_transactions() && conn.is_autocommit() {
+                // Switches the connection out of autocommit mode, and nothing more: the
+                // lookup below takes the shared lock, and now keeps it when it is done.
+                conn.execute_batch("BEGIN")
+                    .map_err(|e| ("begin read transaction", e))?;
+            }
             let mut stmt = conn.prepare_cached(FETCH_SQL).map_err(|e| ("prepare", e))?;
             stmt.query_row(rusqlite::params![key_lo, key_hi], |row| row.get(0))
                 .optional()
@@ -793,6 +843,7 @@ impl SqliteBackedPagableStorage {
             }
             for reader in &shard.inner.conns.readers {
                 let conn = reader.lock();
+                let _unused = ConnectionPool::end_read_transaction(&conn);
                 let _unused = conn.execute_batch("PRAGMA shrink_memory;");
             }
         }
@@ -1087,6 +1138,111 @@ mod tests {
         }
     }
 
+    fn data_in_shard(shard_id: u128, label: &str) -> PagableData {
+        (0..10000)
+            .map(|i| pagable_data(format!("{label}-{i}").as_bytes(), Vec::new()))
+            .find(|data| data.compute_key().get() % NUM_SHARDS as u128 == shard_id)
+            .expect("fixture should find a key in the requested shard")
+    }
+
+    fn warm_retained_readers(
+        storage: &SqliteBackedPagableStorage,
+        key: DataKey,
+    ) -> anyhow::Result<()> {
+        let pool = &storage.shard_for(&key).inner.conns;
+        for _ in &pool.readers {
+            storage.fetch_data_blocking(&key)?;
+        }
+        for reader in &pool.readers {
+            assert!(!reader.lock().is_autocommit());
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn sqlite_retained_readers_see_pending_rows_and_release_snapshots() -> anyhow::Result<()> {
+        let dir = TempStorageDir::new("retained_pending_read")?;
+        let storage = SqliteBackedPagableStorage::try_new(&dir.path)?;
+        let warm = storage.store_data(pagable_data(b"warm", Vec::new()))?;
+        storage.flush()?;
+        warm_retained_readers(&storage, warm)?;
+
+        let data = data_in_shard(warm.get() % NUM_SHARDS as u128, "pending");
+        let expected = data.data.clone();
+        let key = storage.store_data(data)?;
+        assert_eq!(storage.fetch_data_blocking(&key)?.data, expected);
+        storage.release_memory();
+        for shard in &storage.shards {
+            for reader in &shard.inner.conns.readers {
+                assert!(reader.lock().is_autocommit());
+            }
+        }
+        assert_eq!(storage.fetch_data_blocking(&key)?.data, expected);
+        Ok(())
+    }
+
+    #[test]
+    fn sqlite_retained_readers_do_not_block_automatic_writes() -> anyhow::Result<()> {
+        let dir = TempStorageDir::new("retained_automatic_write")?;
+        let storage = SqliteBackedPagableStorage::try_new(&dir.path)?;
+        let warm = storage.store_data(pagable_data(b"concurrent warm", Vec::new()))?;
+        storage.flush()?;
+        warm_retained_readers(&storage, warm)?;
+        let shard = storage.shard_for(&warm);
+        shard.inner.write_state.lock().unwrap().max_rows = 1;
+        let start = std::sync::Barrier::new(3);
+
+        std::thread::scope(|scope| -> anyhow::Result<()> {
+            let readers: Vec<_> = (0..2)
+                .map(|_| {
+                    scope.spawn(|| -> anyhow::Result<()> {
+                        start.wait();
+                        for _ in 0..200 {
+                            assert_eq!(
+                                storage.fetch_data_blocking(&warm)?.data,
+                                b"concurrent warm"
+                            );
+                        }
+                        Ok(())
+                    })
+                })
+                .collect();
+            start.wait();
+            let shard_id = warm.get() % NUM_SHARDS as u128;
+            let first = storage.store_data(data_in_shard(shard_id, "automatic first"))?;
+            let second = storage.store_data(data_in_shard(shard_id, "automatic second"))?;
+
+            let state = shard.inner.write_state.lock().unwrap();
+            let (state, timeout) = shard
+                .inner
+                .write_state_changed
+                .wait_timeout_while(state, Duration::from_secs(5), |state| {
+                    !state.pending_buffers.is_empty() || state.writing
+                })
+                .unwrap();
+            assert!(
+                !timeout.timed_out(),
+                "automatic writer should drain without a flush"
+            );
+            ShardInner::check_error(&state)?;
+            drop(state);
+            let (key_lo, key_hi) = data_key_parts(first);
+            assert_eq!(
+                shard.inner.conns.get_readwrite().query_row(
+                    "SELECT COUNT(*) FROM pagable_data WHERE key_lo=? AND key_hi=?",
+                    rusqlite::params![key_lo, key_hi],
+                    |row| row.get::<_, usize>(0),
+                )?,
+                1,
+            );
+            for reader in readers {
+                reader.join().expect("reader should not panic")?;
+            }
+            storage.fetch_data_blocking(&second)?;
+            Ok(())
+        })
+    }
+
     #[test]
     fn sqlite_reads_pending_rows_without_explicit_flush() -> anyhow::Result<()> {
         let dir = TempStorageDir::new("pending_read")?;
@@ -1166,9 +1322,55 @@ mod tests {
         Ok(())
     }
 
-    /// A read that cannot get a reader connection gives up after the same
-    /// waits as one that meets SQLite's lock, and the readers are usable
-    /// afterwards.
+    /// Reads race the writer for rows that are stored but not written yet, in
+    /// every shard and across many small write batches. A read that finds no
+    /// row waits for the write and then sees it, whichever reader connection
+    /// it gets and whatever transaction that connection had open.
+    #[test]
+    fn sqlite_reads_see_rows_being_written_in_many_batches() -> anyhow::Result<()> {
+        const ROWS: usize = 2000;
+        let dir = TempStorageDir::new("read_while_writing")?;
+        let storage = SqliteBackedPagableStorage::try_new(&dir.path)?;
+        for shard in &storage.shards {
+            shard.inner.write_state.lock().unwrap().max_rows = 4;
+        }
+        let (send, receive) = std::sync::mpsc::channel::<(DataKey, Vec<u8>)>();
+        let receive = Mutex::new(receive);
+
+        std::thread::scope(|scope| -> anyhow::Result<()> {
+            let readers: Vec<_> = (0..4)
+                .map(|_| {
+                    scope.spawn(|| -> anyhow::Result<usize> {
+                        let mut read = 0;
+                        loop {
+                            let next = receive.lock().unwrap().recv();
+                            let Ok((key, expected)) = next else {
+                                return Ok(read);
+                            };
+                            assert_eq!(storage.fetch_data_blocking(&key)?.data, expected);
+                            read += 1;
+                        }
+                    })
+                })
+                .collect();
+            for i in 0..ROWS {
+                let bytes = format!("row {i}").into_bytes();
+                let key = storage.store_data(pagable_data(&bytes, Vec::new()))?;
+                send.send((key, bytes)).unwrap();
+            }
+            drop(send);
+            let mut read = 0;
+            for reader in readers {
+                read += reader.join().expect("reader should not panic")?;
+            }
+            assert_eq!(read, ROWS);
+            Ok(())
+        })
+    }
+
+    /// A write batch holds every reader connection of its shard. A read that
+    /// arrives meanwhile gives up after the same waits as one that meets
+    /// SQLite's lock, and the readers are usable afterwards.
     #[test]
     fn sqlite_read_gives_up_waiting_for_a_reader_connection() -> anyhow::Result<()> {
         let dir = TempStorageDir::new("reader_wait")?;

@@ -746,6 +746,29 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ac07cdecf99051d9a5238b80f35af32cdeba5b336e55d957b318b50137e18da5"
 
 [[package]]
+name = "bazel_bep_proto"
+version = "0.1.0"
+dependencies = [
+ "buck2_protoc_dev",
+ "prost",
+ "prost-types",
+ "tonic",
+ "tonic-prost",
+]
+
+[[package]]
+name = "bes_grpc_proto"
+version = "0.1.0"
+dependencies = [
+ "buck2_protoc_dev",
+ "google_grpc_proto",
+ "prost",
+ "prost-types",
+ "tonic",
+ "tonic-prost",
+]
+
+[[package]]
 name = "bincode"
 version = "2.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2677,6 +2700,7 @@ dependencies = [
  "buck2_build_api",
  "buck2_common",
  "buck2_core",
+ "buck2_data",
  "buck2_directory",
  "buck2_error",
  "buck2_execute",
@@ -3596,6 +3620,7 @@ dependencies = [
  "libc",
  "maplit",
  "pagable",
+ "prost-types",
  "remote_execution",
  "serde",
  "serde_json",
@@ -6046,6 +6071,19 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2c4ee00b289aba7a9e5306d57c2d05499b2e5dc427f84ac708bd2c090212cf3e"
 dependencies = [
  "gl_generator",
+]
+
+[[package]]
+name = "google_grpc_proto"
+version = "0.1.0"
+dependencies = [
+ "buck2_proto_serde",
+ "buck2_protoc_dev",
+ "prost",
+ "prost-types",
+ "serde",
+ "tonic",
+ "tonic-prost",
 ]
 
 [[package]]
@@ -9258,6 +9296,7 @@ version = "0.1.0"
 dependencies = [
  "buck2_proto_serde",
  "buck2_protoc_dev",
+ "google_grpc_proto",
  "prost",
  "prost-types",
  "serde",

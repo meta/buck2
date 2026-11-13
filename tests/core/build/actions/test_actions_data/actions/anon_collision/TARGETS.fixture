@@ -1,0 +1,74 @@
+load(":defs.bzl", "fanout", "lib")
+
+lib(name = "lib_0000")
+lib(name = "lib_0001")
+lib(name = "lib_0002")
+lib(name = "lib_0003")
+lib(name = "lib_0004")
+lib(name = "lib_0005")
+lib(name = "lib_0006")
+lib(name = "lib_0007")
+lib(name = "lib_0008")
+lib(name = "lib_0009")
+lib(name = "lib_0010")
+lib(name = "lib_0011")
+lib(name = "lib_0012")
+lib(name = "lib_0013")
+lib(name = "lib_0014")
+lib(name = "lib_0015")
+lib(name = "lib_0016")
+lib(name = "lib_0017")
+lib(name = "lib_0018")
+lib(name = "lib_0019")
+lib(name = "lib_0020")
+lib(name = "lib_0021")
+lib(name = "lib_0022")
+lib(name = "lib_0023")
+lib(name = "lib_0024")
+lib(name = "lib_0025")
+lib(name = "lib_0026")
+lib(name = "lib_0027")
+lib(name = "lib_0028")
+lib(name = "lib_0029")
+lib(name = "lib_0030")
+lib(name = "lib_0031")
+lib(name = "lib_0032")
+
+fanout(
+    name = "fanout",
+    deps = [
+        ":lib_0000",
+        ":lib_0001",
+        ":lib_0002",
+        ":lib_0003",
+        ":lib_0004",
+        ":lib_0005",
+        ":lib_0006",
+        ":lib_0007",
+        ":lib_0008",
+        ":lib_0009",
+        ":lib_0010",
+        ":lib_0011",
+        ":lib_0012",
+        ":lib_0013",
+        ":lib_0014",
+        ":lib_0015",
+        ":lib_0016",
+        ":lib_0017",
+        ":lib_0018",
+        ":lib_0019",
+        ":lib_0020",
+        ":lib_0021",
+        ":lib_0022",
+        ":lib_0023",
+        ":lib_0024",
+        ":lib_0025",
+        ":lib_0026",
+        ":lib_0027",
+        ":lib_0028",
+        ":lib_0029",
+        ":lib_0030",
+        ":lib_0031",
+        ":lib_0032",
+    ],
+)

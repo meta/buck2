@@ -49,7 +49,8 @@ pub mod internal;
     Allocative,
     Serialize,
     Deserialize,
-    Pagable
+    Pagable,
+    strong_hash::StrongHash
 )]
 pub struct AttributeId(u16); // Index in the attribute spec
 

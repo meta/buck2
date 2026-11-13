@@ -349,6 +349,33 @@ async fn test_anon_targets(buck: &Buck) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// 33 anon targets that differ only in a `lib_NNNN` label each get their own configuration-based
+/// output path and content.
+#[buck_test(data_dir = "actions")]
+async fn test_anon_targets_differing_in_a_label_get_distinct_outputs(
+    buck: &Buck,
+) -> anyhow::Result<()> {
+    let result = buck
+        .build(&["//anon_collision:fanout", "--local-only"])
+        .await?;
+    let outputs = result
+        .build_report()?
+        .outputs_for_target("//anon_collision:fanout", "DEFAULT")?;
+    assert_eq!(outputs.len(), 33, "{outputs:?}");
+    assert_eq!(
+        outputs.iter().collect::<BTreeSet<_>>().len(),
+        33,
+        "output paths collide"
+    );
+
+    let contents = outputs
+        .iter()
+        .map(|output| read_text(output))
+        .collect::<anyhow::Result<BTreeSet<_>>>()?;
+    assert_eq!(contents.len(), 33, "output contents collide");
+    Ok(())
+}
+
 // The missing use case is served from the fallback, which is the
 // `cas_artifact_canonical_check_failed` soft error.
 #[buck_test(data_dir = "actions", allow_soft_errors = true)]

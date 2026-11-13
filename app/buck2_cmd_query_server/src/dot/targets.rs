@@ -40,6 +40,9 @@ impl<'a, T: QueryCommandTarget> DotDigraph<'a> for DotTargetGraph<T> {
         &'a self,
         mut f: F,
     ) -> buck2_error::Result<()> {
+        if self.attributes.is_some() {
+            T::prefetch_bodies(&self.targets)?;
+        }
         for node in self.targets.iter() {
             f(&DotTargetGraphNode(node, self))?;
         }

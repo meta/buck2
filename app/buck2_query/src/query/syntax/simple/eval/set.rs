@@ -81,6 +81,7 @@ impl<T: QueryTarget> TargetSet<T> {
     }
 
     pub fn buildfile(&self) -> buck2_error::Result<FileSet> {
+        T::prefetch_bodies(self)?;
         let mut files = BuckMutInsertionSet::default();
         for target in self.targets.iter() {
             files.insert(FileNode(target.buildfile_path()?.path()));
@@ -89,6 +90,7 @@ impl<T: QueryTarget> TargetSet<T> {
     }
 
     pub fn inputs(&self) -> buck2_error::Result<FileSet> {
+        T::prefetch_bodies(self)?;
         let mut files = BuckMutInsertionSet::default();
         for target in self.targets.iter() {
             target.inputs_for_each(|file| {
@@ -180,6 +182,7 @@ impl<T: QueryTarget> TargetSet<T> {
         attribute: &str,
         filter: &dyn Fn(&str) -> buck2_error::Result<bool>,
     ) -> buck2_error::Result<TargetSet<T>> {
+        T::prefetch_bodies(self)?;
         self.filter(move |node| node.attr_matches(attribute, filter))
     }
 
@@ -188,6 +191,7 @@ impl<T: QueryTarget> TargetSet<T> {
         attribute: &str,
         filter: &dyn Fn(&str) -> buck2_error::Result<bool>,
     ) -> buck2_error::Result<TargetSet<T>> {
+        T::prefetch_bodies(self)?;
         self.filter(move |node| {
             node.map_any_attr(attribute, |val| match val {
                 None => Ok(false),

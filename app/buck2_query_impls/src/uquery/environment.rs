@@ -468,6 +468,7 @@ pub(crate) async fn allbuildfiles<T: QueryTarget>(
 
     let mut top_level_imports = Vec::<ImportPath>::new();
 
+    T::prefetch_bodies(universe)?;
     for target in universe.iter() {
         paths.insert(FileNode(target.buildfile_path()?.path()));
 

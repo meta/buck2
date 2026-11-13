@@ -50,6 +50,8 @@ pub(crate) fn gen_fbs(
     actions: Vec<(String, ActionEntryData)>,
     changed_files: Vec<ChangedFilesEntryData>,
 ) -> buck2_error::Result<FlatBufferBuilder<'static>> {
+    ConfiguredTargetNode::prefetch_bodies(&data)?;
+
     // associate actions and changed files with targets when possible
     let (target_data, other_actions_data, other_changed_files) = {
         // These are in case we need to debug orphan actions or changed files

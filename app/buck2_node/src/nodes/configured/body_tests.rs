@@ -300,6 +300,68 @@ fn a_restored_node_serves_its_header_without_reading_its_body() -> buck2_error::
 }
 
 #[test]
+fn prefetch_bodies_reads_the_bodies_that_are_not_in_memory() -> buck2_error::Result<()> {
+    let probe = Probe::new(true);
+    let deps: Vec<_> = (0..32)
+        .map(|i| node(&format!("cell//pkg:dep{i}"), &format!("dep{i}"), Vec::new()))
+        .collect();
+    let original = node("cell//pkg:root", "root", deps);
+    let key = probe.store(&original)?;
+    let restored: ConfiguredTargetNode = probe.restore_fresh(key)?;
+    value_attr(&restored.deps()[3])?;
+    let reads_before = probe.storage.reads();
+
+    // Only the deps are asked for. One of them is in memory already.
+    ConfiguredTargetNode::prefetch_bodies(restored.deps())?;
+    assert!(restored.deps().iter().all(body_is_resident));
+    assert!(
+        !body_is_resident(&restored),
+        "a node that was not asked for is left alone"
+    );
+    let reads_for_bodies = probe.storage.reads() - reads_before;
+    assert!(reads_for_bodies >= 31, "{reads_for_bodies}");
+    for (restored, original) in restored.deps().iter().zip(original.deps()) {
+        assert_eq!(value_attr(restored)?, value_attr(original)?);
+    }
+
+    ConfiguredTargetNode::prefetch_bodies(restored.deps())?;
+    ConfiguredTargetNode::prefetch_bodies(original.deps())?;
+    assert_eq!(
+        probe.storage.reads() - reads_before,
+        reads_for_bodies,
+        "bodies in memory are not read again, and nodes that were built have nothing to read"
+    );
+    Ok(())
+}
+
+#[test]
+fn prefetch_bodies_leaves_an_unreadable_body_for_body_to_report() -> buck2_error::Result<()> {
+    let probe = Probe::new(true);
+    let deps: Vec<_> = (0..8)
+        .map(|i| node(&format!("cell//pkg:dep{i}"), &format!("dep{i}"), Vec::new()))
+        .collect();
+    let dep_key = probe.store(&deps[5])?;
+    let key = probe.store(&node("cell//pkg:root", "root", deps))?;
+    probe.storage.fail_reads_of(Some(probe.body_key(dep_key)?));
+    let restored: ConfiguredTargetNode = probe.restore_fresh(key)?;
+
+    ConfiguredTargetNode::prefetch_bodies(restored.deps())?;
+    for (i, dep) in restored.deps().iter().enumerate() {
+        assert_eq!(body_is_resident(dep), i != 5, "dep{i}");
+    }
+    let error = restored.deps()[5]
+        .body()
+        .expect_err("the body is still unreadable");
+    assert!(error.has_tag(ErrorTag::DeferredFieldRead));
+    let message = format!("{error:#}");
+    assert!(
+        message.contains("Failed to restore the body of configured target node `cell//pkg:dep5"),
+        "{message}"
+    );
+    Ok(())
+}
+
+#[test]
 fn an_unreadable_body_is_an_error_and_leaves_the_header_usable() -> buck2_error::Result<()> {
     let probe = Probe::new(true);
     let original = node("cell//pkg:root", "root", Vec::new());

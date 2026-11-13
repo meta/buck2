@@ -91,6 +91,8 @@ pub(crate) trait TargetFormatter: Send + Sync {
 
 #[allow(unused_variables)]
 pub trait ConfiguredTargetFormatter: Send + Sync {
+    /// Whether [`Self::target`] reads the body of each node.
+    fn reads_bodies(&self) -> bool;
     fn begin(&self, buffer: &mut String) {}
     fn end(&self, buffer: &mut String) {}
     fn separator(&self, buffer: &mut String) {}
@@ -362,6 +364,10 @@ impl TargetFormatter for JsonFormat {
 }
 
 impl ConfiguredTargetFormatter for JsonFormat {
+    fn reads_bodies(&self) -> bool {
+        true
+    }
+
     fn begin(&self, buffer: &mut String) {
         self.writer.begin(buffer)
     }
@@ -561,6 +567,10 @@ impl TargetFormatter for TargetNameFormat {
 }
 
 impl ConfiguredTargetFormatter for TargetNameFormat {
+    fn reads_bodies(&self) -> bool {
+        self.target_call_stacks
+    }
+
     fn target(
         &self,
         target_node: &ConfiguredTargetNode,
@@ -622,6 +632,7 @@ impl JsonReportFormat {
         output.push_str("{\n  \"compatible_targets\": [\n");
 
         // Format compatible targets
+        ConfiguredTargetNode::prefetch_bodies(&result.compatible_targets)?;
         let mut needs_separator = false;
         for node in &result.compatible_targets {
             if needs_separator {

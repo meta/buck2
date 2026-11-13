@@ -87,6 +87,18 @@ pub struct AttrFmtOptions {
 pub trait QueryTarget: LabeledNode + Dupe + Send + Sync + 'static {
     type Attr<'a>: ?Sized + Debug + 'a;
 
+    /// Called by a caller about to read the attributes, inputs or build file of every one of
+    /// `targets`. An implementation that loads those on demand loads them here, several at a
+    /// time, so that the caller does not load them one target after another.
+    ///
+    /// This only saves time: what cannot be loaded here is left for the read that needs it
+    /// to report. The error is for buck2's own tests, where a soft error fails the command.
+    fn prefetch_bodies<'a>(
+        _targets: impl IntoIterator<Item = &'a Self>,
+    ) -> buck2_error::Result<()> {
+        Ok(())
+    }
+
     /// `filter()` function uses this.
     fn label_for_filter(&self) -> String {
         self.node_key().to_string()
@@ -296,6 +308,7 @@ pub trait QueryEnvironment: Send + Sync {
         &self,
         targets: &TargetSet<Self::Target>,
     ) -> buck2_error::Result<TargetSet<Self::Target>> {
+        Self::Target::prefetch_bodies(targets)?;
         let target_tests = targets
             .iter()
             .map(|target| {
@@ -334,6 +347,7 @@ pub trait QueryEnvironment: Send + Sync {
         &self,
         targets: &TargetSet<Self::Target>,
     ) -> buck2_error::Result<Vec<MaybeCompatible<Self::Target>>> {
+        Self::Target::prefetch_bodies(targets)?;
         let target_tests = targets
             .iter()
             .map(|target| {

@@ -24,6 +24,10 @@ use std::any::TypeId;
 use std::cell::Cell;
 use std::fmt;
 use std::sync::Arc;
+use std::sync::Mutex as StdMutex;
+use std::sync::OnceLock;
+use std::sync::atomic::AtomicUsize;
+use std::sync::atomic::Ordering;
 
 use allocative::Allocative;
 use once_cell::sync::OnceCell;
@@ -178,6 +182,29 @@ fn blocking<R>(load: impl FnOnce() -> crate::Result<R>) -> crate::Result<R> {
     load()
 }
 
+/// The most threads that help one caller of [`DeferredValue::read_all`]:
+/// `BUCK2_DEFERRED_READ_THREADS` (0 leaves every bulk read to its caller), else
+/// a quarter of the available parallelism, at least 4 and at most 32.
+fn read_all_helper_limit() -> usize {
+    static LIMIT: OnceLock<usize> = OnceLock::new();
+    *LIMIT.get_or_init(|| {
+        if let Some(raw) = std::env::var_os("BUCK2_DEFERRED_READ_THREADS") {
+            return match raw.to_str().and_then(|v| v.parse::<usize>().ok()) {
+                Some(n) if n <= 256 => n,
+                _ => panic!("BUCK2_DEFERRED_READ_THREADS={raw:?} must be an integer in 0..=256"),
+            };
+        }
+        std::thread::available_parallelism()
+            .map(|n| n.get() / 4)
+            .unwrap_or(4)
+            .clamp(4, 32)
+    })
+}
+
+/// Fields of a bulk read for each thread that helps with it. Starting a thread costs about
+/// as much as reading a field, so a helper has to have several to read.
+const READ_ALL_FIELDS_PER_HELPER: usize = 4;
+
 impl<T, M> DeferredValue<T, M> {
     /// Construct a field that needs no storage access.
     pub fn new(value: T) -> Self {
@@ -230,6 +257,79 @@ impl<T, M> DeferredValue<T, M> {
                     })?)
                 }
             },
+        }
+    }
+
+    /// Resolve every field of `fields` that is still unread, several at a time,
+    /// and return once each of them is resolved or has failed.
+    ///
+    /// For a caller about to read the fields of many values: `read` on each
+    /// would do one storage round trip after another on the caller's thread.
+    /// Here the caller shares the reads with threads that live only for this
+    /// call, one for every few fields up to a limit.
+    ///
+    /// Returns the first failure. A failed field stays unread, so a later
+    /// `read` retries and reports it. Like `read`, fails without loading when
+    /// called while this thread is restoring another value.
+    pub fn read_all<'a>(fields: impl IntoIterator<Item = &'a Self>) -> Result<(), DeferredReadError>
+    where
+        T: Send + Sync + 'a,
+        M: Send + Sync + 'a,
+    {
+        let unread: Vec<&PendingValue<T, M>> = fields
+            .into_iter()
+            .filter_map(|field| match &field.0 {
+                DeferredValueState::Pending(pending) if pending.value.get().is_none() => {
+                    Some(&**pending)
+                }
+                _ => None,
+            })
+            .collect();
+        if unread.is_empty() {
+            return Ok(());
+        }
+        if holding_cell() {
+            return Err(ReadRefused(
+                "Cold bulk read of deferred fields while this thread is restoring another value; refused because it could deadlock",
+            )
+            .into());
+        }
+
+        // Index of the next field no thread has taken.
+        let next = AtomicUsize::new(0);
+        let first_error = StdMutex::new(None);
+        let read_fields = || {
+            while let Some(field) = unread.get(next.fetch_add(1, Ordering::Relaxed)) {
+                let _held = HeldCell::enter();
+                if let Err(error) = field.value.get_or_try_init(|| field.load()) {
+                    first_error
+                        .lock()
+                        .expect("bulk read error should not be poisoned")
+                        .get_or_insert(error);
+                }
+            }
+        };
+        blocking(|| {
+            let helpers = (unread.len() / READ_ALL_FIELDS_PER_HELPER).min(read_all_helper_limit());
+            std::thread::scope(|scope| {
+                for i in 0..helpers {
+                    let helper = std::thread::Builder::new().name(format!("deferred-read-{i}"));
+                    // A helper that cannot be started is done without: the threads that
+                    // did start read its share.
+                    if helper.spawn_scoped(scope, read_fields).is_err() {
+                        break;
+                    }
+                }
+                read_fields();
+            });
+            Ok(())
+        })?;
+        match first_error
+            .into_inner()
+            .expect("bulk read error should not be poisoned")
+        {
+            Some(error) => Err(error.into()),
+            None => Ok(()),
         }
     }
 
@@ -501,6 +601,104 @@ mod tests {
         graph.visit_root(&deferred);
         let flame = graph.finish_and_write_flame_graph();
         assert!(flame.contains("ArcLoader"), "{flame}");
+        Ok(())
+    }
+
+    #[test]
+    fn read_all_resolves_unread_fields_on_more_than_one_thread() -> crate::Result<()> {
+        // The first two loads wait for each other, so they finish only if two threads
+        // are loading at once.
+        let rendezvous = Arc::new(Barrier::new(2));
+        let loads = Arc::new(AtomicUsize::new(0));
+        let fields: Vec<DeferredValue<usize>> = (0..64)
+            .map(|i| {
+                let rendezvous = rendezvous.clone();
+                let loads = loads.clone();
+                DeferredValue::pending(move || {
+                    if loads.fetch_add(1, Ordering::SeqCst) < 2 {
+                        rendezvous.wait();
+                    }
+                    Ok(i)
+                })
+            })
+            .chain([DeferredValue::new(64)])
+            .collect();
+
+        DeferredValue::read_all(&fields)?;
+        assert!(fields.iter().all(DeferredValue::is_resolved));
+        assert_eq!(loads.load(Ordering::SeqCst), 64, "each field loads once");
+        for (i, field) in fields.iter().enumerate() {
+            assert_eq!(*field.read()?, i);
+        }
+
+        DeferredValue::read_all(&fields)?;
+        assert_eq!(loads.load(Ordering::SeqCst), 64, "nothing is left to load");
+        Ok(())
+    }
+
+    #[test]
+    fn read_all_of_a_few_fields_reads_them_on_the_caller() -> crate::Result<()> {
+        let threads = Arc::new(StdMutex::new(Vec::new()));
+        let fields: Vec<DeferredValue<usize>> = (0..READ_ALL_FIELDS_PER_HELPER - 1)
+            .map(|i| {
+                let threads = threads.clone();
+                DeferredValue::pending(move || {
+                    threads.lock().unwrap().push(std::thread::current().id());
+                    Ok(i)
+                })
+            })
+            .collect();
+
+        DeferredValue::read_all(&fields)?;
+        assert!(fields.iter().all(DeferredValue::is_resolved));
+        let caller = std::thread::current().id();
+        assert_eq!(*threads.lock().unwrap(), vec![caller; fields.len()]);
+        Ok(())
+    }
+
+    #[test]
+    fn read_all_returns_a_failure_and_resolves_the_other_fields() {
+        let attempts = Arc::new(AtomicUsize::new(0));
+        let fields: Vec<DeferredValue<usize>> = (0..16)
+            .map(|i| {
+                let attempts = attempts.clone();
+                DeferredValue::pending(move || {
+                    if i == 5 {
+                        attempts.fetch_add(1, Ordering::SeqCst);
+                        anyhow::bail!("field 5 has no row");
+                    }
+                    Ok(i)
+                })
+            })
+            .collect();
+
+        let error = DeferredValue::read_all(&fields).expect_err("one field cannot be read");
+        assert!(
+            error.to_string().contains("field 5 has no row"),
+            "{error:#}"
+        );
+        for (i, field) in fields.iter().enumerate() {
+            assert_eq!(field.is_resolved(), i != 5, "field {i}");
+        }
+        // The failed field is left for a later read to retry and report.
+        fields[5].read().expect_err("still unreadable");
+        assert_eq!(attempts.load(Ordering::SeqCst), 2);
+    }
+
+    #[test]
+    fn read_all_is_refused_while_restoring_another_value() -> crate::Result<()> {
+        let fields = [
+            DeferredValue::pending(|| Ok(1)),
+            DeferredValue::pending(|| Ok(2)),
+        ];
+        {
+            let _cell = HeldCell::enter();
+            let error = DeferredValue::read_all(&fields).expect_err("a cell is held");
+            assert!(error.to_string().contains("could deadlock"), "{error:#}");
+            assert!(!fields.iter().any(DeferredValue::is_resolved));
+        }
+        DeferredValue::read_all(&fields)?;
+        assert!(fields.iter().all(DeferredValue::is_resolved));
         Ok(())
     }
 

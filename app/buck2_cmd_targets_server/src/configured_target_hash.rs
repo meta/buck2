@@ -124,6 +124,7 @@ impl ConfiguredTargetHashes {
                 },
             )?;
         } else {
+            ConfiguredTargetNode::prefetch_bodies(roots)?;
             for node in roots {
                 if hashes.contains_key(node.label()) {
                     continue;

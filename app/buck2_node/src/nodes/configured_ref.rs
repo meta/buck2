@@ -103,6 +103,10 @@ impl LabeledNode for ConfiguredGraphNodeRef {
 impl QueryTarget for ConfiguredGraphNodeRef {
     type Attr<'a> = ConfiguredAttr;
 
+    fn prefetch_bodies<'a>(targets: impl IntoIterator<Item = &'a Self>) -> buck2_error::Result<()> {
+        ConfiguredTargetNode::prefetch_bodies(targets.into_iter().map(|target| &target.0))
+    }
+
     fn label_for_filter(&self) -> String {
         self.0.label().unconfigured().to_string()
     }

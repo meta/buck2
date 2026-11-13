@@ -39,6 +39,10 @@ impl LabeledNode for ConfiguredTargetNode {
 impl QueryTarget for ConfiguredTargetNode {
     type Attr<'a> = ConfiguredAttr;
 
+    fn prefetch_bodies<'a>(targets: impl IntoIterator<Item = &'a Self>) -> buck2_error::Result<()> {
+        ConfiguredTargetNode::prefetch_bodies(targets)
+    }
+
     fn label_for_filter(&self) -> String {
         self.label().unconfigured().to_string()
     }

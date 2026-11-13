@@ -33,6 +33,7 @@ use buck2_core::plugins::PluginLists;
 use buck2_core::provider::label::ConfiguredProvidersLabel;
 use buck2_core::provider::label::ProvidersLabel;
 use buck2_core::provider::label::ProvidersName;
+use buck2_core::soft_error;
 use buck2_core::target::configured_target_label::ConfiguredTargetLabel;
 use buck2_core::target::label::label::TargetLabel;
 use buck2_error::BuckErrorContext;
@@ -405,9 +406,33 @@ impl ConfiguredTargetNode {
 
     /// Everything about this node that is not in its header: the unconfigured node, the
     /// attributes, the execution platform and the plugins.
+    ///
+    /// A caller about to do this for many nodes calls [`Self::prefetch_bodies`] first.
     #[inline]
     pub fn body(&self) -> buck2_error::Result<ConfiguredTargetNodeBodyRef<'_>> {
         self.as_ref().body()
+    }
+
+    /// Reads the bodies of `nodes` that are not in memory yet, several at a time, so that
+    /// [`Self::body`] of each finds its body there.
+    ///
+    /// Each `body` of a node paged back in from storage is otherwise a read from storage on
+    /// the caller's thread, one node after another.
+    ///
+    /// This only saves time. A body it cannot read is left for `body` to read again and to
+    /// report, to the caller that needs that node. The failure here is a soft error.
+    pub fn prefetch_bodies<'a>(
+        nodes: impl IntoIterator<Item = &'a ConfiguredTargetNode>,
+    ) -> buck2_error::Result<()> {
+        if let Err(error) = DeferredValue::read_all(nodes.into_iter().map(|node| &node.0.body.0)) {
+            soft_error!(
+                "configured_node_body_prefetch_failed",
+                buck2_error::Error::from(error)
+                    .context("Failed to prefetch the bodies of configured target nodes"),
+                task: false
+            );
+        }
+        Ok(())
     }
 
     /// Returns all deps for this node:

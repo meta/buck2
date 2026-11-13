@@ -358,6 +358,7 @@ impl<'a> QueryResultPrinter<'a> {
                     }
                 }
                 QueryOutputFormatInfo::Starlark => {
+                    T::prefetch_bodies(&targets)?;
                     for (i, target) in targets.iter().enumerate() {
                         if i > 0 {
                             writeln!(&mut output)?;
@@ -484,6 +485,9 @@ async fn printable_targets<'a, T: QueryCommandTarget>(
     attributes: &'a Option<RegexSet>,
     target_call_stacks: bool,
 ) -> buck2_error::Result<Vec<PrintableQueryTarget<'a, T>>> {
+    if attributes.is_some() || target_call_stacks {
+        T::prefetch_bodies(targets)?;
+    }
     buck2_util::future::join_all(targets.iter().map(|t| async move {
         Ok(PrintableQueryTarget {
             value: t,

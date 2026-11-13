@@ -89,12 +89,13 @@ impl<'v> HeapEdge<'v, 'static> {
     /// anywhere.
     ///
     /// Such data is brought to the brand of the heap in use by spelling `at()`
-    /// ([`AllocStaticSimple::at`], [`ValueTyped::at`]), which is this edge's
+    /// ([`AllocStaticSimple::at`], [`ValueTyped::at`], [`ValueOf::at`]), which is this edge's
     /// [`rebrand`](HeapEdge::rebrand) behind a name.
     ///
     /// [`AllocStaticSimple`]: crate::values::AllocStaticSimple
     /// [`AllocStaticSimple::at`]: crate::values::AllocStaticSimple::at
     /// [`ValueTyped::at`]: crate::values::ValueTyped::at
+    /// [`ValueOf::at`]: crate::values::ValueOf::at
     /// [`const_frozen_string!`]: crate::const_frozen_string
     /// [`Methods`]: crate::environment::Methods
     pub fn immortal() -> Self {

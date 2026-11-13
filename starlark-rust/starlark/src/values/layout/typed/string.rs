@@ -23,6 +23,7 @@ use crate::collections::Hashed;
 use crate::values::FreezeResult;
 use crate::values::Freezer;
 use crate::values::Value;
+use crate::values::ValueOf;
 use crate::values::ValueTyped;
 use crate::values::layout::static_string::VALUE_EMPTY_STRING;
 use crate::values::string::str_type::StarlarkStr;
@@ -96,13 +97,69 @@ impl<'v> Ord for StringValue<'v> {
     }
 }
 
+impl<'v> ValueOf<'v, StarlarkStr> {
+    /// The Rust string.
+    #[inline]
+    pub fn as_str(self) -> &'v str {
+        self.as_ref().as_str()
+    }
+
+    /// Get self along with the hash.
+    pub fn get_hashed(self) -> Hashed<Self> {
+        Hashed::new_unchecked(self.as_ref().get_hash(), self)
+    }
+
+    /// Get the string reference along with the hash.
+    pub fn get_hashed_str(self) -> Hashed<&'v str> {
+        self.as_ref().as_str_hashed()
+    }
+
+    /// Get the [`Value`] along with the hash.
+    pub fn get_hashed_value(self) -> Hashed<Value<'v>> {
+        Hashed::new_unchecked(self.as_ref().get_hash(), self.to_value())
+    }
+}
+
+impl<'v> Borrow<str> for ValueOf<'v, StarlarkStr> {
+    fn borrow(&self) -> &str {
+        self.as_str()
+    }
+}
+
+impl<'v> Default for ValueOf<'v, StarlarkStr> {
+    fn default() -> Self {
+        VALUE_EMPTY_STRING.erase().at().into()
+    }
+}
+
+impl<'v> Hash for ValueOf<'v, StarlarkStr> {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.as_ref().hash(state)
+    }
+}
+
+impl<'v> PartialOrd for ValueOf<'v, StarlarkStr> {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl<'v> Ord for ValueOf<'v, StarlarkStr> {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.as_ref().cmp(other.as_ref())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use crate::collections::Hashed;
+    use crate::const_frozen_string;
     use crate::values::FrozenHeap;
     use crate::values::Heap;
     use crate::values::StringValue;
     use crate::values::Value;
+    use crate::values::ValueOf;
+    use crate::values::string::str_type::StarlarkStr;
 
     #[test]
     fn test_string_hashes() {
@@ -121,6 +178,28 @@ mod tests {
             assert_eq!(expected, Hashed::new(fs).hash());
             let fv: Value = heap.alloc_str("xyz").to_value();
             assert_eq!(expected, fv.get_hashed().unwrap().hash());
+        });
+    }
+
+    #[test]
+    fn test_type_handle() {
+        Heap::temp(|heap| {
+            let s: ValueOf<StarlarkStr> = heap.alloc("xyz");
+            let t: ValueOf<StarlarkStr> = heap.alloc("xyz");
+            let u: ValueOf<StarlarkStr> = heap.alloc("xyzw");
+            assert!(!s.to_value().ptr_eq(t.to_value()));
+            assert_eq!(s, t);
+            assert_ne!(s, u);
+            assert!(s < u);
+            assert_eq!("xyz", s.as_str());
+            assert_eq!(Hashed::new("xyz"), s.get_hashed_str());
+            assert_eq!(Hashed::new("xyz").hash(), Hashed::new(s).hash());
+            assert_eq!(s.get_hashed().hash(), s.get_hashed_value().hash());
+            assert_eq!("", ValueOf::<StarlarkStr>::default().as_str());
+            let name: ValueOf<'static, StarlarkStr> =
+                ValueOf::new(const_frozen_string!("static string").to_value()).unwrap();
+            let name: ValueOf<StarlarkStr> = name.at();
+            assert_eq!("static string", name.as_str());
         });
     }
 }

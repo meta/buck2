@@ -35,6 +35,7 @@ use starlark_derive::StarlarkPagable;
 use crate as starlark;
 use crate::any::IsStaticType;
 use crate::any::ProvidesStaticType;
+use crate::any::ReinfectStatic;
 use crate::values::AllocFrozenValue;
 use crate::values::AllocValue;
 use crate::values::Freeze;
@@ -43,6 +44,7 @@ use crate::values::FreezeResult;
 use crate::values::Freezer;
 use crate::values::FrozenHeap;
 use crate::values::Heap;
+use crate::values::HeapEdge;
 use crate::values::StarlarkType;
 use crate::values::StarlarkValue;
 use crate::values::Trace;
@@ -201,6 +203,23 @@ impl<'v, T: StarlarkValue<'v> + StarlarkType<'v, Get = ValueTyped<'v, T>>> Deref
     }
 }
 
+impl<T: StarlarkTypeExpr<'static>> ValueOf<'static, T> {
+    /// The value, for use with any heap.
+    ///
+    /// Data at the `'static` brand is immortal, so it can be used at every brand; see
+    /// [`HeapEdge::immortal`]. The type follows the brand: a
+    /// `ValueOf<'static, ListType<Value<'static>>>` becomes a `ValueOf<'v, ListType<Value<'v>>>`.
+    #[inline]
+    pub fn at<'v>(self) -> ValueOf<'v, ReinfectStatic<'v, T>>
+    where
+        T: ProvidesStaticType<'static>,
+        T::StaticType: StarlarkTypeExpr<'static> + IsStaticType,
+        for<'lt> ReinfectStatic<'lt, T>: StarlarkTypeExpr<'lt>,
+    {
+        HeapEdge::immortal().rebrand(self)
+    }
+}
+
 /// Every value is a `typing.Any`.
 impl<'v> From<Value<'v>> for ValueOf<'v, Value<'v>> {
     #[inline]
@@ -237,8 +256,15 @@ where
 }
 
 impl<'v, T: StarlarkTypeExpr<'v>> PartialEq for ValueOf<'v, T> {
+    #[inline]
     fn eq(&self, other: &Self) -> bool {
-        self.0 == other.0
+        // Strings are compared without the virtual call of `Value`'s equality: they are the keys
+        // of the evaluator's maps.
+        self.0.ptr_eq(other.0)
+            || match (self.0.unpack_starlark_str(), other.0.unpack_starlark_str()) {
+                (Some(a), Some(b)) => a == b,
+                _ => self.0 == other.0,
+            }
     }
 }
 

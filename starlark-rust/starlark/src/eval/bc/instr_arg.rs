@@ -54,6 +54,7 @@ use crate::eval::runtime::slots::LocalSlotId;
 use crate::pagable::StarlarkDeserialize;
 use crate::pagable::StarlarkSerialize;
 use crate::values::Value;
+use crate::values::ValueOf;
 use crate::values::ValueTyped;
 use crate::values::any_complex::StarlarkAnyComplex;
 use crate::values::function::NativeFunction;
@@ -407,6 +408,19 @@ macro_rules! impl_bc_instr_arg_for_value_typed {
 }
 
 impl_bc_instr_arg_for_value_typed!(StarlarkStr, PointerI32, Def<'v>, NativeFunction<'v>);
+
+impl<'v> BcInstrArg<'v> for ValueOf<'v, StarlarkStr> {
+    fn fmt_append(
+        param: &Self,
+        _ip: BcAddr,
+        _end_arg: Option<&BcInstrEndArg<'v>>,
+        f: &mut dyn Write,
+    ) -> fmt::Result {
+        write!(f, " {}", TruncateValueRepr(param.to_value()))
+    }
+
+    fn visit_jump_addr(_param: &Self, _ip: BcAddr, _consumer: &mut dyn FnMut(BcAddr)) {}
+}
 
 impl<'v, T: AnyArrayRegistered> BcInstrArg<'v> for ValueTyped<'v, AnyArray<T>> {
     fn fmt_append(

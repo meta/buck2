@@ -15,6 +15,7 @@ use buck2_query::query::syntax::simple::eval::values::QueryEvaluationValue;
 use starlark::typing::HasTyVTable;
 use starlark::values::Heap;
 use starlark::values::Value;
+use starlark::values::dict::AllocDict;
 
 use super::targetset::NodeLike;
 use crate::bxl::starlark_defs::file_set::StarlarkFileSet;
@@ -37,7 +38,7 @@ where
             }
         },
         QueryEvaluationResult::Multiple(multi) => heap
-            .alloc(
+            .alloc(AllocDict(
                 multi
                     .0
                     .into_iter()
@@ -61,7 +62,7 @@ where
                         ))
                     })
                     .collect::<buck2_error::Result<BuckMutInsertionMap<Value, Value>>>()?,
-            )
+            ))
             .to_value(),
     })
 }

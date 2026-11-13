@@ -34,6 +34,7 @@ use starlark::values::Heap;
 use starlark::values::UnpackValue;
 use starlark::values::Value;
 use starlark::values::ValueOf;
+use starlark::values::list::AllocList;
 use starlark::values::list_or_tuple::ListOrTupleType;
 use starlark::values::string::StarlarkStr;
 
@@ -69,8 +70,8 @@ fn get_command_line(value: Value) -> buck2_error::Result<Vec<String>> {
 
 #[starlark_module]
 pub(crate) fn command_line_stringifier(builder: &mut GlobalsBuilder) {
-    fn get_args<'v>(value: Value<'v>) -> starlark::Result<Vec<String>> {
-        Ok(get_command_line(value)?)
+    fn get_args<'v>(value: Value<'v>) -> starlark::Result<AllocList<Vec<String>>> {
+        Ok(AllocList(get_command_line(value)?))
     }
 
     fn stringify_cli_arg<'v>(value: Value<'v>) -> starlark::Result<String> {

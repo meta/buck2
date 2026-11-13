@@ -58,6 +58,7 @@ use starlark::values::Trace;
 use starlark::values::UnpackValue;
 use starlark::values::Value;
 use starlark::values::ValueOf;
+use starlark::values::dict::AllocDict;
 use starlark::values::dict::DictRef;
 use starlark::values::dict::DictType;
 use starlark::values::list::AllocList;
@@ -855,7 +856,7 @@ fn output_stream_methods(builder: &mut MethodsBuilder) {
                 ))
             }
             EnsureMultipleArtifactsArg::Dict(build_result_dict) => Ok(heap
-                .alloc(
+                .alloc(AllocDict(
                     build_result_dict
                         .iter()
                         .map(|entry| {
@@ -878,7 +879,7 @@ fn output_stream_methods(builder: &mut MethodsBuilder) {
                             ))
                         })
                         .collect::<buck2_error::Result<BuckMutInsertionMap<Value, Value>>>()?,
-                )
+                ))
                 .to_value()),
             EnsureMultipleArtifactsArg::CmdLine(cmd_line) => {
                 // TODO(nga): we should not be doing that here.

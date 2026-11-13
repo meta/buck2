@@ -53,6 +53,7 @@ use starlark::values::StarlarkValue;
 use starlark::values::Trace;
 use starlark::values::Value;
 use starlark::values::ValueOf;
+use starlark::values::dict::AllocDict;
 use starlark::values::list::AllocList;
 use starlark::values::starlark_value;
 
@@ -128,7 +129,7 @@ impl LazyResult {
             }),
             LazyResult::UnconfiguredTargetNodeKeepGoing((success_targets, error_packages)) => {
                 let error_packages = heap
-                    .alloc(
+                    .alloc(AllocDict(
                         error_packages
                             .into_iter()
                             .map(|(package, error)| {
@@ -138,7 +139,7 @@ impl LazyResult {
                                 ))
                             })
                             .collect::<starlark::Result<BuckMutInsertionMap<Value, Value>>>()?,
-                    )
+                    ))
                     .to_value();
                 Ok(heap
                     .alloc((heap.alloc(success_targets).to_value(), error_packages))

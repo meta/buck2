@@ -35,6 +35,7 @@ use starlark::values::StringValue;
 use starlark::values::Trace;
 use starlark::values::Value;
 use starlark::values::ValueOf;
+use starlark::values::list::AllocList;
 use starlark::values::none::NoneOr;
 use starlark::values::starlark_value;
 use starlark::values::string::AllocStrIntern;
@@ -139,12 +140,12 @@ fn configured_label_methods(builder: &mut MethodsBuilder) {
     #[starlark(attribute)]
     fn sub_target<'v>(
         this: &'v StarlarkConfiguredProvidersLabel,
-    ) -> starlark::Result<NoneOr<Vec<&'v str>>> {
+    ) -> starlark::Result<NoneOr<AllocList<Vec<&'v str>>>> {
         Ok(match this.label.name() {
             ProvidersName::Default => NoneOr::None,
             ProvidersName::NonDefault(flavor) => match flavor.as_ref() {
                 NonDefaultProvidersName::Named(names) => {
-                    NoneOr::Other(names.iter().map(|p| p.as_str()).collect())
+                    NoneOr::Other(AllocList(names.iter().map(|p| p.as_str()).collect()))
                 }
                 NonDefaultProvidersName::UnrecognizedFlavor(_) => {
                     unreachable!(
@@ -301,12 +302,14 @@ fn label_methods(builder: &mut MethodsBuilder) {
     }
 
     #[starlark(attribute)]
-    fn sub_target<'v>(this: &'v StarlarkProvidersLabel) -> starlark::Result<NoneOr<Vec<&'v str>>> {
+    fn sub_target<'v>(
+        this: &'v StarlarkProvidersLabel,
+    ) -> starlark::Result<NoneOr<AllocList<Vec<&'v str>>>> {
         Ok(match this.label.name() {
             ProvidersName::Default => NoneOr::None,
             ProvidersName::NonDefault(flavor) => match flavor.as_ref() {
                 NonDefaultProvidersName::Named(names) => {
-                    NoneOr::Other(names.iter().map(|p| p.as_str()).collect())
+                    NoneOr::Other(AllocList(names.iter().map(|p| p.as_str()).collect()))
                 }
                 NonDefaultProvidersName::UnrecognizedFlavor(_) => {
                     unreachable!(

@@ -80,6 +80,7 @@ use starlark::values::UnpackValue;
 use starlark::values::Value;
 use starlark::values::ValueOf;
 use starlark::values::ValueTyped;
+use starlark::values::dict::AllocDict;
 use starlark::values::list::AllocList;
 use starlark::values::none::NoneOr;
 use starlark::values::starlark_value;
@@ -383,8 +384,8 @@ fn configured_target_node_value_methods(builder: &mut MethodsBuilder) {
     fn get_attrs<'v>(
         this: &StarlarkConfiguredTargetNode,
         heap: Heap<'v>,
-    ) -> starlark::Result<BuckMutInsertionMap<StringValue<'v>, Value<'v>>> {
-        Ok(NodeAttributeGetter::get_attrs(this, heap)?)
+    ) -> starlark::Result<AllocDict<BuckMutInsertionMap<StringValue<'v>, Value<'v>>>> {
+        Ok(AllocDict(NodeAttributeGetter::get_attrs(this, heap)?))
     }
 
     /// Check if rule has the attribute.
@@ -646,7 +647,7 @@ fn configured_target_node_value_methods(builder: &mut MethodsBuilder) {
     fn sources<'v>(
         this: &StarlarkConfiguredTargetNode,
         heap: Heap<'v>,
-    ) -> starlark::Result<Vec<ValueOf<'v, StarlarkArtifactView<'v>>>> {
+    ) -> starlark::Result<AllocList<Vec<ValueOf<'v, StarlarkArtifactView<'v>>>>> {
         struct InputsCollector {
             inputs: Vec<StarlarkArtifact>,
         }
@@ -667,11 +668,13 @@ fn configured_target_node_value_methods(builder: &mut MethodsBuilder) {
         for a in this.body()?.attrs(AttrInspectOptions::All) {
             a.traverse(this.0.label().pkg(), &mut traversal)?;
         }
-        Ok(traversal
-            .inputs
-            .into_iter()
-            .map(|artifact| ValueOf::alloc(heap, artifact))
-            .collect())
+        Ok(AllocList(
+            traversal
+                .inputs
+                .into_iter()
+                .map(|artifact| ValueOf::alloc(heap, artifact))
+                .collect(),
+        ))
     }
 
     /// Gets the source `Artifact` that corresponds to the given `path` given a context. The path should be the

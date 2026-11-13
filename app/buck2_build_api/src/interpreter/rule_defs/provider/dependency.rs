@@ -34,6 +34,7 @@ use starlark::values::Trace;
 use starlark::values::Value;
 use starlark::values::ValueOf;
 use starlark::values::ValueTyped;
+use starlark::values::list::AllocList;
 use starlark::values::none::NoneOr;
 use starlark::values::starlark_value;
 use starlark_map::StarlarkHasher;
@@ -190,12 +191,13 @@ fn dependency_methods(builder: &mut MethodsBuilder) {
     /// Returns a list of all providers available from this dependency.
     // TODO(nga): should return provider collection.
     #[starlark(attribute)]
-    fn providers<'v>(this: &Dependency<'v>) -> starlark::Result<Vec<Value<'v>>> {
-        Ok(this
-            .collection()
-            .iter_providers()
-            .map(|entry| entry.map(|(_, v)| v))
-            .collect::<buck2_error::Result<Vec<_>>>()?)
+    fn providers<'v>(this: &Dependency<'v>) -> starlark::Result<AllocList<Vec<Value<'v>>>> {
+        Ok(AllocList(
+            this.collection()
+                .iter_providers()
+                .map(|entry| entry.map(|(_, v)| v))
+                .collect::<buck2_error::Result<Vec<_>>>()?,
+        ))
     }
 
     /// Returns a `Dependency` object of the subtarget of this target.

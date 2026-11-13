@@ -19,6 +19,7 @@ use starlark::values::NoSerialize;
 use starlark::values::ProvidesStaticType;
 use starlark::values::StarlarkValue;
 use starlark::values::Value;
+use starlark::values::list::AllocList;
 use starlark::values::starlark_value;
 
 /// One layer of a package's visibility intersection, as returned by
@@ -49,13 +50,16 @@ fn visibility_intersection_layer_methods(builder: &mut MethodsBuilder) {
 
     /// Package patterns whose targets skip this layer.
     #[starlark(attribute)]
-    fn exempt_targets(this: &StarlarkVisibilityIntersectionLayer) -> starlark::Result<Vec<String>> {
-        Ok(this
-            .0
-            .exemptions()
-            .iter()
-            .map(ToString::to_string)
-            .collect())
+    fn exempt_targets(
+        this: &StarlarkVisibilityIntersectionLayer,
+    ) -> starlark::Result<AllocList<Vec<String>>> {
+        Ok(AllocList(
+            this.0
+                .exemptions()
+                .iter()
+                .map(ToString::to_string)
+                .collect(),
+        ))
     }
 }
 

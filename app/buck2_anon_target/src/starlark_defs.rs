@@ -41,6 +41,7 @@ use starlark::values::Trace;
 use starlark::values::Value;
 use starlark::values::ValueOf;
 use starlark::values::ValueTyped;
+use starlark::values::dict::AllocDict;
 use starlark::values::dict::DictType;
 use starlark::values::list::AllocList;
 use starlark::values::list_or_tuple::ListOrTupleType;
@@ -129,7 +130,7 @@ fn anon_target_methods(builder: &mut MethodsBuilder) {
     ) -> starlark::Result<Value<'v>> {
         Ok(eval
             .heap()
-            .alloc(
+            .alloc(AllocDict(
                 this.artifacts
                     .iter()
                     .map(|(k, v)| {
@@ -146,7 +147,7 @@ fn anon_target_methods(builder: &mut MethodsBuilder) {
                         ))
                     })
                     .collect::<starlark::Result<BuckMutInsertionMap<Value, Value>>>()?,
-            )
+            ))
             .to_value())
     }
 

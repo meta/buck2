@@ -35,6 +35,8 @@ use buck2_node::attrs::configured_traversal::ConfiguredAttrTraversal;
 use dice::DiceComputations;
 use dupe::Dupe;
 use starlark::values::Value;
+use starlark::values::dict::AllocDict;
+use starlark::values::list::AllocList;
 use starlark::values::tuple::AllocTuple;
 
 use crate::anon_target_attr::AnonTargetAttr;
@@ -97,7 +99,7 @@ impl AnonTargetAttrResolution for AnonTargetAttr {
                 for v in list.iter() {
                     values.append(&mut v.resolve(pkg, anon_resolution_ctx)?);
                 }
-                Ok(ctx.heap().alloc(values).to_value())
+                Ok(ctx.heap().alloc(AllocList(values)).to_value())
             }
             AnonTargetAttr::Tuple(list) => {
                 let mut values = Vec::with_capacity(list.len());
@@ -114,7 +116,7 @@ impl AnonTargetAttrResolution for AnonTargetAttr {
                         v.resolve_single(pkg, anon_resolution_ctx)?,
                     );
                 }
-                Ok(ctx.heap().alloc(res).to_value())
+                Ok(ctx.heap().alloc(AllocDict(res)).to_value())
             }
             AnonTargetAttr::None => Ok(Value::new_none()),
             AnonTargetAttr::OneOf(box l, _) => l.resolve_single(pkg, anon_resolution_ctx),

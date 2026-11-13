@@ -28,6 +28,7 @@ use starlark::values::NoSerialize;
 use starlark::values::StarlarkValue;
 use starlark::values::Value;
 use starlark::values::ValueOf;
+use starlark::values::list::AllocList;
 use starlark::values::starlark_value;
 
 #[derive(
@@ -129,7 +130,7 @@ fn starlark_analysis_result_methods(builder: &mut MethodsBuilder) {
             ]));
             result.push(info);
         }
-        Ok(heap.alloc(result).to_value())
+        Ok(heap.alloc(AllocList(result)).to_value())
     }
 
     /// Gets the configured providers label for this analysis result.

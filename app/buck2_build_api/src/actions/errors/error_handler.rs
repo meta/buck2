@@ -30,6 +30,7 @@ use starlark::values::Value;
 use starlark::values::ValueError;
 use starlark::values::ValueOf;
 use starlark::values::dict::DictType;
+use starlark::values::list::AllocList;
 use starlark::values::list::ListType;
 use starlark::values::list_or_tuple::ListOrTupleType;
 use starlark::values::none::NoneOr;
@@ -263,7 +264,7 @@ fn action_error_context_methods(builder: &mut MethodsBuilder) {
         #[starlark(require = named)] error: &str,
         #[starlark(require = named)] errorformats: ValueOf<'v, ListOrTupleType<StarlarkStr>>,
         heap: Heap<'v>,
-    ) -> starlark::Result<Vec<ValueOf<'v, StarlarkActionSubError>>> {
+    ) -> starlark::Result<AllocList<Vec<ValueOf<'v, StarlarkActionSubError>>>> {
         let error_lines = buck2_errorformat::split_lines(error);
         let error_entries = buck2_errorformat::parse_error_format(
             errorformats
@@ -282,7 +283,7 @@ fn action_error_context_methods(builder: &mut MethodsBuilder) {
                 )
             })
             .collect();
-        Ok(res)
+        Ok(AllocList(res))
     }
 }
 

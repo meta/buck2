@@ -46,6 +46,7 @@ use starlark::values::AllocValue;
 use starlark::values::UnpackValue;
 use starlark::values::ValueOf;
 use starlark::values::ValueTyped;
+use starlark::values::list::AllocList;
 use starlark::values::none::NoneOr;
 
 use crate::actions::impls::dep_file_fingerprint::DepFileFingerprintFormat;
@@ -90,8 +91,13 @@ type WriteOutput<'v> = Either<
     ),
 >;
 
-type WriteReturnValue<'v> =
-    Either<WriteOutput<'v>, (WriteOutput<'v>, Vec<ValueOf<'v, StarlarkArtifactView<'v>>>)>;
+type WriteReturnValue<'v> = Either<
+    WriteOutput<'v>,
+    (
+        WriteOutput<'v>,
+        AllocList<Vec<ValueOf<'v, StarlarkArtifactView<'v>>>>,
+    ),
+>;
 
 /// We don't need to run this visitor in order to provide the inputs to the write actions,
 /// because that is done lazily when we run the action.
@@ -544,7 +550,7 @@ pub(crate) fn analysis_actions_methods_write(methods: &mut MethodsBuilder) {
                     ))
                 })
                 .collect();
-            Ok(Either::Right((value, macro_files)))
+            Ok(Either::Right((value, AllocList(macro_files))))
         } else {
             // Prefer simpler API when there is no possibility for write-to-file macros to be present in a content
             Ok(Either::Left(value))

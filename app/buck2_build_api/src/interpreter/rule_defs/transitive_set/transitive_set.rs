@@ -871,7 +871,9 @@ fn transitive_set_methods(builder: &mut MethodsBuilder) {
         })
     }
     #[starlark(attribute)]
-    fn children<'v>(this: ValueTyped<'v, TransitiveSet<'v>>) -> starlark::Result<Vec<Value<'v>>> {
-        Ok(this.children.read()?.to_vec())
+    fn children<'v>(
+        this: ValueTyped<'v, TransitiveSet<'v>>,
+    ) -> starlark::Result<AllocList<Vec<Value<'v>>>> {
+        Ok(AllocList(this.children.read()?.to_vec()))
     }
 }

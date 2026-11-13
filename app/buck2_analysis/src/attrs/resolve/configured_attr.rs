@@ -36,6 +36,7 @@ use buck2_util::arc_str::PackedStr;
 use dupe::Dupe;
 use starlark::values::Heap;
 use starlark::values::Value;
+use starlark::values::dict::AllocDict;
 use starlark::values::list::AllocList;
 use starlark::values::tuple::AllocTuple;
 
@@ -115,7 +116,7 @@ impl ConfiguredAttrExt for ConfiguredAttr {
                 for v in list.iter() {
                     values.append(&mut v.resolve(pkg, ctx)?);
                 }
-                Ok(ctx.heap().alloc(values).to_value())
+                Ok(ctx.heap().alloc(AllocList(values)).to_value())
             }
             ConfiguredAttr::Tuple(list) => {
                 let mut values = Vec::with_capacity(list.len());
@@ -132,7 +133,7 @@ impl ConfiguredAttrExt for ConfiguredAttr {
                         v.resolve_single(pkg, ctx)?,
                     );
                 }
-                Ok(ctx.heap().alloc(res).to_value())
+                Ok(ctx.heap().alloc(AllocDict(res)).to_value())
             }
             ConfiguredAttr::None => Ok(Value::new_none()),
             ConfiguredAttr::OneOf(box l, _) => l.resolve_single(pkg, ctx),
@@ -194,11 +195,11 @@ fn configured_attr_to_value<'v>(
             heap.alloc(s.as_str()).to_value()
         }
         ConfiguredAttr::List(list) => heap
-            .alloc(
+            .alloc(AllocList(
                 list.iter()
                     .map(|v| configured_attr_to_value(v, pkg, heap))
                     .collect::<Result<Vec<_>, _>>()?,
-            )
+            ))
             .to_value(),
         ConfiguredAttr::Tuple(v) => heap
             .alloc(AllocTuple(
@@ -217,7 +218,7 @@ fn configured_attr_to_value<'v>(
                 );
             }
 
-            heap.alloc(res).to_value()
+            heap.alloc(AllocDict(res)).to_value()
         }
         ConfiguredAttr::None => Value::new_none(),
         ConfiguredAttr::OneOf(box l, _) => configured_attr_to_value(l, pkg, heap)?,
@@ -255,7 +256,7 @@ fn configured_attr_to_value<'v>(
                 );
             }
 
-            heap.alloc(map).to_value()
+            heap.alloc(AllocDict(map)).to_value()
         }
         ConfiguredAttr::ConfigurationDep(c) => {
             // TODO(T198210718)

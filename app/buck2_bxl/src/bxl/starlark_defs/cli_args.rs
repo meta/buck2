@@ -64,6 +64,7 @@ use starlark::values::UnpackValue;
 use starlark::values::Value;
 use starlark::values::ValueError;
 use starlark::values::ValueOf;
+use starlark::values::dict::AllocDict;
 use starlark::values::float::StarlarkFloat;
 use starlark::values::list::AllocList;
 use starlark::values::list::ListRef;
@@ -264,7 +265,7 @@ impl JsonCliArgValueData {
                         v.as_starlark(heap),
                     );
                 }
-                heap.alloc(res).to_value()
+                heap.alloc(AllocDict(res)).to_value()
             }
         }
     }
@@ -1395,6 +1396,7 @@ mod tests {
     use num_bigint::BigInt;
     use starlark::values::Heap;
     use starlark::values::Value;
+    use starlark::values::list::AllocList;
 
     use crate::bxl::starlark_defs::cli_args::CliArgType;
     use crate::bxl::starlark_defs::cli_args::CliArgValue;
@@ -1496,7 +1498,7 @@ mod tests {
 
             assert_eq!(
                 CliArgType::list(CliArgType::int())
-                    .coerce_value(heap.alloc(vec![1i32, 4i32, 2i32]).to_value())?,
+                    .coerce_value(heap.alloc(AllocList(vec![1i32, 4i32, 2i32])).to_value())?,
                 CliArgValue::List(vec![
                     CliArgValue::Int(BigInt::from(1)),
                     CliArgValue::Int(BigInt::from(4)),

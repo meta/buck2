@@ -50,6 +50,8 @@ use starlark::values::OwnedFrozen;
 use starlark::values::UnpackValue;
 use starlark::values::Value;
 use starlark::values::ValueOf;
+use starlark::values::dict::AllocDict;
+use starlark::values::list::AllocList;
 use starlark::values::list_or_tuple::ListOrTupleType;
 use starlark::values::none::NoneOr;
 use starlark::values::string::StarlarkStr;
@@ -107,7 +109,7 @@ async fn eval_pre_constraint_analysis<'v, 'a>(
             .heap()
             .alloc(NoneOr::from_option(target_cfg_modifiers.copied()))
             .to_value();
-        let cli_modifiers = eval.heap().alloc(cli_modifiers).to_value();
+        let cli_modifiers = eval.heap().alloc(AllocList(cli_modifiers)).to_value();
         let rule_name = eval.heap().alloc(rule_type.name()).to_value();
         let aliases = match aliases {
             Some(v) => v,
@@ -196,14 +198,14 @@ fn eval_post_constraint_analysis<'v>(
             (
                 "refs",
                 eval.heap()
-                    .alloc(
+                    .alloc(AllocDict(
                         refs_providers_map
                             .into_iter()
                             .map(|(label, providers)| {
                                 (label, providers.add_heap_ref(eval.heap()).to_value())
                             })
                             .collect::<BuckMutInsertionMap<String, Value<'_>>>(),
-                    )
+                    ))
                     .to_value(),
             ),
             ("params", params),

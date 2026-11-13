@@ -31,7 +31,9 @@ use starlark::values::AllocValue;
 use starlark::values::Heap;
 use starlark::values::Value;
 use starlark::values::ValueOf;
+use starlark::values::dict::AllocDict;
 use starlark::values::dict::DictRef;
+use starlark::values::list::AllocList;
 use starlark::values::list::ListRef;
 use starlark::values::tuple::TupleRef;
 use static_interner::Intern;
@@ -673,16 +675,16 @@ impl<'v> ModifierRenderer for StarlarkRenderer<'v> {
     }
 
     fn list(&mut self, items: Vec<Value<'v>>) -> Value<'v> {
-        self.0.alloc(items).to_value()
+        self.0.alloc(AllocList(items)).to_value()
     }
 
     fn dict(&mut self, entries: Vec<(String, Value<'v>)>) -> Value<'v> {
         self.0
-            .alloc(
+            .alloc(AllocDict(
                 entries
                     .into_iter()
                     .collect::<BuckMutInsertionMap<String, Value<'v>>>(),
-            )
+            ))
             .to_value()
     }
 
@@ -828,7 +830,10 @@ mod tests {
                     heap.alloc(AllocTuple(["cfg//os:linux"])).to_value(),
                     &labels
                 ),
-                CfgModifiers::from_target(heap.alloc(vec!["cfg//os:linux"]).to_value(), &labels),
+                CfgModifiers::from_target(
+                    heap.alloc(AllocList(vec!["cfg//os:linux"])).to_value(),
+                    &labels
+                ),
             );
             assert!(
                 CfgModifiers::from_target(heap.alloc(AllocTuple::EMPTY).to_value(), &labels)
@@ -837,7 +842,7 @@ mod tests {
             assert_eq!(
                 CfgModifiers::from_package(heap.alloc(AllocTuple::EMPTY).to_value(), &labels, None),
                 CfgModifiers::from_package(
-                    heap.alloc(Vec::<&str>::new()).to_value(),
+                    heap.alloc(AllocList(Vec::<&str>::new())).to_value(),
                     &labels,
                     None
                 ),

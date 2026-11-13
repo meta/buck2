@@ -57,6 +57,7 @@ use starlark::values::Value;
 use starlark::values::ValueError;
 use starlark::values::ValueOf;
 use starlark::values::ValueTyped;
+use starlark::values::list::AllocList;
 use starlark::values::list::ListType;
 use starlark::values::starlark_value;
 use starlark::values::string::StarlarkStr;
@@ -1079,7 +1080,7 @@ fn cmd_args_methods(builder: &mut MethodsBuilder) {
     fn outputs<'v>(
         this: Value<'v>,
         heap: Heap<'v>,
-    ) -> starlark::Result<Vec<ValueOf<'v, StarlarkOutputArtifactView<'v>>>> {
+    ) -> starlark::Result<AllocList<Vec<ValueOf<'v, StarlarkOutputArtifactView<'v>>>>> {
         let mut visitor = SimpleCommandLineArtifactVisitor::new();
         cmd_args(this).visit_artifacts(&mut visitor)?;
         let mut outputs =
@@ -1105,7 +1106,7 @@ fn cmd_args_methods(builder: &mut MethodsBuilder) {
             ));
             outputs.push(heap.alloc(StarlarkOutputArtifact::new(declared)));
         }
-        Ok(outputs)
+        Ok(AllocList(outputs))
     }
 }
 

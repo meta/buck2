@@ -11,6 +11,7 @@
 use starlark::environment::GlobalsBuilder;
 use starlark::eval::Evaluator;
 use starlark::starlark_module;
+use starlark::values::list::AllocList;
 use starlark::values::none::NoneType;
 
 use crate::interpreter::module_internals::ModuleInternals;
@@ -31,11 +32,15 @@ pub(crate) fn register_internals(builder: &mut GlobalsBuilder) {
     }
 
     /// Returns a list of direct subpackage relative paths of current package.
-    fn sub_packages<'v>(eval: &mut Evaluator<'v, '_, '_>) -> starlark::Result<Vec<String>> {
+    fn sub_packages<'v>(
+        eval: &mut Evaluator<'v, '_, '_>,
+    ) -> starlark::Result<AllocList<Vec<String>>> {
         let extra = ModuleInternals::from_context(eval, "sub_packages")?;
-        Ok(extra
-            .sub_packages()
-            .map(|p| p.as_str().to_owned())
-            .collect())
+        Ok(AllocList(
+            extra
+                .sub_packages()
+                .map(|p| p.as_str().to_owned())
+                .collect(),
+        ))
     }
 }

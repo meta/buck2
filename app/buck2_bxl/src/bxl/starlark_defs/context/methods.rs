@@ -42,6 +42,8 @@ use starlark::values::Heap;
 use starlark::values::Value;
 use starlark::values::ValueOf;
 use starlark::values::ValueTyped;
+use starlark::values::dict::AllocDict;
+use starlark::values::list::AllocList;
 use starlark::values::list::ListType;
 use starlark::values::none::NoneOr;
 use starlark::values::none::NoneType;
@@ -259,7 +261,7 @@ pub(crate) fn bxl_context_methods(builder: &mut MethodsBuilder) {
     ) -> starlark::Result<
         Either<
             ValueOf<'v, StarlarkProvidersLabel>,
-            BuckMutInsertionMap<String, ValueOf<'v, StarlarkProvidersLabel>>,
+            AllocDict<BuckMutInsertionMap<String, ValueOf<'v, StarlarkProvidersLabel>>>,
         >,
     > {
         let providers = ProvidersExpr::<ProvidersLabel>::unpack(labels, this)?;
@@ -269,7 +271,7 @@ pub(crate) fn bxl_context_methods(builder: &mut MethodsBuilder) {
                 heap,
                 StarlarkProvidersLabel::new(provider),
             ))),
-            ProvidersExpr::Iterable(providers) => Ok(Either::Right(
+            ProvidersExpr::Iterable(providers) => Ok(Either::Right(AllocDict(
                 providers
                     .into_iter()
                     .map(|p| {
@@ -279,7 +281,7 @@ pub(crate) fn bxl_context_methods(builder: &mut MethodsBuilder) {
                         )
                     })
                     .collect(),
-            )),
+            ))),
         }
     }
 
@@ -597,9 +599,11 @@ pub(crate) fn bxl_context_methods(builder: &mut MethodsBuilder) {
     ) -> starlark::Result<
         Either<
             NoneOr<ValueOf<'v, StarlarkAnalysisResult>>,
-            BuckMutInsertionMap<
-                ValueTyped<'v, StarlarkConfiguredProvidersLabel>,
-                ValueTyped<'v, StarlarkAnalysisResult>,
+            AllocDict<
+                BuckMutInsertionMap<
+                    ValueTyped<'v, StarlarkConfiguredProvidersLabel>,
+                    ValueTyped<'v, StarlarkAnalysisResult>,
+                >,
             >,
         >,
     > {
@@ -616,7 +620,7 @@ pub(crate) fn bxl_context_methods(builder: &mut MethodsBuilder) {
             Either::Left(single) => Either::Left(NoneOr::from_option(
                 single.map(|result| ValueOf::alloc(eval.heap(), result)),
             )),
-            Either::Right(many) => Either::Right(
+            Either::Right(many) => Either::Right(AllocDict(
                 many.into_iter()
                     .map(|(t, v)| {
                         Ok((
@@ -629,7 +633,7 @@ pub(crate) fn bxl_context_methods(builder: &mut MethodsBuilder) {
                         ))
                     })
                     .collect::<buck2_error::Result<_>>()?,
-            ),
+            )),
         })
     }
 
@@ -664,12 +668,14 @@ pub(crate) fn bxl_context_methods(builder: &mut MethodsBuilder) {
         #[starlark(require = named, default = "default")] materializations: &str,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<
-        BuckMutInsertionMap<
-            ValueTyped<'v, StarlarkConfiguredProvidersLabel>,
-            ValueTyped<'v, StarlarkBxlBuildResult>,
+        AllocDict<
+            BuckMutInsertionMap<
+                ValueTyped<'v, StarlarkConfiguredProvidersLabel>,
+                ValueTyped<'v, StarlarkBxlBuildResult>,
+            >,
         >,
     > {
-        Ok(build::build(
+        Ok(AllocDict(build::build(
             this,
             labels,
             target_platform,
@@ -682,7 +688,7 @@ pub(crate) fn bxl_context_methods(builder: &mut MethodsBuilder) {
             })?,
             Uploads::Never,
             eval,
-        )?)
+        )?))
     }
 
     /// A struct of the command line args as declared using the [`cli_args`] module.
@@ -847,7 +853,9 @@ pub(crate) fn bxl_context_methods(builder: &mut MethodsBuilder) {
 
     /// The modifiers from the bxl invocation. It is from the `--modifier` flag.
     #[starlark(attribute)]
-    fn modifiers<'v>(this: &'v BxlContext<'v>) -> starlark::Result<Vec<String>> {
-        Ok((*this.global_cfg_options().cli_modifiers).clone())
+    fn modifiers<'v>(this: &'v BxlContext<'v>) -> starlark::Result<AllocList<Vec<String>>> {
+        Ok(AllocList(
+            (*this.global_cfg_options().cli_modifiers).clone(),
+        ))
     }
 }

@@ -32,6 +32,7 @@ use starlark::values::UnpackValue;
 use starlark::values::Value;
 use starlark::values::ValueOf;
 use starlark::values::ValueTyped;
+use starlark::values::dict::AllocDict;
 use starlark::values::list::AllocList;
 use starlark::values::none::NoneOr;
 use starlark::values::starlark_value;
@@ -141,8 +142,8 @@ fn target_node_value_methods(builder: &mut MethodsBuilder) {
     fn get_attrs<'v>(
         this: &StarlarkTargetNode,
         heap: Heap<'v>,
-    ) -> starlark::Result<BuckMutInsertionMap<StringValue<'v>, Value<'v>>> {
-        Ok(NodeAttributeGetter::get_attrs(this, heap)?)
+    ) -> starlark::Result<AllocDict<BuckMutInsertionMap<StringValue<'v>, Value<'v>>>> {
+        Ok(AllocDict(NodeAttributeGetter::get_attrs(this, heap)?))
     }
 
     /// Check if rule has the attribute.

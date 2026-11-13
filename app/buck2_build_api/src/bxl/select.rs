@@ -45,6 +45,7 @@ use starlark::values::Trace;
 use starlark::values::UnpackValue;
 use starlark::values::Value;
 use starlark::values::ValueOf;
+use starlark::values::list::AllocList;
 use starlark::values::none::NoneOr;
 use starlark::values::starlark_value;
 use starlark::values::string::StarlarkStr;
@@ -209,7 +210,7 @@ fn select_dict_methods(builder: &mut MethodsBuilder) {
     fn select_items<'v>(
         this: &'v StarlarkSelectDict,
         heap: Heap<'v>,
-    ) -> starlark::Result<Vec<(SelectDictKey<'v>, Value<'v>)>> {
+    ) -> starlark::Result<AllocList<Vec<(SelectDictKey<'v>, Value<'v>)>>> {
         let (entries, default) = this.entries()?;
         let mut items: Vec<(SelectDictKey, Value)> = entries
             .iter()
@@ -224,7 +225,7 @@ fn select_dict_methods(builder: &mut MethodsBuilder) {
                 ref_to_value(d, &this.selector, this.pkg.dupe(), heap)?,
             ));
         }
-        Ok(items)
+        Ok(AllocList(items))
     }
 
     /// Return the keys of SelectDict. The key is either a string (for `DEFAULT`) or a `ProvidersLabel`.
@@ -241,14 +242,14 @@ fn select_dict_methods(builder: &mut MethodsBuilder) {
     fn select_keys<'v>(
         this: &'v StarlarkSelectDict,
         heap: Heap<'v>,
-    ) -> starlark::Result<Vec<SelectDictKey<'v>>> {
+    ) -> starlark::Result<AllocList<Vec<SelectDictKey<'v>>>> {
         let (entries, default) = this.entries()?;
         let mut keys: Vec<SelectDictKey> =
             entries.iter().map(|(k, _)| target_key(k, heap)).collect();
         if default.is_some() {
             keys.push(default_key());
         }
-        Ok(keys)
+        Ok(AllocList(keys))
     }
 
     /// Return the entry of the select for the given key. It accepts either a string or a `ProvidersLabel`.
@@ -388,13 +389,13 @@ fn select_concat_methods(builder: &mut MethodsBuilder) {
     fn select_iter<'v>(
         this: &'v StarlarkSelectConcat,
         heap: Heap<'v>,
-    ) -> starlark::Result<Vec<Value<'v>>> {
+    ) -> starlark::Result<AllocList<Vec<Value<'v>>>> {
         let list = this
             .items()?
             .iter()
             .map(|a| ref_to_value(a, &this.concat, this.pkg.dupe(), heap))
             .collect::<buck2_error::Result<_>>()?;
-        Ok(list)
+        Ok(AllocList(list))
     }
 
     /// Returns the length of a SelectConcat, defined as the number of items being concatenated

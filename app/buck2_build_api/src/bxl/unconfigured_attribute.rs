@@ -47,6 +47,7 @@ use starlark::values::Heap;
 use starlark::values::StarlarkPagable;
 use starlark::values::StarlarkValue;
 use starlark::values::Value;
+use starlark::values::dict::AllocDict;
 use starlark::values::list::AllocList;
 use starlark::values::starlark_value;
 use starlark::values::tuple::AllocTuple;
@@ -164,11 +165,11 @@ pub(crate) fn ref_to_value<'v>(
         CoercedAttrRefKind::ArgSimple(s) => heap.alloc(s).to_value(),
         CoercedAttrRefKind::Arg(parts) => heap.alloc(parts.to_string()).to_value(),
         CoercedAttrRefKind::List(seq) => heap
-            .alloc(
+            .alloc(AllocList(
                 seq.iter()
                     .map(|v| ref_to_value(v, owner, pkg.dupe(), heap))
                     .collect::<buck2_error::Result<Vec<_>>>()?,
-            )
+            ))
             .to_value(),
         CoercedAttrRefKind::Tuple(seq) => heap
             .alloc(AllocTuple(
@@ -193,7 +194,7 @@ pub(crate) fn ref_to_value<'v>(
                     ref_to_value(v, owner, pkg.dupe(), heap)?,
                 );
             }
-            heap.alloc(res).to_value()
+            heap.alloc(AllocDict(res)).to_value()
         }
         CoercedAttrRefKind::OneOf((_, l)) => ref_to_value(l, owner, pkg, heap)?,
         CoercedAttrRefKind::Selector(_) => heap

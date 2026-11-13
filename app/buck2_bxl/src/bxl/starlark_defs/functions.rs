@@ -33,6 +33,7 @@ use starlark::values::StringValue;
 use starlark::values::UnpackValue;
 use starlark::values::Value;
 use starlark::values::ValueOf;
+use starlark::values::list::AllocList;
 use starlark::values::list::ListType;
 use starlark::values::none::NoneType;
 use starlark::values::string::StarlarkStr;
@@ -239,7 +240,7 @@ pub(crate) fn register_artifact_function(builder: &mut GlobalsBuilder) {
                 .boxed_local()
             })
         })?;
-        Ok(heap.alloc(paths).to_value())
+        Ok(heap.alloc(AllocList(paths)).to_value())
     }
 }
 
@@ -489,15 +490,19 @@ pub(crate) fn register_read_package_visibility_functions(builder: &mut GlobalsBu
     fn read_package_visibility_intersection<'v>(
         #[starlark(require = pos)] package_path: PackagePathArg<'v>,
         eval: &mut Evaluator<'v, '_, '_>,
-    ) -> starlark::Result<Vec<ValueOf<'v, StarlarkVisibilityIntersectionLayer>>> {
+    ) -> starlark::Result<AllocList<Vec<ValueOf<'v, StarlarkVisibilityIntersectionLayer>>>> {
         let super_package = read_super_package(package_path, eval)?;
         let heap = eval.heap();
-        Ok(super_package
-            .visibility_intersection()
-            .layers()
-            .iter()
-            .map(|layer| ValueOf::alloc(heap, StarlarkVisibilityIntersectionLayer(layer.dupe())))
-            .collect())
+        Ok(AllocList(
+            super_package
+                .visibility_intersection()
+                .layers()
+                .iter()
+                .map(|layer| {
+                    ValueOf::alloc(heap, StarlarkVisibilityIntersectionLayer(layer.dupe()))
+                })
+                .collect(),
+        ))
     }
 
     /// Read the `within_view` cap propagated from `enforce_within_view_intersection()`

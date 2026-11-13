@@ -14,6 +14,7 @@ use buck2_node::attrs::attr_type::dep::DepAttrType;
 use buck2_node::attrs::attr_type::query::QueryAttr;
 use dupe::Dupe;
 use starlark::values::Value;
+use starlark::values::list::AllocList;
 
 use crate::attrs::resolve::attr_type::dep::DepAttrTypeExt;
 use crate::attrs::resolve::ctx::AttrResolutionContext;
@@ -52,6 +53,6 @@ impl ConfiguredQueryAttrExt for QueryAttr<ConfiguredProvidersLabel> {
                 None,
             ));
         }
-        Ok(ctx.heap().alloc(dependencies).to_value())
+        Ok(ctx.heap().alloc(AllocList(dependencies)).to_value())
     }
 }

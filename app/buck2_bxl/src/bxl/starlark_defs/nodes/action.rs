@@ -38,6 +38,7 @@ use starlark::values::UnpackValue;
 use starlark::values::Value;
 use starlark::values::ValueOf;
 use starlark::values::ValueTyped;
+use starlark::values::list::AllocList;
 use starlark::values::none::NoneOr;
 use starlark::values::starlark_value;
 use starlark::values::structs::AllocStruct;
@@ -108,14 +109,15 @@ fn action_methods(builder: &mut MethodsBuilder) {
     fn outputs<'v>(
         this: StarlarkAction,
         heap: Heap<'v>,
-    ) -> starlark::Result<Vec<ValueOf<'v, StarlarkArtifactView<'v>>>> {
-        Ok(this
-            .0
-            .action()
-            .outputs()
-            .iter()
-            .map(|a| ValueOf::alloc(heap, StarlarkArtifact::new(Artifact::from(a.dupe()))))
-            .collect())
+    ) -> starlark::Result<AllocList<Vec<ValueOf<'v, StarlarkArtifactView<'v>>>>> {
+        Ok(AllocList(
+            this.0
+                .action()
+                .outputs()
+                .iter()
+                .map(|a| ValueOf::alloc(heap, StarlarkArtifact::new(Artifact::from(a.dupe()))))
+                .collect(),
+        ))
     }
 }
 

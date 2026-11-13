@@ -13,6 +13,7 @@ use buck2_node::attrs::attr_type::dep::DepAttrType;
 use buck2_node::attrs::attr_type::split_transition_dep::ConfiguredSplitTransitionDep;
 use buck2_node::attrs::attr_type::split_transition_dep::SplitTransitionDepAttrType;
 use starlark::values::Value;
+use starlark::values::dict::AllocDict;
 use starlark_map::Hashed;
 
 use crate::attrs::resolve::attr_type::dep::DepAttrTypeExt;
@@ -44,6 +45,6 @@ impl SplitTransitionDepAttrTypeExt for SplitTransitionDepAttrType {
                 )?,
             );
         }
-        Ok(ctx.heap().alloc(res).to_value())
+        Ok(ctx.heap().alloc(AllocDict(res)).to_value())
     }
 }

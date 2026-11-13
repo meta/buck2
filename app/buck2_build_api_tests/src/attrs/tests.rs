@@ -52,6 +52,7 @@ use starlark::environment::Module;
 use starlark::values::Heap;
 use starlark::values::UnpackValue;
 use starlark::values::Value;
+use starlark::values::list::AllocList;
 
 use crate::attrs::resolve::testing::resolution_ctx;
 use crate::attrs::resolve::testing::resolution_ctx_with_providers;
@@ -240,7 +241,7 @@ fn test_concat_option_one_of() {
 fn test_any() -> buck2_error::Result<()> {
     Heap::temp(|heap| {
         let value = heap
-            .alloc(vec!["//some:target", "cell1//named:target[foo]"])
+            .alloc(AllocList(vec!["//some:target", "cell1//named:target[foo]"]))
             .to_value();
         let attr = AttrType::any();
 
@@ -294,7 +295,7 @@ fn test_option() -> buck2_error::Result<()> {
     Heap::temp(|heap| {
         let attr = AttrType::option(AttrType::list(AttrType::string()));
 
-        let value = heap.alloc(vec!["string1", "string2"]).to_value();
+        let value = heap.alloc(AllocList(vec!["string1", "string2"])).to_value();
         let coerced = coercion_ctx().coerce_sealed(&attr, value)?;
         assert_eq!(
             "[\"string1\", \"string2\"]",
@@ -385,7 +386,7 @@ fn test_dict() -> buck2_error::Result<()> {
 fn test_one_of() -> buck2_error::Result<()> {
     Heap::temp(|heap| {
         let value = heap.alloc("one").to_value();
-        let values = heap.alloc(vec!["test", "extra"]).to_value();
+        let values = heap.alloc(AllocList(vec!["test", "extra"])).to_value();
 
         let attr = AttrType::one_of(vec![AttrType::string(), AttrType::list(AttrType::string())]);
         let coerced = coercion_ctx().coerce_sealed(&attr, value)?;
@@ -422,7 +423,7 @@ fn test_one_of() -> buck2_error::Result<()> {
 fn test_label() -> buck2_error::Result<()> {
     Heap::temp(|heap| {
         let value = heap
-            .alloc(vec!["//some:target", "cell1//named:target[foo]"])
+            .alloc(AllocList(vec!["//some:target", "cell1//named:target[foo]"]))
             .to_value();
 
         let attr = AttrType::list(AttrType::dep(ProviderIdSet::EMPTY, PluginKindSet::EMPTY));
@@ -674,7 +675,7 @@ fn test_dep_requires_providers() -> buck2_error::Result<()> {
 #[test]
 fn test_source_missing() {
     Heap::temp(|heap| {
-        let value = heap.alloc(vec!["foo/bar.cpp"]).to_value();
+        let value = heap.alloc(AllocList(vec!["foo/bar.cpp"])).to_value();
         let attr = AttrType::list(AttrType::source(false));
 
         // FIXME: T85510500 Enable this test properly once we can error out on missing files
@@ -695,11 +696,11 @@ fn test_source_missing() {
 fn test_source_label() -> buck2_error::Result<()> {
     Heap::temp(|heap| {
         let value = heap
-            .alloc(vec![
+            .alloc(AllocList(vec![
                 "//some:target",
                 "cell1//named:target[foo]",
                 "foo/bar.cpp",
-            ])
+            ]))
             .to_value();
 
         let attr = AttrType::list(AttrType::source(false));

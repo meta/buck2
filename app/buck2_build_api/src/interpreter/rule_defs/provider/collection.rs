@@ -705,6 +705,7 @@ pub mod tester {
     use starlark::values::Heap;
     use starlark::values::Value;
     use starlark::values::ValueOf;
+    use starlark::values::list::AllocList;
 
     use crate::interpreter::rule_defs::provider::ProviderCollection;
 
@@ -770,18 +771,20 @@ pub mod tester {
             Ok(res)
         }
 
-        fn providers_list<'v>(collection: Value<'v>) -> starlark::Result<Vec<String>> {
+        fn providers_list<'v>(collection: Value<'v>) -> starlark::Result<AllocList<Vec<String>>> {
             assert!(collection.is_frozen(), "a frozen value");
-            Ok(collection
-                .downcast_ref::<ProviderCollection>()
-                .ok_or_else(|| {
-                    buck2_error::buck2_error!(
-                        buck2_error::ErrorTag::StarlarkError,
-                        "{:?} was not a ProviderCollection",
-                        collection
-                    )
-                })?
-                .provider_names())
+            Ok(AllocList(
+                collection
+                    .downcast_ref::<ProviderCollection>()
+                    .ok_or_else(|| {
+                        buck2_error::buck2_error!(
+                            buck2_error::ErrorTag::StarlarkError,
+                            "{:?} was not a ProviderCollection",
+                            collection
+                        )
+                    })?
+                    .provider_names(),
+            ))
         }
     }
 }

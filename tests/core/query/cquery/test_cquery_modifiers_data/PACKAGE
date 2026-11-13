@@ -1,0 +1,3 @@
+load("@nano_prelude//:cfg_constructor.bzl", "set_nano_cfg_constructor")
+
+set_nano_cfg_constructor()

@@ -1,0 +1,3 @@
+package(
+    visibility_exempt_targets = ["root//requires_visibility/sub:"],
+)

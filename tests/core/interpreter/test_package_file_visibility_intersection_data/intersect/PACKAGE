@@ -1,0 +1,8 @@
+# Top opt-in: every target in `root//intersect/...` (and descendants that
+# don't override) has its `visibility` AND-ed with this list. PUBLIC and
+# wider non-PUBLIC lists are silently clipped to this intersection.
+package(
+    visibility = ["root//intersect/..."],
+)
+
+enforce_visibility_intersection()

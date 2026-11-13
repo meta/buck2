@@ -1,0 +1,3 @@
+# @nolint
+
+print("AAA from BUCK_TREE")

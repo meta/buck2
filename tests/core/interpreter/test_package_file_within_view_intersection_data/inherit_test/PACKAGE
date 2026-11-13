@@ -1,0 +1,6 @@
+# Top opt-in -- broad cap covering the whole `inherit_test/` subtree.
+package(
+    within_view = ["root//inherit_test/..."],
+)
+
+enforce_within_view_intersection()

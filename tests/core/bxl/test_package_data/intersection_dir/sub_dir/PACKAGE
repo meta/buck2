@@ -1,0 +1,14 @@
+# Copyright (c) Meta Platforms, Inc. and affiliates.
+#
+# This source code is dual-licensed under either the MIT license found in the
+# LICENSE-MIT file in the root directory of this source tree or the Apache
+# License, Version 2.0 found in the LICENSE-APACHE file in the root directory
+# of this source tree. You may select, at your option, one of the
+# above-listed licenses.
+
+# Declares its own visibility but does NOT call enforce_visibility_intersection().
+# Its `visibility_intersection` is therefore inherited from the ancestor `intersection_dir` and is
+# distinct from this package's own `visibility`, exercising intersection propagation.
+package(
+    visibility = ["root//other:thing"],
+)

@@ -1,0 +1,5 @@
+# A plain `within_view` default with no opt-in anywhere above: the ordinary
+# `within_view` error must stay byte-identical.
+package(
+    within_view = ["root//no_optin/..."],
+)

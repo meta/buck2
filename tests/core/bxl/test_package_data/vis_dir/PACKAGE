@@ -1,0 +1,16 @@
+# Copyright (c) Meta Platforms, Inc. and affiliates.
+#
+# This source code is dual-licensed under either the MIT license found in the
+# LICENSE-MIT file in the root directory of this source tree or the Apache
+# License, Version 2.0 found in the LICENSE-APACHE file in the root directory
+# of this source tree. You may select, at your option, one of the
+# above-listed licenses.
+
+# Declare explicit visibility and within_view so the `bxl.read_package_*`
+# functions have a non-default value to read here, while `root//` keeps the
+# defaults (visibility `[]`, within_view `["PUBLIC"]`). The `target_name_glob(...)`
+# entry exercises the JSON-object rendering path of a non-string pattern.
+package(
+    visibility = ["root//bar_dir/...", "root//sub_dir:", target_name_glob(["*-test"])],
+    within_view = ["root//..."],
+)

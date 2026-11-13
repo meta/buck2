@@ -1,0 +1,5 @@
+package(
+    within_view = ["root//exec_dep/..."],
+)
+
+enforce_within_view_intersection()

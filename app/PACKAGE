@@ -1,0 +1,12 @@
+load("@fbcode//buck2/app:modifier.bzl", "buck2_modifiers")
+load("@fbsource//tools/build_defs:rust_package_local.bzl", "rust_package_local")
+load("@prelude//cfg/modifier:set_cfg_modifiers.bzl", "set_cfg_modifiers")
+
+modifiers_list = buck2_modifiers()
+
+set_cfg_modifiers(
+    cfg_modifiers = modifiers_list,
+)
+
+# The app crates get the stricter `app/clippy.toml`; the file says why it is separate.
+rust_package_local.set_clippy_configuration("//buck2/app:clippy_config", overwrite = True)

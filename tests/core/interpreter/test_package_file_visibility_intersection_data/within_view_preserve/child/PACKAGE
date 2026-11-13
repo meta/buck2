@@ -1,0 +1,7 @@
+# Child PACKAGE that ONLY calls `enforce_visibility_intersection()` --
+# it does NOT call `package()`. Guards against the bug where the
+# implementation could be refactored to share code with `package(...)`,
+# whose omitted `within_view` arg normalizes to `["PUBLIC"]` and
+# `extend_with(PUBLIC) -> PUBLIC` would silently disable the parent's
+# within_view restriction.
+enforce_visibility_intersection()

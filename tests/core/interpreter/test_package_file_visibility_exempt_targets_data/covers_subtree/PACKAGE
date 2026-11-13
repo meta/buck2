@@ -1,0 +1,4 @@
+package(
+    visibility = ["root//covers_subtree/..."],
+    visibility_exempt_targets = ["root//covers_subtree/..."],
+)

@@ -1,0 +1,6 @@
+package(
+    visibility = ["root//marked/..."],
+    visibility_exempt_targets = ["root//marked/inner/legacy:"],
+)
+
+enforce_visibility_intersection()

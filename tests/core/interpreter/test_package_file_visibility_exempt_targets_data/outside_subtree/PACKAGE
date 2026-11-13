@@ -1,0 +1,4 @@
+package(
+    visibility = ["root//outside_subtree/..."],
+    visibility_exempt_targets = ["root//boundary/legacy:"],
+)

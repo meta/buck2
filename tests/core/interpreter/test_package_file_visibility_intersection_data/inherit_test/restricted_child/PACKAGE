@@ -1,0 +1,25 @@
+# Child PACKAGE that uses `inherit=True` AND opts in. The intersection
+# contribution must be the EXPLICIT `visibility=[...]` list (here
+# `root//inherit_test/restricted_child/inside/...`), NOT the
+# post-inherit superset (parent.visibility ∪ this), because the
+# post-inherit superset is at least as wide as the parent's
+# visibility -- and so always a superset of the parent's intersection, making
+# this child's contribution silently ineffective.
+#
+# Effective intersection on descendants of this PACKAGE:
+#   parent_intersection ∩ explicit_child_visibility
+# = `root//inherit_test/...` ∩ `root//inherit_test/restricted_child/inside/...`
+# = `root//inherit_test/restricted_child/inside/...`
+# (the narrower of the two -- exactly what the user wrote and intended
+# as the new intersection term).
+#
+# `inherit=True` here only affects the *visibility attribute* default
+# for non-overriding targets in this PACKAGE: those targets see
+# `parent.visibility ∪ this.visibility` as their default `visibility`.
+# It does NOT affect the intersection.
+package(
+    inherit = True,
+    visibility = ["root//inherit_test/restricted_child/inside/..."],
+)
+
+enforce_visibility_intersection()

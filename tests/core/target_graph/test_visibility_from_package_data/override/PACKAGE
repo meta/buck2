@@ -1,0 +1,8 @@
+package(
+    visibility = [
+        "//in-parent/...",
+    ],
+    within_view = [
+        "//in-parent/...",
+    ],
+)

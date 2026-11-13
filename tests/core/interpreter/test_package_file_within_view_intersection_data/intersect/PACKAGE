@@ -1,0 +1,9 @@
+# Top opt-in: every target in `root//intersect/...` (and descendants that
+# don't override) has its `within_view` AND-ed with this list. A broader
+# per-target `within_view` or a nested `package(within_view = ["PUBLIC"])`
+# cannot widen it.
+package(
+    within_view = ["root//intersect/..."],
+)
+
+enforce_within_view_intersection()

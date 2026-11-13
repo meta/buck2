@@ -1,0 +1,19 @@
+load("@nano_prelude//:cfg_rules.bzl", "execution_platform", "platform")
+load("@nano_prelude//:execution_platforms.bzl", "execution_platforms")
+
+oncall("build_infra")
+
+platform(name = "platform")
+
+execution_platform(
+    name = "local",
+    local_enabled = True,
+    platform = ":platform",
+    remote_cache_enabled = False,
+    remote_enabled = False,
+)
+
+execution_platforms(
+    name = "platforms",
+    platforms = [":local"],
+)

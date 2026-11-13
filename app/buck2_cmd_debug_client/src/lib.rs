@@ -34,6 +34,7 @@ use crate::log_perf::LogPerfCommand;
 use crate::paranoid::ParanoidCommand;
 use crate::persist_event_logs::PersistEventLogsCommand;
 use crate::recent_alloc_dump::RecentAllocDumpCommand;
+use crate::restart::RestartCommand;
 use crate::set_log_filter::SetLogFilterCommand;
 use crate::tenants::TenantsCommand;
 use crate::thread_dump::ThreadDumpCommand;
@@ -58,6 +59,7 @@ mod log_perf;
 mod paranoid;
 mod persist_event_logs;
 mod recent_alloc_dump;
+mod restart;
 mod set_log_filter;
 mod tenants;
 mod thread_dump;
@@ -67,6 +69,7 @@ mod upload_re_logs;
 #[derive(Debug, clap::Parser)]
 #[clap(about = "Hidden debug commands useful for testing buck2")]
 pub enum DebugCommand {
+    Restart(RestartCommand),
     /// Deliberately crashes the Buck daemon, for testing purposes.
     Crash(CrashCommand),
     HeapDump(HeapDumpCommand),
@@ -124,6 +127,7 @@ impl DebugCommand {
     ) -> ExitResult {
         let matches = matches.unwrap_subcommand();
         match self {
+            DebugCommand::Restart(cmd) => ctx.exec(cmd, matches, events_ctx),
             DebugCommand::DiceDump(cmd) => ctx.exec(cmd, matches, events_ctx),
             DebugCommand::Crash(cmd) => ctx.exec(cmd, matches, events_ctx),
             DebugCommand::HeapDump(cmd) => ctx.exec(cmd, matches, events_ctx),

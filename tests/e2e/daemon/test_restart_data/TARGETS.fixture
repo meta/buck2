@@ -1,0 +1,5 @@
+load("@nano_prelude//:stub_rules.bzl", "trivial_build")
+
+oncall("build_infra")
+
+trivial_build(name = "ok")

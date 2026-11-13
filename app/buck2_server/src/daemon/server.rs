@@ -52,6 +52,7 @@ use buck2_core::error::SoftErrorContext;
 use buck2_core::fs::project::ProjectRoot;
 use buck2_core::logging::LogConfigurationReloadHandle;
 use buck2_core::pattern::unparsed::UnparsedPatternPredicate;
+use buck2_core::tag_error;
 use buck2_error::BuckErrorContext;
 use buck2_error::BuckErrorOptionContext;
 use buck2_error::ErrorTag;
@@ -1579,6 +1580,26 @@ type ResponseStream =
 
 #[async_trait]
 impl DaemonApi for BuckdServer {
+    async fn restart(
+        &self,
+        req: Request<RestartRequest>,
+    ) -> Result<Response<RestartResponse>, Status> {
+        self.check_if_accepting_requests()?;
+        let error = buck2_error!(
+            ErrorTag::InterruptedByDaemonShutdown,
+            "Daemon restart requested: {}",
+            req.into_inner().reason
+        );
+        // Reported outside any command, so every running command is sent it.
+        let _reported = tag_error!(
+            "daemon_restart_requested",
+            error,
+            daemon_in_memory_state_is_corrupted: true,
+            task: false
+        );
+        Ok(Response::new(RestartResponse {}))
+    }
+
     async fn kill(&self, req: Request<KillRequest>) -> Result<Response<CommandResult>, Status> {
         struct KillRunCommandOptions;
 

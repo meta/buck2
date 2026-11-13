@@ -1,0 +1,42 @@
+# Copyright (c) Meta Platforms, Inc. and affiliates.
+#
+# This source code is dual-licensed under either the MIT license found in the
+# LICENSE-MIT file in the root directory of this source tree or the Apache
+# License, Version 2.0 found in the LICENSE-APACHE file in the root directory
+# of this source tree. You may select, at your option, one of the
+# above-listed licenses.
+
+# The first attempt at a tag marks itself started and waits for the gate to be released.
+_WAIT_AT_GATE = """
+import pathlib, sys, time
+gate = pathlib.Path(sys.argv[1])
+started = gate / sys.argv[2]
+if not started.exists():
+    started.touch()
+    while not (gate / "released").exists():
+        if not gate.exists():
+            sys.exit("the gate is gone")
+        time.sleep(0.05)
+    if (gate / "fail").exists():
+        sys.exit("the gate fails the first attempt")
+pathlib.Path(sys.argv[3]).write_text("ready")
+"""
+
+def _gated(ctx):
+    actions = ctx.bxl_actions().actions
+    output = actions.declare_output("gate-" + ctx.cli_args.tag, has_content_based_path = False)
+    actions.run(
+        cmd_args(ctx.cli_args.python, "-c", _WAIT_AT_GATE, ctx.cli_args.gate, ctx.cli_args.tag, output.as_output()),
+        category = "coordinated_restart_gate",
+        local_only = True,
+    )
+    ctx.output.ensure(output)
+
+gated = bxl_main(
+    impl = _gated,
+    cli_args = {
+        "gate": cli_args.string(),
+        "python": cli_args.string(),
+        "tag": cli_args.string(),
+    },
+)

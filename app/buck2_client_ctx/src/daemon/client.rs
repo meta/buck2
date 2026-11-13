@@ -657,6 +657,7 @@ impl FlushingBuckdClient<'_> {
         SubscriptionResponseWrapper
     );
 
+    debug_method!(restart, RestartRequest, RestartResponse);
     oneshot_method!(flush_dep_files, FlushDepFilesRequest, GenericResponse);
     stream_method!(
         hydration,

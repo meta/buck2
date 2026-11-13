@@ -64,6 +64,12 @@ message KillRequest {
   repeated string callers = 4;
 }
 
+message RestartRequest {
+  string reason = 1;
+}
+
+message RestartResponse {}
+
 message KillResponse {}
 
 message StatusRequest {
@@ -1155,6 +1161,7 @@ message TraceIoResponse {
 // src/lib.rs need to be updated to derive common things for buck's cli package.
 service DaemonApi {
   rpc Kill(KillRequest) returns (CommandResult);
+  rpc Restart(RestartRequest) returns (RestartResponse);
   rpc Status(StatusRequest) returns (CommandResult);
   rpc Ping(PingRequest) returns (CommandResult);
   rpc FlushDepFiles(FlushDepFilesRequest) returns (CommandResult);

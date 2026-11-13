@@ -9,6 +9,7 @@
  */
 
 use std::mem;
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::Mutex;
 
@@ -26,6 +27,7 @@ use buck2_error::conversion::from_any_with_tag;
 use buck2_events::dispatch::span_async;
 use buck2_fs::paths::abs_norm_path::AbsNormPath;
 use buck2_hash::BuckMutInsertionSet;
+use buck2_hash::BuckMutSet;
 use dice::DiceTransactionUpdater;
 use dupe::Dupe;
 use notify::EventKind;
@@ -80,8 +82,19 @@ impl NotifyFileData {
         root: &ProjectRoot,
         ignores: &FileWatcherIgnores,
     ) -> buck2_error::Result<()> {
-        let event =
-            event.map_err(|e| from_any_with_tag(e, buck2_error::ErrorTag::NotifyWatcher))?;
+        let event = match event {
+            Ok(event) => event,
+            // The watcher failed at something, typically installing a watch for a directory that
+            // just appeared. It is not fatal, but from here on the watch tree covers less than the
+            // whole project, and a directory nobody watches produces no events at all: the daemon
+            // would keep serving whatever it read last. Treat it exactly like dropped events, which
+            // starts over and registers the tree again.
+            Err(e) => {
+                self.missed_events = true;
+                info!("FileWatcher: watcher error, coverage may be incomplete: {e:?}");
+                return Ok(());
+            }
+        };
 
         // Checked before the path loop: the kernel-overflow rescan signal can arrive with no
         // paths attached (platform dependent), and a missed rescan means the daemon keeps
@@ -126,8 +139,9 @@ impl NotifyFileData {
     fn sync(self) -> (buck2_data::FileWatcherStats, Option<FileChangeTracker>) {
         // The changes that go into the DICE transaction
         let mut changed = FileChangeTracker::new();
-        // If we missed events, the sync reports a fresh instance and the daemon starts over.
-        // Surface that to telemetry/UI the same way the watchman path does.
+        // If we missed events, the sync reports a fresh instance and the daemon starts over, and
+        // sync2() registers the watch tree again. Surface that to telemetry/UI the same way the
+        // watchman path does.
         let base = if self.missed_events {
             buck2_data::FileWatcherStats {
                 fresh_instance: true,
@@ -137,7 +151,7 @@ impl NotifyFileData {
                     cleared_dep_files: false,
                 }),
                 incomplete_events_reason: Some(
-                    "notify dropped events (kernel queue overflow)".to_owned(),
+                    "notify dropped events or failed to watch a directory".to_owned(),
                 ),
                 ..Default::default()
             }
@@ -235,12 +249,29 @@ impl NotifyFileData {
     }
 }
 
+/// What it takes to register the watch tree, kept so that it can be built again.
+struct Registration {
+    root: ProjectRoot,
+    ignores: FileWatcherIgnores,
+}
+
+/// Paths whose watch could not be installed.
+///
+/// A path that failed once fails again on every registration, a directory the user has no
+/// permission for being the obvious case. Remembering them keeps such a directory from making every
+/// single command start over and walk the tree again; they cost that once.
+type FailedWatches = Arc<Mutex<BuckMutSet<PathBuf>>>;
+
 #[derive(Allocative)]
 pub struct NotifyFileWatcher {
+    /// Never used directly, but must be kept alive: dropping the watcher removes all its watches.
+    /// Replaced wholesale when the tree has to be registered again.
     #[allocative(skip)]
-    #[expect(unused)]
-    // FIXME(JakobDegen): Clarify if this just needs to be kept alive or can be removed?
-    watcher: RecommendedWatcher,
+    watcher: Mutex<RecommendedWatcher>,
+    #[allocative(skip)]
+    registration: Registration,
+    #[allocative(skip)]
+    failed: FailedWatches,
     data: Arc<Mutex<buck2_error::Result<NotifyFileData>>>,
     /// What the changes recorded on the updater are relative to.
     baseline: Mutex<FileSystemBaseline>,
@@ -249,25 +280,68 @@ pub struct NotifyFileWatcher {
 impl NotifyFileWatcher {
     pub fn new(root: &ProjectRoot, ignores: FileWatcherIgnores) -> buck2_error::Result<Self> {
         let data = Arc::new(Mutex::new(Ok(NotifyFileData::new())));
-        let data2 = data.dupe();
-        let root2 = root.dupe();
-        let mut watcher = notify::recommended_watcher(move |event| {
-            let mut guard = data2.lock().unwrap();
-            if let Ok(state) = &mut *guard {
-                if let Err(e) = state.process(event, &root2, &ignores) {
-                    *guard = Err(e);
-                }
-            }
-        })
-        .map_err(|e| from_any_with_tag(e, buck2_error::ErrorTag::NotifyWatcher))?;
-        watcher
-            .watch(root.root().as_path(), notify::RecursiveMode::Recursive)
-            .map_err(|e| from_any_with_tag(e, buck2_error::ErrorTag::NotifyWatcher))?;
+        let registration = Registration {
+            root: root.dupe(),
+            ignores,
+        };
+        let failed: FailedWatches = Default::default();
+        let watcher = Self::register(&registration, data.dupe(), failed.dupe())?;
         Ok(Self {
-            watcher,
+            watcher: Mutex::new(watcher),
+            registration,
+            failed,
             data,
             baseline: Mutex::new(FileSystemBaseline::unique()),
         })
+    }
+
+    /// Watch the whole project.
+    fn register(
+        registration: &Registration,
+        data: Arc<Mutex<buck2_error::Result<NotifyFileData>>>,
+        failed: FailedWatches,
+    ) -> buck2_error::Result<RecommendedWatcher> {
+        let root = registration.root.dupe();
+        let ignores = registration.ignores.clone();
+        let mut watcher =
+            notify::recommended_watcher(move |event: notify::Result<notify::Event>| {
+                // A path we already know we cannot watch is not news, and reacting to it again would
+                // make every command start over for as long as it exists.
+                if let Err(e) = &event {
+                    let mut failed = failed.lock().unwrap();
+                    let novel: Vec<_> = e.paths.iter().map(|p| failed.insert(p.clone())).collect();
+                    if !e.paths.is_empty() && !novel.contains(&true) {
+                        debug!("FileWatcher: {:?} failed to watch again", e.paths);
+                        return;
+                    }
+                }
+                let mut guard = data.lock().unwrap();
+                if let Ok(state) = &mut *guard {
+                    if let Err(e) = state.process(event, &root, &ignores) {
+                        *guard = Err(e);
+                    }
+                }
+            })
+            .map_err(|e| from_any_with_tag(e, buck2_error::ErrorTag::NotifyWatcher))?;
+        watcher
+            .watch(
+                registration.root.root().as_path(),
+                notify::RecursiveMode::Recursive,
+            )
+            .map_err(|e| from_any_with_tag(e, buck2_error::ErrorTag::NotifyWatcher))?;
+        Ok(watcher)
+    }
+
+    /// Register the tree again, after events were dropped or a watch failed to install.
+    ///
+    /// Starting over recovers from the changes we did not see, but not from a directory that has no
+    /// watch at all: nothing would ever report a change there again. The new registration walks the
+    /// tree and covers whatever the old one is missing. It is built before the old one is dropped,
+    /// so no window opens where the project is unwatched; the overlap only duplicates events.
+    fn reregister(&self) -> buck2_error::Result<()> {
+        let watcher = Self::register(&self.registration, self.data.dupe(), self.failed.dupe())?;
+        *self.watcher.lock().unwrap() = watcher;
+        Ok(())
     }
 
     fn sync2(
@@ -284,8 +358,9 @@ impl NotifyFileWatcher {
             changes.write_to_dice(&mut dice)?;
         } else {
             // Events were missed; the fresh instance reported in `stats` has the daemon start
-            // over.
+            // over. Make sure the watch tree covers the project again before it is read back.
             *baseline = FileSystemBaseline::unique();
+            self.reregister()?;
         }
         dice.set_file_system_baseline(baseline.dupe())?;
         Ok((stats, dice))
@@ -332,19 +407,22 @@ mod tests {
 
     use super::*;
 
-    fn fixture() -> (ProjectRoot, FileWatcherIgnores, tempfile::TempDir) {
+    fn no_ignores() -> FileWatcherIgnores {
         let cells = CellResolver::testing_with_name_and_path(
             CellName::testing_new("root"),
             CellRootPathBuf::testing_new(""),
         );
+        FileWatcherIgnores::new(Arc::new(
+            IgnoreSet::testing_new_single_cell(cells, CellName::testing_new("root"), "").unwrap(),
+        ))
+    }
+
+    fn fixture() -> (ProjectRoot, FileWatcherIgnores, tempfile::TempDir) {
         let tempdir = tempfile::tempdir().unwrap();
         let root_path =
             fs_util::canonicalize(AbsNormPathBuf::new(tempdir.path().to_owned()).unwrap()).unwrap();
         let root = ProjectRoot::new(root_path).unwrap();
-        let ignores = Arc::new(
-            IgnoreSet::testing_new_single_cell(cells, CellName::testing_new("root"), "").unwrap(),
-        );
-        (root, FileWatcherIgnores::new(ignores), tempdir)
+        (root, no_ignores(), tempdir)
     }
 
     /// The kernel-overflow signal can arrive as a rescan-flagged event with no paths attached
@@ -419,5 +497,81 @@ mod tests {
         assert!(ignore_event_kind(EventKind::Access(
             notify::event::AccessKind::Read
         )));
+    }
+
+    /// Coverage recovery, which needs a directory that cannot be watched: unix permissions
+    /// are the only portable way to make one.
+    #[cfg(unix)]
+    mod coverage {
+        use std::fs;
+        use std::os::unix::fs::PermissionsExt;
+        use std::thread::sleep;
+        use std::time::Duration;
+        use std::time::Instant;
+
+        use super::*;
+
+        /// Wait for the watcher thread to catch up with what the test did.
+        fn wait_for(watcher: &NotifyFileWatcher, done: impl Fn(&NotifyFileData) -> bool) -> bool {
+            let deadline = Instant::now() + Duration::from_secs(5);
+            while Instant::now() < deadline {
+                if let Ok(data) = &*watcher.data.lock().unwrap() {
+                    if done(data) {
+                        return true;
+                    }
+                }
+                sleep(Duration::from_millis(50));
+            }
+            false
+        }
+
+        /// A watch that could not be installed has to leave the daemon knowing that its coverage is
+        /// incomplete, so that the next sync starts over and registers the tree again.
+        #[test]
+        fn a_failed_watch_counts_as_missed_events() {
+            let tempdir = tempfile::tempdir().unwrap();
+            let project = tempdir.path().join("project");
+            let staging = tempdir.path().join("staging");
+            fs::create_dir(&project).unwrap();
+            fs::create_dir_all(staging.join("readable")).unwrap();
+            let unwatchable = staging.join("unwatchable");
+            fs::create_dir(&unwatchable).unwrap();
+            fs::set_permissions(&unwatchable, fs::Permissions::from_mode(0o000)).unwrap();
+            if fs::read_dir(&unwatchable).is_ok() {
+                return; // running as root, which can watch a directory it cannot read
+            }
+
+            let root = ProjectRoot::new(
+                fs_util::canonicalize(AbsNormPathBuf::new(project.clone()).unwrap()).unwrap(),
+            )
+            .unwrap();
+            let watcher = NotifyFileWatcher::new(&root, no_ignores()).unwrap();
+
+            // Moved in whole, so the walk it triggers is certain to meet the unwatchable directory.
+            let appearing = project.join("appearing");
+            fs::rename(&staging, &appearing).unwrap();
+            let missed = wait_for(&watcher, |data| data.missed_events);
+            // Before the asserts: a directory the test cannot read is one tempfile cannot remove.
+            fs::set_permissions(
+                appearing.join("unwatchable"),
+                fs::Permissions::from_mode(0o755),
+            )
+            .unwrap();
+            assert!(
+                missed,
+                "expected the failed watch to count as missed events"
+            );
+
+            // Registering again is what buys back the coverage the failure cost us.
+            watcher.reregister().unwrap();
+            fs::write(appearing.join("readable").join("file"), "x").unwrap();
+            assert!(
+                wait_for(&watcher, |data| data
+                    .events
+                    .iter()
+                    .any(|(path, _)| path.to_string().ends_with("file"))),
+                "expected a change under the sibling of the unwatchable directory to be seen"
+            );
+        }
     }
 }

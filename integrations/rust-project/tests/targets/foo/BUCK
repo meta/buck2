@@ -93,6 +93,17 @@ rust_library(
     target_compatible_with = ["ovr_config//cpu/constraints:riscv64"],
 )
 
+rust_library(
+    name = "g_with_select_no_default",
+    srcs = ["lib_g.rs"],
+    crate_root = "lib_g.rs",
+    env = {
+        "MACOS_ONLY": select({"ovr_config//os:macos": "1"}),
+        "UNIVERSAL": "1",
+    },
+    target_compatible_with = ["ovr_config//cpu/constraints:riscv64"],
+)
+
 rust_binary(
     name = "g_incompatible_tool",
     srcs = ["main.rs"],

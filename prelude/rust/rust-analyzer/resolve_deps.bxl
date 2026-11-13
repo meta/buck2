@@ -125,6 +125,11 @@ def _select_assume_default(value):
     if isinstance(value, list):
         return [_select_assume_default(item) for item in value]
 
+    if isinstance(value, dict):
+        # A select() with no DEFAULT has no value here, so its key is unset.
+        resolved = {k: _select_assume_default(v) for k, v in value.items()}
+        return {k: v for k, v in resolved.items() if v != None}
+
     return value
 
 def _get_attr_no_select(target: bxl.UnconfiguredTargetNode, attr: str) -> typing.Any:

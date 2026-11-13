@@ -23,7 +23,6 @@ use starlark::values::StringValue;
 use starlark::values::Trace;
 use starlark::values::Value;
 use starlark::values::ValueOf;
-use starlark::values::ValueTyped;
 use starlark::values::dict::DictType;
 use starlark::values::string::StarlarkStr;
 
@@ -134,8 +133,8 @@ fn template_placeholder_info_creator(builder: &mut GlobalsBuilder) {
             >,
         >,
         heap: Heap<'v>,
-    ) -> starlark::Result<ValueTyped<'v, TemplatePlaceholderInfo<'v>>> {
-        Ok(heap.alloc_representation(TemplatePlaceholderInfo {
+    ) -> starlark::Result<ValueOf<'v, TemplatePlaceholderInfo<'v>>> {
+        Ok(heap.alloc(TemplatePlaceholderInfo {
             unkeyed_variables,
             keyed_variables,
         }))

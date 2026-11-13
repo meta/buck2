@@ -102,7 +102,7 @@ impl<'v> AnalysisExtraValue<'v> {
             .set_extra_value_no_overwrite(
                 module
                     .heap()
-                    .alloc_representation(StarlarkAnyComplex::new(AnalysisExtraValue::default()))
+                    .alloc(StarlarkAnyComplex::new(AnalysisExtraValue::default()))
                     .to_value(),
             )
             .map_err(|e| from_any_with_tag(e, buck2_error::ErrorTag::Tier0))?;

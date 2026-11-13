@@ -46,8 +46,7 @@ impl AllocNode for TargetNode {
     }
 
     fn alloc(self, heap: Heap<'_>) -> Value<'_> {
-        heap.alloc_representation(StarlarkTargetNode(self))
-            .to_value()
+        heap.alloc(StarlarkTargetNode(self)).to_value()
     }
 }
 
@@ -57,7 +56,7 @@ impl AllocNode for ConfiguredTargetNode {
     }
 
     fn alloc(self, heap: Heap<'_>) -> Value<'_> {
-        heap.alloc_representation(StarlarkConfiguredTargetNode::new(self))
+        heap.alloc(StarlarkConfiguredTargetNode::new(self))
             .to_value()
     }
 
@@ -77,7 +76,6 @@ impl AllocNode for ActionQueryNode {
     }
 
     fn alloc(self, heap: Heap<'_>) -> Value<'_> {
-        heap.alloc_representation(StarlarkActionQueryNode(self))
-            .to_value()
+        heap.alloc(StarlarkActionQueryNode(self)).to_value()
     }
 }

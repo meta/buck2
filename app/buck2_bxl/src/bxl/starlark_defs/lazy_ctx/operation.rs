@@ -120,13 +120,11 @@ impl LazyResult {
         bxl_eval_extra: &BxlEvalExtra,
     ) -> buck2_error::Result<Value<'v>> {
         match self {
-            LazyResult::Analysis(analysis_res) => {
-                Ok(heap.alloc_representation(analysis_res).to_value())
-            }
+            LazyResult::Analysis(analysis_res) => Ok(heap.alloc(analysis_res).to_value()),
             LazyResult::ConfiguredTargetNode(res) => res.into_value(heap, bxl_eval_extra),
             LazyResult::UnconfiguredTargetNode(node) => Ok(match node {
-                Either::Left(node) => heap.alloc_representation(node).to_value(),
-                Either::Right(target_set) => heap.alloc_representation(target_set).to_value(),
+                Either::Left(node) => heap.alloc(node).to_value(),
+                Either::Right(target_set) => heap.alloc(target_set).to_value(),
             }),
             LazyResult::UnconfiguredTargetNodeKeepGoing((success_targets, error_packages)) => {
                 let error_packages = heap.alloc_dict(
@@ -134,24 +132,19 @@ impl LazyResult {
                         .into_iter()
                         .map(|(package, error)| {
                             Ok((
-                                heap.alloc_representation(package).to_value().get_hashed()?,
-                                heap.alloc_representation(error).to_value(),
+                                heap.alloc(package).to_value().get_hashed()?,
+                                heap.alloc(error).to_value(),
                             ))
                         })
                         .collect::<starlark::Result<_>>()?,
                 );
                 Ok(heap
-                    .alloc((
-                        heap.alloc_representation(success_targets).to_value(),
-                        error_packages,
-                    ))
+                    .alloc((heap.alloc(success_targets).to_value(), error_packages))
                     .to_value())
             }
-            LazyResult::BuildArtifact(artifact) => {
-                Ok(heap.alloc_representation(artifact).to_value())
-            }
+            LazyResult::BuildArtifact(artifact) => Ok(heap.alloc(artifact).to_value()),
             LazyResult::DynamicValue(providers) => Ok(heap
-                .alloc_representation(StarlarkResolvedDynamicValue {
+                .alloc(StarlarkResolvedDynamicValue {
                     value: providers.add_heap_ref(heap),
                 })
                 .to_value()),
@@ -175,9 +168,7 @@ impl LazyResult {
                     Ok(res) => res.into_value(heap, bxl_eval_extra),
                     Err(e) => Err(e),
                 };
-                Ok(heap
-                    .alloc_representation(StarlarkResult::from_result(val))
-                    .to_value())
+                Ok(heap.alloc(StarlarkResult::from_result(val)).to_value())
             }
         }
     }

@@ -41,6 +41,7 @@ use buck2_interpreter::print_handler::EventDispatcherPrintHandler;
 use buck2_interpreter::soft_error::Buck2StarlarkSoftErrorHandler;
 use buck2_interpreter_for_build::attrs::StarlarkAttribute;
 use buck2_interpreter_for_build::rule::StarlarkRuleCallable;
+use buck2_interpreter_for_build::rule::StarlarkRuleCallableView;
 use buck2_interpreter_for_build::rule::frozen_rule_attribute_spec;
 use buck2_node::attrs::spec::AttributeSpec;
 use buck2_node::bzl_or_bxl_path::BzlOrBxlPath;
@@ -124,7 +125,7 @@ pub(crate) fn register_anon_rule(globals: &mut GlobalsBuilder) {
             >,
         >,
         eval: &mut Evaluator<'v, '_, '_>,
-    ) -> starlark::Result<ValueTyped<'v, StarlarkRuleCallable<'v>>> {
+    ) -> starlark::Result<ValueOf<'v, StarlarkRuleCallableView<'v>>> {
         let rule = StarlarkRuleCallable::new_bxl_anon(
             StarlarkCallable::unchecked_new(r#impl.0),
             attrs,
@@ -132,7 +133,7 @@ pub(crate) fn register_anon_rule(globals: &mut GlobalsBuilder) {
             artifact_promise_mappings,
             eval,
         )?;
-        Ok(eval.heap().alloc_representation(rule))
+        Ok(eval.heap().alloc(rule))
     }
 }
 
@@ -299,7 +300,7 @@ async fn eval_bxl_for_anon_target_inner(
                 analysis_registry,
                 attributes,
             )?;
-            let bxl_ctx = env.heap().alloc_representation(bxl_anon_ctx);
+            let bxl_ctx = env.heap().alloc(bxl_anon_ctx).get();
 
             let list_res = tokio::task::block_in_place(|| -> buck2_error::Result<Value<'_>> {
                 anon_impl.invoke(eval, bxl_ctx, attributes)
@@ -316,7 +317,7 @@ async fn eval_bxl_for_anon_target_inner(
         })?;
 
         let res_typed = ProviderCollection::try_from_value(list_res)?;
-        let res = env.heap().alloc_representation(res_typed).to_value();
+        let res = env.heap().alloc(res_typed).to_value();
 
         let fulfilled_artifact_mappings = reentrant_eval.with_evaluator(|eval| {
             let promise_artifact_mappings = anon_impl.promise_artifact_mappings(eval)?;

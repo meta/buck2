@@ -40,6 +40,7 @@ use starlark::values::StarlarkValue;
 use starlark::values::Trace;
 use starlark::values::UnpackValue;
 use starlark::values::Value;
+use starlark::values::ValueOf;
 use starlark::values::ValueTyped;
 use starlark::values::starlark_value;
 
@@ -123,9 +124,7 @@ pub(crate) struct EnsuredArtifactGroup<'v> {
 impl<'v> EnsuredArtifactGroup<'v> {
     pub(crate) fn new(ags: Vec<ArtifactGroup>, abs: bool, heap: Heap<'v>) -> Self {
         EnsuredArtifactGroup {
-            inner: heap
-                .alloc_representation(EnsuredArtifactGroupInner { ags })
-                .to_value(),
+            inner: heap.alloc(EnsuredArtifactGroupInner { ags }).to_value(),
 
             abs,
         }
@@ -316,16 +315,16 @@ fn ensured_artifact_methods(builder: &mut MethodsBuilder) {
     fn abs_path<'v>(
         this: ValueTyped<'v, EnsuredArtifact>,
         heap: Heap<'v>,
-    ) -> starlark::Result<ValueTyped<'v, EnsuredArtifact>> {
+    ) -> starlark::Result<ValueOf<'v, EnsuredArtifact>> {
         if this.abs() {
-            Ok(this)
+            Ok(this.into())
         } else {
             let artifact = EnsuredArtifact {
                 artifact: this.artifact.dupe(),
                 abs: true,
             };
 
-            Ok(heap.alloc_representation(artifact))
+            Ok(heap.alloc(artifact))
         }
     }
 
@@ -347,16 +346,16 @@ fn ensured_artifact_methods(builder: &mut MethodsBuilder) {
     fn rel_path<'v>(
         this: ValueTyped<'v, EnsuredArtifact>,
         heap: Heap<'v>,
-    ) -> starlark::Result<ValueTyped<'v, EnsuredArtifact>> {
+    ) -> starlark::Result<ValueOf<'v, EnsuredArtifact>> {
         if !this.abs() {
-            Ok(this)
+            Ok(this.into())
         } else {
             let artifact = EnsuredArtifact {
                 artifact: this.artifact.dupe(),
                 abs: false,
             };
 
-            Ok(heap.alloc_representation(artifact))
+            Ok(heap.alloc(artifact))
         }
     }
 }
@@ -386,16 +385,16 @@ fn artifact_group_methods(builder: &mut MethodsBuilder) {
     fn abs_path<'v>(
         this: ValueTyped<'v, EnsuredArtifactGroup<'v>>,
         heap: Heap<'v>,
-    ) -> starlark::Result<ValueTyped<'v, EnsuredArtifactGroup<'v>>> {
+    ) -> starlark::Result<ValueOf<'v, EnsuredArtifactGroup<'v>>> {
         if this.abs {
-            Ok(this)
+            Ok(this.into())
         } else {
             let artifact = EnsuredArtifactGroup {
                 inner: this.inner,
                 abs: true,
             };
 
-            Ok(heap.alloc_representation(artifact))
+            Ok(heap.alloc(artifact))
         }
     }
 
@@ -417,16 +416,16 @@ fn artifact_group_methods(builder: &mut MethodsBuilder) {
     fn rel_path<'v>(
         this: ValueTyped<'v, EnsuredArtifactGroup<'v>>,
         heap: Heap<'v>,
-    ) -> starlark::Result<ValueTyped<'v, EnsuredArtifactGroup<'v>>> {
+    ) -> starlark::Result<ValueOf<'v, EnsuredArtifactGroup<'v>>> {
         if !this.abs {
-            Ok(this)
+            Ok(this.into())
         } else {
             let artifact = EnsuredArtifactGroup {
                 inner: this.inner,
                 abs: false,
             };
 
-            Ok(heap.alloc_representation(artifact))
+            Ok(heap.alloc(artifact))
         }
     }
 }

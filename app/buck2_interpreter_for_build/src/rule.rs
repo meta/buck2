@@ -1053,7 +1053,7 @@ pub fn register_rule_function(builder: &mut GlobalsBuilder) {
             ListOrTupleType<StarlarkExecutionGroupView<'v>>,
         >,
         eval: &mut Evaluator<'v, '_, '_>,
-    ) -> starlark::Result<ValueTyped<'v, StarlarkRuleCallable<'v>>> {
+    ) -> starlark::Result<ValueOf<'v, StarlarkRuleCallableView<'v>>> {
         let rule = StarlarkRuleCallable::new(
             RuleImpl::BuildRule(StarlarkCallable::unchecked_new(r#impl.0)),
             attrs,
@@ -1073,7 +1073,7 @@ pub fn register_rule_function(builder: &mut GlobalsBuilder) {
             None,
             eval,
         )?;
-        Ok(eval.heap().alloc_representation(rule))
+        Ok(eval.heap().alloc(rule))
     }
 
     /// Define an anon rule, similar to how a normal rule is defined, except with an extra `artifact_promise_mappings` field. This
@@ -1095,9 +1095,9 @@ pub fn register_rule_function(builder: &mut GlobalsBuilder) {
             >,
         >,
         eval: &mut Evaluator<'v, '_, '_>,
-    ) -> starlark::Result<ValueTyped<'v, StarlarkRuleCallable<'v>>> {
+    ) -> starlark::Result<ValueOf<'v, StarlarkRuleCallableView<'v>>> {
         let rule =
             StarlarkRuleCallable::new_anon(r#impl, attrs, doc, artifact_promise_mappings, eval)?;
-        Ok(eval.heap().alloc_representation(rule))
+        Ok(eval.heap().alloc(rule))
     }
 }

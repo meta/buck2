@@ -464,7 +464,7 @@ fn external_runner_test_info_creator(globals: &mut GlobalsBuilder) {
         #[starlark(require = named, default = NoneOr::None)]
         supports_test_execution_caching: NoneOr<ValueOf<'v, bool>>,
         eval: &mut Evaluator<'v, '_, '_>,
-    ) -> starlark::Result<ValueTyped<'v, ExternalRunnerTestInfo<'v>>> {
+    ) -> starlark::Result<ValueOf<'v, ExternalRunnerTestInfo<'v>>> {
         let exec_group = exec_group.into_option();
         let group = exec_group.map(|g| g.get().expect_bound()).transpose()?;
         let default_executor = default_executor_with_execution_group(
@@ -489,6 +489,6 @@ fn external_runner_test_info_creator(globals: &mut GlobalsBuilder) {
             supports_test_execution_caching: supports_test_execution_caching.into_option(),
         };
         validate_external_runner_test_info(&res)?;
-        Ok(eval.heap().alloc_representation(res))
+        Ok(eval.heap().alloc(res))
     }
 }

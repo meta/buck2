@@ -316,14 +316,14 @@ impl CliArgValue {
                 .alloc(AllocList(l.iter().map(|v| v.as_starlark(heap))))
                 .to_value(),
             CliArgValue::None => Value::new_none(),
-            CliArgValue::TargetLabel(t) => heap
-                .alloc_representation(StarlarkTargetLabel::new(t.dupe()))
-                .to_value(),
+            CliArgValue::TargetLabel(t) => {
+                heap.alloc(StarlarkTargetLabel::new(t.dupe())).to_value()
+            }
             CliArgValue::ConfiguredTargetLabel(c) => heap
-                .alloc_representation(StarlarkConfiguredTargetLabel::new(c.dupe()))
+                .alloc(StarlarkConfiguredTargetLabel::new(c.dupe()))
                 .to_value(),
             CliArgValue::ProvidersLabel(p) => heap
-                .alloc_representation(StarlarkProvidersLabel::new(p.clone()))
+                .alloc(StarlarkProvidersLabel::new(p.clone()))
                 .to_value(),
             CliArgValue::Json(j) => heap.alloc(j.as_starlark(heap)).to_value(),
         }
@@ -1506,9 +1506,9 @@ mod tests {
 
             assert_eq!(
                 CliArgType::target_label().coerce_value(
-                    heap.alloc_representation(StarlarkTargetLabel::new(
-                        TargetLabel::testing_parse("root//foo:bar")
-                    ))
+                    heap.alloc(StarlarkTargetLabel::new(TargetLabel::testing_parse(
+                        "root//foo:bar"
+                    )))
                     .to_value()
                 )?,
                 CliArgValue::TargetLabel(TargetLabel::testing_parse("root//foo:bar"))
@@ -1516,7 +1516,7 @@ mod tests {
 
             assert_eq!(
                 CliArgType::configured_target_label().coerce_value(
-                    heap.alloc_representation(StarlarkConfiguredTargetLabel::new(
+                    heap.alloc(StarlarkConfiguredTargetLabel::new(
                         ConfiguredTargetLabel::testing_parse(
                             "root//foo:bar",
                             ConfigurationData::testing_new(),
@@ -1532,9 +1532,12 @@ mod tests {
 
             assert_eq!(
                 CliArgType::sub_target().coerce_value(
-                    heap.alloc_representation(StarlarkProvidersLabel::new(
-                        ProvidersLabel::testing_new("foo", "pkg", "bar", Some(&["a", "b"]))
-                    ))
+                    heap.alloc(StarlarkProvidersLabel::new(ProvidersLabel::testing_new(
+                        "foo",
+                        "pkg",
+                        "bar",
+                        Some(&["a", "b"])
+                    )))
                     .to_value()
                 )?,
                 CliArgValue::ProvidersLabel(ProvidersLabel::testing_new(

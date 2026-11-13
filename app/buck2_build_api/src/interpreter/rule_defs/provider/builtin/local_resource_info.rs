@@ -112,7 +112,7 @@ fn local_resource_info_creator(globals: &mut GlobalsBuilder) {
             ValueOf<'v, Either<IntView<'v>, StarlarkFloat>>,
         >,
         eval: &mut Evaluator<'v, '_, '_>,
-    ) -> starlark::Result<ValueTyped<'v, LocalResourceInfo<'v>>> {
+    ) -> starlark::Result<ValueOf<'v, LocalResourceInfo<'v>>> {
         let setup = StarlarkCmdArgs::try_from_value_typed(setup)?;
         let result = LocalResourceInfo {
             setup: ValueOf::alloc(eval.heap(), setup),
@@ -120,7 +120,7 @@ fn local_resource_info_creator(globals: &mut GlobalsBuilder) {
             setup_timeout_seconds: setup_timeout_seconds.into_option(),
         };
         validate_local_resource_info(&result)?;
-        Ok(eval.heap().alloc_representation(result))
+        Ok(eval.heap().alloc(result))
     }
 }
 

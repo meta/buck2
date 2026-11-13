@@ -318,7 +318,7 @@ impl<'v> AnalysisRegistry<'v> {
             .register_transitive_set(move |key| {
                 let set =
                     TransitiveSet::new_from_values(key.dupe(), definition, value, children, eval)?;
-                Ok(eval.heap().alloc_representation(set))
+                Ok(eval.heap().alloc(set).get())
             })?)
     }
 
@@ -568,7 +568,8 @@ impl<'v> AnalysisValueStorage<'v> {
         let res = extra_v.analysis_value_storage.set(
             module
                 .heap()
-                .alloc_representation(StarlarkAnyComplex { value: self }),
+                .alloc(StarlarkAnyComplex { value: self })
+                .get(),
         );
         if res.is_err() {
             return Err(internal_error!("analysis_value_storage is already set"));
@@ -713,7 +714,7 @@ impl RecordedAnalysisValues {
                     .map(|(_key, tset)| tset.as_ref().add_to_frozen_heap(heap))
                     .collect();
 
-                heap.alloc_representation(StarlarkAnyComplex {
+                heap.alloc(StarlarkAnyComplex {
                     value: FrozenAnalysisValueStorage {
                         self_key: self_key.dupe(),
                         action_data: BuckMutInsertionMap::new(),
@@ -725,6 +726,7 @@ impl RecordedAnalysisValues {
                         result_value: Some(ProviderCollection::testing_new_default(heap)),
                     },
                 })
+                .get()
             });
         Self {
             self_key,

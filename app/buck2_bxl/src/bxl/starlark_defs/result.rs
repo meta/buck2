@@ -481,7 +481,7 @@ starlark::__starlark_pagable_only! {
                 assert_eq!(serde_json::to_value(&action).expect("serialize action diagnostics"), expected);
                 let owned: OwnedFrozen<Value<'static>> = OwnedFrozen::build(
                     FrozenHeapName::user("action_error_round_trips"),
-                    |heap| heap.alloc_representation(action).to_value(),
+                    |heap| heap.alloc(action).to_value(),
                 );
                 let restored = round_trip(owned)?;
                 restored.by_ref(|value| {
@@ -527,7 +527,7 @@ starlark::__starlark_pagable_only! {
             let err = test_error();
             let owned: OwnedFrozen<Value<'static>> =
                 OwnedFrozen::build(FrozenHeapName::user("result_err_round_trips"), |heap| {
-                    heap.alloc_representation(StarlarkResult::Err(err.dupe()))
+                    heap.alloc(StarlarkResult::Err(err.dupe()))
                         .to_value()
                 });
             let expected_display = owned.by_ref(|v| v.to_string());
@@ -551,7 +551,7 @@ starlark::__starlark_pagable_only! {
         fn result_ok_round_trips() -> pagable::Result<()> {
             let owned: OwnedFrozen<Value<'static>> =
                 OwnedFrozen::build(FrozenHeapName::user("result_ok_round_trips"), |heap| {
-                    heap.alloc_representation(StarlarkResult::Ok(heap.alloc("payload").to_value()))
+                    heap.alloc(StarlarkResult::Ok(heap.alloc("payload").to_value()))
                         .to_value()
                 });
 
@@ -571,7 +571,7 @@ starlark::__starlark_pagable_only! {
             let err = test_error();
             let owned: OwnedFrozen<Value<'static>> =
                 OwnedFrozen::build(FrozenHeapName::user("error_round_trips"), |heap| {
-                    heap.alloc_representation(StarlarkError::new(err.dupe()))
+                    heap.alloc(StarlarkError::new(err.dupe()))
                         .to_value()
                 });
             let expected_display = owned.by_ref(|v| v.to_string());

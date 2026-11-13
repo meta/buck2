@@ -93,7 +93,7 @@ impl DepAttrTypeExt for DepAttrType {
         execution_platform_resolution: Option<&ExecutionPlatformResolution>,
     ) -> Value<'v> {
         env.heap()
-            .alloc_representation(Dependency::new(
+            .alloc(Dependency::new(
                 env.heap(),
                 target.clone(),
                 v.to_value_typed(),

@@ -134,7 +134,7 @@ fn anon_target_methods(builder: &mut MethodsBuilder) {
                     Ok((
                         k.to_value().get_hashed()?,
                         eval.heap()
-                            .alloc_representation(StarlarkPromiseArtifact::new(
+                            .alloc(StarlarkPromiseArtifact::new(
                                 eval.call_stack_top_location(),
                                 v.dupe(),
                                 None,
@@ -157,7 +157,7 @@ fn anon_target_methods(builder: &mut MethodsBuilder) {
         match this.artifacts.get(name) {
             Some(v) => Ok(eval
                 .heap()
-                .alloc_representation(StarlarkPromiseArtifact::new(
+                .alloc(StarlarkPromiseArtifact::new(
                     eval.call_stack_top_location(),
                     v.dupe(),
                     None,
@@ -224,7 +224,7 @@ fn anon_targets_methods(builder: &mut MethodsBuilder) {
             .alloc(AllocList(
                 this.anon_targets
                     .iter()
-                    .map(|a| heap.alloc_representation(a.clone()).to_value()),
+                    .map(|a| heap.alloc(a.clone()).to_value()),
             ))
             .to_value())
     }
@@ -273,15 +273,13 @@ fn analysis_actions_methods_anon_target(builder: &mut MethodsBuilder) {
             StarlarkExecutionGroupView<'v>,
         >,
         eval: &mut Evaluator<'v, '_, '_>,
-    ) -> starlark::Result<ValueTyped<'v, StarlarkAnonTarget<'v>>> {
+    ) -> starlark::Result<ValueOf<'v, StarlarkAnonTarget<'v>>> {
         let exec_group = exec_group
             .into_option()
             .map(|group| group.expect_bound())
             .transpose()?;
         let rule = rule.frozen()?;
-        let anon_target_promise = eval
-            .heap()
-            .alloc_representation(StarlarkPromise::new_unresolved());
+        let anon_target_promise = eval.heap().alloc(StarlarkPromise::new_unresolved()).get();
         let mut this = this.state()?;
         let this = &mut *this;
         let registry = AnonTargetsRegistry::downcast_mut(&mut **this.anon_targets)?;
@@ -296,7 +294,7 @@ fn analysis_actions_methods_anon_target(builder: &mut MethodsBuilder) {
             key,
             registry,
         )?;
-        Ok(eval.heap().alloc_representation(anon_target))
+        Ok(eval.heap().alloc(anon_target))
     }
 
     /// Generate a series of anonymous targets.
@@ -314,7 +312,7 @@ fn analysis_actions_methods_anon_target(builder: &mut MethodsBuilder) {
             StarlarkExecutionGroupView<'v>,
         >,
         eval: &mut Evaluator<'v, '_, '_>,
-    ) -> starlark::Result<ValueTyped<'v, StarlarkAnonTargets<'v>>> {
+    ) -> starlark::Result<ValueOf<'v, StarlarkAnonTargets<'v>>> {
         let exec_group = exec_group
             .into_option()
             .map(|group| group.expect_bound())
@@ -334,9 +332,8 @@ fn analysis_actions_methods_anon_target(builder: &mut MethodsBuilder) {
                 let rule = rule.frozen()?;
                 let key =
                     registry.anon_target_key(rule, attributes, owner_key, exec_group.as_ref())?;
-                let anon_target_promise = eval
-                    .heap()
-                    .alloc_representation(StarlarkPromise::new_unresolved());
+                let anon_target_promise =
+                    eval.heap().alloc(StarlarkPromise::new_unresolved()).get();
 
                 promises_to_join.push(anon_target_promise);
 
@@ -355,7 +352,7 @@ fn analysis_actions_methods_anon_target(builder: &mut MethodsBuilder) {
             })
             .collect::<Result<Vec<_>, _>>()?;
 
-        Ok(eval.heap().alloc_representation(StarlarkAnonTargets {
+        Ok(eval.heap().alloc(StarlarkAnonTargets {
             promise: StarlarkPromise::join(promises_to_join, eval.heap()),
             anon_targets,
             declaration_location,

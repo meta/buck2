@@ -299,7 +299,7 @@ fn transitive_set_args_projection_methods(builder: &mut MethodsBuilder) {
         heap: Heap<'v>,
     ) -> starlark::Result<Value<'v>> {
         Ok(heap
-            .alloc_representation(TransitiveSetProjectionTraversal {
+            .alloc(TransitiveSetProjectionTraversal {
                 transitive_set: this.transitive_set,
                 projection: this.projection,
                 ordering: this.ordering,

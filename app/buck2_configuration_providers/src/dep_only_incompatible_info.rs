@@ -28,7 +28,6 @@ use starlark::values::Freeze;
 use starlark::values::StarlarkPagable;
 use starlark::values::Trace;
 use starlark::values::ValueOf;
-use starlark::values::ValueTyped;
 use starlark::values::dict::DictType;
 use starlark::values::list::ListType;
 use starlark::values::string::StarlarkStr;
@@ -85,7 +84,7 @@ fn dep_only_incompatible_info_creator(globals: &mut GlobalsBuilder) {
             DictType<StarlarkStr, DepOnlyIncompatibleRollout<'v>>,
         >,
         eval: &mut Evaluator<'v, '_, '_>,
-    ) -> starlark::Result<ValueTyped<'v, DepOnlyIncompatibleInfo<'v>>> {
+    ) -> starlark::Result<ValueOf<'v, DepOnlyIncompatibleInfo<'v>>> {
         // The provider's own copy, so that mutating the caller's dict cannot add a category that
         // was not validated.
         let mut entries = Vec::with_capacity(custom_soft_errors.dict().len());
@@ -94,7 +93,7 @@ fn dep_only_incompatible_info_creator(globals: &mut GlobalsBuilder) {
             validate_logview_category(category.get().as_str())?;
             entries.push((category, rollout));
         }
-        Ok(eval.heap().alloc_representation(DepOnlyIncompatibleInfo {
+        Ok(eval.heap().alloc(DepOnlyIncompatibleInfo {
             custom_soft_errors: ValueOf::alloc_dict(eval.heap(), entries),
         }))
     }

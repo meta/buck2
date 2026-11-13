@@ -129,10 +129,7 @@ impl<'v> StarlarkValue<'v> for StarlarkFileSet {
         Ok(self
             .0
             .iter()
-            .map(|cell_path| {
-                heap.alloc_representation(StarlarkFileNode(*cell_path))
-                    .to_value()
-            })
+            .map(|cell_path| heap.alloc(StarlarkFileNode(*cell_path)).to_value())
             .collect())
     }
 
@@ -145,7 +142,7 @@ impl<'v> StarlarkValue<'v> for StarlarkFileSet {
             return ValueError::unsupported_with(self, "-", other);
         };
         let difference = self.0.difference(&other.0)?;
-        Ok(heap.alloc_representation(Self(difference)).to_value())
+        Ok(heap.alloc(Self(difference)).to_value())
     }
 
     fn equals(&self, other: Value<'v>) -> starlark::Result<bool> {
@@ -158,7 +155,7 @@ impl<'v> StarlarkValue<'v> for StarlarkFileSet {
     fn bit_or(&self, other: Value<'v>, heap: Heap<'v>) -> starlark::Result<Value<'v>> {
         let other = other.downcast_ref_err::<Self>()?;
         let union = self.0.union(&other.0);
-        Ok(heap.alloc_representation(Self(union)).to_value())
+        Ok(heap.alloc(Self(union)).to_value())
     }
 
     fn bit_and(&self, other: Value<'v>, heap: Heap<'v>) -> starlark::Result<Value<'v>> {
@@ -166,7 +163,7 @@ impl<'v> StarlarkValue<'v> for StarlarkFileSet {
             return ValueError::unsupported_with(self, "&", other);
         };
         let intersect = self.0.intersect(&other.0)?;
-        Ok(heap.alloc_representation(Self(intersect)).to_value())
+        Ok(heap.alloc(Self(intersect)).to_value())
     }
 
     fn get_methods() -> Option<&'static Methods> {
@@ -281,10 +278,7 @@ impl<'v> StarlarkValue<'v> for StarlarkReadDirSet {
         Ok(self
             .children()?
             .into_iter()
-            .map(|cell_path| {
-                heap.alloc_representation(StarlarkFileNode(cell_path))
-                    .to_value()
-            })
+            .map(|cell_path| heap.alloc(StarlarkFileNode(cell_path)).to_value())
             .collect::<Vec<_>>())
     }
 }

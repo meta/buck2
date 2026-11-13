@@ -158,7 +158,7 @@ pub(crate) fn bxl_context_methods(builder: &mut MethodsBuilder) {
     ) -> starlark::Result<
         Either<
             NoneOr<ValueOf<'v, StarlarkConfiguredTargetNode>>,
-            ValueTyped<'v, StarlarkTargetSet<ConfiguredTargetNode>>,
+            ValueOf<'v, StarlarkTargetSet<ConfiguredTargetNode>>,
         >,
     > {
         let cli_modifiers = match modifiers.into_option() {
@@ -193,7 +193,7 @@ pub(crate) fn bxl_context_methods(builder: &mut MethodsBuilder) {
                             Ok(Either::Left(NoneOr::None))
                         }
                     } else {
-                        Ok(Either::Right(heap.alloc_representation(StarlarkTargetSet(
+                        Ok(Either::Right(heap.alloc(StarlarkTargetSet(
                             filter_incompatible(target_expr.get(ctx).await?, this)?,
                         ))))
                     }
@@ -218,7 +218,7 @@ pub(crate) fn bxl_context_methods(builder: &mut MethodsBuilder) {
         labels: TargetListExprArg<'v>,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<
-        Either<ValueOf<'v, StarlarkTargetNode>, ValueTyped<'v, StarlarkTargetSet<TargetNode>>>,
+        Either<ValueOf<'v, StarlarkTargetNode>, ValueOf<'v, StarlarkTargetSet<TargetNode>>>,
     > {
         let heap = eval.heap();
         Ok(this.via_dice(eval, |ctx| {
@@ -228,7 +228,7 @@ pub(crate) fn bxl_context_methods(builder: &mut MethodsBuilder) {
                     if let Some(one) = expr.get_one(ctx).await? {
                         Ok(Either::Left(ValueOf::alloc(heap, StarlarkTargetNode(one))))
                     } else {
-                        Ok(Either::Right(heap.alloc_representation(StarlarkTargetSet(
+                        Ok(Either::Right(heap.alloc(StarlarkTargetSet(
                             expr.get(ctx).await?.into_owned(),
                         ))))
                     }
@@ -621,10 +621,11 @@ pub(crate) fn bxl_context_methods(builder: &mut MethodsBuilder) {
                     .map(|(t, v)| {
                         Ok((
                             eval.heap()
-                                .alloc_representation(StarlarkConfiguredProvidersLabel::new(t))
+                                .alloc(StarlarkConfiguredProvidersLabel::new(t))
+                                .get()
                                 .hashed()
                                 .unwrap(),
-                            eval.heap().alloc_representation(v),
+                            eval.heap().alloc(v).get(),
                         ))
                     })
                     .collect::<buck2_error::Result<_>>()?,

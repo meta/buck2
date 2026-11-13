@@ -11,6 +11,7 @@
 use allocative::Allocative;
 use buck2_artifact::artifact::source_artifact::SourceArtifact;
 use buck2_build_api::interpreter::rule_defs::artifact::starlark_artifact::StarlarkArtifact;
+use buck2_build_api::interpreter::rule_defs::artifact::starlark_artifact_like::StarlarkArtifactView;
 use buck2_common::file_ops::dice::DiceFileComputations;
 use buck2_common::file_ops::metadata::RawPathMetadata;
 use buck2_common::package_listing::dice::DicePackageListingResolver;
@@ -290,7 +291,7 @@ fn fs_operations(builder: &mut MethodsBuilder) {
         expr: FileExpr<'v>,
         #[starlark(default = NoneOr::None)] target_hint: NoneOr<ValueOf<'v, TargetListExprArg<'v>>>,
         eval: &mut Evaluator<'v, '_, '_>,
-    ) -> starlark::Result<ValueTyped<'v, StarlarkArtifact>> {
+    ) -> starlark::Result<ValueOf<'v, StarlarkArtifactView<'v>>> {
         let buck_path = this.ctx.via_dice(eval, |dice| {
             dice.via(|dice| {
                 async {
@@ -351,6 +352,6 @@ fn fs_operations(builder: &mut MethodsBuilder) {
 
         Ok(eval
             .heap()
-            .alloc_representation(StarlarkArtifact::new(SourceArtifact::new(buck_path).into())))
+            .alloc(StarlarkArtifact::new(SourceArtifact::new(buck_path).into())))
     }
 }

@@ -114,7 +114,7 @@ fn bxl_impl<'v>(
 
     Ok(eval
         .heap()
-        .alloc_representation(BxlFunction {
+        .alloc(BxlFunction {
             bxl_path,
             id: RefCell::new(None),
             implementation,

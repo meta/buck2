@@ -1999,22 +1999,19 @@ mod tests {
                 "visible",
                 module
                     .heap()
-                    .alloc_representation(StarlarkArtifact::new(visible.dupe()))
+                    .alloc(StarlarkArtifact::new(visible.dupe()))
                     .to_value(),
             );
             module.set(
                 "hidden",
                 module
                     .heap()
-                    .alloc_representation(StarlarkArtifact::new(hidden.dupe()))
+                    .alloc(StarlarkArtifact::new(hidden.dupe()))
                     .to_value(),
             );
             module.set(
                 "tag",
-                module
-                    .heap()
-                    .alloc_representation(ArtifactTag::testing_new())
-                    .to_value(),
+                module.heap().alloc(ArtifactTag::testing_new()).to_value(),
             );
             let globals = GlobalsBuilder::standard().with(register_cmd_args).build();
             let ast = AstModule::parse(

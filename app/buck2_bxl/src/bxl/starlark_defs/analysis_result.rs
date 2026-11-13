@@ -28,7 +28,6 @@ use starlark::values::NoSerialize;
 use starlark::values::StarlarkValue;
 use starlark::values::Value;
 use starlark::values::ValueOf;
-use starlark::values::ValueTyped;
 use starlark::values::starlark_value;
 
 #[derive(
@@ -170,8 +169,8 @@ fn starlark_analysis_result_methods(builder: &mut MethodsBuilder) {
     fn as_dependency<'v>(
         this: &'v StarlarkAnalysisResult,
         eval: &mut Evaluator<'v, '_, '_>,
-    ) -> starlark::Result<ValueTyped<'v, Dependency<'v>>> {
-        Ok(eval.heap().alloc_representation(Dependency::new(
+    ) -> starlark::Result<ValueOf<'v, Dependency<'v>>> {
+        Ok(eval.heap().alloc(Dependency::new(
             eval.heap(),
             this.lookup.label().dupe(),
             this.lookup

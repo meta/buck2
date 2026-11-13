@@ -135,7 +135,7 @@ pub(crate) fn register_set_cfg_constructor(globals: &mut GlobalsBuilder) {
         }
         package_file_extra.cfg_constructor.get_or_init(|| {
             eval.heap()
-                .alloc_representation(StarlarkCfgConstructor {
+                .alloc(StarlarkCfgConstructor {
                     stage0,
                     stage1,
                     key: key.to_owned(),

@@ -160,8 +160,7 @@ fn action_query_node_value_methods(builder: &mut MethodsBuilder) {
         this.0.attrs_for_each(|k, v| {
             result.push((
                 k.to_owned(),
-                heap.alloc_representation(StarlarkActionAttr(v.to_owned()))
-                    .to_value(),
+                heap.alloc(StarlarkActionAttr(v.to_owned())).to_value(),
             ));
             buck2_error::Ok(())
         })?;

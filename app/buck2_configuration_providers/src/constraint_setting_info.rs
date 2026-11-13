@@ -31,7 +31,6 @@ use starlark::values::Heap;
 use starlark::values::StarlarkPagable;
 use starlark::values::Trace;
 use starlark::values::ValueOf;
-use starlark::values::ValueTyped;
 use starlark::values::none::NoneOr;
 
 /// Provider that signals that a target can be used as a constraint key. This is the only provider
@@ -90,7 +89,7 @@ fn constraint_info_creator(globals: &mut GlobalsBuilder) {
             ValueOf<'v, StarlarkProvidersLabel>,
         >,
         heap: Heap<'v>,
-    ) -> starlark::Result<ValueTyped<'v, ConstraintSettingInfo<'v>>> {
-        Ok(heap.alloc_representation(ConstraintSettingInfo::new(label, default.into_option())))
+    ) -> starlark::Result<ValueOf<'v, ConstraintSettingInfo<'v>>> {
+        Ok(heap.alloc(ConstraintSettingInfo::new(label, default.into_option())))
     }
 }

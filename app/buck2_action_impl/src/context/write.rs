@@ -85,7 +85,7 @@ type WriteOutput<'v> = Either<
     ValueTyped<'v, StarlarkDeclaredArtifact<'v>>,
     (
         ValueTyped<'v, StarlarkDeclaredArtifact<'v>>,
-        ValueTyped<'v, StarlarkDepFileFingerprint<'v>>,
+        ValueOf<'v, StarlarkDepFileFingerprint<'v>>,
     ),
 >;
 
@@ -241,18 +241,13 @@ pub(crate) fn analysis_actions_methods_write(methods: &mut MethodsBuilder) {
                 absolute,
                 format: DepFileFingerprintFormat::Json { pretty },
             };
-            Ok(Either::Right((
-                value,
-                eval.heap().alloc_representation(fingerprint),
-            )))
+            Ok(Either::Right((value, eval.heap().alloc(fingerprint))))
         } else if with_inputs {
             // TODO(nga): we use `AllocValue`, so this function return type for this branch
             //   is `write_json_cli_args`. We want just `cmd_args`,
             //   because users don't care about precise type.
             //   Do it when we migrate to new types not based on strings.
-            Ok(Either::Left(Either::Right(
-                eval.heap().alloc_representation(cli),
-            )))
+            Ok(Either::Left(Either::Right(eval.heap().alloc(cli))))
         } else {
             Ok(Either::Left(Either::Left(value)))
         }
@@ -431,7 +426,7 @@ pub(crate) fn analysis_actions_methods_write(methods: &mut MethodsBuilder) {
                 let count = count_write_to_file_macros(allow_args, &cli)?;
                 let associated_artifacts = get_cli_inputs(with_inputs, &cli)?;
                 (
-                    CommandLineArg::new_err(eval.heap().alloc_representation(cli).to_value())?,
+                    CommandLineArg::new_err(eval.heap().alloc(cli).to_value())?,
                     count,
                     associated_artifacts,
                 )
@@ -538,7 +533,7 @@ pub(crate) fn analysis_actions_methods_write(methods: &mut MethodsBuilder) {
                     macro_files,
                 },
             };
-            Either::Right((value, eval.heap().alloc_representation(fingerprint)))
+            Either::Right((value, eval.heap().alloc(fingerprint)))
         } else {
             Either::Left(value)
         };

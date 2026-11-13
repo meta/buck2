@@ -597,7 +597,7 @@ pub(crate) fn analysis_actions_methods_run(methods: &mut MethodsBuilder) {
             })
             .collect::<buck2_error::Result<Vec<_>>>()?;
 
-        let starlark_values = heap.alloc_representation(StarlarkRunActionValues {
+        let starlark_values = heap.alloc(StarlarkRunActionValues {
             exe: heap.alloc_representation(starlark_exe),
             args: heap.alloc_representation(starlark_args),
             dep_file_fingerprints: MiniBoxSlice::from(dep_file_fingerprints),

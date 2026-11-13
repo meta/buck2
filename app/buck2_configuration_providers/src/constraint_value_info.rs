@@ -27,7 +27,6 @@ use starlark::values::Heap;
 use starlark::values::StarlarkPagable;
 use starlark::values::Trace;
 use starlark::values::ValueOf;
-use starlark::values::ValueTyped;
 
 use crate::constraint_setting_info::ConstraintSettingInfo;
 
@@ -93,8 +92,8 @@ fn constraint_value_info_creator(globals: &mut GlobalsBuilder) {
         #[starlark(require = named)] setting: ValueOf<'v, ConstraintSettingInfo<'v>>,
         #[starlark(require = named)] label: LabelArg<'v>,
         heap: Heap<'v>,
-    ) -> starlark::Result<ValueTyped<'v, ConstraintValueInfo<'v>>> {
+    ) -> starlark::Result<ValueOf<'v, ConstraintValueInfo<'v>>> {
         let label = ValueOf::alloc(heap, label.to_provider_label());
-        Ok(heap.alloc_representation(ConstraintValueInfo::new(setting, label)))
+        Ok(heap.alloc(ConstraintValueInfo::new(setting, label)))
     }
 }

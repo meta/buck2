@@ -244,7 +244,7 @@ fn execute_lambda_inner<'v>(
 
         let providers: ProviderCollection =
             invoke_dynamic_output_lambda(eval, dynamic_lambda_ctx_data.lambda.lambda(), args)?;
-        let providers = eval.heap().alloc_representation(providers);
+        let providers = eval.heap().alloc(providers).get();
 
         ctx.assert_no_promises()?;
 
@@ -638,7 +638,7 @@ fn new_attr_value<'v>(
                 ));
             Ok(env
                 .heap()
-                .alloc_representation(StarlarkOutputArtifact::new(artifact))
+                .alloc(StarlarkOutputArtifact::new(artifact))
                 .to_value())
         }
         DynamicAttrValue::ArtifactValue(artifact) => {
@@ -661,7 +661,7 @@ fn new_attr_value<'v>(
             // `InputArtifactsMaterialized` marker indicates that the artifact is materialized.
             Ok(env
                 .heap()
-                .alloc_representation(StarlarkArtifactValue::new(
+                .alloc(StarlarkArtifactValue::new(
                     artifact.dupe(),
                     path.to_owned(),
                     artifact_fs.fs().dupe(),
@@ -674,7 +674,7 @@ fn new_attr_value<'v>(
                 .internal_error("Missing resolved dynamic value")?;
             Ok(env
                 .heap()
-                .alloc_representation(StarlarkResolvedDynamicValue {
+                .alloc(StarlarkResolvedDynamicValue {
                     value: v.add_heap_ref(env.heap()),
                 })
                 .to_value())

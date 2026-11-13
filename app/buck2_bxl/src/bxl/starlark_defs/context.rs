@@ -343,21 +343,25 @@ impl<'v> BxlContext<'v> {
     ) -> buck2_error::Result<Self> {
         let root_data = RootBxlContextData {
             cli_args,
-            output_stream: heap.alloc_representation(StarlarkOutputStream::new(
-                core.project_fs.dupe(),
-                core.artifact_fs.dupe(),
-                stream_state,
-            )),
+            output_stream: heap
+                .alloc(StarlarkOutputStream::new(
+                    core.project_fs.dupe(),
+                    core.artifact_fs.dupe(),
+                    stream_state,
+                ))
+                .get(),
         };
         let context_type = BxlContextType::Root(root_data);
 
         Ok(Self {
-            state: heap.alloc_representation(AnalysisActions {
-                state: RefCell::new(None),
-                attributes: None,
-                plugins: None,
-                digest_config,
-            }),
+            state: heap
+                .alloc(AnalysisActions {
+                    state: RefCell::new(None),
+                    attributes: None,
+                    plugins: None,
+                    digest_config,
+                })
+                .get(),
             context_type,
             core,
         })
@@ -371,12 +375,14 @@ impl<'v> BxlContext<'v> {
         dynamic_data: DynamicBxlContextData,
     ) -> buck2_error::Result<Self> {
         Ok(Self {
-            state: heap.alloc_representation(AnalysisActions {
-                state: RefCell::new(Some(analysis_registry)),
-                attributes: None,
-                plugins: None,
-                digest_config,
-            }),
+            state: heap
+                .alloc(AnalysisActions {
+                    state: RefCell::new(Some(analysis_registry)),
+                    attributes: None,
+                    plugins: None,
+                    digest_config,
+                })
+                .get(),
             context_type: BxlContextType::Dynamic(dynamic_data),
             core,
         })
@@ -390,12 +396,14 @@ impl<'v> BxlContext<'v> {
         attributes: ValueOf<'v, StructRef<'v>>,
     ) -> buck2_error::Result<Self> {
         Ok(Self {
-            state: heap.alloc_representation(AnalysisActions {
-                state: RefCell::new(Some(analysis_registry)),
-                attributes: Some(attributes),
-                plugins: None,
-                digest_config,
-            }),
+            state: heap
+                .alloc(AnalysisActions {
+                    state: RefCell::new(Some(analysis_registry)),
+                    attributes: Some(attributes),
+                    plugins: None,
+                    digest_config,
+                })
+                .get(),
             context_type: BxlContextType::AnonTarget,
             core,
         })

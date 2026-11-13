@@ -104,7 +104,7 @@ impl ConfiguredStringWithMacrosExt for ConfiguredStringWithMacros {
 
         Ok(ctx
             .heap()
-            .alloc_representation(ResolvedStringWithMacros::new(
+            .alloc(ResolvedStringWithMacros::new(
                 resolved_parts,
                 configured_macros,
             ))

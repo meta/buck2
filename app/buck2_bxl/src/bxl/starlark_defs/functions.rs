@@ -33,7 +33,6 @@ use starlark::values::StringValue;
 use starlark::values::UnpackValue;
 use starlark::values::Value;
 use starlark::values::ValueOf;
-use starlark::values::ValueTyped;
 use starlark::values::list::ListType;
 use starlark::values::none::NoneType;
 use starlark::values::string::StarlarkStr;
@@ -66,12 +65,12 @@ pub(crate) fn register_target_function(builder: &mut GlobalsBuilder) {
     fn ctarget_set<'v>(
         nodes: Option<ValueOf<'v, ListType<StarlarkConfiguredTargetNode>>>,
         heap: Heap<'v>,
-    ) -> starlark::Result<ValueTyped<'v, StarlarkTargetSet<ConfiguredTargetNode>>> {
+    ) -> starlark::Result<ValueOf<'v, StarlarkTargetSet<ConfiguredTargetNode>>> {
         let nodes = match nodes {
             Some(nodes) => nodes.try_to_vec::<StarlarkConfiguredTargetNode>()?,
             None => Vec::new(),
         };
-        Ok(heap.alloc_representation(StarlarkTargetSet::from_iter(
+        Ok(heap.alloc(StarlarkTargetSet::from_iter(
             nodes.into_iter().map(|node| node.0),
         )))
     }
@@ -90,12 +89,12 @@ pub(crate) fn register_target_function(builder: &mut GlobalsBuilder) {
     fn utarget_set<'v>(
         nodes: Option<ValueOf<'v, ListType<StarlarkTargetNode>>>,
         heap: Heap<'v>,
-    ) -> starlark::Result<ValueTyped<'v, StarlarkTargetSet<TargetNode>>> {
+    ) -> starlark::Result<ValueOf<'v, StarlarkTargetSet<TargetNode>>> {
         let nodes = match nodes {
             Some(nodes) => nodes.try_to_vec::<StarlarkTargetNode>()?,
             None => Vec::new(),
         };
-        Ok(heap.alloc_representation(StarlarkTargetSet::from_iter(
+        Ok(heap.alloc(StarlarkTargetSet::from_iter(
             nodes.into_iter().map(|node| node.0),
         )))
     }
@@ -113,12 +112,12 @@ pub(crate) fn register_target_function(builder: &mut GlobalsBuilder) {
     fn atarget_set<'v>(
         nodes: Option<ValueOf<'v, ListType<StarlarkActionQueryNode>>>,
         heap: Heap<'v>,
-    ) -> starlark::Result<ValueTyped<'v, StarlarkTargetSet<ActionQueryNode>>> {
+    ) -> starlark::Result<ValueOf<'v, StarlarkTargetSet<ActionQueryNode>>> {
         let nodes = match nodes {
             Some(nodes) => nodes.try_to_vec::<StarlarkActionQueryNode>()?,
             None => Vec::new(),
         };
-        Ok(heap.alloc_representation(StarlarkTargetSet::from_iter(
+        Ok(heap.alloc(StarlarkTargetSet::from_iter(
             nodes.into_iter().map(|node| node.0),
         )))
     }

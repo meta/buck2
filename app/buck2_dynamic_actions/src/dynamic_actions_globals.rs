@@ -23,7 +23,6 @@ use starlark::util::ArcStr;
 use starlark::values::Heap;
 use starlark::values::StarlarkTypeExpr;
 use starlark::values::ValueOf;
-use starlark::values::ValueTyped;
 use starlark::values::dict::DictType;
 use starlark::values::string::StarlarkStr;
 use starlark::values::typing::StarlarkCallableChecked;
@@ -32,6 +31,7 @@ use crate::attrs::DynamicAttrType;
 use crate::attrs_starlark::StarlarkDynamicAttrType;
 use crate::dynamic_actions::StarlarkDynamicActions;
 use crate::dynamic_actions_callable::DynamicActionsCallable;
+use crate::dynamic_actions_callable::DynamicActionsCallableView;
 use crate::dynamic_actions_callable::DynamicActionsCallbackParam;
 use crate::dynamic_actions_callable::DynamicActionsCallbackParamSpec;
 use crate::dynamic_actions_callable::DynamicActionsCallbackReturnType;
@@ -122,7 +122,7 @@ pub fn register_dynamic_actions(globals: &mut GlobalsBuilder) {
             DictType<StarlarkStr, StarlarkDynamicAttrType<'v>>,
         >,
         heap: Heap<'v>,
-    ) -> starlark::Result<ValueTyped<'v, DynamicActionsCallable<'v>>> {
-        Ok(heap.alloc_representation(new_dynamic_actions_callable(r#impl, attrs, &P_ACTIONS)?))
+    ) -> starlark::Result<ValueOf<'v, DynamicActionsCallableView<'v>>> {
+        Ok(heap.alloc(new_dynamic_actions_callable(r#impl, attrs, &P_ACTIONS)?))
     }
 }

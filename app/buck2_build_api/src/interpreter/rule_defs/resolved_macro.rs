@@ -402,7 +402,7 @@ mod tests {
         Heap::temp(|heap| {
             let resolved = make_string_resolved("-resolved-flag");
             let other_val = heap
-                .alloc_representation(make_string_resolved("-resolved-flag"))
+                .alloc(make_string_resolved("-resolved-flag"))
                 .to_value();
             assert_eq!(resolved.equals(other_val).unwrap(), true);
         });

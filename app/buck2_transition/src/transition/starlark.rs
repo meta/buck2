@@ -341,7 +341,7 @@ fn register_transition_function(builder: &mut GlobalsBuilder) {
         #[starlark(require = named)] attrs: Option<ValueOf<'v, ListOrTupleType<StarlarkStr>>>,
         #[starlark(require = named, default = false)] split: bool,
         eval: &mut Evaluator<'v, '_, '_>,
-    ) -> starlark::Result<ValueTyped<'v, Transition<'v>>> {
+    ) -> starlark::Result<ValueOf<'v, TransitionView<'v>>> {
         let implementation = r#impl.0;
 
         let refs = refs
@@ -376,7 +376,7 @@ fn register_transition_function(builder: &mut GlobalsBuilder) {
 
         validate_transition_impl(implementation, attrs.is_some(), split)?;
 
-        Ok(eval.heap().alloc_representation(Transition {
+        Ok(eval.heap().alloc(Transition {
             id: RefCell::new(None),
             path,
             implementation,

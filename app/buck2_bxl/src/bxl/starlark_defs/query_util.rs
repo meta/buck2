@@ -28,12 +28,12 @@ where
 {
     Ok(match result {
         QueryEvaluationResult::Single(result) => match result {
-            QueryEvaluationValue::TargetSet(targets) => heap
-                .alloc_representation(StarlarkTargetSet::from(targets))
-                .to_value(),
-            QueryEvaluationValue::FileSet(files) => heap
-                .alloc_representation(StarlarkFileSet::from(files))
-                .to_value(),
+            QueryEvaluationValue::TargetSet(targets) => {
+                heap.alloc(StarlarkTargetSet::from(targets)).to_value()
+            }
+            QueryEvaluationValue::FileSet(files) => {
+                heap.alloc(StarlarkFileSet::from(files)).to_value()
+            }
         },
         QueryEvaluationResult::Multiple(multi) => heap.alloc_dict(
             multi
@@ -49,12 +49,12 @@ where
                             )
                         })?,
                         match res? {
-                            QueryEvaluationValue::TargetSet(targets) => heap
-                                .alloc_representation(StarlarkTargetSet::from(targets))
-                                .to_value(),
-                            QueryEvaluationValue::FileSet(files) => heap
-                                .alloc_representation(StarlarkFileSet::from(files))
-                                .to_value(),
+                            QueryEvaluationValue::TargetSet(targets) => {
+                                heap.alloc(StarlarkTargetSet::from(targets)).to_value()
+                            }
+                            QueryEvaluationValue::FileSet(files) => {
+                                heap.alloc(StarlarkFileSet::from(files)).to_value()
+                            }
                         },
                     ))
                 })

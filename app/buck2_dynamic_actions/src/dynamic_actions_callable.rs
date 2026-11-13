@@ -186,7 +186,7 @@ impl<'v> StarlarkType<'v> for DynamicActionsCallableView<'v> {
             })?;
         Ok(eval
             .heap()
-            .alloc_representation(StarlarkDynamicActions {
+            .alloc(StarlarkDynamicActions {
                 data: RefCell::new(Some(StarlarkDynamicActionsData {
                     callable: me,
                     attr_values,

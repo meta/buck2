@@ -30,7 +30,7 @@ pub(crate) trait SourceAttrTypeExt {
         path: SourcePath,
     ) -> Value<'v> {
         ctx.heap()
-            .alloc_representation(StarlarkArtifact::new(SourceArtifact::new(path).into()))
+            .alloc(StarlarkArtifact::new(SourceArtifact::new(path).into()))
             .to_value()
     }
 

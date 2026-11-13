@@ -25,7 +25,6 @@ use starlark::values::StarlarkValue;
 use starlark::values::StringValue;
 use starlark::values::Trace;
 use starlark::values::ValueOf;
-use starlark::values::ValueTyped;
 use starlark::values::starlark_value;
 
 use crate::interpreter::rule_defs::artifact::starlark_artifact_like::StarlarkArtifactView;
@@ -222,13 +221,13 @@ pub fn register_validation_spec(builder: &mut GlobalsBuilder) {
         #[starlark(require = named)] validation_result: ValueOf<'v, StarlarkArtifactView<'v>>,
         #[starlark(require = named, default = false)] optional: bool,
         heap: Heap<'v>,
-    ) -> starlark::Result<ValueTyped<'v, StarlarkValidationSpec<'v>>> {
+    ) -> starlark::Result<ValueOf<'v, StarlarkValidationSpec<'v>>> {
         let result = StarlarkValidationSpec {
             name,
             validation_result,
             optional,
         };
         validate_validation_spec(&result)?;
-        Ok(heap.alloc_representation(result))
+        Ok(heap.alloc(result))
     }
 }

@@ -85,8 +85,8 @@ fn transition_info_creator(globals: &mut GlobalsBuilder) {
         >,
         #[starlark(require = named)] attrs: Option<ValueOf<'v, ListOrTupleType<StarlarkStr>>>,
         heap: Heap<'v>,
-    ) -> starlark::Result<ValueTyped<'v, TransitionInfo<'v>>> {
-        Ok(heap.alloc_representation(TransitionInfo { r#impl, attrs }))
+    ) -> starlark::Result<ValueOf<'v, TransitionInfo<'v>>> {
+        Ok(heap.alloc(TransitionInfo { r#impl, attrs }))
     }
 }
 

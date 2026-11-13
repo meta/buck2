@@ -54,6 +54,7 @@ use starlark::values::ThinBoxSliceValue;
 use starlark::values::Trace;
 use starlark::values::UnpackValue;
 use starlark::values::Value;
+use starlark::values::ValueOf;
 use starlark::values::ValueTyped;
 use starlark::values::list::AllocList;
 use starlark::values::starlark_value;
@@ -780,14 +781,14 @@ fn transitive_set_methods(builder: &mut MethodsBuilder) {
         projection: &str,
         #[starlark(require = named, default = "preorder")] ordering: &str,
         heap: Heap<'v>,
-    ) -> starlark::Result<ValueTyped<'v, TransitiveSetJsonProjection<'v>>> {
+    ) -> starlark::Result<ValueOf<'v, TransitiveSetJsonProjection<'v>>> {
         let def = this.definition;
 
         let index = def
             .operations()
             .get_index_of_projection(TransitiveSetProjectionKind::Json, projection)?;
 
-        Ok(heap.alloc_representation(TransitiveSetJsonProjection {
+        Ok(heap.alloc(TransitiveSetJsonProjection {
             transitive_set: this,
             projection: index,
             ordering: TransitiveSetOrdering::parse(ordering)?,
@@ -799,14 +800,14 @@ fn transitive_set_methods(builder: &mut MethodsBuilder) {
         projection: &str,
         #[starlark(require = named, default = "preorder")] ordering: &str,
         heap: Heap<'v>,
-    ) -> starlark::Result<ValueTyped<'v, TransitiveSetArgsProjection<'v>>> {
+    ) -> starlark::Result<ValueOf<'v, TransitiveSetArgsProjection<'v>>> {
         let def = this.definition;
 
         let index = def
             .operations()
             .get_index_of_projection(TransitiveSetProjectionKind::Args, projection)?;
 
-        Ok(heap.alloc_representation(TransitiveSetArgsProjection {
+        Ok(heap.alloc(TransitiveSetArgsProjection {
             transitive_set: this,
             projection: index,
             ordering: TransitiveSetOrdering::parse(ordering)?,
@@ -848,8 +849,8 @@ fn transitive_set_methods(builder: &mut MethodsBuilder) {
         this: ValueTyped<'v, TransitiveSet<'v>>,
         #[starlark(require = named, default = "preorder")] ordering: &str,
         heap: Heap<'v>,
-    ) -> starlark::Result<ValueTyped<'v, TransitiveSetTraversal<'v>>> {
-        Ok(heap.alloc_representation(TransitiveSetTraversal {
+    ) -> starlark::Result<ValueOf<'v, TransitiveSetTraversal<'v>>> {
+        Ok(heap.alloc(TransitiveSetTraversal {
             inner: this,
             ordering: TransitiveSetOrdering::parse(ordering)?,
         }))

@@ -536,7 +536,7 @@ fn internal_runner_test_info_creator(globals: &mut GlobalsBuilder) {
             ValueOf<'v, StarlarkExecutionGroupView<'v>>,
         >,
         eval: &mut Evaluator<'v, '_, '_>,
-    ) -> starlark::Result<ValueTyped<'v, InternalRunnerTestInfo<'v>>> {
+    ) -> starlark::Result<ValueOf<'v, InternalRunnerTestInfo<'v>>> {
         let exec_group = exec_group.into_option();
         let group = exec_group.map(|g| g.get().expect_bound()).transpose()?;
         let default_executor = default_executor_with_execution_group(
@@ -563,6 +563,6 @@ fn internal_runner_test_info_creator(globals: &mut GlobalsBuilder) {
             parse_test_result,
         };
         validate_internal_runner_test_info(&res)?;
-        Ok(eval.heap().alloc_representation(res))
+        Ok(eval.heap().alloc(res))
     }
 }

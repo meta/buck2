@@ -10,6 +10,7 @@
 
 use buck2_artifact::artifact::output_type::OutputType;
 use buck2_build_api::interpreter::rule_defs::artifact::associated::AssociatedArtifacts;
+use buck2_build_api::interpreter::rule_defs::artifact::starlark_artifact_like::StarlarkArtifactView;
 use buck2_build_api::interpreter::rule_defs::artifact::starlark_declared_artifact::StarlarkDeclaredArtifact;
 use buck2_build_api::interpreter::rule_defs::artifact_tagging::ArtifactTag;
 use buck2_build_api::interpreter::rule_defs::context::AnalysisActions;
@@ -54,7 +55,7 @@ pub(crate) fn analysis_actions_methods_unsorted(builder: &mut MethodsBuilder) {
         #[starlark(require = named, default = false)] dir: bool,
         #[starlark(require = named)] has_content_based_path: Option<bool>,
         eval: &mut Evaluator<'v, '_, '_>,
-    ) -> starlark::Result<ValueTyped<'v, StarlarkDeclaredArtifact<'v>>> {
+    ) -> starlark::Result<ValueOf<'v, StarlarkArtifactView<'v>>> {
         // We take either one or two positional arguments, namely (filename) or (prefix, filename).
         // The prefix argument is optional, but first, so we pretend the filename is optional
         // and fix them up here.
@@ -83,13 +84,11 @@ pub(crate) fn analysis_actions_methods_unsorted(builder: &mut MethodsBuilder) {
             eval.heap(),
         )?;
 
-        Ok(eval
-            .heap()
-            .alloc_representation(StarlarkDeclaredArtifact::new(
-                eval.call_stack_top_location(),
-                artifact,
-                AssociatedArtifacts::new(),
-            )))
+        Ok(eval.heap().alloc(StarlarkDeclaredArtifact::new(
+            eval.call_stack_top_location(),
+            artifact,
+            AssociatedArtifacts::new(),
+        )))
     }
 
     /// Creates a new transitive set. For details, see https://buck2.build/docs/rule_authors/transitive_sets/.

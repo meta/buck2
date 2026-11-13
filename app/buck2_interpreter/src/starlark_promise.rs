@@ -172,12 +172,16 @@ impl<'v> StarlarkPromise<'v> {
         match x.get() {
             Some(x) => Ok(eval
                 .heap()
-                .alloc_representation(Self::new_resolved(Self::apply(f, x, eval)?))),
+                .alloc(Self::new_resolved(Self::apply(f, x, eval)?))
+                .get()),
             _ => {
-                let res = eval.heap().alloc_representation(Self {
-                    value: RefCell::new(PromiseValue::Map(x, f)),
-                    ..Self::new_unresolved()
-                });
+                let res = eval
+                    .heap()
+                    .alloc(Self {
+                        value: RefCell::new(PromiseValue::Map(x, f)),
+                        ..Self::new_unresolved()
+                    })
+                    .get();
                 x.downstream.borrow_mut().push(res);
                 Ok(res)
             }
@@ -191,10 +195,11 @@ impl<'v> StarlarkPromise<'v> {
         let join = PromiseJoin::new(args);
         match join.get() {
             Some(values) => heap
-                .alloc_representation(Self::new_resolved(heap.alloc(AllocList(values)).to_value())),
+                .alloc(Self::new_resolved(heap.alloc(AllocList(values)).to_value()))
+                .get(),
             None => {
                 let promise = Self::new_unresolved();
-                let value = heap.alloc_representation(promise);
+                let value = heap.alloc(promise).get();
                 for arg in &join.items {
                     arg.downstream.borrow_mut().push(value);
                 }
@@ -337,7 +342,7 @@ mod tests {
         Allocative
     )]
     #[display("{:?}", self)]
-    struct Promises<'v>(RefCell<Vec<(String, ValueTyped<'v, StarlarkPromise<'v>>)>>);
+    struct Promises<'v>(RefCell<Vec<(String, ValueOf<'v, StarlarkPromise<'v>>)>>);
 
     #[starlark_value(type = "Promises", no_freeze)]
     impl<'v> StarlarkValue<'v> for Promises<'v> {}
@@ -347,11 +352,9 @@ mod tests {
         fn promise_unresolved<'v>(
             name: &str,
             eval: &mut Evaluator<'v, '_, '_>,
-        ) -> starlark::Result<ValueTyped<'v, StarlarkPromise<'v>>> {
+        ) -> starlark::Result<ValueOf<'v, StarlarkPromise<'v>>> {
             let promises = get_promises(eval.module());
-            let promise = eval
-                .heap()
-                .alloc_representation(StarlarkPromise::new_unresolved());
+            let promise = eval.heap().alloc(StarlarkPromise::new_unresolved());
             promises.0.borrow_mut().push((name.to_owned(), promise));
             Ok(promise)
         }
@@ -359,8 +362,8 @@ mod tests {
         fn promise_resolved<'v>(
             value: Value<'v>,
             heap: Heap<'v>,
-        ) -> starlark::Result<ValueTyped<'v, StarlarkPromise<'v>>> {
-            Ok(heap.alloc_representation(StarlarkPromise::new_resolved(value)))
+        ) -> starlark::Result<ValueOf<'v, StarlarkPromise<'v>>> {
+            Ok(heap.alloc(StarlarkPromise::new_resolved(value)))
         }
 
         fn promise_validate<'v>(
@@ -383,9 +386,7 @@ mod tests {
     fn alloc_promises(modu: &Module) {
         modu.set(
             "__promises__",
-            modu.heap()
-                .alloc_representation(Promises::default())
-                .to_value(),
+            modu.heap().alloc(Promises::default()).to_value(),
         )
     }
 

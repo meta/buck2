@@ -343,7 +343,7 @@ impl InterpreterForDir {
 
         env.set_extra_value_no_overwrite(
             env.heap()
-                .alloc_representation(StarlarkAnyComplex {
+                .alloc(StarlarkAnyComplex {
                     value: InterpreterExtraValue::default(),
                 })
                 .to_value(),

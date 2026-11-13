@@ -11,10 +11,11 @@
 use buck2_interpreter::execution_group::EXEC_GROUP_TYPE;
 use buck2_interpreter::execution_group::FrozenStarlarkExecutionGroup;
 use buck2_interpreter::execution_group::StarlarkExecutionGroup;
+use buck2_interpreter::execution_group::StarlarkExecutionGroupView;
 use starlark::environment::GlobalsBuilder;
 use starlark::eval::Evaluator;
 use starlark::starlark_module;
-use starlark::values::ValueTyped;
+use starlark::values::ValueOf;
 use starlark::values::starlark_value_as_type::StarlarkValueAsType;
 
 use crate::interpreter::build_context::BuildContext;
@@ -51,14 +52,14 @@ fn register_execution_group_globals(r: &mut GlobalsBuilder) {
     /// `exec_group` only to refer to tools.
     fn exec_group<'v>(
         eval: &mut Evaluator<'v, '_, '_>,
-    ) -> starlark::Result<ValueTyped<'v, StarlarkExecutionGroup>> {
+    ) -> starlark::Result<ValueOf<'v, StarlarkExecutionGroupView<'v>>> {
         let cell_path = BuildContext::from_context(eval)?
             .starlark_path()
             .path()
             .into_owned();
         Ok(eval
             .heap()
-            .alloc_representation(StarlarkExecutionGroup::new_unbound(cell_path)))
+            .alloc(StarlarkExecutionGroup::new_unbound(cell_path)))
     }
 
     /// The execution group of every exec dep, toolchain dep and action that does not specify one.

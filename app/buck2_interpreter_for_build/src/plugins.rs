@@ -34,6 +34,7 @@ use starlark::values::StarlarkValue;
 use starlark::values::Trace;
 use starlark::values::UnpackValue;
 use starlark::values::Value;
+use starlark::values::ValueOf;
 use starlark::values::ValueTyped;
 use starlark::values::starlark_value;
 
@@ -258,16 +259,14 @@ fn register_plugins_methods(r: &mut GlobalsBuilder) {
     /// - `rule(..., uses_plugins = [MyKind])` to access plugins via `ctx.plugins[MyKind]`
     fn kind<'v>(
         eval: &mut Evaluator<'v, '_, '_>,
-    ) -> starlark::Result<ValueTyped<'v, StarlarkPluginKind>> {
+    ) -> starlark::Result<ValueOf<'v, StarlarkPluginKindView<'v>>> {
         let cell_path = BuildContext::from_context(eval)?
             .starlark_path()
             .path()
             .into_owned();
-        Ok(eval
-            .heap()
-            .alloc_representation(StarlarkPluginKind(RefCell::new(
-                InnerStarlarkPluginKind::Unbound(cell_path),
-            ))))
+        Ok(eval.heap().alloc(StarlarkPluginKind(RefCell::new(
+            InnerStarlarkPluginKind::Unbound(cell_path),
+        ))))
     }
 
     /// A special value for use with `pulls_and_pushes_plugins`.

@@ -29,6 +29,7 @@ use starlark::starlark_module;
 use starlark::values::FreezeErrorContext;
 use starlark::values::OwnedFrozen;
 use starlark::values::Value;
+use starlark::values::ValueOf;
 use starlark::values::ValueTyped;
 
 use crate::interpreter::rule_defs::artifact::testing::artifactory;
@@ -40,7 +41,7 @@ pub(crate) fn tset_factory(builder: &mut GlobalsBuilder) {
         value: Option<Value<'v>>,
         children: Option<Value<'v>>, // An iterable.
         eval: &mut Evaluator<'v, '_, '_>,
-    ) -> starlark::Result<ValueTyped<'v, TransitiveSet<'v>>> {
+    ) -> starlark::Result<ValueOf<'v, TransitiveSet<'v>>> {
         let definition = definition.frozen()?;
         // Per thread, so a test's indices start at zero whatever other tests
         // run alongside it: `libtest` runs each test on its own thread, and
@@ -64,7 +65,7 @@ pub(crate) fn tset_factory(builder: &mut GlobalsBuilder) {
             eval,
         )?;
 
-        Ok(eval.heap().alloc_representation(set))
+        Ok(eval.heap().alloc(set))
     }
 }
 

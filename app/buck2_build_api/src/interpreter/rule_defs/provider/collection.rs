@@ -332,10 +332,7 @@ impl<'v> ProviderCollection<'v> {
         if !providers.contains_key(DefaultInfoCallable::provider_id().as_ref()) {
             providers.insert(
                 CollectionKey(DefaultInfoCallable::provider_id().dupe()),
-                Deferred::new(
-                    heap.alloc_representation(DefaultInfo::empty(heap))
-                        .to_value(),
-                ),
+                Deferred::new(heap.alloc(DefaultInfo::empty(heap)).to_value()),
             );
         }
         Ok(ProviderCollection { providers })
@@ -386,12 +383,13 @@ impl<'v> ProviderCollection<'v> {
 
 impl ProviderCollection<'static> {
     pub fn testing_new_default<'v>(heap: FrozenHeap<'v>) -> ValueTyped<'v, ProviderCollection<'v>> {
-        heap.alloc_representation(ProviderCollection {
+        heap.alloc(ProviderCollection {
             providers: BuckMutInsertionMap::from_iter([(
                 CollectionKey(DefaultInfoCallable::provider_id().dupe()),
                 Deferred::new(DefaultInfo::testing_empty(heap).to_value()),
             )]),
         })
+        .get()
     }
 }
 
@@ -706,7 +704,7 @@ pub mod tester {
     use starlark::environment::GlobalsBuilder;
     use starlark::values::Heap;
     use starlark::values::Value;
-    use starlark::values::ValueTyped;
+    use starlark::values::ValueOf;
 
     use crate::interpreter::rule_defs::provider::ProviderCollection;
 
@@ -715,8 +713,8 @@ pub mod tester {
         fn create_collection<'v>(
             value: Value<'v>,
             heap: Heap<'v>,
-        ) -> starlark::Result<ValueTyped<'v, ProviderCollection<'v>>> {
-            Ok(heap.alloc_representation(ProviderCollection::try_from_value(value)?))
+        ) -> starlark::Result<ValueOf<'v, ProviderCollection<'v>>> {
+            Ok(heap.alloc(ProviderCollection::try_from_value(value)?))
         }
 
         fn get_default_info_default_outputs<'v>(value: Value<'v>) -> starlark::Result<Value<'v>> {

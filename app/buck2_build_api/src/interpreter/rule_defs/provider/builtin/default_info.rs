@@ -166,8 +166,8 @@ impl<'v> DefaultInfo<'v> {
         }
     }
 
-    pub(crate) fn testing_empty(heap: FrozenHeap<'v>) -> ValueTyped<'v, DefaultInfo<'v>> {
-        heap.alloc_representation(DefaultInfo {
+    pub(crate) fn testing_empty(heap: FrozenHeap<'v>) -> ValueOf<'v, DefaultInfo<'v>> {
+        heap.alloc(DefaultInfo {
             sub_targets: ValueOf::new_unchecked(heap.alloc(AllocDict::EMPTY).to_value()),
             default_outputs: ValueOf::new_unchecked(heap.alloc(AllocList::EMPTY).to_value()),
             other_outputs: ValueOf::new_unchecked(heap.alloc(AllocList::EMPTY).to_value()),
@@ -324,7 +324,7 @@ fn default_info_creator(builder: &mut GlobalsBuilder) {
             DictType<StarlarkStr, Value<'v>>,
         >,
         eval: &mut Evaluator<'v, '_, '_>,
-    ) -> starlark::Result<ValueTyped<'v, DefaultInfo<'v>>> {
+    ) -> starlark::Result<ValueOf<'v, DefaultInfo<'v>>> {
         let heap = eval.heap();
 
         // support both list and singular options for now until we migrate all the rules.
@@ -348,7 +348,7 @@ fn default_info_creator(builder: &mut GlobalsBuilder) {
             })
             .collect::<buck2_error::Result<Vec<_>>>()?;
 
-        Ok(heap.alloc_representation(DefaultInfo {
+        Ok(heap.alloc(DefaultInfo {
             default_outputs,
             other_outputs,
             sub_targets: ValueOf::alloc_dict(heap, sub_targets),

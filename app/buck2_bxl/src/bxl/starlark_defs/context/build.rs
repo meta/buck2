@@ -84,7 +84,7 @@ impl<'v> StarlarkValue<'v> for StarlarkProvidersArtifactIterable<'v> {
         Ok(self
             .iter()
             .map(|artifact| {
-                heap.alloc_representation(StarlarkArtifact::new(artifact.dupe()))
+                heap.alloc(StarlarkArtifact::new(artifact.dupe()))
                     .to_value()
             })
             .collect())
@@ -95,7 +95,7 @@ impl<'v> StarlarkValue<'v> for StarlarkProvidersArtifactIterable<'v> {
         if let Ok(i) = usize::try_from(i) {
             if let Some(artifact) = self.iter().nth(i) {
                 return Ok(heap
-                    .alloc_representation(StarlarkArtifact::new(artifact.dupe()))
+                    .alloc(StarlarkArtifact::new(artifact.dupe()))
                     .to_value());
             }
         }
@@ -251,14 +251,16 @@ pub(crate) fn build<'v>(
         .map(|(target, result)| {
             (
                 eval.heap()
-                    .alloc_representation(StarlarkConfiguredProvidersLabel::new(target.clone()))
+                    .alloc(StarlarkConfiguredProvidersLabel::new(target.clone()))
+                    .get()
                     .hashed()
                     .unwrap(),
                 eval.heap()
-                    .alloc_representation(StarlarkBxlBuildResult(BxlBuildResult::new(
+                    .alloc(StarlarkBxlBuildResult(BxlBuildResult::new(
                         target.clone(),
                         result,
-                    ))),
+                    )))
+                    .get(),
             )
         })
         .collect())

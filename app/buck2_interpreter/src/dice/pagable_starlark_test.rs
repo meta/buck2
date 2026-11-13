@@ -290,13 +290,13 @@ impl Key for ScopeHeapKey {
             FrozenHeapName::user("dice_scope_dependency"),
             |heap| match generation {
                 0 => heap
-                    .alloc_representation(ScopeLeafData {
+                    .alloc(ScopeLeafData {
                         flag: true,
                         count: 111,
                     })
                     .to_value(),
                 1 => heap
-                    .alloc_representation(ScopeLeafData {
+                    .alloc(ScopeLeafData {
                         flag: false,
                         count: 222,
                     })
@@ -345,7 +345,7 @@ fn make_root(dependency: &OwnedFrozen<Value<'static>>, root_id: u8) -> OwnedFroz
         FrozenHeapName::user(format!("dice_scope_root_{root_id}")),
         |heap| {
             let target = dependency.as_ref().add_to_frozen_heap(heap);
-            heap.alloc_representation(ScopeRootData {
+            heap.alloc(ScopeRootData {
                 label: if root_id == 0 { 10 } else { 20 },
                 gate: PageInGateMarker(root_id == 0),
                 target,
@@ -604,7 +604,7 @@ impl Key for CollisionHeapKey {
         ScopeHeapValue::new(OwnedFrozen::build(
             FrozenHeapName::user("dice_collision_dependency"),
             |heap| {
-                heap.alloc_representation(ScopeLeafData {
+                heap.alloc(ScopeLeafData {
                     flag: true,
                     count: 333,
                 })

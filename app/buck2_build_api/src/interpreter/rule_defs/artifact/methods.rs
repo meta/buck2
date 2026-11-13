@@ -18,7 +18,6 @@ use starlark::environment::MethodsBuilder;
 use starlark::values::Heap;
 use starlark::values::StringValue;
 use starlark::values::ValueOf;
-use starlark::values::ValueTyped;
 use starlark::values::list::ListType;
 use starlark::values::none::NoneOr;
 
@@ -26,7 +25,7 @@ use crate::interpreter::rule_defs::artifact::starlark_artifact::StarlarkArtifact
 use crate::interpreter::rule_defs::artifact::starlark_artifact_like::ArtifactOrOutputArtifact;
 use crate::interpreter::rule_defs::artifact::starlark_artifact_like::StarlarkArtifactView;
 use crate::interpreter::rule_defs::artifact::starlark_declared_artifact::StarlarkDeclaredArtifact;
-use crate::interpreter::rule_defs::artifact::starlark_output_artifact::StarlarkOutputArtifact;
+use crate::interpreter::rule_defs::artifact::starlark_output_artifact::StarlarkOutputArtifactView;
 use crate::interpreter::rule_defs::artifact::starlark_promise_artifact::StarlarkPromiseArtifact;
 
 pub enum EitherStarlarkInputArtifact<'v> {
@@ -38,9 +37,9 @@ pub enum EitherStarlarkInputArtifact<'v> {
 impl<'v> EitherStarlarkInputArtifact<'v> {
     pub(crate) fn alloc(self, heap: Heap<'v>) -> ValueOf<'v, StarlarkArtifactView<'v>> {
         match self {
-            Self::Artifact(x) => ValueOf::from_representation(heap.alloc_representation(x)),
-            Self::DeclaredArtifact(x) => ValueOf::from_representation(heap.alloc_representation(x)),
-            Self::PromiseArtifact(x) => ValueOf::from_representation(heap.alloc_representation(x)),
+            Self::Artifact(x) => heap.alloc(x),
+            Self::DeclaredArtifact(x) => heap.alloc(x),
+            Self::PromiseArtifact(x) => heap.alloc(x),
         }
     }
 }
@@ -120,8 +119,8 @@ fn input_artifact_methods(builder: &mut MethodsBuilder) {
     fn as_output<'v>(
         this: ValueOf<'v, StarlarkArtifactView<'v>>,
         heap: Heap<'v>,
-    ) -> starlark::Result<ValueTyped<'v, StarlarkOutputArtifact<'v>>> {
-        Ok(heap.alloc_representation(
+    ) -> starlark::Result<ValueOf<'v, StarlarkOutputArtifactView<'v>>> {
+        Ok(heap.alloc(
             this.get()
                 .as_input_artifact_like()
                 .as_output(this.to_value())?,

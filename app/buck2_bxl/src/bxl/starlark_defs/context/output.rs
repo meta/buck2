@@ -893,7 +893,7 @@ fn output_stream_methods(builder: &mut MethodsBuilder) {
                 }
 
                 Ok(heap
-                    .alloc_representation(EnsuredArtifactGroup::new(result, false, heap))
+                    .alloc(EnsuredArtifactGroup::new(result, false, heap))
                     .to_value())
             }
         }
@@ -904,7 +904,7 @@ fn alloc_ensured_artifacts<'v>(heap: Heap<'v>, artifacts: Vec<EnsuredArtifact>) 
     heap.alloc(AllocList(
         artifacts
             .into_iter()
-            .map(|artifact| heap.alloc_representation(artifact).to_value()),
+            .map(|artifact| heap.alloc(artifact).to_value()),
     ))
     .to_value()
 }

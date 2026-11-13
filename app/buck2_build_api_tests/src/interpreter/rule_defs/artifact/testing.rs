@@ -56,7 +56,6 @@ use starlark::eval::Evaluator;
 use starlark::starlark_module;
 use starlark::values::Value;
 use starlark::values::ValueOf;
-use starlark::values::ValueTyped;
 use starlark::values::list_or_tuple::ListOrTupleType;
 
 use crate::actions::testings::SimpleUnregisteredAction;
@@ -111,7 +110,7 @@ pub(crate) fn artifactory(builder: &mut GlobalsBuilder) {
     fn declared_artifact<'v>(
         path: &str,
         eval: &mut Evaluator<'v, '_, '_>,
-    ) -> starlark::Result<ValueTyped<'v, StarlarkDeclaredArtifact<'v>>> {
+    ) -> starlark::Result<ValueOf<'v, StarlarkArtifactView<'v>>> {
         let target_label = get_label(eval, "//foo:bar")?;
         let mut registry = ActionsRegistry::new(
             DeferredHolderKey::Base(BaseDeferredKey::TargetLabel(target_label)),
@@ -125,20 +124,18 @@ pub(crate) fn artifactory(builder: &mut GlobalsBuilder) {
             BuckOutPathKind::default(),
             eval.heap(),
         )?;
-        Ok(eval
-            .heap()
-            .alloc_representation(StarlarkDeclaredArtifact::new(
-                None,
-                artifact,
-                AssociatedArtifacts::new(),
-            )))
+        Ok(eval.heap().alloc(StarlarkDeclaredArtifact::new(
+            None,
+            artifact,
+            AssociatedArtifacts::new(),
+        )))
     }
 
     fn declared_bound_artifact<'v>(
         target: &str,
         path: &str,
         eval: &mut Evaluator<'v, '_, '_>,
-    ) -> starlark::Result<ValueTyped<'v, StarlarkDeclaredArtifact<'v>>> {
+    ) -> starlark::Result<ValueOf<'v, StarlarkArtifactView<'v>>> {
         let target_label = get_label(eval, target)?;
         let mut registry = ActionsRegistry::new(
             DeferredHolderKey::Base(BaseDeferredKey::TargetLabel(target_label.dupe())),
@@ -163,13 +160,11 @@ pub(crate) fn artifactory(builder: &mut GlobalsBuilder) {
                 None,
             ),
         )?;
-        Ok(eval
-            .heap()
-            .alloc_representation(StarlarkDeclaredArtifact::new(
-                None,
-                artifact,
-                AssociatedArtifacts::new(),
-            )))
+        Ok(eval.heap().alloc(StarlarkDeclaredArtifact::new(
+            None,
+            artifact,
+            AssociatedArtifacts::new(),
+        )))
     }
 
     fn stringify_for_cli<'v>(artifact: StarlarkArtifactView<'v>) -> starlark::Result<String> {

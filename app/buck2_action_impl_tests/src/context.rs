@@ -81,7 +81,8 @@ fn run_ctx_test(
                 ValueOf::alloc_struct(eval.heap(), AllocStruct([("name", "some_name")]));
             let plugins = eval
                 .heap()
-                .alloc_representation(AnalysisPlugins::new(BuckMutInsertionMap::new()))
+                .alloc(AnalysisPlugins::new(BuckMutInsertionMap::new()))
+                .get()
                 .into();
 
             let ctx = eval

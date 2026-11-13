@@ -129,7 +129,7 @@ fn audit_methods(builder: &mut MethodsBuilder) {
                         None => Ok(NoneOr::None),
                         Some(result) => buck2_error::Ok(NoneOr::Other(match result {
                             AuditOutputResult::Match(action) => heap
-                                .alloc_representation(StarlarkAction(
+                                .alloc(StarlarkAction(
                                     action
                                         .action()
                                         .ok_or_else(|| {
@@ -138,12 +138,12 @@ fn audit_methods(builder: &mut MethodsBuilder) {
                                         .dupe(),
                                 ))
                                 .to_value(),
-                            AuditOutputResult::MaybeRelevantForConfigurationHashPath(label) => heap
-                                .alloc_representation(StarlarkTargetLabel::new(label))
-                                .to_value(),
-                            AuditOutputResult::MatchContentBasedPath(label) => heap
-                                .alloc_representation(StarlarkTargetLabel::new(label))
-                                .to_value(),
+                            AuditOutputResult::MaybeRelevantForConfigurationHashPath(label) => {
+                                heap.alloc(StarlarkTargetLabel::new(label)).to_value()
+                            }
+                            AuditOutputResult::MatchContentBasedPath(label) => {
+                                heap.alloc(StarlarkTargetLabel::new(label)).to_value()
+                            }
                         })),
                     }
                 }

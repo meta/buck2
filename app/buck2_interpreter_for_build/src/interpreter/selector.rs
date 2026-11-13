@@ -92,8 +92,7 @@ impl<'v> StarlarkSelector<'v> {
     }
 
     fn sum(left: Value<'v>, right: Value<'v>, heap: Heap<'v>) -> Value<'v> {
-        heap.alloc_representation(StarlarkSelector::Sum(left, right))
-            .to_value()
+        heap.alloc(StarlarkSelector::Sum(left, right)).to_value()
     }
 
     pub fn from_concat<I>(iter: I, heap: Heap<'v>) -> buck2_error::Result<Value<'v>>
@@ -122,10 +121,7 @@ impl<'v> StarlarkSelector<'v> {
                 }
                 (Some(s), None) => Ok(Some(s)),
                 (Some(s), Some(v)) => {
-                    let head = Some(StarlarkSelector::Sum(
-                        heap.alloc_representation(s).to_value(),
-                        v,
-                    ));
+                    let head = Some(StarlarkSelector::Sum(heap.alloc(s).to_value(), v));
                     values_to_selector(head, values, heap)
                 }
             }
@@ -133,7 +129,7 @@ impl<'v> StarlarkSelector<'v> {
         Ok(
             match values_to_selector(None, &mut iter.into_iter(), heap)? {
                 None => Value::new_none(),
-                Some(selector) => heap.alloc_representation(selector).to_value(),
+                Some(selector) => heap.alloc(selector).to_value(),
             },
         )
     }
@@ -177,7 +173,7 @@ impl<'v> StarlarkSelector<'v> {
                     }
                     Ok(eval
                         .heap()
-                        .alloc_representation(StarlarkSelector::new(ValueOf::alloc_dict(
+                        .alloc(StarlarkSelector::new(ValueOf::alloc_dict(
                             eval.heap(),
                             mapped,
                         )))
@@ -188,7 +184,7 @@ impl<'v> StarlarkSelector<'v> {
                         Self::select_map::<RECURSE>(eval, left, func)?,
                         Self::select_map::<RECURSE>(eval, right, func)?,
                     );
-                    Ok(eval.heap().alloc_representation(sum).to_value())
+                    Ok(eval.heap().alloc(sum).to_value())
                 }
             }
         } else if StarlarkSelectFail::from_value(val).is_some()
@@ -263,7 +259,7 @@ impl<'v> StarlarkValue<'v> for StarlarkSelector<'v> {
 
     fn radd(&self, left: Value<'v>, heap: Heap<'v>) -> Option<starlark::Result<Value<'v>>> {
         let right = heap
-            .alloc_representation(match self {
+            .alloc(match self {
                 StarlarkSelector::Primary(x) => StarlarkSelector::Primary(*x),
                 StarlarkSelector::Sum(x, y) => StarlarkSelector::Sum(x.to_value(), y.to_value()),
             })
@@ -274,9 +270,7 @@ impl<'v> StarlarkValue<'v> for StarlarkSelector<'v> {
     fn add(&self, other: Value<'v>, heap: Heap<'v>) -> Option<starlark::Result<Value<'v>>> {
         match self {
             Self::Primary(v) => {
-                let this = heap
-                    .alloc_representation(StarlarkSelector::new(*v))
-                    .to_value();
+                let this = heap.alloc(StarlarkSelector::new(*v)).to_value();
                 Some(Ok(StarlarkSelector::sum(this, other, heap)))
             }
             Self::Sum(l, r) => {

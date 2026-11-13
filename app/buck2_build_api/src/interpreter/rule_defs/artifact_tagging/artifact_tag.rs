@@ -33,7 +33,7 @@ use starlark::values::StarlarkValue;
 use starlark::values::Trace;
 use starlark::values::UnpackValue;
 use starlark::values::Value;
-use starlark::values::ValueTyped;
+use starlark::values::ValueOf;
 use starlark::values::starlark_value;
 use strong_hash::StrongHash;
 
@@ -151,17 +151,14 @@ fn artifact_tag_methods(_: &mut MethodsBuilder) {
         inner: Value<'v>,
         heap: Heap<'v>,
     ) -> starlark::Result<
-        Either<
-            ValueTyped<'v, StarlarkTaggedValue<'v>>,
-            ValueTyped<'v, StarlarkTaggedCommandLine<'v>>,
-        >,
+        Either<ValueOf<'v, StarlarkTaggedValue<'v>>, ValueOf<'v, StarlarkTaggedCommandLine<'v>>>,
     > {
         let value = StarlarkTaggedValue::new(inner, this.dupe());
 
         Ok(if ValueAsCommandLineLike::unpack_value(inner)?.is_some() {
-            Either::Right(heap.alloc_representation(StarlarkTaggedCommandLine::new(value)))
+            Either::Right(heap.alloc(StarlarkTaggedCommandLine::new(value)))
         } else {
-            Either::Left(heap.alloc_representation(value))
+            Either::Left(heap.alloc(value))
         })
     }
 
@@ -182,17 +179,14 @@ fn artifact_tag_methods(_: &mut MethodsBuilder) {
         inner: Value<'v>,
         heap: Heap<'v>,
     ) -> starlark::Result<
-        Either<
-            ValueTyped<'v, StarlarkTaggedValue<'v>>,
-            ValueTyped<'v, StarlarkTaggedCommandLine<'v>>,
-        >,
+        Either<ValueOf<'v, StarlarkTaggedValue<'v>>, ValueOf<'v, StarlarkTaggedCommandLine<'v>>>,
     > {
         let value = StarlarkTaggedValue::inputs_only(inner, this.dupe());
 
         Ok(if ValueAsCommandLineLike::unpack_value(inner)?.is_some() {
-            Either::Right(heap.alloc_representation(StarlarkTaggedCommandLine::new(value)))
+            Either::Right(heap.alloc(StarlarkTaggedCommandLine::new(value)))
         } else {
-            Either::Left(heap.alloc_representation(value))
+            Either::Left(heap.alloc(value))
         })
     }
 }

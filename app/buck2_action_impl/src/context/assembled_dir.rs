@@ -23,7 +23,6 @@ use starlark::values::StarlarkValue;
 use starlark::values::Trace;
 use starlark::values::Value;
 use starlark::values::ValueOf;
-use starlark::values::ValueTyped;
 use starlark::values::starlark_value;
 
 /// One entry of `ctx.actions.assembled_dir`: a bound input artifact plus how
@@ -65,8 +64,8 @@ fn assembled_dir_members(globals: &mut GlobalsBuilder) {
     fn copy<'v>(
         #[starlark(require = pos)] artifact: ValueOf<'v, StarlarkArtifactView<'v>>,
         heap: Heap<'v>,
-    ) -> starlark::Result<ValueTyped<'v, StarlarkAssembledDirEntry<'v>>> {
-        Ok(heap.alloc_representation(StarlarkAssembledDirEntry {
+    ) -> starlark::Result<ValueOf<'v, StarlarkAssembledDirEntry<'v>>> {
+        Ok(heap.alloc(StarlarkAssembledDirEntry {
             copy: true,
             artifact: artifact.to_value(),
         }))
@@ -78,8 +77,8 @@ fn assembled_dir_members(globals: &mut GlobalsBuilder) {
     fn symlink<'v>(
         #[starlark(require = pos)] artifact: ValueOf<'v, StarlarkArtifactView<'v>>,
         heap: Heap<'v>,
-    ) -> starlark::Result<ValueTyped<'v, StarlarkAssembledDirEntry<'v>>> {
-        Ok(heap.alloc_representation(StarlarkAssembledDirEntry {
+    ) -> starlark::Result<ValueOf<'v, StarlarkAssembledDirEntry<'v>>> {
+        Ok(heap.alloc(StarlarkAssembledDirEntry {
             copy: false,
             artifact: artifact.to_value(),
         }))

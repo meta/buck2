@@ -114,10 +114,10 @@ fn validation_info_creator(globals: &mut GlobalsBuilder) {
     fn ValidationInfo<'v>(
         #[starlark(require = named)] validations: ValueOf<'v, ListType<StarlarkValidationSpec<'v>>>,
         heap: Heap<'v>,
-    ) -> starlark::Result<ValueTyped<'v, ValidationInfo<'v>>> {
+    ) -> starlark::Result<ValueOf<'v, ValidationInfo<'v>>> {
         let result = ValidationInfo { validations };
         validate_validation_info(&result)?;
-        Ok(heap.alloc_representation(result))
+        Ok(heap.alloc(result))
     }
 }
 

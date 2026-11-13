@@ -23,7 +23,6 @@ use starlark::values::Heap;
 use starlark::values::StarlarkPagable;
 use starlark::values::Trace;
 use starlark::values::ValueOf;
-use starlark::values::ValueTyped;
 use starlark::values::dict::DictType;
 use starlark::values::string::StarlarkStr;
 
@@ -93,10 +92,10 @@ fn install_info_creator(globals: &mut GlobalsBuilder) {
         installer: ValueOf<'v, StarlarkConfiguredProvidersLabel>,
         files: ValueOf<'v, DictType<StarlarkStr, StarlarkArtifactView<'v>>>,
         heap: Heap<'v>,
-    ) -> starlark::Result<ValueTyped<'v, InstallInfo<'v>>> {
+    ) -> starlark::Result<ValueOf<'v, InstallInfo<'v>>> {
         let info = InstallInfo { installer, files };
         validate_install_info(&info)?;
-        Ok(heap.alloc_representation(info))
+        Ok(heap.alloc(info))
     }
 }
 

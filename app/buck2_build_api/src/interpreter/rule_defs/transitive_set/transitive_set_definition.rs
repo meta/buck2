@@ -459,7 +459,7 @@ pub fn register_transitive_set(builder: &mut GlobalsBuilder) {
             ValueOf<'v, DictType<StarlarkStr, Reduction<'v>>>,
         >,
         eval: &mut Evaluator<'v, '_, '_>,
-    ) -> starlark::Result<ValueTyped<'v, TransitiveSetDefinition<'v>>> {
+    ) -> starlark::Result<ValueOf<'v, TransitiveSetDefinitionView<'v>>> {
         let projections: BuckMutInsertionMap<_, _> = args_projections
             .into_iter()
             .flat_map(|v| v.iter())
@@ -502,22 +502,20 @@ pub fn register_transitive_set(builder: &mut GlobalsBuilder) {
         };
 
         let starlark_path: StarlarkPath = starlark_path_from_build_context(eval)?;
-        Ok(eval
-            .heap()
-            .alloc_representation(TransitiveSetDefinition::new(
-                match starlark_path {
-                    StarlarkPath::LoadFile(import_path) => import_path.clone(),
-                    _ => {
-                        return Err(buck2_error::Error::from(
-                            TransitiveSetDefinitionError::TransitiveSetOnlyInBzl,
-                        )
-                        .into());
-                    }
-                },
-                TransitiveSetOperations {
-                    projections,
-                    reductions,
-                },
-            )))
+        Ok(eval.heap().alloc(TransitiveSetDefinition::new(
+            match starlark_path {
+                StarlarkPath::LoadFile(import_path) => import_path.clone(),
+                _ => {
+                    return Err(buck2_error::Error::from(
+                        TransitiveSetDefinitionError::TransitiveSetOnlyInBzl,
+                    )
+                    .into());
+                }
+            },
+            TransitiveSetOperations {
+                projections,
+                reductions,
+            },
+        )))
     }
 }

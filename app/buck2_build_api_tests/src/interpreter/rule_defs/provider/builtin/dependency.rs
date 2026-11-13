@@ -19,14 +19,14 @@ use indoc::indoc;
 use starlark::environment::GlobalsBuilder;
 use starlark::eval::Evaluator;
 use starlark::starlark_module;
-use starlark::values::ValueTyped;
+use starlark::values::ValueOf;
 
 #[starlark_module]
 fn dependency_creator(builder: &mut GlobalsBuilder) {
     fn create_collection<'v>(
         s: &str,
         eval: &mut Evaluator<'v, '_, '_>,
-    ) -> starlark::Result<ValueTyped<'v, Dependency<'v>>> {
+    ) -> starlark::Result<ValueOf<'v, Dependency<'v>>> {
         let c = BuildContext::from_context(eval)?;
         let label = match ParsedPattern::<ProvidersPatternExtra>::parse_precise(
             s,
@@ -47,7 +47,7 @@ fn dependency_creator(builder: &mut GlobalsBuilder) {
 
         Ok(eval
             .heap()
-            .alloc_representation(Dependency::new(eval.heap(), label, collection, None)))
+            .alloc(Dependency::new(eval.heap(), label, collection, None)))
     }
 }
 

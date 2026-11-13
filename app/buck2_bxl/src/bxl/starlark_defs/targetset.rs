@@ -244,7 +244,7 @@ where
     fn add(&self, other: Value<'v>, heap: Heap<'v>) -> Option<starlark::Result<Value<'v>>> {
         let other = other.downcast_ref::<Self>()?;
         let union = self.0.union(&other.0);
-        Some(Ok(heap.alloc_representation(Self(union)).to_value()))
+        Some(Ok(heap.alloc(Self(union)).to_value()))
     }
 
     fn sub(&self, other: Value<'v>, heap: Heap<'v>) -> starlark::Result<Value<'v>> {
@@ -252,7 +252,7 @@ where
             return ValueError::unsupported_with(self, "-", other);
         };
         let difference = self.0.difference(&other.0)?;
-        Ok(heap.alloc_representation(Self(difference)).to_value())
+        Ok(heap.alloc(Self(difference)).to_value())
     }
 
     fn equals(&self, other: Value<'v>) -> starlark::Result<bool> {
@@ -267,7 +267,7 @@ where
             return ValueError::unsupported_with(self, "&", other);
         };
         let intersect = self.0.intersect(&other.0)?;
-        Ok(heap.alloc_representation(Self(intersect)).to_value())
+        Ok(heap.alloc(Self(intersect)).to_value())
     }
 }
 
@@ -508,7 +508,7 @@ starlark::__starlark_pagable_only! {
             let set = TargetSet::from_iter([node]);
             let owned: OwnedFrozen<Value<'static>> = OwnedFrozen::build(
                 FrozenHeapName::user("configured_target_set_round_trips"),
-                |heap| heap.alloc_representation(StarlarkTargetSet(set.clone())).to_value(),
+                |heap| heap.alloc(StarlarkTargetSet(set.clone())).to_value(),
             );
 
             let mut serializer = pagable::testing::TestingSerializer::new();
@@ -547,7 +547,7 @@ starlark::__starlark_pagable_only! {
             let owned: OwnedFrozen<Value<'static>> = OwnedFrozen::build(
                 FrozenHeapName::user("aquery_target_set_fails_page_out_without_panicking"),
                 |heap| {
-                    heap.alloc_representation(StarlarkTargetSet(TargetSet::from_iter([node])))
+                    heap.alloc(StarlarkTargetSet(TargetSet::from_iter([node])))
                         .to_value()
                 },
             );

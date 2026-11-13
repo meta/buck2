@@ -198,7 +198,7 @@ pub(crate) fn user_provider_creator<'v>(
         })
         .collect::<buck2_error::Result<MiniBoxSlice<Value>>>()?;
     Ok(heap
-        .alloc_representation(UserProvider {
+        .alloc(UserProvider {
             callable,
             attributes: values,
         })

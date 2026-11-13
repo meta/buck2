@@ -64,9 +64,9 @@ enum DependencyError {
 )]
 #[repr(C)]
 pub struct Dependency<'v> {
-    label: ValueTyped<'v, StarlarkConfiguredProvidersLabel>,
+    label: ValueOf<'v, StarlarkConfiguredProvidersLabel>,
     provider_collection: ValueTyped<'v, ProviderCollection<'v>>,
-    execution_platform: Option<ValueTyped<'v, StarlarkExecutionPlatformResolution>>,
+    execution_platform: Option<ValueOf<'v, StarlarkExecutionPlatformResolution>>,
 }
 
 starlark_complex_value!(pub Dependency);
@@ -95,10 +95,10 @@ impl<'v> Dependency<'v> {
         execution_platform: Option<&ExecutionPlatformResolution>,
     ) -> Self {
         Dependency {
-            label: heap.alloc_representation(StarlarkConfiguredProvidersLabel::new(label)),
+            label: heap.alloc(StarlarkConfiguredProvidersLabel::new(label)),
             provider_collection,
             execution_platform: execution_platform
-                .map(|e| heap.alloc_representation(StarlarkExecutionPlatformResolution(e.clone()))),
+                .map(|e| heap.alloc(StarlarkExecutionPlatformResolution(e.clone()))),
         }
     }
 
@@ -183,7 +183,7 @@ fn dependency_methods(builder: &mut MethodsBuilder) {
     #[starlark(attribute)]
     fn label<'v>(
         this: &Dependency<'v>,
-    ) -> starlark::Result<ValueTyped<'v, StarlarkConfiguredProvidersLabel>> {
+    ) -> starlark::Result<ValueOf<'v, StarlarkConfiguredProvidersLabel>> {
         Ok(this.label)
     }
 
@@ -218,7 +218,7 @@ fn dependency_methods(builder: &mut MethodsBuilder) {
         this: &Dependency<'v>,
         #[starlark(require = pos)] subtarget: &str,
         heap: Heap<'v>,
-    ) -> starlark::Result<ValueTyped<'v, Dependency<'v>>> {
+    ) -> starlark::Result<ValueOf<'v, Dependency<'v>>> {
         let providers = this
             .collection()
             .default_info()?
@@ -231,7 +231,7 @@ fn dependency_methods(builder: &mut MethodsBuilder) {
             lbl.target().dupe(),
             lbl.name().push(ProviderName::new(subtarget.to_owned())?),
         );
-        Ok(heap.alloc_representation(Dependency::new(heap, lbl, providers, None)))
+        Ok(heap.alloc(Dependency::new(heap, lbl, providers, None)))
     }
 
     /// Gets a specific provider from this dependency by provider type. Returns None if the

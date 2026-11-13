@@ -230,12 +230,14 @@ impl<'v> AnalysisContext<'v> {
     ) -> Self {
         Self {
             attrs,
-            actions: heap.alloc_representation(AnalysisActions {
-                state: RefCell::new(Some(registry)),
-                attributes: attrs,
-                plugins,
-                digest_config,
-            }),
+            actions: heap
+                .alloc(AnalysisActions {
+                    state: RefCell::new(Some(registry)),
+                    attributes: attrs,
+                    plugins,
+                    digest_config,
+                })
+                .get(),
             label,
             plugins,
         }
@@ -250,13 +252,14 @@ impl<'v> AnalysisContext<'v> {
         digest_config: DigestConfig,
     ) -> ValueTyped<'v, AnalysisContext<'v>> {
         let label = label.map(|label| {
-            heap.alloc_representation(StarlarkConfiguredProvidersLabel::new(
+            heap.alloc(StarlarkConfiguredProvidersLabel::new(
                 ConfiguredProvidersLabel::new(label, ProvidersName::Default),
             ))
+            .get()
         });
 
         let analysis_context = Self::new(heap, attrs, label, plugins, registry, digest_config);
-        heap.alloc_representation(analysis_context)
+        heap.alloc(analysis_context).get()
     }
 
     pub fn assert_no_promises(&self) -> buck2_error::Result<()> {

@@ -29,7 +29,6 @@ use starlark::values::Heap;
 use starlark::values::StarlarkPagable;
 use starlark::values::Trace;
 use starlark::values::ValueOf;
-use starlark::values::ValueTyped;
 
 use crate::configuration_info::ConfigurationInfo;
 
@@ -93,7 +92,7 @@ fn info_creator(globals: &mut GlobalsBuilder) {
         #[starlark(require = named)] configuration: ValueOf<'v, ConfigurationInfo<'v>>,
         #[starlark(require = named)] executor_config: ValueOf<'v, StarlarkCommandExecutorConfig>,
         heap: Heap<'v>,
-    ) -> starlark::Result<ValueTyped<'v, ExecutionPlatformInfo<'v>>> {
+    ) -> starlark::Result<ValueOf<'v, ExecutionPlatformInfo<'v>>> {
         let info = ExecutionPlatformInfo {
             label,
             configuration,
@@ -102,6 +101,6 @@ fn info_creator(globals: &mut GlobalsBuilder) {
         // Surface a configuration that cannot be turned into an `ExecutionPlatform` here rather
         // than wherever the provider is eventually used.
         info.to_execution_platform()?;
-        Ok(heap.alloc_representation(info))
+        Ok(heap.alloc(info))
     }
 }

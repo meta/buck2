@@ -446,7 +446,7 @@ fn configured_target_node_value_methods(builder: &mut MethodsBuilder) {
                 special_attrs_iter
                     .map(|(name, attr)| (name, StarlarkConfiguredAttr(attr, pkg.dupe()))),
             )
-            .map(|(name, attr)| (name, heap.alloc_representation(attr).to_value()));
+            .map(|(name, attr)| (name, heap.alloc(attr).to_value()));
 
         Ok(heap.alloc(AllocStruct(attrs)).to_value())
     }
@@ -590,10 +590,10 @@ fn configured_target_node_value_methods(builder: &mut MethodsBuilder) {
     fn unwrap_forward<'v>(
         this: ValueTyped<'v, StarlarkConfiguredTargetNode>,
         heap: Heap<'v>,
-    ) -> starlark::Result<ValueTyped<'v, StarlarkConfiguredTargetNode>> {
+    ) -> starlark::Result<ValueOf<'v, StarlarkConfiguredTargetNode>> {
         match this.0.forward_target() {
-            Some(n) => Ok(heap.alloc_representation(StarlarkConfiguredTargetNode::new(n.dupe()))),
-            None => Ok(this),
+            Some(n) => Ok(heap.alloc(StarlarkConfiguredTargetNode::new(n.dupe()))),
+            None => Ok(this.into()),
         }
     }
 
@@ -895,7 +895,7 @@ fn configured_target_node_value_methods(builder: &mut MethodsBuilder) {
         }
         let data = cfg.data()?;
         let info = ConfigurationInfo::from_configuration_data(data, heap);
-        Ok(NoneOr::Other(heap.alloc_representation(info).to_value()))
+        Ok(NoneOr::Other(heap.alloc(info).to_value()))
     }
 }
 

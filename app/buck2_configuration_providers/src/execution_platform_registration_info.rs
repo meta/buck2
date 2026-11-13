@@ -111,17 +111,15 @@ fn info_creator(globals: &mut GlobalsBuilder) {
             StringValue<'v>,
         >,
         heap: Heap<'v>,
-    ) -> starlark::Result<ValueTyped<'v, ExecutionPlatformRegistrationInfo<'v>>> {
+    ) -> starlark::Result<ValueOf<'v, ExecutionPlatformRegistrationInfo<'v>>> {
         let fallback = fallback.into_option();
         if let Some(Either::Left(word)) = fallback.map(|f| f.split()).transpose()? {
             fallback_from_str(word.get())?;
         }
-        Ok(
-            heap.alloc_representation(ExecutionPlatformRegistrationInfo {
-                platforms,
-                fallback,
-                exec_marker_constraint: exec_marker_constraint.into_option(),
-            }),
-        )
+        Ok(heap.alloc(ExecutionPlatformRegistrationInfo {
+            platforms,
+            fallback,
+            exec_marker_constraint: exec_marker_constraint.into_option(),
+        }))
     }
 }

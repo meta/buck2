@@ -51,7 +51,5 @@ pub fn plugins_to_starlark_value<'v>(
             .collect::<buck2_error::Result<_>>()?;
         plugins.insert(kind, ctx.heap().alloc(deps).to_value());
     }
-    Ok(ctx
-        .heap()
-        .alloc_representation(AnalysisPlugins::new(plugins)))
+    Ok(ctx.heap().alloc(AnalysisPlugins::new(plugins)).get())
 }

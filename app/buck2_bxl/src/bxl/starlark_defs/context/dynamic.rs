@@ -28,7 +28,7 @@ use buck2_dynamic_actions::deferred::DynamicLambdaCtxDataSpec;
 use buck2_dynamic_actions::deferred::InputArtifactsMaterialized;
 use buck2_dynamic_actions::deferred::dynamic_lambda_ctx_data;
 use buck2_dynamic_actions::deferred::invoke_dynamic_output_lambda;
-use buck2_dynamic_actions::dynamic_actions_callable::DynamicActionsCallable;
+use buck2_dynamic_actions::dynamic_actions_callable::DynamicActionsCallableView;
 use buck2_dynamic_actions::dynamic_actions_callable::DynamicActionsCallbackParam;
 use buck2_dynamic_actions::dynamic_actions_callable::DynamicActionsCallbackParamSpec;
 use buck2_dynamic_actions::dynamic_actions_callable::DynamicActionsCallbackReturnType;
@@ -56,7 +56,6 @@ use starlark::values::Heap;
 use starlark::values::OwnedFrozenRef;
 use starlark::values::StarlarkTypeExpr;
 use starlark::values::ValueOf;
-use starlark::values::ValueTyped;
 use starlark::values::dict::DictType;
 use starlark::values::string::StarlarkStr;
 use starlark::values::typing::StarlarkCallableChecked;
@@ -202,7 +201,7 @@ impl BxlDynamicOutputEvaluator<'_> {
                         self.dynamic_data,
                     )?;
 
-                    let ctx = env.heap().alloc_representation(bxl_dynamic_ctx);
+                    let ctx = env.heap().alloc(bxl_dynamic_ctx).get();
 
                     let args = match (
                         &dynamic_lambda_ctx_data.lambda.attr_values,
@@ -304,7 +303,7 @@ pub(crate) fn register_dynamic_actions(globals: &mut GlobalsBuilder) {
             DictType<StarlarkStr, StarlarkDynamicAttrType<'v>>,
         >,
         heap: Heap<'v>,
-    ) -> starlark::Result<ValueTyped<'v, DynamicActionsCallable<'v>>> {
-        Ok(heap.alloc_representation(new_dynamic_actions_callable(r#impl, attrs, &P_BXLCTX)?))
+    ) -> starlark::Result<ValueOf<'v, DynamicActionsCallableView<'v>>> {
+        Ok(heap.alloc(new_dynamic_actions_callable(r#impl, attrs, &P_BXLCTX)?))
     }
 }

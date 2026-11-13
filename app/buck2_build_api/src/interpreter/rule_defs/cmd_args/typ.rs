@@ -66,6 +66,7 @@ use crate::artifact_groups::ArtifactGroup;
 use crate::interpreter::rule_defs::artifact::associated::AssociatedArtifacts;
 use crate::interpreter::rule_defs::artifact::starlark_declared_artifact::StarlarkDeclaredArtifact;
 use crate::interpreter::rule_defs::artifact::starlark_output_artifact::StarlarkOutputArtifact;
+use crate::interpreter::rule_defs::artifact::starlark_output_artifact::StarlarkOutputArtifactView;
 use crate::interpreter::rule_defs::artifact_tagging::ArtifactTag;
 use crate::interpreter::rule_defs::cmd_args::ArtifactPathMapper;
 use crate::interpreter::rule_defs::cmd_args::builder::CommandLineBuilder;
@@ -1032,8 +1033,8 @@ fn cmd_args_methods(builder: &mut MethodsBuilder) {
     fn copy<'v>(
         this: Value<'v>,
         heap: Heap<'v>,
-    ) -> starlark::Result<ValueTyped<'v, StarlarkCmdArgs<'v>>> {
-        Ok(heap.alloc_representation(cmd_args(this).copy()))
+    ) -> starlark::Result<ValueOf<'v, StarlarkCmdArgsView<'v>>> {
+        Ok(heap.alloc(cmd_args(this).copy()))
     }
 
     /// Collect all the inputs (including hidden) referenced by this command line.
@@ -1078,7 +1079,7 @@ fn cmd_args_methods(builder: &mut MethodsBuilder) {
     fn outputs<'v>(
         this: Value<'v>,
         heap: Heap<'v>,
-    ) -> starlark::Result<Vec<ValueTyped<'v, StarlarkOutputArtifact<'v>>>> {
+    ) -> starlark::Result<Vec<ValueOf<'v, StarlarkOutputArtifactView<'v>>>> {
         let mut visitor = SimpleCommandLineArtifactVisitor::new();
         cmd_args(this).visit_artifacts(&mut visitor)?;
         let mut outputs =
@@ -1089,7 +1090,7 @@ fn cmd_args_methods(builder: &mut MethodsBuilder) {
                 (*out).dupe(),
                 AssociatedArtifacts::new(),
             ));
-            outputs.push(heap.alloc_representation(StarlarkOutputArtifact::new(declared)));
+            outputs.push(heap.alloc(StarlarkOutputArtifact::new(declared)));
         }
         // FIXME(JakobDegen): We should probably not be allowing people to get an `OutputArtifact`
         // for an artifact declared in a downstream action??
@@ -1102,7 +1103,7 @@ fn cmd_args_methods(builder: &mut MethodsBuilder) {
                 .dupe(),
                 AssociatedArtifacts::new(),
             ));
-            outputs.push(heap.alloc_representation(StarlarkOutputArtifact::new(declared)));
+            outputs.push(heap.alloc(StarlarkOutputArtifact::new(declared)));
         }
         Ok(outputs)
     }
@@ -1229,7 +1230,7 @@ pub fn register_cmd_args(builder: &mut GlobalsBuilder) {
             ValueOf<'v, ListType<(CmdArgsRegex<'v>, StarlarkStr)>>,
         >,
         heap: Heap<'v>,
-    ) -> starlark::Result<ValueTyped<'v, StarlarkCmdArgs<'v>>> {
+    ) -> starlark::Result<ValueOf<'v, StarlarkCmdArgsView<'v>>> {
         let format = format.filter(|format| format.as_str() != "{}");
         let quote = quote.map(QuoteStyle::parse).transpose()?;
         let mut builder = StarlarkCommandLineData::default();
@@ -1278,7 +1279,7 @@ pub fn register_cmd_args(builder: &mut GlobalsBuilder) {
         if let Some(hidden) = hidden {
             builder.add_hidden(hidden)?;
         }
-        Ok(heap.alloc_representation(StarlarkCmdArgs(RefCell::new(builder))))
+        Ok(heap.alloc(StarlarkCmdArgs(RefCell::new(builder))))
     }
 }
 

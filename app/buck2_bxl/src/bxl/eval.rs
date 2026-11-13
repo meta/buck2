@@ -227,7 +227,7 @@ impl BxlInnerEvaluator {
                             digest_config,
                         )?;
 
-                        let bxl_ctx = env.heap().alloc_representation(bxl_ctx);
+                        let bxl_ctx = env.heap().alloc(bxl_ctx).get();
 
                         tokio::task::block_in_place(|| {
                             with_dispatcher(dispatcher.clone(), || {

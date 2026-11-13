@@ -302,7 +302,7 @@ impl TargetNameGlobRecord {
 
     pub fn alloc_starlark_value<'v>(&self, heap: Heap<'v>) -> Value<'v> {
         // `within` scopes render back to their canonical string form.
-        heap.alloc_representation(StarlarkTargetNameGlob {
+        heap.alloc(StarlarkTargetNameGlob {
             name_globs: self.name_globs.dupe(),
             within: self.within.iter().map(ToString::to_string).collect(),
         })

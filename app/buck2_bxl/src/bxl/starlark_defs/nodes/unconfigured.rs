@@ -102,9 +102,7 @@ fn target_node_value_methods(builder: &mut MethodsBuilder) {
                     StarlarkCoercedAttr(attr.to_owned_coerced()?, pkg.dupe()),
                 ))
             }))
-            .map(|entry| {
-                entry.map(|(name, attr)| (name, heap.alloc_representation(attr).to_value()))
-            });
+            .map(|entry| entry.map(|(name, attr)| (name, heap.alloc(attr).to_value())));
 
         Ok(itertools::process_results(attrs, |attrs| {
             heap.alloc(AllocStruct(attrs)).to_value()

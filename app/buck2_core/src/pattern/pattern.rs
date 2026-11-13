@@ -48,7 +48,6 @@ use crate::pattern::pattern_type::ConfiguredProvidersPatternExtra;
 use crate::pattern::pattern_type::PatternType;
 use crate::pattern::pattern_type::ProvidersPatternExtra;
 use crate::pattern::pattern_type::TargetPatternExtra;
-use crate::provider::flavors::flavor_error;
 use crate::provider::label::NonDefaultProvidersName;
 use crate::provider::label::ProviderName;
 use crate::provider::label::ProvidersLabel;
@@ -141,7 +140,12 @@ pub(crate) fn split_providers_name<'a>(
     if let Some((t, flavors)) = split1_opt_ascii(s, AsciiChar::new('#'))
         && is_buck1_flavored_target(t, flavors)
     {
-        Err(flavor_error(flavors, full_pattern))
+        // Buck1 flavor syntax. Buck2 expresses secondary outputs as subtargets and platforms as
+        // configurations; the mapping it used to apply was removed in T147637580.
+        Err(buck2_error!(
+            buck2_error::ErrorTag::Buck1Flavor,
+            "buck1 flavor `#{flavors}` on `{full_pattern}` is not supported: write a secondary output as a subtarget (`[name]`) and pick the platform with a mode file, `--target-platforms` or `-m`"
+        ))
     } else if let Some((t, p)) = split1_opt_ascii(s, AsciiChar::new('[')) {
         let mut names = Vec::new();
 
@@ -1931,7 +1935,7 @@ mod tests {
             )?
         );
 
-        // Buck1 flavors are an error that names the buck2 spelling.
+        // Buck1 flavors are an error that points at subtargets.
         let err = ParsedPattern::<ProvidersPatternExtra>::parse_precise(
             "//package/path:target#shared",
             CellName::testing_new("root"),
@@ -1944,7 +1948,7 @@ mod tests {
         assert!(
             msg.contains(
                 "buck1 flavor `#shared` on `//package/path:target#shared` is not supported"
-            ) && msg.contains("`[shared]`"),
+            ) && msg.contains("subtarget"),
             "{msg}"
         );
         Ok(())

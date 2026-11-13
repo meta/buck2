@@ -16,7 +16,7 @@ async fn test_subtarget_flavor_is_an_error(buck: &Buck) -> anyhow::Result<()> {
         .await
         .expect_failure()
         .assert_stderr_matches(
-            r"buck1 flavor `#shared` on `//lib:lib#shared` is not supported.*write the subtarget as `\[shared\]`",
+            r"buck1 flavor `#shared` on `//lib:lib#shared` is not supported.*subtarget",
         );
     // The same label spelled as a subtarget works.
     let out = buck.audit(&["providers", "root//lib:lib[shared]"]).await?;
@@ -32,13 +32,13 @@ async fn test_platform_flavor_is_an_error(buck: &Buck) {
         .await
         .expect_failure()
         .assert_stderr_matches(
-            r"buck1 flavor `#android-arm64,shared` on `//lib:lib#android-arm64,shared` is not supported.*write the subtarget as `\[shared\]`",
+            r"buck1 flavor `#android-arm64,shared` on `//lib:lib#android-arm64,shared` is not supported",
         );
     buck.uquery(&["root//lib:lib#iphoneos-arm64-tests"])
         .await
         .expect_failure()
         .assert_stderr_matches(
-            r"buck1 flavor `#iphoneos-arm64-tests` on `root//lib:lib#iphoneos-arm64-tests` is not supported.*it has no effect in buck2; remove it",
+            r"buck1 flavor `#iphoneos-arm64-tests` on `root//lib:lib#iphoneos-arm64-tests` is not supported.*--target-platforms",
         );
 }
 
@@ -48,7 +48,7 @@ async fn test_unrecognized_flavor_is_an_error(buck: &Buck) {
         .await
         .expect_failure()
         .assert_stderr_matches(
-            r"buck1 flavor `#no-such-flavor` on `//lib:lib#no-such-flavor` is not supported.*buck2 has no equivalent for it",
+            r"buck1 flavor `#no-such-flavor` on `//lib:lib#no-such-flavor` is not supported",
         );
 }
 

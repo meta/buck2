@@ -20,6 +20,5 @@
 //! languages, for which specific languages can be referred to via depends as
 //! `some_rule[java]` or `some_rule[cxx]`.
 
-pub mod flavors;
 pub mod id;
 pub mod label;

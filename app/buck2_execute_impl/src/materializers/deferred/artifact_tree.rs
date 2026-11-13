@@ -432,9 +432,22 @@ impl ArtifactTree {
         // the copy source.
         if let Some(active) = materialization_data.processing.active_ref()
             && let ProcessingFuture::Materializing(future) = &active.future
-            && let Some(Ok(())) = future.peek()
         {
-            return Ok(path);
+            match future.peek() {
+                Some(Ok(())) => return Ok(path),
+                // A copy that is still running would also resolve to its source. A caller of
+                // `publish` that writes its source only once deletes the source as soon as the
+                // copy is done, so a reader that reads the source later finds nothing. The reader
+                // waits for the copy instead.
+                None if matches!(
+                    method.as_ref(),
+                    ArtifactMaterializationMethod::LocalCopy(..)
+                ) =>
+                {
+                    return Err(ArtifactNotMaterializedReason::RequiresMaterialization { path });
+                }
+                _ => {}
+            }
         }
         match method.as_ref() {
             ArtifactMaterializationMethod::CasDownload { info } => {

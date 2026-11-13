@@ -1090,6 +1090,47 @@ pub(crate) mod state_machine {
     }
 
     #[tokio::test]
+    async fn test_file_contents_path_while_copy_in_flight() -> buck2_error::Result<()> {
+        // An artifact that a running copy is putting on disk must not resolve to the copy's
+        // source, because a caller of `publish` that writes its source only once deletes the
+        // source once the copy is done.
+        // Declare an artifact as a copy of another path, mark its materialization as running,
+        // and check that the artifact asks to be materialized.
+        let (mut dm, _) = make_processor(Default::default());
+        let digest_config = dm.io.digest_config();
+        let src = make_path("foo/src");
+        let dest = make_path("foo/dest");
+        let mut srcs = FileTree::new();
+        srcs.insert(std::iter::empty(), src);
+        dm.testing_process_one_command(MaterializerCommand::Declare(
+            DeclareArtifactPayload {
+                path: dest.clone(),
+                artifact: ArtifactValue::file(digest_config.empty_file()),
+            },
+            Box::new(ArtifactMaterializationMethod::LocalCopy(srcs, Vec::new())),
+            EventDispatcher::null(),
+            None,
+        ));
+        dm.tree
+            .prefix_get_mut(&mut dest.iter())
+            .expect("declared artifact should be present")
+            .processing = Processing::active(
+            ProcessingFuture::Materializing(
+                futures::future::pending::<Result<(), SharedMaterializingError>>()
+                    .boxed()
+                    .shared(),
+            ),
+            Version(100),
+        );
+
+        assert!(matches!(
+            dm.tree.file_contents_path(dest.clone(), digest_config),
+            Err(ArtifactNotMaterializedReason::RequiresMaterialization { path }) if path == dest
+        ));
+        Ok(())
+    }
+
+    #[tokio::test]
     async fn test_declare_reuse() -> buck2_error::Result<()> {
         ignore_stack_overflow_checks_for_future(async {
             let (mut dm, _) = make_processor(Default::default());

@@ -119,42 +119,39 @@ impl<'v> StarlarkValue<'v> for CliArgs {
 
 impl CliArgs {
     /// Helper to create an attribute from attrs.foo functions
-    fn new<'v>(
-        default: Option<Value<'v>>,
+    fn new(
+        default: Option<CliArgValue>,
         doc: &str,
         coercer: CliArgType,
-        short: Option<Value<'v>>,
+        short: Option<&str>,
     ) -> buck2_error::Result<Self> {
-        let default = match default {
-            None => None,
-            Some(x) => Some(Arc::new(coercer.coerce_value(x).map_err(|_| {
-                starlark::Error::from(ValueError::IncorrectParameterType)
-            })?)),
-        };
-
         let short = match short {
             None => None,
-            Some(s) => match s.unpack_str() {
-                Some(s) => {
-                    if s.len() != 1 {
-                        return Err(
-                            starlark::Error::from(ValueError::IncorrectParameterType).into()
-                        );
-                    }
-                    Some(s.chars().next().unwrap())
-                }
-                None => {
+            Some(s) => {
+                if s.len() != 1 {
                     return Err(starlark::Error::from(ValueError::IncorrectParameterType).into());
                 }
-            },
+                Some(s.chars().next().unwrap())
+            }
         };
 
         Ok(Self {
-            default,
+            default: default.map(Arc::new),
             doc: doc.to_owned(),
             coercer,
             short,
         })
+    }
+
+    /// A default whose type depends on another argument of the constructor (the item type of
+    /// `cli_args.list`, the inner type of `cli_args.option`), checked against `coercer`.
+    fn coerce_default<'v>(
+        coercer: &CliArgType,
+        default: Value<'v>,
+    ) -> buck2_error::Result<CliArgValue> {
+        Ok(coercer
+            .coerce_value(default)
+            .map_err(|_| starlark::Error::from(ValueError::IncorrectParameterType))?)
     }
 
     pub(crate) fn to_clap(&self, arg: clap::Arg) -> clap::Arg {
@@ -922,11 +919,12 @@ pub(crate) fn cli_args_module(registry: &mut GlobalsBuilder) {
     /// buck2 bxl //my.bxl:target -- --name foo
     /// ```
     fn string<'v>(
-        default: Option<Value<'v>>,
+        default: Option<&str>,
         #[starlark(default = "")] doc: &str,
-        #[starlark(require = named)] short: Option<Value<'v>>,
+        #[starlark(require = named)] short: Option<&str>,
         heap: Heap<'v>,
     ) -> starlark::Result<ValueOf<'v, CliArgs>> {
+        let default = default.map(|s| CliArgValue::String(s.to_owned()));
         Ok(ValueOf::alloc(
             heap,
             CliArgs::new(default, doc, CliArgType::string(), short)?,
@@ -957,10 +955,13 @@ pub(crate) fn cli_args_module(registry: &mut GlobalsBuilder) {
         #[starlark(require = pos)] inner: ValueOf<'v, CliArgs>,
         default: Option<Value<'v>>,
         #[starlark(default = "")] doc: &str,
-        #[starlark(require = named)] short: Option<Value<'v>>,
+        #[starlark(require = named)] short: Option<&str>,
         heap: Heap<'v>,
     ) -> starlark::Result<ValueOf<'v, CliArgs>> {
         let coercer = CliArgType::list(inner.coercer.dupe());
+        let default = default
+            .map(|default| CliArgs::coerce_default(&coercer, default))
+            .transpose()?;
         Ok(ValueOf::alloc(
             heap,
             CliArgs::new(default, doc, coercer, short)?,
@@ -985,14 +986,19 @@ pub(crate) fn cli_args_module(registry: &mut GlobalsBuilder) {
     /// buck2 bxl //my.bxl:target -- --verbose true
     /// ```
     fn bool<'v>(
-        #[starlark(default = false)] default: Value<'v>,
+        #[starlark(default = false)] default: bool,
         #[starlark(default = "")] doc: &str,
-        #[starlark(require = named)] short: Option<Value<'v>>,
+        #[starlark(require = named)] short: Option<&str>,
         heap: Heap<'v>,
     ) -> starlark::Result<ValueOf<'v, CliArgs>> {
         Ok(ValueOf::alloc(
             heap,
-            CliArgs::new(Some(default), doc, CliArgType::bool(), short)?,
+            CliArgs::new(
+                Some(CliArgValue::Bool(default)),
+                doc,
+                CliArgType::bool(),
+                short,
+            )?,
         ))
     }
 
@@ -1012,14 +1018,14 @@ pub(crate) fn cli_args_module(registry: &mut GlobalsBuilder) {
     /// buck2 bxl //my.bxl:target -- --count 42
     /// ```
     fn int<'v>(
-        default: Option<Value<'v>>,
+        default: Option<BigInt>,
         #[starlark(default = "")] doc: &str,
-        #[starlark(require = named)] short: Option<Value<'v>>,
+        #[starlark(require = named)] short: Option<&str>,
         heap: Heap<'v>,
     ) -> starlark::Result<ValueOf<'v, CliArgs>> {
         Ok(ValueOf::alloc(
             heap,
-            CliArgs::new(default, doc, CliArgType::int(), short)?,
+            CliArgs::new(default.map(CliArgValue::Int), doc, CliArgType::int(), short)?,
         ))
     }
 
@@ -1039,11 +1045,12 @@ pub(crate) fn cli_args_module(registry: &mut GlobalsBuilder) {
     /// buck2 bxl //my.bxl:target -- --threshold 3.14
     /// ```
     fn float<'v>(
-        default: Option<Value<'v>>,
+        default: Option<StarlarkFloat>,
         #[starlark(default = "")] doc: &str,
-        #[starlark(require = named)] short: Option<Value<'v>>,
+        #[starlark(require = named)] short: Option<&str>,
         heap: Heap<'v>,
     ) -> starlark::Result<ValueOf<'v, CliArgs>> {
+        let default = default.map(|f| CliArgValue::Float(f.0.to_string()));
         Ok(ValueOf::alloc(
             heap,
             CliArgs::new(default, doc, CliArgType::float(), short)?,
@@ -1070,10 +1077,11 @@ pub(crate) fn cli_args_module(registry: &mut GlobalsBuilder) {
         inner: ValueOf<'v, CliArgs>,
         #[starlark(default = "")] doc: &str,
         #[starlark(default = NoneType)] default: Value<'v>,
-        #[starlark(require = named)] short: Option<Value<'v>>,
+        #[starlark(require = named)] short: Option<&str>,
         heap: Heap<'v>,
     ) -> starlark::Result<ValueOf<'v, CliArgs>> {
         let coercer = CliArgType::option(inner.coercer.dupe());
+        let default = CliArgs::coerce_default(&coercer, default)?;
         Ok(ValueOf::alloc(
             heap,
             CliArgs::new(Some(default), doc, coercer, short)?,
@@ -1098,27 +1106,28 @@ pub(crate) fn cli_args_module(registry: &mut GlobalsBuilder) {
     /// ```
     fn r#enum<'v>(
         #[starlark(require = pos)] variants: ValueOf<'v, ListOrTupleType<StarlarkStr>>,
-        default: Option<Value<'v>>,
+        default: Option<&str>,
         #[starlark(default = "")] doc: &str,
-        #[starlark(require = named)] short: Option<Value<'v>>,
+        #[starlark(require = named)] short: Option<&str>,
         heap: Heap<'v>,
     ) -> starlark::Result<ValueOf<'v, CliArgs>> {
         // Value seems to usually be a `[String]`, listing the possible values of the
         // enumeration. Unfortunately, for things like `exported_lang_preprocessor_flags`
         // it ends up being `Type` which doesn't match the data we see.
+        let variants: BuckMutInsertionSet<String> = variants
+            .try_items::<&str>()
+            .map(|s| s.map(str::to_owned))
+            .collect::<starlark::Result<_>>()?;
+        let default = match default {
+            None => None,
+            Some(default) if variants.contains(default) => {
+                Some(CliArgValue::String(default.to_owned()))
+            }
+            Some(_) => return Err(starlark::Error::from(ValueError::IncorrectParameterType)),
+        };
         Ok(ValueOf::alloc(
             heap,
-            CliArgs::new(
-                default,
-                doc,
-                CliArgType::enumeration(
-                    variants
-                        .try_items::<&str>()
-                        .map(|s| s.map(str::to_owned))
-                        .collect::<starlark::Result<_>>()?,
-                ),
-                short,
-            )?,
+            CliArgs::new(default, doc, CliArgType::enumeration(variants), short)?,
         ))
     }
 
@@ -1141,7 +1150,7 @@ pub(crate) fn cli_args_module(registry: &mut GlobalsBuilder) {
     /// ```
     fn target_label<'v>(
         #[starlark(default = "")] doc: &str,
-        #[starlark(require = named)] short: Option<Value<'v>>,
+        #[starlark(require = named)] short: Option<&str>,
         heap: Heap<'v>,
     ) -> starlark::Result<ValueOf<'v, CliArgs>> {
         Ok(ValueOf::alloc(
@@ -1168,7 +1177,7 @@ pub(crate) fn cli_args_module(registry: &mut GlobalsBuilder) {
     /// ```
     fn configured_target_label<'v>(
         #[starlark(default = "")] doc: &str,
-        #[starlark(require = named)] short: Option<Value<'v>>,
+        #[starlark(require = named)] short: Option<&str>,
         heap: Heap<'v>,
     ) -> starlark::Result<ValueOf<'v, CliArgs>> {
         Ok(ValueOf::alloc(
@@ -1196,7 +1205,7 @@ pub(crate) fn cli_args_module(registry: &mut GlobalsBuilder) {
     /// ```
     fn sub_target<'v>(
         #[starlark(default = "")] doc: &str,
-        #[starlark(require = named)] short: Option<Value<'v>>,
+        #[starlark(require = named)] short: Option<&str>,
         heap: Heap<'v>,
     ) -> starlark::Result<ValueOf<'v, CliArgs>> {
         Ok(ValueOf::alloc(
@@ -1223,7 +1232,7 @@ pub(crate) fn cli_args_module(registry: &mut GlobalsBuilder) {
     /// ```
     fn target_expr<'v>(
         #[starlark(default = "")] doc: &str,
-        #[starlark(require = named)] short: Option<Value<'v>>,
+        #[starlark(require = named)] short: Option<&str>,
         heap: Heap<'v>,
     ) -> starlark::Result<ValueOf<'v, CliArgs>> {
         Ok(ValueOf::alloc(
@@ -1251,7 +1260,7 @@ pub(crate) fn cli_args_module(registry: &mut GlobalsBuilder) {
     /// ```
     fn configured_target_expr<'v>(
         #[starlark(default = "")] doc: &str,
-        #[starlark(require = named)] short: Option<Value<'v>>,
+        #[starlark(require = named)] short: Option<&str>,
         heap: Heap<'v>,
     ) -> starlark::Result<ValueOf<'v, CliArgs>> {
         Ok(ValueOf::alloc(
@@ -1278,7 +1287,7 @@ pub(crate) fn cli_args_module(registry: &mut GlobalsBuilder) {
     /// ```
     fn sub_target_expr<'v>(
         #[starlark(default = "")] doc: &str,
-        #[starlark(require = named)] short: Option<Value<'v>>,
+        #[starlark(require = named)] short: Option<&str>,
         heap: Heap<'v>,
     ) -> starlark::Result<ValueOf<'v, CliArgs>> {
         Ok(ValueOf::alloc(
@@ -1306,7 +1315,7 @@ pub(crate) fn cli_args_module(registry: &mut GlobalsBuilder) {
     /// ```
     fn json<'v>(
         #[starlark(default = "")] doc: &str,
-        #[starlark(require = named)] short: Option<Value<'v>>,
+        #[starlark(require = named)] short: Option<&str>,
         heap: Heap<'v>,
     ) -> starlark::Result<ValueOf<'v, CliArgs>> {
         Ok(ValueOf::alloc(
@@ -1333,7 +1342,7 @@ pub(crate) fn cli_args_module(registry: &mut GlobalsBuilder) {
     /// ```
     fn json_file<'v>(
         #[starlark(default = "")] doc: &str,
-        #[starlark(require = named)] short: Option<Value<'v>>,
+        #[starlark(require = named)] short: Option<&str>,
         heap: Heap<'v>,
     ) -> starlark::Result<ValueOf<'v, CliArgs>> {
         Ok(ValueOf::alloc(

@@ -14,7 +14,6 @@ use std::cell::RefMut;
 use allocative::Allocative;
 use buck2_core::pattern::pattern::ParsedPattern;
 use buck2_core::pattern::pattern_type::TargetPatternExtra;
-use buck2_core::provider::label::NonDefaultProvidersName;
 use buck2_core::provider::label::ProvidersLabel;
 use buck2_core::provider::label::ProvidersName;
 use buck2_core::target::label::label::TargetLabel;
@@ -129,9 +128,7 @@ pub trait AttrCoercionContext<'v> {
     fn coerce_target_label(&self, value: &str) -> buck2_error::Result<TargetLabel> {
         let label = self.coerce_providers_label(value)?;
 
-        if let ProvidersName::NonDefault(flavor) = label.name()
-            && matches!(flavor.as_ref(), NonDefaultProvidersName::Named(_))
-        {
+        if let ProvidersName::NonDefault(_) = label.name() {
             return Err(AttrCoercionContextError::UnexpectedProvidersName(value.to_owned()).into());
         }
 

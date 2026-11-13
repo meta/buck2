@@ -497,6 +497,7 @@ fn tag_metadata(tag: ErrorTag) -> TagMetadata {
         ErrorTag::StarlarkNativeInput => rank!(input),
         ErrorTag::StarlarkRuntimeTypeError => rank!(input),
         ErrorTag::Visibility => rank!(input),
+        ErrorTag::Buck1Flavor => rank!(input),
         ErrorTag::TestDeadlineExpired => rank!(input),
         ErrorTag::TestListingFailed => rank!(input),
         ErrorTag::TestFailed => rank!(input),

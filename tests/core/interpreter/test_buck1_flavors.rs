@@ -10,76 +10,56 @@
 
 use buck2_e2e::prelude::*;
 
-#[buck_test(env = [("BUCK2_HARD_ERROR", "false")])]
-async fn test_buck1_flavors_are_mapped(buck: &Buck) -> anyhow::Result<()> {
-    let out = buck
-        .uquery(&["deps(root//subtarget:subtarget_flavor)"])
-        .await?;
-    assert!(out.stdout.contains("root//lib:lib"));
-    let out = buck
-        .cquery(&["root//subtarget:subtarget_flavor", "--output-attribute=dep"])
-        .await?;
-    assert!(out.stdout.contains("root//lib:lib[shared]"));
-    let out = buck
-        .cquery(&["root//platform:platform_flavor", "--output-attribute=dep"])
-        .await?;
-    assert!(out.stdout.contains("root//lib:lib[shared]"));
-    buck.build(&["root//file:hash_in_file_name"]).await?;
-    Ok(())
-}
-
-#[buck_test(env = [("BUCK2_HARD_ERROR", "only=legacy_flavor_subtarget")])]
-async fn test_subtarget_flavor_hard_error(buck: &Buck) {
+#[buck_test]
+async fn test_subtarget_flavor_is_an_error(buck: &Buck) -> anyhow::Result<()> {
     buck.uquery(&["root//subtarget:subtarget_flavor"])
         .await
         .expect_failure()
         .assert_stderr_matches(
-            r"buck1 flavor `#shared` on `//lib:lib#shared` is deprecated.*write the subtarget as `\[shared\]`",
+            r"buck1 flavor `#shared` on `//lib:lib#shared` is not supported.*write the subtarget as `\[shared\]`",
         );
-}
-
-#[buck_test(env = [("BUCK2_HARD_ERROR", "true")])]
-async fn test_hash_in_file_name_is_not_a_flavor(buck: &Buck) -> anyhow::Result<()> {
-    // `attrs.one_of(attrs.dep(), attrs.source())` probes `data#1.json` as a label first;
-    // without a `:` it is not a flavored label, so no soft error is reported.
+    // The same label spelled as a subtarget works.
+    let out = buck.audit(&["providers", "root//lib:lib[shared]"]).await?;
+    assert!(out.stdout.contains("root//lib:lib[shared]"));
+    // A string that is not a label still coerces as a file.
     buck.build(&["root//file:hash_in_file_name"]).await?;
     Ok(())
 }
 
-#[buck_test(env = [("BUCK2_HARD_ERROR", "false")])]
-async fn test_hash_in_text_is_not_a_flavor(buck: &Buck) -> anyhow::Result<()> {
-    // `attrs.one_of(attrs.dep(), attrs.string())` probes the shell command as a label first.
-    buck.build(&["root//text:shell_command"]).await?;
-    let log = buck.log(&["show"]).await?;
-    assert!(!log.stdout.contains("Soft Error: legacy_flavor"));
-    Ok(())
-}
-
-#[buck_test(env = [("BUCK2_HARD_ERROR", "only=platform_flavor")])]
-async fn test_platform_flavor_hard_error(buck: &Buck) -> anyhow::Result<()> {
+#[buck_test]
+async fn test_platform_flavor_is_an_error(buck: &Buck) {
     buck.uquery(&["root//platform:platform_flavor"])
         .await
         .expect_failure()
         .assert_stderr_matches(
-            r"buck1 flavor `#android-arm64,shared` on `//lib:lib#android-arm64,shared` is deprecated.*write the subtarget as `\[shared\]`",
+            r"buck1 flavor `#android-arm64,shared` on `//lib:lib#android-arm64,shared` is not supported.*write the subtarget as `\[shared\]`",
         );
     buck.uquery(&["root//lib:lib#iphoneos-arm64-tests"])
         .await
         .expect_failure()
         .assert_stderr_matches(
-            r"buck1 flavor `#iphoneos-arm64-tests` on `root//lib:lib#iphoneos-arm64-tests` is deprecated.*it has no effect in buck2; remove it",
+            r"buck1 flavor `#iphoneos-arm64-tests` on `root//lib:lib#iphoneos-arm64-tests` is not supported.*it has no effect in buck2; remove it",
         );
-    // Subtarget-only flavors are a different category.
-    buck.uquery(&["root//subtarget:subtarget_flavor"]).await?;
-    Ok(())
 }
 
-#[buck_test(env = [("BUCK2_HARD_ERROR", "only=legacy_flavor_unrecognized")])]
-async fn test_unrecognized_flavor_hard_error(buck: &Buck) {
+#[buck_test]
+async fn test_unrecognized_flavor_is_an_error(buck: &Buck) {
     buck.uquery(&["root//unrecognized:unrecognized_flavor"])
         .await
         .expect_failure()
         .assert_stderr_matches(
-            r"buck1 flavor `#no-such-flavor` on `//lib:lib#no-such-flavor` is deprecated.*buck2 does not support it",
+            r"buck1 flavor `#no-such-flavor` on `//lib:lib#no-such-flavor` is not supported.*buck2 has no equivalent for it",
         );
+}
+
+#[buck_test]
+async fn test_one_of_does_not_swallow_a_flavored_label(buck: &Buck) -> anyhow::Result<()> {
+    // `attrs.one_of(attrs.dep(), attrs.string())` would otherwise accept the label as text.
+    buck.uquery(&["root//one_of:flavored_dep_or_string"])
+        .await
+        .expect_failure()
+        .assert_stderr_matches(r"buck1 flavor `#shared` on `//lib:lib#shared` is not supported");
+    // Text that only happens to contain a `:` and a `#` is still a string.
+    buck.build(&["root//text:shell_command"]).await?;
+    Ok(())
 }

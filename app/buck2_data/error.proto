@@ -421,6 +421,8 @@ enum ErrorTag {
   DISPATCHER_UNAVAILABLE = 912;
   CSV_PARSE = 917;
   CAS_BLOB_COUNT_MISMATCH = 918;
+  // A target label carries a buck1 `#flavor` suffix.
+  BUCK1_FLAVOR = 919;
 
   CLEAN_OUTPUTS = 8017;
   COPY_OUTPUTS = 8029;

@@ -43,6 +43,7 @@ use either::Either;
 use mini_vec::MiniBoxSlice;
 use pagable::Pagable;
 use starlark_map::Hashed;
+use starlark_map::StarlarkHashValue;
 use strong_hash::StrongHash;
 
 use crate::attrs::arena::OwnedCoercedAttr;
@@ -89,7 +90,7 @@ use crate::rule_type::StarlarkRuleType;
 /// resolving the attributes. This saves memory, but users should try avoid repeatedly
 /// requesting the same information.
 #[derive(Debug, Clone, Eq, PartialEq, Hash, Allocative, Pagable)]
-pub struct ConfiguredTargetNode(triomphe::Arc<Hashed<ConfiguredTargetNodeData>>);
+pub struct ConfiguredTargetNode(triomphe::Arc<ConfiguredTargetNodeData>);
 
 // SAFETY: `_assert_send_sync` requires the only field to be `Send + Sync`, so these
 // impls hold exactly when the derived ones would. Spelled out so that auto-trait
@@ -187,9 +188,11 @@ impl TargetNodeOrForward {
 //  1. we iterate over and configure the attributes multiple times, that could be improved in a bunch of ways
 //  2. we store the same resolvedconfiguration probably in a bunch of nodes, that could be made smaller or shared
 //  3. deps could probably be approximated a diff against the targetnode's deps
-#[derive(Eq, PartialEq, Hash, Allocative, Pagable)]
+#[derive(Allocative, Pagable)]
 struct ConfiguredTargetNodeData {
     label: Hashed<ConfiguredTargetLabel>,
+    /// Hash of the other fields, in the order they are declared, taken when the node is built.
+    hash: StarlarkHashValue,
     target_node: TargetNodeOrForward,
     resolved_configuration: MatchedConfigurationSettingKeysWithCfg,
     resolved_transition_configurations:
@@ -203,6 +206,81 @@ struct ConfiguredTargetNodeData {
     // TODO(JakobDegen): Consider saving some memory by using a more tset like representation of
     // the plugin lists
     plugin_lists: PluginLists,
+}
+
+impl ConfiguredTargetNodeData {
+    fn new(
+        label: ConfiguredTargetLabel,
+        target_node: TargetNodeOrForward,
+        resolved_configuration: MatchedConfigurationSettingKeysWithCfg,
+        resolved_transition_configurations: BuckFixedSortedMap<
+            Arc<TransitionId>,
+            Arc<TransitionApplied>,
+        >,
+        execution_platform_resolution: ExecutionPlatformResolution,
+        all_deps: ConfiguredTargetNodeDeps,
+        platform_cfgs: BuckFixedSortedMap<TargetLabel, ConfigurationData>,
+        plugin_lists: PluginLists,
+    ) -> Self {
+        let label = Hashed::new(label);
+        let hash = StarlarkHashValue::new(&(
+            &label,
+            &target_node,
+            &resolved_configuration,
+            &resolved_transition_configurations,
+            &execution_platform_resolution,
+            &all_deps,
+            &platform_cfgs,
+            &plugin_lists,
+        ));
+        Self {
+            label,
+            hash,
+            target_node,
+            resolved_configuration,
+            resolved_transition_configurations,
+            execution_platform_resolution,
+            all_deps,
+            platform_cfgs,
+            plugin_lists,
+        }
+    }
+}
+
+/// The stored hashes are compared first: nodes that differ nearly always differ there, which
+/// spares comparing the fields.
+impl PartialEq for ConfiguredTargetNodeData {
+    fn eq(&self, other: &Self) -> bool {
+        let ConfiguredTargetNodeData {
+            label,
+            hash,
+            target_node,
+            resolved_configuration,
+            resolved_transition_configurations,
+            execution_platform_resolution,
+            all_deps,
+            platform_cfgs,
+            plugin_lists,
+        } = self;
+        *hash == other.hash
+            && *label == other.label
+            && *target_node == other.target_node
+            && *resolved_configuration == other.resolved_configuration
+            && *resolved_transition_configurations == other.resolved_transition_configurations
+            && *execution_platform_resolution == other.execution_platform_resolution
+            && *all_deps == other.all_deps
+            && *platform_cfgs == other.platform_cfgs
+            && *plugin_lists == other.plugin_lists
+    }
+}
+
+impl Eq for ConfiguredTargetNodeData {}
+
+/// Only the stored hash: the fields are not hashed again.
+impl Hash for ConfiguredTargetNodeData {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.hash.hash(state);
+    }
 }
 
 impl Debug for ConfiguredTargetNodeData {
@@ -256,16 +334,16 @@ impl ConfiguredTargetNode {
         platform_cfgs: BuckFixedSortedMap<TargetLabel, ConfigurationData>,
         plugin_lists: PluginLists,
     ) -> Self {
-        Self(triomphe::Arc::new(Hashed::new(ConfiguredTargetNodeData {
-            label: Hashed::new(name),
-            target_node: TargetNodeOrForward::TargetNode(target_node),
+        Self(triomphe::Arc::new(ConfiguredTargetNodeData::new(
+            name,
+            TargetNodeOrForward::TargetNode(target_node),
             resolved_configuration,
-            resolved_transition_configurations: resolved_tr_configurations,
+            resolved_tr_configurations,
             execution_platform_resolution,
-            all_deps: ConfiguredTargetNodeDeps::new(deps, exec_deps),
+            ConfiguredTargetNodeDeps::new(deps, exec_deps),
             platform_cfgs,
             plugin_lists,
-        })))
+        )))
     }
 
     /// New `ConfiguredTargetNode` for a forward node for transitioned target.
@@ -286,27 +364,29 @@ impl ConfiguredTargetNode {
             "Creating a forward node to identical target label would be a mistake"
         );
 
-        Ok(ConfiguredTargetNode(triomphe::Arc::new(Hashed::new(
-            ConfiguredTargetNodeData {
-                label: Hashed::new(name.dupe()),
-                target_node: TargetNodeOrForward::Forward(transitioned_node.dupe()),
-                // We have no attributes with selects, so resolved configurations is empty.
-                resolved_configuration: MatchedConfigurationSettingKeysWithCfg::new(
-                    name.cfg_pair().check_no_exec_cfg()?,
-                    MatchedConfigurationSettingKeys::empty(),
-                ),
+        // We have no attributes with selects, so resolved configurations is empty.
+        let resolved_configuration = MatchedConfigurationSettingKeysWithCfg::new(
+            name.cfg_pair().check_no_exec_cfg()?,
+            MatchedConfigurationSettingKeys::empty(),
+        );
+        // Set the execution platform equal to the transitioned node's execution platform
+        // so we can call `buck2 test` on Forward.
+        let execution_platform_resolution =
+            transitioned_node.execution_platform_resolution().dupe();
+        let plugin_lists = transitioned_node.plugin_lists().clone();
+        Ok(ConfiguredTargetNode(triomphe::Arc::new(
+            ConfiguredTargetNodeData::new(
+                name,
+                TargetNodeOrForward::Forward(transitioned_node.dupe()),
+                resolved_configuration,
                 // We have no attributes to transition, so empty map is fine.
-                resolved_transition_configurations: BuckFixedSortedMap::new(),
-                // Set the execution platform equal to the transitioned node's execution platform
-                // so we can call `buck2 test` on Forward.
-                execution_platform_resolution: transitioned_node
-                    .execution_platform_resolution()
-                    .dupe(),
-                plugin_lists: transitioned_node.plugin_lists().clone(),
-                all_deps: ConfiguredTargetNodeDeps::new(vec![transitioned_node], vec![]),
-                platform_cfgs: BuckFixedSortedMap::new(),
-            },
-        ))))
+                BuckFixedSortedMap::new(),
+                execution_platform_resolution,
+                ConfiguredTargetNodeDeps::new(vec![transitioned_node], vec![]),
+                BuckFixedSortedMap::new(),
+                plugin_lists,
+            ),
+        )))
     }
 
     pub(crate) fn actual_attribute() -> &'static Attribute {
@@ -652,7 +732,7 @@ impl Hash for ConfiguredTargetNodeDeps {
 
 /// Like `&ConfiguredTargetNode`, but cheaper (one fewer indirection).
 #[derive(Debug, Copy, Clone)]
-pub struct ConfiguredTargetNodeRef<'a>(triomphe::ArcBorrow<'a, Hashed<ConfiguredTargetNodeData>>);
+pub struct ConfiguredTargetNodeRef<'a>(triomphe::ArcBorrow<'a, ConfiguredTargetNodeData>);
 
 impl Dupe for ConfiguredTargetNodeRef<'_> {}
 

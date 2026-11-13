@@ -387,6 +387,17 @@ struct TenantStateInit<'a> {
     cancellation: Arc<CancellationScope>,
     generation: Arc<TenantGeneration>,
     dice_provider: &'a TenantDiceProvider,
+    /// A shared daemon's stash, outside every tenant tree.
+    shared_stash: Option<&'a SharedStash>,
+}
+
+/// Where a shared daemon keeps the BlobStore's stash and what it does the stash's IO on. The
+/// store keeps the executor it is given for the daemon's lifetime, and a tenant's executor holds
+/// that tenant's disk lease, which its eviction waits for, so the stash gets one of the daemon's
+/// own.
+struct SharedStash {
+    path: AbsNormPathBuf,
+    blocking: Arc<dyn BlockingExecutor>,
 }
 
 struct TenantInitializationGate {
@@ -414,6 +425,12 @@ struct DaemonSharedServices<'a> {
 #[derive(Allocative)]
 struct TenantStateFactory {
     dice_provider: TenantDiceProvider,
+    /// Where a shared daemon keeps the BlobStore's stash: under its namespace in the state
+    /// directory of the checkout that started it, like its forkserver state, so that cleaning
+    /// or evicting a tenant, the first included, leaves the content other tenants are served
+    /// from in place. `None` for an unshared daemon, whose stash is in its tenant's buck-out.
+    #[allocative(skip)]
+    shared_stash: Option<SharedStash>,
     #[allocative(skip)]
     fb: FacebookInit,
     init_ctx: TenantStateInitPreferences,
@@ -479,6 +496,7 @@ impl TenantStateFactory {
             cancellation,
             generation,
             dice_provider: &self.dice_provider,
+            shared_stash: self.shared_stash.as_ref(),
         })
         .await
     }
@@ -499,6 +517,7 @@ impl TenantState {
             cancellation,
             generation,
             dice_provider,
+            shared_stash,
         } = init;
         let paths = LeasedTenantPaths::acquire(
             paths,
@@ -806,21 +825,25 @@ impl TenantState {
         } else {
             EventDispatcher::null()
         };
-        let stash = io
+        let tenant_stash = io
             .project_root()
             .resolve(paths.buck_out_dir())
             .join(ForwardRelativePath::unchecked_new("stash"));
+        let (stash, stash_io) = match shared_stash {
+            Some(shared) => {
+                // Nothing refers to what an unshared daemon left in this tenant's buck-out.
+                buck2_execute::blob_store::discard_stash(&tenant_stash, blocking_executor.dupe());
+                (shared.path.clone(), shared.blocking.dupe())
+            }
+            None => (tenant_stash, blocking_executor.dupe()),
+        };
         if disk_state_core {
-            // The daemon has one stash, started empty. It lives under this repo's buck-out until
-            // it has a home of the daemon's own; a second repo in the process would share it.
-            BlobStore::global().attach_stash(
-                stash,
-                digest_config.cas_digest_config(),
-                blocking_executor.dupe(),
-            );
+            // The daemon has one stash, started empty; every tenant after the first finds it
+            // attached.
+            BlobStore::global().attach_stash(stash, digest_config.cas_digest_config(), stash_io);
         } else {
             // Nothing refers to what a previous daemon left, whichever core it ran.
-            buck2_execute::blob_store::discard_stash(&stash, blocking_executor.dupe());
+            buck2_execute::blob_store::discard_stash(&stash, stash_io);
         }
         let materializer = RepoState::create_materializer(
             disk_state_core,
@@ -2431,7 +2454,22 @@ impl DaemonState {
             .await?;
 
             let (init_ctx, daemon_originating_cgroup) = init_ctx.split();
+            let unidaemon = init_ctx
+                .daemon_startup_config
+                .startup_options
+                .routing
+                .is_shared();
+            let shared_stash = unidaemon
+                .then(|| -> buck2_error::Result<_> {
+                    Ok(SharedStash {
+                        path: invocation_paths.stash_dir()?,
+                        blocking: blocking_executor_factory
+                            .for_project(invocation_paths.project_root().clone()),
+                    })
+                })
+                .transpose()?;
             let tenant_state_factory = TenantStateFactory {
+                shared_stash,
                 dice_provider: TenantDiceProvider::new(
                     init_ctx.daemon_startup_config.startup_options.share_dice,
                     invocation_paths
@@ -2483,12 +2521,6 @@ impl DaemonState {
                 .daemon_buck_settings()
                 .package_visibility
                 .default_intersection();
-            let unidaemon = tenant_state_factory
-                .init_ctx
-                .daemon_startup_config
-                .startup_options
-                .routing
-                .is_shared();
             let tenants = TenantStateRegistry::new(tenant, unidaemon).await?;
             Ok(Arc::new(DaemonStateData {
                 tenants,

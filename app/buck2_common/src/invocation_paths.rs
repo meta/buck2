@@ -761,6 +761,33 @@ impl InvocationPaths {
             .join(FileName::unchecked_new("forkserver"))
     }
 
+    /// The BlobStore's stash: the local content behind the daemon's tracked digests that the
+    /// CAS is not known to hold. An unshared daemon keeps it in its tenant's buck-out, where it
+    /// has always been. A shared daemon's tenants are cleaned and evicted independently of it,
+    /// the tenant that started it included, so its stash lives with its forkserver state, under
+    /// its namespace beside its working directory.
+    pub fn stash_dir(&self) -> buck2_error::Result<AbsNormPathBuf> {
+        if !self.routing()?.is_shared() {
+            return Ok(self.buck_out_path().join(FileName::unchecked_new("stash")));
+        }
+        Ok(self
+            .shared_stash_state_dir()?
+            .join(FileName::unchecked_new("stash")))
+    }
+
+    /// Stash state of the shared daemon of this checkout's namespace: the stash and what a
+    /// starting daemon moves aside of a previous one's. Removed with the forkserver state when
+    /// the daemon exits normally.
+    pub fn shared_stash_state_dir(&self) -> buck2_error::Result<AbsNormPathBuf> {
+        let key = self
+            .unidaemon_key()
+            .internal_error("A shared daemon serves a namespace")?;
+        Ok(self
+            .daemon_state_dir()
+            .join(FileName::unchecked_new("stash"))
+            .join(key.file_name()))
+    }
+
     fn materializer_state_dir_name(&self) -> &FileName {
         FileName::unchecked_new("materializer_state")
     }

@@ -111,10 +111,18 @@ pub fn terminate(pid: i32) -> io::Result<()> {
     ignore_esrch(unsafe { libc::kill(pid, libc::SIGTERM) })
 }
 
-/// Sends `SIGKILL` to every process in the group `pgid`. An empty group is not an error.
+/// Sends `SIGKILL` to every process in the group `pgid`. An empty group is not an error, and
+/// neither is a group of zombies only, for which macOS fails `killpg` with `EPERM`.
 pub fn kill_group(pgid: i32) -> io::Result<()> {
     // SAFETY: `killpg` has no memory safety requirements.
-    ignore_esrch(unsafe { libc::killpg(pgid, libc::SIGKILL) })
+    let res = unsafe { libc::killpg(pgid, libc::SIGKILL) };
+    if cfg!(target_os = "macos")
+        && res != 0
+        && io::Error::last_os_error().raw_os_error() == Some(libc::EPERM)
+    {
+        return Ok(());
+    }
+    ignore_esrch(res)
 }
 
 fn ignore_esrch(res: libc::c_int) -> io::Result<()> {
@@ -257,6 +265,15 @@ mod tests {
         assert_eq!(leader.wait().unwrap().code(), Some(5));
         // The group outlives its leader while the leader's `sleep` is in it.
         kill_group(pgid).unwrap();
+    }
+
+    #[test]
+    fn test_kill_group_of_an_unreaped_leader_alone() {
+        let mut leader = spawn_sh("exit 0", true);
+        let pgid = leader.id() as i32;
+        wait_for_child_exit(pgid).unwrap();
+        kill_group(pgid).unwrap();
+        leader.wait().unwrap();
     }
 
     #[test]

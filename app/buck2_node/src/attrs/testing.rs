@@ -24,6 +24,7 @@ use buck2_core::configuration::transition::id::TransitionId;
 use buck2_core::target::configured_target_label::ConfiguredTargetLabel;
 use buck2_core::target::label::label::TargetLabel;
 use buck2_hash::BuckFixedSortedMap;
+use buck2_util::arc_str::ArcStr;
 use dupe::Dupe;
 
 use crate::attrs::configuration_context::AttrConfigurationContext;
@@ -32,7 +33,19 @@ use crate::configuration::resolved::ConfigurationSettingKey;
 use crate::configuration::resolved::MatchedConfigurationSettingKeys;
 
 pub fn configuration_ctx() -> impl AttrConfigurationContext {
-    configuration_ctx_with_matched_keys([
+    configuration_ctx_impl(default_matched_keys(), None)
+}
+
+/// Like `configuration_ctx`, for a target whose package set
+/// `buck.unmatched_select_incompatible` to `reason`.
+pub fn configuration_ctx_unmatched_select_incompatible(
+    reason: &str,
+) -> impl AttrConfigurationContext {
+    configuration_ctx_impl(default_matched_keys(), Some(ArcStr::from(reason)))
+}
+
+fn default_matched_keys() -> Vec<(ConfigurationSettingKey, Option<ConfigSettingData>)> {
+    vec![
         (
             ConfigurationSettingKey::testing_parse("root//other:config"),
             Some(ConfigSettingData {
@@ -49,13 +62,20 @@ pub fn configuration_ctx() -> impl AttrConfigurationContext {
             ConfigurationSettingKey::testing_parse("cell1//other:config"),
             None,
         ),
-    ])
+    ]
 }
 
 /// A configuration context whose `select()` resolution sees exactly
 /// `matched_keys`, each with the setting data that decides specificity.
 pub fn configuration_ctx_with_matched_keys(
     matched_keys: impl IntoIterator<Item = (ConfigurationSettingKey, Option<ConfigSettingData>)>,
+) -> impl AttrConfigurationContext {
+    configuration_ctx_impl(matched_keys, None)
+}
+
+fn configuration_ctx_impl(
+    matched_keys: impl IntoIterator<Item = (ConfigurationSettingKey, Option<ConfigSettingData>)>,
+    unmatched_select_incompatible: Option<ArcStr>,
 ) -> impl AttrConfigurationContext {
     let matched_keys = MatchedConfigurationSettingKeys::new(BuckFixedSortedMap::from_iter(
         matched_keys
@@ -67,10 +87,15 @@ pub fn configuration_ctx_with_matched_keys(
         ConfigurationData,
         MatchedConfigurationSettingKeys,
         ConfiguredTargetLabel,
+        Option<ArcStr>,
     );
     impl AttrConfigurationContext for TestAttrConfigurationContext {
         fn cfg(&self) -> ConfigurationNoExec {
             ConfigurationNoExec::new(self.0.dupe())
+        }
+
+        fn unmatched_select_incompatible(&self) -> Option<&ArcStr> {
+            self.4.as_ref()
         }
 
         fn base_exec_cfg(&self) -> buck2_error::Result<ConfigurationNoExec> {
@@ -120,5 +145,6 @@ pub fn configuration_ctx_with_matched_keys(
         .unwrap(),
         matched_keys,
         TargetLabel::testing_parse("root//:test_target").configure(cfg),
+        unmatched_select_incompatible,
     )
 }

@@ -1,0 +1,11 @@
+load(":defs.bzl", "constraint_setting", "constraint_value", "execution_platforms", "platform")
+
+# Linux first, so an action runs there unless something rules it out.
+execution_platforms(name = "execs", platforms = [":linux_p", ":windows_p"])
+
+constraint_setting(name = "os")
+constraint_value(name = "linux", setting = ":os")
+constraint_value(name = "windows", setting = ":os")
+
+platform(name = "linux_p", values = [":linux"])
+platform(name = "windows_p", values = [":windows"])

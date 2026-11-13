@@ -13,6 +13,7 @@ use async_trait::async_trait;
 use buck2_common::dice::cells::HasCellResolver;
 use buck2_common::legacy_configs::dice::HasLegacyConfigs;
 use buck2_common::legacy_configs::key::BuckconfigKeyRef;
+use buck2_core::configuration::compatibility::MaybeCompatible;
 use buck2_core::configuration::data::ConfigurationData;
 use buck2_core::global_cfg_options::GlobalCfgOptions;
 use buck2_core::target::configured_target_label::ConfiguredTargetLabel;
@@ -189,12 +190,24 @@ impl ConfiguredTargetCalculationImpl for ConfiguredTargetCalculationInstance {
                     &super_package,
                 )
                 .await?;
-                let exec_cfg = get_execution_platform_toolchain_dep(
+                let exec_cfg = match get_execution_platform_toolchain_dep(
                     ctx,
                     &TargetConfiguredTargetLabel::new_configure(target, cfg.dupe()),
                     node.as_ref(),
                 )
                 .await?
+                {
+                    // In a package with `buck.unmatched_select_incompatible`, leave the
+                    // incompatibility to configuring the target, which reports it.
+                    MaybeCompatible::Incompatible(_)
+                        if node.unmatched_select_incompatible().is_some() =>
+                    {
+                        return Ok(
+                            target.configure_with_exec(cfg, ConfigurationData::unspecified_exec())
+                        );
+                    }
+                    r => r,
+                }
                 // FIXME(JakobDegen): This is busted. Callers of this function expect to need to
                 // subsequently actually configure the target, and handle any possible
                 // incompatibilities at that time. Doing this here prevents them from handling those

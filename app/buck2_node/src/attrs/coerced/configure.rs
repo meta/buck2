@@ -11,12 +11,15 @@
 //! Configuration of coerced values: select resolution, the fused configured
 //! traversal, and concat validation.
 
+use buck2_core::configuration::compatibility::IncompatiblePlatformReasonCause;
 use buck2_core::configuration::compatibility::ResultMaybeCompatible;
 use buck2_core::configuration::config_setting::ConfigSettingData;
 use buck2_core::package::PackageLabel;
 use buck2_core::provider::label::ProvidersLabel;
 use buck2_error::buck2_error;
 use buck2_error::internal_error;
+use buck2_util::arc_str::ArcStr;
+use dupe::Dupe;
 use itertools::Itertools;
 use ref_cast::RefCast;
 use smallvec::SmallVec;
@@ -68,6 +71,25 @@ impl<'a> CoercedAttrRef<'a> {
             ctx.cfg().cfg(),
             entries.iter().map(|(k, _)| format!("  {k}")).join("\n"),
         )
+    }
+
+    /// The result of a select where no condition matched and no default was set: the target is
+    /// incompatible if its package set `buck.unmatched_select_incompatible`, otherwise
+    /// `select_no_match_error`.
+    pub(crate) fn select_no_match<T>(
+        ctx: &dyn AttrConfigurationContext,
+        entries: AttrRefSelectorEntries<'a>,
+        attr_name: Option<&str>,
+    ) -> ResultMaybeCompatible<T> {
+        match ctx.unmatched_select_incompatible() {
+            Some(reason) => ResultMaybeCompatible::Incompatible(ctx.incompatible_platform_reason(
+                IncompatiblePlatformReasonCause::UnmatchedSelect {
+                    attr: attr_name.map(ArcStr::from),
+                    reason: reason.dupe(),
+                },
+            )),
+            None => Self::select_no_match_error(ctx, entries).into(),
+        }
     }
 
     /// Resolve a select against the configuration: most specific matching

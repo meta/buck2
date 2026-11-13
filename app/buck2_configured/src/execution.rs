@@ -386,16 +386,24 @@ impl ToolchainExecutionPlatformCompatibilityKey {
         let resolved_transitions = BuckFixedSortedMap::new();
         let cfg_ctx = unspecified_attr_cfg_ctx(
             self.target.inner(),
+            node.as_ref(),
             matched_cfg_keys,
             &resolved_transitions,
             &platform_cfgs,
         );
+        // In a package with `buck.unmatched_select_incompatible`, an incompatible toolchain
+        // doesn't constrain the execution platform: configuring it for the target reports
+        // the incompatibility.
+        let allow_incompatible = node.unmatched_select_incompatible().is_some();
         let (gathered_deps, errors_and_incompats) =
-            gather_deps(&self.target, node.as_ref(), &cfg_ctx, ctx)
-                .await
-                .require_compatible()?;
-
-        errors_and_incompats.finalize().require_compatible()?;
+            match gather_deps(&self.target, node.as_ref(), &cfg_ctx, ctx).await {
+                ResultMaybeCompatible::Incompatible(_) if allow_incompatible => return Ok(Ok(())),
+                r => r.require_compatible()?,
+            };
+        match errors_and_incompats.finalize() {
+            ResultMaybeCompatible::Incompatible(_) if allow_incompatible => return Ok(Ok(())),
+            r => r.require_compatible()?,
+        };
 
         let constraints =
             ExecutionPlatformConstraints::new(node.as_ref(), &gathered_deps, &cfg_ctx)?;
@@ -477,14 +485,20 @@ pub(crate) async fn get_execution_platform_toolchain_dep(
         let resolved_transitions = BuckFixedSortedMap::new();
         let cfg_ctx = unspecified_attr_cfg_ctx(
             target_label.inner(),
+            target_node,
             matched_cfg_keys,
             &resolved_transitions,
             &platform_cfgs,
         );
         let (gathered_deps, errors_and_incompats) =
-            gather_deps(target_label, target_node, &cfg_ctx, ctx)
-                .await
-                .require_compatible()?;
+            match gather_deps(target_label, target_node, &cfg_ctx, ctx).await {
+                ResultMaybeCompatible::Incompatible(reason)
+                    if target_node.unmatched_select_incompatible().is_some() =>
+                {
+                    return Ok(MaybeCompatible::Incompatible(reason));
+                }
+                r => r.require_compatible()?,
+            };
         match errors_and_incompats.finalize() {
             ResultMaybeCompatible::Compatible(_) => {}
             ResultMaybeCompatible::Incompatible(reason) => {
@@ -1109,7 +1123,7 @@ async fn diagnose_execution_platform_resolution(
         .finalize()
         .require_compatible()?;
 
-    let cfg_ctx = preamble.attr_cfg_ctx(target.inner());
+    let cfg_ctx = preamble.attr_cfg_ctx(target.inner(), node.as_ref());
     let cell = CellNameForConfigurationResolution(target.pkg().cell_name());
     let default =
         match ExecutionPlatformConstraints::new(node.as_ref(), &preamble.gathered_deps, &cfg_ctx) {

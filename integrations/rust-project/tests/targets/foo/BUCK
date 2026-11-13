@@ -101,6 +101,7 @@ rust_library(
         "MACOS_ONLY": select({"ovr_config//os:macos": "1"}),
         "UNIVERSAL": "1",
     },
+    features = select({"ovr_config//os:macos": ["macos_only"]}),
     target_compatible_with = ["ovr_config//cpu/constraints:riscv64"],
 )
 

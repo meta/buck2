@@ -197,7 +197,7 @@ def gather_unconfigured_deps(ctx: bxl.Context, targets: list[TargetLabel]) -> di
             "deps": deps,
             "edition": _get_attr_no_select(target, "edition"),
             "env": env,
-            "features": _get_attr_no_select(target, "features"),
+            "features": _get_attr_no_select(target, "features") or [],
             "in_workspace": False,
             "kind": _get_attr_no_select(target, "_rust_analyzer_target_kind"),
             "label": target.label,

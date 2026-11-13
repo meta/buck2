@@ -1,0 +1,8 @@
+load("@prelude//cfg/modifier:set_cfg_modifiers.bzl", "set_cfg_modifiers")
+
+# Useful for fuzzing
+modifiers_list = ["ovr_config//rust:panic_unwind"]
+
+set_cfg_modifiers(
+    cfg_modifiers = modifiers_list,
+)

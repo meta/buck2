@@ -1,0 +1,9 @@
+load("@prelude//cfg/modifier:set_cfg_modifiers.bzl", "set_cfg_modifiers")
+
+set_cfg_modifiers(
+    cfg_modifiers = [
+        "root//cfg:build_mode[release]",
+        "root//cfg:os[macos]",
+        "root//cfg:cpu[arm64]",
+    ]
+)

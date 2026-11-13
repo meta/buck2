@@ -1,0 +1,11 @@
+# Regression fixture: child opts in but does NOT pass `visibility=`.
+# The intersection contribution should be NONE (parent's intersection stays unchanged),
+# NOT an empty list (which would block all consumers). `within_view`
+# is set to keep the call non-trivial — it forces `package()` to be
+# called, exercising the omitted-`visibility=` code path.
+package(
+    inherit = True,
+    within_view = ["PUBLIC"],
+)
+
+enforce_visibility_intersection()

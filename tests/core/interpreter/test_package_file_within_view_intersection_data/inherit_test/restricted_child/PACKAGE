@@ -1,0 +1,19 @@
+# Child PACKAGE that uses `inherit = True` AND opts in. The cap contribution
+# is the EXPLICIT `within_view = [...]` list (here
+# `root//inherit_test/restricted_child/...`), NOT the post-inherit union,
+# which is at least as wide as the parent's list and so would never tighten
+# the parent's cap.
+#
+# Effective cap on descendants of this PACKAGE:
+#   parent_cap AND explicit_child_within_view
+# = `root//inherit_test/...` AND `root//inherit_test/restricted_child/...`
+#
+# `inherit = True` only affects the `within_view` DEFAULT for targets in
+# this PACKAGE that do not declare their own: they see
+# `parent.within_view ∪ this.within_view`. It does not affect the cap.
+package(
+    inherit = True,
+    within_view = ["root//inherit_test/restricted_child/..."],
+)
+
+enforce_within_view_intersection()

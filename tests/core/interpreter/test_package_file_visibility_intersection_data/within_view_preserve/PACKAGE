@@ -1,0 +1,12 @@
+# Parent: restrictive within_view that ONLY allows depending on
+# `root//within_view_preserve/...`. Combined with
+# `enforce_visibility_intersection()`, descendants must (a) AND with
+# this PACKAGE's `visibility = ["PUBLIC"]` (which is a no-op since
+# PUBLIC is the identity of the intersection), and (b) preserve this
+# `within_view` restriction.
+package(
+    visibility = ["PUBLIC"],
+    within_view = ["root//within_view_preserve/..."],
+)
+
+enforce_visibility_intersection()

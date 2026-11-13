@@ -1,0 +1,4 @@
+package(
+    visibility = ["root//target_pattern/..."],
+    visibility_exempt_targets = ["root//target_pattern/sub:t"],
+)

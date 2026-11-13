@@ -1,0 +1,11 @@
+# Second level of opt-in. Names `root//outside/...`, which the grandparent's
+# cap does not; the effective cap below is the AND of both lists, so
+# `outside` stays unreachable.
+package(
+    within_view = [
+        "root//intersect/child/...",
+        "root//outside/...",
+    ],
+)
+
+enforce_within_view_intersection()

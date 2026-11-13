@@ -1,0 +1,13 @@
+load("@fbcode_macros//build_defs:python.bzl", "python")
+load("@fbsource//tools/target_determinator/macros:ci.bzl", "ci")
+
+python.set_typing(True)
+
+# Run these tests on all of Windows, Mac, and Linux.
+#
+# FIXME(JakobDegen): Figure out reasonable defaults for cross-build testing
+ci.package(
+    ci.linux(ci.aarch64()),
+    ci.remove(ci.linux(ci.skip_test(ci.mode("fbcode//mode/opt-mac")))),
+    ci.remove(ci.linux(ci.opt())),
+)

@@ -1,0 +1,4 @@
+# `enforce_visibility_intersection()` may be called at most once per PACKAGE
+# file. The second direct call fails PACKAGE evaluation.
+enforce_visibility_intersection()
+enforce_visibility_intersection()

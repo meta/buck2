@@ -1,0 +1,17 @@
+load("@fbcode//buck2/cfg/experimental:set_cfg_modifiers.bzl", "set_cfg_modifiers")
+load("@fbsource//tools/target_determinator/macros:ci.bzl", "ci")
+
+# this won't work in OSS but looks like we don't run these tests in OSS anyway
+set_cfg_modifiers(
+    cfg_modifiers = [
+        "ovr_config//build_mode:sanitizer_type[asan]",
+    ],
+)
+
+# Run only on linux/x86_64
+ci.package(
+    ci.linux(
+        ci.x86_64(),
+    ),
+    overwrite = True,
+)

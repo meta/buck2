@@ -1,0 +1,7 @@
+load("@prelude//cfg/modifier:set_cfg_modifiers.bzl", "set_cfg_modifiers")
+
+set_cfg_modifiers(
+    cfg_modifiers = [
+        "ovr_config//build_mode:opt",
+    ]
+)

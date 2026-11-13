@@ -1,0 +1,5 @@
+# No marker: this layer applies only under `audit` or `enforce`.
+package(
+    visibility = ["root//boundary/..."],
+    visibility_exempt_targets = ["root//boundary/legacy:"],
+)

@@ -1,0 +1,15 @@
+# Copyright (c) Meta Platforms, Inc. and affiliates.
+#
+# This source code is dual-licensed under either the MIT license found in the
+# LICENSE-MIT file in the root directory of this source tree or the Apache
+# License, Version 2.0 found in the LICENSE-APACHE file in the root directory
+# of this source tree. You may select, at your option, one of the
+# above-listed licenses.
+
+# Declares its own `within_view` but does NOT call
+# `enforce_within_view_intersection()`. Its `within_view_cap` is therefore
+# inherited from the ancestor `within_view_cap_dir` and is distinct from this
+# package's own `within_view`, exercising cap propagation.
+package(
+    within_view = ["root//other/..."],
+)

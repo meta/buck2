@@ -1,0 +1,5 @@
+package(
+    visibility = ["root//marked/..."],
+)
+
+enforce_visibility_intersection()

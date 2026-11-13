@@ -1,0 +1,1 @@
+write_package_value("xxx.yyy", "zzz")  # buildifier: disable=positional-args

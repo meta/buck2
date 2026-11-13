@@ -985,12 +985,22 @@ class K2JvmAbiFirAnalysisHandlerExtension(private val outputPath: String) :
       sourceFiles: List<KtFile>,
       session: FirSession,
       state: AbiGenState,
+      readPackagesFromAst: Boolean,
   ): Map<ClassId, Set<String>> {
     val missingConstants = mutableMapOf<ClassId, MutableSet<String>>()
 
     // Collect all packages that are defined in the source files being compiled
     // to exclude constants from those packages (they're not "missing")
-    val sourcePackages = sourceFiles.map { it.packageFqName }.toSet()
+    // While a file has no AST, `packageFqName` reads the PSI stub tree, which the core environment
+    // then builds for that file. Loading the AST first, which the visitor below needs anyway, makes
+    // the property read the package directive instead.
+    val sourcePackages =
+        sourceFiles
+            .map { file ->
+              if (readPackagesFromAst) file.node
+              file.packageFqName
+            }
+            .toSet()
 
     for (sourceFile in sourceFiles) {
       val usedConstants = mutableSetOf<String>()
@@ -1328,7 +1338,13 @@ class K2JvmAbiFirAnalysisHandlerExtension(private val outputPath: String) :
 
     val outputs = sessionsWithSources.map { (session, sources) ->
       val state = session.jvmAbiGenService.state
-      val missingConstants = collectMissingConstantsFromSourceFiles(sources, session, state)
+      val missingConstants = collectMissingConstantsFromSourceFiles(
+          sources,
+          session,
+          state,
+          readPackagesFromAst =
+              configuration.get(K2JvmAbiConfigurationKeys.AST_PACKAGE_NAMES) != false,
+      )
       state.missingConstants.putAll(missingConstants)
       // Skip checkers - ABI generation only needs resolved types, and third-party
       // plugin checkers (like Litho K2) crash on unresolved references from stubs.

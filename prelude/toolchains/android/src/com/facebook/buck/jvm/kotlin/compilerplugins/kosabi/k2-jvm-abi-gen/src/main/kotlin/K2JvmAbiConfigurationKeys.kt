@@ -29,6 +29,9 @@ object K2JvmAbiConfigurationKeys {
   val ENABLE_COMPOSE_ABI_EMULATION: CompilerConfigurationKey<Boolean> =
       CompilerConfigurationKey.create("enable Compose ABI emulation for K2 JVM ABI generation")
 
+  val AST_PACKAGE_NAMES: CompilerConfigurationKey<Boolean> =
+      CompilerConfigurationKey.create("read source packages from the AST, not PSI stub trees")
+
   val ABI_VALIDATION_MODE: CompilerConfigurationKey<String> =
       CompilerConfigurationKey.create("ABI validation mode for K2 JVM ABI generation")
 

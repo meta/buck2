@@ -59,6 +59,14 @@ class K2JvmAbiCommandLineProcessor : CommandLineProcessor {
         false,
     )
 
+    val AST_PACKAGE_NAMES_OPTION: CliOption = CliOption(
+        "astPackageNames",
+        "<boolean>",
+        "Read each source file's package from its AST instead of building a PSI stub tree for " +
+            "it. Default is true; false reads it through the stub tree as before.",
+        false,
+    )
+
     val ABI_VALIDATION_MODE_OPTION: CliOption = CliOption(
         "abiValidationMode",
         "off|warn|error",
@@ -97,6 +105,7 @@ class K2JvmAbiCommandLineProcessor : CommandLineProcessor {
         ENABLE_MIXED_COMPILATION,
         DEBUG_OUTPUT_OPTION,
         ENABLE_COMPOSE_ABI_EMULATION_OPTION,
+        AST_PACKAGE_NAMES_OPTION,
         ABI_VALIDATION_MODE_OPTION,
         SHALLOW_CLASS_USAGE_OPTION,
         SKIP_NON_ABI_BODIES_OPTION,
@@ -120,6 +129,8 @@ class K2JvmAbiCommandLineProcessor : CommandLineProcessor {
               K2JvmAbiConfigurationKeys.ENABLE_COMPOSE_ABI_EMULATION,
               value == "true",
           )
+      AST_PACKAGE_NAMES_OPTION ->
+          configuration.put(K2JvmAbiConfigurationKeys.AST_PACKAGE_NAMES, value != "false")
       ABI_VALIDATION_MODE_OPTION ->
           configuration.put(K2JvmAbiConfigurationKeys.ABI_VALIDATION_MODE, value)
       SHALLOW_CLASS_USAGE_OPTION ->

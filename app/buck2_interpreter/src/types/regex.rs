@@ -20,7 +20,6 @@ use starlark::environment::Methods;
 use starlark::environment::MethodsBuilder;
 use starlark::starlark_module;
 use starlark::starlark_simple_value;
-use starlark::typing::Ty;
 use starlark::values::Freeze;
 use starlark::values::Heap;
 use starlark::values::NoSerialize;
@@ -101,10 +100,6 @@ starlark::methods_static!(REGEX_METHODS = regex_methods);
 impl<'v> StarlarkValue<'v> for StarlarkBuckRegex {
     fn get_methods() -> Option<&'static Methods> {
         Some(REGEX_METHODS.methods())
-    }
-
-    fn typechecker_ty(&self) -> Option<Ty> {
-        Some(Ty::starlark_value::<Self>())
     }
 }
 

@@ -35,10 +35,9 @@
 //! ```
 
 pub(crate) mod alloc;
-pub(crate) mod refs;
 pub(crate) mod structs;
 pub(crate) mod unordered_hasher;
 pub(crate) mod value;
 
 pub use crate::values::types::structs::alloc::AllocStruct;
-pub use crate::values::types::structs::refs::StructRef;
+pub use crate::values::types::structs::value::Struct;

@@ -31,7 +31,7 @@ use starlark::environment::Module;
 use starlark::eval::Evaluator;
 use starlark::values::Value;
 use starlark::values::ValueOf;
-use starlark::values::structs::StructRef;
+use starlark::values::structs::Struct;
 
 use crate::analysis::AnalysisResult;
 use crate::artifact_groups::promise::PromiseArtifactAttr;
@@ -61,7 +61,7 @@ pub trait AnonTargetDyn: Send + Sync + Display {
         attrs_spec: &AttributeSpec,
         dependents_analyses: AnonTargetDependentAnalysisResults<'_>,
         exec_resolution: ExecutionPlatformResolution,
-    ) -> buck2_error::Result<ValueOf<'v, StructRef<'v>>>;
+    ) -> buck2_error::Result<ValueOf<'v, Struct<'v>>>;
 }
 
 /// Rendered description of an anon target, for introspection commands.

@@ -33,7 +33,7 @@ use starlark::values::list::ListType;
 use starlark::values::none::NoneType;
 use starlark::values::record::Record;
 use starlark::values::string::StarlarkStr;
-use starlark::values::structs::StructRef;
+use starlark::values::structs::Struct;
 use starlark::values::tuple::TupleType;
 
 use crate::artifact_groups::ArtifactGroup;
@@ -136,7 +136,7 @@ pub enum JsonUnpack<'v> {
     List(ValueOf<'v, ListType<Value<'v>>>),
     Tuple(ValueOf<'v, TupleType<Value<'v>>>),
     Dict(ValueOf<'v, DictType<Value<'v>, Value<'v>>>),
-    Struct(StructRef<'v>),
+    Struct(ValueOf<'v, Struct<'v>>),
     Record(ValueOf<'v, Record<'v>>),
     Enum(ValueOf<'v, EnumValue<'v>>),
     TransitiveSetJsonProjection(ValueOf<'v, TransitiveSetJsonProjection<'v>>),

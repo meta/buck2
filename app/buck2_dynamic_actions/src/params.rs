@@ -26,7 +26,7 @@ use starlark::values::Trace;
 use starlark::values::Value;
 use starlark::values::ValueOf;
 use starlark::values::ValueTyped;
-use starlark::values::structs::StructRef;
+use starlark::values::structs::Struct;
 use starlark::values::typing::StarlarkCallable;
 
 use crate::attrs::DynamicAttrValues;
@@ -45,7 +45,7 @@ pub struct DynamicLambdaStaticFields {
 
 #[derive(Allocative, Trace, Debug, ProvidesStaticType)]
 pub struct DynamicLambdaParams<'v> {
-    pub attributes: Option<ValueOf<'v, StructRef<'v>>>,
+    pub attributes: Option<ValueOf<'v, Struct<'v>>>,
     pub plugins: Option<ValueTyped<'v, AnalysisPlugins<'v>>>,
     pub lambda: StarlarkCallable<'v>,
     pub attr_values: Option<(
@@ -58,7 +58,7 @@ pub struct DynamicLambdaParams<'v> {
 
 #[derive(Allocative, Debug, ProvidesStaticType, StarlarkPagable)]
 pub struct FrozenDynamicLambdaParams<'fv> {
-    attributes: Option<ValueOf<'fv, StructRef<'fv>>>,
+    attributes: Option<ValueOf<'fv, Struct<'fv>>>,
     plugins: Option<ValueTyped<'fv, AnalysisPlugins<'fv>>>,
     lambda: StarlarkCallable<'fv>,
     pub attr_values: Option<(
@@ -70,7 +70,7 @@ pub struct FrozenDynamicLambdaParams<'fv> {
 }
 
 impl<'fv> FrozenDynamicLambdaParams<'fv> {
-    pub fn attributes(&self) -> Option<ValueOf<'fv, StructRef<'fv>>> {
+    pub fn attributes(&self) -> Option<ValueOf<'fv, Struct<'fv>>> {
         self.attributes
     }
 

@@ -63,7 +63,7 @@ use starlark::values::dict::DictType;
 use starlark::values::list_or_tuple::ListOrTupleType;
 use starlark::values::starlark_value;
 use starlark::values::string::StarlarkStr;
-use starlark::values::structs::StructRef;
+use starlark::values::structs::Struct;
 use starlark::values::typing::StarlarkCallableChecked;
 use starlark::values::typing::StarlarkCallableParamSpec;
 
@@ -264,11 +264,11 @@ pub(crate) static IMPL_PLATFORM_PARAM: ParamNameAndType = ParamNameAndType {
 };
 static IMPL_REFS_PARAM: ParamNameAndType = ParamNameAndType {
     name: IMPL_REFS_NAME,
-    ty: LazyLock::new(StructRef::starlark_type_repr),
+    ty: LazyLock::new(Struct::starlark_type_repr),
 };
 pub(crate) static IMPL_ATTRS_PARAM: ParamNameAndType = ParamNameAndType {
     name: IMPL_ATTRS_NAME,
-    ty: LazyLock::new(StructRef::starlark_type_repr),
+    ty: LazyLock::new(Struct::starlark_type_repr),
 };
 
 pub(crate) type ImplSingleReturnTy<'v> = PlatformInfo<'v>;

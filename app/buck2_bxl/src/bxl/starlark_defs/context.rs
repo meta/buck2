@@ -54,7 +54,7 @@ use starlark::values::Trace;
 use starlark::values::ValueOf;
 use starlark::values::ValueTyped;
 use starlark::values::starlark_value;
-use starlark::values::structs::StructRef;
+use starlark::values::structs::Struct;
 
 use crate::bxl::key::BxlKey;
 use crate::bxl::starlark_defs::context::actions::BxlExecutionResolution;
@@ -109,7 +109,7 @@ struct TargetPlatformInAnalysis;
 #[derive(ProvidesStaticType, Trace, NoSerialize, Allocative, Debug, Derivative)]
 pub(crate) struct RootBxlContextData<'v> {
     output_stream: ValueTyped<'v, StarlarkOutputStream>,
-    cli_args: ValueOf<'v, StructRef<'v>>,
+    cli_args: ValueOf<'v, Struct<'v>>,
 }
 
 /// Data object for `BxlContextType::Dynamic`.
@@ -338,7 +338,7 @@ impl<'v> BxlContext<'v> {
         heap: Heap<'v>,
         core: Arc<BxlContextCoreData>,
         stream_state: OutputStreamState,
-        cli_args: ValueOf<'v, StructRef<'v>>,
+        cli_args: ValueOf<'v, Struct<'v>>,
         digest_config: DigestConfig,
     ) -> buck2_error::Result<Self> {
         let root_data = RootBxlContextData {
@@ -393,7 +393,7 @@ impl<'v> BxlContext<'v> {
         core: Arc<BxlContextCoreData>,
         digest_config: DigestConfig,
         analysis_registry: AnalysisRegistry<'v>,
-        attributes: ValueOf<'v, StructRef<'v>>,
+        attributes: ValueOf<'v, Struct<'v>>,
     ) -> buck2_error::Result<Self> {
         Ok(Self {
             state: heap

@@ -38,7 +38,7 @@ use crate::typing::structs::TyStruct;
 use crate::util::arc_str::ArcStr;
 use crate::values::Heap;
 use crate::values::ValueOf;
-use crate::values::structs::value::Struct;
+use crate::values::structs::Struct;
 
 #[derive(
     Allocative, Clone, Copy, Dupe, Debug, Eq, PartialEq, Hash, Ord, PartialOrd, Pagable

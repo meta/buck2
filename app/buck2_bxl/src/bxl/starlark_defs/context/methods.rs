@@ -46,7 +46,7 @@ use starlark::values::list::ListType;
 use starlark::values::none::NoneOr;
 use starlark::values::none::NoneType;
 use starlark::values::string::StarlarkStr;
-use starlark::values::structs::StructRef;
+use starlark::values::structs::Struct;
 
 use crate::bxl::starlark_defs::analysis_result::StarlarkAnalysisResult;
 use crate::bxl::starlark_defs::aquery::StarlarkAQueryCtx;
@@ -694,7 +694,7 @@ pub(crate) fn bxl_context_methods(builder: &mut MethodsBuilder) {
     ///
     /// This attribute is not available on the bxl context within the a dynamic lambda.
     #[starlark(attribute)]
-    fn cli_args<'v>(this: &'v BxlContext<'v>) -> starlark::Result<ValueOf<'v, StructRef<'v>>> {
+    fn cli_args<'v>(this: &'v BxlContext<'v>) -> starlark::Result<ValueOf<'v, Struct<'v>>> {
         let cli_args = this
             .context_type
             .unpack_root()

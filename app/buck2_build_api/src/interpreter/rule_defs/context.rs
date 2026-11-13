@@ -46,7 +46,7 @@ use starlark::values::ValueOf;
 use starlark::values::ValueTyped;
 use starlark::values::none::NoneOr;
 use starlark::values::starlark_value;
-use starlark::values::structs::StructRef;
+use starlark::values::structs::Struct;
 
 use crate::analysis::AnalysisSplitInstants;
 use crate::analysis::anon_promises_dyn::RunAnonPromisesAccessor;
@@ -64,7 +64,7 @@ pub struct AnalysisActions<'v> {
     /// we can take the internal state without having to clone it.
     pub state: RefCell<Option<AnalysisRegistry<'v>>>,
     /// Copies from the ctx, so we can capture them for `dynamic`.
-    pub attributes: Option<ValueOf<'v, StructRef<'v>>>,
+    pub attributes: Option<ValueOf<'v, Struct<'v>>>,
     pub plugins: Option<ValueTyped<'v, AnalysisPlugins<'v>>>,
     /// Digest configuration to use when interpreting digests passed in analysis.
     pub digest_config: DigestConfig,
@@ -198,7 +198,7 @@ impl<'v> StarlarkValue<'v> for AnalysisActions<'v> {
 
 #[derive(ProvidesStaticType, Debug, Trace, NoSerialize, Allocative)]
 pub struct AnalysisContext<'v> {
-    attrs: Option<ValueOf<'v, StructRef<'v>>>,
+    attrs: Option<ValueOf<'v, Struct<'v>>>,
     pub actions: ValueTyped<'v, AnalysisActions<'v>>,
     /// Only `None` when running a `dynamic_output` action from Bxl.
     label: Option<ValueTyped<'v, StarlarkConfiguredProvidersLabel>>,
@@ -222,7 +222,7 @@ impl<'v> AnalysisContext<'v> {
     /// The context that is provided to users' UDR implementation functions. Comprised of things like attribute values, actions, etc
     fn new(
         heap: Heap<'v>,
-        attrs: Option<ValueOf<'v, StructRef<'v>>>,
+        attrs: Option<ValueOf<'v, Struct<'v>>>,
         label: Option<ValueTyped<'v, StarlarkConfiguredProvidersLabel>>,
         plugins: Option<ValueTyped<'v, AnalysisPlugins<'v>>>,
         registry: AnalysisRegistry<'v>,
@@ -245,7 +245,7 @@ impl<'v> AnalysisContext<'v> {
 
     pub fn prepare(
         heap: Heap<'v>,
-        attrs: Option<ValueOf<'v, StructRef<'v>>>,
+        attrs: Option<ValueOf<'v, Struct<'v>>>,
         label: Option<ConfiguredTargetLabel>,
         plugins: Option<ValueTyped<'v, AnalysisPlugins<'v>>>,
         registry: AnalysisRegistry<'v>,
@@ -299,7 +299,7 @@ fn analysis_context_methods(builder: &mut MethodsBuilder) {
     /// As an example, given a rule with the `attrs` argument of `{"foo": attrs.string()}`, this field will be
     /// a `struct` containing a field `foo` of type string.
     #[starlark(attribute)]
-    fn attrs<'v>(this: &'v AnalysisContext<'v>) -> starlark::Result<ValueOf<'v, StructRef<'v>>> {
+    fn attrs<'v>(this: &'v AnalysisContext<'v>) -> starlark::Result<ValueOf<'v, Struct<'v>>> {
         Ok(this.attrs.ok_or_else(|| {
             internal_error!("`attrs` is not available for `dynamic_output` or BXL")
         })?)

@@ -25,7 +25,7 @@ use starlark::values::OwnedFrozen;
 use starlark::values::Value;
 use starlark::values::ValueOf;
 use starlark::values::structs::AllocStruct;
-use starlark::values::structs::StructRef;
+use starlark::values::structs::Struct;
 
 use crate::interpreter::build_context::BuildContext;
 
@@ -138,7 +138,7 @@ pub(crate) fn register_host_info(builder: &mut GlobalsBuilder) {
     #[starlark(speculative_exec_safe)]
     fn host_info<'v>(
         eval: &mut Evaluator<'v, '_, '_>,
-    ) -> starlark::Result<ValueOf<'v, StructRef<'v>>> {
+    ) -> starlark::Result<ValueOf<'v, Struct<'v>>> {
         // Keeping this `speculative_exec_safe` is safe because BuildContext's `HostInfo`,
         // even when evaluated speculatively, is going to be the same across all interpreters
         // that might reuse each other's output.

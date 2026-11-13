@@ -12,7 +12,7 @@ use buck2_node::attrs::inspect_options::AttrInspectOptions;
 use buck2_node::nodes::configured::ConfiguredTargetNodeRef;
 use starlark::values::ValueOf;
 use starlark::values::structs::AllocStruct;
-use starlark::values::structs::StructRef;
+use starlark::values::structs::Struct;
 
 use crate::attrs::resolve::configured_attr::ConfiguredAttrExt;
 use crate::attrs::resolve::ctx::AttrResolutionContext;
@@ -21,14 +21,11 @@ use crate::attrs::resolve::ctx::AttrResolutionContext;
 pub(crate) fn node_to_attrs_struct<'v>(
     node: ConfiguredTargetNodeRef,
     ctx: &mut dyn AttrResolutionContext<'v>,
-) -> buck2_error::Result<ValueOf<'v, StructRef<'v>>> {
+) -> buck2_error::Result<ValueOf<'v, Struct<'v>>> {
     let attrs_iter = node.body()?.attrs(AttrInspectOptions::All);
     let mut resolved_attrs = Vec::with_capacity(attrs_iter.len());
     for a in attrs_iter {
         resolved_attrs.push((a.name, a.value.resolve_single(node.label().pkg(), ctx)?));
     }
-    Ok(ValueOf::alloc_struct(
-        ctx.heap(),
-        AllocStruct(resolved_attrs),
-    ))
+    Ok(ValueOf::alloc(ctx.heap(), AllocStruct(resolved_attrs)))
 }

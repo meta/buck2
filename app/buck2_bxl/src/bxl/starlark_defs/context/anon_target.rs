@@ -64,7 +64,7 @@ use starlark::values::ValueTyped;
 use starlark::values::dict::DictType;
 use starlark::values::list::ListType;
 use starlark::values::string::StarlarkStr;
-use starlark::values::structs::StructRef;
+use starlark::values::structs::Struct;
 use starlark::values::typing::StarlarkCallable;
 use starlark::values::typing::StarlarkCallableChecked;
 use starlark::values::typing::StarlarkCallableParamSpec;
@@ -96,7 +96,7 @@ impl StarlarkCallableParamSpec for BxlAnonCallbackParamSpec {
                 (
                     ArcStr::new_static(BXL_ANON_ATTRS),
                     ParamIsRequired::Yes,
-                    StructRef::starlark_type_repr(),
+                    Struct::starlark_type_repr(),
                 ),
             ],
             None,
@@ -167,7 +167,7 @@ impl AnonImpl {
         &self,
         eval: &mut Evaluator<'v, '_, '_>,
         bxl_ctx: ValueTyped<'v, BxlContext<'v>>,
-        attrs: ValueOf<'v, StructRef<'v>>,
+        attrs: ValueOf<'v, Struct<'v>>,
     ) -> buck2_error::Result<Value<'v>> {
         let anon_impl = get_rule_impl(eval, &self.module, &self.name)?;
         eval.eval_function(anon_impl, &[bxl_ctx.to_value(), attrs.to_value()], &[])

@@ -77,8 +77,7 @@ fn run_ctx_test(
                 BaseDeferredKey::TargetLabel(label.dupe()),
                 ExecutionPlatformResolution::unspecified(),
             )?;
-            let attributes =
-                ValueOf::alloc_struct(eval.heap(), AllocStruct([("name", "some_name")]));
+            let attributes = ValueOf::alloc(eval.heap(), AllocStruct([("name", "some_name")]));
             let plugins = eval
                 .heap()
                 .alloc(AnalysisPlugins::new(BuckMutInsertionMap::new()))

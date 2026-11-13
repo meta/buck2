@@ -25,8 +25,7 @@ use crate::values::FrozenHeap;
 use crate::values::Heap;
 use crate::values::ValueOf;
 use crate::values::string::StarlarkStr;
-use crate::values::structs::StructRef;
-use crate::values::structs::value::Struct;
+use crate::values::structs::Struct;
 
 /// Utility to allocate a struct on a heap.
 ///
@@ -59,7 +58,7 @@ where
     K: AllocValue<'v, Type = StarlarkStr>,
     V: AllocValue<'v>,
 {
-    type Type = StructRef<'v>;
+    type Type = Struct<'v>;
 
     fn alloc_value(self, heap: Heap<'v>) -> ValueOf<'v, Self::Type> {
         let iter = self.0.into_iter();
@@ -70,7 +69,7 @@ where
             let prev = fields.insert(k, v);
             assert!(prev.is_none(), "non-unique key: {k}");
         }
-        ValueOf::alloc(heap, Struct::new(fields)).into()
+        ValueOf::alloc(heap, Struct::new(fields))
     }
 }
 
@@ -80,7 +79,7 @@ where
     K: AllocFrozenValue<'fv, Type = StarlarkStr>,
     V: AllocFrozenValue<'fv>,
 {
-    type Type = StructRef<'fv>;
+    type Type = Struct<'fv>;
 
     fn alloc_frozen_value(self, heap: FrozenHeap<'fv>) -> ValueOf<'fv, Self::Type> {
         let iter = self.0.into_iter();
@@ -91,6 +90,6 @@ where
             let prev = fields.insert(k, v);
             assert!(prev.is_none(), "non-unique key: {k}");
         }
-        ValueOf::alloc_frozen(heap, Struct::new(fields)).into()
+        ValueOf::alloc_frozen(heap, Struct::new(fields))
     }
 }

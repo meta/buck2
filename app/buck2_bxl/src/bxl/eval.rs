@@ -197,7 +197,7 @@ impl BxlInnerEvaluator {
             let (finished_eval, (actions, output_stream_outcome)) = {
                 let stream_state = OutputStreamState::new();
 
-                let resolved_args = ValueOf::alloc_struct(
+                let resolved_args = ValueOf::alloc(
                     env.heap(),
                     AllocStruct(
                         key.cli_args()

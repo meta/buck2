@@ -38,7 +38,7 @@ use crate::typing::error::TypingNoContextError;
 use crate::typing::error::TypingNoContextOrInternalError;
 use crate::util::arc_str::ArcStr;
 use crate::values::Value;
-use crate::values::structs::StructRef;
+use crate::values::structs::Struct;
 use crate::values::typing::type_compiled::alloc::TypeMatcherAlloc;
 use crate::values::typing::type_compiled::matcher::TypeMatcher;
 use crate::values::typing::type_compiled::matcher::TypeMatcherDyn;
@@ -50,7 +50,7 @@ struct StructMatcher;
 #[type_matcher]
 impl TypeMatcher for StructMatcher {
     fn matches(&self, value: Value) -> bool {
-        StructRef::is_instance(value)
+        Struct::is_instance(value)
     }
 }
 

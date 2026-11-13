@@ -43,7 +43,6 @@ use crate as starlark;
 use crate::collections::aligned_padded_str::AlignedPaddedStr;
 use crate::environment::Methods;
 use crate::private::Private;
-use crate::typing::Ty;
 use crate::values::Freeze;
 use crate::values::FreezeResult;
 use crate::values::Freezer;
@@ -370,10 +369,6 @@ impl<'v> StarlarkValue<'v> for StarlarkStr {
 
     fn percent(&self, other: Value<'v>, heap: Heap<'v>) -> crate::Result<Value<'v>> {
         Ok(heap.alloc(interpolation::percent(self, other)?).to_value())
-    }
-
-    fn typechecker_ty(&self) -> Option<Ty> {
-        Some(Ty::starlark_value::<Self>())
     }
 }
 

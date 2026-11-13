@@ -512,10 +512,6 @@ impl<'v> StarlarkType<'v> for ListView<'v> {
         with_list!(self, |l| l.set_at(i, alloc_value))
     }
 
-    fn typechecker_ty(&self) -> Option<Ty> {
-        Some(Ty::any_list())
-    }
-
     fn get_type_starlark_repr() -> Ty {
         Ty::any_list()
     }

@@ -225,8 +225,4 @@ impl<'v> StarlarkType<'v> for IntView<'v> {
     fn bin_op_ty(op: TypingBinOp, rhs: &TyBasic) -> Option<Ty> {
         typecheck_num_bin_op(NumTy::Int, op, rhs)
     }
-
-    fn typechecker_ty(&self) -> Option<Ty> {
-        Some(Ty::int())
-    }
 }

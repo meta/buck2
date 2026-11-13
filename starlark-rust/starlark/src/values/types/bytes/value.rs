@@ -32,7 +32,6 @@ use starlark_map::StarlarkHasher;
 use crate as starlark;
 use crate::environment::Methods;
 use crate::starlark_simple_value;
-use crate::typing::Ty;
 use crate::values::Heap;
 use crate::values::StarlarkValue;
 use crate::values::UnpackValue;
@@ -281,9 +280,5 @@ impl<'v> StarlarkValue<'v> for StarlarkBytes {
 
     fn rmul(&self, lhs: Value<'v>, heap: Heap<'v>) -> Option<crate::Result<Value<'v>>> {
         self.mul(lhs, heap)
-    }
-
-    fn typechecker_ty(&self) -> Option<Ty> {
-        Some(Ty::starlark_value::<Self>())
     }
 }

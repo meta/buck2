@@ -576,10 +576,6 @@ impl<'v> StarlarkType<'v> for DictView<'v> {
         Ok(heap.alloc(Dict::new(items)).to_value())
     }
 
-    fn typechecker_ty(&self) -> Option<Ty> {
-        Some(Ty::any_dict())
-    }
-
     fn get_type_starlark_repr() -> Ty {
         Ty::any_dict()
     }

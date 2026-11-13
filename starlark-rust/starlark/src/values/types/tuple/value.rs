@@ -249,10 +249,6 @@ impl<'v> StarlarkValue<'v> for Tuple<'v> {
         collector.push_str("(...)");
     }
 
-    fn typechecker_ty(&self) -> Option<Ty> {
-        Some(Ty::any_tuple())
-    }
-
     fn get_type_starlark_repr() -> Ty {
         Ty::any_tuple()
     }

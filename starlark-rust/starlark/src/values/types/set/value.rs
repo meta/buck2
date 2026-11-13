@@ -374,10 +374,6 @@ impl<'v> StarlarkType<'v> for SetView<'v> {
         Ok(heap.alloc(data).to_value())
     }
 
-    fn typechecker_ty(&self) -> Option<Ty> {
-        Some(Ty::any_set())
-    }
-
     fn get_type_starlark_repr() -> Ty {
         Ty::any_set()
     }

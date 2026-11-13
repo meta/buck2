@@ -215,6 +215,7 @@ mod tests {
     use either::Either;
     use num_bigint::BigInt;
 
+    use crate::typing::Ty;
     use crate::values::Heap;
     use crate::values::Value;
     use crate::values::dict::AllocDict;
@@ -226,8 +227,17 @@ mod tests {
     use crate::values::string::str_type::StarlarkStr;
     use crate::values::tuple::TupleType;
     use crate::values::type_expr::StarlarkTypeExpr;
+    use crate::values::types::bytes::value::StarlarkBytes;
+    use crate::values::types::dict::value::DictView;
+    use crate::values::types::float::StarlarkFloat;
     use crate::values::types::int::view::IntView;
+    use crate::values::types::list::value::ListView;
+    use crate::values::types::record::field::Field;
+    use crate::values::types::set::value::SetData;
+    use crate::values::types::set::value::SetView;
+    use crate::values::types::tuple::value::Tuple;
     use crate::values::typing::StarlarkIter;
+    use crate::values::typing::TypeCompiled;
     use crate::values::typing::type_compiled::matcher::TypeMatcher;
     use crate::values::unpack::type_matcher;
 
@@ -259,6 +269,31 @@ mod tests {
                 T::starlark_type_repr()
             );
         }
+    }
+
+    /// A value of a type that knows nothing finer about its values is typed as the type.
+    #[test]
+    fn test_ty_of_value_is_the_type() {
+        #[track_caller]
+        fn typed_as<'v, T: StarlarkTypeExpr<'v>>(value: Value<'v>) {
+            assert_eq!(Ty::of_value(value), T::starlark_type_repr(), "`{value}`");
+        }
+
+        Heap::temp(|heap| {
+            typed_as::<NoneType>(Value::new_none());
+            typed_as::<bool>(Value::new_bool(true));
+            typed_as::<IntView>(heap.alloc(1i32).to_value());
+            typed_as::<IntView>(heap.alloc(BigInt::from(1u64 << 40)).to_value());
+            typed_as::<StarlarkFloat>(heap.alloc(1.5).to_value());
+            typed_as::<StarlarkStr>(heap.alloc("s").to_value());
+            typed_as::<StarlarkBytes>(heap.alloc(StarlarkBytes::new(b"b")).to_value());
+            typed_as::<ListView>(heap.alloc(AllocList([1i32])).to_value());
+            typed_as::<DictView>(heap.alloc(AllocDict([(1i32, "a")])).to_value());
+            typed_as::<SetView>(heap.alloc(SetData::default()).to_value());
+            typed_as::<Tuple>(heap.alloc((1i32, "a")).to_value());
+            let field = Field::new(TypeCompiled::from_ty(&Ty::int(), heap), None);
+            typed_as::<Field>(heap.alloc(field).to_value());
+        });
     }
 
     #[test]

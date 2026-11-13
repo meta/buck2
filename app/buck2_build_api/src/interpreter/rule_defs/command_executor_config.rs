@@ -755,7 +755,6 @@ mod tests {
     use dice_futures::cancellation::CancellationContext;
     use starlark::values::Heap;
     use starlark::values::dict::AllocDict;
-    use starlark::values::dict::DictRef;
     use starlark::values::list::AllocList;
 
     use crate::interpreter::rule_defs::command_executor_config::parse_meta_internal_extra_params;
@@ -803,19 +802,15 @@ mod tests {
     fn test_parse_meta_internal_extra_params_cancel_on_client_disconnect() -> buck2_error::Result<()>
     {
         Heap::temp(|heap| {
-            let params = heap
-                .alloc(AllocDict([("cancel_on_client_disconnect", true)]))
-                .to_value();
-            let params = parse_meta_internal_extra_params(DictRef::from_value(params))?;
+            let params = heap.alloc(AllocDict([("cancel_on_client_disconnect", true)]));
+            let params = parse_meta_internal_extra_params(Some(params.dict()))?;
             assert!(params.cancel_on_client_disconnect);
 
-            let params = heap
-                .alloc(AllocDict([(
-                    "allow_unsandboxed_action_cache_uploads",
-                    true,
-                )]))
-                .to_value();
-            let params = parse_meta_internal_extra_params(DictRef::from_value(params))?;
+            let params = heap.alloc(AllocDict([(
+                "allow_unsandboxed_action_cache_uploads",
+                true,
+            )]));
+            let params = parse_meta_internal_extra_params(Some(params.dict()))?;
             assert!(!params.cancel_on_client_disconnect, "defaults to false");
             Ok(())
         })
@@ -827,13 +822,11 @@ mod tests {
                 ("name", heap.alloc("xlformers_msl_rl_conda")),
                 ("uuid", heap.alloc(uuid)),
             ]));
-            let params = heap
-                .alloc(AllocDict([(
-                    "remote_execution_caf_fbpkgs",
-                    heap.alloc(AllocList([fbpkg])),
-                )]))
-                .to_value();
-            let params = parse_meta_internal_extra_params(DictRef::from_value(params))?;
+            let params = heap.alloc(AllocDict([(
+                "remote_execution_caf_fbpkgs",
+                heap.alloc(AllocList([fbpkg])),
+            )]));
+            let params = parse_meta_internal_extra_params(Some(params.dict()))?;
             Ok(params
                 .remote_execution_caf_fbpkgs
                 .iter()

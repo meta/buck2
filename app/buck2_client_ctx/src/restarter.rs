@@ -73,8 +73,8 @@ impl Restarter {
     }
 
     /// Whether to restart the command, which had `result`: the restart is forced, or the
-    /// command failed on corrupted state with the restarter on, and the user did not
-    /// interrupt it.
+    /// command failed on corrupted state with the restarter on. A command that the user
+    /// interrupted did not fail, and neither did a `buck2 run` that is to run its target.
     pub(crate) fn should_restart(&self, result: &ExitResult) -> Option<RestartRequest> {
         let daemon = self.daemon.as_ref();
         let reject_daemon = if self.daemon_in_memory_state_is_corrupted {
@@ -90,13 +90,12 @@ impl Restarter {
             None
         };
         let found_corrupted_state = reject_daemon.is_some() || reject_materializer_state.is_some();
-        let interrupted_by_user = matches!(result.exit_code(), Some(ExitCode::SignalInterrupt));
+        let failed = result
+            .exit_code()
+            .is_some_and(|code| !matches!(code, ExitCode::Success | ExitCode::SignalInterrupt));
 
-        let should_restart = self.force
-            || (!result.is_success()
-                && !interrupted_by_user
-                && self.restarter_is_enabled
-                && found_corrupted_state);
+        let should_restart =
+            self.force || (failed && self.restarter_is_enabled && found_corrupted_state);
         should_restart.then_some(RestartRequest {
             reject_daemon,
             reject_materializer_state,
@@ -238,13 +237,18 @@ mod tests {
     }
 
     #[test]
-    fn test_no_restart_of_a_command_that_the_user_interrupted_or_that_had_no_daemon() {
+    fn test_no_restart_of_a_command_that_did_not_fail_or_that_had_no_daemon() {
         assert_eq!(
             should_restart(
                 false,
                 observed(true, true, false),
                 ExitResult::signal_interrupt()
             ),
+            None
+        );
+        let run_target = ExitResult::exec("target".into(), Vec::new(), None, Default::default());
+        assert_eq!(
+            should_restart(false, observed(true, true, false), run_target),
             None
         );
         assert_eq!(

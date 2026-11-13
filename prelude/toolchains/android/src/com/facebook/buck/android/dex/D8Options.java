@@ -27,6 +27,9 @@ public enum D8Options {
   /** Compile an intermediate result intended for later merging */
   INTERMEDIATE,
 
+  /** Emit each input class and its companions as one intermediate dex unit. */
+  FILE_PER_CLASS_FILE,
+
   /** Don't fill up the primary dex beyond classes that need to be in the primary dex */
   MINIMIZE_PRIMARY_DEX,
 

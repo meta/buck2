@@ -10,6 +10,7 @@
 
 package com.facebook.buck.android.dex;
 
+import com.android.tools.r8.ArchiveProgramResourceProvider;
 import com.android.tools.r8.ByteDataView;
 import com.android.tools.r8.CompilationFailedException;
 import com.android.tools.r8.CompilationMode;
@@ -18,6 +19,7 @@ import com.android.tools.r8.DexFilePerClassFileConsumer;
 import com.android.tools.r8.DexIndexedConsumer;
 import com.android.tools.r8.Diagnostic;
 import com.android.tools.r8.DiagnosticsHandler;
+import com.android.tools.r8.ProgramResourceProvider;
 import com.android.tools.r8.SyntheticInfoConsumer;
 import com.android.tools.r8.SyntheticInfoConsumerData;
 import com.android.tools.r8.graph.DexItemFactory;
@@ -47,6 +49,7 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
 import java.util.Collections;
+import java.util.Enumeration;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
@@ -54,6 +57,7 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.OptionalInt;
 import java.util.Set;
+import java.util.TreeSet;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.stream.Stream;
 import java.util.zip.ZipEntry;
@@ -106,7 +110,8 @@ public class D8Utils {
         classpathFiles,
         minSdkVersion,
         threadCount,
-        ImmutableSet.of());
+        ImmutableSet.of(),
+        Optional.empty());
   }
 
   public static D8Output runD8CommandWithOutputClassDescriptors(
@@ -130,7 +135,32 @@ public class D8Utils {
         classpathFiles,
         minSdkVersion,
         threadCount,
-        ImmutableSet.of(D8OutputOption.CLASS_DESCRIPTORS));
+        ImmutableSet.of(D8OutputOption.CLASS_DESCRIPTORS),
+        Optional.empty());
+  }
+
+  public static D8Output runD8CommandWithSelectedClasses(
+      D8DiagnosticsHandler diagnosticsHandler,
+      Path outputDexFile,
+      Iterable<Path> filesToDex,
+      Set<D8Options> options,
+      Path selectedClassNames,
+      Path androidJarPath,
+      Collection<Path> classpathFiles,
+      Optional<Integer> minSdkVersion)
+      throws CompilationFailedException, IOException {
+    return runD8Command(
+        diagnosticsHandler,
+        outputDexFile,
+        filesToDex,
+        options,
+        Optional.empty(),
+        androidJarPath,
+        classpathFiles,
+        minSdkVersion,
+        OptionalInt.empty(),
+        ImmutableSet.of(),
+        Optional.of(new HashSet<>(Files.readAllLines(selectedClassNames))));
   }
 
   private static D8Output runD8Command(
@@ -143,7 +173,8 @@ public class D8Utils {
       Collection<Path> classpathFiles,
       Optional<Integer> minSdkVersion,
       OptionalInt threadCount,
-      Set<D8OutputOption> outputOptions)
+      Set<D8OutputOption> outputOptions,
+      Optional<Set<String>> selectedClasses)
       throws CompilationFailedException, IOException {
     Set<Path> inputs = new HashSet<>();
     for (Path toDex : filesToDex) {
@@ -210,10 +241,10 @@ public class D8Utils {
           public void finished() {}
         };
 
+    Map<String, DexUnitInfo> dexUnits = new ConcurrentHashMap<>();
     D8Command.Builder builder =
         D8Command.builder(diagnosticsHandler)
             .setSyntheticInfoConsumer(syntheticInfoConsumer)
-            .addProgramFiles(inputs)
             .setIntermediate(options.contains(D8Options.INTERMEDIATE))
             .addLibraryFiles(androidJarPath)
             .setMode(
@@ -245,9 +276,42 @@ public class D8Utils {
                   }
                 });
 
+    if (selectedClasses.isPresent()) {
+      Set<String> matchedClasses = new HashSet<>();
+      for (Path input : inputs) {
+        builder.addProgramResourceProvider(
+            createSelectedDexProvider(input, selectedClasses.get(), matchedClasses));
+      }
+      requireSelectedClasses(selectedClasses.get(), matchedClasses);
+    } else {
+      builder.addProgramFiles(inputs);
+    }
+
     OutputClassDescriptorConsumer outputClassDescriptorConsumer = null;
     if (options.contains(D8Options.FILE_PER_CLASS)) {
       builder.setProgramConsumer(new DexFilePerClassFileConsumer.DirectoryConsumer(output));
+    } else if (options.contains(D8Options.FILE_PER_CLASS_FILE)) {
+      Preconditions.checkState(options.contains(D8Options.INTERMEDIATE));
+      Preconditions.checkState(!outputToDex && FileUtils.isArchive(output));
+      Preconditions.checkState(primaryDexClassNamesPath.isEmpty() && selectedClasses.isEmpty());
+      builder.setProgramConsumer(
+          new DexFilePerClassFileConsumer.ForwardingConsumer(
+              new DexFilePerClassFileConsumer.ArchiveConsumer(output)) {
+            @Override
+            public void accept(
+                String primaryClassDescriptor,
+                ByteDataView data,
+                Set<String> descriptors,
+                DiagnosticsHandler handler) {
+              writtenDescriptors.addAll(descriptors);
+              dexUnits.put(
+                  primaryClassDescriptor.substring(1, primaryClassDescriptor.length() - 1),
+                  new DexUnitInfo(data, descriptors));
+              super.accept(primaryClassDescriptor, data, descriptors, handler);
+            }
+          });
+      // Leave the global consumer unset: debug intermediate D8 would otherwise enable optional
+      // lambda-origin annotations. Required globals still trigger D8's missing-consumer error.
     } else if (outputOptions.contains(D8OutputOption.CLASS_DESCRIPTORS)) {
       outputClassDescriptorConsumer = new OutputClassDescriptorConsumer(recordingConsumer);
       builder.setProgramConsumer(outputClassDescriptorConsumer);
@@ -281,7 +345,110 @@ public class D8Utils {
         outputClassDescriptorConsumer == null
             ? ImmutableMap.of()
             : outputClassDescriptorConsumer.getOutputClassDescriptors(),
-        syntheticToSynthesizingContext);
+        syntheticToSynthesizingContext,
+        dexUnits);
+  }
+
+  private static final String DEX_UNIT_METADATA = ".buck-dex-units.tsv";
+
+  /** Validates unit selection using metadata; the returned provider loads the dex contents. */
+  static ProgramResourceProvider createSelectedDexProvider(
+      Path archive, Set<String> selectedClasses) throws IOException {
+    Set<String> matched = new HashSet<>();
+    ProgramResourceProvider provider = createSelectedDexProvider(archive, selectedClasses, matched);
+    requireSelectedClasses(selectedClasses, matched);
+    return provider;
+  }
+
+  private static void requireSelectedClasses(Set<String> selected, Set<String> matched)
+      throws IOException {
+    // Sorting keeps missing-class diagnostics deterministic regardless of set iteration order.
+    Set<String> missing = new TreeSet<>(selected);
+    missing.removeAll(matched);
+    if (!missing.isEmpty()) {
+      throw new IOException("Selected classes have no class-owned dex unit: " + missing);
+    }
+  }
+
+  private static ProgramResourceProvider createSelectedDexProvider(
+      Path archive, Set<String> selectedClasses, Set<String> matchedClasses) throws IOException {
+    ImmutableSet.Builder<String> selectedEntries = ImmutableSet.builder();
+    try (ZipFile zip = new ZipFile(archive.toFile())) {
+      ZipEntry manifest = zip.getEntry(DEX_UNIT_METADATA);
+      if (manifest == null) {
+        throw new IOException("Missing dex unit metadata in " + archive);
+      }
+      String metadata;
+      try (InputStream stream = Objects.requireNonNull(zip.getInputStream(manifest))) {
+        metadata = new String(stream.readAllBytes(), java.nio.charset.StandardCharsets.UTF_8);
+      }
+      for (String line : metadata.split("\n")) {
+        if (line.isEmpty()) {
+          continue;
+        }
+        String[] parts = line.split("\t");
+        if (parts.length < 6) {
+          throw new IOException("Malformed dex unit metadata in " + archive + ": " + line);
+        }
+        Set<String> members = new HashSet<>();
+        for (int i = 5; i < parts.length; i++) {
+          members.add(parts[i] + ".class");
+        }
+        if (Collections.disjoint(members, selectedClasses)) {
+          continue;
+        }
+        if (!members.contains(parts[0] + ".class") || !selectedClasses.containsAll(members)) {
+          throw new IOException(
+              "Selection splits class-owned dex unit " + parts[0] + " in " + archive);
+        }
+        String name = parts[0] + ".dex";
+        ZipEntry entry = zip.getEntry(name);
+        if (entry == null) {
+          throw new IOException("Missing selected dex unit " + name + " in " + archive);
+        }
+        selectedEntries.add(name);
+        matchedClasses.addAll(members);
+      }
+    }
+    ImmutableSet<String> entries = selectedEntries.build();
+    return Objects.requireNonNull(
+        ArchiveProgramResourceProvider.fromArchive(archive, entries::contains));
+  }
+
+  static void writeDexUnitMetadata(Path archive, List<String> lines) throws IOException {
+    Path temporary = Files.createTempFile(archive.getParent(), "dex-units-", ".jar");
+    try {
+      try (ZipFile input = new ZipFile(archive.toFile());
+          CustomZipOutputStream output = ZipOutputStreams.newOutputStream(temporary)) {
+        Enumeration<? extends ZipEntry> entries = input.entries();
+        while (entries.hasMoreElements()) {
+          ZipEntry entry = entries.nextElement();
+          if (entry.getName().equals(DEX_UNIT_METADATA)) {
+            continue;
+          }
+          output.putNextEntry(new ZipEntry(entry.getName()));
+          try (InputStream stream = Objects.requireNonNull(input.getInputStream(entry))) {
+            ByteStreams.copy(stream, output);
+          }
+          output.closeEntry();
+        }
+        output.putNextEntry(new ZipEntry(DEX_UNIT_METADATA));
+        output.write(String.join("\n", lines).getBytes(java.nio.charset.StandardCharsets.UTF_8));
+        output.closeEntry();
+      }
+      ZipScrubber.scrubZip(temporary);
+      Files.move(temporary, archive, StandardCopyOption.REPLACE_EXISTING);
+    } finally {
+      Files.deleteIfExists(temporary);
+    }
+  }
+
+  static void requireSingleDexOutput(Path output) throws IOException {
+    File[] dexFiles =
+        output.toFile().listFiles((dir, name) -> Objects.requireNonNull(name).endsWith(".dex"));
+    if (dexFiles == null || dexFiles.length != 1) {
+      throw new IOException("Expected exactly one final dex in " + output);
+    }
   }
 
   private static class OutputClassDescriptorConsumer extends DexIndexedConsumer.ForwardingConsumer {

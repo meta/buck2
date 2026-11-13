@@ -10,6 +10,10 @@
 
 package com.facebook.buck.android.dex;
 
+import static com.facebook.buck.android.dex.DexHeader.DEX_FIELD_IDS_SIZE_OFFSET;
+import static com.facebook.buck.android.dex.DexHeader.DEX_METHOD_IDS_SIZE_OFFSET;
+import static com.facebook.buck.android.dex.DexHeader.DEX_TYPE_IDS_SIZE_OFFSET;
+
 import com.android.tools.r8.CompilationFailedException;
 import com.facebook.buck.util.zip.ZipScrubber;
 import com.facebook.infer.annotation.Nullsafe;
@@ -31,11 +35,13 @@ import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.Enumeration;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
+import java.util.TreeMap;
 import java.util.stream.Stream;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipFile;
@@ -119,6 +125,17 @@ public class D8ExecutableMain {
   @Nullable
   private String syntheticContextsOutput = null;
 
+  @Option(name = "--file-per-class-file")
+  private boolean filePerClassFile = false;
+
+  @Option(name = "--dex-units-path")
+  @Nullable
+  private String dexUnitsOutput = null;
+
+  @Option(name = "--pre-dex-class-names-path")
+  @Nullable
+  private String preDexClassNamesList = null;
+
   /**
    * When using jar compression, the secondary dex directory consists of N secondary dex jars, each
    * of which has a corresponding .meta file (the secondaryDexMetadataFile) containing a single line
@@ -194,9 +211,6 @@ public class D8ExecutableMain {
   // files the extra 8 bytes come from the data section, which is harmless
   // since we only inspect offsets 80 and 88.
   private static final int DEX_HEADER_SIZE = 120;
-  private static final int DEX_TYPE_IDS_SIZE_OFFSET = 64;
-  private static final int DEX_FIELD_IDS_SIZE_OFFSET = 80;
-  private static final int DEX_METHOD_IDS_SIZE_OFFSET = 88;
   private static final int DEX_REF_LIMIT = 65536;
 
   public static void main(String[] args) throws IOException {
@@ -228,6 +242,11 @@ public class D8ExecutableMain {
 
     Optional<Path> primaryDexClassNamesPath =
         Optional.ofNullable(primaryDexClassNamesList).map(Paths::get);
+    Optional<Path> selectedClassNamesPath =
+        Optional.ofNullable(preDexClassNamesList).map(Paths::get);
+    Preconditions.checkState(
+        primaryDexClassNamesPath.isEmpty() || selectedClassNamesPath.isEmpty());
+    Preconditions.checkState(!filePerClassFile || intermediate);
     Optional<Path> referencedResourcesPath =
         Optional.ofNullable(referencedResourcesList).map(Paths::get);
 
@@ -253,21 +272,31 @@ public class D8ExecutableMain {
     }
     Path scratchDir = Paths.get(scratchPath);
     Path d8Output =
-        primaryDexClassNamesPath.isPresent()
+        primaryDexClassNamesPath.isPresent() || selectedClassNamesPath.isPresent()
             ? Files.createTempDirectory(scratchDir, "dexTmpDir")
             : outputPath;
 
     try {
       D8Output d8InternalData =
-          D8Utils.runD8Command(
-              new D8Utils.D8DiagnosticsHandler(),
-              d8Output,
-              filesToDex,
-              getD8Options(),
-              primaryDexClassNamesPath,
-              Paths.get(androidJar),
-              classpathFiles,
-              minSdkVersion);
+          selectedClassNamesPath.isPresent()
+              ? D8Utils.runD8CommandWithSelectedClasses(
+                  new D8Utils.D8DiagnosticsHandler(),
+                  d8Output,
+                  filesToDex,
+                  getD8Options(),
+                  selectedClassNamesPath.get(),
+                  Paths.get(androidJar),
+                  classpathFiles,
+                  minSdkVersion)
+              : D8Utils.runD8Command(
+                  new D8Utils.D8DiagnosticsHandler(),
+                  d8Output,
+                  filesToDex,
+                  getD8Options(),
+                  primaryDexClassNamesPath,
+                  Paths.get(androidJar),
+                  classpathFiles,
+                  minSdkVersion);
 
       Collection<String> referencedResources = d8InternalData.getResources();
       Collection<String> writtenClassDescriptors = d8InternalData.getWrittenClassDescriptors();
@@ -277,8 +306,13 @@ public class D8ExecutableMain {
       }
 
       Preconditions.checkState(
-          primaryDexClassNamesPath.isPresent() || secondaryDexCompression == null);
-      if (primaryDexClassNamesPath.isPresent()) {
+          primaryDexClassNamesPath.isPresent()
+              || selectedClassNamesPath.isPresent()
+              || secondaryDexCompression == null);
+      if (selectedClassNamesPath.isPresent()) {
+        D8Utils.requireSingleDexOutput(d8Output);
+      }
+      if (primaryDexClassNamesPath.isPresent() || selectedClassNamesPath.isPresent()) {
         Path classesDotDex = d8Output.resolve("classes.dex");
         Preconditions.checkState(
             classesDotDex.toFile().exists(), "D8 command must produce a classes.dex");
@@ -388,7 +422,8 @@ public class D8ExecutableMain {
             toSyntheticContextLines(d8InternalData.getSyntheticToSynthesizingContext()));
       }
 
-      if (weightEstimatePath.isPresent() || classNamesPath.isPresent()) {
+      Map<String, Integer> sourceClassWeights = new HashMap<>();
+      if (weightEstimatePath.isPresent() || classNamesPath.isPresent() || dexUnitsOutput != null) {
         int totalWeightEstimate = 0;
 
         try (ZipFile zipFile = new ZipFile(Iterables.getOnlyElement(filesToDex).toFile())) {
@@ -400,6 +435,11 @@ public class D8ExecutableMain {
               continue;
             }
             totalWeightEstimate += (int) zipEntry.getSize();
+            sourceClassWeights.put(
+                zipEntry
+                    .getName()
+                    .substring(0, zipEntry.getName().length() - CLASS_NAME_SUFFIX.length()),
+                (int) zipEntry.getSize());
           }
         }
 
@@ -414,6 +454,17 @@ public class D8ExecutableMain {
         }
         if (classNamesPath.isPresent()) {
           Files.write(classNamesPath.get(), toInternalClassNames(writtenClassDescriptors));
+        }
+      }
+      if (filePerClassFile) {
+        List<String> unitLines =
+            toDexUnitLines(
+                d8InternalData.getDexUnits(),
+                sourceClassWeights,
+                weightFactor == null ? 1 : Integer.parseInt(weightFactor));
+        D8Utils.writeDexUnitMetadata(outputPath, unitLines);
+        if (dexUnitsOutput != null) {
+          Files.write(Paths.get(dexUnitsOutput), unitLines);
         }
       }
     } catch (CompilationFailedException e) {
@@ -571,6 +622,34 @@ public class D8ExecutableMain {
         .collect(ImmutableList.toImmutableList());
   }
 
+  static ImmutableList<String> toDexUnitLines(
+      Map<String, DexUnitInfo> units, Map<String, Integer> sourceClassWeights, int weightFactor) {
+    ImmutableList.Builder<String> lines = ImmutableList.builder();
+    // Sort owners so the TSV and embedded ownership manifest have deterministic row order.
+    for (Map.Entry<String, DexUnitInfo> entry : new TreeMap<>(units).entrySet()) {
+      String owner = entry.getKey();
+      DexUnitInfo unit = entry.getValue();
+      int weight = sourceClassWeights.getOrDefault(owner, unit.getByteSize()) * weightFactor;
+      Preconditions.checkState(
+          unit.getDescriptors().contains("L" + owner + ";"),
+          "Dex unit owner %s is missing from its emitted classes",
+          owner);
+      lines.add(
+          owner
+              + "\t"
+              + weight
+              + "\t"
+              + unit.getMethodRefs()
+              + "\t"
+              + unit.getFieldRefs()
+              + "\t"
+              + unit.getTypeRefs()
+              + "\t"
+              + String.join("\t", toInternalClassNames(unit.getDescriptors())));
+    }
+    return lines.build();
+  }
+
   private Set<D8Options> getD8Options() {
     ImmutableSet.Builder<D8Options> d8OptionsBuilder = ImmutableSet.builder();
     if (intermediate) {
@@ -580,6 +659,9 @@ public class D8ExecutableMain {
       // Fail loudly if D8 produces multiple files instead of silently
       // discarding extras, which would produce a broken APK.
       d8OptionsBuilder.add(D8Options.FAIL_ON_MULTIPLE_DEX);
+    }
+    if (filePerClassFile) {
+      d8OptionsBuilder.add(D8Options.FILE_PER_CLASS_FILE);
     }
     if (noOptimize) {
       d8OptionsBuilder.add(D8Options.NO_OPTIMIZE);

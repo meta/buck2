@@ -1353,6 +1353,7 @@ third_party_jar(
         "prelude//toolchains/android/src/com/facebook/buck/android/dex:d8_executable_main",
         "prelude//toolchains/android/src/com/facebook/buck/android/dex:dex",
         "prelude//toolchains/android/src/com/facebook/buck/android/dex:multi_dex_executable_main",
+        "prelude//toolchains/android/test/com/facebook/buck/android/dex:dex",
     ],
 )
 # ===   end: third party libraries with internal patching

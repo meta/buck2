@@ -8,6 +8,7 @@
  * above-listed licenses.
  */
 
+pub mod atomic_publish;
 pub mod http;
 
 pub mod materializer;

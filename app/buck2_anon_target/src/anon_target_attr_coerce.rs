@@ -442,7 +442,7 @@ fn to_anon_target_tuple(
     } else if let Some(list) = ListRef::from_value(value) {
         coerce(value, list.content())
     } else {
-        Err(AnonTargetCoercionError::type_error(TupleRef::TYPE, value).into())
+        Err(AnonTargetCoercionError::type_error("tuple", value).into())
     }
 }
 
@@ -471,6 +471,6 @@ fn to_anon_target_list(
                 .into(),
         )))
     } else {
-        Err(AnonTargetCoercionError::type_error(ListRef::TYPE, value).into())
+        Err(AnonTargetCoercionError::type_error("list", value).into())
     }
 }

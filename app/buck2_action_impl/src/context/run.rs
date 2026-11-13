@@ -51,7 +51,6 @@ use starlark::environment::MethodsBuilder;
 use starlark::eval::Evaluator;
 use starlark::starlark_module;
 use starlark::values::StringValue;
-use starlark::values::Value;
 use starlark::values::ValueOf;
 use starlark::values::dict::DictRef;
 use starlark::values::dict::DictType;
@@ -305,7 +304,9 @@ pub(crate) fn analysis_actions_methods_run(methods: &mut MethodsBuilder) {
             'v,
             ListType<DictType<StarlarkStr, StarlarkStr>>,
         >,
-        #[starlark(default = NoneType, require = named)] remote_execution_dynamic_image: Value<'v>,
+        #[starlark(default = NoneOr::None, require = named)] remote_execution_dynamic_image: NoneOr<
+            DictRef<'v>,
+        >,
         #[starlark(require = named, default = NoneOr::None)] timeout_seconds: NoneOr<u32>,
         #[starlark(require = named, default = NoneOr::None)] meta_internal_extra_params: NoneOr<
             DictRef<'v>,
@@ -632,10 +633,7 @@ pub(crate) fn analysis_actions_methods_run(methods: &mut MethodsBuilder) {
             })
             .collect::<buck2_error::Result<MiniBoxSlice<ReGangWorker>>>()?;
 
-        let re_custom_image = parse_custom_re_image(
-            "remote_execution_dynamic_image",
-            remote_execution_dynamic_image,
-        )?;
+        let re_custom_image = parse_custom_re_image(remote_execution_dynamic_image.into_option())?;
 
         let extra_params =
             parse_meta_internal_extra_params(meta_internal_extra_params.into_option())?;

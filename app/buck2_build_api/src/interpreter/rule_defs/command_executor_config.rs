@@ -36,8 +36,6 @@ use buck2_core::execution_types::executor_config::RemoteExecutorOptions;
 use buck2_core::execution_types::executor_config::RemoteExecutorUseCase;
 use buck2_core::execution_types::executor_config::parse_network_access;
 use buck2_error::BuckErrorContext;
-use buck2_error::BuckErrorOptionContext;
-use buck2_error::internal_error;
 use buck2_hash::BuckFixedSortedMap;
 use derive_more::Display;
 use starlark::any::ProvidesStaticType;
@@ -204,12 +202,16 @@ pub fn register_command_executor_config(builder: &mut GlobalsBuilder) {
         #[starlark(default = NoneOr::None, require = named)] remote_cache_enabled: NoneOr<bool>,
         #[starlark(default = false, require = named)] remote_dep_file_cache_enabled: bool,
         #[starlark(default = NoneType, require = named)] remote_execution_properties: Value<'v>,
-        #[starlark(default = NoneType, require = named)] remote_execution_action_key: Value<'v>,
+        #[starlark(default = NoneOr::None, require = named)] remote_execution_action_key: NoneOr<
+            &'v str,
+        >,
         #[starlark(default = NoneOr::None, require = named)]
         remote_execution_max_input_files_mebibytes: NoneOr<i32>,
         #[starlark(default = NoneOr::None, require = named)]
         remote_execution_queue_time_threshold_s: NoneOr<u64>,
-        #[starlark(default = NoneType, require = named)] remote_execution_use_case: Value<'v>,
+        #[starlark(default = NoneOr::None, require = named)] remote_execution_use_case: NoneOr<
+            &'v str,
+        >,
         #[starlark(default = false, require = named)] use_limited_hybrid: bool,
         #[starlark(default = false, require = named)] allow_limited_hybrid_fallbacks: bool,
         #[starlark(default = false, require = named)] allow_hybrid_fallbacks_on_failure: bool,
@@ -235,7 +237,9 @@ pub fn register_command_executor_config(builder: &mut GlobalsBuilder) {
             'v,
             ListType<DictType<StarlarkStr, StarlarkStr>>,
         >,
-        #[starlark(default = NoneType, require = named)] remote_execution_dynamic_image: Value<'v>,
+        #[starlark(default = NoneOr::None, require = named)] remote_execution_dynamic_image: NoneOr<
+            DictRef<'v>,
+        >,
         #[starlark(default = NoneOr::None, require = named)] meta_internal_extra_params: NoneOr<
             DictRef<'v>,
         >,
@@ -276,10 +280,8 @@ pub fn register_command_executor_config(builder: &mut GlobalsBuilder) {
                 })
                 .collect::<buck2_error::Result<Vec<ReGangWorker>>>()?;
 
-            let re_dynamic_image = parse_custom_re_image(
-                "remote_execution_custom_image",
-                remote_execution_dynamic_image,
-            )?;
+            let re_dynamic_image =
+                parse_custom_re_image(remote_execution_dynamic_image.into_option())?;
 
             let extra_params =
                 parse_meta_internal_extra_params(meta_internal_extra_params.into_option())?;
@@ -293,23 +295,11 @@ pub fn register_command_executor_config(builder: &mut GlobalsBuilder) {
 
             let priority = priority.into_option();
 
-            let re_use_case = if remote_execution_use_case.is_none() {
-                None
-            } else {
-                let re_use_case = remote_execution_use_case
-                    .unpack_str()
-                    .internal_error("remote_execution_use_case is not a string")?;
-                Some(RemoteExecutorUseCase::new(re_use_case.to_owned()))
-            };
+            let re_use_case = remote_execution_use_case
+                .into_option()
+                .map(|use_case| RemoteExecutorUseCase::new(use_case.to_owned()));
 
-            let re_action_key = if remote_execution_action_key.is_none() {
-                None
-            } else {
-                let re_action_key = remote_execution_action_key.unpack_str().ok_or_else(|| {
-                    internal_error!("remote_execution_action_key is not a string")
-                })?;
-                Some(re_action_key.to_owned())
-            };
+            let re_action_key = remote_execution_action_key.into_option().map(str::to_owned);
 
             let local_options = if local_enabled {
                 Some(LocalExecutorOptions {
@@ -470,22 +460,11 @@ pub fn register_command_executor_config(builder: &mut GlobalsBuilder) {
 }
 
 pub fn parse_custom_re_image(
-    field_name: &'static str,
-    value: Value,
+    image: Option<DictRef<'_>>,
 ) -> buck2_error::Result<Option<Box<RemoteExecutorCustomImage>>> {
-    if value.is_none() {
+    let Some(dict) = image else {
         return Ok(None);
-    }
-
-    fn dict_ref<'v>(
-        field_name: &'static str,
-        value: Value<'v>,
-    ) -> buck2_error::Result<DictRef<'v>> {
-        match DictRef::from_value(value) {
-            Some(dict_ref) => Ok(dict_ref),
-            None => Err(CommandExecutorConfigErrors::InvalidField(field_name).into()),
-        }
-    }
+    };
 
     fn list_ref<'v>(
         field_name: &'static str,
@@ -514,7 +493,6 @@ pub fn parse_custom_re_image(
         Ok(value.to_str())
     }
 
-    let dict = dict_ref(field_name, value)?;
     let identifier_value = get_value(&dict, "identifier")?;
     let identifier = if let Some(identifier_dict) = DictRef::from_value(identifier_value) {
         ImagePackageIdentifier {

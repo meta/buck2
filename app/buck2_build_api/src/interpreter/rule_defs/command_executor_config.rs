@@ -72,6 +72,12 @@ enum CommandExecutorConfigErrors {
     ReCafFbpkgsNotAList(String, String),
     #[error("expected an dict, got `{0}` (type `{1}`)")]
     ReCafFbpkgNotADict(String, String),
+    #[error(
+        "`remote_execution_caf_fbpkgs` entry `{name}:{uuid}` is not pinned: `uuid` must be a 32-hex fbpkg UUID or a version number. \
+        Remote execution rejects mutable tags such as `stable` or `latest`, because a tag can move to another build while the action digest stays the same. \
+        Pin the version, or resolve the tag at build time with `snapshotted_fbpkg_target()`."
+    )]
+    ReCafFbpkgNotPinned { name: String, uuid: String },
     #[error("`remote_execution_gang` and `remote_execution_gang_workers` are mutually exclusive")]
     GangAndGangWorkersExclusive,
     #[error(
@@ -581,6 +587,16 @@ fn parse_remote_execution_policy(
     }
 }
 
+/// The RE worker's `CafArtifactIdentifier::is_valid_uuid` rule
+/// (`remote_execution/rust/image_manager/src/lib.rs`), so this rejects what the
+/// worker would reject, at analysis time instead of on every execution. Unlike
+/// the worker, an empty value is rejected too: it names no package version.
+fn is_pinned_fbpkg_version(uuid: &str) -> bool {
+    !uuid.is_empty()
+        && (uuid.chars().all(|c| c.is_ascii_digit())
+            || (uuid.len() == 32 && uuid.chars().all(|c| c.is_ascii_hexdigit())))
+}
+
 fn parse_remote_execution_caf_fbpkgs(
     caf_fbpkgs: Option<Value>,
 ) -> buck2_error::Result<Vec<RemoteExecutorCafFbpkg>> {
@@ -598,18 +614,27 @@ fn parse_remote_execution_caf_fbpkgs(
             Ok(re_caf_fbpkgs_list
                 .iter()
                 .map(|caf_fbpkg| match DictRef::from_value(caf_fbpkg) {
-                    Some(dict_ref) => Ok(RemoteExecutorCafFbpkg {
-                        name: dict_ref
+                    Some(dict_ref) => {
+                        let name = dict_ref
                             .get_str("name")
                             .ok_or(CommandExecutorConfigErrors::MissingField("name"))?
-                            .to_str(),
-                        uuid: dict_ref
+                            .to_str();
+                        let uuid = dict_ref
                             .get_str("uuid")
                             .ok_or(CommandExecutorConfigErrors::MissingField("uuid"))?
-                            .to_str(),
-                        tag: dict_ref.get_str("tag").map(|v| v.to_str()),
-                        permissions: dict_ref.get_str("permissions").map(|v| v.to_str()),
-                    }),
+                            .to_str();
+                        if !is_pinned_fbpkg_version(&uuid) {
+                            return Err(buck2_error::Error::from(
+                                CommandExecutorConfigErrors::ReCafFbpkgNotPinned { name, uuid },
+                            ));
+                        }
+                        Ok(RemoteExecutorCafFbpkg {
+                            name,
+                            uuid,
+                            tag: dict_ref.get_str("tag").map(|v| v.to_str()),
+                            permissions: dict_ref.get_str("permissions").map(|v| v.to_str()),
+                        })
+                    }
                     None => Err(buck2_error::Error::from(
                         CommandExecutorConfigErrors::ReCafFbpkgNotADict(
                             caf_fbpkg.to_repr(),
@@ -801,5 +826,60 @@ mod tests {
             assert!(!params.cancel_on_client_disconnect, "defaults to false");
             Ok(())
         })
+    }
+
+    fn parse_caf_fbpkg_uuid(uuid: &str) -> buck2_error::Result<Vec<String>> {
+        Heap::temp(|heap| {
+            let fbpkg = heap.alloc(AllocDict([
+                ("name", heap.alloc("xlformers_msl_rl_conda")),
+                ("uuid", heap.alloc(uuid)),
+            ]));
+            let params = heap.alloc(AllocDict([(
+                "remote_execution_caf_fbpkgs",
+                heap.alloc(AllocList([fbpkg])),
+            )]));
+            let params = parse_meta_internal_extra_params(DictRef::from_value(params))?;
+            Ok(params
+                .remote_execution_caf_fbpkgs
+                .iter()
+                .map(|p| p.uuid.clone())
+                .collect())
+        })
+    }
+
+    #[test]
+    fn test_parse_caf_fbpkgs_accepts_pinned_versions() -> buck2_error::Result<()> {
+        for uuid in [
+            "d8ee9327481e40459344de7e2abafa17",
+            "D8EE9327481E40459344DE7E2ABAFA17",
+            "650",
+        ] {
+            assert_eq!(
+                parse_caf_fbpkg_uuid(uuid)?,
+                vec![uuid.to_owned()],
+                "A UUID or version number is pinned and must be passed through unchanged",
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn test_parse_caf_fbpkgs_rejects_tags() {
+        for uuid in [
+            "conveyor-stable",
+            "stable",
+            "latest",
+            "d8ee9327481e40459344de7e2abafa1",
+            "d8ee9327481e40459344de7e2abafa17x",
+            "",
+        ] {
+            let err = parse_caf_fbpkg_uuid(uuid).expect_err("a tag must not reach RE as a UUID");
+            let msg = format!("{err:#}");
+            assert!(
+                msg.contains(&format!("`xlformers_msl_rl_conda:{uuid}` is not pinned"))
+                    && msg.contains("snapshotted_fbpkg_target()"),
+                "Error should name the entry and the fix; got: {msg}",
+            );
+        }
     }
 }

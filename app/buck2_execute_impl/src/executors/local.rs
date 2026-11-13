@@ -197,16 +197,15 @@ impl LocalExecutor {
         request: &CommandExecutionRequest,
         has_cgroup: bool,
     ) -> DefaultKillProcess {
-        if !request.is_test() {
+        let Some(policy) = request.test_kill_policy() else {
             return DefaultKillProcess::default();
-        }
+        };
         DefaultKillProcess {
             graceful_shutdown_timeout_s: None,
-            timeout_grace_period_s: self
-                .knobs
-                .test_timeout_grace_period
+            timeout_grace_period_s: policy
+                .timeout_grace_period
                 .map(|d| d.as_secs().try_into().unwrap_or(u32::MAX)),
-            kill_detached_descendants: !has_cgroup && self.knobs.kill_detached_test_processes,
+            kill_detached_descendants: !has_cgroup && policy.kill_detached_processes,
         }
     }
 

@@ -121,6 +121,7 @@ use buck2_execute::execute::request::CommandExecutionPaths;
 use buck2_execute::execute::request::CommandExecutionRequest;
 use buck2_execute::execute::request::ExecutorPreference;
 use buck2_execute::execute::request::OutputCreationBehavior;
+use buck2_execute::execute::request::TestKillPolicy;
 use buck2_execute::execute::request::WorkerId;
 use buck2_execute::execute::request::WorkerSpec;
 use buck2_execute::execute::result::CommandCancellationReason;
@@ -410,6 +411,37 @@ pub struct BuckTestOrchestrator<'a: 'static> {
     cancellations: &'a CancellationContext,
     re_client: Arc<remote_storage::ReClientWithCache>,
     internal_runner_config: InternalRunnerConfig,
+}
+
+/// Reads the root cell's full buckconfig, which follows `<file:...>` includes. The daemon's
+/// per-command config parse does not, so it would miss a setting that only an include delivers.
+async fn test_kill_policy(dice: &mut DiceComputations<'_>) -> buck2_error::Result<TestKillPolicy> {
+    let root = dice.get_cell_resolver().await?.root_cell();
+    let timeout_grace_period = dice
+        .parse_legacy_config_property::<u64>(
+            root,
+            BuckconfigKeyRef {
+                section: "buck2",
+                property: "test_timeout_grace_period_s",
+            },
+        )
+        .await?
+        .filter(|s| *s > 0)
+        .map(Duration::from_secs);
+    let kill_detached_processes = dice
+        .parse_legacy_config_property::<bool>(
+            root,
+            BuckconfigKeyRef {
+                section: "buck2",
+                property: "kill_detached_test_processes",
+            },
+        )
+        .await?
+        .unwrap_or(false);
+    Ok(TestKillPolicy {
+        timeout_grace_period,
+        kill_detached_processes,
+    })
 }
 
 impl<'a> BuckTestOrchestrator<'a> {
@@ -2064,7 +2096,7 @@ impl BuckTestOrchestrator<'_> {
             .with_meta_internal_extra_params(meta_internal_extra_params)
             .with_required_local_resources(required_local_resources)?
             .with_disable_local_network_isolation(disable_local_network_isolation)
-            .with_is_test();
+            .with_is_test(test_kill_policy(dice).await?);
         if let Some(timeout) = timeout {
             request = request.with_timeout(timeout)
         }

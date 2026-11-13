@@ -984,21 +984,6 @@ impl DiceCommandUpdater<'_, '_> {
             .unwrap_or_else(RolloutPercentage::always)
             .roll();
 
-        let test_timeout_grace_period = root_config
-            .parse::<u64>(BuckconfigKeyRef {
-                section: "buck2",
-                property: "test_timeout_grace_period_s",
-            })?
-            .filter(|s| *s > 0)
-            .map(Duration::from_secs);
-
-        let kill_detached_test_processes = root_config
-            .parse::<bool>(BuckconfigKeyRef {
-                section: "buck2",
-                property: "kill_detached_test_processes",
-            })?
-            .unwrap_or(false);
-
         let log_action_keys = root_config
             .parse::<RolloutPercentage>(BuckconfigKeyRef {
                 section: "buck2",
@@ -1039,8 +1024,6 @@ impl DiceCommandUpdater<'_, '_> {
             log_action_keys,
             re_cancel_on_estimated_queue_time_exceeds,
             re_fallback_on_estimated_queue_time_exceeds,
-            test_timeout_grace_period,
-            kill_detached_test_processes,
         };
 
         let host_sharing_broker = HostSharingBroker::new_with_named_semaphores(

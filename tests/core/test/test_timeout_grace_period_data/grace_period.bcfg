@@ -1,0 +1,2 @@
+[buck2]
+  test_timeout_grace_period_s = 10

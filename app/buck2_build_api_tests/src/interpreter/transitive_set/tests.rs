@@ -94,6 +94,47 @@ fn test_define_transitive_set_projections() -> buck2_error::Result<()> {
     Ok(())
 }
 
+// With debug assertions, starlark checks what a conversion accepts against the type it
+// declares, and panics here: the FIXME below is such a disagreement.
+#[test]
+#[cfg_attr(
+    debug_assertions,
+    should_panic(expected = "`get` disagrees with the declared type")
+)]
+fn test_define_transitive_set_wrong_signature() {
+    for (param, bad) in [
+        ("args_projections", "def bad(_value, _extra):"),
+        ("json_projections", "def bad():"),
+        ("reductions", "def bad(_children):"),
+    ] {
+        let contents = format!(
+            indoc!(
+                r#"
+                {bad}
+                    pass
+
+                FooSet = transitive_set({param} = {{ "foo": bad }})
+
+                def test():
+                    pass
+                "#
+            ),
+            bad = bad,
+            param = param,
+        );
+
+        let err = transitive_set_tester()
+            .run_starlark_bzl_test(&contents)
+            .unwrap_err();
+        let err = format!("{err:?}");
+        // FIXME: The dict is of the type; what is wrong is the signature of an entry.
+        assert!(
+            err.contains(&format!("Type of parameter `{param}` doesn't match")),
+            "{err}"
+        );
+    }
+}
+
 #[test]
 fn test_create_transitive_set() -> buck2_error::Result<()> {
     let mut tester = transitive_set_tester();

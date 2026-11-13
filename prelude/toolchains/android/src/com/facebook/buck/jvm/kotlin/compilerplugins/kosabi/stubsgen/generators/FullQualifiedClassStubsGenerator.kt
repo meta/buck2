@@ -22,6 +22,9 @@ class FullQualifiedClassStubsGenerator : StubsGenerator {
         .filterDifferentOuterClassIn(context.declaredTypes)
         .filterNot { context.externalTypeReferences.contains(it.outerClassOnlyQualifier()) }
         .filter { it.pkg.isNotEmpty() && it.names.isNotEmpty() }
+        // As in PrimitiveStubsGenerator: a written `kotlinx.coroutines.CancellationException` names
+        // a typealias, and a phantom class stub would shadow it in every file of the module.
+        .filterNot { context.kotlinClasspathDeclarations.isProvided(it.pkg, it.names.first()) }
         .forEach { qualifier ->
           val pkg = qualifier.pkgAsString()
           // create a root stub or register a new one

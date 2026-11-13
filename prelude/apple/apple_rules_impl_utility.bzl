@@ -40,7 +40,7 @@ def get_apple_xctoolchain_bundle_id_attr():
     return attrs.toolchain_dep(default = "toolchains//:apple-xctoolchain-bundle-id", exec_group = DefaultExecGroup)
 
 def get_apple_xctoolchain_full_attr():
-    return attrs.option(attrs.toolchain_dep(exec_group = DefaultExecGroup), default = None)
+    return attrs.toolchain_dep(default = "toolchains//:apple-xctoolchain-full", exec_group = DefaultExecGroup)
 
 def get_enable_library_evolution():
     return attrs.bool(

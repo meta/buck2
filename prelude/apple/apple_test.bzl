@@ -230,8 +230,7 @@ def apple_test_impl(ctx: AnalysisContext) -> [list[Provider], Promise]:
         ]
 
         sub_targets[_XCTOOLCHAIN_SUB_TARGET] = ctx.attrs._apple_xctoolchain.providers
-        if ctx.attrs._apple_xctoolchain_full != None:
-            sub_targets[_XCTOOLCHAIN_FULL_SUB_TARGET] = ctx.attrs._apple_xctoolchain_full.providers
+        sub_targets[_XCTOOLCHAIN_FULL_SUB_TARGET] = ctx.attrs._apple_xctoolchain_full.providers
 
         return (
             filter(

@@ -596,8 +596,7 @@ def apple_bundle_impl(ctx: AnalysisContext) -> list[Provider]:
     info_plist_info = AppleInfoPlistInfo(info_plist = apple_bundle_part_list_output.info_plist_part.source)
 
     sub_targets[_XCTOOLCHAIN_SUB_TARGET] = ctx.attrs._apple_xctoolchain.providers
-    if ctx.attrs._apple_xctoolchain_full != None:
-        sub_targets[_XCTOOLCHAIN_FULL_SUB_TARGET] = ctx.attrs._apple_xctoolchain_full.providers
+    sub_targets[_XCTOOLCHAIN_FULL_SUB_TARGET] = ctx.attrs._apple_xctoolchain_full.providers
 
     # Define the xcode data sub target
     plist_bundle_relative_path = get_apple_bundle_part_relative_destination_path(ctx, apple_bundle_part_list_output.info_plist_part)

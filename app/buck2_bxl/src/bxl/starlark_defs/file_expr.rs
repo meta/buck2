@@ -62,7 +62,7 @@ impl<'a> FileExpr<'a> {
     ) -> buck2_error::Result<CellPath> {
         match self {
             FileExpr::Literal(val) => {
-                let val = val.get().as_str();
+                let val = val.as_str();
                 let cell_alias_resolver =
                     dice.get_cell_alias_resolver(cell_instance.name()).await?;
                 match parse_cell_path_as_file_expr_literal(val, &cell_alias_resolver)? {

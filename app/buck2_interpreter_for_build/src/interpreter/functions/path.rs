@@ -66,7 +66,7 @@ pub(crate) fn register_path(builder: &mut GlobalsBuilder) {
         let heap = eval.heap();
         let res = extra
             .resolve_glob(&spec)
-            .map(|path| ValueOf::from_representation(heap.alloc_str(path.as_str())));
+            .map(|path| heap.alloc(path.as_str()));
         Ok(ValueOf::alloc_list(heap, res))
     }
 

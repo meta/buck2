@@ -282,7 +282,7 @@ impl<P: ProvidersLabelMaybeConfigured> ProvidersExpr<P> {
     ) -> buck2_error::Result<ProvidersLabel> {
         match arg {
             ProvidersLabelArg::Str(s) => {
-                let s = s.get().as_str();
+                let s = s.as_str();
                 Ok(ParsedPattern::<ProvidersPatternExtra>::parse_relaxed(
                     ctx.target_alias_resolver(),
                     // TODO(nga): Parse relaxed relative to cell root is incorrect.

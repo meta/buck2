@@ -90,7 +90,7 @@ fn dep_only_incompatible_info_creator(globals: &mut GlobalsBuilder) {
         let mut entries = Vec::with_capacity(custom_soft_errors.dict().len());
         for entry in custom_soft_errors.iter() {
             let (category, rollout) = entry?;
-            validate_logview_category(category.get().as_str())?;
+            validate_logview_category(category.as_str())?;
             entries.push((category, rollout));
         }
         Ok(eval.heap().alloc(DepOnlyIncompatibleInfo {
@@ -136,7 +136,7 @@ impl<'v> DepOnlyIncompatibleInfo<'v> {
                 .iter()
                 .map(|pattern| {
                     ParsedPattern::parse_precise(
-                        pattern?.get().as_str(),
+                        pattern?.as_str(),
                         root_cell.dupe(),
                         cell_resolver,
                         cell_alias_resolver,
@@ -149,7 +149,7 @@ impl<'v> DepOnlyIncompatibleInfo<'v> {
             .map(|entry| {
                 let (category, rollout) = entry?;
                 Ok((
-                    ArcStr::from(category.get().as_str()),
+                    ArcStr::from(category.as_str()),
                     DepOnlyIncompatibleRolloutPatterns {
                         target_patterns: patterns(rollout.target_patterns)?,
                         exclusions: patterns(rollout.exclusions)?,

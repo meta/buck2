@@ -114,7 +114,7 @@ impl<'v> WorkerInfo<'v> {
         env.iter()
             .map(|entry| {
                 let (key, value) = entry?;
-                Ok((key.get().as_str(), value.get().0))
+                Ok((key.as_str(), value.get().0))
             })
             .collect()
     }

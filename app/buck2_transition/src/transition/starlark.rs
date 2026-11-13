@@ -360,13 +360,7 @@ fn register_transition_function(builder: &mut GlobalsBuilder) {
             .ok_or(buck2_error::Error::from(TransitionError::OnlyBzl))?
             .clone();
 
-        let attrs = attrs
-            .map(|a| {
-                a.iter()
-                    .map(|s| Ok(s?.get()))
-                    .collect::<starlark::Result<Vec<_>>>()
-            })
-            .transpose()?;
+        let attrs = attrs.map(|a| a.try_to_vec::<StringValue>()).transpose()?;
         if let Some(attrs) = &attrs {
             let attrs_set: BuckMutSet<StringValue> = attrs.iter().copied().collect();
             if attrs_set.len() != attrs.len() {

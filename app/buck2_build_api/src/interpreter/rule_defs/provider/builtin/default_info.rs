@@ -209,7 +209,7 @@ impl<'v> DefaultInfo<'v> {
             .iter()
             .map(|entry| {
                 let (k, v) = entry?;
-                Ok((k.get().as_str(), v.get()))
+                Ok((k.as_str(), v.get()))
             })
             .collect()
     }

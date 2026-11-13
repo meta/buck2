@@ -499,7 +499,7 @@ impl<'v> TargetListExpr<'v, TargetNode> {
                 TargetExpr::Label(Cow::Borrowed(target.as_ref().label())),
             )),
             TargetNodeOrTargetLabelOrStr::Str(s) => {
-                let s = s.get().as_str();
+                let s = s.as_str();
                 match ParsedPattern::<TargetPatternExtra>::parse_relaxed(
                     ctx.target_alias_resolver(),
                     // TODO(nga): Parse relaxed relative to cell root is incorrect.

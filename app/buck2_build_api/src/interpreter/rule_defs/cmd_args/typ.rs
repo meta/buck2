@@ -1262,10 +1262,7 @@ pub fn register_cmd_args(builder: &mut GlobalsBuilder) {
         }
         let replace_regex: Vec<(CmdArgsRegex, StringValue)> = match replace_regex {
             Either::Left(x) => vec![x],
-            Either::Right(xs) => xs
-                .iter()
-                .map(|x| Ok(x?.get()))
-                .collect::<starlark::Result<_>>()?,
+            Either::Right(xs) => xs.try_to_vec()?,
         };
         if !replace_regex.is_empty() {
             for (pattern, _replacement) in &replace_regex {

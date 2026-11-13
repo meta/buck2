@@ -94,6 +94,6 @@ impl<'v> TransitionInfo<'v> {
     pub(crate) fn get_attrs_names(
         &self,
     ) -> Option<impl Iterator<Item = buck2_error::Result<&'v str>> + use<'v>> {
-        Some(self.attrs?.iter().map(|s| Ok(s?.get().as_str())))
+        Some(self.attrs?.iter().map(|s| Ok(s?.as_str())))
     }
 }

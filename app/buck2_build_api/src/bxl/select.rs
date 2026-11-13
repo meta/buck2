@@ -130,7 +130,7 @@ impl StarlarkSelectDict {
                 .find(|(k, _)| *k == label.label())
                 .map(|(_, v)| v),
             SelectDictKeyArg::Str(key) => {
-                let key = key.get().as_str();
+                let key = key.as_str();
                 if key == CoercedSelectorKeyRef::DEFAULT_KEY_STR {
                     default
                 } else {

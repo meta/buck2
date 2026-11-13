@@ -135,7 +135,7 @@ impl<'v> LocalResourceInfo<'v> {
             .iter()
             .map(|entry| {
                 let (k, v) = entry?;
-                Ok((k.get().as_str().to_owned(), v.get().as_str().to_owned()))
+                Ok((k.as_str().to_owned(), v.as_str().to_owned()))
             })
             .collect()
     }

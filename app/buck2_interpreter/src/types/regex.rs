@@ -80,7 +80,7 @@ impl StarlarkBuckRegex {
         any: bool,
     ) -> starlark::Result<bool> {
         for string in strings.iter() {
-            if self.is_match(string?.get().as_str())? == any {
+            if self.is_match(string?.as_str())? == any {
                 return Ok(any);
             }
         }

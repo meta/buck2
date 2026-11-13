@@ -604,7 +604,7 @@ impl RunAction {
                 .iter()
                 .map(|entry| {
                     let (k, v) = entry?;
-                    Ok((k.get().as_str(), v.get().0))
+                    Ok((k.as_str(), v.get().0))
                 })
                 .collect::<buck2_error::Result<Vec<_>>>()?,
         };

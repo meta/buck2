@@ -67,7 +67,7 @@ impl<'v> InstallInfo<'v> {
     ) -> impl Iterator<Item = buck2_error::Result<(&'v str, StarlarkArtifactView<'v>)>> + 'v {
         self.files.iter().map(|entry| {
             let (k, v) = entry?;
-            Ok((k.get().as_str(), v.get()))
+            Ok((k.as_str(), v.get()))
         })
     }
 

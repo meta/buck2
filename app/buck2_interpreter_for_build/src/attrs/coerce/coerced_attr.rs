@@ -113,7 +113,7 @@ fn coerce_inner<'v>(
                 let mut default = None;
                 for entry in v.iter() {
                     let (k, v) = entry?;
-                    let k = k.get().as_str();
+                    let k = k.as_str();
                     let v = v.get();
                     let v = match default_attr {
                         Some(default_attr) if v.is_none() => {

@@ -30,7 +30,6 @@ use either::Either;
 use starlark::environment::GlobalsBuilder;
 use starlark::eval::Evaluator;
 use starlark::starlark_module;
-use starlark::values::StringValue;
 use starlark::values::ValueOf;
 use starlark::values::ValueTyped;
 use starlark::values::list_or_tuple::ListOrTupleType;
@@ -289,13 +288,13 @@ pub(crate) fn register_package_function(globals: &mut GlobalsBuilder) {
             .into_option()
             .map(|v| {
                 v.iter()
-                    .map(|p| Ok(p?.get().map_left(StringValue::as_str)))
+                    .map(|p| Ok(p?.get().map_left(|s| s.as_ref().as_str())))
                     .collect::<starlark::Result<Vec<_>>>()
             })
             .transpose()?;
         let within_view = within_view
             .iter()
-            .map(|p| Ok(p?.get().map_left(StringValue::as_str)))
+            .map(|p| Ok(p?.get().map_left(|s| s.as_ref().as_str())))
             .collect::<starlark::Result<Vec<_>>>()?;
         let visibility_exempt_targets = visibility_exempt_targets.try_to_vec::<&str>()?;
         // Validated regardless of `package_visibility.default_intersection`, so an

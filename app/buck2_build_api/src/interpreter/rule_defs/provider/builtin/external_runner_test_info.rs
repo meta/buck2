@@ -278,7 +278,7 @@ pub(super) fn env_entries<'v>(
 ) -> impl Iterator<Item = buck2_error::Result<(&'v str, &'v dyn CommandLineArgLike<'v>)>> + 'v {
     env.into_iter().flat_map(|env| env.iter()).map(|entry| {
         let (key, value) = entry?;
-        Ok((key.get().as_str(), value.get().0))
+        Ok((key.as_str(), value.get().0))
     })
 }
 
@@ -287,7 +287,7 @@ pub(super) fn str_items<'v>(
 ) -> impl Iterator<Item = buck2_error::Result<&'v str>> + 'v {
     list.into_iter()
         .flat_map(|list| list.iter())
-        .map(|item| Ok(item?.get().as_str()))
+        .map(|item| Ok(item?.as_str()))
 }
 
 pub(super) fn lookup_executor_override<'v>(
@@ -364,7 +364,7 @@ pub(super) fn collect_local_resources<'v>(
         .map(|entry| {
             let (key, label) = entry?;
             Ok((
-                key.get().as_str(),
+                key.as_str(),
                 label.get().map(|label| label.as_ref().label()),
             ))
         })

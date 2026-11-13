@@ -45,7 +45,7 @@ impl<'v> ValueAsStarlarkTargetLabel<'v> {
         match self {
             ValueAsStarlarkTargetLabel::None(_) => Ok(default_target_platform),
             ValueAsStarlarkTargetLabel::Str(s) => {
-                let s = s.get().as_str();
+                let s = s.as_str();
                 Ok(Some(
                     ParsedPattern::<TargetPatternExtra>::parse_relaxed(
                         target_alias_resolver,

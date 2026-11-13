@@ -137,12 +137,21 @@ impl<'v, T: StarlarkTypeExpr<'v>> ValueOf<'v, T> {
     {
         match T::get(self.0) {
             Some(x) => x,
-            None => unreachable!(
-                "`{}` is `StarlarkTypeExprStable`, yet value `{}` stopped being one",
-                T::starlark_type_repr(),
-                self.0,
-            ),
+            None => self.stopped_being_one(),
         }
+    }
+
+    /// Kept out of line. `get` is on the evaluator's hot paths, since every read of a string
+    /// handle goes through it, and with the message formatted inline the functions around a
+    /// read stopped being inlined: up to 30% on a native call in `benchmark/benchmark.py`.
+    #[cold]
+    #[inline(never)]
+    fn stopped_being_one(self) -> ! {
+        unreachable!(
+            "`{}` is `StarlarkTypeExprStable`, yet value `{}` stopped being one",
+            T::starlark_type_repr(),
+            self.0,
+        )
     }
 
     /// The handle this value is read through, re-checked: for a `T` that looks into a mutable

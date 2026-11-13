@@ -39,7 +39,6 @@ pub struct SharedProcessContext {
     pub args: Vec<String>,
     pub stdin_argfile: StdinArgfile,
     pub restarter: Restarter,
-    pub force_want_restart: bool,
 }
 
 pub struct ClientRuntime(pub OnceLock<Runtime>);

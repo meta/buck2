@@ -206,8 +206,7 @@ fn main() -> ! {
             working_dir: AbsWorkingDir::current_dir()?,
             args: std::env::args().collect::<Vec<String>>(),
             stdin_argfile: StdinArgfile::default(),
-            restarter: Restarter::new(),
-            force_want_restart: buck2_env!("FORCE_WANT_RESTART", bool)?,
+            restarter: Restarter::try_new()?,
         })
     }
 
@@ -231,46 +230,38 @@ fn main() -> ! {
         }
     }
 
+    /// Restarts the command if its first attempt asks for it and wrote nothing to stdout.
     fn maybe_restart(
         first_trace_id: TraceId,
         initial_result: ExitResult,
         shared: SharedProcessContext,
         runtime: &mut ClientRuntime,
     ) -> ExitResult {
-        let force_want_restart = shared.force_want_restart;
-        let restart = |res| {
-            let restart_start_time = SystemTime::now();
+        let restart_start_time = SystemTime::now();
 
-            if !force_want_restart && !shared.restarter.should_restart() {
-                tracing::debug!("No restart was requested");
-                return res;
-            }
-
-            if stdio::has_written_to_stdout() {
-                tracing::debug!("Cannot restart: wrote to stdout");
-                return res;
-            }
-
-            if print_retry().is_err() {
-                tracing::debug!("Cannot restart: warning message cannot be printed");
-                return res;
-            }
-
-            let (_, res) = exec_with_logging(
-                TraceId::new(),
-                restart_start_time,
-                Some(first_trace_id),
-                Ok(shared),
-                runtime,
-            );
-            res
-        };
-
-        if force_want_restart {
-            restart(initial_result)
-        } else {
-            initial_result.or_else(restart)
+        if !shared.restarter.should_restart(&initial_result) {
+            tracing::debug!("No restart was requested");
+            return initial_result;
         }
+
+        if stdio::has_written_to_stdout() {
+            tracing::debug!("Cannot restart: wrote to stdout");
+            return initial_result;
+        }
+
+        if print_retry().is_err() {
+            tracing::debug!("Cannot restart: warning message cannot be printed");
+            return initial_result;
+        }
+
+        let (_, res) = exec_with_logging(
+            TraceId::new(),
+            restart_start_time,
+            Some(first_trace_id),
+            Ok(shared),
+            runtime,
+        );
+        res
     }
 
     main_with_result().report()

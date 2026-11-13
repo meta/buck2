@@ -297,7 +297,7 @@ impl<T: StreamingCommand> BuckSubcommand for T {
                 .exec_impl(&mut buckd, matches, &mut ctx, events_ctx)
                 .await;
 
-            ctx.restarter.observe(&buckd, events_ctx);
+            ctx.restarter.observe(&buckd, events_ctx, &command_result);
 
             command_result
         };

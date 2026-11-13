@@ -183,15 +183,6 @@ impl ExitResult {
         }
     }
 
-    /// Return this ExitStatus or call a function to produce a new one.
-    pub fn or_else(self, f: impl FnOnce(Self) -> Self) -> Self {
-        if matches!(self.variant, ExitResultVariant::Status(ExitCode::Success)) {
-            return self;
-        }
-
-        f(self)
-    }
-
     pub fn with_stdout(mut self, stdout: Vec<u8>) -> Self {
         self.stdout.extend(stdout);
         self

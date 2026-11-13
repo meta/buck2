@@ -21,6 +21,7 @@ mod alloc;
 mod alloc_unpack;
 pub(crate) mod dot_format;
 pub(crate) mod globals;
+pub(crate) mod handle;
 pub(crate) mod intern;
 pub(crate) mod interpolation;
 pub(crate) mod iter;

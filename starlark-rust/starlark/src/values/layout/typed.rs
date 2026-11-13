@@ -15,8 +15,6 @@
  * limitations under the License.
  */
 
-pub(crate) mod string;
-
 use std::convert::Infallible;
 use std::fmt;
 use std::fmt::Debug;

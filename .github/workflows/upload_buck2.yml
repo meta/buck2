@@ -135,10 +135,6 @@ jobs:
       run: |
         zstd -d artifacts/buck2-x86_64-unknown-linux-gnu.zst -o artifacts/buck2-release
         chmod +x artifacts/buck2-release
-    - name: Install dependencies
-      run: |
-        sudo apt-get install -y yarn
-      id: build
     - name: Build the Website
       run: |
         cd website

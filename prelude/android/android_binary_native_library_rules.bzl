@@ -2615,7 +2615,9 @@ def _get_merged_linkables_for_platform(
 
         supports_shlib_interfaces = is_actually_merged or linkable_nodes[group_data.constituents[0]].supports_shlib_interfaces
         use_shlib_interface = supports_shlib_interfaces and cxx_toolchain.linker_info.shlib_interfaces == ShlibInterfacesMode("stub_from_library")
-        # Gatorade tracks original shared-library artifacts by identity.
+        # An interface leaves out the library's undefined symbols, which moves
+        # where a link against it puts those names in its own symbol tables.
+        # Gatorade's links take the stripped library instead (below).
         # @oss-disable[end= ]: use_shlib_interface = use_shlib_interface and not getattr(ctx.attrs, "gatorade_phases", [])
 
         # Emit the Middle Gatorade container from the merge link; {} when off.
@@ -2634,13 +2636,21 @@ def _get_merged_linkables_for_platform(
         )
         shared_lib = shared_lib_result.shared_library
 
+        # A link reads a shared library's dynamic symbols, versions, SONAME and
+        # DT_NEEDED, which the stripped library keeps whole, at a fraction of
+        # the size. Monogatorade's whole-app step finds each dependency of a
+        # merge link by its full output.
+        dependency_lib = shared_lib_result.shared_library_interface or shared_lib.lib.output
+        # @oss-disable[end= ]: if getattr(ctx.attrs, "gatorade_phases", []) and not is_monogatorade_enabled(ctx):
+            # @oss-disable[end= ]: dependency_lib = shared_lib.stripped_lib or dependency_lib
+
         link_group_linkable_nodes[group] = LinkGroupLinkableNode(
             link = LinkInfo(
                 name = soname,
                 pre_flags = exported_linker_flags,
                 linkables = [
                     SharedLibLinkable(
-                        lib = shared_lib_result.shared_library_interface or shared_lib.lib.output,
+                        lib = dependency_lib,
                     )
                 ],
                 post_flags = exported_linker_post_flags,

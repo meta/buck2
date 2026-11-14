@@ -337,7 +337,7 @@ async fn daemon_pid(buck: &Buck) -> anyhow::Result<Value> {
     Ok(status["process_info"]["pid"].clone())
 }
 
-#[buck_test]
+#[buck_test(meta_only = "tpx")]
 async fn test_local_tests_inherit_the_coding_agent_metadata_of_each_command(
     buck: &Buck,
 ) -> anyhow::Result<()> {
@@ -372,7 +372,7 @@ async fn test_local_tests_inherit_the_coding_agent_metadata_of_each_command(
     Ok(())
 }
 
-#[buck_test]
+#[buck_test(meta_only = "tpx")]
 async fn test_local_tests_inherit_no_coding_agent_metadata_by_default(
     buck: &Buck,
 ) -> anyhow::Result<()> {
@@ -389,7 +389,7 @@ async fn test_local_tests_inherit_no_coding_agent_metadata_by_default(
     Ok(())
 }
 
-#[buck_test]
+#[buck_test(meta_only = "tpx")]
 async fn test_test_env_overrides_the_clients_coding_agent_metadata(
     buck: &Buck,
 ) -> anyhow::Result<()> {

@@ -18,7 +18,7 @@ def apple_tools_impl(ctx: AnalysisContext) -> list[Provider]:
             signing_info = ctx.attrs.signing_info[RunInfo],
             split_arch_combine_dsym_bundles_tool = ctx.attrs.split_arch_combine_dsym_bundles_tool[RunInfo],
             dry_codesign_tool = ctx.attrs.dry_codesign_tool[RunInfo],
-            adhoc_codesign_tool = ctx.attrs.adhoc_codesign_tool[RunInfo],
+            adhoc_codesign_tool = ctx.attrs.adhoc_codesign_tool[RunInfo] if ctx.attrs.adhoc_codesign_tool else None,
             codesign_manifest_tree_postprocessor = ctx.attrs.codesign_manifest_tree_postprocessor[RunInfo],
             dedupe_swift_module_map = ctx.attrs.dedupe_swift_module_map[RunInfo],
             signing_context_tree_postprocessor = ctx.attrs.signing_context_tree_postprocessor[RunInfo],

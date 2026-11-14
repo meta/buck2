@@ -11,6 +11,7 @@ rust_library(
         "ovr_config//os:linux",
         "ovr_config//os:macos",
     ],
+    test_deps = ["fbsource//third-party/rust:tempfile"],
     deps = [
         "fbsource//third-party/rust:arc-swap",
         "fbsource//third-party/rust:async-trait",

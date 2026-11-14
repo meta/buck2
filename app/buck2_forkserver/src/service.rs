@@ -212,6 +212,7 @@ impl UnixForkserverService {
         let (mut cmd, miniperf_output) = match (validated_cmd.enable_miniperf, &self.miniperf) {
             // Wraps the user command with miniperf for performance monitoring
             (true, Some(miniperf)) => {
+                miniperf.check_present()?;
                 let mut cmd = background_command(miniperf.miniperf.as_path());
                 let output_path = miniperf.allocate_output_path();
                 cmd.arg(output_path.as_path());
@@ -403,6 +404,13 @@ impl Forkserver for UnixForkserverService {
     }
 }
 
+/// Spawning through a deleted miniperf fails with ENOENT, which would otherwise be reported as the
+/// user's executable failing to spawn.
+#[derive(buck2_error::Error, Debug)]
+#[buck2(environment, tag = Tier0)]
+#[error("Forkserver state was deleted while the daemon was running: `{0}` is missing")]
+struct ForkserverStateMissing(String);
+
 struct MiniperfContainer {
     /// The Miniperf binary
     miniperf: AbsNormPathBuf,
@@ -461,9 +469,56 @@ impl MiniperfContainer {
         }
     }
 
+    fn check_present(&self) -> buck2_error::Result<()> {
+        for path in [&self.miniperf, &self.output_dir] {
+            if std::fs::symlink_metadata(path.as_path())
+                .is_err_and(|e| e.kind() == std::io::ErrorKind::NotFound)
+            {
+                return Err(ForkserverStateMissing(path.display().to_string()).into());
+            }
+        }
+        Ok(())
+    }
+
     fn allocate_output_path(&self) -> AbsNormPathBuf {
         let name = Alphanumeric.sample_string(&mut rand::rng(), 16);
         self.output_dir
             .join(ForwardRelativePath::unchecked_new(&name))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn container(dir: &AbsNormPath) -> MiniperfContainer {
+        MiniperfContainer {
+            miniperf: dir.join(ForwardRelativePath::unchecked_new("miniperf")),
+            output_dir: dir.join(ForwardRelativePath::unchecked_new("out")),
+        }
+    }
+
+    #[test]
+    fn test_check_present_ok_when_state_exists() -> buck2_error::Result<()> {
+        let tempdir = tempfile::tempdir()?;
+        let dir = AbsNormPath::new(tempdir.path())?;
+        let miniperf = container(dir);
+        std::fs::write(miniperf.miniperf.as_path(), "")?;
+        std::fs::create_dir(miniperf.output_dir.as_path())?;
+        miniperf.check_present()
+    }
+
+    #[test]
+    fn test_check_present_errors_when_state_deleted() -> buck2_error::Result<()> {
+        let tempdir = tempfile::tempdir()?;
+        let dir = AbsNormPath::new(tempdir.path())?;
+        let miniperf = container(dir);
+        std::fs::create_dir(miniperf.output_dir.as_path())?;
+        let error = miniperf.check_present().unwrap_err();
+        assert!(
+            error.to_string().contains("miniperf` is missing"),
+            "{error}"
+        );
+        Ok(())
     }
 }

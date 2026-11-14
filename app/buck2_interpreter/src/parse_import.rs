@@ -36,6 +36,10 @@ enum ImportParseError {
         "Unable to parse import spec. Expected format `(@<cell>)//package/name:filename.bzl` or `:filename.bzl`, but got a path. Got `{0}`"
     )]
     NotAFileName(String),
+    #[error(
+        "Invalid import spec `{0}`: `{1}` is a cell, and cell names in imports must be prefixed with `@`. Did you mean `@{0}`?"
+    )]
+    MissingAtSymbol(String, String),
 }
 
 pub enum RelativeImports<'a> {
@@ -60,6 +64,25 @@ fn has_cell_alias_prefix(path: &str, allow_missing_at_symbol: bool) -> bool {
         return false;
     };
     alias.is_empty() || alias.starts_with('@') || allow_missing_at_symbol
+}
+
+/// Detects imports like `cell//package:file.bzl` where `cell` is a known cell alias but the
+/// required leading `@` is missing. Without this check such imports are treated as file relative
+/// paths (or fail to match at all) and produce an error that doesn't mention the missing `@`.
+fn missing_at_symbol_error(
+    cell_resolver: &CellAliasResolver,
+    import: &str,
+    opts: &ParseImportOptions,
+) -> Option<buck2_error::Error> {
+    if opts.allow_missing_at_symbol {
+        return None;
+    }
+    let (alias, _) = import.split_once("//")?;
+    if alias.is_empty() || alias.starts_with('@') || alias.contains(['/', ':']) {
+        return None;
+    }
+    cell_resolver.resolve(alias).ok()?;
+    Some(ImportParseError::MissingAtSymbol(import.to_owned(), alias.to_owned()).into())
 }
 
 pub fn parse_import(
@@ -93,6 +116,8 @@ pub fn parse_import_with_config(
 
             if has_cell_alias_prefix(import, opts.allow_missing_at_symbol) {
                 Ok(parse_cell_path(import, cell_resolver)?)
+            } else if let Some(e) = missing_at_symbol_error(cell_resolver, import, opts) {
+                Err(e)
             } else if let RelativeImports::Allow {
                 current_dir_with_allowed_relative,
             } = opts.relative_import_option
@@ -123,6 +148,8 @@ pub fn parse_import_with_config(
             } else if has_cell_alias_prefix(path, opts.allow_missing_at_symbol) {
                 let cell_path = parse_cell_path(path, cell_resolver)?;
                 Ok(cell_path.join(filename))
+            } else if let Some(e) = missing_at_symbol_error(cell_resolver, import, opts) {
+                Err(e)
             } else {
                 Err(ImportParseError::MatchFailed(import.to_owned()).into())
             }
@@ -417,6 +444,70 @@ mod tests {
             )?,
         );
         Ok(())
+    }
+
+    #[test]
+    fn missing_at_symbol_for_known_cell() -> buck2_error::Result<()> {
+        let current_dir = CellPathWithAllowedRelativeDir::new(
+            CellPath::testing_new("root//package"),
+            Some(CellPath::testing_new("root//")),
+        );
+        let cases = [
+            ("cell1//package/path:import.bzl", "cell1"),
+            ("cell1//package/path/import.bzl", "cell1"),
+            ("alias2//import.bzl", "alias2"),
+        ];
+        for (import, alias) in cases {
+            for relative_import_option in [
+                RelativeImports::Allow {
+                    current_dir_with_allowed_relative: &current_dir,
+                },
+                RelativeImports::Disallow,
+            ] {
+                match parse_import(&resolver(), relative_import_option, import) {
+                    Ok(res) => panic!("Expected parse failure for {import}, got result {res}"),
+                    Err(e) => assert_eq!(
+                        format!("{e:#}"),
+                        ImportParseError::MissingAtSymbol(import.to_owned(), alias.to_owned())
+                            .to_string()
+                    ),
+                }
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn missing_at_symbol_message_suggests_fix() {
+        assert_eq!(
+            ImportParseError::MissingAtSymbol(
+                "toolchains//nix.bzl".to_owned(),
+                "toolchains".to_owned()
+            )
+            .to_string(),
+            "Invalid import spec `toolchains//nix.bzl`: `toolchains` is a cell, and cell names in \
+             imports must be prefixed with `@`. Did you mean `@toolchains//nix.bzl`?"
+        );
+    }
+
+    #[test]
+    fn missing_at_symbol_not_reported_for_unknown_alias() {
+        let current_dir =
+            CellPathWithAllowedRelativeDir::new(CellPath::testing_new("root//package"), None);
+        for import in ["bad_alias//package/path:import.bzl", "foo//bar.bzl"] {
+            let err = parse_import(
+                &resolver(),
+                RelativeImports::Allow {
+                    current_dir_with_allowed_relative: &current_dir,
+                },
+                import,
+            )
+            .expect_err(import);
+            assert!(
+                !format!("{err:#}").contains("Did you mean"),
+                "{import}: {err:#}"
+            );
+        }
     }
 
     #[test]

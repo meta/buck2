@@ -21,6 +21,9 @@ KotlinToolchainInfo = provider(
         "kapt_base64_encoder": provider_field(typing.Any, default = None),
         "kosabi_abi_validation_mode": provider_field(str, default = "off"),
         "kosabi_applicability_plugin": provider_field(typing.Any, default = None),
+        # Reduces the applicability classpath to class names and Kotlin facade metadata; see
+        # AvailabilityJars. Without it, the full compile reads the dependencies' ABI jars.
+        "kosabi_availability_jars": provider_field(typing.Any, default = None),
         "kosabi_jvm_abi_gen_k2_plugin": provider_field(typing.Any, default = None),
         # `option=value` pairs for the K2 JVM ABI gen plugin of source-only ABI actions.
         "kosabi_jvm_abi_gen_options": provider_field(list[str], default = []),

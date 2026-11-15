@@ -207,6 +207,20 @@ def get_source_only_abi_compiling_deps(
         source_only_abi_compiling_deps = [compiling_dep for compiling_dep in list(compiling_deps_tset.traverse()) if filter_compiling_deps(compiling_dep)]
     return actions.tset(SourceOnlyAbiCompilingDepsTSet, value = source_only_abi_compiling_deps)
 
+def get_source_only_abi_jars(
+    source_only_abi_compiling_deps: JavaCompilingDepsTSet | SourceOnlyAbiCompilingDepsTSet,
+    compiling_deps_tset: [JavaCompilingDepsTSet, None],
+    source_only_abi_deps: list[Dependency],
+) -> list[Artifact]:
+    """
+    The jars of the `source_only_abi_jars` projection of `get_source_only_abi_compiling_deps`'s
+    result, in its order.
+    """
+    if not source_only_abi_deps and compiling_deps_tset != None:
+        # `get_source_only_abi_compiling_deps` returned the compiling deps themselves.
+        return [entry.abi for entry in source_only_abi_compiling_deps.traverse() if entry.required_for_source_only_abi]
+    return [entry.abi for entries in source_only_abi_compiling_deps.traverse() for entry in entries]
+
 def _apply_ap_param_overrides(params: list[str], overrides: dict[str, [str, None]]) -> list[str]:
     result = [param for param in params if param.split("=", 1)[0].removeprefix("-A") not in overrides]
     for key, value in overrides.items():

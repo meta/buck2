@@ -14,8 +14,7 @@ os_lookup(
         "config//cpu:x86_64": "x86_64",
     }),
     os = select({
-        # FIXME(JakobDegen): No default
-        "DEFAULT": "linux",
+        "DEFAULT": "unknown",
         "config//os:linux": "linux",
         "config//os:macos": "macos",
         "config//os:windows": "windows",

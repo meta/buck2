@@ -1,0 +1,28 @@
+load(":defs.bzl", "constraint_setting", "constraint_value", "execution_platforms", "gen", "platform", "ran", "written")
+load(":runs.bzl", "RUNS")
+
+constraint_setting(name = "cpu")
+constraint_value(name = "x86", setting = ":cpu")
+constraint_value(name = "arm", setting = ":cpu")
+constraint_setting(name = "variant")
+constraint_value(name = "a", setting = ":variant")
+constraint_value(name = "b", setting = ":variant")
+
+platform(name = "exec_x86", values = [":x86"])
+platform(name = "exec_arm", values = [":arm"])
+execution_platforms(name = "execs", platforms = [":exec_x86", ":exec_arm"])
+
+platform(name = "x86_a", values = [":x86", ":a"])
+platform(name = "x86_b", values = [":x86", ":b"])
+platform(name = "arm_a", values = [":arm", ":a"])
+
+# Runs on the execution platform of its target cpu.
+gen(
+    name = "t",
+    runs = RUNS,
+    exec_compatible_with = select({":arm": [":arm"], ":x86": [":x86"]}),
+)
+
+# Executable on arm only.
+ran(name = "r", exe = select({":arm": True, ":x86": False}))
+written(name = "w", exe = select({":arm": True, ":x86": False}))

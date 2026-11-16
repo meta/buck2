@@ -39,12 +39,12 @@ use buck2_build_signals::env::WaitingData;
 use buck2_common::file_ops::metadata::TrackedFileDigest;
 use buck2_core::buck2_env;
 use buck2_core::category::CategoryRef;
-use buck2_core::content_hash::ContentBasedPathHash;
 use buck2_core::soft_error;
 use buck2_error::BuckErrorOptionContext;
 use buck2_error::buck2_error;
 use buck2_execute::artifact::fs::ExecutorFs;
 use buck2_execute::artifact_value::ArtifactValue;
+use buck2_execute::artifact_value::file_content_based_path_hash;
 use buck2_execute::execute::command_executor::ActionExecutionTimingData;
 use buck2_execute::materialize::materializer::WriteRequest;
 use buck2_hash::BuckMutInsertionMap;
@@ -220,7 +220,10 @@ impl WriteAction {
                     &content,
                     ctx.digest_config().cas_digest_config(),
                 );
-                Some(ContentBasedPathHash::new(digest.raw_digest().as_bytes())?)
+                Some(file_content_based_path_hash(
+                    digest.raw_digest().as_bytes(),
+                    self.inner.is_executable,
+                )?)
             } else {
                 None
             }

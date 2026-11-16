@@ -1434,7 +1434,177 @@ public class InterfaceValidatorTest extends CompilerTreeApiTest {
   }
 
   @Test
-  public void testInheritedMemberCheckSkipsPrivateImplementationClass() throws IOException {
+  public void testInheritedMemberCheckSkipsPrivateNestedClassThatNoAccessibleClassExtends()
+      throws IOException {
+    withMissingMapSubinterface();
+    compileWithValidation(
+        "import com.facebook.bar.Bar; class Foo { private abstract class Impl implements Bar {"
+            + " public Entry<String, String> entry; } }");
+    assertNoErrors();
+  }
+
+  @Test
+  public void testInheritedMemberCheckSkipsPrivateNestedClassOfInheritingOuter()
+      throws IOException {
+    withMissingMapSubinterface();
+    compileWithValidation(
+        ImmutableMap.of(
+            "Foo.java",
+            Joiner.on('\n')
+                .join(
+                    "import com.facebook.bar.Bar;",
+                    "abstract class Foo implements Bar {",
+                    "  private static class Request {",
+                    "    final Entry<String, String> entry;",
+                    "    Request(Entry<String, String> entry) {",
+                    "      this.entry = entry;",
+                    "    }",
+                    "  }",
+                    "}")));
+    assertNoErrors();
+  }
+
+  @Test
+  public void testInheritedMemberCheckSkipsPrivateNestedInterfaceThatNoAccessibleClassImplements()
+      throws IOException {
+    withMissingMapSubinterface();
+    compileWithValidation(
+        "import com.facebook.bar.Bar; abstract class Foo implements Bar { private interface"
+            + " Callback { void on(Entry<String, String> entry); } }");
+    assertNoErrors();
+  }
+
+  private void withMissingMapSubinterface() throws IOException {
+    taskListenerFactory.setInheritedMemberTypesOnly(true);
+    withClasspath(
+        ImmutableMap.of(
+            "com/facebook/bar/Bar.java",
+            "package com.facebook.bar; public interface Bar extends java.util.Map<String, String> {"
+                + " }"));
+  }
+
+  @Test
+  public void testInheritedMemberCheckCoversPrivateSuperclassOfAccessibleClass()
+      throws IOException {
+    // Shape (a): code outside reads `entry` through `Visible`.
+    withMissingMapSubinterface();
+    testCompiler.setAllowCompilationErrors(true);
+    compileWithValidation(
+        "import com.facebook.bar.Bar; public abstract class Foo implements Bar { private static"
+            + " class Base { public Entry<String, String> entry; } public static class Visible"
+            + " extends Base {} }");
+    assertMissingInheritedBar();
+  }
+
+  @Test
+  public void testInheritedMemberCheckCoversPrivateClassAnAccessibleClassExtendsIndirectly()
+      throws IOException {
+    withMissingMapSubinterface();
+    testCompiler.setAllowCompilationErrors(true);
+    compileWithValidation(
+        "import com.facebook.bar.Bar; public abstract class Foo implements Bar { private static"
+            + " class Base { public void use(Entry<String, String> entry) {} } private static class"
+            + " Middle extends Base {} public static class Visible extends Middle {} }");
+    assertMissingInheritedBar();
+  }
+
+  @Test
+  public void testInheritedMemberCheckCoversPrivateInterfaceOfAccessibleClass() throws IOException {
+    // Code outside calls the default method through `Visible`.
+    withMissingMapSubinterface();
+    testCompiler.setAllowCompilationErrors(true);
+    compileWithValidation(
+        "import com.facebook.bar.Bar; public abstract class Foo implements Bar { private interface"
+            + " Callback { default void on(Entry<String, String> entry) {} } public static class"
+            + " Visible implements Callback {} }");
+    assertMissingInheritedBar();
+  }
+
+  @Test
+  public void testInheritedMemberCheckCoversHeaderOfPrivateSuperclassOfAccessibleClass()
+      throws IOException {
+    // `Visible` is an `Entry` for code outside.
+    withMissingMapSubinterface();
+    testCompiler.setAllowCompilationErrors(true);
+    compileWithValidation(
+        "import com.facebook.bar.Bar; public abstract class Foo implements Bar { private abstract"
+            + " static class Base implements Entry<String, String> {} public abstract static class"
+            + " Visible extends Base {} }");
+    assertMissingInheritedBar();
+  }
+
+  @Test
+  public void testInheritedMemberCheckSkipsPrivateClassInAccessibleSignature() throws IOException {
+    // Shape (b): code outside cannot use `Hidden`'s members against either ABI.
+    withMissingMapSubinterface();
+    compileWithValidation(
+        "import com.facebook.bar.Bar; public abstract class Foo implements Bar { private static"
+            + " class Hidden { public void use(Entry<String, String> entry) {} } public Hidden"
+            + " hidden() { return null; } }");
+    assertNoErrors();
+  }
+
+  @Test
+  public void testInheritedMemberCheckSkipsPrivateRequestClassOfMessagingProcessor()
+      throws IOException {
+    // The shape of `FBLiteMsysMessagingNotificationProcessor.PendingReminderNotifRequest`.
+    taskListenerFactory.setInheritedMemberTypesOnly(true);
+    withClasspath(
+        ImmutableMap.of(
+            "com/facebook/msys/IMessagingNotificationProcessor.java",
+            "package com.facebook.msys; public interface IMessagingNotificationProcessor {"
+                + " interface IMessageReminderResultCallback { void onResult(); } }"));
+    compileWithValidation(
+        ImmutableMap.of(
+            "Processor.java",
+            Joiner.on('\n')
+                .join(
+                    "package com.facebook.lite;",
+                    "class Processor implements com.facebook.msys.IMessagingNotificationProcessor"
+                        + " {",
+                    "  private static class PendingReminderNotifRequest {",
+                    "    final IMessageReminderResultCallback callback;",
+                    "    PendingReminderNotifRequest(IMessageReminderResultCallback callback) {",
+                    "      this.callback = callback;",
+                    "    }",
+                    "  }",
+                    "}")));
+    assertNoErrors();
+  }
+
+  @Test
+  public void testInheritedMemberCheckSkipsPrivateBridgeOfCallerVerifier() throws IOException {
+    // The shape of `AttributionCallerVerifier.PackageManagerBridgeBypassDetour`.
+    taskListenerFactory.setInheritedMemberTypesOnly(true);
+    withClasspath(
+        ImmutableMap.of(
+            "com/facebook/verification/TrustedCallerVerifier.java",
+            "package com.facebook.verification; public abstract class TrustedCallerVerifier {"
+                + " public interface PackageManagerBridge { void bypass(); } }",
+            "com/facebook/missing/DynamicAwareTrustedCallerVerifier.java",
+            "package com.facebook.missing; public abstract class DynamicAwareTrustedCallerVerifier"
+                + " extends com.facebook.verification.TrustedCallerVerifier {}"));
+    taskListenerFactory.addTargetAvailableForSourceOnlyAbi(
+        "//com/facebook/verification:verification");
+    compileWithValidation(
+        ImmutableMap.of(
+            "AttributionCallerVerifier.java",
+            Joiner.on('\n')
+                .join(
+                    "package com.facebook.attribution;",
+                    "public class AttributionCallerVerifier",
+                    "    extends com.facebook.missing.DynamicAwareTrustedCallerVerifier {",
+                    "  private static class PackageManagerBridgeBypassDetour"
+                        + " implements PackageManagerBridge {",
+                    "    @Override",
+                    "    public void bypass() {}",
+                    "  }",
+                    "}")));
+    assertNoErrors();
+  }
+
+  @Test
+  public void testInheritedMemberCheckSkipsPrivateMembersOfPrivateNestedClass() throws IOException {
     taskListenerFactory.setInheritedMemberTypesOnly(true);
     withClasspath(
         ImmutableMap.of(
@@ -1442,8 +1612,23 @@ public class InterfaceValidatorTest extends CompilerTreeApiTest {
             "package com.facebook.bar; public interface Bar extends java.util.Map<String, String> {"
                 + " }"));
     compileWithValidation(
-        "import com.facebook.bar.Bar; class Foo { private abstract class Impl implements Bar {"
-            + " public Entry<String, String> entry; } }");
+        "import com.facebook.bar.Bar; abstract class Foo implements Bar { private static class"
+            + " Request { private Entry<String, String> entry; private void use(Entry<String,"
+            + " String> entry) {} } }");
+    assertNoErrors();
+  }
+
+  @Test
+  public void testInheritedMemberCheckSkipsAnonymousClass() throws IOException {
+    taskListenerFactory.setInheritedMemberTypesOnly(true);
+    withClasspath(
+        ImmutableMap.of(
+            "com/facebook/bar/Bar.java",
+            "package com.facebook.bar; public interface Bar extends java.util.Map<String, String> {"
+                + " }"));
+    compileWithValidation(
+        "import com.facebook.bar.Bar; abstract class Foo implements Bar { Object listener = new"
+            + " Object() { public Entry<String, String> entry; }; }");
     assertNoErrors();
   }
 

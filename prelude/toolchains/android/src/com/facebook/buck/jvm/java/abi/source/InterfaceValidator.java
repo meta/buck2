@@ -23,13 +23,21 @@ import com.sun.source.util.TreePath;
 import com.sun.source.util.Trees;
 import java.lang.annotation.Retention;
 import java.lang.annotation.RetentionPolicy;
+import java.util.ArrayDeque;
+import java.util.ArrayList;
+import java.util.Deque;
+import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
 import java.util.stream.Collectors;
 import javax.lang.model.element.Element;
 import javax.lang.model.element.ElementKind;
 import javax.lang.model.element.Modifier;
 import javax.lang.model.element.Name;
+import javax.lang.model.element.NestingKind;
 import javax.lang.model.element.PackageElement;
 import javax.lang.model.element.QualifiedNameable;
 import javax.lang.model.element.TypeElement;
@@ -37,6 +45,7 @@ import javax.lang.model.element.VariableElement;
 import javax.lang.model.type.DeclaredType;
 import javax.lang.model.type.TypeKind;
 import javax.lang.model.type.TypeMirror;
+import javax.lang.model.util.ElementFilter;
 import javax.lang.model.util.Elements;
 import javax.lang.model.util.Types;
 import javax.tools.Diagnostic;
@@ -92,7 +101,7 @@ class InterfaceValidator {
   }
 
   public void validate(List<? extends CompilationUnitTree> compilationUnits) {
-    InterfaceScanner interfaceScanner = new InterfaceScanner(trees);
+    InterfaceScanner interfaceScanner = new InterfaceScanner(trees, inheritedMemberTypesOnly);
     for (CompilationUnitTree compilationUnit : compilationUnits) {
       interfaceScanner.findReferences(
           compilationUnit,
@@ -119,6 +128,7 @@ class InterfaceValidator {
     private final CompilerTypeResolutionSimulator compilerResolver;
     private final ImportsTracker imports;
     private final boolean inheritedMemberTypesOnly;
+    private final Map<TypeElement, Set<TypeElement>> exposedSupertypes = new HashMap<>();
 
     public ValidatingListener(
         Diagnostic.Kind messageKind,
@@ -327,15 +337,10 @@ class InterfaceValidator {
       if (inheritedMemberTypesOnly) {
         Tree.Kind kind = path.getLeaf().getKind();
         if ((kind != Tree.Kind.IDENTIFIER && kind != Tree.Kind.MEMBER_SELECT)
-            || isInDiscardedSourceAnnotation(path)) {
+            || isInDiscardedSourceAnnotation(path)
+            || isOutsideAbi(referencingElement)
+            || !isReachableFromOutside(referencingElement)) {
           return;
-        }
-        for (Element scope = referencingElement;
-            scope != null;
-            scope = scope.getEnclosingElement()) {
-          if (scope.getModifiers().contains(Modifier.PRIVATE)) {
-            return;
-          }
         }
       }
       compilerResolver.setImports(imports);
@@ -373,6 +378,95 @@ class InterfaceValidator {
           }
         }
       }
+    }
+
+    /**
+     * Whether code outside the top-level class can use the declaration of {@code element} against
+     * an ABI. It can when no class enclosing {@code element} is private. Otherwise it reaches a
+     * private member class's members only through a class accessible outside the top-level class
+     * that inherits them, so the innermost class enclosing {@code element}, or a private class
+     * enclosing that, has to be a supertype, directly or indirectly, of such a class. A private
+     * class that only appears in accessible signatures does not count: code outside cannot use its
+     * members against either ABI.
+     */
+    private boolean isReachableFromOutside(Element element) {
+      List<TypeElement> enclosingTypes = new ArrayList<>();
+      for (Element scope = element; scope != null; scope = scope.getEnclosingElement()) {
+        if (scope instanceof TypeElement) {
+          enclosingTypes.add((TypeElement) scope);
+        }
+      }
+      if (enclosingTypes.stream().noneMatch(ValidatingListener::isPrivate)) {
+        return true;
+      }
+      Set<TypeElement> exposed =
+          exposedSupertypes.computeIfAbsent(
+              enclosingTypes.get(enclosingTypes.size() - 1), ValidatingListener::exposedSupertypes);
+      for (int i = 0; i < enclosingTypes.size(); i++) {
+        TypeElement type = enclosingTypes.get(i);
+        if ((i == 0 || isPrivate(type)) && exposed.contains(type)) {
+          return true;
+        }
+      }
+      return false;
+    }
+
+    /**
+     * The supertypes, direct or indirect, of {@code topLevel} and of the classes nested in it that
+     * code outside it can access.
+     */
+    private static Set<TypeElement> exposedSupertypes(TypeElement topLevel) {
+      Set<TypeElement> supertypes = new HashSet<>();
+      Deque<TypeElement> accessible = new ArrayDeque<>();
+      accessible.add(topLevel);
+      while (!accessible.isEmpty()) {
+        TypeElement type = accessible.removeFirst();
+        addSupertypes(type, supertypes);
+        for (TypeElement member :
+            Objects.requireNonNull(ElementFilter.typesIn(type.getEnclosedElements()))) {
+          if (!isPrivate(member)) {
+            accessible.add(member);
+          }
+        }
+      }
+      return supertypes;
+    }
+
+    private static boolean isPrivate(Element element) {
+      return element.getModifiers().contains(Modifier.PRIVATE);
+    }
+
+    private static void addSupertypes(TypeElement type, Set<TypeElement> supertypes) {
+      List<TypeMirror> direct = new ArrayList<>(type.getInterfaces());
+      direct.add(type.getSuperclass());
+      for (TypeMirror supertype : direct) {
+        if (supertype instanceof DeclaredType) {
+          Element supertypeElement = ((DeclaredType) supertype).asElement();
+          if (supertypeElement instanceof TypeElement
+              && supertypes.add((TypeElement) supertypeElement)) {
+            addSupertypes((TypeElement) supertypeElement, supertypes);
+          }
+        }
+      }
+    }
+
+    /**
+     * Whether references from {@code element} are left out of both ABIs: it is, or is inside, a
+     * private field, method or constructor, or a local or anonymous class. Private member types are
+     * not left out; both ABIs keep them with their non-private members.
+     */
+    private static boolean isOutsideAbi(Element element) {
+      for (Element scope = element; scope != null; scope = scope.getEnclosingElement()) {
+        if (scope instanceof TypeElement) {
+          NestingKind nestingKind = ((TypeElement) scope).getNestingKind();
+          if (nestingKind == NestingKind.LOCAL || nestingKind == NestingKind.ANONYMOUS) {
+            return true;
+          }
+        } else if (scope.getModifiers().contains(Modifier.PRIVATE)) {
+          return true;
+        }
+      }
+      return false;
     }
 
     @Override

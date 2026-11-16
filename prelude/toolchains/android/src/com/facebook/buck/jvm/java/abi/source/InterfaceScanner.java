@@ -71,9 +71,20 @@ class InterfaceScanner {
   }
 
   private final Trees trees;
+  private final boolean scanPrivateMemberTypes;
 
   public InterfaceScanner(Trees trees) {
+    this(trees, false);
+  }
+
+  /**
+   * @param scanPrivateMemberTypes also scan private member interfaces and annotation types. Private
+   *     member classes and enums are always scanned. Both ABIs keep every member type with its
+   *     non-private members, whatever the member type's own access.
+   */
+  public InterfaceScanner(Trees trees, boolean scanPrivateMemberTypes) {
     this.trees = trees;
+    this.scanPrivateMemberTypes = scanPrivateMemberTypes;
   }
 
   public void findReferences(CompilationUnitTree file, Listener listener) {
@@ -122,15 +133,17 @@ class InterfaceScanner {
         return null;
       }
 
-      /** Restricts the search to non-private classes. */
+      /**
+       * Skips private member interfaces and annotation types, unless {@code scanPrivateMemberTypes}
+       * is set.
+       */
       @Override
       public Void visitClass(ClassTree node, Void aVoid) {
         Element element = getEnclosingElement();
 
         listener.onTypeDeclared((TypeElement) element, getCurrentPath());
 
-        // Skip private since they're not part of the interface
-        if (!element.getKind().isClass() && isPrivate(element)) {
+        if (!scanPrivateMemberTypes && !element.getKind().isClass() && isPrivate(element)) {
           return null;
         }
 

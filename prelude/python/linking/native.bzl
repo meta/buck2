@@ -46,7 +46,13 @@ load(
     "@prelude//cxx:preprocessor.bzl",
     "cxx_inherited_preprocessor_infos",
 )
-load("@prelude//linking:generated_build_info.bzl", "GENERATED_BUILD_INFO_OUTPUT_DIR")
+load(
+    "@prelude//linking:generated_build_info.bzl",
+    "BUILD_INFO_DSO_SONAME",
+    "GENERATED_BUILD_INFO_OUTPUT_DIR",
+    "GeneratedBuildInfoSharedLibrary",  # @unused Used as a type
+    "generate_build_info_shared_library",
+)
 load(
     "@prelude//linking:link_info.bzl",
     "LinkArgs",  # @unused Used as a type
@@ -268,7 +274,7 @@ def _compute_cxx_extension_info(ctx, deps) -> (CxxExtensionLinkInfo, CxxExtensio
 def _cxx_exe_allow_cache_upload(ctx) -> bool:
     return hasattr(ctx.attrs, "exe_allow_cache_upload") and bool(ctx.attrs.exe_allow_cache_upload)
 
-def _python_source_build_info_invalidation_inputs(ctx, deps, sources):
+def python_source_build_info_invalidation_inputs(ctx, deps, sources):
     """
     Return all Python sources packaged into the binary, but only when full
     build info is enabled. These are consumed solely as hidden inputs to the
@@ -283,6 +289,55 @@ def _python_source_build_info_invalidation_inputs(ctx, deps, sources):
     # extension DSO (the behavior removed in D121806144).
     transitive_sources = [ctx.actions.tset(PythonLibraryManifestsTSet, children = manifest_sets).project_as_args("source_artifacts")] if manifest_sets else []
     return sources + transitive_sources
+
+def generate_build_info_shared_library_after_link(
+    ctx: AnalysisContext,
+    shared_libs: list[(SharedLibrary, str)],
+    extra: dict[str, typing.Any],
+    link_args: list[LinkArgs],
+    invalidation_inputs: list[typing.Any],
+    output_suffix: str = "",
+) -> (list[(SharedLibrary, str)], dict[str, typing.Any], GeneratedBuildInfoSharedLibrary) | None:
+    """
+    Regenerate the build-info DSO outside the anon native-linking target and
+    swap it in for the placeholder DSO the anon target linked against.
+
+    The anon target links a stable-mode placeholder, so its link (and every
+    action keyed on the DSO's symbol-stable interface) is identical across
+    build hosts. The real, full-mode DSO is generated here, in the outer
+    `python_binary` analysis, and replaces the placeholder in the packaged
+    shared libraries. Returns None when there is no DSO to swap.
+    """
+    generator_args = [flag for flag in getattr(ctx.attrs, "binary_linker_flags", []) if flag.startswith("--build-info")]
+    real = generate_build_info_shared_library(
+        ctx,
+        link_args,
+        generator_args = generator_args,
+        invalidation_inputs = invalidation_inputs,
+        output_suffix = output_suffix,
+    )
+    if real == None:
+        return None
+
+    swapped = []
+    found = False
+    for shlib, libdir in shared_libs:
+        if shlib.soname.is_str and shlib.soname.ensure_str() == BUILD_INFO_DSO_SONAME:
+            swapped.append((real.library, libdir))
+            found = True
+        else:
+            swapped.append((shlib, libdir))
+    if not found:
+        # The link generated a build-info DSO, so the placeholder must be
+        # among the packaged shared libraries; shipping it unswapped would
+        # silently discard the real per-build build info.
+        fail("generated build-info DSO {} not found in shared libraries for {}".format(BUILD_INFO_DSO_SONAME, ctx.label))
+
+    extra = dict(extra)
+    extra["generated_build_info"] = [
+        DefaultInfo(default_output = real.library.lib.output),
+    ]
+    return (swapped, extra, real)
 
 def _compute_cxx_executable_info(
     ctx,
@@ -362,6 +417,11 @@ def _compute_cxx_executable_info(
             # the DSO is not linked: the loader ignores nonexistent RPATH dirs.
             extra_binary_link_flags.append(rpath_ldflag + GENERATED_BUILD_INFO_OUTPUT_DIR)
 
+    # Set only when the binary generates build info after the link (see
+    # `_generate_build_info_after_link`): the link then uses a stable-mode
+    # placeholder DSO and `python_binary` swaps in the real one afterwards.
+    link_stable_build_info_placeholder = getattr(ctx.attrs, "_generate_build_info_after_link", False)
+
     impl_params = CxxRuleConstructorParams(
         rule_type = "python_binary",
         headers_layout = cxx_get_regular_cxx_headers_layout(ctx),
@@ -400,6 +460,7 @@ def _compute_cxx_executable_info(
         allow_cache_upload = cxx_attrs_get_allow_cache_upload(ctx.attrs, get_cxx_toolchain_info(ctx).cxx_compiler_info.allow_cache_upload),
         precompiled_header = ctx.attrs.precompiled_header,
         generated_build_info_invalidation_inputs = generated_build_info_invalidation_inputs,
+        link_stable_build_info_placeholder = link_stable_build_info_placeholder,
         _cxx_toolchain = ctx.attrs._cxx_toolchain,
     )
 
@@ -430,7 +491,7 @@ def process_native_linking(
     extra_artifacts = {}
 
     extension_info, extension_info_reduced = _compute_cxx_extension_info(ctx, deps)
-    generated_build_info_invalidation_inputs = _python_source_build_info_invalidation_inputs(
+    generated_build_info_invalidation_inputs = python_source_build_info_invalidation_inputs(
         ctx,
         generated_build_info_invalidation_deps,
         generated_build_info_invalidation_sources,
@@ -497,13 +558,21 @@ def process_native_linking(
     shared_libs = [(s, "runtime/lib") for s in executable_info.shared_libs]
 
     extra_artifacts.update(extension_info_reduced.artifacts)
+
+    # The executable's RPATH falls back to the build-info DSO beside it in
+    # this target's output dir (an inplace entry symlinks it there), so the
+    # DSO it was linked against is materialized wherever the executable is,
+    # even once the packaged copy is swapped for one generated after the link.
+    binary = executable_info.binary
+    if "generated_build_info" in executable_info.sub_targets:
+        binary = binary.with_associated_artifacts([info.default_outputs[0] for info in executable_info.sub_targets["generated_build_info"]])
     shared_libs.append(
         (
             create_shlib(
                 soname = ctx.attrs.executable_name,
                 label = ctx.label,
                 lib = LinkedObject(
-                    output = executable_info.binary,
+                    output = binary,
                     unstripped_output = executable_info.binary,
                     dwp = executable_info.dwp,
                 ),

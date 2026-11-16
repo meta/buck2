@@ -746,6 +746,7 @@ def cxx_executable(ctx: AnalysisContext, impl_params: CxxRuleConstructorParams, 
             dep_links,
             generator_args = generated_build_info_args,
             invalidation_inputs = generated_build_info_invalidation_inputs,
+            stable_placeholder = impl_params.link_stable_build_info_placeholder,
         )
         if generated_build_info_shared_library:
             shared_libs.append(generated_build_info_shared_library.library)
@@ -753,6 +754,8 @@ def cxx_executable(ctx: AnalysisContext, impl_params: CxxRuleConstructorParams, 
                 DefaultInfo(default_output = generated_build_info_shared_library.library.lib.output),
             ]
     else:
+        # Statically linked build info has no placeholder/swap step, so it
+        # always uses the configured mode.
         generated_build_info = generate_build_info(
             ctx,
             generator_args = generated_build_info_args,

@@ -63,6 +63,7 @@ cxx_implicit_attrs = {
     "preprocessor_flags": attrs.any(default = []),
     "raw_headers": attrs.set(attrs.source(), sorted = True, default = []),
     "_gen_build_info": attrs.option(attrs.exec_dep(providers = [RunInfo]), default = None),
+    "_gen_build_info_no_config": attrs.option(attrs.exec_dep(providers = [RunInfo]), default = None),
     "_generated_build_info_enabled": attrs.bool(default = False),
     "_generated_build_info_mode": attrs.enum(["full", "stable"], default = "stable"),
     "_generated_build_info_spec": BUILD_INFO_ATTR,
@@ -122,6 +123,7 @@ process_native_linking_rule = rule(
         ),
         "use_anon_target_for_analysis": attrs.bool(default = True),
         "_cxx_toolchain": attrs.dep(),
+        "_generate_build_info_after_link": attrs.bool(default = False),
         "_python_internal_tools": attrs.dep(),
         "_python_toolchain": attrs.dep(),
     }

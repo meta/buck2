@@ -49,6 +49,12 @@ GeneratedBuildInfoCompileOutput = record(
 # it to locate the linked DSO next to the binaries that link it.
 GENERATED_BUILD_INFO_OUTPUT_DIR = "__generated_build_info__"
 
+BUILD_INFO_DSO_SONAME = "libgenerated_build_info.so"
+
+# Generated C source name stem; an output suffix (e.g. "-real" for a second
+# generation in the same context) is appended as "_real".
+_GENERATED_BUILD_INFO_SOURCE = "__buck2_generated_build_info"
+
 _REQUIRED_GENERATED_BUILD_INFO_FIELDS = [
     "allow_cache_upload",
     "base_linker_flags",
@@ -75,6 +81,13 @@ GeneratedBuildInfoSharedLibrary = record(
 def compile_generated_build_info(ctx: AnalysisContext, info: GeneratedBuildInfo) -> GeneratedBuildInfoCompileOutput:
     cxx_toolchain_info = get_cxx_toolchain_info(ctx)
 
+    # Derive the output prefix from the generated source's name: a context
+    # that compiles build info twice (placeholder plus its real replacement)
+    # already gives the sources distinct names (see _GENERATED_BUILD_INFO_SOURCE),
+    # and the compile outputs (argsfiles, objects) must differ along with them.
+    source_suffix = info.source.short_path.rsplit("/", 1)[-1].removesuffix(".c").split(_GENERATED_BUILD_INFO_SOURCE, 1)[1]
+    filename_prefix = "generated_build_info" + source_suffix + "_"
+
     # `-fno-whole-program-vtables` is a Clang-only flag; GCC errors out on it.
     src_flags = ["-fno-lto"]
     if cxx_toolchain_info.c_compiler_info.compiler_type in ["clang", "clang_windows", "clang_cl"]:
@@ -98,7 +111,7 @@ def compile_generated_build_info(ctx: AnalysisContext, info: GeneratedBuildInfo)
         inherited_exported_preprocessor_infos = [],
         preferred_linkage = Linkage("shared"),
         add_coverage_instrumentation_compiler_flags = False,
-        filename_prefix = "generated_build_info_",
+        filename_prefix = filename_prefix,
     )
     return GeneratedBuildInfoCompileOutput(
         external_debug_info = (compiled.pic.external_debug_info + (compiled.pic.objects if compiled.pic.objects_have_external_debug_info else [])),
@@ -111,7 +124,7 @@ def compile_generated_build_info(ctx: AnalysisContext, info: GeneratedBuildInfo)
 # }
 # Generator-owned fields remain at the top level so configured selectors are
 # resolved before the specification is serialized.
-def _generated_build_info_config(ctx: AnalysisContext):
+def _generated_build_info_config(ctx: AnalysisContext, stable_placeholder: bool = False):
     spec = dict(getattr(ctx.attrs, "_generated_build_info_spec", {}))
     configured_enabled = getattr(ctx.attrs, "_generated_build_info_enabled", None)
     if configured_enabled != None:
@@ -120,7 +133,7 @@ def _generated_build_info_config(ctx: AnalysisContext):
         if not spec:
             fail("generated build-info spec is missing")
 
-        mode = ctx.attrs._generated_build_info_mode
+        mode = "stable" if stable_placeholder else ctx.attrs._generated_build_info_mode
         spec["allow_cache_upload"] = mode != "full"
         spec["build_info"] = mode
         spec["enabled"] = True
@@ -144,8 +157,9 @@ def _generate_build_info_data(
     tool: RunInfo,
     generator_args: list[typing.Any] = [],
     invalidation_inputs: list[typing.Any] = [],
+    output_suffix: str = "",
 ) -> GeneratedBuildInfoData:
-    output_dir = GENERATED_BUILD_INFO_OUTPUT_DIR
+    output_dir = GENERATED_BUILD_INFO_OUTPUT_DIR + output_suffix
     json = getattr(ctx.attrs, "_generated_build_info_data", None)
     if json != None and spec.get("emit_manifest_entries", False):
         fail("supplied generated build-info data does not provide manifest entries")
@@ -174,6 +188,7 @@ def _generate_build_info_data(
             command,
             category = "generate_build_info_json",
             env = {"LC_ALL": "C"},
+            identifier = output_suffix.removeprefix("-") if output_suffix else None,
             local_only = spec["local_only"],
             allow_cache_upload = spec["allow_cache_upload"],
         )
@@ -186,8 +201,10 @@ def generate_build_info_data(
     ctx: AnalysisContext,
     generator_args: list[typing.Any] = [],
     invalidation_inputs: list[typing.Any] = [],
+    stable_placeholder: bool = False,
+    output_suffix: str = "",
 ) -> GeneratedBuildInfoData | None:
-    config = _generated_build_info_config(ctx)
+    config = _generated_build_info_config(ctx, stable_placeholder = stable_placeholder)
     if config == None:
         return None
     spec, tool = config
@@ -197,6 +214,7 @@ def generate_build_info_data(
         tool,
         generator_args = generator_args,
         invalidation_inputs = invalidation_inputs,
+        output_suffix = output_suffix,
     )
 
 # Expected `_generated_build_info_spec` shape:
@@ -209,15 +227,33 @@ def generate_build_info(
     ctx: AnalysisContext,
     invalidation_inputs: list[typing.Any] = [],
     generator_args: list[typing.Any] = [],
+    output_suffix: str = "",
 ) -> GeneratedBuildInfo | None:
+    # No stable-placeholder variant here: a statically linked object would
+    # bake the placeholder values into the binary with no later swap. The
+    # placeholder only exists for the shared-library form, where the link
+    # consumes nothing but the DSO's interface.
     config = _generated_build_info_config(ctx)
     if config == None:
         return None
     spec, tool = config
-    data = _generate_build_info_data(ctx, spec, tool, generator_args, invalidation_inputs)
+    return _generate_build_info(ctx, spec, tool, generator_args, invalidation_inputs, output_suffix)
 
-    output_dir = GENERATED_BUILD_INFO_OUTPUT_DIR
-    source = ctx.actions.declare_output(output_dir, "__buck2_generated_build_info.c")
+def _generate_build_info(
+    ctx: AnalysisContext,
+    spec,
+    tool: RunInfo,
+    generator_args: list[typing.Any] = [],
+    invalidation_inputs: list[typing.Any] = [],
+    output_suffix: str = "",
+) -> GeneratedBuildInfo:
+    data = _generate_build_info_data(ctx, spec, tool, generator_args, invalidation_inputs, output_suffix = output_suffix)
+
+    output_dir = GENERATED_BUILD_INFO_OUTPUT_DIR + output_suffix
+    # The object output is named after the source basename, so a second
+    # generation in the same context (a placeholder inside a link plus its
+    # real replacement) needs a distinct source name.
+    source = ctx.actions.declare_output(output_dir, "{}{}.c".format(_GENERATED_BUILD_INFO_SOURCE, output_suffix.replace("-", "_")))
 
     ctx.actions.run(
         cmd_args(
@@ -228,6 +264,7 @@ def generate_build_info(
             source.as_output(),
         ),
         category = "generate_build_info_source",
+        identifier = output_suffix.removeprefix("-") if output_suffix else None,
     )
 
     json_linker_flags = (
@@ -244,31 +281,52 @@ def generate_build_info(
 
 def generate_build_info_shared_library(
     ctx: AnalysisContext,
-    metadata_link_args: LinkArgs,
+    metadata_link_args: LinkArgs | list[LinkArgs],
     generator_args: list[typing.Any] = [],
     invalidation_inputs: list[typing.Any] = [],
+    stable_placeholder: bool = False,
+    output_suffix: str = "",
 ) -> GeneratedBuildInfoSharedLibrary | None:
-    config = _generated_build_info_config(ctx)
+    config = _generated_build_info_config(ctx, stable_placeholder = stable_placeholder)
     if config == None:
         return None
     spec, _tool = config
+    tool = _tool
+    if stable_placeholder:
+        # Stable generation ignores per-build `-c build_info.*` overrides,
+        # so the config-baked tool would re-run on every host change with
+        # identical outputs. The bare tool keeps the action host-independent.
+        stable_tool = getattr(ctx.attrs, "_gen_build_info_no_config", None)
+        if stable_tool != None:
+            tool = stable_tool[RunInfo]
 
-    info = generate_build_info(
+    # Callers that regenerate the DSO outside the original link (e.g. the
+    # python_binary rule regenerating it outside its anon native-linking
+    # target) only have the executable's combined link args, not the
+    # dep-only `LinkArgs` the link itself used.
+    if type(metadata_link_args) != type([]):
+        metadata_link_args = [metadata_link_args]
+    metadata_args = cmd_args(
+        [unpack_link_args_metadata(args) for args in metadata_link_args],
+    )
+
+    info = _generate_build_info(
         ctx,
+        spec,
+        tool,
+        output_suffix = output_suffix,
         generator_args = generator_args
         + [
             cmd_args(
-                unpack_link_args_metadata(metadata_link_args),
+                metadata_args,
                 format = "--build-info-link-metadata={}",
             ),
         ],
         invalidation_inputs = invalidation_inputs,
     )
-    if info == None:
-        return None
 
     linker_info = get_cxx_toolchain_info(ctx).linker_info
-    soname = "libgenerated_build_info.so"
+    soname = BUILD_INFO_DSO_SONAME
     compile_output = compile_generated_build_info(ctx, info)
     exported_symbols = spec["exported_symbols"]
     links = [
@@ -293,19 +351,20 @@ def generate_build_info_shared_library(
         ),
         LinkArgs(
             flags = cmd_args(
-                unpack_link_args_metadata(metadata_link_args),
+                metadata_args,
                 format = "--build-info-link-metadata={}",
             ),
         ),
     ]
     link_result = cxx_link_shared_library(
         ctx = ctx,
-        output = "{}/{}".format(GENERATED_BUILD_INFO_OUTPUT_DIR, soname),
+        output = "{}/{}".format(GENERATED_BUILD_INFO_OUTPUT_DIR + output_suffix, soname),
         name = soname,
         opts = link_options(
             links = links,
             link_execution_preference = LinkExecutionPreference("any"),
             link_weight = linker_info.link_weight,
+            identifier = "generated_build_info_shared_library{}".format(output_suffix) if output_suffix else None,
         ),
     )
     interface = shared_library_interface(ctx, link_result.linked_object.output)

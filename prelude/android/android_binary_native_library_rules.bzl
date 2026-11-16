@@ -31,6 +31,7 @@ load("@prelude//android:voltron.bzl", "ROOT_MODULE", "all_targets_in_root_module
     # @oss-disable[end= ]: "@prelude//android/meta_only:gatorade.bzl",
     # @oss-disable[end= ]: "add_gatorade_relinker_args",
     # @oss-disable[end= ]: "early_gatorade_libraries",
+    # @oss-disable[end= ]: "gatorade_allows_shlib_interfaces",
     # @oss-disable[end= ]: "gatorade_deferred_libs",
     # @oss-disable[end= ]: "gatorade_libraries",
     # @oss-disable[end= ]: "is_late_gatorade_enabled",
@@ -2628,8 +2629,9 @@ def _get_merged_linkables_for_platform(
         use_shlib_interface = supports_shlib_interfaces and cxx_toolchain.linker_info.shlib_interfaces == ShlibInterfacesMode("stub_from_library")
         # An interface leaves out the library's undefined symbols, which moves
         # where a link against it puts those names in its own symbol tables.
-        # Gatorade's links take the stripped library instead (below).
-        # @oss-disable[end= ]: use_shlib_interface = use_shlib_interface and not getattr(ctx.attrs, "gatorade_phases", [])
+        # Gatorade's links take the stripped library instead (below), unless
+        # gatorade_allows_shlib_interfaces opts the build in.
+        # @oss-disable[end= ]: use_shlib_interface = use_shlib_interface and gatorade_allows_shlib_interfaces(ctx)
 
         # Emit the Middle Gatorade container from the merge link; {} when off.
         # @oss-disable[end= ]: mg_args = middle_gatorade_merge_args(ctx, output_path, cxx_toolchain)
@@ -2651,9 +2653,11 @@ def _get_merged_linkables_for_platform(
         # DT_NEEDED, which the stripped library keeps whole, at a fraction of
         # the size. Monogatorade's whole-app step finds each dependency of a
         # merge link by its full output.
-        dependency_lib = shared_lib_result.shared_library_interface or shared_lib.lib.output
-        # @oss-disable[end= ]: if getattr(ctx.attrs, "gatorade_phases", []) and not is_monogatorade_enabled(ctx):
-            # @oss-disable[end= ]: dependency_lib = shared_lib.stripped_lib or dependency_lib
+        dependency_lib = shared_lib_result.shared_library_interface
+        if dependency_lib == None:
+            dependency_lib = shared_lib.lib.output
+            # @oss-disable[end= ]: if getattr(ctx.attrs, "gatorade_phases", []) and not is_monogatorade_enabled(ctx):
+                # @oss-disable[end= ]: dependency_lib = shared_lib.stripped_lib or dependency_lib
 
         link_group_linkable_nodes[group] = LinkGroupLinkableNode(
             link = LinkInfo(

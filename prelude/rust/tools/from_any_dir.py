@@ -24,6 +24,10 @@ class Args(NamedTuple):
     cc: list[str]
 
 
+def exec_command(cc: list[str]) -> None:
+    os.execvp(cc[0], cc)
+
+
 def arg_parse() -> Args:
     parser = argparse.ArgumentParser()
     parser.add_argument("--cwd", type=Path, required=True)
@@ -65,7 +69,7 @@ def main():
 
     os.chdir(args.cwd)
     try:
-        os.execl(cc[0], cc[0], *cc[1:])
+        exec_command(cc)
     except Exception:
         print(f"exec failed: {pformat(cc)}", file=sys.stderr)
         raise

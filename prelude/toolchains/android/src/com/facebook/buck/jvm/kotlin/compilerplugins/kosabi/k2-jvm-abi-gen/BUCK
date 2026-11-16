@@ -7,8 +7,8 @@ oncall("android_devxx")
 source_listing()
 
 # compilercompat shims match the compiler actually run: key off the version the kotlincd
-# toolchain selects the compiler jar from. 2.2 and 2.3 share minor-version buckets
-# (compilercompat/2.2.0, compilercompat/2.3.0); newer compilers use full-version buckets.
+# toolchain selects the compiler jar from. 2.3 uses the minor-version bucket
+# (compilercompat/2.3.0); newer compilers use full-version buckets.
 # @oss-disable[end= ]: _KOTLIN_FULL_VERSION = toolchain_kotlin_version()
 _KOTLIN_FULL_VERSION = read_root_config("kotlin", "kotlin_version", "2.3.21") # @oss-enable
 

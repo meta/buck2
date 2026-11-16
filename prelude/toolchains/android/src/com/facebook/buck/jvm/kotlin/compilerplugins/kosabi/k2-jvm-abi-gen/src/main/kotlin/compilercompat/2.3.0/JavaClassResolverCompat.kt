@@ -21,8 +21,9 @@ import org.jetbrains.kotlin.fir.resolve.providers.impl.FirCachingCompositeSymbol
 import org.jetbrains.kotlin.fir.resolve.providers.symbolProvider
 import org.jetbrains.kotlin.load.java.structure.impl.VirtualFileBoundJavaClass
 
-// Same KT-60555 workaround as the 2.2.0 shim, but 2.3 removed FirJavaAwareSymbolProvider and
-// privatized the facade, so reflection is the only path. See:
+// KT-60555 workaround: library sessions never register the session-level javaSymbolProvider.
+// 2.3 removed FirJavaAwareSymbolProvider and privatized the facade, so reflection is the only
+// path. See:
 // https://youtrack.jetbrains.com/issue/KT-60555/K2.-FirJavaClass-source-field-is-null
 fun FirClass.toBinaryJavaClassCompat(): VirtualFileBoundJavaClass {
   val symbolProvider = moduleData.session.symbolProvider

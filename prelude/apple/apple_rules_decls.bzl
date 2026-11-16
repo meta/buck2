@@ -1105,7 +1105,6 @@ apple_test = prelude_rule(
         | apple_common.uses_modules_arg()
         | apple_common.xcode_product_type_arg()
         | {
-            "bridging_header": attrs.option(attrs.source(), default = None),
             "can_be_asset": attrs.option(attrs.bool(), default = None),
             "cxx_runtime_type": attrs.option(attrs.enum(CxxRuntimeType), default = None),
             "destination_specifier": attrs.dict(key = attrs.string(), value = attrs.string(), sorted = False, default = {}),

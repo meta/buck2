@@ -73,17 +73,6 @@ def apple_test_impl(ctx: AnalysisContext) -> [list[Provider], Promise]:
         test_host_app_binary = _get_test_host_app_binary(ctx, test_host_app_bundle)
         ui_test_target_app_bundle = _get_ui_test_target_app_bundle(ctx)
 
-        objc_bridging_header_flags = (
-            [
-                # Disable bridging header -> PCH compilation to mitigate an issue in Xcode 13 beta.
-                "-disable-bridging-pch",
-                "-import-objc-header",
-                cmd_args(ctx.attrs.bridging_header),
-            ]
-            if ctx.attrs.bridging_header
-            else []
-        )
-
         shared_library_flags = ["-bundle"]
 
         # Embedding entitlements (if present) means that we can skip adhoc codesigning
@@ -99,7 +88,7 @@ def apple_test_impl(ctx: AnalysisContext) -> [list[Provider], Promise]:
             AppleLibraryAdditionalParams(
                 rule_type = "apple_test",
                 extra_exported_link_flags = get_test_framework_linker_flags(ctx) + _get_bundle_loader_flags(test_host_app_binary),
-                extra_swift_compiler_flags = _get_test_framework_search_paths_flags(ctx) + objc_bridging_header_flags,
+                extra_swift_compiler_flags = _get_test_framework_search_paths_flags(ctx),
                 shared_library_flags = SharedLibraryFlagOverrides(
                     # When `-bundle` is used we can't use the `-install_name` args, thus we keep this field empty.
                     shared_library_name_linker_flags_format = [],

@@ -371,3 +371,9 @@ def min_sdk_version():
         min_sdk_version_dict[constraint] = min_sdk
 
     return select(min_sdk_version_dict)
+
+def pre_dex_desugar_classpath_view():
+    return select({
+        "DEFAULT": False,
+        "prelude//android/constraints:pre_dex_desugar_classpath_view[enabled]": True,
+    })

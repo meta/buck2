@@ -1,0 +1,18 @@
+load("@prelude//toolchains/android/tools:build_rules.bzl", "buck_java_test")
+load("@prelude//utils:source_listing.bzl", "source_listing")
+
+oncall("android_devxx")
+
+source_listing()
+
+buck_java_test(
+    name = "desugarclasspath",
+    srcs = glob(["*.java"]),
+    deps = [
+        "prelude//toolchains/android/src/com/facebook/buck/android/dex:d8_executable_main",
+        "prelude//toolchains/android/src/com/facebook/buck/android/dex/desugarclasspath:desugar_classpath_view",
+        "prelude//toolchains/android/third-party:asm",
+        "prelude//toolchains/android/third-party:guava",
+        "prelude//toolchains/android/third-party:junit",
+    ],
+)

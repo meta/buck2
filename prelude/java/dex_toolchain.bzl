@@ -15,5 +15,9 @@ DexToolchainInfo = provider(
         # Pre-dex also writes each class's ref counts for a library over a 64K limit.
         "class_ref_counts": provider_field(bool, default = False),
         "d8_command": provider_field(typing.Any, default = None),
+        # Writes the classes of the desugar classpath that D8 can read. Pre-dex at min SDK 24 or higher
+        # uses it instead of the whole classpath for libraries configured with
+        # `prelude//android/constraints:pre_dex_desugar_classpath_view[enabled]`.
+        "desugar_classpath_view_command": provider_field(typing.Any, default = None),
     },
 )

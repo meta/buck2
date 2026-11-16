@@ -55,7 +55,7 @@ load(
     "get_default_info",
     "get_java_version_attributes",
 )
-load("@prelude//jvm:attrs.bzl", "jvm_common", "min_sdk_version")
+load("@prelude//jvm:attrs.bzl", "jvm_common", "min_sdk_version", "pre_dex_desugar_classpath_view")
 load("@prelude//jvm:nullsafe.bzl", "get_nullsafe_info")
 load(
     "@prelude//kotlin:kotlin_toolchain.bzl",
@@ -1035,6 +1035,7 @@ kotlin_library = prelude_rule(
             "manifest_file": attrs.option(attrs.source(), default = None),
             "maven_coords": attrs.option(attrs.string(), default = None),
             "min_sdk_version": attrs.default_only(attrs.option(attrs.int(), default = min_sdk_version())),
+            "pre_dex_desugar_classpath_view": attrs.default_only(attrs.bool(default = pre_dex_desugar_classpath_view())),
             "proguard_config": attrs.option(attrs.source(), default = None),
             "required_for_source_only_abi": attrs.bool(default = False),
             "resources_root": attrs.option(attrs.string(), default = None),

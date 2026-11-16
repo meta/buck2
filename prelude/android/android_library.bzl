@@ -38,7 +38,7 @@ load(
     "get_java_version_attributes",
     "get_string_concat_inline_javac_args",
 )
-load("@prelude//jvm:attrs.bzl", "jvm_common", "min_sdk_version")
+load("@prelude//jvm:attrs.bzl", "jvm_common", "min_sdk_version", "pre_dex_desugar_classpath_view")
 load("@prelude//kotlin:kotlin_library.bzl", "build_kotlin_library")
 load("@prelude//target_stats:target_stats.bzl", "CycleMode", "target_stats_providers_and_subtargets")
 load("@prelude//target_stats:target_stats_config.bzl", "TARGET_STATS_ENABLED")
@@ -357,6 +357,7 @@ android_library = prelude_rule(
             "manifest_file": attrs.option(attrs.source(), default = None),
             "maven_coords": attrs.option(attrs.string(), default = None),
             "min_sdk_version": attrs.default_only(attrs.option(attrs.int(), default = min_sdk_version())),
+            "pre_dex_desugar_classpath_view": attrs.default_only(attrs.bool(default = pre_dex_desugar_classpath_view())),
             "proguard_config": attrs.option(attrs.source(), default = None),
             "remove_classes": attrs.list(
                 attrs.regex(),

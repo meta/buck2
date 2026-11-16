@@ -63,9 +63,18 @@ def get_dex_produced_from_java_library(
     if not needs_desugar:
         d8_cmd.add("--no-desugar")
     else:
-        desugar_deps_file = ctx.actions.write(prefix + "_desugar_deps_file.txt", desugar_deps or [], has_content_based_path = True)
+        desugar_classpath = desugar_deps or []
+        if (
+            desugar_deps
+            and dex_toolchain.desugar_classpath_view_command
+            # Rules without this attribute (some outside the prelude) keep the whole classpath.
+            and getattr(ctx.attrs, "pre_dex_desugar_classpath_view", False)
+            and _desugars_without_interface_methods(ctx)
+        ):
+            desugar_classpath = _desugar_classpath_view(ctx, dex_toolchain, prefix, jar_to_dex, desugar_deps)
+        desugar_deps_file = ctx.actions.write(prefix + "_desugar_deps_file.txt", desugar_classpath, has_content_based_path = True)
         d8_cmd.add(["--classpath-files", desugar_deps_file])
-        d8_cmd.add(cmd_args(hidden = desugar_deps or []))
+        d8_cmd.add(cmd_args(hidden = desugar_classpath))
 
     referenced_resources_file = ctx.actions.declare_output(prefix + "_referenced_resources.txt", has_content_based_path = True)
     d8_cmd.add(["--referenced-resources-path", referenced_resources_file.as_output()])
@@ -111,3 +120,39 @@ def get_dex_produced_from_java_library(
         synthetic_contexts = synthetic_contexts_file,
         dex_units = dex_units_file,
     )
+
+def _desugars_without_interface_methods(ctx: AnalysisContext) -> bool:
+    # From min SDK 24, D8 does not desugar default and static interface methods. Keep in sync with
+    # `abi_jars_suffice` in `java_providers.bzl`, which picks the ABI jars as the desugar classpath.
+    min_sdk_version = ctx.attrs.min_sdk_version
+    return min_sdk_version != None and int(min_sdk_version) >= 24
+
+def _desugar_classpath_view(
+    ctx: AnalysisContext, dex_toolchain: DexToolchainInfo, prefix: str, jar_to_dex: Artifact, desugar_deps: TransitiveSetArgsProjection
+) -> list[Artifact]:
+    """Writes the classes of `desugar_deps` that D8 can read when it desugars `jar_to_dex`.
+
+    The view changes only when such a class changes, so the `pre_dex` action that uses it does not
+    run again when a dependency changes only classes or members that the library does not refer to.
+    """
+    classpath_file = ctx.actions.write(prefix + "_desugar_classpath_view_input.txt", desugar_deps, has_content_based_path = True)
+    view = ctx.actions.declare_output(prefix + "_desugar_classpath_view.jar", has_content_based_path = True)
+    duplicates = ctx.actions.declare_output(prefix + "_desugar_classpath_view_duplicates.jar", has_content_based_path = True)
+    ctx.actions.run(
+        cmd_args(
+            dex_toolchain.desugar_classpath_view_command[RunInfo],
+            "--program-jar",
+            jar_to_dex,
+            "--classpath-files",
+            classpath_file,
+            "--output",
+            view.as_output(),
+            "--duplicates-output",
+            duplicates.as_output(),
+            hidden = desugar_deps,
+        ),
+        category = "pre_dex_classpath_view",
+        identifier = "{}:{} {}".format(ctx.label.package, ctx.label.name, view.short_path),
+        allow_cache_upload = True,
+    )
+    return [view, duplicates]

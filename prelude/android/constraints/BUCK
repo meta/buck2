@@ -34,6 +34,18 @@ constraint_with_aliases(
     visibility = ["PUBLIC"],
 )
 
+# `enabled`: pre-dex at min SDK 24 or higher desugars against the classpath classes D8 can read
+# (`java/dex.bzl`). An app turns it on with this modifier.
+prelude.constraint(
+    name = "pre_dex_desugar_classpath_view",
+    default = "disabled",
+    values = [
+        "disabled",
+        "enabled",
+    ],
+    visibility = ["PUBLIC"],
+)
+
 prelude.filegroup(
     name = "files",
     srcs = glob(

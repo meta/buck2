@@ -297,7 +297,7 @@ def generate_build_info_shared_library_after_link(
     link_args: list[LinkArgs],
     invalidation_inputs: list[typing.Any],
     output_suffix: str = "",
-) -> (list[(SharedLibrary, str)], dict[str, typing.Any], GeneratedBuildInfoSharedLibrary) | None:
+) -> (list[(SharedLibrary, str)], dict[str, typing.Any], GeneratedBuildInfoSharedLibrary, SharedLibrary) | None:
     """
     Regenerate the build-info DSO outside the anon native-linking target and
     swap it in for the placeholder DSO the anon target linked against.
@@ -320,14 +320,14 @@ def generate_build_info_shared_library_after_link(
         return None
 
     swapped = []
-    found = False
+    placeholder = None
     for shlib, libdir in shared_libs:
         if shlib.soname.is_str and shlib.soname.ensure_str() == BUILD_INFO_DSO_SONAME:
             swapped.append((real.library, libdir))
-            found = True
+            placeholder = shlib
         else:
             swapped.append((shlib, libdir))
-    if not found:
+    if placeholder == None:
         # The link generated a build-info DSO, so the placeholder must be
         # among the packaged shared libraries; shipping it unswapped would
         # silently discard the real per-build build info.
@@ -337,7 +337,7 @@ def generate_build_info_shared_library_after_link(
     extra["generated_build_info"] = [
         DefaultInfo(default_output = real.library.lib.output),
     ]
-    return (swapped, extra, real)
+    return (swapped, extra, real, placeholder)
 
 def _compute_cxx_executable_info(
     ctx,

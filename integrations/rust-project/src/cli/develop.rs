@@ -67,6 +67,7 @@ impl Develop {
             stdout,
             prefer_rustup_managed_toolchain,
             sysroot,
+            sysroot_src,
             pretty,
             mode,
             check_cycles,
@@ -86,7 +87,21 @@ impl Develop {
             let sysroot = if prefer_rustup_managed_toolchain {
                 SysrootConfig::Rustup
             } else if let Some(sysroot) = sysroot {
-                SysrootConfig::Sysroot(sysroot)
+                // sysroot_src priority:
+                // 1. --sysroot-src flag
+                // 2. RUST_SRC_PATH env var
+                // 3. --sysroot flag
+                let sysroot_src = sysroot_src
+                    .or_else(|| {
+                        std::env::var("RUST_SRC_PATH")
+                            .ok()
+                            .map(|s| PathBuf::from(&s))
+                    })
+                    .unwrap_or(sysroot.clone());
+                SysrootConfig::Sysroot {
+                    sysroot,
+                    sysroot_src,
+                }
             } else {
                 SysrootConfig::BuckConfig
             };
@@ -139,13 +154,20 @@ impl Develop {
             let sysroot = match sysroot_mode {
                 crate::SysrootMode::BuckConfig => SysrootConfig::BuckConfig,
                 crate::SysrootMode::Rustc => SysrootConfig::Rustup,
-                crate::SysrootMode::FullPath(path) => SysrootConfig::Sysroot(path),
+                crate::SysrootMode::FullPath(path) => SysrootConfig::Sysroot {
+                    sysroot: path.clone(),
+                    sysroot_src: path,
+                },
                 crate::SysrootMode::Command(cmd_args) => {
                     let cmd = cmd_args[0].clone();
                     let args = cmd_args[1..].to_vec();
                     let output = std::process::Command::new(cmd).args(args).output().unwrap();
                     let path = String::from_utf8(output.stdout).unwrap();
-                    SysrootConfig::Sysroot(PathBuf::from(path.trim()))
+                    let path = PathBuf::from(path.trim());
+                    SysrootConfig::Sysroot {
+                        sysroot: path.clone(),
+                        sysroot_src: path,
+                    }
                 }
             };
 
@@ -297,9 +319,12 @@ impl Develop {
 
         info!(kind = "progress", "finding std source code");
         let sysroot = match &sysroot {
-            SysrootConfig::Sysroot(path) => Sysroot {
-                sysroot: safe_canonicalize(&expand_tilde(path)?),
-                sysroot_src: None,
+            SysrootConfig::Sysroot {
+                sysroot,
+                sysroot_src,
+            } => Sysroot {
+                sysroot: safe_canonicalize(&expand_tilde(sysroot)?),
+                sysroot_src: Some(safe_canonicalize(&expand_tilde(&sysroot_src)?)),
                 sysroot_project: None,
             },
             SysrootConfig::BuckConfig => {

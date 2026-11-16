@@ -765,10 +765,11 @@ def get_android_binary_native_library_info(
                 },
             )
         elif enable_relinker:
-            final_shared_libs_by_platform, native_library_merge_debug_outputs = _create_all_relinkable_links(
+            final_shared_libs_by_platform, excluded_shared_libs_by_platform, native_library_merge_debug_outputs = _create_all_relinkable_links(
                 ctx,
                 original_shared_libs_by_platform,
                 linkable_nodes_by_platform,
+                shared_libraries_to_exclude,
             )
             ctx.actions.symlinked_dir(outputs[native_merge_debug], native_library_merge_debug_outputs)
 
@@ -2699,10 +2700,12 @@ def _create_all_relinkable_links(
     ctx: AnalysisContext,
     platform_to_original_native_linkables: dict[str, dict[str, SharedLibrary]],
     graph_node_map_by_platform: dict[str, dict[Label, LinkableNode]],
-) -> (dict[str, dict[str, SharedLibrary]], dict[str, typing.Any]):
+    shared_libraries_to_exclude: set[TargetLabel],
+) -> (dict[str, dict[str, SharedLibrary]], dict[str, dict[str, SharedLibrary]], dict[str, typing.Any]):
     final_platform_to_native_linkables = {}
+    excluded_platform_to_native_linkables = {}
     link_graphs_by_platform = {}
-    for platform in platform_to_original_native_linkables:
+    for platform, original_native_linkables in platform_to_original_native_linkables.items():
         linkables, link_graphs = _create_relinkable_links(
             ctx,
             cxx_toolchain = ctx.attrs._cxx_toolchain[platform][CxxToolchainInfo],
@@ -2710,12 +2713,19 @@ def _create_all_relinkable_links(
             platform = platform,
         )
         link_graphs_by_platform[platform] = link_graphs
-        final_platform_to_native_linkables[platform] = linkables
 
-    # sanity check that we produce the same list of linkables that are produced by standard linking.
-    original_sonames = sorted(platform_to_original_native_linkables.keys())
-    final_sonames = sorted(final_platform_to_native_linkables.keys())
-    expect(original_sonames == final_sonames, "Unexpected differences in final sonames! {} {}".format(original_sonames, final_sonames))
+        # The linkable graph also has the libraries that standard linking leaves out. They don't
+        # ship, but the libraries that do still link against them.
+        final_platform_to_native_linkables[platform] = {
+            soname: lib for soname, lib in linkables.items() if lib.label.raw_target() not in shared_libraries_to_exclude
+        }
+        excluded_platform_to_native_linkables[platform] = {
+            soname: lib for soname, lib in linkables.items() if lib.label.raw_target() in shared_libraries_to_exclude
+        }
+
+        # sanity check that we produce all the linkables that are produced by standard linking.
+        missing_sonames = [soname for soname in original_native_linkables if soname not in final_platform_to_native_linkables[platform]]
+        expect(not missing_sonames, "Relinkable links are missing {} libraries that standard linking produces: {}".format(platform, missing_sonames))
 
     debug_outputs = {}
 
@@ -2751,7 +2761,7 @@ def _create_all_relinkable_links(
             # of the differing argsfiles.
             # We can't compare them eagerly because the link args have large tsets that we don't want to traverse at analysis time.
 
-    return final_platform_to_native_linkables, debug_outputs
+    return final_platform_to_native_linkables, excluded_platform_to_native_linkables, debug_outputs
 
 def _create_relinkable_links(
     ctx: AnalysisContext, *, cxx_toolchain: CxxToolchainInfo, linkable_nodes: dict[Label, LinkableNode], platform: str
@@ -3001,12 +3011,15 @@ def _bolt_libraries(
 # 5. extract the list of undefined symbols in the relinked libs (i.e. those symbols needed from dependencies and what had been
 #    used in (1) above from higher nodes).
 #
-# A library that is not relinked (a prebuilt shared library or a packaged executable) has no relink whose undefined symbols
-# (5) would record its imports. Each of its strong imports is charged to the first of its DT_NEEDED libraries that exports
-# the name, the library the dynamic loader binds it in, and that library keeps it in (2).
+# A library that is not relinked (a prebuilt shared library, a packaged executable or a library that doesn't ship) has no
+# relink whose undefined symbols (5) would record its imports. Each of its strong imports is charged to the first of its
+# DT_NEEDED libraries that exports the name, the library the dynamic loader binds it in, and that library keeps it in (2).
 
 def relink_libraries(
-    ctx: AnalysisContext, libraries_by_platform: dict[str, dict[str, SharedLibrary]], native_cmd_entries = None
+    ctx: AnalysisContext,
+    libraries_by_platform: dict[str, dict[str, SharedLibrary]],
+    native_cmd_entries = None,
+    excluded_libraries_by_platform: dict[str, dict[str, SharedLibrary]] = {},
 ) -> dict[str, dict[str, SharedLibrary]]:
     relinker_extra_deps = getattr(ctx.attrs, "relinker_extra_deps", None)
     relinker_extra_args = getattr(ctx.attrs, "relinker_extra_args", {})
@@ -3028,14 +3041,18 @@ def relink_libraries(
     for platform, shared_libraries in libraries_by_platform.items():
         cxx_toolchain = ctx.attrs._cxx_toolchain[platform][CxxToolchainInfo]
 
+        excluded_libraries = excluded_libraries_by_platform.get(platform, {})
+        graph_libraries = dict(shared_libraries)
+        graph_libraries.update(excluded_libraries)
+
         relinked_libraries = relinked_libraries_by_platform.setdefault(platform, {})
         unsupported_libs = {}
         shlib_graph = {}
         rev_shlib_graph = {}
-        for soname, solib in shared_libraries.items():
+        for soname, solib in graph_libraries.items():
             shlib_graph[soname] = []
             rev_shlib_graph.setdefault(soname, [])
-            if solib.shlib_deps == None or solib.link_args == None:
+            if soname in excluded_libraries or solib.shlib_deps == None or solib.link_args == None:
                 unsupported_libs[soname] = True
             else:
                 for dep in solib.shlib_deps:
@@ -3046,9 +3063,11 @@ def relink_libraries(
             for soname, solib in shared_libraries.items()
             if soname not in unsupported_libs
         }
-        unrelinked_imports = _unrelinked_imports(ctx, cxx_toolchain, platform, shared_libraries, unsupported_libs, provided_symbols_files)
+        unrelinked_imports = _unrelinked_imports(ctx, cxx_toolchain, platform, graph_libraries, unsupported_libs, provided_symbols_files)
         needed_symbols_files = {}
         for soname in pre_order_traversal(shlib_graph):
+            if soname in excluded_libraries:
+                continue
             if soname in unsupported_libs:
                 relinked_libraries[soname] = shared_libraries[soname]
                 continue
@@ -3113,7 +3132,7 @@ def _relink_for_native_libs(
     monogatorade_products: dict[str, Artifact] | None = None,
     excluded_libraries_by_platform: dict[str, dict[str, SharedLibrary]] = {},
 ) -> tuple:
-    return (relink_libraries(ctx, libraries_by_platform, native_cmd_entries), {}) # @oss-enable
+    return (relink_libraries(ctx, libraries_by_platform, native_cmd_entries, excluded_libraries_by_platform), {}) # @oss-enable
     # @oss-disable[end= ]: relink = relink_for_native_libs
     # @oss-disable[end= ]: products = (monogatorade_products, excluded_libraries_by_platform)
     # @oss-disable[end= ]: return relink(ctx, libraries_by_platform, relink_libraries, create_shared_lib, native_cmd_entries, check_report, *products)

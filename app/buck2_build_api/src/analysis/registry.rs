@@ -437,8 +437,11 @@ pub struct AnalysisValueStorage<'v> {
 pub struct FrozenAnalysisValueStorage<'fv> {
     #[starlark_pagable(pagable)]
     pub self_key: DeferredHolderKey,
-    action_data:
-        BuckMutInsertionMap<ActionIndex, (Option<Value<'fv>>, Option<StarlarkCallable<'fv>>)>,
+    /// The action index of `action_data[0]`. The registry numbers a holder's
+    /// actions consecutively, so the data is a dense slice from this index on.
+    #[starlark_pagable(pagable)]
+    first_action_index: u32,
+    action_data: MiniBoxSlice<(Option<Value<'fv>>, Option<StarlarkCallable<'fv>>)>,
     transitive_sets: MiniBoxSlice<ValueTyped<'fv, TransitiveSet<'fv>>>,
     #[starlark_pagable(
         serialize_with = "serialize_lambda_params",
@@ -446,6 +449,16 @@ pub struct FrozenAnalysisValueStorage<'fv> {
     )]
     pub lambda_params: FrozenDynamicLambdaParamsStorageBox<'fv>,
     result_value: Option<ValueTyped<'fv, ProviderCollection<'fv>>>,
+}
+
+impl<'fv> FrozenAnalysisValueStorage<'fv> {
+    fn action_data(
+        &self,
+        index: ActionIndex,
+    ) -> Option<&(Option<Value<'fv>>, Option<StarlarkCallable<'fv>>)> {
+        let offset = index.0.checked_sub(self.first_action_index)?;
+        self.action_data.get(offset as usize)
+    }
 }
 
 fn serialize_lambda_params(
@@ -497,17 +510,15 @@ impl<'v> Freeze<'v> for AnalysisValueStorage<'v> {
             result_value,
         } = self;
 
-        // N.B. collect::<Result<_>> sets the lower bound to zero,
-        // which can cause over-allocations in frozen containers.
-        let mut frozen_action_data = BuckMutInsertionMap::with_capacity(action_data.len());
+        let first_action_index = action_data.keys().next().map_or(0, |k| k.0);
+        let mut frozen_action_data: Vec<(Option<Value<'fv>>, Option<StarlarkCallable<'fv>>)> =
+            Vec::with_capacity(action_data.len());
         for (k, (data, error_handler)) in action_data {
-            frozen_action_data.insert(
-                k,
-                (
-                    Freeze::freeze(data, freezer)?,
-                    Freeze::freeze(error_handler, freezer)?,
-                ),
-            );
+            assert!(k.0 == first_action_index + frozen_action_data.len() as u32);
+            frozen_action_data.push((
+                Freeze::freeze(data, freezer)?,
+                Freeze::freeze(error_handler, freezer)?,
+            ));
         }
         let mut frozen_transitive_sets = Vec::with_capacity(transitive_sets.len());
         for v in transitive_sets {
@@ -519,7 +530,8 @@ impl<'v> Freeze<'v> for AnalysisValueStorage<'v> {
             .transpose()?;
         Ok(FrozenAnalysisValueStorage {
             self_key,
-            action_data: frozen_action_data,
+            first_action_index,
+            action_data: frozen_action_data.into_iter().collect::<MiniBoxSlice<_>>(),
             transitive_sets: frozen_transitive_sets
                 .into_iter()
                 .collect::<MiniBoxSlice<_>>(),
@@ -643,10 +655,9 @@ impl AnalysisValueFetcher {
         // kept alive by `storage`'s heap.
         let index = id.action_index();
         let starlark_data =
-            storage.maybe_map::<Value<'static>, _>(|v| v.as_ref().value.action_data.get(&index)?.0);
-        let error_handler = storage.maybe_map::<Value<'static>, _>(|v| {
-            Some(v.as_ref().value.action_data.get(&index)?.1?.0)
-        });
+            storage.maybe_map::<Value<'static>, _>(|v| v.as_ref().value.action_data(index)?.0);
+        let error_handler = storage
+            .maybe_map::<Value<'static>, _>(|v| Some(v.as_ref().value.action_data(index)?.1?.0));
         Ok((
             starlark_data.map(|v| v.to_owned()),
             error_handler.map(|v| v.to_owned()),
@@ -714,7 +725,8 @@ impl RecordedAnalysisValues {
                 heap.alloc(StarlarkAnyComplex {
                     value: FrozenAnalysisValueStorage {
                         self_key: self_key.dupe(),
-                        action_data: BuckMutInsertionMap::new(),
+                        first_action_index: 0,
+                        action_data: MiniBoxSlice::default(),
                         transitive_sets: alloced_tsets.into_iter().collect(),
                         lambda_params: DYNAMIC_LAMBDA_PARAMS_STORAGES
                             .get()

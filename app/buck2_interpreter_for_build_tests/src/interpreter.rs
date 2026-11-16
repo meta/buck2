@@ -11,7 +11,6 @@
 use buck2_build_api::interpreter::rule_defs::provider::registration::register_builtin_providers;
 use buck2_build_api::interpreter::rule_defs::register_rule_defs;
 use buck2_common::legacy_configs::cells::BuckConfigBasedCells;
-use buck2_common::legacy_configs::configs::LegacyBuckConfig;
 use buck2_common::legacy_configs::configs::testing::TestConfigParserFileOps;
 use buck2_common::package_listing::listing::PackageListing;
 use buck2_common::package_listing::listing::testing::PackageListingExt;
@@ -148,7 +147,7 @@ fn test_eval_build_file() {
 
     tester
         .add_import(
-            &ImportPath::testing_new_cross_cell("root", "imports", "one.bzl", "root"),
+            &ImportPath::testing_new("root//imports:one.bzl"),
             indoc!(
                 r#"
                     load("@root//:rules.bzl", "export_file")
@@ -195,29 +194,35 @@ fn test_eval_build_file() {
     assert_eq!(vec!["invoke_some-exported", "java"], target_names);
 }
 
-fn cells() -> CellsData {
-    let BuckConfigBasedCells { cell_resolver, .. } =
-        futures::executor::block_on(BuckConfigBasedCells::testing_parse_with_file_ops(
-            &mut TestConfigParserFileOps::new(&[(
-                ".buckconfig",
-                indoc!(
-                    r#"
+fn cells(cell_segmentation: bool) -> CellsData {
+    let disable_cell_segmentation = !cell_segmentation;
+    let BuckConfigBasedCells {
+        cell_resolver,
+        root_config,
+        ..
+    } = futures::executor::block_on(BuckConfigBasedCells::testing_parse_with_file_ops(
+        &mut TestConfigParserFileOps::new(&[(
+            ".buckconfig",
+            &indoc::formatdoc!(
+                r#"
                     [cells]
                         root = .
                         cell1 = project/cell1
                         cell2 = project/cell2
                         xalias2 = project/cell2
+                    [buck2]
+                        disable_cell_segmentation = {disable_cell_segmentation:?}
                     "#
-                ),
-            )])
-            .unwrap(),
-            &[],
-        ))
-        .unwrap();
+            ),
+        )])
+        .unwrap(),
+        &[],
+    ))
+    .unwrap();
     (
         cell_resolver.root_cell_cell_alias_resolver().dupe(),
         cell_resolver,
-        LegacyBuckConfig::empty(),
+        root_config,
         CellPathWithAllowedRelativeDir::new(
             CellPath::testing_new("cell1//config/foo"),
             Some(CellPath::testing_new("cell1//config")),
@@ -226,8 +231,9 @@ fn cells() -> CellsData {
 }
 
 #[test]
-fn test_find_imports() {
-    let tester = Tester::with_cells(cells()).unwrap();
+fn test_find_imports_segmented() {
+    let cell_segmentation = true;
+    let tester = Tester::with_cells(cells(cell_segmentation)).unwrap();
     let path = BuildFilePath::testing_new("cell1//config/foo:BUCK");
     let parse_result = tester.parse(
         StarlarkPath::BuildFile(&path),
@@ -258,11 +264,65 @@ fn test_find_imports() {
         ),
     );
 
+    // cell_segmentation is on, so we have the @cell1 when importing cross-cell
     assert_eq!(
         &[
             "root//imports/one.bzl@cell1",
             "cell1//one.bzl",
             "cell2//two.bzl@cell1",
+            "cell1//config/foo/other.bzl",
+            "cell1//config/bar/three.bzl",
+        ],
+        parse_result
+            .imports()
+            .iter()
+            .map(|e| e.1.to_string())
+            .collect::<Vec<_>>()
+            .as_slice()
+    );
+}
+
+#[test]
+fn test_find_imports_unsegmented() {
+    let cell_segmentation = false;
+    let tester = Tester::with_cells(cells(cell_segmentation)).unwrap();
+    let path = BuildFilePath::testing_new("cell1//config/foo:BUCK");
+    let parse_result = tester.parse(
+        StarlarkPath::BuildFile(&path),
+        indoc!(
+            r#"
+            a = 1
+        "#
+        ),
+    );
+
+    assert!(parse_result.imports().is_empty());
+
+    let parse_result = tester.parse(
+        StarlarkPath::BuildFile(&path),
+        indoc!(
+            r#"
+            # some documentation
+            """ and a string """
+
+            load("//imports:one.bzl", "some_macro")
+            load("@cell1//:one.bzl", "some_macro")
+            load("@xalias2//:two.bzl", "some_macro")
+
+            # some other comments
+            load(":other.bzl", "some_macro")
+            load("../bar/three.bzl", "some_macro")
+        "#
+        ),
+    );
+
+    // cell_segmentation is off, so we don't get the @cell1 cross-cell
+    // indication, just one global canonical import path per cell path.
+    assert_eq!(
+        &[
+            "root//imports/one.bzl",
+            "cell1//one.bzl",
+            "cell2//two.bzl",
             "cell1//config/foo/other.bzl",
             "cell1//config/bar/three.bzl",
         ],

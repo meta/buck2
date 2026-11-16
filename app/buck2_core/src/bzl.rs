@@ -40,6 +40,12 @@ pub struct ImportPath {
     path: CellPath,
     /// The cell of the top-level build module that this is being loaded
     /// (perhaps transitively) into.
+    ///
+    /// This segments import paths such that each .bzl file is parsed once per importing cell.
+    ///
+    /// This may, if `cell_segmentation` is `false`, be overridden to match `path.cell()`.
+    /// This negates the segmentation. All cells resolve a given load() path to the
+    /// same ImportPath. Hence Buck parses each .bzl file once globally.
     build_file_cell: BuildFileCell,
 }
 
@@ -49,12 +55,13 @@ impl ImportPath {
     /// This function is for call sites where we don't care about the build file cell.
     pub fn new_same_cell(path: CellPath) -> buck2_error::Result<Self> {
         let build_file_cell = BuildFileCell::new(path.cell());
-        Self::new_with_build_file_cells(path, build_file_cell)
+        Self::new_with_build_file_cells(path, build_file_cell, false)
     }
 
     pub fn new_with_build_file_cells(
         path: CellPath,
-        build_file_cell: BuildFileCell,
+        mut build_file_cell: BuildFileCell,
+        cell_segmentation: bool,
     ) -> buck2_error::Result<Self> {
         if path.parent().is_none() {
             return Err(ImportPathError::Invalid(path).into());
@@ -68,6 +75,10 @@ impl ImportPath {
             return Err(ImportPathError::Suffix(path).into());
         }
 
+        if !cell_segmentation {
+            build_file_cell = BuildFileCell::new(path.cell());
+        }
+
         Ok(Self {
             path,
             build_file_cell,
@@ -77,7 +88,8 @@ impl ImportPath {
     /// LSP creates imports for non-bzl files.
     pub fn new_hack_for_lsp(
         path: CellPath,
-        build_file_cell: BuildFileCell,
+        mut build_file_cell: BuildFileCell,
+        cell_segmentation: bool,
     ) -> buck2_error::Result<Self> {
         if path.parent().is_none() {
             return Err(ImportPathError::Invalid(path).into());
@@ -85,6 +97,10 @@ impl ImportPath {
 
         if path.path().as_str().contains('?') {
             return Err(ImportPathError::Invalid(path).into());
+        }
+
+        if !cell_segmentation {
+            build_file_cell = BuildFileCell::new(path.cell());
         }
 
         Ok(Self {
@@ -99,7 +115,7 @@ impl ImportPath {
         Self::testing_new_cross_cell(cell, cell_relative_path, filename, cell)
     }
 
-    pub fn testing_new_cross_cell(
+    fn testing_new_cross_cell(
         cell: &str,
         cell_relative_path: &str,
         filename: &str,
@@ -111,6 +127,9 @@ impl ImportPath {
         Self::new_with_build_file_cells(
             cell_path,
             BuildFileCell::new(CellName::testing_new(build_file_cell)),
+            // At the time of writing, no tests need this function,
+            // but if they did, they'd want cell_segmentation enabled.
+            true,
         )
         .unwrap()
     }

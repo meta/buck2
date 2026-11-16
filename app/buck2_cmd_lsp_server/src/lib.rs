@@ -46,6 +46,7 @@ use buck2_fs::paths::forward_rel_path::ForwardRelativePath;
 use buck2_hash::BuckMutMap;
 use buck2_hash::BuckMutSet;
 use buck2_interpreter::allow_relative_paths::HasAllowRelativePaths;
+use buck2_interpreter::import_paths::HasImportPaths;
 use buck2_interpreter::load_module::InterpreterCalculation;
 use buck2_interpreter::paths::module::OwnedStarlarkModulePath;
 use buck2_interpreter::paths::path::OwnedStarlarkPath;
@@ -363,15 +364,15 @@ impl<'a> BuckLspContext<'a> {
     async fn import_path(&self, path: &Path) -> buck2_error::Result<OwnedStarlarkModulePath> {
         let abs_path = AbsPath::new(path)?;
         let relative_path = self.fs.relativize_any(abs_path)?;
-        let cell_path = self
+        let (cell_path, cell_segmentation) = self
             .with_dice_ctx(|dice_ctx| async move {
-                buck2_error::Ok(
-                    dice_ctx
-                        .ctx()
-                        .get_cell_resolver()
-                        .await?
-                        .get_cell_path(&relative_path),
-                )
+                let cell_path = dice_ctx
+                    .ctx()
+                    .get_cell_resolver()
+                    .await?
+                    .get_cell_path(&relative_path);
+                let cell_segmentation = dice_ctx.ctx().get_cell_segmentation().await?;
+                buck2_error::Ok((cell_path, cell_segmentation))
             })
             .await?;
 
@@ -386,7 +387,7 @@ impl<'a> BuckLspContext<'a> {
                 let bfc = BuildFileCell::new(cell_path.cell());
 
                 Ok(OwnedStarlarkModulePath::LoadFile(
-                    ImportPath::new_hack_for_lsp(cell_path, bfc)?,
+                    ImportPath::new_hack_for_lsp(cell_path, bfc, cell_segmentation)?,
                 ))
             }
         }

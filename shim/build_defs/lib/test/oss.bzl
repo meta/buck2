@@ -6,10 +6,10 @@
 # of this source tree. You may select, at your option, one of the
 # above-listed licenses.
 
-load("@shim//build_defs/lib:oss.bzl", "translate_target")
+load("@shim//build_defs/lib:oss.bzl", "RewriteCells", "RewriteContext", "translate_target")
 
-TEST_CTX = struct(
-    cells = struct(
+TEST_CTX = RewriteContext(
+    cells = RewriteCells(
         active = "root",
         root = "root",
         shim = "shim",
@@ -75,8 +75,8 @@ def test_translate_target():
     _test_target("@internal//exact:exact", "shim//foo/shimmed:exact")
     _test_target("@internal//third-party/lib/foo:bar", "shim//third_party/lib/foo:bar")
 
-    external_ctx = struct(
-        cells = struct(active = "external", root = "root", shim = "shim", internal = "internal"),
+    external_ctx = RewriteContext(
+        cells = RewriteCells(active = "external", root = "root", shim = "shim", internal = "internal"),
         project_dirs = TEST_CTX.project_dirs,
         stripped_root_dirs = TEST_CTX.stripped_root_dirs,
         prefix_mappings = TEST_CTX.prefix_mappings,

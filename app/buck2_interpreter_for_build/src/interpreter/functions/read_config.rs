@@ -7,7 +7,8 @@
  * of this source tree. You may select, at your option, one of the
  * above-listed licenses.
  */
-
+use buck2_interpreter::bxl_read_config::BXL_READ_CONFIG;
+use buck2_interpreter::bxl_read_config::BxlConfigValue;
 use starlark::environment::GlobalsBuilder;
 use starlark::eval::Evaluator;
 use starlark::starlark_module;
@@ -39,17 +40,67 @@ pub(crate) fn register_read_config(globals: &mut GlobalsBuilder) {
     ///
     /// In general the use of `.buckconfig` is discouraged in favour of `select`,
     /// but it can still be useful.
-    #[starlark(speculative_exec_safe)]
+    ///
+    /// ### Cell segmentation
+    ///
+    /// Historically, Buck has re-evaluated each .bzl file once per cell it is imported
+    /// into. That meant that `read_config` would read from a cell based on where the
+    /// chain of imports started. Re-evaluating came with undesirable behaviour for
+    /// cross-cell type checking so this behaviour can now be disabled, but be aware
+    /// that this affects read_config().
+    ///
+    /// In the prelude, and when you disable this behaviour for all cells with the
+    /// buckconfig `buck2.disable_cell_segmentation`, the cell that this reads from
+    /// depends on the function call stack.
+    ///
+    /// ```python
+    /// # root .buckconfig
+    /// [buck2]
+    ///     disable_cell_segmentation = true
+    ///
+    /// # hello//:world.bzl
+    /// ABC_DEF = read_config("abc", "def")
+    /// def dynamic() -> str:
+    ///     return read_config("abc", "def")
+    ///
+    /// # root//BUCK
+    /// load("@hello//:world.bzl", "ABC_DEF", "dynamic")
+    /// print(ABC_DEF)      # from hello/.buckconfig
+    /// print(dynamic())    # from root .buckconfig
+    /// ```
+    ///
+    /// Please note that you can no longer read_config during analysis.
+    /// Previously this may have worked occasionally due to inlining.
+    //
+    // Unlike read_root_config, this is NOT speculative_exec_safe.
+    // Its return value depends on the call stack.
     fn read_config<'v>(
         section: StringValue,
         key: StringValue,
         default: Option<Value<'v>>,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<Value<'v>> {
-        let buckconfigs = &BuildContext::from_context(eval)?.buckconfigs;
-        match buckconfigs.current_cell_get(section, key, eval)? {
-            Some(v) => Ok(v.to_value()),
-            None => Ok(default.unwrap_or_else(Value::new_none)),
+        // During `BUCK`/`PACKAGE`/`.bzl` evaluation, read the current cell.
+        let build_err = match BuildContext::from_context(eval) {
+            Ok(build_context) => {
+                let buckconfigs = &build_context.buckconfigs;
+                return match buckconfigs.current_cell_get(section, key, eval)? {
+                    Some(v) => Ok(v.to_value()),
+                    None => Ok(default.unwrap_or_else(Value::new_none)),
+                };
+            }
+            Err(e) => e,
+        };
+
+        // In BXL there is no `BuildContext`; read the `.bxl` file's cell instead.
+        match (BXL_READ_CONFIG.get()?)(eval, section.as_str(), key.as_str())? {
+            BxlConfigValue::Bxl(value) => match value {
+                Some(v) => Ok(eval.heap().alloc_str(&v).to_value()),
+                None => Ok(default.unwrap_or_else(Value::new_none)),
+            },
+            // Not build file evaluation and not BXL: this is analysis, where
+            // `read_config` is unavailable. Report the original error.
+            BxlConfigValue::NotBxl => Err(build_err.into()),
         }
     }
 

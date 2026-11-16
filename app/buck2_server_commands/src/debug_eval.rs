@@ -18,6 +18,7 @@ use buck2_core::cells::cell_path::CellPath;
 use buck2_fs::error::IoResultExt;
 use buck2_fs::fs_util;
 use buck2_fs::paths::abs_path::AbsPathBuf;
+use buck2_interpreter::import_paths::HasImportPaths;
 use buck2_interpreter::load_module::InterpreterCalculation;
 use buck2_interpreter::paths::module::OwnedStarlarkModulePath;
 use buck2_server_ctx::ctx::ServerCommandContextTrait;
@@ -38,6 +39,7 @@ pub(crate) async fn debug_eval_command(
         .with_dice_ctx(|server_ctx, ctx| async move {
             let cell_resolver = ctx.ctx().get_cell_resolver().await?;
             let current_cell_path = cell_resolver.get_cell_path(server_ctx.working_dir());
+            let cell_segmentation = ctx.ctx().get_cell_segmentation().await?;
             let mut loads = Vec::new();
 
             let ctx = &ctx;
@@ -51,6 +53,7 @@ pub(crate) async fn debug_eval_command(
                     OwnedStarlarkModulePath::LoadFile(ImportPath::new_with_build_file_cells(
                         path,
                         BuildFileCell::new(current_cell_path.cell()),
+                        cell_segmentation,
                     )?)
                 } else if path.path().as_str().ends_with(".bxl") {
                     OwnedStarlarkModulePath::BxlFile(BxlFilePath::new(path)?)

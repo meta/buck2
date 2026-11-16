@@ -15,6 +15,7 @@ use buck2_cmd_audit_client::starlark::module::StarlarkModuleCommand;
 use buck2_common::dice::cells::HasCellResolver;
 use buck2_core::cells::build_file_cell::BuildFileCell;
 use buck2_core::cells::cell_path_with_allowed_relative_dir::CellPathWithAllowedRelativeDir;
+use buck2_interpreter::import_paths::HasImportPaths;
 use buck2_interpreter::load_module::InterpreterCalculation;
 use buck2_interpreter::parse_import::ParseImportOptions;
 use buck2_interpreter::parse_import::RelativeImports;
@@ -40,6 +41,7 @@ pub(crate) async fn server_execute(
                 .ctx()
                 .get_cell_alias_resolver(current_cell_path.cell())
                 .await?;
+            let cell_segmentation = dice_ctx.ctx().get_cell_segmentation().await?;
 
             let import_path = parse_bzl_path_with_config(
                 &cell_alias_resolver,
@@ -55,6 +57,7 @@ pub(crate) async fn server_execute(
                     allow_missing_at_symbol: true,
                 },
                 current_cell,
+                cell_segmentation,
             )?;
 
             let loaded_module = dice_ctx

@@ -33,6 +33,7 @@ use buck2_interpreter::extra::InterpreterHostPlatform;
 use buck2_interpreter::factory::StarlarkEvaluatorProvider;
 use buck2_interpreter::file_loader::LoadedModule;
 use buck2_interpreter::file_loader::LoadedModules;
+use buck2_interpreter::import_paths::GetCellSegmentation;
 use buck2_interpreter::import_paths::ImplicitImportPaths;
 use buck2_interpreter::paths::module::OwnedStarlarkModulePath;
 use buck2_interpreter::paths::module::StarlarkModulePath;
@@ -200,10 +201,12 @@ impl Tester {
 
     fn interpreter(&self) -> buck2_error::Result<Arc<InterpreterForDir>> {
         let build_file_cell = BuildFileCell::new(self.cell_alias_resolver.resolve_self());
+        let cell_segmentation = self.root_config.view().get_cell_segmentation()?;
         let import_paths = ImplicitImportPaths::parse(
-            &self.root_config,
+            self.root_config.view(),
             build_file_cell,
             &self.cell_alias_resolver,
+            cell_segmentation,
         )?;
         let additional_globals = self.additional_globals.clone();
         let cell_info = InterpreterCellInfo::new(

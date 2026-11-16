@@ -12,6 +12,7 @@
 
 pub mod allow_relative_paths;
 pub mod build_context;
+pub mod bxl_read_config;
 pub mod coerce;
 pub mod dice;
 pub mod downstream_crate_starlark_defs;

@@ -33,6 +33,14 @@ use crate::legacy_configs::parser::LegacyConfigParser;
 #[derive(Clone, Dupe, Debug, Allocative, Pagable)]
 pub struct LegacyBuckConfig(pub(crate) Arc<ConfigData>);
 
+impl LegacyBuckConfig {
+    /// Get a short-lived impl of [crate::legacy_configs::view::LegacyBuckConfigView] by simply borrowing self.
+    ///
+    /// This helps find the methods on an owned LegacyBuckConfig instead of typing `(&config).xxx`.
+    pub fn view(&self) -> &Self {
+        self
+    }
+}
 #[derive(Debug, Allocative, Pagable)]
 pub(crate) struct ConfigData {
     pub(crate) values: BuckFixedSortedMap<String, LegacyBuckConfigSection>,

@@ -1,0 +1,6 @@
+load("@one//:rules.bzl", "library")
+
+library(
+    name = "lib",
+    visibility = ["PUBLIC"],
+)

@@ -159,6 +159,14 @@ def _merged_lib_provided_by_apk_under_test(soname: str, merged_lib, apk_under_te
         frontier = next_frontier
     return False
 
+def _merged_lib_excluded(merged_lib, shared_libraries_to_exclude: set[TargetLabel]) -> bool:
+    # get_default_shared_libs leaves out the targets in shared_libraries_to_exclude, but merged
+    # libraries are built from the linkable graph, which still has them.
+    for constituent in merged_lib.primary_constituents:
+        if constituent.raw_target() not in shared_libraries_to_exclude:
+            return False
+    return True
+
 # [relinked_libs] and [relinked_libs_manifest] when no relink is deferred: there is nothing to swap
 # in after packaging, so the step that does the swap (relinked_libs_combine_rule) copies its input.
 def _register_empty_relinked_libs(enhance_ctx: EnhancementContext) -> None:
@@ -240,6 +248,7 @@ def get_android_binary_native_library_info(
     apk_module_graph_file: Artifact | None = None,
     prebuilt_native_library_dirs_to_exclude: set[TargetLabel] = set(),
     shared_libraries_to_exclude: set[TargetLabel] = set(),
+    apk_under_test_shared_libraries: set[TargetLabel] = set(),
     apk_under_test_shipped_merged_libs: Artifact | None = None,
     native_library_merge_sequence: list | None = None,
     native_library_merge_glue: dict | None = None,
@@ -265,7 +274,7 @@ def get_android_binary_native_library_info(
         if platform == CPU_FILTER_FOR_PRIMARY_PLATFORM and platform not in ctx.attrs.cpu_filters and len(ctx.attrs.cpu_filters) != 0:
             continue
 
-        shared_libs = get_default_shared_libs(ctx, deps, shared_libraries_to_exclude)
+        shared_libs = get_default_shared_libs(ctx, deps, shared_libraries_to_exclude | apk_under_test_shared_libraries)
         included_shared_lib_targets.extend([lib.label.raw_target() for lib in shared_libs.values()])
         original_shared_libs_by_platform[platform] = shared_libs
 
@@ -733,7 +742,8 @@ def get_android_binary_native_library_info(
                 platform: [
                     soname
                     for soname, d in merged_shared_libs.items()
-                    if _merged_lib_provided_by_apk_under_test(soname, d, apk_under_test_shipped.get(platform, {}))
+                    if _merged_lib_excluded(d, shared_libraries_to_exclude)
+                    or _merged_lib_provided_by_apk_under_test(soname, d, apk_under_test_shipped.get(platform, {}))
                 ]
                 for platform, merged_shared_libs in merged_shared_libs_by_platform.items()
             }

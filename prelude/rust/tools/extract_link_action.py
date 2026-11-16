@@ -133,7 +133,9 @@ def process_link_args(
        allocator shim module when rustc generates one, and
      - `symbols.o`, which carries undefined references to the exported and
        `#[used]` symbols of every linked crate so that the corresponding
-       archive members survive the link.
+       archive members survive the link, and
+     - on Windows, the import libraries for the crate's own `raw-dylib`
+       imports, which a library crate carries inside its rlib instead.
 
     The only args retained are wasm-ld `--export` args, which carry the same
     per-program symbol metadata that `symbols.o` does on ELF, and entry-point
@@ -156,7 +158,11 @@ def process_link_args(
     size = len(args)
     while i < size:
         arg = args[i]
-        if arg.endswith("rcgu.o") or arg.endswith("symbols.o"):
+        if (
+            arg.endswith("rcgu.o")
+            or arg.endswith("symbols.o")
+            or arg.endswith("_imports.lib")
+        ):
             path = Path(arg)
             if path.parent.is_absolute():
                 temp_dirs.add(str(path.parent))

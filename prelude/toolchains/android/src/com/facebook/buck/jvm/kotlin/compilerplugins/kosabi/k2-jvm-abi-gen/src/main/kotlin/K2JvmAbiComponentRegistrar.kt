@@ -25,7 +25,13 @@ class K2JvmAbiComponentRegistrar : CompilerPluginRegistrar() {
 
     if (outputPath != null) {
       // Register K2 FIR extension for ABI generation
-      FirAnalysisHandlerExtension.registerExtension(K2JvmAbiFirAnalysisHandlerExtension(outputPath))
+      FirAnalysisHandlerExtension.registerExtension(
+          K2JvmAbiFirAnalysisHandlerExtension(
+              outputPath,
+              preserveDeclarationOrder =
+                  configuration.get(K2JvmAbiConfigurationKeys.PRESERVE_DECLARATION_ORDER, true),
+          ),
+      )
       FirExtensionRegistrarAdapter.registerExtension(AbiGenFirExtensionRegistrar())
     }
   }

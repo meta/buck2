@@ -43,4 +43,7 @@ object K2JvmAbiConfigurationKeys {
 
   val KEPT_BODY_STUB_CHECK: CompilerConfigurationKey<Boolean> =
       CompilerConfigurationKey.create("kept inline body stub-only class check")
+
+  val PRESERVE_DECLARATION_ORDER: CompilerConfigurationKey<Boolean> =
+      CompilerConfigurationKey.create("keep ABI class members in the order kotlinc generates them")
 }

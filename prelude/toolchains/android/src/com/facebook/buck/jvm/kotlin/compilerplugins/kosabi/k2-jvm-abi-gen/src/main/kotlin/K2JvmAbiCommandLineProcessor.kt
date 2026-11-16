@@ -101,6 +101,15 @@ class K2JvmAbiCommandLineProcessor : CommandLineProcessor {
             "stub provides. Default is true; false turns the check off.",
         false,
     )
+
+    val PRESERVE_DECLARATION_ORDER_OPTION: CliOption = CliOption(
+        "preserveDeclarationOrder",
+        "<boolean>",
+        "Keep the members of each class in the order kotlinc generates them. Default is true; " +
+            "false sorts them as jvm-abi-gen sorts a class ABI when its own " +
+            "preserveDeclarationOrder option is not set.",
+        false,
+    )
   }
 
   override val pluginId: String
@@ -118,6 +127,7 @@ class K2JvmAbiCommandLineProcessor : CommandLineProcessor {
         SHALLOW_CLASS_USAGE_OPTION,
         SKIP_NON_ABI_BODIES_OPTION,
         KEPT_BODY_STUB_CHECK_OPTION,
+        PRESERVE_DECLARATION_ORDER_OPTION,
     )
 
   override fun processOption(
@@ -148,6 +158,8 @@ class K2JvmAbiCommandLineProcessor : CommandLineProcessor {
           configuration.put(K2JvmAbiConfigurationKeys.SKIP_NON_ABI_BODIES, value != "false")
       KEPT_BODY_STUB_CHECK_OPTION ->
           configuration.put(K2JvmAbiConfigurationKeys.KEPT_BODY_STUB_CHECK, value != "false")
+      PRESERVE_DECLARATION_ORDER_OPTION ->
+          configuration.put(K2JvmAbiConfigurationKeys.PRESERVE_DECLARATION_ORDER, value != "false")
       else -> throw CliOptionProcessingException("Unknown option: ${option.optionName}")
     }
   }

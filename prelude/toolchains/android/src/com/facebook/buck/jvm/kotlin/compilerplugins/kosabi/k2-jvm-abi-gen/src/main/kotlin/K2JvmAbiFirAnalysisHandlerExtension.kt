@@ -101,10 +101,13 @@ import org.jetbrains.kotlin.psi.KtTreeVisitorVoid
 import org.jetbrains.kotlin.types.ConstantValueKind
 
 @SuppressWarnings("PackageLocationMismatch")
-class K2JvmAbiFirAnalysisHandlerExtension(private val outputPath: String) :
-    FirAnalysisHandlerExtension() {
+class K2JvmAbiFirAnalysisHandlerExtension(
+    private val outputPath: String,
+    preserveDeclarationOrder: Boolean = true,
+) : FirAnalysisHandlerExtension() {
 
-  private val pipeline = AbiGenPipeline()
+  private val pipeline =
+      AbiGenPipeline(bytecodeSanitizer = BytecodeSanitizerStage(preserveDeclarationOrder))
 
   // Annotations a code-rewriting plugin is configured to read in THIS compilation:
   // allopen's explicit `annotation=` values plus its preset expansions (spring, quarkus,

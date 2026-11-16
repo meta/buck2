@@ -1325,12 +1325,17 @@ internal class IrSanitizerStage(
  * - Strip @Throws annotations from RuntimeInvisibleAnnotations
  * - Strip private declarations from @Metadata annotation
  * - Strip line numbers from method bodies that consumers do not inline
+ * - Unless [preserveDeclarationOrder], sort class members as jvm-abi-gen does
  */
-internal class BytecodeSanitizerStage : AbiGenStage {
+internal class BytecodeSanitizerStage(preserveDeclarationOrder: Boolean = true) : AbiGenStage {
   override val name = "BytecodeSanitizer"
 
-  private val transformers =
-      listOf(ThrowsAnnotationStripper(), PrivateMetadataStripper(), StubLineNumberStripper())
+  private val transformers = listOfNotNull(
+      ThrowsAnnotationStripper(),
+      PrivateMetadataStripper(),
+      StubLineNumberStripper(),
+      JvmAbiGenMemberSorter().takeUnless { preserveDeclarationOrder },
+  )
 
   /** Transform class bytecode in-memory, applying all sanitization transformers. */
   fun transform(bytes: ByteArray): ByteArray {

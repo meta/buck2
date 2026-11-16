@@ -1,0 +1,11 @@
+# `//app/denied.bxl` is in a different package than `//lib`, so loading the
+# private `//lib/priv.bzl` is rejected when enforcement is on.
+load("//lib/priv.bzl", "SYM")
+
+def _impl(ctx: bxl.Context):
+    ctx.output.print(SYM)
+
+check = bxl_main(
+    impl = _impl,
+    cli_args = {},
+)

@@ -26,6 +26,7 @@ use pagable::Pagable;
 use pagable::pagable_typetag;
 use smallvec::SmallVec;
 
+use crate::file_ops::dice::DiceFileComputations;
 use crate::package_listing::interpreter::InterpreterPackageListingResolver;
 use crate::package_listing::listing::PackageListing;
 use crate::package_listing::resolver::PackageListingResolver;
@@ -84,7 +85,136 @@ impl Key for PackageListingKey {
     }
 }
 
+/// Whether a directory contains a buildfile. Depends only on the existence of
+/// each buildfile candidate, not on the directory listing, so adding or removing
+/// other files in the directory does not invalidate it.
+#[derive(
+    Clone,
+    Copy,
+    Dupe,
+    derive_more::Display,
+    Debug,
+    Eq,
+    Hash,
+    PartialEq,
+    Allocative,
+    Pagable
+)]
+#[pagable_typetag(dice::DiceKeyDyn)]
+struct HasBuildfileKey(CellPath);
+
+#[async_trait]
+impl Key for HasBuildfileKey {
+    type Value = buck2_error::Result<bool>;
+
+    async fn compute(
+        &self,
+        ctx: &mut DiceComputations,
+        _cancellations: &CancellationContext,
+    ) -> Self::Value {
+        for candidate in DiceFileComputations::buildfiles(ctx, self.0.cell())
+            .await?
+            .iter()
+        {
+            if DiceFileComputations::exists(ctx, self.0.join(candidate)).await? {
+                return Ok(true);
+            }
+        }
+        Ok(false)
+    }
+
+    fn equality_behavior() -> EqualityBehavior<Self::Value> {
+        EqualityBehavior::Compare(|x, y| match (x, y) {
+            (Ok(x), Ok(y)) => x == y,
+            _ => false,
+        })
+    }
+
+    fn validity(x: &Self::Value) -> bool {
+        x.is_ok()
+    }
+
+    fn value_serialize() -> impl ValueSerialize<Value = Self::Value> {
+        OkPagableValueSerialize::<Self::Value>::new()
+    }
+}
+
+/// The package enclosing a directory: the nearest directory at or above it
+/// that contains a buildfile, or `None` if there is none up to the cell root.
+/// Only changes when a buildfile is added or removed at or above the directory.
+#[derive(
+    Clone,
+    Copy,
+    Dupe,
+    derive_more::Display,
+    Debug,
+    Eq,
+    Hash,
+    PartialEq,
+    Allocative,
+    Pagable
+)]
+#[pagable_typetag(dice::DiceKeyDyn)]
+struct EnclosingPackageKey(CellPath);
+
+#[async_trait]
+impl Key for EnclosingPackageKey {
+    type Value = buck2_error::Result<Option<PackageLabel>>;
+
+    async fn compute(
+        &self,
+        ctx: &mut DiceComputations,
+        _cancellations: &CancellationContext,
+    ) -> Self::Value {
+        if ctx.compute(&HasBuildfileKey(self.0)).await?.dupe()? {
+            return Ok(Some(PackageLabel::from_cell_path(self.0)?));
+        }
+        match self.0.parent() {
+            Some(parent) => enclosing_package_of_dir(ctx, parent).await,
+            None => Ok(None),
+        }
+    }
+
+    fn equality_behavior() -> EqualityBehavior<Self::Value> {
+        EqualityBehavior::Compare(|x, y| match (x, y) {
+            (Ok(x), Ok(y)) => x == y,
+            _ => false,
+        })
+    }
+
+    fn validity(x: &Self::Value) -> bool {
+        x.is_ok()
+    }
+
+    fn value_serialize() -> impl ValueSerialize<Value = Self::Value> {
+        OkPagableValueSerialize::<Self::Value>::new()
+    }
+}
+
 pub struct DicePackageListingResolver<'compute, 'dice>(pub &'compute mut DiceComputations<'dice>);
+
+impl DicePackageListingResolver<'_, '_> {
+    /// The package of the file at `path`: the nearest directory at or above it
+    /// that contains a buildfile. Unlike `get_enclosing_package`, this returns
+    /// `None` rather than an error when there is none.
+    pub async fn find_enclosing_package(
+        &mut self,
+        path: CellPath,
+    ) -> buck2_error::Result<Option<PackageLabel>> {
+        match path.parent() {
+            Some(dir) => enclosing_package_of_dir(self.0, dir).await,
+            None => Ok(None),
+        }
+    }
+}
+
+/// The package enclosing the directory `dir`, or `None` if there is none.
+pub(crate) async fn enclosing_package_of_dir(
+    ctx: &mut DiceComputations<'_>,
+    dir: CellPath,
+) -> buck2_error::Result<Option<PackageLabel>> {
+    ctx.compute(&EnclosingPackageKey(dir)).await?.dupe()
+}
 
 #[async_trait]
 impl PackageListingResolver for DicePackageListingResolver<'_, '_> {

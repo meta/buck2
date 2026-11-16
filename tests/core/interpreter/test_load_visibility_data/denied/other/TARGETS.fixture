@@ -1,0 +1,5 @@
+# Cross-package load of the private `//lib/priv.bzl`: rejected unless
+# `buck2.check_load_visibility` is disabled.
+load("//lib/priv.bzl", "SYM")
+
+_all = (SYM,)

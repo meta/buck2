@@ -1,0 +1,4 @@
+# Same-package load of the private `.bzl`: allowed.
+load(":priv.bzl", "SYM")
+
+_all = (SYM,)

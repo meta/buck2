@@ -13,6 +13,7 @@ use std::cell::OnceCell;
 use allocative::Allocative;
 use buck2_error::BuckErrorOptionContext;
 use buck2_node::attrs::coercion_context::CoerceMemoTable;
+use buck2_node::visibility::LoadVisibility;
 use starlark::StarlarkPagable;
 use starlark::StarlarkPagablePanic;
 use starlark::any::ProvidesStaticType;
@@ -46,11 +47,17 @@ pub(crate) struct InterpreterExtraValue<'v> {
     pub(crate) buckconfigs: BuckConfigsCache<'v>,
     /// Coercion results memoized while evaluating a buildfile.
     pub(crate) coerce_memo: CoerceMemoTable<'v>,
+    /// Set by the `visibility()` builtin when evaluating a `.bzl` file. Holds no
+    /// Starlark values, so it is ignored for tracing.
+    #[trace(unsafe_ignore)]
+    pub(crate) load_visibility: OnceCell<LoadVisibility>,
 }
 
 #[derive(Debug, ProvidesStaticType, Allocative, StarlarkPagable)]
 pub(crate) struct FrozenInterpreterExtraValue<'v> {
     pub(crate) package_extra: Option<FrozenPackageFileExtra<'v>>,
+    #[starlark_pagable(pagable)]
+    pub(crate) load_visibility: Option<LoadVisibility>,
 }
 
 starlark::register_starlark_any_complex!(InterpreterExtraValue<'_>, frozen FrozenInterpreterExtraValue<'_>);
@@ -63,9 +70,11 @@ impl<'v> Freeze<'v> for InterpreterExtraValue<'v> {
             package_extra,
             buckconfigs: _,
             coerce_memo: _,
+            load_visibility,
         } = self;
         Ok(FrozenInterpreterExtraValue {
             package_extra: Freeze::freeze(package_extra, freezer)?,
+            load_visibility: load_visibility.into_inner(),
         })
     }
 }
@@ -96,5 +105,13 @@ impl FrozenInterpreterExtraValue<'_> {
                 |v| ValueTyped::new(v),
             )
             .internal_error("Extra value had wrong type")
+    }
+
+    /// The load visibility declared by a `.bzl` file via the `visibility()`
+    /// builtin, or `None` if it did not call it (treated as public).
+    pub(crate) fn load_visibility(
+        module: &FrozenModule,
+    ) -> buck2_error::Result<Option<LoadVisibility>> {
+        Ok(Self::get(module)?.by_ref(|v| v.as_ref().value.load_visibility.clone()))
     }
 }

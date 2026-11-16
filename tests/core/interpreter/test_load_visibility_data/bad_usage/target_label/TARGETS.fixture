@@ -1,0 +1,3 @@
+load(":defs.bzl", "X")
+
+_all = (X,)

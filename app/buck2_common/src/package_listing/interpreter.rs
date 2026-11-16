@@ -26,6 +26,7 @@ use crate::find_buildfile::find_buildfile;
 use crate::ignores::file_ignores::FileIgnoreReason;
 use crate::io::DirectoryDoesNotExistSuggestion;
 use crate::io::ReadDirError;
+use crate::package_listing::dice::enclosing_package_of_dir;
 use crate::package_listing::listing::PackageListing;
 use crate::package_listing::resolver::PackageListingResolver;
 
@@ -43,15 +44,18 @@ impl PackageListingResolver for InterpreterPackageListingResolver<'_, '_> {
     }
 
     async fn get_enclosing_package(&mut self, path: CellPath) -> buck2_error::Result<PackageLabel> {
-        let buildfile_candidates = DiceFileComputations::buildfiles(self.ctx, path.cell()).await?;
-        if let Some(path) = path.parent() {
-            for path in path.ancestors() {
-                let listing = DiceFileComputations::read_dir(self.ctx, path).await?;
-                if find_buildfile(buildfile_candidates, &listing.included).is_some() {
-                    return PackageLabel::from_cell_path(path);
-                }
+        if let Some(dir) = path.parent() {
+            if !DiceFileComputations::exists(self.ctx, dir).await? {
+                // Only for the error, which says what is wrong and suggests
+                // corrections: depending on the listing otherwise would rerun
+                // this on any change to the directory.
+                DiceFileComputations::read_dir(self.ctx, dir).await?;
+            }
+            if let Some(package) = enclosing_package_of_dir(self.ctx, dir).await? {
+                return Ok(package);
             }
         }
+        let buildfile_candidates = DiceFileComputations::buildfiles(self.ctx, path.cell()).await?;
         Err(PackageListingError::NoContainingPackage(path, buildfile_candidates.to_vec()).into())
     }
 
@@ -60,26 +64,30 @@ impl PackageListingResolver for InterpreterPackageListingResolver<'_, '_> {
         path: CellPath,
         enclosing_path: CellPath,
     ) -> buck2_error::Result<Vec<PackageLabel>> {
-        let buildfile_candidates = DiceFileComputations::buildfiles(self.ctx, path.cell()).await?;
-        if let Some(path) = path.parent() {
-            let mut packages = Vec::new();
-            for path in path.ancestors() {
-                if !path.starts_with(enclosing_path) {
-                    // stop when we are no longer within the enclosing path
-                    break;
-                }
-                let listing = DiceFileComputations::read_dir(self.ctx, path).await?;
-                if find_buildfile(buildfile_candidates, &listing.included).is_some() {
-                    packages.push(PackageLabel::from_cell_path(path)?);
-                }
-            }
-            Ok(packages)
-        } else {
-            Err(
-                PackageListingError::NoContainingPackage(path, buildfile_candidates.to_vec())
-                    .into(),
+        let Some(mut dir) = path.parent() else {
+            let buildfile_candidates =
+                DiceFileComputations::buildfiles(self.ctx, path.cell()).await?;
+            return Err(PackageListingError::NoContainingPackage(
+                path,
+                buildfile_candidates.to_vec(),
             )
+            .into());
+        };
+        // Hop from package to package rather than reading every directory, so
+        // this only depends on where the buildfiles are.
+        let mut packages = Vec::new();
+        while let Some(package) = enclosing_package_of_dir(self.ctx, dir).await? {
+            if !package.as_cell_path().starts_with(enclosing_path) {
+                // stop when we are no longer within the enclosing path
+                break;
+            }
+            packages.push(package);
+            match package.as_cell_path().parent() {
+                Some(parent) => dir = parent,
+                None => break,
+            }
         }
+        Ok(packages)
     }
 }
 

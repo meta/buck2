@@ -1,0 +1,5 @@
+# `//lib/sub` has its own buildfile, so it is a different package from
+# `//lib` and may not load the private `//lib/priv.bzl`.
+load("//lib:priv.bzl", "SYM")
+
+_all = (SYM,)

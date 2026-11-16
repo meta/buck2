@@ -1,0 +1,11 @@
+# There is no buildfile in `nopkg` or any parent, so this file is not in any
+# package and may only load public `.bzl` files.
+load("//lib/vis.bzl", "SYM2")
+
+def _impl(ctx: bxl.Context):
+    ctx.output.print(SYM2)
+
+check = bxl_main(
+    impl = _impl,
+    cli_args = {},
+)

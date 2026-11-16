@@ -64,9 +64,12 @@ internal class ParcelableCreatorEmulator(private val pluginContext: IrPluginCont
 
   @OptIn(UnsafeDuringIrConstructionAPI::class)
   private fun IrClass.declaresCreator(): Boolean = declarations.any {
-    (it as? IrField)?.name == CREATOR_NAME ||
-        (it as? IrProperty)?.name == CREATOR_NAME ||
-        (it as? IrClass)?.name == CREATOR_NAME
+    when (it) {
+      is IrField -> it.name == CREATOR_NAME && (isCompanion || it.isStatic)
+      is IrProperty -> isCompanion && it.name == CREATOR_NAME
+      is IrClass -> it.name == CREATOR_NAME
+      else -> false
+    }
   }
 
   @OptIn(UnsafeDuringIrConstructionAPI::class)

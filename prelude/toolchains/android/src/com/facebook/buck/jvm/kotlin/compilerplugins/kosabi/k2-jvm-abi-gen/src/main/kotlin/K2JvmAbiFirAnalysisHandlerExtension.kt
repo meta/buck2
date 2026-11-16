@@ -551,7 +551,7 @@ class K2JvmAbiFirAnalysisHandlerExtension(
       if (composeAbiEnabled) {
         add(pipeline.composeAbi.createExtension())
       }
-      add(ParcelizeAbiEmulationExtension())
+      ParcelizeAbiEmulationExtension.createIfRegistered(project, configuration)?.let { add(it) }
       // Restores kept inline bodies before the sanitizer, which leaves exactly those bodies alone.
       if (pipeline.inlineBodies.keptFirFunctions.isNotEmpty()) {
         add(pipeline.inlineBodies.createExtension(configuration.messageCollector))

@@ -67,6 +67,15 @@ buck_kotlin_library(
     ],
     resources = glob(["resources/**"]),
     resources_root = "resources",
+    tests = [
+        "fbcode//buck2/tests/targets/rules/kotlin/kosabi_creator_selection:pipeline_selected",
+        "fbcode//buck2/tests/targets/rules/kotlin/kosabi_creator_selection:pipeline_selected_custom",
+        "fbcode//buck2/tests/targets/rules/kotlin/kosabi_creator_selection:pipeline_selected_legacy",
+        "fbcode//buck2/tests/targets/rules/kotlin/kosabi_creator_selection:pipeline_selected_legacy_sealed",
+        "fbcode//buck2/tests/targets/rules/kotlin/kosabi_creator_selection:pipeline_selected_sealed",
+        "fbcode//buck2/tests/targets/rules/kotlin/kosabi_creator_selection:pipeline_unselected",
+        "fbsource//fbandroid/javatests/com/facebook/kotlin/compilerplugins/kosabi/integrationtest:integration-test",
+    ],
     visibility = [
         "PUBLIC",
     ],

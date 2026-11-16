@@ -64,6 +64,19 @@ def main():
     cc = list(filter(lambda arg: not arg.startswith("-Wa,--debug-prefix-map="), cc))
 
     os.chdir(args.cwd)
+    if os.name == "nt":
+        # os.exec* on Windows is a non-blocking _P_OVERLAY spawn: the parent
+        # process exits 0 immediately while the child (e.g. cl.bat / lib.bat)
+        # runs detached. A cc-rs buildscript then sees the compiler/archiver
+        # "succeed" with no object/archive produced yet, and fails at the
+        # hard-link of the never-created lib. Spawn and WAIT for the real exit
+        # code instead. (os.spawnv uses the same CRT launch that os.execl does,
+        # so it runs the .bat the same way -- just synchronously.)
+        try:
+            sys.exit(os.spawnv(os.P_WAIT, cc[0], cc))
+        except Exception:
+            print(f"spawn failed: {pformat(cc)}", file=sys.stderr)
+            raise
     try:
         os.execl(cc[0], cc[0], *cc[1:])
     except Exception:

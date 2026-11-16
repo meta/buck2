@@ -47,11 +47,21 @@ def cmd_script(
             has_content_based_path = has_content_based_path,
         )
     elif language == ScriptLanguage("bat"):
+        output = actions.declare_output("{}.bat".format(name), has_content_based_path = has_content_based_path)
+        # Resolve the wrapped command's artifact paths relative to the script's
+        # own location (%~dp0) rather than the process cwd. Otherwise a wrapper
+        # like cl.bat -- which invokes a repo-root-relative run_msvc_tool.py with
+        # no `cd` -- breaks when called from a different directory, e.g. through
+        # the rust buildscript from_any_dir shim, which chdir's to the
+        # buildscript's cwd before running $CC. The script deliberately does NOT
+        # cd, so any relative paths in the caller-supplied %* still resolve
+        # against the caller's cwd (as the from_any_dir shim requires).
+        positioned = cmd_args(cmd, relative_to = (output, 1), absolute_prefix = "%~dp0", **cmd_kwargs)
         wrapper, _ = actions.write(
-            actions.declare_output("{}.bat".format(name), has_content_based_path = has_content_based_path),
+            output,
             [
                 "@echo off",
-                cmd_args(cmd_args(shell_quoted, delimiter = "^\n "), format = "{} %*\n"),
+                cmd_args(cmd_args(positioned, delimiter = "^\n "), format = "{} %*\n"),
             ],
             allow_args = True,
             has_content_based_path = has_content_based_path,

@@ -157,11 +157,16 @@ impl ConfigActionSlot {
         }
     }
 
-    /// The dep-file state of every configuration in this slot.
-    fn states(&self) -> impl Iterator<Item = &Arc<DepFileState>> {
+    /// The dep-file state of every configuration in this slot other than `cfg`.
+    fn states_of_other_configurations(
+        &self,
+        cfg: Option<Configuration>,
+    ) -> impl Iterator<Item = &Arc<DepFileState>> {
         match self {
-            ConfigActionSlot::One(_, s) => Either::Left(std::iter::once(s)),
-            ConfigActionSlot::Many(m) => Either::Right(m.values()),
+            ConfigActionSlot::One(c, s) => Either::Left((*c != cfg).then_some(s).into_iter()),
+            ConfigActionSlot::Many(m) => {
+                Either::Right(m.iter().filter(move |(c, _)| **c != cfg).map(|(_, s)| s))
+            }
         }
     }
 
@@ -258,13 +263,20 @@ impl ShardedDepFiles {
         self.map.remove_if_mut(logical, |_, slot| slot.remove(cfg));
     }
 
-    /// Every cached state for `logical`, across all configurations built this session -- the
-    /// cross-configuration candidates. Returned owned so the caller can drop the shard guard before
-    /// awaiting. Entries from previous daemon sessions are not held here; they are loaded on demand
-    /// from the persisted store (see `match_if_identical_action`).
-    fn states_for_logical(&self, logical: &LogicalActionKey) -> Vec<Arc<DepFileState>> {
+    /// Every cached state for `logical` built this session under a configuration other than `cfg`
+    /// -- the cross-configuration candidates. Returned owned so the caller can drop the shard guard
+    /// before awaiting. Entries from previous daemon sessions are not held here; they are loaded on
+    /// demand from the persisted store (see `match_if_identical_action`).
+    fn states_of_other_configurations(
+        &self,
+        logical: &LogicalActionKey,
+        cfg: Option<Configuration>,
+    ) -> Vec<Arc<DepFileState>> {
         match self.map.get(logical) {
-            Some(slot) => slot.states().map(Dupe::dupe).collect(),
+            Some(slot) => slot
+                .states_of_other_configurations(cfg)
+                .map(Dupe::dupe)
+                .collect(),
             None => Vec::new(),
         }
     }
@@ -1225,7 +1237,10 @@ pub(crate) async fn match_if_identical_action(
     stats.outcome = buck2_data::DepFileLookupOutcome::Miss as i32;
 
     // First, this configuration's own cached action.
-    if let Some(previous_state) = get_dep_files(ctx.dep_file_cache(), key) {
+    let own_entry = get_dep_files(ctx.dep_file_cache(), key);
+    let has_own_entry = own_entry.is_some();
+    let mut check_filtered_inputs = false;
+    if let Some(previous_state) = own_entry {
         let actions_match = check_action(
             Some(key),
             ctx.dep_file_cache(),
@@ -1254,22 +1269,26 @@ pub(crate) async fn match_if_identical_action(
 
         // Don't remove the key from cache in this case as we did not fully check with the dep file content
         tracing::trace!("Local dep file cache does not have an identical action cached");
-        return Ok((
-            None,
-            actions_match == InitialDepFileLookupResult::CheckFilteredInputs,
-        ));
+        check_filtered_inputs = actions_match == InitialDepFileLookupResult::CheckFilteredInputs;
+        if !ctx.run_action_knobs().cross_config_lookup_on_stale_entry {
+            return Ok((None, check_filtered_inputs));
+        }
     }
 
-    // No entry for this configuration. First reuse an identical action built this session under a
-    // different configuration; if none match, fall back to the persisted store (previous daemon
-    // sessions). Either way we honor only `check_action`'s exact-match `Hit` verdict (identical input
-    // directory), never reading another configuration's dep file. The first candidate `check_action`
-    // matches decides the outcome: if its outputs are still materialized we serve them, otherwise it
-    // is a miss (every candidate reuses the same configuration-independent outputs, so a later one
-    // would not help). `states_for_logical` clones the candidates out, so we hold no shard guard
-    // across the async work.
+    // This configuration has no identical entry. First reuse an identical action built this
+    // session under a different configuration; if none match and this configuration had no entry
+    // when the lookup started, fall back to the persisted store (previous daemon sessions). Either
+    // way we honor only `check_action`'s exact-match `Hit` verdict (identical input directory),
+    // never reading another configuration's dep file. The first candidate `check_action` matches
+    // decides the outcome: if its outputs are still materialized we serve them, otherwise it is a
+    // miss (every candidate reuses the same configuration-independent outputs, so a later one
+    // would not help). A miss leaves this configuration's own entry, if any, to the
+    // dep-file-filtered check. `states_of_other_configurations` clones the candidates out, so we
+    // hold no shard guard across the async work.
     let logical = key.to_logical();
-    for candidate in dep_files(ctx.dep_file_cache()).states_for_logical(&logical) {
+    for candidate in dep_files(ctx.dep_file_cache())
+        .states_of_other_configurations(&logical, key.configuration())
+    {
         match probe_cross_config_candidate(
             ctx,
             declared_outputs,
@@ -1287,8 +1306,15 @@ pub(crate) async fn match_if_identical_action(
                 stats.hit_live();
                 return Ok((Some(outputs), false));
             }
-            CrossConfigProbe::OutputsGone => return Ok((None, false)),
+            CrossConfigProbe::OutputsGone => return Ok((None, check_filtered_inputs)),
         }
+    }
+
+    // The persisted store is consulted only when this configuration had no entry when the lookup
+    // started: with one, the store adds little beyond the live entries (only rows left by previous
+    // daemon sessions), and probing it would add a store read to every rebuild of a changed action.
+    if has_own_entry {
+        return Ok((None, check_filtered_inputs));
     }
 
     // Nothing built this session matched. Consult the persisted store, loading just this logical

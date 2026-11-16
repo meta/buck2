@@ -507,6 +507,7 @@ impl<'a> ServerCommandContext<'a> {
             defer_write_actions: false,
             write_action_cache: WriteActionCacheMode::Off,
             write_action_cache_populate: RolloutFraction::none(),
+            cross_config_lookup_on_stale_entry: false,
         };
 
         let concurrency = self
@@ -1119,6 +1120,12 @@ impl DiceCommandUpdater<'_, '_> {
                 property: "write_action_cache_populate",
             })?
             .unwrap_or_else(RolloutFraction::none);
+        run_action_knobs.cross_config_lookup_on_stale_entry = root_config
+            .parse::<bool>(BuckconfigKeyRef {
+                section: "buck2",
+                property: "cross_config_lookup_on_stale_entry",
+            })?
+            .unwrap_or(false);
 
         let output_trees_download_semaphore_size = root_config.parse::<u32>(BuckconfigKeyRef {
             section: "buck2",

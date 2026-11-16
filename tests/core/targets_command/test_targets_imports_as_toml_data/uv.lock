@@ -1,0 +1,5 @@
+# Deliberately valid TOML but INVALID Starlark: a TOML inline table uses `=`,
+# whereas a Starlark dict literal requires `:`. So if this file is (wrongly)
+# parsed as a bzl file, parsing fails outright; parsed as TOML (via `?as=toml`)
+# it succeeds. This is what distinguishes the fixed behaviour from the bug.
+package = { name = "foo", version = "1.0" }

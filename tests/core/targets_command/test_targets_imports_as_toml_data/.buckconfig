@@ -1,0 +1,9 @@
+[buildfile]
+name=TARGETS.fixture
+
+[buck2]
+load_as_allowlist = *.lock
+
+[repositories]
+root = .
+prelude = prelude

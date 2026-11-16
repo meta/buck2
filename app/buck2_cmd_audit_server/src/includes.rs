@@ -75,8 +75,8 @@ async fn get_transitive_includes(
         fn import_path(&self) -> &ImportPath {
             self.0
                 .path()
-                .unpack_load_file()
-                .expect("only visit imports so only bzl files are expected")
+                .unpack_import_path()
+                .expect("only visit imports, and `.bxl` cannot be imported")
         }
     }
 
@@ -104,7 +104,7 @@ async fn get_transitive_includes(
             Ok(Node(
                 self.ctx
                     .get()
-                    .get_loaded_module(StarlarkModulePath::LoadFile(&label.0))
+                    .get_loaded_module(StarlarkModulePath::from_import_path(&label.0))
                     .await?
                     .dupe(),
             ))

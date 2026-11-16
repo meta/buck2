@@ -1,0 +1,11 @@
+load(":uses_lock.bzl", "test")
+
+# Top-level `?as=toml` load, directly in the build file. This exercises the
+# seed path of `targets --imports`, where the import list crosses the
+# `buck2_node` boundary (`EvaluationResult`) as bare `ImportPath`s. The format
+# rides along on the `ImportPath`, so `direct.lock` still resolves as TOML.
+load(":direct.lock?as=toml", "value")
+
+direct = value
+
+test()

@@ -1,0 +1,2 @@
+# Makes `other//pkg` a package, so `other//pkg/lib.lock` is owned by it. Its
+# intra-cell path (`pkg`) deliberately matches the loader's package in `root`.

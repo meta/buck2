@@ -1,0 +1,2 @@
+# Valid TOML (and invalid Starlark), owned by package `other//pkg`.
+tool = { name = "bar", version = "2.0" }

@@ -1,0 +1,7 @@
+# A native `.toml` load (no `?as=`) that crosses a package boundary within the
+# same cell: this build file is in package `root//`, but `//sub/data.toml` is
+# owned by package `root//sub` (which has its own build file). Data files are
+# package-isolated exactly like `?as=` loads, so this must be rejected.
+load("//sub/data.toml", "value")
+
+value_alias = value

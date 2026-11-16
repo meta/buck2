@@ -1,0 +1,2 @@
+# Valid TOML (and invalid Starlark), in the same package as this build file.
+tool = { name = "bar", version = "2.0" }

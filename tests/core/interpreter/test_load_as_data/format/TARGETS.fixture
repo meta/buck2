@@ -1,0 +1,10 @@
+# The extension selects no parser for either of these: `deps.lock` is TOML and
+# `metadata.txt` is JSON, and neither can be renamed.
+load(":deps.lock?as=toml", lock = "value")
+load(":metadata.txt?as=json", metadata = "value")
+
+# buildifier: disable=print
+print("DATA_LOAD_TEST_OUTPUT: " + repr({
+    "lock": lock,
+    "metadata": metadata,
+}))

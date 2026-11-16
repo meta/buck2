@@ -13,6 +13,8 @@ use std::sync::Arc;
 use allocative::Allocative;
 use async_trait::async_trait;
 use buck2_common::dice::cells::HasCellResolver;
+use buck2_common::legacy_configs::dice::HasLegacyConfigs;
+use buck2_common::legacy_configs::view::LegacyBuckConfigView;
 use buck2_core::cells::CellResolver;
 use buck2_interpreter::dice::starlark_types::GetStarlarkTypes;
 use dice::DiceComputations;
@@ -31,6 +33,8 @@ use starlark::environment::Globals;
 use crate::interpreter::configuror::BuildInterpreterConfiguror;
 use crate::interpreter::context::HasInterpreterContext;
 use crate::interpreter::globals::base_globals;
+use crate::interpreter::load_data::LOAD_AS_ALLOWLIST;
+use crate::interpreter::load_data::LoadAsAllowlist;
 
 pagable::static_str!(GLOBAL_ENV_HEAP_NAME = concat!(module_path!(), "::global_env"));
 
@@ -52,6 +56,9 @@ pub struct GlobalInterpreterState {
 
     /// Static typechecking for bzl and bxl files.
     pub unstable_typecheck: bool,
+
+    /// Files allowed to use an `?as=` import format override.
+    pub load_as_allowlist: LoadAsAllowlist,
 }
 
 impl GlobalInterpreterState {
@@ -60,6 +67,7 @@ impl GlobalInterpreterState {
         interpreter_configuror: Arc<BuildInterpreterConfiguror>,
         disable_starlark_types: bool,
         unstable_typecheck: bool,
+        load_as_allowlist: LoadAsAllowlist,
     ) -> buck2_error::Result<Self> {
         let global_env = base_globals()
             .with(|g| {
@@ -77,6 +85,7 @@ impl GlobalInterpreterState {
             configuror: interpreter_configuror,
             disable_starlark_types,
             unstable_typecheck,
+            load_as_allowlist,
         })
     }
 
@@ -129,11 +138,20 @@ impl<'d> HasGlobalInterpreterState<'d> for DiceComputations<'d> {
                 let disable_starlark_types = ctx.get_disable_starlark_types().await?;
                 let unstable_typecheck = ctx.get_unstable_typecheck().await?;
 
+                let root_config = ctx.get_legacy_root_config_on_dice().await?;
+                let load_as_allowlist = LoadAsAllowlist::new(
+                    root_config
+                        .view(ctx)
+                        .parse_list::<String>(LOAD_AS_ALLOWLIST)?
+                        .unwrap_or_default(),
+                )?;
+
                 Ok(Arc::new(GlobalInterpreterState::new(
                     cell_resolver,
                     interpreter_configuror,
                     disable_starlark_types,
                     unstable_typecheck,
+                    load_as_allowlist,
                 )?))
             }
 
@@ -147,5 +165,74 @@ impl<'d> HasGlobalInterpreterState<'d> for DiceComputations<'d> {
         }
 
         self.compute(&GisKey()).await?.as_ref().duped_err()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn parse(values: &[&str]) -> LoadAsAllowlist {
+        LoadAsAllowlist::new(values.iter().map(|s| (*s).to_owned()).collect()).unwrap()
+    }
+
+    #[test]
+    fn test_empty_allows_nothing() {
+        let allowed = parse(&[]);
+        assert!(!allowed.is_allowed(Some("uv.lock")));
+        assert!(!allowed.is_allowed(Some("foo.toml")));
+        assert!(!allowed.is_allowed(None));
+    }
+
+    #[test]
+    fn test_extension_glob() {
+        let allowed = parse(&["*.lock", "*.cfg"]);
+        assert!(allowed.is_allowed(Some("uv.lock")));
+        assert!(allowed.is_allowed(Some("app.cfg")));
+        // `*.lock` also matches a compound extension.
+        assert!(allowed.is_allowed(Some("foo.pkg.lock")));
+        assert!(!allowed.is_allowed(Some("foo.toml")));
+        // A bare `*.lock` glob needs a dot; `mylock` has none.
+        assert!(!allowed.is_allowed(Some("mylock")));
+        assert!(!allowed.is_allowed(None));
+    }
+
+    #[test]
+    fn test_star_allows_everything() {
+        let allowed = parse(&["*"]);
+        assert!(allowed.is_allowed(Some("uv.lock")));
+        assert!(allowed.is_allowed(Some("foo.anything")));
+    }
+
+    #[test]
+    fn test_whitespace_and_empty_entries_ignored() {
+        let allowed = parse(&["  *.lock  ", ""]);
+        assert!(allowed.is_allowed(Some("uv.lock")));
+        assert!(!allowed.is_allowed(Some("foo.toml")));
+    }
+
+    #[test]
+    fn test_compound_extension_glob() {
+        let allowed = parse(&["*.pkg.lock"]);
+        assert!(allowed.is_allowed(Some("uv.pkg.lock")));
+        assert!(allowed.is_allowed(Some("a.b.pkg.lock")));
+        assert!(!allowed.is_allowed(Some("uv.lock")));
+    }
+
+    #[test]
+    fn test_whole_filename_entry() {
+        // Pin a specific package-manager lockfile by its whole name.
+        let allowed = parse(&["uv.lock"]);
+        assert!(allowed.is_allowed(Some("uv.lock")));
+        // Other `.lock` files are not opened up.
+        assert!(!allowed.is_allowed(Some("poetry.lock")));
+        assert!(!allowed.is_allowed(Some("Cargo.lock")));
+        // An exact-name glob has no wildcard, so it does not match `nested.uv.lock`.
+        assert!(!allowed.is_allowed(Some("nested.uv.lock")));
+    }
+
+    #[test]
+    fn test_invalid_glob_is_an_error() {
+        assert!(LoadAsAllowlist::new(vec!["[".to_owned()]).is_err());
     }
 }

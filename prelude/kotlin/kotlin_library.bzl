@@ -61,7 +61,7 @@ load(
     "@prelude//kotlin:kotlin_toolchain.bzl",
     "KotlinToolchainInfo",
 )
-load("@prelude//kotlin:kotlin_utils.bzl", "get_friend_paths", "get_kotlinc_compatible_target")
+load("@prelude//kotlin:kotlin_utils.bzl", "get_friend_paths", "get_kotlinc_compatible_target", "kotlinc_arg_text")
 load("@prelude//kotlin:kotlincd_jar_creator.bzl", "create_jar_artifact_kotlincd")
 load("@prelude//utils:argfile.bzl", "at_argfile")
 load("@prelude//utils:expect.bzl", "expect")
@@ -348,15 +348,6 @@ def get_language_version(ctx: AnalysisContext) -> str:
 def get_language_version_arg(ctx: AnalysisContext) -> list[str]:
     language_version = get_language_version(ctx)
     return ["-language-version=" + language_version]
-
-def _kotlinc_arg_text(arg) -> str:
-    """The text kotlincd gives kotlinc for one `extra_kotlinc_arguments`
-    element: KotlinCStepsBuilder passes each element unchanged. `str()` of an
-    `attrs.arg()` value is that text in one pair of double quotes, with a
-    macro written as `$(location ...)`."""
-    if isinstance(arg, str):
-        return arg
-    return str(arg)[1:-1]
 
 def filter_out_language_version(extra_arguments: list) -> list:
     return [arg for arg in extra_arguments if not (isinstance(arg, str) and "-language-version" in arg)]
@@ -851,7 +842,7 @@ def _typecheck_subtarget(
     # not -Werror.
     def has_flag(*names):
         return lazy.is_any(
-            lambda a: _kotlinc_arg_text(a) in names,
+            lambda a: kotlinc_arg_text(a) in names,
             ctx.attrs.extra_kotlinc_arguments or [],
         )
 
@@ -863,7 +854,7 @@ def _typecheck_subtarget(
     # kotlinc reports, so the checker must see them too.
     warning_levels = []
     for a in ctx.attrs.extra_kotlinc_arguments or []:
-        flag = _kotlinc_arg_text(a)
+        flag = kotlinc_arg_text(a)
         if flag.startswith("-Xwarning-level="):
             warning_levels.append(flag[len("-Xwarning-level=") :])
         elif flag.startswith("-Xsuppress-warning="):
@@ -882,7 +873,7 @@ def _typecheck_subtarget(
             kotlinc_args += ["-P", ",".join(["{}={}".format(key, value) for key, value in options.items()])]
     kotlinc_args += ["-jvm-target", get_kotlinc_compatible_target(str(target_level)), "-Xjspecify-annotations=strict"]
     for a in ctx.attrs.extra_kotlinc_arguments or []:
-        flag = _kotlinc_arg_text(a)
+        flag = kotlinc_arg_text(a)
         handled = flag in ("-Werror", "-nowarn", "-W") or "-language-version" in flag
         if not handled and not flag.startswith("-Xwarning-level=") and not flag.startswith("-Xsuppress-warning="):
             kotlinc_args.append(a)

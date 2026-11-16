@@ -49,7 +49,7 @@ load(
     "setup_dep_files",
 )
 load("@prelude//kotlin:kotlin_toolchain.bzl", "KotlinToolchainInfo")
-load("@prelude//kotlin:kotlin_utils.bzl", "get_kotlinc_compatible_target")
+load("@prelude//kotlin:kotlin_utils.bzl", "get_kotlinc_compatible_target", "jvm_abi_gen_preserves_declaration_order")
 load("@prelude//utils:argfile.bzl", "at_argfile")
 load("@prelude//utils:expect.bzl", "expect")
 load("@prelude//utils:utils.bzl", "map_idx")
@@ -300,7 +300,7 @@ def create_jar_artifact_kotlincd(
             incremental_state_dir = None,
             language_version = language_version,
             source_only_abi_applicability_classpath = cmd_args(),
-            kosabi_jvm_abi_gen_options = kotlin_toolchain.kosabi_jvm_abi_gen_options,
+            kosabi_jvm_abi_gen_options = kotlin_toolchain.kosabi_jvm_abi_gen_options + _kosabi_member_order_options(kotlin_toolchain, extra_kotlinc_arguments),
         )
 
         # kotlincd does not support source abi
@@ -403,6 +403,17 @@ def _availability_jar_name(jar: Artifact) -> str:
     # Classpath jars are build outputs, so they have an owner.
     owner = jar.owner
     return "{}.{}.{}/{}".format(owner.cell, owner.package.replace("/", "."), owner.name, jar.basename)
+
+def _kosabi_member_order_options(kotlin_toolchain: KotlinToolchainInfo, extra_kotlinc_arguments: list) -> list[str]:
+    """The k2-jvm-abi-gen options that order the members of the source-only ABI as the class ABI of
+    a class-mode target orders them."""
+
+    # jvm-abi-gen writes that class ABI, sorting its members unless the target sets jvm-abi-gen's
+    # preserveDeclarationOrder option. Without jvm-abi-gen, the class ABI generator keeps the
+    # order of the library jar.
+    if kotlin_toolchain.jvm_abi_gen_plugin == None or jvm_abi_gen_preserves_declaration_order(extra_kotlinc_arguments):
+        return []
+    return ["preserveDeclarationOrder=false"]
 
 def get_source_only_friend_path_abis(friend_paths: list[Dependency], source_only_abi_deps: list[Dependency]) -> list[Artifact]:
     """Returns friend ABI jars restricted to the source-only ABI classpath."""

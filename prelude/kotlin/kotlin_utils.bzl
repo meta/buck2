@@ -13,10 +13,35 @@ load(
 )
 load("@prelude//utils:lazy.bzl", "lazy")
 
+_JVM_ABI_GEN_PRESERVE_DECLARATION_ORDER = "plugin:org.jetbrains.kotlin.jvm.abi:preserveDeclarationOrder="
+
 # kotlinc is strict about the target that you can pass, e.g.
 # error: unknown JVM target version: 8.  Supported versions: 1.8, 9, 10, 11, 12
 def get_kotlinc_compatible_target(target: str) -> str:
     return "1.8" if target == "8" else target
+
+def kotlinc_arg_text(arg) -> str:
+    """The text kotlincd gives kotlinc for one `extra_kotlinc_arguments`
+    element: KotlinCStepsBuilder passes each element unchanged. `str()` of an
+    `attrs.arg()` value is that text in one pair of double quotes, with a
+    macro written as `$(location ...)`."""
+    if isinstance(arg, str):
+        return arg
+    return str(arg)[1:-1]
+
+def jvm_abi_gen_preserves_declaration_order(extra_kotlinc_arguments: list) -> bool:
+    """
+    Whether these `extra_kotlinc_arguments` set jvm-abi-gen's `preserveDeclarationOrder` option,
+    which keeps the members of the class ABI in the order kotlinc generates instead of sorting them.
+    """
+    preserves = False
+    for arg in extra_kotlinc_arguments:
+        # A `-P` value is a comma-separated list of plugin options, the last setting of an option
+        # winning.
+        for option in kotlinc_arg_text(arg).split(","):
+            if option.startswith(_JVM_ABI_GEN_PRESERVE_DECLARATION_ORDER):
+                preserves = option[len(_JVM_ABI_GEN_PRESERVE_DECLARATION_ORDER) :] == "true"
+    return preserves
 
 def get_friend_paths(ctx: AnalysisContext) -> list[Dependency]:
     """

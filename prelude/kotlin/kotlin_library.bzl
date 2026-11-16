@@ -361,7 +361,7 @@ def _kotlinc_arg_text(arg) -> str:
 def filter_out_language_version(extra_arguments: list) -> list:
     return [arg for arg in extra_arguments if not (isinstance(arg, str) and "-language-version" in arg)]
 
-def kotlin_library_impl(ctx: AnalysisContext) -> list[Provider]:
+def kotlin_library_impl(ctx: AnalysisContext, kotlin_compiler_plugins = None) -> list[Provider]:
     packaging_deps = ctx.attrs.deps + ctx.attrs.exported_deps + ctx.attrs.runtime_deps
 
     # TODO(T107163344) this shouldn't be in kotlin_library itself, use overlays to remove it.
@@ -388,6 +388,7 @@ def kotlin_library_impl(ctx: AnalysisContext) -> list[Provider]:
         ctx = ctx,
         validation_deps_outputs = get_validation_deps_outputs(ctx),
         extra_sub_targets = target_stats_subtargets,
+        kotlin_compiler_plugins = kotlin_compiler_plugins,
     )
     return to_list(java_providers) + [android_packageable_info] + target_stats_providers
 
@@ -407,7 +408,9 @@ def build_kotlin_library(
     extra_sub_targets: dict = {},
     validation_deps_outputs: [list[Artifact], None] = None,
     extra_arguments = [],
+    kotlin_compiler_plugins = None,
 ) -> JavaProviders:
+    effective_kotlin_compiler_plugins = ctx.attrs.kotlin_compiler_plugins if kotlin_compiler_plugins == None else kotlin_compiler_plugins
     srcs = ctx.attrs.srcs
     has_kotlin_srcs = lazy.is_any(lambda src: src.extension == ".kt" or src.basename.endswith(".src.zip") or src.basename.endswith("-sources.jar"), srcs)
     kotlin_toolchain = ctx.attrs._kotlin_toolchain[KotlinToolchainInfo]
@@ -461,7 +464,7 @@ def build_kotlin_library(
                 ksp_annotation_processor_properties,
                 additional_classpath_entries,
                 bootclasspath_for_kotlinc,
-                ctx.attrs.kotlin_compiler_plugins,
+                effective_kotlin_compiler_plugins,
                 target_level,
             )
             semanticdb_res = _semanticdb_plugin(ctx, kotlin_toolchain)
@@ -548,7 +551,7 @@ def build_kotlin_library(
                 "is_building_android_binary": ctx.attrs._is_building_android_binary,
                 "jar_postprocessor": ctx.attrs.jar_postprocessor[RunInfo] if hasattr(ctx.attrs, "jar_postprocessor") and ctx.attrs.jar_postprocessor else None,
                 "java_toolchain": ctx.attrs._java_toolchain[JavaToolchainInfo],
-                "kotlin_compiler_plugins": ctx.attrs.kotlin_compiler_plugins,
+                "kotlin_compiler_plugins": effective_kotlin_compiler_plugins,
                 "kotlin_toolchain": kotlin_toolchain,
                 "label": ctx.label,
                 "language_version": get_language_version(ctx),

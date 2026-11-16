@@ -161,6 +161,7 @@ def build_android_library(
     r_dot_java: JavaLibraryInfo | None = None,
     extra_sub_targets = {},
     validation_deps_outputs: [list[Artifact], None] = None,
+    kotlin_compiler_plugins = None,
 ) -> (JavaProviders, [AndroidLibraryIntellijInfo, None]):
     custom_jdk_info = get_custom_jdk_info(ctx)
     dummy_r_dot_java_info, android_library_intellij_info = _get_dummy_r_dot_java(ctx)
@@ -191,6 +192,7 @@ def build_android_library(
             extra_sub_targets = extra_sub_targets,
             validation_deps_outputs = validation_deps_outputs,
             extra_arguments = extra_arguments,
+            kotlin_compiler_plugins = kotlin_compiler_plugins,
         ), android_library_intellij_info
     else:
         return build_java_library(

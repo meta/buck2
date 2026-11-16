@@ -255,8 +255,8 @@ impl<'a> ClientCommandContext<'a> {
             Advice::Killall => settings.agent_interactive.killall_enabled(),
             Advice::Clean => settings.agent_interactive.clean_enabled(),
             Advice::NewIsolationDir => settings.agent_interactive.new_isolation_dir_enabled(),
-            // These policies need daemon configuration or resolved target rule types.
-            Advice::Build(_) | Advice::ConfigChange => {
+            // These policies need daemon configuration, parsed patterns, or resolved rule types.
+            Advice::Build(_) | Advice::ConfigChange | Advice::RecursivePatterns => {
                 return Ok(AgentAdvice::not_applicable(advice));
             }
         };

@@ -77,6 +77,7 @@ pub enum Advice {
     Build(BuildLanguage),
     Killall,
     Clean,
+    RecursivePatterns,
     NewIsolationDir,
     /// The command drops config args that the daemon's state was built with, which changes its
     /// buckconfig without asking for different values. Evaluated in the daemon, which is the only
@@ -125,6 +126,7 @@ impl Advice {
             Self::Build(_) => "build",
             Self::Killall => "killall",
             Self::Clean => "clean",
+            Self::RecursivePatterns => "recursive_patterns",
             Self::NewIsolationDir => "new_isolation_dir",
             Self::ConfigChange => "config_change",
         }
@@ -158,6 +160,18 @@ impl Advice {
     pub fn message(self) -> &'static str {
         match self {
             Self::Build(language) => language.message(),
+            Self::RecursivePatterns => {
+                "This recursive build/test was blocked before expanding target patterns.\n\n\
+                 Recursive patterns select every target under a directory. Their dependencies and \
+                 configurations can cause excessive analysis, build work, and memory use. \
+                 Prefer explicit targets relevant to the change, or a single package \
+                 (`//path/to/package:`). Use `buck2 targets <pattern>` to inspect candidates \
+                 when needed.\n\n\
+                 If validating the entire recursive scope is necessary, retry with \
+                 `--agent-context advice_ack=recursive_patterns` and \
+                 `--agent-context reason=\"<why the entire recursive scope is needed>\"`. \
+                 This guard does not require user confirmation."
+            }
             Self::Clean => {
                 "No build state or outputs have been removed.\n\n\
                  `buck2 clean` stops the daemon and removes reusable build state and outputs, \
@@ -216,6 +230,12 @@ impl Decision {
             Self::Block(Advice::Killall) => Some("agent_interactive.killall.block"),
             Self::Acknowledged(Advice::Clean) => Some("agent_interactive.clean.ack"),
             Self::Block(Advice::Clean) => Some("agent_interactive.clean.block"),
+            Self::Acknowledged(Advice::RecursivePatterns) => {
+                Some("agent_interactive.recursive_patterns.ack")
+            }
+            Self::Block(Advice::RecursivePatterns) => {
+                Some("agent_interactive.recursive_patterns.block")
+            }
             Self::Acknowledged(Advice::NewIsolationDir) => {
                 Some("agent_interactive.new_isolation_dir.ack")
             }
@@ -232,11 +252,12 @@ impl Decision {
 mod tests {
     use super::*;
 
-    const ALL_ADVICE: [Advice; 6] = [
+    const ALL_ADVICE: [Advice; 7] = [
         Advice::Build(BuildLanguage::Rust),
         Advice::Build(BuildLanguage::Cxx),
         Advice::Killall,
         Advice::Clean,
+        Advice::RecursivePatterns,
         Advice::NewIsolationDir,
         Advice::ConfigChange,
     ];

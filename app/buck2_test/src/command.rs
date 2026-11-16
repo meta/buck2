@@ -94,6 +94,7 @@ use buck2_node::load_patterns::MissingTargetBehavior;
 use buck2_node::nodes::configured_frontend::ConfiguredTargetNodeCalculation;
 use buck2_node::nodes::frontend::TargetGraphCalculation;
 use buck2_node::target_calculation::ConfiguredTargetCalculation;
+use buck2_server_ctx::agent_recursive_patterns::check_recursive_patterns;
 use buck2_server_ctx::commands::send_build_phase_end;
 use buck2_server_ctx::commands::send_target_cfg_event;
 use buck2_server_ctx::ctx::ServerCommandContextTrait;
@@ -463,6 +464,11 @@ async fn test(
         parse_patterns_with_modifiers_from_cli_args(&mut ctx.ctx(), &request.target_patterns, cwd)
             .await?;
     server_ctx.log_target_pattern_with_modifiers(&parsed_patterns_with_modifiers);
+    check_recursive_patterns(
+        &server_ctx.buck_settings().invocation,
+        request.context.as_ref(),
+        &parsed_patterns_with_modifiers,
+    )?;
 
     let has_pattern_modifiers = parsed_patterns_with_modifiers
         .iter()

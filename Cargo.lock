@@ -3426,6 +3426,7 @@ version = "0.1.0"
 dependencies = [
  "allocative",
  "async-trait",
+ "buck2_agent_interactive",
  "buck2_build_signals",
  "buck2_certs",
  "buck2_cli_proto",

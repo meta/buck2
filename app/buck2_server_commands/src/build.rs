@@ -72,6 +72,7 @@ use buck2_node::configured_universe::CqueryUniverse;
 use buck2_node::load_patterns::MissingTargetBehavior;
 use buck2_node::nodes::frontend::TargetGraphCalculation;
 use buck2_node::target_calculation::ConfiguredTargetCalculation;
+use buck2_server_ctx::agent_recursive_patterns::check_recursive_patterns;
 use buck2_server_ctx::commands::send_build_phase_end;
 use buck2_server_ctx::commands::send_target_cfg_event;
 use buck2_server_ctx::ctx::ServerCommandContextTrait;
@@ -198,6 +199,11 @@ async fn build(
         .any(|p| p.modifiers.as_slice().is_some());
 
     server_ctx.log_target_pattern_with_modifiers(&parsed_patterns_with_modifiers);
+    check_recursive_patterns(
+        &server_ctx.buck_settings().invocation,
+        request.context.as_ref(),
+        &parsed_patterns_with_modifiers,
+    )?;
 
     let resolved_pattern: ResolvedPattern<ConfiguredProvidersPatternExtra> =
         ResolveTargetPatterns::resolve_with_modifiers(

@@ -6957,7 +6957,6 @@ public class StubJarTest {
 
   @Test
   public void bridgeMethodInStubsCanBeCompiledAgainst() throws IOException {
-    if (notYetImplementedForMissingClasspath()) return;
 
     tester
         .setSourceFile(
@@ -7535,7 +7534,6 @@ public class StubJarTest {
 
   @Test
   public void shouldIncludeGenericBridgeMethods() throws IOException {
-    if (notYetImplementedForMissingClasspath()) return;
     tester
         .setSourceFile(
             "A.java",
@@ -7822,7 +7820,6 @@ public class StubJarTest {
    */
   @Test
   public void shouldIncludeNonPublicBaseClassBridgeMethods() throws IOException {
-    if (notYetImplementedForMissingClasspath()) return;
     tester
         .setSourceFile(
             "B.java",
@@ -7892,7 +7889,6 @@ public class StubJarTest {
 
   @Test
   public void shouldNotIncludeNonPublicBaseClassBridgeMethodsWhenManuallyDone() throws IOException {
-    if (notYetImplementedForMissingClasspath()) return;
     tester
         .setSourceFile(
             "B.java",
@@ -7946,6 +7942,519 @@ public class StubJarTest {
             "  public foo()V",
             "}")
         .createAndCheckStubJar();
+  }
+
+  @Test
+  public void shouldIncludeAccessBridgeForGenericMethodOfNonPublicGenericBase() throws IOException {
+    tester
+        .setSourceFile(
+            "B.java",
+            "package com.example.buck;",
+            "abstract class B<T> {",
+            "  public T value() { return null; }",
+            "}")
+        .compileFullJar()
+        .addFullJarToClasspathAlways()
+        .setSourceFile(
+            "A.java", "package com.example.buck;", "public class A extends B<String> {", "}")
+        .addExpectedFullAbi(
+            "com/example/buck/A",
+            "JDK8:// class version 52.0 (52)",
+            "JDK11:// class version 55.0 (55)",
+            "// access flags 0x21",
+            "// signature Lcom/example/buck/B<Ljava/lang/String;>;",
+            "// declaration: com/example/buck/A extends com.example.buck.B<java.lang.String>",
+            "public class com/example/buck/A extends com/example/buck/B {",
+            "",
+            "",
+            "  // access flags 0x1",
+            "  public <init>()V",
+            "",
+            "  // access flags 0x1041",
+            "  public synthetic bridge value()Ljava/lang/Object;",
+            "}")
+        .addExpectedStub(
+            "com/example/buck/A",
+            "JDK8:// class version 52.0 (52)",
+            "JDK11:// class version 55.0 (55)",
+            "// access flags 0x21",
+            "// signature Lcom/example/buck/B<Ljava/lang/String;>;",
+            "// declaration: com/example/buck/A extends com.example.buck.B<java.lang.String>",
+            "public class com/example/buck/A extends com/example/buck/B {",
+            "",
+            "",
+            "  // access flags 0x1",
+            "  public <init>()V",
+            "",
+            "  // access flags 0x1041",
+            "  public synthetic bridge value()Ljava/lang/Object;",
+            "}")
+        .createAndCheckStubJar();
+  }
+
+  @Test
+  public void shouldIncludeAccessBridgesThroughNonPublicIntermediateClass() throws IOException {
+    tester
+        .setSourceFile(
+            "B.java",
+            "package com.example.buck;",
+            "abstract class B {",
+            "  public void foo() throws java.io.IOException {}",
+            "  public <X> X id(X x) { return x; }",
+            "  protected void bar() {}",
+            "  void baz() {}",
+            "  public static void qux() {}",
+            "}")
+        .compileFullJar()
+        .addFullJarToClasspathAlways()
+        .setSourceFile(
+            "Mid.java", "package com.example.buck;", "abstract class Mid extends B {", "}")
+        .compileFullJar()
+        .addFullJarToClasspathAlways()
+        .setSourceFile(
+            "A.java",
+            "package com.example.buck;",
+            "public class A extends Mid {",
+            "  @Override",
+            "  public <X> X id(X x) { return x; }",
+            "}")
+        .addExpectedFullAbi(
+            "com/example/buck/A",
+            "JDK8:// class version 52.0 (52)",
+            "JDK11:// class version 55.0 (55)",
+            "// access flags 0x21",
+            "public class com/example/buck/A extends com/example/buck/Mid {",
+            "",
+            "",
+            "  // access flags 0x1",
+            "  public <init>()V",
+            "",
+            "  // access flags 0x1",
+            "  // signature <X:Ljava/lang/Object;>(TX;)TX;",
+            "  // declaration: X id<X>(X)",
+            "  public id(Ljava/lang/Object;)Ljava/lang/Object;",
+            "",
+            "  // access flags 0x1041",
+            "  public synthetic bridge foo()V throws java/io/IOException",
+            "}")
+        .addExpectedStub(
+            "com/example/buck/A",
+            "JDK8:// class version 52.0 (52)",
+            "JDK11:// class version 55.0 (55)",
+            "// access flags 0x21",
+            "public class com/example/buck/A extends com/example/buck/Mid {",
+            "",
+            "",
+            "  // access flags 0x1",
+            "  public <init>()V",
+            "",
+            "  // access flags 0x1",
+            "  // signature <X:Ljava/lang/Object;>(TX;)TX;",
+            "  // declaration: X id<X>(X)",
+            "  public id(Ljava/lang/Object;)Ljava/lang/Object;",
+            "",
+            "  // access flags 0x1041",
+            "  public synthetic bridge foo()V throws java/io/IOException",
+            "}")
+        .createAndCheckStubJar();
+  }
+
+  @Test
+  public void shouldNotIncludeAccessBridgesInNonPublicSubclass() throws IOException {
+    tester
+        .setSourceFile(
+            "B.java", "package com.example.buck;", "class B {", "  public void foo() {}", "}")
+        .compileFullJar()
+        .addFullJarToClasspathAlways()
+        .setSourceFile("A.java", "package com.example.buck;", "class A extends B {", "}")
+        .addExpectedFullAbi(
+            "com/example/buck/A",
+            "JDK8:// class version 52.0 (52)",
+            "JDK11:// class version 55.0 (55)",
+            "// access flags 0x20",
+            "class com/example/buck/A extends com/example/buck/B {",
+            "",
+            "",
+            "  // access flags 0x0",
+            "  <init>()V",
+            "}")
+        .addExpectedStub(
+            "com/example/buck/A",
+            "JDK8:// class version 52.0 (52)",
+            "JDK11:// class version 55.0 (55)",
+            "// access flags 0x20",
+            "class com/example/buck/A extends com/example/buck/B {",
+            "",
+            "",
+            "  // access flags 0x0",
+            "  <init>()V",
+            "}")
+        .createAndCheckStubJar();
+  }
+
+  @Test
+  public void shouldIncludeGenericAndCovariantBridgesWhenSupertypeIsRequired() throws IOException {
+    tester
+        .setSourceFile(
+            "Super.java",
+            "package com.example.buck;",
+            "public abstract class Super<T> {",
+            "  public abstract T get();",
+            "  protected abstract void put(T t);",
+            "  public Object make() { return null; }",
+            "}")
+        .compileFullJar()
+        .addFullJarToClasspathAlways()
+        .setSourceFile(
+            "A.java",
+            "package com.example.buck;",
+            "public class A extends Super<String> {",
+            "  @Override",
+            "  public String get() { return null; }",
+            "  @Override",
+            "  protected void put(String s) {}",
+            "  @Override",
+            "  public String make() { return null; }",
+            "}")
+        .addExpectedFullAbi(
+            "com/example/buck/A",
+            "JDK8:// class version 52.0 (52)",
+            "JDK11:// class version 55.0 (55)",
+            "// access flags 0x21",
+            "// signature Lcom/example/buck/Super<Ljava/lang/String;>;",
+            "// declaration: com/example/buck/A extends com.example.buck.Super<java.lang.String>",
+            "public class com/example/buck/A extends com/example/buck/Super {",
+            "",
+            "",
+            "  // access flags 0x1",
+            "  public <init>()V",
+            "",
+            "  // access flags 0x1",
+            "  public get()Ljava/lang/String;",
+            "",
+            "  // access flags 0x4",
+            "  protected put(Ljava/lang/String;)V",
+            "",
+            "  // access flags 0x1",
+            "  public make()Ljava/lang/String;",
+            "",
+            "  // access flags 0x1041",
+            "  public synthetic bridge make()Ljava/lang/Object;",
+            "",
+            "  // access flags 0x1044",
+            "  protected synthetic bridge put(Ljava/lang/Object;)V",
+            "",
+            "  // access flags 0x1041",
+            "  public synthetic bridge get()Ljava/lang/Object;",
+            "}")
+        .addExpectedStub(
+            "com/example/buck/A",
+            "JDK8:// class version 52.0 (52)",
+            "JDK11:// class version 55.0 (55)",
+            "// access flags 0x21",
+            "// signature Lcom/example/buck/Super<Ljava/lang/String;>;",
+            "// declaration: com/example/buck/A extends com.example.buck.Super<java.lang.String>",
+            "public class com/example/buck/A extends com/example/buck/Super {",
+            "",
+            "",
+            "  // access flags 0x1",
+            "  public <init>()V",
+            "",
+            "  // access flags 0x1",
+            "  public get()Ljava/lang/String;",
+            "",
+            "  // access flags 0x4",
+            "  protected put(Ljava/lang/String;)V",
+            "",
+            "  // access flags 0x1",
+            "  public make()Ljava/lang/String;",
+            "",
+            "  // access flags 0x1041",
+            "  public synthetic bridge make()Ljava/lang/Object;",
+            "",
+            "  // access flags 0x1044",
+            "  protected synthetic bridge put(Ljava/lang/Object;)V",
+            "",
+            "  // access flags 0x1041",
+            "  public synthetic bridge get()Ljava/lang/Object;",
+            "}")
+        .createAndCheckStubJar();
+  }
+
+  @Test
+  public void shouldOmitBridgeWhoseParameterTypeIsMissing() throws IOException {
+    tester
+        .setSourceFile("Card.java", "package com.example.buck.dep;", "public class Card { }")
+        .compileFullJar()
+        .addFullJarToClasspath()
+        .setSourceFile(
+            "A.java",
+            "package com.example.buck;",
+            "import com.example.buck.dep.Card;",
+            "public class A implements SetsCard, SetsName {",
+            "  @Override",
+            "  public A setCard(Card card) { return this; }",
+            "  @Override",
+            "  public A setName(String name) { return this; }",
+            "}",
+            "interface SetsCard {",
+            "  SetsName setCard(Card card);",
+            "}",
+            "interface SetsName {",
+            "  SetsName setName(String name);",
+            "}")
+        .addExpectedFullAbi(
+            "com/example/buck/A",
+            "JDK8:// class version 52.0 (52)",
+            "JDK11:// class version 55.0 (55)",
+            "// access flags 0x21",
+            "public class com/example/buck/A implements com/example/buck/SetsCard"
+                + " com/example/buck/SetsName {",
+            "",
+            "",
+            "  // access flags 0x1",
+            "  public <init>()V",
+            "",
+            "  // access flags 0x1",
+            "  public setCard(Lcom/example/buck/dep/Card;)Lcom/example/buck/A;",
+            "",
+            "  // access flags 0x1",
+            "  public setName(Ljava/lang/String;)Lcom/example/buck/A;",
+            "",
+            "  // access flags 0x1041",
+            "  public synthetic bridge"
+                + " setCard(Lcom/example/buck/dep/Card;)Lcom/example/buck/SetsName;",
+            "",
+            "  // access flags 0x1041",
+            "  public synthetic bridge setName(Ljava/lang/String;)Lcom/example/buck/SetsName;",
+            "}")
+        .addExpectedStub("com/example/buck/SetsCard")
+        .addExpectedStub("com/example/buck/SetsName");
+    if (testingMode.equals(MODE_SOURCE_BASED_MISSING_DEPS)) {
+      // `Card` is not on the classpath, so the descriptor of the `setCard` bridge cannot be
+      // computed; the `setName` bridge is.
+      tester.addExpectedStub(
+          "com/example/buck/A",
+          "JDK8:// class version 52.0 (52)",
+          "JDK11:// class version 55.0 (55)",
+          "// access flags 0x21",
+          "public class com/example/buck/A implements com/example/buck/SetsCard"
+              + " com/example/buck/SetsName {",
+          "",
+          "",
+          "  // access flags 0x1",
+          "  public <init>()V",
+          "",
+          "  // access flags 0x1",
+          "  public setCard(Lcom/example/buck/dep/Card;)Lcom/example/buck/A;",
+          "",
+          "  // access flags 0x1",
+          "  public setName(Ljava/lang/String;)Lcom/example/buck/A;",
+          "",
+          "  // access flags 0x1041",
+          "  public synthetic bridge setName(Ljava/lang/String;)Lcom/example/buck/SetsName;",
+          "}");
+    } else {
+      tester.addExpectedStub(
+          "com/example/buck/A",
+          "JDK8:// class version 52.0 (52)",
+          "JDK11:// class version 55.0 (55)",
+          "// access flags 0x21",
+          "public class com/example/buck/A implements com/example/buck/SetsCard"
+              + " com/example/buck/SetsName {",
+          "",
+          "",
+          "  // access flags 0x1",
+          "  public <init>()V",
+          "",
+          "  // access flags 0x1",
+          "  public setCard(Lcom/example/buck/dep/Card;)Lcom/example/buck/A;",
+          "",
+          "  // access flags 0x1",
+          "  public setName(Ljava/lang/String;)Lcom/example/buck/A;",
+          "",
+          "  // access flags 0x1041",
+          "  public synthetic bridge"
+              + " setCard(Lcom/example/buck/dep/Card;)Lcom/example/buck/SetsName;",
+          "",
+          "  // access flags 0x1041",
+          "  public synthetic bridge setName(Ljava/lang/String;)Lcom/example/buck/SetsName;",
+          "}");
+    }
+    tester.createAndCheckStubJar();
+  }
+
+  @Test
+  public void shouldOmitAccessBridgeWhoseReturnTypeIsMissing() throws IOException {
+    tester
+        .setSourceFile("App.java", "package com.example.buck.dep;", "public class App { }")
+        .compileFullJar()
+        .addFullJarToClasspath()
+        .setSourceFile(
+            "A.java",
+            "package com.example.buck;",
+            "import com.example.buck.dep.App;",
+            "public class A extends Base {",
+            "}",
+            "class Base {",
+            "  public App getApp() { return null; }",
+            "  public String getName() { return null; }",
+            "}")
+        .addExpectedFullAbi(
+            "com/example/buck/A",
+            "JDK8:// class version 52.0 (52)",
+            "JDK11:// class version 55.0 (55)",
+            "// access flags 0x21",
+            "public class com/example/buck/A extends com/example/buck/Base {",
+            "",
+            "",
+            "  // access flags 0x1",
+            "  public <init>()V",
+            "",
+            "  // access flags 0x1041",
+            "  public synthetic bridge getName()Ljava/lang/String;",
+            "",
+            "  // access flags 0x1041",
+            "  public synthetic bridge getApp()Lcom/example/buck/dep/App;",
+            "}")
+        .addExpectedStub("com/example/buck/Base");
+    if (testingMode.equals(MODE_SOURCE_BASED_MISSING_DEPS)) {
+      // `App` is not on the classpath, so the descriptor of the `getApp` access bridge cannot be
+      // computed; the `getName` access bridge is.
+      tester.addExpectedStub(
+          "com/example/buck/A",
+          "JDK8:// class version 52.0 (52)",
+          "JDK11:// class version 55.0 (55)",
+          "// access flags 0x21",
+          "public class com/example/buck/A extends com/example/buck/Base {",
+          "",
+          "",
+          "  // access flags 0x1",
+          "  public <init>()V",
+          "",
+          "  // access flags 0x1041",
+          "  public synthetic bridge getName()Ljava/lang/String;",
+          "}");
+    } else {
+      tester.addExpectedStub(
+          "com/example/buck/A",
+          "JDK8:// class version 52.0 (52)",
+          "JDK11:// class version 55.0 (55)",
+          "// access flags 0x21",
+          "public class com/example/buck/A extends com/example/buck/Base {",
+          "",
+          "",
+          "  // access flags 0x1",
+          "  public <init>()V",
+          "",
+          "  // access flags 0x1041",
+          "  public synthetic bridge getName()Ljava/lang/String;",
+          "",
+          "  // access flags 0x1041",
+          "  public synthetic bridge getApp()Lcom/example/buck/dep/App;",
+          "}");
+    }
+    tester.createAndCheckStubJar();
+  }
+
+  @Test
+  public void shouldOmitBridgeWhoseThrownTypeIsMissing() throws IOException {
+    tester
+        .setSourceFile(
+            "Failure.java",
+            "package com.example.buck.dep;",
+            "public class Failure extends Exception { }")
+        .compileFullJar()
+        .addFullJarToClasspath()
+        .setSourceFile(
+            "A.java",
+            "package com.example.buck;",
+            "import com.example.buck.dep.Failure;",
+            "public class A implements Derivation {",
+            "  @Override",
+            "  public A update(byte[] data) throws Failure { return this; }",
+            "  @Override",
+            "  public A reset() { return this; }",
+            "}",
+            "interface Derivation {",
+            "  Derivation update(byte[] data) throws Failure;",
+            "  Derivation reset();",
+            "}")
+        .addExpectedFullAbi(
+            "com/example/buck/A",
+            "JDK8:// class version 52.0 (52)",
+            "JDK11:// class version 55.0 (55)",
+            "// access flags 0x21",
+            "public class com/example/buck/A implements com/example/buck/Derivation {",
+            "",
+            "",
+            "  // access flags 0x1",
+            "  public <init>()V",
+            "",
+            "  // access flags 0x1",
+            "  public update([B)Lcom/example/buck/A; throws com/example/buck/dep/Failure",
+            "",
+            "  // access flags 0x1",
+            "  public reset()Lcom/example/buck/A;",
+            "",
+            "  // access flags 0x1041",
+            "  public synthetic bridge reset()Lcom/example/buck/Derivation;",
+            "",
+            "  // access flags 0x1041",
+            "  public synthetic bridge update([B)Lcom/example/buck/Derivation; throws"
+                + " com/example/buck/dep/Failure",
+            "}")
+        .addExpectedStub("com/example/buck/Derivation");
+    if (testingMode.equals(MODE_SOURCE_BASED_MISSING_DEPS)) {
+      // `Failure` is not on the classpath, so the thrown types of the `update` bridge cannot be
+      // computed; the `reset` bridge is.
+      tester.addExpectedStub(
+          "com/example/buck/A",
+          "JDK8:// class version 52.0 (52)",
+          "JDK11:// class version 55.0 (55)",
+          "// access flags 0x21",
+          "public class com/example/buck/A implements com/example/buck/Derivation {",
+          "",
+          "",
+          "  // access flags 0x1",
+          "  public <init>()V",
+          "",
+          "  // access flags 0x1",
+          "  public update([B)Lcom/example/buck/A; throws com/example/buck/dep/Failure",
+          "",
+          "  // access flags 0x1",
+          "  public reset()Lcom/example/buck/A;",
+          "",
+          "  // access flags 0x1041",
+          "  public synthetic bridge reset()Lcom/example/buck/Derivation;",
+          "}");
+    } else {
+      tester.addExpectedStub(
+          "com/example/buck/A",
+          "JDK8:// class version 52.0 (52)",
+          "JDK11:// class version 55.0 (55)",
+          "// access flags 0x21",
+          "public class com/example/buck/A implements com/example/buck/Derivation {",
+          "",
+          "",
+          "  // access flags 0x1",
+          "  public <init>()V",
+          "",
+          "  // access flags 0x1",
+          "  public update([B)Lcom/example/buck/A; throws com/example/buck/dep/Failure",
+          "",
+          "  // access flags 0x1",
+          "  public reset()Lcom/example/buck/A;",
+          "",
+          "  // access flags 0x1041",
+          "  public synthetic bridge reset()Lcom/example/buck/Derivation;",
+          "",
+          "  // access flags 0x1041",
+          "  public synthetic bridge update([B)Lcom/example/buck/Derivation; throws"
+              + " com/example/buck/dep/Failure",
+          "}");
+    }
+    tester.createAndCheckStubJar();
   }
 
   @Test

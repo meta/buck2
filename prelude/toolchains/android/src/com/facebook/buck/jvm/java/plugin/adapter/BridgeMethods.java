@@ -141,11 +141,13 @@ public class BridgeMethods {
                 && !types.isSubtype(
                     types.erasure(vmResolvedMethodOwner.asType()),
                     types.erasure(languageResolvedMethod.getEnclosingElement().asType())))) {
+          // Mirrors javac's TransTypes.addBridgeIfNeeded: an override bridge only when the VM
+          // would not already resolve to the language-level implementation; otherwise fall
+          // through to the access-bridge case.
           if (languageResolvedMethod != null
+              && languageResolvedMethod.getEnclosingElement() != vmResolvedMethodOwner
               && isBridgeNeeded(supertypeMethod, languageResolvedMethod, subclass)) {
-            if (languageResolvedMethod.getEnclosingElement() != vmResolvedMethodOwner) {
-              bridgesNeeded.add(new BridgeMethod(languageResolvedMethod, supertypeMethod));
-            }
+            bridgesNeeded.add(new BridgeMethod(languageResolvedMethod, supertypeMethod));
             // There's a comment in the compiler source about there being a design flaw in
             // Reflection
             // that requires bridge methods to be created if a public class inherits a public method

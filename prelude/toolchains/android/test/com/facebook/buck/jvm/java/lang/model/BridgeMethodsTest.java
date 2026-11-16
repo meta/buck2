@@ -708,13 +708,13 @@ public class BridgeMethodsTest extends CompilerTreeApiTest {
     assertNoNeededBridges(subclass);
   }
 
-  @Test
   /**
-   * This might be a bug in javac, but if it creates a hypothetical bridge (see {@link
-   * #testNoHypotheticalBridges()}) it will not go down the accessibility bridge path.
+   * javac still emits the accessibility bridge when the erasure bridge would only be hypothetical
+   * (see {@link #testNoHypotheticalBridges()}): {@code Subclass} gets {@code public synthetic
+   * bridge method()Ljava/lang/Object;}.
    */
-  public void testNoHypotheticalBridgesEvenIfAccessibilityBridgeWouldOtherwiseApply()
-      throws IOException {
+  @Test
+  public void testFindsAccessibilityBridgeEvenIfErasureBridgeIsHypothetical() throws IOException {
     compile(
         ImmutableMap.of(
             "Super.java",
@@ -730,7 +730,10 @@ public class BridgeMethodsTest extends CompilerTreeApiTest {
                     "package com.example.buck;",
                     "public class Subclass extends Super<String> { }")));
     TypeElement subclass = elements.getTypeElement("com.example.buck.Subclass");
-    assertNoNeededBridges(subclass);
+    TypeElement superclass = elements.getTypeElement("com.example.buck.Super");
+    assertNeededBridges(
+        subclass,
+        new BridgeMethod(getMethod(superclass, "method"), getMethod(superclass, "method")));
   }
 
   private void assertNoNeededBridges(TypeElement subclass) {

@@ -1186,22 +1186,41 @@ pub fn success_stderr(
         return Ok(None);
     }
 
-    let stderr = match action.commands.last() {
-        Some(command) => {
-            &command
-                .details
-                .as_ref()
-                .internal_error("CommandExecution did not include a `command`")?
-                .cmd_stderr
-        }
-        None => return Ok(None),
-    };
+    last_command_stream(action, |details| &details.cmd_stderr)
+}
 
-    if stderr.is_empty() {
+/// The stdout of a successful action, if the user asked for it with `-v stdout`. It is only
+/// present in the event if the daemon was asked to keep it (which `-v stdout` does).
+pub fn success_stdout(
+    action: &buck2_data::ActionExecutionEnd,
+    verbosity: Verbosity,
+) -> buck2_error::Result<Option<&str>> {
+    if !verbosity.print_success_stdout() {
         return Ok(None);
     }
 
-    Ok(Some(stderr))
+    last_command_stream(action, |details| &details.cmd_stdout)
+}
+
+fn last_command_stream(
+    action: &buck2_data::ActionExecutionEnd,
+    stream: impl FnOnce(&buck2_data::CommandExecutionDetails) -> &String,
+) -> buck2_error::Result<Option<&str>> {
+    let output = match action.commands.last() {
+        Some(command) => stream(
+            command
+                .details
+                .as_ref()
+                .internal_error("CommandExecution did not include a `command`")?,
+        ),
+        None => return Ok(None),
+    };
+
+    if output.is_empty() {
+        return Ok(None);
+    }
+
+    Ok(Some(output))
 }
 
 pub fn sanitize_output_colors(stderr: &[u8]) -> String {
@@ -1509,6 +1528,53 @@ mod tests {
                 },
             )),
         })
+    }
+
+    fn action_end_with_output(stdout: &str, stderr: &str) -> buck2_data::ActionExecutionEnd {
+        buck2_data::ActionExecutionEnd {
+            commands: vec![buck2_data::CommandExecution {
+                details: Some(buck2_data::CommandExecutionDetails {
+                    cmd_stdout: stdout.to_owned(),
+                    cmd_stderr: stderr.to_owned(),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            }],
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn test_success_stdout_requires_stdout_verbosity() -> buck2_error::Result<()> {
+        let action = action_end_with_output("out", "err");
+
+        let verbosity = Verbosity::try_from_cli("1,stdout")?;
+        assert_eq!(success_stdout(&action, verbosity)?, Some("out"));
+        assert_eq!(success_stderr(&action, verbosity)?, None);
+
+        let verbosity = Verbosity::try_from_cli("4")?;
+        assert_eq!(success_stdout(&action, verbosity)?, None);
+        assert_eq!(success_stderr(&action, verbosity)?, Some("err"));
+        Ok(())
+    }
+
+    #[test]
+    fn test_success_stdout_empty_or_missing() -> buck2_error::Result<()> {
+        let verbosity = Verbosity::try_from_cli("stdout")?;
+        let action = action_end_with_output("", "err");
+        assert_eq!(success_stdout(&action, verbosity)?, None);
+        assert_eq!(
+            success_stdout(&buck2_data::ActionExecutionEnd::default(), verbosity)?,
+            None
+        );
+
+        // `always_print_stderr` on an action does not print its stdout.
+        let mut action = action_end_with_output("out", "err");
+        action.always_print_stderr = true;
+        let verbosity = Verbosity::default();
+        assert_eq!(success_stdout(&action, verbosity)?, None);
+        assert_eq!(success_stderr(&action, verbosity)?, Some("err"));
+        Ok(())
     }
 
     fn test_result(name: &str, status: buck2_data::TestStatus) -> buck2_data::TestResult {

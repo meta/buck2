@@ -11,6 +11,7 @@
 use buck2_cli_proto::common_build_options::ExecutionStrategy;
 use buck2_core::buck2_env_name;
 use buck2_error::conversion::clap::buck_error_clap_parser;
+use buck2_event_observer::verbosity::Verbosity;
 use clap::ArgGroup;
 use clap::builder::FalseyValueParser;
 
@@ -165,6 +166,15 @@ pub struct CommonBuildOptions {
     #[clap(long)]
     upload_all_actions: bool,
 
+    /// Keep the stdout of successful actions in the event log, so that it can be read with
+    /// `buck2 log show`. By default, only the stdout of failed actions is kept. Only actions that
+    /// execute during this command are affected.
+    ///
+    /// To also print it on the console, use `-v stdout` (e.g. `-v 1,stdout`), which implies
+    /// this flag.
+    #[clap(long)]
+    keep_action_stdout: bool,
+
     /// If Buck hits an error, do as little work as possible before exiting.
     ///
     /// To illustrate the effect of this flag, consider an invocation of `build :foo :bar`. The
@@ -216,7 +226,9 @@ impl CommonBuildOptions {
         }
     }
 
-    pub fn to_proto(&self) -> buck2_cli_proto::CommonBuildOptions {
+    /// `verbosity` is the console verbosity: asking the console to print the stdout of successful
+    /// actions (`-v stdout`) requires the daemon to keep it.
+    pub fn to_proto(&self, verbosity: Verbosity) -> buck2_cli_proto::CommonBuildOptions {
         let (unstable_print_build_report, unstable_build_report_filename) = self.build_report();
         let unstable_streaming_build_report_filename =
             self.streaming_build_report.clone().unwrap_or_default();
@@ -268,6 +280,7 @@ impl CommonBuildOptions {
             unstable_build_report_filename,
             eager_dep_files: self.eager_dep_files,
             upload_all_actions: self.upload_all_actions,
+            keep_action_stdout: self.keep_action_stdout || verbosity.print_success_stdout(),
             skip_cache_read: self.no_remote_cache,
             skip_cache_write: self.no_remote_cache && !self.write_to_cache_anyway,
             fail_fast: self.fail_fast,

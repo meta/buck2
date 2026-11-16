@@ -595,16 +595,23 @@ async fn test_command_details_omission() {
         },
     };
 
-    let proto = command_details(&report, false).await;
+    let proto = command_details(&report, false, false).await;
     let command_kind = proto.command_kind.unwrap();
     assert_matches!(command_kind.command, Some(Command::LocalCommand(..)));
     assert_eq!(&proto.cmd_stdout, "stdout");
     assert_eq!(&proto.cmd_stderr, "stderr");
 
-    let proto = command_details(&report, true).await;
+    let proto = command_details(&report, true, false).await;
     let command_kind = proto.command_kind.unwrap();
     assert_matches!(command_kind.command, Some(Command::OmittedLocalCommand(..)));
     assert_eq!(&proto.cmd_stdout, "");
+    assert_eq!(&proto.cmd_stderr, "stderr");
+
+    // Asking to keep stdout keeps it for a successful command, but still omits the other details.
+    let proto = command_details(&report, true, true).await;
+    let command_kind = proto.command_kind.unwrap();
+    assert_matches!(command_kind.command, Some(Command::OmittedLocalCommand(..)));
+    assert_eq!(&proto.cmd_stdout, "stdout");
     assert_eq!(&proto.cmd_stderr, "stderr");
 
     report.status = CommandExecutionStatus::Failure {
@@ -615,7 +622,13 @@ async fn test_command_details_omission() {
         },
         missing_materialized_inputs: false,
     };
-    let proto = command_details(&report, true).await;
+    let proto = command_details(&report, true, false).await;
+    let command_kind = proto.command_kind.unwrap();
+    assert_matches!(command_kind.command, Some(Command::LocalCommand(..)));
+    assert_eq!(&proto.cmd_stdout, "stdout");
+    assert_eq!(&proto.cmd_stderr, "stderr");
+
+    let proto = command_details(&report, true, true).await;
     let command_kind = proto.command_kind.unwrap();
     assert_matches!(command_kind.command, Some(Command::LocalCommand(..)));
     assert_eq!(&proto.cmd_stdout, "stdout");

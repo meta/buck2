@@ -557,39 +557,50 @@ where
             TargetDisplayOptions::for_log(),
         )?;
 
+        let stdout = display::success_stdout(action, self.verbosity)?;
         let stderr = display::success_stderr(action, self.verbosity)?;
 
-        if self.verbosity.print_all_actions() || stderr.is_some() {
+        if self.verbosity.print_all_actions() || stdout.is_some() || stderr.is_some() {
             let complete = self.observer().spans().roots_completed();
             let incomplete = self.observer().spans().roots_ongoing();
             echo!("{} / {}: {}", complete, complete + incomplete, action_id)?;
+            if let Some(stdout) = stdout {
+                self.echo_success_output("stdout", stdout)?;
+            }
             if let Some(stderr) = stderr {
-                match self.output_limit.emit(stderr.len()) {
-                    EmitResult::Emit => {
-                        // TODO(nmj): Factor out behavior here so that handling ttymode isn't ad hoc.  i.e. write a method that formats text based on tty mode
-                        match self.tty_mode {
-                            TtyMode::Enabled => {
-                                // Add the extra control character so that users' stderr messages can't
-                                // mess up the terminal
-                                echo!("stderr:{}\x1b[0m", stderr)?;
-                            }
-                            TtyMode::Disabled => {
-                                echo!(
-                                    "stderr:\n{}",
-                                    display::sanitize_output_colors(stderr.as_bytes())
-                                )?;
-                            }
-                        }
-                    }
-                    EmitResult::Exceeded(msg) => {
-                        echo!("{}", msg)?;
-                    }
-                    EmitResult::Skipped => {}
-                }
+                self.echo_success_output("stderr", stderr)?;
             }
             self.notify_printed();
         }
 
+        Ok(())
+    }
+
+    /// Print one output stream (`stdout` or `stderr`) of a successful action.
+    fn echo_success_output(&mut self, stream_name: &str, output: &str) -> buck2_error::Result<()> {
+        match self.output_limit.emit(output.len()) {
+            EmitResult::Emit => {
+                // TODO(nmj): Factor out behavior here so that handling ttymode isn't ad hoc.  i.e. write a method that formats text based on tty mode
+                match self.tty_mode {
+                    TtyMode::Enabled => {
+                        // Add the extra control character so that users' output can't
+                        // mess up the terminal
+                        echo!("{}:{}\x1b[0m", stream_name, output)?;
+                    }
+                    TtyMode::Disabled => {
+                        echo!(
+                            "{}:\n{}",
+                            stream_name,
+                            display::sanitize_output_colors(output.as_bytes())
+                        )?;
+                    }
+                }
+            }
+            EmitResult::Exceeded(msg) => {
+                echo!("{}", msg)?;
+            }
+            EmitResult::Skipped => {}
+        }
         Ok(())
     }
 

@@ -87,7 +87,13 @@ data class DiscardedInitializer(
     val isConst: Boolean = false,
     val consumerVisible: Boolean = true,
     val unresolvedSymbols: List<String> = emptyList(),
+    val position: SourcePosition? = null,
 )
+
+/** A 1-based source position, for diagnostics that point at a declaration. */
+data class SourcePosition(val path: String, val line: Int, val column: Int) {
+  override fun toString(): String = "$path:$line:$column"
+}
 
 /**
  * A consumer-visible member whose signature did not resolve, so the emitted descriptor carries
@@ -156,8 +162,16 @@ class AbiGenRepairLog {
     )
   }
 
-  fun recordReplacedFieldInitializer(owner: String, detail: String) {
-    replacedFieldInitializers.add(DiscardedInitializer(owner, detail))
+  fun recordReplacedFieldInitializer(
+      owner: String,
+      detail: String,
+      isConst: Boolean = false,
+      consumerVisible: Boolean = true,
+      position: SourcePosition? = null,
+  ) {
+    replacedFieldInitializers.add(
+        DiscardedInitializer(owner, detail, isConst, consumerVisible, position = position),
+    )
   }
 
   fun recordStrippedSupertype(owner: String, detail: String) {

@@ -22,6 +22,7 @@ import com.facebook.kotlin.compilercompat.packageNameOrNullCompat
 import java.io.File
 import java.util.jar.JarFile
 import org.jetbrains.kotlin.backend.common.extensions.IrGenerationExtension
+import org.jetbrains.kotlin.cli.common.messages.CompilerMessageLocation
 import org.jetbrains.kotlin.cli.common.messages.CompilerMessageSeverity
 import org.jetbrains.kotlin.cli.common.messages.MessageCollector
 import org.jetbrains.kotlin.descriptors.ClassKind
@@ -1528,6 +1529,37 @@ internal class ValidationStage(private val repairLog: AbiGenRepairLog) : AbiGenS
               "consumer that depends on it. " +
               "KOSABI_MISSING_CONST_DEP const=`${cleared.owner}` " +
               "symbols=`${symbols.joinToString("|")}` fix=`ADD_SOURCE_ONLY_ABI_DEP`",
+      )
+    }
+
+    // Assertion 2b (unconditional, same escape hatch as Assertion 2): no consumer-visible const
+    // val had its initializer replaced or discarded by the IR stripper. The field then carries a
+    // placeholder ConstantValue (the type's default) or none at all, so consumers inline a wrong
+    // value or fail in their own compile. A const whose FIR initializer was cleared is already
+    // reported above and is not reported twice.
+    val clearedConsts =
+        repairLog.clearedPropertyInitializers
+            .filter { it.isConst }
+            .mapTo(HashSet()) { it.owner.replace('/', '.') }
+    for (replaced in repairLog.replacedFieldInitializers) {
+      if (!replaced.isConst) continue
+      if (!replaced.consumerVisible) continue
+      if (replaced.owner.replace('/', '.') in clearedConsts) continue
+      val position = replaced.position
+      messageCollector.report(
+          if (policy == AbiRepairPolicy.WARN) CompilerMessageSeverity.WARNING
+          else CompilerMessageSeverity.ERROR,
+          "Kosabi ABI validation: `${replaced.owner}` is a const val whose initializer " +
+              "source-only ABI generation could not evaluate: ${replaced.detail}. Its " +
+              "ConstantValue attribute would not be the real constant, so consumers that " +
+              "constant-fold it inline a wrong value or fail during their own compile. To fix, " +
+              "spell the constant's value (or its type) explicitly in the initializer, or, when " +
+              "the initializer reads constants of another target, add that target to THIS " +
+              "target's `source_only_abi_deps`. " +
+              "KOSABI_REPLACED_CONST_INITIALIZER const=`${replaced.owner}` " +
+              "location=`${position ?: "unknown"}` " +
+              "fix=`SPELL_CONSTANT_EXPLICITLY|ADD_SOURCE_ONLY_ABI_DEP`",
+          position?.let { CompilerMessageLocation.create(it.path, it.line, it.column, null) },
       )
     }
 

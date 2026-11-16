@@ -461,10 +461,10 @@ internal class NonAbiDeclarationsStrippingIrVisitor(
         if (defaultExpressionBody != null) {
           declaration.initializer = defaultExpressionBody
           // For a non-const field this only affects the initializer, which is not part of the
-          // ABI. For a const val it rewrites the ConstantValue attribute consumers inline.
-          val ownerPrefix = (declaration.parent as? IrClass)?.kotlinFqName?.asString()?.plus(".")
+          // ABI. For a const val it rewrites the ConstantValue attribute consumers inline, which
+          // ValidationStage rejects.
           repairLog.recordReplacedFieldInitializer(
-              (ownerPrefix ?: "") + declaration.name.asString(),
+              declaration,
               "initializer contained a call that source-only ABI cannot evaluate; " +
                   "replaced with the default value for ${declaration.type.classFqName?.asString()}",
           )

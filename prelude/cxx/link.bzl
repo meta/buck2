@@ -232,7 +232,7 @@ def cxx_link_into(
 
     if is_incremental_link:
         ilk_filename = paths.replace_extension(output.short_path, ".ilk")
-        ilk_artifact = ctx.actions.declare_output(ilk_filename, has_content_based_path = False)
+        ilk_artifact = ctx.actions.declare_output(ilk_filename, has_content_based_path = output_has_content_based_path)
     else:
         ilk_artifact = None
 
@@ -346,6 +346,7 @@ def cxx_link_into(
             links_with_extra_args,
             output_short_path = output.short_path,
             link_ordering = opts.link_ordering,
+            has_content_based_path = output_has_content_based_path,
         )
         all_link_args.add(link_args_output.link_args)
 

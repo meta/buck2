@@ -31,13 +31,18 @@ def arg_parse() -> Args:
     return Args(**vars(parser.parse_args()))
 
 
+def relative_interim_cwd(original_cwd: Path, interim_cwd: Path) -> Path:
+    if original_cwd.is_relative_to(interim_cwd):
+        return Path(os.path.relpath(interim_cwd, original_cwd))
+    return interim_cwd
+
+
 def main():
     args = arg_parse()
 
     original_cwd = args.cwd.resolve()
     interim_cwd = Path.cwd().resolve()
-    if original_cwd.is_relative_to(interim_cwd):
-        interim_cwd = interim_cwd.relative_to(original_cwd, walk_up=True)
+    interim_cwd = relative_interim_cwd(original_cwd, interim_cwd)
 
     placeholder = "\\${..}\\" if os.name == "nt" else "${..}/"
     cc = [arg.replace(placeholder, f"{interim_cwd}{os.sep}") for arg in args.cc]

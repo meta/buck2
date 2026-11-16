@@ -69,8 +69,8 @@ impl DaemonRouting {
         }
     }
 
-    /// Shared daemons run on Linux, under either materializer: which one is part of the daemon's
-    /// startup configuration, and so of its compatibility key.
+    /// Shared daemons run on Linux. They run the disk-state materializer, whatever the
+    /// materializer rollout says: the daemon decides that from the routing in its startup options.
     fn host_supports_sharing() -> bool {
         cfg!(target_os = "linux")
     }
@@ -122,9 +122,18 @@ mod tests {
             routing("[buck2]\nshare_daemon = hostname:1.0").unwrap(),
             expected
         );
-        // The materializer selects the daemon, not the routing.
+        // The materializer rollout does not select the routing; a shared daemon runs the
+        // disk-state materializer either way.
         assert_eq!(
             routing("[buck2]\nshare_daemon = true\nmaterializer_v2_version = 0").unwrap(),
+            expected
+        );
+        assert_eq!(
+            routing(&format!(
+                "[buck2]\nshare_daemon = true\nmaterializer_v2_version = {}",
+                u32::MAX
+            ))
+            .unwrap(),
             expected
         );
     }

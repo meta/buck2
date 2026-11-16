@@ -2305,17 +2305,13 @@ async fn test_checkout_buckconfig_local_opts_out_of_external_sharing(
     Ok(())
 }
 
-/// Under the disk-state materializer the stash is the daemon's, not the first tenant's: it takes
+/// A shared daemon's stash is the daemon's, not the first tenant's: it takes
 /// the first tenant's outputs under the daemon's state directory, the first tenant's `clean`
 /// leaves it in place for the tenants that remain, and it goes with the daemon. (These checkouts
 /// crawl the filesystem, so their engine shares no baseline and the second tenant computes its
 /// own outputs rather than being served the first's; serving out of the stash is the
 /// materializer suites' to cover.)
-#[buck_test(
-    data_dir = "test_daemon_data",
-    skip_for_os = ["windows", "darwin"],
-    skip_for_materializer = ["deferred"]
-)]
+#[buck_test(data_dir = "test_daemon_data", skip_for_os = ["windows", "darwin"])]
 async fn test_unidaemon_disk_state_stash_outlives_its_first_tenant(
     buck: &Buck,
     tmp_path: &Path,

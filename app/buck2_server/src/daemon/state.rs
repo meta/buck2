@@ -644,11 +644,8 @@ impl TenantState {
         let cache_dir_path = paths.cache_dir_path();
         let valid_cache_dirs = paths.valid_cache_dirs();
 
-        let disk_state_core = init_ctx
-            .daemon_startup_config
-            .startup_options
-            .materializer_v2_version
-            .is_some_and(|wanted| disk_state::ROLLOUT_VERSION >= wanted);
+        let disk_state_core =
+            disk_state::selected_by(&init_ctx.daemon_startup_config.startup_options);
         let deferred_materializer_configs = {
             let defer_write_actions = root_config
                 .parse::<RolloutPercentage>(BuckconfigKeyRef {

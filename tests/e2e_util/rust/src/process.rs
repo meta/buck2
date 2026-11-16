@@ -177,6 +177,7 @@ mod imp {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::buck::BuckOptions;
 
     /// The pid of a process that has exited and been reaped.
     fn exited_pid() -> u32 {
@@ -234,8 +235,7 @@ mod tests {
             "/bin/sh".into(),
             std::env::temp_dir(),
             [("PATH".into(), std::env::var_os("PATH").unwrap_or_default())].into(),
-            false,
-            false,
+            BuckOptions::default(),
         )
     }
 

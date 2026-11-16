@@ -30,9 +30,24 @@ use crate::output::BuckOutput;
 
 /// Marks the routing block the harness appends to a test's external config.
 pub(crate) const DAEMON_ROUTING_MARKER: &str = "# daemon routing, appended by the test harness\n";
+const DAEMON_ROUTING_END: &str = "# end of daemon routing\n";
 
-pub(crate) fn daemon_routing_config(share_daemon: bool) -> String {
-    format!("{DAEMON_ROUTING_MARKER}[buck2]\nshare_daemon = {share_daemon}\n")
+/// Whether a client asked to share a daemon on this host does; mirrors
+/// `DaemonRouting::host_supports_sharing`.
+pub(crate) fn host_shares_daemons() -> bool {
+    cfg!(target_os = "linux")
+}
+
+/// The routing block. A shared daemon runs the disk-state materializer, which tests run strict
+/// unless the test opted out; see [`crate::BuckTest::strict_leases`].
+pub(crate) fn daemon_routing_config(share_daemon: bool, strict_leases: bool) -> String {
+    let share_daemon = share_daemon && host_shares_daemons();
+    let mut block = format!("{DAEMON_ROUTING_MARKER}[buck2]\nshare_daemon = {share_daemon}\n");
+    if share_daemon && strict_leases {
+        block.push_str("materializer_strict_leases = true\n");
+    }
+    block.push_str(DAEMON_ROUTING_END);
+    block
 }
 
 /// The buck2 under test, set up in the test's project. Its methods start commands: awaiting a
@@ -48,8 +63,16 @@ pub struct Buck {
     cwd: PathBuf,
     env: BTreeMap<OsString, OsString>,
     isolation_prefix: Option<String>,
-    write_invocation_record: bool,
-    disk_state_materializer: bool,
+    options: BuckOptions,
+    share_daemon: bool,
+}
+
+/// What the fixture settled for a test's clients; see [`crate::BuckTest`].
+#[derive(Debug, Clone, Copy, Default)]
+pub(crate) struct BuckOptions {
+    pub(crate) write_invocation_record: bool,
+    pub(crate) disk_state_materializer: bool,
+    pub(crate) strict_leases: bool,
 }
 
 macro_rules! subcommands {
@@ -68,25 +91,25 @@ impl Buck {
         executable: PathBuf,
         cwd: PathBuf,
         env: BTreeMap<OsString, OsString>,
-        write_invocation_record: bool,
-        disk_state_materializer: bool,
+        options: BuckOptions,
     ) -> Self {
         let mut buck = Self {
             executable,
             cwd,
             env,
             isolation_prefix: None,
-            write_invocation_record,
-            disk_state_materializer,
+            options,
+            share_daemon: false,
         };
         buck.set_env("NO_BUCKD", "0");
         buck
     }
 
     /// Whether commands run against the disk-state materializer, for an assertion on one
-    /// implementation's own state in a test that runs under both; see `buck2_core_tests`.
+    /// implementation's own state in a test that runs under both; see `buck2_core_tests`. A
+    /// shared daemon runs it whichever variant the test is.
     pub fn disk_state_materializer(&self) -> bool {
-        self.disk_state_materializer
+        self.options.disk_state_materializer || self.share_daemon
     }
 
     /// The project directory commands run in.
@@ -102,8 +125,12 @@ impl Buck {
     /// replaced. Clients with equal routing share the file. A shared daemon's namespace is keyed
     /// only by the client's compatibility key, so clients that share get a home of their own
     /// (`BUCK2_TEST_HOME_DIR`), unless the test set one; unshared ones keep the real one, as they
-    /// do outside tests.
+    /// do outside tests. Where the host does not share daemons a client asked to share stays
+    /// unshared, as it would outside tests, but still gets the home, so the test's paths under it
+    /// hold on every host.
     pub fn set_daemon_routing(&mut self, share_daemon: bool) -> anyhow::Result<()> {
+        let own_home = share_daemon;
+        let share_daemon = share_daemon && host_shares_daemons();
         let current = PathBuf::from(
             self.env_var("BUCK2_TEST_EXTRA_EXTERNAL_CONFIG")
                 .context("the test fixture sets `BUCK2_TEST_EXTRA_EXTERNAL_CONFIG`")?,
@@ -112,10 +139,17 @@ impl Buck {
         // Only the routing block goes; what the harness appended after it, such as the
         // materializer pin or a test's extra configuration, stays.
         let (before, after) = match contents.split_once(DAEMON_ROUTING_MARKER) {
-            Some((before, rest)) => (before, rest.splitn(3, '\n').nth(2).unwrap_or("")),
+            Some((before, rest)) => (
+                before,
+                rest.split_once(DAEMON_ROUTING_END)
+                    .map_or("", |(_, after)| after),
+            ),
             None => (contents.as_str(), ""),
         };
-        let routed = format!("{before}{after}{}", daemon_routing_config(share_daemon));
+        let routed = format!(
+            "{before}{after}{}",
+            daemon_routing_config(share_daemon, self.options.strict_leases)
+        );
         let name = hex::encode(Sha256::digest(&routed));
         let path = current.with_file_name(format!("routing-{}.bcfg", &name[..12]));
         if !path.exists() {
@@ -124,7 +158,8 @@ impl Buck {
             std::fs::rename(&tmp, &path)?;
         }
         self.set_env("BUCK2_TEST_EXTRA_EXTERNAL_CONFIG", path);
-        if share_daemon && self.env_var("BUCK2_TEST_HOME_DIR").is_none() {
+        self.share_daemon = share_daemon;
+        if own_home && self.env_var("BUCK2_TEST_HOME_DIR").is_none() {
             let home = current
                 .parent()
                 .context("the external config has a parent")?
@@ -415,24 +450,24 @@ impl<'a> BuckCommand<'a> {
         };
 
         let mut args = self.args.clone();
-        let invocation_record_path = if self.buck.write_invocation_record && self.invocation_record
-        {
-            let path = cwd
-                .join("buck-out")
-                .join("tmp")
-                .join(format!("{invocation_id}.json"));
-            let separator = args.iter().position(|a| a == "--").unwrap_or(args.len());
-            args.splice(
-                separator..separator,
-                [
-                    "--unstable-write-invocation-record".into(),
-                    path.clone().into_os_string(),
-                ],
-            );
-            Some(path)
-        } else {
-            None
-        };
+        let invocation_record_path =
+            if self.buck.options.write_invocation_record && self.invocation_record {
+                let path = cwd
+                    .join("buck-out")
+                    .join("tmp")
+                    .join(format!("{invocation_id}.json"));
+                let separator = args.iter().position(|a| a == "--").unwrap_or(args.len());
+                args.splice(
+                    separator..separator,
+                    [
+                        "--unstable-write-invocation-record".into(),
+                        path.clone().into_os_string(),
+                    ],
+                );
+                Some(path)
+            } else {
+                None
+            };
 
         let mut argv = vec![self.buck.executable.clone().into_os_string()];
         if let Some(prefix) = &self.buck.isolation_prefix {
@@ -608,8 +643,11 @@ mod tests {
             PathBuf::from("/bin/buck2"),
             PathBuf::from("/project"),
             BTreeMap::new(),
-            write_invocation_record,
-            false,
+            BuckOptions {
+                write_invocation_record,
+                strict_leases: true,
+                ..BuckOptions::default()
+            },
         )
     }
 
@@ -787,5 +825,28 @@ mod tests {
         let mut buck = buck(false);
         buck.set_executable("buck2");
         assert_eq!(argv(buck.kill()), ["buck2", "kill"]);
+    }
+
+    #[test]
+    fn test_sharing_follows_the_host() -> anyhow::Result<()> {
+        let dir = tempfile::tempdir()?;
+        let config = dir.path().join("external.bcfg");
+        std::fs::write(&config, daemon_routing_config(false, true))?;
+        let mut buck = buck(false);
+        buck.set_env("BUCK2_TEST_EXTRA_EXTERNAL_CONFIG", &config);
+        buck.set_daemon_routing(true)?;
+        let shared = host_shares_daemons();
+        assert_eq!(buck.disk_state_materializer(), shared);
+        assert_eq!(
+            buck.env_var("BUCK2_TEST_HOME_DIR"),
+            Some(dir.path().join("home").as_os_str())
+        );
+        let routed = std::fs::read_to_string(
+            buck.env_var("BUCK2_TEST_EXTRA_EXTERNAL_CONFIG")
+                .context("routing set the config")?,
+        )?;
+        assert_eq!(routed.contains("share_daemon = true"), shared);
+        assert_eq!(routed.contains("materializer_strict_leases = true"), shared);
+        Ok(())
     }
 }

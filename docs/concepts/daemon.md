@@ -32,7 +32,9 @@ separate output and cache state. The key accepts a hostname share such as
 testing; every client of a host then agrees on its routing. Hosts that cannot
 run a shared daemon (today: anything but Linux) keep one daemon per isolation
 directory whatever the share says, as does `--no-buckd`. The `daemon_routing`
-command metadata records the mode in use.
+command metadata records the mode in use. A shared daemon runs the disk-state
+materializer whatever `[buck2] materializer_v2_version` says of its rollout;
+unshared daemons follow that rollout.
 
 A tenant is a `(project root, isolation directory)` pair. Clients select the
 shared daemon by a compatibility key, a BLAKE3 hash of the binary version, user

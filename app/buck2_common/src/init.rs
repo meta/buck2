@@ -514,8 +514,9 @@ pub struct DaemonStartupOptions {
     pub source_digest_algorithm: Option<String>,
     pub paranoid: bool,
     pub materializations: Option<String>,
-    /// `buck2.materializer_v2_version`: the daemon runs the disk-state materializer when its
-    /// `ROLLOUT_VERSION` is at least this, and the deferred one when this is unset.
+    /// `buck2.materializer_v2_version`: an unshared daemon runs the disk-state materializer when
+    /// its `ROLLOUT_VERSION` is at least this, and the deferred one when this is unset. A shared
+    /// daemon runs the disk-state materializer whatever this says.
     pub materializer_v2_version: Option<u32>,
     pub http: HttpConfig,
     pub resource_control: ResourceControlConfig,

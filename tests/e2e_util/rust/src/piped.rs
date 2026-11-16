@@ -204,6 +204,7 @@ mod tests {
 
     use super::*;
     use crate::Buck;
+    use crate::buck::BuckOptions;
 
     /// A [`Buck`] whose "buck2" is the shell, so that `command(&["-c", script])` runs `script`.
     fn shell(dir: &Path) -> Buck {
@@ -211,8 +212,7 @@ mod tests {
             PathBuf::from("/bin/sh"),
             dir.to_owned(),
             BTreeMap::new(),
-            false,
-            false,
+            BuckOptions::default(),
         )
     }
 

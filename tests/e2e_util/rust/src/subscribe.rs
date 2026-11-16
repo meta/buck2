@@ -126,6 +126,7 @@ mod tests {
 
     use super::*;
     use crate::ExpectFailure;
+    use crate::buck::BuckOptions;
 
     /// A client of `script` run by the shell instead of `buck2 subscribe`.
     fn client(dir: &Path, script: &str) -> SubscribeClient {
@@ -133,8 +134,7 @@ mod tests {
             PathBuf::from("/bin/sh"),
             dir.to_owned(),
             BTreeMap::new(),
-            false,
-            false,
+            BuckOptions::default(),
         );
         SubscribeClient::start(buck.command(&["-c", script]))
     }

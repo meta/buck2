@@ -28,6 +28,7 @@ use sha2::Digest;
 use sha2::Sha256;
 
 use crate::buck::Buck;
+use crate::buck::BuckOptions;
 use crate::buck::daemon_routing_config;
 use crate::eden::Eden;
 use crate::eden::run;
@@ -463,7 +464,7 @@ impl BuckTest {
         // Core tests run with read-only outputs, under either materializer.
         extra_config.push_str("[buck2]\nreadonly_outputs = true\n");
         // Each test gets its own daemons unless it opts into sharing with `share_daemon`.
-        extra_config.push_str(&daemon_routing_config(false));
+        extra_config.push_str(&daemon_routing_config(false, self.strict_leases));
         // A target variant can run its suite against another materializer implementation; see
         // `buck2_core_tests`.
         let disk_state_materializer = match std::env::var("BUCK2_TEST_MATERIALIZER").ok().as_deref()
@@ -500,8 +501,11 @@ impl BuckTest {
             PathBuf::from(executable),
             cwd,
             env,
-            self.write_invocation_record,
-            disk_state_materializer,
+            BuckOptions {
+                write_invocation_record: self.write_invocation_record,
+                disk_state_materializer,
+                strict_leases: self.strict_leases,
+            },
         );
         if let Some(isolation_prefix) = isolation_prefix {
             buck.set_isolation_prefix(isolation_prefix);

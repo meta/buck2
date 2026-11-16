@@ -496,6 +496,7 @@ mod tests {
         use std::collections::BTreeMap;
 
         use super::*;
+        use crate::buck::BuckOptions;
 
         /// A client of `script` run by the shell instead of `buck2 lsp`.
         fn client(dir: &Path, script: &str) -> LspClient {
@@ -503,8 +504,7 @@ mod tests {
                 PathBuf::from("/bin/sh"),
                 dir.to_owned(),
                 BTreeMap::new(),
-                false,
-                false,
+                BuckOptions::default(),
             );
             LspClient::start(buck.command(&["-c", script]), dir.to_owned())
         }

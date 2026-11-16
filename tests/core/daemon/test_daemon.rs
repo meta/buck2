@@ -1424,6 +1424,34 @@ async fn test_isolated_tenants_report_tenant_telemetry(buck: &Buck) -> anyhow::R
     Ok(())
 }
 
+/// A shared daemon runs the disk-state materializer whatever the materializer rollout says; an
+/// unshared daemon of the same checkout follows the rollout.
+#[buck_test(write_invocation_record = true, skip_for_os = ["windows", "darwin"], share_daemon = true)]
+async fn test_shared_daemon_runs_disk_state_materializer(buck: &Buck) -> anyhow::Result<()> {
+    // A version above every binary's `ROLLOUT_VERSION` rolls the disk-state materializer back.
+    std::fs::write(
+        buck.cwd().join(".buckconfig.local"),
+        format!("[buck2]\nmaterializer_v2_version = {}\n", u32::MAX),
+    )?;
+    let shared = isolated_buck(buck, "tenant-one");
+    let result = tenant_telemetry(&shared).await;
+    let killed = shared.kill().await;
+    let telemetry = result?;
+    killed?;
+    assert_eq!(telemetry["daemon_routing"], "shared");
+    assert_eq!(telemetry["materializer"], "v2");
+
+    let mut unshared = isolated_buck(buck, "tenant-two");
+    unshared.set_daemon_routing(false)?;
+    let result = tenant_telemetry(&unshared).await;
+    let killed = unshared.kill().await;
+    let telemetry = result?;
+    killed?;
+    assert_eq!(telemetry["daemon_routing"], "unshared");
+    assert_eq!(telemetry["materializer"], "deferred");
+    Ok(())
+}
+
 async fn killall_repo_reaches_all_isolation_directories(
     buck: &mut Buck,
     sharing: &str,

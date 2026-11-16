@@ -53,6 +53,7 @@ use allocative::FlameGraphBuilder;
 use async_trait::async_trait;
 use buck2_common::file_ops::metadata::FileDigest;
 use buck2_common::file_ops::metadata::TrackedFileDigest;
+use buck2_common::init::DaemonStartupOptions;
 use buck2_common::io::fs::is_executable;
 use buck2_core::execution_types::executor_config::RemoteExecutorUseCase;
 use buck2_core::fs::project::ProjectRoot;
@@ -157,13 +158,23 @@ use crate::materializers::v2::tree::WriteHold;
 use crate::sqlite::materializer_db::MaterializerState;
 use crate::sqlite::materializer_db::MaterializerStateSqliteDb;
 
-/// Rolls this implementation out: a daemon runs it when `buck2.materializer_v2_version` is set
-/// to at most this value, and the deferred materializer otherwise.
+/// Rolls this implementation out to unshared daemons: one runs it when
+/// `buck2.materializer_v2_version` is set to at most this value, and the deferred materializer
+/// otherwise. Shared daemons always run it; see [`selected_by`].
 ///
 /// Bump this with any fix that a rollback waited on. Setting the config above every version in
 /// the fleet rolls back; setting it to the fixed version then rolls out again to the binaries
 /// that have the fix, and to no others.
 pub const ROLLOUT_VERSION: u32 = 3;
+
+/// Whether a daemon started with these options runs this implementation rather than the deferred
+/// materializer: a shared daemon always does, an unshared one follows `ROLLOUT_VERSION`.
+pub fn selected_by(options: &DaemonStartupOptions) -> bool {
+    options.routing.is_shared()
+        || options
+            .materializer_v2_version
+            .is_some_and(|wanted| ROLLOUT_VERSION >= wanted)
+}
 
 /// How often buffered access-time bumps reach sqlite under `AccessTimesUpdates::Full`.
 const ACCESS_TIMES_FLUSH_PERIOD: Duration = Duration::from_secs(5);

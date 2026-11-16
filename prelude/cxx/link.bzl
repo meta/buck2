@@ -189,6 +189,7 @@ def cxx_link_into(
     opts: LinkOptions,
     output_has_content_based_path: bool = False,
     build_info_json: Artifact | None = None,
+    link_groups_enabled: bool = False,
 ) -> CxxLinkResult:
     cxx_toolchain_info = opts.cxx_toolchain or get_cxx_toolchain_info(ctx)
     linker_info = cxx_toolchain_info.linker_info
@@ -270,6 +271,7 @@ def cxx_link_into(
                 dwp_tool_available,
                 is_result_executable,
                 build_info_json,
+                link_groups_enabled,
             )
             extra_outputs = {}
         else:
@@ -514,7 +516,7 @@ def cxx_link_into(
             full_hybrid = action_execution_properties.full_hybrid,
         )
 
-    enable_late_build_info_stamping = is_result_executable and cxx_stamp_build_info(ctx)
+    enable_late_build_info_stamping = is_result_executable and cxx_stamp_build_info(ctx, link_groups_enabled = link_groups_enabled)
 
     if is_incremental_link:
         allow_cache_upload = False
@@ -605,6 +607,7 @@ def cxx_link_into(
             output,
             links = opts.links,
             build_info_json = build_info_json,
+            link_groups_enabled = link_groups_enabled,
         )
 
     linked_object = LinkedObject(

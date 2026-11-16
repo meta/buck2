@@ -53,7 +53,13 @@ load(
     "DistInfo",
 )
 load("@prelude//linking:add_elf_sections.bzl", "get_elf_sections")
-load("@prelude//linking:generated_build_info.bzl", "compile_generated_build_info", "generate_build_info")
+load(
+    "@prelude//linking:generated_build_info.bzl",
+    "compile_generated_build_info",
+    "generate_build_info",
+    "generate_build_info_shared_library",
+    "generated_build_info_is_shared_library",
+)
 load(
     "@prelude//linking:link_info.bzl",
     "LibOutputStyle",
@@ -377,12 +383,7 @@ def _rust_binary_common(
             "`elf_sections` is set, but the sections are added as part of the cxx link. "
             + "This target links via rustc; `elf_sections` requires `advanced_unstable_linking` on the Rust toolchain."
         )
-    enable_late_build_info_stamping = cxx_stamp_build_info(ctx)
     content_based_output = getattr(ctx.attrs, "has_content_based_path", False)
-    unstamped_name = None
-    if enable_late_build_info_stamping:
-        allow_cache_upload = True
-        unstamped_name = output_filename(compile_ctx, simple_crate, Emit("link"), params, "-unstamped")
 
     # The exe output is declared below, once we know whether it ships in a
     # content-based `copied_dir` bundle (see the `will_bundle` decision after
@@ -419,6 +420,13 @@ def _rust_binary_common(
         labels_to_links_map = {}
         targets_consumed_by_link_groups = {}
         filtered_targets = set()
+
+    link_groups_enabled = rust_cxx_link_group_info != None and rust_cxx_link_group_info.link_group_info != None
+    enable_late_build_info_stamping = cxx_stamp_build_info(ctx, link_groups_enabled = link_groups_enabled)
+    unstamped_name = None
+    if enable_late_build_info_stamping:
+        allow_cache_upload = True
+        unstamped_name = output_filename(compile_ctx, simple_crate, Emit("link"), params, "-unstamped")
 
     native_link_args = get_inherited_link_args(
         ctx,
@@ -469,6 +477,29 @@ def _rust_binary_common(
         extra_shared_libraries = [],
     )
 
+    generated_build_info_shared_library = None
+    if generated_build_info_is_shared_library(ctx, link_groups_enabled = link_groups_enabled):
+        generated_build_info_shared_library = generate_build_info_shared_library(
+            ctx,
+            native_link_args,
+            generator_args = generated_build_info_args,
+            invalidation_inputs = [
+                rust_compile_invalidation_inputs(
+                    ctx = ctx,
+                    compile_ctx = compile_ctx,
+                    emit = bin_emit,
+                    params = params,
+                    default_roots = default_roots,
+                    incremental_enabled = ctx.attrs.incremental_enabled,
+                ),
+                unpack_link_args(native_link_args),
+                [shared_lib.lib.output for shared_lib in shared_libs],
+            ],
+        )
+        if generated_build_info_shared_library:
+            shared_libs.append(generated_build_info_shared_library.library)
+            generated_build_info_shared_library_link_args.append(unpack_link_args(generated_build_info_shared_library.link_args))
+
     # Decide whether the content-based output ships as a bare exe or a
     # `assembled_dir` bundle (see `_create_content_based_dist`). A binary with
     # adjacent files -- resources and/or a shared-lib tree -- goes in a bundle,
@@ -508,7 +539,7 @@ def _rust_binary_common(
         # own post-link processing, so the output has to be named the way those
         # stages expect; we must not stamp again here.
         predeclared_output = ctx.actions.declare_output(
-            output_filename(compile_ctx, simple_crate, Emit("link"), params, get_cxx_post_link_suffix(ctx)),
+            output_filename(compile_ctx, simple_crate, Emit("link"), params, get_cxx_post_link_suffix(ctx, link_groups_enabled = link_groups_enabled)),
             has_content_based_path = exe_content_based,
         )
 
@@ -534,7 +565,7 @@ def _rust_binary_common(
         shlib_args_output,
         shared_libs,
     )
-    if generated_build_info_enabled and not links_via_cxx:
+    if generated_build_info_enabled and not generated_build_info_shared_library and not links_via_cxx:
         generated_build_info = generate_build_info(
             ctx,
             generator_args = generated_build_info_args,
@@ -584,7 +615,7 @@ def _rust_binary_common(
         ]
         if extraction.out_archive != None:
             rust_link_inputs.append(extraction.out_archive)
-        if generated_build_info_enabled:
+        if generated_build_info_enabled and not generated_build_info_shared_library:
             generated_build_info = generate_build_info(
                 ctx,
                 generator_args = generated_build_info_args,
@@ -611,6 +642,8 @@ def _rust_binary_common(
             output_has_content_based_path = exe_content_based,
             identifier = name,
             allow_cache_upload = allow_cache_upload,
+            build_info_json = generated_build_info_shared_library.json if generated_build_info_shared_library else None,
+            link_groups_enabled = link_groups_enabled,
         )
         final_output = link_result.linked_object.output
         dwp_output = link_result.linked_object.dwp
@@ -620,7 +653,13 @@ def _rust_binary_common(
         dwp_output = link.product.dwp_output
         pdb_output = link.product.pdb
         if enable_late_build_info_stamping:
-            stamp_build_info(ctx, link.product.output, final_output)
+            stamp_build_info(
+                ctx,
+                link.product.output,
+                final_output,
+                build_info_json = generated_build_info_shared_library.json if generated_build_info_shared_library else None,
+                link_groups_enabled = link_groups_enabled,
+            )
 
     args = cmd_args(final_output, hidden = executable_shlib_args.runtime_files)
     external_debug_info = project_artifacts(
@@ -690,6 +729,8 @@ def _rust_binary_common(
         "sources": compile_ctx.symlinked_srcs,
     }
     sub_targets = {}
+    if generated_build_info_shared_library:
+        sub_targets["generated_build_info"] = [DefaultInfo(default_output = generated_build_info_shared_library.library.lib.output)]
 
     # TODO(agallagher) There appears to be pre-existing soname conflicts
     # when building this (when using link groups), which prevents using
@@ -1115,7 +1156,7 @@ rust_binary = prelude_rule(
         | native_common.transformation_spec_arg()
         | buck.allow_cache_upload_arg()
         | {
-            "build_info_as_shared_library": attrs.bool(default = True),
+            "build_info_as_shared_library": attrs.bool(default = False),
             "_gen_build_info": attrs.option(attrs.exec_dep(providers = [RunInfo]), default = None),
             "_generated_build_info_args": attrs.list(attrs.arg(), default = []),
             "_generated_build_info_data": attrs.option(attrs.source(), default = None),
@@ -1209,7 +1250,7 @@ rust_test = prelude_rule(
         | native_common.transformation_spec_arg()
         | test_common.attributes()
         | {
-            "build_info_as_shared_library": attrs.bool(default = True),
+            "build_info_as_shared_library": attrs.bool(default = False),
             "_gen_build_info": attrs.option(attrs.exec_dep(providers = [RunInfo]), default = None),
             "_generated_build_info_args": attrs.list(attrs.arg(), default = []),
             "_generated_build_info_data": attrs.option(attrs.source(), default = None),

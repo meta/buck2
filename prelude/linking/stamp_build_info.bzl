@@ -23,18 +23,18 @@ load(
 
 PRE_STAMPED_SUFFIX = "-pre_stamped"
 
-def cxx_stamp_build_info(ctx: AnalysisContext) -> bool:
+def cxx_stamp_build_info(ctx: AnalysisContext, link_groups_enabled: bool = False) -> bool:
     if getattr(ctx.attrs, "_generated_build_info_enabled", False):
         if not getattr(ctx.attrs, "build_info_as_shared_library", True):
             return False
         spec = ctx.attrs._generated_build_info_spec
-        return bool(spec.get("link_as_shared_library", False) and cxx_is_gnu(ctx))
+        return bool((spec.get("link_as_shared_library", False) or link_groups_enabled) and cxx_is_gnu(ctx))
 
     generated_build_info = getattr(ctx.attrs, "_generated_build_info_spec", {})
     if generated_build_info.get("enabled", False):
         if not getattr(ctx.attrs, "build_info_as_shared_library", True):
             return False
-        return bool(generated_build_info.get("link_as_shared_library", False) and cxx_is_gnu(ctx))
+        return bool((generated_build_info.get("link_as_shared_library", False) or link_groups_enabled) and cxx_is_gnu(ctx))
 
     if not hasattr(ctx.attrs, "_build_info") or not ctx.attrs._build_info or not cxx_is_gnu(ctx):
         return False
@@ -65,11 +65,12 @@ def stamp_build_info(
     has_content_based_path: bool = False,
     links: list[LinkArgs] | None = None,
     build_info_json: Artifact | None = None,
+    link_groups_enabled: bool = False,
 ) -> Artifact:
     """
     If necessary, add fb_build_info section to binary via late-stamping
     """
-    if cxx_stamp_build_info(ctx):
+    if cxx_stamp_build_info(ctx, link_groups_enabled = link_groups_enabled):
         if build_info_json == None:
             build_info = dict(ctx.attrs._build_info)
             library_versions = _get_library_versions(links)

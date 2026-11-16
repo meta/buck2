@@ -134,6 +134,7 @@ def cxx_gnu_dist_link(
     dwp_tool_available: bool = True,
     executable_link: bool = True,
     build_info_json: Artifact | None = None,
+    link_groups_enabled: bool = False,
 ) -> LinkedObject:
     """
     Perform a distributed thin-lto link into the supplied output
@@ -164,7 +165,7 @@ def cxx_gnu_dist_link(
     # pass identifiers containing spaces and brackets.
     normalized_identifier = identifier.replace("[", "_").replace("]", "_").replace(" ", "_") if identifier != None else None
 
-    enable_late_build_info_stamping = executable_link and cxx_stamp_build_info(ctx)
+    enable_late_build_info_stamping = executable_link and cxx_stamp_build_info(ctx, link_groups_enabled = link_groups_enabled)
 
     # Unlike the plain link, a `None` (no preference) narrows to `False` here,
     # because this also feeds `bolt` and `strip_object`, which take a plain bool.
@@ -900,6 +901,7 @@ def cxx_gnu_dist_link(
             final_output,
             links = opts.links,
             build_info_json = build_info_json,
+            link_groups_enabled = link_groups_enabled,
         )
         if executable_link
         else final_output

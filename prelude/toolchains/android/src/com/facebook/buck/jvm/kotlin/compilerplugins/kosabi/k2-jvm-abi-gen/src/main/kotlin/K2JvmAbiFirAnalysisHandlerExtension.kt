@@ -165,6 +165,23 @@ class K2JvmAbiFirAnalysisHandlerExtension(private val outputPath: String) :
           module,
       )
 
+      // A Kotlin constant reading a same-module Java constant whose value is lost here would ship
+      // without its value (const val) or crash codegen (annotation argument), so report it first
+      // and stop before the backend on an error.
+      val unavailableJavaConstants =
+          findUnavailableJavaConstantReads(analysisResults.outputs.map { it.session to it.fir })
+      if (
+          reportUnavailableJavaConstantReads(
+              unavailableJavaConstants,
+              AbiRepairPolicy.parse(
+                  updatedConfiguration.get(K2JvmAbiConfigurationKeys.ABI_VALIDATION_MODE),
+              ),
+              messageCollector,
+          )
+      ) {
+        return false
+      }
+
       // Decide before any FIR cleanup below rewrites declarations.
       pipeline.inlineBodies.decide(
           analysisResults,

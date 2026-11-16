@@ -274,6 +274,7 @@ JavaCompileOutputs = record(
     incremental_state_dir = Artifact | None,
     used_jars_json = Artifact | None,
     compiler_class_to_source_map = field(Artifact | None, default = None),
+    command_proto_json = field(Artifact | None, default = None),
 )
 
 JavaProviders = record(
@@ -328,6 +329,7 @@ def make_compile_outputs(
     compiler_class_to_source_map: Artifact | None = None,
     full_library_compiler_depth: JavaCompilerDepth | None = None,
     abi_compiler_depth: JavaCompilerDepth | None = None,
+    command_proto_json: Artifact | None = None,
 ) -> JavaCompileOutputs:
     expect(classpath_abi != None or classpath_abi_dir == None, "A classpath_abi_dir should only be provided if a classpath_abi is provided!")
     return JavaCompileOutputs(
@@ -349,6 +351,7 @@ def make_compile_outputs(
         incremental_state_dir = incremental_state_dir,
         used_jars_json = used_jars_json,
         compiler_class_to_source_map = compiler_class_to_source_map,
+        command_proto_json = command_proto_json,
     )
 
 def create_abi(actions: AnalysisActions, class_abi_generator: Dependency, library: Artifact, keepSynthetic: bool = False) -> Artifact:

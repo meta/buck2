@@ -155,7 +155,7 @@ def create_jar_artifact_javacd(
         source_only_abi_compiling_deps = None,
         track_class_usage = track_class_usage,
     )
-    used_jars_json = define_javacd_action(
+    proto, used_jars_json = define_javacd_action(
         category_prefix = "",
         actions_identifier = actions_identifier,
         encoded_command = command,
@@ -220,6 +220,7 @@ def create_jar_artifact_javacd(
             abi_jar_snapshot = abi_jar_snapshot,
             used_jars_json = used_jars_json,
             compiler_class_to_source_map = output_paths.compiler_class_to_source_map,
+            command_proto_json = proto,
         )
     else:
         full_jar_snapshot = generate_java_classpath_snapshot(
@@ -238,6 +239,7 @@ def create_jar_artifact_javacd(
             full_library_compiler_depth = full_library_compiler_depth,
             abi_compiler_depth = full_library_compiler_depth,
             used_jars_json = used_jars_json,
+            command_proto_json = proto,
         )
     return result
 
@@ -399,4 +401,4 @@ def _define_javacd_action(
         error_handler = java_toolchain.java_error_handler,
     )
 
-    return used_jars_json_output
+    return proto, used_jars_json_output

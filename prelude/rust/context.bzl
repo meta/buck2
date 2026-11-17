@@ -107,7 +107,7 @@ CompileContext = record(
 def compile_context(ctx: AnalysisContext, binary: bool = False) -> CompileContext:
     toolchain = ctx.attrs._rust_toolchain
     toolchain_info = toolchain[RustToolchainInfo]
-    arch_toolchain_info = get_rust_arch_toolchain_info(toolchain, ctx.label)
+    arch_toolchain_info = get_rust_arch_toolchain_info(ctx.attrs.multi_arch_toolchain, ctx.label)
     _validate_nightly_features(toolchain_info)
     internal_tools_info = ctx.attrs._rust_internal_tools_toolchain[RustInternalToolsInfo]
     cxx_toolchain_info = get_cxx_toolchain_info(ctx)

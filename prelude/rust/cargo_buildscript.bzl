@@ -34,6 +34,7 @@ load("@prelude//os_lookup:defs.bzl", "Os", "OsLookup", "ScriptLanguage")
 load(
     "@prelude//rust:rust_toolchain.bzl",
     "RustArchRunInfo",
+    "RustArchToolchainInfo",
     "RustToolchainInfo",
     "get_rust_arch_toolchain_info",
     "require_rust_arch_variants",
@@ -81,7 +82,7 @@ def _make_rustc_shim(ctx: AnalysisContext, cwd: Artifact, arch: str | None = Non
     # which supplies the sysroot deps if necessary
     toolchain = ctx.attrs._rust_toolchain
     toolchain_info = toolchain[RustToolchainInfo]
-    arch_info = get_rust_arch_toolchain_info(toolchain, ctx.label)
+    arch_info = get_rust_arch_toolchain_info(ctx.attrs.multi_arch_toolchain, ctx.label)
     explicit_sysroot_deps = toolchain_info.explicit_sysroot_deps
     if explicit_sysroot_deps:
         dep_ctx = DepCollectionContext(
@@ -260,7 +261,7 @@ def _cargo_buildscript_impl(ctx: AnalysisContext) -> list[Provider]:
     cxx_toolchain_info = ctx.attrs._cxx_toolchain[CxxToolchainInfo]
     rust_toolchain = ctx.attrs._rust_toolchain
     rust_toolchain_info = rust_toolchain[RustToolchainInfo]
-    arch_toolchain_info = get_rust_arch_toolchain_info(rust_toolchain, ctx.label)
+    arch_toolchain_info = get_rust_arch_toolchain_info(ctx.attrs.multi_arch_toolchain, ctx.label)
 
     cwd = ctx.actions.declare_output("cwd", dir = True, has_content_based_path = True)
     out_dir = ctx.actions.declare_output("OUT_DIR", dir = True, has_content_based_path = True)
@@ -478,6 +479,10 @@ _cargo_buildscript_rule = rule(
         "features": attrs.list(attrs.string(), default = []),
         "filegroup_for_manifest_dir": attrs.option(attrs.dict(key = attrs.string(), value = attrs.source()), default = None),
         "manifest_dir": attrs.option(attrs.dep(), default = None),
+        "multi_arch_toolchain": attrs.option(
+            attrs.dep(providers = [RustArchToolchainInfo]),
+            default = None,
+        ),
         "package_name": attrs.string(),
         "runner": attrs.default_only(attrs.exec_dep(providers = [RunInfo], default = "prelude//rust/tools:buildscript_run")),
         # *IMPORTANT* rustc_cfg must be a `dep` and not an `exec_dep` because

@@ -61,20 +61,22 @@ pub(crate) fn iterate_chars<'v>(
     string: StringValue<'v>,
     heap: Heap<'v>,
 ) -> ValueOf<'v, StarlarkIter<StarlarkStr>> {
-    ValueOf::new_unchecked(heap.alloc_complex(StringIterable {
+    ValueOf::new(heap.alloc_complex(StringIterable {
         string,
         produce_char: true,
     }))
+    .expect("a `StringIterable` iterates")
 }
 
 pub(crate) fn iterate_codepoints<'v>(
     string: StringValue<'v>,
     heap: Heap<'v>,
 ) -> ValueOf<'v, StarlarkIter<IntView<'v>>> {
-    ValueOf::new_unchecked(heap.alloc_complex(StringIterable {
+    ValueOf::new(heap.alloc_complex(StringIterable {
         string,
         produce_char: false,
     }))
+    .expect("a `StringIterable` iterates")
 }
 
 #[starlark_value(type = "iterator")]

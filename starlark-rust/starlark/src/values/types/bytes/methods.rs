@@ -61,7 +61,6 @@ pub(crate) fn bytes_methods(builder: &mut MethodsBuilder) {
             .as_bytes()
             .iter()
             .map(|&b| heap.alloc(StarlarkBytes::new(&[b])));
-        // A tuple of `bytes` iterates `bytes`.
-        Ok(ValueOf::new_unchecked(heap.alloc_tuple_iter(it).to_value()))
+        Ok(ValueOf::new(heap.alloc_tuple_iter(it).to_value()).expect("a tuple iterates"))
     }
 }

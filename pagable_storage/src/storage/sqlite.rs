@@ -35,7 +35,6 @@ use pagable::storage::traits::WriteTicket;
 use pagable::traits::StorageContext;
 use rusqlite::Connection;
 use rusqlite::OptionalExtension;
-use rusqlite::ToSql;
 
 const NUM_SHARDS: usize = 10;
 const _: () = assert!(NUM_SHARDS <= WriteTicket::MAX_SHARDS);
@@ -181,9 +180,7 @@ fn retain_read_transactions() -> bool {
         env::var_os("BUCK2_PAGABLE_RETAIN_READ_TRANSACTIONS").is_none_or(|value| value != "0")
     })
 }
-const INSERT_BATCH_ROWS: usize = 8;
-const INSERT_COLUMNS: usize = 3;
-const INSERT_SINGLE_SQL: &str =
+const INSERT_SQL: &str =
     "INSERT OR IGNORE INTO pagable_data (key_lo, key_hi, value) VALUES (?1, ?2, ?3)";
 const FETCH_SQL: &str = "SELECT value FROM pagable_data WHERE key_lo = ?1 AND key_hi = ?2";
 const CREATE_TABLE_SQL: &str = "CREATE TABLE IF NOT EXISTS pagable_data (
@@ -227,21 +224,10 @@ struct ShardInner {
     stop_write: AtomicBool,
     /// The connection pool for this shard.
     conns: ConnectionPool,
-    /// Immutable insertion settings derived from the writer connection.
-    insert: SqliteInsertConfig,
     /// The state of the writer thread.
     write_state: Mutex<ShardWriteState>,
     /// The condition variable to signal the writer thread.
     write_state_changed: Condvar,
-}
-
-struct SqliteInsertConfig {
-    /// The number of rows inserted by one SQL statement execution.
-    batch_rows: usize,
-    /// The SQL statement used for a full batch.
-    batch_sql: String,
-    /// The writer connection's maximum permitted string, BLOB, or row size.
-    sqlite_length_limit: usize,
 }
 
 struct ShardWriteState {
@@ -454,13 +440,8 @@ impl Shard {
         next_seq: Arc<AtomicU64>,
     ) -> anyhow::Result<Self> {
         let conns = ConnectionPool::open(path, num_readers)?;
-        let insert = {
-            let conn = conns.get_readwrite();
-            SqliteInsertConfig::new(&conn, INSERT_BATCH_ROWS)?
-        };
         let inner = Arc::new(ShardInner {
             conns,
-            insert,
             next_seq,
             stop_write: AtomicBool::new(false),
             write_state: Mutex::new(ShardWriteState {
@@ -698,7 +679,7 @@ impl ShardInner {
         // Declared before the transaction, so released after it has committed.
         let _readers = self.conns.pause_readers()?;
         let tx = conn.transaction()?;
-        self.insert.insert_items(&tx, items, &self.stop_write)?;
+        insert_items(&tx, items, &self.stop_write)?;
         tx.commit()?;
         Ok(())
     }
@@ -972,132 +953,48 @@ fn data_key_parts(key: DataKey) -> (i64, i64) {
     ((key.get() as u64) as i64, ((key.get() >> 64) as u64) as i64)
 }
 
-fn sqlite_insert_batch_row_limit(conn: &Connection) -> anyhow::Result<usize> {
-    let max_values: usize = conn
-        .limit(rusqlite::limits::Limit::SQLITE_LIMIT_VARIABLE_NUMBER)?
-        .try_into()
-        .unwrap_or(999);
-    Ok((max_values / INSERT_COLUMNS).max(1))
-}
-
-fn insert_sql(row_count: usize) -> String {
-    let mut sql =
-        String::from("INSERT OR IGNORE INTO pagable_data (key_lo, key_hi, value) VALUES ");
-    for i in 0..row_count {
-        if i > 0 {
-            sql.push_str(", ");
-        }
-        sql.push_str("(?, ?, ?)");
-    }
-    sql
-}
-
-impl SqliteInsertConfig {
-    fn new(conn: &Connection, requested_batch_rows: usize) -> anyhow::Result<Self> {
-        let batch_rows = requested_batch_rows.min(sqlite_insert_batch_row_limit(conn)?);
-        Ok(Self {
-            batch_rows,
-            batch_sql: insert_sql(batch_rows),
-            sqlite_length_limit: conn
-                .limit(rusqlite::limits::Limit::SQLITE_LIMIT_LENGTH)?
-                .try_into()?,
-        })
-    }
-
-    /// Inserts `items`, stopping after the current statement once `stop` is
-    /// set. The transaction stays committable either way.
-    fn insert_items(
-        &self,
-        tx: &rusqlite::Transaction<'_>,
-        items: &[(DataKey, Vec<u8>)],
-        stop: &AtomicBool,
-    ) -> anyhow::Result<()> {
-        if self.batch_rows <= 1 {
-            let mut single_stmt = tx.prepare_cached(INSERT_SINGLE_SQL)?;
-            for item in items {
-                if stop.load(Ordering::Relaxed) {
-                    return Ok(());
-                }
-                self.execute_insert(&mut single_stmt, std::slice::from_ref(item))?;
-            }
+/// Inserts `items`, stopping after the current row once `stop` is set. The transaction stays
+/// committable either way.
+fn insert_items(
+    tx: &rusqlite::Transaction<'_>,
+    items: &[(DataKey, Vec<u8>)],
+    stop: &AtomicBool,
+) -> anyhow::Result<()> {
+    let mut insert = tx.prepare_cached(INSERT_SQL)?;
+    for (key, bytes) in items {
+        if stop.load(Ordering::Relaxed) {
             return Ok(());
         }
-
-        let mut batch_stmt = tx.prepare_cached(&self.batch_sql)?;
-        let mut chunks = items.chunks_exact(self.batch_rows);
-        for chunk in &mut chunks {
-            if stop.load(Ordering::Relaxed) {
-                return Ok(());
-            }
-            self.execute_insert(&mut batch_stmt, chunk)?;
-        }
-        let remainder = chunks.remainder();
-        if !remainder.is_empty() {
-            let mut single_stmt = tx.prepare_cached(INSERT_SINGLE_SQL)?;
-            for item in remainder {
-                if stop.load(Ordering::Relaxed) {
-                    return Ok(());
-                }
-                self.execute_insert(&mut single_stmt, std::slice::from_ref(item))?;
-            }
-        }
-        Ok(())
+        let (key_lo, key_hi) = data_key_parts(*key);
+        insert
+            .execute(rusqlite::params![key_lo, key_hi, bytes])
+            .map_err(|error| insert_error(tx, error, key, bytes.len()))?;
     }
+    Ok(())
+}
 
-    fn execute_insert(
-        &self,
-        stmt: &mut rusqlite::Statement<'_>,
-        items: &[(DataKey, Vec<u8>)],
-    ) -> anyhow::Result<()> {
-        let key_parts = items
-            .iter()
-            .map(|(key, _bytes)| data_key_parts(*key))
-            .collect::<Vec<_>>();
-        let params: Vec<&dyn ToSql> = key_parts
-            .iter()
-            .zip(items)
-            .flat_map(|((key_lo, key_hi), (_key, bytes))| {
-                [
-                    key_lo as &dyn ToSql,
-                    key_hi as &dyn ToSql,
-                    bytes as &dyn ToSql,
-                ]
-            })
-            .collect();
-        stmt.execute(rusqlite::params_from_iter(params))
-            .map(drop)
-            .map_err(|error| self.insert_error(error, items))
+#[cold]
+fn insert_error(
+    conn: &Connection,
+    error: rusqlite::Error,
+    key: &DataKey,
+    value_bytes: usize,
+) -> anyhow::Error {
+    if matches!(
+        &error,
+        rusqlite::Error::SqliteFailure(sqlite_error, _)
+            if sqlite_error.code == rusqlite::ErrorCode::TooBig
+    ) && let Ok(limit) = conn.limit(rusqlite::limits::Limit::SQLITE_LIMIT_LENGTH)
+    {
+        return anyhow::Error::new(error).context(format!(
+            "SQLite rejected the page-out insert of {key:?}: its serialized value is {} ({} bytes); SQLITE_LIMIT_LENGTH is {} ({} bytes)",
+            ByteSize::b(value_bytes as u64).display().iec(),
+            value_bytes,
+            ByteSize::b(limit as u64).display().iec(),
+            limit,
+        ));
     }
-
-    #[cold]
-    fn insert_error(&self, error: rusqlite::Error, items: &[(DataKey, Vec<u8>)]) -> anyhow::Error {
-        if matches!(
-            &error,
-            rusqlite::Error::SqliteFailure(sqlite_error, _)
-                if sqlite_error.code == rusqlite::ErrorCode::TooBig
-        ) {
-            let Some((largest_key, largest_value_bytes)) = items
-                .iter()
-                .max_by_key(|(_key, bytes)| bytes.len())
-                .map(|(key, bytes)| (key, bytes.len()))
-            else {
-                return anyhow::Error::new(error).context(format!(
-                    "SQLite rejected an empty page-out insert; SQLITE_LIMIT_LENGTH is {} ({} bytes)",
-                    ByteSize::b(self.sqlite_length_limit as u64).display().iec(),
-                    self.sqlite_length_limit,
-                ));
-            };
-            return anyhow::Error::new(error).context(format!(
-                "SQLite rejected page-out insert containing {} item(s): largest serialized value in the failed batch is {} ({} bytes) for {largest_key:?}; SQLITE_LIMIT_LENGTH is {} ({} bytes)",
-                items.len(),
-                ByteSize::b(largest_value_bytes as u64).display().iec(),
-                largest_value_bytes,
-                ByteSize::b(self.sqlite_length_limit as u64).display().iec(),
-                self.sqlite_length_limit,
-            ));
-        }
-        error.into()
-    }
+    error.into()
 }
 
 #[cfg(test)]
@@ -1676,55 +1573,6 @@ mod tests {
     }
 
     #[test]
-    fn sqlite_batch_insert_handles_boundary_cases() -> anyhow::Result<()> {
-        for (case, item_count, batch_rows) in [
-            ("empty input", 0, 8),
-            ("single-row fallback", 3, 1),
-            ("exact batch", 32, 16),
-            ("tail rows", 35, 32),
-        ] {
-            let mut conn = Connection::open_in_memory()?;
-            conn.execute_batch(
-                "CREATE TABLE pagable_data (
-                    key_lo INTEGER NOT NULL,
-                    key_hi INTEGER NOT NULL,
-                    value BLOB NOT NULL,
-                    UNIQUE(key_hi, key_lo)
-                );",
-            )?;
-            let insert = SqliteInsertConfig::new(&conn, batch_rows)?;
-            let tx = conn.transaction()?;
-            let items = (0..item_count)
-                .map(|i| (DataKey::testing_new((i + 1) as u128 + 1), vec![i as u8]))
-                .collect::<Vec<_>>();
-            insert.insert_items(&tx, &items, &AtomicBool::new(false))?;
-            tx.commit()?;
-
-            let row_count: usize =
-                conn.query_row("SELECT COUNT(*) FROM pagable_data", [], |row| {
-                    row.get::<_, i64>(0)
-                })? as usize;
-            assert_eq!(
-                item_count, row_count,
-                "{case}: every queued item should be inserted exactly once",
-            );
-            for (key, expected_value) in &items {
-                let (key_lo, key_hi) = data_key_parts(*key);
-                let value: Vec<u8> = conn.query_row(
-                    "SELECT value FROM pagable_data WHERE key_lo = ?1 AND key_hi = ?2",
-                    rusqlite::params![key_lo, key_hi],
-                    |row| row.get(0),
-                )?;
-                assert_eq!(
-                    expected_value, &value,
-                    "{case}: stored value should match the value bound for {key:?}",
-                );
-            }
-        }
-        Ok(())
-    }
-
-    #[test]
     fn sqlite_sharded_storage_round_trips_data_and_arcs() -> anyhow::Result<()> {
         let dir = TempStorageDir::new("sharded_round_trip")?;
         let storage = SqliteBackedPagableStorage::try_new(&dir.path)?;
@@ -1781,17 +1629,15 @@ mod tests {
             rusqlite::limits::Limit::SQLITE_LIMIT_LENGTH,
             SQLITE_LENGTH_LIMIT,
         )?;
-        let insert = SqliteInsertConfig::new(&conn, 1)?;
         let tx = conn.transaction()?;
         let data_key = DataKey::testing_new(1);
         let items = vec![(data_key, vec![0; VALUE_BYTES])];
-        let error = insert
-            .insert_items(&tx, &items, &AtomicBool::new(false))
+        let error = insert_items(&tx, &items, &AtomicBool::new(false))
             .expect_err("SQLite should reject a BLOB larger than SQLITE_LIMIT_LENGTH");
         let message = format!("{error:#}");
 
         assert!(
-            message.contains("largest serialized value in the failed batch is 512 B (512 bytes)"),
+            message.contains("its serialized value is 512 B (512 bytes)"),
             "missing value size in error: {message}",
         );
         assert!(

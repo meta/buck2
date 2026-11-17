@@ -940,7 +940,7 @@ impl<'v> StarlarkCommandLineData<'v> {
 }
 
 struct StarlarkCommandLineMut<'v> {
-    value: Value<'v>,
+    value: ValueOf<'v, StarlarkCmdArgsView<'v>>,
     borrow: RefMut<'v, StarlarkCommandLineData<'v>>,
 }
 
@@ -954,7 +954,7 @@ impl<'v> UnpackValue<'v> for StarlarkCommandLineMut<'v> {
     ) -> Result<Self, Self::Error> {
         match get {
             StarlarkCmdArgsView::Unfrozen(v) => Ok(Self {
-                value: value.to_value(),
+                value,
                 borrow: v.as_ref().0.borrow_mut(),
             }),
             // A `cmd_args` all the same; what fails is the mutation.
@@ -966,10 +966,10 @@ impl<'v> UnpackValue<'v> for StarlarkCommandLineMut<'v> {
 }
 
 impl<'v> AllocValue<'v> for StarlarkCommandLineMut<'v> {
-    type Type = <StarlarkCmdArgs<'v> as StarlarkValue<'v>>::Type;
+    type Type = StarlarkCmdArgsView<'v>;
 
     fn alloc_value(self, _heap: Heap<'v>) -> ValueOf<'v, Self::Type> {
-        ValueOf::new_unchecked(self.value)
+        self.value
     }
 }
 

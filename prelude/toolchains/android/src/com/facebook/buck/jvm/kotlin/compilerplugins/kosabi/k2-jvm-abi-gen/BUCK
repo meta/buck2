@@ -83,6 +83,10 @@ buck_kotlin_library(
     resources = glob(["resources/**"]),
     resources_root = "resources",
     tests = [
+        "fbcode//buck2/tests/targets/rules/kotlin/kosabi_compose_protected_stability:default_class",
+        "fbcode//buck2/tests/targets/rules/kotlin/kosabi_compose_protected_stability:default_source_only",
+        "fbcode//buck2/tests/targets/rules/kotlin/kosabi_compose_stable_marker:default_class",
+        "fbcode//buck2/tests/targets/rules/kotlin/kosabi_compose_stable_marker:default_source_only",
         "fbcode//buck2/tests/targets/rules/kotlin/kosabi_creator_selection:pipeline_selected",
         "fbcode//buck2/tests/targets/rules/kotlin/kosabi_creator_selection:pipeline_selected_custom",
         "fbcode//buck2/tests/targets/rules/kotlin/kosabi_creator_selection:pipeline_selected_legacy",

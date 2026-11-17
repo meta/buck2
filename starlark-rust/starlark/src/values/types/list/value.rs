@@ -423,12 +423,12 @@ impl<'v> StarlarkType<'v> for ListView<'v> {
         !self.content().is_empty()
     }
 
-    fn equals(&self, other: Self) -> crate::Result<bool> {
-        equals_slice(self.content(), other.content(), |x, y| x.equals(*y))
+    fn equals(&self, other: &ListRef<'v>) -> crate::Result<bool> {
+        equals_slice(self.content(), &other.content, |x, y| x.equals(*y))
     }
 
-    fn compare(&self, other: Self) -> crate::Result<Ordering> {
-        compare_slice(self.content(), other.content(), |x, y| x.compare(*y))
+    fn compare(&self, other: &ListRef<'v>) -> crate::Result<Ordering> {
+        compare_slice(self.content(), &other.content, |x, y| x.compare(*y))
     }
 
     fn at(&self, index: Value, _heap: Heap<'v>) -> crate::Result<Value<'v>> {

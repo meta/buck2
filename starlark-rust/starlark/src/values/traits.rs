@@ -440,8 +440,9 @@ pub trait StarlarkType<'v>: 'v + ProvidesStaticType<'v> + Debug + Display + Size
     /// [`#[starlark_value]`](crate::values::starlark_value) derives this method from it.
     ///
     /// * The operand is any [`UnpackValue`](crate::values::UnpackValue): `&Self` for a type
-    ///   with one representation; `Self`, the view, for a type with several; a union such as
-    ///   `Either<&Self, &str>`.
+    ///   with one representation; for a type with several, `Self`, the view, or a reference
+    ///   the type is read through, such as [`&ListRef`](crate::values::list::ListRef); a union
+    ///   such as `Either<&Self, &str>`.
     /// * The result is `bool`, or `starlark::Result<bool>` for a body that compares the values
     ///   it contains.
     /// * A value that is not of the operand's type is not equal, as with the default. A value

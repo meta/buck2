@@ -757,9 +757,9 @@ impl ImplStarlarkValue {
                     // A view's method is inlined into each representation's vtable entry (see
                     // below), and for a derived one the hint is not enough: converting the
                     // operand makes it look larger than it is once the receiver's variant is
-                    // known. Left to the hint, the list view's `equals` stays out of line and
-                    // dispatches on the variant when it runs: 7% more instructions on
-                    // `xs == ys`, with the `starlark` crate built as one codegen unit.
+                    // known. Left to the hint, the list view's `compare` stays out of line and
+                    // dispatches on the variant when it runs: 3.6% more instructions on
+                    // `xs < ys`, with the `starlark` crate built as one codegen unit.
                     if self.impl_of == ImplOf::Type
                         && !f.attrs.iter().any(|a| a.path().is_ident("inline"))
                     {

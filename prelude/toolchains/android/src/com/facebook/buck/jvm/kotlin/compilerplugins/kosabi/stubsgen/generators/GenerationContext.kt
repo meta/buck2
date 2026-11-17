@@ -46,6 +46,7 @@ import org.jetbrains.kotlin.psi.KtTypeReference
 import org.jetbrains.kotlin.psi.KtUserType
 import org.jetbrains.kotlin.psi.psiUtil.getChildOfType
 import org.jetbrains.kotlin.psi.psiUtil.getChildrenOfType
+import org.jetbrains.kotlin.psi.psiUtil.getStrictParentOfType
 import org.jetbrains.kotlin.psi.psiUtil.referenceExpression
 
 class GenerationContext {
@@ -93,6 +94,24 @@ class GenerationContext {
   val knownGeneratedTypes: Set<FullTypeQualifier>
   val pkgsInClasspath: Set<List<String>>
   val interfaceTypes: List<KtUserType>
+
+  /**
+   * The entries of [interfaceTypes] that may be a superclass: the first supertype of a class that
+   * has secondary constructors, no primary constructor and no constructor call in its supertype
+   * list, when no secondary constructor delegates to `super` or takes no parameters. Kotlin writes
+   * the superclass of such a class without parentheses, so the class alone does not say whether the
+   * entry is a class or an interface.
+   */
+  val ambiguousInterfaceTypes: Set<KtUserType>
+
+  /**
+   * Supertypes written as constructor calls (`: A()`), which only a class can be. Only calls whose
+   * name no declaration of the file and no containing class's supertype can shadow are kept: the
+   * entry's class has no containing class with a supertype (whose nested classes, inherited ones
+   * included, would be in scope), and no classifier, type alias or type parameter of the file has
+   * the call's first name.
+   */
+  val superclassCallTypes: List<KtUserType>
   // Each entry is one multi-bound type parameter's bounds, in source order.
   val multiBoundGroups: List<List<KtUserType>>
   val annotationEntries: List<KtAnnotationEntry>
@@ -164,6 +183,8 @@ class GenerationContext {
       this.importedTypesByFile = emptyMap()
       this.companionCallableImports = emptySet()
       this.interfaceTypes = emptyList()
+      this.ambiguousInterfaceTypes = emptySet()
+      this.superclassCallTypes = emptyList()
       this.multiBoundGroups = emptyList()
       this.annotationEntries = emptyList()
       this.declaredTypes = emptySet()
@@ -254,12 +275,16 @@ class GenerationContext {
       val usedTypes = mutableSetOf<KtUserType>()
       val multiSegByFile = mutableMapOf<KtFile, MutableList<List<String>>>()
       val interfaceUserTypes = mutableListOf<KtUserType>()
+      val ambiguousInterfaceUserTypes = mutableSetOf<KtUserType>()
+      val superclassCallUserTypes = mutableListOf<KtUserType>()
       val multiBoundUserTypes = mutableListOf<List<KtUserType>>()
       val typeValueArgPairs = mutableListOf<Pair<String, Int>>()
       for (ktFile in projectFiles) {
         val superCallPairs = mutableListOf<Pair<String, Int>>()
         val callExprPairs = mutableListOf<Pair<String, Int>>()
         val classCtorPairs = mutableListOf<Pair<String, Int>>()
+        val fileClassifierNames = mutableSetOf<String>()
+        val fileSuperclassCalls = mutableListOf<KtUserType>()
         ktFile.accept(
             object : KtTreeVisitorVoid() {
               override fun visitElement(element: PsiElement) {
@@ -267,10 +292,16 @@ class GenerationContext {
                   annotations.add(element)
                 }
                 if (element is KtTypeAlias) {
-                  element.name?.let { aliasNames.add(it) }
+                  element.name?.let {
+                    aliasNames.add(it)
+                    fileClassifierNames.add(it)
+                  }
                 }
                 if (element is KtTypeParameter) {
-                  element.name?.let { paramNames.add(it) }
+                  element.name?.let {
+                    paramNames.add(it)
+                    fileClassifierNames.add(it)
+                  }
                 }
                 if (element is KtUserType && element.calculateQualifierList().size == 1) {
                   usedTypes.add(element)
@@ -283,15 +314,22 @@ class GenerationContext {
                   }
                 }
                 if (element is KtClassOrObject) {
+                  element.name?.let { fileClassifierNames.add(it) }
                   interfaceUserTypes.addAll(
                       element.getInterfaceTypes().mapNotNull { it.typeAsUserType },
                   )
+                  element.ambiguousInterfaceEntry()?.typeAsUserType?.let {
+                    ambiguousInterfaceUserTypes.add(it)
+                  }
                 }
                 if (element is KtTypeParameterListOwner) {
                   multiBoundUserTypes.addAll(element.multiBoundGroups())
                 }
                 if (element is KtSuperTypeCallEntry) {
                   element.typeValueArgs()?.let { superCallPairs.add(it) }
+                  if (element.resolvesInFileScope()) {
+                    element.typeAsUserType?.let { fileSuperclassCalls.add(it) }
+                  }
                 }
                 if (element is KtCallExpression) {
                   element.typeValueArgs()?.let { callExprPairs.add(it) }
@@ -305,6 +343,9 @@ class GenerationContext {
               }
             },
         )
+        fileSuperclassCalls.filterTo(superclassCallUserTypes) {
+          it.calculateQualifierList().first() !in fileClassifierNames
+        }
         typeValueArgPairs.addAll(superCallPairs)
         typeValueArgPairs.addAll(callExprPairs)
         typeValueArgPairs.addAll(classCtorPairs)
@@ -315,6 +356,8 @@ class GenerationContext {
       this.parameterNames = paramNames
       this.usedUserTypes = usedTypes
       this.interfaceTypes = interfaceUserTypes
+      this.ambiguousInterfaceTypes = ambiguousInterfaceUserTypes
+      this.superclassCallTypes = superclassCallUserTypes
       this.multiBoundGroups = multiBoundUserTypes
       fun qualifiersOf(quals: List<List<String>>): Set<FullTypeQualifier> =
           quals
@@ -425,6 +468,37 @@ class GenerationContext {
       }
     }
     return superTypeEntries.orEmpty() + delegatedSuperTypeEntries.orEmpty()
+  }
+
+  // The entry [getInterfaceTypes] lists only because nothing in the class contradicts it. A
+  // class with a primary constructor (written or implicit) must call its superclass, and an enum
+  // has none, so their uncalled entries are interfaces.
+  private fun KtClassOrObject.ambiguousInterfaceEntry(): KtSuperTypeEntry? {
+    if (this !is KtClass || isInterface() || isEnum() || hasExplicitPrimaryConstructor()) {
+      return null
+    }
+    val superTypeList = getChildOfType<KtSuperTypeList>() ?: return null
+    if (superTypeList.getChildOfType<KtSuperTypeCallEntry>() != null) return null
+    val first = superTypeList.getChildrenOfType<KtSuperTypeEntry>().firstOrNull() ?: return null
+    val secondaryConstructors = getChildOfType<KtClassBody>()?.getSecondaryConstructor().orEmpty()
+    if (
+        secondaryConstructors.isEmpty() ||
+            secondaryConstructors.defaultConstructor().isNotEmpty() ||
+            secondaryConstructors.superConstructor().isNotEmpty()
+    ) {
+      return null
+    }
+    return first
+  }
+
+  // A supertype list sees the nested classes of every class containing its own, and those classes'
+  // inherited nested classes, which the stubbed supertypes do not reveal.
+  private fun KtSuperTypeCallEntry.resolvesInFileScope(): Boolean {
+    val owner = getStrictParentOfType<KtClassOrObject>() ?: return false
+    return generateSequence(owner.getStrictParentOfType<KtClassOrObject>()) {
+          it.getStrictParentOfType<KtClassOrObject>()
+        }
+        .none { it.superTypeListEntries.isNotEmpty() }
   }
 
   private fun KtClassOrObject.isInterface(): Boolean =

@@ -46,6 +46,8 @@ import org.jetbrains.kotlin.name.Name
  * - `$default: Int` (0 or more) — bitmask for default parameter values, only on a concrete function
  *   that has defaults
  *
+ * It also clears the parameters' default values, as Compose does.
+ *
  * Parameter counting follows the Compose compiler spec:
  * - changedParamCount = max(1, ceil((realValueParams + thisParams) / SLOTS_PER_INT))
  * - defaultParamCount = ceil(valueParams / BITS_PER_DEFAULT_INT), only if the function is concrete
@@ -174,6 +176,9 @@ internal class ComposerParamInjector(private val pluginContext: IrPluginContext)
       val hasDefaults = existingValueParams.any { it.defaultValue != null }
       val defaultCount =
           if (hasDefaults && hasBody) ceilDiv(realValueParamCount, BITS_PER_DEFAULT_INT) else 0
+      // Compose clears these once it has moved the defaults into the body or into
+      // ComposeDefaultImpls, so the backend generates no `<fn>$default` stub for a composable.
+      existingValueParams.forEach { it.defaultValue = null }
 
       // Appended after the existing parameters: $composer, $changed[N], $default[N].
       val injectedParams = mutableListOf<IrValueParameter>()

@@ -47,6 +47,7 @@ _KOTLIN_25_SHARED_COMPAT_SRCS = [
         "MetadataVersionCompat.kt",
         "OptInAnnotationsCompat.kt",
         "PipelineCompat.kt",
+        "ReturnValueStatusCompat.kt",
     ]
 ]
 

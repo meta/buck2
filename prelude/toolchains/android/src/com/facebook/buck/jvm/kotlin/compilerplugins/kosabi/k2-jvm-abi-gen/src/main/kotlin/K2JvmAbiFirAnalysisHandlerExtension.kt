@@ -191,6 +191,15 @@ class K2JvmAbiFirAnalysisHandlerExtension(
         return false
       }
 
+      // Reads the supertypes as resolution saw them, so it runs before missing ones are stripped.
+      pipeline.returnValueStatus.repair(
+          analysisResults,
+          record =
+              AbiRepairPolicy.parse(
+                  configuration.get(K2JvmAbiConfigurationKeys.ABI_VALIDATION_MODE),
+              ) != AbiRepairPolicy.OFF,
+      )
+
       // Decide before any FIR cleanup below rewrites declarations.
       pipeline.inlineBodies.decide(
           analysisResults,

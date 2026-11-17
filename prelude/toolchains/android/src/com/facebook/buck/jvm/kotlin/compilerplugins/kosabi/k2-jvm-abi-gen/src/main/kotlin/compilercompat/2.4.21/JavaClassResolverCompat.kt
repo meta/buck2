@@ -12,6 +12,7 @@
 
 package com.facebook
 
+import java.lang.reflect.Field
 import org.jetbrains.kotlin.fir.declarations.FirClass
 import org.jetbrains.kotlin.fir.declarations.utils.classId
 import org.jetbrains.kotlin.fir.java.FirJavaFacade
@@ -25,6 +26,12 @@ import org.jetbrains.kotlin.load.java.structure.impl.VirtualFileBoundJavaClass
 // 2.3 removed FirJavaAwareSymbolProvider and privatized the facade, so reflection is the only
 // path. See:
 // https://youtrack.jetbrains.com/issue/KT-60555/K2.-FirJavaClass-source-field-is-null
+private val javaFacadeField: Field by lazy {
+  JvmClassFileBasedSymbolProvider::class.java.getDeclaredField("javaFacade").apply {
+    isAccessible = true
+  }
+}
+
 fun FirClass.toBinaryJavaClassCompat(): VirtualFileBoundJavaClass {
   val symbolProvider = moduleData.session.symbolProvider
   val composite =
@@ -39,11 +46,7 @@ fun FirClass.toBinaryJavaClassCompat(): VirtualFileBoundJavaClass {
           )
   val facade =
       try {
-        JvmClassFileBasedSymbolProvider::class
-            .java
-            .getDeclaredField("javaFacade")
-            .apply { isAccessible = true }
-            .get(service) as FirJavaFacade
+        javaFacadeField.get(service) as FirJavaFacade
       } catch (e: NoSuchFieldException) {
         error(
             "KT-60555 workaround broken by compiler change: no javaFacade field on JvmClassFileBasedSymbolProvider",

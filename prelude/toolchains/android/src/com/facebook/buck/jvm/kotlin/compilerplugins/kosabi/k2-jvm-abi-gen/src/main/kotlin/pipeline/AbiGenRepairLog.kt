@@ -106,6 +106,20 @@ data class SourcePosition(val path: String, val line: Int, val column: Int) {
 data class ErrorTypedApiMember(val owner: String, val member: String, val where: String)
 
 /**
+ * A member whose return-value status [ReturnValueStatusStage] changed because it may inherit it
+ * from a member that is not on the source-only ABI classpath. [computed] is the status the compiler
+ * resolved without that member, [emitted] the one written to the ABI; [unreadableClasses] are the
+ * classes off the classpath it may inherit through, empty when the stage could not decide.
+ */
+data class UnknownReturnValueStatus(
+    val owner: String,
+    val member: String,
+    val computed: String,
+    val emitted: String,
+    val unreadableClasses: List<String>,
+)
+
+/**
  * Record of every place the ABI generator knowingly emitted something other than what the source
  * says, plus every place a best-effort repair failed outright.
  *
@@ -121,6 +135,7 @@ class AbiGenRepairLog {
   val clearedPropertyInitializers: MutableList<DiscardedInitializer> = mutableListOf()
   val replacedFieldInitializers: MutableList<DiscardedInitializer> = mutableListOf()
   val strippedSupertypes: MutableList<DiscardedInitializer> = mutableListOf()
+  val unknownReturnValueStatuses: MutableList<UnknownReturnValueStatus> = mutableListOf()
 
   /**
    * Repairs that did not even complete - a reflective mutation threw, so the FIR tree is in
@@ -178,6 +193,10 @@ class AbiGenRepairLog {
     strippedSupertypes.add(DiscardedInitializer(owner, detail))
   }
 
+  fun recordUnknownReturnValueStatus(status: UnknownReturnValueStatus) {
+    unknownReturnValueStatuses.add(status)
+  }
+
   fun recordFailedRepair(owner: String, detail: String) {
     failedRepairs.add(DiscardedInitializer(owner, detail))
   }
@@ -194,7 +213,8 @@ class AbiGenRepairLog {
         fabricatedConstants.size +
             clearedPropertyInitializers.size +
             replacedFieldInitializers.size +
-            strippedSupertypes.size
+            strippedSupertypes.size +
+            unknownReturnValueStatuses.size
 
   /**
    * Constants whose emitted type is known not to match the real declaration, or is only a guess.
@@ -212,6 +232,7 @@ class AbiGenRepairLog {
           " cleared_property_initializers=${clearedPropertyInitializers.size}" +
           " replaced_field_initializers=${replacedFieldInitializers.size}" +
           " stripped_supertypes=${strippedSupertypes.size}" +
+          " unknown_return_value_statuses=${unknownReturnValueStatuses.size}" +
           " error_typed_api_members=${errorTypedApiMembers.size}" +
           " failed_repairs=${failedRepairs.size}"
 }

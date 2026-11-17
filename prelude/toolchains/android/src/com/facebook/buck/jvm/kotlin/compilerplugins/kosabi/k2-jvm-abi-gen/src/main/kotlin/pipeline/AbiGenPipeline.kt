@@ -1673,6 +1673,34 @@ internal class ValidationStage(private val repairLog: AbiGenRepairLog) : AbiGenS
               "type so source-only ABI does not publish a phantom descriptor.",
       )
     }
+
+    // Assertion 7: every return-value status ReturnValueStatusStage changed. Such a member may
+    // inherit its status from a member that is not on the source-only ABI classpath, so the stage
+    // wrote `MustUse` over the status the compiler resolved here, never laxer than the class ABI.
+    for (status in repairLog.unknownReturnValueStatuses) {
+      val inherited =
+          if (status.unreadableClasses.isEmpty()) {
+            "a member that may not be on the source-only ABI classpath (the stage could not " +
+                "decide which)"
+          } else {
+            "a member of `${status.unreadableClasses.joinToString("`, `")}`, which is not on " +
+                "the source-only ABI classpath"
+          }
+      val provider =
+          status.unreadableClasses.firstOrNull()?.let { "the target that provides `$it`" }
+              ?: "the target that declares the overridden member"
+      messageCollector.report(
+          severity,
+          "Kosabi ABI validation: `${status.owner}.${status.member}` may inherit its " +
+              "return-value status from $inherited. `${status.emitted}` was emitted where this " +
+              "compile resolved `${status.computed}`; a class-ABI build writes the inherited " +
+              "status, so consumers built with `-Xreturn-value-checker` may report a discarded " +
+              "result against this ABI only. To make the status exact, add $provider to THIS " +
+              "target's `source_only_abi_deps`. " +
+              "KOSABI_UNKNOWN_RETURN_VALUE_STATUS member=`${status.owner}.${status.member}` " +
+              "symbols=`${status.unreadableClasses.joinToString("|")}` fix=`ADD_SOURCE_ONLY_ABI_DEP`",
+      )
+    }
   }
 
   private data class KeptBodyReference(val function: String, val className: String)
@@ -2672,6 +2700,7 @@ internal class AbiGenPipeline(
     val composeAbi: ComposeAbiEmulationStage = ComposeAbiEmulationStage(),
     val bytecodeSanitizer: BytecodeSanitizerStage = BytecodeSanitizerStage(),
 ) {
+  val returnValueStatus: ReturnValueStatusStage = ReturnValueStatusStage(repairLog)
   val firMetadataSanitizer: FirMetadataSanitizerStage = FirMetadataSanitizerStage(repairLog)
   val inlineBodies: InlineBodyStage = InlineBodyStage()
   val irSanitizer: IrSanitizerStage = IrSanitizerStage(repairLog, inlineBodies)
@@ -2679,6 +2708,7 @@ internal class AbiGenPipeline(
 
   val stages: List<AbiGenStage>
     get() = listOf(
+        returnValueStatus,
         firMetadataSanitizer,
         composeAbi,
         inlineBodies,

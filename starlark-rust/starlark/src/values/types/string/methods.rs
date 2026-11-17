@@ -1270,20 +1270,16 @@ pub(crate) fn string_methods(builder: &mut MethodsBuilder) {
     /// ```
     #[starlark(speculative_exec_safe)]
     fn title(this: &str) -> anyhow::Result<String> {
-        let mut last_space = true;
+        // As in `istitle`, a word starts at a cased letter that follows an uncased character.
+        let mut previous_is_cased = false;
         let mut result = String::with_capacity(this.len());
         for c in this.chars() {
-            if !c.is_alphabetic() {
-                last_space = true;
+            if previous_is_cased {
                 result.extend(c.to_lowercase());
             } else {
-                if last_space {
-                    result.extend(c.to_uppercase())
-                } else {
-                    result.extend(c.to_lowercase())
-                }
-                last_space = false;
+                result.extend(c.to_uppercase());
             }
+            previous_is_cased = is_cased(c);
         }
         Ok(result)
     }
@@ -1439,6 +1435,17 @@ mod tests {
         assert::eq(r#""中".isupper()"#, "False");
         assert::eq(r#""aǅ".islower()"#, "False");
         assert::eq(r#""a中".islower()"#, "True");
+    }
+
+    /// `title` starts a word at a cased letter that follows an uncased character, as `istitle`
+    /// expects: a letter with no case (CJK) does not continue a word.
+    #[test]
+    fn test_title_with_uncased_letters() {
+        assert::eq(r#""中a".title()"#, r#""中A""#);
+        assert::eq(r#""a中b".title()"#, r#""A中B""#);
+        assert::eq(r#""hello 世界world".title()"#, r#""Hello 世界World""#);
+        assert::eq(r#""they're 3rd_party".title()"#, r#""They'Re 3Rd_Party""#);
+        assert::is_true(r#""hello 世界world".title().istitle()"#);
     }
 
     /// `chars` is a set of characters: ASCII at both ends of the range, non-ASCII, and

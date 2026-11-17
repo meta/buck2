@@ -32,6 +32,7 @@ import org.jetbrains.kotlin.ir.types.IrSimpleType
 import org.jetbrains.kotlin.ir.types.IrType
 import org.jetbrains.kotlin.ir.types.classFqName
 import org.jetbrains.kotlin.ir.types.classOrNull
+import org.jetbrains.kotlin.ir.types.isAny
 import org.jetbrains.kotlin.ir.types.isBoolean
 import org.jetbrains.kotlin.ir.types.isByte
 import org.jetbrains.kotlin.ir.types.isChar
@@ -46,6 +47,7 @@ import org.jetbrains.kotlin.ir.types.isUnit
 import org.jetbrains.kotlin.ir.types.makeNotNull
 import org.jetbrains.kotlin.ir.util.constructors
 import org.jetbrains.kotlin.ir.util.getAnnotation
+import org.jetbrains.kotlin.ir.util.hasAnnotation
 import org.jetbrains.kotlin.ir.util.isEnumClass
 import org.jetbrains.kotlin.ir.util.isEnumEntry
 import org.jetbrains.kotlin.ir.util.isFileClass
@@ -64,7 +66,14 @@ import org.jetbrains.kotlin.name.Name
  * Eligible classes: public/internal, non-enum, non-interface, non-annotation, non-anonymous,
  * non-expect, non-inner, non-file-class, non-companion, non-inline/value.
  *
+ * An eligible class that carries a stable marker gets `$stable = STABLE` and no @StabilityInferred,
+ * as Compose's ClassStabilityTransformer does. A stable marker is an annotation whose class is
+ * annotated @StableMarker (Compose's @Stable and @Immutable among them), or one Compose lists in
+ * KnownStableConstructs.stableMarkers.
+ *
  * Stability rules (simplified for ABI emulation):
+ * - A class that carries a stable marker, or has a supertype that does: stable, with no
+ *   type-parameter dependencies
  * - val properties of stable types: stable
  * - var properties (non-delegated): unstable
  * - Primitives, String, Unit, enums, function types: stable
@@ -84,6 +93,12 @@ internal class ClassStabilityTransformer(private val pluginContext: IrPluginCont
     private val STABILITY_INFERRED_CLASS_ID =
         ClassId(FqName("androidx.compose.runtime.internal"), Name.identifier("StabilityInferred"))
     private val STABILITY_INFERRED_FQ_NAME = STABILITY_INFERRED_CLASS_ID.asSingleFqName()
+    private val STABLE_MARKER_FQ_NAME = FqName("androidx.compose.runtime.StableMarker")
+
+    // Compose's KnownStableConstructs.stableMarkers: annotations it treats as stable markers
+    // although they are not annotated @StableMarker.
+    private val KNOWN_STABLE_MARKER_FQ_NAMES =
+        setOf(FqName("com.google.errorprone.annotations.Immutable"))
 
     // Known stable FQNs beyond primitives/String/Unit
     private val KNOWN_STABLE_FQNS = setOf(
@@ -120,6 +135,8 @@ internal class ClassStabilityTransformer(private val pluginContext: IrPluginCont
   // @StabilityInferred attached yet (this transformer is what attaches it, and visit order does not
   // follow the inheritance graph), so its stability must be recomputed rather than read back.
   private val moduleClassFqns = mutableSetOf<String>()
+
+  private val stableMarkedDescendantCache = mutableMapOf<IrClass, Boolean>()
 
   fun transform(moduleFragment: IrModuleFragment) {
     // No-op when Compose runtime is not on the classpath.
@@ -207,6 +224,9 @@ internal class ClassStabilityTransformer(private val pluginContext: IrPluginCont
     stableField.initializer = pluginContext.irFactory.createExpressionBody(-1, -1, constExpr)
     irClass.declarations.add(stableField)
 
+    // Compose gives a marked class `$stable = STABLE` and no @StabilityInferred.
+    if (hasStableMarker(irClass)) return
+
     // Not the same encoding as $stable: a bitmask over the class's type parameters, plus a high
     // bit at (1 shl typeParameters.size) meaning "known stable regardless of its parameters".
     // The `< 32` bound mirrors Compose exactly (ClassStabilityTransformer.kt:161 emits it,
@@ -247,6 +267,9 @@ internal class ClassStabilityTransformer(private val pluginContext: IrPluginCont
   // Deliberately conservative: an unrecognised member type yields not-known-stable, so consumers
   // resolve stability at runtime rather than assume the wrong answer.
   private fun computeStability(irClass: IrClass): Stability {
+    // Compose answers Stable here before it looks at any member, superclass or type parameter.
+    if (hasStableMarkedDescendant(irClass)) return Stability(0, knownStable = true)
+
     val classFqn = irClass.classFqName()
     if (classFqn != null && analyzing.contains(classFqn)) {
       // Cycle — do not claim knowledge we do not have.
@@ -331,6 +354,26 @@ internal class ClassStabilityTransformer(private val pluginContext: IrPluginCont
     if (typeParamCount >= 32) return false
     return (parameters and (1 shl typeParamCount)) != 0
   }
+
+  /** Whether [irClass] itself carries a stable marker (Compose's `hasStableMarker`). */
+  private fun hasStableMarker(irClass: IrClass): Boolean =
+      irClass.annotations.any { annotation ->
+        annotation.type.classFqName in KNOWN_STABLE_MARKER_FQ_NAMES ||
+            annotation.type.classOrNull?.owner?.hasAnnotation(STABLE_MARKER_FQ_NAME) == true
+      }
+
+  /**
+   * Whether [irClass] or any of its supertypes carries a stable marker. Compose names this
+   * `hasStableMarkedDescendant`, and walks superclasses and interfaces alike.
+   */
+  private fun hasStableMarkedDescendant(irClass: IrClass): Boolean =
+      stableMarkedDescendantCache.getOrPut(irClass) {
+        hasStableMarker(irClass) ||
+            irClass.superTypes.any { superType ->
+              !superType.isAny() &&
+                  superType.classOrNull?.owner?.let { hasStableMarkedDescendant(it) } == true
+            }
+      }
 
   // True only when the type IS one of the class's own type parameters, e.g. `val value: T`. Such a
   // member's stability is carried by its bit in the mask and resolved by the consumer, so it must

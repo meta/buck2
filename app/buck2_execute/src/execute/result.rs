@@ -39,6 +39,17 @@ use crate::materialize::materializer::ReadLease;
 use crate::output_size::OutputSize;
 use crate::re::remote_action_result::ReMetadataTiming;
 
+pub fn command_execution_error_proto(
+    stage: &str,
+    error: &buck2_error::Error,
+) -> buck2_data::command_execution::Error {
+    buck2_data::command_execution::Error {
+        stage: stage.to_owned(),
+        error: format!("{error:#}"),
+        tags: error.tags().iter().map(|t| *t as i32).collect(),
+    }
+}
+
 #[derive(Debug)]
 pub enum CommandExecutionErrorType {
     StorageResourceExhausted,
@@ -450,11 +461,7 @@ impl CommandExecutionReport {
                 .into()
             }
             CommandExecutionStatus::Error { stage, error, .. } => {
-                buck2_data::command_execution::Error {
-                    stage: (*stage).to_owned(),
-                    error: format!("{error:#}"),
-                }
-                .into()
+                command_execution_error_proto(stage, error).into()
             }
         };
 

@@ -1171,7 +1171,7 @@ fn failure_reason_for_command_execution(
 
             format!("Command timed out after {:.3}s", duration.as_secs_f64(),)
         }
-        Status::Error(Error { stage, error }) => {
+        Status::Error(Error { stage, error, .. }) => {
             format!("Internal error (stage: {stage}): {error}")
         }
         Status::Cancelled(Cancelled {}) => "Command was cancelled".to_owned(),

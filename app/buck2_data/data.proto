@@ -2432,6 +2432,9 @@ message CommandExecution {
   message Error {
     string stage = 1;
     string error = 2;
+    // buck2's classification of `error`, so consumers can act on what buck2
+    // already knows about the failure instead of parsing `error`.
+    repeated buck.data.error.ErrorTag tags = 3;
   }
 
   // (Hybrid execution only) This executor released its claim in order to allow

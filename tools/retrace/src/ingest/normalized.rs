@@ -738,6 +738,7 @@ mod tests {
             status: Some(Status::Error(buck2_data::command_execution::Error {
                 stage: "worker".to_owned(),
                 error: "failed to connect".to_owned(),
+                ..Default::default()
             })),
             details: Some(buck2_data::CommandExecutionDetails {
                 command_kind: Some(buck2_data::CommandExecutionKind {

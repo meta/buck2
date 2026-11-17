@@ -34,6 +34,7 @@ use buck2_events::dispatch::span_async;
 use buck2_events::span::SpanId;
 use buck2_execute::execute::result::CommandExecutionReport;
 use buck2_execute::execute::result::CommandExecutionStatus;
+use buck2_execute::execute::result::command_execution_error_proto;
 use buck2_execute::materialize::materializer::HasMaterializer;
 use buck2_execute::materialize::materializer::MaterializationPurpose;
 use buck2_execute::materialize::materializer::MaterializeRequest;
@@ -811,11 +812,7 @@ async fn command_execution_report_to_proto(
             .into()
         }
         CommandExecutionStatus::Error { stage, error, .. } => {
-            buck2_data::command_execution::Error {
-                stage: (*stage).to_owned(),
-                error: format!("{error:#}"),
-            }
-            .into()
+            command_execution_error_proto(stage, error).into()
         }
     };
 

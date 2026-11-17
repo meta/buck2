@@ -11,6 +11,8 @@
 use std::ffi::OsStr;
 #[cfg(all(fbcode_build, target_os = "linux"))]
 use std::fs::OpenOptions;
+#[cfg(all(fbcode_build, target_os = "linux"))]
+use std::io::Write;
 use std::os::unix::ffi::OsStrExt;
 #[cfg(all(fbcode_build, target_os = "linux"))]
 use std::os::unix::fs::OpenOptionsExt;
@@ -420,10 +422,6 @@ struct MiniperfContainer {
 }
 
 impl MiniperfContainer {
-    /// Must match the section key in `//buck2/app/buck2:buck2-bin`.
-    #[cfg(all(fbcode_build, target_os = "linux"))]
-    const SECTION_NAME: &'static str = "buck2_miniperf";
-
     fn new(forkserver_state_dir: &AbsNormPath) -> buck2_error::Result<Option<Self>> {
         #[cfg(not(all(fbcode_build, target_os = "linux")))]
         {
@@ -451,13 +449,10 @@ impl MiniperfContainer {
                 .open(miniperf.as_path())
                 .with_buck_error_context(|| format!("Error opening: `{}`", miniperf.display()))?;
 
-            let section = buck2_embedded_section::EmbeddedSection {
-                name: Self::SECTION_NAME,
-                encoding: buck2_embedded_section::SectionEncoding::Zstd,
-            };
-
-            section
-                .copy_to(&mut miniperf_writer)
+            // Raw zstd rather than Managed Compression: this must decode with
+            // no configuration or network access.
+            zstd::stream::copy_decode(buck2_miniperf_data::get(), &mut miniperf_writer)
+                .and_then(|()| miniperf_writer.flush())
                 .with_buck_error_context(|| {
                     format!("Error writing miniperf to `{}`", miniperf.display())
                 })?;

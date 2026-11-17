@@ -37,7 +37,8 @@ rust_library(
         "DEFAULT": [],
         "ovr_config//os:linux": [
             "fbsource//third-party/rust:nix",
-            "//buck2/app/buck2_embedded_section:buck2_embedded_section",
+            "fbsource//third-party/rust:zstd",
+            # @oss-disable[end= ]: "//buck2/app/buck2_forkserver/meta_only:buck2_miniperf_data",
         ],
     }),
 )

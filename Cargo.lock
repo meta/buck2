@@ -2318,15 +2318,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "buck2_embedded_section"
-version = "0.1.0"
-dependencies = [
- "buck2_error",
- "object 0.40.0",
- "zstd",
-]
-
-[[package]]
 name = "buck2_env"
 version = "0.1.0"
 dependencies = [
@@ -2741,7 +2732,6 @@ dependencies = [
  "buck2_common",
  "buck2_core",
  "buck2_data",
- "buck2_embedded_section",
  "buck2_error",
  "buck2_execute_local",
  "buck2_forkserver_proto",
@@ -2758,6 +2748,7 @@ dependencies = [
  "tokio",
  "tokio-stream",
  "tonic",
+ "zstd",
 ]
 
 [[package]]

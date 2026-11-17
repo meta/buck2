@@ -93,7 +93,6 @@ members = [
   "app/buck2_downward_api",
   "app/buck2_downward_api_proto",
   "app/buck2_dynamic_actions",
-  "app/buck2_embedded_section",
   "app/buck2_env",
   "app/buck2_error",
   "app/buck2_error_derive",
@@ -272,7 +271,6 @@ buck2_directory = { path = "app/buck2_directory" }
 buck2_downward_api = { path = "app/buck2_downward_api" }
 buck2_downward_api_proto = { path = "app/buck2_downward_api_proto" }
 buck2_dynamic_actions = { path = "app/buck2_dynamic_actions" }
-buck2_embedded_section = { path = "app/buck2_embedded_section" }
 buck2_env = { path = "app/buck2_env" }
 buck2_error = { path = "app/buck2_error" }
 buck2_error_derive = { path = "app/buck2_error_derive" }

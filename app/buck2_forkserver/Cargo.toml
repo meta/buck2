@@ -33,8 +33,8 @@ tonic.workspace = true
 tempfile.workspace = true
 
 [target.'cfg(target_os = "linux")'.dependencies]
-buck2_embedded_section.workspace = true
 nix.workspace = true
+zstd.workspace = true
 
 [lints]
 workspace = true

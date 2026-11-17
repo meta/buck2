@@ -106,6 +106,9 @@ fn derive_allocative_impl(
         #[automatically_derived]
         impl #impl_generics allocative::Allocative for #name #type_generics #where_clause {
             #[allow(unused, warnings)]
+            // Re-enable once the method-level form reaches our default nightly toolchain.
+            // Older nightlies only accept it on traits (rust-lang/rust#164217).
+            // #[cfg_attr(rust_nightly, rustc_trivial_field_reads)]
             fn visit<'allocative_a, 'allocative_b: 'allocative_a>(
                 &self,
                 visitor: &'allocative_a mut allocative::Visitor<'allocative_b>,

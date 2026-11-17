@@ -213,6 +213,7 @@ fn saturating_sub(counter: &AtomicU64, n: u64) {
     });
 }
 
+#[allocative::root]
 static GLOBAL: OnceLock<BlobStore> = OnceLock::new();
 
 impl BlobStore {

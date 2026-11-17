@@ -84,6 +84,7 @@ impl StreamingCommand for TenantsCommand {
                         "isolation": tenant.isolation,
                         "generation": tenant.generation,
                         "initialized": tenant.initialized,
+                        "pending_registrations": tenant.pending_registrations,
                     })
                 })
                 .collect();

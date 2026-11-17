@@ -208,6 +208,31 @@ pub fn tenant_generation(entries: &[Value], isolation: &str) -> anyhow::Result<u
     generation_of(tenant_entry(entries, isolation)?)
 }
 
+/// Waits until `count` registrations of the tenant `isolation`'s generation are pending: the
+/// clients behind them have joined the generation and wait for it to initialize.
+pub async fn wait_for_pending_registrations(
+    buck: &Buck,
+    isolation: &str,
+    count: u64,
+) -> anyhow::Result<()> {
+    tokio::time::timeout(THIRTY_SECONDS, async {
+        loop {
+            let entries = debug_tenants(buck).await?;
+            let entry = tenant_entry(&entries, isolation)?;
+            let pending = entry
+                .get("pending_registrations")
+                .and_then(Value::as_u64)
+                .with_context(|| format!("No `pending_registrations` in {entry}"))?;
+            if pending >= count {
+                return anyhow::Ok(());
+            }
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+    })
+    .await
+    .with_context(|| format!("Timed out waiting for {count} registrations of `{isolation}`"))?
+}
+
 /// Waits up to 30 seconds for `path`, failing if `build` exits first.
 pub async fn wait_for_marker(path: &Path, build: &mut Option<BuckProcess>) -> anyhow::Result<()> {
     tokio::time::timeout(THIRTY_SECONDS, async {

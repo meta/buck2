@@ -48,6 +48,7 @@ use common_unidaemon::tenant_generation;
 use common_unidaemon::unidaemon_checkouts;
 use common_unidaemon::wait_for_evicted_generation;
 use common_unidaemon::wait_for_marker;
+use common_unidaemon::wait_for_pending_registrations;
 use regex::Regex;
 use serde_json::Value;
 
@@ -296,7 +297,7 @@ async fn test_unidaemon_proxy_publishes_before_tenant_initializes(
         );
         assert!(!truthy(&spec["constraints"]["extra"]["trace_io_enabled"]));
         second = Some(victim.build(&["//:tenant_value"]).spawn());
-        tokio::time::sleep(Duration::from_millis(500)).await;
+        wait_for_pending_registrations(&tenants[1], "initializing", 2).await?;
         assert!(second.as_mut().unwrap().try_wait().is_none());
         touch(&tmp_path.join("initialization.release"))?;
         wait_within(first.take().unwrap(), THIRTY_SECONDS).await??;

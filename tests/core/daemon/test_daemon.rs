@@ -43,6 +43,7 @@ use common_unidaemon::tenant_entry;
 use common_unidaemon::tenant_generation;
 use common_unidaemon::wait_for_evicted_generation;
 use common_unidaemon::wait_for_marker;
+use common_unidaemon::wait_for_pending_registrations;
 use regex::Regex;
 use serde_json::Value;
 use serde_json::json;
@@ -1247,7 +1248,7 @@ async fn client_killed_during_tenant_initialization_leaves_the_tenant_usable(
         let generation = tenant_generation(&debug_tenants(buck).await?, "initializing")?;
         if joined {
             joiner = Some(tenant.targets(&["//:rule"]).spawn());
-            tokio::time::sleep(Duration::from_secs(1)).await;
+            wait_for_pending_registrations(buck, "initializing", 2).await?;
         }
         let _killed = first
             .take()

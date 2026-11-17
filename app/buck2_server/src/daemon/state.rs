@@ -1806,6 +1806,7 @@ impl TenantStateRegistry {
                 key: entry.spec.key().clone(),
                 generation: entry.generation,
                 initialized: entry.is_initialized(),
+                pending_registrations: entry.registrants.load(Ordering::Acquire),
             })
             .collect();
         result.sort_by(|a, b| {
@@ -1843,6 +1844,8 @@ pub struct TenantStateInfo {
     pub key: TenantKey,
     pub generation: u64,
     pub initialized: bool,
+    /// Registrations of the generation that have not completed.
+    pub pending_registrations: usize,
 }
 
 /// Whether the daemon may drain when the evicted generation was its last tenant.

@@ -2194,6 +2194,7 @@ impl DaemonApi for BuckdServer {
                 isolation: tenant.key.isolation().as_str().to_owned(),
                 generation: tenant.generation,
                 initialized: tenant.initialized,
+                pending_registrations: tenant.pending_registrations as u64,
             })
             .collect();
         Ok(Response::new(UnstableListTenantsResponse { tenants }))

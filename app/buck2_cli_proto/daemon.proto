@@ -903,6 +903,8 @@ message UnstableTenantInfo {
   string isolation = 2;
   uint64 generation = 3;
   bool initialized = 4;
+  // Registrations of the generation that have not completed.
+  uint64 pending_registrations = 5;
 }
 
 message UnstableListTenantsResponse {

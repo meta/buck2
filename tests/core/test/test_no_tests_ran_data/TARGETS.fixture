@@ -1,0 +1,6 @@
+load(":rules.bzl", "no_tests", "test_case")
+
+no_tests(name = "no_tests")
+test_case(name = "omitted", labels = ["extended"])
+test_case(name = "passes")
+test_case(name = "skips", skipped = True)

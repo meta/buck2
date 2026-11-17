@@ -391,6 +391,30 @@ def setup_dep_files(
 
 FORCE_PERSISTENT_WORKERS = read_root_config("build", "require_persistent_workers", "false").lower() == "true"
 
+def compiler_daemon_base_jvm_args(java_runtime_version: [int, None]) -> list[str]:
+    return ["-XX:-MaxFDLimit"] + unsafe_memory_access_jvm_args(java_runtime_version)
+
+def compiler_daemon_jdk_access_jvm_args(launcher_runtime: JvmLauncherRuntimeInfo | None) -> list[str]:
+    # Allow JVM compiler daemon to access internal jdk.compiler APIs. Launched from a launcher runtime, the
+    # bootstrapper's own classes are in a named module rather than the unnamed one.
+    jdk_compiler_readers = "ALL-UNNAMED,{}".format(launcher_runtime.module) if launcher_runtime else "ALL-UNNAMED"
+    return [
+        "--add-exports=jdk.compiler/com.sun.tools.javac.code={}".format(jdk_compiler_readers),
+        "--add-exports=jdk.compiler/com.sun.tools.javac.comp={}".format(jdk_compiler_readers),
+        "--add-exports=jdk.compiler/com.sun.tools.javac.file={}".format(jdk_compiler_readers),
+        "--add-exports=jdk.compiler/com.sun.tools.javac.jvm={}".format(jdk_compiler_readers),
+        "--add-exports=jdk.compiler/com.sun.tools.javac.main={}".format(jdk_compiler_readers),
+        "--add-exports=jdk.compiler/com.sun.tools.javac.model={}".format(jdk_compiler_readers),
+        "--add-exports=jdk.compiler/com.sun.tools.javac.processing={}".format(jdk_compiler_readers),
+        "--add-exports=jdk.compiler/com.sun.tools.javac.parser={}".format(jdk_compiler_readers),
+        "--add-exports=jdk.compiler/com.sun.tools.javac.tree={}".format(jdk_compiler_readers),
+        "--add-opens=jdk.compiler/com.sun.tools.javac.api={}".format(jdk_compiler_readers),
+        "--add-opens=jdk.compiler/com.sun.tools.javac.code={}".format(jdk_compiler_readers),
+        "--add-opens=jdk.compiler/com.sun.tools.javac.jvm={}".format(jdk_compiler_readers),
+        "--add-opens=jdk.compiler/com.sun.tools.javac.processing={}".format(jdk_compiler_readers),
+        "--add-opens=jdk.compiler/com.sun.tools.javac.util={}".format(jdk_compiler_readers),
+    ]
+
 def prepare_cd_exe(
     qualified_name: str,
     java: RunInfo,
@@ -411,7 +435,7 @@ def prepare_cd_exe(
     aot_mode: str = "on",
 ) -> tuple:
     local_only = False
-    jvm_args = ["-XX:-MaxFDLimit"] + unsafe_memory_access_jvm_args(java_runtime_version)
+    jvm_args = compiler_daemon_base_jvm_args(java_runtime_version)
 
     # The variables 'extra_jvm_args' and 'extra_jvm_args_target' are generally used, but they are primarily designed for profiling use-cases.
     # The following section is configured with the profiling use-case in mind.
@@ -436,25 +460,7 @@ def prepare_cd_exe(
         # If no specific target is provided, the extra JVM arguments are added to all targets that run on worker, local machine or RE.
         jvm_args = jvm_args + extra_jvm_args
 
-    # Allow JVM compiler daemon to access internal jdk.compiler APIs. Launched from a launcher runtime, the
-    # bootstrapper's own classes are in a named module rather than the unnamed one.
-    jdk_compiler_readers = "ALL-UNNAMED,{}".format(launcher_runtime.module) if launcher_runtime else "ALL-UNNAMED"
-    jvm_args += [
-        "--add-exports=jdk.compiler/com.sun.tools.javac.code={}".format(jdk_compiler_readers),
-        "--add-exports=jdk.compiler/com.sun.tools.javac.comp={}".format(jdk_compiler_readers),
-        "--add-exports=jdk.compiler/com.sun.tools.javac.file={}".format(jdk_compiler_readers),
-        "--add-exports=jdk.compiler/com.sun.tools.javac.jvm={}".format(jdk_compiler_readers),
-        "--add-exports=jdk.compiler/com.sun.tools.javac.main={}".format(jdk_compiler_readers),
-        "--add-exports=jdk.compiler/com.sun.tools.javac.model={}".format(jdk_compiler_readers),
-        "--add-exports=jdk.compiler/com.sun.tools.javac.processing={}".format(jdk_compiler_readers),
-        "--add-exports=jdk.compiler/com.sun.tools.javac.parser={}".format(jdk_compiler_readers),
-        "--add-exports=jdk.compiler/com.sun.tools.javac.tree={}".format(jdk_compiler_readers),
-        "--add-opens=jdk.compiler/com.sun.tools.javac.api={}".format(jdk_compiler_readers),
-        "--add-opens=jdk.compiler/com.sun.tools.javac.code={}".format(jdk_compiler_readers),
-        "--add-opens=jdk.compiler/com.sun.tools.javac.jvm={}".format(jdk_compiler_readers),
-        "--add-opens=jdk.compiler/com.sun.tools.javac.processing={}".format(jdk_compiler_readers),
-        "--add-opens=jdk.compiler/com.sun.tools.javac.util={}".format(jdk_compiler_readers),
-    ]
+    jvm_args += compiler_daemon_jdk_access_jvm_args(launcher_runtime)
 
     if target_specified_debug_port:
         debug_port = target_specified_debug_port

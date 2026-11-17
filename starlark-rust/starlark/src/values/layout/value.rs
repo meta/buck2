@@ -974,32 +974,42 @@ impl<'v> Value<'v> {
         }
     }
 
+    /// Whether the value's representation is `T`: the test of
+    /// [`downcast_ref`](Self::downcast_ref), without the reference. A handle is made from this,
+    /// since testing the `Option` of a reference costs a check that the reference is not null.
+    #[inline]
+    pub(crate) fn has_representation<T: StarlarkValue<'v>>(self) -> bool {
+        if T::static_type_id() == StarlarkStr::static_type_id() {
+            self.is_str()
+        } else if PointerI32::type_is_pointer_i32::<T>() {
+            self.unpack_inline_int().is_some()
+        } else {
+            match self.0.unpack_ptr() {
+                None => false,
+                Some(entry) => match entry.state() {
+                    // SAFETY: just checked to be a live value.
+                    AValueHeapEntryState::Value(_) => {
+                        unsafe { self.0.value_header_ptr_unchecked() }
+                            .unpack()
+                            .is::<T>()
+                    }
+                    AValueHeapEntryState::Forward(_) | AValueHeapEntryState::Reservation(_) => {
+                        false
+                    }
+                },
+            }
+        }
+    }
+
     /// Get a reference to underlying data or [`None`]
     /// if contained object has different type than requested.
     #[inline]
     pub fn downcast_ref<T: StarlarkValue<'v>>(self) -> Option<&'v T> {
-        if T::static_type_id() == StarlarkStr::static_type_id() {
-            if self.is_str() {
-                // SAFETY: we just checked this is string, and requested type is string.
-                Some(unsafe { self.downcast_ref_unchecked() })
-            } else {
-                None
-            }
-        } else if PointerI32::type_is_pointer_i32::<T>() {
-            if self.unpack_inline_int().is_some() {
-                // SAFETY: we just checked this is int, and requested type is int.
-                Some(unsafe { self.downcast_ref_unchecked() })
-            } else {
-                None
-            }
+        if self.has_representation::<T>() {
+            // SAFETY: the representation was just checked to be `T`.
+            Some(unsafe { self.downcast_ref_unchecked() })
         } else {
-            match self.0.unpack_ptr()?.state() {
-                // SAFETY: just checked to be a live value.
-                AValueHeapEntryState::Value(_) => unsafe { self.0.value_header_ptr_unchecked() }
-                    .unpack()
-                    .downcast_ref::<T>(),
-                AValueHeapEntryState::Forward(_) | AValueHeapEntryState::Reservation(_) => None,
-            }
+            None
         }
     }
 

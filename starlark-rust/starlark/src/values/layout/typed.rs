@@ -147,8 +147,11 @@ impl<'v, T: StarlarkValue<'v>> ValueTyped<'v, T> {
     /// Downcast.
     #[inline]
     pub fn new(value: Value<'v>) -> Option<ValueTyped<'v, T>> {
-        value.downcast_ref::<T>()?;
-        Some(ValueTyped(value, marker::PhantomData))
+        if value.has_representation::<T>() {
+            Some(ValueTyped(value, marker::PhantomData))
+        } else {
+            None
+        }
     }
 
     /// Downcast.
@@ -273,8 +276,11 @@ impl<'v, T: StarlarkValue<'v>> FrozenValueTyped<'v, T> {
     #[inline]
     fn new_frozen(value: Value<'v>) -> Option<FrozenValueTyped<'v, T>> {
         debug_assert!(value.is_frozen());
-        value.downcast_ref::<T>()?;
-        Some(FrozenValueTyped(value, marker::PhantomData))
+        if value.has_representation::<T>() {
+            Some(FrozenValueTyped(value, marker::PhantomData))
+        } else {
+            None
+        }
     }
 
     /// Downcast; `None` if the value is not of type `T` or not frozen.

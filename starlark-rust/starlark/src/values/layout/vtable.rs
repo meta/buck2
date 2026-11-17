@@ -410,9 +410,15 @@ impl<'v> AValueDyn<'v> {
         (self.vtable.starlark_serialize)(self.value, ctx)
     }
 
+    /// Whether the representation is `T`.
+    #[inline]
+    pub(crate) fn is<T: StarlarkValue<'v>>(self) -> bool {
+        self.vtable.static_type_of_value.get() == T::static_type_id()
+    }
+
     #[inline]
     pub(crate) fn downcast_ref<T: StarlarkValue<'v>>(self) -> Option<&'v T> {
-        if self.vtable.static_type_of_value.get() == T::static_type_id() {
+        if self.is::<T>() {
             // SAFETY: just checked whether we are pointing to the correct type.
             unsafe { Some(self.value.value_ref()) }
         } else {

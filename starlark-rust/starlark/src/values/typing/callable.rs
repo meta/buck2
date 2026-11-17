@@ -235,8 +235,21 @@ impl<'v, P: StarlarkCallableParamSpec, R: StarlarkTypeExpr<'static>> StarlarkCal
         StarlarkCallable(value, PhantomData)
     }
 
+    /// The value.
+    pub fn to_value(self) -> Value<'v> {
+        self.0
+    }
+
     /// Erase parameter and return types.
     pub fn erase(self) -> StarlarkCallable<'v> {
+        self.with_signature()
+    }
+
+    /// The same callable under another signature. The signature is not looked at when a
+    /// value is read as a `typing.Callable`, so this checks nothing.
+    pub fn with_signature<P2: StarlarkCallableParamSpec, R2: StarlarkTypeExpr<'static>>(
+        self,
+    ) -> StarlarkCallable<'v, P2, R2> {
         StarlarkCallable::unchecked_new(self.0)
     }
 }
@@ -381,6 +394,11 @@ impl<'v, P: StarlarkCallableParamSpec, R: StarlarkTypeExpr<'static>> AllocValue<
 impl<'v, P: StarlarkCallableParamSpec, R: StarlarkTypeExpr<'static>>
     StarlarkCallableChecked<'v, P, R>
 {
+    /// The value.
+    pub fn to_value(self) -> Value<'v> {
+        self.0
+    }
+
     /// Convert to [`StarlarkCallable`].
     pub fn to_unchecked(self) -> StarlarkCallable<'v, P, R> {
         StarlarkCallable::unchecked_new(self.0)

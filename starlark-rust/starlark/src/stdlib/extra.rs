@@ -60,7 +60,7 @@ pub fn filter(builder: &mut GlobalsBuilder) {
                     }
                 }
                 NoneOr::Other(func) => {
-                    if func.0.invoke_pos(&[v], eval)?.to_bool() {
+                    if func.to_value().invoke_pos(&[v], eval)?.to_bool() {
                         res.push(v);
                     }
                 }
@@ -88,7 +88,7 @@ pub fn map(builder: &mut GlobalsBuilder) {
         let it = seq.to_value().iterate(eval.heap())?;
         let mut res = Vec::with_capacity(it.size_hint().0);
         for v in it {
-            res.push(func.0.invoke_pos(&[v], eval)?);
+            res.push(func.to_value().invoke_pos(&[v], eval)?);
         }
         Ok(AllocList(res))
     }

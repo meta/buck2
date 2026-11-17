@@ -417,6 +417,13 @@ def _compute_cxx_executable_info(
             # the DSO is not linked: the loader ignores nonexistent RPATH dirs.
             extra_binary_link_flags.append(rpath_ldflag + GENERATED_BUILD_INFO_OUTPUT_DIR)
 
+        # Link group libraries also sit next to the ELF under __link_groups__/
+        # (symlinked there by `process_native_linking` when the link groups are
+        # anonymous), with or without the anon target, so they resolve the same
+        # way when the ELF has no link tree beside it. Keep this after the
+        # link-tree entries so the link tree still wins when it is present.
+        extra_binary_link_flags.append(rpath_ldflag + "__link_groups__")
+
     # Set only when the binary generates build info after the link (see
     # `_generate_build_info_after_link`): the link then uses a stable-mode
     # placeholder DSO and `python_binary` swaps in the real one afterwards.
@@ -529,7 +536,18 @@ def process_native_linking(
         allow_cache_upload,
         generated_build_info_invalidation_inputs,
     )
-    extra["native-executable"] = [DefaultInfo(default_output = executable_info.binary, sub_targets = executable_info.sub_targets)]
+    binary = executable_info.binary
+    if getattr(ctx.attrs, "anonymous_link_groups", False) and executable_info.auto_link_groups:
+        # Anonymous link groups are linked by their own anon targets, so unlike
+        # regular link groups they are not output next to the executable, where its
+        # `$ORIGIN/__link_groups__` RPATH entry looks. Under anon analysis the
+        # executable also runs from a content-addressed path with no link tree
+        # beside it, so a child that re-execs it without the runner's library path
+        # cannot load them. Symlink them there with the executable.
+        binary = binary.with_associated_artifacts(
+            [ctx.actions.symlink_file(group.output.short_path, group.output) for group in executable_info.auto_link_groups.values()]
+        )
+    extra["native-executable"] = [DefaultInfo(default_output = binary, sub_targets = executable_info.sub_targets)]
     if "generated_build_info" in executable_info.sub_targets:
         extra["generated_build_info"] = executable_info.sub_targets["generated_build_info"]
 
@@ -563,7 +581,6 @@ def process_native_linking(
     # this target's output dir (an inplace entry symlinks it there), so the
     # DSO it was linked against is materialized wherever the executable is,
     # even once the packaged copy is swapped for one generated after the link.
-    binary = executable_info.binary
     if "generated_build_info" in executable_info.sub_targets:
         binary = binary.with_associated_artifacts([info.default_outputs[0] for info in executable_info.sub_targets["generated_build_info"]])
     shared_libs.append(

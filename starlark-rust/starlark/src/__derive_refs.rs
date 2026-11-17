@@ -33,6 +33,7 @@ pub use inventory;
 pub use pagable::StaticValue;
 pub use pagable::static_str;
 pub use pagable::static_value;
+pub mod behaviour;
 pub mod components;
 pub mod invoke_macro_error;
 pub mod param_spec;

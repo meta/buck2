@@ -28,6 +28,7 @@ use crate::values::UnpackValue;
 use crate::values::Value;
 use crate::values::ValueOf;
 use crate::values::type_expr::StarlarkTypeExpr;
+use crate::values::type_expr::StarlarkTypeExprHashable;
 use crate::values::type_expr::StarlarkTypeExprStable;
 use crate::values::types::tuple::value::Tuple;
 
@@ -123,6 +124,11 @@ impl<'v, T1: StarlarkTypeExprStable<'v>, T2: StarlarkTypeExprStable<'v>> Starlar
 {
 }
 
+impl<'v, T1: StarlarkTypeExprHashable<'v>, T2: StarlarkTypeExprHashable<'v>>
+    StarlarkTypeExprHashable<'v> for (T1, T2)
+{
+}
+
 impl<'v, T1: StarlarkTypeExpr<'v>> StarlarkTypeExpr<'v> for (T1,) {
     type Get = (T1::Get,);
 
@@ -139,6 +145,8 @@ impl<'v, T1: StarlarkTypeExpr<'v>> StarlarkTypeExpr<'v> for (T1,) {
 }
 
 impl<'v, T1: StarlarkTypeExprStable<'v>> StarlarkTypeExprStable<'v> for (T1,) {}
+
+impl<'v, T1: StarlarkTypeExprHashable<'v>> StarlarkTypeExprHashable<'v> for (T1,) {}
 
 impl<'v, T1: StarlarkTypeExpr<'v>, T2: StarlarkTypeExpr<'v>, T3: StarlarkTypeExpr<'v>>
     StarlarkTypeExpr<'v> for (T1, T2, T3)
@@ -167,6 +175,15 @@ impl<
     T2: StarlarkTypeExprStable<'v>,
     T3: StarlarkTypeExprStable<'v>,
 > StarlarkTypeExprStable<'v> for (T1, T2, T3)
+{
+}
+
+impl<
+    'v,
+    T1: StarlarkTypeExprHashable<'v>,
+    T2: StarlarkTypeExprHashable<'v>,
+    T3: StarlarkTypeExprHashable<'v>,
+> StarlarkTypeExprHashable<'v> for (T1, T2, T3)
 {
 }
 

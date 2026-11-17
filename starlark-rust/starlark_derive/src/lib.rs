@@ -36,6 +36,7 @@ mod starlark_pagable_via_pagable;
 mod starlark_value;
 mod trace;
 mod type_matcher;
+mod typed_behaviour;
 mod union_input;
 mod unpack_value;
 mod util;
@@ -219,6 +220,10 @@ pub fn derive_starlark_representations(input: proc_macro::TokenStream) -> proc_m
 ///
 /// At most one of `skip_vtable`, `no_freeze`, `frozen_vtable` may be given, and at most one
 /// of `no_freeze` and `alloc`.
+///
+/// `equals`, `compare` and `write_hash` may be written in the block with a typed signature, in
+/// which case the trait's method is derived from the one written. The typed forms are
+/// documented on those methods of `StarlarkType`.
 #[proc_macro_attribute]
 pub fn starlark_value(
     attr: proc_macro::TokenStream,

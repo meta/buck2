@@ -186,6 +186,35 @@ impl<A: UnpackValueErrorInfallible, B: UnpackValueErrorInfallible> UnpackValueEr
     }
 }
 
+/// The three outcomes of converting `value` to a `T`, each with what follows from it:
+/// `converted` for a value that converts, `not_of_type` for a value that is not of
+/// [`T::Type`](UnpackValue::Type), and the conversion's error for a value of the type that does
+/// not convert.
+///
+/// This is the one place a value is converted. [`unpack_value`](UnpackValue::unpack_value),
+/// which the parameter conversions are built on, is this with the outcomes returned; a
+/// `StarlarkType` method derived from a typed one is this with what its method does for each.
+///
+/// It is always inlined and takes continuations so that a derived `equals` or `compare`, which
+/// are on the evaluator's hot paths, is the code of a hand-written downcast: built on
+/// `unpack_value`, they take its `Result<Option<&T>>` apart again with a second null check.
+/// The parameter conversions stay on `unpack_value`: with their errors as continuations here,
+/// `xs[i]` measured two instructions more, the converted index going through the stack.
+#[inline(always)]
+pub(crate) fn unpack_then<'v, T: UnpackValue<'v>, R>(
+    value: Value<'v>,
+    converted: impl FnOnce(T) -> crate::Result<R>,
+    not_of_type: impl FnOnce() -> crate::Result<R>,
+) -> crate::Result<R> {
+    match ValueOf::<T::Type>::new_with_get(value) {
+        None => not_of_type(),
+        Some((value, get)) => match T::unpack(value, get) {
+            Ok(x) => converted(x),
+            Err(e) => Err(T::Error::into_error(e)),
+        },
+    }
+}
+
 /// A conversion from a Starlark type to a Rust type: how a parameter of a
 /// [`#[starlark_module]`](macro@crate::starlark_module) function is bound.
 ///
@@ -246,12 +275,7 @@ pub trait UnpackValue<'v>: Sized {
     /// `value` converted, if it is of [`Type`](Self::Type): `None` if it is not, an error if it
     /// is but does not convert.
     fn unpack_value(value: Value<'v>) -> crate::Result<Option<Self>> {
-        match ValueOf::<Self::Type>::new_with_get(value) {
-            None => Ok(None),
-            Some((value, get)) => Self::unpack(value, get)
-                .map(Some)
-                .map_err(Self::Error::into_error),
-        }
+        unpack_then(value, |x| Ok(Some(x)), || Ok(None))
     }
 
     /// [`unpack_value`](Self::unpack_value) for a conversion that cannot fail.

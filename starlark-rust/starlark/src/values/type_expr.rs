@@ -83,6 +83,15 @@ pub trait StarlarkTypeExpr<'v>: Sized {
 /// `list` is. A [`ValueOf`] of such a type is read without re-checking.
 pub trait StarlarkTypeExprStable<'v>: StarlarkTypeExpr<'v> {}
 
+/// A [`StarlarkTypeExpr`] whose values all hash: [`write_hash`](StarlarkType::write_hash) of a
+/// value of the type cannot fail.
+///
+/// A type has this by writing its `write_hash` without a result in its
+/// [`#[starlark_value]`](crate::values::starlark_value) block, which implements it; there is
+/// nothing to implement by hand for a type. A union has it when both sides do, and a tuple
+/// type when its items do.
+pub trait StarlarkTypeExprHashable<'v>: StarlarkTypeExpr<'v> {}
+
 impl<'v, T: StarlarkType<'v>> StarlarkTypeExpr<'v> for T {
     type Get = <T as StarlarkType<'v>>::Get;
 
@@ -132,6 +141,11 @@ impl<'v, TLeft: StarlarkTypeExpr<'v>, TRight: StarlarkTypeExpr<'v>> StarlarkType
 
 impl<'v, TLeft: StarlarkTypeExprStable<'v>, TRight: StarlarkTypeExprStable<'v>>
     StarlarkTypeExprStable<'v> for Either<TLeft, TRight>
+{
+}
+
+impl<'v, TLeft: StarlarkTypeExprHashable<'v>, TRight: StarlarkTypeExprHashable<'v>>
+    StarlarkTypeExprHashable<'v> for Either<TLeft, TRight>
 {
 }
 

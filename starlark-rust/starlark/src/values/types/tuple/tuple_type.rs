@@ -30,6 +30,7 @@ use crate::values::Value;
 use crate::values::ValueOf;
 use crate::values::tuple::TupleRef;
 use crate::values::type_expr::StarlarkTypeExpr;
+use crate::values::type_expr::StarlarkTypeExprHashable;
 use crate::values::type_expr::StarlarkTypeExprStable;
 
 /// A tuple type marker: a tuple of any length whose items are all `T`.
@@ -60,6 +61,9 @@ impl<'v, T: StarlarkTypeExpr<'v>> StarlarkTypeExpr<'v> for TupleType<T> {
 
 /// A tuple's items are fixed, so the check is as stable as the items' own.
 impl<'v, T: StarlarkTypeExprStable<'v>> StarlarkTypeExprStable<'v> for TupleType<T> {}
+
+/// A tuple hashes its items.
+impl<'v, T: StarlarkTypeExprHashable<'v>> StarlarkTypeExprHashable<'v> for TupleType<T> {}
 
 impl<'v, T: StarlarkTypeExpr<'v>> UnpackValue<'v> for TupleType<T> {
     type Type = Self;

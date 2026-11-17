@@ -17,6 +17,8 @@
 
 use quote::quote;
 
+use crate::typed_behaviour::always_hashes_impl;
+use crate::typed_behaviour::derive_from_typed;
 use crate::v_lifetime::find_v_lifetime;
 use crate::vtable::vtable_has_field_name;
 
@@ -739,9 +741,33 @@ impl ImplStarlarkValue {
 }
 
 impl ImplStarlarkValue {
-    /// The `impl StarlarkType` for `self_ty`: `items` plus the generated members.
-    fn type_impl(&self, items: Vec<syn::ImplItem>) -> syn::Result<syn::ItemImpl> {
+    /// The `impl StarlarkType` for `self_ty`: `items`, a method written with a typed signature
+    /// replaced by the trait's method derived from it, plus the generated members. Next to it,
+    /// what the typed methods say about the type.
+    fn type_impl(&self, mut items: Vec<syn::ImplItem>) -> syn::Result<proc_macro2::TokenStream> {
         let lt = &self.lifetime_param;
+        let mut always_hashes = None;
+        for item in &mut items {
+            if let syn::ImplItem::Fn(f) = item {
+                if let Some(derived) = derive_from_typed(f, lt)? {
+                    *f = derived.method;
+                    // A view's method is inlined into each representation's vtable entry (see
+                    // below), and for a derived one the hint is not enough: converting the
+                    // operand makes it look larger than it is once the receiver's variant is
+                    // known. Left to the hint, the list view's `equals` stays out of line and
+                    // dispatches on the variant when it runs: 7% more instructions on
+                    // `xs == ys`, with the `starlark` crate built as one codegen unit.
+                    if self.impl_of == ImplOf::Type
+                        && !f.attrs.iter().any(|a| a.path().is_ident("inline"))
+                    {
+                        f.attrs.push(syn::parse_quote! { #[inline(always)] });
+                    }
+                    if derived.always_hashes {
+                        always_hashes = Some(always_hashes_impl(&self.input, lt));
+                    }
+                }
+            }
+        }
         let mut type_impl = self.input.clone();
         if self.impl_of == ImplOf::Value {
             let (_, for_token) = type_impl.trait_.take().expect("checked to be a trait impl");
@@ -776,7 +802,11 @@ impl ImplStarlarkValue {
                 }
             }
         }
-        Ok(type_impl)
+        Ok(quote! {
+            #type_impl
+
+            #always_hashes
+        })
     }
 
     /// `with_type` for a representation whose `Type` is a view that

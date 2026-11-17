@@ -39,6 +39,7 @@ use erased_serde::Serialize;
 use starlark_derive::starlark_internal_vtable;
 use starlark_map::StarlarkHashValue;
 
+use crate::__derive_refs::behaviour::compare_unsupported;
 use crate::any::ProvidesStaticType;
 use crate::collections::Hashed;
 use crate::collections::StarlarkHasher;
@@ -367,6 +368,21 @@ pub trait StarlarkType<'v>: 'v + ProvidesStaticType<'v> + Debug + Display + Size
     /// Return a hash data for self to be used when self is placed as a key in a `Dict`.
     /// Return an [`Err`] if there is no hash for this value (e.g. list).
     /// Must be stable between frozen and non-frozen values.
+    ///
+    /// # In a `#[starlark_value]` block
+    ///
+    /// A type whose values all hash writes the method without a result:
+    ///
+    /// ```ignore
+    /// fn write_hash(&self, hasher: &mut StarlarkHasher) {
+    ///     self.name.hash(hasher)
+    /// }
+    /// ```
+    ///
+    /// [`#[starlark_value]`](crate::values::starlark_value) derives this method from it, and
+    /// implements [`StarlarkTypeExprHashable`](crate::values::StarlarkTypeExprHashable) for the
+    /// type. A type with values that do not hash, such as a container that hashes what it
+    /// contains, writes this method as it is declared here.
     fn write_hash(&self, hasher: &mut StarlarkHasher) -> crate::Result<()> {
         if Self::TYPE == FUNCTION_TYPE {
             // The Starlark spec says values of type "function" must be hashable.
@@ -403,6 +419,31 @@ pub trait StarlarkType<'v>: 'v + ProvidesStaticType<'v> + Debug + Display + Size
     /// Equality must be symmetric (`a == b` implies `b == a`).
     /// When evaluating `a == b` (or when using equality in dicts and such),
     /// it is not specified whether `a.equals(b)` or `b.equals(a)` is called.
+    ///
+    /// # In a `#[starlark_value]` block
+    ///
+    /// The method is written with the operand it compares with, and the plain result if it
+    /// cannot fail:
+    ///
+    /// ```ignore
+    /// fn equals(&self, other: &Self) -> bool {
+    ///     self.name == other.name
+    /// }
+    /// ```
+    ///
+    /// [`#[starlark_value]`](crate::values::starlark_value) derives this method from it.
+    ///
+    /// * The operand is any [`UnpackValue`](crate::values::UnpackValue): `&Self` for a type
+    ///   with one representation; `Self`, the view, for a type with several; a union such as
+    ///   `Either<&Self, &str>`.
+    /// * The result is `bool`, or `starlark::Result<bool>` for a body that compares the values
+    ///   it contains.
+    /// * A value that is not of the operand's type is not equal, as with the default. A value
+    ///   that is of the operand's type but does not convert (an `int` that does not fit an
+    ///   `i32` operand) is the conversion's error.
+    ///
+    /// A method is taken to be written as declared here, and left as it is, when its operand's
+    /// type is spelled `Value` and its result's `Result`.
     fn equals(&self, _other: Value<'v>) -> crate::Result<bool> {
         // Type is only equal via a pointer
         Ok(false)
@@ -411,8 +452,21 @@ pub trait StarlarkType<'v>: 'v + ProvidesStaticType<'v> + Debug + Display + Size
     /// Compare `self` with `other`.
     /// This method returns a result of type [`Ordering`], or an [`Err`]
     /// if the two types differ.
+    ///
+    /// # In a `#[starlark_value]` block
+    ///
+    /// The method is written as [`equals`](Self::equals) is, with the operand it compares with:
+    ///
+    /// ```ignore
+    /// fn compare(&self, other: &Self) -> Ordering {
+    ///     self.name.cmp(&other.name)
+    /// }
+    /// ```
+    ///
+    /// The result is [`Ordering`] or `starlark::Result<Ordering>`. A value that is not of the
+    /// operand's type gets the default's error, that the two types do not compare.
     fn compare(&self, other: Value<'v>) -> crate::Result<Ordering> {
-        ValueError::unsupported_with(self, "compare", other)
+        compare_unsupported(self, other)
     }
 
     /// Directly invoke a function.

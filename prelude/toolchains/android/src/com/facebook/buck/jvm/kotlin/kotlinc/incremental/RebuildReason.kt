@@ -28,4 +28,5 @@ enum class RebuildReason(val message: String) {
       "Kosabi applicability did not pass the incremental round; checking it in a full round",
   ),
   APPLICABILITY_LEDGER_NOT_FOUND("Kosabi applicability ledger not found"),
+  APPLICABILITY_JAVA_SOURCES_CHANGED("Kosabi applicability Java sources have been changed"),
 }

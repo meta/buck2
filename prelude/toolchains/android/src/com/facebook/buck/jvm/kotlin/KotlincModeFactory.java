@@ -24,6 +24,7 @@ import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
 import java.io.IOException;
 import java.nio.file.Path;
+import java.util.Map;
 import java.util.Optional;
 import org.jspecify.annotations.Nullable;
 
@@ -122,6 +123,9 @@ public class KotlincModeFactory {
           && rebuildReason == null) {
         rebuildReason = RebuildReason.KOTLIN_COMPILER_PLUGIN_CHANGED;
       }
+      if (verifiesApplicability && hasJavaSourcesChanged(metadata) && rebuildReason == null) {
+        rebuildReason = RebuildReason.APPLICABILITY_JAVA_SOURCES_CHANGED;
+      }
       if (verifiesApplicability && !hasApplicabilityLedger(extraParams) && rebuildReason == null) {
         rebuildReason = RebuildReason.APPLICABILITY_LEDGER_NOT_FOUND;
       }
@@ -190,6 +194,34 @@ public class KotlincModeFactory {
       LOG.warn(e, "Could not compare the Kosabi applicability classpath; compiling in full");
       return true;
     }
+  }
+
+  /**
+   * Whether the round's Java sources changed since the last successful round. kotlinc analyzes only
+   * dirty Kotlin files, so a Java-only change must compile in full for the applicability plugin's
+   * Java source pass to run.
+   */
+  private static boolean hasJavaSourcesChanged(ActionMetadata metadata) {
+    Map<Path, String> previous = metadata.getPreviousDigest();
+    Map<Path, String> current = metadata.getCurrentDigest();
+    for (Map.Entry<Path, String> entry : current.entrySet()) {
+      if (!isJavaSource(entry.getKey())) {
+        continue;
+      }
+      if (!entry.getValue().equals(previous.get(entry.getKey()))) {
+        return true;
+      }
+    }
+    for (Path path : previous.keySet()) {
+      if (isJavaSource(path) && !current.containsKey(path)) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  private static boolean isJavaSource(Path path) {
+    return path.toString().endsWith(".java");
   }
 
   private static boolean hasApplicabilityLedger(KotlinExtraParams extraParams) {

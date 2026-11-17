@@ -437,6 +437,64 @@ public class KotlincModeFactoryTest {
     assertFalse(Files.exists(stalePending));
   }
 
+  @Test
+  public void when_applicabilityJavaSources_changed_then_rebuild() throws IOException {
+    Path java = Paths.get("src/Bindings.java");
+    KotlincMode kotlincMode =
+        createApplicabilityModeWithJava(
+            true, ImmutableMap.of(java, "old"), ImmutableMap.of(java, "new"));
+
+    assertEquals(
+        RebuildReason.APPLICABILITY_JAVA_SOURCES_CHANGED,
+        ((KotlincMode.Incremental) kotlincMode).getRebuildReason());
+  }
+
+  @Test
+  public void when_applicabilityJavaSource_removed_then_rebuild() throws IOException {
+    Path java = Paths.get("src/Bindings.java");
+    KotlincMode kotlincMode =
+        createApplicabilityModeWithJava(true, ImmutableMap.of(java, "old"), ImmutableMap.of());
+
+    assertEquals(
+        RebuildReason.APPLICABILITY_JAVA_SOURCES_CHANGED,
+        ((KotlincMode.Incremental) kotlincMode).getRebuildReason());
+  }
+
+  @Test
+  public void when_applicabilityJavaSources_unchanged_then_no_rebuild() throws IOException {
+    Path java = Paths.get("src/Bindings.java");
+    KotlincMode kotlincMode =
+        createApplicabilityModeWithJava(
+            true, ImmutableMap.of(java, "same"), ImmutableMap.of(java, "same"));
+
+    assertNull(((KotlincMode.Incremental) kotlincMode).getRebuildReason());
+  }
+
+  @Test
+  public void when_applicabilityJavaSources_changed_but_applicability_off_then_no_rebuild()
+      throws IOException {
+    Path java = Paths.get("src/Bindings.java");
+    KotlincMode kotlincMode =
+        createApplicabilityModeWithJava(
+            false, ImmutableMap.of(java, "old"), ImmutableMap.of(java, "new"));
+
+    assertNull(((KotlincMode.Incremental) kotlincMode).getRebuildReason());
+  }
+
+  private KotlincMode createApplicabilityModeWithJava(
+      boolean verifiesApplicability, Map<Path, String> previousJava, Map<Path, String> currentJava)
+      throws IOException {
+    AbsPath stateDir = temporaryPaths.newFolder("incremental_state");
+    AbsPath reducedJar = temporaryPaths.getRoot().resolve("reduced.jar");
+    writeJar(reducedJar, "p/A.class");
+    // A round with a recorded classpath, so only the Java sources can force a full one.
+    createApplicabilityMode(
+        verifiesApplicability, "same", "same", stateDir, reducedJar, previousJava, previousJava);
+    succeedRound(stateDir);
+    return createApplicabilityMode(
+        verifiesApplicability, "same", "same", stateDir, reducedJar, previousJava, currentJava);
+  }
+
   /** What a successful round leaves: the plugin's pending ledger, then kotlincd's promotion. */
   private static void succeedRound(AbsPath stateDir) throws IOException {
     Files.writeString(stateDir.resolve(ApplicabilityLedgerFiles.PENDING_FILE).getPath(), "ledger");
@@ -465,6 +523,24 @@ public class KotlincModeFactoryTest {
       String currentPluginDigest,
       AbsPath stateDir,
       AbsPath reducedJar) {
+    return createApplicabilityMode(
+        verifiesApplicability,
+        previousPluginDigest,
+        currentPluginDigest,
+        stateDir,
+        reducedJar,
+        ImmutableMap.of(),
+        ImmutableMap.of());
+  }
+
+  private KotlincMode createApplicabilityMode(
+      boolean verifiesApplicability,
+      String previousPluginDigest,
+      String currentPluginDigest,
+      AbsPath stateDir,
+      AbsPath reducedJar,
+      Map<Path, String> previousExtra,
+      Map<Path, String> currentExtra) {
     AbsPath root = temporaryPaths.getRoot();
     AbsPath plugin = root.resolve("applicability.jar");
 
@@ -482,9 +558,9 @@ public class KotlincModeFactoryTest {
     when(mockActionMetadata.getPreviousIncrementalConfigDigest()).thenReturn("config");
     when(mockActionMetadata.getCurrentIncrementalConfigDigest()).thenReturn("config");
     Path pluginKey = root.relativize(plugin).getPath();
-    Map<Path, String> previousDigest = new HashMap<>();
+    Map<Path, String> previousDigest = new HashMap<>(previousExtra);
     previousDigest.put(pluginKey, previousPluginDigest);
-    Map<Path, String> currentDigest = new HashMap<>();
+    Map<Path, String> currentDigest = new HashMap<>(currentExtra);
     currentDigest.put(pluginKey, currentPluginDigest);
     when(mockActionMetadata.getPreviousDigest()).thenReturn(previousDigest);
     when(mockActionMetadata.getCurrentDigest()).thenReturn(currentDigest);

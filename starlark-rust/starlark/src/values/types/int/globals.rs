@@ -27,7 +27,6 @@ use crate::values::int::int_or_big::StarlarkInt;
 use crate::values::int::pointer_i32::PointerI32;
 use crate::values::int::view::IntView;
 use crate::values::string::StarlarkStr;
-use crate::values::types::num::value::NumRef;
 
 #[starlark_module]
 pub(crate) fn register_int(globals: &mut GlobalsBuilder) {
@@ -91,8 +90,7 @@ pub(crate) fn register_int(globals: &mut GlobalsBuilder) {
             return Ok(heap.alloc(0));
         };
         let num_or_bool = match a.get() {
-            Either::Left(Either::Left(int)) => Either::Left(NumRef::Int(int.as_int_ref())),
-            Either::Left(Either::Right(float)) => Either::Left(NumRef::Float(*float.as_ref())),
+            Either::Left(num) => Either::Left(num),
             Either::Right(Either::Left(b)) => Either::Right(b),
             Either::Right(Either::Right(s)) => {
                 let s = s.as_str();
@@ -165,9 +163,12 @@ pub(crate) fn register_int(globals: &mut GlobalsBuilder) {
         }
 
         match num_or_bool {
-            Either::Left(NumRef::Int(_)) => Ok(ValueOf::new_unchecked(a.to_value())),
-            Either::Left(NumRef::Float(f)) => {
-                Ok(heap.alloc(StarlarkInt::from_f64_exact(f.0.trunc())?))
+            Either::Left(Either::Left(IntView::Small(int))) => {
+                Ok(ValueOf::from_representation(int))
+            }
+            Either::Left(Either::Left(IntView::Big(int))) => Ok(ValueOf::from_representation(int)),
+            Either::Left(Either::Right(float)) => {
+                Ok(heap.alloc(StarlarkInt::from_f64_exact(float.as_ref().0.trunc())?))
             }
             Either::Right(b) => Ok(heap.alloc(b as i32)),
         }

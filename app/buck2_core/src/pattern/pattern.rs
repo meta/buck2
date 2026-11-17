@@ -114,39 +114,9 @@ pub fn display_precise_pattern<'a, T: PatternType>(
     }
 }
 
-/// Whether `name#flavors` has the shape of a buck1 flavored target: a target name followed by a
-/// comma-separated list of flavor names.
-///
-/// `attrs.one_of(attrs.dep(), attrs.string())` probes every string as a label first, so text
-/// that only happens to contain a `:` and a `#`, such as a shell command with a comment, gets
-/// here too.
-fn is_buck1_flavored_target(name: &str, flavors: &str) -> bool {
-    TargetNameRef::new(name).is_ok()
-        && flavors.split(',').all(|flavor| {
-            !flavor.is_empty()
-                && flavor
-                    .bytes()
-                    .all(|c| c.is_ascii_alphanumeric() || matches!(c, b'-' | b'_' | b'.'))
-        })
-}
-
 /// Extract provider name from a target pattern.
-///
-/// `full_pattern` is the pattern `s` was cut from, for error messages.
-pub(crate) fn split_providers_name<'a>(
-    s: &'a str,
-    full_pattern: &str,
-) -> buck2_error::Result<(&'a str, ProvidersName)> {
-    if let Some((t, flavors)) = split1_opt_ascii(s, AsciiChar::new('#'))
-        && is_buck1_flavored_target(t, flavors)
-    {
-        // Buck1 flavor syntax. Buck2 expresses secondary outputs as subtargets and platforms as
-        // configurations; the mapping it used to apply was removed in T147637580.
-        Err(buck2_error!(
-            buck2_error::ErrorTag::Buck1Flavor,
-            "buck1 flavor `#{flavors}` on `{full_pattern}` is not supported: write a secondary output as a subtarget (`[name]`) and pick the platform with a mode file, `--target-platforms` or `-m`"
-        ))
-    } else if let Some((t, p)) = split1_opt_ascii(s, AsciiChar::new('[')) {
+pub(crate) fn split_providers_name(s: &str) -> buck2_error::Result<(&str, ProvidersName)> {
+    if let Some((t, p)) = split1_opt_ascii(s, AsciiChar::new('[')) {
         let mut names = Vec::new();
 
         let mut remaining = if let Some((p, r)) = split1_opt_ascii(p, AsciiChar::new(']')) {
@@ -794,8 +764,6 @@ fn lex_provider_pattern(
         ));
     }
 
-    let full_pattern = pattern;
-
     // Modifiers may be cell-qualified, so they come off before the cell alias is split at `//`.
     let (pattern, modifiers) = match split1_opt_ascii(pattern, AsciiChar::new('?')) {
         Some((pattern, modifiers)) => (pattern, Modifiers::parse(modifiers)),
@@ -814,7 +782,7 @@ fn lex_provider_pattern(
         }
         .into(),
         Some((package, target)) => {
-            let (target, providers) = split_providers_name(target, full_pattern)?;
+            let (target, providers) = split_providers_name(target)?;
             let target_name = TargetName::new(target)?;
             let extra = ProvidersPatternExtra { providers };
             PatternData::TargetInPackage {
@@ -839,14 +807,7 @@ fn lex_provider_pattern(
                 }
                 .into()
             } else if !pattern.is_empty() {
-                // Without a `:` this may be a package or a target; a `#` in it is a plain
-                // (invalid) path character, not a buck1 flavor. That matters for
-                // `attrs.one_of(attrs.dep(), attrs.source())`, which probes file names like
-                // `data#1.json` as labels first.
-                let (pattern, providers) = match split1_opt_ascii(pattern, AsciiChar::new('[')) {
-                    Some(_) => split_providers_name(pattern, full_pattern)?,
-                    None => (pattern, ProvidersName::Default),
-                };
+                let (pattern, providers) = split_providers_name(pattern)?;
                 PatternDataOrAmbiguous::Ambiguous {
                     pattern,
                     strip_package_trailing_slash,
@@ -1314,7 +1275,6 @@ mod tests {
     use crate::pattern::pattern::ParsedPatternWithModifiers;
     use crate::pattern::pattern::TargetParsingRel;
     use crate::pattern::pattern::TargetPatternParseError;
-    use crate::pattern::pattern::split_providers_name;
     use crate::pattern::pattern_type::ConfigurationPredicate;
     use crate::pattern::pattern_type::ConfiguredProvidersPatternExtra;
     use crate::pattern::pattern_type::ConfiguredTargetPatternExtra;
@@ -1934,44 +1894,6 @@ mod tests {
                 &alias_resolver(),
             )?
         );
-
-        // Buck1 flavors are an error that points at subtargets.
-        let err = ParsedPattern::<ProvidersPatternExtra>::parse_precise(
-            "//package/path:target#shared",
-            CellName::testing_new("root"),
-            &resolver(),
-            &alias_resolver(),
-        )
-        .unwrap_err();
-        assert!(err.has_tag(buck2_error::ErrorTag::Buck1Flavor));
-        let msg = format!("{err:#}");
-        assert!(
-            msg.contains(
-                "buck1 flavor `#shared` on `//package/path:target#shared` is not supported"
-            ) && msg.contains("subtarget"),
-            "{msg}"
-        );
-        Ok(())
-    }
-
-    #[test]
-    fn hash_in_text_is_not_a_flavor() -> buck2_error::Result<()> {
-        for text in ["target#not a flavor", "not a target#flavor", "target#"] {
-            assert_eq!(
-                (text, ProvidersName::Default),
-                split_providers_name(text, text)?,
-            );
-        }
-
-        let shell = "echo \"status: [$STATUS]\"\n# A comment.\nrm -rf \"$DIR\"";
-        let err = ParsedPattern::<ProvidersPatternExtra>::parse_precise(
-            shell,
-            CellName::testing_new("root"),
-            &resolver(),
-            &alias_resolver(),
-        )
-        .expect_err("a shell command is not a label");
-        assert!(!format!("{err:?}").contains("buck1 flavor"), "{err:?}");
         Ok(())
     }
 

@@ -31,10 +31,6 @@ impl AttrTypeCoerce for OneOfAttrType {
         for (i, x) in self.xs.iter().enumerate() {
             match x.coerce_item(configurable, ctx, value) {
                 Ok(v) => return ctx.attr_arena().encode_one_of(i as u32, v),
-                // A buck1 `#flavor` label is a label the user meant to write, not a value of some
-                // other alternative (`attrs.string()` would accept it as text), so stop here and
-                // report the fix instead of the combined failure.
-                Err(e) if e.has_tag(buck2_error::ErrorTag::Buck1Flavor) => return Err(e),
                 Err(e) => {
                     // TODO(nga): anyhow error creation is expensive.
                     errs.push(e)

@@ -51,14 +51,6 @@ async fn test_query_provider_names(buck: &Buck) -> anyhow::Result<()> {
         .cquery(&["'root//bin:the_binary[provider_name]'"])
         .await?;
     assert!(result.stdout.contains("root//bin:the_binary ("));
-
-    buck.cquery(&["'root//bin:the_binary#some_flavor'"])
-        .await
-        .expect_failure()
-        // Soft error, upgraded to a hard error by the test harness.
-        .assert_stderr_matches(
-            "buck1 flavor `#some_flavor` on `root//bin:the_binary#some_flavor` is not supported",
-        );
     Ok(())
 }
 

@@ -1,1 +1,0 @@
-consumer(name = "subtarget_flavor", dep = "//lib:lib#shared")

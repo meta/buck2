@@ -1,1 +1,0 @@
-consumer(name = "flavored_dep_or_string", dep_or_string = "//lib:lib#shared")

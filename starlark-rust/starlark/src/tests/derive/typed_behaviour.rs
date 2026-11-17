@@ -27,20 +27,27 @@ use derive_more::Display;
 use either::Either;
 use starlark_derive::NoSerialize;
 use starlark_derive::StarlarkPagable;
+use starlark_derive::StarlarkPagablePanic;
 use starlark_derive::StarlarkRepresentations;
 use starlark_derive::starlark_value;
 
 use crate as starlark;
 use crate::any::ProvidesStaticType;
 use crate::collections::StarlarkHasher;
+use crate::const_frozen_string;
 use crate::starlark_simple_value;
 use crate::typing::HasTyVTable;
 use crate::values::Heap;
 use crate::values::StarlarkType;
 use crate::values::StarlarkTypeExprHashable;
 use crate::values::StarlarkValue;
+use crate::values::StringValue;
 use crate::values::Value;
+use crate::values::ValueOf;
 use crate::values::ValueTyped;
+use crate::values::list::AllocList;
+use crate::values::list::ListType;
+use crate::values::string::StarlarkStr;
 
 fn hash_of(value: Value) -> crate::Result<u64> {
     let mut hasher = StarlarkHasher::new();
@@ -406,5 +413,84 @@ fn test_view() {
         assert!(!small.equals(heap.alloc(1i32).to_value()).unwrap());
         assert_eq!(Ordering::Less, small.compare(larger).unwrap());
         assert_eq!(hash_of(small).unwrap(), hash_of(large).unwrap());
+    });
+}
+
+/// A type that hashes and compares the values it holds through their handles: without a
+/// `Result` where the part's type always hashes.
+#[derive(
+    Debug,
+    Display,
+    ProvidesStaticType,
+    NoSerialize,
+    Allocative,
+    StarlarkPagablePanic
+)]
+#[display("holder")]
+struct Holder {
+    name: StringValue<'static>,
+    flag: ValueOf<'static, Either<bool, StarlarkStr>>,
+}
+starlark_simple_value!(Holder);
+
+#[starlark_value(type = "holder")]
+impl<'v> StarlarkValue<'v> for Holder {
+    fn equals(&self, other: &Self) -> starlark::Result<bool> {
+        Ok(self.name.try_equals(other.name)? && self.flag.try_equals(other.flag)?)
+    }
+
+    fn write_hash(&self, hasher: &mut StarlarkHasher) {
+        self.name.write_hash(hasher);
+        self.flag.write_hash(hasher);
+    }
+}
+
+#[test]
+fn test_parts_through_their_handles() {
+    assert_always_hashes::<Holder>();
+    let holder = |name: StringValue<'static>, flag: Value<'static>| Holder {
+        name,
+        flag: ValueOf::new(flag).unwrap(),
+    };
+    Heap::temp(|heap| {
+        let a = heap.alloc_simple(holder(const_frozen_string!("a"), Value::new_bool(true)));
+        let same = heap.alloc_simple(holder(const_frozen_string!("a"), Value::new_bool(true)));
+        let other_name =
+            heap.alloc_simple(holder(const_frozen_string!("b"), Value::new_bool(true)));
+        let other_flag = heap.alloc_simple(holder(
+            const_frozen_string!("a"),
+            const_frozen_string!("true").to_value(),
+        ));
+
+        assert!(a.equals(same).unwrap());
+        assert!(!a.equals(other_name).unwrap());
+        assert!(!a.equals(other_flag).unwrap());
+        assert_eq!(hash_of(a).unwrap(), hash_of(same).unwrap());
+        assert_ne!(hash_of(a).unwrap(), hash_of(other_name).unwrap());
+        assert_ne!(hash_of(a).unwrap(), hash_of(other_flag).unwrap());
+    });
+}
+
+/// A handle hashes as the value does, with a `Result` for a type that may not hash.
+#[test]
+fn test_handle_hash() {
+    Heap::temp(|heap| {
+        let s: StringValue = heap.alloc("s");
+        let mut by_handle = StarlarkHasher::new();
+        s.write_hash(&mut by_handle);
+        let mut by_try = StarlarkHasher::new();
+        s.try_write_hash(&mut by_try).unwrap();
+        assert_eq!(hash_of(s.to_value()).unwrap(), by_handle.finish());
+        assert_eq!(hash_of(s.to_value()).unwrap(), by_try.finish());
+
+        let list = |items| -> ValueOf<ListType<Value>> {
+            ValueOf::new(heap.alloc(AllocList::<Vec<i32>>(items)).to_value()).unwrap()
+        };
+        let e = list(vec![1])
+            .try_write_hash(&mut StarlarkHasher::new())
+            .unwrap_err();
+        assert!(e.to_string().contains("not hashable"), "{e}");
+        assert!(list(vec![1]).try_equals(list(vec![1])).unwrap());
+        assert!(!list(vec![1]).try_equals(list(vec![2])).unwrap());
     });
 }

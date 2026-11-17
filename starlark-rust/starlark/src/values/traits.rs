@@ -383,6 +383,12 @@ pub trait StarlarkType<'v>: 'v + ProvidesStaticType<'v> + Debug + Display + Size
     /// implements [`StarlarkTypeExprHashable`](crate::values::StarlarkTypeExprHashable) for the
     /// type. A type with values that do not hash, such as a container that hashes what it
     /// contains, writes this method as it is declared here.
+    ///
+    /// A value the type holds is hashed through its handle: with
+    /// [`ValueOf::write_hash`](crate::values::ValueOf::write_hash) where the type of the part
+    /// always hashes, which needs no result here either, and with
+    /// [`ValueOf::try_write_hash`](crate::values::ValueOf::try_write_hash) or
+    /// [`Value::write_hash`] where it may not.
     fn write_hash(&self, hasher: &mut StarlarkHasher) -> crate::Result<()> {
         if Self::TYPE == FUNCTION_TYPE {
             // The Starlark spec says values of type "function" must be hashable.

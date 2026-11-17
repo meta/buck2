@@ -90,6 +90,9 @@ pub trait StarlarkTypeExprStable<'v>: StarlarkTypeExpr<'v> {}
 /// [`#[starlark_value]`](crate::values::starlark_value) block, which implements it; there is
 /// nothing to implement by hand for a type. A union has it when both sides do, and a tuple
 /// type when its items do.
+///
+/// It is what lets a handle hash its value without a `Result`:
+/// [`ValueOf::write_hash`](crate::values::ValueOf::write_hash).
 pub trait StarlarkTypeExprHashable<'v>: StarlarkTypeExpr<'v> {}
 
 impl<'v, T: StarlarkType<'v>> StarlarkTypeExpr<'v> for T {
@@ -254,6 +257,7 @@ mod tests {
     use either::Either;
     use num_bigint::BigInt;
 
+    use crate::eval::compiler::def::Def;
     use crate::typing::Ty;
     use crate::values::Heap;
     use crate::values::Value;
@@ -348,6 +352,7 @@ mod tests {
         always_hashes::<StarlarkBytes>();
         always_hashes::<TypeCompiled>();
         always_hashes::<RecordTypeView>();
+        always_hashes::<Def>();
         always_hashes::<Either<bool, StarlarkStr>>();
         always_hashes::<(StarlarkStr, NoneType)>();
         always_hashes::<TupleType<StarlarkBytes>>();

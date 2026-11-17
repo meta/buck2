@@ -776,7 +776,7 @@ impl<'v> StarlarkValue<'v> for Def<'v> {
         Some(self.def_info.value.ty.clone())
     }
 
-    fn write_hash(&self, hasher: &mut StarlarkHasher) -> crate::Result<()> {
+    fn write_hash(&self, hasher: &mut StarlarkHasher) {
         // It's hard to come up with a good hash here, but let's at least make an effort.
         self.def_info.value.name.write_hash(hasher)
     }

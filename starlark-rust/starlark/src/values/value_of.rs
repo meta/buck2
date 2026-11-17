@@ -36,6 +36,7 @@ use crate as starlark;
 use crate::any::IsStaticType;
 use crate::any::ProvidesStaticType;
 use crate::any::ReinfectStatic;
+use crate::collections::StarlarkHasher;
 use crate::values::AllocFrozenValue;
 use crate::values::AllocValue;
 use crate::values::Freeze;
@@ -53,6 +54,7 @@ use crate::values::UnpackValue;
 use crate::values::Value;
 use crate::values::ValueTyped;
 use crate::values::type_expr::StarlarkTypeExpr;
+use crate::values::type_expr::StarlarkTypeExprHashable;
 use crate::values::type_expr::StarlarkTypeExprStable;
 
 /// A [`Value`] known to be of the type `T`: it was checked when it was constructed.
@@ -175,6 +177,51 @@ impl<'v, T: StarlarkTypeExpr<'v>> ValueOf<'v, T> {
         builder: impl AllocFrozenValue<'v, Type = T>,
     ) -> Self {
         heap.alloc(builder)
+    }
+}
+
+impl<'v, T: StarlarkTypeExpr<'v>> ValueOf<'v, T> {
+    /// Hashes the value into `hasher`, as its type's
+    /// [`write_hash`](StarlarkType::write_hash) does: an error if the value does not hash.
+    /// For a `T` whose values all hash, [`write_hash`](Self::write_hash) is this without the
+    /// `Result`.
+    #[inline]
+    pub fn try_write_hash(self, hasher: &mut StarlarkHasher) -> crate::Result<()> {
+        self.0.write_hash(hasher)
+    }
+
+    /// Whether the two values are equal, as `==` in Starlark says. An error only on excessive
+    /// recursion.
+    #[inline]
+    pub fn try_equals(self, other: ValueOf<'v, T>) -> crate::Result<bool> {
+        self.0.equals(other.0)
+    }
+}
+
+impl<'v, T: StarlarkTypeExprHashable<'v>> ValueOf<'v, T> {
+    /// Hashes the value into `hasher`, as its type's
+    /// [`write_hash`](StarlarkType::write_hash) does. This cannot fail: `T` says that every
+    /// value of it hashes. It is how a type that holds a value of `T` hashes it in a
+    /// `write_hash` that has no `Result` of its own.
+    ///
+    /// Not named `hash`: a string handle is [`Hash`](std::hash::Hash) by its content, which is
+    /// not what a string writes here, and a method of that name would be called in its place.
+    #[inline]
+    pub fn write_hash(self, hasher: &mut StarlarkHasher) {
+        if let Err(e) = self.0.write_hash(hasher) {
+            self.did_not_hash(e)
+        }
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn did_not_hash(self, e: crate::Error) -> ! {
+        unreachable!(
+            "`{}` is `StarlarkTypeExprHashable`, yet value `{}` did not hash: {}",
+            T::starlark_type_repr(),
+            self.0,
+            e,
+        )
     }
 }
 

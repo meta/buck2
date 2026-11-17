@@ -20,6 +20,7 @@ import com.facebook.kotlin.compilerplugins.kosabi.stubsgen.util.calculateQualifi
 import com.facebook.kotlin.compilerplugins.kosabi.stubsgen.util.declaredTypes
 import com.facebook.kotlin.compilerplugins.kosabi.stubsgen.util.toImportedClass
 import java.io.File
+import java.util.IdentityHashMap
 import org.jetbrains.kotlin.com.intellij.psi.PsiElement
 import org.jetbrains.kotlin.lexer.KtTokens
 import org.jetbrains.kotlin.psi.KtAnnotationEntry
@@ -160,6 +161,15 @@ class GenerationContext {
   // Element: (type simple name -> num of ctor args)
   val typeValueArgs: Map<String, Int>
   val usedUserTypes: Set<KtUserType>
+
+  /**
+   * Each candidate collection passed to [resolveImportedType], grouped by last name. A generator
+   * builds its candidates once and resolves every usage against them, so the grouping is reused
+   * instead of scanning all candidates per usage. Candidate collections are not changed after they
+   * are built.
+   */
+  private val candidatesByLastName =
+      IdentityHashMap<Collection<FullTypeQualifier>, Map<String, List<FullTypeQualifier>>>()
 
   constructor(
       projectFiles: Collection<KtFile>,
@@ -610,7 +620,8 @@ class GenerationContext {
    * Without a [file], only imports that every file renames are passed over.
    *
    * An alias naming a type the caller's own filter excluded stays unresolved: [candidates] is the
-   * authority on what this pass may act on.
+   * authority on what this pass may act on. [candidates] must not change after the first call that
+   * passes it: its grouping by last name is cached per collection instance.
    */
   fun resolveImportedType(
       candidates: Collection<FullTypeQualifier>,
@@ -627,7 +638,9 @@ class GenerationContext {
           }
     }
     val renamed = if (file == null) aliasOnlyImports else aliasOnlyImportsByFile[file].orEmpty()
-    val byLastName = candidates.filter { it.names.last() == simpleName && it.segments !in renamed }
+    val grouped =
+        candidatesByLastName.getOrPut(candidates) { candidates.groupBy { it.names.last() } }
+    val byLastName = grouped[simpleName].orEmpty().filter { it.segments !in renamed }
     return byLastName.firstOrNull { candidate ->
       aliases.values.none { it.segments == candidate.segments }
     } ?: byLastName.firstOrNull()

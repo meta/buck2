@@ -37,13 +37,6 @@ def buck2_modifiers():
                 "ovr_config//build_mode:sanitizer_type[asan]": "ovr_config//build_mode/constraints:default_link_style[static_pic]",
             }),
         }),
-        modifiers.conditional({
-            "DEFAULT": None,
-            "ovr_config//os:linux": modifiers.conditional({
-                "DEFAULT": "ovr_config//build_mode/constraints:debug_style[split-dwarf-single]",
-                "ovr_config//build_mode:dev": None,
-            }),
-        }),
         "ovr_config//build_mode:sanitizer_type[no-san]",
         modifiers.conditional({
             "DEFAULT": "ovr_config//build_mode/constraints:fbcode-build-info-mode[stable]",

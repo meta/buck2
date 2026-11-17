@@ -254,20 +254,12 @@ impl<'v> StarlarkValue<'v> for StarlarkStr {
         Ok(self.get_hash())
     }
 
-    fn equals(&self, other: Value) -> crate::Result<bool> {
-        if let Some(other) = other.unpack_starlark_str() {
-            Ok(self == other)
-        } else {
-            Ok(false)
-        }
+    fn equals(&self, other: &Self) -> bool {
+        self == other
     }
 
-    fn compare(&self, other: Value) -> crate::Result<Ordering> {
-        if let Some(other) = other.unpack_str() {
-            Ok(self.as_str().cmp(other))
-        } else {
-            ValueError::unsupported_with(self, "compare", other)
-        }
+    fn compare(&self, other: &Self) -> Ordering {
+        self.as_str().cmp(other.as_str())
     }
 
     fn at(&self, index: Value<'v>, heap: Heap<'v>) -> crate::Result<Value<'v>> {

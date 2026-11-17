@@ -807,7 +807,11 @@ internal class NonAbiDeclarationsStrippingIrVisitor(
       return super.visitSimpleFunction(declaration)
     }
     if (!declaration.origin.isSynthetic) {
-      if (declaration.parent is IrProperty) {
+      if (declaration.modality == Modality.ABSTRACT || declaration.isFakeOverride) {
+        // Bodiless in the full compilation too. With a body, the backend emits members the library
+        // does not have, such as the static `<fn>$suspendImpl` of an overridable suspend function.
+        declaration.body = null
+      } else if (declaration.parent is IrProperty) {
         // for properties we need to generate a default body
         // otherwise we get a crash in the compiler
         // handles properties likeval DEFAULT_SHADOW_COLOR: Int = Color.argb(128, 0, 0, 0)

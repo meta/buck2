@@ -130,7 +130,7 @@ def _elp_config(ctx):
     # Build a single alias map from the full configured dep graph.
     # deps() already follows alias→actual edges transitively, so alias
     # actuals are always in all_targets.  The alias map is still needed to
-    # translate alias labels (e.g. //third-party/erlang:foo in a deps
+    # translate alias labels (e.g. //third-party/erlang/vendor:foo in a deps
     # attribute) to actual target labels that match result dict keys.
     alias_map = _build_alias_map(ctx, all_targets)
 

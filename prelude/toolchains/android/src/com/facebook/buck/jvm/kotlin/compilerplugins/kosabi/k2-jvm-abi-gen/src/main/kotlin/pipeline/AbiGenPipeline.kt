@@ -1430,6 +1430,12 @@ internal class ValidationStage(private val repairLog: AbiGenRepairLog) : AbiGenS
       inputs: AbiValidationInputs,
       keptBodyStubCheck: Boolean = true,
   ) {
+    for (output in inputs.outputFiles) {
+      if (!output.relativePath.endsWith(".class")) continue
+      for (problem in enumConsumerMetadataProblems(output.bytes)) {
+        messageCollector.report(CompilerMessageSeverity.ERROR, "Kosabi ABI validation: $problem")
+      }
+    }
     // The literal-NEC invariant is not a repair-policy diagnostic and is checked whatever
     // `abiValidationMode` says. An ABI that ships `error/NonExistentClass` cannot be linked
     // against in any configuration, so there is no setting under which emitting one is the

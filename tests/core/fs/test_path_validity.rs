@@ -19,6 +19,9 @@ use buck2_e2e::utils::is_open_source;
 
 const SHOW_IGNORED_READS: (&str, &str) = ("BUCK2_SHOW_SOFT_ERRORS", "only=path_check_ignored_read");
 
+const REFUSE_SYMLINKS_INTO_REPO: &str = "buck2.refuse_reads_through_symlinks_into_repo=true";
+const REFUSE_SYMLINKS_OUT_OF_REPO: &str = "buck2.refuse_reads_through_symlinks_out_of_repo=true";
+
 const CP_DEFS: &str = concat!(
     "def _impl(ctx):\n",
     "    return [DefaultInfo(default_output = ctx.actions.copy_file(\"out\", ctx.attrs.src))]\n",
@@ -87,6 +90,74 @@ async fn test_target_pattern_symlink(buck: &Buck) {
         Ok(())
     })
     .await;
+}
+
+// With `buck2.refuse_reads_through_symlinks_into_repo`, they are not.
+#[buck_test]
+async fn test_target_pattern_symlink_refused(buck: &Buck) -> anyhow::Result<()> {
+    symlink("realdir", buck.cwd().join("linkdir"))?;
+    let res = buck
+        .targets(&["//linkdir:", "-v0", "-c", REFUSE_SYMLINKS_INTO_REPO])
+        .await
+        .expect_failure();
+    golden(
+        &sanitize_stderr(&res.stderr),
+        "golden/target_pattern_symlink.golden.stderr",
+    );
+    Ok(())
+}
+
+// The refusal follows the root cell's `.buckconfig` from one command to the
+// next, in the same daemon.
+#[buck_test(allow_soft_errors = true)]
+async fn test_refuse_reads_through_symlinks_follows_buckconfig(buck: &Buck) -> anyhow::Result<()> {
+    symlink("realdir", buck.cwd().join("linkdir"))?;
+    let buckconfig = buck.cwd().join(".buckconfig");
+    let read_through = fs::read_to_string(&buckconfig)?;
+    let refused =
+        format!("{read_through}\n[buck2]\n  refuse_reads_through_symlinks_into_repo = true\n");
+
+    let res = buck.targets(&["//linkdir:"]).await?;
+    assert!(res.stdout.contains("root//linkdir:x"), "{}", res.stdout);
+
+    fs::write(&buckconfig, refused)?;
+    let res = buck.targets(&["//linkdir:"]).await.expect_failure();
+    assert!(!res.stderr.contains("restarting daemon"), "{}", res.stderr);
+    res.assert_stderr_matches("`root//linkdir` is a symlink");
+
+    fs::write(&buckconfig, read_through)?;
+    let res = buck.targets(&["//linkdir:"]).await?;
+    assert!(!res.stderr.contains("restarting daemon"), "{}", res.stderr);
+    assert!(res.stdout.contains("root//linkdir:x"), "{}", res.stdout);
+    Ok(())
+}
+
+// Symlinks into the repo and symlinks out of it are each refused by their own
+// buckconfig, and read through under the other's.
+#[buck_test(allow_soft_errors = true)]
+async fn test_target_pattern_symlinks_refused_by_kind(
+    buck: &Buck,
+    tmp_path: &Path,
+) -> anyhow::Result<()> {
+    let outside = tmp_path;
+    fs::write(outside.join("TARGETS.fixture"), "stub(name = \"ext\")\n")?;
+    symlink(outside, buck.cwd().join("extlink"))?;
+    symlink("realdir", buck.cwd().join("linkdir"))?;
+
+    buck.targets(&["//extlink:", "-c", REFUSE_SYMLINKS_INTO_REPO])
+        .await?;
+    buck.targets(&["//linkdir:", "-c", REFUSE_SYMLINKS_INTO_REPO])
+        .await
+        .expect_failure()
+        .assert_stderr_matches("`root//linkdir` is a symlink");
+
+    buck.targets(&["//linkdir:", "-c", REFUSE_SYMLINKS_OUT_OF_REPO])
+        .await?;
+    buck.targets(&["//extlink:", "-c", REFUSE_SYMLINKS_OUT_OF_REPO])
+        .await
+        .expect_failure()
+        .assert_stderr_matches("`root//extlink` is a symlink");
+    Ok(())
 }
 
 // Reads through a symlink out of the repo and through one into it are counted
@@ -270,4 +341,24 @@ async fn test_load_symlink(buck: &Buck) {
         Ok(())
     })
     .await;
+}
+
+// With `buck2.refuse_reads_through_symlinks_into_repo`, they are not.
+#[buck_test]
+async fn test_load_symlink_refused(buck: &Buck) -> anyhow::Result<()> {
+    symlink("realdir", buck.cwd().join("linkdir"))?;
+    fs::create_dir(buck.cwd().join("loader"))?;
+    fs::write(
+        buck.cwd().join("loader").join("TARGETS.fixture"),
+        "load(\"//linkdir:lib.bzl\", \"value\")\nstub(name = \"loader_\" + value)\n",
+    )?;
+    let res = buck
+        .targets(&["//loader:", "-v0", "-c", REFUSE_SYMLINKS_INTO_REPO])
+        .await
+        .expect_failure();
+    golden(
+        &sanitize_stderr(&res.stderr),
+        "golden/load_symlink.golden.stderr",
+    );
+    Ok(())
 }

@@ -329,6 +329,7 @@ impl Key for PathCheckKey {
 
 #[cfg(test)]
 mod tests {
+    use std::cell::Cell;
     use std::sync::Arc;
 
     use assert_matches::assert_matches;
@@ -352,6 +353,8 @@ mod tests {
     use crate::file_ops::baseline::SetFileSystemBaseline;
     use crate::file_ops::dice::DiceFileComputations;
     use crate::file_ops::io::FileChangeTracker;
+    use crate::file_ops::io::RefusedSymlinkReads;
+    use crate::file_ops::io::SetRefusedSymlinkReads;
     use crate::file_ops::io::initialize_read_dir_cache;
     use crate::file_ops::metadata::RawPathMetadata;
     use crate::file_ops::metadata::RawSymlink;
@@ -371,6 +374,8 @@ mod tests {
         root: dice::BranchId,
         baseline: FileSystemBaseline,
         cells: CellResolver,
+        /// What the next transaction is given.
+        refused_symlink_reads: Cell<RefusedSymlinkReads>,
     }
 
     impl Fixture {
@@ -411,6 +416,7 @@ mod tests {
                 root,
                 baseline: FileSystemBaseline::unique(),
                 cells,
+                refused_symlink_reads: Cell::default(),
             })
         }
 
@@ -425,12 +431,15 @@ mod tests {
             let mut updater = self.dice.updater_with_data(self.root, data);
             updater.set_cell_resolver(self.cells.dupe())?;
             updater.set_file_system_baseline(self.baseline.dupe())?;
+            updater.set_refused_symlink_reads(self.refused_symlink_reads.get())?;
             changes.write_to_dice(&mut updater)?;
             Ok(updater.commit().await)
         }
 
         /// Writes the target verbatim; `fs_util::symlink` makes it absolute on Windows, and
-        /// the tests that look at the target want a relative one to stay relative.
+        /// the tests that look at the target want a relative one to stay relative. Windows does
+        /// not resolve a relative target written with `/`, so a link that is read through needs
+        /// a target of one component.
         fn symlink(&self, link: &str, target: &str) {
             let link = self
                 .fs
@@ -742,7 +751,7 @@ mod tests {
             read_dir(&ctx, "root//ign/g").await,
             "(`ign` is ignored, `project.ignore` contains `ign`)",
         );
-        // Read through, with a soft error, until `read_through_symlink` is retired.
+        // Read through, with a soft error: no `RefusedSymlinkReads` are set.
         assert_eq!(read_dir(&ctx, "root//l").await, names(&["b"]));
         assert_eq!(read_dir(&ctx, "root//l/b").await, names(&["f"]));
         fails_with(
@@ -809,7 +818,7 @@ mod tests {
         assert!(exists("sub//f").await);
         assert!(!exists("root//a/B/f").await);
         assert!(!exists("root//a/b/F").await);
-        // Read through, with a soft error, until `read_through_symlink` is retired.
+        // Read through, with a soft error: no `RefusedSymlinkReads` are set.
         assert!(exists("root//l/b").await);
         assert!(!exists("root//l/nope").await);
         assert!(!exists("root//ign/f").await);
@@ -1010,10 +1019,113 @@ mod tests {
             Err(msg) => assert!(msg.contains(needle), "`{msg}` does not contain `{needle}`"),
             Ok(v) => panic!("expected a failure mentioning `{needle}`, got {v:?}"),
         };
-        // Read through, with a soft error, until `read_through_symlink` is retired.
+        // Read through, with a soft error: no `RefusedSymlinkReads` are set.
         assert_eq!(read("root//l/f").await, Ok(Some("contents".to_owned())));
         assert_eq!(read("root//a/lf").await, Ok(Some("contents".to_owned())));
         fails(read("root//a").await, "`a` is a directory, not a file");
+        Ok(())
+    }
+
+    /// Reads through the kind of symlink that `RefusedSymlinkReads` names are refused, including
+    /// what was read before it named them. Metadata, which never read through a symlink, is the
+    /// same either way.
+    #[tokio::test]
+    async fn refused_symlink_reads() -> buck2_error::Result<()> {
+        let f = Fixture::new("").await?;
+        f.fs.write_file("a/f", "contents");
+        f.fs.write_file("a/b/f", "contents");
+        f.symlink("l", "a");
+        f.symlink("a/lf", "f");
+        let outside = ProjectRootTemp::new()?;
+        outside.write_file("b/f", "contents");
+        f.symlink("e", outside.path().root().as_path().to_str().unwrap());
+
+        let read = async |ctx: &DiceTransaction, path: &str| {
+            DiceFileComputations::read_file_if_exists(&mut ctx.ctx(), cp(path))
+                .await
+                .map_err(|e| format!("{e:#}"))
+        };
+        let exists = async |ctx: &DiceTransaction, path: &str| {
+            DiceFileComputations::exists(&mut ctx.ctx(), cp(path))
+                .await
+                .unwrap()
+        };
+        let contents = || Ok(Some("contents".to_owned()));
+        let refused = |res: Result<Option<String>, String>, needle: &str| match res {
+            Err(msg) => assert!(msg.contains(needle), "`{msg}` does not contain `{needle}`"),
+            Ok(v) => panic!("expected a failure mentioning `{needle}`, got {v:?}"),
+        };
+        // `link` is `l` or `e`.
+        let read_through = async |ctx: &DiceTransaction, link: &str| {
+            assert_eq!(
+                read_dir(ctx, &format!("root//{link}/b")).await,
+                names(&["f"])
+            );
+            assert_eq!(read(ctx, &format!("root//{link}/b/f")).await, contents());
+            assert!(exists(ctx, &format!("root//{link}/b/f")).await);
+        };
+        let refuses = async |ctx: &DiceTransaction, link: &str| {
+            fails_with(
+                read_dir(ctx, &format!("root//{link}")).await,
+                &format!("`{link}` is a symlink, which buck2 does not follow"),
+            );
+            fails_with(
+                read_dir(ctx, &format!("root//{link}/b")).await,
+                &format!(
+                    "Directory `{link}/b` is behind the symlink `{link}`, which buck2 does not follow"
+                ),
+            );
+            assert_matches!(
+                read_dir_error(ctx, &format!("root//{link}/b")).await,
+                ReadDirError::Symlink { path, at } => {
+                    assert_eq!(path, cp(&format!("root//{link}/b")));
+                    assert_eq!(at, cp(&format!("root//{link}")));
+                }
+            );
+            refused(
+                read(ctx, &format!("root//{link}/b/f")).await,
+                &format!(
+                    "File `{link}/b/f` is behind the symlink `{link}`, which buck2 does not follow"
+                ),
+            );
+            assert!(!exists(ctx, &format!("root//{link}/b/f")).await);
+            // The symlink is an entry like any other.
+            assert!(exists(ctx, &format!("root//{link}")).await);
+        };
+
+        let ctx = f.transaction(FileChangeTracker::new()).await?;
+        read_through(&ctx, "l").await;
+        read_through(&ctx, "e").await;
+        assert_eq!(read(&ctx, "root//a/lf").await, contents());
+        let metadata_behind_symlink = metadata(&ctx, "root//l/b/f").await;
+        assert_matches!(
+            metadata_behind_symlink,
+            Some(RawPathMetadata::Symlink { .. })
+        );
+        drop(ctx);
+
+        f.refused_symlink_reads.set(RefusedSymlinkReads {
+            into_repo: true,
+            out_of_repo: false,
+        });
+        let ctx = f.transaction(FileChangeTracker::new()).await?;
+        refuses(&ctx, "l").await;
+        refused(
+            read(&ctx, "root//a/lf").await,
+            "`a/lf` is a symlink, which buck2 does not follow",
+        );
+        read_through(&ctx, "e").await;
+        assert_eq!(metadata(&ctx, "root//l/b/f").await, metadata_behind_symlink);
+        drop(ctx);
+
+        f.refused_symlink_reads.set(RefusedSymlinkReads {
+            into_repo: false,
+            out_of_repo: true,
+        });
+        let ctx = f.transaction(FileChangeTracker::new()).await?;
+        read_through(&ctx, "l").await;
+        assert_eq!(read(&ctx, "root//a/lf").await, contents());
+        refuses(&ctx, "e").await;
         Ok(())
     }
 

@@ -50,6 +50,8 @@ use buck2_cli_proto::config_override::ConfigType;
 use buck2_common::dice::data::SetIsolationDir;
 use buck2_common::file_ops::baseline::FileSystemBaseline;
 use buck2_common::file_ops::baseline::SetFileSystemBaseline;
+use buck2_common::file_ops::io::RefusedSymlinkReads;
+use buck2_common::file_ops::io::SetRefusedSymlinkReads;
 use buck2_common::file_ops::io::initialize_read_dir_cache;
 use buck2_common::http::SetHttpClient;
 use buck2_common::ignores::ignore_set::IgnoreSet;
@@ -915,6 +917,10 @@ impl DiceUpdater for DiceCommandUpdater<'_, '_> {
             .map_or(Vec::new(), |opts| opts.enable_optional_validations.clone());
 
         ctx.set_enabled_optional_validations(optional_validations)?;
+
+        ctx.set_refused_symlink_reads(RefusedSymlinkReads::from_root_buckconfig(
+            &cells_and_configs.root_config,
+        )?)?;
 
         let profiler_instrumentation_override =
             &self.cmd_ctx.starlark_profiling_manager.configuration;

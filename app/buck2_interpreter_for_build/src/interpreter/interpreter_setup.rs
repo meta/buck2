@@ -13,6 +13,8 @@ use std::sync::Arc;
 use buck2_common::dice::cells::SetCellResolver;
 use buck2_common::file_ops::baseline::FileSystemBaseline;
 use buck2_common::file_ops::baseline::SetFileSystemBaseline;
+use buck2_common::file_ops::io::RefusedSymlinkReads;
+use buck2_common::file_ops::io::SetRefusedSymlinkReads;
 use buck2_common::legacy_configs::cells::ExternalBuckconfigData;
 use buck2_common::legacy_configs::dice::SetLegacyConfigs;
 use buck2_core::cells::CellResolver;
@@ -53,6 +55,7 @@ pub fn setup_interpreter_basic(
     configuror: Arc<BuildInterpreterConfiguror>,
 ) -> buck2_error::Result<()> {
     dice.set_file_system_baseline(FileSystemBaseline::unique())?;
+    dice.set_refused_symlink_reads(RefusedSymlinkReads::default())?;
     setup_interpreter(
         dice,
         cell_resolver,

@@ -585,6 +585,63 @@ public class InstrumentationTestRunnerTest {
   }
 
   @Test
+  public void appPrivateCoveragePullsSelfInstrumentingArtifacts() throws Throwable {
+    assertAppPrivateCoveragePull(0, "com.example.test", "--is-self-instrumenting");
+  }
+
+  @Test
+  public void appPrivateCoveragePullsTargetArtifactsForSecondaryUser() throws Throwable {
+    assertAppPrivateCoveragePull(10, "com.example", "--user", "10");
+  }
+
+  private void assertAppPrivateCoveragePull(int user, String appPackage, String... extraArgs)
+      throws Throwable {
+    String deviceDir = "/data/user/" + user + "/" + appPackage + "/files/per_test_coverage";
+    Path hostDir = tmp.newFolder("private_coverage").getPath();
+    byte[] execData = new byte[] {0, 1, (byte) 0xff, (byte) 0x80};
+    byte[] manifest = "{\"test_name\":\"test\",\"exec_file\":\"test.exec\"}\n".getBytes();
+    Map<Path, byte[]> deviceFiles = new HashMap<>();
+    deviceFiles.put(Paths.get(deviceDir, "manifest.jsonl"), manifest);
+    deviceFiles.put(Paths.get(deviceDir, "test.exec"), execData);
+    deviceFiles.put(Paths.get(deviceDir, "extension/trace.txt"), "resource trace".getBytes());
+    Map<String, String> env = new HashMap<>();
+    env.put(InstrumentationTestRunner.PER_TEST_COVERAGE_ENABLED_ENV, "true");
+    env.put(InstrumentationTestRunner.PER_TEST_COVERAGE_APP_PRIVATE_ENV, "true");
+    env.put(InstrumentationTestRunner.PER_TEST_COVERAGE_DIR_ENV, hostDir.toString());
+    ArrayList<String> commands = new ArrayList<>();
+    InstrumentationTestRunner runner =
+        createInstrumentationTestRunnerWithDeviceForSdk(
+            "36", commands, deviceFiles, env, new HashMap<>(), extraArgs);
+
+    runner.run();
+
+    Assert.assertTrue(
+        findInstrumentationCommand(commands).contains("-e PER_TEST_COVERAGE_DIR " + deviceDir));
+    Assert.assertArrayEquals(manifest, Files.readAllBytes(hostDir.resolve("manifest.jsonl")));
+    Assert.assertArrayEquals(execData, Files.readAllBytes(hostDir.resolve("test.exec")));
+    Assert.assertEquals("resource trace", Files.readString(hostDir.resolve("extension/trace.txt")));
+  }
+
+  @Test
+  public void missingAppPrivateCoverageFailsCollection() throws Throwable {
+    Path hostDir = tmp.newFolder("missing_private_coverage").getPath();
+    Map<String, String> env = new HashMap<>();
+    env.put(InstrumentationTestRunner.PER_TEST_COVERAGE_ENABLED_ENV, "true");
+    env.put(InstrumentationTestRunner.PER_TEST_COVERAGE_APP_PRIVATE_ENV, "true");
+    env.put(InstrumentationTestRunner.PER_TEST_COVERAGE_DIR_ENV, hostDir.toString());
+    InstrumentationTestRunner runner =
+        createInstrumentationTestRunnerWithDeviceForSdk(
+            "36", new ArrayList<>(), new HashMap<>(), env, new HashMap<>());
+
+    try {
+      runner.run();
+      Assert.fail("Expected missing private coverage to fail collection");
+    } catch (IOException expected) {
+      Assert.assertFalse(Files.exists(hostDir.resolve("manifest.jsonl")));
+    }
+  }
+
+  @Test
   public void perTestCoverageFallsBackToTestArtifactsDir() throws Throwable {
     ArrayList<String> capturedShellCommands = new ArrayList<>();
     Path artifactsDir = tmp.newFolder("test_artifacts").getPath();
@@ -1749,6 +1806,23 @@ public class InstrumentationTestRunnerTest {
             // Return configured mock response if available
             if (shellCommandMockResponses.containsKey(command)) {
               return shellCommandMockResponses.get(command);
+            }
+
+            if (command.startsWith("su root cp -R ")) {
+              String[] paths = command.substring("su root cp -R ".length()).split(" ");
+              Path source = Paths.get(paths[0]).normalize();
+              Path destination = Paths.get(paths[1]);
+              Map<Path, byte[]> copied = new HashMap<>();
+              for (Map.Entry<Path, byte[]> entry : filesOnDevice.entrySet()) {
+                if (entry.getKey().startsWith(source)) {
+                  copied.put(
+                      destination.resolve(source.relativize(entry.getKey())), entry.getValue());
+                }
+              }
+              if (copied.isEmpty()) {
+                throw new IOException("Missing coverage source " + source);
+              }
+              filesOnDevice.putAll(copied);
             }
 
             // Default: return empty string

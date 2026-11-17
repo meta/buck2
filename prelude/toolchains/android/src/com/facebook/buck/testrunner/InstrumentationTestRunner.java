@@ -102,7 +102,11 @@ public class InstrumentationTestRunner extends DeviceRunner {
   /** Instrumentation arg read by the on-device per-test coverage listener. */
   static final String PER_TEST_COVERAGE_DIR_ARG = "PER_TEST_COVERAGE_DIR";
 
+  static final String PER_TEST_COVERAGE_APP_PRIVATE_ENV =
+      "ANDROID_PER_TEST_COVERAGE_USE_APP_PRIVATE_STORAGE";
+
   private static final String PER_TEST_COVERAGE_SUBDIR = "per_test_coverage";
+  @Nullable private String appPrivatePerTestCoverageDir;
 
   /** Env var to enable per-test timeout enforcement. */
   static final String PER_TEST_TIMEOUT_ENABLED_ENV = "ANDROID_PER_TEST_TIMEOUT_ENABLED";
@@ -952,6 +956,11 @@ public class InstrumentationTestRunner extends DeviceRunner {
     boolean failOnArtifactStagingError = "true".equals(getenv(FAIL_ON_ARTIFACT_STAGING_ERROR_ENV));
     for (final String devicePath : this.extraDirsToPull.keySet()) {
       String resolvedPath = resolvePathForUser(devicePath);
+      if (resolvedPath.equals(appPrivatePerTestCoverageDir)) {
+        // Let the app create its own directory with the correct owner and SELinux label.
+        executeAdbShellCommand("su root rm -fr " + BashEscaper.BASH_ESCAPER.apply(resolvedPath));
+        continue;
+      }
       String output = executeAdbShellCommand("rm -fr " + resolvedPath);
 
       if (directoryExists(resolvedPath)) {
@@ -1129,7 +1138,11 @@ public class InstrumentationTestRunner extends DeviceRunner {
       }
       for (Map.Entry<String, String> entry : this.extraDirsToPull.entrySet()) {
         String resolvedPath = resolvePathForUser(entry.getKey());
-        pullDir(resolvedPath, entry.getValue());
+        if (resolvedPath.equals(appPrivatePerTestCoverageDir)) {
+          pullAppPrivatePerTestCoverage(resolvedPath, entry.getValue());
+        } else {
+          pullDir(resolvedPath, entry.getValue());
+        }
       }
 
       maybeEmitPerTestCoverageInfraFailure(hostPerTestCoverageDir, testResultsOutputSender);
@@ -1170,9 +1183,19 @@ public class InstrumentationTestRunner extends DeviceRunner {
       return null;
     }
 
-    String devicePerTestCoveragePath =
-        getAppScopedStoragePath(
-            packageName, targetPackageName, isSelfInstrumenting, PER_TEST_COVERAGE_SUBDIR);
+    String devicePerTestCoveragePath;
+    if ("true".equals(getenv(PER_TEST_COVERAGE_APP_PRIVATE_ENV))) {
+      String appPackage = isSelfInstrumenting ? packageName : targetPackageName;
+      appPrivatePerTestCoverageDir =
+          String.format(
+              "/data/user/%d/%s/files/%s",
+              userId == null ? 0 : userId, appPackage, PER_TEST_COVERAGE_SUBDIR);
+      devicePerTestCoveragePath = appPrivatePerTestCoverageDir;
+    } else {
+      devicePerTestCoveragePath =
+          getAppScopedStoragePath(
+              packageName, targetPackageName, isSelfInstrumenting, PER_TEST_COVERAGE_SUBDIR);
+    }
     if (devicePerTestCoveragePath == null) {
       devicePerTestCoveragePath =
           String.format(
@@ -1186,6 +1209,22 @@ public class InstrumentationTestRunner extends DeviceRunner {
       extraInstrumentationArguments.put(PER_TEST_COVERAGE_DIR_ARG, devicePerTestCoveragePath);
     }
     return hostPerTestCoverageDir;
+  }
+
+  private void pullAppPrivatePerTestCoverage(String sourceDir, String destinationDir)
+      throws Exception {
+    String stagingDir = "/data/local/tmp/buck-per-test-coverage/" + packageName;
+    String source = BashEscaper.BASH_ESCAPER.apply(sourceDir + "/.");
+    String staging = BashEscaper.BASH_ESCAPER.apply(stagingDir);
+    executeAdbShellCommand("su root rm -fr " + staging);
+    executeAdbShellCommand("mkdir -p " + staging);
+    try {
+      executeAdbShellCommand("su root cp -R " + source + " " + staging);
+      executeAdbShellCommand("su root chmod -R a+rX " + staging);
+      pullDir(stagingDir, destinationDir);
+    } finally {
+      executeAdbShellCommand("su root rm -fr " + staging);
+    }
   }
 
   @Nullable

@@ -12,6 +12,7 @@
 
 package com.facebook.buck.jvm.kotlin.compilerplugins.common
 
+import com.facebook.kotlin.compilerplugins.common.isOwnDeclaration
 import com.facebook.kotlin.compilerplugins.common.isSameModuleJava
 import java.util.Collections
 import java.util.IdentityHashMap
@@ -216,6 +217,8 @@ class InlineBodyKeepability(
 
   private fun isOwn(symbol: FirBasedSymbol<*>, origin: FirDeclarationOrigin): Boolean {
     if (isSameModuleJava(origin)) return true
+    // An unchanged file of an incremental round's own target; never a stub.
+    if (!origin.fromSource && isOwnDeclaration(symbol, session)) return true
     if (origin is FirDeclarationOrigin.Enhancement) {
       return ownerOrigin(symbol)?.let(::isSameModuleJava) == true
     }
@@ -241,7 +244,7 @@ class InlineBodyKeepability(
     // rejected.
     if (classId.isLocal) return true
     val symbol = session.symbolProvider.getClassLikeSymbolByClassId(classId) ?: return false
-    if (symbol.origin.fromSource) {
+    if (symbol.origin.fromSource || isOwnDeclaration(symbol, session)) {
       // With lowerableOnly: the ABI drops private classes.
       val private = (symbol.fir as? FirMemberDeclaration)?.effectiveVisibility?.privateApi != false
       return isOwn(symbol, symbol.origin) && !(lowerableOnly && private)
@@ -372,7 +375,9 @@ class InlineBodyKeepability(
       val callableId = callable.callableId ?: return false
       // `when`, `try`, `!!` and `?:` resolve through synthetic calls that generate no call.
       if (callableId.packageName == SYNTHETIC_PACKAGE) return true
-      if (callable.origin.fromSource) return isOwn(callable, callable.origin)
+      if (callable.origin.fromSource || isOwnDeclaration(callable, session)) {
+        return isOwn(callable, callable.origin)
+      }
       val classId =
           callableId.classId
               ?: return isLibraryDeclarationAllowed(callableId.asSingleFqName().asString(), true)

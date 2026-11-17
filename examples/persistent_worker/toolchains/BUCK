@@ -22,7 +22,9 @@ http_file(
     name = "python-download",
     out = "cpython.tar.gz",
     sha256 = "445156c61e1cc167f7b8777ad08cc36e5598e12cd27e07453f6e6dc0f62e421e",
-    urls = ["https://github.com/indygreg/python-build-standalone/releases/download/20241002/cpython-3.13.0rc3+20241002-x86_64-unknown-linux-gnu-install_only_stripped.tar.gz"],
+    urls = [
+        "https://github.com/indygreg/python-build-standalone/releases/download/20241002/cpython-3.13.0rc3+20241002-x86_64-unknown-linux-gnu-install_only_stripped.tar.gz"
+    ],
 )
 
 genrule(

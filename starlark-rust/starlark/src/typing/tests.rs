@@ -15,6 +15,7 @@
  * limitations under the License.
  */
 
+use std::cmp::Ordering;
 use std::collections::HashMap;
 use std::fmt::Write;
 
@@ -38,11 +39,15 @@ use crate::syntax::AstModule;
 use crate::syntax::Dialect;
 use crate::tests::util::trim_rust_backtrace;
 use crate::typing::AstModuleTypecheck;
+use crate::typing::OperatorSignature;
 use crate::typing::ParamSpec;
 use crate::typing::Ty;
+use crate::typing::TypingBinOp;
+use crate::typing::TypingUnOp;
 use crate::typing::callable_param::ParamIsRequired;
 use crate::typing::interface::Interface;
 use crate::util::ArcStr;
+use crate::values::Heap;
 use crate::values::StarlarkValue;
 use crate::values::Value;
 use crate::values::ValueOf;
@@ -84,6 +89,142 @@ struct MyCustomType;
 #[starlark_value(type = "my_custom_type")]
 impl<'v> StarlarkValue<'v> for MyCustomType {}
 
+/// A type with every operator, each written with the signature the trait declares.
+#[derive(
+    derive_more::Display,
+    Debug,
+    NoSerialize,
+    Allocative,
+    ProvidesStaticType,
+    StarlarkPagable
+)]
+#[display("EveryOperator")]
+struct EveryOperator;
+
+#[starlark_value(type = "every_operator")]
+impl<'v> StarlarkValue<'v> for EveryOperator {
+    fn add(&self, other: Value<'v>, _heap: Heap<'v>) -> Option<crate::Result<Value<'v>>> {
+        Some(Ok(other))
+    }
+
+    fn radd(&self, other: Value<'v>, _heap: Heap<'v>) -> Option<crate::Result<Value<'v>>> {
+        Some(Ok(other))
+    }
+
+    fn mul(&self, other: Value<'v>, _heap: Heap<'v>) -> Option<crate::Result<Value<'v>>> {
+        Some(Ok(other))
+    }
+
+    fn rmul(&self, other: Value<'v>, _heap: Heap<'v>) -> Option<crate::Result<Value<'v>>> {
+        Some(Ok(other))
+    }
+
+    fn sub(&self, other: Value<'v>, _heap: Heap<'v>) -> crate::Result<Value<'v>> {
+        Ok(other)
+    }
+
+    fn div(&self, other: Value<'v>, _heap: Heap<'v>) -> crate::Result<Value<'v>> {
+        Ok(other)
+    }
+
+    fn percent(&self, other: Value<'v>, _heap: Heap<'v>) -> crate::Result<Value<'v>> {
+        Ok(other)
+    }
+
+    fn floor_div(&self, other: Value<'v>, _heap: Heap<'v>) -> crate::Result<Value<'v>> {
+        Ok(other)
+    }
+
+    fn bit_and(&self, other: Value<'v>, _heap: Heap<'v>) -> crate::Result<Value<'v>> {
+        Ok(other)
+    }
+
+    fn bit_or(&self, other: Value<'v>, _heap: Heap<'v>) -> crate::Result<Value<'v>> {
+        Ok(other)
+    }
+
+    fn bit_xor(&self, other: Value<'v>, _heap: Heap<'v>) -> crate::Result<Value<'v>> {
+        Ok(other)
+    }
+
+    fn left_shift(&self, other: Value<'v>, _heap: Heap<'v>) -> crate::Result<Value<'v>> {
+        Ok(other)
+    }
+
+    fn right_shift(&self, other: Value<'v>, _heap: Heap<'v>) -> crate::Result<Value<'v>> {
+        Ok(other)
+    }
+
+    fn plus(&self, _heap: Heap<'v>) -> crate::Result<Value<'v>> {
+        Ok(Value::new_none())
+    }
+
+    fn minus(&self, _heap: Heap<'v>) -> crate::Result<Value<'v>> {
+        Ok(Value::new_none())
+    }
+
+    fn bit_not(&self, _heap: Heap<'v>) -> crate::Result<Value<'v>> {
+        Ok(Value::new_none())
+    }
+
+    fn compare(&self, _other: Value<'v>) -> crate::Result<Ordering> {
+        Ok(Ordering::Equal)
+    }
+
+    fn is_in(&self, _other: Value<'v>) -> crate::Result<bool> {
+        Ok(true)
+    }
+}
+
+/// A type that writes the signatures of its operators by hand: `+` with a result that
+/// depends on the operand, a reflected `*`, and unary `-`.
+#[derive(
+    derive_more::Display,
+    Debug,
+    NoSerialize,
+    Allocative,
+    ProvidesStaticType,
+    StarlarkPagable
+)]
+#[display("WithSignatures")]
+struct WithSignatures;
+
+#[starlark_value(type = "with_signatures")]
+impl<'v> StarlarkValue<'v> for WithSignatures {
+    fn bin_op_signatures(op: TypingBinOp) -> Vec<OperatorSignature> {
+        match op {
+            TypingBinOp::Add => vec![
+                OperatorSignature {
+                    operand: Ty::int(),
+                    result: Ty::string(),
+                },
+                OperatorSignature {
+                    operand: Ty::float(),
+                    result: Ty::bool(),
+                },
+            ],
+            _ => Vec::new(),
+        }
+    }
+
+    fn rbin_op_signatures(op: TypingBinOp) -> Vec<OperatorSignature> {
+        match op {
+            TypingBinOp::Mul => vec![OperatorSignature {
+                operand: Ty::float(),
+                result: Ty::string(),
+            }],
+            _ => Vec::new(),
+        }
+    }
+
+    fn un_op_result(op: TypingUnOp) -> Option<Ty> {
+        match op {
+            TypingUnOp::Minus => Some(Ty::int()),
+            _ => None,
+        }
+    }
+}
+
 struct NamedXy;
 
 pagable::static_str!(NAMED_XY_X = "x");
@@ -108,7 +249,11 @@ impl StarlarkCallableParamSpec for NamedXy {
 }
 
 #[starlark_module]
-#[starlark_types(MyCustomType as MyCustomType)]
+#[starlark_types(
+    MyCustomType as MyCustomType,
+    EveryOperator as EveryOperator,
+    WithSignatures as WithSignatures
+)]
 fn register_typecheck_globals(globals: &mut GlobalsBuilder) {
     fn accepts_iterable<'v>(
         #[starlark(require = pos)] xs: ValueOf<'v, StarlarkIter<Value<'v>>>,
@@ -439,6 +584,59 @@ def test():
     z = -(1 if True else "")
 "#,
     );
+}
+
+#[test]
+fn test_operators_without_types() {
+    TypeCheck::new()
+        .ty("binary")
+        .ty("boolean")
+        .ty("reflected")
+        .ty("unary")
+        .check(
+            "operators_without_types",
+            r#"
+def test(x: EveryOperator, y: str):
+    binary = (x + y, x - y, x * y, x / y, x // y, x % y, x & y, x | y, x ^ y, x << y, x >> y)
+    boolean = (x < y, y in x)
+    reflected = (None + x, None * x)
+    unary = (+x, -x, ~x)
+"#,
+        );
+}
+
+#[test]
+fn test_operator_signatures() {
+    TypeCheck::new()
+        .ty("one_int")
+        .ty("one_float")
+        .ty("both")
+        .ty("unknown")
+        .ty("none")
+        .ty("reflected")
+        .ty("reflected_none")
+        .ty("unary")
+        .ty("unary_none")
+        .check(
+            "operator_signatures",
+            r#"
+def test(x: WithSignatures, i: int, f: float, n: int | float, a, s: str):
+    # The operand matches one signature.
+    one_int = x + i
+    one_float = x + f
+    # The operand matches both.
+    both = x + n
+    unknown = x + a
+    # The operand matches none.
+    none = x + s
+    # The reflected operator, for a left operand whose type does not have the operator.
+    reflected = f * x
+    reflected_none = None * x
+    # The unary operators.
+    unary = -x
+    unary_none = ~x
+"#,
+        );
 }
 
 #[test]

@@ -20,6 +20,8 @@
 
 use dupe::Dupe;
 
+use crate::typing::Ty;
+
 /// Unary operator for typechecker.
 #[derive(Copy, Clone, Dupe, Eq, PartialEq, derive_more::Display, Debug)]
 pub enum TypingUnOp {
@@ -82,5 +84,33 @@ impl TypingBinOp {
     /// Result type is always `bool`.
     pub(crate) fn always_bool(self) -> bool {
         matches!(self, TypingBinOp::In | TypingBinOp::Less)
+    }
+}
+
+/// One way an operator of a type applies: what the other operand is, and what the result is
+/// then.
+///
+/// A type lists these per operator
+/// ([`StarlarkType::bin_op_signatures`](crate::values::StarlarkType::bin_op_signatures)), and
+/// the typechecker does the rest: an operand that intersects the operand type of one or more
+/// of them gives the union of their results, and an operand that intersects none is an error.
+/// A type has more than one for an operator when the result depends on the operand, as
+/// `int + int` and `int + float` do.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct OperatorSignature {
+    /// The type of the other operand.
+    pub operand: Ty,
+    /// The type of the result.
+    pub result: Ty,
+}
+
+impl OperatorSignature {
+    /// What an operator written without types says: any operand, and a result that is not
+    /// known.
+    pub fn any() -> OperatorSignature {
+        OperatorSignature {
+            operand: Ty::any(),
+            result: Ty::any(),
+        }
     }
 }

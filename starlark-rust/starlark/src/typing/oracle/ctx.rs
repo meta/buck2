@@ -25,6 +25,7 @@ use starlark_syntax::syntax::ast::BinOp;
 use crate::codemap::CodeMap;
 use crate::codemap::Span;
 use crate::codemap::Spanned;
+use crate::typing::OperatorSignature;
 use crate::typing::ParamSpec;
 use crate::typing::Ty;
 use crate::typing::TypingBinOp;
@@ -577,10 +578,7 @@ impl<'a> TypingOracleCtx<'a> {
         un_op: TypingUnOp,
     ) -> Result<Ty, TypingNoContextError> {
         match ty {
-            TyBasic::StarlarkValue(ty) => match ty.un_op(un_op) {
-                Ok(x) => Ok(Ty::basic(TyBasic::StarlarkValue(x))),
-                Err(TypingNoContextError) => Err(TypingNoContextError),
-            },
+            TyBasic::StarlarkValue(ty) => ty.un_op(un_op),
             _ => Err(TypingNoContextError),
         }
     }
@@ -600,6 +598,27 @@ impl<'a> TypingOracleCtx<'a> {
         }
     }
 
+    /// The type of the result of an operator with these signatures applied to `operand`: the
+    /// union of the results of the signatures whose operand type `operand` intersects.
+    pub(crate) fn operator_result(
+        &self,
+        signatures: Vec<OperatorSignature>,
+        operand: &TyBasic,
+    ) -> Result<Ty, TypingNoContextOrInternalError> {
+        let operand = Ty::basic(operand.dupe());
+        let mut results = Vec::new();
+        for signature in signatures {
+            if self.intersects(&signature.operand, &operand)? {
+                results.push(signature.result);
+            }
+        }
+        if results.is_empty() {
+            Err(TypingNoContextOrInternalError::Typing)
+        } else {
+            Ok(Ty::unions(results))
+        }
+    }
+
     fn expr_bin_op_ty_basic_lhs(
         &self,
         lhs: &TyBasic,
@@ -608,7 +627,7 @@ impl<'a> TypingOracleCtx<'a> {
     ) -> Result<Ty, TypingNoContextOrInternalError> {
         match lhs {
             TyBasic::Any | TyBasic::Iter(_) | TyBasic::Callable(_) | TyBasic::Type => Ok(Ty::any()),
-            TyBasic::StarlarkValue(lhs) => Ok(lhs.bin_op(bin_op, rhs.node)?),
+            TyBasic::StarlarkValue(lhs) => lhs.bin_op(bin_op, rhs.node, self),
             lhs @ TyBasic::List(elem) => match bin_op {
                 TypingBinOp::Less => {
                     if self.intersects_basic(lhs, rhs.node)? {
@@ -641,11 +660,11 @@ impl<'a> TypingOracleCtx<'a> {
                         Err(TypingNoContextOrInternalError::Typing)
                     }
                 }
-                _ => Ok(TyStarlarkValue::new::<List>().bin_op(bin_op, rhs.node)?),
+                _ => TyStarlarkValue::new::<List>().bin_op(bin_op, rhs.node, self),
             },
             TyBasic::Tuple(_) => {
                 // TODO(nga): can do better types.
-                Ok(TyStarlarkValue::new::<Tuple>().bin_op(bin_op, rhs.node)?)
+                TyStarlarkValue::new::<Tuple>().bin_op(bin_op, rhs.node, self)
             }
             TyBasic::Dict(k, v) => match bin_op {
                 TypingBinOp::BitOr => {
@@ -665,7 +684,7 @@ impl<'a> TypingOracleCtx<'a> {
                         Err(TypingNoContextOrInternalError::Typing)
                     }
                 }
-                bin_op => Ok(TyStarlarkValue::new::<MutableDict>().bin_op(bin_op, rhs.node)?),
+                bin_op => TyStarlarkValue::new::<MutableDict>().bin_op(bin_op, rhs.node, self),
             },
             TyBasic::Custom(lhs) => Ok(lhs.0.bin_op_dyn(bin_op, rhs.node, self)?),
             TyBasic::Set(elem) => match bin_op {
@@ -689,7 +708,7 @@ impl<'a> TypingOracleCtx<'a> {
                         Err(TypingNoContextOrInternalError::Typing)
                     }
                 }
-                bin_op => Ok(TyStarlarkValue::new::<MutableSet>().bin_op(bin_op, rhs.node)?),
+                bin_op => TyStarlarkValue::new::<MutableSet>().bin_op(bin_op, rhs.node, self),
             },
         }
     }
@@ -701,7 +720,7 @@ impl<'a> TypingOracleCtx<'a> {
         rhs: &TyBasic,
     ) -> Result<Ty, TypingNoContextOrInternalError> {
         match rhs {
-            TyBasic::StarlarkValue(rhs) => Ok(rhs.rbin_op(bin_op, lhs)?),
+            TyBasic::StarlarkValue(rhs) => rhs.rbin_op(bin_op, lhs, self),
             rhs @ TyBasic::List(_) => match bin_op {
                 TypingBinOp::Mul => {
                     if self.intersects_basic(lhs, &TyBasic::int())? {
@@ -710,7 +729,7 @@ impl<'a> TypingOracleCtx<'a> {
                         Err(TypingNoContextOrInternalError::Typing)
                     }
                 }
-                _ => Ok(TyStarlarkValue::new::<List>().rbin_op(bin_op, lhs)?),
+                _ => TyStarlarkValue::new::<List>().rbin_op(bin_op, lhs, self),
             },
             TyBasic::Tuple(_) => match bin_op {
                 TypingBinOp::Mul => {
@@ -720,7 +739,7 @@ impl<'a> TypingOracleCtx<'a> {
                         Err(TypingNoContextOrInternalError::Typing)
                     }
                 }
-                _ => Ok(TyStarlarkValue::tuple().rbin_op(bin_op, lhs)?),
+                _ => TyStarlarkValue::tuple().rbin_op(bin_op, lhs, self),
             },
             _ => Err(TypingNoContextOrInternalError::Typing),
         }

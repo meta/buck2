@@ -50,9 +50,11 @@ use crate::environment::Methods;
 use crate::eval::Arguments;
 use crate::eval::Evaluator;
 use crate::private::Private;
+use crate::typing::OperatorSignature;
 use crate::typing::Ty;
 use crate::typing::TyBasic;
 use crate::typing::TypingBinOp;
+use crate::typing::TypingUnOp;
 use crate::values::FreezeDynamic;
 use crate::values::Heap;
 use crate::values::StringValue;
@@ -879,13 +881,36 @@ pub trait StarlarkType<'v>: 'v + ProvidesStaticType<'v> + Debug + Display + Size
         ValueError::unsupported_with(self, ">>", other)
     }
 
-    /// Typecheck `this op rhs`.
-    fn bin_op_ty(_op: TypingBinOp, _rhs: &TyBasic) -> Option<Ty> {
+    /// The typing of `this op rhs`: the signatures of the operator, each with the type of
+    /// `rhs` it takes and the type of the result. None if the type does not have the operator.
+    /// The typechecker matches the operand against them; see [`OperatorSignature`].
+    ///
+    /// [`#[starlark_value]`](crate::values::starlark_value) generates this from the operator
+    /// methods of the block: [`OperatorSignature::any`] for each one that is there.
+    fn bin_op_signatures(_op: TypingBinOp) -> Vec<OperatorSignature> {
+        Vec::new()
+    }
+
+    /// The typing of `lhs op this` for the operators with a reflected method (`radd`,
+    /// `rmul`), as [`bin_op_signatures`](Self::bin_op_signatures); the operand is `lhs`.
+    fn rbin_op_signatures(_op: TypingBinOp) -> Vec<OperatorSignature> {
+        Vec::new()
+    }
+
+    /// The type of the result of the unary operator, if the type has it.
+    ///
+    /// [`#[starlark_value]`](crate::values::starlark_value) generates this from the unary
+    /// methods of the block: the type itself for each one that is there.
+    fn un_op_result(_op: TypingUnOp) -> Option<Ty> {
         None
     }
 
-    /// Typecheck `lhs op this`.
-    fn rbin_op_ty(_lhs: &TyBasic, _op: TypingBinOp) -> Option<Ty> {
+    /// The typing of `this op rhs` as a verdict on one type of `rhs`, which takes the place
+    /// of [`bin_op_signatures`](Self::bin_op_signatures) where it is written. A verdict
+    /// cannot ask the typechecker whether two types intersect, so it compares `rhs` with the
+    /// types it knows; write the signatures instead.
+    #[doc(hidden)]
+    fn bin_op_ty(_op: TypingBinOp, _rhs: &TyBasic) -> Option<Ty> {
         None
     }
 
@@ -975,11 +1000,6 @@ pub trait StarlarkValue<'v>:
     /// [`StarlarkType::bin_op_ty`] of [`Type`](Self::Type).
     fn bin_op_ty(op: TypingBinOp, rhs: &TyBasic) -> Option<Ty> {
         <Self::Type as StarlarkType<'v>>::bin_op_ty(op, rhs)
-    }
-
-    /// [`StarlarkType::rbin_op_ty`] of [`Type`](Self::Type).
-    fn rbin_op_ty(lhs: &TyBasic, op: TypingBinOp) -> Option<Ty> {
-        <Self::Type as StarlarkType<'v>>::rbin_op_ty(lhs, op)
     }
 
     /// Please do not implement this method or `get_type`,

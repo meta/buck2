@@ -272,21 +272,28 @@ impl ImplStarlarkValue {
         if self.has_fn("get_type_starlark_repr") {
             return Ok(None);
         }
+        let nominal = self.nominal_ty();
+        Ok(Some(syn::parse_quote! {
+            fn get_type_starlark_repr() -> starlark::typing::Ty {
+                #nominal
+            }
+        }))
+    }
+
+    /// The nominal type as a `Ty`, named through the representation (for a view, through its
+    /// canonical representation, which `#[derive(StarlarkRepresentations)]` picks).
+    fn nominal_ty(&self) -> syn::Expr {
         let lt = &self.lifetime_param;
-        Ok(Some(match self.impl_of {
+        match self.impl_of {
             ImplOf::Value => syn::parse_quote! {
-                fn get_type_starlark_repr() -> starlark::typing::Ty {
-                    starlark::typing::Ty::starlark_value::<Self>()
-                }
+                starlark::typing::Ty::starlark_value::<Self>()
             },
             ImplOf::Type => syn::parse_quote! {
-                fn get_type_starlark_repr() -> starlark::typing::Ty {
-                    starlark::typing::Ty::starlark_value::<
-                        <Self as starlark::__derive_refs::ViewOfRepresentations<#lt>>::Canonical,
-                    >()
-                }
+                starlark::typing::Ty::starlark_value::<
+                    <Self as starlark::__derive_refs::ViewOfRepresentations<#lt>>::Canonical,
+                >()
             },
-        }))
+        }
     }
 
     /// A view is its own handle, so it is a union payload as itself.
@@ -408,12 +415,14 @@ impl ImplStarlarkValue {
             .any(|item| matches!(item, syn::ImplItem::Macro(_)))
     }
 
-    fn bin_op_arm(&self, bin_op: &str, impl_name: &str) -> Option<syn::Arm> {
+    /// The arm of `bin_op_signatures` or `rbin_op_signatures` for an operator, if the block has
+    /// its method.
+    fn operator_arm(&self, bin_op: &str, impl_name: &str) -> Option<syn::Arm> {
         let bin_op = syn::Ident::new(bin_op, proc_macro2::Span::call_site());
         if self.has_fn(impl_name) || (impl_name == "bit_or" && self.has_fn("eval_type")) {
             Some(syn::parse_quote! {
                 starlark::typing::TypingBinOp::#bin_op => {
-                    Some(starlark::typing::Ty::any())
+                    vec![starlark::typing::OperatorSignature::any()]
                 }
             })
         } else {
@@ -421,81 +430,112 @@ impl ImplStarlarkValue {
         }
     }
 
-    fn bin_op_ty_impl(&self) -> syn::Result<Option<syn::ImplItem>> {
-        let arms = [
-            self.bin_op_arm("Add", "add"),
-            self.bin_op_arm("Sub", "sub"),
-            self.bin_op_arm("Mul", "mul"),
-            self.bin_op_arm("Div", "div"),
-            self.bin_op_arm("FloorDiv", "floor_div"),
-            self.bin_op_arm("Percent", "percent"),
-            self.bin_op_arm("In", "is_in"),
-            self.bin_op_arm("BitOr", "bit_or"),
-            self.bin_op_arm("BitAnd", "bit_and"),
-            self.bin_op_arm("BitXor", "bit_xor"),
-            self.bin_op_arm("Less", "compare"),
-            self.bin_op_arm("LeftShift", "left_shift"),
-            self.bin_op_arm("RightShift", "right_shift"),
-        ];
+    /// `fn bin_op_signatures()` or `fn rbin_op_signatures()` from the arms of the operators
+    /// the block has; nothing, which leaves the trait's default, if it has none.
+    ///
+    /// `every_operator` says that `arms` has an entry for every `TypingBinOp`.
+    fn operator_signatures(
+        name: &str,
+        arms: Vec<Option<syn::Arm>>,
+        every_operator: bool,
+    ) -> Option<syn::ImplItem> {
         if arms.iter().all(Option::is_none) {
-            // Use default implementation.
-            return Ok(None);
+            return None;
         }
-        let default_arm: Option<syn::Arm> = if arms.iter().all(Option::is_some) {
+        let name = syn::Ident::new(name, proc_macro2::Span::call_site());
+        let default_arm: Option<syn::Arm> = if every_operator && arms.iter().all(Option::is_some) {
             None
         } else {
             Some(syn::parse_quote! {
-                _ => { None }
+                _ => { Vec::new() }
             })
         };
         let arms = arms.into_iter().flatten();
-        Ok(Some(syn::parse_quote! {
-            fn bin_op_ty(op: starlark::typing::TypingBinOp, _rhs: &starlark::typing::TyBasic) -> Option<starlark::typing::Ty> {
+        Some(syn::parse_quote! {
+            fn #name(op: starlark::typing::TypingBinOp) -> Vec<starlark::typing::OperatorSignature> {
                 match op {
                     #( #arms )*
                     #default_arm
                 }
             }
-        }))
+        })
     }
 
-    fn rbin_op_ty_impl(&self) -> syn::Result<Option<syn::ImplItem>> {
-        let arms = [
-            self.bin_op_arm("Add", "radd"),
-            self.bin_op_arm("Mul", "rmul"),
-        ];
-        if arms.iter().all(Option::is_none) {
-            // Use default implementation.
-            return Ok(None);
+    /// `fn bin_op_signatures()`, unless the block writes it or the verdict that stands in for
+    /// it.
+    fn bin_op_signatures(&self) -> Option<syn::ImplItem> {
+        if self.has_fn("bin_op_signatures") || self.has_fn("bin_op_ty") {
+            return None;
         }
-        Ok(Some(syn::parse_quote! {
-            fn rbin_op_ty(_lhs: &starlark::typing::TyBasic, op: starlark::typing::TypingBinOp) -> Option<starlark::typing::Ty> {
+        Self::operator_signatures(
+            "bin_op_signatures",
+            vec![
+                self.operator_arm("Add", "add"),
+                self.operator_arm("Sub", "sub"),
+                self.operator_arm("Mul", "mul"),
+                self.operator_arm("Div", "div"),
+                self.operator_arm("FloorDiv", "floor_div"),
+                self.operator_arm("Percent", "percent"),
+                self.operator_arm("In", "is_in"),
+                self.operator_arm("BitOr", "bit_or"),
+                self.operator_arm("BitAnd", "bit_and"),
+                self.operator_arm("BitXor", "bit_xor"),
+                self.operator_arm("Less", "compare"),
+                self.operator_arm("LeftShift", "left_shift"),
+                self.operator_arm("RightShift", "right_shift"),
+            ],
+            true,
+        )
+    }
+
+    /// `fn rbin_op_signatures()`, unless the block writes it.
+    fn rbin_op_signatures(&self) -> Option<syn::ImplItem> {
+        if self.has_fn("rbin_op_signatures") {
+            return None;
+        }
+        Self::operator_signatures(
+            "rbin_op_signatures",
+            vec![
+                self.operator_arm("Add", "radd"),
+                self.operator_arm("Mul", "rmul"),
+            ],
+            false,
+        )
+    }
+
+    /// `fn un_op_result()`, unless the block writes it: the type itself for each unary operator
+    /// the block has.
+    fn un_op_result(&self) -> Option<syn::ImplItem> {
+        if self.has_fn("un_op_result") {
+            return None;
+        }
+        let nominal = self.nominal_ty();
+        let arms: Vec<syn::Arm> = [("Plus", "plus"), ("Minus", "minus"), ("BitNot", "bit_not")]
+            .into_iter()
+            .filter(|(_, impl_name)| self.has_fn(impl_name))
+            .map(|(un_op, _)| {
+                let un_op = syn::Ident::new(un_op, proc_macro2::Span::call_site());
+                syn::parse_quote! {
+                    starlark::typing::TypingUnOp::#un_op => Some(#nominal),
+                }
+            })
+            .collect();
+        if arms.is_empty() {
+            return None;
+        }
+        let default_arm: Option<syn::Arm> = (arms.len() != 3).then(|| {
+            syn::parse_quote! {
+                _ => None,
+            }
+        });
+        Some(syn::parse_quote! {
+            fn un_op_result(op: starlark::typing::TypingUnOp) -> Option<starlark::typing::Ty> {
                 match op {
                     #( #arms )*
-                    _ => {
-                        None
-                    }
+                    #default_arm
                 }
             }
-        }))
-    }
-
-    /// Generate `fn bin_op_ty()`.
-    fn bin_op_ty(&self) -> syn::Result<Option<syn::ImplItem>> {
-        if self.has_fn("bin_op_ty") {
-            Ok(None)
-        } else {
-            self.bin_op_ty_impl()
-        }
-    }
-
-    /// Generate `fn rbin_op_ty()`.
-    fn rbin_op_ty(&self) -> syn::Result<Option<syn::ImplItem>> {
-        if self.has_fn("rbin_op_ty") {
-            Ok(None)
-        } else {
-            self.rbin_op_ty_impl()
-        }
+        })
     }
 
     /// `fn attr_ty()`.
@@ -788,8 +828,9 @@ impl ImplStarlarkValue {
                 .chain(self.get_type_starlark_repr()?)
                 .chain(self.attr_ty()?)
                 .chain(self.bit_or()?)
-                .chain(self.bin_op_ty()?)
-                .chain(self.rbin_op_ty()?),
+                .chain(self.bin_op_signatures())
+                .chain(self.rbin_op_signatures())
+                .chain(self.un_op_result()),
         );
         let has_fn_flags = self.has_fn_flags(&type_impl)?;
         type_impl.items.extend(has_fn_flags);

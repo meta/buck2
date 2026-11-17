@@ -268,9 +268,9 @@ impl TyCustomImpl for TyUser {
         &self,
         bin_op: TypingBinOp,
         rhs: &TyBasic,
-        _ctx: &TypingOracleCtx,
+        ctx: &TypingOracleCtx,
     ) -> Result<Ty, TypingNoContextOrInternalError> {
-        Ok(self.base.bin_op(bin_op, rhs)?)
+        self.base.bin_op(bin_op, rhs, ctx)
     }
 
     fn as_callable(&self) -> Option<TyCallable> {

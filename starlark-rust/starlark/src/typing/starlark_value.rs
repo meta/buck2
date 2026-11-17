@@ -37,6 +37,7 @@ use crate::typing::TypingOracleCtx;
 use crate::typing::TypingUnOp;
 use crate::typing::error::TypingError;
 use crate::typing::error::TypingNoContextError;
+use crate::typing::error::TypingNoContextOrInternalError;
 use crate::typing::ty::TypeRenderConfig;
 use crate::values::StarlarkType;
 use crate::values::StarlarkValue;
@@ -368,35 +369,34 @@ impl TyStarlarkValue {
     }
 
     /// Result of applying unary operator to this type.
-    pub(crate) fn un_op(self, un_op: TypingUnOp) -> Result<TyStarlarkValue, TypingNoContextError> {
-        let has = match un_op {
-            TypingUnOp::Plus => self.vtable.vtable.HAS_plus,
-            TypingUnOp::Minus => self.vtable.vtable.HAS_minus,
-            TypingUnOp::BitNot => self.vtable.vtable.HAS_bit_not,
-        };
-        if has {
-            Ok(self)
-        } else {
-            Err(TypingNoContextError)
-        }
+    pub(crate) fn un_op(self, un_op: TypingUnOp) -> Result<Ty, TypingNoContextError> {
+        (self.vtable.vtable.un_op_result)(un_op).ok_or(TypingNoContextError)
     }
 
-    pub(crate) fn bin_op(self, op: TypingBinOp, rhs: &TyBasic) -> Result<Ty, TypingNoContextError> {
-        match (self.vtable.vtable.bin_op_ty)(op, rhs) {
-            Some(ty) => Ok(ty),
-            None => Err(TypingNoContextError),
+    /// The type of `self op rhs`.
+    pub(crate) fn bin_op(
+        self,
+        op: TypingBinOp,
+        rhs: &TyBasic,
+        oracle: &TypingOracleCtx,
+    ) -> Result<Ty, TypingNoContextOrInternalError> {
+        if self.vtable.vtable.HAS_bin_op_ty {
+            return match (self.vtable.vtable.bin_op_ty)(op, rhs) {
+                Some(ty) => Ok(ty),
+                None => Err(TypingNoContextOrInternalError::Typing),
+            };
         }
+        oracle.operator_result((self.vtable.vtable.bin_op_signatures)(op), rhs)
     }
 
+    /// The type of `lhs op self`, when `lhs` does not have the operator for `self`.
     pub(crate) fn rbin_op(
         self,
         op: TypingBinOp,
         lhs: &TyBasic,
-    ) -> Result<Ty, TypingNoContextError> {
-        match (self.vtable.vtable.rbin_op_ty)(lhs, op) {
-            Some(ty) => Ok(ty),
-            None => Err(TypingNoContextError),
-        }
+        oracle: &TypingOracleCtx,
+    ) -> Result<Ty, TypingNoContextOrInternalError> {
+        oracle.operator_result((self.vtable.vtable.rbin_op_signatures)(op), lhs)
     }
 
     pub(crate) fn index(self, _index: &TyBasic) -> Result<Ty, TypingNoContextError> {

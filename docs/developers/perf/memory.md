@@ -31,6 +31,12 @@ ask for a heap dump. If you must heap-profile a `--no-buckd` run, set
 `MALLOC_CONF=…,prof_final:true` to dump at exit — but that captures
 post-cleanup state, not peak.
 
+Turn idle page-out off while profiling (`page_out_on_idle = false` under
+`[hydration]` in `.bucksettings.local.toml` at the repo root). Where it is on,
+a page-out starts as each command ends and runs for a couple of minutes, during
+which its own allocations, several GiB, are in whatever is measured; an
+allocative profile taken meanwhile grows the daemon severalfold.
+
 ## Allocator stats vs RSS
 
 `allocator-stats.allocated` is what to track for retained memory: it counts

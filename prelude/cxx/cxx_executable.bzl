@@ -433,7 +433,7 @@ def cxx_executable(ctx: AnalysisContext, impl_params: CxxRuleConstructorParams, 
         link_group_mappings = {}
         link_group_deps = []
     link_group_preferred_linkage = get_link_group_preferred_linkage(link_groups.values())
-    link_groups_enabled = link_group_info != None
+    link_groups_enabled = bool(link_groups)
 
     # Create the linkable graph with the binary's deps and any link group deps.
     linkable_graph = create_linkable_graph(

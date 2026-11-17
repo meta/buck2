@@ -421,7 +421,9 @@ def _rust_binary_common(
         targets_consumed_by_link_groups = {}
         filtered_targets = set()
 
-    link_groups_enabled = rust_cxx_link_group_info != None and rust_cxx_link_group_info.link_group_info != None
+    link_groups_enabled = (
+        rust_cxx_link_group_info != None and rust_cxx_link_group_info.link_group_info != None and bool(rust_cxx_link_group_info.link_group_info.groups)
+    )
     enable_late_build_info_stamping = cxx_stamp_build_info(ctx, link_groups_enabled = link_groups_enabled)
     unstamped_name = None
     if enable_late_build_info_stamping:

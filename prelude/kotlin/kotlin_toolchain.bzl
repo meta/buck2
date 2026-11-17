@@ -24,6 +24,8 @@ KotlinToolchainInfo = provider(
         "jvm_abi_gen_plugin": provider_field(typing.Any, default = None),
         "kapt_base64_encoder": provider_field(typing.Any, default = None),
         "kosabi_abi_validation_mode": provider_field(str, default = "off"),
+        # Lets source_only library actions compile incrementally while the applicability plugin runs.
+        "kosabi_applicability_incremental": provider_field(bool, default = False),
         "kosabi_applicability_plugin": provider_field(typing.Any, default = None),
         # Reduces the applicability classpath to class names and Kotlin facade metadata; see
         # AvailabilityJars. Without it, the full compile reads the dependencies' ABI jars.

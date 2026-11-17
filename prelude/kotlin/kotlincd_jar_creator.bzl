@@ -136,7 +136,12 @@ def create_jar_artifact_kotlincd(
         jvm_abi_gen = None
         should_use_jvm_abi_gen = False
 
-    expect(incremental == False or kosabi_applicability_cell_root == None, "Kosabi applicability requires a full compilation")
+    expect(
+        incremental == False
+        or kosabi_applicability_cell_root == None
+        or (kotlin_toolchain.kosabi_applicability_incremental and kotlin_toolchain.incremental_input_tracking),
+        "Kosabi applicability requires a full compilation unless kotlin.kosabi_applicability_incremental and " + "kotlin.incremental_input_tracking are set",
+    )
     should_kotlinc_run_incrementally = kotlin_toolchain.enable_incremental_compilation and incremental
     incremental_state_dir = declare_prefixed_output(actions, actions_identifier, "incremental_state", has_content_based_path = True, dir = True)
     incremental_metadata_ignored_inputs_tag = actions.artifact_tag()

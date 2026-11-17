@@ -519,8 +519,12 @@ def build_kotlin_library(
             )
 
             kosabi_applicability_runs = abi_generation_mode == AbiGenerationMode("source_only") and kotlin_toolchain.kosabi_applicability_plugin != None
-            # Applicability verdicts need whole-target analysis; incremental frontends can omit findings from unchanged files.
-            incremental = ctx.attrs.incremental and not kosabi_applicability_runs
+
+            # Applicability verdicts need whole-target analysis. An incremental round checks only the files it recompiles,
+            # which is enough only with kotlin.kosabi_applicability_incremental and kotlincd's input tracking: kotlincd
+            # then forces a full round when an input the incremental compiler cannot see changes.
+            applicability_can_run_incrementally = kotlin_toolchain.kosabi_applicability_incremental and kotlin_toolchain.incremental_input_tracking
+            incremental = ctx.attrs.incremental and (not kosabi_applicability_runs or applicability_can_run_incrementally)
 
             common_kotlincd_kwargs = {
                 "abi_generation_mode": abi_generation_mode,

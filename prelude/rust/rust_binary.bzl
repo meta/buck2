@@ -650,6 +650,7 @@ def _rust_binary_common(
         pdb_output = link_result.linked_object.pdb
         prebolt_output = link_result.linked_object.prebolt_output
     else:
+        link_result = None
         dwp_output = link.product.dwp_output
         pdb_output = link.product.pdb
         if enable_late_build_info_stamping:
@@ -731,6 +732,17 @@ def _rust_binary_common(
     sub_targets = {}
     if generated_build_info_shared_library:
         sub_targets["generated_build_info"] = [DefaultInfo(default_output = generated_build_info_shared_library.library.lib.output)]
+
+    if link_result != None:
+        if link_result.linker_map_data != None:
+            sub_targets["linker-map"] = [
+                DefaultInfo(
+                    default_output = link_result.linker_map_data.map,
+                    other_outputs = [link_result.linker_map_data.binary],
+                )
+            ]
+        if link_result.linked_object.linker_argsfile != None:
+            sub_targets["linker.argsfile"] = [DefaultInfo(default_output = link_result.linked_object.linker_argsfile)]
 
     # TODO(agallagher) There appears to be pre-existing soname conflicts
     # when building this (when using link groups), which prevents using

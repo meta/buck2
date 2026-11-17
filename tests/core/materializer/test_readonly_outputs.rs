@@ -87,3 +87,13 @@ async fn test_clean_removes_read_only_outputs(buck: &Buck) -> anyhow::Result<()>
     )?);
     Ok(())
 }
+
+#[buck_test]
+async fn test_copied_dir_entry_replaces_read_only_file(buck: &Buck) -> anyhow::Result<()> {
+    let res = buck.build(&["//:overlay_dir", "--local-only"]).await?;
+    let out = res.build_report()?.output_for_target("//:overlay_dir")?;
+    assert_eq!(std::fs::read_to_string(out.join("kept.txt"))?, "kept");
+    assert_eq!(std::fs::read_to_string(out.join("replaced.txt"))?, "new");
+    assert!(read_only(&out.join("replaced.txt"))?);
+    Ok(())
+}

@@ -1403,10 +1403,7 @@ class K2JvmAbiFirAnalysisHandlerExtension(
                 else "type unknown, assumed String"}) " +
               "was emitted instead, so this ABI does not match a class-ABI build. " +
               "To fix, add the target that declares the constant to THIS target's " +
-              "`source_only_abi_deps`. Reach for `required_for_source_only_abi = True` on the " +
-              "declaring target only when many consumers need it: that is a global edge which " +
-              "puts its ABI on the source-only ABI classpath of every consumer, not just this " +
-              "one.",
+              "`source_only_abi_deps`.",
       )
     }
   }

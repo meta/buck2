@@ -1455,8 +1455,7 @@ internal class ValidationStage(private val repairLog: AbiGenRepairLog) : AbiGenS
               "literal `$NON_EXISTENT_CLASS_INTERNAL_NAME`. The final ABI bytecode contains an " +
               "unresolved type and no consumer can link against it. " +
               "If the type comes from an explicit reference, add the target that provides it " +
-              "to this target's `source_only_abi_deps`, or declare that target " +
-              "`required_for_source_only_abi = True`. " +
+              "to this target's `source_only_abi_deps`. " +
               "If it was inferred from an expression body, spell the type explicitly " +
               "instead. If it is a nested generic arg of an inherited default method, " +
               "add an explicit override spelling the full signature (see T290092261).",
@@ -1527,11 +1526,7 @@ internal class ValidationStage(private val repairLog: AbiGenRepairLog) : AbiGenS
               "compile. To fix, resolve the provider buck target of each symbol (e.g. with " +
               "`buck2 uquery \"owner(<file>)\"` or kosabi_sodeps.py) and add it to THIS target's " +
               "`source_only_abi_deps`. The provider cannot be resolved here: the compiler has " +
-              "no view of the build graph, so no target is named or guessed. An explicit " +
-              "`source_only_abi_deps` edge adds the provider for this consumer only. " +
-              "`required_for_source_only_abi = True` on the provider instead adds its ABI jar " +
-              "(its source-only ABI when the provider is source_only) for every eligible " +
-              "consumer that depends on it. " +
+              "no view of the build graph, so no target is named or guessed. " +
               "KOSABI_MISSING_CONST_DEP const=`${cleared.owner}` " +
               "symbols=`${symbols.joinToString("|")}` fix=`ADD_SOURCE_ONLY_ABI_DEP`",
       )
@@ -1648,8 +1643,7 @@ internal class ValidationStage(private val repairLog: AbiGenRepairLog) : AbiGenS
           "Kosabi ABI validation: `${m.owner}.${m.member}` has an unresolved ${m.where}, so its " +
               "descriptor was emitted with `error/NonExistentClass` and no consumer can link " +
               "against it. The referenced type is not on the source-only ABI classpath. Add the " +
-              "target that provides it to this target's `source_only_abi_deps`, or declare that " +
-              "target `required_for_source_only_abi = True`.",
+              "target that provides it to this target's `source_only_abi_deps`.",
       )
     }
 

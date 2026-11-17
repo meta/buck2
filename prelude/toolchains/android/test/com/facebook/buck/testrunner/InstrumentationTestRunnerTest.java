@@ -695,6 +695,126 @@ public class InstrumentationTestRunnerTest {
   }
 
   @Test
+  public void irpgoCoveragePullsFromTargetScopedStorage() throws Throwable {
+    assertIrpgoCoveragePull(
+        "30",
+        "/sdcard/Android/data/com.example/files/Download/test_result/irpgo_coverage/",
+        "/sdcard/Android/data/com.example/files/Download/test_result/irpgo_coverage/");
+  }
+
+  @Test
+  public void irpgoCoveragePullsFromSelfInstrumentingScopedStorage() throws Throwable {
+    assertIrpgoCoveragePull(
+        "33",
+        "/storage/emulated/0/Android/media/com.example.test/test_result/irpgo_coverage/",
+        "/storage/emulated/0/Android/media/com.example.test/test_result/irpgo_coverage/",
+        "--is-self-instrumenting");
+  }
+
+  @Test
+  public void irpgoCoverageUsesMountedSecondaryUserPathForWriter() throws Throwable {
+    assertIrpgoCoveragePull(
+        "33",
+        "/storage/emulated/10/Android/media/com.example/test_result/irpgo_coverage/",
+        "/data/media/10/Android/media/com.example/test_result/irpgo_coverage/",
+        "--user",
+        "10");
+  }
+
+  @Test
+  public void irpgoCoveragePreservesLegacyPathBeforeApi30() throws Throwable {
+    Path hostFile = tmp.newFolder("legacy_irpgo").getPath().resolve("trace.txt");
+    String legacyPath = "/sdcard/instrumentation-irpgo-function-ids.txt";
+    Map<Path, byte[]> files = new HashMap<>();
+    files.put(Paths.get(legacyPath), "legacy trace".getBytes());
+    ArrayList<String> commands = new ArrayList<>();
+    InstrumentationTestRunner runner =
+        createInstrumentationTestRunnerWithDeviceForSdk(
+            "29",
+            commands,
+            files,
+            new HashMap<>(),
+            new HashMap<>(),
+            "--extra-instrumentation-argument",
+            "irpgo_run_id=run-id",
+            "--extra-file-to-pull",
+            legacyPath + "=" + hostFile);
+
+    runner.run();
+
+    Assert.assertEquals("legacy trace", Files.readString(hostFile));
+    Assert.assertFalse(findInstrumentationCommand(commands).contains("irpgo_output_file"));
+  }
+
+  @Test
+  public void missingIrpgoTraceStillFailsAfterTestsRun() throws Throwable {
+    Path hostFile = tmp.newFolder("missing_irpgo").getPath().resolve("trace.txt");
+    ArrayList<String> commands = new ArrayList<>();
+    InstrumentationTestRunner runner =
+        createInstrumentationTestRunnerWithDeviceForSdk(
+            "30",
+            commands,
+            new HashMap<>(),
+            new HashMap<>(),
+            new HashMap<>(),
+            "--extra-instrumentation-argument",
+            "irpgo_run_id=run-id",
+            "--extra-file-to-pull",
+            "/sdcard/instrumentation-irpgo-function-ids.txt=" + hostFile);
+
+    try {
+      runner.run();
+      Assert.fail("Expected missing coverage trace to fail the run");
+    } catch (IOException error) {
+      Assert.assertTrue(error.getMessage().contains("irpgo_coverage/run-id.txt"));
+    }
+    Assert.assertTrue(findInstrumentationCommand(commands).contains("irpgo_output_file"));
+    Assert.assertFalse(Files.exists(hostFile));
+  }
+
+  private void assertIrpgoCoveragePull(
+      String sdkVersion, String appDirectory, String adbDirectory, String... extraArgs)
+      throws Throwable {
+    String runId = "01234567-89ab-cdef-0123-456789abcdef";
+    String appFile = appDirectory + runId + ".txt";
+    String adbFile = adbDirectory + runId + ".txt";
+    Path hostDirectory = tmp.newFolder("irpgo_coverage").getPath();
+    Path hostFile = hostDirectory.resolve("trace.txt");
+    Path unrelatedFile = hostDirectory.resolve("unrelated.txt");
+    Map<Path, byte[]> files = new HashMap<>();
+    files.put(Paths.get(adbFile), ("IRPGO_FUNCTION_IDS " + runId + "\n0x123\nDONE\n").getBytes());
+    files.put(Paths.get("/sdcard/unrelated.txt"), "unrelated artifact".getBytes());
+    files.put(Paths.get("/data/media/10/unrelated.txt"), "unrelated artifact".getBytes());
+    ArrayList<String> commands = new ArrayList<>();
+    List<String> args =
+        new ArrayList<>(
+            Arrays.asList(
+                "--extra-instrumentation-argument",
+                "irpgo_run_id=" + runId,
+                "--extra-file-to-pull",
+                "/sdcard/instrumentation-irpgo-function-ids.txt=" + hostFile,
+                "--extra-file-to-pull",
+                "/sdcard/unrelated.txt=" + unrelatedFile));
+    args.addAll(Arrays.asList(extraArgs));
+    InstrumentationTestRunner runner =
+        createInstrumentationTestRunnerWithDeviceForSdk(
+            sdkVersion,
+            commands,
+            files,
+            new HashMap<>(),
+            new HashMap<>(),
+            args.toArray(new String[0]));
+
+    runner.run();
+
+    Assert.assertTrue(
+        findInstrumentationCommand(commands).contains("-e irpgo_output_file " + appFile));
+    Assert.assertEquals(
+        "IRPGO_FUNCTION_IDS " + runId + "\n0x123\nDONE\n", Files.readString(hostFile));
+    Assert.assertEquals("unrelated artifact", Files.readString(unrelatedFile));
+  }
+
+  @Test
   public void pullDirPullsContentsDirectlyToDestination() throws Throwable {
     // Set up a device directory structure with files
     Map<Path, byte[]> filesOnDevice = new HashMap<>();
@@ -1868,6 +1988,18 @@ public class InstrumentationTestRunnerTest {
                 Path target = Paths.get(local);
                 Files.write(target, entry.getValue());
               }
+            }
+          }
+
+          @Override
+          protected void transferFile(String operation, String source, String destination)
+              throws Exception {
+            if (operation.equals("pull")) {
+              byte[] contents = filesOnDevice.get(Paths.get(source));
+              if (contents == null) {
+                throw new IOException("Missing file on device: " + source);
+              }
+              Files.write(Paths.get(destination), contents);
             }
           }
 

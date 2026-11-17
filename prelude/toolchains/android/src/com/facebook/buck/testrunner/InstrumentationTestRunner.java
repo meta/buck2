@@ -174,6 +174,10 @@ public class InstrumentationTestRunner extends DeviceRunner {
   private static final String SECONDARY_USER_STORAGE_PREFIX = "/data/media/";
 
   private static final String SDCARD_PATH = "/sdcard";
+  private static final String LEGACY_IRPGO_OUTPUT_FILE =
+      "/sdcard/instrumentation-irpgo-function-ids.txt";
+  private static final String IRPGO_RUN_ID_ARG = "irpgo_run_id";
+  private static final String IRPGO_OUTPUT_FILE_ARG = "irpgo_output_file";
   private static final String STORAGE_EMULATED_PATH = "/storage/emulated/0";
   private static final String STORAGE_EMULATED_PREFIX = "/storage/emulated/";
 
@@ -930,6 +934,8 @@ public class InstrumentationTestRunner extends DeviceRunner {
       executeAdbShellCommand("pm clear " + this.targetPackageName);
     }
 
+    setUpIrpgoCoveragePull();
+
     AnimationScales originalWindowAnimationScales = null;
 
     if (this.disableAnimations) {
@@ -1225,6 +1231,35 @@ public class InstrumentationTestRunner extends DeviceRunner {
     } finally {
       executeAdbShellCommand("su root rm -fr " + staging);
     }
+  }
+
+  private void setUpIrpgoCoveragePull() {
+    String hostOutputFile = extraFilesToPull.get(LEGACY_IRPGO_OUTPUT_FILE);
+    String runId = extraInstrumentationArguments.get(IRPGO_RUN_ID_ARG);
+    if (hostOutputFile == null || runId == null) {
+      return;
+    }
+
+    String deviceOutputFile = extraInstrumentationArguments.get(IRPGO_OUTPUT_FILE_ARG);
+    if (deviceOutputFile == null) {
+      String deviceOutputDir =
+          getAppScopedStoragePath(
+              packageName, targetPackageName, isSelfInstrumenting, "irpgo_coverage");
+      if (deviceOutputDir == null) {
+        return;
+      }
+      // Applications need the mounted user path; adb resolves it to /data/media when pulling.
+      if (userId != null && userId > 0 && deviceOutputDir.startsWith(STORAGE_EMULATED_PATH)) {
+        deviceOutputDir =
+            STORAGE_EMULATED_PREFIX
+                + userId
+                + deviceOutputDir.substring(STORAGE_EMULATED_PATH.length());
+      }
+      deviceOutputFile = Paths.get(deviceOutputDir, runId + ".txt").toString();
+    }
+    extraInstrumentationArguments.put(IRPGO_OUTPUT_FILE_ARG, deviceOutputFile);
+    extraFilesToPull.remove(LEGACY_IRPGO_OUTPUT_FILE);
+    extraFilesToPull.put(deviceOutputFile, hostOutputFile);
   }
 
   @Nullable

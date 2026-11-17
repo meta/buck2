@@ -11,6 +11,7 @@ load("@prelude//cxx:cxx_toolchain_types.bzl", "CxxToolchainInfo", "LinkerInfo")
 load(
     "@prelude//cxx:linker.bzl",
     "get_default_shared_library_name",
+    "get_link_flags_for_reproducible_build",
     "get_shared_library_name_for_param",
 )
 load("@prelude//linking:link_info.bzl", "LinkStrategy")
@@ -212,6 +213,7 @@ def _linker(ctx: AnalysisContext, linker_info: LinkerInfo, binary: bool = False)
         name = "linker_wrapper",
         cmd = cmd_args(
             linker_info.linker,
+            get_link_flags_for_reproducible_build(linker_info.type),
             linker_info.linker_flags or [],
             # For "binary" rules, add C++ toolchain binary-specific linker flags.
             # TODO(agallagher): This feels a bit wrong -- it might be better to have

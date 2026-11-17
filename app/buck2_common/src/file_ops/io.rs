@@ -263,10 +263,10 @@ async fn read_through_symlink(
         })
     );
     let category = match (check, external) {
-        (PathCheck::ParentSymlink { .. }, false) => "path_check_symlink_in_parent",
-        (PathCheck::ParentSymlink { .. }, true) => "path_check_external_symlink_in_parent",
-        (_, false) => "path_check_symlink_at_path",
-        (_, true) => "path_check_external_symlink_at_path",
+        (PathCheck::ParentSymlink { .. }, false) => "path_check_symlink_in_parent_two",
+        (PathCheck::ParentSymlink { .. }, true) => "path_check_external_symlink_in_parent_two",
+        (_, false) => "path_check_symlink_at_path_two",
+        (_, true) => "path_check_external_symlink_at_path_two",
     };
     soft_error!(
         category,

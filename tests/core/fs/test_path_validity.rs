@@ -101,7 +101,7 @@ async fn test_target_pattern_external_symlink(buck: &Buck, tmp_path: &Path) -> a
         .targets(&["//extlink:", "//linkdir:"])
         .env(
             "BUCK2_SHOW_SOFT_ERRORS",
-            "only=path_check_external_symlink_in_parent,path_check_external_symlink_at_path",
+            "only=path_check_external_symlink_in_parent_two,path_check_external_symlink_at_path_two",
         )
         .await?;
     assert!(res.stdout.contains("root//extlink:ext"), "{}", res.stdout);
@@ -120,7 +120,7 @@ async fn test_target_pattern_in_repo_symlink(buck: &Buck, tmp_path: &Path) -> an
         .targets(&["//extlink:", "//linkdir:"])
         .env(
             "BUCK2_SHOW_SOFT_ERRORS",
-            "only=path_check_symlink_in_parent,path_check_symlink_at_path",
+            "only=path_check_symlink_in_parent_two,path_check_symlink_at_path_two",
         )
         .await?;
     assert!(res.stderr.contains("symlink `linkdir`"), "{}", res.stderr);

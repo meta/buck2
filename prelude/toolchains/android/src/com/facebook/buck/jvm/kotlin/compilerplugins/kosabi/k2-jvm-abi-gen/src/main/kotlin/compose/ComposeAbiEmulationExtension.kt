@@ -24,9 +24,11 @@ import org.jetbrains.kotlin.ir.declarations.IrModuleFragment
  *
  * 1. **ClassStabilityTransformer** — adds $stable field and @StabilityInferred annotation to
  *    eligible classes (the P1 ClassStabilityTransformer equivalent)
- * 2. **ComposerParamInjector** — adds $composer, $changed, $default parameters to @Composable
+ * 2. **ComposableDefaultParamEmulator** — moves the defaults of a virtual @Composable function into
+ *    a `ComposeDefaultImpls` wrapper (the ComposableDefaultParamLowering equivalent)
+ * 3. **ComposerParamInjector** — adds $composer, $changed, $default parameters to @Composable
  *    functions (the P4 ComposerParamTransformer equivalent)
- * 3. **ComposableTypeRewriter** — rewrites @Composable function types in parameters, return types,
+ * 4. **ComposableTypeRewriter** — rewrites @Composable function types in parameters, return types,
  *    and supertypes to include the synthetic Composer and changed-bitmask type arguments
  *
  * These transforms run before the IR sanitizer so that Compose-emulated declarations are present
@@ -38,10 +40,13 @@ internal class ComposeAbiEmulationExtension : IrGenerationExtension {
     // Pass 1: Add $stable field + @StabilityInferred to eligible classes.
     ClassStabilityTransformer(pluginContext).transform(moduleFragment)
 
-    // Pass 2: Inject $composer, $changed, $default params into @Composable functions.
+    // Pass 2: Move the defaults of virtual @Composable functions into ComposeDefaultImpls wrappers.
+    ComposableDefaultParamEmulator(pluginContext).transform(moduleFragment)
+
+    // Pass 3: Inject $composer, $changed, $default params into @Composable functions.
     ComposerParamInjector(pluginContext).transform(moduleFragment)
 
-    // Pass 3: Rewrite @Composable function types in parameter types, return types, supertypes.
+    // Pass 4: Rewrite @Composable function types in parameter types, return types, supertypes.
     ComposableTypeRewriter(pluginContext).transform(moduleFragment)
   }
 }

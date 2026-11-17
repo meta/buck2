@@ -184,25 +184,16 @@ impl<'v> StarlarkValue<'v> for StarlarkBytes {
         !self.content.is_empty()
     }
 
-    fn write_hash(&self, hasher: &mut StarlarkHasher) -> crate::Result<()> {
+    fn write_hash(&self, hasher: &mut StarlarkHasher) {
         self.content.hash(hasher);
-        Ok(())
     }
 
-    fn equals(&self, other: Value<'v>) -> crate::Result<bool> {
-        if let Some(other) = StarlarkBytes::from_value(other) {
-            Ok(self.content == other.content)
-        } else {
-            Ok(false)
-        }
+    fn equals(&self, other: &Self) -> bool {
+        self.content == other.content
     }
 
-    fn compare(&self, other: Value<'v>) -> crate::Result<Ordering> {
-        if let Some(other) = StarlarkBytes::from_value(other) {
-            Ok(self.content.cmp(&other.content))
-        } else {
-            crate::values::ValueError::unsupported_with(self, "compare", other)
-        }
+    fn compare(&self, other: &Self) -> Ordering {
+        self.content.cmp(&other.content)
     }
 
     fn length(&self) -> crate::Result<i32> {

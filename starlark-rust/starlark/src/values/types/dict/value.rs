@@ -518,11 +518,8 @@ impl<'v> StarlarkType<'v> for DictView<'v> {
         !self.content().is_empty()
     }
 
-    fn equals(&self, other: Value<'v>) -> crate::Result<bool> {
-        match DictRef::from_value(other) {
-            None => Ok(false),
-            Some(other) => equals_small_map(&self.content(), &other.content, |x, y| x.equals(*y)),
-        }
+    fn equals(&self, other: Self) -> crate::Result<bool> {
+        equals_small_map(&self.content(), &other.content(), |x, y| x.equals(*y))
     }
 
     fn at(&self, index: Value<'v>, _heap: Heap<'v>) -> crate::Result<Value<'v>> {

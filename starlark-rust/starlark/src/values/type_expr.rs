@@ -266,12 +266,14 @@ mod tests {
     use crate::values::string::str_type::StarlarkStr;
     use crate::values::tuple::TupleType;
     use crate::values::type_expr::StarlarkTypeExpr;
+    use crate::values::type_expr::StarlarkTypeExprHashable;
     use crate::values::types::bytes::value::StarlarkBytes;
     use crate::values::types::dict::value::DictView;
     use crate::values::types::float::StarlarkFloat;
     use crate::values::types::int::view::IntView;
     use crate::values::types::list::value::ListView;
     use crate::values::types::record::field::Field;
+    use crate::values::types::record::record_type::RecordTypeView;
     use crate::values::types::set::value::SetData;
     use crate::values::types::set::value::SetView;
     use crate::values::types::tuple::value::Tuple;
@@ -333,6 +335,22 @@ mod tests {
             let field = Field::new(TypeCompiled::from_ty(&Ty::int(), heap), None);
             typed_as::<Field>(heap.alloc(field).to_value());
         });
+    }
+
+    /// The types whose `write_hash` is written without a result, and what is built from them.
+    #[test]
+    fn test_types_that_always_hash() {
+        fn always_hashes<'v, T: StarlarkTypeExprHashable<'v>>() {}
+
+        always_hashes::<bool>();
+        always_hashes::<NoneType>();
+        always_hashes::<StarlarkStr>();
+        always_hashes::<StarlarkBytes>();
+        always_hashes::<TypeCompiled>();
+        always_hashes::<RecordTypeView>();
+        always_hashes::<Either<bool, StarlarkStr>>();
+        always_hashes::<(StarlarkStr, NoneType)>();
+        always_hashes::<TupleType<StarlarkBytes>>();
     }
 
     #[test]

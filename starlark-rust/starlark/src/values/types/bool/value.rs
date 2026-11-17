@@ -36,7 +36,6 @@ use crate::values::AllocStaticSimple;
 use crate::values::StarlarkType;
 use crate::values::StarlarkValue;
 use crate::values::Value;
-use crate::values::ValueError;
 use crate::values::ValueTyped;
 
 /// The result of calling `type()` on booleans.
@@ -85,9 +84,8 @@ impl<'v> StarlarkType<'v> for bool {
         *self
     }
 
-    fn write_hash(&self, hasher: &mut StarlarkHasher) -> crate::Result<()> {
+    fn write_hash(&self, hasher: &mut StarlarkHasher) {
         hasher.write_u8(if *self { 1 } else { 0 });
-        Ok(())
     }
 
     fn get_hash(&self, _private: Private) -> crate::Result<StarlarkHashValue> {
@@ -99,12 +97,8 @@ impl<'v> StarlarkType<'v> for bool {
         }))
     }
 
-    fn compare(&self, other: Value) -> crate::Result<Ordering> {
-        if let Some(other) = other.unpack_bool() {
-            Ok(self.cmp(&other))
-        } else {
-            ValueError::unsupported_with(self, "compare", other)
-        }
+    fn compare(&self, other: bool) -> Ordering {
+        self.cmp(&other)
     }
 }
 

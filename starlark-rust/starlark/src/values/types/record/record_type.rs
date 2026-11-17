@@ -334,11 +334,10 @@ impl<'v> RecordTypeView<'v> {
 
 #[starlark_value(type = FUNCTION_TYPE)]
 impl<'v> StarlarkType<'v> for RecordTypeView<'v> {
-    fn write_hash(&self, hasher: &mut StarlarkHasher) -> crate::Result<()> {
+    fn write_hash(&self, hasher: &mut StarlarkHasher) {
         // Record types compare by identity, so the identity is enough, and unlike the fields it
         // cannot fail to hash (a field default may be a list or a dict).
         with_record_type!(self, |r| r.id.hash(hasher));
-        Ok(())
     }
 
     fn invoke(

@@ -73,10 +73,9 @@ impl<'v> StarlarkValue<'v> for NoneType {
     fn to_bool(&self) -> bool {
         false
     }
-    fn write_hash(&self, hasher: &mut StarlarkHasher) -> crate::Result<()> {
+    fn write_hash(&self, hasher: &mut StarlarkHasher) {
         // just took the result of hash(None) in macos python 2.7.10 interpreter.
         hasher.write_u64(9_223_380_832_852_120_682);
-        Ok(())
     }
 
     fn get_hash(&self, _private: Private) -> crate::Result<StarlarkHashValue> {

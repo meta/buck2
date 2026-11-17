@@ -198,12 +198,11 @@ impl<'v> StarlarkValue<'v> for Record<'v> {
         true
     }
 
-    fn equals(&self, other: Value<'v>) -> crate::Result<bool> {
-        match Record::from_value(other) {
-            Some(other) if self.typ.equals(other.typ)? => {
-                equals_slice(self.content(), other.content(), |x, y| x.equals(*y))
-            }
-            _ => Ok(false),
+    fn equals(&self, other: &Self) -> crate::Result<bool> {
+        if self.typ.equals(other.typ)? {
+            equals_slice(self.content(), other.content(), |x, y| x.equals(*y))
+        } else {
+            Ok(false)
         }
     }
 

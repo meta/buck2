@@ -245,10 +245,9 @@ impl<'v> StarlarkValue<'v> for StarlarkStr {
         !self.is_empty()
     }
 
-    fn write_hash(&self, hasher: &mut StarlarkHasher) -> crate::Result<()> {
+    fn write_hash(&self, hasher: &mut StarlarkHasher) {
         // Don't defer to str because we cache the Hash in StarlarkStr
         hasher.write_u32(self.get_hash().get());
-        Ok(())
     }
 
     fn get_hash(&self, _private: Private) -> crate::Result<StarlarkHashValue> {

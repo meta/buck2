@@ -38,7 +38,6 @@ use crate::values::Heap;
 use crate::values::StarlarkValue;
 use crate::values::UnpackValue;
 use crate::values::Value;
-use crate::values::ValueError;
 use crate::values::comparison::compare_slice;
 use crate::values::comparison::equals_slice;
 use crate::values::index::apply_slice;
@@ -155,18 +154,12 @@ impl<'v> StarlarkValue<'v> for Tuple<'v> {
         Ok(())
     }
 
-    fn equals(&self, other: Value<'v>) -> crate::Result<bool> {
-        match Tuple::from_value(other) {
-            None => Ok(false),
-            Some(other) => equals_slice(self.content(), other.content(), |x, y| x.equals(*y)),
-        }
+    fn equals(&self, other: &Self) -> crate::Result<bool> {
+        equals_slice(self.content(), other.content(), |x, y| x.equals(*y))
     }
 
-    fn compare(&self, other: Value<'v>) -> crate::Result<Ordering> {
-        match Tuple::from_value(other) {
-            None => ValueError::unsupported_with(self, "compare", other),
-            Some(other) => compare_slice(self.content(), other.content(), |x, y| x.compare(*y)),
-        }
+    fn compare(&self, other: &Self) -> crate::Result<Ordering> {
+        compare_slice(self.content(), other.content(), |x, y| x.compare(*y))
     }
 
     fn at(&self, index: Value, _heap: Heap<'v>) -> crate::Result<Value<'v>> {

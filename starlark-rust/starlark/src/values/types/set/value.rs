@@ -291,11 +291,8 @@ impl<'v> StarlarkType<'v> for SetView<'v> {
         Ok(self.content().contains_hashed(other.get_hashed()?.as_ref()))
     }
 
-    fn equals(&self, other: Value<'v>) -> crate::Result<bool> {
-        match SetRef::unpack_value_opt(other) {
-            None => Ok(false),
-            Some(other) => Ok(equals_small_set(&self.content(), &other.aref.content)),
-        }
+    fn equals(&self, other: Self) -> bool {
+        equals_small_set(&self.content(), &other.content())
     }
 
     fn get_methods() -> Option<&'static Methods> {

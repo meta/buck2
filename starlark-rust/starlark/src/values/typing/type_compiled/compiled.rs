@@ -228,9 +228,8 @@ impl<'v> StarlarkType<'v> for TypeCompiled<'v> {
             .then_some(TypeCompiled(value))
     }
 
-    fn write_hash(&self, hasher: &mut StarlarkHasher) -> crate::Result<()> {
+    fn write_hash(&self, hasher: &mut StarlarkHasher) {
         Hash::hash(self.as_ty(), hasher);
-        Ok(())
     }
 
     fn equals(&self, other: Value<'v>) -> crate::Result<bool> {

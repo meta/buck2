@@ -45,7 +45,6 @@ use crate::values::StarlarkPagable;
 use crate::values::StarlarkValue;
 use crate::values::StringValue;
 use crate::values::Value;
-use crate::values::ValueError;
 use crate::values::comparison::compare_small_map;
 use crate::values::comparison::equals_small_map;
 use crate::values::starlark_type_id::StarlarkTypeId;
@@ -141,23 +140,17 @@ impl<'v> StarlarkValue<'v> for Struct<'v> {
         collector.push_str("struct(...)");
     }
 
-    fn equals(&self, other: Value<'v>) -> crate::Result<bool> {
-        match Struct::from_value(other) {
-            None => Ok(false),
-            Some(other) => equals_small_map(&self.fields, &other.fields, |x, y| x.equals(*y)),
-        }
+    fn equals(&self, other: &Self) -> crate::Result<bool> {
+        equals_small_map(&self.fields, &other.fields, |x, y| x.equals(*y))
     }
 
-    fn compare(&self, other: Value<'v>) -> crate::Result<Ordering> {
-        match Struct::from_value(other) {
-            None => ValueError::unsupported_with(self, "compare", other),
-            Some(other) => compare_small_map(
-                &self.fields,
-                &other.fields,
-                |k| k.as_str(),
-                |x, y| x.compare(*y),
-            ),
-        }
+    fn compare(&self, other: &Self) -> crate::Result<Ordering> {
+        compare_small_map(
+            &self.fields,
+            &other.fields,
+            |k| k.as_str(),
+            |x, y| x.compare(*y),
+        )
     }
 
     fn get_attr(&self, attribute: &str, heap: Heap<'v>) -> Option<Value<'v>> {

@@ -161,12 +161,8 @@ impl<'v> StarlarkValue<'v> for Range {
             .to_value())
     }
 
-    fn equals(&self, other: Value) -> crate::Result<bool> {
-        if let Some(other) = other.downcast_ref::<Self>() {
-            self.equals_range(other)
-        } else {
-            Ok(false)
-        }
+    fn equals(&self, other: &Self) -> crate::Result<bool> {
+        self.equals_range(other)
     }
 
     fn slice(

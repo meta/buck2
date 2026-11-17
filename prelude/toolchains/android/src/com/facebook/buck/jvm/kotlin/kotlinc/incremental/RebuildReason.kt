@@ -27,4 +27,5 @@ enum class RebuildReason(val message: String) {
   APPLICABILITY_CHECKED_IN_FULL(
       "Kosabi applicability did not pass the incremental round; checking it in a full round",
   ),
+  APPLICABILITY_LEDGER_NOT_FOUND("Kosabi applicability ledger not found"),
 }

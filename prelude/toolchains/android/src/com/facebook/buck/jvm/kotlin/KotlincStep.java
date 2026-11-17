@@ -21,6 +21,7 @@ import com.facebook.buck.jvm.cd.command.kotlin.LanguageVersion;
 import com.facebook.buck.jvm.core.BuildTargetValue;
 import com.facebook.buck.jvm.java.CompilerClassToSourceMap;
 import com.facebook.buck.jvm.java.CompilerOutputPaths;
+import com.facebook.buck.jvm.java.JavaPaths;
 import com.facebook.buck.jvm.kotlin.cd.analytics.KotlinCDAnalytics;
 import com.facebook.buck.jvm.kotlin.cd.analytics.KotlinCDLoggingContext;
 import com.facebook.buck.jvm.kotlin.kotlinc.Kotlinc;
@@ -40,14 +41,18 @@ import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.ImmutableSortedSet;
 import java.io.File;
 import java.io.IOException;
+import java.io.UncheckedIOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.time.Instant;
+import java.util.Collections;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.function.Supplier;
+import java.util.zip.ZipEntry;
+import java.util.zip.ZipFile;
 import org.jspecify.annotations.Nullable;
 
 /** Kotlin compile Step */
@@ -477,6 +482,81 @@ public class KotlincStep implements IsolatedStep {
         && stderr.get().contains(APPLICABILITY_REPORT_MARKER);
   }
 
+  /**
+   * The round's Kotlin sources as the applicability plugin keys them, relative to {@code root}: the
+   * target's {@code .kt} and {@code .kts} files, and those in its source archives at the paths
+   * kotlinc compiles them from, under {@code workingDirectory}, where kotlincd extracts them.
+   */
+  @VisibleForTesting
+  static ImmutableList<RelPath> applicabilitySources(
+      AbsPath root, Iterable<RelPath> sources, RelPath workingDirectory) throws IOException {
+    ImmutableList.Builder<RelPath> kotlinSources = ImmutableList.builder();
+    for (RelPath source : sources) {
+      String name = source.toString();
+      if (isKotlinSource(name)) {
+        kotlinSources.add(source);
+      } else if (name.endsWith(JavaPaths.SRC_ZIP) || name.endsWith(JavaPaths.SRC_JAR)) {
+        try (ZipFile archive = new ZipFile(root.resolve(source).toFile())) {
+          for (ZipEntry entry : Collections.list(archive.entries())) {
+            if (!entry.isDirectory() && isKotlinSource(entry.getName())) {
+              kotlinSources.add(extractedPath(root, workingDirectory, entry.getName()));
+            }
+          }
+        }
+      }
+    }
+    return kotlinSources.build();
+  }
+
+  /**
+   * Where kotlincd extracts an archive entry, relative to {@code root}: the entry name resolved
+   * against {@code workingDirectory} and normalized, as {@code Unzip.extractArchive} does. An entry
+   * that lands outside {@code root} has no path the plugin could match, so the list cannot be made.
+   */
+  private static RelPath extractedPath(AbsPath root, RelPath workingDirectory, String entryName)
+      throws IOException {
+    Path base = root.getPath().normalize();
+    Path extracted = base.resolve(workingDirectory.getPath()).resolve(entryName).normalize();
+    if (!extracted.startsWith(base)) {
+      throw new IOException("Source archive entry outside the checkout: " + entryName);
+    }
+    return RelPath.of(base.relativize(extracted));
+  }
+
+  /**
+   * Lists the round's Kotlin sources for the applicability plugin. A list that cannot be made does
+   * not fail the step: any earlier list is removed instead, so that it is never read as this
+   * round's, and the plugin, which then cannot tell which files are still sources, reports the
+   * round as not fully evaluated and leaves no ledger. Only an earlier list that can be neither
+   * replaced nor removed fails the step, since the plugin would read it as this round's.
+   */
+  @VisibleForTesting
+  static void writeApplicabilitySourceList(
+      AbsPath incrementalStateDir,
+      AbsPath root,
+      Iterable<RelPath> sources,
+      RelPath workingDirectory) {
+    try {
+      ApplicabilityLedgerFiles.writeSourceList(
+          incrementalStateDir, applicabilitySources(root, sources, workingDirectory));
+    } catch (IOException | RuntimeException e) {
+      LOG.warn(e, "Could not list the Kotlin sources of the round for Kosabi applicability");
+      try {
+        ApplicabilityLedgerFiles.deleteSourceList(incrementalStateDir);
+      } catch (IOException deleteFailure) {
+        deleteFailure.addSuppressed(e);
+        throw new UncheckedIOException(
+            "An earlier Kotlin source list for Kosabi applicability can be neither replaced nor"
+                + " removed",
+            deleteFailure);
+      }
+    }
+  }
+
+  private static boolean isKotlinSource(String name) {
+    return name.endsWith(".kt") || name.endsWith(".kts");
+  }
+
   @VisibleForTesting
   Kotlinc getKotlinc() {
     return kotlinc;
@@ -569,6 +649,19 @@ public class KotlincStep implements IsolatedStep {
             Optional.ofNullable(
                 resolvedKosabiPluginOptionPath.get(
                     KosabiConfig.PROPERTY_KOSABI_APPLICABILITY_CELL_ROOT))));
+    if (kotlincMode instanceof KotlincMode.Incremental) {
+      // The plugin keeps its cross-file ledger next to the rest of the incremental state.
+      AbsPath incrementalStateDir =
+          ((KotlincMode.Incremental) kotlincMode).getKotlicWorkingDir().getParent();
+      if (incrementalStateDir == null) {
+        throw new IllegalStateException(
+            "incremental_state_dir is not available: kotlinc working dir has no parent");
+      }
+      writeApplicabilitySourceList(
+          incrementalStateDir, sourceRoot, sourceFilePaths, outputPaths.getWorkingDirectory());
+      addApplicabilityPluginOption(
+          builder, "incremental-state-dir", incrementalStateDir.getPath().toString());
+    }
   }
 
   @VisibleForTesting

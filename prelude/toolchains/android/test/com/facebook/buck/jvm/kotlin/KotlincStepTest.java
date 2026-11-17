@@ -16,6 +16,7 @@ import static org.junit.Assert.assertThrows;
 import static org.junit.Assert.assertTrue;
 
 import com.facebook.buck.core.filesystems.AbsPath;
+import com.facebook.buck.core.filesystems.RelPath;
 import com.facebook.buck.jvm.kotlin.kotlinc.incremental.ClasspathChanges;
 import com.facebook.buck.jvm.kotlin.kotlinc.incremental.KotlinSourceChanges;
 import com.facebook.buck.jvm.kotlin.kotlinc.incremental.KotlincMode;
@@ -299,6 +300,122 @@ public class KotlincStepTest {
             new FakeStateCopier(),
             "//test:target"));
     assertEquals(1, notVerifying.modes.size());
+  }
+
+  @Test
+  public void sourceArchivesAndScriptsHoldKotlinSourcesOfTheRound() throws IOException {
+    AbsPath root = temporaryPaths.newFolder("checkout");
+    java.nio.file.Path archive = root.resolve("src/lib.src.zip").getPath();
+    Files.createDirectories(archive.getParent());
+    try (java.util.zip.ZipOutputStream zip =
+        new java.util.zip.ZipOutputStream(Files.newOutputStream(archive))) {
+      for (String entry : ImmutableList.of("com/x/", "com/x/Provider.kt", "com/x/Other.java")) {
+        zip.putNextEntry(new java.util.zip.ZipEntry(entry));
+        zip.closeEntry();
+      }
+    }
+
+    ImmutableList<RelPath> sources =
+        KotlincStep.applicabilitySources(
+            root,
+            ImmutableList.of(
+                RelPath.get("src/A.kt"),
+                RelPath.get("src/B.kts"),
+                RelPath.get("src/C.java"),
+                RelPath.get("src/lib.src.zip")),
+            RelPath.get("buck-out/work"));
+
+    assertEquals(
+        ImmutableList.of(
+            RelPath.get("src/A.kt"),
+            RelPath.get("src/B.kts"),
+            RelPath.get("buck-out/work/com/x/Provider.kt")),
+        sources);
+  }
+
+  @Test
+  public void sourceArchiveEntriesAreListedWhereTheyAreExtracted() throws IOException {
+    AbsPath root = temporaryPaths.newFolder("checkout");
+    java.nio.file.Path archive = root.resolve("src/lib.src.zip").getPath();
+    Files.createDirectories(archive.getParent());
+    ImmutableList<RelPath> sources = ImmutableList.of(RelPath.get("src/lib.src.zip"));
+    RelPath workingDirectory = RelPath.get("buck-out/work");
+
+    writeArchive(archive, "com/../../Up.kt");
+    assertEquals(
+        ImmutableList.of(RelPath.get("buck-out/Up.kt")),
+        KotlincStep.applicabilitySources(root, sources, workingDirectory));
+
+    for (String outside : ImmutableList.of("/com/x/Absolute.kt", "../../../Outside.kt")) {
+      writeArchive(archive, outside);
+      assertThrows(
+          outside,
+          IOException.class,
+          () -> KotlincStep.applicabilitySources(root, sources, workingDirectory));
+    }
+  }
+
+  private static void writeArchive(java.nio.file.Path archive, String... entries)
+      throws IOException {
+    try (java.util.zip.ZipOutputStream zip =
+        new java.util.zip.ZipOutputStream(Files.newOutputStream(archive))) {
+      for (String entry : entries) {
+        zip.putNextEntry(new java.util.zip.ZipEntry(entry));
+        zip.closeEntry();
+      }
+    }
+  }
+
+  @Test
+  public void aSourceListThatCannotBeMadeLeavesNoListAndDoesNotFail() throws IOException {
+    AbsPath root = temporaryPaths.newFolder("checkout");
+    AbsPath stateDir = temporaryPaths.newFolder("incremental_state");
+    java.nio.file.Path list = stateDir.resolve(ApplicabilityLedgerFiles.SOURCE_LIST_FILE).getPath();
+    Files.writeString(list, "src/Earlier.kt\n");
+    java.nio.file.Path archive = root.resolve("src/lib.src.zip").getPath();
+    Files.createDirectories(archive.getParent());
+    Files.write(archive, new byte[] {1, 2, 3});
+
+    KotlincStep.writeApplicabilitySourceList(
+        stateDir,
+        root,
+        ImmutableList.of(RelPath.get("src/A.kt"), RelPath.get("src/lib.src.zip")),
+        RelPath.get("buck-out/work"));
+
+    assertFalse(Files.exists(list));
+  }
+
+  @Test
+  public void anEarlierSourceListThatCanBeNeitherReplacedNorRemovedFailsTheStep()
+      throws IOException {
+    AbsPath root = temporaryPaths.newFolder("checkout");
+    AbsPath stateDir = temporaryPaths.newFolder("incremental_state");
+    // A non-empty directory where the list goes can be neither replaced nor removed.
+    java.nio.file.Path list = stateDir.resolve(ApplicabilityLedgerFiles.SOURCE_LIST_FILE).getPath();
+    Files.createDirectories(list.resolve("blocker"));
+
+    assertThrows(
+        java.io.UncheckedIOException.class,
+        () ->
+            KotlincStep.writeApplicabilitySourceList(
+                stateDir,
+                root,
+                ImmutableList.of(RelPath.get("src/A.kt")),
+                RelPath.get("buck-out/work")));
+    assertTrue(Files.isDirectory(list.resolve("blocker")));
+  }
+
+  @Test
+  public void theSourceListOfTheRoundReplacesTheEarlierOne() throws IOException {
+    AbsPath root = temporaryPaths.newFolder("checkout");
+    AbsPath stateDir = temporaryPaths.newFolder("incremental_state");
+    java.nio.file.Path list = stateDir.resolve(ApplicabilityLedgerFiles.SOURCE_LIST_FILE).getPath();
+    Files.writeString(list, "src/Earlier.kt\n");
+
+    KotlincStep.writeApplicabilitySourceList(
+        stateDir, root, ImmutableList.of(RelPath.get("src/A.kt")), RelPath.get("buck-out/work"));
+
+    assertEquals(ImmutableList.of("src/A.kt"), Files.readAllLines(list));
   }
 
   private static KotlincMode.Incremental incrementalMode(

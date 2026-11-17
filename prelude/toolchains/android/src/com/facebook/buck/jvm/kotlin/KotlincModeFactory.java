@@ -122,6 +122,9 @@ public class KotlincModeFactory {
           && rebuildReason == null) {
         rebuildReason = RebuildReason.KOTLIN_COMPILER_PLUGIN_CHANGED;
       }
+      if (verifiesApplicability && !hasApplicabilityLedger(extraParams) && rebuildReason == null) {
+        rebuildReason = RebuildReason.APPLICABILITY_LEDGER_NOT_FOUND;
+      }
 
       if (verifiesApplicability) {
         rebuildReason = startApplicabilityRound(extraParams, rebuildReason);
@@ -186,6 +189,19 @@ public class KotlincModeFactory {
     } catch (IOException e) {
       LOG.warn(e, "Could not compare the Kosabi applicability classpath; compiling in full");
       return true;
+    }
+  }
+
+  private static boolean hasApplicabilityLedger(KotlinExtraParams extraParams) {
+    AbsPath incrementalStateDir =
+        extraParams
+            .getIncrementalStateDir()
+            .orElseThrow(() -> new IllegalStateException("incremental_state_dir is not created"));
+    try {
+      return ApplicabilityLedgerFiles.discardPendingAndCheckCommitted(incrementalStateDir);
+    } catch (IOException e) {
+      LOG.warn(e, "Could not discard the pending Kosabi applicability ledger; compiling in full");
+      return false;
     }
   }
 

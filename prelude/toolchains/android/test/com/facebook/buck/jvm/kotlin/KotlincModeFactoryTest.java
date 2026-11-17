@@ -11,6 +11,7 @@
 package com.facebook.buck.jvm.kotlin;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
 import static org.mockito.Mockito.mock;
@@ -30,6 +31,7 @@ import java.io.OutputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.nio.file.attribute.PosixFilePermissions;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Objects;
@@ -308,11 +310,11 @@ public class KotlincModeFactoryTest {
     assertEquals(
         RebuildReason.APPLICABILITY_CLASSPATH_CHANGED,
         ((KotlincMode.Incremental) first).getRebuildReason());
-    ApplicabilityClasspathState.promotePending(stateDir.getPath());
+    succeedRound(stateDir);
 
     KotlincMode unchanged = createApplicabilityMode(true, "same", "same", stateDir, reducedJar);
     assertNull(((KotlincMode.Incremental) unchanged).getRebuildReason());
-    ApplicabilityClasspathState.promotePending(stateDir.getPath());
+    succeedRound(stateDir);
 
     writeJar(reducedJar, "p/A.class", "p/B.class");
     KotlincMode changed = createApplicabilityMode(true, "same", "same", stateDir, reducedJar);
@@ -331,7 +333,7 @@ public class KotlincModeFactoryTest {
     AbsPath reducedJar = temporaryPaths.getRoot().resolve("reduced.jar");
     writeJar(reducedJar, "p/A.class");
     createApplicabilityMode(true, "same", "same", stateDir, reducedJar);
-    ApplicabilityClasspathState.promotePending(stateDir.getPath());
+    succeedRound(stateDir);
     when(mockActionMetadata.getPreviousDigest()).thenReturn(new HashMap<>());
     when(mockActionMetadata.getCurrentDigest()).thenReturn(new HashMap<>());
     KotlincMode withoutDigest =
@@ -358,8 +360,7 @@ public class KotlincModeFactoryTest {
     AbsPath reducedJar = temporaryPaths.getRoot().resolve("reduced.jar");
     writeJar(reducedJar, "p/A.class");
     createApplicabilityMode(true, "same", "same", stateDir, reducedJar);
-    ApplicabilityClasspathState.promotePending(stateDir.getPath());
-    ApplicabilityRoundMarker.clear(stateDir.getPath());
+    succeedRound(stateDir);
 
     // A clean compile failure leaves the round marked as started: still incremental.
     ApplicabilityRoundMarker.enter(stateDir.getPath(), ApplicabilityRoundMarker.Phase.STARTED);
@@ -383,6 +384,67 @@ public class KotlincModeFactoryTest {
     assertTrue(ApplicabilityRoundMarker.lastRoundDidNotFinish(stateDir.getPath()));
   }
 
+  @Test
+  public void when_applicabilityLedger_missing_then_rebuild() throws IOException {
+    AbsPath stateDir = temporaryPaths.newFolder("incremental_state");
+    AbsPath reducedJar = temporaryPaths.getRoot().resolve("reduced.jar");
+    writeJar(reducedJar, "p/A.class");
+    createApplicabilityMode(true, "same", "same", stateDir, reducedJar);
+    // A successful round whose plugin left no ledger.
+    ApplicabilityClasspathState.promotePending(stateDir.getPath());
+
+    KotlincMode next = createApplicabilityMode(true, "same", "same", stateDir, reducedJar);
+
+    assertEquals(
+        RebuildReason.APPLICABILITY_LEDGER_NOT_FOUND,
+        ((KotlincMode.Incremental) next).getRebuildReason());
+  }
+
+  @Test
+  public void when_applicabilityLedger_unreadable_then_rebuild() throws IOException {
+    AbsPath stateDir = temporaryPaths.newFolder("incremental_state");
+    AbsPath reducedJar = temporaryPaths.getRoot().resolve("reduced.jar");
+    writeJar(reducedJar, "p/A.class");
+    createApplicabilityMode(true, "same", "same", stateDir, reducedJar);
+    succeedRound(stateDir);
+    Path committed = stateDir.resolve(ApplicabilityLedgerFiles.COMMITTED_FILE).getPath();
+    Files.setPosixFilePermissions(committed, PosixFilePermissions.fromString("---------"));
+    try {
+      KotlincMode next = createApplicabilityMode(true, "same", "same", stateDir, reducedJar);
+
+      assertEquals(
+          RebuildReason.APPLICABILITY_LEDGER_NOT_FOUND,
+          ((KotlincMode.Incremental) next).getRebuildReason());
+    } finally {
+      Files.setPosixFilePermissions(committed, PosixFilePermissions.fromString("rw-r--r--"));
+    }
+  }
+
+  @Test
+  public void when_round_starts_then_stale_pending_ledger_is_discarded() throws IOException {
+    AbsPath stateDir = temporaryPaths.newFolder("incremental_state");
+    AbsPath reducedJar = temporaryPaths.getRoot().resolve("reduced.jar");
+    writeJar(reducedJar, "p/A.class");
+    createApplicabilityMode(true, "same", "same", stateDir, reducedJar);
+    succeedRound(stateDir);
+    // A failed round's ledger, which a later success must not promote.
+    Path stalePending = stateDir.resolve(ApplicabilityLedgerFiles.PENDING_FILE).getPath();
+    Files.writeString(stalePending, "stale");
+
+    KotlincMode next = createApplicabilityMode(true, "same", "same", stateDir, reducedJar);
+
+    assertNull(((KotlincMode.Incremental) next).getRebuildReason());
+    assertFalse(Files.exists(stalePending));
+  }
+
+  /** What a successful round leaves: the plugin's pending ledger, then kotlincd's promotion. */
+  private static void succeedRound(AbsPath stateDir) throws IOException {
+    Files.writeString(stateDir.resolve(ApplicabilityLedgerFiles.PENDING_FILE).getPath(), "ledger");
+    ApplicabilityClasspathState.promotePending(stateDir.getPath());
+    ApplicabilityLedgerFiles.promotePending(stateDir.getPath());
+    ApplicabilityRoundMarker.clear(stateDir.getPath());
+  }
+
   private KotlincMode createApplicabilityMode(
       boolean verifiesApplicability, String previousPluginDigest, String currentPluginDigest)
       throws IOException {
@@ -392,7 +454,7 @@ public class KotlincModeFactoryTest {
     // A round with a recorded classpath, so only the plugin can force a full one.
     createApplicabilityMode(
         verifiesApplicability, previousPluginDigest, previousPluginDigest, stateDir, reducedJar);
-    ApplicabilityClasspathState.promotePending(stateDir.getPath());
+    succeedRound(stateDir);
     return createApplicabilityMode(
         verifiesApplicability, previousPluginDigest, currentPluginDigest, stateDir, reducedJar);
   }

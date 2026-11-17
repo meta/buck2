@@ -24,6 +24,11 @@ load(
     "native_build_command_entry",
     "record_link_command",
 )
+load(
+    "@prelude//android:prebuilt_native_library_symbols.bzl",
+    "parse_prebuilt_native_library_symbols",
+    "prebuilt_native_library_symbols",
+)
 load("@prelude//android:relinker_linker_outputs.bzl", "get_extra_relinker_args")
 load("@prelude//android:util.bzl", "EnhancementContext", "merge_extra_linker_args")
 load("@prelude//android:voltron.bzl", "ROOT_MODULE", "all_targets_in_root_module", "get_apk_module_graph_info", "is_root_module")
@@ -420,6 +425,20 @@ def get_android_binary_native_library_info(
         and not getattr(ctx.attrs, "native_library_pick_first", [])
     )
 
+    # The libraries in prebuilt native library directories are packaged as
+    # files and never relinked, but they import from the relinked libraries.
+    prebuilt_dir_symbols_by_platform = {}
+    if enable_relinker:
+        for platform in original_shared_libs_by_platform:
+            symbols = prebuilt_native_library_symbols(
+                ctx,
+                ctx.attrs._cxx_toolchain[platform][CxxToolchainInfo],
+                platform,
+                all_prebuilt_native_library_dirs,
+            )
+            if symbols:
+                prebuilt_dir_symbols_by_platform[platform] = symbols
+
     middle_gatorade_products = None
     if enable_relinker and has_native_merging and "middle" in getattr(ctx.attrs, "gatorade_phases", []):
         middle_gatorade_products = ctx.actions.declare_output(
@@ -553,6 +572,7 @@ def get_android_binary_native_library_info(
                 # @oss-disable[end= ]: native_library_merge_linker_args or {},
                 # @oss-disable[end= ]: native_library_merge_dir,
                 # @oss-disable[end= ]: native_build_command_entries,
+                # @oss-disable[end= ]: prebuilt_dir_symbols_by_platform,
             # @oss-disable[end= ]: )
         elif not "early" in getattr(ctx.attrs, "gatorade_phases", []):
             mergemap_cmd = cmd_args(ctx.attrs._android_toolchain[AndroidToolchainInfo].mergemap_tool)
@@ -631,6 +651,7 @@ def get_android_binary_native_library_info(
             # @oss-disable[end= ]: native_library_merge_linker_args or {},
             # @oss-disable[end= ]: None,
             # @oss-disable[end= ]: native_build_command_entries,
+            # @oss-disable[end= ]: prebuilt_dir_symbols_by_platform,
         # @oss-disable[end= ]: )
 
     mergemap_gencode_jar = None
@@ -855,6 +876,7 @@ def get_android_binary_native_library_info(
                 outputs[relink_check_report] if relink_check_report else None,
                 monogatorade_products,
                 excluded_shared_libs_by_platform,
+                prebuilt_dir_symbols_by_platform,
             )
             middle_gatorade_relinked_libraries_by_platform = final_shared_libs_by_platform
             relinked_libs_for_extra_outputs = final_shared_libs_by_platform
@@ -899,6 +921,7 @@ def get_android_binary_native_library_info(
                 outputs[relink_check_report] if relink_check_report else None,
                 monogatorade_products,
                 excluded_shared_libs_by_platform,
+                prebuilt_dir_symbols_by_platform,
             )
             # This branch deliberately leaves final_shared_libs_by_platform unrelinked for the
             # [unrelinked] subtargets below. Final diagnostic reports must instead reuse the
@@ -3025,8 +3048,8 @@ def _bolt_libraries(
 # 5. extract the list of undefined symbols in the relinked libs (i.e. those symbols needed from dependencies and what had been
 #    used in (1) above from higher nodes).
 #
-# A library that is not relinked (a prebuilt shared library, a packaged executable or a library that doesn't ship) has no
-# relink whose undefined symbols (5) would record its imports. Each of its strong imports is charged to the first of its
+# A library that is not relinked (a prebuilt shared library, a packaged executable, a library that doesn't ship or a library
+# in a prebuilt native library directory) has no relink whose undefined symbols (5) would record its imports. Each of its strong imports is charged to the first of its
 # DT_NEEDED libraries that exports the name, the library the dynamic loader binds it in, and that library keeps it in (2).
 
 def relink_libraries(
@@ -3034,6 +3057,7 @@ def relink_libraries(
     libraries_by_platform: dict[str, dict[str, SharedLibrary]],
     native_cmd_entries = None,
     excluded_libraries_by_platform: dict[str, dict[str, SharedLibrary]] = {},
+    prebuilt_dir_symbols_by_platform: dict[str, Artifact] = {},
 ) -> dict[str, dict[str, SharedLibrary]]:
     relinker_extra_deps = getattr(ctx.attrs, "relinker_extra_deps", None)
     relinker_extra_args = getattr(ctx.attrs, "relinker_extra_args", {})
@@ -3077,7 +3101,15 @@ def relink_libraries(
             for soname, solib in shared_libraries.items()
             if soname not in unsupported_libs
         }
-        unrelinked_imports = _unrelinked_imports(ctx, cxx_toolchain, platform, graph_libraries, unsupported_libs, provided_symbols_files)
+        unrelinked_imports = _unrelinked_imports(
+            ctx,
+            cxx_toolchain,
+            platform,
+            graph_libraries,
+            unsupported_libs,
+            provided_symbols_files,
+            prebuilt_dir_symbols_by_platform.get(platform),
+        )
         needed_symbols_files = {}
         for soname in pre_order_traversal(shlib_graph):
             if soname in excluded_libraries:
@@ -3145,10 +3177,11 @@ def _relink_for_native_libs(
     check_report: Artifact | None = None,
     monogatorade_products: dict[str, Artifact] | None = None,
     excluded_libraries_by_platform: dict[str, dict[str, SharedLibrary]] = {},
+    prebuilt_dir_symbols_by_platform: dict[str, Artifact] = {},
 ) -> tuple:
-    return (relink_libraries(ctx, libraries_by_platform, native_cmd_entries, excluded_libraries_by_platform), {}) # @oss-enable
+    return (relink_libraries(ctx, libraries_by_platform, native_cmd_entries, excluded_libraries_by_platform, prebuilt_dir_symbols_by_platform), {}) # @oss-enable
     # @oss-disable[end= ]: relink = relink_for_native_libs
-    # @oss-disable[end= ]: products = (monogatorade_products, excluded_libraries_by_platform)
+    # @oss-disable[end= ]: products = (monogatorade_products, excluded_libraries_by_platform, prebuilt_dir_symbols_by_platform)
     # @oss-disable[end= ]: return relink(ctx, libraries_by_platform, relink_libraries, create_shared_lib, native_cmd_entries, check_report, *products)
 
 def extract_provided_symbols(ctx: AnalysisContext, toolchain: CxxToolchainInfo, lib: Artifact) -> Artifact:
@@ -3161,17 +3194,20 @@ def _unrelinked_imports(
     shared_libraries: dict[str, SharedLibrary],
     unsupported_libs: dict[str, bool],
     provided_symbols_files: dict[str, Artifact],
+    prebuilt_dir_symbols: Artifact | None,
 ) -> Artifact | None:
-    """Charges each strong import of a library that is not relinked to the
-    first of its DT_NEEDED libraries that exports the name, and returns a file
-    of `<soname> <symbol>` lines. None when there is no such library, or no
-    objdump or bash to read DT_NEEDED with.
+    """Charges each strong import of a library that is not relinked (one in
+    `unsupported_libs`, or one in a prebuilt native library directory, which
+    `prebuilt_dir_symbols` describes) to the first of its DT_NEEDED libraries
+    that exports the name, and returns a file of `<soname> <symbol>` lines.
+    None when there is no such library, or no objdump or bash to read DT_NEEDED
+    with.
     """
     objdump = cxx_toolchain.binary_utilities_info.objdump
 
     # _needed_libraries runs bash, which a Windows execution platform lacks.
     exec_is_windows = hasattr(ctx.attrs, "_exec_os_type") and ctx.attrs._exec_os_type[OsLookup].os == Os("windows")
-    if not unsupported_libs or not provided_symbols_files or objdump == None or exec_is_windows:
+    if (not unsupported_libs and prebuilt_dir_symbols == None) or not provided_symbols_files or objdump == None or exec_is_windows:
         return None
 
     unrelinked = []
@@ -3217,18 +3253,21 @@ def _unrelinked_imports(
 
     def read_needed(ctx, artifacts, outputs):
         needed = {u.soname: artifacts[u.needed].read_string().splitlines() for u in unrelinked}
+        dir_libraries = parse_prebuilt_native_library_symbols(artifacts[prebuilt_dir_symbols].read_string())[0] if prebuilt_dir_symbols else []
 
         # Only the relinked libraries an unrelinked library names in DT_NEEDED
         # can be charged, so the version scripts wait for no other link.
-        providers = {dep: True for deps in needed.values() for dep in deps if dep in provided_symbols_files}
+        providers = {dep: True for deps in list(needed.values()) + [lib.needed for lib in dir_libraries] for dep in deps if dep in provided_symbols_files}
 
         def charge(ctx, artifacts, outputs):
             provided = {dep: read_names(artifacts, provided_symbols_files[dep]) for dep in providers}
-            unrelinked_exports = {u.soname: read_names(artifacts, u.exports) for u in unrelinked}
+            importers = [(needed[u.soname], read_names(artifacts, u.imports)) for u in unrelinked] + [(lib.needed, lib.imports) for lib in dir_libraries]
+            unrelinked_exports = {lib.name: lib.exports for lib in dir_libraries}
+            unrelinked_exports.update({u.soname: read_names(artifacts, u.exports) for u in unrelinked})
             charged = {}
-            for u in unrelinked:
-                for symbol in artifacts[u.imports].read_string().splitlines():
-                    for dep in needed[u.soname]:
+            for deps, imports in importers:
+                for symbol in imports:
+                    for dep in deps:
                         if symbol in unrelinked_exports.get(dep, {}):
                             break
                         if symbol in provided.get(dep, {}):
@@ -3244,7 +3283,7 @@ def _unrelinked_imports(
         )
 
     ctx.actions.dynamic_output(
-        dynamic = [u.needed for u in unrelinked],
+        dynamic = [u.needed for u in unrelinked] + ([prebuilt_dir_symbols] if prebuilt_dir_symbols else []),
         inputs = [],
         outputs = [output.as_output()],
         f = read_needed,

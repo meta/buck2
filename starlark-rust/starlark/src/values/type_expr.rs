@@ -55,10 +55,10 @@ pub trait StarlarkTypeExpr<'v>: Sized {
     fn starlark_type_repr() -> Ty;
 
     /// What a value of this type is read through: `ValueTyped<'v, Foo>` for a nominal type with
-    /// one representation, the view for one with several, the reading for a typed list or
-    /// tuple (the [`ValueOf`] handle together with the list or tuple it found, such as
-    /// [`ListOf`](crate::values::list::ListOf)), the handle for a typed dict or set,
-    /// `Option<T::Get>` for `NoneOr<T>`, `Either<A::Get, B::Get>` for a union.
+    /// one representation, the view for one with several, the reading for a typed container
+    /// (the [`ValueOf`] handle together with what the read found, such as
+    /// [`ListOf`](crate::values::list::ListOf)), `Option<T::Get>` for `NoneOr<T>`,
+    /// `Either<A::Get, B::Get>` for a union.
     type Get;
 
     /// `value` as this type's [`Get`](Self::Get), if it is of this type: exactly what a Starlark
@@ -198,6 +198,7 @@ union_payload_is_conversion! {
     &'v crate::values::list::ListRef<'v>;
     &'v crate::values::tuple::TupleRef<'v>;
     crate::values::dict::DictRef<'v>;
+    crate::values::set::SetRef<'v>;
 }
 
 /// `None` carries nothing, so the unit value is as good a payload as its handle.

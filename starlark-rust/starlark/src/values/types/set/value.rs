@@ -25,6 +25,7 @@ use std::ops::Deref;
 
 use allocative::Allocative;
 use display_container::fmt_container;
+use dupe::Dupe;
 use either::Either;
 use serde::Serialize;
 use starlark_map::Hashed;
@@ -236,7 +237,7 @@ impl<'v> SetLike<'v> for SetData<'v> {
 starlark::methods_static!(SET_METHODS = methods::set_methods);
 
 /// A `set` in either of its representations.
-#[derive(Debug, Clone, Copy, StarlarkRepresentations)]
+#[derive(Debug, Clone, Copy, Dupe, StarlarkRepresentations)]
 pub(crate) enum SetView<'v> {
     Frozen(ValueTyped<'v, SetGen<SetData<'v>>>),
     Unfrozen(ValueTyped<'v, SetGen<RefCell<SetData<'v>>>>),
@@ -259,6 +260,17 @@ macro_rules! with_set {
 }
 
 impl<'v> SetView<'v> {
+    /// The set, borrowed for as long as the reference lives if it is mutable.
+    #[inline]
+    pub(crate) fn to_ref(self) -> SetRef<'v> {
+        SetRef {
+            aref: match self {
+                SetView::Frozen(x) => Either::Right(&x.as_ref().0),
+                SetView::Unfrozen(x) => Either::Left(x.as_ref().0.borrow()),
+            },
+        }
+    }
+
     #[inline]
     fn content(self) -> Either<Ref<'v, SmallSet<Value<'v>>>, &'v SmallSet<Value<'v>>> {
         match self {

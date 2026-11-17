@@ -28,6 +28,7 @@ use crate::values::UnpackValue;
 use crate::values::Value;
 use crate::values::ValueError;
 use crate::values::ValueOf;
+use crate::values::set::SetOf;
 use crate::values::set::SetType;
 use crate::values::set::value::SetGen;
 
@@ -116,7 +117,7 @@ impl<'v> UnpackValue<'v> for SetRef<'v> {
     #[inline]
     fn unpack(
         _value: ValueOf<'v, Self::Type>,
-        get: ValueOf<'v, Self::Type>,
+        get: SetOf<'v, Value<'v>>,
     ) -> Result<Self, Infallible> {
         Ok(get.set())
     }

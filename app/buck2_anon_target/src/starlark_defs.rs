@@ -334,8 +334,12 @@ fn analysis_actions_methods_anon_target(builder: &mut MethodsBuilder) {
             .map(|rule| {
                 let (rule, attributes) = rule?.try_get()?;
                 let rule = rule.frozen()?;
-                let key =
-                    registry.anon_target_key(rule, attributes, owner_key, exec_group.as_ref())?;
+                let key = registry.anon_target_key(
+                    rule,
+                    attributes.handle(),
+                    owner_key,
+                    exec_group.as_ref(),
+                )?;
                 let anon_target_promise =
                     eval.heap().alloc(StarlarkPromise::new_unresolved()).get();
 

@@ -30,6 +30,8 @@ use crate::values::int::IntView;
 use crate::values::list::AllocList;
 use crate::values::list::ListRef;
 use crate::values::list::ListType;
+use crate::values::set::SetRef;
+use crate::values::set::SetType;
 use crate::values::string::StarlarkStr;
 use crate::values::tuple::AllocTuple;
 use crate::values::tuple::TupleRef;
@@ -119,14 +121,15 @@ enum References<'v> {
     List(&'v ListRef<'v>),
     Tuple(&'v TupleRef<'v>),
     Dict(DictRef<'v>),
+    Set(SetRef<'v>),
 }
 
 #[test]
 fn test_reference_payloads() {
     assert_eq!(
         Either::<
-            Either<StarlarkStr, ListType<Value>>,
-            Either<TupleType<Value>, DictType<Value, Value>>,
+            Either<Either<StarlarkStr, ListType<Value>>, TupleType<Value>>,
+            Either<DictType<Value, Value>, SetType<Value>>,
         >::starlark_type_repr(),
         References::starlark_type_repr()
     );
@@ -137,6 +140,7 @@ fn test_reference_payloads() {
             Some(References::List(l)) => format!("list {}", l.len()),
             Some(References::Tuple(t)) => format!("tuple {}", t.len()),
             Some(References::Dict(d)) => format!("dict {}", d.len()),
+            Some(References::Set(_)) => "set".to_owned(),
             None => "other".to_owned(),
         };
         assert_eq!("str abc", show(heap.alloc("abc").to_value()));
@@ -148,4 +152,9 @@ fn test_reference_payloads() {
         assert_eq!("dict 1", show(heap.alloc(AllocDict([(1, 2)])).to_value()));
         assert_eq!("other", show(Value::testing_new_int(1)));
     });
+    let set = crate::assert::pass("set([1, 2])");
+    assert!(matches!(
+        References::unpack_value_opt(set.as_ref().value()),
+        Some(References::Set(s)) if s.iter().count() == 2
+    ));
 }

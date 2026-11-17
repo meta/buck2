@@ -30,6 +30,7 @@ use crate::values::ValueError;
 use crate::values::ValueOf;
 use crate::values::dict::Dict;
 use crate::values::dict::value::DictGen;
+use crate::values::types::dict::dict_type::DictOf;
 use crate::values::types::dict::dict_type::DictType;
 
 /// Borrowed `Dict`.
@@ -120,7 +121,7 @@ impl<'v> UnpackValue<'v> for DictRef<'v> {
     #[inline]
     fn unpack(
         _value: ValueOf<'v, Self::Type>,
-        get: ValueOf<'v, Self::Type>,
+        get: DictOf<'v, Value<'v>, Value<'v>>,
     ) -> Result<Self, Infallible> {
         Ok(get.dict())
     }

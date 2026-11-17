@@ -26,6 +26,7 @@ mod refs;
 pub(crate) mod value;
 
 pub use crate::values::dict::alloc::AllocDict;
+pub use crate::values::dict::dict_type::DictOf;
 pub use crate::values::dict::dict_type::DictType;
 pub use crate::values::dict::refs::DictMut;
 pub use crate::values::dict::refs::DictRef;

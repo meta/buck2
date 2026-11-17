@@ -29,6 +29,7 @@ use std::ops::Deref;
 
 use allocative::Allocative;
 use display_container::fmt_keyed_container;
+use dupe::Dupe;
 use either::Either;
 use serde::Serialize;
 use starlark_derive::StarlarkPagable;
@@ -444,7 +445,7 @@ impl<'v> DictLike<'v> for Dict<'v> {
 starlark::methods_static!(DICT_METHODS = crate::values::types::dict::methods::dict_methods);
 
 /// A `dict` in either of its representations.
-#[derive(Debug, Clone, Copy, StarlarkRepresentations)]
+#[derive(Debug, Clone, Copy, Dupe, StarlarkRepresentations)]
 pub(crate) enum DictView<'v> {
     Frozen(ValueTyped<'v, DictGen<Dict<'v>>>),
     Unfrozen(ValueTyped<'v, DictGen<RefCell<Dict<'v>>>>),
@@ -467,6 +468,17 @@ macro_rules! with_dict {
 }
 
 impl<'v> DictView<'v> {
+    /// The dict, borrowed for as long as the reference lives if it is mutable.
+    #[inline]
+    pub(crate) fn to_ref(self) -> DictRef<'v> {
+        DictRef {
+            aref: match self {
+                DictView::Frozen(x) => Either::Right(&x.as_ref().0),
+                DictView::Unfrozen(x) => Either::Left(x.as_ref().0.borrow()),
+            },
+        }
+    }
+
     #[inline]
     fn content(
         self,

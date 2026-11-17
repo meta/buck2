@@ -18,7 +18,12 @@
 use std::convert::Infallible;
 use std::marker::PhantomData;
 
+use dupe::Clone_;
+use dupe::Copy_;
+use dupe::Dupe_;
+
 use crate as starlark;
+use crate::__derive_refs::representations::ViewOfRepresentations;
 use crate::any::ProvidesStaticType;
 use crate::typing::Ty;
 use crate::values::UnpackValue;
@@ -26,6 +31,7 @@ use crate::values::Value;
 use crate::values::ValueOf;
 use crate::values::dict::DictMut;
 use crate::values::dict::DictRef;
+use crate::values::dict::value::DictView;
 use crate::values::type_expr::StarlarkTypeExpr;
 use crate::values::type_expr::StarlarkTypeExprStable;
 
@@ -40,18 +46,22 @@ pub struct DictType<K, V> {
 }
 
 impl<'v, K: StarlarkTypeExpr<'v>, V: StarlarkTypeExpr<'v>> StarlarkTypeExpr<'v> for DictType<K, V> {
-    /// The handle: a typed dict has no cheaper form that keeps `K` and `V`.
-    type Get = ValueOf<'v, DictType<K, V>>;
+    type Get = DictOf<'v, K, V>;
 
     fn starlark_type_repr() -> Ty {
         Ty::dict(K::starlark_type_repr(), V::starlark_type_repr())
     }
 
+    #[inline]
     fn get(value: Value<'v>) -> Option<Self::Get> {
-        let dict = DictRef::from_value(value)?;
-        dict.iter()
+        let dict = DictView::from_value(value)?;
+        dict.to_ref()
+            .iter()
             .all(|(k, v)| K::matches(k) && V::matches(v))
-            .then(|| ValueOf::new_unchecked(value))
+            .then(|| DictOf {
+                value: ValueOf::new_unchecked(value),
+                dict,
+            })
     }
 }
 
@@ -62,7 +72,7 @@ impl<'v, K: StarlarkTypeExpr<'v>, V: StarlarkTypeExpr<'v>> UnpackValue<'v> for D
     type Type = Self;
     type Error = Infallible;
 
-    fn unpack(_value: ValueOf<'v, Self>, _get: ValueOf<'v, Self>) -> Result<Self, Infallible> {
+    fn unpack(_value: ValueOf<'v, Self>, _get: DictOf<'v, K, V>) -> Result<Self, Infallible> {
         Ok(DictType {
             k: PhantomData,
             v: PhantomData,
@@ -79,7 +89,75 @@ impl<'v, K: StarlarkTypeExpr<'v>, V: StarlarkTypeExpr<'v>> ValueOf<'v, DictType<
     /// The dict.
     #[inline]
     pub fn dict(self) -> DictRef<'v> {
-        DictRef::from_value(self.to_value()).expect("a value's type does not change")
+        DictOf::of_handle(self).dict()
+    }
+
+    /// The dict, to change it: an error if it is frozen or being iterated.
+    pub fn dict_mut(self) -> crate::Result<DictMut<'v>> {
+        DictOf::of_handle(self).dict_mut()
+    }
+
+    /// The entries, as [`DictOf::iter`] gives them.
+    pub fn iter(self) -> DictEntries<'v, K, V> {
+        DictOf::of_handle(self).iter()
+    }
+
+    /// The entries, each converted by `K2` and `V2`, as [`DictOf::try_items`] gives them.
+    pub fn try_items<K2, V2>(self) -> impl Iterator<Item = crate::Result<(K2, V2)>> + 'v
+    where
+        K2: UnpackValue<'v, Type = K>,
+        V2: UnpackValue<'v, Type = V>,
+    {
+        DictOf::of_handle(self).try_items()
+    }
+
+    /// The value at `key`, re-checked unless the dict is frozen.
+    pub fn lookup(self, key: Value<'v>) -> crate::Result<Option<ValueOf<'v, V>>> {
+        DictOf::of_handle(self).lookup(key)
+    }
+
+    /// The value at a string key, re-checked unless the dict is frozen.
+    pub fn lookup_str(self, key: &str) -> crate::Result<Option<ValueOf<'v, V>>> {
+        DictOf::of_handle(self).lookup_str(key)
+    }
+}
+
+/// What a value read as a `dict[K, V]` gives ([`DictType`]'s `Get`): the handle, and which of
+/// its representations the dict is, so that what holds one does not look the dict up again.
+/// It does not hold a borrow of a mutable dict: [`dict`](Self::dict) takes one when it is
+/// called.
+///
+/// The type is interim: a dict is to have one public type, and this is not its name.
+#[derive(Clone_, Copy_, Dupe_)]
+pub struct DictOf<'v, K: StarlarkTypeExpr<'v>, V: StarlarkTypeExpr<'v>> {
+    value: ValueOf<'v, DictType<K, V>>,
+    dict: DictView<'v>,
+}
+
+impl<'v, K: StarlarkTypeExpr<'v>, V: StarlarkTypeExpr<'v>> DictOf<'v, K, V> {
+    /// The reading of a handle. The dict is looked up; its entries are not checked.
+    #[inline]
+    pub(crate) fn of_handle(value: ValueOf<'v, DictType<K, V>>) -> Self {
+        let dict = DictView::from_value(value.to_value()).expect("a value's type does not change");
+        DictOf { value, dict }
+    }
+
+    /// The handle.
+    #[inline]
+    pub fn handle(self) -> ValueOf<'v, DictType<K, V>> {
+        self.value
+    }
+
+    /// The value.
+    #[inline]
+    pub fn to_value(self) -> Value<'v> {
+        self.value.to_value()
+    }
+
+    /// The dict.
+    #[inline]
+    pub fn dict(self) -> DictRef<'v> {
+        self.dict.to_ref()
     }
 
     /// The dict, to change it: an error if it is frozen or being iterated.
@@ -179,5 +257,42 @@ impl<'v> Iterator for Entries<'v> {
     fn size_hint(&self) -> (usize, Option<usize>) {
         let rem = self.dict.content.len() - self.index;
         (rem, Some(rem))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::values::Heap;
+    use crate::values::UnpackValue;
+    use crate::values::ValueOf;
+    use crate::values::dict::AllocDict;
+    use crate::values::dict::DictMut;
+    use crate::values::dict::DictRef;
+    use crate::values::dict::DictType;
+    use crate::values::int::IntView;
+    use crate::values::string::StarlarkStr;
+
+    #[test]
+    fn test_reading() {
+        Heap::temp(|heap| {
+            let dict = heap.alloc(AllocDict([("a", 1), ("b", 2)])).to_value();
+            let (handle, reading) =
+                ValueOf::<DictType<StarlarkStr, IntView>>::new_with_get(dict).unwrap();
+            assert!(reading.handle().to_value().ptr_eq(dict));
+            assert_eq!(2, reading.dict().len());
+            assert_eq!(2, reading.iter().count());
+            assert_eq!(2, handle.iter().count());
+            assert!(reading.lookup_str("a").unwrap().is_some());
+            // The reading holds no borrow, so the dict can be changed while one is held.
+            DictMut::from_value(dict)
+                .unwrap()
+                .aref
+                .insert_hashed(heap.alloc("c").to_value().get_hashed().unwrap(), dict);
+            assert_eq!(3, reading.dict().len());
+            // A conversion that ends in the dict borrows it.
+            let unpacked = DictRef::unpack_value_opt(dict).unwrap();
+            assert_eq!(3, unpacked.len());
+            assert!(DictMut::from_value(dict).is_err());
+        });
     }
 }

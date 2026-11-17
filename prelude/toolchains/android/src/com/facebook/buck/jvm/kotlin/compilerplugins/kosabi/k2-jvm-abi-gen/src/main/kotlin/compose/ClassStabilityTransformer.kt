@@ -17,6 +17,7 @@ import org.jetbrains.kotlin.backend.common.extensions.IrPluginContext
 import org.jetbrains.kotlin.backend.common.lower.createIrBuilder
 import org.jetbrains.kotlin.descriptors.ClassKind
 import org.jetbrains.kotlin.descriptors.DescriptorVisibilities
+import org.jetbrains.kotlin.descriptors.Modality
 import org.jetbrains.kotlin.ir.IrElement
 import org.jetbrains.kotlin.ir.declarations.IrClass
 import org.jetbrains.kotlin.ir.declarations.IrDeclaration
@@ -74,15 +75,21 @@ import org.jetbrains.kotlin.name.Name
  * Stability rules (simplified for ABI emulation):
  * - A class that carries a stable marker, or has a supertype that does: stable, with no
  *   type-parameter dependencies
+ * - An object, when the compiler's Compose plugin calls every object stable (2.4 on)
  * - val properties of stable types: stable
+ * - val properties typed with one of the class's own type parameters: set that parameter's bit and
+ *   are not known stable, as Compose's Stability.Parameter
  * - var properties (non-delegated): unstable
  * - Primitives, String, Unit, enums, function types: stable
+ * - A type that carries a stable marker, or has a supertype that does: stable, and so is an object
+ *   type when objects are stable
  * - A class is no more stable than its superclass
  * - Unrecognised types: conservatively not-known-stable
  *
  * The two outputs use different encodings. $stable carries StabilityBits: 0 when known stable,
  * UNSTABLE.bitsForSlot(0) = 8 otherwise. @StabilityInferred(parameters) carries the type-parameter
- * bitmask plus a known-stable high bit at (1 shl typeParameters.size).
+ * bitmask plus a known-stable high bit at (1 shl typeParameters.size). $stable is annotated
+ * `@JvmField` when the compiler's Compose plugin writes it as a property's backing field (2.4 on).
  */
 @OptIn(UnsafeDuringIrConstructionAPI::class)
 internal class ClassStabilityTransformer(private val pluginContext: IrPluginContext) {
@@ -94,6 +101,7 @@ internal class ClassStabilityTransformer(private val pluginContext: IrPluginCont
         ClassId(FqName("androidx.compose.runtime.internal"), Name.identifier("StabilityInferred"))
     private val STABILITY_INFERRED_FQ_NAME = STABILITY_INFERRED_CLASS_ID.asSingleFqName()
     private val STABLE_MARKER_FQ_NAME = FqName("androidx.compose.runtime.StableMarker")
+    private val JVM_FIELD_CLASS_ID = ClassId(FqName("kotlin.jvm"), Name.identifier("JvmField"))
 
     // Compose's KnownStableConstructs.stableMarkers: annotations it treats as stable markers
     // although they are not annotated @StableMarker.
@@ -131,6 +139,8 @@ internal class ClassStabilityTransformer(private val pluginContext: IrPluginCont
   // Lazily resolved — null if compose-runtime is not on the classpath
   private var stabilityInferredClass: IrClassSymbol? = null
 
+  private var jvmFieldClass: IrClassSymbol? = null
+
   // FQNs declared in the module under compilation. A superclass in this set has not had its
   // @StabilityInferred attached yet (this transformer is what attaches it, and visit order does not
   // follow the inheritance graph), so its stability must be recomputed rather than read back.
@@ -142,6 +152,7 @@ internal class ClassStabilityTransformer(private val pluginContext: IrPluginCont
     // No-op when Compose runtime is not on the classpath.
     pluginContext.referenceClass(COMPOSER_CLASS_ID) ?: return
     stabilityInferredClass = pluginContext.referenceClass(STABILITY_INFERRED_CLASS_ID)
+    jvmFieldClass = pluginContext.referenceClass(JVM_FIELD_CLASS_ID)
     // Carrying FQNs across fragments would route a compiled dependency down the recompute branch
     // instead of the external-annotation one.
     moduleClassFqns.clear()
@@ -222,6 +233,18 @@ internal class ClassStabilityTransformer(private val pluginContext: IrPluginCont
     stableField.parent = irClass
     val constExpr = IrConstImpl.int(-1, -1, pluginContext.irBuiltIns.intType, stableValue)
     stableField.initializer = pluginContext.irFactory.createExpressionBody(-1, -1, constExpr)
+    // The Compose plugin of 2.4 and later writes $stable as a property whose backing field is
+    // annotated @JvmField, so its getter is never generated. The annotation is all that reaches the
+    // class file.
+    if (COMPOSE_STABLE_FIELD_IS_JVM_FIELD) {
+      jvmFieldClass?.constructors?.singleOrNull()?.let { constructor ->
+        val jvmField =
+            pluginContext.irBuiltIns.createIrBuilder(irClass.symbol).run {
+              irAnnotationCompat(constructor, emptyList())
+            }
+        stableField.annotations = stableField.annotations + jvmField
+      }
+    }
     irClass.declarations.add(stableField)
 
     // Compose gives a marked class `$stable = STABLE` and no @StabilityInferred.
@@ -266,9 +289,12 @@ internal class ClassStabilityTransformer(private val pluginContext: IrPluginCont
 
   // Deliberately conservative: an unrecognised member type yields not-known-stable, so consumers
   // resolve stability at runtime rather than assume the wrong answer.
-  private fun computeStability(irClass: IrClass): Stability {
+  private fun computeStability(irClass: IrClass, asSuperclass: Boolean = false): Stability {
     // Compose answers Stable here before it looks at any member, superclass or type parameter.
     if (hasStableMarkedDescendant(irClass)) return Stability(0, knownStable = true)
+    if (COMPOSE_OBJECTS_ARE_STABLE && irClass.kind == ClassKind.OBJECT) {
+      return Stability(0, knownStable = true)
+    }
 
     val classFqn = irClass.classFqName()
     if (classFqn != null && analyzing.contains(classFqn)) {
@@ -292,10 +318,7 @@ internal class ClassStabilityTransformer(private val pluginContext: IrPluginCont
           val backingField = declaration.backingField
           if (backingField != null) {
             mask = mask or typeParamBits(backingField.type, irClass)
-            if (
-                !isStabilityDelegatedToTypeParam(backingField.type, irClass) &&
-                    !isKnownStableType(backingField.type)
-            ) {
+            if (!isKnownStableType(backingField.type)) {
               knownStable = false
             }
           }
@@ -303,10 +326,7 @@ internal class ClassStabilityTransformer(private val pluginContext: IrPluginCont
         is IrField -> {
           if (!declaration.isStatic) {
             mask = mask or typeParamBits(declaration.type, irClass)
-            if (
-                !isStabilityDelegatedToTypeParam(declaration.type, irClass) &&
-                    !isKnownStableType(declaration.type)
-            ) {
+            if (!isKnownStableType(declaration.type)) {
               knownStable = false
             }
           }
@@ -321,6 +341,18 @@ internal class ClassStabilityTransformer(private val pluginContext: IrPluginCont
     // mutable state lives in Painter. Over-asserting stability makes a consumer skip recomposition
     // for a value that did change, so this is deliberately the pessimistic direction.
     if (knownStable && !superclassKnownStable(irClass)) {
+      knownStable = false
+    }
+    // From 2.4 Compose starts a class that is not final at `Stability.Unknown`. As a superclass
+    // such
+    // a class is still answered by its members: Compose drops a superclass that is only Unknown and
+    // keeps one with an unstable member.
+    if (
+        !asSuperclass &&
+            COMPOSE_NON_FINAL_CLASSES_ARE_UNKNOWN &&
+            irClass.modality != Modality.FINAL &&
+            !irClass.isEnumClass
+    ) {
       knownStable = false
     }
 
@@ -339,7 +371,7 @@ internal class ClassStabilityTransformer(private val pluginContext: IrPluginCont
     val superFqn = superClass.classFqName() ?: return false
     if (superFqn == "kotlin.Any") return true
     if (superFqn in moduleClassFqns) {
-      return computeStability(superClass).knownStable
+      return computeStability(superClass, asSuperclass = true).knownStable
     }
     // Compiled dependency: trust its @StabilityInferred, and treat an absent one as unstable. A
     // class outside a Compose-enabled compilation carries no stability information, and its private
@@ -374,15 +406,6 @@ internal class ClassStabilityTransformer(private val pluginContext: IrPluginCont
                   superType.classOrNull?.owner?.let { hasStableMarkedDescendant(it) } == true
             }
       }
-
-  // True only when the type IS one of the class's own type parameters, e.g. `val value: T`. Such a
-  // member's stability is carried by its bit in the mask and resolved by the consumer, so it must
-  // not clear knownStable. A container that merely mentions T, e.g. `List<T>`, is not delegated:
-  // List is unstable whatever T is, and must clear knownStable.
-  private fun isStabilityDelegatedToTypeParam(type: IrType, irClass: IrClass): Boolean {
-    val classifier = (type as? IrSimpleType)?.classifier ?: return false
-    return irClass.typeParameters.any { classifier == it.symbol }
-  }
 
   // Determine which type parameter bits are affected by a given type.
   // Returns a bitmask where bit N is set if type parameter N of the class appears in the type.
@@ -443,11 +466,19 @@ internal class ClassStabilityTransformer(private val pluginContext: IrPluginCont
       return true
     }
 
-    // Enums
+    // Enums, and the types Compose calls stable before it looks at their state or their arguments:
+    // those that carry a stable marker or have a supertype that does, and objects where its
+    // StabilityInferencer calls every object stable.
     val classSymbol = (type as? IrSimpleType)?.classOrNull
     if (classSymbol != null) {
       val owner = classSymbol.owner
       if (owner.isEnumClass) return true
+      val marked =
+          if (owner.isValue && !COMPOSE_VALUE_CLASS_MARKERS_INCLUDE_SUPERTYPES)
+              hasStableMarker(owner)
+          else hasStableMarkedDescendant(owner)
+      if (marked) return true
+      if (COMPOSE_OBJECTS_ARE_STABLE && owner.kind == ClassKind.OBJECT) return true
     }
 
     // Known stable types. The container-shaped ones are only as stable as their arguments:

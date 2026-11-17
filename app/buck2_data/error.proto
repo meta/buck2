@@ -316,6 +316,7 @@ enum ErrorTag {
   RE_CONNECTION = 1340;
   RE_USER_QUOTA = 1341;
   RE_USER_BAD_CERTS = 1342;
+  RE_ACTION_LOST_WORKERS = 1343;
 
   // Dice Errors
   // Value: https://fburl.com/code/5dxzaw41

@@ -2497,6 +2497,12 @@ def _windows_export_def(ctx: AnalysisContext, compile_ctx: CompileContext, stati
     )
     return deffile
 
+def _pdb_alt_path_flags(compile_ctx: CompileContext) -> list[str]:
+    linker_info = compile_ctx.cxx_toolchain_info.linker_info
+    if linker_info.type == LinkerType("windows") and linker_info.is_pdb_generated:
+        return ["/PDBALTPATH:%_PDB%"]
+    return []
+
 def rust_link_shared(
     ctx: AnalysisContext,
     compile_ctx: CompileContext,
@@ -2517,6 +2523,7 @@ def rust_link_shared(
     link_args = [
         LinkArgs(
             flags = cmd_args(
+                _pdb_alt_path_flags(compile_ctx),
                 compile_ctx.toolchain_info.linker_flags,
                 ctx.attrs.linker_flags,
             )
@@ -2653,6 +2660,7 @@ def rust_link_binary(
         # `binary_linker_flags` mirrors `cxx_executable`'s use of them.
         LinkArgs(
             flags = cmd_args(
+                _pdb_alt_path_flags(compile_ctx),
                 compile_ctx.cxx_toolchain_info.linker_info.binary_linker_flags,
                 compile_ctx.toolchain_info.linker_flags,
                 linker_flags,

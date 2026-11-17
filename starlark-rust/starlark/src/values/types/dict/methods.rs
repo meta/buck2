@@ -373,7 +373,7 @@ pub(crate) fn dict_methods(registry: &mut MethodsBuilder) {
         this: DictRef<'v>,
         heap: Heap<'v>,
     ) -> anyhow::Result<ValueOf<'v, ListType<Value<'v>>>> {
-        Ok(ValueOf::new_unchecked(heap.alloc_list_iter(this.values())))
+        Ok(heap.alloc_list_iter(this.values().map(ValueOf::from)))
     }
 }
 

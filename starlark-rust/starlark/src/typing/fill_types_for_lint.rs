@@ -705,7 +705,7 @@ impl<'a, 'v, 'f> GlobalTypesBuilder<'a, 'v, 'f> {
                                     .to_inner(),
                             )
                         })?;
-                        let args = self.heap.alloc_list(&args);
+                        let args = self.heap.alloc_list(&args).to_value();
                         let ret = self.from_type_expr_impl(i1)?;
                         let ret = TypeCompiled::from_ty(&ret, self.heap).to_inner();
                         match a.get_ref().at2(args, ret, self.heap) {

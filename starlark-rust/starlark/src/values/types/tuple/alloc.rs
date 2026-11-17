@@ -54,10 +54,7 @@ where
     type Type = TupleType<<T::Item as AllocValue<'v>>::Type>;
 
     fn alloc_value(self, heap: Heap<'v>) -> ValueOf<'v, Self::Type> {
-        // The items are `T::Item::Type` by `T::Item`'s declaration.
-        ValueOf::new_unchecked(
-            heap.alloc_tuple_iter(self.0.into_iter().map(|x| heap.alloc(x).to_value())),
-        )
+        heap.alloc_tuple_iter(self.0.into_iter().map(|x| heap.alloc(x)))
     }
 }
 
@@ -69,14 +66,7 @@ where
     type Type = TupleType<<T::Item as AllocFrozenValue<'fv>>::Type>;
 
     fn alloc_frozen_value(self, heap: FrozenHeap<'fv>) -> ValueOf<'fv, Self::Type> {
-        // The items are `T::Item::Type` by `T::Item`'s declaration.
-        ValueOf::new_unchecked(
-            heap.alloc_tuple_iter(
-                self.0
-                    .into_iter()
-                    .map(|x| x.alloc_frozen_value(heap).to_value()),
-            ),
-        )
+        heap.alloc_tuple_iter(self.0.into_iter().map(|x| heap.alloc(x)))
     }
 }
 

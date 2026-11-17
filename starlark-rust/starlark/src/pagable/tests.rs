@@ -686,7 +686,7 @@ fn test_frozen_list_round_trip() -> crate::Result<()> {
         flag: false,
         count: 20,
     });
-    let root = heap.alloc_list(&[a, b]);
+    let root = heap.alloc_list(&[a, b]).to_value();
     let heap_ref = heap.into_ref_named(TestHeapName::heap_name("test"));
 
     let restored = round_trip_owned(heap_ref, root)?;
@@ -828,7 +828,7 @@ fn test_heap_ref_dedup_round_trip() -> crate::Result<()> {
     let heap_a = ErasingHeap::new();
     heap_a.add_reference(heap_b_ref.owner());
     heap_a.add_reference(heap_c_ref.owner());
-    let root = heap_a.alloc_list(&[b_root, c_root]);
+    let root = heap_a.alloc_list(&[b_root, c_root]).to_value();
     let heap_a_ref = heap_a.into_ref_named(TestHeapName::heap_name("a"));
 
     let restored = round_trip_owned(heap_a_ref, root)?;

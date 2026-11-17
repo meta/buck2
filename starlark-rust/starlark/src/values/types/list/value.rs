@@ -465,7 +465,7 @@ impl<'v> StarlarkType<'v> for ListView<'v> {
     ) -> crate::Result<Value<'v>> {
         let xs = self.content();
         let res = apply_slice(xs, start, stop, stride)?;
-        Ok(heap.alloc_list(&res))
+        Ok(heap.alloc_list(&res).to_value())
     }
 
     unsafe fn iterate(&self, me: Value<'v>, _heap: Heap<'v>) -> crate::Result<Value<'v>> {
@@ -500,7 +500,7 @@ impl<'v> StarlarkType<'v> for ListView<'v> {
         for _ in 0..l {
             result.extend(content.iter());
         }
-        Some(Ok(heap.alloc_list(&result)))
+        Some(Ok(heap.alloc_list(&result).to_value()))
     }
 
     fn rmul(&self, lhs: Value<'v>, heap: Heap<'v>) -> Option<crate::Result<Value<'v>>> {

@@ -24,8 +24,10 @@ use crate::values::FreezeResult;
 use crate::values::Freezer;
 use crate::values::FrozenHeap;
 use crate::values::Heap;
+use crate::values::StarlarkTypeExpr;
 use crate::values::Tracer;
 use crate::values::Value;
+use crate::values::ValueOf;
 use crate::values::layout::avalue::AValue;
 use crate::values::layout::avalue::AValueImpl;
 use crate::values::layout::avalue::heap_copy_with_extra;
@@ -34,6 +36,7 @@ use crate::values::layout::avalue::starlark_deserialize_with_extra;
 use crate::values::layout::avalue::starlark_serialize_with_extra;
 use crate::values::layout::heap::maybe_uninit_slice_util::maybe_uninit_write_from_exact_size_iter;
 use crate::values::layout::heap::repr::AValueRepr;
+use crate::values::tuple::TupleType;
 use crate::values::types::tuple::value::Tuple;
 
 fn tuple_avalue<'v>(len: usize) -> AValueImpl<'v, AValueTuple> {
@@ -159,15 +162,20 @@ impl<'v> AValue<'v> for AValueFrozenTuple {
 impl<'fh> FrozenHeap<'fh> {
     /// Allocate a tuple with the given elements on this heap.
     pub(crate) fn alloc_tuple(self, elems: &[Value<'fh>]) -> Value<'fh> {
-        self.alloc_tuple_iter(elems.iter().copied())
+        self.alloc_tuple_values(elems.iter().copied())
     }
 
-    /// Allocate a tuple from iterator of elements.
-    pub(crate) fn alloc_tuple_iter(
+    /// Allocate a tuple of these items on this heap, typed by them.
+    #[inline]
+    pub(crate) fn alloc_tuple_iter<T: StarlarkTypeExpr<'fh>>(
         self,
-        elems: impl IntoIterator<Item = Value<'fh>>,
-    ) -> Value<'fh> {
-        let elems = elems.into_iter();
+        elems: impl IntoIterator<Item = ValueOf<'fh, T>>,
+    ) -> ValueOf<'fh, TupleType<T>> {
+        // The items are `T`s, so the tuple is a `tuple[T, ...]`.
+        ValueOf::new_unchecked(self.alloc_tuple_values(elems.into_iter().map(ValueOf::to_value)))
+    }
+
+    fn alloc_tuple_values(self, elems: impl Iterator<Item = Value<'fh>>) -> Value<'fh> {
         let (lower, upper) = elems.size_hint();
         if Some(lower) == upper {
             if lower == 0 {
@@ -181,7 +189,7 @@ impl<'fh> FrozenHeap<'fh> {
                 v.to_value()
             }
         } else {
-            self.alloc_tuple(&elems.collect::<Vec<_>>())
+            self.alloc_tuple_values(elems.collect::<Vec<_>>().into_iter())
         }
     }
 }
@@ -201,8 +209,17 @@ impl<'v> Heap<'v> {
         }
     }
 
-    pub(crate) fn alloc_tuple_iter(self, elems: impl IntoIterator<Item = Value<'v>>) -> Value<'v> {
-        let elems = elems.into_iter();
+    /// Allocate a tuple of these items, typed by them.
+    #[inline]
+    pub(crate) fn alloc_tuple_iter<T: StarlarkTypeExpr<'v>>(
+        self,
+        elems: impl IntoIterator<Item = ValueOf<'v, T>>,
+    ) -> ValueOf<'v, TupleType<T>> {
+        // The items are `T`s, so the tuple is a `tuple[T, ...]`.
+        ValueOf::new_unchecked(self.alloc_tuple_values(elems.into_iter().map(ValueOf::to_value)))
+    }
+
+    fn alloc_tuple_values(self, elems: impl Iterator<Item = Value<'v>>) -> Value<'v> {
         let (lower, upper) = elems.size_hint();
         if Some(lower) == upper {
             if lower == 0 {

@@ -15,7 +15,6 @@
  * limitations under the License.
  */
 
-use std::convert::Infallible;
 use std::mem;
 use std::mem::MaybeUninit;
 use std::ptr;
@@ -30,9 +29,11 @@ use crate::values::FreezeResult;
 use crate::values::Freezer;
 use crate::values::FrozenHeap;
 use crate::values::Heap;
+use crate::values::StarlarkTypeExpr;
 use crate::values::Trace;
 use crate::values::Tracer;
 use crate::values::Value;
+use crate::values::ValueOf;
 use crate::values::ValueTyped;
 use crate::values::layout::avalue::AValue;
 use crate::values::layout::avalue::AValueImpl;
@@ -41,6 +42,7 @@ use crate::values::layout::heap::maybe_uninit_slice_util::maybe_uninit_write_fro
 use crate::values::layout::heap::repr::AValueHeader;
 use crate::values::layout::heap::repr::AValueRepr;
 use crate::values::layout::heap::repr::ForwardPtr;
+use crate::values::list::ListType;
 use crate::values::list::value::ListGen;
 use crate::values::list::value::VALUE_EMPTY_FROZEN_LIST;
 use crate::values::types::array::Array;
@@ -179,13 +181,17 @@ impl<'v> AValue<'v> for AValueFrozenList {
 }
 
 impl<'fh> FrozenHeap<'fh> {
-    /// Allocate a list with the given elements on this heap.
-    pub(crate) fn alloc_list(self, elems: &[Value<'fh>]) -> Value<'fh> {
-        self.alloc_list_iter(elems.iter().copied())
+    /// Allocate a list of these items on this heap, typed by them.
+    #[inline]
+    pub(crate) fn alloc_list_iter<T: StarlarkTypeExpr<'fh>>(
+        self,
+        elems: impl IntoIterator<Item = ValueOf<'fh, T>>,
+    ) -> ValueOf<'fh, ListType<T>> {
+        // The items are `T`s, so the list is a `list[T]`.
+        ValueOf::new_unchecked(self.alloc_list_values(elems.into_iter().map(ValueOf::to_value)))
     }
 
-    pub(crate) fn alloc_list_iter(self, elems: impl IntoIterator<Item = Value<'fh>>) -> Value<'fh> {
-        let elems = elems.into_iter();
+    fn alloc_list_values(self, elems: impl Iterator<Item = Value<'fh>>) -> Value<'fh> {
         let (lower, upper) = elems.size_hint();
         if Some(lower) == upper {
             if lower == 0 {
@@ -199,36 +205,35 @@ impl<'fh> FrozenHeap<'fh> {
                 v.to_value()
             }
         } else {
-            self.alloc_list(&elems.collect::<Vec<_>>())
+            self.alloc_list_values(elems.collect::<Vec<_>>().into_iter())
         }
     }
 }
 
 impl<'v> Heap<'v> {
     /// Allocate a list with the given elements.
-    pub(crate) fn alloc_list(self, elems: &[Value<'v>]) -> Value<'v> {
+    pub(crate) fn alloc_list(self, elems: &[Value<'v>]) -> ValueOf<'v, ListType<Value<'v>>> {
         let array = self.alloc_array(elems.len());
         array.extend_from_slice(elems);
-        self.alloc_raw(list_avalue(array)).to_value()
+        // Every value is a `typing.Any`, so the list is a `list[typing.Any]`.
+        ValueOf::new_unchecked(self.alloc_raw(list_avalue(array)).to_value())
     }
 
-    /// Allocate a list with the given elements.
-    pub(crate) fn alloc_list_iter(self, elems: impl IntoIterator<Item = Value<'v>>) -> Value<'v> {
-        match self.try_alloc_list_iter(elems.into_iter().map(Ok::<_, Infallible>)) {
-            Ok(value) => value,
-        }
-    }
-
-    /// Allocate a list with the given elements.
-    pub(crate) fn try_alloc_list_iter<E>(
+    /// Allocate a list of these items, typed by them.
+    #[inline]
+    pub(crate) fn alloc_list_iter<T: StarlarkTypeExpr<'v>>(
         self,
-        elems: impl IntoIterator<Item = Result<Value<'v>, E>>,
-    ) -> Result<Value<'v>, E> {
-        let elems = elems.into_iter();
+        elems: impl IntoIterator<Item = ValueOf<'v, T>>,
+    ) -> ValueOf<'v, ListType<T>> {
+        // The items are `T`s, so the list is a `list[T]`.
+        ValueOf::new_unchecked(self.alloc_list_values(elems.into_iter().map(ValueOf::to_value)))
+    }
+
+    fn alloc_list_values(self, elems: impl Iterator<Item = Value<'v>>) -> Value<'v> {
         let array = self.alloc_array(0);
         let list = self.alloc_raw(list_avalue(array));
-        list.0.try_extend(elems, self)?;
-        Ok(list.to_value())
+        list.0.extend(elems, self);
+        list.to_value()
     }
 
     /// Allocate a list by concatenating two slices.

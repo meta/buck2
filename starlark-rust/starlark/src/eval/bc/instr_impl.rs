@@ -957,7 +957,7 @@ impl<'v> InstrNoFlowImpl<'v> for InstrListNPopImpl {
         (values, target): &(BcSlotInRange, BcSlotOut),
     ) -> crate::Result<()> {
         let items = frame.get_bc_slot_range(*values);
-        let value = eval.heap().alloc_list(items);
+        let value = eval.heap().alloc_list(items).to_value();
         frame.set_bc_slot(*target, value);
         Ok(())
     }
@@ -973,7 +973,7 @@ impl<'v> InstrNoFlowImpl<'v> for InstrListOfConstsImpl {
         _: BcPtrAddr,
         (values, target): &(Box<[Value<'v>]>, BcSlotOut),
     ) -> crate::Result<()> {
-        let list = eval.heap().alloc_list(values);
+        let list = eval.heap().alloc_list(values).to_value();
         frame.set_bc_slot(*target, list);
         Ok(())
     }
@@ -1064,7 +1064,7 @@ impl<'v> InstrNoFlowImpl<'v> for InstrListNewImpl {
         _: BcPtrAddr,
         target: &BcSlotOut,
     ) -> crate::Result<()> {
-        let list = eval.heap().alloc_list(&[]);
+        let list = eval.heap().alloc_list(&[]).to_value();
         frame.set_bc_slot(*target, list);
         Ok(())
     }

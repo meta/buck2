@@ -273,7 +273,7 @@ mod tests {
     fn one_of_each_tag<'v>(heap: Heap<'v>) -> [Value<'v>; 5] {
         [
             Value::new_empty_list(),
-            heap.alloc_list(&[]),
+            heap.alloc_list(&[]).to_value(),
             Value::testing_new_int(17),
             const_frozen_string!("frozen").at().to_value(),
             heap.alloc("unfrozen").to_value(),

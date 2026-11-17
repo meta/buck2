@@ -58,7 +58,7 @@ pub(crate) fn register_tuple(globals: &mut GlobalsBuilder) {
             }
 
             let it = a.to_value().iterate(heap)?;
-            Ok(ValueOf::new_unchecked(heap.alloc_tuple_iter(it)))
+            Ok(heap.alloc_tuple_iter(it.map(ValueOf::from)))
         } else {
             Ok(heap.alloc(AllocTuple::EMPTY))
         }

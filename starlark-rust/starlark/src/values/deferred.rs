@@ -683,7 +683,7 @@ mod tests {
             let values = [
                 heap.alloc("a").to_value(),
                 Value::testing_new_int(1),
-                heap.alloc_list(&[]),
+                heap.alloc_list(&[]).to_value(),
             ];
             let deferred = Deferred::new(ThinBoxSliceValue::from_iter(values));
             assert_eq!(deferred.len(), 3);

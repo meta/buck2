@@ -512,7 +512,7 @@ mod tests {
     #[test]
     fn tuple_cycle_freeze() {
         Module::with_temp_heap(|module| {
-            let list = module.heap().alloc_list(&[]);
+            let list = module.heap().alloc_list(&[]).to_value();
             let tuple = module.heap().alloc_tuple(&[list]);
             ListData::from_value_mut(list)
                 .unwrap()
@@ -549,7 +549,7 @@ mod tests {
             let reentrant = module
                 .heap()
                 .alloc_complex(ReentrantListFreeze(RefCell::new(None)));
-            let list = module.heap().alloc_list(&[reentrant]);
+            let list = module.heap().alloc_list(&[reentrant]).to_value();
             reentrant
                 .downcast_ref::<ReentrantListFreeze>()
                 .unwrap()

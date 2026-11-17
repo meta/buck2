@@ -1,3 +1,4 @@
+load("@prelude//jvm:launcher_runtime.bzl", "jvm_launcher_runtime")
 load("@prelude//toolchains/android/tools:build_rules.bzl", "buck_java_binary", "buck_java_library")
 load("@prelude//utils:source_listing.bzl", "source_listing")
 
@@ -12,6 +13,16 @@ buck_java_binary(
     deps = [
         ":bootstrapper_lib",
     ],
+)
+
+# The JDK with the bootstrapper linked in as a module, so that compiler daemons started from it
+# can load a Java AOT cache on any host.
+jvm_launcher_runtime(
+    name = "bootstrapper_runtime",
+    launcher_jar = ":bootstrapper",
+    main_class = "com.facebook.buck.cli.bootstrapper.ClassLoaderBootstrapper",
+    module = "com.facebook.buck.cli.bootstrapper",
+    visibility = ["PUBLIC"],
 )
 
 buck_java_library(

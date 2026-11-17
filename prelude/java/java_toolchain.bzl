@@ -50,10 +50,15 @@ JavaToolchainInfo = provider(
         "javac": provider_field(typing.Any, default = None),
         "javac_protocol": provider_field(typing.Any, default = None),
         "javacd": provider_field(typing.Any, default = None),
+        # Java AOT cache for one-shot javacd JVMs, trained with `javacd_launcher_runtime`.
+        "javacd_aot_cache": provider_field(typing.Any, default = None),
+        "javacd_aot_mode": provider_field(str, default = "on"),
         "javacd_debug_port": provider_field(typing.Any, default = None),
         "javacd_debug_target": provider_field(typing.Any, default = None),
         "javacd_jvm_args": provider_field(typing.Any, default = None),
         "javacd_jvm_args_target": provider_field(typing.Any, default = None),
+        # A `JvmLauncherRuntimeInfo` to start one-shot javacd JVMs from instead of `java -jar <bootstrapper>`.
+        "javacd_launcher_runtime": provider_field(typing.Any, default = None),
         "javacd_main_class": provider_field(typing.Any, default = None),
         "javacd_remote_worker": provider_field(typing.Any, default = None),
         "javacd_worker": provider_field(typing.Any, default = None),

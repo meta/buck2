@@ -51,6 +51,7 @@ load(
     "prepare_final_jar",
     "setup_dep_files",
 )
+load("@prelude//jvm:launcher_runtime.bzl", "JvmLauncherRuntimeInfo")
 load("@prelude//utils:expect.bzl", "expect")
 
 def create_jar_artifact_javacd(
@@ -320,6 +321,9 @@ def _define_javacd_action(
         extra_jvm_args = java_toolchain.javacd_jvm_args,
         extra_jvm_args_target = java_toolchain.javacd_jvm_args_target,
         java_runtime_version = java_toolchain.java_runtime_version,
+        launcher_runtime = java_toolchain.javacd_launcher_runtime[JvmLauncherRuntimeInfo] if java_toolchain.javacd_launcher_runtime else None,
+        aot_cache = java_toolchain.javacd_aot_cache,
+        aot_mode = java_toolchain.javacd_aot_mode,
     )
 
     post_build_params = {}

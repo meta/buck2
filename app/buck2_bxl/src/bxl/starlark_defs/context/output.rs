@@ -59,17 +59,14 @@ use starlark::values::UnpackValue;
 use starlark::values::Value;
 use starlark::values::ValueOf;
 use starlark::values::dict::AllocDict;
-use starlark::values::dict::DictRef;
 use starlark::values::dict::DictType;
 use starlark::values::list::AllocList;
-use starlark::values::list::ListRef;
 use starlark::values::list::ListType;
 use starlark::values::none::NoneType;
 use starlark::values::record::Record;
-use starlark::values::set::SetRef;
+use starlark::values::set::SetType;
 use starlark::values::starlark_value;
 use starlark::values::structs::Struct;
-use starlark::values::tuple::TupleRef;
 use starlark::values::tuple::TupleType;
 
 use crate::bxl::starlark_defs::artifacts::EnsuredArtifact;
@@ -466,71 +463,89 @@ impl StarlarkOutputStream {
             }
         }
 
+        /// What is serialized here: an ensured artifact as its path, and a container item by
+        /// item, to get to the ensured artifacts inside. Any other value is serialized as its
+        /// own `Serialize` says.
+        #[derive(UnpackValue)]
+        enum SerializedHere<'v> {
+            EnsuredArtifact(ValueOf<'v, EnsuredArtifact>),
+            EnsuredArtifactGroup(ValueOf<'v, EnsuredArtifactGroup<'v>>),
+            List(ValueOf<'v, ListType<Value<'v>>>),
+            Tuple(ValueOf<'v, TupleType<Value<'v>>>),
+            Set(ValueOf<'v, SetType<Value<'v>>>),
+            Dict(ValueOf<'v, DictType<Value<'v>, Value<'v>>>),
+            Struct(ValueOf<'v, Struct<'v>>),
+            Record(ValueOf<'v, Record<'v>>),
+        }
+
         impl Serialize for SerializeValue<'_, '_, '_, '_> {
             fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
             where
                 S: Serializer,
             {
-                if let Some(ensured) = <&EnsuredArtifact>::unpack_value(self.value)
-                    .map_err(|e| serde::ser::Error::custom(format!("{e:#}")))?
-                {
-                    let path = get_artifact_path_display(
-                        ensured.get_artifact_path(),
-                        ensured.abs(),
-                        self.project_fs,
-                        self.artifact_fs,
-                    )
-                    .map_err(|err| serde::ser::Error::custom(format!("{err:#}")))?;
-                    serializer.serialize_str(&path)
-                } else if let Some(ensured) = <&EnsuredArtifactGroup>::unpack_value(self.value)
-                    .map_err(|e| serde::ser::Error::custom(format!("{e:#}")))?
-                {
-                    let mut seq_ser = serializer.serialize_seq(None)?;
-
-                    self.async_ctx
-                        .borrow_mut()
-                        .via(|dice| {
-                            ensured
-                                .visit_artifact_path_without_associated_deduped(
-                                    |artifact_path, abs| {
-                                        let path = get_artifact_path_display(
-                                            artifact_path,
-                                            abs,
-                                            self.project_fs,
-                                            self.artifact_fs,
-                                        )?;
-                                        seq_ser.serialize_element(&path).map_err(|err| {
-                                            buck2_error!(
-                                                buck2_error::ErrorTag::Tier0,
-                                                "{}",
-                                                format!("{:#}", err)
-                                            )
-                                        })?;
-                                        Ok(())
-                                    },
-                                    dice,
-                                )
-                                .boxed_local()
-                        })
+                match SerializedHere::unpack_value_opt(self.value) {
+                    Some(SerializedHere::EnsuredArtifact(ensured)) => {
+                        let path = get_artifact_path_display(
+                            ensured.get_artifact_path(),
+                            ensured.abs(),
+                            self.project_fs,
+                            self.artifact_fs,
+                        )
                         .map_err(|err| serde::ser::Error::custom(format!("{err:#}")))?;
-                    seq_ser.end()
-                } else if let Some(x) = ListRef::from_value(self.value) {
-                    serializer.collect_seq(x.iter().map(|v| self.with_value(v)))
-                } else if let Some(x) = TupleRef::from_value(self.value) {
-                    serializer.collect_seq(x.iter().map(|v| self.with_value(v)))
-                } else if let Some(x) = SetRef::from_value(self.value) {
-                    serializer.collect_seq(x.iter().map(|v| self.with_value(v)))
-                } else if let Some(x) = DictRef::from_value(self.value) {
-                    serializer.collect_map(
-                        x.iter()
+                        serializer.serialize_str(&path)
+                    }
+                    Some(SerializedHere::EnsuredArtifactGroup(ensured)) => {
+                        let mut seq_ser = serializer.serialize_seq(None)?;
+
+                        self.async_ctx
+                            .borrow_mut()
+                            .via(|dice| {
+                                ensured
+                                    .visit_artifact_path_without_associated_deduped(
+                                        |artifact_path, abs| {
+                                            let path = get_artifact_path_display(
+                                                artifact_path,
+                                                abs,
+                                                self.project_fs,
+                                                self.artifact_fs,
+                                            )?;
+                                            seq_ser.serialize_element(&path).map_err(|err| {
+                                                buck2_error!(
+                                                    buck2_error::ErrorTag::Tier0,
+                                                    "{}",
+                                                    format!("{:#}", err)
+                                                )
+                                            })?;
+                                            Ok(())
+                                        },
+                                        dice,
+                                    )
+                                    .boxed_local()
+                            })
+                            .map_err(|err| serde::ser::Error::custom(format!("{err:#}")))?;
+                        seq_ser.end()
+                    }
+                    Some(SerializedHere::List(x)) => {
+                        serializer.collect_seq(x.list().iter().map(|v| self.with_value(v)))
+                    }
+                    Some(SerializedHere::Tuple(x)) => {
+                        serializer.collect_seq(x.tuple().iter().map(|v| self.with_value(v)))
+                    }
+                    Some(SerializedHere::Set(x)) => {
+                        serializer.collect_seq(x.set().iter().map(|v| self.with_value(v)))
+                    }
+                    Some(SerializedHere::Dict(x)) => serializer.collect_map(
+                        x.dict()
+                            .iter()
                             .map(|(k, v)| (self.with_value(k), self.with_value(v))),
-                    )
-                } else if let Some(x) = Struct::from_value(self.value) {
-                    serializer.collect_map(x.iter().map(|(k, v)| (k, self.with_value(v))))
-                } else if let Some(x) = Record::from_value(self.value) {
-                    serializer.collect_map(x.iter().map(|(k, v)| (k, self.with_value(v))))
-                } else {
-                    self.value.serialize(serializer)
+                    ),
+                    Some(SerializedHere::Struct(x)) => {
+                        serializer.collect_map(x.iter().map(|(k, v)| (k, self.with_value(v))))
+                    }
+                    Some(SerializedHere::Record(x)) => {
+                        serializer.collect_map(x.iter().map(|(k, v)| (k, self.with_value(v))))
+                    }
+                    None => self.value.serialize(serializer),
                 }
             }
         }

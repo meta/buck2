@@ -29,6 +29,7 @@ import org.jetbrains.kotlin.psi.KtClassBody
 import org.jetbrains.kotlin.psi.KtClassOrObject
 import org.jetbrains.kotlin.psi.KtDelegatedSuperTypeEntry
 import org.jetbrains.kotlin.psi.KtFile
+import org.jetbrains.kotlin.psi.KtImportDirective
 import org.jetbrains.kotlin.psi.KtNameReferenceExpression
 import org.jetbrains.kotlin.psi.KtNullableType
 import org.jetbrains.kotlin.psi.KtParameterList
@@ -111,6 +112,29 @@ class GenerationContext {
    * no candidate by name and would otherwise resolve to nothing.
    */
   val importAliasQualifiers: Map<String, FullTypeQualifier>
+
+  /** [importAliasQualifiers] split by the file that wrote the alias: an alias binds only there. */
+  val importAliasQualifiersByFile: Map<KtFile, Map<String, FullTypeQualifier>>
+
+  /**
+   * Per file, the segments of the imports that the file writes only under an alias. `import a.B as
+   * Alias` binds `Alias` alone, so in that file the plain `B` never resolves through `a.B`.
+   */
+  val aliasOnlyImportsByFile: Map<KtFile, Set<List<String>>>
+
+  /**
+   * The segments of the imports that every file writing them renames: no file of the module binds
+   * their plain name.
+   */
+  val aliasOnlyImports: Set<List<String>>
+
+  /**
+   * Per file, the plain names that its renaming imports give up: the last name of each import the
+   * file writes under an alias, unless the file also imports something of that name without one.
+   * Such a name means whatever it would mean without the import, a type of the file's own package
+   * included.
+   */
+  val aliasHiddenNamesByFile: Map<KtFile, Set<String>>
   val typeAliasSymbol: Set<String>
   val parameterNames: Set<String>
 
@@ -146,6 +170,10 @@ class GenerationContext {
       this.typeValueArgs = emptyMap<String, Int>()
       this.importAlias = emptySet()
       this.importAliasQualifiers = emptyMap()
+      this.importAliasQualifiersByFile = emptyMap()
+      this.aliasOnlyImportsByFile = emptyMap()
+      this.aliasOnlyImports = emptySet()
+      this.aliasHiddenNamesByFile = emptyMap()
       this.fullQualifierTypes = emptySet()
       this.fullQualifierTypesByFile = emptyMap()
       this.usedUserTypes = emptySet()
@@ -165,6 +193,40 @@ class GenerationContext {
                 directive.aliasName?.let { alias -> alias to directive.toImportedClass() }
               }
               .toMap()
+      this.importAliasQualifiersByFile = importsByFile.mapValues { (_, imports) ->
+        imports
+            .mapNotNull { directive ->
+              directive.aliasName?.let { alias -> alias to directive.toImportedClass() }
+            }
+            .toMap()
+      }
+      // `import a.B as B` keeps its plain name; any other alias gives it up.
+      val explicitByFile = importsByFile.mapValues { (_, imports) ->
+        imports.filterNot { it.isAllUnder }
+      }
+      val renamingByFile = explicitByFile.mapValues { (_, imports) ->
+        imports.filter { it.renames() }
+      }
+      val plainByFile = explicitByFile.mapValues { (_, imports) ->
+        imports.filterNot { it.renames() }
+      }
+      this.aliasOnlyImportsByFile =
+          importsByFile.keys.associateWith { file ->
+            val plain =
+                plainByFile.getValue(file).mapTo(mutableSetOf()) {
+                  it.toImportedClass().segments
+                }
+            renamingByFile.getValue(file).mapTo(mutableSetOf()) { it.toImportedClass().segments } -
+                plain
+          }
+      val plainAnywhere =
+          plainByFile.values.flatten().mapTo(mutableSetOf()) { it.toImportedClass().segments }
+      this.aliasOnlyImports = aliasOnlyImportsByFile.values.flatten().toSet() - plainAnywhere
+      this.aliasHiddenNamesByFile =
+          importsByFile.keys.associateWith { file ->
+            val plain = plainByFile.getValue(file).mapNotNullTo(mutableSetOf()) { it.plainName() }
+            renamingByFile.getValue(file).mapNotNullTo(mutableSetOf()) { it.plainName() } - plain
+          }
 
       val dataInClasspath: Pair<Set<FullTypeQualifier>, Set<List<String>>> =
           parseClasspathFileClassesAndPackages(classpath)
@@ -465,12 +527,13 @@ class GenerationContext {
           .toSet()
 
   /**
-   * The candidate an unqualified [simpleName] refers to.
+   * The candidate an unqualified [simpleName] in [file] refers to.
    *
-   * `import a.B as Alias` binds `Alias` and does not bind `B`, so matching an import by the last
-   * name of its FQN is only correct for an import that carries no alias. An alias resolves to the
-   * type it names; every other name prefers an unaliased import and only then falls back to the
-   * historical last-name match, so a name that resolves today keeps resolving.
+   * `import a.B as Alias` binds `Alias` and does not bind `B`. An alias resolves to the type it
+   * names. Any other name resolves by the last name of an import's FQN, but never through an import
+   * that [file] writes only under an alias: the plain `B` then means whatever it would mean without
+   * that import, such as a type of the file's own package, which the caller handles as unresolved.
+   * Without a [file], only imports that every file renames are passed over.
    *
    * An alias naming a type the caller's own filter excluded stays unresolved: [candidates] is the
    * authority on what this pass may act on.
@@ -478,17 +541,21 @@ class GenerationContext {
   fun resolveImportedType(
       candidates: Collection<FullTypeQualifier>,
       simpleName: String,
+      file: KtFile? = null,
   ): FullTypeQualifier? {
-    importAliasQualifiers[simpleName]?.let { aliased ->
+    val aliases =
+        if (file == null) importAliasQualifiers else importAliasQualifiersByFile[file].orEmpty()
+    aliases[simpleName]?.let { aliased ->
       candidates
           .find { it.segments == aliased.segments }
           ?.let {
             return it
           }
     }
-    val byLastName = candidates.filter { it.names.last() == simpleName }
+    val renamed = if (file == null) aliasOnlyImports else aliasOnlyImportsByFile[file].orEmpty()
+    val byLastName = candidates.filter { it.names.last() == simpleName && it.segments !in renamed }
     return byLastName.firstOrNull { candidate ->
-      importAliasQualifiers.values.none { it.segments == candidate.segments }
+      aliases.values.none { it.segments == candidate.segments }
     } ?: byLastName.firstOrNull()
   }
 
@@ -509,6 +576,15 @@ class GenerationContext {
     return packageName()?.split(".").orEmpty()
   }
 }
+
+/** Whether this import binds a name other than its own last name. */
+private fun KtImportDirective.renames(): Boolean {
+  val alias = aliasName ?: return false
+  return alias != importedFqName?.shortName()?.asString()
+}
+
+/** The last name of the imported FQN: the name an import without an alias binds. */
+private fun KtImportDirective.plainName(): String? = importedFqName?.shortName()?.asString()
 
 private fun FullTypeQualifier.isThroughCompanion(): Boolean {
   for (i in 0 until names.size - 1) {

@@ -54,7 +54,12 @@ class InterfaceStubsGenerator : StubsGenerator {
 
     for (iType in context.interfaceTypes + multiBoundStubs) {
       val qualifierList = iType.calculateQualifierList()
-      val imp = context.resolveImportedType(candidatesFor(iType), qualifierList.first())
+      val imp =
+          context.resolveImportedType(
+              candidatesFor(iType),
+              qualifierList.first(),
+              iType.containingKtFile,
+          )
       var pkg: String
       var name: String
       var inners: List<String>
@@ -113,7 +118,7 @@ class InterfaceStubsGenerator : StubsGenerator {
       type: KtUserType,
   ): Boolean {
     val qualifierList = type.calculateQualifierList()
-    val imp = context.resolveImportedType(candidates, qualifierList.first())
+    val imp = context.resolveImportedType(candidates, qualifierList.first(), type.containingKtFile)
     return when {
       imp != null ->
           (imp.names.drop(1) + qualifierList.drop(1)).isNotEmpty() ||
@@ -134,7 +139,7 @@ class InterfaceStubsGenerator : StubsGenerator {
       first: KtUserType,
   ): Boolean {
     val qualifierList = first.calculateQualifierList()
-    val imp = context.resolveImportedType(candidates, qualifierList.first())
+    val imp = context.resolveImportedType(candidates, qualifierList.first(), first.containingKtFile)
     val pkg: String
     val name: String
     val inners: List<String>

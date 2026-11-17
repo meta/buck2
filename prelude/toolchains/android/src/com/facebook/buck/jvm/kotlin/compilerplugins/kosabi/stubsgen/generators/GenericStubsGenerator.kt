@@ -169,7 +169,7 @@ private fun GenerationContext.stubTarget(
     pooledCandidates: Set<FullTypeQualifier>,
 ): StubTarget? {
   val candidates = candidatesByFile[file] ?: pooledCandidates
-  val imported = resolveImportedType(candidates, writtenQualifier.first())
+  val imported = resolveImportedType(candidates, writtenQualifier.first(), file)
   val imp: FullTypeQualifier
   val innerClassNames: List<String>
   if (imported != null) {

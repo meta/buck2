@@ -1542,17 +1542,8 @@ async fn start_new_buckd_and_connect(
         .start_server(options, &deadline)
         .await
         .buck_error_context("Error starting buck2 daemon")?;
-    // It might take a little bit for the daemon server to start up. We could wait for the buckd.info
-    // file to appear, but it's just as easy to just retry the connection itself.
 
-    let channel = deadline
-        .retrying(
-            "connect to buckd after server start",
-            Duration::from_millis(5),
-            Duration::from_millis(100),
-            || async { BuckdProcessInfo::load_and_create_channel(&paths.daemon_dir()?).await },
-        )
-        .await?;
+    let channel = connect_to_started_daemon(&paths.daemon_dir()?, &deadline).await?;
 
     let client = channel.upgrade().await?;
 
@@ -1572,6 +1563,33 @@ async fn start_new_buckd_and_connect(
         .await?;
 
     Ok(client)
+}
+
+/// Connects to the daemon that was just started in `daemon_dir`, waiting for it to come up.
+///
+/// Stops waiting once the daemon has reported that it failed to start: it exits after writing its
+/// error log, possibly before this client's first attempt, and nothing would ever answer.
+async fn connect_to_started_daemon(
+    daemon_dir: &DaemonDir,
+    deadline: &StartupDeadline,
+) -> buck2_error::Result<BuckdChannel> {
+    deadline
+        .retrying(
+            "connect to buckd after server start",
+            Duration::from_millis(5),
+            Duration::from_millis(100),
+            // We could wait for the buckd.info file to appear, but it's just as easy to just retry
+            // the connection itself.
+            || async {
+                match BuckdProcessInfo::load_and_create_channel(daemon_dir).await {
+                    Ok(channel) => Ok(Ok(channel)),
+                    // Retrying cannot succeed.
+                    Err(e) if daemon_dir.buckd_error_log().exists() => Ok(Err(e)),
+                    Err(e) => Err(e),
+                }
+            },
+        )
+        .await?
 }
 
 #[allow(clippy::large_enum_variant)]
@@ -2561,5 +2579,25 @@ mod tests {
             .to_string(),
             "Daemon process info from /tmp/buckd/buckd.info:\n    daemon dir: /tmp/buckd\n    status: unavailable: failed to load buckd.info (internal error)"
         );
+    }
+
+    /// A daemon that fails to start can be gone before the client's first attempt to connect.
+    /// Waiting out the startup deadline for it only delays reporting its error.
+    #[tokio::test]
+    async fn test_does_not_wait_for_a_daemon_that_failed_to_start() {
+        let tmp = tempfile::tempdir().unwrap();
+        let daemon_dir = DaemonDir {
+            path: AbsNormPathBuf::new(tmp.path().to_owned()).unwrap(),
+        };
+        std::fs::write(daemon_dir.buckd_error_log(), "{}").unwrap();
+
+        let deadline = StartupDeadline::duration_from_now(Duration::from_secs(3600)).unwrap();
+        let connected = tokio::time::timeout(
+            Duration::from_secs(60),
+            connect_to_started_daemon(&daemon_dir, &deadline),
+        )
+        .await
+        .expect("Waited for a daemon that reported that it failed to start");
+        assert!(connected.is_err());
     }
 }

@@ -178,7 +178,13 @@ pub struct StarlarkCallable<
     'v,
     P: StarlarkCallableParamSpec = StarlarkCallableParamAny,
     R: StarlarkTypeExpr<'static> = Value<'static>,
->(pub Value<'v>, PhantomData<PhantomData<AtomicPtr<(P, R)>>>);
+>(
+    /// A callable. Only this module builds a `StarlarkCallable`, and only from a value it has
+    /// checked or from another `StarlarkCallable`, which is what lets one be turned into a
+    /// [`ValueOf`] without checking again.
+    Value<'v>,
+    PhantomData<PhantomData<AtomicPtr<(P, R)>>>,
+);
 
 impl<'v, P: StarlarkCallableParamSpec, R: StarlarkTypeExpr<'static>> Copy
     for StarlarkCallable<'v, P, R>
@@ -230,8 +236,8 @@ unsafe impl<'v, P: StarlarkCallableParamSpec, R: StarlarkTypeExpr<'static>> Trac
 }
 
 impl<'v, P: StarlarkCallableParamSpec, R: StarlarkTypeExpr<'static>> StarlarkCallable<'v, P, R> {
-    /// Wrap the value.
-    pub fn unchecked_new(value: Value<'v>) -> Self {
+    /// Wrap a value that is callable.
+    fn unchecked_new(value: Value<'v>) -> Self {
         StarlarkCallable(value, PhantomData)
     }
 
@@ -339,7 +345,8 @@ impl<'v, P: StarlarkCallableParamSpec, R: StarlarkTypeExpr<'static>> Freeze<'v>
 #[derive(Allocative)]
 #[allocative(bound = "")]
 pub struct StarlarkCallableChecked<'v, P: StarlarkCallableParamSpec, R: StarlarkTypeExpr<'static>>(
-    pub Value<'v>,
+    /// A callable, as for [`StarlarkCallable`]: only the conversion below builds one.
+    Value<'v>,
     PhantomData<AtomicPtr<(P, R)>>,
 );
 

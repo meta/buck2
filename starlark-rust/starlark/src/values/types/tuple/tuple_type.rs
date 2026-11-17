@@ -95,7 +95,7 @@ impl<'v, T: StarlarkTypeExpr<'v>> ValueOf<'v, TupleType<T>> {
     {
         self.tuple()
             .iter()
-            .map(|x| ValueOf::<T>::new_unchecked(x).get())
+            .map(|x| T::get(x).expect("an item of a tuple checked as a `tuple[T, ...]` is a `T`"))
     }
 
     /// The items, each converted by `U`, a conversion from `T`. Each is re-checked, as for

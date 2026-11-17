@@ -236,12 +236,12 @@ impl<'v> From<Value<'v>> for ValueOf<'v, Value<'v>> {
 }
 
 /// A typed value of a single-representation type is a handle to the type by construction.
-impl<'v, T: StarlarkValue<'v> + StarlarkType<'v, Get = ValueTyped<'v, T>>> From<ValueTyped<'v, T>>
+impl<'v, T: StarlarkValue<'v, Type = T> + StarlarkType<'v>> From<ValueTyped<'v, T>>
     for ValueOf<'v, T>
 {
     #[inline]
     fn from(value: ValueTyped<'v, T>) -> Self {
-        Self::new_unchecked(value.to_value())
+        Self::from_representation(value)
     }
 }
 

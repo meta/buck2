@@ -317,13 +317,14 @@ fn test_radd() {
         type Error = crate::Error;
 
         fn unpack(
-            value: ValueOf<'v, Self::Type>,
+            _value: ValueOf<'v, Self::Type>,
             get: <Self::Type as StarlarkTypeExpr<'v>>::Get,
         ) -> crate::Result<Self> {
             match get {
                 Either::Left(x) => Ok(x.as_ref().clone()),
-                Either::Right(_) => Ok(Select(
-                    ValueOf::<ListOrTupleType<IntView>>::new_unchecked(value.to_value())
+                Either::Right(items) => Ok(Select(
+                    items
+                        .either(ValueOf::left, ValueOf::right)
                         .try_items::<IntView>()
                         .map(|x| x?.to_integer())
                         .collect::<crate::Result<_>>()?,

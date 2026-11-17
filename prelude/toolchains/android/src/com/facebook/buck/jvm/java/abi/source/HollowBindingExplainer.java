@@ -40,10 +40,19 @@ import org.jspecify.annotations.Nullable;
  * supertype hierarchy can bind a hollow element with no type parameters, and building the
  * parameterized type then throws {@code IllegalArgumentException: Incorrect number of type
  * arguments} naming nothing fixable. The explanation names the unavailable supertypes of the
- * enclosing class and the fix.
+ * enclosing class and the fix: writing the reference so that it does not depend on them, or, when
+ * no spelling can do that, the providers to add.
  */
 @Nullsafe(Nullsafe.Mode.LOCAL)
 class HollowBindingExplainer {
+  /** Spellings that do not depend on the enclosing class's supertypes come before the providers. */
+  private static final String REMEDY =
+      "To fix, refer to the member type through the type that declares it, with a qualified name"
+          + " (for example Map.Entry<String, String> for an Entry inherited from java.util.Map) or"
+          + " a single-type import of it; the library build's \"Inherited member type\" error"
+          + " gives the spelling. Add the BUCK targets providing these types to"
+          + " source_only_abi_deps only when that error says no spelling can name it.\n";
+
   static IllegalStateException explain(
       Trees javacTrees,
       @Nullable TreePath treePath,
@@ -99,7 +108,7 @@ class HollowBindingExplainer {
               "Further unreadable supertype links (names as spelled): %s.\n",
               String.join(", ", approximate)));
     }
-    message.append("To fix, add the BUCK targets providing these types to source_only_abi_deps.\n");
+    message.append(REMEDY);
     message.append("KOSABI_JASABI_MISSING_SUPERTYPES: ").append(String.join(", ", broken));
     return message.toString();
   }
@@ -115,10 +124,11 @@ class HollowBindingExplainer {
         "Source-only ABI generation cannot emit a correct ABI (in %s): resolving a generic"
             + " reference bound a hollow %s with no type parameters, but no direct supertype"
             + " link of the enclosing class is unreadable. The hierarchy may be incomplete"
-            + " deeper down; add the BUCK targets providing its supertypes to"
-            + " source_only_abi_deps.\n"
+            + " deeper down.\n"
+            + REMEDY
             + "KOSABI_JASABI_MISSING_SUPERTYPES: ",
-        file, hollowName);
+        file,
+        hollowName);
   }
 
   private static @Nullable TreePath enclosingClassPath(TreePath path) {

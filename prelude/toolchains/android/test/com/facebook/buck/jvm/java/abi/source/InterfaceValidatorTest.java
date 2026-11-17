@@ -540,8 +540,12 @@ public class InterfaceValidatorTest extends CompilerTreeApiTest {
                     + " supertypes during source-only ABI generation.",
                 "  State state;",
                 "  ^",
-                "  Use the fully qualified type or add the providers of the following classes to"
-                    + " source_only_abi_deps in //:rule.",
+                "  Refer to it without those supertypes: write Thread.State or"
+                    + " java.lang.Thread.State, or add import java.lang.Thread.State; and write"
+                    + " State.",
+                "  To write Thread.State automatically, run: arc aast codemod --jast"
+                    + " qualifyinheritedmembertypes //:rule -- -member-types"
+                    + " java.lang.Thread.State",
                 "  KOSABI_JASABI_MISSING_SUPERTYPES: com.facebook.bar.Bar"));
   }
 
@@ -572,8 +576,12 @@ public class InterfaceValidatorTest extends CompilerTreeApiTest {
                     + " supertypes during source-only ABI generation.",
                 "  State state;",
                 "  ^",
-                "  Use the fully qualified type or add the providers of the following classes to"
-                    + " source_only_abi_deps in //:rule.",
+                "  Refer to it without those supertypes: write Thread.State or"
+                    + " java.lang.Thread.State, or add import java.lang.Thread.State; and write"
+                    + " State.",
+                "  To write Thread.State automatically, run: arc aast codemod --jast"
+                    + " qualifyinheritedmembertypes //:rule -- -member-types"
+                    + " java.lang.Thread.State",
                 "  KOSABI_JASABI_MISSING_SUPERTYPES: com.facebook.bar.Bar"));
   }
 
@@ -607,8 +615,11 @@ public class InterfaceValidatorTest extends CompilerTreeApiTest {
                     + " missing supertypes during source-only ABI generation.",
                 "  Inner inner;",
                 "  ^",
-                "  Use the fully qualified type or add the providers of the following classes to"
-                    + " source_only_abi_deps in //:rule.",
+                "  Refer to it without those supertypes: write Base.Inner (with import"
+                    + " com.facebook.base.Base;) or com.facebook.base.Base.Inner.",
+                "  To write Base.Inner automatically, run: arc aast codemod --jast"
+                    + " qualifyinheritedmembertypes //:rule -- -member-types"
+                    + " com.facebook.base.Base.Inner",
                 "  KOSABI_JASABI_MISSING_SUPERTYPES: com.facebook.bar.Bar"));
   }
 
@@ -642,8 +653,11 @@ public class InterfaceValidatorTest extends CompilerTreeApiTest {
                     + " supertypes during source-only ABI generation.",
                 "    State state;",
                 "    ^",
-                "  Use the fully qualified type or add the providers of the following classes to"
-                    + " source_only_abi_deps in //:rule.",
+                "  Refer to it without those supertypes: write Thread.State or"
+                    + " java.lang.Thread.State.",
+                "  To write Thread.State automatically, run: arc aast codemod --jast"
+                    + " qualifyinheritedmembertypes //:rule -- -member-types"
+                    + " java.lang.Thread.State",
                 "  KOSABI_JASABI_MISSING_SUPERTYPES: com.facebook.bar.Bar"));
   }
 
@@ -1410,7 +1424,262 @@ public class InterfaceValidatorTest extends CompilerTreeApiTest {
                     + " supertypes during source-only ABI generation.",
                 "  Entry<String, String> entry;",
                 "  ^",
-                "  Use the fully qualified type or add the providers of the following classes to"
+                "  Refer to it without those supertypes: write Map.Entry (with import"
+                    + " java.util.Map;) or java.util.Map.Entry, or add import java.util.Map.Entry;"
+                    + " and write Entry.",
+                "  To write Map.Entry automatically, run: arc aast codemod --jast"
+                    + " qualifyinheritedmembertypes //:rule -- -member-types java.util.Map.Entry",
+                "  KOSABI_JASABI_MISSING_SUPERTYPES: com.facebook.bar.Bar"));
+  }
+
+  private void withSamePackageDeclaringType() throws IOException {
+    taskListenerFactory.setInheritedMemberTypesOnly(true);
+    withClasspath(
+        ImmutableMap.of(
+            "com/facebook/foo/Base.java",
+            "package com.facebook.foo; public class Base { public interface Inner {} }",
+            "com/facebook/bar/Bar.java",
+            "package com.facebook.bar; public class Bar extends com.facebook.foo.Base {}"));
+  }
+
+  @Test
+  public void testInheritedMemberMessageForSamePackageDeclaringType() throws IOException {
+    withSamePackageDeclaringType();
+    testCompiler.setAllowCompilationErrors(true);
+    compileWithValidation(
+        Joiner.on('\n')
+            .join(
+                "package com.facebook.foo;",
+                "class Foo extends com.facebook.bar.Bar {",
+                "  public Inner inner;",
+                "}"));
+    assertError(
+        Joiner.on('\n')
+            .join(
+                "Foo.java:3: error: Inherited member type com.facebook.foo.Base.Inner requires"
+                    + " missing supertypes during source-only ABI generation.",
+                "  public Inner inner;",
+                "         ^",
+                "  Refer to it without those supertypes: write Base.Inner or"
+                    + " com.facebook.foo.Base.Inner, or add import com.facebook.foo.Base.Inner; and"
+                    + " write Inner.",
+                "  To write Base.Inner automatically, run: arc aast codemod --jast"
+                    + " qualifyinheritedmembertypes //:rule -- -member-types"
+                    + " com.facebook.foo.Base.Inner",
+                "  KOSABI_JASABI_MISSING_SUPERTYPES: com.facebook.bar.Bar, com.facebook.foo.Base"));
+  }
+
+  @Test
+  public void testSamePackageDeclaringTypeSpellingSucceeds() throws IOException {
+    withSamePackageDeclaringType();
+    compileWithValidation(
+        "package com.facebook.foo; class Foo extends com.facebook.bar.Bar { public Base.Inner"
+            + " inner; }");
+    assertNoErrors();
+  }
+
+  private void withNestedDeclaringType() throws IOException {
+    taskListenerFactory.setInheritedMemberTypesOnly(true);
+    withClasspath(
+        ImmutableMap.of(
+            "com/facebook/base/Top.java",
+            "package com.facebook.base; public class Top { public static class Base { public"
+                + " interface Inner {} } }",
+            "com/facebook/bar/Bar.java",
+            "package com.facebook.bar; public class Bar extends com.facebook.base.Top.Base {}"));
+    taskListenerFactory.addTargetAvailableForSourceOnlyAbi("//com/facebook/base:base");
+  }
+
+  @Test
+  public void testInheritedMemberMessageForNestedDeclaringType() throws IOException {
+    withNestedDeclaringType();
+    testCompiler.setAllowCompilationErrors(true);
+    compileWithValidation(
+        Joiner.on('\n')
+            .join(
+                "package com.facebook.foo;",
+                "class Foo extends com.facebook.bar.Bar {",
+                "  public Inner inner;",
+                "}"));
+    assertError(
+        Joiner.on('\n')
+            .join(
+                "Foo.java:3: error: Inherited member type com.facebook.base.Top.Base.Inner requires"
+                    + " missing supertypes during source-only ABI generation.",
+                "  public Inner inner;",
+                "         ^",
+                "  Refer to it without those supertypes: write Top.Base.Inner (with import"
+                    + " com.facebook.base.Top;) or com.facebook.base.Top.Base.Inner, or add import"
+                    + " com.facebook.base.Top.Base.Inner; and write Inner.",
+                "  To write Top.Base.Inner automatically, run: arc aast codemod --jast"
+                    + " qualifyinheritedmembertypes //:rule -- -member-types"
+                    + " com.facebook.base.Top.Base.Inner",
+                "  KOSABI_JASABI_MISSING_SUPERTYPES: com.facebook.bar.Bar"));
+  }
+
+  @Test
+  public void testNestedDeclaringTypeSpellingSucceeds() throws IOException {
+    withNestedDeclaringType();
+    compileWithValidation(
+        "package com.facebook.foo; import com.facebook.base.Top; class Foo extends"
+            + " com.facebook.bar.Bar { public Top.Base.Inner inner; }");
+    assertNoErrors();
+  }
+
+  @Test
+  public void testFullyQualifiedMemberTypeSpellingSucceeds() throws IOException {
+    withNestedDeclaringType();
+    compileWithValidation(
+        "package com.facebook.foo; class Foo extends com.facebook.bar.Bar { public"
+            + " com.facebook.base.Top.Base.Inner inner; }");
+    assertNoErrors();
+  }
+
+  @Test
+  public void testImportedMemberTypeSpellingSucceeds() throws IOException {
+    withNestedDeclaringType();
+    compileWithValidation(
+        "package com.facebook.foo; import com.facebook.base.Top.Base.Inner; class Foo extends"
+            + " com.facebook.bar.Bar { public Inner inner; }");
+    assertNoErrors();
+  }
+
+  @Test
+  public void testInheritedMemberMessageLeavesOutShadowedDeclaringType() throws IOException {
+    withNestedDeclaringType();
+    testCompiler.setAllowCompilationErrors(true);
+    compileWithValidation(
+        Joiner.on('\n')
+            .join(
+                "package com.facebook.foo;",
+                "class Foo extends com.facebook.bar.Bar {",
+                "  static class Top {}",
+                "  public Inner inner;",
+                "}"));
+    assertError(
+        Joiner.on('\n')
+            .join(
+                "Foo.java:4: error: Inherited member type com.facebook.base.Top.Base.Inner requires"
+                    + " missing supertypes during source-only ABI generation.",
+                "  public Inner inner;",
+                "         ^",
+                "  Refer to it without those supertypes: write com.facebook.base.Top.Base.Inner, or"
+                    + " add import com.facebook.base.Top.Base.Inner; and write Inner.",
+                "  To write com.facebook.base.Top.Base.Inner automatically, run: arc aast codemod"
+                    + " --jast qualifyinheritedmembertypes //:rule -- -member-types"
+                    + " com.facebook.base.Top.Base.Inner",
+                "  KOSABI_JASABI_MISSING_SUPERTYPES: com.facebook.bar.Bar"));
+  }
+
+  private void withGenericMemberType() throws IOException {
+    taskListenerFactory.setInheritedMemberTypesOnly(true);
+    withClasspath(
+        ImmutableMap.of(
+            "com/facebook/base/Base.java",
+            "package com.facebook.base; public class Base { public interface Node<T> {} }",
+            "com/facebook/bar/Bar.java",
+            "package com.facebook.bar; public class Bar extends com.facebook.base.Base {}"));
+  }
+
+  @Test
+  public void testInheritedMemberMessageForGenericMemberType() throws IOException {
+    withGenericMemberType();
+    testCompiler.setAllowCompilationErrors(true);
+    compileWithValidation(
+        Joiner.on('\n')
+            .join(
+                "package com.facebook.foo;",
+                "class Foo extends com.facebook.bar.Bar {",
+                "  public Node<String> node;",
+                "}"));
+    assertError(
+        Joiner.on('\n')
+            .join(
+                "Foo.java:3: error: Inherited member type com.facebook.base.Base.Node requires"
+                    + " missing supertypes during source-only ABI generation.",
+                "  public Node<String> node;",
+                "         ^",
+                "  Refer to it without those supertypes: write Base.Node (with import"
+                    + " com.facebook.base.Base;) or com.facebook.base.Base.Node, or add import"
+                    + " com.facebook.base.Base.Node; and write Node.",
+                "  To write Base.Node automatically, run: arc aast codemod --jast"
+                    + " qualifyinheritedmembertypes //:rule -- -member-types"
+                    + " com.facebook.base.Base.Node",
+                "  KOSABI_JASABI_MISSING_SUPERTYPES: com.facebook.bar.Bar,"
+                    + " com.facebook.base.Base"));
+  }
+
+  @Test
+  public void testQualifiedGenericMemberTypeOfUnavailableDeclaringTypeSucceeds()
+      throws IOException {
+    withGenericMemberType();
+    compileWithValidation(
+        "package com.facebook.foo; class Foo extends com.facebook.bar.Bar { public"
+            + " com.facebook.base.Base.Node<String> node; }");
+    assertNoErrors();
+  }
+
+  @Test
+  public void testInaccessibleDeclaringTypeRequiresProviders() throws IOException {
+    taskListenerFactory.setInheritedMemberTypesOnly(true);
+    withClasspath(
+        ImmutableMap.of(
+            "com/facebook/hidden/HiddenBase.java",
+            "package com.facebook.hidden; class HiddenBase { public interface State {} }",
+            "com/facebook/hidden/Visible.java",
+            "package com.facebook.hidden; public class Visible extends HiddenBase {}"));
+    testCompiler.setAllowCompilationErrors(true);
+    compileWithValidation(
+        Joiner.on('\n')
+            .join(
+                "package com.facebook.foo;",
+                "class Foo extends com.facebook.hidden.Visible {",
+                "  public State state;",
+                "}"));
+    assertError(
+        Joiner.on('\n')
+            .join(
+                "Foo.java:3: error: Inherited member type com.facebook.hidden.HiddenBase.State"
+                    + " requires missing supertypes during source-only ABI generation.",
+                "  public State state;",
+                "         ^",
+                "  No spelling names it here without those supertypes:"
+                    + " com.facebook.hidden.HiddenBase is not accessible from com.facebook.foo.Foo."
+                    + " Add the providers of the following classes to source_only_abi_deps in"
+                    + " //:rule.",
+                "  KOSABI_JASABI_MISSING_SUPERTYPES: com.facebook.hidden.HiddenBase,"
+                    + " com.facebook.hidden.Visible"));
+  }
+
+  @Test
+  public void testInnerClassOfParameterizedSupertypeRequiresProviders() throws IOException {
+    taskListenerFactory.setInheritedMemberTypesOnly(true);
+    withClasspath(
+        ImmutableMap.of(
+            "com/facebook/base/Tree.java",
+            "package com.facebook.base; public class Tree<T> { public class Node {} }",
+            "com/facebook/bar/Bar.java",
+            "package com.facebook.bar; public class Bar extends com.facebook.base.Tree<String>"
+                + " {}"));
+    taskListenerFactory.addTargetAvailableForSourceOnlyAbi("//com/facebook/base:base");
+    testCompiler.setAllowCompilationErrors(true);
+    compileWithValidation(
+        Joiner.on('\n')
+            .join(
+                "package com.facebook.foo;",
+                "class Foo extends com.facebook.bar.Bar {",
+                "  public Node node;",
+                "}"));
+    assertError(
+        Joiner.on('\n')
+            .join(
+                "Foo.java:3: error: Inherited member type com.facebook.base.Tree.Node requires"
+                    + " missing supertypes during source-only ABI generation.",
+                "  public Node node;",
+                "         ^",
+                "  No spelling names it here without those supertypes: it is an inner class of"
+                    + " com.facebook.base.Tree<java.lang.String>, and a qualified name would drop"
+                    + " the type arguments. Add the providers of the following classes to"
                     + " source_only_abi_deps in //:rule.",
                 "  KOSABI_JASABI_MISSING_SUPERTYPES: com.facebook.bar.Bar"));
   }

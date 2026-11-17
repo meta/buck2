@@ -18,6 +18,10 @@ import com.facebook.infer.annotation.Nullsafe;
 import com.sun.source.tree.AnnotationTree;
 import com.sun.source.tree.ClassTree;
 import com.sun.source.tree.CompilationUnitTree;
+import com.sun.source.tree.ImportTree;
+import com.sun.source.tree.MemberSelectTree;
+import com.sun.source.tree.MethodTree;
+import com.sun.source.tree.Scope;
 import com.sun.source.tree.Tree;
 import com.sun.source.util.TreePath;
 import com.sun.source.util.Trees;
@@ -25,6 +29,7 @@ import java.lang.annotation.Retention;
 import java.lang.annotation.RetentionPolicy;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.Deque;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -120,6 +125,7 @@ class InterfaceValidator {
 
   private static class ValidatingListener implements InterfaceScanner.Listener {
     private final Diagnostic.Kind messageKind;
+    private final Elements elements;
     private final Trees trees;
     private final SourceOnlyAbiRuleInfo ruleInfo;
     private final TreeBackedTypeResolutionSimulator treeBackedResolver;
@@ -143,6 +149,7 @@ class InterfaceValidator {
       this.messageKind = messageKind;
       this.inheritedMemberTypesOnly = inheritedMemberTypesOnly;
       this.trees = trees;
+      this.elements = elements;
       this.ruleInfo = ruleInfo;
       this.fileManager = fileManager;
       this.compilerResolver = compilerResolver;
@@ -351,17 +358,8 @@ class InterfaceValidator {
         if (!compilerResolvedType.missingMemberSupertypes.isEmpty()) {
           trees.printMessage(
               messageKind,
-              String.format(
-                  "Inherited member type %s requires missing supertypes during source-only ABI"
-                      + " generation.\n"
-                      + "Use the fully qualified type or add the providers of the following classes"
-                      + " to source_only_abi_deps in %s.\n"
-                      + "KOSABI_JASABI_MISSING_SUPERTYPES: %s",
-                  canonicalTypeElement.getQualifiedName(),
-                  ruleInfo.getRuleName(),
-                  compilerResolvedType.missingMemberSupertypes.stream()
-                      .sorted()
-                      .collect(Collectors.joining(", "))),
+              inheritedMemberTypeMessage(
+                  canonicalTypeElement, path, compilerResolvedType.missingMemberSupertypes),
               path.getLeaf(),
               path.getCompilationUnit());
         }
@@ -378,6 +376,229 @@ class InterfaceValidator {
           }
         }
       }
+    }
+
+    /**
+     * The error for a reference that names an inherited member type through supertypes missing from
+     * the source-only ABI classpath. It lists the spellings that name the type without those
+     * supertypes: through its declaring type, fully qualified, or imported. Only when none of them
+     * can name it here does it ask for the providers of the missing supertypes. Tooling parses the
+     * first sentence and the last line.
+     */
+    private String inheritedMemberTypeMessage(
+        TypeElement memberType, TreePath path, Set<String> missingSupertypes) {
+      String canonicalName = memberType.getQualifiedName().toString();
+      StringBuilder message =
+          new StringBuilder(
+              String.format(
+                  "Inherited member type %s requires missing supertypes during source-only ABI"
+                      + " generation.\n",
+                  canonicalName));
+      List<TypeElement> chain = enclosingChain(memberType);
+      String unnameable = whyNoSpellingNames(chain, path);
+      if (unnameable == null) {
+        String declaringSpelling =
+            chain.stream()
+                .map(type -> type.getSimpleName().toString())
+                .collect(Collectors.joining("."));
+        TypeElement top = chain.get(0);
+        CompilationUnitTree unit = path.getCompilationUnit();
+        List<String> spellings = new ArrayList<>();
+        if (!simpleNameIsTaken(top, unit) && !isShadowed(top, path)) {
+          spellings.add(
+              simpleNameIsVisible(top, unit)
+                  ? declaringSpelling
+                  : String.format(
+                      "%s (with import %s;)", declaringSpelling, top.getQualifiedName()));
+        }
+        spellings.add(canonicalName);
+        message.append("Refer to it without those supertypes: write ");
+        message.append(String.join(" or ", spellings));
+        if (isImportable(chain, unit) && !isShadowed(memberType, path)) {
+          message.append(
+              String.format(
+                  ", or add import %s; and write %s", canonicalName, memberType.getSimpleName()));
+        }
+        message.append(".\n");
+        message.append(
+            String.format(
+                "To write %s automatically, run: arc aast codemod --jast"
+                    + " qualifyinheritedmembertypes %s -- -member-types %s\n",
+                spellings.get(0).equals(canonicalName) ? canonicalName : declaringSpelling,
+                ruleInfo.getRuleName(),
+                canonicalName));
+      } else {
+        message.append(
+            String.format(
+                "No spelling names it here without those supertypes: %s. Add the providers of the"
+                    + " following classes to source_only_abi_deps in %s.\n",
+                unnameable, ruleInfo.getRuleName()));
+      }
+      message.append("KOSABI_JASABI_MISSING_SUPERTYPES: ");
+      message.append(missingSupertypes.stream().sorted().collect(Collectors.joining(", ")));
+      return message.toString();
+    }
+
+    /** {@code memberType} and the types enclosing it, outermost first. */
+    private static List<TypeElement> enclosingChain(TypeElement memberType) {
+      List<TypeElement> chain = new ArrayList<>();
+      for (Element type = memberType;
+          type instanceof TypeElement;
+          type = type.getEnclosingElement()) {
+        chain.add((TypeElement) type);
+      }
+      Collections.reverse(chain);
+      return chain;
+    }
+
+    /**
+     * Why no spelling of the member type at {@code path} avoids the missing supertypes, or null if
+     * the declaring-type, fully qualified and imported spellings do.
+     */
+    @Nullable
+    private String whyNoSpellingNames(List<TypeElement> chain, TreePath path) {
+      Scope scope = Objects.requireNonNull(trees.getScope(path));
+      for (TypeElement type : chain) {
+        if (!trees.isAccessible(scope, type)) {
+          TypeElement from = scope.getEnclosingClass();
+          return String.format(
+              "%s is not accessible from %s",
+              type.getQualifiedName(), from == null ? "this file" : from.getQualifiedName());
+        }
+      }
+      TypeMirror referenced = trees.getTypeMirror(typePath(path));
+      if (referenced instanceof DeclaredType) {
+        for (TypeMirror enclosing = ((DeclaredType) referenced).getEnclosingType();
+            enclosing instanceof DeclaredType;
+            enclosing = ((DeclaredType) enclosing).getEnclosingType()) {
+          if (!((DeclaredType) enclosing).getTypeArguments().isEmpty()) {
+            return String.format(
+                "it is an inner class of %s, and a qualified name would drop the type arguments",
+                enclosing);
+          }
+        }
+      }
+      return null;
+    }
+
+    /** The path of the whole type at {@code path}, including its type arguments. */
+    private static TreePath typePath(TreePath path) {
+      TreePath parent = path.getParentPath();
+      return parent != null && parent.getLeaf().getKind() == Tree.Kind.PARAMETERIZED_TYPE
+          ? parent
+          : path;
+    }
+
+    /**
+     * Whether a single-type import of the member type compiles in {@code unit}: every type in
+     * {@code chain} is accessible at the top level of the file, and no other type there has the
+     * member type's simple name.
+     */
+    private boolean isImportable(List<TypeElement> chain, CompilationUnitTree unit) {
+      Scope scope = Objects.requireNonNull(trees.getScope(new TreePath(unit)));
+      for (TypeElement type : chain) {
+        if (!trees.isAccessible(scope, type)) {
+          return false;
+        }
+      }
+      return !simpleNameIsTaken(chain.get(chain.size() - 1), unit);
+    }
+
+    /**
+     * Whether a type parameter or a member type of a class enclosing {@code path} gives {@code
+     * type}'s simple name to another type. That name then wins over an import, and over a top-level
+     * type, when source-only ABI generation cannot see the inherited member type.
+     */
+    private boolean isShadowed(TypeElement type, TreePath path) {
+      Name simpleName = type.getSimpleName();
+      for (TreePath current = path; current != null; current = current.getParentPath()) {
+        Tree leaf = current.getLeaf();
+        if (leaf instanceof MethodTree
+            && Objects.requireNonNull(((MethodTree) leaf).getTypeParameters()).stream()
+                .anyMatch(
+                    parameter ->
+                        Objects.requireNonNull(parameter.getName()).contentEquals(simpleName))) {
+          return true;
+        }
+        if (!(leaf instanceof ClassTree)) {
+          continue;
+        }
+        if (Objects.requireNonNull(((ClassTree) leaf).getTypeParameters()).stream()
+            .anyMatch(
+                parameter ->
+                    Objects.requireNonNull(parameter.getName()).contentEquals(simpleName))) {
+          return true;
+        }
+        Element enclosing = trees.getElement(current);
+        if (enclosing instanceof TypeElement) {
+          for (TypeElement member :
+              Objects.requireNonNull(
+                  ElementFilter.typesIn(elements.getAllMembers((TypeElement) enclosing)))) {
+            if (member.getSimpleName().contentEquals(simpleName) && !member.equals(type)) {
+              return true;
+            }
+          }
+        }
+      }
+      return false;
+    }
+
+    /**
+     * Whether a single import or a top-level type of {@code unit} gives {@code type}'s simple name
+     * to another type.
+     */
+    private static boolean simpleNameIsTaken(TypeElement type, CompilationUnitTree unit) {
+      Name simpleName = type.getSimpleName();
+      String qualifiedName = type.getQualifiedName().toString();
+      for (ImportTree importTree : unit.getImports()) {
+        Tree imported = importTree.getQualifiedIdentifier();
+        if (imported instanceof MemberSelectTree
+            && ((MemberSelectTree) imported).getIdentifier().contentEquals(simpleName)
+            && !imported.toString().equals(qualifiedName)) {
+          return true;
+        }
+      }
+      String unitPackage = packageName(unit);
+      for (Tree declaration : unit.getTypeDecls()) {
+        if (declaration instanceof ClassTree) {
+          Name declared = ((ClassTree) declaration).getSimpleName();
+          String declaredName =
+              unitPackage.isEmpty() ? declared.toString() : unitPackage + "." + declared;
+          if (declared.contentEquals(simpleName) && !declaredName.equals(qualifiedName)) {
+            return true;
+          }
+        }
+      }
+      return false;
+    }
+
+    /**
+     * Whether the simple name of the top-level type {@code top} names it in {@code unit} without
+     * another import: it is in the same package or {@code java.lang}, or imported already.
+     */
+    private static boolean simpleNameIsVisible(TypeElement top, CompilationUnitTree unit) {
+      Element enclosing = top.getEnclosingElement();
+      String topPackage =
+          enclosing instanceof PackageElement
+              ? ((PackageElement) enclosing).getQualifiedName().toString()
+              : "";
+      if (topPackage.equals(packageName(unit)) || topPackage.equals("java.lang")) {
+        return true;
+      }
+      for (ImportTree importTree : unit.getImports()) {
+        if (importTree.isStatic()) {
+          continue;
+        }
+        String imported = importTree.getQualifiedIdentifier().toString();
+        if (imported.contentEquals(top.getQualifiedName()) || imported.equals(topPackage + ".*")) {
+          return true;
+        }
+      }
+      return false;
+    }
+
+    private static String packageName(CompilationUnitTree unit) {
+      return unit.getPackageName() == null ? "" : unit.getPackageName().toString();
     }
 
     /**

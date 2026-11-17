@@ -49,4 +49,38 @@ public class ActionMetadataTest {
     assertNull(previousIncrementalConfigDigest);
     assertNull(currentIncrementalConfigDigest);
   }
+
+  @Test
+  public void when_contentBasedConfigPathChanged_then_previousConfigIsFoundWithoutContentHash() {
+    Path previousConfig =
+        Paths.get("buck-out/v2/art/fbcode/a/__lib__/aaaaaaaaaaaaaaaa/incremental_config.json");
+    Path currentConfig =
+        Paths.get("buck-out/v2/art/fbcode/a/__lib__/bbbbbbbbbbbbbbbb/incremental_config.json");
+    Map<Path, String> previousDigest = new HashMap<>();
+    previousDigest.put(previousConfig, "aaaaaaaaaaaaaaaa0123:155");
+    previousDigest.put(
+        Paths.get("buck-out/v2/art/fbcode/a/__dep__/cccccccccccccccc/incremental_config.json"),
+        "cccccccccccccccc0123:155");
+    Map<Path, String> currentDigest = new HashMap<>();
+    currentDigest.put(currentConfig, "bbbbbbbbbbbbbbbb4567:170");
+    ActionMetadata metadata = new ActionMetadata(currentConfig, previousDigest, currentDigest);
+
+    assertEquals("aaaaaaaaaaaaaaaa0123:155", metadata.getPreviousIncrementalConfigDigest());
+    assertEquals("bbbbbbbbbbbbbbbb4567:170", metadata.getCurrentIncrementalConfigDigest());
+  }
+
+  @Test
+  public void when_previousConfigBelongsToAnotherOutput_then_previousDigestIsNull() {
+    Path currentConfig =
+        Paths.get("buck-out/v2/art/fbcode/a/__lib__/bbbbbbbbbbbbbbbb/incremental_config.json");
+    Map<Path, String> previousDigest = new HashMap<>();
+    previousDigest.put(
+        Paths.get("buck-out/v2/art/fbcode/a/__dep__/cccccccccccccccc/incremental_config.json"),
+        "cccccccccccccccc0123:155");
+    Map<Path, String> currentDigest = new HashMap<>();
+    currentDigest.put(currentConfig, "bbbbbbbbbbbbbbbb4567:170");
+    ActionMetadata metadata = new ActionMetadata(currentConfig, previousDigest, currentDigest);
+
+    assertNull(metadata.getPreviousIncrementalConfigDigest());
+  }
 }

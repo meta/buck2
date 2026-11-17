@@ -20,5 +20,6 @@ enum class RebuildReason(val message: String) {
   COMPILER_INPUT_FILES_CHANGED(
       "A Kotlin compiler plugin or a file that a compiler option names has been changed",
   ),
+  KOTLIN_MODULE_MAPPINGS_CHANGED("Kotlin module mappings of a classpath jar have been changed"),
   INCREMENTAL_INPUTS_UNREADABLE("Inputs of the last successful round could not be compared"),
 }

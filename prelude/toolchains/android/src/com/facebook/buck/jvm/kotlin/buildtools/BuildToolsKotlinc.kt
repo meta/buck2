@@ -76,7 +76,7 @@ class BuildToolsKotlinc : Kotlinc {
           // Machine-parseable, for measuring how often these inputs change and what tracking
           // them costs.
           LOG.info(
-              "KOTLINCD_INCREMENTAL_INPUTS|${invokingRule.fullyQualifiedName}|files_changed=${changes.filesChanged}|classpath_order_changed=${changes.classpathOrderChanged}|record_unreadable=${changes.recordUnreadable}|inputs_ms=$inputsMs",
+              "KOTLINCD_INCREMENTAL_INPUTS|${invokingRule.fullyQualifiedName}|files_changed=${changes.filesChanged}|classpath_order_changed=${changes.classpathOrderChanged}|module_mappings_changed=${changes.moduleMappingsChanged}|module_mapping_jars_read=${changes.moduleMappingJarsRead}|record_unreadable=${changes.recordUnreadable}|inputs_ms=$inputsMs",
           )
         }
 

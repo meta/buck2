@@ -23,6 +23,8 @@ import java.nio.file.Path
 import java.nio.file.Paths
 import java.nio.file.attribute.FileTime
 import java.nio.file.attribute.PosixFilePermissions
+import java.util.zip.ZipEntry
+import java.util.zip.ZipOutputStream
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotEquals
@@ -545,6 +547,7 @@ class IncrementalCompilerInputsTest {
     val changes = record()
     assertTrue(changes.filesChanged)
     assertTrue(changes.classpathOrderChanged)
+    assertTrue(changes.moduleMappingsChanged)
   }
 
   @Test
@@ -665,5 +668,151 @@ class IncrementalCompilerInputsTest {
         optionValues,
         sources,
     )
+  }
+
+  @Test
+  fun `module mappings are read only from jars the record does not hold`() {
+    val jar = root.resolve("buck-out/v2/art/__provider__/0123456789abcdef/provider.jar")
+    writeJar(jar, mapOf("p/A.class" to "class", "META-INF/main.kotlin_module" to "mapping"))
+    val relative = root.relativize(jar)
+
+    // No record yet: every jar is read, and the mappings count as changed.
+    val first = recordModules(listOf(jar), mapOf(relative to "1"))
+    assertTrue(first.moduleMappingsChanged)
+    assertEquals(1, first.moduleMappingJarsRead)
+    IncrementalCompilerInputs.promotePending(stateDir)
+
+    // The same path and digest need no read: a missing jar would fail otherwise.
+    Files.delete(jar)
+    val unchanged = recordModules(listOf(jar), mapOf(relative to "1"))
+    assertFalse(unchanged.moduleMappingsChanged)
+    assertEquals(0, unchanged.moduleMappingJarsRead)
+    IncrementalCompilerInputs.promotePending(stateDir)
+
+    // A new digest with the same mappings, then one without them.
+    writeJar(jar, mapOf("p/A.class" to "other", "META-INF/main.kotlin_module" to "mapping"))
+    assertFalse(recordModules(listOf(jar), mapOf(relative to "2")).moduleMappingsChanged)
+    IncrementalCompilerInputs.promotePending(stateDir)
+    writeJar(jar, mapOf("p/A.class" to "other"))
+    assertTrue(recordModules(listOf(jar), mapOf(relative to "3")).moduleMappingsChanged)
+  }
+
+  @Test
+  fun `a new content hash in the path of a jar with the same mappings is not a change`() {
+    val before = root.resolve("buck-out/v2/art/__provider__/0123456789abcdef/provider.jar")
+    val after = root.resolve("buck-out/v2/art/__provider__/fedcba9876543210/provider.jar")
+    writeJar(before, mapOf("p/A.class" to "one", "META-INF/main.kotlin_module" to "mapping"))
+    writeJar(after, mapOf("p/A.class" to "two", "META-INF/main.kotlin_module" to "mapping"))
+    recordModules(listOf(before), mapOf(root.relativize(before) to "1"))
+    IncrementalCompilerInputs.promotePending(stateDir)
+
+    assertFalse(
+        recordModules(listOf(after), mapOf(root.relativize(after) to "2")).moduleMappingsChanged,
+    )
+  }
+
+  @Test
+  fun `a jar that carries only module mappings entering or leaving the classpath is a change`() {
+    val classes = root.resolve("classes.jar")
+    val mappingsOnly = root.resolve("mappings.jar")
+    writeJar(classes, mapOf("p/A.class" to "class"))
+    writeJar(mappingsOnly, mapOf("META-INF/main.kotlin_module" to "mapping"))
+    val digests = mapOf(Paths.get("classes.jar") to "1", Paths.get("mappings.jar") to "1")
+    recordModules(listOf(classes), digests)
+    IncrementalCompilerInputs.promotePending(stateDir)
+
+    assertTrue(recordModules(listOf(classes, mappingsOnly), digests).moduleMappingsChanged)
+    IncrementalCompilerInputs.promotePending(stateDir)
+
+    assertTrue(recordModules(listOf(classes), digests).moduleMappingsChanged)
+  }
+
+  @Test
+  fun `a jar without module mappings entering the classpath is not a module mappings change`() {
+    val first = root.resolve("first.jar")
+    val second = root.resolve("second.jar")
+    writeJar(first, mapOf("META-INF/first.kotlin_module" to "first"))
+    writeJar(second, mapOf("p/B.class" to "class"))
+    val digests = mapOf(Paths.get("first.jar") to "1", Paths.get("second.jar") to "1")
+    recordModules(listOf(first), digests)
+    IncrementalCompilerInputs.promotePending(stateDir)
+
+    assertFalse(recordModules(listOf(first, second), digests).moduleMappingsChanged)
+  }
+
+  @Test
+  fun `a jar without an input digest is read every round where no stored digest exists`() {
+    // The temporary directory keeps no content digests, unlike an EdenFS checkout.
+    val jar = root.resolve("toolchain.jar")
+    writeJar(jar, mapOf("META-INF/main.kotlin_module" to "mapping-1"))
+    val time = Files.getLastModifiedTime(jar)
+    assertEquals(1, recordModules(listOf(jar), emptyMap()).moduleMappingJarsRead)
+    IncrementalCompilerInputs.promotePending(stateDir)
+
+    val unchanged = recordModules(listOf(jar), emptyMap())
+    assertEquals(1, unchanged.moduleMappingJarsRead)
+    assertFalse(unchanged.moduleMappingsChanged)
+    IncrementalCompilerInputs.promotePending(stateDir)
+
+    // Other mappings of the same size, with the same modification time.
+    writeJar(jar, mapOf("META-INF/main.kotlin_module" to "mapping-2"))
+    Files.setLastModifiedTime(jar, time)
+    assertTrue(recordModules(listOf(jar), emptyMap()).moduleMappingsChanged)
+  }
+
+  @Test
+  fun `module mappings in a classpath directory are compared`() {
+    val directory = root.resolve("buck-out/v2/art/dep/__abi_dir__")
+    val module = directory.resolve("META-INF/main.kotlin_module")
+    Files.createDirectories(module.parent)
+    Files.writeString(module, "mapping-1")
+    recordModules(listOf(directory), emptyMap())
+    IncrementalCompilerInputs.promotePending(stateDir)
+
+    assertFalse(recordModules(listOf(directory), emptyMap()).moduleMappingsChanged)
+    IncrementalCompilerInputs.promotePending(stateDir)
+
+    Files.writeString(module, "mapping-2")
+    assertTrue(recordModules(listOf(directory), emptyMap()).moduleMappingsChanged)
+    IncrementalCompilerInputs.promotePending(stateDir)
+
+    Files.delete(module)
+    assertTrue(recordModules(listOf(directory), emptyMap()).moduleMappingsChanged)
+  }
+
+  @Test
+  fun `a jar whose module mappings cannot be read deletes the committed record`() {
+    val jar = root.resolve("dep.jar")
+    writeJar(jar, mapOf("META-INF/main.kotlin_module" to "mapping"))
+    recordModules(listOf(jar), emptyMap())
+    IncrementalCompilerInputs.promotePending(stateDir)
+
+    Files.writeString(jar, "not a zip")
+    assertThrows(IOException::class.java) { recordModules(listOf(jar), emptyMap()) }
+
+    assertFalse(Files.exists(stateDir.resolve(IncrementalCompilerInputs.RECORD_FILE)))
+  }
+
+  private fun recordModules(
+      classpath: List<Path>,
+      digests: Map<Path, String>,
+  ): IncrementalCompilerInputs.Changes =
+      IncrementalCompilerInputs.recordAndCompare(
+          stateDir,
+          root,
+          listOf("-classpath", classpath.joinToString(java.io.File.pathSeparator)),
+          digests,
+          emptyList(),
+      )
+
+  private fun writeJar(jar: Path, entries: Map<String, String>) {
+    Files.createDirectories(jar.parent)
+    ZipOutputStream(Files.newOutputStream(jar)).use { zip ->
+      for ((name, content) in entries) {
+        zip.putNextEntry(ZipEntry(name))
+        zip.write(content.toByteArray())
+        zip.closeEntry()
+      }
+    }
   }
 }

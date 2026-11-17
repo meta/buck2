@@ -22,11 +22,13 @@ import java.nio.file.Paths
 import java.nio.file.StandardCopyOption
 import java.nio.file.attribute.UserDefinedFileAttributeView
 import java.security.MessageDigest
+import java.util.zip.ZipFile
 
 /**
  * Inputs of an incremental kotlinc round that neither the Kotlin incremental compiler nor
- * `incremental_config.json` tracks: the content of the files that compiler options name, and the
- * order of the classpath.
+ * `incremental_config.json` tracks: the content of the files that compiler options name, the order
+ * of the classpath, and the Kotlin module mappings (the `.kotlin_module` files under `META-INF`) of
+ * classpath jars.
  *
  * The incremental config records the settings kotlincd turns into compiler arguments, so that a
  * changed JVM target, friend path, compiler plugin or plugin option compiles in full. It records
@@ -34,11 +36,13 @@ import java.security.MessageDigest
  * names, such as Compose's stability configuration, can change at the same path. kotlincd also
  * tells the incremental compiler that the classpath has not changed whenever the set of classpath
  * snapshots is the same, which hides a reordering that changes which of two duplicate classes the
- * compiler resolves.
+ * compiler resolves. Classpath snapshots describe class files only, while the compiler finds
+ * top-level declarations of a package through the module mappings, so a jar can gain or lose them
+ * without any class changing.
  *
- * Each round records both in one file in the incremental state, as a pending record that kotlincd
- * promotes only when the action succeeds, so the committed record describes the last successful
- * round.
+ * Each round records all of them in one file in the incremental state, as a pending record that
+ * kotlincd promotes only when the action succeeds, so the committed record describes the last
+ * successful round.
  */
 object IncrementalCompilerInputs {
   const val RECORD_FILE: String = "incremental_inputs.txt"
@@ -48,6 +52,8 @@ object IncrementalCompilerInputs {
   private const val CLASSPATH_ORDER = "classpath"
   // EdenFS keeps the SHA-1 of every file of the checkout in this extended attribute.
   private const val SHA1_ATTRIBUTE = "sha1"
+  private const val MODULE_MAPPINGS = "module"
+  private const val NONE = "-"
 
   private val CLASSPATH_FLAGS = setOf("-classpath", "-cp")
   private const val PLUGIN_PREFIX = "-Xplugin="
@@ -81,6 +87,9 @@ object IncrementalCompilerInputs {
   data class Changes(
       val filesChanged: Boolean,
       val classpathOrderChanged: Boolean,
+      val moduleMappingsChanged: Boolean = false,
+      /** How many classpath jars this round read module mappings from. */
+      val moduleMappingJarsRead: Int = 0,
       val recordUnreadable: Boolean = false,
   )
 
@@ -131,6 +140,9 @@ object IncrementalCompilerInputs {
     } else if (changes.filesChanged) {
       result = result.withRebuildReason(RebuildReason.COMPILER_INPUT_FILES_CHANGED)
     }
+    if (changes.moduleMappingsChanged) {
+      result = result.withRebuildReason(RebuildReason.KOTLIN_MODULE_MAPPINGS_CHANGED)
+    }
     val classpathChanges = result.classpathChanges
     if (changes.classpathOrderChanged && classpathChanges is ClasspathChanges.NoChanges) {
       result =
@@ -146,14 +158,21 @@ object IncrementalCompilerInputs {
 
   /**
    * Records the digests of this round's compiler plugins and of the files its option values name,
-   * and its classpath order, as pending in [incrementalStateDir], and compares them with the last
-   * successful round's. Without a committed record, or with one that cannot be read, everything
-   * counts as changed, and the round still records what it compiles with. A plugin or a named file
-   * that cannot be read counts as changed. When this round's record cannot be made, the committed
-   * record is deleted too, so that no later round compares with a record older than its outputs.
+   * its classpath order and its module mappings as pending in [incrementalStateDir], and compares
+   * them with the last successful round's. Without a committed record, or with one that cannot be
+   * read, everything counts as changed, and the round still records what it compiles with. A plugin
+   * or a named file that cannot be read counts as changed. When this round's record cannot be made,
+   * the committed record is deleted too, so that no later round compares with a record older than
+   * its outputs.
+   *
+   * Module mappings are recorded for every classpath entry, with the entry's input digest (or, for
+   * a jar without one, its [contentDigest] when the file system keeps one), and read only from the
+   * jars that the record does not hold with the same path and digest. Directory entries are read
+   * every round.
    *
    * @param arguments the compiler arguments
-   * @param inputDigests the action's input digests by project-relative path
+   * @param inputDigests the action's input digests by project-relative path, which identify the
+   *   content of compiler plugins, named files and classpath jars
    * @param optionValues the target's own compiler arguments and plugin option values, which may
    *   name files (see [fileValues])
    * @param sources the round's sources, absolute or relative to [rootProjectDir]: an option value
@@ -182,18 +201,44 @@ object IncrementalCompilerInputs {
             null
           }
       val previous = previousLines?.let(::recordValues)
+      val previousMappings = previousLines.orEmpty().mapNotNull { ModuleMappingEntry.parse(it) }
+      val recordedMappings =
+          previousMappings.associateBy({ it.path to it.inputDigest }, { it.mappings })
+      var jarsRead = 0
+      val currentMappings =
+          classpathEntries(arguments).map { entry ->
+            val path = entry.removePrefix(root)
+            val inputDigest =
+                inputDigests[Paths.get(path)]
+                    ?: contentDigest(rootProjectDir.resolve(path), hashContent = false)
+                    ?: NONE
+            val recorded = if (inputDigest == NONE) null else recordedMappings[path to inputDigest]
+            val mappings =
+                recorded
+                    ?: run {
+                      jarsRead++
+                      moduleMappingsDigest(rootProjectDir.resolve(path))
+                    }
+            ModuleMappingEntry(path, inputDigest, mappings)
+          }
       val files = fileDigests(arguments, optionValues, sources, root, rootProjectDir, inputDigests)
       val filesDigest = digest(files.map { (path, digest) -> "$path#$digest" })
       val classpathOrderDigest = digest(classpathOrder(arguments, root))
       writePending(
           incrementalStateDir,
-          listOf("$FILES $filesDigest", "$CLASSPATH_ORDER $classpathOrderDigest"),
+          listOf("$FILES $filesDigest", "$CLASSPATH_ORDER $classpathOrderDigest") +
+              currentMappings.map { it.format() },
       )
       return Changes(
           filesChanged =
               previous?.get(FILES) != filesDigest ||
                   files.any { (_, digest) -> digest == UNREADABLE },
           classpathOrderChanged = previous?.get(CLASSPATH_ORDER) != classpathOrderDigest,
+          moduleMappingsChanged =
+              previousLines == null ||
+                  mappingIdentities(previousMappings, root) !=
+                      mappingIdentities(currentMappings, root),
+          moduleMappingJarsRead = jarsRead,
           recordUnreadable = recordUnreadable,
       )
     } catch (e: IOException) {
@@ -376,6 +421,84 @@ object IncrementalCompilerInputs {
   private fun sha1(file: Path): String {
     val digest = MessageDigest.getInstance("SHA-1").digest(Files.readAllBytes(file))
     return "sha1:" + digest.joinToString("") { "%02x".format(it) }
+  }
+
+  /** One classpath entry's module mappings, as recorded: its path, input digest and mappings. */
+  private data class ModuleMappingEntry(
+      val path: String,
+      val inputDigest: String,
+      val mappings: String,
+  ) {
+    fun format(): String = "$MODULE_MAPPINGS $path\t$inputDigest\t$mappings"
+
+    companion object {
+      fun parse(line: String): ModuleMappingEntry? {
+        if (!line.startsWith("$MODULE_MAPPINGS ")) return null
+        val fields = line.removePrefix("$MODULE_MAPPINGS ").split('\t')
+        return if (fields.size == 3) ModuleMappingEntry(fields[0], fields[1], fields[2]) else null
+      }
+    }
+  }
+
+  /**
+   * The entries that carry module mappings, each as its path without hash segments and a digest of
+   * its mappings, counted. An entry that gains, loses or changes mappings, or carries mappings and
+   * enters or leaves the classpath, changes it; a new content hash in a path alone does not.
+   */
+  private fun mappingIdentities(
+      entries: List<ModuleMappingEntry>,
+      root: String,
+  ): Map<Pair<String, String>, Int> =
+      entries
+          .filter { it.mappings != NONE }
+          .groupingBy { portablePath(it.path, root) to it.mappings }
+          .eachCount()
+
+  /** A digest of the `.kotlin_module` entries under `META-INF` in [jar], or [NONE] without any. */
+  private fun moduleMappingsDigest(jar: Path): String {
+    if (Files.isDirectory(jar)) return directoryModuleMappingsDigest(jar)
+    if (!Files.isRegularFile(jar)) return NONE
+    ZipFile(jar.toFile()).use { zip ->
+      val modules =
+          zip.entries()
+              .asSequence()
+              .filter { it.name.startsWith("META-INF/") && it.name.endsWith(".kotlin_module") }
+              .sortedBy { it.name }
+              .toList()
+      if (modules.isEmpty()) return NONE
+      val digest = MessageDigest.getInstance("SHA-256")
+      for (module in modules) {
+        digest.update(module.name.toByteArray(StandardCharsets.UTF_8))
+        digest.update(0)
+        zip.getInputStream(module).use { digest.update(it.readBytes()) }
+      }
+      return digest.digest().joinToString("") { "%02x".format(it) }
+    }
+  }
+
+  /** The same digest for a classpath directory: its `.kotlin_module` files under `META-INF`. */
+  private fun directoryModuleMappingsDigest(directory: Path): String {
+    val metaInf = directory.resolve("META-INF")
+    if (!Files.isDirectory(metaInf)) return NONE
+    val modules: List<Path> =
+        Files.list(metaInf).use { files ->
+          files
+              .iterator()
+              .asSequence()
+              .filter {
+                it.fileName.toString().endsWith(".kotlin_module") && Files.isRegularFile(it)
+              }
+              .sortedBy { it.fileName.toString() }
+              .toList()
+        }
+    if (modules.isEmpty()) return NONE
+    val digest = MessageDigest.getInstance("SHA-256")
+    for (module in modules) {
+      digest.update("META-INF/${module.fileName}".toByteArray(StandardCharsets.UTF_8))
+      digest.update(0)
+      digest.update(Files.readAllBytes(module))
+    }
+    return digest.digest().joinToString("") { "%02x".format(it) }
   }
 
   /**

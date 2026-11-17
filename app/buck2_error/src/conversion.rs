@@ -26,8 +26,6 @@ pub mod rusqlite;
 pub mod serde;
 pub mod stds;
 pub mod superconsole;
-#[cfg(fbcode_build)]
-pub mod thrift;
 pub mod tokio;
 pub mod toml;
 pub mod tonic;

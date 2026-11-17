@@ -19,11 +19,21 @@ use either::Either;
 
 use crate as starlark;
 use crate::const_frozen_string;
+use crate::values::Heap;
 use crate::values::UnpackValue;
 use crate::values::Value;
 use crate::values::ValueOf;
+use crate::values::dict::AllocDict;
+use crate::values::dict::DictRef;
+use crate::values::dict::DictType;
 use crate::values::int::IntView;
+use crate::values::list::AllocList;
+use crate::values::list::ListRef;
+use crate::values::list::ListType;
 use crate::values::string::StarlarkStr;
+use crate::values::tuple::AllocTuple;
+use crate::values::tuple::TupleRef;
+use crate::values::tuple::TupleType;
 use crate::values::type_expr::StarlarkTypeExpr;
 use crate::values::typing::StarlarkNever;
 
@@ -101,4 +111,41 @@ fn test_unpack_value() {
         .unwrap()
         .unwrap();
     assert_eq!("int 19", show(inner));
+}
+
+#[derive(UnpackValue)]
+enum References<'v> {
+    Str(&'v str),
+    List(&'v ListRef<'v>),
+    Tuple(&'v TupleRef<'v>),
+    Dict(DictRef<'v>),
+}
+
+#[test]
+fn test_reference_payloads() {
+    assert_eq!(
+        Either::<
+            Either<StarlarkStr, ListType<Value>>,
+            Either<TupleType<Value>, DictType<Value, Value>>,
+        >::starlark_type_repr(),
+        References::starlark_type_repr()
+    );
+
+    Heap::temp(|heap| {
+        let show = |v: Value| match References::unpack_value_opt(v) {
+            Some(References::Str(s)) => format!("str {s}"),
+            Some(References::List(l)) => format!("list {}", l.len()),
+            Some(References::Tuple(t)) => format!("tuple {}", t.len()),
+            Some(References::Dict(d)) => format!("dict {}", d.len()),
+            None => "other".to_owned(),
+        };
+        assert_eq!("str abc", show(heap.alloc("abc").to_value()));
+        assert_eq!("list 2", show(heap.alloc(AllocList([1, 2])).to_value()));
+        assert_eq!(
+            "tuple 3",
+            show(heap.alloc(AllocTuple([1, 2, 3])).to_value())
+        );
+        assert_eq!("dict 1", show(heap.alloc(AllocDict([(1, 2)])).to_value()));
+        assert_eq!("other", show(Value::testing_new_int(1)));
+    });
 }

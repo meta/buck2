@@ -136,8 +136,9 @@ impl<'v, TLeft: StarlarkTypeExprStable<'v>, TRight: StarlarkTypeExprStable<'v>>
 }
 
 /// What a variant of a `#[derive(UnpackValue)]` union holds: a [`ValueOf`] of a type
-/// expression, or a type expression that is its own [`Get`](StarlarkTypeExpr::Get), such as a
-/// view. The derive reads the type expression off the payload to test the variant.
+/// expression, a type expression that is its own [`Get`](StarlarkTypeExpr::Get), such as a
+/// view, or a reference that a type is read through, such as `&ListRef`. The derive reads the
+/// type expression off the payload to test the variant.
 pub trait UnionPayload<'v>: Sized {
     /// The type expression the payload stands for.
     type Expr: StarlarkTypeExpr<'v>;
@@ -175,6 +176,28 @@ union_payload_is_self! {
     impl['v] crate::values::typing::TypeType;
     impl['v, P: crate::values::typing::StarlarkCallableParamSpec, R: StarlarkTypeExpr<'static>]
         crate::values::typing::StarlarkCallable<'v, P, R>;
+}
+
+/// A conversion that cannot fail and gives the reference its type is read through is a payload
+/// as well: the variant then holds what the read found, and the arm does not read again.
+macro_rules! union_payload_is_conversion {
+    ($($t:ty;)*) => {$(
+        impl<'v> UnionPayload<'v> for $t {
+            type Expr = <$t as crate::values::UnpackValue<'v>>::Type;
+
+            #[inline]
+            fn from_value(value: Value<'v>) -> Option<Self> {
+                <$t as crate::values::UnpackValue<'v>>::unpack_value_opt(value)
+            }
+        }
+    )*};
+}
+
+union_payload_is_conversion! {
+    &'v str;
+    &'v crate::values::list::ListRef<'v>;
+    &'v crate::values::tuple::TupleRef<'v>;
+    crate::values::dict::DictRef<'v>;
 }
 
 /// `None` carries nothing, so the unit value is as good a payload as its handle.

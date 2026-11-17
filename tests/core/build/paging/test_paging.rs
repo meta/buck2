@@ -494,13 +494,14 @@ async fn test_failed_demand_page_in_recomputes_without_restart(buck: &Buck) -> a
     Ok(())
 }
 
-/// Whether `path` matches `pagable.*.db`.
+/// Whether `path` names a shard's value file, `pagable.<shard>.db`, and not its key file,
+/// `pagable.<shard>.keys.db`.
 fn is_pagable_db(path: &Path) -> bool {
     path.file_name()
         .and_then(|name| name.to_str())
         .and_then(|name| name.strip_prefix("pagable."))
         .and_then(|rest| rest.strip_suffix(".db"))
-        .is_some()
+        .is_some_and(|shard| shard.parse::<usize>().is_ok())
 }
 
 #[buck_test(

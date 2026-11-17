@@ -134,10 +134,10 @@ fn parse_positive_env(var: &str, default: usize) -> usize {
 ///
 /// The row cap alone would let byte volume swing with row size, and
 /// transaction size is what page-out cost scales by: content-hash keys land
-/// uniformly across the `UNIQUE(key_hi, key_lo)` index, the batch sort writes
-/// each touched index page once per transaction, so total index churn is
-/// (rows / transaction-rows) passes over an index that grows with row count
-/// (buffer-size sweep in the diff summary).
+/// uniformly across the key file, the batch sort writes each touched page of
+/// it once per transaction, so total churn is (rows / transaction-rows) passes
+/// over a key file that grows with row count (buffer-size sweep in the diff
+/// summary).
 fn write_buffer_bytes() -> usize {
     static BYTES: OnceLock<usize> = OnceLock::new();
     *BYTES.get_or_init(|| {
@@ -180,15 +180,21 @@ fn retain_read_transactions() -> bool {
         env::var_os("BUCK2_PAGABLE_RETAIN_READ_TRANSACTIONS").is_none_or(|value| value != "0")
     })
 }
-const INSERT_SQL: &str =
-    "INSERT OR IGNORE INTO pagable_data (key_lo, key_hi, value) VALUES (?1, ?2, ?3)";
-const FETCH_SQL: &str = "SELECT value FROM pagable_data WHERE key_lo = ?1 AND key_hi = ?2";
-const CREATE_TABLE_SQL: &str = "CREATE TABLE IF NOT EXISTS pagable_data (
+const INSERT_KEY_SQL: &str =
+    "INSERT OR IGNORE INTO keys.pagable_keys (key_lo, key_hi, id) VALUES (?1, ?2, ?3)";
+const INSERT_VALUE_SQL: &str = "INSERT INTO pagable_data (id, value) VALUES (?1, ?2)";
+const FETCH_SQL: &str = "SELECT value FROM pagable_data WHERE id = \
+    (SELECT id FROM keys.pagable_keys WHERE key_lo = ?1 AND key_hi = ?2)";
+const CREATE_TABLES_SQL: &str = "CREATE TABLE IF NOT EXISTS pagable_data (
+        id INTEGER PRIMARY KEY,
+        value BLOB NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS keys.pagable_keys (
         key_lo INTEGER NOT NULL,
         key_hi INTEGER NOT NULL,
-        value BLOB NOT NULL,
-        UNIQUE(key_hi, key_lo)
-    );";
+        id INTEGER NOT NULL,
+        PRIMARY KEY (key_hi, key_lo)
+    ) WITHOUT ROWID;";
 
 /// SQLite-backed storage backend for pagable data.
 ///
@@ -199,6 +205,13 @@ const CREATE_TABLE_SQL: &str = "CREATE TABLE IF NOT EXISTS pagable_data (
 ///
 /// SQLite serializes writes per database file, so data is sharded by `DataKey`
 /// to allow page-out workers to write independent files in parallel.
+///
+/// A shard is two files. `pagable.N.db` holds the values, each under a row id.
+/// `pagable.N.keys.db` holds the keys, each with the row id of its value, and is
+/// what finds a value from its `DataKey` and tells a value already stored from a
+/// new one. Keys are content hashes, so looking one up lands anywhere in the key
+/// file; keeping them out of the value file keeps those pages together, and leaves
+/// the value file free to hold values in whatever order suits reading them.
 pub struct SqliteBackedPagableStorage {
     shards: Vec<Shard>,
     /// Shared with every shard; see [`ShardInner::next_seq`].
@@ -224,6 +237,8 @@ struct ShardInner {
     stop_write: AtomicBool,
     /// The connection pool for this shard.
     conns: ConnectionPool,
+    /// The row id the next value written takes. Only the writer thread advances it.
+    next_id: AtomicU64,
     /// The state of the writer thread.
     write_state: Mutex<ShardWriteState>,
     /// The condition variable to signal the writer thread.
@@ -324,7 +339,8 @@ impl ConnectionPool {
         let writer = Connection::open(path)?;
         Self::init_pragmas(&writer)?;
         Self::init_writer_pragmas(&writer)?;
-        writer.execute_batch(CREATE_TABLE_SQL)?;
+        Self::attach_key_file(&writer, path)?;
+        writer.execute_batch(CREATE_TABLES_SQL)?;
 
         // Readers load the schema with their first statement and keep it. One
         // that loaded it before the table existed, or that first loads it while
@@ -340,6 +356,7 @@ impl ConnectionPool {
                     | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX,
             )?;
             Self::init_pragmas(&reader)?;
+            Self::attach_key_file(&reader, path)?;
             reader.prepare_cached(FETCH_SQL)?;
             readers.push(parking_lot::Mutex::new(reader));
         }
@@ -350,6 +367,22 @@ impl ConnectionPool {
             next_reader: AtomicUsize::new(0),
             read_timeout_ms: AtomicU64::new(BUSY_TIMEOUT.as_millis() as u64),
         })
+    }
+
+    /// Makes the shard's key file, which sits beside its value file as `<shard>.keys.db`,
+    /// part of `conn` under the name `keys`.
+    fn attach_key_file(conn: &Connection, path: &Path) -> anyhow::Result<()> {
+        let key_file = path.with_extension("keys.db");
+        let key_file = key_file
+            .to_str()
+            .ok_or_else(|| anyhow::anyhow!("key file path {key_file:?} is not UTF-8"))?;
+        conn.execute("ATTACH DATABASE ?1 AS keys", [key_file])?;
+        conn.execute_batch(
+            "PRAGMA keys.synchronous=OFF;
+            PRAGMA keys.journal_mode=OFF;
+            PRAGMA keys.page_size=8192;",
+        )?;
+        Ok(())
     }
 
     fn init_pragmas(conn: &Connection) -> anyhow::Result<()> {
@@ -440,8 +473,14 @@ impl Shard {
         next_seq: Arc<AtomicU64>,
     ) -> anyhow::Result<Self> {
         let conns = ConnectionPool::open(path, num_readers)?;
+        let next_id: i64 = conns.get_readwrite().query_row(
+            "SELECT COALESCE(MAX(id), 0) + 1 FROM pagable_data",
+            [],
+            |row| row.get(0),
+        )?;
         let inner = Arc::new(ShardInner {
             conns,
+            next_id: AtomicU64::new(next_id as u64),
             next_seq,
             stop_write: AtomicBool::new(false),
             write_state: Mutex::new(ShardWriteState {
@@ -679,7 +718,10 @@ impl ShardInner {
         // Declared before the transaction, so released after it has committed.
         let _readers = self.conns.pause_readers()?;
         let tx = conn.transaction()?;
-        insert_items(&tx, items, &self.stop_write)?;
+        let first_id = self
+            .next_id
+            .fetch_add(items.len() as u64, Ordering::Relaxed);
+        insert_items(&tx, items, first_id, &self.stop_write)?;
         tx.commit()?;
         Ok(())
     }
@@ -953,22 +995,28 @@ fn data_key_parts(key: DataKey) -> (i64, i64) {
     ((key.get() as u64) as i64, ((key.get() >> 64) as u64) as i64)
 }
 
-/// Inserts `items`, stopping after the current row once `stop` is set. The transaction stays
-/// committable either way.
+/// Gives `items` the row ids from `first_id` on, records each key with its row id, and
+/// writes the value of every key the shard did not already hold. Stops after the current
+/// row once `stop` is set; the transaction stays committable either way.
 fn insert_items(
     tx: &rusqlite::Transaction<'_>,
     items: &[(DataKey, Vec<u8>)],
+    first_id: u64,
     stop: &AtomicBool,
 ) -> anyhow::Result<()> {
-    let mut insert = tx.prepare_cached(INSERT_SQL)?;
-    for (key, bytes) in items {
+    let mut insert_key = tx.prepare_cached(INSERT_KEY_SQL)?;
+    let mut insert_value = tx.prepare_cached(INSERT_VALUE_SQL)?;
+    for (id, (key, bytes)) in (first_id as i64..).zip(items) {
         if stop.load(Ordering::Relaxed) {
             return Ok(());
         }
         let (key_lo, key_hi) = data_key_parts(*key);
-        insert
-            .execute(rusqlite::params![key_lo, key_hi, bytes])
-            .map_err(|error| insert_error(tx, error, key, bytes.len()))?;
+        let is_new = insert_key.execute(rusqlite::params![key_lo, key_hi, id])? == 1;
+        if is_new {
+            insert_value
+                .execute(rusqlite::params![id, bytes])
+                .map_err(|error| insert_error(tx, error, key, bytes.len()))?;
+        }
     }
     Ok(())
 }
@@ -1126,7 +1174,7 @@ mod tests {
             let (key_lo, key_hi) = data_key_parts(first);
             assert_eq!(
                 shard.inner.conns.get_readwrite().query_row(
-                    "SELECT COUNT(*) FROM pagable_data WHERE key_lo=? AND key_hi=?",
+                    "SELECT COUNT(*) FROM keys.pagable_keys WHERE key_lo=? AND key_hi=?",
                     rusqlite::params![key_lo, key_hi],
                     |row| row.get::<_, usize>(0),
                 )?,
@@ -1617,14 +1665,8 @@ mod tests {
         const VALUE_BYTES: usize = 512;
 
         let mut conn = Connection::open_in_memory()?;
-        conn.execute_batch(
-            "CREATE TABLE pagable_data (
-                key_lo INTEGER NOT NULL,
-                key_hi INTEGER NOT NULL,
-                value BLOB NOT NULL,
-                UNIQUE(key_hi, key_lo)
-            );",
-        )?;
+        conn.execute_batch("ATTACH DATABASE ':memory:' AS keys;")?;
+        conn.execute_batch(CREATE_TABLES_SQL)?;
         conn.set_limit(
             rusqlite::limits::Limit::SQLITE_LIMIT_LENGTH,
             SQLITE_LENGTH_LIMIT,
@@ -1632,7 +1674,7 @@ mod tests {
         let tx = conn.transaction()?;
         let data_key = DataKey::testing_new(1);
         let items = vec![(data_key, vec![0; VALUE_BYTES])];
-        let error = insert_items(&tx, &items, &AtomicBool::new(false))
+        let error = insert_items(&tx, &items, 1, &AtomicBool::new(false))
             .expect_err("SQLite should reject a BLOB larger than SQLITE_LIMIT_LENGTH");
         let message = format!("{error:#}");
 
@@ -1685,6 +1727,37 @@ mod tests {
         Ok(())
     }
 
+    /// A shard's keys are in its key file and nowhere else: the value file holds the values
+    /// by row id, with no index over them.
+    #[test]
+    fn sqlite_keeps_a_shards_keys_out_of_its_value_file() -> anyhow::Result<()> {
+        let dir = TempStorageDir::new("key_file")?;
+        let storage = SqliteBackedPagableStorage::try_new(&dir.path)?;
+        let keys = (0..200)
+            .map(|i| storage.store_data(pagable_data(format!("value-{i}").as_bytes(), Vec::new())))
+            .collect::<anyhow::Result<Vec<_>>>()?;
+        storage.flush()?;
+
+        for shard_id in 0..NUM_SHARDS {
+            let in_shard = keys
+                .iter()
+                .filter(|key| key.get() % NUM_SHARDS as u128 == shard_id as u128)
+                .count();
+            let value_file = Connection::open(dir.path.join(format!("pagable.{shard_id}.db")))?;
+            let indexes: usize = value_file.query_row(
+                "SELECT COUNT(*) FROM sqlite_schema WHERE type = 'index'",
+                [],
+                |row| row.get(0),
+            )?;
+            assert_eq!(indexes, 0, "shard {shard_id}");
+            let key_file = Connection::open(dir.path.join(format!("pagable.{shard_id}.keys.db")))?;
+            let recorded: usize =
+                key_file.query_row("SELECT COUNT(*) FROM pagable_keys", [], |row| row.get(0))?;
+            assert_eq!(recorded, in_shard, "shard {shard_id}");
+        }
+        Ok(())
+    }
+
     #[test]
     fn sqlite_storage_drop_drains_unflushed_active_buffer() -> anyhow::Result<()> {
         let dir = TempStorageDir::new("drop_drains")?;
@@ -1697,13 +1770,14 @@ mod tests {
         };
 
         let shard_id = (key.get() % NUM_SHARDS as u128) as usize;
-        let conn = Connection::open(dir.path.join(format!("pagable.{shard_id}.db")))?;
+        let path = dir.path.join(format!("pagable.{shard_id}.db"));
+        let conn = Connection::open(&path)?;
+        ConnectionPool::attach_key_file(&conn, &path)?;
         let (key_lo, key_hi) = data_key_parts(key);
-        let value: Vec<u8> = conn.query_row(
-            "SELECT value FROM pagable_data WHERE key_lo = ?1 AND key_hi = ?2",
-            rusqlite::params![key_lo, key_hi],
-            |row| row.get(0),
-        )?;
+        let value: Vec<u8> =
+            conn.query_row(FETCH_SQL, rusqlite::params![key_lo, key_hi], |row| {
+                row.get(0)
+            })?;
         let fetched = SqliteBackedPagableStorage::decode_pagable_data(&value, &key)?;
         assert_eq!(b"drop drains payload", fetched.data.as_slice());
         assert_eq!(vec![DataKey::testing_new(7)], fetched.arcs);

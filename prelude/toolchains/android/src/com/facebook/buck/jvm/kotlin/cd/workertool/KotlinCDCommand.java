@@ -23,10 +23,12 @@ import com.facebook.buck.jvm.cd.DepFileUtils;
 import com.facebook.buck.jvm.cd.JvmCDCommand;
 import com.facebook.buck.jvm.cd.command.PostBuildParams;
 import com.facebook.buck.jvm.cd.command.kotlin.BuildKotlinCommand;
+import com.facebook.buck.jvm.cd.command.kotlin.KotlinExtraParams;
 import com.facebook.buck.jvm.cd.serialization.kotlin.ActionMetadataSerializer;
 import com.facebook.buck.jvm.java.ActionMetadata;
 import com.facebook.buck.jvm.java.CompilerClassToSourceMap;
 import com.facebook.buck.jvm.java.CompilerOutputPaths;
+import com.facebook.buck.jvm.kotlin.ApplicabilityClasspathState;
 import com.facebook.buck.jvm.kotlin.KotlinStepsBuilder;
 import com.facebook.buck.jvm.kotlin.cd.analytics.KotlinCDAnalytics;
 import com.facebook.buck.jvm.kotlin.cd.analytics.logger.KotlinCDLogger;
@@ -383,7 +385,7 @@ public class KotlinCDCommand implements JvmCDCommand {
     }
   }
 
-  protected void maybeWritePreviousStateForNextIncrementalRun() {
+  protected void maybeWritePreviousStateForNextIncrementalRun() throws IOException {
     PreviousStateWriter previousStateWriter =
         PreviousStateWriterFactory.create(
             buildKotlinCommand.getKotlinExtraParams().getShouldActionRunIncrementally(),
@@ -391,10 +393,16 @@ public class KotlinCDCommand implements JvmCDCommand {
             actionMetadataPath.orElse(null));
 
     previousStateWriter.execute();
-    if (buildKotlinCommand.getKotlinExtraParams().getShouldActionRunIncrementally()
-        && buildKotlinCommand.getKotlinExtraParams().getShouldTrackIncrementalInputs()) {
-      IncrementalCompilerInputs.promotePending(
-          Objects.requireNonNull(postBuildParams.getIncrementalStateDir()));
+    KotlinExtraParams extraParams = buildKotlinCommand.getKotlinExtraParams();
+    if (!extraParams.getShouldActionRunIncrementally()) {
+      return;
+    }
+    Path incrementalStateDir = Objects.requireNonNull(postBuildParams.getIncrementalStateDir());
+    if (extraParams.getShouldTrackIncrementalInputs()) {
+      IncrementalCompilerInputs.promotePending(incrementalStateDir);
+    }
+    if (extraParams.getShouldVerifySourceOnlyAbiConstraints()) {
+      ApplicabilityClasspathState.promotePending(incrementalStateDir);
     }
   }
 

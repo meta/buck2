@@ -22,4 +22,5 @@ enum class RebuildReason(val message: String) {
   ),
   KOTLIN_MODULE_MAPPINGS_CHANGED("Kotlin module mappings of a classpath jar have been changed"),
   INCREMENTAL_INPUTS_UNREADABLE("Inputs of the last successful round could not be compared"),
+  APPLICABILITY_CLASSPATH_CHANGED("Kosabi applicability reduced classpath has been changed"),
 }

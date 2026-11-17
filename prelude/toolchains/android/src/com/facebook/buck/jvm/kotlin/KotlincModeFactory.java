@@ -18,9 +18,11 @@ import com.facebook.buck.jvm.java.ActionMetadata;
 import com.facebook.buck.jvm.kotlin.kotlinc.incremental.IncrementalInputTracking;
 import com.facebook.buck.jvm.kotlin.kotlinc.incremental.KotlinSourceChanges;
 import com.facebook.buck.jvm.kotlin.kotlinc.incremental.KotlincMode;
+import com.facebook.buck.jvm.kotlin.kotlinc.incremental.RebuildReason;
 import com.facebook.infer.annotation.Nullsafe;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
+import java.io.IOException;
 import java.util.Optional;
 import org.jspecify.annotations.Nullable;
 
@@ -84,6 +86,41 @@ public class KotlincModeFactory {
             .map(rootProjectDir::relativize)
             .ifPresent(watchedPlugins::add);
       }
+      // So does the Kosabi applicability plugin, whose rules decide the verdict of every round.
+      boolean verifiesApplicability = extraParams.getShouldVerifySourceOnlyAbiConstraints();
+      @Nullable RelPath applicabilityPlugin =
+          verifiesApplicability
+              ? Optional.ofNullable(
+                      extraParams
+                          .getKosabiPluginOptions()
+                          .get(KosabiConfig.PROPERTY_KOSABI_APPLICABILITY_PLUGIN))
+                  .map(rootProjectDir::relativize)
+                  .orElse(null)
+              : null;
+      if (applicabilityPlugin != null) {
+        watchedPlugins.add(applicabilityPlugin);
+      }
+
+      @Nullable RebuildReason rebuildReason =
+          incrementalCompilationValidator.validate(
+              watchedPlugins.build(),
+              metadata,
+              depFile,
+              usedJars,
+              getJvmAbiGenWorkingDir(
+                  extraParams.getShouldUseJvmAbiGen(), extraParams.getJvmAbiGenWorkingDir()));
+      // Recorded on every round, so that a successful one leaves the state the next compares with.
+      if (verifiesApplicability
+          && hasApplicabilityClasspathChanged(rootProjectDir, extraParams, metadata)
+          && rebuildReason == null) {
+        rebuildReason = RebuildReason.APPLICABILITY_CLASSPATH_CHANGED;
+      }
+      // The plugin watch compares digests; without one for the plugin it cannot see a change.
+      if (applicabilityPlugin != null
+          && !metadata.getCurrentDigest().containsKey(applicabilityPlugin.getPath())
+          && rebuildReason == null) {
+        rebuildReason = RebuildReason.KOTLIN_COMPILER_PLUGIN_CHANGED;
+      }
 
       return new KotlincMode.Incremental(
           rootProjectDir,
@@ -92,16 +129,25 @@ public class KotlincModeFactory {
           KotlinSourceChanges.ToBeCalculated.INSTANCE,
           ClasspathChangesFactory.create(new SnapshotsActionMetadata(metadata), classpathSnapshots),
           depFile,
-          incrementalCompilationValidator.validate(
-              watchedPlugins.build(),
-              metadata,
-              depFile,
-              usedJars,
-              getJvmAbiGenWorkingDir(
-                  extraParams.getShouldUseJvmAbiGen(), extraParams.getJvmAbiGenWorkingDir())),
+          rebuildReason,
           extraParams.getShouldTrackIncrementalInputs()
               ? new IncrementalInputTracking(metadata.getCurrentDigest(), optionValues(extraParams))
               : null);
+    }
+  }
+
+  private static boolean hasApplicabilityClasspathChanged(
+      AbsPath rootProjectDir, KotlinExtraParams extraParams, ActionMetadata metadata) {
+    AbsPath incrementalStateDir =
+        extraParams
+            .getIncrementalStateDir()
+            .orElseThrow(() -> new IllegalStateException("incremental_state_dir is not created"));
+    try {
+      return ApplicabilityClasspathState.recordAndCompare(
+          rootProjectDir, incrementalStateDir, extraParams.getApplicabilityClasspath(), metadata);
+    } catch (IOException e) {
+      LOG.warn(e, "Could not compare the Kosabi applicability classpath; compiling in full");
+      return true;
     }
   }
 

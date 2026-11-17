@@ -45,5 +45,6 @@ buck_kotlin_library(
         "prelude//toolchains/android/src/com/facebook/buck/jvm/kotlin/abtesting:abtesting",
         "prelude//toolchains/android/src/com/facebook/buck/jvm/kotlin/abtesting/ksic:ksic",
         "prelude//toolchains/android/src/com/facebook/buck/core/filesystems:filesystems",
+        "prelude//toolchains/android/third-party:asm",
     ],
 )

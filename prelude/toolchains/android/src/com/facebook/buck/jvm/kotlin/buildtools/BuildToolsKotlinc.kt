@@ -18,6 +18,7 @@ import com.facebook.buck.jvm.core.BuildTargetValue
 import com.facebook.buck.jvm.kotlin.cd.analytics.KotlinCDLoggingContext
 import com.facebook.buck.jvm.kotlin.cd.analytics.SourceTokenCounter
 import com.facebook.buck.jvm.kotlin.kotlinc.Kotlinc
+import com.facebook.buck.jvm.kotlin.kotlinc.incremental.ClasspathChanges
 import com.facebook.buck.jvm.kotlin.kotlinc.incremental.IncrementalCompilerInputs
 import com.facebook.buck.jvm.kotlin.kotlinc.incremental.KotlincMode
 import com.facebook.buck.util.ClassLoaderCache
@@ -39,6 +40,10 @@ import org.jetbrains.kotlin.buildtools.api.ProjectId
  */
 @OptIn(ExperimentalBuildToolsApi::class)
 class BuildToolsKotlinc : Kotlinc {
+
+  @Volatile private var lastCompilationWasIncremental = false
+
+  override fun lastCompilationWasIncremental(): Boolean = lastCompilationWasIncremental
 
   // Legacy BTA API is DEPRECATION_ERROR from Kotlin 2.4; KotlinToolchains replaces it.
   @Suppress("DEPRECATION_ERROR")
@@ -107,26 +112,33 @@ class BuildToolsKotlinc : Kotlinc {
 
     val gcBefore = getGcStats()
     val compileStart = System.nanoTime()
+    val logger = BuckKotlinLogger(UncloseablePrintStream(context.stdErr), kotlinCDLoggingContext)
+    val classToSourceMap = classToSourceMapPath?.let {
+      KotlinClassToSourceMap(
+          it,
+          outputDirectory.path,
+          ruleCellRoot.path,
+          (effectiveMode as? KotlincMode.Incremental)
+              ?.kotlicWorkingDir
+              ?.path
+              ?.resolve(com.facebook.buck.jvm.java.CompilerClassToSourceMap.KOTLIN_FILE_NAME),
+      )
+    }
+    lastCompilationWasIncremental = false
     val result =
         kotlinCompilationService.compile(
             ProjectId.ProjectUUID(UUID.randomUUID()),
             compilerArgs,
             effectiveMode,
-            BuckKotlinLogger(UncloseablePrintStream(context.stdErr), kotlinCDLoggingContext),
-            classToSourceMapPath?.let {
-              KotlinClassToSourceMap(
-                  it,
-                  outputDirectory.path,
-                  ruleCellRoot.path,
-                  (effectiveMode as? KotlincMode.Incremental)
-                      ?.kotlicWorkingDir
-                      ?.path
-                      ?.resolve(
-                          com.facebook.buck.jvm.java.CompilerClassToSourceMap.KOTLIN_FILE_NAME,
-                      ),
-              )
-            },
+            logger,
+            classToSourceMap,
         )
+    lastCompilationWasIncremental =
+        effectiveMode is KotlincMode.Incremental &&
+            effectiveMode.rebuildReason == null &&
+            effectiveMode.classpathChanges !is ClasspathChanges.Unknown &&
+            classToSourceMap?.requiresRebuild != true &&
+            !logger.compiledNonIncrementally
     val compileMs = (System.nanoTime() - compileStart) / 1_000_000
     val gcAfter = getGcStats()
     val gcDeltaMs = gcAfter.first - gcBefore.first

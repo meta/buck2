@@ -30,6 +30,12 @@ public class CapturingPrintStream extends PrintStream {
     this.byteArrayOutputStream = byteArrayOutputStream;
   }
 
+  /** Discards what was captured so far. */
+  public void reset() {
+    flush();
+    byteArrayOutputStream.reset();
+  }
+
   public String getContentsAsString(Charset charset) {
     try {
       return byteArrayOutputStream.toString(charset.name());

@@ -25,6 +25,7 @@ import com.facebook.buck.jvm.kotlin.cd.analytics.KotlinCDAnalytics;
 import com.facebook.buck.jvm.kotlin.cd.analytics.KotlinCDLoggingContext;
 import com.facebook.buck.jvm.kotlin.kotlinc.Kotlinc;
 import com.facebook.buck.jvm.kotlin.kotlinc.incremental.KotlincMode;
+import com.facebook.buck.jvm.kotlin.kotlinc.incremental.RebuildReason;
 import com.facebook.buck.jvm.kotlin.plugin.PluginLoader;
 import com.facebook.buck.step.StepExecutionResult;
 import com.facebook.buck.step.StepExecutionResults;
@@ -40,11 +41,13 @@ import com.google.common.collect.ImmutableSortedSet;
 import java.io.File;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.function.Supplier;
 import org.jspecify.annotations.Nullable;
 
 /** Kotlin compile Step */
@@ -54,8 +57,15 @@ public class KotlincStep implements IsolatedStep {
 
   private static final String CLASSPATH_FLAG = "-classpath";
   private static final String DESTINATION_FLAG = "-d";
+  // Under the incremental state directory, beside the directories it copies.
+  private static final String STATE_COPY_DIRECTORY = "applicability_full_round_copy";
   private static final String X_PLUGIN_ARG = "-Xplugin=";
   private static final String PLUGIN = "-P";
+  // The marker the applicability plugin's report starts with (`ApplicabilityReport.kt`).
+  private static final String APPLICABILITY_REPORT_MARKER = "KOSABI_APPLICABILITY_REPORT_V2=";
+  // Written by the incremental compiler after a successful round
+  // (`JvmCompilationConfigurationFactory`).
+  private static final String SHRUNK_CLASSPATH_SNAPSHOT = "shrunk-classpath-snapshot.bin";
   private static final String APPLICABILITY_PLUGIN_ID =
       "com.facebook.kotlin.compilerplugins.kosabiapplicability";
 
@@ -178,25 +188,18 @@ public class KotlincStep implements IsolatedStep {
       Instant compilationStart = Instant.now();
 
       int declaredDepsBuildResult =
-          kotlinc.buildWithClasspath(
-              firstOrderContext,
-              invokingRule,
-              compilerOptions,
-              kotlinHomeLibraries,
-              sourceFilePaths,
-              pathToSrcsList,
-              Optional.of(outputPaths.getWorkingDirectory().getPath()),
-              context.getRuleCellRoot(),
+          compileCheckingAgainInFull(
+              verifySourceOnlyAbiConstraints && invokingRule.isLibraryJar(),
               kotlincMode,
-              loggingContext,
-              context.getRuleCellRoot().resolve(outputDirectory),
-              emitsClassToSourceMap() && outputPaths.getCompilerClassToSourceMap() != null
-                  ? context
-                      .getRuleCellRoot()
-                      .resolve(outputPaths.getWorkingDirectory())
-                      .getPath()
-                      .resolve(CompilerClassToSourceMap.KOTLIN_FILE_NAME)
-                  : null);
+              mode -> compile(context, firstOrderContext, compilerOptions, mode, loggingContext),
+              kotlinc::lastCompilationWasIncremental,
+              () -> stderr.getContentsAsString(StandardCharsets.UTF_8),
+              () -> {
+                stdout.reset();
+                stderr.reset();
+              },
+              () -> copyIncrementalState(context.getRuleCellRoot()),
+              invokingRule.getFullyQualifiedName());
 
       Instant compilationEnd = Instant.now();
       Duration compilationDuration = Duration.between(compilationStart, compilationEnd);
@@ -267,6 +270,171 @@ public class KotlincStep implements IsolatedStep {
     } catch (IOException | InterruptedException e) {
       throw new RuntimeException(e);
     }
+  }
+
+  private int compile(
+      IsolatedExecutionContext context,
+      IsolatedExecutionContext firstOrderContext,
+      ImmutableList<String> compilerOptions,
+      KotlincMode mode,
+      KotlinCDLoggingContext loggingContext)
+      throws InterruptedException {
+    return kotlinc.buildWithClasspath(
+        firstOrderContext,
+        invokingRule,
+        compilerOptions,
+        kotlinHomeLibraries,
+        sourceFilePaths,
+        pathToSrcsList,
+        Optional.of(outputPaths.getWorkingDirectory().getPath()),
+        context.getRuleCellRoot(),
+        mode,
+        loggingContext,
+        context.getRuleCellRoot().resolve(outputDirectory),
+        emitsClassToSourceMap() && outputPaths.getCompilerClassToSourceMap() != null
+            ? context
+                .getRuleCellRoot()
+                .resolve(outputPaths.getWorkingDirectory())
+                .getPath()
+                .resolve(CompilerClassToSourceMap.KOTLIN_FILE_NAME)
+            : null);
+  }
+
+  /** A compile in a mode, returning its exit code. */
+  @VisibleForTesting
+  interface Compilation {
+    int compile(KotlincMode mode) throws InterruptedException, IOException;
+  }
+
+  /** A copy of an incremental round's state, kept while a full compile replaces it. */
+  @VisibleForTesting
+  interface StateCopy {
+    /** Puts the copied state back. */
+    void restore() throws IOException;
+
+    /** Drops the copy, keeping the current state. */
+    void discard() throws IOException;
+  }
+
+  /** Copies an incremental round's state. */
+  @VisibleForTesting
+  interface StateCopier {
+    StateCopy copy() throws IOException;
+  }
+
+  private static final StateCopy NO_COPY =
+      new StateCopy() {
+        @Override
+        public void restore() {}
+
+        @Override
+        public void discard() {}
+      };
+
+  /**
+   * Compiles in {@code mode}. When an incremental round of an action that verifies Kosabi
+   * applicability compiled incrementally and failed on an applicability verdict alone, compiles
+   * again in full and returns that compile's result: an incremental round analyses only the files
+   * it recompiles, and checks that need facts only a source declaration carries treat unchanged
+   * files conservatively, so a verdict that is not READY is final only after a full round.
+   *
+   * <p>The full compile replaces the incremental compiler's state. If it fails too, the state
+   * copied before it is put back: the failed incremental compile left the last successful round's
+   * state, so the next round can still be incremental.
+   */
+  @VisibleForTesting
+  static int compileCheckingAgainInFull(
+      boolean verifiesApplicability,
+      KotlincMode mode,
+      Compilation compilation,
+      java.util.function.BooleanSupplier compiledIncrementally,
+      Supplier<String> stderr,
+      Runnable resetOutput,
+      StateCopier stateCopier,
+      String target)
+      throws InterruptedException, IOException {
+    boolean incrementalRound = isIncrementalApplicabilityRound(verifiesApplicability, mode);
+    int result = compilation.compile(mode);
+    if (!shouldCheckAgainInFull(
+        incrementalRound && compiledIncrementally.getAsBoolean(), result, stderr)) {
+      return result;
+    }
+    LOG.info(
+        "Kosabi applicability did not pass an incremental round of %s; checking it in full",
+        target);
+    resetOutput.run();
+    StateCopy copy;
+    try {
+      copy = stateCopier.copy();
+    } catch (IOException e) {
+      LOG.warn(e, "Could not copy the incremental state of %s", target);
+      copy = NO_COPY;
+    }
+    int fullResult;
+    try {
+      fullResult =
+          compilation.compile(
+              ((KotlincMode.Incremental) mode)
+                  .withRebuildReason(RebuildReason.APPLICABILITY_CHECKED_IN_FULL));
+    } catch (InterruptedException | IOException | RuntimeException e) {
+      try {
+        copy.restore();
+      } catch (IOException restoreFailure) {
+        e.addSuppressed(restoreFailure);
+      }
+      throw e;
+    }
+    // The full compile's result stands either way: a copy left behind is replaced by the next one,
+    // and state that cannot be put back is deleted, so the next round compiles in full.
+    try {
+      if (fullResult == StepExecutionResults.SUCCESS_EXIT_CODE) {
+        copy.discard();
+      } else {
+        copy.restore();
+      }
+    } catch (IOException e) {
+      LOG.warn(e, "Could not put back or drop the copy of the incremental state of %s", target);
+    }
+    return fullResult;
+  }
+
+  /** Copies the incremental compiler's working directory and the class outputs. */
+  private StateCopy copyIncrementalState(AbsPath ruleCellRoot) throws IOException {
+    Path workingDirectory = ((KotlincMode.Incremental) kotlincMode).getKotlicWorkingDir().getPath();
+    Path stateDirectory = Objects.requireNonNull(workingDirectory.getParent());
+    return IncrementalStateCopy.copy(
+        stateDirectory.resolve(STATE_COPY_DIRECTORY),
+        ImmutableList.of(workingDirectory, ruleCellRoot.resolve(outputDirectory).getPath()));
+  }
+
+  /**
+   * Whether a round runs Kosabi applicability incrementally: it verifies source-only ABI
+   * constraints, is not forced to be full, and has the shrunk classpath snapshot that only a
+   * successful earlier round leaves, without which the incremental compiler compiles in full
+   * anyway.
+   */
+  @VisibleForTesting
+  static boolean isIncrementalApplicabilityRound(boolean verifiesApplicability, KotlincMode mode) {
+    if (!verifiesApplicability || !(mode instanceof KotlincMode.Incremental)) {
+      return false;
+    }
+    KotlincMode.Incremental incremental = (KotlincMode.Incremental) mode;
+    return incremental.getRebuildReason() == null
+        && Files.exists(
+            incremental.getKotlicWorkingDir().resolve(SHRUNK_CLASSPATH_SNAPSHOT).getPath());
+  }
+
+  /**
+   * Whether a round must be compiled again in full: an incremental applicability round that failed
+   * on an applicability verdict alone. The plugin reports only when no other compiler error
+   * occurred, and only for a verdict that is not READY.
+   */
+  @VisibleForTesting
+  static boolean shouldCheckAgainInFull(
+      boolean incrementalApplicabilityRound, int exitCode, Supplier<String> stderr) {
+    return incrementalApplicabilityRound
+        && exitCode != StepExecutionResults.SUCCESS_EXIT_CODE
+        && stderr.get().contains(APPLICABILITY_REPORT_MARKER);
   }
 
   @VisibleForTesting

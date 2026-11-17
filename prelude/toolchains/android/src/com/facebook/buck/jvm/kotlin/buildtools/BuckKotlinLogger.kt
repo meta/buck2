@@ -43,8 +43,13 @@ internal class BuckKotlinLogger(
     throwable?.printStackTrace(stdErr)
   }
 
+  /** Whether the compiler reported compiling in full. */
+  var compiledNonIncrementally: Boolean = false
+    private set
+
   override fun info(msg: String) {
     if (msg.startsWith("Non-incremental compilation will be performed")) {
+      compiledNonIncrementally = true
       loggingContext.addExtras(BuckKotlinLogger::class.java.simpleName, msg)
     }
     if (msg.startsWith("KOTLIN_BUILD_METRIC|")) {

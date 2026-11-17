@@ -52,6 +52,14 @@ public interface Kotlinc {
 
   String getShortName();
 
+  /**
+   * Whether the last {@link #buildWithClasspath} compiled incrementally: in an incremental mode
+   * without a reason to compile in full, and without the compiler falling back to a full compile.
+   */
+  default boolean lastCompilationWasIncremental() {
+    return false;
+  }
+
   default ImmutableList<Path> getExpandedSourcePaths(
       AbsPath ruleCellRoot,
       ImmutableSet<RelPath> kotlinSourceFilePaths,

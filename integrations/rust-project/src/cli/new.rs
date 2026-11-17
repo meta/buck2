@@ -62,13 +62,12 @@ impl New {
 
         info!(?path);
 
-        // create the `TARGETS` file
-        let targets_path = path.join("TARGETS");
-        let mut targets_file =
-            fs::File::create(targets_path).context("Unable to create `TARGETS` file")?;
-        targets_file
+        // create the `BUCK` file
+        let buck_path = path.join("BUCK");
+        let mut buck_file = fs::File::create(buck_path).context("Unable to create `BUCK` file")?;
+        buck_file
             .write_all(target.render().as_bytes())
-            .context("Unable to write generated template to `TARGETS` file")?;
+            .context("Unable to write generated template to `BUCK` file")?;
 
         // create src dir
         let src_dur = path.join(Path::new("src"));
@@ -147,11 +146,11 @@ impl Target {
     fn render(&self) -> String {
         match self {
             Target::Library { name } => {
-                let template = include_str!("../../templates/TARGETS_LIB");
+                let template = include_str!("../../templates/BUCK_LIB");
                 template.replace("__NAME_PLACEHOLDER__", name)
             }
             Target::Binary { name } => {
-                let template = include_str!("../../templates/TARGETS_BIN");
+                let template = include_str!("../../templates/BUCK_BIN");
                 template.replace("__NAME_PLACEHOLDER__", name)
             }
         }
@@ -189,4 +188,29 @@ rust_binary(
 "#;
 
     assert_eq!(expected, target.render().replace("\r\n", "\n"));
+}
+
+#[test]
+fn test_run_creates_buck_file() {
+    let parent = std::env::temp_dir().join(format!("rust-project-new-{}", std::process::id()));
+    fs::create_dir_all(&parent).unwrap();
+
+    New {
+        name: String::from("a-rust-library"),
+        kind: ProjectKind::Library,
+        path: Some(parent.clone()),
+    }
+    .run()
+    .unwrap();
+
+    let project = parent.join("a-rust-library");
+    let has_buck = project.join("BUCK").is_file();
+    let has_targets = project.join("TARGETS").exists();
+    fs::remove_dir_all(&parent).unwrap();
+
+    assert!(has_buck, "`rust-project new` should create a `BUCK` file");
+    assert!(
+        !has_targets,
+        "`rust-project new` should not create a `TARGETS` file"
+    );
 }

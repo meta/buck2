@@ -109,7 +109,7 @@ pub(crate) struct Crate {
 ///
 /// ```json
 /// "target_spec": {
-///     "manifest_file": "/Users/dbarsky/fbsource/fbcode/buck2/integrations/rust-project/TARGETS",
+///     "manifest_file": "/Users/dbarsky/fbsource/fbcode/buck2/integrations/rust-project/BUCK",
 ///     "target_label": "fbcode//buck2/integrations/rust-project:rust-project",
 ///     "target_kind": "bin",
 ///     "runnables": {

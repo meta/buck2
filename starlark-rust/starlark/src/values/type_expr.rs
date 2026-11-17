@@ -65,7 +65,8 @@ pub trait StarlarkTypeExpr<'v>: Sized {
     /// and nothing stricter.
     fn get(value: Value<'v>) -> Option<Self::Get>;
 
-    /// Whether `value` is of this type.
+    /// Whether `value` is of this type: `get(value).is_some()`. An impl does not override
+    /// this; [`get`](Self::get) alone decides what is of the type.
     #[inline]
     fn matches(value: Value<'v>) -> bool {
         Self::get(value).is_some()

@@ -83,10 +83,7 @@ impl<'v, T: StarlarkTypeExpr<'v>> ValueOf<'v, T> {
     /// `value` if it is a `T`.
     #[inline]
     pub fn new(value: Value<'v>) -> Option<Self> {
-        let matches = T::matches(value);
-        #[cfg(debug_assertions)]
-        crate::values::unpack::check_matches_agreement::<T>(value, matches);
-        matches.then(|| Self::new_unchecked(value))
+        Self::new_with_get(value).map(|(value, _get)| value)
     }
 
     /// `value` and what it is read as, if it is a `T`: [`new`](Self::new) and

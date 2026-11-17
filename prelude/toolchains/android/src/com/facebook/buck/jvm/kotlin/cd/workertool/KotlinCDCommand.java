@@ -29,6 +29,7 @@ import com.facebook.buck.jvm.java.ActionMetadata;
 import com.facebook.buck.jvm.java.CompilerClassToSourceMap;
 import com.facebook.buck.jvm.java.CompilerOutputPaths;
 import com.facebook.buck.jvm.kotlin.ApplicabilityClasspathState;
+import com.facebook.buck.jvm.kotlin.ApplicabilityRoundMarker;
 import com.facebook.buck.jvm.kotlin.KotlinStepsBuilder;
 import com.facebook.buck.jvm.kotlin.cd.analytics.KotlinCDAnalytics;
 import com.facebook.buck.jvm.kotlin.cd.analytics.logger.KotlinCDLogger;
@@ -403,6 +404,7 @@ public class KotlinCDCommand implements JvmCDCommand {
     }
     if (extraParams.getShouldVerifySourceOnlyAbiConstraints()) {
       ApplicabilityClasspathState.promotePending(incrementalStateDir);
+      ApplicabilityRoundMarker.clear(incrementalStateDir);
     }
   }
 

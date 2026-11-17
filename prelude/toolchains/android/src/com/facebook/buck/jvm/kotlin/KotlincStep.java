@@ -187,11 +187,19 @@ public class KotlincStep implements IsolatedStep {
           KotlinCDLoggingContextFactory.create(this, languageVersion, kotlincMode);
       Instant compilationStart = Instant.now();
 
+      @Nullable Path roundStateDir = applicabilityRoundStateDir();
       int declaredDepsBuildResult =
           compileCheckingAgainInFull(
               verifySourceOnlyAbiConstraints && invokingRule.isLibraryJar(),
               kotlincMode,
-              mode -> compile(context, firstOrderContext, compilerOptions, mode, loggingContext),
+              mode ->
+                  compile(
+                      context,
+                      firstOrderContext,
+                      compilerOptions,
+                      mode,
+                      loggingContext,
+                      roundStateDir),
               kotlinc::lastCompilationWasIncremental,
               () -> stderr.getContentsAsString(StandardCharsets.UTF_8),
               () -> {
@@ -270,6 +278,38 @@ public class KotlincStep implements IsolatedStep {
     } catch (IOException | InterruptedException e) {
       throw new RuntimeException(e);
     }
+  }
+
+  /**
+   * Compiles in [mode]. In an incremental round of an action that verifies Kosabi applicability,
+   * [roundStateDir] is its incremental state, where {@link ApplicabilityRoundMarker} records the
+   * compile; otherwise it is null.
+   */
+  private int compile(
+      IsolatedExecutionContext context,
+      IsolatedExecutionContext firstOrderContext,
+      ImmutableList<String> compilerOptions,
+      KotlincMode mode,
+      KotlinCDLoggingContext loggingContext,
+      @Nullable Path roundStateDir)
+      throws InterruptedException, IOException {
+    if (roundStateDir == null) {
+      return compile(context, firstOrderContext, compilerOptions, mode, loggingContext);
+    }
+    ApplicabilityRoundMarker.enter(roundStateDir, ApplicabilityRoundMarker.Phase.COMPILING);
+    int result = compile(context, firstOrderContext, compilerOptions, mode, loggingContext);
+    ApplicabilityRoundMarker.leaveCompile(
+        roundStateDir, result == StepExecutionResults.SUCCESS_EXIT_CODE);
+    return result;
+  }
+
+  private @Nullable Path applicabilityRoundStateDir() {
+    if (!verifySourceOnlyAbiConstraints
+        || !invokingRule.isLibraryJar()
+        || !(kotlincMode instanceof KotlincMode.Incremental)) {
+      return null;
+    }
+    return ((KotlincMode.Incremental) kotlincMode).getKotlicWorkingDir().getPath().getParent();
   }
 
   private int compile(

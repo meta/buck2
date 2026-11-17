@@ -352,6 +352,37 @@ public class KotlincModeFactoryTest {
         ((KotlincMode.Incremental) withoutDigest).getRebuildReason());
   }
 
+  @Test
+  public void when_last_applicability_round_did_not_finish_then_rebuild() throws IOException {
+    AbsPath stateDir = temporaryPaths.newFolder("incremental_state");
+    AbsPath reducedJar = temporaryPaths.getRoot().resolve("reduced.jar");
+    writeJar(reducedJar, "p/A.class");
+    createApplicabilityMode(true, "same", "same", stateDir, reducedJar);
+    ApplicabilityClasspathState.promotePending(stateDir.getPath());
+    ApplicabilityRoundMarker.clear(stateDir.getPath());
+
+    // A clean compile failure leaves the round marked as started: still incremental.
+    ApplicabilityRoundMarker.enter(stateDir.getPath(), ApplicabilityRoundMarker.Phase.STARTED);
+    assertNull(
+        ((KotlincMode.Incremental)
+                createApplicabilityMode(true, "same", "same", stateDir, reducedJar))
+            .getRebuildReason());
+
+    // A compile that was committed before the action failed.
+    ApplicabilityRoundMarker.enter(stateDir.getPath(), ApplicabilityRoundMarker.Phase.COMPILED);
+    KotlincMode next = createApplicabilityMode(true, "same", "same", stateDir, reducedJar);
+
+    assertEquals(
+        RebuildReason.APPLICABILITY_ROUND_DID_NOT_FINISH,
+        ((KotlincMode.Incremental) next).getRebuildReason());
+    // That round fails before it compiles: the round after it is full too.
+    KotlincMode afterThat = createApplicabilityMode(true, "same", "same", stateDir, reducedJar);
+    assertEquals(
+        RebuildReason.APPLICABILITY_ROUND_DID_NOT_FINISH,
+        ((KotlincMode.Incremental) afterThat).getRebuildReason());
+    assertTrue(ApplicabilityRoundMarker.lastRoundDidNotFinish(stateDir.getPath()));
+  }
+
   private KotlincMode createApplicabilityMode(
       boolean verifiesApplicability, String previousPluginDigest, String currentPluginDigest)
       throws IOException {

@@ -23,6 +23,7 @@ import com.facebook.infer.annotation.Nullsafe;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
 import java.io.IOException;
+import java.nio.file.Path;
 import java.util.Optional;
 import org.jspecify.annotations.Nullable;
 
@@ -122,6 +123,10 @@ public class KotlincModeFactory {
         rebuildReason = RebuildReason.KOTLIN_COMPILER_PLUGIN_CHANGED;
       }
 
+      if (verifiesApplicability) {
+        rebuildReason = startApplicabilityRound(extraParams, rebuildReason);
+      }
+
       return new KotlincMode.Incremental(
           rootProjectDir,
           buildDir,
@@ -134,6 +139,39 @@ public class KotlincModeFactory {
               ? new IncrementalInputTracking(metadata.getCurrentDigest(), optionValues(extraParams))
               : null);
     }
+  }
+
+  /**
+   * Compiles in full after a round that did not finish (see {@link ApplicabilityRoundMarker}), and
+   * records that this one started.
+   */
+  private static @Nullable RebuildReason startApplicabilityRound(
+      KotlinExtraParams extraParams, @Nullable RebuildReason rebuildReason) {
+    Path incrementalStateDir =
+        extraParams
+            .getIncrementalStateDir()
+            .orElseThrow(() -> new IllegalStateException("incremental_state_dir is not created"))
+            .getPath();
+    @Nullable RebuildReason result = rebuildReason;
+    boolean unfinished = ApplicabilityRoundMarker.lastRoundDidNotFinish(incrementalStateDir);
+    if (unfinished && result == null) {
+      result = RebuildReason.APPLICABILITY_ROUND_DID_NOT_FINISH;
+    }
+    if (unfinished && ApplicabilityRoundMarker.isRecorded(incrementalStateDir)) {
+      // The unfinished round stays recorded until this round's compile moves the marker on: a
+      // round that fails before it compiles (in an annotation processor, for one) must not make
+      // the next round incremental.
+      return result;
+    }
+    try {
+      ApplicabilityRoundMarker.enter(incrementalStateDir, ApplicabilityRoundMarker.Phase.STARTED);
+    } catch (IOException e) {
+      LOG.warn(e, "Could not mark the Kosabi applicability round; compiling in full");
+      if (result == null) {
+        result = RebuildReason.APPLICABILITY_ROUND_DID_NOT_FINISH;
+      }
+    }
+    return result;
   }
 
   private static boolean hasApplicabilityClasspathChanged(

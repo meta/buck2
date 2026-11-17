@@ -134,7 +134,7 @@ def _make_rustc_shim(ctx: AnalysisContext, cwd: Artifact, arch: str | None = Non
         language = ctx.attrs._exec_os_type[OsLookup].script,
     )
 
-    return cmd_args(shim, relative_to = cwd)
+    return cmd_args(shim, hidden = shim) if arch != None else cmd_args(shim, relative_to = cwd)
 
 def _make_cc_shim(ctx: AnalysisContext, name: str, cmd: cmd_args) -> cmd_args:
     """
@@ -297,7 +297,7 @@ def _cargo_buildscript_impl(ctx: AnalysisContext) -> list[Provider]:
 
     if rust_toolchain_info.rustc_target_triple:
         rule_env["TARGET"] = rust_toolchain_info.rustc_target_triple
-    else:
+    elif ctx.attrs.rustc_host_tuple != None:
         base_cmd.append(cmd_args("--rustc-host-tuple=", ctx.attrs.rustc_host_tuple[DefaultInfo].default_outputs[0], delimiter = ""))
 
     # \037 == \x1f == the magic delimiter specified in the environment variable
@@ -445,7 +445,7 @@ def _cargo_buildscript_impl(ctx: AnalysisContext) -> list[Provider]:
                 ctx.attrs.runner[RunInfo],
                 cmd_args("--buildscript=", buildscript_variants[arch], delimiter = ""),
                 base_cmd,
-                hidden = variant.runtime_and_plugin_inputs,
+                hidden = variant.runtime_and_plugin_inputs + env.values() + [ctx.attrs.runner[RunInfo], buildscript_variants[arch]],
             )
             arch_programs[arch] = RunInfo(args = cmd)
         ctx.actions.run(
@@ -483,7 +483,7 @@ _cargo_buildscript_rule = rule(
         # *IMPORTANT* rustc_cfg must be a `dep` and not an `exec_dep` because
         # we want the `rustc --cfg` for the target platform, not the exec platform.
         "rustc_cfg": attrs.dep(default = "prelude//rust/tools:rustc_cfg"),
-        "rustc_host_tuple": attrs.dep(default = "prelude//rust/tools:rustc_host_tuple"),
+        "rustc_host_tuple": attrs.option(attrs.dep(), default = None),
         "rustc_link_lib": attrs.bool(default = False),
         "rustc_link_search": attrs.bool(default = False),
         "version": attrs.string(),
@@ -522,6 +522,7 @@ def buildscript_run(
     manifest_dir = None,
     buildscript_compatible_with = None,
     arch_buildscript_rule = None,
+    manifest_files = None,
     **kwargs,
 ):
     kwargs = apply_platform_attrs(platform, kwargs)
@@ -551,8 +552,8 @@ def buildscript_run(
         else:
             local_manifest_dir = "vendor/{}-{}".format(package_name, version)
 
-    filegroup_for_manifest_dir = None
-    if local_manifest_dir != None:
+    filegroup_for_manifest_dir = manifest_files
+    if local_manifest_dir != None and filegroup_for_manifest_dir == None:
         prefix_with_trailing_slash = "" if local_manifest_dir in ("", ".") else "{}/".format(local_manifest_dir)
         filegroup_for_manifest_dir = {path.removeprefix(prefix_with_trailing_slash): path for path in glob(["{}**".format(prefix_with_trailing_slash)])}
 
@@ -596,11 +597,13 @@ def buildscript_run(
     else:
         buildscript_arch_value = arch_buildscript_rule
 
+    rustc_host_tuple = kwargs.pop("rustc_host_tuple", "prelude//rust/tools:rustc_host_tuple")
     _cargo_buildscript_rule(
         name = name,
         buildscript = buildscript_rule,
         buildscript_arch = buildscript_arch_value,
         package_name = package_name,
+        rustc_host_tuple = select({_DUAL_ARCH: None, "DEFAULT": rustc_host_tuple}) if arch_buildscript_rule != None else rustc_host_tuple,
         version = version,
         filegroup_for_manifest_dir = filegroup_for_manifest_dir,
         manifest_dir = manifest_dir,

@@ -198,6 +198,11 @@ class K2JvmAbiFirAnalysisHandlerExtension(
           messageCollector,
           pluginTriggerAnnotations(updatedConfiguration),
       )
+      if (
+          updatedConfiguration.get(K2JvmAbiConfigurationKeys.ENABLE_COMPOSE_ABI_EMULATION) == true
+      ) {
+        pipeline.composeAbi.inferComposableTargets(analysisResults, sourceFiles, pipeline.repairLog)
+      }
 
       // Collect class usage from the resolved FIR tree for dep file tracking.
       // The DependencyTracker compiler plugin's FIR checkers don't run in kosabi's
@@ -1394,8 +1399,13 @@ class K2JvmAbiFirAnalysisHandlerExtension(
       // Skip checkers - ABI generation only needs resolved types, and third-party
       // plugin checkers (like Litho K2) crash on unresolved references from stubs.
       val firFiles = session.buildFirFromKtFiles(sources)
+      // Compose ABI emulation reads composable bodies (the applier inference runs on them
+      // below), so body skipping stays off while it is enabled.
+      val skipNonAbiBodies =
+          configuration.get(K2JvmAbiConfigurationKeys.SKIP_NON_ABI_BODIES) != false &&
+              configuration.get(K2JvmAbiConfigurationKeys.ENABLE_COMPOSE_ABI_EMULATION) != true
       val (scopeSession, fir) =
-          if (configuration.get(K2JvmAbiConfigurationKeys.SKIP_NON_ABI_BODIES) != false) {
+          if (skipNonAbiBodies) {
             session.runResolutionSkippingNonAbiBodies(firFiles)
           } else {
             session.runResolution(firFiles)

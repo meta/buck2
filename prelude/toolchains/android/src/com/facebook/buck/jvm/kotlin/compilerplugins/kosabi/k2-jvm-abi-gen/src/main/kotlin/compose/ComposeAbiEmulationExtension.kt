@@ -14,6 +14,7 @@ package com.facebook
 
 import org.jetbrains.kotlin.backend.common.extensions.IrGenerationExtension
 import org.jetbrains.kotlin.backend.common.extensions.IrPluginContext
+import org.jetbrains.kotlin.com.intellij.psi.PsiElement
 import org.jetbrains.kotlin.ir.declarations.IrModuleFragment
 
 /**
@@ -30,11 +31,16 @@ import org.jetbrains.kotlin.ir.declarations.IrModuleFragment
  *    functions (the P4 ComposerParamTransformer equivalent)
  * 4. **ComposableTypeRewriter** — rewrites @Composable function types in parameters, return types,
  *    and supertypes to include the synthetic Composer and changed-bitmask type arguments
+ * 5. **ComposableTargetAnnotator** — writes the applier annotations (`ComposableTarget`,
+ *    `ComposableInferredTarget`, `ComposableOpenTarget`) that [ComposableTargetInference] inferred
+ *    from the FIR bodies (the ComposableTargetAnnotationsTransformer equivalent)
  *
  * These transforms run before the IR sanitizer so that Compose-emulated declarations are present
  * when non-ABI content is stripped.
  */
-internal class ComposeAbiEmulationExtension : IrGenerationExtension {
+internal class ComposeAbiEmulationExtension(
+    private val composableTargets: Map<PsiElement, ComposableTargetAnnotation> = emptyMap(),
+) : IrGenerationExtension {
 
   override fun generate(moduleFragment: IrModuleFragment, pluginContext: IrPluginContext) {
     // Pass 1: Add $stable field + @StabilityInferred to eligible classes.
@@ -48,5 +54,8 @@ internal class ComposeAbiEmulationExtension : IrGenerationExtension {
 
     // Pass 4: Rewrite @Composable function types in parameter types, return types, supertypes.
     ComposableTypeRewriter(pluginContext).transform(moduleFragment)
+
+    // Pass 5: Write the inferred applier annotations.
+    ComposableTargetAnnotator(pluginContext, composableTargets).transform(moduleFragment)
   }
 }

@@ -961,6 +961,14 @@ third_party_jar(
 )
 
 third_party_jar(
+    name = "kotlin-compose-compiler-plugin-embeddable",
+    # @oss-disable[end= ]: internal_alias = "fbsource//third-party/java/kotlincd:kotlin-compose-compiler-plugin-embeddable__toolchain",
+    sha1 = "96eb34ab9364f1c4291f35b38b1b98d0fc70170c",
+    url = "mvn:org.jetbrains.kotlin:kotlin-compose-compiler-plugin-embeddable:jar:2.3.21",
+    visibility = ["PUBLIC"],
+)
+
+third_party_jar(
     name = "kotlin-metadata-jvm",
     # @oss-disable[end= ]: internal_alias = "fbsource//third-party/java/kotlincd:kotlin-metadata-jvm__toolchain",
     sha1 = "44a462b3cacd654503a791e4a04ec84f7a1f1c78",

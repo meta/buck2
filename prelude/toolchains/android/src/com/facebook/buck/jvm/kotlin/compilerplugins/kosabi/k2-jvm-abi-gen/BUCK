@@ -50,6 +50,21 @@ _KOTLIN_25_SHARED_COMPAT_SRCS = [
     ]
 ]
 
+# The Compose compiler's applier inference (androidx.compose.compiler.plugins.kotlin.inference), cut
+# out of the toolchain's Compose compiler plugin jar. The whole jar would also register the Compose
+# compiler plugin in every compilation that loads abi-gen.
+zip_file(
+    name = "compose-applier-inference",
+    out = "compose-applier-inference.jar",
+    entries_to_exclude = ["^(?!androidx/compose/compiler/plugins/kotlin/inference/).*$"],
+    zip_srcs = ["prelude//toolchains/android/third-party:kotlin-compose-compiler-plugin-embeddable"],
+)
+
+prebuilt_jar(
+    name = "compose-applier-inference-jar",
+    binary_jar = ":compose-applier-inference",
+)
+
 buck_kotlin_library(
     name = "k2-jvm-abi-gen-lib",
     srcs = glob(
@@ -97,6 +112,7 @@ buck_kotlin_library(
         "prelude//toolchains/android/third-party:kotlin-metadata-jvm",
         "prelude//toolchains/android/third-party:kotlin-stdlib",
         "prelude//toolchains/android/third-party:kotlinx-coroutines-core-jvm",
+        ":compose-applier-inference-jar",
     ],
 )
 

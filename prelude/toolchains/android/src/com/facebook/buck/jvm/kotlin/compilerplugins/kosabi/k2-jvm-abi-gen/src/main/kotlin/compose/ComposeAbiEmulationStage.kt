@@ -12,7 +12,10 @@
 
 package com.facebook
 
+import com.facebook.buck.jvm.kotlin.compilerplugins.common.isStub
 import org.jetbrains.kotlin.backend.common.extensions.IrGenerationExtension
+import org.jetbrains.kotlin.com.intellij.psi.PsiElement
+import org.jetbrains.kotlin.psi.KtFile
 
 /**
  * Pipeline stage for Compose ABI emulation.
@@ -24,8 +27,46 @@ import org.jetbrains.kotlin.backend.common.extensions.IrGenerationExtension
 internal class ComposeAbiEmulationStage : AbiGenStage {
   override val name = "ComposeAbiEmulation"
 
+  private var targetAnnotations: Map<PsiElement, ComposableTargetAnnotation> = emptyMap()
+
+  /**
+   * Infers the applier annotations the Compose backend writes. Runs on the resolved FIR, before any
+   * FIR cleanup rewrites function bodies. A failure leaves the stub without them, as before, and is
+   * recorded in [repairLog].
+   */
+  fun inferComposableTargets(
+      analysisResults: FrontendOutputCompat,
+      sourceFiles: List<KtFile>,
+      repairLog: AbiGenRepairLog,
+  ) {
+    val stubPaths =
+        sourceFiles.filter { it.isStub() }.map { it.viewProvider.virtualFile.path }.toSet()
+    if (!COMPOSE_APPLIER_INFERENCE_SUPPORTED) return
+    val output = analysisResults.outputs.lastOrNull() ?: return
+    val files = analysisResults.outputs.flatMap { module -> module.fir }
+    targetAnnotations =
+        try {
+          // The backend makes some links only depending on what it has inferred so far, which can
+          // depend on code that does not resolve here. One run makes every such link, the other
+          // none; an annotation is written only when both agree.
+          val linked =
+              ComposableTargetInference(output.session, stubPaths).also { it.analyze(files) }
+          val unlinked = ComposableTargetInference(
+              output.session,
+              stubPaths,
+              linkThroughCallTypes = false,
+              nonCapturing = linked.captureUncertainLambdas(),
+          )
+              .also { it.analyze(files) }
+          linked.annotations.filter { (key, annotation) -> unlinked.annotations[key] == annotation }
+        } catch (e: Exception) {
+          repairLog.recordFailedRepair("Compose applier inference", e.toString())
+          emptyMap()
+        }
+  }
+
   /** Create the IR generation extension to be registered during FIR-to-IR conversion. */
   fun createExtension(): IrGenerationExtension {
-    return ComposeAbiEmulationExtension()
+    return ComposeAbiEmulationExtension(targetAnnotations)
   }
 }

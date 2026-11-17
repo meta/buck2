@@ -51,6 +51,9 @@ import org.jetbrains.kotlin.fir.withFileAnalysisExceptionWrapping
  * as is every body that is already resolved. Property initializers, delegated properties (with
  * their accessors), accessors that use `field`, and default values keep their normal resolution.
  * Local declarations live inside bodies and are not visited.
+ *
+ * Compose ABI emulation is the exception: the applier inference reads composable bodies, so callers
+ * leave skipping off while `ENABLE_COMPOSE_ABI_EMULATION` is set.
  */
 internal fun FirSession.runResolutionSkippingNonAbiBodies(
     firFiles: List<FirFile>,

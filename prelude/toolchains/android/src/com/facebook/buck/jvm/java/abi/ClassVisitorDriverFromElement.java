@@ -379,8 +379,8 @@ class ClassVisitorDriverFromElement {
                   + "1. A dependency is missing in the BUCK file for the current target. "
                   + "Try building the current rule without the #source-only-abi flavor, "
                   + "fix any errors that are reported, and then build this flavor again.\n"
-                  + "2. The rule that owns %1$s is not marked with "
-                  + "required_for_source_only_abi = True. Add that parameter to the rule and try "
+                  + "2. The rule that owns %1$s is not on this target's source-only ABI "
+                  + "classpath. Add that rule to this target's source_only_abi_deps and try "
                   + "again.",
               annotationType),
           element,

@@ -4066,10 +4066,83 @@ public class StubJarTest {
             "@Foo(stringValue=Dependency.STRING)",
             "public @interface A {}")
         .addExpectedCompileError(
-            "A.java:2: error: Could not resolve constant. Either inline the value or add"
-                + " required_for_source_only_abi = True to the build rule that contains it.\n"
+            "A.java:2: error: Could not resolve constant. Either inline the value or add the"
+                + " build rule that contains it to this target's source_only_abi_deps.\n"
                 + "@Foo(stringValue=Dependency.STRING)\n"
                 + "                           ^")
+        .createStubJar();
+  }
+
+  @Test
+  public void providesNiceErrorWhenAnnotationTypeMissing() throws IOException {
+    if (!testingMode.equals(MODE_SOURCE_BASED_MISSING_DEPS)) {
+      return;
+    }
+
+    tester
+        .setSourceFile(
+            "Missing.java", "package com.example.buck.dependency;", "public @interface Missing { }")
+        .compileFullJar()
+        .addFullJarToClasspath()
+        .setSourceFile(
+            "A.java",
+            "package com.example.buck;",
+            "import com.example.buck.dependency.Missing;",
+            "@Missing",
+            "public class A { }")
+        .addExpectedCompileError(
+            "A.java:3: error: Could not find the annotation com.example.buck.dependency.Missing.",
+            "@Missing",
+            "^",
+            "  This can happen for one of two reasons:",
+            "  1. A dependency is missing in the BUCK file for the current target. Try building"
+                + " the current rule without the #source-only-abi flavor, fix any errors that are"
+                + " reported, and then build this flavor again.",
+            "  2. The rule that owns com.example.buck.dependency.Missing is not on this target's"
+                + " source-only ABI classpath. Add that rule to this target's source_only_abi_deps"
+                + " and try again.")
+        .createStubJar();
+  }
+
+  @Test
+  public void noAnnotationTypeErrorWhenProviderIsOnSourceOnlyAbiClasspath() throws IOException {
+    if (!testingMode.equals(MODE_SOURCE_BASED_MISSING_DEPS)) {
+      return;
+    }
+
+    tester
+        .setSourceFile(
+            "Missing.java", "package com.example.buck.dependency;", "public @interface Missing { }")
+        .compileFullJar()
+        .addFullJarToClasspathAlways()
+        .setSourceFile(
+            "A.java",
+            "package com.example.buck;",
+            "import com.example.buck.dependency.Missing;",
+            "@Missing",
+            "public class A { }")
+        .createStubJar();
+  }
+
+  @Test
+  public void noConstantErrorWhenProviderIsOnSourceOnlyAbiClasspath() throws IOException {
+    if (!testingMode.equals(MODE_SOURCE_BASED_MISSING_DEPS)) {
+      return;
+    }
+
+    createAnnotationFullJar()
+        .addFullJarToClasspathAlways()
+        .setSourceFile(
+            "Dependency.java",
+            "package com.example.buck;",
+            "public class Dependency { public static final String STRING = \"string\";}")
+        .compileFullJar()
+        .addFullJarToClasspathAlways()
+        .setSourceFile(
+            "A.java",
+            "package com.example.buck;",
+            "@Foo(stringValue=Dependency.STRING)",
+            "public @interface A {}")
         .createStubJar();
   }
 

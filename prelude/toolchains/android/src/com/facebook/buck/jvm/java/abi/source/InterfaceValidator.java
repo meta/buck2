@@ -168,21 +168,6 @@ class InterfaceValidator {
       if (inheritedMemberTypesOnly) {
         return;
       }
-      if (type.getKind() == ElementKind.ANNOTATION_TYPE
-          && !ruleInfo.ruleIsRequiredForSourceOnlyAbi()) {
-        trees.printMessage(
-            messageKind,
-            String.format(
-                "Annotation definitions must be in rules with required_for_source_only_abi ="
-                    + " True.\n"
-                    + "For a quick fix, add required_for_source_only_abi = True to %s.\n"
-                    + "A better fix is to move %s to a new rule that contains only\n"
-                    + "annotations, and mark that rule required_for_source_only_abi.\n",
-                ruleInfo.getRuleName(), type.getSimpleName()),
-            path.getLeaf(),
-            path.getCompilationUnit());
-      }
-
       ClassTree classTree = (ClassTree) path.getLeaf();
 
       // The compiler can handle superclasses and interfaces that are outright missing
@@ -708,9 +693,9 @@ class InterfaceValidator {
           messageKind,
           String.format(
               "This constant will not be available during source-only ABI generation.\n"
-                  + "For a quick fix, add required_for_source_only_abi = True to %s.\n"
+                  + "To fix, add %s to this target's source_only_abi_deps.\n"
                   + "A better fix is to move %s to a new rule that contains only\n"
-                  + "constants, and mark that rule required_for_source_only_abi.\n",
+                  + "constants, and add that rule to this target's source_only_abi_deps.\n",
               owningTarget, constant.getEnclosingElement().getSimpleName()),
           path.getLeaf(),
           path.getCompilationUnit());

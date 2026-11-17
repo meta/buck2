@@ -11,6 +11,7 @@
 package com.facebook.buck.jvm.java.abi.source;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
 
 import com.facebook.buck.jvm.java.testutil.compiler.CompilerTreeApiTest;
@@ -18,6 +19,7 @@ import com.google.common.base.Joiner;
 import com.google.common.collect.ImmutableMap;
 import com.sun.source.tree.CompilationUnitTree;
 import java.io.IOException;
+import java.util.List;
 import java.util.Map;
 import org.junit.Before;
 import org.junit.Test;
@@ -76,25 +78,10 @@ public class InterfaceValidatorTest extends CompilerTreeApiTest {
   }
 
   @Test
-  public void testAnnotationInNonRequiredRuleFails() throws IOException {
-    testCompiler.setAllowCompilationErrors(true);
+  public void testAnnotationInRuleWithoutMarkHasNoDiagnostic() throws IOException {
     compileWithValidation(ImmutableMap.of("Foo.java", "@interface Foo { @interface Inner { } };"));
 
-    assertErrors(
-        "Foo.java:1: error: Annotation definitions must be in rules with"
-            + " required_for_source_only_abi = True.\n"
-            + "@interface Foo { @interface Inner { } };\n"
-            + " ^\n"
-            + "  For a quick fix, add required_for_source_only_abi = True to //:rule.\n"
-            + "  A better fix is to move Foo to a new rule that contains only\n"
-            + "  annotations, and mark that rule required_for_source_only_abi.",
-        "Foo.java:1: error: Annotation definitions must be in rules with"
-            + " required_for_source_only_abi = True.\n"
-            + "@interface Foo { @interface Inner { } };\n"
-            + "                  ^\n"
-            + "  For a quick fix, add required_for_source_only_abi = True to //:rule.\n"
-            + "  A better fix is to move Inner to a new rule that contains only\n"
-            + "  annotations, and mark that rule required_for_source_only_abi.");
+    assertNoErrors();
   }
 
   @Test
@@ -2406,20 +2393,21 @@ public class InterfaceValidatorTest extends CompilerTreeApiTest {
                     + " generation.",
                 "  public static final int CONSTANT = Constants.CONSTANT + 1 + Constants.CONST2;",
                 "                                              ^",
-                "  For a quick fix, add required_for_source_only_abi = True to"
-                    + " //com/facebook/constants:constants.",
+                "  To fix, add //com/facebook/constants:constants to this target's"
+                    + " source_only_abi_deps.",
                 "  A better fix is to move Constants to a new rule that contains only",
-                "  constants, and mark that rule required_for_source_only_abi."),
+                "  constants, and add that rule to this target's source_only_abi_deps."),
         Joiner.on('\n')
             .join(
                 "Foo.java:3: error: This constant will not be available during source-only ABI"
                     + " generation.",
                 "  public static final int CONSTANT = Constants.CONSTANT + 1 + Constants.CONST2;",
                 "                                                                       ^",
-                "  For a quick fix, add required_for_source_only_abi = True to"
-                    + " //com/facebook/constants:constants.",
+                "  To fix, add //com/facebook/constants:constants to this target's"
+                    + " source_only_abi_deps.",
                 "  A better fix is to move Constants to a new rule that contains only",
-                "  constants, and mark that rule required_for_source_only_abi."));
+                "  constants, and add that rule to this target's source_only_abi_deps."));
+    assertFixTextsOfferOnlySourceOnlyAbiDeps("//com/facebook/constants:constants");
   }
 
   @Test
@@ -2456,5 +2444,15 @@ public class InterfaceValidatorTest extends CompilerTreeApiTest {
   protected Iterable<? extends CompilationUnitTree> compileWithValidation(
       Map<String, String> sources) throws IOException {
     return compile(sources, taskListenerFactory);
+  }
+
+  private void assertFixTextsOfferOnlySourceOnlyAbiDeps(String provider) {
+    List<String> messages = testCompiler.getErrorMessages();
+    assertFalse(messages.isEmpty());
+    for (String message : messages) {
+      assertTrue(message, message.contains(provider));
+      assertTrue(message, message.contains("source_only_abi_deps"));
+      assertFalse(message, message.contains("required_for_source_only_abi"));
+    }
   }
 }

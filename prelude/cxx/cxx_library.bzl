@@ -45,6 +45,7 @@ load(
     "CPrecompiledHeaderInfo",
     "CxxPrecompiledHeader",
     "cxx_attr_precompiled_headers",
+    "header_map_key",
 )
 load(
     "@prelude//ide_integrations/xcode:argsfiles.bzl",
@@ -1122,10 +1123,7 @@ def cxx_library_parameterized(ctx: AnalysisContext, impl_params: CxxRuleConstruc
         for records in propagated_preprocessor.set.traverse():
             for record in records:
                 for header in record.headers:
-                    header_path = header.name
-                    if header.namespace:
-                        header_path = paths.join(header.namespace, header_path)
-                    header_symlink_mapping[paths.normalize(header_path)] = header.artifact
+                    header_symlink_mapping[paths.normalize(header_map_key(header))] = header.artifact
 
                 all_include_dirs = record.include_dirs + (record.system_include_dirs.include_dirs if record.system_include_dirs else [])
                 for header in record.raw_headers:

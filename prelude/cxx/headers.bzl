@@ -95,6 +95,14 @@ CHeader = record(
     named = bool,
 )
 
+def header_map_key(header: CHeader) -> str:
+    """
+    The include path a header map gives `header`: `namespace/name`, or `name`
+    when the namespace is empty. Tools that index headers by include path load
+    this rather than rebuild the key.
+    """
+    return paths.join(header.namespace, header.name)
+
 # Parameters controlling the varying aspects of headers-related behavior.
 # The contract on how headers could be used (i.e. end user inclusion rules)
 # is different for `apple_library` and `cxx_library`. Those parameters

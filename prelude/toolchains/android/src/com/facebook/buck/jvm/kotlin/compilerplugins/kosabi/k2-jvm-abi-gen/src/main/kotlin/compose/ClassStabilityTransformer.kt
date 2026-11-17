@@ -177,13 +177,8 @@ internal class ClassStabilityTransformer(private val pluginContext: IrPluginCont
     if (irClass.isCompanion) return false
     // Skip inline/value classes
     if (irClass.isValue) return false
-    // Only process public/internal classes
     val vis = irClass.visibility
-    if (
-        vis != DescriptorVisibilities.PUBLIC &&
-            vis != DescriptorVisibilities.INTERNAL &&
-            vis != DescriptorVisibilities.PROTECTED
-    ) {
+    if (vis != DescriptorVisibilities.PUBLIC && vis != DescriptorVisibilities.INTERNAL) {
       return false
     }
     return true

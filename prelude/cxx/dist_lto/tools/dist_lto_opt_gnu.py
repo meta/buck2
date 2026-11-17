@@ -286,10 +286,15 @@ def main(argv: List[str]) -> int:
     if clang_cc1_flags is None:
         return EXIT_FAILURE
 
-    compiler_wrapper_prefix_end = _compiler_wrapper_prefix_end(args.opt_args)
-    compiler_wrapper_cmd = (
-        args.opt_args[1:compiler_wrapper_prefix_end] + clang_cc1_flags
-    )
+    if clang_cc1_flags and clang_cc1_flags[0] == "-cc1":
+        # `-cc1` must be argv[1] for the clang driver.
+        cc_arg = args.opt_args[compiler_wrapper_passthrough_arg_index]
+        compiler_wrapper_cmd = [cc_arg[len("--cc=") :]] + clang_cc1_flags
+    else:
+        compiler_wrapper_prefix_end = _compiler_wrapper_prefix_end(args.opt_args)
+        compiler_wrapper_cmd = (
+            args.opt_args[1:compiler_wrapper_prefix_end] + clang_cc1_flags
+        )
 
     if args.debug:
         # Print the compiler wrapper command line and exit.

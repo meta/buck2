@@ -12,7 +12,6 @@
 
 pub mod clap;
 pub mod dice;
-pub mod eden;
 pub mod hex;
 pub mod http;
 pub mod hyper;

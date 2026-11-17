@@ -357,19 +357,30 @@ impl<'v> UnpackValue<'v> for InlineInt {
     }
 }
 
+impl<'v> ValueOf<'v, IntView<'v>> {
+    /// An int that fits in the pointer, which is not allocated.
+    #[inline]
+    pub(crate) fn new_inline_int(x: InlineInt) -> Self {
+        // A pointer tagged as an int is an `int`.
+        ValueOf::new_unchecked(Value::new_int(x))
+    }
+}
+
 impl<'v> AllocValue<'v> for InlineInt {
     type Type = IntView<'v>;
 
+    #[inline]
     fn alloc_value(self, _heap: Heap<'v>) -> ValueOf<'v, Self::Type> {
-        ValueOf::new_unchecked(Value::new_int(self))
+        ValueOf::new_inline_int(self)
     }
 }
 
 impl<'fv> AllocFrozenValue<'fv> for InlineInt {
     type Type = IntView<'fv>;
 
+    #[inline]
     fn alloc_frozen_value(self, _heap: FrozenHeap<'fv>) -> ValueOf<'fv, Self::Type> {
-        ValueOf::new_unchecked(Value::new_int(self))
+        ValueOf::new_inline_int(self)
     }
 }
 

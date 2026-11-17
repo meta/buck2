@@ -39,7 +39,6 @@ use crate::values::FrozenHeap;
 use crate::values::Heap;
 use crate::values::StarlarkValue;
 use crate::values::UnpackValue;
-use crate::values::Value;
 use crate::values::ValueOf;
 use crate::values::ValueTyped;
 
@@ -94,11 +93,20 @@ impl<'v> StarlarkValue<'v> for NoneType {
     }
 }
 
+impl<'v> ValueOf<'v, NoneType> {
+    /// `None`, which is a static.
+    #[inline]
+    pub(crate) fn new_none() -> Self {
+        ValueOf::from_representation(VALUE_NONE.at())
+    }
+}
+
 impl<'v> AllocValue<'v> for NoneType {
     type Type = NoneType;
 
+    #[inline]
     fn alloc_value(self, _heap: Heap<'v>) -> ValueOf<'v, Self::Type> {
-        ValueOf::new_unchecked(Value::new_none())
+        ValueOf::new_none()
     }
 }
 
@@ -116,8 +124,9 @@ static_starlark_value!(pub(crate) VALUE_NONE: NoneType = NoneType);
 impl<'fv> AllocFrozenValue<'fv> for NoneType {
     type Type = NoneType;
 
+    #[inline]
     fn alloc_frozen_value(self, _heap: FrozenHeap<'fv>) -> ValueOf<'fv, Self::Type> {
-        ValueOf::new_unchecked(Value::new_none())
+        ValueOf::new_none()
     }
 }
 

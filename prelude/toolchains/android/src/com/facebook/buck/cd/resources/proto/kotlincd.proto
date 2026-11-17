@@ -90,6 +90,9 @@ message KotlinExtraParams {
   // last successful incremental round, and has the incremental compiler compute
   // classpath changes when only the classpath order changed.
   bool shouldTrackIncrementalInputs = 34;
+  // Replaces read-only outputs with writable copies before an incremental
+  // round, when Buck2 seals outputs (`buck2.readonly_outputs`).
+  bool shouldReclaimReadOnlyOutputs = 35;
 }
 
 message PluginParams {

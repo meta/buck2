@@ -496,6 +496,7 @@ def _encode_kotlin_extra_params(
         kosabiAbiValidationMode = kotlin_toolchain.kosabi_abi_validation_mode,
         kosabiJvmAbiGenOptions = kosabi_jvm_abi_gen_options,
         disableKosabiKeptBodyStubCheck = not kotlin_toolchain.kosabi_kept_body_stub_check,
+        shouldReclaimReadOnlyOutputs = kotlin_toolchain.reclaim_read_only_outputs,
         incrementalStateDir = incremental_state_dir.as_output() if incremental_state_dir else None,
         languageVersion = language_version,
         javaBinary = cmd_args(kotlin_toolchain.java_binary_for_kotlincd[RunInfo], delimiter = " ") if kotlin_toolchain.java_binary_for_kotlincd else "",

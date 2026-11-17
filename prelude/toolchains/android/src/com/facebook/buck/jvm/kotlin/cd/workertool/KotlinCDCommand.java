@@ -26,12 +26,14 @@ import com.facebook.buck.jvm.cd.command.kotlin.BuildKotlinCommand;
 import com.facebook.buck.jvm.cd.serialization.kotlin.ActionMetadataSerializer;
 import com.facebook.buck.jvm.java.ActionMetadata;
 import com.facebook.buck.jvm.java.CompilerClassToSourceMap;
+import com.facebook.buck.jvm.java.CompilerOutputPaths;
 import com.facebook.buck.jvm.kotlin.KotlinStepsBuilder;
 import com.facebook.buck.jvm.kotlin.cd.analytics.KotlinCDAnalytics;
 import com.facebook.buck.jvm.kotlin.cd.analytics.logger.KotlinCDLogger;
 import com.facebook.buck.jvm.kotlin.cd.analytics.logger.KotlinCDLoggerAnalytics;
 import com.facebook.buck.jvm.kotlin.cd.workertool.postexecutors.ClassAbiWriter;
 import com.facebook.buck.jvm.kotlin.cd.workertool.postexecutors.ClassAbiWriterFactory;
+import com.facebook.buck.jvm.kotlin.cd.workertool.postexecutors.PreviousOutputs;
 import com.facebook.buck.jvm.kotlin.cd.workertool.postexecutors.PreviousStateWriter;
 import com.facebook.buck.jvm.kotlin.cd.workertool.postexecutors.PreviousStateWriterFactory;
 import com.facebook.buck.jvm.kotlin.cd.workertool.postexecutors.SkippedCompilationTracker;
@@ -52,11 +54,14 @@ import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.Set;
 import java.util.StringJoiner;
 import java.util.stream.Collectors;
+import java.util.stream.Stream;
 import org.jspecify.annotations.Nullable;
 import org.kohsuke.args4j.CmdLineException;
 import org.kohsuke.args4j.CmdLineParser;
@@ -138,6 +143,7 @@ public class KotlinCDCommand implements JvmCDCommand {
     this.executionPlatform = env.get("INSIDE_RE_WORKER") != null ? "remote_execution" : "local";
     KotlinCDAnalytics kotlinCDAnalytics = initKotlinCDAnalytics();
     cleanupOldPostBuildOutputs();
+    reclaimPreviousOutputs();
 
     // Capture pre-compilation timestamps for tracking which files skip compilation.
     this.kotlinClassesTracker =
@@ -233,6 +239,46 @@ public class KotlinCDCommand implements JvmCDCommand {
   private static long countSourceFiles(
       ImmutableSortedSet<RelPath> sources, PathMatcher pathMatcher) {
     return sources.stream().filter(pathMatcher::matches).count();
+  }
+
+  /**
+   * Makes the outputs this round rewrites in place writable again when Buck2 left them read-only
+   * (see {@link PreviousOutputs#needsReclaim}). Runs after {@link #cleanupOldPostBuildOutputs}, so
+   * that nothing it deletes is copied first.
+   */
+  private void reclaimPreviousOutputs() throws IOException {
+    if (!buildKotlinCommand.getKotlinExtraParams().getShouldActionRunIncrementally()
+        || !buildKotlinCommand.getKotlinExtraParams().getShouldReclaimReadOnlyOutputs()) {
+      return;
+    }
+    Path incrementalStateDir = Objects.requireNonNull(postBuildParams.getIncrementalStateDir());
+    Path sentinel = incrementalStateDir.resolve(PreviousOutputs.RECLAIM_SENTINEL);
+    if (!PreviousOutputs.needsReclaim(sentinel)) {
+      return;
+    }
+    CompilerOutputPaths outputPaths =
+        buildKotlinCommand
+            .getBaseJarCommand()
+            .getCompilerOutputPathsValue()
+            .getLibraryCompilerOutputPath();
+    Set<Path> outputs = new LinkedHashSet<>();
+    outputs.add(incrementalStateDir);
+    outputs.add(outputPaths.getOutputJarDirPath().getPath());
+    outputs.add(outputPaths.getAnnotationPath().getPath());
+    if (outputPaths.getCompilerClassToSourceMap() != null) {
+      outputs.add(outputPaths.getCompilerClassToSourceMap().getPath());
+    }
+    Stream.of(
+            postBuildParams.getDepFile(),
+            postBuildParams.getUsedJarsPath(),
+            postBuildParams.getFilesWhichSkippedCompilation(),
+            postBuildParams.getJvmAbiFilesWhichSkippedCompilation())
+        .filter(Objects::nonNull)
+        .forEach(outputs::add);
+    PreviousOutputs.reclaim(
+        new ArrayList<>(outputs),
+        sentinel,
+        incrementalStateDir.resolve(PreviousOutputs.RECLAIM_DIRECTORY));
   }
 
   private void cleanupOldPostBuildOutputs() throws IOException {

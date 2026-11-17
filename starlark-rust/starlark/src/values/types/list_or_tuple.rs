@@ -21,8 +21,10 @@ use either::Either;
 
 use crate::values::UnpackValue;
 use crate::values::ValueOf;
+use crate::values::list::ListOf;
 use crate::values::list::ListRef;
 use crate::values::list::ListType;
+use crate::values::tuple::TupleOf;
 use crate::values::tuple::TupleType;
 use crate::values::type_expr::StarlarkTypeExpr;
 
@@ -33,14 +35,7 @@ impl<'v, T: StarlarkTypeExpr<'v>> ValueOf<'v, ListOrTupleType<T>> {
     /// The items, as [`ValueOf<ListType<T>>::iter`](ValueOf::iter) or
     /// [`ValueOf<TupleType<T>>::iter`](ValueOf::iter) gives them.
     pub fn iter(self) -> impl Iterator<Item = crate::Result<ValueOf<'v, T>>> + 'v {
-        let value = self.to_value();
-        // A list and a tuple are different representations, so which side this is cannot
-        // change; the items are re-checked by that side's `iter` as for any sequence.
-        if ListRef::from_value(value).is_some() {
-            Either::Left(ValueOf::<ListType<T>>::new_unchecked(value).iter())
-        } else {
-            Either::Right(ValueOf::<TupleType<T>>::new_unchecked(value).iter())
-        }
+        self.side().map_either(ListOf::iter, TupleOf::iter)
     }
 
     /// The items, each converted by `U`, a conversion from `T`, as
@@ -50,11 +45,20 @@ impl<'v, T: StarlarkTypeExpr<'v>> ValueOf<'v, ListOrTupleType<T>> {
     where
         U: UnpackValue<'v, Type = T> + 'v,
     {
+        self.side()
+            .map_either(ListOf::try_items::<U>, TupleOf::try_items::<U>)
+    }
+
+    /// The side that the value is, looked up; its items are not checked. A list and a tuple
+    /// are different representations, so which side this is cannot change.
+    fn side(self) -> Either<ListOf<'v, T>, TupleOf<'v, T>> {
         let value = self.to_value();
-        if ListRef::from_value(value).is_some() {
-            Either::Left(ValueOf::<ListType<T>>::new_unchecked(value).try_items::<U>())
-        } else {
-            Either::Right(ValueOf::<TupleType<T>>::new_unchecked(value).try_items::<U>())
+        match ListRef::from_value(value) {
+            Some(list) => Either::Left(ListOf::of_handle_and_list(
+                ValueOf::new_unchecked(value),
+                list,
+            )),
+            None => Either::Right(TupleOf::of_handle(ValueOf::new_unchecked(value))),
         }
     }
 

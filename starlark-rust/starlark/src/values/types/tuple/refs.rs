@@ -25,6 +25,7 @@ use ref_cast::ref_cast_custom;
 use crate::values::UnpackValue;
 use crate::values::Value;
 use crate::values::ValueOf;
+use crate::values::tuple::TupleOf;
 use crate::values::tuple::TupleType;
 use crate::values::types::tuple::value::Tuple;
 
@@ -68,7 +69,7 @@ impl<'v> UnpackValue<'v> for &'v TupleRef<'v> {
     #[inline]
     fn unpack(
         _value: ValueOf<'v, Self::Type>,
-        get: ValueOf<'v, Self::Type>,
+        get: TupleOf<'v, Value<'v>>,
     ) -> Result<Self, Infallible> {
         Ok(get.tuple())
     }

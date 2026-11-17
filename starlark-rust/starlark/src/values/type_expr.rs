@@ -55,8 +55,9 @@ pub trait StarlarkTypeExpr<'v>: Sized {
     fn starlark_type_repr() -> Ty;
 
     /// What a value of this type is read through: `ValueTyped<'v, Foo>` for a nominal type with
-    /// one representation, the view for one with several, the untyped collection for a
-    /// container (its typed items come from the [`ValueOf`] handle),
+    /// one representation, the view for one with several, the reading for a typed list or
+    /// tuple (the [`ValueOf`] handle together with the list or tuple it found, such as
+    /// [`ListOf`](crate::values::list::ListOf)), the handle for a typed dict or set,
     /// `Option<T::Get>` for `NoneOr<T>`, `Either<A::Get, B::Get>` for a union.
     type Get;
 

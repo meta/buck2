@@ -56,9 +56,11 @@ use crate::values::ValueOf;
 use crate::values::ValueTyped;
 use crate::values::dict::DictType;
 use crate::values::layout::heap::name::StarlarkTestHeapName;
+use crate::values::list::ListOf;
 use crate::values::list_or_tuple::ListOrTupleType;
 use crate::values::none::NoneType;
 use crate::values::string::StarlarkStr;
+use crate::values::tuple::TupleOf;
 use crate::values::type_expr::StarlarkTypeExpr;
 use crate::values::types::int::view::IntView;
 
@@ -324,8 +326,7 @@ fn test_radd() {
                 Either::Left(x) => Ok(x.as_ref().clone()),
                 Either::Right(items) => Ok(Select(
                     items
-                        .either(ValueOf::left, ValueOf::right)
-                        .try_items::<IntView>()
+                        .map_either(ListOf::try_items::<IntView>, TupleOf::try_items::<IntView>)
                         .map(|x| x?.to_integer())
                         .collect::<crate::Result<_>>()?,
                 )),

@@ -28,6 +28,7 @@ use ref_cast::ref_cast_custom;
 use crate::values::UnpackValue;
 use crate::values::Value;
 use crate::values::ValueOf;
+use crate::values::list::ListOf;
 use crate::values::list::ListType;
 use crate::values::list::value::FrozenListData;
 use crate::values::list::value::ListGen;
@@ -97,7 +98,7 @@ impl<'v> UnpackValue<'v> for &'v ListRef<'v> {
     #[inline]
     fn unpack(
         _value: ValueOf<'v, Self::Type>,
-        get: ValueOf<'v, Self::Type>,
+        get: ListOf<'v, Value<'v>>,
     ) -> Result<Self, Infallible> {
         Ok(get.list())
     }

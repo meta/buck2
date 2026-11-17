@@ -18,6 +18,10 @@
 use std::convert::Infallible;
 use std::marker::PhantomData;
 
+use dupe::Clone_;
+use dupe::Copy_;
+use dupe::Dupe_;
+
 use crate as starlark;
 use crate::any::ProvidesStaticType;
 use crate::typing::Ty;
@@ -38,19 +42,19 @@ pub struct TupleType<T> {
 }
 
 impl<'v, T: StarlarkTypeExpr<'v>> StarlarkTypeExpr<'v> for TupleType<T> {
-    /// The handle: a typed tuple has no cheaper form that keeps `T`.
-    type Get = ValueOf<'v, TupleType<T>>;
+    type Get = TupleOf<'v, T>;
 
     fn starlark_type_repr() -> Ty {
         Ty::tuple_of(T::starlark_type_repr())
     }
 
+    #[inline]
     fn get(value: Value<'v>) -> Option<Self::Get> {
         let tuple = TupleRef::from_value(value)?;
-        tuple
-            .iter()
-            .all(|x| T::matches(x))
-            .then(|| ValueOf::new_unchecked(value))
+        tuple.iter().all(|x| T::matches(x)).then(|| TupleOf {
+            value: ValueOf::new_unchecked(value),
+            tuple,
+        })
     }
 }
 
@@ -61,16 +65,45 @@ impl<'v, T: StarlarkTypeExpr<'v>> UnpackValue<'v> for TupleType<T> {
     type Type = Self;
     type Error = Infallible;
 
-    fn unpack(_value: ValueOf<'v, Self>, _get: ValueOf<'v, Self>) -> Result<Self, Infallible> {
+    fn unpack(_value: ValueOf<'v, Self>, _get: TupleOf<'v, T>) -> Result<Self, Infallible> {
         Ok(TupleType { _item: PhantomData })
     }
 }
 
-impl<'v, T: StarlarkTypeExpr<'v>> ValueOf<'v, TupleType<T>> {
+/// What a value read as a `tuple[T, ...]` gives ([`TupleType`]'s `Get`): the handle, and the
+/// tuple that the read found, so that what holds one does not look the tuple up again.
+///
+/// The type is interim: a tuple is to have one public type, and this is not its name.
+#[derive(Clone_, Copy_, Dupe_)]
+pub struct TupleOf<'v, T: StarlarkTypeExpr<'v>> {
+    value: ValueOf<'v, TupleType<T>>,
+    tuple: &'v TupleRef<'v>,
+}
+
+impl<'v, T: StarlarkTypeExpr<'v>> TupleOf<'v, T> {
+    /// The reading of a handle. The tuple is looked up; its items are not checked.
+    #[inline]
+    pub(crate) fn of_handle(value: ValueOf<'v, TupleType<T>>) -> Self {
+        let tuple = TupleRef::from_value(value.to_value()).expect("a value's type does not change");
+        TupleOf { value, tuple }
+    }
+
+    /// The handle.
+    #[inline]
+    pub fn handle(self) -> ValueOf<'v, TupleType<T>> {
+        self.value
+    }
+
+    /// The value.
+    #[inline]
+    pub fn to_value(self) -> Value<'v> {
+        self.value.to_value()
+    }
+
     /// The tuple.
     #[inline]
     pub fn tuple(self) -> &'v TupleRef<'v> {
-        TupleRef::from_value(self.to_value()).expect("a value's type does not change")
+        self.tuple
     }
 
     /// The items. Each is re-checked unless the tuple is frozen: the tuple itself cannot
@@ -78,7 +111,7 @@ impl<'v, T: StarlarkTypeExpr<'v>> ValueOf<'v, TupleType<T>> {
     /// `Ok`.
     pub fn iter(self) -> impl Iterator<Item = crate::Result<ValueOf<'v, T>>> + 'v {
         let frozen = self.to_value().is_frozen();
-        self.tuple().iter().map(move |x| {
+        self.tuple.iter().map(move |x| {
             if frozen {
                 Ok(ValueOf::new_unchecked(x))
             } else {
@@ -93,7 +126,7 @@ impl<'v, T: StarlarkTypeExpr<'v>> ValueOf<'v, TupleType<T>> {
     where
         T: StarlarkTypeExprStable<'v> + 'v,
     {
-        self.tuple()
+        self.tuple
             .iter()
             .map(|x| T::get(x).expect("an item of a tuple checked as a `tuple[T, ...]` is a `T`"))
     }
@@ -104,7 +137,7 @@ impl<'v, T: StarlarkTypeExpr<'v>> ValueOf<'v, TupleType<T>> {
     where
         U: UnpackValue<'v, Type = T> + 'v,
     {
-        self.tuple().iter().map(U::unpack_value_err)
+        self.tuple.iter().map(U::unpack_value_err)
     }
 
     /// The items, converted into a `Vec`, as [`try_items`](Self::try_items) gives them.
@@ -113,5 +146,69 @@ impl<'v, T: StarlarkTypeExpr<'v>> ValueOf<'v, TupleType<T>> {
         U: UnpackValue<'v, Type = T> + 'v,
     {
         self.try_items().collect()
+    }
+}
+
+impl<'v, T: StarlarkTypeExpr<'v>> ValueOf<'v, TupleType<T>> {
+    /// The tuple.
+    #[inline]
+    pub fn tuple(self) -> &'v TupleRef<'v> {
+        TupleOf::of_handle(self).tuple()
+    }
+
+    /// The items, as [`TupleOf::iter`] gives them.
+    pub fn iter(self) -> impl Iterator<Item = crate::Result<ValueOf<'v, T>>> + 'v {
+        TupleOf::of_handle(self).iter()
+    }
+
+    /// The items, read as [`get`](ValueOf::get) reads them, as [`TupleOf::items`] gives them.
+    pub fn items(self) -> impl Iterator<Item = T::Get> + 'v
+    where
+        T: StarlarkTypeExprStable<'v> + 'v,
+    {
+        TupleOf::of_handle(self).items()
+    }
+
+    /// The items, each converted by `U`, as [`TupleOf::try_items`] gives them.
+    pub fn try_items<U>(self) -> impl Iterator<Item = crate::Result<U>> + 'v
+    where
+        U: UnpackValue<'v, Type = T> + 'v,
+    {
+        TupleOf::of_handle(self).try_items()
+    }
+
+    /// The items, converted into a `Vec`, as [`try_items`](Self::try_items) gives them.
+    pub fn try_to_vec<U>(self) -> crate::Result<Vec<U>>
+    where
+        U: UnpackValue<'v, Type = T> + 'v,
+    {
+        TupleOf::of_handle(self).try_to_vec()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::values::Heap;
+    use crate::values::UnpackValue;
+    use crate::values::ValueOf;
+    use crate::values::int::IntView;
+    use crate::values::tuple::AllocTuple;
+    use crate::values::tuple::TupleRef;
+    use crate::values::tuple::TupleType;
+
+    #[test]
+    fn test_reading() {
+        Heap::temp(|heap| {
+            let tuple = heap.alloc(AllocTuple([1, 2, 3])).to_value();
+            let (handle, reading) = ValueOf::<TupleType<IntView>>::new_with_get(tuple).unwrap();
+            assert!(reading.handle().to_value().ptr_eq(tuple));
+            assert!(std::ptr::eq(handle.tuple(), reading.tuple()));
+            assert_eq!(3, reading.iter().count());
+            assert_eq!(3, reading.items().count());
+            assert_eq!(vec![1, 2, 3], reading.try_to_vec::<i32>().unwrap());
+            // A conversion that ends in the tuple is given the tuple the reading found.
+            let unpacked = <&TupleRef>::unpack_value_opt(tuple).unwrap();
+            assert!(std::ptr::eq(handle.tuple(), unpacked));
+        });
     }
 }

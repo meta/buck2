@@ -26,4 +26,5 @@ pub(crate) mod value;
 
 pub use crate::values::types::tuple::alloc::AllocTuple;
 pub use crate::values::types::tuple::refs::TupleRef;
+pub use crate::values::types::tuple::tuple_type::TupleOf;
 pub use crate::values::types::tuple::tuple_type::TupleType;

@@ -43,10 +43,13 @@ use buck2_node::attrs::attr_type::tuple::TupleAttrType;
 use buck2_node::attrs::attr_type::tuple::TupleLiteral;
 use dupe::Dupe;
 use dupe::IterDupedExt;
+use either::Either;
 use starlark::values::UnpackValue;
 use starlark::values::Value;
 use starlark::values::dict::DictRef;
+use starlark::values::int::IntView;
 use starlark::values::list::ListRef;
+use starlark::values::none::NoneType;
 use starlark::values::string::STRING_TYPE;
 use starlark::values::tuple::TupleRef;
 
@@ -312,46 +315,53 @@ impl AnonTargetCoercionError {
     }
 }
 
+/// The values that `attrs.any()` keeps as they are. Any other value is kept as its `str()`.
+#[derive(UnpackValue)]
+enum AnyLiteral<'v> {
+    None(NoneType),
+    Bool(bool),
+    Int(IntView<'v>),
+    Dict(DictRef<'v>),
+    Tuple(&'v TupleRef<'v>),
+    List(&'v ListRef<'v>),
+    Str(&'v str),
+}
+
 fn to_anon_target_any(value: Value, ctx: &AnonAttrCtx) -> buck2_error::Result<AnonTargetAttr> {
-    if value.is_none() {
-        Ok(AnonTargetAttr::None)
-    } else if let Some(x) = value.unpack_bool() {
-        Ok(AnonTargetAttr::Bool(BoolLiteral(x)))
-    } else if let Some(x) = i64::unpack_value(value)? {
-        Ok(AnonTargetAttr::Int(x))
-    } else if let Some(x) = DictRef::from_value(value) {
-        Ok(AnonTargetAttr::Dict(
+    match AnyLiteral::unpack_value_opt(value) {
+        Some(AnyLiteral::None(_)) => Ok(AnonTargetAttr::None),
+        Some(AnyLiteral::Bool(x)) => Ok(AnonTargetAttr::Bool(BoolLiteral(x))),
+        Some(AnyLiteral::Int(x)) => Ok(AnonTargetAttr::Int(x.to_integer()?)),
+        Some(AnyLiteral::Dict(x)) => Ok(AnonTargetAttr::Dict(
             x.iter()
                 .map(|(k, v)| Ok((to_anon_target_any(k, ctx)?, to_anon_target_any(v, ctx)?)))
                 .collect::<buck2_error::Result<_>>()?,
-        ))
-    } else if let Some(x) = TupleRef::from_value(value) {
+        )),
         // TODO(wendyy) intern attr
-        Ok(AnonTargetAttr::Tuple(TupleLiteral(
+        Some(AnyLiteral::Tuple(x)) => Ok(AnonTargetAttr::Tuple(TupleLiteral(
             x.iter()
                 .map(|v| to_anon_target_any(v, ctx))
                 .collect::<buck2_error::Result<Vec<_>>>()?
                 .into(),
-        )))
-    } else if let Some(x) = ListRef::from_value(value) {
+        ))),
         // TODO(wendyy) intern attr
-        Ok(AnonTargetAttr::List(ListLiteral(
+        Some(AnyLiteral::List(x)) => Ok(AnonTargetAttr::List(ListLiteral(
             x.iter()
                 .map(|v| to_anon_target_any(v, ctx))
                 .collect::<buck2_error::Result<Vec<_>>>()?
                 .into(),
-        )))
-    } else if let Some(s) = value.unpack_str() {
-        Ok(AnonTargetAttr::String(StringLiteral(ctx.intern_str(s))))
-    } else {
-        deprecation!(
-            "coerce_to_any",
-            AnonTargetCoercionError::CannotCoerceToAny(value.get_type(), value.to_repr()).into(),
-            owner: "jtbraun", started: "2023-04-29"
-        );
-        Ok(AnonTargetAttr::String(StringLiteral(
-            ctx.intern_str(&value.to_str()),
-        )))
+        ))),
+        Some(AnyLiteral::Str(s)) => Ok(AnonTargetAttr::String(StringLiteral(ctx.intern_str(s)))),
+        None => {
+            deprecation!(
+                "coerce_to_any",
+                AnonTargetCoercionError::CannotCoerceToAny(value.get_type(), value.to_repr()).into(),
+                owner: "jtbraun", started: "2023-04-29"
+            );
+            Ok(AnonTargetAttr::String(StringLiteral(
+                ctx.intern_str(&value.to_str()),
+            )))
+        }
     }
 }
 
@@ -415,34 +425,29 @@ fn to_anon_target_tuple(
     ctx: &AnonAttrCtx,
     value: Value,
 ) -> buck2_error::Result<AnonTargetAttr> {
-    let coerce = |value, items: &[Value]| {
-        // Use comparison rather than equality below. If the tuple is too short,
-        // it is implicitly extended using None.
-        if items.len() <= tuple_attr_type.xs.len() {
-            let mut res = Vec::with_capacity(tuple_attr_type.xs.len());
-            for (c, v) in tuple_attr_type
-                .xs
-                .iter()
-                .zip(items.iter().duped().chain(iter::repeat(Value::new_none())))
-            {
-                res.push(c.coerce_item(ctx, v)?);
-            }
-            // TODO(wendyy) intern attr
-            Ok(AnonTargetAttr::Tuple(TupleLiteral(res.into())))
-        } else {
-            Err(AnonTargetCoercionError::type_error(
-                &format!("Tuple of at most length {}", tuple_attr_type.xs.len()),
-                value,
-            )
-            .into())
-        }
+    let Some(items) = <Either<&TupleRef, &ListRef>>::unpack_value_opt(value) else {
+        return Err(AnonTargetCoercionError::type_error("tuple", value).into());
     };
-    if let Some(list) = TupleRef::from_value(value) {
-        coerce(value, list.content())
-    } else if let Some(list) = ListRef::from_value(value) {
-        coerce(value, list.content())
+    let items = items.either(|tuple| tuple.content(), |list| list.content());
+    // Use comparison rather than equality below. If the tuple is too short,
+    // it is implicitly extended using None.
+    if items.len() <= tuple_attr_type.xs.len() {
+        let mut res = Vec::with_capacity(tuple_attr_type.xs.len());
+        for (c, v) in tuple_attr_type
+            .xs
+            .iter()
+            .zip(items.iter().duped().chain(iter::repeat(Value::new_none())))
+        {
+            res.push(c.coerce_item(ctx, v)?);
+        }
+        // TODO(wendyy) intern attr
+        Ok(AnonTargetAttr::Tuple(TupleLiteral(res.into())))
     } else {
-        Err(AnonTargetCoercionError::type_error("tuple", value).into())
+        Err(AnonTargetCoercionError::type_error(
+            &format!("Tuple of at most length {}", tuple_attr_type.xs.len()),
+            value,
+        )
+        .into())
     }
 }
 
@@ -452,25 +457,16 @@ fn to_anon_target_list(
     ctx: &AnonAttrCtx,
     value: Value,
 ) -> buck2_error::Result<AnonTargetAttr> {
-    if let Some(list) = ListRef::from_value(value) {
-        Ok(AnonTargetAttr::List(ListLiteral(
-            // TODO(wendyy) intern attr
-            list.content()
-                .iter()
-                .map(|v| list_attr_type.inner.coerce_item(ctx, *v))
-                .collect::<Result<Vec<_>, _>>()?
-                .into(),
-        )))
-    } else if let Some(list) = TupleRef::from_value(value) {
-        Ok(AnonTargetAttr::List(ListLiteral(
-            // TODO(wendyy) intern attr
-            list.content()
-                .iter()
-                .map(|v| list_attr_type.inner.coerce_item(ctx, *v))
-                .collect::<Result<Vec<_>, _>>()?
-                .into(),
-        )))
-    } else {
-        Err(AnonTargetCoercionError::type_error("list", value).into())
-    }
+    let Some(items) = <Either<&ListRef, &TupleRef>>::unpack_value_opt(value) else {
+        return Err(AnonTargetCoercionError::type_error("list", value).into());
+    };
+    let items = items.either(|list| list.content(), |tuple| tuple.content());
+    Ok(AnonTargetAttr::List(ListLiteral(
+        // TODO(wendyy) intern attr
+        items
+            .iter()
+            .map(|v| list_attr_type.inner.coerce_item(ctx, *v))
+            .collect::<Result<Vec<_>, _>>()?
+            .into(),
+    )))
 }

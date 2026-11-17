@@ -481,7 +481,10 @@ _cargo_buildscript_rule = rule(
         "manifest_dir": attrs.option(attrs.dep(), default = None),
         "multi_arch_toolchain": attrs.option(
             attrs.dep(providers = [RustArchToolchainInfo]),
-            default = None,
+            default = select({
+                _DUAL_ARCH: "fbsource//third-party/rust-toolchain:dual-arch-stage2-toolchain",
+                "DEFAULT": None,
+            }),
         ),
         "package_name": attrs.string(),
         "runner": attrs.default_only(attrs.exec_dep(providers = [RunInfo], default = "prelude//rust/tools:buildscript_run")),

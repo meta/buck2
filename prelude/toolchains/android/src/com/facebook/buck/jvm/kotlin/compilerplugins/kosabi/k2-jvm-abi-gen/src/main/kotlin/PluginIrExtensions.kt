@@ -36,10 +36,12 @@ import org.jetbrains.kotlin.psi.KtFile
 internal val ABI_RELEVANT_PLUGIN_IR_EXTENSIONS: Set<String> = setOf(
     // DataClassGenerate replaces a data class's `Any` superclass with `DataClassSuper`.
     "com.facebook.kotlin.compilerplugins.dataclassgenerate.DataClassGenerateIrGenerationExtension",
-    // STAX Events adds `getParentEventNames` to `@Event` classes, and the `EventHandler` supertype
-    // with `invoke` and `traceName` overrides to `@EventHandler` classes. With `SKIP_BODIES` set,
-    // which abi-gen sets on the configuration the extension is registered with, it runs only those
-    // two transforms; its parity, handler-list and controller-config transforms stay skipped.
+    // STAX Events adds `getParentEventNames` to `@Event` classes, the `EventHandler` supertype with
+    // `invoke` and `traceName` overrides to `@EventHandler` classes, and the `HandlerListMapping`
+    // supertype with its four overrides to `HandlerList` classes. With `SKIP_BODIES` set, which
+    // abi-gen sets on the configuration the extension is registered with, it runs only those three
+    // transforms; its parity, handler-list annotation and controller-config transforms stay
+    // skipped.
     STAX_EVENTS_PLUGIN_IR_EXTENSION,
     // generatedid adds the `IHaveGeneratedId` supertype and a `_getGeneratedId` override to
     // `@GenerateId` classes, including classes whose annotation is meta-annotated with it

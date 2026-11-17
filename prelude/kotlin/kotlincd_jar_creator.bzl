@@ -171,6 +171,11 @@ def create_jar_artifact_kotlincd(
         else:
             source_only_abi_applicability_classpath = cmd_args(so_abi_deps.project_as_args("source_only_abi_jars"))
 
+    # Whether an incremental round's verdict comes from applicability, which the incremental compiler does not
+    # track: turning it on or off changes `incremental_config.json`, which forces a full round. Changes to the
+    # reduced classpath itself are fingerprinted by kotlincd.
+    incremental_applicability_config = struct(mode = "ENFORCE") if kosabi_applicability_cell_root != None and should_kotlinc_run_incrementally else None
+
     track_class_usage = enable_depfiles and kotlin_toolchain.track_class_usage_plugin != None
 
     if track_files_which_skipped_compilation:
@@ -202,6 +207,7 @@ def create_jar_artifact_kotlincd(
         jar_postprocessor,
         files_which_skipped_compilation,
         jvm_abi_files_which_skipped_compilation,
+        incremental_applicability_config,
     )
 
     library_classpath_jars_tag = actions.artifact_tag()
@@ -611,6 +617,7 @@ def _define_kotlincd_action(
     jar_postprocessor: [RunInfo, None],
     files_which_skipped_compilation: [Artifact, None],
     jvm_abi_files_which_skipped_compilation: [Artifact, None],
+    incremental_applicability_config: [struct, None],
     # end of factory provided
     category_prefix: str,
     actions_identifier: [str, None],
@@ -729,7 +736,7 @@ def _define_kotlincd_action(
     if should_action_run_incrementally:
         args.add(
             "--incremental-config-file",
-            _create_incremental_config(actions, actions_identifier, kotlin_build_command, kotlin_toolchain.kotlin_version),
+            _create_incremental_config(actions, actions_identifier, kotlin_build_command, kotlin_toolchain.kotlin_version, incremental_applicability_config),
         )
 
     incremental_run_params = (
@@ -763,11 +770,18 @@ def _define_kotlincd_action(
     )
     return proto, used_jars_json_output
 
-def _create_incremental_config(actions: AnalysisActions, actions_identifier: [str, None], kotlin_build_command: struct, kotlin_version: str):
+def _create_incremental_config(
+    actions: AnalysisActions,
+    actions_identifier: [str, None],
+    kotlin_build_command: struct,
+    kotlin_version: str,
+    applicability: [struct, None],
+):
     incremental_meta_data_output = declare_prefixed_output(actions, actions_identifier, "incremental_config.json", has_content_based_path = True)
     kotlin_extra_params = kotlin_build_command.buildCommand.kotlinExtraParams
 
-    # Fields absent from the config without input tracking, which is then the same as before tracking existed.
+    # Optional fields, absent from the default config, so that the config of an action without input tracking and
+    # without incremental applicability is the same as before either existed.
     optional_fields = {}
 
     # With input tracking, the other settings that kotlincd turns into compiler arguments, so that a change
@@ -775,6 +789,8 @@ def _create_incremental_config(actions: AnalysisActions, actions_identifier: [st
     # record from before tracking was turned off.
     if kotlin_extra_params.shouldTrackIncrementalInputs:
         optional_fields["compiler_settings"] = _compiler_settings(kotlin_extra_params)
+    if applicability:
+        optional_fields["applicability"] = applicability
     incremental_meta_data = struct(
         version = 3,
         track_class_usage = kotlin_build_command.buildCommand.baseJarCommand.trackClassUsage,

@@ -60,10 +60,6 @@ internal class ComposableDefaultParamEmulator(private val pluginContext: IrPlugi
   private companion object {
     val DEFAULT_IMPLS = Name.identifier("ComposeDefaultImpls")
     const val COMPOSE_PLUGIN_ID = "androidx.compose.compiler.plugins.kotlin"
-    const val STUB_MESSAGE = "Binary compatibility stub for default parameters"
-    val JVM_SYNTHETIC_CLASS_ID = ClassId(FqName("kotlin.jvm"), Name.identifier("JvmSynthetic"))
-    val DEPRECATED_CLASS_ID = ClassId(FqName("kotlin"), Name.identifier("Deprecated"))
-    val DEPRECATION_LEVEL_CLASS_ID = ClassId(FqName("kotlin"), Name.identifier("DeprecationLevel"))
   }
 
   fun transform(moduleFragment: IrModuleFragment) {
@@ -150,56 +146,82 @@ internal class ComposableDefaultParamEmulator(private val pluginContext: IrPlugi
           }
 
   private fun stub(function: IrSimpleFunction): IrSimpleFunction =
-      pluginContext.irFactory
-          .buildFun {
-            startOffset = function.startOffset
-            endOffset = function.endOffset
-            origin = function.origin
-            name = function.name
-            visibility = function.visibility
-            modality = function.modality
-            returnType = function.returnType
-            isInline = function.isInline
-            isSuspend = function.isSuspend
-            isOperator = function.isOperator
-            isInfix = function.isInfix
-            isExternal = function.isExternal
-            isTailrec = function.isTailrec
-          }
-          .also { stub ->
-            stub.parent = function.parent
-            stub.copyAnnotationsFrom(function)
-            stub.copyParametersFrom(function)
-            val hidden = listOfNotNull(jvmSynthetic(stub), hiddenDeprecated(stub))
-            stub.annotations =
-                stub.annotations.filterNot { existing ->
-                  hidden.any { it.symbol == existing.symbol }
-                } + hidden
-            stub.body = pluginContext.irFactory.createBlockBody(-1, -1)
-          }
+      defaultParamStub(pluginContext, function)
+}
 
-  private fun jvmSynthetic(function: IrSimpleFunction): IrAnnotation? {
-    val constructor =
-        pluginContext.referenceClass(JVM_SYNTHETIC_CLASS_ID)?.constructors?.firstOrNull()
-            ?: return null
-    return pluginContext.irBuiltIns.createIrBuilder(function.symbol).run {
-      irAnnotationCompat(constructor, emptyList())
-    }
+private const val STUB_MESSAGE = "Binary compatibility stub for default parameters"
+private val JVM_SYNTHETIC_CLASS_ID = ClassId(FqName("kotlin.jvm"), Name.identifier("JvmSynthetic"))
+private val DEPRECATED_CLASS_ID = ClassId(FqName("kotlin"), Name.identifier("Deprecated"))
+private val DEPRECATION_LEVEL_CLASS_ID =
+    ClassId(FqName("kotlin"), Name.identifier("DeprecationLevel"))
+
+/**
+ * Compose's `makeStub`: a copy of [function] with its current parameters, hidden from source and
+ * synthetic in bytecode, that keeps a binary-compatible entry point for callers compiled against an
+ * earlier shape of the function.
+ */
+internal fun defaultParamStub(
+    pluginContext: IrPluginContext,
+    function: IrSimpleFunction,
+): IrSimpleFunction =
+    pluginContext.irFactory
+        .buildFun {
+          startOffset = function.startOffset
+          endOffset = function.endOffset
+          origin = function.origin
+          name = function.name
+          visibility = function.visibility
+          modality = function.modality
+          returnType = function.returnType
+          isInline = function.isInline
+          isSuspend = function.isSuspend
+          isOperator = function.isOperator
+          isInfix = function.isInfix
+          isExternal = function.isExternal
+          isTailrec = function.isTailrec
+        }
+        .also { stub ->
+          stub.parent = function.parent
+          stub.copyAnnotationsFrom(function)
+          stub.copyParametersFrom(function)
+          val hidden = listOfNotNull(
+              jvmSynthetic(pluginContext, stub),
+              hiddenDeprecated(pluginContext, stub),
+          )
+          stub.annotations =
+              stub.annotations.filterNot { existing ->
+                hidden.any { it.symbol == existing.symbol }
+              } + hidden
+          stub.body = pluginContext.irFactory.createBlockBody(-1, -1)
+        }
+
+private fun jvmSynthetic(
+    pluginContext: IrPluginContext,
+    function: IrSimpleFunction,
+): IrAnnotation? {
+  val constructor =
+      pluginContext.referenceClass(JVM_SYNTHETIC_CLASS_ID)?.constructors?.firstOrNull()
+          ?: return null
+  return pluginContext.irBuiltIns.createIrBuilder(function.symbol).run {
+    irAnnotationCompat(constructor, emptyList())
   }
+}
 
-  private fun hiddenDeprecated(function: IrSimpleFunction): IrAnnotation? {
-    val deprecated = pluginContext.referenceClass(DEPRECATED_CLASS_ID) ?: return null
-    val level = pluginContext.referenceClass(DEPRECATION_LEVEL_CLASS_ID) ?: return null
-    val hidden =
-        level.owner.declarations.filterIsInstance<IrEnumEntry>().singleOrNull {
-          it.name.asString() == "HIDDEN"
-        } ?: return null
-    val constructor = deprecated.constructors.firstOrNull { it.owner.isPrimary } ?: return null
-    return pluginContext.irBuiltIns.createIrBuilder(function.symbol).run {
-      irAnnotationCompat(constructor, emptyList()).apply {
-        arguments[0] = IrConstImpl.string(-1, -1, pluginContext.irBuiltIns.stringType, STUB_MESSAGE)
-        arguments[2] = IrGetEnumValueImpl(-1, -1, level.defaultType, hidden.symbol)
-      }
+private fun hiddenDeprecated(
+    pluginContext: IrPluginContext,
+    function: IrSimpleFunction,
+): IrAnnotation? {
+  val deprecated = pluginContext.referenceClass(DEPRECATED_CLASS_ID) ?: return null
+  val level = pluginContext.referenceClass(DEPRECATION_LEVEL_CLASS_ID) ?: return null
+  val hidden =
+      level.owner.declarations.filterIsInstance<IrEnumEntry>().singleOrNull {
+        it.name.asString() == "HIDDEN"
+      } ?: return null
+  val constructor = deprecated.constructors.firstOrNull { it.owner.isPrimary } ?: return null
+  return pluginContext.irBuiltIns.createIrBuilder(function.symbol).run {
+    irAnnotationCompat(constructor, emptyList()).apply {
+      arguments[0] = IrConstImpl.string(-1, -1, pluginContext.irBuiltIns.stringType, STUB_MESSAGE)
+      arguments[2] = IrGetEnumValueImpl(-1, -1, level.defaultType, hidden.symbol)
     }
   }
 }

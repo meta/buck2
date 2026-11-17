@@ -311,6 +311,9 @@ impl ImplStarlarkValue {
 
     /// `type Get` and `fn get`: the handle a value of the type is read through. A type whose
     /// representations are not a derived view writes its own.
+    ///
+    /// `get` is `#[inline(always)]` as every step of a conversion is; `unpack_then` in
+    /// `starlark` says why.
     fn get_items(&self) -> syn::Result<Vec<syn::ImplItem>> {
         let lt = &self.lifetime_param;
         let written = self.input.items.iter().any(|item| match item {
@@ -327,7 +330,7 @@ impl ImplStarlarkValue {
                     type Get = starlark::values::ValueTyped<#lt, Self>;
                 },
                 syn::parse_quote! {
-                    #[inline]
+                    #[inline(always)]
                     fn get(value: starlark::values::Value<#lt>) -> Option<Self::Get> {
                         starlark::values::ValueTyped::new(value)
                     }
@@ -338,7 +341,7 @@ impl ImplStarlarkValue {
                     type Get = Self;
                 },
                 syn::parse_quote! {
-                    #[inline]
+                    #[inline(always)]
                     fn get(value: starlark::values::Value<#lt>) -> Option<Self::Get> {
                         <Self as starlark::__derive_refs::ViewOfRepresentations<#lt>>::from_value(value)
                     }

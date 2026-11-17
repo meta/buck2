@@ -102,7 +102,7 @@ impl<'v, T: StarlarkType<'v>> StarlarkTypeExpr<'v> for T {
         <T as StarlarkType<'v>>::get_type_starlark_repr()
     }
 
-    #[inline]
+    #[inline(always)] // A step of a conversion: see `unpack_then`.
     fn get(value: Value<'v>) -> Option<Self::Get> {
         <T as StarlarkType<'v>>::get(value)
     }

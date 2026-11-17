@@ -200,6 +200,17 @@ impl<A: UnpackValueErrorInfallible, B: UnpackValueErrorInfallible> UnpackValueEr
 /// `unpack_value`, they take its `Result<Option<&T>>` apart again with a second null check.
 /// The parameter conversions stay on `unpack_value`: with their errors as continuations here,
 /// `xs[i]` measured two instructions more, the converted index going through the stack.
+///
+/// # Inlining
+///
+/// Every step between a caller and the test of the value's type is `#[inline(always)]`: this
+/// function, [`unpack_value`](UnpackValue::unpack_value) and its relatives, [`ValueOf::new`]
+/// and [`ValueOf::new_with_get`], a type's `get` and [`ValueTyped::new`]. None of them does
+/// anything of its own, and with only the `#[inline]` hint, which of them ends up a call
+/// depends on how the crate is split into codegen units. A step that returns a `Result` is
+/// an expensive place for the call: with it at `unpack_value`, `xs[i]` measured ten
+/// instructions more. What is left for the compiler to place is the test itself,
+/// `Value::has_representation` or a view's `from_value`, which answers in registers.
 #[inline(always)]
 pub(crate) fn unpack_then<'v, T: UnpackValue<'v>, R>(
     value: Value<'v>,
@@ -274,11 +285,13 @@ pub trait UnpackValue<'v>: Sized {
 
     /// `value` converted, if it is of [`Type`](Self::Type): `None` if it is not, an error if it
     /// is but does not convert.
+    #[inline(always)] // A step of a conversion: see `unpack_then`.
     fn unpack_value(value: Value<'v>) -> crate::Result<Option<Self>> {
         unpack_then(value, |x| Ok(Some(x)), || Ok(None))
     }
 
     /// [`unpack_value`](Self::unpack_value) for a conversion that cannot fail.
+    #[inline(always)] // A step of a conversion: see `unpack_then`.
     fn unpack_value_opt(value: Value<'v>) -> Option<Self>
     where
         Self::Error: UnpackValueErrorInfallible,
@@ -291,7 +304,7 @@ pub trait UnpackValue<'v>: Sized {
     }
 
     /// [`unpack_value`](Self::unpack_value), with an error instead of `None`.
-    #[inline]
+    #[inline(always)] // A step of a conversion: see `unpack_then`.
     fn unpack_value_err(value: Value<'v>) -> crate::Result<Self> {
         Self::unpack_value(value)?
             .ok_or_else(|| expected_type_error(value, Self::Type::starlark_type_repr))
@@ -299,7 +312,7 @@ pub trait UnpackValue<'v>: Sized {
 
     /// [`unpack_value`](Self::unpack_value), with an error about a parameter's type instead of
     /// `None`.
-    #[inline]
+    #[inline(always)] // A step of a conversion: see `unpack_then`.
     fn unpack_param(value: Value<'v>) -> crate::Result<Self> {
         #[cold]
         fn error<'v>(value: Value<'v>, ty: fn() -> Ty) -> crate::Error {

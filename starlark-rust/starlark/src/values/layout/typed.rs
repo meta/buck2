@@ -145,7 +145,7 @@ impl<'v, T: StarlarkValue<'v>> Eq for FrozenValueTyped<'v, T> {}
 
 impl<'v, T: StarlarkValue<'v>> ValueTyped<'v, T> {
     /// Downcast.
-    #[inline]
+    #[inline(always)] // A step of a conversion: see `unpack_then`.
     pub fn new(value: Value<'v>) -> Option<ValueTyped<'v, T>> {
         if value.has_representation::<T>() {
             Some(ValueTyped(value, marker::PhantomData))

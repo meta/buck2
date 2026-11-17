@@ -83,14 +83,14 @@ pub struct ValueOf<'v, T: StarlarkTypeExpr<'v>>(Value<'v>, PhantomData<fn() -> T
 
 impl<'v, T: StarlarkTypeExpr<'v>> ValueOf<'v, T> {
     /// `value` if it is a `T`.
-    #[inline]
+    #[inline(always)] // A step of a conversion: see `unpack_then`.
     pub fn new(value: Value<'v>) -> Option<Self> {
         Self::new_with_get(value).map(|(value, _get)| value)
     }
 
     /// `value` and what it is read as, if it is a `T`: [`new`](Self::new) and
     /// [`get`](Self::get) in one read.
-    #[inline]
+    #[inline(always)] // A step of a conversion: see `unpack_then`.
     pub fn new_with_get(value: Value<'v>) -> Option<(Self, T::Get)> {
         let get = T::get(value);
         #[cfg(debug_assertions)]

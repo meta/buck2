@@ -26,9 +26,11 @@ use buck2_util::arc_str::ArcStr;
 use buck2_util::strong_hasher::Blake3StrongHasher;
 use buck2_util::strong_hasher::StrongHash128;
 use dupe::Dupe;
+use either::Either;
 use pagable::Pagable;
 use starlark::values::AllocValue;
 use starlark::values::Heap;
+use starlark::values::UnpackValue;
 use starlark::values::Value;
 use starlark::values::ValueOf;
 use starlark::values::dict::AllocDict;
@@ -425,9 +427,12 @@ impl<'v> ModifierSource<'v> for Value<'v> {
     }
 
     fn list(self) -> Option<Vec<Self>> {
-        ListRef::from_value(self)
-            .map(|l| l.content().to_vec())
-            .or_else(|| TupleRef::from_value(self).map(|t| t.content().to_vec()))
+        let items = <Either<&ListRef, &TupleRef>>::unpack_value_opt(self)?;
+        Some(
+            items
+                .either(|list| list.content(), |tuple| tuple.content())
+                .to_vec(),
+        )
     }
 
     fn entries(self) -> Option<Vec<(&'v str, Self)>> {

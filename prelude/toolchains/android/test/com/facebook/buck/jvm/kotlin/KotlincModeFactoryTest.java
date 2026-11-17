@@ -27,8 +27,10 @@ import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
 import java.io.IOException;
 import java.nio.file.Path;
+import java.nio.file.Paths;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
 import org.junit.Before;
 import org.junit.Rule;
@@ -160,6 +162,59 @@ public class KotlincModeFactoryTest {
                 ImmutableList.of());
 
     assertTrue(kotlincMode instanceof KotlincMode.Incremental);
+  }
+
+  @Test
+  public void incremental_mode_tracks_inputs_only_when_asked() {
+    when(mockKotlinExtraParams.getShouldKotlincRunIncrementally()).thenReturn(true);
+    when(mockKotlinExtraParams.getIncrementalStateDir()).thenReturn(Optional.of(AbsPath.get("/")));
+    when(mockKotlinExtraParams.getKotlincWorkingDir()).thenReturn(Optional.of(AbsPath.get("/")));
+    when(mockActionMetadata.getCurrentDigest())
+        .thenReturn(ImmutableMap.of(Paths.get("plugin.jar"), "digest"));
+    when(mockKotlinExtraParams.getExtraKotlincArguments())
+        .thenReturn(ImmutableList.of("@args.txt"));
+    when(mockKotlinExtraParams.getKotlinCompilerPlugins())
+        .thenReturn(
+            ImmutableMap.of(AbsPath.get("/plugin.jar"), ImmutableMap.of("config", "config.txt")));
+    // Dependencies' source-only ABI jars: their content changes with every ABI change.
+    when(mockKotlinExtraParams.getApplicabilityClasspath())
+        .thenReturn(ImmutableList.of(AbsPath.get("/reduced.jar")));
+
+    when(mockKotlinExtraParams.getShouldTrackIncrementalInputs()).thenReturn(true);
+    KotlincMode.Incremental tracking =
+        (KotlincMode.Incremental)
+            new KotlincModeFactory(incrementalCompilationValidator)
+                .create(
+                    false,
+                    absPath,
+                    absPath,
+                    false,
+                    relPath,
+                    relPath,
+                    mockKotlinExtraParams,
+                    Optional.of(mockActionMetadata),
+                    ImmutableList.of());
+    assertEquals(
+        ImmutableMap.of(Paths.get("plugin.jar"), "digest"),
+        Objects.requireNonNull(tracking.getInputTracking()).getInputDigests());
+    assertEquals(
+        ImmutableList.of("@args.txt", "config.txt"), tracking.getInputTracking().getOptionValues());
+
+    when(mockKotlinExtraParams.getShouldTrackIncrementalInputs()).thenReturn(false);
+    KotlincMode.Incremental notTracking =
+        (KotlincMode.Incremental)
+            new KotlincModeFactory(incrementalCompilationValidator)
+                .create(
+                    false,
+                    absPath,
+                    absPath,
+                    false,
+                    relPath,
+                    relPath,
+                    mockKotlinExtraParams,
+                    Optional.of(mockActionMetadata),
+                    ImmutableList.of());
+    assertNull(notTracking.getInputTracking());
   }
 
   @Test

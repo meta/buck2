@@ -45,6 +45,7 @@ data class KotlinExtraParams(
     val kosabiAbiValidationMode: String = "off",
     val kosabiJvmAbiGenOptions: ImmutableList<String> = ImmutableList.of(),
     val disableKosabiKeptBodyStubCheck: Boolean = false,
+    val shouldTrackIncrementalInputs: Boolean = false,
 ) : CompileToJarStepFactory.ExtraParams {
 
   val shouldActionRunIncrementally: Boolean = shouldKotlincRunIncrementally

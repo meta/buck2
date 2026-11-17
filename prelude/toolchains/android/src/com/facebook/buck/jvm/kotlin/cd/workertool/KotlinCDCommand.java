@@ -36,6 +36,7 @@ import com.facebook.buck.jvm.kotlin.cd.workertool.postexecutors.PreviousStateWri
 import com.facebook.buck.jvm.kotlin.cd.workertool.postexecutors.PreviousStateWriterFactory;
 import com.facebook.buck.jvm.kotlin.cd.workertool.postexecutors.SkippedCompilationTracker;
 import com.facebook.buck.jvm.kotlin.cd.workertool.postexecutors.SkippedCompilationTrackerFactory;
+import com.facebook.buck.jvm.kotlin.kotlinc.incremental.IncrementalCompilerInputs;
 import com.facebook.buck.util.zip.ZipScrubber;
 import com.facebook.infer.annotation.Nullsafe;
 import com.google.common.base.Preconditions;
@@ -344,6 +345,11 @@ public class KotlinCDCommand implements JvmCDCommand {
             actionMetadataPath.orElse(null));
 
     previousStateWriter.execute();
+    if (buildKotlinCommand.getKotlinExtraParams().getShouldActionRunIncrementally()
+        && buildKotlinCommand.getKotlinExtraParams().getShouldTrackIncrementalInputs()) {
+      IncrementalCompilerInputs.promotePending(
+          Objects.requireNonNull(postBuildParams.getIncrementalStateDir()));
+    }
   }
 
   protected void maybeWriteUsedJarsFile() throws IOException {

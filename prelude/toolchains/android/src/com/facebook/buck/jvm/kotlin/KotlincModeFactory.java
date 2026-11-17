@@ -15,10 +15,12 @@ import com.facebook.buck.core.filesystems.RelPath;
 import com.facebook.buck.core.util.log.Logger;
 import com.facebook.buck.jvm.cd.command.kotlin.KotlinExtraParams;
 import com.facebook.buck.jvm.java.ActionMetadata;
+import com.facebook.buck.jvm.kotlin.kotlinc.incremental.IncrementalInputTracking;
 import com.facebook.buck.jvm.kotlin.kotlinc.incremental.KotlinSourceChanges;
 import com.facebook.buck.jvm.kotlin.kotlinc.incremental.KotlincMode;
 import com.facebook.infer.annotation.Nullsafe;
 import com.google.common.collect.ImmutableList;
+import com.google.common.collect.ImmutableMap;
 import java.util.Optional;
 import org.jspecify.annotations.Nullable;
 
@@ -96,7 +98,10 @@ public class KotlincModeFactory {
               depFile,
               usedJars,
               getJvmAbiGenWorkingDir(
-                  extraParams.getShouldUseJvmAbiGen(), extraParams.getJvmAbiGenWorkingDir())));
+                  extraParams.getShouldUseJvmAbiGen(), extraParams.getJvmAbiGenWorkingDir())),
+          extraParams.getShouldTrackIncrementalInputs()
+              ? new IncrementalInputTracking(metadata.getCurrentDigest(), optionValues(extraParams))
+              : null);
     }
   }
 
@@ -108,5 +113,20 @@ public class KotlincModeFactory {
 
     return jvmAbiGenWorkingDir.orElseThrow(
         () -> new IllegalStateException("jvm_abi_gen_working_dir is not created"));
+  }
+
+  /**
+   * The target's own compiler arguments and compiler plugin option values: the values that may name
+   * files whose content changes the output at the same path. The reduced classpath of the Kosabi
+   * applicability plugin is not among them: those jars are the dependencies' source-only ABI jars,
+   * so their content changes with every ABI change of a dependency.
+   */
+  private static ImmutableList<String> optionValues(KotlinExtraParams extraParams) {
+    ImmutableList.Builder<String> values = ImmutableList.builder();
+    values.addAll(extraParams.getExtraKotlincArguments());
+    for (ImmutableMap<String, String> options : extraParams.getKotlinCompilerPlugins().values()) {
+      values.addAll(options.values());
+    }
+    return values.build();
   }
 }

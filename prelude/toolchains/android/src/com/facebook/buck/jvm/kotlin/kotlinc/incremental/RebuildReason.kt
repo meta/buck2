@@ -17,4 +17,8 @@ enum class RebuildReason(val message: String) {
   NO_LAST_USED_JARS("used-jars.json not found"),
   NO_JVM_ABI_WORKING_DIR("jvm_abi_gen_working_dir not found"),
   KOTLIN_COMPILER_PLUGIN_CHANGED("Kotlin compiler plugin has been changed"),
+  COMPILER_INPUT_FILES_CHANGED(
+      "A Kotlin compiler plugin or a file that a compiler option names has been changed",
+  ),
+  INCREMENTAL_INPUTS_UNREADABLE("Inputs of the last successful round could not be compared"),
 }

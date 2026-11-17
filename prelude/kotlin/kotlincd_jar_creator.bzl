@@ -500,6 +500,7 @@ def _encode_kotlin_extra_params(
         languageVersion = language_version,
         javaBinary = cmd_args(kotlin_toolchain.java_binary_for_kotlincd[RunInfo], delimiter = " ") if kotlin_toolchain.java_binary_for_kotlincd else "",
         applicabilityClasspath = source_only_abi_applicability_classpath,
+        shouldTrackIncrementalInputs = kotlin_toolchain.incremental_input_tracking,
     )
 
 def _command_builder(
@@ -763,11 +764,43 @@ def _define_kotlincd_action(
 
 def _create_incremental_config(actions: AnalysisActions, actions_identifier: [str, None], kotlin_build_command: struct, kotlin_version: str):
     incremental_meta_data_output = declare_prefixed_output(actions, actions_identifier, "incremental_config.json", has_content_based_path = True)
+    kotlin_extra_params = kotlin_build_command.buildCommand.kotlinExtraParams
+
+    # Fields absent from the config without input tracking, which is then the same as before tracking existed.
+    optional_fields = {}
+
+    # With input tracking, the other settings that kotlincd turns into compiler arguments, so that a change
+    # compiles in full. Switching tracking either way changes the config, so that no round compares with a
+    # record from before tracking was turned off.
+    if kotlin_extra_params.shouldTrackIncrementalInputs:
+        optional_fields["compiler_settings"] = _compiler_settings(kotlin_extra_params)
     incremental_meta_data = struct(
         version = 3,
         track_class_usage = kotlin_build_command.buildCommand.baseJarCommand.trackClassUsage,
-        should_use_jvm_abi_gen = kotlin_build_command.buildCommand.kotlinExtraParams.shouldUseJvmAbiGen,
-        extra_kotlinc_arguments = kotlin_build_command.buildCommand.kotlinExtraParams.extraKotlincArguments,
+        should_use_jvm_abi_gen = kotlin_extra_params.shouldUseJvmAbiGen,
+        extra_kotlinc_arguments = kotlin_extra_params.extraKotlincArguments,
         kotlin_version = kotlin_version,
+        **optional_fields,
     )
     return actions.write_json(incremental_meta_data_output, incremental_meta_data, with_inputs = True)
+
+def _compiler_settings(kotlin_extra_params: struct) -> struct:
+    """
+    The settings in `kotlinExtraParams` that kotlincd turns into compiler arguments, besides those the
+    incremental config records anyway. Paths, not content: kotlincd compares the content of compiler plugins
+    and of the files that options name itself. Friend paths are recorded by their owners: they are classpath
+    entries, whose paths can change with their content, which the classpath snapshots track.
+    """
+    return struct(
+        jvm_target = kotlin_extra_params.jvmTarget,
+        language_version = kotlin_extra_params.languageVersion,
+        kotlin_compiler_plugins = kotlin_extra_params.kotlinCompilerPlugins,
+        kosabi_plugin_options = kotlin_extra_params.kosabiPluginOptions,
+        friend_paths = [str(path.owner.raw_target()) if path.owner else path.short_path for path in kotlin_extra_params.friendPaths],
+        kotlin_home_libraries = kotlin_extra_params.kotlinHomeLibraries,
+        jvm_abi_gen_plugin = kotlin_extra_params.jvmAbiGenPlugin,
+        dep_tracker_plugin = kotlin_extra_params.depTrackerPlugin,
+        should_verify_source_only_abi_constraints = kotlin_extra_params.shouldVerifySourceOnlyAbiConstraints,
+        kosabi_abi_validation_mode = kotlin_extra_params.kosabiAbiValidationMode,
+        should_kosabi_use_shallow_class_usage = kotlin_extra_params.shouldKosabiUseShallowClassUsage,
+    )

@@ -85,6 +85,11 @@ message KotlinExtraParams {
   // inline bodies name a class that only a Kosabi stub provides. Unset (false)
   // keeps the check on.
   bool disableKosabiKeptBodyStubCheck = 36;
+  // Records the compiler settings in incremental_config.json, compiles in full
+  // when a compiler plugin or a file that an option names changed since the
+  // last successful incremental round, and has the incremental compiler compute
+  // classpath changes when only the classpath order changed.
+  bool shouldTrackIncrementalInputs = 34;
 }
 
 message PluginParams {

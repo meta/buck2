@@ -16,6 +16,10 @@ KotlinToolchainInfo = provider(
         "compile_kotlin": provider_field(typing.Any, default = None),
         "dep_files": provider_field(typing.Any, default = None),
         "enable_incremental_compilation": provider_field(typing.Any, default = None),
+        # Whether incremental kotlinc rounds compile in full when the compiler arguments change
+        # and have the incremental compiler compute classpath changes when the classpath order
+        # changes. Off restores the behaviour that tracks neither.
+        "incremental_input_tracking": provider_field(bool, default = True),
         "java_binary_for_kotlincd": provider_field(typing.Any, default = None),
         "jvm_abi_gen_plugin": provider_field(typing.Any, default = None),
         "kapt_base64_encoder": provider_field(typing.Any, default = None),

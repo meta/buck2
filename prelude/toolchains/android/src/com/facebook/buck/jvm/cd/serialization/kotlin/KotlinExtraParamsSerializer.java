@@ -98,6 +98,7 @@ public class KotlinExtraParamsSerializer {
         kotlinExtraParams.getShouldKosabiUseShallowClassUsage(),
         kotlinExtraParams.getKosabiAbiValidationMode(),
         ImmutableList.copyOf(kotlinExtraParams.getKosabiJvmAbiGenOptionsList()),
-        kotlinExtraParams.getDisableKosabiKeptBodyStubCheck());
+        kotlinExtraParams.getDisableKosabiKeptBodyStubCheck(),
+        kotlinExtraParams.getShouldTrackIncrementalInputs());
   }
 }

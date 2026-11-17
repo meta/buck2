@@ -18,6 +18,7 @@ import com.facebook.buck.jvm.core.BuildTargetValue
 import com.facebook.buck.jvm.kotlin.cd.analytics.KotlinCDLoggingContext
 import com.facebook.buck.jvm.kotlin.cd.analytics.SourceTokenCounter
 import com.facebook.buck.jvm.kotlin.kotlinc.Kotlinc
+import com.facebook.buck.jvm.kotlin.kotlinc.incremental.IncrementalCompilerInputs
 import com.facebook.buck.jvm.kotlin.kotlinc.incremental.KotlincMode
 import com.facebook.buck.util.ClassLoaderCache
 import com.google.common.collect.ImmutableList
@@ -66,10 +67,22 @@ class BuildToolsKotlinc : Kotlinc {
             kotlinCDLoggingContext,
         )
     val argsMs = (System.nanoTime() - argsStart) / 1_000_000
+    val effectiveMode =
+        IncrementalCompilerInputs.apply(
+            mode,
+            compilerArgs,
+            expandedSources.map { ruleCellRoot.resolve(it).path },
+        ) { changes, inputsMs ->
+          // Machine-parseable, for measuring how often these inputs change and what tracking
+          // them costs.
+          LOG.info(
+              "KOTLINCD_INCREMENTAL_INPUTS|${invokingRule.fullyQualifiedName}|files_changed=${changes.filesChanged}|classpath_order_changed=${changes.classpathOrderChanged}|record_unreadable=${changes.recordUnreadable}|inputs_ms=$inputsMs",
+          )
+        }
 
     LOG.info(
         "[KotlinC Toolchain Build Step from for target:${invokingRule.fullyQualifiedName} type:${invokingRule.type}] " +
-            "Running ${CompilationService::class.java.name} ${getIncrementalInfoMessage(mode)} " +
+            "Running ${CompilationService::class.java.name} ${getIncrementalInfoMessage(effectiveMode)} " +
             "with arguments:[${compilerArgs.joinToString()}] ",
     )
 
@@ -77,7 +90,7 @@ class BuildToolsKotlinc : Kotlinc {
     // Format: KOTLINCD_INVOCATION|target|type|incremental|arg_count
     // Followed by: KOTLINCD_ARG|<arg> for each argument
     LOG.info(
-        "KOTLINCD_INVOCATION|${invokingRule.fullyQualifiedName}|${invokingRule.type}|${getIncrementalInfoMessage(mode)}|${compilerArgs.size}",
+        "KOTLINCD_INVOCATION|${invokingRule.fullyQualifiedName}|${invokingRule.type}|${getIncrementalInfoMessage(effectiveMode)}|${compilerArgs.size}",
     )
     compilerArgs.forEach { arg -> LOG.info("KOTLINCD_ARG|$arg") }
 
@@ -98,14 +111,14 @@ class BuildToolsKotlinc : Kotlinc {
         kotlinCompilationService.compile(
             ProjectId.ProjectUUID(UUID.randomUUID()),
             compilerArgs,
-            mode,
+            effectiveMode,
             BuckKotlinLogger(UncloseablePrintStream(context.stdErr), kotlinCDLoggingContext),
             classToSourceMapPath?.let {
               KotlinClassToSourceMap(
                   it,
                   outputDirectory.path,
                   ruleCellRoot.path,
-                  (mode as? KotlincMode.Incremental)
+                  (effectiveMode as? KotlincMode.Incremental)
                       ?.kotlicWorkingDir
                       ?.path
                       ?.resolve(

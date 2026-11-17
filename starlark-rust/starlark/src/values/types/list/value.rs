@@ -432,7 +432,7 @@ impl<'v> StarlarkType<'v> for ListView<'v> {
 
     fn compare(&self, other: Value<'v>) -> crate::Result<Ordering> {
         match ListRef::from_value(other) {
-            None => ValueError::unsupported_with(self, "cmp()", other),
+            None => ValueError::unsupported_with(self, "compare", other),
             Some(other) => compare_slice(self.content(), &other.content, |x, y| x.compare(*y)),
         }
     }

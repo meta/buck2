@@ -164,7 +164,7 @@ impl<'v> StarlarkValue<'v> for Tuple<'v> {
 
     fn compare(&self, other: Value<'v>) -> crate::Result<Ordering> {
         match Tuple::from_value(other) {
-            None => ValueError::unsupported_with(self, "cmp()", other),
+            None => ValueError::unsupported_with(self, "compare", other),
             Some(other) => compare_slice(self.content(), other.content(), |x, y| x.compare(*y)),
         }
     }

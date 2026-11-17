@@ -479,7 +479,7 @@ fn test_bytes_add_type_error() {
 // bytes < non-bytes produces a type error.
 #[test]
 fn test_bytes_compare_type_error() {
-    assert::fail(r#"b"abc" < 1"#, "cmp()");
+    assert::fail(r#"b"abc" < 1"#, "Operation `compare` not supported");
 }
 
 // elems() on multi-byte UTF-8 content iterates individual bytes, not codepoints.

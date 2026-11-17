@@ -103,7 +103,7 @@ impl<'v> StarlarkType<'v> for bool {
         if let Some(other) = other.unpack_bool() {
             Ok(self.cmp(&other))
         } else {
-            ValueError::unsupported_with(self, "<>", other)
+            ValueError::unsupported_with(self, "compare", other)
         }
     }
 }

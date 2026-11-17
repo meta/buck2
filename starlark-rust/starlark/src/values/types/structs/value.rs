@@ -150,7 +150,7 @@ impl<'v> StarlarkValue<'v> for Struct<'v> {
 
     fn compare(&self, other: Value<'v>) -> crate::Result<Ordering> {
         match Struct::from_value(other) {
-            None => ValueError::unsupported_with(self, "cmp()", other),
+            None => ValueError::unsupported_with(self, "compare", other),
             Some(other) => compare_small_map(
                 &self.fields,
                 &other.fields,

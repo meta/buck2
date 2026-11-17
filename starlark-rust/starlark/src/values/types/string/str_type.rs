@@ -267,7 +267,7 @@ impl<'v> StarlarkValue<'v> for StarlarkStr {
         if let Some(other) = other.unpack_str() {
             Ok(self.as_str().cmp(other))
         } else {
-            ValueError::unsupported_with(self, "cmp()", other)
+            ValueError::unsupported_with(self, "compare", other)
         }
     }
 

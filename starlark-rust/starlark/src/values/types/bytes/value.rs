@@ -201,7 +201,7 @@ impl<'v> StarlarkValue<'v> for StarlarkBytes {
         if let Some(other) = StarlarkBytes::from_value(other) {
             Ok(self.content.cmp(&other.content))
         } else {
-            crate::values::ValueError::unsupported_with(self, "cmp()", other)
+            crate::values::ValueError::unsupported_with(self, "compare", other)
         }
     }
 

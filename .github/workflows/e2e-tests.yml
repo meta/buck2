@@ -68,10 +68,10 @@ jobs:
       shell: bash
     # The open source test runner runs each test target's binary once, with all
     # its test cases: buck2 runs a binary per core, each with 4 test cases at a
-    # time, and gives a binary 30 minutes.
+    # time, and gives a binary 30 minutes. The script runs a test target that
+    # fails a second time, and reports what failed on the run's summary page.
     - name: Run the e2e tests
-      run: >-
-        "$RUNNER_TEMP/artifacts/buck2" test
-        //tests/core/... //tests/e2e/... //tests/select_type_params/...
-        -- --timeout=1800 --env RUST_TEST_THREADS=4
+      run: |
+        printf '%s\n' //tests/core/... //tests/e2e/... //tests/select_type_params/... > "$RUNNER_TEMP/e2e-targets.txt"
+        bash .github/scripts/buck2_test.sh "$RUNNER_TEMP/e2e-targets.txt" -- --timeout=1800 --env RUST_TEST_THREADS=4
       shell: bash

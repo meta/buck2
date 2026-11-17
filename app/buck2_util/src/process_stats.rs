@@ -20,6 +20,7 @@ pub struct ProcessStats {
 
 #[cfg(unix)]
 pub fn process_stats() -> ProcessStats {
+    use crate::os::unix_like::sc_page_size::sc_page_size;
     use crate::process_stats::proc_self_stat::ProcSelfStat;
 
     let usage = unsafe {
@@ -44,10 +45,8 @@ pub fn process_stats() -> ProcessStats {
 
     let rss_bytes = if cfg!(target_os = "linux") {
         // Buck2 snapshot is made once per second, so this shouldn't be too expensive.
-        ProcSelfStat::read().map(|stat| {
-            // `getconf PAGESIZE`, but practically it's always 4096.
-            stat.rss * 4096
-        })
+        let page_size = sc_page_size().ok();
+        ProcSelfStat::rss_bytes(ProcSelfStat::read().as_ref(), page_size)
     } else {
         None
     };
@@ -159,6 +158,12 @@ mod proc_self_stat {
                 .ok()
                 .and_then(|s| ProcSelfStat::parse(&s))
         }
+
+        /// Resident set size in bytes when both the stat and kernel page size are available.
+        pub fn rss_bytes(stat: Option<&Self>, page_size: Option<usize>) -> Option<u64> {
+            stat.zip(page_size)
+                .map(|(stat, page_size)| stat.rss * page_size as u64)
+        }
     }
 }
 
@@ -204,7 +209,24 @@ mod tests {
             0 0 0 0 0 0 0 0 0 17 11 0 0 0 0 0 \
             94565084199504 94565084201152 94565084205056 140727456831309 \
             140727456831329 140727456831329 140727456833519 0";
-        assert_eq!(215, ProcSelfStat::parse(stat).unwrap().rss);
+        let stat = ProcSelfStat::parse(stat).unwrap();
+        assert_eq!(215, stat.rss);
+        // 215 pages of 4 KiB (x86_64) and of 64 KiB (some aarch64 kernels).
+        assert_eq!(
+            Some(880_640),
+            ProcSelfStat::rss_bytes(Some(&stat), Some(4096))
+        );
+        assert_eq!(
+            Some(14_090_240),
+            ProcSelfStat::rss_bytes(Some(&stat), Some(65536))
+        );
+    }
+
+    #[test]
+    fn test_rss_bytes_missing_inputs() {
+        let stat = ProcSelfStat { rss: 215 };
+        assert_eq!(None, ProcSelfStat::rss_bytes(Some(&stat), None));
+        assert_eq!(None, ProcSelfStat::rss_bytes(None, Some(65536)));
     }
 
     // Reads `/proc`, which Miri's isolation hides.

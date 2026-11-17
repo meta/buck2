@@ -164,6 +164,23 @@ impl ArcSerCache {
     pub fn len(&self) -> usize {
         self.by_type.iter().map(|entry| entry.value().len()).sum()
     }
+
+    /// Consumes the cache and returns its slots in chunks of at most `chunk_size`, so that the
+    /// caller can drop them on several threads.
+    pub fn into_slot_chunks(self, chunk_size: usize) -> Vec<Vec<Arc<ArcSerSlot>>> {
+        let mut slots = self
+            .by_type
+            .into_iter()
+            // Every view of the cache borrows it, so no other holder of a map is left.
+            .filter_map(|(_, by_identity)| Arc::into_inner(by_identity))
+            .flatten()
+            .map(|(_, slot)| slot);
+        std::iter::from_fn(|| {
+            let chunk: Vec<_> = slots.by_ref().take(chunk_size).collect();
+            (!chunk.is_empty()).then_some(chunk)
+        })
+        .collect()
+    }
 }
 
 /// One worker's view of a shared [`ArcSerCache`].
@@ -192,7 +209,7 @@ impl<'a> ArcSerCacheLocal<'a> {
             .entry(type_id)
             .or_insert_with(|| shared.by_identity(type_id))
             .entry(arc.identity())
-            .or_insert_with(|| Arc::new(ArcSerSlot::new()))
+            .or_insert_with(|| Arc::new(ArcSerSlot::new(arc)))
             .dupe()
     }
 }
@@ -756,13 +773,17 @@ pub struct ArcSerSlot {
     /// The key and the ticket covering the arc's row and its children on
     /// success, `None` on failure.
     result: OnceCell<Option<(DataKey, WriteTicket)>>,
+    /// Keeps the allocation, and so the identity this slot is keyed by, from being reused by
+    /// another arc while the cache lives.
+    _keep: Box<dyn WeakEraseDyn>,
 }
 
 impl ArcSerSlot {
-    fn new() -> Self {
+    fn new(arc: &dyn ArcEraseDyn) -> Self {
         Self {
             claimed: AtomicBool::new(false),
             result: OnceCell::new(),
+            _keep: arc.downgrade(),
         }
     }
 

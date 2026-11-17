@@ -1546,8 +1546,10 @@ mod tests {
         let arc_key = storage.fetch_data_blocking(&item_key)?.arcs[0];
         assert_eq!(ArcEraseDyn::data_key(&arc), Some(arc_key));
         // The binding keeps the arc alive, and the arc keeps the storage alive,
-        // until the sweep that follows a command.
+        // until the sweep that follows a command. The serialization cache keeps
+        // the arc's allocation alive too, so it goes before the sweep.
         drop(arc);
+        drop(finished);
         storage.arc_cache().evict_expired();
         Ok(())
     }

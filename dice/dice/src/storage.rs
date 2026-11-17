@@ -465,6 +465,10 @@ impl DiceStorage {
         awaiting_commit
             .commit_covered(&self.storage.commit_frontier())
             .await;
+        // Nothing looks up a slot from here on. The slots go before the sweep: an arc that a
+        // slot still holds is not freed by it.
+        drop(awaiting_commit);
+        drop_in_parallel(finished).await;
         // Evictions are fire-and-forget. The sweep must run after the core has
         // processed every one, or the arcs of late evictions stay pinned until
         // the next sweep. State requests are FIFO, so any round trip is the barrier.
@@ -836,6 +840,34 @@ async fn bind_in_parallel(
     for task in tasks {
         // A chunk only fails by panicking, and a panic in the binding of
         // paged-out arcs is a bug in the page-out, not something to continue from.
+        if let Err(e) = task.await
+            && e.is_panic()
+        {
+            std::panic::resume_unwind(e.into_panic());
+        }
+    }
+}
+
+/// Drops the slots of `finished` on a few threads of the blocking pool. Each slot releases its
+/// arc's allocation, memory that is cold by then: on one thread the 17 million slots of a
+/// `fbcode//buck2:buck2` page-out took 6 s to drop.
+async fn drop_in_parallel(finished: Arc<ArcSerCache>) {
+    // Few tasks: the allocator caches the last blocks that a thread frees, and a cached block
+    // keeps its page resident until the thread exits. With a task per 65536 slots, the daemon
+    // had about 0.5 GB more resident memory for the seconds after the page-out.
+    const DROP_TASKS: usize = 16;
+    // Another holder, if one is left, drops the cache when it lets go.
+    let Some(finished) = Arc::into_inner(finished) else {
+        return;
+    };
+    let chunk_size = finished.len().div_ceil(DROP_TASKS).max(1);
+    let tasks: Vec<_> = finished
+        .into_slot_chunks(chunk_size)
+        .into_iter()
+        .map(|chunk| tokio::task::spawn_blocking(move || drop(chunk)))
+        .collect();
+    for task in tasks {
+        // A chunk only fails by panicking, in the drop of an arc's contents.
         if let Err(e) = task.await
             && e.is_panic()
         {

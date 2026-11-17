@@ -1757,3 +1757,85 @@ fn frontier_covers_tickets_whose_shards_have_passed_them() {
     assert!(CommitFrontier::everything().covers(&both));
     assert!(CommitFrontier::new(vec![1]).covers(&WriteTicket::DURABLE));
 }
+
+fn page_out_arc(
+    storage: &Arc<dyn PagableStorage>,
+    arc: &Arc<Vec<u8>>,
+    finished: &ArcSerCache,
+) -> DataKey {
+    let storage_context = storage.storage_context();
+    let mut ser = SerializerForPaging::new(storage_context);
+    arc.pagable_serialize(&mut ser).unwrap();
+    let (data, arcs) = ser.finish();
+    storage
+        .page_out_item(data, arcs, finished, storage_context)
+        .unwrap()
+}
+
+fn read_back_bytes(storage: &Arc<dyn PagableStorage>, key: DataKey) -> Vec<u8> {
+    let handle = PagableStorageHandle::new(storage.dupe());
+    let data = storage.fetch_data_blocking(&key).unwrap();
+    let mut de = handle.root_deserializer(key, &data);
+    let arc: Arc<Vec<u8>> = Arc::pagable_deserialize(&mut de).unwrap();
+    (*arc).clone()
+}
+
+/// Allocates arcs holding `fill` until one lands on `addr`, keeping the misses alive so the
+/// allocator is pushed towards the freed slot. `None` when `addr` does not come back within the
+/// bound, which depends on the allocator and is not an error.
+fn alloc_arc_at(addr: usize, fill: u8) -> Option<Arc<Vec<u8>>> {
+    let mut misses = Vec::new();
+    for _ in 0..10_000 {
+        let candidate = Arc::new(vec![fill; 64]);
+        if Arc::as_ptr(&candidate) as usize == addr {
+            return Some(candidate);
+        }
+        misses.push(candidate);
+    }
+    None
+}
+
+/// A slot keeps a weak reference to its arc, so the allocation stays reserved while the cache
+/// lives and no arc allocated during the page-out can take over a paged-out arc's key.
+#[test]
+fn shared_ser_cache_keeps_a_paged_out_arcs_address_reserved() {
+    let mem = InMemoryPagableStorage::new();
+    let storage = mem.handle();
+    let finished = ArcSerCache::new();
+
+    let first = Arc::new(vec![1u8; 64]);
+    let addr = Arc::as_ptr(&first) as usize;
+    let first_key = page_out_arc(&storage, &first, &finished);
+    assert_eq!(Arc::weak_count(&first), 1);
+    assert_eq!(Arc::strong_count(&first), 1);
+    drop(first);
+
+    assert!(alloc_arc_at(addr, 2).is_none());
+    let second = Arc::new(vec![2u8; 64]);
+    let second_key = page_out_arc(&storage, &second, &finished);
+    assert_ne!(second_key, first_key);
+    assert_eq!(read_back_bytes(&storage, second_key), vec![2u8; 64]);
+    assert_eq!(read_back_bytes(&storage, first_key), vec![1u8; 64]);
+
+    drop(finished);
+    assert_eq!(Arc::weak_count(&second), 0);
+}
+
+/// The chunks hold every slot, and the arcs stay reserved until the chunks are dropped.
+#[test]
+fn into_slot_chunks_returns_every_slot() {
+    let mem = InMemoryPagableStorage::new();
+    let storage = mem.handle();
+    let finished = ArcSerCache::new();
+    let arcs: Vec<_> = (0..5u8).map(|i| Arc::new(vec![i; 64])).collect();
+    for arc in &arcs {
+        page_out_arc(&storage, arc, &finished);
+    }
+
+    let chunks = finished.into_slot_chunks(2);
+    assert_eq!(chunks.iter().map(Vec::len).collect::<Vec<_>>(), [2, 2, 1]);
+    assert!(arcs.iter().all(|arc| Arc::weak_count(arc) == 1));
+
+    drop(chunks);
+    assert!(arcs.iter().all(|arc| Arc::weak_count(arc) == 0));
+}

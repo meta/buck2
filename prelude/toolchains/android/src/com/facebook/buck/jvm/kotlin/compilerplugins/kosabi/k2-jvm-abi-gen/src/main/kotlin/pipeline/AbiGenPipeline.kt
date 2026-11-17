@@ -2637,15 +2637,15 @@ internal class ValidationStage(private val repairLog: AbiGenRepairLog) : AbiGenS
     }
     return classes
   }
-
-  // KosabiStubgenStepsBuilder emits the stub classpath as `__%s_stubgen_stubs.jar`, or as the
-  // corresponding `__%s_stubgen_stubs` directory before packaging. `stubs.jar` stays an equality
-  // check: as a suffix it would also swallow `core-lambda-stubs.jar` and treat the Android lambda
-  // stubs as fabricated classes.
-  private fun File.isStubClasspathRoot(): Boolean =
-      (isDirectory && name.endsWith("stubgen_stubs")) ||
-          (isFile && (name.endsWith("stubgen_stubs.jar") || name == "stubs.jar"))
 }
+
+// KosabiStubgenStepsBuilder emits the stub classpath as `__%s_stubgen_stubs.jar`, or as the
+// corresponding `__%s_stubgen_stubs` directory before packaging. `stubs.jar` stays an equality
+// check: as a suffix it would also swallow `core-lambda-stubs.jar` and treat the Android lambda
+// stubs as fabricated classes.
+internal fun File.isStubClasspathRoot(): Boolean =
+    (isDirectory && name.endsWith("stubgen_stubs")) ||
+        (isFile && (name.endsWith("stubgen_stubs.jar") || name == "stubs.jar"))
 
 /**
  * Pipeline runner that orchestrates the ABI generation stages in the correct order.

@@ -109,6 +109,12 @@ class K2JvmAbiFirAnalysisHandlerExtension(
   private val pipeline =
       AbiGenPipeline(bytecodeSanitizer = BytecodeSanitizerStage(preserveDeclarationOrder))
 
+  /**
+   * The classes whose supertypes on missing transitive dependencies were stripped from FIR before
+   * IR conversion, each with the supertypes it lost.
+   */
+  private var strippedSupertypes: Map<ClassId, Set<ClassId>> = emptyMap()
+
   // Annotations a code-rewriting plugin is configured to read in THIS compilation:
   // allopen's explicit `annotation=` values plus its preset expansions (spring, quarkus,
   // micronaut, jpa). InlineBodyKeepability subtracts these from its allowlist, so a
@@ -203,9 +209,12 @@ class K2JvmAbiFirAnalysisHandlerExtension(
       // If any are found, strip their supertype references from FIR to prevent crashes
       // during FIR-to-IR fake override building.
       val missingTypes = collectMissingTypesFromFir(analysisResults)
-      if (missingTypes.isNotEmpty()) {
-        stripUnresolvableSupertypesFromFir(analysisResults, missingTypes)
-      }
+      strippedSupertypes =
+          if (missingTypes.isNotEmpty()) {
+            stripUnresolvableSupertypesFromFir(analysisResults, missingTypes)
+          } else {
+            emptyMap()
+          }
 
       runBackendForKosabi(
           messageCollector,
@@ -452,12 +461,14 @@ class K2JvmAbiFirAnalysisHandlerExtension(
   // classes, removing any supertype reference whose ClassId is in the missing set.
   // This is done BEFORE FIR-to-IR conversion to prevent crashes during fake override
   // building (Fir2IrDeclarationStorage.findContainingIrClassSymbol).
+  // Returns the classes that lost supertypes, each with the supertypes it lost.
   @OptIn(SymbolInternals::class)
   private fun stripUnresolvableSupertypesFromFir(
       analysisResults: FrontendOutputCompat,
       missingTypes: Set<ClassId>,
-  ) {
+  ): Map<ClassId, Set<ClassId>> {
     val visited = mutableSetOf<ClassId>()
+    val stripped = mutableMapOf<ClassId, Set<ClassId>>()
 
     fun stripFromClassRecursively(firClass: FirRegularClass, session: FirSession) {
       val classId = firClass.symbol.classId
@@ -473,6 +484,10 @@ class K2JvmAbiFirAnalysisHandlerExtension(
             coneType.lookupTag.classId in missingTypes
           }
       if (toRemove.isNotEmpty()) {
+        stripped[classId] =
+            toRemove.mapTo(LinkedHashSet()) {
+              ((it as FirResolvedTypeRef).coneType as ConeClassLikeType).lookupTag.classId
+            }
         val filtered = firClass.superTypeRefs - toRemove.toSet()
         try {
           // Works for standard FirRegularClass (Kotlin classes from bytecode or source)
@@ -529,6 +544,7 @@ class K2JvmAbiFirAnalysisHandlerExtension(
         )
       }
     }
+    return stripped
   }
 
   fun convertAnalyzedFirToIr(
@@ -545,7 +561,15 @@ class K2JvmAbiFirAnalysisHandlerExtension(
     val allIrExtensions = buildList {
       // Plugin extensions run first, before the emulations and the sanitizer read the IR they
       // change (e.g. Compose stability reads the superclass DataClassGenerate injects).
-      addAll(abiRelevantPluginIrExtensions(project, configuration))
+      addAll(
+          abiRelevantPluginIrExtensions(
+              project,
+              configuration,
+              sourceFiles,
+              configuration.messageCollector,
+              strippedSupertypes,
+          ),
+      )
       // Compose ABI emulation runs before the IR sanitizer so that any emulated
       // declarations are present when non-ABI content is stripped.
       if (composeAbiEnabled) {

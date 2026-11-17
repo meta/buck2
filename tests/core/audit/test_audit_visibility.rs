@@ -14,6 +14,7 @@
 )]
 
 use buck2_e2e::prelude::*;
+use buck2_e2e::utils::filter_events;
 
 async fn test_audit_visibility(buck: &Buck, rule: &str, passes: bool) -> anyhow::Result<()> {
     if passes {
@@ -76,4 +77,35 @@ async fn test_audit_visibility_self_fail5_False(buck: &Buck) -> anyhow::Result<(
 #[buck_test]
 async fn test_audit_visibility_self_fail6_False(buck: &Buck) -> anyhow::Result<()> {
     test_audit_visibility(buck, "self//:fail6", false).await
+}
+
+/// The command sends its errors as console messages. What it writes to the daemon's own stderr
+/// reaches the client through a file that the client polls, which can split a line in two.
+#[buck_test]
+async fn test_audit_visibility_errors_are_console_messages(buck: &Buck) -> anyhow::Result<()> {
+    buck.audit_visibility(&["self//:fail2"])
+        .await
+        .expect_failure();
+    let messages = filter_events(
+        buck,
+        &[
+            "Event",
+            "data",
+            "Instant",
+            "data",
+            "ConsoleMessage",
+            "message",
+        ],
+    )
+    .await?;
+    let error = "`self//subdir:badpackage` is not visible to `self//:fail2`";
+    assert!(
+        messages
+            .iter()
+            .filter_map(|message| message.as_str())
+            .flat_map(str::lines)
+            .any(|line| line.starts_with(error)),
+        "No console message has a line starting with {error}: {messages:?}"
+    );
+    Ok(())
 }

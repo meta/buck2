@@ -83,7 +83,7 @@ fn bxl_impl<'v>(
     doc: &str,
     eval: &mut Evaluator<'v, '_, '_>,
 ) -> starlark::Result<Value<'v>> {
-    let implementation = r#impl.0;
+    let implementation = r#impl.to_value();
 
     let bxl_path = starlark_path_from_build_context(eval)?
         .unpack_bxl_file()

@@ -161,7 +161,7 @@ impl<'v> StarlarkPromise<'v> {
         x: Value<'v>,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> buck2_error::Result<Value<'v>> {
-        Ok(eval.eval_function(f.0, &[x], &[])?)
+        Ok(eval.eval_function(f.to_value(), &[x], &[])?)
     }
 
     pub fn map(

@@ -127,7 +127,7 @@ pub(crate) fn register_anon_rule(globals: &mut GlobalsBuilder) {
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<ValueOf<'v, StarlarkRuleCallableView<'v>>> {
         let rule = StarlarkRuleCallable::new_bxl_anon(
-            StarlarkCallable::unchecked_new(r#impl.0),
+            r#impl.to_unchecked().with_signature(),
             attrs,
             doc,
             artifact_promise_mappings,

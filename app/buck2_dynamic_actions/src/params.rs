@@ -79,7 +79,7 @@ impl<'fv> FrozenDynamicLambdaParams<'fv> {
     }
 
     pub fn lambda(&self) -> Value<'fv> {
-        self.lambda.0
+        self.lambda.to_value()
     }
 }
 

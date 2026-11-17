@@ -656,8 +656,9 @@ impl AnalysisValueFetcher {
         let index = id.action_index();
         let starlark_data =
             storage.maybe_map::<Value<'static>, _>(|v| v.as_ref().value.action_data(index)?.0);
-        let error_handler = storage
-            .maybe_map::<Value<'static>, _>(|v| Some(v.as_ref().value.action_data(index)?.1?.0));
+        let error_handler = storage.maybe_map::<Value<'static>, _>(|v| {
+            Some(v.as_ref().value.action_data(index)?.1?.to_value())
+        });
         Ok((
             starlark_data.map(|v| v.to_owned()),
             error_handler.map(|v| v.to_owned()),

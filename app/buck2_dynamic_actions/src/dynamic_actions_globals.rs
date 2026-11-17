@@ -67,7 +67,7 @@ pub fn new_dynamic_actions_callable<'v>(
         .collect::<Vec<_>>();
 
     r#impl
-        .0
+        .to_value()
         .check_callable_with(
             [],
             iter::once((callback_param.name.as_str(), &*callback_param.ty))

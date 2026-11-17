@@ -342,7 +342,7 @@ fn register_transition_function(builder: &mut GlobalsBuilder) {
         #[starlark(require = named, default = false)] split: bool,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<ValueOf<'v, TransitionView<'v>>> {
-        let implementation = r#impl.0;
+        let implementation = r#impl.to_value();
 
         let refs = refs
             .iter()

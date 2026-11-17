@@ -406,7 +406,7 @@ impl<'v> StarlarkRuleCallable<'v> {
                     .iter()
                     .map(|entry| {
                         let (k, v) = entry?;
-                        Ok::<_, starlark::Error>((k, v.get().0))
+                        Ok::<_, starlark::Error>((k, v.get().to_value()))
                     })
                     .collect::<starlark::Result<BuckMutInsertionMap<_, _>>>()?,
             }),
@@ -728,8 +728,8 @@ enum FrozenRuleImpl<'v> {
 impl<'v> FrozenRuleImpl<'v> {
     fn into_value(self) -> Value<'v> {
         match self {
-            FrozenRuleImpl::BuildRule(callable) => callable.0,
-            FrozenRuleImpl::BxlAnon(callable) => callable.0,
+            FrozenRuleImpl::BuildRule(callable) => callable.to_value(),
+            FrozenRuleImpl::BxlAnon(callable) => callable.to_value(),
         }
     }
 }
@@ -1055,7 +1055,7 @@ pub fn register_rule_function(builder: &mut GlobalsBuilder) {
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<ValueOf<'v, StarlarkRuleCallableView<'v>>> {
         let rule = StarlarkRuleCallable::new(
-            RuleImpl::BuildRule(StarlarkCallable::unchecked_new(r#impl.0)),
+            RuleImpl::BuildRule(r#impl.to_unchecked().with_signature()),
             attrs,
             cfg,
             supports_incoming_transition,

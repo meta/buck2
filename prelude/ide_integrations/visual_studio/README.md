@@ -5,7 +5,7 @@ files given buck target labels or patterns, with full functional IntelliSense
 and build/run/debug setup.
 
 The majority of heavy lifting is implemented in
-[BXL](https://buck2.build/docs/developers/bxl/), Buck Extension Language, which
+[BXL](https://buck2.build/docs/bxl/), Buck Extension Language, which
 offers superb performance and handles incremental changes extremely well.
 
 ![demo](assets/demo.png)

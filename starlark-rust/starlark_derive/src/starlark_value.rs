@@ -15,8 +15,11 @@
  * limitations under the License.
  */
 
+use std::collections::HashMap;
+
 use quote::quote;
 
+use crate::typed_behaviour::Typing;
 use crate::typed_behaviour::always_hashes_impl;
 use crate::typed_behaviour::derive_from_typed;
 use crate::v_lifetime::find_v_lifetime;
@@ -178,6 +181,10 @@ enum ImplOf {
     /// `impl StarlarkType for X`: `X` is a type whose representations are elsewhere.
     Type,
 }
+
+/// What the methods of a block that are written with typed signatures say to the typechecker, by
+/// the name of the method.
+type TypedMethods = HashMap<String, Typing>;
 
 struct ImplStarlarkValue {
     input: syn::ItemImpl,
@@ -416,18 +423,42 @@ impl ImplStarlarkValue {
     }
 
     /// The arm of `bin_op_signatures` or `rbin_op_signatures` for an operator, if the block has
-    /// its method.
-    fn operator_arm(&self, bin_op: &str, impl_name: &str) -> Option<syn::Arm> {
+    /// its method: what the method's types say if it is written with them, any operand and an
+    /// unknown result if it is not.
+    fn operator_arm(
+        &self,
+        bin_op: &str,
+        impl_name: &str,
+        typed: &TypedMethods,
+    ) -> Option<syn::Arm> {
         let bin_op = syn::Ident::new(bin_op, proc_macro2::Span::call_site());
-        if self.has_fn(impl_name) || (impl_name == "bit_or" && self.has_fn("eval_type")) {
-            Some(syn::parse_quote! {
-                starlark::typing::TypingBinOp::#bin_op => {
-                    vec![starlark::typing::OperatorSignature::any()]
-                }
-            })
-        } else {
-            None
+        let any: syn::Expr = syn::parse_quote! { starlark::typing::OperatorSignature::any() };
+        // A type that is evaluated as a type has `|` with another type, whatever its own
+        // `bit_or` takes.
+        let type_union = impl_name == "bit_or" && self.has_fn("eval_type");
+        let mut signatures: Vec<syn::Expr> = Vec::new();
+        match typed.get(impl_name) {
+            Some(Typing::Operator { operand, result }) => {
+                signatures.push(syn::parse_quote! {
+                    starlark::__derive_refs::behaviour::operator_signature::<#operand, #result>()
+                });
+                signatures.extend(type_union.then_some(any));
+            }
+            Some(Typing::Compare { operand }) => signatures.push(syn::parse_quote! {
+                starlark::__derive_refs::behaviour::compare_signature::<#operand>()
+            }),
+            Some(Typing::UnaryOperator { .. }) => {}
+            None if self.has_fn(impl_name) || type_union => signatures.push(any),
+            None => {}
         }
+        if signatures.is_empty() {
+            return None;
+        }
+        Some(syn::parse_quote! {
+            starlark::typing::TypingBinOp::#bin_op => {
+                std::vec::Vec::from([#( #signatures ),*])
+            }
+        })
     }
 
     /// `fn bin_op_signatures()` or `fn rbin_op_signatures()` from the arms of the operators
@@ -463,49 +494,49 @@ impl ImplStarlarkValue {
 
     /// `fn bin_op_signatures()`, unless the block writes it or the verdict that stands in for
     /// it.
-    fn bin_op_signatures(&self) -> Option<syn::ImplItem> {
+    fn bin_op_signatures(&self, typed: &TypedMethods) -> Option<syn::ImplItem> {
         if self.has_fn("bin_op_signatures") || self.has_fn("bin_op_ty") {
             return None;
         }
         Self::operator_signatures(
             "bin_op_signatures",
             vec![
-                self.operator_arm("Add", "add"),
-                self.operator_arm("Sub", "sub"),
-                self.operator_arm("Mul", "mul"),
-                self.operator_arm("Div", "div"),
-                self.operator_arm("FloorDiv", "floor_div"),
-                self.operator_arm("Percent", "percent"),
-                self.operator_arm("In", "is_in"),
-                self.operator_arm("BitOr", "bit_or"),
-                self.operator_arm("BitAnd", "bit_and"),
-                self.operator_arm("BitXor", "bit_xor"),
-                self.operator_arm("Less", "compare"),
-                self.operator_arm("LeftShift", "left_shift"),
-                self.operator_arm("RightShift", "right_shift"),
+                self.operator_arm("Add", "add", typed),
+                self.operator_arm("Sub", "sub", typed),
+                self.operator_arm("Mul", "mul", typed),
+                self.operator_arm("Div", "div", typed),
+                self.operator_arm("FloorDiv", "floor_div", typed),
+                self.operator_arm("Percent", "percent", typed),
+                self.operator_arm("In", "is_in", typed),
+                self.operator_arm("BitOr", "bit_or", typed),
+                self.operator_arm("BitAnd", "bit_and", typed),
+                self.operator_arm("BitXor", "bit_xor", typed),
+                self.operator_arm("Less", "compare", typed),
+                self.operator_arm("LeftShift", "left_shift", typed),
+                self.operator_arm("RightShift", "right_shift", typed),
             ],
             true,
         )
     }
 
     /// `fn rbin_op_signatures()`, unless the block writes it.
-    fn rbin_op_signatures(&self) -> Option<syn::ImplItem> {
+    fn rbin_op_signatures(&self, typed: &TypedMethods) -> Option<syn::ImplItem> {
         if self.has_fn("rbin_op_signatures") {
             return None;
         }
         Self::operator_signatures(
             "rbin_op_signatures",
             vec![
-                self.operator_arm("Add", "radd"),
-                self.operator_arm("Mul", "rmul"),
+                self.operator_arm("Add", "radd", typed),
+                self.operator_arm("Mul", "rmul", typed),
             ],
             false,
         )
     }
 
-    /// `fn un_op_result()`, unless the block writes it: the type itself for each unary operator
-    /// the block has.
-    fn un_op_result(&self) -> Option<syn::ImplItem> {
+    /// `fn un_op_result()`, unless the block writes it: for each unary operator the block has,
+    /// the type of its result if it is written with one, the type itself if it is not.
+    fn un_op_result(&self, typed: &TypedMethods) -> Option<syn::ImplItem> {
         if self.has_fn("un_op_result") {
             return None;
         }
@@ -513,10 +544,16 @@ impl ImplStarlarkValue {
         let arms: Vec<syn::Arm> = [("Plus", "plus"), ("Minus", "minus"), ("BitNot", "bit_not")]
             .into_iter()
             .filter(|(_, impl_name)| self.has_fn(impl_name))
-            .map(|(un_op, _)| {
+            .map(|(un_op, impl_name)| {
                 let un_op = syn::Ident::new(un_op, proc_macro2::Span::call_site());
+                let result: syn::Expr = match typed.get(impl_name) {
+                    Some(Typing::UnaryOperator { result }) => syn::parse_quote! {
+                        starlark::__derive_refs::behaviour::unary_operator_result::<#result>()
+                    },
+                    _ => nominal.clone(),
+                };
                 syn::parse_quote! {
-                    starlark::typing::TypingUnOp::#un_op => Some(#nominal),
+                    starlark::typing::TypingUnOp::#un_op => Some(#result),
                 }
             })
             .collect();
@@ -790,17 +827,26 @@ impl ImplStarlarkValue {
     fn type_impl(&self, mut items: Vec<syn::ImplItem>) -> syn::Result<proc_macro2::TokenStream> {
         let lt = &self.lifetime_param;
         let mut always_hashes = None;
+        let mut typed = TypedMethods::new();
         for item in &mut items {
             if let syn::ImplItem::Fn(f) = item {
                 if let Some(derived) = derive_from_typed(f, lt)? {
                     *f = derived.method;
+                    if let Some(typing) = derived.typing {
+                        typed.insert(f.sig.ident.to_string(), typing);
+                    }
                     // A view's method is inlined into each representation's vtable entry (see
-                    // below), and for a derived one the hint is not enough: converting the
-                    // operand makes it look larger than it is once the receiver's variant is
-                    // known. Left to the hint, the list view's `compare` stays out of line and
-                    // dispatches on the variant when it runs: 3.6% more instructions on
+                    // below), and for a derived comparison the hint is not enough: converting
+                    // the operand makes it look larger than it is once the receiver's variant
+                    // is known. Left to the hint, the list view's `compare` stays out of line
+                    // and dispatches on the variant when it runs: 3.6% more instructions on
                     // `xs < ys`, with the `starlark` crate built as one codegen unit.
+                    //
+                    // An operator is left to the hint. Forced, the conversion goes into each
+                    // entry and the body, which allocates and is not small, stays behind one
+                    // more call: 2.5% more instructions on `xs * 3`.
                     if self.impl_of == ImplOf::Type
+                        && derived.small
                         && !f.attrs.iter().any(|a| a.path().is_ident("inline"))
                     {
                         f.attrs.push(syn::parse_quote! { #[inline(always)] });
@@ -828,9 +874,9 @@ impl ImplStarlarkValue {
                 .chain(self.get_type_starlark_repr()?)
                 .chain(self.attr_ty()?)
                 .chain(self.bit_or()?)
-                .chain(self.bin_op_signatures())
-                .chain(self.rbin_op_signatures())
-                .chain(self.un_op_result()),
+                .chain(self.bin_op_signatures(&typed))
+                .chain(self.rbin_op_signatures(&typed))
+                .chain(self.un_op_result(&typed)),
         );
         let has_fn_flags = self.has_fn_flags(&type_impl)?;
         type_impl.items.extend(has_fn_flags);

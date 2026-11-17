@@ -188,8 +188,8 @@ impl<A: UnpackValueErrorInfallible, B: UnpackValueErrorInfallible> UnpackValueEr
 
 /// The three outcomes of converting `value` to a `T`, each with what follows from it:
 /// `converted` for a value that converts, `not_of_type` for a value that is not of
-/// [`T::Type`](UnpackValue::Type), and the conversion's error for a value of the type that does
-/// not convert.
+/// [`T::Type`](UnpackValue::Type), and `failed`, with the conversion's error, for a value of the
+/// type that does not convert.
 ///
 /// This is the one place a value is converted. [`unpack_value`](UnpackValue::unpack_value),
 /// which the parameter conversions are built on, is this with the outcomes returned; a
@@ -214,14 +214,15 @@ impl<A: UnpackValueErrorInfallible, B: UnpackValueErrorInfallible> UnpackValueEr
 #[inline(always)]
 pub(crate) fn unpack_then<'v, T: UnpackValue<'v>, R>(
     value: Value<'v>,
-    converted: impl FnOnce(T) -> crate::Result<R>,
-    not_of_type: impl FnOnce() -> crate::Result<R>,
-) -> crate::Result<R> {
+    converted: impl FnOnce(T) -> R,
+    not_of_type: impl FnOnce() -> R,
+    failed: impl FnOnce(crate::Error) -> R,
+) -> R {
     match ValueOf::<T::Type>::new_with_get(value) {
         None => not_of_type(),
         Some((value, get)) => match T::unpack(value, get) {
             Ok(x) => converted(x),
-            Err(e) => Err(T::Error::into_error(e)),
+            Err(e) => failed(T::Error::into_error(e)),
         },
     }
 }
@@ -287,7 +288,7 @@ pub trait UnpackValue<'v>: Sized {
     /// is but does not convert.
     #[inline(always)] // A step of a conversion: see `unpack_then`.
     fn unpack_value(value: Value<'v>) -> crate::Result<Option<Self>> {
-        unpack_then(value, |x| Ok(Some(x)), || Ok(None))
+        unpack_then(value, |x| Ok(Some(x)), || Ok(None), Err)
     }
 
     /// [`unpack_value`](Self::unpack_value) for a conversion that cannot fail.

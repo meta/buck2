@@ -39,7 +39,16 @@ use erased_serde::Serialize;
 use starlark_derive::starlark_internal_vtable;
 use starlark_map::StarlarkHashValue;
 
+use crate::__derive_refs::behaviour::bit_and_unsupported;
+use crate::__derive_refs::behaviour::bit_or_unsupported;
+use crate::__derive_refs::behaviour::bit_xor_unsupported;
 use crate::__derive_refs::behaviour::compare_unsupported;
+use crate::__derive_refs::behaviour::div_unsupported;
+use crate::__derive_refs::behaviour::floor_div_unsupported;
+use crate::__derive_refs::behaviour::left_shift_unsupported;
+use crate::__derive_refs::behaviour::percent_unsupported;
+use crate::__derive_refs::behaviour::right_shift_unsupported;
+use crate::__derive_refs::behaviour::sub_unsupported;
 use crate::any::ProvidesStaticType;
 use crate::collections::Hashed;
 use crate::collections::StarlarkHasher;
@@ -473,7 +482,8 @@ pub trait StarlarkType<'v>: 'v + ProvidesStaticType<'v> + Debug + Display + Size
     /// ```
     ///
     /// The result is [`Ordering`] or `starlark::Result<Ordering>`. A value that is not of the
-    /// operand's type gets the default's error, that the two types do not compare.
+    /// operand's type gets the default's error, that the two types do not compare. The
+    /// operand's type is also what the typechecker takes `<` and its like to accept.
     fn compare(&self, other: Value<'v>) -> crate::Result<Ordering> {
         compare_unsupported(self, other)
     }
@@ -697,6 +707,9 @@ pub trait StarlarkType<'v>: 'v + ProvidesStaticType<'v> + Debug + Display + Size
     /// +1 == 1
     /// # "#);
     /// ```
+    ///
+    /// In a `#[starlark_value]` block it is written with the type of its result, as
+    /// [`add`](Self::add) is with its types.
     fn plus(&self, _heap: Heap<'v>) -> crate::Result<Value<'v>> {
         ValueError::unsupported(self, "+")
     }
@@ -710,12 +723,17 @@ pub trait StarlarkType<'v>: 'v + ProvidesStaticType<'v> + Debug + Display + Size
     /// -(1) == -1
     /// # "#);
     /// ```
+    ///
+    /// In a `#[starlark_value]` block it is written with the type of its result, as
+    /// [`add`](Self::add) is with its types.
     fn minus(&self, _heap: Heap<'v>) -> crate::Result<Value<'v>> {
         ValueError::unsupported(self, "-")
     }
 
     /// Add with the arguments the other way around.
     /// Normal `add` should return `None` in order for it to be evaluated.
+    ///
+    /// In a `#[starlark_value]` block it is written with its types, as [`add`](Self::add) is.
     fn radd(&self, _lhs: Value<'v>, _heap: Heap<'v>) -> Option<crate::Result<Value<'v>>> {
         None
     }
@@ -733,6 +751,36 @@ pub trait StarlarkType<'v>: 'v + ProvidesStaticType<'v> + Debug + Display + Size
     /// (1, 2, 3) + (2, 3) == (1, 2, 3, 2, 3)
     /// # "#);
     /// ```
+    ///
+    /// # In a `#[starlark_value]` block
+    ///
+    /// An operator is written with the operand it takes and what it makes:
+    ///
+    /// ```ignore
+    /// fn add(&self, other: &Self, _heap: Heap<'v>) -> Seconds {
+    ///     Seconds(self.0 + other.0)
+    /// }
+    /// ```
+    ///
+    /// [`#[starlark_value]`](crate::values::starlark_value) derives this method from it, and
+    /// from its two types what the typechecker knows of the operator
+    /// ([`bin_op_signatures`](Self::bin_op_signatures)). This goes for every binary operator,
+    /// and for the unary ones with the result alone.
+    ///
+    /// * The operand is any [`UnpackValue`](crate::values::UnpackValue), as for
+    ///   [`equals`](Self::equals).
+    /// * The result is an [`AllocValue`](crate::values::AllocValue), which the derived method
+    ///   puts on the heap, or a `starlark::Result` of one. A body that allocates returns the
+    ///   handle it got ([`ValueOf`](crate::values::ValueOf)). The type is named, not
+    ///   `impl AllocValue`: the typechecker reads it.
+    /// * A value that is not of the operand's type gets what the default of the method gives.
+    ///   For `add`, `radd`, `mul` and `rmul` that is `None`, so that the other operand gets its
+    ///   turn; for the other operators it is the error that the operator is not supported. A
+    ///   value that is of the operand's type but does not convert is the conversion's error.
+    ///
+    /// A method is taken to be written as declared here, and left as it is, when its operand's
+    /// type is spelled `Value` and its result's `Option`; for the operators that return a
+    /// `starlark::Result<Value>`, when the result is spelled so.
     fn add(&self, _rhs: Value<'v>, _heap: Heap<'v>) -> Option<crate::Result<Value<'v>>> {
         None
     }
@@ -746,11 +794,15 @@ pub trait StarlarkType<'v>: 'v + ProvidesStaticType<'v> + Debug + Display + Size
     /// 1 - 2 == -1
     /// # "#);
     /// ```
+    ///
+    /// In a `#[starlark_value]` block it is written with its types, as [`add`](Self::add) is.
     fn sub(&self, other: Value<'v>, _heap: Heap<'v>) -> crate::Result<Value<'v>> {
-        ValueError::unsupported_with(self, "-", other)
+        sub_unsupported(self, other)
     }
 
     /// Called on `rhs` of `lhs * rhs` when `lhs.mul` returns `None`.
+    ///
+    /// In a `#[starlark_value]` block it is written with its types, as [`add`](Self::add) is.
     fn rmul(&self, lhs: Value<'v>, heap: Heap<'v>) -> Option<crate::Result<Value<'v>>> {
         let _ignore = (lhs, heap);
         None
@@ -770,6 +822,8 @@ pub trait StarlarkType<'v>: 'v + ProvidesStaticType<'v> + Debug + Display + Size
     /// (1, 2, 3) * 3 == (1, 2, 3, 1, 2, 3, 1, 2, 3)
     /// # "#);
     /// ```
+    ///
+    /// In a `#[starlark_value]` block it is written with its types, as [`add`](Self::add) is.
     fn mul(&self, _rhs: Value<'v>, _heap: Heap<'v>) -> Option<crate::Result<Value<'v>>> {
         None
     }
@@ -784,8 +838,10 @@ pub trait StarlarkType<'v>: 'v + ProvidesStaticType<'v> + Debug + Display + Size
     /// 7 / 2 == 3.5
     /// # "#);
     /// ```
+    ///
+    /// In a `#[starlark_value]` block it is written with its types, as [`add`](Self::add) is.
     fn div(&self, other: Value<'v>, _heap: Heap<'v>) -> crate::Result<Value<'v>> {
-        ValueError::unsupported_with(self, "/", other)
+        div_unsupported(self, other)
     }
 
     /// Apply the percent operator between the current value and `other`. Usually used on
@@ -815,8 +871,10 @@ pub trait StarlarkType<'v>: 'v + ProvidesStaticType<'v> + Debug + Display + Size
     /// "test" % () == "test"
     /// # "#);
     /// ```
+    ///
+    /// In a `#[starlark_value]` block it is written with its types, as [`add`](Self::add) is.
     fn percent(&self, other: Value<'v>, _heap: Heap<'v>) -> crate::Result<Value<'v>> {
-        ValueError::unsupported_with(self, "%", other)
+        percent_unsupported(self, other)
     }
 
     /// Floor division between the current value and `other`.
@@ -836,13 +894,17 @@ pub trait StarlarkType<'v>: 'v + ProvidesStaticType<'v> + Debug + Display + Size
     /// 3.0 // 2.0 == 1.0
     /// # "#);
     /// ```
+    ///
+    /// In a `#[starlark_value]` block it is written with its types, as [`add`](Self::add) is.
     fn floor_div(&self, other: Value<'v>, _heap: Heap<'v>) -> crate::Result<Value<'v>> {
-        ValueError::unsupported_with(self, "//", other)
+        floor_div_unsupported(self, other)
     }
 
     /// Bitwise `&` operator.
+    ///
+    /// In a `#[starlark_value]` block it is written with its types, as [`add`](Self::add) is.
     fn bit_and(&self, other: Value<'v>, _heap: Heap<'v>) -> crate::Result<Value<'v>> {
-        ValueError::unsupported_with(self, "&", other)
+        bit_and_unsupported(self, other)
     }
 
     /// Bitwise `|` operator.
@@ -857,28 +919,39 @@ pub trait StarlarkType<'v>: 'v + ProvidesStaticType<'v> + Debug + Display + Size
     /// {1: 2} | {1: 3} == {1: 3}
     /// # "#);
     /// ```
+    ///
+    /// In a `#[starlark_value]` block it is written with its types, as [`add`](Self::add) is.
     fn bit_or(&self, other: Value<'v>, _heap: Heap<'v>) -> crate::Result<Value<'v>> {
-        ValueError::unsupported_with(self, "|", other)
+        bit_or_unsupported(self, other)
     }
 
     /// Bitwise `^` operator.
+    ///
+    /// In a `#[starlark_value]` block it is written with its types, as [`add`](Self::add) is.
     fn bit_xor(&self, other: Value<'v>, _heap: Heap<'v>) -> crate::Result<Value<'v>> {
-        ValueError::unsupported_with(self, "^", other)
+        bit_xor_unsupported(self, other)
     }
 
     /// Bitwise `~` operator.
+    ///
+    /// In a `#[starlark_value]` block it is written with the type of its result, as
+    /// [`add`](Self::add) is with its types.
     fn bit_not(&self, _heap: Heap<'v>) -> crate::Result<Value<'v>> {
         ValueError::unsupported(self, "~")
     }
 
     /// Bitwise `<<` operator.
+    ///
+    /// In a `#[starlark_value]` block it is written with its types, as [`add`](Self::add) is.
     fn left_shift(&self, other: Value<'v>, _heap: Heap<'v>) -> crate::Result<Value<'v>> {
-        ValueError::unsupported_with(self, "<<", other)
+        left_shift_unsupported(self, other)
     }
 
     /// Bitwise `>>` operator.
+    ///
+    /// In a `#[starlark_value]` block it is written with its types, as [`add`](Self::add) is.
     fn right_shift(&self, other: Value<'v>, _heap: Heap<'v>) -> crate::Result<Value<'v>> {
-        ValueError::unsupported_with(self, ">>", other)
+        right_shift_unsupported(self, other)
     }
 
     /// The typing of `this op rhs`: the signatures of the operator, each with the type of
@@ -886,7 +959,9 @@ pub trait StarlarkType<'v>: 'v + ProvidesStaticType<'v> + Debug + Display + Size
     /// The typechecker matches the operand against them; see [`OperatorSignature`].
     ///
     /// [`#[starlark_value]`](crate::values::starlark_value) generates this from the operator
-    /// methods of the block: [`OperatorSignature::any`] for each one that is there.
+    /// methods of the block: for one written with types (see [`add`](Self::add)), the types of
+    /// its operand and result; for one written as declared here,
+    /// [`OperatorSignature::any`]. `<` is [`compare`](Self::compare) with its operand.
     fn bin_op_signatures(_op: TypingBinOp) -> Vec<OperatorSignature> {
         Vec::new()
     }
@@ -900,7 +975,8 @@ pub trait StarlarkType<'v>: 'v + ProvidesStaticType<'v> + Debug + Display + Size
     /// The type of the result of the unary operator, if the type has it.
     ///
     /// [`#[starlark_value]`](crate::values::starlark_value) generates this from the unary
-    /// methods of the block: the type itself for each one that is there.
+    /// methods of the block: for one written with the type of its result, that type; for one
+    /// written as declared here, the type itself.
     fn un_op_result(_op: TypingUnOp) -> Option<Ty> {
         None
     }

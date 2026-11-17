@@ -221,9 +221,11 @@ pub fn derive_starlark_representations(input: proc_macro::TokenStream) -> proc_m
 /// At most one of `skip_vtable`, `no_freeze`, `frozen_vtable` may be given, and at most one
 /// of `no_freeze` and `alloc`.
 ///
-/// `equals`, `compare` and `write_hash` may be written in the block with a typed signature, in
-/// which case the trait's method is derived from the one written. The typed forms are
-/// documented on those methods of `StarlarkType`.
+/// `equals`, `compare`, `write_hash` and the operators (`add`, `mul`, `minus` and the rest) may
+/// be written in the block with a typed signature, in which case the trait's method is derived
+/// from the one written, and for an operator its typing too. The typed forms are documented on
+/// those methods of `StarlarkType`: `equals`, `compare`, `write_hash`, and `add` for the
+/// operators.
 #[proc_macro_attribute]
 pub fn starlark_value(
     attr: proc_macro::TokenStream,

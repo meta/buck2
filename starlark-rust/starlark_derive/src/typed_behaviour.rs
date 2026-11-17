@@ -21,58 +21,94 @@
 //! The typed forms are documented on the methods of `StarlarkType`. What a derived method does
 //! is in `starlark::__derive_refs::behaviour`; here it is only told apart and wrapped.
 
+use quote::format_ident;
 use quote::quote;
 use quote::quote_spanned;
 use syn::spanned::Spanned;
 
 use crate::module::util::is_type_name;
 
-/// A method that may be written typed.
+/// What a method that may be written typed takes and returns as the trait declares it.
 #[derive(Copy, Clone, PartialEq, Eq)]
-enum Method {
+enum Shape {
+    /// `(&self, Value) -> Result<bool>`.
     Equals,
+    /// `(&self, Value) -> Result<Ordering>`.
     Compare,
+    /// `(&self, &mut StarlarkHasher) -> Result<()>`.
     WriteHash,
+    /// `add`, `radd`, `mul`, `rmul`: `(&self, Value, Heap) -> Option<Result<Value>>`, where
+    /// `None` gives the other operand its turn.
+    OperatorOrNone,
+    /// The other binary operators: `(&self, Value, Heap) -> Result<Value>`.
+    Operator,
+    /// `plus`, `minus`, `bit_not`: `(&self, Heap) -> Result<Value>`.
+    UnaryOperator,
+}
+
+/// A method that may be written typed.
+struct Method {
+    name: String,
+    shape: Shape,
 }
 
 impl Method {
     fn of(name: &syn::Ident) -> Option<Method> {
-        if name == "equals" {
-            Some(Method::Equals)
-        } else if name == "compare" {
-            Some(Method::Compare)
-        } else if name == "write_hash" {
-            Some(Method::WriteHash)
-        } else {
-            None
-        }
+        let name = name.to_string();
+        let shape = match name.as_str() {
+            "equals" => Shape::Equals,
+            "compare" => Shape::Compare,
+            "write_hash" => Shape::WriteHash,
+            "add" | "radd" | "mul" | "rmul" => Shape::OperatorOrNone,
+            "sub" | "div" | "floor_div" | "percent" | "bit_and" | "bit_or" | "bit_xor"
+            | "left_shift" | "right_shift" => Shape::Operator,
+            "plus" | "minus" | "bit_not" => Shape::UnaryOperator,
+            _ => return None,
+        };
+        Some(Method { name, shape })
     }
 
     /// The signatures the method may be written with, for an error message.
-    fn forms(self) -> &'static str {
-        match self {
-            Method::Equals => {
-                "`fn equals(&self, other: Operand) -> bool`, where `Operand` is an \
+    fn forms(&self) -> String {
+        let name = &self.name;
+        match self.shape {
+            Shape::Equals => "`fn equals(&self, other: Operand) -> bool`, where `Operand` is an \
                  `UnpackValue` such as `&Self`, the result may also be `starlark::Result<bool>`, \
                  and `fn equals(&self, other: Value<'v>) -> starlark::Result<bool>` is the \
                  trait's own form"
-            }
-            Method::Compare => {
-                "`fn compare(&self, other: Operand) -> Ordering`, where `Operand` is an \
-                 `UnpackValue` such as `&Self`, the result may also be \
+                .to_owned(),
+            Shape::Compare => "`fn compare(&self, other: Operand) -> Ordering`, where `Operand` \
+                 is an `UnpackValue` such as `&Self`, the result may also be \
                  `starlark::Result<Ordering>`, and \
                  `fn compare(&self, other: Value<'v>) -> starlark::Result<Ordering>` is the \
                  trait's own form"
-            }
-            Method::WriteHash => {
-                "`fn write_hash(&self, hasher: &mut StarlarkHasher)` for a type whose values \
-                 all hash, or the trait's own form \
+                .to_owned(),
+            Shape::WriteHash => "`fn write_hash(&self, hasher: &mut StarlarkHasher)` for a type \
+                 whose values all hash, or the trait's own form \
                  `fn write_hash(&self, hasher: &mut StarlarkHasher) -> starlark::Result<()>`"
-            }
+                .to_owned(),
+            Shape::OperatorOrNone => format!(
+                "`fn {name}(&self, other: Operand, heap: Heap<'v>) -> Made`, where `Operand` is \
+                 an `UnpackValue` such as `&Self`, `Made` is an `AllocValue` or a \
+                 `starlark::Result` of one, and `fn {name}(&self, other: Value<'v>, heap: \
+                 Heap<'v>) -> Option<starlark::Result<Value<'v>>>` is the trait's own form"
+            ),
+            Shape::Operator => format!(
+                "`fn {name}(&self, other: Operand, heap: Heap<'v>) -> Made`, where `Operand` is \
+                 an `UnpackValue` such as `&Self`, `Made` is an `AllocValue` or a \
+                 `starlark::Result` of one, and `fn {name}(&self, other: Value<'v>, heap: \
+                 Heap<'v>) -> starlark::Result<Value<'v>>` is the trait's own form"
+            ),
+            Shape::UnaryOperator => format!(
+                "`fn {name}(&self, heap: Heap<'v>) -> Made`, where `Made` is an `AllocValue` or \
+                 a `starlark::Result` of one, and \
+                 `fn {name}(&self, heap: Heap<'v>) -> starlark::Result<Value<'v>>` is the \
+                 trait's own form"
+            ),
         }
     }
 
-    fn error<T>(self, at: impl quote::ToTokens, what: &str) -> syn::Result<T> {
+    fn error<T>(&self, at: impl quote::ToTokens, what: &str) -> syn::Result<T> {
         Err(syn::Error::new_spanned(
             at,
             format!("{what}; expected {}", self.forms()),
@@ -80,11 +116,47 @@ impl Method {
     }
 }
 
+/// What the typechecker goes by in the signature of a typed method.
+pub(crate) enum Typing {
+    /// `compare`: the operand's type.
+    Compare { operand: Box<syn::Type> },
+    /// A binary operator: the operand's type and the result's.
+    Operator {
+        operand: Box<syn::Type>,
+        result: Box<syn::Type>,
+    },
+    /// A unary operator: the result's type.
+    UnaryOperator { result: Box<syn::Type> },
+}
+
 /// The trait's method derived from a typed one.
 pub(crate) struct Derived {
     pub(crate) method: syn::ImplItemFn,
     /// The typed method says that every value of the type hashes.
     pub(crate) always_hashes: bool,
+    /// The method is one whose body is typically a few instructions and that the evaluator
+    /// calls on its hot paths: `equals`, `compare`, `write_hash`.
+    pub(crate) small: bool,
+    /// What the typed method says to the typechecker, if it is one the typechecker reads.
+    pub(crate) typing: Option<Typing>,
+}
+
+/// The first type argument of `ty`, if `ty` is a path whose last segment is `name`.
+fn type_argument<'a>(ty: &'a syn::Type, name: &str) -> Option<&'a syn::Type> {
+    let syn::Type::Path(path) = ty else {
+        return None;
+    };
+    let segment = path.path.segments.last()?;
+    if segment.ident != name {
+        return None;
+    }
+    let syn::PathArguments::AngleBracketed(args) = &segment.arguments else {
+        return None;
+    };
+    args.args.iter().find_map(|arg| match arg {
+        syn::GenericArgument::Type(ty) => Some(ty),
+        _ => None,
+    })
 }
 
 /// The type a function returns is spelled `Result`, as the trait's methods return.
@@ -95,11 +167,69 @@ fn returns_result(output: &syn::ReturnType) -> bool {
     }
 }
 
+/// The type a function returns is spelled `Result<Value>`, as the trait's operators return.
+fn returns_result_of_value(output: &syn::ReturnType) -> bool {
+    match output {
+        syn::ReturnType::Default => false,
+        syn::ReturnType::Type(_, ty) => {
+            type_argument(ty, "Result").is_some_and(|ty| is_type_name(ty, "Value"))
+        }
+    }
+}
+
+/// The type a function returns is spelled `Option`, as the trait's `add` and its like return.
+fn returns_option(output: &syn::ReturnType) -> bool {
+    match output {
+        syn::ReturnType::Default => false,
+        syn::ReturnType::Type(_, ty) => is_type_name(ty, "Option"),
+    }
+}
+
+/// The result type of a typed operator, which the typechecker reads and so has to be named.
+fn operator_result<'a>(method: &Method, sig: &'a syn::Signature) -> syn::Result<&'a syn::Type> {
+    struct HasImplTrait(bool);
+
+    impl<'ast> syn::visit::Visit<'ast> for HasImplTrait {
+        fn visit_type_impl_trait(&mut self, _: &'ast syn::TypeImplTrait) {
+            self.0 = true;
+        }
+    }
+
+    let syn::ReturnType::Type(_, ty) = &sig.output else {
+        return method.error(sig, "a typed operator returns what it makes");
+    };
+    let mut has_impl_trait = HasImplTrait(false);
+    syn::visit::Visit::visit_type(&mut has_impl_trait, ty);
+    if has_impl_trait.0 {
+        return method.error(
+            ty,
+            "the result type of a typed operator is named, because the typechecker reads it",
+        );
+    }
+    Ok(ty)
+}
+
+/// The name of a parameter of the derived method: the name the typed method gave the parameter
+/// it stands for, so that the expansion reads as the method that was written. It cannot be seen
+/// from the typed body, whose own parameter has that name.
+fn derived_parameter(typed: &syn::PatType, default: &str) -> syn::Ident {
+    let name = match &*typed.pat {
+        syn::Pat::Ident(syn::PatIdent { ident, .. }) => {
+            ident.to_string().trim_start_matches('_').to_owned()
+        }
+        _ => String::new(),
+    };
+    let name = if name.is_empty() { default } else { &name };
+    syn::Ident::new(name, proc_macro2::Span::mixed_site())
+}
+
 /// The trait's method derived from `f`, if `f` is one of the methods that may be written typed
 /// and its signature is not the trait's. `None` for every other item, which stays as written.
 ///
 /// A signature is the trait's by its spelling, as `#[starlark_module]` recognises a `Value`
-/// parameter: the operand's type is named `Value` and the result's `Result`.
+/// parameter: the operand's type is named `Value` and the result's is spelled as the trait's
+/// (`Result` for `equals` and `compare`, `Option` for `add` and its like, `Result<Value>` for
+/// the other operators).
 pub(crate) fn derive_from_typed(
     f: &syn::ImplItemFn,
     lt: &syn::Lifetime,
@@ -109,17 +239,26 @@ pub(crate) fn derive_from_typed(
     };
     let sig = &f.sig;
     let mut inputs = sig.inputs.iter();
-    let (Some(receiver), Some(syn::FnArg::Typed(operand)), None) =
-        (inputs.next(), inputs.next(), inputs.next())
-    else {
-        return method.error(&sig.inputs, "unexpected parameters");
+    let Some(receiver) = inputs.next() else {
+        return method.error(sig, "unexpected parameters");
+    };
+    // The parameters after the receiver: the operand, if the method has one, then the heap, if
+    // the method takes it.
+    let mut params = Vec::new();
+    for input in inputs {
+        match input {
+            syn::FnArg::Typed(param) => params.push(param),
+            syn::FnArg::Receiver(_) => return method.error(input, "unexpected parameters"),
+        }
+    }
+    let operand_is_value = match (method.shape, &params[..]) {
+        (Shape::UnaryOperator, _) | (_, []) => false,
+        (_, [operand, ..]) => is_type_name(&operand.ty, "Value"),
     };
 
-    let typed = match method {
-        Method::Equals | Method::Compare => {
-            !(is_type_name(&operand.ty, "Value") && returns_result(&sig.output))
-        }
-        Method::WriteHash => match &sig.output {
+    let typed = match method.shape {
+        Shape::Equals | Shape::Compare => !(operand_is_value && returns_result(&sig.output)),
+        Shape::WriteHash => match &sig.output {
             syn::ReturnType::Default => true,
             syn::ReturnType::Type(_, ty) => match &**ty {
                 syn::Type::Tuple(unit) if unit.elems.is_empty() => true,
@@ -127,6 +266,19 @@ pub(crate) fn derive_from_typed(
                 ty => return method.error(ty, "unexpected result type"),
             },
         },
+        Shape::OperatorOrNone => match (operand_is_value, returns_option(&sig.output)) {
+            (true, true) => false,
+            (false, true) => {
+                return method.error(
+                    &sig.output,
+                    "a typed operator returns what it makes, and it is a value that is not of \
+                     the operand's type that is `None`",
+                );
+            }
+            (_, false) => true,
+        },
+        Shape::Operator => !(operand_is_value && returns_result_of_value(&sig.output)),
+        Shape::UnaryOperator => !returns_result_of_value(&sig.output),
     };
     if !typed {
         return Ok(None);
@@ -152,68 +304,131 @@ pub(crate) fn derive_from_typed(
     }
 
     let attrs = &f.attrs;
+    let name = &sig.ident;
     let output = &sig.output;
     let block = &f.block;
-    // The derived method's parameter takes the name the typed method gave its operand, so that
-    // the expansion reads as the method that was written. It cannot be seen from the typed
-    // body, whose own operand has that name.
-    let untyped = match &*operand.pat {
-        syn::Pat::Ident(syn::PatIdent { ident, .. }) => ident.to_string(),
-        _ => match method {
-            Method::Equals | Method::Compare => "other".to_owned(),
-            Method::WriteHash => "hasher".to_owned(),
-        },
-    };
-    let untyped = syn::Ident::new(&untyped, proc_macro2::Span::mixed_site());
+    let glue = format_ident!("typed_{}", name);
     // The typed body goes into the derived method as a closure: there it sees `self`, `Self`
     // and the impl's generics as it did where it was written, which a nested `fn` would not,
     // and it needs no item on `Self`, which may be a type of another crate.
     //
     // The call is spanned to the typed signature, which is what a bound it fails is about.
-    let derived: syn::ImplItemFn = match method {
-        Method::Equals => {
+    let (derived, typing): (syn::ImplItemFn, Option<Typing>) = match (method.shape, &params[..]) {
+        (Shape::Equals, [operand]) => {
+            let other = derived_parameter(operand, "other");
             let call = quote_spanned! { sig.span() =>
-                starlark::__derive_refs::behaviour::typed_equals(#untyped, |#operand| #output #block)
+                starlark::__derive_refs::behaviour::#glue(#other, |#operand| #output #block)
             };
-            syn::parse_quote! {
+            let derived = syn::parse_quote! {
                 #( #attrs )*
-                fn equals(&self, #untyped: starlark::values::Value<#lt>) -> starlark::Result<bool> {
+                fn #name(&self, #other: starlark::values::Value<#lt>) -> starlark::Result<bool> {
                     #call
                 }
-            }
-        }
-        Method::Compare => {
-            let call = quote_spanned! { sig.span() =>
-                starlark::__derive_refs::behaviour::typed_compare(self, #untyped, |#operand| #output #block)
             };
-            syn::parse_quote! {
+            (derived, None)
+        }
+        (Shape::Compare, [operand]) => {
+            let other = derived_parameter(operand, "other");
+            let call = quote_spanned! { sig.span() =>
+                starlark::__derive_refs::behaviour::#glue(self, #other, |#operand| #output #block)
+            };
+            let derived = syn::parse_quote! {
                 #( #attrs )*
-                fn compare(
+                fn #name(
                     &self,
-                    #untyped: starlark::values::Value<#lt>,
+                    #other: starlark::values::Value<#lt>,
                 ) -> starlark::Result<std::cmp::Ordering> {
                     #call
                 }
-            }
-        }
-        Method::WriteHash => {
-            let call = quote_spanned! { sig.span() =>
-                starlark::__derive_refs::behaviour::typed_write_hash(#untyped, |#operand| #block)
             };
-            syn::parse_quote! {
+            let typing = Typing::Compare {
+                operand: operand.ty.clone(),
+            };
+            (derived, Some(typing))
+        }
+        (Shape::WriteHash, [typed_hasher]) => {
+            let hasher = derived_parameter(typed_hasher, "hasher");
+            let call = quote_spanned! { sig.span() =>
+                starlark::__derive_refs::behaviour::#glue(#hasher, |#typed_hasher| #block)
+            };
+            let derived = syn::parse_quote! {
                 #( #attrs )*
-                fn write_hash(
+                fn #name(
                     &self,
-                    #untyped: &mut starlark::collections::StarlarkHasher,
+                    #hasher: &mut starlark::collections::StarlarkHasher,
                 ) -> starlark::Result<()> {
                     #call
                 }
-            }
+            };
+            (derived, None)
         }
+        (Shape::OperatorOrNone | Shape::Operator, [operand, typed_heap]) => {
+            let result = operator_result(&method, sig)?;
+            let other = derived_parameter(operand, "other");
+            let heap = derived_parameter(typed_heap, "heap");
+            // The error for a value that is not of the operand's type names the type of the
+            // receiver, so the glue of an operator that answers with it takes the receiver.
+            let this = (method.shape == Shape::Operator).then(|| quote! { self, });
+            let call = quote_spanned! { sig.span() =>
+                starlark::__derive_refs::behaviour::#glue(
+                    #this
+                    #other,
+                    #heap,
+                    |#operand, #typed_heap| #output #block,
+                )
+            };
+            let derived_result = match method.shape {
+                Shape::OperatorOrNone => quote! {
+                    std::option::Option<starlark::Result<starlark::values::Value<#lt>>>
+                },
+                _ => quote! { starlark::Result<starlark::values::Value<#lt>> },
+            };
+            let derived = syn::parse_quote! {
+                #( #attrs )*
+                fn #name(
+                    &self,
+                    #other: starlark::values::Value<#lt>,
+                    #heap: starlark::values::Heap<#lt>,
+                ) -> #derived_result {
+                    #call
+                }
+            };
+            let typing = Typing::Operator {
+                operand: operand.ty.clone(),
+                result: Box::new(result.clone()),
+            };
+            (derived, Some(typing))
+        }
+        (Shape::UnaryOperator, [typed_heap]) => {
+            let result = operator_result(&method, sig)?;
+            let heap = derived_parameter(typed_heap, "heap");
+            let call = quote_spanned! { sig.span() =>
+                starlark::__derive_refs::behaviour::#glue(#heap, |#typed_heap| #output #block)
+            };
+            let derived = syn::parse_quote! {
+                #( #attrs )*
+                fn #name(
+                    &self,
+                    #heap: starlark::values::Heap<#lt>,
+                ) -> starlark::Result<starlark::values::Value<#lt>> {
+                    #call
+                }
+            };
+            let typing = Typing::UnaryOperator {
+                result: Box::new(result.clone()),
+            };
+            (derived, Some(typing))
+        }
+        _ => return method.error(&sig.inputs, "unexpected parameters"),
     };
     Ok(Some(Derived {
         method: derived,
-        always_hashes: method == Method::WriteHash,
+        always_hashes: method.shape == Shape::WriteHash,
+        small: matches!(
+            method.shape,
+            Shape::Equals | Shape::Compare | Shape::WriteHash
+        ),
+        typing,
     }))
 }
 

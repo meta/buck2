@@ -37,6 +37,10 @@ use crate::collections::StarlarkHasher;
 use crate::const_frozen_string;
 use crate::starlark_simple_value;
 use crate::typing::HasTyVTable;
+use crate::typing::OperatorSignature;
+use crate::typing::Ty;
+use crate::typing::TypingBinOp;
+use crate::typing::TypingUnOp;
 use crate::values::Heap;
 use crate::values::StarlarkType;
 use crate::values::StarlarkTypeExprHashable;
@@ -493,4 +497,404 @@ fn test_handle_hash() {
         assert!(list(vec![1]).try_equals(list(vec![1])).unwrap());
         assert!(!list(vec![1]).try_equals(list(vec![2])).unwrap());
     });
+}
+
+/// The operators typed: an operand of the type itself, a converted one, a union, any value;
+/// results that are made, and results that may fail. `floor_div` and `bit_not` are written as
+/// the trait declares them.
+#[derive(
+    Debug,
+    Display,
+    ProvidesStaticType,
+    NoSerialize,
+    Allocative,
+    StarlarkPagable
+)]
+#[display("{}s", _0)]
+struct Seconds(i32);
+starlark_simple_value!(Seconds);
+
+#[derive(Debug, thiserror::Error)]
+#[error("a time span is not negative")]
+struct NegativeSpan;
+
+#[starlark_value(type = "seconds")]
+impl<'v> StarlarkValue<'v> for Seconds {
+    fn add(&self, other: &Self, _heap: Heap<'v>) -> Seconds {
+        Seconds(self.0 + other.0)
+    }
+
+    fn radd(&self, minutes: &str, _heap: Heap<'v>) -> starlark::Result<Seconds> {
+        let minutes: i32 = minutes.parse().map_err(starlark::Error::new_other)?;
+        Ok(Seconds(minutes * 60 + self.0))
+    }
+
+    fn mul(&self, times: i32, _heap: Heap<'v>) -> Seconds {
+        Seconds(self.0 * times)
+    }
+
+    fn rmul(&self, times: i32, _heap: Heap<'v>) -> Seconds {
+        Seconds(times * self.0)
+    }
+
+    fn sub(&self, other: &Self, _heap: Heap<'v>) -> starlark::Result<Seconds> {
+        if other.0 > self.0 {
+            return Err(starlark::Error::new_other(NegativeSpan));
+        }
+        Ok(Seconds(self.0 - other.0))
+    }
+
+    fn div(&self, by: Either<&Self, i32>, _heap: Heap<'v>) -> Either<f64, Seconds> {
+        match by {
+            Either::Left(other) => Either::Left(self.0 as f64 / other.0 as f64),
+            Either::Right(parts) => Either::Right(Seconds(self.0 / parts)),
+        }
+    }
+
+    fn percent(&self, unit: Value<'v>, heap: Heap<'v>) -> StringValue<'v> {
+        heap.alloc_str(&format!("{}{}", self.0, unit.to_str()))
+    }
+
+    fn floor_div(&self, other: Value<'v>, heap: Heap<'v>) -> starlark::Result<Value<'v>> {
+        match other.unpack_i32() {
+            Some(parts) => Ok(heap.alloc(Seconds(self.0 / parts)).to_value()),
+            None => Ok(Value::new_none()),
+        }
+    }
+
+    fn minus(&self, _heap: Heap<'v>) -> starlark::Result<Seconds> {
+        if self.0 > 0 {
+            return Err(starlark::Error::new_other(NegativeSpan));
+        }
+        Ok(Seconds(0))
+    }
+
+    fn plus(&self, _heap: Heap<'v>) -> i32 {
+        self.0
+    }
+
+    fn bit_not(&self, heap: Heap<'v>) -> starlark::Result<Value<'v>> {
+        Ok(heap.alloc(Seconds(!self.0)).to_value())
+    }
+}
+
+/// A type with no operators, named as `Seconds` is: its errors are the defaults'.
+#[derive(
+    Debug,
+    Display,
+    ProvidesStaticType,
+    NoSerialize,
+    Allocative,
+    StarlarkPagable
+)]
+#[display("no_operators")]
+struct NoOperators;
+starlark_simple_value!(NoOperators);
+
+#[starlark_value(type = "seconds")]
+impl<'v> StarlarkValue<'v> for NoOperators {}
+
+#[test]
+fn test_operators() {
+    Heap::temp(|heap| {
+        let seconds = |n: i32| heap.alloc_simple(Seconds(n)).to_value();
+        let int = |n: i32| heap.alloc(n).to_value();
+        let str = |s: &str| heap.alloc(s).to_value();
+        let shown = |v: starlark::Result<Value>| v.unwrap().to_str();
+
+        assert_eq!("5s", shown(seconds(2).add(seconds(3), heap)));
+        assert_eq!("62s", shown(str("1").add(seconds(2), heap)));
+        assert_eq!("6s", shown(seconds(2).mul(int(3), heap)));
+        assert_eq!("6s", shown(int(3).mul(seconds(2), heap)));
+        assert_eq!("1s", shown(seconds(3).sub(seconds(2), heap)));
+        assert_eq!("1.5", shown(seconds(3).div(seconds(2), heap)));
+        assert_eq!("2s", shown(seconds(6).div(int(3), heap)));
+        assert_eq!("6min", shown(seconds(6).percent(str("min"), heap)));
+        assert_eq!("2s", shown(seconds(6).floor_div(int(3), heap)));
+        assert_eq!("0s", shown(seconds(0).minus(heap)));
+        assert_eq!("6", shown(seconds(6).plus(heap)));
+        assert_eq!("-1s", shown(seconds(0).bit_not(heap)));
+    });
+}
+
+/// A value that is not of the operand's type gets what the trait's default gives: for `add`
+/// and `mul` the other operand's turn and then the error of `+` and `*`, for the others the
+/// default's error.
+#[test]
+fn test_operator_operand_of_another_type() {
+    Heap::temp(|heap| {
+        let seconds = heap.alloc_simple(Seconds(1)).to_value();
+        let default = heap.alloc_simple(NoOperators).to_value();
+        let none = Value::new_none();
+        let error = |v: starlark::Result<Value>| v.unwrap_err().to_string();
+
+        assert_eq!(
+            error(default.add(none, heap)),
+            error(seconds.add(none, heap))
+        );
+        assert_eq!(
+            error(none.add(default, heap)),
+            error(none.add(seconds, heap))
+        );
+        assert_eq!(
+            error(default.mul(none, heap)),
+            error(seconds.mul(none, heap))
+        );
+        assert_eq!(
+            error(none.mul(default, heap)),
+            error(none.mul(seconds, heap))
+        );
+        assert_eq!(
+            error(default.sub(none, heap)),
+            error(seconds.sub(none, heap))
+        );
+        assert_eq!(
+            error(default.div(none, heap)),
+            error(seconds.div(none, heap))
+        );
+        assert!(
+            error(seconds.sub(none, heap))
+                .contains("Operation `-` not supported for types `seconds` and `NoneType`"),
+        );
+    });
+}
+
+/// A value of the operand's type that does not convert is the conversion's error, and a body's
+/// error is the body's.
+#[test]
+fn test_operator_errors() {
+    Heap::temp(|heap| {
+        let seconds = |n: i32| heap.alloc_simple(Seconds(n)).to_value();
+        let big = heap.alloc(1i64 << 40).to_value();
+        let error = |v: starlark::Result<Value>| v.unwrap_err().to_string();
+
+        let e = error(seconds(1).mul(big, heap));
+        assert!(e.contains("too big to fit in i32"), "{e}");
+        let e = error(big.mul(seconds(1), heap));
+        assert!(e.contains("too big to fit in i32"), "{e}");
+        let e = error(seconds(1).div(big, heap));
+        assert!(e.contains("too big to fit in i32"), "{e}");
+        let e = error(seconds(1).sub(seconds(2), heap));
+        assert!(e.contains("not negative"), "{e}");
+        let e = error(heap.alloc("one").to_value().add(seconds(1), heap));
+        assert!(e.contains("invalid digit"), "{e}");
+        let e = error(seconds(1).minus(heap));
+        assert!(e.contains("not negative"), "{e}");
+    });
+}
+
+/// The typechecker is told what the signatures say: the operand's type and the result's for a
+/// typed operator, any operand and an unknown result for one written as the trait declares it,
+/// and nothing for an operator the type does not have.
+#[test]
+fn test_operator_signatures() {
+    fn signature(operand: Ty, result: Ty) -> Vec<OperatorSignature> {
+        vec![OperatorSignature { operand, result }]
+    }
+    let seconds = Ty::starlark_value::<Seconds>;
+    let binary = <Seconds as StarlarkType>::bin_op_signatures;
+    let reflected = <Seconds as StarlarkType>::rbin_op_signatures;
+    let unary = <Seconds as StarlarkType>::un_op_result;
+
+    assert_eq!(signature(seconds(), seconds()), binary(TypingBinOp::Add));
+    assert_eq!(signature(Ty::int(), seconds()), binary(TypingBinOp::Mul));
+    assert_eq!(signature(seconds(), seconds()), binary(TypingBinOp::Sub));
+    assert_eq!(
+        signature(
+            Ty::union2(seconds(), Ty::int()),
+            Ty::union2(Ty::float(), seconds()),
+        ),
+        binary(TypingBinOp::Div),
+    );
+    assert_eq!(
+        signature(Ty::any(), Ty::string()),
+        binary(TypingBinOp::Percent)
+    );
+    assert_eq!(
+        vec![OperatorSignature::any()],
+        binary(TypingBinOp::FloorDiv)
+    );
+    assert_eq!(Vec::<OperatorSignature>::new(), binary(TypingBinOp::BitOr));
+    assert_eq!(Vec::<OperatorSignature>::new(), binary(TypingBinOp::Less));
+
+    assert_eq!(
+        signature(Ty::string(), seconds()),
+        reflected(TypingBinOp::Add)
+    );
+    assert_eq!(signature(Ty::int(), seconds()), reflected(TypingBinOp::Mul));
+    assert_eq!(Vec::<OperatorSignature>::new(), reflected(TypingBinOp::Sub));
+
+    assert_eq!(Some(seconds()), unary(TypingUnOp::Minus));
+    assert_eq!(Some(Ty::int()), unary(TypingUnOp::Plus));
+    assert_eq!(Some(seconds()), unary(TypingUnOp::BitNot));
+}
+
+/// A typed `compare` says what `<` takes; one written as the trait declares it takes anything.
+#[test]
+fn test_compare_signature() {
+    assert_eq!(
+        vec![OperatorSignature {
+            operand: Ty::starlark_value::<Plain>(),
+            result: Ty::bool(),
+        }],
+        <Plain as StarlarkType>::bin_op_signatures(TypingBinOp::Less),
+    );
+    assert_eq!(
+        vec![OperatorSignature {
+            operand: Ty::int(),
+            result: Ty::bool(),
+        }],
+        <Count as StarlarkType>::bin_op_signatures(TypingBinOp::Less),
+    );
+    assert_eq!(
+        vec![OperatorSignature::any()],
+        <AnyOperand as StarlarkType>::bin_op_signatures(TypingBinOp::Less),
+    );
+}
+
+/// Typed operators in a generic impl and on a view: the signatures are read where `Self` and
+/// the impl's parameters mean what they do in the body.
+#[derive(
+    Debug,
+    Display,
+    ProvidesStaticType,
+    NoSerialize,
+    Allocative,
+    StarlarkPagable
+)]
+#[display("scaled({:?})", _0)]
+struct Scaled<T: Tag>(T::Key);
+
+#[starlark_value(type = "scaled")]
+impl<'v, T: Tag> StarlarkValue<'v> for Scaled<T>
+where
+    Self: HasTyVTable + ProvidesStaticType<'v>,
+{
+    fn bit_and(&self, other: &Scaled<T>, _heap: Heap<'v>) -> bool {
+        self.0 == other.0
+    }
+
+    fn mul(&self, times: i32, _heap: Heap<'v>) -> i32 {
+        times * T::SALT as i32
+    }
+
+    fn minus(&self, _heap: Heap<'v>) -> i32 {
+        -(T::SALT as i32)
+    }
+}
+
+crate::register_avalue_simple_frozen!(Scaled<ByNumber>);
+
+#[starlark_value(type = "length")]
+impl<'v> StarlarkType<'v> for LengthView<'v> {
+    fn add(&self, other: LengthView<'v>, _heap: Heap<'v>) -> Metres {
+        Metres(self.get() + other.get())
+    }
+
+    fn sub(&self, other: Self, _heap: Heap<'v>) -> starlark::Result<Metres> {
+        match self.get().checked_sub(other.get()) {
+            Some(metres) => Ok(Metres(metres)),
+            None => Err(starlark::Error::new_other(NegativeSpan)),
+        }
+    }
+}
+
+#[derive(
+    Debug,
+    Display,
+    ProvidesStaticType,
+    NoSerialize,
+    Allocative,
+    StarlarkPagable
+)]
+#[display("{}m", _0)]
+struct Metres(u64);
+
+#[derive(
+    Debug,
+    Display,
+    ProvidesStaticType,
+    NoSerialize,
+    Allocative,
+    StarlarkPagable
+)]
+#[display("{}km", _0)]
+struct Kilometres(u64);
+
+#[derive(Debug, Clone, Copy, StarlarkRepresentations)]
+enum LengthView<'v> {
+    Metres(ValueTyped<'v, Metres>),
+    Kilometres(ValueTyped<'v, Kilometres>),
+}
+
+impl<'v> LengthView<'v> {
+    fn get(self) -> u64 {
+        match self {
+            LengthView::Metres(x) => x.0,
+            LengthView::Kilometres(x) => x.0 * 1000,
+        }
+    }
+}
+
+#[starlark_value]
+impl<'v> StarlarkValue<'v> for Metres {
+    type Type = LengthView<'v>;
+}
+
+#[starlark_value]
+impl<'v> StarlarkValue<'v> for Kilometres {
+    type Type = LengthView<'v>;
+}
+
+#[test]
+fn test_operators_generic_impl() {
+    Heap::temp(|heap| {
+        let one = heap.alloc_simple(Scaled::<ByNumber>(1)).to_value();
+        let two = heap.alloc_simple(Scaled::<ByNumber>(2)).to_value();
+        let shown = |v: starlark::Result<Value>| v.unwrap().to_str();
+
+        assert_eq!("False", shown(one.bit_and(two, heap)));
+        assert_eq!("True", shown(one.bit_and(one, heap)));
+        assert_eq!("14", shown(one.mul(heap.alloc(2i32).to_value(), heap)));
+        assert_eq!("-7", shown(one.minus(heap)));
+    });
+    assert_eq!(
+        vec![OperatorSignature {
+            operand: Ty::starlark_value::<Scaled<ByNumber>>(),
+            result: Ty::bool(),
+        }],
+        <Scaled<ByNumber> as StarlarkType>::bin_op_signatures(TypingBinOp::BitAnd),
+    );
+    assert_eq!(
+        Some(Ty::int()),
+        <Scaled<ByNumber> as StarlarkType>::un_op_result(TypingUnOp::Minus),
+    );
+}
+
+#[test]
+fn test_operators_view() {
+    Heap::temp(|heap| {
+        let metres = heap.alloc_simple(Metres(1)).to_value();
+        let kilometres = heap.alloc_simple(Kilometres(1)).to_value();
+        let shown = |v: starlark::Result<Value>| v.unwrap().to_str();
+
+        assert_eq!("1001m", shown(metres.add(kilometres, heap)));
+        assert_eq!("1001m", shown(kilometres.add(metres, heap)));
+        assert_eq!("999m", shown(kilometres.sub(metres, heap)));
+        let e = metres.sub(kilometres, heap).unwrap_err().to_string();
+        assert!(e.contains("not negative"), "{e}");
+        let e = metres.sub(Value::new_none(), heap).unwrap_err().to_string();
+        assert!(
+            e.contains("Operation `-` not supported for types `length` and `NoneType`"),
+            "{e}"
+        );
+    });
+    let length = Ty::starlark_value::<Metres>();
+    assert_eq!(
+        vec![OperatorSignature {
+            operand: length.clone(),
+            result: length,
+        }],
+        <LengthView as StarlarkType>::bin_op_signatures(TypingBinOp::Add),
+    );
 }

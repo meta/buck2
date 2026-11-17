@@ -639,6 +639,19 @@ def test(x: WithSignatures, i: int, f: float, n: int | float, a, s: str):
         );
 }
 
+/// `<` takes what the type's `compare` takes.
+#[test]
+fn test_compare_operand() {
+    TypeCheck::new().ty("good").ty("bad").check(
+        "compare_operand",
+        r#"
+def test(s: str, i: int):
+    good = s < "x"
+    bad = s < i
+"#,
+    );
+}
+
 #[test]
 fn test_union() {
     TypeCheck::new().check(

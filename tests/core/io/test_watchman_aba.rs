@@ -11,7 +11,11 @@
 use buck2_e2e::prelude::*;
 use common_io::file_watcher_tests::run_aba_test;
 
-#[buck_test(setup_eden = false)]
+// Watchman answers a query that names a merge base, as these projects ask for with
+// `watchman_merge_base`, only in a `.hg` or a `.git` repository. Meta's Sapling makes `.hg`
+// repositories, the open source one `.sl` ones.
+
+#[buck_test(setup_eden = false, meta_only = "Meta's Sapling")]
 async fn test_watchman_aba_no_eden(buck: &Buck) -> anyhow::Result<()> {
     run_aba_test(buck).await
 }

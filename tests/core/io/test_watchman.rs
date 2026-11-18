@@ -34,7 +34,11 @@ use common_io::file_watcher_tests::FileSystemType;
 use common_io::file_watcher_tests::setup_file_watcher_test;
 use common_io::file_watcher_tests::verify_results;
 
-#[buck_test(setup_eden = false)]
+// Watchman answers a query that names a merge base, as these projects ask for with
+// `watchman_merge_base`, only in a `.hg` or a `.git` repository. Meta's Sapling makes `.hg`
+// repositories, the open source one `.sl` ones.
+
+#[buck_test(setup_eden = false, meta_only = "Meta's Sapling")]
 async fn test_watchman_create_file_no_eden(buck: &Buck) -> anyhow::Result<()> {
     run_create_file_test(buck, FileSystemType::Native, FileWatcherProvider::Watchman).await
 }
@@ -44,7 +48,7 @@ async fn test_watchman_create_file_eden(buck: &Buck) -> anyhow::Result<()> {
     run_create_file_test(buck, FileSystemType::EdenFs, FileWatcherProvider::Watchman).await
 }
 
-#[buck_test(setup_eden = false)]
+#[buck_test(setup_eden = false, meta_only = "Meta's Sapling")]
 async fn test_watchman_modify_file_no_eden(buck: &Buck) -> anyhow::Result<()> {
     run_modify_file_test(buck, FileSystemType::Native, FileWatcherProvider::Watchman).await
 }
@@ -54,7 +58,7 @@ async fn test_watchman_modify_file_eden(buck: &Buck) -> anyhow::Result<()> {
     run_modify_file_test(buck, FileSystemType::EdenFs, FileWatcherProvider::Watchman).await
 }
 
-#[buck_test(setup_eden = false)]
+#[buck_test(setup_eden = false, meta_only = "Meta's Sapling")]
 async fn test_watchman_remove_file_no_eden(buck: &Buck) -> anyhow::Result<()> {
     run_remove_file_test(buck, FileSystemType::Native, FileWatcherProvider::Watchman).await
 }
@@ -64,7 +68,7 @@ async fn test_watchman_remove_file_eden(buck: &Buck) -> anyhow::Result<()> {
     run_remove_file_test(buck, FileSystemType::EdenFs, FileWatcherProvider::Watchman).await
 }
 
-#[buck_test(setup_eden = false)]
+#[buck_test(setup_eden = false, meta_only = "Meta's Sapling")]
 async fn test_watchman_rename_file_no_eden(buck: &Buck) -> anyhow::Result<()> {
     run_rename_file_test(buck, FileSystemType::Native, FileWatcherProvider::Watchman).await
 }
@@ -75,7 +79,11 @@ async fn test_watchman_rename_file_eden(buck: &Buck) -> anyhow::Result<()> {
 }
 
 // File replace is not supported on Windows
-#[buck_test(setup_eden = false, skip_for_os = ["windows"])]
+#[buck_test(
+    setup_eden = false,
+    skip_for_os = ["windows"],
+    meta_only = "Meta's Sapling",
+)]
 async fn test_watchman_replace_file_no_eden(buck: &Buck) -> anyhow::Result<()> {
     run_replace_file_test(buck, FileSystemType::Native, FileWatcherProvider::Watchman).await
 }
@@ -86,7 +94,7 @@ async fn test_watchman_replace_file_eden(buck: &Buck) -> anyhow::Result<()> {
     run_replace_file_test(buck, FileSystemType::EdenFs, FileWatcherProvider::Watchman).await
 }
 
-#[buck_test(setup_eden = false)]
+#[buck_test(setup_eden = false, meta_only = "Meta's Sapling")]
 async fn test_watchman_create_directory_no_eden(buck: &Buck) -> anyhow::Result<()> {
     run_create_directory_test(buck, FileSystemType::Native, FileWatcherProvider::Watchman).await
 }
@@ -96,7 +104,7 @@ async fn test_watchman_create_directory_eden(buck: &Buck) -> anyhow::Result<()> 
     run_create_directory_test(buck, FileSystemType::EdenFs, FileWatcherProvider::Watchman).await
 }
 
-#[buck_test(setup_eden = false)]
+#[buck_test(setup_eden = false, meta_only = "Meta's Sapling")]
 async fn test_watchman_remove_directory_no_eden(buck: &Buck) -> anyhow::Result<()> {
     run_remove_directory_test(buck, FileSystemType::Native, FileWatcherProvider::Watchman).await
 }
@@ -106,7 +114,7 @@ async fn test_watchman_remove_directory_eden(buck: &Buck) -> anyhow::Result<()> 
     run_remove_directory_test(buck, FileSystemType::EdenFs, FileWatcherProvider::Watchman).await
 }
 
-#[buck_test(setup_eden = false)]
+#[buck_test(setup_eden = false, meta_only = "Meta's Sapling")]
 async fn test_watchman_rename_directory_no_eden(buck: &Buck) -> anyhow::Result<()> {
     run_rename_directory_test(buck, FileSystemType::Native, FileWatcherProvider::Watchman).await
 }
@@ -116,7 +124,7 @@ async fn test_watchman_rename_directory_eden(buck: &Buck) -> anyhow::Result<()> 
     run_rename_directory_test(buck, FileSystemType::EdenFs, FileWatcherProvider::Watchman).await
 }
 
-#[buck_test(setup_eden = false)]
+#[buck_test(setup_eden = false, meta_only = "Meta's Sapling")]
 async fn test_watchman_checkout_mergebase_changes_no_eden(buck: &Buck) -> anyhow::Result<()> {
     run_checkout_mergebase_changes_test(buck, FileSystemType::Native, FileWatcherProvider::Watchman)
         .await
@@ -128,7 +136,7 @@ async fn test_watchman_checkout_mergebase_changes_eden(buck: &Buck) -> anyhow::R
         .await
 }
 
-#[buck_test(setup_eden = false)]
+#[buck_test(setup_eden = false, meta_only = "Meta's Sapling")]
 async fn test_watchman_checkout_with_mergebase_no_eden(buck: &Buck) -> anyhow::Result<()> {
     run_checkout_with_mergebase_test(buck, FileSystemType::Native, FileWatcherProvider::Watchman)
         .await
@@ -140,7 +148,7 @@ async fn test_watchman_checkout_with_mergebase_eden(buck: &Buck) -> anyhow::Resu
         .await
 }
 
-#[buck_test(setup_eden = false)]
+#[buck_test(setup_eden = false, meta_only = "Meta's Sapling")]
 async fn test_watchman_rebase_with_mergebase_no_eden(buck: &Buck) -> anyhow::Result<()> {
     run_rebase_with_mergebase_test(buck, FileSystemType::Native, FileWatcherProvider::Watchman)
         .await
@@ -152,7 +160,7 @@ async fn test_watchman_rebase_with_mergebase_eden(buck: &Buck) -> anyhow::Result
         .await
 }
 
-#[buck_test(setup_eden = false)]
+#[buck_test(setup_eden = false, meta_only = "Meta's Sapling")]
 async fn test_watchman_restack_with_mergebase_no_eden(buck: &Buck) -> anyhow::Result<()> {
     run_restack_with_mergebase_test(buck, FileSystemType::Native, FileWatcherProvider::Watchman)
         .await
@@ -197,7 +205,7 @@ async fn test_watchman_create_symlink_test_eden(buck: &Buck) -> anyhow::Result<(
     run_create_symlink_test(buck, FileSystemType::EdenFs, FileWatcherProvider::Watchman).await
 }
 
-#[buck_test(setup_eden = false)]
+#[buck_test(setup_eden = false, meta_only = "Meta's Sapling")]
 async fn test_watchman_create_symlink_test_no_eden(buck: &Buck) -> anyhow::Result<()> {
     run_create_symlink_test(buck, FileSystemType::Native, FileWatcherProvider::Watchman).await
 }
@@ -208,7 +216,7 @@ async fn test_watchman_replace_file_with_symlink_eden(buck: &Buck) -> anyhow::Re
         .await
 }
 
-#[buck_test(setup_eden = false)]
+#[buck_test(setup_eden = false, meta_only = "Meta's Sapling")]
 async fn test_watchman_replace_file_with_symlink_no_eden(buck: &Buck) -> anyhow::Result<()> {
     run_replace_file_with_symlink_test(buck, FileSystemType::Native, FileWatcherProvider::Watchman)
         .await
@@ -220,7 +228,7 @@ async fn test_watchman_change_symlink_target_test_eden(buck: &Buck) -> anyhow::R
         .await
 }
 
-#[buck_test(setup_eden = false)]
+#[buck_test(setup_eden = false, meta_only = "Meta's Sapling")]
 async fn test_watchman_change_symlink_target_test_no_eden(buck: &Buck) -> anyhow::Result<()> {
     run_change_symlink_target_test(buck, FileSystemType::Native, FileWatcherProvider::Watchman)
         .await

@@ -154,6 +154,14 @@ impl TtlRefresher {
         }
     }
 
+    /// Asks the CAS about `digests` as a pass does, and stamps what it says on them.
+    pub async fn check(
+        &self,
+        digests: Vec<TrackedFileDigest>,
+    ) -> buck2_error::Result<Vec<Presence>> {
+        self.checker.begin_pass().check(digests).await
+    }
+
     /// Digests per `check` call, for tests that want to see more than one chunk.
     pub fn with_chunk_size(mut self, chunk_size: usize) -> Self {
         self.chunk_size = chunk_size.max(1);

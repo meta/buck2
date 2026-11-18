@@ -26,6 +26,7 @@ use buck2_directory::directory::directory_iterator::DirectoryIteratorPathStack;
 use buck2_directory::directory::entry::DirectoryEntry;
 use buck2_directory::directory::walk::unordered_entry_walk;
 use buck2_error::BuckErrorContext;
+use buck2_error::BuckErrorOptionContext;
 use buck2_error::ErrorTag;
 use buck2_error::conversion::from_any_with_tag;
 use buck2_events::dispatch::EventDispatcher;
@@ -51,8 +52,10 @@ use buck2_execute::re::error::RemoteExecutionError;
 use buck2_execute::re::manager::ReConnectionManager;
 use buck2_fs::error::IoResultExt;
 use buck2_fs::fs_util;
+use buck2_fs::fs_util::DiskSpaceStats;
 use buck2_fs::fs_util::ReadDir;
 use buck2_fs::paths::abs_norm_path::AbsNormPathBuf;
+use buck2_fs::paths::abs_path::AbsPathBuf;
 use buck2_hash::BuckMutMap;
 use buck2_hash::BuckMutSet;
 use dice_futures::cancellation::CancellationContext;
@@ -62,6 +65,7 @@ use futures::future::Future;
 use futures::future::FutureExt;
 use jiff::SignedDuration;
 use jiff::Timestamp;
+use parking_lot::Mutex;
 use remote_execution::NamedDigest;
 use remote_execution::NamedDigestWithPermissions;
 use remote_execution::TCode;
@@ -177,6 +181,13 @@ pub trait IoHandler: Sized + Sync + Send + 'static {
         entry: ActionDirectoryEntry<ActionSharedDirectory>,
         info: Arc<CasDownloadInfo>,
     ) -> buck2_error::Result<()>;
+
+    /// Free and total space on the filesystem holding `path`, counting what deletions on it
+    /// freed.
+    async fn synced_disk_space_stats(
+        self: &Arc<Self>,
+        path: Arc<AbsPathBuf>,
+    ) -> buck2_error::Result<DiskSpaceStats>;
 
     fn read_dir(&self, path: &AbsNormPathBuf) -> buck2_error::Result<ReadDir>;
     fn buck_out_path(&self) -> &ProjectRelativePathBuf;
@@ -332,6 +343,19 @@ impl DefaultIoHandler {
     }
 }
 
+struct SyncedDiskSpaceStatsRequest {
+    path: Arc<AbsPathBuf>,
+    stats: Arc<Mutex<Option<DiskSpaceStats>>>,
+}
+
+impl IoRequest for SyncedDiskSpaceStatsRequest {
+    fn execute(self: Box<Self>, _project_fs: &ProjectRoot) -> buck2_error::Result<()> {
+        fs_util::sync_filesystem(&*self.path)?;
+        *self.stats.lock() = Some(fs_util::disk_space_stats(&*self.path)?);
+        Ok(())
+    }
+}
+
 #[async_trait]
 impl IoHandler for DefaultIoHandler {
     async fn immediate_write<'a>(
@@ -467,6 +491,28 @@ impl IoHandler for DefaultIoHandler {
         Ok(())
     }
 
+    async fn synced_disk_space_stats(
+        self: &Arc<Self>,
+        path: Arc<AbsPathBuf>,
+    ) -> buck2_error::Result<DiskSpaceStats> {
+        // Not `execute_io_inline`: the deferred materializer's clean runs on its command thread,
+        // a current-thread runtime that cannot block in place.
+        let stats = Arc::new(Mutex::new(None));
+        self.io_executor
+            .execute_io(
+                Box::new(SyncedDiskSpaceStatsRequest {
+                    path,
+                    stats: stats.dupe(),
+                }),
+                CancellationContext::never_cancelled(),
+            )
+            .await?;
+        stats
+            .lock()
+            .take()
+            .internal_error("Synced disk space stats request finished without stats")
+    }
+
     fn read_dir(&self, path: &AbsNormPathBuf) -> buck2_error::Result<ReadDir> {
         fs_util::read_dir(path).categorize_internal()
     }
@@ -591,6 +637,13 @@ impl IoHandler for NoDiskIoHandler {
             ErrorTag::Tier0,
             "No-disk materializers cannot upload artifacts"
         ))
+    }
+
+    async fn synced_disk_space_stats(
+        self: &Arc<Self>,
+        path: Arc<AbsPathBuf>,
+    ) -> buck2_error::Result<DiskSpaceStats> {
+        fs_util::disk_space_stats(&*path)
     }
 
     fn read_dir(&self, path: &AbsNormPathBuf) -> buck2_error::Result<ReadDir> {

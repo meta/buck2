@@ -20,6 +20,7 @@ use buck2_node::attrs::attr_type::arg::ConfiguredStringWithMacros;
 use buck2_util::arc_str::ArcStr;
 use buck2_util::size_assert;
 use dupe::Dupe;
+use either::Either;
 use mini_vec::MiniBoxSlice;
 use starlark::any::ProvidesStaticType;
 use starlark::environment::GlobalsBuilder;
@@ -33,9 +34,7 @@ use starlark::values::NoSerialize;
 use starlark::values::StarlarkPagable;
 use starlark::values::StarlarkValue;
 use starlark::values::Trace;
-use starlark::values::Value;
 use starlark::values::starlark_value;
-use starlark::values::type_repr::StarlarkTypeRepr;
 
 use crate::artifact_groups::ArtifactGroup;
 use crate::interpreter::rule_defs::artifact::starlark_artifact::StarlarkArtifact;
@@ -124,9 +123,7 @@ impl<'v> ResolvedMacro<'v> {
             }
             Self::ArgLike(command_line_like) => {
                 fmt.push_scope_delimiter(" ");
-                command_line_like
-                    .as_command_line_arg()
-                    .add_to_command_line(fmt)?;
+                command_line_like.get().0.add_to_command_line(fmt)?;
                 fmt.pop_scope();
             }
             Self::Query(value) => value.add_to_arg(fmt)?,
@@ -157,9 +154,7 @@ impl<'v> ResolvedMacro<'v> {
                 }
             }
             Self::ArgLike(command_line_like) => {
-                command_line_like
-                    .as_command_line_arg()
-                    .visit_artifacts(visitor)?;
+                command_line_like.get().0.visit_artifacts(visitor)?;
             }
             Self::Query(value) => value.visit_artifacts(visitor)?,
             Self::Source(artifact) => visitor.visit_input(
@@ -209,11 +204,15 @@ impl<'v> Display for ResolvedStringWithMacrosPart<'v> {
 )]
 pub struct ResolvedStringWithMacros<'v> {
     parts: MiniBoxSlice<ResolvedStringWithMacrosPart<'v>>,
+    /// Set only for anon-target-compatible args. Boxed because every resolved `attrs.arg()` value
+    /// carries this field, and inline it would take four words.
     #[trace(static)]
     #[freeze(identity)]
     #[starlark_pagable(pagable)]
-    configured_macros: Option<ConfiguredStringWithMacros>,
+    configured_macros: Option<Box<ConfiguredStringWithMacros>>,
 }
+
+size_assert::words_of_type!(ResolvedStringWithMacros, 2);
 
 starlark_complex_value!(pub ResolvedStringWithMacros);
 
@@ -234,7 +233,7 @@ impl<'v> ResolvedStringWithMacros<'v> {
     ) -> Self {
         Self {
             parts: parts.into(),
-            configured_macros: configured_macros.cloned(),
+            configured_macros: configured_macros.cloned().map(Box::new),
         }
     }
 
@@ -248,14 +247,14 @@ impl<'v> ResolvedStringWithMacros<'v> {
         }
     }
 
-    pub fn configured_macros(&self) -> &Option<ConfiguredStringWithMacros> {
-        &self.configured_macros
+    pub fn configured_macros(&self) -> Option<&ConfiguredStringWithMacros> {
+        self.configured_macros.as_deref()
     }
 }
 
 impl<'v> CommandLineArgLike<'v> for ResolvedStringWithMacros<'v> {
     fn register_me(&self) {
-        command_line_arg_like_impl!(ResolvedStringWithMacros::starlark_type_repr());
+        command_line_arg_like_impl!(ResolvedStringWithMacros::get_type_starlark_repr());
     }
 
     fn add_to_command_line(&self, fmt: &mut CommandLineBuilder<'v, '_>) -> buck2_error::Result<()> {
@@ -331,13 +330,10 @@ impl<'v> StarlarkValue<'v> for ResolvedStringWithMacros<'v> {
         Some(RESOLVED_STRING_WITH_MACROS_METHODS.methods())
     }
 
-    fn equals(&self, other: Value<'v>) -> starlark::Result<bool> {
-        if let Some(other) = ResolvedStringWithMacros::from_value(other) {
-            Ok(*self == *other)
-        } else if let Some(s) = other.unpack_str() {
-            Ok(self.downcast_str() == Some(s))
-        } else {
-            Ok(false)
+    fn equals(&self, other: Either<&Self, &str>) -> bool {
+        match other {
+            Either::Left(other) => *self == *other,
+            Either::Right(s) => self.downcast_str() == Some(s),
         }
     }
 
@@ -369,7 +365,7 @@ pub(crate) fn register_string_with_macros(globals: &mut GlobalsBuilder) {}
 mod tests {
 
     use starlark::values::Heap;
-    use starlark::values::StarlarkValue;
+    use starlark::values::StarlarkType;
 
     use super::*;
 
@@ -384,7 +380,7 @@ mod tests {
     fn test_equals_matching_string() {
         Heap::temp(|heap| {
             let resolved = make_string_resolved("-matching-flag");
-            let str_val = heap.alloc_str("-matching-flag").to_value();
+            let str_val = heap.alloc("-matching-flag").to_value();
             assert_eq!(resolved.equals(str_val).unwrap(), true);
         });
     }
@@ -393,7 +389,7 @@ mod tests {
     fn test_equals_non_matching_string() {
         Heap::temp(|heap| {
             let resolved = make_string_resolved("-resolved-flag");
-            let str_val = heap.alloc_str("-str-flag").to_value();
+            let str_val = heap.alloc("-str-flag").to_value();
             assert_eq!(resolved.equals(str_val).unwrap(), false);
         });
     }
@@ -402,7 +398,9 @@ mod tests {
     fn test_equals_resolved_string_vs_resolved_string() {
         Heap::temp(|heap| {
             let resolved = make_string_resolved("-resolved-flag");
-            let other_val = heap.alloc(make_string_resolved("-resolved-flag"));
+            let other_val = heap
+                .alloc(make_string_resolved("-resolved-flag"))
+                .to_value();
             assert_eq!(resolved.equals(other_val).unwrap(), true);
         });
     }
@@ -411,7 +409,7 @@ mod tests {
     fn test_equals_resolved_string_vs_non_string_value() {
         Heap::temp(|heap| {
             let resolved = make_string_resolved("-Wno-error");
-            let int_val = heap.alloc(42);
+            let int_val = heap.alloc(42i32).to_value();
             assert_eq!(resolved.equals(int_val).unwrap(), false);
         });
     }
@@ -426,7 +424,7 @@ mod tests {
                 )],
                 None,
             );
-            let int_val = heap.alloc(42);
+            let int_val = heap.alloc(42i32).to_value();
             assert_eq!(resolved.equals(int_val).unwrap(), false);
         });
     }

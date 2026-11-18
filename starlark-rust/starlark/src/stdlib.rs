@@ -172,9 +172,12 @@ mod tests {
     use crate::environment::Methods;
     use crate::environment::MethodsBuilder;
     use crate::starlark_simple_value;
+    use crate::values::Heap;
     use crate::values::StarlarkValue;
     use crate::values::UnpackValue;
     use crate::values::Value;
+    use crate::values::ValueOf;
+    use crate::values::ValueTyped;
     use crate::values::none::NoneType;
 
     #[test]
@@ -224,10 +227,14 @@ mod tests {
         }
 
         impl<'v> UnpackValue<'v> for Bool2 {
+            type Type = Self;
             type Error = Infallible;
 
-            fn unpack_value_impl(value: Value<'v>) -> Result<Option<Self>, Self::Error> {
-                Ok(Some(*value.downcast_ref::<Bool2>().unwrap()))
+            fn unpack(
+                _value: ValueOf<'v, Self>,
+                get: ValueTyped<'v, Self>,
+            ) -> Result<Self, Infallible> {
+                Ok(*get.as_ref())
             }
         }
 
@@ -240,12 +247,12 @@ mod tests {
         #[starlark_module]
         fn methods(builder: &mut MethodsBuilder) {
             #[starlark(attribute)]
-            fn invert1(this: Bool2) -> starlark::Result<Bool2> {
-                Ok(Bool2(!this.0))
+            fn invert1<'v>(this: Bool2, heap: Heap<'v>) -> starlark::Result<ValueOf<'v, Bool2>> {
+                Ok(ValueOf::alloc(heap, Bool2(!this.0)))
             }
 
-            fn invert2(this: Bool2) -> anyhow::Result<Bool2> {
-                Ok(Bool2(!this.0))
+            fn invert2<'v>(this: Bool2, heap: Heap<'v>) -> anyhow::Result<ValueOf<'v, Bool2>> {
+                Ok(ValueOf::alloc(heap, Bool2(!this.0)))
             }
         }
 

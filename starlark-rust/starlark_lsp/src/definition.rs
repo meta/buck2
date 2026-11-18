@@ -48,6 +48,20 @@ use crate::exported::Symbol;
 use crate::loaded::AstModuleLoadedSymbols;
 use crate::loaded::LoadedSymbol;
 
+/// Converts an LSP column, counted in UTF-16 code units, into a byte offset within `line`.
+///
+/// A column past the end of the line maps to the end of the line.
+pub(crate) fn utf16_column_to_byte_offset(line: &str, column: u32) -> usize {
+    let mut units = 0;
+    for (offset, c) in line.char_indices() {
+        if units >= column {
+            return offset;
+        }
+        units += c.len_utf16() as u32;
+    }
+    line.len()
+}
+
 /// The location of a definition for a given identifier. See [`AstModule::find_definition_at_location`].
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub(crate) enum IdentifierDefinition {
@@ -251,7 +265,8 @@ impl LspModule {
             }
             Some(line_span) => line_span,
         };
-        let current_pos = std::cmp::min(line_span.begin() + col, line_span.end());
+        let line_text = self.ast.codemap().source_span(line_span);
+        let current_pos = line_span.begin() + utf16_column_to_byte_offset(line_text, col) as u32;
 
         // Finalize the results after recursing down from and back up to the top level scope.
         match Self::find_definition_in_scope(&scope, current_pos) {

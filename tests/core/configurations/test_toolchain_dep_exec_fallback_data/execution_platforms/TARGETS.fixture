@@ -1,0 +1,24 @@
+load(":defs.bzl", "execution_platform", "execution_platforms")
+
+execution_platform(name = "haiku", os_configuration = "//config:haiku")
+execution_platform(name = "hurd", os_configuration = "//config:hurd")
+execution_platform(name = "minix", os_configuration = "//config:minix")
+execution_platform(name = "sunos", os_configuration = "//config:sunos")
+
+# fallback unset == use_unspecified
+execution_platforms(
+    name = "execution_platforms",
+    platforms = [":haiku", ":minix"],
+)
+
+execution_platforms(
+    name = "execution_platforms_platform_fallback",
+    fallback_platform = ":sunos",
+    platforms = [":haiku", ":minix"],
+)
+
+execution_platforms(
+    name = "execution_platforms_three",
+    fallback = "error",
+    platforms = [":haiku", ":hurd", ":minix"],
+)

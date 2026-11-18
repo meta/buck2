@@ -13,7 +13,6 @@ use std::sync::atomic::AtomicU64;
 
 use async_trait::async_trait;
 use buck2_agent_interactive::Advice;
-use buck2_agent_interactive::Decision;
 use buck2_common::argv::Argv;
 use buck2_common::argv::SanitizedArgv;
 use buck2_common::invocation_paths::DEFAULT_ISOLATION_DIR;
@@ -23,6 +22,7 @@ use buck2_error::ExitCode;
 use buck2_event_observer::span_tracker::EventTimestamp;
 use dupe::Dupe;
 
+use crate::client_ctx::AgentAdvice;
 use crate::client_ctx::BuckSubcommand;
 use crate::client_ctx::ClientCommandContext;
 use crate::common::BuckArgMatches;
@@ -38,14 +38,17 @@ use crate::daemon::client::connect::DaemonConstraintsRequest;
 use crate::daemon::client::connect::DaemonStartupMode;
 use crate::daemon::client::connect::DesiredTraceIoState;
 use crate::daemon::client::connect::connect_buckd;
+use crate::daemon::client::connect::remove_in_process_daemon_info;
 use crate::events_ctx::EventsCtx;
 use crate::exit_result::ExitResult;
 use crate::path_arg::PathArg;
+use crate::restarter::RestartState;
 use crate::signal_handler::with_simple_sigint_handler;
 use crate::subscribers::build_graph_stats::BuildGraphStats;
 use crate::subscribers::build_id_writer::BuildIdWriter;
 use crate::subscribers::event_log::EventLog;
 use crate::subscribers::health_check_subscriber::HealthCheckSubscriber;
+#[cfg(fbcode_build)]
 use crate::subscribers::re_log::ReLog;
 use crate::subscribers::subscriber::EventSubscriber;
 use crate::subscribers::superconsole::timekeeper::RealtimeClock;
@@ -111,8 +114,11 @@ fn update_events_ctx<T: StreamingCommand>(
     events_ctx.used_superconsole = used_superconsole;
 
     if let Some(paths) = paths {
-        let re_log_subscriber = ReLog::new(paths.isolation.clone());
-        subscribers.push(Box::new(re_log_subscriber));
+        #[cfg(fbcode_build)]
+        {
+            let re_log_subscriber = ReLog::new(paths.isolation.clone());
+            subscribers.push(Box::new(re_log_subscriber));
+        }
 
         if !event_log_opts.no_event_log {
             let event_log_subscriber =
@@ -234,20 +240,26 @@ impl<T: StreamingCommand> BuckSubcommand for T {
         mut ctx: ClientCommandContext<'_>,
         events_ctx: &mut EventsCtx,
     ) -> ExitResult {
+        let in_process_daemon_dir = match &ctx.start_in_process_daemon {
+            None => None,
+            Some(_) => Some(ctx.paths()?.daemon_dir()?),
+        };
         let work = async {
             let mut connect_options = if T::existing_only() {
                 BuckdConnectOptions::ExistingOnly
             } else {
                 let mut req =
                     DaemonConstraintsRequest::new(ctx.immediate_config, T::trace_io(&self))?;
-                ctx.restarter.apply_to_constraints(&mut req);
+                if let RestartState::Restarted(restart_request) = &events_ctx.restart_state {
+                    restart_request.apply_to_constraints(&mut req);
+                }
                 BuckdConnectOptions::Options(BuckdConnectDaemonOptions {
                     constraints: req,
                     daemon_startup_mode: T::daemon_startup_mode(),
                     new_isolation_dir_advice: if ctx.paths()?.isolation.as_str()
                         == DEFAULT_ISOLATION_DIR
                     {
-                        Decision::Inactive
+                        AgentAdvice::not_applicable(Advice::NewIsolationDir)
                     } else {
                         ctx.agent_advice(Advice::NewIsolationDir)?
                     },
@@ -285,20 +297,27 @@ impl<T: StreamingCommand> BuckSubcommand for T {
             events_ctx.monitor_daemon_exit(buckd.daemon_pid);
             events_ctx.cgroup_path_of_buck2_daemon = buckd.cgroup_path_of_buck2_daemon.clone();
             events_ctx.daemon_start_instant = buckd.daemon_start_instant;
+            if let RestartState::Watching(restarter) = &mut events_ctx.restart_state {
+                restarter.connected(buckd.daemon_constraints());
+            }
 
-            let command_result = self
-                .exec_impl(&mut buckd, matches, &mut ctx, events_ctx)
-                .await;
-
-            ctx.restarter.observe(&buckd, events_ctx);
-
-            command_result
+            self.exec_impl(&mut buckd, matches, &mut ctx, events_ctx)
+                .await
         };
 
         // FIXME: move this into client_ctx
-        with_simple_sigint_handler(work)
+        let result = with_simple_sigint_handler(work)
             .await
-            .unwrap_or_else(ExitResult::signal_interrupt)
+            .unwrap_or_else(ExitResult::signal_interrupt);
+
+        // The in-process daemon dies with this client: by exit, or by `run` replacing the client
+        // with the target. The command is done or interrupted, so the record goes now, before
+        // either.
+        if let Some(daemon_dir) = in_process_daemon_dir {
+            remove_in_process_daemon_info(&daemon_dir);
+        }
+
+        result
     }
 
     fn update_events_ctx(

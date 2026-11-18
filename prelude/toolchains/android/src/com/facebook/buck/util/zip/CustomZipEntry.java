@@ -13,12 +13,14 @@ package com.facebook.buck.util.zip;
 import static java.util.zip.Deflater.BEST_COMPRESSION;
 import static java.util.zip.Deflater.NO_COMPRESSION;
 
+import com.facebook.infer.annotation.Nullsafe;
 import com.google.common.base.Preconditions;
 import java.io.File;
 import java.nio.file.Path;
 import java.util.zip.Deflater;
 import java.util.zip.ZipEntry;
 
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public class CustomZipEntry extends ZipEntry {
 
   private int compressionLevel = Deflater.DEFAULT_COMPRESSION;

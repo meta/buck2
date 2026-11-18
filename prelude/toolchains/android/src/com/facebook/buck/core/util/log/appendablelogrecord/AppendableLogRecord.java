@@ -10,6 +10,7 @@
 
 package com.facebook.buck.core.util.log.appendablelogrecord;
 
+import com.facebook.infer.annotation.Nullsafe;
 import java.util.logging.Level;
 import java.util.logging.LogRecord;
 
@@ -17,6 +18,7 @@ import java.util.logging.LogRecord;
  * Subclass of LogRecord that only accepts preformatted strings. LogFormatter downcasts if it
  * receives AppendableLogRecord instances, allowing us to avoid string allocations.
  */
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public class AppendableLogRecord extends LogRecord {
   public AppendableLogRecord(Level level, String msg) {
     super(level, msg);

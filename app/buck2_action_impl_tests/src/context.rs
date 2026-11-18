@@ -31,6 +31,7 @@ use starlark::eval::ReturnFileLoader;
 use starlark::syntax::AstModule;
 use starlark::values::UnpackValue;
 use starlark::values::Value;
+use starlark::values::ValueOf;
 use starlark::values::structs::AllocStruct;
 
 fn run_ctx_test(
@@ -76,23 +77,24 @@ fn run_ctx_test(
                 BaseDeferredKey::TargetLabel(label.dupe()),
                 ExecutionPlatformResolution::unspecified(),
             )?;
-            let attributes = eval
-                .heap()
-                .alloc_typed_unchecked(AllocStruct([("name", "some_name")]))
-                .cast();
+            let attributes = ValueOf::alloc(eval.heap(), AllocStruct([("name", "some_name")]));
             let plugins = eval
                 .heap()
-                .alloc_typed(AnalysisPlugins::new(BuckMutInsertionMap::new()))
+                .alloc(AnalysisPlugins::new(BuckMutInsertionMap::new()))
+                .get()
                 .into();
 
-            let ctx = eval.heap().alloc(AnalysisContext::prepare(
-                eval.heap(),
-                Some(attributes),
-                Some(label),
-                Some(plugins),
-                registry,
-                DigestConfig::testing_default(),
-            ));
+            let ctx = eval
+                .heap()
+                .alloc(AnalysisContext::prepare(
+                    eval.heap(),
+                    Some(attributes),
+                    Some(label),
+                    Some(plugins),
+                    registry,
+                    DigestConfig::testing_default(),
+                ))
+                .to_value();
 
             let returned = eval.eval_function(test_function, &[ctx], &[]);
             result_handler(returned)

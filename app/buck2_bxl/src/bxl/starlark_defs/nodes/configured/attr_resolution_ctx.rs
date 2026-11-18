@@ -47,6 +47,7 @@ pub(crate) struct LazyAttrResolutionCache {
 pub(crate) struct LazyAttrResolutionContext<'v, 'a, 'e, 'c> {
     pub(crate) eval: &'c mut Evaluator<'v, 'a, 'e>,
     pub(super) configured_node: &'v ConfiguredTargetNode,
+    pub(super) execution_platform_resolution: &'v ExecutionPlatformResolution,
     pub(super) ctx: &'v BxlContext<'v>,
     pub(crate) cache: RefMut<'c, LazyAttrResolutionCache>,
 }
@@ -152,6 +153,6 @@ impl<'v, 'a, 'e, 'c> AttrResolutionContext<'v> for LazyAttrResolutionContext<'v,
     }
 
     fn execution_platform_resolution(&self) -> &ExecutionPlatformResolution {
-        self.configured_node.execution_platform_resolution()
+        self.execution_platform_resolution
     }
 }

@@ -15,200 +15,185 @@
  * limitations under the License.
  */
 
+use std::convert::Infallible;
+
 use num_bigint::BigInt;
 
-use crate::typing::Ty;
 use crate::values::AllocFrozenValue;
 use crate::values::AllocValue;
 use crate::values::FrozenHeap;
 use crate::values::Heap;
 use crate::values::UnpackValue;
-use crate::values::Value;
-use crate::values::type_repr::StarlarkTypeRepr;
+use crate::values::ValueOf;
 use crate::values::types::int::int_or_big::StarlarkInt;
 use crate::values::types::int::int_or_big::StarlarkIntRef;
-
-impl StarlarkTypeRepr for u32 {
-    type Canonical = <i32 as StarlarkTypeRepr>::Canonical;
-
-    fn starlark_type_repr() -> Ty {
-        i32::starlark_type_repr()
-    }
-}
+use crate::values::types::int::view::IntView;
 
 impl<'v> AllocValue<'v> for u32 {
+    type Type = IntView<'v>;
+
     #[inline]
-    fn alloc_value(self, heap: Heap<'v>) -> Value<'v> {
-        heap.alloc(StarlarkInt::from(self))
+    fn alloc_value(self, heap: Heap<'v>) -> ValueOf<'v, Self::Type> {
+        StarlarkInt::from(self).alloc_value(heap)
     }
 }
 
 impl<'fv> AllocFrozenValue<'fv> for u32 {
+    type Type = IntView<'fv>;
+
     #[inline]
-    fn alloc_frozen_value(self, heap: FrozenHeap<'fv>) -> Value<'fv> {
-        heap.alloc(StarlarkInt::from(self))
-    }
-}
-
-impl StarlarkTypeRepr for u64 {
-    type Canonical = <i32 as StarlarkTypeRepr>::Canonical;
-
-    fn starlark_type_repr() -> Ty {
-        i32::starlark_type_repr()
+    fn alloc_frozen_value(self, heap: FrozenHeap<'fv>) -> ValueOf<'fv, Self::Type> {
+        StarlarkInt::from(self).alloc_frozen_value(heap)
     }
 }
 
 impl<'v> AllocValue<'v> for u64 {
+    type Type = IntView<'v>;
+
     #[inline]
-    fn alloc_value(self, heap: Heap<'v>) -> Value<'v> {
-        heap.alloc(StarlarkInt::from(self))
+    fn alloc_value(self, heap: Heap<'v>) -> ValueOf<'v, Self::Type> {
+        StarlarkInt::from(self).alloc_value(heap)
     }
 }
 
 impl<'fv> AllocFrozenValue<'fv> for u64 {
+    type Type = IntView<'fv>;
+
     #[inline]
-    fn alloc_frozen_value(self, heap: FrozenHeap<'fv>) -> Value<'fv> {
-        heap.alloc(StarlarkInt::from(self))
-    }
-}
-
-impl StarlarkTypeRepr for i64 {
-    type Canonical = <i32 as StarlarkTypeRepr>::Canonical;
-
-    fn starlark_type_repr() -> Ty {
-        i32::starlark_type_repr()
+    fn alloc_frozen_value(self, heap: FrozenHeap<'fv>) -> ValueOf<'fv, Self::Type> {
+        StarlarkInt::from(self).alloc_frozen_value(heap)
     }
 }
 
 impl<'v> AllocValue<'v> for i64 {
+    type Type = IntView<'v>;
+
     #[inline]
-    fn alloc_value(self, heap: Heap<'v>) -> Value<'v> {
-        heap.alloc(StarlarkInt::from(self))
+    fn alloc_value(self, heap: Heap<'v>) -> ValueOf<'v, Self::Type> {
+        StarlarkInt::from(self).alloc_value(heap)
     }
 }
 
 impl<'fv> AllocFrozenValue<'fv> for i64 {
+    type Type = IntView<'fv>;
+
     #[inline]
-    fn alloc_frozen_value(self, heap: FrozenHeap<'fv>) -> Value<'fv> {
-        heap.alloc(StarlarkInt::from(self))
-    }
-}
-
-impl StarlarkTypeRepr for usize {
-    type Canonical = <i32 as StarlarkTypeRepr>::Canonical;
-
-    fn starlark_type_repr() -> Ty {
-        i32::starlark_type_repr()
+    fn alloc_frozen_value(self, heap: FrozenHeap<'fv>) -> ValueOf<'fv, Self::Type> {
+        StarlarkInt::from(self).alloc_frozen_value(heap)
     }
 }
 
 impl<'v> AllocValue<'v> for usize {
+    type Type = IntView<'v>;
+
     #[inline]
-    fn alloc_value(self, heap: Heap<'v>) -> Value<'v> {
-        heap.alloc(StarlarkInt::from(self))
+    fn alloc_value(self, heap: Heap<'v>) -> ValueOf<'v, Self::Type> {
+        StarlarkInt::from(self).alloc_value(heap)
     }
 }
 
 impl<'fv> AllocFrozenValue<'fv> for usize {
+    type Type = IntView<'fv>;
+
     #[inline]
-    fn alloc_frozen_value(self, heap: FrozenHeap<'fv>) -> Value<'fv> {
-        heap.alloc(StarlarkInt::from(self))
-    }
-}
-
-impl StarlarkTypeRepr for isize {
-    type Canonical = <i32 as StarlarkTypeRepr>::Canonical;
-
-    fn starlark_type_repr() -> Ty {
-        i32::starlark_type_repr()
+    fn alloc_frozen_value(self, heap: FrozenHeap<'fv>) -> ValueOf<'fv, Self::Type> {
+        StarlarkInt::from(self).alloc_frozen_value(heap)
     }
 }
 
 impl<'v> AllocValue<'v> for isize {
+    type Type = IntView<'v>;
+
     #[inline]
-    fn alloc_value(self, heap: Heap<'v>) -> Value<'v> {
-        heap.alloc(StarlarkInt::from(self))
+    fn alloc_value(self, heap: Heap<'v>) -> ValueOf<'v, Self::Type> {
+        StarlarkInt::from(self).alloc_value(heap)
     }
 }
 
 impl<'fv> AllocFrozenValue<'fv> for isize {
+    type Type = IntView<'fv>;
+
     #[inline]
-    fn alloc_frozen_value(self, heap: FrozenHeap<'fv>) -> Value<'fv> {
-        heap.alloc(StarlarkInt::from(self))
-    }
-}
-
-impl StarlarkTypeRepr for BigInt {
-    type Canonical = <i32 as StarlarkTypeRepr>::Canonical;
-
-    fn starlark_type_repr() -> Ty {
-        i32::starlark_type_repr()
+    fn alloc_frozen_value(self, heap: FrozenHeap<'fv>) -> ValueOf<'fv, Self::Type> {
+        StarlarkInt::from(self).alloc_frozen_value(heap)
     }
 }
 
 impl<'v> AllocValue<'v> for BigInt {
+    type Type = IntView<'v>;
+
     #[inline]
-    fn alloc_value(self, heap: Heap<'v>) -> Value<'v> {
-        heap.alloc(StarlarkInt::from(self))
+    fn alloc_value(self, heap: Heap<'v>) -> ValueOf<'v, Self::Type> {
+        StarlarkInt::from(self).alloc_value(heap)
     }
 }
 
 impl<'fv> AllocFrozenValue<'fv> for BigInt {
-    fn alloc_frozen_value(self, heap: FrozenHeap<'fv>) -> Value<'fv> {
-        heap.alloc(StarlarkInt::from(self))
+    type Type = IntView<'fv>;
+
+    fn alloc_frozen_value(self, heap: FrozenHeap<'fv>) -> ValueOf<'fv, Self::Type> {
+        StarlarkInt::from(self).alloc_frozen_value(heap)
     }
 }
 
 impl<'v> UnpackValue<'v> for u32 {
+    type Type = IntView<'v>;
     type Error = crate::Error;
 
-    fn unpack_value_impl(value: Value<'v>) -> crate::Result<Option<u32>> {
-        value.unpack_integer()
+    #[inline]
+    fn unpack(_value: ValueOf<'v, IntView<'v>>, int: IntView<'v>) -> crate::Result<Self> {
+        int.to_integer()
     }
 }
 
 impl<'v> UnpackValue<'v> for u64 {
+    type Type = IntView<'v>;
     type Error = crate::Error;
 
-    fn unpack_value_impl(value: Value<'v>) -> crate::Result<Option<u64>> {
-        value.unpack_integer()
+    #[inline]
+    fn unpack(_value: ValueOf<'v, IntView<'v>>, int: IntView<'v>) -> crate::Result<Self> {
+        int.to_integer()
     }
 }
 
 impl<'v> UnpackValue<'v> for i64 {
+    type Type = IntView<'v>;
     type Error = crate::Error;
 
-    fn unpack_value_impl(value: Value<'v>) -> crate::Result<Option<i64>> {
-        value.unpack_integer()
+    #[inline]
+    fn unpack(_value: ValueOf<'v, IntView<'v>>, int: IntView<'v>) -> crate::Result<Self> {
+        int.to_integer()
     }
 }
 
 impl<'v> UnpackValue<'v> for usize {
+    type Type = IntView<'v>;
     type Error = crate::Error;
 
-    fn unpack_value_impl(value: Value<'v>) -> crate::Result<Option<usize>> {
-        value.unpack_integer()
+    #[inline]
+    fn unpack(_value: ValueOf<'v, IntView<'v>>, int: IntView<'v>) -> crate::Result<Self> {
+        int.to_integer()
     }
 }
 
 impl<'v> UnpackValue<'v> for isize {
+    type Type = IntView<'v>;
     type Error = crate::Error;
 
-    fn unpack_value_impl(value: Value<'v>) -> crate::Result<Option<isize>> {
-        value.unpack_integer()
+    #[inline]
+    fn unpack(_value: ValueOf<'v, IntView<'v>>, int: IntView<'v>) -> crate::Result<Self> {
+        int.to_integer()
     }
 }
 
 impl<'v> UnpackValue<'v> for BigInt {
-    type Error = crate::Error;
+    type Type = IntView<'v>;
+    type Error = Infallible;
 
-    fn unpack_value_impl(value: Value<'v>) -> crate::Result<Option<BigInt>> {
-        let Some(int) = StarlarkIntRef::unpack_value_opt(value) else {
-            return Ok(None);
-        };
-        Ok(match int {
-            StarlarkIntRef::Small(x) => Some(BigInt::from(x.to_i32())),
-            StarlarkIntRef::Big(x) => Some(x.get().to_owned()),
+    fn unpack(_value: ValueOf<'v, IntView<'v>>, int: IntView<'v>) -> Result<Self, Infallible> {
+        Ok(match int.as_int_ref() {
+            StarlarkIntRef::Small(x) => BigInt::from(x.to_i32()),
+            StarlarkIntRef::Big(x) => x.get().to_owned(),
         })
     }
 }

@@ -10,10 +10,12 @@
 
 package com.facebook.buck.util.zip;
 
+import com.facebook.infer.annotation.Nullsafe;
 import java.io.IOException;
 import java.io.OutputStream;
 import java.util.zip.GZIPOutputStream;
 
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public class BestCompressionGZIPOutputStream extends GZIPOutputStream {
 
   public BestCompressionGZIPOutputStream(OutputStream out, boolean syncFlush) throws IOException {

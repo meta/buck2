@@ -328,7 +328,7 @@ impl<'c, 'd: 'c> DiceCalculationDelegate<'c, 'd> {
         // We expect these to be small + simple
         // ast-grep-ignore: rust/buck2-no-starlark-module
         let frozen = Module::with_temp_heap(|module| {
-            module.set("value", module.heap().alloc(value));
+            module.set("value", module.heap().alloc(value).to_value());
             module
                 .freeze_named(FrozenHeapName::User(Box::new(StarlarkEvalKind::Load(
                     Arc::new(OwnedStarlarkModulePath::new(starlark_file)),
@@ -358,7 +358,7 @@ impl<'c, 'd: 'c> DiceCalculationDelegate<'c, 'd> {
         // We expect these to be small + simple
         // ast-grep-ignore: rust/buck2-no-starlark-module
         let frozen = Module::with_temp_heap(|module| {
-            module.set("value", module.heap().alloc(json_value));
+            module.set("value", module.heap().alloc(json_value).to_value());
             module
                 .freeze_named(FrozenHeapName::User(Box::new(StarlarkEvalKind::Load(
                     Arc::new(OwnedStarlarkModulePath::new(starlark_file)),

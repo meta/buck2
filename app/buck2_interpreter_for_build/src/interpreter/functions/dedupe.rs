@@ -30,7 +30,7 @@ pub(crate) fn register_dedupe(builder: &mut GlobalsBuilder) {
                 res.push(v);
             }
         }
-        Ok(heap.alloc(AllocList(res)))
+        Ok(heap.alloc(AllocList(res)).to_value())
     }
 }
 

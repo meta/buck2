@@ -19,7 +19,7 @@
 
 use thiserror::Error;
 
-use crate::values::StarlarkValue;
+use crate::values::StarlarkType;
 use crate::values::Value;
 
 /// Common errors returned by Starlark evaluation.
@@ -118,7 +118,7 @@ impl ValueError {
 
     /// Helper to create an [`OperationNotSupported`](ValueError::OperationNotSupported) error.
     #[cold]
-    pub fn unsupported<'v, T, V: StarlarkValue<'v>>(_left: &V, op: &str) -> crate::Result<T> {
+    pub fn unsupported<'v, T, V: StarlarkType<'v>>(_left: &V, op: &str) -> crate::Result<T> {
         Self::unsupported_owned(V::TYPE, op, None)
     }
 
@@ -129,7 +129,7 @@ impl ValueError {
 
     /// Helper to create an [`OperationNotSupported`](ValueError::OperationNotSupportedBinary) error.
     #[cold]
-    pub fn unsupported_with<'v, T, V: StarlarkValue<'v>>(
+    pub fn unsupported_with<'v, T, V: StarlarkType<'v>>(
         _left: &V,
         op: &str,
         right: Value,

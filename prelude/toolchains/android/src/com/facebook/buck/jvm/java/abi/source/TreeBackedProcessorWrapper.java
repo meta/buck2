@@ -10,6 +10,7 @@
 
 package com.facebook.buck.jvm.java.abi.source;
 
+import com.facebook.infer.annotation.Nullsafe;
 import java.util.LinkedHashSet;
 import java.util.Set;
 import java.util.stream.Collector;
@@ -31,6 +32,7 @@ import javax.lang.model.element.TypeElement;
  * <p>Annotation processors that depend on compiler internals or {@link com.sun.source.util.Trees}
  * will not run properly (typically they will crash) when run inside this wrapper.
  */
+@Nullsafe(Nullsafe.Mode.LOCAL)
 class TreeBackedProcessorWrapper implements Processor {
   private final Processor inner;
   private final FrontendOnlyJavacTask task;

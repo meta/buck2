@@ -23,7 +23,7 @@ use buck2_build_api::anon_target::AnonTargetDependentAnalysisResults;
 use buck2_build_api::anon_target::AnonTargetDyn;
 use buck2_build_api::artifact_groups::promise::PromiseArtifactId;
 use buck2_build_api::artifact_groups::promise::PromiseArtifactResolveError;
-use buck2_build_api::interpreter::rule_defs::artifact::starlark_artifact_like::ValueAsInputArtifactLike;
+use buck2_build_api::interpreter::rule_defs::artifact::starlark_artifact_like::StarlarkArtifactView;
 use buck2_core::configuration::data::ConfigurationData;
 use buck2_core::configuration::pair::ConfigurationNoExec;
 use buck2_core::content_hash::ContentBasedPathHash;
@@ -60,9 +60,9 @@ use starlark::environment::Module;
 use starlark::eval::Evaluator;
 use starlark::values::UnpackValue;
 use starlark::values::Value;
-use starlark::values::ValueOfUnchecked;
+use starlark::values::ValueOf;
 use starlark::values::structs::AllocStruct;
-use starlark::values::structs::StructRef;
+use starlark::values::structs::Struct;
 use strong_hash::StrongHash;
 
 use crate::anon_target_attr::AnonTargetAttr;
@@ -153,12 +153,14 @@ impl AnonTarget {
         variant.hash(&mut full_hash);
         let full_hash = full_hash.finish();
 
+        // `StrongHash`, not `Hash`: the standard hash of a target label is 32 bits with many
+        // collisions between similar names, and this hash names the output directory.
         let mut strong_hash = Blake3StrongHasher::new();
-        rule_type.hash(&mut strong_hash);
-        name.hash(&mut strong_hash);
-        attrs.hash(&mut strong_hash);
-        exec_cfg.hash(&mut strong_hash);
-        variant.hash(&mut strong_hash);
+        rule_type.strong_hash(&mut strong_hash);
+        name.strong_hash(&mut strong_hash);
+        attrs.strong_hash(&mut strong_hash);
+        exec_cfg.strong_hash(&mut strong_hash);
+        variant.strong_hash(&mut strong_hash);
         let strong_hash = strong_hash.finish();
 
         AnonTarget {
@@ -210,7 +212,7 @@ impl AnonTargetDyn for AnonTarget {
         attrs_spec: &AttributeSpec,
         dependents_analyses: AnonTargetDependentAnalysisResults<'_>,
         exec_resolution: ExecutionPlatformResolution,
-    ) -> buck2_error::Result<ValueOfUnchecked<'v, StructRef<'static>>> {
+    ) -> buck2_error::Result<ValueOf<'v, Struct<'v>>> {
         let dep_analysis_results =
             get_deps_from_analysis_results(dependents_analyses.dep_analysis_results)?;
 
@@ -249,11 +251,7 @@ impl AnonTargetDyn for AnonTarget {
         // Storage order (attribute ids) is an internal detail; present the
         // fields in name order.
         resolved_attrs.sort_unstable_by_key(|(name, _)| *name);
-        let attributes = env
-            .heap()
-            .alloc_typed_unchecked(AllocStruct(resolved_attrs))
-            .cast();
-        Ok(attributes)
+        Ok(ValueOf::alloc(env.heap(), AllocStruct(resolved_attrs)))
     }
 
     fn get_fulfilled_promise_artifacts<'v>(
@@ -271,8 +269,11 @@ impl AnonTargetDyn for AnonTarget {
                 let promise_id =
                     PromiseArtifactId::new(BaseDeferredKey::AnonTarget(self.dupe()), id);
 
-                match ValueAsInputArtifactLike::unpack_value(artifact)? {
-                    Some(artifact) => Ok((promise_id, artifact.0.get_bound_artifact()?)),
+                match StarlarkArtifactView::unpack_value(artifact)? {
+                    Some(artifact) => Ok((
+                        promise_id,
+                        artifact.as_input_artifact_like().get_bound_artifact()?,
+                    )),
                     None => {
                         Err(PromiseArtifactResolveError::NotAnArtifact(artifact.to_repr()).into())
                     }
@@ -385,6 +386,91 @@ impl BaseDeferredKeyDyn for AnonTarget {
         match &self.variant {
             AnonTargetVariant::Bzl => None,
             AnonTargetVariant::Bxl(global_cfg_options) => Some(global_cfg_options.dupe()),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+
+    use buck2_core::bzl::ImportPath;
+    use buck2_core::configuration::pair::ConfigurationNoExec;
+    use buck2_core::deferred::base_deferred_key::BaseDeferredKeyDyn;
+    use buck2_core::fs::buck_out_path::BuckOutPathKind;
+    use buck2_core::fs::project_rel_path::ProjectRelativePath;
+    use buck2_core::provider::label::ProvidersLabel;
+    use buck2_core::target::label::label::TargetLabel;
+    use buck2_fs::paths::forward_rel_path::ForwardRelativePath;
+    use buck2_node::attrs::spec::AttributeId;
+    use buck2_node::attrs::values::SortedAttrValues;
+    use buck2_node::bzl_or_bxl_path::BzlOrBxlPath;
+    use buck2_node::rule_type::StarlarkRuleType;
+    use buck2_util::vec2::Vec2;
+
+    use super::AnonTarget;
+    use super::AnonTargetVariant;
+    use crate::anon_target_attr::AnonTargetAttr;
+
+    /// `ctx.actions.anon_target(shadow, {"target": <label>})` with the default name.
+    fn shadow(label: &str) -> AnonTarget {
+        // `AttributeId` has no public constructor; it derives `Deserialize` over its index.
+        let id: AttributeId = serde_json::from_str("0").unwrap();
+        let mut attrs = Vec2::new();
+        attrs.push(
+            id,
+            AnonTargetAttr::Label(ProvidersLabel::default_for(TargetLabel::testing_parse(
+                label,
+            ))),
+        );
+        AnonTarget::new(
+            Arc::new(StarlarkRuleType {
+                path: BzlOrBxlPath::Bzl(ImportPath::testing_new("root//:defs.bzl")),
+                name: "shadow".to_owned(),
+            }),
+            TargetLabel::testing_parse("anon//:shadow"),
+            SortedAttrValues::new(attrs),
+            ConfigurationNoExec::testing_new(),
+            AnonTargetVariant::Bzl,
+        )
+    }
+
+    fn out_path(t: &AnonTarget) -> String {
+        t.make_hashed_path(
+            ProjectRelativePath::unchecked_new("buck-out/v2"),
+            ForwardRelativePath::unchecked_new("gen"),
+            None,
+            ForwardRelativePath::unchecked_new("out.txt"),
+            BuckOutPathKind::Configuration,
+            None,
+        )
+        .unwrap()
+        .as_str()
+        .to_owned()
+    }
+
+    /// 33 anon targets that differ only in a label attribute whose target names are 8 bytes
+    /// long and share their first 4 bytes.
+    fn similar_targets() -> Vec<AnonTarget> {
+        (0..33)
+            .map(|i| shadow(&format!("root//pkg:lib_{i:04}")))
+            .collect()
+    }
+
+    /// Distinct anon targets get distinct `strong_hash` values and output paths, also when they
+    /// differ only in a label whose 32-bit `Hash` collides with another's.
+    #[test]
+    fn test_distinct_anon_targets_get_distinct_output_paths() {
+        let targets = similar_targets();
+        for i in 0..targets.len() {
+            for j in i + 1..targets.len() {
+                assert_ne!(targets[i], targets[j]);
+                assert_ne!(
+                    targets[i].strong_hash, targets[j].strong_hash,
+                    "{i} and {j} share a strong hash"
+                );
+                assert_ne!(out_path(&targets[i]), out_path(&targets[j]));
+            }
         }
     }
 }

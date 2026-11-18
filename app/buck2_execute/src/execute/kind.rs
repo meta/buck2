@@ -14,6 +14,7 @@ use allocative::Allocative;
 use buck2_core::execution_types::executor_config::RemoteExecutorUseCase;
 use buck2_core::fs::project_rel_path::ProjectRelativePathBuf;
 use buck2_data::RePlatform;
+use buck2_data::local_command::EnvironmentRule;
 use buck2_hash::BuckFixedSortedMap;
 use derive_more::Display;
 use dupe::Dupe;
@@ -53,6 +54,11 @@ pub enum CommandExecutionKind {
         digest: ActionDigest,
         command: Vec<String>,
         env: BuckFixedSortedMap<String, String>,
+        /// Working directory, relative to the project root.
+        working_directory: ProjectRelativePathBuf,
+        /// How the command's environment was built from buck2's own; `Unspecified` when no rule
+        /// applied.
+        environment_rule: EnvironmentRule,
     },
     /// This action was submitted to a remote executor.
     #[display("remote")]
@@ -69,6 +75,9 @@ pub enum CommandExecutionKind {
         /// was passed to build options
         materialized_outputs_for_failed_actions: Option<Vec<ProjectRelativePathBuf>>,
         origin: RemoteExecutionOrigin,
+        /// What the RE worker reported, when RE ran this command for this build rather than
+        /// reusing another execution's result.
+        re_worker: Option<Box<buck2_data::ReWorkerDetails>>,
     },
     /// This action was served by the action cache and not executed.
     #[display("action_cache")]
@@ -147,6 +156,8 @@ impl CommandExecutionKind {
                 command,
                 env,
                 digest,
+                working_directory,
+                environment_rule,
             } => {
                 if omit_details {
                     Command::OmittedLocalCommand(buck2_data::OmittedLocalCommand {
@@ -163,7 +174,11 @@ impl CommandExecutionKind {
                                 value: value.clone(),
                             })
                             .collect(),
-                        ..Default::default()
+                        context: Some(buck2_data::LocalCommandContext {
+                            working_directory: (!working_directory.as_str().is_empty())
+                                .then(|| working_directory.to_string()),
+                            environment_rule: (*environment_rule).into(),
+                        }),
                     })
                 }
             }
@@ -173,6 +188,7 @@ impl CommandExecutionKind {
                 materialized_inputs_for_failed,
                 materialized_outputs_for_failed_actions,
                 origin,
+                re_worker,
             } => Command::RemoteCommand(buck2_data::RemoteCommand {
                 action_digest: details.action_digest.to_string(),
                 cache_hit: false,
@@ -200,7 +216,7 @@ impl CommandExecutionKind {
                             .collect::<Vec<_>>()
                     })
                     .unwrap_or_default(),
-                re_worker: None,
+                re_worker: re_worker.clone(),
             }),
             Self::ActionCache { details } => Command::RemoteCommand(buck2_data::RemoteCommand {
                 action_digest: details.action_digest.to_string(),
@@ -331,9 +347,56 @@ fn re_platform_name_from_properties(
 
 #[cfg(test)]
 mod tests {
+    use buck2_common::cas_digest::CasDigest;
+    use buck2_data::command_execution_kind::Command;
     use buck2_data::re_platform::Property;
 
     use super::*;
+    use crate::execute::environment_inheritance::EnvironmentInheritance;
+
+    fn local_context(
+        working_directory: &str,
+        environment_rule: EnvironmentRule,
+    ) -> buck2_data::LocalCommandContext {
+        let kind = CommandExecutionKind::Local {
+            digest: CasDigest::new_blake3([0].repeat(32).as_slice().try_into().unwrap(), 1),
+            command: vec!["cc".to_owned()],
+            env: BuckFixedSortedMap::new(),
+            working_directory: ProjectRelativePathBuf::unchecked_new(working_directory.to_owned()),
+            environment_rule,
+        };
+        match kind.to_proto(false).command {
+            Some(Command::LocalCommand(local)) => local.context,
+            _ => None,
+        }
+        .expect("a local kind converts to a local command with a context")
+    }
+
+    #[test]
+    fn local_command_records_a_non_root_working_directory_and_the_rule() {
+        let test = local_context("fbcode", EnvironmentInheritance::test_allowlist().rule());
+        assert_eq!(test.working_directory.as_deref(), Some("fbcode"));
+        assert_eq!(test.environment_rule(), EnvironmentRule::TestAllowlist);
+
+        let build = local_context(
+            "",
+            EnvironmentInheritance::local_command_exclusions().rule(),
+        );
+        assert_eq!(
+            build.working_directory, None,
+            "the project root is the default"
+        );
+        assert_eq!(
+            build.environment_rule(),
+            EnvironmentRule::InheritExceptExclusions
+        );
+
+        assert_eq!(
+            local_context("", EnvironmentRule::Unspecified).environment_rule(),
+            EnvironmentRule::Unspecified,
+            "no rule: buck2's whole environment"
+        );
+    }
 
     fn prop(name: &str, value: &str) -> Property {
         Property {

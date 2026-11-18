@@ -1,0 +1,4 @@
+load("@fbcode//buck2:ci.bzl", "ci_linux_only")
+
+# This fails on Mac with a link error in the gRPC library
+ci_linux_only()

@@ -39,6 +39,10 @@ impl LabeledNode for ConfiguredTargetNode {
 impl QueryTarget for ConfiguredTargetNode {
     type Attr<'a> = ConfiguredAttr;
 
+    fn prefetch_bodies<'a>(targets: impl IntoIterator<Item = &'a Self>) -> buck2_error::Result<()> {
+        ConfiguredTargetNode::prefetch_bodies(targets)
+    }
+
     fn label_for_filter(&self) -> String {
         self.label().unconfigured().to_string()
     }
@@ -51,8 +55,8 @@ impl QueryTarget for ConfiguredTargetNode {
         Cow::Borrowed(self.label().name().as_str())
     }
 
-    fn buildfile_path(&self) -> &BuildFilePath {
-        ConfiguredTargetNode::buildfile_path(self)
+    fn buildfile_path(&self) -> buck2_error::Result<&BuildFilePath> {
+        Ok(self.body()?.buildfile_path())
     }
 
     fn deps(&self) -> impl Iterator<Item = &Self::Key> + Send + '_ {
@@ -76,8 +80,8 @@ impl QueryTarget for ConfiguredTargetNode {
     fn toolchain_deps(&self) -> impl Iterator<Item = &Self::Key> + Send + '_ {
         ConfiguredTargetNode::toolchain_deps(self).map(|v| v.label())
     }
-    fn tests(&self) -> Option<impl Iterator<Item = Self::Key> + Send + '_> {
-        Some(self.tests().map(|t| t.target().dupe()))
+    fn tests(&self) -> buck2_error::Result<Option<impl Iterator<Item = Self::Key> + Send + '_>> {
+        Ok(Some(self.body()?.tests().map(|t| t.target().dupe())))
     }
 
     fn special_attrs_for_each<
@@ -87,7 +91,7 @@ impl QueryTarget for ConfiguredTargetNode {
         &self,
         mut func: F,
     ) -> Result<(), E> {
-        for (name, attr) in ConfiguredTargetNode::special_attrs(self) {
+        for (name, attr) in self.body()?.special_attrs() {
             func(name, &attr)?;
         }
         Ok(())
@@ -107,7 +111,7 @@ impl QueryTarget for ConfiguredTargetNode {
         &self,
         mut func: F,
     ) -> Result<(), E> {
-        for a in self.attrs(AttrInspectOptions::All) {
+        for a in self.body()?.attrs(AttrInspectOptions::All) {
             func(a.name, &a.value)?;
         }
         Ok(())
@@ -120,7 +124,7 @@ impl QueryTarget for ConfiguredTargetNode {
         &self,
         mut func: F,
     ) -> Result<(), E> {
-        for a in self.attrs(AttrInspectOptions::DefinedOnly) {
+        for a in self.body()?.attrs(AttrInspectOptions::DefinedOnly) {
             func(a.name, &a.value)?;
         }
         Ok(())
@@ -132,17 +136,18 @@ impl QueryTarget for ConfiguredTargetNode {
         mut func: F,
     ) -> buck2_error::Result<R> {
         Ok(func(
-            self.get(key, AttrInspectOptions::All)
+            self.body()?
+                .get(key, AttrInspectOptions::All)
                 .as_ref()
                 .map(|v| &v.value),
         ))
     }
 
-    fn inputs_for_each<E, F: FnMut(CellPath) -> Result<(), E>>(
+    fn inputs_for_each<E: From<buck2_error::Error>, F: FnMut(CellPath) -> Result<(), E>>(
         &self,
         mut func: F,
     ) -> Result<(), E> {
-        for input in self.inputs() {
+        for input in self.body()?.inputs() {
             func(input)?;
         }
         Ok(())
@@ -153,14 +158,15 @@ impl QueryTarget for ConfiguredTargetNode {
         key: &str,
         mut func: F,
     ) -> buck2_error::Result<R> {
+        let body = self.body()?;
         Ok(
-            match self
+            match body
                 .get(key, AttrInspectOptions::All)
                 .as_ref()
                 .map(|v| &v.value)
             {
                 Some(attr) => func(Some(attr)),
-                None => func(self.special_attr_or_none(key).as_ref()),
+                None => func(body.special_attr_or_none(key).as_ref()),
             },
         )
     }

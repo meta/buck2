@@ -245,9 +245,14 @@ def get_no_as_needed_shared_libs_flags(linker_type: LinkerType) -> list[str]:
 
     return args
 
+def get_link_flags_for_reproducible_build(linker_type: LinkerType) -> list[str]:
+    if linker_type == LinkerType("windows"):
+        return ["/Brepro"]
+    return []
+
 def get_output_flags(linker_type: LinkerType, output: Artifact) -> list[ArgLike]:
     if linker_type == LinkerType("windows"):
-        return ["/Brepro", cmd_args(output.as_output(), format = "/OUT:{}")]
+        return get_link_flags_for_reproducible_build(linker_type) + [cmd_args(output.as_output(), format = "/OUT:{}")]
     else:
         return ["-o", output.as_output()]
 
@@ -259,7 +264,7 @@ def get_import_library(ctx: AnalysisContext, linker_type: LinkerType, output_sho
         return None, []
 
 def get_deffile_flags(ctx: AnalysisContext, linker_type: LinkerType) -> list[ArgLike]:
-    if linker_type == LinkerType("windows") and ctx.attrs.deffile != None:
+    if linker_type == LinkerType("windows") and getattr(ctx.attrs, "deffile", None) != None:
         return [
             cmd_args(ctx.attrs.deffile, format = "/DEF:{}"),
         ]

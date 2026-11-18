@@ -14,30 +14,36 @@ import com.facebook.buck.jvm.java.abi.source.api.SourceOnlyAbiRuleInfoFactory.So
 import com.facebook.buck.jvm.java.plugin.api.BuckJavacTaskListener;
 import com.facebook.buck.jvm.java.plugin.api.BuckJavacTaskProxy;
 import com.facebook.buck.jvm.java.plugin.api.PluginClassLoader;
+import com.facebook.infer.annotation.Nullsafe;
 import java.lang.reflect.Constructor;
 import java.util.function.Supplier;
 import javax.tools.Diagnostic;
+import org.jspecify.annotations.Nullable;
 
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public final class SourceBasedAbiStubber {
-  public static BuckJavacTaskListener newValidatingTaskListener(
+  public static BuckJavacTaskListener newInheritedMemberTypeValidatingTaskListener(
       PluginClassLoader pluginLoader,
       BuckJavacTaskProxy task,
       SourceOnlyAbiRuleInfo ruleInfo,
       Supplier<Boolean> errorsExist,
-      Diagnostic.Kind messageKind) {
+      Diagnostic.@Nullable Kind messageKind) {
     try {
-      Class<?> validatingTaskListenerClass =
-          pluginLoader.loadClass(
-              "com.facebook.buck.jvm.java.abi.source.ValidatingTaskListener", Object.class);
+      String className = "com.facebook.buck.jvm.java.abi.source.ValidatingTaskListener";
+      Class<?> validatingTaskListenerClass = pluginLoader.loadClass(className, Object.class);
+      if (validatingTaskListenerClass == null) {
+        throw new ClassNotFoundException(className);
+      }
       Constructor<?> constructor =
           validatingTaskListenerClass.getConstructor(
               BuckJavacTaskProxy.class,
               SourceOnlyAbiRuleInfo.class,
               Supplier.class,
-              Diagnostic.Kind.class);
+              Diagnostic.Kind.class,
+              boolean.class);
 
       return BuckJavacTaskListener.wrapRealTaskListener(
-          pluginLoader, constructor.newInstance(task, ruleInfo, errorsExist, messageKind));
+          pluginLoader, constructor.newInstance(task, ruleInfo, errorsExist, messageKind, true));
     } catch (ReflectiveOperationException e) {
       throw new RuntimeException(
           "Could not load source-generated ABI validator. Your compiler might not support this. "

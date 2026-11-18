@@ -47,13 +47,14 @@ use starlark::values::FreezeError;
 use starlark::values::FreezeResult;
 use starlark::values::Freezer;
 use starlark::values::FrozenValueTyped;
+use starlark::values::Heap;
 use starlark::values::StarlarkPagable;
 use starlark::values::StarlarkValue;
 use starlark::values::ThinBoxSliceValue;
 use starlark::values::Trace;
 use starlark::values::UnpackValue;
 use starlark::values::Value;
-use starlark::values::ValueOfUnchecked;
+use starlark::values::ValueOf;
 use starlark::values::ValueTyped;
 use starlark::values::list::AllocList;
 use starlark::values::starlark_value;
@@ -555,7 +556,7 @@ impl<'v> TransitiveSet<'v> {
                     .iter()
                     .map(|(name, spec)| {
                         let projected_value = eval
-                            .eval_function(spec.projection.get(), &[value], &[])
+                            .eval_function(spec.projection.to_value(), &[value], &[])
                             .map_err(|error| TransitiveSetError::ProjectionError {
                                 error: error.into(),
                                 name: name.clone(),
@@ -590,12 +591,12 @@ impl<'v> TransitiveSet<'v> {
                             })
                         })
                         .collect::<Result<Vec<_>, _>>()?;
-                    let children_values = eval.heap().alloc(AllocList(children_values));
+                    let children_values = eval.heap().alloc(AllocList(children_values)).to_value();
 
                     let value = value.unwrap_or_else(Value::new_none);
 
                     let reduced = eval
-                        .eval_function(reduce.get(), &[children_values, value], &[])
+                        .eval_function(reduce.to_value(), &[children_values, value], &[])
                         .map_err(|error| TransitiveSetError::ReductionError {
                             error: error.into(),
                             name: name.clone(),
@@ -779,36 +780,38 @@ fn transitive_set_methods(builder: &mut MethodsBuilder) {
         this: ValueTyped<'v, TransitiveSet<'v>>,
         projection: &str,
         #[starlark(require = named, default = "preorder")] ordering: &str,
-    ) -> starlark::Result<TransitiveSetJsonProjection<'v>> {
+        heap: Heap<'v>,
+    ) -> starlark::Result<ValueOf<'v, TransitiveSetJsonProjection<'v>>> {
         let def = this.definition;
 
         let index = def
             .operations()
             .get_index_of_projection(TransitiveSetProjectionKind::Json, projection)?;
 
-        Ok(TransitiveSetJsonProjection {
-            transitive_set: ValueOfUnchecked::<TransitiveSet<'static>>::new(this.to_value()),
+        Ok(heap.alloc(TransitiveSetJsonProjection {
+            transitive_set: this,
             projection: index,
             ordering: TransitiveSetOrdering::parse(ordering)?,
-        })
+        }))
     }
 
     fn project_as_args<'v>(
         this: ValueTyped<'v, TransitiveSet<'v>>,
         projection: &str,
         #[starlark(require = named, default = "preorder")] ordering: &str,
-    ) -> starlark::Result<TransitiveSetArgsProjection<'v>> {
+        heap: Heap<'v>,
+    ) -> starlark::Result<ValueOf<'v, TransitiveSetArgsProjection<'v>>> {
         let def = this.definition;
 
         let index = def
             .operations()
             .get_index_of_projection(TransitiveSetProjectionKind::Args, projection)?;
 
-        Ok(TransitiveSetArgsProjection {
-            transitive_set: ValueOfUnchecked::<TransitiveSet<'static>>::new(this.to_value()),
+        Ok(heap.alloc(TransitiveSetArgsProjection {
+            transitive_set: this,
             projection: index,
             ordering: TransitiveSetOrdering::parse(ordering)?,
-        })
+        }))
     }
 
     fn reduce<'v>(
@@ -845,11 +848,12 @@ fn transitive_set_methods(builder: &mut MethodsBuilder) {
     fn traverse<'v>(
         this: ValueTyped<'v, TransitiveSet<'v>>,
         #[starlark(require = named, default = "preorder")] ordering: &str,
-    ) -> starlark::Result<TransitiveSetTraversal<'v>> {
-        Ok(TransitiveSetTraversal {
-            inner: this.to_value(),
+        heap: Heap<'v>,
+    ) -> starlark::Result<ValueOf<'v, TransitiveSetTraversal<'v>>> {
+        Ok(heap.alloc(TransitiveSetTraversal {
+            inner: this,
             ordering: TransitiveSetOrdering::parse(ordering)?,
-        })
+        }))
     }
 
     #[starlark(attribute)]
@@ -867,7 +871,9 @@ fn transitive_set_methods(builder: &mut MethodsBuilder) {
         })
     }
     #[starlark(attribute)]
-    fn children<'v>(this: ValueTyped<'v, TransitiveSet<'v>>) -> starlark::Result<Vec<Value<'v>>> {
-        Ok(this.children.read()?.to_vec())
+    fn children<'v>(
+        this: ValueTyped<'v, TransitiveSet<'v>>,
+    ) -> starlark::Result<AllocList<Vec<Value<'v>>>> {
+        Ok(AllocList(this.children.read()?.to_vec()))
     }
 }

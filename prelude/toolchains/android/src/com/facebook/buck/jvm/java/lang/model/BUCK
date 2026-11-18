@@ -12,12 +12,15 @@ buck_java_library(
         "--add-exports",
         "jdk.compiler/com.sun.tools.javac.code=ALL-UNNAMED",
     ],
+    provided_deps = [
+        "prelude//toolchains/android/third-party:infer-annotations",
+        "prelude//toolchains/android/third-party:jspecify",
+    ],
     visibility = [
         "PUBLIC",
     ],
     deps = [
         "prelude//toolchains/android/src/com/facebook/buck/jvm/java/version/utils:utils",
-        "prelude//toolchains/android/src/com/facebook/buck/util/liteinfersupport:liteinfersupport",
         # Don't add deps that aren't already in the bootstrapper; any dependencies
         # here will pollute the compiler and annotation processor class loaders
     ],

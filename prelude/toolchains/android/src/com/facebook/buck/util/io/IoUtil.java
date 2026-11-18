@@ -10,10 +10,12 @@
 
 package com.facebook.buck.util.io;
 
+import com.facebook.infer.annotation.Nullsafe;
 import java.io.Closeable;
 import java.io.IOException;
 
 /** IO utilities. */
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public class IoUtil {
   /** Like {@link java.util.function.Function} but allows throwing {@link IOException}. */
   public interface IoFunction<A, B> {

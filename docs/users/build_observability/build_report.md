@@ -468,6 +468,28 @@ Pass `--streaming-build-report <path>` to have buck write build reports to
   without modifiers, and the other request's entry can end the stream reading
   `SUCCESS`. The final build report files both correctly.
 
+### Final-only streaming build reports
+
+`buck build` accepts `--streaming-build-report-final-only` together with
+`--streaming-build-report`. In this mode, output and configured-target updates
+do not write lines. A line is written when a requested target finishes, so the
+entry for the request that caused it has a terminal `SUCCESS` or `FAIL` status.
+Another `?modifier` request for the same target can still read `IN_PROGRESS` on
+that line. With `--fail-fast`, the error that stops the build is written once
+even when its target did not finish.
+
+If a build is cancelled or killed before a request finishes, final-only mode
+writes no completion line for that request. Previously written lines for
+completed requests remain available; another request's line can still carry an
+unfinished `?modifier` entry for the same target. This mode does not recover
+partially built targets, and a process killed during a write can leave a partial
+last line that readers must ignore.
+
+`buck test` does not support final-only streaming reports. It builds provider
+labels independently and currently has no event that says all provider labels
+for one requested target have finished. Its streaming report therefore keeps
+the incremental behavior described above.
+
 ### Lines from older buck2 versions
 
 No field on a line says which buck2 wrote it. On a buck2 that predates the

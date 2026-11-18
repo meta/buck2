@@ -27,7 +27,8 @@ use starlark::values::Heap;
 use starlark::values::NoSerialize;
 use starlark::values::StarlarkValue;
 use starlark::values::Value;
-use starlark::values::ValueTyped;
+use starlark::values::ValueOf;
+use starlark::values::list::AllocList;
 use starlark::values::starlark_value;
 
 #[derive(
@@ -117,9 +118,9 @@ fn starlark_analysis_result_methods(builder: &mut MethodsBuilder) {
         let mut result = Vec::new();
         for entry in collection.as_ref().iter_providers() {
             let (id, value) = entry?;
-            let name = heap.alloc(id.name.as_str());
+            let name = heap.alloc(id.name.as_str()).to_value();
             let path = match &id.path {
-                Some(p) => heap.alloc(p.to_string()),
+                Some(p) => heap.alloc(p.to_string()).to_value(),
                 None => Value::new_none(),
             };
             let info = heap.alloc(starlark::values::structs::AllocStruct([
@@ -129,7 +130,7 @@ fn starlark_analysis_result_methods(builder: &mut MethodsBuilder) {
             ]));
             result.push(info);
         }
-        Ok(heap.alloc(result))
+        Ok(heap.alloc(AllocList(result)).to_value())
     }
 
     /// Gets the configured providers label for this analysis result.
@@ -143,9 +144,13 @@ fn starlark_analysis_result_methods(builder: &mut MethodsBuilder) {
     ///         if analysis:
     ///             ctx.output.print(analysis.label())
     /// ```
-    fn label(this: &StarlarkAnalysisResult) -> starlark::Result<StarlarkConfiguredProvidersLabel> {
-        Ok(StarlarkConfiguredProvidersLabel::new(
-            this.lookup.label().dupe(),
+    fn label<'v>(
+        this: &StarlarkAnalysisResult,
+        heap: Heap<'v>,
+    ) -> starlark::Result<ValueOf<'v, StarlarkConfiguredProvidersLabel>> {
+        Ok(ValueOf::alloc(
+            heap,
+            StarlarkConfiguredProvidersLabel::new(this.lookup.label().dupe()),
         ))
     }
 
@@ -165,8 +170,8 @@ fn starlark_analysis_result_methods(builder: &mut MethodsBuilder) {
     fn as_dependency<'v>(
         this: &'v StarlarkAnalysisResult,
         eval: &mut Evaluator<'v, '_, '_>,
-    ) -> starlark::Result<ValueTyped<'v, Dependency<'v>>> {
-        Ok(eval.heap().alloc_typed(Dependency::new(
+    ) -> starlark::Result<ValueOf<'v, Dependency<'v>>> {
+        Ok(eval.heap().alloc(Dependency::new(
             eval.heap(),
             this.lookup.label().dupe(),
             this.lookup

@@ -16,21 +16,26 @@
  */
 
 use std::cmp::Ordering;
+use std::convert::Infallible;
 use std::ops::Add;
 use std::ops::Mul;
 use std::ops::Sub;
 
 use dupe::Dupe;
+use either::Either;
 
-use crate as starlark;
 use crate::collections::StarlarkHashValue;
 use crate::values::AllocFrozenValue;
 use crate::values::AllocValue;
+use crate::values::FrozenHeap;
+use crate::values::Heap;
 use crate::values::UnpackValue;
-use crate::values::type_repr::StarlarkTypeRepr;
+use crate::values::ValueOf;
+use crate::values::ValueTyped;
 use crate::values::types::float::StarlarkFloat;
 use crate::values::types::int::int_or_big::StarlarkInt;
 use crate::values::types::int::int_or_big::StarlarkIntRef;
+use crate::values::types::int::view::IntView;
 
 #[derive(Debug, thiserror::Error)]
 enum NumError {
@@ -45,7 +50,7 @@ enum NumError {
 /// It's an intermediate representation that facilitates conversions between
 /// numerical types and helps in implementation of arithmetical operations
 /// between them.
-#[derive(Clone, Debug, Dupe, Copy, StarlarkTypeRepr, UnpackValue)]
+#[derive(Clone, Debug, Dupe, Copy)]
 #[doc(hidden)]
 pub enum NumRef<'v> {
     Int(StarlarkIntRef<'v>),
@@ -53,17 +58,50 @@ pub enum NumRef<'v> {
     Float(StarlarkFloat),
 }
 
-#[derive(
-    Debug,
-    derive_more::Display,
-    StarlarkTypeRepr,
-    AllocValue,
-    AllocFrozenValue
-)]
+/// A conversion from `int | float`, not a type expression: both variants are by value.
+impl<'v> UnpackValue<'v> for NumRef<'v> {
+    type Type = Either<IntView<'v>, StarlarkFloat>;
+    type Error = Infallible;
+
+    #[inline]
+    fn unpack(
+        _value: ValueOf<'v, Self::Type>,
+        get: Either<IntView<'v>, ValueTyped<'v, StarlarkFloat>>,
+    ) -> Result<Self, Infallible> {
+        Ok(match get {
+            Either::Left(int) => NumRef::Int(int.as_int_ref()),
+            Either::Right(float) => NumRef::Float(*float.as_ref()),
+        })
+    }
+}
+
+#[derive(Debug, derive_more::Display)]
 #[doc(hidden)]
 pub enum Num {
     Int(StarlarkInt),
     Float(f64),
+}
+
+impl<'v> AllocValue<'v> for Num {
+    type Type = Either<IntView<'v>, StarlarkFloat>;
+
+    fn alloc_value(self, heap: Heap<'v>) -> ValueOf<'v, Self::Type> {
+        match self {
+            Num::Int(i) => ValueOf::left(i.alloc_value(heap)),
+            Num::Float(f) => ValueOf::right(f.alloc_value(heap)),
+        }
+    }
+}
+
+impl<'fv> AllocFrozenValue<'fv> for Num {
+    type Type = Either<IntView<'fv>, StarlarkFloat>;
+
+    fn alloc_frozen_value(self, heap: FrozenHeap<'fv>) -> ValueOf<'fv, Self::Type> {
+        match self {
+            Num::Int(i) => ValueOf::left(i.alloc_frozen_value(heap)),
+            Num::Float(f) => ValueOf::right(f.alloc_frozen_value(heap)),
+        }
+    }
 }
 
 impl<'v> NumRef<'v> {
@@ -244,6 +282,7 @@ mod tests {
     use num_bigint::BigInt;
 
     use super::*;
+    use crate::values::StringValue;
     use crate::values::Value;
     use crate::values::types::int::inline_int::InlineInt;
 
@@ -260,7 +299,7 @@ mod tests {
                 .is_none()
         );
         assert!(
-            NumRef::unpack_value(Value::new_empty_string())
+            NumRef::unpack_value(StringValue::default().to_value())
                 .unwrap()
                 .is_none()
         );

@@ -10,10 +10,14 @@ load("@fbcode//buck2/app:modifier.bzl", "buck2_modifiers")
 load("@fbcode_macros//build_defs:native_rules.bzl", "buck_filegroup")
 load("@fbcode_macros//build_defs:platform_utils.bzl", "platform_utils")
 load("@fbcode_macros//build_defs:python_unittest.bzl", "python_unittest")
+load("@fbcode_macros//build_defs/lib:noop_rule.bzl", "is_noop_rule")
 load("@fbcode_macros//build_defs/lib:re_test_utils.bzl", "re_test_utils")
+load("@fbsource//tools/build_defs:rust_unittest.bzl", "rust_unittest")
 load("@fbsource//tools/build_defs/testinfra:network_access_utils.bzl", "network_access_utils")
+load("@fbsource//tools/build_defs/xplat:shims.bzl", "xplat_shims")
 load("@fbsource//tools/target_determinator/macros:ci.bzl", "ci")
 load("@fbsource//tools/target_determinator/macros:ci_hint.bzl", "ci_hint")
+load("@prelude//:is_full_meta_repo.bzl", "is_full_meta_repo")
 
 def buck_e2e_test(
     name,
@@ -39,11 +43,24 @@ def buck_e2e_test(
     remote_execution = None,
     network_access = None,
     visibility = None,
+    meta_only = False,
 ):
     """
     Custom macro for buck2/buckaemon end-to-end tests.
+
+    The test is a `python_unittest` on the Python harness (`e2e_util/buck_workspace.py`), or, if
+    `srcs` are Rust, a `rust_unittest` on the Rust harness (`e2e_util/rust`) whose crate root is
+    the first of `srcs`. Open source has no Python harness, and does not get its tests.
+
+    meta_only:
+        Whether all of the target's tests need Meta's infrastructure or repository. Open source
+        does not get the target. For some of a target's tests, see `BuckTest::meta_only`.
     """
     srcs = srcs or []
+    is_rust = _is_rust_test(name, srcs)
+    if (meta_only or not is_rust) and not is_full_meta_repo():
+        return
+    e2e_flavor = _e2e_flavor()
     labels = labels or []
     deps = deps or []
     cfg_modifiers = cfg_modifiers or []
@@ -63,9 +80,6 @@ def buck_e2e_test(
     # Having it enabled has significant negative impact on Starlark evaluation performance.
     env["RUST_LIB_BACKTRACE"] = "0"
 
-    # For autodeps
-    read_package_value = getattr(native, "read_package_value", None)
-    e2e_flavor = read_package_value and read_package_value("buck2_e2e_test.flavor")
     if e2e_flavor == "isolated":
         env["BUCK2_E2E_TEST_FLAVOR"] = "isolated"
         serialize_test_cases = serialize_test_cases or False
@@ -116,10 +130,6 @@ def buck_e2e_test(
     if require_nano_prelude:
         env["NANO_PRELUDE"] = "$(location fbcode//buck2/tests/e2e_util/nano_prelude:nano_prelude)"
 
-    deps += ["fbcode//buck2/tests/e2e_util:utilities"]
-    if use_buck_api:
-        deps += ["fbcode//buck2/tests/e2e_util/api:api"]
-
     ci_removals = []
     if "darwin" in skip_for_os:
         ci_removals.append(ci.remove(ci.mac(ci.aarch64(ci.opt()))))
@@ -129,26 +139,75 @@ def buck_e2e_test(
         labels = _remove_ci_labels(labels, ci_removals)
 
     kwargs = {"visibility": visibility} if visibility != None else {}
-    python_unittest(
-        name = name,
-        base_module = base_module,
-        srcs = srcs,
-        labels = labels,
-        deps = deps,
-        env = env,
-        emails = contacts,
-        remote_execution = remote_execution,
-        network_access = network_access,
-        resources = resources,
-        skip_on_mode_mac = "darwin" in skip_for_os,
-        skip_on_mode_win = "windows" in skip_for_os,
-        modifiers = cfg_modifiers,
-        compatible_with = compatible_with,
-        # Static listing reads the test names off the source: it would miss the test cases
-        # `parametrize()` generates and list the method they come from.
-        supports_static_listing = False,
-        **kwargs,
-    )
+    if is_rust:
+        if base_module != None:
+            fail("`base_module` does not apply to the Rust test {}".format(name))
+        run_env = dict(env)
+
+        # `run_env` gives the paths to outputs relative to the project root, where a Rust test
+        # starts; the harness makes these absolute for the buck2 it runs elsewhere.
+        path_vars = [key for key, value in env.items() if type(value) != "string" or "$(location" in value]
+        if path_vars:
+            run_env["BUCK2_E2E_PATH_VARS"] = ",".join(sorted(path_vars))
+
+        # An inplace test runs buck2 in its cell's root, with an isolation dir named after the
+        # test target.
+        run_env["BUCK2_E2E_CELL"] = native.get_cell_name()
+        run_env["BUCK2_E2E_TARGET"] = "{}//{}:{}".format(native.get_cell_name(), native.package_name(), name)
+
+        # As with `python_unittest`'s `skip_on_mode_*`, a build mode the tests skip gets a
+        # placeholder instead.
+        if is_noop_rule("rust_unittest", skip_on_mode_mac = "darwin" in skip_for_os, skip_on_mode_win = "windows" in skip_for_os):
+            xplat_shims.dummy_node(name = name, msg = "rust e2e test was skipped on this platform.")
+            return
+
+        # Elsewhere, the tests pass without running on these.
+        if skip_for_os:
+            run_env["BUCK2_E2E_SKIP_FOR_OS"] = ",".join(skip_for_os)
+        rust_unittest(
+            name = name,
+            srcs = srcs,
+            # A target name may hold characters a crate name cannot, as in `test_x.py@fbcode__mode_dev_fbcode`.
+            crate = _crate_name(name),
+            crate_root = srcs[0],
+            deps = deps + ["fbcode//buck2/tests/e2e_util/rust:buck2_e2e"],
+            # Unlike `run_env`, `env` would also set the variables for rustc.
+            run_env = run_env,
+            labels = labels,
+            contacts = contacts,
+            remote_execution = remote_execution,
+            network_access = network_access,
+            resources = resources,
+            modifiers = cfg_modifiers,
+            compatible_with = compatible_with,
+            # The tests build with buck only.
+            autocargo = {"ignore_rule": True},
+            **kwargs,
+        )
+    else:
+        deps += ["fbcode//buck2/tests/e2e_util:utilities"]
+        if use_buck_api:
+            deps += ["fbcode//buck2/tests/e2e_util/api:api"]
+        python_unittest(
+            name = name,
+            base_module = base_module,
+            srcs = srcs,
+            labels = labels,
+            deps = deps,
+            env = env,
+            emails = contacts,
+            remote_execution = remote_execution,
+            network_access = network_access,
+            resources = resources,
+            skip_on_mode_mac = "darwin" in skip_for_os,
+            skip_on_mode_win = "windows" in skip_for_os,
+            modifiers = cfg_modifiers,
+            compatible_with = compatible_with,
+            # Static listing reads the test names off the source: it would miss the test cases
+            # `parametrize()` generates and list the method they come from.
+            supports_static_listing = False,
+            **kwargs,
+        )
 
     if e2e_flavor == "buck2_non_isolated":
         # These are buck2's own non-isolated e2e tests. Add a ci hint indicating
@@ -184,6 +243,28 @@ def buck_e2e_test(
             # tools/build_defs/fbcode_macros/build_defs/lib/python_common.bzl).
             default_target_platform = platform_utils.get_cxx_platform_for_current_buildfile().target_platform,
         )
+
+def _e2e_flavor():
+    # For autodeps
+    read_package_value = getattr(native, "read_package_value", None)
+    flavor = read_package_value and read_package_value("buck2_e2e_test.flavor")
+    if flavor == None and not is_full_meta_repo():
+        # Open source does not get the `PACKAGE` files that set the flavor.
+        package = native.package_name()
+        if package.startswith("tests/core/"):
+            return "isolated"
+        if package.startswith("tests/e2e/") or package == "tests/e2e":
+            return "buck2_non_isolated"
+    return flavor
+
+def _is_rust_test(name, srcs):
+    rust = [src for src in srcs if src.endswith(".rs")]
+    if rust and len(rust) != len(srcs):
+        fail("{} mixes Rust sources with others".format(name))
+    return len(rust) > 0
+
+def _crate_name(name):
+    return "".join([c if c.isalnum() or c == "_" else "_" for c in name.elems()])
 
 def _remove_ci_labels(labels, removals):
     """Apply CI removals without discarding CI labels the caller set.
@@ -226,6 +307,7 @@ def buck2_e2e_test(
     remote_execution = None,
     network_access = None,
     visibility = None,
+    meta_only = False,
 ):
     """
     Custom macro for buck2 end-to-end tests. All tests are run against buck2 compiled in-repo (compiled buck2).
@@ -251,6 +333,8 @@ def buck2_e2e_test(
         test_with_deployed_buck2 is True. This is useful for tests that don't need the version
         dependency for Target Determinator purposes (e.g., bxl tests that test Starlark logic).
         Default is False.
+    meta_only:
+        Whether the test needs Meta's infrastructure or repository; see `buck_e2e_test`.
     """
     kwargs = {
         "base_module": base_module,
@@ -262,6 +346,7 @@ def buck2_e2e_test(
         "data_dir": data_dir,
         "heavyweight_threads": heavyweight_threads,
         "labels": labels,
+        "meta_only": meta_only,
         "network_access": network_access,
         "remote_execution": remote_execution,
         "require_nano_prelude": require_nano_prelude,
@@ -276,6 +361,10 @@ def buck2_e2e_test(
     if not test_with_compiled_buck2 and not test_with_deployed_buck2:
         fail("Must set one of `test_with_compiled_buck2` or `test_with_deployed_buck2` for " + name)
 
+    # Open source has no deployed buck2.
+    with_deployed_buck2 = test_with_deployed_buck2 and is_full_meta_repo()
+    with_reverted_buck2 = test_with_reverted_buck2 and is_full_meta_repo()
+
     # soft errors should always be allowed on tests with deployed buck2, or with reverted buck
     deployed_env = dict(env)
     deployed_env["BUCK2_HARD_ERROR"] = "false"
@@ -285,7 +374,7 @@ def buck2_e2e_test(
 
         # TODO(ctolliday) use BUCK2_HARD_ERROR=panic
         compiled_env["BUCK2_HARD_ERROR"] = "true"
-        compiled_env["BUCK2_TPX"] = "$BUCK2_BINARY_DIR/buck2-tpx"
+        # @oss-disable[end= ]: compiled_env["BUCK2_TPX"] = "$BUCK2_BINARY_DIR/buck2-tpx"
 
         # The coverage wrapper maps profiles only against the test's own executable and
         # `LLVM_COVERAGE_ADDITIONAL_OBJECT_PATHS`. Each branch lists the binaries the test runs;
@@ -316,12 +405,12 @@ def buck2_e2e_test(
             cfg_modifiers = buck2_modifiers()
             + [
                 # Always run these tests under rust opt build
-                "ovr_config//build_mode:opt",
+                # @oss-disable[end= ]: "ovr_config//build_mode:opt",
             ],
             **kwargs,
         )
 
-    if test_with_deployed_buck2:
+    if with_deployed_buck2:
         deps = deps or []
 
         # Add a buck2 version file as dep so we can run deployed buck2 tests on version bumps.
@@ -330,12 +419,13 @@ def buck2_e2e_test(
             deps += ["fbsource//tools/buck2-versions:stable"]
         buck_e2e_test(name = name, env = deployed_env, executable = "buck2", skip_for_os = skip_for_os, deps = deps, **kwargs)
 
-    if test_with_reverted_buck2:
+    if with_reverted_buck2:
         previous_env = dict(deployed_env)
         previous_env["BUCK2_CHANNEL"] = "previous"
         buck_e2e_test(name = name + "_with_reverted_buck2", env = previous_env, executable = "buck2", skip_for_os = skip_for_os, deps = deps, **kwargs)
 
-# Materializer implementations other than the default, by their `buck2.materializer` value.
+# Materializer implementations other than the default, by the names `buck_workspace.py` maps to
+# their configs.
 OTHER_MATERIALIZERS = ["v2"]
 
 def buck2_core_tests(extra_attrs = {}, target_extra_attrs = {}, allow_bundled_cells = False, materializer_variants = []):
@@ -371,10 +461,10 @@ def buck2_core_tests(extra_attrs = {}, target_extra_attrs = {}, allow_bundled_ce
             continue
         if item.startswith("test_") and item.endswith("_data"):
             # Just make sure the associated test exists
-            if item[:-5] + ".py" not in items:
+            if item[:-5] + ".py" not in items and item[:-5] + ".rs" not in items:
                 fail("Test data directory {} exists but has no matching test!".format(item))
             continue
-        if item.startswith("test_") and item.endswith(".py"):
+        if item.startswith("test_") and (item.endswith(".py") or item.endswith(".rs")):
             target = item[:-3]
             generated_targets.append(target)
 
@@ -395,12 +485,12 @@ def buck2_core_tests(extra_attrs = {}, target_extra_attrs = {}, allow_bundled_ce
                 # Allowing people to override `srcs` seems fine
                 attrs["srcs"] = [item]
 
-            IMPLICIT_DEPS = [
-                "//buck2/tests/e2e_util:utils",
-                "//buck2/tests/e2e_util:golden",
-            ]
             attrs["deps"] = list(attrs.get("deps") or [])
-            attrs["deps"].extend(IMPLICIT_DEPS)
+            if item.endswith(".py"):
+                attrs["deps"].extend([
+                    "//buck2/tests/e2e_util:utils",
+                    "//buck2/tests/e2e_util:golden",
+                ])
 
             buck2_e2e_test(name = target, **attrs)
             if target in materializer_variants:
@@ -415,7 +505,7 @@ def buck2_core_tests(extra_attrs = {}, target_extra_attrs = {}, allow_bundled_ce
                         variant_attrs.setdefault("require_nano_prelude", True)
                     buck2_e2e_test(name = target + "_" + materializer, **variant_attrs)
             continue
-        fail("Expected all directory entries to look like `test_*_data` or `test_*.py`, not {}".format(item))
+        fail("Expected all directory entries to look like `test_*_data`, `test_*.py` or `test_*.rs`, not {}".format(item))
 
     # Check that all target attrs actually correspond to a target
     for t in target_extra_attrs.keys():

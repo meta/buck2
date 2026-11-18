@@ -14,14 +14,14 @@ use starlark::any::ProvidesStaticType;
 use starlark::environment::GlobalsBuilder;
 use starlark::starlark_module;
 use starlark::static_starlark_value;
-use starlark::values::AllocFrozenValue;
-use starlark::values::AllocValue;
-use starlark::values::FrozenHeap;
-use starlark::values::Heap;
+use starlark::values::AllocFrozenRepresentation;
+use starlark::values::AllocRepresentation;
+use starlark::values::Allocator;
+use starlark::values::FrozenAllocator;
 use starlark::values::NoSerialize;
 use starlark::values::StarlarkPagable;
 use starlark::values::StarlarkValue;
-use starlark::values::Value;
+use starlark::values::ValueTyped;
 use starlark::values::starlark_value;
 
 #[derive(
@@ -35,20 +35,24 @@ use starlark::values::starlark_value;
 )]
 pub struct StarlarkProjectRoot;
 
-#[starlark_value(type = "ProjectRoot", StarlarkTypeRepr, UnpackValue)]
+#[starlark_value(type = "ProjectRoot", alloc = by_hand)]
 impl<'v> StarlarkValue<'v> for StarlarkProjectRoot {}
 
 static_starlark_value!(STARLARK_PROJECT_ROOT: StarlarkProjectRoot = StarlarkProjectRoot);
 
-impl<'v> AllocValue<'v> for StarlarkProjectRoot {
-    fn alloc_value(self, _heap: Heap<'v>) -> Value<'v> {
-        STARLARK_PROJECT_ROOT.at().to_value()
+impl<'v> AllocRepresentation<'v> for StarlarkProjectRoot {
+    type Repr = Self;
+
+    fn alloc(self, _allocator: Allocator<'v>) -> ValueTyped<'v, Self> {
+        STARLARK_PROJECT_ROOT.at()
     }
 }
 
-impl<'fv> AllocFrozenValue<'fv> for StarlarkProjectRoot {
-    fn alloc_frozen_value(self, _heap: FrozenHeap<'fv>) -> Value<'fv> {
-        STARLARK_PROJECT_ROOT.at().to_value()
+impl<'fv> AllocFrozenRepresentation<'fv> for StarlarkProjectRoot {
+    type Repr = Self;
+
+    fn alloc_frozen(self, _allocator: FrozenAllocator<'fv>) -> ValueTyped<'fv, Self> {
+        STARLARK_PROJECT_ROOT.at()
     }
 }
 

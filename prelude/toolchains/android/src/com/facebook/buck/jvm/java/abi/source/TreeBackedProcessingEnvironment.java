@@ -10,6 +10,7 @@
 
 package com.facebook.buck.jvm.java.abi.source;
 
+import com.facebook.infer.annotation.Nullsafe;
 import com.sun.source.util.Trees;
 import java.util.HashMap;
 import java.util.Locale;
@@ -20,7 +21,9 @@ import javax.annotation.processing.ProcessingEnvironment;
 import javax.lang.model.SourceVersion;
 import javax.lang.model.util.Elements;
 import javax.lang.model.util.Types;
+import org.jspecify.annotations.Nullable;
 
+@Nullsafe(Nullsafe.Mode.LOCAL)
 class TreeBackedProcessingEnvironment implements ProcessingEnvironment {
   private final FrontendOnlyJavacTask task;
   private final ProcessingEnvironment javacProcessingEnvironment;
@@ -74,6 +77,7 @@ class TreeBackedProcessingEnvironment implements ProcessingEnvironment {
   }
 
   @Override
+  @Nullable
   public Locale getLocale() {
     return javacProcessingEnvironment.getLocale();
   }

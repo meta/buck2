@@ -21,22 +21,22 @@ use starlark::environment::GlobalsBuilder;
 use starlark::eval::Evaluator;
 use starlark::starlark_module;
 use starlark::starlark_simple_value;
-use starlark::typing::Ty;
-use starlark::values::AllocValue;
 use starlark::values::Freeze;
 use starlark::values::FreezeError;
 use starlark::values::FreezeResult;
 use starlark::values::Freezer;
-use starlark::values::Heap;
 use starlark::values::NoSerialize;
 use starlark::values::ProvidesStaticType;
 use starlark::values::StarlarkPagable;
+use starlark::values::StarlarkRepresentations;
+use starlark::values::StarlarkType;
 use starlark::values::StarlarkValue;
 use starlark::values::Trace;
 use starlark::values::UnpackValue;
 use starlark::values::Value;
+use starlark::values::ValueOf;
+use starlark::values::ValueTyped;
 use starlark::values::starlark_value;
-use starlark::values::type_repr::StarlarkTypeRepr;
 
 use crate::interpreter::build_context::BuildContext;
 
@@ -69,25 +69,9 @@ enum InnerStarlarkPluginKind {
 #[display("{}", RefCell::borrow(_0))]
 pub struct StarlarkPluginKind(RefCell<InnerStarlarkPluginKind>);
 
-#[starlark_value(type = "PluginKind", skip_vtable, StarlarkTypeRepr, UnpackValue)]
+#[starlark_value(skip_vtable)]
 impl<'v> StarlarkValue<'v> for StarlarkPluginKind {
-    type Canonical = FrozenStarlarkPluginKind;
-
-    fn export_as(
-        &self,
-        variable_name: &str,
-        _eval: &mut Evaluator<'v, '_, '_>,
-    ) -> starlark::Result<()> {
-        let mut inner = self.0.borrow_mut();
-        let InnerStarlarkPluginKind::Unbound(cell_path) = &*inner else {
-            // Was already exported
-            return Ok(());
-        };
-        let cell_path = *cell_path;
-        let kind = PluginKind::new(variable_name.to_owned(), cell_path);
-        *inner = InnerStarlarkPluginKind::Bound(kind);
-        Ok(())
-    }
+    type Type = StarlarkPluginKindView<'v>;
 }
 
 #[derive(Debug, buck2_error::Error)]
@@ -108,12 +92,6 @@ impl StarlarkPluginKind {
     }
 }
 
-impl<'v> AllocValue<'v> for StarlarkPluginKind {
-    fn alloc_value(self, heap: Heap<'v>) -> Value<'v> {
-        heap.alloc_complex(self)
-    }
-}
-
 #[derive(
     derive_more::Display,
     Debug,
@@ -126,9 +104,9 @@ impl<'v> AllocValue<'v> for StarlarkPluginKind {
 pub struct FrozenStarlarkPluginKind(#[starlark_pagable(pagable)] PluginKind);
 starlark_simple_value!(FrozenStarlarkPluginKind);
 
-#[starlark_value(type = "PluginKind")]
+#[starlark_value]
 impl<'v> StarlarkValue<'v> for FrozenStarlarkPluginKind {
-    type Canonical = FrozenStarlarkPluginKind;
+    type Type = StarlarkPluginKindView<'v>;
 }
 
 impl<'v> Freeze<'v> for StarlarkPluginKind {
@@ -140,53 +118,50 @@ impl<'v> Freeze<'v> for StarlarkPluginKind {
     }
 }
 
-/// A plugin kind in either of its reprs: the kind is bound to a name by `export_as`, and the
-/// binding is required by the time the defining module freezes.
-#[derive(StarlarkTypeRepr, UnpackValue)]
-enum StarlarkPluginKindUnpack<'v> {
-    Unfrozen(&'v StarlarkPluginKind),
-    Frozen(&'v FrozenStarlarkPluginKind),
+/// A plugin kind in either of its representations: the kind is bound to a name by `export_as`,
+/// and the binding is required by the time the defining module freezes.
+#[derive(Debug, Clone, Copy, StarlarkRepresentations)]
+pub enum StarlarkPluginKindView<'v> {
+    Frozen(ValueTyped<'v, FrozenStarlarkPluginKind>),
+    Unfrozen(ValueTyped<'v, StarlarkPluginKind>),
 }
 
-impl StarlarkPluginKindUnpack<'_> {
-    fn expect_bound(&self) -> buck2_error::Result<PluginKind> {
+#[starlark_value(type = "PluginKind")]
+impl<'v> StarlarkType<'v> for StarlarkPluginKindView<'v> {
+    fn export_as(
+        &self,
+        variable_name: &str,
+        _eval: &mut Evaluator<'v, '_, '_>,
+    ) -> starlark::Result<()> {
+        let StarlarkPluginKindView::Unfrozen(this) = self else {
+            return Ok(());
+        };
+        let mut inner = this.0.borrow_mut();
+        let InnerStarlarkPluginKind::Unbound(cell_path) = &*inner else {
+            // Was already exported
+            return Ok(());
+        };
+        let cell_path = *cell_path;
+        let kind = PluginKind::new(variable_name.to_owned(), cell_path);
+        *inner = InnerStarlarkPluginKind::Bound(kind);
+        Ok(())
+    }
+}
+
+impl StarlarkPluginKindView<'_> {
+    pub fn expect_bound(&self) -> buck2_error::Result<PluginKind> {
         match self {
-            StarlarkPluginKindUnpack::Unfrozen(v) => v.expect_bound(),
-            StarlarkPluginKindUnpack::Frozen(v) => Ok(v.0.dupe()),
+            StarlarkPluginKindView::Unfrozen(v) => v.expect_bound(),
+            StarlarkPluginKindView::Frozen(v) => Ok(v.0.dupe()),
         }
     }
 }
 
 fn plugin_kind_from_value<'v>(v: Value<'v>) -> buck2_error::Result<PluginKind> {
-    let Some(kind) = StarlarkPluginKindUnpack::unpack_value_opt(v) else {
+    let Some(kind) = StarlarkPluginKindView::unpack_value_opt(v) else {
         return Err(PluginKindError::NotAPluginKind(v.to_repr()).into());
     };
     kind.expect_bound()
-}
-
-pub(crate) struct PluginKindArg {
-    pub(crate) plugin_kind: PluginKind,
-}
-
-impl StarlarkTypeRepr for PluginKindArg {
-    type Canonical = <StarlarkPluginKind as StarlarkTypeRepr>::Canonical;
-
-    fn starlark_type_repr() -> Ty {
-        <Self::Canonical as StarlarkTypeRepr>::starlark_type_repr()
-    }
-}
-
-impl<'v> UnpackValue<'v> for PluginKindArg {
-    type Error = starlark::Error;
-
-    fn unpack_value_impl(value: Value<'v>) -> Result<Option<Self>, Self::Error> {
-        let Some(kind) = StarlarkPluginKindUnpack::unpack_value_opt(value) else {
-            return Ok(None);
-        };
-        Ok(Some(PluginKindArg {
-            plugin_kind: kind.expect_bound()?,
-        }))
-    }
 }
 
 /// The value yielded by `plugins.ALL`
@@ -282,14 +257,16 @@ fn register_plugins_methods(r: &mut GlobalsBuilder) {
     /// - `attrs.dep(pulls_plugins = [MyKind])` to pull plugins from deps without propagating
     /// - `attrs.dep(pulls_and_pushes_plugins = [MyKind])` to pull and propagate plugins to rdeps
     /// - `rule(..., uses_plugins = [MyKind])` to access plugins via `ctx.plugins[MyKind]`
-    fn kind<'v>(eval: &mut Evaluator<'v, '_, '_>) -> starlark::Result<StarlarkPluginKind> {
+    fn kind<'v>(
+        eval: &mut Evaluator<'v, '_, '_>,
+    ) -> starlark::Result<ValueOf<'v, StarlarkPluginKindView<'v>>> {
         let cell_path = BuildContext::from_context(eval)?
             .starlark_path()
             .path()
             .into_owned();
-        Ok(StarlarkPluginKind(RefCell::new(
+        Ok(eval.heap().alloc(StarlarkPluginKind(RefCell::new(
             InnerStarlarkPluginKind::Unbound(cell_path),
-        )))
+        ))))
     }
 
     /// A special value for use with `pulls_and_pushes_plugins`.

@@ -8,8 +8,8 @@ Note there's also `buck2 killall` and `buck2 clean`.
 
 `buck2 clean` kills the buck2 daemon and also deletes the buck2 state files.
 
-With `BUCK2_SHARE_DAEMON=true`, this evicts the current tenant from the shared daemon instead; the
-daemon exits after its final tenant is evicted.
+Under daemon sharing (`buck2.share_daemon`), this evicts the current tenant from the shared daemon
+instead; the daemon exits after its final tenant is evicted.
 
 Usage: buck2 kill [OPTIONS]
 

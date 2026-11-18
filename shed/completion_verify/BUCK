@@ -10,12 +10,13 @@ rust_binary(
         "ovr_config//os:linux",
         "ovr_config//os:macos",
     ],
+    # Open source runs the shells on `PATH`: the packages download with `dnf`.
     resources = select({
         "DEFAULT": {},
-        "ovr_config//os:linux": {
-            "fish": "//buck2/shed/completion_verify/packages:fish",
-            "zsh": "//buck2/shed/completion_verify/packages:zsh",
-        },
+        # @oss-disable[end= ]: "ovr_config//os:linux": {
+            # @oss-disable[end= ]: "fish": "//buck2/shed/completion_verify/packages:fish",
+            # @oss-disable[end= ]: "zsh": "//buck2/shed/completion_verify/packages:zsh",
+        # @oss-disable[end= ]: },
     }),
     deps = [
         "fbsource//third-party/rust:buck-resources",

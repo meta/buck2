@@ -125,8 +125,7 @@ impl Artifact {
                     DeclaredArtifactKind::Bound(artifact.dupe()),
                 )));
                 DeclaredArtifact {
-                    artifact: ValueTyped::new_err(heap.alloc_complex_no_freeze(artifact))
-                        .expect("Just allocated"),
+                    artifact: StarlarkAnyComplex::alloc_no_freeze(artifact, heap),
                     projected_path: key.path.dupe(),
                     hidden_components_count: self.0.hidden_components_count,
                 }
@@ -390,8 +389,7 @@ impl<'v> DeclaredArtifact<'v> {
             DeclaredArtifactKind::Unbound(UnboundArtifact(path, output_type)),
         )));
         DeclaredArtifact {
-            artifact: ValueTyped::new_err(heap.alloc_complex_no_freeze(artifact))
-                .expect("Just allocated"),
+            artifact: StarlarkAnyComplex::alloc_no_freeze(artifact, heap),
             projected_path: ThinArcS::from(ForwardRelativePath::empty()),
             hidden_components_count,
         }

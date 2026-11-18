@@ -385,6 +385,7 @@ public class AdbHelperTest {
   public void testAdbCallShouldFailForMultipleDevices() throws Exception {
     exceptionRule.expect(RuntimeException.class);
     exceptionRule.expectMessage("2 devices match specified device filter");
+    exceptionRule.expectMessage("Matching devices: one, two.");
 
     List<AndroidDevice> devices =
         Arrays.asList(createRealDevice("one", "device"), createRealDevice("two", "device"));
@@ -401,6 +402,74 @@ public class AdbHelperTest {
     when(adbUtils.getDevices()).thenReturn(Collections.emptyList());
     AdbHelper helper = createAdbHelper();
     helper.adbCall("test", d -> true, /* quiet= */ true);
+  }
+
+  @Test
+  public void testAdbCallShouldSayAdbListsNoDevice() throws Exception {
+    exceptionRule.expect(RuntimeException.class);
+    exceptionRule.expectMessage(
+        "Didn't find any attached Android devices/emulators. adb lists no device.");
+
+    when(adbUtils.getDevices()).thenReturn(Collections.emptyList());
+    createAdbHelper().adbCall("test", d -> true, /* quiet= */ true);
+  }
+
+  @Test
+  public void testAdbCallShouldNameDevicesThatAreNotOnline() throws Exception {
+    exceptionRule.expect(RuntimeException.class);
+    exceptionRule.expectMessage("None of the devices adb lists is online: emulator-5554.");
+
+    List<AndroidDevice> devices =
+        Collections.singletonList(createEmulator("emulator-5554", "offline"));
+    when(adbUtils.getDevices()).thenReturn(devices);
+    createAdbHelper().adbCall("test", d -> true, /* quiet= */ true);
+  }
+
+  @Test
+  public void testAdbCallShouldNameOnlineDevicesAndTheSerialNoneMatches() throws Exception {
+    exceptionRule.expect(RuntimeException.class);
+    exceptionRule.expectMessage(
+        "Didn't find any attached Android devices/emulators. None of the online devices"
+            + " (emulator-5554, 127.0.0.1:15574) matches the device filter: serial emulator-5556.");
+
+    List<AndroidDevice> devices =
+        Arrays.asList(
+            createEmulator("emulator-5554", "device"), createEmulator("127.0.0.1:15574", "device"));
+    when(adbUtils.getDevices()).thenReturn(devices);
+    createAdbHelper(
+            createAdbOptions(), new TargetDeviceOptions(false, false, Optional.of("emulator-5556")))
+        .adbCall("test", d -> true, /* quiet= */ true);
+  }
+
+  @Test
+  public void testGetDevicesShouldNotRestartAdbWhenOnlineDevicesDoNotMatch() {
+    List<AndroidDevice> devices =
+        Collections.singletonList(createEmulator("127.0.0.1:15574", "device"));
+    when(adbUtils.getDevices()).thenReturn(devices);
+    AdbHelper helper =
+        createAdbHelper(
+            createAdbOptions(),
+            new TargetDeviceOptions(false, false, Optional.of("emulator-5556")));
+
+    assertTrue(helper.getDevices(true).isEmpty());
+    verify(adbUtils, never()).restart();
+  }
+
+  @Test
+  public void testAdbCallShouldNameTheEnvironmentAsTheSerialSource() throws Exception {
+    exceptionRule.expect(RuntimeException.class);
+    exceptionRule.expectMessage(
+        "matches the device filter: serial emulator-5556 from $ANDROID_SERIAL.");
+
+    List<AndroidDevice> devices =
+        Collections.singletonList(createEmulator("emulator-5554", "device"));
+    when(adbUtils.getDevices()).thenReturn(devices);
+    createAdbHelper(
+            new TestAdbExecutionContext(
+                ImmutableMap.of(AdbHelper.SERIAL_NUMBER_ENV, "emulator-5556")),
+            createAdbOptions(),
+            new TargetDeviceOptions())
+        .adbCall("test", d -> true, /* quiet= */ true);
   }
 
   @Test
@@ -483,7 +552,7 @@ public class AdbHelperTest {
   @Test
   public void testPlainInstallInstallsWhenTheInstalledApkCannotBeRead() throws Exception {
     AndroidDeviceImpl device = deviceWithInstalledApk(/* sameApk= */ true);
-    when(device.compareInstalledApk(eq("com.example.app"), any(File.class), eq(false)))
+    when(device.compareInstalledApk(eq("com.example.app"), any(File.class)))
         .thenThrow(new AdbCommandFailedException("md5sum: base.apk: Permission denied"));
 
     installPlainApk(/* restartApp= */ false);
@@ -690,7 +759,7 @@ public class AdbHelperTest {
   private AndroidDeviceImpl deviceWithInstalledApk(boolean sameApk) throws Exception {
     AndroidDeviceImpl device = createRealDevice("one", "device");
     when(device.setDebugAppPackageName("com.example.app")).thenReturn(true);
-    when(device.compareInstalledApk(eq("com.example.app"), any(File.class), eq(false)))
+    when(device.compareInstalledApk(eq("com.example.app"), any(File.class)))
         .thenReturn(
             sameApk ? AndroidDevice.InstalledApk.SAME : AndroidDevice.InstalledApk.DIFFERENT);
     when(device.installApkOnDevice(

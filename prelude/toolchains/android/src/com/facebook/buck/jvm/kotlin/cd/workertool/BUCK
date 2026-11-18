@@ -54,9 +54,11 @@ buck_java_library(
         "prelude//toolchains/android/src/com/facebook/buck/jvm/kotlin/cd/analytics:analytics",
         "prelude//toolchains/android/src/com/facebook/buck/jvm/kotlin/cd/analytics/logger:logger",
         "prelude//toolchains/android/src/com/facebook/buck/jvm/kotlin/cd/workertool/postexecutors:postexecutors",
+        "prelude//toolchains/android/src/com/facebook/buck/jvm/kotlin/kotlinc/incremental:incremental",
         "prelude//toolchains/android/third-party:args4j",
         "prelude//toolchains/android/third-party:guava",
-        "prelude//toolchains/android/third-party:jsr305",
+        "prelude//toolchains/android/third-party:infer-annotations",
+        "prelude//toolchains/android/third-party:jspecify",
         "prelude//toolchains/android/third-party:protobuf-util",
     ],
 )
@@ -75,6 +77,7 @@ buck_java_library(
         "prelude//toolchains/android/third-party:args4j",
         "prelude//toolchains/android/third-party:gson",
         "prelude//toolchains/android/third-party:guava",
+        "prelude//toolchains/android/third-party:infer-annotations",
         ":command_lib",
     ],
 )
@@ -90,6 +93,7 @@ buck_java_library(
         "prelude//toolchains/android/src/com/facebook/buck/workertool/resources/proto:worker-model",
         "prelude//toolchains/android/third-party:args4j",
         "prelude//toolchains/android/third-party:guava",
+        "prelude//toolchains/android/third-party:infer-annotations",
         ":command_lib",
     ],
 )

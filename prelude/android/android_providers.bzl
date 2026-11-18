@@ -52,6 +52,7 @@ AndroidBinaryNativeLibsInfo = record(
     # Indicates which shared lib producing targets are included in the binary. Used by instrumentation tests
     # to exclude those from the test apk.
     shared_libraries = list[TargetLabel],
+    shipped_merged_libs = field(Artifact | None, None),
     exopackage_info = [ExopackageNativeInfo, None],
     root_module_native_lib_assets = list[Artifact],
     non_root_module_native_lib_assets = list[Artifact],
@@ -61,6 +62,11 @@ AndroidBinaryNativeLibsInfo = record(
     # Artifacts that must be produced for the binary to be valid. Threaded into
     # the apk's validation_deps_outputs, so a failing check fails the build.
     validation_outputs = list[Artifact],
+    # Under defer_relink, the same packaging inputs built from the relinked
+    # libraries (an AndroidBinaryNativeLibsInfo): the binary's own package is
+    # built from them, while the inputs above, from the unrelinked libraries,
+    # make the early package Redex starts from. None otherwise.
+    shipped = field(typing.Any, None),
 )
 
 AndroidBinaryResourcesInfo = record(
@@ -80,6 +86,8 @@ AndroidBinaryResourcesInfo = record(
     proguard_config_file = Artifact,
     # R.java jars containing all the linked resources
     r_dot_java_infos = list[RDotJavaInfo],
+    # R.txt containing the final linked resource IDs
+    r_dot_txt = Artifact,
     # directory containing filtered string resources files
     string_source_map = Artifact | None,
     # directory containing filtered string resources files for Voltron language packs
@@ -171,8 +179,11 @@ AndroidApkUnderTestInfo = provider(
         "prebuilt_native_library_dirs": provider_field(typing.Any, default = None),  # set(TargetLabel)
         "primary_platform": provider_field(typing.Any, default = None),  # str
         "resource_infos": provider_field(typing.Any, default = None),  # set(TargetLabel)
+        "resource_source_infos": provider_field(typing.Any, default = None),  # list(AndroidResourceInfo)
+        "resource_id_map": provider_field(Artifact | None, default = None),
         "r_dot_java_packages": provider_field(typing.Any, default = None),  # set(str)
         "shared_libraries": provider_field(typing.Any, default = None),  # set(TargetLabel)
+        "shipped_merged_libs": provider_field(Artifact | None, default = None),
         # Merge map delegate
         "native_library_merge_code_generator": provider_field(typing.Any, default = None),
         "native_library_merge_glue": provider_field(typing.Any, default = None),
@@ -189,6 +200,8 @@ AndroidInstrumentationApkInfo = provider(
     fields = {
         "apk_under_test": provider_field(typing.Any, default = None),  # "artifact"
         "is_self_instrumenting": provider_field(bool, default = False),
+        "resource_id_map": provider_field(Artifact | None, default = None),
+        "resource_source_infos": provider_field(typing.Any, default = None),  # list(AndroidResourceInfo)
     },
 )
 

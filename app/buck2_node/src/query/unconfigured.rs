@@ -41,8 +41,8 @@ impl QueryTarget for TargetNode {
         Cow::Borrowed(self.label().name().as_str())
     }
 
-    fn buildfile_path(&self) -> &BuildFilePath {
-        TargetNode::buildfile_path(self)
+    fn buildfile_path(&self) -> buck2_error::Result<&BuildFilePath> {
+        Ok(TargetNode::buildfile_path(self))
     }
 
     fn deps(&self) -> impl Iterator<Item = &Self::Key> + Send + '_ {
@@ -64,8 +64,8 @@ impl QueryTarget for TargetNode {
     fn toolchain_deps(&self) -> impl Iterator<Item = &Self::Key> + Send + '_ {
         TargetNode::toolchain_deps(self).iter()
     }
-    fn tests(&self) -> Option<impl Iterator<Item = Self::Key> + Send + '_> {
-        Some(self.tests().map(|t| t.target().dupe()))
+    fn tests(&self) -> buck2_error::Result<Option<impl Iterator<Item = Self::Key> + Send + '_>> {
+        Ok(Some(self.tests().map(|t| t.target().dupe())))
     }
 
     fn attr_any_matches(
@@ -139,7 +139,7 @@ impl QueryTarget for TargetNode {
         })
     }
 
-    fn inputs_for_each<E, F: FnMut(CellPath) -> Result<(), E>>(
+    fn inputs_for_each<E: From<buck2_error::Error>, F: FnMut(CellPath) -> Result<(), E>>(
         &self,
         mut func: F,
     ) -> Result<(), E> {

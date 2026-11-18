@@ -311,8 +311,12 @@
 //!     let heap = module.heap();
 //!     let res = eval.eval_function(
 //!         quad,
-//!         &[heap.alloc(4), heap.alloc(2), heap.alloc(1)],
-//!         &[("x", heap.alloc(8))],
+//!         &[
+//!             heap.alloc(4i32).to_value(),
+//!             heap.alloc(2i32).to_value(),
+//!             heap.alloc(1i32).to_value(),
+//!         ],
+//!         &[("x", heap.alloc(8i32).to_value())],
 //!     )?;
 //!     assert_eq!(res.unpack_i32(), Some(273));
 //!     starlark::Result::Ok(())
@@ -376,10 +380,12 @@
 //!     // How we add them
 //!     fn add(&self, rhs: Value<'v>, heap: Heap<'v>) -> Option<starlark::Result<Value<'v>>> {
 //!         if let Some(rhs) = rhs.downcast_ref::<Self>() {
-//!             Some(Ok(heap.alloc(Complex {
-//!                 real: self.real + rhs.real,
-//!                 imaginary: self.imaginary + rhs.imaginary,
-//!             })))
+//!             Some(Ok(heap
+//!                 .alloc(Complex {
+//!                     real: self.real + rhs.real,
+//!                     imaginary: self.imaginary + rhs.imaginary,
+//!                 })
+//!                 .to_value()))
 //!         } else {
 //!             None
 //!         }
@@ -392,15 +398,21 @@
 //! let globals = Globals::standard();
 //! Module::with_temp_heap(|module| {
 //!     // We inject some complex numbers into the module before we start.
-//!     let a = module.heap().alloc(Complex {
-//!         real: 1,
-//!         imaginary: 8,
-//!     });
+//!     let a = module
+//!         .heap()
+//!         .alloc(Complex {
+//!             real: 1,
+//!             imaginary: 8,
+//!         })
+//!         .to_value();
 //!     module.set("a", a);
-//!     let b = module.heap().alloc(Complex {
-//!         real: 4,
-//!         imaginary: 2,
-//!     });
+//!     let b = module
+//!         .heap()
+//!         .alloc(Complex {
+//!             real: 4,
+//!             imaginary: 2,
+//!         })
+//!         .to_value();
 //!     module.set("b", b);
 //!     let mut eval = Evaluator::new(&module);
 //!     let res = eval.eval_module(ast, &globals)?;

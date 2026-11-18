@@ -72,7 +72,7 @@ struct TargetSetJsonPrinter<'a, T: QueryTarget> {
     is_complex: bool,
 }
 
-impl<'a, T: QueryTarget> TargetSetJsonPrinter<'a, T> {
+impl<'a, T: QueryCommandTarget> TargetSetJsonPrinter<'a, T> {
     async fn new(
         target_call_stacks: bool,
         print_providers: ShouldPrintProviders<'a, T>,
@@ -94,6 +94,8 @@ struct PrintableQueryTarget<'a, T: QueryTarget> {
     attributes: &'a Option<RegexSet>,
     providers: Option<FrozenProviderCollectionValue>,
     target_call_stacks: bool,
+    /// Present if call stacks were asked for and the target has one.
+    call_stack: Option<String>,
 }
 
 impl<T: QueryTarget> PrintableQueryTarget<'_, T> {
@@ -111,9 +113,9 @@ impl<T: QueryCommandTarget> Display for PrintableQueryTarget<'_, T> {
         }
 
         if self.target_call_stacks {
-            match self.value.call_stack() {
+            match &self.call_stack {
                 Some(call_stack) => {
-                    write!(f, "{}", indent("  ", &call_stack))?;
+                    write!(f, "{}", indent("  ", call_stack))?;
                 }
                 None => {
                     // This is `aquery`.
@@ -183,7 +185,7 @@ impl<T: QueryCommandTarget> Serialize for PrintableQueryTarget<'_, T> {
         .map_err(|AttrWalkError(error)| error)?;
 
         if self.target_call_stacks {
-            map.serialize_entry("buck.target_call_stack", &self.value.call_stack())?;
+            map.serialize_entry("buck.target_call_stack", &self.call_stack)?;
         }
 
         if let Some(providers) = &self.providers {
@@ -356,13 +358,14 @@ impl<'a> QueryResultPrinter<'a> {
                     }
                 }
                 QueryOutputFormatInfo::Starlark => {
+                    T::prefetch_bodies(&targets)?;
                     for (i, target) in targets.iter().enumerate() {
                         if i > 0 {
                             writeln!(&mut output)?;
                             writeln!(&mut output)?;
                         }
                         if call_stack {
-                            match target.call_stack() {
+                            match target.call_stack()? {
                                 Some(call_stack) => {
                                     write!(&mut output, "{}", indent("#  ", &call_stack))?;
                                 }
@@ -476,17 +479,25 @@ impl<'a> QueryResultPrinter<'a> {
     }
 }
 
-async fn printable_targets<'a, T: QueryTarget>(
+async fn printable_targets<'a, T: QueryCommandTarget>(
     targets: &'a TargetSet<T>,
     print_providers: ShouldPrintProviders<'a, T>,
     attributes: &'a Option<RegexSet>,
     target_call_stacks: bool,
 ) -> buck2_error::Result<Vec<PrintableQueryTarget<'a, T>>> {
+    if attributes.is_some() || target_call_stacks {
+        T::prefetch_bodies(targets)?;
+    }
     buck2_util::future::join_all(targets.iter().map(|t| async move {
         Ok(PrintableQueryTarget {
             value: t,
             attributes,
             target_call_stacks,
+            call_stack: if target_call_stacks {
+                t.call_stack()?
+            } else {
+                None
+            },
             providers: match print_providers {
                 ShouldPrintProviders::No => None,
                 ShouldPrintProviders::Yes(lookup) => {

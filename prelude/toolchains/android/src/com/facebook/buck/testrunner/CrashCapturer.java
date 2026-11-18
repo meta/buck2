@@ -12,10 +12,12 @@ package com.facebook.buck.testrunner;
 
 import com.facebook.buck.android.exopackage.AdbUtils;
 import com.facebook.buck.android.exopackage.AndroidDevice;
+import com.facebook.infer.annotation.Nullsafe;
 import java.util.ArrayList;
 import java.util.List;
 
 /** Static methods to collect crash information from a device. */
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public class CrashCapturer {
   /**
    * Checks if the given trace string may contain crash trace information.

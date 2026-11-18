@@ -99,6 +99,7 @@ pub(crate) mod owned_frozen;
 pub(crate) mod owned_frozen_ext;
 pub(crate) mod profile;
 pub(crate) mod repr;
+pub(crate) mod representation;
 pub(crate) mod sealed;
 pub(crate) mod send;
 pub(crate) mod unfrozen;

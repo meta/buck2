@@ -4,6 +4,7 @@
 
 [cell_aliases]
   alias = root
+  config = prelude
   ovr_config = prelude
   toolchains = root
   fbsource = root

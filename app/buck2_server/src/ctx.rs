@@ -23,6 +23,8 @@ use buck2_build_api::actions::execute::dice_data::SetCommandExecutor;
 use buck2_build_api::actions::execute::dice_data::SetLowPassFilter;
 use buck2_build_api::actions::execute::dice_data::SetReClient;
 use buck2_build_api::actions::execute::dice_data::set_fallback_executor_config;
+use buck2_build_api::actions::graph_recorder::GraphRecorder;
+use buck2_build_api::actions::graph_recorder::HasGraphRecorder;
 use buck2_build_api::actions::impls::run_action_knobs::HasRunActionKnobs;
 use buck2_build_api::actions::impls::run_action_knobs::RunActionKnobs;
 use buck2_build_api::actions::impls::run_action_knobs::WriteActionCacheMode;
@@ -48,6 +50,8 @@ use buck2_cli_proto::client_context::PreemptibleWhen;
 use buck2_cli_proto::common_build_options::ExecutionStrategy;
 use buck2_cli_proto::config_override::ConfigType;
 use buck2_common::dice::data::SetIsolationDir;
+use buck2_common::file_ops::baseline::FileSystemBaseline;
+use buck2_common::file_ops::baseline::SetFileSystemBaseline;
 use buck2_common::file_ops::io::initialize_read_dir_cache;
 use buck2_common::http::SetHttpClient;
 use buck2_common::ignores::ignore_set::IgnoreSet;
@@ -58,6 +62,7 @@ use buck2_common::legacy_configs::configs::LegacyBuckConfig;
 use buck2_common::legacy_configs::dice::HasInjectedLegacyConfigs;
 use buck2_common::legacy_configs::file_ops::ConfigPath;
 use buck2_common::legacy_configs::key::BuckconfigKeyRef;
+use buck2_common::tenant::tenant_instance_id;
 use buck2_core::buck2_env;
 use buck2_core::cells::name::CellName;
 use buck2_core::execution_types::executor_config::CommandExecutorConfig;
@@ -81,7 +86,9 @@ use buck2_events::metadata;
 use buck2_events::schedule_type::SandcastleScheduleType;
 use buck2_execute::dep_file_state::SetDepFileStore;
 use buck2_execute::execute::blocking::SetBlockingExecutor;
+use buck2_execute::execute::environment_inheritance::ClientCodingAgentMetadata;
 use buck2_execute::execute::low_pass_filter::LowPassFilter;
+use buck2_execute::incremental_state::SetIncrementalStore;
 use buck2_execute::knobs::ExecutorGlobalKnobs;
 use buck2_execute::materialize::materializer::Materializer;
 use buck2_execute::materialize::materializer::SetMaterializer;
@@ -97,6 +104,7 @@ use buck2_execute_impl::executors::worker::WorkerPool;
 use buck2_execute_impl::materializers::deferred::clean_stale::CleanStaleConfig;
 use buck2_file_watcher::dep_files::SetDepFileCache;
 use buck2_file_watcher::file_watcher::SyncOutcome;
+use buck2_file_watcher::mergebase::Mergebase;
 use buck2_file_watcher::mergebase::SetMergebase;
 use buck2_fs::async_fs_util::spawn_blocking;
 use buck2_fs::error::IoResultExt;
@@ -149,6 +157,7 @@ use host_sharing::HostSharingStrategy;
 
 use crate::active_commands::ActiveCommandDropGuard;
 use crate::agent_config_guard::check_agent_config_change;
+use crate::agent_config_guard::tag_agent_interactive_arm;
 use crate::agent_context_validation::validate_agent_context;
 use crate::agent_host_guard::check_agent_host_guard;
 use crate::daemon::common::CommandExecutorFactory;
@@ -304,6 +313,9 @@ pub struct ServerCommandContext<'a> {
     /// Agent context key=value pairs from --agent-context.
     pub(crate) agent_context: Vec<buck2_data::AgentContextEntry>,
 
+    /// The client's `CODING_AGENT_METADATA`, for its local tests.
+    client_coding_agent_metadata: Option<String>,
+
     cancellations: &'a CancellationContext,
 
     preemptible: PreemptibleWhen,
@@ -446,6 +458,7 @@ impl<'a> ServerCommandContext<'a> {
             command_name: client_context.command_name.clone(),
             sanitized_argv: client_context.sanitized_argv.clone(),
             agent_context: client_context.agent_context.clone(),
+            client_coding_agent_metadata: client_context.coding_agent_metadata.clone(),
             debugger_handle,
             cancellations,
             preemptible: client_context.preemptible(),
@@ -496,6 +509,14 @@ impl<'a> ServerCommandContext<'a> {
             defer_write_actions: false,
             write_action_cache: WriteActionCacheMode::Off,
             write_action_cache_populate: RolloutFraction::none(),
+            cross_config_lookup_on_stale_entry: false,
+            // The request's flag; `make_user_computation_data` ORs in `buck2.log_action_graph`.
+            // A flag for one command leaves buckconfig unchanged, so the daemon doesn't recheck
+            // its config-dependent state.
+            log_action_graph: self
+                .build_options
+                .as_ref()
+                .is_some_and(|options| options.log_action_graph),
         };
 
         let concurrency = self
@@ -838,6 +859,13 @@ impl DiceUpdater for DiceCommandUpdater<'_, '_> {
             self.cmd_ctx.isolation_prefix.as_str(),
         )?;
 
+        // Tag before the config change check, which can end the command with a block.
+        tag_agent_interactive_arm(
+            &self.cmd_ctx.buck_settings.invocation,
+            &self.cmd_ctx.agent_context,
+            self.cmd_ctx.events(),
+        );
+
         // Check before setup_interpreter consumes the new configs. Returning an error
         // here prevents the caller from committing the configuration change.
         check_agent_config_change(
@@ -912,13 +940,17 @@ impl DiceUpdater for DiceCommandUpdater<'_, '_> {
         )?;
 
         early_timings.start_span(FILE_WATCHER_WAIT.to_owned());
-        let (ctx, mergebase, outcome) = self
-            .cmd_ctx
-            .base_context
-            .repo()
-            .file_watcher
-            .sync(ctx)
-            .await?;
+        let (ctx, mergebase, outcome) = match &self.cmd_ctx.base_context.repo().file_watcher {
+            Some(file_watcher) => file_watcher.sync(ctx).await?,
+            // No watcher (`--no-buckd`): this command is the daemon's only one, reading the tree
+            // as its own fresh snapshot. The unique baseline keeps file ops from reusing state
+            // across daemons, exactly as a watcher's first sync after startup would.
+            None => {
+                let mut ctx = ctx;
+                ctx.set_file_system_baseline(FileSystemBaseline::unique())?;
+                (ctx, Mergebase::default(), SyncOutcome::Incremental)
+            }
+        };
         early_timings.end_known_span();
 
         let mut user_data = self.make_user_computation_data(&cells_and_configs.root_config)?;
@@ -1033,6 +1065,19 @@ impl DiceCommandUpdater<'_, '_> {
             self.cmd_ctx.base_context.daemon.memory_tracker.is_some(),
         ));
 
+        let tests_inherit_client_coding_agent_metadata = root_config
+            .parse::<bool>(BuckconfigKeyRef {
+                section: "buck2",
+                property: "tests_inherit_client_coding_agent_metadata",
+            })?
+            .unwrap_or(false);
+        data.set(ClientCodingAgentMetadata::new(
+            self.cmd_ctx
+                .client_coding_agent_metadata
+                .as_deref()
+                .filter(|_| tests_inherit_client_coding_agent_metadata),
+        ));
+
         let mut run_action_knobs = self.run_action_knobs.dupe();
         run_action_knobs.use_network_action_output_cache |= root_config
             .parse::<bool>(BuckconfigKeyRef {
@@ -1058,11 +1103,10 @@ impl DiceCommandUpdater<'_, '_> {
         }
 
         // A write whose content the CAS already has is declared as a CAS download, so its bytes
-        // then exist nowhere but the CAS, and a copy from a source file follows the same
-        // decision: the same question about content produced here, and its source stays where
-        // it is either way. That pays only when the content would not have gone to the output
-        // path right away (`defer_write_actions`); a hit trades a write for a download
-        // otherwise, and the knob decides.
+        // then exist nowhere but the CAS. That pays only when the content would not have gone to
+        // the output path right away (`defer_write_actions`); a hit trades a write for a download
+        // otherwise, and the knob decides. A copy of a source file asks on the core's terms, not
+        // the knob's (`buck2_action_impl`'s `cas_probe::probes_copies`).
         let repo = self.cmd_ctx.base_context.repo();
         run_action_knobs.defer_write_actions = repo.materializer_defers_writes;
         run_action_knobs.write_cas_probe = root_config
@@ -1085,6 +1129,19 @@ impl DiceCommandUpdater<'_, '_> {
                 property: "write_action_cache_populate",
             })?
             .unwrap_or_else(RolloutFraction::none);
+        run_action_knobs.cross_config_lookup_on_stale_entry = root_config
+            .parse::<bool>(BuckconfigKeyRef {
+                section: "buck2",
+                property: "cross_config_lookup_on_stale_entry",
+            })?
+            .unwrap_or(false);
+
+        run_action_knobs.log_action_graph |= root_config
+            .parse::<bool>(BuckconfigKeyRef {
+                section: "buck2",
+                property: "log_action_graph",
+            })?
+            .unwrap_or(false);
 
         let output_trees_download_semaphore_size = root_config.parse::<u32>(BuckconfigKeyRef {
             section: "buck2",
@@ -1194,11 +1251,15 @@ impl DiceCommandUpdater<'_, '_> {
             self.cmd_ctx.base_context.repo().incremental_db_state.dupe(),
             output_trees_download_config.dupe(),
             self.cmd_ctx.base_context.daemon.daemon_id.dupe(),
+            self.cmd_ctx.base_context.daemon.user_version.clone(),
         )));
         data.set_blocking_executor(self.cmd_ctx.base_context.repo().blocking_executor.dupe());
         data.set_http_client(self.cmd_ctx.base_context.daemon.http_client.dupe());
         data.set_materializer(self.cmd_ctx.base_context.repo().materializer.dupe());
         data.set_dep_file_cache(self.cmd_ctx.base_context.repo().dep_file_cache.dupe());
+        data.set_incremental_store(Some(
+            self.cmd_ctx.base_context.repo().incremental_db_state.dupe(),
+        ));
         data.set_dep_file_store(
             self.cmd_ctx
                 .base_context
@@ -1210,6 +1271,7 @@ impl DiceCommandUpdater<'_, '_> {
         data.init_materialization_queue_tracker();
         data.set_build_signals(self.build_signals.build_signals.dupe());
         data.set_run_action_knobs(run_action_knobs);
+        data.set_graph_recorder(GraphRecorder::default());
         data.set_invocation_re_settings(invocation_re_settings);
         data.set_create_unhashed_symlink_lock(
             self.cmd_ctx
@@ -1485,6 +1547,36 @@ impl ServerCommandContextTrait for ServerCommandContext<'_> {
                 "daemon_originating_cgroup".to_owned(),
                 originating_cgroup.clone(),
             );
+        }
+
+        let tenant_generation = &self.base_context.tenant.generation;
+        let tenant_id = tenant_generation.key().telemetry_id();
+        metadata.insert(
+            "tenant_instance_id".to_owned(),
+            tenant_instance_id(
+                &self.base_context.daemon.daemon_id.to_string(),
+                &tenant_id,
+                tenant_generation.number(),
+            ),
+        );
+        metadata.insert("tenant_id".to_owned(), tenant_id);
+        metadata.insert(
+            "tenant_generation".to_owned(),
+            tenant_generation.number().to_string(),
+        );
+        metadata.insert(
+            "tenant_count".to_owned(),
+            self.base_context
+                .daemon
+                .initialized_tenant_count()
+                .to_string(),
+        );
+        metadata.insert(
+            "daemon_routing".to_owned(),
+            self.base_context.daemon.routing().name().to_owned(),
+        );
+        if let Some(reason) = tenant_generation.take_started_reason() {
+            metadata.insert("tenant_started_reason".to_owned(), reason.to_owned());
         }
 
         if let Some(agent_identity) = buck2_events::metadata::agent_identity_from_env() {

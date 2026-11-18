@@ -18,12 +18,11 @@
 /// Reduce boilerplate when defining a Starlark value that contains other values.
 ///
 /// The type is written once, as `X<'v>`, and freezes to `X<'fv>` — see
-/// [`Freeze`](crate::values::Freeze). The macro defines instances of
-/// [`AllocValue`](crate::values::AllocValue),
-/// [`AllocFrozenValue`](crate::values::AllocFrozenValue),
-/// [`StarlarkTypeRepr`](crate::values::type_repr::StarlarkTypeRepr) and
-/// [`UnpackValue`](crate::values::UnpackValue) for `&'v X<'v>`, plus a
-/// `X::from_value` downcast that matches frozen and unfrozen instances alike.
+/// [`Freeze`](crate::values::Freeze). The macro registers `X<'fv>` as the frozen form and
+/// defines an instance of [`AllocFrozenRepresentation`](crate::values::AllocFrozenRepresentation)
+/// for it, plus a `X::from_value` downcast that matches frozen and unfrozen instances alike. A
+/// value is
+/// allocated with [`Heap::alloc`](crate::values::Heap::alloc).
 ///
 /// Hand-expand it when a piece needs customizing.
 #[macro_export]
@@ -37,48 +36,24 @@ macro_rules! starlark_complex_value {
             // covers the frozen form at any heap lifetime.
             unsafe impl<'v> $crate::__derive_refs::VtableRegistered for $x<'v> {}
 
-            impl<'v> $crate::values::AllocValue<'v> for $x<'v> {
-                #[inline]
-                fn alloc_value(self, heap: $crate::values::Heap<'v>) -> $crate::values::Value<'v> {
-                    heap.alloc_complex(self)
-                }
-            }
+            impl<'fv> $crate::values::AllocFrozenRepresentation<'fv> for $x<'fv> {
+                type Repr = Self;
 
-            impl<'fv> $crate::values::AllocFrozenValue<'fv> for $x<'fv> {
                 #[inline]
-                fn alloc_frozen_value(
+                fn alloc_frozen(
                     self,
-                    heap: $crate::values::FrozenHeap<'fv>,
-                ) -> $crate::values::Value<'fv> {
-                    heap.alloc_simple_typed(self).to_value()
+                    allocator: $crate::values::FrozenAllocator<'fv>,
+                ) -> $crate::values::ValueTyped<'fv, Self> {
+                    allocator.alloc_simple(self)
                 }
             }
 
             impl<'v> $x<'v> {
                 /// Downcast the value.
                 #[inline]
+                #[allow(dead_code)] // A type private to a module may not use it.
                 pub fn from_value(x: $crate::values::Value<'v>) -> Option<&'v Self> {
                     x.downcast_ref::<$x<'v>>()
-                }
-            }
-
-            impl<'v> $crate::values::type_repr::StarlarkTypeRepr for &'v $x<'v> {
-                type Canonical = $x<'v>;
-
-                #[inline]
-                fn starlark_type_repr() -> $crate::typing::Ty {
-                    <$x as $crate::values::StarlarkValue>::get_type_starlark_repr()
-                }
-            }
-
-            impl<'v> $crate::values::UnpackValue<'v> for &'v $x<'v> {
-                type Error = std::convert::Infallible;
-
-                #[inline]
-                fn unpack_value_impl(
-                    x: $crate::values::Value<'v>,
-                ) -> Result<Option<&'v $x<'v>>, Self::Error> {
-                    Ok($x::from_value(x))
                 }
             }
         };
@@ -118,16 +93,14 @@ macro_rules! starlark_complex_value {
 ///     // We can choose to implement whichever methods we want.
 ///     // All other operations will result in runtime errors.
 ///     fn plus(&self, heap: Heap<'v>) -> starlark::Result<Value<'v>> {
-///         Ok(heap.alloc(MyObject(self.0.to_uppercase())))
+///         Ok(heap.alloc(MyObject(self.0.to_uppercase())).to_value())
 ///     }
 /// }
 /// ```
 ///
-/// The `starlark_simple_value!` macro defines instances of
-/// [`ProvidesStaticType`](crate::values::ProvidesStaticType),
-/// [`AllocValue`](crate::values::AllocValue),
-/// [`AllocFrozenValue`](crate::values::AllocFrozenValue) and
-/// [`UnpackValue`](crate::values::UnpackValue). It also defines a method:
+/// The `starlark_simple_value!` macro defines an instance of
+/// [`ProvidesStaticType`](crate::values::ProvidesStaticType); the allocation impls come from
+/// `#[starlark_value]`. It also defines a method:
 ///
 /// ```
 /// # use crate::starlark::values::*;
@@ -145,47 +118,12 @@ macro_rules! starlark_complex_value {
 macro_rules! starlark_simple_value {
     ($x:ident) => {
         const _: () = {
-            impl<'v> $crate::values::AllocValue<'v> for $x {
-                #[inline]
-                fn alloc_value(self, heap: $crate::values::Heap<'v>) -> $crate::values::Value<'v> {
-                    heap.alloc_simple(self)
-                }
-            }
-
-            impl<'fv> $crate::values::AllocFrozenValue<'fv> for $x {
-                #[inline]
-                fn alloc_frozen_value(
-                    self,
-                    heap: $crate::values::FrozenHeap<'fv>,
-                ) -> $crate::values::Value<'fv> {
-                    heap.alloc_simple(self)
-                }
-            }
-
             impl $x {
                 /// Downcast a value to self type.
                 #[inline]
+                #[allow(dead_code)] // A type private to a module may not use it.
                 pub fn from_value<'v>(x: $crate::values::Value<'v>) -> Option<&'v Self> {
                     x.downcast_ref::<$x>()
-                }
-            }
-
-            impl<'v> $crate::values::type_repr::StarlarkTypeRepr for &'v $x {
-                type Canonical = $x;
-
-                fn starlark_type_repr() -> $crate::typing::Ty {
-                    <$x as $crate::values::StarlarkValue>::get_type_starlark_repr()
-                }
-            }
-
-            impl<'v> $crate::values::UnpackValue<'v> for &'v $x {
-                type Error = std::convert::Infallible;
-
-                #[inline]
-                fn unpack_value_impl(
-                    x: $crate::values::Value<'v>,
-                ) -> std::result::Result<Option<&'v $x>, Self::Error> {
-                    std::result::Result::Ok($x::from_value(x))
                 }
             }
         };

@@ -49,7 +49,7 @@ use crate::pagable::StarlarkDeserialize;
 use crate::pagable::StarlarkDeserializeContext;
 use crate::pagable::StarlarkSerialize;
 use crate::pagable::StarlarkSerializeContext;
-use crate::values::StringValue;
+use crate::values::string::StarlarkStr;
 
 // We use a RawTable (the thing that underlies HashMap) so we can look up efficiently
 // and easily by Symbol and str, without being limited by `Borrow` traits.
@@ -99,7 +99,7 @@ impl<T> SymbolMap<T> {
             .map(|x| &x.1)
     }
 
-    pub(crate) fn get_hashed_string_value(&self, key: Hashed<StringValue>) -> Option<&T> {
+    pub(crate) fn get_hashed_starlark_str(&self, key: Hashed<&StarlarkStr>) -> Option<&T> {
         self.0
             .find(key.hash().promote(), |x| {
                 x.0.as_aligned_padded_str() == key.key().as_aligned_padded_str()

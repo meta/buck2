@@ -1,6 +1,7 @@
 load("@fbsource//tools/build_defs:testpilot_defs.bzl", "tpx_labels")
 load(
     "@prelude//toolchains/android/tools:build_rules.bzl",
+    "OPEN_JDK_COMPILER_ARGS",
     "buck_java_library",
     "buck_java_test",
 )
@@ -48,7 +49,7 @@ buck_java_library(
         "prelude//toolchains/android/third-party:jackson-annotations",
         "prelude//toolchains/android/third-party:jackson-core",
         "prelude//toolchains/android/third-party:jackson-databind",
-        "prelude//toolchains/android/third-party:jsr305",
+        "prelude//toolchains/android/third-party:jspecify",
         "prelude//toolchains/android/third-party:junit",
         "prelude//toolchains/android/third-party:okhttp",
         "prelude//toolchains/android/third-party:okio",
@@ -67,6 +68,7 @@ buck_java_test(
     labels = [
         tpx_labels.long_running,
     ],
+    vm_args = OPEN_JDK_COMPILER_ARGS,
     deps = [
         "prelude//toolchains/android/src/com/facebook/buck/android:helpers",
         "prelude//toolchains/android/src/com/facebook/buck/cd/resources/proto:javacd-model",
@@ -109,7 +111,7 @@ buck_java_test(
         "prelude//toolchains/android/third-party:jackson-core",
         "prelude//toolchains/android/third-party:jackson-databind",
         "prelude//toolchains/android/third-party:jimfs",
-        "prelude//toolchains/android/third-party:jsr305",
+        "prelude//toolchains/android/third-party:jspecify",
         "prelude//toolchains/android/third-party:junit",
         "prelude//toolchains/android/third-party:okhttp",
         "prelude//toolchains/android/third-party:okio",

@@ -29,9 +29,21 @@ object K2JvmAbiConfigurationKeys {
   val ENABLE_COMPOSE_ABI_EMULATION: CompilerConfigurationKey<Boolean> =
       CompilerConfigurationKey.create("enable Compose ABI emulation for K2 JVM ABI generation")
 
+  val AST_PACKAGE_NAMES: CompilerConfigurationKey<Boolean> =
+      CompilerConfigurationKey.create("read source packages from the AST, not PSI stub trees")
+
   val ABI_VALIDATION_MODE: CompilerConfigurationKey<String> =
       CompilerConfigurationKey.create("ABI validation mode for K2 JVM ABI generation")
 
   val SHALLOW_CLASS_USAGE: CompilerConfigurationKey<Boolean> =
       CompilerConfigurationKey.create("shallow class usage for K2 JVM ABI dep files")
+
+  val SKIP_NON_ABI_BODIES: CompilerConfigurationKey<Boolean> =
+      CompilerConfigurationKey.create("skip resolving bodies the source-only ABI never reads")
+
+  val KEPT_BODY_STUB_CHECK: CompilerConfigurationKey<Boolean> =
+      CompilerConfigurationKey.create("kept inline body stub-only class check")
+
+  val PRESERVE_DECLARATION_ORDER: CompilerConfigurationKey<Boolean> =
+      CompilerConfigurationKey.create("keep ABI class members in the order kotlinc generates them")
 }

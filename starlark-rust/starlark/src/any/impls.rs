@@ -23,6 +23,8 @@ use std::collections::HashMap;
 use std::rc::Rc;
 use std::sync::Arc;
 
+use either::Either;
+
 use crate::any::IsStaticType;
 use crate::any::ProvidesStaticType;
 
@@ -182,6 +184,23 @@ where
     for<'lt> E::Reinfect<'lt>: Sized,
 {
     type Reinfect<'lt> = Result<T::Reinfect<'lt>, E::Reinfect<'lt>>;
+}
+
+unsafe impl<'a, L, R> ProvidesStaticType<'a> for Either<L, R>
+where
+    L: ProvidesStaticType<'a>,
+    L::StaticType: Sized,
+    R: ProvidesStaticType<'a>,
+    R::StaticType: Sized,
+{
+    type StaticType = Either<L::StaticType, R::StaticType>;
+}
+impl<L: IsStaticType, R: IsStaticType> IsStaticType for Either<L, R>
+where
+    for<'lt> L::Reinfect<'lt>: Sized,
+    for<'lt> R::Reinfect<'lt>: Sized,
+{
+    type Reinfect<'lt> = Either<L::Reinfect<'lt>, R::Reinfect<'lt>>;
 }
 
 unsafe impl<'a, T> ProvidesStaticType<'a> for Vec<T>

@@ -7,6 +7,16 @@ rust_library(
     srcs = glob(
         ["src/**/*.rs"],
     ),
+    # See `buck2_client_ctx` for why sysinfo's default features are off.
+    autocargo = {
+        "cargo_toml_config": {
+            "dependencies_override": {
+                "dependencies": {
+                    "sysinfo": {"default-features": False, "features": ["system"]},
+                },
+            },
+        },
+    },
     test_deps = [
         "fbcode//buck2/shed/three_billion_instructions:three_billion_instructions",
         "fbsource//third-party/rust:serde_json",

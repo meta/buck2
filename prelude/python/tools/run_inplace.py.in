@@ -165,9 +165,9 @@ def __run():
     assert sys.argv[0] == '-c'
     sys.argv[0] = {sys.argv[0]!r}
 
-    # Remove the working directory.
-    assert sys.path[0] == ''
-    del sys.path[0]
+    # Remove the working directory, which PYTHONSAFEPATH may already have left out.
+    if sys.path[0] == '':
+        del sys.path[0]
 
     import os
     import runpy

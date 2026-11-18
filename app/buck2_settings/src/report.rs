@@ -115,9 +115,9 @@ impl SettingsReport {
         })
     }
 
-    /// The report as text. `verbose` adds each key's documentation, type,
+    /// The report as text. `detailed` adds each key's documentation, type,
     /// fallback and override policy.
-    pub fn render(&self, verbose: bool) -> String {
+    pub fn render(&self, detailed: bool) -> String {
         let mut out = String::new();
         // Writing to a `String` cannot fail.
         let _ = writeln!(out, "Buck settings {}", self.hash);
@@ -162,7 +162,7 @@ impl SettingsReport {
                 "[{}]  {scope} scope, version {}",
                 section.name, section.version
             );
-            if verbose && !section.doc.is_empty() {
+            if detailed && !section.doc.is_empty() {
                 for line in section.doc.lines() {
                     let _ = writeln!(out, "  # {line}");
                 }
@@ -184,7 +184,7 @@ impl SettingsReport {
                     None => "default".to_owned(),
                 };
                 let _ = writeln!(out, "  {assignment:<width$}  ({origin})");
-                if verbose {
+                if detailed {
                     for line in setting.doc.lines() {
                         let _ = writeln!(out, "    # {line}");
                     }

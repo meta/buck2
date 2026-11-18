@@ -75,6 +75,7 @@ impl TCodeReasonGroup {
     pub const USER_QUOTA: Self = TCodeReasonGroup(2i32);
     pub const USER_BAD_CERTS: Self = TCodeReasonGroup(3i32);
     pub const USER_QUEUE_FULL: Self = TCodeReasonGroup(2023i32);
+    pub const USER_ACTION_LOST_WORKERS: Self = TCodeReasonGroup(2033i32);
     pub const DIGEST_NOT_FOUND: Self = TCodeReasonGroup(3002i32);
 }
 
@@ -85,6 +86,9 @@ impl Display for TCodeReasonGroup {
             TCodeReasonGroup::USER_QUOTA => write!(f, "USER_QUOTA"),
             TCodeReasonGroup::USER_BAD_CERTS => write!(f, "USER_BAD_CERTS"),
             TCodeReasonGroup::USER_QUEUE_FULL => write!(f, "USER_QUEUE_FULL"),
+            TCodeReasonGroup::USER_ACTION_LOST_WORKERS => {
+                write!(f, "USER_ACTION_LOST_WORKERS")
+            }
             TCodeReasonGroup::DIGEST_NOT_FOUND => write!(f, "DIGEST_NOT_FOUND"),
             _ => write!(f, "UNKNOWN"),
         }

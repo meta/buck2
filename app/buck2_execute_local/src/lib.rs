@@ -51,6 +51,8 @@ use crate::status_decoder::DecodedStatus;
 use crate::status_decoder::StatusDecoder;
 
 mod interruptible_async_read;
+#[cfg(unix)]
+mod kill_on_drop;
 pub mod process_group;
 pub mod status_decoder;
 
@@ -230,7 +232,8 @@ where
         cmd.stderr(Stdio::piped());
     }
 
-    let cmd = ProcessCommand::new(cmd, cgroup_path).await?;
+    let cmd =
+        ProcessCommand::new(cmd, cgroup_path, kill_process.kill_detached_descendants()).await?;
 
     // Note: Process spawning is a fundamentally asynchronous operation that legitimately might
     // block for a non-zero amount of time. Typically, that would mean that we should
@@ -313,8 +316,9 @@ where
                 (decoder.decode_status(status).await?.into(), orphans)
             }
             Outcome::Cancelled(res) => {
+                let timed_out = matches!(res, GatherOutputStatus::TimedOut(_));
                 kill_process
-                    .kill(&mut process_group)
+                    .kill(&mut process_group, timed_out)
                     .await
                     .buck_error_context("Failed to terminate child after timeout")?;
 
@@ -383,17 +387,38 @@ where
 /// Dependency injection for kill. We use this in testing.
 #[async_trait]
 pub(crate) trait KillProcess {
-    async fn kill(self, process: &mut ProcessGroup) -> buck2_error::Result<()>;
+    /// `timed_out` is whether the command hit its timeout, as opposed to being cancelled.
+    async fn kill(self, process: &mut ProcessGroup, timed_out: bool) -> buck2_error::Result<()>;
+
+    /// Whether killing the command also kills its descendants that left its process group. Read
+    /// when the command is spawned, which is when that has to be set up.
+    fn kill_detached_descendants(&self) -> bool {
+        false
+    }
 }
 
-#[derive(Default)]
+#[derive(Default, Clone, Copy)]
 pub struct DefaultKillProcess {
+    /// How long the process gets to exit after `SIGTERM` before its whole group gets `SIGKILL`, on
+    /// any kill. The group gets `SIGKILL` even if the process exits in time, so that nothing it
+    /// started outlives it. `None` kills the group at once.
     pub graceful_shutdown_timeout_s: Option<u32>,
+    /// Like `graceful_shutdown_timeout_s`, but only when the command timed out. Other kills, such
+    /// as cancellation or resource control reclaiming memory, use `graceful_shutdown_timeout_s`.
+    pub timeout_grace_period_s: Option<u32>,
+    /// Also kill descendants that left the process group, such as daemons. Linux only. The command
+    /// then adopts its orphaned descendants and leaves them zombies until it exits; see
+    /// `adopt_detached_descendants`.
+    pub kill_detached_descendants: bool,
 }
 
 #[async_trait]
 impl KillProcess for DefaultKillProcess {
-    async fn kill(self, process_group: &mut ProcessGroup) -> buck2_error::Result<()> {
+    async fn kill(
+        self,
+        process_group: &mut ProcessGroup,
+        timed_out: bool,
+    ) -> buck2_error::Result<()> {
         let pid = match process_group.id() {
             Some(pid) => pid,
             None => {
@@ -402,7 +427,18 @@ impl KillProcess for DefaultKillProcess {
             }
         };
         tracing::info!("Killing process {}", pid);
-        process_group.kill(self.graceful_shutdown_timeout_s).await
+        let grace = if timed_out {
+            self.timeout_grace_period_s
+                .or(self.graceful_shutdown_timeout_s)
+        } else {
+            self.graceful_shutdown_timeout_s
+        };
+
+        process_group.kill(grace).await
+    }
+
+    fn kill_detached_descendants(&self) -> bool {
+        self.kill_detached_descendants
     }
 }
 
@@ -505,6 +541,31 @@ mod tests {
             futures::future::pending(),
             DefaultStatusDecoder,
             DefaultKillProcess::default(),
+            None,
+            true,
+            None,
+            futures::stream::pending(),
+        )
+        .await?;
+        decode_command_event_stream(stream).await
+    }
+
+    #[cfg(unix)]
+    async fn gather_output_with_grace(
+        cmd: Command,
+        timeout: Duration,
+        timeout_grace_period_s: u32,
+    ) -> buck2_error::Result<CommandResult> {
+        let stream = spawn_command_and_stream_events(
+            cmd,
+            Some(timeout),
+            futures::future::pending(),
+            DefaultStatusDecoder,
+            DefaultKillProcess {
+                graceful_shutdown_timeout_s: None,
+                timeout_grace_period_s: Some(timeout_grace_period_s),
+                kill_detached_descendants: false,
+            },
             None,
             true,
             None,
@@ -625,7 +686,7 @@ mod tests {
         file.write_all(b"#!/usr/bin/env bash\ntrue\n").await?;
 
         let cmd = background_command(&bin);
-        let cmd = ProcessCommand::new(cmd, None).await?;
+        let cmd = ProcessCommand::new(cmd, None, false).await?;
         // Sibling tests fork concurrently and hold the inherited write handle
         // until they exec, so dropping ours does not clear ETXTBSY by itself.
         let mut process_group = spawn_retry_txt_busy(cmd, {
@@ -649,7 +710,7 @@ mod tests {
         let bin = tempdir.path().join("bin"); // Does not actually exist
 
         let cmd = background_command(&bin);
-        let cmd = ProcessCommand::new(cmd, None).await?;
+        let cmd = ProcessCommand::new(cmd, None, false).await?;
         let res = spawn_retry_txt_busy(cmd, || async { panic!("Should not be called!") }).await;
         assert!(res.is_err());
 
@@ -684,7 +745,7 @@ mod tests {
         let pids: Vec<&str> = out.split('\n').collect();
         let ppid = Pid::from_str(pids.first().internal_error("no ppid")?.trim())?;
         let pid = Pid::from_str(pids.get(1).internal_error("no pid")?.trim())?;
-        let sys = System::new_all();
+        let sys = System::new_all().unwrap();
 
         // we want to check if existed process doesn't have the same parent because of pid reuse
         if let Some(process) = sys.process(pid) {
@@ -699,6 +760,254 @@ mod tests {
                 pid
             ));
         }
+        Ok(())
+    }
+
+    /// A process a test expects to go away, killed on drop unless it was seen gone, so that a
+    /// failing test does not leave it behind.
+    ///
+    /// It must not be a child of the test process, which never reaps it; see
+    /// [`buck2_process_kill::process_is_gone`].
+    #[cfg(unix)]
+    struct WatchedProcess {
+        pid: nix::unistd::Pid,
+        gone: bool,
+    }
+
+    #[cfg(unix)]
+    impl WatchedProcess {
+        fn new(pid: i32) -> Self {
+            Self {
+                pid: nix::unistd::Pid::from_raw(pid),
+                gone: false,
+            }
+        }
+
+        /// Whether the process goes away within `timeout`.
+        async fn gone_within(&mut self, timeout: Duration) -> bool {
+            let start = Instant::now();
+            loop {
+                if buck2_process_kill::process_is_gone(self.pid.as_raw()).unwrap_or(true) {
+                    self.gone = true;
+                    return true;
+                }
+                if Instant::now() - start > timeout {
+                    return false;
+                }
+                tokio::time::sleep(Duration::from_millis(100)).await;
+            }
+        }
+    }
+
+    #[cfg(unix)]
+    impl Drop for WatchedProcess {
+        fn drop(&mut self) {
+            if !self.gone {
+                let _ignored = nix::sys::signal::kill(self.pid, nix::sys::signal::SIGKILL);
+            }
+        }
+    }
+
+    #[cfg(unix)]
+    fn parse_pid(stdout: &[u8], prefix: &str) -> buck2_error::Result<i32> {
+        Ok(str::from_utf8(stdout)?
+            .lines()
+            .find_map(|l| l.strip_prefix(prefix))
+            .internal_error("pid not printed")?
+            .trim()
+            .parse()?)
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn test_timeout_with_grace_lets_leader_report_then_kills_group() -> buck2_error::Result<()>
+    {
+        // The child reports if it gets `SIGTERM` too; the leader takes its time in the trap so that
+        // a child that got it would have a chance to say so.
+        let mut cmd = background_command("sh");
+        cmd.arg("-c").arg(
+            "sh -c 'trap \"echo child_got_sigterm; exit 0\" TERM; while :; do sleep 0.1; done' & \
+             echo \"child $!\"; \
+             trap 'sleep 1; echo trap_done; exit 3' TERM; \
+             wait",
+        );
+
+        let CommandResult { status, stdout, .. } =
+            gather_output_with_grace(cmd, Duration::from_secs(1), 30).await?;
+        assert_matches!(status, GatherOutputStatus::TimedOut(..));
+        let mut child = WatchedProcess::new(parse_pid(&stdout, "child ")?);
+        let gone = child.gone_within(Duration::from_secs(5)).await;
+
+        let stdout = str::from_utf8(&stdout)?;
+        assert!(stdout.contains("trap_done"), "stdout: {stdout}");
+        assert!(
+            !stdout.contains("child_got_sigterm"),
+            "only the leader should get SIGTERM, stdout: {stdout}"
+        );
+        assert!(
+            gone,
+            "the leader's child should be killed with the group after the leader exits"
+        );
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn test_timeout_with_grace_kills_leader_that_ignores_sigterm() -> buck2_error::Result<()>
+    {
+        let now = Instant::now();
+        let mut cmd = background_command("sh");
+        cmd.arg("-c")
+            .arg("trap '' TERM; sleep 1000 & echo \"child $!\"; wait");
+
+        let CommandResult { status, stdout, .. } =
+            gather_output_with_grace(cmd, Duration::from_secs(1), 2).await?;
+        let elapsed = Instant::now() - now;
+        assert_matches!(status, GatherOutputStatus::TimedOut(..));
+        let mut child = WatchedProcess::new(parse_pid(&stdout, "child ")?);
+        assert!(
+            child.gone_within(Duration::from_secs(5)).await,
+            "the leader's child should be killed with the group"
+        );
+        assert!(
+            elapsed >= Duration::from_secs(3),
+            "the leader should get the whole grace period, elapsed: {elapsed:?}"
+        );
+        assert!(elapsed < Duration::from_secs(20), "elapsed: {elapsed:?}");
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn test_cancellation_skips_timeout_grace_period() -> buck2_error::Result<()> {
+        let now = Instant::now();
+        let mut cmd = background_command("sh");
+        cmd.arg("-c").arg(
+            "trap 'echo got_sigterm; sleep 1000' TERM; echo ready; while :; do sleep 0.1; done",
+        );
+        let cancellation = async {
+            tokio::time::sleep(Duration::from_secs(1)).await;
+            Ok::<_, buck2_error::Error>(GatherOutputStatus::Cancelled)
+        }
+        .boxed();
+
+        let stream = spawn_command_and_stream_events(
+            cmd,
+            None,
+            cancellation,
+            DefaultStatusDecoder,
+            DefaultKillProcess {
+                graceful_shutdown_timeout_s: None,
+                timeout_grace_period_s: Some(30),
+                kill_detached_descendants: false,
+            },
+            None,
+            true,
+            None,
+            futures::stream::pending(),
+        )
+        .await?;
+        let CommandResult { status, stdout, .. } = decode_command_event_stream(stream).await?;
+        let elapsed = Instant::now() - now;
+
+        assert_matches!(status, GatherOutputStatus::Cancelled);
+        assert_eq!(str::from_utf8(&stdout)?.trim(), "ready");
+        assert!(
+            elapsed < Duration::from_secs(15),
+            "a cancelled command should be killed at once, elapsed: {elapsed:?}"
+        );
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn test_graceful_shutdown_kills_group_after_leader_exits() -> buck2_error::Result<()> {
+        // Like a worker on shutdown: the leader exits as soon as it gets `SIGTERM`, leaving a
+        // child behind in its group.
+        let mut cmd = background_command("sh");
+        cmd.arg("-c")
+            .arg("sleep 1000 & echo \"child $!\"; trap 'exit 0' TERM; wait");
+        let cancellation = async {
+            tokio::time::sleep(Duration::from_secs(1)).await;
+            Ok::<_, buck2_error::Error>(GatherOutputStatus::Cancelled)
+        }
+        .boxed();
+
+        let stream = spawn_command_and_stream_events(
+            cmd,
+            None,
+            cancellation,
+            DefaultStatusDecoder,
+            DefaultKillProcess {
+                graceful_shutdown_timeout_s: Some(30),
+                timeout_grace_period_s: None,
+                kill_detached_descendants: false,
+            },
+            None,
+            true,
+            None,
+            futures::stream::pending(),
+        )
+        .await?;
+        let CommandResult { status, stdout, .. } = decode_command_event_stream(stream).await?;
+        assert_matches!(status, GatherOutputStatus::Cancelled);
+        let mut child = WatchedProcess::new(parse_pid(&stdout, "child ")?);
+        assert!(
+            child.gone_within(Duration::from_secs(5)).await,
+            "the group should get SIGKILL even though the leader exited within its grace period"
+        );
+        Ok(())
+    }
+
+    /// Runs a command that starts a process in a new session and exits the shell that started
+    /// it, then hangs until it times out. Returns the detached process.
+    #[cfg(target_os = "linux")]
+    async fn time_out_with_detached_process(
+        kill_detached_descendants: bool,
+    ) -> buck2_error::Result<WatchedProcess> {
+        let mut cmd = background_command("sh");
+        cmd.arg("-c")
+            .arg("(setsid sleep 1000 & echo \"detached $!\"); sleep 1000");
+        let stream = spawn_command_and_stream_events(
+            cmd,
+            Some(Duration::from_secs(1)),
+            futures::future::pending(),
+            DefaultStatusDecoder,
+            DefaultKillProcess {
+                graceful_shutdown_timeout_s: None,
+                timeout_grace_period_s: None,
+                kill_detached_descendants,
+            },
+            None,
+            true,
+            None,
+            futures::stream::pending(),
+        )
+        .await?;
+        let CommandResult { status, stdout, .. } = decode_command_event_stream(stream).await?;
+        assert_matches!(status, GatherOutputStatus::TimedOut(..));
+        Ok(WatchedProcess::new(parse_pid(&stdout, "detached ")?))
+    }
+
+    #[cfg(target_os = "linux")]
+    #[tokio::test]
+    async fn test_timeout_kills_detached_descendants() -> buck2_error::Result<()> {
+        let mut detached = time_out_with_detached_process(true).await?;
+        assert!(
+            detached.gone_within(Duration::from_secs(5)).await,
+            "a process the command detached into its own session should be killed with it"
+        );
+        Ok(())
+    }
+
+    #[cfg(target_os = "linux")]
+    #[tokio::test]
+    async fn test_timeout_leaves_detached_descendants_without_opt_in() -> buck2_error::Result<()> {
+        let mut detached = time_out_with_detached_process(false).await?;
+        assert!(
+            !detached.gone_within(Duration::from_secs(1)).await,
+            "without the opt-in, killing the process group does not reach a new session"
+        );
         Ok(())
     }
 
@@ -754,12 +1063,18 @@ mod tests {
 
         #[async_trait]
         impl KillProcess for Kill {
-            async fn kill(self, process_group: &mut ProcessGroup) -> buck2_error::Result<()> {
+            async fn kill(
+                self,
+                process_group: &mut ProcessGroup,
+                timed_out: bool,
+            ) -> buck2_error::Result<()> {
                 *self.killed.lock().unwrap() = true;
 
                 // We still need to kill the process. On Windows in particular our test will hang
                 // if we do not.
-                DefaultKillProcess::default().kill(process_group).await
+                DefaultKillProcess::default()
+                    .kill(process_group, timed_out)
+                    .await
             }
         }
 

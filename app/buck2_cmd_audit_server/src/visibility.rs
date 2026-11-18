@@ -9,6 +9,7 @@
  */
 
 use std::collections::BTreeMap;
+use std::io::Write;
 
 use async_trait::async_trait;
 use buck2_cli_proto::ClientContext;
@@ -47,6 +48,7 @@ enum VisibilityCommandError {
 /// listed per `(consumer package, dep package)` instead of failing. Unlike the
 /// build-time soft errors, this sees every edge regardless of DICE caching.
 async fn verify_visibility(
+    server_ctx: &dyn ServerCommandContextTrait,
     ctx: DiceTransaction,
     targets: TargetSet<TargetNode>,
 ) -> buck2_error::Result<()> {
@@ -109,19 +111,24 @@ async fn verify_visibility(
         }
     }
 
+    // The client prints what it is sent line by line, as it arrives. A line goes out in one
+    // write, so that the writer cannot send it in two parts when its buffer fills.
+    let mut stderr = server_ctx.stderr()?;
+    let mut line = |line: String| stderr.write_all(format!("{line}\n").as_bytes());
+
     if !would_block.is_empty() {
         for ((consumer, dep), edges) in &would_block {
-            buck2_client_ctx::eprintln!("would block: {} -> {} ({} edges)", consumer, dep, edges)?;
+            line(format!("would block: {consumer} -> {dep} ({edges} edges)"))?;
         }
-        buck2_client_ctx::eprintln!(
+        line(format!(
             "{} edges across {} package pairs would be blocked under `package_visibility.default_intersection = \"enforce\"`",
             would_block.values().sum::<usize>(),
             would_block.len(),
-        )?;
+        ))?;
     }
 
     for err in &visibility_errors {
-        buck2_client_ctx::eprintln!("{}", err)?;
+        line(err.to_string())?;
     }
 
     if !visibility_errors.is_empty() {
@@ -132,7 +139,7 @@ async fn verify_visibility(
         ));
     }
 
-    buck2_client_ctx::eprintln!("audit visibility succeeded")?;
+    line("audit visibility succeeded".to_owned())?;
     Ok(())
 }
 
@@ -163,7 +170,7 @@ impl ServerAuditSubcommand for AuditVisibilityCommand {
                     nodes.extend(res.values().map(|n| n.to_owned()));
                 }
 
-                verify_visibility(ctx, nodes).await?;
+                verify_visibility(server_ctx, ctx, nodes).await?;
                 Ok(())
             })
             .await?)

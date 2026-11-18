@@ -199,7 +199,7 @@ mod tests {
         let restored = round_trip(&b);
         // `list[str]` matches an empty list (vacuously).
         Heap::temp(|heap| {
-            let list = heap.alloc(AllocList::EMPTY);
+            let list = heap.alloc(AllocList::EMPTY).to_value();
             assert!(restored.0.matches_dyn(list));
         });
     }
@@ -239,7 +239,7 @@ mod tests {
         // a matches string, not int; b matches int, not string.
         Heap::temp(|heap| {
             let str_val = const_frozen_string!("hi").at().to_value();
-            let int_val = heap.alloc(42i32);
+            let int_val = heap.alloc(42i32).to_value();
             assert!(restored_a.0.matches_dyn(str_val));
             assert!(!restored_a.0.matches_dyn(int_val));
             assert!(!restored_b.0.matches_dyn(str_val));

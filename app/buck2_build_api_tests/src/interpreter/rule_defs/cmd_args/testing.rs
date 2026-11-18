@@ -30,9 +30,13 @@ use buck2_interpreter_for_build::label::testing::label_creator;
 use buck2_util::strong_hasher::Blake3StrongHasher;
 use starlark::environment::GlobalsBuilder;
 use starlark::starlark_module;
+use starlark::values::Heap;
 use starlark::values::UnpackValue;
 use starlark::values::Value;
-use starlark::values::list_or_tuple::UnpackListOrTuple;
+use starlark::values::ValueOf;
+use starlark::values::list::AllocList;
+use starlark::values::list_or_tuple::ListOrTupleType;
+use starlark::values::string::StarlarkStr;
 
 use crate::interpreter::rule_defs::artifact::testing::artifactory;
 
@@ -66,8 +70,8 @@ fn get_command_line(value: Value) -> buck2_error::Result<Vec<String>> {
 
 #[starlark_module]
 pub(crate) fn command_line_stringifier(builder: &mut GlobalsBuilder) {
-    fn get_args<'v>(value: Value<'v>) -> starlark::Result<Vec<String>> {
-        Ok(get_command_line(value)?)
+    fn get_args<'v>(value: Value<'v>) -> starlark::Result<AllocList<Vec<String>>> {
+        Ok(AllocList(get_command_line(value)?))
     }
 
     fn stringify_cli_arg<'v>(value: Value<'v>) -> starlark::Result<String> {
@@ -84,9 +88,12 @@ pub(crate) fn command_line_stringifier(builder: &mut GlobalsBuilder) {
     }
 
     /// A hash of `parts` in order, in hex; prefix-free, so moving a boundary changes it.
-    fn blake3_hex<'v>(parts: UnpackListOrTuple<String>) -> starlark::Result<String> {
+    fn blake3_hex<'v>(
+        parts: ValueOf<'v, ListOrTupleType<StarlarkStr>>,
+    ) -> starlark::Result<String> {
         let mut hasher = Blake3StrongHasher::new();
-        for part in parts {
+        for part in parts.try_items::<&str>() {
+            let part = part?;
             hasher.write_usize(part.len());
             hasher.write(part.as_bytes());
         }
@@ -106,17 +113,22 @@ pub(crate) fn command_line_stringifier(builder: &mut GlobalsBuilder) {
 #[starlark_module]
 pub(crate) fn inputs_helper(builder: &mut GlobalsBuilder) {
     fn make_inputs<'v>(
-        values: UnpackListOrTuple<Value<'v>>,
-    ) -> starlark::Result<StarlarkCommandLineInputs> {
+        values: ValueOf<'v, ListOrTupleType<Value<'v>>>,
+        heap: Heap<'v>,
+    ) -> starlark::Result<ValueOf<'v, StarlarkCommandLineInputs>> {
         let mut visitor = SimpleCommandLineArtifactVisitor::new();
-        for v in values {
+        for v in values.try_items() {
+            let v = v?;
             let cli = ValueAsCommandLineLike::unpack_value_err(v)?.0;
             cli.visit_artifacts(&mut visitor)?;
         }
 
-        Ok(StarlarkCommandLineInputs {
-            inputs: visitor.inputs,
-        })
+        Ok(ValueOf::alloc(
+            heap,
+            StarlarkCommandLineInputs {
+                inputs: visitor.inputs,
+            },
+        ))
     }
 }
 

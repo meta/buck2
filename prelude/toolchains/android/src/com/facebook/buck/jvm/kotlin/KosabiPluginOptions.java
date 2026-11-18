@@ -11,9 +11,11 @@
 package com.facebook.buck.jvm.kotlin;
 
 import com.facebook.buck.core.filesystems.AbsPath;
+import com.facebook.infer.annotation.Nullsafe;
 import com.google.common.collect.ImmutableMap;
 import java.util.Map;
 
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public class KosabiPluginOptions {
   private final ImmutableMap<String, AbsPath> resolvedKosabiPluginOptionPath;
 
@@ -26,8 +28,11 @@ public class KosabiPluginOptions {
   }
 
   private ImmutableMap<String, AbsPath> getAllKosabiPluginsExceptStubgen() {
+    // The stubsgen plugin and the rokoko stubgen .so are stubgen-step tools,
+    // not main-compile plugins: keep them out of -Xplugin args.
     return resolvedKosabiPluginOptionPath.entrySet().stream()
         .filter(entry -> !KosabiConfig.PROPERTY_KOSABI_STUBS_GEN_K2_PLUGIN.equals(entry.getKey()))
+        .filter(entry -> !KosabiConfig.PROPERTY_ROKOKO_STUBGEN_SO.equals(entry.getKey()))
         .collect(ImmutableMap.toImmutableMap(Map.Entry::getKey, Map.Entry::getValue));
   }
 

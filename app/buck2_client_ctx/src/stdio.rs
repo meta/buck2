@@ -23,7 +23,6 @@ use std::sync::atomic::Ordering;
 
 use buck2_error::ErrorTag;
 use buck2_error::internal_error;
-use superconsole::Line;
 
 use crate::exit_result::ClientIoError;
 
@@ -108,11 +107,6 @@ pub fn print_bytes(bytes: &[u8]) -> buck2_error::Result<()> {
         .lock()
         .write_all(bytes)
         .map_err(|e| ClientIoError::from(e).into())
-}
-
-pub fn eprint_line(line: &Line) -> buck2_error::Result<()> {
-    let line = line.render();
-    crate::eprintln!("{}", line)
 }
 
 pub fn flush() -> buck2_error::Result<()> {

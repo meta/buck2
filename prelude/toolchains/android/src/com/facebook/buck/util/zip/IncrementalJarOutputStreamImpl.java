@@ -14,12 +14,12 @@ import static java.nio.file.StandardOpenOption.CREATE;
 import static java.nio.file.StandardOpenOption.READ;
 import static java.nio.file.StandardOpenOption.WRITE;
 
+import com.facebook.infer.annotation.Nullsafe;
 import java.io.IOException;
 import java.io.OutputStream;
 import java.nio.channels.Channels;
 import java.nio.channels.FileChannel;
 import java.nio.file.Path;
-import javax.annotation.Nonnull;
 
 /**
  * Alternative implementation to dependency packing, instead of copying several jars which is slow,
@@ -27,6 +27,7 @@ import javax.annotation.Nonnull;
  *
  * @see AppendableCentralDirectory
  */
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public class IncrementalJarOutputStreamImpl extends AppendingZipOutputStreamImpl {
 
   /**
@@ -81,7 +82,6 @@ public class IncrementalJarOutputStreamImpl extends AppendingZipOutputStreamImpl
     setCurrentOffset(appendableDirectory.getEntryOffset());
   }
 
-  @Nonnull
   @Override
   protected CentralDirectory getCentralDirectory() {
     return appendableDirectory;

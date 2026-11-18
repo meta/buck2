@@ -45,8 +45,8 @@ use starlark::values::Heap;
 use starlark::values::UnpackValue;
 use starlark::values::Value;
 use starlark::values::ValueOf;
-use starlark::values::list::UnpackList;
-use starlark::values::type_repr::StarlarkTypeRepr;
+use starlark::values::list::ListType;
+use starlark::values::string::StarlarkStr;
 
 use crate::bxl::starlark_defs::context::BxlContext;
 use crate::bxl::starlark_defs::context::BxlContextCoreData;
@@ -111,56 +111,56 @@ fn collect_and_filter_targets<T: ErrorPrinter>(
     filter_incompatible(maybe_compatible, error_printer)
 }
 
-#[derive(StarlarkTypeRepr, UnpackValue)]
+#[derive(UnpackValue)]
 pub(crate) enum TargetNodeOrTargetLabel<'v> {
-    TargetNode(&'v StarlarkTargetNode),
-    TargetLabel(&'v StarlarkTargetLabel),
+    TargetNode(ValueOf<'v, StarlarkTargetNode>),
+    TargetLabel(ValueOf<'v, StarlarkTargetLabel>),
 }
 
 impl<'v> TargetNodeOrTargetLabel<'v> {
     fn label(&self) -> &'v TargetLabel {
         match self {
-            TargetNodeOrTargetLabel::TargetNode(node) => node.0.label(),
-            TargetNodeOrTargetLabel::TargetLabel(label) => label.label(),
+            TargetNodeOrTargetLabel::TargetNode(node) => node.as_ref().0.label(),
+            TargetNodeOrTargetLabel::TargetLabel(label) => label.as_ref().label(),
         }
     }
 }
 
-#[derive(StarlarkTypeRepr, UnpackValue)]
+#[derive(UnpackValue)]
 pub(crate) enum TargetNodeOrTargetLabelOrStr<'v> {
-    TargetNode(&'v StarlarkTargetNode),
-    TargetLabel(&'v StarlarkTargetLabel),
-    Str(&'v str),
+    TargetNode(ValueOf<'v, StarlarkTargetNode>),
+    TargetLabel(ValueOf<'v, StarlarkTargetLabel>),
+    Str(ValueOf<'v, StarlarkStr>),
 }
 
-#[derive(StarlarkTypeRepr, UnpackValue)]
+#[derive(UnpackValue)]
 pub(crate) enum ConfiguredTargetNodeArg<'v> {
-    ConfiguredTargetNode(&'v StarlarkConfiguredTargetNode),
-    ConfiguredTargetLabel(&'v StarlarkConfiguredTargetLabel),
-    Str(&'v str),
+    ConfiguredTargetNode(ValueOf<'v, StarlarkConfiguredTargetNode>),
+    ConfiguredTargetLabel(ValueOf<'v, StarlarkConfiguredTargetLabel>),
+    Str(ValueOf<'v, StarlarkStr>),
     Unconfigured(TargetNodeOrTargetLabel<'v>),
 }
 
-#[derive(StarlarkTypeRepr, UnpackValue)]
+#[derive(UnpackValue)]
 pub(crate) enum TargetSetOrTargetList<'v> {
-    TargetSet(&'v StarlarkTargetSet<TargetNode>),
-    TargetList(UnpackList<ValueOf<'v, TargetNodeOrTargetLabelOrStr<'v>>>),
+    TargetSet(ValueOf<'v, StarlarkTargetSet<TargetNode>>),
+    TargetList(ValueOf<'v, ListType<TargetNodeOrTargetLabelOrStr<'v>>>),
 }
 
-#[derive(StarlarkTypeRepr, UnpackValue)]
+#[derive(UnpackValue)]
 pub(crate) enum ConfiguredTargetListArg<'v> {
-    ConfiguredTargetSet(&'v StarlarkTargetSet<ConfiguredTargetNode>),
-    TargetSet(&'v StarlarkTargetSet<TargetNode>),
-    TargetList(UnpackList<ConfiguredTargetNodeArg<'v>>),
+    ConfiguredTargetSet(ValueOf<'v, StarlarkTargetSet<ConfiguredTargetNode>>),
+    TargetSet(ValueOf<'v, StarlarkTargetSet<TargetNode>>),
+    TargetList(ValueOf<'v, ListType<ConfiguredTargetNodeArg<'v>>>),
 }
 
-#[derive(StarlarkTypeRepr, UnpackValue)]
+#[derive(UnpackValue)]
 pub(crate) enum TargetListExprArg<'v> {
     Target(TargetNodeOrTargetLabelOrStr<'v>),
     List(TargetSetOrTargetList<'v>),
 }
 
-#[derive(StarlarkTypeRepr, UnpackValue)]
+#[derive(UnpackValue)]
 pub(crate) enum ConfiguredTargetListExprArg<'v> {
     Target(ConfiguredTargetNodeArg<'v>),
     List(ValueOf<'v, ConfiguredTargetListArg<'v>>),
@@ -308,11 +308,14 @@ impl<'v> TargetListExpr<'v, ConfiguredTargetNode> {
             ConfiguredTargetNodeArg::ConfiguredTargetNode(configured_target) => {
                 Ok(Self::One(TargetExpr::Node(configured_target.0.dupe())))
             }
-            ConfiguredTargetNodeArg::ConfiguredTargetLabel(configured_target) => Ok(
-                TargetListExpr::One(TargetExpr::Label(Cow::Borrowed(configured_target.label()))),
-            ),
+            ConfiguredTargetNodeArg::ConfiguredTargetLabel(configured_target) => {
+                Ok(TargetListExpr::One(TargetExpr::Label(Cow::Borrowed(
+                    configured_target.as_ref().label(),
+                ))))
+            }
             ConfiguredTargetNodeArg::Str(s) => {
-                Self::unpack_string_literal(s, global_cfg_options, ctx, dice, keep_going).await
+                Self::unpack_string_literal(s.as_str(), global_cfg_options, ctx, dice, keep_going)
+                    .await
             }
             ConfiguredTargetNodeArg::Unconfigured(label) => dice
                 .get_configured_target(label.label(), global_cfg_options)
@@ -407,9 +410,9 @@ impl<'v> TargetListExpr<'v, ConfiguredTargetNode> {
         dice: &mut DiceComputations<'_>,
         keep_going: bool,
     ) -> buck2_error::Result<TargetListExpr<'v, ConfiguredTargetNode>> {
-        match value.typed {
+        match value.try_get()? {
             ConfiguredTargetListArg::ConfiguredTargetSet(s) => {
-                Ok(Self::TargetSet(Cow::Borrowed(s)))
+                Ok(Self::TargetSet(Cow::Borrowed(s.as_ref())))
             }
             ConfiguredTargetListArg::TargetSet(s) => {
                 let results: Vec<ResultMaybeCompatible<ConfiguredTargetNode>> = dice
@@ -432,7 +435,8 @@ impl<'v> TargetListExpr<'v, ConfiguredTargetNode> {
                 // FIXME(JakobDegen): These iterations don't run in parallel, which is pretty sad.
                 // Unfortunately, that's also not easy to fix because for some reason this code
                 // prints to console
-                for item in unpack.items {
+                for item in unpack.try_items() {
+                    let item = item?;
                     let unpacked =
                         match Self::unpack_literal(item, global_cfg_options, ctx, dice, keep_going)
                             .await
@@ -454,10 +458,10 @@ impl<'v> TargetListExpr<'v, ConfiguredTargetNode> {
                                 resolved.extend(items);
                             } else {
                                 let error: buck2_error::Error =
-                                    TargetExprError::NotATarget(value.value.to_repr()).into();
+                                    TargetExprError::NotATarget(value.to_value().to_repr()).into();
                                 return Err(error.context(format!(
                                     "Error resolving list `{}`",
-                                    truncate(&value.value.to_repr(), 150)
+                                    truncate(&value.to_value().to_repr(), 150)
                                 )));
                             }
                         }
@@ -492,9 +496,10 @@ impl<'v> TargetListExpr<'v, TargetNode> {
                 Ok(TargetListExpr::One(TargetExpr::Node(target.0.dupe())))
             }
             TargetNodeOrTargetLabelOrStr::TargetLabel(target) => Ok(TargetListExpr::One(
-                TargetExpr::Label(Cow::Borrowed(target.label())),
+                TargetExpr::Label(Cow::Borrowed(target.as_ref().label())),
             )),
             TargetNodeOrTargetLabelOrStr::Str(s) => {
+                let s = s.as_str();
                 match ParsedPattern::<TargetPatternExtra>::parse_relaxed(
                     ctx.target_alias_resolver(),
                     // TODO(nga): Parse relaxed relative to cell root is incorrect.
@@ -528,12 +533,13 @@ impl<'v> TargetListExpr<'v, TargetNode> {
         dice: &mut DiceComputations<'_>,
     ) -> buck2_error::Result<TargetListExpr<'v, TargetNode>> {
         match value {
-            TargetSetOrTargetList::TargetSet(s) => Ok(Self::TargetSet(Cow::Borrowed(s))),
+            TargetSetOrTargetList::TargetSet(s) => Ok(Self::TargetSet(Cow::Borrowed(s.as_ref()))),
             TargetSetOrTargetList::TargetList(items) => {
                 let mut resolved = vec![];
 
-                for item in items.items {
-                    let unpacked = Self::unpack_literal(item.typed, ctx, dice).await?;
+                for item in items.iter() {
+                    let item = item?;
+                    let unpacked = Self::unpack_literal(item.get(), ctx, dice).await?;
 
                     match unpacked {
                         TargetListExpr::One(node) => resolved.push(node),
@@ -543,7 +549,7 @@ impl<'v> TargetListExpr<'v, TargetNode> {
                         }
                         .for_each(|t| resolved.push(TargetExpr::Node(t))),
                         TargetListExpr::Iterable(_) => {
-                            return Err(TargetExprError::NotATarget(item.value.to_repr()))
+                            return Err(TargetExprError::NotATarget(item.to_value().to_repr()))
                                 .buck_error_context("list in a list");
                         }
                     }
@@ -567,12 +573,12 @@ impl SingleOrCompatibleConfiguredTargets {
         bxl_eval_extra: &BxlEvalExtra,
     ) -> buck2_error::Result<Value<'v>> {
         match self {
-            SingleOrCompatibleConfiguredTargets::Single(node) => {
-                Ok(heap.alloc(StarlarkConfiguredTargetNode(node)))
-            }
+            SingleOrCompatibleConfiguredTargets::Single(node) => Ok(heap
+                .alloc(StarlarkConfiguredTargetNode::new(node))
+                .to_value()),
             SingleOrCompatibleConfiguredTargets::Compatibles(compatibles) => {
                 let target_set = filter_incompatible(compatibles, bxl_eval_extra)?;
-                Ok(heap.alloc(StarlarkTargetSet(target_set)))
+                Ok(heap.alloc(StarlarkTargetSet(target_set)).to_value())
             }
         }
     }
@@ -633,10 +639,10 @@ impl OwnedTargetNodeOrTargetLabel {
     pub(crate) fn from_ref(reference: TargetNodeOrTargetLabel<'_>) -> Self {
         match reference {
             TargetNodeOrTargetLabel::TargetNode(node) => {
-                OwnedTargetNodeOrTargetLabel::TargetNode(node.dupe())
+                OwnedTargetNodeOrTargetLabel::TargetNode(node.as_ref().dupe())
             }
             TargetNodeOrTargetLabel::TargetLabel(label) => {
-                OwnedTargetNodeOrTargetLabel::TargetLabel(label.dupe())
+                OwnedTargetNodeOrTargetLabel::TargetLabel(label.as_ref().dupe())
             }
         }
     }
@@ -688,13 +694,13 @@ impl OwnedConfiguredTargetNodeArg {
     pub(crate) fn from_ref(reference: ConfiguredTargetNodeArg<'_>) -> Self {
         match reference {
             ConfiguredTargetNodeArg::ConfiguredTargetNode(node) => {
-                OwnedConfiguredTargetNodeArg::ConfiguredTargetNode(node.dupe())
+                OwnedConfiguredTargetNodeArg::ConfiguredTargetNode(node.as_ref().dupe())
             }
             ConfiguredTargetNodeArg::ConfiguredTargetLabel(label) => {
-                OwnedConfiguredTargetNodeArg::ConfiguredTargetLabel(label.dupe())
+                OwnedConfiguredTargetNodeArg::ConfiguredTargetLabel(label.as_ref().dupe())
             }
             ConfiguredTargetNodeArg::Str(str) => {
-                OwnedConfiguredTargetNodeArg::String(str.to_owned())
+                OwnedConfiguredTargetNodeArg::String(str.as_str().to_owned())
             }
             ConfiguredTargetNodeArg::Unconfigured(unconfigured) => {
                 OwnedConfiguredTargetNodeArg::Unconfigured(OwnedTargetNodeOrTargetLabel::from_ref(
@@ -741,12 +747,14 @@ impl OwnedTargetNodeArg {
     pub(crate) fn from_ref(expr: &TargetNodeOrTargetLabelOrStr<'_>) -> Self {
         match *expr {
             TargetNodeOrTargetLabelOrStr::TargetNode(node) => OwnedTargetNodeArg::Unconfigured(
-                OwnedTargetNodeOrTargetLabel::TargetNode(node.dupe()),
+                OwnedTargetNodeOrTargetLabel::TargetNode(node.as_ref().dupe()),
             ),
             TargetNodeOrTargetLabelOrStr::TargetLabel(label) => OwnedTargetNodeArg::Unconfigured(
-                OwnedTargetNodeOrTargetLabel::TargetLabel(label.dupe()),
+                OwnedTargetNodeOrTargetLabel::TargetLabel(label.as_ref().dupe()),
             ),
-            TargetNodeOrTargetLabelOrStr::Str(str) => OwnedTargetNodeArg::String(str.to_owned()),
+            TargetNodeOrTargetLabelOrStr::Str(str) => {
+                OwnedTargetNodeArg::String(str.as_str().to_owned())
+            }
         }
     }
 
@@ -809,8 +817,8 @@ pub(crate) enum OwnedTargetListExprArg {
 }
 
 impl OwnedTargetListExprArg {
-    pub(crate) fn from_ref(expr: &TargetListExprArg<'_>) -> Self {
-        match expr {
+    pub(crate) fn from_ref(expr: &TargetListExprArg<'_>) -> buck2_error::Result<Self> {
+        Ok(match expr {
             TargetListExprArg::Target(target) => {
                 OwnedTargetListExprArg::Target(OwnedTargetNodeArg::from_ref(target))
             }
@@ -820,14 +828,13 @@ impl OwnedTargetListExprArg {
                 }
                 TargetSetOrTargetList::TargetList(list) => {
                     let owned_targets = list
-                        .items
                         .iter()
-                        .map(|item| OwnedTargetNodeArg::from_ref(&item.typed))
-                        .collect();
+                        .map(|item| buck2_error::Ok(OwnedTargetNodeArg::from_ref(&item?.get())))
+                        .collect::<buck2_error::Result<_>>()?;
                     OwnedTargetListExprArg::TargetList(owned_targets)
                 }
             },
-        }
+        })
     }
 
     pub(crate) async fn to_unconfigured_target_set(

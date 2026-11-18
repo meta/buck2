@@ -10,6 +10,8 @@
 
 use std::path::Path;
 use std::str::FromStr;
+use std::time::Duration;
+use std::time::Instant;
 
 use buck2_common::file_ops::metadata::FileDigest;
 use buck2_common::file_ops::metadata::TrackedFileDigest;
@@ -19,6 +21,7 @@ use buck2_core::fs::project::ProjectRoot;
 use buck2_core::fs::project_rel_path::ProjectRelativePath;
 use buck2_core::soft_error;
 use buck2_data::ReUploadMetrics;
+use buck2_data::timing::Micros;
 use buck2_directory::directory::directory::Directory;
 use buck2_directory::directory::directory_iterator::DirectoryIterator;
 use buck2_directory::directory::directory_iterator::DirectoryIteratorPathStack;
@@ -61,6 +64,52 @@ use crate::re::presence::NegativeCache;
 pub struct UploadStats {
     pub total: ReUploadMetrics,
     pub by_extension: IntentionallyStdHashMap<String, ReUploadMetrics>,
+    pub(crate) phases: UploadPhases,
+}
+
+/// Where a successful upload's time went, and what the presence check reported about its input
+/// digests.
+#[derive(Clone, Copy, Debug, Default)]
+pub(crate) struct UploadPhases {
+    pub(crate) slot_wait: Duration,
+    pub(crate) find_missing: Duration,
+    pub(crate) materializer_query: Duration,
+    pub(crate) materialize: Duration,
+    pub(crate) cas_write: Duration,
+    pub(crate) digests_queried: u64,
+    pub(crate) digests_missing: u64,
+}
+
+impl UploadStats {
+    pub fn to_proto(self) -> buck2_data::ReUploadEnd {
+        buck2_data::ReUploadEnd {
+            digests_uploaded: Some(self.total.digests_uploaded),
+            bytes_uploaded: Some(self.total.bytes_uploaded),
+            stats_by_extension: self.by_extension,
+            stats: Some(self.phases.to_proto()),
+        }
+    }
+}
+
+impl UploadPhases {
+    fn to_proto(self) -> buck2_data::ReUploadStats {
+        buck2_data::ReUploadStats {
+            slot_wait_us: Micros::from(self.slot_wait).into(),
+            find_missing_us: Micros::from(self.find_missing).into(),
+            materializer_query_us: Micros::from(self.materializer_query).into(),
+            materialize_us: Micros::from(self.materialize).into(),
+            cas_write_us: Micros::from(self.cas_write).into(),
+            digests_queried: self.digests_queried,
+            digests_missing: self.digests_missing,
+        }
+    }
+}
+
+struct FindMissing<'a> {
+    upload_blobs: Vec<InlinedBlobWithDigest>,
+    missing_digests: BuckMutSet<&'a TrackedFileDigest>,
+    digests_queried: u64,
+    digests_missing: u64,
 }
 
 pub struct Uploader {}
@@ -71,10 +120,7 @@ impl Uploader {
         input_dir: &'a ActionImmutableDirectory,
         blobs: &'a ActionBlobs,
         use_case: RemoteExecutorUseCase,
-    ) -> buck2_error::Result<(
-        Vec<InlinedBlobWithDigest>,
-        BuckMutSet<&'a TrackedFileDigest>,
-    )> {
+    ) -> buck2_error::Result<FindMissing<'a>> {
         // Everything the action refers to; the presence check answers from the digest for
         // whatever is known to be in the CAS with time to spare.
         let mut input_digests = blobs.keys().collect::<BuckMutSet<_>>();
@@ -92,6 +138,8 @@ impl Uploader {
         let mut missing_digests = BuckMutSet::default();
         add_injected_missing_digests(&input_digests, &mut missing_digests)?;
         let input_digests = input_digests.into_iter().collect::<Vec<_>>();
+        let digests_queried = input_digests.len() as u64;
+        let mut digests_missing = 0;
 
         // Whatever is missing gets uploaded below, so a stale miss costs one redundant upload.
         let presence = client
@@ -115,6 +163,7 @@ impl Uploader {
                 }
                 _ => {
                     tracing::debug!(digest=%digest, "Mark for upload");
+                    digests_missing += 1;
 
                     match blobs.get(digest) {
                         Some(blob) => {
@@ -132,7 +181,12 @@ impl Uploader {
             }
         }
 
-        Ok((upload_blobs, missing_digests))
+        Ok(FindMissing {
+            upload_blobs,
+            missing_digests,
+            digests_queried,
+            digests_missing,
+        })
     }
 
     pub async fn upload(
@@ -145,11 +199,25 @@ impl Uploader {
         use_case: RemoteExecutorUseCase,
         identity: Option<&ReActionIdentity<'_>>,
     ) -> buck2_error::Result<UploadStats> {
-        let (mut upload_blobs, mut missing_digests) =
-            Self::find_missing(client, input_dir, blobs, use_case).await?;
+        let mut start = Instant::now();
+        let FindMissing {
+            mut upload_blobs,
+            mut missing_digests,
+            digests_queried,
+            digests_missing,
+        } = Self::find_missing(client, input_dir, blobs, use_case).await?;
+        let mut phases = UploadPhases {
+            find_missing: Instant::now() - start,
+            digests_queried,
+            digests_missing,
+            ..Default::default()
+        };
 
         if upload_blobs.is_empty() && missing_digests.is_empty() {
-            return Ok(UploadStats::default());
+            return Ok(UploadStats {
+                phases,
+                ..Default::default()
+            });
         }
 
         // Find the file paths and directory blobs that need to be uploaded
@@ -205,9 +273,11 @@ impl Uploader {
             // we are asked to upload B. But since we defer local copies until
             // it's actually needed for a local run, B might not have been
             // copied yet (or ever), so we should upload A directly instead.
+            start = Instant::now();
             let upload_file_paths = materializer
                 .get_materialized_file_paths(upload_file_paths)
                 .await?;
+            phases.materializer_query = Instant::now() - start;
 
             for ((name, digest), metadata) in upload_file_paths
                 .into_iter()
@@ -312,6 +382,7 @@ impl Uploader {
         }
 
         // The upload reads these files; the lease covers it.
+        start = Instant::now();
         let _materialized_lease = if artifacts_to_materialize.is_empty() {
             None
         } else {
@@ -329,6 +400,7 @@ impl Uploader {
             }
             Some(response.lease)
         };
+        phases.materialize = Instant::now() - start;
 
         // Compute stats of digests we're about to upload so we can report them
         // to the span end event of this stage of execution.
@@ -359,15 +431,18 @@ impl Uploader {
                     bytes_uploaded: named_digest_byte_count + blob_byte_count,
                 },
                 by_extension: stats_by_extension,
+                phases: UploadPhases::default(),
             }
         };
 
         // Upload
+        start = Instant::now();
         if !upload_files.is_empty() || !upload_blobs.is_empty() {
             Self::send(client, use_case, identity, upload_files, upload_blobs).await?;
         };
+        phases.cas_write = Instant::now() - start;
 
-        Ok(stats)
+        Ok(UploadStats { phases, ..stats })
     }
 
     /// Uploads whichever of `blobs` the CAS does not hold: the check and the upload `upload`
@@ -408,6 +483,7 @@ impl Uploader {
                     .sum(),
             },
             by_extension: IntentionallyStdHashMap::new(),
+            phases: UploadPhases::default(),
         };
         Self::send(client, use_case, None, Vec::new(), upload_blobs).await?;
         Ok(stats)
@@ -458,7 +534,7 @@ impl Uploader {
 buck2_util::size_assert::words_of_async_fn_future!(
     Uploader::upload,
     (_, _, _, _, _, _, _, _),
-    ~287
+    ~324
 );
 #[cfg(fbcode_build)] // Relies on fbcode future sizes
 buck2_util::size_assert::words_of_async_fn_future!(
@@ -550,5 +626,48 @@ fn extract_file_extension(path: &str) -> String {
     match path.extension() {
         Some(ext) => ext.to_string_lossy().to_lowercase(),
         None => "<empty>".to_owned(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_upload_stats_to_proto() {
+        let stats = UploadStats {
+            total: ReUploadMetrics {
+                digests_uploaded: 3,
+                bytes_uploaded: 300,
+            },
+            by_extension: IntentionallyStdHashMap::new(),
+            phases: UploadPhases {
+                slot_wait: Duration::from_micros(1),
+                find_missing: Duration::from_micros(2),
+                materializer_query: Duration::from_micros(3),
+                materialize: Duration::from_micros(4),
+                cas_write: Duration::from_micros(5),
+                digests_queried: 10,
+                digests_missing: 2,
+            },
+        };
+        let event = stats.to_proto();
+        assert_eq!(
+            event.stats,
+            Some(buck2_data::ReUploadStats {
+                slot_wait_us: 1,
+                find_missing_us: 2,
+                materializer_query_us: 3,
+                materialize_us: 4,
+                cas_write_us: 5,
+                digests_queried: 10,
+                digests_missing: 2,
+            }),
+            "each phase goes to its own field"
+        );
+        assert_eq!(
+            (event.digests_uploaded, event.bytes_uploaded),
+            (Some(3), Some(300))
+        );
     }
 }

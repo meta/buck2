@@ -46,7 +46,11 @@ impl PackageListingResolver for InterpreterPackageListingResolver<'_, '_> {
         let buildfile_candidates = DiceFileComputations::buildfiles(self.ctx, path.cell()).await?;
         if let Some(path) = path.parent() {
             for path in path.ancestors() {
-                let listing = DiceFileComputations::read_dir(self.ctx, path).await?;
+                let Some(listing) =
+                    DiceFileComputations::read_dir_unless_behind_symlink(self.ctx, path).await?
+                else {
+                    continue;
+                };
                 if find_buildfile(buildfile_candidates, &listing.included).is_some() {
                     return PackageLabel::from_cell_path(path);
                 }
@@ -68,7 +72,11 @@ impl PackageListingResolver for InterpreterPackageListingResolver<'_, '_> {
                     // stop when we are no longer within the enclosing path
                     break;
                 }
-                let listing = DiceFileComputations::read_dir(self.ctx, path).await?;
+                let Some(listing) =
+                    DiceFileComputations::read_dir_unless_behind_symlink(self.ctx, path).await?
+                else {
+                    continue;
+                };
                 if find_buildfile(buildfile_candidates, &listing.included).is_some() {
                     packages.push(PackageLabel::from_cell_path(path)?);
                 }

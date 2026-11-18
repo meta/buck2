@@ -10,6 +10,7 @@
 
 #![feature(anonymous_lifetime_in_impl_trait)]
 
+pub mod agent_recursive_patterns;
 pub mod bxl;
 pub mod commands;
 pub mod concurrency {

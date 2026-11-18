@@ -37,7 +37,12 @@ class AnnotationStubsGenerator : StubsGenerator {
         .mapNotNull { it.typeReference?.getChildOfType<KtUserType>() }
         .forEach { annotationType ->
           val genFullQualifier = annotationType.calculateQualifierList()
-          val imp = context.resolveImportedType(candidates, genFullQualifier.first())
+          val imp =
+              context.resolveImportedType(
+                  candidates,
+                  genFullQualifier.first(),
+                  annotationType.containingKtFile,
+              )
 
           val pkg: String
           val name: String

@@ -49,8 +49,12 @@ use pagable::pagable_typetag;
 use starlark::values::OwnedFrozen;
 use starlark::values::UnpackValue;
 use starlark::values::Value;
-use starlark::values::list_or_tuple::UnpackListOrTuple;
+use starlark::values::ValueOf;
+use starlark::values::dict::AllocDict;
+use starlark::values::list::AllocList;
+use starlark::values::list_or_tuple::ListOrTupleType;
 use starlark::values::none::NoneOr;
+use starlark::values::string::StarlarkStr;
 
 use crate::registration::init_registration;
 
@@ -92,18 +96,21 @@ async fn eval_pre_constraint_analysis<'v, 'a>(
         let legacy_platform = if cfg.is_bound() {
             eval.heap()
                 .alloc(PlatformInfo::from_configuration(cfg, eval.heap())?)
+                .to_value()
         } else {
             Value::new_none()
         };
 
         let package_cfg_modifiers = eval
             .heap()
-            .alloc(NoneOr::from_option(package_cfg_modifiers.copied()));
+            .alloc(NoneOr::from_option(package_cfg_modifiers.copied()))
+            .to_value();
         let target_cfg_modifiers = eval
             .heap()
-            .alloc(NoneOr::from_option(target_cfg_modifiers.copied()));
-        let cli_modifiers = eval.heap().alloc(cli_modifiers);
-        let rule_name = eval.heap().alloc(rule_type.name());
+            .alloc(NoneOr::from_option(target_cfg_modifiers.copied()))
+            .to_value();
+        let cli_modifiers = eval.heap().alloc(AllocList(cli_modifiers)).to_value();
+        let rule_name = eval.heap().alloc(rule_type.name()).to_value();
         let aliases = match aliases {
             Some(v) => v,
             None => Value::new_none(),
@@ -112,7 +119,7 @@ async fn eval_pre_constraint_analysis<'v, 'a>(
             Some(v) => v,
             None => Value::new_none(),
         };
-        let configuring_exec_dep = eval.heap().alloc(configuring_exec_dep);
+        let configuring_exec_dep = eval.heap().alloc(configuring_exec_dep).to_value();
 
         // TODO: should eventually accept cli modifiers and target modifiers (T163570597)
         let pre_constraint_analysis_args = vec![
@@ -127,15 +134,20 @@ async fn eval_pre_constraint_analysis<'v, 'a>(
         ];
 
         // Type check + unpack
-        let (refs, params) =
-            <(UnpackListOrTuple<String>, Value)>::unpack_value_err(eval.eval_function(
+        let (refs, params) = <(ValueOf<ListOrTupleType<StarlarkStr>>, Value)>::unpack_value_err(
+            eval.eval_function(
                 cfg_constructor_pre_constraint_analysis,
                 &[],
                 &pre_constraint_analysis_args,
-            )?)?;
+            )?,
+        )?;
 
         // `params` Value lives on eval.heap() so we need to move eval out of the closure to keep it alive
-        Ok((refs.items, params))
+        let refs = refs
+            .try_items::<&str>()
+            .map(|s| s.map(str::to_owned))
+            .collect::<starlark::Result<Vec<_>>>()?;
+        Ok((refs, params))
     })
 }
 
@@ -185,14 +197,16 @@ fn eval_post_constraint_analysis<'v>(
         let post_constraint_analysis_args = vec![
             (
                 "refs",
-                eval.heap().alloc(
-                    refs_providers_map
-                        .into_iter()
-                        .map(|(label, providers)| {
-                            (label, providers.add_heap_ref(eval.heap()).to_value())
-                        })
-                        .collect::<BuckMutInsertionMap<String, Value<'_>>>(),
-                ),
+                eval.heap()
+                    .alloc(AllocDict(
+                        refs_providers_map
+                            .into_iter()
+                            .map(|(label, providers)| {
+                                (label, providers.add_heap_ref(eval.heap()).to_value())
+                            })
+                            .collect::<BuckMutInsertionMap<String, Value<'_>>>(),
+                    ))
+                    .to_value(),
             ),
             ("params", params),
         ];

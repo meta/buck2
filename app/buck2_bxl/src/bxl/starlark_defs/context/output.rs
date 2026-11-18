@@ -22,6 +22,7 @@ use buck2_artifact::artifact::artifact_path::ArtifactPath;
 use buck2_build_api::artifact_groups::ArtifactGroup;
 use buck2_build_api::bxl::build_result::BxlBuildResult;
 use buck2_build_api::interpreter::rule_defs::artifact::starlark_artifact::StarlarkArtifact;
+use buck2_build_api::interpreter::rule_defs::artifact::starlark_artifact_like::StarlarkArtifactView;
 use buck2_build_api::interpreter::rule_defs::cmd_args::CommandLineArgLike;
 use buck2_build_api::interpreter::rule_defs::cmd_args::SimpleCommandLineArtifactVisitor;
 use buck2_build_api::interpreter::rule_defs::cmd_args::StarlarkCommandLineInputs;
@@ -32,6 +33,7 @@ use buck2_core::fs::project::ProjectRoot;
 use buck2_error::BuckErrorContext;
 use buck2_error::buck2_error;
 use buck2_error::starlark_error::from_starlark_with_options;
+use buck2_hash::BuckMutInsertionMap;
 use buck2_hash::BuckMutInsertionSet;
 use buck2_server_ctx::bxl::BxlStreamingTracker;
 use buck2_server_ctx::bxl::GetBxlStreamingTracker;
@@ -49,27 +51,24 @@ use starlark::environment::Methods;
 use starlark::environment::MethodsBuilder;
 use starlark::eval::Evaluator;
 use starlark::starlark_module;
-use starlark::values::AllocValue;
 use starlark::values::Heap;
 use starlark::values::NoSerialize;
 use starlark::values::StarlarkValue;
 use starlark::values::Trace;
 use starlark::values::UnpackValue;
 use starlark::values::Value;
-use starlark::values::dict::DictRef;
-use starlark::values::dict::UnpackDictEntries;
-use starlark::values::list::ListRef;
-use starlark::values::list::UnpackList;
+use starlark::values::ValueOf;
+use starlark::values::dict::AllocDict;
+use starlark::values::dict::DictType;
+use starlark::values::list::AllocList;
+use starlark::values::list::ListType;
 use starlark::values::none::NoneType;
 use starlark::values::record::Record;
-use starlark::values::set::SetRef;
+use starlark::values::set::SetType;
 use starlark::values::starlark_value;
-use starlark::values::structs::StructRef;
-use starlark::values::tuple::TupleRef;
-use starlark::values::tuple::UnpackTuple;
-use starlark::values::type_repr::StarlarkTypeRepr;
+use starlark::values::structs::Struct;
+use starlark::values::tuple::TupleType;
 
-use crate::bxl::starlark_defs::artifacts::ArtifactArg;
 use crate::bxl::starlark_defs::artifacts::EnsuredArtifact;
 use crate::bxl::starlark_defs::artifacts::EnsuredArtifactGroup;
 use crate::bxl::starlark_defs::build_result::StarlarkBxlBuildResult;
@@ -464,71 +463,89 @@ impl StarlarkOutputStream {
             }
         }
 
+        /// What is serialized here: an ensured artifact as its path, and a container item by
+        /// item, to get to the ensured artifacts inside. Any other value is serialized as its
+        /// own `Serialize` says.
+        #[derive(UnpackValue)]
+        enum SerializedHere<'v> {
+            EnsuredArtifact(ValueOf<'v, EnsuredArtifact>),
+            EnsuredArtifactGroup(ValueOf<'v, EnsuredArtifactGroup<'v>>),
+            List(ValueOf<'v, ListType<Value<'v>>>),
+            Tuple(ValueOf<'v, TupleType<Value<'v>>>),
+            Set(ValueOf<'v, SetType<Value<'v>>>),
+            Dict(ValueOf<'v, DictType<Value<'v>, Value<'v>>>),
+            Struct(ValueOf<'v, Struct<'v>>),
+            Record(ValueOf<'v, Record<'v>>),
+        }
+
         impl Serialize for SerializeValue<'_, '_, '_, '_> {
             fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
             where
                 S: Serializer,
             {
-                if let Some(ensured) = <&EnsuredArtifact>::unpack_value(self.value)
-                    .map_err(|e| serde::ser::Error::custom(format!("{e:#}")))?
-                {
-                    let path = get_artifact_path_display(
-                        ensured.get_artifact_path(),
-                        ensured.abs(),
-                        self.project_fs,
-                        self.artifact_fs,
-                    )
-                    .map_err(|err| serde::ser::Error::custom(format!("{err:#}")))?;
-                    serializer.serialize_str(&path)
-                } else if let Some(ensured) = <&EnsuredArtifactGroup>::unpack_value(self.value)
-                    .map_err(|e| serde::ser::Error::custom(format!("{e:#}")))?
-                {
-                    let mut seq_ser = serializer.serialize_seq(None)?;
-
-                    self.async_ctx
-                        .borrow_mut()
-                        .via(|dice| {
-                            ensured
-                                .visit_artifact_path_without_associated_deduped(
-                                    |artifact_path, abs| {
-                                        let path = get_artifact_path_display(
-                                            artifact_path,
-                                            abs,
-                                            self.project_fs,
-                                            self.artifact_fs,
-                                        )?;
-                                        seq_ser.serialize_element(&path).map_err(|err| {
-                                            buck2_error!(
-                                                buck2_error::ErrorTag::Tier0,
-                                                "{}",
-                                                format!("{:#}", err)
-                                            )
-                                        })?;
-                                        Ok(())
-                                    },
-                                    dice,
-                                )
-                                .boxed_local()
-                        })
+                match SerializedHere::unpack_value_opt(self.value) {
+                    Some(SerializedHere::EnsuredArtifact(ensured)) => {
+                        let path = get_artifact_path_display(
+                            ensured.get_artifact_path(),
+                            ensured.abs(),
+                            self.project_fs,
+                            self.artifact_fs,
+                        )
                         .map_err(|err| serde::ser::Error::custom(format!("{err:#}")))?;
-                    seq_ser.end()
-                } else if let Some(x) = ListRef::from_value(self.value) {
-                    serializer.collect_seq(x.iter().map(|v| self.with_value(v)))
-                } else if let Some(x) = TupleRef::from_value(self.value) {
-                    serializer.collect_seq(x.iter().map(|v| self.with_value(v)))
-                } else if let Some(x) = SetRef::from_value(self.value) {
-                    serializer.collect_seq(x.iter().map(|v| self.with_value(v)))
-                } else if let Some(x) = DictRef::from_value(self.value) {
-                    serializer.collect_map(
-                        x.iter()
+                        serializer.serialize_str(&path)
+                    }
+                    Some(SerializedHere::EnsuredArtifactGroup(ensured)) => {
+                        let mut seq_ser = serializer.serialize_seq(None)?;
+
+                        self.async_ctx
+                            .borrow_mut()
+                            .via(|dice| {
+                                ensured
+                                    .visit_artifact_path_without_associated_deduped(
+                                        |artifact_path, abs| {
+                                            let path = get_artifact_path_display(
+                                                artifact_path,
+                                                abs,
+                                                self.project_fs,
+                                                self.artifact_fs,
+                                            )?;
+                                            seq_ser.serialize_element(&path).map_err(|err| {
+                                                buck2_error!(
+                                                    buck2_error::ErrorTag::Tier0,
+                                                    "{}",
+                                                    format!("{:#}", err)
+                                                )
+                                            })?;
+                                            Ok(())
+                                        },
+                                        dice,
+                                    )
+                                    .boxed_local()
+                            })
+                            .map_err(|err| serde::ser::Error::custom(format!("{err:#}")))?;
+                        seq_ser.end()
+                    }
+                    Some(SerializedHere::List(x)) => {
+                        serializer.collect_seq(x.list().iter().map(|v| self.with_value(v)))
+                    }
+                    Some(SerializedHere::Tuple(x)) => {
+                        serializer.collect_seq(x.tuple().iter().map(|v| self.with_value(v)))
+                    }
+                    Some(SerializedHere::Set(x)) => {
+                        serializer.collect_seq(x.set().iter().map(|v| self.with_value(v)))
+                    }
+                    Some(SerializedHere::Dict(x)) => serializer.collect_map(
+                        x.dict()
+                            .iter()
                             .map(|(k, v)| (self.with_value(k), self.with_value(v))),
-                    )
-                } else if let Some(x) = StructRef::from_value(self.value) {
-                    serializer.collect_map(x.iter().map(|(k, v)| (k, self.with_value(v))))
-                } else if let Some(x) = Record::from_value(self.value) {
-                    serializer.collect_map(x.iter().map(|(k, v)| (k, self.with_value(v))))
-                } else {
-                    self.value.serialize(serializer)
+                    ),
+                    Some(SerializedHere::Struct(x)) => {
+                        serializer.collect_map(x.iter().map(|(k, v)| (k, self.with_value(v))))
+                    }
+                    Some(SerializedHere::Record(x)) => {
+                        serializer.collect_map(x.iter().map(|(k, v)| (k, self.with_value(v))))
+                    }
+                    None => self.value.serialize(serializer),
                 }
             }
         }
@@ -559,31 +576,20 @@ impl StarlarkOutputStream {
 
 starlark::methods_static!(OUTPUT_STREAM_METHODS = output_stream_methods);
 
-#[starlark_value(
-    type = "bxl.OutputStream",
-    StarlarkTypeRepr,
-    UnpackValue,
-    ty_vtable_no_freeze
-)]
+#[starlark_value(type = "bxl.OutputStream", no_freeze)]
 impl<'v> StarlarkValue<'v> for StarlarkOutputStream {
     fn get_methods() -> Option<&'static Methods> {
         Some(OUTPUT_STREAM_METHODS.methods())
     }
 }
 
-impl<'v> AllocValue<'v> for StarlarkOutputStream {
-    fn alloc_value(self, heap: Heap<'v>) -> Value<'v> {
-        heap.alloc_complex_no_freeze(self)
-    }
-}
-
-#[derive(StarlarkTypeRepr, UnpackValue)]
+#[derive(UnpackValue)]
 enum EnsureMultipleArtifactsArg<'v> {
     None(NoneType),
-    EnsuredArtifactArgs(UnpackList<ArtifactArg<'v>>),
-    ProvidersArtifactIterable(&'v StarlarkProvidersArtifactIterable<'v>),
-    BxlBuildResult(&'v StarlarkBxlBuildResult),
-    Dict(UnpackDictEntries<Value<'v>, &'v StarlarkBxlBuildResult>),
+    EnsuredArtifactArgs(ValueOf<'v, ListType<StarlarkArtifactView<'v>>>),
+    ProvidersArtifactIterable(ValueOf<'v, StarlarkProvidersArtifactIterable<'v>>),
+    BxlBuildResult(ValueOf<'v, StarlarkBxlBuildResult>),
+    Dict(ValueOf<'v, DictType<Value<'v>, StarlarkBxlBuildResult>>),
     CmdLine(ValueAsCommandLineLike<'v>),
 }
 
@@ -611,14 +617,14 @@ fn output_stream_methods(builder: &mut MethodsBuilder) {
     /// ```
     fn print<'v>(
         this: &'v StarlarkOutputStream,
-        #[starlark(args)] args: UnpackTuple<Value<'v>>,
+        #[starlark(args)] args: ValueOf<'v, TupleType<Value<'v>>>,
         #[starlark(default = " ")] sep: &'v str,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<NoneType> {
         let buffer_output = BufferPrintOutput {
             output: this.output(),
         };
-        this.print(args.into_iter(), sep, eval, buffer_output)?;
+        this.print(args.items(), sep, eval, buffer_output)?;
 
         Ok(NoneType)
     }
@@ -684,29 +690,37 @@ fn output_stream_methods(builder: &mut MethodsBuilder) {
     /// ```
     fn stream<'v>(
         this: &'v StarlarkOutputStream,
-        #[starlark(args)] args: UnpackTuple<Value<'v>>,
+        #[starlark(args)] args: ValueOf<'v, TupleType<Value<'v>>>,
         #[starlark(default = " ")] sep: &'v str,
-        #[starlark(require = named, default = UnpackList::default())] wait_on: UnpackList<
-            Either<&'v EnsuredArtifact, &'v EnsuredArtifactGroup>,
+        #[starlark(require = named, default = ValueOf::empty_list())] wait_on: ValueOf<
+            'v,
+            ListType<Either<EnsuredArtifact, EnsuredArtifactGroup<'v>>>,
         >,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<NoneType> {
         let extra = BxlEvalExtra::from_context(eval)?;
         let streaming_writer = BxlStreamingWriter::new(&extra.dice);
 
-        let wait_on = wait_on.into_iter().flat_map(|wait_on| match wait_on {
-            Either::Left(ensured_artifact) => {
-                vec![EnsuredArtifactOrGroup::Artifact(ensured_artifact.dupe())]
-            }
-            Either::Right(ensured_group) => ensured_group
-                .inner()
-                .iter()
-                .map(|group| EnsuredArtifactOrGroup::ArtifactGroup(group.dupe()))
-                .collect(),
-        });
+        let wait_on = wait_on
+            .iter()
+            .map(|wait_on| Ok(wait_on?.get()))
+            .collect::<starlark::Result<Vec<_>>>()?
+            .into_iter()
+            .flat_map(|wait_on| match wait_on {
+                Either::Left(ensured_artifact) => {
+                    vec![EnsuredArtifactOrGroup::Artifact(
+                        ensured_artifact.as_ref().dupe(),
+                    )]
+                }
+                Either::Right(ensured_group) => ensured_group
+                    .inner()
+                    .iter()
+                    .map(|group| EnsuredArtifactOrGroup::ArtifactGroup(group.dupe()))
+                    .collect(),
+            });
 
         let streaming_output = StreamingOutput::new(wait_on, this.state.dupe(), streaming_writer);
-        this.print(args.into_iter(), sep, eval, streaming_output)?;
+        this.print(args.items(), sep, eval, streaming_output)?;
 
         Ok(NoneType)
     }
@@ -741,23 +755,31 @@ fn output_stream_methods(builder: &mut MethodsBuilder) {
         this: &'v StarlarkOutputStream,
         value: Value<'v>,
         #[starlark(require=named, default=true)] pretty: bool,
-        #[starlark(require = named, default = UnpackList::default())] wait_on: UnpackList<
-            Either<&'v EnsuredArtifact, &'v EnsuredArtifactGroup>,
+        #[starlark(require = named, default = ValueOf::empty_list())] wait_on: ValueOf<
+            'v,
+            ListType<Either<EnsuredArtifact, EnsuredArtifactGroup<'v>>>,
         >,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<NoneType> {
         let extra = BxlEvalExtra::from_context(eval)?;
         let streaming_writer = BxlStreamingWriter::new(&extra.dice);
-        let wait_on = wait_on.into_iter().flat_map(|wait_on| match wait_on {
-            Either::Left(ensured_artifact) => {
-                vec![EnsuredArtifactOrGroup::Artifact(ensured_artifact.dupe())]
-            }
-            Either::Right(ensured_group) => ensured_group
-                .inner()
-                .iter()
-                .map(|group| EnsuredArtifactOrGroup::ArtifactGroup(group.dupe()))
-                .collect(),
-        });
+        let wait_on = wait_on
+            .iter()
+            .map(|wait_on| Ok(wait_on?.get()))
+            .collect::<starlark::Result<Vec<_>>>()?
+            .into_iter()
+            .flat_map(|wait_on| match wait_on {
+                Either::Left(ensured_artifact) => {
+                    vec![EnsuredArtifactOrGroup::Artifact(
+                        ensured_artifact.as_ref().dupe(),
+                    )]
+                }
+                Either::Right(ensured_group) => ensured_group
+                    .inner()
+                    .iter()
+                    .map(|group| EnsuredArtifactOrGroup::ArtifactGroup(group.dupe()))
+                    .collect(),
+            });
         let streaming_output = StreamingOutput::new(wait_on, this.state.dupe(), streaming_writer);
 
         this.print_json(value, pretty, eval, streaming_output)?;
@@ -782,12 +804,13 @@ fn output_stream_methods(builder: &mut MethodsBuilder) {
     /// ```
     fn ensure<'v>(
         this: &StarlarkOutputStream,
-        artifact: ArtifactArg<'v>,
-    ) -> starlark::Result<EnsuredArtifact> {
-        let artifact = artifact.into_ensured_artifact()?;
+        artifact: StarlarkArtifactView<'v>,
+        heap: Heap<'v>,
+    ) -> starlark::Result<ValueOf<'v, EnsuredArtifact>> {
+        let artifact = EnsuredArtifact::from_artifact(artifact)?;
         this.populate_ensured_artifacts(EnsuredArtifactOrGroup::Artifact(artifact.clone()))?;
 
-        Ok(artifact)
+        Ok(ValueOf::alloc(heap, artifact))
     }
 
     /// Same as `ensure`, but for multiple artifacts. Will preserve the shape of the inputs (i.e. if the resulting
@@ -813,13 +836,12 @@ fn output_stream_methods(builder: &mut MethodsBuilder) {
         heap: Heap<'v>,
     ) -> starlark::Result<Value<'v>> {
         match artifacts {
-            EnsureMultipleArtifactsArg::None(_) => Ok(heap.alloc(Vec::<EnsuredArtifact>::new())),
+            EnsureMultipleArtifactsArg::None(_) => Ok(alloc_ensured_artifacts(heap, Vec::new())),
             EnsureMultipleArtifactsArg::EnsuredArtifactArgs(list) => {
                 let artifacts: Vec<EnsuredArtifact> = list
-                    .items
-                    .into_iter()
+                    .try_items()
                     .map(|artifact| {
-                        let artifact = artifact.into_ensured_artifact()?;
+                        let artifact = EnsuredArtifact::from_artifact(artifact?)?;
                         this.populate_ensured_artifacts(EnsuredArtifactOrGroup::Artifact(
                             artifact.clone(),
                         ))?;
@@ -828,41 +850,52 @@ fn output_stream_methods(builder: &mut MethodsBuilder) {
                     })
                     .collect::<Result<Vec<_>, _>>()?;
 
-                Ok(heap.alloc(artifacts))
+                Ok(alloc_ensured_artifacts(heap, artifacts))
             }
             EnsureMultipleArtifactsArg::ProvidersArtifactIterable(artifact_gen) => {
-                Ok(heap.alloc(get_artifacts_from_bxl_build_result(
-                    artifact_gen
-                        .0
-                        .downcast_ref::<StarlarkBxlBuildResult>()
-                        .unwrap(),
-                    this,
-                )?))
+                Ok(alloc_ensured_artifacts(
+                    heap,
+                    get_artifacts_from_bxl_build_result(
+                        artifact_gen
+                            .0
+                            .downcast_ref::<StarlarkBxlBuildResult>()
+                            .unwrap(),
+                        this,
+                    )?,
+                ))
             }
             EnsureMultipleArtifactsArg::BxlBuildResult(bxl_build_result) => {
-                Ok(heap.alloc(get_artifacts_from_bxl_build_result(bxl_build_result, this)?))
+                Ok(alloc_ensured_artifacts(
+                    heap,
+                    get_artifacts_from_bxl_build_result(bxl_build_result.as_ref(), this)?,
+                ))
             }
-            EnsureMultipleArtifactsArg::Dict(build_result_dict) => Ok(heap.alloc_dict(
-                build_result_dict
-                    .entries
-                    .into_iter()
-                    .map(|(label, bxl_build_result)| {
-                        Ok((
-                            label.get_hashed().map_err(|e| {
-                                from_starlark_with_options(
-                                    e,
-                                    buck2_error::starlark_error::NativeErrorHandling::Unknown,
-                                    false,
-                                )
-                            })?,
-                            heap.alloc(get_artifacts_from_bxl_build_result(
-                                bxl_build_result,
-                                this,
-                            )?),
-                        ))
-                    })
-                    .collect::<buck2_error::Result<_>>()?,
-            )),
+            EnsureMultipleArtifactsArg::Dict(build_result_dict) => Ok(heap
+                .alloc(AllocDict(
+                    build_result_dict
+                        .iter()
+                        .map(|entry| {
+                            let (label, bxl_build_result) = entry?;
+                            Ok((
+                                label.to_value().get_hashed().map_err(|e| {
+                                    from_starlark_with_options(
+                                        e,
+                                        buck2_error::starlark_error::NativeErrorHandling::Unknown,
+                                        false,
+                                    )
+                                })?,
+                                alloc_ensured_artifacts(
+                                    heap,
+                                    get_artifacts_from_bxl_build_result(
+                                        bxl_build_result.as_ref(),
+                                        this,
+                                    )?,
+                                ),
+                            ))
+                        })
+                        .collect::<buck2_error::Result<BuckMutInsertionMap<Value, Value>>>()?,
+                ))
+                .to_value()),
             EnsureMultipleArtifactsArg::CmdLine(cmd_line) => {
                 // TODO(nga): we should not be doing that here.
                 //   If we pass random string to this function,
@@ -878,10 +911,21 @@ fn output_stream_methods(builder: &mut MethodsBuilder) {
                     result.push(artifact_group.dupe());
                 }
 
-                Ok(heap.alloc(EnsuredArtifactGroup::new(result, false, heap)))
+                Ok(heap
+                    .alloc(EnsuredArtifactGroup::new(result, false, heap))
+                    .to_value())
             }
         }
     }
+}
+
+fn alloc_ensured_artifacts<'v>(heap: Heap<'v>, artifacts: Vec<EnsuredArtifact>) -> Value<'v> {
+    heap.alloc(AllocList(
+        artifacts
+            .into_iter()
+            .map(|artifact| heap.alloc(artifact).to_value()),
+    ))
+    .to_value()
 }
 
 pub(crate) fn get_cmd_line_inputs(

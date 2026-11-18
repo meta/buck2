@@ -21,7 +21,9 @@ use std::fmt::Write;
 use allocative::Allocative;
 use anyhow::Context;
 use derive_more::Display;
+use either::Either;
 use starlark_derive::StarlarkPagable;
+use starlark_derive::StarlarkRepresentations;
 use starlark_derive::starlark_module;
 use starlark_derive::starlark_value;
 use starlark_syntax::golden_test_template::golden_test_template;
@@ -44,13 +46,23 @@ use crate::values::FreezeResult;
 use crate::values::Freezer;
 use crate::values::Heap;
 use crate::values::NoSerialize;
+use crate::values::StarlarkType;
 use crate::values::StarlarkValue;
 use crate::values::Trace;
 use crate::values::UnpackValue;
 use crate::values::Value;
+use crate::values::ValueError;
+use crate::values::ValueOf;
+use crate::values::ValueTyped;
+use crate::values::dict::DictType;
 use crate::values::layout::heap::name::StarlarkTestHeapName;
-use crate::values::list_or_tuple::UnpackListOrTuple;
+use crate::values::list::ListOf;
+use crate::values::list_or_tuple::ListOrTupleType;
 use crate::values::none::NoneType;
+use crate::values::string::StarlarkStr;
+use crate::values::tuple::TupleOf;
+use crate::values::type_expr::StarlarkTypeExpr;
+use crate::values::types::int::view::IntView;
 
 #[test]
 fn alias_test() {
@@ -303,17 +315,21 @@ fn test_radd() {
     starlark_simple_value!(Select);
 
     impl<'v> UnpackValue<'v> for Select {
+        type Type = Either<Select, ListOrTupleType<IntView<'v>>>;
         type Error = crate::Error;
 
-        fn unpack_value_impl(value: Value<'v>) -> crate::Result<Option<Self>> {
-            match Select::from_value(value) {
-                Some(x) => Ok(Some(x.clone())),
-                None => {
-                    let Some(list_or_tuple) = UnpackListOrTuple::unpack_value(value)? else {
-                        return Ok(None);
-                    };
-                    Ok(Some(Select(list_or_tuple.items)))
-                }
+        fn unpack(
+            _value: ValueOf<'v, Self::Type>,
+            get: <Self::Type as StarlarkTypeExpr<'v>>::Get,
+        ) -> crate::Result<Self> {
+            match get {
+                Either::Left(x) => Ok(x.as_ref().clone()),
+                Either::Right(items) => Ok(Select(
+                    items
+                        .map_either(ListOf::try_items::<IntView>, TupleOf::try_items::<IntView>)
+                        .map(|x| x?.to_integer())
+                        .collect::<crate::Result<_>>()?,
+                )),
             }
         }
     }
@@ -329,11 +345,11 @@ fn test_radd() {
     impl<'v> StarlarkValue<'v> for Select {
         fn radd(&self, lhs: Value<'v>, heap: Heap<'v>) -> Option<crate::Result<Value<'v>>> {
             let lhs: Select = Select::unpack_value(lhs).unwrap().unwrap();
-            Some(Ok(heap.alloc(lhs.add(self))))
+            Some(Ok(heap.alloc(lhs.add(self)).to_value()))
         }
         fn add(&self, rhs: Value<'v>, heap: Heap<'v>) -> Option<crate::Result<Value<'v>>> {
             let rhs: Select = UnpackValue::unpack_value(rhs).unwrap().unwrap();
-            Some(Ok(heap.alloc(self.clone().add(&rhs))))
+            Some(Ok(heap.alloc(self.clone().add(&rhs)).to_value()))
         }
         fn collect_repr(&self, collector: &mut String) {
             write!(collector, "{self}").unwrap()
@@ -342,8 +358,16 @@ fn test_radd() {
 
     #[starlark_module]
     fn module(build: &mut GlobalsBuilder) {
-        fn select(xs: UnpackListOrTuple<i32>) -> anyhow::Result<Select> {
-            Ok(Select(xs.items))
+        fn select<'v>(
+            xs: ValueOf<'v, ListOrTupleType<IntView<'v>>>,
+            heap: Heap<'v>,
+        ) -> anyhow::Result<ValueOf<'v, Select>> {
+            let select = Select(
+                xs.try_items::<i32>()
+                    .collect::<crate::Result<_>>()
+                    .map_err(|e| e.into_anyhow())?,
+            );
+            Ok(ValueOf::alloc(heap, select))
         }
     }
 
@@ -550,7 +574,7 @@ fn test_module_visibility_preserved_by_evaluator() -> crate::Result<()> {
     Module::with_temp_heap(|import| {
         import.set("a", Value::testing_new_int(1));
         import.set_private(
-            import.frozen_heap(|fh, edge| edge.rebrand(fh.alloc_str("b"))),
+            import.frozen_heap(|fh, edge| edge.rebrand(fh.alloc("b"))),
             Value::testing_new_int(2),
         );
 
@@ -766,16 +790,37 @@ fn test_label_assign() {
     #[display("{:?}", self)]
     struct Wrapper<'v>(RefCell<SmallMap<String, Value<'v>>>);
 
+    #[derive(Debug, Clone, Copy, StarlarkRepresentations)]
+    enum WrapperView<'v> {
+        Unfrozen(ValueTyped<'v, Wrapper<'v>>),
+        Frozen(ValueTyped<'v, FrozenWrapper>),
+    }
+
     #[starlark_value(type = "wrapper")]
-    impl<'v> StarlarkValue<'v> for Wrapper<'v> {
+    impl<'v> StarlarkType<'v> for WrapperView<'v> {
         fn get_attr(&self, attribute: &str, _heap: Heap<'v>) -> Option<Value<'v>> {
-            Some(*self.0.borrow().get(attribute).unwrap())
+            match self {
+                WrapperView::Unfrozen(this) => Some(*this.0.borrow().get(attribute).unwrap()),
+                WrapperView::Frozen(_) => None,
+            }
         }
 
         fn set_attr(&self, attribute: &str, new_value: Value<'v>) -> starlark::Result<()> {
-            self.0.borrow_mut().insert(attribute.to_owned(), new_value);
-            Ok(())
+            match self {
+                WrapperView::Unfrozen(this) => {
+                    this.0.borrow_mut().insert(attribute.to_owned(), new_value);
+                    Ok(())
+                }
+                WrapperView::Frozen(_) => Err(starlark::Error::new_other(
+                    ValueError::CannotMutateImmutableValue,
+                )),
+            }
         }
+    }
+
+    #[starlark_value]
+    impl<'v> StarlarkValue<'v> for Wrapper<'v> {
+        type Type = WrapperView<'v>;
     }
 
     #[derive(
@@ -789,9 +834,9 @@ fn test_label_assign() {
     #[display("FrozenWrapper")]
     struct FrozenWrapper;
 
-    #[starlark_value(type = "wrapper")]
+    #[starlark_value]
     impl<'v> StarlarkValue<'v> for FrozenWrapper {
-        type Canonical = Wrapper<'v>;
+        type Type = WrapperView<'v>;
     }
 
     impl<'v> Freeze<'v> for Wrapper<'v> {
@@ -901,6 +946,28 @@ xs[xs] = xs
 }
 
 #[test]
+fn test_str_index_and_in_of_another_type() {
+    assert::fail(
+        r#"
+def at(s, i):
+    return s[i]
+
+at("abc", None)
+"#,
+        "Expected `int`, but got `NoneType",
+    );
+    assert::fail(
+        r#"
+def is_in(x, s):
+    return x in s
+
+is_in(1, "abc")
+"#,
+        "Expected `str`, but got `int",
+    );
+}
+
+#[test]
 fn test_list_slice_does_not_accept_bool() {
     // TODO(nga): this should fail.
     assert::fail("[1][False]", "Expected `int`, but got `bool");
@@ -1005,7 +1072,11 @@ animal("Joe")
         let mut eval = Evaluator::new(&m);
         let ast = AstModule::parse("code.bzl", code.to_owned(), &Dialect::Standard).unwrap();
         let res: Value = eval.eval_module(ast, &globals).unwrap();
-        let animal = SmallMap::<String, Value>::unpack_value(res).unwrap();
+        let animal: SmallMap<&str, Value> = ValueOf::<DictType<StarlarkStr, Value>>::new_err(res)
+            .unwrap()
+            .try_items::<&str, Value>()
+            .collect::<crate::Result<_>>()
+            .unwrap();
         println!("animal = {animal:?}");
         crate::Result::Ok(())
     })

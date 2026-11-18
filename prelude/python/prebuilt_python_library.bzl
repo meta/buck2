@@ -43,7 +43,7 @@ load("@prelude//third-party:providers.bzl", "ThirdPartyBuild", "third_party_buil
 load("@prelude//unix:providers.bzl", "UnixEnv", "create_unix_env_info")
 load(":compile.bzl", "compile_manifests")
 load(":lazy_imports.bzl", "get_lazy_imports_analyzer", "run_lazy_imports_library_analyzer")
-load(":manifest.bzl", "ManifestInfo", "create_manifest_for_source_dir")
+load(":manifest.bzl", "create_manifest_for_source_dir", "new_manifest_info")
 load(":python.bzl", "NativeDepsInfo", "NativeDepsInfoTSet")
 load(
     ":python_library.bzl",
@@ -132,7 +132,7 @@ def prebuilt_python_library_impl(ctx: AnalysisContext) -> list[Provider]:
     )
     providers.append(library_info)
 
-    entry_points_manifest = ManifestInfo(
+    entry_points_manifest = new_manifest_info(
         manifest = entry_points,
         artifacts = [(entry_points_dir, "")],
     )

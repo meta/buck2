@@ -13,7 +13,9 @@ buck_java_library(
     source = "11", # @oss-enable
     target = "11", # @oss-enable
     visibility = ["PUBLIC"],
-    deps = [],
+    deps = [
+        "prelude//toolchains/android/third-party:infer-annotations",
+    ],
 )
 
 buck_java_library(
@@ -26,6 +28,7 @@ buck_java_library(
     visibility = ["PUBLIC"],
     deps = [
         "prelude//toolchains/android/third-party:guava",
+        "prelude//toolchains/android/third-party:infer-annotations",
         ":quoter",
     ],
 )
@@ -40,6 +43,7 @@ buck_java_library(
     visibility = ["PUBLIC"],
     deps = [
         "prelude//toolchains/android/third-party:guava",
+        "prelude//toolchains/android/third-party:infer-annotations",
         ":quoter",
         ":utils",
     ],

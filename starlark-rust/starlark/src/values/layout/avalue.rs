@@ -375,6 +375,7 @@ mod tests {
     use std::fmt;
 
     use allocative::Allocative;
+    use starlark_derive::StarlarkRepresentations;
     use starlark_derive::starlark_value;
 
     use crate as starlark;
@@ -384,10 +385,12 @@ mod tests {
     use crate::values::Freezer;
     use crate::values::NoSerialize;
     use crate::values::StarlarkPagable;
+    use crate::values::StarlarkType;
     use crate::values::StarlarkValue;
     use crate::values::Trace;
     use crate::values::UnpackValue;
     use crate::values::Value;
+    use crate::values::ValueTyped;
     use crate::values::dict::AllocDict;
     use crate::values::freeze_error::FreezeResult;
     use crate::values::layout::heap::name::StarlarkTestHeapName;
@@ -405,8 +408,19 @@ mod tests {
         }
     }
 
+    #[derive(Debug, Clone, Copy, StarlarkRepresentations)]
+    enum ReentrantTupleFreezeView<'v> {
+        Unfrozen(ValueTyped<'v, ReentrantTupleFreeze<'v>>),
+        Frozen(ValueTyped<'v, FrozenReentrantTupleFreeze>),
+    }
+
     #[starlark_value(type = "reentrant_tuple_freeze")]
-    impl<'v> StarlarkValue<'v> for ReentrantTupleFreeze<'v> {}
+    impl<'v> StarlarkType<'v> for ReentrantTupleFreezeView<'v> {}
+
+    #[starlark_value]
+    impl<'v> StarlarkValue<'v> for ReentrantTupleFreeze<'v> {
+        type Type = ReentrantTupleFreezeView<'v>;
+    }
 
     #[derive(Debug, ProvidesStaticType, NoSerialize, Allocative, StarlarkPagable)]
     struct FrozenReentrantTupleFreeze;
@@ -417,9 +431,9 @@ mod tests {
         }
     }
 
-    #[starlark_value(type = "reentrant_tuple_freeze")]
+    #[starlark_value]
     impl<'v> StarlarkValue<'v> for FrozenReentrantTupleFreeze {
-        type Canonical = ReentrantTupleFreeze<'v>;
+        type Type = ReentrantTupleFreezeView<'v>;
     }
 
     impl<'v> Freeze<'v> for ReentrantTupleFreeze<'v> {
@@ -448,8 +462,19 @@ mod tests {
         }
     }
 
+    #[derive(Debug, Clone, Copy, StarlarkRepresentations)]
+    enum ReentrantListFreezeView<'v> {
+        Unfrozen(ValueTyped<'v, ReentrantListFreeze<'v>>),
+        Frozen(ValueTyped<'v, FrozenReentrantListFreeze>),
+    }
+
     #[starlark_value(type = "reentrant_list_freeze")]
-    impl<'v> StarlarkValue<'v> for ReentrantListFreeze<'v> {}
+    impl<'v> StarlarkType<'v> for ReentrantListFreezeView<'v> {}
+
+    #[starlark_value]
+    impl<'v> StarlarkValue<'v> for ReentrantListFreeze<'v> {
+        type Type = ReentrantListFreezeView<'v>;
+    }
 
     #[derive(Debug, ProvidesStaticType, NoSerialize, Allocative, StarlarkPagable)]
     struct FrozenReentrantListFreeze;
@@ -460,9 +485,9 @@ mod tests {
         }
     }
 
-    #[starlark_value(type = "reentrant_list_freeze")]
+    #[starlark_value]
     impl<'v> StarlarkValue<'v> for FrozenReentrantListFreeze {
-        type Canonical = ReentrantListFreeze<'v>;
+        type Type = ReentrantListFreezeView<'v>;
     }
 
     impl<'v> Freeze<'v> for ReentrantListFreeze<'v> {
@@ -487,8 +512,8 @@ mod tests {
     #[test]
     fn tuple_cycle_freeze() {
         Module::with_temp_heap(|module| {
-            let list = module.heap().alloc_list(&[]);
-            let tuple = module.heap().alloc_tuple(&[list]);
+            let list = module.heap().alloc_list(&[]).to_value();
+            let tuple = module.heap().alloc_tuple(&[list]).to_value();
             ListData::from_value_mut(list)
                 .unwrap()
                 .push(tuple, module.heap());
@@ -505,7 +530,7 @@ mod tests {
             let reentrant = module
                 .heap()
                 .alloc_complex(ReentrantTupleFreeze(RefCell::new(None)));
-            let tuple = module.heap().alloc_tuple(&[reentrant]);
+            let tuple = module.heap().alloc_tuple(&[reentrant]).to_value();
             reentrant
                 .downcast_ref::<ReentrantTupleFreeze>()
                 .unwrap()
@@ -524,7 +549,7 @@ mod tests {
             let reentrant = module
                 .heap()
                 .alloc_complex(ReentrantListFreeze(RefCell::new(None)));
-            let list = module.heap().alloc_list(&[reentrant]);
+            let list = module.heap().alloc_list(&[reentrant]).to_value();
             reentrant
                 .downcast_ref::<ReentrantListFreeze>()
                 .unwrap()
@@ -542,12 +567,12 @@ mod tests {
         // Empty dictionaries freeze to one statically allocated value.
 
         Module::with_temp_heap(|module| {
-            let d0 = module.heap().alloc(AllocDict::EMPTY);
-            let d1 = module.heap().alloc(AllocDict::EMPTY);
+            let d0 = module.heap().alloc(AllocDict::EMPTY).to_value();
+            let d1 = module.heap().alloc(AllocDict::EMPTY).to_value();
             // Pointers are not equal.
             assert_ne!(d0.0.raw(), d1.0.raw());
 
-            module.set_extra_value(module.heap().alloc((d0, d1)));
+            module.set_extra_value(module.heap().alloc((d0, d1)).to_value());
 
             let module = module.freeze_named(StarlarkTestHeapName::frozen_heap_name())?;
             module.extra_value().unwrap().by_ref(|extra| {

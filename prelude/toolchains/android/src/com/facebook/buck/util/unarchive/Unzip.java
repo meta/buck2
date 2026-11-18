@@ -14,6 +14,7 @@ import com.facebook.buck.core.filesystems.AbsPath;
 import com.facebook.buck.io.file.MorePosixFilePermissions;
 import com.facebook.buck.io.file.MostFiles;
 import com.facebook.buck.io.filesystem.impl.ProjectFilesystemUtils;
+import com.facebook.infer.annotation.Nullsafe;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.Iterables;
@@ -32,6 +33,7 @@ import java.nio.file.Paths;
 import java.nio.file.attribute.PosixFilePermission;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.Objects;
 import java.util.Set;
 import java.util.SortedMap;
 import java.util.TreeMap;
@@ -41,12 +43,13 @@ import org.apache.commons.compress.archivers.zip.ZipArchiveEntry;
 import org.apache.commons.compress.archivers.zip.ZipFile;
 
 /** A simple utility class that extracts zip files */
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public class Unzip {
 
   private static void writeZipContents(
       ZipFile zip, ZipArchiveEntry entry, AbsPath root, Path target) throws IOException {
     // Write file
-    try (InputStream is = zip.getInputStream(entry)) {
+    try (InputStream is = Objects.requireNonNull(zip.getInputStream(entry))) {
       if (entry.isUnixSymlink()) {
         ProjectFilesystemUtils.createSymLink(
             root,
@@ -172,8 +175,7 @@ public class Unzip {
       ZipArchiveEntry entry)
       throws IOException {
     AbsPath root = creator.getProjectRoot();
-    if (ProjectFilesystemUtils.isFile(
-        root, target, LinkOption.NOFOLLOW_LINKS)) { // NOPMD for clarity pass
+    if (ProjectFilesystemUtils.isFile(root, target, LinkOption.NOFOLLOW_LINKS)) {
     } else if (ProjectFilesystemUtils.exists(root, target, LinkOption.NOFOLLOW_LINKS)) {
       ProjectFilesystemUtils.deleteRecursivelyIfExists(root, target);
     } else if (target.getParent() != null) {

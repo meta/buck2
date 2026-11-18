@@ -1,0 +1,6 @@
+[cells]
+  root = .
+[cell_aliases]
+  alias = root
+[buildfile]
+  name = TARGETS.fixture

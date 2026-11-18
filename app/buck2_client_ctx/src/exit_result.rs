@@ -9,6 +9,7 @@
  */
 
 use std::convert::Infallible;
+use std::ffi::OsStr;
 use std::ffi::OsString;
 use std::fmt::Display;
 use std::io;
@@ -142,6 +143,14 @@ impl ExitResult {
         }
     }
 
+    /// The program this result will exec and the environment changes applied to it.
+    pub fn exec_environment(&mut self) -> Option<(&OsStr, &mut ExecEnvironment)> {
+        match &mut self.variant {
+            ExitResultVariant::Exec(args) => Some((&args.prog, &mut args.environment)),
+            _ => None,
+        }
+    }
+
     pub fn bail(msg: impl Display) -> Self {
         Self::err(buck2_error::buck2_error!(
             buck2_error::ErrorTag::Bail,
@@ -172,15 +181,6 @@ impl ExitResult {
             stdout: Vec::new(),
             emitted_errors: Vec::new(),
         }
-    }
-
-    /// Return this ExitStatus or call a function to produce a new one.
-    pub fn or_else(self, f: impl FnOnce(Self) -> Self) -> Self {
-        if matches!(self.variant, ExitResultVariant::Status(ExitCode::Success)) {
-            return self;
-        }
-
-        f(self)
     }
 
     pub fn with_stdout(mut self, stdout: Vec<u8>) -> Self {

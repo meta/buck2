@@ -22,5 +22,4 @@ LANGUAGE_STANDARD = "language_standard"
 
 CLANG = "clang"
 CLANG_WINDOWS = "clang_windows"
-VS2019 = "vs2019"
 VS2022 = "vs2022"

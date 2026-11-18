@@ -133,11 +133,13 @@ def process_link_args(
        allocator shim module when rustc generates one, and
      - `symbols.o`, which carries undefined references to the exported and
        `#[used]` symbols of every linked crate so that the corresponding
-       archive members survive the link.
+       archive members survive the link, and
+     - on Windows, the import libraries for the crate's own `raw-dylib`
+       imports, which a library crate carries inside its rlib instead.
 
     The only args retained are wasm-ld `--export` args, which carry the same
-    per-program symbol metadata that `symbols.o` does on ELF (see the comment
-    at the branch). All other flags and libraries rustc puts on its link line
+    per-program symbol metadata that `symbols.o` does on ELF, and entry-point
+    args (see the comments at the branches). All other flags and libraries rustc puts on its link line
     are deliberately dropped: the toolchain and the dependency graph are the
     sole owners of the flags and libraries on the cxx-driven link. A
     rustc-synthesized file we don't recognize is an error, not something to
@@ -156,7 +158,11 @@ def process_link_args(
     size = len(args)
     while i < size:
         arg = args[i]
-        if arg.endswith("rcgu.o") or arg.endswith("symbols.o"):
+        if (
+            arg.endswith("rcgu.o")
+            or arg.endswith("symbols.o")
+            or arg.endswith("_imports.lib")
+        ):
             path = Path(arg)
             if path.parent.is_absolute():
                 temp_dirs.add(str(path.parent))
@@ -200,6 +206,11 @@ def process_link_args(
             i += 2
             continue
         elif arg.startswith("--entry="):
+            retained_args.append(arg)
+            i += 1
+            continue
+        # The msvc spellings, which `#![windows_subsystem]` sets.
+        elif arg.startswith("/SUBSYSTEM:") or arg.startswith("/ENTRY:"):
             retained_args.append(arg)
             i += 1
             continue

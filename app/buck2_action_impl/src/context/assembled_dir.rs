@@ -9,13 +9,14 @@
  */
 
 use allocative::Allocative;
-use buck2_build_api::interpreter::rule_defs::artifact::starlark_artifact_like::ValueAsInputArtifactLike;
+use buck2_build_api::interpreter::rule_defs::artifact::starlark_artifact_like::StarlarkArtifactView;
 use derive_more::Display;
 use starlark::any::ProvidesStaticType;
 use starlark::environment::GlobalsBuilder;
 use starlark::starlark_complex_value;
 use starlark::starlark_module;
 use starlark::values::Freeze;
+use starlark::values::Heap;
 use starlark::values::NoSerialize;
 use starlark::values::StarlarkPagable;
 use starlark::values::StarlarkValue;
@@ -61,24 +62,26 @@ fn assembled_dir_members(globals: &mut GlobalsBuilder) {
     /// lookup must resolve inside it (a symlinked executable resolves those
     /// against its realpath, outside the directory).
     fn copy<'v>(
-        #[starlark(require = pos)] artifact: ValueOf<'v, ValueAsInputArtifactLike<'v>>,
-    ) -> starlark::Result<StarlarkAssembledDirEntry<'v>> {
-        Ok(StarlarkAssembledDirEntry {
+        #[starlark(require = pos)] artifact: ValueOf<'v, StarlarkArtifactView<'v>>,
+        heap: Heap<'v>,
+    ) -> starlark::Result<ValueOf<'v, StarlarkAssembledDirEntry<'v>>> {
+        Ok(heap.alloc(StarlarkAssembledDirEntry {
             copy: true,
-            artifact: artifact.value,
-        })
+            artifact: artifact.to_value(),
+        }))
     }
 
     /// An entry materialized as a symlink pointing at the artifact. Use for
     /// inputs that are pure content -- especially large ones already living
     /// at an immutable (content-based) path -- to avoid duplicating bytes.
     fn symlink<'v>(
-        #[starlark(require = pos)] artifact: ValueOf<'v, ValueAsInputArtifactLike<'v>>,
-    ) -> starlark::Result<StarlarkAssembledDirEntry<'v>> {
-        Ok(StarlarkAssembledDirEntry {
+        #[starlark(require = pos)] artifact: ValueOf<'v, StarlarkArtifactView<'v>>,
+        heap: Heap<'v>,
+    ) -> starlark::Result<ValueOf<'v, StarlarkAssembledDirEntry<'v>>> {
+        Ok(heap.alloc(StarlarkAssembledDirEntry {
             copy: false,
-            artifact: artifact.value,
-        })
+            artifact: artifact.to_value(),
+        }))
     }
 }
 

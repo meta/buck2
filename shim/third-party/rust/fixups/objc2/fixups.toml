@@ -7,3 +7,6 @@
 # above-listed licenses.
 
 buildscript.run = false
+
+# objc2 reads its own version with env!("CARGO_PKG_VERSION").
+cargo_env = true

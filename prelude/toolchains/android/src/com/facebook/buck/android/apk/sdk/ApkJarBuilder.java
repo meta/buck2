@@ -11,21 +11,34 @@
 package com.facebook.buck.android.apk.sdk;
 
 import com.facebook.buck.android.apk.sdk.ApkJarBuilder.IZipEntryFilter.ZipAbortException;
+import com.facebook.buck.util.zip.CustomZipEntry;
+import com.facebook.buck.util.zip.CustomZipOutputStream;
+import com.facebook.buck.util.zip.DeflatedZipEntries;
+import com.facebook.buck.util.zip.ZipOutputStreams;
 import com.facebook.infer.annotation.Nullsafe;
 import com.google.common.collect.ImmutableSet;
 import java.io.BufferedOutputStream;
+import java.io.ByteArrayInputStream;
+import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.io.FileInputStream;
+import java.io.FilterInputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
+import java.io.SequenceInputStream;
+import java.util.ArrayDeque;
 import java.util.Calendar;
+import java.util.HashSet;
 import java.util.Objects;
 import java.util.Set;
-import java.util.jar.JarEntry;
-import java.util.jar.JarOutputStream;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
 import java.util.zip.CRC32;
 import java.util.zip.ZipEntry;
+import java.util.zip.ZipException;
 import java.util.zip.ZipInputStream;
 import org.jetbrains.annotations.Nullable;
 
@@ -33,6 +46,7 @@ import org.jetbrains.annotations.Nullable;
 @Nullsafe(Nullsafe.Mode.LOCAL)
 public class ApkJarBuilder {
   private static final long DOS_FAKE_TIME;
+  private static final int COMPRESSION_LEVEL = 4;
 
   /**
    * {@link java.util.zip.ZipEntry#setTime(long)} is timezone-sensitive. Use this value instead of a
@@ -58,9 +72,20 @@ public class ApkJarBuilder {
           "META-INF/services/kotlin.reflect.jvm.internal.impl.km.internal.extensions.MetadataExtensions",
           "META-INF/services/kotlinx.coroutines.CoroutineExceptionHandler",
           "META-INF/androidx.compose.ui_ui.version");
-  @Nullable private JarOutputStream mOutputJar;
+  @Nullable private CustomZipOutputStream mOutputJar;
   private byte[] mBuffer = new byte[256 * 1024];
   private boolean mPackageMetaInfVersionFiles;
+
+  // Entry data held in memory while entries wait to be written, plain and deflated.
+  private static final long MAX_BUDGET = 512L << 20;
+
+  private final long mBudget;
+  // An entry larger than this is deflated on the calling thread instead.
+  private final int mMaxBufferedEntry;
+  @Nullable private final ExecutorService mPool;
+  private final ArrayDeque<PendingEntry> mPending = new ArrayDeque<>();
+  private final Set<String> mNames = new HashSet<>();
+  private long mPendingBytes;
 
   /**
    * Classes which implement this interface provides a method to check whether a file should be
@@ -109,9 +134,56 @@ public class ApkJarBuilder {
    * @throws IOException
    */
   public ApkJarBuilder(OutputStream out, boolean packageMetaInfVersionFiles) throws IOException {
-    mOutputJar = new JarOutputStream(new BufferedOutputStream(out));
-    mOutputJar.setLevel(4);
+    this(out, packageMetaInfVersionFiles, 0);
+  }
+
+  /**
+   * Creates a {@link ApkJarBuilder} that deflates entries on {@code compressionThreads} threads.
+   * The archive is byte-identical to the one written with no threads.
+   *
+   * @param compressionThreads threads that deflate entries; 0 deflates every entry on the calling
+   *     thread
+   */
+  public ApkJarBuilder(OutputStream out, boolean packageMetaInfVersionFiles, int compressionThreads)
+      throws IOException {
+    this(
+        out,
+        packageMetaInfVersionFiles,
+        compressionThreads,
+        defaultBudget(),
+        (int) Math.min(Integer.MAX_VALUE - 16, defaultBudget() / 2));
+  }
+
+  private static long defaultBudget() {
+    return Math.min(Runtime.getRuntime().maxMemory() / 4, MAX_BUDGET);
+  }
+
+  /**
+   * @param budget bytes of entry data, plain and deflated, held in memory while entries wait
+   * @param maxBufferedEntry the largest entry deflated on a worker; larger ones are deflated on the
+   *     calling thread
+   */
+  ApkJarBuilder(
+      OutputStream out,
+      boolean packageMetaInfVersionFiles,
+      int compressionThreads,
+      long budget,
+      int maxBufferedEntry)
+      throws IOException {
+    mOutputJar = ZipOutputStreams.newOutputStream(new BufferedOutputStream(out));
     mPackageMetaInfVersionFiles = packageMetaInfVersionFiles;
+    mBudget = budget;
+    mMaxBufferedEntry = maxBufferedEntry;
+    mPool =
+        compressionThreads > 0
+            ? Executors.newFixedThreadPool(compressionThreads, ApkJarBuilder::daemonThread)
+            : null;
+  }
+
+  private static Thread daemonThread(Runnable r) {
+    Thread t = new Thread(r, "apk-builder-deflate");
+    t.setDaemon(true);
+    return t;
   }
 
   /**
@@ -127,10 +199,10 @@ public class ApkJarBuilder {
     try {
 
       // create the zip entry
-      JarEntry entry = new JarEntry(jarPath);
+      CustomZipEntry entry = new CustomZipEntry(jarPath);
       entry.setTime(DOS_FAKE_TIME);
 
-      writeEntry(fis, entry);
+      writeEntry(fis, entry, inputFile.length());
     } finally {
       // close the file stream used to read the file
       fis.close();
@@ -145,7 +217,7 @@ public class ApkJarBuilder {
    * @throws IOException
    */
   public void writeStoredFile(File inputFile, String jarPath) throws IOException {
-    JarEntry entry = new JarEntry(jarPath);
+    CustomZipEntry entry = new CustomZipEntry(jarPath);
     entry.setTime(DOS_FAKE_TIME);
     entry.setMethod(ZipEntry.STORED);
     entry.setSize(inputFile.length());
@@ -153,7 +225,7 @@ public class ApkJarBuilder {
     entry.setCrc(crc32(inputFile));
 
     try (FileInputStream fis = new FileInputStream(inputFile)) {
-      writeEntry(fis, entry);
+      writeEntry(fis, entry, inputFile.length());
     }
   }
 
@@ -208,18 +280,18 @@ public class ApkJarBuilder {
           continue;
         }
 
-        JarEntry newEntry;
+        CustomZipEntry newEntry;
 
         // Preserve the STORED method of the input entry.
-        if (entry.getMethod() == JarEntry.STORED) {
-          newEntry = new JarEntry(entry);
+        if (entry.getMethod() == ZipEntry.STORED) {
+          newEntry = new CustomZipEntry(entry);
         } else {
           // Create a new entry so that the compressed len is recomputed.
-          newEntry = new JarEntry(name);
+          newEntry = new CustomZipEntry(name);
         }
 
         newEntry.setTime(DOS_FAKE_TIME);
-        writeEntry(zis, newEntry);
+        writeEntry(zis, newEntry, entry.getSize());
 
         zis.closeEntry();
       }
@@ -244,8 +316,15 @@ public class ApkJarBuilder {
    * @throws IOException
    */
   public void close() throws IOException {
-    Objects.requireNonNull(mOutputJar).close();
-    mOutputJar = null;
+    try {
+      drain(-1);
+      Objects.requireNonNull(mOutputJar).close();
+      mOutputJar = null;
+    } finally {
+      if (mPool != null) {
+        mPool.shutdown();
+      }
+    }
   }
 
   /**
@@ -253,6 +332,16 @@ public class ApkJarBuilder {
    * called successfully.
    */
   public void cleanUp() {
+    for (PendingEntry p : mPending) {
+      if (p.deflated != null) {
+        p.deflated.cancel(true);
+      }
+    }
+    mPending.clear();
+    mPendingBytes = 0;
+    if (mPool != null) {
+      mPool.shutdownNow();
+    }
     if (mOutputJar != null) {
       try {
         mOutputJar.close();
@@ -265,11 +354,62 @@ public class ApkJarBuilder {
   /**
    * Adds an entry to the output jar, and write its content from the {@link InputStream}
    *
+   * <p>With compression threads, the entry is read here and deflated on a worker. It is written
+   * once it and every entry before it are ready, so the archive keeps the order of the calls.
+   *
    * @param input The input stream from where to write the entry content.
    * @param entry the entry to write in the jar.
+   * @param sizeHint the entry's length when the caller knows it, otherwise -1
    * @throws IOException
    */
-  private void writeEntry(InputStream input, JarEntry entry) throws IOException {
+  private void writeEntry(InputStream input, CustomZipEntry entry, long sizeHint)
+      throws IOException {
+    if (mPool == null) {
+      writeNow(input, entry);
+      return;
+    }
+    // The output rejects a repeated name when the entry is written; reject it here, while the
+    // caller that added it is still on the stack, rather than when the queue reaches it.
+    if (!mNames.add(entry.getName())) {
+      throw new ZipException("duplicate entry: " + entry.getName());
+    }
+    BoundedBytes data = BoundedBytes.read(input, mMaxBufferedEntry, sizeHint, mBuffer);
+    if (!data.complete) {
+      drain(-1);
+      // SequenceInputStream closes each stream it finishes; the caller still owns input.
+      InputStream rest =
+          new FilterInputStream(input) {
+            @Override
+            public void close() {}
+          };
+      writeNow(
+          new SequenceInputStream(new ByteArrayInputStream(data.bytes, 0, data.length), rest),
+          entry);
+      return;
+    }
+    PendingEntry p = new PendingEntry(entry, data.bytes, data.length);
+    if (entry.getMethod() != ZipEntry.STORED) {
+      p.deflated =
+          Objects.requireNonNull(mPool)
+              .submit(
+                  () ->
+                      DeflatedZipEntries.deflate(
+                          new ByteArrayInputStream(p.data, 0, p.length), COMPRESSION_LEVEL));
+    }
+    mPending.add(p);
+    mPendingBytes += p.cost;
+    drainReady();
+    drain(mBudget);
+  }
+
+  /** Writes an entry on the calling thread. */
+  private void writeNow(InputStream input, CustomZipEntry entry) throws IOException {
+    if (entry.getMethod() != ZipEntry.STORED) {
+      entry.setCompressionLevel(COMPRESSION_LEVEL);
+      DeflatedZipEntries.write(Objects.requireNonNull(mOutputJar), entry, input);
+      return;
+    }
+
     // add the entry to the jar archive
     Objects.requireNonNull(mOutputJar).putNextEntry(entry);
 
@@ -281,5 +421,111 @@ public class ApkJarBuilder {
 
     // close the entry for this file
     Objects.requireNonNull(mOutputJar).closeEntry();
+  }
+
+  /** Writes queued entries from the head that need no more work, without waiting. */
+  private void drainReady() throws IOException {
+    while (!mPending.isEmpty()) {
+      Future<DeflatedZipEntries.Deflated> head =
+          Objects.requireNonNull(mPending.peekFirst()).deflated;
+      if (head != null && !head.isDone()) {
+        return;
+      }
+      writeHead();
+    }
+  }
+
+  /**
+   * Writes queued entries in order until at most {@code budget} bytes are queued; -1 writes all.
+   */
+  private void drain(long budget) throws IOException {
+    while (!mPending.isEmpty() && mPendingBytes > budget) {
+      writeHead();
+    }
+  }
+
+  private void writeHead() throws IOException {
+    PendingEntry p = mPending.removeFirst();
+    mPendingBytes -= p.cost;
+    CustomZipOutputStream out = Objects.requireNonNull(mOutputJar);
+    try {
+      Future<DeflatedZipEntries.Deflated> deflated = p.deflated;
+      if (deflated == null) {
+        out.putNextEntry(p.entry);
+        out.write(p.data, 0, p.length);
+        out.closeEntry();
+        return;
+      }
+      DeflatedZipEntries.Deflated d;
+      try {
+        d = deflated.get();
+      } catch (InterruptedException e) {
+        Thread.currentThread().interrupt();
+        throw new IOException("Interrupted while deflating", e);
+      } catch (ExecutionException e) {
+        throw new IOException("Failed to deflate", e.getCause());
+      }
+      p.entry.setCompressionLevel(COMPRESSION_LEVEL);
+      DeflatedZipEntries.write(out, p.entry, d);
+    } catch (IOException e) {
+      throw new IOException("Failed to write " + p.entry.getName() + ": " + e.getMessage(), e);
+    }
+  }
+
+  private static final class PendingEntry {
+    final CustomZipEntry entry;
+    final byte[] data;
+    final int length;
+    final long cost;
+    @Nullable Future<DeflatedZipEntries.Deflated> deflated;
+
+    PendingEntry(CustomZipEntry entry, byte[] data, int length) {
+      this.entry = entry;
+      this.data = data;
+      this.length = length;
+      // The plain bytes, and for a deflated entry at most about as many deflated ones.
+      this.cost = entry.getMethod() == ZipEntry.STORED ? length : 2L * length;
+    }
+  }
+
+  /** The bytes of a stream up to a limit, and whether the stream ended within it. */
+  private static final class BoundedBytes {
+    final byte[] bytes;
+    final int length;
+    final boolean complete;
+
+    private BoundedBytes(byte[] bytes, int length, boolean complete) {
+      this.bytes = bytes;
+      this.length = length;
+      this.complete = complete;
+    }
+
+    /**
+     * Reads up to {@code limit} bytes, plus one more to learn whether the stream goes on, into an
+     * array sized from {@code sizeHint} when the caller knows the length.
+     */
+    static BoundedBytes read(InputStream input, int limit, long sizeHint, byte[] buffer)
+        throws IOException {
+      ExposedBuffer out =
+          new ExposedBuffer(sizeHint >= 0 ? (int) Math.min(sizeHint + 1, limit + 1L) : 8192);
+      int count;
+      while (out.size() <= limit
+          && (count = input.read(buffer, 0, (int) Math.min(buffer.length, limit + 1L - out.size())))
+              != -1) {
+        out.write(buffer, 0, count);
+      }
+      return new BoundedBytes(out.array(), out.size(), out.size() <= limit);
+    }
+  }
+
+  /** A ByteArrayOutputStream whose array is used in place, so an entry is not copied again. */
+  private static final class ExposedBuffer extends ByteArrayOutputStream {
+    ExposedBuffer(int size) {
+      super(size);
+    }
+
+    byte[] array() {
+      return buf;
+    }
   }
 }

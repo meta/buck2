@@ -13,6 +13,7 @@ use std::ops::Add;
 use std::ops::Sub;
 use std::time::Duration;
 use std::time::Instant;
+use std::time::SystemTime;
 
 use allocative::Allocative;
 use dupe::Dupe;
@@ -88,6 +89,15 @@ impl TimeSpan {
     pub fn start_now() -> TimeSpanBuilder {
         TimeSpanBuilder {
             start: Instant::now(),
+        }
+    }
+
+    /// Like `start_now`, but also reads the wall clock, for callers that need to place the span
+    /// on the client's timeline. Durations still come from the monotonic clock.
+    pub fn start_now_with_wall_time() -> AnchoredTimeSpanBuilder {
+        AnchoredTimeSpanBuilder {
+            span: Self::start_now(),
+            start_time: SystemTime::now(),
         }
     }
 
@@ -220,7 +230,27 @@ impl Sub<Duration> for TimeSpan {
     }
 }
 
+/// A `TimeSpanBuilder` with the wall-clock time read when it started.
+#[derive(Clone, Copy)]
+pub struct AnchoredTimeSpanBuilder {
+    span: TimeSpanBuilder,
+    start_time: SystemTime,
+}
+
+impl AnchoredTimeSpanBuilder {
+    /// The wall-clock time read alongside the monotonic start.
+    pub fn start_time(&self) -> SystemTime {
+        self.start_time
+    }
+
+    /// Completes the time span using the monotonic clock.
+    pub fn end_now(self) -> TimeSpan {
+        self.span.end_now()
+    }
+}
+
 /// A builder for creating `TimeSpan` instances that start at a specific time.
+#[derive(Clone, Copy)]
 pub struct TimeSpanBuilder {
     start: Instant,
 }
@@ -274,6 +304,16 @@ mod tests {
     use std::time::Duration;
 
     use super::*;
+
+    // Reads the wall clock, which Miri's isolation hides.
+    #[cfg(not(miri))]
+    #[test]
+    fn test_anchored_builder_reads_the_wall_clock_at_start() {
+        let before = SystemTime::now();
+        let builder = TimeSpan::start_now_with_wall_time();
+        let after = SystemTime::now();
+        assert!(before <= builder.start_time() && builder.start_time() <= after);
+    }
 
     #[test]
     fn test_new_timespan() {

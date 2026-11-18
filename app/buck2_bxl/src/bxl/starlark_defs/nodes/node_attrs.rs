@@ -17,6 +17,7 @@ use starlark::values::Heap;
 use starlark::values::StringValue;
 use starlark::values::Value;
 use starlark::values::none::NoneOr;
+use starlark::values::string::AllocStrIntern;
 
 use crate::bxl::starlark_defs::nodes::configured::StarlarkConfiguredTargetNode;
 use crate::bxl::starlark_defs::nodes::unconfigured::StarlarkTargetNode;
@@ -27,7 +28,7 @@ pub(crate) trait NodeAttributeGetter {
         &self,
         heap: Heap<'v>,
     ) -> buck2_error::Result<BuckMutInsertionMap<StringValue<'v>, Value<'v>>>;
-    fn has_attr(&self, key: &str) -> bool;
+    fn has_attr(&self, key: &str) -> buck2_error::Result<bool>;
 }
 
 impl NodeAttributeGetter for StarlarkTargetNode {
@@ -49,22 +50,22 @@ impl NodeAttributeGetter for StarlarkTargetNode {
         let attrs_iter = node.owned_attrs(AttrInspectOptions::All);
         attrs_iter
             .map(|(name, attr)| {
-                let name = heap.alloc_str_intern(name);
+                let name = heap.alloc(AllocStrIntern(name));
                 let value = attr.to_value(pkg, heap)?;
                 Ok((name, value))
             })
             .collect::<buck2_error::Result<BuckMutInsertionMap<_, _>>>()
     }
 
-    fn has_attr(&self, key: &str) -> bool {
+    fn has_attr(&self, key: &str) -> buck2_error::Result<bool> {
         let node = &self.0;
-        node.attr_or_none(key, AttrInspectOptions::All).is_some()
+        Ok(node.attr_or_none(key, AttrInspectOptions::All).is_some())
     }
 }
 
 impl NodeAttributeGetter for StarlarkConfiguredTargetNode {
     fn get_attr<'v>(&self, key: &str, heap: Heap<'v>) -> buck2_error::Result<NoneOr<Value<'v>>> {
-        let node = &self.0;
+        let node = self.body()?;
         let pkg = PackageLabelOption::PackageLabel(node.label().pkg());
         match node.get(key, AttrInspectOptions::All) {
             Some(attr) => Ok(NoneOr::Other(attr.value.to_value(pkg, heap)?)),
@@ -76,21 +77,20 @@ impl NodeAttributeGetter for StarlarkConfiguredTargetNode {
         &self,
         heap: Heap<'v>,
     ) -> buck2_error::Result<BuckMutInsertionMap<StringValue<'v>, Value<'v>>> {
-        let node = &self.0;
+        let node = self.body()?;
         let pkg = PackageLabelOption::PackageLabel(node.label().pkg());
         let attrs_iter = node.attrs(AttrInspectOptions::All);
         attrs_iter
             .map(|attr| {
-                let name = heap.alloc_str_intern(attr.name);
+                let name = heap.alloc(AllocStrIntern(attr.name));
                 let value = attr.value.to_value(pkg, heap)?;
                 Ok((name, value))
             })
             .collect::<buck2_error::Result<BuckMutInsertionMap<_, _>>>()
     }
 
-    fn has_attr(&self, key: &str) -> bool {
-        let node = &self.0;
+    fn has_attr(&self, key: &str) -> buck2_error::Result<bool> {
         // attr coercion here is somewhat expensive, we need a more efficient way to check if an attr exists
-        node.get(key, AttrInspectOptions::All).is_some()
+        Ok(self.body()?.get(key, AttrInspectOptions::All).is_some())
     }
 }

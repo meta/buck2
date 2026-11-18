@@ -23,7 +23,6 @@ buck_java_test(
         "prelude//toolchains/android/third-party:asm",
         "prelude//toolchains/android/third-party:guava",
         "prelude//toolchains/android/third-party:jackson-databind",
-        "prelude//toolchains/android/third-party:jsr305",
         "prelude//toolchains/android/third-party:junit",
     ],
 )
@@ -45,7 +44,6 @@ buck_java_library(
         "prelude//toolchains/android/test/com/facebook/buck/jvm/java/testutil/compiler:compiler",
         "prelude//toolchains/android/third-party:asm",
         "prelude//toolchains/android/third-party:guava",
-        "prelude//toolchains/android/third-party:jsr305",
         "prelude//toolchains/android/third-party:junit",
     ],
 )

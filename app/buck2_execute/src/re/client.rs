@@ -9,6 +9,7 @@
  */
 
 use std::collections::BTreeMap;
+use std::future::Future;
 use std::sync::Arc;
 use std::sync::OnceLock;
 use std::sync::atomic::AtomicBool;
@@ -29,10 +30,12 @@ use buck2_data::ReQueueAcquiringDependencies;
 use buck2_data::ReQueueCancelled;
 use buck2_data::ReQueueNoWorkerAvailable;
 use buck2_data::ReQueueOverQuota;
+use buck2_data::timing::Micros;
 use buck2_error::BuckErrorContext;
 use buck2_error::BuckErrorOptionContext;
 use buck2_error::buck2_error;
 use buck2_error::conversion::from_any_with_tag;
+use buck2_events::dispatch::Span;
 use buck2_events::dispatch::get_dispatcher;
 use buck2_events::schedule_type::SandcastleScheduleType;
 use buck2_fs::error::IoResultExt;
@@ -214,6 +217,77 @@ fn map_casd_mode_into_remote_fetch_policy(casd_mode: &CASdMode) -> RemoteFetchPo
     }
 }
 
+/// Runs `operation` while holding a slot from `semaphore`, recording the wait for the slot and the
+/// time the operation took.
+async fn timed_cache_lookup<F: Future>(
+    semaphore: &Semaphore,
+    timings: &mut buck2_data::CacheQueryTimings,
+    operation: impl FnOnce() -> F,
+) -> F::Output {
+    let start = Instant::now();
+    let _slot = semaphore.acquire().await;
+    let admitted = Instant::now();
+    timings.slot_wait_us = Micros::from(admitted - start).into();
+    // `operation` is only called here because `OpStats::op` counts an operation as started when
+    // the future is created.
+    let result = operation().await;
+    timings.remote_lookup_us = Micros::from(Instant::now() - admitted).into();
+    result
+}
+
+/// The `ReSubmit` span and what it measures; see `buck2_data::ReSubmitStart` for what it covers.
+struct SubmitSpan {
+    span: Span,
+    end: buck2_data::ReSubmitEnd,
+    since: Instant,
+}
+
+impl SubmitSpan {
+    /// Opens the span just before waiting for an execution slot.
+    fn start(exec_semaphore: &Semaphore) -> Self {
+        Self {
+            span: get_dispatcher().create_span(buck2_data::ReSubmitStart {}),
+            end: buck2_data::ReSubmitEnd {
+                free_slots_hint: exec_semaphore
+                    .available_permits()
+                    .try_into()
+                    .unwrap_or(u64::MAX),
+                ..Default::default()
+            },
+            since: Instant::now(),
+        }
+    }
+
+    fn got_slot(&mut self) {
+        self.end.slot_wait_us = lap_time(&mut self.since).into();
+    }
+
+    /// Awaits `open`, which opens RE's progress stream, and ends the span once it has.
+    async fn open_stream<F: Future>(self, open: F) -> F::Output {
+        let Self {
+            span,
+            mut end,
+            mut since,
+        } = self;
+        end.request_prep_us = lap_time(&mut since).into();
+        span.wrap_future(async move {
+            let result = open.await;
+            end.rpc_open_us = lap_time(&mut since).into();
+            (result, end)
+        })
+        .await
+    }
+}
+
+/// The time since `since`, then restarts `since` at now so the next call times only the next
+/// phase.
+fn lap_time(since: &mut Instant) -> Micros {
+    let now = Instant::now();
+    let elapsed = now - *since;
+    *since = now;
+    Micros::from(elapsed)
+}
+
 impl RemoteExecutionClient {
     pub async fn new(re_config: &RemoteExecutionConfig) -> buck2_error::Result<Self> {
         if buck2_env!("BUCK2_TEST_FAIL_CONNECT", bool, applicability = testing)? {
@@ -291,16 +365,17 @@ impl RemoteExecutionClient {
         metadata: &RemoteExecutionMetadata,
         use_case: RemoteExecutorUseCase,
         platform: &RE::Platform,
+        timings: &mut buck2_data::CacheQueryTimings,
     ) -> buck2_error::Result<Option<ActionResultResponse>> {
-        let _ac = self.data.client.action_cache_semaphore.acquire().await;
-
-        self.data
-            .action_cache
-            .op(self
-                .data
-                .client
-                .action_cache(action_digest, metadata, use_case, platform))
-            .await
+        timed_cache_lookup(&self.data.client.action_cache_semaphore, timings, || {
+            self.data.action_cache.op(self.data.client.action_cache(
+                action_digest,
+                metadata,
+                use_case,
+                platform,
+            ))
+        })
+        .await
     }
 
     pub async fn upload(
@@ -314,9 +389,12 @@ impl RemoteExecutionClient {
         identity: Option<&ReActionIdentity<'_>>,
     ) -> buck2_error::Result<UploadStats> {
         // Actually upload to CAS
+        let start = Instant::now();
         let _cas = self.data.client.cas_semaphore.acquire().await;
+        let slot_wait = Instant::now() - start;
 
-        self.data
+        let mut stats = self
+            .data
             .uploads
             .op(Uploader::upload(
                 fs,
@@ -328,7 +406,9 @@ impl RemoteExecutionClient {
                 use_case,
                 identity,
             ))
-            .await
+            .await?;
+        stats.phases.slot_wait = slot_wait;
+        Ok(stats)
     }
 
     /// Uploads whichever of `blobs` the CAS does not hold, as `upload` does for an action's
@@ -1250,6 +1330,7 @@ impl RemoteExecutionClientImpl {
         platform: &remote_execution::Platform,
         knobs: &ExecutorGlobalKnobs,
         persistent_worker: bool,
+        submit_span: SubmitSpan,
     ) -> anyhow::Result<ExecuteResponseOrCancelled> {
         use buck2_data::ReAfterAction;
         use buck2_data::ReBeforeAction;
@@ -1491,12 +1572,14 @@ impl RemoteExecutionClientImpl {
 
         // Obtain a stream of events from RE. If this fails then that is case #1 above so we
         // bail.
-        let mut receiver = self
-            .client()
-            .get_execution_client()
-            .execute_with_progress(metadata, request)
-            // boxed() to segment the future
-            .boxed()
+        let mut receiver = submit_span
+            .open_stream(
+                self.client()
+                    .get_execution_client()
+                    .execute_with_progress(metadata, request)
+                    // boxed() to segment the future
+                    .boxed(),
+            )
             .await
             .context("Failed to start remote execution")?;
 
@@ -1620,7 +1703,9 @@ impl RemoteExecutionClientImpl {
         worker_tool_action_digest: Option<ActionDigest>,
         priority: Option<i32>,
     ) -> buck2_error::Result<ExecuteResponseOrCancelled> {
+        let mut submit_span = SubmitSpan::start(&self.exec_semaphore);
         let _exec_permit = self.exec_semaphore.acquire().await;
+        submit_span.got_slot();
 
         #[cfg(not(fbcode_build))]
         let _unused = worker_tool_action_digest;
@@ -1825,6 +1910,7 @@ impl RemoteExecutionClientImpl {
                 platform,
                 knobs,
                 worker_tool_action_digest.is_some(),
+                submit_span,
             )
             .await,
         );
@@ -2193,6 +2279,42 @@ fn chunks<T>(v: Vec<T>, chunk_size: usize) -> impl ExactSizeIterator<Item = Vec<
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn test_submit_span_ends_when_the_stream_opens() {
+        let (mut source, sink) = buck2_events::create_source_sink_pair();
+        let dispatcher = buck2_events::dispatch::EventDispatcher::new(
+            buck2_wrapper_common::invocation_id::TraceId::new(),
+            buck2_events::daemon_id::DaemonId::new(),
+            sink,
+        );
+        let semaphore = Semaphore::new(2);
+        let result = buck2_events::dispatch::with_dispatcher_async(dispatcher, async {
+            let mut span = SubmitSpan::start(&semaphore);
+            let _slot = semaphore.acquire().await.unwrap();
+            span.got_slot();
+            span.open_stream(async { 7 }).await
+        })
+        .await;
+        assert_eq!(result, 7, "the stream-opening result passes through");
+
+        let mut ends = Vec::new();
+        while let Some(event) = source.try_receive() {
+            // Borrow rather than clone the event: its derived `Clone` is inlined into this crate,
+            // and cloning it here cost about 5% of the crate's optimized compile.
+            if let Some(buck2_data::buck_event::Data::SpanEnd(end)) =
+                event.unpack_buck().map(|e| e.data())
+                && let Some(buck2_data::span_end_event::Data::ReSubmit(end)) = &end.data
+            {
+                ends.push(*end);
+            }
+        }
+        assert_eq!(ends.len(), 1, "one ReSubmit end: {ends:?}");
+        assert_eq!(
+            ends[0].free_slots_hint, 2,
+            "both slots were free before waiting"
+        );
+    }
 
     #[test]
     fn test_chunks_skips() {

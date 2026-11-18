@@ -12,9 +12,11 @@ package com.facebook.buck.jvm.java.abi.source;
 
 import com.facebook.buck.jvm.java.abi.source.api.FrontendOnlyJavacTaskProxy;
 import com.facebook.buck.jvm.java.plugin.adapter.BuckJavacTaskProxyImpl;
+import com.facebook.infer.annotation.Nullsafe;
 import com.sun.source.util.JavacTask;
 import javax.tools.JavaCompiler;
 
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public class FrontendOnlyJavacTaskProxyImpl extends BuckJavacTaskProxyImpl
     implements FrontendOnlyJavacTaskProxy {
   private final FrontendOnlyJavacTask javacTask;

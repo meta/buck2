@@ -22,7 +22,6 @@ use std::mem;
 
 use allocative::Allocative;
 use display_container::fmt_keyed_container;
-use either::Either;
 use serde::Serialize;
 use starlark_derive::starlark_value;
 
@@ -41,12 +40,10 @@ use crate::values::ValueTyped;
 use crate::values::comparison::equals_slice;
 use crate::values::layout::avalue::TrailingValues;
 use crate::values::record::field::Field;
-use crate::values::record::record_type::AnyRecordType;
 use crate::values::record::record_type::RecordTypeError;
 use crate::values::record::record_type::RecordTypeGen;
+use crate::values::record::record_type::RecordTypeView;
 use crate::values::record::record_type::RecordVariant;
-use crate::values::record::record_type::record_fields;
-use crate::values::type_repr::StarlarkTypeRepr;
 use crate::values::types::type_instance_id::TypeInstanceId;
 
 #[derive(Debug, thiserror::Error)]
@@ -126,7 +123,10 @@ impl<'v> Record<'v> {
         heap: Heap<'v>,
         typ: ValueTyped<'v, RecordTypeGen<'v, V>>,
         values: &[Value<'v>],
-    ) -> crate::Result<Value<'v>> {
+    ) -> crate::Result<Value<'v>>
+    where
+        RecordTypeGen<'v, V>: StarlarkValue<'v>,
+    {
         if typ.as_ref().ty_record_data.get_ty().is_none() {
             return Err(crate::Error::new_other(
                 RecordTypeError::RecordTypeNotAssigned,
@@ -145,27 +145,21 @@ impl<'v> Record<'v> {
         Ok(heap.alloc_record(typ.to_value(), values))
     }
 
-    fn get_record_type(&self) -> AnyRecordType<'v> {
+    fn get_record_type(&self) -> RecordTypeView<'v> {
         // Safe to unwrap because we always ensure typ is RecordType
-        AnyRecordType::unpack_value_err(self.typ.to_value()).unwrap()
+        RecordTypeView::unpack_value_err(self.typ.to_value()).unwrap()
     }
 
     fn record_type_name(&self) -> Option<&'v str> {
-        match self.get_record_type() {
-            Either::Left(x) => Some(&x.ty_record_data.get_ty()?.name),
-            Either::Right(x) => Some(&x.ty_record_data.get_ty()?.name),
-        }
+        Some(&self.get_record_type().ty_record_data()?.name)
     }
 
     pub(crate) fn record_type_id(&self) -> TypeInstanceId {
-        match self.get_record_type() {
-            Either::Left(x) => x.id,
-            Either::Right(x) => x.id,
-        }
+        self.get_record_type().id()
     }
 
     fn get_record_fields(&self) -> &'v SmallMap<String, Field<'v>> {
-        record_fields(self.get_record_type())
+        self.get_record_type().fields()
     }
 
     /// Iterate over the elements in the record.
@@ -195,24 +189,6 @@ unsafe impl<'v> TrailingValues<'v> for Record<'v> {
     }
 }
 
-impl<'v> StarlarkTypeRepr for &'v Record<'v> {
-    type Canonical = Record<'v>;
-
-    #[inline]
-    fn starlark_type_repr() -> Ty {
-        <Record as StarlarkValue>::get_type_starlark_repr()
-    }
-}
-
-impl<'v> UnpackValue<'v> for &'v Record<'v> {
-    type Error = std::convert::Infallible;
-
-    #[inline]
-    fn unpack_value_impl(x: Value<'v>) -> Result<Option<&'v Record<'v>>, Self::Error> {
-        Ok(Record::from_value(x))
-    }
-}
-
 #[starlark_value(type = Record::TYPE)]
 impl<'v> StarlarkValue<'v> for Record<'v> {
     fn is_special(_: Private) -> bool
@@ -222,12 +198,11 @@ impl<'v> StarlarkValue<'v> for Record<'v> {
         true
     }
 
-    fn equals(&self, other: Value<'v>) -> crate::Result<bool> {
-        match Record::from_value(other) {
-            Some(other) if self.typ.equals(other.typ)? => {
-                equals_slice(self.content(), other.content(), |x, y| x.equals(*y))
-            }
-            _ => Ok(false),
+    fn equals(&self, other: &Self) -> crate::Result<bool> {
+        if self.typ.equals(other.typ)? {
+            equals_slice(self.content(), other.content(), |x, y| x.equals(*y))
+        } else {
+            Ok(false)
         }
     }
 
@@ -253,10 +228,7 @@ impl<'v> StarlarkValue<'v> for Record<'v> {
     }
 
     fn typechecker_ty(&self) -> Option<Ty> {
-        Some(
-            self.get_record_type()
-                .either(|r| r.instance_ty(), |r| r.instance_ty()),
-        )
+        Some(self.get_record_type().instance_ty())
     }
 }
 
@@ -300,11 +272,10 @@ mod tests {
             "port".to_owned(),
             Field::new(TypeCompiled::from_ty(&Ty::int(), heap), None),
         );
-        ValueTyped::new_err(heap.alloc(RecordType::new(
+        heap.alloc_representation(RecordType::new(
             fields,
             TypeInstanceId::for_test(&"unnamed_ip_address_record_type"),
-        )))
-        .expect("just allocated a RecordType")
+        ))
     }
 
     fn ip_address_record_type<'v>(module: &Module<'v>) -> ValueTyped<'v, RecordType<'v>> {
@@ -324,8 +295,15 @@ mod tests {
             assert_eq!(2, typ.as_ref().len(), "`IpAddress` has two fields");
             assert!(!typ.as_ref().is_empty(), "`IpAddress` has fields");
 
-            let record = Record::alloc(heap, typ, &[heap.alloc("localhost"), heap.alloc(80)])
-                .expect("values match the field types");
+            let record = Record::alloc(
+                heap,
+                typ,
+                &[
+                    heap.alloc("localhost").to_value(),
+                    heap.alloc(80i32).to_value(),
+                ],
+            )
+            .expect("values match the field types");
             assert_eq!(
                 Some("localhost"),
                 record
@@ -352,7 +330,7 @@ mod tests {
             let typ = ip_address_record_type(&module);
 
             assert!(
-                Record::alloc(heap, typ, &[heap.alloc("localhost")]).is_err(),
+                Record::alloc(heap, typ, &[heap.alloc("localhost").to_value()]).is_err(),
                 "one value for two fields should be rejected"
             );
         });
@@ -365,7 +343,12 @@ mod tests {
             let typ = ip_address_record_type(&module);
 
             assert!(
-                Record::alloc(heap, typ, &[heap.alloc(1), heap.alloc(80)]).is_err(),
+                Record::alloc(
+                    heap,
+                    typ,
+                    &[heap.alloc(1i32).to_value(), heap.alloc(80i32).to_value()]
+                )
+                .is_err(),
                 "an int is not a valid `host`"
             );
         });
@@ -378,7 +361,15 @@ mod tests {
             let typ = unnamed_ip_address_record_type(heap);
 
             assert!(
-                Record::alloc(heap, typ, &[heap.alloc("localhost"), heap.alloc(80)]).is_err(),
+                Record::alloc(
+                    heap,
+                    typ,
+                    &[
+                        heap.alloc("localhost").to_value(),
+                        heap.alloc(80i32).to_value()
+                    ]
+                )
+                .is_err(),
                 "records of a type that was never assigned a name cannot be created"
             );
         });
@@ -404,8 +395,15 @@ mod tests {
             let typ = ValueTyped::<FrozenRecordType>::new_err(typ)
                 .expect("the frozen module symbol is a frozen record type");
 
-            let record = Record::alloc(heap, typ, &[heap.alloc("localhost"), heap.alloc(80)])
-                .expect("values match the field types");
+            let record = Record::alloc(
+                heap,
+                typ,
+                &[
+                    heap.alloc("localhost").to_value(),
+                    heap.alloc(80i32).to_value(),
+                ],
+            )
+            .expect("values match the field types");
             assert_eq!(
                 Some(80),
                 record
@@ -431,25 +429,32 @@ mod tests {
                 "port".to_owned(),
                 Field::new(
                     TypeCompiled::from_ty(&Ty::int(), heap),
-                    Some(heap.alloc(80)),
+                    Some(heap.alloc(80i32).to_value()),
                 ),
             );
-            let typ = ValueTyped::<RecordType>::new_err(heap.alloc(RecordType::new(
+            let typ = heap.alloc_representation(RecordType::new(
                 fields,
                 TypeInstanceId::for_test(&"ip_address_record_type_with_defaulted_port"),
-            )))
-            .expect("just allocated a RecordType");
+            ));
             let mut eval = Evaluator::new(&module);
             typ.to_value()
                 .export_as("IpAddress", &mut eval)
                 .expect("assigning a name to a record type does not fail");
 
             assert!(
-                Record::alloc(heap, typ, &[heap.alloc("localhost")]).is_err(),
+                Record::alloc(heap, typ, &[heap.alloc("localhost").to_value()]).is_err(),
                 "defaults are not applied, so a value for `port` is still required"
             );
             assert!(
-                Record::alloc(heap, typ, &[heap.alloc("localhost"), heap.alloc(8080)]).is_ok(),
+                Record::alloc(
+                    heap,
+                    typ,
+                    &[
+                        heap.alloc("localhost").to_value(),
+                        heap.alloc(8080i32).to_value()
+                    ]
+                )
+                .is_ok(),
                 "explicitly passing a value for the defaulted field works"
             );
         });

@@ -10,7 +10,6 @@
 
 use std::cell::RefCell;
 use std::cell::RefMut;
-use std::convert::Infallible;
 use std::fmt;
 use std::fmt::Display;
 use std::fmt::Formatter;
@@ -38,20 +37,16 @@ use starlark::any::ProvidesStaticType;
 use starlark::environment::GlobalsBuilder;
 use starlark::environment::Methods;
 use starlark::environment::MethodsBuilder;
-use starlark::typing::Ty;
-use starlark::values::AllocValue;
 use starlark::values::Heap;
 use starlark::values::NoSerialize;
+use starlark::values::StarlarkTypeExpr;
 use starlark::values::StarlarkValue;
 use starlark::values::Trace;
-use starlark::values::UnpackValue;
-use starlark::values::Value;
-use starlark::values::ValueOfUnchecked;
+use starlark::values::ValueOf;
 use starlark::values::ValueTyped;
 use starlark::values::none::NoneOr;
 use starlark::values::starlark_value;
-use starlark::values::structs::StructRef;
-use starlark::values::type_repr::StarlarkTypeRepr;
+use starlark::values::structs::Struct;
 
 use crate::analysis::AnalysisSplitInstants;
 use crate::analysis::anon_promises_dyn::RunAnonPromisesAccessor;
@@ -69,7 +64,7 @@ pub struct AnalysisActions<'v> {
     /// we can take the internal state without having to clone it.
     pub state: RefCell<Option<AnalysisRegistry<'v>>>,
     /// Copies from the ctx, so we can capture them for `dynamic`.
-    pub attributes: Option<ValueOfUnchecked<'v, StructRef<'static>>>,
+    pub attributes: Option<ValueOf<'v, Struct<'v>>>,
     pub plugins: Option<ValueTyped<'v, AnalysisPlugins<'v>>>,
     /// Digest configuration to use when interpreting digests passed in analysis.
     pub digest_config: DigestConfig,
@@ -194,44 +189,16 @@ starlark::methods_static!(
     }
 );
 
-#[starlark_value(type = "AnalysisActions", StarlarkTypeRepr, UnpackValue)]
+#[starlark_value(type = "AnalysisActions", no_freeze)]
 impl<'v> StarlarkValue<'v> for AnalysisActions<'v> {
     fn get_methods() -> Option<&'static Methods> {
         Some(ANALYSIS_ACTIONS_METHODS.methods())
     }
 }
 
-impl<'v> AllocValue<'v> for AnalysisActions<'v> {
-    fn alloc_value(self, heap: Heap<'v>) -> Value<'v> {
-        heap.alloc_complex_no_freeze(self)
-    }
-}
-
-#[allow(dead_code)] // field `0` is never read
-struct RefAnalysisAction<'v>(&'v AnalysisActions<'v>);
-
-impl<'v> StarlarkTypeRepr for RefAnalysisAction<'v> {
-    type Canonical = <AnalysisActions<'v> as StarlarkTypeRepr>::Canonical;
-
-    fn starlark_type_repr() -> Ty {
-        AnalysisActions::starlark_type_repr()
-    }
-}
-
-impl<'v> UnpackValue<'v> for RefAnalysisAction<'v> {
-    type Error = Infallible;
-
-    fn unpack_value_impl(value: Value<'v>) -> Result<Option<Self>, Self::Error> {
-        let Some(analysis_actions) = value.downcast_ref::<AnalysisActions>() else {
-            return Ok(None);
-        };
-        Ok(Some(RefAnalysisAction(analysis_actions)))
-    }
-}
-
 #[derive(ProvidesStaticType, Debug, Trace, NoSerialize, Allocative)]
 pub struct AnalysisContext<'v> {
-    attrs: Option<ValueOfUnchecked<'v, StructRef<'static>>>,
+    attrs: Option<ValueOf<'v, Struct<'v>>>,
     pub actions: ValueTyped<'v, AnalysisActions<'v>>,
     /// Only `None` when running a `dynamic_output` action from Bxl.
     label: Option<ValueTyped<'v, StarlarkConfiguredProvidersLabel>>,
@@ -255,7 +222,7 @@ impl<'v> AnalysisContext<'v> {
     /// The context that is provided to users' UDR implementation functions. Comprised of things like attribute values, actions, etc
     fn new(
         heap: Heap<'v>,
-        attrs: Option<ValueOfUnchecked<'v, StructRef<'static>>>,
+        attrs: Option<ValueOf<'v, Struct<'v>>>,
         label: Option<ValueTyped<'v, StarlarkConfiguredProvidersLabel>>,
         plugins: Option<ValueTyped<'v, AnalysisPlugins<'v>>>,
         registry: AnalysisRegistry<'v>,
@@ -263,12 +230,14 @@ impl<'v> AnalysisContext<'v> {
     ) -> Self {
         Self {
             attrs,
-            actions: heap.alloc_typed(AnalysisActions {
-                state: RefCell::new(Some(registry)),
-                attributes: attrs,
-                plugins,
-                digest_config,
-            }),
+            actions: heap
+                .alloc(AnalysisActions {
+                    state: RefCell::new(Some(registry)),
+                    attributes: attrs,
+                    plugins,
+                    digest_config,
+                })
+                .get(),
             label,
             plugins,
         }
@@ -276,20 +245,21 @@ impl<'v> AnalysisContext<'v> {
 
     pub fn prepare(
         heap: Heap<'v>,
-        attrs: Option<ValueOfUnchecked<'v, StructRef<'static>>>,
+        attrs: Option<ValueOf<'v, Struct<'v>>>,
         label: Option<ConfiguredTargetLabel>,
         plugins: Option<ValueTyped<'v, AnalysisPlugins<'v>>>,
         registry: AnalysisRegistry<'v>,
         digest_config: DigestConfig,
     ) -> ValueTyped<'v, AnalysisContext<'v>> {
         let label = label.map(|label| {
-            heap.alloc_typed(StarlarkConfiguredProvidersLabel::new(
+            heap.alloc(StarlarkConfiguredProvidersLabel::new(
                 ConfiguredProvidersLabel::new(label, ProvidersName::Default),
             ))
+            .get()
         });
 
         let analysis_context = Self::new(heap, attrs, label, plugins, registry, digest_config);
-        heap.alloc_typed(analysis_context)
+        heap.alloc(analysis_context).get()
     }
 
     pub fn assert_no_promises(&self) -> buck2_error::Result<()> {
@@ -308,37 +278,10 @@ impl<'v> AnalysisContext<'v> {
 
 starlark::methods_static!(ANALYSIS_CONTEXT_METHODS = analysis_context_methods);
 
-#[starlark_value(type = "AnalysisContext")]
+#[starlark_value(type = "AnalysisContext", no_freeze)]
 impl<'v> StarlarkValue<'v> for AnalysisContext<'v> {
     fn get_methods() -> Option<&'static Methods> {
         Some(ANALYSIS_CONTEXT_METHODS.methods())
-    }
-}
-
-impl<'v> AllocValue<'v> for AnalysisContext<'v> {
-    fn alloc_value(self, heap: Heap<'v>) -> Value<'v> {
-        heap.alloc_complex_no_freeze(self)
-    }
-}
-
-struct RefAnalysisContext<'v>(&'v AnalysisContext<'v>);
-
-impl<'v> StarlarkTypeRepr for RefAnalysisContext<'v> {
-    type Canonical = <AnalysisContext<'v> as StarlarkTypeRepr>::Canonical;
-
-    fn starlark_type_repr() -> Ty {
-        AnalysisContext::starlark_type_repr()
-    }
-}
-
-impl<'v> UnpackValue<'v> for RefAnalysisContext<'v> {
-    type Error = Infallible;
-
-    fn unpack_value_impl(value: Value<'v>) -> Result<Option<Self>, Self::Error> {
-        let Some(analysis_context) = value.downcast_ref::<AnalysisContext>() else {
-            return Ok(None);
-        };
-        Ok(Some(RefAnalysisContext(analysis_context)))
     }
 }
 
@@ -356,10 +299,8 @@ fn analysis_context_methods(builder: &mut MethodsBuilder) {
     /// As an example, given a rule with the `attrs` argument of `{"foo": attrs.string()}`, this field will be
     /// a `struct` containing a field `foo` of type string.
     #[starlark(attribute)]
-    fn attrs<'v>(
-        this: RefAnalysisContext<'v>,
-    ) -> starlark::Result<ValueOfUnchecked<'v, StructRef<'static>>> {
-        Ok(this.0.attrs.ok_or_else(|| {
+    fn attrs<'v>(this: &'v AnalysisContext<'v>) -> starlark::Result<ValueOf<'v, Struct<'v>>> {
+        Ok(this.attrs.ok_or_else(|| {
             internal_error!("`attrs` is not available for `dynamic_output` or BXL")
         })?)
     }
@@ -368,18 +309,18 @@ fn analysis_context_methods(builder: &mut MethodsBuilder) {
     /// See the `actions` type for the operations that are available.
     #[starlark(attribute)]
     fn actions<'v>(
-        this: RefAnalysisContext<'v>,
+        this: &'v AnalysisContext<'v>,
     ) -> starlark::Result<ValueTyped<'v, AnalysisActions<'v>>> {
-        Ok(this.0.actions)
+        Ok(this.actions)
     }
 
     /// Returns a `label` representing the target, or `None` if being invoked from a
     /// `dynamic_output` in Bxl.
     #[starlark(attribute)]
     fn label<'v>(
-        this: RefAnalysisContext<'v>,
+        this: &'v AnalysisContext<'v>,
     ) -> starlark::Result<NoneOr<ValueTyped<'v, StarlarkConfiguredProvidersLabel>>> {
-        Ok(NoneOr::from_option(this.0.label))
+        Ok(NoneOr::from_option(this.label))
     }
 
     /// An opaque value that can be indexed with a plugin kind to get a list of the available plugin
@@ -387,9 +328,9 @@ fn analysis_context_methods(builder: &mut MethodsBuilder) {
     /// declaration.
     #[starlark(attribute)]
     fn plugins<'v>(
-        this: RefAnalysisContext<'v>,
+        this: &'v AnalysisContext<'v>,
     ) -> starlark::Result<ValueTyped<'v, AnalysisPlugins<'v>>> {
-        Ok(this.0.plugins.ok_or_else(|| {
+        Ok(this.plugins.ok_or_else(|| {
             internal_error!("`plugins` is not available for `dynamic_output` or BXL")
         })?)
     }
@@ -405,5 +346,7 @@ pub static ANALYSIS_ACTIONS_METHODS_ANON_TARGET: LateBinding<fn(&mut MethodsBuil
     LateBinding::new("ANALYSIS_ACTIONS_METHODS_ANON_TARGET");
 
 pub(crate) fn init_analysis_context_ty() {
-    AnalysisContextReprLate::init(AnalysisContext::starlark_type_repr());
+    AnalysisContextReprLate::init(AnalysisContext::starlark_type_repr(), |value| {
+        AnalysisContext::matches(value)
+    });
 }

@@ -12,6 +12,7 @@ package com.facebook.buck.cli.bootstrapper;
 
 import static java.util.Objects.requireNonNull;
 
+import com.facebook.infer.annotation.Nullsafe;
 import java.io.File;
 import java.net.MalformedURLException;
 import java.net.URL;
@@ -21,6 +22,7 @@ import java.util.function.Function;
 import java.util.stream.Stream;
 
 /** Creates a ClassLoader from {@code System.getenv()}. classpath entries. */
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public class ClassLoaderFactory {
 
   /** Expose a provider to facilitate mock tests. */
@@ -32,7 +34,6 @@ public class ClassLoaderFactory {
 
   private final ClassPathProvider classPathProvider;
 
-  @SuppressWarnings("PMD.BlacklistedSystemGetenv")
   static ClassLoaderFactory withEnv() {
     return new ClassLoaderFactory(System.getenv()::get);
   }

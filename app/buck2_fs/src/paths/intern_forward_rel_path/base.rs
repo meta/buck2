@@ -514,11 +514,9 @@ mod tests {
         assert_eq!("notails_a/notails_b", full.as_str());
     }
 
+    // With panic=abort the panic kills the in-process Miri harness.
+    #[cfg(not(all(miri, panic = "abort")))]
     #[test]
-    #[cfg_attr(
-        all(miri, panic = "abort"),
-        ignore = "with panic=abort the panic kills the in-process Miri harness"
-    )]
     #[should_panic(expected = "tail_skips must be sorted")]
     fn test_intern_concat_with_tails_unsorted_panics() {
         let _ = IForwardRelativePath::intern_concat_with_tails(

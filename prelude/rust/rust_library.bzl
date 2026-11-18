@@ -118,6 +118,7 @@ load(
     "RustLinkStrategyInfo",
     "RustLinkableGraphs",
     "RustNativeLinkDeps",
+    "RustProcMacroArchInfo",
     "RustProcMacroInfo",
     "TransitiveDeps",
     "attr_crate",
@@ -350,7 +351,7 @@ def rust_library_impl(ctx: AnalysisContext) -> list[Provider]:
         document_private_items = False,
     )
 
-    if toolchain_info.nightly_features:
+    if toolchain_info.nightly_features and compile_ctx.arch_toolchain_info == None:
         rustdoc_coverage = generate_rustdoc_coverage(
             ctx = ctx,
             compile_ctx = compile_ctx,
@@ -431,7 +432,7 @@ def rust_library_impl(ctx: AnalysisContext) -> list[Provider]:
     if toolchain_info.rustc_target_triple != None and toolchain_info.rustc_target_triple != targets.exec_triple(ctx):
         doctests_enabled = False
 
-    if toolchain_info.nightly_features:
+    if toolchain_info.nightly_features and compile_ctx.arch_toolchain_info == None:
         rustdoc_test_metadata_kind = MetadataKind("full") if toolchain_info.advanced_unstable_linking and not ctx.attrs.proc_macro else MetadataKind("link")
         rustdoc_test_params = binary_build_params(
             proc_macro = ctx.attrs.proc_macro,
@@ -1247,8 +1248,8 @@ def _compute_transitive_deps(
     transitive_proc_macro_deps = set()
 
     for dep in resolve_rust_deps(ctx, dep_ctx):
-        if isinstance(dep.info, RustProcMacroInfo):
-            transitive_proc_macro_deps.add(dep.label.raw_target())
+        if isinstance(dep.info, RustProcMacroInfo) or isinstance(dep.info, RustProcMacroArchInfo):
+            transitive_proc_macro_deps.add(dep.dep.label.raw_target())
 
             # We don't want to propagate proc macros directly, and they have no transitive deps
             continue

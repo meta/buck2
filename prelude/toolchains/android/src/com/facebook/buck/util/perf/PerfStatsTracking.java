@@ -10,14 +10,17 @@
 
 package com.facebook.buck.util.perf;
 
+import com.facebook.infer.annotation.Nullsafe;
 import com.google.common.collect.ImmutableMap;
 import java.lang.management.GarbageCollectorMXBean;
 import java.lang.management.ManagementFactory;
 import java.lang.management.MemoryPoolMXBean;
 import java.lang.management.MemoryType;
 import java.util.Map;
+import java.util.Objects;
 
 /** Periodically probes for process-wide perf-related metrics. */
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public class PerfStatsTracking {
 
   /**
@@ -44,7 +47,7 @@ public class PerfStatsTracking {
     for (MemoryPoolMXBean memoryPoolBean : ManagementFactory.getMemoryPoolMXBeans()) {
       String name = memoryPoolBean.getName();
       MemoryType type = memoryPoolBean.getType();
-      long currentlyUsedBytes = memoryPoolBean.getUsage().getUsed();
+      long currentlyUsedBytes = Objects.requireNonNull(memoryPoolBean.getUsage()).getUsed();
       currentMemoryBytesUsageByPool.put(name + "(" + type + ")", currentlyUsedBytes);
     }
 

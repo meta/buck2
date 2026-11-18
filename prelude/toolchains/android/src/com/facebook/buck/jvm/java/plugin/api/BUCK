@@ -8,12 +8,15 @@ source_listing()
 buck_java_library(
     name = "api",
     srcs = glob(["*.java"]),
+    provided_deps = [
+        "prelude//toolchains/android/third-party:infer-annotations",
+        "prelude//toolchains/android/third-party:jspecify",
+    ],
     visibility = [
         "PUBLIC",
     ],
     deps = [
         "prelude//toolchains/android/src/com/facebook/buck/jvm/java/lang/model:model",
-        "prelude//toolchains/android/src/com/facebook/buck/util/liteinfersupport:liteinfersupport",
         # Don't add deps that aren't already in the plugin; this is a super-light library that can be
         # used outside of Buck
     ],

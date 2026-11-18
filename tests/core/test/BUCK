@@ -7,4 +7,9 @@ buck2_core_tests(
         "use_compiled_buck2_client_and_tpx": True,
     },
     materializer_variants = ["test_execution"],
+    target_extra_attrs = {
+        "test_test_name_whitespace": {
+            "deps": ["fbsource//third-party/rust:regex"],
+        },
+    },
 )

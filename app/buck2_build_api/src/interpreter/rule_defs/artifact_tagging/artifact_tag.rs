@@ -26,12 +26,14 @@ use starlark::environment::GlobalsBuilder;
 use starlark::environment::Methods;
 use starlark::environment::MethodsBuilder;
 use starlark::values::Freeze;
+use starlark::values::Heap;
 use starlark::values::NoSerialize;
 use starlark::values::StarlarkPagable;
 use starlark::values::StarlarkValue;
 use starlark::values::Trace;
 use starlark::values::UnpackValue;
 use starlark::values::Value;
+use starlark::values::ValueOf;
 use starlark::values::starlark_value;
 use strong_hash::StrongHash;
 
@@ -110,16 +112,12 @@ impl<'v> StarlarkValue<'v> for ArtifactTag {
         Some(ARTIFACT_TAG_METHODS.methods())
     }
 
-    fn equals(&self, other: Value<'v>) -> starlark::Result<bool> {
-        Ok(match other.downcast_ref::<Self>() {
-            Some(other) => self == other,
-            None => false,
-        })
+    fn equals(&self, other: &Self) -> bool {
+        self == other
     }
 
-    fn write_hash(&self, hasher: &mut StarlarkHasher) -> starlark::Result<()> {
+    fn write_hash(&self, hasher: &mut StarlarkHasher) {
         Hash::hash(self, hasher);
-        Ok(())
     }
 }
 
@@ -147,13 +145,16 @@ fn artifact_tag_methods(_: &mut MethodsBuilder) {
     fn tag_artifacts<'v>(
         this: &ArtifactTag,
         inner: Value<'v>,
-    ) -> starlark::Result<Either<StarlarkTaggedValue<'v>, StarlarkTaggedCommandLine<'v>>> {
+        heap: Heap<'v>,
+    ) -> starlark::Result<
+        Either<ValueOf<'v, StarlarkTaggedValue<'v>>, ValueOf<'v, StarlarkTaggedCommandLine<'v>>>,
+    > {
         let value = StarlarkTaggedValue::new(inner, this.dupe());
 
         Ok(if ValueAsCommandLineLike::unpack_value(inner)?.is_some() {
-            Either::Right(StarlarkTaggedCommandLine::new(value))
+            Either::Right(heap.alloc(StarlarkTaggedCommandLine::new(value)))
         } else {
-            Either::Left(value)
+            Either::Left(heap.alloc(value))
         })
     }
 
@@ -172,13 +173,16 @@ fn artifact_tag_methods(_: &mut MethodsBuilder) {
     fn tag_inputs<'v>(
         this: &ArtifactTag,
         inner: Value<'v>,
-    ) -> starlark::Result<Either<StarlarkTaggedValue<'v>, StarlarkTaggedCommandLine<'v>>> {
+        heap: Heap<'v>,
+    ) -> starlark::Result<
+        Either<ValueOf<'v, StarlarkTaggedValue<'v>>, ValueOf<'v, StarlarkTaggedCommandLine<'v>>>,
+    > {
         let value = StarlarkTaggedValue::inputs_only(inner, this.dupe());
 
         Ok(if ValueAsCommandLineLike::unpack_value(inner)?.is_some() {
-            Either::Right(StarlarkTaggedCommandLine::new(value))
+            Either::Right(heap.alloc(StarlarkTaggedCommandLine::new(value)))
         } else {
-            Either::Left(value)
+            Either::Left(heap.alloc(value))
         })
     }
 }

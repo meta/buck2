@@ -98,7 +98,7 @@ impl<'v> AnonPromisesDyn<'v> for AnonPromises<'v> {
                             .clone()
                             .map(|i| Ok(values[i].1.providers()?.add_heap_ref(eval.heap())))
                             .collect::<buck2_error::Result<_>>()?;
-                        let list = eval.heap().alloc(AllocList(xs));
+                        let list = eval.heap().alloc(AllocList(xs)).to_value();
                         promise.resolve(list, eval)?
                     }
                 }

@@ -16,7 +16,8 @@ buck_java_library(
     ],
     deps = [
         "prelude//toolchains/android/third-party:guava",
-        "prelude//toolchains/android/third-party:jsr305",
+        "prelude//toolchains/android/third-party:infer-annotations",
+        "prelude//toolchains/android/third-party:jspecify",
     ],
 )
 
@@ -59,6 +60,7 @@ buck_kotlin_library(
         "OptionsConsumer.java",
         "PluginFactory.java",
         "PluginLoaderJavaFileManager.java",
+        "ReducedClasspathSourceOnlyAbiRuleInfoFactory.java",
         "ResolvedJavac.java",
         "ResolvedJavacOptions.kt",
         "ResolvedJavacPluginProperties.java",
@@ -103,7 +105,7 @@ buck_kotlin_library(
         "prelude//toolchains/android/third-party:jackson-annotations",
         "prelude//toolchains/android/third-party:jackson-core",
         "prelude//toolchains/android/third-party:jackson-databind",
-        "prelude//toolchains/android/third-party:jsr305",
+        "prelude//toolchains/android/third-party:jspecify",
     ],
     exported_deps = [
         "prelude//toolchains/android/src/com/facebook/buck/jvm/core:core",
@@ -122,6 +124,8 @@ buck_java_library(
     ],
     deps = [
         "prelude//toolchains/android/third-party:guava",
+        "prelude//toolchains/android/third-party:infer-annotations",
+        "prelude//toolchains/android/third-party:jspecify",
     ],
     exported_deps = [],
 )
@@ -172,9 +176,10 @@ buck_kotlin_library(
         "prelude//toolchains/android/src/com/facebook/buck/util/unarchive:unarchive",
         "prelude//toolchains/android/src/com/facebook/buck/util/zip:zip",
         "prelude//toolchains/android/third-party:guava",
+        "prelude//toolchains/android/third-party:infer-annotations",
         "prelude//toolchains/android/third-party:jackson-annotations",
         "prelude//toolchains/android/third-party:jackson-databind",
-        "prelude//toolchains/android/third-party:jsr305",
+        "prelude//toolchains/android/third-party:jspecify",
     ],
     exported_deps = [
         "prelude//toolchains/android/src/com/facebook/buck/jvm/cd:cd",

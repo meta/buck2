@@ -24,17 +24,17 @@ use starlark::environment::Methods;
 use starlark::environment::MethodsBuilder;
 use starlark::eval::Evaluator;
 use starlark::starlark_module;
-use starlark::values::AllocValue;
-use starlark::values::Heap;
 use starlark::values::NoSerialize;
 use starlark::values::StarlarkValue;
 use starlark::values::Trace;
 use starlark::values::Value;
+use starlark::values::ValueOf;
 use starlark::values::ValueTyped;
 use starlark::values::dict::AllocDict;
-use starlark::values::list_or_tuple::UnpackListOrTuple;
+use starlark::values::list_or_tuple::ListOrTupleType;
 use starlark::values::none::NoneOr;
 use starlark::values::starlark_value;
+use starlark::values::string::StarlarkStr;
 
 use crate::bxl::starlark_defs::context::BxlContext;
 use crate::bxl::starlark_defs::nodes::action::StarlarkAction;
@@ -61,16 +61,10 @@ pub(crate) struct StarlarkAuditCtx<'v> {
 
 starlark::methods_static!(AUDIT_METHODS = audit_methods);
 
-#[starlark_value(type = "bxl.AuditContext", StarlarkTypeRepr, UnpackValue)]
+#[starlark_value(type = "bxl.AuditContext", no_freeze)]
 impl<'v> StarlarkValue<'v> for StarlarkAuditCtx<'v> {
     fn get_methods() -> Option<&'static Methods> {
         Some(AUDIT_METHODS.methods())
-    }
-}
-
-impl<'v> AllocValue<'v> for StarlarkAuditCtx<'v> {
-    fn alloc_value(self, heap: Heap<'v>) -> Value<'v> {
-        heap.alloc_complex_no_freeze(self)
     }
 }
 
@@ -134,19 +128,21 @@ fn audit_methods(builder: &mut MethodsBuilder) {
                     match output {
                         None => Ok(NoneOr::None),
                         Some(result) => buck2_error::Ok(NoneOr::Other(match result {
-                            AuditOutputResult::Match(action) => heap.alloc(StarlarkAction(
-                                action
-                                    .action()
-                                    .ok_or_else(|| {
-                                        internal_error!("audit_output did not return an action")
-                                    })?
-                                    .dupe(),
-                            )),
+                            AuditOutputResult::Match(action) => heap
+                                .alloc(StarlarkAction(
+                                    action
+                                        .action()
+                                        .ok_or_else(|| {
+                                            internal_error!("audit_output did not return an action")
+                                        })?
+                                        .dupe(),
+                                ))
+                                .to_value(),
                             AuditOutputResult::MaybeRelevantForConfigurationHashPath(label) => {
-                                heap.alloc(StarlarkTargetLabel::new(label))
+                                heap.alloc(StarlarkTargetLabel::new(label)).to_value()
                             }
                             AuditOutputResult::MatchContentBasedPath(label) => {
-                                heap.alloc(StarlarkTargetLabel::new(label))
+                                heap.alloc(StarlarkTargetLabel::new(label)).to_value()
                             }
                         })),
                     }
@@ -173,18 +169,23 @@ fn audit_methods(builder: &mut MethodsBuilder) {
     fn cell<'v>(
         this: &StarlarkAuditCtx<'v>,
         // TODO(nga): parameters should be either positional or named, not both.
-        #[starlark(default = UnpackListOrTuple::default())] aliases_to_resolve: UnpackListOrTuple<
-            String,
+        #[starlark(default = ValueOf::empty_list())] aliases_to_resolve: ValueOf<
+            'v,
+            ListOrTupleType<StarlarkStr>,
         >,
         #[starlark(require = named, default = false)] aliases: bool,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<AllocDict<impl Iterator<Item = (String, String)> + use<>>> {
+        let aliases_to_resolve = aliases_to_resolve
+            .try_items::<&str>()
+            .map(|s| s.map(str::to_owned))
+            .collect::<starlark::Result<Vec<_>>>()?;
         Ok(this.ctx.via_dice(eval, |ctx| {
             ctx.via(|ctx| {
                 async {
                     let result = audit_cell(
                         ctx,
-                        &aliases_to_resolve.items,
+                        &aliases_to_resolve,
                         aliases,
                         &this.working_dir,
                         this.ctx.project_root(),

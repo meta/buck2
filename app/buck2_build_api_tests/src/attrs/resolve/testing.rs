@@ -239,7 +239,7 @@ pub(crate) fn resolution_ctx_with_providers<'v>(
                     else {
                         return buck2_error::Ok(None);
                     };
-                    let Some(value) = placeholders.unkeyed_variables().get(name).copied() else {
+                    let Some(value) = placeholders.unkeyed_variables()?.get(name).copied() else {
                         return Ok(None);
                     };
                     Ok(Some(r.edge(self.module.heap()).rebrand(value)))

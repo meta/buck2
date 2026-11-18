@@ -77,6 +77,22 @@ message KotlinExtraParams {
   // dependency was missing from the source-only ABI classpath: off, warn,
   // or error (fails the compilation instead of emitting a knowingly-wrong ABI).
   string kosabiAbiValidationMode = 33;
+  // `option=value` pairs passed to the K2 JVM ABI gen plugin of source-only ABI
+  // actions, set by toolchain kill switches. Empty by default.
+  repeated string kosabiJvmAbiGenOptions = 40;
+
+  // Turns off the K2 JVM ABI gen check that fails a source-only ABI whose kept
+  // inline bodies name a class that only a Kosabi stub provides. Unset (false)
+  // keeps the check on.
+  bool disableKosabiKeptBodyStubCheck = 36;
+  // Records the compiler settings in incremental_config.json, compiles in full
+  // when a compiler plugin or a file that an option names changed since the
+  // last successful incremental round, and has the incremental compiler compute
+  // classpath changes when only the classpath order changed.
+  bool shouldTrackIncrementalInputs = 34;
+  // Replaces read-only outputs with writable copies before an incremental
+  // round, when Buck2 seals outputs (`buck2.readonly_outputs`).
+  bool shouldReclaimReadOnlyOutputs = 35;
 }
 
 message PluginParams {

@@ -59,6 +59,14 @@ class K2JvmAbiCommandLineProcessor : CommandLineProcessor {
         false,
     )
 
+    val AST_PACKAGE_NAMES_OPTION: CliOption = CliOption(
+        "astPackageNames",
+        "<boolean>",
+        "Read each source file's package from its AST instead of building a PSI stub tree for " +
+            "it. Default is true; false reads it through the stub tree as before.",
+        false,
+    )
+
     val ABI_VALIDATION_MODE_OPTION: CliOption = CliOption(
         "abiValidationMode",
         "off|warn|error",
@@ -77,6 +85,31 @@ class K2JvmAbiCommandLineProcessor : CommandLineProcessor {
             "for the target's own supertype chain only. Default is false.",
         false,
     )
+
+    val SKIP_NON_ABI_BODIES_OPTION: CliOption = CliOption(
+        "skipNonAbiBodies",
+        "<boolean>",
+        "Skip resolving the function, accessor, constructor and init bodies that the " +
+            "source-only ABI never reads. Default is true; false restores full body resolution.",
+        false,
+    )
+
+    val KEPT_BODY_STUB_CHECK_OPTION: CliOption = CliOption(
+        "keptBodyStubCheck",
+        "<boolean>",
+        "Fail the source-only ABI when a kept inline body names a class that only a Kosabi " +
+            "stub provides. Default is true; false turns the check off.",
+        false,
+    )
+
+    val PRESERVE_DECLARATION_ORDER_OPTION: CliOption = CliOption(
+        "preserveDeclarationOrder",
+        "<boolean>",
+        "Keep the members of each class in the order kotlinc generates them. Default is true; " +
+            "false sorts them as jvm-abi-gen sorts a class ABI when its own " +
+            "preserveDeclarationOrder option is not set.",
+        false,
+    )
   }
 
   override val pluginId: String
@@ -89,8 +122,12 @@ class K2JvmAbiCommandLineProcessor : CommandLineProcessor {
         ENABLE_MIXED_COMPILATION,
         DEBUG_OUTPUT_OPTION,
         ENABLE_COMPOSE_ABI_EMULATION_OPTION,
+        AST_PACKAGE_NAMES_OPTION,
         ABI_VALIDATION_MODE_OPTION,
         SHALLOW_CLASS_USAGE_OPTION,
+        SKIP_NON_ABI_BODIES_OPTION,
+        KEPT_BODY_STUB_CHECK_OPTION,
+        PRESERVE_DECLARATION_ORDER_OPTION,
     )
 
   override fun processOption(
@@ -111,10 +148,18 @@ class K2JvmAbiCommandLineProcessor : CommandLineProcessor {
               K2JvmAbiConfigurationKeys.ENABLE_COMPOSE_ABI_EMULATION,
               value == "true",
           )
+      AST_PACKAGE_NAMES_OPTION ->
+          configuration.put(K2JvmAbiConfigurationKeys.AST_PACKAGE_NAMES, value != "false")
       ABI_VALIDATION_MODE_OPTION ->
           configuration.put(K2JvmAbiConfigurationKeys.ABI_VALIDATION_MODE, value)
       SHALLOW_CLASS_USAGE_OPTION ->
           configuration.put(K2JvmAbiConfigurationKeys.SHALLOW_CLASS_USAGE, value == "true")
+      SKIP_NON_ABI_BODIES_OPTION ->
+          configuration.put(K2JvmAbiConfigurationKeys.SKIP_NON_ABI_BODIES, value != "false")
+      KEPT_BODY_STUB_CHECK_OPTION ->
+          configuration.put(K2JvmAbiConfigurationKeys.KEPT_BODY_STUB_CHECK, value != "false")
+      PRESERVE_DECLARATION_ORDER_OPTION ->
+          configuration.put(K2JvmAbiConfigurationKeys.PRESERVE_DECLARATION_ORDER, value != "false")
       else -> throw CliOptionProcessingException("Unknown option: ${option.optionName}")
     }
   }

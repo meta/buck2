@@ -10,10 +10,13 @@
 
 package com.facebook.buck.util.zip.collect;
 
+import com.facebook.infer.annotation.Nullsafe;
 import java.nio.file.Path;
 import java.util.Objects;
+import org.jspecify.annotations.Nullable;
 
 /** A file source for an entry in a zip file. */
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public class FileZipEntrySource implements ZipEntrySource {
 
   private final Path sourceFilePath;
@@ -35,7 +38,7 @@ public class FileZipEntrySource implements ZipEntrySource {
   }
 
   @Override
-  public boolean equals(Object o) {
+  public boolean equals(@Nullable Object o) {
     if (this == o) {
       return true;
     }

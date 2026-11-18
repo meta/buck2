@@ -15,10 +15,12 @@ import com.facebook.kotlin.compilerplugins.kosabi.common.parseClasspathFileClass
 import com.facebook.kotlin.compilerplugins.kosabi.stubsgen.stub.container.StubsContainer
 import com.facebook.kotlin.compilerplugins.kosabi.stubsgen.stub.container.StubsContainerImpl
 import com.facebook.kotlin.compilerplugins.kosabi.stubsgen.util.JavaSourceInfo
+import com.facebook.kotlin.compilerplugins.kosabi.stubsgen.util.KotlinClasspathDeclarations
 import com.facebook.kotlin.compilerplugins.kosabi.stubsgen.util.calculateQualifierList
 import com.facebook.kotlin.compilerplugins.kosabi.stubsgen.util.declaredTypes
 import com.facebook.kotlin.compilerplugins.kosabi.stubsgen.util.toImportedClass
 import java.io.File
+import java.util.IdentityHashMap
 import org.jetbrains.kotlin.com.intellij.psi.PsiElement
 import org.jetbrains.kotlin.lexer.KtTokens
 import org.jetbrains.kotlin.psi.KtAnnotationEntry
@@ -28,6 +30,7 @@ import org.jetbrains.kotlin.psi.KtClassBody
 import org.jetbrains.kotlin.psi.KtClassOrObject
 import org.jetbrains.kotlin.psi.KtDelegatedSuperTypeEntry
 import org.jetbrains.kotlin.psi.KtFile
+import org.jetbrains.kotlin.psi.KtImportDirective
 import org.jetbrains.kotlin.psi.KtNameReferenceExpression
 import org.jetbrains.kotlin.psi.KtNullableType
 import org.jetbrains.kotlin.psi.KtParameterList
@@ -44,11 +47,19 @@ import org.jetbrains.kotlin.psi.KtTypeReference
 import org.jetbrains.kotlin.psi.KtUserType
 import org.jetbrains.kotlin.psi.psiUtil.getChildOfType
 import org.jetbrains.kotlin.psi.psiUtil.getChildrenOfType
+import org.jetbrains.kotlin.psi.psiUtil.getStrictParentOfType
 import org.jetbrains.kotlin.psi.psiUtil.referenceExpression
 
 class GenerationContext {
   val projectFiles: Collection<KtFile>
   val stubsContainer: StubsContainer
+  /**
+   * Classpath-provided declarations the entry-name scan cannot see: classes in its skipped jars and
+   * Kotlin top-level declarations (typealiases) recorded only in file facades. Consulted before
+   * fabricating a class stub for an import; lazily built, so merely constructing it costs nothing
+   * on modules with no such imports.
+   */
+  val kotlinClasspathDeclarations: KotlinClasspathDeclarations
   val importedDeclarations: Set<FullTypeQualifier>
   val importedTypes: Set<FullTypeQualifier>
 
@@ -84,6 +95,24 @@ class GenerationContext {
   val knownGeneratedTypes: Set<FullTypeQualifier>
   val pkgsInClasspath: Set<List<String>>
   val interfaceTypes: List<KtUserType>
+
+  /**
+   * The entries of [interfaceTypes] that may be a superclass: the first supertype of a class that
+   * has secondary constructors, no primary constructor and no constructor call in its supertype
+   * list, when no secondary constructor delegates to `super` or takes no parameters. Kotlin writes
+   * the superclass of such a class without parentheses, so the class alone does not say whether the
+   * entry is a class or an interface.
+   */
+  val ambiguousInterfaceTypes: Set<KtUserType>
+
+  /**
+   * Supertypes written as constructor calls (`: A()`), which only a class can be. Only calls whose
+   * name no declaration of the file and no containing class's supertype can shadow are kept: the
+   * entry's class has no containing class with a supertype (whose nested classes, inherited ones
+   * included, would be in scope), and no classifier, type alias or type parameter of the file has
+   * the call's first name.
+   */
+  val superclassCallTypes: List<KtUserType>
   // Each entry is one multi-bound type parameter's bounds, in source order.
   val multiBoundGroups: List<List<KtUserType>>
   val annotationEntries: List<KtAnnotationEntry>
@@ -103,12 +132,44 @@ class GenerationContext {
    * no candidate by name and would otherwise resolve to nothing.
    */
   val importAliasQualifiers: Map<String, FullTypeQualifier>
+
+  /** [importAliasQualifiers] split by the file that wrote the alias: an alias binds only there. */
+  val importAliasQualifiersByFile: Map<KtFile, Map<String, FullTypeQualifier>>
+
+  /**
+   * Per file, the segments of the imports that the file writes only under an alias. `import a.B as
+   * Alias` binds `Alias` alone, so in that file the plain `B` never resolves through `a.B`.
+   */
+  val aliasOnlyImportsByFile: Map<KtFile, Set<List<String>>>
+
+  /**
+   * The segments of the imports that every file writing them renames: no file of the module binds
+   * their plain name.
+   */
+  val aliasOnlyImports: Set<List<String>>
+
+  /**
+   * Per file, the plain names that its renaming imports give up: the last name of each import the
+   * file writes under an alias, unless the file also imports something of that name without one.
+   * Such a name means whatever it would mean without the import, a type of the file's own package
+   * included.
+   */
+  val aliasHiddenNamesByFile: Map<KtFile, Set<String>>
   val typeAliasSymbol: Set<String>
   val parameterNames: Set<String>
 
   // Element: (type simple name -> num of ctor args)
   val typeValueArgs: Map<String, Int>
   val usedUserTypes: Set<KtUserType>
+
+  /**
+   * Each candidate collection passed to [resolveImportedType], grouped by last name. A generator
+   * builds its candidates once and resolves every usage against them, so the grouping is reused
+   * instead of scanning all candidates per usage. Candidate collections are not changed after they
+   * are built.
+   */
+  private val candidatesByLastName =
+      IdentityHashMap<Collection<FullTypeQualifier>, Map<String, List<FullTypeQualifier>>>()
 
   constructor(
       projectFiles: Collection<KtFile>,
@@ -119,6 +180,7 @@ class GenerationContext {
   ) {
     this.projectFiles = projectFiles
     this.stubsContainer = StubsContainerImpl()
+    this.kotlinClasspathDeclarations = KotlinClasspathDeclarations(classpath)
     this.knownGeneratedTypes = knownGeneratedTypes
 
     if (lightweight) {
@@ -131,12 +193,18 @@ class GenerationContext {
       this.importedTypesByFile = emptyMap()
       this.companionCallableImports = emptySet()
       this.interfaceTypes = emptyList()
+      this.ambiguousInterfaceTypes = emptySet()
+      this.superclassCallTypes = emptyList()
       this.multiBoundGroups = emptyList()
       this.annotationEntries = emptyList()
       this.declaredTypes = emptySet()
       this.typeValueArgs = emptyMap<String, Int>()
       this.importAlias = emptySet()
       this.importAliasQualifiers = emptyMap()
+      this.importAliasQualifiersByFile = emptyMap()
+      this.aliasOnlyImportsByFile = emptyMap()
+      this.aliasOnlyImports = emptySet()
+      this.aliasHiddenNamesByFile = emptyMap()
       this.fullQualifierTypes = emptySet()
       this.fullQualifierTypesByFile = emptyMap()
       this.usedUserTypes = emptySet()
@@ -156,6 +224,40 @@ class GenerationContext {
                 directive.aliasName?.let { alias -> alias to directive.toImportedClass() }
               }
               .toMap()
+      this.importAliasQualifiersByFile = importsByFile.mapValues { (_, imports) ->
+        imports
+            .mapNotNull { directive ->
+              directive.aliasName?.let { alias -> alias to directive.toImportedClass() }
+            }
+            .toMap()
+      }
+      // `import a.B as B` keeps its plain name; any other alias gives it up.
+      val explicitByFile = importsByFile.mapValues { (_, imports) ->
+        imports.filterNot { it.isAllUnder }
+      }
+      val renamingByFile = explicitByFile.mapValues { (_, imports) ->
+        imports.filter { it.renames() }
+      }
+      val plainByFile = explicitByFile.mapValues { (_, imports) ->
+        imports.filterNot { it.renames() }
+      }
+      this.aliasOnlyImportsByFile =
+          importsByFile.keys.associateWith { file ->
+            val plain =
+                plainByFile.getValue(file).mapTo(mutableSetOf()) {
+                  it.toImportedClass().segments
+                }
+            renamingByFile.getValue(file).mapTo(mutableSetOf()) { it.toImportedClass().segments } -
+                plain
+          }
+      val plainAnywhere =
+          plainByFile.values.flatten().mapTo(mutableSetOf()) { it.toImportedClass().segments }
+      this.aliasOnlyImports = aliasOnlyImportsByFile.values.flatten().toSet() - plainAnywhere
+      this.aliasHiddenNamesByFile =
+          importsByFile.keys.associateWith { file ->
+            val plain = plainByFile.getValue(file).mapNotNullTo(mutableSetOf()) { it.plainName() }
+            renamingByFile.getValue(file).mapNotNullTo(mutableSetOf()) { it.plainName() } - plain
+          }
 
       val dataInClasspath: Pair<Set<FullTypeQualifier>, Set<List<String>>> =
           parseClasspathFileClassesAndPackages(classpath)
@@ -183,12 +285,16 @@ class GenerationContext {
       val usedTypes = mutableSetOf<KtUserType>()
       val multiSegByFile = mutableMapOf<KtFile, MutableList<List<String>>>()
       val interfaceUserTypes = mutableListOf<KtUserType>()
+      val ambiguousInterfaceUserTypes = mutableSetOf<KtUserType>()
+      val superclassCallUserTypes = mutableListOf<KtUserType>()
       val multiBoundUserTypes = mutableListOf<List<KtUserType>>()
       val typeValueArgPairs = mutableListOf<Pair<String, Int>>()
       for (ktFile in projectFiles) {
         val superCallPairs = mutableListOf<Pair<String, Int>>()
         val callExprPairs = mutableListOf<Pair<String, Int>>()
         val classCtorPairs = mutableListOf<Pair<String, Int>>()
+        val fileClassifierNames = mutableSetOf<String>()
+        val fileSuperclassCalls = mutableListOf<KtUserType>()
         ktFile.accept(
             object : KtTreeVisitorVoid() {
               override fun visitElement(element: PsiElement) {
@@ -196,10 +302,16 @@ class GenerationContext {
                   annotations.add(element)
                 }
                 if (element is KtTypeAlias) {
-                  element.name?.let { aliasNames.add(it) }
+                  element.name?.let {
+                    aliasNames.add(it)
+                    fileClassifierNames.add(it)
+                  }
                 }
                 if (element is KtTypeParameter) {
-                  element.name?.let { paramNames.add(it) }
+                  element.name?.let {
+                    paramNames.add(it)
+                    fileClassifierNames.add(it)
+                  }
                 }
                 if (element is KtUserType && element.calculateQualifierList().size == 1) {
                   usedTypes.add(element)
@@ -212,15 +324,22 @@ class GenerationContext {
                   }
                 }
                 if (element is KtClassOrObject) {
+                  element.name?.let { fileClassifierNames.add(it) }
                   interfaceUserTypes.addAll(
                       element.getInterfaceTypes().mapNotNull { it.typeAsUserType },
                   )
+                  element.ambiguousInterfaceEntry()?.typeAsUserType?.let {
+                    ambiguousInterfaceUserTypes.add(it)
+                  }
                 }
                 if (element is KtTypeParameterListOwner) {
                   multiBoundUserTypes.addAll(element.multiBoundGroups())
                 }
                 if (element is KtSuperTypeCallEntry) {
                   element.typeValueArgs()?.let { superCallPairs.add(it) }
+                  if (element.resolvesInFileScope()) {
+                    element.typeAsUserType?.let { fileSuperclassCalls.add(it) }
+                  }
                 }
                 if (element is KtCallExpression) {
                   element.typeValueArgs()?.let { callExprPairs.add(it) }
@@ -234,6 +353,9 @@ class GenerationContext {
               }
             },
         )
+        fileSuperclassCalls.filterTo(superclassCallUserTypes) {
+          it.calculateQualifierList().first() !in fileClassifierNames
+        }
         typeValueArgPairs.addAll(superCallPairs)
         typeValueArgPairs.addAll(callExprPairs)
         typeValueArgPairs.addAll(classCtorPairs)
@@ -244,6 +366,8 @@ class GenerationContext {
       this.parameterNames = paramNames
       this.usedUserTypes = usedTypes
       this.interfaceTypes = interfaceUserTypes
+      this.ambiguousInterfaceTypes = ambiguousInterfaceUserTypes
+      this.superclassCallTypes = superclassCallUserTypes
       this.multiBoundGroups = multiBoundUserTypes
       fun qualifiersOf(quals: List<List<String>>): Set<FullTypeQualifier> =
           quals
@@ -356,6 +480,37 @@ class GenerationContext {
     return superTypeEntries.orEmpty() + delegatedSuperTypeEntries.orEmpty()
   }
 
+  // The entry [getInterfaceTypes] lists only because nothing in the class contradicts it. A
+  // class with a primary constructor (written or implicit) must call its superclass, and an enum
+  // has none, so their uncalled entries are interfaces.
+  private fun KtClassOrObject.ambiguousInterfaceEntry(): KtSuperTypeEntry? {
+    if (this !is KtClass || isInterface() || isEnum() || hasExplicitPrimaryConstructor()) {
+      return null
+    }
+    val superTypeList = getChildOfType<KtSuperTypeList>() ?: return null
+    if (superTypeList.getChildOfType<KtSuperTypeCallEntry>() != null) return null
+    val first = superTypeList.getChildrenOfType<KtSuperTypeEntry>().firstOrNull() ?: return null
+    val secondaryConstructors = getChildOfType<KtClassBody>()?.getSecondaryConstructor().orEmpty()
+    if (
+        secondaryConstructors.isEmpty() ||
+            secondaryConstructors.defaultConstructor().isNotEmpty() ||
+            secondaryConstructors.superConstructor().isNotEmpty()
+    ) {
+      return null
+    }
+    return first
+  }
+
+  // A supertype list sees the nested classes of every class containing its own, and those classes'
+  // inherited nested classes, which the stubbed supertypes do not reveal.
+  private fun KtSuperTypeCallEntry.resolvesInFileScope(): Boolean {
+    val owner = getStrictParentOfType<KtClassOrObject>() ?: return false
+    return generateSequence(owner.getStrictParentOfType<KtClassOrObject>()) {
+          it.getStrictParentOfType<KtClassOrObject>()
+        }
+        .none { it.superTypeListEntries.isNotEmpty() }
+  }
+
   private fun KtClassOrObject.isInterface(): Boolean =
       getDeclarationKeyword() == KtTokens.INTERFACE_KEYWORD
 
@@ -456,30 +611,38 @@ class GenerationContext {
           .toSet()
 
   /**
-   * The candidate an unqualified [simpleName] refers to.
+   * The candidate an unqualified [simpleName] in [file] refers to.
    *
-   * `import a.B as Alias` binds `Alias` and does not bind `B`, so matching an import by the last
-   * name of its FQN is only correct for an import that carries no alias. An alias resolves to the
-   * type it names; every other name prefers an unaliased import and only then falls back to the
-   * historical last-name match, so a name that resolves today keeps resolving.
+   * `import a.B as Alias` binds `Alias` and does not bind `B`. An alias resolves to the type it
+   * names. Any other name resolves by the last name of an import's FQN, but never through an import
+   * that [file] writes only under an alias: the plain `B` then means whatever it would mean without
+   * that import, such as a type of the file's own package, which the caller handles as unresolved.
+   * Without a [file], only imports that every file renames are passed over.
    *
    * An alias naming a type the caller's own filter excluded stays unresolved: [candidates] is the
-   * authority on what this pass may act on.
+   * authority on what this pass may act on. [candidates] must not change after the first call that
+   * passes it: its grouping by last name is cached per collection instance.
    */
   fun resolveImportedType(
       candidates: Collection<FullTypeQualifier>,
       simpleName: String,
+      file: KtFile? = null,
   ): FullTypeQualifier? {
-    importAliasQualifiers[simpleName]?.let { aliased ->
+    val aliases =
+        if (file == null) importAliasQualifiers else importAliasQualifiersByFile[file].orEmpty()
+    aliases[simpleName]?.let { aliased ->
       candidates
           .find { it.segments == aliased.segments }
           ?.let {
             return it
           }
     }
-    val byLastName = candidates.filter { it.names.last() == simpleName }
+    val renamed = if (file == null) aliasOnlyImports else aliasOnlyImportsByFile[file].orEmpty()
+    val grouped =
+        candidatesByLastName.getOrPut(candidates) { candidates.groupBy { it.names.last() } }
+    val byLastName = grouped[simpleName].orEmpty().filter { it.segments !in renamed }
     return byLastName.firstOrNull { candidate ->
-      importAliasQualifiers.values.none { it.segments == candidate.segments }
+      aliases.values.none { it.segments == candidate.segments }
     } ?: byLastName.firstOrNull()
   }
 
@@ -500,6 +663,15 @@ class GenerationContext {
     return packageName()?.split(".").orEmpty()
   }
 }
+
+/** Whether this import binds a name other than its own last name. */
+private fun KtImportDirective.renames(): Boolean {
+  val alias = aliasName ?: return false
+  return alias != importedFqName?.shortName()?.asString()
+}
+
+/** The last name of the imported FQN: the name an import without an alias binds. */
+private fun KtImportDirective.plainName(): String? = importedFqName?.shortName()?.asString()
 
 private fun FullTypeQualifier.isThroughCompanion(): Boolean {
   for (i in 0 until names.size - 1) {

@@ -1,0 +1,37 @@
+# The image `cross` builds the aarch64 and riscv64 glibc release binaries
+# in. Its glibc is what those binaries require at runtime: Ubuntu 20.04 ships
+# 2.31, which Debian 11, RHEL 9 and every later release of theirs provide.
+# (The images of the last `cross` release are Ubuntu 16.04 and 18.04, whose
+# glibc lacks symbols current dependencies call, and the images on its main
+# branch are Ubuntu 24.04, whose glibc 2.39 would exclude Ubuntu 22.04 and
+# Debian 12 hosts.)
+FROM ubuntu:20.04
+
+ARG DEBIAN_FRONTEND=noninteractive
+RUN apt-get update && apt-get install --assume-yes --no-install-recommends \
+    ca-certificates \
+    g++ \
+    g++-aarch64-linux-gnu \
+    g++-riscv64-linux-gnu \
+    libc6-dev \
+    libc6-dev-arm64-cross \
+    libc6-dev-riscv64-cross \
+    make \
+    pkg-config \
+    && rm -rf /var/lib/apt/lists/*
+
+# Ubuntu 20.04's binutils (2.34) rejects the RISC-V ISA attributes current
+# LLVM emits ("unsupported ISA subset `z'"), so riscv64 links through the gcc
+# driver with the Rust toolchain's own lld, which cross mounts at /rust.
+RUN printf '#!/bin/sh\nexec riscv64-linux-gnu-gcc -fuse-ld=lld -B/rust/lib/rustlib/x86_64-unknown-linux-gnu/bin/gcc-ld "$@"\n' \
+    > /usr/local/bin/riscv64-linux-gnu-gcc-lld \
+    && chmod +x /usr/local/bin/riscv64-linux-gnu-gcc-lld
+
+ENV CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc \
+    CC_aarch64_unknown_linux_gnu=aarch64-linux-gnu-gcc \
+    CXX_aarch64_unknown_linux_gnu=aarch64-linux-gnu-g++ \
+    AR_aarch64_unknown_linux_gnu=aarch64-linux-gnu-ar \
+    CARGO_TARGET_RISCV64GC_UNKNOWN_LINUX_GNU_LINKER=riscv64-linux-gnu-gcc-lld \
+    CC_riscv64gc_unknown_linux_gnu=riscv64-linux-gnu-gcc \
+    CXX_riscv64gc_unknown_linux_gnu=riscv64-linux-gnu-g++ \
+    AR_riscv64gc_unknown_linux_gnu=riscv64-linux-gnu-ar

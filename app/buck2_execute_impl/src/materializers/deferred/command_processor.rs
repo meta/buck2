@@ -134,6 +134,10 @@ pub(super) struct DeferredMaterializerCommandProcessor<T: 'static> {
     background_cleanup_gate: Arc<BackgroundCleanupGate>,
 }
 
+/// What was materialized at exactly each of the paths an invalidation was asked for, for the
+/// holder that is about to write there to tell what it may keep (`fill`).
+pub(crate) type Displaced = Vec<(ProjectRelativePathBuf, ArtifactMetadata)>;
+
 /// Message taken by the `DeferredMaterializer`'s command loop.
 pub(super) enum MaterializerCommand<T: 'static> {
     // [Materializer trait methods -> Command thread]
@@ -176,7 +180,7 @@ pub(super) enum MaterializerCommand<T: 'static> {
     /// the file was created, or because it was removed..
     InvalidateFilePaths(
         Vec<ProjectRelativePathBuf>,
-        oneshot::Sender<CleaningFuture>,
+        oneshot::Sender<(Displaced, CleaningFuture)>,
         EventDispatcher,
         Option<SpanId>,
     ),
@@ -718,6 +722,21 @@ impl<T: IoHandler> DeferredMaterializerCommandProcessor<T> {
                     )
                 });
 
+                let displaced: Displaced = paths
+                    .iter()
+                    .filter_map(|path| {
+                        let (root, data) =
+                            Self::find_artifact_containing_path(&mut self.tree, path)?;
+                        match &data.stage {
+                            ArtifactMaterializationStage::Materialized { metadata, .. }
+                                if root == path =>
+                            {
+                                Some((path.clone(), metadata.dupe()))
+                            }
+                            _ => None,
+                        }
+                    })
+                    .collect();
                 let existing_futs = self.tree.invalidate_paths_and_collect_futures(
                     paths,
                     self.sqlite_db.as_mut(),
@@ -726,11 +745,12 @@ impl<T: IoHandler> DeferredMaterializerCommandProcessor<T> {
 
                 // TODO: This probably shouldn't return a CleanFuture
                 sender
-                    .send(
+                    .send((
+                        displaced,
                         async move { join_all_existing_futs(existing_futs?).await }
                             .boxed()
                             .shared(),
-                    )
+                    ))
                     .ok();
             }),
             // Entry point for `ensure_materialized` calls

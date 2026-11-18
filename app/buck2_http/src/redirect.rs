@@ -22,30 +22,81 @@ use hyper::StatusCode;
 use crate::HttpError;
 
 trait UriWithRedirect {
-    fn with_redirect(&self, location: &Uri) -> buck2_error::Result<Uri>;
-
     fn is_cross_host(&self, other: &Uri) -> bool;
 }
 
-impl UriWithRedirect for Uri {
-    /// Converts this Uri into the redirect Uri by combining it with the URI
-    /// obtained from the Location header of a response.
-    fn with_redirect(&self, location: &Uri) -> buck2_error::Result<Uri> {
-        let mut redirected = Uri::builder();
-        if let Some(scheme) = location.scheme().or_else(|| self.scheme()) {
-            redirected = redirected.scheme(scheme.clone());
-        };
-        if let Some(authority) = location.authority().or_else(|| self.authority()) {
-            redirected = redirected.authority(authority.clone());
+/// Resolves the value of a `Location` header against the request URI (RFC 3986 section 5.2).
+/// Returns `None` when the value does not resolve to a URI the client can request.
+fn resolve_location(base: &Uri, location: &[u8]) -> Option<Uri> {
+    let location = std::str::from_utf8(location).ok()?;
+    // A fragment is never sent to the server.
+    let location = location.split('#').next().unwrap_or("");
+    if let Ok(uri) = Uri::try_from(location) {
+        if uri.scheme().is_some() && uri.authority().is_some() {
+            return Some(uri);
         }
-        if let Some(path_and_query) = location.path_and_query().or_else(|| self.path_and_query()) {
-            redirected = redirected.path_and_query(path_and_query.clone());
-        }
-        redirected
-            .build()
-            .buck_error_context("Building redirected URI")
     }
+    let scheme = base.scheme_str()?;
+    if let Some(rest) = location.strip_prefix("//") {
+        return Uri::try_from(format!("{scheme}://{rest}")).ok();
+    }
+    // A first segment with a colon is a scheme (RFC 3986 section 4.2), so this was a malformed
+    // absolute URI rather than a relative path.
+    let first_segment = location.split(['/', '?']).next().unwrap_or("");
+    if first_segment.contains(':') {
+        return None;
+    }
+    let authority = base.authority()?.as_str();
+    let (path, query) = match location.split_once('?') {
+        Some((path, query)) => (path, Some(query)),
+        None => (location, None),
+    };
+    let base_path = base.path();
+    let path = if path.is_empty() {
+        base_path.to_owned()
+    } else if path.starts_with('/') {
+        remove_dot_segments(path)
+    } else {
+        let dir = &base_path[..base_path.rfind('/').map_or(0, |i| i + 1)];
+        remove_dot_segments(&format!("{dir}{path}"))
+    };
+    let query = if location.is_empty() {
+        base.query()
+    } else {
+        query
+    };
+    let target = match query {
+        Some(query) => format!("{scheme}://{authority}{path}?{query}"),
+        None => format!("{scheme}://{authority}{path}"),
+    };
+    Uri::try_from(target).ok()
+}
 
+/// RFC 3986 section 5.2.4 on an absolute path.
+fn remove_dot_segments(path: &str) -> String {
+    let mut out: Vec<&str> = Vec::new();
+    let mut trailing_slash = path.ends_with('/');
+    for segment in path.split('/').skip(1) {
+        match segment {
+            "." => trailing_slash = true,
+            ".." => {
+                out.pop();
+                trailing_slash = true;
+            }
+            segment => {
+                out.push(segment);
+                trailing_slash = segment.is_empty();
+            }
+        }
+    }
+    let mut result = format!("/{}", out.join("/"));
+    if trailing_slash && !result.ends_with('/') {
+        result.push('/');
+    }
+    result
+}
+
+impl UriWithRedirect for Uri {
     /// Returns whether this Uri is the same host as represented by 'other'.
     fn is_cross_host(&self, other: &Uri) -> bool {
         self.host() != other.host() || self.port_u16() != other.port_u16()
@@ -175,11 +226,7 @@ impl<B> RedirectEngine<B> {
                 return Ok(None);
             };
 
-        let redirect_uri = self
-            .pending_request
-            .uri
-            .clone()
-            .with_redirect(&redirect_location)?;
+        let redirect_uri = redirect_location;
         let is_cross_host = redirect_uri.is_cross_host(&self.pending_request.uri);
         self.pending_request.uri = redirect_uri;
 
@@ -215,12 +262,44 @@ impl<B> RedirectEngine<B> {
         Some(self.pending_request.to_request()).transpose()
     }
 
-    /// Extracts location header from the current response and tries to convert it
-    /// to a URI.
+    /// Extracts the location header from the current response and resolves it against the
+    /// request URI.
     fn extract_redirect_location_from_response(&self) -> Option<Uri> {
         self.response
             .headers()
             .get(hyper::header::LOCATION)
-            .and_then(|location| Uri::try_from(location.as_bytes()).ok())
+            .and_then(|location| resolve_location(&self.pending_request.uri, location.as_bytes()))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// `resolve_location` follows RFC 3986 section 5.2 for the reference forms a `Location`
+    /// header can take.
+    #[test]
+    fn test_resolve_location() {
+        let base = Uri::try_from("http://h/dir/start?q").unwrap();
+        let resolve = |location: &str| {
+            resolve_location(&base, location.as_bytes())
+                .map(|uri| uri.to_string())
+                .unwrap_or_else(|| "<none>".to_owned())
+        };
+        assert_eq!("http://h/dir/artifact.tar.gz", resolve("artifact.tar.gz"));
+        assert_eq!("http://h/dir/sub/next", resolve("sub/next"));
+        assert_eq!("http://h/dir/sub/next?x=1", resolve("sub/next?x=1"));
+        assert_eq!("http://h/x", resolve("../x"));
+        assert_eq!("http://h/x", resolve("../../x"));
+        assert_eq!("http://h/dir/", resolve("./"));
+        assert_eq!("http://h/dir/start?page=2", resolve("?page=2"));
+        assert_eq!("http://h/dir/start?q", resolve(""));
+        assert_eq!("http://h/dir/start?q", resolve("#frag"));
+        assert_eq!("http://h/abs?x", resolve("/abs?x"));
+        assert_eq!("http://h/b/", resolve("/a/../b/./"));
+        assert_eq!("http://mirror.example/f", resolve("//mirror.example/f"));
+        assert_eq!("https://other/p", resolve("https://other/p"));
+        assert_eq!("<none>", resolve("http://"));
+        assert_eq!("<none>", resolve("a b"));
     }
 }

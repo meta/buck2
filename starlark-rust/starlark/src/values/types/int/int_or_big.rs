@@ -36,15 +36,16 @@ use num_traits::ToPrimitive;
 use num_traits::Zero;
 use starlark_syntax::lexer::TokenInt;
 
-use crate as starlark;
-use crate::typing::Ty;
 use crate::values::AllocFrozenValue;
 use crate::values::AllocValue;
+use crate::values::FrozenHeap;
+use crate::values::Heap;
 use crate::values::UnpackValue;
 use crate::values::Value;
-use crate::values::type_repr::StarlarkTypeRepr;
+use crate::values::ValueOf;
 use crate::values::types::bigint::StarlarkBigInt;
 use crate::values::types::int::inline_int::InlineInt;
+use crate::values::types::int::view::IntView;
 
 #[derive(Debug, thiserror::Error)]
 enum StarlarkIntError {
@@ -62,27 +63,32 @@ enum StarlarkIntError {
     RightShiftNegative,
 }
 
-#[derive(
-    Debug,
-    Clone,
-    Eq,
-    PartialEq,
-    derive_more::Display,
-    Hash,
-    AllocValue,
-    AllocFrozenValue
-)]
+#[derive(Debug, Clone, Eq, PartialEq, derive_more::Display, Hash)]
 #[doc(hidden)]
 pub enum StarlarkInt {
     Small(InlineInt),
     Big(StarlarkBigInt),
 }
 
-impl StarlarkTypeRepr for StarlarkInt {
-    type Canonical = Self;
+impl<'v> AllocValue<'v> for StarlarkInt {
+    type Type = IntView<'v>;
 
-    fn starlark_type_repr() -> Ty {
-        Ty::int()
+    fn alloc_value(self, heap: Heap<'v>) -> ValueOf<'v, Self::Type> {
+        match self {
+            StarlarkInt::Small(i) => i.alloc_value(heap),
+            StarlarkInt::Big(b) => ValueOf::alloc(heap, b),
+        }
+    }
+}
+
+impl<'fv> AllocFrozenValue<'fv> for StarlarkInt {
+    type Type = IntView<'fv>;
+
+    fn alloc_frozen_value(self, heap: FrozenHeap<'fv>) -> ValueOf<'fv, Self::Type> {
+        match self {
+            StarlarkInt::Small(i) => i.alloc_frozen_value(heap),
+            StarlarkInt::Big(b) => ValueOf::alloc_frozen(heap, b),
+        }
     }
 }
 
@@ -168,7 +174,8 @@ impl<'v> StarlarkIntRef<'v> {
         }
     }
 
-    pub(crate) fn to_f64(self) -> f64 {
+    /// The nearest `f64`, as `float()` computes it.
+    pub fn to_f64(self) -> f64 {
         match self {
             StarlarkIntRef::Small(i) => i.to_f64(),
             StarlarkIntRef::Big(i) => i.to_f64(),
@@ -405,19 +412,13 @@ impl<'v> StarlarkIntRef<'v> {
     }
 }
 
-impl<'v> StarlarkTypeRepr for StarlarkIntRef<'v> {
-    type Canonical = <StarlarkInt as StarlarkTypeRepr>::Canonical;
-
-    fn starlark_type_repr() -> Ty {
-        StarlarkInt::starlark_type_repr()
-    }
-}
-
 impl<'v> UnpackValue<'v> for StarlarkIntRef<'v> {
+    type Type = IntView<'v>;
     type Error = Infallible;
 
-    fn unpack_value_impl(value: Value<'v>) -> Result<Option<Self>, Self::Error> {
-        Ok(StarlarkIntRef::unpack(value))
+    #[inline]
+    fn unpack(_value: ValueOf<'v, IntView<'v>>, int: IntView<'v>) -> Result<Self, Infallible> {
+        Ok(int.as_int_ref())
     }
 }
 

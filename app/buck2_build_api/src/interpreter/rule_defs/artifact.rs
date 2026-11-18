@@ -18,7 +18,6 @@ pub mod starlark_artifact_value;
 pub mod starlark_declared_artifact;
 pub mod starlark_output_artifact;
 pub mod starlark_promise_artifact;
-pub mod unpack_artifact;
 
 use std::fmt::Debug;
 

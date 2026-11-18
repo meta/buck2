@@ -1,0 +1,5 @@
+package(
+    visibility = ["root//intersection/..."],
+)
+
+enforce_visibility_intersection()

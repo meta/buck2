@@ -1006,6 +1006,23 @@ mod tests {
         }
 
         #[test]
+        fn recursive_pattern_rollout_preserves_existing_guards() -> buck2_error::Result<()> {
+            for enabled in [false, true] {
+                let rollout = format!(
+                    "[agent_interactive.1]\nenabled = true\nclean_enabled = true\n\
+                     [agent_recursive_patterns.0]\nenabled = {enabled}"
+                );
+                let settings = settings_with_rollout(Some(rollout.as_bytes()))?;
+                assert!(settings.invocation.agent_interactive.clean_enabled());
+                assert_eq!(
+                    settings.invocation.agent_recursive_patterns.enabled(),
+                    enabled
+                );
+            }
+            Ok(())
+        }
+
+        #[test]
         fn agent_build_rollout_preserves_existing_guards() -> buck2_error::Result<()> {
             for enabled in [false, true] {
                 let rollout = format!(

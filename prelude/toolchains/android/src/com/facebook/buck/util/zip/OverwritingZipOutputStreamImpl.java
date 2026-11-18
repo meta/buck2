@@ -10,6 +10,7 @@
 
 package com.facebook.buck.util.zip;
 
+import com.facebook.infer.annotation.Nullsafe;
 import com.google.common.hash.Hashing;
 import java.io.BufferedOutputStream;
 import java.io.File;
@@ -26,7 +27,7 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipException;
-import javax.annotation.Nullable;
+import org.jspecify.annotations.Nullable;
 
 /**
  * An implementation of an {@link OutputStream} for zip files that allows newer entries to overwrite
@@ -36,6 +37,7 @@ import javax.annotation.Nullable;
  * the name of the {@link ZipEntry} being stored. Once the stream is closed, these files are spooled
  * off disk and written to the OutputStream given to the constructor.
  */
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public class OverwritingZipOutputStreamImpl implements CustomZipOutputStream.Impl {
   // Attempt to maintain ordering of files that are added.
   private final Map<File, EntryAccounting> entries = new LinkedHashMap<>();
@@ -50,7 +52,13 @@ public class OverwritingZipOutputStreamImpl implements CustomZipOutputStream.Imp
     this.delegate = out;
 
     try {
-      scratchDir = Files.createTempDirectory("overwritingzip").toFile();
+      String scratchEnv = System.getenv("BUCK_SCRATCH_PATH");
+      Path scratchPath =
+          Path.of(
+              scratchEnv == null || scratchEnv.isEmpty()
+                  ? Objects.requireNonNull(System.getProperty("java.io.tmpdir"))
+                  : scratchEnv);
+      scratchDir = Files.createTempDirectory(scratchPath, "overwritingzip").toFile();
       // Reading the source, it seems like the temp dir isn't scheduled for deletion. We will delete
       // the directory when we close the stream, but if that method is never called, we'd leave
       // cruft on the FS. It's not foolproof, but try and avoid that.

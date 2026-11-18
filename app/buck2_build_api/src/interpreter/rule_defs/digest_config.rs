@@ -16,14 +16,11 @@ use starlark::any::ProvidesStaticType;
 use starlark::environment::GlobalsBuilder;
 use starlark::environment::Methods;
 use starlark::environment::MethodsBuilder;
-use starlark::values::AllocValue;
 use starlark::values::Freeze;
-use starlark::values::Heap;
 use starlark::values::NoSerialize;
 use starlark::values::StarlarkPagable;
 use starlark::values::StarlarkValue;
 use starlark::values::Trace;
-use starlark::values::Value;
 use starlark::values::starlark_value;
 
 /// Functions to access the daemon's digest config. This is not normally all that useful, but it
@@ -50,16 +47,10 @@ pub struct StarlarkDigestConfig {
 
 starlark::methods_static!(DIGEST_CONFIG_METHODS = digest_config_methods);
 
-#[starlark_value(type = "DigestConfig", StarlarkTypeRepr, UnpackValue)]
+#[starlark_value(type = "DigestConfig")]
 impl<'v> StarlarkValue<'v> for StarlarkDigestConfig {
     fn get_methods() -> Option<&'static Methods> {
         Some(DIGEST_CONFIG_METHODS.methods())
-    }
-}
-
-impl<'v> AllocValue<'v> for StarlarkDigestConfig {
-    fn alloc_value(self, heap: Heap<'v>) -> Value<'v> {
-        heap.alloc_simple(self)
     }
 }
 

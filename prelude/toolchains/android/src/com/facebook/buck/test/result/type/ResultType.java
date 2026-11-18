@@ -10,7 +10,10 @@
 
 package com.facebook.buck.test.result.type;
 
+import com.facebook.infer.annotation.Nullsafe;
+
 /** The kind of result */
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public enum ResultType {
 
   // First, three different reasons why the tests weren't even attempted:

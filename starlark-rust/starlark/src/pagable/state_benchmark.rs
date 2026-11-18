@@ -69,9 +69,7 @@ struct BenchValue {
 starlark_simple_value!(BenchValue);
 
 #[starlark_value(type = "BenchValue")]
-impl<'v> StarlarkValue<'v> for BenchValue {
-    type Canonical = Self;
-}
+impl<'v> StarlarkValue<'v> for BenchValue {}
 
 #[derive(Debug, Clone, Display, Hash, StrongHash, Pagable)]
 #[pagable::pagable_typetag(crate::values::UserHeapName)]

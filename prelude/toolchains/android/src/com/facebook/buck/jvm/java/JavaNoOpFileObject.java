@@ -11,6 +11,7 @@
 package com.facebook.buck.jvm.java;
 
 import com.facebook.buck.util.zip.JarBuilder;
+import com.facebook.infer.annotation.Nullsafe;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.io.OutputStreamWriter;
@@ -22,6 +23,7 @@ import java.net.URI;
  * An {@link JarFileObject} implementation that represents a {@link javax.tools.FileObject} that has
  * no operations and does not write the contents to any form of output.
  */
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public class JavaNoOpFileObject extends JarFileObject {
 
   public JavaNoOpFileObject(URI uri, String pathInJar, Kind kind) {

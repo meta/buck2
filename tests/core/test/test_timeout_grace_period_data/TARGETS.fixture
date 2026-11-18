@@ -1,0 +1,14 @@
+load(":python_test.bzl", "python_test")
+
+python_test(
+    name = "reports_on_sigterm",
+    script = "\n".join([
+        "import signal, sys, time",
+        "def report(*_):",
+        "    sys.stderr.write('reported on SIGTERM\\n')",
+        "    sys.stderr.flush()",
+        "    sys.exit(1)",
+        "signal.signal(signal.SIGTERM, report)",
+        "time.sleep(600)",
+    ]),
+)

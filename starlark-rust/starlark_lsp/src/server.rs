@@ -1422,14 +1422,18 @@ mod tests {
     use anyhow::Context;
     use lsp_server::Request;
     use lsp_server::RequestId;
+    use lsp_types::DidOpenTextDocumentParams;
     use lsp_types::GotoDefinitionParams;
     use lsp_types::GotoDefinitionResponse;
     use lsp_types::LocationLink;
     use lsp_types::Position;
     use lsp_types::Range;
     use lsp_types::TextDocumentIdentifier;
+    use lsp_types::TextDocumentItem;
     use lsp_types::TextDocumentPositionParams;
     use lsp_types::Uri;
+    use lsp_types::notification::DidOpenTextDocument;
+    use lsp_types::notification::PublishDiagnostics;
     use lsp_types::request::GotoDefinition;
     use starlark::codemap::ResolvedSpan;
     use starlark::wasm::is_wasm;
@@ -1442,6 +1446,7 @@ mod tests {
     use crate::server::StarlarkFileContentsParams;
     use crate::server::StarlarkFileContentsRequest;
     use crate::server::StarlarkFileContentsResponse;
+    use crate::server::new_notification;
     use crate::test::TestServer;
 
     fn goto_definition_request(
@@ -2555,6 +2560,67 @@ mod tests {
                 case.2
             );
         }
+        Ok(())
+    }
+
+    /// Opens a file and discards its diagnostics, so that programs with lints can be used.
+    fn open_without_checking_diagnostics(
+        server: &mut TestServer,
+        uri: &Uri,
+        text: &str,
+    ) -> anyhow::Result<()> {
+        server.send_notification(new_notification::<DidOpenTextDocument>(
+            DidOpenTextDocumentParams {
+                text_document: TextDocumentItem {
+                    uri: uri.clone(),
+                    language_id: String::new(),
+                    version: 1,
+                    text: text.to_owned(),
+                },
+            },
+        ))?;
+        server.get_notification::<PublishDiagnostics>()?;
+        Ok(())
+    }
+
+    fn goto_definition_links(
+        server: &mut TestServer,
+        uri: &Uri,
+        line: u32,
+        character: u32,
+    ) -> anyhow::Result<Vec<LocationLink>> {
+        let request = goto_definition_request(server, uri.clone(), line, character);
+        let id = server.send_request(request)?;
+        match server.get_response::<GotoDefinitionResponse>(id)? {
+            GotoDefinitionResponse::Link(links) => Ok(links),
+            // An empty `Link` response deserializes as an empty `Array`.
+            GotoDefinitionResponse::Array(locations) if locations.is_empty() => Ok(Vec::new()),
+            other => Err(anyhow::anyhow!("unexpected response: {other:?}")),
+        }
+    }
+
+    fn range(begin_line: u32, begin_column: u32, end_line: u32, end_column: u32) -> Range {
+        Range::new(
+            Position::new(begin_line, begin_column),
+            Position::new(end_line, end_column),
+        )
+    }
+
+    /// The cursor column counts UTF-16 code units; after non-ASCII text on the same line,
+    /// go-to-definition still resolves the token under the cursor.
+    #[test]
+    fn goto_definition_after_non_ascii_text_resolves_the_token_under_the_cursor()
+    -> anyhow::Result<()> {
+        if is_wasm() {
+            return Ok(());
+        }
+        let uri = temp_file_uri("non_ascii.star");
+        let mut server = TestServer::new()?;
+        open_without_checking_diagnostics(&mut server, &uri, "x = 1\ny = (\"日本語\", x)\n")?;
+        let links = goto_definition_links(&mut server, &uri, 1, 12)?;
+        assert_eq!(links.len(), 1, "{links:?}");
+        assert_eq!(links[0].origin_selection_range, Some(range(1, 12, 1, 13)));
+        assert_eq!(links[0].target_range, range(0, 0, 0, 1));
         Ok(())
     }
 }

@@ -10,16 +10,19 @@
 
 package com.facebook.buck.util.zip;
 
+import com.facebook.infer.annotation.Nullsafe;
 import com.google.common.hash.HashFunction;
 import com.google.common.hash.Hasher;
 import com.google.common.hash.Hashing;
 import java.io.IOException;
 import java.io.OutputStream;
+import java.util.Objects;
 import java.util.jar.JarFile;
 import java.util.zip.ZipEntry;
-import javax.annotation.Nullable;
+import org.jspecify.annotations.Nullable;
 
 /** Extension of {@link CustomZipOutputStream} with jar-specific functionality. */
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public class CustomJarOutputStream extends CustomZipOutputStream {
   public static final String DIGEST_ATTRIBUTE_NAME = "Murmur3-128-Digest";
   private final HashingImpl impl;
@@ -98,7 +101,9 @@ public class CustomJarOutputStream extends CustomZipOutputStream {
               "Attempted to write an entry with hashing enabled after the manifest was written.");
         }
         manifest.setEntryAttribute(
-            currentEntry.getName(), DIGEST_ATTRIBUTE_NAME, hasher.hash().toString());
+            Objects.requireNonNull(currentEntry).getName(),
+            DIGEST_ATTRIBUTE_NAME,
+            hasher.hash().toString());
         hasher = null;
       }
 

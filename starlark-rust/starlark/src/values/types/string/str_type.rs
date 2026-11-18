@@ -43,12 +43,12 @@ use crate as starlark;
 use crate::collections::aligned_padded_str::AlignedPaddedStr;
 use crate::environment::Methods;
 use crate::private::Private;
-use crate::typing::Ty;
 use crate::values::Freeze;
 use crate::values::FreezeResult;
 use crate::values::Freezer;
 use crate::values::Heap;
 use crate::values::StarlarkValue;
+use crate::values::StringValue;
 use crate::values::UnpackValue;
 use crate::values::Value;
 use crate::values::ValueError;
@@ -201,6 +201,15 @@ impl StarlarkStr {
         string_repr(s, &mut buffer);
         buffer
     }
+
+    /// The string `times` times over: `str * times` and `times * str`.
+    fn repeated(&self, times: i32) -> String {
+        let mut result = String::with_capacity(self.len() * cmp::max(0, times) as usize);
+        for _i in 0..times {
+            result.push_str(self)
+        }
+        result
+    }
 }
 
 /// How to hash a string in a way that is compatible with Value
@@ -246,62 +255,51 @@ impl<'v> StarlarkValue<'v> for StarlarkStr {
         !self.is_empty()
     }
 
-    fn write_hash(&self, hasher: &mut StarlarkHasher) -> crate::Result<()> {
+    fn write_hash(&self, hasher: &mut StarlarkHasher) {
         // Don't defer to str because we cache the Hash in StarlarkStr
         hasher.write_u32(self.get_hash().get());
-        Ok(())
     }
 
     fn get_hash(&self, _private: Private) -> crate::Result<StarlarkHashValue> {
         Ok(self.get_hash())
     }
 
-    fn equals(&self, other: Value) -> crate::Result<bool> {
-        if let Some(other) = other.unpack_starlark_str() {
-            Ok(self == other)
-        } else {
-            Ok(false)
-        }
+    fn equals(&self, other: &Self) -> bool {
+        self == other
     }
 
-    fn compare(&self, other: Value) -> crate::Result<Ordering> {
-        if let Some(other) = other.unpack_str() {
-            Ok(self.as_str().cmp(other))
-        } else {
-            ValueError::unsupported_with(self, "cmp()", other)
-        }
+    fn compare(&self, other: &Self) -> Ordering {
+        self.as_str().cmp(other.as_str())
     }
 
-    fn at(&self, index: Value<'v>, heap: Heap<'v>) -> crate::Result<Value<'v>> {
+    fn at(&self, index: i32) -> crate::Result<char> {
         // This method is disturbingly hot. Use the logic from `convert_index`,
         // but modified to be UTF8 string friendly.
-        let i = i32::unpack_param(index)?;
-        if i >= 0 {
-            match fast_string::at(self, CharIndex(i as usize)) {
-                None => Err(ValueError::IndexOutOfBound(i).into()),
-                Some(c) => Ok(heap.alloc(c)),
+        if index >= 0 {
+            match fast_string::at(self, CharIndex(index as usize)) {
+                None => Err(ValueError::IndexOutOfBound(index).into()),
+                Some(c) => Ok(c),
             }
         } else {
             let len_chars = fast_string::len(self);
-            let ind = CharIndex(i.unsigned_abs() as usize); // Index from the end, minimum of 1
+            let ind = CharIndex(index.unsigned_abs() as usize); // Index from the end, minimum of 1
             if ind > len_chars {
-                Err(ValueError::IndexOutOfBound(i).into())
+                Err(ValueError::IndexOutOfBound(index).into())
             } else if len_chars.0 == self.len() {
                 // We are a 7bit ASCII string, so take the fast-path
-                Ok(heap.alloc(self.as_bytes()[(len_chars - ind).0] as char))
+                Ok(self.as_bytes()[(len_chars - ind).0] as char)
             } else {
-                Ok(heap.alloc(fast_string::at(self, len_chars - ind).unwrap()))
+                Ok(fast_string::at(self, len_chars - ind).unwrap())
             }
         }
     }
 
-    fn length(&self) -> crate::Result<i32> {
-        Ok(fast_string::len(self).0 as i32)
+    fn length(&self) -> i32 {
+        fast_string::len(self).0 as i32
     }
 
-    fn is_in(&self, other: Value) -> crate::Result<bool> {
-        let s = <&str>::unpack_param(other)?;
-        Ok(fast_string::contains(self, s))
+    fn is_in(&self, other: &str) -> bool {
+        fast_string::contains(self, other)
     }
 
     fn slice(
@@ -316,7 +314,7 @@ impl<'v> StarlarkValue<'v> for StarlarkStr {
             // The stride case is super rare and super complex, so let's do something inefficient but safe
             let xs = s.chars().collect::<Vec<_>>();
             let xs = apply_slice(&xs, start, stop, stride)?;
-            return Ok(heap.alloc(xs.into_iter().collect::<String>()));
+            return Ok(heap.alloc(xs.into_iter().collect::<String>()).to_value());
         }
 
         #[inline(always)]
@@ -335,41 +333,24 @@ impl<'v> StarlarkValue<'v> for StarlarkStr {
         }
     }
 
-    fn add(&self, other: Value<'v>, heap: Heap<'v>) -> Option<crate::Result<Value<'v>>> {
-        if let Some(other_str) = other.unpack_str() {
-            if self.is_empty() {
-                Some(Ok(other))
-            } else {
-                Some(Ok(heap.alloc_str_concat(self, other_str).to_value()))
-            }
+    fn add(&self, other: StringValue<'v>, heap: Heap<'v>) -> StringValue<'v> {
+        if self.is_empty() {
+            other
         } else {
-            None
+            heap.alloc_str_concat(self, other.as_str())
         }
     }
 
-    fn mul(&self, other: Value<'v>, heap: Heap<'v>) -> Option<crate::Result<Value<'v>>> {
-        let l = match i32::unpack_value(other) {
-            Ok(Some(l)) => l,
-            Ok(None) => return None,
-            Err(e) => return Some(Err(e)),
-        };
-        let mut result = String::with_capacity(self.len() * cmp::max(0, l) as usize);
-        for _i in 0..l {
-            result.push_str(self)
-        }
-        Some(Ok(heap.alloc(result)))
+    fn mul(&self, times: i32) -> String {
+        self.repeated(times)
     }
 
-    fn rmul(&self, lhs: Value<'v>, heap: Heap<'v>) -> Option<crate::Result<Value<'v>>> {
-        self.mul(lhs, heap)
+    fn rmul(&self, times: i32) -> String {
+        self.repeated(times)
     }
 
-    fn percent(&self, other: Value<'v>, heap: Heap<'v>) -> crate::Result<Value<'v>> {
-        Ok(heap.alloc(interpolation::percent(self, other)?))
-    }
-
-    fn typechecker_ty(&self) -> Option<Ty> {
-        Some(Ty::starlark_value::<Self>())
+    fn percent(&self, other: Value<'v>) -> crate::Result<String> {
+        interpolation::percent(self, other)
     }
 }
 
@@ -461,7 +442,7 @@ mod tests {
             for x in EXAMPLES {
                 assert_eq!(
                     heap.alloc_str(x).get_hashed().hash(),
-                    heap.alloc(*x).get_hashed().unwrap().hash()
+                    heap.alloc(*x).to_value().get_hashed().unwrap().hash()
                 );
             }
         });
@@ -472,7 +453,7 @@ mod tests {
     #[test]
     fn test_zero_length_string_hash_is_not_zero() {
         Heap::temp(|heap| {
-            assert_ne!(0, heap.alloc("").get_hash().unwrap().get());
+            assert_ne!(0, heap.alloc("").to_value().get_hash().unwrap().get());
         });
     }
 
@@ -572,22 +553,23 @@ len("😿") == 1
         fn test_str(str: &str) -> crate::Result<()> {
             Heap::temp(|heap| {
                 let chars = str.chars().collect::<Vec<char>>();
-                let val = heap.alloc(str);
+                let val = heap.alloc(str).to_value();
                 let len = chars.len() as i32;
                 assert_eq!(val.length()?, len);
                 for (i, char) in chars.iter().enumerate() {
                     let char_str = char.to_string();
                     assert_eq!(
-                        val.at(heap.alloc(i), heap)?.unpack_str(),
+                        val.at(heap.alloc(i).to_value(), heap)?.unpack_str(),
                         Some(char_str.as_str())
                     );
                     assert_eq!(
-                        val.at(heap.alloc(-len + (i as i32)), heap)?.unpack_str(),
+                        val.at(heap.alloc(-len + (i as i32)).to_value(), heap)?
+                            .unpack_str(),
                         Some(char_str.as_str())
                     );
                 }
-                assert!(val.at(heap.alloc(len), heap).is_err());
-                assert!(val.at(heap.alloc(-(len + 1)), heap).is_err());
+                assert!(val.at(heap.alloc(len).to_value(), heap).is_err());
+                assert!(val.at(heap.alloc(-(len + 1)).to_value(), heap).is_err());
                 Ok(())
             })
         }

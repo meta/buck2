@@ -10,13 +10,15 @@
 
 package com.facebook.buck.jvm.java.abi.source;
 
-import com.facebook.buck.util.liteinfersupport.Nullable;
+import com.facebook.infer.annotation.Nullsafe;
 import com.sun.source.util.TreePath;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 import javax.lang.model.element.Element;
+import org.jspecify.annotations.Nullable;
 
+@Nullsafe(Nullsafe.Mode.LOCAL)
 abstract class TreeBackedParameterizable extends TreeBackedElement
     implements ArtificialParameterizable {
   private final List<TreeBackedTypeParameterElement> typeParameters = new ArrayList<>();

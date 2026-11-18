@@ -32,7 +32,7 @@ def fb_dirsync_cpp_library(
     fbandroid_deps = None,
     fbandroid_exported_deps = None,
     fbandroid_exported_preprocessor_flags = None,
-    fbandroid_cpu_suffixes = None,
+    fbandroid_abi_variants = None,
     fbandroid_preprocessor_flags = None,
     fbandroid_use_host_platform = None,
     fbobjc_compiler_flags = None,
@@ -53,7 +53,7 @@ def fb_dirsync_cpp_library(
 ):
     _unused = (
         enable_static_variant,
-        fbandroid_cpu_suffixes,
+        fbandroid_abi_variants,
         fbandroid_use_host_platform,
         fbobjc_complete_nullability,
         raw_headers_as_headers_mode,

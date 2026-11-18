@@ -121,7 +121,13 @@ public class AndroidBundleBuilderExecutableMain {
 
     ImmutableList.Builder<Path> modulePaths = ImmutableList.builder();
 
-    Path tempDir = Files.createTempDirectory("bundleTempDir");
+    String scratchPath = System.getenv("BUCK_SCRATCH_PATH");
+    if (scratchPath == null || scratchPath.isEmpty()) {
+      throw new IllegalStateException(
+          "BUCK_SCRATCH_PATH environment variable must be set and non-empty");
+    }
+    Path scratchDir = Paths.get(scratchPath);
+    Path tempDir = Files.createTempDirectory(scratchDir, "bundleTempDir");
     Path rootModuleZip = tempDir.resolve("base.zip");
     modulePaths.add(rootModuleZip);
     Path fakeResourcesApk = Files.createFile(tempDir.resolve("fake.txt"));

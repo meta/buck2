@@ -10,6 +10,7 @@
 
 package com.facebook.buck.jvm.java.abi.kotlin;
 
+import com.facebook.infer.annotation.Nullsafe;
 import com.google.common.collect.ImmutableList;
 import java.util.Arrays;
 import java.util.Collection;
@@ -33,6 +34,7 @@ import kotlin.metadata.jvm.KotlinClassMetadata;
 import org.objectweb.asm.tree.AnnotationNode;
 
 /** Utilities to read Kotlin class metadata. */
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public class KotlinMetadataReader {
 
   /**
@@ -175,6 +177,28 @@ public class KotlinMetadataReader {
   }
 
   /**
+   * JVM internal names of the sealed subclasses listed in a class's metadata. Kotlin consumers
+   * check `when` exhaustiveness against this list, so a listed subclass missing from the ABI makes
+   * a non-exhaustive `when` compile.
+   *
+   * @param parsed the result of {@link #readMetadata}
+   */
+  public static List<String> getSealedSubclasses(ParsedMetadata parsed) {
+    KotlinClassMetadata metadata = parsed.metadata;
+    if (!(metadata instanceof KotlinClassMetadata.Class)) {
+      return ImmutableList.of();
+    }
+    ImmutableList.Builder<String> names = ImmutableList.builder();
+    for (String name : ((KotlinClassMetadata.Class) metadata).getKmClass().getSealedSubclasses()) {
+      // Local class names start with '.'; they cannot be sealed subclasses of another file.
+      if (!name.startsWith(".")) {
+        names.add(name.replace('.', '$'));
+      }
+    }
+    return names.build();
+  }
+
+  /**
    * Checks if a Kotlin class is a private nested class (a member class whose own Kotlin visibility
    * is private). Its members are unreachable: Kotlin consumers see the metadata-private owner, and
    * Java consumers see a non-public nested class. Callers keep the class shell (its file must exist
@@ -308,7 +332,7 @@ public class KotlinMetadataReader {
   private static void replacePayload(AnnotationNode annotationNode, Metadata rewritten) {
     List<String> d1 = Arrays.asList(rewritten.d1());
     List<String> d2 = Arrays.asList(rewritten.d2());
-    List<Object> values = annotationNode.values;
+    List<Object> values = Objects.requireNonNull(annotationNode.values);
     for (int i = 0; i + 1 < values.size(); i += 2) {
       if ("d1".equals(values.get(i))) {
         values.set(i + 1, d1);
@@ -363,7 +387,7 @@ public class KotlinMetadataReader {
     String packageName = null;
     Integer extraInt = null;
 
-    Iterator<Object> it = node.values.iterator();
+    Iterator<Object> it = Objects.requireNonNull(node.values).iterator();
     while (it.hasNext()) {
       String name = (String) it.next();
       Object value = it.next();

@@ -22,6 +22,7 @@ import com.facebook.kotlin.compilercompat.packageNameOrNullCompat
 import java.io.File
 import java.util.jar.JarFile
 import org.jetbrains.kotlin.backend.common.extensions.IrGenerationExtension
+import org.jetbrains.kotlin.cli.common.messages.CompilerMessageLocation
 import org.jetbrains.kotlin.cli.common.messages.CompilerMessageSeverity
 import org.jetbrains.kotlin.cli.common.messages.MessageCollector
 import org.jetbrains.kotlin.descriptors.ClassKind
@@ -40,6 +41,7 @@ import org.jetbrains.kotlin.fir.declarations.utils.isConst
 import org.jetbrains.kotlin.fir.expressions.FirAnnotation
 import org.jetbrains.kotlin.fir.expressions.FirAnnotationCall
 import org.jetbrains.kotlin.fir.expressions.FirErrorExpression
+import org.jetbrains.kotlin.fir.expressions.FirFunctionCall
 import org.jetbrains.kotlin.fir.expressions.FirGetClassCall
 import org.jetbrains.kotlin.fir.expressions.FirNamedArgumentExpression
 import org.jetbrains.kotlin.fir.expressions.FirQualifiedAccessExpression
@@ -48,6 +50,7 @@ import org.jetbrains.kotlin.fir.expressions.FirWrappedArgumentExpression
 import org.jetbrains.kotlin.fir.expressions.impl.FirResolvedArgumentList
 import org.jetbrains.kotlin.fir.moduleData
 import org.jetbrains.kotlin.fir.references.FirErrorNamedReference
+import org.jetbrains.kotlin.fir.references.FirNamedReference
 import org.jetbrains.kotlin.fir.references.FirResolvedNamedReference
 import org.jetbrains.kotlin.fir.resolve.providers.symbolProvider
 import org.jetbrains.kotlin.fir.serialization.providedDeclarationsForMetadataService
@@ -73,6 +76,7 @@ import org.jetbrains.kotlin.ir.declarations.IrMetadataSourceOwner
 import org.jetbrains.kotlin.ir.declarations.IrModuleFragment
 import org.jetbrains.kotlin.ir.declarations.IrProperty
 import org.jetbrains.kotlin.ir.declarations.IrSimpleFunction
+import org.jetbrains.kotlin.ir.types.classOrNull
 import org.jetbrains.kotlin.ir.util.kotlinFqName
 import org.jetbrains.kotlin.name.CallableId
 import org.jetbrains.kotlin.name.ClassId
@@ -93,6 +97,11 @@ import org.jetbrains.org.objectweb.asm.Type
 import org.jetbrains.org.objectweb.asm.TypePath
 import org.jetbrains.org.objectweb.asm.signature.SignatureReader
 import org.jetbrains.org.objectweb.asm.signature.SignatureVisitor
+import org.jetbrains.org.objectweb.asm.tree.ClassNode
+import org.jetbrains.org.objectweb.asm.tree.LdcInsnNode
+import org.jetbrains.org.objectweb.asm.tree.MethodInsnNode
+import org.jetbrains.org.objectweb.asm.tree.MethodNode
+import org.jetbrains.org.objectweb.asm.tree.TypeInsnNode
 
 fun errorTypedApiPositions(
     isProperty: Boolean,
@@ -155,6 +164,9 @@ internal class FirMetadataSanitizerStage(private val repairLog: AbiGenRepairLog)
   fun cleanupFirMetadataSources(moduleFragment: IrModuleFragment, session: FirSession) {
     val THROWS_FQ_NAME = FqName("kotlin.jvm.Throws")
     val THROWS_KOTLIN_FQ_NAME = FqName("kotlin.Throws")
+    // Classes the ABI jar keeps as shells. A private supertype in this set still
+    // resolves for consumers, so the metadata cleanup below must keep naming it.
+    val mustKeepPrivateClassNames = collectMustKeepPrivateClassNames(moduleFragment)
 
     moduleFragment.accept(
         object : IrElementVisitorVoidCompat() {
@@ -169,7 +181,7 @@ internal class FirMetadataSanitizerStage(private val repairLog: AbiGenRepairLog)
 
           override fun visitClass(declaration: IrClass) {
             stripThrowsAndErrorAnnotationsFromDeclaration(declaration)
-            stripPrivateSupertypesFromDeclaration(declaration)
+            stripPrivateSupertypesFromDeclaration(declaration, mustKeepPrivateClassNames)
             stripErrorTypedPrivateMembersFromDeclaration(declaration)
             super.visitClass(declaration)
           }
@@ -558,7 +570,10 @@ internal class FirMetadataSanitizerStage(private val repairLog: AbiGenRepairLog)
           // --- Private supertype stripping helpers ---
 
           @OptIn(SymbolInternals::class)
-          private fun stripPrivateSupertypesFromDeclaration(declaration: IrClass) {
+          private fun stripPrivateSupertypesFromDeclaration(
+              declaration: IrClass,
+              mustKeepPrivateClassNames: Set<String>,
+          ) {
             val metadataSourceOwner = declaration as? IrMetadataSourceOwner ?: return
             val metadataSource = metadataSourceOwner.metadata ?: return
             val firMetadataSource = metadataSource as? FirMetadataSource ?: return
@@ -587,7 +602,9 @@ internal class FirMetadataSanitizerStage(private val repairLog: AbiGenRepairLog)
                   }
 
               val toRemove = superTypeRefs.filter { typeRef ->
-                isPrivateSupertype(typeRef, firClass)
+                isPrivateSupertype(typeRef, firClass) &&
+                    !isRetainedInIrSupertypes(declaration, typeRef) &&
+                    !isKeptShellSupertype(typeRef, mustKeepPrivateClassNames)
               }
 
               for (typeRef in toRemove) {
@@ -631,6 +648,36 @@ internal class FirMetadataSanitizerStage(private val repairLog: AbiGenRepairLog)
                 ?.classId
           }
 
+          // True when the private supertype survives in the ABI jar as a shell, even
+          // though the IR stripper dropped it from the supertype list (interfaces
+          // strip by design; fake overrides materialize instead). The shell still
+          // resolves for consumers, so the metadata must keep naming it — this is
+          // what production jvm-abi-gen emits (its bytecode implements clause
+          // strips while the metadata supertype stays).
+          private fun isKeptShellSupertype(
+              typeRef: org.jetbrains.kotlin.fir.types.FirTypeRef,
+              mustKeepPrivateClassNames: Set<String>,
+          ): Boolean {
+            val dotted =
+                getPrivateClassIdFromTypeRef(typeRef)?.asString()?.replace('/', '.') ?: return false
+            return mustKeepPrivateClassNames.contains(dotted)
+          }
+
+          // True when the IR stripper kept this supertype on the class (e.g. a
+          // must-keep private superclass). The FIR metadata source must keep the
+          // link too, or consumers cannot resolve inherited members. Anything
+          // the IR dropped stays dropped here.
+          private fun isRetainedInIrSupertypes(
+              declaration: IrClass,
+              typeRef: org.jetbrains.kotlin.fir.types.FirTypeRef,
+          ): Boolean {
+            val classId =
+                getPrivateClassIdFromTypeRef(typeRef)?.asString()?.replace('/', '.') ?: return false
+            return declaration.superTypes.any {
+              it.classOrNull?.owner?.kotlinFqName?.asString() == classId
+            }
+          }
+
           @OptIn(SymbolInternals::class)
           private fun convertFirFakeOverridesFromStrippedPrivateSupertypes(
               firClass: FirRegularClass,
@@ -645,15 +692,16 @@ internal class FirMetadataSanitizerStage(private val repairLog: AbiGenRepairLog)
 
             if (interfaceMethods.isEmpty()) return
 
-            val existingMethodNames =
+            val existingMethodKeys =
                 firClass.declarations
                     .filterIsInstance<FirNamedFunctionCompat>()
-                    .map { it.name.asString() }
+                    .mapNotNull { methodKey(it) }
                     .toSet()
 
             for (interfaceMethod in interfaceMethods) {
               val methodName = interfaceMethod.name.asString()
-              if (methodName in existingMethodNames) continue
+              val interfaceKey = methodKey(interfaceMethod)
+              if (interfaceKey != null && interfaceKey in existingMethodKeys) continue
 
               val copiedMethod = copyPrivateInterfaceMethodToClass(interfaceMethod, firClass)
               if (copiedMethod != null) {
@@ -704,6 +752,28 @@ internal class FirMetadataSanitizerStage(private val repairLog: AbiGenRepairLog)
           }
 
           @OptIn(SymbolInternals::class)
+          // Inherited members match by signature, not name: a class declaring d(Int)
+          // while a stripped private interface supplies d(String) must keep both.
+          // Bails out (null) when a parameter type is not resolved, like
+          // erasedSignatureKey in the handler: two distinct unresolved parameters
+          // must never share a key, so an unkeyable method never matches and is
+          // always materialized.
+          private fun methodKey(fn: FirNamedFunctionCompat): String? = runCatching {
+            val params =
+                fn.valueParameters.map { param ->
+                  val coneType =
+                      (param.returnTypeRef as? org.jetbrains.kotlin.fir.types.FirResolvedTypeRef)
+                          ?.coneType ?: return@runCatching null
+                  if (coneType is org.jetbrains.kotlin.fir.types.ConeClassLikeType) {
+                    coneType.lookupTag.classId.asString()
+                  } else {
+                    coneType.toString()
+                  }
+                }
+            "${fn.name.asString()}(${params.joinToString(",")})"
+          }
+              .getOrNull()
+
           private fun collectMethodsFromPrivateInterfaces(
               session: FirSession,
               interfaceClassIds: Set<ClassId>,
@@ -977,7 +1047,9 @@ internal class FirMetadataSanitizerStage(private val repairLog: AbiGenRepairLog)
           // A const val that loses its initializer is emitted without a ConstantValue attribute,
           // so consumers that constant-fold it fail during their own compile rather than here.
           // That reasoning only applies to a constant a consumer can actually see, hence the
-          // visibility, which [ValidationStage] filters on.
+          // visibility, which [ValidationStage] filters on. The unresolved symbols are recorded
+          // so the validation error can name them and tooling can resolve their providers.
+          val unresolved = collectUnresolvedSymbols(initializer)
           repairLog.recordClearedPropertyInitializer(
               owner,
               if (property.isConst) "const val, no ConstantValue will be emitted"
@@ -987,6 +1059,7 @@ internal class FirMetadataSanitizerStage(private val repairLog: AbiGenRepairLog)
                   property.status.visibility != Visibilities.Private &&
                       property.status.visibility != Visibilities.PrivateToThis &&
                       property.status.visibility != Visibilities.Local,
+              unresolvedSymbols = unresolved,
           )
         } catch (e: Exception) {
           repairLog.recordFailedRepair(
@@ -996,6 +1069,48 @@ internal class FirMetadataSanitizerStage(private val repairLog: AbiGenRepairLog)
         }
       }
       super.visitProperty(property)
+    }
+
+    // Dotted source paths (`a.B.C`) of references the frontend could not resolve, innermost
+    // qualifier first, capped so one broken expression cannot flood the repair log. A call whose
+    // callee is missing only because an argument is already an error (the `times` in
+    // `5 * <error>`) names no provider, so it is skipped; its erroneous arguments are still
+    // visited and collected on their own.
+    private fun collectUnresolvedSymbols(root: FirElement): List<String> {
+      val out = LinkedHashSet<String>()
+      root.accept(
+          object : FirDefaultVisitorVoid() {
+            override fun visitElement(element: FirElement) {
+              if (
+                  element is FirQualifiedAccessExpression &&
+                      element.calleeReference is FirErrorNamedReference &&
+                      !(element is FirFunctionCall &&
+                          (element.argumentList.arguments + element.explicitReceiver).any {
+                            it != null && hasErrorExpressionRecursive(it)
+                          })
+              ) {
+                dottedPath(element)?.let(out::add)
+              }
+              element.acceptChildren(this)
+            }
+          },
+      )
+      return out.take(3)
+    }
+
+    // Null when the callee cannot be named (not a FirNamedReference): the caller
+    // drops it, so the "could not name" branch handles it instead of printing "?".
+    private fun dottedPath(access: FirQualifiedAccessExpression): String? {
+      val parts = mutableListOf(
+          (access.calleeReference as? FirNamedReference)?.name?.asString() ?: return null,
+      )
+      var receiver = access.explicitReceiver
+      while (receiver is FirQualifiedAccessExpression) {
+        val name = (receiver.calleeReference as? FirNamedReference)?.name?.asString() ?: break
+        parts.add(0, name)
+        receiver = receiver.explicitReceiver
+      }
+      return parts.joinToString(".")
     }
 
     override fun visitRegularClass(regularClass: FirRegularClass) {
@@ -1209,11 +1324,18 @@ internal class IrSanitizerStage(
  * ASM-based post-processing of generated .class files:
  * - Strip @Throws annotations from RuntimeInvisibleAnnotations
  * - Strip private declarations from @Metadata annotation
+ * - Strip line numbers from method bodies that consumers do not inline
+ * - Unless [preserveDeclarationOrder], sort class members as jvm-abi-gen does
  */
-internal class BytecodeSanitizerStage : AbiGenStage {
+internal class BytecodeSanitizerStage(preserveDeclarationOrder: Boolean = true) : AbiGenStage {
   override val name = "BytecodeSanitizer"
 
-  private val transformers = listOf(ThrowsAnnotationStripper(), PrivateMetadataStripper())
+  private val transformers = listOfNotNull(
+      ThrowsAnnotationStripper(),
+      PrivateMetadataStripper(),
+      StubLineNumberStripper(),
+      JvmAbiGenMemberSorter().takeUnless { preserveDeclarationOrder },
+  )
 
   /** Transform class bytecode in-memory, applying all sanitization transformers. */
   fun transform(bytes: ByteArray): ByteArray {
@@ -1306,7 +1428,14 @@ internal class ValidationStage(private val repairLog: AbiGenRepairLog) : AbiGenS
       messageCollector: MessageCollector,
       policy: AbiRepairPolicy,
       inputs: AbiValidationInputs,
+      keptBodyStubCheck: Boolean = true,
   ) {
+    for (output in inputs.outputFiles) {
+      if (!output.relativePath.endsWith(".class")) continue
+      for (problem in enumConsumerMetadataProblems(output.bytes)) {
+        messageCollector.report(CompilerMessageSeverity.ERROR, "Kosabi ABI validation: $problem")
+      }
+    }
     // The literal-NEC invariant is not a repair-policy diagnostic and is checked whatever
     // `abiValidationMode` says. An ABI that ships `error/NonExistentClass` cannot be linked
     // against in any configuration, so there is no setting under which emitting one is the
@@ -1332,11 +1461,133 @@ internal class ValidationStage(private val repairLog: AbiGenRepairLog) : AbiGenS
               "literal `$NON_EXISTENT_CLASS_INTERNAL_NAME`. The final ABI bytecode contains an " +
               "unresolved type and no consumer can link against it. " +
               "If the type comes from an explicit reference, add the target that provides it " +
-              "to this target's `source_only_abi_deps`, or declare that target " +
-              "`required_for_source_only_abi = True`. " +
+              "to this target's `source_only_abi_deps`. " +
               "If it was inferred from an expression body, spell the type explicitly " +
               "instead. If it is a nested generic arg of an inherited default method, " +
               "add an explicit override spelling the full signature (see T290092261).",
+      )
+    }
+
+    // Unconditional for the same reason: callers copy a kept inline body into their own code, so a
+    // class that only a Kosabi stub provides fails them at run time (NoClassDefFoundError), far
+    // from the target that published it.
+    // As for Assertion 2, warn mode reports this as a warning, which `-Werror` still makes fatal.
+    // The switch is buckconfig `kotlin.kosabi_kept_body_stub_check` (default on).
+    val keptBodySeverity =
+        if (policy == AbiRepairPolicy.WARN) CompilerMessageSeverity.WARNING
+        else CompilerMessageSeverity.ERROR
+    val keptBodyReferences =
+        if (keptBodyStubCheck) {
+          findKeptInlineBodyStubReferences(inputs, messageCollector, keptBodySeverity)
+        } else {
+          emptySet()
+        }
+    for (reference in keptBodyReferences) {
+      messageCollector.report(
+          keptBodySeverity,
+          "Kosabi inline bodies: the kept body of inline function `${reference.function}` " +
+              "references `${reference.className}`, which only a Kosabi stub provides: neither " +
+              "this ABI jar nor any non-stub classpath root has that class, so callers that " +
+              "inline the body can fail at run time (NoClassDefFoundError, or NoSuchMethodError " +
+              "from a member the stub guessed). If the name is a typealias, write the class it " +
+              "expands to; if it is a class of another target, add that target to this " +
+              "target's `source_only_abi_deps`; otherwise remove `inline` or make the function " +
+              "private.",
+      )
+    }
+
+    // Assertion 2 (unconditional): no *consumer-visible* const val silently lost its
+    // ConstantValue attribute. Unlike every other assertion here this one runs even when
+    // validation is off, because a valueless public const is never a correct ABI: any consumer
+    // that constant-folds it crashes in the IR interpreter (InterpreterMethodNotFoundError)
+    // during its own compile, far from the cause. Failing here names the defining target.
+    //
+    // The visibility filter is not a convenience. Every one of the 12 constants this assertion
+    // named on its first repo-wide run was a `private const val` initialised from a constant
+    // declared in another buck target. A private companion constant takes part in no consumer's
+    // constant folding, so the message's own justification - "consumers that constant-fold it fail
+    // during their own compile" - cannot apply to it. Reporting those is a false positive, and
+    // since `warn` is fatal under `-Werror` a false positive here is a broken build. What they do
+    // expose is real but narrower, and belongs to a different check: Kosabi's const resolver is
+    // source-local and cannot read a constant's value off a dependency's ABI.
+    for (cleared in repairLog.clearedPropertyInitializers) {
+      if (!cleared.isConst) continue
+      if (!cleared.consumerVisible) continue
+      val symbols = cleared.unresolvedSymbols
+      // The compiler has no view of the build graph, so the provider buck target behind each
+      // symbol cannot be resolved here; tooling resolves it from the machine-readable marker
+      // (kosabi_sodeps.py auto-applies the edge). Never print a guessed target.
+      val symbolText =
+          if (symbols.isEmpty()) "unresolvable references the sanitizer could not name"
+          else "unresolved ${symbols.joinToString()}"
+      messageCollector.report(
+          // Escape hatch: warn mode downgrades this to a warning (buckconfig
+          // `kotlin.kosabi_abi_validation_mode` or per-target `abiValidationMode=warn`).
+          // Every other mode fails loud: a valueless public const is never a correct ABI.
+          if (policy == AbiRepairPolicy.WARN) CompilerMessageSeverity.WARNING
+          else CompilerMessageSeverity.ERROR,
+          "Kosabi ABI validation: `${cleared.owner}` is a const val whose initializer could not " +
+              "be resolved ($symbolText) and was discarded. It will be emitted without a " +
+              "ConstantValue attribute, so consumers that constant-fold it fail during their own " +
+              "compile. To fix, resolve the provider buck target of each symbol (e.g. with " +
+              "`buck2 uquery \"owner(<file>)\"` or kosabi_sodeps.py) and add it to THIS target's " +
+              "`source_only_abi_deps`. The provider cannot be resolved here: the compiler has " +
+              "no view of the build graph, so no target is named or guessed. " +
+              "KOSABI_MISSING_CONST_DEP const=`${cleared.owner}` " +
+              "symbols=`${symbols.joinToString("|")}` fix=`ADD_SOURCE_ONLY_ABI_DEP`",
+      )
+    }
+
+    // Assertion 2b (unconditional, same escape hatch as Assertion 2): no consumer-visible const
+    // val had its initializer replaced or discarded by the IR stripper. The field then carries a
+    // placeholder ConstantValue (the type's default) or none at all, so consumers inline a wrong
+    // value or fail in their own compile. A const whose FIR initializer was cleared is already
+    // reported above and is not reported twice.
+    val clearedConsts =
+        repairLog.clearedPropertyInitializers
+            .filter { it.isConst }
+            .mapTo(HashSet()) { it.owner.replace('/', '.') }
+    for (replaced in repairLog.replacedFieldInitializers) {
+      if (!replaced.isConst) continue
+      if (!replaced.consumerVisible) continue
+      if (replaced.owner.replace('/', '.') in clearedConsts) continue
+      val position = replaced.position
+      messageCollector.report(
+          if (policy == AbiRepairPolicy.WARN) CompilerMessageSeverity.WARNING
+          else CompilerMessageSeverity.ERROR,
+          "Kosabi ABI validation: `${replaced.owner}` is a const val whose initializer " +
+              "source-only ABI generation could not evaluate: ${replaced.detail}. Its " +
+              "ConstantValue attribute would not be the real constant, so consumers that " +
+              "constant-fold it inline a wrong value or fail during their own compile. To fix, " +
+              "spell the constant's value (or its type) explicitly in the initializer, or, when " +
+              "the initializer reads constants of another target, add that target to THIS " +
+              "target's `source_only_abi_deps`. " +
+              "KOSABI_REPLACED_CONST_INITIALIZER const=`${replaced.owner}` " +
+              "location=`${position ?: "unknown"}` " +
+              "fix=`SPELL_CONSTANT_EXPLICITLY|ADD_SOURCE_ONLY_ABI_DEP`",
+          position?.let { CompilerMessageLocation.create(it.path, it.line, it.column, null) },
+      )
+    }
+
+    // Unconditional: the declarations whose applier the reduced classpath hid are consumed by
+    // the applicability rule, the codemod and the driver on default builds, where no validation
+    // policy is set. INFO never fails a build under `-Werror`, and the KOSABI_ prefix keeps the
+    // lines greppable. Each reference names the import it resolves through, so tooling can map it
+    // to the target that provides it; the compiler has no view of the build graph, so no target
+    // is named or guessed here.
+    for (entry in repairLog.uncomputedAppliers) {
+      val refs =
+          entry.references.joinToString("; ") { ref ->
+            "name=${ref.name} kind=${ref.kind.name.lowercase()} " +
+                "receiver=${ref.receiver ?: "-"} import=${ref.importFqn ?: "-"} " +
+                "file=${ref.file ?: "-"}"
+          }
+      messageCollector.report(
+          CompilerMessageSeverity.INFO,
+          "KOSABI_UNCOMPUTED_APPLIER declaration=`${entry.declaration}` " +
+              "reason=`${entry.reason}` refs=`$refs`. To fix, add the target that provides each " +
+              "reference to this target's `source_only_abi_deps`, or write the applier " +
+              "explicitly.",
       )
     }
 
@@ -1359,27 +1610,6 @@ internal class ValidationStage(private val repairLog: AbiGenRepairLog) : AbiGenS
               "with an assumed type of `String`. Neither its type nor its value could be " +
               "established, so if the real constant is not a String this ABI is wrong in a way " +
               "that will not surface until a consumer compiles against it.",
-      )
-    }
-
-    // Assertion 2: no *consumer-visible* const val silently lost its ConstantValue attribute.
-    //
-    // The visibility filter is not a convenience. Every one of the 12 constants this assertion
-    // named on its first repo-wide run was a `private const val` initialised from a constant
-    // declared in another buck target. A private companion constant takes part in no consumer's
-    // constant folding, so the message's own justification - "consumers that constant-fold it fail
-    // during their own compile" - cannot apply to it. Reporting those is a false positive, and
-    // since `warn` is fatal under `-Werror` a false positive here is a broken build. What they do
-    // expose is real but narrower, and belongs to a different check: Kosabi's const resolver is
-    // source-local and cannot read a constant's value off a dependency's ABI.
-    for (cleared in repairLog.clearedPropertyInitializers) {
-      if (!cleared.isConst) continue
-      if (!cleared.consumerVisible) continue
-      messageCollector.report(
-          severity,
-          "Kosabi ABI validation: `${cleared.owner}` is a const val whose initializer could not " +
-              "be resolved and was discarded. It will be emitted without a ConstantValue " +
-              "attribute, so consumers that constant-fold it fail during their own compile.",
       )
     }
 
@@ -1441,8 +1671,7 @@ internal class ValidationStage(private val repairLog: AbiGenRepairLog) : AbiGenS
           "Kosabi ABI validation: `${m.owner}.${m.member}` has an unresolved ${m.where}, so its " +
               "descriptor was emitted with `error/NonExistentClass` and no consumer can link " +
               "against it. The referenced type is not on the source-only ABI classpath. Add the " +
-              "target that provides it to this target's `source_only_abi_deps`, or declare that " +
-              "target `required_for_source_only_abi = True`.",
+              "target that provides it to this target's `source_only_abi_deps`.",
       )
     }
 
@@ -1466,6 +1695,150 @@ internal class ValidationStage(private val repairLog: AbiGenRepairLog) : AbiGenS
               "type so source-only ABI does not publish a phantom descriptor.",
       )
     }
+
+    // Assertion 7: every return-value status ReturnValueStatusStage changed. Such a member may
+    // inherit its status from a member that is not on the source-only ABI classpath, so the stage
+    // wrote `MustUse` over the status the compiler resolved here, never laxer than the class ABI.
+    for (status in repairLog.unknownReturnValueStatuses) {
+      val inherited =
+          if (status.unreadableClasses.isEmpty()) {
+            "a member that may not be on the source-only ABI classpath (the stage could not " +
+                "decide which)"
+          } else {
+            "a member of `${status.unreadableClasses.joinToString("`, `")}`, which is not on " +
+                "the source-only ABI classpath"
+          }
+      val provider =
+          status.unreadableClasses.firstOrNull()?.let { "the target that provides `$it`" }
+              ?: "the target that declares the overridden member"
+      messageCollector.report(
+          severity,
+          "Kosabi ABI validation: `${status.owner}.${status.member}` may inherit its " +
+              "return-value status from $inherited. `${status.emitted}` was emitted where this " +
+              "compile resolved `${status.computed}`; a class-ABI build writes the inherited " +
+              "status, so consumers built with `-Xreturn-value-checker` may report a discarded " +
+              "result against this ABI only. To make the status exact, add $provider to THIS " +
+              "target's `source_only_abi_deps`. " +
+              "KOSABI_UNKNOWN_RETURN_VALUE_STATUS member=`${status.owner}.${status.member}` " +
+              "symbols=`${status.unreadableClasses.joinToString("|")}` fix=`ADD_SOURCE_ONLY_ABI_DEP`",
+      )
+    }
+  }
+
+  private data class KeptBodyReference(val function: String, val className: String)
+
+  private val lineNumberStripper = StubLineNumberStripper()
+
+  /**
+   * The class constants of kept inline bodies that only the stub classpath declares: no emitted
+   * class and no non-stub classpath root provides them. A kept body is a method whose line numbers
+   * [StubLineNumberStripper] keeps, or any method of a local or anonymous class declared in one,
+   * which callers copy along with it.
+   */
+  private fun findKeptInlineBodyStubReferences(
+      inputs: AbiValidationInputs,
+      messageCollector: MessageCollector,
+      severity: CompilerMessageSeverity,
+  ): Set<KeptBodyReference> {
+    val (stubRoots, realRoots) = inputs.classpathRoots.partition { it.isStubClasspathRoot() }
+    if (stubRoots.isEmpty()) return emptySet()
+    val classFiles = inputs.outputFiles.filter { it.relativePath.endsWith(".class") }
+    val emitted = classFiles.mapTo(HashSet()) { classNameFromRelativePath(it.relativePath) }
+    val references =
+        collectKeptInlineBodyClassReferences(classFiles).filterTo(linkedSetOf()) {
+          it.className !in emitted
+        }
+    if (references.isEmpty()) return emptySet()
+    val checkName = "the kept inline body check"
+    val stubDeclared =
+        collectClassesFromClasspath(stubRoots, messageCollector, severity, checkName)
+            ?: return emptySet()
+    val candidates = references.filterTo(linkedSetOf()) { it.className in stubDeclared }
+    if (candidates.isEmpty()) return emptySet()
+    val realClasses =
+        collectClassesFromClasspath(realRoots, messageCollector, severity, checkName)
+            ?: return emptySet()
+    return candidates.filterTo(linkedSetOf()) { it.className !in realClasses }
+  }
+
+  private fun collectKeptInlineBodyClassReferences(
+      classFiles: List<AbiValidationOutputFile>,
+  ): Set<KeptBodyReference> {
+    val headers = classFiles.map { file ->
+      ClassNode().also {
+        ClassReader(file.bytes)
+            .accept(it, ClassReader.SKIP_CODE or ClassReader.SKIP_DEBUG or ClassReader.SKIP_FRAMES)
+      }
+    }
+    val keptMethods = HashMap<String, (String, String) -> Boolean>()
+    for (node in headers) {
+      // Only local and anonymous classes have an EnclosingMethod attribute.
+      if (node.outerClass != null) continue
+      val isKept = lineNumberStripper.keptInlineMethodPredicate(node) ?: continue
+      if (node.methods.any { isKept(it.name, it.desc) }) keptMethods[node.name] = isKept
+    }
+    // Local and anonymous classes declared in a kept body, by the kept function they come from.
+    val copiedClasses = HashMap<String, String>()
+    do {
+      val before = copiedClasses.size
+      for (node in headers) {
+        val outer = node.outerClass ?: continue
+        if (node.name in copiedClasses) continue
+        val outerMethod = node.outerMethod
+        val function =
+            copiedClasses[outer]
+                ?: outerMethod
+                    ?.takeIf { keptMethods[outer]?.invoke(it, node.outerMethodDesc) == true }
+                    ?.let { keptFunctionName(outer, it) }
+                ?: continue
+        copiedClasses[node.name] = function
+      }
+    } while (copiedClasses.size != before)
+
+    val references = linkedSetOf<KeptBodyReference>()
+    for ((index, header) in headers.withIndex()) {
+      val copiedFrom = copiedClasses[header.name]
+      val isKept = keptMethods[header.name]
+      if (copiedFrom == null && isKept == null) continue
+      val node = ClassNode()
+      ClassReader(classFiles[index].bytes).accept(node, ClassReader.SKIP_FRAMES)
+      for (method in node.methods) {
+        val function =
+            copiedFrom
+                ?: keptFunctionName(node.name, method.name).takeIf {
+                  isKept?.invoke(method.name, method.desc) == true
+                }
+                ?: continue
+        method.classConstants().forEach { references += KeptBodyReference(function, it) }
+      }
+    }
+    return references
+  }
+
+  /** The inline function a kept method belongs to: its `$default` method shares it. */
+  private fun keptFunctionName(owner: String, method: String): String =
+      "${owner.replace('/', '.')}.${method.removeSuffix("\$default")}"
+
+  /** The classes this method's code names through class constants, as dotted binary names. */
+  private fun MethodNode.classConstants(): Set<String> {
+    val classes = linkedSetOf<String>()
+    fun addType(type: Type) {
+      val element = if (type.sort == Type.ARRAY) type.elementType else type
+      if (element.sort == Type.OBJECT) classes += element.internalName.replace('/', '.')
+    }
+    fun addInternalName(name: String?) {
+      if (name == null) return
+      addType(Type.getObjectType(name))
+    }
+    tryCatchBlocks.orEmpty().forEach { addInternalName(it.type) }
+    for (instruction in instructions) {
+      when (instruction) {
+        is TypeInsnNode -> addInternalName(instruction.desc)
+        is MethodInsnNode -> addInternalName(instruction.owner)
+        is LdcInsnNode -> (instruction.cst as? Type)?.let(::addType)
+      }
+    }
+    return classes
   }
 
   private fun findStubOnlyDescriptorLeaks(
@@ -2284,6 +2657,7 @@ internal class ValidationStage(private val repairLog: AbiGenRepairLog) : AbiGenS
       classpathRoots: List<File>,
       messageCollector: MessageCollector,
       severity: CompilerMessageSeverity,
+      checkName: String = "same-package phantom detection",
   ): Set<String>? {
     val classes = linkedSetOf<String>()
     for (root in classpathRoots) {
@@ -2311,7 +2685,7 @@ internal class ValidationStage(private val repairLog: AbiGenRepairLog) : AbiGenS
       } catch (failure: Exception) {
         messageCollector.report(
             severity,
-            "Kosabi ABI validation: same-package phantom detection could not complete because " +
+            "Kosabi ABI validation: $checkName could not complete because " +
                 "classpath root `$root` could not be read: $failure",
         )
         return null
@@ -2319,15 +2693,15 @@ internal class ValidationStage(private val repairLog: AbiGenRepairLog) : AbiGenS
     }
     return classes
   }
-
-  // KosabiStubgenStepsBuilder emits the stub classpath as `__%s_stubgen_stubs.jar`, or as the
-  // corresponding `__%s_stubgen_stubs` directory before packaging. `stubs.jar` stays an equality
-  // check: as a suffix it would also swallow `core-lambda-stubs.jar` and treat the Android lambda
-  // stubs as fabricated classes.
-  private fun File.isStubClasspathRoot(): Boolean =
-      (isDirectory && name.endsWith("stubgen_stubs")) ||
-          (isFile && (name.endsWith("stubgen_stubs.jar") || name == "stubs.jar"))
 }
+
+// KosabiStubgenStepsBuilder emits the stub classpath as `__%s_stubgen_stubs.jar`, or as the
+// corresponding `__%s_stubgen_stubs` directory before packaging. `stubs.jar` stays an equality
+// check: as a suffix it would also swallow `core-lambda-stubs.jar` and treat the Android lambda
+// stubs as fabricated classes.
+internal fun File.isStubClasspathRoot(): Boolean =
+    (isDirectory && name.endsWith("stubgen_stubs")) ||
+        (isFile && (name.endsWith("stubgen_stubs.jar") || name == "stubs.jar"))
 
 /**
  * Pipeline runner that orchestrates the ABI generation stages in the correct order.
@@ -2348,6 +2722,7 @@ internal class AbiGenPipeline(
     val composeAbi: ComposeAbiEmulationStage = ComposeAbiEmulationStage(),
     val bytecodeSanitizer: BytecodeSanitizerStage = BytecodeSanitizerStage(),
 ) {
+  val returnValueStatus: ReturnValueStatusStage = ReturnValueStatusStage(repairLog)
   val firMetadataSanitizer: FirMetadataSanitizerStage = FirMetadataSanitizerStage(repairLog)
   val inlineBodies: InlineBodyStage = InlineBodyStage()
   val irSanitizer: IrSanitizerStage = IrSanitizerStage(repairLog, inlineBodies)
@@ -2355,6 +2730,7 @@ internal class AbiGenPipeline(
 
   val stages: List<AbiGenStage>
     get() = listOf(
+        returnValueStatus,
         firMetadataSanitizer,
         composeAbi,
         inlineBodies,

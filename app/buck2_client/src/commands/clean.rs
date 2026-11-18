@@ -18,7 +18,6 @@ use std::time::Duration;
 use std::time::Instant;
 
 use buck2_agent_interactive::Advice;
-use buck2_cli_proto::EvictTenantRequest;
 use buck2_client_ctx::client_ctx::BuckSubcommand;
 use buck2_client_ctx::client_ctx::ClientCommandContext;
 use buck2_client_ctx::common::BuckArgMatches;
@@ -27,17 +26,16 @@ use buck2_client_ctx::common::CommonEventLogOptions;
 use buck2_client_ctx::common::target_cfg::TargetCfgUnusedOptions;
 use buck2_client_ctx::common::ui::ConsoleType;
 use buck2_client_ctx::daemon::client::BuckdLifecycleLock;
-use buck2_client_ctx::daemon::client::connect::establish_connection_existing;
-use buck2_client_ctx::daemon::client::connect::shared_daemon_is_inactive;
+use buck2_client_ctx::daemon::client::kill::TenantShutdownCommand;
 use buck2_client_ctx::daemon::client::kill::kill_command_impl;
+use buck2_client_ctx::daemon::client::kill::kill_unidaemon_tenant;
 use buck2_client_ctx::events_ctx::EventsCtx;
 use buck2_client_ctx::exit_result::ExitResult;
 use buck2_client_ctx::final_console::FinalConsole;
 use buck2_client_ctx::startup_deadline::StartupDeadline;
 use buck2_client_ctx::subscribers::superconsole::StatefulSuperConsole;
 use buck2_common::daemon_dir::DaemonDir;
-use buck2_common::invocation_paths::TenantDiskLock;
-use buck2_core::buck2_env;
+use buck2_common::invocation_paths::TenantDiskForCleanup;
 use buck2_error::BuckErrorContext;
 use buck2_error::ErrorTag;
 use buck2_fs::error::IoError;
@@ -61,7 +59,8 @@ use crate::commands::clean_stale::parse_clean_stale_args;
 ///
 /// The command also kills the buck2 daemon.
 ///
-/// With `BUCK2_SHARE_DAEMON=true`, it evicts the selected tenant from the shared daemon instead.
+/// Under daemon sharing (`buck2.share_daemon`), it evicts the selected tenant from the shared
+/// daemon instead.
 #[derive(Debug, clap::Parser)]
 pub struct CleanCommand {
     #[clap(
@@ -206,7 +205,7 @@ impl CleanCommand {
 
 struct CleanGuard {
     lifecycle: Option<BuckdLifecycleLock>,
-    disk_lock: Arc<TenantDiskLock>,
+    disk_lock: Arc<TenantDiskForCleanup>,
 }
 
 struct InnerCleanCommand {
@@ -226,9 +225,15 @@ impl BuckSubcommand for InnerCleanCommand {
     ) -> ExitResult {
         let paths = ctx.paths()?;
         let buck_out_dir = paths.buck_out_path();
-        let daemon_dir = paths.daemon_dir()?;
-        let sharing = buck2_env!("BUCK2_SHARE_DAEMON", type=bool, default=false)?;
-        let metadata_to_clean = (!sharing).then(|| daemon_dir.clone());
+        let sharing = paths.routing()?.is_shared();
+        // A shared tenant's own directory holds its proxy; the shared daemon's namespace is not
+        // this tenant's to delete.
+        let daemon_dir = if sharing {
+            paths.tenant_paths().unshared_daemon_dir()?
+        } else {
+            paths.daemon_dir()?
+        };
+        let metadata_to_clean = Some(daemon_dir.clone());
         let trash_dir = paths.trash_dir();
         let console = &self.common_opts.console_opts.final_console();
 
@@ -252,43 +257,18 @@ impl BuckSubcommand for InnerCleanCommand {
 
         // Kill the daemon and make sure a new daemon does not spin up while we're performing clean up operations
         // This will ensure we have exclusive access to the directories in question
-        let lifecycle = if sharing {
-            match establish_connection_existing(&daemon_dir).await {
-                Ok(client) => {
-                    client
-                        .to_connector()
-                        .with_flushing()
-                        .evict_tenant(
-                            EvictTenantRequest {
-                                context: Some(ctx.empty_client_context(Self::COMMAND_NAME)?),
-                            },
-                            events_ctx,
-                        )
-                        .await?;
-                    None
-                }
-                Err(error) => {
-                    let lock = BuckdLifecycleLock::lock_with_timeout(
-                        daemon_dir.clone(),
-                        StartupDeadline::duration_from_now(Duration::from_secs(10))?,
-                    )
-                    .await?;
-                    if !shared_daemon_is_inactive(&daemon_dir).await? {
-                        return error.into();
-                    }
-                    Some(lock)
-                }
-            }
+        let lifecycle = BuckdLifecycleLock::lock_with_timeout(
+            daemon_dir.clone(),
+            StartupDeadline::duration_from_now(Duration::from_secs(10))?,
+        )
+        .await?;
+        if sharing {
+            kill_unidaemon_tenant(&lifecycle, TenantShutdownCommand::Clean, None).await?;
         } else {
-            let lock = BuckdLifecycleLock::lock_with_timeout(
-                daemon_dir.clone(),
-                StartupDeadline::duration_from_now(Duration::from_secs(10))?,
-            )
-            .await?;
-            kill_command_impl(&lock, "`buck2 clean` was invoked", false).await?;
-            Some(lock)
-        };
-        let disk_lock = TenantDiskLock::acquire(&paths.tenant_paths(), Duration::from_secs(30))
+            kill_command_impl(&lifecycle, "`buck2 clean` was invoked", false).await?;
+        }
+        let lifecycle = Some(lifecycle);
+        let disk_lock = TenantDiskForCleanup::take(&paths.tenant_paths(), Duration::from_secs(30))
             .await
             .buck_error_context("Waiting for tenant disk work to drain; no files were deleted")?;
         let guard = CleanGuard {
@@ -642,6 +622,33 @@ fn ok_if_not_found(res: Result<(), IoError>) -> buck2_error::Result<()> {
     }
 }
 
+/// Removes a file, or a directory whose contents were just removed. Below the top level, the
+/// containing directory is being removed as well, so the `_harder` variants may add owner
+/// permissions to it; the root survives the clean, so its permissions are left alone. A directory
+/// the walk couldn't list (no owner read or execute permission) still has its contents, so fall
+/// back to `remove_dir_all`, which adds owner permissions to every directory in the tree.
+fn remove_entry(root: &AbsPath, path: &AbsPath, is_dir: bool) -> Result<(), IoError> {
+    let in_root = path.parent() == Some(root);
+    if !is_dir {
+        return if in_root {
+            fs_util::remove_file(path)
+        } else {
+            fs_util::remove_file_harder(path)
+        };
+    }
+    let res = if in_root {
+        fs_util::remove_dir(path)
+    } else {
+        fs_util::remove_dir_harder(path)
+    };
+    match res {
+        Err(e) if e.io_error_kind() == Some(io::ErrorKind::DirectoryNotEmpty) => {
+            fs_util::remove_dir_all(path)
+        }
+        res => res,
+    }
+}
+
 /// Chooses disjoint subtrees whose removal can proceed in parallel.
 ///
 /// Starting from the top-level directories, descends level by level until at least `target_units`
@@ -702,6 +709,7 @@ fn clean_buck_out_pass(path: &AbsNormPathBuf, state: &Arc<CleanProgressState>) -
 
     let pool = ThreadPool::new(directory_mutation_parallelism());
     for subtree_root in subtree_roots {
+        let root = path.clone();
         let failures = failures.dupe();
         let dir_counter = dir_counter.dupe();
         let file_counter = file_counter.dupe();
@@ -713,13 +721,8 @@ fn clean_buck_out_pass(path: &AbsNormPathBuf, state: &Arc<CleanProgressState>) -
             for dir_entry in walk.into_iter().flatten() {
                 let is_dir = dir_entry.file_type().is_dir();
                 // The walk gives us back absolute paths since we give it absolute paths.
-                let res = AbsPath::new(dir_entry.path()).and_then(|p| {
-                    if is_dir {
-                        ok_if_not_found(fs_util::remove_dir(p))
-                    } else {
-                        ok_if_not_found(fs_util::remove_file(p))
-                    }
-                });
+                let res = AbsPath::new(dir_entry.path())
+                    .and_then(|p| ok_if_not_found(remove_entry(root.as_abs_path(), p, is_dir)));
 
                 match res {
                     Ok(()) => {
@@ -747,7 +750,11 @@ fn clean_buck_out_pass(path: &AbsNormPathBuf, state: &Arc<CleanProgressState>) -
                 if entry.file_type().is_ok_and(|t| t.is_dir()) {
                     continue;
                 }
-                match ok_if_not_found(fs_util::remove_file(entry.path())) {
+                match ok_if_not_found(remove_entry(
+                    path.as_abs_path(),
+                    entry.path().as_abs_path(),
+                    false,
+                )) {
                     Ok(()) => {
                         file_counter.fetch_add(1, Ordering::Relaxed);
                     }
@@ -755,7 +762,7 @@ fn clean_buck_out_pass(path: &AbsNormPathBuf, state: &Arc<CleanProgressState>) -
                 }
             }
         }
-        match ok_if_not_found(fs_util::remove_dir(dir)) {
+        match ok_if_not_found(remove_entry(path.as_abs_path(), dir.as_abs_path(), true)) {
             Ok(()) => {
                 dir_counter.fetch_add(1, Ordering::Relaxed);
             }
@@ -776,11 +783,11 @@ fn clean_buck_out_pass(path: &AbsNormPathBuf, state: &Arc<CleanProgressState>) -
                     Err(_) => std::fs::symlink_metadata(entry.path())
                         .is_ok_and(|m| m.file_type().is_dir()),
                 };
-                let res = if is_dir {
-                    ok_if_not_found(fs_util::remove_dir(entry.path()))
-                } else {
-                    ok_if_not_found(fs_util::remove_file(entry.path()))
-                };
+                let res = ok_if_not_found(remove_entry(
+                    path.as_abs_path(),
+                    entry.path().as_abs_path(),
+                    is_dir,
+                ));
                 match res {
                     Ok(()) => {
                         let counter = if is_dir { &dir_counter } else { &file_counter };
@@ -804,6 +811,77 @@ mod tests {
     use std::collections::BTreeMap;
 
     use super::*;
+
+    #[cfg(unix)]
+    #[test]
+    fn test_clean_readonly_directory_with_empty_children() -> buck2_error::Result<()> {
+        use std::os::unix::fs::PermissionsExt;
+
+        let tempdir = tempfile::tempdir()?;
+        let root = AbsNormPathBuf::new(tempdir.path().to_path_buf())?;
+        let parent = tempdir.path().join("delta");
+        std::fs::create_dir_all(parent.join("dev"))?;
+        std::fs::set_permissions(&parent, std::fs::Permissions::from_mode(0o555))?;
+
+        let state = Arc::new(CleanProgressState::new());
+        let outcome = clean_buck_out_pass(&root, &state);
+        drop(std::fs::set_permissions(
+            &parent,
+            std::fs::Permissions::from_mode(0o755),
+        ));
+
+        assert_eq!(outcome.failed, 0, "{:?}", outcome.first_error);
+        assert_eq!(std::fs::read_dir(&root)?.count(), 0);
+        assert_eq!(state.dirs_deleted(), 2);
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_clean_unlistable_directory() -> buck2_error::Result<()> {
+        use std::os::unix::fs::PermissionsExt;
+
+        let tempdir = tempfile::tempdir()?;
+        let root = AbsNormPathBuf::new(tempdir.path().to_path_buf())?;
+        let locked = tempdir.path().join("gamma").join("locked");
+        std::fs::create_dir_all(locked.join("dir"))?;
+        std::fs::write(locked.join("file"), b"content")?;
+        std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o000))?;
+
+        let state = Arc::new(CleanProgressState::new());
+        let outcome = clean_buck_out_pass(&root, &state);
+        drop(std::fs::set_permissions(
+            &locked,
+            std::fs::Permissions::from_mode(0o755),
+        ));
+
+        assert_eq!(outcome.failed, 0, "{:?}", outcome.first_error);
+        assert_eq!(std::fs::read_dir(&root)?.count(), 0);
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_clean_leaves_root_permissions_alone() -> buck2_error::Result<()> {
+        use std::os::unix::fs::PermissionsExt;
+
+        let tempdir = tempfile::tempdir()?;
+        let root_path = tempdir.path().join("root");
+        std::fs::create_dir_all(root_path.join("dir"))?;
+        std::fs::write(root_path.join("file"), b"content")?;
+        let root = AbsNormPathBuf::new(root_path)?;
+        std::fs::set_permissions(&root, std::fs::Permissions::from_mode(0o555))?;
+
+        let state = Arc::new(CleanProgressState::new());
+        // Depending on capabilities (e.g. CAP_DAC_OVERRIDE) the removal may succeed or fail;
+        // either way the root's permissions must be left untouched.
+        drop(clean_buck_out_pass(&root, &state));
+        let mode = std::fs::symlink_metadata(&root)?.permissions().mode();
+        std::fs::set_permissions(&root, std::fs::Permissions::from_mode(0o755))?;
+
+        assert_eq!(mode & 0o777, 0o555);
+        Ok(())
+    }
 
     fn fixture<'a>(
         children: &'a BTreeMap<&'static str, Vec<&'static str>>,

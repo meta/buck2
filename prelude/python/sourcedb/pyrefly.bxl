@@ -31,10 +31,13 @@ _MODULE_SUFFIXES = set([
 _CATCH_ALL_STUB_CONTENT = "from typing import Any\n\ndef __getattr__(name: str) -> Any: ...\n"
 
 _MANIFESTLESS_RULE_TYPES = set([
+    "_source_directory",
+    "_sv_filelist",
     "forward",
     "command_alias",
     "export_file",
     "filegroup",
+    "sh_binary",
 ])
 
 def _rule_has_no_manifest(rule_type: str) -> bool:
@@ -85,7 +88,7 @@ def _append_or_default_if_module(
 def _list_targets(ctx: bxl.Context) -> bxl.TargetSet[bxl.ConfiguredTargetNode]:
     cquery = ctx.cquery()
     uquery = ctx.uquery()
-    files = cquery.deps(ctx.target_universe(uquery.owner(ctx.cli_args.file)).target_set(), 0)
+    files = cquery.deps(ctx.target_universe(uquery.owner(ctx.cli_args.file), keep_going = True).target_set(), 0)
     targets = cquery.eval("kind('python_library|alias|genrule', %s)", ctx.cli_args.target)
     res = files
     for target in targets.values():
@@ -465,6 +468,7 @@ def _main(ctx: bxl.Context) -> None:
 
         if (
             x.rule_type.endswith(":alias")
+            or x.rule_type.endswith(":configured_alias")
             or x.rule_type.endswith("_fbcode_configured_alias")
             or x.rule_type.endswith(":build_mode_alias")
             or x.rule_type.endswith(":_sanitizer_alias")

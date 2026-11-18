@@ -10,10 +10,12 @@
 
 package com.facebook.buck.jvm.kotlin
 
+import com.facebook.buck.jvm.kotlin.ksp.Ksp2NoOpDetector
 import com.facebook.buck.jvm.kotlin.ksp.Ksp2Step
 import java.io.File
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -32,6 +34,28 @@ class Ksp2StepTest {
   @Test
   fun `skips counts when empty`() {
     assertFalse(Ksp2Step.shouldRecordProcessorCounts(true, false))
+  }
+
+  @Test
+  fun `processor times format as create, process, finish and rounds per provider`() {
+    assertEquals(
+        "a.P=1;20;3;2,b.Q=0;0;0;1",
+        Ksp2Step.formatProcessorTimes(
+            linkedMapOf(
+                "a.P" to Ksp2NoOpDetector.ProcessorTime(1, 20, 3, 2),
+                "b.Q" to Ksp2NoOpDetector.ProcessorTime(0, 0, 0, 1),
+            ),
+        ),
+    )
+  }
+
+  @Test
+  fun `phases format in order and are omitted when not measured`() {
+    assertEquals(
+        "setup=100,processors=67,other=10",
+        Ksp2Step.formatPhases(linkedMapOf("setup" to 100L, "processors" to 67L, "other" to 10L)),
+    )
+    assertNull(Ksp2Step.formatPhases(emptyMap()))
   }
 
   @Test

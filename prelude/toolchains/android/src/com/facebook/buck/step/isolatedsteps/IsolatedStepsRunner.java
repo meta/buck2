@@ -14,10 +14,12 @@ import com.facebook.buck.core.build.execution.context.IsolatedExecutionContext;
 import com.facebook.buck.core.util.log.Logger;
 import com.facebook.buck.step.StepExecutionResult;
 import com.facebook.buck.step.StepExecutionResults;
+import com.facebook.infer.annotation.Nullsafe;
 import com.google.common.collect.ImmutableList;
 import java.io.IOException;
 
 /** Step runner that executes the steps the given {@link IsolatedStep}s. */
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public class IsolatedStepsRunner {
 
   private static final Logger LOG = Logger.get(IsolatedStepsRunner.class);

@@ -10,10 +10,8 @@
 
 package com.facebook.buck.jvm.cd;
 
-import com.facebook.buck.util.json.ObjectMappers;
+import com.facebook.buck.util.json.JsonStringListMaps;
 import com.facebook.infer.annotation.Nullsafe;
-import com.fasterxml.jackson.core.type.TypeReference;
-import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.ImmutableSortedMap;
 import com.google.common.collect.ImmutableSortedSet;
 import java.io.IOException;
@@ -22,9 +20,9 @@ import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.Set;
 import java.util.TreeMap;
 import java.util.stream.Collectors;
 
@@ -40,10 +38,9 @@ public class DepFileUtils {
       throws IOException {
     List<Path> allUsedPaths = new ArrayList<>();
     for (Path usedClassesMapPath : usedClassesMapPaths) {
-      ImmutableMap<Path, Set<Path>> usedClassesMap =
-          ObjectMappers.readValue(usedClassesMapPath, new TypeReference<>() {});
+      Map<Path, List<Path>> usedClassesMap = readPathLists(usedClassesMapPath);
 
-      for (Map.Entry<Path, Set<Path>> usedClassesEntry : usedClassesMap.entrySet()) {
+      for (Map.Entry<Path, List<Path>> usedClassesEntry : usedClassesMap.entrySet()) {
         Path usedJarPath = usedClassesEntry.getKey();
         Path usedJarDir = jarToJarDirMap.get(usedJarPath);
         if (usedJarDir == null) {
@@ -74,15 +71,12 @@ public class DepFileUtils {
     Map<Path, List<Path>> usedJarsToClasses = new TreeMap<>();
 
     if (append && Files.exists(usedJarsFileOutput)) {
-      Map<Path, List<Path>> existingEntries =
-          ObjectMappers.readValue(usedJarsFileOutput, new TypeReference<>() {});
-      usedJarsToClasses.putAll(existingEntries);
+      usedJarsToClasses.putAll(readPathLists(usedJarsFileOutput));
     }
 
     // Merge multiple used-classes.json files into a single map of jar to classes
     for (Path usedClassesJsonPath : usedClassesJsonPaths) {
-      ImmutableMap<Path, Set<Path>> usedClassesMap =
-          ObjectMappers.readValue(usedClassesJsonPath, new TypeReference<>() {});
+      Map<Path, List<Path>> usedClassesMap = readPathLists(usedClassesJsonPath);
 
       usedClassesMap.forEach(
           (usedJarPath, classes) -> {
@@ -90,13 +84,25 @@ public class DepFileUtils {
           });
     }
 
-    ObjectMappers.WRITER.writeValue(
-        usedJarsFileOutput.toFile(),
+    JsonStringListMaps.write(
+        usedJarsFileOutput,
         usedJarsToClasses.entrySet().stream()
             .collect(
                 ImmutableSortedMap.toImmutableSortedMap(
                     Comparator.naturalOrder(),
                     Map.Entry::getKey,
                     v -> ImmutableSortedSet.copyOf(v.getValue()))));
+  }
+
+  private static Map<Path, List<Path>> readPathLists(Path file) throws IOException {
+    Map<Path, List<Path>> result = new LinkedHashMap<>();
+    for (Map.Entry<String, List<String>> entry : JsonStringListMaps.read(file).entrySet()) {
+      List<Path> paths = new ArrayList<>();
+      for (String path : entry.getValue()) {
+        paths.add(Paths.get(path));
+      }
+      result.put(Paths.get(entry.getKey()), paths);
+    }
+    return result;
   }
 }

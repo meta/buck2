@@ -16,6 +16,7 @@ load("@prelude//utils:type_defs.bzl", "is_select")
 BuildVariant = record(
     buckconfigs = field(dict[str, str]),
     description = field(str),
+    metadata = field(dict[str, str]),
     modefiles = field(list[str]),
     modifiers = field(list[ProvidersLabel]),
     target_platform = field(TargetLabel | None),
@@ -30,9 +31,10 @@ BuildVariantsInfo = provider(
 )
 
 # The per-variant keys accepted by the `build_variants()` macro. `modifiers`
-# is spelled as on the command line; the rule attribute is `modifier_lists`
-# because buck2 reserves `modifiers` as an internal per-target attribute.
-BUILD_VARIANT_KEYS = ["buckconfigs", "description", "modefiles", "modifiers", "target_platform"]
+# is spelled as on the command line. The rule attributes for `metadata` and
+# `modifiers` are `metadata_dicts` and `modifier_lists` because buck2 reserves
+# both names as internal per-target attributes.
+BUILD_VARIANT_KEYS = ["buckconfigs", "description", "metadata", "modefiles", "modifiers", "target_platform"]
 
 def _reject_selects(name: str, path: str, value: typing.Any):
     # A variant is a fixed recipe that tooling reads back unconfigured, so a
@@ -71,6 +73,7 @@ def build_variants_macro(build_variants_rule, name: str, target: str, variants: 
         variants = list(variants.keys()),
         buckconfigs = {variant: spec.get("buckconfigs", {}) for variant, spec in variants.items()},
         descriptions = {variant: spec.get("description", "") for variant, spec in variants.items()},
+        metadata_dicts = {variant: spec.get("metadata", {}) for variant, spec in variants.items()},
         modefiles = {variant: spec.get("modefiles", []) for variant, spec in variants.items()},
         modifier_lists = {variant: spec.get("modifiers", []) for variant, spec in variants.items()},
         target_platforms = {variant: spec["target_platform"] for variant, spec in variants.items() if spec.get("target_platform") != None},
@@ -111,6 +114,7 @@ def _build_variant(ctx: AnalysisContext, variant: str) -> BuildVariant:
     return BuildVariant(
         buckconfigs = buckconfigs,
         description = ctx.attrs.descriptions.get(variant, ""),
+        metadata = ctx.attrs.metadata_dicts.get(variant, {}),
         modefiles = modefiles,
         modifiers = [_unconfigured(m.label) for m in ctx.attrs.modifier_lists.get(variant, [])],
         target_platform = target_platform.label.raw_target() if target_platform else None,
@@ -120,6 +124,7 @@ def _json(variant: BuildVariant) -> dict[str, typing.Any]:
     return {
         "buckconfigs": variant.buckconfigs,
         "description": variant.description,
+        "metadata": variant.metadata,
         "modefiles": variant.modefiles,
         "modifiers": [str(m) for m in variant.modifiers],
         "target_platform": str(variant.target_platform) if variant.target_platform else None,
@@ -167,11 +172,13 @@ build_variants = prelude_rule(
     impl = _build_variants_impl,
     docs = """
         A `build_variants()` rule lists the named ways of building one target: for each variant, the
-        target platform to build for, and the buckconfigs, modefiles and modifiers to build with.
+        target platform to build for, and the buckconfigs, modefiles and modifiers to build with. A
+        variant may also carry `metadata`, string key-value pairs for tooling to read, which do not
+        change how the variant is built.
 
         The `target` must be in the same package, written `:NAME`, so that a target's variants are
         always found next to it. The variants are given inline as a dict from variant name to a dict
-        with any of the keys `description`, `buckconfigs`, `modefiles`, `modifiers` and
+        with any of the keys `description`, `buckconfigs`, `metadata`, `modefiles`, `modifiers` and
         `target_platform`; the macro layer splits that into the per-key attributes below. A variant
         is a fixed recipe, so no part of it may be a `select()`. Variant names are used as sub-target
         names, so they may not contain whitespace, `:`, `/`, `\\` or `.`.
@@ -192,6 +199,7 @@ build_variants = prelude_rule(
               'description': 'Release build, as shipped to the App Store',
               'target_platform': 'config//platform/ios:arm64-release',
               'buckconfigs': {'apple.codesign_type': 'distribution'},
+              'metadata': {'distribution_channel': 'app_store'},
               'modefiles': ['@fbsource//fbobjc/mode/release'],
               'modifiers': ['config//toolchain/constraints:xcode-pika'],
             },
@@ -231,6 +239,18 @@ build_variants = prelude_rule(
                 default = {},
                 doc = """
                 Per variant, a free-form, human-readable description for tooling to display.
+            """,
+            ),
+            # Not `metadata`: buck2 reserves that name for its internal per-target
+            # attribute and rejects rules that declare it.
+            "metadata_dicts": attrs.dict(
+                key = attrs.string(),
+                value = attrs.dict(key = attrs.string(), value = attrs.string(), sorted = True),
+                sorted = False,
+                default = {},
+                doc = """
+                Per variant, string key-value pairs for tooling to read. They do not change how the
+                variant is built.
             """,
             ),
             "modefiles": attrs.dict(

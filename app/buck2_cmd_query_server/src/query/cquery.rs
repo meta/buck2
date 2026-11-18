@@ -49,8 +49,8 @@ use crate::query::query_target_ext::QueryCommandTarget;
 use crate::query::starlark_profile::write_query_profile_for_targets;
 
 impl QueryCommandTarget for ConfiguredTargetNode {
-    fn call_stack(&self) -> Option<String> {
-        ConfiguredTargetNode::call_stack(self)
+    fn call_stack(&self) -> buck2_error::Result<Option<String>> {
+        Ok(self.body()?.call_stack())
     }
 
     fn attr_to_string_alternate(&self, options: AttrFmtOptions, attr: &Self::Attr<'_>) -> String {

@@ -31,8 +31,9 @@ use crate::typing::error::TypingOrInternalError;
 use crate::typing::function::TyCustomFunctionImpl;
 use crate::values::Heap;
 use crate::values::Value;
-use crate::values::ValueOfUnchecked;
-use crate::values::tuple::UnpackTuple;
+use crate::values::ValueOf;
+use crate::values::list::AllocList;
+use crate::values::tuple::TupleType;
 use crate::values::typing::StarlarkIter;
 
 #[derive(
@@ -87,25 +88,25 @@ pub(crate) fn register_zip(globals: &mut GlobalsBuilder) {
     /// ```
     #[starlark(speculative_exec_safe, ty_custom_function = ZipType)]
     fn zip<'v>(
-        #[starlark(args)] args: UnpackTuple<ValueOfUnchecked<'v, StarlarkIter<Value<'v>>>>,
+        #[starlark(args)] args: ValueOf<'v, TupleType<StarlarkIter<Value<'v>>>>,
         heap: Heap<'v>,
-    ) -> starlark::Result<Vec<Value<'v>>> {
+    ) -> starlark::Result<AllocList<Vec<Value<'v>>>> {
         let mut v = Vec::new();
         let mut first = true;
-        for arg in args.items {
+        for arg in args.iter() {
             let mut idx = 0;
-            for e in arg.get().iterate(heap)? {
+            for e in arg?.to_value().iterate(heap)? {
                 if first {
-                    v.push(heap.alloc((e,)));
+                    v.push(heap.alloc((e,)).to_value());
                     idx += 1;
                 } else if idx < v.len() {
-                    v[idx] = v[idx].add(heap.alloc((e,)), heap)?;
+                    v[idx] = v[idx].add(heap.alloc((e,)).to_value(), heap)?;
                     idx += 1;
                 }
             }
             v.truncate(idx);
             first = false;
         }
-        Ok(v)
+        Ok(AllocList(v))
     }
 }

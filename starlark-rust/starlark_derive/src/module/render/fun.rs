@@ -248,7 +248,7 @@ pub(crate) fn render_fun(x: StarFun) -> syn::Result<syn::Stmt> {
                     #( #param_types, )*
                 ) -> std::result::Result<T, E>,
             ) -> starlark::typing::Ty {
-                <T as starlark::values::type_repr::StarlarkTypeRepr>::starlark_type_repr()
+                <<T as starlark::values::AllocValue<'v>>::Type as starlark::values::StarlarkTypeExpr<'v>>::starlark_type_repr()
             }
             get_impl(__starlark_invoke_impl)
         }
@@ -265,7 +265,7 @@ pub(crate) fn render_fun(x: StarFun) -> syn::Result<syn::Stmt> {
             #this_prepare
             #prepare
             match __starlark_invoke_impl(#( #invoke_args, )*) {
-                Ok(v) => Ok(eval.heap().alloc(v)),
+                Ok(v) => Ok(eval.heap().alloc(v).to_value()),
                 Err(e) => Err(starlark::__derive_refs::invoke_macro_error::InvokeMacroError::into_starlark_error(e)),
             }
         }
@@ -489,9 +489,8 @@ fn render_option(expr: Option<syn::Expr>) -> syn::Expr {
 fn render_starlark_type(typ: &syn::Type) -> syn::Expr {
     syn::parse_quote! {
         {
-            #[allow(clippy::extra_unused_lifetimes)]
             fn get_type_string<'v>() -> starlark::typing::Ty {
-                <#typ as starlark::values::type_repr::StarlarkTypeRepr>::starlark_type_repr()
+                <<#typ as starlark::values::UnpackValue<'v>>::Type as starlark::values::StarlarkTypeExpr<'v>>::starlark_type_repr()
             }
             get_type_string()
         }
@@ -518,7 +517,7 @@ fn render_regular_native_callable_param(arg: &StarArg) -> syn::Result<syn::Expr>
             // For things that aren't type value, use optional and then next_opt/unwrap
             // to avoid the to/from value conversion.
             let default = if arg.is_value() {
-                Some(syn::parse_quote! { |__heap| __heap.alloc(#default) })
+                Some(syn::parse_quote! { |__heap| __heap.alloc(#default).to_value() })
             } else {
                 render_default_as_value(default)
             };
@@ -648,7 +647,7 @@ impl SignatureRegularArgMode {
             // to avoid the to/from value conversion.
             if arg.is_value() {
                 SignatureRegularArgMode::Defaulted(syn::parse_quote! {
-                    __heap.alloc(#default)
+                    __heap.alloc(#default).to_value()
                 })
             } else {
                 SignatureRegularArgMode::Optional
@@ -740,7 +739,7 @@ fn parameter_spec_args(star_args: &[StarArg]) -> syn::Result<ParametersSpecArgs>
 fn render_default_as_value(default: &Expr) -> Option<syn::Expr> {
     let x = quote!(#default).to_string();
     if let Ok(x) = x.trim_end_matches("i32").parse::<i32>() {
-        Some(syn::parse_quote! { |__heap| __heap.alloc(#x) })
+        Some(syn::parse_quote! { |__heap| __heap.alloc(#x).to_value() })
     } else if let Ok(x) = x.parse::<bool>() {
         Some(syn::parse_quote! { |_| starlark::values::Value::new_bool(#x) })
     } else if x == "NoneOr :: None" {
@@ -753,10 +752,10 @@ fn render_default_as_value(default: &Expr) -> Option<syn::Expr> {
         })
     ) {
         // Make sure we don't splice in `x` again, or we double quote the string
-        Some(syn::parse_quote! { |__heap| __heap.alloc(#default) })
-    } else if x == "UnpackListOrTuple :: default()" || x == "UnpackList :: default()" {
+        Some(syn::parse_quote! { |__heap| __heap.alloc(#default).to_value() })
+    } else if x == "ValueOf :: empty_list()" {
         Some(syn::parse_quote! { |_| starlark::values::Value::new_empty_list() })
-    } else if x == "SmallMap :: new()" {
+    } else if x == "ValueOf :: empty_dict()" {
         Some(syn::parse_quote! { |_| starlark::values::Value::new_empty_dict() })
     } else {
         None

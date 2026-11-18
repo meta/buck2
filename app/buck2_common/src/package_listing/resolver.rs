@@ -18,8 +18,13 @@ use crate::package_listing::listing::PackageListing;
 pub trait PackageListingResolver: Send + Sync {
     async fn resolve(&mut self, package: PackageLabel) -> buck2_error::Result<PackageListing>;
 
+    /// The package the path belongs to: the nearest directory above it that has a build file.
+    ///
+    /// A symlink is a leaf of the package it is in, like a file. A path behind one belongs to
+    /// that package, whatever build files following the symlink would find.
     async fn get_enclosing_package(&mut self, path: CellPath) -> buck2_error::Result<PackageLabel>;
 
+    /// Like `get_enclosing_package`, but every package above the path, up to `enclosing_path`.
     async fn get_enclosing_packages(
         &mut self,
         path: CellPath,

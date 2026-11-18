@@ -25,32 +25,45 @@ and the endpoint it is serving on (along with some other information) to the
 "buckd.info" file in the daemon dir, overwriting whatever was there. Once that
 is done, the server is ready to be used.
 
-The daemon holds no lock of its own: nothing daemon-side prevents a second
+A daemon of its own holds no lock: nothing daemon-side prevents a second
 daemon from starting over the same daemon directory. Exclusivity relies on the
 client-side lifecycle lock described below, plus the periodic self-check in
-point 2 here.
+point 2 here. A unidaemon additionally holds an exclusive lock on
+`.unidaemon_locks/<key>.alive` from before it writes to its namespace until it
+exits; a second daemon of the namespace cannot acquire it, and clients probe it
+to tell a running daemon from damaged metadata. A unidaemon that exits normally
+removes its namespace directory; `buck2 killall`, and a client that has just
+registered, remove the namespace directories of daemons that have exited, as
+judged by that lock. The lock files themselves stay: unlinking one while a
+daemon of the key waits on it would leave that daemon holding a lock on an
+unlinked file.
 
-With `BUCK2_SHARE_DAEMON=true`, isolation directories within a repository share
-the reserved `._buck2_shared` daemon directory and retain separate output and
-cache state.
+With `[buck2] share_daemon = true`, compatible tenants share one daemon whose
+connection information lives under `.unidaemons/<compatibility key>/`, while
+each tenant's own daemon directory holds a proxy that represents it to clients
+of other releases. Tenants retain separate output and cache state.
 
-Sharing is opt-in during initial rollout. Set `BUCK2_SHARE_DAEMON=true` for
-selected callers; unset it or set it to `false` to restore separate daemon
-directories. Inplace tests and `buck2.py` disable sharing so their local
-binary does not replace the daemon running the outer build or test command.
-Clients check the daemon executable version and startup settings before reuse.
-A mismatch or a failed connection to a live shared daemon is reported without
-killing sibling tenants. Stop the tenants with `buck2 killall --repo` before
-changing daemon settings or binaries. Unshared daemons retain restart recovery.
+Sharing is opt-in during initial rollout. The key is read from the root
+buckconfig by the client before it selects a daemon directory, and is part of
+the daemon startup options, so a daemon serves only tenants routed the same
+way. A hostname share (`hostname:<fraction>`) enables sharing on a stable
+subset of hosts; hosts that cannot run a shared daemon stay unshared. Core E2E
+tests pin `share_daemon = false` in their external config unless they opt into
+sharing. Because the namespace is keyed by the compatibility key, a client
+never connects to a shared daemon of another release: it evicts its tenant
+through the proxy and starts or joins a daemon for its own key. Unshared
+daemons retain restart recovery.
 
 Tenant disk ownership uses a persistent OS file lock independent of daemon
 routing. A conflicting daemon cannot initialize the same tenant output and cache
 paths until the owner releases them. `buck2 clean` evicts the selected shared
 tenant and waits for cancellation and cleanup before deletion; sibling tenants and the
 daemon-global forkserver state remain available. Lock files are outside the
-disposable tenant directories. Shared tenants also retain the legacy isolation
-lifecycle lock, fencing startup by older clients. An already running legacy
-daemon must be stopped before shared initialization can claim its disk state.
+disposable tenant directories. A shared tenant's own daemon directory is fenced
+by its lifecycle lock as before: a client holds it while it replaces the
+directory's previous owner, and the tenant's proxy publishes its connection
+files under it, refusing a directory that a live process of another release
+still owns.
 
 
 There are 3 ways that the buckd process will shutdown:

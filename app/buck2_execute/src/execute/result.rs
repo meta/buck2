@@ -39,6 +39,17 @@ use crate::materialize::materializer::ReadLease;
 use crate::output_size::OutputSize;
 use crate::re::remote_action_result::ReMetadataTiming;
 
+pub fn command_execution_error_proto(
+    stage: &str,
+    error: &buck2_error::Error,
+) -> buck2_data::command_execution::Error {
+    buck2_data::command_execution::Error {
+        stage: stage.to_owned(),
+        error: format!("{error:#}"),
+        tags: error.tags().iter().map(|t| *t as i32).collect(),
+    }
+}
+
 #[derive(Debug)]
 pub enum CommandExecutionErrorType {
     StorageResourceExhausted,
@@ -147,6 +158,10 @@ pub struct CommandExecutionMetadata {
     /// A TimeSpan covering the time that this build actually waited for this action to complete
     pub time_span: TimeSpan,
 
+    /// The client's wall-clock time when `time_span` started. `None` when `time_span` is not a
+    /// real attempt interval.
+    pub client_start_time: Option<SystemTime>,
+
     /// How long this command actually took to execute. This can be different from the wall_time if
     /// this was e.g. an action cache hit, in which case this field would reflect how long the
     /// command took to actually execute but not how we had to wait for it.
@@ -179,6 +194,7 @@ impl CommandExecutionMetadata {
     pub fn empty(time_span: TimeSpan) -> Self {
         Self {
             time_span,
+            client_start_time: None,
             execution_time: Duration::default(),
             start_time: SystemTime::now(),
             execution_stats: None,
@@ -191,9 +207,14 @@ impl CommandExecutionMetadata {
         }
     }
 
-    pub fn from_re_timing(re_timing: ReMetadataTiming, time_span: TimeSpan) -> Self {
+    pub fn from_re_timing(
+        re_timing: ReMetadataTiming,
+        client_start_time: Option<SystemTime>,
+        time_span: TimeSpan,
+    ) -> Self {
         Self {
             time_span,
+            client_start_time,
             execution_time: re_timing.execution_time,
             start_time: re_timing.start_time,
             execution_stats: re_timing.execution_stats,
@@ -223,7 +244,11 @@ impl CommandExecutionMetadata {
             queue_duration: metadata.queue_duration.and_then(|d| d.try_into().ok()),
             suspend_duration: metadata.suspend_duration.and_then(|d| d.try_into().ok()),
             suspend_count: metadata.suspend_count,
-            client_start_time: None,
+            client_attempt: metadata
+                .client_start_time
+                .map(|t| buck2_data::ClientAttempt {
+                    start_time: Some(buck2_data::timing::whole_millis(t).into()),
+                }),
         }
     }
 }
@@ -260,10 +285,29 @@ pub struct CommandExecutionResult {
     /// Data about time spent waiting (not on critical path) during command execution.
     pub waiting_data: WaitingData,
 
-    /// Holds the outputs on disk for the readers that come after the run, the cache upload among
-    /// them. `None` when the run did not report its outputs, or from an executor whose outputs
-    /// are not on this machine's disk.
-    pub outputs_lease: Option<ReadLease>,
+    /// The outputs on this machine's disk, held for the readers that come after the run, the
+    /// cache upload among them. `None` when the run did not report its outputs, or from an
+    /// executor whose outputs are not on this machine's disk.
+    pub held_outputs: Option<HeldOutputs>,
+}
+
+/// A run's outputs on disk, under a lease for their readers.
+#[derive(Debug)]
+pub struct HeldOutputs {
+    pub lease: ReadLease,
+    /// Where a content-based output among them is.
+    pub content_based_at: ContentBasedOutputsAt,
+}
+
+/// Where a local run leaves a content-based output, which it writes at a placeholder path since
+/// the content path is known only once the content is hashed.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum ContentBasedOutputsAt {
+    /// At the placeholder path: the disk-state core's, whose consumers find content by digest.
+    WrittenPath,
+    /// At its content path, published there: the deferred core's, whose consumers copy from the
+    /// declared path, and which keeps no reader out of the placeholder.
+    ContentPath,
 }
 
 impl CommandExecutionResult {
@@ -337,15 +381,11 @@ impl CommandExecutionResult {
     /// Resolves the output path as used by execution, a stable path it can be
     /// accessed at without holding a lock, and the artifact value.
     ///
-    /// For content-based outputs, we resolve the outputs to the placeholder
-    /// paths that are used during execution, so that e.g. remote execution can
-    /// key on a path matching that used by execution.
-    ///
-    /// The [`ResolvedCommandExecutionOutput`] returned by this function is not
-    /// safe to read without holding a `NamedSemaphores` permit for it: when it
-    /// is a [`ContentBasedPathHash::OutputArtifact`] path,
-    /// concurrently-running `run` actions in different configurations may
-    /// overwrite it.
+    /// The outputs, each with the path remote execution names it by, the placeholder path for a
+    /// content-based one, the path its content is at on this machine, and its value. The local
+    /// path is where the run holding the outputs (`held_outputs`) left them, safe to read for as
+    /// long as this result is held; without such a run it is the content path, where a
+    /// materialization puts a content-based output.
     pub fn resolve_outputs<'a>(
         &'a self,
         fs: &'a ArtifactFs,
@@ -356,7 +396,11 @@ impl CommandExecutionResult {
             &'a ArtifactValue,
         )>,
     > + 'a {
-        self.outputs.iter().map(|(output, value)| {
+        let at_written_path = self
+            .held_outputs
+            .as_ref()
+            .is_some_and(|held| held.content_based_at == ContentBasedOutputsAt::WrittenPath);
+        self.outputs.iter().map(move |(output, value)| {
             let has_content_based_path = output.has_content_based_path();
             let resolved = output.as_ref().resolve(
                 fs,
@@ -367,7 +411,7 @@ impl CommandExecutionResult {
                 }
                 .as_ref(),
             )?;
-            let content_path = if has_content_based_path {
+            let local_path = if has_content_based_path && !at_written_path {
                 output
                     .as_ref()
                     .resolve(fs, Some(&value.content_based_path_hash()))?
@@ -375,7 +419,7 @@ impl CommandExecutionResult {
             } else {
                 resolved.path().to_buf()
             };
-            Ok((resolved, content_path, value))
+            Ok((resolved, local_path, value))
         })
     }
 }
@@ -431,11 +475,7 @@ impl CommandExecutionReport {
                 .into()
             }
             CommandExecutionStatus::Error { stage, error, .. } => {
-                buck2_data::command_execution::Error {
-                    stage: (*stage).to_owned(),
-                    error: format!("{error:#}"),
-                }
-                .into()
+                command_execution_error_proto(stage, error).into()
             }
         };
 
@@ -503,6 +543,8 @@ mod tests {
     use std::time::Instant;
 
     use buck2_common::cas_digest::CasDigest;
+    use buck2_core::fs::project_rel_path::ProjectRelativePathBuf;
+    use buck2_data::local_command::EnvironmentRule;
     use buck2_hash::BuckFixedSortedMap;
     use buck2_util::time_span::TimeSpan;
 
@@ -515,10 +557,13 @@ mod tests {
                 digest: CasDigest::new_blake3([0].repeat(32).as_slice().try_into().unwrap(), 123),
                 command: vec!["fake_buck2".to_owned()],
                 env: BuckFixedSortedMap::from_iter([("FAKE_ENV_VAR".to_owned(), "1".to_owned())]),
+                working_directory: ProjectRelativePathBuf::unchecked_new("dir".to_owned()),
+                environment_rule: EnvironmentRule::InheritExceptExclusions,
             },
         };
         let timing = CommandExecutionMetadata {
             time_span: TimeSpan::from_start_and_duration(Instant::now(), Duration::from_secs(2)),
+            client_start_time: None,
             execution_time: Duration::from_secs(3),
             start_time: SystemTime::UNIX_EPOCH,
             execution_stats: Some(buck2_data::CommandExecutionStats {
@@ -572,7 +617,12 @@ mod tests {
                         value: "1".to_owned(),
                     }],
                     action_digest: format!("{}:{}", "0".repeat(64), "123"),
-                    ..Default::default()
+                    context: Some(buck2_data::LocalCommandContext {
+                        working_directory: Some("dir".to_owned()),
+                        environment_rule:
+                            buck2_data::local_command::EnvironmentRule::InheritExceptExclusions
+                                .into(),
+                    }),
                 },
             )),
         };
@@ -620,7 +670,7 @@ mod tests {
             }),
             suspend_duration: None,
             suspend_count: None,
-            client_start_time: None,
+            client_attempt: None,
         };
         let command_execution_details = buck2_data::CommandExecutionDetails {
             signed_exit_code: Some(456),

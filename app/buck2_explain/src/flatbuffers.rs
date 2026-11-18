@@ -50,6 +50,8 @@ pub(crate) fn gen_fbs(
     actions: Vec<(String, ActionEntryData)>,
     changed_files: Vec<ChangedFilesEntryData>,
 ) -> buck2_error::Result<FlatBufferBuilder<'static>> {
+    ConfiguredTargetNode::prefetch_bodies(&data)?;
+
     // associate actions and changed files with targets when possible
     let (target_data, other_actions_data, other_changed_files) = {
         // These are in case we need to debug orphan actions or changed files
@@ -153,12 +155,13 @@ fn target_to_fbs<'a>(
     let name = builder.create_shared_string(&node.name());
     let target_label = get_target_label(builder, node);
 
-    let oncall = node.oncall().map(|v| builder.create_shared_string(v));
+    let body = node.body()?;
+    let oncall = body.oncall().map(|v| builder.create_shared_string(v));
     let type_ = builder.create_shared_string(node.rule_type().name());
-    let package = builder.create_shared_string(&node.buildfile_path().to_string());
+    let package = builder.create_shared_string(&body.buildfile_path().to_string());
     let target_configuration =
         builder.create_shared_string(&node.target_configuration().to_string());
-    let execution_platform = builder.create_shared_string(&node.execution_platform()?.id());
+    let execution_platform = builder.create_shared_string(&body.execution_platform()?.id());
     let deps = {
         let res = &node
             .deps()
@@ -168,7 +171,7 @@ fn target_to_fbs<'a>(
         builder.create_vector(res)
     };
 
-    let code_pointer = node
+    let code_pointer = body
         .root_location()
         .map(|l| fbs::CodePointerArgs {
             file_path: Some(builder.create_shared_string(&l.file)),
@@ -177,7 +180,7 @@ fn target_to_fbs<'a>(
         .as_ref()
         .map(|r| fbs::CodePointer::create(builder, r));
 
-    let srcs = node
+    let srcs = body
         .get("srcs", AttrInspectOptions::DefinedOnly)
         .map(|v| match categorize(v.value) {
             AttrField::StringList(v) => v.len(),

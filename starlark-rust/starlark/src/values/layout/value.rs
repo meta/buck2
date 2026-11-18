@@ -15,7 +15,6 @@
  * limitations under the License.
  */
 
-use std::any;
 use std::cmp::Ordering;
 use std::fmt;
 use std::fmt::Debug;
@@ -30,7 +29,6 @@ use dupe::Dupe_;
 use dupe::IterDupedExt;
 use dupe::OptionDupedExt;
 use either::Either;
-use num_bigint::BigInt;
 use serde::Serialize;
 use serde::Serializer;
 use starlark_syntax::value_error;
@@ -84,8 +82,6 @@ use crate::values::layout::heap::repr::AValueHeapEntryState;
 use crate::values::layout::heap::repr::AValueRepr;
 use crate::values::layout::pointer::Pointer;
 use crate::values::layout::pointer::RawPointer;
-use crate::values::layout::static_string::VALUE_EMPTY_STRING;
-use crate::values::layout::vtable::AValueDyn;
 use crate::values::layout::vtable::AValueDynFull;
 use crate::values::layout::vtable::AValueVTable;
 use crate::values::list::value::VALUE_EMPTY_FROZEN_LIST;
@@ -99,7 +95,6 @@ use crate::values::starlark_type_id::StarlarkTypeId;
 use crate::values::string::str_type::StarlarkStr;
 use crate::values::structs::value::Struct;
 use crate::values::tuple::value::VALUE_EMPTY_TUPLE;
-use crate::values::type_repr::StarlarkTypeRepr;
 use crate::values::types::int::inline_int::InlineInt;
 use crate::values::types::int::int_or_big::StarlarkIntRef;
 use crate::values::types::list::value::FrozenListData;
@@ -298,12 +293,6 @@ impl<'v> Value<'v> {
         Self::new_int(InlineInt::try_from(x).ok().unwrap())
     }
 
-    /// Create a new blank string.
-    #[inline]
-    pub(crate) fn new_empty_string() -> Self {
-        VALUE_EMPTY_STRING.erase().at().to_value()
-    }
-
     /// Create a new empty tuple.
     #[inline]
     pub(crate) fn new_empty_tuple() -> Self {
@@ -343,27 +332,6 @@ impl<'v> Value<'v> {
             Some(NumRef::Float(*float))
         } else {
             None
-        }
-    }
-
-    pub(crate) fn unpack_integer<I>(self) -> crate::Result<Option<I>>
-    where
-        I: TryFrom<i32>,
-        I: TryFrom<&'v BigInt>,
-    {
-        let Some(num) = StarlarkIntRef::unpack_value_opt(self) else {
-            return Ok(None);
-        };
-        let option = match num {
-            StarlarkIntRef::Small(x) => I::try_from(x.to_i32()).ok(),
-            StarlarkIntRef::Big(x) => x.unpack_integer(),
-        };
-        match option {
-            Some(i) => Ok(Some(i)),
-            None => Err(crate::Error::new_value(IntegerTooBigError {
-                integer_type: any::type_name::<I>(),
-                value: num.to_string(),
-            })),
         }
     }
 
@@ -470,16 +438,13 @@ impl<'v> Value<'v> {
 
     /// Get a pointer to a [`AValue`].
     #[inline]
-    pub(crate) fn get_ref(self) -> AValueDyn<'v> {
-        match self.0.unpack() {
+    pub(crate) fn get_ref(self) -> AValueDynFull<'v> {
+        let avalue = match self.0.unpack() {
             Either::Left(x) => x.unpack(),
             Either::Right(x) => x.as_avalue_dyn(),
-        }
-    }
-
-    #[inline]
-    fn get_ref_full(self) -> AValueDynFull<'v> {
-        unsafe { AValueDynFull::new(self.get_ref(), self) }
+        };
+        // SAFETY: `avalue` was just read from `self`.
+        unsafe { AValueDynFull::new(avalue, self) }
     }
 
     #[inline]
@@ -703,9 +668,7 @@ impl<'v> Value<'v> {
         args: &Arguments<'v, '_>,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> crate::Result<Value<'v>> {
-        eval.with_call_stack(self, location, |eval| {
-            self.get_ref_full().invoke(args, eval)
-        })
+        eval.with_call_stack(self, location, |eval| self.get_ref().invoke(args, eval))
     }
 
     /// Callable parameters if known.
@@ -840,15 +803,15 @@ impl<'v> Value<'v> {
         self.vtable().type_starlark_repr()
     }
 
-    /// Add two [`Value`]s together. Will first try using [`add`](StarlarkValue::add),
-    /// before falling back to [`radd`](StarlarkValue::radd).
+    /// Add two [`Value`]s together. Will first try using [`add`](crate::values::StarlarkType::add),
+    /// before falling back to [`radd`](crate::values::StarlarkType::radd).
     pub fn add(self, other: Value<'v>, heap: Heap<'v>) -> crate::Result<Value<'v>> {
         // Fast special case for ints.
         if let Some(ls) = self.unpack_inline_int() {
             if let Some(rs) = other.unpack_inline_int() {
                 // On overflow take the slow path below.
                 if let Some(sum) = ls.checked_add(rs) {
-                    return Ok(heap.alloc(sum));
+                    return Ok(heap.alloc(sum).to_value());
                 }
             }
         }
@@ -911,17 +874,17 @@ impl<'v> Value<'v> {
         serde_json::to_value(self).map_err(|e| anyhow::anyhow!(e))
     }
 
-    /// Forwards to [`StarlarkValue::set_attr`].
+    /// Forwards to [`StarlarkType::set_attr`](crate::values::StarlarkType::set_attr).
     pub fn set_attr(self, attribute: &str, alloc_value: Value<'v>) -> crate::Result<()> {
         self.get_ref().set_attr(attribute, alloc_value)
     }
 
-    /// Forwards to [`StarlarkValue::set_at`].
+    /// Forwards to [`StarlarkType::set_at`](crate::values::StarlarkType::set_at).
     pub fn set_at(self, index: Value<'v>, alloc_value: Value<'v>) -> crate::Result<()> {
         self.get_ref().set_at(index, alloc_value)
     }
 
-    /// Forwards to [`StarlarkValue::documentation`].
+    /// Forwards to [`StarlarkType::documentation`](crate::values::StarlarkType::documentation).
     pub fn documentation(self) -> DocItem {
         self.get_ref().documentation()
     }
@@ -1011,31 +974,42 @@ impl<'v> Value<'v> {
         }
     }
 
+    /// Whether the value's representation is `T`: the test of
+    /// [`downcast_ref`](Self::downcast_ref), without the reference. A handle is made from this,
+    /// since testing the `Option` of a reference costs a check that the reference is not null.
+    #[inline]
+    pub(crate) fn has_representation<T: StarlarkValue<'v>>(self) -> bool {
+        if T::static_type_id() == StarlarkStr::static_type_id() {
+            self.is_str()
+        } else if PointerI32::type_is_pointer_i32::<T>() {
+            self.unpack_inline_int().is_some()
+        } else {
+            match self.0.unpack_ptr() {
+                None => false,
+                Some(entry) => match entry.state() {
+                    // SAFETY: just checked to be a live value.
+                    AValueHeapEntryState::Value(_) => {
+                        unsafe { self.0.value_header_ptr_unchecked() }
+                            .unpack()
+                            .is::<T>()
+                    }
+                    AValueHeapEntryState::Forward(_) | AValueHeapEntryState::Reservation(_) => {
+                        false
+                    }
+                },
+            }
+        }
+    }
+
     /// Get a reference to underlying data or [`None`]
     /// if contained object has different type than requested.
+    #[inline]
     pub fn downcast_ref<T: StarlarkValue<'v>>(self) -> Option<&'v T> {
-        if T::static_type_id() == StarlarkStr::static_type_id() {
-            if self.is_str() {
-                // SAFETY: we just checked this is string, and requested type is string.
-                Some(unsafe { self.downcast_ref_unchecked() })
-            } else {
-                None
-            }
-        } else if PointerI32::type_is_pointer_i32::<T>() {
-            if self.unpack_inline_int().is_some() {
-                // SAFETY: we just checked this is int, and requested type is int.
-                Some(unsafe { self.downcast_ref_unchecked() })
-            } else {
-                None
-            }
+        if self.has_representation::<T>() {
+            // SAFETY: the representation was just checked to be `T`.
+            Some(unsafe { self.downcast_ref_unchecked() })
         } else {
-            match self.0.unpack_ptr()?.state() {
-                // SAFETY: just checked to be a live value.
-                AValueHeapEntryState::Value(_) => unsafe { self.0.value_header_ptr_unchecked() }
-                    .unpack()
-                    .downcast_ref::<T>(),
-                AValueHeapEntryState::Forward(_) | AValueHeapEntryState::Reservation(_) => None,
-            }
+            None
         }
     }
 
@@ -1210,14 +1184,6 @@ impl<'v> StarlarkDeserialize<'v> for Value<'v> {
     }
 }
 
-impl<'v> StarlarkTypeRepr for Value<'v> {
-    type Canonical = Value<'static>;
-
-    fn starlark_type_repr() -> Ty {
-        Ty::any()
-    }
-}
-
 #[derive(Debug, thiserror::Error)]
 enum ToJsonError {
     #[error("Cycle detected when serializing value of type `{0}` to JSON")]
@@ -1246,7 +1212,7 @@ mod tests {
     #[test]
     fn test_downcast_ref() {
         Heap::temp(|heap| {
-            let string = heap.alloc_str("asd").to_value();
+            let string = heap.alloc("asd").to_value();
             let none = Value::new_none();
             let integer = Value::testing_new_int(17);
 
@@ -1270,7 +1236,7 @@ mod tests {
     #[test]
     fn test_unpack_i32() {
         Heap::temp(|heap| {
-            let value = heap.alloc(i32::MAX);
+            let value = heap.alloc(i32::MAX).to_value();
             assert_eq!(Some(i32::MAX), value.unpack_i32());
         });
     }
@@ -1280,15 +1246,20 @@ mod tests {
         assert!(Value::new_none().is_frozen());
         assert!(Value::testing_new_int(10).is_frozen());
         Heap::temp(|heap| {
-            assert!(!heap.alloc_str("unfrozen").to_value().is_frozen());
-            assert!(!heap.alloc(AllocList([Value::new_none()])).is_frozen());
+            assert!(!heap.alloc("unfrozen").to_value().is_frozen());
+            assert!(
+                !heap
+                    .alloc(AllocList([Value::new_none()]))
+                    .to_value()
+                    .is_frozen()
+            );
         });
     }
 
     #[test]
     fn test_unpack_bigint() {
         Heap::temp(|heap| {
-            let value = heap.alloc(BigInt::from(i64::MAX));
+            let value = heap.alloc(BigInt::from(i64::MAX)).to_value();
             assert_eq!(None, value.unpack_i32());
             assert_eq!(
                 Some(BigInt::from(i64::MAX)),
@@ -1314,7 +1285,7 @@ mod tests {
         );
 
         Heap::temp(|heap| {
-            let list = heap.alloc(AllocList(0..12345));
+            let list = heap.alloc(AllocList(0..12345)).to_value();
             assert_eq!(
                 "list (repr: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10,<<...>>42, 12343, 12344])",
                 list.to_string_for_type_error(),

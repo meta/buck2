@@ -13,6 +13,7 @@ package com.facebook.buck.android.apk;
 import com.android.apksig.ApkSigner;
 import com.facebook.buck.android.apk.sdk.ApkCreationException;
 import com.facebook.buck.android.apk.sdk.DuplicateFileException;
+import com.facebook.buck.android.apk.sdk.FastPackaging;
 import com.facebook.buck.android.apk.sdk.SealedApkException;
 import com.facebook.buck.android.zipalign.ZipAlign;
 import com.facebook.buck.util.zip.RepackZipEntries;
@@ -42,6 +43,10 @@ import org.kohsuke.args4j.Option;
 /** Main entry point for executing {@link ApkBuilderUtils} calls. */
 @Nullsafe(Nullsafe.Mode.LOCAL)
 public class ApkBuilderExecutableMain {
+  private static final int MAX_COMPRESSION_THREADS = 16;
+  private static final String V1_SIGNING_ALWAYS = "always";
+  private static final String V1_SIGNING_MIN_SDK = "min-sdk";
+
   @Option(name = "--output-apk", required = true)
   private String outputApk;
 
@@ -90,6 +95,25 @@ public class ApkBuilderExecutableMain {
   @Nullable
   private String buildInfoGeneratorArgs = null;
 
+  @Option(
+      name = "--fast-packaging",
+      usage =
+          "Copy deflated entries of zip inputs without recompressing them, and deflate files on"
+              + " --compression-threads threads")
+  private boolean fastPackaging;
+
+  @Option(
+      name = "--compression-threads",
+      usage = "Threads that deflate files with --fast-packaging")
+  private int compressionThreads = 4;
+
+  @Option(
+      name = "--v1-signing-policy",
+      usage =
+          "always: sign with v1 and v2. min-sdk: sign with v1 only when the manifest's"
+              + " minSdkVersion is below 24")
+  private String v1SigningPolicy = V1_SIGNING_ALWAYS;
+
   public static void main(String[] args) throws IOException {
     ApkBuilderExecutableMain main = new ApkBuilderExecutableMain();
     CmdLineParser parser = new CmdLineParser(main);
@@ -105,6 +129,26 @@ public class ApkBuilderExecutableMain {
   }
 
   private void run() throws IOException {
+    if (compressionThreads < 1 || compressionThreads > MAX_COMPRESSION_THREADS) {
+      throw new IllegalArgumentException(
+          String.format(
+              "--compression-threads must be between 1 and %d, but was %d",
+              MAX_COMPRESSION_THREADS, compressionThreads));
+    }
+    if (!V1_SIGNING_ALWAYS.equals(v1SigningPolicy) && !V1_SIGNING_MIN_SDK.equals(v1SigningPolicy)) {
+      throw new IllegalArgumentException(
+          String.format(
+              "--v1-signing-policy must be %s or %s, but was %s",
+              V1_SIGNING_ALWAYS, V1_SIGNING_MIN_SDK, v1SigningPolicy));
+    }
+
+    String scratchPath = System.getenv("BUCK_SCRATCH_PATH");
+    if (scratchPath == null || scratchPath.isEmpty()) {
+      throw new IllegalStateException(
+          "BUCK_SCRATCH_PATH environment variable must be set and non-empty");
+    }
+    Path scratchDir = Paths.get(scratchPath);
+
     ImmutableSet<Path> assetDirectories =
         Files.readAllLines(Paths.get(assetDirectoriesList)).stream()
             .map(Paths::get)
@@ -112,7 +156,7 @@ public class ApkBuilderExecutableMain {
 
     Path buildInfoDir = null;
     if (buildInfoGeneratorArgs != null) {
-      buildInfoDir = generateBuildInfoAssetDir(buildInfoGeneratorArgs);
+      buildInfoDir = generateBuildInfoAssetDir(buildInfoGeneratorArgs, scratchDir);
       assetDirectories =
           ImmutableSet.<Path>builder().addAll(assetDirectories).add(buildInfoDir).build();
     }
@@ -147,8 +191,9 @@ public class ApkBuilderExecutableMain {
     Path keystorePath = Paths.get(keystore);
     Path keystorePropertiesPath = Paths.get(keystoreProperties);
 
-    Path intermediateApk = Files.createTempFile("intermediate", "output.apk");
-    Path zipalignApk = Files.createTempFile("zipalign", "output.apk");
+    Path tempDir = Files.createTempDirectory(scratchDir, "apk_builder");
+    Path intermediateApk = tempDir.resolve("intermediate.apk");
+    Path zipalignApk = tempDir.resolve("zipalign.apk");
     KeystoreProperties keystoreProperties =
         KeystoreProperties.createFromPropertiesFile(keystorePath, keystorePropertiesPath);
 
@@ -166,11 +211,15 @@ public class ApkBuilderExecutableMain {
           packageMetaInfVersionFiles,
           null,
           excludedResources,
-          archivePath -> matchesAny(uncompressedFilePatterns, archivePath));
+          archivePath -> matchesAny(uncompressedFilePatterns, archivePath),
+          fastPackaging
+              ? FastPackaging.withCompressionThreads(
+                  Math.min(compressionThreads, Runtime.getRuntime().availableProcessors()))
+              : null);
 
       if (compressResourcesDotArsc) {
         Path intermediateApkWithCompressedResources =
-            Files.createTempFile("intermediate", "output_with_compressed_resources.apk");
+            tempDir.resolve("intermediate_with_compressed_resources.apk");
         RepackZipEntries.repack(
             intermediateApk,
             intermediateApkWithCompressedResources,
@@ -184,7 +233,7 @@ public class ApkBuilderExecutableMain {
             findCompressedEntries(intermediateApk, uncompressedFilePatterns);
         if (!compressedUncompressedFiles.isEmpty()) {
           Path intermediateApkWithUncompressedFiles =
-              Files.createTempFile("intermediate", "output_with_uncompressed_files.apk");
+              tempDir.resolve("intermediate_with_uncompressed_files.apk");
           RepackZipEntries.repack(
               intermediateApk,
               intermediateApkWithUncompressedFiles,
@@ -200,8 +249,11 @@ public class ApkBuilderExecutableMain {
 
       ImmutableList<ApkSigner.SignerConfig> signerConfigs =
           ApkSignerUtils.getSignerConfigs(keystoreProperties, Files.newInputStream(keystorePath));
+      boolean v1SigningEnabled =
+          V1_SIGNING_ALWAYS.equals(v1SigningPolicy)
+              || ApkSignerUtils.needsV1Signature(zipalignApk.toFile());
       ApkSignerUtils.signApkFile(
-          zipalignApk.toFile(), Paths.get(outputApk).toFile(), signerConfigs);
+          zipalignApk.toFile(), Paths.get(outputApk).toFile(), signerConfigs, v1SigningEnabled);
     } catch (UnrecoverableKeyException
         | NoSuchAlgorithmException
         | ApkCreationException
@@ -215,14 +267,11 @@ public class ApkBuilderExecutableMain {
               "Found duplicate file for APK: %1$s\nOrigin 1: %2$s\nOrigin 2: %3$s",
               e.getArchivePath(), e.getFile1(), e.getFile2()));
     } finally {
+      deleteRecursivelyQuietly(tempDir);
       if (buildInfoDir != null) {
         // Clean up the synthesized build-info temp dir (the bundler does the same on iOS); the
         // action sandbox would reclaim it anyway.
-        try {
-          MoreFiles.deleteRecursively(buildInfoDir, RecursiveDeleteOption.ALLOW_INSECURE);
-        } catch (IOException e) {
-          // Best-effort cleanup.
-        }
+        deleteRecursivelyQuietly(buildInfoDir);
       }
     }
 
@@ -237,9 +286,10 @@ public class ApkBuilderExecutableMain {
    * it from the apk packaging action, ties the baked id to the APK content (re-baked only when the
    * APK changes).
    */
-  private static Path generateBuildInfoAssetDir(String argsFile) throws IOException {
+  private static Path generateBuildInfoAssetDir(String argsFile, Path scratchDir)
+      throws IOException {
     List<String> command = new ArrayList<>(Files.readAllLines(Paths.get(argsFile)));
-    Path dir = Files.createTempDirectory("build_info");
+    Path dir = Files.createTempDirectory(scratchDir, "build_info");
     command.add("--output-dir");
     command.add(dir.toString());
     Process process = new ProcessBuilder(command).inheritIO().start();
@@ -254,6 +304,14 @@ public class ApkBuilderExecutableMain {
       throw new RuntimeException("Build-info generator failed with exit code " + exitCode);
     }
     return dir;
+  }
+
+  private static void deleteRecursivelyQuietly(Path path) {
+    try {
+      MoreFiles.deleteRecursively(path, RecursiveDeleteOption.ALLOW_INSECURE);
+    } catch (IOException e) {
+      // Best-effort cleanup.
+    }
   }
 
   private static boolean matchesAny(ImmutableSet<Pattern> patterns, String archivePath) {

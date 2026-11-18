@@ -11,6 +11,7 @@
 use allocative::Allocative;
 use buck2_artifact::artifact::source_artifact::SourceArtifact;
 use buck2_build_api::interpreter::rule_defs::artifact::starlark_artifact::StarlarkArtifact;
+use buck2_build_api::interpreter::rule_defs::artifact::starlark_artifact_like::StarlarkArtifactView;
 use buck2_common::file_ops::dice::DiceFileComputations;
 use buck2_common::file_ops::metadata::RawPathMetadata;
 use buck2_common::package_listing::dice::DicePackageListingResolver;
@@ -35,13 +36,10 @@ use starlark::environment::Methods;
 use starlark::environment::MethodsBuilder;
 use starlark::eval::Evaluator;
 use starlark::starlark_module;
-use starlark::values::AllocValue;
-use starlark::values::Heap;
 use starlark::values::NoSerialize;
 use starlark::values::StarlarkValue;
 use starlark::values::StringValue;
 use starlark::values::Trace;
-use starlark::values::Value;
 use starlark::values::ValueOf;
 use starlark::values::ValueTyped;
 use starlark::values::none::NoneOr;
@@ -89,16 +87,10 @@ impl<'v> BxlFilesystem<'v> {
 
 starlark::methods_static!(BXL_FILESYSTEM_METHODS = fs_operations);
 
-#[starlark_value(type = "bxl.Filesystem", StarlarkTypeRepr, UnpackValue)]
+#[starlark_value(type = "bxl.Filesystem", no_freeze)]
 impl<'v> StarlarkValue<'v> for BxlFilesystem<'v> {
     fn get_methods() -> Option<&'static Methods> {
         Some(BXL_FILESYSTEM_METHODS.methods())
-    }
-}
-
-impl<'v> AllocValue<'v> for BxlFilesystem<'v> {
-    fn alloc_value(self, heap: Heap<'v>) -> Value<'v> {
-        heap.alloc_complex_no_freeze(self)
     }
 }
 
@@ -198,8 +190,9 @@ fn fs_operations(builder: &mut MethodsBuilder) {
         expr: FileExpr<'v>,
         #[starlark(require = named, default = false)] dirs_only: bool,
         eval: &mut Evaluator<'v, '_, '_>,
-    ) -> starlark::Result<StarlarkReadDirSet> {
-        Ok(this.ctx.via_dice(eval, |ctx| {
+    ) -> starlark::Result<ValueOf<'v, StarlarkReadDirSet>> {
+        let heap = eval.heap();
+        let read_dir_set = this.ctx.via_dice(eval, |ctx| {
             ctx.via(|dice| {
                 async {
                     let path = expr.get(dice, this.cell()?).await;
@@ -219,7 +212,8 @@ fn fs_operations(builder: &mut MethodsBuilder) {
                 }
                 .boxed_local()
             })
-        })?)
+        })?;
+        Ok(ValueOf::alloc(heap, read_dir_set))
     }
 
     /// Returns whether the provided path is a dir. Returns false is the dir does not exist.
@@ -268,7 +262,7 @@ fn fs_operations(builder: &mut MethodsBuilder) {
     ) -> starlark::Result<StringValue<'v>> {
         Ok(eval
             .heap()
-            .alloc_str(this.project_relative_path(expr, eval)?.as_str()))
+            .alloc(this.project_relative_path(expr, eval)?.as_str()))
     }
 
     /// Returns the absolute path, given the file expression. Use at your own risk, as the current working directory
@@ -286,7 +280,7 @@ fn fs_operations(builder: &mut MethodsBuilder) {
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<StringValue<'v>> {
         let abs_norm_path = this.resolve(expr, eval)?;
-        Ok(eval.heap().alloc_str(abs_norm_path.as_abs_path().to_str()?))
+        Ok(eval.heap().alloc(abs_norm_path.as_abs_path().to_str()?))
     }
 
     /// Returns the source artifact for a path and an optional target hint (unconfigured target label or node)
@@ -297,7 +291,7 @@ fn fs_operations(builder: &mut MethodsBuilder) {
         expr: FileExpr<'v>,
         #[starlark(default = NoneOr::None)] target_hint: NoneOr<ValueOf<'v, TargetListExprArg<'v>>>,
         eval: &mut Evaluator<'v, '_, '_>,
-    ) -> starlark::Result<ValueTyped<'v, StarlarkArtifact>> {
+    ) -> starlark::Result<ValueOf<'v, StarlarkArtifactView<'v>>> {
         let buck_path = this.ctx.via_dice(eval, |dice| {
             dice.via(|dice| {
                 async {
@@ -314,7 +308,7 @@ fn fs_operations(builder: &mut MethodsBuilder) {
                         }
                         NoneOr::Other(target_hint) => {
                             let target_expr = TargetListExpr::<'v, TargetNode>::unpack(
-                                target_hint.typed,
+                                target_hint.try_get()?,
                                 &this.ctx,
                                 dice,
                             )
@@ -323,7 +317,7 @@ fn fs_operations(builder: &mut MethodsBuilder) {
                                 Ok(node.label().pkg())
                             } else {
                                 Err(BxlFilesystemError::MultipleTargetHintsNotSupported(
-                                    target_hint.value.to_repr(),
+                                    target_hint.to_value().to_repr(),
                                 )
                                 .into())
                             }
@@ -358,6 +352,6 @@ fn fs_operations(builder: &mut MethodsBuilder) {
 
         Ok(eval
             .heap()
-            .alloc_typed(StarlarkArtifact::new(SourceArtifact::new(buck_path).into())))
+            .alloc(StarlarkArtifact::new(SourceArtifact::new(buck_path).into())))
     }
 }

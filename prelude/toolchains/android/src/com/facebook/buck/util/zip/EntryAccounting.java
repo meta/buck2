@@ -12,6 +12,7 @@ package com.facebook.buck.util.zip;
 
 import static com.google.common.base.Preconditions.checkState;
 
+import com.facebook.infer.annotation.Nullsafe;
 import com.google.common.hash.Hasher;
 import com.google.common.hash.Hashing;
 import com.google.common.io.CountingOutputStream;
@@ -20,13 +21,16 @@ import java.io.OutputStream;
 import java.nio.charset.StandardCharsets;
 import java.util.Calendar;
 import java.util.Locale;
+import java.util.Objects;
 import java.util.zip.Deflater;
 import java.util.zip.ZipEntry;
+import org.jspecify.annotations.Nullable;
 
 /**
  * A wrapper containing the {@link ZipEntry} and additional book keeping information required to
  * write the entry to a zip file.
  */
+@Nullsafe(Nullsafe.Mode.LOCAL)
 class EntryAccounting {
 
   private static final ThreadLocal<Calendar> CALENDAR =
@@ -89,7 +93,7 @@ class EntryAccounting {
   public long getTime() {
     // Calendar objects aren't thread-safe, but they're quite expensive to create, so we'll re-use
     // them per thread.
-    Calendar instance = CALENDAR.get();
+    Calendar instance = Objects.requireNonNull(CALENDAR.get());
     instance.setTimeInMillis(entry.getTime());
 
     int year = instance.get(Calendar.YEAR);
@@ -366,8 +370,8 @@ class EntryAccounting {
 
     private static final int DEFAULT_BUFFER_SIZE = 8192;
 
-    private byte[] buffer;
-    private Deflater deflater;
+    private byte @Nullable [] buffer;
+    private @Nullable Deflater deflater;
     private int compressionLevel = Deflater.DEFAULT_COMPRESSION;
 
     void setCompressionLevel(int compressionLevel) {
@@ -385,6 +389,7 @@ class EntryAccounting {
     /** Writes data to the output stream. */
     void write(OutputStream out, byte[] bytes, int off, int len) throws IOException {
       initializeIfNeeded();
+      Deflater deflater = Objects.requireNonNull(this.deflater);
       deflater.setInput(bytes, off, len);
       while (!deflater.needsInput()) {
         deflate(out);
@@ -394,6 +399,7 @@ class EntryAccounting {
     /** Finishes the compression process. */
     void finish(OutputStream out) throws IOException {
       initializeIfNeeded();
+      Deflater deflater = Objects.requireNonNull(this.deflater);
       deflater.finish();
       while (!deflater.finished()) {
         deflate(out);
@@ -403,6 +409,8 @@ class EntryAccounting {
     /** Compress data to the output stream. */
     private int deflate(OutputStream out) throws IOException {
       initializeIfNeeded();
+      Deflater deflater = Objects.requireNonNull(this.deflater);
+      byte[] buffer = Objects.requireNonNull(this.buffer);
       final int written = deflater.deflate(buffer, 0, buffer.length);
       if (written > 0) {
         out.write(buffer, 0, written);

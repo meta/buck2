@@ -12,6 +12,7 @@ rust_library(
         "fbsource//third-party/rust:pin-project",
         "fbsource//third-party/rust:tonic",
         "//buck2/allocative/allocative:allocative",
+        "//buck2/app/buck2_agent_interactive:buck2_agent_interactive",
         "//buck2/app/buck2_build_signals:buck2_build_signals",
         "//buck2/app/buck2_certs:buck2_certs",
         "//buck2/app/buck2_cli_proto:buck2_cli_proto",

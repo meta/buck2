@@ -33,13 +33,17 @@ pub use inventory;
 pub use pagable::StaticValue;
 pub use pagable::static_str;
 pub use pagable::static_value;
+pub mod behaviour;
 pub mod components;
 pub mod invoke_macro_error;
 pub mod param_spec;
 pub mod parse_args;
+pub mod representations;
 pub mod sig;
 
 // Re-exports for the methods_static!/globals_static! macros.
+pub use representations::ViewOfRepresentations;
+
 pub use crate::environment::GlobalsStatic;
 pub use crate::environment::MethodsStatic;
 // Re-export for const_frozen_string!, static_starlark_value!, and

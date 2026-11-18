@@ -132,6 +132,8 @@ def get_default_info(
         for name, artifact in abis:
             if artifact != None:
                 sub_targets[name] = [DefaultInfo(default_output = artifact)]
+        if outputs.command_proto_json != None:
+            sub_targets["jar_command_proto_json"] = [DefaultInfo(default_output = outputs.command_proto_json)]
         other_outputs = []
         if not java_toolchain.is_bootstrap_toolchain and outputs.annotation_processor_output:
             other_outputs.append(outputs.annotation_processor_output)

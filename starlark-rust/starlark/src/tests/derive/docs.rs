@@ -99,7 +99,7 @@ starlark_complex_value!(ComplexTestExample);
 
 starlark::methods_static!(COMPLEX_TEST_EXAMPLE_METHODS = object_docs_1);
 
-#[starlark_value(type = "ComplexTestExample")]
+#[starlark_value(type = "ComplexTestExample", alloc = by_hand)]
 impl<'v> StarlarkValue<'v> for ComplexTestExample<'v>
 where
     Self: ProvidesStaticType<'v>,

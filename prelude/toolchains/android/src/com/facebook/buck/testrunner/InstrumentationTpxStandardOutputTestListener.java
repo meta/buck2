@@ -16,6 +16,7 @@ import com.facebook.buck.android.exopackage.AdbUtils;
 import com.facebook.buck.android.exopackage.AndroidDevice;
 import com.facebook.buck.testresultsoutput.TestResultsOutputEvent.RunFailureStatus;
 import com.facebook.buck.testresultsoutput.TestResultsOutputSender;
+import com.facebook.infer.annotation.Nullsafe;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.Map;
@@ -32,6 +33,7 @@ import java.util.Map;
  * <p>testRunStarted testStarted [testFailed] [testAssumptionFailure] [testIgnored] testEnded ....
  * [testRunFailed] testRunEnded
  */
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public class InstrumentationTpxStandardOutputTestListener implements ITestRunListener {
   private static final String OS_FINGERPRINT_PROPERTY = "ro.build.fingerprint";
   private static final String OS_FINGERPRINT_METADATA_KEY = "app_info:OS";

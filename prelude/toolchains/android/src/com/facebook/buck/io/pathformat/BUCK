@@ -11,6 +11,9 @@ buck_java_library(
     visibility = [
         "PUBLIC",
     ],
+    deps = [
+        "prelude//toolchains/android/third-party:infer-annotations",
+    ],
     exported_deps = [
         "prelude//toolchains/android/src/com/facebook/buck/core/filesystems:filesystems",
     ],

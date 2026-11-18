@@ -15,32 +15,26 @@
  * limitations under the License.
  */
 
-use crate::typing::Ty;
+use crate as starlark;
+use crate::any::ProvidesStaticType;
 use crate::values::UnpackValue;
-use crate::values::Value;
-use crate::values::type_repr::StarlarkTypeRepr;
-use crate::values::types::num::value::Num;
+use crate::values::ValueOf;
+use crate::values::type_expr::StarlarkTypeExpr;
 use crate::values::types::num::value::NumRef;
 
 /// Unpack `int` or `float` into `f64`.
+#[derive(ProvidesStaticType)]
 pub struct UnpackFloat(pub f64);
 
-impl StarlarkTypeRepr for UnpackFloat {
-    type Canonical = <Num as StarlarkTypeRepr>::Canonical;
-
-    fn starlark_type_repr() -> Ty {
-        <Self::Canonical as StarlarkTypeRepr>::starlark_type_repr()
-    }
-}
-
 impl<'v> UnpackValue<'v> for UnpackFloat {
+    type Type = <NumRef<'v> as UnpackValue<'v>>::Type;
     type Error = <NumRef<'v> as UnpackValue<'v>>::Error;
 
-    fn unpack_value_impl(value: Value<'v>) -> Result<Option<Self>, Self::Error> {
-        let Some(num) = NumRef::unpack_value_impl(value)? else {
-            return Ok(None);
-        };
-        Ok(Some(UnpackFloat(num.as_float())))
+    fn unpack(
+        value: ValueOf<'v, Self::Type>,
+        get: <Self::Type as StarlarkTypeExpr<'v>>::Get,
+    ) -> Result<Self, Self::Error> {
+        Ok(UnpackFloat(NumRef::unpack(value, get)?.as_float()))
     }
 }
 
@@ -63,7 +57,7 @@ mod tests {
             );
             assert_eq!(
                 1.0,
-                UnpackFloat::unpack_value(heap.alloc(1.0))
+                UnpackFloat::unpack_value(heap.alloc(1.0).to_value())
                     .unwrap()
                     .unwrap()
                     .0

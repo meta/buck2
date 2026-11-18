@@ -871,6 +871,17 @@ message StructuredError {
   // results?
   bool action_cache_is_corrupted = 10;
   reserved 11;
+  // The error the soft error reported, if it has
+  // `daemon_in_memory_state_is_corrupted` or `daemon_restart_requested`. A
+  // command that was sent it, and that the daemon then shutting down
+  // interrupts, fails with it.
+  //
+  // We should consider setting this on every soft error, and using it to
+  // replace `payload`, `location`, the flags above, etc.
+  ErrorReport error = 12;
+  // The daemon is to be replaced now. A daemon that can restart itself sends
+  // this to every running command and shuts down.
+  bool daemon_restart_requested = 13;
 }
 
 message CriticalPathEntry {
@@ -1182,6 +1193,15 @@ message ResourceControlEvent {
   uint64 allprocs_memory_current = 6;
   uint64 allprocs_memory_pressure = 7;
   uint64 allprocs_memory_swap_current = 12;
+  // The part of `allprocs_memory_current` that is page cache which the kernel
+  // can drop
+  uint64 allprocs_page_cache = 20;
+  // The part of `allprocs_page_cache` that the kernel has seen in repeated use,
+  // which it drops last
+  uint64 allprocs_page_cache_active = 21;
+  // How many times so far the kernel wanted to move memory of these processes
+  // to swap and couldn't
+  uint64 allprocs_swap_failures = 22;
 
   // Memory information regarding the buck2 daemon cgroup
   uint64 daemon_memory_current = 17;
@@ -1593,6 +1613,11 @@ message Snapshot {
   // materializer's declared artifacts. Always populated by current daemons;
   // absent in event logs recorded by older daemons that pre-date this field.
   optional StandaloneTtlRefreshStats standalone_ttl_refresh = 3002;
+
+  // Time since this command's tenant generation was created. Equals
+  // `daemon_uptime_s` for the tenant a daemon started with; a tenant that
+  // joined a shared daemon later, or was recreated after eviction, is younger.
+  optional uint64 tenant_uptime_s = 3003;
 }
 
 message StandaloneTtlRefreshStats {
@@ -2335,12 +2360,21 @@ message CommandExecutionMetadata {
   /// resource control was not enabled.
   optional uint64 suspend_count = 11;
 
+  reserved 12; // client_start_time, now in `client_attempt`
+
+  /// This attempt as the client saw it. Unset when there was no real attempt
+  /// interval. Written to the event log only, not to Scribe.
+  ClientAttempt client_attempt = 13;
+}
+
+/// One command attempt as the client saw it.
+message ClientAttempt {
   /// The client's wall-clock time when this attempt started, read alongside
-  /// the monotonic start of `wall_time`. Unlike `start_time`, which can come
-  /// from an RE worker or from the original execution of a cached result, this
-  /// is always this attempt's own and on the client's clock. Whole
-  /// milliseconds. Unset when there was no real attempt interval.
-  google.protobuf.Timestamp client_start_time = 12;
+  /// the monotonic start of `CommandExecutionMetadata.wall_time`. Unlike
+  /// `CommandExecutionMetadata.start_time`, which can come from an RE worker or
+  /// from the original execution of a cached result, this is always this
+  /// attempt's own and on the client's clock. Whole milliseconds.
+  google.protobuf.Timestamp start_time = 1;
 }
 
 /// What the RE worker reported about running a command for this build. Times
@@ -2362,19 +2396,27 @@ message ReWorkerDetails {
   optional uint64 cpu_time_user_us = 4;
   optional uint64 cpu_time_system_us = 5;
 
-  /// Number of times RE attempted the command, when more than once.
-  optional uint32 execution_attempts = 6;
-
-  /// Microseconds the final attempt spent queued: from RE last queuing the
-  /// command to a worker receiving it. Set only when RE attempted the command
-  /// more than once; after one attempt it equals `queue_duration`. The two ends
-  /// are stamped on different machines, so it is also unset when clock skew
-  /// would make it negative.
-  optional uint64 final_queue_us = 7;
+  reserved 6, 7; // execution_attempts and final_queue_us, now in `attempts`
 
   /// Bytes the worker downloaded for inputs and uploaded for outputs.
   optional uint64 input_download_bytes = 8;
   optional uint64 output_upload_bytes = 9;
+
+  /// Set only when RE attempted the command more than once. After one attempt
+  /// there is nothing to add: the final queue time equals
+  /// `CommandExecutionMetadata.queue_duration`.
+  ReAttempts attempts = 10;
+}
+
+/// The attempts RE made at a command it attempted more than once.
+message ReAttempts {
+  /// Number of attempts, at least two.
+  uint32 count = 1;
+
+  /// Microseconds the final attempt spent queued: from RE last queuing the
+  /// command to a worker receiving it. The two ends are stamped on different
+  /// machines, so it is unset when clock skew would make it negative.
+  optional uint64 final_queue_us = 2;
 }
 
 message CommandOutputsMissing {
@@ -2407,6 +2449,9 @@ message CommandExecution {
   message Error {
     string stage = 1;
     string error = 2;
+    // buck2's classification of `error`, so consumers can act on what buck2
+    // already knows about the failure instead of parsing `error`.
+    repeated buck.data.error.ErrorTag tags = 3;
   }
 
   // (Hybrid execution only) This executor released its claim in order to allow
@@ -2559,25 +2604,35 @@ message ActionExecutionEnd {
   // command's total.
   optional uint64 dep_file_db_writes_queued = 47;
 
-  // For `run` actions: time spent before checking caches (expanding the command
-  // line, building the input tree, fingerprinting dep files), and time spent
-  // after the result arrived (unpacking outputs, writing the dep-file
-  // database), in microseconds at two significant figures. Unset for other
-  // actions and for failed ones, and `finish_action_us` is unset when a local
-  // dep-file cache hit skipped execution.
-  optional uint64 prepare_command_us = 48;
-  optional uint64 finish_action_us = 49;
+  // prepare_command_us and finish_action_us, now in `run_action_timings`
+  reserved 48, 49;
 
   // The producers of this action's direct inputs, recorded only with
   // `--log-action-graph`. For an action a dynamic output created, they include
   // the producers of what its lambda read, since the action could not start
   // before those were built. Inputs that arrive through a transitive set are
-  // referenced by the set's id instead of being expanded.
+  // referenced by the set's id instead of being expanded. Written to the event
+  // log only, not to Scribe.
   ActionGraphProducers graph_producers = 50;
 
   // The name of the execution group the action ran in; empty for the default
   // execution group.
   string exec_group = 51;
+
+  // For `run` actions; unset for other actions and for failed ones. Written to
+  // the event log only, not to Scribe.
+  RunActionTimings run_action_timings = 52;
+}
+
+// Where a `run` action spent its time outside the command, in microseconds at
+// two significant figures.
+message RunActionTimings {
+  // Before checking caches: expanding the command line, building the input
+  // tree, fingerprinting dep files.
+  optional uint64 prepare_command_us = 1;
+  // After the result arrived: unpacking outputs, writing the dep-file
+  // database. Unset when a local dep-file cache hit skipped execution.
+  optional uint64 finish_action_us = 2;
 }
 
 enum IncrementalKind {
@@ -3300,9 +3355,10 @@ message LocalCommand {
   repeated string argv = 1;
   repeated EnvironmentEntry env = 2;
   string action_digest = 3;
-  // Working directory, relative to the project root. Unset when it is the
-  // project root, where most commands run; tests run in their cell's root.
-  optional string working_directory = 4;
+  reserved 4, 5; // working_directory and environment_rule, now in `context`
+  // Where and how the command ran beyond `argv` and `env`. Written to the
+  // event log only, not to Scribe.
+  LocalCommandContext context = 6;
   // How the command's environment was built from buck2's own, before `env` was
   // set on top of it.
   enum EnvironmentRule {
@@ -3311,12 +3367,20 @@ message LocalCommand {
     // buck2's environment minus a fixed list of variables known to break
     // commands, such as `LD_PRELOAD` and `PYTHONPATH`.
     INHERIT_EXCEPT_EXCLUSIONS = 1;
-    // An empty environment plus the allow-listed variables buck2 had.
+    // An empty environment plus the allow-listed variables buck2 had. With
+    // `buck2.tests_inherit_client_coding_agent_metadata`, a test also gets the
+    // invoking client's `CODING_AGENT_METADATA`, which `env` doesn't list.
     TEST_ALLOWLIST = 2;
     // An empty environment.
     CLEARED = 3;
   }
-  EnvironmentRule environment_rule = 5;
+}
+
+message LocalCommandContext {
+  // Working directory, relative to the project root. Unset when it is the
+  // project root, where most commands run; tests run in their cell's root.
+  optional string working_directory = 1;
+  LocalCommand.EnvironmentRule environment_rule = 2;
 }
 
 message WorkerInitCommand {
@@ -3843,13 +3907,13 @@ message InvocationRecord {
 
   // Peak swap usage (bytes) of all Buck2 processes during the invocation,
   // from allprocs cgroup memory.swap.current.
-  uint64 memory_max_swap_bytes_allprocs = 434;
+  optional uint64 memory_max_swap_bytes_allprocs = 434;
   // Peak memory pressure (PSI full avg10 %) of all Buck2
   // processes during the invocation, from allprocs cgroup memory.pressure.
-  double memory_max_pressure_10s_avg_allprocs = 435;
+  optional double memory_max_pressure_10s_avg_allprocs = 435;
   // Peak memory pressure (PSI full avg60 %) of all Buck2
   // processes during the invocation, from allprocs cgroup memory.pressure.
-  double memory_max_pressure_60s_avg_allprocs = 436;
+  optional double memory_max_pressure_60s_avg_allprocs = 436;
 
   // Agent context entries passed via --agent-context.
   repeated AgentContextEntry agent_context = 437;

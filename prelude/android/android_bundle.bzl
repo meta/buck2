@@ -38,16 +38,33 @@ def android_bundle_impl(ctx: AnalysisContext) -> list[Provider]:
         extension = ".aab",
     )
 
-    output_bundle = wrapped_build_bundle(
-        output_filename = ctx.label.name,
+    bundle_kwargs = dict(
         actions = ctx.actions,
         android_toolchain = ctx.attrs._android_toolchain[AndroidToolchainInfo],
         dex_files_info = android_binary_info.dex_files_info,
-        native_library_info = native_library_info,
         resources_info = android_binary_info.resources_info,
         bundle_config = ctx.attrs.bundle_config_file,
-        validation_deps_outputs = get_validation_deps_outputs(ctx) + native_library_info.validation_outputs,
         packaging_options = ctx.attrs.packaging_options,
+    )
+
+    # With a deferred relink, the bundle this rule outputs is built from the relinked libraries,
+    # and an early bundle from the unrelinked ones lets Redex start before the relinks finish (the
+    # [unrelinked_package] sub-target; the step after Redex swaps the relinked libraries in).
+    unrelinked_bundle = None
+    if native_library_info.shipped:
+        unrelinked_bundle = build_bundle(
+            output_filename = ctx.label.name + "_unrelinked",
+            native_library_info = native_library_info,
+            validation_deps_outputs = get_validation_deps_outputs(ctx) + native_library_info.validation_outputs,
+            name_prefix = "unrelinked/",
+            **bundle_kwargs,
+        )
+        native_library_info = native_library_info.shipped
+    output_bundle = wrapped_build_bundle(
+        output_filename = ctx.label.name,
+        native_library_info = native_library_info,
+        validation_deps_outputs = get_validation_deps_outputs(ctx) + native_library_info.validation_outputs,
+        **bundle_kwargs,
     )
 
     extra_providers = []
@@ -87,15 +104,29 @@ def android_bundle_impl(ctx: AnalysisContext) -> list[Provider]:
     sub_targets.update(target_stats_subtargets)
 
     java_packaging_deps = android_binary_info.java_packaging_deps
+
+    def aab_info(aab):
+        return AndroidAabInfo(
+            aab = aab,
+            manifest = android_binary_info.resources_info.manifest,
+            materialized_artifacts = android_binary_info.materialized_artifacts,
+            unstripped_shared_libraries = native_library_info.unstripped_shared_libraries,
+        )
+
+    # What an apk_genrule needs to run on the early bundle (see android_apk_impl).
+    early_bundle = unrelinked_bundle or output_bundle
+    early_sub_targets = dict(sub_targets)
+    if "aab" in early_sub_targets:
+        early_sub_targets["aab"] = [DefaultInfo(default_outputs = [early_bundle])]
+    sub_targets["unrelinked_package"] = [
+        aab_info(early_bundle),
+        DefaultInfo(default_output = early_bundle, sub_targets = early_sub_targets),
+    ] + ([android_binary_info.preprocessed_java_classes_info] if android_binary_info.preprocessed_java_classes_info else [])
+
     return (
         [
             DefaultInfo(default_output = default_output, other_outputs = android_binary_info.materialized_artifacts, sub_targets = sub_targets),
-            AndroidAabInfo(
-                aab = output_bundle,
-                manifest = android_binary_info.resources_info.manifest,
-                materialized_artifacts = android_binary_info.materialized_artifacts,
-                unstripped_shared_libraries = native_library_info.unstripped_shared_libraries,
-            ),
+            aab_info(output_bundle),
             AndroidBinaryPrimaryPlatformInfo(
                 primary_platform = android_binary_info.primary_platform,
             ),
@@ -122,6 +153,8 @@ def build_bundle(
     bundle_config: Artifact | None,
     validation_deps_outputs: [list[Artifact], None] = None,
     packaging_options: dict | None = None,
+    # Prefixes the files declared besides the bundle, so one analysis can build two bundles.
+    name_prefix: str = "",
 ) -> Artifact:
     output_bundle = actions.declare_output("{}.aab".format(output_filename), has_content_based_path = False)
 
@@ -147,19 +180,21 @@ def build_bundle(
     root_module_asset_directories = (
         native_library_info.root_module_native_lib_assets + dex_files_info.root_module_bootstrap_dex_dirs + dex_files_info.root_module_secondary_dex_dirs
     )
-    root_module_asset_directories_file = argfile(actions = actions, name = "root_module_asset_directories.txt", args = root_module_asset_directories)
+    root_module_asset_directories_file = argfile(actions = actions, name = name_prefix + "root_module_asset_directories.txt", args = root_module_asset_directories)
 
     non_root_module_asset_directories = resources_info.module_manifests + dex_files_info.non_root_module_secondary_dex_dirs
-    non_root_module_asset_directories_file = argfile(actions = actions, name = "non_root_module_asset_directories.txt", args = non_root_module_asset_directories)
+    non_root_module_asset_directories_file = argfile(
+        actions = actions, name = name_prefix + "non_root_module_asset_directories.txt", args = non_root_module_asset_directories
+    )
     non_root_module_asset_native_lib_directories = argfile(
-        actions = actions, name = "non_root_module_asset_native_lib_directories.txt", args = native_library_info.non_root_module_native_lib_assets
+        actions = actions, name = name_prefix + "non_root_module_asset_native_lib_directories.txt", args = native_library_info.non_root_module_native_lib_assets
     )
 
-    native_library_directories = argfile(actions = actions, name = "native_library_directories", args = native_library_info.native_libs_for_primary_apk)
+    native_library_directories = argfile(actions = actions, name = name_prefix + "native_library_directories", args = native_library_info.native_libs_for_primary_apk)
     all_zip_files = [resources_info.packaged_string_assets] if resources_info.packaged_string_assets else []
-    zip_files = argfile(actions = actions, name = "zip_files", args = all_zip_files)
+    zip_files = argfile(actions = actions, name = name_prefix + "zip_files", args = all_zip_files)
     jar_files_that_may_contain_resources = argfile(
-        actions = actions, name = "jar_files_that_may_contain_resources", args = resources_info.jar_files_that_may_contain_resources
+        actions = actions, name = name_prefix + "jar_files_that_may_contain_resources", args = resources_info.jar_files_that_may_contain_resources
     )
 
     if resources_info.module_assets:
@@ -185,9 +220,9 @@ def build_bundle(
             if key != "excluded_resources":
                 fail("Only 'excluded_resources' is supported in packaging_options right now!")
             else:
-                bundle_builder_args.add("--excluded-resources", actions.write("excluded_resources.txt", value, has_content_based_path = False))
+                bundle_builder_args.add("--excluded-resources", actions.write(name_prefix + "excluded_resources.txt", value, has_content_based_path = False))
 
-    actions.run(bundle_builder_args, category = "bundle_build")
+    actions.run(bundle_builder_args, category = "bundle_build", identifier = output_filename)
 
     return output_bundle
 

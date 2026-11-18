@@ -22,6 +22,9 @@ use std::fmt::Display;
 
 use logos::Logos;
 use num_bigint::BigInt;
+use num_bigint::BigUint;
+use num_bigint::ParseBigIntError;
+use num_bigint::Sign;
 use num_traits::Num;
 use thiserror::Error;
 
@@ -1164,10 +1167,68 @@ impl TokenInt {
             // `BigInt::from_str_radix` skips `_`, which is not part of Starlark integer syntax.
             Err(LexemeError::CannotParse(s.to_owned(), base).into())
         } else {
-            match BigInt::from_str_radix(s, base) {
+            match big_int_from_str_radix(s, base) {
                 Ok(i) => Ok(TokenInt::BigInt(i)),
                 Err(_) => Err(LexemeError::CannotParse(s.to_owned(), base).into()),
             }
+        }
+    }
+}
+
+/// Number of digits up to which `big_int_from_str_radix` leaves parsing to `num-bigint`.
+///
+/// Splitting first computes a power of the base, so below about 12000 digits it is no faster.
+const BIG_INT_SPLIT_DIGITS: usize = 8192;
+
+/// `BigInt::from_str_radix`, in subquadratic time.
+///
+/// For a base that is not a power of two, `num-bigint` multiplies the whole number parsed so far
+/// by the base once per word of digits, which is quadratic in the length: a few million decimal
+/// digits take seconds. Longer strings of plain digits are split instead, each part parsed on its
+/// own, and the parts joined with one multiplication by a power of the base, which `num-bigint`
+/// does in subquadratic time.
+fn big_int_from_str_radix(s: &str, base: u32) -> Result<BigInt, ParseBigIntError> {
+    let (sign, digits) = match s.as_bytes().first() {
+        Some(b'-') => (Sign::Minus, &s[1..]),
+        Some(b'+') => (Sign::Plus, &s[1..]),
+        _ => (Sign::Plus, s),
+    };
+    if base.is_power_of_two()
+        || digits.len() <= BIG_INT_SPLIT_DIGITS
+        || !digits.bytes().all(|b| char::from(b).is_digit(base))
+    {
+        // Linear already, short, or not plain digits: `num-bigint` gives the result or the error.
+        return BigInt::from_str_radix(s, base);
+    }
+    // `pows[k]` is `base` to the power `BIG_INT_SPLIT_DIGITS << k`.
+    let mut pows = vec![BigUint::from(base).pow(BIG_INT_SPLIT_DIGITS as u32)];
+    while BIG_INT_SPLIT_DIGITS << pows.len() < digits.len() {
+        let last = &pows[pows.len() - 1];
+        pows.push(last * last);
+    }
+    let magnitude = big_uint_from_digits(digits, base, &pows)?;
+    Ok(BigInt::from_biguint(sign, magnitude))
+}
+
+/// Parse `digits`, which are all valid in `base` and at most
+/// `BIG_INT_SPLIT_DIGITS << pows.len()` long.
+fn big_uint_from_digits(
+    digits: &str,
+    base: u32,
+    pows: &[BigUint],
+) -> Result<BigUint, ParseBigIntError> {
+    // Split off the largest `BIG_INT_SPLIT_DIGITS << k` low digits that leave some high digits.
+    // The high part is then no longer than the low part, so both fit in `pows[..k]`.
+    match (0..pows.len())
+        .rev()
+        .find(|&k| BIG_INT_SPLIT_DIGITS << k < digits.len())
+    {
+        None => BigUint::from_str_radix(digits, base),
+        Some(k) => {
+            let (high, low) = digits.split_at(digits.len() - (BIG_INT_SPLIT_DIGITS << k));
+            let high = big_uint_from_digits(high, base, &pows[..k])?;
+            let low = big_uint_from_digits(low, base, &pows[..k])?;
+            Ok(high * &pows[k] + low)
         }
     }
 }
@@ -1588,10 +1649,59 @@ pub fn lex_exactly_one_identifier(s: &str) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
+    use num_bigint::BigInt;
+    use num_traits::Num;
+
     use crate::codemap::CodeMap;
     use crate::dialect::Dialect;
+    use crate::lexer::BIG_INT_SPLIT_DIGITS;
     use crate::lexer::Lexer;
+    use crate::lexer::TokenInt;
     use crate::lexer::lex_exactly_one_identifier;
+
+    #[test]
+    fn test_token_int_from_str_radix_long() {
+        // Lengths on either side of where the digits are split, in bases that get split.
+        let n = BIG_INT_SPLIT_DIGITS;
+        let mut seed = 1u64;
+        for base in [10, 3, 36] {
+            for len in [n, n + 1, 2 * n, 2 * n + 1, 3 * n + 5] {
+                let digits: String = (0..len)
+                    .map(|i| {
+                        seed = seed
+                            .wrapping_mul(6364136223846793005)
+                            .wrapping_add(1442695040888963407);
+                        let d = if i == 0 {
+                            1
+                        } else {
+                            (seed >> 33) % u64::from(base)
+                        };
+                        char::from_digit(d as u32, base).unwrap()
+                    })
+                    .collect();
+                for s in [digits.clone(), format!("-{digits}"), format!("+{digits}")] {
+                    assert_eq!(
+                        TokenInt::BigInt(BigInt::from_str_radix(&s, base).unwrap()),
+                        TokenInt::from_str_radix(&s, base).unwrap(),
+                        "base {base}, {len} digits",
+                    );
+                }
+            }
+        }
+
+        // A long string that is not all digits is still rejected.
+        let digits = "7".repeat(2 * n + 1);
+        for s in [
+            format!("{digits}a"),
+            format!("{digits}+{digits}"),
+            format!("{digits}-{digits}"),
+            format!("{digits}_7"),
+            format!("--{digits}"),
+            format!(" {digits}"),
+        ] {
+            assert!(TokenInt::from_str_radix(&s, 10).is_err());
+        }
+    }
 
     #[test]
     fn test_is_valid_identifier() {

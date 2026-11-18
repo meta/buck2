@@ -61,10 +61,12 @@ pub async fn run_internal_test(
             .value()
             .as_ref()
             .required_local_resources()
-            .map(|r| LocalResourceType {
-                name: r.name.clone(),
+            .map(|r| {
+                Ok(LocalResourceType {
+                    name: r?.name.clone(),
+                })
             })
-            .collect(),
+            .collect::<buck2_error::Result<_>>()?,
     };
 
     // Step 1: Execute listing using the dedicated listing command

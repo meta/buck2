@@ -61,6 +61,7 @@ use buck2_execute::execute::request::CommandExecutionRequest;
 use buck2_execute::execute::request::ExecutorPreference;
 use buck2_execute::execute::result::CommandExecutionResult;
 use buck2_execute::execute::write_action_cache::WriteActionCache;
+use buck2_execute::incremental_state::IncrementalStore;
 use buck2_execute::materialize::materializer::Materializer;
 use buck2_execute::re::manager::UnconfiguredRemoteExecutionClient;
 use buck2_execute::re::output_trees_download_config::OutputTreesDownloadConfig;
@@ -83,9 +84,8 @@ use remote_execution::TActionResult2;
 use starlark::values::Heap;
 use starlark::values::OwnedFrozen;
 use starlark::values::Value;
-use starlark::values::ValueOfUnchecked;
-use starlark::values::dict::DictType;
 
+use crate::actions::errors::error_handler::OutputArtifacts;
 use crate::actions::errors::execute_error::ExecuteError;
 use crate::actions::execute::action_execution_target::ActionExecutionTarget;
 use crate::actions::execute::action_executor::ActionExecutionMetadata;
@@ -93,8 +93,6 @@ use crate::actions::execute::action_executor::ActionOutputs;
 use crate::actions::impls::run_action_knobs::RunActionKnobs;
 use crate::artifact_groups::ArtifactGroup;
 use crate::artifact_groups::ArtifactGroupValues;
-use crate::interpreter::rule_defs::artifact::starlark_artifact::StarlarkArtifact;
-use crate::interpreter::rule_defs::artifact::starlark_artifact_value::StarlarkArtifactValue;
 use crate::interpreter::rule_defs::cmd_args::ArtifactPathMapper;
 
 pub mod artifact;
@@ -102,6 +100,7 @@ pub mod box_slice_set;
 pub mod calculation;
 pub mod errors;
 pub mod execute;
+pub mod graph_recorder;
 pub mod impls;
 pub mod query;
 pub mod registry;
@@ -202,9 +201,8 @@ pub trait Action: PagableTagged + Allocative + Debug + Send + Sync + 'static {
         _artifact_fs: &ArtifactFs,
         _heap: Heap<'v>,
         _outputs: Option<&ActionOutputs>,
-    ) -> buck2_error::Result<ValueOfUnchecked<'v, DictType<StarlarkArtifact, StarlarkArtifactValue>>>
-    {
-        Ok(ValueOfUnchecked::new(starlark::values::Value::new_none()))
+    ) -> buck2_error::Result<Option<OutputArtifacts<'v>>> {
+        Ok(None)
     }
 
     fn all_outputs_are_content_based(&self) -> bool {
@@ -373,6 +371,9 @@ pub trait ActionExecutionCtx: Send + Sync {
 
     /// The current repo's persisted dep-file cache, if enabled.
     fn dep_file_store(&self) -> Option<&dyn DepFileStore>;
+
+    /// The current repo's incremental records (`buck2_execute::incremental_state`).
+    fn incremental_store(&self) -> Option<&dyn IncrementalStore>;
 
     /// The current repo's live dep-file cache.
     fn dep_file_cache(&self) -> &dyn DepFileCache;

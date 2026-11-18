@@ -26,6 +26,7 @@ use allocative::Allocative;
 use derive_more::Display;
 use starlark_derive::NoSerialize;
 use starlark_derive::StarlarkPagable;
+use starlark_derive::StarlarkRepresentations;
 use starlark_derive::Trace;
 use starlark_derive::starlark_value;
 
@@ -34,8 +35,10 @@ use crate::any::ProvidesStaticType;
 use crate::values::Freeze;
 use crate::values::FreezeResult;
 use crate::values::Freezer;
+use crate::values::StarlarkType;
 use crate::values::StarlarkValue;
 use crate::values::Value;
+use crate::values::ValueTyped;
 
 #[derive(Debug, Trace, ProvidesStaticType, Display, NoSerialize, Allocative)]
 #[display("{:?}", self)] // This type should never be user visible
@@ -55,12 +58,24 @@ pub(crate) struct ValueCaptured<'v>(Cell<Option<Value<'v>>>);
 #[repr(transparent)]
 pub(crate) struct FrozenValueCaptured<'v>(Option<Value<'v>>);
 
-#[starlark_value(type = "value_captured")]
-impl<'v> StarlarkValue<'v> for ValueCaptured<'v> {}
+/// A captured variable in either of its representations.
+#[derive(Debug, Clone, Copy, StarlarkRepresentations)]
+pub(crate) enum ValueCapturedView<'v> {
+    Unfrozen(ValueTyped<'v, ValueCaptured<'v>>),
+    Frozen(ValueTyped<'v, FrozenValueCaptured<'v>>),
+}
 
-#[starlark_value(type = "value_captured", frozen_vtable)]
+#[starlark_value(type = "value_captured")]
+impl<'v> StarlarkType<'v> for ValueCapturedView<'v> {}
+
+#[starlark_value]
+impl<'v> StarlarkValue<'v> for ValueCaptured<'v> {
+    type Type = ValueCapturedView<'v>;
+}
+
+#[starlark_value(frozen_vtable)]
 impl<'v> StarlarkValue<'v> for FrozenValueCaptured<'v> {
-    type Canonical = ValueCaptured<'v>;
+    type Type = ValueCapturedView<'v>;
 }
 
 impl<'v> ValueCaptured<'v> {

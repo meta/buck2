@@ -77,6 +77,7 @@ pub enum Advice {
     Build(BuildLanguage),
     Killall,
     Clean,
+    RecursivePatterns,
     NewIsolationDir,
     /// The command drops config args that the daemon's state was built with, which changes its
     /// buckconfig without asking for different values. Evaluated in the daemon, which is the only
@@ -93,6 +94,19 @@ pub const CONFIG_CHANGE_EXPLICIT_TAG: &str = "agent_interactive.config_change.ex
 /// arm, including the commands the guard never acts on.
 pub const CONFIG_CHANGE_ENABLED_TAG: &str = "agent_interactive.config_change.enabled";
 pub const CONFIG_CHANGE_DISABLED_TAG: &str = "agent_interactive.config_change.disabled";
+
+/// Tag for a config change the command did not ask for: it drops config args the daemon's
+/// configuration uses, which changes a resolved value. This is what the config change guard acts
+/// on, and it is recorded in both arms of the guard's A/B test; `CONFIG_CHANGE_ENABLED_TAG` or
+/// `CONFIG_CHANGE_DISABLED_TAG` on the same command says which arm.
+pub const CONFIG_CHANGE_IMPLICIT_TAG: &str = "agent_interactive.config_change.implicit";
+
+/// Tags recording whether the `agent_interactive` guards (killall, clean, new isolation directory)
+/// were on for a direct agent call that reached the daemon. Those guards run in the client and tag
+/// only the operations they guard, so these let an A/B analysis assign every other command to an
+/// arm as well.
+pub const AGENT_INTERACTIVE_ENABLED_TAG: &str = "agent_interactive.enabled";
+pub const AGENT_INTERACTIVE_DISABLED_TAG: &str = "agent_interactive.disabled";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Decision {
@@ -112,9 +126,19 @@ impl Advice {
             Self::Build(_) => "build",
             Self::Killall => "killall",
             Self::Clean => "clean",
+            Self::RecursivePatterns => "recursive_patterns",
             Self::NewIsolationDir => "new_isolation_dir",
             Self::ConfigChange => "config_change",
         }
+    }
+
+    /// Tag recording that this guard's operation is about to happen in a direct agent call, and
+    /// whether the guard is on. Callers record it after the same eligibility checks in both arms of
+    /// the guard's A/B test, so the operations of the control arm can be compared with those the
+    /// guard acted on. The build guard records the same names.
+    pub fn state_tag(self, enabled: bool) -> String {
+        let state = if enabled { "enabled" } else { "disabled" };
+        format!("agent_interactive.{}.{state}", self.id())
     }
 
     /// `acknowledged` must refer to this advice ID in the current invocation.
@@ -136,6 +160,18 @@ impl Advice {
     pub fn message(self) -> &'static str {
         match self {
             Self::Build(language) => language.message(),
+            Self::RecursivePatterns => {
+                "This recursive build/test was blocked before expanding target patterns.\n\n\
+                 Recursive patterns select every target under a directory. Their dependencies and \
+                 configurations can cause excessive analysis, build work, and memory use. \
+                 Prefer explicit targets relevant to the change, or a single package \
+                 (`//path/to/package:`). Use `buck2 targets <pattern>` to inspect candidates \
+                 when needed.\n\n\
+                 If validating the entire recursive scope is necessary, retry with \
+                 `--agent-context advice_ack=recursive_patterns` and \
+                 `--agent-context reason=\"<why the entire recursive scope is needed>\"`. \
+                 This guard does not require user confirmation."
+            }
             Self::Clean => {
                 "No build state or outputs have been removed.\n\n\
                  `buck2 clean` stops the daemon and removes reusable build state and outputs, \
@@ -194,6 +230,12 @@ impl Decision {
             Self::Block(Advice::Killall) => Some("agent_interactive.killall.block"),
             Self::Acknowledged(Advice::Clean) => Some("agent_interactive.clean.ack"),
             Self::Block(Advice::Clean) => Some("agent_interactive.clean.block"),
+            Self::Acknowledged(Advice::RecursivePatterns) => {
+                Some("agent_interactive.recursive_patterns.ack")
+            }
+            Self::Block(Advice::RecursivePatterns) => {
+                Some("agent_interactive.recursive_patterns.block")
+            }
             Self::Acknowledged(Advice::NewIsolationDir) => {
                 Some("agent_interactive.new_isolation_dir.ack")
             }
@@ -210,11 +252,12 @@ impl Decision {
 mod tests {
     use super::*;
 
-    const ALL_ADVICE: [Advice; 6] = [
+    const ALL_ADVICE: [Advice; 7] = [
         Advice::Build(BuildLanguage::Rust),
         Advice::Build(BuildLanguage::Cxx),
         Advice::Killall,
         Advice::Clean,
+        Advice::RecursivePatterns,
         Advice::NewIsolationDir,
         Advice::ConfigChange,
     ];
@@ -253,6 +296,23 @@ mod tests {
                 assert_eq!(advice.evaluate(&invocation, false), Decision::Inactive);
             }
         }
+    }
+
+    #[test]
+    fn state_tags_name_the_guard_and_its_state() {
+        assert_eq!(
+            Advice::Killall.state_tag(true),
+            "agent_interactive.killall.enabled"
+        );
+        assert_eq!(
+            Advice::NewIsolationDir.state_tag(false),
+            "agent_interactive.new_isolation_dir.disabled"
+        );
+        // Matches the names the build guard records for every language.
+        assert_eq!(
+            Advice::Build(BuildLanguage::Rust).state_tag(false),
+            "agent_interactive.build.disabled"
+        );
     }
 
     #[test]

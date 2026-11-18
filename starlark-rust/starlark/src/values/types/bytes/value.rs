@@ -32,17 +32,11 @@ use starlark_map::StarlarkHasher;
 use crate as starlark;
 use crate::environment::Methods;
 use crate::starlark_simple_value;
-use crate::typing::Ty;
-use crate::values::AllocFrozenValue;
-use crate::values::AllocValue;
-use crate::values::FrozenHeap;
 use crate::values::Heap;
 use crate::values::StarlarkValue;
-use crate::values::UnpackValue;
 use crate::values::Value;
 use crate::values::index::apply_slice;
 use crate::values::index::convert_index;
-use crate::values::type_repr::StarlarkTypeRepr;
 
 /// The result of calling `type()` on bytes.
 pub const BYTES_TYPE: &str = "bytes";
@@ -63,46 +57,6 @@ pub struct StarlarkBytes {
 }
 
 starlark_simple_value!(StarlarkBytes);
-
-impl StarlarkTypeRepr for &'_ [u8] {
-    type Canonical = StarlarkBytes;
-
-    fn starlark_type_repr() -> Ty {
-        StarlarkBytes::starlark_type_repr()
-    }
-}
-
-impl<'v> AllocValue<'v> for &'_ [u8] {
-    fn alloc_value(self, heap: Heap<'v>) -> Value<'v> {
-        heap.alloc(StarlarkBytes::new(self))
-    }
-}
-
-impl<'fv> AllocFrozenValue<'fv> for &'_ [u8] {
-    fn alloc_frozen_value(self, heap: FrozenHeap<'fv>) -> Value<'fv> {
-        heap.alloc(StarlarkBytes::new(self))
-    }
-}
-
-impl StarlarkTypeRepr for Vec<u8> {
-    type Canonical = StarlarkBytes;
-
-    fn starlark_type_repr() -> Ty {
-        StarlarkBytes::starlark_type_repr()
-    }
-}
-
-impl<'v> AllocValue<'v> for Vec<u8> {
-    fn alloc_value(self, heap: Heap<'v>) -> Value<'v> {
-        heap.alloc(StarlarkBytes::from_vec(self))
-    }
-}
-
-impl<'fv> AllocFrozenValue<'fv> for Vec<u8> {
-    fn alloc_frozen_value(self, heap: FrozenHeap<'fv>) -> Value<'fv> {
-        heap.alloc(StarlarkBytes::from_vec(self))
-    }
-}
 
 impl StarlarkBytes {
     /// Create a new bytes value from a byte slice.
@@ -132,6 +86,12 @@ impl StarlarkBytes {
     /// Whether the bytes are empty.
     pub fn is_empty(&self) -> bool {
         self.content.is_empty()
+    }
+
+    /// The bytes `times` times over: `bytes * times` and `times * bytes`.
+    fn repeated(&self, times: i32) -> StarlarkBytes {
+        let count = cmp::max(0, times) as usize;
+        StarlarkBytes::from_vec(self.content.repeat(count))
     }
 }
 
@@ -229,35 +189,26 @@ impl<'v> StarlarkValue<'v> for StarlarkBytes {
         !self.content.is_empty()
     }
 
-    fn write_hash(&self, hasher: &mut StarlarkHasher) -> crate::Result<()> {
+    fn write_hash(&self, hasher: &mut StarlarkHasher) {
         self.content.hash(hasher);
-        Ok(())
     }
 
-    fn equals(&self, other: Value<'v>) -> crate::Result<bool> {
-        if let Some(other) = StarlarkBytes::from_value(other) {
-            Ok(self.content == other.content)
-        } else {
-            Ok(false)
-        }
+    fn equals(&self, other: &Self) -> bool {
+        self.content == other.content
     }
 
-    fn compare(&self, other: Value<'v>) -> crate::Result<Ordering> {
-        if let Some(other) = StarlarkBytes::from_value(other) {
-            Ok(self.content.cmp(&other.content))
-        } else {
-            crate::values::ValueError::unsupported_with(self, "cmp()", other)
-        }
+    fn compare(&self, other: &Self) -> Ordering {
+        self.content.cmp(&other.content)
     }
 
-    fn length(&self) -> crate::Result<i32> {
-        Ok(self.content.len() as i32)
+    fn length(&self) -> i32 {
+        self.content.len() as i32
     }
 
     /// `bytes[i]` returns the integer value of byte at index `i`.
-    fn at(&self, index: Value<'v>, heap: Heap<'v>) -> crate::Result<Value<'v>> {
+    fn at(&self, index: i32) -> crate::Result<i32> {
         let i = convert_index(index, self.content.len() as i32)? as usize;
-        Ok(heap.alloc(self.content[i] as i32))
+        Ok(self.content[i] as i32)
     }
 
     /// `bytes[i:j:k]` returns a new bytes object.
@@ -269,7 +220,7 @@ impl<'v> StarlarkValue<'v> for StarlarkBytes {
         heap: Heap<'v>,
     ) -> crate::Result<Value<'v>> {
         let sliced = apply_slice(&self.content, start, stop, stride)?;
-        Ok(heap.alloc(StarlarkBytes::from_vec(sliced)))
+        Ok(heap.alloc(StarlarkBytes::from_vec(sliced)).to_value())
     }
 
     /// `x in bytes`: supports both int (byte value) and bytes (subsequence).
@@ -287,10 +238,7 @@ impl<'v> StarlarkValue<'v> for StarlarkBytes {
             if needle.is_empty() {
                 return Ok(true);
             }
-            Ok(self
-                .content
-                .windows(needle.len())
-                .any(|window| window == needle.as_ref()))
+            Ok(memchr::memmem::find(&self.content, needle).is_some())
         } else {
             Err(crate::Error::new_other(anyhow::anyhow!(
                 "argument to 'in bytes' must be an int or bytes, not '{}'",
@@ -300,34 +248,19 @@ impl<'v> StarlarkValue<'v> for StarlarkBytes {
     }
 
     /// `bytes + bytes` — concatenation.
-    fn add(&self, other: Value<'v>, heap: Heap<'v>) -> Option<crate::Result<Value<'v>>> {
-        if let Some(other) = StarlarkBytes::from_value(other) {
-            let mut result = Vec::with_capacity(self.content.len() + other.content.len());
-            result.extend_from_slice(&self.content);
-            result.extend_from_slice(&other.content);
-            Some(Ok(heap.alloc(StarlarkBytes::from_vec(result))))
-        } else {
-            None
-        }
+    fn add(&self, other: &Self) -> StarlarkBytes {
+        let mut result = Vec::with_capacity(self.content.len() + other.content.len());
+        result.extend_from_slice(&self.content);
+        result.extend_from_slice(&other.content);
+        StarlarkBytes::from_vec(result)
     }
 
     /// `bytes * n` — repetition.
-    fn mul(&self, other: Value<'v>, heap: Heap<'v>) -> Option<crate::Result<Value<'v>>> {
-        let l = match i32::unpack_value(other) {
-            Ok(Some(l)) => l,
-            Ok(None) => return None,
-            Err(e) => return Some(Err(e)),
-        };
-        let count = std::cmp::max(0, l) as usize;
-        let result = self.content.repeat(count);
-        Some(Ok(heap.alloc(StarlarkBytes::from_vec(result))))
+    fn mul(&self, times: i32) -> StarlarkBytes {
+        self.repeated(times)
     }
 
-    fn rmul(&self, lhs: Value<'v>, heap: Heap<'v>) -> Option<crate::Result<Value<'v>>> {
-        self.mul(lhs, heap)
-    }
-
-    fn typechecker_ty(&self) -> Option<Ty> {
-        Some(Ty::starlark_value::<Self>())
+    fn rmul(&self, times: i32) -> StarlarkBytes {
+        self.repeated(times)
     }
 }

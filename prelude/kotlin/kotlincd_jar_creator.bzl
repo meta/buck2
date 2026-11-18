@@ -30,6 +30,7 @@ load(
 load(
     "@prelude//java/utils:java_utils.bzl",
     "CustomJdkInfo",  # @unused Used as type
+    "declare_prefixed_name",
 )
 load(
     "@prelude//jvm:cd_jar_creator_util.bzl",
@@ -42,12 +43,14 @@ load(
     "encode_command",
     "generate_abi_jars",
     "get_source_only_abi_compiling_deps",
+    "get_source_only_abi_jars",
     "prepare_cd_exe",
     "prepare_final_jar",
     "setup_dep_files",
 )
 load("@prelude//kotlin:kotlin_toolchain.bzl", "KotlinToolchainInfo")
-load("@prelude//kotlin:kotlin_utils.bzl", "get_kotlinc_compatible_target")
+load("@prelude//kotlin:kotlin_utils.bzl", "get_kotlinc_compatible_target", "jvm_abi_gen_preserves_declaration_order")
+load("@prelude//utils:argfile.bzl", "at_argfile")
 load("@prelude//utils:expect.bzl", "expect")
 load("@prelude//utils:utils.bzl", "map_idx")
 
@@ -133,7 +136,12 @@ def create_jar_artifact_kotlincd(
         jvm_abi_gen = None
         should_use_jvm_abi_gen = False
 
-    expect(incremental == False or kosabi_applicability_cell_root == None, "Kosabi applicability requires a full compilation")
+    expect(
+        incremental == False
+        or kosabi_applicability_cell_root == None
+        or (kotlin_toolchain.kosabi_applicability_incremental and kotlin_toolchain.incremental_input_tracking),
+        "Kosabi applicability requires a full compilation unless kotlin.kosabi_applicability_incremental and " + "kotlin.incremental_input_tracking are set",
+    )
     should_kotlinc_run_incrementally = kotlin_toolchain.enable_incremental_compilation and incremental
     incremental_state_dir = declare_prefixed_output(actions, actions_identifier, "incremental_state", has_content_based_path = True, dir = True)
     incremental_metadata_ignored_inputs_tag = actions.artifact_tag()
@@ -156,7 +164,22 @@ def create_jar_artifact_kotlincd(
     so_abi_deps = None
     if actual_abi_generation_mode == AbiGenerationMode("source_only"):
         so_abi_deps = get_source_only_abi_compiling_deps(actions, compiling_deps_tset, source_only_abi_deps)
-        source_only_abi_applicability_classpath = cmd_args(so_abi_deps.project_as_args("source_only_abi_jars"))
+        if kotlin_toolchain.kosabi_availability_jars != None:
+            # The jars themselves are inputs that no dep file covers, so any change to them would rerun
+            # this compile; the availability jars change only when what the checks read changes.
+            source_only_abi_applicability_classpath = _availability_jars(
+                actions,
+                actions_identifier,
+                kotlin_toolchain.kosabi_availability_jars,
+                get_source_only_abi_jars(so_abi_deps, compiling_deps_tset, source_only_abi_deps),
+            )
+        else:
+            source_only_abi_applicability_classpath = cmd_args(so_abi_deps.project_as_args("source_only_abi_jars"))
+
+    # Whether an incremental round's verdict comes from applicability, which the incremental compiler does not
+    # track: turning it on or off changes `incremental_config.json`, which forces a full round. Changes to the
+    # reduced classpath itself are fingerprinted by kotlincd.
+    incremental_applicability_config = struct(mode = "ENFORCE") if kosabi_applicability_cell_root != None and should_kotlinc_run_incrementally else None
 
     track_class_usage = enable_depfiles and kotlin_toolchain.track_class_usage_plugin != None
 
@@ -189,6 +212,7 @@ def create_jar_artifact_kotlincd(
         jar_postprocessor,
         files_which_skipped_compilation,
         jvm_abi_files_which_skipped_compilation,
+        incremental_applicability_config,
     )
 
     library_classpath_jars_tag = actions.artifact_tag()
@@ -287,6 +311,7 @@ def create_jar_artifact_kotlincd(
             incremental_state_dir = None,
             language_version = language_version,
             source_only_abi_applicability_classpath = cmd_args(),
+            kosabi_jvm_abi_gen_options = kotlin_toolchain.kosabi_jvm_abi_gen_options + _kosabi_member_order_options(kotlin_toolchain, extra_kotlinc_arguments),
         )
 
         # kotlincd does not support source abi
@@ -360,6 +385,47 @@ def create_jar_artifact_kotlincd(
             {},
         )
 
+def _availability_jars(actions: AnalysisActions, actions_identifier: [str, None], tool: Dependency, jars: list[Artifact]) -> cmd_args:
+    """The availability jars of `jars`, in the same order: see AvailabilityJars."""
+    # The i-th availability jar is `<output>/<i>/<cell>.<package>.<target>/<jar name>`, so the compile
+    # command still shows which dependency each one stands for.
+    names = [_availability_jar_name(jar) for jar in jars]
+    args = []
+    for name, jar in zip(names, jars):
+        args.extend([name, jar])
+    output = declare_prefixed_output(actions, actions_identifier, "source_only_abi_availability_jars", has_content_based_path = True, dir = True)
+    actions.run(
+        cmd_args(
+            tool[RunInfo],
+            output.as_output(),
+            at_argfile(
+                actions = actions,
+                name = declare_prefixed_name("source_only_abi_availability_jars.args", actions_identifier),
+                args = args,
+                has_content_based_path = True,
+            ),
+        ),
+        category = "kosabi_availability_jars",
+        identifier = actions_identifier,
+    )
+    return cmd_args([cmd_args(output, format = "{}/" + str(index) + "/" + name) for index, name in enumerate(names)])
+
+def _availability_jar_name(jar: Artifact) -> str:
+    # Classpath jars are build outputs, so they have an owner.
+    owner = jar.owner
+    return "{}.{}.{}/{}".format(owner.cell, owner.package.replace("/", "."), owner.name, jar.basename)
+
+def _kosabi_member_order_options(kotlin_toolchain: KotlinToolchainInfo, extra_kotlinc_arguments: list) -> list[str]:
+    """The k2-jvm-abi-gen options that order the members of the source-only ABI as the class ABI of
+    a class-mode target orders them."""
+
+    # jvm-abi-gen writes that class ABI, sorting its members unless the target sets jvm-abi-gen's
+    # preserveDeclarationOrder option. Without jvm-abi-gen, the class ABI generator keeps the
+    # order of the library jar.
+    if kotlin_toolchain.jvm_abi_gen_plugin == None or jvm_abi_gen_preserves_declaration_order(extra_kotlinc_arguments):
+        return []
+    return ["preserveDeclarationOrder=false"]
+
 def get_source_only_friend_path_abis(friend_paths: list[Dependency], source_only_abi_deps: list[Dependency]) -> list[Artifact]:
     """Returns friend ABI jars restricted to the source-only ABI classpath."""
     if not friend_paths:
@@ -399,6 +465,7 @@ def _encode_kotlin_extra_params(
     incremental_state_dir: Artifact | None,
     language_version: str,
     source_only_abi_applicability_classpath: cmd_args = cmd_args(),
+    kosabi_jvm_abi_gen_options: list[str] = [],
 ):
     kosabiPluginOptionsMap = {}
 
@@ -413,6 +480,12 @@ def _encode_kotlin_extra_params(
 
     if kotlin_toolchain.kosabi_jvm_abi_gen_k2_plugin != None:
         kosabiPluginOptionsMap["kosabi_jvm_abi_gen_k2_plugin"] = kotlin_toolchain.kosabi_jvm_abi_gen_k2_plugin
+
+    # Rokoko stubgen .so (prototype engine). Present only when
+    # kotlin.stubgen_engine=rokoko; the Java side branches on its presence.
+    # Excluded from main-compile -Xplugin args in KosabiPluginOptions.
+    if kotlin_toolchain.rokoko_stubgen_so != None:
+        kosabiPluginOptionsMap["rokoko_stubgen_so"] = kotlin_toolchain.rokoko_stubgen_so[DefaultInfo].default_outputs[0]
 
     return struct(
         extraClassPaths = bootclasspath_entries,
@@ -432,10 +505,14 @@ def _encode_kotlin_extra_params(
         shouldKotlincRunIncrementally = should_kotlinc_run_incrementally,
         shouldKosabiUseShallowClassUsage = kotlin_toolchain.kosabi_shallow_class_usage,
         kosabiAbiValidationMode = kotlin_toolchain.kosabi_abi_validation_mode,
+        kosabiJvmAbiGenOptions = kosabi_jvm_abi_gen_options,
+        disableKosabiKeptBodyStubCheck = not kotlin_toolchain.kosabi_kept_body_stub_check,
+        shouldReclaimReadOnlyOutputs = kotlin_toolchain.reclaim_read_only_outputs,
         incrementalStateDir = incremental_state_dir.as_output() if incremental_state_dir else None,
         languageVersion = language_version,
         javaBinary = cmd_args(kotlin_toolchain.java_binary_for_kotlincd[RunInfo], delimiter = " ") if kotlin_toolchain.java_binary_for_kotlincd else "",
         applicabilityClasspath = source_only_abi_applicability_classpath,
+        shouldTrackIncrementalInputs = kotlin_toolchain.incremental_input_tracking,
     )
 
 def _command_builder(
@@ -516,6 +593,15 @@ def _encode_kotlin_command(
         incremental_metadata_ignored_inputs_tag = incremental_metadata_ignored_inputs_tag,
     )
 
+def _is_small_compile(srcs: list[Artifact], max_srcs: int) -> bool:
+    if len(srcs) > max_srcs:
+        return False
+    for src in srcs:
+        # A source archive can hold any number of files.
+        if src.extension in (".srcjar", ".zip", ".jar"):
+            return False
+    return True
+
 # buildifier: disable=uninitialized
 # buildifier: disable=unused-variable
 def _define_kotlincd_action(
@@ -536,6 +622,7 @@ def _define_kotlincd_action(
     jar_postprocessor: [RunInfo, None],
     files_which_skipped_compilation: [Artifact, None],
     jvm_abi_files_which_skipped_compilation: [Artifact, None],
+    incremental_applicability_config: [struct, None],
     # end of factory provided
     category_prefix: str,
     actions_identifier: [str, None],
@@ -564,6 +651,7 @@ def _define_kotlincd_action(
         extra_jvm_args = kotlin_toolchain.kotlincd_jvm_args,
         extra_jvm_args_target = kotlin_toolchain.kotlincd_jvm_args_target,
         java_runtime_version = java_toolchain.java_runtime_version,
+        non_worker_jvm_args = kotlin_toolchain.kotlincd_small_action_jvm_args if _is_small_compile(srcs, kotlin_toolchain.kotlincd_small_action_max_srcs) else [],
     )
 
     args = cmd_args()
@@ -653,7 +741,7 @@ def _define_kotlincd_action(
     if should_action_run_incrementally:
         args.add(
             "--incremental-config-file",
-            _create_incremental_config(actions, actions_identifier, kotlin_build_command, kotlin_toolchain.kotlin_version),
+            _create_incremental_config(actions, actions_identifier, kotlin_build_command, kotlin_toolchain.kotlin_version, incremental_applicability_config),
         )
 
     incremental_run_params = (
@@ -687,13 +775,54 @@ def _define_kotlincd_action(
     )
     return proto, used_jars_json_output
 
-def _create_incremental_config(actions: AnalysisActions, actions_identifier: [str, None], kotlin_build_command: struct, kotlin_version: str):
+def _create_incremental_config(
+    actions: AnalysisActions,
+    actions_identifier: [str, None],
+    kotlin_build_command: struct,
+    kotlin_version: str,
+    applicability: [struct, None],
+):
     incremental_meta_data_output = declare_prefixed_output(actions, actions_identifier, "incremental_config.json", has_content_based_path = True)
+    kotlin_extra_params = kotlin_build_command.buildCommand.kotlinExtraParams
+
+    # Optional fields, absent from the default config, so that the config of an action without input tracking and
+    # without incremental applicability is the same as before either existed.
+    optional_fields = {}
+
+    # With input tracking, the other settings that kotlincd turns into compiler arguments, so that a change
+    # compiles in full. Switching tracking either way changes the config, so that no round compares with a
+    # record from before tracking was turned off.
+    if kotlin_extra_params.shouldTrackIncrementalInputs:
+        optional_fields["compiler_settings"] = _compiler_settings(kotlin_extra_params)
+    if applicability:
+        optional_fields["applicability"] = applicability
     incremental_meta_data = struct(
         version = 3,
         track_class_usage = kotlin_build_command.buildCommand.baseJarCommand.trackClassUsage,
-        should_use_jvm_abi_gen = kotlin_build_command.buildCommand.kotlinExtraParams.shouldUseJvmAbiGen,
-        extra_kotlinc_arguments = kotlin_build_command.buildCommand.kotlinExtraParams.extraKotlincArguments,
+        should_use_jvm_abi_gen = kotlin_extra_params.shouldUseJvmAbiGen,
+        extra_kotlinc_arguments = kotlin_extra_params.extraKotlincArguments,
         kotlin_version = kotlin_version,
+        **optional_fields,
     )
     return actions.write_json(incremental_meta_data_output, incremental_meta_data, with_inputs = True)
+
+def _compiler_settings(kotlin_extra_params: struct) -> struct:
+    """
+    The settings in `kotlinExtraParams` that kotlincd turns into compiler arguments, besides those the
+    incremental config records anyway. Paths, not content: kotlincd compares the content of compiler plugins
+    and of the files that options name itself. Friend paths are recorded by their owners: they are classpath
+    entries, whose paths can change with their content, which the classpath snapshots track.
+    """
+    return struct(
+        jvm_target = kotlin_extra_params.jvmTarget,
+        language_version = kotlin_extra_params.languageVersion,
+        kotlin_compiler_plugins = kotlin_extra_params.kotlinCompilerPlugins,
+        kosabi_plugin_options = kotlin_extra_params.kosabiPluginOptions,
+        friend_paths = [str(path.owner.raw_target()) if path.owner else path.short_path for path in kotlin_extra_params.friendPaths],
+        kotlin_home_libraries = kotlin_extra_params.kotlinHomeLibraries,
+        jvm_abi_gen_plugin = kotlin_extra_params.jvmAbiGenPlugin,
+        dep_tracker_plugin = kotlin_extra_params.depTrackerPlugin,
+        should_verify_source_only_abi_constraints = kotlin_extra_params.shouldVerifySourceOnlyAbiConstraints,
+        kosabi_abi_validation_mode = kotlin_extra_params.kosabiAbiValidationMode,
+        should_kosabi_use_shallow_class_usage = kotlin_extra_params.shouldKosabiUseShallowClassUsage,
+    )

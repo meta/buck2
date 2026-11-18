@@ -47,16 +47,14 @@ use dupe::Dupe;
 use starlark::any::ProvidesStaticType;
 use starlark::environment::Methods;
 use starlark::eval::Evaluator;
-use starlark::values::AllocValue;
 use starlark::values::Heap;
 use starlark::values::NoSerialize;
 use starlark::values::StarlarkValue;
 use starlark::values::Trace;
-use starlark::values::Value;
-use starlark::values::ValueOfUnchecked;
+use starlark::values::ValueOf;
 use starlark::values::ValueTyped;
 use starlark::values::starlark_value;
-use starlark::values::structs::StructRef;
+use starlark::values::structs::Struct;
 
 use crate::bxl::key::BxlKey;
 use crate::bxl::starlark_defs::context::actions::BxlExecutionResolution;
@@ -111,7 +109,7 @@ struct TargetPlatformInAnalysis;
 #[derive(ProvidesStaticType, Trace, NoSerialize, Allocative, Debug, Derivative)]
 pub(crate) struct RootBxlContextData<'v> {
     output_stream: ValueTyped<'v, StarlarkOutputStream>,
-    cli_args: ValueOfUnchecked<'v, StructRef<'v>>,
+    cli_args: ValueOf<'v, Struct<'v>>,
 }
 
 /// Data object for `BxlContextType::Dynamic`.
@@ -340,26 +338,30 @@ impl<'v> BxlContext<'v> {
         heap: Heap<'v>,
         core: Arc<BxlContextCoreData>,
         stream_state: OutputStreamState,
-        cli_args: ValueOfUnchecked<'v, StructRef<'v>>,
+        cli_args: ValueOf<'v, Struct<'v>>,
         digest_config: DigestConfig,
     ) -> buck2_error::Result<Self> {
         let root_data = RootBxlContextData {
             cli_args,
-            output_stream: heap.alloc_typed(StarlarkOutputStream::new(
-                core.project_fs.dupe(),
-                core.artifact_fs.dupe(),
-                stream_state,
-            )),
+            output_stream: heap
+                .alloc(StarlarkOutputStream::new(
+                    core.project_fs.dupe(),
+                    core.artifact_fs.dupe(),
+                    stream_state,
+                ))
+                .get(),
         };
         let context_type = BxlContextType::Root(root_data);
 
         Ok(Self {
-            state: heap.alloc_typed(AnalysisActions {
-                state: RefCell::new(None),
-                attributes: None,
-                plugins: None,
-                digest_config,
-            }),
+            state: heap
+                .alloc(AnalysisActions {
+                    state: RefCell::new(None),
+                    attributes: None,
+                    plugins: None,
+                    digest_config,
+                })
+                .get(),
             context_type,
             core,
         })
@@ -373,12 +375,14 @@ impl<'v> BxlContext<'v> {
         dynamic_data: DynamicBxlContextData,
     ) -> buck2_error::Result<Self> {
         Ok(Self {
-            state: heap.alloc_typed(AnalysisActions {
-                state: RefCell::new(Some(analysis_registry)),
-                attributes: None,
-                plugins: None,
-                digest_config,
-            }),
+            state: heap
+                .alloc(AnalysisActions {
+                    state: RefCell::new(Some(analysis_registry)),
+                    attributes: None,
+                    plugins: None,
+                    digest_config,
+                })
+                .get(),
             context_type: BxlContextType::Dynamic(dynamic_data),
             core,
         })
@@ -389,15 +393,17 @@ impl<'v> BxlContext<'v> {
         core: Arc<BxlContextCoreData>,
         digest_config: DigestConfig,
         analysis_registry: AnalysisRegistry<'v>,
-        attributes: ValueOfUnchecked<'v, StructRef<'static>>,
+        attributes: ValueOf<'v, Struct<'v>>,
     ) -> buck2_error::Result<Self> {
         Ok(Self {
-            state: heap.alloc_typed(AnalysisActions {
-                state: RefCell::new(Some(analysis_registry)),
-                attributes: Some(attributes),
-                plugins: None,
-                digest_config,
-            }),
+            state: heap
+                .alloc(AnalysisActions {
+                    state: RefCell::new(Some(analysis_registry)),
+                    attributes: Some(attributes),
+                    plugins: None,
+                    digest_config,
+                })
+                .get(),
             context_type: BxlContextType::AnonTarget,
             core,
         })
@@ -492,15 +498,9 @@ impl<'v> ErrorPrinter for BxlContext<'v> {
 
 starlark::methods_static!(BXL_CONTEXT_METHODS = methods::bxl_context_methods);
 
-#[starlark_value(type = "bxl.Context", StarlarkTypeRepr, UnpackValue)]
+#[starlark_value(type = "bxl.Context", no_freeze)]
 impl<'v> StarlarkValue<'v> for BxlContext<'v> {
     fn get_methods() -> Option<&'static Methods> {
         Some(BXL_CONTEXT_METHODS.methods())
-    }
-}
-
-impl<'v> AllocValue<'v> for BxlContext<'v> {
-    fn alloc_value(self, heap: Heap<'v>) -> Value<'v> {
-        heap.alloc_complex_no_freeze(self)
     }
 }

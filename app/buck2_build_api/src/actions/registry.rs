@@ -306,8 +306,10 @@ impl<'v> ActionsRegistry<'v> {
         }
 
         Ok(move |analysis_value_fetcher: &AnalysisValueFetcher| {
-            // Buck2 has an invariant that pairs of categories and identifiers are unique throughout a build. That
-            // invariant is enforced here, using observed_names to keep track of the categories and identifiers that we've seen.
+            // Pairs of categories and identifiers are unique within one registry, i.e. one analysis of a
+            // target, anon target or dynamic lambda. Separate registries may repeat a pair (each variant of
+            // an anon target, each lambda of a target). Their output paths still differ: anon target paths
+            // include the anon hash and dynamic output paths include the dynamic action key.
             let mut observed_names: BuckMutMap<Category, BuckMutSet<String>> =
                 BuckMutMap::default();
             for a in self.pending.into_iter() {
@@ -427,9 +429,7 @@ impl<'de> PagableDeserialize<'de> for DeferredRegisteredAction {
 
 impl DeferredRegisteredAction {
     fn read(&self) -> buck2_error::Result<&Arc<RegisteredAction>> {
-        self.0.read().map_err(|error| {
-            buck2_error::conversion::from_any_with_tag(error, buck2_error::ErrorTag::Environment)
-        })
+        Ok(self.0.read()?)
     }
 }
 

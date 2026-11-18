@@ -238,7 +238,7 @@ fn render_attr(x: StarAttr, generics: &StarGenerics) -> syn::Stmt {
         #where_clause
         {
             #unpack
-            Ok(heap.alloc(#name_inner #turbofish(this, heap)?))
+            Ok(heap.alloc(#name_inner #turbofish(this, heap)?).to_value())
         }
     };
 
@@ -251,7 +251,7 @@ fn render_attr(x: StarAttr, generics: &StarGenerics) -> syn::Stmt {
                 #name_str,
                 #speculative_exec_safe,
                 #docstring,
-                starlark::values::type_repr::type_repr_from_attr_impl(#name_inner #turbofish),
+                starlark::values::type_expr::type_repr_from_attr_impl(#name_inner #turbofish),
                 #name #turbofish
             );
         }

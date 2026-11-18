@@ -20,7 +20,7 @@ use starlark_derive::StarlarkPagable;
 
 use crate as starlark;
 use crate::values::Value;
-use crate::values::layout::vtable::AValueDyn;
+use crate::values::layout::vtable::AValueDynFull;
 use crate::values::stack_guard;
 
 /// A frozen `Value` which is not `i32` or `str`, at the brand of the heap it lives in.
@@ -43,9 +43,10 @@ impl<'v> ValueNotSpecial<'v> {
     }
 
     #[inline]
-    fn get_ref(self) -> AValueDyn<'v> {
-        // SAFETY: we checked in constructor that it is a frozen value which is not a str or i32.
-        unsafe { self.0.0.value_header_ptr_unchecked().unpack() }
+    fn get_ref(self) -> AValueDynFull<'v> {
+        // SAFETY: we checked in constructor that it is a frozen value which is not a str or i32,
+        // and the vtable is read from the value itself.
+        unsafe { AValueDynFull::new(self.0.0.value_header_ptr_unchecked().unpack(), self.0) }
     }
 
     #[inline]

@@ -13,6 +13,7 @@ package com.facebook.buck.jvm.java;
 import com.facebook.buck.core.filesystems.AbsPath;
 import com.facebook.buck.core.filesystems.RelPath;
 import com.facebook.buck.util.unarchive.Unzip;
+import com.facebook.infer.annotation.Nullsafe;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableSet;
 import java.io.IOException;
@@ -23,6 +24,7 @@ import java.util.zip.ZipEntry;
 import java.util.zip.ZipFile;
 
 /** Utilities for handling paths to java source files. */
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public class JavaPaths {
 
   public static final String SRC_ZIP = ".src.zip";

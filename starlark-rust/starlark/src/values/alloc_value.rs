@@ -19,82 +19,73 @@
 
 use either::Either;
 
+use crate::values::AllocFrozenRepresentation;
+use crate::values::AllocRepresentation;
 use crate::values::FrozenHeap;
 use crate::values::Heap;
-use crate::values::StringValue;
+use crate::values::StarlarkValue;
 use crate::values::Value;
-use crate::values::type_repr::StarlarkTypeRepr;
+use crate::values::ValueOf;
+use crate::values::type_expr::StarlarkTypeExpr;
 
-/// Trait for things that can be created on a [`Heap`] producing a [`Value`].
+/// A Rust value that makes a Starlark [`Value`] on a [`Heap`]: what a native function returns
+/// and what [`Heap::alloc`] takes.
 ///
-/// Note, this trait does not represent Starlark types.
-/// For example, this trait is implemented for `char`,
-/// but there's no Starlark type for `char`, this trait
-/// is implemented for `char` to construct Starlark `str`.
-///
-/// For types that implement [`crate::values::StarlarkValue`] a typical implementation
-/// will probably call either [`Heap::alloc_simple`] or [`Heap::alloc_complex`],
-/// e.g.
-///
-/// ```
-/// # use allocative::Allocative;
-/// # use starlark::any::ProvidesStaticType;
-/// # use starlark::values::{AllocValue, Heap, NoSerialize, starlark_value, StarlarkValue, Value};
-/// # use starlark_derive::StarlarkPagable;
-///
-/// #[derive(Debug, derive_more::Display, Allocative, NoSerialize, ProvidesStaticType, StarlarkPagable)]
-/// struct MySimpleValue;
-///
-/// #[starlark_value(type = "MySimpleValue", UnpackValue, StarlarkTypeRepr)]
-/// impl<'v> StarlarkValue<'v> for MySimpleValue {}
-///
-/// impl<'v> AllocValue<'v> for MySimpleValue {
-///     fn alloc_value(self, heap: Heap<'v>) -> Value<'v> {
-///         heap.alloc_simple(self)
-///     }
-/// }
-/// ```
-///
-/// # Derive
-///
-/// `AllocValue` can be derived for enums, like this:
-///
-/// ```
-/// use starlark::values::AllocValue;
-/// use starlark::values::type_repr::StarlarkTypeRepr;
-///
-/// #[derive(StarlarkTypeRepr, AllocValue)]
-/// enum AllocIntOrStr {
-///     Int(i32),
-///     Str(String),
-/// }
-/// ```
-pub trait AllocValue<'v>: StarlarkTypeRepr {
-    /// Allocate the value on a heap and return a reference to the allocated value.
+/// A representation of a Starlark type makes a value of that type, through the impl every
+/// [`AllocRepresentation`] gets below. Everything else is a recipe that says which type it
+/// makes: a handle, a scalar with one obvious Starlark type (`char` makes a `str`, `StarlarkInt`
+/// an inline `int` or a big one), a Rust tuple, `Either`, `NoneOr`, or an `Alloc*` type in the
+/// module of the type it makes ([`AllocList`](crate::values::list::AllocList),
+/// [`AllocDict`](crate::values::dict::AllocDict)). A Rust collection is not a recipe, because
+/// which Starlark type a `Vec` or a map should become is a guess: wrap it in the recipe of
+/// the type that is meant. [`ValueOf::alloc`] is the same entry by type.
+pub trait AllocValue<'v> {
+    /// The Starlark type of the value this makes, which is what a native function returning
+    /// `Self` is documented and type-checked as. A conversion that can make several types names
+    /// their union (`Either<IntView, StarlarkFloat>`); one that can make anything names
+    /// [`Value`].
+    type Type: StarlarkTypeExpr<'v>;
+
+    /// The value, on the heap, as the handle of [`Type`](Self::Type) it is by construction.
     ///
-    /// Note, for certain values (e.g. empty strings) no allocation is actually performed,
-    /// and a reference to the statically allocated object is returned.
-    fn alloc_value(self, heap: Heap<'v>) -> Value<'v>;
+    /// Some values are not allocated: an empty string or `None` is a reference to a static.
+    fn alloc_value(self, heap: Heap<'v>) -> ValueOf<'v, Self::Type>;
 }
 
-/// Type which allocates a string.
-pub trait AllocStringValue<'v>: AllocValue<'v> + Sized {
-    /// Allocate a string.
-    fn alloc_string_value(self, heap: Heap<'v>) -> StringValue<'v>;
+impl<'v> Heap<'v> {
+    /// Allocate a new value on a [`Heap`]: the value, on the heap, as the handle of the
+    /// builder's [`Type`](AllocValue::Type).
+    pub fn alloc<T: AllocValue<'v>>(self, x: T) -> ValueOf<'v, T::Type> {
+        x.alloc_value(self)
+    }
+}
+
+/// A representation makes a value of its type, allocated the way it chose to be.
+impl<'v, B: AllocRepresentation<'v>> AllocValue<'v> for B {
+    type Type = <B::Repr as StarlarkValue<'v>>::Type;
+
+    #[inline]
+    fn alloc_value(self, heap: Heap<'v>) -> ValueOf<'v, Self::Type> {
+        ValueOf::from_representation(heap.alloc_representation(self))
+    }
 }
 
 impl<'v> AllocValue<'v> for Value<'v> {
-    fn alloc_value(self, _heap: Heap<'v>) -> Value<'v> {
-        self
+    type Type = Value<'v>;
+
+    fn alloc_value(self, _heap: Heap<'v>) -> ValueOf<'v, Self::Type> {
+        self.into()
     }
 }
 
 impl<'v, A: AllocValue<'v>, B: AllocValue<'v>> AllocValue<'v> for Either<A, B> {
+    type Type = Either<A::Type, B::Type>;
+
     #[inline]
-    fn alloc_value(self, heap: Heap<'v>) -> Value<'v> {
+    fn alloc_value(self, heap: Heap<'v>) -> ValueOf<'v, Self::Type> {
         match self {
-            Either::Left(a) => a.alloc_value(heap),
-            Either::Right(b) => b.alloc_value(heap),
+            Either::Left(a) => ValueOf::left(a.alloc_value(heap)),
+            Either::Right(b) => ValueOf::right(b.alloc_value(heap)),
         }
     }
 }
@@ -102,44 +93,50 @@ impl<'v, A: AllocValue<'v>, B: AllocValue<'v>> AllocValue<'v> for Either<A, B> {
 impl<'fv, A: AllocFrozenValue<'fv>, B: AllocFrozenValue<'fv>> AllocFrozenValue<'fv>
     for Either<A, B>
 {
+    type Type = Either<A::Type, B::Type>;
+
     #[inline]
-    fn alloc_frozen_value(self, heap: FrozenHeap<'fv>) -> Value<'fv> {
+    fn alloc_frozen_value(self, heap: FrozenHeap<'fv>) -> ValueOf<'fv, Self::Type> {
         match self {
-            Either::Left(a) => a.alloc_frozen_value(heap),
-            Either::Right(b) => b.alloc_frozen_value(heap),
+            Either::Left(a) => ValueOf::left(a.alloc_frozen_value(heap)),
+            Either::Right(b) => ValueOf::right(b.alloc_frozen_value(heap)),
         }
     }
 }
 
-/// Trait for things that can be allocated on a [`FrozenHeap`] producing a [`Value`].
-///
-/// # Derive
-///
-/// `AllocFrozenValue` can be derived for enums, like this:
-///
-/// ```
-/// use starlark::values::AllocFrozenValue;
-/// use starlark::values::type_repr::StarlarkTypeRepr;
-///
-/// #[derive(StarlarkTypeRepr, AllocFrozenValue)]
-/// enum AllocIntOrStr {
-///     Int(i32),
-///     Str(String),
-/// }
-/// ```
-pub trait AllocFrozenValue<'fv>: StarlarkTypeRepr {
-    /// Allocate a value in the frozen heap and return a reference to the allocated value.
-    fn alloc_frozen_value(self, heap: FrozenHeap<'fv>) -> Value<'fv>;
+/// [`AllocValue`] for a [`FrozenHeap`]: a representation that can live on one
+/// ([`AllocFrozenRepresentation`]) is one, as is a conversion into a frozen [`Value`].
+pub trait AllocFrozenValue<'fv> {
+    /// The Starlark type of the value this makes, as [`AllocValue::Type`].
+    type Type: StarlarkTypeExpr<'fv>;
+
+    /// The value, on the frozen heap, as the handle of [`Type`](Self::Type) it is by
+    /// construction.
+    fn alloc_frozen_value(self, heap: FrozenHeap<'fv>) -> ValueOf<'fv, Self::Type>;
 }
 
-/// Type which allocates a string.
-pub trait AllocFrozenStringValue<'fv>: AllocFrozenValue<'fv> + Sized {
-    /// Allocate a string.
-    fn alloc_frozen_string_value(self, heap: FrozenHeap<'fv>) -> StringValue<'fv>;
+impl<'fh> FrozenHeap<'fh> {
+    /// Allocate a new value on this heap: the value, on the heap, as the handle of the
+    /// builder's [`Type`](AllocFrozenValue::Type).
+    pub fn alloc<T: AllocFrozenValue<'fh>>(self, val: T) -> ValueOf<'fh, T::Type> {
+        val.alloc_frozen_value(self)
+    }
+}
+
+/// A representation makes a value of its type, allocated the way it chose to be.
+impl<'fv, B: AllocFrozenRepresentation<'fv>> AllocFrozenValue<'fv> for B {
+    type Type = <B::Repr as StarlarkValue<'fv>>::Type;
+
+    #[inline]
+    fn alloc_frozen_value(self, heap: FrozenHeap<'fv>) -> ValueOf<'fv, Self::Type> {
+        ValueOf::from_representation(heap.alloc_representation(self))
+    }
 }
 
 impl<'fv> AllocFrozenValue<'fv> for Value<'fv> {
-    fn alloc_frozen_value(self, _heap: FrozenHeap<'fv>) -> Value<'fv> {
-        self
+    type Type = Value<'fv>;
+
+    fn alloc_frozen_value(self, _heap: FrozenHeap<'fv>) -> ValueOf<'fv, Self::Type> {
+        self.into()
     }
 }

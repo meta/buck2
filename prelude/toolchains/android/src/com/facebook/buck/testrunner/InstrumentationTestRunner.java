@@ -27,6 +27,7 @@ import com.facebook.buck.testrunner.reportlayer.ReportLayer;
 import com.facebook.buck.testrunner.reportlayer.TombstonesReportLayer;
 import com.facebook.buck.testrunner.reportlayer.VideoRecordingReportLayer;
 import com.facebook.buck.util.escaper.BashEscaper;
+import com.facebook.infer.annotation.Nullsafe;
 import java.io.File;
 import java.io.FileWriter;
 import java.io.IOException;
@@ -42,6 +43,7 @@ import java.util.Arrays;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
@@ -51,8 +53,10 @@ import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
 import java.util.function.Function;
 import java.util.stream.Stream;
+import org.jspecify.annotations.Nullable;
 
 /** Logcat buffers that can be collected from the device */
+@Nullsafe(Nullsafe.Mode.LOCAL)
 enum LogcatBuffer {
   MAIN("main"),
   SYSTEM("system"),
@@ -73,6 +77,7 @@ enum LogcatBuffer {
   }
 }
 
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public class InstrumentationTestRunner extends DeviceRunner {
 
   private static final String TEST_RESULT_ARTIFACTS_ENV = "TEST_RESULT_ARTIFACTS_DIR";
@@ -97,7 +102,11 @@ public class InstrumentationTestRunner extends DeviceRunner {
   /** Instrumentation arg read by the on-device per-test coverage listener. */
   static final String PER_TEST_COVERAGE_DIR_ARG = "PER_TEST_COVERAGE_DIR";
 
+  static final String PER_TEST_COVERAGE_APP_PRIVATE_ENV =
+      "ANDROID_PER_TEST_COVERAGE_USE_APP_PRIVATE_STORAGE";
+
   private static final String PER_TEST_COVERAGE_SUBDIR = "per_test_coverage";
+  @Nullable private String appPrivatePerTestCoverageDir;
 
   /** Env var to enable per-test timeout enforcement. */
   static final String PER_TEST_TIMEOUT_ENABLED_ENV = "ANDROID_PER_TEST_TIMEOUT_ENABLED";
@@ -138,12 +147,12 @@ public class InstrumentationTestRunner extends DeviceRunner {
   private final String targetPackageName;
   private final String testRunner;
   private final File outputDirectory;
-  private final String exopackageLocalPath;
+  @Nullable private final String exopackageLocalPath;
   @Nullable private final String exopackageSecondaryDexLocalPath;
   private final boolean attemptUninstallApkUnderTest;
   private final boolean attemptUninstallInstrumentationApk;
   private final Map<String, String> extraInstrumentationArguments;
-  private final String extraInstrumentationTestListener;
+  @Nullable private final String extraInstrumentationTestListener;
   private final Map<String, String> extraFilesToPull;
   private final Map<String, String> extraDirsToPull;
   private final boolean debug;
@@ -156,7 +165,7 @@ public class InstrumentationTestRunner extends DeviceRunner {
   @Nullable private final String apkUnderTestPath;
   @Nullable private final String codeCoverageOutputFile;
   @Nullable private final String apkUnderTestExopackageLocalPath;
-  private final String preTestSetupScript;
+  @Nullable private final String preTestSetupScript;
   private final List<String> apexesToInstall;
 
   @Nullable private final Integer userId;
@@ -165,6 +174,10 @@ public class InstrumentationTestRunner extends DeviceRunner {
   private static final String SECONDARY_USER_STORAGE_PREFIX = "/data/media/";
 
   private static final String SDCARD_PATH = "/sdcard";
+  private static final String LEGACY_IRPGO_OUTPUT_FILE =
+      "/sdcard/instrumentation-irpgo-function-ids.txt";
+  private static final String IRPGO_RUN_ID_ARG = "irpgo_run_id";
+  private static final String IRPGO_OUTPUT_FILE_ARG = "irpgo_output_file";
   private static final String STORAGE_EMULATED_PATH = "/storage/emulated/0";
   private static final String STORAGE_EMULATED_PREFIX = "/storage/emulated/";
 
@@ -222,24 +235,24 @@ public class InstrumentationTestRunner extends DeviceRunner {
       String targetPackageName,
       String testRunner,
       File outputDirectory,
-      String instrumentationApkPath,
-      String apkUnderTestPath,
-      String exopackageLocalPath,
-      String apkUnderTestExopackageLocalPath,
-      String exopackageSecondaryDexLocalPath,
+      @Nullable String instrumentationApkPath,
+      @Nullable String apkUnderTestPath,
+      @Nullable String exopackageLocalPath,
+      @Nullable String apkUnderTestExopackageLocalPath,
+      @Nullable String exopackageSecondaryDexLocalPath,
       boolean attemptUninstallApkUnderTest,
       boolean attemptUninstallInstrumentationApk,
       boolean debug,
       boolean codeCoverage,
-      String codeCoverageOutputFile,
+      @Nullable String codeCoverageOutputFile,
       boolean isSelfInstrumenting,
       Map<String, String> extraInstrumentationArguments,
-      String extraInstrumentationTestListener,
+      @Nullable String extraInstrumentationTestListener,
       Map<String, String> extraFilesToPull,
       Map<String, String> extraDirsToPull,
       boolean clearPackageData,
       boolean disableAnimations,
-      String preTestSetupScript,
+      @Nullable String preTestSetupScript,
       List<String> apexesToInstall,
       @Nullable Integer userId) {
     super(deviceArgs);
@@ -274,18 +287,18 @@ public class InstrumentationTestRunner extends DeviceRunner {
 
   protected static class ArgsParser {
     private final Map<String, String> environment;
-    File outputDirectory = null;
-    DeviceArgs deviceArgs = null;
-    String apkUnderTestPath = null;
-    String packageName = null;
-    String targetPackageName = null;
-    String testRunner = null;
-    String instrumentationApkPath = null;
-    String codeCoverageOutputFile = null;
-    String exopackageLocalPath = null;
-    String apkUnderTestExopackageLocalPath = null;
-    String exopackageSecondaryDexLocalPath = null;
-    String extraInstrumentationTestListener = null;
+    @Nullable File outputDirectory = null;
+    @Nullable DeviceArgs deviceArgs = null;
+    @Nullable String apkUnderTestPath = null;
+    @Nullable String packageName = null;
+    @Nullable String targetPackageName = null;
+    @Nullable String testRunner = null;
+    @Nullable String instrumentationApkPath = null;
+    @Nullable String codeCoverageOutputFile = null;
+    @Nullable String exopackageLocalPath = null;
+    @Nullable String apkUnderTestExopackageLocalPath = null;
+    @Nullable String exopackageSecondaryDexLocalPath = null;
+    @Nullable String extraInstrumentationTestListener = null;
     boolean attemptUninstallApkUnderTest = false;
     boolean attemptUninstallInstrumentationApk = false;
     boolean debug = false;
@@ -300,7 +313,7 @@ public class InstrumentationTestRunner extends DeviceRunner {
     Map<String, String> extraFilesToPull = new HashMap<String, String>();
     Map<String, String> extraDirsToPull = new HashMap<String, String>();
     Map<String, String> logExtractors = new HashMap<String, String>();
-    String preTestSetupScript = null;
+    @Nullable String preTestSetupScript = null;
     List<String> extraApksToInstall = new ArrayList<>();
     @Nullable Integer userId = null;
 
@@ -312,7 +325,6 @@ public class InstrumentationTestRunner extends DeviceRunner {
       this.environment = environment;
     }
 
-    @SuppressWarnings("PMD.BlacklistedSystemGetenv")
     void fromArgs(String... args) throws IOException {
 
       for (int i = 0; i < args.length; i++) {
@@ -528,17 +540,16 @@ public class InstrumentationTestRunner extends DeviceRunner {
     reportLayers.add(reportLayer);
   }
 
-  @SuppressWarnings("PMD.BlacklistedSystemGetenv")
   public static InstrumentationTestRunner fromArgs(String... args) throws IOException {
     ArgsParser argsParser = new ArgsParser();
     argsParser.fromArgs(args);
     InstrumentationTestRunner runner =
         new InstrumentationTestRunner(
-            argsParser.deviceArgs,
-            argsParser.packageName,
-            argsParser.targetPackageName,
-            argsParser.testRunner,
-            argsParser.outputDirectory,
+            Objects.requireNonNull(argsParser.deviceArgs),
+            Objects.requireNonNull(argsParser.packageName),
+            Objects.requireNonNull(argsParser.targetPackageName),
+            Objects.requireNonNull(argsParser.testRunner),
+            Objects.requireNonNull(argsParser.outputDirectory),
             argsParser.instrumentationApkPath,
             argsParser.apkUnderTestPath,
             argsParser.exopackageLocalPath,
@@ -688,9 +699,10 @@ public class InstrumentationTestRunner extends DeviceRunner {
    * {@link RemoteAndroidTestRunner} requires an {@link IDevice} to execute {@code am instrument}.
    * All other device interactions use {@link AndroidDevice} via {@link AdbUtils}.
    */
-  protected IDevice resolveIDevice(String serial) throws InterruptedException {
+  protected @Nullable IDevice resolveIDevice(String serial) throws InterruptedException {
     AndroidDebugBridge.initIfNeeded(/* clientSupport */ false);
-    AndroidDebugBridge adb = AndroidDebugBridge.createBridge(getAdbPath(), false);
+    AndroidDebugBridge adb =
+        AndroidDebugBridge.createBridge(Objects.requireNonNull(getAdbPath()), false);
     if (adb == null) {
       System.err.println("Failed to connect to adb. Make sure adb server is running.");
       System.exit(1);
@@ -744,7 +756,6 @@ public class InstrumentationTestRunner extends DeviceRunner {
     }
   }
 
-  @SuppressWarnings({"PMD.BlacklistedSystemGetenv", "PMD.BlacklistedDefaultProcessMethod"})
   public void run() throws Throwable {
     // Proactive timeout: start the timer as early as possible since TPX_TIMEOUT_SEC counts from
     // process start. ADB setup (APK install, directory creation) can consume significant time,
@@ -761,10 +772,12 @@ public class InstrumentationTestRunner extends DeviceRunner {
 
     // Resolve a ddmlib IDevice solely for RemoteAndroidTestRunner compatibility.
     // All other device interactions use this.androidDevice (AdbUtils-based).
-    IDevice iDevice = resolveIDevice(androidDevice.getSerialNumber());
+    IDevice iDevice = Objects.requireNonNull(resolveIDevice(androidDevice.getSerialNumber()));
 
     if (this.instrumentationApkPath != null) {
       if (this.apkUnderTestPath != null) {
+        String instrumentationApkPath = this.instrumentationApkPath;
+        String apkUnderTestPath = this.apkUnderTestPath;
         // Install both APKs in parallel to improve performance
         ExecutorService executor = Executors.newFixedThreadPool(2);
         try {
@@ -772,7 +785,7 @@ public class InstrumentationTestRunner extends DeviceRunner {
               executor.submit(
                   () -> {
                     try {
-                      installPackage(this.instrumentationApkPath, this.packageName);
+                      installPackage(instrumentationApkPath, this.packageName);
                       return null;
                     } catch (Throwable t) {
                       throw new RuntimeException("Failed to install instrumentation APK", t);
@@ -783,7 +796,7 @@ public class InstrumentationTestRunner extends DeviceRunner {
               executor.submit(
                   () -> {
                     try {
-                      installPackage(this.apkUnderTestPath, this.targetPackageName);
+                      installPackage(apkUnderTestPath, this.targetPackageName);
                       return null;
                     } catch (Throwable t) {
                       throw new RuntimeException("Failed to install APK under test", t);
@@ -921,6 +934,8 @@ public class InstrumentationTestRunner extends DeviceRunner {
       executeAdbShellCommand("pm clear " + this.targetPackageName);
     }
 
+    setUpIrpgoCoveragePull();
+
     AnimationScales originalWindowAnimationScales = null;
 
     if (this.disableAnimations) {
@@ -947,6 +962,11 @@ public class InstrumentationTestRunner extends DeviceRunner {
     boolean failOnArtifactStagingError = "true".equals(getenv(FAIL_ON_ARTIFACT_STAGING_ERROR_ENV));
     for (final String devicePath : this.extraDirsToPull.keySet()) {
       String resolvedPath = resolvePathForUser(devicePath);
+      if (resolvedPath.equals(appPrivatePerTestCoverageDir)) {
+        // Let the app create its own directory with the correct owner and SELinux label.
+        executeAdbShellCommand("su root rm -fr " + BashEscaper.BASH_ESCAPER.apply(resolvedPath));
+        continue;
+      }
       String output = executeAdbShellCommand("rm -fr " + resolvedPath);
 
       if (directoryExists(resolvedPath)) {
@@ -1018,7 +1038,6 @@ public class InstrumentationTestRunner extends DeviceRunner {
         }
       }
 
-      BuckXmlTestRunListener buckXmlListener = new BuckXmlTestRunListener(androidDevice, adbUtils);
       ITestRunListener trimLineListener =
           new ITestRunListener() {
             /**
@@ -1059,28 +1078,12 @@ public class InstrumentationTestRunner extends DeviceRunner {
             public void testRunStopped(long elapsedTime) {}
           };
 
-      buckXmlListener.setReportDir(this.outputDirectory);
-
       List<ITestRunListener> listeners = new ArrayList<ITestRunListener>();
       if (extraListener != null) {
         listeners.add(extraListener);
       }
       listeners.add(trimLineListener);
-      listeners.add(buckXmlListener);
-
-      // Determine the result listener for timeout enforcement.
-      ITestRunListener resultListener = buckXmlListener;
-
-      if (testResultsOutputSender.isPresent()) {
-        InstrumentationTpxStandardOutputTestListener tpxListener =
-            new InstrumentationTpxStandardOutputTestListener(
-                testResultsOutputSender.get(),
-                androidDevice,
-                adbUtils,
-                "true".equals(System.getenv(TEST_RESULT_OS_METADATA_ENABLED_ENV)));
-        listeners.add(tpxListener);
-        resultListener = tpxListener;
-      }
+      ITestRunListener resultListener = addResultListeners(listeners, testResultsOutputSender);
 
       if ("true".equals(System.getenv(PER_TEST_TIMEOUT_ENABLED_ENV))) {
         listeners.add(new InstrumentationTimeoutEnforcingRunListener(resultListener));
@@ -1097,10 +1100,13 @@ public class InstrumentationTestRunner extends DeviceRunner {
       }
 
       if (this.disableAnimations) {
-        setAnimationScales(originalWindowAnimationScales);
+        setAnimationScales(Objects.requireNonNull(originalWindowAnimationScales));
       }
 
-      if (this.codeCoverageOutputFile != null || (useJaCoCoCoverage && coverageTempDir != null)) {
+      boolean shouldPullLegacyCoverageFile =
+          this.codeCoverageOutputFile != null
+              || (hostPerTestCoverageDir == null && useJaCoCoCoverage && coverageTempDir != null);
+      if (shouldPullLegacyCoverageFile) {
         String destCovFileInHost = this.codeCoverageOutputFile;
 
         if (coverageTempDir != null) {
@@ -1114,7 +1120,7 @@ public class InstrumentationTestRunner extends DeviceRunner {
             executeAdbShellCommand("su root cp " + covFileInEmu + " " + covFileInSdcard);
 
         System.out.println(cpOutput);
-        pullFile(covFileInSdcard, destCovFileInHost);
+        pullFile(covFileInSdcard, Objects.requireNonNull(destCovFileInHost));
 
         String coverageParser = getenv("COVERAGE_PARSER");
         if (coverageParser != null) {
@@ -1138,7 +1144,11 @@ public class InstrumentationTestRunner extends DeviceRunner {
       }
       for (Map.Entry<String, String> entry : this.extraDirsToPull.entrySet()) {
         String resolvedPath = resolvePathForUser(entry.getKey());
-        pullDir(resolvedPath, entry.getValue());
+        if (resolvedPath.equals(appPrivatePerTestCoverageDir)) {
+          pullAppPrivatePerTestCoverage(resolvedPath, entry.getValue());
+        } else {
+          pullDir(resolvedPath, entry.getValue());
+        }
       }
 
       maybeEmitPerTestCoverageInfraFailure(hostPerTestCoverageDir, testResultsOutputSender);
@@ -1179,9 +1189,19 @@ public class InstrumentationTestRunner extends DeviceRunner {
       return null;
     }
 
-    String devicePerTestCoveragePath =
-        getAppScopedStoragePath(
-            packageName, targetPackageName, isSelfInstrumenting, PER_TEST_COVERAGE_SUBDIR);
+    String devicePerTestCoveragePath;
+    if ("true".equals(getenv(PER_TEST_COVERAGE_APP_PRIVATE_ENV))) {
+      String appPackage = isSelfInstrumenting ? packageName : targetPackageName;
+      appPrivatePerTestCoverageDir =
+          String.format(
+              "/data/user/%d/%s/files/%s",
+              userId == null ? 0 : userId, appPackage, PER_TEST_COVERAGE_SUBDIR);
+      devicePerTestCoveragePath = appPrivatePerTestCoverageDir;
+    } else {
+      devicePerTestCoveragePath =
+          getAppScopedStoragePath(
+              packageName, targetPackageName, isSelfInstrumenting, PER_TEST_COVERAGE_SUBDIR);
+    }
     if (devicePerTestCoveragePath == null) {
       devicePerTestCoveragePath =
           String.format(
@@ -1195,6 +1215,51 @@ public class InstrumentationTestRunner extends DeviceRunner {
       extraInstrumentationArguments.put(PER_TEST_COVERAGE_DIR_ARG, devicePerTestCoveragePath);
     }
     return hostPerTestCoverageDir;
+  }
+
+  private void pullAppPrivatePerTestCoverage(String sourceDir, String destinationDir)
+      throws Exception {
+    String stagingDir = "/data/local/tmp/buck-per-test-coverage/" + packageName;
+    String source = BashEscaper.BASH_ESCAPER.apply(sourceDir + "/.");
+    String staging = BashEscaper.BASH_ESCAPER.apply(stagingDir);
+    executeAdbShellCommand("su root rm -fr " + staging);
+    executeAdbShellCommand("mkdir -p " + staging);
+    try {
+      executeAdbShellCommand("su root cp -R " + source + " " + staging);
+      executeAdbShellCommand("su root chmod -R a+rX " + staging);
+      pullDir(stagingDir, destinationDir);
+    } finally {
+      executeAdbShellCommand("su root rm -fr " + staging);
+    }
+  }
+
+  private void setUpIrpgoCoveragePull() {
+    String hostOutputFile = extraFilesToPull.get(LEGACY_IRPGO_OUTPUT_FILE);
+    String runId = extraInstrumentationArguments.get(IRPGO_RUN_ID_ARG);
+    if (hostOutputFile == null || runId == null) {
+      return;
+    }
+
+    String deviceOutputFile = extraInstrumentationArguments.get(IRPGO_OUTPUT_FILE_ARG);
+    if (deviceOutputFile == null) {
+      String deviceOutputDir =
+          getAppScopedStoragePath(
+              packageName, targetPackageName, isSelfInstrumenting, "irpgo_coverage");
+      if (deviceOutputDir == null) {
+        return;
+      }
+      // Applications need the mounted user path; adb resolves it to /data/media when pulling.
+      if (userId != null && userId > 0 && deviceOutputDir.startsWith(STORAGE_EMULATED_PATH)) {
+        deviceOutputDir =
+            STORAGE_EMULATED_PREFIX
+                + userId
+                + deviceOutputDir.substring(STORAGE_EMULATED_PATH.length());
+      }
+      deviceOutputFile = Paths.get(deviceOutputDir, runId + ".txt").toString();
+    }
+    extraInstrumentationArguments.put(IRPGO_OUTPUT_FILE_ARG, deviceOutputFile);
+    extraFilesToPull.remove(LEGACY_IRPGO_OUTPUT_FILE);
+    extraFilesToPull.put(deviceOutputFile, hostOutputFile);
   }
 
   @Nullable
@@ -1217,7 +1282,7 @@ public class InstrumentationTestRunner extends DeviceRunner {
   // probes (empty manifest.jsonl) — surfacing it as INFRA_FAILURE makes the next regression
   // visible in test results instead of waiting for someone to notice missing per-test artifacts.
   private static void maybeEmitPerTestCoverageInfraFailure(
-      String hostPerTestCoverageDir, Optional<TestResultsOutputSender> sender) {
+      @Nullable String hostPerTestCoverageDir, Optional<TestResultsOutputSender> sender) {
     if (hostPerTestCoverageDir == null || !sender.isPresent()) {
       return;
     }
@@ -1257,16 +1322,15 @@ public class InstrumentationTestRunner extends DeviceRunner {
    * create TRA path for logcat buffer
    *
    * @param bufferName name of the buffer
-   * @return path to the tra
+   * @return path to the tra, null if the creation is not successful
    * @throws IOException when fail to create the path
    */
-  public Path createPathForLogcatBuffer(String bufferName) throws IOException {
+  public @Nullable Path createPathForLogcatBuffer(String bufferName) throws IOException {
     return this.createTRALogcatLog(
         String.format("Logcat `%s` Buffer Output", bufferName),
         String.format("logcat_%s_buffer_logs", bufferName));
   }
 
-  @SuppressWarnings("PMD.BlacklistedSystemGetenv")
   private void collectAdbLogs() {
     try {
       StringBuilder allLogOutput = new StringBuilder();
@@ -1309,14 +1373,14 @@ public class InstrumentationTestRunner extends DeviceRunner {
    * @return Path of the created TRA, null if the creation is not successful
    * @throws IOException the exception may throw from file writing.
    */
-  public Path createTRA(String type, String description, String name) throws IOException {
+  public @Nullable Path createTRA(String type, String description, String name) throws IOException {
     // create the annotation file
     String annotationTemplate =
         String.format("{\"type\": {\"%s\": {}}, \"description\": \"%s\"}", type, description);
     return createTRA(annotationTemplate, name);
   }
 
-  public Path createTRALogcatLog(String description, String name) throws IOException {
+  public @Nullable Path createTRALogcatLog(String description, String name) throws IOException {
     // Use Logcat type(id = 4 https://fburl.com/code/8xzvasdf)
     String annotationTemplate =
         String.format(
@@ -1325,7 +1389,7 @@ public class InstrumentationTestRunner extends DeviceRunner {
     return createTRA(annotationTemplate, name);
   }
 
-  public Path createTRAPlainTextLog(String description, String name) throws IOException {
+  public @Nullable Path createTRAPlainTextLog(String description, String name) throws IOException {
     // Use PLAIN_TEXT type(id = 5 https://fburl.com/code/8xzvasdf)
     String annotationTemplate =
         String.format(
@@ -1334,7 +1398,7 @@ public class InstrumentationTestRunner extends DeviceRunner {
     return createTRA(annotationTemplate, name);
   }
 
-  private Path createTRA(String annotationTemplate, String name) throws IOException {
+  private @Nullable Path createTRA(String annotationTemplate, String name) throws IOException {
     /// get TRA directories
     String testArtifactsPath = getenv(TEST_RESULT_ARTIFACTS_ENV);
     String testArtifactsAnnotationsPath = getenv(TEST_RESULT_ARTIFACTS_ANNOTATIONS_ENV);
@@ -1381,15 +1445,32 @@ public class InstrumentationTestRunner extends DeviceRunner {
     pullFile(remote, local);
   }
 
+  ITestRunListener addResultListeners(
+      List<ITestRunListener> listeners, Optional<TestResultsOutputSender> sender) {
+    if (sender.isPresent()) {
+      ITestRunListener tpxListener =
+          new InstrumentationTpxStandardOutputTestListener(
+              sender.get(),
+              androidDevice,
+              adbUtils,
+              "true".equals(getenv(TEST_RESULT_OS_METADATA_ENABLED_ENV)));
+      listeners.add(tpxListener);
+      return tpxListener;
+    }
+
+    BuckXmlTestRunListener xmlListener = new BuckXmlTestRunListener(androidDevice, adbUtils);
+    xmlListener.setReportDir(outputDirectory);
+    listeners.add(xmlListener);
+    return xmlListener;
+  }
+
   // Java has no setenv(), so this is needed to be able to overwrite env vars in tests
   // the lint suggests to use EnvVariablesProvider, but the
   // compiler cannot find it
-  @SuppressWarnings("PMD.BlacklistedSystemGetenv")
-  protected String getenv(String env) {
+  protected @Nullable String getenv(String env) {
     return System.getenv(env);
   }
 
-  @SuppressWarnings("PMD.BlacklistedSystemGetenv")
   protected Map<String, String> getenv() {
     return System.getenv();
   }
@@ -1470,7 +1551,7 @@ public class InstrumentationTestRunner extends DeviceRunner {
     pushTree(localDir, remoteBase, this::pushFile);
   }
 
-  private String getAppScopedStoragePath(
+  private @Nullable String getAppScopedStoragePath(
       String packageName,
       String targetPackageName,
       boolean isSelfInstrumenting,
@@ -1484,7 +1565,7 @@ public class InstrumentationTestRunner extends DeviceRunner {
     return Paths.get(basePath, fileName).toString();
   }
 
-  private String getAppScopedStoragePath(
+  private @Nullable String getAppScopedStoragePath(
       String packageName,
       String targetPackageName,
       boolean isSelfInstrumenting,
@@ -1555,7 +1636,8 @@ public class InstrumentationTestRunner extends DeviceRunner {
     try {
       Field mParserField = RemoteAndroidTestRunner.class.getDeclaredField("mParser");
       mParserField.setAccessible(true);
-      MultiLineReceiver multiLineReceiver = (MultiLineReceiver) mParserField.get(runner);
+      MultiLineReceiver multiLineReceiver =
+          (MultiLineReceiver) Objects.requireNonNull(mParserField.get(runner));
       multiLineReceiver.setTrimLine(value);
     } catch (NoSuchFieldException | IllegalAccessException e) {
       throw new RuntimeException(e);

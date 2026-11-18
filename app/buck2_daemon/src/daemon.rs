@@ -18,12 +18,17 @@ use std::time::Duration;
 #[cfg(all(fbcode_build, target_os = "linux"))]
 use bpfjailer_client_rs::SOCK_PATHS as BPFJAILER_SOCK_PATHS;
 use buck2_cli_proto::DaemonProcessInfo;
+use buck2_client_ctx::daemon::client::BuckdLifecycleLock;
+use buck2_client_ctx::daemon::client::namespaces::remove_unidaemon_namespace_dir;
 use buck2_client_ctx::daemon_constraints::gen_daemon_constraints;
+use buck2_client_ctx::startup_deadline::StartupDeadline;
 use buck2_client_ctx::version::BuckVersion;
 use buck2_common::buckd_connection::ConnectionType;
+use buck2_common::daemon_compatibility::DaemonCompatibilityKey;
 use buck2_common::daemon_dir::DaemonDir;
 use buck2_common::init::DaemonStartupConfig;
 use buck2_common::invocation_paths::InvocationPaths;
+use buck2_common::invocation_paths::UnidaemonLifetimeLock;
 use buck2_common::memory;
 use buck2_core::buck2_env;
 use buck2_core::logging::LogConfigurationReloadHandle;
@@ -36,6 +41,7 @@ use buck2_events::daemon_id::DaemonId;
 use buck2_events::daemon_id::set_daemon_id_for_panics;
 use buck2_fs::error::IoResultExt;
 use buck2_fs::fs_util;
+use buck2_fs::paths::abs_norm_path::AbsNormPathBuf;
 use buck2_fs::paths::forward_rel_path::ForwardRelativePath;
 use buck2_resource_control::buck_cgroup_tree::PreppedBuckCgroups;
 use buck2_server::daemon::daemon_tcp::create_listener;
@@ -115,6 +121,15 @@ pub struct DaemonCommand {
     daemon_id: String,
 
     #[clap(long, hide = true)]
+    tenant_proxy_file: Option<PathBuf>,
+
+    #[clap(long, hide = true)]
+    tenant_proxy_fd: Option<i32>,
+
+    #[clap(long, hide = true)]
+    unidaemon_reap: Option<u32>,
+
+    #[clap(long, hide = true)]
     started_for_clean_stale: bool,
 }
 
@@ -131,6 +146,9 @@ impl DaemonCommand {
             has_cgroup: false,
             daemon_originating_cgroup: None,
             daemon_id: DaemonId::new().to_string(),
+            tenant_proxy_file: None,
+            tenant_proxy_fd: None,
+            unidaemon_reap: None,
             started_for_clean_stale: false,
         }
     }
@@ -239,6 +257,38 @@ fn verify_buck_out_dir(paths: &InvocationPaths) -> buck2_error::Result<()> {
     Ok(())
 }
 
+/// Removes the namespace directory of a shared daemon that has exited normally, so that no record
+/// names it, and the daemon's forkserver and stash state, which nothing else removes; a daemon that failed
+/// leaves its error report there for its client to read. The daemon still holds the namespace's
+/// lifetime lock here, so no replacement runs yet; a client that holds the lifecycle lock is
+/// about to start one over the directory and keeps it, which is why this is best effort. The
+/// namespace's lock files stay: unlinking one while a daemon of the key waits on it would leave
+/// that daemon holding a lock on an unlinked file, which every later probe reads as "no daemon".
+fn remove_exited_namespace(daemon_dir: &DaemonDir, namespace_state: &[AbsNormPathBuf]) {
+    for state in namespace_state {
+        if let Err(error) = fs_util::remove_all(state) {
+            tracing::info!("Left namespace state `{state}` in place: {error:?}");
+        }
+    }
+    let removed = new_tokio_runtime("buck2-daemon-exit")
+        .enable_all()
+        .build()
+        .map_err(buck2_error::Error::from)
+        .and_then(|runtime| {
+            runtime.block_on(async {
+                let lifecycle = BuckdLifecycleLock::lock_with_timeout(
+                    daemon_dir.clone(),
+                    StartupDeadline::duration_from_now(Duration::from_millis(100))?,
+                )
+                .await?;
+                remove_unidaemon_namespace_dir(&lifecycle).await
+            })
+        });
+    if let Err(error) = removed {
+        tracing::info!("Left namespace directory `{daemon_dir}` in place: {error:#}");
+    }
+}
+
 impl DaemonCommand {
     fn run(
         self,
@@ -274,7 +324,21 @@ impl DaemonCommand {
             daemon_startup_config: self.daemon_startup_config,
             daemon_originating_cgroup: self.daemon_originating_cgroup,
             started_for_clean_stale: self.started_for_clean_stale,
+            in_process,
         };
+
+        #[cfg(target_os = "linux")]
+        if server_init_ctx
+            .daemon_startup_config
+            .startup_options
+            .routing
+            .is_shared()
+        {
+            buck2_server::daemon::proxies::LAUNCH_PROXY.get_or_init(|| buck2_tenant_proxy::launch);
+            buck2_server::daemon::proxies::RETIRE_PROXY.get_or_init(|| buck2_tenant_proxy::retire);
+            buck2_server::daemon::proxies::EMERGENCY_SHUTDOWN
+                .get_or_init(|| buck2_tenant_proxy::emergency_exit);
+        }
 
         let span = tracing::info_span!("daemon_listener");
         let span_guard = span.enter();
@@ -516,7 +580,6 @@ impl DaemonCommand {
                 paths,
                 server_init_ctx,
                 process_info,
-                in_process,
                 prepped_cgroups,
                 daemon_constraints,
                 Box::pin(listener),
@@ -638,18 +701,102 @@ impl DaemonCommand {
         in_process: bool,
         ready: Box<dyn FnOnce() + Send>,
     ) -> buck2_error::Result<()> {
+        // The client that started this daemon chose its routing; serve under that choice even if
+        // the configuration changed since.
+        let paths = paths.with_routing(self.daemon_startup_config.startup_options.routing);
+        let unidaemon = paths.routing()?.is_shared();
+        if let Some(pid) = self.unidaemon_reap {
+            #[cfg(target_os = "linux")]
+            {
+                // SAFETY: `getppid` has no preconditions and cannot fail.
+                if unsafe { libc::getppid() } as u32 != pid {
+                    return Err(buck2_error!(
+                        ErrorTag::Input,
+                        "Emergency reaper must target its parent"
+                    ));
+                }
+                if !buck2_wrapper_common::kill::kill_unidaemon_tree_within(
+                    buck2_wrapper_common::pid::Pid::from_u32(pid)?,
+                    0,
+                    Duration::from_secs(10),
+                ) {
+                    return Err(buck2_error!(
+                        ErrorTag::Input,
+                        "Emergency reaper could not confirm that daemon `{pid}` exited"
+                    ));
+                }
+                return Ok(());
+            }
+            #[cfg(not(target_os = "linux"))]
+            return Err(buck2_error!(
+                ErrorTag::Input,
+                "Emergency reaper requires Linux: cannot reap `{pid}`"
+            ));
+        }
+        if let Some(path) = &self.tenant_proxy_file {
+            #[cfg(target_os = "linux")]
+            return buck2_tenant_proxy::run(path, self.tenant_proxy_fd);
+            #[cfg(not(target_os = "linux"))]
+            return Err(buck2_error!(
+                ErrorTag::Input,
+                "Tenant proxy requires Linux: {}",
+                path.display()
+            ));
+        }
+        if in_process && unidaemon {
+            return Err(buck2_error!(
+                ErrorTag::Input,
+                "Daemon sharing requires an external daemon"
+            ));
+        }
+        let key = if unidaemon {
+            // The same inputs the client hashed, so the daemon serves the namespace the client
+            // is waiting on.
+            let key = DaemonCompatibilityKey::new(
+                &buck2_client_ctx::daemon_constraints::version()?,
+                buck2_client_ctx::daemon_constraints::user_version()?.as_deref(),
+                &self.daemon_startup_config.serialize()?,
+                self.enable_trace_io,
+            );
+            paths.select_unidaemon(key.clone());
+            Some(key)
+        } else {
+            None
+        };
         let daemon_dir = paths.daemon_dir()?;
         if !daemon_dir.path.is_dir() {
             fs_util::create_dir_all(&daemon_dir.path)?;
         }
 
-        let res = self.run(log_reload_handle, paths, in_process, ready);
+        let namespace_state = unidaemon
+            .then(|| -> buck2_error::Result<_> {
+                Ok(vec![
+                    paths.forkserver_state_dir()?,
+                    paths.shared_stash_state_dir()?,
+                ])
+            })
+            .transpose()?;
+        let res = (move || {
+            if let Some(key) = &key {
+                // Released by the kernel when the process exits, and only then; see
+                // `UnidaemonLifetimeLock`. Taken where a failure is reported to the client like
+                // any other failure to start.
+                std::mem::forget(UnidaemonLifetimeLock::acquire(
+                    &paths,
+                    key,
+                    Duration::from_secs(10),
+                )?);
+            }
+            self.run(log_reload_handle, paths, in_process, ready)
+        })();
         if let Err(err) = res.as_ref() {
             fs_util::write(
                 daemon_dir.buckd_error_log(),
                 serde_json::to_string(&buck2_data::ErrorReport::from(err))?,
             )
             .categorize_internal()?;
+        } else if let Some(namespace_state) = &namespace_state {
+            remove_exited_namespace(&daemon_dir, namespace_state);
         }
         // Flush PGO profile data on all daemon exit paths (graceful kill,
         // dir mismatch, inactivity timeout, errors).
@@ -757,6 +904,7 @@ mod tests {
     use buck2_cli_proto::PingRequest;
     use buck2_client_ctx::daemon::client::connect::new_daemon_api_client;
     use buck2_client_ctx::daemon_constraints::gen_daemon_constraints;
+    use buck2_common::daemon_routing::DaemonRouting;
     use buck2_common::init::DaemonStartupConfig;
     use buck2_common::invocation_paths::InvocationPaths;
     use buck2_common::invocation_roots::InvocationRoots;
@@ -791,13 +939,14 @@ mod tests {
         let listener = tokio::net::TcpListener::from_std(listener).unwrap();
         let listener = tokio_stream::wrappers::TcpListenerStream::new(listener);
 
-        let invocation_paths = InvocationPaths {
-            roots: InvocationRoots {
+        let invocation_paths = InvocationPaths::new(
+            InvocationRoots {
                 project_root: project_root.path().dupe(),
                 cwd: ProjectRelativePath::empty().to_buf(),
             },
-            isolation: FileNameBuf::try_from("v2".to_owned()).unwrap(),
-        };
+            FileNameBuf::try_from("v2".to_owned()).unwrap(),
+            Some(DaemonRouting::Unshared),
+        );
 
         // NOTE: This disables the forkserver since it uses the current
         // executable and that's not gonna be available in a test like this.
@@ -831,11 +980,11 @@ mod tests {
                 daemon_startup_config: DaemonStartupConfig::testing_empty(),
                 daemon_originating_cgroup: None,
                 started_for_clean_stale: false,
+                // In process: there is no daemon here, just the test binary's own process, and a
+                // watchdog would `_exit` it out from under the remaining tests.
+                in_process: true,
             },
             process_info.clone(),
-            // In process: there is no daemon here, just the test binary's own process, and a
-            // watchdog would `_exit` it out from under the remaining tests.
-            true,
             None,
             gen_daemon_constraints(&DaemonStartupConfig::testing_empty(), &daemon_id).unwrap(),
             Box::pin(listener),

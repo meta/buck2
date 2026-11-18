@@ -195,6 +195,35 @@ class RustProjectTest(BuckTestCase):
         assert dep["source_folder"] is not None
 
     @buck_test(inplace=True, skip_for_os=["darwin", "windows"])
+    async def test_fallback_select_in_list(self, buck: Buck) -> None:
+        result_raw = await buck.bxl(
+            "prelude//rust/rust-analyzer/resolve_deps.bxl:resolve_targets",
+            "--",
+            "--targets",
+            "//buck2/integrations/rust-project/tests/targets/foo:g_with_compatibility",
+        )
+        result: Dict[str, Any] = json.load(open(result_raw.stdout.rstrip()))
+
+        dep = list(result["resolved_deps"].values())[0]
+
+        # The fbcode macros add select()s as elements of `labels`.
+        assert all(isinstance(label, str) for label in dep["labels"]), dep["labels"]
+
+    @buck_test(inplace=True, skip_for_os=["darwin", "windows"])
+    async def test_fallback_concat_env(self, buck: Buck) -> None:
+        result_raw = await buck.bxl(
+            "prelude//rust/rust-analyzer/resolve_deps.bxl:resolve_targets",
+            "--",
+            "--targets",
+            "//buck2/integrations/rust-project/tests/targets/foo:g_with_concat_env",
+        )
+        result: Dict[str, Any] = json.load(open(result_raw.stdout.rstrip()))
+
+        dep = list(result["resolved_deps"].values())[0]
+
+        assert dep["env"] == {"UNIVERSAL": "1", "DEFAULT_ONLY": "2"}, dep["env"]
+
+    @buck_test(inplace=True, skip_for_os=["darwin", "windows"])
     async def test_fallback_mapped_srcs(self, buck: Buck) -> None:
         result_raw = await buck.bxl(
             "prelude//rust/rust-analyzer/resolve_deps.bxl:resolve_targets",
@@ -213,6 +242,71 @@ class RustProjectTest(BuckTestCase):
         assert any(k.endswith(":g_filegroup") for k in mapped_srcs), mapped_srcs
         # A plain source file key is resolved to its path rather than dropped.
         assert any(k.endswith("mapped_g.rs") for k in mapped_srcs), mapped_srcs
+
+    @buck_test(inplace=True, skip_for_os=["darwin", "windows"])
+    async def test_fallback_generated_srcs(self, buck: Buck) -> None:
+        result_raw = await buck.bxl(
+            "prelude//rust/rust-analyzer/resolve_deps.bxl:resolve_targets",
+            "--",
+            "--targets",
+            "//buck2/integrations/rust-project/tests/targets/foo:g_with_generated_srcs",
+        )
+        result: Dict[str, Any] = json.load(open(result_raw.stdout.rstrip()))
+
+        dep = list(result["resolved_deps"].values())[0]
+
+        # Generated srcs have no path until they're built, so only the plain source
+        # file is reported.
+        assert [Path(src).name for src in dep["srcs"]] == ["lib_g.rs"], dep["srcs"]
+
+    @buck_test(inplace=True, skip_for_os=["darwin", "windows"])
+    async def test_fallback_nested_select_deps(self, buck: Buck) -> None:
+        result_raw = await buck.bxl(
+            "prelude//rust/rust-analyzer/resolve_deps.bxl:resolve_targets",
+            "--",
+            "--targets",
+            "//buck2/integrations/rust-project/tests/targets/foo:g_with_nested_select_deps",
+        )
+        result: Dict[str, Any] = json.load(open(result_raw.stdout.rstrip()))
+
+        dep = list(result["resolved_deps"].values())[0]
+
+        assert dep["deps"] == [
+            "fbcode//buck2/integrations/rust-project/tests/targets/foo:f"
+        ], dep["deps"]
+
+    @buck_test(inplace=True, skip_for_os=["darwin", "windows"])
+    async def test_fallback_incompatible_exec_dep(self, buck: Buck) -> None:
+        result_raw = await buck.bxl(
+            "prelude//rust/rust-analyzer/resolve_deps.bxl:resolve_targets",
+            "--",
+            "--targets",
+            "//buck2/integrations/rust-project/tests/targets/foo:g_with_incompatible_exec_dep",
+        )
+        result: Dict[str, Any] = json.load(open(result_raw.stdout.rstrip()))
+
+        assert len(result["resolved_deps"]) > 0
+
+        dep = list(result["resolved_deps"].values())[0]
+
+        assert dep["crate_root"] == "lib_g.rs"
+
+    @buck_test(inplace=True, skip_for_os=["darwin", "windows"])
+    async def test_fallback_alongside_configured_target(self, buck: Buck) -> None:
+        result_raw = await buck.bxl(
+            "prelude//rust/rust-analyzer/resolve_deps.bxl:resolve_targets",
+            "--",
+            "--targets",
+            "//buck2/integrations/rust-project/tests/targets/foo:f",
+            "//buck2/integrations/rust-project/tests/targets/foo:g_with_compatibility",
+            "--exclude_workspaces=true",
+        )
+        result: Dict[str, Any] = json.load(open(result_raw.stdout.rstrip()))
+
+        assert result["expanded_targets"] == [
+            "fbcode//buck2/integrations/rust-project/tests/targets/foo:f",
+            "fbcode//buck2/integrations/rust-project/tests/targets/foo:g_with_compatibility",
+        ]
 
     # FIXME: Remove once actual tests work on mac and windows
     @buck_test(inplace=True)

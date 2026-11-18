@@ -11,11 +11,14 @@
 package com.facebook.buck.io.file;
 
 import com.facebook.buck.core.filesystems.RelPath;
+import com.facebook.infer.annotation.Nullsafe;
 import java.nio.file.FileSystems;
 import java.nio.file.Path;
 import java.util.Objects;
+import org.jspecify.annotations.Nullable;
 
 /** Matcher that matches paths described by the glob pattern. */
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public class GlobPatternMatcher implements PathMatcher {
 
   private final String globPattern;
@@ -27,7 +30,7 @@ public class GlobPatternMatcher implements PathMatcher {
   }
 
   @Override
-  public boolean equals(Object other) {
+  public boolean equals(@Nullable Object other) {
     if (this == other) {
       return true;
     }

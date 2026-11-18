@@ -20,6 +20,7 @@ use std::mem;
 
 use crate::private::Private;
 use crate::values::ComplexValue;
+use crate::values::FreezePreservesType;
 use crate::values::FreezeResult;
 use crate::values::Freezer;
 use crate::values::Heap;
@@ -34,7 +35,7 @@ use crate::values::layout::avalue::AValueImpl;
 use crate::values::layout::avalue::heap_copy_impl;
 use crate::values::layout::heap::repr::AValueRepr;
 
-struct AValueComplex<T>(PhantomData<T>);
+pub(crate) struct AValueComplex<T>(PhantomData<T>);
 
 impl<'v, T> AValue<'v> for AValueComplex<T>
 where
@@ -75,9 +76,9 @@ where
 
 impl<'v> Heap<'v> {
     /// Allocate a value which can be traced (garbage collected) and frozen on the [`Heap`].
-    pub fn alloc_complex<T>(self, x: T) -> Value<'v>
+    pub(crate) fn alloc_complex<T>(self, x: T) -> Value<'v>
     where
-        T: ComplexValue<'v>,
+        T: ComplexValue<'v> + FreezePreservesType<'v>,
         T: HeapSendable<'v>,
     {
         assert!(!T::is_special(Private));
@@ -95,6 +96,7 @@ mod tests {
     use starlark_derive::NoSerialize;
     use starlark_derive::StarlarkPagable;
     use starlark_derive::StarlarkPagablePanic;
+    use starlark_derive::StarlarkRepresentations;
     use starlark_derive::starlark_value;
 
     use crate as starlark;
@@ -102,13 +104,16 @@ mod tests {
     use crate::values::FreezeDynamic;
     use crate::values::FreezeError;
     use crate::values::FreezePlan;
+    use crate::values::FreezePreservesType;
     use crate::values::FreezeResult;
     use crate::values::FreezeSlot;
     use crate::values::FreezeTarget;
     use crate::values::Freezer;
+    use crate::values::StarlarkType;
     use crate::values::StarlarkValue;
     use crate::values::Trace;
     use crate::values::Value;
+    use crate::values::ValueTyped;
 
     #[derive(
         Debug,
@@ -121,9 +126,21 @@ mod tests {
     #[display("small dynamic freeze target")]
     struct SmallTarget(u32);
 
+    /// The targets a dynamic freeze may select, and the value that is frozen into them.
+    #[derive(Debug, Clone, Copy, StarlarkRepresentations)]
+    enum DynamicFreezeTargetView<'v> {
+        Small(ValueTyped<'v, SmallTarget>),
+        Large(ValueTyped<'v, LargeTarget>),
+        Drop(ValueTyped<'v, DropTarget>),
+        Source(ValueTyped<'v, FreezeDynamicValue<'v>>),
+    }
+
     #[starlark_value(type = "dynamic_freeze_target")]
+    impl<'v> StarlarkType<'v> for DynamicFreezeTargetView<'v> {}
+
+    #[starlark_value]
     impl<'v> StarlarkValue<'v> for SmallTarget {
-        type Canonical = Self;
+        type Type = DynamicFreezeTargetView<'v>;
     }
 
     #[derive(
@@ -137,9 +154,9 @@ mod tests {
     #[display("large dynamic freeze target")]
     struct LargeTarget([u64; 4]);
 
-    #[starlark_value(type = "dynamic_freeze_target")]
+    #[starlark_value]
     impl<'v> StarlarkValue<'v> for LargeTarget {
-        type Canonical = SmallTarget;
+        type Type = DynamicFreezeTargetView<'v>;
     }
 
     /// The size of `SmallTarget`, but with a destructor.
@@ -154,9 +171,9 @@ mod tests {
     #[display("dropping dynamic freeze target")]
     struct DropTarget(Box<u32>);
 
-    #[starlark_value(type = "dynamic_freeze_target")]
+    #[starlark_value]
     impl<'v> StarlarkValue<'v> for DropTarget {
-        type Canonical = SmallTarget;
+        type Type = DynamicFreezeTargetView<'v>;
     }
 
     #[derive(Debug, Display, ProvidesStaticType, NoSerialize, Allocative, Trace)]
@@ -195,9 +212,9 @@ mod tests {
         }
     }
 
-    #[starlark_value(type = "dynamic_freeze_target", skip_vtable)]
+    #[starlark_value(skip_vtable)]
     impl<'v> StarlarkValue<'v> for FreezeDynamicValue<'v> {
-        type Canonical = SmallTarget;
+        type Type = DynamicFreezeTargetView<'v>;
     }
 
     #[derive(Copy, Clone, Debug, Allocative)]
@@ -219,6 +236,9 @@ mod tests {
         /// the slot.
         Unpublished,
     }
+
+    /// Every target of `DynamicPlan` is a `DynamicFreezeTargetView`, as the source is.
+    impl<'v> FreezePreservesType<'v> for FreezeDynamicValue<'v> {}
 
     impl<'v> FreezeDynamic<'v> for FreezeDynamicValue<'v> {
         type Plan<'fv> = DynamicPlan;
@@ -293,9 +313,7 @@ mod tests {
             freezer
                 .freeze(value)
                 .expect_err("the dynamic freeze plan should fail");
-            let following = freezer
-                .frozen_heap()
-                .alloc_str("after failed dynamic freeze");
+            let following = freezer.frozen_heap().alloc("after failed dynamic freeze");
             assert_eq!("after failed dynamic freeze", following.as_str());
         });
     }
@@ -314,7 +332,7 @@ mod tests {
             // heap must remain allocatable, walkable, and droppable.
             let following = freezer
                 .frozen_heap()
-                .alloc_str("after panicking dynamic freeze");
+                .alloc("after panicking dynamic freeze");
             assert_eq!("after panicking dynamic freeze", following.as_str());
         });
     }
@@ -330,7 +348,7 @@ mod tests {
                 .freeze(value)
                 .expect_err("the dynamic freeze plan should fail");
 
-            let following = heap.alloc_str("after the failed freeze").to_value();
+            let following = heap.alloc("after the failed freeze").to_value();
             std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| freezer.freeze(following)))
                 .expect_err("freezing through an abandoned freezer should panic");
         });
@@ -351,7 +369,7 @@ mod tests {
                 "unexpected error: {}",
                 error.err_msg
             );
-            let following = freezer.frozen_heap().alloc_str("after the failed freeze");
+            let following = freezer.frozen_heap().alloc("after the failed freeze");
             assert_eq!("after the failed freeze", following.as_str());
         });
     }

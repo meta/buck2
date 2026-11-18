@@ -11,7 +11,6 @@
 //! A type [`StarlarkPromise`] which provides basic promise-like functionality.
 use std::cell::Cell;
 use std::cell::RefCell;
-use std::convert::Infallible;
 use std::mem;
 
 use allocative::Allocative;
@@ -23,19 +22,16 @@ use starlark::environment::Methods;
 use starlark::environment::MethodsBuilder;
 use starlark::eval::Evaluator;
 use starlark::starlark_module;
-use starlark::typing::Ty;
-use starlark::values::AllocValue;
 use starlark::values::Heap;
 use starlark::values::NoSerialize;
 use starlark::values::StarlarkValue;
 use starlark::values::Trace;
-use starlark::values::UnpackValue;
 use starlark::values::Value;
+use starlark::values::ValueOf;
 use starlark::values::ValueTyped;
 use starlark::values::list::AllocList;
-use starlark::values::list_or_tuple::UnpackListOrTuple;
 use starlark::values::starlark_value;
-use starlark::values::type_repr::StarlarkTypeRepr;
+use starlark::values::tuple::TupleType;
 use starlark::values::typing::StarlarkCallable;
 
 /// A type that corresponds to a Rust promise.
@@ -72,7 +68,7 @@ enum PromiseValue<'v> {
     Resolved(Value<'v>),
     Map(
         ValueTyped<'v, StarlarkPromise<'v>>,
-        StarlarkCallable<'v, (Value<'v>,), Value<'v>>,
+        StarlarkCallable<'v, (Value<'static>,), Value<'static>>,
     ),
     Join(PromiseJoin<'v>),
 }
@@ -161,27 +157,31 @@ impl<'v> StarlarkPromise<'v> {
     }
 
     fn apply(
-        f: StarlarkCallable<'v, (Value<'v>,), Value<'v>>,
+        f: StarlarkCallable<'v, (Value<'static>,), Value<'static>>,
         x: Value<'v>,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> buck2_error::Result<Value<'v>> {
-        Ok(eval.eval_function(f.0, &[x], &[])?)
+        Ok(eval.eval_function(f.to_value(), &[x], &[])?)
     }
 
     pub fn map(
         x: ValueTyped<'v, StarlarkPromise<'v>>,
-        f: StarlarkCallable<'v, (Value<'v>,), Value<'v>>,
+        f: StarlarkCallable<'v, (Value<'static>,), Value<'static>>,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> buck2_error::Result<ValueTyped<'v, StarlarkPromise<'v>>> {
         match x.get() {
             Some(x) => Ok(eval
                 .heap()
-                .alloc_typed(Self::new_resolved(Self::apply(f, x, eval)?))),
+                .alloc(Self::new_resolved(Self::apply(f, x, eval)?))
+                .get()),
             _ => {
-                let res = eval.heap().alloc_typed(Self {
-                    value: RefCell::new(PromiseValue::Map(x, f)),
-                    ..Self::new_unresolved()
-                });
+                let res = eval
+                    .heap()
+                    .alloc(Self {
+                        value: RefCell::new(PromiseValue::Map(x, f)),
+                        ..Self::new_unresolved()
+                    })
+                    .get();
                 x.downstream.borrow_mut().push(res);
                 Ok(res)
             }
@@ -194,10 +194,12 @@ impl<'v> StarlarkPromise<'v> {
     ) -> ValueTyped<'v, StarlarkPromise<'v>> {
         let join = PromiseJoin::new(args);
         match join.get() {
-            Some(values) => heap.alloc_typed(Self::new_resolved(heap.alloc(AllocList(values)))),
+            Some(values) => heap
+                .alloc(Self::new_resolved(heap.alloc(AllocList(values)).to_value()))
+                .get(),
             None => {
                 let promise = Self::new_unresolved();
-                let value = heap.alloc_typed(promise);
+                let value = heap.alloc(promise).get();
                 for arg in &join.items {
                     arg.downstream.borrow_mut().push(value);
                 }
@@ -260,7 +262,7 @@ impl<'v> StarlarkPromise<'v> {
                     join.resolve_one();
                     if let Some(elems) = join.get() {
                         drop(borrow);
-                        d.resolve_rec(eval.heap().alloc(AllocList(elems)), eval)?;
+                        d.resolve_rec(eval.heap().alloc(AllocList(elems)).to_value(), eval)?;
                     }
                 }
                 _ => panic!("Impossible to reach a downstream promise that is not a map or join"),
@@ -275,34 +277,9 @@ impl<'v> StarlarkPromise<'v> {
     }
 }
 
-// We can't use `starlark_complex_value!` because there is no frozen form of a promise
-
-impl<'v> AllocValue<'v> for StarlarkPromise<'v> {
-    fn alloc_value(self, heap: Heap<'v>) -> Value<'v> {
-        // FIXME: need to be able to freeze things that are resolved
-        heap.alloc_complex_no_freeze(self)
-    }
-}
-
-impl<'v> StarlarkTypeRepr for &'v StarlarkPromise<'v> {
-    type Canonical = Self;
-
-    fn starlark_type_repr() -> Ty {
-        StarlarkPromise::get_type_starlark_repr()
-    }
-}
-
-impl<'v> UnpackValue<'v> for &'v StarlarkPromise<'v> {
-    type Error = Infallible;
-
-    fn unpack_value_impl(x: Value<'v>) -> Result<Option<Self>, Self::Error> {
-        Ok(StarlarkPromise::from_value(x))
-    }
-}
-
 starlark::methods_static!(PROMISE_METHODS = promise_methods);
 
-#[starlark_value(type = "Promise")]
+#[starlark_value(type = "Promise", no_freeze)]
 impl<'v> StarlarkValue<'v> for StarlarkPromise<'v> {
     fn get_methods() -> Option<&'static Methods> {
         Some(PROMISE_METHODS.methods())
@@ -314,7 +291,7 @@ fn promise_methods(builder: &mut MethodsBuilder) {
     /// Given a promise, apply a function to the value it contains, producing a promise with the resulting value.
     fn map<'v>(
         this: ValueTyped<'v, StarlarkPromise<'v>>,
-        #[starlark(require = pos)] func: StarlarkCallable<'v, (Value<'v>,), Value<'v>>,
+        #[starlark(require = pos)] func: StarlarkCallable<'v, (Value<'static>,), Value<'static>>,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<ValueTyped<'v, StarlarkPromise<'v>>> {
         Ok(StarlarkPromise::map(this, func, eval)?)
@@ -327,11 +304,14 @@ fn promise_methods(builder: &mut MethodsBuilder) {
     /// those from `p1`, `p2` and `p3` respectively.
     fn join<'v>(
         this: ValueTyped<'v, StarlarkPromise<'v>>,
-        #[starlark(args)] mut args: UnpackListOrTuple<ValueTyped<'v, StarlarkPromise<'v>>>,
+        #[starlark(args)] args: ValueOf<'v, TupleType<StarlarkPromise<'v>>>,
         heap: Heap<'v>,
     ) -> starlark::Result<ValueTyped<'v, StarlarkPromise<'v>>> {
-        args.items.insert(0, this);
-        Ok(StarlarkPromise::join(args.items, heap))
+        let mut promises = vec![this];
+        for arg in args.iter() {
+            promises.push(arg?.get());
+        }
+        Ok(StarlarkPromise::join(promises, heap))
     }
 }
 
@@ -362,29 +342,32 @@ mod tests {
         Allocative
     )]
     #[display("{:?}", self)]
-    struct Promises<'v>(RefCell<Vec<(String, ValueTyped<'v, StarlarkPromise<'v>>)>>);
+    struct Promises<'v>(RefCell<Vec<(String, ValueOf<'v, StarlarkPromise<'v>>)>>);
 
-    #[starlark_value(type = "Promises")]
+    #[starlark_value(type = "Promises", no_freeze)]
     impl<'v> StarlarkValue<'v> for Promises<'v> {}
 
     #[starlark_module]
     fn helpers(builder: &mut GlobalsBuilder) {
         fn promise_unresolved<'v>(
-            name: String,
+            name: &str,
             eval: &mut Evaluator<'v, '_, '_>,
-        ) -> starlark::Result<ValueTyped<'v, StarlarkPromise<'v>>> {
+        ) -> starlark::Result<ValueOf<'v, StarlarkPromise<'v>>> {
             let promises = get_promises(eval.module());
-            let promise = eval.heap().alloc_typed(StarlarkPromise::new_unresolved());
-            promises.0.borrow_mut().push((name, promise));
+            let promise = eval.heap().alloc(StarlarkPromise::new_unresolved());
+            promises.0.borrow_mut().push((name.to_owned(), promise));
             Ok(promise)
         }
 
-        fn promise_resolved<'v>(value: Value<'v>) -> starlark::Result<StarlarkPromise<'v>> {
-            Ok(StarlarkPromise::new_resolved(value))
+        fn promise_resolved<'v>(
+            value: Value<'v>,
+            heap: Heap<'v>,
+        ) -> starlark::Result<ValueOf<'v, StarlarkPromise<'v>>> {
+            Ok(heap.alloc(StarlarkPromise::new_resolved(value)))
         }
 
         fn promise_validate<'v>(
-            promise: ValueTyped<'v, StarlarkPromise<'v>>,
+            promise: ValueOf<'v, StarlarkPromise<'v>>,
         ) -> starlark::Result<NoneType> {
             promise.validate(|x| {
                 if x.unpack_str() == Some("ok") {
@@ -403,7 +386,7 @@ mod tests {
     fn alloc_promises(modu: &Module) {
         modu.set(
             "__promises__",
-            modu.heap().alloc_complex_no_freeze(Promises::default()),
+            modu.heap().alloc(Promises::default()).to_value(),
         )
     }
 
@@ -423,7 +406,7 @@ mod tests {
         let res = eval.eval_module(ast, &globals)?;
         let promises = get_promises(modu);
         for (key, promise) in promises.0.borrow().iter() {
-            promise.resolve(modu.heap().alloc(key), &mut eval)?;
+            promise.resolve(modu.heap().alloc(key).to_value(), &mut eval)?;
         }
         Ok(res)
     }

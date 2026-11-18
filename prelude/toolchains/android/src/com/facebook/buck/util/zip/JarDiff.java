@@ -12,6 +12,7 @@ package com.facebook.buck.util.zip;
 
 import static java.util.stream.Collectors.toCollection;
 
+import com.facebook.infer.annotation.Nullsafe;
 import java.io.BufferedReader;
 import java.io.IOException;
 import java.io.InputStream;
@@ -28,12 +29,14 @@ import java.util.TreeSet;
 import java.util.jar.JarEntry;
 import java.util.jar.JarFile;
 import java.util.stream.Stream;
+import org.jspecify.annotations.Nullable;
 
 /**
  * A utility class for comparing the contents of two JAR files. Compares the contents of two JAR
  * files. Detects entries that exist only in one jar. Validate the content of binary files, and
  * property files. It will exclude property comments since they might have built dates that differ.
  */
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public class JarDiff {
 
   private static final String INNER_JAR = "inner.jar";
@@ -95,7 +98,8 @@ public class JarDiff {
   private Path extractInnerJar(final JarFile jar) throws IOException {
     final Path tempFile =
         Files.createTempFile(Path.of(jar.getName()).getFileName() + "-", "-" + INNER_JAR);
-    try (final InputStream input = jar.getInputStream(jar.getJarEntry(INNER_JAR));
+    try (final InputStream input =
+            jar.getInputStream(Objects.requireNonNull(jar.getJarEntry(INNER_JAR)));
         final OutputStream output = Files.newOutputStream(tempFile); ) {
       input.transferTo(output);
     }
@@ -106,9 +110,10 @@ public class JarDiff {
     return Stream.of(".properties", ".MF", ".factories").anyMatch(name::endsWith);
   }
 
-  private String compareBytes(String name, JarFile jar, JarFile otherJar) {
-    try (final InputStream in = jar.getInputStream(jar.getJarEntry(name));
-        final InputStream otherIn = otherJar.getInputStream(otherJar.getJarEntry(name)); ) {
+  private @Nullable String compareBytes(String name, JarFile jar, JarFile otherJar) {
+    try (final InputStream in = jar.getInputStream(Objects.requireNonNull(jar.getJarEntry(name)));
+        final InputStream otherIn =
+            otherJar.getInputStream(Objects.requireNonNull(otherJar.getJarEntry(name))); ) {
 
       long totalSize = 0;
       long otherTotalSize = 0;
@@ -142,9 +147,10 @@ public class JarDiff {
     return null;
   }
 
-  private String compareText(String name, JarFile jar, JarFile otherJar) {
-    try (final InputStream in = jar.getInputStream(jar.getJarEntry(name));
-        final InputStream otherIn = otherJar.getInputStream(otherJar.getJarEntry(name)); ) {
+  private @Nullable String compareText(String name, JarFile jar, JarFile otherJar) {
+    try (final InputStream in = jar.getInputStream(Objects.requireNonNull(jar.getJarEntry(name)));
+        final InputStream otherIn =
+            otherJar.getInputStream(Objects.requireNonNull(otherJar.getJarEntry(name))); ) {
 
       final Iterator<String> lines = textLines(in);
       final Iterator<String> otherLines = textLines(otherIn);

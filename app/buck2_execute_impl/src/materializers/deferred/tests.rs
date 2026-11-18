@@ -190,10 +190,13 @@ pub(crate) mod state_machine {
     use buck2_execute::directory::ActionSharedDirectory;
     use buck2_execute::directory::INTERNER;
     use buck2_execute::execute::blocking::IoRequest;
+    use buck2_fs::fs_util::DiskSpaceStats;
     use buck2_fs::fs_util::ReadDir;
+    use buck2_fs::fs_util::disk_space_stats;
     use buck2_fs::fs_util::uncategorized as fs_util;
     use buck2_fs::paths::RelativePathBuf;
     use buck2_fs::paths::abs_norm_path::AbsNormPathBuf;
+    use buck2_fs::paths::abs_path::AbsPathBuf;
     use buck2_fs::paths::forward_rel_path::ForwardRelativePath;
     use buck2_hash::IntentionallyStdHashMap;
     use buck2_util::threads::ignore_stack_overflow_checks_for_current_thread;
@@ -455,6 +458,13 @@ pub(crate) mod state_machine {
                 buck2_error::ErrorTag::Tier0,
                 "The IO stub cannot upload `{path}`"
             ))
+        }
+
+        async fn synced_disk_space_stats(
+            self: &Arc<Self>,
+            path: Arc<AbsPathBuf>,
+        ) -> buck2_error::Result<DiskSpaceStats> {
+            disk_space_stats(&*path)
         }
 
         fn read_dir(&self, path: &AbsNormPathBuf) -> buck2_error::Result<ReadDir> {
@@ -870,6 +880,183 @@ pub(crate) mod state_machine {
                 source.contains("artifact_tree"),
                 "flamegraph source should contain artifact_tree: {source}"
             );
+
+            dm.abort();
+            Ok(())
+        })
+        .await
+    }
+
+    #[tokio::test]
+    async fn test_fill_keeps_what_prepare_outputs_displaced() -> buck2_error::Result<()> {
+        ignore_stack_overflow_checks_for_future(async {
+            let io = Arc::new(StubIoHandler::new(temp_root()));
+            let path = make_path("foo/bar");
+            let copy = make_path("foo/copy");
+            let value = ArtifactValue::file(io.digest_config().empty_file());
+            let (dm, _daemon_dispatcher_events) = make_materializer(io.dupe(), None).await;
+            let cancellations = CancellationContext::testing();
+            let fill = async |lease: &WriteLease, path: &ProjectRelativePathBuf, from| {
+                dm.fill(
+                    lease,
+                    path.clone(),
+                    value.dupe(),
+                    from,
+                    RemoteExecutorUseCase::buck2_default(),
+                    &cancellations,
+                )
+                .await
+            };
+
+            let report = async |path: &ProjectRelativePathBuf| {
+                let lease = dm.prepare_outputs(vec![path.clone()]).await?;
+                dm.declare_existing(
+                    &lease,
+                    vec![DeclareArtifactPayload {
+                        path: path.clone(),
+                        artifact: value.dupe(),
+                    }],
+                )
+                .await?;
+                io.take_log();
+                buck2_error::Ok(())
+            };
+
+            // Materialized at the path: the lease keeps what it forgot, and the fill keeps it.
+            report(&path).await?;
+            let lease = dm.prepare_outputs(vec![path.clone()]).await?;
+            fill(&lease, &path, None).await?;
+            assert_eq!(io.take_log(), &[]);
+            drop(lease);
+
+            // Nothing known at the path any more: declared from the CAS and materialized.
+            let lease = dm.prepare_outputs(vec![path.clone()]).await?;
+            fill(&lease, &path, None).await?;
+            assert_eq!(
+                io.take_log(),
+                &[(Op::Clean, path.clone()), (Op::Materialize, path.clone())]
+            );
+            drop(lease);
+
+            // With a source this core tracks: a copy from it.
+            report(&path).await?;
+            let lease = dm.prepare_outputs(vec![copy.clone()]).await?;
+            fill(&lease, &copy, Some(path.clone())).await?;
+            assert_eq!(
+                io.take_log(),
+                &[(Op::Clean, copy.clone()), (Op::Materialize, copy.clone())]
+            );
+            drop(lease);
+
+            dm.abort();
+            Ok(())
+        })
+        .await
+    }
+
+    /// A filled path is its caller's to write, so once the caller is gone without reporting
+    /// it, the same value declared there has to be fetched again.
+    #[tokio::test]
+    async fn test_fill_forgets_what_it_fetched() -> buck2_error::Result<()> {
+        ignore_stack_overflow_checks_for_future(async {
+            let io = Arc::new(StubIoHandler::new(temp_root()));
+            let path = make_path("foo/bar");
+            let value = ArtifactValue::file(io.digest_config().empty_file());
+            let (dm, _daemon_dispatcher_events) = make_materializer(io.dupe(), None).await;
+
+            let lease = dm.prepare_outputs(vec![path.clone()]).await?;
+            dm.fill(
+                &lease,
+                path.clone(),
+                value.dupe(),
+                None,
+                RemoteExecutorUseCase::buck2_default(),
+                &CancellationContext::testing(),
+            )
+            .await?;
+            drop(lease);
+            io.take_log();
+
+            dm.declare_cas_many_impl(
+                Arc::new(CasDownloadInfo::new_declared(
+                    RemoteExecutorUseCase::buck2_default(),
+                )),
+                vec![DeclareArtifactPayload {
+                    path: path.clone(),
+                    artifact: value,
+                }],
+            )
+            .await?;
+            dm.ensure_materialized(vec![path.clone()], MaterializationPurpose::IntermediateOnly)
+                .await?;
+            assert_eq!(
+                io.take_log(),
+                &[(Op::Clean, path.clone()), (Op::Materialize, path)]
+            );
+
+            dm.abort();
+            Ok(())
+        })
+        .await
+    }
+
+    #[tokio::test]
+    async fn test_fill_forgets_what_it_failed_to_fetch() -> buck2_error::Result<()> {
+        ignore_stack_overflow_checks_for_future(async {
+            let io = Arc::new(StubIoHandler::new(temp_root()));
+            let path = make_path("foo/bar");
+            let value = ArtifactValue::file(io.digest_config().empty_file());
+            let (dm, _daemon_dispatcher_events) = make_materializer(io.dupe(), None).await;
+
+            io.set_fail_on(vec![path.clone()]);
+            let lease = dm.prepare_outputs(vec![path.clone()]).await?;
+            let filled = dm
+                .fill(
+                    &lease,
+                    path.clone(),
+                    value,
+                    None,
+                    RemoteExecutorUseCase::buck2_default(),
+                    &CancellationContext::testing(),
+                )
+                .await;
+            assert!(filled.is_err());
+            assert!(!dm.has_artifact_at(path).await?);
+
+            dm.abort();
+            Ok(())
+        })
+        .await
+    }
+
+    #[tokio::test]
+    async fn test_fill_forgets_what_it_was_fetching_when_dropped() -> buck2_error::Result<()> {
+        ignore_stack_overflow_checks_for_future(async {
+            let started = Arc::new(tokio::sync::Semaphore::new(0));
+            let mut io = StubIoHandler::new(temp_root());
+            io.block_materialization = Some(started.clone());
+            let path = make_path("foo/bar");
+            let value = ArtifactValue::file(io.digest_config().empty_file());
+            let (dm, _daemon_dispatcher_events) = make_materializer(Arc::new(io), None).await;
+
+            let lease = dm.prepare_outputs(vec![path.clone()]).await?;
+            let cancellations = CancellationContext::testing();
+            {
+                let fill = dm.fill(
+                    &lease,
+                    path.clone(),
+                    value,
+                    None,
+                    RemoteExecutorUseCase::buck2_default(),
+                    &cancellations,
+                );
+                futures::pin_mut!(fill);
+                tokio::select! {
+                    _ = &mut fill => panic!("The stub never finishes a materialization"),
+                    started = started.acquire() => started.unwrap().forget(),
+                }
+            }
+            assert!(!dm.has_artifact_at(path).await?);
 
             dm.abort();
             Ok(())
@@ -1320,7 +1507,7 @@ pub(crate) mod state_machine {
                 EventDispatcher::null(),
                 None,
             ));
-            receiver.await?.await?;
+            receiver.await?.1.await?;
             assert_eq!(*dm.stats.sizes.read(), MaterializerSizeStats::default());
 
             Ok(())
@@ -2100,9 +2287,19 @@ pub(crate) mod state_machine {
         .await
     }
 
+    /// The tests remove the owner permissions of `path`. If the clean under test fails to
+    /// delete `path`, the temp dir can't be deleted until the permissions are restored.
+    #[cfg(unix)]
+    fn restore_permissions_if_exists(path: &AbsNormPathBuf) -> buck2_error::Result<()> {
+        if fs_util::try_exists(path)? {
+            fs_util::set_permissions(path, std::fs::Permissions::from_mode(0o755))?;
+        }
+        Ok(())
+    }
+
     #[cfg(unix)]
     #[tokio::test]
-    async fn test_clean_stale_skips_unreadable() -> buck2_error::Result<()> {
+    async fn test_clean_stale_deletes_unreadable() -> buck2_error::Result<()> {
         ignore_stack_overflow_checks_for_future(async {
             let path = make_path(SAMPLE_BUCK_OUT_PATH);
             let project_root = temp_root();
@@ -2146,9 +2343,8 @@ pub(crate) mod state_machine {
                 })
                 .await;
 
-            // Restore permissions so the temp dir can be deleted.
-            fs_util::set_permissions(&unreadable_dir, std::fs::Permissions::from_mode(0o755))?;
-            fs_util::set_permissions(&listable_dir, std::fs::Permissions::from_mode(0o755))?;
+            restore_permissions_if_exists(&unreadable_dir)?;
+            restore_permissions_if_exists(&listable_dir)?;
 
             let res = res?;
             let &buck2_data::CleanStaleStats {
@@ -2163,6 +2359,8 @@ pub(crate) mod state_machine {
                 .stats
                 .as_ref()
                 .unwrap_or_else(|| panic!("{}", res.message.unwrap()));
+            assert!(!fs_util::try_exists(&untracked_dir)?);
+            assert!(!fs_util::try_exists(&listable_dir)?);
             assert_eq!(
                 (
                     stale_artifact_count,
@@ -2172,12 +2370,10 @@ pub(crate) mod state_machine {
                     scan_unreadable_count,
                     delete_permission_denied_artifact_count,
                 ),
-                (1, 1, 2, 4, 2, 2),
-                "clean should finish despite the unreadable entries: the stale artifact is \
-                 cleaned; neither untracked root can be fully deleted, so both are skipped \
-                 rather than failing the clean — four skips total: the scan reading the \
-                 unreadable dir, the scan statting the file in the non-traversable dir, and \
-                 the two failed deletions"
+                (1, 3, 2, 2, 2, 0),
+                "the scan skips reading the unreadable dir and statting the file in the \
+                 non-traversable dir, and the clean still deletes both untracked roots \
+                 because it adds owner permissions to the directories it deletes"
             );
             Ok(())
         })
@@ -2198,7 +2394,8 @@ pub(crate) mod state_machine {
             fs_util::create_dir_all(&dead)?;
             fs_util::write(&dead_file, b"xxxx")?;
 
-            // Unknown-age scratch (permission denied) is skipped, never deleted.
+            // The scan can't read `unreadable` or traverse `listable`. The sweep still deletes
+            // `unreadable` and `listable`.
             let unreadable = project_root.resolve(make_path("buck-out/v2/tmp/unreadable"));
             let unreadable_file =
                 project_root.resolve(make_path("buck-out/v2/tmp/unreadable/junk"));
@@ -2227,9 +2424,8 @@ pub(crate) mod state_machine {
             let dispatcher = EventDispatcher::new(TraceId::null(), DaemonId::new(), sink);
             let res = with_dispatcher_async(dispatcher, dm.clean_scratch()).await;
 
-            // Restore permissions so the temp dir can be deleted.
-            fs_util::set_permissions(&unreadable, std::fs::Permissions::from_mode(0o755))?;
-            fs_util::set_permissions(&listable, std::fs::Permissions::from_mode(0o755))?;
+            restore_permissions_if_exists(&unreadable)?;
+            restore_permissions_if_exists(&listable)?;
 
             let res = res?;
             let &buck2_data::CleanStaleStats {
@@ -2244,8 +2440,8 @@ pub(crate) mod state_machine {
                 .as_ref()
                 .unwrap_or_else(|| panic!("{}", res.message.unwrap()));
             assert!(!fs_util::try_exists(&dead)?);
-            assert!(fs_util::try_exists(&unreadable_file)?);
-            assert!(fs_util::try_exists(&listable_file)?);
+            assert!(!fs_util::try_exists(&unreadable)?);
+            assert!(!fs_util::try_exists(&listable)?);
             #[cfg(not(target_os = "macos"))]
             assert!(fs_util::try_exists(&invalid_name)?);
             let expected_invalid_filename_count = if cfg!(target_os = "macos") { 0 } else { 1 };
@@ -2257,9 +2453,9 @@ pub(crate) mod state_machine {
                     skipped_unreadable_count,
                     scan_invalid_filename_count,
                 ),
-                (3, 1, 4, 4, expected_invalid_filename_count,),
-                "the sweep deletes dead scratch and records permission-denied and invalid-name \
-                 operations separately"
+                (3, 3, 4, 2, expected_invalid_filename_count,),
+                "the sweep deletes all scratch with a valid name and records the entries the \
+                 scan can't read and the invalid names separately"
             );
             assert!(
                 events.try_receive().is_none(),

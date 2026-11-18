@@ -141,7 +141,7 @@ pub async fn resolve_queries(
     ctx: &mut DiceComputations<'_>,
     configured_node: ConfiguredTargetNodeRef<'_>,
 ) -> buck2_error::Result<BuckMutMap<String, Arc<AnalysisQueryResult>>> {
-    let mut queries = configured_node.queries().peekable();
+    let mut queries = configured_node.body()?.queries().peekable();
 
     if queries.peek().is_none() {
         return Ok(Default::default());
@@ -315,7 +315,7 @@ async fn get_analysis_result_inner(
                                     target,
                                     dep_analysis,
                                     query_results,
-                                    configured_node.execution_platform_resolution(),
+                                    configured_node.body()?.execution_platform_resolution(),
                                     &rule_spec,
                                     configured_node,
                                     cancellation,

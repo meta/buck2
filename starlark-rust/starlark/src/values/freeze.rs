@@ -44,6 +44,7 @@ use std::cell::RefCell;
 use std::cell::UnsafeCell;
 use std::marker::PhantomData;
 
+use either::Either;
 use mini_map::MiniMutInsertionMap;
 use mini_map::MiniMutInsertionSet;
 use mini_vec::MiniBoxSlice;
@@ -53,6 +54,7 @@ use starlark_map::small_map::SmallMap;
 use starlark_map::small_set::SmallSet;
 use starlark_syntax::slice_vec_ext::VecExt;
 
+use crate::any::ProvidesStaticType;
 use crate::values::FreezeDynamic;
 use crate::values::FreezeError;
 use crate::values::FreezePlan;
@@ -198,6 +200,32 @@ where
         }
         slot.write(value.freeze(freezer)?)
     }
+}
+
+/// Freezing preserves the Starlark type: the frozen form of this representation is a
+/// representation of the same [`Type`](StarlarkValue::Type), at the frozen heap's brand.
+///
+/// So a value keeps its type when it is frozen, whichever of the type's representations it
+/// has, and a handle of the type ([`ValueOf`](crate::values::ValueOf)) is still one
+/// afterwards. [`alloc_complex`](crate::values::Allocator::alloc_complex) requires this of
+/// what it allocates. The one complex value allocated without it is a
+/// [`StarlarkAnyComplex`](crate::values::any_complex::StarlarkAnyComplex) whose payload
+/// freezes into another payload type.
+///
+/// A representation that names its frozen form with [`Freeze`] has this implemented for it,
+/// and the compiler checks it there: the two `Type`s must have one
+/// [`StaticType`](ProvidesStaticType::StaticType), which makes them one type at two brands. A
+/// representation whose [`FreezeDynamic`] plan selects the frozen form at run time implements
+/// this itself, as a promise about every target its plans select.
+pub trait FreezePreservesType<'v>: StarlarkValue<'v> {}
+
+impl<'v, T> FreezePreservesType<'v> for T
+where
+    T: Freeze<'v> + StarlarkValue<'v>,
+    for<'fv> T::Frozen<'fv>: StarlarkValue<'fv>,
+    for<'fv> <T::Frozen<'fv> as StarlarkValue<'fv>>::Type:
+        ProvidesStaticType<'fv, StaticType = <T::Type as ProvidesStaticType<'v>>::StaticType>,
+{
 }
 
 macro_rules! impl_freeze_identity {
@@ -420,6 +448,17 @@ where
             new.insert_hashed_unique_unchecked(value);
         }
         Ok(new)
+    }
+}
+
+impl<'v, L: Freeze<'v>, R: Freeze<'v>> Freeze<'v> for Either<L, R> {
+    type Frozen<'fv> = Either<L::Frozen<'fv>, R::Frozen<'fv>>;
+
+    fn freeze<'fv>(self, freezer: &Freezer<'v, 'fv>) -> FreezeResult<Self::Frozen<'fv>> {
+        match self {
+            Either::Left(l) => Ok(Either::Left(l.freeze(freezer)?)),
+            Either::Right(r) => Ok(Either::Right(r.freeze(freezer)?)),
+        }
     }
 }
 

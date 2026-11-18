@@ -26,14 +26,17 @@ use buck2_data::ActionErrorDiagnostics;
 use buck2_data::ActionSubErrors;
 use buck2_data::ToProtoMessage;
 use buck2_data::get_action_digest;
+use buck2_data::timing::Micros;
 use buck2_error::BuckErrorContext;
 use buck2_event_observer::action_util::get_execution_time_ms;
 use buck2_events::dispatch::async_record_root_spans;
+use buck2_events::dispatch::current_span;
 use buck2_events::dispatch::get_dispatcher;
 use buck2_events::dispatch::span_async;
 use buck2_events::span::SpanId;
 use buck2_execute::execute::result::CommandExecutionReport;
 use buck2_execute::execute::result::CommandExecutionStatus;
+use buck2_execute::execute::result::command_execution_error_proto;
 use buck2_execute::materialize::materializer::HasMaterializer;
 use buck2_execute::materialize::materializer::MaterializationPurpose;
 use buck2_execute::materialize::materializer::MaterializeRequest;
@@ -74,6 +77,9 @@ use crate::actions::execute::action_executor::ActionOutputs;
 use crate::actions::execute::action_executor::BuckActionExecutor;
 use crate::actions::execute::action_executor::DiceActionOutputs;
 use crate::actions::execute::action_executor::HasActionExecutor;
+use crate::actions::graph_recorder::DirectProducers;
+use crate::actions::graph_recorder::HasGraphRecorder;
+use crate::actions::impls::run_action_knobs::HasRunActionKnobs;
 use crate::artifact_groups::ArtifactGroup;
 use crate::artifact_groups::ArtifactGroupValues;
 use crate::artifact_groups::calculation::ensure_artifact_group_staged;
@@ -83,8 +89,8 @@ use crate::deferred::calculation::ActionLookup;
 use crate::deferred::calculation::lookup_deferred_holder;
 use crate::keep_going::KeepGoing;
 use crate::materialize::invocation_re_use_case;
+use crate::starlark::values::StarlarkTypeExpr;
 use crate::starlark::values::UnpackValue;
-use crate::starlark::values::type_repr::StarlarkTypeRepr;
 
 pub struct ActionCalculation;
 
@@ -147,6 +153,18 @@ async fn build_action_no_redirect(
         .await
         .buck_error_context(format!("for action `{action}`"))?;
 
+    // Before the action's clock starts, so the recorder's time isn't counted as the action's.
+    let producers = ctx
+        .per_transaction_data()
+        .get_run_action_knobs()
+        .log_action_graph
+        .then(|| {
+            Box::new(DirectProducers::collect(
+                ctx.per_transaction_data().get_graph_recorder(),
+                ensured_inputs.keys(),
+            ))
+        });
+
     let now = TimeSpan::start_now();
 
     let target_rule_type_name = rule_type.map(|rule_type| rule_type.name().to_owned());
@@ -159,6 +177,7 @@ async fn build_action_no_redirect(
         ensured_inputs,
         &action,
         target_rule_type_name,
+        producers,
     );
 
     // Don't hold this across an await point
@@ -175,6 +194,17 @@ async fn build_action_no_redirect(
         // boxed() the future so that we don't need to allocate space for it while waiting on input dependencies.
         .boxed()
         .await;
+
+    // Only now that the end event has been written, so that the footer's count matches the log.
+    if ctx
+        .per_transaction_data()
+        .get_run_action_knobs()
+        .log_action_graph
+    {
+        ctx.per_transaction_data()
+            .get_graph_recorder()
+            .action_end_written();
+    }
 
     let execution_metrics = ActionExecutionMetrics {
         key: action.key().dupe(),
@@ -214,6 +244,7 @@ async fn build_action_inner(
     ensured_inputs: BuckMutInsertionMap<ArtifactGroup, ArtifactGroupValues>,
     action: &Arc<RegisteredAction>,
     target_rule_type_name: Option<String>,
+    producers: Option<Box<DirectProducers>>,
 ) -> (ActionExecutionData, Box<buck2_data::ActionExecutionEnd>) {
     let is_eligible_for_dedupe = is_action_eligible_for_dedupe(action, &ensured_inputs);
     let is_expected_eligible_for_dedupe = match action.is_expected_eligible_for_dedupe() {
@@ -229,6 +260,16 @@ async fn build_action_inner(
     let (execute_result, command_reports) = executor
         .execute(waiting_data, ensured_inputs, action, cancellation)
         .await;
+
+    // Consumers look this up only after DICE gives them this action's value, which happens after
+    // this future completes. A failed action's outputs are never consumed.
+    if producers.is_some()
+        && let Some(span) = current_span()
+    {
+        ctx.per_transaction_data()
+            .get_graph_recorder()
+            .record(action.key(), span.0.get());
+    }
 
     let allow_omit_details = execute_result.is_ok();
 
@@ -276,6 +317,7 @@ async fn build_action_inner(
     let mut incremental_kind = None;
     let mut waiting_data = None;
     let mut dep_file_db_writes_queued = 0;
+    let mut execution_timing = None;
     let error_diagnostics = match execute_result {
         Ok((outputs, meta)) => {
             output_size = outputs.calc_output_count_and_bytes(false).bytes;
@@ -292,6 +334,7 @@ async fn build_action_inner(
                 hostname = buck2_events::metadata::hostname();
             }
             wall_time = Some(meta.timing.wall_time);
+            execution_timing = Some(meta.timing);
             error = None;
             input_files_bytes = meta.input_files_bytes;
             waiting_data = Some(meta.waiting_data);
@@ -424,6 +467,8 @@ async fn build_action_inner(
         .and_then(|r| r.status.execution_kind())
         .and_then(|k| k.re_platform_name());
 
+    let graph_producers = producers.map(|p| p.into_proto());
+
     (
         ActionExecutionData {
             action_result,
@@ -473,9 +518,13 @@ async fn build_action_inner(
             incremental_kind: incremental_kind.map(|k| k as i32),
             eligible_for_dedupe: is_eligible_for_dedupe as i32,
             expected_eligible_for_dedupe: is_expected_eligible_for_dedupe as i32,
-            prepare_command_us: None,
-            finish_action_us: None,
-            graph_producers: None,
+            run_action_timings: execution_timing
+                .map(|t| buck2_data::RunActionTimings {
+                    prepare_command_us: t.prepare_command.map(|d| Micros::from(d).into()),
+                    finish_action_us: t.finish_action.map(|d| Micros::from(d).into()),
+                })
+                .filter(|t| *t != buck2_data::RunActionTimings::default()),
+            graph_producers,
             exec_group: match action.execution_group() {
                 Some(ExecutionGroup::Named(group)) => group.name().to_owned(),
                 Some(ExecutionGroup::Default) | None => String::new(),
@@ -612,15 +661,17 @@ fn try_run_error_handler(
 
                         let error_handler_result = eval.eval_function(
                             error_handler.as_ref().add_to_heap(heap),
-                            &[heap.alloc(error_handler_ctx)],
+                            &[heap.alloc(error_handler_ctx).to_value()],
                             &[],
                         );
 
                         let data = match error_handler_result {
-                            Ok(result) => match ActionSubErrorResult::unpack_value_err(result) {
-                                Ok(result) => Data::SubErrors(ActionSubErrors {
-                                    sub_errors: result
-                                        .items
+                            Ok(result) => match ActionSubErrorResult::unpack_value_err(result)
+                                .and_then(|result| {
+                                    result.iter().collect::<starlark::Result<Vec<_>>>()
+                                }) {
+                                Ok(sub_errors) => Data::SubErrors(ActionSubErrors {
+                                    sub_errors: sub_errors
                                         .into_iter()
                                         .map(|s| s.to_proto())
                                         .collect(),
@@ -628,7 +679,7 @@ fn try_run_error_handler(
                                 Err(_) => Data::HandlerInvocationError(format!(
                                     "{}",
                                     ActionErrorHandlerError::TypeError(
-                                        ActionSubErrorResult::starlark_type_repr(),
+                                        <ActionSubErrorResult as UnpackValue>::Type::starlark_type_repr(),
                                         result.get_type().to_owned()
                                     )
                                 )),
@@ -809,11 +860,7 @@ async fn command_execution_report_to_proto(
             .into()
         }
         CommandExecutionStatus::Error { stage, error, .. } => {
-            buck2_data::command_execution::Error {
-                stage: (*stage).to_owned(),
-                error: format!("{error:#}"),
-            }
-            .into()
+            command_execution_error_proto(stage, error).into()
         }
     };
 

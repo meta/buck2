@@ -170,6 +170,15 @@ public class BuildConfigFields implements Iterable<Field> {
     return of(nameToFieldBuilder.build());
   }
 
+  public BuildConfigFields overrideExisting(BuildConfigFields overrides) {
+    ImmutableMap.Builder<String, Field> nameToFieldBuilder = ImmutableMap.builder();
+    for (Field field : this) {
+      nameToFieldBuilder.put(
+          field.getName(), overrides.getNameToField().getOrDefault(field.getName(), field));
+    }
+    return of(nameToFieldBuilder.build());
+  }
+
   /**
    * Creates the Java code for a {@code BuildConfig.java} file in the specified {@code javaPackage}.
    *

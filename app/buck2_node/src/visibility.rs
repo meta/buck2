@@ -306,6 +306,7 @@ impl TargetNameGlobRecord {
             name_globs: self.name_globs.dupe(),
             within: self.within.iter().map(ToString::to_string).collect(),
         })
+        .to_value()
     }
 }
 

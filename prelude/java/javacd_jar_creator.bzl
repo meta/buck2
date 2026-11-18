@@ -51,6 +51,7 @@ load(
     "prepare_final_jar",
     "setup_dep_files",
 )
+load("@prelude//jvm:launcher_runtime.bzl", "JvmLauncherRuntimeInfo")
 load("@prelude//utils:expect.bzl", "expect")
 
 def create_jar_artifact_javacd(
@@ -94,9 +95,10 @@ def create_jar_artifact_javacd(
 
     uses_content_based_paths = java_toolchain.uses_content_based_paths
 
-    should_create_class_abi = (
-        not additional_compiled_srcs and not is_creating_subtarget and (abi_generation_mode == AbiGenerationMode("class") or not is_building_android_binary)
-    )
+    # Only class-mode targets create the class ABI inline. For other modes,
+    # `create_abi` in `generate_abi_jars` creates it when needed. This keeps the
+    # javacd action key the same in APK and non-APK builds.
+    should_create_class_abi = not additional_compiled_srcs and not is_creating_subtarget and abi_generation_mode == AbiGenerationMode("class")
     if should_create_class_abi:
         class_abi_jar = declare_prefixed_output(actions, actions_identifier, "class-abi.jar", uses_content_based_paths)
         class_abi_output_dir = declare_prefixed_output(actions, actions_identifier, "class_abi_dir", uses_content_based_paths, dir = True)
@@ -154,7 +156,7 @@ def create_jar_artifact_javacd(
         source_only_abi_compiling_deps = None,
         track_class_usage = track_class_usage,
     )
-    used_jars_json = define_javacd_action(
+    proto, used_jars_json = define_javacd_action(
         category_prefix = "",
         actions_identifier = actions_identifier,
         encoded_command = command,
@@ -219,6 +221,7 @@ def create_jar_artifact_javacd(
             abi_jar_snapshot = abi_jar_snapshot,
             used_jars_json = used_jars_json,
             compiler_class_to_source_map = output_paths.compiler_class_to_source_map,
+            command_proto_json = proto,
         )
     else:
         full_jar_snapshot = generate_java_classpath_snapshot(
@@ -237,6 +240,7 @@ def create_jar_artifact_javacd(
             full_library_compiler_depth = full_library_compiler_depth,
             abi_compiler_depth = full_library_compiler_depth,
             used_jars_json = used_jars_json,
+            command_proto_json = proto,
         )
     return result
 
@@ -317,6 +321,9 @@ def _define_javacd_action(
         extra_jvm_args = java_toolchain.javacd_jvm_args,
         extra_jvm_args_target = java_toolchain.javacd_jvm_args_target,
         java_runtime_version = java_toolchain.java_runtime_version,
+        launcher_runtime = java_toolchain.javacd_launcher_runtime[JvmLauncherRuntimeInfo] if java_toolchain.javacd_launcher_runtime else None,
+        aot_cache = java_toolchain.javacd_aot_cache,
+        aot_mode = java_toolchain.javacd_aot_mode,
     )
 
     post_build_params = {}
@@ -398,4 +405,4 @@ def _define_javacd_action(
         error_handler = java_toolchain.java_error_handler,
     )
 
-    return used_jars_json_output
+    return proto, used_jars_json_output

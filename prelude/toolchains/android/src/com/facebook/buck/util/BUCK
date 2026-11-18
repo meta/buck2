@@ -13,6 +13,9 @@ buck_java_library(
     name = "throwing_print_writer",
     srcs = THROWING_PRINT_WRITER_SRCS,
     visibility = ["PUBLIC"],
+    deps = [
+        "prelude//toolchains/android/third-party:infer-annotations",
+    ],
 )
 
 PROCESS_EXECUTOR_SRCS = [
@@ -33,7 +36,7 @@ buck_kotlin_library(
         "prelude//toolchains/android/src/com/facebook/buck/core/util/log:log",
         "prelude//toolchains/android/src/com/facebook/buck/util/environment:platform",
         "prelude//toolchains/android/third-party:guava",
-        "prelude//toolchains/android/third-party:jsr305",
+        "prelude//toolchains/android/third-party:infer-annotations",
         ":util",
     ],
 )
@@ -60,8 +63,9 @@ buck_java_library(
         "prelude//toolchains/android/src/com/facebook/buck/util/escaper:utils",
         "prelude//toolchains/android/src/com/facebook/buck/util/function:function",
         "prelude//toolchains/android/third-party:guava",
+        "prelude//toolchains/android/third-party:infer-annotations",
         "prelude//toolchains/android/third-party:jackson-annotations",
         "prelude//toolchains/android/third-party:jackson-databind",
-        "prelude//toolchains/android/third-party:jsr305",
+        "prelude//toolchains/android/third-party:jspecify",
     ],
 )

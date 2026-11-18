@@ -1,0 +1,8 @@
+load("//:defs.bzl", "covers_only")
+
+# In a package of its own: open source buck2 refuses to read a build file that names a file that
+# does not exist.
+covers_only(
+    name = "missing_file",
+    covers = ["missing.txt"],
+)

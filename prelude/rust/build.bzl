@@ -12,6 +12,7 @@ load(
     "make_artifact_tset",
     "project_artifacts",
 )
+load("@prelude//:asserts.bzl", "asserts")
 load("@prelude//:local_only.bzl", "link_cxx_binary_locally")
 load("@prelude//:paths.bzl", "paths")
 load("@prelude//:resources.bzl", "create_resource_db", "gather_resources")
@@ -87,6 +88,7 @@ load(
     "@prelude//utils:utils.bzl",
     "flatten_dict",
 )
+load(":arch_action.bzl", "RustArchCommand", "rust_arch_action")
 load(
     ":build_params.bzl",
     "BuildParams",  # @unused Used as a type
@@ -126,6 +128,7 @@ load(
     "RustArtifact",
     "RustCxxLinkGroupInfo",  # @unused Used as a type
     "RustDependency",
+    "RustProcMacroArchInfo",
     "RustProcMacroInfo",
     "TransitiveDeps",
     "attr_crate",
@@ -197,32 +200,57 @@ def generate_rustdoc(
     if toolchain_info.rust_target_path != None:
         path_env["RUST_TARGET_PATH"] = toolchain_info.rust_target_path[DefaultInfo].default_outputs[0]
 
-    rustdoc_cmd = cmd_args(
-        toolchain_info.rustdoc,
-        "--rustc-action-separator",
+    rustdoc_args = cmd_args(
         toolchain_info.rustdoc_flags,
         ctx.attrs.rustdoc_flags,
         common_args.args,
         cmd_args(output.as_output(), format = "--out-dir={}"),
-        hidden = [toolchain_info.rustdoc, compile_ctx.symlinked_srcs],
+        hidden = [compile_ctx.symlinked_srcs],
     )
 
     if document_private_items:
-        rustdoc_cmd.add("--document-private-items")
+        rustdoc_args.add("--document-private-items")
 
-    rustdoc_cmd_action = cmd_args(
+    rustdoc_common = cmd_args(
         [cmd_args("--env=", k, "=", v, delimiter = "") for k, v in plain_env.items()],
         [cmd_args("--path-env=", k, "=", v, delimiter = "") for k, v in path_env.items()],
-        rustdoc_cmd,
     )
-
-    rustdoc_cmd = _long_command(
-        ctx = ctx,
-        exe = compile_ctx.internal_tools_info.rustc_action,
-        args = rustdoc_cmd_action,
-        argfile_name = "{}.args".format(subdir),
-        has_content_based_path = use_cbp,
-    )
+    if compile_ctx.arch_toolchain_info == None:
+        rustdoc_cmd = _long_command(
+            ctx = ctx,
+            exe = compile_ctx.internal_tools_info.rustc_action,
+            args = cmd_args(rustdoc_common, toolchain_info.rustdoc, "--rustc-action-separator", rustdoc_args, hidden = toolchain_info.rustdoc),
+            argfile_name = "{}.args".format(subdir),
+            has_content_based_path = use_cbp,
+        )
+    else:
+        arch_commands = {}
+        for arch, variant in compile_ctx.arch_toolchain_info.arch_variants.items():
+            args = cmd_args(
+                [cmd_args("--env=", key, "=", value, delimiter = "") for key, value in variant.plain_env.items()],
+                [cmd_args("--path-env=", key, "=", value, delimiter = "") for key, value in variant.path_env.items()],
+                rustdoc_common,
+                variant.rustdoc,
+                "--rustc-action-separator",
+                rustdoc_args,
+                common_args.arch_dependency_args[arch],
+                hidden = variant.runtime_and_plugin_inputs,
+            )
+            arch_commands[arch] = RustArchCommand(
+                wrapper = compile_ctx.internal_tools_info.rustc_action,
+                wrapper_argfile = at_argfile(
+                    actions = ctx.actions,
+                    name = "{}-{}.args".format(subdir, arch),
+                    args = args,
+                    allow_args = True,
+                    has_content_based_path = use_cbp,
+                ),
+            )
+        rustdoc_cmd = rust_arch_action(
+            actions = ctx.actions,
+            path = "{}-arch-action".format(subdir),
+            arch_commands = arch_commands,
+        )
 
     ctx.actions.run(rustdoc_cmd, category = "rustdoc")
 
@@ -237,6 +265,11 @@ def generate_rustdoc_coverage(
     default_roots: list[str],
 ) -> Artifact:
     toolchain_info = compile_ctx.toolchain_info
+    if compile_ctx.arch_toolchain_info != None:
+        asserts.true(
+            toolchain_info.rustdoc == None,
+            "dual-arch rustdoc coverage needs rustdoc unset",
+        )
 
     if not toolchain_info.nightly_features:
         fail("Doc coverage uses the unstable `--show-coverage` flag and requires a toolchain with `nightly_features = True`")
@@ -270,25 +303,45 @@ def generate_rustdoc_coverage(
     plain_env["RUSTC_BOOTSTRAP"] = cmd_args("1")
     unstable_options = ["-Zunstable-options"]
 
-    rustdoc_cmd_action = cmd_args(
+    rustdoc_common = cmd_args(
         [cmd_args("--env=", k, "=", v, delimiter = "") for k, v in plain_env.items()],
         [cmd_args("--path-env=", k, "=", v, delimiter = "") for k, v in path_env.items()],
-        toolchain_info.rustdoc,
-        "--rustc-action-separator",
+    )
+    rustdoc_args = cmd_args(
         toolchain_info.rustdoc_flags,
         ctx.attrs.rustdoc_flags,
         common_args.args,
         unstable_options,
         "--show-coverage",
     )
-
-    rustdoc_cmd = _long_command(
-        ctx = ctx,
-        exe = compile_ctx.internal_tools_info.rustc_action,
-        args = rustdoc_cmd_action,
-        argfile_name = "{}.args".format(file),
-        has_content_based_path = use_cbp,
-    )
+    if compile_ctx.arch_toolchain_info == None:
+        rustdoc_cmd = _long_command(
+            ctx = ctx,
+            exe = compile_ctx.internal_tools_info.rustc_action,
+            args = cmd_args(rustdoc_common, toolchain_info.rustdoc, "--rustc-action-separator", rustdoc_args),
+            argfile_name = "{}.args".format(file),
+            has_content_based_path = use_cbp,
+        )
+    else:
+        arch_commands = {}
+        for arch, variant in compile_ctx.arch_toolchain_info.arch_variants.items():
+            args = cmd_args(
+                [cmd_args("--env=", key, "=", value, delimiter = "") for key, value in variant.plain_env.items()],
+                [cmd_args("--path-env=", key, "=", value, delimiter = "") for key, value in variant.path_env.items()],
+                rustdoc_common,
+                variant.rustdoc,
+                "--rustc-action-separator",
+                rustdoc_args,
+                common_args.arch_dependency_args[arch],
+                hidden = variant.runtime_and_plugin_inputs,
+            )
+            arch_commands[arch] = RustArchCommand(
+                wrapper = compile_ctx.internal_tools_info.rustc_action,
+                wrapper_argfile = at_argfile(
+                    actions = ctx.actions, name = "{}-{}.args".format(file, arch), args = args, allow_args = True, has_content_based_path = use_cbp
+                ),
+            )
+        rustdoc_cmd = rust_arch_action(actions = ctx.actions, path = "{}-arch-action".format(file), arch_commands = arch_commands)
 
     cmd = cmd_args([compile_ctx.internal_tools_info.rustdoc_coverage, output.as_output(), rustdoc_cmd])
 
@@ -305,6 +358,11 @@ def generate_rustdoc_test(
     default_roots: list[str],
 ) -> cmd_args:
     toolchain_info = compile_ctx.toolchain_info
+    if compile_ctx.arch_toolchain_info != None:
+        asserts.true(
+            toolchain_info.compiler == None and toolchain_info.rustdoc == None,
+            "dual-arch rustdoc test needs compiler and rustdoc unset",
+        )
 
     if not toolchain_info.nightly_features:
         fail("Doctests use the unstable `--test-runtool` flag and require a toolchain with `nightly_features = True`")
@@ -431,14 +489,13 @@ def generate_rustdoc_test(
     if toolchain_info.rust_target_path != None:
         path_env["RUST_TARGET_PATH"] = toolchain_info.rust_target_path[DefaultInfo].default_outputs[0]
 
-    rustdoc_cmd = cmd_args(
+    rustdoc_env = cmd_args(
         [cmd_args("--env=", k, "=", v, delimiter = "") for k, v in plain_env.items()],
         [cmd_args("--path-env=", k, "=", v, delimiter = "") for k, v in path_env.items()],
-        toolchain_info.rustdoc,
-        "--rustc-action-separator",
+    )
+    rustdoc_args = cmd_args(
         "--test",
         unstable_options,
-        cmd_args("--test-builder=", toolchain_info.compiler, delimiter = ""),
         toolchain_info.rustdoc_flags,
         ctx.attrs.rustdoc_flags,
         common_args.args,
@@ -466,13 +523,49 @@ def generate_rustdoc_test(
             executable_args.runtime_files,
         ],
     )
+    use_cbp = getattr(ctx.attrs, "use_content_based_paths", False)
+    if compile_ctx.arch_toolchain_info == None:
+        return _long_command(
+            ctx = ctx,
+            exe = internal_tools_info.rustc_action,
+            args = cmd_args(
+                rustdoc_env,
+                toolchain_info.rustdoc,
+                "--rustc-action-separator",
+                cmd_args("--test-builder=", toolchain_info.compiler, delimiter = ""),
+                rustdoc_args,
+            ),
+            argfile_name = "{}.args".format(common_args.subdir),
+            has_content_based_path = use_cbp,
+        )
 
-    return _long_command(
-        ctx = ctx,
-        exe = internal_tools_info.rustc_action,
-        args = rustdoc_cmd,
-        argfile_name = "{}.args".format(common_args.subdir),
-        has_content_based_path = getattr(ctx.attrs, "use_content_based_paths", False),
+    arch_commands = {}
+    for arch, variant in compile_ctx.arch_toolchain_info.arch_variants.items():
+        args = cmd_args(
+            [cmd_args("--env=", key, "=", value, delimiter = "") for key, value in variant.plain_env.items()],
+            [cmd_args("--path-env=", key, "=", value, delimiter = "") for key, value in variant.path_env.items()],
+            rustdoc_env,
+            variant.rustdoc,
+            "--rustc-action-separator",
+            cmd_args("--test-builder=", variant.compiler, delimiter = ""),
+            rustdoc_args,
+            common_args.arch_dependency_args[arch],
+            hidden = variant.runtime_and_plugin_inputs,
+        )
+        arch_commands[arch] = RustArchCommand(
+            wrapper = internal_tools_info.rustc_action,
+            wrapper_argfile = at_argfile(
+                actions = ctx.actions,
+                name = "{}-doctest-{}.args".format(common_args.subdir, arch),
+                args = args,
+                allow_args = True,
+                has_content_based_path = use_cbp,
+            ),
+        )
+    return rust_arch_action(
+        actions = ctx.actions,
+        path = "{}-doctest-arch-action".format(common_args.subdir),
+        arch_commands = arch_commands,
     )
 
 def _archiver_command(ctx: AnalysisContext, compile_ctx: CompileContext, subdir: str, archive_cbp: bool) -> cmd_args:
@@ -739,7 +832,21 @@ def rust_compile(
         extra_flags,
     )
 
-    if emit == Emit("clippy"):
+    # TODO: dual-arch miri assembly is not available yet.
+    if compile_ctx.arch_toolchain_info != None:
+        if emit == Emit("miri"):
+            fail("{} dual-arch miri assembly is not available yet".format(ctx.label))
+        if emit == Emit("clippy"):
+            if toolchain_info.explicit_sysroot_deps == None and toolchain_info.sysroot_path == None:
+                for arch, variant in compile_ctx.arch_toolchain_info.arch_variants.items():
+                    if variant.implicit_bootstrap_sysroot == None:
+                        fail("{} dual-arch clippy needs a target sysroot for {}".format(ctx.label, arch))
+            rustc_bin = {}
+            for arch, variant in compile_ctx.arch_toolchain_info.arch_variants.items():
+                rustc_bin[arch] = variant.clippy_driver
+        else:
+            rustc_bin = {arch: variant.compiler for arch, variant in compile_ctx.arch_toolchain_info.arch_variants.items()}
+    elif emit == Emit("clippy"):
         rustc_bin = compile_ctx.clippy_wrapper
     elif emit == Emit("miri"):
         # The driver running as rustc (`MIRI_BE_RUSTC=target`, set below)
@@ -938,17 +1045,14 @@ def rust_compile(
         compile_ctx = compile_ctx,
         common_args = common_args,
         prefix = "{}/{}".format(common_args.subdir, common_args.tempfile),
-        rustc_cmd = cmd_args(
-            rustc_bin,
-            "--rustc-action-separator",
-            rustc_cmd,
-            emit_op.args,
-        ),
+        rustc_bin = rustc_bin,
+        rustc_args = cmd_args(rustc_cmd, emit_op.args),
+        arch_dependency_args = common_args.arch_dependency_args,
         required_outputs = [emit_op.output] if emit_op.output else [],
         is_clippy = emit.value == "clippy",
         infallible_diagnostics = infallible_diagnostics,
         allow_cache_upload = allow_cache_upload and emit != Emit("clippy"),
-        crate_map = common_args.crate_map,
+        crate_map_args = common_args.crate_map_args,
         env = emit_op.env,
         incremental_enabled = incremental_enabled,
         profile_mode = profile_mode,
@@ -1083,6 +1187,7 @@ def dependency_args(
     dep_link_strategy: LinkStrategy,
     dep_metadata_kind: MetadataKind,
     is_rustdoc_test: bool,
+    arch: str | None = None,
     cwd: Artifact | None = None,
 ) -> (cmd_args, cmd_args, list[(CrateName, Label)]):
     args = cmd_args()
@@ -1098,7 +1203,14 @@ def dependency_args(
         else:
             crate = dep.info.crate
 
-        if isinstance(dep.info, RustProcMacroInfo):
+        if isinstance(dep.info, RustProcMacroArchInfo):
+            asserts.true(arch != None)
+            variant = dep.info.arch_variants[arch]
+            artifact = variant.dylib
+            singleton_tset = variant.singleton_tset
+            transitive_artifacts = None
+        elif isinstance(dep.info, RustProcMacroInfo):
+            asserts.false(arch)
             artifact = dep.info.dylib
             singleton_tset = dep.info.singleton_tset
             transitive_artifacts = None
@@ -1114,17 +1226,22 @@ def dependency_args(
             if artifact == None:
                 fail(
                     "dependency `{}` was analyzed without a `{}` artifact (toolchain `{}`): `miri`-kind compiles need every dependency built by a toolchain with `miri_driver`".format(
-                        dep.label, dep_metadata_kind.value, toolchain_info.rustc_target_triple or "unknown"
+                        dep.dep.label, dep_metadata_kind.value, toolchain_info.rustc_target_triple or "unknown"
                     )
                 )
             singleton_tset = strategy.singleton_tset[dep_metadata_kind]
             transitive_artifacts = strategy.transitive_deps[dep_metadata_kind]
 
             for label in strategy.transitive_proc_macro_deps:
-                transitive_deps.append(available_proc_macros[label][RustProcMacroInfo].singleton_tset)
+                proc_macro = available_proc_macros[label]
+                if arch == None:
+                    transitive_deps.append(proc_macro[RustProcMacroInfo].singleton_tset)
+                else:
+                    arch_info = proc_macro.get(RustProcMacroArchInfo)
+                    transitive_deps.append(arch_info.arch_variants[arch].singleton_tset)
 
         args.add(extern_arg(dep.flags, crate, artifact))
-        crate_targets.append((crate, dep.label))
+        crate_targets.append((crate, dep.dep.label))
 
         # Because deps of this *target* can also be transitive deps of this
         # compiler invocation, pass the artifact (under its original crate name)
@@ -1136,7 +1253,7 @@ def dependency_args(
         if transitive_artifacts != None:
             transitive_deps.append(transitive_artifacts)
 
-    prefix = "{}-deps{}".format(subdir, dep_metadata_kind.value)
+    prefix = "{}-{}-deps{}".format(subdir, arch, dep_metadata_kind.value)
     transitive_deps = ctx.actions.tset(TransitiveDeps, children = transitive_deps)
     argsfile = symlinked_dirs(ctx, internal_tools_info, transitive_dependency_dirs, prefix, transitive_deps, cwd)
 
@@ -1192,7 +1309,7 @@ def symlinked_dirs(
     ctx.actions.run(
         arguments,
         category = "deps",
-        identifier = str(len(transitive_dependency_dirs)),
+        identifier = "{}-{}".format(prefix, len(transitive_dependency_dirs)),
     )
 
     transitive_dependency_dirs.add(transitive_dependency_dir)
@@ -1417,38 +1534,59 @@ def _compute_common_args(
     dependency_args_key = (crate_type, params.dep_link_strategy, dep_metadata_kind, is_rustdoc_test)
     cached_dependency_args = compile_ctx.dependency_args.get(dependency_args_key)
     if cached_dependency_args == None:
-        dep_args, dep_argsfiles, crate_map = dependency_args(
-            ctx = ctx,
-            internal_tools_info = compile_ctx.internal_tools_info,
-            transitive_dependency_dirs = compile_ctx.transitive_dependency_dirs,
-            toolchain_info = compile_ctx.toolchain_info,
-            deps = resolve_rust_deps(ctx, dep_ctx),
-            subdir = subdir,
-            dep_link_strategy = params.dep_link_strategy,
-            dep_metadata_kind = dep_metadata_kind,
-            is_rustdoc_test = is_rustdoc_test,
-        )
-
-        dep_args.add(
-            cmd_args(
-                hidden = compile_ctx.transitive_srcs.project_as_args("artifacts") if compile_ctx else [],
+        arch_args = None
+        if compile_ctx.arch_toolchain_info == None:
+            dep_args, dep_argsfiles, crate_map = dependency_args(
+                ctx = ctx,
+                internal_tools_info = compile_ctx.internal_tools_info,
+                transitive_dependency_dirs = compile_ctx.transitive_dependency_dirs,
+                toolchain_info = compile_ctx.toolchain_info,
+                deps = resolve_rust_deps(ctx, dep_ctx),
+                subdir = subdir,
+                dep_link_strategy = params.dep_link_strategy,
+                dep_metadata_kind = dep_metadata_kind,
+                is_rustdoc_test = is_rustdoc_test,
             )
-        )
+            dep_args.add(cmd_args(hidden = compile_ctx.transitive_srcs.project_as_args("artifacts")))
+            dep_args.add(dep_argsfiles)
+            if crate_type == CrateType("proc-macro"):
+                dep_args.add("--extern=proc_macro")
+        else:
+            dep_args = cmd_args()
+            arch_args = {}
+            crate_map = None
+            resolved_deps = resolve_rust_deps(ctx, dep_ctx)
+            for arch in compile_ctx.arch_toolchain_info.arch_variants:
+                arch_dep_args, arch_dep_argsfiles, arch_crate_map = dependency_args(
+                    ctx = ctx,
+                    internal_tools_info = compile_ctx.internal_tools_info,
+                    transitive_dependency_dirs = compile_ctx.transitive_dependency_dirs,
+                    toolchain_info = compile_ctx.toolchain_info,
+                    deps = resolved_deps,
+                    subdir = subdir,
+                    dep_link_strategy = params.dep_link_strategy,
+                    dep_metadata_kind = dep_metadata_kind,
+                    is_rustdoc_test = is_rustdoc_test,
+                    arch = arch,
+                )
+                arch_dep_args.add(cmd_args(hidden = compile_ctx.transitive_srcs.project_as_args("artifacts")), arch_dep_argsfiles)
+                if crate_type == CrateType("proc-macro"):
+                    arch_dep_args.add("--extern=proc_macro")
+                if crate_map != None and crate_map != arch_crate_map:
+                    fail("{} proc-macro arch variants produced different crate maps".format(ctx.label))
+                crate_map = arch_crate_map
+                arch_args[arch] = arch_dep_args
 
-        # Add dep_argsfiles to dep_args because rustc_action supports nested @argfiles.
-        dep_args.add(dep_argsfiles)
-
-        if crate_type == CrateType("proc-macro"):
-            dep_args.add("--extern=proc_macro")
-
-        cached_dependency_args = DependencyArgsInfo(
-            args = dep_args,
-            crate_map = crate_map,
-        )
+        cached_dependency_args = DependencyArgsInfo(args = dep_args, arch_args = arch_args, crate_map = crate_map)
         compile_ctx.dependency_args[dependency_args_key] = cached_dependency_args
 
     dep_args = cached_dependency_args.args
-    crate_map = cached_dependency_args.crate_map
+    arch_dependency_args = cached_dependency_args.arch_args
+
+    crate_map_args = compile_ctx.crate_map_args.get(is_rustdoc_test)
+    if crate_map_args == None:
+        crate_map_args = cmd_args([crate_map_arg(k, v) for k, v in cached_dependency_args.crate_map])
+        compile_ctx.crate_map_args[is_rustdoc_test] = crate_map_args
 
     toolchain_info = compile_ctx.toolchain_info
     edition = ctx.attrs.edition or toolchain_info.default_edition or fail("missing 'edition' attribute, and there is no 'default_edition' set by the toolchain")
@@ -1592,12 +1730,13 @@ def _compute_common_args(
 
     common_args = CommonArgsInfo(
         args = args,
+        arch_dependency_args = arch_dependency_args,
         subdir = subdir,
         tempfile = tempfile,
         crate_type = crate_type,
         params = params,
         emit = emit,
-        crate_map = crate_map,
+        crate_map_args = crate_map_args,
     )
 
     compile_ctx.common_args[args_key] = common_args
@@ -1611,7 +1750,7 @@ def rust_compile_invalidation_inputs(
     default_roots: list[str],
     incremental_enabled: bool,
 ) -> cmd_args:
-    return _compute_common_args(
+    common_args = _compute_common_args(
         ctx = ctx,
         compile_ctx = compile_ctx,
         dep_ctx = compile_ctx.dep_ctx,
@@ -1622,7 +1761,8 @@ def rust_compile_invalidation_inputs(
         incremental_enabled = incremental_enabled,
         is_rustdoc_test = False,
         profile_mode = None,
-    ).args
+    )
+    return cmd_args(common_args.args, hidden = common_args.arch_dependency_args.values() if common_args.arch_dependency_args != None else [])
 
 def _host_agnostic_proc_macro(crate_type: CrateType, emit: Emit, is_rustdoc_test: bool, incremental_enabled: bool) -> bool:
     return crate_type == CrateType("proc-macro") and emit != Emit("clippy") and not is_rustdoc_test and not incremental_enabled
@@ -1954,6 +2094,9 @@ def _strip_dwo_members_args(compile_ctx: CompileContext, emit: Emit, crate_type:
     if linker_info.archiver_type not in ["gnu", "llvm", "bsd"]:
         return None
 
+    if compile_ctx.arch_toolchain_info != None:
+        return cmd_args(output.as_output(), format = "--strip-dwo-members={}")
+
     return cmd_args(
         cmd_args(output.as_output(), format = "--strip-dwo-members={}"),
         cmd_args(linker_info.archiver, format = "--archiver={}"),
@@ -1968,18 +2111,21 @@ def _rustc_invoke(
     compile_ctx: CompileContext,
     common_args: CommonArgsInfo,
     prefix: str,
-    rustc_cmd: cmd_args,
+    rustc_bin: cmd_args | RunInfo | dict[str, RunInfo] | None,
+    rustc_args: cmd_args,
+    arch_dependency_args: dict[str, cmd_args] | None,
     required_outputs: list[Artifact],
     is_clippy: bool,
     infallible_diagnostics: bool,
     allow_cache_upload: bool,
     incremental_enabled: bool,
-    crate_map: list[(CrateName, Label)],
+    crate_map_args: cmd_args,
     env: dict[str, str | ResolvedStringWithMacros | Artifact],
     profile_mode: ProfileMode | None,
     strip_dwo_members: cmd_args | None,
 ) -> Invoke:
     toolchain_info = compile_ctx.toolchain_info
+    arch_programs = rustc_bin if isinstance(rustc_bin, dict) else None
 
     plain_env, path_env = _base_rustc_env(ctx, compile_ctx)
 
@@ -2008,11 +2154,10 @@ def _rustc_invoke(
         cmd_args(diag_txt.as_output(), format = "--diag-txt={}"),
         ["--remap-cwd-prefix=."] if not toolchain_info.nightly_features else [],
         "--buck-target={}".format(ctx.label.raw_target()),
-        hidden = [toolchain_info.compiler, compile_ctx.transitive_srcs.project_as_args("artifacts")],
+        hidden = [compile_ctx.transitive_srcs.project_as_args("artifacts")] + ([rustc_bin] if arch_programs == None else []),
     )
 
-    for k, v in crate_map:
-        compile_cmd.add(crate_map_arg(k, v))
+    compile_cmd.add(crate_map_args)
     for k, v in plain_env.items():
         compile_cmd.add(cmd_args("--env=", k, "=", v, delimiter = ""))
     for k, v in path_env.items():
@@ -2028,18 +2173,63 @@ def _rustc_invoke(
         if common_args.emit == Emit("expand"):
             compile_cmd.add("--keep-outputs-on-error")
 
-    if strip_dwo_members != None:
-        compile_cmd.add(strip_dwo_members)
-
-    compile_cmd.add(rustc_cmd)
-
-    compile_cmd = _long_command(
-        ctx = ctx,
-        exe = compile_ctx.internal_tools_info.rustc_action,
-        args = compile_cmd,
-        argfile_name = "{}-{}.args".format(prefix, diag),
-        has_content_based_path = use_cbp,
-    )
+    if arch_programs == None:
+        if strip_dwo_members != None:
+            compile_cmd.add(strip_dwo_members)
+        compile_cmd.add(rustc_bin, "--rustc-action-separator", rustc_args)
+        compile_cmd = _long_command(
+            ctx = ctx,
+            exe = compile_ctx.internal_tools_info.rustc_action,
+            args = compile_cmd,
+            argfile_name = "{}-{}.args".format(prefix, diag),
+            has_content_based_path = use_cbp,
+        )
+    else:
+        arch_commands = {}
+        for arch, variant in compile_ctx.arch_toolchain_info.arch_variants.items():
+            env_args = cmd_args(
+                [cmd_args("--env=", key, "=", value, delimiter = "") for key, value in variant.plain_env.items()],
+                [cmd_args("--path-env=", key, "=", value, delimiter = "") for key, value in variant.path_env.items()],
+                ["--env=__CLIPPY_INTERNAL_TESTS=true"] if is_clippy else [],
+                cmd_args("--path-env=SYSROOT=", variant.implicit_bootstrap_sysroot, delimiter = "")
+                if is_clippy and toolchain_info.explicit_sysroot_deps == None and toolchain_info.sysroot_path == None
+                else [],
+            )
+            strip = cmd_args()
+            if strip_dwo_members != None:
+                if variant.archiver == None:
+                    fail("{} dual-arch Rust action needs an archiver for {}".format(ctx.label, arch))
+                strip.add(
+                    strip_dwo_members,
+                    cmd_args(variant.archiver, format = "--archiver={}"),
+                    ["--archiver-deterministic"] if variant.archiver_deterministic else [],
+                )
+            hidden = variant.runtime_and_plugin_inputs + ([variant.implicit_bootstrap_sysroot] if variant.implicit_bootstrap_sysroot != None else [])
+            args = cmd_args(
+                env_args,
+                compile_cmd,
+                strip,
+                arch_programs[arch],
+                "--rustc-action-separator",
+                rustc_args,
+                arch_dependency_args[arch] if arch_dependency_args != None else [],
+                hidden = hidden,
+            )
+            arch_commands[arch] = RustArchCommand(
+                wrapper = compile_ctx.internal_tools_info.rustc_action,
+                wrapper_argfile = at_argfile(
+                    actions = ctx.actions,
+                    name = "{}-{}-{}.args".format(prefix, diag, arch),
+                    args = args,
+                    allow_args = True,
+                    has_content_based_path = use_cbp,
+                ),
+            )
+        compile_cmd = rust_arch_action(
+            actions = ctx.actions,
+            path = "{}-{}-arch-action".format(prefix, diag),
+            arch_commands = arch_commands,
+        )
 
     local_only = incremental_enabled
     prefer_local = False
@@ -2291,6 +2481,28 @@ def get_inherited_link_args(
 
     return inherited_link_args
 
+def _windows_export_def(ctx: AnalysisContext, compile_ctx: CompileContext, static_lib: LinkInfo) -> Artifact:
+    deffile = ctx.actions.declare_output("{}.def".format(compile_ctx.soname), has_content_based_path = True)
+    ctx.actions.run(
+        cmd_args(
+            compile_ctx.internal_tools_info.windows_export_def,
+            cmd_args(deffile.as_output(), format = "--out={}"),
+            cmd_args(
+                [linkable.archive.artifact for linkable in static_lib.linkables if isinstance(linkable, ArchiveLinkable)],
+                format = "--archive={}",
+            ),
+            compile_ctx.cxx_toolchain_info.binary_utilities_info.nm,
+        ),
+        category = "rust_export_def",
+    )
+    return deffile
+
+def _pdb_alt_path_flags(compile_ctx: CompileContext) -> list[str]:
+    linker_info = compile_ctx.cxx_toolchain_info.linker_info
+    if linker_info.type == LinkerType("windows") and linker_info.is_pdb_generated:
+        return ["/PDBALTPATH:%_PDB%"]
+    return []
+
 def rust_link_shared(
     ctx: AnalysisContext,
     compile_ctx: CompileContext,
@@ -2311,6 +2523,7 @@ def rust_link_shared(
     link_args = [
         LinkArgs(
             flags = cmd_args(
+                _pdb_alt_path_flags(compile_ctx),
                 compile_ctx.toolchain_info.linker_flags,
                 ctx.attrs.linker_flags,
             )
@@ -2332,6 +2545,9 @@ def rust_link_shared(
         LinkArgs(infos = [set_link_info_link_whole(static_lib)]),
         inherited_link_args,
     ]
+
+    if compile_ctx.cxx_toolchain_info.linker_info.type == LinkerType("windows"):
+        link_args.append(LinkArgs(flags = [cmd_args(_windows_export_def(ctx, compile_ctx, static_lib), format = "/DEF:{}")]))
 
     return cxx_link_shared_library(
         ctx = ctx,
@@ -2360,6 +2576,8 @@ def rust_link_binary(
     output_has_content_based_path: bool,
     identifier: str | None,
     allow_cache_upload: bool,
+    build_info_json: Artifact | None = None,
+    link_groups_enabled: bool = False,
 ) -> CxxLinkResult:
     """Link an executable from the objects that a bin-crate `Emit("rlib")`
     `rust_compile` extracted, plus the link args of the dependency graph."""
@@ -2442,6 +2660,7 @@ def rust_link_binary(
         # `binary_linker_flags` mirrors `cxx_executable`'s use of them.
         LinkArgs(
             flags = cmd_args(
+                _pdb_alt_path_flags(compile_ctx),
                 compile_ctx.cxx_toolchain_info.linker_info.binary_linker_flags,
                 compile_ctx.toolchain_info.linker_flags,
                 linker_flags,
@@ -2502,7 +2721,7 @@ def rust_link_binary(
             # The link is local only so the fbcode linker wrapper can stamp
             # build info from the repo (D115067153); dwp needs no repo and is
             # memory-hungry enough that pinning it to the link's host thrashes
-            # small workers. Let it schedule anywhere, matching the
+            # small arches. Let it schedule anywhere, matching the
             # rustc-linked path, which runs dwp with no preference.
             dwp_execution_preference = LinkExecutionPreference("any"),
             category_suffix = "rust_binary",
@@ -2510,4 +2729,6 @@ def rust_link_binary(
             enable_distributed_thinlto = dist_thinlto,
             allow_cache_upload = allow_cache_upload,
         ),
+        build_info_json = build_info_json,
+        link_groups_enabled = link_groups_enabled,
     )

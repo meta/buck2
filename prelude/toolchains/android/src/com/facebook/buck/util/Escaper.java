@@ -13,9 +13,11 @@ package com.facebook.buck.util;
 import com.facebook.buck.jvm.java.fatjar.WindowsCreateProcessEscape;
 import com.facebook.buck.util.environment.Platform;
 import com.facebook.buck.util.escaper.BashEscaper;
+import com.facebook.infer.annotation.Nullsafe;
 import com.google.common.base.CharMatcher;
 import java.util.function.Function;
 
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public final class Escaper {
 
   /** Utility class: do not instantiate. */

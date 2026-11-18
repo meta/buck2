@@ -18,12 +18,14 @@ import com.facebook.buck.jvm.java.CompilerOutputPaths;
 import com.facebook.buck.jvm.kotlin.cd.analytics.KotlinCDAnalytics;
 import com.facebook.buck.jvm.kotlin.kotlinc.Kotlinc;
 import com.facebook.buck.jvm.kotlin.kotlinc.incremental.KotlincMode;
+import com.facebook.infer.annotation.Nullsafe;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.ImmutableSortedSet;
 import java.nio.file.Path;
 import java.util.Optional;
 
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public class KaptStep extends KotlincStep {
 
   private static final String VERBOSE = "-verbose";
@@ -74,7 +76,12 @@ public class KaptStep extends KotlincStep {
         false,
         // ABI validation mode for jvm-abi-gen repairs
         // not part of KAPT, since jvm-abi-gen doesn't run on KAPT steps
-        "off");
+        "off",
+        // jvm-abi-gen kill switch options
+        // not part of KAPT, since jvm-abi-gen doesn't run on KAPT steps
+        ImmutableList.of(),
+        // The kept-body check is part of jvm-abi-gen, which does not run here
+        false);
   }
 
   @Override

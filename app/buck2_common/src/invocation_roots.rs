@@ -24,6 +24,7 @@ use buck2_fs::paths::file_name::FileName;
 use buck2_fs::paths::file_name::FileNameBuf;
 use buck2_fs::working_dir::AbsWorkingDir;
 
+use crate::daemon_routing::DaemonRouting;
 use crate::invocation_paths::InvocationPaths;
 use crate::invocation_paths_result::InvocationPathsResult;
 
@@ -110,12 +111,18 @@ pub fn find_invocation_roots(from: &AbsWorkingDir) -> buck2_error::Result<Invoca
     get_roots(from)?.ok_or_else(|| BuckCliError::NoBuckRoot(from.to_owned()).into())
 }
 
+/// `routing` is read only once the invocation is known to be inside a repository, since it comes
+/// from that repository's configuration; it returns `None` for commands that never select a
+/// daemon.
 pub fn get_invocation_paths_result(
     from: &AbsWorkingDir,
     isolation: FileNameBuf,
+    routing: impl FnOnce() -> Option<DaemonRouting>,
 ) -> InvocationPathsResult {
     match get_roots(from) {
-        Ok(Some(roots)) => InvocationPathsResult::Paths(InvocationPaths { roots, isolation }),
+        Ok(Some(roots)) => {
+            InvocationPathsResult::Paths(InvocationPaths::new(roots, isolation, routing()))
+        }
         Ok(None) => {
             InvocationPathsResult::OutsideOfRepo(BuckCliError::NoBuckRoot(from.to_owned()).into())
         }

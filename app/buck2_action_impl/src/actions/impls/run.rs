@@ -13,6 +13,7 @@ use std::fmt::Display;
 use std::ops::ControlFlow;
 use std::sync::Arc;
 use std::time::Duration;
+use std::time::Instant;
 
 use allocative::Allocative;
 use async_trait::async_trait;
@@ -24,6 +25,7 @@ use buck2_build_api::actions::Action;
 use buck2_build_api::actions::ActionExecutionCtx;
 use buck2_build_api::actions::UnregisteredAction;
 use buck2_build_api::actions::box_slice_set::BoxSliceSet;
+use buck2_build_api::actions::errors::error_handler::OutputArtifacts;
 use buck2_build_api::actions::errors::execute_error::ExecuteError;
 use buck2_build_api::actions::execute::action_execution_target::ActionExecutionTarget;
 use buck2_build_api::actions::execute::action_executor::ActionExecutionKind;
@@ -70,11 +72,16 @@ use buck2_core::fs::buck_out_path::BuckOutPathKind;
 use buck2_core::fs::buck_out_path::BuildArtifactPath;
 use buck2_core::fs::project_rel_path::ProjectRelativePathBuf;
 use buck2_core::target::label::label::TargetLabel;
+use buck2_directory::directory::directory::Directory;
+use buck2_directory::directory::directory_iterator::DirectoryIterator;
+use buck2_directory::directory::entry::DirectoryEntry;
 use buck2_error::BuckErrorContext;
 use buck2_error::BuckErrorOptionContext;
 use buck2_error::buck2_error;
 use buck2_events::dispatch::span_async_simple;
 use buck2_execute::artifact::fs::ExecutorFs;
+use buck2_execute::artifact_value::ArtifactValue;
+use buck2_execute::directory::ActionDirectoryMember;
 use buck2_execute::execute::action_digest::ActionDigest;
 use buck2_execute::execute::action_digest_and_blobs::ActionDigestAndBlobs;
 use buck2_execute::execute::cache_uploader::IntoRemoteDepFile;
@@ -93,9 +100,13 @@ use buck2_execute::execute::request::RemoteWorkerSpec;
 use buck2_execute::execute::request::WorkerId;
 use buck2_execute::execute::request::WorkerSpec;
 use buck2_execute::execute::result::CommandExecutionResult;
+use buck2_execute::incremental_state::IncrementalRecord;
+use buck2_execute::incremental_state::recorded_values;
+use buck2_execute::materialize::materializer::CasDownloadInfo;
 use buck2_execute::materialize::materializer::WriteRequest;
 use buck2_execute::re::client::induced_cache_misses_configured;
 use buck2_execute::re::client::is_induced_cache_miss;
+use buck2_execute::re::presence::NegativeCache;
 use buck2_fs::fs_util;
 use buck2_fs::paths::forward_rel_path::ForwardRelativePathBuf;
 use buck2_hash::BuckFixedSortedMap;
@@ -114,7 +125,6 @@ use mini_vec::MiniBoxSlice;
 use pagable::Pagable;
 use pagable::pagable_typetag;
 use serde_json::json;
-use starlark::values::AllocValue;
 use starlark::values::Freeze;
 use starlark::values::FreezeResult;
 use starlark::values::Freezer;
@@ -123,17 +133,18 @@ use starlark::values::NoSerialize;
 use starlark::values::OwnedFrozen;
 use starlark::values::ProvidesStaticType;
 use starlark::values::StarlarkPagable;
+use starlark::values::StarlarkRepresentations;
+use starlark::values::StarlarkType;
 use starlark::values::StarlarkValue;
 use starlark::values::StringValue;
 use starlark::values::Trace;
-use starlark::values::UnpackValue;
 use starlark::values::Value;
-use starlark::values::ValueOfUnchecked;
+use starlark::values::ValueOf;
 use starlark::values::ValueTyped;
 use starlark::values::dict::AllocDict;
-use starlark::values::dict::DictRef;
 use starlark::values::dict::DictType;
 use starlark::values::starlark_value;
+use starlark::values::string::StarlarkStr;
 use strong_hash::StrongHash;
 
 use self::dep_files::DepFileBundle;
@@ -336,7 +347,7 @@ pub(crate) struct StarlarkRunActionValues<'v> {
     pub(crate) exe: ValueTyped<'v, StarlarkCmdArgs<'v>>,
     pub(crate) args: ValueTyped<'v, StarlarkCmdArgs<'v>>,
     pub(crate) dep_file_fingerprints: MiniBoxSlice<ValueTyped<'v, StarlarkDepFileFingerprint<'v>>>,
-    pub(crate) env: Option<ValueOfUnchecked<'v, DictType<String, ValueAsCommandLineLike<'static>>>>,
+    pub(crate) env: Option<ValueOf<'v, DictType<StarlarkStr, ValueAsCommandLineLike<'v>>>>,
     pub(crate) worker: Option<ValueTyped<'v, WorkerInfo<'v>>>,
     pub(crate) remote_worker: Option<ValueTyped<'v, WorkerInfo<'v>>>,
     pub(crate) category: StringValue<'v>,
@@ -357,7 +368,7 @@ pub(crate) struct FrozenStarlarkRunActionValues<'v> {
     pub(crate) exe: ValueTyped<'v, FrozenStarlarkCmdArgs<'v>>,
     pub(crate) args: ValueTyped<'v, FrozenStarlarkCmdArgs<'v>>,
     pub(crate) dep_file_fingerprints: MiniBoxSlice<ValueTyped<'v, StarlarkDepFileFingerprint<'v>>>,
-    pub(crate) env: Option<ValueOfUnchecked<'v, DictType<String, ValueAsCommandLineLike<'static>>>>,
+    pub(crate) env: Option<ValueOf<'v, DictType<StarlarkStr, ValueAsCommandLineLike<'v>>>>,
     pub(crate) worker: Option<ValueTyped<'v, WorkerInfo<'v>>>,
     pub(crate) remote_worker: Option<ValueTyped<'v, WorkerInfo<'v>>>,
     pub(crate) category: StringValue<'v>,
@@ -366,18 +377,24 @@ pub(crate) struct FrozenStarlarkRunActionValues<'v> {
         MiniBoxSlice<ValueTyped<'v, FrozenStarlarkOutputArtifact<'v>>>,
 }
 
-#[starlark_value(type = "RunActionValues")]
-impl<'v> StarlarkValue<'v> for StarlarkRunActionValues<'v> {}
-
-#[starlark_value(type = "RunActionValues", frozen_vtable)]
-impl<'v> StarlarkValue<'v> for FrozenStarlarkRunActionValues<'v> {
-    type Canonical = StarlarkRunActionValues<'v>;
+/// A `RunActionValues` in either of its representations.
+#[derive(Debug, Clone, Copy, StarlarkRepresentations)]
+pub(crate) enum StarlarkRunActionValuesView<'v> {
+    Unfrozen(ValueTyped<'v, StarlarkRunActionValues<'v>>),
+    Frozen(ValueTyped<'v, FrozenStarlarkRunActionValues<'v>>),
 }
 
-impl<'v> AllocValue<'v> for StarlarkRunActionValues<'v> {
-    fn alloc_value(self, heap: Heap<'v>) -> Value<'v> {
-        heap.alloc_complex(self)
-    }
+#[starlark_value(type = "RunActionValues")]
+impl<'v> StarlarkType<'v> for StarlarkRunActionValuesView<'v> {}
+
+#[starlark_value]
+impl<'v> StarlarkValue<'v> for StarlarkRunActionValues<'v> {
+    type Type = StarlarkRunActionValuesView<'v>;
+}
+
+#[starlark_value(frozen_vtable)]
+impl<'v> StarlarkValue<'v> for FrozenStarlarkRunActionValues<'v> {
+    type Type = StarlarkRunActionValuesView<'v>;
 }
 
 impl<'v> Freeze<'v> for StarlarkRunActionValues<'v> {
@@ -467,6 +484,7 @@ enum ExecuteResult {
         executor_preference: ExecutorPreference,
         action_and_blobs: ActionDigestAndBlobs,
         input_files_bytes: u64,
+        prepare_command: Duration,
     },
 }
 
@@ -585,40 +603,44 @@ impl RunAction {
         let args: &dyn CommandLineArgLike = values.args.as_ref();
         let env = match values.env {
             None => Vec::new(),
-            Some(env) => {
-                let d = DictRef::from_value(env.get()).internal_error("expecting dict")?;
-                let mut res = Vec::with_capacity(d.len());
-                for (k, v) in d.iter() {
-                    res.push((
-                        k.unpack_str().internal_error("expecting string")?,
-                        ValueAsCommandLineLike::unpack_value_err(v)?.0,
-                    ));
-                }
-                res
-            }
+            Some(env) => env
+                .iter()
+                .map(|entry| {
+                    let (k, v) = entry?;
+                    Ok((k.as_str(), v.get().0))
+                })
+                .collect::<buck2_error::Result<Vec<_>>>()?,
         };
         let worker: Option<&WorkerInfo> = values.worker()?.map(|v| v.as_ref());
 
-        let worker = worker.map(|worker| UnpackedWorkerValues {
-            exe: worker.exe_command_line(),
-            env: worker.env(),
-            id: WorkerId(worker.id),
-            concurrency: worker.concurrency(),
-            streaming: worker.streaming(),
-            supports_bazel_remote_persistent_worker_protocol: worker
-                .supports_bazel_remote_persistent_worker_protocol(),
-        });
+        let worker = worker
+            .map(|worker| {
+                buck2_error::Ok(UnpackedWorkerValues {
+                    exe: worker.exe_command_line(),
+                    env: worker.env()?,
+                    id: WorkerId(worker.id),
+                    concurrency: worker.concurrency()?,
+                    streaming: worker.streaming(),
+                    supports_bazel_remote_persistent_worker_protocol: worker
+                        .supports_bazel_remote_persistent_worker_protocol(),
+                })
+            })
+            .transpose()?;
 
         let remote_worker: Option<&WorkerInfo> = values.remote_worker()?.map(|v| v.as_ref());
 
-        let remote_worker = remote_worker.map(|remote_worker| UnpackedWorkerValues {
-            exe: remote_worker.exe_command_line(),
-            env: remote_worker.env(),
-            id: WorkerId(remote_worker.id),
-            concurrency: remote_worker.concurrency(),
-            streaming: false,
-            supports_bazel_remote_persistent_worker_protocol: false,
-        });
+        let remote_worker = remote_worker
+            .map(|remote_worker| {
+                buck2_error::Ok(UnpackedWorkerValues {
+                    exe: remote_worker.exe_command_line(),
+                    env: remote_worker.env()?,
+                    id: WorkerId(remote_worker.id),
+                    concurrency: remote_worker.concurrency()?,
+                    streaming: false,
+                    supports_bazel_remote_persistent_worker_protocol: false,
+                })
+            })
+            .transpose()?;
 
         Ok(UnpackedRunActionValues {
             exe,
@@ -1222,6 +1244,7 @@ impl RunAction {
         let mut run_action_visitor =
             RunActionVisitor::new(&self.inner.dep_files, incremental_action_ignore_tags);
         waiting_data.start_waiting_category_now(WaitingCategory::PreparingAction);
+        let prepare_start = Instant::now();
         let (prepared_run_action, cmdline_digest_for_dep_files, host_sharing_requirements) =
             self.prepare(&mut run_action_visitor, ctx).await?;
 
@@ -1232,6 +1255,7 @@ impl RunAction {
             &prepared_run_action.paths,
             prepared_run_action.worker.as_ref().map(|w| &w.input_paths),
         )?;
+        let prepare_command = Instant::now() - prepare_start;
 
         // First, check in the local dep file cache if an identical action can be found there.
         // Do this before checking the action cache as we can avoid a potentially large download.
@@ -1241,7 +1265,8 @@ impl RunAction {
             .await?;
         // We can avoid preparing the action for a local cache hit as long as we're not forcing certain digests to cache-miss.
         let forced_misses = induced_cache_misses_configured();
-        if !forced_misses && let Some((outputs, metadata)) = identical_action {
+        if !forced_misses && let Some((outputs, mut metadata)) = identical_action {
+            metadata.timing.prepare_command = Some(prepare_command);
             return Ok(ExecuteResult::LocalDepFileHit(outputs, metadata));
         }
 
@@ -1271,7 +1296,8 @@ impl RunAction {
                     let lookup = dep_file_bundle
                         .check_local_dep_file_cache(ctx, self.outputs.as_slice())
                         .await?;
-                    if let Some((outputs, metadata)) = lookup {
+                    if let Some((outputs, mut metadata)) = lookup {
+                        metadata.timing.prepare_command = Some(prepare_command);
                         return Ok(ExecuteResult::LocalDepFileHit(outputs, metadata));
                     }
                 }
@@ -1331,7 +1357,7 @@ impl RunAction {
                     // For the case of incremental remote outputs, we checked the caches using the action which
                     // does not include the outputs as inputs.
                     // To execute such action we first prepare a different action with the outputs added as inputs.
-                    let output_paths_as_inputs = self.output_paths_as_inputs(ctx).await?;
+                    let output_paths_as_inputs = self.output_paths_as_inputs(ctx, &req).await?;
                     if !output_paths_as_inputs.is_empty() {
                         let executor_fs = ctx.executor_fs();
                         let fs = executor_fs.fs();
@@ -1355,40 +1381,65 @@ impl RunAction {
             }
         };
 
+        if let Some(key) = req.run_action_key()
+            && let Some(store) = ctx.incremental_store()
+            && let Some(record) = IncrementalRecord::of_result(&result)
+        {
+            store.insert(key, record);
+        }
+
         Ok(ExecuteResult::ExecutedOrReHit {
             result,
             dep_file_bundle,
             executor_preference: req.executor_preference,
             action_and_blobs,
             input_files_bytes: req.paths().input_files_bytes(),
+            prepare_command,
         })
     }
 
+    /// The action's previous outputs as inputs of its remote run: what its record says they
+    /// were, when the run can be given every one of them. Nothing otherwise, and the run starts
+    /// clean, as one without a record does.
     async fn output_paths_as_inputs(
         &self,
         ctx: &dyn ActionExecutionCtx,
+        req: &CommandExecutionRequest,
     ) -> buck2_error::Result<Vec<CommandExecutionInput>> {
+        let record = req
+            .run_action_key()
+            .as_deref()
+            .and_then(|key| ctx.incremental_store()?.get(key));
+        let Some(IncrementalRecord::Outputs(recorded)) = record.as_deref() else {
+            return Ok(Vec::new());
+        };
         let executor_fs = ctx.executor_fs();
         let fs = executor_fs.fs();
-        let output_paths = {
-            let mut output_paths = Vec::new();
-            for output in &self.outputs {
-                // TODO(T219919866): support content based paths
-                let path = fs.resolve_build(output.get_path(), None)?;
-                output_paths.push(path);
-            }
-            output_paths
+        let mut paths = Vec::new();
+        let mut outputs = Vec::new();
+        for output in &self.outputs {
+            let Some(recorded) = recorded.get(output.get_path().path()) else {
+                return Ok(Vec::new());
+            };
+            // No content-based path here: `incremental_remote_outputs` rejects them at analysis.
+            let path = fs.resolve_build(output.get_path(), None)?;
+            outputs.push((recorded, path.clone()));
+            paths.push(path);
+        }
+        let Some(values) = recorded_values(outputs, ctx.materializer()).await? else {
+            return Ok(Vec::new());
         };
-        let entries = ctx
-            .materializer()
-            .get_artifact_entries_for_materialized_paths(output_paths, false)
-            .await?;
-        // Only proceed with incremental outputs if every output is present
-        Ok(entries
+        let outputs: Vec<(ProjectRelativePathBuf, ArtifactValue)> =
+            paths.into_iter().zip(values).collect();
+        if !can_be_uploaded(ctx, &outputs).await? {
+            return Ok(Vec::new());
+        }
+        Ok(outputs
             .into_iter()
-            .map(|entry| entry.map(|(p, e)| CommandExecutionInput::IncrementalRemoteOutput(p, e)))
-            .collect::<Option<Vec<_>>>()
-            .unwrap_or_default())
+            .map(|(path, value)| {
+                CommandExecutionInput::IncrementalRemoteOutput(path, value.entry().dupe())
+            })
+            .collect())
     }
 
     fn command_execution_request(
@@ -1420,23 +1471,79 @@ impl RunAction {
             req = req.with_timeout(timeout);
         }
 
-        if self.inner.no_outputs_cleanup {
-            if self
-                .outputs
-                .iter()
-                .any(|o| o.get_path().is_content_based_path())
-            {
-                req = req.with_run_action_key(Some(
-                    // Using string representation as it is going to be stored in db which requires it to be a string
-                    // doing it early here prevents us from exposing RunActionKey type
-                    RunActionKey::from_action_execution_target(ctx.target())
-                        .incremental_state_key(),
-                ));
-            }
+        if self.inner.no_outputs_cleanup || self.inner.incremental_remote_outputs {
+            req = req.with_run_action_key(Some(
+                RunActionKey::from_action_execution_target(ctx.target()).incremental_state_key(),
+            ));
         }
 
         Ok(req)
     }
+}
+
+/// Whether a remote run can be given `outputs` as inputs: the CAS has each file's content, or
+/// the materializer holds the output at its path, from where the upload reads it. An output
+/// that is neither is one the run cannot have, however it is recorded.
+async fn can_be_uploaded(
+    ctx: &dyn ActionExecutionCtx,
+    outputs: &[(ProjectRelativePathBuf, ArtifactValue)],
+) -> buck2_error::Result<bool> {
+    let mut files = Vec::new();
+    for (index, (_, value)) in outputs.iter().enumerate() {
+        match value.entry() {
+            DirectoryEntry::Dir(dir) => {
+                for leaf in dir.unordered_walk_leaves().without_paths() {
+                    if let ActionDirectoryMember::File(f) = leaf {
+                        files.push((index, f.digest.dupe()));
+                    }
+                }
+            }
+            DirectoryEntry::Leaf(ActionDirectoryMember::File(f)) => {
+                files.push((index, f.digest.dupe()));
+            }
+            DirectoryEntry::Leaf(_) => {}
+        }
+    }
+    if files.is_empty() {
+        return Ok(true);
+    }
+    let use_case = ctx.invocation_re_use_case();
+    let presence = ctx
+        .re_client()
+        .with_use_case(use_case)
+        .check_presence(
+            files.iter().map(|(_, digest)| digest.dupe()).collect(),
+            NegativeCache::Allowed,
+            &CasDownloadInfo::new_declared(use_case),
+        )
+        .await?;
+    let mut absent: Vec<usize> = files
+        .iter()
+        .zip(presence)
+        .filter(|(_, presence)| presence.is_none())
+        .map(|((index, _), _)| *index)
+        .collect();
+    absent.dedup();
+    if absent.is_empty() {
+        return Ok(true);
+    }
+    let held = ctx
+        .materializer()
+        .get_artifact_entries_for_materialized_paths(
+            absent
+                .iter()
+                .map(|index| outputs[*index].0.clone())
+                .collect(),
+            false,
+        )
+        .await?;
+    Ok(absent.iter().zip(held).all(|(index, held)| {
+        held.is_some_and(|(_, held)| match (&held, outputs[*index].1.entry()) {
+            (DirectoryEntry::Dir(a), DirectoryEntry::Dir(b)) => a.fingerprint() == b.fingerprint(),
+            (DirectoryEntry::Leaf(a), DirectoryEntry::Leaf(b)) => a == b,
+            _ => false,
+        })
+    }))
 }
 
 pub(crate) struct PreparedRunAction {
@@ -1667,8 +1774,7 @@ impl Action for RunAction {
         artifact_fs: &ArtifactFs,
         heap: Heap<'v>,
         outputs: Option<&ActionOutputs>,
-    ) -> buck2_error::Result<ValueOfUnchecked<'v, DictType<StarlarkArtifact, StarlarkArtifactValue>>>
-    {
+    ) -> buck2_error::Result<Option<OutputArtifacts<'v>>> {
         let values = self.values();
         let mut artifact_value_dict = Vec::with_capacity(values.outputs_for_error_handler.len());
 
@@ -1720,9 +1826,11 @@ impl Action for RunAction {
             artifact_value_dict.push((artifact, artifact_value));
         }
 
-        Ok(heap
-            .alloc_typed_unchecked(AllocDict(artifact_value_dict))
-            .cast())
+        Ok(Some(heap.alloc(AllocDict(
+            artifact_value_dict.into_iter().map(|(artifact, value)| {
+                (ValueOf::alloc(heap, artifact), ValueOf::alloc(heap, value))
+            }),
+        ))))
     }
 
     async fn execute(
@@ -1746,6 +1854,7 @@ impl Action for RunAction {
             executor_preference,
             action_and_blobs,
             input_files_bytes,
+            prepare_command,
         ) = match self.execute_inner(ctx, waiting_data).await? {
             ExecuteResult::LocalDepFileHit(outputs, metadata) => {
                 return Ok((outputs, metadata));
@@ -1756,12 +1865,14 @@ impl Action for RunAction {
                 executor_preference,
                 action_and_blobs,
                 input_files_bytes,
+                prepare_command,
             } => (
                 result,
                 dep_file_bundle,
                 executor_preference,
                 action_and_blobs,
                 input_files_bytes,
+                prepare_command,
             ),
         };
 
@@ -1827,6 +1938,7 @@ impl Action for RunAction {
             }
         }
 
+        let finish_start = Instant::now();
         let was_locally_executed = result.was_locally_executed();
         let (outputs, mut metadata) = ctx.unpack_command_execution_result(
             executor_preference,
@@ -1858,6 +1970,8 @@ impl Action for RunAction {
         let queued_write =
             populate_dep_files(ctx, dep_file_bundle, &outputs, was_locally_executed).await?;
         metadata.dep_file_db_writes_queued = u64::from(queued_write);
+        metadata.timing.prepare_command = Some(prepare_command);
+        metadata.timing.finish_action = Some(Instant::now() - finish_start);
 
         Ok((outputs, metadata))
     }
@@ -1877,6 +1991,7 @@ mod tests {
     use starlark::environment::GlobalsBuilder;
     use starlark::syntax::AstModule;
     use starlark::syntax::Dialect;
+    use starlark::values::UnpackValue;
 
     use super::*;
 
@@ -1895,13 +2010,22 @@ mod tests {
             });
             module.set(
                 "visible",
-                module.heap().alloc(StarlarkArtifact::new(visible.dupe())),
+                module
+                    .heap()
+                    .alloc(StarlarkArtifact::new(visible.dupe()))
+                    .to_value(),
             );
             module.set(
                 "hidden",
-                module.heap().alloc(StarlarkArtifact::new(hidden.dupe())),
+                module
+                    .heap()
+                    .alloc(StarlarkArtifact::new(hidden.dupe()))
+                    .to_value(),
             );
-            module.set("tag", module.heap().alloc(ArtifactTag::testing_new()));
+            module.set(
+                "tag",
+                module.heap().alloc(ArtifactTag::testing_new()).to_value(),
+            );
             let globals = GlobalsBuilder::standard().with(register_cmd_args).build();
             let ast = AstModule::parse(
                 "test.bzl",

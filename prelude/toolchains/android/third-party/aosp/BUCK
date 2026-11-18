@@ -31,5 +31,6 @@ third_party_jar(
     visibility = [
         "prelude//toolchains/android/src/com/facebook/buck/android/apk:apk",
         "prelude//toolchains/android/src/com/facebook/buck/android/bundle:bundle",
+        "prelude//toolchains/android/test/com/facebook/buck/android:unit",
     ],
 )

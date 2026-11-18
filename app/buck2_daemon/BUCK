@@ -60,6 +60,7 @@ rust_library(
             "fbsource//third-party/rust:nix",
             # @oss-disable[end= ]: "//bpfjailer/client:bpfjailer_client_rs",
             # @oss-disable[end= ]: "//bpfjailer/client:bpfjailer_handler_polyglot-rs_bindings",
+            "//buck2/app/buck2_tenant_proxy:buck2_tenant_proxy",
             # @oss-disable[end= ]: "//buck2/facebook/mem_frag:mem_frag",
         ],
         "ovr_config//os:macos": [

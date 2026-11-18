@@ -69,7 +69,8 @@ pub fn system_memory_stats() -> u64 {
 
     let system = System::new_with_specifics(
         RefreshKind::nothing().with_memory(MemoryRefreshKind::nothing().with_ram()),
-    );
+    )
+    .expect("should be supported on this platform");
     system.total_memory()
 }
 

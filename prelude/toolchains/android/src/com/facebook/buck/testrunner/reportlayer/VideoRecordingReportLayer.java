@@ -11,19 +11,24 @@
 package com.facebook.buck.testrunner.reportlayer;
 
 import com.facebook.buck.testrunner.InstrumentationTestRunner;
+import com.facebook.infer.annotation.Nullsafe;
 import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.io.FileWriter;
 import java.io.IOException;
 import java.io.InputStream;
+import java.io.OutputStream;
 import java.nio.file.Path;
+import java.util.Objects;
 import java.util.concurrent.TimeUnit;
 import java.util.regex.Pattern;
+import org.jspecify.annotations.Nullable;
 
 /**
  * report layer to start a process to record video of tests before they run and collect the video as
  * TRA after tests finish
  */
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public class VideoRecordingReportLayer extends ReportLayer {
 
   private static final String VIDEO_RECORDING_STORAGE_PATH =
@@ -36,7 +41,7 @@ public class VideoRecordingReportLayer extends ReportLayer {
 
   public static final String ARG = "--record-video";
 
-  private Process videoRecordingProcess;
+  private @Nullable Process videoRecordingProcess;
 
   public VideoRecordingReportLayer(InstrumentationTestRunner runner) {
     super(runner);
@@ -56,7 +61,7 @@ public class VideoRecordingReportLayer extends ReportLayer {
     return String.format(VIDEO_RECORDING_STORAGE_PATH, this.runner.getPackageName());
   }
 
-  private Process startVideoRecording() {
+  private @Nullable Process startVideoRecording() {
     try {
       File scriptFile = File.createTempFile("video-recording-", ".sh");
       FileWriter scriptFileWriter = new FileWriter(scriptFile);
@@ -99,9 +104,12 @@ public class VideoRecordingReportLayer extends ReportLayer {
   private void collectVideoRecording() {
     try {
       // stop video recording
-      videoRecordingProcess.getOutputStream().write("STOP".getBytes());
-      videoRecordingProcess.getOutputStream().write(System.lineSeparator().getBytes());
-      videoRecordingProcess.getOutputStream().flush();
+      Process videoRecordingProcess = Objects.requireNonNull(this.videoRecordingProcess);
+      OutputStream videoRecordingInput =
+          Objects.requireNonNull(videoRecordingProcess.getOutputStream());
+      videoRecordingInput.write("STOP".getBytes());
+      videoRecordingInput.write(System.lineSeparator().getBytes());
+      videoRecordingInput.flush();
       if (!videoRecordingProcess.waitFor(
           RECORDING_PROCESS_STOP_TIMEOUT_SECONDS, TimeUnit.SECONDS)) {
         videoRecordingProcess.destroyForcibly();

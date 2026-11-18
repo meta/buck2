@@ -6,8 +6,10 @@
 # of this source tree. You may select, at your option, one of the
 # above-listed licenses.
 
+_BUCK2_RE_CLIENT_OVERRIDE_USE_CASE = read_config("buck2_re_client", "override_use_case")
+
 def _simple(ctx):
-    re_use_case = read_config("buck2_re_client", "override_use_case")
+    re_use_case = _BUCK2_RE_CLIENT_OVERRIDE_USE_CASE
     if re_use_case != None:
         fail("RE use case is set to: {}".format(re_use_case))
     output = ctx.actions.declare_output("output", has_content_based_path = False)

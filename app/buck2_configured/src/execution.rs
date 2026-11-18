@@ -127,6 +127,13 @@ pub async fn find_execution_platform_by_configuration(
                     return Ok(c.dupe());
                 }
             }
+            // The parent may have resolved to the fallback platform when every candidate was
+            // skipped.
+            if let ExecutionPlatformFallback::Platform(p) = platforms.fallback()
+                && p.cfg() == exec_cfg
+            {
+                return Ok(p.dupe());
+            }
             Err(buck2_error::Error::from(
                 ExecutionPlatformComputationError::ToolchainDepMissingPlatform(exec_cfg.dupe()),
             ))

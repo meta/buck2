@@ -41,13 +41,11 @@ use starlark::any::ProvidesStaticType;
 use starlark::environment::Methods;
 use starlark::environment::MethodsBuilder;
 use starlark::starlark_module;
-use starlark::values::AllocValue;
 use starlark::values::Heap;
 use starlark::values::NoSerialize;
 use starlark::values::StarlarkValue;
 use starlark::values::Trace;
-use starlark::values::Value;
-use starlark::values::ValueOfUnchecked;
+use starlark::values::ValueOf;
 use starlark::values::ValueTyped;
 use starlark::values::dict::AllocDict;
 use starlark::values::dict::DictType;
@@ -193,9 +191,13 @@ pub(crate) fn validate_action_instantiation(
 #[display("{:?}", self)]
 pub(crate) struct BxlActions<'v> {
     actions: ValueTyped<'v, AnalysisActions<'v>>,
-    exec_deps: ValueOfUnchecked<'v, DictType<StarlarkProvidersLabel, Dependency<'v>>>,
-    toolchains: ValueOfUnchecked<'v, DictType<StarlarkProvidersLabel, Dependency<'v>>>,
+    exec_deps: Deps<'v>,
+    toolchains: Deps<'v>,
 }
+
+/// Dependencies configured for the bxl action's execution platform, by the label they were
+/// requested as.
+type Deps<'v> = ValueOf<'v, DictType<StarlarkProvidersLabel, Dependency<'v>>>;
 
 impl<'v> BxlActions<'v> {
     pub(crate) async fn new<'c>(
@@ -231,7 +233,7 @@ async fn alloc_deps<'v>(
     deps: Vec<ConfiguredProvidersLabel>,
     heap: Heap<'v>,
     ctx: &mut DiceComputations<'_>,
-) -> buck2_error::Result<ValueOfUnchecked<'v, DictType<StarlarkProvidersLabel, Dependency<'v>>>> {
+) -> buck2_error::Result<Deps<'v>> {
     let analysis_results: Vec<_> = ctx
         .try_compute_join(deps, async |ctx, target| {
             let res = ctx
@@ -242,7 +244,7 @@ async fn alloc_deps<'v>(
         })
         .await?;
 
-    let deps: Vec<(StarlarkProvidersLabel, Dependency)> = analysis_results
+    let deps: Vec<_> = analysis_results
         .into_iter()
         .map(|(configured, analysis_result)| {
             let v = analysis_result.lookup_inner(&configured)?;
@@ -255,25 +257,22 @@ async fn alloc_deps<'v>(
                 None,
             );
 
-            buck2_error::Ok((starlark_label, dependency))
+            buck2_error::Ok((
+                ValueOf::alloc(heap, starlark_label),
+                ValueOf::alloc(heap, dependency),
+            ))
         })
         .collect::<Result<_, _>>()?;
 
-    Ok(heap.alloc_typed_unchecked(AllocDict(deps)).cast())
+    Ok(heap.alloc(AllocDict(deps)))
 }
 
 starlark::methods_static!(BXL_ACTIONS_METHODS = bxl_actions_methods);
 
-#[starlark_value(type = "bxl.Actions", StarlarkTypeRepr, UnpackValue)]
+#[starlark_value(type = "bxl.Actions", no_freeze)]
 impl<'v> StarlarkValue<'v> for BxlActions<'v> {
     fn get_methods() -> Option<&'static Methods> {
         Some(BXL_ACTIONS_METHODS.methods())
-    }
-}
-
-impl<'v> AllocValue<'v> for BxlActions<'v> {
-    fn alloc_value(self, heap: Heap<'v>) -> Value<'v> {
-        heap.alloc_complex_no_freeze(self)
     }
 }
 
@@ -293,10 +292,7 @@ fn bxl_actions_methods(builder: &mut MethodsBuilder) {
 
     /// Gets the execution deps requested correctly configured for the current execution platform
     #[starlark(attribute)]
-    fn exec_deps<'v>(
-        this: &BxlActions<'v>,
-    ) -> starlark::Result<ValueOfUnchecked<'v, DictType<StarlarkProvidersLabel, Dependency<'v>>>>
-    {
+    fn exec_deps<'v>(this: &BxlActions<'v>) -> starlark::Result<Deps<'v>> {
         if this.is_anon_target_or_dyn_action()? {
             return Err(buck2_error!(
                 buck2_error::ErrorTag::Input,
@@ -310,10 +306,7 @@ fn bxl_actions_methods(builder: &mut MethodsBuilder) {
 
     /// Gets the toolchains requested configured for the current execution platform
     #[starlark(attribute)]
-    fn toolchains<'v>(
-        this: &BxlActions<'v>,
-    ) -> starlark::Result<ValueOfUnchecked<'v, DictType<StarlarkProvidersLabel, Dependency<'v>>>>
-    {
+    fn toolchains<'v>(this: &BxlActions<'v>) -> starlark::Result<Deps<'v>> {
         if this.is_anon_target_or_dyn_action()? {
             return Err(buck2_error!(
                 buck2_error::ErrorTag::Input,

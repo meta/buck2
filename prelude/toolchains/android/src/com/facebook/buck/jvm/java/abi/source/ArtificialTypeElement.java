@@ -10,10 +10,12 @@
 
 package com.facebook.buck.jvm.java.abi.source;
 
+import com.facebook.infer.annotation.Nullsafe;
 import java.util.List;
 import javax.lang.model.element.TypeElement;
 
 /** Interface for {@link TypeElement}s that are implemented by something other than javac itself. */
+@Nullsafe(Nullsafe.Mode.LOCAL)
 interface ArtificialTypeElement
     extends ArtificialElement, ArtificialParameterizable, ArtificialQualifiedNameable, TypeElement {
   @Override

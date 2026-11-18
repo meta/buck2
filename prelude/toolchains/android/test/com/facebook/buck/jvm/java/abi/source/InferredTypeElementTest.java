@@ -11,11 +11,17 @@
 package com.facebook.buck.jvm.java.abi.source;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertSame;
+import static org.junit.Assert.assertThrows;
+import static org.junit.Assert.assertTrue;
 
+import com.facebook.buck.jvm.java.abi.source.api.CannotInferException;
 import com.facebook.buck.jvm.java.testutil.compiler.CompilerTreeApiTest;
 import com.google.common.base.Joiner;
+import com.google.common.collect.ImmutableMap;
 import java.io.IOException;
+import javax.lang.model.element.Modifier;
 import javax.lang.model.element.NestingKind;
 import javax.lang.model.element.TypeElement;
 import javax.lang.model.type.DeclaredType;
@@ -135,5 +141,39 @@ public class InferredTypeElementTest extends CompilerTreeApiTest {
     assertEquals(TypeKind.DECLARED, type.getKind());
     DeclaredType fooDeclaredType = (DeclaredType) type;
     assertSame(element, fooDeclaredType.asElement());
+  }
+
+  @Test
+  public void testCannotInferMessageOffersOnlySourceOnlyAbiDeps() throws IOException {
+    compile(
+        Joiner.on('\n').join("package com.example.buck;", "public class Foo extends Bar {", "}"));
+
+    DeclaredType superclass =
+        (DeclaredType) elements.getTypeElement("com.example.buck.Foo").getSuperclass();
+    TypeElement element = (TypeElement) superclass.asElement();
+    String message = assertThrows(CannotInferException.class, element::getModifiers).getMessage();
+
+    assertTrue(
+        message,
+        message.contains(
+            "2. The module containing com.example.buck.Bar needs to be added to this target's"
+                + " source_only_abi_deps"));
+    assertFalse(message, message.contains("required_for_source_only_abi"));
+  }
+
+  @Test
+  public void testSupertypeOnClasspathIsNotInferred() throws IOException {
+    withClasspath(
+        ImmutableMap.of(
+            "com/example/buck/Bar.java", "package com.example.buck; public class Bar { }"));
+    compile(
+        Joiner.on('\n').join("package com.example.buck;", "public class Foo extends Bar {", "}"));
+
+    DeclaredType superclass =
+        (DeclaredType) elements.getTypeElement("com.example.buck.Foo").getSuperclass();
+    TypeElement element = (TypeElement) superclass.asElement();
+
+    assertFalse(element instanceof InferredTypeElement);
+    assertTrue(element.getModifiers().contains(Modifier.PUBLIC));
   }
 }

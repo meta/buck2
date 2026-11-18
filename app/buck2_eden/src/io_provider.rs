@@ -304,11 +304,6 @@ impl EdenIoProvider {
                     );
                     return Ok(ReadDirOutcome::EdenPermissionDenied);
                 }
-                Some(libc::EINVAL) | Some(libc::ENOTDIR) => {
-                    // A symlink at or above the path, which plain file IO follows. Goes with the
-                    // diff that refuses reads through symlinks.
-                    return self.fs.read_dir_impl(path).await;
-                }
                 _ => return Err(EdenError::from(err).into()),
             },
             edenfs::DirListAttributeDataOrError::UnknownField(code) => {
@@ -424,13 +419,6 @@ impl EdenIoProvider {
                                 ),
                             );
 
-                            return self.fs.read_file_if_exists_impl(path).await;
-                        }
-                        EdenError::PosixError { code, .. }
-                            if code == libc::EINVAL || code == libc::ENOTDIR =>
-                        {
-                            // A symlink at or above the path, which plain file IO follows. Goes
-                            // with the diff that refuses reads through symlinks.
                             return self.fs.read_file_if_exists_impl(path).await;
                         }
                         _ => Err(eden_error.into()),

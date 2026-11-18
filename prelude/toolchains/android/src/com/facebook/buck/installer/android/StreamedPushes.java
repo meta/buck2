@@ -10,6 +10,7 @@
 
 package com.facebook.buck.installer.android;
 
+import com.facebook.infer.annotation.Nullsafe;
 import com.google.common.annotations.VisibleForTesting;
 import java.util.ArrayList;
 import java.util.EnumSet;
@@ -19,7 +20,7 @@ import java.util.concurrent.ExecutionException;
 import java.util.concurrent.Future;
 import java.util.function.Function;
 import java.util.logging.Level;
-import java.util.logging.Logger; // NOPMD
+import java.util.logging.Logger;
 
 /**
  * The payloads sent ahead of an install, and the pushes carrying them.
@@ -28,6 +29,7 @@ import java.util.logging.Logger; // NOPMD
  * together, so that pair is one method rather than a contract callers are trusted to keep, and the
  * pushes are waited on and stopped from here rather than handed out.
  */
+@Nullsafe(Nullsafe.Mode.LOCAL)
 final class StreamedPushes {
   private static final Logger LOG = Logger.getLogger(StreamedPushes.class.getName());
 

@@ -26,6 +26,11 @@ load(
     "PluginParams",  # @unused Used as type
 )
 load("@prelude//java/utils:java_utils.bzl", "declare_prefixed_name")
+load(
+    "@prelude//jvm:launcher_runtime.bzl",
+    "JvmLauncherRuntimeInfo",  # @unused Used as type
+    "aot_jvm_args",
+)
 load("@prelude//utils:expect.bzl", "expect")
 
 def declare_prefixed_output(actions: AnalysisActions, prefix: [str, None], output: str, has_content_based_path: bool, dir: bool = False) -> Artifact:
@@ -207,6 +212,20 @@ def get_source_only_abi_compiling_deps(
         source_only_abi_compiling_deps = [compiling_dep for compiling_dep in list(compiling_deps_tset.traverse()) if filter_compiling_deps(compiling_dep)]
     return actions.tset(SourceOnlyAbiCompilingDepsTSet, value = source_only_abi_compiling_deps)
 
+def get_source_only_abi_jars(
+    source_only_abi_compiling_deps: JavaCompilingDepsTSet | SourceOnlyAbiCompilingDepsTSet,
+    compiling_deps_tset: [JavaCompilingDepsTSet, None],
+    source_only_abi_deps: list[Dependency],
+) -> list[Artifact]:
+    """
+    The jars of the `source_only_abi_jars` projection of `get_source_only_abi_compiling_deps`'s
+    result, in its order.
+    """
+    if not source_only_abi_deps and compiling_deps_tset != None:
+        # `get_source_only_abi_compiling_deps` returned the compiling deps themselves.
+        return [entry.abi for entry in source_only_abi_compiling_deps.traverse() if entry.required_for_source_only_abi]
+    return [entry.abi for entries in source_only_abi_compiling_deps.traverse() for entry in entries]
+
 def _apply_ap_param_overrides(params: list[str], overrides: dict[str, [str, None]]) -> list[str]:
     result = [param for param in params if param.split("=", 1)[0].removeprefix("-A") not in overrides]
     for key, value in overrides.items():
@@ -305,7 +324,7 @@ def encode_base_jar_command(
         if use_abi_dirs:
             compiling_classpath = cmd_args(compiling_deps_tset.project_as_args("abi_and_dir", ordering = "topological")) if compiling_deps_tset else []
         else:
-            compiling_classpath = compiling_deps_tset.project_as_json("javacd_json", ordering = "topological") if compiling_deps_tset else []
+            compiling_classpath = cmd_args(compiling_deps_tset.project_as_args("args_for_compiling", ordering = "topological")) if compiling_deps_tset else []
         # The snapshot inputs are tagged for association with dep_files, but they are not marked as used,
         # as they serve the incremental compiler's internal needs,
         # which are utilized after the build system has determined whether a rebuild is necessary.
@@ -372,6 +391,30 @@ def setup_dep_files(
 
 FORCE_PERSISTENT_WORKERS = read_root_config("build", "require_persistent_workers", "false").lower() == "true"
 
+def compiler_daemon_base_jvm_args(java_runtime_version: [int, None]) -> list[str]:
+    return ["-XX:-MaxFDLimit"] + unsafe_memory_access_jvm_args(java_runtime_version)
+
+def compiler_daemon_jdk_access_jvm_args(launcher_runtime: JvmLauncherRuntimeInfo | None) -> list[str]:
+    # Allow JVM compiler daemon to access internal jdk.compiler APIs. Launched from a launcher runtime, the
+    # bootstrapper's own classes are in a named module rather than the unnamed one.
+    jdk_compiler_readers = "ALL-UNNAMED,{}".format(launcher_runtime.module) if launcher_runtime else "ALL-UNNAMED"
+    return [
+        "--add-exports=jdk.compiler/com.sun.tools.javac.code={}".format(jdk_compiler_readers),
+        "--add-exports=jdk.compiler/com.sun.tools.javac.comp={}".format(jdk_compiler_readers),
+        "--add-exports=jdk.compiler/com.sun.tools.javac.file={}".format(jdk_compiler_readers),
+        "--add-exports=jdk.compiler/com.sun.tools.javac.jvm={}".format(jdk_compiler_readers),
+        "--add-exports=jdk.compiler/com.sun.tools.javac.main={}".format(jdk_compiler_readers),
+        "--add-exports=jdk.compiler/com.sun.tools.javac.model={}".format(jdk_compiler_readers),
+        "--add-exports=jdk.compiler/com.sun.tools.javac.processing={}".format(jdk_compiler_readers),
+        "--add-exports=jdk.compiler/com.sun.tools.javac.parser={}".format(jdk_compiler_readers),
+        "--add-exports=jdk.compiler/com.sun.tools.javac.tree={}".format(jdk_compiler_readers),
+        "--add-opens=jdk.compiler/com.sun.tools.javac.api={}".format(jdk_compiler_readers),
+        "--add-opens=jdk.compiler/com.sun.tools.javac.code={}".format(jdk_compiler_readers),
+        "--add-opens=jdk.compiler/com.sun.tools.javac.jvm={}".format(jdk_compiler_readers),
+        "--add-opens=jdk.compiler/com.sun.tools.javac.processing={}".format(jdk_compiler_readers),
+        "--add-opens=jdk.compiler/com.sun.tools.javac.util={}".format(jdk_compiler_readers),
+    ]
+
 def prepare_cd_exe(
     qualified_name: str,
     java: RunInfo,
@@ -386,9 +429,13 @@ def prepare_cd_exe(
     extra_jvm_args: list[str],
     extra_jvm_args_target: list[Label],
     java_runtime_version: [int, None],
+    non_worker_jvm_args: list[str] = [],
+    launcher_runtime: JvmLauncherRuntimeInfo | None = None,
+    aot_cache: Artifact | None = None,
+    aot_mode: str = "on",
 ) -> tuple:
     local_only = False
-    jvm_args = ["-XX:-MaxFDLimit"] + unsafe_memory_access_jvm_args(java_runtime_version)
+    jvm_args = compiler_daemon_base_jvm_args(java_runtime_version)
 
     # The variables 'extra_jvm_args' and 'extra_jvm_args_target' are generally used, but they are primarily designed for profiling use-cases.
     # The following section is configured with the profiling use-case in mind.
@@ -413,23 +460,7 @@ def prepare_cd_exe(
         # If no specific target is provided, the extra JVM arguments are added to all targets that run on worker, local machine or RE.
         jvm_args = jvm_args + extra_jvm_args
 
-    # Allow JVM compiler daemon to access internal jdk.compiler APIs
-    jvm_args += [
-        "--add-exports=jdk.compiler/com.sun.tools.javac.code=ALL-UNNAMED",
-        "--add-exports=jdk.compiler/com.sun.tools.javac.comp=ALL-UNNAMED",
-        "--add-exports=jdk.compiler/com.sun.tools.javac.file=ALL-UNNAMED",
-        "--add-exports=jdk.compiler/com.sun.tools.javac.jvm=ALL-UNNAMED",
-        "--add-exports=jdk.compiler/com.sun.tools.javac.main=ALL-UNNAMED",
-        "--add-exports=jdk.compiler/com.sun.tools.javac.model=ALL-UNNAMED",
-        "--add-exports=jdk.compiler/com.sun.tools.javac.processing=ALL-UNNAMED",
-        "--add-exports=jdk.compiler/com.sun.tools.javac.parser=ALL-UNNAMED",
-        "--add-exports=jdk.compiler/com.sun.tools.javac.tree=ALL-UNNAMED",
-        "--add-opens=jdk.compiler/com.sun.tools.javac.api=ALL-UNNAMED",
-        "--add-opens=jdk.compiler/com.sun.tools.javac.code=ALL-UNNAMED",
-        "--add-opens=jdk.compiler/com.sun.tools.javac.jvm=ALL-UNNAMED",
-        "--add-opens=jdk.compiler/com.sun.tools.javac.processing=ALL-UNNAMED",
-        "--add-opens=jdk.compiler/com.sun.tools.javac.util=ALL-UNNAMED",
-    ]
+    jvm_args += compiler_daemon_jdk_access_jvm_args(launcher_runtime)
 
     if target_specified_debug_port:
         debug_port = target_specified_debug_port
@@ -443,7 +474,17 @@ def prepare_cd_exe(
         local_only = True
         jvm_args.extend(["-agentlib:jdwp=transport=dt_socket,server=y,suspend=y,address={}".format(debug_port)])
 
-    non_worker_args = cmd_args([java, jvm_args, "-cp", compiler, "-jar", class_loader_bootstrapper, main_class])
+    # `non_worker_jvm_args` apply only to the one-shot JVM below (remote execution, or no worker), never to a
+    # persistent worker, whose long-lived JVM profits from the full JIT.
+    if launcher_runtime:
+        # The compiler is loaded from `BUCK_CLASSPATH` by the bootstrapper, so the application classpath stays
+        # empty and an AOT cache trained by one action can be mapped by another on any host.
+        non_worker_args = cmd_args(
+            [launcher_runtime.java, jvm_args, non_worker_jvm_args, aot_jvm_args(aot_cache, aot_mode), "-m", launcher_runtime.main_module, main_class]
+        )
+    else:
+        expect(aot_cache == None, "An AOT cache needs a launcher runtime: a classpath launch cannot map it on another host.")
+        non_worker_args = cmd_args([java, jvm_args, non_worker_jvm_args, "-cp", compiler, "-jar", class_loader_bootstrapper, main_class])
 
     if local_only or not worker:
         # buck doesn't support the case where remote_worker is provided but worker is not.

@@ -25,25 +25,16 @@ use std::sync::atomic::AtomicU64;
 use std::sync::atomic::Ordering;
 use std::time::Instant;
 
-use buck2_common::external_symlink::ExternalSymlink;
-use buck2_common::file_ops::metadata::FileDigest;
-use buck2_common::file_ops::metadata::FileMetadata;
-use buck2_common::file_ops::metadata::Symlink;
 use buck2_common::file_ops::metadata::TrackedFileDigest;
 use buck2_common::sqlite::sqlite_db::SqliteTables;
 use buck2_core::soft_error_or_panic;
-use buck2_directory::directory::entry::DirectoryEntry;
 use buck2_error::BuckErrorContext;
-use buck2_error::conversion::from_any_with_tag;
-use buck2_error::internal_error;
 use buck2_execute::dep_file_state::DepFileDbSize;
 use buck2_execute::dep_file_state::StoredDepFileDigests;
 use buck2_execute::dep_file_state::StoredDepFileIdentity;
 use buck2_execute::dep_file_state::StoredDepFileState;
 use buck2_execute::dep_file_state::StoredOutput;
-use buck2_execute::dep_file_state::StoredOutputValue;
 use buck2_execute::digest_config::DigestConfig;
-use buck2_execute::directory::ActionDirectoryMember;
 use buck2_fs::paths::abs_norm_path::AbsNormPath;
 use buck2_fs::paths::abs_norm_path::AbsNormPathBuf;
 use buck2_fs::paths::forward_rel_path::ForwardRelativePathBuf;
@@ -52,79 +43,20 @@ use parking_lot::Mutex;
 use rusqlite::Connection;
 use rusqlite::OptionalExtension;
 
-use crate::materializers::artifact_type::ArtifactType;
+use crate::sqlite::tables::stored_output_row::COLUMN_NAMES;
+use crate::sqlite::tables::stored_output_row::StoredOutputColumns;
+use crate::sqlite::tables::stored_output_row::file_digest_parts;
+use crate::sqlite::tables::stored_output_row::rebuild_file_digest;
+use crate::sqlite::tables::stored_output_row::tracked_digest_parts;
 
 const STATE_TABLE_NAME: &str = "dep_file_state";
 const OUTPUTS_TABLE_NAME: &str = "dep_file_outputs";
 const DECLARED_TABLE_NAME: &str = "dep_file_declared";
 
-#[derive(buck2_error::Error, Debug)]
-#[buck2(tag = InternalError)]
-enum DepFileStateTableError {
-    #[error(
-        "Internal error: expected field `{field}` to be present for artifact type `{artifact_type}`"
-    )]
-    ExpectedFieldIsMissing {
-        field: &'static str,
-        artifact_type: ArtifactType,
-    },
-}
-
-fn file_digest_parts(digest: &FileDigest) -> (u64, &[u8], u8) {
-    (
-        digest.size(),
-        digest.raw_digest().as_bytes(),
-        digest.raw_digest().algorithm() as _,
-    )
-}
-
-fn tracked_digest_parts(digest: &TrackedFileDigest) -> (u64, &[u8], u8) {
-    (
-        digest.size(),
-        digest.raw_digest().as_bytes(),
-        digest.raw_digest().algorithm() as _,
-    )
-}
-
-fn rebuild_file_digest(size: u64, bytes: &[u8], kind: u8) -> buck2_error::Result<FileDigest> {
-    let kind = kind
-        .try_into()
-        .map_err(|e| from_any_with_tag(e, buck2_error::ErrorTag::InternalError))
-        .with_buck_error_context(|| format!("Invalid digest kind: `{kind}`"))?;
-    FileDigest::from_digest_bytes(kind, bytes, size)
-}
-
-/// An output row decoded from `dep_file_outputs` (a leaf, or a directory carrying only its
-/// fingerprint in the digest columns).
+/// An output row of `dep_file_outputs`.
 struct OutputRow {
     output_path: String,
-    artifact_type: ArtifactType,
-    entry_size: Option<u64>,
-    entry_hash: Option<Vec<u8>>,
-    entry_hash_kind: Option<u8>,
-    file_is_executable: Option<bool>,
-    symlink_target: Option<String>,
-    /// Only set for external symlinks with a non-empty `remaining_path`.
-    symlink_remaining_path: Option<String>,
-}
-
-/// Rebuild the `FileDigest` from an output row's digest columns (`entry_size`/`entry_hash`/
-/// `entry_hash_kind`), erroring if any is missing. Shared by the directory-fingerprint and
-/// file-member decode paths.
-fn row_file_digest(
-    entry_size: Option<u64>,
-    entry_hash: Option<&[u8]>,
-    entry_hash_kind: Option<u8>,
-    artifact_type: ArtifactType,
-) -> buck2_error::Result<FileDigest> {
-    let missing = |field| DepFileStateTableError::ExpectedFieldIsMissing {
-        field,
-        artifact_type,
-    };
-    let size = entry_size.ok_or_else(|| missing("entry_size"))?;
-    let bytes = entry_hash.ok_or_else(|| missing("entry_hash"))?;
-    let kind = entry_hash_kind.ok_or_else(|| missing("entry_hash_kind"))?;
-    rebuild_file_digest(size, bytes, kind)
+    columns: StoredOutputColumns,
 }
 
 fn output_row_to_stored_output(
@@ -135,77 +67,9 @@ fn output_row_to_stored_output(
     // error (skipped by the hydration caller) instead of constructing an invalid path.
     let path = ForwardRelativePathBuf::new(row.output_path)
         .buck_error_context("Invalid `output_path` in dep-file db")?;
-
-    // A directory output stored only its fingerprint (`entry_size`/`entry_hash`/`entry_hash_kind`);
-    // the full tree is rehydrated from the materializer at lookup time and verified against it.
-    if row.artifact_type == ArtifactType::Directory {
-        let fingerprint = row_file_digest(
-            row.entry_size,
-            row.entry_hash.as_deref(),
-            row.entry_hash_kind,
-            row.artifact_type,
-        )?;
-        return Ok(StoredOutput {
-            path,
-            value: StoredOutputValue::Directory(fingerprint),
-        });
-    }
-
-    let member = match row.artifact_type {
-        ArtifactType::Directory => unreachable!("handled above"),
-        ArtifactType::File => {
-            let file_digest = row_file_digest(
-                row.entry_size,
-                row.entry_hash.as_deref(),
-                row.entry_hash_kind,
-                row.artifact_type,
-            )?;
-            ActionDirectoryMember::File(FileMetadata {
-                digest: TrackedFileDigest::new(file_digest, digest_config.cas_digest_config()),
-                is_executable: row.file_is_executable.ok_or(
-                    DepFileStateTableError::ExpectedFieldIsMissing {
-                        field: "file_is_executable",
-                        artifact_type: row.artifact_type,
-                    },
-                )?,
-            })
-        }
-        ArtifactType::Symlink => {
-            let target =
-                row.symlink_target
-                    .ok_or(DepFileStateTableError::ExpectedFieldIsMissing {
-                        field: "symlink_target",
-                        artifact_type: row.artifact_type,
-                    })?;
-            ActionDirectoryMember::Symlink(Arc::new(Symlink::new(target.into())))
-        }
-        ArtifactType::ExternalSymlink => {
-            let target =
-                row.symlink_target
-                    .ok_or(DepFileStateTableError::ExpectedFieldIsMissing {
-                        field: "symlink_target",
-                        artifact_type: row.artifact_type,
-                    })?;
-            // Reconstruct `remaining_path` too. Without it an external symlink with a non-empty
-            // `remaining_path` would rehydrate as a different symlink (they compare by both fields),
-            // so it would never match on lookup.
-            let remaining_path = row
-                .symlink_remaining_path
-                .map(ForwardRelativePathBuf::new)
-                .transpose()
-                .buck_error_context("Invalid symlink `remaining_path` in dep-file db")?
-                .unwrap_or_default();
-            ActionDirectoryMember::ExternalSymlink(Arc::new(ExternalSymlink::new(
-                target.into(),
-                remaining_path,
-            )?))
-        }
-    };
-    let value =
-        buck2_execute::artifact_value::ArtifactValue::new(DirectoryEntry::Leaf(member), None);
     Ok(StoredOutput {
         path,
-        value: StoredOutputValue::Leaf(value),
+        value: row.columns.decode(digest_config)?,
     })
 }
 
@@ -498,7 +362,7 @@ impl DepFileStateSqliteTable {
         });
         static OUTPUT_SQL: LazyLock<String> = LazyLock::new(|| {
             format!(
-                "INSERT INTO {OUTPUTS_TABLE_NAME} (entry_id, output_path, artifact_type, entry_size, entry_hash, entry_hash_kind, file_is_executable, symlink_target, symlink_remaining_path) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)"
+                "INSERT INTO {OUTPUTS_TABLE_NAME} (entry_id, output_path, {COLUMN_NAMES}) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)"
             )
         });
         static DECLARED_SQL: LazyLock<String> = LazyLock::new(|| {
@@ -547,97 +411,18 @@ impl DepFileStateSqliteTable {
 
         for output in &state.outputs {
             let path = &output.path;
-            let (
-                artifact_type,
-                entry_size,
-                entry_hash,
-                entry_hash_kind,
-                is_executable,
-                symlink_target,
-                symlink_remaining_path,
-            ): (
-                ArtifactType,
-                Option<u64>,
-                Option<Vec<u8>>,
-                Option<u8>,
-                Option<bool>,
-                Option<String>,
-                Option<String>,
-            ) = match &output.value {
-                // A directory output persists only its fingerprint; the tree is rehydrated from the
-                // materializer at lookup time.
-                StoredOutputValue::Directory(fingerprint) => {
-                    let (size, bytes, kind) = file_digest_parts(fingerprint);
-                    (
-                        ArtifactType::Directory,
-                        Some(size),
-                        Some(bytes.to_vec()),
-                        Some(kind),
-                        None,
-                        None,
-                        None,
-                    )
-                }
-                StoredOutputValue::Leaf(value) => match value.entry() {
-                    DirectoryEntry::Dir(_) => {
-                        return Err(internal_error!(
-                            "`StoredOutputValue::Leaf` unexpectedly holds a directory for `{}`",
-                            path
-                        ));
-                    }
-                    DirectoryEntry::Leaf(ActionDirectoryMember::File(f)) => {
-                        let (size, bytes, kind) = tracked_digest_parts(&f.digest);
-                        (
-                            ArtifactType::File,
-                            Some(size),
-                            Some(bytes.to_vec()),
-                            Some(kind),
-                            Some(f.is_executable),
-                            None,
-                            None,
-                        )
-                    }
-                    DirectoryEntry::Leaf(ActionDirectoryMember::Symlink(s)) => (
-                        ArtifactType::Symlink,
-                        None,
-                        None,
-                        None,
-                        None,
-                        Some(s.target().as_str().to_owned()),
-                        None,
-                    ),
-                    DirectoryEntry::Leaf(ActionDirectoryMember::ExternalSymlink(s)) => {
-                        // Persist `remaining_path` (when non-empty) so the symlink round-trips
-                        // exactly; `target_str()` alone is just `abs_target`.
-                        let remaining = s.remaining_path();
-                        let remaining = if remaining.is_empty() {
-                            None
-                        } else {
-                            Some(remaining.as_str().to_owned())
-                        };
-                        (
-                            ArtifactType::ExternalSymlink,
-                            None,
-                            None,
-                            None,
-                            None,
-                            Some(s.target_str().to_owned()),
-                            remaining,
-                        )
-                    }
-                },
-            };
+            let columns = StoredOutputColumns::encode(&output.value)?;
             tx.prepare_cached(&OUTPUT_SQL)?
                 .execute(rusqlite::params![
                     entry_id,
                     path.as_str(),
-                    artifact_type,
-                    entry_size,
-                    entry_hash,
-                    entry_hash_kind,
-                    is_executable,
-                    symlink_target,
-                    symlink_remaining_path,
+                    columns.artifact_type,
+                    columns.entry_size,
+                    columns.entry_hash,
+                    columns.entry_hash_kind,
+                    columns.file_is_executable,
+                    columns.symlink_target,
+                    columns.symlink_remaining_path,
                 ])
                 .with_buck_error_context(|| format!("inserting into {OUTPUTS_TABLE_NAME}"))?;
         }
@@ -831,7 +616,7 @@ impl DepFileStateSqliteTable {
         {
             static SQL: LazyLock<String> = LazyLock::new(|| {
                 format!(
-                    "SELECT output_path, artifact_type, entry_size, entry_hash, entry_hash_kind, file_is_executable, symlink_target, symlink_remaining_path FROM {OUTPUTS_TABLE_NAME} WHERE entry_id = ?1"
+                    "SELECT output_path, {COLUMN_NAMES} FROM {OUTPUTS_TABLE_NAME} WHERE entry_id = ?1"
                 )
             });
             let mut stmt = conn.prepare_cached(&SQL)?;
@@ -839,13 +624,7 @@ impl DepFileStateSqliteTable {
                 .query_map(rusqlite::params![id], |row| {
                     Ok(OutputRow {
                         output_path: row.get(0)?,
-                        artifact_type: row.get(1)?,
-                        entry_size: row.get(2)?,
-                        entry_hash: row.get(3)?,
-                        entry_hash_kind: row.get(4)?,
-                        file_is_executable: row.get(5)?,
-                        symlink_target: row.get(6)?,
-                        symlink_remaining_path: row.get(7)?,
+                        columns: StoredOutputColumns::read(row, 1)?,
                     })
                 })?
                 .collect::<Result<Vec<_>, _>>()
@@ -954,11 +733,16 @@ impl DepFileStateSqliteTable {
 
 #[cfg(test)]
 mod tests {
+    use buck2_common::external_symlink::ExternalSymlink;
     use buck2_common::file_ops::metadata::FileMetadata;
+    use buck2_common::file_ops::metadata::Symlink;
     use buck2_core::fs::project_rel_path::ProjectRelativePath;
     use buck2_core::fs::project_rel_path::ProjectRelativePathBuf;
+    use buck2_directory::directory::entry::DirectoryEntry;
     use buck2_execute::artifact_value::ArtifactValue;
+    use buck2_execute::dep_file_state::StoredOutputValue;
     use buck2_execute::directory::ActionDirectoryBuilder;
+    use buck2_execute::directory::ActionDirectoryMember;
     use buck2_execute::directory::extract_artifact_value;
     use buck2_execute::directory::insert_entry;
     use buck2_execute::directory::insert_file;

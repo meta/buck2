@@ -1,0 +1,9 @@
+package(
+    inherit = True,
+    visibility = [
+        "//in-child/...",
+    ],
+    within_view = [
+        "//in-child/...",
+    ],
+)

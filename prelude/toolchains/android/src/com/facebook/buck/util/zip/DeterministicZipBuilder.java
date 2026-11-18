@@ -10,6 +10,7 @@
 
 package com.facebook.buck.util.zip;
 
+import com.facebook.infer.annotation.Nullsafe;
 import com.google.common.io.ByteStreams;
 import java.io.Closeable;
 import java.io.IOException;
@@ -18,6 +19,7 @@ import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.zip.CRC32;
 
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public class DeterministicZipBuilder implements Closeable {
   // TODO(cjhopman): Should this buffer the entries and then sort them by name? We may have to
   // buffer them on disk to keep memory use sensible.

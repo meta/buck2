@@ -366,7 +366,7 @@ impl<Env: QueryEnvironment> DefaultQueryFunctionsModule<Env> {
     /// ```
     /// both return `buck2/app/buck2_action_impl_tests/TARGETS`.
     async fn buildfile(&self, targets: TargetSet<Env::Target>) -> QueryFuncResult<Env> {
-        Ok(self.implementation.buildfile(&targets).into())
+        Ok(self.implementation.buildfile(&targets)?.into())
     }
 
     /// Build file reverse dependencies.
@@ -819,7 +819,7 @@ impl<Env: QueryEnvironment> DefaultQueryFunctions<Env> {
         targets.attrregexfilter(attr, value)
     }
 
-    pub fn buildfile(&self, targets: &TargetSet<Env::Target>) -> FileSet {
+    pub fn buildfile(&self, targets: &TargetSet<Env::Target>) -> buck2_error::Result<FileSet> {
         targets.buildfile()
     }
 

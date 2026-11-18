@@ -10,12 +10,14 @@
 
 package com.facebook.buck.jvm.kotlin;
 
+import com.facebook.infer.annotation.Nullsafe;
 import com.google.common.base.Preconditions;
 import com.google.common.collect.ImmutableList;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 // TODO(navidq) Deserialize BuildKotlinCommand into our own data model and use it everywhere
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public class KotlinCDModelHelper {
   private static final Pattern LANGUAGE_VERSION_REGEX =
       Pattern.compile("-language-version=\\d+\\.\\d+");

@@ -10,7 +10,10 @@
 
 package com.facebook.buck.step;
 
+import com.facebook.infer.annotation.Nullsafe;
+
 /** A collection of common StepExecutionResult constants. */
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public class StepExecutionResults {
   // NB: These constants cannot live in StepExecutionResult, as referencing subclass in
   // static initializer may cause deadlock during classloading.

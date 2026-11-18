@@ -10,6 +10,8 @@
 
 package com.facebook.buck.jvm.java.plugin.api;
 
+import com.facebook.infer.annotation.Nullsafe;
+
 /**
  * {@link com.sun.source.tree.CompilationUnitTree} is included with the compiler and is thus not
  * directly accessible from within Buck's class loader. This interface is used to identify objects
@@ -17,4 +19,5 @@ package com.facebook.buck.jvm.java.plugin.api;
  * loader. These are translated back into the underlying {@link
  * com.sun.source.tree.CompilationUnitTree} when passed back into the compiler.
  */
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public interface CompilationUnitTreeProxy {}

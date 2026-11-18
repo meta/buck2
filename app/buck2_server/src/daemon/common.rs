@@ -104,6 +104,7 @@ pub struct CommandExecutorFactory {
     incremental_db_state: Arc<IncrementalDbState>,
     output_trees_download_config: OutputTreesDownloadConfig,
     daemon_id: DaemonId,
+    user_version: Option<String>,
 }
 
 impl CommandExecutorFactory {
@@ -130,6 +131,7 @@ impl CommandExecutorFactory {
         incremental_db_state: Arc<IncrementalDbState>,
         output_trees_download_config: OutputTreesDownloadConfig,
         daemon_id: DaemonId,
+        user_version: Option<String>,
     ) -> Self {
         let cache_upload_permission_checker = Arc::new(ActionCacheUploadPermissionChecker::new());
         let revision = Arc::new(LazyVcsRevision::new(project_root.root().to_owned()));
@@ -160,6 +162,7 @@ impl CommandExecutorFactory {
             incremental_db_state,
             output_trees_download_config,
             daemon_id,
+            user_version,
         }
     }
 
@@ -211,6 +214,7 @@ impl HasCommandExecutor for CommandExecutorFactory {
                 worker_pool,
                 self.memory_tracker.dupe(),
                 self.daemon_id.dupe(),
+                self.user_version.clone(),
                 self.invocation_re_use_case,
             )
         };
@@ -243,7 +247,6 @@ impl HasCommandExecutor for CommandExecutorFactory {
                 project_fs: self.project_root.clone(),
                 revision: self.revision.dupe(),
                 materializer: self.materializer.dupe(),
-                incremental_db_state: self.incremental_db_state.dupe(),
                 re_client: re_client.dupe(),
                 invocation_re_use_case: self.invocation_re_use_case,
                 re_action_key: re_action_key.clone(),
@@ -341,7 +344,6 @@ impl HasCommandExecutor for CommandExecutorFactory {
                             Arc::new(RemoteDepFileCacheChecker {
                                 artifact_fs: artifact_fs.dupe(),
                                 materializer: self.materializer.dupe(),
-                                incremental_db_state: self.incremental_db_state.dupe(),
                                 re_client: re_client.dupe(),
                                 invocation_re_use_case: self.invocation_re_use_case,
                                 re_action_key: remote_options.re_action_key.clone(),
@@ -361,7 +363,6 @@ impl HasCommandExecutor for CommandExecutorFactory {
                             Arc::new(ActionCacheChecker {
                                 artifact_fs: artifact_fs.dupe(),
                                 materializer: self.materializer.dupe(),
-                                incremental_db_state: self.incremental_db_state.dupe(),
                                 re_client: re_client.dupe(),
                                 invocation_re_use_case: self.invocation_re_use_case,
                                 re_action_key: remote_options.re_action_key.clone(),

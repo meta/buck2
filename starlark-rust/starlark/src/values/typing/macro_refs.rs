@@ -17,7 +17,7 @@
 
 #![doc(hidden)]
 use crate::values::Heap;
-use crate::values::StarlarkValue;
+use crate::values::StarlarkType;
 use crate::values::Value;
 use crate::values::typing::type_compiled::compiled::TypeCompiled;
 
@@ -27,8 +27,8 @@ enum TypingMacroRefsError {
     LhsNotType(String),
 }
 
-/// Implementation of `bit_or` for `StarlarkValue` implementations which are types.
-pub fn starlark_value_bit_or_for_type<'v, S: StarlarkValue<'v>>(
+/// Implementation of `bit_or` for `StarlarkType` implementations which are types.
+pub fn starlark_value_bit_or_for_type<'v, S: StarlarkType<'v>>(
     this: &S,
     other: Value<'v>,
     heap: Heap<'v>,

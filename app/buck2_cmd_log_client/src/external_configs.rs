@@ -88,6 +88,44 @@ struct ExternalConfigFileEntry<'a> {
     origin: &'a str,
 }
 
+/// One csv row shape for config files and values. The csv writer takes the header from the
+/// first row and rejects rows of another width, so every column is always present.
+#[derive(Serialize)]
+struct ExternalConfigCsvRow<'a> {
+    path: &'a str,
+    section: &'a str,
+    key: &'a str,
+    value: &'a str,
+    cell: &'a str,
+    origin: &'a str,
+}
+
+impl ExternalConfigValueEntry<'_> {
+    fn csv_row(&self) -> ExternalConfigCsvRow<'_> {
+        ExternalConfigCsvRow {
+            path: "",
+            section: self.section,
+            key: self.key,
+            value: self.value,
+            cell: self.cell.unwrap_or_default(),
+            origin: self.origin.unwrap_or_default(),
+        }
+    }
+}
+
+impl ExternalConfigFileEntry<'_> {
+    fn csv_row(&self) -> ExternalConfigCsvRow<'_> {
+        ExternalConfigCsvRow {
+            path: self.path,
+            section: "",
+            key: "",
+            value: "",
+            cell: "",
+            origin: self.origin,
+        }
+    }
+}
+
 fn write_config_value<'a>(
     config_value: &'a buck2_data::ConfigValue,
     origin_path: &'a str,
@@ -122,7 +160,7 @@ fn write_config_value<'a>(
         }
         LogCommandOutputFormatWithWriter::Csv(writer) => {
             writer
-                .serialize(external_config)
+                .serialize(external_config.csv_row())
                 .map_err(|e| from_any_with_tag(e, buck2_error::ErrorTag::LogCmd))?;
         }
     }
@@ -162,7 +200,7 @@ fn write_config_file(
         }
         LogCommandOutputFormatWithWriter::Csv(writer) => {
             writer
-                .serialize(config_file)
+                .serialize(config_file.csv_row())
                 .map_err(|e| from_any_with_tag(e, buck2_error::ErrorTag::LogCmd))?;
         }
     }
@@ -206,4 +244,53 @@ async fn log_external_configs(
         }
         Ok(())
     }).await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Config files and values share one csv row shape, so any sequence of them writes.
+    #[test]
+    fn test_csv_rows_share_one_shape() {
+        let mut out = Vec::new();
+        {
+            let mut w = csv::WriterBuilder::new().from_writer(&mut out);
+            w.serialize(
+                ExternalConfigFileEntry {
+                    path: "x.bcfg",
+                    origin: "config-file",
+                }
+                .csv_row(),
+            )
+            .unwrap();
+            w.serialize(
+                ExternalConfigValueEntry {
+                    section: "a",
+                    key: "b",
+                    value: "1",
+                    cell: None,
+                    origin: Some("cli"),
+                }
+                .csv_row(),
+            )
+            .unwrap();
+            w.serialize(
+                ExternalConfigValueEntry {
+                    section: "a",
+                    key: "c",
+                    value: "2",
+                    cell: Some("root"),
+                    origin: Some("cli"),
+                }
+                .csv_row(),
+            )
+            .unwrap();
+        }
+        let out = String::from_utf8(out).unwrap();
+        assert_eq!(
+            out,
+            "path,section,key,value,cell,origin\nx.bcfg,,,,,config-file\n,a,b,1,,cli\n,a,c,2,root,cli\n"
+        );
+    }
 }

@@ -58,7 +58,7 @@ impl TransitionData {
         .into_iter()
     }
 
-    pub(crate) fn attr_names(&self) -> Option<impl IntoIterator<Item = &str>> {
+    pub(crate) fn attr_names(&self) -> Option<impl Iterator<Item = buck2_error::Result<&str>>> {
         match self {
             TransitionData::MagicObject(v) => Some(Either::Left(
                 v.as_ref()
@@ -67,10 +67,10 @@ impl TransitionData {
                     .attrs_names
                     .as_ref()?
                     .iter()
-                    .map(|s| s.as_str()),
+                    .map(|s| Ok(s.as_str())),
             )),
             TransitionData::Target(v) => Some(Either::Right(
-                v.as_ref().value().as_ref().get_attrs_names()?.into_iter(),
+                v.as_ref().value().as_ref().get_attrs_names()?,
             )),
         }
     }
@@ -160,11 +160,11 @@ impl Key for TransitionAttrsKey {
         ctx: &mut DiceComputations,
         _cancellation: &dice::CancellationContext,
     ) -> Self::Value {
-        Ok(ctx
-            .fetch_transition(&self.0)
+        ctx.fetch_transition(&self.0)
             .await?
             .attr_names()
-            .map(|n| n.into_iter().map(|s| s.to_owned()).collect()))
+            .map(|names| names.map(|s| Ok(s?.to_owned())).collect())
+            .transpose()
     }
 
     fn equality_behavior() -> EqualityBehavior<Self::Value> {

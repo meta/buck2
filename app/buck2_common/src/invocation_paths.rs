@@ -15,36 +15,48 @@ use std::borrow::Cow;
 use std::fs::File;
 use std::fs::TryLockError;
 use std::io::ErrorKind;
+use std::ops::Deref;
+use std::sync::Arc;
+use std::sync::Mutex;
 use std::time::Duration;
 
 use allocative::Allocative;
-use buck2_core::buck2_env;
 use buck2_core::fs::project::ProjectRoot;
 use buck2_core::fs::project_rel_path::ProjectRelativePath;
 use buck2_core::fs::project_rel_path::ProjectRelativePathBuf;
 use buck2_error::BuckErrorContext;
+use buck2_error::BuckErrorOptionContext;
 use buck2_fs::paths::abs_norm_path::AbsNormPathBuf;
 use buck2_fs::paths::file_name::FileName;
 use buck2_fs::paths::file_name::FileNameBuf;
 use buck2_fs::paths::forward_rel_path::ForwardRelativePath;
 pub use buck2_wrapper_common::DEFAULT_ISOLATION_DIR;
-use buck2_wrapper_common::kill::process_exists;
-use buck2_wrapper_common::pid::Pid;
+use dupe::Dupe;
+use tokio::sync::OwnedSemaphorePermit;
+use tokio::sync::Semaphore;
 
+use crate::cancellation::CancellationScope;
+use crate::cancellation::CancellationScopeGuard;
+use crate::daemon_compatibility::DaemonCompatibilityKey;
 use crate::daemon_dir::DaemonDir;
+use crate::daemon_routing::DaemonRouting;
 use crate::invocation_roots::InvocationRoots;
 
 #[derive(Clone, Allocative)]
 pub struct InvocationPaths {
     pub roots: InvocationRoots,
+    #[allocative(skip)]
+    daemon_compatibility: Arc<Mutex<Option<DaemonCompatibilityKey>>>,
+    #[allocative(skip)]
+    tenant_generation: Arc<Mutex<Option<u64>>>,
 
     /// The isolation dir is a relative path used to create unique directories for
     /// a tenant's on-disk state. This allows multiple isolated tenants to use the
     /// same project root.
     ///
-    /// With `BUCK2_SHARE_DAEMON=true`, daemon metadata is shared across isolation directories for
-    /// the same project. `BUCK2_DAEMON_GROUP` also shares metadata across project roots in that
-    /// group. The tenant's buck-out remains `<projectroot>/buck-out/<isolationdir>/`.
+    /// Under shared [`DaemonRouting`], the daemon serving the tenant lives in a namespace keyed by
+    /// the client's compatibility key, and this directory holds the tenant's proxy. The tenant's
+    /// buck-out remains `<projectroot>/buck-out/<isolationdir>/`.
     ///
     /// Any tenant-specific on-disk state from the daemon (including build outputs and similar)
     /// should only be written or read from directories that include this component.
@@ -60,6 +72,11 @@ pub struct InvocationPaths {
     ///    eventually are not allowed, the most pragmatic approach currently is to support them
     ///    but push them into isolated, temporary daemons.
     pub isolation: FileNameBuf,
+
+    /// How this invocation's client selects its daemon. Read from the root buckconfig before
+    /// any daemon is contacted, so every path that depends on it agrees across clients. `None`
+    /// for commands that never select a daemon, which then skip parsing the root buckconfig.
+    routing: Option<DaemonRouting>,
 }
 
 /// Paths whose lifetime is tied to a tenant rather than an individual invocation.
@@ -80,13 +97,7 @@ impl TenantPaths {
 
     /// A persistent lock file outside the tenant's disposable output and daemon directories.
     pub fn disk_ownership_lock_path(&self) -> buck2_error::Result<AbsNormPathBuf> {
-        let paths = InvocationPaths {
-            roots: InvocationRoots {
-                project_root: self.project_root.clone(),
-                cwd: ProjectRelativePath::empty().to_buf(),
-            },
-            isolation: self.isolation.clone(),
-        };
+        let paths = self.unshared_invocation_paths();
         Ok(paths
             .project_daemon_dir()?
             .path
@@ -94,18 +105,34 @@ impl TenantPaths {
             .join(&self.isolation))
     }
 
+    /// Waits until no process owns the tenant's directories, for up to `timeout`. A client starts
+    /// an unshared daemon over them only once a previous owner has finished releasing them.
+    pub async fn wait_until_disk_unowned(
+        &self,
+        timeout: Duration,
+    ) -> buck2_error::Result<Result<(), TenantDiskStillOwned>> {
+        Ok(TenantDiskLock::wait_for(self, timeout).await?.map(drop))
+    }
+
     /// The daemon directory used by clients without shared daemon routing.
     pub fn unshared_daemon_dir(&self) -> buck2_error::Result<DaemonDir> {
-        let paths = InvocationPaths {
-            roots: InvocationRoots {
-                project_root: self.project_root.clone(),
-                cwd: ProjectRelativePath::empty().to_buf(),
-            },
-            isolation: self.isolation.clone(),
-        };
+        let paths = self.unshared_invocation_paths();
         Ok(DaemonDir {
             path: paths.project_daemon_dir()?.path.join(&self.isolation),
         })
+    }
+
+    /// Invocation paths for this tenant under unshared routing, for the paths that do not depend
+    /// on routing.
+    fn unshared_invocation_paths(&self) -> InvocationPaths {
+        InvocationPaths::new(
+            InvocationRoots {
+                project_root: self.project_root.clone(),
+                cwd: ProjectRelativePath::empty().to_buf(),
+            },
+            self.isolation.clone(),
+            Some(DaemonRouting::Unshared),
+        )
     }
 
     /// Returns the tenant's project root.
@@ -190,70 +217,164 @@ impl TenantPaths {
     }
 }
 
-/// Exclusive disk ownership shared by tenant generations and cleanup clients.
+/// An exclusive lock a unidaemon holds for its whole lifetime, taken before it writes anything to
+/// its namespace. The kernel releases it when the daemon exits however it exits, so whether it is
+/// held tells a client whether a daemon of the namespace is running, whatever the namespace's
+/// metadata says: a crash before `buckd.info` is written, damaged metadata, and a recorded pid
+/// that another process has since taken all leave the answer right.
+///
+/// The lock file lives beside the namespace's lifecycle lock, outside the daemon directory that
+/// cleanup clears. The descriptor is close-on-exec, so processes the daemon spawns do not keep it.
+pub struct UnidaemonLifetimeLock {
+    _file: File,
+}
+
+impl UnidaemonLifetimeLock {
+    /// Takes the lock for the calling daemon, waiting out clients that are probing it. Fails if
+    /// another daemon of the namespace holds it.
+    pub fn acquire(
+        paths: &InvocationPaths,
+        key: &DaemonCompatibilityKey,
+        timeout: Duration,
+    ) -> buck2_error::Result<Self> {
+        let path = paths.unidaemon_lifetime_lock_path(key)?;
+        let file = Self::open(&path)?;
+        let deadline = std::time::Instant::now() + timeout;
+        loop {
+            match file.try_lock() {
+                Ok(()) => return Ok(Self { _file: file }),
+                Err(TryLockError::WouldBlock) if std::time::Instant::now() < deadline => {
+                    std::thread::sleep(Duration::from_millis(10));
+                }
+                Err(TryLockError::WouldBlock) => {
+                    return Err(buck2_error::buck2_error!(
+                        buck2_error::ErrorTag::Input,
+                        "Another daemon of unidaemon namespace `{key}` is running (`{path}` is locked)"
+                    ));
+                }
+                Err(TryLockError::Error(error)) => {
+                    return Err(
+                        buck2_error::Error::from(error).context(format!("Locking `{path}`"))
+                    );
+                }
+            }
+        }
+    }
+
+    /// Whether a daemon of the namespace holds the lock. A probe takes the lock shared, so
+    /// concurrent probes never mistake each other for a daemon, and does not create the lock
+    /// file: a namespace whose daemon never created it has no daemon that holds it.
+    pub async fn is_held(
+        paths: &InvocationPaths,
+        key: &DaemonCompatibilityKey,
+    ) -> buck2_error::Result<bool> {
+        let path = paths.unidaemon_lifetime_lock_path(key)?;
+        tokio::task::spawn_blocking(move || Self::is_held_at(&path)).await?
+    }
+
+    fn is_held_at(path: &AbsNormPathBuf) -> buck2_error::Result<bool> {
+        let file = match File::open(path) {
+            Ok(file) => file,
+            Err(error) if error.kind() == ErrorKind::NotFound => return Ok(false),
+            Err(error) => {
+                return Err(buck2_error::Error::from(error).context(format!("Probing `{path}`")));
+            }
+        };
+        match file.try_lock_shared() {
+            Ok(()) => Ok(false),
+            Err(TryLockError::WouldBlock) => Ok(true),
+            Err(TryLockError::Error(error)) => {
+                Err(buck2_error::Error::from(error).context(format!("Probing `{path}`")))
+            }
+        }
+    }
+
+    /// Whether the lock is free, waiting up to `timeout` for a daemon that holds it to exit. A
+    /// daemon releases the lock only as its process ends, after it has removed its connection
+    /// records, so a client that has seen the process go can still find the lock held for a
+    /// moment.
+    pub async fn wait_until_free(
+        paths: &InvocationPaths,
+        key: &DaemonCompatibilityKey,
+        timeout: Duration,
+    ) -> buck2_error::Result<bool> {
+        let deadline = std::time::Instant::now() + timeout;
+        loop {
+            if !Self::is_held(paths, key).await? {
+                return Ok(true);
+            }
+            if std::time::Instant::now() >= deadline {
+                return Ok(false);
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    }
+
+    fn open(path: &AbsNormPathBuf) -> buck2_error::Result<File> {
+        std::fs::create_dir_all(path.parent().internal_error("Lock file has a parent")?)?;
+        Ok(std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .truncate(false)
+            .open(path)?)
+    }
+}
+
+/// The OS file lock behind a tenant's disk ownership, taken by a generation through
+/// [`LeasedTenantPaths`] and by cleanup through [`TenantDiskForCleanup`].
 #[derive(Allocative)]
-pub struct TenantDiskLock {
+struct TenantDiskLock {
     #[allocative(skip)]
     _file: File,
-    #[allocative(skip)]
-    _legacy_lifecycle: Option<File>,
+}
+
+/// Another process still owned a tenant's disk state when [`TenantDiskLock::wait_for`] stopped
+/// waiting.
+#[derive(Debug, buck2_error::Error)]
+#[buck2(tag = BuckdLifecycleLock)]
+#[error(
+    "Timed out waiting for exclusive use of `{buck_out}`: another process still owns it, either a Buck2 daemon or a running `buck2 clean`. Wait for it to finish, or stop the daemon (for example with `buck2 killall`), then retry."
+)]
+pub struct TenantDiskStillOwned {
+    pub buck_out: AbsNormPathBuf,
 }
 
 impl TenantDiskLock {
     /// Waits for disk ownership without interrupting the existing owner.
-    pub async fn acquire(paths: &TenantPaths, timeout: Duration) -> buck2_error::Result<Self> {
+    async fn acquire(paths: &TenantPaths, timeout: Duration) -> buck2_error::Result<Self> {
+        Ok(Self::wait_for(paths, timeout).await??)
+    }
+
+    /// Like [`acquire`](Self::acquire), but tells a wait that ran out, while another process still
+    /// owned the disk state, from other failures.
+    async fn wait_for(
+        paths: &TenantPaths,
+        timeout: Duration,
+    ) -> buck2_error::Result<Result<Self, TenantDiskStillOwned>> {
         tokio::time::timeout(timeout, async {
             loop {
-                if let Some(mut lock) = Self::try_acquire(paths).await? {
-                    if buck2_env!("BUCK2_SHARE_DAEMON", type=bool, default=false)? {
-                        let legacy_dir = paths.unshared_daemon_dir()?;
-                        let Some(file) = Self::try_lock_file(&legacy_dir.path.join(FileName::unchecked_new("buckd.lifecycle"))).await? else {
-                            tokio::time::sleep(Duration::from_millis(50)).await;
-                            continue;
-                        };
-                        lock._legacy_lifecycle = Some(file);
-                        match tokio::fs::read_to_string(legacy_dir.buckd_pid()).await {
-                            Ok(pid) => {
-                                let trimmed = pid.trim();
-                                let raw: i64 = trimmed.parse().buck_error_context(format!(
-                                    "Cannot verify legacy daemon ownership at `{legacy_dir}`; refusing shared initialization. Garbage `buckd.pid` does not prove ownership ended. Stop the legacy daemon and restore a consistent `buckd.pid` before sharing."
-                                ))?;
-                                let legacy_pid = Pid::from_i64(raw).buck_error_context(format!(
-                                    "Cannot verify legacy daemon ownership at `{legacy_dir}`; refusing shared initialization. Invalid PID `{trimmed}` does not prove ownership ended. Stop the legacy daemon and restore a consistent `buckd.pid` before sharing."
-                                ))?;
-                                if process_exists(legacy_pid)? {
-                                    return Err(buck2_error::buck2_error!(
-                                        buck2_error::ErrorTag::Input,
-                                        "Tenant disk state is already owned by a legacy daemon at `{legacy_dir}`. Stop it before enabling daemon sharing."
-                                    ));
-                                }
-                            }
-                            Err(error) if error.kind() == ErrorKind::NotFound => {}
-                            Err(error) => return Err(error.into()),
-                        }
-                    }
+                if let Some(lock) = Self::try_acquire(paths).await? {
                     break buck2_error::Ok(lock);
                 }
                 tokio::time::sleep(Duration::from_millis(50)).await;
             }
         })
         .await
-        .map_err(|_elapsed| {
-            buck2_error::buck2_error!(
-                buck2_error::ErrorTag::BuckdLifecycleLock,
-                "Timed out waiting for exclusive use of `{}`: another process still owns it, either a Buck2 daemon or a running `buck2 clean`. Wait for it to finish, or stop the daemon (for example with `buck2 killall`), then retry.",
-                paths.buck_out_path()
-            )
-        })?
+        .map_or_else(
+            |_elapsed| {
+                Ok(Err(TenantDiskStillOwned {
+                    buck_out: paths.buck_out_path(),
+                }))
+            },
+            |lock| Ok(Ok(lock?)),
+        )
     }
 
     async fn try_acquire(paths: &TenantPaths) -> buck2_error::Result<Option<Self>> {
         Ok(Self::try_lock_file(&paths.disk_ownership_lock_path()?)
             .await?
-            .map(|file| Self {
-                _file: file,
-                _legacy_lifecycle: None,
-            }))
+            .map(|file| Self { _file: file }))
     }
 
     async fn try_lock_file(path: &AbsNormPathBuf) -> buck2_error::Result<Option<File>> {
@@ -276,7 +397,156 @@ impl TenantDiskLock {
     }
 }
 
+/// Exclusive ownership of a tenant's output and cache directories by a process that is not
+/// serving the tenant, held while deleting them. Taking it waits for the owning generation's
+/// disk work to drain, and no daemon can take the directories until it is dropped.
+#[derive(Allocative)]
+pub struct TenantDiskForCleanup {
+    _lock: TenantDiskLock,
+}
+
+impl TenantDiskForCleanup {
+    pub async fn take(paths: &TenantPaths, timeout: Duration) -> buck2_error::Result<Self> {
+        Ok(Self {
+            _lock: TenantDiskLock::acquire(paths, timeout).await?,
+        })
+    }
+}
+
+/// One generation's ownership of a tenant's output and cache directories.
+///
+/// The permit serializes generations of the tenant within this daemon, the file lock serializes
+/// them across daemons, and the scope registration keeps the generation's eviction incomplete
+/// while the lease exists. Held through [`LeasedTenantPaths`] and by the blocking executor that
+/// runs the generation's I/O, so the lease outlives every reader of the paths and every request
+/// in flight.
+pub struct TenantDiskLease {
+    _permit: OwnedSemaphorePermit,
+    _lock: TenantDiskLock,
+    _lifetime: Arc<CancellationScopeGuard>,
+}
+
+/// A tenant's paths, obtainable only with the tenant's disk lease.
+///
+/// Daemon code reaches a tenant's output and cache directories through these paths, so a
+/// generation cannot touch them before it owns them, and a replacement generation cannot own them
+/// until every holder of this value and every I/O its executor retains are gone. Cloning shares
+/// the lease; [`Self::without_lease`] is for records that must not keep the generation's disk
+/// state alive.
+#[derive(Clone, Allocative)]
+pub struct LeasedTenantPaths {
+    paths: TenantPaths,
+    #[allocative(skip)]
+    lease: Arc<TenantDiskLease>,
+}
+
+impl LeasedTenantPaths {
+    /// Takes the tenant's disk ownership for a generation of `scope`, waiting for the previous
+    /// owner within this daemon and for up to `lock_timeout` for one in another process.
+    pub async fn acquire(
+        paths: TenantPaths,
+        gate: Arc<Semaphore>,
+        scope: &CancellationScope,
+        lock_timeout: Duration,
+    ) -> buck2_error::Result<Self> {
+        let lifetime = scope.register()?;
+        let permit = gate
+            .acquire_owned()
+            .await
+            .internal_error("Tenant disk ownership gate should remain open")?;
+        let lock = TenantDiskLock::acquire(&paths, lock_timeout).await?;
+        Ok(Self {
+            paths,
+            lease: Arc::new(TenantDiskLease {
+                _permit: permit,
+                _lock: lock,
+                _lifetime: lifetime,
+            }),
+        })
+    }
+
+    /// The lease itself, for an executor to retain while it runs the generation's I/O.
+    pub fn lease(&self) -> Arc<TenantDiskLease> {
+        self.lease.dupe()
+    }
+
+    /// The paths alone. The result keeps no disk ownership alive, so it suits status records and
+    /// other bookkeeping that must not delay a replacement generation; it must not be used for I/O.
+    pub fn without_lease(&self) -> TenantPaths {
+        self.paths.clone()
+    }
+}
+
+impl Deref for LeasedTenantPaths {
+    type Target = TenantPaths;
+
+    fn deref(&self) -> &TenantPaths {
+        &self.paths
+    }
+}
+
 impl InvocationPaths {
+    pub fn new(
+        roots: InvocationRoots,
+        isolation: FileNameBuf,
+        routing: Option<DaemonRouting>,
+    ) -> Self {
+        Self {
+            roots,
+            isolation,
+            routing,
+            daemon_compatibility: Arc::new(Mutex::new(None)),
+            tenant_generation: Arc::new(Mutex::new(None)),
+        }
+    }
+
+    /// The same paths under another routing, as a daemon applies the routing it was started with.
+    pub fn with_routing(self, routing: DaemonRouting) -> Self {
+        Self {
+            routing: Some(routing),
+            ..self
+        }
+    }
+
+    pub fn routing(&self) -> buck2_error::Result<DaemonRouting> {
+        self.routing
+            .internal_error("Daemon routing is not resolved for this command")
+    }
+
+    /// Whether this command addresses a shared daemon. A command that never selects a daemon
+    /// leaves routing unresolved and addresses none.
+    pub fn shares_daemon(&self) -> bool {
+        self.routing.is_some_and(|routing| routing.is_shared())
+    }
+
+    pub fn select_unidaemon(&self, key: DaemonCompatibilityKey) {
+        *self
+            .daemon_compatibility
+            .lock()
+            .unwrap_or_else(|error| error.into_inner()) = Some(key);
+    }
+
+    pub fn select_tenant_generation(&self, generation: u64) {
+        *self
+            .tenant_generation
+            .lock()
+            .unwrap_or_else(|error| error.into_inner()) = Some(generation);
+    }
+
+    pub fn tenant_generation(&self) -> Option<u64> {
+        *self
+            .tenant_generation
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+    }
+
+    pub fn unidaemon_key(&self) -> Option<DaemonCompatibilityKey> {
+        self.daemon_compatibility
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .clone()
+    }
+
     /// Returns the stable tenant paths, excluding the invocation cwd.
     pub fn tenant_paths(&self) -> TenantPaths {
         TenantPaths::new(self.project_root().clone(), self.isolation.clone())
@@ -306,36 +576,36 @@ impl InvocationPaths {
         Ok(DaemonDir { path })
     }
 
-    pub fn daemon_dir(&self) -> buck2_error::Result<DaemonDir> {
-        if let Some(group) = self.shared_daemon_group()? {
-            return Ok(DaemonDir {
-                path: self
-                    .roots
-                    .common_buckd_dir()?
-                    .join(FileName::unchecked_new(".groups"))
-                    .join(group)
-                    .join(FileName::unchecked_new(DEFAULT_ISOLATION_DIR)),
-            });
-        }
-        let isolation = if buck2_env!("BUCK2_SHARE_DAEMON", type=bool, default=false)? {
-            FileName::unchecked_new("._buck2_shared")
-        } else {
-            &self.isolation
-        };
+    /// See [`UnidaemonLifetimeLock`].
+    pub fn unidaemon_lifetime_lock_path(
+        &self,
+        key: &DaemonCompatibilityKey,
+    ) -> buck2_error::Result<AbsNormPathBuf> {
+        Ok(self
+            .roots
+            .common_buckd_dir()?
+            .join(FileName::unchecked_new(UNIDAEMON_LOCKS_DIR))
+            .join(FileName::new(&format!("{key}.alive"))?))
+    }
+
+    pub fn unidaemon_dir(&self, key: &DaemonCompatibilityKey) -> buck2_error::Result<DaemonDir> {
         Ok(DaemonDir {
-            path: self.project_daemon_dir()?.path.join(isolation),
+            path: self
+                .roots
+                .common_buckd_dir()?
+                .join(FileName::unchecked_new(UNIDAEMON_NAMESPACES_DIR))
+                .join(key.file_name())
+                .join(FileName::unchecked_new(DEFAULT_ISOLATION_DIR)),
         })
     }
 
-    pub fn shared_daemon_group(&self) -> buck2_error::Result<Option<FileNameBuf>> {
-        // Groups only exist among shared daemons; without sharing the variable is ignored.
-        if !buck2_env!("BUCK2_SHARE_DAEMON", type=bool, default=false)? {
-            return Ok(None);
+    pub fn daemon_dir(&self) -> buck2_error::Result<DaemonDir> {
+        if let Some(key) = self.unidaemon_key() {
+            return self.unidaemon_dir(&key);
         }
-        let Some(group) = buck2_env!("BUCK2_DAEMON_GROUP")? else {
-            return Ok(None);
-        };
-        Ok(Some(FileName::new(group)?.to_owned()))
+        Ok(DaemonDir {
+            path: self.project_daemon_dir()?.path.join(&self.isolation),
+        })
     }
 
     pub fn project_root(&self) -> &ProjectRoot {
@@ -448,13 +718,11 @@ impl InvocationPaths {
     /// tenant, so it lives outside the tenant output directories; an unshared daemon runs in
     /// the tenant's buck-out.
     pub fn daemon_working_dir(&self) -> buck2_error::Result<AbsNormPathBuf> {
-        Ok(
-            if buck2_env!("BUCK2_SHARE_DAEMON", type=bool, default=false)? {
-                self.daemon_state_dir()
-            } else {
-                self.buck_out_path()
-            },
-        )
+        Ok(if self.routing()?.is_shared() {
+            self.daemon_state_dir()
+        } else {
+            self.buck_out_path()
+        })
     }
 
     /// Daemon-scoped paged DICE storage, outside every disposable tenant tree.
@@ -469,14 +737,55 @@ impl InvocationPaths {
         Ok(self.shared_dice_state_dir().join(FileName::new(daemon_id)?))
     }
 
-    /// Private executable state for one forkserver, under execution-allowlisted buck-out.
-    /// It is a sibling of the daemon's working directory so that `buck2 clean` of a shared
-    /// tenant leaves the daemon-wide forkserver intact.
-    pub fn forkserver_state_dir(&self, daemon_id: &str) -> buck2_error::Result<AbsNormPathBuf> {
-        Ok(self
-            .daemon_working_dir()?
+    /// Private executable state for the daemon's forkserver, under execution-allowlisted
+    /// buck-out. A shared daemon keeps it beside its working directory, so that `buck2 clean` of
+    /// a tenant leaves it intact, under its namespace. As with an unshared daemon's state, which
+    /// daemons under different homes started over one checkout and isolation directory share, a
+    /// daemon only ever touches its own directory.
+    pub fn forkserver_state_dir(&self) -> buck2_error::Result<AbsNormPathBuf> {
+        if !self.routing()?.is_shared() {
+            return Ok(self
+                .buck_out_path()
+                .join(FileName::unchecked_new("forkserver")));
+        }
+        let key = self
+            .unidaemon_key()
+            .internal_error("A shared daemon serves a namespace")?;
+        Ok(self.shared_forkserver_state_root().join(key.file_name()))
+    }
+
+    /// Forkserver state of the shared daemons started from this checkout, one entry per
+    /// namespace.
+    pub fn shared_forkserver_state_root(&self) -> AbsNormPathBuf {
+        self.daemon_state_dir()
             .join(FileName::unchecked_new("forkserver"))
-            .join(FileName::new(daemon_id)?))
+    }
+
+    /// The BlobStore's stash: the local content behind the daemon's tracked digests that the
+    /// CAS is not known to hold. An unshared daemon keeps it in its tenant's buck-out, where it
+    /// has always been. A shared daemon's tenants are cleaned and evicted independently of it,
+    /// the tenant that started it included, so its stash lives with its forkserver state, under
+    /// its namespace beside its working directory.
+    pub fn stash_dir(&self) -> buck2_error::Result<AbsNormPathBuf> {
+        if !self.routing()?.is_shared() {
+            return Ok(self.buck_out_path().join(FileName::unchecked_new("stash")));
+        }
+        Ok(self
+            .shared_stash_state_dir()?
+            .join(FileName::unchecked_new("stash")))
+    }
+
+    /// Stash state of the shared daemon of this checkout's namespace: the stash and what a
+    /// starting daemon moves aside of a previous one's. Removed with the forkserver state when
+    /// the daemon exits normally.
+    pub fn shared_stash_state_dir(&self) -> buck2_error::Result<AbsNormPathBuf> {
+        let key = self
+            .unidaemon_key()
+            .internal_error("A shared daemon serves a namespace")?;
+        Ok(self
+            .daemon_state_dir()
+            .join(FileName::unchecked_new("stash"))
+            .join(key.file_name()))
     }
 
     fn materializer_state_dir_name(&self) -> &FileName {
@@ -536,6 +845,12 @@ impl InvocationPaths {
 /// recreated on daemon start.
 pub const RESERVED_BUCK_OUT_PREFIX: &str = "._buck2";
 
+/// Under the common daemon directory, the directory holding one shared-daemon namespace per
+/// compatibility key.
+pub const UNIDAEMON_NAMESPACES_DIR: &str = ".unidaemons";
+/// Beside [`UNIDAEMON_NAMESPACES_DIR`]: the lifecycle locks of the namespaces, named by their key.
+pub const UNIDAEMON_LOCKS_DIR: &str = ".unidaemon_locks";
+
 #[cfg(test)]
 mod tests {
     use std::ffi::OsStr;
@@ -548,6 +863,9 @@ mod tests {
     use buck2_fs::paths::file_name::FileNameBuf;
     use buck2_fs::paths::forward_rel_path::ForwardRelativePath;
 
+    use crate::daemon_compatibility::DaemonCompatibilityKey;
+    use crate::daemon_routing::DaemonRouting;
+    use crate::init::DaemonStartupConfig;
     use crate::invocation_paths::InvocationPaths;
     use crate::invocation_roots::InvocationRoots;
 
@@ -558,15 +876,16 @@ mod tests {
         } else {
             "/my/project"
         };
-        let paths = InvocationPaths {
-            roots: InvocationRoots {
+        let paths = InvocationPaths::new(
+            InvocationRoots {
                 project_root: ProjectRoot::new_unchecked(
                     AbsNormPathBuf::try_from(project_root.to_owned()).unwrap(),
                 ),
                 cwd: ProjectRelativePath::empty().to_buf(),
             },
-            isolation: FileNameBuf::unchecked_new("isolation"),
-        };
+            FileNameBuf::unchecked_new("isolation"),
+            Some(DaemonRouting::Unshared),
+        );
 
         let expected_path = if cfg!(windows) {
             ".buck\\buckd\\C\\my\\project\\isolation"
@@ -583,15 +902,64 @@ mod tests {
             .as_os_str()
         );
 
-        let other_paths = InvocationPaths {
-            roots: paths.roots.clone(),
-            isolation: FileNameBuf::unchecked_new("other-isolation"),
-        };
+        let other_paths = InvocationPaths::new(
+            paths.roots.clone(),
+            FileNameBuf::unchecked_new("other-isolation"),
+            Some(DaemonRouting::Unshared),
+        );
         assert_ne!(
             paths.daemon_dir().unwrap().path,
             other_paths.daemon_dir().unwrap().path,
         );
         assert_ne!(paths.buck_out_path(), other_paths.buck_out_path());
+
+        // A shared daemon outlives any one tenant's buck-out, so it works outside them; until a
+        // namespace is selected, the tenant's own directory holds its proxy.
+        let shared = InvocationPaths::new(
+            paths.roots.clone(),
+            FileNameBuf::unchecked_new("isolation"),
+            Some(DaemonRouting::Shared),
+        );
+        assert_eq!(
+            shared.daemon_dir().unwrap().path,
+            paths.daemon_dir().unwrap().path
+        );
+        assert_eq!(
+            shared.daemon_working_dir().unwrap(),
+            shared.daemon_state_dir()
+        );
+        assert_eq!(paths.daemon_working_dir().unwrap(), paths.buck_out_path());
+
+        // Commands that never select a daemon leave routing unresolved; anything that depends on
+        // it reports that instead of guessing.
+        let unrouted = InvocationPaths::new(
+            paths.roots.clone(),
+            FileNameBuf::unchecked_new("isolation"),
+            None,
+        );
+        assert!(unrouted.routing().is_err());
+        assert!(unrouted.daemon_working_dir().is_err());
+        assert_eq!(unrouted.buck_out_path(), paths.buck_out_path());
+
+        // A unidaemon directory depends on neither the checkout nor the isolation directory.
+        let key = DaemonCompatibilityKey::new(
+            "release-a",
+            None,
+            &DaemonStartupConfig::testing_empty().serialize().unwrap(),
+            false,
+        );
+        let mut other_checkout = other_paths;
+        let other_root = if cfg!(windows) {
+            "C:\\other\\project"
+        } else {
+            "/other/project"
+        };
+        other_checkout.roots.project_root =
+            ProjectRoot::new_unchecked(AbsNormPathBuf::try_from(other_root.to_owned()).unwrap());
+        assert_eq!(
+            paths.unidaemon_dir(&key).unwrap().path,
+            other_checkout.unidaemon_dir(&key).unwrap().path,
+        );
 
         let expected_path = if cfg!(windows) {
             "C:\\my\\project"

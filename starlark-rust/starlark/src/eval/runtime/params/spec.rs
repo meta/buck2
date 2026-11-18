@@ -780,7 +780,7 @@ impl<'v> ParametersSpec<Value<'v>> {
                     Some(kwargs) => Dict::from_string_keyed(kwargs),
                     None => Dict::default(),
                 };
-                heap.alloc(kwargs)
+                heap.alloc(kwargs).to_value()
             }
         }
 
@@ -862,14 +862,12 @@ impl<'v> ParametersSpec<Value<'v>> {
             match DictRef::from_value(param_kwargs) {
                 Some(y) => {
                     for (k, v) in y.iter_hashed() {
-                        match StringValue::new(*k.key()) {
+                        match StringValue::new_with_get(*k.key()) {
                             None => return Err(FunctionError::KwargsKeyIsNotString.into()),
-                            Some(s) => {
-                                let repeat = match self
-                                    .prototype
-                                    .names
-                                    .get_hashed_string_value(Hashed::new_unchecked(k.hash(), s))
-                                {
+                            Some((s, str)) => {
+                                let repeat = match self.prototype.names.get_hashed_starlark_str(
+                                    Hashed::new_unchecked(k.hash(), str.as_ref()),
+                                ) {
                                     None => kwargs.insert(Hashed::new_unchecked(k.hash(), s), v),
                                     Some(i) => {
                                         let this_slot = &mut slots[*i as usize];
@@ -935,7 +933,7 @@ impl<'v> ParametersSpec<Value<'v>> {
         // Note that we deliberately give warnings about missing parameters _before_ giving warnings
         // about unexpected extra parameters, so if a user misspells an argument they get a better error.
         if let Some(args_pos) = self.prototype.indices.args {
-            slots[args_pos as usize] = Some(heap.alloc_tuple(&star_args));
+            slots[args_pos as usize] = Some(heap.alloc_tuple(&star_args).to_value());
         } else if unlikely(!star_args.is_empty()) {
             return Err(FunctionError::ExtraPositionalArg {
                 count: star_args.len(),

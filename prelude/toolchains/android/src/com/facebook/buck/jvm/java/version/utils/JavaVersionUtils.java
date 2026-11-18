@@ -10,9 +10,11 @@
 
 package com.facebook.buck.jvm.java.version.utils;
 
+import com.facebook.infer.annotation.Nullsafe;
 import java.util.Objects;
 
 /** Utility class for retrieving Java version information. */
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public class JavaVersionUtils {
   private static int majorVersion = 0;
 

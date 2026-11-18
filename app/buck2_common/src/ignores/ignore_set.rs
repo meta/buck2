@@ -264,6 +264,8 @@ impl PerCellIgnoreSet {
                         .build()?,
                 );
             } else {
+                // Escape so that a `}` or `]` in the name does not break the alternation.
+                let val = globset::escape(val);
                 builder.add(globset::Glob::new(&format!("{{{val},{val}/**}}"))?);
             }
         }
@@ -345,5 +347,18 @@ mod tests {
         assert!(set("a, !").is_err());
         assert!(set("a, !/").is_err());
         assert!(set("a, ! b/").is_ok());
+    }
+
+    /// A plain pattern is escaped before it is wrapped in `{name,name/**}`, so glob
+    /// metacharacters in it are matched literally.
+    #[test]
+    fn test_closing_brace_in_plain_pattern_is_literal() {
+        let root = CellName::testing_new("root");
+        let cells =
+            CellResolver::testing_with_name_and_path(root, CellRootPathBuf::testing_new(""));
+        let set = IgnoreSet::testing_new_single_cell(cells, root, "a}").unwrap();
+        assert!(set.is_match(ProjectRelativePath::new("a}").unwrap()));
+        assert!(set.is_match(ProjectRelativePath::new("a}/x").unwrap()));
+        assert!(!set.is_match(ProjectRelativePath::new("a").unwrap()));
     }
 }

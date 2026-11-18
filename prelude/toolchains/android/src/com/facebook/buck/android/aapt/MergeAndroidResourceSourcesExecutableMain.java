@@ -48,6 +48,12 @@ public class MergeAndroidResourceSourcesExecutableMain {
   }
 
   private void run() throws IOException {
+    String scratchPath = System.getenv("BUCK_SCRATCH_PATH");
+    if (scratchPath == null || scratchPath.isEmpty()) {
+      throw new IllegalStateException(
+          "BUCK_SCRATCH_PATH environment variable must be set and non-empty");
+    }
+    Path scratchDir = Paths.get(scratchPath);
     try {
       ImmutableList<Path> resPaths =
           Files.readAllLines(Paths.get(resourcePathsList)).stream()
@@ -57,7 +63,7 @@ public class MergeAndroidResourceSourcesExecutableMain {
       MergeAndroidResourceSourcesUtils.mergeResPaths(
           resPaths,
           output,
-          Files.createTempDirectory("merge_android_resource_sources_temp"),
+          Files.createTempDirectory(scratchDir, "merge_android_resource_sources_temp"),
           new StdLogger(StdLogger.Level.WARNING));
     } catch (MergingException e) {
       throw new RuntimeException(e);

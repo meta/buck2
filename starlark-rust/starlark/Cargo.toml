@@ -30,6 +30,7 @@ hashbrown.workspace = true
 inventory.workspace = true
 itertools.workspace = true
 maplit.workspace = true
+memchr.workspace = true
 mini_map.workspace = true
 mini_vec.workspace = true
 num-bigint.workspace = true

@@ -10,11 +10,14 @@
 
 package com.facebook.buck.android.resources.filter;
 
+import com.facebook.infer.annotation.Nullsafe;
+
 /**
  * A {@link Runnable} that can throw checked exceptions.
  *
  * @param <E> the type of exception that can be thrown
  */
+@Nullsafe(Nullsafe.Mode.LOCAL)
 @FunctionalInterface
 public interface ThrowingRunnable<E extends Exception> {
   void run() throws E;

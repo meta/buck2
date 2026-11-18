@@ -15,13 +15,10 @@ use starlark::any::ProvidesStaticType;
 use starlark::environment::Methods;
 use starlark::environment::MethodsBuilder;
 use starlark::starlark_module;
-use starlark::values::AllocValue;
 use starlark::values::FrozenValueTyped;
-use starlark::values::Heap;
 use starlark::values::NoSerialize;
 use starlark::values::StarlarkValue;
 use starlark::values::Trace;
-use starlark::values::Value;
 use starlark::values::starlark_value;
 
 use crate::attrs::DynamicAttrValues;
@@ -49,19 +46,11 @@ pub struct StarlarkDynamicActions<'v> {
 starlark::methods_static!(DYNAMIC_ACTIONS_METHODS = dynamic_actions_methods);
 
 // TODO(nero): the type name is not aligan with the registered type `DynamicActions`, fix it.
-#[starlark_value(type = "DynamicAction")]
+#[starlark_value(type = "DynamicAction", no_freeze)]
 impl<'v> StarlarkValue<'v> for StarlarkDynamicActions<'v> {
     // Used to add type documentation to the generated documentation
     fn get_methods() -> Option<&'static Methods> {
         Some(DYNAMIC_ACTIONS_METHODS.methods())
-    }
-}
-
-impl<'v> AllocValue<'v> for StarlarkDynamicActions<'v> {
-    fn alloc_value(self, heap: Heap<'v>) -> Value<'v> {
-        // No need to freeze: we unpack contents of this struct
-        // in `ctx.actions.dynamic_output` call.
-        heap.alloc_complex_no_freeze(self)
     }
 }
 

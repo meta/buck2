@@ -11,13 +11,14 @@
 package com.facebook.buck.android;
 
 import com.facebook.infer.annotation.Nullsafe;
+import org.jspecify.annotations.Nullable;
 
 @Nullsafe(Nullsafe.Mode.LOCAL)
 public class AdbOptions {
 
   public static final String MULTI_INSTALL_MODE_SHORT_ARG = "-x";
 
-  private String adbExecutablePath;
+  private @Nullable String adbExecutablePath;
   private int adbThreadCount;
   private int adbServerPort;
   private boolean multiInstallMode;
@@ -29,7 +30,7 @@ public class AdbOptions {
   private final boolean forceQueryable;
 
   public AdbOptions(
-      String adbExecutablePath,
+      @Nullable String adbExecutablePath,
       int adbThreadCount,
       int adbServerPort,
       boolean multiInstallMode,
@@ -52,7 +53,7 @@ public class AdbOptions {
   }
 
   public AdbOptions(
-      String adbExecutablePath,
+      @Nullable String adbExecutablePath,
       int adbThreadCount,
       int adbServerPort,
       boolean multiInstallMode,
@@ -74,7 +75,7 @@ public class AdbOptions {
     this.waitForDeviceReady = waitForDeviceReady;
   }
 
-  public String getAdbExecutablePath() {
+  public @Nullable String getAdbExecutablePath() {
     return adbExecutablePath;
   }
 

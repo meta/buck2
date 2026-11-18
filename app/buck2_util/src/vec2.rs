@@ -34,6 +34,7 @@ use serde::Deserialize;
 use serde::Serialize;
 use serde::de::SeqAccess;
 use serde::ser::SerializeSeq;
+use strong_hash::StrongHash;
 
 use crate::vec2::insertion::insertion_sort;
 use crate::vec2::insertion::slice_swap_shift;
@@ -707,6 +708,16 @@ impl<A: Hash, B: Hash> Hash for Vec2<A, B> {
     }
 }
 
+impl<A: StrongHash, B: StrongHash> StrongHash for Vec2<A, B> {
+    fn strong_hash<H: Hasher>(&self, state: &mut H) {
+        self.len.strong_hash(state);
+        for (a, b) in self.iter() {
+            a.strong_hash(state);
+            b.strong_hash(state);
+        }
+    }
+}
+
 impl<A: Allocative, B: Allocative> Allocative for Vec2<A, B> {
     fn visit<'a, 'b: 'a>(&self, visitor: &'a mut Visitor<'b>) {
         let mut visitor = visitor.enter_self_sized::<Self>();
@@ -737,7 +748,10 @@ mod tests {
     use std::rc::Rc;
 
     use dupe::Dupe;
+    use strong_hash::StrongHash;
 
+    use crate::strong_hasher::Blake3StrongHasher;
+    use crate::strong_hasher::StrongHash128;
     use crate::vec2::Vec2;
     use crate::vec2::Vec2Layout;
 
@@ -893,6 +907,23 @@ mod tests {
         assert_eq!(Some((&1, &2)), v.last());
         v.push(3, 4);
         assert_eq!(Some((&3, &4)), v.last());
+    }
+
+    #[test]
+    fn test_strong_hash_includes_len() {
+        fn strong_hash(vs: &(Vec2<u8, u8>, Vec2<u8, u8>)) -> StrongHash128 {
+            let mut hasher = Blake3StrongHasher::new();
+            vs.strong_hash(&mut hasher);
+            hasher.finalize128()
+        }
+
+        // Without the lengths, both pairs would hash as the one entry `(1, 2)`.
+        let one: Vec2<u8, u8> = Vec2::from_iter([(1, 2)]);
+        let empty: Vec2<u8, u8> = Vec2::new();
+        assert_ne!(
+            strong_hash(&(one.clone(), empty.clone())),
+            strong_hash(&(empty, one))
+        );
     }
 
     #[repr(align(16))]

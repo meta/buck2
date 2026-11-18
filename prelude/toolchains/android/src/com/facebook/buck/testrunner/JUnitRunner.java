@@ -16,6 +16,7 @@ import com.facebook.buck.test.selectors.TestSelector;
 import com.facebook.buck.testresultsoutput.TestResultsOutputEvent;
 import com.facebook.buck.testresultsoutput.TestResultsOutputSender;
 import com.facebook.buck.testrunner.JavaUtilLoggingHelper.LogHandlers;
+import com.facebook.infer.annotation.Nullsafe;
 import java.io.BufferedWriter;
 import java.io.ByteArrayOutputStream;
 import java.io.File;
@@ -27,12 +28,13 @@ import java.lang.reflect.Method;
 import java.lang.reflect.Modifier;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.logging.Level;
-import javax.annotation.Nullable;
 import junit.framework.TestCase;
+import org.jspecify.annotations.Nullable;
 import org.junit.Ignore;
 import org.junit.Test;
 import org.junit.experimental.runners.Enclosed;
@@ -58,6 +60,7 @@ import org.junit.runners.model.RunnerBuilder;
  * Java API. The objective is to limit the set of files added to the ClassLoader that runs the test,
  * as not to interfere with the results of the test.
  */
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public final class JUnitRunner extends BaseRunner {
 
   static final String JUL_DEBUG_LOGS_HEADER = "====DEBUG LOGS====\n\n";
@@ -208,7 +211,7 @@ public final class JUnitRunner extends BaseRunner {
               result -> {
                 System.err.printf(
                     "Failed to list tests for class %s.%n%s",
-                    className, stackTraceToString(result.failure));
+                    className, stackTraceToString(Objects.requireNonNull(result.failure)));
                 System.exit(1);
               });
     }
@@ -235,13 +238,12 @@ public final class JUnitRunner extends BaseRunner {
       Optional<TestResultsOutputSender> sender,
       TestResultsOutputEvent.RunFailureStatus status,
       String message,
-      String stacktrace) {
+      @Nullable String stacktrace) {
     if (sender.isPresent()) {
       sender.get().sendRunFailure(status, System.currentTimeMillis(), message, stacktrace);
     }
   }
 
-  @SuppressWarnings("PMD.BlacklistedSystemGetenv")
   private void setupLogging() {
     // Check if we have robolectric logging to setup
     // get it as a resource to avoid loading the class
@@ -295,7 +297,7 @@ public final class JUnitRunner extends BaseRunner {
         continue;
       }
       if (cls.isAnnotationPresent(RunWith.class)
-          && cls.getAnnotation(RunWith.class).value() != Enclosed.class) {
+          && Objects.requireNonNull(cls.getAnnotation(RunWith.class)).value() != Enclosed.class) {
         continue;
       }
       if (mightBeATestClass(cls)) {
@@ -444,7 +446,7 @@ public final class JUnitRunner extends BaseRunner {
     try {
       Method getChildrenMethod = ParentRunner.class.getDeclaredMethod("getChildren");
       getChildrenMethod.setAccessible(true);
-      List<?> children = (List<?>) getChildrenMethod.invoke(runner);
+      List<?> children = (List<?>) Objects.requireNonNull(getChildrenMethod.invoke(runner));
 
       if (children.isEmpty()) {
         return false;
@@ -517,21 +519,23 @@ public final class JUnitRunner extends BaseRunner {
     @Override
     public void testFinished(Description description) throws Exception {
       // Shutdown single-test result.
+      Result result = Objects.requireNonNull(this.result);
+      RunListener resultListener = Objects.requireNonNull(this.resultListener);
       resultListener.testFinished(description);
       resultListener.testRunFinished(result);
-      resultListener = null;
+      this.resultListener = null;
 
       // Restore the original stdout/stderr.
       System.setOut(originalOut);
       System.setErr(originalErr);
 
       // Clean up logging handlers
-      JavaUtilLoggingHelper.cleanupLogging(logHandlers);
+      JavaUtilLoggingHelper.cleanupLogging(Objects.requireNonNull(logHandlers));
       logHandlers = null;
 
       // Get the stdout/stderr written during the test as strings.
-      stdOutStream.flush();
-      stdErrStream.flush();
+      Objects.requireNonNull(stdOutStream).flush();
+      Objects.requireNonNull(stdErrStream).flush();
 
       int numFailures = result.getFailureCount();
       String className = description.getClassName();
@@ -551,7 +555,8 @@ public final class JUnitRunner extends BaseRunner {
         }
         failure = numFailures == 0 ? null : result.getFailures().get(0);
         if (failure != null
-            && stackTraceToString(failure.getException()).contains("No runnable methods")
+            && stackTraceToString(Objects.requireNonNull(failure.getException()))
+                .contains("No runnable methods")
             && "initializationError".equals(methodName)) {
           return; // don't record errors if there is no runnable
         }
@@ -565,14 +570,16 @@ public final class JUnitRunner extends BaseRunner {
       }
 
       StringBuilder stdOut = new StringBuilder();
-      stdOut.append(rawStdOutBytes.toString(ENCODING));
+      stdOut.append(Objects.requireNonNull(rawStdOutBytes).toString(ENCODING));
+      ByteArrayOutputStream julLogBytes = Objects.requireNonNull(this.julLogBytes);
       if (type == ResultType.FAILURE && julLogBytes.size() > 0) {
         stdOut.append('\n');
         stdOut.append(JUL_DEBUG_LOGS_HEADER);
         stdOut.append(julLogBytes.toString(ENCODING));
       }
       StringBuilder stdErr = new StringBuilder();
-      stdErr.append(rawStdErrBytes.toString(ENCODING));
+      stdErr.append(Objects.requireNonNull(rawStdErrBytes).toString(ENCODING));
+      ByteArrayOutputStream julErrLogBytes = Objects.requireNonNull(this.julErrLogBytes);
       if (type == ResultType.FAILURE && julErrLogBytes.size() > 0) {
         stdErr.append('\n');
         stdErr.append(JUL_ERROR_LOGS_HEADER);
@@ -595,7 +602,7 @@ public final class JUnitRunner extends BaseRunner {
       if (resultListener != null) {
         // testStarted was called for latest test, but not the testFinished
         // report all failures as unbounded
-        for (Failure failure : result.getFailures()) {
+        for (Failure failure : Objects.requireNonNull(result).getFailures()) {
           recordUnpairedResult(failure, ResultType.FAILURE);
         }
       }

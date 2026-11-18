@@ -15,4 +15,3 @@ pub mod command;
 pub(crate) mod convert;
 pub mod launch;
 pub(crate) mod service;
-pub mod state_dir;

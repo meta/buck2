@@ -43,13 +43,14 @@ impl XmlElement {
     fn alloc<'v>(self, heap: Heap<'v>) -> Value<'v> {
         let children: Vec<Value<'v>> = self.children.into_iter().map(|c| c.alloc(heap)).collect();
 
-        let tag = heap.alloc_str(&self.tag).to_value();
-        let attrs =
-            heap.alloc(AllocDict(self.attrs.into_iter().map(|(k, v)| {
-                (heap.alloc_str(&k).to_value(), heap.alloc_str(&v).to_value())
-            })));
-        let text = heap.alloc_str(&self.text).to_value();
-        let children_val = heap.alloc(AllocList(children));
+        let tag = heap.alloc(&self.tag).to_value();
+        let attrs = heap
+            .alloc(AllocDict(self.attrs.into_iter().map(|(k, v)| {
+                (heap.alloc(&k).to_value(), heap.alloc(&v).to_value())
+            })))
+            .to_value();
+        let text = heap.alloc(&self.text).to_value();
+        let children_val = heap.alloc(AllocList(children)).to_value();
 
         heap.alloc(AllocDict([
             ("tag", tag),
@@ -57,6 +58,7 @@ impl XmlElement {
             ("text", text),
             ("children", children_val),
         ]))
+        .to_value()
     }
 }
 

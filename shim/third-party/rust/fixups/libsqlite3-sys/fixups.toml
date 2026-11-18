@@ -22,4 +22,7 @@ preprocessor_flags = [
     "-DSQLITE_ENABLE_COLUMN_METADATA",
     "-DSQLITE_ENABLE_FTS3",
     "-DSQLITE_ENABLE_RTREE",
+    # rusqlite's `session` feature, as libsqlite3-sys's build script defines them.
+    "-DSQLITE_ENABLE_SESSION",
+    "-DSQLITE_ENABLE_PREUPDATE_HOOK",
 ]

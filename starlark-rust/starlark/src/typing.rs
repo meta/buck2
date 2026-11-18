@@ -57,6 +57,7 @@ pub use callable_param::ParamSpec;
 pub use function::TyFunction;
 pub use interface::Interface;
 pub use oracle::ctx::TypingOracleCtx;
+pub use oracle::traits::OperatorSignature;
 pub use oracle::traits::TypingBinOp;
 pub use oracle::traits::TypingUnOp;
 pub use starlark_value::HasTyVTable;

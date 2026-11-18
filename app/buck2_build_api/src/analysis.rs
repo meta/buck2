@@ -196,9 +196,7 @@ impl AnalysisResult {
     }
 
     pub fn analysis_values(&self) -> buck2_error::Result<&RecordedAnalysisValues> {
-        Ok(self.analysis_values.0.read().map_err(|error| {
-            buck2_error::conversion::from_any_with_tag(error, buck2_error::ErrorTag::Environment)
-        })?)
+        Ok(self.analysis_values.0.read()?)
     }
 }
 

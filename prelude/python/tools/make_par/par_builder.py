@@ -59,7 +59,17 @@ class ParBuilder:
     def _postbuild(self):
         raise NotImplementedError
 
-    def _get_python_command(self, shebang=False, interp=None, base_dir=None):
+    def _resolve_python_from_output(self, python):
+        relative_python = os.path.relpath(python, os.path.dirname(self.output) or ".")
+        return '"$(dirname "$(readlink_e "$FB_PAR_FILENAME")")/' + relative_python + '"'
+
+    def _get_python_command(
+        self,
+        shebang=False,
+        interp=None,
+        base_dir=None,
+        resolve_python_from_output=False,
+    ):
         if self.entry_point:
             if not os.path.isabs(self.entry_point) and base_dir:
                 cmd = [f"{base_dir}/{self.entry_point}"]
@@ -68,17 +78,26 @@ class ParBuilder:
         elif interp:
             cmd = [interp]
         else:
-            if shebang and not os.path.isabs(self.python):
+            python = self.python
+            if shebang and not os.path.isabs(python):
                 # If shebang is true, the command will be used as the #! line in a
                 # script.  Unfortunately, the #! line can only parse at most 2
                 # arguments, so if we need to use env we can't use any other
                 # arguments.  Therefore we ignore strict_tabs in this case.
                 #
                 # We also need to specify an absolute path to env in this case.
-                return "/usr/bin/env " + self.python
+                return "/usr/bin/env " + python
 
-            cmd = [self.python]
-            if not os.path.isabs(self.python):
+            resolved_from_output = (
+                resolve_python_from_output
+                and not os.path.isabs(python)
+                and bool(os.path.dirname(python))
+            )
+            if resolved_from_output:
+                python = self._resolve_python_from_output(python)
+
+            cmd = [python]
+            if not os.path.isabs(python) and not resolved_from_output:
                 cmd.insert(0, "env")
 
         flags = []

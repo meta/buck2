@@ -70,12 +70,12 @@ use crate::values::StringValue;
 use crate::values::Value;
 use crate::values::ValueError;
 use crate::values::ValueTyped;
-use crate::values::bool::StarlarkBool;
 use crate::values::function::BoundMethod;
 use crate::values::list::ListRef;
 use crate::values::range::Range;
 use crate::values::string::interpolation::parse_percent_s_one;
 use crate::values::tuple::AllocTuple;
+use crate::values::types::bool::value::StarlarkBool;
 use crate::values::types::bytes::value::StarlarkBytes;
 use crate::values::types::dict::Dict;
 use crate::values::types::ellipsis::Ellipsis;
@@ -692,8 +692,8 @@ impl<'f> ExprCompiled<'f> {
     ) -> ExprCompiled<'f> {
         if let Some(v) = l.as_string() {
             if let Some((before, after)) = parse_percent_s_one(&v) {
-                let before = ctx.frozen_heap().alloc_str(&before);
-                let after = ctx.frozen_heap().alloc_str(&after);
+                let before = ctx.frozen_heap().alloc(before.as_str());
+                let after = ctx.frozen_heap().alloc(after.as_str());
                 return ExprCompiled::percent_s_one(before, r, after, ctx);
             }
         }
@@ -713,7 +713,7 @@ impl<'f> ExprCompiled<'f> {
                 after.as_str(),
                 ctx.heap(),
             ) {
-                let value = ctx.frozen_heap().alloc_str(value.as_str());
+                let value = ctx.frozen_heap().alloc(value.as_str());
                 return ExprCompiled::Value(value.to_value());
             }
         }
@@ -729,7 +729,7 @@ impl<'f> ExprCompiled<'f> {
     ) -> ExprCompiled<'f> {
         if let Some(arg) = arg.as_value() {
             let value = format_one(&before, ctx.edge().rebrand(arg), &after, ctx.heap());
-            let value = ctx.frozen_heap().alloc_str(value.as_str());
+            let value = ctx.frozen_heap().alloc(value.as_str());
             return ExprCompiled::Value(value.to_value());
         }
 
@@ -858,16 +858,16 @@ impl<'f> ExprCompiled<'f> {
         } else if let Some(v) = v.unpack_str() {
             if v.len() <= 1000 {
                 // If string, copy it to frozen heap.
-                Some(ExprCompiled::Value(heap.alloc_str(v).to_value()))
+                Some(ExprCompiled::Value(heap.alloc(v).to_value()))
             } else {
                 // Long strings may lead to exponential explosion in the optimizer,
                 // so skips optimizations for them.
                 None
             }
         } else if let Some(v) = v.downcast_ref::<StarlarkFloat>() {
-            Some(ExprCompiled::Value(heap.alloc(*v)))
+            Some(ExprCompiled::Value(heap.alloc(*v).to_value()))
         } else if let Some(v) = v.downcast_ref::<Range>() {
-            Some(ExprCompiled::Value(heap.alloc(*v)))
+            Some(ExprCompiled::Value(heap.alloc(*v).to_value()))
         } else if let Some(v) = ListRef::from_value(v) {
             // When spec-safe function returned a non-frozen list,
             // we try to convert that list to a list of constants instruction.
@@ -907,7 +907,7 @@ impl<'f> ExprCompiled<'f> {
         heap: FrozenHeap<'f>,
     ) -> ExprCompiled<'f> {
         if let Ok(elems) = elems.try_map(|e| e.as_value().ok_or(())) {
-            ExprCompiled::Value(heap.alloc(AllocTuple(elems)))
+            ExprCompiled::Value(heap.alloc(AllocTuple(elems)).to_value())
         } else {
             ExprCompiled::Tuple(elems)
         }
@@ -922,7 +922,11 @@ impl<'f> ExprCompiled<'f> {
         let v = get_attr_hashed_raw(ctx.edge().rebrand(left), attr, ctx.heap()).ok()?;
         match v {
             MemberOrValue::Member(m) => match m.at() {
-                UnboundValue::Method(m) => Some(ctx.frozen_heap().alloc(BoundMethod::new(left, m))),
+                UnboundValue::Method(m) => Some(
+                    ctx.frozen_heap()
+                        .alloc(BoundMethod::new(left, m))
+                        .to_value(),
+                ),
                 UnboundValue::Attr(..) => None,
             },
             MemberOrValue::Value(v) => ctx.demote(v),
@@ -1114,11 +1118,11 @@ trait AstLiteralCompile {
 impl AstLiteralCompile for AstLiteral {
     fn compile<'f>(&self, heap: FrozenHeap<'f>) -> Value<'f> {
         match self {
-            AstLiteral::Int(i) => heap.alloc(StarlarkInt::from(i.node.clone())),
-            AstLiteral::Float(f) => heap.alloc(f.node),
-            AstLiteral::String(x) => heap.alloc(x.node.as_str()),
-            AstLiteral::Bytes(b) => heap.alloc(StarlarkBytes::new(&b.node)),
-            AstLiteral::Ellipsis => heap.alloc(Ellipsis),
+            AstLiteral::Int(i) => heap.alloc(StarlarkInt::from(i.node.clone())).to_value(),
+            AstLiteral::Float(f) => heap.alloc(f.node).to_value(),
+            AstLiteral::String(x) => heap.alloc(x.node.as_str()).to_value(),
+            AstLiteral::Bytes(b) => heap.alloc(StarlarkBytes::new(&b.node)).to_value(),
+            AstLiteral::Ellipsis => heap.alloc(Ellipsis).to_value(),
         }
     }
 }
@@ -1384,7 +1388,7 @@ impl<'v, 'a, 'e, 'fm> Compiler<'v, 'a, 'e, '_, 'fm> {
                     // Note there's const propagation for `+` on compiled expressions,
                     // but special handling of `+` on AST might be slightly more efficient
                     // (no unnecessary allocations on the heap). So keep it.
-                    let val = self.fh.alloc(x);
+                    let val = self.fh.alloc(x).to_value();
                     ExprCompiled::Value(val)
                 } else {
                     let right = if *op == BinOp::In || *op == BinOp::NotIn {
@@ -1503,7 +1507,7 @@ impl<'v, 'a, 'e, 'fm> Compiler<'v, 'a, 'e, '_, 'fm> {
 
                 // Desugar f"foo{x}bar{y}" to "foo{}bar{}.format(x, y)"
                 let format = IrSpanned {
-                    node: ExprCompiled::Value(self.fh.alloc(format.node.as_str())),
+                    node: ExprCompiled::Value(self.fh.alloc(format.node.as_str()).to_value()),
                     span: fstring_span,
                 };
                 let method = IrSpanned {

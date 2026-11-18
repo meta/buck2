@@ -11,13 +11,15 @@
 package com.facebook.buck.installer.android;
 
 import com.facebook.buck.android.AdbHelper;
+import com.facebook.infer.annotation.Nullsafe;
 import java.util.function.Supplier;
-import javax.annotation.Nullable;
+import org.jspecify.annotations.Nullable;
 
 /**
  * Everything one install accumulates, so that something new to track is a field here rather than
  * another map keyed by install id.
  */
+@Nullsafe(Nullsafe.Mode.LOCAL)
 final class InstallState {
   private final AndroidArtifacts artifacts = new AndroidArtifacts();
   private final InstallMetrics metrics = new InstallMetrics();
@@ -41,8 +43,7 @@ final class InstallState {
   }
 
   /** The package this install is for, or null until the manifest has arrived. */
-  @Nullable
-  String packageName() {
+  @Nullable String packageName() {
     return packageName;
   }
 
@@ -56,8 +57,7 @@ final class InstallState {
   }
 
   /** Bound to the devices this install targets, or null until its options have arrived. */
-  @Nullable
-  AdbHelper adbHelper() {
+  @Nullable AdbHelper adbHelper() {
     return adbHelper;
   }
 

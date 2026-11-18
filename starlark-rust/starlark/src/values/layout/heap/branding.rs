@@ -38,7 +38,7 @@
 //! # use crate::values::tuple::AllocTuple;
 //! Heap::temp(|heap1| {
 //!     Heap::temp(|heap2| {
-//!         let s1: Value<'_> = heap1.alloc_str("abc").to_value();
+//!         let s1: Value<'_> = heap1.alloc("abc").to_value();
 //!         let v: Value<'_> = heap2.alloc(AllocTuple([s1]));
 //!     })
 //! })
@@ -142,7 +142,9 @@
 //! use starlark::values::Value;
 //!
 //! let owned: OwnedFrozen<Value<'static>> =
-//!     OwnedFrozen::build(FrozenHeapName::user("example"), |heap| heap.alloc("a value"));
+//!     OwnedFrozen::build(FrozenHeapName::user("example"), |heap| {
+//!         heap.alloc("a value").to_value()
+//!     });
 //! Module::with_temp_heap(|module| {
 //!     module.set("x", owned.as_ref().value());
 //! });
@@ -158,7 +160,7 @@
 //! # use starlark::values::Value;
 //! let owned: OwnedFrozen<Value<'static>> =
 //!     OwnedFrozen::build(FrozenHeapName::user("example"), |heap| {
-//!         heap.alloc("a value")
+//!         heap.alloc("a value").to_value()
 //!     });
 //! Module::with_temp_heap(|module| {
 //!     module.set("x", owned.as_ref().add_to_heap(module.heap()));

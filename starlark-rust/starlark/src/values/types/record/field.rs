@@ -92,8 +92,4 @@ impl<'v> StarlarkValue<'v> for Field<'v> {
         }
         Ok(())
     }
-
-    fn typechecker_ty(&self) -> Option<Ty> {
-        Some(Ty::starlark_value::<Self>())
-    }
 }

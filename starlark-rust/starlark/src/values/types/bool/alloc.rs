@@ -19,16 +19,32 @@ use crate::values::AllocFrozenValue;
 use crate::values::AllocValue;
 use crate::values::FrozenHeap;
 use crate::values::Heap;
-use crate::values::Value;
+use crate::values::ValueOf;
+use crate::values::bool::value::VALUE_FALSE_TRUE;
+
+impl<'v> ValueOf<'v, bool> {
+    /// `True` or `False`, which are statics.
+    #[inline]
+    pub(crate) fn new_bool(x: bool) -> Self {
+        // Indexing into a static keeps this branchless, as for `Value::new_bool`.
+        ValueOf::from_representation(VALUE_FALSE_TRUE[x as usize].at())
+    }
+}
 
 impl<'v> AllocValue<'v> for bool {
-    fn alloc_value(self, _heap: Heap<'v>) -> Value<'v> {
-        Value::new_bool(self)
+    type Type = bool;
+
+    #[inline]
+    fn alloc_value(self, _heap: Heap<'v>) -> ValueOf<'v, Self::Type> {
+        ValueOf::new_bool(self)
     }
 }
 
 impl<'fv> AllocFrozenValue<'fv> for bool {
-    fn alloc_frozen_value(self, _heap: FrozenHeap<'fv>) -> Value<'fv> {
-        Value::new_bool(self)
+    type Type = bool;
+
+    #[inline]
+    fn alloc_frozen_value(self, _heap: FrozenHeap<'fv>) -> ValueOf<'fv, Self::Type> {
+        ValueOf::new_bool(self)
     }
 }

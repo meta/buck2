@@ -10,12 +10,15 @@
 
 package com.facebook.buck.util.environment;
 
+import com.facebook.infer.annotation.Nullsafe;
+
 /**
  * The type of the {@link Platform}, in only a very general sense: Windows, Unix, etc.
  *
  * <p>See boolean functions like {@link #isUnix()}, {@link #isWindows()}, ... for slightly easier
  * syntax: {@code if (Platform.detect().getType().isUnix()) ...}
  */
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public enum PlatformType {
   UNKNOWN,
   UNIX,

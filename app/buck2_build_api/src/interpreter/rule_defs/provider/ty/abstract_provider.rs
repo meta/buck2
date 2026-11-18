@@ -21,9 +21,11 @@ use starlark::typing::TyStarlarkValue;
 use starlark::typing::TyUser;
 use starlark::typing::TyUserFields;
 use starlark::typing::TyUserParams;
+use starlark::values::StarlarkTypeExpr;
+use starlark::values::StarlarkTypeExprStable;
 use starlark::values::StarlarkValue;
 use starlark::values::Value;
-use starlark::values::type_repr::StarlarkTypeRepr;
+use starlark::values::ValueOf;
 use starlark::values::typing::TypeInstanceId;
 use starlark::values::typing::TypeMatcher;
 use starlark::values::typing::TypeMatcherDyn;
@@ -61,15 +63,25 @@ fn mk_ty_provider() -> buck2_error::Result<Ty> {
 /// Type of any provider instance. In Starlark it is available as `Provider`.
 pub struct AbstractProvider;
 
-impl StarlarkTypeRepr for AbstractProvider {
-    type Canonical = Self;
-
+impl<'v> StarlarkTypeExpr<'v> for AbstractProvider {
     fn starlark_type_repr() -> Ty {
         static TY: OnceLock<Ty> = OnceLock::new();
         TY.get_or_init(|| mk_ty_provider().unwrap()).dupe()
     }
+
+    type Get = ValueOf<'v, Self>;
+
+    fn get(value: Value<'v>) -> Option<Self::Get> {
+        ValueAsProviderLike::unpack(value)
+            .is_some()
+            .then(|| ValueOf::new_unchecked(value))
+    }
 }
 
+impl<'v> StarlarkTypeExprStable<'v> for AbstractProvider {}
+
 pub(crate) fn init_provider_ty() {
-    ProviderReprLate::init(AbstractProvider::starlark_type_repr())
+    ProviderReprLate::init(AbstractProvider::starlark_type_repr(), |value| {
+        AbstractProvider::matches(value)
+    })
 }

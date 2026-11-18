@@ -65,6 +65,7 @@ pub(crate) async fn find_daemon_oom_evidence(
     let cgroup_path_of_buck2_daemon =
         cgroup_path_of_buck2_daemon.and_then(|path| match path.strip_prefix("/sys/fs/cgroup/") {
             Some(rel) => Some(rel),
+            None if path == "/sys/fs/cgroup" => Some(""),
             None => {
                 soft_error_or_panic!(
                     "oom_cgroup_path_unexpected_prefix",
@@ -300,7 +301,7 @@ struct Buck2CgroupMatcher<'a> {
 
 impl<'a> Buck2CgroupMatcher<'a> {
     fn new(buck2_cgroup: &'a str) -> Self {
-        let components: Vec<&'a str> = buck2_cgroup.split('/').collect();
+        let components: Vec<&'a str> = buck2_cgroup.split('/').filter(|c| !c.is_empty()).collect();
         let prefix_hashes: Box<[u64]> = std::iter::once(0u64)
             .chain(components.iter().scan((0u64, 1u64), |(h, power), c| {
                 *h = h.wrapping_add(hash_component(c).wrapping_mul(*power));
@@ -316,7 +317,7 @@ impl<'a> Buck2CgroupMatcher<'a> {
 
     /// Check whether the killed cgroup is the daemon's cgroup or one of its ancestors.
     fn killed_cgroup_contains_daemon(&self, killed_cgroup: &str) -> bool {
-        let killed: Vec<&str> = killed_cgroup.split('/').collect();
+        let killed: Vec<&str> = killed_cgroup.split('/').filter(|c| !c.is_empty()).collect();
         self.components.starts_with(&killed) || self.prefix_matches_suffix(&killed)
     }
 
@@ -410,6 +411,32 @@ mod tests {
         assert!(!matcher.killed_cgroup_contains_daemon(
             "user.slice/user-190155.slice/user@190155.service/buck2.slice/buck2_daemon.scope_sibling"
         ));
+    }
+
+    #[test]
+    fn test_oomd_root_cgroup() {
+        let root = Buck2CgroupMatcher::new("");
+        assert!(root.killed_cgroup_contains_daemon("/"));
+        assert!(!root.killed_cgroup_contains_daemon("/child"));
+
+        let daemon = Buck2CgroupMatcher::new("user.slice/buck2.slice/daemon");
+        assert!(daemon.killed_cgroup_contains_daemon("/user.slice/buck2.slice"));
+        assert!(!daemon.killed_cgroup_contains_daemon("/user.slice/other.slice"));
+
+        let line = "<6>[101.000000] oomd kill: 81.28 80.05 42.78 / 1000 ruleset:[test]";
+        assert!(matches!(
+            find_matching_oom_kill(line, UNMATCHED_DAEMON_PID, Some(""), Duration::from_secs(100)),
+            Some(OomEvidence::OomdCgroup { cgroup, .. }) if cgroup == "/"
+        ));
+        assert_eq!(
+            None,
+            find_matching_oom_kill(
+                line,
+                UNMATCHED_DAEMON_PID,
+                Some(""),
+                Duration::from_secs(102)
+            )
+        );
     }
 
     #[test]

@@ -25,13 +25,9 @@ use starlark_derive::starlark_value;
 
 use crate as starlark;
 use crate::any::ProvidesStaticType;
-use crate::values::AllocFrozenValue;
-use crate::values::AllocValue;
 use crate::values::Freeze;
 use crate::values::FreezeResult;
 use crate::values::Freezer;
-use crate::values::FrozenHeap;
-use crate::values::Heap;
 use crate::values::StarlarkValue;
 use crate::values::Value;
 
@@ -47,7 +43,7 @@ use crate::values::Value;
 #[display("TestComplexValue<{}>", _0)]
 pub(crate) struct TestComplexValue<'v>(pub(crate) Value<'v>);
 
-#[starlark_value(type = "TestComplexValue", frozen_vtable)]
+#[starlark_value(type = "TestComplexValue", frozen_vtable, alloc = complex)]
 impl<'v> StarlarkValue<'v> for TestComplexValue<'v> {}
 
 impl<'v> Freeze<'v> for TestComplexValue<'v> {
@@ -55,18 +51,6 @@ impl<'v> Freeze<'v> for TestComplexValue<'v> {
 
     fn freeze<'fv>(self, freezer: &Freezer<'v, 'fv>) -> FreezeResult<Self::Frozen<'fv>> {
         Ok(TestComplexValue(freezer.freeze(self.0)?))
-    }
-}
-
-impl<'v> AllocValue<'v> for TestComplexValue<'v> {
-    fn alloc_value(self, heap: Heap<'v>) -> Value<'v> {
-        heap.alloc_complex(self)
-    }
-}
-
-impl<'fv> AllocFrozenValue<'fv> for TestComplexValue<'fv> {
-    fn alloc_frozen_value(self, heap: FrozenHeap<'fv>) -> Value<'fv> {
-        heap.alloc_simple(self)
     }
 }
 

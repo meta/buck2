@@ -72,15 +72,15 @@ init([Port]) ->
             {error, failed_to_connect_watchdog}
     end.
 
--spec handle_call(any(), gen_server:from(), #state{}) -> no_return().
+-spec handle_call(term(), gen_server:from(), #state{}) -> no_return().
 handle_call(_Request, _From, _State) ->
     error(not_implemented).
 
--spec handle_cast(any(), #state{}) -> no_return().
+-spec handle_cast(term(), #state{}) -> no_return().
 handle_cast(_Request, _State) ->
     error(not_implemented).
 
--spec handle_info(any(), #state{}) -> no_return().
+-spec handle_info(term(), #state{}) -> no_return().
 handle_info({tcp_closed, Socket}, #state{socket = Socket}) ->
     %% when the test binary goes down, we kill the beam
     ?LOG_CRITICAL("Test binary went down, killing beam"),

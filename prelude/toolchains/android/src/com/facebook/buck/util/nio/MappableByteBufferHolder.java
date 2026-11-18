@@ -10,11 +10,15 @@
 
 package com.facebook.buck.util.nio;
 
+import com.facebook.infer.annotation.Nullsafe;
 import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
+import java.util.Objects;
+import org.jspecify.annotations.Nullable;
 
 /** Helper class that actually maintains the underlying ByteBuffer for LargeByteBuffer. */
+@Nullsafe(Nullsafe.Mode.LOCAL)
 abstract class MappableByteBufferHolder {
   private final long size;
   private final int maxBufferSize;
@@ -22,7 +26,7 @@ abstract class MappableByteBufferHolder {
   private long windowStart = -1;
   private long windowEnd = -1;
   private ByteOrder byteOrder = ByteOrder.BIG_ENDIAN;
-  private ByteBuffer byteBuffer = null;
+  private @Nullable ByteBuffer byteBuffer = null;
 
   MappableByteBufferHolder(long size, int maxBufferSize) throws IOException {
     this.size = size;
@@ -120,6 +124,6 @@ abstract class MappableByteBufferHolder {
   }
 
   public ByteBuffer getByteBuffer() {
-    return byteBuffer;
+    return Objects.requireNonNull(byteBuffer);
   }
 }

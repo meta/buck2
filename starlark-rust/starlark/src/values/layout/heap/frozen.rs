@@ -39,13 +39,10 @@ use starlark_map::small_set::SmallSet;
 use crate::any::IsStaticType;
 use crate::any::ProvidesStaticType;
 use crate::collections::StarlarkHashValue;
-use crate::values::AllocFrozenValue;
 use crate::values::HeapSendable;
 use crate::values::OwnedFrozen;
 use crate::values::OwnedFrozenRef;
-use crate::values::StarlarkValue;
 use crate::values::StringValue;
-use crate::values::ValueOfUnchecked;
 use crate::values::ValueTyped;
 use crate::values::layout::avalue::AValue;
 use crate::values::layout::avalue::AValueImpl;
@@ -266,28 +263,6 @@ impl<'fh> FrozenHeap<'fh> {
         unsafe {
             StringValue::new_unchecked(Value::new_frozen_ptr(NonNull::new_unchecked(v), true))
         }
-    }
-
-    /// Allocate a new value on this heap.
-    pub fn alloc<T: AllocFrozenValue<'fh>>(self, val: T) -> Value<'fh> {
-        val.alloc_frozen_value(self)
-    }
-
-    /// Allocate a value and return [`ValueTyped`] of it.
-    /// Can fail if the [`AllocFrozenValue`] trait generates a different type on the heap.
-    pub fn alloc_typed<T: AllocFrozenValue<'fh> + StarlarkValue<'fh>>(
-        self,
-        val: T,
-    ) -> ValueTyped<'fh, T> {
-        ValueTyped::new(self.alloc(val)).expect("just allocated value must have the right type")
-    }
-
-    /// Allocate a value and return [`ValueOfUnchecked`] of it.
-    pub fn alloc_typed_unchecked<T: AllocFrozenValue<'fh>>(
-        self,
-        val: T,
-    ) -> ValueOfUnchecked<'fh, T> {
-        ValueOfUnchecked::new(self.alloc(val))
     }
 
     /// Number of bytes allocated on this heap, not including any memory

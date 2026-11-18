@@ -9,8 +9,8 @@
  */
 
 use buck2_client_ctx::daemon::client::BuckdLifecycleLock;
+use buck2_client_ctx::daemon::client::connect::buckd_connect_timeout;
 use buck2_client_ctx::daemon::client::connect::buckd_startup_init_timeout;
-use buck2_client_ctx::daemon::client::connect::buckd_startup_timeout;
 use buck2_client_ctx::daemon::client::kill::kill_command_impl;
 use buck2_client_ctx::startup_deadline::StartupDeadline;
 use buck2_common::init::DaemonStartupConfig;
@@ -41,7 +41,7 @@ pub fn start_in_process_daemon(
             handle.block_on(async {
                 let lifecycle_lock = BuckdLifecycleLock::lock_with_timeout(
                     daemon_dir,
-                    StartupDeadline::duration_from_now(buckd_startup_timeout()?)?,
+                    StartupDeadline::duration_from_now(buckd_connect_timeout()?)?,
                 )
                 .await?;
 

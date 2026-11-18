@@ -5,7 +5,6 @@ BUCK2_ACTION_DIGEST_TRACE_LG_SAMPLE_RATE       u32
 BUCK2_ARG0                                     String
 BUCK2_CLIENT_METADATA                          String
 BUCK2_CONSOLE_OUTPUT_LIMIT                     u64
-BUCK2_DAEMON_GROUP                             String
 BUCK2_DEBUG_RAWOUTPUT_CHUNK_SIZE               usize
 BUCK2_DICE_DUMP_ON_PANIC                       bool                   false
 BUCK2_DICE_SNAPSHOT_INTERVAL_MS                u64                    500
@@ -31,7 +30,6 @@ BUCK2_RUNTIME_THREADS                          usize
 BUCK2_SCRIBE_CATEGORY                          String
 BUCK2_SELF_TEST_TIMEOUT_S                      u64
 BUCK2_SETTINGS_OVERRIDE                        String
-BUCK2_SHARE_DAEMON                             bool                   false
 BUCK2_SHOW_SOFT_ERRORS                         String
 BUCK2_TERMINATE_AFTER                          u64
 BUCK2_TESTING_CHECKER_INTERVAL_SECONDS         u64
@@ -65,6 +63,8 @@ BUCK2_TEST_LOW_PASS_FILTER_CAPACITY            usize
 BUCK2_TEST_MANIFOLD_CHUNK_BYTES                u64
 BUCK2_TEST_MANIFOLD_TTL_S                      u64
 BUCK2_TEST_ONLY_REMOTE_DEP_FILE_CACHE          bool                   false
+BUCK2_TEST_PROXY_BEFORE_EVICT                  String
+BUCK2_TEST_PROXY_CLOSE_LIVENESS                String
 BUCK2_TEST_RESOURCE_CONTROL_CONFIG             String
 BUCK2_TEST_RE_QUEUE_ESTIMATE_S                 u64
 BUCK2_TEST_SETTINGS_HOME_DIR                   String
@@ -74,8 +74,10 @@ BUCK2_TEST_SKIP_DICE_CLEAR_ON_MERGEBASE_CHANGE bool                   false
 BUCK2_TEST_STDIN_BUFFER_SIZE                   usize
 BUCK2_TEST_TOMBSTONED_DIGESTS                  BuckMutSet<FileDigest>
 BUCK2_TEST_TPX_USE_TCP                         bool                   false
+BUCK2_TEST_UNIDAEMON_EVICTION_GATE             String
 BUCK2_TEST_WRITE_ACTION_CACHE_KEY_DUMP         String
 BUCK2_WATCHMAN_TIMEOUT                         u64                    57
+BUCKD_LAUNCH_TIMEOUT                           u64
 BUCKD_STARTUP_INIT_TIMEOUT                     u64
 BUCKD_STARTUP_TIMEOUT                          u64
 BUCK_CONSOLE                                   String
@@ -93,6 +95,7 @@ CI                                             bool                   false
 CODING_AGENT_METADATA                          String
 COMPLETION_VERIFY_LOCKFILE                     String
 ENFORCE_DISPATCHER_SET                         bool                   false
+FAAS_CONTAINER_MEM_SOFT_LIMIT                  u64
 FORCE_WANT_RESTART                             bool                   false
 SANDCASTLE                                     String
 SANDCASTLE_ALIAS                               String

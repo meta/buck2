@@ -28,6 +28,7 @@ use crate::typing::arc_ty::ArcTy;
 use crate::typing::callable::TyCallable;
 use crate::typing::custom::TyCustom;
 use crate::typing::custom::TyCustomImpl;
+use crate::typing::starlark_value::HasTyVTable;
 use crate::typing::starlark_value::TyStarlarkValue;
 use crate::typing::tuple::TyTuple;
 use crate::typing::ty::TypeRenderConfig;
@@ -69,7 +70,7 @@ impl TyBasic {
         TyBasic::starlark_value::<NoneType>()
     }
 
-    pub(crate) const fn starlark_value<'v, T: StarlarkValue<'v>>() -> TyBasic {
+    pub(crate) const fn starlark_value<'v, T: StarlarkValue<'v> + HasTyVTable>() -> TyBasic {
         TyBasic::StarlarkValue(TyStarlarkValue::new::<T>())
     }
 

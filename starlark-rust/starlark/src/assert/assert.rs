@@ -44,10 +44,12 @@ use crate::values::AllocValue;
 use crate::values::Heap;
 use crate::values::OwnedFrozen;
 use crate::values::Value;
+use crate::values::ValueOf;
 use crate::values::layout::heap::name::StarlarkTestHeapName;
+use crate::values::list::AllocList;
 use crate::values::none::NoneType;
 use crate::values::structs::AllocStruct;
-use crate::values::tuple::UnpackTuple;
+use crate::values::tuple::TupleType;
 use crate::values::typing::type_compiled::compiled::TypeCompiled;
 
 fn mk_environment() -> GlobalsBuilder {
@@ -154,7 +156,7 @@ fn asserts_star(builder: &mut crate::environment::GlobalsBuilder) {
 #[starlark_module]
 pub(crate) fn test_functions(builder: &mut GlobalsBuilder) {
     // Used by one of the test methods in Go
-    const fibonacci: Vec<i32> = vec![0, 1, 1, 2, 3, 5, 8, 13, 21, 34, 55, 89];
+    const fibonacci: AllocList<[i32; 12]> = AllocList([0, 1, 1, 2, 3, 5, 8, 13, 21, 34, 55, 89]);
 
     // Approximate version of a method used by the Go test suite
     fn hasfields<'v>() -> anyhow::Result<impl AllocValue<'v>> {
@@ -204,11 +206,11 @@ pub(crate) fn test_functions(builder: &mut GlobalsBuilder) {
     ///
     /// This function is unknown to optimizer, so it can be used in optimizer tests.
     fn noop<'v>(
-        #[starlark(args)] args: UnpackTuple<Value<'v>>,
+        #[starlark(args)] args: ValueOf<'v, TupleType<Value<'v>>>,
         #[starlark(kwargs)] kwargs: Value<'v>,
     ) -> anyhow::Result<Value<'v>> {
         let _ = kwargs;
-        Ok(args.items.into_iter().next().unwrap_or(Value::new_none()))
+        Ok(args.items().next().unwrap_or(Value::new_none()))
     }
 }
 

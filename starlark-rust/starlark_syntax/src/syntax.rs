@@ -34,7 +34,8 @@ mod lint_suppressions;
 pub mod module;
 pub mod payload_map;
 pub(crate) mod state;
-#[cfg(test)]
+// Far too much input to parse interpreted.
+#[cfg(all(test, not(miri)))]
 mod testcases;
 pub mod top_level_stmts;
 pub mod type_expr;

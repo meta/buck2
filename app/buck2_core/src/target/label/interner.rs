@@ -69,6 +69,10 @@ mod tests {
     use crate::target::label::label::TargetLabel;
 
     #[test]
+    #[cfg_attr(
+        all(miri, windows),
+        ignore = "a contended `parking_lot` lock calls `GetModuleHandleA`, which Miri does not implement"
+    )]
     fn test_concurrent_interning_is_canonical() {
         // Race many threads interning the same small label set to exercise
         // the losing side of concurrent inserts.

@@ -28,7 +28,7 @@ use buck2_dynamic_actions::deferred::DynamicLambdaCtxDataSpec;
 use buck2_dynamic_actions::deferred::InputArtifactsMaterialized;
 use buck2_dynamic_actions::deferred::dynamic_lambda_ctx_data;
 use buck2_dynamic_actions::deferred::invoke_dynamic_output_lambda;
-use buck2_dynamic_actions::dynamic_actions_callable::DynamicActionsCallable;
+use buck2_dynamic_actions::dynamic_actions_callable::DynamicActionsCallableView;
 use buck2_dynamic_actions::dynamic_actions_callable::DynamicActionsCallbackParam;
 use buck2_dynamic_actions::dynamic_actions_callable::DynamicActionsCallbackParamSpec;
 use buck2_dynamic_actions::dynamic_actions_callable::DynamicActionsCallbackReturnType;
@@ -52,9 +52,12 @@ use dupe::Dupe;
 use itertools::Itertools;
 use starlark::environment::GlobalsBuilder;
 use starlark::starlark_module;
+use starlark::values::Heap;
 use starlark::values::OwnedFrozenRef;
-use starlark::values::ValueTyped;
-use starlark::values::type_repr::StarlarkTypeRepr;
+use starlark::values::StarlarkTypeExpr;
+use starlark::values::ValueOf;
+use starlark::values::dict::DictType;
+use starlark::values::string::StarlarkStr;
 use starlark::values::typing::StarlarkCallableChecked;
 
 use crate::bxl::eval::LIMITED_EXECUTOR;
@@ -198,7 +201,7 @@ impl BxlDynamicOutputEvaluator<'_> {
                         self.dynamic_data,
                     )?;
 
-                    let ctx = ValueTyped::<BxlContext>::new_err(env.heap().alloc(bxl_dynamic_ctx))?;
+                    let ctx = env.heap().alloc(bxl_dynamic_ctx).get();
 
                     let args = match (
                         &dynamic_lambda_ctx_data.lambda.attr_values,
@@ -295,11 +298,12 @@ pub(crate) fn register_dynamic_actions(globals: &mut GlobalsBuilder) {
             DynamicActionsCallbackParamSpec,
             DynamicActionsCallbackReturnType,
         >,
-        #[starlark(require = named)] attrs: BuckMutInsertionMap<
-            String,
-            &'v StarlarkDynamicAttrType<'v>,
+        #[starlark(require = named)] attrs: ValueOf<
+            'v,
+            DictType<StarlarkStr, StarlarkDynamicAttrType<'v>>,
         >,
-    ) -> starlark::Result<DynamicActionsCallable<'v>> {
-        Ok(new_dynamic_actions_callable(r#impl, attrs, &P_BXLCTX)?)
+        heap: Heap<'v>,
+    ) -> starlark::Result<ValueOf<'v, DynamicActionsCallableView<'v>>> {
+        Ok(heap.alloc(new_dynamic_actions_callable(r#impl, attrs, &P_BXLCTX)?))
     }
 }

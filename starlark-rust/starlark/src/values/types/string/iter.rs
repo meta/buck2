@@ -32,7 +32,9 @@ use crate::values::Heap;
 use crate::values::StarlarkValue;
 use crate::values::StringValue;
 use crate::values::Value;
-use crate::values::ValueOfUnchecked;
+use crate::values::ValueOf;
+use crate::values::string::StarlarkStr;
+use crate::values::types::int::view::IntView;
 use crate::values::typing::iter::StarlarkIter;
 
 /// An opaque iterator over a string, produced by elems/codepoints
@@ -58,21 +60,23 @@ starlark_complex_value!(StringIterable);
 pub(crate) fn iterate_chars<'v>(
     string: StringValue<'v>,
     heap: Heap<'v>,
-) -> ValueOfUnchecked<'v, StarlarkIter<String>> {
-    ValueOfUnchecked::new(heap.alloc_complex(StringIterable {
+) -> ValueOf<'v, StarlarkIter<StarlarkStr>> {
+    ValueOf::new(heap.alloc_complex(StringIterable {
         string,
         produce_char: true,
     }))
+    .expect("a `StringIterable` iterates")
 }
 
 pub(crate) fn iterate_codepoints<'v>(
     string: StringValue<'v>,
     heap: Heap<'v>,
-) -> ValueOfUnchecked<'v, StarlarkIter<u32>> {
-    ValueOfUnchecked::new(heap.alloc_complex(StringIterable {
+) -> ValueOf<'v, StarlarkIter<IntView<'v>>> {
+    ValueOf::new(heap.alloc_complex(StringIterable {
         string,
         produce_char: false,
     }))
+    .expect("a `StringIterable` iterates")
 }
 
 #[starlark_value(type = "iterator")]
@@ -81,6 +85,7 @@ impl<'v> StarlarkValue<'v> for StringIterable<'v> {
         // Lazy implementation: we allocate a tuple and then iterate over it.
         let iter = if self.produce_char {
             heap.alloc_tuple_iter(self.string.as_str().chars().map(|c| heap.alloc(c)))
+                .to_value()
         } else {
             heap.alloc_tuple_iter(
                 self.string
@@ -88,6 +93,7 @@ impl<'v> StarlarkValue<'v> for StringIterable<'v> {
                     .chars()
                     .map(|c| heap.alloc(u32::from(c))),
             )
+            .to_value()
         };
         Ok(iter)
     }

@@ -13,10 +13,12 @@ package com.facebook.buck.jvm.kotlin;
 import com.facebook.buck.core.filesystems.AbsPath;
 import com.facebook.buck.core.util.log.Logger;
 import com.facebook.buck.jvm.kotlin.kotlinc.incremental.KotlinSourceChanges;
+import com.facebook.infer.annotation.Nullsafe;
 import java.nio.file.Path;
 import java.util.List;
 import java.util.stream.Collectors;
 
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public class KotlinSourceChangesFactory {
 
   private static final Logger LOG = Logger.get(KotlinSourceChangesFactory.class);

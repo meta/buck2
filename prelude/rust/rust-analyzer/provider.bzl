@@ -20,7 +20,7 @@ load(
     "@prelude//rust:dep_context.bzl",
     "DepCollectionContext",  # @unused Used as a type
 )
-load("@prelude//rust:link_info.bzl", "attr_crate", "get_available_proc_macros", "resolve_rust_deps")
+load("@prelude//rust:link_info.bzl", "RustLinkInfo", "RustProcMacroMarker", "attr_crate", "get_available_proc_macros", "resolve_listed_deps")
 
 RustAnalyzerInfo = provider(
     fields = {
@@ -68,14 +68,15 @@ def _compute_rust_deps(ctx: AnalysisContext, dep_ctx: DepCollectionContext) -> l
         panic_runtime = dep_ctx.panic_runtime,
     )
 
-    first_order_deps = resolve_rust_deps(ctx, dep_ctx)
-    available_proc_macros = get_available_proc_macros(ctx)
+    first_order_deps = [dep.dep for dep in resolve_listed_deps(ctx, dep_ctx) if RustLinkInfo in dep.dep or RustProcMacroMarker in dep.dep]
 
-    return [dep.dep for dep in first_order_deps] + available_proc_macros.values()
+    return first_order_deps + get_available_proc_macros(ctx).values()
 
 def _compute_transitive_target_set(ctx: AnalysisContext, first_order_deps: list[Dependency]) -> set[ConfiguredTargetLabel]:
     transitive_targets = set([ctx.label.configured_target()])
     for dep in first_order_deps:
+        if RustProcMacroMarker in dep:
+            continue
         target_sets = dep[RustAnalyzerInfo].transitive_target_set
         for target_set in target_sets:
             transitive_targets.add(target_set)

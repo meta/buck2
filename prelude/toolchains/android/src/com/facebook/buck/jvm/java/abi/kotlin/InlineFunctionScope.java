@@ -10,6 +10,7 @@
 
 package com.facebook.buck.jvm.java.abi.kotlin;
 
+import com.facebook.infer.annotation.Nullsafe;
 import java.nio.file.Path;
 import java.util.Collection;
 import java.util.HashMap;
@@ -31,9 +32,11 @@ import org.objectweb.asm.tree.ClassNode;
  * inline functions (or nested inside classes that are nested inside inline functions, and so on,
  * transitively).
  */
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public final class InlineFunctionScope {
   private static final String DEFAULT_METHOD_SUFFIX = "$default";
   private static final int DEFAULT_METHOD_SUFFIX_LENGTH = DEFAULT_METHOD_SUFFIX.length();
+  private static final String WHEN_MAPPINGS_SUFFIX = "$WhenMappings";
 
   /**
    * Maps from class names (canonical names, formatted as paths, i.e. parts separated by `/`, not
@@ -43,6 +46,12 @@ public final class InlineFunctionScope {
 
   /** Classes within inline scopes, transitively (formatted same as [inlineFunctionsMap] keys) */
   private Set<String> nestedInlineScopes = new HashSet<>();
+
+  /**
+   * `$WhenMappings` classes read by a retained inline body. A caller that inlines the body
+   * regenerates its own mapping from this class's `<clinit>`, so the class must be kept whole.
+   */
+  private final Set<String> whenMappingsReadByInlineBodies = new HashSet<>();
 
   /**
    * Add a new set of inline scopes, from [inlineFunctions] that are part of [clazz]. Note that if
@@ -55,6 +64,15 @@ public final class InlineFunctionScope {
   public void createScopes(String clazz, Collection<String> inlineFunctions) {
     if (!inlineFunctions.isEmpty()) {
       this.inlineFunctionsMap.computeIfAbsent(clazz, c -> new HashSet<>()).addAll(inlineFunctions);
+    }
+  }
+
+  /** Records the `$WhenMappings` classes among the owners a retained inline body reads. */
+  public void recordInlineBodyFieldOwners(Collection<String> owners) {
+    for (String owner : owners) {
+      if (owner.endsWith(WHEN_MAPPINGS_SUFFIX)) {
+        whenMappingsReadByInlineBodies.add(owner);
+      }
     }
   }
 
@@ -83,7 +101,8 @@ public final class InlineFunctionScope {
     //
     // TODO This is a pessimisation: not all "$sam$i" classes need to be retained, we can do better
     //  by tracking the ones that are referenced from inline functions.
-    if (path.toString().contains("$sam$i")) {
+    if (path.toString().contains("$sam$i")
+        || whenMappingsReadByInlineBodies.contains(classNode.name)) {
       return true;
     }
 

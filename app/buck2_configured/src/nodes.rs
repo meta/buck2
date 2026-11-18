@@ -484,11 +484,13 @@ impl ErrorsAndIncompatibilities {
                 if CheckVisibility::No == check_visibility {
                     return Some(dep);
                 }
-                match check_dep_visibility(
-                    dep.target_node(),
-                    *target_label.unconfigured(),
-                    package_visibility,
-                ) {
+                match dep.body().and_then(|body| {
+                    check_dep_visibility(
+                        body.target_node(),
+                        *target_label.unconfigured(),
+                        package_visibility,
+                    )
+                }) {
                     Ok(()) => {
                         return Some(dep);
                     }
@@ -644,7 +646,7 @@ pub(crate) async fn gather_deps(
         };
 
         if !plugin_kind_sets.is_empty() {
-            for (kind, plugins) in dep.plugin_lists().iter_by_kind() {
+            for (kind, plugins) in dep.body()?.plugin_lists().iter_by_kind() {
                 let Some(should_propagate) = plugin_kind_sets
                     .iter()
                     .filter_map(|set| set.get(kind))
@@ -969,6 +971,7 @@ fn verify_transitioned_attrs(
     pre_transition_config: &ConfigurationData,
     node: &ConfiguredTargetNode,
 ) -> buck2_error::Result<()> {
+    let node = node.body()?;
     for (attr, attr_value) in pre_transition_attrs {
         let transition_configured_attr =
             node.get(attr, AttrInspectOptions::All).ok_or_else(|| {
@@ -1164,6 +1167,12 @@ async fn compute_configured_target_node_no_transition(
         // (2) isn't allowed to do execution
         // And so we use an "unspecified" execution platform to avoid cycles and cause any attempts at execution to fail.
         None
+    } else if let Some(exec_cfg) = target_label.exec_cfg()
+        && exec_cfg == &ConfigurationData::unspecified_exec()
+    {
+        // The parent resolved to no execution platform (the `use_unspecified` fallback), and so
+        // does its toolchain dep.
+        Some(ExecutionPlatformResolutionPartial::new(None, Vec::new()))
     } else if let Some(exec_cfg) = target_label.exec_cfg() {
         // The label was produced by a toolchain_dep, so we use the execution platform of our parent
         // We need to convert that to an execution platform, so just find the one with the same configuration.
@@ -1619,7 +1628,11 @@ impl Key for ConfiguredTargetNodeKey {
 
     fn equality_behavior() -> EqualityBehavior<Self::Value> {
         EqualityBehavior::Compare(|x, y| match (x, y) {
-            (ResultMaybeCompatible::Compatible(x), ResultMaybeCompatible::Compatible(y)) => x == y,
+            // A node whose body cannot be read counts as changed. The failed read is
+            // recorded where it happens and reported when the command ends.
+            (ResultMaybeCompatible::Compatible(x), ResultMaybeCompatible::Compatible(y)) => {
+                x.try_eq(y).unwrap_or(false)
+            }
             (ResultMaybeCompatible::Incompatible(x), ResultMaybeCompatible::Incompatible(y)) => {
                 x == y
             }

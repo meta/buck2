@@ -39,7 +39,6 @@ use buck2_interpreter::file_loader::LoadResolver;
 use buck2_interpreter::file_loader::LoadedModules;
 use buck2_interpreter::file_type::StarlarkFileType;
 use buck2_interpreter::import_paths::ImplicitImportPaths;
-use buck2_interpreter::package_imports::ImplicitImport;
 use buck2_interpreter::parse_import::RelativeImports;
 use buck2_interpreter::parse_import::parse_import;
 use buck2_interpreter::paths::module::OwnedStarlarkModulePath;
@@ -341,9 +340,13 @@ impl InterpreterForDir {
             }
         }
 
-        env.set_extra_value_no_overwrite(env.heap().alloc(StarlarkAnyComplex {
-            value: InterpreterExtraValue::default(),
-        }))
+        env.set_extra_value_no_overwrite(
+            StarlarkAnyComplex {
+                value: InterpreterExtraValue::default(),
+            }
+            .alloc_retyped_by_freeze(env.heap())
+            .to_value(),
+        )
         .map_err(|e| from_any_with_tag(e, buck2_error::ErrorTag::Interpreter))?;
 
         Ok(env)
@@ -352,8 +355,7 @@ impl InterpreterForDir {
     // The environment for evaluating a build file contains additional information
     // to support the extra things available in that context. For example, rule
     // functions can be invoked when evaluating a build file, the package (cell
-    // + path) is available. It also includes the implicit root include and
-    // implicit package include.
+    // + path) is available. It also includes the implicit root include.
     fn create_build_env<'v>(
         &self,
         env: BuckStarlarkModule<'v>,
@@ -368,7 +370,6 @@ impl InterpreterForDir {
             package_listing.dupe(),
             super_package,
             loaded_modules,
-            self.package_import(build_file),
             self.current_dir_with_allowed_relative_dirs
                 .as_ref()
                 .to_owned(),
@@ -398,12 +399,6 @@ impl InterpreterForDir {
             loader_file_type: current_file_path.file_type(),
             build_file_cell: current_file_path.build_file_cell(),
         }
-    }
-
-    fn package_import(&self, build_file_import: &BuildFilePath) -> Option<&Arc<ImplicitImport>> {
-        self.implicit_import_paths
-            .package_imports
-            .get(build_file_import.package())
     }
 
     fn root_import(&self) -> Option<ImportPath> {
@@ -468,10 +463,7 @@ impl InterpreterForDir {
         if let Some(i) = self.prelude_import(import) {
             implicit_imports.push(OwnedStarlarkModulePath::LoadFile(i.import_path().clone()));
         }
-        if let StarlarkPath::BuildFile(build_file) = import {
-            if let Some(i) = self.package_import(build_file) {
-                implicit_imports.push(OwnedStarlarkModulePath::LoadFile(i.import().clone()));
-            }
+        if let StarlarkPath::BuildFile(_) = import {
             if let Some(i) = self.root_import() {
                 implicit_imports.push(OwnedStarlarkModulePath::LoadFile(i));
             }

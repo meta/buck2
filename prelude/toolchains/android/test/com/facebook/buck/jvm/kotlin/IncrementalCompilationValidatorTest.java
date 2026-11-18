@@ -63,6 +63,39 @@ public class IncrementalCompilationValidatorTest {
   }
 
   @Test
+  public void when_contentBasedConfigChanged_then_returnBuildConfigurationChangedReason() {
+    Path previousConfig = Paths.get("buck-out/__lib__/aaaaaaaaaaaaaaaa/incremental_config.json");
+    Path currentConfig = Paths.get("buck-out/__lib__/bbbbbbbbbbbbbbbb/incremental_config.json");
+    ActionMetadata actionMetadata =
+        new ActionMetadata(
+            currentConfig,
+            ImmutableMap.of(previousConfig, "aaaaaaaaaaaaaaaa0123:155"),
+            ImmutableMap.of(currentConfig, "bbbbbbbbbbbbbbbb4567:170"));
+
+    RebuildReason result =
+        incrementalCompilationValidator.validate(
+            ImmutableList.of(), actionMetadata, null, null, null);
+
+    assertEquals(RebuildReason.BUILD_CONFIGURATION_CHANGED, result);
+  }
+
+  @Test
+  public void when_contentBasedConfigUnchanged_then_noRebuild() {
+    Path config = Paths.get("buck-out/__lib__/aaaaaaaaaaaaaaaa/incremental_config.json");
+    ActionMetadata actionMetadata =
+        new ActionMetadata(
+            config,
+            ImmutableMap.of(config, "aaaaaaaaaaaaaaaa0123:155"),
+            ImmutableMap.of(config, "aaaaaaaaaaaaaaaa0123:155"));
+
+    RebuildReason result =
+        incrementalCompilationValidator.validate(
+            ImmutableList.of(), actionMetadata, null, null, null);
+
+    assertNull(result);
+  }
+
+  @Test
   public void when_depFileNotExists_then_returnPreviousKotlinUsedClassesFileNotFoundReason() {
     ActionMetadata actionMetadata = mock(ActionMetadata.class);
     when(actionMetadata.getPreviousIncrementalConfigDigest()).thenReturn("digest");

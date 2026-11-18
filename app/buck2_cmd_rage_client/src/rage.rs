@@ -102,8 +102,8 @@ impl RageCommand {
     }
 
     async fn exec_impl(self, mut ctx: ClientCommandContext<'_>) -> buck2_error::Result<()> {
+        let daemon_dir = ctx.resolve_tenant_daemon_dir().await?;
         let paths = ctx.paths()?;
-        let daemon_dir = paths.daemon_dir()?;
         // Resolved before anything else borrows `ctx`; cheap, and it needs no daemon.
         let settings = ctx.settings_report().map(|report| report.render(true));
         let stderr_path = daemon_dir.buckd_stderr();

@@ -40,10 +40,12 @@ use crate::values::AllocStaticSimple;
 use crate::values::AllocValue;
 use crate::values::FrozenHeap;
 use crate::values::Heap;
+use crate::values::StarlarkType;
 use crate::values::StarlarkValue;
 use crate::values::StaticValueRegistered;
 use crate::values::Value;
-use crate::values::type_repr::StarlarkTypeRepr;
+use crate::values::ValueOf;
+use crate::values::type_expr::StarlarkTypeExpr;
 use crate::values::typing::TypeType;
 use crate::values::typing::ty::AbstractType;
 
@@ -81,7 +83,9 @@ unsafe impl StaticValueRegistered for StarlarkValueAsTypeStarlarkValue {}
 
 #[starlark_value(type = "type")]
 impl<'v> StarlarkValue<'v> for StarlarkValueAsTypeStarlarkValue {
-    type Canonical = AbstractType;
+    fn get_type_starlark_repr() -> Ty {
+        <AbstractType as StarlarkType>::get_type_starlark_repr()
+    }
 
     fn eval_type(&self) -> Option<Ty> {
         Some((self.0)())
@@ -142,38 +146,37 @@ impl Display for StarlarkValueAsTypeStarlarkValue {
 /// // Or standalone:
 /// // starlark::declare_starlark_value_as_type!(TEMPERATURE, StarlarkTemperature);
 /// ```
-pub struct StarlarkValueAsType<T: StarlarkTypeRepr>(
+pub struct StarlarkValueAsType<T>(
     &'static AllocStaticSimple<StarlarkValueAsTypeStarlarkValue>,
     PhantomData<fn(&T)>,
 );
 
 // Manual Clone/Copy implementations
-impl<T: StarlarkTypeRepr> Clone for StarlarkValueAsType<T> {
+impl<T> Clone for StarlarkValueAsType<T> {
     fn clone(&self) -> Self {
         *self
     }
 }
 
-impl<T: StarlarkTypeRepr> Copy for StarlarkValueAsType<T> {}
+impl<T> Copy for StarlarkValueAsType<T> {}
 
-impl<T: StarlarkTypeRepr> Debug for StarlarkValueAsType<T> {
+impl<T> Debug for StarlarkValueAsType<T> {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         f.debug_tuple("StarlarkValueAsType")
-            .field(&T::starlark_type_repr())
+            .field(&self.ty())
             .finish()
     }
 }
 
-impl<T: StarlarkTypeRepr> Display for StarlarkValueAsType<T> {
+impl<T> Display for StarlarkValueAsType<T> {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        Display::fmt(&T::starlark_type_repr(), f)
+        Display::fmt(&self.ty(), f)
     }
 }
 
-impl<T: StarlarkTypeRepr> StarlarkValueAsType<T> {
-    /// Constructor.
-    ///
-    /// Use [`new_no_docs`](Self::new_no_docs) if `T` is not a `StarlarkValue`.
+impl<T> StarlarkValueAsType<T> {
+    /// The type object of `T`'s type, documented from `T`: a representation of the type, or
+    /// the type itself when it has one representation.
     pub const fn new() -> Self
     where
         T: StarlarkValue<'static> + AsTypeStaticRegistered,
@@ -181,7 +184,7 @@ impl<T: StarlarkTypeRepr> StarlarkValueAsType<T> {
         StarlarkValueAsType(
             &const {
                 AllocStaticSimple::alloc(StarlarkValueAsTypeStarlarkValue(
-                    T::starlark_type_repr,
+                    T::get_type_starlark_repr,
                     || DocItem::Type(DocType::from_starlark_value::<T>()),
                 ))
             },
@@ -190,9 +193,10 @@ impl<T: StarlarkTypeRepr> StarlarkValueAsType<T> {
     }
 
     /// Constructor.
+    /// The type object of the type expression `T`, undocumented.
     pub const fn new_no_docs() -> Self
     where
-        T: AsTypeStaticRegistered,
+        T: StarlarkTypeExpr<'static> + AsTypeStaticRegistered,
     {
         StarlarkValueAsType(
             &const {
@@ -216,25 +220,28 @@ impl<T: StarlarkTypeRepr> StarlarkValueAsType<T> {
     pub fn to_value(&self) -> Value<'static> {
         self.0.unpack().to_value()
     }
-}
 
-impl<T: StarlarkTypeRepr> StarlarkTypeRepr for StarlarkValueAsType<T> {
-    type Canonical = <TypeType as StarlarkTypeRepr>::Canonical;
-
-    fn starlark_type_repr() -> Ty {
-        <Self::Canonical as StarlarkTypeRepr>::starlark_type_repr()
+    /// The type this is the type object of.
+    pub fn ty(&self) -> Ty {
+        (self.0.unpack().as_ref().0)()
     }
 }
 
-impl<'v, T: StarlarkTypeRepr> AllocValue<'v> for StarlarkValueAsType<T> {
-    fn alloc_value(self, _heap: Heap<'v>) -> Value<'v> {
-        self.0.at().to_value()
+impl<'v, T> AllocValue<'v> for StarlarkValueAsType<T> {
+    type Type = TypeType;
+
+    fn alloc_value(self, _heap: Heap<'v>) -> ValueOf<'v, Self::Type> {
+        // A `StarlarkValueAsType` is a type object.
+        ValueOf::new_unchecked(self.0.at().to_value())
     }
 }
 
-impl<'fv, T: StarlarkTypeRepr> AllocFrozenValue<'fv> for StarlarkValueAsType<T> {
-    fn alloc_frozen_value(self, _heap: FrozenHeap<'fv>) -> Value<'fv> {
-        self.0.at().to_value()
+impl<'fv, T> AllocFrozenValue<'fv> for StarlarkValueAsType<T> {
+    type Type = TypeType;
+
+    fn alloc_frozen_value(self, _heap: FrozenHeap<'fv>) -> ValueOf<'fv, Self::Type> {
+        // A `StarlarkValueAsType` is a type object.
+        ValueOf::new_unchecked(self.0.at().to_value())
     }
 }
 
@@ -247,7 +254,7 @@ impl<'fv, T: StarlarkTypeRepr> AllocFrozenValue<'fv> for StarlarkValueAsType<T> 
 ///
 /// Standalone (outside `#[starlark_module]`):
 /// ```ignore
-/// declare_starlark_value_as_type!(pub MY_INT, StarlarkInt);
+/// declare_starlark_value_as_type!(pub MY_TEMPERATURE, StarlarkTemperature);
 /// declare_starlark_value_as_type!(pub MY_PROVIDER, AbstractProvider, no_docs);
 /// ```
 ///
@@ -300,10 +307,7 @@ mod tests {
     use crate as starlark;
     use crate::assert::Assert;
     use crate::environment::GlobalsBuilder;
-    use crate::values::AllocValue;
-    use crate::values::Heap;
     use crate::values::StarlarkValue;
-    use crate::values::Value;
     use crate::values::types::starlark_value_as_type::tests;
 
     #[derive(
@@ -319,17 +323,11 @@ mod tests {
     #[starlark_value(type = "compiler_args")]
     impl<'v> StarlarkValue<'v> for StarlarkCompilerArgs {}
 
-    impl<'v> AllocValue<'v> for StarlarkCompilerArgs {
-        fn alloc_value(self, heap: Heap<'v>) -> Value<'v> {
-            heap.alloc_simple(self)
-        }
-    }
-
     #[starlark_module]
     #[starlark_types(StarlarkCompilerArgs as CompilerArgs)]
     fn compiler_args_globals(globals: &mut GlobalsBuilder) {
-        fn compiler_args(x: String) -> anyhow::Result<StarlarkCompilerArgs> {
-            Ok(tests::StarlarkCompilerArgs(x))
+        fn compiler_args(x: &str) -> anyhow::Result<StarlarkCompilerArgs> {
+            Ok(tests::StarlarkCompilerArgs(x.to_owned()))
         }
     }
 

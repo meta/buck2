@@ -70,12 +70,14 @@ indoc.workspace = true
 test-case.workspace = true
 
 [target.'cfg(target_os = "linux")'.dependencies]
+buck2_process_kill.workspace = true
 hyper-util.workspace = true
 nix.workspace = true
 tower.workspace = true
 xattr.workspace = true
 
 [target.'cfg(target_os = "macos")'.dependencies]
+buck2_process_kill.workspace = true
 hyper-util.workspace = true
 nix.workspace = true
 tower.workspace = true

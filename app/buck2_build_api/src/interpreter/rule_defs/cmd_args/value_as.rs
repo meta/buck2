@@ -16,10 +16,15 @@ use buck2_interpreter::types::configured_providers_label::StarlarkConfiguredProv
 use buck2_interpreter::types::project_root::StarlarkProjectRoot;
 use buck2_interpreter::types::target_label::StarlarkTargetLabel;
 use dupe::Dupe;
+use starlark::any::IsStaticType;
+use starlark::any::ProvidesStaticType;
 use starlark::typing::Ty;
+use starlark::values::StarlarkTypeExpr;
+use starlark::values::StarlarkTypeExprStable;
 use starlark::values::UnpackValue;
 use starlark::values::Value;
-use starlark::values::type_repr::StarlarkTypeRepr;
+use starlark::values::ValueOf;
+use starlark::values::type_expr::UnionPayload;
 
 use crate::interpreter::rule_defs::cmd_args::CommandLineArgLike;
 use crate::interpreter::rule_defs::cmd_args::command_line_arg_like_type::command_line_arg_like_ty;
@@ -27,11 +32,34 @@ use crate::interpreter::rule_defs::provider::builtin::run_info::RunInfo;
 
 pub struct ValueAsCommandLineLike<'v>(pub &'v dyn CommandLineArgLike<'v>);
 
-impl<'v> StarlarkTypeRepr for ValueAsCommandLineLike<'v> {
-    type Canonical = ValueAsCommandLineLike<'static>;
+// SAFETY: the static type is the same type with the heap lifetime erased.
+unsafe impl<'v> ProvidesStaticType<'v> for ValueAsCommandLineLike<'v> {
+    type StaticType = ValueAsCommandLineLike<'static>;
+}
+
+impl IsStaticType for ValueAsCommandLineLike<'static> {
+    type Reinfect<'lt> = ValueAsCommandLineLike<'lt>;
+}
+
+impl<'v> StarlarkTypeExpr<'v> for ValueAsCommandLineLike<'v> {
+    type Get = Self;
 
     fn starlark_type_repr() -> Ty {
         command_line_arg_like_ty().dupe()
+    }
+
+    fn get(value: Value<'v>) -> Option<Self> {
+        ValueAsCommandLineLike::unpack(value)
+    }
+}
+
+impl<'v> StarlarkTypeExprStable<'v> for ValueAsCommandLineLike<'v> {}
+
+impl<'v> UnionPayload<'v> for ValueAsCommandLineLike<'v> {
+    type Expr = Self;
+
+    fn from_value(value: Value<'v>) -> Option<Self> {
+        <Self as StarlarkTypeExpr<'v>>::get(value)
     }
 }
 
@@ -67,9 +95,11 @@ impl<'v> ValueAsCommandLineLike<'v> {
 }
 
 impl<'v> UnpackValue<'v> for ValueAsCommandLineLike<'v> {
+    type Type = Self;
     type Error = Infallible;
 
-    fn unpack_value_impl(value: Value<'v>) -> Result<Option<Self>, Self::Error> {
-        Ok(Self::unpack(value))
+    #[inline]
+    fn unpack(_value: ValueOf<'v, Self>, get: Self) -> Result<Self, Infallible> {
+        Ok(get)
     }
 }

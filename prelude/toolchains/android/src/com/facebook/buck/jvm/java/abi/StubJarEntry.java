@@ -12,13 +12,15 @@ package com.facebook.buck.jvm.java.abi;
 
 import com.facebook.buck.cd.model.java.AbiGenerationMode;
 import com.facebook.buck.jvm.java.abi.kotlin.InlineFunctionScope;
+import com.facebook.infer.annotation.Nullsafe;
 import java.io.IOException;
 import java.nio.file.Path;
 import java.util.Collections;
 import java.util.List;
 import java.util.Set;
-import javax.annotation.Nullable;
+import org.jspecify.annotations.Nullable;
 
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public abstract class StubJarEntry {
   @Nullable
   static StubJarEntry of(
@@ -26,7 +28,7 @@ public abstract class StubJarEntry {
       Path path,
       @Nullable LibraryReader existingAbiInput,
       Set<String> existingAbiPathStrings,
-      AbiGenerationMode compatibilityMode,
+      @Nullable AbiGenerationMode compatibilityMode,
       @Nullable InlineFunctionScope inlineFunctionScope,
       boolean keepSynthetic)
       throws IOException {
@@ -63,8 +65,14 @@ public abstract class StubJarEntry {
     return Collections.emptySet();
   }
 
-  public boolean isScopeCaptured() {
-    return false;
+  /** Owners of the fields read by the entry's retained method bodies. */
+  public Set<String> getRetainedBodyFieldOwners() {
+    return Collections.emptySet();
+  }
+
+  /** Classes the entry's Kotlin metadata lists as sealed subclasses. */
+  public List<String> getSealedSubclasses() {
+    return Collections.emptyList();
   }
 
   @Nullable

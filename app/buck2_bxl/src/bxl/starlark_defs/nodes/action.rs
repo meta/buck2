@@ -17,6 +17,7 @@ use buck2_build_api::actions::RegisteredAction;
 use buck2_build_api::actions::query::ActionQueryNode;
 use buck2_build_api::actions::query::OwnedActionAttr;
 use buck2_build_api::interpreter::rule_defs::artifact::starlark_artifact::StarlarkArtifact;
+use buck2_build_api::interpreter::rule_defs::artifact::starlark_artifact_like::StarlarkArtifactView;
 use buck2_core::deferred::base_deferred_key::BaseDeferredKey;
 use buck2_error::buck2_error;
 use buck2_interpreter::types::target_label::StarlarkConfiguredTargetLabel;
@@ -35,7 +36,9 @@ use starlark::values::StarlarkValue;
 use starlark::values::StringValue;
 use starlark::values::UnpackValue;
 use starlark::values::Value;
+use starlark::values::ValueOf;
 use starlark::values::ValueTyped;
+use starlark::values::list::AllocList;
 use starlark::values::none::NoneOr;
 use starlark::values::starlark_value;
 use starlark::values::structs::AllocStruct;
@@ -65,13 +68,12 @@ impl<'v> StarlarkValue<'v> for StarlarkAction {
     }
 }
 
-impl<'a> UnpackValue<'a> for StarlarkAction {
+impl<'v> UnpackValue<'v> for StarlarkAction {
+    type Type = Self;
     type Error = Infallible;
 
-    fn unpack_value_impl(value: Value<'a>) -> Result<Option<Self>, Self::Error> {
-        Ok(value
-            .downcast_ref::<Self>()
-            .map(|value| Self(value.0.dupe())))
+    fn unpack(_value: ValueOf<'v, Self>, get: ValueTyped<'v, Self>) -> Result<Self, Infallible> {
+        Ok(Self(get.as_ref().0.dupe()))
     }
 }
 
@@ -86,11 +88,15 @@ fn action_methods(builder: &mut MethodsBuilder) {
     ///     action = ctx.audit().output("buck-out/path/to/__target__/artifact", "your_target_platform")
     ///     ctx.output.print(action.owner())
     /// ```
-    fn owner<'v>(this: StarlarkAction) -> starlark::Result<StarlarkConfiguredTargetLabel> {
+    fn owner<'v>(
+        this: StarlarkAction,
+        heap: Heap<'v>,
+    ) -> starlark::Result<ValueOf<'v, StarlarkConfiguredTargetLabel>> {
         match this.0.owner() {
-            BaseDeferredKey::TargetLabel(label) => {
-                Ok(StarlarkConfiguredTargetLabel::new(label.dupe()))
-            }
+            BaseDeferredKey::TargetLabel(label) => Ok(ValueOf::alloc(
+                heap,
+                StarlarkConfiguredTargetLabel::new(label.dupe()),
+            )),
             _ => Err(buck2_error!(
                 buck2_error::ErrorTag::Input,
                 "BXL and anon targets not supported."
@@ -100,14 +106,18 @@ fn action_methods(builder: &mut MethodsBuilder) {
     }
 
     /// Gets the artifacts built by this action.
-    fn outputs<'v>(this: StarlarkAction) -> starlark::Result<Vec<StarlarkArtifact>> {
-        Ok(this
-            .0
-            .action()
-            .outputs()
-            .iter()
-            .map(|a| StarlarkArtifact::new(Artifact::from(a.dupe())))
-            .collect())
+    fn outputs<'v>(
+        this: StarlarkAction,
+        heap: Heap<'v>,
+    ) -> starlark::Result<AllocList<Vec<ValueOf<'v, StarlarkArtifactView<'v>>>>> {
+        Ok(AllocList(
+            this.0
+                .action()
+                .outputs()
+                .iter()
+                .map(|a| ValueOf::alloc(heap, StarlarkArtifact::new(Artifact::from(a.dupe()))))
+                .collect(),
+        ))
     }
 }
 
@@ -133,13 +143,12 @@ impl<'v> StarlarkValue<'v> for StarlarkActionQueryNode {
     }
 }
 
-impl<'a> UnpackValue<'a> for StarlarkActionQueryNode {
+impl<'v> UnpackValue<'v> for StarlarkActionQueryNode {
+    type Type = Self;
     type Error = Infallible;
 
-    fn unpack_value_impl(value: Value<'a>) -> Result<Option<Self>, Self::Error> {
-        Ok(value
-            .downcast_ref::<Self>()
-            .map(|value| Self(value.0.dupe())))
+    fn unpack(_value: ValueOf<'v, Self>, get: ValueTyped<'v, Self>) -> Result<Self, Infallible> {
+        Ok(Self(get.as_ref().0.dupe()))
     }
 }
 
@@ -148,35 +157,39 @@ impl<'a> UnpackValue<'a> for StarlarkActionQueryNode {
 fn action_query_node_value_methods(builder: &mut MethodsBuilder) {
     /// Gets the attributes from the action query node. Returns a struct.
     #[starlark(attribute)]
-    fn attrs<'v>(this: StarlarkActionQueryNode, heap: Heap<'_>) -> starlark::Result<Value<'v>> {
+    fn attrs<'v>(this: StarlarkActionQueryNode, heap: Heap<'v>) -> starlark::Result<Value<'v>> {
         let mut result = Vec::new();
         this.0.attrs_for_each(|k, v| {
-            result.push((k.to_owned(), StarlarkActionAttr(v.to_owned())));
+            result.push((
+                k.to_owned(),
+                heap.alloc(StarlarkActionAttr(v.to_owned())).to_value(),
+            ));
             buck2_error::Ok(())
         })?;
 
-        Ok(heap.alloc(AllocStruct(result)))
+        Ok(heap.alloc(AllocStruct(result)).to_value())
     }
 
     /// Gets optional action from the action query target node.
     fn action<'v>(
         this: &StarlarkActionQueryNode,
         heap: Heap<'v>,
-    ) -> starlark::Result<NoneOr<ValueTyped<'v, StarlarkAction>>> {
-        let action = this.0.action();
-        match action {
-            None => Ok(NoneOr::None),
-            Some(a) => Ok(NoneOr::Other(heap.alloc_typed(StarlarkAction(a.dupe())))),
-        }
+    ) -> starlark::Result<NoneOr<ValueOf<'v, StarlarkAction>>> {
+        Ok(NoneOr::from_option(
+            this.0
+                .action()
+                .map(|a| ValueOf::alloc(heap, StarlarkAction(a.dupe()))),
+        ))
     }
 
     /// Gets optional analysis from the action query target node.
     fn analysis<'v>(
         this: &StarlarkActionQueryNode,
         heap: Heap<'v>,
-    ) -> starlark::Result<NoneOr<ValueTyped<'v, StarlarkAnalysisResult>>> {
+    ) -> starlark::Result<NoneOr<ValueOf<'v, StarlarkAnalysisResult>>> {
         match this.0.analysis_opt() {
-            Some(a) => Ok(NoneOr::Other(heap.alloc_typed(
+            Some(a) => Ok(NoneOr::Other(ValueOf::alloc(
+                heap,
                 StarlarkAnalysisResult::new(a.analysis_result().lookup(a.target())?),
             ))),
             None => Ok(NoneOr::None),
@@ -220,6 +233,6 @@ impl<'v> StarlarkValue<'v> for StarlarkActionAttr {
 fn action_attr_methods(builder: &mut MethodsBuilder) {
     /// Returns the value of this attribute.
     fn value<'v>(this: &StarlarkActionAttr, heap: Heap<'v>) -> starlark::Result<StringValue<'v>> {
-        Ok(heap.alloc_str(&this.0.0))
+        Ok(heap.alloc(&this.0.0))
     }
 }

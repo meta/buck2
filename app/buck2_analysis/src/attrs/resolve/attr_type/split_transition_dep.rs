@@ -13,6 +13,7 @@ use buck2_node::attrs::attr_type::dep::DepAttrType;
 use buck2_node::attrs::attr_type::split_transition_dep::ConfiguredSplitTransitionDep;
 use buck2_node::attrs::attr_type::split_transition_dep::SplitTransitionDepAttrType;
 use starlark::values::Value;
+use starlark::values::dict::AllocDict;
 use starlark_map::Hashed;
 
 use crate::attrs::resolve::attr_type::dep::DepAttrTypeExt;
@@ -32,7 +33,7 @@ impl SplitTransitionDepAttrTypeExt for SplitTransitionDepAttrType {
     ) -> buck2_error::Result<Value<'v>> {
         let mut res = BuckMutInsertionMap::with_capacity(deps.deps.len());
         for (label, target) in &deps.deps {
-            let label_hashed = ctx.heap().alloc_str(label).get_hashed();
+            let label_hashed = ctx.heap().alloc(label).get_hashed();
             res.insert_hashed(
                 Hashed::new_unchecked(label_hashed.hash(), label_hashed.key().to_value()),
                 DepAttrType::resolve_single_impl(
@@ -44,6 +45,6 @@ impl SplitTransitionDepAttrTypeExt for SplitTransitionDepAttrType {
                 )?,
             );
         }
-        Ok(ctx.heap().alloc(res))
+        Ok(ctx.heap().alloc(AllocDict(res)).to_value())
     }
 }

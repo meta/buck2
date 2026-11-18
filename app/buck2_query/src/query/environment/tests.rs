@@ -56,7 +56,10 @@ impl LabeledNode for TestTarget {
 impl QueryTarget for TestTarget {
     type Attr<'a> = TestTargetAttr;
 
-    fn inputs_for_each<E, F: FnMut(CellPath) -> Result<(), E>>(&self, _func: F) -> Result<(), E> {
+    fn inputs_for_each<E: From<buck2_error::Error>, F: FnMut(CellPath) -> Result<(), E>>(
+        &self,
+        _func: F,
+    ) -> Result<(), E> {
         unimplemented!()
     }
 
@@ -68,7 +71,7 @@ impl QueryTarget for TestTarget {
         unimplemented!()
     }
 
-    fn buildfile_path(&self) -> &BuildFilePath {
+    fn buildfile_path(&self) -> buck2_error::Result<&BuildFilePath> {
         unimplemented!()
     }
 

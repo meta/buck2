@@ -25,10 +25,11 @@ use crate::environment::GlobalsBuilder;
 use crate::eval::Evaluator;
 use crate::values::StringValue;
 use crate::values::Value;
-use crate::values::ValueOfUnchecked;
+use crate::values::ValueOf;
+use crate::values::list::AllocList;
 use crate::values::none::NoneOr;
 use crate::values::none::NoneType;
-use crate::values::tuple::UnpackTuple;
+use crate::values::tuple::TupleType;
 use crate::values::typing::StarlarkCallable;
 use crate::values::typing::iter::StarlarkIter;
 
@@ -46,12 +47,12 @@ pub fn filter(builder: &mut GlobalsBuilder) {
     /// ```
     fn filter<'v>(
         #[starlark(require = pos)] func: NoneOr<StarlarkCallable<'v>>,
-        #[starlark(require = pos)] seq: ValueOfUnchecked<'v, StarlarkIter<Value<'v>>>,
+        #[starlark(require = pos)] seq: ValueOf<'v, StarlarkIter<Value<'v>>>,
         eval: &mut Evaluator<'v, '_, '_>,
-    ) -> starlark::Result<Vec<Value<'v>>> {
+    ) -> starlark::Result<AllocList<Vec<Value<'v>>>> {
         let mut res = Vec::new();
 
-        for v in seq.get().iterate(eval.heap())? {
+        for v in seq.to_value().iterate(eval.heap())? {
             match func {
                 NoneOr::None => {
                     if !v.is_none() {
@@ -59,13 +60,13 @@ pub fn filter(builder: &mut GlobalsBuilder) {
                     }
                 }
                 NoneOr::Other(func) => {
-                    if func.0.invoke_pos(&[v], eval)?.to_bool() {
+                    if func.to_value().invoke_pos(&[v], eval)?.to_bool() {
                         res.push(v);
                     }
                 }
             }
         }
-        Ok(res)
+        Ok(AllocList(res))
     }
 }
 
@@ -81,15 +82,15 @@ pub fn map(builder: &mut GlobalsBuilder) {
     /// ```
     fn map<'v>(
         #[starlark(require = pos)] func: StarlarkCallable<'v>,
-        #[starlark(require = pos)] seq: ValueOfUnchecked<'v, StarlarkIter<Value<'v>>>,
+        #[starlark(require = pos)] seq: ValueOf<'v, StarlarkIter<Value<'v>>>,
         eval: &mut Evaluator<'v, '_, '_>,
-    ) -> starlark::Result<Vec<Value<'v>>> {
-        let it = seq.get().iterate(eval.heap())?;
+    ) -> starlark::Result<AllocList<Vec<Value<'v>>>> {
+        let it = seq.to_value().iterate(eval.heap())?;
         let mut res = Vec::with_capacity(it.size_hint().0);
         for v in it {
-            res.push(func.0.invoke_pos(&[v], eval)?);
+            res.push(func.to_value().invoke_pos(&[v], eval)?);
         }
-        Ok(res)
+        Ok(AllocList(res))
     }
 }
 
@@ -102,7 +103,7 @@ pub fn debug(builder: &mut GlobalsBuilder) {
     }
 }
 
-struct PrintWrapper<'a, 'b>(&'a Vec<Value<'b>>);
+struct PrintWrapper<'a, 'b>(&'a [Value<'b>]);
 impl fmt::Display for PrintWrapper<'_, '_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         for (i, v) in self.0.iter().enumerate() {
@@ -133,27 +134,28 @@ impl PrintHandler for StderrPrintHandler {
 #[starlark_module]
 pub fn print(builder: &mut GlobalsBuilder) {
     /// Print some values to the output.
-    fn print(
-        #[starlark(args)] args: UnpackTuple<Value>,
-        eval: &mut Evaluator,
+    fn print<'v>(
+        #[starlark(args)] args: ValueOf<'v, TupleType<Value<'v>>>,
+        #[starlark(require = named, default = " ")] sep: &str,
+        eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<NoneType> {
         // In practice most users should want to put the print somewhere else, but this does for now
         // Unfortunately, we can't use PrintWrapper because strings to_str() and Display are different.
         eval.print_handler
-            .println(&args.items.iter().map(|x| x.to_str()).join(" "))?;
+            .println(&args.items().map(|x| x.to_str()).join(sep))?;
         Ok(NoneType)
     }
 }
 
 #[starlark_module]
 pub fn pprint(builder: &mut GlobalsBuilder) {
-    fn pprint(
-        #[starlark(args)] args: UnpackTuple<Value>,
-        eval: &mut Evaluator,
+    fn pprint<'v>(
+        #[starlark(args)] args: ValueOf<'v, TupleType<Value<'v>>>,
+        eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<NoneType> {
         // In practice most users may want to put the print somewhere else, but this does for now
         eval.print_handler
-            .println(&format!("{:#}", PrintWrapper(&args.items)))?;
+            .println(&format!("{:#}", PrintWrapper(args.tuple().content())))?;
         Ok(NoneType)
     }
 }
@@ -166,7 +168,7 @@ fn pretty_repr<'v>(
 
     let mut s = eval.string_pool.alloc();
     write!(s, "{a:#}").unwrap();
-    let r = eval.heap().alloc_str(&s);
+    let r = eval.heap().alloc(&s);
     eval.string_pool.release(s);
     Ok(r)
 }
@@ -274,6 +276,20 @@ assert_eq(["11",8], map(double, ["1",4]))
         a.set_print_handler(&print_handler);
         a.pass("print('hw')");
         assert_eq!("hw", s_copy.borrow().as_str());
+        a.pass("print()");
+        assert_eq!("", s_copy.borrow().as_str());
+        a.pass("print('hello', 'world')");
+        assert_eq!("hello world", s_copy.borrow().as_str());
+        a.pass("print('hello', 'world', sep=', ')");
+        assert_eq!("hello, world", s_copy.borrow().as_str());
+        a.pass("print('hello', 'world', sep='')");
+        assert_eq!("helloworld", s_copy.borrow().as_str());
+        a.pass("print(1, ['two'], None, sep='|')");
+        assert_eq!("1|[\"two\"]|None", s_copy.borrow().as_str());
+        a.pass("print(sep=', ')");
+        assert_eq!("", s_copy.borrow().as_str());
+        a.fail("print('hello', sep=None)", "str");
+        a.fail("print('hello', end='')", "extra named");
     }
 
     #[test]

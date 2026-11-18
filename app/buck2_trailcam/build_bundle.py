@@ -99,6 +99,7 @@ def main() -> None:
         )
         env = dict(os.environ)
         env["YARN_YARN_OFFLINE_MIRROR"] = os.path.realpath(args.yarn_offline_mirror)
+        env["YARN_CACHE_FOLDER"] = os.path.join(work, ".yarn-cache")
         env["PATH"] = (
             os.path.dirname(os.path.realpath(args.node))
             + os.pathsep

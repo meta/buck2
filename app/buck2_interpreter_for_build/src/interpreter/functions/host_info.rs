@@ -23,9 +23,9 @@ use starlark::values::FrozenHeap;
 use starlark::values::FrozenHeapName;
 use starlark::values::OwnedFrozen;
 use starlark::values::Value;
-use starlark::values::ValueOfUnchecked;
+use starlark::values::ValueOf;
 use starlark::values::structs::AllocStruct;
-use starlark::values::structs::StructRef;
+use starlark::values::structs::Struct;
 
 use crate::interpreter::build_context::BuildContext;
 
@@ -33,7 +33,7 @@ fn new_struct<'fv, V: AllocFrozenValue<'fv> + Copy>(
     heap: FrozenHeap<'fv>,
     values: &[(&str, V)],
 ) -> Value<'fv> {
-    heap.alloc(AllocStruct(values.iter().copied()))
+    heap.alloc(AllocStruct(values.iter().copied())).to_value()
 }
 
 fn new_host_info(
@@ -76,7 +76,7 @@ fn new_host_info(
 
         let xcode = {
             let mk_value = |sel: fn(&XcodeVersionInfo) -> &String| match xcode_info {
-                Some(i) => heap.alloc(sel(i).as_str()),
+                Some(i) => heap.alloc(sel(i).as_str()).to_value(),
                 None => Value::new_none(),
             };
 
@@ -138,14 +138,12 @@ pub(crate) fn register_host_info(builder: &mut GlobalsBuilder) {
     #[starlark(speculative_exec_safe)]
     fn host_info<'v>(
         eval: &mut Evaluator<'v, '_, '_>,
-    ) -> starlark::Result<ValueOfUnchecked<'v, StructRef<'v>>> {
+    ) -> starlark::Result<ValueOf<'v, Struct<'v>>> {
         // Keeping this `speculative_exec_safe` is safe because BuildContext's `HostInfo`,
         // even when evaluated speculatively, is going to be the same across all interpreters
         // that might reuse each other's output.
         let host_info = &BuildContext::from_context(eval)?.host_info;
-        Ok(ValueOfUnchecked::new(
-            host_info.value.as_ref().add_to_heap(eval.heap()),
-        ))
+        ValueOf::new_err(host_info.value.as_ref().add_to_heap(eval.heap()))
     }
 }
 

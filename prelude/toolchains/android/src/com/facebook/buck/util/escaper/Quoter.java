@@ -10,9 +10,11 @@
 
 package com.facebook.buck.util.escaper;
 
+import com.facebook.infer.annotation.Nullsafe;
 import java.util.Collections;
 
 /** The quoting style to use when escaping. */
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public enum Quoter {
   SINGLE {
     @Override

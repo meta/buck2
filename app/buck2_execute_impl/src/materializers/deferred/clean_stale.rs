@@ -1639,8 +1639,10 @@ impl IoRequest for CleanInvalidatedPathRequest {
 /// sends this when it goes idle after a command.
 ///
 /// The sweep holds the same clean guard as `clean --stale`: the moment any other
-/// materializer command arrives, deletion stops between paths. Entries that cannot be read
-/// or deleted (permission denied) are counted and skipped, like the artifact scan.
+/// materializer command arrives, deletion stops between paths. Entries below a root that the
+/// scan cannot read are counted, like in the artifact scan, but still deleted: the deletion adds
+/// owner permissions to the directories it removes. Entries that stay undeletable (permission
+/// denied, e.g. owned by another user) are counted and skipped.
 #[derive(Derivative)]
 #[derivative(Debug)]
 pub struct CleanScratchExtensionCommand {
@@ -2901,6 +2903,33 @@ mod tests {
             unmaterialize_active: true,
             ..adaptive_params(threshold_percent)
         }
+    }
+
+    #[test]
+    fn clean_on_a_disk_that_frees_less_than_it_deletes() {
+        // Three retained artifacts of 300 bytes on a 1000-byte disk with 100 bytes free, so a 50%
+        // threshold needs 400 more.
+        let mut paths = vec![
+            retained("a", 100, 300),
+            retained("b", 200, 300),
+            retained("c", 300, 300),
+        ];
+        let result = apply_adaptive_low_disk(&mut paths, 100, 1000, &adaptive_params(50.0));
+        assert_eq!(result.outcome, AdaptiveOutcome::SatisfiedByStaleDeletion);
+        assert!(is_stale(&paths[0], 300) && is_stale(&paths[1], 300));
+
+        // Deleting `a` and `b` frees only 200 of their 600 logical bytes on a filesystem that
+        // compresses them, leaving the disk at 300 free, 200 short of 500. The clean promotes only
+        // once, from the projection: `c` stays retained, and the clean reports success with no
+        // shortfall while the disk is still short.
+        assert!(
+            is_retained(&paths[2]),
+            "`c` currently stays retained although the disk is still short"
+        );
+        assert_eq!(
+            result.shortfall_bytes, 0,
+            "the shortfall currently comes from the projection, not the disk"
+        );
     }
 
     #[test]

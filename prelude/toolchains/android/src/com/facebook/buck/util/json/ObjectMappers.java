@@ -12,6 +12,7 @@ package com.facebook.buck.util.json;
 
 import com.facebook.buck.core.filesystems.AbsPath;
 import com.facebook.buck.core.filesystems.RelPath;
+import com.facebook.infer.annotation.Nullsafe;
 import com.fasterxml.jackson.annotation.JsonInclude.Include;
 import com.fasterxml.jackson.core.JsonFactory;
 import com.fasterxml.jackson.core.JsonGenerator;
@@ -43,9 +44,11 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.Map;
+import java.util.Objects;
 import java.util.function.Function;
 import java.util.function.Supplier;
 
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public class ObjectMappers {
 
   // It's important to re-use these objects for perf:
@@ -284,7 +287,8 @@ public class ObjectMappers {
 
   private static ObjectMapper create_with_type() {
     ObjectMapper objectMapper = create();
-    return objectMapper.activateDefaultTyping(objectMapper.getPolymorphicTypeValidator());
+    return objectMapper.activateDefaultTyping(
+        Objects.requireNonNull(objectMapper.getPolymorphicTypeValidator()));
   }
 
   private ObjectMappers() {}

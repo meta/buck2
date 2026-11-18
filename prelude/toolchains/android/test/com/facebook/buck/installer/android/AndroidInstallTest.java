@@ -28,4 +28,19 @@ public class AndroidInstallTest {
             Instant.parse("2026-08-27T21:05:09.987654321Z"),
             ZoneId.of("America/Los_Angeles")));
   }
+
+  /** A step stopped at its time limit is interrupted, and its exception carries no message. */
+  @Test
+  public void failureWithoutAMessageIsNamedByItsException() {
+    assertEquals(
+        "java.lang.InterruptedException",
+        AndroidInstall.failureMessage(new InterruptedException()));
+  }
+
+  @Test
+  public void failureWithAMessageReportsTheMessage() {
+    assertEquals(
+        "device offline",
+        AndroidInstall.failureMessage(new IllegalStateException("device offline")));
+  }
 }

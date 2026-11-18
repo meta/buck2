@@ -162,3 +162,31 @@ cli_json_file = bxl_main(
         "json-file": cli_args.json_file(),
     },
 )
+
+def _cli_option_default_impl(ctx):
+    ctx.output.print("opt_int: " + repr(ctx.cli_args.opt_int))
+    ctx.output.print("opt_str: " + repr(ctx.cli_args.opt_str))
+    ctx.output.print("opt_bool: " + repr(ctx.cli_args.opt_bool))
+    ctx.output.print("opt_list: " + repr(ctx.cli_args.opt_list))
+
+cli_option_default = bxl_main(
+    impl = _cli_option_default_impl,
+    cli_args = {
+        "opt_bool": cli_args.option(cli_args.bool(), default = True),
+        "opt_int": cli_args.option(cli_args.int(), default = 5),
+        "opt_list": cli_args.option(cli_args.list(cli_args.int())),
+        "opt_str": cli_args.option(cli_args.string(), default = "consumer"),
+    },
+)
+
+def _cli_int_impl(ctx):
+    ctx.output.print("n: " + repr(ctx.cli_args.n))
+    ctx.output.print("ns: " + repr(ctx.cli_args.ns))
+
+cli_int = bxl_main(
+    impl = _cli_int_impl,
+    cli_args = {
+        "n": cli_args.int(),
+        "ns": cli_args.list(cli_args.int(), default = []),
+    },
+)

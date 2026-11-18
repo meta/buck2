@@ -267,9 +267,34 @@ public final class ApkBuilder implements IArchiveBuilder {
       Set<String> excludedResources,
       Predicate<String> storedPaths)
       throws ApkCreationException {
+    this(
+        apkFile,
+        resFile,
+        dexFile,
+        packageMetaInfVersionFiles,
+        verboseStream,
+        excludedResources,
+        storedPaths,
+        null);
+  }
+
+  /**
+   * Creates a new instance that deflates entries on {@code fastPackaging}'s threads when it is set.
+   * The APK is byte-identical either way.
+   */
+  public ApkBuilder(
+      File apkFile,
+      File resFile,
+      @Nullable File dexFile,
+      boolean packageMetaInfVersionFiles,
+      @Nullable PrintStream verboseStream,
+      Set<String> excludedResources,
+      Predicate<String> storedPaths,
+      @Nullable FastPackaging fastPackaging)
+      throws ApkCreationException {
     mFilter = new JavaAndNativeResourceFilter(excludedResources);
     mStoredPaths = storedPaths;
-    init(apkFile, resFile, dexFile, packageMetaInfVersionFiles, verboseStream);
+    init(apkFile, resFile, dexFile, packageMetaInfVersionFiles, verboseStream, fastPackaging);
   }
 
   private void init(
@@ -277,7 +302,8 @@ public final class ApkBuilder implements IArchiveBuilder {
       File resFile,
       @Nullable File dexFile,
       boolean packageMetaInfVersionFiles,
-      @Nullable PrintStream verboseStream)
+      @Nullable PrintStream verboseStream,
+      @Nullable FastPackaging fastPackaging)
       throws ApkCreationException {
 
     try {
@@ -292,7 +318,9 @@ public final class ApkBuilder implements IArchiveBuilder {
 
       mBuilder =
           new ApkJarBuilder(
-              new FileOutputStream(mApkFile, false /* append */), packageMetaInfVersionFiles);
+              new FileOutputStream(mApkFile, false /* append */),
+              packageMetaInfVersionFiles,
+              fastPackaging == null ? 0 : fastPackaging.getCompressionThreads());
 
       verbosePrintln("Packaging %s", mApkFile.getName());
 
@@ -535,6 +563,9 @@ public final class ApkBuilder implements IArchiveBuilder {
 
                 try {
                   doAddFile(lib, path);
+                } catch (DuplicateFileException e) {
+                  mBuilder.cleanUp();
+                  throw e;
                 } catch (IOException e) {
                   mBuilder.cleanUp();
                   throw new ApkCreationException(e, "Failed to add %s", lib);

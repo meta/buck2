@@ -23,7 +23,6 @@ use starlark_derive::ProvidesStaticType;
 use starlark_derive::StarlarkPagable;
 use starlark_derive::starlark_module;
 use starlark_derive::starlark_value;
-use starlark_map::small_map::SmallMap;
 
 use crate as starlark;
 use crate::assert::Assert;
@@ -40,10 +39,15 @@ use crate::values::Heap;
 use crate::values::StarlarkValue;
 use crate::values::StringValue;
 use crate::values::Value;
-use crate::values::ValueOfUnchecked;
-use crate::values::list::UnpackList;
+use crate::values::ValueOf;
+use crate::values::ValueTyped;
+use crate::values::dict::DictType;
+use crate::values::list::AllocList;
+use crate::values::list::ListType;
 use crate::values::none::NoneType;
-use crate::values::tuple::UnpackTuple;
+use crate::values::string::StarlarkStr;
+use crate::values::tuple::TupleType;
+use crate::values::types::int::view::IntView;
 
 #[derive(
     Debug,
@@ -76,11 +80,11 @@ impl<'v> StarlarkValue<'v> for OutputTypeRepr {}
 #[starlark_types(InputTypeRepr as Input, OutputTypeRepr as Output)]
 fn globals(builder: &mut GlobalsBuilder) {
     #[allow(unused_variables)]
-    fn simple(
+    fn simple<'v>(
         arg_int: i32,
         arg_bool: bool,
-        arg_vec: UnpackList<&str>,
-        arg_dict: SmallMap<String, (bool, i32)>,
+        arg_vec: ValueOf<'v, ListType<StarlarkStr>>,
+        arg_dict: ValueOf<'v, DictType<StarlarkStr, (bool, IntView<'v>)>>,
     ) -> anyhow::Result<NoneType> {
         unimplemented!()
     }
@@ -90,13 +94,13 @@ fn globals(builder: &mut GlobalsBuilder) {
         arg1: Option<Value<'v>>,
         #[starlark(default = NoneType)] arg2: Value<'v>,
         eval: &mut Evaluator<'v, '_, '_>,
-    ) -> anyhow::Result<Vec<String>> {
+    ) -> anyhow::Result<AllocList<Vec<String>>> {
         unimplemented!()
     }
 
     #[allow(unused_variables)]
     fn args_kwargs<'v>(
-        #[starlark(args)] args: UnpackTuple<Value<'v>>,
+        #[starlark(args)] args: ValueOf<'v, TupleType<Value<'v>>>,
         #[starlark(kwargs)] kwargs: Value<'v>,
     ) -> anyhow::Result<NoneType> {
         unimplemented!()
@@ -105,9 +109,9 @@ fn globals(builder: &mut GlobalsBuilder) {
     #[allow(unused_variables)]
     fn custom_types<'v>(
         arg1: StringValue<'v>,
-        arg2: ValueOfUnchecked<'v, InputTypeRepr>,
+        arg2: ValueTyped<'v, InputTypeRepr>,
         heap: Heap<'v>,
-    ) -> anyhow::Result<ValueOfUnchecked<'v, OutputTypeRepr>> {
+    ) -> anyhow::Result<ValueTyped<'v, OutputTypeRepr>> {
         unimplemented!()
     }
 
@@ -190,7 +194,7 @@ fn object(builder: &mut MethodsBuilder) {
     ///
     /// # Returns
     /// The string 'func1'
-    fn func1<'v>(this: Value<'v>, foo: String) -> anyhow::Result<String> {
+    fn func1<'v>(this: Value<'v>, foo: &str) -> anyhow::Result<String> {
         let _ignore = (this, foo);
         Ok("func1".to_owned())
     }
@@ -226,7 +230,7 @@ fn module(builder: &mut GlobalsBuilder) {
     ///
     /// # Returns
     /// The string 'func1'
-    fn func1(foo: String) -> anyhow::Result<String> {
+    fn func1(foo: &str) -> anyhow::Result<String> {
         let _ignore = foo;
         Ok("func1".to_owned())
     }

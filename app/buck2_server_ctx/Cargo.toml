@@ -10,6 +10,7 @@ license.workspace = true
 [dependencies]
 allocative.workspace = true
 async-trait.workspace = true
+buck2_agent_interactive.workspace = true
 buck2_build_signals.workspace = true
 buck2_certs.workspace = true
 buck2_cli_proto.workspace = true

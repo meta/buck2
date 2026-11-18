@@ -11,10 +11,12 @@
 use buck2_build_api::interpreter::rule_defs::artifact_tagging::ArtifactTag;
 use starlark::environment::GlobalsBuilder;
 use starlark::starlark_module;
+use starlark::values::Heap;
+use starlark::values::ValueOf;
 
 #[starlark_module]
 pub(crate) fn artifact_tag_factory(builder: &mut GlobalsBuilder) {
-    fn make_tag() -> starlark::Result<ArtifactTag> {
-        Ok(ArtifactTag::testing_new())
+    fn make_tag<'v>(heap: Heap<'v>) -> starlark::Result<ValueOf<'v, ArtifactTag>> {
+        Ok(ValueOf::alloc(heap, ArtifactTag::testing_new()))
     }
 }

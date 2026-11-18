@@ -15,11 +15,41 @@ from pathlib import Path
 from shutil import which
 
 
+def find_libpython() -> Path:
+    """The shared libpython of this interpreter.
+
+    `LDLIBRARY` is relative to a different directory on each layout: `LIBDIR`
+    for a plain install, the multiarch directory under it on Debian and Ubuntu,
+    and `PYTHONFRAMEWORKPREFIX` for a macOS framework build, where it reads
+    `Python.framework/Versions/X.Y/Python`.
+    """
+    config = sysconfig.get_config_var
+    names = [str(config(name)) for name in ("LDLIBRARY", "INSTSONAME") if config(name)]
+    dirs = [
+        Path(str(config("LIBDIR") or "")),
+        Path(str(config("LIBDIR") or "")) / str(config("MULTIARCH") or ""),
+        Path(str(config("PYTHONFRAMEWORKPREFIX") or "")),
+        Path(str(config("installed_platbase"))) / str(config("platlibdir")),
+    ]
+    candidates = [d / n for d in dirs if str(d) not in ("", ".") for n in names]
+    for candidate in candidates:
+        if candidate.is_file():
+            return candidate
+    tried = ", ".join(str(c) for c in candidates)
+    raise RuntimeError(f"No shared libpython found; tried {tried}")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--nm", type=Path, help="Path to nm tool")
     parser.add_argument("output", help="Output file path")
     args = parser.parse_args()
+
+    if sys.platform == "win32":
+        # Windows links against an import library, and the linker needs no
+        # flags to keep libpython's symbols.
+        open(args.output, "w").close()
+        return
 
     nm: Path | None = args.nm
     if nm is None:
@@ -30,13 +60,7 @@ def main() -> None:
     if not nm.exists():
         raise ValueError(f"nm tool not found at specified location: {nm!r}")
 
-    lib_dir = Path(sysconfig.get_config_var("installed_platbase")) / str(
-        sysconfig.get_config_var("platlibdir")
-    )
-    libpython = lib_dir / str(sysconfig.get_config_var("LDLIBRARY"))
-
-    if not libpython.exists():
-        raise RuntimeError(f"No libpython found in {libpython} ({lib_dir=})")
+    libpython = find_libpython()
 
     # Run nm on the library file
     nm_output = subprocess.check_output([nm, libpython], text=True)

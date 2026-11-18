@@ -91,7 +91,7 @@ def _incremental_action_with_multiple_outputs_impl(ctx) -> list[Provider]:
         env = {"INVALIDATE_ACTION": ctx.attrs.invalidate},
     )
     return [
-        DefaultInfo(default_outputs = [out1, out2]),
+        DefaultInfo(default_outputs = [out1], sub_targets = {"out2": [DefaultInfo(default_outputs = [out2])]}),
         RunInfo(args = ["cat", out1, out2]),
     ]
 

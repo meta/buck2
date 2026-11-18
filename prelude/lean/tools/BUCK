@@ -6,10 +6,12 @@ source_listing()
 
 prelude = native  # Avoid warnings and auto-formatters
 
-# Runs `lean --deps-json` and writes its stdout to the output file. Buck
-# actions have no stdout redirection, and a shell is not on every host.
+# Lists the modules of a target, its source files and the `.lean` files of
+# its source directories, and runs `lean --deps-json` on them, with the file
+# names on stdin. Buck actions have no stdout redirection, and a shell is not
+# on every host.
 prelude.python_bootstrap_binary(
-    name = "stdout_to_file",
-    main = "stdout_to_file.py",
+    name = "lean_deps",
+    main = "lean_deps.py",
     visibility = ["PUBLIC"],
 )

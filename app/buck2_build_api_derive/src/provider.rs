@@ -49,18 +49,19 @@ impl syn::parse::Parse for InternalProviderArgs {
 
 /// The wrapper a provider field is declared with.
 ///
-/// `ValueTyped<'v, T>` is preferred: the value is checked once, where the provider is
-/// constructed, and reads are plain field accesses. It is only available when the starlark type
-/// is exactly one `StarlarkValue` implementation; unions, containers and other type-repr-only
-/// markers must use `ValueOfUnchecked<'v, T>` and re-check on read.
+/// `ValueOf<'v, T>` holds a value checked to be a `T` when the provider is constructed, for any
+/// `T` that is a parameter binding (a view, a `ValueTyped`, `ListType<T>`, a union), and reads
+/// never re-check. `ValueTyped<'v, T>` is the same for a type that is exactly one `StarlarkValue`
+/// implementation.
 ///
-/// A field that may legitimately be absent is declared `Option<ValueTyped<'v, T>>`, which is the
-/// only spelling that documents itself honestly - the other two describe a field that is always a
-/// `T`, so an absent value has to be smuggled through as a `None` the starlark type does not
-/// mention.
+/// A field that may legitimately be absent is declared `Option<ValueOf<'v, T>>` or
+/// `Option<ValueTyped<'v, T>>`, which is the only spelling that documents itself honestly - the
+/// others describe a field that is always a `T`, so an absent value would have to be smuggled
+/// through as a `None` the starlark type does not mention.
 #[derive(Copy, Clone)]
 enum FieldKind {
-    Unchecked,
+    Of,
+    OptionOf,
     Typed,
     OptionTyped,
 }
@@ -87,13 +88,15 @@ impl Field {
     fn field_type_ty(&self) -> syn::Expr {
         let field_type = &self.field_type;
         let ty: syn::Type = match self.kind {
-            FieldKind::Unchecked | FieldKind::Typed => field_type.clone(),
-            FieldKind::OptionTyped => syn::parse_quote_spanned! { self.name.span() =>
-                starlark::values::none::NoneOr<#field_type>
-            },
+            FieldKind::Of | FieldKind::Typed => field_type.clone(),
+            FieldKind::OptionOf | FieldKind::OptionTyped => {
+                syn::parse_quote_spanned! { self.name.span() =>
+                    starlark::values::none::NoneOr<#field_type>
+                }
+            }
         };
         syn::parse_quote_spanned! { self.name.span() =>
-            <#ty as starlark::values::type_repr::StarlarkTypeRepr>::starlark_type_repr()
+            <#ty as starlark::values::StarlarkTypeExpr<'v>>::starlark_type_repr()
         }
     }
 
@@ -101,15 +104,14 @@ impl Field {
     fn value(&self, this: &syn::Expr) -> syn::Expr {
         let name = &self.name;
         match self.kind {
-            FieldKind::Unchecked => syn::parse_quote_spanned! { name.span() =>
-                #this.#name.get()
-            },
-            FieldKind::Typed => syn::parse_quote_spanned! { name.span() =>
+            FieldKind::Of | FieldKind::Typed => syn::parse_quote_spanned! { name.span() =>
                 #this.#name.to_value()
             },
-            FieldKind::OptionTyped => syn::parse_quote_spanned! { name.span() =>
-                #this.#name.map_or_else(starlark::values::Value::new_none, |v| v.to_value())
-            },
+            FieldKind::OptionOf | FieldKind::OptionTyped => {
+                syn::parse_quote_spanned! { name.span() =>
+                    #this.#name.map_or_else(starlark::values::Value::new_none, |v| v.to_value())
+                }
+            }
         }
     }
 }
@@ -247,8 +249,8 @@ impl ProviderCodegen {
             ));
         }
 
-        let error = "Field type must be `ValueOfUnchecked<'v, SomeType>`, \
-             `ValueTyped<'v, SomeType>` or `Option<ValueTyped<'v, SomeType>>`";
+        let error = "Field type must be `ValueOf<'v, SomeType>`, `ValueTyped<'v, SomeType>` or \
+             `StringValue<'v>`, any of them in an `Option`";
         let err = || syn::Error::new_spanned(field, error);
 
         let (ident, args) = generic_segment(&field.ty).ok_or_else(err)?;
@@ -264,23 +266,42 @@ impl ProviderCodegen {
             (false, ident, args)
         };
 
-        let kind = if ident == "ValueTyped" {
+        let of = |optional| {
             if optional {
-                FieldKind::OptionTyped
+                FieldKind::OptionOf
             } else {
-                FieldKind::Typed
+                FieldKind::Of
             }
-        } else if ident == "ValueOfUnchecked" && !optional {
-            FieldKind::Unchecked
-        } else {
-            return Err(err());
         };
-        let [
-            syn::GenericArgument::Lifetime(_),
-            syn::GenericArgument::Type(field_type),
-        ] = Vec::from_iter(&args.args).as_slice()
-        else {
-            return Err(err());
+        // `StringValue<'v>` is `ValueOf<'v, StarlarkStr>` under its usual name.
+        let (kind, field_type): (FieldKind, syn::Type) = if ident == "StringValue" {
+            let [syn::GenericArgument::Lifetime(_)] = Vec::from_iter(&args.args).as_slice() else {
+                return Err(err());
+            };
+            (
+                of(optional),
+                syn::parse_quote! { starlark::values::string::StarlarkStr },
+            )
+        } else {
+            let kind = if ident == "ValueOf" {
+                of(optional)
+            } else if ident == "ValueTyped" {
+                if optional {
+                    FieldKind::OptionTyped
+                } else {
+                    FieldKind::Typed
+                }
+            } else {
+                return Err(err());
+            };
+            let [
+                syn::GenericArgument::Lifetime(_),
+                syn::GenericArgument::Type(field_type),
+            ] = Vec::from_iter(&args.args).as_slice()
+            else {
+                return Err(err());
+            };
+            (kind, field_type.clone())
         };
 
         let name = field.ident.as_ref().unwrap().to_owned();
@@ -290,7 +311,7 @@ impl ProviderCodegen {
         Ok(Field {
             name,
             docstring,
-            field_type: field_type.clone(),
+            field_type,
             kind,
         })
     }
@@ -476,11 +497,7 @@ impl ProviderCodegen {
                     demand.provide_value::<
                         &dyn buck2_build_api::interpreter::rule_defs::provider::ProviderLike>(self);
                 }
-                fn equals(&self, other: starlark::values::Value<'v>) -> starlark::Result<bool> {
-                    let other: &#name<'v> = match #name::from_value(other) {
-                        Some(other) => other,
-                        None => return Ok(false),
-                    };
+                fn equals(&self, other: &Self) -> starlark::Result<bool> {
                     #(
                         if !#self_values.equals(#other_values)? {
                             return Ok(false);

@@ -88,6 +88,7 @@ load(
     "get_apple_resources_toolchain_attr",
     "get_apple_xctoolchain_attr",
     "get_apple_xctoolchain_bundle_id_attr",
+    "get_apple_xctoolchain_full_attr",
     "get_enable_library_evolution",
     "get_incremental_split_actions_attrs",
     "get_incremental_swiftmodule_action_attrs",
@@ -392,6 +393,7 @@ apple_binary = prelude_rule(
             "swift_version": attrs.enum(SwiftVersion, default = SwiftVersion[0]),
             "_apple_xctoolchain": get_apple_xctoolchain_attr(),
             "_apple_xctoolchain_bundle_id": get_apple_xctoolchain_bundle_id_attr(),
+            "_apple_xctoolchain_full": get_apple_xctoolchain_full_attr(),
             "_enable_library_evolution": get_enable_library_evolution(),
             "_swift_enable_testing": attrs.default_only(attrs.bool(default = False)),
             VALIDATION_DEPS_ATTR_NAME: VALIDATION_DEPS_ATTR_TYPE,
@@ -674,7 +676,6 @@ apple_library = prelude_rule(
         | apple_common.uses_cxx_explicit_modules_arg()
         | apple_common.uses_modules_arg()
         | {
-            "bridging_header": attrs.option(attrs.source(), default = None),
             "can_be_asset": attrs.option(attrs.bool(), default = None),
             "cxx_runtime_type": attrs.option(attrs.enum(CxxRuntimeType), default = None),
             "dist_thin_lto_codegen_flags": attrs.list(attrs.arg(), default = []),
@@ -728,6 +729,7 @@ apple_library = prelude_rule(
             "use_archive": attrs.option(attrs.bool(), default = None),
             "_apple_xctoolchain": get_apple_xctoolchain_attr(),
             "_apple_xctoolchain_bundle_id": get_apple_xctoolchain_bundle_id_attr(),
+            "_apple_xctoolchain_full": get_apple_xctoolchain_full_attr(),
             "_enable_library_evolution": get_enable_library_evolution(),
             "_swift_enable_testing": attrs.bool(
                 default = select({
@@ -972,7 +974,8 @@ apple_resource = prelude_rule(
                 doc = """
                 Specifies the destination in the final application bundle where resource will be copied. Possible
                  values: "resources", "frameworks", "executables", "plugins", "xpcservices", "loginitems",
-                 "launchagents" (macOS `Contents/Library/LaunchAgents`), "extensionkit_extensions".
+                 "launchagents" (macOS `Contents/Library/LaunchAgents`), "launchdaemons" (macOS
+                 `Contents/Library/LaunchDaemons`), "extensionkit_extensions".
             """,
             ),
             "codesign_on_copy": attrs.bool(
@@ -1103,7 +1106,6 @@ apple_test = prelude_rule(
         | apple_common.uses_modules_arg()
         | apple_common.xcode_product_type_arg()
         | {
-            "bridging_header": attrs.option(attrs.source(), default = None),
             "can_be_asset": attrs.option(attrs.bool(), default = None),
             "cxx_runtime_type": attrs.option(attrs.enum(CxxRuntimeType), default = None),
             "destination_specifier": attrs.dict(key = attrs.string(), value = attrs.string(), sorted = False, default = {}),
@@ -1120,6 +1122,11 @@ apple_test = prelude_rule(
             "force_static": attrs.option(attrs.bool(), default = None),
             "headers_as_raw_headers_mode": attrs.option(attrs.enum(HeadersAsRawHeadersMode), default = None),
             "incremental_bundling_enabled": attrs.option(attrs.bool(), default = None),
+            "internal_bridging_header": attrs.option(
+                attrs.source(),
+                default = None,
+                doc = "A bridging header whose declarations are imported with internal visibility during Swift compilation.",
+            ),
             "is_ui_test": attrs.bool(default = False),
             "lang_compiler_flags": attrs.dict(key = attrs.enum(CxxSourceType), value = attrs.list(attrs.arg()), sorted = False, default = {}),
             "lang_preprocessor_flags": attrs.dict(key = attrs.enum(CxxSourceType), value = attrs.list(attrs.arg()), sorted = False, default = {}),
@@ -1441,7 +1448,6 @@ swift_toolchain = prelude_rule(
             "swift_ide_test_tool": attrs.option(attrs.exec_dep(providers = [RunInfo]), default = None),
             "swift_stdlib_tool": attrs.exec_dep(providers = [RunInfo]),
             "swift_stdlib_tool_flags": attrs.list(attrs.arg(), default = []),
-            "swift_symbolgraph_extract": attrs.option(attrs.exec_dep(providers = [RunInfo]), default = None),
             "swift_upcoming_features": attrs.dict(
                 key = attrs.enum(SwiftVersion), value = attrs.list(attrs.string()), sorted = False, default = SWIFT_VERSION_FEATURE_MAP
             ),

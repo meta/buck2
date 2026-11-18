@@ -11,6 +11,8 @@
 use std::ffi::OsStr;
 #[cfg(all(fbcode_build, target_os = "linux"))]
 use std::fs::OpenOptions;
+#[cfg(all(fbcode_build, target_os = "linux"))]
+use std::io::Write;
 use std::os::unix::ffi::OsStrExt;
 #[cfg(all(fbcode_build, target_os = "linux"))]
 use std::os::unix::fs::OpenOptionsExt;
@@ -79,9 +81,11 @@ struct ValidatedCommand {
     enable_miniperf: bool,
     std_redirects: Option<StdRedirectPaths>,
     graceful_shutdown_timeout_s: Option<u32>,
+    timeout_grace_period_s: Option<u32>,
     command_cgroup: Option<CgroupPathBuf>,
     #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
     network_access: Option<buck2_data::NetworkAccess>,
+    kill_detached_descendants: bool,
 }
 
 impl ValidatedCommand {
@@ -97,6 +101,8 @@ impl ValidatedCommand {
             graceful_shutdown_timeout_s,
             command_cgroup,
             network_access,
+            timeout_grace_period_s,
+            kill_detached_descendants,
         } = cmd_request;
 
         let exe = OsStr::from_bytes(&exe);
@@ -130,11 +136,13 @@ impl ValidatedCommand {
             enable_miniperf,
             std_redirects,
             graceful_shutdown_timeout_s,
+            timeout_grace_period_s,
             command_cgroup,
             network_access: network_access
                 .map(buck2_data::NetworkAccess::try_from)
                 .transpose()
                 .map_err(|v| internal_error!("Invalid network_access value: {}", v))?,
+            kill_detached_descendants: kill_detached_descendants.unwrap_or(false),
         })
     }
 }
@@ -206,6 +214,7 @@ impl UnixForkserverService {
         let (mut cmd, miniperf_output) = match (validated_cmd.enable_miniperf, &self.miniperf) {
             // Wraps the user command with miniperf for performance monitoring
             (true, Some(miniperf)) => {
+                miniperf.check_present()?;
                 let mut cmd = background_command(miniperf.miniperf.as_path());
                 let output_path = miniperf.allocate_output_path();
                 cmd.arg(output_path.as_path());
@@ -262,7 +271,11 @@ impl UnixForkserverService {
         freeze_rx: impl ActionFreezeEventReceiver,
     ) -> buck2_error::Result<RunStream> {
         let timeout = validated_cmd.timeout;
-        let graceful_shutdown_timeout_s = validated_cmd.graceful_shutdown_timeout_s;
+        let kill_process = DefaultKillProcess {
+            graceful_shutdown_timeout_s: validated_cmd.graceful_shutdown_timeout_s,
+            timeout_grace_period_s: validated_cmd.timeout_grace_period_s,
+            kill_detached_descendants: validated_cmd.kill_detached_descendants,
+        };
         let std_redirects = validated_cmd.std_redirects;
         let cgroup = validated_cmd.command_cgroup.clone();
         let stream = match miniperf_output {
@@ -271,9 +284,7 @@ impl UnixForkserverService {
                 timeout,
                 cancellation,
                 MiniperfStatusDecoder::new(out),
-                DefaultKillProcess {
-                    graceful_shutdown_timeout_s,
-                },
+                kill_process,
                 std_redirects,
                 false,
                 cgroup,
@@ -286,9 +297,7 @@ impl UnixForkserverService {
                 timeout,
                 cancellation,
                 DefaultStatusDecoder,
-                DefaultKillProcess {
-                    graceful_shutdown_timeout_s,
-                },
+                kill_process,
                 std_redirects,
                 false,
                 cgroup,
@@ -397,6 +406,13 @@ impl Forkserver for UnixForkserverService {
     }
 }
 
+/// Spawning through a deleted miniperf fails with ENOENT, which would otherwise be reported as the
+/// user's executable failing to spawn.
+#[derive(buck2_error::Error, Debug)]
+#[buck2(environment, tag = Tier0)]
+#[error("Forkserver state was deleted while the daemon was running: `{0}` is missing")]
+struct ForkserverStateMissing(String);
+
 struct MiniperfContainer {
     /// The Miniperf binary
     miniperf: AbsNormPathBuf,
@@ -406,10 +422,6 @@ struct MiniperfContainer {
 }
 
 impl MiniperfContainer {
-    /// Must match the section key in `//buck2/app/buck2:buck2-bin`.
-    #[cfg(all(fbcode_build, target_os = "linux"))]
-    const SECTION_NAME: &'static str = "buck2_miniperf";
-
     fn new(forkserver_state_dir: &AbsNormPath) -> buck2_error::Result<Option<Self>> {
         #[cfg(not(all(fbcode_build, target_os = "linux")))]
         {
@@ -437,13 +449,10 @@ impl MiniperfContainer {
                 .open(miniperf.as_path())
                 .with_buck_error_context(|| format!("Error opening: `{}`", miniperf.display()))?;
 
-            let section = buck2_embedded_section::EmbeddedSection {
-                name: Self::SECTION_NAME,
-                encoding: buck2_embedded_section::SectionEncoding::Zstd,
-            };
-
-            section
-                .copy_to(&mut miniperf_writer)
+            // Raw zstd rather than Managed Compression: this must decode with
+            // no configuration or network access.
+            zstd::stream::copy_decode(buck2_miniperf_data::get(), &mut miniperf_writer)
+                .and_then(|()| miniperf_writer.flush())
                 .with_buck_error_context(|| {
                     format!("Error writing miniperf to `{}`", miniperf.display())
                 })?;
@@ -455,9 +464,56 @@ impl MiniperfContainer {
         }
     }
 
+    fn check_present(&self) -> buck2_error::Result<()> {
+        for path in [&self.miniperf, &self.output_dir] {
+            if std::fs::symlink_metadata(path.as_path())
+                .is_err_and(|e| e.kind() == std::io::ErrorKind::NotFound)
+            {
+                return Err(ForkserverStateMissing(path.display().to_string()).into());
+            }
+        }
+        Ok(())
+    }
+
     fn allocate_output_path(&self) -> AbsNormPathBuf {
         let name = Alphanumeric.sample_string(&mut rand::rng(), 16);
         self.output_dir
             .join(ForwardRelativePath::unchecked_new(&name))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn container(dir: &AbsNormPath) -> MiniperfContainer {
+        MiniperfContainer {
+            miniperf: dir.join(ForwardRelativePath::unchecked_new("miniperf")),
+            output_dir: dir.join(ForwardRelativePath::unchecked_new("out")),
+        }
+    }
+
+    #[test]
+    fn test_check_present_ok_when_state_exists() -> buck2_error::Result<()> {
+        let tempdir = tempfile::tempdir()?;
+        let dir = AbsNormPath::new(tempdir.path())?;
+        let miniperf = container(dir);
+        std::fs::write(miniperf.miniperf.as_path(), "")?;
+        std::fs::create_dir(miniperf.output_dir.as_path())?;
+        miniperf.check_present()
+    }
+
+    #[test]
+    fn test_check_present_errors_when_state_deleted() -> buck2_error::Result<()> {
+        let tempdir = tempfile::tempdir()?;
+        let dir = AbsNormPath::new(tempdir.path())?;
+        let miniperf = container(dir);
+        std::fs::create_dir(miniperf.output_dir.as_path())?;
+        let error = miniperf.check_present().unwrap_err();
+        assert!(
+            error.to_string().contains("miniperf` is missing"),
+            "{error}"
+        );
+        Ok(())
     }
 }

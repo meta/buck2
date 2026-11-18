@@ -87,20 +87,35 @@ pub struct AttrFmtOptions {
 pub trait QueryTarget: LabeledNode + Dupe + Send + Sync + 'static {
     type Attr<'a>: ?Sized + Debug + 'a;
 
+    /// Called by a caller about to read the attributes, inputs or build file of every one of
+    /// `targets`. An implementation that loads those on demand loads them here, several at a
+    /// time, so that the caller does not load them one target after another.
+    ///
+    /// This only saves time: what cannot be loaded here is left for the read that needs it
+    /// to report. The error is for buck2's own tests, where a soft error fails the command.
+    fn prefetch_bodies<'a>(
+        _targets: impl IntoIterator<Item = &'a Self>,
+    ) -> buck2_error::Result<()> {
+        Ok(())
+    }
+
     /// `filter()` function uses this.
     fn label_for_filter(&self) -> String {
         self.node_key().to_string()
     }
 
     /// Returns the input files for this node.
-    fn inputs_for_each<E, F: FnMut(CellPath) -> Result<(), E>>(&self, func: F) -> Result<(), E>;
+    fn inputs_for_each<E: From<buck2_error::Error>, F: FnMut(CellPath) -> Result<(), E>>(
+        &self,
+        func: F,
+    ) -> Result<(), E>;
 
     fn rule_type(&self) -> Cow<'_, str>;
 
     fn name(&self) -> Cow<'_, str>;
 
     /// Return the path to the buildfile that defines this target, e.g. `fbcode//foo/bar/TARGETS`
-    fn buildfile_path(&self) -> &BuildFilePath;
+    fn buildfile_path(&self) -> buck2_error::Result<&BuildFilePath>;
 
     fn deps<'a>(&'a self) -> impl Iterator<Item = &'a Self::Key> + Send + 'a;
 
@@ -112,8 +127,10 @@ pub trait QueryTarget: LabeledNode + Dupe + Send + Sync + 'static {
 
     fn toolchain_deps<'a>(&'a self) -> impl Iterator<Item = &'a Self::Key> + Send + 'a;
 
-    fn tests<'a>(&'a self) -> Option<impl Iterator<Item = Self::Key> + Send + 'a> {
-        None::<iter::Empty<Self::Key>>
+    fn tests<'a>(
+        &'a self,
+    ) -> buck2_error::Result<Option<impl Iterator<Item = Self::Key> + Send + 'a>> {
+        Ok(None::<iter::Empty<Self::Key>>)
     }
 
     fn attr_any_matches(
@@ -291,11 +308,12 @@ pub trait QueryEnvironment: Send + Sync {
         &self,
         targets: &TargetSet<Self::Target>,
     ) -> buck2_error::Result<TargetSet<Self::Target>> {
+        Self::Target::prefetch_bodies(targets)?;
         let target_tests = targets
             .iter()
             .map(|target| {
                 let tests = target
-                    .tests()
+                    .tests()?
                     .ok_or(QueryError::FunctionUnimplemented("testsof"))?;
 
                 buck2_error::Ok((target, tests))
@@ -329,11 +347,12 @@ pub trait QueryEnvironment: Send + Sync {
         &self,
         targets: &TargetSet<Self::Target>,
     ) -> buck2_error::Result<Vec<MaybeCompatible<Self::Target>>> {
+        Self::Target::prefetch_bodies(targets)?;
         let target_tests = targets
             .iter()
             .map(|target| {
                 let tests = target
-                    .tests()
+                    .tests()?
                     .ok_or(QueryError::FunctionUnimplemented("testsof"))?;
 
                 buck2_error::Ok((target, tests))

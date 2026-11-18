@@ -122,9 +122,15 @@ def strip_object(
 
     return stripped_lib
 
+# Sections from `-fpseudo-probe-for-profiling`. Only profile tools read them; the program
+# does not load them at run time. `--strip-debug` does not remove them (it removes only
+# `.debug*` sections), and `--only-keep-debug` copies them into the debuginfo binary.
+_PSEUDO_PROBE_SECTIONS = [".pseudo_probe", ".pseudo_probe_desc"]
+
 def strip_debug_with_gnu_debuglink(ctx: AnalysisContext, name: str, obj: Artifact) -> tuple:
     """
-    Split a binary into a separate debuginfo binary and a stripped binary with a .gnu_debuglink reference
+    Split a binary into a separate debuginfo binary and a stripped binary with a .gnu_debuglink reference.
+    Pseudo-probe sections go into the debuginfo binary only.
     """
     objcopy = get_cxx_toolchain_info(ctx).binary_utilities_info.objcopy
 
@@ -136,7 +142,16 @@ def strip_debug_with_gnu_debuglink(ctx: AnalysisContext, name: str, obj: Artifac
     ctx.actions.run(cmd, category = "extract_debuginfo", identifier = name, local_only = get_cxx_toolchain_info(ctx).linker_info.link_binaries_locally)
 
     binary_output = ctx.actions.declare_output("__stripped_objects__", name, has_content_based_path = False)
-    cmd = cmd_args([objcopy, "--strip-debug", "--keep-file-symbols", "--add-gnu-debuglink", debuginfo_output, obj, binary_output.as_output()])
+    cmd = cmd_args(
+        objcopy,
+        "--strip-debug",
+        "--keep-file-symbols",
+        ["--remove-section=" + section for section in _PSEUDO_PROBE_SECTIONS],
+        "--add-gnu-debuglink",
+        debuginfo_output,
+        obj,
+        binary_output.as_output(),
+    )
     ctx.actions.run(cmd, category = "strip_debug", identifier = name, local_only = get_cxx_toolchain_info(ctx).linker_info.link_binaries_locally)
 
     return binary_output, debuginfo_output

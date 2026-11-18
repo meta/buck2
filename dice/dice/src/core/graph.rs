@@ -18,7 +18,7 @@ use dice_core::Cert;
 use dice_core::Change;
 use dice_core::CoreState;
 use dice_core::Env;
-use dice_core::KeyMap;
+use dice_core::KeyVec;
 use dice_core::Lookup;
 use dupe::Dupe;
 use pagable::DataKey;
@@ -113,6 +113,14 @@ impl KeyValues {
         self.entries
             .iter_mut()
             .find_map(|(r, v)| (*r == revision).then_some(v))
+    }
+
+    fn values(&self) -> impl Iterator<Item = &PagableValue> {
+        self.entries.iter().map(|(_, value)| value)
+    }
+
+    fn values_mut(&mut self) -> impl Iterator<Item = &mut PagableValue> {
+        self.entries.iter_mut().map(|(_, value)| value)
     }
 
     fn lifecycle(&self) -> fn(DiceValidValue) -> PagableValue {
@@ -211,7 +219,7 @@ impl KeyValues {
         if self.injected {
             return c;
         }
-        for (_, value) in &self.entries {
+        for value in self.values() {
             match value {
                 PagableValue::PagedOut(_) => c.paged_out += 1,
                 PagableValue::NeverPagedOut(_) | PagableValue::Recomputed(_) => {
@@ -289,11 +297,18 @@ impl PagableIndex {
     }
 }
 
+/// The keys with a backed value at one point, and a residency cutoff that excludes values
+/// backed after it.
+pub(crate) struct BackedSnapshot {
+    pub(crate) keys: Vec<DiceKey>,
+    pub(crate) cutoff: u64,
+}
+
 /// The core state with its values: what the actor thread operates on.
 #[derive(Allocative)]
 pub(crate) struct VersionedGraph {
     core: CoreState<DiceEnv>,
-    values: KeyMap<KeyValues>,
+    values: KeyVec<KeyValues>,
     #[allocative(skip)]
     index: PagableIndex,
     /// Which values a page-out writes; see [`PageOutPolicy`].
@@ -304,7 +319,7 @@ impl VersionedGraph {
     pub(crate) fn new() -> Self {
         VersionedGraph {
             core: CoreState::new(),
-            values: KeyMap::default(),
+            values: KeyVec::default(),
             index: PagableIndex::default(),
             page_out_policy: PageOutPolicy::default(),
         }
@@ -353,13 +368,13 @@ impl VersionedGraph {
     }
 
     fn with_values_of<R>(
-        values: &mut KeyMap<KeyValues>,
+        values: &mut KeyVec<KeyValues>,
         index: &mut PagableIndex,
         policy: PageOutPolicy,
         key: DiceKey,
         f: impl FnOnce(&mut KeyValues) -> R,
     ) -> R {
-        let key_values = values.entry(key).or_default();
+        let key_values = values.get_or_insert_with(key, KeyValues::default);
         let before = key_values.contribution(policy);
         let result = f(key_values);
         let after = key_values.contribution(policy);
@@ -610,7 +625,7 @@ impl VersionedGraph {
                 index: index as u32,
             };
             if let Some(kv) = self.values.get(&key) {
-                for (_, value) in &kv.entries {
+                for value in kv.values() {
                     if value.is_page_out_candidate(self.page_out_policy) {
                         out.push((
                             key,
@@ -626,13 +641,13 @@ impl VersionedGraph {
     /// Every paged-out value, with its key.
     pub(crate) fn paged_out_keys(&self) -> Vec<(DiceKey, DataKey)> {
         let mut out = Vec::with_capacity(self.index.paged_out_count);
-        for (key, kv) in &self.values {
+        for (key, kv) in self.values.iter() {
             if kv.injected {
                 continue;
             }
-            for (_, value) in &kv.entries {
+            for value in kv.values() {
                 if let Some(data_key) = value.data_key() {
-                    out.push((*key, data_key));
+                    out.push((key, data_key));
                 }
             }
         }
@@ -645,18 +660,18 @@ impl VersionedGraph {
         let mut resident = Vec::with_capacity(self.index.resident_count);
         let mut paged_out = Vec::with_capacity(self.index.paged_out_count);
         let mut backed = Vec::with_capacity(self.index.backed_count);
-        for (key, kv) in &self.values {
+        for (key, kv) in self.values.iter() {
             if kv.injected {
                 continue;
             }
-            for (_, value) in &kv.entries {
+            for value in kv.values() {
                 match value {
-                    PagableValue::PagedOut(_) => paged_out.push(*key),
+                    PagableValue::PagedOut(_) => paged_out.push(key),
                     PagableValue::Backed(_) => {
-                        resident.push(*key);
-                        backed.push(*key);
+                        resident.push(key);
+                        backed.push(key);
                     }
-                    _ => resident.push(*key),
+                    _ => resident.push(key),
                 }
             }
         }
@@ -693,7 +708,7 @@ impl VersionedGraph {
         ) in keys
         {
             self.with_values(key, |kv| {
-                for (_, value) in kv.entries.iter_mut() {
+                for value in kv.values_mut() {
                     if value
                         .as_hydrated()
                         .is_some_and(|current| current.ptr_eq(&serialized_value))
@@ -710,24 +725,30 @@ impl VersionedGraph {
         evicted
     }
 
-    /// Evicts the backed values of up to `limit` keys, leaving their rows. Returns how many
-    /// values were evicted: zero only once no key has a backed value.
-    pub(crate) fn evict_backed(&mut self, limit: usize) -> u64 {
-        // Collected first: evicting a key's values takes it out of the index.
-        let keys: Vec<DiceKey> = self
-            .index
-            .backed
-            .iter()
-            .take(limit)
-            .map(|index| DiceKey {
-                index: index as u32,
-            })
-            .collect();
+    /// What is backed now, for an eviction sweep that must leave alone values backed after it
+    /// starts.
+    pub(crate) fn backed_snapshot(&self) -> BackedSnapshot {
+        BackedSnapshot {
+            keys: self
+                .index
+                .backed
+                .iter()
+                .map(|index| DiceKey {
+                    index: index as u32,
+                })
+                .collect(),
+            cutoff: lifecycle::residency_cutoff(),
+        }
+    }
+
+    /// Evicts the values of `keys` backed no later than `cutoff`,
+    /// leaving their rows. Returns how many values were evicted.
+    pub(crate) fn evict_backed(&mut self, keys: &[DiceKey], cutoff: u64) -> u64 {
         let mut evicted = 0u64;
-        for key in keys {
+        for &key in keys {
             self.with_values(key, |kv| {
-                for (_, value) in kv.entries.iter_mut() {
-                    if value.evict_backed() {
+                for value in kv.values_mut() {
+                    if value.evict_backed(cutoff) {
                         evicted += 1;
                     }
                 }
@@ -741,7 +762,7 @@ impl VersionedGraph {
     pub(crate) fn mark_non_pageable(&mut self, keys: Vec<(DiceKey, DiceValidValue)>) {
         for (key, inspected) in keys {
             self.with_values(key, |kv| {
-                for (_, value) in kv.entries.iter_mut() {
+                for value in kv.values_mut() {
                     if value
                         .as_hydrated()
                         .is_some_and(|current| current.ptr_eq(&inspected))
@@ -784,7 +805,7 @@ impl VersionedGraph {
         let mut total = Contribution::default();
         let mut candidates = Vec::new();
         let mut backed = Vec::new();
-        for (key, kv) in &self.values {
+        for (key, kv) in self.values.iter() {
             let c = kv.contribution(self.page_out_policy);
             total.resident += c.resident;
             total.paged_out += c.paged_out;
@@ -797,7 +818,7 @@ impl VersionedGraph {
             if c.backed > 0 {
                 backed.push(key.index as usize);
             }
-            for cert in self.core.pinned_certs(*key) {
+            for cert in self.core.pinned_certs(key) {
                 assert!(
                     kv.entry(cert.revision).is_some(),
                     "{key:?} pins a certificate at {:?} but retains no value for it",
@@ -806,7 +827,7 @@ impl VersionedGraph {
             }
             for (revision, _) in &kv.entries {
                 assert!(
-                    self.core.is_referenced(*key, *revision),
+                    self.core.is_referenced(key, *revision),
                     "{key:?} retains {revision:?}, which no claim or assertion names"
                 );
             }

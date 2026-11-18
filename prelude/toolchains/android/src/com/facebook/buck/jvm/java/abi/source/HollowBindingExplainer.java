@@ -10,7 +10,7 @@
 
 package com.facebook.buck.jvm.java.abi.source;
 
-import com.facebook.buck.util.liteinfersupport.Nullable;
+import com.facebook.infer.annotation.Nullsafe;
 import com.sun.source.tree.ClassTree;
 import com.sun.source.tree.CompilationUnitTree;
 import com.sun.source.tree.IdentifierTree;
@@ -26,21 +26,33 @@ import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 import java.util.TreeSet;
 import javax.lang.model.element.Element;
 import javax.lang.model.element.TypeElement;
 import javax.lang.model.type.TypeKind;
 import javax.lang.model.type.TypeMirror;
+import org.jspecify.annotations.Nullable;
 
 /**
  * Explains source-only ABI arity crashes. Resolving a generic reference through an incomplete
  * supertype hierarchy can bind a hollow element with no type parameters, and building the
  * parameterized type then throws {@code IllegalArgumentException: Incorrect number of type
  * arguments} naming nothing fixable. The explanation names the unavailable supertypes of the
- * enclosing class and the fix.
+ * enclosing class and the fix: writing the reference so that it does not depend on them, or, when
+ * no spelling can do that, the providers to add.
  */
+@Nullsafe(Nullsafe.Mode.LOCAL)
 class HollowBindingExplainer {
+  /** Spellings that do not depend on the enclosing class's supertypes come before the providers. */
+  private static final String REMEDY =
+      "To fix, refer to the member type through the type that declares it, with a qualified name"
+          + " (for example Map.Entry<String, String> for an Entry inherited from java.util.Map) or"
+          + " a single-type import of it; the library build's \"Inherited member type\" error"
+          + " gives the spelling. Add the BUCK targets providing these types to"
+          + " source_only_abi_deps only when that error says no spelling can name it.\n";
+
   static IllegalStateException explain(
       Trees javacTrees,
       @Nullable TreePath treePath,
@@ -56,7 +68,8 @@ class HollowBindingExplainer {
       }
       return new IllegalStateException(buildMessage(javacTrees, treePath, hollowName), cause);
     } catch (RuntimeException e) {
-      return new IllegalStateException(fallbackMessage(treePath, hollowName), cause);
+      return new IllegalStateException(
+          fallbackMessage(Objects.requireNonNull(treePath), hollowName), cause);
     }
   }
 
@@ -95,7 +108,7 @@ class HollowBindingExplainer {
               "Further unreadable supertype links (names as spelled): %s.\n",
               String.join(", ", approximate)));
     }
-    message.append("To fix, add the BUCK targets providing these types to source_only_abi_deps.\n");
+    message.append(REMEDY);
     message.append("KOSABI_JASABI_MISSING_SUPERTYPES: ").append(String.join(", ", broken));
     return message.toString();
   }
@@ -111,13 +124,14 @@ class HollowBindingExplainer {
         "Source-only ABI generation cannot emit a correct ABI (in %s): resolving a generic"
             + " reference bound a hollow %s with no type parameters, but no direct supertype"
             + " link of the enclosing class is unreadable. The hierarchy may be incomplete"
-            + " deeper down; add the BUCK targets providing its supertypes to"
-            + " source_only_abi_deps.\n"
+            + " deeper down.\n"
+            + REMEDY
             + "KOSABI_JASABI_MISSING_SUPERTYPES: ",
-        file, hollowName);
+        file,
+        hollowName);
   }
 
-  private static TreePath enclosingClassPath(TreePath path) {
+  private static @Nullable TreePath enclosingClassPath(TreePath path) {
     TreePath current = path;
     while (current != null && !(current.getLeaf() instanceof ClassTree)) {
       current = current.getParentPath();
@@ -189,7 +203,7 @@ class HollowBindingExplainer {
 
   private static void recordBroken(
       TypeMirror mirror,
-      Tree spelling,
+      @Nullable Tree spelling,
       UnitNames names,
       Set<String> broken,
       Set<String> approximate) {
@@ -262,7 +276,7 @@ class HollowBindingExplainer {
     }
 
     /** Fully qualified name for a supertype-clause spelling, or null when unresolvable. */
-    String resolve(Tree spelling) {
+    @Nullable String resolve(Tree spelling) {
       String dotted = dottedName(spelling);
       if (dotted == null || dotted.isEmpty()) {
         return null;
@@ -286,7 +300,7 @@ class HollowBindingExplainer {
       return packageName.isEmpty() ? dotted : packageName + "." + dotted;
     }
 
-    private static String dottedName(Tree spelling) {
+    private static @Nullable String dottedName(Tree spelling) {
       if (spelling instanceof IdentifierTree) {
         return ((IdentifierTree) spelling).getName().toString();
       }

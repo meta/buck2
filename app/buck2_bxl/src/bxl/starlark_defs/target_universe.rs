@@ -22,12 +22,11 @@ use starlark::environment::Methods;
 use starlark::environment::MethodsBuilder;
 use starlark::eval::Evaluator;
 use starlark::starlark_module;
-use starlark::values::AllocValue;
 use starlark::values::Heap;
 use starlark::values::NoSerialize;
 use starlark::values::StarlarkValue;
 use starlark::values::Trace;
-use starlark::values::Value;
+use starlark::values::ValueOf;
 use starlark::values::ValueTyped;
 use starlark::values::starlark_value;
 
@@ -60,16 +59,10 @@ pub(crate) struct StarlarkTargetUniverse<'v> {
 
 starlark::methods_static!(TARGET_UNIVERSE_METHODS = target_universe_methods);
 
-#[starlark_value(type = "bxl.TargetUniverse", StarlarkTypeRepr, UnpackValue)]
+#[starlark_value(type = "bxl.TargetUniverse", no_freeze)]
 impl<'v> StarlarkValue<'v> for StarlarkTargetUniverse<'v> {
     fn get_methods() -> Option<&'static Methods> {
         Some(TARGET_UNIVERSE_METHODS.methods())
-    }
-}
-
-impl<'v> AllocValue<'v> for StarlarkTargetUniverse<'v> {
-    fn alloc_value(self, heap: Heap<'v>) -> Value<'v> {
-        heap.alloc_complex_no_freeze(self)
     }
 }
 
@@ -96,20 +89,21 @@ fn target_universe_methods(builder: &mut MethodsBuilder) {
     fn target_set<'v>(
         this: &'v StarlarkTargetUniverse<'v>,
         heap: Heap<'v>,
-    ) -> starlark::Result<ValueTyped<'v, StarlarkTargetSet<ConfiguredTargetNode>>> {
-        Ok(heap.alloc_typed(StarlarkTargetSet::from(this.target_set.clone())))
+    ) -> starlark::Result<ValueOf<'v, StarlarkTargetSet<ConfiguredTargetNode>>> {
+        Ok(heap.alloc(StarlarkTargetSet::from(this.target_set.clone())))
     }
 
     /// The target set of the entire target universe.
     fn universe_target_set<'v>(
         this: &'v StarlarkTargetUniverse<'v>,
-    ) -> starlark::Result<StarlarkTargetSet<ConfiguredTargetNode>> {
-        Ok(StarlarkTargetSet::from(
+        heap: Heap<'v>,
+    ) -> starlark::Result<ValueOf<'v, StarlarkTargetSet<ConfiguredTargetNode>>> {
+        Ok(heap.alloc(StarlarkTargetSet::from(
             this.target_universe
                 .iter()
                 .map(|node| node.to_owned())
                 .collect::<TargetSet<_>>(),
-        ))
+        )))
     }
 
     /// Looks up valid configured target nodes within the universe. The targets passed in are either string literals,
@@ -118,7 +112,7 @@ fn target_universe_methods(builder: &mut MethodsBuilder) {
         this: &'v StarlarkTargetUniverse<'v>,
         targets: TargetListExprArg<'v>,
         eval: &mut Evaluator<'v, '_, '_>,
-    ) -> starlark::Result<ValueTyped<'v, StarlarkTargetSet<ConfiguredTargetNode>>> {
+    ) -> starlark::Result<ValueOf<'v, StarlarkTargetSet<ConfiguredTargetNode>>> {
         let heap = eval.heap();
         Ok(this.ctx.via_dice(eval, |dice| {
             dice.via(|dice| {
@@ -133,7 +127,7 @@ fn target_universe_methods(builder: &mut MethodsBuilder) {
                         .target_universe
                         .get_from_targets(inputs.iter().map(|i| i.label().dupe()));
 
-                    Ok(heap.alloc_typed(StarlarkTargetSet::from(result)))
+                    Ok(heap.alloc(StarlarkTargetSet::from(result)))
                 }
                 .boxed_local()
             })

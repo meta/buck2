@@ -20,15 +20,16 @@ The isolation directory serves as a fundamental boundary that:
 
 ## Daemon Sharing
 
-Daemon sharing is opt-in with `BUCK2_SHARE_DAEMON=true`. Isolation directories
-in the same project then become tenants of one daemon, with independent output
-and cache paths. The default `false` mode keeps separate daemons.
+Daemon sharing is opt-in with `[buck2] share_daemon = true` in the root
+`.buckconfig`. Isolation directories then become tenants of one daemon per
+compatibility key, with independent output and cache paths. The default `false`
+mode keeps separate daemons; see the daemon concept page for how tenants are
+addressed.
 
 In that mode `buck2 clean` evicts the selected tenant and waits for its disk
 work to finish before deleting its outputs and caches, and `buck2 kill` evicts
 the tenant rather than stopping the process. Sibling tenants remain running and
-the daemon shuts down after its final tenant is evicted. Conflicting routing
-modes cannot own the same tenant disk state simultaneously.
+the daemon shuts down after its final tenant is evicted.
 
 ## How Isolation Directories Work
 

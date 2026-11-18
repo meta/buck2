@@ -18,6 +18,7 @@ import com.facebook.buck.android.exopackage.IsolatedExopackageInfo;
 import com.facebook.buck.core.filesystems.AbsPath;
 import com.facebook.buck.installer.InstallId;
 import com.facebook.buck.installer.InstallResult;
+import com.facebook.infer.annotation.Nullsafe;
 import java.time.Duration;
 import java.time.Instant;
 import java.time.ZoneId;
@@ -26,12 +27,14 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 import java.util.logging.Level;
-import java.util.logging.Logger; // NOPMD
+import java.util.logging.Logger;
 
 /** Installs an Android Apk */
+@Nullsafe(Nullsafe.Mode.LOCAL)
 class AndroidInstall {
   private static final Logger LOG = Logger.getLogger(AndroidInstall.class.getName());
   private static final DateTimeFormatter INSTALL_COMPLETION_TIME_FORMAT =
@@ -73,10 +76,12 @@ class AndroidInstall {
     List<Map<String, String>> deviceInfos = new ArrayList();
     try {
       if (cliOptions.cleanUp) {
-        adbHelper.uninstallApp(state.packageName(), cliOptions.keepUserData);
+        adbHelper.uninstallApp(
+            Objects.requireNonNull(state.packageName()), cliOptions.keepUserData);
       } else {
         if (cliOptions.uninstallFirst) {
-          adbHelper.uninstallApp(state.packageName(), cliOptions.keepUserData);
+          adbHelper.uninstallApp(
+              Objects.requireNonNull(state.packageName()), cliOptions.keepUserData);
         }
         logger.info(String.format("Attempting install of %s", apkInfo.getApkPath()));
         Instant start = Instant.now();
@@ -112,7 +117,7 @@ class AndroidInstall {
             installViaSd,
             /* quiet= */ false,
             installId.getValue(),
-            state.packageName(),
+            Objects.requireNonNull(state.packageName()),
             /* restartApp= */ startsActivity);
         state.metrics().recordDeviceWork(deviceWorkStart, System.currentTimeMillis());
 
@@ -168,15 +173,24 @@ class AndroidInstall {
     } catch (AndroidInstallException exc) {
       return new InstallResult(deviceInfos, Optional.of(exc.getInstallError()));
     } catch (Exception err) {
-      String errMsg = err.getMessage();
+      String errMsg = failureMessage(err);
       logger.log(
           Level.SEVERE,
           String.format("Error while installing %s. Error message: %s", installId, errMsg),
           err);
       return new InstallResult(
           deviceInfos,
-          Optional.of(errMsg).map(AndroidInstallErrorClassifier.INSTANCE::fromErrorMessage));
+          Optional.of(AndroidInstallErrorClassifier.INSTANCE.fromErrorMessage(errMsg)));
     }
+  }
+
+  /**
+   * What a failed install reports. An exception without a message, such as the {@link
+   * InterruptedException} of a step stopped at its time limit, is named by its class.
+   */
+  static String failureMessage(Exception err) {
+    String message = err.getMessage();
+    return message != null ? message : err.toString();
   }
 
   static String formatCompletionMessage(

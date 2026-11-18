@@ -131,11 +131,10 @@ impl AllocWindow {
 /// Cumulative bytes paging has moved out of and back into memory, measured from
 /// the allocator rather than inferred from serialized sizes.
 ///
-/// `bytes_offloaded` is charged where values are actually dropped (the core state
-/// thread, evicting them from the graph) and `bytes_restored` where they are
-/// actually rebuilt (the thread deserializing them). An arc shared with a value
-/// that stays resident is never freed, so it contributes nothing — the case a
-/// serialized-byte count gets wrong.
+/// `bytes_offloaded` counts the memory paging frees: values dropped from the graph, and the
+/// storage and arc-cache memory released after them. `bytes_restored` counts the memory values
+/// take up again when read back. An arc shared with a value that stays resident is never freed,
+/// so it contributes nothing — the case a serialized-byte count gets wrong.
 #[derive(Default)]
 pub(crate) struct PagingMemoryMetrics {
     bytes_offloaded: AtomicI64,
@@ -234,9 +233,10 @@ pub struct EvictionSnapshot {
     /// Eviction passes, counted when they start, including ones that found nothing to evict.
     pub evictions: u64,
     pub values_evicted: u64,
-    /// Memory the evictions freed, measured from the allocator like
-    /// [`PagingMemorySnapshot::bytes_offloaded`] and signed for the same reason. `None` when the
-    /// allocator counters cannot be read.
+    /// Memory the evictions freed, including the storage and arc-cache memory released after
+    /// them, measured from the allocator like [`PagingMemorySnapshot::bytes_offloaded`] and
+    /// signed for the same reason. Excludes what returning freed pages to the OS saves. `None`
+    /// when the allocator counters cannot be read.
     pub bytes_evicted: Option<i64>,
 }
 

@@ -71,7 +71,7 @@ rust_library(
                 "authors": ["Meta"],
                 "description": "Inspect rust object tree and output it as flamegraph",
                 "documentation": "https://docs.rs/allocative",
-                "version": "0.3.6",
+                "version": "0.4.0",
             },
         },
         # FIXME(JakobDegen): Needed because autocargo doesn't handle the select below

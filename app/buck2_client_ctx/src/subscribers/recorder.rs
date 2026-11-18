@@ -47,6 +47,8 @@ use buck2_error::Tier;
 use buck2_error::buck2_error;
 use buck2_error::classify::ERROR_TAG_UNCLASSIFIED;
 use buck2_error::classify::ErrorLike;
+#[cfg(fbcode_build)]
+use buck2_error::classify::best_error;
 use buck2_error::classify::source_area;
 use buck2_error::internal_error;
 use buck2_error::source_location::SourceLocation;
@@ -87,7 +89,6 @@ use crate::common::PreemptibleWhen;
 use crate::console_interaction_stream::ConsoleInteraction;
 use crate::exit_result::ExitResult;
 use crate::subscribers::classify_server_stderr::classify_server_stderr;
-use crate::subscribers::observer::ErrorObserver;
 use crate::subscribers::subscriber::EventSubscriber;
 use crate::subscribers::system_warning::check_download_speed;
 use crate::subscribers::system_warning::check_memory_pressure;
@@ -122,6 +123,8 @@ pub struct InvocationRecorder {
     write_to_path: Option<AbsPathBuf>,
     command_name: Option<&'static str>,
     cli_args: Vec<String>,
+    #[cfg(fbcode_build)]
+    expanded_command: String,
     representative_config_flags: Vec<String>,
     isolation_dir: Option<String>,
     start_time: SystemTime,
@@ -208,9 +211,6 @@ pub struct InvocationRecorder {
     metadata: IntentionallyStdHashMap<String, String>,
     analysis_count: u64,
     load_count: u64,
-    daemon_in_memory_state_is_corrupted: bool,
-    daemon_materializer_state_is_corrupted: bool,
-    enable_restarter: bool,
     restarted_trace_id: Option<TraceId>,
     preemptible: Option<PreemptibleWhen>,
     has_command_result: bool,
@@ -360,6 +360,8 @@ impl InvocationRecorder {
             write_to_path: None,
             command_name: None,
             cli_args: args,
+            #[cfg(fbcode_build)]
+            expanded_command: String::new(),
             representative_config_flags: Vec::new(),
             isolation_dir: None,
             start_time,
@@ -444,9 +446,6 @@ impl InvocationRecorder {
             metadata: buck2_events::metadata::collect(&DaemonId::null()),
             analysis_count: 0,
             load_count: 0,
-            daemon_in_memory_state_is_corrupted: false,
-            daemon_materializer_state_is_corrupted: false,
-            enable_restarter: false,
             restarted_trace_id,
             preemptible: None,
             has_command_result: false,
@@ -606,6 +605,55 @@ impl InvocationRecorder {
             .map(|settings| settings.snapshot().hash);
 
         self.command_name = Some(command_name);
+        #[cfg(fbcode_build)]
+        {
+            self.expanded_command = ctx.argv.expanded_argv.args().join(" ");
+        }
+    }
+
+    #[cfg(fbcode_build)]
+    pub(crate) fn log_artillery_trace(&self, result: &mut ExitResult) {
+        if result.exit_code().is_none() && self.command_name != Some("run")
+            || self.should_restart && !result.is_success() && !crate::stdio::has_written_to_stdout()
+        {
+            return;
+        }
+        art_cli_lite_rs_native::trace_cli("cli.buck2");
+        if !art_cli_lite_rs_native::process_may_be_tracing() {
+            return;
+        }
+        art_cli_lite_rs_native::annotate("buck2.uuid", &self.trace_id.to_string());
+        if let Some(command) = self.command_name {
+            art_cli_lite_rs_native::annotate("buck2.command", command);
+            art_cli_lite_rs_native::annotate("buck2.expanded_command", &self.expanded_command);
+        }
+        art_cli_lite_rs_native::annotate("buck2.exit_result_name", result.name());
+        if let Some(code) = result.exit_code() {
+            art_cli_lite_rs_native::exit_code(code.exit_code() as i32);
+        }
+        if let Some(error) = best_error(&result.get_all_errors()) {
+            art_cli_lite_rs_native::annotate(
+                "buck2.best_error_tag",
+                error
+                    .best_tag()
+                    .map_or(ERROR_TAG_UNCLASSIFIED, |tag| tag.as_str_name()),
+            );
+            art_cli_lite_rs_native::annotate("buck2.error_category", &error.category().to_string());
+        }
+        match result.exec_environment() {
+            Some((prog, environment)) => {
+                environment
+                    .set
+                    .extend(art_cli_lite_rs_native::outgoing_exec(
+                        &prog.to_string_lossy(),
+                    ))
+            }
+            None => art_cli_lite_rs_native::finish(),
+        }
+    }
+
+    pub(crate) fn set_should_restart(&mut self) {
+        self.should_restart = true;
     }
 
     pub(crate) fn update_for_command(
@@ -1345,13 +1393,9 @@ impl InvocationRecorder {
             memory_max_anon_forkserver_actions: self.memory_max_anon_forkserver_actions,
             memory_max_total_allprocs: self.memory_max_total_allprocs,
             memory_max_total_forkserver_actions: self.memory_max_total_forkserver_actions,
-            memory_max_swap_bytes_allprocs: self.memory_max_swap_bytes_allprocs.unwrap_or(0),
-            memory_max_pressure_10s_avg_allprocs: self
-                .memory_max_pressure_10s_avg_allprocs
-                .unwrap_or(0.0),
-            memory_max_pressure_60s_avg_allprocs: self
-                .memory_max_pressure_60s_avg_allprocs
-                .unwrap_or(0.0),
+            memory_max_swap_bytes_allprocs: self.memory_max_swap_bytes_allprocs,
+            memory_max_pressure_10s_avg_allprocs: self.memory_max_pressure_10s_avg_allprocs,
+            memory_max_pressure_60s_avg_allprocs: self.memory_max_pressure_60s_avg_allprocs,
             command_options: self.command_options,
             io_copy_count,
             io_symlink_count,
@@ -2472,14 +2516,6 @@ impl InvocationRecorder {
         if let Some(soft_error_category) = err.soft_error_category.as_ref() {
             self.soft_error_categories
                 .insert(soft_error_category.to_owned());
-
-            if err.daemon_in_memory_state_is_corrupted {
-                self.daemon_in_memory_state_is_corrupted = true;
-            }
-
-            if err.daemon_materializer_state_is_corrupted {
-                self.daemon_materializer_state_is_corrupted = true;
-            }
         }
 
         Ok(())
@@ -2678,10 +2714,6 @@ impl InvocationRecorder {
                     }
                     buck2_data::instant_event::Data::StructuredError(err) => {
                         self.handle_structured_error(err)
-                    }
-                    buck2_data::instant_event::Data::RestartConfiguration(conf) => {
-                        self.enable_restarter = conf.enable_restarter;
-                        Ok(())
                     }
                     buck2_data::instant_event::Data::ConcurrentCommands(concurrent_commands) => {
                         self.handle_concurrent_commands(concurrent_commands)
@@ -2895,34 +2927,12 @@ impl EventSubscriber for InvocationRecorder {
         }
     }
 
-    fn as_error_observer(&self) -> Option<&dyn ErrorObserver> {
-        Some(self)
-    }
-
     fn handle_daemon_connection_failure(&mut self) {
         self.daemon_connection_failure = true;
     }
 
     fn handle_daemon_started(&mut self, daemon_was_started: buck2_data::DaemonWasStartedReason) {
         self.daemon_was_started = Some(daemon_was_started);
-    }
-
-    fn handle_should_restart(&mut self) {
-        self.should_restart = self.restarted_trace_id.is_none();
-    }
-}
-
-impl ErrorObserver for InvocationRecorder {
-    fn daemon_in_memory_state_is_corrupted(&self) -> bool {
-        self.daemon_in_memory_state_is_corrupted
-    }
-
-    fn daemon_materializer_state_is_corrupted(&self) -> bool {
-        self.daemon_materializer_state_is_corrupted
-    }
-
-    fn restarter_is_enabled(&self) -> bool {
-        self.enable_restarter
     }
 }
 

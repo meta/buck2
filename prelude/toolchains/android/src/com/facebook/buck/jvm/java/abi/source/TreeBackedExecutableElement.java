@@ -10,7 +10,7 @@
 
 package com.facebook.buck.jvm.java.abi.source;
 
-import com.facebook.buck.util.liteinfersupport.Nullable;
+import com.facebook.infer.annotation.Nullsafe;
 import com.sun.source.tree.MethodTree;
 import com.sun.source.tree.Tree;
 import com.sun.source.tree.VariableTree;
@@ -27,12 +27,14 @@ import javax.lang.model.element.TypeParameterElement;
 import javax.lang.model.element.VariableElement;
 import javax.lang.model.type.TypeMirror;
 import javax.lang.model.type.TypeVariable;
+import org.jspecify.annotations.Nullable;
 
 /**
  * An implementation of {@link ExecutableElement} that uses only the information available from a
  * {@link MethodTree}. This results in an incomplete implementation; see documentation for
  * individual methods and {@link com.facebook.buck.jvm.java.abi.source} for more information.
  */
+@Nullsafe(Nullsafe.Mode.LOCAL)
 class TreeBackedExecutableElement extends TreeBackedParameterizable
     implements ArtificialExecutableElement {
   private final ExecutableElement underlyingElement;
@@ -62,8 +64,7 @@ class TreeBackedExecutableElement extends TreeBackedParameterizable
   }
 
   @Override
-  @Nullable
-  MethodTree getTree() {
+  @Nullable MethodTree getTree() {
     return tree;
   }
 
@@ -173,7 +174,7 @@ class TreeBackedExecutableElement extends TreeBackedParameterizable
                 underlyingValue,
                 new TreePath(
                     Objects.requireNonNull(getTreePath()),
-                    Objects.requireNonNull(tree).getDefaultValue()),
+                    Objects.requireNonNull(Objects.requireNonNull(tree).getDefaultValue())),
                 getCanonicalizer());
       }
     }
@@ -181,7 +182,7 @@ class TreeBackedExecutableElement extends TreeBackedParameterizable
   }
 
   @Override
-  public <R, P> R accept(ElementVisitor<R, P> v, P p) {
+  public <R, P> R accept(ElementVisitor<R, P> v, @Nullable P p) {
     return v.visitExecutable(this, p);
   }
 }

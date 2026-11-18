@@ -10,6 +10,7 @@
 
 package com.facebook.buck.jvm.java.abi;
 
+import com.facebook.infer.annotation.Nullsafe;
 import com.google.common.base.Preconditions;
 import java.util.ArrayList;
 import java.util.Collections;
@@ -17,7 +18,7 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Objects;
 import java.util.Set;
-import javax.annotation.Nullable;
+import org.jspecify.annotations.Nullable;
 import org.objectweb.asm.Attribute;
 import org.objectweb.asm.ClassReader;
 import org.objectweb.asm.ClassVisitor;
@@ -33,6 +34,7 @@ import org.objectweb.asm.tree.FieldNode;
 import org.objectweb.asm.tree.MethodNode;
 
 /** A {@link ClassVisitor} that only passes to its delegate events for the class's ABI. */
+@Nullsafe(Nullsafe.Mode.LOCAL)
 class AbiFilteringClassVisitor extends ClassVisitor {
 
   private final List<String> methodsWithRetainedBody;
@@ -143,13 +145,14 @@ class AbiFilteringClassVisitor extends ClassVisitor {
             && !hasJvmStaticOrJvmField(method.invisibleAnnotations)) {
           continue;
         }
-        result.add(method.name + method.desc);
-        if (method.name.endsWith("$annotations")) {
+        String methodName = Objects.requireNonNull(method.name);
+        result.add(methodName + method.desc);
+        if (methodName.endsWith("$annotations")) {
           String accessorName =
-              method.name.substring(0, method.name.length() - "$annotations".length());
+              methodName.substring(0, methodName.length() - "$annotations".length());
           for (MethodNode candidate : classNode.methods) {
-            if (candidate.name.equals(accessorName)
-                && isAccessorShape(accessorName, candidate.desc)) {
+            if (Objects.requireNonNull(candidate.name).equals(accessorName)
+                && isAccessorShape(accessorName, Objects.requireNonNull(candidate.desc))) {
               result.add(candidate.name + candidate.desc);
             }
           }
@@ -231,9 +234,9 @@ class AbiFilteringClassVisitor extends ClassVisitor {
       int version,
       int access,
       String name,
-      String signature,
-      String superName,
-      String[] interfaces) {
+      @Nullable String signature,
+      @Nullable String superName,
+      String @Nullable [] interfaces) {
     this.name = name;
     classAccess = access;
     classVersion = version;
@@ -263,7 +266,7 @@ class AbiFilteringClassVisitor extends ClassVisitor {
   @Override
   @Nullable
   public FieldVisitor visitField(
-      int access, String name, String desc, String signature, Object value) {
+      int access, String name, String desc, @Nullable String signature, @Nullable Object value) {
     if (stripAllMembers && !keptMemberKeys.contains(name + desc)) {
       return null;
     }
@@ -276,7 +279,11 @@ class AbiFilteringClassVisitor extends ClassVisitor {
   @Override
   @Nullable
   public MethodVisitor visitMethod(
-      int access, String name, String desc, String signature, String[] exceptions) {
+      int access,
+      String name,
+      String desc,
+      @Nullable String signature,
+      String @Nullable [] exceptions) {
     if (stripAllMembers && !name.equals("<init>") && !keptMemberKeys.contains(name + desc)) {
       return null;
     }
@@ -423,7 +430,7 @@ class AbiFilteringClassVisitor extends ClassVisitor {
 
   /** A {@link MethodVisitor} that replicates the behavior of {@link ClassReader#SKIP_CODE}. */
   private static class SkipCodeMethodVisitor extends MethodVisitor {
-    public SkipCodeMethodVisitor(int api, MethodVisitor methodVisitor) {
+    public SkipCodeMethodVisitor(int api, @Nullable MethodVisitor methodVisitor) {
       super(api, methodVisitor);
     }
 

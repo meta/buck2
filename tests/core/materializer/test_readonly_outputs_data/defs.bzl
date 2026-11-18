@@ -70,3 +70,28 @@ incremental = rule(
         "script": attrs.source(),
     },
 )
+
+def _overlay_dir_impl(ctx):
+    base = ctx.actions.copied_dir(
+        "base",
+        {
+            "kept.txt": ctx.actions.write("kept.txt", "kept", has_content_based_path = False),
+            "replaced.txt": ctx.actions.write("old.txt", "old", has_content_based_path = False),
+        },
+        has_content_based_path = False,
+    )
+    out = ctx.actions.copied_dir(
+        "overlay",
+        {
+            "": base,
+            "replaced.txt": ctx.actions.write("new.txt", "new", has_content_based_path = False),
+        },
+        has_content_based_path = False,
+    )
+    return [DefaultInfo(default_output = out)]
+
+# A copied dir whose later entry replaces a file an earlier entry lays down.
+overlay_dir = rule(
+    impl = _overlay_dir_impl,
+    attrs = {},
+)

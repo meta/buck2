@@ -517,7 +517,8 @@ fn backed_counts(
 }
 
 fn evict_backed(graph: &mut VersionedGraph) -> u64 {
-    let evicted = graph.evict_backed(usize::MAX);
+    let snapshot = graph.backed_snapshot();
+    let evicted = graph.evict_backed(&snapshot.keys, snapshot.cutoff);
     graph.assert_consistent();
     evicted
 }
@@ -628,6 +629,29 @@ fn rehydrated_value_is_backed_by_its_row() {
         Some(DataKey::testing_new(0x1234))
     );
     assert_eq!(evict_backed(&mut graph), 0);
+}
+
+/// An eviction leaves values backed after its snapshot: a value read back again while the
+/// eviction runs is in use.
+#[test]
+fn eviction_leaves_values_backed_after_its_snapshot() {
+    let (mut graph, root) = with_leaf_under(PageOutPolicy::OncePerValue);
+    let v2 = graph.head(root);
+    compute(&mut graph, key(1), v2, value(7));
+    page_out(&mut graph, key(1), 0x1);
+    graph.rehydrate(key(1), DataKey::testing_new(0x1), value(7), READ_BACK_BYTES);
+    let snapshot = graph.backed_snapshot();
+    assert_eq!(snapshot.keys, [key(1)]);
+
+    assert_eq!(graph.evict_backed(&snapshot.keys, snapshot.cutoff), 1);
+    graph.rehydrate(key(1), DataKey::testing_new(0x1), value(7), READ_BACK_BYTES);
+    assert_eq!(
+        graph.evict_backed(&snapshot.keys, snapshot.cutoff),
+        0,
+        "read back after the snapshot"
+    );
+    graph.assert_consistent();
+    assert_eq!(evict_backed(&mut graph), 1, "a later snapshot includes it");
 }
 
 /// A computed key whose values are asserted (`changed_to` on a `Key`, which buck2 does for its

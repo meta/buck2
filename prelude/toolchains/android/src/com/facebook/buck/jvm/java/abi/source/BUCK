@@ -9,6 +9,8 @@ buck_java_library(
     name = "source",
     srcs = glob(["*.java"]),
     provided_deps = [
+        "prelude//toolchains/android/third-party:infer-annotations",
+        "prelude//toolchains/android/third-party:jspecify",
         # Interface-only api module for communicating back to Buck core, also loaded by the bootstrapper
         "prelude//toolchains/android/src/com/facebook/buck/jvm/java/abi/source/api:api",
         # Another interface-only api module for communicating back to Buck core, also loaded by the bootstrapper
@@ -29,6 +31,5 @@ buck_java_library(
         # internals (outside of stuff designed for use in plugins) or large libraries like Guava
         "prelude//toolchains/android/src/com/facebook/buck/jvm/java/lang/model:model",
         "prelude//toolchains/android/src/com/facebook/buck/jvm/java/plugin/adapter:adapter",
-        "prelude//toolchains/android/src/com/facebook/buck/util/liteinfersupport:liteinfersupport",
     ],
 )

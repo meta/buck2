@@ -60,6 +60,7 @@ public class HollowBindingExplainerTest extends CompilerTreeApiTest {
         explanation.contains(
             "KOSABI_JASABI_MISSING_SUPERTYPES: "
                 + "com.dep.MissingIface, com.dep.Outer.Inner, com.foo.SamePkgMissing"));
+    assertSpellingsBeforeProviders();
   }
 
   @Test
@@ -104,6 +105,23 @@ public class HollowBindingExplainerTest extends CompilerTreeApiTest {
     testCompiler.compile();
 
     assertTrue(explanation, explanation.contains("no direct supertype link"));
+    assertSpellingsBeforeProviders();
+  }
+
+  /**
+   * The fix leads with writing the reference through its declaring type, and offers the providers
+   * only for references that no spelling can name.
+   */
+  private void assertSpellingsBeforeProviders() {
+    String spellings =
+        "To fix, refer to the member type through the type that declares it, with a qualified name"
+            + " (for example Map.Entry<String, String> for an Entry inherited from java.util.Map)"
+            + " or a single-type import of it; the library build's \"Inherited member type\" error"
+            + " gives the spelling.";
+    String providers =
+        "Add the BUCK targets providing these types to source_only_abi_deps only when that error"
+            + " says no spelling can name it.";
+    assertTrue(explanation, explanation.contains(spellings + " " + providers + "\n"));
   }
 
   private void captureExplanation(String fieldName) {

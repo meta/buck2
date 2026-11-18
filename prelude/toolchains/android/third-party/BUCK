@@ -383,7 +383,6 @@ buck_java_library(
     exported_deps = [
         ":failureaccess",
         ":guava-jar",
-        ":jsr305",
         ":listenablefuture",
     ],
 )
@@ -710,15 +709,18 @@ third_party_jar(
 )
 # ===   End: jna
 
-# === Begin: jsr
+# === Begin: jspecify
 
 third_party_jar(
-    name = "jsr305",
-    # @oss-disable[end= ]: internal_alias = "fbsource//third-party/java/com/google/code/findbugs/jsr305:jsr305__toolchain",
-    sha1 = "25ea2e8b0c338a877313bd4672d3fe056ea78f0d",
-    url = "mvn:com.google.code.findbugs:jsr305:jar:3.0.2",
+    name = "jspecify",
+    # @oss-disable[end= ]: internal_alias = "fbsource//third-party/java/org/jspecify/jspecify:jspecify",
+    sha1 = "3d60fd98eb8ade73004f4195c37b6317e02cf3d7",
+    url = "mvn:org.jspecify:jspecify:jar:1.0.1",
     visibility = ["PUBLIC"],
 )
+# ===   End: jspecify
+
+# === Begin: jsr
 
 third_party_jar(
     name = "jsr330",
@@ -955,6 +957,14 @@ third_party_jar(
     # @oss-disable[end= ]: internal_alias = "fbsource//third-party/java/kotlincd:kotlin-daemon-client",
     sha1 = "8bd63e265ea5e6472f96f7e9e2431d02b4e69f3e",
     url = "mvn:org.jetbrains.kotlin:kotlin-daemon-client:jar:2.3.21",
+    visibility = ["PUBLIC"],
+)
+
+third_party_jar(
+    name = "kotlin-compose-compiler-plugin-embeddable",
+    # @oss-disable[end= ]: internal_alias = "fbsource//third-party/java/kotlincd:kotlin-compose-compiler-plugin-embeddable__toolchain",
+    sha1 = "96eb34ab9364f1c4291f35b38b1b98d0fc70170c",
+    url = "mvn:org.jetbrains.kotlin:kotlin-compose-compiler-plugin-embeddable:jar:2.3.21",
     visibility = ["PUBLIC"],
 )
 
@@ -1351,6 +1361,7 @@ third_party_jar(
         "prelude//toolchains/android/src/com/facebook/buck/android/dex:d8_executable_main",
         "prelude//toolchains/android/src/com/facebook/buck/android/dex:dex",
         "prelude//toolchains/android/src/com/facebook/buck/android/dex:multi_dex_executable_main",
+        "prelude//toolchains/android/test/com/facebook/buck/android/dex:dex",
     ],
 )
 # ===   end: third party libraries with internal patching

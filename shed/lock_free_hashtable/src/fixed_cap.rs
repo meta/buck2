@@ -202,7 +202,7 @@ impl<T: AtomicValue> FixedCapTable<T> {
 
     #[inline]
     pub(crate) fn need_resize(&self) -> bool {
-        self.size.0.load(Ordering::Relaxed) >= self.entries.len() / 2
+        self.size.0.load(Ordering::Relaxed) >= self.entries.len() / 8 * 7
     }
 
     #[inline]

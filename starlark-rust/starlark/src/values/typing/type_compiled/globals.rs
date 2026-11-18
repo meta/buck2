@@ -21,18 +21,18 @@ use crate as starlark;
 use crate::environment::GlobalsBuilder;
 use crate::eval::Evaluator;
 use crate::values::Value;
-use crate::values::ValueOfUnchecked;
-use crate::values::typing::ty::AbstractType;
+use crate::values::ValueOf;
 use crate::values::typing::type_compiled::compiled::TypeCompiled;
+use crate::values::typing::type_type::TypeType;
 
 #[starlark_module]
 pub(crate) fn register_eval_type(globals: &mut GlobalsBuilder) {
     /// Create a runtime type object which can be used to check if a value matches the given type.
     fn eval_type<'v>(
-        #[starlark(require = pos)] ty: ValueOfUnchecked<'v, AbstractType>,
+        #[starlark(require = pos)] ty: ValueOf<'v, TypeType>,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> anyhow::Result<TypeCompiled<'v>> {
-        TypeCompiled::new(ty.get(), eval.heap())
+        TypeCompiled::new(ty.to_value(), eval.heap())
     }
 
     /// Check if a value matches the given type.
@@ -53,10 +53,10 @@ pub(crate) fn register_eval_type(globals: &mut GlobalsBuilder) {
     /// `eval_type()` converts `list` value into prepared type matcher.
     fn isinstance<'v>(
         #[starlark(require = pos)] value: Value<'v>,
-        #[starlark(require = pos)] ty: ValueOfUnchecked<'v, AbstractType>,
+        #[starlark(require = pos)] ty: ValueOf<'v, TypeType>,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> anyhow::Result<bool> {
-        Ok(TypeCompiled::new(ty.get(), eval.heap())?.matches(value))
+        Ok(TypeCompiled::new(ty.to_value(), eval.heap())?.matches(value))
     }
 }
 

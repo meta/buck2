@@ -16,8 +16,10 @@ package com.facebook
 import com.facebook.kotlin.compilercompat.compatValueParameters
 import org.jetbrains.kotlin.backend.common.extensions.IrPluginContext
 import org.jetbrains.kotlin.backend.common.lower.createIrBuilder
+import org.jetbrains.kotlin.descriptors.InlineClassRepresentation
 import org.jetbrains.kotlin.ir.IrElement
 import org.jetbrains.kotlin.ir.declarations.IrClass
+import org.jetbrains.kotlin.ir.declarations.IrDeclarationContainer
 import org.jetbrains.kotlin.ir.declarations.IrDeclarationOrigin
 import org.jetbrains.kotlin.ir.declarations.IrModuleFragment
 import org.jetbrains.kotlin.ir.declarations.IrParameterKind
@@ -27,11 +29,16 @@ import org.jetbrains.kotlin.ir.declarations.IrValueParameter
 import org.jetbrains.kotlin.ir.expressions.impl.IrConstImpl
 import org.jetbrains.kotlin.ir.symbols.IrClassSymbol
 import org.jetbrains.kotlin.ir.symbols.UnsafeDuringIrConstructionAPI
+import org.jetbrains.kotlin.ir.types.IrSimpleType
 import org.jetbrains.kotlin.ir.types.IrType
+import org.jetbrains.kotlin.ir.types.classOrNull
 import org.jetbrains.kotlin.ir.types.defaultType
+import org.jetbrains.kotlin.ir.types.isNullable
+import org.jetbrains.kotlin.ir.types.isPrimitiveType
 import org.jetbrains.kotlin.ir.types.makeNullable
 import org.jetbrains.kotlin.ir.util.constructors
 import org.jetbrains.kotlin.ir.util.hasAnnotation
+import org.jetbrains.kotlin.ir.util.isPublishedApi
 import org.jetbrains.kotlin.load.java.JvmAbi
 import org.jetbrains.kotlin.name.ClassId
 import org.jetbrains.kotlin.name.FqName
@@ -45,6 +52,9 @@ import org.jetbrains.kotlin.name.Name
  * - `$changed: Int` (1 or more) — bitmask tracking parameter change state
  * - `$default: Int` (0 or more) — bitmask for default parameter values, only on a concrete function
  *   that has defaults
+ *
+ * It also clears the parameters' default values, as Compose does, and like Compose makes each
+ * parameter with a default able to take the placeholder passed for "use the default".
  *
  * Parameter counting follows the Compose compiler spec:
  * - changedParamCount = max(1, ceil((realValueParams + thisParams) / SLOTS_PER_INT))
@@ -79,6 +89,8 @@ internal class ComposerParamInjector(private val pluginContext: IrPluginContext)
     pluginContext.referenceClass(JVM_NAME_CLASS_ID)
   }
 
+  private val pendingStubs = mutableListOf<IrSimpleFunction>()
+
   /** Run the transform on the entire module. */
   fun transform(moduleFragment: IrModuleFragment) {
     val composerIrType = composerType ?: return // Compose runtime not on classpath; skip.
@@ -86,6 +98,8 @@ internal class ComposerParamInjector(private val pluginContext: IrPluginContext)
         ComposerParamVisitor(pluginContext, composerIrType),
         null,
     )
+    // Added once the walk is over, so it never iterates a container it is adding to.
+    pendingStubs.forEach { (it.parent as IrDeclarationContainer).declarations += it }
     // This must run after every in-module composable has been transformed, so links between two
     // transformed declarations are preserved while stale links to dependency declarations are not.
     moduleFragment.accept(OverrideLinkRepairVisitor(), null)
@@ -174,6 +188,17 @@ internal class ComposerParamInjector(private val pluginContext: IrPluginContext)
       val hasDefaults = existingValueParams.any { it.defaultValue != null }
       val defaultCount =
           if (hasDefaults && hasBody) ceilDiv(realValueParamCount, BITS_PER_DEFAULT_INT) else 0
+      // Compose retypes each parameter that has a default, its own or an overridden function's, so
+      // it can carry the placeholder passed for "use the default" (ComposerParamTransformer:
+      // `param.type = param.type.defaultParameterType()`), once the synthetic parameters are in.
+      // From 2.5 only a function that takes the `$default` mask is retyped. The defaults of a
+      // virtual function were already moved into ComposeDefaultImpls, as Compose also does first.
+      val retyped =
+          if (COMPOSE_RETYPES_ONLY_WITH_DEFAULT_MASK && defaultCount == 0) emptyList()
+          else function.parameters.indices.filter { hasDefaultForParam(function, it) }
+      // Compose clears these once it has moved the defaults into the body or into
+      // ComposeDefaultImpls, so the backend generates no `<fn>$default` stub for a composable.
+      existingValueParams.forEach { it.defaultValue = null }
 
       // Appended after the existing parameters: $composer, $changed[N], $default[N].
       val injectedParams = mutableListOf<IrValueParameter>()
@@ -188,6 +213,18 @@ internal class ComposerParamInjector(private val pluginContext: IrPluginContext)
       }
 
       function.parameters = function.parameters + injectedParams
+      // ComposerParamTransformer.makeValueClassNonPrimitiveStub: retyping a value class over a
+      // reference type changes the mangled JVM name, so a public composable keeps a stub with the
+      // parameter types it had before.
+      if (
+          (function.visibility.isPublicAPI || function.isPublishedApi()) &&
+              retyped.any { isNonNullValueClassOverReference(function.parameters[it].type) }
+      ) {
+        pendingStubs += defaultParamStub(pluginContext, function)
+      }
+      retyped.forEach {
+        function.parameters[it].type = defaultParameterType(function.parameters[it].type)
+      }
       stampAccessorJvmName(function)
     }
 
@@ -268,6 +305,36 @@ internal class ComposerParamInjector(private val pluginContext: IrPluginContext)
 
   private fun IrSimpleFunction.hasInjectedComposerParam(): Boolean = compatValueParameters.any {
     it.name.asString() == "\$composer"
+  }
+
+  // ComposerParamTransformer.hasDefaultForParam: a regular parameter has a default when it
+  // declares one or the parameter at its index in an overridden function with as many parameters
+  // has one.
+  private fun hasDefaultForParam(function: IrSimpleFunction, index: Int): Boolean {
+    val param = function.parameters[index]
+    if (param.kind != IrParameterKind.Regular) return false
+    if (param.defaultValue != null) return true
+    return function.overriddenSymbols.any {
+      it.owner.parameters.size == function.parameters.size && hasDefaultForParam(it.owner, index)
+    }
+  }
+
+  // AbstractComposeLowering.defaultParameterType: primitives and value classes over a primitive
+  // keep their type; everything else becomes nullable.
+  private fun defaultParameterType(type: IrType): IrType =
+      if (type.isPrimitiveType() || unboxedValueClassType(type)?.isPrimitiveType() == true) type
+      else type.makeNullable()
+
+  private fun isNonNullValueClassOverReference(type: IrType): Boolean =
+      unboxedValueClassType(type)?.let { !it.isPrimitiveType() && !it.isNullable() } == true
+
+  private fun unboxedValueClassType(type: IrType): IrType? {
+    if (type.isNullable()) return null
+    val underlying =
+        (type.classOrNull?.owner?.valueClassRepresentation
+                as? InlineClassRepresentation<IrSimpleType>)
+            ?.underlyingType ?: return null
+    return unboxedValueClassType(underlying) ?: underlying
   }
 }
 

@@ -34,6 +34,7 @@ use pagable::PagableSerialize;
 use pagable::PagableSerializer;
 use starlark_derive::StarlarkPagable;
 use starlark_syntax::syntax::ast::Visibility;
+use static_assertions::assert_eq_size;
 
 use crate as starlark;
 use crate::collections::Hashed;
@@ -141,10 +142,13 @@ pub(crate) struct FrozenModuleData<'v> {
     docstring: Option<String>,
     /// When heap profile enabled, this field stores retained memory info.
     /// Runtime profiling data — not meaningful to round-trip, so we skip
-    /// serialization and restore as `None`.
+    /// serialization and restore as `None`. Boxed to keep every frozen module
+    /// small: this is `None` unless the retained heap profiler is on.
     #[starlark_pagable(skip)]
-    heap_profile: Option<RetainedHeapProfile>,
+    heap_profile: Option<Box<RetainedHeapProfile>>,
 }
+
+assert_eq_size!(FrozenModuleData<'static>, [usize; 9]);
 
 register_starlark_any_complex!(frozen FrozenModuleData<'_>);
 
@@ -564,10 +568,10 @@ impl<'v> Module<'v> {
                 // TODO(nga): retained heap profile does not store information about data
                 //   allocated in frozen heap before freeze starts.
                 let heap_profile = AggregateHeapProfileInfo::collect(heap, Some(HeapKind::Frozen));
-                Some(RetainedHeapProfile {
+                Some(Box::new(RetainedHeapProfile {
                     info: heap_profile,
                     mode,
-                })
+                }))
             } else {
                 None
             };
@@ -598,7 +602,7 @@ impl<'v> Module<'v> {
     /// Modifying these variables while executing is ongoing can have
     /// surprising effects.
     pub fn set(&self, name: &str, value: Value<'v>) {
-        let name = self.frozen_heap(|fh, edge| edge.rebrand(fh.alloc_str(name)));
+        let name = self.frozen_heap(|fh, edge| edge.rebrand(fh.alloc(name)));
         let slot = self.names.add_name(name);
         let slots = self.slots();
         slots.ensure_slot(slot);
@@ -731,6 +735,7 @@ mod tests {
     use crate::values::Trace;
     use crate::values::Value;
     use crate::values::layout::heap::name::StarlarkTestHeapName;
+    use crate::values::list::AllocList;
     use crate::values::list::ListRef;
     use crate::values::starlark_value;
 
@@ -775,7 +780,7 @@ x = f(1)
                 Ok(17)
             }
 
-            const BAR: Vec<String> = Vec::new();
+            const BAR: AllocList<Vec<String>> = AllocList(Vec::new());
         }
 
         let mut globals = GlobalsBuilder::new();
@@ -798,7 +803,7 @@ x = f(1)
     /// A value of the module's frozen heap, stored in a list on the value heap.
     fn frozen_heap_string_in_value_heap<'v>(module: &Module<'v>, expected: &str) -> Value<'v> {
         let s = module.frozen_heap(|fh, edge| edge.rebrand(fh.alloc(expected)));
-        module.heap().alloc(vec![s])
+        module.heap().alloc(AllocList(vec![s])).to_value()
     }
 
     fn assert_list_of_string(list: Value, expected: &str) {

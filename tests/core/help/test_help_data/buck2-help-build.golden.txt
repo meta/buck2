@@ -178,6 +178,10 @@ Options:
       --materialize-failed-outputs
           Materializes outputs (if present) for failed actions which ran on RE
 
+      --streaming-build-report-final-only
+          Emit streaming build report snapshots only when a requested target finishes, except for
+          the error that stops a fail-fast build
+
   -h, --help
           Print help (see a summary with '-h')
 

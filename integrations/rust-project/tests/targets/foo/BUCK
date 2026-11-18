@@ -2,6 +2,7 @@ load("@fbcode_macros//build_defs:native_rules.bzl", "buck_filegroup")
 load("@fbsource//tools/build_defs:rust_binary.bzl", "rust_binary")
 load("@fbsource//tools/build_defs:rust_library.bzl", "rust_library")
 load("@fbsource//tools/build_defs:rust_unittest.bzl", "rust_unittest")
+load("@fbsource//tools/target_determinator/macros:ci.bzl", "ci")
 load(":wrapper.bzl", "custom_rust_test")
 
 oncall("rust_foundation")
@@ -54,6 +55,70 @@ rust_library(
         "mapped_g.rs": "src/mapped.rs",
     },
     target_compatible_with = ["ovr_config//cpu/constraints:riscv64"],
+)
+
+rust_library(
+    name = "g_with_generated_srcs",
+    srcs = [
+        "lib_g.rs",
+        ":g_filegroup",
+    ],
+    crate_root = "lib_g.rs",
+    target_compatible_with = ["ovr_config//cpu/constraints:riscv64"],
+)
+
+rust_library(
+    name = "g_with_nested_select_deps",
+    srcs = ["lib_g.rs"],
+    crate_root = "lib_g.rs",
+    target_compatible_with = ["ovr_config//cpu/constraints:riscv64"],
+    deps = select({
+        "DEFAULT": [":f"] + select({
+            "DEFAULT": [],
+            "ovr_config//os:macos": [":e"],
+        }),
+        "ovr_config//os:macos": [],
+    }),
+)
+
+rust_library(
+    name = "g_with_concat_env",
+    srcs = ["lib_g.rs"],
+    crate_root = "lib_g.rs",
+    # buildifier: disable=dict-concatenation
+    env = {"UNIVERSAL": "1"} + select({
+        "DEFAULT": {"DEFAULT_ONLY": "2"},
+        "ovr_config//os:macos": {},
+    }),
+    target_compatible_with = ["ovr_config//cpu/constraints:riscv64"],
+)
+
+rust_library(
+    name = "g_with_select_no_default",
+    srcs = ["lib_g.rs"],
+    crate_root = "lib_g.rs",
+    env = {
+        "MACOS_ONLY": select({"ovr_config//os:macos": "1"}),
+        "UNIVERSAL": "1",
+    },
+    features = select({"ovr_config//os:macos": ["macos_only"]}),
+    target_compatible_with = ["ovr_config//cpu/constraints:riscv64"],
+)
+
+rust_binary(
+    name = "g_incompatible_tool",
+    srcs = ["main.rs"],
+    target_compatible_with = ["ovr_config//cpu/constraints:riscv64"],
+)
+
+rust_library(
+    name = "g_with_incompatible_exec_dep",
+    srcs = ["lib_g.rs"],
+    crate_root = "lib_g.rs",
+    env = {"TOOL": "$(exe :g_incompatible_tool)"},
+    # No execution platform can build this, by design.
+    labels = [ci.skip_target()],
+    unittests = False,
 )
 
 rust_binary(

@@ -23,13 +23,11 @@ pub struct ThreadDumpCommand {}
 
 impl ThreadDumpCommand {
     pub fn exec(self, _matches: BuckArgMatches<'_>, ctx: ClientCommandContext<'_>) -> ExitResult {
-        let paths = ctx.paths()?;
-        let daemon_dir = paths.daemon_dir()?;
-        let Ok(info) = BuckdProcessInfo::load(&daemon_dir) else {
-            return buck2_error!(ErrorTag::Input, "No running buck daemon").into();
-        };
-
-        ctx.with_runtime(|_| async move {
+        ctx.with_runtime(|ctx| async move {
+            let daemon_dir = ctx.resolve_tenant_daemon_dir().await?;
+            let Ok(info) = BuckdProcessInfo::load(&daemon_dir) else {
+                return Err(buck2_error!(ErrorTag::Input, "No running buck daemon"));
+            };
             let status = thread_dump_command(&info)?
                 .spawn()
                 .buck_error_context("Could not run LLDB to grab a thread-dump")?

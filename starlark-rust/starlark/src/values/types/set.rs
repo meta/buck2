@@ -19,8 +19,9 @@
 pub(crate) mod methods;
 pub(crate) mod refs;
 pub(crate) mod set;
-pub(crate) mod unpack;
+pub(crate) mod set_type;
 pub(crate) mod value;
 pub use crate::values::set::refs::SetMut;
 pub use crate::values::set::refs::SetRef;
-pub use crate::values::set::unpack::UnpackSetEntries;
+pub use crate::values::set::set_type::SetOf;
+pub use crate::values::set::set_type::SetType;

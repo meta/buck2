@@ -9,6 +9,7 @@
  */
 
 use std::io;
+use std::path::PathBuf;
 use std::process::Command;
 
 use clap::Parser;
@@ -30,24 +31,24 @@ enum Shell {
     Zsh,
 }
 
+/// The install directory of a shell that Meta's Linux build bundles with this binary. Elsewhere,
+/// and in open source, there is none, and the shell on `PATH` runs.
+pub(crate) fn bundled_shell(shell: &str) -> Option<PathBuf> {
+    buck_resources::get(format!("buck2/shed/completion_verify/{shell}")).ok()
+}
+
 impl Shell {
     fn find(self) -> io::Result<Command> {
         match self {
             Self::Bash => Ok(Command::new("bash")),
-            Self::Fish => {
-                let mut path = buck_resources::get("buck2/shed/completion_verify/fish").unwrap();
-                path.push("bin/fish");
-                Ok(Command::new(path))
-            }
-            Self::Zsh => {
-                if cfg!(target_os = "macos") {
-                    Ok(Command::new("zsh"))
-                } else {
-                    let mut path = buck_resources::get("buck2/shed/completion_verify/zsh").unwrap();
-                    path.push("usr/bin/zsh");
-                    Ok(Command::new(path))
-                }
-            }
+            Self::Fish => Ok(match bundled_shell("fish") {
+                Some(dir) => Command::new(dir.join("bin/fish")),
+                None => Command::new("fish"),
+            }),
+            Self::Zsh => Ok(match bundled_shell("zsh") {
+                Some(dir) => Command::new(dir.join("usr/bin/zsh")),
+                None => Command::new("zsh"),
+            }),
         }
     }
 }

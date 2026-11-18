@@ -194,7 +194,9 @@ public class MergeAndroidResources {
         LOG.info("Override-symbols file %s is not present or not regular.  Skipping.", path);
         continue;
       }
-      JsonNode jsonData = ObjectMappers.READER.readTree(ObjectMappers.createParser(path));
+      JsonNode jsonData =
+          Preconditions.checkNotNull(
+              ObjectMappers.READER.readTree(ObjectMappers.createParser(path)));
       for (String packageName : (Iterable<String>) jsonData::fieldNames) {
         Iterator<JsonNode> rDotTxtLines =
             Objects.requireNonNull(jsonData.get(packageName)).elements();

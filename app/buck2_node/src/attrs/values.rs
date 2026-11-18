@@ -18,6 +18,7 @@ use buck2_util::vec2;
 use buck2_util::vec2::Vec2;
 use dupe::Dupe;
 use pagable::Pagable;
+use strong_hash::StrongHash;
 
 use crate::attrs::arena::AttrToken;
 use crate::attrs::arena::AttrWord;
@@ -191,7 +192,7 @@ impl Hash for AttrValues {
 /// non-internal attribute (`V = AnonTargetAttr`) with defaults
 /// materialized; `TargetNode` stores arena refs through the arena-backed
 /// [`AttrValues`] instead.
-#[derive(Debug, Eq, PartialEq, Hash, Clone, Allocative, Pagable)]
+#[derive(Debug, Eq, PartialEq, Hash, StrongHash, Clone, Allocative, Pagable)]
 pub struct SortedAttrValues<V> {
     sorted: Vec2<AttributeId, V>,
 }

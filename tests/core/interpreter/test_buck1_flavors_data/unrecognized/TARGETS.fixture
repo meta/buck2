@@ -1,1 +1,0 @@
-consumer(name = "unrecognized_flavor", dep = "//lib:lib#no-such-flavor")

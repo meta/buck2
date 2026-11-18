@@ -1,4 +1,4 @@
-load(":defs.bzl", "copy_source", "incremental", "produce", "write")
+load(":defs.bzl", "copy_source", "incremental", "overlay_dir", "produce", "write")
 
 write(name = "write", content = read_config("test", "content", "written"))
 
@@ -11,3 +11,5 @@ incremental(
     script = "incremental_script.py",
     invalidate = read_config("test", "seed", "42"),
 )
+
+overlay_dir(name = "overlay_dir")

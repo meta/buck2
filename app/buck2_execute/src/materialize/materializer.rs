@@ -24,8 +24,10 @@ use buck2_directory::directory::entry::DirectoryEntry;
 use buck2_directory::directory::walk::ordered_entry_walk;
 use buck2_error::ErrorTag;
 use buck2_events::dispatch::EventDispatcher;
+use buck2_fs::paths::abs_norm_path::AbsNormPathBuf;
 use derive_more::Display;
 use dice::UserComputationData;
+use dice_futures::cancellation::CancellationContext;
 use dupe::Dupe;
 use futures::stream::BoxStream;
 use futures::stream::TryStreamExt;
@@ -304,6 +306,19 @@ pub enum HeldContent {
     Missing(WriteLease),
 }
 
+/// The paths a materializer tracks, as the BlobStore takes content out of them
+/// (`BlobStore::find`).
+#[async_trait]
+pub trait TrackedPaths: Send + Sync {
+    /// A tracked path holding a file of `digest`, held for reading until the lease drops;
+    /// `None` when no such path can be held without waiting, or the materializer does not know
+    /// its paths by digest (the deferred core).
+    async fn hold_file(
+        &self,
+        digest: &FileDigest,
+    ) -> buck2_error::Result<Option<(AbsNormPathBuf, ReadLease)>>;
+}
+
 /// A trait providing methods to asynchronously materialize artifacts.
 ///
 /// # Invariants
@@ -330,7 +345,7 @@ pub enum HeldContent {
 /// 4. Declare may delete any existing paths that conflict with the path that was
 ///    declared.
 #[async_trait]
-pub trait Materializer: Allocative + Send + Sync + 'static {
+pub trait Materializer: TrackedPaths + Allocative + Send + Sync + 'static {
     /// Whether this materializer tracks disk state only, so that a producer that can make its
     /// content puts it on disk itself, under `hold_or_take`, and reports it, as a local run does
     /// (`materialize::produce`). The deferred core is declared to instead (`declare_write`,
@@ -411,10 +426,30 @@ pub trait Materializer: Allocative + Send + Sync + 'static {
         paths: Vec<ProjectRelativePathBuf>,
     ) -> buck2_error::Result<()>;
 
+    /// Puts `value`'s content at `path`, which the caller holds `lease` for in write mode, unless
+    /// the path held exactly that content when the lease took it: an incremental action's
+    /// previous output, which its run writes in place. Whatever else is at the path goes first.
+    /// The content is not tracked: it is the caller's, as its own writes are, until the caller
+    /// reports the path. `from` names a path that held the content when the caller last saw it;
+    /// a materializer that copies by declaration (the deferred core) copies from there, one that
+    /// finds content by digest (the disk-state core) needs no hint. Once it writes, the fill runs
+    /// to its end whatever `cancellations` asks, so that the path is never left half-written.
+    async fn fill(
+        &self,
+        lease: &WriteLease,
+        path: ProjectRelativePathBuf,
+        value: ArtifactValue,
+        from: Option<ProjectRelativePathBuf>,
+        re_use_case: RemoteExecutorUseCase,
+        cancellations: &CancellationContext,
+    ) -> buck2_error::Result<()>;
+
     /// Makes the untracked content an action produced at `src`, which it holds `lease` for, the
     /// artifact at `dest`, described by `value`. The content moves: `src` is the caller's to
     /// produce and not to keep. Returns once `dest` is on disk, with a lease over it for the
-    /// readers that follow.
+    /// readers that follow. The deferred core's: a disk-state materializer refuses it, since its
+    /// consumers find content by digest and a local output stays where its run wrote it,
+    /// reported through [`Materializer::declare_existing`].
     async fn publish(
         &self,
         lease: &WriteLease,

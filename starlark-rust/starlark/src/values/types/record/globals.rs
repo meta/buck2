@@ -25,8 +25,12 @@ use crate::collections::SmallMap;
 use crate::environment::GlobalsBuilder;
 use crate::eval::Evaluator;
 use crate::values::Value;
+use crate::values::ValueOf;
+use crate::values::dict::DictType;
 use crate::values::record::field::Field;
 use crate::values::record::record_type::RecordType;
+use crate::values::string::StarlarkStr;
+use crate::values::types::record::record_type::RecordTypeView;
 use crate::values::types::type_instance_id::StarlarkTypeIdDomain;
 use crate::values::types::type_instance_id::TypeInstanceId;
 use crate::values::typing::type_compiled::compiled::TypeCompiled;
@@ -61,21 +65,22 @@ pub(crate) fn register_record(builder: &mut GlobalsBuilder) {
     ///
     /// Records are stored deduplicating their field names, making them more memory efficient than dictionaries.
     fn record<'v>(
-        #[starlark(kwargs)] kwargs: SmallMap<String, Value<'v>>,
+        #[starlark(kwargs)] kwargs: ValueOf<'v, DictType<StarlarkStr, Value<'v>>>,
         eval: &mut Evaluator<'v, '_, '_>,
-    ) -> anyhow::Result<RecordType<'v>> {
+    ) -> anyhow::Result<ValueOf<'v, RecordTypeView<'v>>> {
         // Every Value must either be a field or a value (the type)
-        let mut mp = SmallMap::with_capacity(kwargs.len());
-        for (k, v) in kwargs.into_iter_hashed() {
+        let mut mp = SmallMap::with_capacity(kwargs.dict().len());
+        for item in kwargs.try_items::<&str, Value>() {
+            let (k, v) = item.map_err(|e| e.into_anyhow())?;
             let field = match Field::from_value(v) {
                 None => Field::new(TypeCompiled::new(v, eval.heap())?, None),
                 Some(v) => v.dupe(),
             };
-            mp.insert_hashed(k, field);
+            mp.insert(k.to_owned(), field);
         }
         let id = TypeInstanceId::from_def_site(StarlarkTypeIdDomain::Record, eval)
             .map_err(|e| e.into_anyhow())?;
-        Ok(RecordType::new(mp, id))
+        Ok(ValueOf::alloc(eval.heap(), RecordType::new(mp, id)))
     }
 
     /// Creates a field record. Used as an argument to the `record` function.
@@ -92,13 +97,13 @@ pub(crate) fn register_record(builder: &mut GlobalsBuilder) {
         #[starlark(require = pos)] typ: Value<'v>,
         default: Option<Value<'v>>,
         eval: &mut Evaluator<'v, '_, '_>,
-    ) -> starlark::Result<Field<'v>> {
+    ) -> starlark::Result<ValueOf<'v, Field<'v>>> {
         // We compile the type even if we don't have a default to raise the error sooner
         let compiled = TypeCompiled::new(typ, eval.heap())?;
         if let Some(d) = default {
             compiled.check_type(d, Some("default"))?;
         }
-        Ok(Field::new(compiled, default))
+        Ok(eval.heap().alloc(Field::new(compiled, default)))
     }
 }
 

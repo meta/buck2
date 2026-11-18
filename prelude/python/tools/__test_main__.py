@@ -19,6 +19,7 @@ any of its code to help implement your main module.
 
 import contextlib
 import ctypes
+import faulthandler
 import fnmatch
 import json
 import logging
@@ -26,6 +27,7 @@ import optparse
 import os
 import platform
 import re
+import signal
 import sys
 import time
 import traceback
@@ -397,6 +399,28 @@ class BuckTestRunner(unittest.TextTestRunner):
         )
 
 
+def print_stacks_on_sigterm(file=None) -> None:
+    """
+    Makes `SIGTERM`, which a test runner may send to a test that timed out before it kills it,
+    print every thread's stack to `file` (`sys.stderr` by default) before the process dies of it
+    as without a handler. No effect where `faulthandler` cannot register signal handlers
+    (Windows) or the file has no file descriptor. Not in forked children, such as
+    `multiprocessing` workers, which their parent may stop with `SIGTERM` in a passing test.
+    """
+    if not hasattr(faulthandler, "register"):
+        return
+    with contextlib.suppress(ValueError, OSError, AttributeError):
+        faulthandler.register(
+            signal.SIGTERM,
+            file=file if file is not None else sys.stderr,
+            all_threads=True,
+            chain=True,
+        )
+        os.register_at_fork(
+            after_in_child=lambda: faulthandler.unregister(signal.SIGTERM)
+        )
+
+
 def _format_test_name(test_class, attrname):
     """
     Format the name of the test buck-style.
@@ -730,6 +754,8 @@ class MainProgram:
     def run_tests(self, test_suite):
         # Install a signal handler to catch Ctrl-C and display the results
         unittest.installHandler()
+
+        print_stacks_on_sigterm()
 
         # Run the tests
         runner = BuckTestRunner(

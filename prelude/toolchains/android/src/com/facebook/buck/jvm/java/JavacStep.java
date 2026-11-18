@@ -17,6 +17,7 @@ import com.facebook.buck.jvm.core.BuildTargetValue;
 import com.facebook.buck.step.StepExecutionResult;
 import com.facebook.buck.step.StepExecutionResults;
 import com.facebook.buck.step.isolatedsteps.IsolatedStep;
+import com.facebook.infer.annotation.Nullsafe;
 import com.google.common.annotations.VisibleForTesting;
 import com.google.common.base.Joiner;
 import com.google.common.base.MoreObjects;
@@ -24,9 +25,10 @@ import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableSortedSet;
 import java.io.IOException;
 import java.util.Optional;
-import javax.annotation.Nullable;
+import org.jspecify.annotations.Nullable;
 
 /** Command used to compile java libraries with a variety of ways to handle dependencies. */
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public class JavacStep implements IsolatedStep {
 
   private final JavacPipelineState state;

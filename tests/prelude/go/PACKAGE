@@ -1,0 +1,10 @@
+load("@fbcode//buck2/cfg/experimental:modifiers.bzl", "modifiers")
+load("@fbcode//buck2/cfg/experimental:set_cfg_modifiers.bzl", "set_cfg_modifiers")
+
+set_cfg_modifiers(
+    cfg_modifiers = [
+        modifiers.match({
+            "ovr_config//os:windows": "ovr_config//build_mode/constraints:fbcode-build-info-ldflags[not-accepted]",
+        }),
+    ],
+)

@@ -35,7 +35,7 @@ def _main(ctx: bxl.Context):
     index_stores = []
     for node, analysis_res in zip(configured_nodes, analysis_results):
         if IndexStoreInfo not in analysis_res.providers():
-            warning("{} has no IndexStoreInfo, skipping".format(node.label.raw_target()))
+            print("{} has no IndexStoreInfo, skipping".format(node.label.raw_target()))  # buildifier: disable=print
             continue
         index_store_info = analysis_res.providers()[IndexStoreInfo]
         if subtarget == "swift-index-store":

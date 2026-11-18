@@ -11,6 +11,7 @@ load("@prelude//cxx:cxx_toolchain_types.bzl", "CxxToolchainInfo", "LinkerInfo")
 load(
     "@prelude//cxx:linker.bzl",
     "get_default_shared_library_name",
+    "get_link_flags_for_reproducible_build",
     "get_shared_library_name_for_param",
 )
 load("@prelude//linking:link_info.bzl", "LinkStrategy")
@@ -27,7 +28,12 @@ load(
     ":link_info.bzl",
     "resolve_deps",
 )
-load(":rust_toolchain.bzl", "RustToolchainInfo")
+load(
+    ":rust_toolchain.bzl",
+    "RustArchToolchainInfo",
+    "RustToolchainInfo",
+    "get_rust_arch_toolchain_info",
+)
 load(
     ":sources.bzl",
     "RustSources",
@@ -39,16 +45,18 @@ load(
 # (rustdoc just relays bunch of the same args to rustc when trying to gen docs)
 CommonArgsInfo = record(
     args = field(cmd_args),
+    arch_dependency_args = field(dict[str, cmd_args] | None),
     subdir = field(str),
     tempfile = field(str),
     crate_type = field(CrateType),
     params = field(BuildParams),
     emit = field(Emit),
-    crate_map = field(list[(CrateName, Label)]),
+    crate_map_args = field(cmd_args),
 )
 
 DependencyArgsInfo = record(
     args = field(cmd_args),
+    arch_args = field(dict[str, cmd_args] | None),
     crate_map = field(list[(CrateName, Label)]),
 )
 
@@ -61,6 +69,10 @@ CompileContext = record(
     common_args = field(dict[(CrateType, Emit, LinkStrategy, bool, bool, bool, bool, ProfileMode), CommonArgsInfo]),
     # Memoized dependency args for reuse across emits with the same inputs.
     dependency_args = field(dict[(CrateType, LinkStrategy, MetadataKind, bool), DependencyArgsInfo]),
+    # Memoized `--crate-map` args, one `cmd_args` shared by every invocation;
+    # keyed by whether the crate is compiled as a rustdoc test, which is the
+    # only thing that changes its dependencies.
+    crate_map_args = field(dict[bool, cmd_args]),
     # Memoized environment classifications for reuse across multiple emits,
     # keyed by the environment's origin. A record field cannot be reassigned,
     # so the memo lives in a dict even while "rustc" is its only key.
@@ -88,11 +100,14 @@ CompileContext = record(
     # Linker args to pass the linker wrapper to rustc.
     sysroot_args = field(cmd_args),
     toolchain_info = field(RustToolchainInfo),
+    arch_toolchain_info = field(RustArchToolchainInfo | None),
     transitive_dependency_dirs = field(set[Artifact]),
 )
 
 def compile_context(ctx: AnalysisContext, binary: bool = False) -> CompileContext:
-    toolchain_info = ctx.attrs._rust_toolchain[RustToolchainInfo]
+    toolchain = ctx.attrs._rust_toolchain
+    toolchain_info = toolchain[RustToolchainInfo]
+    arch_toolchain_info = get_rust_arch_toolchain_info(toolchain, ctx.label)
     _validate_nightly_features(toolchain_info)
     internal_tools_info = ctx.attrs._rust_internal_tools_toolchain[RustInternalToolsInfo]
     cxx_toolchain_info = get_cxx_toolchain_info(ctx)
@@ -100,7 +115,8 @@ def compile_context(ctx: AnalysisContext, binary: bool = False) -> CompileContex
     srcs = symlinked_srcs(ctx)
 
     linker_with_pre_args = _linker(ctx, cxx_toolchain_info.linker_info, binary = binary)
-    clippy_wrapper = _clippy_wrapper(ctx, toolchain_info)
+    # Multi-arch branch dispatch directly from the variant's clippy_driver, it doesn't need the clippy_wrapper here.
+    clippy_wrapper = cmd_args() if arch_toolchain_info != None else _clippy_wrapper(ctx, toolchain_info)
 
     dep_ctx = DepCollectionContext(
         advanced_unstable_linking = toolchain_info.advanced_unstable_linking,
@@ -145,6 +161,7 @@ def compile_context(ctx: AnalysisContext, binary: bool = False) -> CompileContex
         clippy_wrapper = clippy_wrapper,
         common_args = {},
         dependency_args = {},
+        crate_map_args = {},
         processed_env = {},
         cxx_toolchain_info = cxx_toolchain_info,
         dep_ctx = dep_ctx,
@@ -158,6 +175,7 @@ def compile_context(ctx: AnalysisContext, binary: bool = False) -> CompileContex
         transitive_srcs = transitive_srcs,
         sysroot_args = sysroot_args,
         toolchain_info = toolchain_info,
+        arch_toolchain_info = arch_toolchain_info,
         transitive_dependency_dirs = set(),
     )
 
@@ -195,6 +213,7 @@ def _linker(ctx: AnalysisContext, linker_info: LinkerInfo, binary: bool = False)
         name = "linker_wrapper",
         cmd = cmd_args(
             linker_info.linker,
+            get_link_flags_for_reproducible_build(linker_info.type),
             linker_info.linker_flags or [],
             # For "binary" rules, add C++ toolchain binary-specific linker flags.
             # TODO(agallagher): This feels a bit wrong -- it might be better to have

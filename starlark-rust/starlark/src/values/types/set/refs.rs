@@ -24,13 +24,13 @@ use dupe::Dupe;
 use either::Either;
 
 use super::value::SetData;
-use crate::typing::Ty;
 use crate::values::UnpackValue;
 use crate::values::Value;
 use crate::values::ValueError;
+use crate::values::ValueOf;
+use crate::values::set::SetOf;
+use crate::values::set::SetType;
 use crate::values::set::value::SetGen;
-use crate::values::type_repr::SetType;
-use crate::values::type_repr::StarlarkTypeRepr;
 
 /// Define the set type.
 pub struct SetRef<'v> {
@@ -52,6 +52,7 @@ impl<'v> Clone for SetRef<'v> {
 
 impl<'v> SetRef<'v> {
     /// Downcast the value to a set.
+    #[inline]
     pub fn from_value(x: Value<'v>) -> Option<SetRef<'v>> {
         if let Some(x) = x.downcast_ref::<SetGen<SetData<'v>>>() {
             Some(SetRef {
@@ -109,18 +110,15 @@ impl<'v> SetMut<'v> {
     }
 }
 
-impl<'v> StarlarkTypeRepr for SetRef<'v> {
-    type Canonical = <SetType<Value<'static>> as StarlarkTypeRepr>::Canonical;
-
-    fn starlark_type_repr() -> Ty {
-        <Self::Canonical as StarlarkTypeRepr>::starlark_type_repr()
-    }
-}
-
 impl<'v> UnpackValue<'v> for SetRef<'v> {
+    type Type = SetType<Value<'v>>;
     type Error = Infallible;
 
-    fn unpack_value_impl(value: Value<'v>) -> Result<Option<SetRef<'v>>, Infallible> {
-        Ok(SetRef::from_value(value))
+    #[inline]
+    fn unpack(
+        _value: ValueOf<'v, Self::Type>,
+        get: SetOf<'v, Value<'v>>,
+    ) -> Result<Self, Infallible> {
+        Ok(get.set())
     }
 }

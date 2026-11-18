@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import json
 
-from .scrubber import load_debug_file_paths, make_scrub_handler
+from .scrubber import get_target_output_paths, load_debug_file_paths, make_scrub_handler
 
 
 def kept_debug_file_paths(
@@ -29,6 +29,47 @@ def kept_debug_file_paths(
     with open(input_file, "rb") as f:
         debug_file_paths = load_debug_file_paths(f) or []
     return sorted({p.path for p in debug_file_paths if not should_scrub(p.path)})
+
+
+def linked_target_output_paths(input_file: str) -> list[str]:
+    """
+    Returns the output directories (`package/__name__`) of the targets whose
+    object files or archives are in the debug map (`N_OSO` entries) of
+    `input_file`. The file is only read.
+    """
+    with open(input_file, "rb") as f:
+        debug_file_paths = load_debug_file_paths(f) or []
+    return sorted(
+        {
+            output_path
+            for debug_file_path in debug_file_paths
+            for output_path in get_target_output_paths(debug_file_path.path)
+        }
+    )
+
+
+def kept_target_output_paths(
+    input_file: str,
+    targets_file: str | None = None,
+    spec_file: str | None = None,
+) -> list[str]:
+    """
+    Returns the output directories (`package/__name__`) of the targets whose
+    object files or archive members in the debug map of `input_file` the
+    scrubber would keep. The file is only read.
+    """
+    return sorted(
+        {
+            output_path
+            for path in kept_debug_file_paths(
+                input_file,
+                persisted_targets_file=None,
+                targets_file=targets_file,
+                spec_file=spec_file,
+            )
+            for output_path in get_target_output_paths(path)
+        }
+    )
 
 
 def write_dsymutil_allowlist(paths: list[str], output_file: str) -> None:

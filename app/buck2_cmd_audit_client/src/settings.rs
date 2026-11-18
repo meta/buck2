@@ -33,7 +33,7 @@ pub struct AuditSettingsCommand {
     /// Also show each setting's documentation, type, defaults and override
     /// policy.
     #[clap(long)]
-    verbose: bool,
+    detailed: bool,
 
     /// Command doesn't need these flags, but they are used in mode files, so we need to keep them.
     #[clap(flatten)]
@@ -57,7 +57,7 @@ impl AuditSettingsCommand {
                 })
                 .buck_error_context("Serializing the settings report")?
         } else {
-            report.render(self.verbose)
+            report.render(self.detailed)
         };
         buck2_client_ctx::println!("{}", text.trim_end())?;
         Ok(())

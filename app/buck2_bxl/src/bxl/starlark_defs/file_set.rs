@@ -33,10 +33,10 @@ use starlark::values::StarlarkPagable;
 use starlark::values::StarlarkValue;
 use starlark::values::UnpackValue;
 use starlark::values::Value;
-use starlark::values::ValueError;
-use starlark::values::list_or_tuple::UnpackListOrTuple;
+use starlark::values::ValueOf;
+use starlark::values::list_or_tuple::ListOrTupleType;
 use starlark::values::starlark_value;
-use starlark::values::type_repr::StarlarkTypeRepr;
+use starlark::values::string::StarlarkStr;
 
 use crate::bxl::starlark_defs::context::BxlContext;
 use crate::bxl::starlark_defs::context::BxlContextCoreData;
@@ -45,27 +45,27 @@ use crate::bxl::starlark_defs::context::BxlContextCoreData;
 /// functions for arguments that should be file sets. It will accept either a
 /// literal (like `//path/to/some/file.txt`) or a FileSet Value (from one of the
 /// bxl functions that return them).
-#[derive(StarlarkTypeRepr, UnpackValue)]
+#[derive(UnpackValue)]
 pub(crate) enum FileSetExpr<'v> {
-    Literal(&'v str),
-    Literals(UnpackListOrTuple<&'v str>),
-    FileSet(&'v StarlarkFileSet),
+    Literal(ValueOf<'v, StarlarkStr>),
+    Literals(ValueOf<'v, ListOrTupleType<StarlarkStr>>),
+    FileSet(ValueOf<'v, StarlarkFileSet>),
 }
 
 impl<'a> FileSetExpr<'a> {
     pub(crate) async fn get(self, bxl: &BxlContext<'_>) -> buck2_error::Result<Cow<'a, FileSet>> {
         let set = match self {
             FileSetExpr::Literal(val) => Cow::Owned(FileSet::from_iter([FileNode(
-                bxl.parse_query_file_literal(val)?,
+                bxl.parse_query_file_literal(val.as_str())?,
             )])),
             FileSetExpr::Literals(val) => {
                 let mut file_set = FileSet::new(BuckMutInsertionSet::default());
-                for arg in &val {
-                    file_set.insert(FileNode(bxl.parse_query_file_literal(arg)?));
+                for arg in val.try_items::<&str>() {
+                    file_set.insert(FileNode(bxl.parse_query_file_literal(arg?)?));
                 }
                 Cow::Owned(file_set)
             }
-            FileSetExpr::FileSet(val) => Cow::Borrowed(&val.0),
+            FileSetExpr::FileSet(val) => Cow::Borrowed(&val.as_ref().0),
         };
         Ok(set)
     }
@@ -79,14 +79,16 @@ pub(crate) enum OwnedFileSetExpr {
 }
 
 impl OwnedFileSetExpr {
-    pub(crate) fn from_ref(expr: &FileSetExpr) -> Self {
-        match expr {
-            FileSetExpr::Literal(val) => Self::Literal(val.to_string()),
-            FileSetExpr::Literals(val) => {
-                Self::Literals(val.items.iter().map(|s| s.to_string()).collect())
-            }
+    pub(crate) fn from_ref(expr: &FileSetExpr) -> buck2_error::Result<Self> {
+        Ok(match expr {
+            FileSetExpr::Literal(val) => Self::Literal(val.as_str().to_owned()),
+            FileSetExpr::Literals(val) => Self::Literals(
+                val.try_items::<&str>()
+                    .map(|s| s.map(str::to_owned))
+                    .collect::<starlark::Result<_>>()?,
+            ),
             FileSetExpr::FileSet(val) => Self::FileSet(val.0.clone()),
-        }
+        })
     }
 
     pub(crate) fn get<'a>(
@@ -126,7 +128,7 @@ impl<'v> StarlarkValue<'v> for StarlarkFileSet {
         Ok(self
             .0
             .iter()
-            .map(|cell_path| heap.alloc(StarlarkFileNode(*cell_path)))
+            .map(|cell_path| heap.alloc(StarlarkFileNode(*cell_path)).to_value())
             .collect())
     }
 
@@ -134,33 +136,24 @@ impl<'v> StarlarkValue<'v> for StarlarkFileSet {
         i32::try_from(self.0.len()).map_err(starlark::Error::new_other)
     }
 
-    fn sub(&self, other: Value<'v>, heap: Heap<'v>) -> starlark::Result<Value<'v>> {
-        let Some(other) = other.downcast_ref::<Self>() else {
-            return ValueError::unsupported_with(self, "-", other);
-        };
+    fn sub(&self, other: &Self) -> starlark::Result<StarlarkFileSet> {
         let difference = self.0.difference(&other.0)?;
-        Ok(heap.alloc(Self(difference)))
+        Ok(Self(difference))
     }
 
-    fn equals(&self, other: Value<'v>) -> starlark::Result<bool> {
-        match other.downcast_ref::<StarlarkFileSet>() {
-            Some(other) => Ok(self.0 == other.0),
-            None => Ok(false),
-        }
+    fn equals(&self, other: &Self) -> bool {
+        self.0 == other.0
     }
 
     fn bit_or(&self, other: Value<'v>, heap: Heap<'v>) -> starlark::Result<Value<'v>> {
         let other = other.downcast_ref_err::<Self>()?;
         let union = self.0.union(&other.0);
-        Ok(heap.alloc(Self(union)))
+        Ok(heap.alloc(Self(union)).to_value())
     }
 
-    fn bit_and(&self, other: Value<'v>, heap: Heap<'v>) -> starlark::Result<Value<'v>> {
-        let Some(other) = other.downcast_ref::<Self>() else {
-            return ValueError::unsupported_with(self, "&", other);
-        };
+    fn bit_and(&self, other: &Self) -> starlark::Result<StarlarkFileSet> {
         let intersect = self.0.intersect(&other.0)?;
-        Ok(heap.alloc(Self(intersect)))
+        Ok(Self(intersect))
     }
 
     fn get_methods() -> Option<&'static Methods> {
@@ -275,7 +268,7 @@ impl<'v> StarlarkValue<'v> for StarlarkReadDirSet {
         Ok(self
             .children()?
             .into_iter()
-            .map(|cell_path| heap.alloc(StarlarkFileNode(cell_path)))
+            .map(|cell_path| heap.alloc(StarlarkFileNode(cell_path)).to_value())
             .collect::<Vec<_>>())
     }
 }

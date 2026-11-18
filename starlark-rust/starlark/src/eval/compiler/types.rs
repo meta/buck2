@@ -163,7 +163,7 @@ impl<'v, 'fm> Compiler<'v, '_, '_, '_, 'fm> {
                     .into_iter()
                     .map(|item| self.eval_expr(item))
                     .collect::<Result<_, _>>()?;
-                Ok(self.eval.heap().alloc_list(&values))
+                Ok(self.eval.heap().alloc_list(&values).to_value())
             }
             TypeExprUnpackP::Path(path) => self.eval_path(path),
             TypeExprUnpackP::Index(a, i) => {

@@ -64,6 +64,7 @@ pub use impls::StaticStr;
 pub use impls::static_value;
 pub use impls::static_value::StaticBytes;
 pub use impls::static_value::StaticValue;
+pub use read_failures::DeferredReadError;
 pub use read_failures::DeferredReadFailures;
 pub use read_failures::ReadRefused;
 pub use read_failures::ReadTimedOut;

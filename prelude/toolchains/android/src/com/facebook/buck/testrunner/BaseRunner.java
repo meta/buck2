@@ -13,17 +13,20 @@ package com.facebook.buck.testrunner;
 import com.facebook.buck.test.selectors.TestSelectorList;
 import com.facebook.buck.util.environment.Platform;
 import com.facebook.buck.util.environment.PlatformType;
+import com.facebook.infer.annotation.Initializer;
+import com.facebook.infer.annotation.Nullsafe;
 import java.io.BufferedOutputStream;
 import java.io.File;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.OutputStream;
-import java.io.PrintWriter; // NOPMD can't depend on Guava
+import java.io.PrintWriter;
 import java.io.StringWriter;
 import java.nio.file.Files;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
+import java.util.Objects;
 import javax.xml.parsers.DocumentBuilder;
 import javax.xml.parsers.DocumentBuilderFactory;
 import javax.xml.parsers.ParserConfigurationException;
@@ -33,10 +36,12 @@ import javax.xml.transform.TransformerException;
 import javax.xml.transform.TransformerFactory;
 import javax.xml.transform.dom.DOMSource;
 import javax.xml.transform.stream.StreamResult;
+import org.jspecify.annotations.Nullable;
 import org.w3c.dom.Document;
 import org.w3c.dom.Element;
 
 /** Base class for both the JUnit and TestNG runners. */
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public abstract class BaseRunner {
   protected static final String ENCODING = "UTF-8";
   // This is to be extended when introducing new information into the result .xml file and allow
@@ -61,7 +66,7 @@ public abstract class BaseRunner {
     return text;
   }
 
-  protected File outputDirectory;
+  protected @Nullable File outputDirectory;
   protected List<String> testClassNames;
   protected long defaultTestTimeoutMillis;
   protected TestSelectorList testSelectorList;
@@ -103,7 +108,7 @@ public abstract class BaseRunner {
               : result.testClassName);
 
       // name attribute
-      test.setAttribute("name", result.testMethodName);
+      test.setAttribute("name", result.testMethodName == null ? "" : result.testMethodName);
 
       // success attribute
       boolean isSuccess = result.isSuccess();
@@ -120,14 +125,16 @@ public abstract class BaseRunner {
       Throwable failure = result.failure;
       if (failure != null) {
         String stacktrace = stackTraceToString(failure);
-        test.setAttribute("stacktrace", attributeEscaper.escape(stacktrace));
+        test.setAttribute(
+            "stacktrace", Objects.requireNonNull(attributeEscaper.escape(stacktrace)));
       }
 
       // stdout, if non-empty.
       if (result.stdOut != null) {
         Element stdOutEl = doc.createElement("stdout");
         stdOutEl.appendChild(
-            doc.createTextNode(contentEscaper.escape(removeCRIfNeeded(result.stdOut))));
+            doc.createTextNode(
+                Objects.requireNonNull(contentEscaper.escape(removeCRIfNeeded(result.stdOut)))));
         test.appendChild(stdOutEl);
       }
 
@@ -135,7 +142,8 @@ public abstract class BaseRunner {
       if (result.stdErr != null) {
         Element stdErrEl = doc.createElement("stderr");
         stdErrEl.appendChild(
-            doc.createTextNode(contentEscaper.escape(removeCRIfNeeded(result.stdErr))));
+            doc.createTextNode(
+                Objects.requireNonNull(contentEscaper.escape(removeCRIfNeeded(result.stdErr)))));
         test.appendChild(stdErrEl);
       }
 
@@ -202,7 +210,7 @@ public abstract class BaseRunner {
 
   protected String stackTraceToString(Throwable exc) {
     StringWriter writer = new StringWriter();
-    exc.printStackTrace(new PrintWriter(writer, /* autoFlush */ true)); // NOPMD no Guava
+    exc.printStackTrace(new PrintWriter(writer, /* autoFlush */ true)); // can't depend on Guava
     return writer.toString();
   }
 
@@ -216,6 +224,7 @@ public abstract class BaseRunner {
    *   <li>(string...) fully-qualified names of test classes
    * </ul>
    */
+  @Initializer
   protected void parseArgs(String... args) {
     File outputDirectory = null;
     long defaultTestTimeoutMillis = 0;

@@ -14,6 +14,7 @@ use std::convert::Infallible;
 use std::fmt;
 use std::fmt::Display;
 use std::path::Path;
+use std::sync::Arc;
 
 use allocative::Allocative;
 use buck2_analysis::analysis::calculation::get_dep_analysis;
@@ -27,6 +28,7 @@ use buck2_build_api::actions::query::PackageLabelOption;
 use buck2_build_api::analysis::AnalysisResult;
 use buck2_build_api::bxl::unconfigured_attribute::StarlarkCoercedAttr;
 use buck2_build_api::interpreter::rule_defs::artifact::starlark_artifact::StarlarkArtifact;
+use buck2_build_api::interpreter::rule_defs::artifact::starlark_artifact_like::StarlarkArtifactView;
 use buck2_common::dice::cells::HasCellResolver;
 use buck2_configuration_providers::configuration_info::ConfigurationInfo;
 use buck2_core::cells::cell_path::CellPath;
@@ -52,9 +54,13 @@ use buck2_node::attrs::fmt_context::AttrFmtContext;
 use buck2_node::attrs::inspect_options::AttrInspectOptions;
 use buck2_node::attrs::serialize::AttrSerializeWithContext;
 use buck2_node::nodes::configured::ConfiguredTargetNode;
+use buck2_node::nodes::configured::ConfiguredTargetNodeBodyReadAhead;
+use buck2_node::nodes::configured::ConfiguredTargetNodeBodyRef;
 use derivative::Derivative;
 use derive_more::Display;
 use dupe::Dupe;
+use dupe::IterDupedExt;
+use either::Either;
 use futures::FutureExt;
 use pagable::Pagable;
 use serde::Serialize;
@@ -65,7 +71,6 @@ use starlark::environment::MethodsBuilder;
 use starlark::eval::Evaluator;
 use starlark::starlark_module;
 use starlark::starlark_simple_value;
-use starlark::values::AllocValue;
 use starlark::values::Heap;
 use starlark::values::NoSerialize;
 use starlark::values::StarlarkValue;
@@ -73,10 +78,13 @@ use starlark::values::StringValue;
 use starlark::values::Trace;
 use starlark::values::UnpackValue;
 use starlark::values::Value;
+use starlark::values::ValueOf;
 use starlark::values::ValueTyped;
+use starlark::values::dict::AllocDict;
 use starlark::values::list::AllocList;
 use starlark::values::none::NoneOr;
 use starlark::values::starlark_value;
+use starlark::values::string::AllocStrIntern;
 use starlark::values::structs::AllocStruct;
 
 use super::node_attrs::NodeAttributeGetter;
@@ -219,7 +227,66 @@ fn strip_cfg_into(
 )]
 #[derive(NoSerialize)] // TODO probably should be serializable the same as how queries serialize
 #[display("configured_target_node(name = {}, ...)", self.0.label())]
-pub(crate) struct StarlarkConfiguredTargetNode(pub(crate) ConfiguredTargetNode);
+pub(crate) struct StarlarkConfiguredTargetNode(
+    pub(crate) ConfiguredTargetNode,
+    /// Set on a value a script got by iterating a target set. It changes nothing a script
+    /// can see, only how the node's body is read. Not stored when the value is paged out: it
+    /// is of no use to a later reader of the value.
+    #[pagable(discard = "None")]
+    #[allocative(skip)]
+    Option<BodyReadAheadHint>,
+);
+
+/// What lets the read of one node's body take the bodies of the following nodes with it: the
+/// target set the script is iterating, and this node's place in it.
+#[derive(Debug, Clone, Dupe)]
+struct BodyReadAheadHint {
+    read_ahead: Arc<ConfiguredTargetNodeBodyReadAhead>,
+    index: usize,
+}
+
+impl StarlarkConfiguredTargetNode {
+    pub(crate) fn new(node: ConfiguredTargetNode) -> Self {
+        Self(node, None)
+    }
+
+    /// The values of `nodes`, the nodes of a target set a script is iterating.
+    ///
+    /// A script that loops over a set usually reads attributes of most of its nodes. So the
+    /// first time it reads something of one of these that is not in memory, what it would read
+    /// of the nodes after it is read as well; see [`ConfiguredTargetNodeBodyReadAhead`].
+    ///
+    /// A set whose nodes all have their bodies in memory, as every set does in a daemon that
+    /// has paged nothing out, has nothing to read ahead: its values are the same as those of
+    /// [`Self::new`], and cost no more.
+    pub(crate) fn all_in_set<'a>(
+        nodes: impl Iterator<Item = &'a ConfiguredTargetNode> + Clone,
+    ) -> impl Iterator<Item = Self> {
+        match ConfiguredTargetNodeBodyReadAhead::if_any_body_unread(nodes.clone()) {
+            None => Either::Left(nodes.duped().map(Self::new)),
+            Some(read_ahead) => {
+                let read_ahead = Arc::new(read_ahead);
+                Either::Right((0..read_ahead.nodes().len()).map(move |index| {
+                    Self(
+                        read_ahead.nodes()[index].dupe(),
+                        Some(BodyReadAheadHint {
+                            read_ahead: read_ahead.dupe(),
+                            index,
+                        }),
+                    )
+                }))
+            }
+        }
+    }
+
+    /// The node's body, for everything a script reads that is not in the node's header.
+    pub(crate) fn body(&self) -> buck2_error::Result<ConfiguredTargetNodeBodyRef<'_>> {
+        match &self.1 {
+            Some(hint) => hint.read_ahead.body(hint.index),
+            None => self.0.body(),
+        }
+    }
+}
 
 starlark_simple_value!(StarlarkConfiguredTargetNode);
 
@@ -234,13 +301,12 @@ impl<'v> StarlarkValue<'v> for StarlarkConfiguredTargetNode {
     }
 }
 
-impl<'a> UnpackValue<'a> for StarlarkConfiguredTargetNode {
+impl<'v> UnpackValue<'v> for StarlarkConfiguredTargetNode {
+    type Type = Self;
     type Error = Infallible;
 
-    fn unpack_value_impl(value: Value<'a>) -> Result<Option<Self>, Self::Error> {
-        Ok(value
-            .downcast_ref::<Self>()
-            .map(|value| Self(value.0.dupe())))
+    fn unpack(_value: ValueOf<'v, Self>, get: ValueTyped<'v, Self>) -> Result<Self, Infallible> {
+        Ok(get.as_ref().dupe())
     }
 }
 
@@ -258,10 +324,14 @@ fn configured_target_node_value_methods(builder: &mut MethodsBuilder) {
     ///     ctx.output.print(node.label)
     /// ```
     #[starlark(attribute)]
-    fn label(
+    fn label<'v>(
         this: &StarlarkConfiguredTargetNode,
-    ) -> starlark::Result<StarlarkConfiguredTargetLabel> {
-        Ok(StarlarkConfiguredTargetLabel::new(this.0.label().dupe()))
+        heap: Heap<'v>,
+    ) -> starlark::Result<ValueOf<'v, StarlarkConfiguredTargetLabel>> {
+        Ok(ValueOf::alloc(
+            heap,
+            StarlarkConfiguredTargetLabel::new(this.0.label().dupe()),
+        ))
     }
 
     /// Gets the buildfile path from the configured target node.
@@ -273,8 +343,14 @@ fn configured_target_node_value_methods(builder: &mut MethodsBuilder) {
     ///     ctx.output.print(target_node.buildfile_path)
     /// ```
     #[starlark(attribute)]
-    fn buildfile_path(this: &StarlarkConfiguredTargetNode) -> starlark::Result<StarlarkFileNode> {
-        Ok(StarlarkFileNode(this.0.buildfile_path().path()))
+    fn buildfile_path<'v>(
+        this: &StarlarkConfiguredTargetNode,
+        heap: Heap<'v>,
+    ) -> starlark::Result<ValueOf<'v, StarlarkFileNode>> {
+        Ok(ValueOf::alloc(
+            heap,
+            StarlarkFileNode(this.body()?.buildfile_path().path()),
+        ))
     }
 
     /// Gets the attribute from the configured target node.
@@ -308,8 +384,8 @@ fn configured_target_node_value_methods(builder: &mut MethodsBuilder) {
     fn get_attrs<'v>(
         this: &StarlarkConfiguredTargetNode,
         heap: Heap<'v>,
-    ) -> starlark::Result<BuckMutInsertionMap<StringValue<'v>, Value<'v>>> {
-        Ok(NodeAttributeGetter::get_attrs(this, heap)?)
+    ) -> starlark::Result<AllocDict<BuckMutInsertionMap<StringValue<'v>, Value<'v>>>> {
+        Ok(AllocDict(NodeAttributeGetter::get_attrs(this, heap)?))
     }
 
     /// Check if rule has the attribute.
@@ -328,7 +404,7 @@ fn configured_target_node_value_methods(builder: &mut MethodsBuilder) {
         this: &StarlarkConfiguredTargetNode,
         #[starlark(require=pos)] key: &str,
     ) -> starlark::Result<bool> {
-        Ok(NodeAttributeGetter::has_attr(this, key))
+        Ok(NodeAttributeGetter::has_attr(this, key)?)
     }
 
     /// Returns a struct of all the attributes of this target node. The structs fields are the
@@ -361,24 +437,20 @@ fn configured_target_node_value_methods(builder: &mut MethodsBuilder) {
         this: &StarlarkConfiguredTargetNode,
         heap: Heap<'v>,
     ) -> starlark::Result<Value<'v>> {
-        let attrs_iter = this.0.attrs(AttrInspectOptions::All);
-        let special_attrs_iter = this.0.special_attrs();
+        let body = this.body()?;
+        let attrs_iter = body.attrs(AttrInspectOptions::All);
+        let special_attrs_iter = body.special_attrs();
 
+        let pkg = this.0.label().pkg();
         let attrs = attrs_iter
-            .map(|a| {
-                (
-                    a.name,
-                    StarlarkConfiguredAttr(a.value, this.0.label().pkg().dupe()),
-                )
-            })
-            .chain(special_attrs_iter.map(|(name, attr)| {
-                (
-                    name,
-                    StarlarkConfiguredAttr(attr, this.0.label().pkg().dupe()),
-                )
-            }));
+            .map(|a| (a.name, StarlarkConfiguredAttr(a.value, pkg.dupe())))
+            .chain(
+                special_attrs_iter
+                    .map(|(name, attr)| (name, StarlarkConfiguredAttr(attr, pkg.dupe()))),
+            )
+            .map(|(name, attr)| (name, heap.alloc(attr).to_value()));
 
-        Ok(heap.alloc(AllocStruct(attrs)))
+        Ok(heap.alloc(AllocStruct(attrs)).to_value())
     }
 
     /// Returns a `lazy_attrs` object that you can call `get()` on that gets an attr one at a time.
@@ -409,8 +481,9 @@ fn configured_target_node_value_methods(builder: &mut MethodsBuilder) {
     /// ```
     fn attrs_lazy<'v>(
         this: &'v StarlarkConfiguredTargetNode,
-    ) -> starlark::Result<StarlarkLazyAttrs<'v>> {
-        Ok(StarlarkLazyAttrs::new(this))
+        heap: Heap<'v>,
+    ) -> starlark::Result<ValueOf<'v, StarlarkLazyAttrs<'v>>> {
+        Ok(ValueOf::alloc(heap, StarlarkLazyAttrs::new(this)))
     }
 
     /// Returns a `lazy_resolved_attrs` object that you can call `get()` on that gets a resolved attr one at a time.
@@ -437,9 +510,13 @@ fn configured_target_node_value_methods(builder: &mut MethodsBuilder) {
     /// ```
     fn resolved_attrs_lazy<'v>(
         this: ValueTyped<'v, StarlarkConfiguredTargetNode>,
-        ctx: ValueTyped<'v, BxlContext<'v>>,
-    ) -> starlark::Result<StarlarkLazyResolvedAttrs<'v>> {
-        Ok(StarlarkLazyResolvedAttrs::new(this, ctx))
+        ctx: ValueOf<'v, BxlContext<'v>>,
+        heap: Heap<'v>,
+    ) -> starlark::Result<ValueOf<'v, StarlarkLazyResolvedAttrs<'v>>> {
+        Ok(ValueOf::alloc(
+            heap,
+            StarlarkLazyResolvedAttrs::new(this, ctx.get()),
+        ))
     }
 
     /// Returns a struct of all the resolved attributes of this target node. The structs fields are the
@@ -466,7 +543,7 @@ fn configured_target_node_value_methods(builder: &mut MethodsBuilder) {
     /// ```
     fn resolved_attrs_eager<'v>(
         this: &'v StarlarkConfiguredTargetNode,
-        ctx: &'v BxlContext<'v>,
+        ctx: ValueOf<'v, BxlContext<'v>>,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<Value<'v>> {
         let configured_node = this.0.as_ref();
@@ -484,10 +561,10 @@ fn configured_target_node_value_methods(builder: &mut MethodsBuilder) {
             module: eval.module(),
             dep_analysis_results: get_deps_from_analysis_results(dep_analysis?)?,
             query_results,
-            execution_platform_resolution: configured_node.execution_platform_resolution().clone(),
+            execution_platform_resolution: this.body()?.execution_platform_resolution().clone(),
         };
 
-        let attrs_iter = this.0.attrs(AttrInspectOptions::All);
+        let attrs_iter = this.body()?.attrs(AttrInspectOptions::All);
         let mut resolved_attrs = Vec::with_capacity(attrs_iter.len());
 
         for a in attrs_iter {
@@ -498,7 +575,7 @@ fn configured_target_node_value_methods(builder: &mut MethodsBuilder) {
             ));
         }
 
-        Ok(eval.heap().alloc(AllocStruct(resolved_attrs)))
+        Ok(eval.heap().alloc(AllocStruct(resolved_attrs)).to_value())
     }
 
     /// Skip incoming transition forward node.
@@ -515,10 +592,10 @@ fn configured_target_node_value_methods(builder: &mut MethodsBuilder) {
     fn unwrap_forward<'v>(
         this: ValueTyped<'v, StarlarkConfiguredTargetNode>,
         heap: Heap<'v>,
-    ) -> starlark::Result<ValueTyped<'v, StarlarkConfiguredTargetNode>> {
+    ) -> starlark::Result<ValueOf<'v, StarlarkConfiguredTargetNode>> {
         match this.0.forward_target() {
-            Some(n) => Ok(heap.alloc_typed(StarlarkConfiguredTargetNode(n.dupe()))),
-            None => Ok(this),
+            Some(n) => Ok(heap.alloc(StarlarkConfiguredTargetNode::new(n.dupe()))),
+            None => Ok(this.into()),
         }
     }
 
@@ -536,7 +613,7 @@ fn configured_target_node_value_methods(builder: &mut MethodsBuilder) {
         this: &'v StarlarkConfiguredTargetNode,
         heap: Heap<'v>,
     ) -> starlark::Result<StringValue<'v>> {
-        Ok(heap.alloc_str_intern(this.0.rule_type().to_string().as_str()))
+        Ok(heap.alloc(AllocStrIntern(this.0.rule_type().to_string().as_str())))
     }
 
     /// Gets the targets' corresponding rule's kind which is one of
@@ -555,7 +632,7 @@ fn configured_target_node_value_methods(builder: &mut MethodsBuilder) {
         this: &'v StarlarkConfiguredTargetNode,
         heap: Heap<'v>,
     ) -> starlark::Result<StringValue<'v>> {
-        Ok(heap.alloc_str_intern(this.0.rule_kind().as_str()))
+        Ok(heap.alloc(AllocStrIntern(this.0.rule_kind().as_str())))
     }
 
     /// Returns all source `Artifact`s exist in this target's attributes.
@@ -567,7 +644,10 @@ fn configured_target_node_value_methods(builder: &mut MethodsBuilder) {
     ///     node = ctx.configured_targets("my_cell//bin:the_binary")
     ///     ctx.output.print(node.sources())
     /// ```
-    fn sources(this: &StarlarkConfiguredTargetNode) -> starlark::Result<Vec<StarlarkArtifact>> {
+    fn sources<'v>(
+        this: &StarlarkConfiguredTargetNode,
+        heap: Heap<'v>,
+    ) -> starlark::Result<AllocList<Vec<ValueOf<'v, StarlarkArtifactView<'v>>>>> {
         struct InputsCollector {
             inputs: Vec<StarlarkArtifact>,
         }
@@ -585,10 +665,16 @@ fn configured_target_node_value_methods(builder: &mut MethodsBuilder) {
             }
         }
         let mut traversal = InputsCollector { inputs: Vec::new() };
-        for a in this.0.attrs(AttrInspectOptions::All) {
+        for a in this.body()?.attrs(AttrInspectOptions::All) {
             a.traverse(this.0.label().pkg(), &mut traversal)?;
         }
-        Ok(traversal.inputs)
+        Ok(AllocList(
+            traversal
+                .inputs
+                .into_iter()
+                .map(|artifact| ValueOf::alloc(heap, artifact))
+                .collect(),
+        ))
     }
 
     /// Gets the source `Artifact` that corresponds to the given `path` given a context. The path should be the
@@ -604,9 +690,9 @@ fn configured_target_node_value_methods(builder: &mut MethodsBuilder) {
     fn get_source<'v>(
         this: &StarlarkConfiguredTargetNode,
         path: &str,
-        ctx: &BxlContext<'v>,
+        ctx: ValueOf<'v, BxlContext<'v>>,
         eval: &mut Evaluator<'v, '_, '_>,
-    ) -> starlark::Result<NoneOr<StarlarkArtifact>> {
+    ) -> starlark::Result<NoneOr<ValueOf<'v, StarlarkArtifactView<'v>>>> {
         let path = Path::new(path);
         let fs = ctx.project_root();
         let path = if path.is_absolute() {
@@ -648,11 +734,11 @@ fn configured_target_node_value_methods(builder: &mut MethodsBuilder) {
             found: None,
             target: cell_path,
         };
-        for a in this.0.attrs(AttrInspectOptions::All) {
+        for a in this.body()?.attrs(AttrInspectOptions::All) {
             a.traverse(this.0.label().pkg(), &mut traversal)?;
 
             if let Some(found) = traversal.found {
-                return Ok(NoneOr::Other(found));
+                return Ok(NoneOr::Other(ValueOf::alloc(eval.heap(), found)));
             }
         }
         Ok(NoneOr::None)
@@ -671,8 +757,8 @@ fn configured_target_node_value_methods(builder: &mut MethodsBuilder) {
         this: &'v StarlarkConfiguredTargetNode,
         heap: Heap<'v>,
     ) -> starlark::Result<NoneOr<StringValue<'v>>> {
-        match this.0.oncall() {
-            Some(oncall) => Ok(NoneOr::Other(heap.alloc_str_intern(oncall))),
+        match this.body()?.oncall() {
+            Some(oncall) => Ok(NoneOr::Other(heap.alloc(AllocStrIntern(oncall)))),
             None => Ok(NoneOr::None),
         }
     }
@@ -688,15 +774,13 @@ fn configured_target_node_value_methods(builder: &mut MethodsBuilder) {
     /// ```
     fn deps<'v>(
         this: &'v StarlarkConfiguredTargetNode,
-        // ) -> buck2_error::Result<Vec<StarlarkConfiguredTargetNode>> {
-    ) -> starlark::Result<AllocList<impl IntoIterator<Item = StarlarkConfiguredTargetNode> + 'v>>
-    {
-        Ok(AllocList(
-            this.0
-                .deps()
-                .iter()
-                .map(|node| StarlarkConfiguredTargetNode(node.dupe())),
-        ))
+        heap: Heap<'v>,
+    ) -> starlark::Result<
+        AllocList<impl IntoIterator<Item = ValueOf<'v, StarlarkConfiguredTargetNode>> + 'v>,
+    > {
+        Ok(AllocList(this.0.deps().iter().map(move |node| {
+            ValueOf::alloc(heap, StarlarkConfiguredTargetNode::new(node.dupe()))
+        })))
     }
 
     /// Gets the target deps of this target: the deps in the target's own configuration (those of
@@ -714,13 +798,13 @@ fn configured_target_node_value_methods(builder: &mut MethodsBuilder) {
     /// ```
     fn target_deps<'v>(
         this: &'v StarlarkConfiguredTargetNode,
-    ) -> starlark::Result<AllocList<impl IntoIterator<Item = StarlarkConfiguredTargetNode> + 'v>>
-    {
-        Ok(AllocList(
-            this.0
-                .target_deps()
-                .map(|node| StarlarkConfiguredTargetNode(node.dupe())),
-        ))
+        heap: Heap<'v>,
+    ) -> starlark::Result<
+        AllocList<impl IntoIterator<Item = ValueOf<'v, StarlarkConfiguredTargetNode>> + 'v>,
+    > {
+        Ok(AllocList(this.0.target_deps().map(move |node| {
+            ValueOf::alloc(heap, StarlarkConfiguredTargetNode::new(node.dupe()))
+        })))
     }
 
     /// Gets the exec deps of this target: the deps of its `attrs.exec_dep()` attributes,
@@ -736,14 +820,13 @@ fn configured_target_node_value_methods(builder: &mut MethodsBuilder) {
     /// ```
     fn exec_deps<'v>(
         this: &'v StarlarkConfiguredTargetNode,
-    ) -> starlark::Result<AllocList<impl IntoIterator<Item = StarlarkConfiguredTargetNode> + 'v>>
-    {
-        Ok(AllocList(
-            this.0
-                .exec_deps()
-                .iter()
-                .map(|node| StarlarkConfiguredTargetNode(node.dupe())),
-        ))
+        heap: Heap<'v>,
+    ) -> starlark::Result<
+        AllocList<impl IntoIterator<Item = ValueOf<'v, StarlarkConfiguredTargetNode>> + 'v>,
+    > {
+        Ok(AllocList(this.0.exec_deps().iter().map(move |node| {
+            ValueOf::alloc(heap, StarlarkConfiguredTargetNode::new(node.dupe()))
+        })))
     }
 
     /// Gets the toolchain deps of this target: the deps of its `attrs.toolchain_dep()`
@@ -758,13 +841,13 @@ fn configured_target_node_value_methods(builder: &mut MethodsBuilder) {
     /// ```
     fn toolchain_deps<'v>(
         this: &'v StarlarkConfiguredTargetNode,
-    ) -> starlark::Result<AllocList<impl IntoIterator<Item = StarlarkConfiguredTargetNode> + 'v>>
-    {
-        Ok(AllocList(
-            this.0
-                .toolchain_deps()
-                .map(|node| StarlarkConfiguredTargetNode(node.dupe())),
-        ))
+        heap: Heap<'v>,
+    ) -> starlark::Result<
+        AllocList<impl IntoIterator<Item = ValueOf<'v, StarlarkConfiguredTargetNode>> + 'v>,
+    > {
+        Ok(AllocList(this.0.toolchain_deps().map(move |node| {
+            ValueOf::alloc(heap, StarlarkConfiguredTargetNode::new(node.dupe()))
+        })))
     }
 
     /// Gets the configuration deps of this target: the configuration rules among its deps, such as
@@ -781,13 +864,13 @@ fn configured_target_node_value_methods(builder: &mut MethodsBuilder) {
     /// ```
     fn configuration_deps<'v>(
         this: &'v StarlarkConfiguredTargetNode,
-    ) -> starlark::Result<AllocList<impl IntoIterator<Item = StarlarkConfiguredTargetNode> + 'v>>
-    {
-        Ok(AllocList(
-            this.0
-                .configuration_deps()
-                .map(|node| StarlarkConfiguredTargetNode(node.dupe())),
-        ))
+        heap: Heap<'v>,
+    ) -> starlark::Result<
+        AllocList<impl IntoIterator<Item = ValueOf<'v, StarlarkConfiguredTargetNode>> + 'v>,
+    > {
+        Ok(AllocList(this.0.configuration_deps().map(move |node| {
+            ValueOf::alloc(heap, StarlarkConfiguredTargetNode::new(node.dupe()))
+        })))
     }
 
     /// Returns a `ConfigurationInfo` representing this node's configuration,
@@ -816,7 +899,7 @@ fn configured_target_node_value_methods(builder: &mut MethodsBuilder) {
         }
         let data = cfg.data()?;
         let info = ConfigurationInfo::from_configuration_data(data, heap);
-        Ok(NoneOr::Other(heap.alloc(info)))
+        Ok(NoneOr::Other(heap.alloc(info).to_value()))
     }
 }
 
@@ -927,11 +1010,14 @@ fn configured_attr_methods(builder: &mut MethodsBuilder) {
     /// ```
     fn strip_cfg<'v>(
         this: &StarlarkConfiguredAttr,
-        _heap: Heap<'v>,
-    ) -> starlark::Result<StarlarkCoercedAttr> {
+        heap: Heap<'v>,
+    ) -> starlark::Result<ValueOf<'v, StarlarkCoercedAttr>> {
         let stripped = attr_with_stripped_cfg(&this.0)
             .buck_error_context("Failed to strip configuration from attribute")?;
-        Ok(StarlarkCoercedAttr(stripped, this.1.dupe()))
+        Ok(ValueOf::alloc(
+            heap,
+            StarlarkCoercedAttr(stripped, this.1.dupe()),
+        ))
     }
 }
 
@@ -955,16 +1041,10 @@ pub(crate) struct StarlarkLazyAttrs<'v> {
 
 starlark::methods_static!(LAZY_ATTRS_METHODS = lazy_attrs_methods);
 
-#[starlark_value(type = "bxl.LazyAttrs", StarlarkTypeRepr, UnpackValue)]
+#[starlark_value(type = "bxl.LazyAttrs", no_freeze)]
 impl<'v> StarlarkValue<'v> for StarlarkLazyAttrs<'v> {
     fn get_methods() -> Option<&'static Methods> {
         Some(LAZY_ATTRS_METHODS.methods())
-    }
-}
-
-impl<'v> AllocValue<'v> for StarlarkLazyAttrs<'v> {
-    fn alloc_value(self, heap: Heap<'v>) -> Value<'v> {
-        heap.alloc_complex_no_freeze(self)
     }
 }
 
@@ -993,35 +1073,23 @@ fn lazy_attrs_methods(builder: &mut MethodsBuilder) {
     fn get<'v>(
         this: &StarlarkLazyAttrs<'v>,
         attr: &str,
-    ) -> starlark::Result<NoneOr<StarlarkConfiguredAttr>> {
-        Ok(
-            match this
-                .configured_target_node
-                .0
-                .get(attr, AttrInspectOptions::All)
-            {
-                Some(attr) => NoneOr::Other(StarlarkConfiguredAttr(
-                    attr.value,
-                    this.configured_target_node.0.label().pkg().dupe(),
+        heap: Heap<'v>,
+    ) -> starlark::Result<NoneOr<ValueOf<'v, StarlarkConfiguredAttr>>> {
+        let pkg = this.configured_target_node.0.label().pkg();
+        let body = this.configured_target_node.body()?;
+        Ok(match body.get(attr, AttrInspectOptions::All) {
+            Some(attr) => NoneOr::Other(ValueOf::alloc(
+                heap,
+                StarlarkConfiguredAttr(attr.value, pkg.dupe()),
+            )),
+            None => match body.special_attr_or_none(attr) {
+                None => NoneOr::None,
+                Some(attr) => NoneOr::Other(ValueOf::alloc(
+                    heap,
+                    StarlarkConfiguredAttr(attr, pkg.dupe()),
                 )),
-                None => {
-                    // Check special attrs
-                    let special_attrs = this
-                        .configured_target_node
-                        .0
-                        .special_attrs()
-                        .collect::<BuckMutMap<_, _>>();
-                    let attr = special_attrs.get(attr);
-                    match attr {
-                        None => NoneOr::None,
-                        Some(attr) => NoneOr::Other(StarlarkConfiguredAttr(
-                            attr.clone(),
-                            this.configured_target_node.0.label().pkg().dupe(),
-                        )),
-                    }
-                }
             },
-        )
+        })
     }
 }
 
@@ -1046,16 +1114,10 @@ pub(crate) struct StarlarkLazyResolvedAttrs<'v> {
 
 starlark::methods_static!(LAZY_RESOLVED_ATTRS_METHODS = lazy_resolved_attrs_methods);
 
-#[starlark_value(type = "bxl.LazyResolvedAttrs", StarlarkTypeRepr, UnpackValue)]
+#[starlark_value(type = "bxl.LazyResolvedAttrs", no_freeze)]
 impl<'v> StarlarkValue<'v> for StarlarkLazyResolvedAttrs<'v> {
     fn get_methods() -> Option<&'static Methods> {
         Some(LAZY_RESOLVED_ATTRS_METHODS.methods())
-    }
-}
-
-impl<'v> AllocValue<'v> for StarlarkLazyResolvedAttrs<'v> {
-    fn alloc_value(self, heap: Heap<'v>) -> Value<'v> {
-        heap.alloc_complex_no_freeze(self)
     }
 }
 
@@ -1079,13 +1141,15 @@ impl<'v> StarlarkLazyResolvedAttrs<'v> {
     fn resolution_ctx<'a, 'e, 'c>(
         &'c self,
         eval: &'c mut Evaluator<'v, 'a, 'e>,
-    ) -> LazyAttrResolutionContext<'v, 'a, 'e, 'c> {
-        LazyAttrResolutionContext {
+    ) -> buck2_error::Result<LazyAttrResolutionContext<'v, 'a, 'e, 'c>> {
+        let node = self.configured_node.as_ref();
+        Ok(LazyAttrResolutionContext {
             eval,
-            configured_node: &self.configured_node.as_ref().0,
+            configured_node: &node.0,
+            execution_platform_resolution: node.body()?.execution_platform_resolution(),
             ctx: self.bxl_context.as_ref(),
             cache: self.resolution_ctx_data.borrow_mut(),
-        }
+        })
     }
 }
 
@@ -1108,30 +1172,25 @@ fn lazy_resolved_attrs_methods(builder: &mut MethodsBuilder) {
         attr: &str,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<NoneOr<Value<'v>>> {
-        Ok(
-            match this.configured_node.0.get(attr, AttrInspectOptions::All) {
-                Some(attr) => NoneOr::Other(attr.value.resolve_single(
-                    this.configured_node.0.label().pkg(),
-                    &mut this.resolution_ctx(eval),
-                )?),
-                None => {
-                    // Check special attrs
-                    let special_attrs = this
-                        .configured_node
-                        .0
-                        .special_attrs()
-                        .collect::<BuckMutMap<_, _>>();
-                    let attr = special_attrs.get(attr);
-                    match attr {
-                        None => NoneOr::None,
-                        Some(attr) => NoneOr::Other(attr.resolve_single(
-                            this.configured_node.0.label().pkg(),
-                            &mut this.resolution_ctx(eval),
-                        )?),
-                    }
+        let body = this.configured_node.body()?;
+        Ok(match body.get(attr, AttrInspectOptions::All) {
+            Some(attr) => NoneOr::Other(attr.value.resolve_single(
+                this.configured_node.0.label().pkg(),
+                &mut this.resolution_ctx(eval)?,
+            )?),
+            None => {
+                // Check special attrs
+                let special_attrs = body.special_attrs().collect::<BuckMutMap<_, _>>();
+                let attr = special_attrs.get(attr);
+                match attr {
+                    None => NoneOr::None,
+                    Some(attr) => NoneOr::Other(attr.resolve_single(
+                        this.configured_node.0.label().pkg(),
+                        &mut this.resolution_ctx(eval)?,
+                    )?),
                 }
-            },
-        )
+            }
+        })
     }
 }
 

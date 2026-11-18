@@ -10,6 +10,7 @@
 
 package com.facebook.buck.jvm.java.classes;
 
+import com.facebook.infer.annotation.Nullsafe;
 import java.io.IOException;
 import java.io.InputStream;
 import java.nio.file.Path;
@@ -18,6 +19,7 @@ import java.nio.file.Path;
  * Provides a file-like interface for objects which may be present within more specialized
  * containers (like zip files).
  */
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public interface FileLike {
   /** Returns the containing file for this file-like entry. */
   Path getContainer();

@@ -24,16 +24,16 @@
 //! #[derive(Clone, Debug, Trace, Freeze, ProvidesStaticType, Allocative, StarlarkPagable)]
 //! #[repr(C)]
 //! pub struct MyProvider<'v> {
-//!    field1: ValueOfUnchecked<'v, String>,
-//!    field2: ValueOfUnchecked<'v, String>,
+//!    field1: StringValue<'v>,
+//!    field2: ValueOf<'v, ListType<StarlarkStr>>,
 //! }
 //!
 //! #[starlark_module]
 //! fn create_my_prov(globals: &mut GlobalsBuilder) {
 //!    fn NameDoesntMatter<'v>(
 //!        // It's not enforced that the args here match the fields, but it's generally the user expectation that they do.
-//!        field1: ValueOfUnchecked<'v, String>,
-//!        field2: ValueOfUnchecked<'v, String>,
+//!        field1: StringValue<'v>,
+//!        field2: ValueOf<'v, ListType<StarlarkStr>>,
 //!    ) -> starlark::Result<MyProvider<'v>> {
 //!       // Can do some arg validation or computation here, just need to construct the provider.
 //!       Ok(MyProvider {
@@ -66,10 +66,13 @@ use buck2_core::provider::id::ProviderId;
 use starlark::any::IsStaticType;
 use starlark::any::ProvidesStaticType;
 use starlark::typing::Ty;
+use starlark::values::StarlarkTypeExpr;
+use starlark::values::StarlarkTypeExprStable;
 use starlark::values::StarlarkValue;
 use starlark::values::UnpackValue;
 use starlark::values::Value;
-use starlark::values::type_repr::StarlarkTypeRepr;
+use starlark::values::ValueOf;
+use starlark::values::type_expr::UnionPayload;
 
 use crate::interpreter::rule_defs::provider::builtin::default_info::DefaultInfo;
 use crate::interpreter::rule_defs::provider::builtin::default_info::DefaultInfoCallable;
@@ -111,11 +114,25 @@ unsafe impl<'v> ProvidesStaticType<'v> for &'v dyn ProviderLike<'v> {
 
 pub struct ValueAsProviderLike<'v>(pub(crate) &'v dyn ProviderLike<'v>);
 
-impl<'v> StarlarkTypeRepr for ValueAsProviderLike<'v> {
-    type Canonical = <AbstractProvider as StarlarkTypeRepr>::Canonical;
+impl<'v> StarlarkTypeExpr<'v> for ValueAsProviderLike<'v> {
+    type Get = Self;
 
     fn starlark_type_repr() -> Ty {
         AbstractProvider::starlark_type_repr()
+    }
+
+    fn get(value: Value<'v>) -> Option<Self> {
+        ValueAsProviderLike::unpack(value)
+    }
+}
+
+impl<'v> StarlarkTypeExprStable<'v> for ValueAsProviderLike<'v> {}
+
+impl<'v> UnionPayload<'v> for ValueAsProviderLike<'v> {
+    type Expr = Self;
+
+    fn from_value(value: Value<'v>) -> Option<Self> {
+        <Self as StarlarkTypeExpr<'v>>::get(value)
     }
 }
 
@@ -126,9 +143,11 @@ impl<'v> ValueAsProviderLike<'v> {
 }
 
 impl<'v> UnpackValue<'v> for ValueAsProviderLike<'v> {
+    type Type = Self;
     type Error = Infallible;
 
-    fn unpack_value_impl(value: Value<'v>) -> Result<Option<Self>, Self::Error> {
-        Ok(ValueAsProviderLike::unpack(value))
+    #[inline]
+    fn unpack(_value: ValueOf<'v, Self>, get: Self) -> Result<Self, Infallible> {
+        Ok(get)
     }
 }

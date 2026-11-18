@@ -18,6 +18,8 @@ import com.facebook.buck.jvm.core.BuildTargetValue
 import com.facebook.buck.jvm.kotlin.cd.analytics.KotlinCDLoggingContext
 import com.facebook.buck.jvm.kotlin.cd.analytics.SourceTokenCounter
 import com.facebook.buck.jvm.kotlin.kotlinc.Kotlinc
+import com.facebook.buck.jvm.kotlin.kotlinc.incremental.ClasspathChanges
+import com.facebook.buck.jvm.kotlin.kotlinc.incremental.IncrementalCompilerInputs
 import com.facebook.buck.jvm.kotlin.kotlinc.incremental.KotlincMode
 import com.facebook.buck.util.ClassLoaderCache
 import com.google.common.collect.ImmutableList
@@ -39,6 +41,10 @@ import org.jetbrains.kotlin.buildtools.api.ProjectId
 @OptIn(ExperimentalBuildToolsApi::class)
 class BuildToolsKotlinc : Kotlinc {
 
+  @Volatile private var lastCompilationWasIncremental = false
+
+  override fun lastCompilationWasIncremental(): Boolean = lastCompilationWasIncremental
+
   // Legacy BTA API is DEPRECATION_ERROR from Kotlin 2.4; KotlinToolchains replaces it.
   @Suppress("DEPRECATION_ERROR")
   override fun buildWithClasspath(
@@ -56,19 +62,32 @@ class BuildToolsKotlinc : Kotlinc {
       classToSourceMapPath: Path?,
   ): Int {
     val argsStart = System.nanoTime()
-    val compilerArgs = buildCompilerArgs(
-        ruleCellRoot,
-        kotlinSourceFilePaths,
-        workingDirectory,
-        invokingRule,
-        options,
-        kotlinCDLoggingContext,
-    )
+    val (compilerArgs, expandedSources) =
+        buildCompilerArgs(
+            ruleCellRoot,
+            kotlinSourceFilePaths,
+            workingDirectory,
+            invokingRule,
+            options,
+            kotlinCDLoggingContext,
+        )
     val argsMs = (System.nanoTime() - argsStart) / 1_000_000
+    val effectiveMode =
+        IncrementalCompilerInputs.apply(
+            mode,
+            compilerArgs,
+            expandedSources.map { ruleCellRoot.resolve(it).path },
+        ) { changes, inputsMs ->
+          // Machine-parseable, for measuring how often these inputs change and what tracking
+          // them costs.
+          LOG.info(
+              "KOTLINCD_INCREMENTAL_INPUTS|${invokingRule.fullyQualifiedName}|files_changed=${changes.filesChanged}|classpath_order_changed=${changes.classpathOrderChanged}|module_mappings_changed=${changes.moduleMappingsChanged}|module_mapping_jars_read=${changes.moduleMappingJarsRead}|record_unreadable=${changes.recordUnreadable}|inputs_ms=$inputsMs",
+          )
+        }
 
     LOG.info(
         "[KotlinC Toolchain Build Step from for target:${invokingRule.fullyQualifiedName} type:${invokingRule.type}] " +
-            "Running ${CompilationService::class.java.name} ${getIncrementalInfoMessage(mode)} " +
+            "Running ${CompilationService::class.java.name} ${getIncrementalInfoMessage(effectiveMode)} " +
             "with arguments:[${compilerArgs.joinToString()}] ",
     )
 
@@ -76,7 +95,7 @@ class BuildToolsKotlinc : Kotlinc {
     // Format: KOTLINCD_INVOCATION|target|type|incremental|arg_count
     // Followed by: KOTLINCD_ARG|<arg> for each argument
     LOG.info(
-        "KOTLINCD_INVOCATION|${invokingRule.fullyQualifiedName}|${invokingRule.type}|${getIncrementalInfoMessage(mode)}|${compilerArgs.size}",
+        "KOTLINCD_INVOCATION|${invokingRule.fullyQualifiedName}|${invokingRule.type}|${getIncrementalInfoMessage(effectiveMode)}|${compilerArgs.size}",
     )
     compilerArgs.forEach { arg -> LOG.info("KOTLINCD_ARG|$arg") }
 
@@ -93,33 +112,56 @@ class BuildToolsKotlinc : Kotlinc {
 
     val gcBefore = getGcStats()
     val compileStart = System.nanoTime()
+    val logger = BuckKotlinLogger(UncloseablePrintStream(context.stdErr), kotlinCDLoggingContext)
+    val classToSourceMap = classToSourceMapPath?.let {
+      KotlinClassToSourceMap(
+          it,
+          outputDirectory.path,
+          ruleCellRoot.path,
+          (effectiveMode as? KotlincMode.Incremental)
+              ?.kotlicWorkingDir
+              ?.path
+              ?.resolve(com.facebook.buck.jvm.java.CompilerClassToSourceMap.KOTLIN_FILE_NAME),
+      )
+    }
+    lastCompilationWasIncremental = false
     val result =
         kotlinCompilationService.compile(
             ProjectId.ProjectUUID(UUID.randomUUID()),
             compilerArgs,
-            mode,
-            BuckKotlinLogger(UncloseablePrintStream(context.stdErr), kotlinCDLoggingContext),
-            classToSourceMapPath?.let {
-              KotlinClassToSourceMap(
-                  it,
-                  outputDirectory.path,
-                  ruleCellRoot.path,
-                  (mode as? KotlincMode.Incremental)
-                      ?.kotlicWorkingDir
-                      ?.path
-                      ?.resolve(
-                          com.facebook.buck.jvm.java.CompilerClassToSourceMap.KOTLIN_FILE_NAME,
-                      ),
-              )
-            },
+            effectiveMode,
+            logger,
+            classToSourceMap,
         )
+    lastCompilationWasIncremental =
+        effectiveMode is KotlincMode.Incremental &&
+            effectiveMode.rebuildReason == null &&
+            effectiveMode.classpathChanges !is ClasspathChanges.Unknown &&
+            classToSourceMap?.requiresRebuild != true &&
+            !logger.compiledNonIncrementally
     val compileMs = (System.nanoTime() - compileStart) / 1_000_000
     val gcAfter = getGcStats()
     val gcDeltaMs = gcAfter.first - gcBefore.first
     val gcDeltaCount = gcAfter.second - gcBefore.second
 
+    // After compiling, so that counting uses lexer classes the compiler has already loaded.
+    val tokenCountStart = System.nanoTime()
+    try {
+      val tokenCounts =
+          SourceTokenCounter.countTokens(expandedSources, ruleCellRoot.path, classLoader)
+      kotlinCDLoggingContext.numKotlinTokens = tokenCounts.kotlinTokens
+      kotlinCDLoggingContext.numJavaTokens = tokenCounts.javaTokens
+    } catch (e: Exception) {
+      // Token counting is best-effort telemetry; don't fail the build
+      kotlinCDLoggingContext.addExtras(
+          BuildToolsKotlinc::class.java.simpleName,
+          "Token counting failed: ${e.cause ?: e}",
+      )
+    }
+    val tokenCountMs = (System.nanoTime() - tokenCountStart) / 1_000_000
+
     LOG.info(
-        "KOTLINCD_TIMING|${invokingRule.fullyQualifiedName}|args_ms=$argsMs|classloader_ms=$classLoaderMs|service_load_ms=$serviceLoadMs|compile_ms=$compileMs|gc_time_ms=$gcDeltaMs|gc_count=$gcDeltaCount",
+        "KOTLINCD_TIMING|${invokingRule.fullyQualifiedName}|args_ms=$argsMs|classloader_ms=$classLoaderMs|service_load_ms=$serviceLoadMs|compile_ms=$compileMs|gc_time_ms=$gcDeltaMs|gc_count=$gcDeltaCount|token_count_ms=$tokenCountMs",
     )
 
     return result.toExitCode.code
@@ -152,6 +194,7 @@ class BuildToolsKotlinc : Kotlinc {
     )
   }
 
+  /** Returns the compiler arguments and the expanded source paths. */
   private fun buildCompilerArgs(
       ruleCellRoot: AbsPath,
       kotlinSourceFilePaths: ImmutableSortedSet<RelPath>,
@@ -159,7 +202,7 @@ class BuildToolsKotlinc : Kotlinc {
       invokingRule: BuildTargetValue,
       options: List<String>,
       kotlinCDLoggingContext: KotlinCDLoggingContext,
-  ): List<String> {
+  ): Pair<List<String>, List<Path>> {
     val expandStart = System.nanoTime()
     val expandedSources: ImmutableList<Path> = getExpandedSourcePathsOrThrow(
         ruleCellRoot,
@@ -184,18 +227,6 @@ class BuildToolsKotlinc : Kotlinc {
           )
         }
 
-    try {
-      val tokenCounts = SourceTokenCounter.countTokens(expandedSources, ruleCellRoot.path)
-      kotlinCDLoggingContext.numKotlinTokens = tokenCounts.kotlinTokens
-      kotlinCDLoggingContext.numJavaTokens = tokenCounts.javaTokens
-    } catch (e: Exception) {
-      // Token counting is best-effort telemetry; don't fail the build
-      kotlinCDLoggingContext.addExtras(
-          BuildToolsKotlinc::class.java.simpleName,
-          "Token counting failed: ${e.message}",
-      )
-    }
-
     val resolvedExpandedSources = expandedSources.map { path ->
       ruleCellRoot.resolve(path).toString()
     }
@@ -214,7 +245,7 @@ class BuildToolsKotlinc : Kotlinc {
       }
 
       addAll(resolvedExpandedSources)
-    }
+    } to expandedSources
   }
 
   private fun getExpandedSourcePathsOrThrow(

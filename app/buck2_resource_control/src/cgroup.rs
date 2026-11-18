@@ -31,6 +31,7 @@ use crate::cgroup_files::CgroupFile;
 use crate::cgroup_files::CgroupFileMode;
 use crate::cgroup_files::MemoryStat;
 use crate::cgroup_files::ResourcePressure;
+use crate::cgroup_files::SwapEvents;
 use crate::path::CgroupPath;
 use crate::path::CgroupPathBuf;
 
@@ -81,6 +82,7 @@ pub struct WithMemoryMonitoring {
     memory_stat: CgroupFile,
     memory_current: CgroupFile,
     swap_current: CgroupFile,
+    swap_events: CgroupFile,
     memory_pressure: CgroupFile,
 }
 
@@ -644,17 +646,20 @@ impl<K: CgroupKind> Cgroup<NoMemoryMonitoring, K> {
                 .await
             }
         };
-        let (memory_stat, memory_current, memory_swap_current, memory_pressure) = tokio::try_join!(
-            open("memory.stat"),
-            open("memory.current"),
-            open("memory.swap.current"),
-            open("memory.pressure"),
-        )?;
+        let (memory_stat, memory_current, memory_swap_current, memory_swap_events, memory_pressure) =
+            tokio::try_join!(
+                open("memory.stat"),
+                open("memory.current"),
+                open("memory.swap.current"),
+                open("memory.swap.events"),
+                open("memory.pressure"),
+            )?;
         Ok(Cgroup {
             memory: WithMemoryMonitoring {
                 memory_stat,
                 memory_current,
                 swap_current: memory_swap_current,
+                swap_events: memory_swap_events,
                 memory_pressure,
             },
             dir: self.dir,
@@ -675,6 +680,10 @@ impl<K: CgroupKind> Cgroup<WithMemoryMonitoring, K> {
 
     pub async fn read_swap_current(&self) -> buck2_error::Result<u64> {
         self.memory.swap_current.read_int().await
+    }
+
+    pub async fn read_swap_events(&self) -> buck2_error::Result<SwapEvents> {
+        self.memory.swap_events.read_swap_events().await
     }
 
     /// Reads the memory pressure of this cgroup
@@ -922,6 +931,7 @@ impl Cgroup<NoMemoryMonitoring, CgroupKindInternal> {
 mod tests {
     use std::os::unix::process::ExitStatusExt;
     use std::time::Duration;
+    use std::time::Instant;
 
     use buck2_fs::fs_util::uncategorized as fs_util;
     use buck2_fs::paths::file_name::FileNameBuf;
@@ -1078,6 +1088,7 @@ mod tests {
         assert_eq!(stat.file, 0);
         assert_eq!(cgroup.read_memory_current().await.unwrap(), 0);
         assert_eq!(cgroup.read_swap_current().await.unwrap(), 0);
+        assert_eq!(cgroup.read_swap_events().await.unwrap().fail, 0);
         assert_eq!(
             cgroup
                 .read_memory_pressure_total(&mut pressure_handle)
@@ -1091,14 +1102,26 @@ mod tests {
             .spawn_use_some_memory_process(1, 20.0, None, Some(Duration::from_secs(100)))
             .unwrap();
 
-        // Give the process some time to start
-        std::thread::sleep(Duration::from_secs(10));
-        let stat = cgroup.read_memory_stat().await.unwrap();
-        assert!(stat.anon > 15000000, "{:?}", stat);
-        let memory_current = cgroup.read_memory_current().await.unwrap();
-        assert!(memory_current > 15000000, "{:?}", memory_current);
-        let swap_current = cgroup.read_swap_current().await.unwrap();
-        assert!(swap_current > 500000, "{:?}", swap_current);
+        // Above `memory.high` the kernel reclaims the process's pages to swap, and how far it
+        // gets depends on the host, so check the footprint across memory and swap. Wait for it
+        // rather than sleeping a fixed time: the process starts and allocates asynchronously.
+        let deadline = Instant::now() + Duration::from_secs(60);
+        loop {
+            let stat = cgroup.read_memory_stat().await.unwrap();
+            let memory_current = cgroup.read_memory_current().await.unwrap();
+            let swap_current = cgroup.read_swap_current().await.unwrap();
+            if stat.anon + swap_current > 15000000
+                && memory_current + swap_current > 15000000
+                && swap_current > 500000
+            {
+                break;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "{stat:?}, memory.current {memory_current}, memory.swap.current {swap_current}"
+            );
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
         let memory_pressure = cgroup
             .read_memory_pressure_total(&mut pressure_handle)
             .await

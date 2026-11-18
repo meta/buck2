@@ -10,6 +10,7 @@
 
 package com.facebook.buck.installer.common;
 
+import com.facebook.infer.annotation.Nullsafe;
 import org.kohsuke.args4j.CmdLineException;
 import org.kohsuke.args4j.CmdLineParser;
 import org.kohsuke.args4j.OptionDef;
@@ -18,6 +19,7 @@ import org.kohsuke.args4j.spi.Parameters;
 import org.kohsuke.args4j.spi.Setter;
 
 /** Consume all options handler for args4j library */
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public class ConsumeAllOptionsHandler extends OptionHandler<String> {
 
   public ConsumeAllOptionsHandler(

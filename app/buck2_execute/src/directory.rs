@@ -281,7 +281,7 @@ pub fn new_symlink<T: AsRef<Path>>(target: T) -> buck2_error::Result<ActionDirec
         )))
     } else {
         Ok(ActionDirectoryMember::Symlink(Arc::new(Symlink::new(
-            RelativePathBuf::from_system_path(target).unwrap(),
+            RelativePathBuf::from_system_path(target)?,
         ))))
     }
 }
@@ -895,6 +895,15 @@ pub fn extract_artifact_value(
 mod tests {
 
     use super::*;
+
+    /// A local output symlink whose target is not a relative path buck2 can represent is an error, not
+    /// a panic. On Windows `\` is a path separator, so only Unix has such a target.
+    #[cfg(unix)]
+    #[test]
+    fn test_new_symlink_target_with_backslash() {
+        assert!(new_symlink(r"a\b").is_err());
+        assert!(new_symlink("a/b").is_ok());
+    }
 
     fn path(s: &str) -> ProjectRelativePathBuf {
         ProjectRelativePath::new(s).unwrap().to_buf()

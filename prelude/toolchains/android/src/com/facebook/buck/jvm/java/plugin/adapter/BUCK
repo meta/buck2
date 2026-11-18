@@ -7,10 +7,10 @@ source_listing()
 
 buck_java_library(
     name = "adapter",
-    # We use conditional compilation to support building against both Java 8 and 11, despite
-    # breaking interface changes in the JDK.
     srcs = glob(["*.java"]),
     provided_deps = [
+        "prelude//toolchains/android/third-party:infer-annotations",
+        "prelude//toolchains/android/third-party:jspecify",
         # api modules are included in the bootstrapper at runtime, so we don't need direct deps on them
         "prelude//toolchains/android/src/com/facebook/buck/jvm/java/plugin/api:api",
     ],
@@ -26,6 +26,5 @@ buck_java_library(
         # This module is loaded as a plugin into the compiler itself; don't take dependencies on Buck
         # internals or large libraries like Guava
         "prelude//toolchains/android/src/com/facebook/buck/jvm/java/lang/model:model",
-        "prelude//toolchains/android/src/com/facebook/buck/util/liteinfersupport:liteinfersupport",
     ],
 )

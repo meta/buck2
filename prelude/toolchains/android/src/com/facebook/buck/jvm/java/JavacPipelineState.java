@@ -17,6 +17,7 @@ import com.facebook.buck.core.util.log.Logger;
 import com.facebook.buck.jvm.core.BuildTargetValue;
 import com.facebook.buck.util.CapturingPrintStream;
 import com.facebook.buck.util.Verbosity;
+import com.facebook.infer.annotation.Nullsafe;
 import com.google.common.base.Joiner;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.Lists;
@@ -31,8 +32,9 @@ import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.stream.Collectors;
-import javax.annotation.Nullable;
+import org.jspecify.annotations.Nullable;
 
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public class JavacPipelineState implements AutoCloseable {
 
   private static final Logger LOG = Logger.get(JavacPipelineState.class);
@@ -48,7 +50,7 @@ public class JavacPipelineState implements AutoCloseable {
 
   @Nullable private CapturingPrintStream stdout;
   @Nullable private CapturingPrintStream stderr;
-  @Nullable private ResolvedJavac.Invocation invocation;
+  private ResolvedJavac.@Nullable Invocation invocation;
 
   public JavacPipelineState(
       ResolvedJavac resolvedJavac,
@@ -114,7 +116,8 @@ public class JavacPipelineState implements AutoCloseable {
                   libraryJarParameters,
                   compilerParameters.getAbiGenerationMode(),
                   compilerParameters.getAbiCompatibilityMode(),
-                  compilerParameters.getSourceOnlyAbiRuleInfoFactory());
+                  compilerParameters.getSourceOnlyAbiRuleInfoFactory(),
+                  compilerParameters.getLocalClassDirectories());
 
       closeables.add(invocation);
     }

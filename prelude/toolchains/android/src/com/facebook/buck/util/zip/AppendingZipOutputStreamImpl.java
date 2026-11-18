@@ -10,6 +10,7 @@
 
 package com.facebook.buck.util.zip;
 
+import com.facebook.infer.annotation.Nullsafe;
 import java.io.IOException;
 import java.io.OutputStream;
 import java.util.HashSet;
@@ -19,8 +20,7 @@ import java.util.Objects;
 import java.util.Set;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipException;
-import javax.annotation.Nonnull;
-import javax.annotation.Nullable;
+import org.jspecify.annotations.Nullable;
 
 /**
  * A drop-in replacement for (@link java.util.zip.ZipOutStream} that supports the ability to set a
@@ -31,6 +31,7 @@ import javax.annotation.Nullable;
  * href="http://www.pkware.com/documents/casestudies/APPNOTE.TXT">
  * http://www.pkware.com/documents/casestudies/APPNOTE.TXT </a>
  */
+@Nullsafe(Nullsafe.Mode.LOCAL)
 class AppendingZipOutputStreamImpl implements CustomZipOutputStream.Impl {
 
   private final OutputStream delegate;
@@ -96,7 +97,7 @@ class AppendingZipOutputStreamImpl implements CustomZipOutputStream.Impl {
     delegate.close();
   }
 
-  protected @Nonnull CentralDirectory getCentralDirectory() {
+  protected CentralDirectory getCentralDirectory() {
     return new CentralDirectory();
   }
 

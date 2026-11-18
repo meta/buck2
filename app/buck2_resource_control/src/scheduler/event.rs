@@ -24,6 +24,7 @@ use crate::scheduler::Scene;
 pub(crate) struct EventSenderState {
     metadata: IntentionallyStdHashMap<String, String>,
     estimated_memory_cap: u64,
+    estimated_swap_cap: Option<u64>,
     memory_reading: MemoryReading,
     last_scheduled_event_time: Option<Instant>,
     txs: Vec<mpsc::UnboundedSender<ResourceControlEventMostly>>,
@@ -35,15 +36,9 @@ impl EventSenderState {
         Self {
             metadata: buck2_events::metadata::collect(daemon_id),
             estimated_memory_cap,
+            estimated_swap_cap: None,
             last_scheduled_event_time: None,
-            memory_reading: MemoryReading {
-                allprocs_memory_current: 0,
-                allprocs_swap_current: 0,
-                allprocs_memory_pressure: 0.0,
-                daemon_memory_current: 0,
-                daemon_swap_current: 0,
-                time_collected: SystemTime::now(),
-            },
+            memory_reading: MemoryReading::zero(),
             txs: Vec::new(),
             tags: Vec::new(),
         }
@@ -62,6 +57,11 @@ impl EventSenderState {
 
     pub(crate) fn update_estimated_memory_cap(&mut self, estimated_memory_cap: u64) {
         self.estimated_memory_cap = estimated_memory_cap;
+    }
+
+    /// The most swap that buck can use, as best we know; `None` if we don't.
+    pub(crate) fn update_estimated_swap_cap(&mut self, estimated_swap_cap: Option<u64>) {
+        self.estimated_swap_cap = estimated_swap_cap;
     }
 
     pub(crate) fn set_tags(&mut self, tags: Vec<String>) {
@@ -114,6 +114,7 @@ impl EventSenderState {
 
             memory_reading: self.memory_reading,
             estimated_memory_cap: self.estimated_memory_cap,
+            estimated_swap_cap: self.estimated_swap_cap,
             actions_suspended,
             actions_running,
 
@@ -137,6 +138,7 @@ pub(crate) struct ResourceControlEventMostly {
 
     memory_reading: MemoryReading,
     estimated_memory_cap: u64,
+    estimated_swap_cap: Option<u64>,
     actions_running: u64,
     actions_suspended: u64,
 
@@ -160,6 +162,9 @@ impl ResourceControlEventMostly {
 
             allprocs_memory_current: self.memory_reading.allprocs_memory_current,
             allprocs_memory_swap_current: self.memory_reading.allprocs_swap_current,
+            allprocs_page_cache: self.memory_reading.allprocs_page_cache,
+            allprocs_page_cache_active: self.memory_reading.allprocs_page_cache_active,
+            allprocs_swap_failures: self.memory_reading.allprocs_swap_failures,
             allprocs_memory_pressure: self.memory_reading.allprocs_memory_pressure.round() as u64,
 
             daemon_memory_current: self.memory_reading.daemon_memory_current,
@@ -182,7 +187,7 @@ impl ResourceControlEventMostly {
                 // FIXME(JakobDegen): Replace with more appropriate columns
                 memory_max: Some(self.estimated_memory_cap),
                 memory_high: Some(self.estimated_memory_cap),
-                memory_swap_max: None,
+                memory_swap_max: self.estimated_swap_cap,
                 memory_swap_high: None,
             }),
 

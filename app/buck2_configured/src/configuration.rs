@@ -317,7 +317,7 @@ impl Key for ConfigurationNodeKey {
                 );
             }
         }
-        .to_config_setting_data();
+        .to_config_setting_data()?;
 
         let matches =
             configuration_matches(ctx, &self.target_cfg, self.target_cell, &result).await?;

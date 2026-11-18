@@ -12,6 +12,7 @@ package com.facebook.buck.jvm.java;
 
 import com.facebook.buck.core.filesystems.AbsPath;
 import com.facebook.buck.core.filesystems.RelPath;
+import com.facebook.infer.annotation.Nullsafe;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.ImmutableSortedSet;
@@ -25,6 +26,7 @@ import java.nio.file.Paths;
 import java.util.stream.Collectors;
 
 /** Resolved JavacPluginProperties used in {@link JavacPipelineState} */
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public class ResolvedJavacPluginProperties {
 
   private final boolean canReuseClassLoader;

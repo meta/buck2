@@ -7,8 +7,9 @@
 # above-listed licenses.
 
 load("@prelude//:prelude_rule.bzl", "prelude_rule")
-load("@prelude//android:android_providers.bzl", "AndroidApkExopackageInfo", "AndroidApkInfo", "AndroidInstrumentationApkInfo")
+load("@prelude//android:android_providers.bzl", "AndroidApkExopackageInfo", "AndroidApkInfo", "AndroidApkUnderTestInfo", "AndroidInstrumentationApkInfo")
 load("@prelude//android:android_toolchain.bzl", "AndroidToolchainInfo")
+load("@prelude//android:resource_source_map.bzl", "create_resource_source_map")
 load("@prelude//decls:common.bzl", "buck")
 load("@prelude//decls:test_common.bzl", "test_common")
 load("@prelude//decls:toolchains_common.bzl", "toolchains_common")
@@ -65,8 +66,9 @@ def android_instrumentation_test_impl(ctx: AnalysisContext):
 
     classpath_args = cmd_args()
     classpath_args.add("-classpath")
-    env = ctx.attrs.env or {}
+    env = dict(ctx.attrs.env or {})
     extra_classpath = []
+    extra_sub_targets = {}
     if ctx.attrs.instrumentation_test_listener != None:
         extra_classpath.extend([
             get_all_java_packaging_deps_tset(ctx, java_packaging_infos = [ctx.attrs.instrumentation_test_listener[JavaPackagingInfo]]).project_as_args(
@@ -102,7 +104,39 @@ def android_instrumentation_test_impl(ctx: AnalysisContext):
         cmd.extend(["--apk-under-test-path", instrumentation_apk_info.apk_under_test])
     if ctx.attrs.is_self_instrumenting:
         cmd.extend(["--is-self-instrumenting"])
-    extra_instrumentation_args = ctx.attrs.extra_instrumentation_args
+
+    extra_instrumentation_args = dict(ctx.attrs.extra_instrumentation_args or {})
+    resource_source_map_jar = env.pop("ANDROID_RESOURCE_SOURCE_MAP_JAR", None)
+    apk_under_test_info = ctx.attrs.apk.get(AndroidApkUnderTestInfo)
+    resource_source_infos = (
+        instrumentation_apk_info.resource_source_infos
+        if instrumentation_apk_info != None and instrumentation_apk_info.resource_source_infos != None
+        else apk_under_test_info.resource_source_infos
+        if apk_under_test_info != None
+        else []
+    )
+    resource_id_map = (
+        instrumentation_apk_info.resource_id_map
+        if instrumentation_apk_info != None and instrumentation_apk_info.resource_id_map != None
+        else apk_under_test_info.resource_id_map
+        if apk_under_test_info != None
+        else None
+    )
+    if resource_source_map_jar:
+        resource_source_map = create_resource_source_map(
+            ctx,
+            resource_source_infos or [],
+            resource_source_map_jar,
+            name = "instrumentation_resource_source_map",
+            r_dot_txt = resource_id_map,
+        )
+        env["ANDROID_RESOURCE_SOURCE_MAP"] = resource_source_map
+        extra_sub_targets["resource_source_map"] = [DefaultInfo(default_output = resource_source_map)]
+        resource_usage_extension = "com.facebook.testing.instrumentation.resourceusage.InstrumentationResourceUsage"
+        existing_extensions = extra_instrumentation_args.get("PER_TEST_COVERAGE_EXTENSION_CLASSES")
+        extra_instrumentation_args["PER_TEST_COVERAGE_EXTENSION_CLASSES"] = (
+            resource_usage_extension if not existing_extensions else existing_extensions + "," + resource_usage_extension
+        )
     if extra_instrumentation_args:
         for arg_name, arg_value in extra_instrumentation_args.items():
             cmd.extend(
@@ -198,7 +232,9 @@ def android_instrumentation_test_impl(ctx: AnalysisContext):
         labels.append("tpx:supports-test-result-output-spec")
     if _AOSP_REPLAY_OBI_BUILD:
         labels = [label for label in labels if not label.startswith(_AOSP_REPLAY_OBI_BUILD_LABEL_PREFIX)]
-        labels.append(_AOSP_REPLAY_OBI_BUILD_LABEL_PREFIX + _AOSP_REPLAY_OBI_BUILD)
+        # FIXME: `format` instead of `+` because the typechecker types a module-level value by what
+        # it holds at load, `None` when the config is unset, and does not narrow on the `if`.
+        labels.append("{}{}".format(_AOSP_REPLAY_OBI_BUILD_LABEL_PREFIX, _AOSP_REPLAY_OBI_BUILD))
 
     test_info = ExternalRunnerTestInfo(
         type = "android_instrumentation",
@@ -238,11 +274,12 @@ def android_instrumentation_test_impl(ctx: AnalysisContext):
 
     # We append additional args so that "buck2 run" will work with sane defaults
     run_info.args.add(cmd_args(["--auto-run-on-connected-device", "--output", ".", "--adb-executable-path", "adb"]))
+    extra_sub_targets.update(target_stats_subtargets)
     return (
         [
             test_info,
             run_info,
-            DefaultInfo(sub_targets = target_stats_subtargets),
+            DefaultInfo(sub_targets = extra_sub_targets),
         ]
         + classmap_source_info
         + target_stats_providers

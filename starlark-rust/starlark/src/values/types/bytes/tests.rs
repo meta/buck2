@@ -347,16 +347,20 @@ assert_eq(len(d), 2)
     );
 }
 
-// Per the spec, elems() returns an iterable of 1-byte bytes objects.
-// Note: bytes(iterable) requires integers, so bytes(x.elems()) doesn't work
-// since elems() yields bytes objects — use list comprehension with indexing instead.
+// elems() exposes integer byte values through an opaque iterable.
 #[test]
 fn test_bytes_elems() {
     assert::all_true(
         r#"
-list(b"abc".elems()) == [b"a", b"b", b"c"]
+list(b"abc".elems()) == [97, 98, 99]
 list(b"".elems()) == []
-list(b"\x00\xff".elems()) == [b"\x00", b"\xff"]
+list(b"\x00\xff".elems()) == [0, 255]
+type(b"abc".elems()) == "bytes.elems"
+repr(b"abc".elems()) == 'b"abc".elems()'
+list(bytes("é").elems()) == [195, 169]
+bytes(b"abc".elems()) == b"abc"
+bytes(b"".elems()) == b""
+bytes(bytes([0, 255]).elems()) == bytes([0, 255])
 "#,
     );
 }
@@ -479,21 +483,18 @@ fn test_bytes_add_type_error() {
 // bytes < non-bytes produces a type error.
 #[test]
 fn test_bytes_compare_type_error() {
-    assert::fail(r#"b"abc" < 1"#, "cmp()");
+    assert::fail(r#"b"abc" < 1"#, "Operation `compare` not supported");
 }
 
 // elems() on multi-byte UTF-8 content iterates individual bytes, not codepoints.
 #[test]
 fn test_bytes_elems_multibyte() {
-    // "é" = 0xc3 0xa9 → two 1-byte bytes objects
-    assert::all_true(r#"list(bytes("é").elems()) == [b"\xc3", b"\xa9"]"#);
+    assert::all_true(r#"list(bytes("é").elems()) == [195, 169]"#);
 }
 
-// bytes(iterable_of_bytes_objects) fails — elems() yields bytes, not ints.
-// This documents our deviation from starlark-go (where elems() yields ints).
 #[test]
-fn test_bytes_constructor_rejects_bytes_elements() {
-    assert::fail(r#"bytes(b"abc".elems())"#, "integers");
+fn test_bytes_constructor_from_elems() {
+    assert::eq(r#"bytes(b"abc".elems())"#, r#"b"abc""#);
 }
 
 // Slices with stride > 1 (beyond the stride=2 case already tested).

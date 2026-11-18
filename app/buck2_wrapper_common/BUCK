@@ -5,6 +5,16 @@ oncall("build_infra")
 rust_library(
     name = "buck2_wrapper_common",
     srcs = glob(["src/**/*.rs"]),
+    # See `buck2_client_ctx` for why sysinfo's default features are off.
+    autocargo = {
+        "cargo_toml_config": {
+            "dependencies_override": {
+                "dependencies": {
+                    "sysinfo": {"default-features": False, "features": ["system"]},
+                },
+            },
+        },
+    },
     test_deps = [
         "fbsource//third-party/rust:serde_json",
         "fbsource//third-party/rust:tempfile",

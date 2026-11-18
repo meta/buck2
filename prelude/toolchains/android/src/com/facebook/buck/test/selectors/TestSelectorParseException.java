@@ -10,7 +10,10 @@
 
 package com.facebook.buck.test.selectors;
 
+import com.facebook.infer.annotation.Nullsafe;
+
 /** Errors specific to parsing test selectors. */
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public class TestSelectorParseException extends RuntimeException {
   public TestSelectorParseException(String message) {
     super(message);

@@ -25,3 +25,21 @@ erlang_application(
     use_global_parse_transforms = False,
     visibility = ["PUBLIC"],
 )
+
+erlang_tests(
+    contacts = ["build_infra"],
+    labels = ["unit"],
+    suites = ["test/test_binary_SUITE.erl"],
+    deps = [
+        "stdlib",
+        ":test_binary",
+        ":test_binary_fixtures",
+    ],
+)
+
+erlang_application(
+    name = "test_binary_fixtures",
+    srcs = glob(["test/fixtures/*.erl"]),
+    applications = ["//erlang/common_test/common:common"],
+    labels = ["test_application"],
+)

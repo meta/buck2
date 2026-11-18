@@ -10,6 +10,7 @@
 
 package com.facebook.buck.core.util.graph;
 
+import com.facebook.infer.annotation.Nullsafe;
 import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.Iterables;
 import java.util.HashSet;
@@ -26,6 +27,7 @@ import java.util.Set;
  *
  * <p>TODO: Implement via {@link ConsumingTraverser}.
  */
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public abstract class AbstractBreadthFirstThrowingTraversal<Node, E extends Throwable> {
 
   private final Queue<Node> toExplore;

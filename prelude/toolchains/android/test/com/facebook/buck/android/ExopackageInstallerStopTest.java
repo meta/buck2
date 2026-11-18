@@ -309,8 +309,7 @@ public class ExopackageInstallerStopTest {
     }
 
     @Override
-    public InstalledApk compareInstalledApk(String packageName, File apk, boolean exact)
-        throws Exception {
+    public InstalledApk compareInstalledApk(String packageName, File apk) throws Exception {
       return installedApkHash.equals(ContentDigests.getContentHash(apk))
           ? InstalledApk.SAME
           : InstalledApk.DIFFERENT;

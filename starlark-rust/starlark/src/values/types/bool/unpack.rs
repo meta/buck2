@@ -18,12 +18,14 @@
 use std::convert::Infallible;
 
 use crate::values::UnpackValue;
-use crate::values::Value;
+use crate::values::ValueOf;
 
-impl UnpackValue<'_> for bool {
+impl<'v> UnpackValue<'v> for bool {
+    type Type = bool;
     type Error = Infallible;
 
-    fn unpack_value_impl(value: Value) -> Result<Option<Self>, Self::Error> {
-        Ok(value.unpack_bool())
+    #[inline]
+    fn unpack(_value: ValueOf<'v, bool>, get: bool) -> Result<Self, Infallible> {
+        Ok(get)
     }
 }

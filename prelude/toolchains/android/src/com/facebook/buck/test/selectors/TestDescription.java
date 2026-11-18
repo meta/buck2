@@ -10,12 +10,15 @@
 
 package com.facebook.buck.test.selectors;
 
+import com.facebook.infer.annotation.Nullsafe;
 import java.util.Objects;
+import org.jspecify.annotations.Nullable;
 
 /**
  * A non-JUnit specific way of describing a test-method inside a test-class. This meants that the
  * test-selectors code does not need a dependency on JUnit.
  */
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public class TestDescription {
 
   private final String className;
@@ -35,7 +38,7 @@ public class TestDescription {
   }
 
   @Override
-  public boolean equals(Object obj) {
+  public boolean equals(@Nullable Object obj) {
     if (!(obj instanceof TestDescription)) {
       return false;
     }

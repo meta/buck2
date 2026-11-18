@@ -11,7 +11,7 @@
 use std::sync::Arc;
 
 use allocative::Allocative;
-use buck2_common::invocation_paths::TenantPaths;
+use buck2_common::invocation_paths::LeasedTenantPaths;
 use buck2_common::legacy_configs::configs::LegacyBuckConfig;
 use buck2_common::legacy_configs::key::BuckconfigKeyRef;
 use buck2_core::rollout_percentage::RolloutPercentage;
@@ -94,7 +94,7 @@ fn sqlite_db_setup_metadata_and_versions(
 
 pub(crate) async fn maybe_initialize_materializer_sqlite_db(
     options: &DiskStateOptions,
-    paths: TenantPaths,
+    paths: &LeasedTenantPaths,
     io_executor: Arc<dyn BlockingExecutor>,
     root_config: &LegacyBuckConfig,
     deferred_materializer_configs: &DeferredMaterializerConfigs,
@@ -144,10 +144,11 @@ pub(crate) async fn maybe_initialize_materializer_sqlite_db(
 }
 
 pub(crate) async fn maybe_initialize_incremental_sqlite_db(
-    paths: TenantPaths,
+    paths: &LeasedTenantPaths,
     io_executor: Arc<dyn BlockingExecutor>,
     root_config: &LegacyBuckConfig,
     daemon_id: &DaemonId,
+    digest_config: DigestConfig,
 ) -> buck2_error::Result<IncrementalDbState> {
     // Rolling it out by default, but giving an option to disable in case something goes horribly wrong
     if !root_config
@@ -185,6 +186,7 @@ pub(crate) async fn maybe_initialize_incremental_sqlite_db(
         // TODO(minglunli): I'm not convinced we need reject_identity for incremental state. iiuc, this is only used by restarter
         // but incremental state isn't as widely used as materializer so we prob shouldn't restart daemon even if that's out of sync?
         None,
+        digest_config,
     )
     .await?;
     Ok(incremental_db_state)
@@ -192,16 +194,17 @@ pub(crate) async fn maybe_initialize_incremental_sqlite_db(
 
 pub(crate) async fn maybe_initialize_dep_file_sqlite_db(
     options: &DiskStateOptions,
-    paths: TenantPaths,
+    paths: &LeasedTenantPaths,
     io_executor: Arc<dyn BlockingExecutor>,
     root_config: &LegacyBuckConfig,
     daemon_id: &DaemonId,
 ) -> buck2_error::Result<Option<DepFileStateSqliteDb>> {
     // Opt-in (Phase 1), enabled with `buck2.sqlite_dep_file_state = true` -- but only meaningful with
-    // the materializer state db. A cross-restart hit re-validates outputs via
-    // `Materializer::declare_match`, which after a restart only reports a match if the materializer
-    // reloaded its tracked state from sqlite. Without `sqlite_materializer_state` that tree is empty
-    // post-restart, so no reloaded entry could ever hit and persisting them would be pure overhead.
+    // the materializer state db. A cross-restart hit vouches for its outputs through what the
+    // materializer reloaded from sqlite: the deferred core re-declares them at their paths, the
+    // disk-state core takes a locally made output out of the tracked path holding it. Without
+    // `sqlite_materializer_state` that state is empty post-restart, so a reloaded entry could hit
+    // only on CAS content and persisting local entries would be pure overhead.
     let requested = root_config
         .parse(BuckconfigKeyRef {
             section: "buck2",

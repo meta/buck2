@@ -162,6 +162,14 @@ def _get_srcs(attrs) -> dict:
     srcs = {}
 
     for src in raw_srcs:
+        if isinstance(src, Dependency):
+            outputs = src[DefaultInfo].default_outputs
+            if not outputs:
+                fail("Source dependency {} has no default outputs".format(src.label))
+            for output in outputs:
+                srcs[output] = output.short_path + ".o"
+            continue
+
         obj = None
         if isinstance(src, Artifact):
             obj = src.short_path + ".o"

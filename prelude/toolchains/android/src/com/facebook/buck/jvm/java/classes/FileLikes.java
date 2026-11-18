@@ -10,7 +10,10 @@
 
 package com.facebook.buck.jvm.java.classes;
 
+import com.facebook.infer.annotation.Nullsafe;
+
 /** Utilities for common operations when working with {@link FileLike}s. */
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public class FileLikes {
 
   /** {@link FileLike} name suffix that identifies it as a Java class file. */

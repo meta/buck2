@@ -11,15 +11,16 @@
 package com.facebook.buck.jvm.java;
 
 import com.facebook.buck.core.filesystems.AbsPath;
+import com.facebook.infer.annotation.Nullsafe;
 import java.io.BufferedReader;
 import java.io.IOException;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.Locale;
 import java.util.Optional;
-import javax.annotation.Nullable;
 import javax.tools.Diagnostic;
 import javax.tools.JavaFileObject;
+import org.jspecify.annotations.Nullable;
 
 /**
  * Take a {@link Diagnostic} and pretty print it, using the same formatting as you'd find in the
@@ -37,6 +38,7 @@ import javax.tools.JavaFileObject;
  * Remainder of message
  * </pre>
  */
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public class DiagnosticPrettyPrinter {
 
   private DiagnosticPrettyPrinter() {

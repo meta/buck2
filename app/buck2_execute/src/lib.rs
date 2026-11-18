@@ -22,6 +22,7 @@ pub mod digest_config;
 pub mod directory;
 pub mod entry;
 pub mod execute;
+pub mod incremental_state;
 pub mod knobs;
 pub mod materialize;
 pub mod output_size;

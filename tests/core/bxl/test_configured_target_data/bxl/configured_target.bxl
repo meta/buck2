@@ -79,3 +79,29 @@ strip_cfg = bxl_main(
     impl = _strip_cfg_impl,
     cli_args = {},
 )
+
+def _lazy_attrs_special_lookup_impl(ctx):
+    node = ctx.configured_targets("root//:with_deps")
+    attrs = node.attrs_lazy()
+    _assert_eq(attrs.get("name").value(), "with_deps")
+    _assert_eq(len(attrs.get("srcs").value()), 2)
+    _assert_eq(len(attrs.get("buck.deps").value()), 2)
+    _assert_eq(attrs.get("not_an_attribute"), None)
+
+    eager = node.attrs_eager()
+    for name in dir(eager):
+        _assert_eq(attrs.get(name).value(), getattr(eager, name).value())
+
+    _assert_eq(attrs.get("buck.exec_group_platforms"), None)
+    forward = ctx.configured_targets("//transition:rainbow")
+    _assert_eq(forward.rule_type, "forward")
+    forward_eager = forward.attrs_eager()
+    for name in dir(forward_eager):
+        _assert_eq(forward.attrs_lazy().get(name).value(), getattr(forward_eager, name).value())
+    _assert_eq(forward.attrs_lazy().get("not_an_attribute"), None)
+    ctx.output.print("lazy special attributes match eager values")
+
+lazy_attrs_special_lookup = bxl_main(
+    impl = _lazy_attrs_special_lookup_impl,
+    cli_args = {},
+)

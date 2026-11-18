@@ -11,10 +11,11 @@ configuration_alias(
     visibility = ["PUBLIC"],
 )
 
+# Reads the root cell's config, like ovr_config//os:windows-cl.
 config_setting(
     name = "cl",
     constraint_values = ["prelude//os/constraints:os[windows]"],
-    values = {"cxx.windows_compiler_type": "windows"},
+    root_values = {"cxx.windows_compiler_type": "windows"},
     visibility = ["PUBLIC"],
 )
 
@@ -27,6 +28,6 @@ configuration_alias(
 config_setting(
     name = "msvc",
     constraint_values = ["prelude//os/constraints:os[windows]"],
-    values = {"cxx.windows_compiler_type": "windows"},
+    root_values = {"cxx.windows_compiler_type": "windows"},
     visibility = ["PUBLIC"],
 )

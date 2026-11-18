@@ -23,6 +23,7 @@ load(
     "DepMetadata",
     "LinkArgs",
     "LinkInfosTSet",
+    "LinkedObject",
     "dedupe_dep_metadata",
     "get_link_info",
     "truncate_dep_metadata",
@@ -74,6 +75,30 @@ ManifestModule = record(
     manifest = ArgLike,
     artifacts = list[ArgLike],
     bytecode = field(ManifestInfo | None, None),
+)
+
+# Build-info artifacts that must only reach an outplace link tree after the
+# packaging action has run, so the packaging inputs stay stable across build
+# hosts. The tree is first packaged with placeholder build info (stable-mode
+# DSO, placeholder manifest entries, placeholder executable stamp); the public
+# tree is then assembled from it with these files replaced.
+LateBuildInfoPatch = record(
+    # Real full-mode `libgenerated_build_info.so`.
+    dso = field(Artifact),
+    # Placeholder (stable-mode) build-info DSO the link produced; packaged
+    # in the outplace tree and overwritten by `dso` in the patch.
+    placeholder_dso = field(SharedLibrary | None, None),
+    # In-tree destination of `dso`, e.g. `runtime/lib/libgenerated_build_info.so`.
+    dso_dest = field(str),
+    # In-tree destination of the native executable, e.g. `runtime/bin/<exe>`.
+    exe_dest = field(str),
+    # Placeholder (stable-mode) manifest entries for the packaged manifest.
+    placeholder_manifest_entries = field(Artifact | None, None),
+    # Real full-mode build-info JSON to re-stamp the packaged executable with.
+    build_info_json = field(Artifact | None, None),
+    # The native executable re-stamped with `build_info_json`; used for
+    # non-outplace styles, whose trees symlink to it directly.
+    stamped_exe = field(Artifact | None, None),
 )
 
 def make_py_package_providers(ctx: AnalysisContext, manifest_identifier: str, pex: PexProviders) -> list[Provider]:
@@ -262,6 +287,7 @@ def make_py_package(
     link_args: list[LinkArgs] = [],
     debuginfo_files: list[(str | (str, SharedLibrary, str), Artifact)] = [],
     manifest_entries_overlay: Artifact | None = None,
+    late_build_info_patch: LateBuildInfoPatch | None = None,
 ) -> PexProviders:
     """
     Passes a standardized set of flags to a `make_py_package` binary to create a python
@@ -330,11 +356,38 @@ def make_py_package(
         generated_files.append((manifest_module.artifacts[1], "__manifest__.py"))
         generated_files.append((manifest_module.artifacts[0], "__manifest__.json"))
 
+    # With a late build-info patch, the outplace tree is packaged with a
+    # placeholder manifest (placeholder entries) and the real one is applied
+    # to the packaged tree afterwards; other styles use the real manifest
+    # directly. Only the Rust live builder supports the patch step.
+    # The placeholder module is always overwritten after packaging, so its
+    # base entries neutralize per-build fields (which arrive via the
+    # macros-provided manifest info): otherwise it re-runs on every host
+    # change with identical outputs.
+    placeholder_manifest_module = None
+    if late_build_info_patch != None and manifest_module != None and ctx.attrs.use_rust_make_par:
+        placeholder_manifest_module = _generate_manifest_module(
+            ctx,
+            _neutralize_per_build_manifest_entries(manifest_module_entries),
+            late_build_info_patch.placeholder_manifest_entries,
+            python_toolchain,
+            python_internal_tools,
+            srcs,
+            pex_modules.compile,
+            name_suffix = "-placeholder",
+        )
+    # The non-live packaging path consumes shared libraries only through
+    # these precomputed args, and it has no late patch step, so it must
+    # package the re-stamped executable. The live builder receives the
+    # original list and picks placeholder vs re-stamped per style.
+    packaged_shared_libraries = shared_libraries
+    if late_build_info_patch != None and late_build_info_patch.stamped_exe != None:
+        packaged_shared_libraries = _swap_stamped_executable(shared_libraries, late_build_info_patch)
     common_modules_args, dep_artifacts, debug_artifacts = _pex_modules_common_args(
         ctx,
         pex_modules,
         [startup_function] if startup_function else [],
-        shared_libraries,
+        packaged_shared_libraries,
         debuginfo_files = debuginfo_files,
     )
 
@@ -356,6 +409,8 @@ def make_py_package(
         pex_modules,
         output_suffix = "",
         allow_cache_upload = allow_cache_upload,
+        late_build_info_patch = late_build_info_patch,
+        placeholder_manifest_module = placeholder_manifest_module,
     )
 
     # lets make a shell
@@ -375,7 +430,7 @@ def make_py_package(
             ctx,
             repl_pex_modules,
             [startup_function] if startup_function else [],
-            shared_libraries,
+            packaged_shared_libraries,
             debuginfo_files = debuginfo_files,
             suffix = "_repl",
         )
@@ -401,6 +456,8 @@ def make_py_package(
                 repl_pex_modules,
                 output_suffix = "-repl",
                 allow_cache_upload = allow_cache_upload,
+                late_build_info_patch = late_build_info_patch,
+                placeholder_manifest_module = placeholder_manifest_module,
             ),
         )
 
@@ -426,6 +483,8 @@ def make_py_package(
                 pex_modules,
                 output_suffix = "-{}".format(style),
                 allow_cache_upload = allow_cache_upload,
+                late_build_info_patch = late_build_info_patch,
+                placeholder_manifest_module = placeholder_manifest_module,
             )
         )
         default.sub_targets[style] = make_py_package_providers(
@@ -438,6 +497,83 @@ def make_py_package(
     # so we opt to use a more specific subtarget
     default.sub_targets["par-debuginfo"] = _debuginfo_subtarget(ctx, debug_artifacts)
     return default
+
+def _swap_stamped_executable(
+    shared_libraries: list[(SharedLibrary, str)],
+    late_build_info_patch: LateBuildInfoPatch,
+) -> list[(SharedLibrary, str)]:
+    """Point the packaged native executable at its re-stamped copy.
+
+    Every packaging path except patched live outplace packages the
+    executable directly (symlinked or copied into the PAR), so it must be
+    the copy re-stamped with the real build info, not the
+    placeholder-stamped original.
+    """
+    swapped = []
+    for shlib, libdir in shared_libraries:
+        if shlib.soname.is_str and paths.join(libdir, shlib.soname.ensure_str()) == late_build_info_patch.exe_dest:
+            shlib = SharedLibrary(
+                soname = shlib.soname,
+                label = shlib.label,
+                lib = LinkedObject(
+                    output = late_build_info_patch.stamped_exe,
+                    unstripped_output = shlib.lib.unstripped_output,
+                    dwp = shlib.lib.dwp,
+                ),
+                link_args = shlib.link_args,
+                shlib_deps = shlib.shlib_deps,
+                stripped_lib = shlib.stripped_lib,
+            )
+        swapped.append((shlib, libdir))
+    return swapped
+
+def _assemble_patched_tree(
+    ctx: AnalysisContext,
+    tree: Artifact,
+    unstamped_tree: Artifact,
+    manifest_module: ManifestModule | None,
+    dso: Artifact,
+    late_build_info_patch: LateBuildInfoPatch,
+) -> None:
+    """Assemble the public outplace tree: the unstamped tree with the real
+    build info in place of the placeholders.
+
+    The tree is composed from the artifacts' digests alone; no command runs,
+    and nothing is copied until something materializes the tree. Entries are
+    laid down in order, so everything after the unstamped tree replaces what
+    the tree has at that path.
+    """
+    entries = {"": unstamped_tree}
+    if manifest_module != None:
+        entries["__manifest__.json"] = manifest_module.artifacts[0]
+        entries["__manifest__.py"] = manifest_module.artifacts[1]
+    entries[late_build_info_patch.dso_dest] = dso
+    # Without a re-stamped executable (no ELF section to re-stamp on this
+    # toolchain) the tree keeps the placeholder-stamped one it was packaged with.
+    if late_build_info_patch.stamped_exe != None:
+        entries[late_build_info_patch.exe_dest] = late_build_info_patch.stamped_exe
+
+    bytecode = manifest_module.bytecode if manifest_module != None else None
+    if bytecode == None:
+        ctx.actions.copied_dir(tree.as_output(), entries)
+        return
+
+    # The manifest module's bytecode lands wherever the compiler's cache
+    # layout puts it, which only its bytecode manifest knows.
+    bytecode_dir = bytecode.artifacts[0][0]
+
+    def assemble(ctx: AnalysisContext, artifacts, outputs):
+        patched = dict(entries)
+        for dest_pyc, _, _ in artifacts[bytecode.manifest].read_json():
+            patched[dest_pyc] = bytecode_dir.project(dest_pyc)
+        ctx.actions.copied_dir(outputs[tree], patched)
+
+    ctx.actions.dynamic_output(
+        dynamic = [bytecode.manifest],
+        inputs = [],
+        outputs = [tree.as_output()],
+        f = assemble,
+    )
 
 def _make_py_package_wrapper(
     ctx: AnalysisContext,
@@ -457,6 +593,8 @@ def _make_py_package_wrapper(
     pex_modules: PexModules,
     output_suffix: str,
     allow_cache_upload: bool,
+    late_build_info_patch: LateBuildInfoPatch | None = None,
+    placeholder_manifest_module: ManifestModule | None = None,
 ) -> PexProviders:
     if package_style in [PackageStyle("inplace"), PackageStyle("outplace")] and ctx.attrs.use_rust_make_par:
         return _make_py_package_live(
@@ -474,6 +612,9 @@ def _make_py_package_wrapper(
             package_style,
             allow_cache_upload,
             manifest_module.bytecode if manifest_module else None,
+            manifest_module = manifest_module,
+            late_build_info_patch = late_build_info_patch,
+            placeholder_manifest_module = placeholder_manifest_module,
         )
     return _make_py_package_impl(
         ctx,
@@ -685,6 +826,9 @@ def _make_py_package_live(
     package_style: PackageStyle,
     allow_cache_upload: bool,
     manifest_bytecode: ManifestInfo | None,
+    manifest_module: ManifestModule | None = None,
+    late_build_info_patch: LateBuildInfoPatch | None = None,
+    placeholder_manifest_module: ManifestModule | None = None,
 ) -> PexProviders:
     """
     Bundle contents of par into symlink dir
@@ -726,12 +870,56 @@ def _make_py_package_live(
     name = "{}{}".format(ctx.attrs.name, output_suffix)
 
     symlink_tree_path = ctx.actions.declare_output("{}#link-tree".format(name), dir = True, has_content_based_path = False)
+
+    # With a late build-info patch, outplace packaging writes an unstamped
+    # intermediate tree (placeholder build info throughout, so the action is
+    # cacheable across build hosts); the public tree is assembled from it
+    # below with the real build info in place of the placeholders.
+    patch_link_tree = is_outplace and late_build_info_patch != None
+    unstamped_tree_path = ctx.actions.declare_output("{}#link-tree-unstamped".format(name), dir = True, has_content_based_path = False) if patch_link_tree else None
+    tree_output = unstamped_tree_path if patch_link_tree else symlink_tree_path
+
+    if late_build_info_patch != None and not is_outplace and late_build_info_patch.stamped_exe != None:
+        # Non-outplace trees symlink to the executable, so point them at the
+        # re-stamped copy instead of the placeholder-stamped original.
+        shared_libraries = _swap_stamped_executable(shared_libraries, late_build_info_patch)
+
+    patch_dso = late_build_info_patch.dso if late_build_info_patch != None else None
+    if patch_link_tree:
+        # Package the placeholder DSO so the packaging action's inputs are
+        # build-info-free; the patch overwrites it with the real DSO (the
+        # packaged, possibly stripped, artifact from `shared_libraries`).
+        swapped_libraries = []
+        for shlib, libdir in shared_libraries:
+            if shlib.soname.is_str and paths.join(libdir, shlib.soname.ensure_str()) == late_build_info_patch.dso_dest:
+                patch_dso = shlib.lib.output
+                swapped_libraries.append((late_build_info_patch.placeholder_dso, libdir))
+            else:
+                swapped_libraries.append((shlib, libdir))
+        shared_libraries = swapped_libraries
+
     runtime_files = []
 
     output = ctx.actions.declare_output("{}{}".format(name, ctx.attrs.extension or python_toolchain.pex_extension), has_content_based_path = False)
 
     generated_files = []
     generated_files.extend(common_generated_files)
+
+    if patch_link_tree and placeholder_manifest_module != None:
+        # Package the placeholder manifest; the patch step applies the real
+        # one to the packaged tree.
+        generated_files = [
+            (
+                placeholder_manifest_module.artifacts[1]
+                if dest == "__manifest__.py"
+                else placeholder_manifest_module.artifacts[0]
+                if dest == "__manifest__.json"
+                else artifact,
+                dest,
+            )
+            for artifact, dest in generated_files
+        ]
+        manifest_bytecode = placeholder_manifest_module.bytecode
 
     is_windows = ctx.attrs._target_os_type[OsLookup].os == Os("windows")
 
@@ -762,7 +950,7 @@ def _make_py_package_live(
         )
 
     cmd = cmd_args(make_py_package_live)
-    cmd.add(cmd_args(symlink_tree_path.as_output(), format = "--output-path={}"))
+    cmd.add(cmd_args(tree_output.as_output(), format = "--output-path={}"))
 
     sources = pex_modules.manifests.src_manifests()
     if pex_modules.repl_manifests:
@@ -877,6 +1065,15 @@ def _make_py_package_live(
             identifier = "make_outplace_par{}".format(output_suffix),
             allow_cache_upload = allow_cache_upload,
         )
+        if patch_link_tree:
+            _assemble_patched_tree(
+                ctx,
+                symlink_tree_path,
+                unstamped_tree_path,
+                manifest_module,
+                patch_dso,
+                late_build_info_patch,
+            )
     else:
         state = ctx.actions.declare_output("{}-state.json".format(name), has_content_based_path = False)
         cmd.add(cmd_args(state.as_output(), format = "--state={}"))
@@ -1383,6 +1580,47 @@ def load_startup_functions():
     )
     return src_startup_functions_path
 
+# Per-build `-c build_info.*` fields (plus their `fbmake` aliases) with the
+# stable values the placeholder manifest uses for them. Only keys already
+# present are neutralized, so the module keeps its shape.
+_PER_BUILD_MANIFEST_FIELDS = {
+    "epochtime": 0,
+    "host": "",
+    "package": "",
+    "package_name": "",
+    "package_release": "",
+    "package_version": "",
+    "path": "",
+    "release": "",
+    "revision": "",
+    "revision_epochtime": 0,
+    "time": "",
+    "time_iso8601": "",
+    "upstream_revision": "",
+    "upstream_revision_epochtime": 0,
+    "user": "",
+    "version": "",
+}
+
+def _neutralize_per_build_manifest_entries(
+    manifest_module_entries: dict[str, typing.Any],
+) -> dict[str, typing.Any]:
+    """Copy base manifest entries with per-build fields neutralized.
+
+    The placeholder manifest module is always overwritten with the real
+    module after packaging, so its content only needs to be stable across
+    build hosts, not accurate. Neutralizing here keeps the placeholder
+    `entries.json` (and everything below it) host-independent.
+    """
+    entries = dict(manifest_module_entries)
+    if "fbmake" in entries:
+        fbmake = dict(entries["fbmake"])
+        for field, stable in _PER_BUILD_MANIFEST_FIELDS.items():
+            if field in fbmake:
+                fbmake[field] = stable
+        entries["fbmake"] = fbmake
+    return entries
+
 def _generate_manifest_module(
     ctx: AnalysisContext,
     manifest_module_entries: dict[str, typing.Any] | None,
@@ -1391,6 +1629,7 @@ def _generate_manifest_module(
     python_internal_tools: PythonInternalToolsInfo,
     src_manifests: list[ArgLike],
     compile: bool,
+    name_suffix: str = "",
 ) -> ManifestModule | None:
     """
     Generates a __manifest__.py module, and an extra entry to add to source manifests.
@@ -1401,11 +1640,11 @@ def _generate_manifest_module(
 
     if manifest_module_entries == None:
         return None
-    module = ctx.actions.declare_output("manifest/__manifest__.py", has_content_based_path = False)
-    json_entries_output = ctx.actions.declare_output("manifest/__manifest__.json", has_content_based_path = False)
-    entries_json = ctx.actions.write_json("manifest/entries.json", manifest_module_entries, has_content_based_path = False)
+    module = ctx.actions.declare_output("manifest{}/__manifest__.py".format(name_suffix), has_content_based_path = False)
+    json_entries_output = ctx.actions.declare_output("manifest{}/__manifest__.json".format(name_suffix), has_content_based_path = False)
+    entries_json = ctx.actions.write_json("manifest{}/entries.json".format(name_suffix), manifest_module_entries, has_content_based_path = False)
     src_manifests_path = ctx.actions.write(
-        "__module_manifests.txt",
+        "__module_manifests{}.txt".format(name_suffix),
         src_manifests,
         has_content_based_path = False,
     )
@@ -1418,7 +1657,7 @@ def _generate_manifest_module(
             ["--output", module.as_output()],
             hidden = src_manifests,
         )
-        ctx.actions.run(cmd, category = "par", identifier = "manifest-module")
+        ctx.actions.run(cmd, category = "par", identifier = "manifest-module{}".format(name_suffix))
         ctx.actions.copy_file(json_entries_output.as_output(), entries_json)
     else:
         cmd = cmd_args(
@@ -1430,10 +1669,10 @@ def _generate_manifest_module(
             ["--output-json", json_entries_output.as_output()],
             hidden = src_manifests,
         )
-        ctx.actions.run(cmd, category = "par", identifier = "manifest-module")
+        ctx.actions.run(cmd, category = "par", identifier = "manifest-module{}".format(name_suffix))
 
     src_manifest = ctx.actions.write_json(
-        "manifest/module_manifest.json",
+        "manifest{}/module_manifest.json".format(name_suffix),
         [
             ["__manifest__.py", module, "prelude//python:make_py_package.bzl"],
             ["__manifest__.json", json_entries_output, "prelude//python:make_py_package.bzl"],
@@ -1448,8 +1687,13 @@ def _generate_manifest_module(
     if compile and python_toolchain.pyc_compilation_enabled:
         bytecode = compile_manifests(
             ctx,
-            [create_manifest_for_entries(ctx, "manifest/manifest_module", [("__manifest__.py", module, "prelude//python:make_py_package.bzl")])],
+            [
+                create_manifest_for_entries(
+                    ctx, "manifest{}/manifest_module".format(name_suffix), [("__manifest__.py", module, "prelude//python:make_py_package.bzl")]
+                )
+            ],
             mode = "CHECKED_HASH",
+            output_suffix = name_suffix,
         )
 
     return ManifestModule(manifest = src_manifest, artifacts = [json_entries_output, module], bytecode = bytecode)

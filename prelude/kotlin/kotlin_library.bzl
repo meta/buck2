@@ -55,13 +55,13 @@ load(
     "get_default_info",
     "get_java_version_attributes",
 )
-load("@prelude//jvm:attrs.bzl", "jvm_common", "min_sdk_version")
+load("@prelude//jvm:attrs.bzl", "jvm_common", "min_sdk_version", "pre_dex_desugar_classpath_view")
 load("@prelude//jvm:nullsafe.bzl", "get_nullsafe_info")
 load(
     "@prelude//kotlin:kotlin_toolchain.bzl",
     "KotlinToolchainInfo",
 )
-load("@prelude//kotlin:kotlin_utils.bzl", "get_friend_paths", "get_kotlinc_compatible_target")
+load("@prelude//kotlin:kotlin_utils.bzl", "get_friend_paths", "get_kotlinc_compatible_target", "kotlinc_arg_text")
 load("@prelude//kotlin:kotlincd_jar_creator.bzl", "create_jar_artifact_kotlincd")
 load("@prelude//utils:argfile.bzl", "at_argfile")
 load("@prelude//utils:expect.bzl", "expect")
@@ -349,19 +349,10 @@ def get_language_version_arg(ctx: AnalysisContext) -> list[str]:
     language_version = get_language_version(ctx)
     return ["-language-version=" + language_version]
 
-def _kotlinc_arg_text(arg) -> str:
-    """The text kotlincd gives kotlinc for one `extra_kotlinc_arguments`
-    element: KotlinCStepsBuilder passes each element unchanged. `str()` of an
-    `attrs.arg()` value is that text in one pair of double quotes, with a
-    macro written as `$(location ...)`."""
-    if isinstance(arg, str):
-        return arg
-    return str(arg)[1:-1]
-
 def filter_out_language_version(extra_arguments: list) -> list:
     return [arg for arg in extra_arguments if not (isinstance(arg, str) and "-language-version" in arg)]
 
-def kotlin_library_impl(ctx: AnalysisContext) -> list[Provider]:
+def kotlin_library_impl(ctx: AnalysisContext, kotlin_compiler_plugins = None) -> list[Provider]:
     packaging_deps = ctx.attrs.deps + ctx.attrs.exported_deps + ctx.attrs.runtime_deps
 
     # TODO(T107163344) this shouldn't be in kotlin_library itself, use overlays to remove it.
@@ -388,6 +379,7 @@ def kotlin_library_impl(ctx: AnalysisContext) -> list[Provider]:
         ctx = ctx,
         validation_deps_outputs = get_validation_deps_outputs(ctx),
         extra_sub_targets = target_stats_subtargets,
+        kotlin_compiler_plugins = kotlin_compiler_plugins,
     )
     return to_list(java_providers) + [android_packageable_info] + target_stats_providers
 
@@ -407,7 +399,9 @@ def build_kotlin_library(
     extra_sub_targets: dict = {},
     validation_deps_outputs: [list[Artifact], None] = None,
     extra_arguments = [],
+    kotlin_compiler_plugins = None,
 ) -> JavaProviders:
+    effective_kotlin_compiler_plugins = ctx.attrs.kotlin_compiler_plugins if kotlin_compiler_plugins == None else kotlin_compiler_plugins
     srcs = ctx.attrs.srcs
     has_kotlin_srcs = lazy.is_any(lambda src: src.extension == ".kt" or src.basename.endswith(".src.zip") or src.basename.endswith("-sources.jar"), srcs)
     kotlin_toolchain = ctx.attrs._kotlin_toolchain[KotlinToolchainInfo]
@@ -461,7 +455,7 @@ def build_kotlin_library(
                 ksp_annotation_processor_properties,
                 additional_classpath_entries,
                 bootclasspath_for_kotlinc,
-                ctx.attrs.kotlin_compiler_plugins,
+                effective_kotlin_compiler_plugins,
                 target_level,
             )
             semanticdb_res = _semanticdb_plugin(ctx, kotlin_toolchain)
@@ -525,8 +519,12 @@ def build_kotlin_library(
             )
 
             kosabi_applicability_runs = abi_generation_mode == AbiGenerationMode("source_only") and kotlin_toolchain.kosabi_applicability_plugin != None
-            # Applicability verdicts need whole-target analysis; incremental frontends can omit findings from unchanged files.
-            incremental = ctx.attrs.incremental and not kosabi_applicability_runs
+
+            # Applicability verdicts need whole-target analysis. An incremental round checks only the files it recompiles,
+            # which is enough only with kotlin.kosabi_applicability_incremental and kotlincd's input tracking: kotlincd
+            # then forces a full round when an input the incremental compiler cannot see changes.
+            applicability_can_run_incrementally = kotlin_toolchain.kosabi_applicability_incremental and kotlin_toolchain.incremental_input_tracking
+            incremental = ctx.attrs.incremental and (not kosabi_applicability_runs or applicability_can_run_incrementally)
 
             common_kotlincd_kwargs = {
                 "abi_generation_mode": abi_generation_mode,
@@ -548,7 +546,7 @@ def build_kotlin_library(
                 "is_building_android_binary": ctx.attrs._is_building_android_binary,
                 "jar_postprocessor": ctx.attrs.jar_postprocessor[RunInfo] if hasattr(ctx.attrs, "jar_postprocessor") and ctx.attrs.jar_postprocessor else None,
                 "java_toolchain": ctx.attrs._java_toolchain[JavaToolchainInfo],
-                "kotlin_compiler_plugins": ctx.attrs.kotlin_compiler_plugins,
+                "kotlin_compiler_plugins": effective_kotlin_compiler_plugins,
                 "kotlin_toolchain": kotlin_toolchain,
                 "label": ctx.label,
                 "language_version": get_language_version(ctx),
@@ -848,7 +846,7 @@ def _typecheck_subtarget(
     # not -Werror.
     def has_flag(*names):
         return lazy.is_any(
-            lambda a: _kotlinc_arg_text(a) in names,
+            lambda a: kotlinc_arg_text(a) in names,
             ctx.attrs.extra_kotlinc_arguments or [],
         )
 
@@ -860,7 +858,7 @@ def _typecheck_subtarget(
     # kotlinc reports, so the checker must see them too.
     warning_levels = []
     for a in ctx.attrs.extra_kotlinc_arguments or []:
-        flag = _kotlinc_arg_text(a)
+        flag = kotlinc_arg_text(a)
         if flag.startswith("-Xwarning-level="):
             warning_levels.append(flag[len("-Xwarning-level=") :])
         elif flag.startswith("-Xsuppress-warning="):
@@ -879,7 +877,7 @@ def _typecheck_subtarget(
             kotlinc_args += ["-P", ",".join(["{}={}".format(key, value) for key, value in options.items()])]
     kotlinc_args += ["-jvm-target", get_kotlinc_compatible_target(str(target_level)), "-Xjspecify-annotations=strict"]
     for a in ctx.attrs.extra_kotlinc_arguments or []:
-        flag = _kotlinc_arg_text(a)
+        flag = kotlinc_arg_text(a)
         handled = flag in ("-Werror", "-nowarn", "-W") or "-language-version" in flag
         if not handled and not flag.startswith("-Xwarning-level=") and not flag.startswith("-Xsuppress-warning="):
             kotlinc_args.append(a)
@@ -1041,6 +1039,7 @@ kotlin_library = prelude_rule(
             "manifest_file": attrs.option(attrs.source(), default = None),
             "maven_coords": attrs.option(attrs.string(), default = None),
             "min_sdk_version": attrs.default_only(attrs.option(attrs.int(), default = min_sdk_version())),
+            "pre_dex_desugar_classpath_view": attrs.default_only(attrs.bool(default = pre_dex_desugar_classpath_view())),
             "proguard_config": attrs.option(attrs.source(), default = None),
             "required_for_source_only_abi": attrs.bool(default = False),
             "resources_root": attrs.option(attrs.string(), default = None),

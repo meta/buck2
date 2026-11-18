@@ -11,9 +11,11 @@
 package com.facebook.buck.util;
 
 import com.facebook.buck.core.util.log.Logger;
+import com.facebook.infer.annotation.Nullsafe;
 import com.google.common.io.ByteStreams;
 import java.io.PrintStream;
 
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public class Console {
 
   private static final Logger LOG = Logger.get(Console.class);

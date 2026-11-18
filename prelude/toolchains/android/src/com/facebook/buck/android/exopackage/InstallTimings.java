@@ -10,12 +10,15 @@
 
 package com.facebook.buck.android.exopackage;
 
+import com.facebook.infer.annotation.Nullsafe;
+
 /**
  * Collects how long each stage of an install took.
  *
  * <p>Paired with when each artifact arrived, this is enough to work out the earliest the install
  * could have finished had it never waited for an artifact it did not yet need.
  */
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public interface InstallTimings {
 
   /** Preparing the device: creating the data root and listing what is already on it. */

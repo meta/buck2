@@ -15,6 +15,7 @@ import com.facebook.buck.core.filesystems.AbsPath;
 import com.facebook.buck.jvm.java.abi.kotlin.InlineFunctionScope;
 import com.facebook.buck.jvm.java.lang.model.ElementsExtended;
 import com.facebook.buck.util.zip.JarBuilder;
+import com.facebook.infer.annotation.Nullsafe;
 import java.io.IOException;
 import java.nio.file.Path;
 import java.util.ArrayDeque;
@@ -26,16 +27,18 @@ import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 import java.util.TreeSet;
 import java.util.function.Supplier;
 import java.util.stream.Collectors;
-import javax.annotation.Nullable;
 import javax.annotation.processing.Messager;
 import javax.lang.model.SourceVersion;
 import javax.lang.model.element.Element;
 import javax.lang.model.util.Types;
+import org.jspecify.annotations.Nullable;
 
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public class StubJar {
   private final Supplier<LibraryReader> libraryReaderSupplier;
   @Nullable private AbiGenerationMode compatibilityMode = null;
@@ -144,6 +147,18 @@ public class StubJar {
                 .collect(Collectors.toSet())
             : Collections.emptySet();
 
+    if (inlineFunctionScope != null) {
+      // Path order is not enclosing-owner order: Compose hoists an inline function's capture-free
+      // lambdas to ComposableSingletons$<File>Kt$lambda$N$1, which sorts before <File>Kt. Create
+      // every owner's scopes first so the capture check never runs ahead of them.
+      for (Path path : paths) {
+        if (input.isClass(path) && !existingAbiPathStrings.contains(path.toString())) {
+          inlineFunctionScope.createScopes(
+              pathWithoutClassSuffix(path), StubJarClassEntry.readInlineFunctions(input, path));
+        }
+      }
+    }
+
     Map<String, StubJarEntry> deferredEntries = new HashMap<>();
     Set<String> referencedByWritten = new HashSet<>();
     List<StubJarEntry> writtenExistingEntries = new ArrayList<>();
@@ -163,14 +178,13 @@ public class StubJar {
       }
       String className = entry.getClassName();
       String scopeOuter = entry.getScopeOuterClass();
-      // Entries visit outer-first, so a scope-captured class whose outer is already deferred
+      // Entries visit outer-first, so a nested class whose outer is already deferred
       // cannot be written yet: it must drop with its outer unless the fixpoint keeps it.
-      boolean scopeDeferred =
-          className != null
-              && entry.isScopeCaptured()
-              && scopeOuter != null
-              && deferredEntries.containsKey(scopeOuter);
-      if ((entry.isFilePrivateKotlinClass() && className != null) || scopeDeferred) {
+      // This covers scope-captured lambdas as well as effectively-private member
+      // classes, such as a public companion nested in a file-private class.
+      boolean outerDeferred =
+          className != null && scopeOuter != null && deferredEntries.containsKey(scopeOuter);
+      if ((entry.isFilePrivateKotlinClass() && className != null) || outerDeferred) {
         deferredEntries.put(className, entry);
       } else {
         entry.write(writer);
@@ -178,11 +192,13 @@ public class StubJar {
           writtenExistingEntries.add(entry);
         } else {
           referencedByWritten.addAll(entry.getReferencedClassNames());
+          referencedByWritten.addAll(entry.getSealedSubclasses());
         }
       }
       if (inlineFunctionScope != null) {
         String pathNoSuffix = pathWithoutClassSuffix(path);
         inlineFunctionScope.createScopes(pathNoSuffix, entry.getInlineFunctions());
+        inlineFunctionScope.recordInlineBodyFieldOwners(entry.getRetainedBodyFieldOwners());
         if (entry.extendsInlineFunctionScope()) {
           inlineFunctionScope.extendScope(pathNoSuffix);
         }
@@ -192,6 +208,7 @@ public class StubJar {
     if (!deferredEntries.isEmpty()) {
       for (StubJarEntry existingEntry : writtenExistingEntries) {
         referencedByWritten.addAll(existingEntry.getReferencedClassNames());
+        referencedByWritten.addAll(existingEntry.getSealedSubclasses());
       }
 
       // keptNames only grows and each pass that changes anything adds to it, so this terminates.
@@ -205,26 +222,25 @@ public class StubJar {
           StubJarEntry deferred = deferredEntries.get(referencedName);
           if (deferred != null && keptNames.add(referencedName)) {
             worklist.addAll(deferred.getReferencedClassNames());
+            worklist.addAll(deferred.getSealedSubclasses());
             changed = true;
           }
         }
         for (Map.Entry<String, StubJarEntry> e : deferredEntries.entrySet()) {
           StubJarEntry deferred = e.getValue();
           String outer = deferred.getScopeOuterClass();
-          if (!deferred.isScopeCaptured()
-              || outer == null
-              || keptNames.contains(e.getKey())
-              || !keptNames.contains(outer)) {
+          if (outer == null || keptNames.contains(e.getKey()) || !keptNames.contains(outer)) {
             continue;
           }
           keptNames.add(e.getKey());
           worklist.addAll(deferred.getReferencedClassNames());
+          worklist.addAll(deferred.getSealedSubclasses());
           changed = true;
         }
       }
 
       for (String keptName : keptNames) {
-        deferredEntries.get(keptName).write(writer);
+        Objects.requireNonNull(deferredEntries.get(keptName)).write(writer);
       }
     }
   }

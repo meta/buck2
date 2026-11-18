@@ -26,7 +26,7 @@ use crate::environment::MethodsBuilder;
 use crate::values::Heap;
 use crate::values::Value;
 use crate::values::ValueError;
-use crate::values::ValueOfUnchecked;
+use crate::values::ValueOf;
 use crate::values::list::ListRef;
 use crate::values::none::NoneOr;
 use crate::values::none::NoneType;
@@ -102,16 +102,16 @@ pub(crate) fn list_methods(builder: &mut MethodsBuilder) {
     /// ```
     fn extend<'v>(
         this: Value<'v>,
-        #[starlark(require = pos)] other: ValueOfUnchecked<'v, StarlarkIter<Value<'v>>>,
+        #[starlark(require = pos)] other: ValueOf<'v, StarlarkIter<Value<'v>>>,
         heap: Heap<'v>,
     ) -> starlark::Result<NoneType> {
         let res = ListData::from_value_mut(this)?;
-        if this.ptr_eq(other.get()) {
+        if this.ptr_eq(other.to_value()) {
             // If the types alias, we can't borrow the `other` for iteration.
             // But we can do something smarter to double the elements
             res.double(heap);
         } else {
-            let it = other.get().iterate(heap)?;
+            let it = other.to_value().iterate(heap)?;
             res.extend(it, heap);
         }
         Ok(NoneType)

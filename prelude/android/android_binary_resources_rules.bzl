@@ -197,6 +197,7 @@ def get_android_binary_resources_info(
         primary_resources_apk = primary_resources_apk,
         proguard_config_file = aapt2_link_info.proguard_config_file,
         r_dot_java_infos = r_dot_java_infos,
+        r_dot_txt = r_dot_txt,
         string_source_map = string_source_map,
         voltron_string_source_map = voltron_string_source_map,
         jar_files_that_may_contain_resources = prebuilt_jars,
@@ -601,6 +602,11 @@ def _merge_assets(
             merged_assets_output_hash = None
 
         merge_assets_cmd.add("--binary-type", "aab" if is_bundle_build else "apk")
+
+        # `apk_build` and the bundle builder inflate every compressed entry of this APK and deflate it
+        # again at their own level, so the level used here never reaches the final APK or bundle.
+        if not is_exopackaged_enabled_for_resources:
+            merge_assets_cmd.add("--compression-level", "1")
 
         return merge_assets_cmd, merged_assets_output_hash
 

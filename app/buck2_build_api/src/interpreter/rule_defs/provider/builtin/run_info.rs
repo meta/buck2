@@ -18,24 +18,21 @@ use starlark::eval::Evaluator;
 use starlark::values::Freeze;
 use starlark::values::OwnedFrozen;
 use starlark::values::StarlarkPagable;
+use starlark::values::StarlarkValue;
 use starlark::values::Trace;
-use starlark::values::UnpackValue;
-use starlark::values::ValueOfUnchecked;
+use starlark::values::ValueOf;
 use starlark::values::ValueTyped;
-use starlark::values::list::ListRef;
-use starlark::values::type_repr::StarlarkTypeRepr;
 
 use crate as buck2_build_api;
 use crate::interpreter::rule_defs::cmd_args::ArtifactPathMapper;
 use crate::interpreter::rule_defs::cmd_args::CommandLineArgLike;
 use crate::interpreter::rule_defs::cmd_args::CommandLineArtifactVisitor;
 use crate::interpreter::rule_defs::cmd_args::CommandLineBuilder;
-use crate::interpreter::rule_defs::cmd_args::FrozenStarlarkCmdArgs;
 use crate::interpreter::rule_defs::cmd_args::StarlarkCmdArgs;
+use crate::interpreter::rule_defs::cmd_args::StarlarkCmdArgsView;
 use crate::interpreter::rule_defs::cmd_args::StarlarkCommandLineValueUnpack;
 use crate::interpreter::rule_defs::cmd_args::WriteToFileMacroVisitor;
 use crate::interpreter::rule_defs::cmd_args::command_line_arg_like_type::command_line_arg_like_impl;
-use crate::interpreter::rule_defs::cmd_args::value_as::ValueAsCommandLineLike;
 
 /// Provider that signals a rule is runnable and defines how to execute it.
 ///
@@ -86,8 +83,8 @@ use crate::interpreter::rule_defs::cmd_args::value_as::ValueAsCommandLineLike;
 )]
 #[repr(transparent)]
 pub struct RunInfo<'v> {
-    /// The command to run, stored as CommandLine
-    args: ValueOfUnchecked<'v, FrozenStarlarkCmdArgs<'static>>,
+    /// The command to run.
+    args: ValueOf<'v, StarlarkCmdArgsView<'v>>,
 }
 
 /// A `RunInfo` kept alive by its owning frozen heap; usable across threads and awaits.
@@ -98,46 +95,44 @@ fn run_info_creator(globals: &mut GlobalsBuilder) {
     #[starlark(as_type = RunInfo<'static>)]
     fn RunInfo<'v>(
         // TODO(nga): make the argument either named or positional.
-        #[starlark(default = StarlarkCommandLineValueUnpack::List(ListRef::empty()))]
+        #[starlark(default = StarlarkCommandLineValueUnpack::List(ValueOf::empty_list()))]
         args: StarlarkCommandLineValueUnpack<'v>,
         eval: &mut Evaluator<'v, '_, '_>,
-    ) -> starlark::Result<RunInfo<'v>> {
+    ) -> starlark::Result<ValueOf<'v, RunInfo<'v>>> {
         let heap = eval.heap();
         let valid_args = StarlarkCmdArgs::try_from_value_typed(args)?;
-        Ok(RunInfo {
-            args: ValueOfUnchecked::<FrozenStarlarkCmdArgs>::new(heap.alloc(valid_args)),
-        })
+        Ok(heap.alloc(RunInfo {
+            args: ValueOf::alloc(heap, valid_args),
+        }))
     }
 }
 
 impl<'v> CommandLineArgLike<'v> for RunInfo<'v> {
     fn register_me(&self) {
-        command_line_arg_like_impl!(RunInfo::starlark_type_repr());
+        command_line_arg_like_impl!(RunInfo::get_type_starlark_repr());
     }
 
     fn add_to_command_line(&self, fmt: &mut CommandLineBuilder<'v, '_>) -> buck2_error::Result<()> {
-        ValueAsCommandLineLike::unpack_value_err(self.args.get())
-            .expect("a command line from construction")
-            .0
-            .add_to_command_line(fmt)?;
-        Ok(())
+        self.args
+            .get()
+            .as_command_line_arg_like()
+            .add_to_command_line(fmt)
     }
 
     fn visit_artifacts(
         &self,
         visitor: &mut dyn CommandLineArtifactVisitor<'v>,
     ) -> buck2_error::Result<()> {
-        ValueAsCommandLineLike::unpack_value_err(self.args.get())
-            .expect("a command line from construction")
-            .0
-            .visit_artifacts(visitor)?;
-        Ok(())
+        self.args
+            .get()
+            .as_command_line_arg_like()
+            .visit_artifacts(visitor)
     }
 
     fn contains_arg_attr(&self) -> bool {
-        ValueAsCommandLineLike::unpack_value_err(self.args.get())
-            .expect("a command line from construction")
-            .0
+        self.args
+            .get()
+            .as_command_line_arg_like()
             .contains_arg_attr()
     }
 

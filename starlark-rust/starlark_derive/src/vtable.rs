@@ -37,7 +37,21 @@ pub(crate) fn vtable_has_field_name(name: &syn::Ident) -> syn::Ident {
 }
 
 struct Gen {
-    starlark_value: ItemTrait,
+    /// The `StarlarkType` trait.
+    trait_item: ItemTrait,
+}
+
+/// How a vtable entry reaches the method it stands for. Every entry is a function generic over
+/// a type parameter `T`; which trait bounds it depends on the dispatch.
+#[derive(Copy, Clone, PartialEq, Eq)]
+enum Dispatch {
+    /// A `StarlarkType` method with a receiver: `T` is the representation, the entry builds the
+    /// receiver with `T::with_type` and calls the method on `T::Type`.
+    ViaRepresentation,
+    /// A `StarlarkType` function without a receiver: `T` is the type itself.
+    OnType,
+    /// A `StarlarkValue` method: `T` is the representation and the method is called on it.
+    OnRepresentation,
 }
 
 struct VTableEntry {
@@ -115,28 +129,45 @@ impl Gen {
         ty
     }
 
-    /// Parse `StarlarkValue` method parameter into vtable `fn` parameter and unpack expr.
-    fn vtable_entry_param(&self, span: Span, param: &FnArg) -> syn::Result<VTableFnParam> {
+    /// Parse `StarlarkValue` method parameter into vtable `fn` parameters and unpack exprs.
+    fn vtable_entry_param(&self, span: Span, param: &FnArg) -> syn::Result<Vec<VTableFnParam>> {
         match param {
-            FnArg::Receiver(_) => Ok(VTableFnParam {
-                span,
-                name: syn::parse_quote_spanned! {span=>
-                    this
+            // The receiver arrives twice: as the payload pointer, which is what a type with one
+            // representation needs, and as the `Value`, which a view needs to carry. Lifetimes
+            // are erased like every other parameter's.
+            FnArg::Receiver(_) => Ok(vec![
+                VTableFnParam {
+                    span,
+                    name: syn::parse_quote_spanned! {span=>
+                        this_ptr
+                    },
+                    ty: syn::parse_quote_spanned! {span=>
+                        StarlarkValueRawPtr
+                    },
+                    unpack: syn::parse_quote_spanned! {span=>
+                        &*this_ptr.value_ptr::<T>()
+                    },
                 },
-                ty: syn::parse_quote_spanned! {span=>
-                    crate::values::layout::vtable::StarlarkValueRawPtr
+                VTableFnParam {
+                    span,
+                    name: syn::parse_quote_spanned! {span=>
+                        this
+                    },
+                    ty: syn::parse_quote_spanned! {span=>
+                        Value<'v>
+                    },
+                    unpack: syn::parse_quote_spanned! {span=>
+                        ValueTyped::<T>::new_unchecked(std::mem::transmute::<Value<'_>, Value<'_>>(this))
+                    },
                 },
-                unpack: syn::parse_quote_spanned! {span=>
-                    this.value_ref::<T>()
-                },
-            }),
+            ]),
             FnArg::Typed(p) => {
                 let name: &Ident = match &*p.pat {
                     Pat::Ident(p) => &p.ident,
                     p => return Err(syn::Error::new(p.span(), "parameter must be identifier")),
                 };
                 let ty_without_lifetime = Self::remove_lifetime_params(&p.ty);
-                Ok(VTableFnParam {
+                Ok(vec![VTableFnParam {
                     span,
                     name: name.clone(),
                     ty: (*p.ty).clone(),
@@ -146,12 +177,12 @@ impl Gen {
                         // to fail at compile time if there's a bug in derive.
                         std::mem::transmute::<#ty_without_lifetime, #ty_without_lifetime>(#name)
                     },
-                })
+                }])
             }
         }
     }
 
-    fn vtable_entry(&self, method: &TraitItemFn) -> syn::Result<VTableEntry> {
+    fn vtable_entry(&self, method: &TraitItemFn, dispatch: Dispatch) -> syn::Result<VTableEntry> {
         let fn_name = &method.sig.ident;
         let fn_ret_type = &method.sig.output;
 
@@ -160,7 +191,10 @@ impl Gen {
             .inputs
             .iter()
             .map(|param| self.vtable_entry_param(method.sig.span(), param))
-            .collect::<syn::Result<_>>()?;
+            .collect::<syn::Result<Vec<_>>>()?
+            .into_iter()
+            .flatten()
+            .collect();
 
         let field_init_param_pairs: Vec<syn::FnArg> = params.iter().map(|p| p.fn_arg()).collect();
         let ret = match &method.sig.output {
@@ -179,11 +213,43 @@ impl Gen {
         })?;
 
         let field_init_args: Vec<&syn::Expr> = params.iter().map(|p| &p.unpack).collect();
+        let (bound, call): (TokenStream, syn::Expr) = match dispatch {
+            Dispatch::OnType => (
+                quote! { StarlarkType<'v2> },
+                syn::parse_quote_spanned! {method.sig.span()=>
+                    T::#fn_name(#(#field_init_args),*)
+                },
+            ),
+            Dispatch::OnRepresentation => {
+                let [payload, _value, args @ ..] = field_init_args.as_slice() else {
+                    unreachable!("a method with a receiver has a receiver");
+                };
+                (
+                    quote! { StarlarkValue<'v2> },
+                    syn::parse_quote_spanned! {method.sig.span()=>
+                        T::#fn_name(#payload, #(#args),*)
+                    },
+                )
+            }
+            Dispatch::ViaRepresentation => {
+                let [payload, value, args @ ..] = field_init_args.as_slice() else {
+                    unreachable!("a method with a receiver has a receiver");
+                };
+                (
+                    quote! { StarlarkValue<'v2> },
+                    syn::parse_quote_spanned! {method.sig.span()=>
+                        T::with_type_at(#payload, #value, |receiver| {
+                            <T::Type as StarlarkType<'v2>>::#fn_name(receiver, #(#args),*)
+                        })
+                    },
+                )
+            }
+        };
         let init = syn::parse_quote_spanned! {method.sig.span()=>
             #fn_name: {
                 // It is important to put vtable entry into named function
                 // instead of anonymous callback so function name is meaningful in profiler output.
-                fn #fn_name<'a, 'v, 'v2, T: StarlarkValue<'v2>>(#(#field_init_param_pairs),*) #fn_ret_type {
+                fn #fn_name<'a, 'v, 'v2, T: #bound>(#(#field_init_param_pairs),*) #fn_ret_type {
                     unsafe {
                         // The problem is that it is concrete `'v` in
                         // ```
@@ -196,9 +262,7 @@ impl Gen {
                         // struct StarlarkValueVTableGet<for<'v> T<'v>: StarlarkValue<'v>>
                         // ```
                         // it would be possible. But it doesn't. Hence all the transmutes.
-                        std::mem::transmute(
-                            T::#fn_name(#(#field_init_args),*)
-                        )
+                        std::mem::transmute(#call)
                     }
                 }
                 #fn_name::<T>
@@ -246,15 +310,11 @@ impl Gen {
             return Ok(None);
         }
 
-        Ok(Some(self.vtable_entry(m)?))
-    }
-
-    fn process_starlark_value_vtable_type(&self, item_type: &mut syn::TraitItemType) {
-        if item_type.ident == "Canonical" {
-            // This won't be needed once associated type defaults are stabilized.
-            // https://github.com/rust-lang/rust/issues/29661
-            item_type.default = None;
-        }
+        let dispatch = match m.sig.inputs.first() {
+            Some(FnArg::Receiver(_)) => Dispatch::ViaRepresentation,
+            _ => Dispatch::OnType,
+        };
+        Ok(Some(self.vtable_entry(m, dispatch)?))
     }
 
     fn gen_starlark_value_vtable(&self) -> syn::Result<TokenStream> {
@@ -266,9 +326,9 @@ impl Gen {
         let mut ty_fields: Vec<syn::Field> = Vec::new();
         let mut ty_inits: Vec<syn::FieldValue> = Vec::new();
         let mut ty_uninits: Vec<syn::FieldValue> = Vec::new();
-        let mut starlark_value = self.starlark_value.clone();
+        let mut trait_item = self.trait_item.clone();
         let mut extra_items: Vec<syn::TraitItem> = Vec::new();
-        for item in &mut starlark_value.items {
+        for item in &mut trait_item.items {
             match item {
                 TraitItem::Fn(m) => {
                     let has_receiver = matches!(m.sig.inputs.first(), Some(FnArg::Receiver(_)));
@@ -308,23 +368,44 @@ impl Gen {
                         #has_name: false
                     });
                 }
-                TraitItem::Type(ty) => self.process_starlark_value_vtable_type(ty),
+                TraitItem::Type(_) => {}
                 TraitItem::Const(_) => {}
                 item => {
                     return Err(syn::Error::new_spanned(item, "unexpected item"));
                 }
             }
         }
-        starlark_value.items.extend(extra_items);
+        trait_item.items.extend(extra_items);
+
+        // The `StarlarkValue` methods with vtable entries all the same; `StarlarkValue` says why
+        // each is not a `StarlarkType` method.
+        let representation_methods: [TraitItemFn; 2] = [
+            syn::parse_quote! {
+                fn provide(&'v self, demand: &mut Demand<'_, 'v>);
+            },
+            syn::parse_quote! {
+                fn type_matches_value(&self, value: Value<'v>, private: Private) -> bool;
+            },
+        ];
+        for method in &representation_methods {
+            let VTableEntry {
+                field,
+                init,
+                init_for_uninitialized,
+            } = self.vtable_entry(method, Dispatch::OnRepresentation)?;
+            value_fields.push(field);
+            value_inits.push(init);
+            value_uninits.push(init_for_uninitialized);
+        }
 
         Ok(quote_spanned! {
-            self.starlark_value.span() =>
+            self.trait_item.span() =>
 
-            #starlark_value
+            #trait_item
 
-            /// The entries of a `StarlarkValue` vtable that describe the type rather than a
-            /// value: the `HAS_*` capability flags and the functions without a receiver. The
-            /// typechecker reads these and nothing else.
+            /// The entries of a `StarlarkType` that describe the type rather than a value: the
+            /// `HAS_*` capability flags and the functions without a receiver. The typechecker
+            /// reads these and nothing else.
             #[allow(non_upper_case_globals, non_snake_case, dead_code)]
             pub(crate) struct StarlarkTypeVTable {
                 #(#ty_fields),*
@@ -338,18 +419,19 @@ impl Gen {
                 };
             }
 
-            pub(crate) struct StarlarkTypeVTableGet<'v, T: StarlarkValue<'v>>(std::marker::PhantomData<&'v T>);
+            pub(crate) struct StarlarkTypeVTableGet<'v, T: StarlarkType<'v>>(std::marker::PhantomData<&'v T>);
 
             #[allow(clippy::all)]
             #[allow(unused_variables)]
-            impl<'v, T: StarlarkValue<'v>> StarlarkTypeVTableGet<'v, T> {
+            impl<'v, T: StarlarkType<'v>> StarlarkTypeVTableGet<'v, T> {
                 pub(crate) const VTABLE: StarlarkTypeVTable = StarlarkTypeVTable {
                     #(#ty_inits),*
                 };
             }
 
-            /// The vtable of a `StarlarkValue` implementation: the type-level entries in `ty`,
-            /// and one entry per method with a receiver.
+            /// The vtable of a representation: its type's entries in `ty`, and one entry per
+            /// method with a receiver, each a shim that builds the receiver from the
+            /// representation and calls the type's method.
             #[allow(non_upper_case_globals, non_snake_case, dead_code)]
             pub(crate) struct StarlarkValueVTable {
                 pub(crate) ty: StarlarkTypeVTable,
@@ -371,7 +453,7 @@ impl Gen {
             #[allow(unused_variables)]
             impl<'v, T: StarlarkValue<'v>> StarlarkValueVTableGet<'v, T> {
                 pub(crate) const VTABLE: StarlarkValueVTable = StarlarkValueVTable {
-                    ty: StarlarkTypeVTableGet::<'v, T>::VTABLE,
+                    ty: StarlarkTypeVTableGet::<'v, T::Type>::VTABLE,
                     #(#value_inits),*
                 };
             }
@@ -379,16 +461,14 @@ impl Gen {
     }
 }
 
-/// Generates the `StarlarkValueVTable` and friends.
-/// At the moment of writing this macro generated: P499428269,
-/// output of `cargo expand -p starlark --lib values::traits`.
+/// Generates the `StarlarkValueVTable` and friends from the `StarlarkType` trait.
 pub(crate) fn starlark_internal_vtable(
     _attr: proc_macro::TokenStream,
     input: proc_macro::TokenStream,
 ) -> proc_macro::TokenStream {
-    let starlark_value = parse_macro_input!(input as ItemTrait);
+    let trait_item = parse_macro_input!(input as ItemTrait);
 
-    let r#gen = Gen { starlark_value };
+    let r#gen = Gen { trait_item };
     let generated = match r#gen.gen_starlark_value_vtable() {
         Ok(generated) => generated,
         Err(error) => {

@@ -10,8 +10,8 @@
 
 package com.facebook.buck.jvm.java;
 
-import com.facebook.buck.util.json.ObjectMappers;
-import com.fasterxml.jackson.core.type.TypeReference;
+import com.facebook.buck.util.json.JsonStringListMaps;
+import com.facebook.infer.annotation.Nullsafe;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -28,6 +28,7 @@ import java.util.stream.Collectors;
  * Compiler output paths relative to the classes directory, and their source paths relative to the
  * cell.
  */
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public final class CompilerClassToSourceMap {
   public static final String JAVA_FILE_NAME = "java-class-to-source.json";
   public static final String KOTLIN_FILE_NAME = "kotlin-class-to-source.json";
@@ -61,20 +62,14 @@ public final class CompilerClassToSourceMap {
   }
 
   public void write(Path output) throws IOException {
-    Files.createDirectories(output.toAbsolutePath().getParent());
-    ObjectMappers.WRITER.writeValue(output.toFile(), entries);
+    Files.createDirectories(Objects.requireNonNull(output.toAbsolutePath().getParent()));
+    JsonStringListMaps.write(output, entries);
   }
 
   public static CompilerClassToSourceMap read(Path input) throws IOException {
     CompilerClassToSourceMap result = new CompilerClassToSourceMap();
-    Map<String, Set<String>> values =
-        ObjectMappers.readValue(input, new TypeReference<Map<String, Set<String>>>() {});
-    if (values == null
-        || values.values().stream()
-            .anyMatch(sources -> sources == null || sources.stream().anyMatch(Objects::isNull))) {
-      throw new IOException("Invalid null value in class-to-source map: " + input);
-    }
-    values.forEach((classFile, sources) -> result.entries.put(classFile, new TreeSet<>(sources)));
+    JsonStringListMaps.read(input)
+        .forEach((classFile, sources) -> result.entries.put(classFile, new TreeSet<>(sources)));
     return result;
   }
 

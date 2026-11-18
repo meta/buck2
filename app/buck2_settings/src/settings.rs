@@ -19,6 +19,7 @@ use crate::agent_build::AgentBuild;
 use crate::agent_config_change::AgentConfigChange;
 use crate::agent_interactive::AgentInteractive;
 use crate::agent_materialization::AgentMaterialization;
+use crate::agent_recursive_patterns::AgentRecursivePatterns;
 use crate::analysis::Analysis;
 use crate::buckconfig::BuckconfigSource;
 use crate::daemon::Daemon;
@@ -210,6 +211,7 @@ buck_settings! {
         agent_config_change: AgentConfigChange,
         agent_interactive: AgentInteractive,
         agent_materialization: AgentMaterialization,
+        agent_recursive_patterns: AgentRecursivePatterns,
         event_log: EventLog,
         health_check: HealthCheck,
     }
@@ -414,6 +416,7 @@ mod tests {
             ("agent_interactive", "clean_enabled"),
             ("agent_interactive", "new_isolation_dir_enabled"),
             ("agent_config_change", "enabled"),
+            ("agent_recursive_patterns", "enabled"),
         ] {
             let current: BuckSettings = serde_json::from_value(serde_json::json!({
                 section: {name: true},

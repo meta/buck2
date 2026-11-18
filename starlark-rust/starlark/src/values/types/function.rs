@@ -40,9 +40,7 @@ use crate::typing::Ty;
 use crate::typing::TyBasic;
 use crate::typing::arc_ty::ArcTy;
 use crate::typing::tuple::TyTuple;
-use crate::values::AllocFrozenValue;
 use crate::values::Freeze;
-use crate::values::FrozenHeap;
 use crate::values::FrozenValueTyped;
 use crate::values::Heap;
 use crate::values::StarlarkValue;
@@ -51,12 +49,6 @@ use crate::values::Value;
 use crate::values::ValueError;
 use crate::values::types::ellipsis::Ellipsis;
 use crate::values::typing::type_compiled::compiled::TypeCompiled;
-
-#[derive(Debug, thiserror::Error)]
-enum FunctionError {
-    #[error("`tuple[]` is implemented only for `tuple[T, ...]`")]
-    TupleOnlyEllipsis,
-}
 
 /// Return value of `type(any function)`.
 pub const FUNCTION_TYPE: &str = "function";
@@ -130,12 +122,6 @@ pub(crate) struct NativeFunction<'v> {
     pub(crate) special_builtin_function: Option<SpecialBuiltinFunction>,
 }
 
-impl<'fv> AllocFrozenValue<'fv> for NativeFunction<'fv> {
-    fn alloc_frozen_value(self, heap: FrozenHeap<'fv>) -> Value<'fv> {
-        heap.alloc_simple_typed(self).to_value()
-    }
-}
-
 /// Define the function type
 #[starlark_value(type = FUNCTION_TYPE, frozen_vtable)]
 impl<'v> StarlarkValue<'v> for NativeFunction<'v> {
@@ -151,7 +137,7 @@ impl<'v> StarlarkValue<'v> for NativeFunction<'v> {
     fn get_attr(&self, attribute: &str, heap: Heap<'v>) -> Option<Value<'v>> {
         if let Some(s) = self.as_type.as_ref().and_then(|t| t.as_name()) {
             if attribute == "type" {
-                return Some(heap.alloc(s));
+                return Some(heap.alloc(s).to_value());
             }
         }
         None
@@ -192,6 +178,12 @@ impl<'v> StarlarkValue<'v> for NativeFunction<'v> {
                 let index = TypeCompiled::new(index, heap)?;
                 Ok(TypeCompiled::type_set_of(index, heap).to_inner())
             }
+            Some(SpecialBuiltinFunction::Tuple) => {
+                // The 1-tuple type, whatever the element type is: a tuple of types is itself a
+                // type (the tuple of those types), so it is not read as a list of elements here.
+                let elem = TypeCompiled::new(index, heap)?;
+                Ok(TypeCompiled::from_ty(&Ty::tuple(vec![elem.as_ty().clone()]), heap).to_inner())
+            }
             _ => ValueError::unsupported(self, "[]"),
         }
     }
@@ -220,7 +212,12 @@ impl<'v> StarlarkValue<'v> for NativeFunction<'v> {
                     )
                     .to_inner())
                 } else {
-                    Err(crate::Error::new_other(FunctionError::TupleOnlyEllipsis))
+                    let second = TypeCompiled::new(index1, heap)?;
+                    Ok(TypeCompiled::from_ty(
+                        &Ty::tuple(vec![item.as_ty().clone(), second.as_ty().clone()]),
+                        heap,
+                    )
+                    .to_inner())
                 }
             }
             _ => ValueError::unsupported(self, "[,]"),
@@ -283,12 +280,6 @@ pub(crate) struct NativeMethod<'v> {
     pub(crate) docs: DocItem,
 }
 
-impl<'fv> AllocFrozenValue<'fv> for NativeMethod<'fv> {
-    fn alloc_frozen_value(self, heap: FrozenHeap<'fv>) -> Value<'fv> {
-        heap.alloc_simple_typed(self).to_value()
-    }
-}
-
 #[starlark_value(type = "native_method", frozen_vtable)]
 impl<'v> StarlarkValue<'v> for NativeMethod<'v> {
     fn documentation(&self) -> DocItem {
@@ -328,12 +319,6 @@ pub(crate) struct NativeAttribute<'v> {
     #[starlark_pagable(skip = "{ |_a, _b, _c| { unimplemented!() } }")]
     pub(crate) callable:
         for<'v2> fn(Option<Value<'v2>>, Value<'v2>, Heap<'v2>) -> crate::Result<Value<'v2>>,
-}
-
-impl<'fv> AllocFrozenValue<'fv> for NativeAttribute<'fv> {
-    fn alloc_frozen_value(self, heap: FrozenHeap<'fv>) -> Value<'fv> {
-        heap.alloc_simple_typed(self).to_value()
-    }
 }
 
 impl<'v> NativeAttribute<'v> {

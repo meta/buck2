@@ -6,6 +6,7 @@ rust_library(
     name = "buck2_configuration_providers",
     srcs = glob(["src/**/*.rs"]),
     deps = [
+        "fbsource//third-party/rust:either",
         "//buck2/allocative/allocative:allocative",
         "//buck2/app/buck2_build_api:buck2_build_api",
         "//buck2/app/buck2_build_api_derive:buck2_build_api_derive",

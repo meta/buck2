@@ -69,11 +69,9 @@ pub(crate) struct CallEnter<'v, D: MaybeDrop + 'static> {
 }
 
 #[starlark_value(type = "call_enter")]
-impl<'v, D: MaybeDrop + Trace<'v> + 'v> StarlarkValue<'v> for CallEnter<'v, D>
-where
-    Self: HasTyVTable,
+impl<'v, D: MaybeDrop + Trace<'v> + 'v> StarlarkValue<'v> for CallEnter<'v, D> where
+    Self: HasTyVTable
 {
-    type Canonical = Self;
 }
 
 // `MaybeDrop` has exactly two implementors: `NeedsDrop` and `NoDrop`. Register
@@ -96,12 +94,7 @@ pub(crate) struct CallExit<D: MaybeDrop + 'static> {
 }
 
 #[starlark_value(type = "call_exit")]
-impl<'v, D: MaybeDrop> StarlarkValue<'v> for CallExit<D>
-where
-    Self: HasTyVTable,
-{
-    type Canonical = Self;
-}
+impl<'v, D: MaybeDrop> StarlarkValue<'v> for CallExit<D> where Self: HasTyVTable {}
 
 crate::register_avalue_simple_frozen!(CallExit<NeedsDrop>);
 crate::register_avalue_simple_frozen!(CallExit<NoDrop>);

@@ -9,5 +9,8 @@ buck_java_library(
     name = "windowsfs",
     srcs = glob(["*.java"]),
     visibility = ["PUBLIC"],
-    deps = ["prelude//toolchains/android/third-party:jna"],
+    deps = [
+        "prelude//toolchains/android/third-party:infer-annotations",
+        "prelude//toolchains/android/third-party:jna",
+    ],
 )

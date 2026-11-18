@@ -156,11 +156,19 @@ fn pst_lifetime(generics: &syn::Generics) -> syn::Result<syn::Lifetime> {
     })
 }
 
-fn derive_provides_static_type_impl(
+pub(crate) fn derive_provides_static_type_impl(
     input: proc_macro::TokenStream,
 ) -> syn::Result<proc_macro2::TokenStream> {
     let input: DeriveInput = syn::parse(input)?;
-    let input = DeriveInputUtil::new(&input)?;
+    derive_provides_static_type_for(&input)
+}
+
+/// The `ProvidesStaticType` impl for a parsed input; `#[derive(StarlarkRepresentations)]`
+/// emits it for a view, whose `StarlarkType` requires it.
+pub(crate) fn derive_provides_static_type_for(
+    input: &DeriveInput,
+) -> syn::Result<proc_macro2::TokenStream> {
+    let input = DeriveInputUtil::new(input)?;
 
     let name = &input.ident;
     let (_impl_generics, ty_generics, where_clause) = input.generics.split_for_impl();

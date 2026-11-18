@@ -10,7 +10,10 @@
 
 package com.facebook.buck.util.zip.collect;
 
+import com.facebook.infer.annotation.Nullsafe;
+
 /** Action to take when a duplicate entry is encountered when building a zip file. */
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public enum OnDuplicateEntry {
   /** Fail fast. */
   FAIL,

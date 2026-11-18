@@ -164,6 +164,9 @@ where
         }
         DirectoryEntry::Leaf(ActionDirectoryMember::File(_)) => {
             if let Some(src) = file_src(dest) {
+                if fs_util::symlink_metadata_if_exists(&dest)?.is_some() {
+                    fs_util::remove_file(&dest).categorize_internal()?;
+                }
                 fs_util::copy(src, &dest)
                     .categorize_tagged(ErrorTag::MaterializeCopyMissingFile)?;
                 if let Some(executable_bit_override) = executable_bit_override {

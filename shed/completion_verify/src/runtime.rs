@@ -31,6 +31,7 @@
 use std::ffi::OsStr;
 use std::io::Read as _;
 use std::io::Write as _;
+use std::num::NonZeroU16;
 use std::path::Path;
 use std::path::PathBuf;
 use std::process::Command;
@@ -194,7 +195,11 @@ fn comptest(
     // for some reason bash does not produce anything with echo disabled...
     process.set_echo(echo, None)?;
 
-    let mut parser = vt100::Parser::new(TERM_HEIGHT, TERM_WIDTH, 0);
+    let mut parser = vt100::Parser::new(
+        NonZeroU16::new(TERM_HEIGHT).unwrap(),
+        NonZeroU16::new(TERM_WIDTH).unwrap(),
+        0,
+    );
 
     let mut stream = process.get_raw_handle()?;
     // pass the completion input

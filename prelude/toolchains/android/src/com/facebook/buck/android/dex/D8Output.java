@@ -38,15 +38,23 @@ public class D8Output {
    */
   private final ImmutableMap<String, String> syntheticToSynthesizingContext;
 
+  private final ImmutableMap<String, DexUnitInfo> dexUnits;
+
   public D8Output(
       Collection<String> referencedResources,
       Collection<String> writtenClassDescriptors,
       Map<Integer, ImmutableSet<String>> outputClassDescriptors,
-      Map<String, String> syntheticToSynthesizingContext) {
+      Map<String, String> syntheticToSynthesizingContext,
+      Map<String, DexUnitInfo> dexUnits) {
     this.referencedResources = referencedResources;
     this.writtenClassDescriptors = writtenClassDescriptors;
     this.outputClassDescriptors = ImmutableMap.copyOf(outputClassDescriptors);
     this.syntheticToSynthesizingContext = ImmutableMap.copyOf(syntheticToSynthesizingContext);
+    this.dexUnits = ImmutableMap.copyOf(dexUnits);
+  }
+
+  public ImmutableMap<String, DexUnitInfo> getDexUnits() {
+    return dexUnits;
   }
 
   public Collection<String> getResources() {

@@ -66,44 +66,17 @@ mod unix {
         UnexpectedError(buck2_error::Error),
     }
 
-    /// Whether the process has terminated but nobody has reaped it yet. Only
-    /// its parent can, and until it does `kill(pid, 0)` still finds the
-    /// process; for anyone else, a zombie is as gone as a process gets.
-    fn is_zombie(pid: nix::unistd::Pid) -> bool {
-        #[cfg(target_os = "linux")]
-        {
-            // `/proc/<pid>/stat`: `<pid> (<comm>) <state> ...`, where `comm`
-            // may contain anything, so look past the last `)`.
-            std::fs::read_to_string(format!("/proc/{pid}/stat")).is_ok_and(|stat| {
-                stat.rsplit_once(')')
-                    .is_some_and(|(_, rest)| rest.trim_start().starts_with('Z'))
-            })
-        }
-        #[cfg(not(target_os = "linux"))]
-        {
-            let _ = pid;
-            false
-        }
+    fn unexpected(pid: nix::unistd::Pid, e: impl std::fmt::Display) -> ControlFlow<StoppedWaiting> {
+        ControlFlow::Break(StoppedWaiting::UnexpectedError(buck2_error::buck2_error!(
+            buck2_error::ErrorTag::Tier0,
+            "Unexpected error while waiting for process `{}` to terminate (`{}`)",
+            pid,
+            e
+        )))
     }
 
-    fn check_result(pid: nix::unistd::Pid, result: nix::Result<()>) -> ControlFlow<StoppedWaiting> {
-        match result {
-            Ok(_) if is_zombie(pid) => ControlFlow::Break(StoppedWaiting::Success),
-            // Signal is sent successfully, now we need to wait for a process to terminate.
-            Ok(_) => ControlFlow::Continue(()),
-            // There is no such process, our desired outcome.
-            Err(nix::errno::Errno::ESRCH) => ControlFlow::Break(StoppedWaiting::Success),
-            Err(e) => {
-                ControlFlow::Break(StoppedWaiting::UnexpectedError(buck2_error::buck2_error!(
-                    buck2_error::ErrorTag::Tier0,
-                    "Unexpected error while waiting for process `{}` to terminate (`{}`)",
-                    pid,
-                    e
-                )))
-            }
-        }
-    }
-
+    /// `pid` is not a child of this process, so a zombie counts as gone: see
+    /// [`buck2_process_kill::process_is_gone`].
     async fn send_signal_and_wait_for_shutdown(
         signal: nix::sys::signal::Signal,
         pid: nix::unistd::Pid,
@@ -111,17 +84,24 @@ mod unix {
     ) -> ControlFlow<StoppedWaiting> {
         let start = Instant::now();
         info!("Sending signal `{}` to process `{}`.", signal, pid);
-        // Actually send a signal.
-        check_result(pid, nix::sys::signal::kill(pid, signal))?;
+        match nix::sys::signal::kill(pid, signal) {
+            Ok(()) => {}
+            // There is no such process, our desired outcome.
+            Err(nix::errno::Errno::ESRCH) => return ControlFlow::Break(StoppedWaiting::Success),
+            Err(e) => return unexpected(pid, e),
+        }
         loop {
+            match buck2_process_kill::process_is_gone(pid.as_raw()) {
+                Ok(true) => return ControlFlow::Break(StoppedWaiting::Success),
+                Ok(false) => {}
+                Err(e) => return unexpected(pid, e),
+            }
             if let Some(timeout) = timeout {
                 if Instant::now() - start > timeout {
                     break;
                 }
             }
             tokio::time::sleep(Duration::from_millis(100)).await;
-            // Just check the process, signal already sent.
-            check_result(pid, nix::sys::signal::kill(pid, None))?;
         }
         ControlFlow::Continue(())
     }

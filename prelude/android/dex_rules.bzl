@@ -280,11 +280,17 @@ def get_multi_dex(
                 multi_dex_cmd.add("--proguard-configuration-file", proguard_configuration_output_file)
                 multi_dex_cmd.add("--proguard-mapping-file", proguard_mapping_output_file)
 
+            # `multi_dex_command` ends in `-jar <jar>`, so JVM options can't be appended to it.
+            multi_dex_env = {}
+            if android_toolchain.multi_dex_max_heap_size:
+                multi_dex_env["JDK_JAVA_OPTIONS"] = "-Xmx{}".format(android_toolchain.multi_dex_max_heap_size)
+
             ctx.actions.run(
                 multi_dex_cmd,
                 category = "multi_dex",
                 identifier = "{}:{}_module_{}".format(ctx.label.package, ctx.label.name, module),
                 allow_cache_upload = True,
+                env = multi_dex_env,
                 error_handler = android_toolchain.android_error_handler,
             )
 
@@ -461,6 +467,8 @@ def _filter_pre_dexed_libs(
         [lib.ref_count for lib in pre_dexed_libs],
         "--synthetic-contexts",
         [lib.synthetic_contexts for lib in pre_dexed_libs],
+        "--dex-units",
+        [lib.dex_units for lib in pre_dexed_libs],
         "--output",
         weight_estimate_and_filtered_class_names_file.as_output(),
     ])
@@ -883,7 +891,7 @@ def _merge_dexes(
     d8_cmd.add(_DEX_MERGE_OPTIONS)
 
     if class_names_to_include:
-        d8_cmd.add(["--primary-dex-class-names-path", class_names_to_include])
+        d8_cmd.add(["--pre-dex-class-names-path", class_names_to_include])
 
     if secondary_output_dex_file:
         d8_cmd.add(["--secondary-output-dex-file", secondary_output_dex_file.as_output()])

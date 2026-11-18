@@ -59,6 +59,25 @@ impl DiceFileComputations {
         }
     }
 
+    /// Lists a directory like `read_dir`, except that a path that is a symlink or behind one is
+    /// `None` rather than an error.
+    ///
+    /// Nothing is found through a symlink, so a caller that looks for something along a path,
+    /// such as the package a file belongs to, finds nothing there and looks on above it.
+    pub async fn read_dir_unless_behind_symlink(
+        ctx: &mut DiceComputations<'_>,
+        path: CellPath,
+    ) -> buck2_error::Result<Option<ReadDirOutput>> {
+        match read_dir_impl(ctx, path).await? {
+            Ok(listing) => Ok(Some(listing)),
+            Err(ReadDirRefusal::Check {
+                check: PathCheck::Present(FileType::Symlink) | PathCheck::ParentSymlink { .. },
+                ..
+            }) => Ok(None),
+            Err(refusal) => Err(refusal.into_error(ctx, path)),
+        }
+    }
+
     /// Whether a file, directory or symlink exists at the path, spelled exactly like that in
     /// every component, with no symlink above it, nothing ignored on the way, and inside this
     /// cell rather than a cell nested in it.

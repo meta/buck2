@@ -17,6 +17,7 @@ import com.facebook.buck.io.file.MorePosixFilePermissions;
 import com.facebook.buck.io.file.MostFiles;
 import com.facebook.buck.io.file.PathMatcher;
 import com.facebook.buck.io.filesystem.CopySourceMode;
+import com.facebook.infer.annotation.Nullsafe;
 import com.google.common.collect.FluentIterable;
 import com.google.common.collect.ImmutableCollection;
 import com.google.common.collect.ImmutableList;
@@ -58,12 +59,13 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.function.Function;
 import java.util.function.Predicate;
-import javax.annotation.Nullable;
+import org.jspecify.annotations.Nullable;
 
 /**
  * A stateless filesystem utils that helps to interact with the filesystem relative to the project
  * root.
  */
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public class ProjectFilesystemUtils {
 
   private ProjectFilesystemUtils() {}
@@ -228,7 +230,7 @@ public class ProjectFilesystemUtils {
   public static void createParentDirs(AbsPath root, Path pathRelativeToProjectRoot)
       throws IOException {
     Path path = getPathForRelativePath(root, pathRelativeToProjectRoot);
-    mkdirs(root, path.getParent());
+    mkdirs(root, Objects.requireNonNull(path.getParent()));
   }
 
   /**
@@ -456,7 +458,8 @@ public class ProjectFilesystemUtils {
           }
 
           @Override
-          public FileVisitResult postVisitDirectory(Path dir, IOException exc) throws IOException {
+          public FileVisitResult postVisitDirectory(Path dir, @Nullable IOException exc)
+              throws IOException {
             return fileVisitor.postVisitDirectory(pathMapper.apply(dir), exc);
           }
         };
@@ -469,7 +472,7 @@ public class ProjectFilesystemUtils {
       boolean skipIgnored,
       ImmutableCollection<PathMatcher> ignores) {
     return skipIgnored
-        ? input -> !isIgnored(relativize(projectRoot, input), ignores)
+        ? input -> !isIgnored(relativize(Objects.requireNonNull(projectRoot), input), ignores)
         : input -> true;
   }
 

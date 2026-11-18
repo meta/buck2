@@ -38,13 +38,18 @@ use futures::FutureExt;
 use starlark::environment::MethodsBuilder;
 use starlark::eval::Evaluator;
 use starlark::starlark_module;
+use starlark::values::Heap;
 use starlark::values::Value;
-use starlark::values::ValueOfUnchecked;
+use starlark::values::ValueOf;
 use starlark::values::ValueTyped;
-use starlark::values::list::UnpackList;
+use starlark::values::dict::AllocDict;
+use starlark::values::dict::DictType;
+use starlark::values::list::AllocList;
+use starlark::values::list::ListType;
 use starlark::values::none::NoneOr;
 use starlark::values::none::NoneType;
-use starlark::values::structs::StructRef;
+use starlark::values::string::StarlarkStr;
+use starlark::values::structs::Struct;
 
 use crate::bxl::starlark_defs::analysis_result::StarlarkAnalysisResult;
 use crate::bxl::starlark_defs::aquery::StarlarkAQueryCtx;
@@ -149,17 +154,26 @@ pub(crate) fn bxl_context_methods(builder: &mut MethodsBuilder) {
         #[starlark(require = pos)] labels: ConfiguredTargetListExprArg<'v>,
         #[starlark(default = ValueAsStarlarkTargetLabel::NONE)]
         target_platform: ValueAsStarlarkTargetLabel<'v>,
-        #[starlark(require = named, default = NoneOr::None)] modifiers: NoneOr<UnpackList<String>>,
+        #[starlark(require = named, default = NoneOr::None)] modifiers: NoneOr<
+            ValueOf<'v, ListType<StarlarkStr>>,
+        >,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<
-        Either<NoneOr<StarlarkConfiguredTargetNode>, StarlarkTargetSet<ConfiguredTargetNode>>,
+        Either<
+            NoneOr<ValueOf<'v, StarlarkConfiguredTargetNode>>,
+            ValueOf<'v, StarlarkTargetSet<ConfiguredTargetNode>>,
+        >,
     > {
         let cli_modifiers = match modifiers.into_option() {
-            Some(cli_modifiers) => cli_modifiers.items,
+            Some(cli_modifiers) => cli_modifiers
+                .try_items::<&str>()
+                .map(|s| s.map(str::to_owned))
+                .collect::<starlark::Result<Vec<_>>>()?,
             None => Vec::new(),
         };
         let global_cfg_options = this.resolve_global_cfg_options(target_platform, cli_modifiers)?;
 
+        let heap = eval.heap();
         Ok(this.via_dice(eval, |dice| {
             dice.via(|ctx| {
                 async move {
@@ -174,17 +188,17 @@ pub(crate) fn bxl_context_methods(builder: &mut MethodsBuilder) {
                     if let Some(one) = target_expr.get_one(ctx).await? {
                         let result = filter_incompatible(iter::once(one), this)?;
                         if let Some(node) = result.iter().next() {
-                            Ok(Either::Left(NoneOr::Other(StarlarkConfiguredTargetNode(
-                                node.dupe(),
+                            Ok(Either::Left(NoneOr::Other(ValueOf::alloc(
+                                heap,
+                                StarlarkConfiguredTargetNode::new(node.dupe()),
                             ))))
                         } else {
                             Ok(Either::Left(NoneOr::None))
                         }
                     } else {
-                        Ok(Either::Right(StarlarkTargetSet(filter_incompatible(
-                            target_expr.get(ctx).await?,
-                            this,
-                        )?)))
+                        Ok(Either::Right(heap.alloc(StarlarkTargetSet(
+                            filter_incompatible(target_expr.get(ctx).await?, this)?,
+                        ))))
                     }
                 }
                 .boxed_local()
@@ -206,17 +220,20 @@ pub(crate) fn bxl_context_methods(builder: &mut MethodsBuilder) {
         this: &'v BxlContext<'v>,
         labels: TargetListExprArg<'v>,
         eval: &mut Evaluator<'v, '_, '_>,
-    ) -> starlark::Result<Either<StarlarkTargetNode, StarlarkTargetSet<TargetNode>>> {
+    ) -> starlark::Result<
+        Either<ValueOf<'v, StarlarkTargetNode>, ValueOf<'v, StarlarkTargetSet<TargetNode>>>,
+    > {
+        let heap = eval.heap();
         Ok(this.via_dice(eval, |ctx| {
             ctx.via(|ctx| {
                 async move {
                     let expr = TargetListExpr::<'v, TargetNode>::unpack(labels, this, ctx).await?;
                     if let Some(one) = expr.get_one(ctx).await? {
-                        Ok(Either::Left(StarlarkTargetNode(one)))
+                        Ok(Either::Left(ValueOf::alloc(heap, StarlarkTargetNode(one))))
                     } else {
-                        Ok(Either::Right(StarlarkTargetSet(
+                        Ok(Either::Right(heap.alloc(StarlarkTargetSet(
                             expr.get(ctx).await?.into_owned(),
-                        )))
+                        ))))
                     }
                 }
                 .boxed_local()
@@ -241,21 +258,31 @@ pub(crate) fn bxl_context_methods(builder: &mut MethodsBuilder) {
         this: &BxlContext<'v>,
         // TODO(nga): parameter should be either positional or named, not both.
         labels: ProvidersExprArg<'v>,
+        heap: Heap<'v>,
     ) -> starlark::Result<
-        Either<StarlarkProvidersLabel, BuckMutInsertionMap<String, StarlarkProvidersLabel>>,
+        Either<
+            ValueOf<'v, StarlarkProvidersLabel>,
+            AllocDict<BuckMutInsertionMap<String, ValueOf<'v, StarlarkProvidersLabel>>>,
+        >,
     > {
         let providers = ProvidersExpr::<ProvidersLabel>::unpack(labels, this)?;
 
         match providers {
-            ProvidersExpr::Literal(provider) => {
-                Ok(Either::Left(StarlarkProvidersLabel::new(provider)))
-            }
-            ProvidersExpr::Iterable(providers) => Ok(Either::Right(
+            ProvidersExpr::Literal(provider) => Ok(Either::Left(ValueOf::alloc(
+                heap,
+                StarlarkProvidersLabel::new(provider),
+            ))),
+            ProvidersExpr::Iterable(providers) => Ok(Either::Right(AllocDict(
                 providers
                     .into_iter()
-                    .map(|p| (p.to_string(), StarlarkProvidersLabel::new(p)))
+                    .map(|p| {
+                        (
+                            p.to_string(),
+                            ValueOf::alloc(heap, StarlarkProvidersLabel::new(p)),
+                        )
+                    })
                     .collect(),
-            )),
+            ))),
         }
     }
 
@@ -278,13 +305,20 @@ pub(crate) fn bxl_context_methods(builder: &mut MethodsBuilder) {
         #[starlark(default = ValueAsStarlarkTargetLabel::NONE)]
         target_platform: ValueAsStarlarkTargetLabel<'v>,
         #[starlark(require = named, default = false)] keep_going: bool,
-        #[starlark(require = named, default = UnpackList::default())] modifiers: UnpackList<String>,
+        #[starlark(require = named, default = ValueOf::empty_list())] modifiers: ValueOf<
+            'v,
+            ListType<StarlarkStr>,
+        >,
         eval: &mut Evaluator<'v, '_, '_>,
-    ) -> starlark::Result<StarlarkTargetUniverse<'v>> {
-        let modifiers = modifiers.items;
+    ) -> starlark::Result<ValueOf<'v, StarlarkTargetUniverse<'v>>> {
+        let modifiers = modifiers
+            .try_items::<&str>()
+            .map(|s| s.map(str::to_owned))
+            .collect::<starlark::Result<Vec<_>>>()?;
         let global_cfg_options = this.resolve_global_cfg_options(target_platform, modifiers)?;
 
-        Ok(this.via_dice(eval, |ctx| {
+        let heap = eval.heap();
+        let universe = this.via_dice(eval, |ctx| {
             ctx.via(|ctx| {
                 async move {
                     let target_expr = TargetListExpr::<'v, ConfiguredTargetNode>::unpack_opt(
@@ -304,7 +338,8 @@ pub(crate) fn bxl_context_methods(builder: &mut MethodsBuilder) {
                 }
                 .boxed_local()
             })
-        })?)
+        })?;
+        Ok(ValueOf::alloc(heap, universe))
     }
 
     /// Returns the `uqueryctx` that holds all uquery functions.
@@ -318,8 +353,12 @@ pub(crate) fn bxl_context_methods(builder: &mut MethodsBuilder) {
     fn uquery<'v>(
         this: ValueTyped<'v, BxlContext<'v>>,
         #[starlark(require = named, default = false)] allow_partial_graph: bool,
-    ) -> starlark::Result<StarlarkUQueryCtx<'v>> {
-        Ok(StarlarkUQueryCtx::new(this, allow_partial_graph)?)
+        heap: Heap<'v>,
+    ) -> starlark::Result<ValueOf<'v, StarlarkUQueryCtx<'v>>> {
+        Ok(ValueOf::alloc(
+            heap,
+            StarlarkUQueryCtx::new(this, allow_partial_graph)?,
+        ))
     }
 
     /// Returns the `cqueryctx` that holds all the cquery functions.
@@ -332,9 +371,13 @@ pub(crate) fn bxl_context_methods(builder: &mut MethodsBuilder) {
         // TODO(nga): parameter should be either positional or named, not both.
         #[starlark(default = ValueAsStarlarkTargetLabel::NONE)]
         target_platform: ValueAsStarlarkTargetLabel<'v>,
-    ) -> starlark::Result<StarlarkCQueryCtx<'v>> {
+        heap: Heap<'v>,
+    ) -> starlark::Result<ValueOf<'v, StarlarkCQueryCtx<'v>>> {
         let global_cfg_options = this.resolve_global_cfg_options(target_platform, vec![])?;
-        Ok(StarlarkCQueryCtx::new(this, global_cfg_options)?)
+        Ok(ValueOf::alloc(
+            heap,
+            StarlarkCQueryCtx::new(this, global_cfg_options)?,
+        ))
     }
 
     /// Returns the `aqueryctx` that holds all the aquery functions.
@@ -346,8 +389,12 @@ pub(crate) fn bxl_context_methods(builder: &mut MethodsBuilder) {
         this: ValueTyped<'v, BxlContext<'v>>,
         #[starlark(default = ValueAsStarlarkTargetLabel::NONE)]
         target_platform: ValueAsStarlarkTargetLabel<'v>,
-    ) -> starlark::Result<StarlarkAQueryCtx<'v>> {
-        Ok(StarlarkAQueryCtx::new(this, target_platform)?)
+        heap: Heap<'v>,
+    ) -> starlark::Result<ValueOf<'v, StarlarkAQueryCtx<'v>>> {
+        Ok(ValueOf::alloc(
+            heap,
+            StarlarkAQueryCtx::new(this, target_platform)?,
+        ))
     }
 
     /// Returns the bxl actions to create and register actions for this
@@ -418,9 +465,9 @@ pub(crate) fn bxl_context_methods(builder: &mut MethodsBuilder) {
             TargetListExprArg<'v>,
         >,
         eval: &mut Evaluator<'v, '_, '_>,
-    ) -> starlark::Result<BxlActions<'v>> {
+    ) -> starlark::Result<ValueOf<'v, BxlActions<'v>>> {
         let heap = eval.heap();
-        Ok(this.via_dice(eval, |ctx| {
+        let actions = this.via_dice(eval, |ctx| {
             ctx.via(|ctx| {
                 async {
                     let (exec_deps, toolchains) = match &this.context_type {
@@ -524,7 +571,8 @@ pub(crate) fn bxl_context_methods(builder: &mut MethodsBuilder) {
                 }
                 .boxed_local()
             })
-        })?)
+        })?;
+        Ok(ValueOf::alloc(heap, actions))
     }
 
     /// Runs analysis on the given configured `labels`, accepting an optional `target_platform` which is the
@@ -551,14 +599,16 @@ pub(crate) fn bxl_context_methods(builder: &mut MethodsBuilder) {
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<
         Either<
-            NoneOr<StarlarkAnalysisResult>,
-            BuckMutInsertionMap<
-                ValueTyped<'v, StarlarkConfiguredProvidersLabel>,
-                ValueTyped<'v, StarlarkAnalysisResult>,
+            NoneOr<ValueOf<'v, StarlarkAnalysisResult>>,
+            AllocDict<
+                BuckMutInsertionMap<
+                    ValueTyped<'v, StarlarkConfiguredProvidersLabel>,
+                    ValueTyped<'v, StarlarkAnalysisResult>,
+                >,
             >,
         >,
     > {
-        let providers = labels.unpack();
+        let providers = labels.unpack()?;
 
         let res: buck2_error::Result<_> = this.via_dice(eval, |dice| {
             dice.via(|dice| {
@@ -568,20 +618,23 @@ pub(crate) fn bxl_context_methods(builder: &mut MethodsBuilder) {
         });
 
         Ok(match res? {
-            Either::Left(single) => Either::Left(NoneOr::from_option(single)),
-            Either::Right(many) => Either::Right(
+            Either::Left(single) => Either::Left(NoneOr::from_option(
+                single.map(|result| ValueOf::alloc(eval.heap(), result)),
+            )),
+            Either::Right(many) => Either::Right(AllocDict(
                 many.into_iter()
                     .map(|(t, v)| {
                         Ok((
                             eval.heap()
-                                .alloc_typed(StarlarkConfiguredProvidersLabel::new(t))
+                                .alloc(StarlarkConfiguredProvidersLabel::new(t))
+                                .get()
                                 .hashed()
                                 .unwrap(),
-                            eval.heap().alloc_typed(v),
+                            eval.heap().alloc(v).get(),
                         ))
                     })
                     .collect::<buck2_error::Result<_>>()?,
-            ),
+            )),
         })
     }
 
@@ -616,12 +669,14 @@ pub(crate) fn bxl_context_methods(builder: &mut MethodsBuilder) {
         #[starlark(require = named, default = "default")] materializations: &str,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<
-        BuckMutInsertionMap<
-            ValueTyped<'v, StarlarkConfiguredProvidersLabel>,
-            ValueTyped<'v, StarlarkBxlBuildResult>,
+        AllocDict<
+            BuckMutInsertionMap<
+                ValueTyped<'v, StarlarkConfiguredProvidersLabel>,
+                ValueTyped<'v, StarlarkBxlBuildResult>,
+            >,
         >,
     > {
-        Ok(build::build(
+        Ok(AllocDict(build::build(
             this,
             labels,
             target_platform,
@@ -634,7 +689,7 @@ pub(crate) fn bxl_context_methods(builder: &mut MethodsBuilder) {
             })?,
             Uploads::Never,
             eval,
-        )?)
+        )?))
     }
 
     /// A struct of the command line args as declared using the [`cli_args`] module.
@@ -646,9 +701,7 @@ pub(crate) fn bxl_context_methods(builder: &mut MethodsBuilder) {
     ///
     /// This attribute is not available on the bxl context within the a dynamic lambda.
     #[starlark(attribute)]
-    fn cli_args<'v>(
-        this: &'v BxlContext<'v>,
-    ) -> starlark::Result<ValueOfUnchecked<'v, StructRef<'v>>> {
+    fn cli_args<'v>(this: &'v BxlContext<'v>) -> starlark::Result<ValueOf<'v, Struct<'v>>> {
         let cli_args = this
             .context_type
             .unpack_root()
@@ -662,8 +715,11 @@ pub(crate) fn bxl_context_methods(builder: &mut MethodsBuilder) {
 
     /// Returns the `bxl.Filesystem` for performing a basic set of filesystem operations within bxl
     #[starlark(attribute)]
-    fn fs<'v>(this: ValueTyped<'v, BxlContext<'v>>) -> starlark::Result<BxlFilesystem<'v>> {
-        Ok(BxlFilesystem::new(this))
+    fn fs<'v>(
+        this: ValueTyped<'v, BxlContext<'v>>,
+        heap: Heap<'v>,
+    ) -> starlark::Result<ValueOf<'v, BxlFilesystem<'v>>> {
+        Ok(ValueOf::alloc(heap, BxlFilesystem::new(this)))
     }
 
     /// Checks if a target label exists. Target label must be a string literal, and an exact target.
@@ -695,7 +751,10 @@ pub(crate) fn bxl_context_methods(builder: &mut MethodsBuilder) {
     }
 
     /// Returns the `audit_ctx` that holds all the audit functions.
-    fn audit<'v>(this: ValueTyped<'v, BxlContext<'v>>) -> starlark::Result<StarlarkAuditCtx<'v>> {
+    fn audit<'v>(
+        this: ValueTyped<'v, BxlContext<'v>>,
+        heap: Heap<'v>,
+    ) -> starlark::Result<ValueOf<'v, StarlarkAuditCtx<'v>>> {
         let working_dir = this
             .cell_resolver()
             .get(this.cell_name())?
@@ -703,7 +762,10 @@ pub(crate) fn bxl_context_methods(builder: &mut MethodsBuilder) {
             .as_project_relative_path()
             .to_buf();
 
-        Ok(StarlarkAuditCtx::new(this, working_dir)?)
+        Ok(ValueOf::alloc(
+            heap,
+            StarlarkAuditCtx::new(this, working_dir)?,
+        ))
     }
 
     /// Awaits a promise and returns an optional value of the promise.
@@ -728,12 +790,12 @@ pub(crate) fn bxl_context_methods(builder: &mut MethodsBuilder) {
     /// ```
     fn resolve<'v>(
         this: &'v BxlContext<'v>,
-        action_factory: ValueTyped<'v, AnalysisActions<'v>>,
-        promise: ValueTyped<'v, StarlarkPromise<'v>>,
+        action_factory: ValueOf<'v, AnalysisActions<'v>>,
+        promise: ValueOf<'v, StarlarkPromise<'v>>,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<NoneOr<Value<'v>>> {
-        run_anon_target_promises(action_factory, this, eval)?;
-        Ok(match promise.get() {
+        run_anon_target_promises(action_factory.get(), this, eval)?;
+        Ok(match promise.as_ref().get() {
             Some(v) => NoneOr::Other(v),
             None => NoneOr::None,
         })
@@ -748,7 +810,7 @@ pub(crate) fn bxl_context_methods(builder: &mut MethodsBuilder) {
     fn instant_event<'v>(
         this: &'v BxlContext<'v>,
         #[starlark(require = named)] id: &str,
-        #[starlark(require = named)] metadata: Value<'v>,
+        #[starlark(require = named)] metadata: ValueOf<'v, DictType<StarlarkStr, Value<'v>>>,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<NoneType> {
         let parser = StarlarkUserEventParser {
@@ -769,26 +831,32 @@ pub(crate) fn bxl_context_methods(builder: &mut MethodsBuilder) {
 
     /// Lazy/batch/error handling operations.
     #[starlark(attribute)]
-    fn lazy<'v>(this: ValueTyped<'v, BxlContext<'v>>) -> starlark::Result<StarlarkLazyCtx<'v>> {
-        Ok(StarlarkLazyCtx::new(this))
+    fn lazy<'v>(
+        this: ValueTyped<'v, BxlContext<'v>>,
+        heap: Heap<'v>,
+    ) -> starlark::Result<ValueOf<'v, StarlarkLazyCtx<'v>>> {
+        Ok(ValueOf::alloc(heap, StarlarkLazyCtx::new(this)))
     }
 
     /// The target_platform from the bxl invocation. It is from the `--target-platforms` flag.
     #[starlark(attribute)]
     fn target_platform<'v>(
         this: &'v BxlContext<'v>,
-    ) -> starlark::Result<NoneOr<StarlarkTargetLabel>> {
+        heap: Heap<'v>,
+    ) -> starlark::Result<NoneOr<ValueOf<'v, StarlarkTargetLabel>>> {
         Ok(NoneOr::from_option(
             this.global_cfg_options()
                 .target_platform
                 .dupe()
-                .map(StarlarkTargetLabel::new),
+                .map(|label| ValueOf::alloc(heap, StarlarkTargetLabel::new(label))),
         ))
     }
 
     /// The modifiers from the bxl invocation. It is from the `--modifier` flag.
     #[starlark(attribute)]
-    fn modifiers<'v>(this: &'v BxlContext<'v>) -> starlark::Result<Vec<String>> {
-        Ok((*this.global_cfg_options().cli_modifiers).clone())
+    fn modifiers<'v>(this: &'v BxlContext<'v>) -> starlark::Result<AllocList<Vec<String>>> {
+        Ok(AllocList(
+            (*this.global_cfg_options().cli_modifiers).clone(),
+        ))
     }
 }

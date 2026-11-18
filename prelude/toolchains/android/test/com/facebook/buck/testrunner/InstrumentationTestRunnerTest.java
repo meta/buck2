@@ -14,16 +14,20 @@ import com.android.ddmlib.FileListingService;
 import com.android.ddmlib.IDevice;
 import com.android.ddmlib.IShellEnabledDevice;
 import com.android.ddmlib.IShellOutputReceiver;
+import com.android.ddmlib.testrunner.ITestRunListener;
 import com.android.ddmlib.testrunner.InstrumentationResultParser;
 import com.android.ddmlib.testrunner.RemoteAndroidTestRunner;
 import com.facebook.buck.android.TestAndroidDevice;
 import com.facebook.buck.android.TestDevice;
 import com.facebook.buck.android.exopackage.AndroidDevice;
+import com.facebook.buck.testresultsoutput.TestResultsOutputSender;
 import com.facebook.buck.testrunner.reportlayer.LogExtractorReportLayer;
 import com.facebook.buck.testrunner.reportlayer.PerfettoReportLayer;
 import com.facebook.buck.testrunner.reportlayer.TombstonesReportLayer;
 import com.facebook.buck.testrunner.reportlayer.VideoRecordingReportLayer;
 import com.facebook.buck.testutil.TemporaryPaths;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.google.common.collect.ImmutableSet;
 import java.io.ByteArrayInputStream;
 import java.io.File;
@@ -43,8 +47,10 @@ import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.TimeUnit;
+import javax.xml.parsers.DocumentBuilderFactory;
 import org.junit.Assert;
 import org.junit.Rule;
 import org.junit.Test;
@@ -54,6 +60,58 @@ public class InstrumentationTestRunnerTest {
   private Process execProcessOverride = null;
 
   @Rule public final TemporaryPaths tmp = new TemporaryPaths();
+
+  @Test
+  public void structuredResultsReportRunFailureWithoutXml() throws Throwable {
+    Path reportDir = tmp.newFolder("structured_reports").getPath();
+    Path jsonPath = reportDir.resolve("results.json");
+    Map<String, String> env = new HashMap<>();
+    InstrumentationTestRunner runner =
+        createInstrumentationTestRunnerWithDevice(
+            new HashMap<>(), env, "--output", reportDir.toString());
+    List<ITestRunListener> listeners = new ArrayList<>();
+    TestResultsOutputSender sender =
+        TestResultsOutputSender.fromFilePath(jsonPath.toString()).get();
+    try {
+      ITestRunListener resultListener = runner.addResultListeners(listeners, Optional.of(sender));
+      Assert.assertEquals(1, listeners.size());
+      Assert.assertSame(listeners.get(0), resultListener);
+      resultListener.testRunStarted("setup_crash", 0);
+      resultListener.testRunFailed("instrumentation crashed before discovering tests");
+      resultListener.testRunEnded(0, new HashMap<>());
+    } finally {
+      sender.close();
+    }
+
+    JsonNode failure = new ObjectMapper().readTree(Files.readString(jsonPath)).get("run_failure");
+    Assert.assertEquals(2, failure.get("status").asInt());
+    Assert.assertEquals(
+        "instrumentation crashed before discovering tests", failure.get("details").asText());
+    try (var files = Files.list(reportDir)) {
+      Assert.assertEquals(1, files.count());
+    }
+  }
+
+  @Test
+  public void missingStructuredSenderUsesXml() throws Throwable {
+    Path reportDir = tmp.newFolder("xml_reports").getPath();
+    Map<String, String> env = new HashMap<>();
+    InstrumentationTestRunner runner =
+        createInstrumentationTestRunnerWithDevice(
+            new HashMap<>(), env, "--output", reportDir.toString());
+    List<ITestRunListener> listeners = new ArrayList<>();
+    ITestRunListener resultListener = runner.addResultListeners(listeners, Optional.empty());
+    Assert.assertEquals(1, listeners.size());
+    Assert.assertSame(listeners.get(0), resultListener);
+    resultListener.testRunStarted("setup_crash", 0);
+    resultListener.testRunFailed("setup failed");
+    resultListener.testRunEnded(0, new HashMap<>());
+    var document =
+        DocumentBuilderFactory.newInstance()
+            .newDocumentBuilder()
+            .parse(reportDir.resolve(BuckXmlTestRunListener.TEST_RESULT_FILE).toFile());
+    Assert.assertEquals(1, document.getElementsByTagName("failure").getLength());
+  }
 
   @Test
   public void launcherReturnsFailureWhenRunnerThrows() {
@@ -498,6 +556,92 @@ public class InstrumentationTestRunnerTest {
   }
 
   @Test
+  public void perTestCoverageDoesNotPullLegacyCoverageFile() throws Throwable {
+    ArrayList<String> capturedShellCommands = new ArrayList<>();
+    Path hostCoverageDir = tmp.newFolder("wrapper_per_test_coverage").getPath();
+    Path legacyCoverageDir = tmp.newFolder("legacy_coverage").getPath();
+    String deviceCoverageDir =
+        "/sdcard/Android/data/com.example/files/Download/test_result/per_test_coverage/";
+
+    Map<String, String> env = new HashMap<>();
+    env.put(InstrumentationTestRunner.PER_TEST_COVERAGE_ENABLED_ENV, "true");
+    env.put(InstrumentationTestRunner.PER_TEST_COVERAGE_DIR_ENV, hostCoverageDir.toString());
+    env.put("USE_JACOCO_COVERAGE", "1");
+    env.put("COVERAGE_COLLECTION_TMPDIR", legacyCoverageDir.toString());
+
+    Map<Path, byte[]> filesOnDevice = new HashMap<>();
+    filesOnDevice.put(
+        Paths.get(deviceCoverageDir, "manifest.jsonl"), "{\"test\":\"example\"}\n".getBytes());
+
+    InstrumentationTestRunner runner =
+        createInstrumentationTestRunnerWithDeviceForSdk(
+            "30", capturedShellCommands, filesOnDevice, env, new HashMap<>());
+    runner.run();
+
+    Assert.assertFalse(
+        capturedShellCommands.contains(
+            "su root cp /data/data/com.example/files/coverage.ec /sdcard/coverage.ec"));
+    Assert.assertTrue(Files.exists(hostCoverageDir.resolve("manifest.jsonl")));
+  }
+
+  @Test
+  public void appPrivateCoveragePullsSelfInstrumentingArtifacts() throws Throwable {
+    assertAppPrivateCoveragePull(0, "com.example.test", "--is-self-instrumenting");
+  }
+
+  @Test
+  public void appPrivateCoveragePullsTargetArtifactsForSecondaryUser() throws Throwable {
+    assertAppPrivateCoveragePull(10, "com.example", "--user", "10");
+  }
+
+  private void assertAppPrivateCoveragePull(int user, String appPackage, String... extraArgs)
+      throws Throwable {
+    String deviceDir = "/data/user/" + user + "/" + appPackage + "/files/per_test_coverage";
+    Path hostDir = tmp.newFolder("private_coverage").getPath();
+    byte[] execData = new byte[] {0, 1, (byte) 0xff, (byte) 0x80};
+    byte[] manifest = "{\"test_name\":\"test\",\"exec_file\":\"test.exec\"}\n".getBytes();
+    Map<Path, byte[]> deviceFiles = new HashMap<>();
+    deviceFiles.put(Paths.get(deviceDir, "manifest.jsonl"), manifest);
+    deviceFiles.put(Paths.get(deviceDir, "test.exec"), execData);
+    deviceFiles.put(Paths.get(deviceDir, "extension/trace.txt"), "resource trace".getBytes());
+    Map<String, String> env = new HashMap<>();
+    env.put(InstrumentationTestRunner.PER_TEST_COVERAGE_ENABLED_ENV, "true");
+    env.put(InstrumentationTestRunner.PER_TEST_COVERAGE_APP_PRIVATE_ENV, "true");
+    env.put(InstrumentationTestRunner.PER_TEST_COVERAGE_DIR_ENV, hostDir.toString());
+    ArrayList<String> commands = new ArrayList<>();
+    InstrumentationTestRunner runner =
+        createInstrumentationTestRunnerWithDeviceForSdk(
+            "36", commands, deviceFiles, env, new HashMap<>(), extraArgs);
+
+    runner.run();
+
+    Assert.assertTrue(
+        findInstrumentationCommand(commands).contains("-e PER_TEST_COVERAGE_DIR " + deviceDir));
+    Assert.assertArrayEquals(manifest, Files.readAllBytes(hostDir.resolve("manifest.jsonl")));
+    Assert.assertArrayEquals(execData, Files.readAllBytes(hostDir.resolve("test.exec")));
+    Assert.assertEquals("resource trace", Files.readString(hostDir.resolve("extension/trace.txt")));
+  }
+
+  @Test
+  public void missingAppPrivateCoverageFailsCollection() throws Throwable {
+    Path hostDir = tmp.newFolder("missing_private_coverage").getPath();
+    Map<String, String> env = new HashMap<>();
+    env.put(InstrumentationTestRunner.PER_TEST_COVERAGE_ENABLED_ENV, "true");
+    env.put(InstrumentationTestRunner.PER_TEST_COVERAGE_APP_PRIVATE_ENV, "true");
+    env.put(InstrumentationTestRunner.PER_TEST_COVERAGE_DIR_ENV, hostDir.toString());
+    InstrumentationTestRunner runner =
+        createInstrumentationTestRunnerWithDeviceForSdk(
+            "36", new ArrayList<>(), new HashMap<>(), env, new HashMap<>());
+
+    try {
+      runner.run();
+      Assert.fail("Expected missing private coverage to fail collection");
+    } catch (IOException expected) {
+      Assert.assertFalse(Files.exists(hostDir.resolve("manifest.jsonl")));
+    }
+  }
+
+  @Test
   public void perTestCoverageFallsBackToTestArtifactsDir() throws Throwable {
     ArrayList<String> capturedShellCommands = new ArrayList<>();
     Path artifactsDir = tmp.newFolder("test_artifacts").getPath();
@@ -548,6 +692,126 @@ public class InstrumentationTestRunnerTest {
         instrumentCommand.contains(
             "-e " + InstrumentationTestRunner.PER_TEST_COVERAGE_DIR_ARG + " " + deviceCoverageDir));
     Assert.assertTrue(Files.exists(hostCoverageDir.resolve("manifest.jsonl")));
+  }
+
+  @Test
+  public void irpgoCoveragePullsFromTargetScopedStorage() throws Throwable {
+    assertIrpgoCoveragePull(
+        "30",
+        "/sdcard/Android/data/com.example/files/Download/test_result/irpgo_coverage/",
+        "/sdcard/Android/data/com.example/files/Download/test_result/irpgo_coverage/");
+  }
+
+  @Test
+  public void irpgoCoveragePullsFromSelfInstrumentingScopedStorage() throws Throwable {
+    assertIrpgoCoveragePull(
+        "33",
+        "/storage/emulated/0/Android/media/com.example.test/test_result/irpgo_coverage/",
+        "/storage/emulated/0/Android/media/com.example.test/test_result/irpgo_coverage/",
+        "--is-self-instrumenting");
+  }
+
+  @Test
+  public void irpgoCoverageUsesMountedSecondaryUserPathForWriter() throws Throwable {
+    assertIrpgoCoveragePull(
+        "33",
+        "/storage/emulated/10/Android/media/com.example/test_result/irpgo_coverage/",
+        "/data/media/10/Android/media/com.example/test_result/irpgo_coverage/",
+        "--user",
+        "10");
+  }
+
+  @Test
+  public void irpgoCoveragePreservesLegacyPathBeforeApi30() throws Throwable {
+    Path hostFile = tmp.newFolder("legacy_irpgo").getPath().resolve("trace.txt");
+    String legacyPath = "/sdcard/instrumentation-irpgo-function-ids.txt";
+    Map<Path, byte[]> files = new HashMap<>();
+    files.put(Paths.get(legacyPath), "legacy trace".getBytes());
+    ArrayList<String> commands = new ArrayList<>();
+    InstrumentationTestRunner runner =
+        createInstrumentationTestRunnerWithDeviceForSdk(
+            "29",
+            commands,
+            files,
+            new HashMap<>(),
+            new HashMap<>(),
+            "--extra-instrumentation-argument",
+            "irpgo_run_id=run-id",
+            "--extra-file-to-pull",
+            legacyPath + "=" + hostFile);
+
+    runner.run();
+
+    Assert.assertEquals("legacy trace", Files.readString(hostFile));
+    Assert.assertFalse(findInstrumentationCommand(commands).contains("irpgo_output_file"));
+  }
+
+  @Test
+  public void missingIrpgoTraceStillFailsAfterTestsRun() throws Throwable {
+    Path hostFile = tmp.newFolder("missing_irpgo").getPath().resolve("trace.txt");
+    ArrayList<String> commands = new ArrayList<>();
+    InstrumentationTestRunner runner =
+        createInstrumentationTestRunnerWithDeviceForSdk(
+            "30",
+            commands,
+            new HashMap<>(),
+            new HashMap<>(),
+            new HashMap<>(),
+            "--extra-instrumentation-argument",
+            "irpgo_run_id=run-id",
+            "--extra-file-to-pull",
+            "/sdcard/instrumentation-irpgo-function-ids.txt=" + hostFile);
+
+    try {
+      runner.run();
+      Assert.fail("Expected missing coverage trace to fail the run");
+    } catch (IOException error) {
+      Assert.assertTrue(error.getMessage().contains("irpgo_coverage/run-id.txt"));
+    }
+    Assert.assertTrue(findInstrumentationCommand(commands).contains("irpgo_output_file"));
+    Assert.assertFalse(Files.exists(hostFile));
+  }
+
+  private void assertIrpgoCoveragePull(
+      String sdkVersion, String appDirectory, String adbDirectory, String... extraArgs)
+      throws Throwable {
+    String runId = "01234567-89ab-cdef-0123-456789abcdef";
+    String appFile = appDirectory + runId + ".txt";
+    String adbFile = adbDirectory + runId + ".txt";
+    Path hostDirectory = tmp.newFolder("irpgo_coverage").getPath();
+    Path hostFile = hostDirectory.resolve("trace.txt");
+    Path unrelatedFile = hostDirectory.resolve("unrelated.txt");
+    Map<Path, byte[]> files = new HashMap<>();
+    files.put(Paths.get(adbFile), ("IRPGO_FUNCTION_IDS " + runId + "\n0x123\nDONE\n").getBytes());
+    files.put(Paths.get("/sdcard/unrelated.txt"), "unrelated artifact".getBytes());
+    files.put(Paths.get("/data/media/10/unrelated.txt"), "unrelated artifact".getBytes());
+    ArrayList<String> commands = new ArrayList<>();
+    List<String> args =
+        new ArrayList<>(
+            Arrays.asList(
+                "--extra-instrumentation-argument",
+                "irpgo_run_id=" + runId,
+                "--extra-file-to-pull",
+                "/sdcard/instrumentation-irpgo-function-ids.txt=" + hostFile,
+                "--extra-file-to-pull",
+                "/sdcard/unrelated.txt=" + unrelatedFile));
+    args.addAll(Arrays.asList(extraArgs));
+    InstrumentationTestRunner runner =
+        createInstrumentationTestRunnerWithDeviceForSdk(
+            sdkVersion,
+            commands,
+            files,
+            new HashMap<>(),
+            new HashMap<>(),
+            args.toArray(new String[0]));
+
+    runner.run();
+
+    Assert.assertTrue(
+        findInstrumentationCommand(commands).contains("-e irpgo_output_file " + appFile));
+    Assert.assertEquals(
+        "IRPGO_FUNCTION_IDS " + runId + "\n0x123\nDONE\n", Files.readString(hostFile));
+    Assert.assertEquals("unrelated artifact", Files.readString(unrelatedFile));
   }
 
   @Test
@@ -1664,6 +1928,23 @@ public class InstrumentationTestRunnerTest {
               return shellCommandMockResponses.get(command);
             }
 
+            if (command.startsWith("su root cp -R ")) {
+              String[] paths = command.substring("su root cp -R ".length()).split(" ");
+              Path source = Paths.get(paths[0]).normalize();
+              Path destination = Paths.get(paths[1]);
+              Map<Path, byte[]> copied = new HashMap<>();
+              for (Map.Entry<Path, byte[]> entry : filesOnDevice.entrySet()) {
+                if (entry.getKey().startsWith(source)) {
+                  copied.put(
+                      destination.resolve(source.relativize(entry.getKey())), entry.getValue());
+                }
+              }
+              if (copied.isEmpty()) {
+                throw new IOException("Missing coverage source " + source);
+              }
+              filesOnDevice.putAll(copied);
+            }
+
             // Default: return empty string
             return "";
           }
@@ -1707,6 +1988,18 @@ public class InstrumentationTestRunnerTest {
                 Path target = Paths.get(local);
                 Files.write(target, entry.getValue());
               }
+            }
+          }
+
+          @Override
+          protected void transferFile(String operation, String source, String destination)
+              throws Exception {
+            if (operation.equals("pull")) {
+              byte[] contents = filesOnDevice.get(Paths.get(source));
+              if (contents == null) {
+                throw new IOException("Missing file on device: " + source);
+              }
+              Files.write(Paths.get(destination), contents);
             }
           }
 

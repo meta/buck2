@@ -86,7 +86,7 @@ pub(crate) fn infer_direct_agent_call() -> AgentCallInference {
     } else {
         None
     };
-    let mut system = System::new();
+    let mut system = System::new().expect("should be supported on this platform");
     let refresh = ProcessRefreshKind::nothing()
         .with_exe(UpdateKind::OnlyIfNotSet)
         .with_cmd(UpdateKind::OnlyIfNotSet);

@@ -196,7 +196,7 @@ def create_per_target_type_check(
 
     # Typeshed artifacts
     if typeshed != None:
-        hidden.extend([a for a, _ in typeshed.artifacts])
+        hidden.append(typeshed.hidden_args)
         typeshed_manifest = typeshed.manifest
     else:
         typeshed_manifest = None
@@ -207,7 +207,7 @@ def create_per_target_type_check(
     if srcs != None:
         source_manifests = [srcs.manifest]
         source_artifacts = srcs.artifacts
-        hidden.extend([a for a, _ in srcs.artifacts])
+        hidden.append(srcs.hidden_args)
 
     return DefaultInfo(
         default_output = _create_batched_type_check(

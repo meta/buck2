@@ -22,6 +22,11 @@ LeanModule = record(
     # A `LeanArtifactsTSet`: the module's `.olean` and IR files and those of
     # all the modules it imports, transitively.
     artifacts = field(typing.Any),
+    # The object of the C that `lean` generated for the module.
+    object = field(Artifact),
+    # The same C compiled with the `c_export_flags` of the toolchain, which
+    # export every symbol of the module. `None` when the toolchain has none.
+    export_object = field(Artifact | None),
 )
 
 # The value of the `LeanLibraryInfo.modules` dynamic value.
@@ -47,6 +52,12 @@ LeanToolchainInfo = provider(
     fields = {
         # Flags for every compilation of the C that `lean` generates.
         "c_compiler_flags": provider_field(list[typing.Any], default = []),
+        # Flags that make the generated C export every symbol, for example
+        # `-DLEAN_EXPORTING`. When set, `lean_library` compiles the C of each
+        # module a second time with them, for shared libraries of Lean code
+        # on Windows, where an executable cannot export the whole core
+        # library. Empty when `c_compiler_flags` exports the symbols already.
+        "c_export_flags": provider_field(list[typing.Any], default = []),
         # Preprocessor information for `lean/lean.h` and the headers it includes.
         "c_preprocessor_infos": provider_field(list[typing.Any], default = []),
         # The `lean` compiler.

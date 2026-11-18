@@ -25,21 +25,23 @@ use serde::Serialize;
 use serde::Serializer;
 use starlark::values::UnpackValue;
 use starlark::values::Value;
-use starlark::values::dict::DictRef;
+use starlark::values::ValueOf;
+use starlark::values::dict::DictType;
 use starlark::values::enumeration::EnumValue;
-use starlark::values::list::ListRef;
+use starlark::values::int::IntView;
+use starlark::values::list::ListType;
 use starlark::values::none::NoneType;
 use starlark::values::record::Record;
-use starlark::values::structs::StructRef;
-use starlark::values::tuple::TupleRef;
-use starlark::values::type_repr::StarlarkTypeRepr;
+use starlark::values::string::StarlarkStr;
+use starlark::values::structs::Struct;
+use starlark::values::tuple::TupleType;
 
 use crate::artifact_groups::ArtifactGroup;
 use crate::bxl::select::StarlarkSelectConcat;
 use crate::bxl::select::StarlarkSelectDict;
+use crate::interpreter::rule_defs::artifact::starlark_artifact_like::StarlarkArtifactView;
 use crate::interpreter::rule_defs::artifact::starlark_artifact_like::StarlarkInputArtifactLike;
-use crate::interpreter::rule_defs::artifact::starlark_artifact_like::ValueAsInputArtifactLike;
-use crate::interpreter::rule_defs::artifact::starlark_output_artifact::StarlarkOutputArtifactUnpack;
+use crate::interpreter::rule_defs::artifact::starlark_output_artifact::StarlarkOutputArtifactView;
 use crate::interpreter::rule_defs::artifact_tagging::StarlarkTaggedValue;
 use crate::interpreter::rule_defs::cmd_args::ArtifactPathMapper;
 use crate::interpreter::rule_defs::cmd_args::CommandLineArtifactVisitor;
@@ -116,37 +118,37 @@ fn err<R, E: serde::ser::Error>(res: buck2_error::Result<R>) -> Result<R, E> {
 /// We want to deal with both normal artifacts, and .as_output() artifacts,
 /// since otherwise the .as_output ones will fall through as a cmd_args
 /// and end up getting wrapped in a list below.
-#[derive(UnpackValue, StarlarkTypeRepr)]
+#[derive(UnpackValue)]
 pub enum JsonArtifact<'v> {
-    ValueAsInputArtifactLike(ValueAsInputArtifactLike<'v>),
-    StarlarkOutputArtifact(StarlarkOutputArtifactUnpack<'v>),
+    Artifact(StarlarkArtifactView<'v>),
+    StarlarkOutputArtifact(StarlarkOutputArtifactView<'v>),
 }
 
 /// Partially unpack the value into JSON writable with `ctx.actions.write_json`.
 /// This does not help typechecker much (because it only validates top-level types),
 /// but it provides better documentation.
-#[derive(UnpackValue, StarlarkTypeRepr)]
+#[derive(UnpackValue)]
 pub enum JsonUnpack<'v> {
     None(NoneType),
-    String(&'v str),
-    Number(i64),
+    String(ValueOf<'v, StarlarkStr>),
+    Number(ValueOf<'v, IntView<'v>>),
     Bool(bool),
-    List(&'v ListRef<'v>),
-    Tuple(&'v TupleRef<'v>),
-    Dict(DictRef<'v>),
-    Struct(StructRef<'v>),
-    Record(&'v Record<'v>),
-    Enum(&'v EnumValue<'v>),
-    TransitiveSetJsonProjection(&'v TransitiveSetJsonProjection<'v>),
-    TargetLabel(&'v StarlarkTargetLabel),
-    ConfiguredProvidersLabel(&'v StarlarkConfiguredProvidersLabel),
-    CellPath(&'v StarlarkCellPath),
+    List(ValueOf<'v, ListType<Value<'v>>>),
+    Tuple(ValueOf<'v, TupleType<Value<'v>>>),
+    Dict(ValueOf<'v, DictType<Value<'v>, Value<'v>>>),
+    Struct(ValueOf<'v, Struct<'v>>),
+    Record(ValueOf<'v, Record<'v>>),
+    Enum(ValueOf<'v, EnumValue<'v>>),
+    TransitiveSetJsonProjection(ValueOf<'v, TransitiveSetJsonProjection<'v>>),
+    TargetLabel(ValueOf<'v, StarlarkTargetLabel>),
+    ConfiguredProvidersLabel(ValueOf<'v, StarlarkConfiguredProvidersLabel>),
+    CellPath(ValueOf<'v, StarlarkCellPath>),
     Artifact(JsonArtifact<'v>),
     CommandLine(CommandLineArg<'v>),
     Provider(ValueAsProviderLike<'v>),
-    TaggedValue(&'v StarlarkTaggedValue<'v>),
-    BxlSelectConcat(&'v StarlarkSelectConcat),
-    BxlSelectDict(&'v StarlarkSelectDict),
+    TaggedValue(ValueOf<'v, StarlarkTaggedValue<'v>>),
+    BxlSelectConcat(ValueOf<'v, StarlarkSelectConcat>),
+    BxlSelectDict(ValueOf<'v, StarlarkSelectDict>),
 }
 
 impl<'a, 'v> Serialize for SerializeValue<'a, 'v> {
@@ -160,13 +162,19 @@ impl<'a, 'v> Serialize for SerializeValue<'a, 'v> {
         err(check_stack_overflow())?;
         match &self.value {
             JsonUnpack::None(_) => serializer.serialize_none(),
-            JsonUnpack::String(x) => serializer.serialize_str(x),
-            JsonUnpack::Number(x) => serializer.serialize_i64(*x),
+            JsonUnpack::String(x) => serializer.serialize_str(x.as_str()),
+            JsonUnpack::Number(x) => serializer
+                .serialize_i64(err(i64::unpack_value_err(x.to_value()).map_err(Into::into))?),
             JsonUnpack::Bool(x) => serializer.serialize_bool(*x),
-            JsonUnpack::List(x) => serializer.collect_seq(x.iter().map(|v| self.with_value(v))),
-            JsonUnpack::Tuple(x) => serializer.collect_seq(x.iter().map(|v| self.with_value(v))),
+            JsonUnpack::List(x) => {
+                serializer.collect_seq(x.list().iter().map(|v| self.with_value(v)))
+            }
+            JsonUnpack::Tuple(x) => {
+                serializer.collect_seq(x.tuple().iter().map(|v| self.with_value(v)))
+            }
             JsonUnpack::Dict(x) => serializer.collect_map(
-                x.iter()
+                x.dict()
+                    .iter()
                     .map(|(k, v)| (self.with_value(k), self.with_value(v))),
             ),
             JsonUnpack::Struct(x) => {
@@ -208,16 +216,16 @@ impl<'a, 'v> Serialize for SerializeValue<'a, 'v> {
                     }
                     Some(fs) => {
                         let p = match x {
-                            JsonArtifact::ValueAsInputArtifactLike(x) => {
-                                let art = err(x.0.get_bound_artifact())?;
+                            JsonArtifact::Artifact(x) => {
+                                let art = err(x.as_input_artifact_like().get_bound_artifact())?;
                                 err(art.resolve_path(fs.fs(), self.artifact_path_mapping.get(&art)))?
                             }
                             JsonArtifact::StarlarkOutputArtifact(x) => {
                                 let art = match x {
-                                    StarlarkOutputArtifactUnpack::Unfrozen(x) => {
+                                    StarlarkOutputArtifactView::Unfrozen(x) => {
                                         err((*x.inner()).get_bound_artifact())?
                                     }
-                                    StarlarkOutputArtifactUnpack::Frozen(x) => x.inner().artifact(),
+                                    StarlarkOutputArtifactView::Frozen(x) => x.inner().artifact(),
                                 };
 
                                 err(art.resolve_path(
@@ -257,7 +265,7 @@ impl<'a, 'v> Serialize for SerializeValue<'a, 'v> {
                             // rejected here and needs to be updated if that changes.
                             None,
                         );
-                        err(x.as_command_line_arg().add_to_command_line(&mut fmt))?;
+                        err(x.get().0.add_to_command_line(&mut fmt))?;
 
                         // We change the type, based on the value - singleton = String, otherwise list.
                         // That's a little annoying (type based on value), but otherwise there would be
@@ -343,17 +351,17 @@ pub fn visit_json_artifacts<'v>(
         | JsonUnpack::CellPath(_) => {}
 
         JsonUnpack::List(x) => {
-            for x in x.iter() {
+            for x in x.list().iter() {
                 visit_json_artifacts(x, visitor)?;
             }
         }
         JsonUnpack::Tuple(x) => {
-            for x in x.iter() {
+            for x in x.tuple().iter() {
                 visit_json_artifacts(x, visitor)?;
             }
         }
         JsonUnpack::Dict(x) => {
-            for (k, v) in x.iter() {
+            for (k, v) in x.dict().iter() {
                 visit_json_artifacts(k, visitor)?;
                 visit_json_artifacts(v, visitor)?;
             }
@@ -381,7 +389,7 @@ pub fn visit_json_artifacts<'v>(
                 .0
                 .visit_artifacts(visitor)?;
         }
-        JsonUnpack::CommandLine(x) => x.as_command_line_arg().visit_artifacts(visitor)?,
+        JsonUnpack::CommandLine(x) => x.get().0.visit_artifacts(visitor)?,
         JsonUnpack::Provider(x) => {
             for (_, v) in x.0.items() {
                 visit_json_artifacts(v, visitor)?;

@@ -8,6 +8,9 @@ source_listing()
 buck_java_library(
     name = "plugin-loader",
     srcs = ["PluginLoader.java"],
+    provided_deps = [
+        "prelude//toolchains/android/third-party:infer-annotations",
+    ],
     resources = [
         "dep-tracker.jar",
     ],

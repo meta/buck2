@@ -52,22 +52,42 @@ class InterfaceStubsGenerator : StubsGenerator {
             .filterNot { group -> group.any { nested(context, candidatesFor(it), it) } }
             .flatMap { group -> group.filter { isStubbed(context, candidatesFor(it), it) } }
 
-    for (iType in context.interfaceTypes + multiBoundStubs) {
-      val qualifierList = iType.calculateQualifierList()
-      val imp = context.resolveImportedType(candidatesFor(iType), qualifierList.first())
-      var pkg: String
-      var name: String
-      var inners: List<String>
+    // An ambiguous entry is a guess, and the module can settle it: a supertype it writes as a
+    // constructor call anywhere is a class, so the guess must not turn that stub into an interface.
+    val calledStubs =
+        context.superclassCallTypes.mapNotNull {
+          stubOf(context, candidatesFor(it), it, log = false)
+        }
 
-      if (imp == null) {
-        // No import matches. A qualifier carrying its own package is written out in full; one
-        // carrying none names a type of the using file's own package, and a trailing segment
-        // here names a nested type whatever its case.
-        val written = FullTypeQualifier(qualifierList).withMemberAsNestedName()
-        val full =
-            if (written.pkg.isEmpty()) {
-              val filePkg = context.packageSegmentsOf(iType.containingKtFile)
-              if (filePkg.isEmpty()) {
+    for (iType in context.interfaceTypes + multiBoundStubs) {
+      val stub = stubOf(context, candidatesFor(iType), iType, log = true) ?: continue
+      if (iType in context.ambiguousInterfaceTypes && calledStubs.any { it === stub }) continue
+      stub.type = KStub.Type.INTERFACE
+    }
+  }
+
+  private fun stubOf(
+      context: GenerationContext,
+      candidates: Collection<FullTypeQualifier>,
+      iType: KtUserType,
+      log: Boolean,
+  ): KStub? {
+    val qualifierList = iType.calculateQualifierList()
+    val imp = context.resolveImportedType(candidates, qualifierList.first(), iType.containingKtFile)
+    val pkg: String
+    val name: String
+    val inners: List<String>
+
+    if (imp == null) {
+      // No import matches. A qualifier carrying its own package is written out in full; one
+      // carrying none names a type of the using file's own package, and a trailing segment
+      // here names a nested type whatever its case.
+      val written = FullTypeQualifier(qualifierList).withMemberAsNestedName()
+      val full =
+          if (written.pkg.isEmpty()) {
+            val filePkg = context.packageSegmentsOf(iType.containingKtFile)
+            if (filePkg.isEmpty()) {
+              if (log) {
                 Logger.log(
                     """
         |  [Warning] ImportTypes not found
@@ -75,34 +95,33 @@ class InterfaceStubsGenerator : StubsGenerator {
       """
                         .trimMargin(),
                 )
-                continue
               }
-              FullTypeQualifier(filePkg + qualifierList).withMemberAsNestedName()
-            } else written
-        if (full.names.isEmpty()) continue
-        pkg = full.pkgAsString()
-        name = full.names.first()
-        inners = full.names.drop(1)
-      } else {
-        pkg = imp.pkgAsString()
-        name = imp.names.first()
-        inners = imp.names.drop(1) + qualifierList.drop(1)
-      }
+              return null
+            }
+            FullTypeQualifier(filePkg + qualifierList).withMemberAsNestedName()
+          } else written
+      if (full.names.isEmpty()) return null
+      pkg = full.pkgAsString()
+      name = full.names.first()
+      inners = full.names.drop(1)
+    } else {
+      pkg = imp.pkgAsString()
+      name = imp.names.first()
+      inners = imp.names.drop(1) + qualifierList.drop(1)
+    }
 
-      val stub = context.stubsContainer.find(pkg, name, inners)
-      if (stub != null) {
-        stub.type = KStub.Type.INTERFACE
-      } else {
-        Logger.log(
-            """
+    val stub = context.stubsContainer.find(pkg, name, inners)
+    if (stub == null && log) {
+      Logger.log(
+          """
           |  [Warning] stub not found
           |    - name: $pkg:$name
           |    - inners: $inners
         """
-                .trimMargin(),
-        )
-      }
+              .trimMargin(),
+      )
     }
+    return stub
   }
 
   // Retyping a nested stub would leave its enclosing stub a class whose InnerClasses entry
@@ -113,7 +132,7 @@ class InterfaceStubsGenerator : StubsGenerator {
       type: KtUserType,
   ): Boolean {
     val qualifierList = type.calculateQualifierList()
-    val imp = context.resolveImportedType(candidates, qualifierList.first())
+    val imp = context.resolveImportedType(candidates, qualifierList.first(), type.containingKtFile)
     return when {
       imp != null ->
           (imp.names.drop(1) + qualifierList.drop(1)).isNotEmpty() ||
@@ -134,7 +153,7 @@ class InterfaceStubsGenerator : StubsGenerator {
       first: KtUserType,
   ): Boolean {
     val qualifierList = first.calculateQualifierList()
-    val imp = context.resolveImportedType(candidates, qualifierList.first())
+    val imp = context.resolveImportedType(candidates, qualifierList.first(), first.containingKtFile)
     val pkg: String
     val name: String
     val inners: List<String>

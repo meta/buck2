@@ -1,0 +1,5 @@
+load(":defs.bzl", "arg_rule")
+
+# A malformed macro after a multibyte character placed so that the 15-byte lead-in of the error
+# window starts inside it.
+arg_rule(name = "umlaut_then_unclosed_macro", cmd = "\u00e9aaaaaaaaaaaa$(")

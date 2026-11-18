@@ -61,7 +61,6 @@ use starlark::values::Trace;
 use starlark::values::UnpackValue;
 use starlark::values::Value;
 use starlark::values::starlark_value;
-use starlark::values::type_repr::StarlarkTypeRepr;
 
 use crate::actions::impls::declare_writes::declare_writes;
 use crate::actions::impls::run::DepFilesPlaceholderArtifactPathMapper;
@@ -274,7 +273,10 @@ impl Action for WriteJsonAction {
             ActionExecutionMetadata {
                 dep_file_db_writes_queued: 0,
                 execution_kind,
-                timing: ActionExecutionTimingData { wall_time },
+                timing: ActionExecutionTimingData {
+                    wall_time,
+                    ..Default::default()
+                },
                 input_files_bytes: None,
                 waiting_data,
             },
@@ -329,7 +331,7 @@ impl<'v> StarlarkWriteJsonCommandLineArg<'v> {
 
 impl<'v> CommandLineArgLike<'v> for StarlarkWriteJsonCommandLineArg<'v> {
     fn register_me(&self) {
-        command_line_arg_like_impl!(StarlarkWriteJsonCommandLineArg::starlark_type_repr());
+        command_line_arg_like_impl!(StarlarkWriteJsonCommandLineArg::get_type_starlark_repr());
     }
 
     fn add_to_command_line(&self, fmt: &mut CommandLineBuilder<'v, '_>) -> buck2_error::Result<()> {

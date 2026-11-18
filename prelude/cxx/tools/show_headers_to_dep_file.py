@@ -14,6 +14,9 @@ from subprocess import PIPE, run
 
 import dep_file_utils
 
+# `clang -H` prints a run of dots for the include depth, one space, then the path verbatim.
+_INCLUDE_LINE = re.compile(r"^(\.+) (.+)$")
+
 
 # output_path -> path to write the dep file to
 # cmd_args -> command to be run to get dependencies from compiler
@@ -48,11 +51,10 @@ def parse_into_dep_file(output, dst_path, input_file, returncode):
     if returncode == 0:
         deps = []
         for line in lines:
-            if line.startswith("."):
-                path = remove_leading_dots(line.replace(" ", ""))
-                if len(path) > 0:
-                    deps.append(path.strip())
-                    continue
+            match = _INCLUDE_LINE.match(line)
+            if match:
+                deps.append(match.group(2))
+                continue
             print(line, file=sys.stderr)  # This was a warning/error
 
         deps.append(input_file)
@@ -63,9 +65,3 @@ def parse_into_dep_file(output, dst_path, input_file, returncode):
                 continue
 
             print(line, file=sys.stderr)
-
-
-def remove_leading_dots(s):
-    while s.startswith("."):
-        s = s[1:]
-    return s

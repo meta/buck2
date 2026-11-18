@@ -97,8 +97,8 @@ where
         let mut closed: Vec<KeySet> = (0..self.branches.len())
             .map(|_| KeySet::default())
             .collect();
-        for (key, slots) in &self.slots {
-            if self.assertions.contains_key(key) {
+        for (key, slots) in self.slots.iter() {
+            if self.assertions.contains_key(&key) {
                 assert!(
                     slots.iter().all(|slot| slot.claim.is_none()),
                     "{key:?} is both asserted and certified"
@@ -126,7 +126,7 @@ where
                     continue;
                 };
                 assert_eq!(
-                    claim.cert.key, *key,
+                    claim.cert.key, key,
                     "claim of {key:?} holds another key's cert"
                 );
                 assert!(
@@ -144,7 +144,7 @@ where
                         "Invariant 1: closed window of {key:?} at {:?} reaches the head",
                         slot.branch
                     );
-                    closed[slot.branch.index()].insert(*key);
+                    closed[slot.branch.index()].insert(key);
                 }
             }
         }
@@ -171,7 +171,7 @@ where
     fn check_attachment(&self, b: BranchId) {
         let head = self.head(b);
         let mut expected: HashSet<(Key, Key)> = HashSet::new();
-        for key in self.slots.keys().copied() {
+        for key in self.slots.keys() {
             let Some(attached) = self.attached(key, b) else {
                 continue;
             };
@@ -226,7 +226,7 @@ where
             .branch(b)
             .rdeps
             .iter()
-            .flat_map(|(dep, dependents)| dependents.iter().map(move |k| (*dep, *k)))
+            .flat_map(|(dep, dependents)| dependents.iter().map(move |k| (dep, *k)))
             .collect();
         assert!(
             actual == expected,

@@ -22,7 +22,6 @@ buck_java_library(
         "prelude//toolchains/android/third-party:gson",
         "prelude//toolchains/android/third-party:guava",
         "prelude//toolchains/android/third-party:infer-annotations",
-        "prelude//toolchains/android/third-party:jsr305",
         "prelude//toolchains/android/third-party:jsr330",
         "prelude//toolchains/android/third-party:kotlin-annotations",
         "prelude//toolchains/android/third-party/aosp:apksig",

@@ -21,30 +21,36 @@ use crate::typing::Ty;
 use crate::typing::TyStarlarkValue;
 use crate::values::UnpackValue;
 use crate::values::Value;
-use crate::values::type_repr::StarlarkTypeRepr;
+use crate::values::ValueOf;
+use crate::values::type_expr::StarlarkTypeExpr;
+use crate::values::type_expr::StarlarkTypeExprStable;
 use crate::values::typing::ty::AbstractType;
 
 /// Represent a type of type. (For example, an expression `int` is valid for this type.)
 pub struct TypeType(());
 
-impl StarlarkTypeRepr for TypeType {
-    type Canonical = AbstractType;
+impl<'v> StarlarkTypeExpr<'v> for TypeType {
+    type Get = TypeType;
 
     fn starlark_type_repr() -> Ty {
-        <Self::Canonical as StarlarkTypeRepr>::starlark_type_repr()
+        AbstractType::starlark_type_repr()
+    }
+
+    fn get(value: Value<'v>) -> Option<Self::Get> {
+        TyStarlarkValue::is_type_from_vtable(&value.vtable().starlark_value.ty)
+            .then_some(TypeType(()))
     }
 }
 
-/// Validate the value is type.
+impl<'v> StarlarkTypeExprStable<'v> for TypeType {}
+
 impl<'v> UnpackValue<'v> for TypeType {
+    type Type = Self;
     type Error = Infallible;
 
-    fn unpack_value_impl(value: Value<'v>) -> Result<Option<Self>, Self::Error> {
-        if TyStarlarkValue::is_type_from_vtable(&value.vtable().starlark_value.ty) {
-            Ok(Some(TypeType(())))
-        } else {
-            Ok(None)
-        }
+    #[inline]
+    fn unpack(_value: ValueOf<'v, Self>, get: Self) -> Result<Self, Infallible> {
+        Ok(get)
     }
 }
 

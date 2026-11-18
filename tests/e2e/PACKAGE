@@ -1,0 +1,25 @@
+load("@fbcode_macros//build_defs:python.bzl", "python")
+load("@fbsource//tools/target_determinator/macros:ci.bzl", "ci")
+load("@prelude//cfg/modifier:set_cfg_modifiers.bzl", "set_cfg_modifiers")
+
+python.set_typing(
+    True,
+    overwrite = True,
+)
+
+# buildifier: disable=positional-args
+write_package_value(
+    "buck2_e2e_test.flavor",
+    "buck2_non_isolated",
+)
+
+ci.package(
+    # Run in opt mode because otherwise the tests are super slow
+    ci.remove(ci.mac(ci.aarch64())),
+    ci.remove(ci.windows()),
+    ci.remove(ci.linux(ci.skip_test(ci.mode("fbcode//mode/opt-mac")))),
+    ci.mac(ci.aarch64(ci.opt())),
+    ci.windows(ci.opt()),
+)
+
+set_cfg_modifiers(cfg_modifiers = ["ovr_config//toolchain/thrift/constraints/py3_migration:auto_migrate"])

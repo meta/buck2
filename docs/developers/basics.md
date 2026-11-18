@@ -41,7 +41,9 @@ cat tests/core/README.md
 buck2 test fbcode//buck2/app/buck2_core:buck2_core
 ```
 
-In OSS, standard cargo tooling applies. Integration tests do not run in OSS.
+In OSS, standard cargo tooling applies, and buck2 built with cargo runs the Rust integration tests:
+`buck2 test //tests/core/... //tests/e2e/... //tests/select_type_params/...` (see
+`tests/README.md`).
 
 ## Coding conventions
 

@@ -742,9 +742,14 @@ mod tests {
             read_dir(&ctx, "root//ign/g").await,
             "(`ign` is ignored, `project.ignore` contains `ign`)",
         );
-        // Read through, with a soft error, until `read_through_symlink` is retired.
-        assert_eq!(read_dir(&ctx, "root//l").await, names(&["b"]));
-        assert_eq!(read_dir(&ctx, "root//l/b").await, names(&["f"]));
+        fails_with(
+            read_dir(&ctx, "root//l").await,
+            "is a symlink, which buck2 does not follow",
+        );
+        fails_with(
+            read_dir(&ctx, "root//l/b").await,
+            "is behind the symlink `l`",
+        );
         fails_with(
             read_dir(&ctx, "root//a/b/f").await,
             "is a file, not a directory",
@@ -764,6 +769,51 @@ mod tests {
         fails_with(
             read_dir(&ctx, "root//a/B/c").await,
             "(`a/B` does not exist)",
+        );
+        Ok(())
+    }
+
+    /// `read_dir_unless_behind_symlink` finds nothing at a symlink or behind one, and is `read_dir`
+    /// everywhere else.
+    #[tokio::test]
+    async fn read_dir_unless_behind_symlink() -> buck2_error::Result<()> {
+        let f = Fixture::new("ign").await?;
+        f.fs.write_file("a/b/f", "");
+        f.fs.write_file("ign/f", "");
+        f.symlink("l", "a");
+        let outside = ProjectRootTemp::new()?;
+        outside.write_file("b/f", "");
+        f.symlink("e", outside.path().root().as_path().to_str().unwrap());
+
+        let list = async |ctx: &DiceTransaction, path: &str| {
+            DiceFileComputations::read_dir_unless_behind_symlink(&mut ctx.ctx(), cp(path))
+                .await
+                .map(|out| {
+                    out.map(|out| {
+                        out.included
+                            .iter()
+                            .map(|n| n.as_str().to_owned())
+                            .collect::<Vec<_>>()
+                    })
+                })
+                .map_err(|e| format!("{e:#}"))
+        };
+        let ctx = f.transaction(FileChangeTracker::new()).await?;
+        assert_eq!(list(&ctx, "root//a").await, Ok(Some(vec!["b".to_owned()])));
+        for behind in ["root//l", "root//l/b", "root//e", "root//e/b"] {
+            assert_eq!(list(&ctx, behind).await, Ok(None), "{behind}");
+        }
+        assert!(
+            list(&ctx, "root//ign")
+                .await
+                .unwrap_err()
+                .contains("is ignored")
+        );
+        assert!(
+            list(&ctx, "root//nope")
+                .await
+                .unwrap_err()
+                .contains("does not exist")
         );
         Ok(())
     }
@@ -809,9 +859,7 @@ mod tests {
         assert!(exists("sub//f").await);
         assert!(!exists("root//a/B/f").await);
         assert!(!exists("root//a/b/F").await);
-        // Read through, with a soft error, until `read_through_symlink` is retired.
-        assert!(exists("root//l/b").await);
-        assert!(!exists("root//l/nope").await);
+        assert!(!exists("root//l/b").await);
         assert!(!exists("root//ign/f").await);
         assert!(!exists("root//missing/f").await);
         assert!(!exists("root//sub/f").await);
@@ -985,8 +1033,8 @@ mod tests {
         Ok(())
     }
 
-    /// File reads go through the check: absent and ignored files read as `None`, directories are
-    /// errors.
+    /// File reads go through the check: absent and ignored files read as `None`, symlinks and
+    /// directories are errors.
     #[tokio::test]
     async fn read_file_through_the_check() -> buck2_error::Result<()> {
         let f = Fixture::new("ign").await?;
@@ -1010,9 +1058,14 @@ mod tests {
             Err(msg) => assert!(msg.contains(needle), "`{msg}` does not contain `{needle}`"),
             Ok(v) => panic!("expected a failure mentioning `{needle}`, got {v:?}"),
         };
-        // Read through, with a soft error, until `read_through_symlink` is retired.
-        assert_eq!(read("root//l/f").await, Ok(Some("contents".to_owned())));
-        assert_eq!(read("root//a/lf").await, Ok(Some("contents".to_owned())));
+        fails(
+            read("root//l/f").await,
+            "File `l/f` is behind the symlink `l`",
+        );
+        fails(
+            read("root//a/lf").await,
+            "`a/lf` is a symlink, which buck2 does not follow",
+        );
         fails(read("root//a").await, "`a` is a directory, not a file");
         Ok(())
     }
@@ -1067,6 +1120,20 @@ mod tests {
             ReadDirError::DirectoryIsIgnored(path, FileIgnoreReason::IgnoredByCell { cell_name, .. }) => {
                 assert_eq!(path, cp("root//sub"));
                 assert_eq!(cell_name, CellName::testing_new("sub"));
+            }
+        );
+        assert_matches!(
+            read_dir_error(&ctx, "root//l/b").await,
+            ReadDirError::Symlink { path, at } => {
+                assert_eq!(path, cp("root//l/b"));
+                assert_eq!(at, cp("root//l"));
+            }
+        );
+        assert_matches!(
+            read_dir_error(&ctx, "root//l").await,
+            ReadDirError::Symlink { path, at } => {
+                assert_eq!(path, cp("root//l"));
+                assert_eq!(at, cp("root//l"));
             }
         );
         assert_matches!(

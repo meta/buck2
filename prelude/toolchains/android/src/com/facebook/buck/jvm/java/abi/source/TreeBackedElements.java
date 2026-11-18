@@ -10,11 +10,16 @@
 
 package com.facebook.buck.jvm.java.abi.source;
 
+import com.facebook.buck.jvm.java.abi.source.api.CannotInferException;
+import com.facebook.buck.jvm.java.lang.model.BridgeMethod;
+import com.facebook.buck.jvm.java.lang.model.ClassFileTypes;
 import com.facebook.buck.jvm.java.plugin.adapter.ElementsExtendedImpl;
-import com.facebook.buck.util.liteinfersupport.Nullable;
-import com.facebook.buck.util.liteinfersupport.PropagatesNullable;
+import com.facebook.infer.annotation.Nullsafe;
+import com.facebook.infer.annotation.PropagatesNullable;
 import com.sun.source.util.Trees;
 import java.io.Writer;
+import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashMap;
 import java.util.List;
@@ -30,9 +35,15 @@ import javax.lang.model.element.Name;
 import javax.lang.model.element.PackageElement;
 import javax.lang.model.element.QualifiedNameable;
 import javax.lang.model.element.TypeElement;
+import javax.lang.model.type.ArrayType;
+import javax.lang.model.type.DeclaredType;
+import javax.lang.model.type.ExecutableType;
+import javax.lang.model.type.TypeKind;
+import javax.lang.model.type.TypeMirror;
 import javax.lang.model.util.ElementFilter;
 import javax.lang.model.util.Elements;
 import javax.lang.model.util.Types;
+import org.jspecify.annotations.Nullable;
 
 /**
  * An implementation of {@link Elements} using just the AST of a single module, without its
@@ -40,9 +51,12 @@ import javax.lang.model.util.Types;
  * meanings of some names, and thus must be used with care. See documentation for individual methods
  * and {@link com.facebook.buck.jvm.java.abi.source} for more information.
  */
+@Nullsafe(Nullsafe.Mode.LOCAL)
 class TreeBackedElements extends ElementsExtendedImpl {
 
   private final Elements javacElements;
+  private final Types javacTypes;
+  private final ElementsExtendedImpl javacElementsExtended;
   private final Map<Element, TreeBackedElement> treeBackedElements = new HashMap<>();
   private final Map<Name, ArtificialTypeElement> knownTypes = new HashMap<>();
   private final Map<Name, ArtificialPackageElement> knownPackages = new HashMap<>();
@@ -50,6 +64,8 @@ class TreeBackedElements extends ElementsExtendedImpl {
   public TreeBackedElements(Elements javacElements, Types javacTypes, Trees trees) {
     super(javacElements, javacTypes, trees);
     this.javacElements = javacElements;
+    this.javacTypes = javacTypes;
+    this.javacElementsExtended = new ElementsExtendedImpl(javacElements, javacTypes, trees);
   }
 
   /* package */ void clear() {
@@ -86,18 +102,16 @@ class TreeBackedElements extends ElementsExtendedImpl {
     return result;
   }
 
-  @Nullable
-  /* package */ PackageElement getCanonicalElement(@Nullable PackageElement element) {
+  @Nullable /* package */ PackageElement getCanonicalElement(@Nullable PackageElement element) {
     return (PackageElement) getCanonicalElement((Element) element);
   }
 
-  @Nullable
-  /* package */ TypeElement getCanonicalElement(@Nullable TypeElement element) {
+  @Nullable /* package */ TypeElement getCanonicalElement(@Nullable TypeElement element) {
     return (TypeElement) getCanonicalElement((Element) element);
   }
 
-  @Nullable
-  /* package */ ExecutableElement getCanonicalElement(@Nullable ExecutableElement element) {
+  @Nullable /* package */ ExecutableElement getCanonicalElement(
+      @Nullable ExecutableElement element) {
     return (ExecutableElement) getCanonicalElement((Element) element);
   }
 
@@ -298,6 +312,82 @@ class TreeBackedElements extends ElementsExtendedImpl {
     }
 
     return javacElements.getAllMembers(type);
+  }
+
+  @Override
+  public void setLocalClassDirectories(List<Path> directories) {
+    super.setLocalClassDirectories(directories);
+    javacElementsExtended.setLocalClassDirectories(directories);
+  }
+
+  /**
+   * Computes the bridge methods javac emits for a source type from javac's own symbols, which are
+   * complete for source types after enter, and maps them back to the canonical elements. Fails when
+   * a transitive supertype is not on the classpath, since its methods cannot be known. Leaves out a
+   * bridge whose erased signature names a class that is not on the classpath: javac has only an
+   * error type for that class, so the bridge's descriptor and thrown types cannot be computed.
+   */
+  @Override
+  public List<BridgeMethod> getAllBridgeMethods(TypeElement type) {
+    TypeElement javacType = getJavacElement(type);
+    requireResolvedSupertypes(javacType.asType());
+
+    // The overriding method is canonicalized so that its parameters and annotations are read
+    // like those of any other source method. The overridden method stays a javac element: the
+    // bridge's descriptor, signature and thrown types come from its erasure, which the tree-backed
+    // types cannot compute for artificial method types.
+    List<BridgeMethod> result = new ArrayList<>();
+    for (BridgeMethod bridgeMethod : javacElementsExtended.getAllBridgeMethods(javacType)) {
+      if (!hasResolvedErasure(bridgeMethod.to)) {
+        continue;
+      }
+      result.add(
+          new BridgeMethod(
+              Objects.requireNonNull(getCanonicalElement(bridgeMethod.from)), bridgeMethod.to));
+    }
+    return result;
+  }
+
+  private boolean hasResolvedErasure(ExecutableElement javacMethod) {
+    ExecutableType erasure = (ExecutableType) javacTypes.erasure(javacMethod.asType());
+    if (ClassFileTypes.isReadFromClassFile(javacMethod.getEnclosingElement())) {
+      // A class file names each class in the descriptor, available or not.
+      if (ClassFileTypes.getDescriptor(javacTypes, erasure) == null) {
+        return false;
+      }
+      for (TypeMirror thrown : erasure.getThrownTypes()) {
+        if (ClassFileTypes.getInternalName(thrown) == null) {
+          return false;
+        }
+      }
+      return true;
+    }
+    List<TypeMirror> signature = new ArrayList<>(erasure.getParameterTypes());
+    signature.add(erasure.getReturnType());
+    signature.addAll(erasure.getThrownTypes());
+    for (TypeMirror type : signature) {
+      while (type.getKind() == TypeKind.ARRAY) {
+        type = ((ArrayType) type).getComponentType();
+      }
+      if (type.getKind() == TypeKind.ERROR) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  private static void requireResolvedSupertypes(TypeMirror javacType) {
+    if (javacType.getKind() == TypeKind.ERROR) {
+      throw new CannotInferException("members", ((DeclaredType) javacType).asElement());
+    }
+    if (javacType.getKind() != TypeKind.DECLARED) {
+      return;
+    }
+    TypeElement element = (TypeElement) ((DeclaredType) javacType).asElement();
+    requireResolvedSupertypes(element.getSuperclass());
+    for (TypeMirror iface : element.getInterfaces()) {
+      requireResolvedSupertypes(iface);
+    }
   }
 
   @Override

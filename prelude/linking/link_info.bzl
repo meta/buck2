@@ -53,7 +53,37 @@ Archive = record(
     external_objects = field(list[Artifact], []),
     # Inputs required when a consumer links external_objects instead of artifact.
     hidden = field(list[Artifact], []),
+    # `hidden`, plus a thin archive's `external_objects`, as one `cmd_args` for consuming links; `hidden` stays a list because anon links serialise it artifact by artifact.
+    hidden_args = field(cmd_args | None, None),
 )
+
+# What a link of the archive has to track as inputs although they are not on
+# its command line: a thin archive is linked through its object files, a
+# virtual one through `hidden`. None when there is nothing to track. A list
+# costs one entry per artifact, a nested `cmd_args` one entry in total, so a
+# caller that already holds the objects as a `cmd_args` passes that.
+def _archive_hidden_args(
+    archive_contents_type: ArchiveContentsType, external_objects: list[Artifact], hidden: list[Artifact], object_args: cmd_args | None
+) -> cmd_args | None:
+    if archive_contents_type == ArchiveContentsType("thin"):
+        inputs = object_args if object_args != None else external_objects
+    elif archive_contents_type == ArchiveContentsType("virtual"):
+        inputs = hidden
+    else:
+        inputs = []
+    return cmd_args(hidden = inputs) if inputs else None
+
+def new_archive(
+    artifact: Artifact, archive_contents_type: str, external_objects: list[Artifact] = [], hidden: list[Artifact] = [], object_args: cmd_args | None = None
+) -> Archive:
+    contents_type = ArchiveContentsType(archive_contents_type)
+    return Archive(
+        artifact = artifact,
+        archive_contents_type = contents_type,
+        external_objects = external_objects,
+        hidden = hidden,
+        hidden_args = _archive_hidden_args(contents_type, external_objects, hidden, object_args),
+    )
 
 # The different strategies that are used to determine sharedlib/executable
 # link constituents.
@@ -292,18 +322,13 @@ def append_linkable_args(args: cmd_args, linkable: LinkableTypes):
 
             if not linkable.link_whole:
                 args.add("-Wl,--end-lib")
-
-            args.add(cmd_args(hidden = linkable.archive.hidden))
         elif linkable.link_whole:
             args.add(get_link_whole_args(linkable.linker_type, [linkable.archive.artifact]))
         else:
             args.add(linkable.archive.artifact)
 
-        if linkable.archive.archive_contents_type == ArchiveContentsType("thin"):
-            # When using thin archives, object files are implicitly used as inputs
-            # to the link, so make sure track them as inputs so that they're
-            # materialized/tracked properly.
-            args.add(cmd_args(hidden = linkable.archive.external_objects))
+        if linkable.archive.hidden_args != None:
+            args.add(linkable.archive.hidden_args)
     elif isinstance(linkable, SharedLibLinkable):
         if linkable.link_without_soname:
             linkable_name = linkable.lib.basename.removeprefix("lib").split(".")[0]

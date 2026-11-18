@@ -11,7 +11,7 @@
 package com.facebook.buck.jvm.java.abi.source;
 
 import com.facebook.buck.jvm.java.lang.model.MoreElements;
-import com.facebook.buck.util.liteinfersupport.Nullable;
+import com.facebook.infer.annotation.Nullsafe;
 import com.sun.source.tree.CompilationUnitTree;
 import com.sun.source.tree.Scope;
 import com.sun.source.tree.Tree.Kind;
@@ -31,8 +31,10 @@ import javax.lang.model.element.TypeElement;
 import javax.lang.model.util.Elements;
 import javax.lang.model.util.SimpleElementVisitor8;
 import javax.tools.Diagnostic;
+import org.jspecify.annotations.Nullable;
 
 /** Simulates the type resolution performed by {@link TreeBackedEnter} for source-only ABIs. */
+@Nullsafe(Nullsafe.Mode.LOCAL)
 class TreeBackedTypeResolutionSimulator {
 
   private final Elements elements;
@@ -64,8 +66,7 @@ class TreeBackedTypeResolutionSimulator {
   private interface Remediation {
     boolean canBeApplied();
 
-    @Nullable
-    String getMessage();
+    @Nullable String getMessage();
   }
 
   public class TreeBackedResolvedType {
@@ -118,7 +119,8 @@ class TreeBackedTypeResolutionSimulator {
                 "Source-only ABI generation requires that this member type reference be more"
                     + " explicit.";
             remediations.add(
-                new ImportTypeRemediation((TypeElement) referencedElement.getEnclosingElement()));
+                new ImportTypeRemediation(
+                    (TypeElement) Objects.requireNonNull(referencedElement.getEnclosingElement())));
             remediations.add(new QualifyNameRemediation(referencedType));
           }
         } else if (!nameIsCorrectCase()) {
@@ -254,7 +256,8 @@ class TreeBackedTypeResolutionSimulator {
 
       @Override
       public String getMessage() {
-        TypeElement enclosingType = (TypeElement) toQualify.getEnclosingElement();
+        TypeElement enclosingType =
+            (TypeElement) Objects.requireNonNull(toQualify.getEnclosingElement());
         return String.format(
             "Use \"%s.%s\" here instead of \"%s\".",
             enclosingType.getSimpleName(), toQualify.getSimpleName(), toQualify.getSimpleName());
@@ -348,7 +351,8 @@ class TreeBackedTypeResolutionSimulator {
       return new TreeBackedResolvedType(
           referencingPath,
           canonicalType,
-          resolveEnclosingElement((QualifiedNameable) canonicalType.getEnclosingElement()));
+          resolveEnclosingElement(
+              (QualifiedNameable) Objects.requireNonNull(canonicalType.getEnclosingElement())));
     }
 
     @Override

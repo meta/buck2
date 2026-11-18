@@ -21,6 +21,7 @@ AppleResourceDestination = enum(
     "extensionkit_extensions",
     "frameworks",
     "launchagents",
+    "launchdaemons",
     "loginitems",
     "plugins",
     "resources",

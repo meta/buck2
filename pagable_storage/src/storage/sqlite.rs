@@ -35,7 +35,6 @@ use pagable::storage::traits::WriteTicket;
 use pagable::traits::StorageContext;
 use rusqlite::Connection;
 use rusqlite::OptionalExtension;
-use rusqlite::ToSql;
 
 const NUM_SHARDS: usize = 10;
 const _: () = assert!(NUM_SHARDS <= WriteTicket::MAX_SHARDS);
@@ -65,6 +64,11 @@ const BUSY_TIMEOUT: Duration = Duration::from_secs(10);
 /// most commits and the retries the tail. Each retry is logged and counted,
 /// so lengthening the timeout instead would hide how often the tail is hit.
 const BUSY_READ_RETRIES: u32 = 2;
+
+/// What SQLite reports when its wait for the shard's lock runs out.
+fn busy_error() -> rusqlite::Error {
+    rusqlite::Error::SqliteFailure(rusqlite::ffi::Error::new(rusqlite::ffi::SQLITE_BUSY), None)
+}
 
 fn is_busy(error: &rusqlite::Error) -> bool {
     matches!(
@@ -130,10 +134,10 @@ fn parse_positive_env(var: &str, default: usize) -> usize {
 ///
 /// The row cap alone would let byte volume swing with row size, and
 /// transaction size is what page-out cost scales by: content-hash keys land
-/// uniformly across the `UNIQUE(key_hi, key_lo)` index, the batch sort writes
-/// each touched index page once per transaction, so total index churn is
-/// (rows / transaction-rows) passes over an index that grows with row count
-/// (buffer-size sweep in the diff summary).
+/// uniformly across the key file, the batch sort writes each touched page of
+/// it once per transaction, so total churn is (rows / transaction-rows) passes
+/// over a key file that grows with row count (buffer-size sweep in the diff
+/// summary).
 fn write_buffer_bytes() -> usize {
     static BYTES: OnceLock<usize> = OnceLock::new();
     *BYTES.get_or_init(|| {
@@ -156,17 +160,41 @@ fn queue_depth() -> usize {
     static DEPTH: OnceLock<usize> = OnceLock::new();
     *DEPTH.get_or_init(|| parse_positive_env("BUCK2_PAGABLE_QUEUE_DEPTH", DEFAULT_QUEUE_DEPTH))
 }
-const INSERT_BATCH_ROWS: usize = 8;
-const INSERT_COLUMNS: usize = 3;
-const INSERT_SINGLE_SQL: &str =
-    "INSERT OR IGNORE INTO pagable_data (key_lo, key_hi, value) VALUES (?1, ?2, ?3)";
-const FETCH_SQL: &str = "SELECT value FROM pagable_data WHERE key_lo = ?1 AND key_hi = ?2";
-const CREATE_TABLE_SQL: &str = "CREATE TABLE IF NOT EXISTS pagable_data (
+
+/// Whether a reader connection keeps its read transaction open between lookups.
+///
+/// Without one, every lookup of a row begins and ends its own transaction: SQLite takes and
+/// releases the shared file lock, checks for a journal to roll back, and re-reads the start
+/// of the file to learn whether its cached pages are still valid. With one open, the next
+/// lookup on that connection does none of that. The transaction belongs to the connection;
+/// nothing is shared between connections.
+///
+/// An open read transaction holds the shared file lock, which the writer cannot commit
+/// under, so the writer ends the readers' transactions first; see
+/// [`ConnectionPool::pause_readers`].
+///
+/// `BUCK2_PAGABLE_RETAIN_READ_TRANSACTIONS=0` turns this off.
+fn retain_read_transactions() -> bool {
+    static RETAIN: OnceLock<bool> = OnceLock::new();
+    *RETAIN.get_or_init(|| {
+        env::var_os("BUCK2_PAGABLE_RETAIN_READ_TRANSACTIONS").is_none_or(|value| value != "0")
+    })
+}
+const INSERT_KEY_SQL: &str =
+    "INSERT OR IGNORE INTO keys.pagable_keys (key_lo, key_hi, id) VALUES (?1, ?2, ?3)";
+const INSERT_VALUE_SQL: &str = "INSERT INTO pagable_data (id, value) VALUES (?1, ?2)";
+const FETCH_SQL: &str = "SELECT value FROM pagable_data WHERE id = \
+    (SELECT id FROM keys.pagable_keys WHERE key_lo = ?1 AND key_hi = ?2)";
+const CREATE_TABLES_SQL: &str = "CREATE TABLE IF NOT EXISTS pagable_data (
+        id INTEGER PRIMARY KEY,
+        value BLOB NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS keys.pagable_keys (
         key_lo INTEGER NOT NULL,
         key_hi INTEGER NOT NULL,
-        value BLOB NOT NULL,
-        UNIQUE(key_hi, key_lo)
-    );";
+        id INTEGER NOT NULL,
+        PRIMARY KEY (key_hi, key_lo)
+    ) WITHOUT ROWID;";
 
 /// SQLite-backed storage backend for pagable data.
 ///
@@ -177,6 +205,13 @@ const CREATE_TABLE_SQL: &str = "CREATE TABLE IF NOT EXISTS pagable_data (
 ///
 /// SQLite serializes writes per database file, so data is sharded by `DataKey`
 /// to allow page-out workers to write independent files in parallel.
+///
+/// A shard is two files. `pagable.N.db` holds the values, each under a row id.
+/// `pagable.N.keys.db` holds the keys, each with the row id of its value, and is
+/// what finds a value from its `DataKey` and tells a value already stored from a
+/// new one. Keys are content hashes, so looking one up lands anywhere in the key
+/// file; keeping them out of the value file keeps those pages together, and leaves
+/// the value file free to hold values in whatever order suits reading them.
 pub struct SqliteBackedPagableStorage {
     shards: Vec<Shard>,
     /// Shared with every shard; see [`ShardInner::next_seq`].
@@ -202,21 +237,12 @@ struct ShardInner {
     stop_write: AtomicBool,
     /// The connection pool for this shard.
     conns: ConnectionPool,
-    /// Immutable insertion settings derived from the writer connection.
-    insert: SqliteInsertConfig,
+    /// The row id the next value written takes. Only the writer thread advances it.
+    next_id: AtomicU64,
     /// The state of the writer thread.
     write_state: Mutex<ShardWriteState>,
     /// The condition variable to signal the writer thread.
     write_state_changed: Condvar,
-}
-
-struct SqliteInsertConfig {
-    /// The number of rows inserted by one SQL statement execution.
-    batch_rows: usize,
-    /// The SQL statement used for a full batch.
-    batch_sql: String,
-    /// The writer connection's maximum permitted string, BLOB, or row size.
-    sqlite_length_limit: usize,
 }
 
 struct ShardWriteState {
@@ -299,8 +325,13 @@ impl ShardWriteState {
 
 struct ConnectionPool {
     readwrite: Mutex<Connection>,
-    readers: Vec<Mutex<Connection>>,
+    /// `parking_lot`, for a lock that gives up after a time: the writer holds every reader
+    /// for the length of a write batch, and a read does not wait for it without limit.
+    readers: Vec<parking_lot::Mutex<Connection>>,
     next_reader: AtomicUsize,
+    /// How long a read waits for the shard, in milliseconds: for a reader connection, and
+    /// then for SQLite's lock on the file. `BUSY_TIMEOUT`, except in tests.
+    read_timeout_ms: AtomicU64,
 }
 
 impl ConnectionPool {
@@ -308,7 +339,8 @@ impl ConnectionPool {
         let writer = Connection::open(path)?;
         Self::init_pragmas(&writer)?;
         Self::init_writer_pragmas(&writer)?;
-        writer.execute_batch(CREATE_TABLE_SQL)?;
+        Self::attach_key_file(&writer, path)?;
+        writer.execute_batch(CREATE_TABLES_SQL)?;
 
         // Readers load the schema with their first statement and keep it. One
         // that loaded it before the table existed, or that first loads it while
@@ -324,15 +356,33 @@ impl ConnectionPool {
                     | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX,
             )?;
             Self::init_pragmas(&reader)?;
+            Self::attach_key_file(&reader, path)?;
             reader.prepare_cached(FETCH_SQL)?;
-            readers.push(Mutex::new(reader));
+            readers.push(parking_lot::Mutex::new(reader));
         }
 
         Ok(Self {
             readwrite: Mutex::new(writer),
             readers,
             next_reader: AtomicUsize::new(0),
+            read_timeout_ms: AtomicU64::new(BUSY_TIMEOUT.as_millis() as u64),
         })
+    }
+
+    /// Makes the shard's key file, which sits beside its value file as `<shard>.keys.db`,
+    /// part of `conn` under the name `keys`.
+    fn attach_key_file(conn: &Connection, path: &Path) -> anyhow::Result<()> {
+        let key_file = path.with_extension("keys.db");
+        let key_file = key_file
+            .to_str()
+            .ok_or_else(|| anyhow::anyhow!("key file path {key_file:?} is not UTF-8"))?;
+        conn.execute("ATTACH DATABASE ?1 AS keys", [key_file])?;
+        conn.execute_batch(
+            "PRAGMA keys.synchronous=OFF;
+            PRAGMA keys.journal_mode=OFF;
+            PRAGMA keys.page_size=8192;",
+        )?;
+        Ok(())
     }
 
     fn init_pragmas(conn: &Connection) -> anyhow::Result<()> {
@@ -347,7 +397,7 @@ impl ConnectionPool {
 
     /// Pragmas for the writer connection only; readers keep the defaults.
     fn init_writer_pragmas(conn: &Connection) -> anyhow::Result<()> {
-        // Measurement probe. The default page cache (~16MB) is far below the
+        // Measurement probe. The default page cache (~2MiB) is far below the
         // per-shard index working set at tens of millions of rows, so
         // transactions spill and rewrite the same index pages many times.
         // Writer-only: sizing every reader's cache too would multiply the
@@ -365,17 +415,52 @@ impl ConnectionPool {
         self.readwrite.lock().expect("lock poisoned")
     }
 
+    /// Ends the read transaction of every reader and returns the readers, locked. Call with
+    /// the writer mutex held, and hold the result until the write has committed: a reader
+    /// that began a new transaction before then would hold the shared file lock again, and
+    /// the writer cannot commit under it.
+    fn pause_readers(&self) -> anyhow::Result<Vec<parking_lot::MutexGuard<'_, Connection>>> {
+        if !retain_read_transactions() {
+            return Ok(Vec::new());
+        }
+        let readers: Vec<_> = self.readers.iter().map(|reader| reader.lock()).collect();
+        for reader in &readers {
+            Self::end_read_transaction(reader)?;
+        }
+        Ok(readers)
+    }
+
+    fn end_read_transaction(conn: &Connection) -> rusqlite::Result<()> {
+        if !conn.is_autocommit() {
+            // Nothing to write on a connection that only reads: this releases the shared
+            // lock, if the connection holds it, and switches it back to autocommit mode.
+            conn.execute_batch("COMMIT")?;
+        }
+        Ok(())
+    }
+
     /// Round-robin with try_lock to skip connections held by other threads.
-    /// Blocks on a reader if all readers are busy.
-    fn get_reader(&self) -> MutexGuard<'_, Connection> {
+    /// Waits for a reader if all readers are busy, and gives up when the wait runs out.
+    fn get_reader(&self) -> Option<parking_lot::MutexGuard<'_, Connection>> {
         let start = self.next_reader.fetch_add(1, Ordering::Relaxed);
         let len = self.readers.len();
         for i in 0..len {
-            if let Ok(guard) = self.readers[(start + i) % len].try_lock() {
-                return guard;
+            if let Some(guard) = self.readers[(start + i) % len].try_lock() {
+                return Some(guard);
             }
         }
-        self.readers[start % len].lock().expect("lock poisoned")
+        let timeout = Duration::from_millis(self.read_timeout_ms.load(Ordering::Relaxed));
+        self.readers[start % len].try_lock_for(timeout)
+    }
+
+    #[cfg(test)]
+    fn set_read_timeout(&self, timeout: Duration) -> anyhow::Result<()> {
+        self.read_timeout_ms
+            .store(timeout.as_millis() as u64, Ordering::Relaxed);
+        for reader in &self.readers {
+            reader.lock().busy_timeout(timeout)?;
+        }
+        Ok(())
     }
 }
 
@@ -388,13 +473,14 @@ impl Shard {
         next_seq: Arc<AtomicU64>,
     ) -> anyhow::Result<Self> {
         let conns = ConnectionPool::open(path, num_readers)?;
-        let insert = {
-            let conn = conns.get_readwrite();
-            SqliteInsertConfig::new(&conn, INSERT_BATCH_ROWS)?
-        };
+        let next_id: i64 = conns.get_readwrite().query_row(
+            "SELECT COALESCE(MAX(id), 0) + 1 FROM pagable_data",
+            [],
+            |row| row.get(0),
+        )?;
         let inner = Arc::new(ShardInner {
             conns,
-            insert,
+            next_id: AtomicU64::new(next_id as u64),
             next_seq,
             stop_write: AtomicBool::new(false),
             write_state: Mutex::new(ShardWriteState {
@@ -629,10 +715,13 @@ impl ShardInner {
         items.sort_unstable_by_key(|(key, _bytes)| key.get());
 
         let mut conn = self.conns.get_readwrite();
+        // Declared before the transaction, so released after it has committed.
+        let _readers = self.conns.pause_readers()?;
         let tx = conn.transaction()?;
-        {
-            self.insert.insert_items(&tx, items, &self.stop_write)?;
-        }
+        let first_id = self
+            .next_id
+            .fetch_add(items.len() as u64, Ordering::Relaxed);
+        insert_items(&tx, items, first_id, &self.stop_write)?;
         tx.commit()?;
         Ok(())
     }
@@ -712,7 +801,19 @@ impl SqliteBackedPagableStorage {
         let shard = self.shard_for(key);
         let (key_lo, key_hi) = data_key_parts(*key);
         let read_once = || -> Result<Option<Vec<u8>>, (&'static str, rusqlite::Error)> {
-            let conn = shard.inner.conns.get_reader();
+            // No reader in time means a write batch has them all. That is the same wait,
+            // for the same write, as SQLite's for the file's lock, and is reported as one.
+            let conn = shard
+                .inner
+                .conns
+                .get_reader()
+                .ok_or_else(|| ("wait for a reader connection", busy_error()))?;
+            if retain_read_transactions() && conn.is_autocommit() {
+                // Switches the connection out of autocommit mode, and nothing more: the
+                // lookup below takes the shared lock, and now keeps it when it is done.
+                conn.execute_batch("BEGIN")
+                    .map_err(|e| ("begin read transaction", e))?;
+            }
             let mut stmt = conn.prepare_cached(FETCH_SQL).map_err(|e| ("prepare", e))?;
             stmt.query_row(rusqlite::params![key_lo, key_hi], |row| row.get(0))
                 .optional()
@@ -764,9 +865,9 @@ impl SqliteBackedPagableStorage {
                 let _unused = conn.execute_batch("PRAGMA shrink_memory;");
             }
             for reader in &shard.inner.conns.readers {
-                if let Ok(conn) = reader.lock() {
-                    let _unused = conn.execute_batch("PRAGMA shrink_memory;");
-                }
+                let conn = reader.lock();
+                let _unused = ConnectionPool::end_read_transaction(&conn);
+                let _unused = conn.execute_batch("PRAGMA shrink_memory;");
             }
         }
     }
@@ -894,132 +995,54 @@ fn data_key_parts(key: DataKey) -> (i64, i64) {
     ((key.get() as u64) as i64, ((key.get() >> 64) as u64) as i64)
 }
 
-fn sqlite_insert_batch_row_limit(conn: &Connection) -> anyhow::Result<usize> {
-    let max_values: usize = conn
-        .limit(rusqlite::limits::Limit::SQLITE_LIMIT_VARIABLE_NUMBER)?
-        .try_into()
-        .unwrap_or(999);
-    Ok((max_values / INSERT_COLUMNS).max(1))
-}
-
-fn insert_sql(row_count: usize) -> String {
-    let mut sql =
-        String::from("INSERT OR IGNORE INTO pagable_data (key_lo, key_hi, value) VALUES ");
-    for i in 0..row_count {
-        if i > 0 {
-            sql.push_str(", ");
-        }
-        sql.push_str("(?, ?, ?)");
-    }
-    sql
-}
-
-impl SqliteInsertConfig {
-    fn new(conn: &Connection, requested_batch_rows: usize) -> anyhow::Result<Self> {
-        let batch_rows = requested_batch_rows.min(sqlite_insert_batch_row_limit(conn)?);
-        Ok(Self {
-            batch_rows,
-            batch_sql: insert_sql(batch_rows),
-            sqlite_length_limit: conn
-                .limit(rusqlite::limits::Limit::SQLITE_LIMIT_LENGTH)?
-                .try_into()?,
-        })
-    }
-
-    /// Inserts `items`, stopping after the current statement once `stop` is
-    /// set. The transaction stays committable either way.
-    fn insert_items(
-        &self,
-        tx: &rusqlite::Transaction<'_>,
-        items: &[(DataKey, Vec<u8>)],
-        stop: &AtomicBool,
-    ) -> anyhow::Result<()> {
-        if self.batch_rows <= 1 {
-            let mut single_stmt = tx.prepare_cached(INSERT_SINGLE_SQL)?;
-            for item in items {
-                if stop.load(Ordering::Relaxed) {
-                    return Ok(());
-                }
-                self.execute_insert(&mut single_stmt, std::slice::from_ref(item))?;
-            }
+/// Gives `items` the row ids from `first_id` on, records each key with its row id, and
+/// writes the value of every key the shard did not already hold. Stops after the current
+/// row once `stop` is set; the transaction stays committable either way.
+fn insert_items(
+    tx: &rusqlite::Transaction<'_>,
+    items: &[(DataKey, Vec<u8>)],
+    first_id: u64,
+    stop: &AtomicBool,
+) -> anyhow::Result<()> {
+    let mut insert_key = tx.prepare_cached(INSERT_KEY_SQL)?;
+    let mut insert_value = tx.prepare_cached(INSERT_VALUE_SQL)?;
+    for (id, (key, bytes)) in (first_id as i64..).zip(items) {
+        if stop.load(Ordering::Relaxed) {
             return Ok(());
         }
-
-        let mut batch_stmt = tx.prepare_cached(&self.batch_sql)?;
-        let mut chunks = items.chunks_exact(self.batch_rows);
-        for chunk in &mut chunks {
-            if stop.load(Ordering::Relaxed) {
-                return Ok(());
-            }
-            self.execute_insert(&mut batch_stmt, chunk)?;
+        let (key_lo, key_hi) = data_key_parts(*key);
+        let is_new = insert_key.execute(rusqlite::params![key_lo, key_hi, id])? == 1;
+        if is_new {
+            insert_value
+                .execute(rusqlite::params![id, bytes])
+                .map_err(|error| insert_error(tx, error, key, bytes.len()))?;
         }
-        let remainder = chunks.remainder();
-        if !remainder.is_empty() {
-            let mut single_stmt = tx.prepare_cached(INSERT_SINGLE_SQL)?;
-            for item in remainder {
-                if stop.load(Ordering::Relaxed) {
-                    return Ok(());
-                }
-                self.execute_insert(&mut single_stmt, std::slice::from_ref(item))?;
-            }
-        }
-        Ok(())
     }
+    Ok(())
+}
 
-    fn execute_insert(
-        &self,
-        stmt: &mut rusqlite::Statement<'_>,
-        items: &[(DataKey, Vec<u8>)],
-    ) -> anyhow::Result<()> {
-        let key_parts = items
-            .iter()
-            .map(|(key, _bytes)| data_key_parts(*key))
-            .collect::<Vec<_>>();
-        let params: Vec<&dyn ToSql> = key_parts
-            .iter()
-            .zip(items)
-            .flat_map(|((key_lo, key_hi), (_key, bytes))| {
-                [
-                    key_lo as &dyn ToSql,
-                    key_hi as &dyn ToSql,
-                    bytes as &dyn ToSql,
-                ]
-            })
-            .collect();
-        stmt.execute(rusqlite::params_from_iter(params))
-            .map(drop)
-            .map_err(|error| self.insert_error(error, items))
+#[cold]
+fn insert_error(
+    conn: &Connection,
+    error: rusqlite::Error,
+    key: &DataKey,
+    value_bytes: usize,
+) -> anyhow::Error {
+    if matches!(
+        &error,
+        rusqlite::Error::SqliteFailure(sqlite_error, _)
+            if sqlite_error.code == rusqlite::ErrorCode::TooBig
+    ) && let Ok(limit) = conn.limit(rusqlite::limits::Limit::SQLITE_LIMIT_LENGTH)
+    {
+        return anyhow::Error::new(error).context(format!(
+            "SQLite rejected the page-out insert of {key:?}: its serialized value is {} ({} bytes); SQLITE_LIMIT_LENGTH is {} ({} bytes)",
+            ByteSize::b(value_bytes as u64).display().iec(),
+            value_bytes,
+            ByteSize::b(limit as u64).display().iec(),
+            limit,
+        ));
     }
-
-    #[cold]
-    fn insert_error(&self, error: rusqlite::Error, items: &[(DataKey, Vec<u8>)]) -> anyhow::Error {
-        if matches!(
-            &error,
-            rusqlite::Error::SqliteFailure(sqlite_error, _)
-                if sqlite_error.code == rusqlite::ErrorCode::TooBig
-        ) {
-            let Some((largest_key, largest_value_bytes)) = items
-                .iter()
-                .max_by_key(|(_key, bytes)| bytes.len())
-                .map(|(key, bytes)| (key, bytes.len()))
-            else {
-                return anyhow::Error::new(error).context(format!(
-                    "SQLite rejected an empty page-out insert; SQLITE_LIMIT_LENGTH is {} ({} bytes)",
-                    ByteSize::b(self.sqlite_length_limit as u64).display().iec(),
-                    self.sqlite_length_limit,
-                ));
-            };
-            return anyhow::Error::new(error).context(format!(
-                "SQLite rejected page-out insert containing {} item(s): largest serialized value in the failed batch is {} ({} bytes) for {largest_key:?}; SQLITE_LIMIT_LENGTH is {} ({} bytes)",
-                items.len(),
-                ByteSize::b(largest_value_bytes as u64).display().iec(),
-                largest_value_bytes,
-                ByteSize::b(self.sqlite_length_limit as u64).display().iec(),
-                self.sqlite_length_limit,
-            ));
-        }
-        error.into()
-    }
+    error.into()
 }
 
 #[cfg(test)]
@@ -1058,6 +1081,111 @@ mod tests {
             data: data.to_vec(),
             arcs,
         }
+    }
+
+    fn data_in_shard(shard_id: u128, label: &str) -> PagableData {
+        (0..10000)
+            .map(|i| pagable_data(format!("{label}-{i}").as_bytes(), Vec::new()))
+            .find(|data| data.compute_key().get() % NUM_SHARDS as u128 == shard_id)
+            .expect("fixture should find a key in the requested shard")
+    }
+
+    fn warm_retained_readers(
+        storage: &SqliteBackedPagableStorage,
+        key: DataKey,
+    ) -> anyhow::Result<()> {
+        let pool = &storage.shard_for(&key).inner.conns;
+        for _ in &pool.readers {
+            storage.fetch_data_blocking(&key)?;
+        }
+        for reader in &pool.readers {
+            assert!(!reader.lock().is_autocommit());
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn sqlite_retained_readers_see_pending_rows_and_release_snapshots() -> anyhow::Result<()> {
+        let dir = TempStorageDir::new("retained_pending_read")?;
+        let storage = SqliteBackedPagableStorage::try_new(&dir.path)?;
+        let warm = storage.store_data(pagable_data(b"warm", Vec::new()))?;
+        storage.flush()?;
+        warm_retained_readers(&storage, warm)?;
+
+        let data = data_in_shard(warm.get() % NUM_SHARDS as u128, "pending");
+        let expected = data.data.clone();
+        let key = storage.store_data(data)?;
+        assert_eq!(storage.fetch_data_blocking(&key)?.data, expected);
+        storage.release_memory();
+        for shard in &storage.shards {
+            for reader in &shard.inner.conns.readers {
+                assert!(reader.lock().is_autocommit());
+            }
+        }
+        assert_eq!(storage.fetch_data_blocking(&key)?.data, expected);
+        Ok(())
+    }
+
+    #[test]
+    fn sqlite_retained_readers_do_not_block_automatic_writes() -> anyhow::Result<()> {
+        let dir = TempStorageDir::new("retained_automatic_write")?;
+        let storage = SqliteBackedPagableStorage::try_new(&dir.path)?;
+        let warm = storage.store_data(pagable_data(b"concurrent warm", Vec::new()))?;
+        storage.flush()?;
+        warm_retained_readers(&storage, warm)?;
+        let shard = storage.shard_for(&warm);
+        shard.inner.write_state.lock().unwrap().max_rows = 1;
+        let start = std::sync::Barrier::new(3);
+
+        std::thread::scope(|scope| -> anyhow::Result<()> {
+            let readers: Vec<_> = (0..2)
+                .map(|_| {
+                    scope.spawn(|| -> anyhow::Result<()> {
+                        start.wait();
+                        for _ in 0..200 {
+                            assert_eq!(
+                                storage.fetch_data_blocking(&warm)?.data,
+                                b"concurrent warm"
+                            );
+                        }
+                        Ok(())
+                    })
+                })
+                .collect();
+            start.wait();
+            let shard_id = warm.get() % NUM_SHARDS as u128;
+            let first = storage.store_data(data_in_shard(shard_id, "automatic first"))?;
+            let second = storage.store_data(data_in_shard(shard_id, "automatic second"))?;
+
+            let state = shard.inner.write_state.lock().unwrap();
+            let (state, timeout) = shard
+                .inner
+                .write_state_changed
+                .wait_timeout_while(state, Duration::from_secs(5), |state| {
+                    !state.pending_buffers.is_empty() || state.writing
+                })
+                .unwrap();
+            assert!(
+                !timeout.timed_out(),
+                "automatic writer should drain without a flush"
+            );
+            ShardInner::check_error(&state)?;
+            drop(state);
+            let (key_lo, key_hi) = data_key_parts(first);
+            assert_eq!(
+                shard.inner.conns.get_readwrite().query_row(
+                    "SELECT COUNT(*) FROM keys.pagable_keys WHERE key_lo=? AND key_hi=?",
+                    rusqlite::params![key_lo, key_hi],
+                    |row| row.get::<_, usize>(0),
+                )?,
+                1,
+            );
+            for reader in readers {
+                reader.join().expect("reader should not panic")?;
+            }
+            storage.fetch_data_blocking(&second)?;
+            Ok(())
+        })
     }
 
     #[test]
@@ -1113,12 +1241,10 @@ mod tests {
         storage.flush()?;
         let shard = storage.shard_for(&key);
         // The production timeout would make this test take that long.
-        for reader in &shard.inner.conns.readers {
-            reader
-                .lock()
-                .unwrap()
-                .busy_timeout(Duration::from_millis(50))?;
-        }
+        shard
+            .inner
+            .conns
+            .set_read_timeout(Duration::from_millis(50))?;
 
         let writer = shard.inner.conns.readwrite.lock().unwrap();
         writer.execute_batch("BEGIN EXCLUSIVE;")?;
@@ -1141,6 +1267,84 @@ mod tests {
         Ok(())
     }
 
+    /// Reads race the writer for rows that are stored but not written yet, in
+    /// every shard and across many small write batches. A read that finds no
+    /// row waits for the write and then sees it, whichever reader connection
+    /// it gets and whatever transaction that connection had open.
+    #[test]
+    fn sqlite_reads_see_rows_being_written_in_many_batches() -> anyhow::Result<()> {
+        const ROWS: usize = 2000;
+        let dir = TempStorageDir::new("read_while_writing")?;
+        let storage = SqliteBackedPagableStorage::try_new(&dir.path)?;
+        for shard in &storage.shards {
+            shard.inner.write_state.lock().unwrap().max_rows = 4;
+        }
+        let (send, receive) = std::sync::mpsc::channel::<(DataKey, Vec<u8>)>();
+        let receive = Mutex::new(receive);
+
+        std::thread::scope(|scope| -> anyhow::Result<()> {
+            let readers: Vec<_> = (0..4)
+                .map(|_| {
+                    scope.spawn(|| -> anyhow::Result<usize> {
+                        let mut read = 0;
+                        loop {
+                            let next = receive.lock().unwrap().recv();
+                            let Ok((key, expected)) = next else {
+                                return Ok(read);
+                            };
+                            assert_eq!(storage.fetch_data_blocking(&key)?.data, expected);
+                            read += 1;
+                        }
+                    })
+                })
+                .collect();
+            for i in 0..ROWS {
+                let bytes = format!("row {i}").into_bytes();
+                let key = storage.store_data(pagable_data(&bytes, Vec::new()))?;
+                send.send((key, bytes)).unwrap();
+            }
+            drop(send);
+            let mut read = 0;
+            for reader in readers {
+                read += reader.join().expect("reader should not panic")?;
+            }
+            assert_eq!(read, ROWS);
+            Ok(())
+        })
+    }
+
+    /// A write batch holds every reader connection of its shard. A read that
+    /// arrives meanwhile gives up after the same waits as one that meets
+    /// SQLite's lock, and the readers are usable afterwards.
+    #[test]
+    fn sqlite_read_gives_up_waiting_for_a_reader_connection() -> anyhow::Result<()> {
+        let dir = TempStorageDir::new("reader_wait")?;
+        let storage = SqliteBackedPagableStorage::try_new(&dir.path)?;
+        let key = storage.store_data(pagable_data(b"waited", Vec::new()))?;
+        storage.flush()?;
+        let shard = storage.shard_for(&key);
+        shard
+            .inner
+            .conns
+            .set_read_timeout(Duration::from_millis(50))?;
+
+        let readers = &shard.inner.conns.readers;
+        let held: Vec<_> = readers.iter().map(|reader| reader.lock()).collect();
+        let error = storage
+            .fetch_data_blocking(&key)
+            .err()
+            .expect("a read gives up when every reader is held");
+        drop(held);
+        assert!(
+            format!("{error:#}").contains("gave up after 3 waits"),
+            "the error counts every wait: {error:#}"
+        );
+        assert!(pagable::is_transient_read_error(&error));
+        assert_eq!(storage.busy_read_retries(), 2);
+        assert_eq!(storage.fetch_data_blocking(&key)?.data, b"waited");
+        Ok(())
+    }
+
     /// A read that meets the lock while a commit is in progress succeeds once
     /// the commit is done, on one of its retries.
     #[test]
@@ -1150,12 +1354,10 @@ mod tests {
         let key = storage.store_data(pagable_data(b"retried", Vec::new()))?;
         storage.flush()?;
         let shard = storage.shard_for(&key);
-        for reader in &shard.inner.conns.readers {
-            reader
-                .lock()
-                .unwrap()
-                .busy_timeout(Duration::from_millis(50))?;
-        }
+        shard
+            .inner
+            .conns
+            .set_read_timeout(Duration::from_millis(50))?;
 
         let writer = shard.inner.conns.readwrite.lock().unwrap();
         writer.execute_batch("BEGIN EXCLUSIVE;")?;
@@ -1289,8 +1491,10 @@ mod tests {
         let arc_key = storage.fetch_data_blocking(&item_key)?.arcs[0];
         assert_eq!(ArcEraseDyn::data_key(&arc), Some(arc_key));
         // The binding keeps the arc alive, and the arc keeps the storage alive,
-        // until the sweep that follows a command.
+        // until the sweep that follows a command. The serialization cache keeps
+        // the arc's allocation alive too, so it goes before the sweep.
         drop(arc);
+        drop(finished);
         storage.arc_cache().evict_expired();
         Ok(())
     }
@@ -1417,55 +1621,6 @@ mod tests {
     }
 
     #[test]
-    fn sqlite_batch_insert_handles_boundary_cases() -> anyhow::Result<()> {
-        for (case, item_count, batch_rows) in [
-            ("empty input", 0, 8),
-            ("single-row fallback", 3, 1),
-            ("exact batch", 32, 16),
-            ("tail rows", 35, 32),
-        ] {
-            let mut conn = Connection::open_in_memory()?;
-            conn.execute_batch(
-                "CREATE TABLE pagable_data (
-                    key_lo INTEGER NOT NULL,
-                    key_hi INTEGER NOT NULL,
-                    value BLOB NOT NULL,
-                    UNIQUE(key_hi, key_lo)
-                );",
-            )?;
-            let insert = SqliteInsertConfig::new(&conn, batch_rows)?;
-            let tx = conn.transaction()?;
-            let items = (0..item_count)
-                .map(|i| (DataKey::testing_new((i + 1) as u128 + 1), vec![i as u8]))
-                .collect::<Vec<_>>();
-            insert.insert_items(&tx, &items, &AtomicBool::new(false))?;
-            tx.commit()?;
-
-            let row_count: usize =
-                conn.query_row("SELECT COUNT(*) FROM pagable_data", [], |row| {
-                    row.get::<_, i64>(0)
-                })? as usize;
-            assert_eq!(
-                item_count, row_count,
-                "{case}: every queued item should be inserted exactly once",
-            );
-            for (key, expected_value) in &items {
-                let (key_lo, key_hi) = data_key_parts(*key);
-                let value: Vec<u8> = conn.query_row(
-                    "SELECT value FROM pagable_data WHERE key_lo = ?1 AND key_hi = ?2",
-                    rusqlite::params![key_lo, key_hi],
-                    |row| row.get(0),
-                )?;
-                assert_eq!(
-                    expected_value, &value,
-                    "{case}: stored value should match the value bound for {key:?}",
-                );
-            }
-        }
-        Ok(())
-    }
-
-    #[test]
     fn sqlite_sharded_storage_round_trips_data_and_arcs() -> anyhow::Result<()> {
         let dir = TempStorageDir::new("sharded_round_trip")?;
         let storage = SqliteBackedPagableStorage::try_new(&dir.path)?;
@@ -1510,29 +1665,21 @@ mod tests {
         const VALUE_BYTES: usize = 512;
 
         let mut conn = Connection::open_in_memory()?;
-        conn.execute_batch(
-            "CREATE TABLE pagable_data (
-                key_lo INTEGER NOT NULL,
-                key_hi INTEGER NOT NULL,
-                value BLOB NOT NULL,
-                UNIQUE(key_hi, key_lo)
-            );",
-        )?;
+        conn.execute_batch("ATTACH DATABASE ':memory:' AS keys;")?;
+        conn.execute_batch(CREATE_TABLES_SQL)?;
         conn.set_limit(
             rusqlite::limits::Limit::SQLITE_LIMIT_LENGTH,
             SQLITE_LENGTH_LIMIT,
         )?;
-        let insert = SqliteInsertConfig::new(&conn, 1)?;
         let tx = conn.transaction()?;
         let data_key = DataKey::testing_new(1);
         let items = vec![(data_key, vec![0; VALUE_BYTES])];
-        let error = insert
-            .insert_items(&tx, &items, &AtomicBool::new(false))
+        let error = insert_items(&tx, &items, 1, &AtomicBool::new(false))
             .expect_err("SQLite should reject a BLOB larger than SQLITE_LIMIT_LENGTH");
         let message = format!("{error:#}");
 
         assert!(
-            message.contains("largest serialized value in the failed batch is 512 B (512 bytes)"),
+            message.contains("its serialized value is 512 B (512 bytes)"),
             "missing value size in error: {message}",
         );
         assert!(
@@ -1580,6 +1727,37 @@ mod tests {
         Ok(())
     }
 
+    /// A shard's keys are in its key file and nowhere else: the value file holds the values
+    /// by row id, with no index over them.
+    #[test]
+    fn sqlite_keeps_a_shards_keys_out_of_its_value_file() -> anyhow::Result<()> {
+        let dir = TempStorageDir::new("key_file")?;
+        let storage = SqliteBackedPagableStorage::try_new(&dir.path)?;
+        let keys = (0..200)
+            .map(|i| storage.store_data(pagable_data(format!("value-{i}").as_bytes(), Vec::new())))
+            .collect::<anyhow::Result<Vec<_>>>()?;
+        storage.flush()?;
+
+        for shard_id in 0..NUM_SHARDS {
+            let in_shard = keys
+                .iter()
+                .filter(|key| key.get() % NUM_SHARDS as u128 == shard_id as u128)
+                .count();
+            let value_file = Connection::open(dir.path.join(format!("pagable.{shard_id}.db")))?;
+            let indexes: usize = value_file.query_row(
+                "SELECT COUNT(*) FROM sqlite_schema WHERE type = 'index'",
+                [],
+                |row| row.get(0),
+            )?;
+            assert_eq!(indexes, 0, "shard {shard_id}");
+            let key_file = Connection::open(dir.path.join(format!("pagable.{shard_id}.keys.db")))?;
+            let recorded: usize =
+                key_file.query_row("SELECT COUNT(*) FROM pagable_keys", [], |row| row.get(0))?;
+            assert_eq!(recorded, in_shard, "shard {shard_id}");
+        }
+        Ok(())
+    }
+
     #[test]
     fn sqlite_storage_drop_drains_unflushed_active_buffer() -> anyhow::Result<()> {
         let dir = TempStorageDir::new("drop_drains")?;
@@ -1592,13 +1770,14 @@ mod tests {
         };
 
         let shard_id = (key.get() % NUM_SHARDS as u128) as usize;
-        let conn = Connection::open(dir.path.join(format!("pagable.{shard_id}.db")))?;
+        let path = dir.path.join(format!("pagable.{shard_id}.db"));
+        let conn = Connection::open(&path)?;
+        ConnectionPool::attach_key_file(&conn, &path)?;
         let (key_lo, key_hi) = data_key_parts(key);
-        let value: Vec<u8> = conn.query_row(
-            "SELECT value FROM pagable_data WHERE key_lo = ?1 AND key_hi = ?2",
-            rusqlite::params![key_lo, key_hi],
-            |row| row.get(0),
-        )?;
+        let value: Vec<u8> =
+            conn.query_row(FETCH_SQL, rusqlite::params![key_lo, key_hi], |row| {
+                row.get(0)
+            })?;
         let fetched = SqliteBackedPagableStorage::decode_pagable_data(&value, &key)?;
         assert_eq!(b"drop drains payload", fetched.data.as_slice());
         assert_eq!(vec![DataKey::testing_new(7)], fetched.arcs);

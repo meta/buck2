@@ -25,10 +25,18 @@ use crate::query::syntax::simple::eval::file_set::FileSet;
 use crate::query::syntax::simple::eval::label_indexed;
 use crate::query::syntax::simple::eval::label_indexed::LabelIndexedSet;
 
-#[derive(Debug, Eq, PartialEq, Clone, Allocative, Pagable)]
+#[derive(Debug, Clone, Allocative, Pagable)]
 pub struct TargetSet<T: QueryTarget> {
     targets: LabelIndexedSet<T>,
 }
+
+impl<T: QueryTarget> PartialEq for TargetSet<T> {
+    fn eq(&self, other: &Self) -> bool {
+        self.targets == other.targets
+    }
+}
+
+impl<T: QueryTarget> Eq for TargetSet<T> {}
 
 impl<T: QueryTarget> TargetSet<T> {
     pub fn new() -> Self {
@@ -72,15 +80,17 @@ impl<T: QueryTarget> TargetSet<T> {
         Ok(Self { targets })
     }
 
-    pub fn buildfile(&self) -> FileSet {
+    pub fn buildfile(&self) -> buck2_error::Result<FileSet> {
+        T::prefetch_bodies(self)?;
         let mut files = BuckMutInsertionSet::default();
         for target in self.targets.iter() {
-            files.insert(FileNode(target.buildfile_path().path()));
+            files.insert(FileNode(target.buildfile_path()?.path()));
         }
-        FileSet::new(files)
+        Ok(FileSet::new(files))
     }
 
     pub fn inputs(&self) -> buck2_error::Result<FileSet> {
+        T::prefetch_bodies(self)?;
         let mut files = BuckMutInsertionSet::default();
         for target in self.targets.iter() {
             target.inputs_for_each(|file| {
@@ -172,6 +182,7 @@ impl<T: QueryTarget> TargetSet<T> {
         attribute: &str,
         filter: &dyn Fn(&str) -> buck2_error::Result<bool>,
     ) -> buck2_error::Result<TargetSet<T>> {
+        T::prefetch_bodies(self)?;
         self.filter(move |node| node.attr_matches(attribute, filter))
     }
 
@@ -180,6 +191,7 @@ impl<T: QueryTarget> TargetSet<T> {
         attribute: &str,
         filter: &dyn Fn(&str) -> buck2_error::Result<bool>,
     ) -> buck2_error::Result<TargetSet<T>> {
+        T::prefetch_bodies(self)?;
         self.filter(move |node| {
             node.map_any_attr(attribute, |val| match val {
                 None => Ok(false),

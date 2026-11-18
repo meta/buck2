@@ -102,20 +102,33 @@ def _process_target_config(ctx: bxl.Context, target: bxl.ConfiguredTargetNode, a
 
 def _select_assume_default(value):
     """Unwrap select() values, assuming the DEFAULT value is always used."""
+    # A SelectConcat comes from `["a"] + select({"DEFAULT": ["b"], ...})`, or
+    # `{"K": "v"} + select(...)` for a dict attribute such as `env`.
     if isinstance(value, bxl.SelectConcat):
+        parts = [_select_assume_default(item) for item in value.select_iter()]
+        if parts and isinstance(parts[0], dict):
+            merged = {}
+            for part in parts:
+                merged.update(part)
+            return merged
+
         items = []
-        for raw_item in value.select_iter():
-            if isinstance(raw_item, list):
-                items.extend(raw_item)
-            else:
-                unwrapped = _select_assume_default(raw_item)
-                if isinstance(unwrapped, list):
-                    items.extend(unwrapped)
+        for part in parts:
+            if isinstance(part, list):
+                items.extend(part)
 
         return items
 
     if isinstance(value, bxl.SelectDict):
-        return value.get_select_entry("DEFAULT")
+        return _select_assume_default(value.get_select_entry("DEFAULT"))
+
+    if isinstance(value, list):
+        return [_select_assume_default(item) for item in value]
+
+    if isinstance(value, dict):
+        # A select() with no DEFAULT has no value here, so its key is unset.
+        resolved = {k: _select_assume_default(v) for k, v in value.items()}
+        return {k: v for k, v in resolved.items() if v != None}
 
     return value
 
@@ -143,7 +156,14 @@ def gather_unconfigured_deps(ctx: bxl.Context, targets: list[TargetLabel]) -> di
         raw_env = _get_attr_no_select(target, "env") or {}
         env = {k: cmd_args(v, delimiter = "") for k, v in raw_env.items()}
 
-        srcs = [src.short_path for src in _get_attr_no_select(target, "srcs") or []]
+        # `short_path` is relative to the package.
+        package_dir = ctx.root() + "/" + str(ctx.fs.project_rel_path(target.buildfile_path)).rpartition("/")[0]
+
+        srcs = []
+        for src in _get_attr_no_select(target, "srcs") or []:
+            # Generated srcs are target labels, and have no path until they're built.
+            if not hasattr(src, "raw_target"):
+                srcs.append(package_dir + "/" + src.short_path)
 
         mapped_srcs = {}
         raw_mapped_srcs = _get_attr_no_select(target, "mapped_srcs") or {}
@@ -154,10 +174,7 @@ def gather_unconfigured_deps(ctx: bxl.Context, targets: list[TargetLabel]) -> di
             if hasattr(src, "raw_target"):
                 mapped_srcs[src.raw_target()] = dst
             else:
-                mapped_srcs[src.short_path] = dst
-
-        abs_buildfile_path = ctx.root() + "/" + target.buildfile_path.cell + "/" + target.buildfile_path.path
-        source_folder = abs_buildfile_path.removesuffix("/TARGETS").removesuffix("/BUCK")
+                mapped_srcs[package_dir + "/" + src.short_path] = dst
 
         crate_root = _get_attr_no_select(target, "crate_root")
         if not crate_root:
@@ -180,7 +197,7 @@ def gather_unconfigured_deps(ctx: bxl.Context, targets: list[TargetLabel]) -> di
             "deps": deps,
             "edition": _get_attr_no_select(target, "edition"),
             "env": env,
-            "features": _get_attr_no_select(target, "features"),
+            "features": _get_attr_no_select(target, "features") or [],
             "in_workspace": False,
             "kind": _get_attr_no_select(target, "_rust_analyzer_target_kind"),
             "label": target.label,
@@ -191,7 +208,7 @@ def gather_unconfigured_deps(ctx: bxl.Context, targets: list[TargetLabel]) -> di
             "proc_macro": _get_attr_no_select(target, "proc_macro"),
             "project_relative_buildfile": ctx.fs.project_rel_path(target.buildfile_path),
             "rustc_flags": _get_attr_no_select(target, "rustc_flags"),
-            "source_folder": source_folder,
+            "source_folder": package_dir,
             "srcs": srcs,
             "tests": tests,
         }
@@ -271,7 +288,8 @@ def expand_proc_macros(ctx: bxl.Context, target_analysis: dict[Label, bxl.Analys
 
 # Returns a list of all the expanded targets including any workspaces, followed by just the workspaces
 def expand_targets(ctx: bxl.Context, targets: list[TargetLabel], exclude_workspaces: bool) -> (dict[Label, bxl.AnalysisResult], list[TargetLabel]):
-    target_universe = ctx.target_universe(targets).target_set()
+    # keep_going skips targets that can't be configured here, such as one with an Apple-only toolchain dep on Linux.
+    target_universe = ctx.target_universe(targets, keep_going = True).target_set()
     # Pick up any rule that sets RustAnalyzerTargetKind and so exposes RustAnalyzerInfo, regardless of its rule name.
     # Custom rules that wrap/override our rust_* builtins but don't use the same names will be picked up here.
     attr_target_list = ctx.cquery().attrregexfilter("_rust_analyzer_target_kind", "^(bin|lib|test)$", target_universe)
@@ -338,15 +356,19 @@ def resolve_targets_impl(ctx: bxl.Context) -> None:
     queried_proc_macros = expand_proc_macros(ctx, target_analysis)
     resolved_deps = gather_deps(ctx, target_analysis, workspaces, ctx.cli_args.exclude_workspaces)
 
-    expanded_targets = sorted([t.raw_target() for t in target_analysis.keys()])
-    if not expanded_targets:
-        # ctx.analysis() drops targets that are incompatible with the current buck
-        # configuration (see the `skip_incompatible` keyword argument).
-        #
-        # If we have no expanded targets at all, try to find sufficient metadata about
-        # the requested targets using unconfigured buck targets.
-        expanded_targets = targets
-        resolved_deps = gather_unconfigured_deps(ctx, targets)
+    expanded_targets = [t.raw_target() for t in target_analysis.keys()]
+
+    # Targets that can't be configured here are silently dropped by ctx.analysis() or keep_going, so build their metadata from unconfigured target nodes.
+    configured = set(expanded_targets)
+    configured.update(resolved_deps.keys())
+    dropped = [t for t in targets if t not in configured]
+
+    if dropped:
+        unconfigured_deps = gather_unconfigured_deps(ctx, dropped)
+        resolved_deps.update(unconfigured_deps)
+        expanded_targets.extend(unconfigured_deps.keys())
+
+    expanded_targets = sorted(expanded_targets)
 
     artifact = actions.declare_output("resolve_targets.json", has_content_based_path = False)
     artifacts = actions.write_json(

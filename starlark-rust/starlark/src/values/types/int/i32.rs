@@ -15,61 +15,38 @@
  * limitations under the License.
  */
 
-use std::any;
-
-use crate::typing::Ty;
 use crate::values::AllocFrozenValue;
 use crate::values::AllocValue;
 use crate::values::FrozenHeap;
 use crate::values::Heap;
 use crate::values::UnpackValue;
-use crate::values::Value;
-use crate::values::int::pointer_i32::PointerI32;
-use crate::values::layout::value::IntegerTooBigError;
-use crate::values::type_repr::StarlarkTypeRepr;
+use crate::values::ValueOf;
 use crate::values::types::int::int_or_big::StarlarkInt;
-use crate::values::types::int::int_or_big::StarlarkIntRef;
+use crate::values::types::int::view::IntView;
 
 impl<'v> AllocValue<'v> for i32 {
+    type Type = IntView<'v>;
+
     #[inline]
-    fn alloc_value(self, heap: Heap<'v>) -> Value<'v> {
-        heap.alloc(StarlarkInt::from(self))
+    fn alloc_value(self, heap: Heap<'v>) -> ValueOf<'v, Self::Type> {
+        StarlarkInt::from(self).alloc_value(heap)
     }
 }
 impl<'fv> AllocFrozenValue<'fv> for i32 {
+    type Type = IntView<'fv>;
+
     #[inline]
-    fn alloc_frozen_value(self, heap: FrozenHeap<'fv>) -> Value<'fv> {
-        heap.alloc(StarlarkInt::from(self))
+    fn alloc_frozen_value(self, heap: FrozenHeap<'fv>) -> ValueOf<'fv, Self::Type> {
+        StarlarkInt::from(self).alloc_frozen_value(heap)
     }
 }
 
-impl StarlarkTypeRepr for i32 {
-    type Canonical = <StarlarkInt as StarlarkTypeRepr>::Canonical;
-
-    fn starlark_type_repr() -> Ty {
-        PointerI32::starlark_type_repr()
-    }
-}
-
-impl UnpackValue<'_> for i32 {
+impl<'v> UnpackValue<'v> for i32 {
+    type Type = IntView<'v>;
     type Error = crate::Error;
 
-    fn unpack_value_impl(value: Value) -> crate::Result<Option<Self>> {
-        // Note this does not use `Value::unpack_integer()`
-        // because we unlike other call sites,
-        // we know that `i32` is `InlineInt` on 64-bit platforms and never `BigInt`,
-        // so this is faster.
-        if let Some(v) = value.unpack_i32() {
-            Ok(Some(v))
-        } else {
-            if let Some(int) = StarlarkIntRef::unpack(value) {
-                Err(crate::Error::new_value(IntegerTooBigError {
-                    value: int.to_string(),
-                    integer_type: any::type_name::<Self>(),
-                }))
-            } else {
-                Ok(None)
-            }
-        }
+    #[inline]
+    fn unpack(_value: ValueOf<'v, IntView<'v>>, int: IntView<'v>) -> crate::Result<Self> {
+        int.to_integer()
     }
 }

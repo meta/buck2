@@ -14,6 +14,7 @@ import static com.facebook.buck.util.zip.ByteIo.*;
 import static java.lang.Math.toIntExact;
 import static java.nio.file.StandardOpenOption.READ;
 
+import com.facebook.infer.annotation.Nullsafe;
 import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.nio.channels.SeekableByteChannel;
@@ -22,6 +23,7 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.zip.ZipEntry;
+import org.jspecify.annotations.Nullable;
 
 /**
  * Utility class designed to read and parse the central directory of a ZIP file. The central
@@ -29,6 +31,7 @@ import java.util.zip.ZipEntry;
  * archive. The class parses the central directory header, extracting essential information such as
  * the number of files, total size, and offset.
  */
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public class CentralDirectoryReader {
 
   /**
@@ -85,7 +88,7 @@ public class CentralDirectoryReader {
    * @return Central Directory Header
    * @throws IOException In case it fails to read the header.
    */
-  private CentralDirectoryHeader readCentralDirectory(
+  private @Nullable CentralDirectoryHeader readCentralDirectory(
       final Path src, final ByteBuffer headerBuffer, final long bufferOffset) throws IOException {
     // position channel to read the last block of the file.
     final byte[] buffer = headerBuffer.array();

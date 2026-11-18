@@ -1,0 +1,12 @@
+# This file is @generated, regenerate by re-running test with `-- --env BUCK2_UPDATE_GOLDEN=1` appended to the test command
+
+[<TIMESTAMP>] Starting new buck2 daemon...
+[<TIMESTAMP>] Connected to new buck2 daemon.
+[<TIMESTAMP>] Buck UI: https://www.internalfb.com/buck2/<UUID>
+[<TIMESTAMP>] Error parsing root//loader
+[<TIMESTAMP>] From load at loader/TARGETS.fixture:1
+[<TIMESTAMP>]
+[<TIMESTAMP>] Caused by:
+[<TIMESTAMP>]     File `linkdir/lib.bzl` is behind the symlink `linkdir`, which buck2 does not follow
+Command failed: 
+Failed to parse 1 package

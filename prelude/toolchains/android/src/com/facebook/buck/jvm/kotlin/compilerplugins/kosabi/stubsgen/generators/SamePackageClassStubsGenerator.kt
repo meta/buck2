@@ -17,6 +17,7 @@ import com.facebook.kotlin.compilerplugins.kosabi.stubsgen.util.PlainJavaLangTyp
 import com.facebook.kotlin.compilerplugins.kosabi.stubsgen.util.PlainKTBuiltInTypes
 import com.facebook.kotlin.compilerplugins.kosabi.stubsgen.util.PlainKTJavaTypeAlias
 import com.facebook.kotlin.compilerplugins.kosabi.stubsgen.util.PlainKTStdlibTypes
+import org.jetbrains.kotlin.psi.KtFile
 import org.jetbrains.kotlin.psi.KtUserType
 import org.jetbrains.kotlin.psi.psiUtil.getChildOfType
 
@@ -60,8 +61,7 @@ class SamePackageClassStubsGenerator : StubsGenerator {
           it.pkg.isEmpty() && it.member == null && it.names.size > 1
         }
     allKnownSymbols.addAll(
-        (context.importedTypes +
-                context.declaredTypes +
+        (context.declaredTypes +
                 autoImportedExternalTypes +
                 generatedTypesInModulePackage +
                 (context.fullQualifierTypes - nestedSamePackageQualifiers.toSet()))
@@ -79,19 +79,28 @@ class SamePackageClassStubsGenerator : StubsGenerator {
             .mapNotNull { it.referencedName },
     )
 
+    // Imported types. A name that a file's import gives up for its alias (`import a.B as Alias`)
+    // is not known in that file through the import: there the plain `B` names a type of the file's
+    // own package, which needs the stub below.
+    val importedSymbols = context.importedTypes.flatMapTo(mutableSetOf()) { it.segments + it.names }
+    fun isKnownIn(file: KtFile, name: String): Boolean =
+        name in allKnownSymbols ||
+            (name in importedSymbols && name !in context.aliasHiddenNamesByFile[file].orEmpty())
+
     // A stub belongs to the package of the file that uses the type: the module's files can span
     // packages (examples, generated sources), and the first file's package is the wrong owner for
     // any other file's same-package usages.
     val maybeUnknownByPkg: Map<String, Set<String>> =
         context.usedUserTypes
-            .groupBy { context.packageSegmentsOf(it.containingKtFile) }
-            .map { (pkgSegments, usages) ->
+            .groupBy { it.containingKtFile }
+            .map { (file, usages) ->
+              val pkgSegments = context.packageSegmentsOf(file)
               val pkg = pkgSegments.joinToString(".")
               pkg to
                   usages
                       .mapNotNull { userType -> userType.referencedName }
                       .toSet()
-                      .filterNot { it -> allKnownSymbols.contains(it) }
+                      .filterNot { name -> isKnownIn(file, name) }
                       .filter { it -> it.first().isUpperCase() }
                       .filterNot { name ->
                         // A stub shadows the real type (same FQN, sources win), so the ABI
@@ -104,8 +113,9 @@ class SamePackageClassStubsGenerator : StubsGenerator {
                       }
                       .toSet()
             }
+            .groupBy({ (pkg, _) -> pkg }, { (_, names) -> names })
+            .mapValues { (_, names) -> names.flatten().toSet() }
             .filter { (pkg, names) -> pkg.isNotEmpty() && names.isNotEmpty() }
-            .toMap()
 
     maybeUnknownByPkg.forEach { (pkg, typeNames) ->
       typeNames.forEach { typeName ->

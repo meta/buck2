@@ -12,7 +12,6 @@
 #![feature(try_trait_v2)]
 
 pub mod executors;
-mod incremental_actions_helper;
 pub mod materializers;
 pub mod re;
 pub mod sqlite;

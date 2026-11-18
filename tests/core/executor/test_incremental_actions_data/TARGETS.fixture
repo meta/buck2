@@ -2,7 +2,7 @@ load(":defs.bzl", "basic_incremental_action", "incremental_action_with_metadata_
 
 basic_incremental_action(
     name = "basic_incremental_action",
-    script = "incremental_script.py",
+    script = "remove_output_and_fail.py" if read_config("test", "remove_output_and_fail", "") == "true" else "incremental_script.py",
     invalidate = read_config("test", "seed", "42"),
 )
 

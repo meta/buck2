@@ -16,7 +16,7 @@ load("@prelude//:paths.bzl", "paths")
 load("@prelude//:prelude_rule.bzl", "prelude_rule")
 load("@prelude//:resources.bzl", "gather_resources")
 load("@prelude//cxx:attrs.bzl", "cxx_binary_base_attrs")
-load("@prelude//cxx:cxx_context.bzl", "get_opt_cxx_toolchain_info")
+load("@prelude//cxx:cxx_context.bzl", "get_cxx_toolchain_info", "get_opt_cxx_toolchain_info")
 load(
     "@prelude//cxx:cxx_library_utility.bzl",
     "cxx_is_gnu",
@@ -25,6 +25,7 @@ load("@prelude//cxx:cxx_utility.bzl", "cxx_attrs_get_allow_cache_upload")
 load("@prelude//decls:common.bzl", "LinkableDepType", "buck")
 load("@prelude//decls:native_common.bzl", "native_common")
 load("@prelude//decls:toolchains_common.bzl", "toolchains_common")
+load("@prelude//linking:generated_build_info.bzl", "BUILD_INFO_DSO_SONAME")
 load(
     "@prelude//linking:link_info.bzl",
     "LinkArgs",  # @unused Used as a type
@@ -51,7 +52,12 @@ load(
     "process_native_linking_rule",
     "python_implicit_attrs",
 )
-load("@prelude//python/linking:native.bzl", "process_native_linking")
+load(
+    "@prelude//python/linking:native.bzl",
+    "generate_build_info_shared_library_after_link",
+    "process_native_linking",
+    "python_source_build_info_invalidation_inputs",
+)
 load("@prelude//python/linking:native_python_util.bzl", "compute_link_strategy", "merge_native_deps")
 load("@prelude//python/linking:omnibus.bzl", "process_omnibus_linking")
 load("@prelude//transitions:constraint_overrides.bzl", "constraint_overrides")
@@ -64,7 +70,7 @@ load(
 )
 load(":internal_tools.bzl", "PythonInternalToolsInfo")
 load(":lazy_imports.bzl", "get_lazy_imports_analyzer", "run_lazy_imports_analyzer", "run_lazy_imports_cached_analysis", "run_lazy_imports_library_analyzer")
-load(":make_py_package.bzl", "PexModules", "PexProviders", "make_py_package")
+load(":make_py_package.bzl", "LateBuildInfoPatch", "PexModules", "PexProviders", "make_py_package")
 load(
     ":manifest.bzl",
     "ManifestInfo",  # @unused Used as a type
@@ -298,6 +304,7 @@ def _compute_pex_providers(
     gc_sections_data = None,
     native_runtime_files = [],
     build_info_manifest_entries = None,
+    late_build_info_patch = None,
 ) -> list[Provider] | Promise:
     dbg_source_db_output = ctx.actions.declare_output("dbg-db.json", has_content_based_path = True)
     dbg_source_db = create_dbg_source_db(ctx, dbg_source_db_output, src_manifest, python_deps)
@@ -439,6 +446,9 @@ def _compute_pex_providers(
             debuginfo_files.append((name + ".debuginfo", debuginfo))
         extensions = stripped_extensions
 
+    if late_build_info_patch != None:
+        late_build_info_patch = _restamp_packaged_executable(ctx, shared_libs, late_build_info_patch)
+
     # Combine sources and extensions into a map of all modules.
     pex_modules = PexModules(
         manifests = manifests_to_interface(library.manifests),
@@ -479,6 +489,7 @@ def _compute_pex_providers(
         debuginfo_files = debuginfo_files,
         link_args = link_args,
         manifest_entries_overlay = build_info_manifest_entries,
+        late_build_info_patch = late_build_info_patch,
     )
 
     pex.sub_targets.update(extra)
@@ -538,6 +549,204 @@ def _compute_pex_providers(
 
     return providers
 
+def _replace_placeholder_build_info(
+    ctx: AnalysisContext,
+    shared_libs: list[(SharedLibrary, str)],
+    extra: dict[str, typing.Any],
+    link_args: list[LinkArgs],
+    build_info_manifest_entries: Artifact | None,
+    generated_build_info_invalidation_deps: list[Dependency],
+    generated_build_info_invalidation_sources: list[Artifact],
+    output_suffix: str = "",
+) -> (list[(SharedLibrary, str)], dict[str, typing.Any], Artifact | None, LateBuildInfoPatch | None):
+    """Generate the real full-mode build-info DSO and swap it in.
+
+    The native link (anon or not) linked a stable-mode placeholder DSO, so
+    its actions are byte-stable across build hosts. This regenerates the
+    real DSO in the `python_binary` analysis and replaces the placeholder
+    in the packaged shared libraries. No-op unless
+    `_generate_build_info_after_link` is set.
+    """
+    late_build_info_patch = None
+    if not ctx.attrs._generate_build_info_after_link:
+        return (shared_libs, extra, build_info_manifest_entries, late_build_info_patch)
+
+    invalidation_inputs = python_source_build_info_invalidation_inputs(
+        ctx,
+        generated_build_info_invalidation_deps,
+        generated_build_info_invalidation_sources,
+    )
+    if "native-executable" in extra:
+        # The linked binary invalidates the real build info, mirroring the
+        # invalidation the link-internal generation used.
+        invalidation_inputs = invalidation_inputs + [
+            extra["native-executable"][0].default_outputs[0],
+        ]
+    after_link = generate_build_info_shared_library_after_link(
+        ctx,
+        shared_libs,
+        extra,
+        link_args,
+        invalidation_inputs,
+        output_suffix = output_suffix,
+    )
+    if after_link == None:
+        return (shared_libs, extra, build_info_manifest_entries, late_build_info_patch)
+
+    shared_libs, extra, real_build_info, placeholder_dso = after_link
+    placeholder_manifest_entries = build_info_manifest_entries
+    build_info_manifest_entries = real_build_info.manifest_entries
+    late_build_info_patch = _late_build_info_patch(
+        shared_libs,
+        extra,
+        real_build_info,
+        placeholder_manifest_entries,
+        placeholder_dso,
+    )
+    return (shared_libs, extra, build_info_manifest_entries, late_build_info_patch)
+
+def _compute_pex_providers_from_anon(
+    ctx: AnalysisContext,
+    providers,
+    src_manifest: ManifestInfo | None,
+    python_deps: list[PythonLibraryInfo],
+    source_db_no_deps: DefaultInfo,
+    main: EntryPoint,
+    compile: bool,
+    library: PythonLibraryInfo,
+    allow_cache_upload: bool,
+    executable_type: ExecutableType,
+    generated_build_info_invalidation_deps: list[Dependency],
+    generated_build_info_invalidation_sources: list[Artifact],
+) -> list[Provider]:
+    """`_compute_pex_providers` for the anon-target native-linking path.
+
+    The anon target linked a stable-mode placeholder build-info DSO (via the
+    the anon rule links a stable-mode placeholder DSO in full mode).
+    Generate the real full-mode DSO here and swap it in, so the packaged
+    artifacts carry the real per-build values while every anon action stays
+    byte-stable across build hosts.
+    """
+    shared_libs, extra, build_info_manifest_entries, late_build_info_patch = _replace_placeholder_build_info(
+        ctx,
+        providers[LinkProviders].shared_libraries,
+        providers[LinkProviders].extra,
+        providers[LinkProviders].link_args,
+        providers[LinkProviders].build_info_manifest_entries,
+        generated_build_info_invalidation_deps,
+        generated_build_info_invalidation_sources,
+    )
+
+    return _compute_pex_providers(
+        ctx,
+        src_manifest,
+        python_deps,
+        source_db_no_deps,
+        main,
+        compile,
+        library,
+        allow_cache_upload,
+        shared_libs,
+        providers[LinkProviders].extensions,
+        providers[LinkProviders].link_args,
+        extra,
+        providers[LinkProviders].extra_artifacts,
+        executable_type,
+        providers[LinkProviders].linker_map_data,
+        providers[LinkProviders].gc_sections_data,
+        native_runtime_files = providers[LinkProviders].runtime_files,
+        build_info_manifest_entries = build_info_manifest_entries,
+        late_build_info_patch = late_build_info_patch,
+    )
+
+def _late_build_info_patch(
+    shared_libs: list[(SharedLibrary, str)],
+    extra: dict[str, typing.Any],
+    real_build_info,
+    placeholder_manifest_entries: Artifact | None,
+    placeholder_dso,
+) -> LateBuildInfoPatch | None:
+    """The late build-info patch for a binary whose build info is generated after the link.
+
+    Locates the swapped-in DSO and the native executable in the packaged
+    shared libraries. The executable is re-stamped by
+    `_restamp_packaged_executable` once it is final (e.g. stripped).
+    Returns None when either is missing, in which case packaging falls back
+    to applying the real build info before packaging as before.
+    """
+    dso_dest = None
+    exe_dest = None
+    for shlib, libdir in shared_libs:
+        if not shlib.soname.is_str:
+            continue
+        dest = paths.join(libdir, shlib.soname.ensure_str())
+        if shlib.soname.ensure_str() == BUILD_INFO_DSO_SONAME:
+            dso_dest = dest
+        elif libdir == "runtime/bin":
+            exe_dest = dest
+    if dso_dest == None or exe_dest == None or "native-executable" not in extra:
+        return None
+    return LateBuildInfoPatch(
+        dso = real_build_info.library.lib.output,
+        placeholder_dso = placeholder_dso,
+        dso_dest = dso_dest,
+        exe_dest = exe_dest,
+        placeholder_manifest_entries = placeholder_manifest_entries,
+        build_info_json = real_build_info.json,
+    )
+
+def _restamp_packaged_executable(
+    ctx: AnalysisContext,
+    shared_libs: list[(SharedLibrary, str)],
+    late_build_info_patch: LateBuildInfoPatch,
+) -> LateBuildInfoPatch:
+    """Set `stamped_exe` by re-stamping the executable `shared_libs` packages
+    at `exe_dest`, so a stripped executable stays stripped."""
+    for shlib, libdir in shared_libs:
+        if shlib.soname.is_str and paths.join(libdir, shlib.soname.ensure_str()) == late_build_info_patch.exe_dest:
+            return LateBuildInfoPatch(
+                dso = late_build_info_patch.dso,
+                placeholder_dso = late_build_info_patch.placeholder_dso,
+                dso_dest = late_build_info_patch.dso_dest,
+                exe_dest = late_build_info_patch.exe_dest,
+                placeholder_manifest_entries = late_build_info_patch.placeholder_manifest_entries,
+                build_info_json = late_build_info_patch.build_info_json,
+                stamped_exe = _restamp_executable(ctx, shlib.lib.output, late_build_info_patch.build_info_json),
+            )
+    fail("no packaged executable at {}".format(late_build_info_patch.exe_dest))
+
+def _restamp_executable(ctx: AnalysisContext, exe: Artifact, build_info_json: Artifact) -> Artifact:
+    """Re-stamp `exe`'s `fb_build_info` section with the real build info.
+
+    The placeholder executable is already stamped (with stable-mode build
+    info), so `elf_stamp` -- which only fills placeholder sections -- cannot
+    be used; `objcopy --update-section` replaces the section contents.
+    Non-GNU toolchains have no `fb_build_info` section to re-stamp (the DSO
+    carries the build info there), so the placeholder is only acceptable
+    there; on GNU, silently shipping it would discard the real build info.
+    """
+    objcopy = get_cxx_toolchain_info(ctx).binary_utilities_info.objcopy
+    if objcopy == None:
+        if cxx_is_gnu(ctx):
+            fail("re-stamping {} requires an objcopy from the C++ toolchain".format(exe.short_path))
+        return exe
+    stamped = ctx.actions.declare_output(
+        paths.basename(exe.short_path) + "-build-info-stamped",
+        has_content_based_path = False,
+    )
+    ctx.actions.run(
+        cmd_args(
+            objcopy,
+            "--update-section",
+            cmd_args(build_info_json, format = "fb_build_info={}"),
+            exe,
+            stamped.as_output(),
+        ),
+        category = "stamp_build_info",
+        identifier = "restamp_python_exe",
+    )
+    return stamped
+
 def _convert_python_library_to_executable(
     ctx: AnalysisContext,
     main: EntryPoint,
@@ -560,6 +769,7 @@ def _convert_python_library_to_executable(
     link_args = []
     link_strategy = compute_link_strategy(ctx)
     native_runtime_files = []
+    late_build_info_patch = None
 
     if link_strategy == NativeLinkStrategy("native"):
         invalidate_build_info_on_python_sources = getattr(ctx.attrs, "_generated_build_info_enabled", False) and ctx.attrs._generated_build_info_mode == "full"
@@ -591,6 +801,7 @@ def _convert_python_library_to_executable(
                 "static_extension_utils": ctx.attrs.static_extension_utils,
                 "transformation_spec": ctx.attrs.transformation_spec,
                 "_cxx_toolchain": ctx.attrs._cxx_toolchain,
+                "_generate_build_info_after_link": ctx.attrs._generate_build_info_after_link,
                 "_python_internal_tools": ctx.attrs._python_internal_tools,
                 "_python_toolchain": ctx.attrs._python_toolchain,
             }
@@ -601,8 +812,9 @@ def _convert_python_library_to_executable(
                 process_native_linking_rule,
                 explicit_attrs | implicit_attrs,
             ).promise.map(
-                lambda providers: _compute_pex_providers(
+                lambda providers: _compute_pex_providers_from_anon(
                     ctx,
+                    providers,
                     src_manifest,
                     python_deps,
                     source_db_no_deps,
@@ -610,16 +822,9 @@ def _convert_python_library_to_executable(
                     compile,
                     library,
                     allow_cache_upload,
-                    providers[LinkProviders].shared_libraries,
-                    providers[LinkProviders].extensions,
-                    providers[LinkProviders].link_args,
-                    providers[LinkProviders].extra,
-                    providers[LinkProviders].extra_artifacts,
                     executable_type,
-                    providers[LinkProviders].linker_map_data,
-                    providers[LinkProviders].gc_sections_data,
-                    native_runtime_files = providers[LinkProviders].runtime_files,
-                    build_info_manifest_entries = providers[LinkProviders].build_info_manifest_entries,
+                    generated_build_info_invalidation_deps,
+                    generated_build_info_invalidation_sources,
                 )
             )
         else:
@@ -634,6 +839,18 @@ def _convert_python_library_to_executable(
                     generated_build_info_invalidation_deps = generated_build_info_invalidation_deps,
                     generated_build_info_invalidation_sources = generated_build_info_invalidation_sources,
                 )
+            )
+            shared_libs, extra, build_info_manifest_entries, late_build_info_patch = _replace_placeholder_build_info(
+                ctx,
+                shared_libs,
+                extra,
+                link_args,
+                build_info_manifest_entries,
+                generated_build_info_invalidation_deps,
+                generated_build_info_invalidation_sources,
+                # Same-context regeneration: keep its outputs distinct from
+                # the placeholder generation inside the link.
+                output_suffix = "-real",
             )
             if ctx.attrs.runtime_bundle:
                 runtime_bundle = ctx.attrs.runtime_bundle[PythonRuntimeBundleInfo]
@@ -694,6 +911,7 @@ def _convert_python_library_to_executable(
         gc_sections_data = gc_sections_data if link_strategy == NativeLinkStrategy("native") else None,
         native_runtime_files = native_runtime_files,
         build_info_manifest_entries = build_info_manifest_entries,
+        late_build_info_patch = late_build_info_patch,
     )
 
 def python_binary_impl(ctx: AnalysisContext) -> list[Provider] | Promise:

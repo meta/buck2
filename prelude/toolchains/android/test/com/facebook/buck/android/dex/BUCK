@@ -12,6 +12,7 @@ buck_java_test(
         "prelude//toolchains/android/src/com/facebook/buck/android/dex:d8_executable_main",
         "prelude//toolchains/android/src/com/facebook/buck/android/dex:dex",
         "prelude//toolchains/android/src/com/facebook/buck/android/dex:multi_dex_executable_main",
+        "prelude//toolchains/android/third-party:d8",
         "prelude//toolchains/android/third-party:guava",
         "prelude//toolchains/android/third-party:junit",
     ],

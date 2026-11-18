@@ -18,6 +18,7 @@ import com.facebook.buck.install.model.InstallResponse;
 import com.facebook.buck.install.model.InstallerGrpc;
 import com.facebook.buck.install.model.ShutdownRequest;
 import com.facebook.buck.install.model.ShutdownResponse;
+import com.facebook.infer.annotation.Nullsafe;
 import com.google.common.base.Throwables;
 import com.google.common.util.concurrent.ListenableFuture;
 import com.google.common.util.concurrent.ListeningExecutorService;
@@ -32,6 +33,7 @@ import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.Callable;
@@ -42,7 +44,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import java.util.function.Function;
 import java.util.logging.Level;
-import java.util.logging.Logger; // NOPMD
+import java.util.logging.Logger;
 import java.util.stream.Collectors;
 
 /**
@@ -62,6 +64,7 @@ import java.util.stream.Collectors;
  *       InstallerService} to terminate.
  * </ol>
  */
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public class InstallerService extends InstallerGrpc.InstallerImplBase {
 
   private static final ThreadPoolExecutor THREAD_POOL =
@@ -228,7 +231,8 @@ public class InstallerService extends InstallerGrpc.InstallerImplBase {
           InfraTimeoutErrorTag.INSTANCE);
     } catch (ExecutionException e) {
       return failed(
-          Throwables.getStackTraceAsString(e.getCause()), DefaultInstallErrorTag.INSTANCE);
+          Throwables.getStackTraceAsString(Objects.requireNonNull(e.getCause())),
+          DefaultInstallErrorTag.INSTANCE);
     }
   }
 

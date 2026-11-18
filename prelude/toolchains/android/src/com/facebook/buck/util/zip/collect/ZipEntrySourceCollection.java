@@ -10,13 +10,16 @@
 
 package com.facebook.buck.util.zip.collect;
 
+import com.facebook.infer.annotation.Nullsafe;
 import com.google.common.collect.ImmutableList;
 import java.util.Objects;
+import org.jspecify.annotations.Nullable;
 
 /**
  * A set of sources to store as entries in a zip file. A source entry can be either a file or an
  * entry from another zip file.
  */
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public class ZipEntrySourceCollection {
 
   private final ImmutableList<ZipEntrySource> sources;
@@ -30,7 +33,7 @@ public class ZipEntrySourceCollection {
   }
 
   @Override
-  public boolean equals(Object o) {
+  public boolean equals(@Nullable Object o) {
     if (this == o) {
       return true;
     }

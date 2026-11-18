@@ -226,6 +226,12 @@ fn parse_visibility(vis: &Visibility) -> syn::Result<()> {
 
 fn parse_const(x: ItemConst) -> syn::Result<StarConst> {
     parse_visibility(&x.vis)?;
+    if let Some(attr) = x.attrs.iter().find(|attr| attr.path().is_ident("starlark")) {
+        return Err(syn::Error::new(
+            attr.span(),
+            "`#[starlark(..)]` is not accepted on a `const` inside a `#[starlark_module]`",
+        ));
+    }
 
     Ok(StarConst {
         name: x.ident,

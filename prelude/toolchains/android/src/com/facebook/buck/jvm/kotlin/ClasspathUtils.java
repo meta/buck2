@@ -18,6 +18,7 @@ import com.facebook.buck.jvm.java.CompilerParameters;
 import com.facebook.buck.step.isolatedsteps.IsolatedStep;
 import com.facebook.buck.step.isolatedsteps.common.CopyIsolatedStep;
 import com.facebook.buck.step.isolatedsteps.common.MakeCleanDirectoryIsolatedStep;
+import com.facebook.infer.annotation.Nullsafe;
 import com.google.common.collect.ImmutableCollection;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableSortedSet;
@@ -25,7 +26,9 @@ import com.google.common.collect.Ordering;
 import java.util.Comparator;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.Objects;
 
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public class ClasspathUtils {
   private final AbsPath buildCellRootPath;
   private final ImmutableSortedSet<AbsPath> resolvedFriendPaths;
@@ -72,8 +75,7 @@ public class ClasspathUtils {
     RelPath friendPathScratchDir =
         buildTargetValueExtraParams.getScratchPath("__%s_friend_path_jars__");
     friendPathScratchDir =
-        friendPathScratchDir
-            .getParent()
+        Objects.requireNonNull(friendPathScratchDir.getParent())
             .resolveRel(friendPathScratchDir.getFileName().toString().replace(",", "__"));
 
     for (AbsPath friendPath : resolvedFriendPaths) {

@@ -24,6 +24,7 @@ from package_tree import (
     assemble_package,
     main,
     manifest,
+    run_build,
     strip_types,
     validate_package,
     write_validation_result,
@@ -355,6 +356,120 @@ class TestAssemblePackage(unittest.TestCase):
             "`package_json`: cannot copy 'package.json': "
             f"{os.strerror(errno.ENOENT)}\n",
         )
+
+
+class TestRunBuild(unittest.TestCase):
+    def setUp(self) -> None:
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.tmp = Path(tmp.name)
+        self.staged = self.tmp / "staged"
+        _write(self.staged / "input.txt", "input")
+        _write(self.staged / "src" / "nested.txt", "nested")
+        _write(self.staged / "node_modules" / "tool" / "index.js", "tool")
+        self.out = self.tmp / "out"
+
+    def _run(self, script: str, root_prefix: str = "") -> int:
+        return run_build(
+            self.staged,
+            "dist",
+            self.out,
+            [sys.executable, "-c", script],
+            self.tmp / "scratch",
+            root_prefix,
+        )
+
+    def test_copies_the_output_directory_and_keeps_the_staged_one(self) -> None:
+        script = (
+            "import os, pathlib\n"
+            "pathlib.Path('node_modules/.cache').mkdir()\n"
+            "pathlib.Path('dist/sub').mkdir(parents=True)\n"
+            "text = open('input.txt').read() + open('src/nested.txt').read()\n"
+            "text += open('node_modules/tool/index.js').read()\n"
+            "pathlib.Path('dist/sub/out.txt').write_text(text)\n"
+            "open('input.txt', 'w').write('changed')\n"
+        )
+        self.assertEqual(self._run(script), 0)
+        self.assertEqual(_files(self.out), ["sub/out.txt"])
+        self.assertEqual((self.out / "sub" / "out.txt").read_text(), "inputnestedtool")
+        self.assertEqual(
+            _files(self.staged),
+            ["input.txt", "node_modules/tool/index.js", "src/nested.txt"],
+        )
+        self.assertEqual((self.staged / "input.txt").read_text(), "input")
+
+    def test_replaces_the_root_prefix_with_the_current_directory(self) -> None:
+        script = (
+            "import pathlib, sys\n"
+            "pathlib.Path('dist').mkdir()\n"
+            "pathlib.Path('dist/arg.txt').write_text(sys.argv[1])\n"
+        )
+        code = run_build(
+            self.staged,
+            "dist",
+            self.out,
+            [sys.executable, "-c", script, "ROOT/some/file"],
+            self.tmp / "scratch",
+            "ROOT/",
+        )
+        self.assertEqual(code, 0)
+        self.assertEqual(
+            (self.out / "arg.txt").read_text(),
+            os.path.join(os.getcwd(), "some/file"),
+        )
+
+    def test_replaces_the_root_prefix_in_env_keys(self) -> None:
+        script = (
+            "import os, pathlib\n"
+            "pathlib.Path('dist').mkdir()\n"
+            "pathlib.Path('dist/env.txt').write_text(os.environ['BUILD_INPUT'])\n"
+        )
+        with mock.patch.dict(os.environ, {"BUILD_INPUT": "ROOT/some/file"}):
+            code = run_build(
+                self.staged,
+                "dist",
+                self.out,
+                [sys.executable, "-c", script],
+                self.tmp / "scratch",
+                "ROOT/",
+                ["BUILD_INPUT"],
+            )
+        self.assertEqual(code, 0)
+        self.assertEqual(
+            (self.out / "env.txt").read_text(),
+            os.path.join(os.getcwd(), "some/file"),
+        )
+
+    def test_copies_symlinks_in_the_output_as_their_targets(self) -> None:
+        script = (
+            "import os, pathlib\n"
+            "pathlib.Path('dist').mkdir()\n"
+            "os.symlink('../node_modules/tool', 'dist/tool')\n"
+            "os.symlink('../input.txt', 'dist/input.txt')\n"
+        )
+        self.assertEqual(self._run(script), 0)
+        self.assertEqual(_files(self.out), ["input.txt", "tool/index.js"])
+        self.assertFalse((self.out / "tool").is_symlink())
+        self.assertEqual((self.out / "tool" / "index.js").read_text(), "tool")
+
+    def test_dangling_symlink_in_the_output_raises(self) -> None:
+        script = (
+            "import os, pathlib\n"
+            "pathlib.Path('dist').mkdir()\n"
+            "os.symlink('missing', 'dist/link')\n"
+        )
+        with self.assertRaises(FileNotFoundError):
+            self._run(script)
+
+    def test_command_failure_is_returned(self) -> None:
+        self.assertEqual(self._run("import sys; sys.exit(3)"), 3)
+        self.assertFalse(self.out.exists())
+
+    def test_missing_output_directory_fails(self) -> None:
+        stderr = io.StringIO()
+        with contextlib.redirect_stderr(stderr):
+            self.assertEqual(self._run("pass"), 1)
+        self.assertIn("the command wrote no directory at 'dist'", stderr.getvalue())
 
 
 class TestManifest(unittest.TestCase):

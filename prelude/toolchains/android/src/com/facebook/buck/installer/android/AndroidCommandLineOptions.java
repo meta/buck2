@@ -10,14 +10,17 @@
 
 package com.facebook.buck.installer.android;
 
+import com.facebook.infer.annotation.Nullsafe;
 import com.google.common.annotations.VisibleForTesting;
-import javax.annotation.Nullable;
+import org.jspecify.annotations.Nullable;
 import org.kohsuke.args4j.Option;
+import org.kohsuke.args4j.spi.ExplicitBooleanOptionHandler;
 
 /**
  * Constructs the Command Line Options to Support Android Install. The majority of these were copied
  * from {@code com.facebook.buck.cli.TargetDeviceCommandLineOptions}.
  */
+@Nullsafe(Nullsafe.Mode.LOCAL)
 class AndroidCommandLineOptions {
   @VisibleForTesting public static final String EMULATOR_MODE_SHORT_ARG = "-e";
 
@@ -56,6 +59,7 @@ class AndroidCommandLineOptions {
       name = ADB_EXECUTABLE_PATH_LONG_ARG,
       metaVar = "<Adb-executable-path>",
       usage = "Use specified adb executable.")
+  @Nullable
   public String adbExecutablePath;
 
   @VisibleForTesting static final String ADB_THREADS_LONG_ARG = "--adb-threads";
@@ -77,6 +81,20 @@ class AndroidCommandLineOptions {
       usage = "Use ADB server with specific TCP port.")
   public int adbServerPort = 0;
 
+  @Option(
+      name = "--adb-restart-on-failure",
+      handler = ExplicitBooleanOptionHandler.class,
+      metaVar = "<true|false>",
+      usage = "Restart the adb server and look again when adb finds no device. Defaults to true.")
+  public boolean restartAdbOnFailure = true;
+
+  @Option(
+      name = "--staged-install-mode",
+      handler = ExplicitBooleanOptionHandler.class,
+      metaVar = "<true|false>",
+      usage = "Install with adb install --staged; the update applies at the next reboot.")
+  public boolean stagedInstallMode;
+
   @VisibleForTesting static final String MULTI_INSTALL_MODE_SHORT_ARG = "-x";
   @VisibleForTesting static final String MULTI_INSTALL_MODE_LONG_ARG = "--all-devices";
 
@@ -92,6 +110,7 @@ class AndroidCommandLineOptions {
   private int tcpPort;
 
   @Option(name = "--log-path", usage = "Use this option to set the log path for the install")
+  @Nullable
   private String logPath;
 
   @Option(
@@ -203,6 +222,7 @@ class AndroidCommandLineOptions {
     return tcpPort;
   }
 
+  @Nullable
   public String getLogPath() {
     return logPath;
   }

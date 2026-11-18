@@ -22,8 +22,6 @@ import org.jetbrains.kotlin.config.CompilerConfiguration
 
 object StubsGenCli {
 
-  // `CompilerConfiguration()` is `@Internals` opt-in from Kotlin 2.4.
-  @Suppress("OPT_IN_USAGE_ERROR")
   fun generate(
       sourceFiles: List<File>,
       classpath: List<File>,

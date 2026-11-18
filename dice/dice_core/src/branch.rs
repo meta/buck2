@@ -11,12 +11,12 @@
 use allocative::Allocative;
 use mini_vec::MiniVec;
 
-use crate::collections::KeyMap;
 use crate::collections::KeySet;
 use crate::ids::BranchId;
 use crate::ids::Key;
 use crate::ids::Seq;
 use crate::ids::Version;
+use crate::key_vec::KeyVec;
 
 /// One branch of the history (`incrementality.md` §4.2).
 #[derive(Allocative)]
@@ -32,7 +32,7 @@ pub(crate) struct Branch {
     /// `RdepMap` (§4.2), maintained exactly (Invariant 3 as an equality). A dependent appears
     /// under a dependency more than once only if its certificate lists that dependency more than
     /// once.
-    pub(crate) rdeps: KeyMap<MiniVec<Key>>,
+    pub(crate) rdeps: KeyVec<MiniVec<Key>>,
     /// `closed_index` (§4.2).
     pub(crate) closed_index: KeySet,
 }
@@ -44,7 +44,7 @@ impl Branch {
             children: MiniVec::new(),
             first,
             head: first,
-            rdeps: KeyMap::default(),
+            rdeps: KeyVec::default(),
             closed_index: KeySet::default(),
         }
     }
@@ -69,7 +69,9 @@ impl Branch {
     }
 
     pub(crate) fn add_edge(&mut self, dep: Key, dependent: Key) {
-        self.rdeps.entry(dep).or_default().push(dependent);
+        self.rdeps
+            .get_or_insert_with(dep, MiniVec::default)
+            .push(dependent);
     }
 
     pub(crate) fn take_rdeps(&mut self, dep: Key) -> MiniVec<Key> {

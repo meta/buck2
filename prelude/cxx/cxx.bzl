@@ -1121,6 +1121,17 @@ def cxx_test_impl(ctx: AnalysisContext) -> list[Provider]:
 
     command = [cmd_args(output.binary, hidden = output.runtime_files)] + ctx.attrs.args
 
+    test_env = dict(ctx.attrs.env)
+    static_lister = test_env.get("STATIC_LIST_TESTS_BINARY")
+    if static_lister != None:
+        listing_binary = test_env.get("BUCK_BASE_BINARY", output.binary)
+        static_listing_library = test_env.get("STATIC_LISTING_DYLIB_NAME")
+        if static_listing_library != None:
+            libraries = [shlib.lib.output for shlib in output.shared_libs if shlib.soname.is_str and static_listing_library == shlib.soname.ensure_str()]
+            listing_binary = libraries[0] if len(libraries) == 1 else None
+        if listing_binary != None:
+            test_env["TPX_LIST_TESTS_COMMAND"] = cmd_args(static_lister, listing_binary)
+
     # Setup RE executors based on the `remote_execution` param.
     re_executors = get_re_executors_from_props(ctx)
 
@@ -1141,7 +1152,7 @@ def cxx_test_impl(ctx: AnalysisContext) -> list[Provider]:
             ExternalRunnerTestInfo(
                 type = "gtest",
                 command = command,
-                env = ctx.attrs.env,
+                env = test_env,
                 labels = ctx.attrs.labels,
                 contacts = ctx.attrs.contacts,
                 default_executor = re_executors.default_executor,
@@ -1231,7 +1242,7 @@ cxx_binary = prelude_rule(
     attrs = (
         cxx_binary_base_attrs()
         | {
-            "build_info_as_shared_library": attrs.bool(default = True),
+            "build_info_as_shared_library": attrs.bool(default = False),
             "_gen_build_info": attrs.option(attrs.exec_dep(providers = [RunInfo]), default = None),
             "_generated_build_info_data": attrs.option(attrs.source(), default = None),
             "_generated_build_info_enabled": attrs.bool(default = False),
@@ -1574,7 +1585,7 @@ cxx_test = prelude_rule(
         | cxx_binary_and_test_attrs()
         | re_test_common.test_args()
         | {
-            "build_info_as_shared_library": attrs.bool(default = True),
+            "build_info_as_shared_library": attrs.bool(default = False),
             "_gen_build_info": attrs.option(attrs.exec_dep(providers = [RunInfo]), default = None),
             "_generated_build_info_data": attrs.option(attrs.source(), default = None),
             "_generated_build_info_enabled": attrs.bool(default = False),

@@ -34,9 +34,9 @@ import java.util.Set;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
-import javax.annotation.Nullable;
 import org.hamcrest.Matcher;
 import org.hamcrest.Matchers;
+import org.jspecify.annotations.Nullable;
 import org.junit.Assert;
 
 /** Additional assertions that delegate to JUnit assertions, but with better error messages. */

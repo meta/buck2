@@ -359,7 +359,7 @@ impl QueryTarget for ActionQueryNode {
     }
 
     /// Return the path to the buildfile that defines this target, e.g. `fbcode//foo/bar/TARGETS`
-    fn buildfile_path(&self) -> &BuildFilePath {
+    fn buildfile_path(&self) -> buck2_error::Result<&BuildFilePath> {
         // TODO(cjhopman): In addition to implementing this, we should be able to return an buck2_error::Error here rather than panicking.
         unimplemented!("buildfile not yet implemented in aquery")
     }
@@ -469,7 +469,7 @@ impl QueryTarget for ActionQueryNode {
         })
     }
 
-    fn inputs_for_each<E, F: FnMut(CellPath) -> Result<(), E>>(
+    fn inputs_for_each<E: From<buck2_error::Error>, F: FnMut(CellPath) -> Result<(), E>>(
         &self,
         mut _func: F,
     ) -> Result<(), E> {

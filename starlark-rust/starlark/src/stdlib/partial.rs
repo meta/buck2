@@ -44,10 +44,12 @@ use crate::starlark_complex_value;
 use crate::values::Freeze;
 use crate::values::FreezeResult;
 use crate::values::Freezer;
+use crate::values::Heap;
 use crate::values::StarlarkValue;
 use crate::values::StringValue;
 use crate::values::Trace;
 use crate::values::Value;
+use crate::values::ValueOf;
 use crate::values::dict::DictRef;
 use crate::values::function::FUNCTION_TYPE;
 use crate::values::types::tuple::value::Tuple;
@@ -72,7 +74,8 @@ pub fn partial(builder: &mut GlobalsBuilder) {
         #[starlark(require = pos)] func: Value<'v>,
         #[starlark(args)] args: Value<'v>,
         #[starlark(kwargs)] kwargs: DictRef<'v>,
-    ) -> anyhow::Result<Partial<'v>> {
+        heap: Heap<'v>,
+    ) -> anyhow::Result<ValueOf<'v, Partial<'v>>> {
         debug_assert!(Tuple::from_value(args).is_some());
         let names: Vec<_> = kwargs
             .keys()
@@ -87,13 +90,13 @@ pub fn partial(builder: &mut GlobalsBuilder) {
             })
             .collect();
         let names_index = build_names_index(names.iter().map(|(s, _)| s));
-        Ok(Partial {
+        Ok(heap.alloc(Partial {
             func,
             pos: args,
             named: kwargs.values().collect(),
             names,
             names_index,
-        })
+        }))
     }
 }
 
@@ -185,8 +188,6 @@ impl<'v> StarlarkDeserialize<'v> for Partial<'v> {
 
 #[starlark_value(type = FUNCTION_TYPE)]
 impl<'v> StarlarkValue<'v> for Partial<'v> {
-    type Canonical = Partial<'v>;
-
     fn name_for_call_stack(&self, _me: Value<'v>) -> String {
         "partial".to_owned()
     }

@@ -5,11 +5,12 @@ Kill all buck2 processes on the machine
 By default this kills every buck2 process regardless of repository or isolation dir.
 Passing `--in-isolation-dir` narrows the kill to processes using that isolation dir, and
 `--repo` narrows it to processes running in the current repository. Processes that
-cannot be checked against the requested filter are skipped and reported.
+cannot be checked against the requested filter are skipped and reported. The connection
+information of shared daemons that have exited is removed afterwards.
 
-With `BUCK2_SHARE_DAEMON=true`, `--repo` instead evicts the current repository's tenants
-from their daemons without stopping a daemon that still serves other tenants. Combine it
-with `--in-isolation-dir` to evict one tenant.
+Under daemon sharing (`buck2.share_daemon`), `--repo` instead evicts the current repository's
+tenants from their daemons without stopping a daemon that still serves other tenants. Combine
+it with `--in-isolation-dir` to evict one tenant.
 
 Usage: buck2 killall [OPTIONS]
 

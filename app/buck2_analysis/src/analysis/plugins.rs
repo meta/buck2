@@ -19,6 +19,7 @@ use buck2_node::provider_id_set::ProviderIdSet;
 use dupe::IterDupedExt;
 use starlark::values::Value;
 use starlark::values::ValueTyped;
+use starlark::values::list::AllocList;
 
 use crate::attrs::resolve::attr_type::dep::DepAttrTypeExt;
 use crate::attrs::resolve::ctx::AttrResolutionContext;
@@ -28,6 +29,7 @@ pub fn plugins_to_starlark_value<'v>(
     ctx: &mut dyn AttrResolutionContext<'v>,
 ) -> buck2_error::Result<ValueTyped<'v, AnalysisPlugins<'v>>> {
     let mut plugins = BuckMutInsertionMap::new();
+    let node = node.body()?;
     let execution_platform_resolution = node.execution_platform_resolution();
 
     for kind in node.uses_plugins().iter().duped() {
@@ -48,7 +50,7 @@ pub fn plugins_to_starlark_value<'v>(
                 )
             })
             .collect::<buck2_error::Result<_>>()?;
-        plugins.insert(kind, ctx.heap().alloc(deps));
+        plugins.insert(kind, ctx.heap().alloc(AllocList(deps)).to_value());
     }
-    Ok(ctx.heap().alloc_typed(AnalysisPlugins::new(plugins)))
+    Ok(ctx.heap().alloc(AnalysisPlugins::new(plugins)).get())
 }

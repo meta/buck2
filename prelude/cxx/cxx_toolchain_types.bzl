@@ -6,7 +6,13 @@
 # of this source tree. You may select, at your option, one of the
 # above-listed licenses.
 
-load("@prelude//cxx:cxx_apple_linker_flags.bzl", "apple_extra_darwin_linker_flags", "apple_format_target_triple", "is_valid_apple_platform_name")
+load(
+    "@prelude//cxx:cxx_apple_linker_flags.bzl",
+    "apple_extra_darwin_linker_flags",
+    "apple_format_target_triple",
+    "apple_target_triple_flags",
+    "is_valid_apple_platform_name",
+)
 load("@prelude//cxx:debug.bzl", "SplitDebugMode")
 load("@prelude//target_stats:target_stats_tools.bzl", "TargetStatsToolsInfo")
 
@@ -471,7 +477,7 @@ def cxx_toolchain_infos(
         target_stats_tools = target_stats_tools,
     )
 
-    ldflags_shared_extra = None
+    ldflags_shared_extra, ldflags_static_extra = None, None
     if linker_info.type == LinkerType("darwin") and is_valid_apple_platform_name(platform_name):
         # These flags are used in `cxx_genrule()`, using the toolchain's target sdk version is
         # the best we can do, as there's no target sdk on the rule itself.
@@ -480,6 +486,7 @@ def cxx_toolchain_infos(
         # which is almost always incorrect.
         apple_target_triple = apple_format_target_triple(platform_name, minimum_os_version or "")
         ldflags_shared_extra = apple_extra_darwin_linker_flags(apple_target_triple)
+        ldflags_static_extra = apple_target_triple_flags(apple_target_triple)
 
     # Provide placeholder mappings, used primarily by cxx_genrule.
     # We don't support these buck1 placeholders since we can't take an argument.
@@ -499,8 +506,8 @@ def cxx_toolchain_infos(
         # identical, and are just separate to match v1's behavior (ideally,
         # we just have a single `ldflags` macro for this case).
         "ldflags-shared": _shell_quote(linker_info.linker_flags or [], ldflags_shared_extra),
-        "ldflags-static": _shell_quote(linker_info.linker_flags or []),
-        "ldflags-static-pic": _shell_quote(linker_info.linker_flags or []),
+        "ldflags-static": _shell_quote(linker_info.linker_flags or [], ldflags_static_extra),
+        "ldflags-static-pic": _shell_quote(linker_info.linker_flags or [], ldflags_static_extra),
         "objcopy": binary_utilities_info.objcopy,
     }
 

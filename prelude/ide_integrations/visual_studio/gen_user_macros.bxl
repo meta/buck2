@@ -9,6 +9,9 @@
 load("constants.bxl", "ADDITIONAL_TARGETS", "BY_MODES", "DEBUG_ARGS", "DEBUG_CMD", "DEBUG_ENV", "DEBUG_PWD", "EXTRA_BUCK_OPTIONS", "IMMEDIATE_BUCK_OPTIONS")
 load("utils.bxl", "get_vs_configuration", "h")
 
+def _escape_xml_text(text: str) -> str:
+    return text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
 def gen_user_macros(target: bxl.ConfiguredTargetNode, vs_settings: dict, _cli_args, buck_root):
     user_macros = []
 
@@ -16,8 +19,8 @@ def gen_user_macros(target: bxl.ConfiguredTargetNode, vs_settings: dict, _cli_ar
         h(
             "PropertyGroup",
             [
-                h("RepoRoot", buck_root, indent_level = 2),
-                h("ovrsource_root", buck_root, indent_level = 2),  # Keep for backward compatibility
+                h("RepoRoot", _escape_xml_text(buck_root), indent_level = 2),
+                h("ovrsource_root", _escape_xml_text(buck_root), indent_level = 2),  # Keep for backward compatibility
             ],
             {
                 "Label": "UserMacros",
@@ -32,14 +35,14 @@ def gen_user_macros(target: bxl.ConfiguredTargetNode, vs_settings: dict, _cli_ar
             h(
                 "PropertyGroup",
                 [
-                    h("BuckModeFile", mode_file, indent_level = 2),
-                    h("BuckTarget", " ".join([str(t) for t in buck_targets_list]), indent_level = 2),
-                    h(EXTRA_BUCK_OPTIONS, " ".join(settings[EXTRA_BUCK_OPTIONS]), indent_level = 2),
-                    h(IMMEDIATE_BUCK_OPTIONS, " ".join(settings[IMMEDIATE_BUCK_OPTIONS]), indent_level = 2),
-                    h(DEBUG_CMD, settings[DEBUG_CMD], indent_level = 2),
-                    h(DEBUG_ARGS, " ".join(settings[DEBUG_ARGS]), indent_level = 2),
-                    h(DEBUG_PWD, settings[DEBUG_PWD], indent_level = 2),
-                    h(DEBUG_ENV, ["{}={}".format(k, v) for (k, v) in settings[DEBUG_ENV].items()], indent_level = 2),
+                    h("BuckModeFile", _escape_xml_text(mode_file), indent_level = 2),
+                    h("BuckTarget", _escape_xml_text(" ".join([str(t) for t in buck_targets_list])), indent_level = 2),
+                    h(EXTRA_BUCK_OPTIONS, _escape_xml_text(" ".join(settings[EXTRA_BUCK_OPTIONS])), indent_level = 2),
+                    h(IMMEDIATE_BUCK_OPTIONS, _escape_xml_text(" ".join(settings[IMMEDIATE_BUCK_OPTIONS])), indent_level = 2),
+                    h(DEBUG_CMD, _escape_xml_text(settings[DEBUG_CMD]), indent_level = 2),
+                    h(DEBUG_ARGS, _escape_xml_text(" ".join(settings[DEBUG_ARGS])), indent_level = 2),
+                    h(DEBUG_PWD, _escape_xml_text(settings[DEBUG_PWD]), indent_level = 2),
+                    h(DEBUG_ENV, [_escape_xml_text("{}={}".format(k, v)) for (k, v) in settings[DEBUG_ENV].items()], indent_level = 2),
                 ],
                 {
                     "Condition": "'$(Configuration)'=='{}'".format(get_vs_configuration(mode_file)),

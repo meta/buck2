@@ -27,10 +27,13 @@ use starlark::values::Freezer;
 use starlark::values::NoSerialize;
 use starlark::values::OwnedFrozen;
 use starlark::values::StarlarkPagable;
+use starlark::values::StarlarkRepresentations;
+use starlark::values::StarlarkType;
 use starlark::values::StarlarkValue;
 use starlark::values::Trace;
 use starlark::values::Tracer;
 use starlark::values::Value;
+use starlark::values::ValueTyped;
 use starlark::values::starlark_value;
 
 use crate::interpreter::extra_value::FrozenInterpreterExtraValue;
@@ -90,12 +93,24 @@ pub static MAKE_CFG_CONSTRUCTOR: LateBinding<
 
 // TODO(nga): this does not need to be fully starlark_value,
 // but we don't have lighter machinery for that.
-#[starlark_value(type = "PackageFileExtra")]
-impl<'v> StarlarkValue<'v> for PackageFileExtra<'v> {}
+/// A `PackageFileExtra` in either of its representations.
+#[derive(Debug, Clone, Copy, StarlarkRepresentations)]
+pub enum PackageFileExtraView<'v> {
+    Unfrozen(ValueTyped<'v, PackageFileExtra<'v>>),
+    Frozen(ValueTyped<'v, FrozenPackageFileExtra<'v>>),
+}
 
-#[starlark_value(type = "PackageFileExtra", frozen_vtable)]
+#[starlark_value(type = "PackageFileExtra")]
+impl<'v> StarlarkType<'v> for PackageFileExtraView<'v> {}
+
+#[starlark_value]
+impl<'v> StarlarkValue<'v> for PackageFileExtra<'v> {
+    type Type = PackageFileExtraView<'v>;
+}
+
+#[starlark_value(frozen_vtable)]
 impl<'v> StarlarkValue<'v> for FrozenPackageFileExtra<'v> {
-    type Canonical = PackageFileExtra<'v>;
+    type Type = PackageFileExtraView<'v>;
 }
 
 impl<'v> Freeze<'v> for PackageFileExtra<'v> {

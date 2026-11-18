@@ -26,29 +26,25 @@ use starlark::any::ProvidesStaticType;
 use starlark::environment::GlobalsBuilder;
 use starlark::environment::Methods;
 use starlark::environment::MethodsBuilder;
-use starlark::values::AllocFrozenValue;
-use starlark::values::AllocValue;
 use starlark::values::Demand;
 use starlark::values::Freeze;
 use starlark::values::FreezeResult;
 use starlark::values::Freezer;
-use starlark::values::FrozenHeap;
-use starlark::values::Heap;
 use starlark::values::NoSerialize;
 use starlark::values::StarlarkPagable;
+use starlark::values::StarlarkRepresentations;
+use starlark::values::StarlarkType;
 use starlark::values::StarlarkValue;
 use starlark::values::StringValue;
 use starlark::values::Trace;
-use starlark::values::UnpackValue;
-use starlark::values::Value;
 use starlark::values::ValueTyped;
 use starlark::values::starlark_value;
-use starlark::values::type_repr::StarlarkTypeRepr;
 use starlark_map::StarlarkHasher;
 
 use crate::interpreter::rule_defs::artifact::methods::any_artifact_methods;
 use crate::interpreter::rule_defs::artifact::starlark_artifact::StarlarkArtifact;
 use crate::interpreter::rule_defs::artifact::starlark_artifact_like::ArtifactFingerprint;
+use crate::interpreter::rule_defs::artifact::starlark_artifact_like::ArtifactOrOutputArtifact;
 use crate::interpreter::rule_defs::artifact::starlark_artifact_like::StarlarkArtifactLike;
 use crate::interpreter::rule_defs::artifact::starlark_declared_artifact::StarlarkDeclaredArtifact;
 use crate::interpreter::rule_defs::cmd_args::ArtifactPathMapper;
@@ -90,32 +86,19 @@ impl<'v> Freeze<'v> for StarlarkOutputArtifact<'v> {
     }
 }
 
-impl<'v> AllocValue<'v> for StarlarkOutputArtifact<'v> {
-    #[inline]
-    fn alloc_value(self, heap: Heap<'v>) -> Value<'v> {
-        heap.alloc_complex(self)
-    }
+/// An `OutputArtifact` in either of its representations: the receiver of the type's methods,
+/// and the binding for a native parameter of type `OutputArtifact`.
+#[derive(Debug, Clone, Copy, StarlarkRepresentations)]
+pub enum StarlarkOutputArtifactView<'v> {
+    Unfrozen(ValueTyped<'v, StarlarkOutputArtifact<'v>>),
+    Frozen(ValueTyped<'v, FrozenStarlarkOutputArtifact<'v>>),
 }
 
-impl<'fv> AllocFrozenValue<'fv> for FrozenStarlarkOutputArtifact<'fv> {
-    #[inline]
-    fn alloc_frozen_value(self, heap: FrozenHeap<'fv>) -> Value<'fv> {
-        heap.alloc_simple_typed(self).to_value()
-    }
-}
-
-/// Unpack an output artifact in either form, at the value's own heap brand.
-#[derive(StarlarkTypeRepr, UnpackValue)]
-pub enum StarlarkOutputArtifactUnpack<'v> {
-    Unfrozen(&'v StarlarkOutputArtifact<'v>),
-    Frozen(&'v FrozenStarlarkOutputArtifact<'v>),
-}
-
-impl<'v> Display for StarlarkOutputArtifactUnpack<'v> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+impl<'v> StarlarkOutputArtifactView<'v> {
+    pub(crate) fn as_artifact_like(self) -> &'v dyn StarlarkArtifactLike<'v> {
         match self {
-            StarlarkOutputArtifactUnpack::Unfrozen(x) => Display::fmt(x, f),
-            StarlarkOutputArtifactUnpack::Frozen(x) => Display::fmt(x, f),
+            StarlarkOutputArtifactView::Unfrozen(x) => x.as_ref(),
+            StarlarkOutputArtifactView::Frozen(x) => x.as_ref(),
         }
     }
 }
@@ -246,40 +229,33 @@ starlark::methods_static!(
     }
 );
 
-#[starlark_value(type = "OutputArtifact", StarlarkTypeRepr, UnpackValue)]
-impl<'v> StarlarkValue<'v> for StarlarkOutputArtifact<'v> {
+#[starlark_value(type = "OutputArtifact")]
+impl<'v> StarlarkType<'v> for StarlarkOutputArtifactView<'v> {
     fn get_methods() -> Option<&'static Methods> {
         Some(OUTPUT_ARTIFACT_METHODS.methods())
     }
 
-    fn equals(&self, other: Value<'v>) -> starlark::Result<bool> {
-        StarlarkArtifactLike::equals(self, other)
+    fn equals(&self, other: ArtifactOrOutputArtifact<'v>) -> bool {
+        StarlarkArtifactLike::equals(self.as_artifact_like(), other)
     }
 
-    fn write_hash(&self, hasher: &mut StarlarkHasher) -> starlark::Result<()> {
-        StarlarkArtifactLike::write_hash(self, hasher)
+    fn write_hash(&self, hasher: &mut StarlarkHasher) {
+        StarlarkArtifactLike::write_hash(self.as_artifact_like(), hasher)
     }
+}
+
+#[starlark_value]
+impl<'v> StarlarkValue<'v> for StarlarkOutputArtifact<'v> {
+    type Type = StarlarkOutputArtifactView<'v>;
 
     fn provide(&'v self, demand: &mut Demand<'_, 'v>) {
         demand.provide_value::<&dyn CommandLineArgLike<'v>>(self);
     }
 }
 
-#[starlark_value(type = "OutputArtifact", StarlarkTypeRepr, UnpackValue, frozen_vtable)]
+#[starlark_value(frozen_vtable)]
 impl<'v> StarlarkValue<'v> for FrozenStarlarkOutputArtifact<'v> {
-    type Canonical = StarlarkOutputArtifact<'v>;
-
-    fn get_methods() -> Option<&'static Methods> {
-        Some(OUTPUT_ARTIFACT_METHODS.methods())
-    }
-
-    fn equals(&self, other: Value<'v>) -> starlark::Result<bool> {
-        StarlarkArtifactLike::equals(self, other)
-    }
-
-    fn write_hash(&self, hasher: &mut StarlarkHasher) -> starlark::Result<()> {
-        StarlarkArtifactLike::write_hash(self, hasher)
-    }
+    type Type = StarlarkOutputArtifactView<'v>;
 
     fn provide(&'v self, demand: &mut Demand<'_, 'v>) {
         demand.provide_value::<&dyn CommandLineArgLike<'v>>(self);
@@ -325,20 +301,20 @@ impl<'v> StarlarkValue<'v> for FrozenStarlarkOutputArtifact<'v> {
 fn output_artifact_methods(builder: &mut MethodsBuilder) {
     /// Returns the input artifact from which this output artifact was constructed
     fn as_input<'v>(
-        this: StarlarkOutputArtifactUnpack<'v>,
+        this: StarlarkOutputArtifactView<'v>,
     ) -> starlark::Result<
         Either<ValueTyped<'v, StarlarkDeclaredArtifact<'v>>, ValueTyped<'v, StarlarkArtifact>>,
     > {
         Ok(match this {
-            StarlarkOutputArtifactUnpack::Unfrozen(v) => Either::Left(v.inner()),
-            StarlarkOutputArtifactUnpack::Frozen(v) => Either::Right(v.inner()),
+            StarlarkOutputArtifactView::Unfrozen(v) => Either::Left(v.inner()),
+            StarlarkOutputArtifactView::Frozen(v) => Either::Right(v.inner()),
         })
     }
 }
 
 impl<'v> CommandLineArgLike<'v> for StarlarkOutputArtifact<'v> {
     fn register_me(&self) {
-        command_line_arg_like_impl!(StarlarkOutputArtifact::starlark_type_repr());
+        command_line_arg_like_impl!(StarlarkOutputArtifact::get_type_starlark_repr());
     }
 
     fn add_to_command_line(
@@ -375,7 +351,7 @@ impl<'v> CommandLineArgLike<'v> for StarlarkOutputArtifact<'v> {
 
 impl<'v> CommandLineArgLike<'v> for FrozenStarlarkOutputArtifact<'v> {
     fn register_me(&self) {
-        command_line_arg_like_impl!(FrozenStarlarkOutputArtifact::starlark_type_repr());
+        command_line_arg_like_impl!(FrozenStarlarkOutputArtifact::get_type_starlark_repr());
     }
 
     fn add_to_command_line(&self, fmt: &mut CommandLineBuilder<'v, '_>) -> buck2_error::Result<()> {

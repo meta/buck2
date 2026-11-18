@@ -42,6 +42,7 @@ pub fn get_re_group_tag(group: &TCodeReasonGroup) -> Option<ErrorTag> {
         TCodeReasonGroup::RE_CONNECTION => Some(ErrorTag::ReConnection),
         TCodeReasonGroup::USER_QUOTA => Some(ErrorTag::ReUserQuota),
         TCodeReasonGroup::USER_BAD_CERTS => Some(ErrorTag::ReUserBadCerts),
+        TCodeReasonGroup::USER_ACTION_LOST_WORKERS => Some(ErrorTag::ReActionLostWorkers),
         _ => None,
     }
 }

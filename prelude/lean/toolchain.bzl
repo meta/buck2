@@ -17,6 +17,7 @@ def _lean_toolchain_impl(ctx: AnalysisContext) -> list[Provider]:
             lean_flags = ctx.attrs.lean_flags,
             linker_flags = ctx.attrs.linker_flags,
             c_compiler_flags = ctx.attrs.c_compiler_flags,
+            c_export_flags = ctx.attrs.c_export_flags,
             c_preprocessor_infos = [dep[CPreprocessorInfo] for dep in ctx.attrs.c_headers],
             stdlib = ctx.attrs.stdlib,
             runtime = ctx.attrs.runtime,
@@ -27,6 +28,11 @@ lean_toolchain = rule(
     impl = _lean_toolchain_impl,
     attrs = {
         "c_compiler_flags": attrs.list(attrs.arg(), default = [], doc = "Flags for every compilation of generated C."),
+        "c_export_flags": attrs.list(
+            attrs.arg(),
+            default = [],
+            doc = "Flags that make the generated C export every symbol, for example `-DLEAN_EXPORTING`. `lean_library` then compiles the C of each module a second time with them, for shared libraries of Lean code on Windows, where an executable cannot export the whole core library. Leave it empty when `c_compiler_flags` exports the symbols already.",
+        ),
         "c_headers": attrs.list(
             attrs.dep(providers = [CPreprocessorInfo]),
             default = [],

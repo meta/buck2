@@ -18,22 +18,19 @@ use dupe::Dupe;
 use pagable::Pagable;
 use starlark::eval::Evaluator;
 use starlark::starlark_simple_value;
-use starlark::typing::Ty;
-use starlark::values::AllocValue;
 use starlark::values::Freeze;
 use starlark::values::FreezeError;
 use starlark::values::FreezeResult;
 use starlark::values::Freezer;
-use starlark::values::Heap;
 use starlark::values::NoSerialize;
 use starlark::values::ProvidesStaticType;
 use starlark::values::StarlarkPagable;
+use starlark::values::StarlarkRepresentations;
+use starlark::values::StarlarkType;
 use starlark::values::StarlarkValue;
 use starlark::values::Trace;
-use starlark::values::UnpackValue;
-use starlark::values::Value;
+use starlark::values::ValueTyped;
 use starlark::values::starlark_value;
-use starlark::values::type_repr::StarlarkTypeRepr;
 
 #[derive(
     Debug,
@@ -67,27 +64,9 @@ enum InnerStarlarkExecutionGroup {
 #[display("{}", RefCell::borrow(_0))]
 pub struct StarlarkExecutionGroup(RefCell<InnerStarlarkExecutionGroup>);
 
-#[starlark_value(type = "ExecGroup", skip_vtable, StarlarkTypeRepr, UnpackValue)]
+#[starlark_value(skip_vtable)]
 impl<'v> StarlarkValue<'v> for StarlarkExecutionGroup {
-    type Canonical = FrozenStarlarkExecutionGroup;
-
-    fn export_as(
-        &self,
-        variable_name: &str,
-        _eval: &mut Evaluator<'v, '_, '_>,
-    ) -> starlark::Result<()> {
-        let mut inner = self.0.borrow_mut();
-        let InnerStarlarkExecutionGroup::Unbound(cell_path) = &*inner else {
-            // Was already exported
-            return Ok(());
-        };
-        if variable_name == DEFAULT_EXECUTION_GROUP_NAME {
-            return Err(buck2_error::Error::from(ExecutionGroupError::ReservedName).into());
-        }
-        let group = NamedExecutionGroup::new(variable_name.to_owned(), *cell_path);
-        *inner = InnerStarlarkExecutionGroup::Bound(group);
-        Ok(())
-    }
+    type Type = StarlarkExecutionGroupView<'v>;
 }
 
 starlark::declare_starlark_value_as_type!(pub EXEC_GROUP_TYPE, StarlarkExecutionGroup);
@@ -121,12 +100,6 @@ impl StarlarkExecutionGroup {
     }
 }
 
-impl<'v> AllocValue<'v> for StarlarkExecutionGroup {
-    fn alloc_value(self, heap: Heap<'v>) -> Value<'v> {
-        heap.alloc_complex(self)
-    }
-}
-
 #[derive(
     derive_more::Display,
     Debug,
@@ -143,9 +116,9 @@ impl FrozenStarlarkExecutionGroup {
     pub const DEFAULT: Self = FrozenStarlarkExecutionGroup(ExecutionGroup::Default);
 }
 
-#[starlark_value(type = "ExecGroup")]
+#[starlark_value]
 impl<'v> StarlarkValue<'v> for FrozenStarlarkExecutionGroup {
-    type Canonical = FrozenStarlarkExecutionGroup;
+    type Type = StarlarkExecutionGroupView<'v>;
 }
 
 impl<'v> Freeze<'v> for StarlarkExecutionGroup {
@@ -157,46 +130,43 @@ impl<'v> Freeze<'v> for StarlarkExecutionGroup {
     }
 }
 
-/// An execution group in either of its reprs: a group is bound to a name by `export_as`, and the
-/// binding is required by the time the defining module freezes.
-#[derive(StarlarkTypeRepr, UnpackValue)]
-enum StarlarkExecutionGroupUnpack<'v> {
-    Unfrozen(&'v StarlarkExecutionGroup),
-    Frozen(&'v FrozenStarlarkExecutionGroup),
+/// An execution group in either of its representations: a group is bound to a name by
+/// `export_as`, and the binding is required by the time the defining module freezes.
+#[derive(Debug, Clone, Copy, StarlarkRepresentations)]
+pub enum StarlarkExecutionGroupView<'v> {
+    Frozen(ValueTyped<'v, FrozenStarlarkExecutionGroup>),
+    Unfrozen(ValueTyped<'v, StarlarkExecutionGroup>),
 }
 
-impl StarlarkExecutionGroupUnpack<'_> {
-    fn expect_bound(&self) -> buck2_error::Result<ExecutionGroup> {
-        match self {
-            StarlarkExecutionGroupUnpack::Unfrozen(v) => {
-                Ok(ExecutionGroup::Named(v.expect_bound()?))
-            }
-            StarlarkExecutionGroupUnpack::Frozen(v) => Ok(v.0.dupe()),
-        }
-    }
-}
-
-pub struct ExecutionGroupArg {
-    pub group: ExecutionGroup,
-}
-
-impl StarlarkTypeRepr for ExecutionGroupArg {
-    type Canonical = <StarlarkExecutionGroup as StarlarkTypeRepr>::Canonical;
-
-    fn starlark_type_repr() -> Ty {
-        <Self::Canonical as StarlarkTypeRepr>::starlark_type_repr()
-    }
-}
-
-impl<'v> UnpackValue<'v> for ExecutionGroupArg {
-    type Error = starlark::Error;
-
-    fn unpack_value_impl(value: Value<'v>) -> Result<Option<Self>, Self::Error> {
-        let Some(group) = StarlarkExecutionGroupUnpack::unpack_value_opt(value) else {
-            return Ok(None);
+#[starlark_value(type = "ExecGroup")]
+impl<'v> StarlarkType<'v> for StarlarkExecutionGroupView<'v> {
+    fn export_as(
+        &self,
+        variable_name: &str,
+        _eval: &mut Evaluator<'v, '_, '_>,
+    ) -> starlark::Result<()> {
+        let StarlarkExecutionGroupView::Unfrozen(this) = self else {
+            return Ok(());
         };
-        Ok(Some(ExecutionGroupArg {
-            group: group.expect_bound()?,
-        }))
+        let mut inner = this.0.borrow_mut();
+        let InnerStarlarkExecutionGroup::Unbound(cell_path) = &*inner else {
+            // Was already exported
+            return Ok(());
+        };
+        if variable_name == DEFAULT_EXECUTION_GROUP_NAME {
+            return Err(buck2_error::Error::from(ExecutionGroupError::ReservedName).into());
+        }
+        let group = NamedExecutionGroup::new(variable_name.to_owned(), *cell_path);
+        *inner = InnerStarlarkExecutionGroup::Bound(group);
+        Ok(())
+    }
+}
+
+impl StarlarkExecutionGroupView<'_> {
+    pub fn expect_bound(&self) -> buck2_error::Result<ExecutionGroup> {
+        match self {
+            StarlarkExecutionGroupView::Unfrozen(v) => Ok(ExecutionGroup::Named(v.expect_bound()?)),
+            StarlarkExecutionGroupView::Frozen(v) => Ok(v.0.dupe()),
+        }
     }
 }

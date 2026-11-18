@@ -32,6 +32,7 @@ load(
     "cxx_attr_exported_header_style",
     "cxx_attr_exported_headers",
     "cxx_attr_headers",
+    "header_map_key",
     "prepare_headers",
 )
 
@@ -266,7 +267,7 @@ def _format_include_arg(flag: str, path: cmd_args, compiler_type: str) -> list[c
         return [shared if shared != None else cmd_args(flag), path]
 
 def format_system_include_arg(path: cmd_args, compiler_type: str) -> list[cmd_args]:
-    if compiler_type == "windows":
+    if compiler_type in ["windows", "clang_cl"]:
         return [cmd_args(path, format = "/external:I{}")]
     else:
         return [_INCLUDE_FLAG_ARGS["-isystem"], path]
@@ -282,7 +283,7 @@ def cxx_exported_preprocessor_info(ctx: AnalysisContext, headers_layout: CxxHead
     for pre in extra_preprocessors:
         exported_headers += pre.headers
 
-    exported_header_map = {paths.join(h.namespace, h.name): h.artifact for h in exported_headers}
+    exported_header_map = {header_map_key(h): h.artifact for h in exported_headers}
     raw_headers = []
     include_dirs = []
     system_include_dirs = []
@@ -309,7 +310,7 @@ def cxx_exported_preprocessor_info(ctx: AnalysisContext, headers_layout: CxxHead
     if _attr_raw_headers_as_headers_mode(ctx) != RawHeadersAsHeadersMode("disabled"):
         if raw_headers:
             exported_headers = as_headers(ctx, raw_headers, ctx.attrs.public_include_directories + ctx.attrs.public_system_include_directories)
-            exported_header_map = {paths.join(h.namespace, h.name): h.artifact for h in exported_headers}
+            exported_header_map = {header_map_key(h): h.artifact for h in exported_headers}
             raw_headers.clear()
 
             # Force system exported header style if any system include directories are set.
@@ -467,7 +468,7 @@ def _cxx_private_preprocessor_info(
         headers += pp.headers
         uses_modules = uses_modules or pp.uses_modules
 
-    header_map = {paths.join(h.namespace, h.name): h.artifact for h in headers}
+    header_map = {header_map_key(h): h.artifact for h in headers}
 
     all_raw_headers = []
     include_dirs = []
@@ -493,7 +494,7 @@ def _cxx_private_preprocessor_info(
             all_raw_headers,
             ctx.attrs.include_directories + getattr(ctx.attrs, "public_include_directories", []) + getattr(ctx.attrs, "public_system_include_directories", []),
         )
-        header_map = {paths.join(h.namespace, h.name): h.artifact for h in headers}
+        header_map = {header_map_key(h): h.artifact for h in headers}
         all_raw_headers.clear()
     else:
         include_dirs.extend([ctx.label.path.add(x) for x in ctx.attrs.include_directories])

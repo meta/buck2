@@ -343,8 +343,10 @@ impl<'a, 'b, 'f> BindingsCollect<'a, 'b, 'f> {
                                     _ => None,
                                 };
                                 if let Some((extend, arg)) = res {
-                                    if let ResolvedIdent::Slot(_, id) =
-                                        id.node.payload.as_ref().unwrap()
+                                    // The payload is `None` after a scope error, which the lint
+                                    // typechecker reports without stopping.
+                                    if let Some(ResolvedIdent::Slot(_, id)) =
+                                        id.node.payload.as_ref()
                                     {
                                         let bind = if extend {
                                             BindExpr::ListExtend(*id, args.args[arg].expr())

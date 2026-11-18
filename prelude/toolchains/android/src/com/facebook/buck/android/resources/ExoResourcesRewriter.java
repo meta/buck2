@@ -46,7 +46,7 @@ import java.util.stream.Collectors;
 import java.util.zip.CRC32;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipFile;
-import javax.annotation.Nullable;
+import org.jspecify.annotations.Nullable;
 
 /**
  * ExoResourceRewriter is the core of constructing build outputs for exo-for-resources.
@@ -428,7 +428,7 @@ public class ExoResourcesRewriter {
       return randomAccessFile;
     }
 
-    private Map<String, Long> localHeaderOffsets;
+    @Nullable private Map<String, Long> localHeaderOffsets;
 
     /**
      * Lazily parses the central directory to build a map of entry name → local header offset.

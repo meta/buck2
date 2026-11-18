@@ -9,4 +9,22 @@ runs:
   - uses: actions/setup-go@v5
     with:
       cache: false
-      go-version: '~1.22.0'
+      go-version: '~1.24.0'
+  # The Erlang support in the prelude uses OTP 28 syntax.
+  - uses: erlef/setup-beam@v1
+    with:
+      otp-version: '28'
+      install-rebar: false
+      install-hex: false
+  - uses: actions/setup-java@v4
+    with:
+      distribution: temurin
+      java-version: '21'
+  # The demo toolchains in the prelude read the JDK from `[java] java_home`
+  # and the Android SDK from `[android] sdk_path`. The runner images carry an
+  # Android SDK under ANDROID_HOME.
+  - name: Point examples/with_prelude at the JDK and the Android SDK
+    run: |-
+      printf '[java]\n  java_home = %s\n' "${JAVA_HOME//\\//}" >> examples/with_prelude/.buckconfig.local
+      printf '[android]\n  sdk_path = %s\n' "${ANDROID_HOME//\\//}" >> examples/with_prelude/.buckconfig.local
+    shell: bash

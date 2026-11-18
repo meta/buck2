@@ -21,16 +21,19 @@ import com.facebook.buck.jvm.cd.command.kotlin.LanguageVersion;
 import com.facebook.buck.jvm.core.BuildTargetValue;
 import com.facebook.buck.jvm.java.CompilerClassToSourceMap;
 import com.facebook.buck.jvm.java.CompilerOutputPaths;
+import com.facebook.buck.jvm.java.JavaPaths;
 import com.facebook.buck.jvm.kotlin.cd.analytics.KotlinCDAnalytics;
 import com.facebook.buck.jvm.kotlin.cd.analytics.KotlinCDLoggingContext;
 import com.facebook.buck.jvm.kotlin.kotlinc.Kotlinc;
 import com.facebook.buck.jvm.kotlin.kotlinc.incremental.KotlincMode;
+import com.facebook.buck.jvm.kotlin.kotlinc.incremental.RebuildReason;
 import com.facebook.buck.jvm.kotlin.plugin.PluginLoader;
 import com.facebook.buck.step.StepExecutionResult;
 import com.facebook.buck.step.StepExecutionResults;
 import com.facebook.buck.step.isolatedsteps.IsolatedStep;
 import com.facebook.buck.util.CapturingPrintStream;
 import com.facebook.buck.util.Verbosity;
+import com.facebook.infer.annotation.Nullsafe;
 import com.google.common.annotations.VisibleForTesting;
 import com.google.common.base.Joiner;
 import com.google.common.collect.ImmutableList;
@@ -38,21 +41,36 @@ import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.ImmutableSortedSet;
 import java.io.File;
 import java.io.IOException;
+import java.io.UncheckedIOException;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.time.Instant;
+import java.util.Collections;
+import java.util.Objects;
 import java.util.Optional;
-import javax.annotation.Nullable;
+import java.util.function.Supplier;
+import java.util.zip.ZipEntry;
+import java.util.zip.ZipFile;
+import org.jspecify.annotations.Nullable;
 
 /** Kotlin compile Step */
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public class KotlincStep implements IsolatedStep {
   private static final Logger LOG = Logger.get(KotlincStep.class);
 
   private static final String CLASSPATH_FLAG = "-classpath";
   private static final String DESTINATION_FLAG = "-d";
+  // Under the incremental state directory, beside the directories it copies.
+  private static final String STATE_COPY_DIRECTORY = "applicability_full_round_copy";
   private static final String X_PLUGIN_ARG = "-Xplugin=";
   private static final String PLUGIN = "-P";
+  // The marker the applicability plugin's report starts with (`ApplicabilityReport.kt`).
+  private static final String APPLICABILITY_REPORT_MARKER = "KOSABI_APPLICABILITY_REPORT_V2=";
+  // Written by the incremental compiler after a successful round
+  // (`JvmCompilationConfigurationFactory`).
+  private static final String SHRUNK_CLASSPATH_SNAPSHOT = "shrunk-classpath-snapshot.bin";
   private static final String APPLICABILITY_PLUGIN_ID =
       "com.facebook.kotlin.compilerplugins.kosabiapplicability";
 
@@ -87,6 +105,8 @@ public class KotlincStep implements IsolatedStep {
   private final boolean shouldKosabiJvmAbiGenUseK2;
   private final boolean shouldKosabiUseShallowClassUsage;
   private final String kosabiAbiValidationMode;
+  private final ImmutableList<String> kosabiJvmAbiGenOptions;
+  private final boolean disableKosabiKeptBodyStubCheck;
 
   private static final String COMPOSE_PLUGIN_PATH_FRAGMENT = "compose-compiler-plugin";
 
@@ -116,7 +136,9 @@ public class KotlincStep implements IsolatedStep {
       LanguageVersion languageVersion,
       boolean shouldKosabiJvmAbiGenUseK2,
       boolean shouldKosabiUseShallowClassUsage,
-      String kosabiAbiValidationMode) {
+      String kosabiAbiValidationMode,
+      ImmutableList<String> kosabiJvmAbiGenOptions,
+      boolean disableKosabiKeptBodyStubCheck) {
     this.invokingRule = invokingRule;
     this.outputDirectory = outputDirectory;
     this.sourceFilePaths = sourceFilePaths;
@@ -143,6 +165,8 @@ public class KotlincStep implements IsolatedStep {
     this.shouldKosabiJvmAbiGenUseK2 = shouldKosabiJvmAbiGenUseK2;
     this.shouldKosabiUseShallowClassUsage = shouldKosabiUseShallowClassUsage;
     this.kosabiAbiValidationMode = kosabiAbiValidationMode;
+    this.kosabiJvmAbiGenOptions = kosabiJvmAbiGenOptions;
+    this.disableKosabiKeptBodyStubCheck = disableKosabiKeptBodyStubCheck;
   }
 
   @Override
@@ -168,26 +192,27 @@ public class KotlincStep implements IsolatedStep {
           KotlinCDLoggingContextFactory.create(this, languageVersion, kotlincMode);
       Instant compilationStart = Instant.now();
 
+      @Nullable Path roundStateDir = applicabilityRoundStateDir();
       int declaredDepsBuildResult =
-          kotlinc.buildWithClasspath(
-              firstOrderContext,
-              invokingRule,
-              compilerOptions,
-              kotlinHomeLibraries,
-              sourceFilePaths,
-              pathToSrcsList,
-              Optional.of(outputPaths.getWorkingDirectory().getPath()),
-              context.getRuleCellRoot(),
+          compileCheckingAgainInFull(
+              verifySourceOnlyAbiConstraints && invokingRule.isLibraryJar(),
               kotlincMode,
-              loggingContext,
-              context.getRuleCellRoot().resolve(outputDirectory),
-              emitsClassToSourceMap() && outputPaths.getCompilerClassToSourceMap() != null
-                  ? context
-                      .getRuleCellRoot()
-                      .resolve(outputPaths.getWorkingDirectory())
-                      .getPath()
-                      .resolve(CompilerClassToSourceMap.KOTLIN_FILE_NAME)
-                  : null);
+              mode ->
+                  compile(
+                      context,
+                      firstOrderContext,
+                      compilerOptions,
+                      mode,
+                      loggingContext,
+                      roundStateDir),
+              kotlinc::lastCompilationWasIncremental,
+              () -> stderr.getContentsAsString(StandardCharsets.UTF_8),
+              () -> {
+                stdout.reset();
+                stderr.reset();
+              },
+              () -> copyIncrementalState(context.getRuleCellRoot()),
+              invokingRule.getFullyQualifiedName());
 
       Instant compilationEnd = Instant.now();
       Duration compilationDuration = Duration.between(compilationStart, compilationEnd);
@@ -258,6 +283,278 @@ public class KotlincStep implements IsolatedStep {
     } catch (IOException | InterruptedException e) {
       throw new RuntimeException(e);
     }
+  }
+
+  /**
+   * Compiles in [mode]. In an incremental round of an action that verifies Kosabi applicability,
+   * [roundStateDir] is its incremental state, where {@link ApplicabilityRoundMarker} records the
+   * compile; otherwise it is null.
+   */
+  private int compile(
+      IsolatedExecutionContext context,
+      IsolatedExecutionContext firstOrderContext,
+      ImmutableList<String> compilerOptions,
+      KotlincMode mode,
+      KotlinCDLoggingContext loggingContext,
+      @Nullable Path roundStateDir)
+      throws InterruptedException, IOException {
+    if (roundStateDir == null) {
+      return compile(context, firstOrderContext, compilerOptions, mode, loggingContext);
+    }
+    ApplicabilityRoundMarker.enter(roundStateDir, ApplicabilityRoundMarker.Phase.COMPILING);
+    int result = compile(context, firstOrderContext, compilerOptions, mode, loggingContext);
+    ApplicabilityRoundMarker.leaveCompile(
+        roundStateDir, result == StepExecutionResults.SUCCESS_EXIT_CODE);
+    return result;
+  }
+
+  private @Nullable Path applicabilityRoundStateDir() {
+    if (!verifySourceOnlyAbiConstraints
+        || !invokingRule.isLibraryJar()
+        || !(kotlincMode instanceof KotlincMode.Incremental)) {
+      return null;
+    }
+    return ((KotlincMode.Incremental) kotlincMode).getKotlicWorkingDir().getPath().getParent();
+  }
+
+  private int compile(
+      IsolatedExecutionContext context,
+      IsolatedExecutionContext firstOrderContext,
+      ImmutableList<String> compilerOptions,
+      KotlincMode mode,
+      KotlinCDLoggingContext loggingContext)
+      throws InterruptedException {
+    return kotlinc.buildWithClasspath(
+        firstOrderContext,
+        invokingRule,
+        compilerOptions,
+        kotlinHomeLibraries,
+        sourceFilePaths,
+        pathToSrcsList,
+        Optional.of(outputPaths.getWorkingDirectory().getPath()),
+        context.getRuleCellRoot(),
+        mode,
+        loggingContext,
+        context.getRuleCellRoot().resolve(outputDirectory),
+        emitsClassToSourceMap() && outputPaths.getCompilerClassToSourceMap() != null
+            ? context
+                .getRuleCellRoot()
+                .resolve(outputPaths.getWorkingDirectory())
+                .getPath()
+                .resolve(CompilerClassToSourceMap.KOTLIN_FILE_NAME)
+            : null);
+  }
+
+  /** A compile in a mode, returning its exit code. */
+  @VisibleForTesting
+  interface Compilation {
+    int compile(KotlincMode mode) throws InterruptedException, IOException;
+  }
+
+  /** A copy of an incremental round's state, kept while a full compile replaces it. */
+  @VisibleForTesting
+  interface StateCopy {
+    /** Puts the copied state back. */
+    void restore() throws IOException;
+
+    /** Drops the copy, keeping the current state. */
+    void discard() throws IOException;
+  }
+
+  /** Copies an incremental round's state. */
+  @VisibleForTesting
+  interface StateCopier {
+    StateCopy copy() throws IOException;
+  }
+
+  private static final StateCopy NO_COPY =
+      new StateCopy() {
+        @Override
+        public void restore() {}
+
+        @Override
+        public void discard() {}
+      };
+
+  /**
+   * Compiles in {@code mode}. When an incremental round of an action that verifies Kosabi
+   * applicability compiled incrementally and failed on an applicability verdict alone, compiles
+   * again in full and returns that compile's result: an incremental round analyses only the files
+   * it recompiles, and checks that need facts only a source declaration carries treat unchanged
+   * files conservatively, so a verdict that is not READY is final only after a full round.
+   *
+   * <p>The full compile replaces the incremental compiler's state. If it fails too, the state
+   * copied before it is put back: the failed incremental compile left the last successful round's
+   * state, so the next round can still be incremental.
+   */
+  @VisibleForTesting
+  static int compileCheckingAgainInFull(
+      boolean verifiesApplicability,
+      KotlincMode mode,
+      Compilation compilation,
+      java.util.function.BooleanSupplier compiledIncrementally,
+      Supplier<String> stderr,
+      Runnable resetOutput,
+      StateCopier stateCopier,
+      String target)
+      throws InterruptedException, IOException {
+    boolean incrementalRound = isIncrementalApplicabilityRound(verifiesApplicability, mode);
+    int result = compilation.compile(mode);
+    if (!shouldCheckAgainInFull(
+        incrementalRound && compiledIncrementally.getAsBoolean(), result, stderr)) {
+      return result;
+    }
+    LOG.info(
+        "Kosabi applicability did not pass an incremental round of %s; checking it in full",
+        target);
+    resetOutput.run();
+    StateCopy copy;
+    try {
+      copy = stateCopier.copy();
+    } catch (IOException e) {
+      LOG.warn(e, "Could not copy the incremental state of %s", target);
+      copy = NO_COPY;
+    }
+    int fullResult;
+    try {
+      fullResult =
+          compilation.compile(
+              ((KotlincMode.Incremental) mode)
+                  .withRebuildReason(RebuildReason.APPLICABILITY_CHECKED_IN_FULL));
+    } catch (InterruptedException | IOException | RuntimeException e) {
+      try {
+        copy.restore();
+      } catch (IOException restoreFailure) {
+        e.addSuppressed(restoreFailure);
+      }
+      throw e;
+    }
+    // The full compile's result stands either way: a copy left behind is replaced by the next one,
+    // and state that cannot be put back is deleted, so the next round compiles in full.
+    try {
+      if (fullResult == StepExecutionResults.SUCCESS_EXIT_CODE) {
+        copy.discard();
+      } else {
+        copy.restore();
+      }
+    } catch (IOException e) {
+      LOG.warn(e, "Could not put back or drop the copy of the incremental state of %s", target);
+    }
+    return fullResult;
+  }
+
+  /** Copies the incremental compiler's working directory and the class outputs. */
+  private StateCopy copyIncrementalState(AbsPath ruleCellRoot) throws IOException {
+    Path workingDirectory = ((KotlincMode.Incremental) kotlincMode).getKotlicWorkingDir().getPath();
+    Path stateDirectory = Objects.requireNonNull(workingDirectory.getParent());
+    return IncrementalStateCopy.copy(
+        stateDirectory.resolve(STATE_COPY_DIRECTORY),
+        ImmutableList.of(workingDirectory, ruleCellRoot.resolve(outputDirectory).getPath()));
+  }
+
+  /**
+   * Whether a round runs Kosabi applicability incrementally: it verifies source-only ABI
+   * constraints, is not forced to be full, and has the shrunk classpath snapshot that only a
+   * successful earlier round leaves, without which the incremental compiler compiles in full
+   * anyway.
+   */
+  @VisibleForTesting
+  static boolean isIncrementalApplicabilityRound(boolean verifiesApplicability, KotlincMode mode) {
+    if (!verifiesApplicability || !(mode instanceof KotlincMode.Incremental)) {
+      return false;
+    }
+    KotlincMode.Incremental incremental = (KotlincMode.Incremental) mode;
+    return incremental.getRebuildReason() == null
+        && Files.exists(
+            incremental.getKotlicWorkingDir().resolve(SHRUNK_CLASSPATH_SNAPSHOT).getPath());
+  }
+
+  /**
+   * Whether a round must be compiled again in full: an incremental applicability round that failed
+   * on an applicability verdict alone. The plugin reports only when no other compiler error
+   * occurred, and only for a verdict that is not READY.
+   */
+  @VisibleForTesting
+  static boolean shouldCheckAgainInFull(
+      boolean incrementalApplicabilityRound, int exitCode, Supplier<String> stderr) {
+    return incrementalApplicabilityRound
+        && exitCode != StepExecutionResults.SUCCESS_EXIT_CODE
+        && stderr.get().contains(APPLICABILITY_REPORT_MARKER);
+  }
+
+  /**
+   * The round's Kotlin sources as the applicability plugin keys them, relative to {@code root}: the
+   * target's {@code .kt} and {@code .kts} files, and those in its source archives at the paths
+   * kotlinc compiles them from, under {@code workingDirectory}, where kotlincd extracts them.
+   */
+  @VisibleForTesting
+  static ImmutableList<RelPath> applicabilitySources(
+      AbsPath root, Iterable<RelPath> sources, RelPath workingDirectory) throws IOException {
+    ImmutableList.Builder<RelPath> kotlinSources = ImmutableList.builder();
+    for (RelPath source : sources) {
+      String name = source.toString();
+      if (isKotlinSource(name)) {
+        kotlinSources.add(source);
+      } else if (name.endsWith(JavaPaths.SRC_ZIP) || name.endsWith(JavaPaths.SRC_JAR)) {
+        try (ZipFile archive = new ZipFile(root.resolve(source).toFile())) {
+          for (ZipEntry entry : Collections.list(archive.entries())) {
+            if (!entry.isDirectory() && isKotlinSource(entry.getName())) {
+              kotlinSources.add(extractedPath(root, workingDirectory, entry.getName()));
+            }
+          }
+        }
+      }
+    }
+    return kotlinSources.build();
+  }
+
+  /**
+   * Where kotlincd extracts an archive entry, relative to {@code root}: the entry name resolved
+   * against {@code workingDirectory} and normalized, as {@code Unzip.extractArchive} does. An entry
+   * that lands outside {@code root} has no path the plugin could match, so the list cannot be made.
+   */
+  private static RelPath extractedPath(AbsPath root, RelPath workingDirectory, String entryName)
+      throws IOException {
+    Path base = root.getPath().normalize();
+    Path extracted = base.resolve(workingDirectory.getPath()).resolve(entryName).normalize();
+    if (!extracted.startsWith(base)) {
+      throw new IOException("Source archive entry outside the checkout: " + entryName);
+    }
+    return RelPath.of(base.relativize(extracted));
+  }
+
+  /**
+   * Lists the round's Kotlin sources for the applicability plugin. A list that cannot be made does
+   * not fail the step: any earlier list is removed instead, so that it is never read as this
+   * round's, and the plugin, which then cannot tell which files are still sources, reports the
+   * round as not fully evaluated and leaves no ledger. Only an earlier list that can be neither
+   * replaced nor removed fails the step, since the plugin would read it as this round's.
+   */
+  @VisibleForTesting
+  static void writeApplicabilitySourceList(
+      AbsPath incrementalStateDir,
+      AbsPath root,
+      Iterable<RelPath> sources,
+      RelPath workingDirectory) {
+    try {
+      ApplicabilityLedgerFiles.writeSourceList(
+          incrementalStateDir, applicabilitySources(root, sources, workingDirectory));
+    } catch (IOException | RuntimeException e) {
+      LOG.warn(e, "Could not list the Kotlin sources of the round for Kosabi applicability");
+      try {
+        ApplicabilityLedgerFiles.deleteSourceList(incrementalStateDir);
+      } catch (IOException deleteFailure) {
+        deleteFailure.addSuppressed(e);
+        throw new UncheckedIOException(
+            "An earlier Kotlin source list for Kosabi applicability can be neither replaced nor"
+                + " removed",
+            deleteFailure);
+      }
+    }
+  }
+
+  private static boolean isKotlinSource(String name) {
+    return name.endsWith(".kt") || name.endsWith(".kts");
   }
 
   @VisibleForTesting
@@ -352,6 +649,19 @@ public class KotlincStep implements IsolatedStep {
             Optional.ofNullable(
                 resolvedKosabiPluginOptionPath.get(
                     KosabiConfig.PROPERTY_KOSABI_APPLICABILITY_CELL_ROOT))));
+    if (kotlincMode instanceof KotlincMode.Incremental) {
+      // The plugin keeps its cross-file ledger next to the rest of the incremental state.
+      AbsPath incrementalStateDir =
+          ((KotlincMode.Incremental) kotlincMode).getKotlicWorkingDir().getParent();
+      if (incrementalStateDir == null) {
+        throw new IllegalStateException(
+            "incremental_state_dir is not available: kotlinc working dir has no parent");
+      }
+      writeApplicabilitySourceList(
+          incrementalStateDir, sourceRoot, sourceFilePaths, outputPaths.getWorkingDirectory());
+      addApplicabilityPluginOption(
+          builder, "incremental-state-dir", incrementalStateDir.getPath().toString());
+    }
   }
 
   @VisibleForTesting
@@ -450,6 +760,14 @@ public class KotlincStep implements IsolatedStep {
         builder.add(
             "plugin:com.facebook.k2.jvm.abi.gen:abiValidationMode=" + kosabiAbiValidationMode);
       }
+      for (String option : kosabiJvmAbiGenOptions) {
+        builder.add(PLUGIN);
+        builder.add("plugin:com.facebook.k2.jvm.abi.gen:" + option);
+      }
+      if (disableKosabiKeptBodyStubCheck) {
+        builder.add(PLUGIN);
+        builder.add("plugin:com.facebook.k2.jvm.abi.gen:keptBodyStubCheck=false");
+      }
     }
 
     addClasspath(builder, this.compilationClasspath);
@@ -474,7 +792,7 @@ public class KotlincStep implements IsolatedStep {
     if (fullErrorMessage.isEmpty()) return false;
 
     int earlyTerminationMessageIndex =
-        fullErrorMessage.indexOf(kosabiEarlyTerminationMessagePrefix);
+        fullErrorMessage.indexOf(Objects.requireNonNull(kosabiEarlyTerminationMessagePrefix));
     if (earlyTerminationMessageIndex >= 0) {
       return true;
     }

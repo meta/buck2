@@ -42,6 +42,8 @@ pagable_transition_alias(
         ),
     ),
     modifiers = buck2_modifiers(),
+    # The e2e tests run it. Open source has no `PACKAGE` file that makes it public.
+    visibility = ["PUBLIC"],
 )
 
 buck2_bundle(

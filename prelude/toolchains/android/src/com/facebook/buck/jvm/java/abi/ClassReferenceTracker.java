@@ -10,13 +10,14 @@
 
 package com.facebook.buck.jvm.java.abi;
 
+import com.facebook.infer.annotation.Nullsafe;
 import com.google.common.collect.ImmutableSortedSet;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Map;
 import java.util.Set;
 import java.util.SortedSet;
-import javax.annotation.Nullable;
+import org.jspecify.annotations.Nullable;
 import org.objectweb.asm.AnnotationVisitor;
 import org.objectweb.asm.ClassVisitor;
 import org.objectweb.asm.FieldVisitor;
@@ -32,6 +33,7 @@ import org.objectweb.asm.tree.InnerClassNode;
  * A {@link ClassVisitor} that records references to other classes. This is intended to be driven by
  * another {@link ClassVisitor} which is filtering down to just the ABI of the class.
  */
+@Nullsafe(Nullsafe.Mode.LOCAL)
 class ClassReferenceTracker extends ClassVisitor {
   private Set<String> referencedClassNames = new HashSet<>();
   @Nullable private String className;
@@ -65,9 +67,9 @@ class ClassReferenceTracker extends ClassVisitor {
       int version,
       int access,
       String name,
-      String signature,
-      String superName,
-      String[] interfaces) {
+      @Nullable String signature,
+      @Nullable String superName,
+      String @Nullable [] interfaces) {
     className = name;
     if (superName != null) {
       addReferencedClassName(superName);
@@ -102,15 +104,15 @@ class ClassReferenceTracker extends ClassVisitor {
 
   @Override
   public AnnotationVisitor visitTypeAnnotation(
-      int typeRef, TypePath typePath, String desc, boolean visible) {
+      int typeRef, @Nullable TypePath typePath, String desc, boolean visible) {
     visitDescriptor(desc);
     return new TrackingAnnotationVisitor(
         api, super.visitTypeAnnotation(typeRef, typePath, desc, visible));
   }
 
   @Override
-  public FieldVisitor visitField(
-      int access, String name, String desc, String signature, Object value) {
+  public @Nullable FieldVisitor visitField(
+      int access, String name, String desc, @Nullable String signature, @Nullable Object value) {
     if ((access & Opcodes.ACC_ENUM) != 0) {
       // Enum values don't count as references
       return super.visitField(access, name, desc, signature, value);
@@ -124,7 +126,11 @@ class ClassReferenceTracker extends ClassVisitor {
 
   @Override
   public MethodVisitor visitMethod(
-      int access, String name, String desc, String signature, String[] exceptions) {
+      int access,
+      String name,
+      String desc,
+      @Nullable String signature,
+      String @Nullable [] exceptions) {
     visitType(Type.getMethodType(desc));
     visitSignature(signature);
     addReferencedClassNames(exceptions);
@@ -166,7 +172,7 @@ class ClassReferenceTracker extends ClassVisitor {
     referencedClassNames.add(className);
   }
 
-  void addReferencedClassNames(@Nullable String[] classNames) {
+  void addReferencedClassNames(String @Nullable [] classNames) {
     if (classNames == null) {
       return;
     }
@@ -186,7 +192,7 @@ class ClassReferenceTracker extends ClassVisitor {
   }
 
   private class TrackingMethodVisitor extends MethodVisitor {
-    public TrackingMethodVisitor(int api, MethodVisitor mv) {
+    public TrackingMethodVisitor(int api, @Nullable MethodVisitor mv) {
       super(api, mv);
     }
 
@@ -198,7 +204,7 @@ class ClassReferenceTracker extends ClassVisitor {
 
     @Override
     public AnnotationVisitor visitTypeAnnotation(
-        int typeRef, TypePath typePath, String desc, boolean visible) {
+        int typeRef, @Nullable TypePath typePath, String desc, boolean visible) {
       visitDescriptor(desc);
       return new TrackingAnnotationVisitor(
           api, super.visitTypeAnnotation(typeRef, typePath, desc, visible));
@@ -213,7 +219,7 @@ class ClassReferenceTracker extends ClassVisitor {
   }
 
   private class TrackingFieldVisitor extends FieldVisitor {
-    public TrackingFieldVisitor(int api, FieldVisitor fv) {
+    public TrackingFieldVisitor(int api, @Nullable FieldVisitor fv) {
       super(api, fv);
     }
 
@@ -225,7 +231,7 @@ class ClassReferenceTracker extends ClassVisitor {
 
     @Override
     public AnnotationVisitor visitTypeAnnotation(
-        int typeRef, TypePath typePath, String desc, boolean visible) {
+        int typeRef, @Nullable TypePath typePath, String desc, boolean visible) {
       visitDescriptor(desc);
       return new TrackingAnnotationVisitor(
           api, super.visitTypeAnnotation(typeRef, typePath, desc, visible));
@@ -233,12 +239,12 @@ class ClassReferenceTracker extends ClassVisitor {
   }
 
   private class TrackingAnnotationVisitor extends AnnotationVisitor {
-    public TrackingAnnotationVisitor(int api, AnnotationVisitor av) {
+    public TrackingAnnotationVisitor(int api, @Nullable AnnotationVisitor av) {
       super(api, av);
     }
 
     @Override
-    public void visit(String name, Object value) {
+    public void visit(@Nullable String name, Object value) {
       if (value instanceof Type) {
         visitDescriptor(((Type) value).getDescriptor());
       }
@@ -246,18 +252,18 @@ class ClassReferenceTracker extends ClassVisitor {
     }
 
     @Override
-    public void visitEnum(String name, String desc, String value) {
+    public void visitEnum(@Nullable String name, String desc, String value) {
       visitDescriptor(desc);
       super.visitEnum(name, desc, value);
     }
 
     @Override
-    public AnnotationVisitor visitArray(String name) {
+    public AnnotationVisitor visitArray(@Nullable String name) {
       return new TrackingAnnotationVisitor(api, super.visitArray(name));
     }
 
     @Override
-    public AnnotationVisitor visitAnnotation(String name, String desc) {
+    public AnnotationVisitor visitAnnotation(@Nullable String name, String desc) {
       visitDescriptor(desc);
       return new TrackingAnnotationVisitor(api, super.visitAnnotation(name, desc));
     }

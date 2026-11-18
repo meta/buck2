@@ -430,8 +430,8 @@ mod tests {
     fn test_stacks_collect() {
         Heap::temp(|heap| {
             heap.record_call_enter(const_frozen_string!("enter").at().to_value());
-            heap.alloc_str("xxyy");
-            heap.alloc_str("zzww");
+            heap.alloc("xxyy");
+            heap.alloc("zzww");
             heap.record_call_exit();
 
             let stacks = AggregateHeapProfileInfo::collect(heap, None);
@@ -444,9 +444,9 @@ mod tests {
     #[test]
     fn test_stacks_collect_skips_uninitialized_entries() {
         Freezer::testing_temp(|heap, freezer| {
-            let retained = heap.alloc_str("retained");
+            let retained = heap.alloc("retained");
             freezer.freeze(retained.to_value()).unwrap();
-            heap.alloc_str("allocated");
+            heap.alloc("allocated");
 
             for retained in [None, Some(HeapKind::Frozen)] {
                 let mut collector = StackCollector::new(retained);
@@ -472,9 +472,9 @@ mod tests {
     fn test_stacks_collect_retained() {
         Freezer::testing_temp(|heap, freezer| {
             heap.record_call_enter(const_frozen_string!("enter").at().to_value());
-            let s0 = heap.alloc_str("xxyy");
-            let s1 = heap.alloc_str("zzww");
-            heap.alloc_str("rrtt");
+            let s0 = heap.alloc("xxyy");
+            let s1 = heap.alloc("zzww");
+            heap.alloc("rrtt");
             heap.record_call_exit();
 
             freezer.freeze(s0.to_value()).unwrap();
@@ -507,7 +507,7 @@ mod tests {
         fn make() -> AggregateHeapProfileInfo {
             Freezer::testing_temp(|heap, freezer| {
                 heap.record_call_enter(const_frozen_string!("xx").at().to_value());
-                let s = heap.alloc_str("abc");
+                let s = heap.alloc("abc");
                 heap.record_call_exit();
                 freezer.freeze(s.to_value()).unwrap();
 

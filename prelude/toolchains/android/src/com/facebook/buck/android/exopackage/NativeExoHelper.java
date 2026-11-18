@@ -145,7 +145,7 @@ public class NativeExoHelper implements ExoHelper {
             relativePath.getName(0).toString().equals("libs")
                 || relativePath.getName(0).toString().equals("assetLibs"));
       }
-      String libAbi = relativePath.getParent().getFileName().toString();
+      String libAbi = Objects.requireNonNull(relativePath.getParent()).getFileName().toString();
       String libName = relativePath.getFileName().toString();
       if (libAbi.equals(abi) && !ignoreLibraries.contains(libName)) {
         filteredLibraries.put(entry);

@@ -24,7 +24,7 @@ def compute_providers(ctx: AnalysisContext, exe: PexProviders, executable_type: 
     elif executable_type == ExecutableType("test"):
         return compute_test_providers(ctx, exe)
     else:
-        fail("Unknown executable type: " + executable_type)
+        fail("Unknown executable type: {}".format(executable_type))
 
 def compute_binary_providers(ctx: AnalysisContext, exe: PexProviders) -> list[Provider]:
     return [

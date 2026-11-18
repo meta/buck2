@@ -12,6 +12,8 @@ package com.facebook.buck.testrunner;
 
 import static com.facebook.buck.testrunner.CheckDependency.requiresClass;
 
+import com.facebook.infer.annotation.Nullsafe;
+
 /**
  * Launcher for JUnit.
  *
@@ -28,6 +30,7 @@ import static com.facebook.buck.testrunner.CheckDependency.requiresClass;
  * Java API. The objective is to limit the set of files added to the ClassLoader that runs the test,
  * as not to interfere with the results of the test.
  */
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public class JUnitMain {
 
   private JUnitMain() {

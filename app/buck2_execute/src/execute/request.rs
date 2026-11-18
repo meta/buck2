@@ -27,6 +27,7 @@ use buck2_core::fs::buck_out_path::BuildArtifactPath;
 use buck2_core::fs::project_rel_path::ProjectRelativePath;
 use buck2_core::fs::project_rel_path::ProjectRelativePathBuf;
 pub use buck2_data::NetworkAccess;
+use buck2_data::local_command::EnvironmentRule;
 use buck2_directory::directory::dashmap_directory_interner::DashMapDirectoryInterner;
 use buck2_directory::directory::directory::Directory;
 use buck2_directory::directory::directory_iterator::DirectoryIterator;
@@ -362,6 +363,19 @@ impl ActionSalt {
     }
 }
 
+/// How a local test is killed.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct TestKillPolicy {
+    /// How long a test that hit its timeout gets to exit after `SIGTERM` before it and
+    /// everything left in its process group get `SIGKILL`. `None` kills immediately.
+    pub timeout_grace_period: Option<Duration>,
+    /// On Linux, kill the processes a test left behind outside its process group, such as
+    /// daemons, when it is killed. Only applies to tests that do not run in an action cgroup. Such
+    /// a test adopts its orphaned descendants, which then stay zombies until it exits instead of
+    /// being reaped by init.
+    pub kill_detached_processes: bool,
+}
+
 /// The data contains the information about the command to be executed.
 pub struct CommandExecutionRequest {
     /// Optional arguments including executable prepended to `args` to get full command line.
@@ -418,7 +432,8 @@ pub struct CommandExecutionRequest {
     /// String representation of a key that uniquely identifies a RunAction
     run_action_key: Option<String>,
 
-    is_test: bool,
+    /// Set for tests only.
+    test_kill_policy: Option<TestKillPolicy>,
     /// Whether to skip resource control (cgroup) for this command.
     /// Set for local resource setup commands whose backgrounded processes
     /// must survive after the setup script exits.
@@ -467,7 +482,7 @@ impl CommandExecutionRequest {
             meta_internal_extra_params: MetaInternalExtraParams::default_arc(),
             outputs_for_error_handler: Vec::new(),
             run_action_key: None,
-            is_test: false,
+            test_kill_policy: None,
             skip_resource_control: false,
             network_access: None,
             disable_local_network_isolation: false,
@@ -631,6 +646,13 @@ impl CommandExecutionRequest {
         self.local_environment_inheritance.as_ref()
     }
 
+    /// How the local command's environment is built from buck2's own, as the event log records it.
+    pub fn local_environment_rule(&self) -> EnvironmentRule {
+        self.local_environment_inheritance
+            .as_ref()
+            .map_or(EnvironmentRule::Unspecified, |e| e.rule())
+    }
+
     pub fn with_force_full_hybrid_if_capable(mut self, force_full_hybrid_if_capable: bool) -> Self {
         self.force_full_hybrid_if_capable = force_full_hybrid_if_capable;
         self
@@ -761,13 +783,17 @@ impl CommandExecutionRequest {
         &self.run_action_key
     }
 
-    pub fn with_is_test(mut self) -> Self {
-        self.is_test = true;
+    pub fn with_is_test(mut self, kill_policy: TestKillPolicy) -> Self {
+        self.test_kill_policy = Some(kill_policy);
         self
     }
 
     pub fn is_test(&self) -> bool {
-        self.is_test
+        self.test_kill_policy.is_some()
+    }
+
+    pub fn test_kill_policy(&self) -> Option<&TestKillPolicy> {
+        self.test_kill_policy.as_ref()
     }
 
     pub fn with_skip_resource_control(mut self) -> Self {

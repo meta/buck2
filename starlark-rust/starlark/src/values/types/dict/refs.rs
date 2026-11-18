@@ -24,13 +24,13 @@ use std::ops::Deref;
 use dupe::Dupe;
 use either::Either;
 
-use crate::typing::Ty;
 use crate::values::UnpackValue;
 use crate::values::Value;
 use crate::values::ValueError;
+use crate::values::ValueOf;
 use crate::values::dict::Dict;
 use crate::values::dict::value::DictGen;
-use crate::values::type_repr::StarlarkTypeRepr;
+use crate::values::types::dict::dict_type::DictOf;
 use crate::values::types::dict::dict_type::DictType;
 
 /// Borrowed `Dict`.
@@ -61,6 +61,7 @@ pub struct DictMut<'v> {
 
 impl<'v> DictRef<'v> {
     /// Downcast the value to a dict.
+    #[inline]
     pub fn from_value(x: Value<'v>) -> Option<DictRef<'v>> {
         if let Some(x) = x.downcast_ref::<DictGen<Dict<'v>>>() {
             Some(DictRef {
@@ -107,23 +108,21 @@ impl<'v> DictMut<'v> {
 impl<'v> Deref for DictRef<'v> {
     type Target = Dict<'v>;
 
+    #[inline]
     fn deref(&self) -> &Self::Target {
         &self.aref
     }
 }
 
-impl<'v> StarlarkTypeRepr for DictRef<'v> {
-    type Canonical = <DictType<Value<'static>, Value<'static>> as StarlarkTypeRepr>::Canonical;
-
-    fn starlark_type_repr() -> Ty {
-        DictType::<Value<'static>, Value<'static>>::starlark_type_repr()
-    }
-}
-
 impl<'v> UnpackValue<'v> for DictRef<'v> {
+    type Type = DictType<Value<'v>, Value<'v>>;
     type Error = Infallible;
 
-    fn unpack_value_impl(value: Value<'v>) -> Result<Option<DictRef<'v>>, Infallible> {
-        Ok(DictRef::from_value(value))
+    #[inline]
+    fn unpack(
+        _value: ValueOf<'v, Self::Type>,
+        get: DictOf<'v, Value<'v>, Value<'v>>,
+    ) -> Result<Self, Infallible> {
+        Ok(get.dict())
     }
 }

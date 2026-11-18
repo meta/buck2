@@ -32,6 +32,12 @@ class PrimitiveStubsGenerator(private val postfixToSkip: String?) : StubsGenerat
         .filterNot { it.pkgAsString().isSdkImport() }
         .filterDifferentOuterClassIn(context.declaredTypes)
         .filterNot { context.externalTypeReferences.contains(it.outerClassOnlyQualifier()) }
+        .filterNot { imp ->
+          // Never fabricate a class the classpath already provides: the entry-name scan
+          // misses skip-listed jars and typeless Kotlin declarations (typealiases), and a
+          // phantom stub first on the abi-gen classpath shadows the real declaration.
+          context.kotlinClasspathDeclarations.isProvided(imp.pkg, imp.names.first())
+        }
         .map { imp -> imp.pkgAsString() to imp.names.first() }
         .filterNot { (pkg, name) ->
           postfixToSkip != null && pkg == context.packageName() && name.endsWith(postfixToSkip)

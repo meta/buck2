@@ -14,10 +14,12 @@ import com.facebook.buck.util.function.ThrowingSupplier;
 import com.facebook.buck.util.zip.CustomZipEntry;
 import com.facebook.buck.util.zip.JarBuilder;
 import com.facebook.buck.util.zip.JarEntrySupplier;
+import com.facebook.infer.annotation.Nullsafe;
 import java.io.IOException;
 import java.io.InputStream;
 import java.nio.file.Path;
 
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public class JarBuilderStubJarWriter implements StubJarWriter {
   private final JarBuilder jarBuilder;
 

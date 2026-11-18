@@ -19,12 +19,13 @@ import com.facebook.buck.jvm.kotlin.cd.analytics.KotlinCDAnalytics;
 import com.facebook.buck.jvm.kotlin.kotlinc.Kotlinc;
 import com.facebook.buck.jvm.kotlin.kotlinc.incremental.KotlincMode;
 import com.facebook.buck.step.isolatedsteps.IsolatedStep;
+import com.facebook.infer.annotation.Nullsafe;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.ImmutableSortedSet;
 import java.nio.file.Path;
 import java.util.Optional;
-import javax.annotation.Nullable;
+import org.jspecify.annotations.Nullable;
 
 /**
  * Kosabi Stubgen Step A step to run Kosabi's stubgen (generate stubs & run source modifier to
@@ -33,9 +34,10 @@ import javax.annotation.Nullable;
  * steps Later we could move away from KotlinC and explore possibility to use Kotlin Analysis API
  * for output stripped srcs
  */
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public class KosabiStubgenStep extends KotlincStep {
   private final RelPath stubgenDir;
-  private final RelPath stubClassOutputDir;
+  @Nullable private final RelPath stubClassOutputDir;
   private final boolean skipJavaImports;
 
   private final String pluginPath;
@@ -98,7 +100,12 @@ public class KosabiStubgenStep extends KotlincStep {
         false,
         // ABI validation mode for jvm-abi-gen repairs
         // not part of stubsgen, since jvm-abi-gen doesn't run on stubsgen steps
-        "off");
+        "off",
+        // jvm-abi-gen kill switch options
+        // not part of stubsgen, since jvm-abi-gen doesn't run on stubsgen steps
+        ImmutableList.of(),
+        // The kept-body check is part of jvm-abi-gen, which does not run here
+        false);
     this.stubgenDir = stubgenDir;
     this.stubClassOutputDir = stubClassOutputDir;
     this.skipJavaImports = skipJavaImports;

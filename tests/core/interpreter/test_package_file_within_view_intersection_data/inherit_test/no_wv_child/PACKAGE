@@ -1,0 +1,14 @@
+# Opts in but does NOT pass `within_view=`. The cap contribution is nothing
+# (the parent's cap stays unchanged), because an omitted `within_view`
+# parses to PUBLIC, the identity of the intersection. `visibility` is set to
+# keep the `package()` call non-trivial.
+#
+# Note the DEFAULT `within_view` for targets below is widened to PUBLIC by
+# this call: `inherit = True` unions the parent's list with the omitted
+# (PUBLIC) one. That is the footgun the cap closes -- see `outside_dep`.
+package(
+    inherit = True,
+    visibility = ["PUBLIC"],
+)
+
+enforce_within_view_intersection()

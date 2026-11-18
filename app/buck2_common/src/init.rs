@@ -31,6 +31,7 @@ use dupe::Dupe;
 use serde::Deserialize;
 use serde::Serialize;
 
+use crate::daemon_routing::DaemonRouting;
 use crate::legacy_configs::configs::LegacyBuckConfig;
 use crate::legacy_configs::key::BuckconfigKeyRef;
 
@@ -501,6 +502,10 @@ pub struct DaemonStartupConfig {
 /// Any difference requires a new daemon; Buck Settings have a separate compatibility check.
 #[derive(Allocative, Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct DaemonStartupOptions {
+    /// How clients select this daemon; a daemon serves only tenants routed the same way.
+    /// Absent from the startup options of older daemons, which were all unshared.
+    #[serde(default)]
+    pub routing: DaemonRouting,
     /// Share one DICE engine across isolated tenant roots for this daemon's lifetime.
     pub share_dice: bool,
     pub num_tokio_workers: Option<usize>,
@@ -509,9 +514,10 @@ pub struct DaemonStartupOptions {
     pub source_digest_algorithm: Option<String>,
     pub paranoid: bool,
     pub materializations: Option<String>,
-    /// Which materializer implementation the daemon runs (`buck2.materializer`); `None` is the
-    /// deferred one.
-    pub materializer: Option<String>,
+    /// `buck2.materializer_v2_version`: an unshared daemon runs the disk-state materializer when
+    /// its `ROLLOUT_VERSION` is at least this, and the deferred one when this is unset. A shared
+    /// daemon runs the disk-state materializer whatever this says.
+    pub materializer_v2_version: Option<u32>,
     pub http: HttpConfig,
     pub resource_control: ResourceControlConfig,
     pub log_download_method: LogDownloadMethod,
@@ -556,7 +562,10 @@ impl DaemonStartupConfig {
             }
         };
 
+        let routing = DaemonRouting::from_config(config)?;
+        let shared = routing.is_shared();
         let startup_options = DaemonStartupOptions {
+            routing,
             share_dice: config
                 .parse(BuckconfigKeyRef {
                     section: "buck2",
@@ -564,17 +573,22 @@ impl DaemonStartupConfig {
                 })?
                 .unwrap_or(false),
             num_tokio_workers: settings.daemon.num_tokio_workers(&mut buckconfig)?,
-            daemon_buster: settings.daemon.buster(&mut buckconfig)?,
+            daemon_buster: {
+                let buster = settings.daemon.buster(&mut buckconfig)?;
+                if shared {
+                    Some(format!("shared-daemon-v1:{}", buster.unwrap_or_default()))
+                } else {
+                    buster
+                }
+            },
             digest_algorithms: settings.digest.algorithms(&mut buckconfig)?,
             source_digest_algorithm: settings.digest.source_algorithm(&mut buckconfig)?,
             paranoid,
             materializations: settings.materializer.materializations(&mut buckconfig)?,
-            materializer: config
-                .get(BuckconfigKeyRef {
-                    section: "buck2",
-                    property: "materializer",
-                })
-                .map(ToOwned::to_owned),
+            materializer_v2_version: config.parse(BuckconfigKeyRef {
+                section: "buck2",
+                property: "materializer_v2_version",
+            })?,
             http: HttpConfig::from_settings(&settings.http, config)?,
             resource_control: ResourceControlConfig::from_settings(
                 &settings.resource_control,
@@ -626,6 +640,7 @@ impl DaemonStartupConfig {
 
     pub fn testing_empty() -> Self {
         let startup_options = DaemonStartupOptions {
+            routing: DaemonRouting::Unshared,
             share_dice: false,
             num_tokio_workers: None,
             daemon_buster: None,
@@ -633,7 +648,7 @@ impl DaemonStartupConfig {
             source_digest_algorithm: None,
             paranoid: false,
             materializations: None,
-            materializer: None,
+            materializer_v2_version: None,
             http: HttpConfig::default(),
             resource_control: ResourceControlConfig::testing_default(),
             log_download_method: if cfg!(fbcode_build) {
@@ -684,6 +699,22 @@ mod tests {
         let deserialized = DaemonStartupConfig::deserialize(&serialized)?;
         assert_eq!(deserialized.startup_options, config.startup_options);
         assert_eq!(deserialized.daemon_buck_settings(), &settings.daemon);
+        Ok(())
+    }
+
+    #[test]
+    fn daemon_routing_is_a_daemon_startup_option() -> buck2_error::Result<()> {
+        let empty = parse(&[("config", "")], "config")?;
+        let unshared = DaemonStartupConfig::new(&empty, &DaemonBuckSettings::default(), false)?;
+        assert_eq!(unshared.startup_options.routing, DaemonRouting::Unshared);
+        let configured = parse(&[("config", "[buck2]\nshare_daemon = true")], "config")?;
+        let shared = DaemonStartupConfig::new(&configured, &DaemonBuckSettings::default(), false)?;
+        if cfg!(target_os = "linux") {
+            assert_eq!(shared.startup_options.routing, DaemonRouting::Shared);
+            assert_ne!(unshared.startup_options, shared.startup_options);
+        }
+        let deserialized = DaemonStartupConfig::deserialize(&shared.serialize()?)?;
+        assert_eq!(deserialized.startup_options, shared.startup_options);
         Ok(())
     }
 

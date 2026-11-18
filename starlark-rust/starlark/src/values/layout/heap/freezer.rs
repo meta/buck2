@@ -24,6 +24,7 @@ use crate::values::AllocFrozenValue;
 use crate::values::FreezeResult;
 use crate::values::FrozenHeap;
 use crate::values::SealEdge;
+use crate::values::ValueOf;
 use crate::values::ValueTyped;
 use crate::values::layout::heap::repr::AValueHeapEntryState;
 use crate::values::layout::value::Value;
@@ -68,7 +69,7 @@ impl<'v, 'fv> Freezer<'v, 'fv> {
     }
 
     /// Allocate a new value while freezing. Usually not a great idea.
-    pub fn alloc<T: AllocFrozenValue<'fv>>(&self, val: T) -> Value<'fv> {
+    pub fn alloc<T: AllocFrozenValue<'fv>>(&self, val: T) -> ValueOf<'fv, T::Type> {
         self.heap.alloc(val)
     }
 

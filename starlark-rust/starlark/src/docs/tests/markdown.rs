@@ -24,7 +24,6 @@ use starlark_derive::NoSerialize;
 use starlark_derive::StarlarkPagable;
 use starlark_derive::starlark_module;
 use starlark_derive::starlark_value;
-use starlark_map::small_map::SmallMap;
 use starlark_syntax::golden_test_template::golden_test_template;
 
 use crate as starlark;
@@ -40,11 +39,16 @@ use crate::environment::Globals;
 use crate::environment::GlobalsBuilder;
 use crate::environment::Methods;
 use crate::environment::MethodsBuilder;
+use crate::values::Heap;
 use crate::values::StarlarkValue;
 use crate::values::Value;
-use crate::values::list::UnpackList;
+use crate::values::ValueOf;
+use crate::values::dict::DictType;
+use crate::values::list::ListType;
 use crate::values::none::NoneType;
-use crate::values::tuple::UnpackTuple;
+use crate::values::string::StarlarkStr;
+use crate::values::tuple::TupleType;
+use crate::values::types::int::view::IntView;
 
 fn docs_golden_test(test_file_name: &str, doc: DocItem) -> String {
     assert!(test_file_name.ends_with(".golden.md"));
@@ -131,7 +135,7 @@ fn module(builder: &mut GlobalsBuilder) {
     ///
     /// # Returns
     /// The string 'func1'
-    fn func1(foo: String) -> anyhow::Result<String> {
+    fn func1(foo: &str) -> anyhow::Result<String> {
         let _ignore = foo;
         Ok("func1".to_owned())
     }
@@ -166,22 +170,26 @@ fn module(builder: &mut GlobalsBuilder) {
     }
 
     fn with_defaults<'v>(
-        #[starlark(default=UnpackList::default())] explicit_default: UnpackList<String>,
-        hidden_default: Option<UnpackList<String>>,
+        #[starlark(default = ValueOf::empty_list())] explicit_default: ValueOf<
+            'v,
+            ListType<StarlarkStr>,
+        >,
+        hidden_default: Option<ValueOf<'v, ListType<StarlarkStr>>>,
         #[starlark(default = "my_default")] string_default: &str,
     ) -> anyhow::Result<NoneType> {
         let _unused = (explicit_default, hidden_default, string_default);
         Ok(NoneType)
     }
 
-    fn pos_either_named(
+    fn pos_either_named<'v>(
         #[starlark(require = pos)] a: i32,
         b: i32,
         #[starlark(require = named)] c: i32,
         #[starlark(require = named, default = 0, doc_hidden)] undocumented: i32,
-    ) -> anyhow::Result<Magic> {
+        heap: Heap<'v>,
+    ) -> anyhow::Result<ValueOf<'v, Magic>> {
         let _unused = (a, b, c, undocumented);
-        Ok(Magic)
+        Ok(ValueOf::alloc(heap, Magic))
     }
 }
 
@@ -191,20 +199,22 @@ fn submodule(builder: &mut GlobalsBuilder) {
         Ok(a)
     }
 
-    fn starlark_args(#[starlark(args)] args: UnpackTuple<String>) -> anyhow::Result<NoneType> {
+    fn starlark_args<'v>(
+        #[starlark(args)] args: ValueOf<'v, TupleType<StarlarkStr>>,
+    ) -> anyhow::Result<NoneType> {
         let _ignore = args;
         Ok(NoneType)
     }
 
-    fn starlark_kwargs(
-        #[starlark(kwargs)] kwargs: SmallMap<String, u32>,
+    fn starlark_kwargs<'v>(
+        #[starlark(kwargs)] kwargs: ValueOf<'v, DictType<StarlarkStr, IntView<'v>>>,
     ) -> anyhow::Result<NoneType> {
         let _ignore = kwargs;
         Ok(NoneType)
     }
 
-    fn new_obj() -> anyhow::Result<Obj> {
-        Ok(Obj)
+    fn new_obj<'v>(heap: Heap<'v>) -> anyhow::Result<ValueOf<'v, Obj>> {
+        Ok(ValueOf::alloc(heap, Obj))
     }
 }
 
@@ -258,7 +268,7 @@ fn object(builder: &mut MethodsBuilder) {
     ///
     /// # Returns
     /// The string 'func1'
-    fn func1<'v>(this: Value<'v>, foo: String) -> anyhow::Result<String> {
+    fn func1<'v>(this: Value<'v>, foo: &str) -> anyhow::Result<String> {
         let _ignore = (this, foo);
         Ok("func1".to_owned())
     }

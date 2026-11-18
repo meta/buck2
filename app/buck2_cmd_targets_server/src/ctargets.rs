@@ -176,6 +176,9 @@ impl ServerCommandTemplate for ConfiguredTargetsServerCommand {
                 }
 
                 // Format compatible targets
+                if formatter.reads_bodies() {
+                    ConfiguredTargetNode::prefetch_bodies(&result.compatible_targets)?;
+                }
                 for node in &result.compatible_targets {
                     if needs_separator {
                         formatter.separator(&mut serialized_targets_output);

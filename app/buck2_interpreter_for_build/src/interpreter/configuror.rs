@@ -20,8 +20,6 @@ use buck2_interpreter::extra::InterpreterHostArchitecture;
 use buck2_interpreter::extra::InterpreterHostPlatform;
 use buck2_interpreter::extra::xcode::XcodeVersionInfo;
 use buck2_interpreter::file_loader::LoadedModules;
-use buck2_interpreter::package_imports::ImplicitImport;
-use buck2_interpreter::paths::module::StarlarkModulePath;
 use buck2_interpreter::prelude_path::PreludePath;
 use buck2_node::super_package::SuperPackage;
 use dupe::Dupe;
@@ -34,7 +32,6 @@ use crate::attrs::coerce::ctx::BuildAttrCoercionContext;
 use crate::interpreter::cell_info::InterpreterCellInfo;
 use crate::interpreter::functions::host_info::HostInfo;
 use crate::interpreter::module_internals::ModuleInternals;
-use crate::interpreter::module_internals::PackageImplicits;
 
 #[pagable_typetag]
 pub trait AdditionalGlobalsFnDyn: PagableTagged + Send + Sync + 'static {
@@ -123,27 +120,10 @@ impl BuildInterpreterConfiguror {
         package_listing: PackageListing,
         super_package: SuperPackage,
         loaded_modules: &LoadedModules,
-        implicit_import: Option<&Arc<ImplicitImport>>,
         current_dir_with_allowed_relative_dirs: CellPathWithAllowedRelativeDir,
     ) -> buck2_error::Result<ModuleInternals> {
         let record_target_call_stack = self.record_target_call_stack;
         let skip_targets_with_duplicate_names = self.skip_targets_with_duplicate_names;
-        let package_implicits = implicit_import.map(|spec| {
-            PackageImplicits::new(
-                spec.dupe(),
-                loaded_modules
-                    .map
-                    .get(&StarlarkModulePath::LoadFile(spec.import()))
-                    .unwrap_or_else(|| {
-                        panic!(
-                            "Should've had an env for the package implicit import (`{}`).",
-                            spec.import(),
-                        )
-                    })
-                    .env()
-                    .dupe(),
-            )
-        });
         let attr_coercer = BuildAttrCoercionContext::new_with_package(
             cell_info.cell_resolver().dupe(),
             cell_info.cell_alias_resolver().dupe(),
@@ -158,7 +138,6 @@ impl BuildInterpreterConfiguror {
             attr_coercer,
             Arc::new(buildfile_path),
             imports,
-            package_implicits,
             record_target_call_stack,
             skip_targets_with_duplicate_names,
             package_listing,

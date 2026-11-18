@@ -1,6 +1,7 @@
-load(":defs.bzl", "run_invalid_command", "run_odd_exit_code")
+load(":defs.bzl", "run_invalid_command", "run_odd_exit_code", "run_symlink_with_backslash")
 
 run_invalid_command(name = "run_invalid_command_local", local_only = True)
 run_invalid_command(name = "run_invalid_command_remote", local_only = False)
 run_odd_exit_code(name = "run_odd_exit_code", exit_code = "45")
 run_odd_exit_code(name = "run_negative_exit_code", exit_code = "-65")
+run_symlink_with_backslash(name = "run_symlink_with_backslash")

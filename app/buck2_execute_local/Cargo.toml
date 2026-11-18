@@ -10,7 +10,6 @@ license.workspace = true
 [dependencies]
 async-trait.workspace = true
 bincode.workspace = true
-buck2_common.workspace = true
 buck2_data.workspace = true
 buck2_error.workspace = true
 buck2_fs.workspace = true
@@ -34,9 +33,11 @@ tempfile.workspace = true
 tokio-stream.workspace = true
 
 [target.'cfg(target_os = "linux")'.dependencies]
+buck2_process_kill.workspace = true
 nix.workspace = true
 
 [target.'cfg(target_os = "macos")'.dependencies]
+buck2_process_kill.workspace = true
 nix.workspace = true
 
 [target.'cfg(target_os = "windows")'.dependencies]

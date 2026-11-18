@@ -13,6 +13,7 @@ use std::sync::Mutex;
 
 use async_trait::async_trait;
 use buck2_core::fs::artifact_path_resolver::ArtifactFs;
+use buck2_data::local_command::EnvironmentRule;
 use buck2_hash::BuckFixedSortedMap;
 use buck2_hash::BuckMutInsertionMap;
 use buck2_util::time_span::TimeSpan;
@@ -81,6 +82,8 @@ impl PreparedCommandExecutor for DryRunExecutor {
             digest: ActionDigest::empty(digest_config.cas_digest_config()),
             command: Default::default(),
             env: Default::default(),
+            working_directory: request.working_directory().to_owned(),
+            environment_rule: EnvironmentRule::Unspecified,
         };
 
         match request

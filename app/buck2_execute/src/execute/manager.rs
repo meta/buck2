@@ -185,7 +185,7 @@ impl CommandExecutionManagerLike for CommandExecutionManager {
             action_result: None,
             scheduling_mode: None,
             waiting_data: self.inner.waiting_data,
-            outputs_lease: None,
+            held_outputs: None,
         }
     }
 
@@ -281,7 +281,7 @@ impl CommandExecutionManagerLike for CommandExecutionManagerWithClaim {
             action_result: None,
             scheduling_mode: None,
             waiting_data: self.inner.waiting_data,
-            outputs_lease: None,
+            held_outputs: None,
         }
     }
 

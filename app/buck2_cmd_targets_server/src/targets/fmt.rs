@@ -91,6 +91,8 @@ pub(crate) trait TargetFormatter: Send + Sync {
 
 #[allow(unused_variables)]
 pub trait ConfiguredTargetFormatter: Send + Sync {
+    /// Whether [`Self::target`] reads the body of each node.
+    fn reads_bodies(&self) -> bool;
     fn begin(&self, buffer: &mut String) {}
     fn end(&self, buffer: &mut String) {}
     fn separator(&self, buffer: &mut String) {}
@@ -362,6 +364,10 @@ impl TargetFormatter for JsonFormat {
 }
 
 impl ConfiguredTargetFormatter for JsonFormat {
+    fn reads_bodies(&self) -> bool {
+        true
+    }
+
     fn begin(&self, buffer: &mut String) {
         self.writer.begin(buffer)
     }
@@ -401,8 +407,9 @@ impl ConfiguredTargetFormatter for JsonFormat {
             )
         });
 
+        let body = target_node.body()?;
         self.print_attr(buffer, &mut is_first_entry, INPUTS, || {
-            QuotedJson::list(target_node.inputs().map(QuotedJson::quote_display))
+            QuotedJson::list(body.inputs().map(QuotedJson::quote_display))
         });
 
         if let Some(hash) = target_hash {
@@ -415,13 +422,13 @@ impl ConfiguredTargetFormatter for JsonFormat {
             QuotedJson::quote_display(target_node.label().pkg())
         });
 
-        if let Some(oncall) = target_node.oncall() {
+        if let Some(oncall) = body.oncall() {
             self.print_attr(buffer, &mut is_first_entry, ONCALL, || {
                 QuotedJson::quote_display(oncall)
             });
         }
 
-        for a in target_node.attrs(self.attr_inspect_opts) {
+        for a in body.attrs(self.attr_inspect_opts) {
             let json_value = configured_value_to_json(&a.value, target_node.label().pkg())?;
             self.print_attr(buffer, &mut is_first_entry, a.name, || {
                 QuotedJson::from_serde_json_value(json_value)
@@ -429,7 +436,7 @@ impl ConfiguredTargetFormatter for JsonFormat {
         }
 
         if self.target_call_stacks {
-            if let Some(call_stack) = target_node.call_stack() {
+            if let Some(call_stack) = body.call_stack() {
                 self.print_attr(buffer, &mut is_first_entry, TARGET_CALL_STACK, || {
                     QuotedJson::quote_str(&call_stack)
                 });
@@ -560,6 +567,10 @@ impl TargetFormatter for TargetNameFormat {
 }
 
 impl ConfiguredTargetFormatter for TargetNameFormat {
+    fn reads_bodies(&self) -> bool {
+        self.target_call_stacks
+    }
+
     fn target(
         &self,
         target_node: &ConfiguredTargetNode,
@@ -572,7 +583,10 @@ impl ConfiguredTargetFormatter for TargetNameFormat {
         }
         .map_err(|e| from_any_with_tag(e, buck2_error::ErrorTag::Tier0))?;
         if self.target_call_stacks {
-            print_target_call_stack_after_target(buffer, target_node.call_stack().as_deref());
+            print_target_call_stack_after_target(
+                buffer,
+                target_node.body()?.call_stack().as_deref(),
+            );
         };
 
         Ok(())
@@ -618,6 +632,7 @@ impl JsonReportFormat {
         output.push_str("{\n  \"compatible_targets\": [\n");
 
         // Format compatible targets
+        ConfiguredTargetNode::prefetch_bodies(&result.compatible_targets)?;
         let mut needs_separator = false;
         for node in &result.compatible_targets {
             if needs_separator {

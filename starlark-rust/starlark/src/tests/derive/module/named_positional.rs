@@ -20,7 +20,9 @@ use starlark_derive::starlark_module;
 use crate as starlark;
 use crate::assert::Assert;
 use crate::environment::GlobalsBuilder;
-use crate::values::tuple::UnpackTuple;
+use crate::values::ValueOf;
+use crate::values::tuple::TupleType;
+use crate::values::types::int::view::IntView;
 
 #[starlark_module]
 fn named_positional_functions(globals: &mut GlobalsBuilder) {
@@ -36,19 +38,25 @@ fn named_positional_functions(globals: &mut GlobalsBuilder) {
         Ok(x)
     }
 
-    fn named_after_args(
-        #[starlark(args)] star_args: UnpackTuple<i32>,
+    fn named_after_args<'v>(
+        #[starlark(args)] star_args: ValueOf<'v, TupleType<IntView<'v>>>,
         x: i32,
     ) -> anyhow::Result<i32> {
-        Ok(x + star_args.items.iter().sum::<i32>())
+        Ok(x + star_args
+            .try_items::<i32>()
+            .sum::<crate::Result<i32>>()
+            .map_err(|e| e.into_anyhow())?)
     }
 
     // Same as above, but with explicit redundant annotation.
-    fn named_after_args_explicitly_marked(
-        #[starlark(args)] args: UnpackTuple<i32>,
+    fn named_after_args_explicitly_marked<'v>(
+        #[starlark(args)] args: ValueOf<'v, TupleType<IntView<'v>>>,
         #[starlark(require = named)] x: i32,
     ) -> anyhow::Result<i32> {
-        Ok(x + args.items.iter().sum::<i32>())
+        Ok(x + args
+            .try_items::<i32>()
+            .sum::<crate::Result<i32>>()
+            .map_err(|e| e.into_anyhow())?)
     }
 }
 

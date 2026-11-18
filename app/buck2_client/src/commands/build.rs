@@ -50,6 +50,11 @@ use crate::print::PrintOutputs;
 
 mod out;
 
+/// Tags recording `agent_materialization.enabled` for a build it decides: `enabled` builds skip
+/// final-output materialization, `disabled` builds materialize as usual.
+const AGENT_MATERIALIZATION_ENABLED_TAG: &str = "agent_materialization.enabled";
+const AGENT_MATERIALIZATION_DISABLED_TAG: &str = "agent_materialization.disabled";
+
 #[derive(Debug, clap::Parser)]
 #[clap(name = "build", about = "Build the specified targets")]
 pub struct BuildCommand {
@@ -133,6 +138,11 @@ pub struct BuildCommand {
 
     #[clap(flatten)]
     build_opts: CommonBuildOptions,
+
+    /// Emit streaming build report snapshots only when a requested target finishes,
+    /// except for the error that stops a fail-fast build.
+    #[clap(long, requires = "streaming_build_report")]
+    streaming_build_report_final_only: bool,
 
     #[clap(flatten)]
     target_cfg: TargetCfgWithUniverseOptions,
@@ -244,14 +254,35 @@ impl StreamingCommand for BuildCommand {
     ) -> ExitResult {
         let context = ctx.client_context(matches, &self)?;
         let return_outputs = self.show_output.format().is_some() || self.output_path.is_some();
-        let skip_materialization_for_agent = self.materializations.is_none()
+        // The builds that `agent_materialization.enabled` decides: direct agent calls that neither
+        // choose materializations nor ask for outputs.
+        let agent_materialization_eligible = self.materializations.is_none()
             && !return_outputs
-            && ctx.agent_context().is_direct_call()
+            && ctx.agent_context().is_direct_call();
+        let skip_materialization_for_agent = agent_materialization_eligible
             && ctx
                 .buck_settings()?
                 .invocation
                 .agent_materialization
                 .enabled();
+        if agent_materialization_eligible {
+            // Recorded in both arms of the setting's A/B test, so builds that skipped final-output
+            // materialization can be compared with builds that would have. Recorded before the
+            // build so that failed builds are counted too.
+            let tag = if skip_materialization_for_agent {
+                AGENT_MATERIALIZATION_ENABLED_TAG
+            } else {
+                AGENT_MATERIALIZATION_DISABLED_TAG
+            };
+            events_ctx
+                .instant_event(
+                    ctx.trace_id.dupe(),
+                    buck2_data::TagEvent {
+                        tags: vec![tag.to_owned()],
+                    },
+                )
+                .await?;
+        }
         let materializations = if skip_materialization_for_agent {
             Materializations::Skip
         } else {
@@ -280,6 +311,7 @@ impl StreamingCommand for BuildCommand {
                     target_universe: self.target_cfg.target_universe,
                     timeout: self.timeout_options.overall_timeout()?,
                     run_args_missing_separator: false,
+                    streaming_build_report_final_only: self.streaming_build_report_final_only,
                 },
                 events_ctx,
                 ctx.console_interaction_stream(&self.common_opts.console_opts),

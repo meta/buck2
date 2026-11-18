@@ -10,13 +10,16 @@
 
 package com.facebook.buck.jvm.java;
 
+import com.facebook.infer.annotation.Nullsafe;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
 import javax.tools.Diagnostic;
 import javax.tools.JavaFileObject;
+import org.jspecify.annotations.Nullable;
 
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public final class DiagnosticCleaner {
 
   private static final Set<String> RECOVERABLE_ERRORS =
@@ -85,7 +88,7 @@ public final class DiagnosticCleaner {
         diagnostic.getCode());
   }
 
-  private static boolean isRecoverableErrorCode(String code) {
+  private static boolean isRecoverableErrorCode(@Nullable String code) {
     return RECOVERABLE_ERRORS.contains(code);
   }
 }

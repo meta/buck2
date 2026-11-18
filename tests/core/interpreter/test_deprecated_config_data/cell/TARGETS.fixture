@@ -1,3 +1,0 @@
-load("@root//:macro.bzl", "create_target")
-
-create_target()

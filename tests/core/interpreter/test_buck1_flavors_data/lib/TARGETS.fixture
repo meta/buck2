@@ -1,1 +1,0 @@
-lib(name = "lib", visibility = ["PUBLIC"])

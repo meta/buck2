@@ -20,9 +20,8 @@ use buck2_build_api::artifact_groups::ArtifactGroup;
 use buck2_build_api::interpreter::rule_defs::artifact::associated::AssociatedArtifacts;
 use buck2_build_api::interpreter::rule_defs::artifact::output_artifact_like::OutputArtifactArg;
 use buck2_build_api::interpreter::rule_defs::artifact::starlark_artifact::StarlarkArtifact;
-use buck2_build_api::interpreter::rule_defs::artifact::starlark_artifact_like::ValueAsInputArtifactLike;
+use buck2_build_api::interpreter::rule_defs::artifact::starlark_artifact_like::StarlarkArtifactView;
 use buck2_build_api::interpreter::rule_defs::artifact::starlark_declared_artifact::StarlarkDeclaredArtifact;
-use buck2_build_api::interpreter::rule_defs::artifact::unpack_artifact::UnpackNonPromiseInputArtifact;
 use buck2_build_api::interpreter::rule_defs::cmd_args::CommandLineBuilder;
 use buck2_core::category::CategoryRef;
 use buck2_core::cells::paths::CellRelativePath;
@@ -56,7 +55,8 @@ use starlark::environment::GlobalsBuilder;
 use starlark::eval::Evaluator;
 use starlark::starlark_module;
 use starlark::values::Value;
-use starlark::values::list_or_tuple::UnpackListOrTuple;
+use starlark::values::ValueOf;
+use starlark::values::list_or_tuple::ListOrTupleType;
 
 use crate::actions::testings::SimpleUnregisteredAction;
 
@@ -78,11 +78,11 @@ fn get_label(eval: &Evaluator, target: &str) -> buck2_error::Result<ConfiguredTa
 
 #[starlark_module]
 pub(crate) fn artifactory(builder: &mut GlobalsBuilder) {
-    fn source_artifact(
+    fn source_artifact<'v>(
         package: &str,
         path: &str,
-        eval: &mut Evaluator,
-    ) -> starlark::Result<StarlarkArtifact> {
+        eval: &mut Evaluator<'v, '_, '_>,
+    ) -> starlark::Result<ValueOf<'v, StarlarkArtifactView<'v>>> {
         let ctx = BuildContext::from_context(eval)?;
         let package = PackageLabel::new(
             ctx.build_file_cell().name(),
@@ -90,24 +90,27 @@ pub(crate) fn artifactory(builder: &mut GlobalsBuilder) {
         )?;
         let path = PackageRelativePath::new(path)?;
         let path = SourcePath::new(package, PackedStr::new(path));
-        Ok(StarlarkArtifact::new(SourceArtifact::new(path).into()))
+        Ok(ValueOf::alloc(
+            eval.heap(),
+            StarlarkArtifact::new(SourceArtifact::new(path).into()),
+        ))
     }
 
-    fn bound_artifact(
+    fn bound_artifact<'v>(
         target: &str,
         path: &str,
-        eval: &mut Evaluator,
-    ) -> starlark::Result<StarlarkArtifact> {
+        eval: &mut Evaluator<'v, '_, '_>,
+    ) -> starlark::Result<ValueOf<'v, StarlarkArtifactView<'v>>> {
         let target_label = get_label(eval, target)?;
         let id = ActionIndex::new(0);
         let artifact = Artifact::from(BuildArtifact::testing_new(target_label, path, id));
-        Ok(StarlarkArtifact::new(artifact))
+        Ok(ValueOf::alloc(eval.heap(), StarlarkArtifact::new(artifact)))
     }
 
     fn declared_artifact<'v>(
         path: &str,
         eval: &mut Evaluator<'v, '_, '_>,
-    ) -> starlark::Result<StarlarkDeclaredArtifact<'v>> {
+    ) -> starlark::Result<ValueOf<'v, StarlarkArtifactView<'v>>> {
         let target_label = get_label(eval, "//foo:bar")?;
         let mut registry = ActionsRegistry::new(
             DeferredHolderKey::Base(BaseDeferredKey::TargetLabel(target_label)),
@@ -121,18 +124,18 @@ pub(crate) fn artifactory(builder: &mut GlobalsBuilder) {
             BuckOutPathKind::default(),
             eval.heap(),
         )?;
-        Ok(StarlarkDeclaredArtifact::new(
+        Ok(eval.heap().alloc(StarlarkDeclaredArtifact::new(
             None,
             artifact,
             AssociatedArtifacts::new(),
-        ))
+        )))
     }
 
     fn declared_bound_artifact<'v>(
         target: &str,
         path: &str,
         eval: &mut Evaluator<'v, '_, '_>,
-    ) -> starlark::Result<StarlarkDeclaredArtifact<'v>> {
+    ) -> starlark::Result<ValueOf<'v, StarlarkArtifactView<'v>>> {
         let target_label = get_label(eval, target)?;
         let mut registry = ActionsRegistry::new(
             DeferredHolderKey::Base(BaseDeferredKey::TargetLabel(target_label.dupe())),
@@ -157,14 +160,14 @@ pub(crate) fn artifactory(builder: &mut GlobalsBuilder) {
                 None,
             ),
         )?;
-        Ok(StarlarkDeclaredArtifact::new(
+        Ok(eval.heap().alloc(StarlarkDeclaredArtifact::new(
             None,
             artifact,
             AssociatedArtifacts::new(),
-        ))
+        )))
     }
 
-    fn stringify_for_cli<'v>(artifact: ValueAsInputArtifactLike<'v>) -> starlark::Result<String> {
+    fn stringify_for_cli<'v>(artifact: StarlarkArtifactView<'v>) -> starlark::Result<String> {
         let cell_info = cells(None).unwrap();
         let project_fs =
             ProjectRoot::new(AbsNormPathBuf::try_from(std::env::current_dir().unwrap()).unwrap())
@@ -181,7 +184,7 @@ pub(crate) fn artifactory(builder: &mut GlobalsBuilder) {
         let artifact_path_mapping = BuckMutMap::default();
         let mut fmt = CommandLineBuilder::new(&mut cli, &artifact_path_mapping, &executor_fs);
         artifact
-            .0
+            .as_input_artifact_like()
             .as_command_line_like()
             .add_to_command_line(&mut fmt)
             .unwrap();
@@ -194,7 +197,7 @@ pub(crate) fn artifactory(builder: &mut GlobalsBuilder) {
     fn declared_bound_artifact_with_associated_artifacts<'v>(
         // TODO(nga): parameters should be either positional or named, not both.
         artifact: OutputArtifactArg<'v>,
-        associated_artifacts: UnpackListOrTuple<UnpackNonPromiseInputArtifact<'v>>,
+        associated_artifacts: ValueOf<'v, ListOrTupleType<StarlarkArtifactView<'v>>>,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<Value<'v>> {
         let target_label = get_label(eval, "//foo:bar")?;
@@ -209,9 +212,8 @@ pub(crate) fn artifactory(builder: &mut GlobalsBuilder) {
 
         let associated_artifacts = AssociatedArtifacts::from(
             associated_artifacts
-                .items
-                .iter()
-                .map(|a| ArtifactGroup::Artifact(a.artifact().unwrap())),
+                .try_items::<StarlarkArtifactView>()
+                .map(|a| ArtifactGroup::Artifact(a.unwrap().non_promise_artifact().unwrap())),
         );
         let (declaration, output_artifact) =
             analysis_registry.get_or_declare_output(eval, artifact, OutputType::File, None)?;
@@ -234,9 +236,9 @@ pub(crate) fn artifactory(builder: &mut GlobalsBuilder) {
     }
 
     fn get_associated_artifacts_as_string<'v>(
-        artifact: ValueAsInputArtifactLike<'v>,
+        artifact: StarlarkArtifactView<'v>,
     ) -> starlark::Result<String> {
-        let associated_artifacts = artifact.0.get_associated_artifacts();
+        let associated_artifacts = artifact.as_input_artifact_like().get_associated_artifacts();
         let s: String = associated_artifacts
             .iter()
             .flat_map(|v| v.iter())

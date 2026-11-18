@@ -85,7 +85,9 @@ use crate::dynamic::storage::DynamicLambdaParamsStorage;
 use crate::dynamic::storage::FrozenDynamicLambdaParamsStorageBox;
 use crate::interpreter::rule_defs::artifact::associated::AssociatedArtifacts;
 use crate::interpreter::rule_defs::artifact::output_artifact_like::OutputArtifactArg;
+use crate::interpreter::rule_defs::artifact::starlark_artifact_like::StarlarkArtifactView;
 use crate::interpreter::rule_defs::artifact::starlark_declared_artifact::StarlarkDeclaredArtifact;
+use crate::interpreter::rule_defs::artifact::starlark_output_artifact::StarlarkOutputArtifactView;
 use crate::interpreter::rule_defs::provider::collection::FrozenProviderCollectionValueRef;
 use crate::interpreter::rule_defs::provider::collection::ProviderCollection;
 use crate::interpreter::rule_defs::transitive_set::FrozenTransitiveSetDefinition;
@@ -209,7 +211,7 @@ impl<'v> AnalysisRegistry<'v> {
             OutputArtifactArg::Str(path) => {
                 let artifact = self.declare_output(
                     None,
-                    path,
+                    path.as_str(),
                     output_type,
                     declaration_location.dupe(),
                     match has_content_based_path {
@@ -219,17 +221,26 @@ impl<'v> AnalysisRegistry<'v> {
                     },
                     heap,
                 )?;
-                heap.alloc_typed(StarlarkDeclaredArtifact::new(
+                heap.alloc_representation(StarlarkDeclaredArtifact::new(
                     declaration_location,
                     artifact,
                     AssociatedArtifacts::new(),
                 ))
             }
-            OutputArtifactArg::OutputArtifact(output) => output.inner(),
-            OutputArtifactArg::DeclaredArtifact(artifact) => artifact,
-            OutputArtifactArg::WrongArtifact(artifact) => {
-                return Err(artifact.0.as_output_error());
-            }
+            OutputArtifactArg::OutputArtifact(output) => match output {
+                StarlarkOutputArtifactView::Unfrozen(output) => output.inner(),
+                StarlarkOutputArtifactView::Frozen(output) => {
+                    return Err(StarlarkArtifactView::Artifact(output.inner())
+                        .as_input_artifact_like()
+                        .as_output_error());
+                }
+            },
+            OutputArtifactArg::Artifact(artifact) => match artifact {
+                StarlarkArtifactView::DeclaredArtifact(artifact) => artifact,
+                StarlarkArtifactView::Artifact(_) | StarlarkArtifactView::PromiseArtifact(_) => {
+                    return Err(artifact.as_input_artifact_like().as_output_error());
+                }
+            },
         };
 
         let output = declared_artifact.output_artifact();
@@ -307,7 +318,7 @@ impl<'v> AnalysisRegistry<'v> {
             .register_transitive_set(move |key| {
                 let set =
                     TransitiveSet::new_from_values(key.dupe(), definition, value, children, eval)?;
-                Ok(eval.heap().alloc_typed(set))
+                Ok(eval.heap().alloc(set).get())
             })?)
     }
 
@@ -395,7 +406,7 @@ impl<'v> ArtifactDeclaration<'v> {
         self,
         extra_associated_artifacts: AssociatedArtifacts,
     ) -> ValueTyped<'v, StarlarkDeclaredArtifact<'v>> {
-        self.heap.alloc_typed(
+        self.heap.alloc_representation(
             self.artifact
                 .with_extended_associated_artifacts(extra_associated_artifacts),
         )
@@ -426,8 +437,11 @@ pub struct AnalysisValueStorage<'v> {
 pub struct FrozenAnalysisValueStorage<'fv> {
     #[starlark_pagable(pagable)]
     pub self_key: DeferredHolderKey,
-    action_data:
-        BuckMutInsertionMap<ActionIndex, (Option<Value<'fv>>, Option<StarlarkCallable<'fv>>)>,
+    /// The action index of `action_data[0]`. The registry numbers a holder's
+    /// actions consecutively, so the data is a dense slice from this index on.
+    #[starlark_pagable(pagable)]
+    first_action_index: u32,
+    action_data: MiniBoxSlice<(Option<Value<'fv>>, Option<StarlarkCallable<'fv>>)>,
     transitive_sets: MiniBoxSlice<ValueTyped<'fv, TransitiveSet<'fv>>>,
     #[starlark_pagable(
         serialize_with = "serialize_lambda_params",
@@ -435,6 +449,16 @@ pub struct FrozenAnalysisValueStorage<'fv> {
     )]
     pub lambda_params: FrozenDynamicLambdaParamsStorageBox<'fv>,
     result_value: Option<ValueTyped<'fv, ProviderCollection<'fv>>>,
+}
+
+impl<'fv> FrozenAnalysisValueStorage<'fv> {
+    fn action_data(
+        &self,
+        index: ActionIndex,
+    ) -> Option<&(Option<Value<'fv>>, Option<StarlarkCallable<'fv>>)> {
+        let offset = index.0.checked_sub(self.first_action_index)?;
+        self.action_data.get(offset as usize)
+    }
 }
 
 fn serialize_lambda_params(
@@ -486,17 +510,15 @@ impl<'v> Freeze<'v> for AnalysisValueStorage<'v> {
             result_value,
         } = self;
 
-        // N.B. collect::<Result<_>> sets the lower bound to zero,
-        // which can cause over-allocations in frozen containers.
-        let mut frozen_action_data = BuckMutInsertionMap::with_capacity(action_data.len());
+        let first_action_index = action_data.keys().next().map_or(0, |k| k.0);
+        let mut frozen_action_data: Vec<(Option<Value<'fv>>, Option<StarlarkCallable<'fv>>)> =
+            Vec::with_capacity(action_data.len());
         for (k, (data, error_handler)) in action_data {
-            frozen_action_data.insert(
-                k,
-                (
-                    Freeze::freeze(data, freezer)?,
-                    Freeze::freeze(error_handler, freezer)?,
-                ),
-            );
+            assert!(k.0 == first_action_index + frozen_action_data.len() as u32);
+            frozen_action_data.push((
+                Freeze::freeze(data, freezer)?,
+                Freeze::freeze(error_handler, freezer)?,
+            ));
         }
         let mut frozen_transitive_sets = Vec::with_capacity(transitive_sets.len());
         for v in transitive_sets {
@@ -508,7 +530,8 @@ impl<'v> Freeze<'v> for AnalysisValueStorage<'v> {
             .transpose()?;
         Ok(FrozenAnalysisValueStorage {
             self_key,
-            action_data: frozen_action_data,
+            first_action_index,
+            action_data: frozen_action_data.into_iter().collect::<MiniBoxSlice<_>>(),
             transitive_sets: frozen_transitive_sets
                 .into_iter()
                 .collect::<MiniBoxSlice<_>>(),
@@ -554,11 +577,9 @@ impl<'v> AnalysisValueStorage<'v> {
     /// Write self to `module` extra value.
     fn write_to_module(self, module: &Module<'v>) -> buck2_error::Result<()> {
         let extra_v = AnalysisExtraValue::get_or_init(module)?;
-        let res = extra_v.analysis_value_storage.set(
-            module
-                .heap()
-                .alloc_typed(StarlarkAnyComplex { value: self }),
-        );
+        let res = extra_v
+            .analysis_value_storage
+            .set(StarlarkAnyComplex { value: self }.alloc_retyped_by_freeze(module.heap()));
         if res.is_err() {
             return Err(internal_error!("analysis_value_storage is already set"));
         }
@@ -634,9 +655,9 @@ impl AnalysisValueFetcher {
         // kept alive by `storage`'s heap.
         let index = id.action_index();
         let starlark_data =
-            storage.maybe_map::<Value<'static>, _>(|v| v.as_ref().value.action_data.get(&index)?.0);
+            storage.maybe_map::<Value<'static>, _>(|v| v.as_ref().value.action_data(index)?.0);
         let error_handler = storage.maybe_map::<Value<'static>, _>(|v| {
-            Some(v.as_ref().value.action_data.get(&index)?.1?.0)
+            Some(v.as_ref().value.action_data(index)?.1?.to_value())
         });
         Ok((
             starlark_data.map(|v| v.to_owned()),
@@ -702,10 +723,11 @@ impl RecordedAnalysisValues {
                     .map(|(_key, tset)| tset.as_ref().add_to_frozen_heap(heap))
                     .collect();
 
-                heap.alloc_simple_typed(StarlarkAnyComplex {
+                heap.alloc(StarlarkAnyComplex {
                     value: FrozenAnalysisValueStorage {
                         self_key: self_key.dupe(),
-                        action_data: BuckMutInsertionMap::new(),
+                        first_action_index: 0,
+                        action_data: MiniBoxSlice::default(),
                         transitive_sets: alloced_tsets.into_iter().collect(),
                         lambda_params: DYNAMIC_LAMBDA_PARAMS_STORAGES
                             .get()
@@ -714,6 +736,7 @@ impl RecordedAnalysisValues {
                         result_value: Some(ProviderCollection::testing_new_default(heap)),
                     },
                 })
+                .get()
             });
         Self {
             self_key,

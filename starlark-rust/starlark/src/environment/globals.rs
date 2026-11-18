@@ -407,7 +407,7 @@ impl GlobalsBuilder {
                 })
                 .collect();
             // SAFETY: Allocated in `self.heap` just here.
-            unsafe { Self::erase(heap.alloc(Namespace::new(fields))) }
+            unsafe { Self::erase(heap.alloc(Namespace::new(fields)).to_value()) }
         });
         // SAFETY: Allocated in `self.heap` just above.
         unsafe { self.set_inner(name, namespace, doc_hidden) }
@@ -485,7 +485,7 @@ impl GlobalsBuilder {
         // SAFETY: Allocated in `self.heap` just here.
         let value = self
             .heap
-            .with(|heap| unsafe { Self::erase(heap.alloc(value)) });
+            .with(|heap| unsafe { Self::erase(heap.alloc(value).to_value()) });
         // SAFETY: Allocated in `self.heap` just above.
         unsafe { self.set_inner(name, value, false) }
     }
@@ -506,7 +506,7 @@ impl GlobalsBuilder {
                 // SAFETY: Allocated in `self.heap` just here.
                 let name = self
                     .heap
-                    .with(|heap| unsafe { Self::erase(heap.alloc_str(name)) });
+                    .with(|heap| unsafe { Self::erase(heap.alloc(name)) });
                 fields.insert(name, value)
             }
         };
@@ -532,15 +532,17 @@ impl GlobalsBuilder {
         let ty = ty.unwrap_or_else(|| components.make_type(as_type_ty.dupe()));
         let value = self.heap.with(|heap| {
             let docs = components.into_docs(as_type, heap);
-            let function = heap.alloc(NativeFunction {
-                function: NativeFunc(f, sig(heap)),
-                name: name.to_owned(),
-                speculative_exec_safe,
-                as_type: as_type_ty,
-                ty,
-                docs,
-                special_builtin_function,
-            });
+            let function = heap
+                .alloc(NativeFunction {
+                    function: NativeFunc(f, sig(heap)),
+                    name: name.to_owned(),
+                    speculative_exec_safe,
+                    as_type: as_type_ty,
+                    ty,
+                    docs,
+                    special_builtin_function,
+                })
+                .to_value();
             // SAFETY: Allocated in `self.heap` just here.
             unsafe { Self::erase(function) }
         });

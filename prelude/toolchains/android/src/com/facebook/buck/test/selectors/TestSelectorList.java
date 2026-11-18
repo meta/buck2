@@ -10,6 +10,7 @@
 
 package com.facebook.buck.test.selectors;
 
+import com.facebook.infer.annotation.Nullsafe;
 import java.io.BufferedReader;
 import java.io.File;
 import java.io.FileReader;
@@ -25,6 +26,7 @@ import java.util.List;
  * A collection of {@link PatternTestSelector} instances which, as a group, can decide whether or
  * not to include a given {@link TestDescription}.
  */
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public class TestSelectorList {
 
   public static final TestSelectorList EMPTY = TestSelectorList.builder().build();

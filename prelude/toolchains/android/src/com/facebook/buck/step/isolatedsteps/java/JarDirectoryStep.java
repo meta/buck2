@@ -18,6 +18,7 @@ import com.facebook.buck.step.StepExecutionResult;
 import com.facebook.buck.step.StepExecutionResults;
 import com.facebook.buck.step.isolatedsteps.IsolatedStep;
 import com.facebook.buck.util.zip.JarBuilder;
+import com.facebook.infer.annotation.Nullsafe;
 import com.google.common.base.MoreObjects;
 import com.google.common.collect.ImmutableSet;
 import java.io.IOException;
@@ -25,6 +26,7 @@ import java.util.Optional;
 import java.util.stream.Collectors;
 
 /** Creates a JAR file from a collection of directories/ZIP/JAR files. */
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public class JarDirectoryStep implements IsolatedStep {
 
   private final JarParameters parameters;

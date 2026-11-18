@@ -104,9 +104,10 @@ isinstance(assert_type, typing.Callable)
 isinstance([], list[int])
 isinstance([], list[typing.Any])
 isinstance([1, 2, 3], list[int])
-isinstance(None, [None, int])
+isinstance(None, None | int)
 isinstance('test', int | str)
 isinstance(('test', None), (str, None))
+isinstance(('test', None), tuple[str, None])
 isinstance({"test": 1, "more": 2}, dict[str, int])
 isinstance({1: 1, 2: 2}, dict[int, int])
 
@@ -124,11 +125,9 @@ isinstance([1,2,"test"], list)
 
     // Checking types fails for invalid types
     a.fail("isinstance(None, isinstance)", "not a valid type");
-    a.fail("isinstance(None, [])", "cannot be used as type");
-    a.fail(
-        "isinstance(None, {'1': '', '2': ''})",
-        "cannot be used as type",
-    );
+    a.fail("isinstance(None, [])", "expected `type`");
+    a.fail("isinstance(None, [None, int])", "expected `type`");
+    a.fail("isinstance(None, {'1': '', '2': ''})", "expected `type`");
 
     // Should check the type of default parameters that aren't used
     a.fail(
@@ -299,4 +298,33 @@ fn test_bit_or() {
             assert::is_true(&format!("not isinstance(range(10), {at} | {bt})"));
         }
     }
+}
+
+/// `tuple[A]` and `tuple[A, B]` as in Python. The grammar has no third subscript, and
+/// `tuple[(A, B, C)]` cannot stand for `tuple[A, B, C]` because a tuple of types is itself a
+/// type, so a longer tuple type is spelled as that tuple of types, `(A, B, C)`.
+#[test]
+fn test_tuple_type_expressions() {
+    let a = crate::assert::Assert::new();
+    a.all_true(
+        r#"
+isinstance((1,), tuple[int])
+isinstance((1, "a"), tuple[int, str])
+isinstance((1, "a", None), (int, str, None))
+isinstance(((1, "a", None),), tuple[(int, str, None)])
+not isinstance((1, "a", None), tuple[(int, str, None)])
+isinstance((1, 2, 3), tuple[int, ...])
+not isinstance((1, "a"), tuple[int])
+not isinstance((1, "a"), tuple[str, int])
+not isinstance((1, "a", "b"), tuple[int, str])
+not isinstance([1, "a"], tuple[int, str])
+"#,
+    );
+    a.pass(
+        r#"
+def f(x: tuple[int, str]) -> tuple[str, int]:
+    return (x[1], x[0])
+f((1, "a"))
+"#,
+    );
 }

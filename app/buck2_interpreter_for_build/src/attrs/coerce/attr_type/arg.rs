@@ -329,7 +329,7 @@ mod tests {
                 ("$(query_paths 'deps(//:foo)')", "query_paths", 1),
                 ("$(find . -name foo)", "find", 3),
             ] {
-                let value = env.heap().alloc(input);
+                let value = env.heap().alloc(input).to_value();
                 let error = coercion_ctx().coerce_sealed(&attr, value).unwrap_err();
                 assert!(
                     format!("{error:#}").contains(&format!(
@@ -346,7 +346,7 @@ mod tests {
         // ast-grep-ignore: rust/buck2-no-starlark-module
         Module::with_temp_heap(|env| {
             let attr = AttrType::arg(true);
-            let value = env.heap().alloc(r"\$(find . -name foo)");
+            let value = env.heap().alloc(r"\$(find . -name foo)").to_value();
             let coerced = coercion_ctx().coerce_sealed(&attr, value)?;
             let CoercedAttrRefKind::ArgSimple(part) = coerced.as_ref().kind() else {
                 panic!("expected a plain-string arg");
@@ -369,7 +369,7 @@ mod tests {
                     "$(cxxppflags root//:foo shared)",
                 ),
             ] {
-                let value = env.heap().alloc(input);
+                let value = env.heap().alloc(input).to_value();
                 let coerced = coercion_ctx().coerce_sealed(&attr, value)?;
                 assert_eq!(
                     coerced.as_ref().as_display_no_ctx().to_string(),

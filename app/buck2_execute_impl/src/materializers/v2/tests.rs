@@ -53,6 +53,7 @@ use buck2_fs::paths::forward_rel_path::ForwardRelativePath;
 use buck2_hash::BuckMutMap;
 use buck2_hash::IntentionallyStdHashMap;
 use buck2_util::threads::ignore_stack_overflow_checks_for_future;
+use dice_futures::cancellation::CancellationContext;
 use dupe::Dupe;
 use jiff::SignedDuration;
 use jiff::Timestamp;
@@ -846,36 +847,56 @@ async fn test_a_request_holds_its_outputs_for_writing() -> buck2_error::Result<(
 }
 
 #[tokio::test]
-async fn test_publish_moves_the_content_and_tracks_it() -> buck2_error::Result<()> {
+async fn test_fill_keeps_a_matching_root_and_remakes_any_other() -> buck2_error::Result<()> {
     ignore_stack_overflow_checks_for_future(async {
         let temp = ProjectRootTemp::new()?;
         let fs = temp.path().dupe();
         let (dm, io) = make(&fs, None, None);
-        let src = path("buck-out/v2/gen/__action__/out");
-        let dest = path("buck-out/v2/gen/content/abc/out");
+        let output = path("buck-out/v2/gen/out");
+        let cancellations = CancellationContext::testing();
+        let fill = async |lease: &WriteLease, value: ArtifactValue| {
+            dm.fill(
+                lease,
+                output.clone(),
+                value,
+                None,
+                RemoteExecutorUseCase::buck2_default(),
+                &cancellations,
+            )
+            .await
+        };
 
-        let lease = dm.prepare_outputs(vec![src.clone()]).await?;
-        fs.write_file(&src, "X", false)?;
-        drop(
-            dm.publish(&lease, src.clone(), dest.clone(), file("X"))
-                .await?,
-        );
-        drop(lease);
-        assert!(!fs.resolve(&src).exists());
-        assert_eq!(std::fs::read_to_string(fs.resolve(&dest))?, "X");
-        assert!(dm.has_artifact_at(dest.clone()).await?);
-
-        // The same content published again is redundant: the source goes, the destination stays.
-        let lease = dm.prepare_outputs(vec![src.clone()]).await?;
-        fs.write_file(&src, "X", false)?;
-        drop(
-            dm.publish(&lease, src.clone(), dest.clone(), file("X"))
-                .await?,
-        );
-        drop(lease);
-        assert!(!fs.resolve(&src).exists());
-        assert_eq!(std::fs::read_to_string(fs.resolve(&dest))?, "X");
+        // Tracked with the wanted content: kept, nothing fetched; the run reports it again.
+        fs.write_file(&output, "old", false)?;
+        drop(report(&dm, &output, file("old")).await?);
+        io.take_log();
+        let lease = dm.prepare_outputs(vec![output.clone()]).await?;
+        fill(&lease, file("old")).await?;
         assert_eq!(io.take_log(), vec![]);
+        assert_eq!(std::fs::read_to_string(fs.resolve(&output))?, "old");
+        dm.declare_existing(
+            &lease,
+            vec![DeclareArtifactPayload {
+                path: output.clone(),
+                artifact: file("old"),
+            }],
+        )
+        .await?;
+        drop(lease);
+
+        // Tracked with other content: replaced.
+        let lease = dm.prepare_outputs(vec![output.clone()]).await?;
+        fill(&lease, file("new")).await?;
+        assert_eq!(io.take_log(), vec![(Op::Materialize, output.clone())]);
+        drop(lease);
+
+        // Untracked, whatever is there: replaced, what was there gone first.
+        let lease = dm.prepare_outputs(vec![output.clone()]).await?;
+        fs.write_file(&output, "left behind", false)?;
+        fill(&lease, file("new")).await?;
+        assert_eq!(io.take_log(), vec![(Op::Materialize, output.clone())]);
+        assert!(!fs.resolve(&output).exists());
+        drop(lease);
         abort(dm);
         Ok(())
     })
@@ -982,23 +1003,46 @@ async fn test_a_final_output_materialization_promotes_a_tracked_root() -> buck2_
     .await
 }
 
+/// The store finds content a tracked path holds out of that path, and content no tracked path
+/// holds not at all.
 #[tokio::test]
-async fn test_a_published_output_enters_the_store() -> buck2_error::Result<()> {
+async fn test_the_store_finds_content_out_of_a_tracked_path() -> buck2_error::Result<()> {
     ignore_stack_overflow_checks_for_future(async {
         let temp = ProjectRootTemp::new()?;
         let fs = temp.path().dupe();
         let (dm, _io) = make(&fs, None, None);
-        let src = path("buck-out/v2/gen/__action__/out");
-        let dest = path("buck-out/v2/gen/content/def/out");
-        let lease = dm.prepare_outputs(vec![src.clone()]).await?;
-        fs.write_file(&src, "published here", false)?;
-        // Held as the action's value holds it; the store keeps nothing past the last holder.
-        let published = file("published here");
-        drop(dm.publish(&lease, src, dest, published.dupe()).await?);
-        drop(lease);
+        let digest = |content: &str| {
+            FileDigest::from_content(
+                content.as_bytes(),
+                DigestConfig::testing_default().cas_digest_config(),
+            )
+        };
+        let p = path("buck-out/v2/gen/out");
+        fs.write_file(&p, "on disk", false)?;
+        // Tracked, with nothing holding its digest: the store let go of the report's copy.
+        drop(report(&dm, &p, file("on disk")).await?);
+        dm.store().flush_collector().await;
         let copy = fs.resolve(path("buck-out/v2/gen/copy"));
-        assert!(in_store(&dm, b"published here", &copy).await?);
-        drop(published);
+        assert!(!in_store(&dm, b"on disk", &copy).await?);
+
+        let found = dm.store().find(&digest("on disk"), false, &*dm).await?;
+        assert!(found.is_some());
+        assert!(in_store(&dm, b"on disk", &copy).await?);
+        assert!(
+            dm.store()
+                .find(&digest("nowhere"), false, &*dm)
+                .await?
+                .is_none()
+        );
+        // Held by the store already: nothing to do, and no path needed.
+        std::fs::remove_file(fs.resolve(&p))?;
+        assert!(
+            dm.store()
+                .find(&digest("on disk"), false, &*dm)
+                .await?
+                .is_some()
+        );
+        drop(found);
         abort(dm);
         Ok(())
     })
@@ -1578,11 +1622,21 @@ async fn test_content_the_store_has_is_linked_rather_than_downloaded() -> buck2_
         assert!(dm.has_artifact_at(p).await?);
 
         // A directory with one file the store has and one it lacks: the served file is linked,
-        // and the structure and the other file are the CAS's.
+        // and the structure and the other file are the CAS's. Content of its own, which no
+        // tracked path holds.
+        let in_dir = b"from the store, in a directory";
+        let held_in_dir =
+            TrackedFileDigest::from_content(in_dir, CasDigestConfig::testing_default());
+        dm.store()
+            .insert_bytes(in_dir.to_vec(), &held_in_dir, false)
+            .await?;
         let d = path("buck-out/v2/gen/dir");
         materialize_ok(
             &dm,
-            vec![(d.clone(), dir(&[("a", "from the store"), ("b", "not")]))],
+            vec![(
+                d.clone(),
+                dir(&[("a", "from the store, in a directory"), ("b", "not")]),
+            )],
         )
         .await?;
         assert_eq!(io.take_log(), vec![(Op::Materialize, d.clone())]);
@@ -1591,8 +1645,9 @@ async fn test_content_the_store_has_is_linked_rather_than_downloaded() -> buck2_
                 temp.path()
                     .resolve(d.join(ForwardRelativePath::unchecked_new("a")))
             )?,
-            "from the store"
+            "from the store, in a directory"
         );
+        assert_eq!(dm.store().stats().served, 2);
         assert!(
             !temp
                 .path()
@@ -1605,8 +1660,7 @@ async fn test_content_the_store_has_is_linked_rather_than_downloaded() -> buck2_
     .await
 }
 
-/// Content tracked at another path is copied from there before the CAS is asked, when the stash
-/// does not have it: content the CAS holds, say, which the stash lets go of.
+/// Content tracked at another path comes from there, and the CAS is not asked.
 #[tokio::test]
 async fn test_content_tracked_elsewhere_is_copied_rather_than_downloaded() -> buck2_error::Result<()>
 {
@@ -1672,6 +1726,13 @@ async fn test_content_tracked_elsewhere_is_copied_rather_than_downloaded() -> bu
         {
             use std::os::unix::fs::PermissionsExt;
             assert!(std::fs::metadata(&a)?.permissions().mode() & 0o111 != 0);
+            // The paths it could have come from keep the mode they were tracked with.
+            for holder in [&first, &second] {
+                let mode = std::fs::metadata(temp.path().resolve(holder))?
+                    .permissions()
+                    .mode();
+                assert!(mode & 0o111 == 0, "`{holder}` became executable");
+            }
         }
         assert!(
             !temp
@@ -1679,6 +1740,57 @@ async fn test_content_tracked_elsewhere_is_copied_rather_than_downloaded() -> bu
                 .resolve(d.join(ForwardRelativePath::unchecked_new("b")))
                 .exists()
         );
+        abort(dm);
+        Ok(())
+    })
+    .await
+}
+
+/// Content a tracked path holds comes from that path even where the store holds it too, and
+/// from the store when the path turns out not to have it.
+#[tokio::test]
+async fn test_a_tracked_path_is_asked_before_the_store() -> buck2_error::Result<()> {
+    ignore_stack_overflow_checks_for_future(async {
+        let temp = ProjectRootTemp::new()?;
+        let (dm, io) = make(temp.path(), None, None);
+        let out = path("buck-out/v2/gen/out");
+        // Held as the action's value holds it, so that the store keeps its copy.
+        let built = file("tracked, and in the store too");
+        drop(
+            write_and_report(
+                &dm,
+                temp.path(),
+                &out,
+                "tracked, and in the store too",
+                &built,
+            )
+            .await?,
+        );
+        let DirectoryEntry::Leaf(ActionDirectoryMember::File(metadata)) = built.entry() else {
+            panic!("a file");
+        };
+        assert!(metadata.digest.stash().is_some());
+
+        let second = path("buck-out/v2/gen/second");
+        materialize_ok(&dm, vec![(second.clone(), built.dupe())]).await?;
+        assert_eq!(io.take_log(), vec![]);
+        assert_eq!(
+            std::fs::read_to_string(temp.path().resolve(&second))?,
+            "tracked, and in the store too"
+        );
+        assert_eq!(dm.store().stats().served, 0);
+
+        // The first tracked path loses its file behind the core's back: the copy from it
+        // fails, which is a soft error, and the store gives the content.
+        std::fs::remove_file(temp.path().resolve(&out))?;
+        let third = path("buck-out/v2/gen/third");
+        materialize_ok(&dm, vec![(third.clone(), built.dupe())]).await?;
+        assert_eq!(io.take_log(), vec![]);
+        assert_eq!(
+            std::fs::read_to_string(temp.path().resolve(&third))?,
+            "tracked, and in the store too"
+        );
+        assert_eq!(dm.store().stats().served, 1);
         abort(dm);
         Ok(())
     })

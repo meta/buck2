@@ -10,9 +10,11 @@
 
 package com.facebook.buck.core.filesystems;
 
+import com.facebook.infer.annotation.Nullsafe;
 import java.nio.file.Path;
 
 /** Implementation of {@link com.facebook.buck.core.filesystems.RelPath} */
+@Nullsafe(Nullsafe.Mode.LOCAL)
 class RelPathImpl extends PathWrapperImpl implements RelPath {
   public RelPathImpl(Path path) {
     super(path);

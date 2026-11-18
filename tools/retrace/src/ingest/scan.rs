@@ -2041,7 +2041,10 @@ fn project_action(
                 status: status_name(c),
                 wall_time_us: md.and_then(|m| m.wall_time.as_ref()).map(dur_us),
                 start_us: md.and_then(|m| m.start_time.as_ref()).map(ts_us),
-                client_start_us: md.and_then(|m| m.client_start_time.as_ref()).map(ts_us),
+                client_start_us: md
+                    .and_then(|m| m.client_attempt.as_ref())
+                    .and_then(|a| a.start_time.as_ref())
+                    .map(ts_us),
                 elastic: c
                     .details
                     .as_ref()
@@ -2066,8 +2069,9 @@ fn project_action(
         last.worker_wall_us = worker.and_then(|w| w.worker_wall_time_us).and_then(us_i64);
         last.worker_bytes_in = worker.and_then(|w| w.input_download_bytes);
         last.worker_bytes_out = worker.and_then(|w| w.output_upload_bytes);
-        last.attempts = worker.and_then(|w| w.execution_attempts).filter(|n| *n > 1);
-        last.final_queue_us = worker.and_then(|w| w.final_queue_us);
+        let attempts = worker.and_then(|w| w.attempts.as_ref());
+        last.attempts = attempts.map(|a| a.count).filter(|n| *n > 1);
+        last.final_queue_us = attempts.and_then(|a| a.final_queue_us);
         last.hashing_us = md.and_then(|m| m.hashing_duration.as_ref()).map(dur_us);
         last.mem_peak = stats.and_then(|s| s.memory_peak);
         last.cpu_us = worker.and_then(cpu_total_us);
@@ -2091,8 +2095,8 @@ fn project_action(
                     if !c.argv.is_empty() {
                         last.argv = Some(c.argv.clone());
                     }
-                    last.cwd = c.working_directory.clone();
-                    last.env_rule = c.environment_rule;
+                    last.cwd = c.context.as_ref().and_then(|x| x.working_directory.clone());
+                    last.env_rule = c.context.as_ref().map_or(0, |x| x.environment_rule);
                 }
                 Some(Command::WorkerCommand(c)) if !c.argv.is_empty() => {
                     last.argv = Some(c.argv.clone());
@@ -2147,8 +2151,14 @@ fn project_action(
         cache_upload_result: end.cache_upload_result,
         dep_file_cache_upload_result: end.dep_file_cache_upload_result,
         wall_time_us: end.wall_time.as_ref().map(dur_us),
-        prepare_us: end.prepare_command_us,
-        finish_us: end.finish_action_us,
+        prepare_us: end
+            .run_action_timings
+            .as_ref()
+            .and_then(|t| t.prepare_command_us),
+        finish_us: end
+            .run_action_timings
+            .as_ref()
+            .and_then(|t| t.finish_action_us),
         output_size: end.output_size,
         input_files_bytes: end.input_files_bytes,
         invalidated: end.invalidation_info.is_some(),
@@ -2655,7 +2665,9 @@ mod execution_tests {
                                 cmd_stderr: "warning: unstable -Ctarget-feature=v9a\n".to_owned(),
                                 signed_exit_code: Some(0),
                                 metadata: Some(buck2_data::CommandExecutionMetadata {
-                                    client_start_time: Some(timestamp(10)),
+                                    client_attempt: Some(buck2_data::ClientAttempt {
+                                        start_time: Some(timestamp(10)),
+                                    }),
                                     wall_time: Some(prost_types::Duration {
                                         seconds: 0,
                                         nanos: 190_000,

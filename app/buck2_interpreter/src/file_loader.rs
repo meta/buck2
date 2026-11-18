@@ -20,7 +20,8 @@ use starlark::codemap::FileSpan;
 use starlark::environment::FrozenModule;
 use starlark::eval::FileLoader;
 use starlark::values::OwnedFrozenRef;
-use starlark::values::structs::StructRef;
+use starlark::values::ValueOf;
+use starlark::values::structs::Struct;
 
 use crate::paths::module::OwnedStarlarkModulePath;
 use crate::paths::module::StarlarkModulePath;
@@ -121,7 +122,7 @@ impl LoadedModule {
     /// another heap.
     pub fn native_globals_for_buck_files(
         &self,
-    ) -> buck2_error::Result<Option<OwnedFrozenRef<'_, StructRef<'static>>>> {
+    ) -> buck2_error::Result<Option<OwnedFrozenRef<'_, ValueOf<'static, Struct<'static>>>>> {
         let Some(native) = self
             .0
             .env
@@ -131,7 +132,7 @@ impl LoadedModule {
             return Ok(None);
         };
         let native = native.try_map(|v| {
-            StructRef::from_value(v)
+            ValueOf::new(v)
                 .ok_or_else(|| buck2_error::Error::from(FileLoaderError::NativeMustBeStruct))
         })?;
         Ok(Some(native))
@@ -229,7 +230,7 @@ mod tests {
         // Test
         // ast-grep-ignore: rust/buck2-no-starlark-module
         Module::with_temp_heap(|m| {
-            m.set("name", m.heap().alloc(name.to_string()));
+            m.set("name", m.heap().alloc(name.to_string()).to_value());
             m.freeze_named(Buck2TestHeapName::frozen_heap_name())
         })
         .unwrap()

@@ -130,6 +130,10 @@ fn main() -> io::Result<()> {
         )
         .type_attribute("buck.data.CpuCounter", "#[derive(dupe::Dupe)]")
         .type_attribute("buck.data.CommandExecutionStats", "#[derive(dupe::Dupe)]")
+        .type_attribute(
+            "buck.data.LocalCommand.EnvironmentRule",
+            "#[derive(dupe::Dupe)]",
+        )
         .type_attribute(".", "#[derive(::serde::Serialize, ::serde::Deserialize)]")
         .type_attribute(".", "#[derive(::allocative::Allocative)]")
         // Keep the JSON event log for ordinary failures as `{"Failure": {}}`.
@@ -147,10 +151,6 @@ fn main() -> io::Result<()> {
         )
         .field_attribute(
             "buck.data.BuildPhaseEnd.end_time",
-            "#[serde(default, with = \"::buck2_proto_serde::serialize_timestamp\")]",
-        )
-        .field_attribute(
-            "client_start_time",
             "#[serde(default, with = \"::buck2_proto_serde::serialize_timestamp\")]",
         )
         .field_attribute(
@@ -319,6 +319,7 @@ fn main() -> io::Result<()> {
         .boxed("InstantEvent.data.rage_result")
         .boxed("InstantEvent.data.resource_control_event")
         .boxed("InstantEvent.data.snapshot")
+        .boxed("StructuredError.error")
         .extern_path(".buck.host_sharing", "::buck2_host_sharing_proto")
         .compile(proto_files, &includes)
 }

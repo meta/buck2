@@ -7,7 +7,6 @@ darwin-libproc = { git = "https://github.com/fbsource/darwin-libproc", rev = "f7
 perf-event = { version = "0.4", git = "https://github.com/Nero5023/perf-event.git", rev = "6dae86b6d4807acec081e6dc0a53167f57f8c0f4" }
 perf-event-open-sys = { version = "5.0", git = "https://github.com/Nero5023/perf-event.git", rev = "6dae86b6d4807acec081e6dc0a53167f57f8c0f4" }
 rustls-native-certs = { git = "https://github.com/rustls/rustls-native-certs", rev = "9734b4cc0bfa88224e0fc49867abafa1c56fa28d" }
-tonic = { git = "https://github.com/grpc/grpc-rust", rev = "de65d0a48783869d89b7d8d4a65ce703f1612249" }
 wezterm-color-types = { git = "https://github.com/wezterm/wezterm.git", rev = "05343b387085842b434d267f91b6b0ec157e4331" }
 wezterm-dynamic = { git = "https://github.com/wezterm/wezterm.git", rev = "05343b387085842b434d267f91b6b0ec157e4331" }
 wezterm-input-types = { git = "https://github.com/wezterm/wezterm.git", rev = "05343b387085842b434d267f91b6b0ec157e4331" }
@@ -94,7 +93,6 @@ members = [
   "app/buck2_downward_api",
   "app/buck2_downward_api_proto",
   "app/buck2_dynamic_actions",
-  "app/buck2_embedded_section",
   "app/buck2_env",
   "app/buck2_error",
   "app/buck2_error_derive",
@@ -129,6 +127,7 @@ members = [
   "app/buck2_node",
   "app/buck2_node_tests",
   "app/buck2_offline_archive",
+  "app/buck2_process_kill",
   "app/buck2_profile",
   "app/buck2_proto_serde",
   "app/buck2_protoc_dev",
@@ -145,6 +144,7 @@ members = [
   "app/buck2_settings",
   "app/buck2_settings_derive",
   "app/buck2_subscription_proto",
+  "app/buck2_tenant_proxy",
   "app/buck2_test",
   "app/buck2_test_api",
   "app/buck2_test_proto",
@@ -209,15 +209,15 @@ license = "MIT OR Apache-2.0"
 repository = "https://github.com/facebook/buck2"
 
 [workspace.dependencies]
-allocative = { version = "0.3.6", path = "allocative/allocative", features = ["anyhow", "bumpalo", "compact_str", "dashmap", "either", "futures", "hashbrown", "indexmap", "jiff", "num-bigint", "once_cell", "parking_lot", "prost-types", "serde_json", "slab", "smallvec", "sorted_vector_map", "tokio", "triomphe"] }
-allocative_derive = { version = "0.3.6", path = "allocative/allocative_derive" }
+allocative = { version = "0.4.0", path = "allocative/allocative", features = ["anyhow", "bumpalo", "compact_str", "dashmap", "either", "futures", "hashbrown", "indexmap", "jiff", "num-bigint", "once_cell", "parking_lot", "prost-types", "serde_json", "slab", "smallvec", "sorted_vector_map", "tokio", "triomphe"] }
+allocative_derive = { version = "0.4.0", path = "allocative/allocative_derive" }
 annotate-snippets = "0.12.17"
 anyhow = "1.0.104"
 anymap3 = "1.1.0"
-arc-swap = { version = "1.9.3", features = ["weak"] }
+arc-swap = { version = "1.9.4", features = ["weak"] }
 argfile = "1.0.0"
 assert_matches = "1.5"
-async-compression = { version = "0.4.51", features = ["brotli", "bzip2", "deflate", "futures-io", "gzip", "tokio", "zlib", "zstd", "zstdmt"] }
+async-compression = { version = "0.4.52", features = ["brotli", "bzip2", "deflate", "futures-io", "gzip", "tokio", "zlib", "zstd", "zstdmt"] }
 async-condvar-fair = { version = "1.0.1", features = ["parking_lot_0_12", "tokio"] }
 async-recursion = "1.2.0"
 async-scoped = { version = "0.9", features = ["use-tokio"] }
@@ -271,7 +271,6 @@ buck2_directory = { path = "app/buck2_directory" }
 buck2_downward_api = { path = "app/buck2_downward_api" }
 buck2_downward_api_proto = { path = "app/buck2_downward_api_proto" }
 buck2_dynamic_actions = { path = "app/buck2_dynamic_actions" }
-buck2_embedded_section = { path = "app/buck2_embedded_section" }
 buck2_env = { path = "app/buck2_env" }
 buck2_error = { path = "app/buck2_error" }
 buck2_error_derive = { path = "app/buck2_error_derive" }
@@ -302,6 +301,7 @@ buck2_log_common = { path = "app/buck2_log_common" }
 buck2_miniperf_proto = { path = "app/buck2_miniperf_proto" }
 buck2_node = { path = "app/buck2_node" }
 buck2_offline_archive = { path = "app/buck2_offline_archive" }
+buck2_process_kill = { path = "app/buck2_process_kill" }
 buck2_profile = { path = "app/buck2_profile" }
 buck2_proto_serde = { path = "app/buck2_proto_serde" }
 buck2_protoc_dev = { path = "app/buck2_protoc_dev" }
@@ -319,6 +319,7 @@ buck2_settings = { path = "app/buck2_settings" }
 buck2_settings_derive = { path = "app/buck2_settings_derive" }
 buck2_sketches = { path = "buck2_sketches" }
 buck2_subscription_proto = { path = "app/buck2_subscription_proto" }
+buck2_tenant_proxy = { path = "app/buck2_tenant_proxy" }
 buck2_test = { path = "app/buck2_test" }
 buck2_test_api = { path = "app/buck2_test_api" }
 buck2_test_proto = { path = "app/buck2_test_proto" }
@@ -368,9 +369,9 @@ enum-map = "3.1.0"
 equivalent = "1.0.3"
 erased-serde = "0.4.11"
 faccess = "0.2.4"
-fancy-regex = "0.19.2"
+fancy-regex = "0.20.0"
 fbinit = "0.2"
-flate2 = { version = "1.1.10", features = ["rust_backend"], default-features = false }
+flate2 = { version = "1.1.11", features = ["rust_backend"], default-features = false }
 fnv = "1.0"
 form_urlencoded = "1.2.1"
 futures = { version = "0.3.34", features = ["async-await", "compat"] }
@@ -378,7 +379,7 @@ futures-intrusive = "0.5.0"
 fxhash = "0.2.1"
 games = { path = "games" }
 glob = "0.3.4"
-globset = { version = "0.4.20", features = ["serde1"] }
+globset = { version = "0.4.21", features = ["serde1"] }
 h2 = "0.4.20"
 hashbrown = "0.17.1"
 hex = { version = "0.4.3", features = ["alloc"] }
@@ -415,7 +416,7 @@ linkme = "0.3.37"
 lock_free_hashtable = { version = "0.2.0", path = "shed/lock_free_hashtable", features = ["allocative"] }
 lock_free_vec = { path = "shed/lock_free_vec" }
 logos = "0.16.1"
-lru = { version = "0.18.5", default-features = false }
+lru = { version = "0.19.0", default-features = false }
 lsp-server = "0.10.0"
 lsp-types = "0.97"
 maplit = "1.0"
@@ -439,7 +440,7 @@ os_str_bytes = { version = "7.2.1", features = ["conversions"] }
 pagable = { version = "0.4.2", path = "pagable", features = ["tokio"] }
 pagable_derive = { version = "0.4.2", path = "pagable_derive" }
 pagable_storage = { version = "0.4.2", path = "pagable_storage", features = ["tokio"] }
-parking_lot = { version = "0.12.1", features = ["arc_lock", "send_guard", "serde"] }
+parking_lot = { version = "0.13.0", features = ["arc_lock", "send_guard", "serde"] }
 paste = "1.0.14"
 pathdiff = "0.2"
 perf-event = "0.4"
@@ -467,19 +468,19 @@ ref-cast = "1.0.27"
 regex = "1.13.1"
 remote_execution = { path = "remote_execution/oss/re_grpc" }
 rfd = "0.15"
-ruff_formatter = "0.0.14"
-ruff_python_ast = "0.0.14"
-ruff_python_formatter = "0.0.14"
-ruff_python_parser = "0.0.14"
-ruff_python_trivia = "0.0.14"
-ruff_source_file = "0.0.14"
-ruff_text_size = "0.0.14"
+ruff_formatter = "0.0.21"
+ruff_python_ast = "0.0.21"
+ruff_python_formatter = "0.0.21"
+ruff_python_parser = { version = "0.0.21", features = ["stacker"] }
+ruff_python_trivia = "0.0.21"
+ruff_source_file = "0.0.21"
+ruff_text_size = "0.0.21"
 rusqlite = { version = "0.40.0", features = ["backup", "blob", "bundled", "column_decltype", "fallible_uint", "functions", "limits", "modern_sqlite", "serde_json", "vtab"] }
 rustc-hash = "2.1.3"
 rustls = { version = "0.23.46", features = ["ring"] }
 rustls-native-certs = "0.8.3"
 rustls-pki-types = { version = "1.15.1", features = ["alloc", "std"] }
-rustyline = { version = "18.0.1", features = ["derive"] }
+rustyline = { version = "19.0.0", features = ["derive"] }
 scopeguard = "1.2.0"
 sequence_trie = { version = "0.3.6", features = ["serde"] }
 serde = { version = "1.0.229", features = ["derive", "rc"] }
@@ -493,7 +494,7 @@ similar = { version = "3.2.1", features = ["bytes", "inline", "unicode"] }
 siphasher = "1.0.4"
 sled = "0.34.7"
 slog = { version = "2.8.2", features = ["max_level_trace", "nested-values"] }
-smallvec = { version = "1.16.4", features = ["const_generics", "impl_bincode", "serde", "specialization", "union", "write"] }
+smallvec = { version = "1.16.5", features = ["const_generics", "impl_bincode", "serde", "specialization", "union", "write"] }
 sorted_vector_map = "0.2.1"
 stacker = "0.1.25"
 starlark = { version = "0.14.2", path = "starlark-rust/starlark", features = ["pagable"] }
@@ -511,7 +512,7 @@ superconsole = { version = "0.3.0", path = "superconsole" }
 syn = { version = "3.0.9", features = ["extra-traits", "fold", "full", "visit", "visit-mut"] }
 sync_wrapper = "1.0.2"
 sys-info = "0.9.1"
-sysinfo = "0.39.6"
+sysinfo = { version = "0.40.1", features = ["system"], default-features = false }
 take_mut = "0.2"
 tar = "0.4.46"
 tempfile = "3.27.0"
@@ -519,7 +520,7 @@ termcolor = "1.0"
 termimad = "0.35.5"
 termios = "0.3"
 termwiz = { git = "https://github.com/wezterm/wezterm.git", rev = "05343b387085842b434d267f91b6b0ec157e4331", features = ["use_serde", "widgets"], default-features = false }
-test-case = "3.4.0"
+test-case = "3.4.1"
 textwrap = { version = "0.16.3", features = ["terminal_size"] }
 thiserror = "2.0.21"
 threadpool = "1.8.1"
@@ -530,10 +531,10 @@ tokio-retry = "0.3.2"
 tokio-rustls = { version = "0.26.6", features = ["logging", "ring", "tls12"], default-features = false }
 tokio-stream = { version = "0.1.19", features = ["fs", "io-util", "net", "signal", "sync", "time"] }
 tokio-util = { version = "0.7.20", features = ["full"] }
-toml = { version = "1.1.8", features = ["preserve_order"] }
-tonic = { version = "0.14.6", features = ["codegen", "gzip", "tls-native-roots", "tls-ring", "tls-webpki-roots", "transport"] }
-tonic-prost = "0.14.6"
-tonic-prost-build = "0.14.6"
+toml = { version = "1.2.1", features = ["preserve_order"] }
+tonic = { version = "0.14.9", features = ["codegen", "gzip", "tls-native-roots", "tls-ring", "tls-webpki-roots", "transport"] }
+tonic-prost = "0.14.9"
+tonic-prost-build = "0.14.9"
 tower = { version = "0.5.3", features = ["util"] }
 tower-layer = "0.3.3"
 tower-lsp-server = "0.22.1"
@@ -542,7 +543,7 @@ tracing = { version = "0.1.41", features = ["attributes", "valuable"] }
 tracing-subscriber = { version = "0.3.23", features = ["chrono", "env-filter", "json", "local-time", "parking_lot", "registry"] }
 triomphe = { version = "0.1.17", features = ["arc-swap"] }
 twox-hash = "2.1.5"
-uuid = { version = "1.28.0", features = ["rng-getrandom", "serde", "v4", "v5", "v6", "v7", "v8"] }
+uuid = { version = "1.29.1", features = ["rng-getrandom", "serde", "v4", "v5", "v6", "v7", "v8"] }
 variant_name = { path = "gazebo/variant_name" }
 variant_name_derive = { path = "gazebo/variant_name_derive" }
 vec1 = { version = "1.12.1", features = ["serde"] }
@@ -552,7 +553,7 @@ whoami = "2.1.3"
 windows-sys = { version = "0.61.2", features = ["Win32_Foundation", "Win32_Globalization", "Win32_NetworkManagement_IpHelper", "Win32_NetworkManagement_Ndis", "Win32_NetworkManagement_WindowsFilteringPlatform", "Win32_Security", "Win32_Security_Authorization", "Win32_Security_Credentials", "Win32_Storage_FileSystem", "Win32_System_ApplicationInstallationAndServicing", "Win32_System_Console", "Win32_System_Diagnostics_ToolHelp", "Win32_System_Environment", "Win32_System_IO", "Win32_System_JobObjects", "Win32_System_LibraryLoader", "Win32_System_Memory", "Win32_System_Power", "Win32_System_ProcessStatus", "Win32_System_Rpc", "Win32_System_SystemServices", "Win32_System_Threading", "Win32_UI_Shell"] }
 winver = "1"
 x509-parser = "0.18.1"
-xattr = "1.6.1"
+xattr = "1.7.0"
 zstd = { version = "0.14.3", features = ["experimental", "zstdmt"] }
 
 [workspace.lints.clippy]

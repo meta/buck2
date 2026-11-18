@@ -24,6 +24,7 @@ _internal_tool_attrs = {
     "shared_libraries_symlink_tree": _internal_tool("prelude//rust/tools:shared_libraries_symlink_tree"),
     "symlink_only_dir_entry": _internal_tool("prelude//rust/tools:symlink_only_dir_entry"),
     "transitive_dependency_symlinks_tool": _internal_tool("prelude//rust/tools:transitive_dependency_symlinks"),
+    "windows_export_def": _internal_tool("prelude//rust/tools:windows_export_def"),
 }
 
 RustInternalToolsInfo = provider(fields = {tool: RunInfo for tool in _internal_tool_attrs.keys()})

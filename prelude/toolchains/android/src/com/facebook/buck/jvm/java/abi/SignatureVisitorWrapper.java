@@ -10,12 +10,14 @@
 
 package com.facebook.buck.jvm.java.abi;
 
+import com.facebook.infer.annotation.Nullsafe;
 import org.objectweb.asm.signature.SignatureVisitor;
 
 /**
  * A {@link SignatureVisitor} that chains to another one. Most of the other visitors in ASM can
  * already do this; {@link SignatureVisitor} is an exception for some reason.
  */
+@Nullsafe(Nullsafe.Mode.LOCAL)
 class SignatureVisitorWrapper extends SignatureVisitor {
   private final SignatureVisitor sv;
 

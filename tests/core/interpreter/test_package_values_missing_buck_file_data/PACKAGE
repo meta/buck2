@@ -1,0 +1,1 @@
+write_package_value("aaa.bbb", "ccc")  # buildifier: disable=positional-args

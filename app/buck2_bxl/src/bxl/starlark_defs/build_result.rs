@@ -14,10 +14,12 @@ use starlark::environment::Methods;
 use starlark::environment::MethodsBuilder;
 use starlark::starlark_module;
 use starlark::starlark_simple_value;
+use starlark::values::Heap;
 use starlark::values::NoSerialize;
 use starlark::values::ProvidesStaticType;
 use starlark::values::StarlarkValue;
-use starlark::values::Value;
+use starlark::values::ValueOf;
+use starlark::values::ValueTyped;
 use starlark::values::none::NoneOr;
 use starlark::values::starlark_value;
 
@@ -49,13 +51,15 @@ fn starlark_build_result_methods(builder: &mut MethodsBuilder) {
     ///         ctx.output.print(value.artifacts())
     /// ```
     fn artifacts<'v>(
-        this: Value<'v>,
-    ) -> starlark::Result<NoneOr<StarlarkProvidersArtifactIterable<'v>>> {
-        match &this.downcast_ref::<StarlarkBxlBuildResult>().unwrap().0 {
+        this: ValueTyped<'v, StarlarkBxlBuildResult>,
+        heap: Heap<'v>,
+    ) -> starlark::Result<NoneOr<ValueOf<'v, StarlarkProvidersArtifactIterable<'v>>>> {
+        match &this.as_ref().0 {
             BxlBuildResult::None => Ok(NoneOr::None),
-            BxlBuildResult::Built { .. } => {
-                Ok(NoneOr::Other(StarlarkProvidersArtifactIterable(this)))
-            }
+            BxlBuildResult::Built { .. } => Ok(NoneOr::Other(ValueOf::alloc(
+                heap,
+                StarlarkProvidersArtifactIterable(this.to_value()),
+            ))),
         }
     }
 
@@ -69,11 +73,15 @@ fn starlark_build_result_methods(builder: &mut MethodsBuilder) {
     ///         ctx.output.print(value.failures())
     /// ```
     fn failures<'v>(
-        this: Value<'v>,
-    ) -> starlark::Result<NoneOr<StarlarkFailedArtifactIterable<'v>>> {
-        match &this.downcast_ref::<StarlarkBxlBuildResult>().unwrap().0 {
+        this: ValueTyped<'v, StarlarkBxlBuildResult>,
+        heap: Heap<'v>,
+    ) -> starlark::Result<NoneOr<ValueOf<'v, StarlarkFailedArtifactIterable<'v>>>> {
+        match &this.as_ref().0 {
             BxlBuildResult::None => Ok(NoneOr::None),
-            BxlBuildResult::Built { .. } => Ok(NoneOr::Other(StarlarkFailedArtifactIterable(this))),
+            BxlBuildResult::Built { .. } => Ok(NoneOr::Other(ValueOf::alloc(
+                heap,
+                StarlarkFailedArtifactIterable(this.to_value()),
+            ))),
         }
     }
 }

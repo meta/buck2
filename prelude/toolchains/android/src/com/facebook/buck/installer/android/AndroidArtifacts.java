@@ -11,6 +11,7 @@
 package com.facebook.buck.installer.android;
 
 import com.facebook.buck.core.filesystems.AbsPath;
+import com.facebook.infer.annotation.Nullsafe;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.Sets;
@@ -20,7 +21,7 @@ import java.util.HashSet;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
-import javax.annotation.Nullable;
+import org.jspecify.annotations.Nullable;
 
 /**
  * Holds android install related artifacts (apk options, manifest path, etc)
@@ -28,11 +29,12 @@ import javax.annotation.Nullable;
  * <p>Shared across the gRPC handler threads that deliver artifacts, the threads that push them, and
  * the install that reads them, so every member is guarded by this object's monitor.
  */
+@Nullsafe(Nullsafe.Mode.LOCAL)
 class AndroidArtifacts {
-  private AbsPath androidManifestPath;
-  private AndroidInstallApkOptions apkOptions;
-  private AbsPath apk;
-  private ImmutableSet<String> apkAbis;
+  @Nullable private AbsPath androidManifestPath;
+  @Nullable private AndroidInstallApkOptions apkOptions;
+  @Nullable private AbsPath apk;
+  @Nullable private ImmutableSet<String> apkAbis;
   private Optional<AbsPath> secondaryDexExopackageInfoDirectory = Optional.empty();
   private Optional<AbsPath> secondaryDexExopackageInfoMetadata = Optional.empty();
   private Optional<AbsPath> nativeLibraryExopackageInfoDirectory = Optional.empty();
@@ -166,6 +168,7 @@ class AndroidArtifacts {
     this.androidManifestPath = androidManifestPath;
   }
 
+  @Nullable
   public synchronized AbsPath getAndroidManifestPath() {
     return this.androidManifestPath;
   }
@@ -174,6 +177,7 @@ class AndroidArtifacts {
     this.apkOptions = apkOptions;
   }
 
+  @Nullable
   public synchronized AndroidInstallApkOptions getApkOptions() {
     return this.apkOptions;
   }
@@ -191,6 +195,7 @@ class AndroidArtifacts {
     this.apkAbis = apkAbis;
   }
 
+  @Nullable
   public synchronized AbsPath getApk() {
     return apk;
   }

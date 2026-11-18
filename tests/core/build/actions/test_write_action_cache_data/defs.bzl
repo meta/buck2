@@ -6,6 +6,8 @@
 # of this source tree. You may select, at your option, one of the
 # above-listed licenses.
 
+_TEST_ALLOW_CACHE_UPLOADS = read_config("test", "allow_cache_uploads", "true")
+
 def _write_impl(ctx):
     out = ctx.actions.write("out.txt", ctx.attrs.content, has_content_based_path = False)
     return [DefaultInfo(default_output = out)]
@@ -49,7 +51,7 @@ def _execution_platforms(ctx):
                         use_windows_path_separators = False,
                         # Whether local results are published, which is what lets a write's
                         # content be recorded.
-                        allow_cache_uploads = read_config("test", "allow_cache_uploads", "true") in ["true", "True"],
+                        allow_cache_uploads = _TEST_ALLOW_CACHE_UPLOADS in ["true", "True"],
                     ),
                 ),
             ],

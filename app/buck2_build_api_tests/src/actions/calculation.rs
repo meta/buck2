@@ -75,6 +75,7 @@ use buck2_core::fs::project_rel_path::ProjectRelativePathBuf;
 use buck2_core::package::source_path::SourcePath;
 use buck2_core::target::configured_target_label::ConfiguredTargetLabel;
 use buck2_core::target::label::label::TargetLabel;
+use buck2_data::local_command::EnvironmentRule;
 use buck2_directory::directory::entry::DirectoryEntry;
 use buck2_events::dispatch::EventDispatcher;
 use buck2_events::dispatch::with_dispatcher_async;
@@ -581,6 +582,8 @@ async fn test_command_details_omission() {
                 digest: ActionDigest::empty(digest_config.cas_digest_config()),
                 command: vec![],
                 env: BuckFixedSortedMap::new(),
+                working_directory: Default::default(),
+                environment_rule: EnvironmentRule::Unspecified,
             },
         },
         timing: CommandExecutionMetadata::empty(TimeSpan::empty_now()),
@@ -612,6 +615,8 @@ async fn test_command_details_omission() {
             digest: ActionDigest::empty(digest_config.cas_digest_config()),
             command: vec![],
             env: BuckFixedSortedMap::new(),
+            working_directory: Default::default(),
+            environment_rule: EnvironmentRule::Unspecified,
         },
         missing_materialized_inputs: false,
     };

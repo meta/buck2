@@ -216,7 +216,7 @@ where
     /// }
     ///
     /// let from = Module::with_temp_heap(|from| {
-    ///     from.set("value", from.heap().alloc("a string"));
+    ///     from.set("value", from.heap().alloc("a string").to_value());
     ///     from.freeze_named(FrozenHeapName::user("from")).unwrap()
     /// });
     /// Module::with_temp_heap(|to| {
@@ -332,7 +332,7 @@ unsafe impl<T> Sync for OwnedFrozen<T> {}
 ///
 /// let v: OwnedFrozen<Value<'static>> =
 ///     OwnedFrozen::build(FrozenHeapName::user("example"), |heap| {
-///         heap.alloc("contents")
+///         heap.alloc("contents").to_value()
 ///     });
 /// assert_eq!(v.name().unwrap().to_string(), "example");
 /// assert!(v.allocated_bytes() > 0);

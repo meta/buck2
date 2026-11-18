@@ -240,6 +240,15 @@ def python_executable_attrs() -> dict[str, Attr]:
             `string`s, or a further `string`-keyed dictionary.""",
             ),
             "native_link_strategy": attrs.option(attrs.enum(NativeLinkStrategy.values()), default = None),
+            "omnibus_linking": attrs.option(
+                attrs.enum(["always", "static_link_style"]),
+                default = None,
+                doc = """
+                When the executable links native deps through omnibus (`merged`): `always`, or only when the
+                target configuration uses a static link style. The python transition switches such executables to
+                the large code model.
+            """,
+            ),
             "opt_by_default_enabled": attrs.bool(default = False),
             "optimize_for_action_throughput": attrs.bool(default = False),
             "package_split_dwarf_dwp": attrs.bool(default = False),
@@ -277,6 +286,15 @@ def python_executable_attrs() -> dict[str, Attr]:
             "_cxx_toolchain": toolchains_common.cxx(),
             "_exec_os_type": buck.exec_os_type_arg(),
             "_gen_build_info": attrs.option(attrs.exec_dep(providers = [RunInfo]), default = None),
+            # Stable build-info generation ignores per-build `-c build_info.*`
+            # overrides, so the placeholder DSO is generated with the bare
+            # tool: the config-baked tool would re-run on every host change
+            # with identical outputs.
+            "_gen_build_info_no_config": attrs.option(attrs.exec_dep(providers = [RunInfo]), default = None),
+            # Generate the build-info DSO after the native link (which
+            # links a stable-mode placeholder instead). Off by default until
+            # the late build-info patch plumbing is in place everywhere.
+            "_generate_build_info_after_link": attrs.bool(default = False),
             "_generated_build_info_enabled": attrs.bool(default = False),
             "_generated_build_info_mode": attrs.enum(["full", "stable"], default = "stable"),
             "_generated_build_info_spec": BUILD_INFO_ATTR,

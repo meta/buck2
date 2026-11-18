@@ -14,5 +14,6 @@ buck_java_test(
         "prelude//toolchains/android/third-party:guava",
         "prelude//toolchains/android/third-party:infer-annotations",
         "prelude//toolchains/android/third-party:junit",
+        "prelude//toolchains/android/third-party:kotlin-annotations",
     ],
 )

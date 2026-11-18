@@ -1,0 +1,5 @@
+# @nolint
+
+load("//:defs.bzl", "loop_long")
+
+loop_long("package")

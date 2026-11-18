@@ -55,6 +55,7 @@ use buck2_cmd_log_client::LogCommand;
 use buck2_cmd_rage_client::rage::RageCommand;
 use buck2_cmd_starlark_client::StarlarkCommand;
 use buck2_common::argv::Argv;
+use buck2_common::daemon_routing::DaemonRouting;
 use buck2_common::invocation_paths::RESERVED_BUCK_OUT_PREFIX;
 use buck2_common::invocation_paths_result::InvocationPathsResult;
 use buck2_common::invocation_roots::get_invocation_paths_result;
@@ -272,6 +273,7 @@ pub fn exec(process: ProcessContext<'_>) -> ExitResult {
         process.shared.args.to_vec(),
         &mut immediate_config,
         &cwd,
+        &process.shared.stdin_argfile,
     )
     .buck_error_context("Error expanding argsfiles")?;
 
@@ -467,6 +469,31 @@ pub(crate) enum CommandKind {
 }
 
 impl CommandKind {
+    /// Whether the command may contact, start or manage a daemon, and so needs the daemon
+    /// routing from the root buckconfig. The daemon process takes its routing from its startup
+    /// config, and helpers such as the event-log uploaders run for every command; parsing the
+    /// root buckconfig in them would only cost time.
+    fn selects_daemon(&self) -> bool {
+        match self {
+            #[cfg(not(client_only))]
+            CommandKind::Daemon(_)
+            | CommandKind::Forkserver(_)
+            | CommandKind::InternalTestRunner(_) => false,
+            CommandKind::Root(root) => root.prints_daemon_dir(),
+            CommandKind::Log(log) => log.connects_to_daemon(),
+            CommandKind::HelpEnv(_) | CommandKind::Init(_) | CommandKind::Completion(_) => false,
+            CommandKind::Debug(
+                DebugCommand::PersistEventLogs(_)
+                | DebugCommand::UploadReLogs(_)
+                | DebugCommand::Exe(_)
+                | DebugCommand::InternalVersion(_)
+                | DebugCommand::ChromeTrace(_)
+                | DebugCommand::LogPerf(_),
+            ) => false,
+            _ => true,
+        }
+    }
+
     pub(crate) fn exec(
         self,
         process: ProcessContext<'_>,
@@ -478,6 +505,20 @@ impl CommandKind {
         let paths_result = get_invocation_paths_result(
             &process.shared.working_dir,
             common_opts.isolation_dir.clone(),
+            || {
+                if !self.selects_daemon() {
+                    return None;
+                }
+                Some(match immediate_config.daemon_startup_config() {
+                    // An in-process daemon serves this command alone.
+                    Ok(_) if common_opts.no_buckd => DaemonRouting::Unshared,
+                    Ok(config) => config.startup_options.routing,
+                    // Commands that need a daemon report this error when they build the startup
+                    // config; the others (`clean`, `kill`) keep working on the unshared paths, as
+                    // they did before routing was configurable.
+                    Err(_) => DaemonRouting::Unshared,
+                })
+            },
         );
 
         // Handle the daemon command earlier: it wants to fork, but the things we do below might
@@ -546,8 +587,17 @@ impl CommandKind {
         let start_in_process_daemon = if common_opts.no_buckd {
             #[cfg(not(client_only))]
             {
+                // The default filter logs events inside the `daemon_listener` tracing spans at
+                // level "info" for recording in buckd.stderr. The in-process daemon would dump this
+                // to the user's terminal; drop that directive unless the user tweaked logging
+                // explicitly.
+                if buck2_env!("BUCK_LOG")?.is_none() {
+                    shared.log_reload_handle.update_log_filter("warn")?;
+                }
+                let mut daemon_startup_config = immediate_config.daemon_startup_config()?.clone();
+                daemon_startup_config.startup_options.routing = DaemonRouting::Unshared;
                 buck2_daemon::no_buckd::start_in_process_daemon(
-                    immediate_config.daemon_startup_config()?,
+                    &daemon_startup_config,
                     paths.clone().get_result()?,
                     runtime,
                 )?
@@ -571,7 +621,6 @@ impl CommandKind {
             argv,
             trace_id.dupe(),
             &mut shared.stdin,
-            &mut shared.restarter,
             runtime,
             common_opts.oncall,
             common_opts.client_metadata,
@@ -696,6 +745,8 @@ impl CommandKind {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeSet;
+
     use buck2_client_ctx::agent_context::parse_agent_context;
 
     use super::*;
@@ -718,6 +769,35 @@ mod tests {
             .iter()
             .map(|value| parse_agent_context(value).unwrap())
             .collect()
+    }
+
+    #[test]
+    fn test_no_command_has_two_arguments_with_the_same_name() {
+        // clap checks this itself only when it is built with debug assertions, as open source's
+        // debug buck2 is, and then panics when it builds the command.
+        fn check(command: &clap::Command, path: &str) {
+            let mut longs = BTreeSet::new();
+            let mut shorts = BTreeSet::new();
+            for arg in command.get_arguments() {
+                if let Some(long) = arg.get_long() {
+                    assert!(longs.insert(long), "`{path}` has two `--{long}` arguments");
+                }
+                if let Some(short) = arg.get_short() {
+                    assert!(
+                        shorts.insert(short),
+                        "`{path}` has two `-{short}` arguments"
+                    );
+                }
+            }
+            for subcommand in command.get_subcommands() {
+                check(subcommand, &format!("{path} {}", subcommand.get_name()));
+            }
+        }
+
+        // Building the command gives each subcommand the global arguments.
+        let mut command = Opt::clap_command();
+        command.build();
+        check(&command, "buck2");
     }
 
     #[test]

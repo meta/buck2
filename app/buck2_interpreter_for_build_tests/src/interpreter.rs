@@ -25,11 +25,8 @@ use buck2_interpreter::paths::path::StarlarkPath;
 use buck2_interpreter_for_build::interpreter::testing::CellsData;
 use buck2_interpreter_for_build::interpreter::testing::Tester;
 use buck2_interpreter_for_build::interpreter::testing::run_simple_starlark_test;
-use buck2_node::attrs::inspect_options::AttrInspectOptions;
-use buck2_node::nodes::unconfigured::testing::targets_to_json;
 use dupe::Dupe;
 use indoc::indoc;
-use serde_json::json;
 
 #[test]
 fn test_eval_import() {
@@ -383,70 +380,6 @@ fn prelude_is_included() -> buck2_error::Result<()> {
         "bzl files in the prelude package should NOT have access to the prelude"
     );
 
-    Ok(())
-}
-
-#[test]
-fn test_package_import() -> buck2_error::Result<()> {
-    let mut tester = Tester::with_cells(buck2_interpreter_for_build::interpreter::testing::cells(
-        Some(indoc!(
-            r#"
-            [buildfile]
-                package_includes = src=>//include.bzl::func_alias=some_func
-        "#
-        )),
-    )?)?;
-
-    let import_path = ImportPath::testing_new("root//:include.bzl");
-    tester.add_import(
-        &import_path,
-        indoc!(
-            r#"
-            def _impl(ctx):
-                pass
-            export_file = rule(impl=_impl, attrs = {})
-
-            def some_func(name):
-                export_file(name = name)
-        "#
-        ),
-    )?;
-
-    let build_path = BuildFilePath::testing_new("root//src/package:BUCK");
-    let eval_result = tester.eval_build_file(
-        &build_path,
-        indoc!(
-            r#"
-                implicit_package_symbol("func_alias")(
-                    implicit_package_symbol("missing", "DEFAULT")
-                )
-                "#
-        ),
-        PackageListing::testing_files(&["file1.java", "file2.java"]),
-    )?;
-    assert_eq!(build_path.package(), eval_result.package());
-    assert_eq!(
-        json!({
-                "DEFAULT": {
-                    "__type__": "root//include.bzl:export_file",
-                    "compatible_with": [],
-                    "default_target_platform": null,
-                    "exec_compatible_with": [],
-                    "name": "DEFAULT",
-                    "target_compatible_with": [],
-                    "modifiers": [],
-                    "tests": [],
-                    "visibility": [],
-                    "within_view": ["PUBLIC"],
-                    "metadata": {},
-                },
-        }),
-        targets_to_json(
-            eval_result.targets(),
-            build_path.package(),
-            AttrInspectOptions::All
-        )?
-    );
     Ok(())
 }
 

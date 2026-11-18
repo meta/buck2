@@ -64,6 +64,9 @@ class ResourceSourceMapExecutableMainTest {
     ResourceSourceMapExecutableMain.generate(resourceDirs, assetDirs, output)
 
     val expectedLines = listOf(
+        fileSourceMapRow(0, "res/layout/screen.xml", "first/BUCK", "first/BUCK"),
+        fileSourceMapRow(0, "res/values/strings.xml", "first/BUCK", "first/BUCK"),
+        fileSourceMapRow(1, "res/values-fr/strings.xml", "second/BUCK", "second/BUCK"),
         "R\t0\tid\ttitle_view\t\tfirst/BUCK\tfirst/BUCK",
         "R\t0\tlayout\tscreen\t\tfirst/BUCK\tfirst/BUCK",
         "R\t0\tstring\ttitle\t\tfirst/BUCK\tfirst/BUCK",
@@ -106,8 +109,15 @@ class ResourceSourceMapExecutableMainTest {
 
     assertEquals(
         listOf(
+            fileSourceMapRow(
+                0,
+                "res/values/strings.xml",
+                "fbandroid/example/res/values/strings.xml",
+                "fbandroid/example/BUCK",
+            ),
             "R\t0\tstring\ttitle\t\tfbandroid/example/res/values/strings.xml\tfbandroid/example/BUCK",
-        ),
+        )
+            .sorted(),
         Files.readAllLines(output, StandardCharsets.UTF_8),
     )
   }
@@ -142,8 +152,15 @@ class ResourceSourceMapExecutableMainTest {
 
     assertEquals(
         listOf(
+            fileSourceMapRow(
+                0,
+                "res/drawable/icon.webp",
+                "fbandroid/example/res/drawable/icon.png",
+                "fbandroid/example/BUCK",
+            ),
             "R\t0\tdrawable\ticon\t\tfbandroid/example/res/drawable/icon.png\tfbandroid/example/BUCK",
-        ),
+        )
+            .sorted(),
         Files.readAllLines(output, StandardCharsets.UTF_8),
     )
   }
@@ -185,8 +202,15 @@ class ResourceSourceMapExecutableMainTest {
 
     assertEquals(
         listOf(
+            fileSourceMapRow(
+                0,
+                "res/drawable-night-v21/icon.xml",
+                "fbandroid/example/res/drawable-night/icon.xml",
+                "fbandroid/example/BUCK",
+            ),
             "R\t0\tdrawable\ticon\tnight-v21\tfbandroid/example/res/drawable-night/icon.xml\tfbandroid/example/BUCK",
-        ),
+        )
+            .sorted(),
         Files.readAllLines(output, StandardCharsets.UTF_8),
     )
   }
@@ -228,9 +252,22 @@ class ResourceSourceMapExecutableMainTest {
 
     assertEquals(
         listOf(
+            fileSourceMapRow(
+                0,
+                "res/drawable-land-night-v21/icon.xml",
+                "fbandroid/example/res/drawable-land/icon.xml",
+                "fbandroid/example/BUCK",
+            ),
+            fileSourceMapRow(
+                0,
+                "res/drawable-land-night-v21/icon.xml",
+                "fbandroid/example/res/drawable-night/icon.xml",
+                "fbandroid/example/BUCK",
+            ),
             "R\t0\tdrawable\ticon\tland-night-v21\tfbandroid/example/res/drawable-land/icon.xml\tfbandroid/example/BUCK",
             "R\t0\tdrawable\ticon\tland-night-v21\tfbandroid/example/res/drawable-night/icon.xml\tfbandroid/example/BUCK",
-        ),
+        )
+            .sorted(),
         Files.readAllLines(output, StandardCharsets.UTF_8),
     )
   }
@@ -294,9 +331,22 @@ class ResourceSourceMapExecutableMainTest {
 
     assertEquals(
         listOf(
+            fileSourceMapRow(
+                0,
+                "res/values/strings.xml",
+                "fbandroid/example/res/values/strings.xml",
+                "fbandroid/example/BUCK",
+            ),
+            fileSourceMapRow(
+                0,
+                "res/values-it/strings.xml",
+                "fbandroid/example/res/values-it/strings.xml",
+                "fbandroid/example/BUCK",
+            ),
             "R\t0\tstring\ttitle\t\tfbandroid/example/res/values/strings.xml\tfbandroid/example/BUCK",
             "R\t0\tstring\ttitle\tit\tfbandroid/example/res/values-it/strings.xml\tfbandroid/example/BUCK",
-        ),
+        )
+            .sorted(),
         Files.readAllLines(output, StandardCharsets.UTF_8),
     )
   }
@@ -330,6 +380,7 @@ class ResourceSourceMapExecutableMainTest {
     val resources = temporaryFolder.newFolder("resources").toPath()
     Files.createDirectories(resources.resolve("values"))
     Files.createDirectories(resources.resolve("layout"))
+    Files.createDirectories(resources.resolve("raw"))
     Files.writeString(
         resources.resolve("values/strings.xml"),
         "<resources><string name=\"title\">Title</string></resources>",
@@ -345,6 +396,10 @@ class ResourceSourceMapExecutableMainTest {
         "<LinearLayout>",
         StandardCharsets.UTF_8,
     )
+    Files.write(
+        resources.resolve("raw/payload.xml"),
+        byteArrayOf(0x00, 0x01, 0x02, 0x03),
+    )
 
     val resourceDirs = temporaryFolder.newFile("resource-dirs").toPath()
     Files.writeString(resourceDirs, "$resources\tresources/BUCK", StandardCharsets.UTF_8)
@@ -359,7 +414,33 @@ class ResourceSourceMapExecutableMainTest {
     ResourceSourceMapExecutableMain.generate(resourceDirs, assetDirs, output)
 
     assertEquals(
-        listOf("R\t0\tstring\ttitle\t\tresources/BUCK\tresources/BUCK"),
+        listOf(
+            fileSourceMapRow(
+                0,
+                "res/layout/broken.xml",
+                "resources/BUCK",
+                "resources/BUCK",
+            ),
+            fileSourceMapRow(
+                0,
+                "res/raw/payload.xml",
+                "resources/BUCK",
+                "resources/BUCK",
+            ),
+            fileSourceMapRow(
+                0,
+                "res/values/broken.xml",
+                "resources/BUCK",
+                "resources/BUCK",
+            ),
+            fileSourceMapRow(
+                0,
+                "res/values/strings.xml",
+                "resources/BUCK",
+                "resources/BUCK",
+            ),
+            "R\t0\tstring\ttitle\t\tresources/BUCK\tresources/BUCK",
+        ),
         Files.readAllLines(output, StandardCharsets.UTF_8),
     )
   }
@@ -410,6 +491,33 @@ class ResourceSourceMapExecutableMainTest {
     assertEquals(assetRow, ResourceSourceMapFormat.parse(assetRow.serialize()))
   }
 
+  @Test
+  fun `resource ids preserve type and name`() {
+    val resourceDirs = temporaryFolder.newFile("resource-dirs").toPath()
+    val assetDirs = temporaryFolder.newFile("asset-dirs").toPath()
+    val rDotTxt = temporaryFolder.newFile("R.txt").toPath()
+    Files.write(
+        rDotTxt,
+        listOf(
+            "int string title 0x7f120001",
+            "int color accent 0x7f060002",
+            "int[] styleable Example { 0x7f010001 }",
+        ),
+        StandardCharsets.UTF_8,
+    )
+    val output = temporaryFolder.newFile("source-map").toPath()
+
+    ResourceSourceMapExecutableMain.generate(resourceDirs, assetDirs, output, rDotTxt = rDotTxt)
+
+    assertEquals(
+        listOf(
+            "I\t0x7f060002\tcolor\taccent",
+            "I\t0x7f120001\tstring\ttitle",
+        ),
+        Files.readAllLines(output, StandardCharsets.UTF_8),
+    )
+  }
+
   private fun assetSourceMapRow(
       priority: Int,
       path: String,
@@ -417,6 +525,20 @@ class ResourceSourceMapExecutableMainTest {
       ownerBuildFile: String,
   ): String = listOf(
       "A",
+      priority.toString(),
+      encodeField(path),
+      encodeField(source),
+      encodeField(ownerBuildFile),
+  )
+      .joinToString("\t")
+
+  private fun fileSourceMapRow(
+      priority: Int,
+      path: String,
+      source: String,
+      ownerBuildFile: String,
+  ): String = listOf(
+      "F",
       priority.toString(),
       encodeField(path),
       encodeField(source),

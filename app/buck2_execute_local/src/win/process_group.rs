@@ -39,6 +39,8 @@ impl ProcessCommandImpl {
     pub(crate) async fn new(
         mut cmd: Command,
         _cgroup: Option<CgroupPathBuf>,
+        // The job object already kills every process the command started.
+        _kill_detached_descendants: bool,
     ) -> buck2_error::Result<Self> {
         // On windows we create suspended process to assign it to a job (group) and then resume.
         // This is necessary because the process might finish before we add it to a job
@@ -145,7 +147,7 @@ impl ProcessGroupImpl {
 
     // On Windows we use JobObject API to kill the whole process tree
     pub(crate) async fn kill(
-        &self,
+        &mut self,
         _graceful_shutdown_timeout_s: Option<u32>,
     ) -> buck2_error::Result<()> {
         tokio::time::timeout(Duration::from_secs(10), self.job.terminate(0))

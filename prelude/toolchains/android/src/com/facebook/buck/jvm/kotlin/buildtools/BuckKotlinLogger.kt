@@ -12,6 +12,7 @@ package com.facebook.buck.jvm.kotlin.buildtools
 
 import org.jetbrains.kotlin.buildtools.api.KotlinLogger // @oss-enable
 import com.facebook.buck.core.util.log.Logger
+import com.facebook.buck.jvm.kotlin.buildtools.CompilerMessageFormatter.Severity
 import com.facebook.buck.jvm.kotlin.cd.analytics.KotlinCDLoggingContext
 // @oss-disable: import com.facebook.kotlin.compilercompat.KotlinLoggerCompat
 import java.io.PrintStream
@@ -25,6 +26,8 @@ internal class BuckKotlinLogger(
 // @oss-disable: : KotlinLoggerCompat()
 {
 
+  private val messageFormatter = CompilerMessageFormatter()
+
   override val isDebugEnabled: Boolean
     get() = LOG.isDebugEnabled
 
@@ -35,12 +38,18 @@ internal class BuckKotlinLogger(
 
   override fun error(msg: String, throwable: Throwable?) {
     if (!LOG.isLoggable(Level.SEVERE)) return
-    stdErr.println(msg)
+    val severity = if (throwable == null) Severity.ERROR else Severity.EXCEPTION
+    stdErr.println(messageFormatter.format(severity, msg))
     throwable?.printStackTrace(stdErr)
   }
 
+  /** Whether the compiler reported compiling in full. */
+  var compiledNonIncrementally: Boolean = false
+    private set
+
   override fun info(msg: String) {
     if (msg.startsWith("Non-incremental compilation will be performed")) {
+      compiledNonIncrementally = true
       loggingContext.addExtras(BuckKotlinLogger::class.java.simpleName, msg)
     }
     if (msg.startsWith("KOTLIN_BUILD_METRIC|")) {
@@ -58,14 +67,14 @@ internal class BuckKotlinLogger(
 
   override fun warn(msg: String) {
     if (!LOG.isLoggable(Level.WARNING)) return
-    stdErr.println(msg)
+    stdErr.println(messageFormatter.format(Severity.WARNING, msg))
   }
 
   // OSS-only: the internal `KotlinLoggerCompat` supertype lacks this Kotlin 2.2
   // overload on some toolchain configurations.
     override fun warn(msg: String, throwable: Throwable?) { // @oss-enable
       if (!LOG.isLoggable(Level.WARNING)) return // @oss-enable
-      stdErr.println(msg) // @oss-enable
+      stdErr.println(messageFormatter.format(Severity.WARNING, msg)) // @oss-enable
       throwable?.printStackTrace(stdErr) // @oss-enable
     } // @oss-enable
 

@@ -165,9 +165,7 @@ def main() -> None:
     if __file__ is not None:
         cwd = os.path.dirname(__file__)
     cmd = build_command(args, extra_args, cwd)
-    result = subprocess.run(
-        cmd, cwd=cwd, env={**os.environ, "BUCK2_SHARE_DAEMON": "false"}
-    )
+    result = subprocess.run(cmd, cwd=cwd)
     sys.exit(result.returncode)
 
 

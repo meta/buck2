@@ -35,7 +35,7 @@ use crate::eval::runtime::inlined_frame::InlinedFrameAlloc;
 use crate::eval::runtime::visit_span::VisitSpanMut;
 use crate::values::UnpackValue;
 use crate::values::Value;
-use crate::values::enumeration::AnyEnumType;
+use crate::values::enumeration::EnumTypeView;
 use crate::values::string::dot_format::parse_format_one;
 
 #[derive(Clone, Debug, VisitSpanMut, StarlarkPagable)]
@@ -252,7 +252,7 @@ impl<'f> CallCompiled<'f> {
     ) -> Option<ExprCompiled<'f>> {
         // The enum type, the argument and the variant it selects are all IR constants, so the
         // lookup happens at the IR's brand and nothing is demoted from the value heap.
-        let fun = AnyEnumType::unpack_value_opt(fun.as_value()?)?;
+        let fun = EnumTypeView::unpack_value_opt(fun.as_value()?)?.as_dyn();
         let arg = args.one_pos()?.as_value()?;
         Some(ExprCompiled::Value(fun.construct(arg).ok()?))
     }
@@ -272,8 +272,8 @@ impl<'f> CallCompiled<'f> {
 
         let (before, after) = parse_format_one(format)?;
 
-        let before = ctx.frozen_heap().alloc_str(&before);
-        let after = ctx.frozen_heap().alloc_str(&after);
+        let before = ctx.frozen_heap().alloc(before.as_str());
+        let after = ctx.frozen_heap().alloc(after.as_str());
         Some(ExprCompiled::format_one(before, arg.clone(), after, ctx))
     }
 

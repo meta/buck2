@@ -264,6 +264,7 @@ fn tag_metadata(tag: ErrorTag) -> TagMetadata {
         ErrorTag::ServerSigabrt => rank!(tier0),
         ErrorTag::ClientStartupTimeout => rank!(tier0),
         ErrorTag::DaemonLaunchFailed => rank!(tier0),
+        ErrorTag::DaemonLaunchTimeout => rank!(tier0),
         ErrorTag::DaemonStartupFailed => rank!(tier0),
         ErrorTag::ExitStatusUnknown => rank!(tier0),
         ErrorTag::DaemonNestedConstraintsMismatch => rank!(tier0),
@@ -511,6 +512,9 @@ fn tag_metadata(tag: ErrorTag) -> TagMetadata {
         // exhausted resource, and set the signal to yellow, not red.
         ErrorTag::ReResourceExhausted => rank!(input).exit_code(ExitCode::InfraError),
         ErrorTag::ReUserQuota => rank!(input).exit_code(ExitCode::InfraError),
+        // The action kept taking down the RE worker running it; the platform
+        // attributes that to the action.
+        ErrorTag::ReActionLostWorkers => rank!(input),
         // Test runner hit fatal errors during test execution
         ErrorTag::TestFatal => rank!(input),
 

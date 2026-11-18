@@ -10,13 +10,21 @@ internal_cell = fbcode
 stripped_root_dirs = buck2
 
 [project]
+# The e2e tests under `tests` build in open source (see `tests/buck_e2e.bzl`).
+# The `tests` paths ignored below need fbsource, or, as the Python e2e harness
+# does, third-party Python packages the shim does not have.
 ignore = \
     app/buck2_explain, \
     app/buck2_trailcam, \
     app_dep_graph_rules, \
     examples, \
     integrations/rust-project/tests, \
-    tests, \
+    tests/e2e_util/BUCK, \
+    tests/e2e_util/api, \
+    tests/js_lockfiles, \
+    tests/lint_rules, \
+    tests/prelude, \
+    tests/tools, \
     .jj, \
     .git, \
     target

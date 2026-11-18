@@ -1,0 +1,41 @@
+# @generated
+# To regenerate, run:
+# ```
+# STARLARK_RUST_REGENERATE_GOLDEN_TESTS=1 cargo test -p starlark --lib
+# ```
+
+Code:
+def test(x: WithSignatures, y: EveryOperator, z: MyCustomType, i: int, s: str, a):
+    by_int = x[i]
+    by_unknown = x[a]
+    by_str = x[s]
+    unsaid = y[s]
+    not_indexed = z[i]
+
+Error:
+error: Type `with_signatures` does not have [] operator or [] cannot accept `str`
+ --> filename:5:14
+  |
+5 |     by_str = x[s]
+  |              ^^^^
+
+Error:
+error: Type `my_custom_type` does not have [] operator or [] cannot accept `int`
+ --> filename:7:19
+  |
+7 |     not_indexed = z[i]
+  |                   ^^^^
+
+Types:
+by_int: str
+by_unknown: str
+by_str: typing.Never
+unsaid: typing.Any
+not_indexed: typing.Never
+
+Compiler typechecker (eval):
+error: Type `with_signatures` does not have [] operator or [] cannot accept `str`
+ --> filename:5:14
+  |
+5 |     by_str = x[s]
+  |              ^^^^

@@ -140,12 +140,19 @@ impl NamedEventLogWriter {
     }
 
     pub(crate) async fn shutdown(&mut self) {
-        if let Err(e) = self.file.shutdown().await {
-            soft_error_or_panic!(
-                "event_log_flush_failed",
-                buck2_error::Error::from(e)
-                    .context(format!("Failed to flush log file at `{}`", self.path.path))
-            );
+        match self.file.shutdown().await {
+            Ok(()) => {}
+            Err(e) if e.kind() == std::io::ErrorKind::BrokenPipe => {
+                // The subprocess exited with some kind of error. That is logged separately, so
+                // here we just ignore it.
+            }
+            Err(e) => {
+                soft_error_or_panic!(
+                    "event_log_flush_failed",
+                    buck2_error::Error::from(e)
+                        .context(format!("Failed to flush log file at `{}`", self.path.path))
+                );
+            }
         }
     }
 

@@ -385,7 +385,7 @@ public class MiniAapt {
           || hasStyleSpans(item)) {
         continue;
       }
-      addStyleItemReference(item.getTextContent().trim(), references);
+      addStyleItemReference(Objects.requireNonNull(item.getTextContent()).trim(), references);
     }
   }
 

@@ -29,16 +29,11 @@ rust_library(
             },
             "extra_buck_dependencies": {
                 "dependencies": [
-                    (None, "//eden/fs/service:thrift-rust-clients"),
-                    (None, "//thrift/lib/rust:fbthrift"),
                     (None, "//watchman/rust/watchman_client:watchman_client"),
                     "fbsource//third-party/rust:watchman_client",
                 ],
             },
         },
-    },
-    named_deps = {
-        # @oss-disable[end= ]: "edenfs_clients": "//eden/fs/service:thrift-rust-clients",
     },
     deps = [
         "fbsource//third-party/rust:anyhow",
@@ -73,7 +68,6 @@ rust_library(
         "//buck2/pagable:pagable",
         "//buck2/starlark-rust/starlark_syntax:starlark_syntax",
         "//buck2/superconsole:superconsole",
-        # @oss-disable[end= ]: "//thrift/lib/rust:fbthrift",
         "//watchman/rust/watchman_client:watchman_client",
     ] + select({
         "DEFAULT": [],

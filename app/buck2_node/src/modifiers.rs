@@ -26,15 +26,18 @@ use buck2_util::arc_str::ArcStr;
 use buck2_util::strong_hasher::Blake3StrongHasher;
 use buck2_util::strong_hasher::StrongHash128;
 use dupe::Dupe;
+use either::Either;
 use pagable::Pagable;
-use starlark::typing::Ty;
 use starlark::values::AllocValue;
 use starlark::values::Heap;
+use starlark::values::UnpackValue;
 use starlark::values::Value;
+use starlark::values::ValueOf;
+use starlark::values::dict::AllocDict;
 use starlark::values::dict::DictRef;
+use starlark::values::list::AllocList;
 use starlark::values::list::ListRef;
 use starlark::values::tuple::TupleRef;
-use starlark::values::type_repr::StarlarkTypeRepr;
 use static_interner::Intern;
 use static_interner::interner;
 use strong_hash::StrongHash;
@@ -342,18 +345,12 @@ impl CfgModifiers {
     }
 }
 
-impl StarlarkTypeRepr for CfgModifiers {
-    type Canonical = <Value<'static> as StarlarkTypeRepr>::Canonical;
-
-    fn starlark_type_repr() -> Ty {
-        Value::starlark_type_repr()
-    }
-}
-
 /// The parsed value in the shape the cfg constructor consumes.
 impl<'v> AllocValue<'v> for CfgModifiers {
-    fn alloc_value(self, heap: Heap<'v>) -> Value<'v> {
-        self.render(&mut StarlarkRenderer(heap))
+    type Type = Value<'v>;
+
+    fn alloc_value(self, heap: Heap<'v>) -> ValueOf<'v, Self::Type> {
+        self.render(&mut StarlarkRenderer(heap)).into()
     }
 }
 
@@ -430,9 +427,12 @@ impl<'v> ModifierSource<'v> for Value<'v> {
     }
 
     fn list(self) -> Option<Vec<Self>> {
-        ListRef::from_value(self)
-            .map(|l| l.content().to_vec())
-            .or_else(|| TupleRef::from_value(self).map(|t| t.content().to_vec()))
+        let items = <Either<&ListRef, &TupleRef>>::unpack_value_opt(self)?;
+        Some(
+            items
+                .either(|list| list.content(), |tuple| tuple.content())
+                .to_vec(),
+        )
     }
 
     fn entries(self) -> Option<Vec<(&'v str, Self)>> {
@@ -676,23 +676,25 @@ impl<'v> ModifierRenderer for StarlarkRenderer<'v> {
     }
 
     fn string(&mut self, s: &str) -> Value<'v> {
-        self.0.alloc_str(s).to_value()
+        self.0.alloc(s).to_value()
     }
 
     fn list(&mut self, items: Vec<Value<'v>>) -> Value<'v> {
-        self.0.alloc(items)
+        self.0.alloc(AllocList(items)).to_value()
     }
 
     fn dict(&mut self, entries: Vec<(String, Value<'v>)>) -> Value<'v> {
-        self.0.alloc(
-            entries
-                .into_iter()
-                .collect::<BuckMutInsertionMap<String, Value<'v>>>(),
-        )
+        self.0
+            .alloc(AllocDict(
+                entries
+                    .into_iter()
+                    .collect::<BuckMutInsertionMap<String, Value<'v>>>(),
+            ))
+            .to_value()
     }
 
     fn raw_json(&mut self, json: &str) -> Value<'v> {
-        self.0.alloc(JsonRenderer.raw_json(json))
+        self.0.alloc(JsonRenderer.raw_json(json)).to_value()
     }
 }
 
@@ -805,7 +807,7 @@ mod tests {
                 written,
                 "BXL and rules see the value as written"
             );
-            let parsed = heap.alloc(m).to_json_value().unwrap();
+            let parsed = heap.alloc(m).to_value().to_json_value().unwrap();
             assert_eq!(parsed[0], json!("root//os:linux"));
             assert_eq!(
                 parsed[1].as_object().unwrap().len(),
@@ -829,13 +831,26 @@ mod tests {
             let cells = cells();
             let labels = ModifierLabelParser::new(&cells);
             assert_eq!(
-                CfgModifiers::from_target(heap.alloc(AllocTuple(["cfg//os:linux"])), &labels),
-                CfgModifiers::from_target(heap.alloc(vec!["cfg//os:linux"]), &labels),
+                CfgModifiers::from_target(
+                    heap.alloc(AllocTuple(["cfg//os:linux"])).to_value(),
+                    &labels
+                ),
+                CfgModifiers::from_target(
+                    heap.alloc(AllocList(vec!["cfg//os:linux"])).to_value(),
+                    &labels
+                ),
             );
-            assert!(CfgModifiers::from_target(heap.alloc(AllocTuple::EMPTY), &labels).is_empty());
+            assert!(
+                CfgModifiers::from_target(heap.alloc(AllocTuple::EMPTY).to_value(), &labels)
+                    .is_empty()
+            );
             assert_eq!(
-                CfgModifiers::from_package(heap.alloc(AllocTuple::EMPTY), &labels, None),
-                CfgModifiers::from_package(heap.alloc(Vec::<&str>::new()), &labels, None),
+                CfgModifiers::from_package(heap.alloc(AllocTuple::EMPTY).to_value(), &labels, None),
+                CfgModifiers::from_package(
+                    heap.alloc(AllocList(Vec::<&str>::new())).to_value(),
+                    &labels,
+                    None
+                ),
             );
         });
     }

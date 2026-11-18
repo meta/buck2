@@ -186,9 +186,14 @@ fn spawn_via_forkserver(
                 stdout: std_redirects.stdout.to_string(),
                 stderr: std_redirects.stderr.to_string(),
             }),
+            // On shutdown the worker gets `SIGTERM` and this long to exit, if set; then its whole
+            // process group gets `SIGKILL`. With no `command_cgroup`, that is what stops the
+            // processes the worker started.
             graceful_shutdown_timeout_s,
             command_cgroup: None,
             network_access: None,
+            timeout_grace_period_s: None,
+            kill_detached_descendants: None,
         };
         apply_local_execution_environment(&mut req, &working_directory, env, None);
         let res = forkserver

@@ -56,7 +56,7 @@ def android_aar_impl(ctx: AnalysisContext) -> list[Provider]:
         java_packaging_deps.extend(
             get_all_java_packaging_deps_from_packaging_infos(
                 ctx,
-                get_build_config_java_libraries(ctx, build_config_infos, package_type = "release", exopackage_modes = []),
+                get_build_config_java_libraries(ctx, build_config_infos, package_type = "release", exopackage_modes = [], is_binary = False),
             )
         )
 

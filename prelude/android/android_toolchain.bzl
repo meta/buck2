@@ -31,7 +31,15 @@ AndroidToolchainInfo = provider(
         "android_jar": provider_field(typing.Any, default = None),
         "android_optional_jars": provider_field(typing.Any, default = None),
         "apk_builder": provider_field(typing.Any, default = None),
+        # Threads that deflate APK files when `apk_builder_fast_packaging` is set.
+        "apk_builder_compression_threads": provider_field(int, default = 4),
+        # Package APKs with `FastApkJarBuilder`: copy compressed entries of zip inputs as they are,
+        # and deflate files on `apk_builder_compression_threads` threads.
+        "apk_builder_fast_packaging": provider_field(bool, default = False),
         "apk_module_graph": provider_field(typing.Any, default = None),
+        # `always` signs APKs with v1 and v2 signatures; `min-sdk` adds the v1 signature only when
+        # the APK's minSdkVersion is below 24.
+        "apk_v1_signing_policy": provider_field(str, default = "always"),
         "app_without_resources_stub": provider_field(typing.Any, default = None),
         "build_info_generator": provider_field(typing.Any, default = None),
         "bundle_apks_builder": provider_field(typing.Any, default = None),
@@ -64,6 +72,8 @@ AndroidToolchainInfo = provider(
         "mergemap_tool": provider_field(typing.Any, default = None),
         "mini_aapt": provider_field(typing.Any, default = None),
         "multi_dex_command": provider_field(typing.Any, default = None),
+        # JVM max heap (`-Xmx` value, e.g. "28g") for `multi_dex_command`. When None, the JVM picks its default.
+        "multi_dex_max_heap_size": provider_field(str | None, default = None),
         "native_libs_as_assets_metadata": provider_field(typing.Any, default = None),
         "optimized_proguard_config": provider_field(typing.Any, default = None),
         "p7zip": provider_field(typing.Any, default = None),
@@ -72,6 +82,7 @@ AndroidToolchainInfo = provider(
         "proguard_config": provider_field(typing.Any, default = None),
         "proguard_jar": provider_field(typing.Any, default = None),
         "r_dot_java_weight_factor": provider_field(typing.Any, default = None),
+        # @oss-disable[end= ]: "redex_native_class_names": provider_field(typing.Any, default = None),
         "replace_application_id_placeholders": provider_field(typing.Any, default = None),
         "secondary_dex_compression_command": provider_field(typing.Any, default = None),
         "secondary_dex_weight_limit": provider_field(typing.Any, default = None),

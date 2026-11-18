@@ -10,21 +10,25 @@
 
 package com.facebook.buck.util.zip;
 
+import com.facebook.infer.annotation.Nullsafe;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.nio.charset.StandardCharsets;
 import java.util.Comparator;
 import java.util.List;
+import java.util.Objects;
 import java.util.jar.Attributes;
 import java.util.jar.Manifest;
 import java.util.stream.Collectors;
+import org.jspecify.annotations.Nullable;
 
 /**
  * A manifest implementation whose formatted output is deterministic given the same input (entries
  * and attributes are sorted). The JDK implementation in {@code java.util.Manifest} does not have
  * this property.
  */
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public class DeterministicManifest extends Manifest {
   private static final String NEW_LINE = "\r\n"; // For some reason JAR manifests use CRLF
   private static final String NEW_LINE_AND_SPACE = "\r\n ";
@@ -74,7 +78,7 @@ public class DeterministicManifest extends Manifest {
   private void writeEntry(String entryName, OutputStream out) throws IOException {
     writeKeyValue("Name", entryName, out);
 
-    writeAttributes(getAttributes(entryName), out);
+    writeAttributes(Objects.requireNonNull(getAttributes(entryName)), out);
   }
 
   private void writeAttributes(Attributes attributes, OutputStream out) throws IOException {
@@ -91,7 +95,8 @@ public class DeterministicManifest extends Manifest {
     writeLine(out);
   }
 
-  private void writeKeyValue(String key, String value, OutputStream out) throws IOException {
+  private void writeKeyValue(String key, @Nullable String value, OutputStream out)
+      throws IOException {
     StringBuilder builder = new StringBuilder();
 
     builder.append(key);

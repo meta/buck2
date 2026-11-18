@@ -145,11 +145,12 @@ mod tests {
     #[starlark_module]
     fn debugger(builder: &mut GlobalsBuilder) {
         fn debug_evaluate<'v>(
-            code: String,
+            code: &str,
             eval: &mut Evaluator<'v, '_, '_>,
         ) -> anyhow::Result<Value<'v>> {
-            let ast = AstModule::parse("interactive", code, &Dialect::AllOptionsInternal)
-                .into_anyhow_result()?;
+            let ast =
+                AstModule::parse("interactive", code.to_owned(), &Dialect::AllOptionsInternal)
+                    .into_anyhow_result()?;
             eval.eval_statements(ast).into_anyhow_result()
         }
 

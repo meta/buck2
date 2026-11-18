@@ -10,9 +10,11 @@
 
 package com.facebook.buck.jvm.java.plugin.adapter;
 
+import com.facebook.infer.annotation.Nullsafe;
 import com.sun.source.util.TaskEvent;
 import com.sun.source.util.TaskListener;
 
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public class TaskListenerWrapper implements TaskListener {
   private final TaskListener inner;
 

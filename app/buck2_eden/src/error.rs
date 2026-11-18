@@ -60,8 +60,8 @@ pub enum IsMountReadyError {
     #[error("Mount does not exist in Eden: `{mount}`")]
     #[buck2(tag = IoEdenMountDoesNotExist)]
     MountDoesNotExist { mount: AbsPathBuf },
-    #[error(transparent)]
-    #[buck2(tag = IoEdenRequestError)]
+    #[error("Eden Request Failed: {0:?}")]
+    #[buck2(tag = IoEdenRequestError, tag = IoEdenListMounts)]
     RequestError(ListMountsError),
 }
 

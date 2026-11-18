@@ -10,8 +10,8 @@
 
 package com.facebook.buck.jvm.java.abi.source;
 
-import com.facebook.buck.util.liteinfersupport.Nullable;
-import com.facebook.buck.util.liteinfersupport.PropagatesNullable;
+import com.facebook.infer.annotation.Nullsafe;
+import com.facebook.infer.annotation.PropagatesNullable;
 import com.sun.source.tree.AnnotatedTypeTree;
 import com.sun.source.tree.ArrayTypeTree;
 import com.sun.source.tree.CompilationUnitTree;
@@ -49,12 +49,14 @@ import javax.lang.model.type.WildcardType;
 import javax.lang.model.util.SimpleAnnotationValueVisitor8;
 import javax.tools.Diagnostic;
 import javax.tools.Diagnostic.Kind;
+import org.jspecify.annotations.Nullable;
 
 /**
  * After the enter phase is complete, this class can obtain the "canonical" version of any {@link
  * javax.lang.model.element.Element}, {@link TypeMirror}, or {@link AnnotationValue}. The canonical
  * versions of these are the artificial ones if they exist, otherwise the javac one.
  */
+@Nullsafe(Nullsafe.Mode.LOCAL)
 class PostEnterCanonicalizer {
 
   private final TreeBackedElements elements;
@@ -106,6 +108,12 @@ class PostEnterCanonicalizer {
       @PropagatesNullable TypeMirror typeMirror, @Nullable TreePath treePath) {
     if (typeMirror == null) {
       return null;
+    }
+
+    // A type-use annotation wraps the tree of the type it annotates, e.g. `String @A []`.
+    while (treePath != null && treePath.getLeaf().getKind() == Tree.Kind.ANNOTATED_TYPE) {
+      treePath =
+          new TreePath(treePath, ((AnnotatedTypeTree) treePath.getLeaf()).getUnderlyingType());
     }
 
     Tree tree = treePath == null ? null : treePath.getLeaf();
@@ -224,7 +232,10 @@ class PostEnterCanonicalizer {
             canonicalType = getInferredType(treePath);
           } catch (CompilerErrorException e) {
             javacTrees.printMessage(
-                Kind.ERROR, e.getMessage(), treePath.getLeaf(), treePath.getCompilationUnit());
+                Kind.ERROR,
+                Objects.requireNonNull(e.getMessage()),
+                treePath.getLeaf(),
+                treePath.getCompilationUnit());
             canonicalType = typeMirror;
           }
           break;
@@ -305,13 +316,15 @@ class PostEnterCanonicalizer {
       case SUPER_WILDCARD:
         {
           WildcardTree wildcardTree = (WildcardTree) tree;
-          TreePath boundTreePath = new TreePath(treePath, wildcardTree.getBound());
+          TreePath boundTreePath =
+              new TreePath(treePath, Objects.requireNonNull(wildcardTree.getBound()));
           return types.getWildcardType(null, getCanonicalType(boundTreePath));
         }
       case EXTENDS_WILDCARD:
         {
           WildcardTree wildcardTree = (WildcardTree) tree;
-          TreePath boundTreePath = new TreePath(treePath, wildcardTree.getBound());
+          TreePath boundTreePath =
+              new TreePath(treePath, Objects.requireNonNull(wildcardTree.getBound()));
           return types.getWildcardType(getCanonicalType(boundTreePath), null);
         }
       case MEMBER_SELECT:
@@ -381,7 +394,8 @@ class PostEnterCanonicalizer {
       case ANNOTATED_TYPE:
         AnnotatedTypeTree annotatedTypeTree = (AnnotatedTypeTree) tree;
         ExpressionTree underlyingTree = annotatedTypeTree.getUnderlyingType();
-        TreePath underlyingTreePath = TreePath.getPath(treePath, underlyingTree);
+        TreePath underlyingTreePath =
+            Objects.requireNonNull(TreePath.getPath(treePath, underlyingTree));
         return getInferredType(underlyingTreePath);
       // $CASES-OMITTED$
       default:
@@ -431,7 +445,8 @@ class PostEnterCanonicalizer {
             Tree valueTree = valueTreePath.getLeaf();
             if (valueTree instanceof NewArrayTree) {
               NewArrayTree tree = (NewArrayTree) valueTree;
-              List<? extends ExpressionTree> valueTrees = tree.getInitializers();
+              List<? extends ExpressionTree> valueTrees =
+                  Objects.requireNonNull(tree.getInitializers());
 
               List<TreeBackedAnnotationValue> result = new ArrayList<>();
               for (int i = 0; i < values.size(); i++) {
@@ -452,7 +467,7 @@ class PostEnterCanonicalizer {
           }
 
           @Override
-          public Object visitString(String s, Void aVoid) {
+          public @Nullable Object visitString(String s, Void aVoid) {
             if (getUnderlyingType(valueTreePath).getKind() == TypeKind.ERROR) {
               Tree leaf = valueTreePath.getLeaf();
               if (leaf instanceof MemberSelectTree
@@ -464,9 +479,8 @@ class PostEnterCanonicalizer {
               } else {
                 javacTrees.printMessage(
                     Diagnostic.Kind.ERROR,
-                    "Could not resolve constant. Either inline the value or add"
-                        + " required_for_source_only_abi = True to the build rule that contains"
-                        + " it.",
+                    "Could not resolve constant. Either inline the value or add the build rule"
+                        + " that contains it to this target's source_only_abi_deps.",
                     leaf,
                     valueTreePath.getCompilationUnit());
               }

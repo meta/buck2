@@ -89,12 +89,13 @@ impl<'v> HeapEdge<'v, 'static> {
     /// anywhere.
     ///
     /// Such data is brought to the brand of the heap in use by spelling `at()`
-    /// ([`AllocStaticSimple::at`], [`ValueTyped::at`]), which is this edge's
+    /// ([`AllocStaticSimple::at`], [`ValueTyped::at`], [`ValueOf::at`]), which is this edge's
     /// [`rebrand`](HeapEdge::rebrand) behind a name.
     ///
     /// [`AllocStaticSimple`]: crate::values::AllocStaticSimple
     /// [`AllocStaticSimple::at`]: crate::values::AllocStaticSimple::at
     /// [`ValueTyped::at`]: crate::values::ValueTyped::at
+    /// [`ValueOf::at`]: crate::values::ValueOf::at
     /// [`const_frozen_string!`]: crate::const_frozen_string
     /// [`Methods`]: crate::environment::Methods
     pub fn immortal() -> Self {
@@ -188,10 +189,10 @@ mod tests {
         let none: ValueTyped<'static, NoneType> = none.at();
         Heap::temp(|outer| {
             let v1 = at_brand(outer, none);
-            let list1 = outer.alloc(AllocList([v1]));
+            let list1 = outer.alloc(AllocList([v1])).to_value();
             Heap::temp(|inner| {
                 let v2 = at_brand(inner, none);
-                let list2 = inner.alloc(AllocList([v2]));
+                let list2 = inner.alloc(AllocList([v2])).to_value();
                 assert!(v1.ptr_eq(none.to_value()));
                 assert!(v2.ptr_eq(none.to_value()));
                 assert!(ListRef::from_value(list1).unwrap().content()[0].is_none());

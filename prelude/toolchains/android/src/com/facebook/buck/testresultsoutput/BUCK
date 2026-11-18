@@ -27,6 +27,8 @@ buck_java_library(
         "prelude//toolchains/android/test/com/facebook/buck/testrunner:tpx_timeout_buffer_manager_test",
     ],
     deps = [
+        "prelude//toolchains/android/third-party:infer-annotations",
         "prelude//toolchains/android/third-party:jackson-core",
+        "prelude//toolchains/android/third-party:jspecify",
     ],
 )

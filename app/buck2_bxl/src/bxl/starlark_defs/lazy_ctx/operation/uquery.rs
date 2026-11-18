@@ -109,21 +109,23 @@ pub(crate) enum LazyUqueryResult {
 impl LazyUqueryResult {
     pub(crate) fn into_value<'v>(self, heap: Heap<'v>) -> buck2_error::Result<Value<'v>> {
         match self {
-            LazyUqueryResult::TestsOf(target_set) => Ok(heap.alloc(target_set)),
-            LazyUqueryResult::AllPaths(target_set) => Ok(heap.alloc(target_set)),
-            LazyUqueryResult::SomePath(target_set) => Ok(heap.alloc(target_set)),
-            LazyUqueryResult::AttrFilter(target_set) => Ok(heap.alloc(target_set)),
-            LazyUqueryResult::AttrRegexFilter(target_set) => Ok(heap.alloc(target_set)),
-            LazyUqueryResult::Inputs(file_set) => Ok(heap.alloc(file_set)),
-            LazyUqueryResult::Kind(target_set) => Ok(heap.alloc(target_set)),
-            LazyUqueryResult::Deps(target_set) => Ok(heap.alloc(target_set)),
-            LazyUqueryResult::Rdeps(target_set) => Ok(heap.alloc(target_set)),
-            LazyUqueryResult::Filter(target_set) => Ok(heap.alloc(target_set)),
-            LazyUqueryResult::Buildfile(file_set) => Ok(heap.alloc(file_set)),
-            LazyUqueryResult::AllBuildfiles(file_set) => Ok(heap.alloc(file_set)),
-            LazyUqueryResult::Rbuildfiles(file_set) => Ok(heap.alloc(file_set)),
-            LazyUqueryResult::Owner(target_set) => Ok(heap.alloc(target_set)),
-            LazyUqueryResult::TargetsInBuildfile(target_set) => Ok(heap.alloc(target_set)),
+            LazyUqueryResult::TestsOf(target_set) => Ok(heap.alloc(target_set).to_value()),
+            LazyUqueryResult::AllPaths(target_set) => Ok(heap.alloc(target_set).to_value()),
+            LazyUqueryResult::SomePath(target_set) => Ok(heap.alloc(target_set).to_value()),
+            LazyUqueryResult::AttrFilter(target_set) => Ok(heap.alloc(target_set).to_value()),
+            LazyUqueryResult::AttrRegexFilter(target_set) => Ok(heap.alloc(target_set).to_value()),
+            LazyUqueryResult::Inputs(file_set) => Ok(heap.alloc(file_set).to_value()),
+            LazyUqueryResult::Kind(target_set) => Ok(heap.alloc(target_set).to_value()),
+            LazyUqueryResult::Deps(target_set) => Ok(heap.alloc(target_set).to_value()),
+            LazyUqueryResult::Rdeps(target_set) => Ok(heap.alloc(target_set).to_value()),
+            LazyUqueryResult::Filter(target_set) => Ok(heap.alloc(target_set).to_value()),
+            LazyUqueryResult::Buildfile(file_set) => Ok(heap.alloc(file_set).to_value()),
+            LazyUqueryResult::AllBuildfiles(file_set) => Ok(heap.alloc(file_set).to_value()),
+            LazyUqueryResult::Rbuildfiles(file_set) => Ok(heap.alloc(file_set).to_value()),
+            LazyUqueryResult::Owner(target_set) => Ok(heap.alloc(target_set).to_value()),
+            LazyUqueryResult::TargetsInBuildfile(target_set) => {
+                Ok(heap.alloc(target_set).to_value())
+            }
             LazyUqueryResult::Eval(result) => parse_query_evaluation_result(result, heap),
         }
     }
@@ -267,7 +269,7 @@ impl LazyUqueryOperation {
             LazyUqueryOperation::Buildfile(expr) => {
                 let target_set = expr.to_unconfigured_target_set(core_data, dice).await?;
 
-                let res = target_set.buildfile();
+                let res = target_set.buildfile()?;
 
                 Ok(LazyUqueryResult::Buildfile(StarlarkFileSet::from(res)))
             }

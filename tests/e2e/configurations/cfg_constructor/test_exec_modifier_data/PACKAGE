@@ -1,0 +1,20 @@
+load("@prelude//cfg/modifier:cfg_constructor.bzl", "cfg_constructor_post_constraint_analysis")
+load("@prelude//cfg/modifier:common.bzl", "MODIFIER_METADATA_KEY")
+load(":defs.bzl", "cfg_constructor_changing_exec_marker", "cfg_constructor_with_exec_marker_refs")
+
+replace_exec_marker = read_config("test", "replace_constructor_marker", "false") == "true"
+
+set_cfg_constructor(
+    aliases = struct(),
+    extra_data = struct(
+        buckconfig_backed_modifiers = "root//buckconfig_backed:buckconfig_modifiers",
+        replace_exec_marker = replace_exec_marker,
+    ),
+    key = MODIFIER_METADATA_KEY,
+    stage0 = cfg_constructor_with_exec_marker_refs,
+    stage1 = (
+        cfg_constructor_changing_exec_marker
+        if replace_exec_marker or read_config("test", "drop_constructor_marker", "false") == "true"
+        else cfg_constructor_post_constraint_analysis
+    ),
+)

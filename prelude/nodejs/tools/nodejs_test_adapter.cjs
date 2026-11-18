@@ -37,7 +37,14 @@ const JEST_RESERVED_FLAGS = [
   '--changedSince',
   '--changed-since',
   '--ci',
+  '--collectCoverage',
+  '--collect-coverage',
   '--config',
+  '--coverage',
+  '--coverageDirectory',
+  '--coverage-directory',
+  '--coverageReporters',
+  '--coverage-reporters',
   '--findRelatedTests',
   '--find-related-tests',
   '--json',
@@ -136,6 +143,19 @@ function isReservedVitestArg(arg) {
 // Reported by its message alone, without a stack.
 class AdapterError extends Error {}
 
+function parseCoveragePaths(text) {
+  let paths;
+  try {
+    paths = JSON.parse(text);
+  } catch {
+    paths = undefined;
+  }
+  if (!Array.isArray(paths) || !paths.every(p => typeof p === 'string')) {
+    throw new AdapterError('--coverage-paths must be a JSON array of strings');
+  }
+  return paths;
+}
+
 function parseArgs(argv) {
   const options = {
     framework: undefined,
@@ -147,6 +167,7 @@ function parseArgs(argv) {
     jest: undefined,
     vitest: undefined,
     coveragePrefix: undefined,
+    coveragePaths: undefined,
     config: undefined,
     root: undefined,
     args: [],
@@ -165,9 +186,23 @@ function parseArgs(argv) {
       case '--framework':
         options.framework = value(arg);
         break;
-      case '--test-file':
-        options.files.push({name: value(arg), path: value(arg)});
+      case '--test-files': {
+        const listing = value(arg);
+        for (const line of fs.readFileSync(listing, 'utf8').split('\n')) {
+          if (line === '') {
+            continue;
+          }
+          const tab = line.indexOf('\t');
+          if (tab === -1) {
+            throw new AdapterError(`malformed ${listing} line: ${line}`);
+          }
+          options.files.push({
+            name: line.slice(0, tab),
+            path: path.join(path.dirname(listing), line.slice(tab + 1)),
+          });
+        }
         break;
+      }
       case '--filter':
         options.filters.push(value(arg));
         break;
@@ -188,6 +223,9 @@ function parseArgs(argv) {
         break;
       case '--coverage-prefix':
         options.coveragePrefix = value(arg);
+        break;
+      case '--coverage-paths':
+        options.coveragePaths = parseCoveragePaths(value(arg));
         break;
       case '--config':
         options.config = value(arg);
@@ -228,8 +266,21 @@ function parseArgs(argv) {
   } else if (options.framework !== 'node') {
     throw new AdapterError(`unsupported --framework '${options.framework}'`);
   }
-  if (options.coveragePrefix !== undefined && options.framework !== 'vitest') {
-    throw new AdapterError('--coverage-prefix requires --framework vitest');
+  if (options.framework === 'node') {
+    if (options.coveragePrefix !== undefined) {
+      throw new AdapterError('--coverage-prefix requires --framework jest or vitest');
+    }
+    if (options.coveragePaths !== undefined) {
+      throw new AdapterError('--coverage-paths requires --framework jest or vitest');
+    }
+  } else {
+    // Jest and Vitest run from `root`, so relative paths would break.
+    const absolute = file => (file === undefined ? undefined : path.resolve(file));
+    options.jest = absolute(options.jest);
+    options.vitest = absolute(options.vitest);
+    options.root = absolute(options.root);
+    options.config = absolute(options.config);
+    options.files = options.files.map(file => ({...file, path: path.resolve(file.path)}));
   }
   return options;
 }
@@ -401,7 +452,7 @@ function linePrefixer(stream, prefix) {
   };
 }
 
-function spawnNode(nodeArgs, args, {prefix, onStdout} = {}) {
+function spawnNode(nodeArgs, args, {prefix, onStdout, cwd} = {}) {
   const started = Date.now();
   return new Promise(resolve => {
     const output = [];
@@ -442,7 +493,7 @@ function spawnNode(nodeArgs, args, {prefix, onStdout} = {}) {
     const child = childProcess.spawn(
       process.execPath,
       [...process.execArgv, ...nodeArgs, ...args],
-      {stdio: ['ignore', 'pipe', 'pipe']},
+      {cwd, stdio: ['ignore', 'pipe', 'pipe']},
     );
     children.add(child);
     child.stdout.on('data', chunk => {
@@ -722,13 +773,13 @@ async function runNodeTests(options, runs, workDir) {
   return {results: resultsByRun.flat(), runFailures: []};
 }
 
-function jestArgs(options) {
+function jestArgs(options, config = options.config) {
   return [
     path.join(options.jest, 'jest', 'bin', 'jest.js'),
     '--ci',
     '--watchman=false',
     '--config',
-    options.config ?? JSON.stringify({rootDir: options.root}),
+    config ?? JSON.stringify({rootDir: options.root}),
     ...options.args,
   ];
 }
@@ -770,6 +821,7 @@ async function jestTestFiles(options) {
       ...options.files.map(file => file.path),
     ],
     {
+      cwd: options.root,
       onStdout: chunk => {
         stdout.push(chunk);
         process.stderr.write(chunk);
@@ -860,19 +912,26 @@ function jestTestResults(file, suite, endedTime) {
   });
 }
 
-async function runJestGroup(options, group, reportFile) {
+async function runJestGroup(options, group, reportFile, coverageDirectory, config) {
   const files = group.runs.map(run => run.file);
   const patterns = group.runs.flatMap(run =>
     run.whole ? [] : run.filters.map(filter => namePattern(run.file, filter, true)),
   );
   const outcome = await spawnNode(options.nodeArgs, [
-    ...jestArgs(options),
+    ...jestArgs(options, config),
     '--json',
     `--outputFile=${reportFile}`,
     ...(patterns.length > 0 ? ['--testNamePattern', patterns.join('|')] : []),
+    ...(coverageDirectory === undefined
+      ? []
+      : [
+          '--coverage',
+          '--coverageReporters=json',
+          `--coverageDirectory=${coverageDirectory}`,
+        ]),
     '--runTestsByPath',
     ...files.map(file => file.path),
-  ]);
+  ], {cwd: options.root});
   const endedTime = Date.now();
   let report;
   let readError;
@@ -999,6 +1058,11 @@ async function runJestGroup(options, group, reportFile) {
 }
 
 async function runJestTests(options, runs, workDir) {
+  const coverage = coveragePlan(options, workDir);
+  const config =
+    coverage?.selected === undefined || coverage.skip
+      ? undefined
+      : writeSelectiveJestConfig(options, coverage.selected, workDir);
   // Jest applies a test name pattern to every file it runs, so only the files
   // run whole share a run. Each run already uses a worker per core but one, so
   // the runs go one at a time.
@@ -1020,6 +1084,8 @@ async function runJestTests(options, runs, workDir) {
         options,
         group,
         path.join(workDir, `jest-${index}.json`),
+        coverage === undefined || coverage.skip ? undefined : coverage.directory(index),
+        config,
       );
       results.push(...outcome.results);
       runFailures.push(...outcome.runFailures);
@@ -1032,6 +1098,7 @@ async function runJestTests(options, runs, workDir) {
       runFailures.push(details);
     }
   }
+  runFailures.push(...writeCoverage(options, coverage, groups.length));
   return {results, runFailures};
 }
 
@@ -1053,7 +1120,7 @@ async function vitestTestFiles(options, workDir) {
     `--json=${listFile}`,
     '--filesOnly',
     ...options.files.map(file => file.path),
-  ]);
+  ], {cwd: options.root});
   if (outcome.error !== undefined || outcome.code !== 0) {
     throw new AdapterError(processDetails('vitest list', outcome, true));
   }
@@ -1098,23 +1165,162 @@ function readVitestReport(reportFile) {
   return report;
 }
 
-function vitestCoveragePlan(workDir) {
+function coveragePlan(options, workDir) {
   const output = process.env.COVERAGE_COLLECTION_OUTPUT_FILE;
   if (!output) {
     return undefined;
   }
-  const reportsDirectory =
-    process.env.COVERAGE_COLLECTION_TMPDIR ?? path.join(workDir, 'coverage');
+  const reportsDirectory = path.resolve(
+    process.env.COVERAGE_COLLECTION_TMPDIR ?? path.join(workDir, 'coverage'),
+  );
+  const selected = selectedCoverageFiles(options);
   return {
     output: path.resolve(output),
-    reportsDirectory: path.resolve(reportsDirectory),
-    args: [
-      '--coverage',
-      '--coverage.reporter=json',
-      `--coverage.reportsDirectory=${path.resolve(reportsDirectory)}`,
-      '--coverage.reportOnFailure=true',
-    ],
+    directory: index => path.join(reportsDirectory, String(index)),
+    selected,
+    skip: selected !== undefined && selected.length === 0,
   };
+}
+
+/** A `coverage_paths` entry as `coverageFilepath` compares it; `''` names nothing. */
+function normalizedCoveragePath(selected) {
+  const normalized = path.posix.normalize(selected).replace(/\/+$/, '');
+  return normalized === '.' ? '' : normalized;
+}
+
+/** The staged absolute paths `coverage_paths` names, or undefined without it. */
+function selectedCoverageFiles(options) {
+  if (options.coveragePaths === undefined) {
+    return undefined;
+  }
+  const base = (options.coveragePrefix ?? '').replace(/\/+$/, '');
+  return options.coveragePaths
+    .map(normalizedCoveragePath)
+    .filter(selected => {
+      if (
+        selected === '..' ||
+        selected.startsWith('../') ||
+        path.posix.isAbsolute(selected)
+      ) {
+        return false;
+      }
+      return base === ''
+        ? selected !== ''
+        : selected === base ||
+            selected.startsWith(`${base}/`) ||
+            (selected !== '' && base.startsWith(`${selected}/`));
+    })
+    .map(selected => {
+      if (base === '') {
+        return path.join(options.root, selected);
+      }
+      // The prefix, or a folder above it, names the whole staged tree.
+      return selected.startsWith(`${base}/`)
+        ? path.join(options.root, selected.slice(base.length + 1))
+        : options.root;
+    });
+}
+
+function coverageGlobs(selected, root) {
+  return selected.flatMap(file => {
+    const relative = path.relative(root, file).split(path.sep).join('/');
+    return relative === '' ? ['**'] : [relative, `${relative}/**`];
+  });
+}
+
+/**
+ * Writes a Jest config that wraps the target's and instruments only the
+ * selected files, in every project. Returns its path.
+ */
+function writeSelectiveJestConfig(options, selected, workDir) {
+  const file = path.join(workDir, 'selective-coverage.jest.config.js');
+  fs.writeFileSync(
+    file,
+    `'use strict';
+const path = require('node:path');
+const {pathToFileURL} = require('node:url');
+const BASE = ${JSON.stringify(options.config ?? null)};
+const ROOT = ${JSON.stringify(options.root)};
+const NODE_MODULES = ${JSON.stringify(options.jest)};
+const SELECTED = ${JSON.stringify(selected)};
+const coverageGlobs = ${coverageGlobs.toString()};
+function jestConfig() {
+  for (const candidate of [
+    () => path.join(NODE_MODULES, 'jest-config'),
+    () => require.resolve('jest-config', {paths: [path.join(NODE_MODULES, 'jest')]}),
+  ]) {
+    try {
+      return require(candidate());
+    } catch {
+      // Not installed there.
+    }
+  }
+  return undefined;
+}
+async function load() {
+  if (BASE === null) {
+    return {};
+  }
+  // Jest's own reader handles every config form it accepts: ESM, TypeScript
+  // and the \`jest\` key of a \`package.json\`.
+  const reader = jestConfig()?.readInitialOptions;
+  if (typeof reader === 'function') {
+    return (await reader(BASE, {skipMultipleConfigError: true})).config;
+  }
+  let loaded;
+  try {
+    loaded = require(BASE);
+  } catch (error) {
+    if (error.code !== 'ERR_REQUIRE_ESM' && error.code !== 'ERR_REQUIRE_ASYNC_MODULE') {
+      throw error;
+    }
+    loaded = await import(pathToFileURL(BASE).href);
+  }
+  if (loaded.__esModule || Object.prototype.toString.call(loaded) === '[object Module]') {
+    loaded = loaded.default;
+  }
+  if (path.basename(BASE) === 'package.json') {
+    loaded = loaded.jest ?? {};
+  }
+  return typeof loaded === 'function' ? loaded() : loaded;
+}
+module.exports = async () => {
+  const base = await load();
+  const configDir = BASE === null ? ROOT : path.dirname(BASE);
+  const rootDir = path.resolve(configDir, base.rootDir ?? '.');
+  const config = {...base, rootDir};
+  const roots = [rootDir];
+  const globs = [...(base.collectCoverageFrom ?? [])];
+  if (Array.isArray(base.projects)) {
+    // An inline project's \`rootDir\` defaults to the config file's directory,
+    // which is no longer the target's, so each gets its own explicitly. Like
+    // Jest, a relative one resolves against the working directory.
+    config.projects = base.projects.map(project => {
+      if (typeof project === 'string') {
+        return project;
+      }
+      const projectRoot = project.rootDir
+        ? path.resolve(project.rootDir.replace(/<rootDir>/g, configDir))
+        : configDir;
+      roots.push(projectRoot);
+      globs.push(...(project.collectCoverageFrom ?? []));
+      return {...project, rootDir: projectRoot};
+    });
+  }
+  // Jest instruments by the top-level \`collectCoverageFrom\` alone, matched
+  // against a file's path from its own project's \`rootDir\`, so the selection
+  // is spelled from every root. Negations go last: the last match wins.
+  config.collectCoverageFrom = [
+    ...new Set([
+      ...roots.flatMap(root => coverageGlobs(SELECTED, root)),
+      ...globs.filter(glob => glob.startsWith('!')),
+    ]),
+  ];
+  return config;
+};
+`,
+  );
+  return file;
 }
 
 function coverageFilepath(sourcePath, options) {
@@ -1134,58 +1340,97 @@ function coverageFilepath(sourcePath, options) {
     return undefined;
   }
   const staged = parts.join('/');
-  return options.coveragePrefix === undefined
-    ? staged
-    : `${options.coveragePrefix.replace(/\/+$/, '')}/${staged}`;
+  const filepath =
+    options.coveragePrefix === undefined
+      ? staged
+      : `${options.coveragePrefix.replace(/\/+$/, '')}/${staged}`;
+  if (
+    options.coveragePaths !== undefined &&
+    !options.coveragePaths.some(selected => {
+      const trimmed = normalizedCoveragePath(selected);
+      return (
+        trimmed !== '' &&
+        (filepath === trimmed || filepath.startsWith(`${trimmed}/`))
+      );
+    })
+  ) {
+    return undefined;
+  }
+  return filepath;
 }
 
-function writeVitestCoverage(options, plan) {
-  const input = JSON.parse(
-    fs.readFileSync(path.join(plan.reportsDirectory, 'coverage-final.json'), 'utf8'),
-  );
-  if (typeof input !== 'object' || input === null || Array.isArray(input)) {
-    throw new Error('coverage report is not an object');
+function writeCoverage(options, plan, runCount) {
+  if (plan === undefined) {
+    return [];
   }
-  const entries = [];
-  for (const fileCoverage of Object.values(input)) {
-    if (typeof fileCoverage?.path !== 'string') {
+  const runFailures = [];
+  const hitsByFile = new Map();
+  for (let index = 0; index < (plan.skip ? 0 : runCount); index++) {
+    let input;
+    try {
+      input = JSON.parse(
+        fs.readFileSync(
+          path.join(plan.directory(index), 'coverage-final.json'),
+          'utf8',
+        ),
+      );
+      if (typeof input !== 'object' || input === null || Array.isArray(input)) {
+        throw new Error('coverage report is not an object');
+      }
+    } catch (error) {
+      runFailures.push(`could not read coverage: ${error?.stack ?? error}`);
       continue;
     }
-    const filepath = coverageFilepath(fileCoverage.path, options);
-    if (filepath === undefined) {
-      continue;
-    }
-    const lineHits = new Map();
-    for (const [id, statement] of Object.entries(fileCoverage.statementMap ?? {})) {
-      const line = statement?.start?.line;
-      if (typeof line !== 'number' || !Number.isInteger(line) || line < 1) {
+    for (const fileCoverage of Object.values(input)) {
+      if (typeof fileCoverage?.path !== 'string') {
         continue;
       }
-      const hit = fileCoverage.s?.[id] ?? 0;
-      const zeroBased = line - 1;
-      lineHits.set(zeroBased, Math.max(lineHits.get(zeroBased) ?? 0, hit));
+      const filepath = coverageFilepath(fileCoverage.path, options);
+      if (filepath === undefined) {
+        continue;
+      }
+      let lineHits = hitsByFile.get(filepath);
+      if (lineHits === undefined) {
+        lineHits = new Map();
+        hitsByFile.set(filepath, lineHits);
+      }
+      for (const [id, statement] of Object.entries(fileCoverage.statementMap ?? {})) {
+        const line = statement?.start?.line;
+        if (typeof line !== 'number' || !Number.isInteger(line) || line < 1) {
+          continue;
+        }
+        const hit = fileCoverage.s?.[id] ?? 0;
+        const zeroBased = line - 1;
+        lineHits.set(zeroBased, Math.max(lineHits.get(zeroBased) ?? 0, hit));
+      }
     }
-    const executable = [...lineHits.keys()].sort((a, b) => a - b);
-    entries.push({
-      filepath,
-      covered_lines: executable.filter(line => (lineHits.get(line) ?? 0) > 0),
-      executable_lines: executable,
-    });
   }
-  entries.sort((a, b) =>
-    a.filepath < b.filepath ? -1 : a.filepath > b.filepath ? 1 : 0,
-  );
-  fs.mkdirSync(path.dirname(plan.output), {recursive: true});
-  fs.writeFileSync(
-    plan.output,
-    entries.length === 0
-      ? ''
-      : entries.map(entry => JSON.stringify(entry)).join('\n') + '\n',
-    'utf8',
-  );
+  const entries = [...hitsByFile]
+    .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
+    .map(([filepath, lineHits]) => {
+      const executable = [...lineHits.keys()].sort((a, b) => a - b);
+      return {
+        filepath,
+        covered_lines: executable.filter(line => lineHits.get(line) > 0),
+        executable_lines: executable,
+      };
+    });
+  try {
+    fs.mkdirSync(path.dirname(plan.output), {recursive: true});
+    fs.writeFileSync(
+      plan.output,
+      entries.length === 0
+        ? ''
+        : entries.map(entry => JSON.stringify(entry)).join('\n') + '\n',
+      'utf8',
+    );
+  } catch (error) {
+    runFailures.push(`could not write coverage: ${error?.stack ?? error}`);
+  }
+  return runFailures;
 }
 
-async function runVitestGroup(options, group, reportFile, coverage) {
+async function runVitestGroup(options, group, reportFile, coverageDirectory, include) {
   const files = group.runs.map(run => run.file);
   const patterns = group.runs.flatMap(run =>
     run.whole ? [] : run.filters.map(filter => namePattern(run.file, filter, true)),
@@ -1196,9 +1441,17 @@ async function runVitestGroup(options, group, reportFile, coverage) {
     '--reporter=json',
     `--outputFile=${reportFile}`,
     ...(patterns.length > 0 ? [`--testNamePattern=${patterns.join('|')}`] : []),
-    ...(coverage === undefined ? [] : coverage.args),
+    ...(coverageDirectory === undefined
+      ? []
+      : [
+          '--coverage',
+          '--coverage.reporter=json',
+          `--coverage.reportsDirectory=${coverageDirectory}`,
+          '--coverage.reportOnFailure=true',
+          ...(include ?? []).map(glob => `--coverage.include=${glob}`),
+        ]),
     ...files.map(file => file.path),
-  ]);
+  ], {cwd: options.root});
   const endedTime = Date.now();
   let report;
   let readError;
@@ -1318,7 +1571,9 @@ async function runVitestGroup(options, group, reportFile, coverage) {
 }
 
 async function runVitestTests(options, runs, workDir) {
-  const coverage = vitestCoveragePlan(workDir);
+  const coverage = coveragePlan(options, workDir);
+  const include =
+    coverage?.selected === undefined ? undefined : coverageGlobs(coverage.selected, options.root);
   const groups = [];
   const whole = runs.filter(run => run.whole);
   if (whole.length > 0) {
@@ -1337,7 +1592,8 @@ async function runVitestTests(options, runs, workDir) {
         options,
         group,
         path.join(workDir, `vitest-${index}.json`),
-        coverage,
+        coverage === undefined || coverage.skip ? undefined : coverage.directory(index),
+        include,
       );
       results.push(...outcome.results);
       runFailures.push(...outcome.runFailures);
@@ -1350,13 +1606,7 @@ async function runVitestTests(options, runs, workDir) {
       runFailures.push(details);
     }
   }
-  if (coverage !== undefined) {
-    try {
-      writeVitestCoverage(options, coverage);
-    } catch (error) {
-      runFailures.push(`could not write coverage: ${error?.stack ?? error}`);
-    }
-  }
+  runFailures.push(...writeCoverage(options, coverage, groups.length));
   return {results, runFailures};
 }
 

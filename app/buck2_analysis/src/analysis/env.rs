@@ -140,7 +140,7 @@ pub fn resolve_unkeyed_placeholder<'v>(
             else {
                 return buck2_error::Ok(None);
             };
-            let Some(value) = placeholder_info.unkeyed_variables().get(name).copied() else {
+            let Some(value) = placeholder_info.unkeyed_variables()?.get(name).copied() else {
                 return Ok(None);
             };
             // IMPORTANT: Anything given back to the user must be kept alive; the edge
@@ -265,7 +265,7 @@ async fn run_analysis_with_env_underlying(
                 module: &env,
                 dep_analysis_results,
                 query_results: analysis_env.query_results,
-                execution_platform_resolution: node.execution_platform_resolution().clone(),
+                execution_platform_resolution: node.body()?.execution_platform_resolution().clone(),
             };
 
             (
@@ -292,7 +292,7 @@ async fn run_analysis_with_env_underlying(
             // so a test runs with it even when another rule returns the test info.
             if AnalysisExtraValue::get_or_init(eval.module())?
                 .execution_platform_resolution
-                .set(node.execution_platform_resolution().dupe())
+                .set(node.body()?.execution_platform_resolution().dupe())
                 .is_err()
             {
                 return Err(internal_error!("execution platform resolution set twice").into());
@@ -327,7 +327,7 @@ async fn run_analysis_with_env_underlying(
         let res_typed = ProviderCollection::try_from_value(list_res)?;
         analysis_registry
             .analysis_value_storage
-            .set_result_value(env.heap().alloc_typed(res_typed))?;
+            .set_result_value(env.heap().alloc(res_typed).get())?;
 
         let finished_eval = reentrant_eval.finish_evaluation();
 

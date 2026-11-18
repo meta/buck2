@@ -264,7 +264,7 @@ mod tests {
                 )
             "#
             ),
-            "`type`",
+            "Expected type `str` but got `int`",
         );
         Ok(())
     }
@@ -284,7 +284,7 @@ mod tests {
                 )
             "#
             ),
-            "`parse_test_listing`",
+            "Expected type `typing.Callable[[str], list[dict[str, typing.Any]]]` but got `str`",
         );
         Ok(())
     }
@@ -304,7 +304,7 @@ mod tests {
                 )
             "#
             ),
-            "`parse_test_result`",
+            "Expected type `typing.Callable[[str, str, int], list[dict[str, typing.Any]]]` but got `str`",
         );
         Ok(())
     }
@@ -329,7 +329,7 @@ mod tests {
                 )
             "#
             ),
-            "`command`",
+            "Expected type `None | list[Artifact",
         );
 
         tester.run_starlark_bzl_test_expecting_error(
@@ -345,7 +345,7 @@ mod tests {
                 )
             "#
             ),
-            "`command`",
+            "but got `list[int]`",
         );
         Ok(())
     }
@@ -366,7 +366,7 @@ mod tests {
                 )
             "#
             ),
-            "`env`",
+            "Expected type `None | dict[str, Artifact",
         );
 
         tester.run_starlark_bzl_test_expecting_error(
@@ -382,7 +382,7 @@ mod tests {
                 )
             "#
             ),
-            "`env`",
+            "but got `dict[str, int]`",
         );
         Ok(())
     }
@@ -403,7 +403,7 @@ mod tests {
                 )
             "#
             ),
-            "`labels`",
+            "Expected type `None | list[str] | tuple[str, ...]` but got `str`",
         );
 
         tester.run_starlark_bzl_test_expecting_error(
@@ -419,7 +419,7 @@ mod tests {
                 )
             "#
             ),
-            "`labels`",
+            "but got `list[int]`",
         );
         Ok(())
     }
@@ -440,7 +440,7 @@ mod tests {
                 )
             "#
             ),
-            "`contacts`",
+            "Expected type `None | list[str] | tuple[str, ...]` but got `str`",
         );
 
         tester.run_starlark_bzl_test_expecting_error(
@@ -456,7 +456,7 @@ mod tests {
                 )
             "#
             ),
-            "`contacts`",
+            "but got `list[int]`",
         );
         Ok(())
     }
@@ -477,7 +477,7 @@ mod tests {
                 )
             "#
             ),
-            "`use_project_relative_paths`",
+            "Expected type `None | bool` but got `str`",
         );
 
         tester.run_starlark_bzl_test_expecting_error(
@@ -493,7 +493,7 @@ mod tests {
                 )
             "#
             ),
-            "`run_from_project_root`",
+            "Expected type `None | bool` but got `str`",
         );
         Ok(())
     }
@@ -514,7 +514,7 @@ mod tests {
                 )
             "#
             ),
-            "`executor_overrides`",
+            "Expected type `None | dict[str, CommandExecutorConfig]` but got `dict[str, str]`",
         );
         Ok(())
     }
@@ -556,7 +556,7 @@ mod tests {
                 )
             "#
             ),
-            "`required_local_resources` should only contain `RequiredTestLocalResource` values",
+            "Expected type `None | list[RequiredTestLocalResource] | tuple[RequiredTestLocalResource, ...]` but got `list[str]`",
         );
 
         tester.run_starlark_bzl_test_expecting_error(
@@ -1226,11 +1226,13 @@ fn test_listing_command_accessor() -> buck2_error::Result<()> {
         .value()
         .as_ref()
         .listing_command()
-        .map(|m| match m {
-            TestCommandMember::Literal(s) => s.to_owned(),
-            _ => "<arg>".to_owned(),
+        .map(|m| {
+            Ok(match m? {
+                TestCommandMember::Literal(s) => s.to_owned(),
+                _ => "<arg>".to_owned(),
+            })
         })
-        .collect();
+        .collect::<buck2_error::Result<_>>()?;
     assert_eq!(listing_cmd, vec!["my_binary", "--gtest_list_tests"]);
 
     let exec_cmd: Vec<String> = info
@@ -1238,11 +1240,13 @@ fn test_listing_command_accessor() -> buck2_error::Result<()> {
         .value()
         .as_ref()
         .command()
-        .map(|m| match m {
-            TestCommandMember::Literal(s) => s.to_owned(),
-            _ => "<arg>".to_owned(),
+        .map(|m| {
+            Ok(match m? {
+                TestCommandMember::Literal(s) => s.to_owned(),
+                _ => "<arg>".to_owned(),
+            })
         })
-        .collect();
+        .collect::<buck2_error::Result<_>>()?;
     assert_eq!(exec_cmd, vec!["my_binary"]);
     Ok(())
 }

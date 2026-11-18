@@ -8,8 +8,12 @@ source_listing()
 buck_java_library(
     name = "apk_builder",
     srcs = glob(["*.java"]),
+    tests = [
+        "prelude//toolchains/android/test/com/facebook/buck/android/apk/sdk:sdk",
+    ],
     visibility = ["PUBLIC"],
     deps = [
+        "prelude//toolchains/android/src/com/facebook/buck/util/zip:zip",
         "prelude//toolchains/android/third-party:guava",
         "prelude//toolchains/android/third-party:infer-annotations",
         "prelude//toolchains/android/third-party:kotlin-annotations",

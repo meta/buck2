@@ -29,8 +29,11 @@ use std::ops::Deref;
 
 use allocative::Allocative;
 use display_container::fmt_keyed_container;
+use dupe::Dupe;
+use either::Either;
 use serde::Serialize;
 use starlark_derive::StarlarkPagable;
+use starlark_derive::StarlarkRepresentations;
 use starlark_derive::starlark_value;
 use starlark_map::Equivalent;
 
@@ -44,23 +47,27 @@ use crate::hint::unlikely;
 use crate::static_starlark_value;
 use crate::typing::Ty;
 use crate::util::refcell::unleak_borrow;
+use crate::values::AllocFrozenRepresentation;
 use crate::values::AllocFrozenValue;
 use crate::values::AllocValue;
 use crate::values::Freeze;
 use crate::values::FreezeResult;
 use crate::values::Freezer;
+use crate::values::FrozenAllocator;
 use crate::values::FrozenHeap;
 use crate::values::Heap;
+use crate::values::StarlarkType;
 use crate::values::StarlarkValue;
 use crate::values::StaticFreezePlan;
 use crate::values::StringValue;
 use crate::values::Trace;
 use crate::values::Value;
+use crate::values::ValueOf;
+use crate::values::ValueTyped;
 use crate::values::comparison::equals_small_map;
 use crate::values::dict::DictRef;
 use crate::values::error::ValueError;
 use crate::values::string::str_type::hash_string_value;
-use crate::values::type_repr::StarlarkTypeRepr;
 use crate::values::types::dict::dict_type::DictType;
 
 #[derive(
@@ -102,14 +109,6 @@ pub struct Dict<'v> {
     pub(crate) content: SmallMap<Value<'v>, Value<'v>>,
 }
 
-impl<'v> StarlarkTypeRepr for Dict<'v> {
-    type Canonical = <DictType<Value<'static>, Value<'static>> as StarlarkTypeRepr>::Canonical;
-
-    fn starlark_type_repr() -> Ty {
-        Self::Canonical::starlark_type_repr()
-    }
-}
-
 /// A frozen dict is a `Dict` without the `RefCell`: the two variants differ only in whether
 /// mutation is possible, and nothing ever hands out a `&mut` to the frozen one.
 ///
@@ -122,7 +121,6 @@ crate::register_simple_vtable_entry!(FrozenDict);
 // SAFETY: The vtable entry is registered above. The deser type id is
 // lifetime-erased, so the `'static` instantiation covers all heap lifetimes.
 unsafe impl<'v> crate::__derive_refs::VtableRegistered for DictGen<Dict<'v>> {}
-crate::register_ty_starlark_value!(DictGen<Dict<'_>>);
 
 static_starlark_value!(
     pub(crate) VALUE_EMPTY_FROZEN_DICT: DictGen<Dict<'static>> = DictGen(Dict {
@@ -130,26 +128,27 @@ static_starlark_value!(
     })
 );
 
-impl<'v> AllocValue<'v> for Dict<'v> {
-    fn alloc_value(self, heap: Heap<'v>) -> Value<'v> {
-        heap.alloc_complex(DictGen(RefCell::new(self)))
+/// Every dict is a `dict[typing.Any, typing.Any]`.
+impl<'v> From<ValueOf<'v, DictView<'v>>> for ValueOf<'v, DictType<Value<'v>, Value<'v>>> {
+    #[inline]
+    fn from(value: ValueOf<'v, DictView<'v>>) -> Self {
+        Self::new_unchecked(value.to_value())
     }
 }
 
-impl<'v> Heap<'v> {
-    /// Allocate a dictionary with pre-allocated and pre-hashed keys and values.
-    pub fn alloc_dict(self, content: SmallMap<Value<'v>, Value<'v>>) -> Value<'v> {
-        self.alloc(Dict::new(content))
+impl<'v> AllocValue<'v> for Dict<'v> {
+    type Type = DictType<Value<'v>, Value<'v>>;
+
+    fn alloc_value(self, heap: Heap<'v>) -> ValueOf<'v, Self::Type> {
+        ValueOf::alloc(heap, DictGen(RefCell::new(self))).into()
     }
 }
 
 impl<'fv> AllocFrozenValue<'fv> for Dict<'fv> {
-    fn alloc_frozen_value(self, heap: FrozenHeap<'fv>) -> Value<'fv> {
-        if self.content.is_empty() {
-            VALUE_EMPTY_FROZEN_DICT.at().to_value()
-        } else {
-            heap.alloc_simple_typed(DictGen(self)).to_value()
-        }
+    type Type = DictType<Value<'fv>, Value<'fv>>;
+
+    fn alloc_frozen_value(self, heap: FrozenHeap<'fv>) -> ValueOf<'fv, Self::Type> {
+        ValueOf::alloc_frozen(heap, DictGen(self)).into()
     }
 }
 
@@ -193,7 +192,7 @@ impl<'v> Dict<'v> {
     }
 
     /// This function is deprecated.
-    /// Use [`AllocDict`](crate::values::dict::AllocDict) or [`SmallMap`]
+    /// Use [`AllocDict`](crate::values::dict::AllocDict)
     /// to allocate a new dictionary on the heap.
     pub fn new(content: SmallMap<Value<'v>, Value<'v>>) -> Self {
         Self { content }
@@ -445,13 +444,54 @@ impl<'v> DictLike<'v> for Dict<'v> {
 
 starlark::methods_static!(DICT_METHODS = crate::values::types::dict::methods::dict_methods);
 
-#[starlark_value(type = Dict::TYPE)]
-impl<'v, T: DictLike<'v> + 'v> StarlarkValue<'v> for DictGen<T>
-where
-    Self: ProvidesStaticType<'v>,
-{
-    type Canonical = DictGen<Dict<'v>>;
+/// A `dict` in either of its representations.
+#[derive(Debug, Clone, Copy, Dupe, StarlarkRepresentations)]
+pub(crate) enum DictView<'v> {
+    Frozen(ValueTyped<'v, DictGen<Dict<'v>>>),
+    Unfrozen(ValueTyped<'v, DictGen<RefCell<Dict<'v>>>>),
+}
 
+/// `$e` with `$x` bound to the representation's `DictLike`.
+macro_rules! with_dict {
+    ($self:expr, |$x:ident| $e:expr) => {
+        match $self {
+            DictView::Frozen($x) => {
+                let $x = &$x.as_ref().0;
+                $e
+            }
+            DictView::Unfrozen($x) => {
+                let $x = &$x.as_ref().0;
+                $e
+            }
+        }
+    };
+}
+
+impl<'v> DictView<'v> {
+    /// The dict, borrowed for as long as the reference lives if it is mutable.
+    #[inline]
+    pub(crate) fn to_ref(self) -> DictRef<'v> {
+        DictRef {
+            aref: match self {
+                DictView::Frozen(x) => Either::Right(&x.as_ref().0),
+                DictView::Unfrozen(x) => Either::Left(x.as_ref().0.borrow()),
+            },
+        }
+    }
+
+    #[inline]
+    fn content(
+        self,
+    ) -> Either<Ref<'v, SmallMap<Value<'v>, Value<'v>>>, &'v SmallMap<Value<'v>, Value<'v>>> {
+        match self {
+            DictView::Frozen(x) => Either::Right(x.as_ref().0.content()),
+            DictView::Unfrozen(x) => Either::Left(x.as_ref().0.content()),
+        }
+    }
+}
+
+#[starlark_value(type = Dict::TYPE)]
+impl<'v> StarlarkType<'v> for DictView<'v> {
     fn get_methods() -> Option<&'static Methods> {
         Some(DICT_METHODS.methods())
     }
@@ -459,7 +499,7 @@ where
     fn collect_repr(&self, r: &mut String) {
         // Fast path as repr() for dicts is quite hot
         r.push('{');
-        for (i, (name, value)) in self.0.content().iter().enumerate() {
+        for (i, (name, value)) in self.content().iter().enumerate() {
             if i != 0 {
                 r.push_str(", ");
             }
@@ -475,20 +515,15 @@ where
     }
 
     fn to_bool(&self) -> bool {
-        !self.0.content().is_empty()
+        !self.content().is_empty()
     }
 
-    fn equals(&self, other: Value<'v>) -> crate::Result<bool> {
-        match DictRef::from_value(other) {
-            None => Ok(false),
-            Some(other) => {
-                equals_small_map(&*self.0.content(), &other.content, |x, y| x.equals(*y))
-            }
-        }
+    fn equals(&self, other: Self) -> crate::Result<bool> {
+        equals_small_map(&self.content(), &other.content(), |x, y| x.equals(*y))
     }
 
     fn at(&self, index: Value<'v>, _heap: Heap<'v>) -> crate::Result<Value<'v>> {
-        match self.0.content().get_hashed_by_value(index.get_hashed()?) {
+        match self.content().get_hashed_by_value(index.get_hashed()?) {
             Some(v) => Ok(v.to_value()),
             None => Err(crate::Error::new_other(ValueError::KeyNotFound(
                 index.to_repr(),
@@ -496,68 +531,84 @@ where
         }
     }
 
-    fn length(&self) -> crate::Result<i32> {
-        Ok(self.0.content().len() as i32)
+    fn length(&self) -> i32 {
+        self.content().len() as i32
     }
 
     fn is_in(&self, other: Value<'v>) -> crate::Result<bool> {
         Ok(self
-            .0
             .content()
             .contains_key_hashed_by_value(other.get_hashed()?))
     }
 
     unsafe fn iterate(&self, me: Value<'v>, _heap: Heap<'v>) -> crate::Result<Value<'v>> {
         unsafe {
-            self.0.iter_start()?;
+            with_dict!(self, |d| d.iter_start())?;
             Ok(me)
         }
     }
 
     unsafe fn iter_size_hint(&self, index: usize) -> (usize, Option<usize>) {
-        debug_assert!(index <= self.0.content().len());
-        let rem = self.0.content().len() - index;
+        let len = self.content().len();
+        debug_assert!(index <= len);
+        let rem = len - index;
         (rem, Some(rem))
     }
 
     unsafe fn iter_next(&self, index: usize, _heap: Heap<'v>) -> Option<Value<'v>> {
-        unsafe { self.0.content_unchecked().keys().nth(index).copied() }
+        unsafe { with_dict!(self, |d| d.content_unchecked().keys().nth(index).copied()) }
     }
 
     unsafe fn iter_stop(&self) {
-        unsafe {
-            self.0.iter_stop();
-        }
+        unsafe { with_dict!(self, |d| d.iter_stop()) }
     }
 
     fn set_at(&self, index: Value<'v>, alloc_value: Value<'v>) -> crate::Result<()> {
         let index = index.get_hashed()?;
-        self.0.set_at(index, alloc_value)
+        with_dict!(self, |d| d.set_at(index, alloc_value))
     }
 
-    fn bit_or(&self, rhs: Value<'v>, heap: Heap<'v>) -> crate::Result<Value<'v>> {
-        let rhs = DictRef::from_value(rhs)
-            .map_or_else(|| ValueError::unsupported_with(self, "|", rhs), Ok)?;
-        if self.0.content().is_empty() {
-            return Ok(heap.alloc((*rhs).clone()));
+    fn bit_or(&self, rhs: DictRef<'v>) -> Dict<'v> {
+        let content = self.content();
+        if content.is_empty() {
+            return (*rhs).clone();
         }
         // Might be faster if we preallocate the capacity, but then copying in the LHS
         // is more expensive and might oversize given the behaviour on duplicates.
         // If this becomes a bottleneck, benchmark.
-        let mut items = self.0.content().clone();
+        let mut items = content.clone();
         for (k, v) in rhs.iter_hashed() {
             items.insert_hashed(k, v);
         }
-        Ok(heap.alloc(Dict::new(items)))
-    }
-
-    fn typechecker_ty(&self) -> Option<Ty> {
-        Some(Ty::any_dict())
+        Dict::new(items)
     }
 
     fn get_type_starlark_repr() -> Ty {
         Ty::any_dict()
     }
+}
+
+#[starlark_value]
+impl<'v> StarlarkValue<'v> for DictGen<RefCell<Dict<'v>>> {
+    type Type = DictView<'v>;
+}
+
+/// The empty frozen dict is a static.
+impl<'fv> AllocFrozenRepresentation<'fv> for DictGen<Dict<'fv>> {
+    type Repr = Self;
+
+    fn alloc_frozen(self, allocator: FrozenAllocator<'fv>) -> ValueTyped<'fv, Self> {
+        if self.0.content.is_empty() {
+            VALUE_EMPTY_FROZEN_DICT.at()
+        } else {
+            allocator.alloc_simple(self)
+        }
+    }
+}
+
+#[starlark_value(alloc = by_hand)]
+impl<'v> StarlarkValue<'v> for DictGen<Dict<'v>> {
+    type Type = DictView<'v>;
 }
 
 impl<'v, T: DictLike<'v>> Serialize for DictGen<T> {
@@ -594,15 +645,18 @@ b1 and b2 and b3
     #[test]
     fn test_get_str() -> crate::Result<()> {
         Heap::temp(|heap| {
-            let k1 = heap.alloc_str("hello").get_hashed_value();
-            let k2 = heap.alloc_str("world").get_hashed_value();
+            let k1 = heap.alloc("hello").get_hashed_value();
+            let k2 = heap.alloc("world").get_hashed_value();
             let mut sm = SmallMap::new();
-            sm.insert_hashed(k1, heap.alloc(12));
-            sm.insert_hashed(k2, heap.alloc(56));
+            sm.insert_hashed(k1, heap.alloc(12i32).to_value());
+            sm.insert_hashed(k2, heap.alloc(56i32).to_value());
             let d = Dict::new(sm);
 
-            assert_eq!(d.get(heap.alloc("hello"))?.unwrap().unpack_i32(), Some(12));
-            assert_eq!(d.get(heap.alloc("foo"))?, None);
+            assert_eq!(
+                d.get(heap.alloc("hello").to_value())?.unwrap().unpack_i32(),
+                Some(12)
+            );
+            assert_eq!(d.get(heap.alloc("foo").to_value())?, None);
             assert_eq!(d.get_str("hello").unwrap().unpack_i32(), Some(12));
             assert_eq!(d.get_str("foo"), None);
             Ok(())

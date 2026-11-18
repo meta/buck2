@@ -86,7 +86,14 @@ data class DiscardedInitializer(
     val detail: String,
     val isConst: Boolean = false,
     val consumerVisible: Boolean = true,
+    val unresolvedSymbols: List<String> = emptyList(),
+    val position: SourcePosition? = null,
 )
+
+/** A 1-based source position, for diagnostics that point at a declaration. */
+data class SourcePosition(val path: String, val line: Int, val column: Int) {
+  override fun toString(): String = "$path:$line:$column"
+}
 
 /**
  * A consumer-visible member whose signature did not resolve, so the emitted descriptor carries
@@ -97,6 +104,53 @@ data class DiscardedInitializer(
  * link against.
  */
 data class ErrorTypedApiMember(val owner: String, val member: String, val where: String)
+
+/**
+ * A member whose return-value status [ReturnValueStatusStage] changed because it may inherit it
+ * from a member that is not on the source-only ABI classpath. [computed] is the status the compiler
+ * resolved without that member, [emitted] the one written to the ABI; [unreadableClasses] are the
+ * classes off the classpath it may inherit through, empty when the stage could not decide.
+ */
+data class UnknownReturnValueStatus(
+    val owner: String,
+    val member: String,
+    val computed: String,
+    val emitted: String,
+    val unreadableClasses: List<String>,
+)
+
+/** How an unresolvable applier reference was written: a call, or a property read. */
+enum class UnresolvedApplierReferenceKind {
+  CALL,
+  READ,
+}
+
+/**
+ * A reference the Compose applier inference could not resolve, blocking a declaration's applier
+ * annotation.
+ *
+ * [name] is the reference as written (`WaScaffold`, or `colors` for `WdsTheme.colors`); [receiver]
+ * is the qualifier's root identifier when the reference has one (`WdsTheme`); [importFqn] is the
+ * file import that root resolves through, when it is an explicit import.
+ */
+data class UnresolvedApplierReference(
+    val name: String,
+    val kind: UnresolvedApplierReferenceKind,
+    val receiver: String? = null,
+    val importFqn: String? = null,
+    val file: String? = null,
+)
+
+/**
+ * A declaration left without the applier annotation it may need, and the unresolved references that
+ * block it: references in its own body, its nested lambdas, and the in-module callees whose scheme
+ * it shares.
+ */
+data class UncomputedApplier(
+    val declaration: String,
+    val reason: String,
+    val references: List<UnresolvedApplierReference>,
+)
 
 /**
  * Record of every place the ABI generator knowingly emitted something other than what the source
@@ -114,6 +168,7 @@ class AbiGenRepairLog {
   val clearedPropertyInitializers: MutableList<DiscardedInitializer> = mutableListOf()
   val replacedFieldInitializers: MutableList<DiscardedInitializer> = mutableListOf()
   val strippedSupertypes: MutableList<DiscardedInitializer> = mutableListOf()
+  val unknownReturnValueStatuses: MutableList<UnknownReturnValueStatus> = mutableListOf()
 
   /**
    * Repairs that did not even complete - a reflective mutation threw, so the FIR tree is in
@@ -125,6 +180,15 @@ class AbiGenRepairLog {
       IdentityHashMap()
 
   val errorTypedApiMembers: MutableList<ErrorTypedApiMember> = mutableListOf()
+
+  /**
+   * Declarations whose applier annotation the Compose inference could not compute on the reduced
+   * classpath, with the unresolved references that block each. Unlike every other list here this is
+   * an expected, fail-open residual rather than a defect, so ValidationStage reports it at INFO:
+   * machine-readable for the applicability rule, the codemod and the driver, and never fatal under
+   * `-Werror`.
+   */
+  val uncomputedAppliers: MutableList<UncomputedApplier> = mutableListOf()
 
   fun recordErrorTypedApiMember(
       declarationIdentity: Any,
@@ -148,22 +212,39 @@ class AbiGenRepairLog {
       detail: String,
       isConst: Boolean = false,
       consumerVisible: Boolean = true,
+      unresolvedSymbols: List<String> = emptyList(),
   ) {
     clearedPropertyInitializers.add(
-        DiscardedInitializer(owner, detail, isConst, consumerVisible),
+        DiscardedInitializer(owner, detail, isConst, consumerVisible, unresolvedSymbols),
     )
   }
 
-  fun recordReplacedFieldInitializer(owner: String, detail: String) {
-    replacedFieldInitializers.add(DiscardedInitializer(owner, detail))
+  fun recordReplacedFieldInitializer(
+      owner: String,
+      detail: String,
+      isConst: Boolean = false,
+      consumerVisible: Boolean = true,
+      position: SourcePosition? = null,
+  ) {
+    replacedFieldInitializers.add(
+        DiscardedInitializer(owner, detail, isConst, consumerVisible, position = position),
+    )
   }
 
   fun recordStrippedSupertype(owner: String, detail: String) {
     strippedSupertypes.add(DiscardedInitializer(owner, detail))
   }
 
+  fun recordUnknownReturnValueStatus(status: UnknownReturnValueStatus) {
+    unknownReturnValueStatuses.add(status)
+  }
+
   fun recordFailedRepair(owner: String, detail: String) {
     failedRepairs.add(DiscardedInitializer(owner, detail))
+  }
+
+  fun recordUncomputedApplier(entry: UncomputedApplier) {
+    uncomputedAppliers.add(entry)
   }
 
   /**
@@ -178,7 +259,8 @@ class AbiGenRepairLog {
         fabricatedConstants.size +
             clearedPropertyInitializers.size +
             replacedFieldInitializers.size +
-            strippedSupertypes.size
+            strippedSupertypes.size +
+            unknownReturnValueStatuses.size
 
   /**
    * Constants whose emitted type is known not to match the real declaration, or is only a guess.
@@ -196,6 +278,8 @@ class AbiGenRepairLog {
           " cleared_property_initializers=${clearedPropertyInitializers.size}" +
           " replaced_field_initializers=${replacedFieldInitializers.size}" +
           " stripped_supertypes=${strippedSupertypes.size}" +
+          " unknown_return_value_statuses=${unknownReturnValueStatuses.size}" +
           " error_typed_api_members=${errorTypedApiMembers.size}" +
+          " uncomputed_appliers=${uncomputedAppliers.size}" +
           " failed_repairs=${failedRepairs.size}"
 }

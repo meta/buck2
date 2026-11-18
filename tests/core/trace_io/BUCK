@@ -5,7 +5,10 @@ oncall("build_infra")
 buck2_core_tests(
     target_extra_attrs = {
         "test_trace_io": {
-            "deps": ["//buck2/tests/e2e_util:http_archive"],
+            "deps": [
+                "fbsource//third-party/rust:regex",
+                "fbsource//third-party/rust:zip",
+            ],
         },
     },
 )

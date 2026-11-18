@@ -19,6 +19,7 @@ import com.facebook.buck.installer.InstallCommand;
 import com.facebook.buck.installer.InstallError;
 import com.facebook.buck.installer.InstallId;
 import com.facebook.buck.installer.InstallResult;
+import com.facebook.infer.annotation.Nullsafe;
 import com.google.common.annotations.VisibleForTesting;
 import com.google.common.base.Preconditions;
 import com.google.common.base.Throwables;
@@ -40,12 +41,13 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.logging.Level;
-import java.util.logging.Logger; // NOPMD
+import java.util.logging.Logger;
 
 /**
  * Coordinates an Android Install of an APK. We need three artifacts: the apk,
  * install_android_options.json (configuration options), and an AndroidManifest.xml
  */
+@Nullsafe(Nullsafe.Mode.LOCAL)
 class AndroidInstallerManager implements InstallCommand {
 
   private static final Logger LOG = Logger.getLogger(AndroidInstallerManager.class.getName());
@@ -91,6 +93,10 @@ class AndroidInstallerManager implements InstallCommand {
       androidArtifacts.recordFileArrival(artifactName, arrivedAt);
 
       if (artifactName.equals("options")) {
+        Optional<InstallError> adbMissing = checkAdbExists(androidArtifacts);
+        if (adbMissing.isPresent()) {
+          return InstallResult.error(adbMissing.get());
+        }
         resolveDevices(installId, androidArtifacts);
       }
       Optional<InstallError> incompatible = checkAbiCompatibility(installId);
@@ -135,7 +141,7 @@ class AndroidInstallerManager implements InstallCommand {
           // Surfaces as an install failure: InstallerService turns this into an error response.
           throw new UncheckedIOException("Could not read install options " + artifactPath, e);
         }
-        LOG.log(Level.INFO, androidArtifacts.getApkOptions().toString());
+        LOG.log(Level.INFO, Objects.requireNonNull(androidArtifacts.getApkOptions()).toString());
         break;
       case "manifest":
         androidArtifacts.setAndroidManifestPath(AbsPath.of(artifactPath));
@@ -199,14 +205,9 @@ class AndroidInstallerManager implements InstallCommand {
                 installId.getValue(), undelivered));
       }
 
-      String adbPath = androidArtifacts.getApkOptions().adbExecutable;
-      if (!Files.exists(Paths.get(adbPath))) {
-        return InstallResult.error(
-            errorClassifier.fromErrorMessage(
-                String.format(
-                    "Could not find `adb` in PATH, and could not find `adb` "
-                        + "at %s. Please add `adb` to your PATH",
-                    adbPath)));
+      Optional<InstallError> adbMissing = checkAdbExists(androidArtifacts);
+      if (adbMissing.isPresent()) {
+        return InstallResult.error(adbMissing.get());
       }
 
       AdbHelper adbHelper = resolveDevices(installId, androidArtifacts);
@@ -225,7 +226,8 @@ class AndroidInstallerManager implements InstallCommand {
               ROOT_PATH,
               options,
               IsolatedApkInfo.of(
-                  androidArtifacts.getAndroidManifestPath(), androidArtifacts.getApk()),
+                  Objects.requireNonNull(androidArtifacts.getAndroidManifestPath()),
+                  Objects.requireNonNull(androidArtifacts.getApk())),
               isolatedExopackageInfo,
               installId,
               installState(installId),
@@ -412,6 +414,38 @@ class AndroidInstallerManager implements InstallCommand {
   }
 
   /**
+   * Checked before anything runs adb: running a missing adb fails with a stack trace that names
+   * neither adb nor the fix.
+   */
+  private Optional<InstallError> checkAdbExists(AndroidArtifacts androidArtifacts) {
+    String adbPath = Objects.requireNonNull(androidArtifacts.getApkOptions()).adbExecutable;
+    if (Files.exists(Paths.get(adbPath))) {
+      return Optional.empty();
+    }
+    return Optional.of(adbNotFound(adbPath, options.adbExecutablePath != null));
+  }
+
+  @VisibleForTesting
+  static InstallError adbNotFound(String adbPath, boolean pathGiven) {
+    if (pathGiven) {
+      return new InstallError(
+          String.format(
+              "Could not find `adb` at %s, the path given with %s or the buckconfig key"
+                  + " `android.adb`.",
+              adbPath, AndroidCommandLineOptions.ADB_EXECUTABLE_PATH_LONG_ARG),
+          AndroidInstallErrorTag.ADB_NOT_FOUND);
+    }
+    return new InstallError(
+        String.format(
+            "Could not find `adb` in PATH, and could not find `adb` at %s. The PATH searched is"
+                + " the one the buck2 daemon started with, which can differ from this command's."
+                + " Pass the location of `adb` instead: `buck2 install <target> -- %s"
+                + " <absolute-path-to-adb>`.",
+            adbPath, AndroidCommandLineOptions.ADB_EXECUTABLE_PATH_LONG_ARG),
+        AndroidInstallErrorTag.ADB_NOT_FOUND);
+  }
+
+  /**
    * Fixes the devices this install targets, as soon as there are options to reach them with.
    *
    * <p>Pinned here rather than at install time so that everything the install does reaches one set
@@ -428,7 +462,7 @@ class AndroidInstallerManager implements InstallCommand {
               AdbHelperFactory.create(
                   LOG,
                   options,
-                  androidArtifacts.getApkOptions(),
+                  Objects.requireNonNull(androidArtifacts.getApkOptions()),
                   options.skipSetDebugApp ? SetDebugAppMode.SKIP : SetDebugAppMode.SET,
                   state.metrics());
           // Asking now is what fixes the set: the helper resolves its devices once, on

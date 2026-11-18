@@ -44,13 +44,15 @@ use starlark::values::StringValue;
 use starlark::values::Trace;
 use starlark::values::UnpackValue;
 use starlark::values::Value;
+use starlark::values::ValueOf;
+use starlark::values::list::AllocList;
 use starlark::values::none::NoneOr;
 use starlark::values::starlark_value;
-use starlark::values::type_repr::StarlarkTypeRepr;
+use starlark::values::string::StarlarkStr;
 
 use crate::bxl::unconfigured_attribute::ref_to_value;
 
-type SelectDictKey<'v> = Either<StarlarkProvidersLabel, StringValue<'v>>;
+type SelectDictKey<'v> = Either<ValueOf<'v, StarlarkProvidersLabel>, StringValue<'v>>;
 
 #[derive(
     ProvidesStaticType,
@@ -92,12 +94,12 @@ impl Serialize for StarlarkSelectDict {
     }
 }
 
-#[derive(StarlarkTypeRepr, UnpackValue, derive_more::Display, Clone, Dupe)]
+#[derive(UnpackValue, derive_more::Display, Clone, Dupe)]
 enum SelectDictKeyArg<'v> {
     #[display("{}", _0)]
-    Label(&'v StarlarkProvidersLabel),
+    Label(ValueOf<'v, StarlarkProvidersLabel>),
     #[display("{}", _0)]
-    Str(&'v str),
+    Str(ValueOf<'v, StarlarkStr>),
 }
 
 impl StarlarkSelectDict {
@@ -129,6 +131,7 @@ impl StarlarkSelectDict {
                 .find(|(k, _)| *k == label.label())
                 .map(|(_, v)| v),
             SelectDictKeyArg::Str(key) => {
+                let key = key.as_str();
                 if key == CoercedSelectorKeyRef::DEFAULT_KEY_STR {
                     default
                 } else {
@@ -163,8 +166,11 @@ impl<'v> StarlarkValue<'v> for StarlarkSelectDict {
 }
 
 #[inline(always)]
-fn target_key<'v>(label: &ProvidersLabel) -> SelectDictKey<'v> {
-    Either::Left(StarlarkProvidersLabel::new(label.dupe()))
+fn target_key<'v>(label: &ProvidersLabel, heap: Heap<'v>) -> SelectDictKey<'v> {
+    Either::Left(ValueOf::alloc(
+        heap,
+        StarlarkProvidersLabel::new(label.dupe()),
+    ))
 }
 
 #[inline(always)]
@@ -204,12 +210,13 @@ fn select_dict_methods(builder: &mut MethodsBuilder) {
     fn select_items<'v>(
         this: &'v StarlarkSelectDict,
         heap: Heap<'v>,
-    ) -> starlark::Result<Vec<(SelectDictKey<'v>, Value<'v>)>> {
+    ) -> starlark::Result<AllocList<Vec<(SelectDictKey<'v>, Value<'v>)>>> {
         let (entries, default) = this.entries()?;
         let mut items: Vec<(SelectDictKey, Value)> = entries
             .iter()
             .map(|(k, v)| {
-                ref_to_value(v, &this.selector, this.pkg.dupe(), heap).map(|v| (target_key(k), v))
+                ref_to_value(v, &this.selector, this.pkg.dupe(), heap)
+                    .map(|v| (target_key(k, heap), v))
             })
             .collect::<buck2_error::Result<_>>()?;
         if let Some(d) = default {
@@ -218,7 +225,7 @@ fn select_dict_methods(builder: &mut MethodsBuilder) {
                 ref_to_value(d, &this.selector, this.pkg.dupe(), heap)?,
             ));
         }
-        Ok(items)
+        Ok(AllocList(items))
     }
 
     /// Return the keys of SelectDict. The key is either a string (for `DEFAULT`) or a `ProvidersLabel`.
@@ -232,13 +239,17 @@ fn select_dict_methods(builder: &mut MethodsBuilder) {
     ///     for key in attr.select_keys():
     ///         ctx.output.print(key)
     /// ```
-    fn select_keys<'v>(this: &'v StarlarkSelectDict) -> starlark::Result<Vec<SelectDictKey<'v>>> {
+    fn select_keys<'v>(
+        this: &'v StarlarkSelectDict,
+        heap: Heap<'v>,
+    ) -> starlark::Result<AllocList<Vec<SelectDictKey<'v>>>> {
         let (entries, default) = this.entries()?;
-        let mut keys: Vec<SelectDictKey> = entries.iter().map(|(k, _)| target_key(k)).collect();
+        let mut keys: Vec<SelectDictKey> =
+            entries.iter().map(|(k, _)| target_key(k, heap)).collect();
         if default.is_some() {
             keys.push(default_key());
         }
-        Ok(keys)
+        Ok(AllocList(keys))
     }
 
     /// Return the entry of the select for the given key. It accepts either a string or a `ProvidersLabel`.
@@ -378,13 +389,13 @@ fn select_concat_methods(builder: &mut MethodsBuilder) {
     fn select_iter<'v>(
         this: &'v StarlarkSelectConcat,
         heap: Heap<'v>,
-    ) -> starlark::Result<Vec<Value<'v>>> {
+    ) -> starlark::Result<AllocList<Vec<Value<'v>>>> {
         let list = this
             .items()?
             .iter()
             .map(|a| ref_to_value(a, &this.concat, this.pkg.dupe(), heap))
             .collect::<buck2_error::Result<_>>()?;
-        Ok(list)
+        Ok(AllocList(list))
     }
 
     /// Returns the length of a SelectConcat, defined as the number of items being concatenated

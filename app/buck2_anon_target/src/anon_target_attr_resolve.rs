@@ -35,6 +35,8 @@ use buck2_node::attrs::configured_traversal::ConfiguredAttrTraversal;
 use dice::DiceComputations;
 use dupe::Dupe;
 use starlark::values::Value;
+use starlark::values::dict::AllocDict;
+use starlark::values::list::AllocList;
 use starlark::values::tuple::AllocTuple;
 
 use crate::anon_target_attr::AnonTargetAttr;
@@ -88,23 +90,23 @@ impl AnonTargetAttrResolution for AnonTargetAttr {
         let mut ctx = &anon_resolution_ctx.rule_analysis_attr_resolution_ctx;
         match self {
             AnonTargetAttr::Bool(v) => Ok(Value::new_bool(v.0)),
-            AnonTargetAttr::Int(v) => Ok(ctx.heap().alloc(*v)),
+            AnonTargetAttr::Int(v) => Ok(ctx.heap().alloc(*v).to_value()),
             AnonTargetAttr::String(v) | AnonTargetAttr::EnumVariant(v) => {
-                Ok(ctx.heap().alloc(v.as_str()))
+                Ok(ctx.heap().alloc(v.as_str()).to_value())
             }
             AnonTargetAttr::List(list) => {
                 let mut values = Vec::with_capacity(list.len());
                 for v in list.iter() {
                     values.append(&mut v.resolve(pkg, anon_resolution_ctx)?);
                 }
-                Ok(ctx.heap().alloc(values))
+                Ok(ctx.heap().alloc(AllocList(values)).to_value())
             }
             AnonTargetAttr::Tuple(list) => {
                 let mut values = Vec::with_capacity(list.len());
                 for v in list.iter() {
                     values.append(&mut v.resolve(pkg, anon_resolution_ctx)?);
                 }
-                Ok(ctx.heap().alloc(AllocTuple(values)))
+                Ok(ctx.heap().alloc(AllocTuple(values)).to_value())
             }
             AnonTargetAttr::Dict(dict) => {
                 let mut res = BuckMutInsertionMap::with_capacity(dict.len());
@@ -114,12 +116,14 @@ impl AnonTargetAttrResolution for AnonTargetAttr {
                         v.resolve_single(pkg, anon_resolution_ctx)?,
                     );
                 }
-                Ok(ctx.heap().alloc(res))
+                Ok(ctx.heap().alloc(AllocDict(res)).to_value())
             }
             AnonTargetAttr::None => Ok(Value::new_none()),
             AnonTargetAttr::OneOf(box l, _) => l.resolve_single(pkg, anon_resolution_ctx),
             AnonTargetAttr::Dep(d) => Ok(DepAttrType::resolve_single(&mut ctx, d)?),
-            AnonTargetAttr::Artifact(d) => Ok(ctx.heap().alloc(StarlarkArtifact::new(d.dupe()))),
+            AnonTargetAttr::Artifact(d) => {
+                Ok(ctx.heap().alloc(StarlarkArtifact::new(d.dupe())).to_value())
+            }
             AnonTargetAttr::Arg(a) => Ok(a.resolve(&mut ctx, pkg)?),
             AnonTargetAttr::PromiseArtifact(box promise_artifact_attr) => {
                 let promise_id = promise_artifact_attr.id.dupe();
@@ -173,11 +177,12 @@ impl AnonTargetAttrResolution for AnonTargetAttr {
                 );
                 // To resolve the promise artifact attr, we end up creating a new `StarlarkPromiseArtifact` with the `OnceLock` set
                 // with the artifact that was found from the upstream analysis.
-                Ok(ctx.heap().alloc(fulfilled_promise_artifact))
+                Ok(ctx.heap().alloc(fulfilled_promise_artifact).to_value())
             }
-            AnonTargetAttr::Label(label) => {
-                Ok(ctx.heap().alloc(StarlarkProvidersLabel::new(label.dupe())))
-            }
+            AnonTargetAttr::Label(label) => Ok(ctx
+                .heap()
+                .alloc(StarlarkProvidersLabel::new(label.dupe()))
+                .to_value()),
         }
     }
 }

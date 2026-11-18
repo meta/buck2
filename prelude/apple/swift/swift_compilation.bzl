@@ -679,7 +679,7 @@ def compile_swift(
         ctx,
         name = "swift-extended",
         module_name = module_name,
-        headers = exported_headers,
+        headers = exported_headers + ([generated_umbrella_header] if generated_umbrella_header else []),
         swift_header = output_header,
     )
     exported_swift_header = CHeader(
@@ -688,14 +688,11 @@ def compile_swift(
         namespace = module_name,
         named = False,
     )
-    modulemap_artifact = modulemap_pp_info.modulemap_artifact
-    if generated_umbrella_header:
-        modulemap_artifact = modulemap_artifact.with_associated_artifacts([generated_umbrella_header.artifact])
     exported_pp_info = CPreprocessor(
         headers = [exported_swift_header] + ([generated_umbrella_header] if generated_umbrella_header else []),
         modular_args = modulemap_pp_info.modular_args,
         args = CPreprocessorArgs(args = modulemap_pp_info.args.args),
-        modulemap_artifact = modulemap_artifact,
+        modulemap_artifact = modulemap_pp_info.modulemap_artifact,
     )
 
     # We also need to include the unprefixed -Swift.h header in this libraries preprocessor info

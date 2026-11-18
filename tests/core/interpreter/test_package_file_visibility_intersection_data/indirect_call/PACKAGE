@@ -1,0 +1,7 @@
+load(":helper.bzl", "setup_intersection")
+
+package(
+    visibility = ["root//indirect_call/..."],
+)
+
+setup_intersection()

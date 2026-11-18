@@ -12,10 +12,12 @@ package com.facebook.buck.jvm.java;
 
 import com.facebook.buck.core.filesystems.AbsPath;
 import com.facebook.buck.core.filesystems.RelPath;
+import com.facebook.infer.annotation.Nullsafe;
 import com.google.common.collect.ImmutableMap;
 import java.nio.file.Path;
 import java.util.Set;
 
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public interface ClassUsageFileWriter {
 
   void writeFile(

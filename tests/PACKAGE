@@ -1,0 +1,9 @@
+# Empty the list of Rust workspaces. This ensures that any workspaces added in `fbcode/buck2` do not "infect"
+# the tests in this directory
+
+# buildifier: disable=native-build
+native.write_package_value(
+    "rust.workspaces",
+    [],
+    overwrite = True,
+)

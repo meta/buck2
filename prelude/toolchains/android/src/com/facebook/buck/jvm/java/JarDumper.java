@@ -10,6 +10,7 @@
 
 package com.facebook.buck.jvm.java;
 
+import com.facebook.infer.annotation.Nullsafe;
 import com.google.common.hash.Hashing;
 import com.google.common.hash.HashingInputStream;
 import com.google.common.io.ByteStreams;
@@ -19,7 +20,7 @@ import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.InputStreamReader;
-import java.io.PrintWriter; // NOPMD required by API
+import java.io.PrintWriter;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
@@ -31,6 +32,7 @@ import org.objectweb.asm.ClassVisitor;
 import org.objectweb.asm.util.Textifier;
 import org.objectweb.asm.util.TraceClassVisitor;
 
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public class JarDumper {
   private int asmFlags = 0;
 
@@ -91,7 +93,7 @@ public class JarDumper {
   private Stream<String> dumpClassFile(InputStream stream) throws IOException {
     byte[] textifiedClass;
     try (ByteArrayOutputStream bos = new ByteArrayOutputStream();
-        PrintWriter pw = new PrintWriter(bos)) { // NOPMD required by API
+        PrintWriter pw = new PrintWriter(bos)) {
       ClassReader reader = new ClassReader(stream);
       TraceClassVisitor traceVisitor = new TraceClassVisitor(null, new Textifier(), pw);
       reader.accept(traceVisitor, asmFlags);

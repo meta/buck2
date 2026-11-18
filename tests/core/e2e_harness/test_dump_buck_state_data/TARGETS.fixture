@@ -1,0 +1,9 @@
+load(":defs.bzl", "slow_actions")
+
+slow_actions(
+    name = "slow",
+    pids = read_config("test", "pids"),
+    duration = read_config("test", "duration"),
+    count = 10,
+    src = "slow.py",
+)

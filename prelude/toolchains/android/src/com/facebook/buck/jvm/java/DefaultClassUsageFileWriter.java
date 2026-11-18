@@ -13,7 +13,8 @@ package com.facebook.buck.jvm.java;
 import com.facebook.buck.core.filesystems.AbsPath;
 import com.facebook.buck.core.filesystems.RelPath;
 import com.facebook.buck.io.filesystem.impl.ProjectFilesystemUtils;
-import com.facebook.buck.util.json.ObjectMappers;
+import com.facebook.buck.util.json.JsonStringListMaps;
+import com.facebook.infer.annotation.Nullsafe;
 import com.google.common.base.Preconditions;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.ImmutableSortedMap;
@@ -21,8 +22,10 @@ import com.google.common.collect.ImmutableSortedSet;
 import java.io.IOException;
 import java.nio.file.Path;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public class DefaultClassUsageFileWriter implements ClassUsageFileWriter {
 
   @Override
@@ -32,15 +35,15 @@ public class DefaultClassUsageFileWriter implements ClassUsageFileWriter {
       AbsPath rootPath,
       RelPath configuredBuckOut) {
     try {
-      AbsPath parent = rootPath.resolve(relativePath).getParent();
+      AbsPath parent = Objects.requireNonNull(rootPath.resolve(relativePath).getParent());
       Path parentRelativePath = rootPath.relativize(parent).getPath();
       Preconditions.checkState(
           ProjectFilesystemUtils.exists(rootPath, parentRelativePath),
           "directory must exist: %s",
           parent);
 
-      ObjectMappers.WRITER.writeValue(
-          rootPath.resolve(relativePath).toFile(),
+      JsonStringListMaps.write(
+          rootPath.resolve(relativePath).getPath(),
           relativizeMap(classUsages, rootPath, configuredBuckOut));
     } catch (IOException e) {
       throw new RuntimeException("Unable to write used classes file.", e);

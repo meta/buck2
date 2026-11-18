@@ -30,6 +30,8 @@ use starlark::values::NoSerialize;
 use starlark::values::StarlarkPagable;
 use starlark::values::StarlarkValue;
 use starlark::values::Value;
+use starlark::values::dict::AllocDict;
+use starlark::values::list::AllocList;
 use starlark::values::starlark_value;
 
 #[derive(Debug, ProvidesStaticType, NoSerialize, Allocative, StarlarkPagable)]
@@ -80,25 +82,30 @@ fn json_convert<'v>(v: serde_json::Value, heap: Heap<'v>) -> starlark::Result<Va
         serde_json::Value::Bool(x) => Ok(Value::new_bool(x)),
         serde_json::Value::Number(x) => {
             if let Some(x) = x.as_i64().and_then(|x| i32::try_from(x).ok()) {
-                Ok(heap.alloc(x))
+                Ok(heap.alloc(x).to_value())
             } else if let Some(x) = x.as_f64() {
-                Ok(heap.alloc(x))
+                Ok(heap.alloc(x).to_value())
             } else {
                 Err(buck2_error::Error::from(JsonError::NumberOutOfBounds(x.to_string())).into())
             }
         }
-        serde_json::Value::String(x) => Ok(heap.alloc(x)),
-        serde_json::Value::Array(xs) => Ok(heap.alloc(
-            xs.into_iter()
-                .map(|v| json_convert(v, heap))
-                .collect::<Result<Vec<_>, _>>()?,
-        )),
+        serde_json::Value::String(x) => Ok(heap.alloc(x).to_value()),
+        serde_json::Value::Array(xs) => Ok(heap
+            .alloc(AllocList(
+                xs.into_iter()
+                    .map(|v| json_convert(v, heap))
+                    .collect::<Result<Vec<_>, _>>()?,
+            ))
+            .to_value()),
         serde_json::Value::Object(mp) => {
             let mut res = BuckMutInsertionMap::with_capacity(mp.len());
             for (k, v) in mp.into_iter() {
-                res.insert_hashed(heap.alloc(k).get_hashed()?, json_convert(v, heap)?);
+                res.insert_hashed(
+                    heap.alloc(k).to_value().get_hashed()?,
+                    json_convert(v, heap)?,
+                );
             }
-            Ok(heap.alloc(res))
+            Ok(heap.alloc(AllocDict(res)).to_value())
         }
     }
 }

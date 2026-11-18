@@ -1,0 +1,154 @@
+load("@fbcode_macros//build_defs:compilation_flags.bzl", "compilation_flags")
+load("@fbcode_macros//build_defs:python.bzl", "python")
+load("@fbcode_macros//build_defs/lib:nvcc_build.bzl", "nvcc_build")
+load("@fbcode_macros//build_defs/lib:third_party.bzl", "third_party")
+load("@fbsource//tools/build_defs:rust_package_local.bzl", "rust_package_local")
+load("@fbsource//tools/build_defs/rust:with_workspace.bzl", "with_rust_workspace")
+load("@fbsource//tools/target_determinator/macros:ci.bzl", "ci")
+load("@prelude//cfg/modifier:set_cfg_modifiers.bzl", "set_cfg_modifiers")
+load(":lint_levels.bzl", "CLIPPY_ALLOW", "CLIPPY_AUTOFIX", "CLIPPY_DENY")
+
+rust_package_local.set_rustc_flags(
+    ["-W" + x for x in CLIPPY_DENY]
+    + ["-A" + x for x in CLIPPY_ALLOW + CLIPPY_AUTOFIX]
+    + [
+        "--cfg=buck_build",
+        # Reuse upstream crates' instantiations of generic functions and async bodies
+        # instead of re-emitting them in every dependent crate. Off by default at this
+        # optimization level; measured as a 30% reduction in codegen time across the
+        # tree and about 10% in link time. The runtime cost: a shared instantiation is
+        # a call across crates, not an inlining candidate, so small generic helpers on
+        # hot paths (`Value::downcast_ref` and the view constructors around it) carry
+        # `#[inline]`, which opts them out of sharing.
+        "-Zshare-generics=yes",
+    ]
+)
+
+rust_package_local.set_clippy_configuration("//buck2:clippy_config")
+
+rust_package_local.set_miri_flags(
+    [
+        # Tree Borrows is the aliasing model the Rust project is converging on; the default,
+        # Stacked Borrows, rejects patterns Tree Borrows accepts. Matches starlark-rust's GitHub CI.
+        "-Zmiri-tree-borrows",
+    ] + select({
+        # No integer-to-pointer casts: pointers that go through integers lose their provenance, and
+        # with it the checking that is the point of running Miri. A target can opt out with
+        # `test_miri_flags = ["-Zmiri-permissive-provenance"]` (`miri_flags` on a `rust_unittest`).
+        # A test that parks threads interpreted hits a cast in `parking_lot_core`'s wait queue
+        # (`word_lock.rs`); such tests are ignored under Miri instead.
+        "DEFAULT": ["-Zmiri-strict-provenance"],
+        # On Apple targets `ctor` (which `allocative`'s `#[root]` pulls into every test binary)
+        # registers a constructor of its own that walks a link section through an
+        # integer-to-pointer cast (`link-section`'s `launder_pointer_provenance`). Miri runs it
+        # before `main`, so under strict provenance no test binary gets as far as listing its
+        # tests. Linux enforces strictness for the whole tree; macOS keeps the aliasing checks and
+        # gives up the provenance one.
+        "ovr_config//os:macos": ["-Zmiri-permissive-provenance"],
+    })
+)
+
+with_rust_workspace(
+    targets = [
+        # buildifier: keep sorted
+        "//buck2/app/buck2:buck2-bin",
+        "//buck2/app/buck2_action_impl_tests:buck2_action_impl_tests",
+        "//buck2/app/buck2_build_api_tests:buck2_build_api_tests",
+        "//buck2/app/buck2_error_tests:buck2_error_tests",
+        "//buck2/app/buck2_interpreter_for_build_tests:buck2_interpreter_for_build_tests",
+        "//buck2/app/buck2_node_tests:buck2_node_tests",
+    ]
+)
+
+ci.package(
+    ci.mac(ci.aarch64()),
+    ci.windows(),
+    # Build for Mac, but from a Linux machine (using RE and cross-compilation)
+    ci.linux(ci.skip_test(ci.mode("fbcode//mode/opt-mac"))),
+)
+
+compilation_flags.automatically_managed_warning_flags(
+    [
+        # This line prevents merge conflicts
+        "-Wunused-exception-parameter",
+        # This line prevents merge conflicts
+        # "-Wunused-function",
+        # This line prevents merge conflicts
+        # "-Wunused-lambda-capture",
+        # This line prevents merge conflicts
+        # "-Wunused-private-field",
+        # This line prevents merge conflicts
+        # "-Wexceptions",
+        # This line prevents merge conflicts
+        # "-Wextra",
+        # This line prevents merge conflicts
+        "-Wreorder-init-list",
+        # This line prevents merge conflicts
+        # "-Wmissing-prototypes",
+        # This line prevents merge conflicts
+        # "-Wshadow",
+        # This line prevents merge conflicts
+        # "-Wunsafe-buffer-usage",
+        # This line prevents merge conflicts
+        # "-Wimplicit-const-int-float-conversion",
+        # This line prevents merge conflicts
+        # "-Wmissing-field-initializers",
+        # This line prevents merge conflicts
+        # "-Wduplicate-enum",
+        # This line prevents merge conflicts
+        # "-Wshorten-64-to-32",
+        # This line prevents merge conflicts
+        # "-Wzero-as-null-pointer-constant",
+        # This line prevents merge conflicts
+        # "-Wdeprecated-copy-with-dtor",
+        # This line prevents merge conflicts
+        # "-Wdeprecated-copy-with-user-provided-dtor",
+        # This line prevents merge conflicts
+        # "-Wunreachable-code-loop-increment",
+        # This line prevents merge conflicts
+        "-Wunreachable-code-break",
+        # This line prevents merge conflicts
+        # "-Wunreachable-code-return",
+        # This line prevents merge conflicts
+        "-Wno-error=deprecated-declarations",
+        # This line prevents merge conflicts
+        # "-Wnontrivial-memcall",
+        # This line prevents merge conflicts
+        "-Wtautological-compare",
+        # This line prevents merge conflicts
+        "-Wunused-but-set-variable",
+        # This line prevents merge conflicts
+        "-Wstring-conversion",
+        # This line prevents merge conflicts
+        # "-Wunused-const-variable",
+        # This line prevents merge conflicts
+        "-Wuninitialized-const-pointer",
+        # This line prevents merge conflicts
+    ],
+    True,
+)
+
+modifiers_list = third_party.versions({
+    "cuda": "13.3",
+    "llvm-fb": "21",
+}) + [
+    "ovr_config//rust:panic_abort",
+]
+
+python.set_opt_by_default(enabled = True)
+
+python.set_typing(True)
+
+modifiers_list.extend([
+    "ovr_config//toolchain/nvcc/compile:dist",
+    "fbcode//buck2/starlark-rust/starlark:pagable[enabled]",
+    "ovr_config//build_mode:asan_ubsan_dev_sanitizer_flags[enabled]",
+])
+
+set_cfg_modifiers(
+    cfg_modifiers = modifiers_list + ["ovr_config//project/folly:folly[xplat]"],
+)
+
+nvcc_build.set_nvcc_host_compiler("clang")
+
+python.set_safer_lazy_imports(True)

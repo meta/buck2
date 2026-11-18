@@ -1,1 +1,0 @@
-consumer(name = "hash_in_file_name", dep_or_file = "data#1.json")

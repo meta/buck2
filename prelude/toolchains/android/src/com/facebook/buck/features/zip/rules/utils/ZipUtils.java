@@ -16,6 +16,7 @@ import com.facebook.buck.util.zip.collect.OnDuplicateEntry;
 import com.facebook.buck.util.zip.collect.ZipEntrySourceCollection;
 import com.facebook.buck.util.zip.collect.ZipEntrySourceCollectionBuilder;
 import com.facebook.buck.util.zip.collect.ZipEntrySourceCollectionWriter;
+import com.facebook.infer.annotation.Nullsafe;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.ImmutableSet;
@@ -25,6 +26,7 @@ import java.util.Map;
 import java.util.regex.Pattern;
 
 /** Utilities method related to zip_file rule */
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public class ZipUtils {
 
   /** Creates zip file */

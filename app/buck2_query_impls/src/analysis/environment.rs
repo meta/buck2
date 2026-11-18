@@ -321,19 +321,19 @@ async fn get_template_info_provider_artifacts(
                 providers_collection.builtin_provider::<TemplatePlaceholderInfo>()?
             {
                 if let Some(template_info) = template_placeholder_info
-                    .keyed_variables()
+                    .keyed_variables()?
                     .get(template_name)
                 {
                     let mut cmd_visitor = SimpleCommandLineArtifactVisitor::new();
                     if let either::Either::Left(command_line_arg) = template_info {
                         CommandLineArgLike::visit_artifacts(
-                            command_line_arg.as_command_line_arg(),
+                            command_line_arg.get().0,
                             &mut cmd_visitor,
                         )?;
                     } else if let either::Either::Right(map) = template_info {
                         for (_, command_line_arg) in map.iter() {
                             CommandLineArgLike::visit_artifacts(
-                                command_line_arg.as_command_line_arg(),
+                                command_line_arg.get().0,
                                 &mut cmd_visitor,
                             )?;
                         }

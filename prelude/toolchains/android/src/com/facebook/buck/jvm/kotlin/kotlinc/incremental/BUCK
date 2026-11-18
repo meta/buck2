@@ -16,5 +16,6 @@ buck_kotlin_library(
     ],
     deps = [
         "prelude//toolchains/android/src/com/facebook/buck/core/filesystems:filesystems",
+        "prelude//toolchains/android/src/com/facebook/buck/core/util/log:log",
     ],
 )

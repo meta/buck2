@@ -50,6 +50,35 @@ impl TenantKey {
     pub fn isolation(&self) -> &FileName {
         &self.isolation
     }
+
+    /// Short identifier of this tenant address for telemetry. Stable across daemon restarts and
+    /// machines with the same checkout path.
+    pub fn telemetry_id(&self) -> String {
+        let mut hasher = blake3::Hasher::new_derive_key("buck2.tenant.id.v1");
+        hasher.update(self.project_root.as_os_str().as_encoded_bytes());
+        hasher.update(&[0]);
+        hasher.update(self.isolation.as_str().as_bytes());
+        short_hex(hasher.finalize())
+    }
+}
+
+/// Identifier of one tenant generation within one daemon process, for telemetry.
+///
+/// Plays the role `daemon_uuid` played while a daemon served exactly one tenant: it changes when
+/// the tenant's build state is recreated and differs between tenants of a shared daemon. In an
+/// unshared daemon it maps one-to-one onto the daemon id.
+pub fn tenant_instance_id(daemon_id: &str, tenant_id: &str, generation: u64) -> String {
+    let mut hasher = blake3::Hasher::new_derive_key("buck2.tenant.instance.v1");
+    hasher.update(daemon_id.as_bytes());
+    hasher.update(&[0]);
+    hasher.update(tenant_id.as_bytes());
+    hasher.update(&[0]);
+    hasher.update(&generation.to_le_bytes());
+    short_hex(hasher.finalize())
+}
+
+fn short_hex(hash: blake3::Hash) -> String {
+    hash.to_hex()[..16].to_owned()
 }
 
 /// Description used to validate or construct a tenant.
@@ -88,6 +117,7 @@ mod tests {
     use buck2_fs::paths::file_name::FileNameBuf;
 
     use super::*;
+    use crate::daemon_routing::DaemonRouting;
     use crate::invocation_roots::InvocationRoots;
 
     fn paths(cwd: &str, isolation: &str) -> InvocationPaths {
@@ -97,8 +127,8 @@ mod tests {
             "/project"
         };
 
-        InvocationPaths {
-            roots: InvocationRoots {
+        InvocationPaths::new(
+            InvocationRoots {
                 project_root: ProjectRoot::new_unchecked(
                     AbsNormPathBuf::try_from(project_root.to_owned())
                         .expect("test project root should be absolute and normalized"),
@@ -107,9 +137,10 @@ mod tests {
                     .expect("test cwd should be project-relative")
                     .to_buf(),
             },
-            isolation: FileNameBuf::try_from(isolation.to_owned())
+            FileNameBuf::try_from(isolation.to_owned())
                 .expect("test isolation should be a file name"),
-        }
+            Some(DaemonRouting::Unshared),
+        )
     }
 
     #[test]
@@ -126,5 +157,33 @@ mod tests {
         let second = TenantSpec::from_invocation_paths(&paths("", "second"));
 
         assert_ne!(first.key(), second.key());
+    }
+
+    #[test]
+    fn telemetry_id_is_stable_and_distinguishes_isolation() {
+        let first = TenantKey::from_invocation_paths(&paths("", "first"));
+        let second = TenantKey::from_invocation_paths(&paths("", "second"));
+
+        assert_eq!(first.telemetry_id(), first.telemetry_id());
+        assert_eq!(first.telemetry_id().len(), 16);
+        assert_ne!(first.telemetry_id(), second.telemetry_id());
+    }
+
+    #[test]
+    fn tenant_instance_id_changes_with_generation_and_daemon() {
+        let tenant = TenantKey::from_invocation_paths(&paths("", "v2")).telemetry_id();
+
+        assert_eq!(
+            tenant_instance_id("daemon", &tenant, 1),
+            tenant_instance_id("daemon", &tenant, 1)
+        );
+        assert_ne!(
+            tenant_instance_id("daemon", &tenant, 1),
+            tenant_instance_id("daemon", &tenant, 2)
+        );
+        assert_ne!(
+            tenant_instance_id("daemon", &tenant, 1),
+            tenant_instance_id("other", &tenant, 1)
+        );
     }
 }

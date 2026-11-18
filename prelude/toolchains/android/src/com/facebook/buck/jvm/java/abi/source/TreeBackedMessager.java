@@ -10,12 +10,14 @@
 
 package com.facebook.buck.jvm.java.abi.source;
 
+import com.facebook.infer.annotation.Nullsafe;
 import javax.annotation.processing.Messager;
 import javax.lang.model.element.AnnotationMirror;
 import javax.lang.model.element.AnnotationValue;
 import javax.lang.model.element.Element;
 import javax.tools.Diagnostic;
 
+@Nullsafe(Nullsafe.Mode.LOCAL)
 class TreeBackedMessager implements Messager {
   private final Messager javacMessager;
   private final FrontendOnlyJavacTask task;

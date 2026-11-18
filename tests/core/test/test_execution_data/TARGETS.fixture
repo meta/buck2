@@ -12,3 +12,14 @@ simple_test(
     name = "writes_output",
     writes_output = True,
 )
+
+simple_test(
+    name = "records_coding_agent_metadata",
+    records_coding_agent_metadata = True,
+)
+
+simple_test(
+    name = "sets_coding_agent_metadata",
+    coding_agent_metadata = "id=rule",
+    records_coding_agent_metadata = True,
+)

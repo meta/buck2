@@ -23,7 +23,8 @@ use crate as starlark;
 use crate::environment::GlobalsBuilder;
 use crate::eval::Evaluator;
 use crate::values::Value;
-use crate::values::tuple::UnpackTuple;
+use crate::values::ValueOf;
+use crate::values::tuple::TupleType;
 
 fn min_max_iter<'v>(
     mut it: impl Iterator<Item = Value<'v>>,
@@ -70,17 +71,18 @@ fn min_max_iter<'v>(
 
 /// Common implementation of `min` and `max`.
 fn min_max<'v>(
-    mut args: UnpackTuple<Value<'v>>,
+    args: ValueOf<'v, TupleType<Value<'v>>>,
     key: Option<Value<'v>>,
     eval: &mut Evaluator<'v, '_, '_>,
     // Select min on true, max on false.
     min: bool,
 ) -> crate::Result<Value<'v>> {
-    if args.items.len() == 1 {
-        let it = args.items.swap_remove(0).iterate(eval.heap())?;
+    let args = args.tuple();
+    if let [only] = args.content() {
+        let it = only.iterate(eval.heap())?;
         min_max_iter(it, key, eval, min)
     } else {
-        min_max_iter(args.items.into_iter(), key, eval, min)
+        min_max_iter(args.iter(), key, eval, min)
     }
 }
 
@@ -108,7 +110,7 @@ pub(crate) fn register_min_max(globals: &mut GlobalsBuilder) {
     // This function is not spec-safe, because it may call `key` function
     // which might be not spec-safe.
     fn max<'v>(
-        #[starlark(args)] args: UnpackTuple<Value<'v>>,
+        #[starlark(args)] args: ValueOf<'v, TupleType<Value<'v>>>,
         key: Option<Value<'v>>,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<Value<'v>> {
@@ -134,7 +136,7 @@ pub(crate) fn register_min_max(globals: &mut GlobalsBuilder) {
     // This function is not spec-safe, because it may call `key` function
     // which might be not spec-safe.
     fn min<'v>(
-        #[starlark(args)] args: UnpackTuple<Value<'v>>,
+        #[starlark(args)] args: ValueOf<'v, TupleType<Value<'v>>>,
         key: Option<Value<'v>>,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<Value<'v>> {

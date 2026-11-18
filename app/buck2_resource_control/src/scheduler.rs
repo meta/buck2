@@ -33,11 +33,13 @@ use crate::scheduler::forecast::PressureForecast;
 use crate::scheduler::suspend_timing::SpreadHalfSuspendTiming;
 use crate::scheduler::suspend_timing::SuspendCandidate;
 use crate::scheduler::suspend_timing::SuspendTiming;
+use crate::scheduler::swap_headroom::SwapHeadroom;
 use crate::scheduler::timeseries::Timeseries;
 
 mod event;
 mod forecast;
 mod suspend_timing;
+mod swap_headroom;
 mod timeseries;
 
 const OOMD_THRESHOLD: f64 = 60.0;
@@ -423,9 +425,8 @@ impl Scheduler {
     }
 
     /// Whether the system is under memory pressure: on once the short-term pressure average
-    /// rises, off only once both the short- and the long-term average have eased. Latched apart
-    /// from the intent, which flips back and forth while the long-term average catches up with
-    /// sustained pressure; each onset reported here starts an eviction.
+    /// rises, off only once both the short- and the long-term average have eased. Each onset
+    /// reported here starts an eviction.
     pub(crate) fn under_memory_pressure(&self) -> bool {
         self.memory_pressure
     }
@@ -453,6 +454,13 @@ impl Scheduler {
             self.event_sender_state
                 .update_estimated_memory_cap(self.estimated_memory_cap);
         }
+
+        self.event_sender_state.update_estimated_swap_cap(
+            memory_reading
+                .host_swap
+                .and_then(SwapHeadroom::new)
+                .map(|headroom| memory_reading.allprocs_swap_current + headroom.available),
+        );
 
         self.event_sender_state
             .update_memory_reading(MemoryReading {
@@ -483,23 +491,23 @@ impl Scheduler {
 
         // Consider flipping the intent. In either case if we do, we set the `last_correction_time`,
         // since we don't want to take any action immediately after flipping intent
+        let pressure_high = self
+            .allprocs_memory_pressure
+            .average_over_last(Duration::from_secs(5))
+            > 10.0;
         match self.current_intent {
             CurrentIntent::Decrease => {
-                if self
+                let pressure_settled = self
                     .allprocs_memory_pressure
                     .average_over_last(Duration::from_secs(30))
-                    < 5.0
-                {
+                    < 5.0;
+                if pressure_settled && !pressure_high {
                     self.current_intent = CurrentIntent::Increase;
                     self.last_parallelism_increase_time = now;
                 }
             }
             CurrentIntent::Increase => {
-                if self
-                    .allprocs_memory_pressure
-                    .average_over_last(Duration::from_secs(5))
-                    > 10.0
-                {
+                if pressure_high {
                     self.current_intent = CurrentIntent::Decrease;
                     self.suspend_timing.on_enter_decrease_mode(now);
                 }
@@ -599,22 +607,27 @@ impl Scheduler {
         }
 
         for _ in 0..suspends_to_issue {
-            let cgroup = self.running_scenes.pop().unwrap();
-
-            let (suspended_cgroup, event_kind) = suspend_scene(cgroup, now);
-
-            // Push it onto the list before emitting the event so that the action count in the event is
-            // correct
-            self.suspended_scenes.push_front(suspended_cgroup);
-            let suspended_cgroup = self.suspended_scenes.front().unwrap();
-
-            self.event_sender_state.send_event(
-                event_kind,
-                Some(&suspended_cgroup.scene),
-                self.running_scenes.len() as u64,
-                self.suspended_scenes.len() as u64,
-            );
+            self.suspend_youngest_scene(now);
         }
+    }
+
+    /// Suspends the most recently started of the running scenes.
+    fn suspend_youngest_scene(&mut self, now: Instant) {
+        let cgroup = self.running_scenes.pop().unwrap();
+
+        let (suspended_cgroup, event_kind) = suspend_scene(cgroup, now);
+
+        // Push it onto the list before emitting the event so that the action count in the event is
+        // correct
+        self.suspended_scenes.push_front(suspended_cgroup);
+        let suspended_cgroup = self.suspended_scenes.front().unwrap();
+
+        self.event_sender_state.send_event(
+            event_kind,
+            Some(&suspended_cgroup.scene),
+            self.running_scenes.len() as u64,
+            self.suspended_scenes.len() as u64,
+        );
     }
 
     fn maybe_increase_running_count(&mut self, now: Instant) {
@@ -763,9 +776,10 @@ fn wake_scene(
 
 #[cfg(test)]
 mod tests {
-    use std::time::SystemTime;
+    use buck2_wrapper_common::invocation_id::TraceId;
 
     use super::*;
+    use crate::host_swap::HostSwap;
 
     struct UpdateBuilder(BuckMutMap<SceneIdRef, SceneResourceReading>);
 
@@ -819,11 +833,9 @@ mod tests {
         let (mut scheduler, timeline) = TestTimeline::new();
         let pressure = MemoryReading {
             allprocs_memory_current: 10000,
-            allprocs_swap_current: 0,
             allprocs_memory_pressure: 80.0,
             daemon_memory_current: 8000,
-            daemon_swap_current: 0,
-            time_collected: SystemTime::now(),
+            ..MemoryReading::zero()
         };
         scheduler.update(pressure, UpdateBuilder::new().build(), timeline.secs(0));
         scheduler.update(pressure, UpdateBuilder::new().build(), timeline.secs(60));
@@ -873,6 +885,35 @@ mod tests {
         assert_eq!(scheduler.estimated_memory_cap, 16 << 30);
     }
 
+    /// Once a constant pressure above the decrease threshold follows a quiet period, the intent
+    /// enters `Decrease` as soon as the 5 s average is above 10 and stays there while it is.
+    #[test]
+    fn test_intent_when_pressure_follows_quiet_period() {
+        let (mut scheduler, timeline) = TestTimeline::new();
+        let reading = |pressure: f64| MemoryReading {
+            allprocs_memory_pressure: pressure,
+            ..MemoryReading::zero()
+        };
+        for i in 1..=60 {
+            scheduler.update(reading(0.0), UpdateBuilder::new().build(), timeline.secs(i));
+        }
+        let mut decrease = Vec::new();
+        for i in 61..=72 {
+            scheduler.update(
+                reading(15.0),
+                UpdateBuilder::new().build(),
+                timeline.secs(i),
+            );
+            decrease.push(matches!(scheduler.current_intent, CurrentIntent::Decrease));
+        }
+        assert_eq!(
+            decrease,
+            [
+                false, false, false, true, true, true, true, true, true, true, true, true
+            ]
+        );
+    }
+
     #[test]
     fn test_peak_memory_and_swap() -> buck2_error::Result<()> {
         let (mut scheduler, timeline) = TestTimeline::new();
@@ -897,11 +938,9 @@ mod tests {
 
         let dummy_memory_reading = MemoryReading {
             allprocs_memory_current: 10000,
-            allprocs_swap_current: 0,
             allprocs_memory_pressure: 12.0,
             daemon_memory_current: 8000,
-            daemon_swap_current: 0,
-            time_collected: SystemTime::now(),
+            ..MemoryReading::zero()
         };
         scheduler.update(
             dummy_memory_reading,
@@ -939,11 +978,9 @@ mod tests {
         // another 40 seconds of observed pressure after entering decrease mode.
         let memory_reading = MemoryReading {
             allprocs_memory_current: 10000,
-            allprocs_swap_current: 0,
             allprocs_memory_pressure: 80.0,
             daemon_memory_current: 8000,
-            daemon_swap_current: 0,
-            time_collected: SystemTime::now(),
+            ..MemoryReading::zero()
         };
         scheduler.update(
             memory_reading,
@@ -987,16 +1024,8 @@ mod tests {
         let cgroup_1_res = scheduler.scene_finished(scene1, timeline.secs(110));
         assert!(cgroup_1_res.suspend_duration.is_none());
 
-        let memory_reading_2 = MemoryReading {
-            allprocs_memory_current: 0,
-            allprocs_swap_current: 0,
-            allprocs_memory_pressure: 0.0,
-            daemon_memory_current: 0,
-            daemon_swap_current: 0,
-            time_collected: SystemTime::now(),
-        };
         scheduler.update(
-            memory_reading_2,
+            MemoryReading::zero(),
             UpdateBuilder::new().build(),
             timeline.secs(115),
         );
@@ -1022,12 +1051,7 @@ mod tests {
         for (duration, level) in pre_start_durations_and_levels.iter().copied() {
             let reading = MemoryReading {
                 allprocs_memory_pressure: level,
-                // Killing is entirely pressure based so we don't care about these
-                allprocs_memory_current: 0,
-                allprocs_swap_current: 0,
-                daemon_memory_current: 0,
-                daemon_swap_current: 0,
-                time_collected: SystemTime::now(),
+                ..MemoryReading::zero()
             };
             for i in 0..duration {
                 scheduler.update(
@@ -1059,12 +1083,7 @@ mod tests {
         for (duration, level) in durations_and_levels.iter().copied() {
             let reading = MemoryReading {
                 allprocs_memory_pressure: level,
-                // Killing is entirely pressure based so we don't care about these
-                allprocs_memory_current: 0,
-                allprocs_swap_current: 0,
-                daemon_memory_current: 0,
-                daemon_swap_current: 0,
-                time_collected: SystemTime::now(),
+                ..MemoryReading::zero()
             };
             for i in 0..duration {
                 scheduler.update(
@@ -1104,18 +1123,14 @@ mod tests {
     }
 
     /// The pressure signal turns on once at the onset of sustained pressure, stays on through
-    /// the intent's flapping while the long-term average catches up and through short dips, and
-    /// turns off once after pressure has subsided; at the production sampling cadence.
+    /// short dips, and turns off once after pressure has subsided; at the production sampling
+    /// cadence.
     #[test]
     fn test_memory_pressure_signal_latches_per_episode() {
         let (mut scheduler, timeline) = TestTimeline::new();
         let reading = |level: f64| MemoryReading {
             allprocs_memory_pressure: level,
-            allprocs_swap_current: 0,
-            allprocs_memory_current: 0,
-            daemon_memory_current: 0,
-            daemon_swap_current: 0,
-            time_collected: SystemTime::now(),
+            ..MemoryReading::zero()
         };
         let mut now_ms = 0;
         let mut was_on = false;
@@ -1143,7 +1158,7 @@ mod tests {
         assert_eq!(
             run(&mut scheduler, 12.0, 40),
             (1, 0),
-            "steady pressure is one onset, however often the intent flips"
+            "steady pressure is one onset"
         );
         assert_eq!(
             run(&mut scheduler, 0.0, 8),
@@ -1188,5 +1203,58 @@ mod tests {
     fn test_baseline_still_kills_for_very_high_sustained_pressure() {
         let scenario = &[(60, 0.0), (60, 80.0)];
         multi_pressure_level_test(&[], scenario, true);
+    }
+
+    #[test]
+    fn test_reports_how_much_swap_can_be_used() {
+        let (mut scheduler, timeline) = TestTimeline::new();
+        let (event_tx, mut event_rx) = mpsc::unbounded_channel();
+        scheduler.command_started(event_tx);
+        let mut reported = |sec: u64, host_swap: Option<HostSwap>| {
+            scheduler.update(
+                MemoryReading {
+                    allprocs_swap_current: 20_000,
+                    host_swap,
+                    ..MemoryReading::zero()
+                },
+                UpdateBuilder::new().build(),
+                timeline.secs(sec),
+            );
+            event_rx
+                .try_recv()
+                .unwrap()
+                .complete(&TraceId::new())
+                .ancestor_cgroup_constraints
+                .unwrap()
+                .memory_swap_max
+        };
+        assert_eq!(reported(1, None), None);
+        // 90_000 of the host's swap are usable, and 30_000 of those are still free.
+        let host_swap = HostSwap {
+            total: 100_000,
+            free: 40_000,
+        };
+        assert_eq!(reported(2, Some(host_swap)), Some(50_000));
+    }
+
+    #[test]
+    fn test_reports_page_cache_and_swap_failures() {
+        let (mut scheduler, timeline) = TestTimeline::new();
+        let (event_tx, mut event_rx) = mpsc::unbounded_channel();
+        scheduler.command_started(event_tx);
+        scheduler.update(
+            MemoryReading {
+                allprocs_page_cache: 3_000,
+                allprocs_page_cache_active: 2_000,
+                allprocs_swap_failures: 7,
+                ..MemoryReading::zero()
+            },
+            UpdateBuilder::new().build(),
+            timeline.secs(1),
+        );
+        let event = event_rx.try_recv().unwrap().complete(&TraceId::new());
+        assert_eq!(event.allprocs_page_cache, 3_000);
+        assert_eq!(event.allprocs_page_cache_active, 2_000);
+        assert_eq!(event.allprocs_swap_failures, 7);
     }
 }

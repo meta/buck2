@@ -16,6 +16,7 @@ use buck2_build_api::actions::impls::json::JsonUnpack;
 use buck2_build_api::artifact_groups::ArtifactGroup;
 use buck2_build_api::interpreter::rule_defs::artifact::associated::AssociatedArtifacts;
 use buck2_build_api::interpreter::rule_defs::artifact::output_artifact_like::OutputArtifactArg;
+use buck2_build_api::interpreter::rule_defs::artifact::starlark_artifact_like::StarlarkArtifactView;
 use buck2_build_api::interpreter::rule_defs::artifact::starlark_declared_artifact::StarlarkDeclaredArtifact;
 use buck2_build_api::interpreter::rule_defs::artifact_tagging::ArtifactTag;
 use buck2_build_api::interpreter::rule_defs::cmd_args::ArtifactPathMapper;
@@ -33,7 +34,7 @@ use buck2_execute::artifact::fs::ExecutorFs;
 use buck2_hash::BuckMutInsertionSet;
 use buck2_hash::BuckMutMap;
 use buck2_hash::buck_mut_insertion_set;
-use buck2_interpreter::execution_group::ExecutionGroupArg;
+use buck2_interpreter::execution_group::StarlarkExecutionGroupView;
 use dupe::Dupe;
 use either::Either;
 use sha1::Digest;
@@ -45,8 +46,8 @@ use starlark::values::AllocValue;
 use starlark::values::UnpackValue;
 use starlark::values::ValueOf;
 use starlark::values::ValueTyped;
+use starlark::values::list::AllocList;
 use starlark::values::none::NoneOr;
-use starlark::values::type_repr::StarlarkTypeRepr;
 
 use crate::actions::impls::dep_file_fingerprint::DepFileFingerprintFormat;
 use crate::actions::impls::dep_file_fingerprint::StarlarkDepFileFingerprint;
@@ -76,7 +77,7 @@ enum WriteActionError {
     DepFileFingerprintWithInputs,
 }
 
-#[derive(UnpackValue, StarlarkTypeRepr)]
+#[derive(UnpackValue)]
 enum WriteContentArg<'v> {
     CommandLineArg(CommandLineArg<'v>),
     StarlarkCommandLineValueUnpack(StarlarkCommandLineValueUnpack<'v>),
@@ -86,12 +87,17 @@ type WriteOutput<'v> = Either<
     ValueTyped<'v, StarlarkDeclaredArtifact<'v>>,
     (
         ValueTyped<'v, StarlarkDeclaredArtifact<'v>>,
-        StarlarkDepFileFingerprint<'v>,
+        ValueOf<'v, StarlarkDepFileFingerprint<'v>>,
     ),
 >;
 
-type WriteReturnValue<'v> =
-    Either<WriteOutput<'v>, (WriteOutput<'v>, Vec<StarlarkDeclaredArtifact<'v>>)>;
+type WriteReturnValue<'v> = Either<
+    WriteOutput<'v>,
+    (
+        WriteOutput<'v>,
+        AllocList<Vec<ValueOf<'v, StarlarkArtifactView<'v>>>>,
+    ),
+>;
 
 /// We don't need to run this visitor in order to provide the inputs to the write actions,
 /// because that is done lazily when we run the action.
@@ -180,10 +186,12 @@ pub(crate) fn analysis_actions_methods_write(methods: &mut MethodsBuilder) {
         #[starlark(require = named, default = NoneOr::None)] has_content_based_path: NoneOr<bool>,
         #[starlark(require = named, default = false)]
         use_dep_files_placeholder_for_content_based_paths: bool,
-        #[starlark(require = named, default = NoneOr::None)] exec_group: NoneOr<ExecutionGroupArg>,
+        #[starlark(require = named, default = NoneOr::None)] exec_group: NoneOr<
+            StarlarkExecutionGroupView<'v>,
+        >,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<impl AllocValue<'v> + use<'v>> {
-        let exec_group = action_execution_group(exec_group);
+        let exec_group = action_execution_group(exec_group)?;
         if dep_files_fingerprint_using_canonical_paths && with_inputs {
             return Err(
                 buck2_error::Error::from(WriteActionError::DepFileFingerprintWithInputs).into(),
@@ -207,7 +215,7 @@ pub(crate) fn analysis_actions_methods_write(methods: &mut MethodsBuilder) {
         )?;
 
         let value = declaration.into_declared_artifact(AssociatedArtifacts::new());
-        let cli = UnregisteredWriteJsonAction::cli(value.to_value(), content.value)?;
+        let cli = UnregisteredWriteJsonAction::cli(value.to_value(), content.to_value())?;
 
         let mut visitor = CommandLineInputVisitor::new(false);
         cli.visit_contents(&mut visitor)?;
@@ -220,7 +228,7 @@ pub(crate) fn analysis_actions_methods_write(methods: &mut MethodsBuilder) {
                 absolute,
                 use_dep_files_placeholder_for_content_based_paths,
             ),
-            Some(content.value),
+            Some(content.to_value()),
             None,
             exec_group,
             action_name,
@@ -231,17 +239,17 @@ pub(crate) fn analysis_actions_methods_write(methods: &mut MethodsBuilder) {
         if dep_files_fingerprint_using_canonical_paths {
             let fingerprint = StarlarkDepFileFingerprint {
                 artifact: value.to_value(),
-                content: content.value,
+                content: content.to_value(),
                 absolute,
                 format: DepFileFingerprintFormat::Json { pretty },
             };
-            Ok(Either::Right((value, fingerprint)))
+            Ok(Either::Right((value, eval.heap().alloc(fingerprint))))
         } else if with_inputs {
             // TODO(nga): we use `AllocValue`, so this function return type for this branch
             //   is `write_json_cli_args`. We want just `cmd_args`,
             //   because users don't care about precise type.
             //   Do it when we migrate to new types not based on strings.
-            Ok(Either::Left(Either::Right(cli)))
+            Ok(Either::Left(Either::Right(eval.heap().alloc(cli))))
         } else {
             Ok(Either::Left(Either::Left(value)))
         }
@@ -267,10 +275,12 @@ pub(crate) fn analysis_actions_methods_write(methods: &mut MethodsBuilder) {
         #[starlark(require = pos)] output: OutputArtifactArg<'v>,
         #[starlark(require = pos)] content: ValueOf<'v, HmapMappings<'v>>,
         #[starlark(require = named, default = NoneOr::None)] has_content_based_path: NoneOr<bool>,
-        #[starlark(require = named, default = NoneOr::None)] exec_group: NoneOr<ExecutionGroupArg>,
+        #[starlark(require = named, default = NoneOr::None)] exec_group: NoneOr<
+            StarlarkExecutionGroupView<'v>,
+        >,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<impl AllocValue<'v> + use<'v>> {
-        let exec_group = action_execution_group(exec_group);
+        let exec_group = action_execution_group(exec_group)?;
         let mut this = this.state()?;
         check_default_execution_group_declared(this.execution_platform(), &exec_group)?;
         let (declaration, output_artifact) = this.get_or_declare_output(
@@ -280,12 +290,12 @@ pub(crate) fn analysis_actions_methods_write(methods: &mut MethodsBuilder) {
             has_content_based_path.into_option(),
         )?;
         let value = declaration.into_declared_artifact(AssociatedArtifacts::new());
-        visit_hmap_artifacts(content.value, &mut CommandLineInputVisitor::new(false))?;
+        visit_hmap_artifacts(content.to_value(), &mut CommandLineInputVisitor::new(false))?;
         let action_name = write_action_name("write_hmap", &output_artifact);
         this.register_action_in_group(
             buck_mut_insertion_set![output_artifact],
             UnregisteredWriteHmapAction {},
-            Some(content.value),
+            Some(content.to_value()),
             None,
             exec_group,
             action_name,
@@ -334,7 +344,9 @@ pub(crate) fn analysis_actions_methods_write(methods: &mut MethodsBuilder) {
         #[starlark(require = named, default = NoneOr::None)] has_content_based_path: NoneOr<bool>,
         #[starlark(require = named, default = false)]
         use_dep_files_placeholder_for_content_based_paths: bool,
-        #[starlark(require = named, default = NoneOr::None)] exec_group: NoneOr<ExecutionGroupArg>,
+        #[starlark(require = named, default = NoneOr::None)] exec_group: NoneOr<
+            StarlarkExecutionGroupView<'v>,
+        >,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<WriteReturnValue<'v>> {
         fn count_write_to_file_macros(
@@ -394,7 +406,7 @@ pub(crate) fn analysis_actions_methods_write(methods: &mut MethodsBuilder) {
             )
             .into());
         }
-        let exec_group = action_execution_group(exec_group);
+        let exec_group = action_execution_group(exec_group)?;
         let mut this = this.state()?;
         check_default_execution_group_declared(this.execution_platform(), &exec_group)?;
         let (declaration, output_artifact) = this.get_or_declare_output(
@@ -406,7 +418,7 @@ pub(crate) fn analysis_actions_methods_write(methods: &mut MethodsBuilder) {
 
         let (content_cli, written_macro_count, mut associated_artifacts) = match content {
             WriteContentArg::CommandLineArg(content) => {
-                let content_arg = content.as_command_line_arg();
+                let content_arg = content.get().0;
                 let count = count_write_to_file_macros(allow_args, content_arg)?;
                 let associated_artifacts = get_cli_inputs(with_inputs, content_arg)?;
                 (content, count, associated_artifacts)
@@ -416,7 +428,7 @@ pub(crate) fn analysis_actions_methods_write(methods: &mut MethodsBuilder) {
                 let count = count_write_to_file_macros(allow_args, &cli)?;
                 let associated_artifacts = get_cli_inputs(with_inputs, &cli)?;
                 (
-                    CommandLineArg::from_cmd_args(eval.heap().alloc_typed(cli)),
+                    CommandLineArg::new_err(eval.heap().alloc(cli).to_value())?,
                     count,
                     associated_artifacts,
                 )
@@ -523,16 +535,22 @@ pub(crate) fn analysis_actions_methods_write(methods: &mut MethodsBuilder) {
                     macro_files,
                 },
             };
-            Either::Right((value, fingerprint))
+            Either::Right((value, eval.heap().alloc(fingerprint)))
         } else {
             Either::Left(value)
         };
         if allow_args {
-            let macro_files: Vec<StarlarkDeclaredArtifact> = written_macro_files
+            let macro_files: Vec<_> = written_macro_files
                 .into_iter()
-                .map(|a| StarlarkDeclaredArtifact::new(None, a, AssociatedArtifacts::new()))
+                .map(|a| {
+                    eval.heap().alloc(StarlarkDeclaredArtifact::new(
+                        None,
+                        a,
+                        AssociatedArtifacts::new(),
+                    ))
+                })
                 .collect();
-            Ok(Either::Right((value, macro_files)))
+            Ok(Either::Right((value, AllocList(macro_files))))
         } else {
             // Prefer simpler API when there is no possibility for write-to-file macros to be present in a content
             Ok(Either::Left(value))

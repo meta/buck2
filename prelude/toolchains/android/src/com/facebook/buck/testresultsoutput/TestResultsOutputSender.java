@@ -15,17 +15,20 @@ import com.facebook.buck.testresultsoutput.TestResultsOutputEvent.RunFailureEven
 import com.facebook.buck.testresultsoutput.TestResultsOutputEvent.RunFailureStatus;
 import com.facebook.buck.testresultsoutput.TestResultsOutputEvent.StartEvent;
 import com.facebook.buck.testresultsoutput.TestResultsOutputEvent.TestStatus;
+import com.facebook.infer.annotation.Nullsafe;
 import java.io.FileNotFoundException;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.util.Collections;
 import java.util.Map;
 import java.util.Optional;
+import org.jspecify.annotations.Nullable;
 
 /**
  * TestResultsOutputSender provides an interface for serializing test_result_output_spec.thrift Test
  * Events.
  */
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public class TestResultsOutputSender implements AutoCloseable {
   private static final String TEST_RESULTS_OUTPUT_FILE_ENV_NAME = "TEST_RESULTS_OUTPUT_FILE";
   private final FileOutputStream fileOutputStream;
@@ -53,8 +56,7 @@ public class TestResultsOutputSender implements AutoCloseable {
     return fromEnvName(TEST_RESULTS_OUTPUT_FILE_ENV_NAME);
   }
 
-  @SuppressWarnings("PMD.BlacklistedSystemGetenv")
-  private static String getEnvValue(String envName) {
+  private static @Nullable String getEnvValue(String envName) {
     return System.getenv(envName);
   }
 
@@ -74,7 +76,8 @@ public class TestResultsOutputSender implements AutoCloseable {
    * @param testResultsOutputFile The file path to create the TestResultsOutputSender from.
    * @return An optional TestResultsOutputSender object.
    */
-  public static Optional<TestResultsOutputSender> fromFilePath(String testResultsOutputFile) {
+  public static Optional<TestResultsOutputSender> fromFilePath(
+      @Nullable String testResultsOutputFile) {
     if (testResultsOutputFile == null) {
       return Optional.empty();
     }
@@ -163,7 +166,7 @@ public class TestResultsOutputSender implements AutoCloseable {
    * @param stacktrace Optional stack trace (can be null).
    */
   public void sendRunFailure(
-      RunFailureStatus status, long time, String details, String stacktrace) {
+      RunFailureStatus status, long time, String details, @Nullable String stacktrace) {
     RunFailureEvent event = new RunFailureEvent(status, time, details, stacktrace);
 
     try {

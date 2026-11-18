@@ -20,13 +20,18 @@ use starlark::typing::ParamIsRequired;
 use starlark::typing::ParamSpec;
 use starlark::typing::Ty;
 use starlark::util::ArcStr;
-use starlark::values::type_repr::StarlarkTypeRepr;
+use starlark::values::Heap;
+use starlark::values::StarlarkTypeExpr;
+use starlark::values::ValueOf;
+use starlark::values::dict::DictType;
+use starlark::values::string::StarlarkStr;
 use starlark::values::typing::StarlarkCallableChecked;
 
 use crate::attrs::DynamicAttrType;
 use crate::attrs_starlark::StarlarkDynamicAttrType;
 use crate::dynamic_actions::StarlarkDynamicActions;
 use crate::dynamic_actions_callable::DynamicActionsCallable;
+use crate::dynamic_actions_callable::DynamicActionsCallableView;
 use crate::dynamic_actions_callable::DynamicActionsCallbackParam;
 use crate::dynamic_actions_callable::DynamicActionsCallbackParamSpec;
 use crate::dynamic_actions_callable::DynamicActionsCallbackReturnType;
@@ -39,19 +44,22 @@ pub fn new_dynamic_actions_callable<'v>(
         DynamicActionsCallbackParamSpec,
         DynamicActionsCallbackReturnType,
     >,
-    attrs: BuckMutInsertionMap<String, &'v StarlarkDynamicAttrType<'v>>,
+    attrs: ValueOf<'v, DictType<StarlarkStr, StarlarkDynamicAttrType<'v>>>,
     callback_param: &DynamicActionsCallbackParam,
 ) -> buck2_error::Result<DynamicActionsCallable<'v>> {
-    if attrs.contains_key(callback_param.name.as_str()) {
+    if attrs.dict().get_str(callback_param.name.as_str()).is_some() {
         return Err(buck2_error!(
             buck2_error::ErrorTag::Input,
             "Cannot define `actions` attribute"
         ));
     }
     let attrs: BuckMutInsertionMap<String, DynamicAttrType<'v>> = attrs
-        .into_iter()
-        .map(|(name, ty)| (name, ty.ty.clone()))
-        .collect();
+        .iter()
+        .map(|entry| {
+            let (name, ty) = entry?;
+            Ok::<_, starlark::Error>((name.as_str().to_owned(), ty.ty.clone()))
+        })
+        .collect::<starlark::Result<_>>()?;
 
     let attr_args = attrs
         .iter()
@@ -59,7 +67,7 @@ pub fn new_dynamic_actions_callable<'v>(
         .collect::<Vec<_>>();
 
     r#impl
-        .0
+        .to_value()
         .check_callable_with(
             [],
             iter::once((callback_param.name.as_str(), &*callback_param.ty))
@@ -109,11 +117,12 @@ pub fn register_dynamic_actions(globals: &mut GlobalsBuilder) {
             DynamicActionsCallbackParamSpec,
             DynamicActionsCallbackReturnType,
         >,
-        #[starlark(require = named)] attrs: BuckMutInsertionMap<
-            String,
-            &'v StarlarkDynamicAttrType<'v>,
+        #[starlark(require = named)] attrs: ValueOf<
+            'v,
+            DictType<StarlarkStr, StarlarkDynamicAttrType<'v>>,
         >,
-    ) -> starlark::Result<DynamicActionsCallable<'v>> {
-        Ok(new_dynamic_actions_callable(r#impl, attrs, &P_ACTIONS)?)
+        heap: Heap<'v>,
+    ) -> starlark::Result<ValueOf<'v, DynamicActionsCallableView<'v>>> {
+        Ok(heap.alloc(new_dynamic_actions_callable(r#impl, attrs, &P_ACTIONS)?))
     }
 }

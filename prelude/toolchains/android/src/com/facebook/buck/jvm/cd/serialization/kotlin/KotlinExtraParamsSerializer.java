@@ -96,6 +96,10 @@ public class KotlinExtraParamsSerializer {
             .map(AbsPathSerializer::deserialize)
             .collect(ImmutableList.toImmutableList()),
         kotlinExtraParams.getShouldKosabiUseShallowClassUsage(),
-        kotlinExtraParams.getKosabiAbiValidationMode());
+        kotlinExtraParams.getKosabiAbiValidationMode(),
+        ImmutableList.copyOf(kotlinExtraParams.getKosabiJvmAbiGenOptionsList()),
+        kotlinExtraParams.getDisableKosabiKeptBodyStubCheck(),
+        kotlinExtraParams.getShouldTrackIncrementalInputs(),
+        kotlinExtraParams.getShouldReclaimReadOnlyOutputs());
   }
 }

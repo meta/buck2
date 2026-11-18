@@ -12,12 +12,15 @@ package com.facebook.buck.testrunner;
 
 import com.facebook.buck.testresultsoutput.TestResultsOutputSender;
 import com.facebook.buck.testrunner.JavaUtilLoggingHelper.LogHandlers;
+import com.facebook.infer.annotation.Nullsafe;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.logging.Level;
+import org.jspecify.annotations.Nullable;
 import org.junit.runner.Description;
 import org.junit.runner.notification.Failure;
 import org.junit.runner.notification.RunListener;
@@ -26,6 +29,7 @@ import org.junit.runner.notification.RunListener;
  * Extends org.junit.runner.notification.RunListener. Meant to be registered with RunNotifier to be
  * notified of events that occurred during a test run.
  */
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public class JUnitTpxStandardOutputListener extends RunListener {
   private final TpxStandardOutputTestListener listener;
   private final Level stdOutLogLevel = Level.INFO;
@@ -38,9 +42,9 @@ public class JUnitTpxStandardOutputListener extends RunListener {
   private static class TestLogState {
     private ByteArrayOutputStream julLogBytes;
     private ByteArrayOutputStream julErrLogBytes;
-    private LogHandlers logHandlers;
-    private StandardOutputRecorder stdoutRecorder;
-    private StandardOutputRecorder stderrRecorder;
+    @Nullable private LogHandlers logHandlers;
+    @Nullable private StandardOutputRecorder stdoutRecorder;
+    @Nullable private StandardOutputRecorder stderrRecorder;
 
     public TestLogState() {
       this.julLogBytes = new ByteArrayOutputStream();
@@ -59,6 +63,7 @@ public class JUnitTpxStandardOutputListener extends RunListener {
       this.logHandlers = logHandlers;
     }
 
+    @Nullable
     public LogHandlers getLogHandlers() {
       return logHandlers;
     }
@@ -67,6 +72,7 @@ public class JUnitTpxStandardOutputListener extends RunListener {
       this.stdoutRecorder = stdoutRecorder;
     }
 
+    @Nullable
     public StandardOutputRecorder getStdoutRecorder() {
       return stdoutRecorder;
     }
@@ -75,6 +81,7 @@ public class JUnitTpxStandardOutputListener extends RunListener {
       this.stderrRecorder = stderrRecorder;
     }
 
+    @Nullable
     public StandardOutputRecorder getStderrRecorder() {
       return stderrRecorder;
     }
@@ -105,7 +112,7 @@ public class JUnitTpxStandardOutputListener extends RunListener {
    * @param className the test class name
    * @return the full test name in format "methodName (className)"
    */
-  static String getFullTestName(String methodName, String className) {
+  static String getFullTestName(@Nullable String methodName, String className) {
     return String.format("%s (%s)", methodName, className);
   }
 
@@ -251,7 +258,7 @@ public class JUnitTpxStandardOutputListener extends RunListener {
       }
 
       // Clean up logging handlers
-      JavaUtilLoggingHelper.cleanupLogging(testLogState.getLogHandlers());
+      JavaUtilLoggingHelper.cleanupLogging(Objects.requireNonNull(testLogState.getLogHandlers()));
 
       // Remove the test log state from the map
       testLogStates.remove(testName);
@@ -269,7 +276,8 @@ public class JUnitTpxStandardOutputListener extends RunListener {
    * @param stderr the captured stderr, or null if there was none
    * @return the combined output, or null if the test produced no output
    */
-  private static String buildInlineOutput(String stdout, String stderr) {
+  @Nullable
+  private static String buildInlineOutput(@Nullable String stdout, @Nullable String stderr) {
     StringBuilder sb = new StringBuilder();
     if (stdout != null) {
       sb.append("====TEST STDOUT====\n").append(stdout);

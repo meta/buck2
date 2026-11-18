@@ -388,6 +388,7 @@ impl ManagedRemoteExecutionClient {
         &self,
         action_digest: ActionDigest,
         platform: &RE::Platform,
+        timings: &mut buck2_data::CacheQueryTimings,
     ) -> buck2_error::Result<Option<ActionResultResponse>> {
         // `Ok(None)` is an outright miss; `Err` is a real failure. The caller
         // decides whether to degrade failures into misses.
@@ -399,6 +400,7 @@ impl ManagedRemoteExecutionClient {
                 &self.no_action_metadata,
                 self.use_case,
                 platform,
+                timings,
             )
             .await
     }

@@ -22,6 +22,10 @@ use buck2_data::SchedulingMode;
 use buck2_data::re_platform::Property;
 use buck2_error::conversion::from_any_with_tag;
 use buck2_event_log::stream_value::StreamValue;
+use buck2_event_observer::action_sub_error_display::ActionSubErrorDisplay;
+use buck2_event_observer::display::TargetDisplayOptions;
+use buck2_event_observer::display::display_action_identity;
+use buck2_event_observer::display::sanitize_output_colors;
 use buck2_event_observer::fmt_duration;
 use buck2_event_observer::what_ran;
 use buck2_event_observer::what_ran::CommandReproducer;
@@ -217,14 +221,30 @@ impl WhatRanState for WhatRanCommandState {
 impl WhatRanCommandState {
     async fn execute(
         mut events: impl Stream<Item = buck2_error::Result<StreamValue>> + Unpin + Send,
-        output: &mut impl WhatRanOutputWriter,
+        output: &mut OutputFormatWithWriter<'_>,
         options: &WhatRanCommandOptions,
     ) -> Result<(), ClientIoError> {
         let mut cmd = Self::default();
 
         while let Some(event) = events.try_next().await? {
             if let StreamValue::Event(event) = event {
+                let diagnostics = if options.failed
+                    && !options.incomplete
+                    && matches!(output.format, LogCommandOutputFormatWithWriter::Readable(_))
+                    && let Some(buck2_data::buck_event::Data::SpanEnd(span)) = &event.data
+                    && let Some(entry) = cmd.known_actions.get(&SpanId::from_u64(event.span_id)?)
+                {
+                    format_failed_action_diagnostics(entry, span, &options.options)?
+                } else {
+                    None
+                };
+
                 cmd.event(event, output, options)?;
+                if let Some(diagnostics) = diagnostics
+                    && let LogCommandOutputFormatWithWriter::Readable(w) = &mut output.format
+                {
+                    w.write_all(diagnostics.as_bytes())?;
+                }
             }
         }
 
@@ -330,6 +350,52 @@ impl WhatRanCommandState {
 
         Ok(())
     }
+}
+
+fn format_failed_action_diagnostics(
+    entry: &WhatRanEntry,
+    span: &buck2_data::SpanEndEvent,
+    options: &WhatRanOptions,
+) -> buck2_error::Result<Option<String>> {
+    let Some(buck2_data::span_end_event::Data::ActionExecution(action)) = &span.data else {
+        return Ok(None);
+    };
+    if !action.failed || entry.reproducers.is_empty() {
+        return Ok(None);
+    }
+    if let Some(category) = &options.filter_category
+        && !what_ran::matches_category(
+            Some(&entry.action),
+            &regex::Regex::new(&format!(r"^{category}$"))?,
+        )
+    {
+        return Ok(None);
+    }
+    let Some(buck2_data::action_error_diagnostics::Data::SubErrors(sub_errors)) = action
+        .error_diagnostics
+        .as_ref()
+        .and_then(|diagnostics| diagnostics.data.as_ref())
+    else {
+        return Ok(None);
+    };
+    let messages = sub_errors
+        .sub_errors
+        .iter()
+        .filter(|error| error.show_in_stderr)
+        .filter_map(|error| error.display())
+        .map(|message| format!("- {message}\n"))
+        .collect::<String>();
+    if messages.is_empty() {
+        return Ok(None);
+    }
+    let identity = display_action_identity(
+        action.key.as_ref(),
+        action.name.as_ref(),
+        TargetDisplayOptions::for_log(),
+    )?;
+    Ok(Some(sanitize_output_colors(
+        format!("Action sub-errors for {identity}:\n{messages}").as_bytes(),
+    )))
 }
 
 fn last_remote_command(
@@ -637,8 +703,10 @@ mod tests {
     use buck2_event_observer::what_ran::WhatRanOptions;
     use buck2_event_observer::what_ran::WhatRanOutputCommand;
     use buck2_event_observer::what_ran::WhatRanOutputWriter;
+    use dupe::Dupe;
 
     use super::*;
+    use crate::LogCommandOutputFormatOptions;
     use crate::what_ran::WhatRanCommandOptions;
     use crate::what_ran::WhatRanCommandState;
 
@@ -865,6 +933,221 @@ mod tests {
         }
         state.emit_remaining(&mut out, options)?;
         Ok(out.0)
+    }
+
+    fn failed_action_events(
+        diagnostics: Option<buck2_data::ActionErrorDiagnostics>,
+    ) -> Vec<buck2_data::BuckEvent> {
+        let start = action_start_event();
+        let buck2_data::buck_event::Data::SpanStart(span) = &start else {
+            unreachable!();
+        };
+        let Some(buck2_data::span_start_event::Data::ActionExecution(action)) = &span.data else {
+            unreachable!();
+        };
+        let error = buck2_data::ActionError {
+            key: action.key.clone(),
+            name: action.name.clone(),
+            error_diagnostics: diagnostics.clone(),
+            ..Default::default()
+        };
+        let end = buck2_data::ActionExecutionEnd {
+            key: action.key.clone(),
+            name: action.name.clone(),
+            failed: true,
+            execution_kind: buck2_data::ActionExecutionKind::Local as i32,
+            error_diagnostics: diagnostics,
+            commands: vec![buck2_data::CommandExecution {
+                details: Some(buck2_data::CommandExecutionDetails {
+                    cmd_stderr: "raw tool stderr\n".to_owned(),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+        vec![
+            span_event(1, 0, start),
+            span_event(2, 1, local_execute_start_event()),
+            span_event(3, 1, local_execute_start_event()),
+            span_event(
+                0,
+                1,
+                buck2_data::buck_event::Data::Instant(buck2_data::InstantEvent {
+                    data: Some(error.into()),
+                }),
+            ),
+            span_event(
+                1,
+                0,
+                buck2_data::buck_event::Data::SpanEnd(buck2_data::SpanEndEvent {
+                    data: Some(Box::new(end).into()),
+                    ..Default::default()
+                }),
+            ),
+        ]
+    }
+
+    fn action_diagnostics() -> buck2_data::ActionErrorDiagnostics {
+        buck2_data::ActionErrorDiagnostics {
+            data: Some(buck2_data::action_error_diagnostics::Data::SubErrors(
+                buck2_data::ActionSubErrors {
+                    sub_errors: vec![
+                        buck2_data::ActionSubError {
+                            category: "missing_required_module".to_owned(),
+                            message: Some("Missing required module 'Example'".to_owned()),
+                            remediation: Some(
+                                "\x1b[36mAdd the module dependency\x1b[0m".to_owned(),
+                            ),
+                            show_in_stderr: true,
+                            ..Default::default()
+                        },
+                        buck2_data::ActionSubError {
+                            category: "hidden".to_owned(),
+                            remediation: Some("Do not print this hint".to_owned()),
+                            ..Default::default()
+                        },
+                    ],
+                },
+            )),
+        }
+    }
+
+    async fn render_failed_action_log(
+        format: LogCommandOutputFormatOptions,
+        options: &WhatRanCommandOptions,
+        include_std_err: bool,
+        diagnostics: Option<buck2_data::ActionErrorDiagnostics>,
+    ) -> Result<String, ClientIoError> {
+        let mut bytes = Vec::new();
+        let mut output = OutputFormatWithWriter {
+            format: transform_format(LogCommandOutputFormat { format }, &mut bytes),
+            include_std_err,
+            omit_empty_std_err: false,
+        };
+        let events = futures::stream::iter(
+            failed_action_events(diagnostics)
+                .into_iter()
+                .map(|event| Ok(StreamValue::Event(Box::new(event)))),
+        );
+        WhatRanCommandState::execute(events, &mut output, options).await?;
+        drop(output);
+        Ok(String::from_utf8(bytes).unwrap())
+    }
+
+    #[tokio::test]
+    async fn test_what_failed_readable_hints_once_per_action() -> Result<(), ClientIoError> {
+        let options = WhatRanCommandOptions {
+            options: WhatRanOptions::default(),
+            failed: true,
+            incomplete: false,
+        };
+        let output = render_failed_action_log(
+            LogCommandOutputFormatOptions::Readable,
+            &options,
+            false,
+            Some(action_diagnostics()),
+        )
+        .await?;
+        assert_eq!(output.matches("build\t").count(), 2, "{output}");
+        assert_eq!(output.matches("Hint:").count(), 1, "{output}");
+        assert!(
+            output.contains("[missing_required_module] Missing required module 'Example'\n  Hint: Add the module dependency\n"),
+            "{output}"
+        );
+        assert!(!output.contains("Do not print this hint"), "{output}");
+        assert!(!output.contains("raw tool stderr"), "{output}");
+        assert!(!output.contains('\x1b'), "{output}");
+        assert!(
+            output.rfind("build\t").unwrap() < output.find("Action sub-errors for").unwrap(),
+            "{output}"
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_what_failed_hints_respect_command_filters() -> Result<(), ClientIoError> {
+        for options in [
+            WhatRanCommandOptions {
+                options: WhatRanOptions::default(),
+                failed: false,
+                incomplete: false,
+            },
+            WhatRanCommandOptions {
+                options: WhatRanOptions {
+                    filter_category: Some("other_category".to_owned()),
+                    ..Default::default()
+                },
+                failed: true,
+                incomplete: false,
+            },
+            WhatRanCommandOptions {
+                options: WhatRanOptions {
+                    skip_local_executions: true,
+                    ..Default::default()
+                },
+                failed: true,
+                incomplete: false,
+            },
+            WhatRanCommandOptions {
+                options: WhatRanOptions::default(),
+                failed: true,
+                incomplete: true,
+            },
+        ] {
+            let output = render_failed_action_log(
+                LogCommandOutputFormatOptions::Readable,
+                &options,
+                false,
+                Some(action_diagnostics()),
+            )
+            .await?;
+            assert!(!output.contains("Hint:"), "{output}");
+            assert!(!output.contains("Action sub-errors"), "{output}");
+        }
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_what_failed_hints_preserve_formats_and_raw_stderr() -> Result<(), ClientIoError> {
+        let options = WhatRanCommandOptions {
+            options: WhatRanOptions::default(),
+            failed: true,
+            incomplete: false,
+        };
+        for format in [
+            LogCommandOutputFormatOptions::Tabulated,
+            LogCommandOutputFormatOptions::Json,
+            LogCommandOutputFormatOptions::Csv,
+        ] {
+            for include_std_err in [false, true] {
+                let without_diagnostics =
+                    render_failed_action_log(format.dupe(), &options, include_std_err, None)
+                        .await?;
+                let with_diagnostics = render_failed_action_log(
+                    format.dupe(),
+                    &options,
+                    include_std_err,
+                    Some(action_diagnostics()),
+                )
+                .await?;
+                assert_eq!(without_diagnostics, with_diagnostics);
+                assert_eq!(
+                    with_diagnostics.contains("raw tool stderr"),
+                    include_std_err
+                );
+            }
+        }
+        let output = render_failed_action_log(
+            LogCommandOutputFormatOptions::Readable,
+            &options,
+            true,
+            Some(action_diagnostics()),
+        )
+        .await?;
+        assert_eq!(output.matches("raw tool stderr").count(), 2, "{output}");
+        assert_eq!(output.matches("Hint:").count(), 1, "{output}");
+        Ok(())
     }
 
     /// A local dep-file cache hit is a cache hit, so `--skip-cache-hits` drops it.

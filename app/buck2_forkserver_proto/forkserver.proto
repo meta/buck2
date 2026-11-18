@@ -38,14 +38,24 @@ message CommandRequest {
   // Used to optionally redirect stdout and stderr to files.
   // If set, stdout and stderr events will not be streamed.
   optional StdRedirectPaths std_redirects = 12;
-  // If set, how long to give the process time to shutdown after SIGTERM
-  // before sending SIGKILL.
+  // If set, a kill first sends SIGTERM to the process alone and gives it this
+  // long to exit. Then its whole process group gets SIGKILL either way, so
+  // that nothing it started outlives it.
   // Should only be needed for daemonized processes (workers).
   optional uint32 graceful_shutdown_timeout_s = 14;
   // The cgroup that the command should be spawned into. Must already exist.
   optional string command_cgroup = 17;
   // Network access policy for the command.
   optional buck.data.NetworkAccess network_access = 18;
+  // Like `graceful_shutdown_timeout_s`, but only when the command hits
+  // `timeout`, not when it is cancelled. Used for tests.
+  optional uint32 timeout_grace_period_s = 19;
+  // On Linux, make the command a child subreaper and, when it is killed, also
+  // kill its descendants that left its process group, such as daemons. For
+  // commands that do not run in `command_cgroup`, whose cleanup covers them.
+  // The command then adopts its orphaned descendants, which stay zombies until
+  // it exits.
+  optional bool kill_detached_descendants = 20;
 }
 
 message WorkingDirectory {

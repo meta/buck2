@@ -1,0 +1,16 @@
+load("@prelude//toolchains:python.bzl", "system_python_bootstrap_toolchain")
+load(":defs.bzl", "inplace_launcher")
+
+# The prelude tools are python_bootstrap_binary targets.
+system_python_bootstrap_toolchain(
+    name = "python_bootstrap",
+    visibility = ["PUBLIC"],
+)
+
+# The test names the interpreter with `-c test.python=<path>`; without it, `python3` is
+# taken from `PATH`.
+inplace_launcher(
+    name = "app",
+    interpreter = read_root_config("test", "python", "python3"),
+    main = "app.py",
+)

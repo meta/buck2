@@ -53,9 +53,10 @@ impl ProcessCommand {
     pub(crate) async fn new(
         cmd: StdCommand,
         cgroup: Option<CgroupPathBuf>,
+        kill_detached_descendants: bool,
     ) -> buck2_error::Result<Self> {
         Ok(Self {
-            inner: imp::ProcessCommandImpl::new(cmd, cgroup).await?,
+            inner: imp::ProcessCommandImpl::new(cmd, cgroup, kill_detached_descendants).await?,
         })
     }
 
@@ -93,7 +94,7 @@ impl ProcessGroup {
     }
 
     pub(crate) async fn kill(
-        &self,
+        &mut self,
         graceful_shutdown_timeout_s: Option<u32>,
     ) -> buck2_error::Result<()> {
         self.inner.kill(graceful_shutdown_timeout_s).await
@@ -120,7 +121,7 @@ mod tests {
         }
         cmd.arg("exit 2");
 
-        let cmd = ProcessCommand::new(cmd, None).await.unwrap();
+        let cmd = ProcessCommand::new(cmd, None, false).await.unwrap();
         let mut child = cmd.spawn().map_err(|x| x.0).unwrap();
 
         let id = child.id().expect("missing id");

@@ -15,18 +15,19 @@ use std::time::SystemTime;
 
 use async_trait::async_trait;
 use buck2_build_api::actions::artifact::get_artifact_fs::GetArtifactFs;
+use buck2_build_api::actions::graph_recorder::with_graph_recording;
 use buck2_build_api::build;
 use buck2_build_api::build::AsyncBuildTargetResultBuilder;
 use buck2_build_api::build::BuildEvent;
 use buck2_build_api::build::BuildEventConsumer;
-use buck2_build_api::build::BuildProviderType;
 use buck2_build_api::build::BuildTargetResult;
 use buck2_build_api::build::ConfiguredBuildEventVariant;
 use buck2_build_api::build::HasCreateUnhashedSymlinkLock;
 use buck2_build_api::build::ProvidersToBuild;
 use buck2_build_api::build::build_report::build_report_opts;
 use buck2_build_api::build::build_report::write_build_report;
-use buck2_build_api::build::detailed_aggregated_metrics::dice::HasDetailedAggregatedMetrics;
+use buck2_build_api::build::build_report_metrics::BuildReportMetricsConfig;
+use buck2_build_api::build::build_report_metrics::compute_build_report_supplemental_data;
 use buck2_build_api::build::detailed_aggregated_metrics::types::ActionGraphSketchResult;
 use buck2_build_api::build::detailed_aggregated_metrics::types::ArtifactPathSketchResult;
 use buck2_build_api::build::detailed_aggregated_metrics::types::DetailedAggregatedMetrics;
@@ -60,22 +61,20 @@ use buck2_core::provider::label::ProvidersLabel;
 use buck2_core::provider::label::ProvidersName;
 use buck2_core::target::label::label::TargetLabel;
 use buck2_data::BuildResult;
-use buck2_data::ToProtoMessage;
+use buck2_data::action_graph_footer::Incomplete;
 use buck2_error::BuckErrorContext;
 use buck2_error::BuckErrorOptionContext;
-use buck2_error::internal_error;
 use buck2_events::dispatch::console_message;
-use buck2_events::dispatch::instant_event;
 use buck2_events::dispatch::span_async;
 use buck2_execute::digest_config::HasDigestConfig;
 use buck2_execute::materialize::materializer::HasMaterializer;
 use buck2_execute::re::invocation_re_settings::HasInvocationReSettings;
 use buck2_hash::BuckMutMap;
-use buck2_hash::BuckMutSet;
 use buck2_node::configured_universe::CqueryUniverse;
 use buck2_node::load_patterns::MissingTargetBehavior;
 use buck2_node::nodes::frontend::TargetGraphCalculation;
 use buck2_node::target_calculation::ConfiguredTargetCalculation;
+use buck2_server_ctx::agent_recursive_patterns::check_recursive_patterns;
 use buck2_server_ctx::commands::send_build_phase_end;
 use buck2_server_ctx::commands::send_target_cfg_event;
 use buck2_server_ctx::ctx::ServerCommandContextTrait;
@@ -202,6 +201,11 @@ async fn build(
         .any(|p| p.modifiers.as_slice().is_some());
 
     server_ctx.log_target_pattern_with_modifiers(&parsed_patterns_with_modifiers);
+    check_recursive_patterns(
+        &server_ctx.buck_settings().invocation,
+        request.context.as_ref(),
+        &parsed_patterns_with_modifiers,
+    )?;
 
     let resolved_pattern: ResolvedPattern<ConfiguredProvidersPatternExtra> =
         ResolveTargetPatterns::resolve_with_modifiers(
@@ -243,156 +247,14 @@ async fn build(
         .with_buck_error_context(|| "Invalid final_artifact_uploads")
         .unwrap();
 
-    let want_configured_graph_size = ctx
-        .ctx()
-        .parse_legacy_config_property(
-            cell_resolver.root_cell(),
-            BuckconfigKeyRef {
-                section: "buck2",
-                property: "log_configured_graph_size",
-            },
-        )
-        .await?
-        .unwrap_or_default();
-
-    let want_configured_graph_sketch = ctx
-        .ctx()
-        .parse_legacy_config_property(
-            cell_resolver.root_cell(),
-            BuckconfigKeyRef {
-                section: "buck2",
-                property: "log_configured_graph_sketch",
-            },
-        )
-        .await?
-        .unwrap_or_default();
-
-    let want_total_configured_graph_sketch = ctx
-        .ctx()
-        .parse_legacy_config_property(
-            cell_resolver.root_cell(),
-            BuckconfigKeyRef {
-                section: "buck2",
-                property: "log_total_configured_graph_sketch",
-            },
-        )
-        .await?
-        .unwrap_or_default();
-
-    let want_retained_analysis_memory_sketch = ctx
-        .ctx()
-        .parse_legacy_config_property(
-            cell_resolver.root_cell(),
-            BuckconfigKeyRef {
-                section: "buck2",
-                property: "log_retained_analysis_memory_sketch",
-            },
-        )
-        .await?
-        .unwrap_or_default();
-
-    let want_action_graph_sketch = ctx
-        .ctx()
-        .parse_legacy_config_property(
-            cell_resolver.root_cell(),
-            BuckconfigKeyRef {
-                section: "buck2",
-                property: "log_action_graph_sketch",
-            },
-        )
-        .await?
-        .unwrap_or_default();
-
-    let want_peak_analysis_memory_sketch = ctx
-        .ctx()
-        .parse_legacy_config_property(
-            cell_resolver.root_cell(),
-            BuckconfigKeyRef {
-                section: "buck2",
-                property: "log_peak_analysis_memory_sketch",
-            },
-        )
-        .await?
-        .unwrap_or_default();
-
-    let want_peak_load_memory_sketch = ctx
-        .ctx()
-        .parse_legacy_config_property(
-            cell_resolver.root_cell(),
-            BuckconfigKeyRef {
-                section: "buck2",
-                property: "log_peak_load_memory_sketch",
-            },
-        )
-        .await?
-        .unwrap_or_default();
-
-    let want_artifact_count_sketch: bool = ctx
-        .ctx()
-        .parse_legacy_config_property(
-            cell_resolver.root_cell(),
-            BuckconfigKeyRef {
-                section: "buck2",
-                property: "log_artifact_count_sketch",
-            },
-        )
-        .await?
-        .unwrap_or_default();
-
-    let want_artifact_size_sketch: bool = ctx
-        .ctx()
-        .parse_legacy_config_property(
-            cell_resolver.root_cell(),
-            BuckconfigKeyRef {
-                section: "buck2",
-                property: "log_artifact_size_sketch",
-            },
-        )
-        .await?
-        .unwrap_or_default();
-
-    let want_log_sketch_cardinalities: bool = ctx
-        .ctx()
-        .parse_legacy_config_property(
-            cell_resolver.root_cell(),
-            BuckconfigKeyRef {
-                section: "buck2",
-                property: "log_sketch_cardinalities",
-            },
-        )
-        .await?
-        .unwrap_or_default();
-
-    let graph_properties = GraphPropertiesOptions {
-        configured_graph_size: want_configured_graph_size,
-        configured_graph_sketch: want_configured_graph_sketch,
-        total_configured_graph_sketch: want_total_configured_graph_sketch,
-        retained_analysis_memory_sketch: want_retained_analysis_memory_sketch,
-        peak_analysis_memory_sketch: want_peak_analysis_memory_sketch,
-        peak_load_memory_sketch: want_peak_load_memory_sketch,
-        action_graph_sketch: want_action_graph_sketch,
-        artifact_count_sketch: want_artifact_count_sketch,
-        artifact_size_sketch: want_artifact_size_sketch,
-        log_sketch_cardinalities: want_log_sketch_cardinalities,
-    };
-
-    let providers_to_skip_in_artifact_path_sketch: BuckMutSet<BuildProviderType> = ctx
-        .ctx()
-        .parse_legacy_config_list_property::<SkipProvider>(
-            cell_resolver.root_cell(),
-            BuckconfigKeyRef {
-                section: "buck2",
-                property: "providers_to_skip_in_artifact_path_sketch",
-            },
-        )
-        .await?
-        .unwrap_or_default()
-        .into_iter()
-        .map(|s| s.into_build_provider_type())
-        .collect();
+    let build_report_metrics_config =
+        BuildReportMetricsConfig::from_buckconfig(&mut ctx.ctx(), cell_resolver.root_cell())
+            .await?;
+    let graph_properties = build_report_metrics_config.graph_properties;
 
     let (streaming_build_result_tx, streaming_build_result_rx) =
         build::build_report::streaming_build_result_channel(build_opts);
+    let streaming_build_report_final_only = request.streaming_build_report_final_only;
 
     let return_run_args = request
         .response_options
@@ -417,6 +279,7 @@ async fn build(
                 return_run_args,
                 timeout_observer.as_ref(),
                 streaming_build_result_tx,
+                streaming_build_report_final_only,
                 build_start,
                 build_advice.as_ref(),
             )
@@ -432,105 +295,28 @@ async fn build(
         result
     });
 
-    let build_result = build::build_report::maybe_stream_build_reports(
-        build_future,
-        build_opts,
-        cloned_ctx,
-        server_ctx.project_root(),
-        server_ctx.working_dir(),
-        server_ctx.events().trace_id().dupe(),
-        graph_properties.dupe(),
-        streaming_build_result_rx,
+    let build_result = with_graph_recording(
+        ctx.dupe(),
+        build::build_report::maybe_stream_build_reports(
+            build_future,
+            build_opts,
+            cloned_ctx,
+            server_ctx.project_root(),
+            server_ctx.working_dir(),
+            server_ctx.events().trace_id().dupe(),
+            graph_properties.dupe(),
+            streaming_build_result_rx,
+        ),
+        |build_result| graph_incomplete(build_result, build_opts.fail_fast),
     )
     .await?;
 
-    let want_detailed_metrics = ctx
-        .ctx()
-        .parse_legacy_config_property(
-            cell_resolver.root_cell(),
-            BuckconfigKeyRef {
-                section: "buck2",
-                property: "detailed_aggregated_metrics",
-            },
-        )
-        .await?
-        .unwrap_or_default();
-
-    // We need to take per-build events if we want either detailed metrics or action graph sketch
-    // or artifact path sketch
-    let need_events = want_detailed_metrics
-        || graph_properties.action_graph_sketch
-        || graph_properties.artifact_count_sketch
-        || graph_properties.artifact_size_sketch;
-    let mut events = if need_events {
-        Some(ctx.ctx().take_per_build_events()?)
-    } else {
-        None
-    };
-
-    // Compute action graph sketch independently if requested (doesn't require detailed_metrics)
-    let action_graph_sketch_result = if graph_properties.action_graph_sketch {
-        if let Some(ref events) = events {
-            Some(ctx.ctx().compute_action_graph_sketch(events).await?)
-        } else {
-            None
-        }
-    } else {
-        None
-    };
-
-    let artifact_path_sketch_result =
-        if graph_properties.artifact_count_sketch || graph_properties.artifact_size_sketch {
-            let events = events.as_ref().ok_or_else(|| {
-                internal_error!("events should be Some when artifact path sketch is needed")
-            })?;
-            // Artifact path sketching re-`ensure_artifact_group`s each target's outputs. For a
-            // target that hit the `--overall-timeout` deadline that would re-demand (and, via
-            // DICE, restart) an action the deadline just cancelled, hanging the command past its
-            // timeout. Those targets never finished building, so skip sketching them.
-            let timed_out_targets: BuckMutSet<ConfiguredProvidersLabel> = build_result
-                .configured
-                .iter()
-                .filter_map(|(label, result)| {
-                    result
-                        .as_ref()
-                        .filter(|r| r.timed_out())
-                        .map(|_| label.clone())
-                })
-                .collect();
-            let artifact_fs = ctx.ctx().get_artifact_fs().await?;
-            Some(
-                ctx.ctx()
-                    .compute_artifact_path_sketch(
-                        events,
-                        artifact_fs,
-                        providers_to_skip_in_artifact_path_sketch,
-                        &timed_out_targets,
-                        graph_properties.artifact_count_sketch,
-                        graph_properties.artifact_size_sketch,
-                    )
-                    .await?,
-            )
-        } else {
-            None
-        };
-
-    let detailed_metrics = if want_detailed_metrics {
-        let events = events.take().ok_or_else(|| {
-            internal_error!("events should be Some when detailed metrics is needed")
-        })?;
-        let mut metrics = ctx.ctx().compute_detailed_metrics(events).await?;
-        for target_metric in &mut metrics.top_level_target_metrics {
-            if let Some(Some(result)) = build_result.configured.get(&target_metric.target) {
-                target_metric.wall_clock_completion_ms =
-                    result.wall_clock_completion().map(|d| d.as_millis() as u64);
-            }
-        }
-        instant_event(metrics.as_proto());
-        Some(metrics)
-    } else {
-        None
-    };
+    let supplemental_data = compute_build_report_supplemental_data(
+        &mut ctx.ctx(),
+        &build_result,
+        build_report_metrics_config,
+    )
+    .await?;
 
     send_target_cfg_event(
         server_ctx.events(),
@@ -543,9 +329,9 @@ async fn build(
         ctx,
         request,
         build_result,
-        detailed_metrics,
-        action_graph_sketch_result,
-        artifact_path_sketch_result,
+        supplemental_data.detailed_metrics,
+        supplemental_data.action_graph_sketch_result,
+        supplemental_data.artifact_path_sketch_result,
         final_artifact_materializations,
         graph_properties,
     )
@@ -669,6 +455,19 @@ async fn process_build_result(
     })
 }
 
+/// Why the recorded action graph may be incomplete, if it may.
+fn graph_incomplete(result: &BuildTargetResult, fail_fast: bool) -> Option<Incomplete> {
+    if result.configured.values().flatten().any(|r| r.timed_out()) {
+        Some(Incomplete::Timeout)
+    } else if result.build_failed && fail_fast {
+        Some(Incomplete::FailFast)
+    } else if result.build_failed {
+        Some(Incomplete::BuildFailed)
+    } else {
+        None
+    }
+}
+
 async fn build_targets(
     ctx: LinearRecomputeDiceComputations<'_, '_>,
     spec: ResolvedPattern<ConfiguredProvidersPatternExtra>,
@@ -682,11 +481,15 @@ async fn build_targets(
     return_run_args: bool,
     timeout_observer: Option<&Arc<dyn LivelinessObserver>>,
     streaming_build_result_tx: Option<UnboundedSender<BuildTargetResult>>,
+    streaming_build_report_final_only: bool,
     build_start: Instant,
     build_advice: Option<&BuildAdviceContext<'_>>,
 ) -> buck2_error::Result<BuildTargetResult> {
-    let (builder, consumer) =
-        AsyncBuildTargetResultBuilder::new(streaming_build_result_tx, build_start);
+    let (builder, consumer) = AsyncBuildTargetResultBuilder::new_with_final_only_streaming(
+        streaming_build_result_tx,
+        build_start,
+        streaming_build_report_final_only,
+    );
     let fut = match target_resolution_config {
         TargetResolutionConfig::Default(global_cfg_options) => {
             let spec = spec.convert_pattern().buck_error_context(
@@ -1103,40 +906,4 @@ async fn build_target(
     )
     .await;
     Some(providers_label)
-}
-
-/// Provider types that can be skipped in artifact path sketch computation.
-/// Parsed from `buck2.providers_to_skip_in_artifact_path_sketch` buckconfig.
-enum SkipProvider {
-    Build,
-    Run,
-    Test,
-}
-
-impl SkipProvider {
-    fn into_build_provider_type(self) -> BuildProviderType {
-        match self {
-            SkipProvider::Build => BuildProviderType::Default,
-            SkipProvider::Run => BuildProviderType::Run,
-            SkipProvider::Test => BuildProviderType::Test,
-        }
-    }
-}
-
-#[derive(Debug, buck2_error::Error)]
-#[error("Invalid skip provider: `{0}`. Valid values are: [`build`, `run`, `test`]")]
-#[buck2(input)]
-struct SkipProviderParseError(String);
-
-impl std::str::FromStr for SkipProvider {
-    type Err = SkipProviderParseError;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s.trim() {
-            "build" => Ok(SkipProvider::Build),
-            "run" => Ok(SkipProvider::Run),
-            "test" => Ok(SkipProvider::Test),
-            other => Err(SkipProviderParseError(other.to_owned())),
-        }
-    }
 }

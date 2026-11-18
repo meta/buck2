@@ -10,6 +10,7 @@
 
 package com.facebook.buck.io.file;
 
+import com.facebook.infer.annotation.Nullsafe;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.ImmutableSet;
@@ -18,6 +19,7 @@ import java.nio.file.attribute.PosixFilePermission;
 import java.nio.file.attribute.PosixFilePermissions;
 import java.util.Set;
 
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public class MorePosixFilePermissions {
 
   public static final FileAttribute<?> READ_ONLY_FILE_ATTRIBUTE =

@@ -34,15 +34,12 @@ use dupe::Dupe;
 
 use crate::collections::StarlarkHashValue;
 use crate::eval::runtime::profile::instant::ProfilerInstant;
-use crate::values::AllocValue;
 use crate::values::HeapSendable;
 #[cfg(test)]
 use crate::values::OwnedFrozen;
 use crate::values::OwnedFrozenRef;
-use crate::values::StarlarkValue;
 use crate::values::StringValue;
 use crate::values::Trace;
-use crate::values::ValueOfUnchecked;
 use crate::values::ValueTyped;
 use crate::values::layout::avalue::AValue;
 use crate::values::layout::avalue::AValueImpl;
@@ -236,22 +233,6 @@ impl<'v> Heap<'v> {
         }
     }
 
-    /// Allocate a new value on a [`Heap`].
-    pub fn alloc<T: AllocValue<'v>>(self, x: T) -> Value<'v> {
-        x.alloc_value(self)
-    }
-
-    /// Allocate a value and return [`ValueTyped`] of it.
-    /// Can fail if the [`AllocValue`] trait generates a different type on the heap.
-    pub fn alloc_typed<T: AllocValue<'v> + StarlarkValue<'v>>(self, x: T) -> ValueTyped<'v, T> {
-        ValueTyped::new(self.alloc(x)).expect("just allocated value must have the right type")
-    }
-
-    /// Allocate a value and return [`ValueOfUnchecked`] of it.
-    pub fn alloc_typed_unchecked<T: AllocValue<'v>>(self, x: T) -> ValueOfUnchecked<'v, T> {
-        ValueOfUnchecked::new(self.alloc(x))
-    }
-
     pub(crate) unsafe fn visit_arena(
         self,
         forward_heap_kind: HeapKind,
@@ -414,12 +395,13 @@ mod tests {
     use crate::assert::Assert;
     use crate::environment::GlobalsBuilder;
     use crate::values::StringValue;
+    use crate::values::string::AllocStrIntern;
 
     #[test]
     fn test_string_reallocated_on_heap() {
         Heap::temp(|heap| {
-            let first = heap.alloc_str("xx");
-            let second = heap.alloc_str("xx");
+            let first = heap.alloc("xx");
+            let second = heap.alloc("xx");
             assert!(
                 !first.to_value().ptr_eq(second.to_value()),
                 "Plain allocations should recreate values. Note assertion negation."
@@ -430,8 +412,8 @@ mod tests {
     #[test]
     fn test_interned_string_equal() {
         Heap::temp(|heap| {
-            let first = heap.alloc_str_intern("xx");
-            let second = heap.alloc_str_intern("xx");
+            let first = heap.alloc(AllocStrIntern("xx"));
+            let second = heap.alloc(AllocStrIntern("xx"));
             assert!(
                 first.to_value().ptr_eq(second.to_value()),
                 "Interned allocations should be equal."
@@ -442,7 +424,7 @@ mod tests {
     #[starlark_module]
     fn validate_str_interning(globals: &mut GlobalsBuilder) {
         fn append_x<'v>(str: StringValue<'v>, heap: Heap<'v>) -> anyhow::Result<StringValue<'v>> {
-            Ok(heap.alloc_str_intern(&(str.as_str().to_owned() + "x")))
+            Ok(heap.alloc(AllocStrIntern(&(str.as_str().to_owned() + "x"))))
         }
     }
 

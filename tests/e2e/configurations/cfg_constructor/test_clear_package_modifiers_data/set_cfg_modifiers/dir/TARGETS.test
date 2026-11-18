@@ -1,3 +1,0 @@
-load(":rules.bzl", "test_rule")
-
-test_rule(name = "test")

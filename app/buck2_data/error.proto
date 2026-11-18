@@ -95,6 +95,9 @@ enum ErrorTag {
   EXIT_STATUS = 517;
   EXIT_STATUS_UNKNOWN = 519;
   DAEMON_LAUNCH_FAILED = 508;
+  // The client gave up waiting for the daemon launcher process to complete
+  // and killed it.
+  DAEMON_LAUNCH_TIMEOUT = 522;
   DAEMON_NESTED_CONSTRAINTS_MISMATCH = 509;
   DAEMON_CONSTRAINTS_WRONG_AFTER_START = 510;
   DAEMON_DIR_CLEANUP_FAILED = 511;
@@ -313,6 +316,7 @@ enum ErrorTag {
   RE_CONNECTION = 1340;
   RE_USER_QUOTA = 1341;
   RE_USER_BAD_CERTS = 1342;
+  RE_ACTION_LOST_WORKERS = 1343;
 
   // Dice Errors
   // Value: https://fburl.com/code/5dxzaw41
@@ -418,6 +422,7 @@ enum ErrorTag {
   DISPATCHER_UNAVAILABLE = 912;
   CSV_PARSE = 917;
   CAS_BLOB_COUNT_MISMATCH = 918;
+  reserved 919;
 
   CLEAN_OUTPUTS = 8017;
   COPY_OUTPUTS = 8029;

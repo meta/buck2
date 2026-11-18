@@ -22,21 +22,22 @@ extern crate proc_macro;
 
 use proc_macro::TokenStream;
 
-mod alloc_value;
 mod any_lifetime;
 mod bc;
 mod freeze;
 mod module;
 mod pagable_brand;
+mod representations;
 mod serde;
 mod starlark_pagable;
 mod starlark_pagable_panic;
 mod starlark_pagable_unsupported;
 mod starlark_pagable_via_pagable;
-mod starlark_type_repr;
 mod starlark_value;
 mod trace;
 mod type_matcher;
+mod typed_behaviour;
+mod union_input;
 mod unpack_value;
 mod util;
 mod v_lifetime;
@@ -89,6 +90,9 @@ mod vtable;
 /// Multiple attributes can be specified either separately `#[starlark(require = named)] #[starlark(default = "")]` or
 /// separated with a comman `#[starlark(require = named, default = "")]`.
 ///
+/// A `const NAME: T = value;` item defines the global `NAME` as `value` allocated through
+/// `AllocFrozenValue`.
+///
 /// There are two special arguments, distinguished by their type, which provides access to interpreter state:
 ///
 /// * `heap: Heap<'v>` gives access to the Starlark heap, for allocating things.
@@ -111,7 +115,7 @@ mod vtable;
 ///         #[starlark(require = named, default = 3)] index: i32,
 ///         heap: Heap<'v>,
 ///     ) -> anyhow::Result<StringValue<'v>> {
-///         Ok(heap.alloc_str(&format!("{this} {index}")))
+///         Ok(heap.alloc(format!("{this} {index}")))
 ///     }
 /// }
 /// ```
@@ -177,46 +181,51 @@ pub fn derive_no_serialize(input: proc_macro::TokenStream) -> proc_macro::TokenS
     serde::derive_no_serialize(input)
 }
 
-/// Derive the `StarlarkTypeRepr` trait.
-#[proc_macro_derive(StarlarkTypeRepr)]
-pub fn derive_starlark_type_repr(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
-    starlark_type_repr::derive_starlark_type_repr(input)
-}
-
 /// Derive the `UnpackValue` trait.
 #[proc_macro_derive(UnpackValue)]
 pub fn derive_unpack_value(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
     unpack_value::derive_unpack_value(input)
 }
 
-/// Derive the `AllocValue` trait.
-#[proc_macro_derive(AllocValue)]
-pub fn derive_alloc_value(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
-    alloc_value::derive_alloc_value(input)
-}
-
-/// Derive the `AllocFrozenValue` trait.
-#[proc_macro_derive(AllocFrozenValue)]
-pub fn derive_alloc_frozen_value(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
-    alloc_value::derive_alloc_frozen_value(input)
+/// Derive the glue of a Starlark type's view over its representations: an enum with one
+/// `ValueTyped<'v, Rep>` variant per representation. Generates `ProvidesStaticType`, `Display`,
+/// `From` of each variant's `ValueTyped` (which `#[starlark_value]` builds a representation's
+/// `with_type` on), the view's `get` (the representations tried in order), and `UnpackValue`
+/// of the view as itself. The first variant's representation is the canonical one, whose type
+/// id is the type's.
+#[proc_macro_derive(StarlarkRepresentations)]
+pub fn derive_starlark_representations(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
+    representations::derive_starlark_representations(input)
 }
 
 /// Generate missing elements of `StarlarkValue` trait when this attribute
 /// is applied to an impl block of `StarlarkValue`.
 ///
 /// `#[starlark_value(type = "name", ...)]` accepts these flags after the required `type`:
-/// - `StarlarkTypeRepr`, `UnpackValue` (only together): implement those traits for `&T`.
 /// - `skip_vtable`: register no vtable at all, neither the pagable `AValue` one nor the typing
 ///   one. For types whose frozen canonical form is what gets serialized.
-/// - `ty_vtable_no_freeze`: register only the typing vtable. For types with no frozen form,
-///   which therefore need not be `StarlarkPagable`.
+/// - `no_freeze`: the type is never frozen. Register only the typing vtable, so it need not be
+///   `StarlarkPagable`, and allocate it with `alloc_complex_no_freeze`.
 /// - `frozen_vtable`: `T<'v>` is its own frozen form, freezing to `T<'static>`; register the
 ///   frozen `AValue` vtable too, which implements `VtableRegistered` for every `T<'v>`.
 ///   Requires `T<'static>: StarlarkPagable`. Without the flag a lifetime-parameterized `T`
 ///   gets only the typing vtable, because that shape is also what the unfrozen half of a
 ///   frozen/unfrozen pair looks like.
+/// - `alloc = simple | complex | frozen | by_hand`: how the representation is allocated, which
+///   writes its `AllocRepresentation` and `AllocFrozenRepresentation` impls. Without it the
+///   shape decides as it does for the vtables: no lifetimes is `simple` (both heaps), lifetimes
+///   is `complex` (the unfrozen heap; both with `frozen_vtable`), `frozen_vtable` alone is
+///   `frozen` (the frozen heap). `by_hand` writes nothing, for a representation that is built
+///   from a recipe rather than by value.
 ///
-/// At most one of the three vtable flags may be given.
+/// At most one of `skip_vtable`, `no_freeze`, `frozen_vtable` may be given, and at most one
+/// of `no_freeze` and `alloc`.
+///
+/// `equals`, `compare`, `write_hash`, `at`, `is_in`, `length` and the operators (`add`, `mul`,
+/// `minus` and the rest) may be written in the block with a typed signature, in which case
+/// the trait's method is derived from the one written, and its typing too where the
+/// typechecker has one. The typed forms are documented on those methods of `StarlarkType`,
+/// with `add` for the operators.
 #[proc_macro_attribute]
 pub fn starlark_value(
     attr: proc_macro::TokenStream,

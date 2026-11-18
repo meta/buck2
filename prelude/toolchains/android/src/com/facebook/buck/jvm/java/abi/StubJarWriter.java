@@ -11,11 +11,13 @@
 package com.facebook.buck.jvm.java.abi;
 
 import com.facebook.buck.util.function.ThrowingSupplier;
+import com.facebook.infer.annotation.Nullsafe;
 import java.io.IOException;
 import java.io.InputStream;
 import java.nio.file.Path;
 
 /** An interface for writing to stub jars. */
+@Nullsafe(Nullsafe.Mode.LOCAL)
 interface StubJarWriter extends AutoCloseable {
   void writeEntry(Path relativePath, ThrowingSupplier<InputStream, IOException> streamSupplier);
 

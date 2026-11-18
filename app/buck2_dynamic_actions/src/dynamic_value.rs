@@ -17,13 +17,9 @@ use starlark::environment::GlobalsBuilder;
 use starlark::environment::Methods;
 use starlark::environment::MethodsBuilder;
 use starlark::starlark_module;
-use starlark::values::AllocValue;
-use starlark::values::Heap;
 use starlark::values::NoSerialize;
 use starlark::values::StarlarkPagable;
 use starlark::values::StarlarkValue;
-use starlark::values::Value;
-use starlark::values::ValueTyped;
 use starlark::values::starlark_value;
 use starlark_map::StarlarkHasher;
 
@@ -43,29 +39,19 @@ pub struct StarlarkDynamicValue {
 
 starlark::methods_static!(DYNAMIC_VALUE_METHODS = dynamic_value_methods);
 
-#[starlark_value(type = "DynamicValue", StarlarkTypeRepr, UnpackValue)]
+#[starlark_value(type = "DynamicValue")]
 impl<'v> StarlarkValue<'v> for StarlarkDynamicValue {
-    fn write_hash(&self, hasher: &mut StarlarkHasher) -> starlark::Result<()> {
+    fn write_hash(&self, hasher: &mut StarlarkHasher) {
         self.dynamic_value.hash(hasher);
-        Ok(())
     }
 
-    fn equals(&self, other: Value<'v>) -> starlark::Result<bool> {
-        let Some(other) = ValueTyped::<StarlarkDynamicValue>::new(other) else {
-            return Ok(false);
-        };
-        Ok(self.dynamic_value == other.dynamic_value)
+    fn equals(&self, other: &Self) -> bool {
+        self.dynamic_value == other.dynamic_value
     }
 
     // used for docs of `DynamicValue`
     fn get_methods() -> Option<&'static Methods> {
         Some(DYNAMIC_VALUE_METHODS.methods())
-    }
-}
-
-impl<'v> AllocValue<'v> for StarlarkDynamicValue {
-    fn alloc_value(self, heap: Heap<'v>) -> Value<'v> {
-        heap.alloc_simple(self)
     }
 }
 

@@ -14,6 +14,7 @@ import static javax.tools.StandardLocation.CLASS_OUTPUT;
 
 import com.facebook.buck.core.util.log.Logger;
 import com.facebook.buck.util.zip.JarBuilder;
+import com.facebook.infer.annotation.Nullsafe;
 import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.Sets;
 import java.io.File;
@@ -33,11 +34,13 @@ import javax.tools.FileObject;
 import javax.tools.ForwardingJavaFileManager;
 import javax.tools.JavaFileObject;
 import javax.tools.StandardJavaFileManager;
+import org.jspecify.annotations.Nullable;
 
 /**
  * A {@link StandardJavaFileManager} that creates and writes the content of files directly into a
  * Jar output stream instead of writing the files to disk.
  */
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public class JavaInMemoryFileManager extends ForwardingJavaFileManager<StandardJavaFileManager>
     implements StandardJavaFileManager {
   private static final Logger LOG = Logger.get(JavaInMemoryFileManager.class);
@@ -80,7 +83,7 @@ public class JavaInMemoryFileManager extends ForwardingJavaFileManager<StandardJ
 
   @Override
   public JavaFileObject getJavaFileForOutput(
-      Location location, String className, JavaFileObject.Kind kind, FileObject sibling)
+      Location location, String className, JavaFileObject.Kind kind, @Nullable FileObject sibling)
       throws IOException {
     // Use the normal FileObject that writes to the disk for source files.
     if (shouldDelegate(location)) {
@@ -105,7 +108,7 @@ public class JavaInMemoryFileManager extends ForwardingJavaFileManager<StandardJ
 
   @Override
   public FileObject getFileForOutput(
-      Location location, String packageName, String relativeName, FileObject sibling)
+      Location location, String packageName, String relativeName, @Nullable FileObject sibling)
       throws IOException {
     if (shouldDelegate(location)) {
       return delegate.getFileForOutput(location, packageName, relativeName, sibling);
@@ -154,6 +157,7 @@ public class JavaInMemoryFileManager extends ForwardingJavaFileManager<StandardJ
   }
 
   @Override
+  @Nullable
   public Iterable<? extends File> getLocation(Location location) {
     return delegate.getLocation(location);
   }

@@ -128,16 +128,16 @@ pub struct ChromeTraceCommand {
     pub(crate) event_log: EventLogOptions,
 }
 
+const TRACE_PATH_HELP: &str = "Where to write the chrome trace JSON. If a directory is passed, the filename of the event log will be used as a base filename.";
+
 #[derive(Debug, clap::Parser)]
 #[group(required = true, multiple = true)]
 pub struct OutputArgs {
-    #[clap(
-        long,
-        help = "Where to write the chrome trace JSON. If a directory is passed, the filename of the event log will be used as a base filename."
-    )]
     #[cfg(fbcode_build)]
+    #[clap(long, help = TRACE_PATH_HELP)]
     pub trace_path: Option<PathArg>,
     #[cfg(not(fbcode_build))]
+    #[clap(long, help = TRACE_PATH_HELP)]
     pub trace_path: PathArg,
 
     /// Uploads the result to manifold and generates a perfetto link for you
@@ -2403,8 +2403,16 @@ impl ChromeTraceCommand {
 mod tests {
     use buck2_events::span::SpanId;
     use buck2_wrapper_common::invocation_id::TraceId;
+    use clap::Parser;
 
     use super::*;
+
+    #[test]
+    fn test_the_trace_path_is_given_with_a_flag() {
+        let command =
+            ChromeTraceCommand::try_parse_from(["chrome-trace", "--trace-path", "trace.json"]);
+        assert!(command.is_ok(), "{command:?}");
+    }
 
     /// Renders `spans` overlapping top-level command spans with `max_tracks` and returns the
     /// distinct tracks the written JSON uses.

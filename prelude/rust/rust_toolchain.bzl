@@ -36,6 +36,49 @@ PanicRuntime = enum("unwind", "abort", "none")
 
 RustSanitizer = enum("address", "cfi", "hwaddress", "kcfi", "leak", "memory", "memtag", "safestack", "shadow-call-stack", "thread")
 
+RUST_ARCH_VARIANTS = ("x86_64", "arm64")
+
+# Tools and inputs selected for the architecture running a Rust action. This is
+# independent of the fixed target architecture of the action's outputs.
+RustArchToolchainVariant = record(
+    compiler = field(RunInfo),
+    rustdoc = field(RunInfo),
+    clippy_driver = field(RunInfo | None),
+    arch_triple = field(str),
+    implicit_bootstrap_sysroot = field(Artifact | None),
+    runtime_and_plugin_inputs = field(list[Artifact | cmd_args]),
+    archiver = field(cmd_args | None),
+    archiver_deterministic = field(bool),
+    plain_env = field(dict[str, typing.Any]),
+    path_env = field(dict[str, typing.Any]),
+)
+
+RustArchToolchainInfo = provider(
+    fields = {
+        "arch_variants": dict[str, RustArchToolchainVariant],
+    },
+)
+
+# A runnable tool with one complete executable closure per arch architecture.
+RustArchRunInfo = provider(
+    fields = {
+        "arch_variants": dict[str, RunInfo],
+    },
+)
+
+def require_rust_arch_variants(arch_variants: dict[str, typing.Any], owner: typing.Any):
+    missing = [variant for variant in RUST_ARCH_VARIANTS if variant not in arch_variants]
+    extra = [variant for variant in arch_variants if variant not in RUST_ARCH_VARIANTS]
+    if missing or extra:
+        fail("{} must provide exactly Rust arch variants {}; missing {}, extra {}".format(owner, RUST_ARCH_VARIANTS, missing, extra))
+    return arch_variants
+
+def get_rust_arch_toolchain_info(toolchain: Dependency, owner: typing.Any) -> RustArchToolchainInfo | None:
+    arch_info = toolchain.get(RustArchToolchainInfo)
+    if arch_info != None:
+        require_rust_arch_variants(arch_info.arch_variants, owner)
+    return arch_info
+
 # FIXME(JakobDegen): These all have default values for historical reasons. Some of them certainly
 # should, but some of them probably shouldn't?
 # @unsorted-dict-items

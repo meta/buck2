@@ -12,12 +12,12 @@
 
 pub mod clap;
 pub mod dice;
-pub mod eden;
 pub mod hex;
 pub mod http;
 pub mod hyper;
 pub mod nix;
 pub mod other;
+pub mod pagable;
 pub mod pem;
 pub mod prost;
 pub mod regex;
@@ -26,8 +26,6 @@ pub mod rusqlite;
 pub mod serde;
 pub mod stds;
 pub mod superconsole;
-#[cfg(fbcode_build)]
-pub mod thrift;
 pub mod tokio;
 pub mod toml;
 pub mod tonic;

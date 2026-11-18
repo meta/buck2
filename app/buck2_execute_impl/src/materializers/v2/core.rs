@@ -32,14 +32,11 @@
 //! deadlock: a request's roots are queued in one processor step, so between any two requests the
 //! queue order is the same at every root where they conflict, and the tree only ever makes a
 //! request wait for requests queued before it; the wait-for relation follows queue order and has
-//! no cycles. The one acquisition made while holding roots from an earlier request is `publish`,
-//! for a content-addressed destination: whoever holds that is a downloader or publisher of the
-//! same content, which finishes without waiting, or a reader of it, which consumes this output
-//! and so cannot be producing the outputs held. Anyone adding an acquisition made while holding
-//! has to redo this argument.
+//! no cycles. No acquisition is made while holding roots from an earlier request; anyone adding
+//! one has to redo this argument.
 //!
 //! What is here is the first step of the core: requests whose content is already on disk or in
-//! the CAS, the report, output preparation and publishing, and eager versions of the producer
+//! the CAS, the report, output preparation, and eager versions of the producer
 //! calls the transition still needs. Local copies from other tracked paths, clean-stale and the
 //! stash come in later steps; what is not supported yet fails with an error that names itself
 //! rather than doing something approximate.
@@ -56,6 +53,9 @@ use allocative::FlameGraphBuilder;
 use async_trait::async_trait;
 use buck2_common::file_ops::metadata::FileDigest;
 use buck2_common::file_ops::metadata::TrackedFileDigest;
+use buck2_common::init::DaemonStartupOptions;
+use buck2_common::io::fs::is_executable;
+use buck2_core::execution_types::executor_config::RemoteExecutorUseCase;
 use buck2_core::fs::project::ProjectRoot;
 use buck2_core::fs::project_rel_path::ProjectRelativePath;
 use buck2_core::fs::project_rel_path::ProjectRelativePathBuf;
@@ -102,12 +102,15 @@ use buck2_execute::materialize::materializer::MaterializerBackgroundCleanupGuard
 use buck2_execute::materialize::materializer::MaterializerEntry;
 use buck2_execute::materialize::materializer::MaterializerIterItem;
 use buck2_execute::materialize::materializer::ReadLease;
+use buck2_execute::materialize::materializer::TrackedPaths;
 use buck2_execute::materialize::materializer::WriteLease;
 use buck2_execute::materialize::materializer::WriteRequest;
 use buck2_execute::re::manager::ReConnectionManager;
 use buck2_fs::error::IoResultExt;
 use buck2_fs::fs_util;
+use buck2_fs::fs_util::Linked;
 use buck2_fs::paths::abs_norm_path::AbsNormPath;
+use buck2_fs::paths::abs_norm_path::AbsNormPathBuf;
 use buck2_fs::paths::file_name::FileName;
 use buck2_hash::BuckMutSet;
 use buck2_util::future::join_all;
@@ -155,8 +158,23 @@ use crate::materializers::v2::tree::WriteHold;
 use crate::sqlite::materializer_db::MaterializerState;
 use crate::sqlite::materializer_db::MaterializerStateSqliteDb;
 
-/// The value of `buck2.materializer` that selects this implementation.
-pub const CONFIG_VALUE: &str = "v2";
+/// Rolls this implementation out to unshared daemons: one runs it when
+/// `buck2.materializer_v2_version` is set to at most this value, and the deferred materializer
+/// otherwise. Shared daemons always run it; see [`selected_by`].
+///
+/// Bump this with any fix that a rollback waited on. Setting the config above every version in
+/// the fleet rolls back; setting it to the fixed version then rolls out again to the binaries
+/// that have the fix, and to no others.
+pub const ROLLOUT_VERSION: u32 = 3;
+
+/// Whether a daemon started with these options runs this implementation rather than the deferred
+/// materializer: a shared daemon always does, an unshared one follows `ROLLOUT_VERSION`.
+pub fn selected_by(options: &DaemonStartupOptions) -> bool {
+    options.routing.is_shared()
+        || options
+            .materializer_v2_version
+            .is_some_and(|wanted| ROLLOUT_VERSION >= wanted)
+}
 
 /// How often buffered access-time bumps reach sqlite under `AccessTimesUpdates::Full`.
 const ACCESS_TIMES_FLUSH_PERIOD: Duration = Duration::from_secs(5);
@@ -170,8 +188,8 @@ pub struct DiskStateMaterializer<T: IoHandler + Allocative + 'static = DefaultIo
     #[allocative(skip)]
     thread: Option<std::thread::JoinHandle<()>>,
     io: Arc<T>,
-    /// The BlobStore, whose stash the daemon attached: what it holds of a root is linked out of
-    /// it before the CAS is asked for the rest.
+    /// The BlobStore, whose stash the daemon attached: what it holds of a root, and no tracked
+    /// path does, is put on disk out of it before the CAS is asked for the rest.
     store: &'static BlobStore,
     /// Which tracked paths hold which file digests, the processor's to keep and the download
     /// tasks' to read (`index.rs`).
@@ -382,22 +400,6 @@ impl<T: IoHandler + Allocative> DiskStateMaterializer<T> {
         Ok((answers, withdraw))
     }
 
-    /// Asks for one want and waits for the grant.
-    async fn acquire_one(
-        &self,
-        path: ProjectRelativePathBuf,
-        want: Want,
-    ) -> buck2_error::Result<Granted> {
-        let (mut answers, withdraw) = self.acquire(vec![(path, want)])?;
-        let granted = answers
-            .pop()
-            .expect("one want")
-            .await
-            .map_err(|_| stopped())?;
-        withdraw.disarm();
-        Ok(granted)
-    }
-
     /// Records `entry` as what the holder put at the guard's root, which it holds in read mode
     /// from then on. Under `readonly_outputs` the root's files lose their write bits first, so
     /// that nothing writes through a name the tree, the index or the stash vouches for; an
@@ -563,9 +565,9 @@ impl<T: IoHandler + Allocative> DiskStateMaterializer<T> {
         }
     }
 
-    /// Records content this daemon produced at the guard's root, an action's output or a
-    /// publish: the stash takes it first, since it is nowhere else, then it is reported as an
-    /// intermediate output. A download is reported through `report` alone: the CAS has it.
+    /// Records content this daemon produced at the guard's root, an action's output: the stash
+    /// takes it first, since it is nowhere else, then it is reported as an intermediate output.
+    /// A download is reported through `report` alone: the CAS has it.
     async fn report_produced(&self, guard: &RootGuard, root: Root) -> buck2_error::Result<()> {
         self.stash(&root).await;
         self.report(guard, root.entry, ArtifactClassification::IntermediateOnly)
@@ -634,6 +636,27 @@ fn duplicate(error: &MaterializationError) -> MaterializationError {
                 source: source.dupe(),
             }
         }
+    }
+}
+
+#[async_trait]
+impl<T: IoHandler + Allocative> TrackedPaths for DiskStateMaterializer<T> {
+    /// A read hold on a path holding the digest, which never waits.
+    async fn hold_file(
+        &self,
+        digest: &FileDigest,
+    ) -> buck2_error::Result<Option<(AbsNormPathBuf, ReadLease)>> {
+        // Only what the index has a path for is worth a round trip to the processor.
+        if !self.index.holds(digest) {
+            return Ok(None);
+        }
+        let mut sources = self.sender.hold_sources(vec![digest.dupe()]).await?;
+        Ok(sources.pop().flatten().map(|(path, guard)| {
+            (
+                self.io.fs().resolve(&path),
+                ReadLease::new(Roots(vec![guard])),
+            )
+        }))
     }
 }
 
@@ -854,61 +877,61 @@ impl<T: IoHandler + Allocative> Materializer for DiskStateMaterializer<T> {
             .await
     }
 
-    async fn publish(
+    async fn fill(
         &self,
         lease: &WriteLease,
-        src: ProjectRelativePathBuf,
-        dest: ProjectRelativePathBuf,
+        path: ProjectRelativePathBuf,
         value: ArtifactValue,
-    ) -> buck2_error::Result<ReadLease> {
-        if self.roots_of(lease)?.over(&src).is_none() {
-            return Err(internal_error!(
-                "`{src}` was published from outside the write roots of its lease"
-            ));
+        _from: Option<ProjectRelativePathBuf>,
+        re_use_case: RemoteExecutorUseCase,
+        cancellations: &CancellationContext,
+    ) -> buck2_error::Result<()> {
+        let guard = self.roots_of(lease)?.at(&path).ok_or_else(|| {
+            internal_error!("`{path}` is not a root of the lease it is filled under")
+        })?;
+        if !guard.holds_for_writing() {
+            return Err(internal_error!("`{path}` is not held for writing"));
         }
         let entry = value.entry().dupe();
-        let Granted {
-            mut held,
-            exclusions,
-        } = self
-            .acquire_one(dest.clone(), Want::Content(entry.dupe()))
-            .await?;
-        let fs = self.io.fs().dupe();
-        let src_abs = fs.resolve(&src);
-        let dest_abs = fs.resolve(&dest);
-        if !held.guard().holds_for_writing() {
-            // Content-addressed destinations only ever hold one thing; the copy the action just
-            // produced is redundant.
-            self.blocking_executor
-                .execute_io_inline(move || fs_util::remove_all(&src_abs).categorize_internal())
-                .await?;
-            return Ok(ReadLease::new(Roots(vec![held.into_guard()])));
+        if guard
+            .take_displaced()
+            .is_some_and(|displaced| displaced.matches(&entry))
+        {
+            return Ok(());
         }
-        // Content-addressed paths hold one content forever, so nothing is ever tracked strictly
-        // under an untracked one. Were it, the rename would replace what its readers hold.
-        if !exclusions.is_empty() {
-            return Err(internal_error!(
-                "`{dest}` has tracked content under it, which a publish cannot replace: [{}]",
-                exclusions
-                    .iter()
-                    .map(|p| format!("`{p}`"))
-                    .collect::<Vec<_>>()
-                    .join(", ")
-            ));
-        }
-        held.settle_except(None).await;
-        self.blocking_executor
-            .execute_io_inline(move || {
-                if let Some(parent) = dest_abs.parent() {
-                    fs_util::create_dir_all(parent)?;
-                }
-                fs_util::remove_all(&dest_abs).categorize_internal()?;
-                fs_util::rename(&src_abs, &dest_abs).categorize_internal()
-            })
-            .await?;
-        self.report_produced(held.guard(), Root { path: dest, entry })
-            .await?;
-        Ok(ReadLease::new(Roots(vec![held.into_guard()])))
+        // The download of a content root with nothing excluded and no report at its end: what is
+        // there goes, and the content comes from a tracked path, the store or the CAS.
+        download_task(
+            self.io.dupe(),
+            self.blocking_executor.dupe(),
+            self.store,
+            self.index.dupe(),
+            self.sender.dupe(),
+            path,
+            entry,
+            Vec::new(),
+            Arc::new(CasDownloadInfo::new_tracked(re_use_case)),
+            get_dispatcher(),
+        )(cancellations)
+        .await
+        .map_err(|e| match e {
+            SharedMaterializingError::Error(e) => e,
+            SharedMaterializingError::NotFound(source) => {
+                MaterializationError::NotFound { source }.into()
+            }
+        })
+    }
+
+    async fn publish(
+        &self,
+        _lease: &WriteLease,
+        src: ProjectRelativePathBuf,
+        _dest: ProjectRelativePathBuf,
+        _value: ArtifactValue,
+    ) -> buck2_error::Result<ReadLease> {
+        Err(internal_error!(
+            "`{src}` was published to the disk-state materializer, which keeps a local output where its run wrote it"
+        ))
     }
 
     /// Paths without values: `ensure_materialized`'s, for the previous outputs of an incremental
@@ -1120,8 +1143,12 @@ impl<T: IoHandler + Allocative> Materializer for DiskStateMaterializer<T> {
 
 impl<T: IoHandler + Allocative> Drop for DiskStateMaterializer<T> {
     fn drop(&mut self) {
-        // The processor ends once every sender is gone, which is when the last lease has been
-        // released; the daemon exits without waiting for it, like the old core's.
+        // The processor holds a sender of its own, for the guards it hands out, so it does not
+        // end with the materializer's; it is told to. What it drops with its tree, the tasks and
+        // IO of its roots, holds the tenant's disk lease, which the tenant's eviction waits for.
+        // A guard that outlives it, a lease a shared engine still keeps, finds it stopped. The
+        // daemon exits without waiting for the thread, like the old core's.
+        let _ignored = self.sender.send(Command::Abort);
         let _ignored = self.thread.take();
     }
 }
@@ -1257,7 +1284,9 @@ impl RequestPlan {
 
 /// The IO of a content root this request has to write: whatever is there and not wanted goes,
 /// entry by entry where something under the root is excluded, and the rest is put there, file by
-/// file from the stash, then from a tracked path holding the same content, then from the CAS.
+/// file from a tracked path holding the same content, then from the store, then from the CAS.
+/// The tracked path comes first because it is read under a hold the processor grants, which
+/// nothing can take the file out from under; the store's files are the collector's to remove.
 fn download_task<T: IoHandler>(
     io: Arc<T>,
     blocking_executor: Arc<dyn BlockingExecutor>,
@@ -1287,32 +1316,7 @@ fn download_task<T: IoHandler>(
                 .map_err(SharedMaterializingError::Error)?;
 
             let mut served: Vec<ProjectRelativePathBuf> = Vec::new();
-            let (stashed, mut rest): (Vec<WantedFile>, Vec<WantedFile>) =
-                wanted_files(&root, &entry, &exclusions)
-                    .into_iter()
-                    .partition(|wanted| wanted.digest.stash().is_some());
-            if !stashed.is_empty() {
-                let answers = store
-                    .materialize(
-                        stashed
-                            .iter()
-                            .map(|wanted| FileToLink {
-                                digest: wanted.digest.dupe(),
-                                executable: wanted.executable,
-                                dest: io.fs().resolve(&wanted.path),
-                            })
-                            .collect(),
-                    )
-                    .await
-                    .map_err(SharedMaterializingError::Error)?;
-                for (wanted, answered) in stashed.into_iter().zip(answers) {
-                    if answered {
-                        served.push(wanted.path);
-                    } else {
-                        rest.push(wanted);
-                    }
-                }
-            }
+            let mut rest = wanted_files(&root, &entry, &exclusions);
             // Only what the index has a path for is worth a round trip to the processor: a
             // path holding the content, held for reading for the length of the copy. A hold
             // that never waits cannot close a cycle with the write lease this task runs under.
@@ -1329,23 +1333,23 @@ fn download_task<T: IoHandler>(
                     )
                     .await
                     .map_err(SharedMaterializingError::Error)?;
-                let copies: Vec<(WantedFile, ProjectRelativePathBuf, RootGuard)> = indexed
-                    .into_iter()
-                    .zip(sources)
-                    .filter_map(|(wanted, source)| {
-                        source.map(|(path, guard)| (wanted, path, guard))
-                    })
-                    .collect();
+                let mut copies: Vec<(WantedFile, ProjectRelativePathBuf, RootGuard)> = Vec::new();
+                for (wanted, source) in indexed.into_iter().zip(sources) {
+                    match source {
+                        Some((path, guard)) => copies.push((wanted, path, guard)),
+                        None => rest.push(wanted),
+                    }
+                }
                 if !copies.is_empty() {
                     let fs = io.fs().dupe();
-                    let copied = blocking_executor
+                    let (copied, missed) = blocking_executor
                         .execute_io_inline(move || {
-                            let mut copied = Vec::new();
+                            let (mut copied, mut missed) = (Vec::new(), Vec::new());
                             for (wanted, source, guard) in copies {
                                 match copy_from_disk(&fs, &source, &wanted.path, wanted.executable)
                                 {
                                     Ok(()) => copied.push(wanted.path),
-                                    // A miss: the CAS is asked.
+                                    // A miss: the store is asked, then the CAS.
                                     Err(e) => {
                                         buck2_core::soft_error_or_panic!(
                                             "disk_state_materializer_copy_failed",
@@ -1354,11 +1358,12 @@ fn download_task<T: IoHandler>(
                                                 wanted.path
                                             ))
                                         );
+                                        missed.push(wanted);
                                     }
                                 }
                                 drop(guard);
                             }
-                            Ok(copied)
+                            Ok((copied, missed))
                         })
                         .await
                         .map_err(SharedMaterializingError::Error)?;
@@ -1367,7 +1372,34 @@ fn download_task<T: IoHandler>(
                         .copied_from_disk
                         .fetch_add(copied.len() as u64, Ordering::Relaxed);
                     served.extend(copied);
+                    rest.extend(missed);
                 }
+            }
+            // What no tracked path gave and the store holds: a stash file, or a deferred write
+            // that has never been on disk.
+            let stashed: Vec<WantedFile> = rest
+                .extract_if(.., |wanted| wanted.digest.stash().is_some())
+                .collect();
+            if !stashed.is_empty() {
+                let answers = store
+                    .materialize(
+                        stashed
+                            .iter()
+                            .map(|wanted| FileToLink {
+                                digest: wanted.digest.dupe(),
+                                executable: wanted.executable,
+                                dest: io.fs().resolve(&wanted.path),
+                            })
+                            .collect(),
+                    )
+                    .await
+                    .map_err(SharedMaterializingError::Error)?;
+                served.extend(
+                    stashed
+                        .into_iter()
+                        .zip(answers)
+                        .filter_map(|(wanted, answered)| answered.then_some(wanted.path)),
+                );
             }
             if matches!(entry, DirectoryEntry::Leaf(_)) && !served.is_empty() {
                 return Ok(());
@@ -1423,9 +1455,11 @@ fn wanted_files(
     files
 }
 
-/// Puts a copy of the tracked file at `source` at `dest`, with the mode asked for: a clone where
-/// the filesystem has them, never a hardlink, so that nothing later written in place at one path
-/// reaches the other. Leaves nothing behind on failure.
+/// Puts the content of the tracked file at `source` at `dest`, with the mode asked for: a clone
+/// where the filesystem has them, else a hardlink when the source has that mode, else a copy. Two
+/// tracked paths may share an inode because nothing writes a tracked file in place: an
+/// incremental action, which does write its previous outputs, is given inodes of its own for
+/// them first (`make_outputs_writable`). Leaves nothing behind on failure.
 fn copy_from_disk(
     fs: &ProjectRoot,
     source: &ProjectRelativePath,
@@ -1437,8 +1471,19 @@ fn copy_from_disk(
         if let Some(parent) = dest.parent() {
             fs_util::create_dir_all(parent)?;
         }
-        fs_util::reflink_or_copy(&source, &dest).categorize_internal()?;
-        fs_util::set_executable(&dest, executable).categorize_internal()?;
+        // A hardlink has its source's mode, so only a source with the mode asked for is linked.
+        // Windows keeps no executable bit to differ in.
+        let source_executable = is_executable(&fs_util::metadata(&source).categorize_internal()?);
+        let made_a_file = if source_executable == executable || cfg!(windows) {
+            fs_util::reflink_or_hardlink_or_copy(&source, &dest).categorize_internal()?
+                != Linked::Hardlinked
+        } else {
+            fs_util::reflink_or_copy(&source, &dest).categorize_internal()?;
+            true
+        };
+        if made_a_file {
+            fs_util::set_executable(&dest, executable).categorize_internal()?;
+        }
         buck2_error::Ok(())
     })();
     if copied.is_err() {
@@ -1592,6 +1637,9 @@ pub(crate) struct RootGuard {
     path: ProjectRelativePathBuf,
     /// Empty while a report is in flight, and once released.
     hold: Mutex<Option<Hold>>,
+    /// For a write grant: what was tracked at the root when the grant untracked it, until a
+    /// fill takes it.
+    displaced: Mutex<Option<DiskEntry>>,
 }
 
 impl RootGuard {
@@ -1601,6 +1649,10 @@ impl RootGuard {
 
     fn holds_for_writing(&self) -> bool {
         matches!(&*self.hold.lock(), Some(Hold::Write(_)))
+    }
+
+    fn take_displaced(&self) -> Option<DiskEntry> {
+        self.displaced.lock().take()
     }
 
     /// Takes the write hold out, for a report.
@@ -1651,11 +1703,6 @@ impl Roots {
     /// The guard of the root at exactly `path`.
     fn at(&self, path: &ProjectRelativePath) -> Option<&RootGuard> {
         self.0.iter().find(|guard| guard.path() == path)
-    }
-
-    /// The guard of the root at or above `path`.
-    fn over(&self, path: &ProjectRelativePath) -> Option<&RootGuard> {
-        self.0.iter().find(|guard| path.starts_with(guard.path()))
     }
 }
 
@@ -1812,7 +1859,7 @@ enum Command {
     },
     /// Anything that needs the state and no IO.
     Sync(Box<dyn FnOnce(&mut Processor) + Send>),
-    #[cfg(test)]
+    /// Ends the processor with whatever it holds: the materializer is gone.
     Abort,
 }
 
@@ -2154,7 +2201,6 @@ impl Processor {
                 let _ignored = reply.send(held);
             }
             Command::Sync(f) => f(self),
-            #[cfg(test)]
             Command::Abort => return false,
         }
         true
@@ -2166,6 +2212,7 @@ impl Processor {
             sender: self.sender.dupe(),
             path: hold.path().to_buf(),
             hold: Mutex::new(Some(Hold::Read(hold))),
+            displaced: Mutex::new(None),
         }
     }
 
@@ -2217,6 +2264,7 @@ impl Processor {
                     sender: self.sender.dupe(),
                     path: grant.hold.path().to_buf(),
                     hold: Mutex::new(Some(grant.hold)),
+                    displaced: Mutex::new(grant.displaced),
                 }),
                 tasks: grant.tasks,
             },

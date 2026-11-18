@@ -28,8 +28,9 @@ use dice::DiceComputations;
 use dupe::Dupe;
 use itertools::Either;
 use starlark::values::UnpackValue;
-use starlark::values::list::UnpackList;
-use starlark::values::type_repr::StarlarkTypeRepr;
+use starlark::values::ValueOf;
+use starlark::values::list::ListType;
+use starlark::values::string::StarlarkStr;
 
 use crate::bxl::starlark_defs::context::BxlContext;
 use crate::bxl::starlark_defs::nodes::configured::StarlarkConfiguredTargetNode;
@@ -46,21 +47,21 @@ pub(crate) enum ProvidersExpr<P: ProvidersLabelMaybeConfigured> {
 
 /// ProvidersLabelArg is a type that can be used as an argument in starlark api for
 /// an unconfigured provider label
-#[derive(StarlarkTypeRepr, UnpackValue)]
+#[derive(UnpackValue)]
 pub(crate) enum ProvidersLabelArg<'v> {
-    Str(&'v str),
-    StarlarkTargetLabel(&'v StarlarkTargetLabel),
-    StarlarkProvidersLabel(&'v StarlarkProvidersLabel),
-    StarlarkTargetNode(&'v StarlarkTargetNode),
+    Str(ValueOf<'v, StarlarkStr>),
+    StarlarkTargetLabel(ValueOf<'v, StarlarkTargetLabel>),
+    StarlarkProvidersLabel(ValueOf<'v, StarlarkProvidersLabel>),
+    StarlarkTargetNode(ValueOf<'v, StarlarkTargetNode>),
 }
 
-#[derive(StarlarkTypeRepr, UnpackValue)]
+#[derive(UnpackValue)]
 pub(crate) enum ProvidersLabelListArg<'v> {
-    List(UnpackList<ProvidersLabelArg<'v>>),
-    TargetSet(&'v StarlarkTargetSet<TargetNode>),
+    List(ValueOf<'v, ListType<ProvidersLabelArg<'v>>>),
+    TargetSet(ValueOf<'v, StarlarkTargetSet<TargetNode>>),
 }
 
-#[derive(StarlarkTypeRepr, UnpackValue)]
+#[derive(UnpackValue)]
 pub(crate) enum ProvidersExprArg<'v> {
     One(ProvidersLabelArg<'v>),
     List(ProvidersLabelListArg<'v>),
@@ -68,24 +69,24 @@ pub(crate) enum ProvidersExprArg<'v> {
 
 /// ConfiguredProvidersLabelArg is a type that can be used as an argument in starlark api for
 /// a configured provider label
-#[derive(StarlarkTypeRepr, UnpackValue)]
+#[derive(UnpackValue)]
 pub(crate) enum ConfiguredProvidersLabelArg<'v> {
-    Node(&'v StarlarkConfiguredTargetNode),
-    Label(&'v StarlarkConfiguredTargetLabel),
-    ProvidersLabel(&'v StarlarkConfiguredProvidersLabel),
+    Node(ValueOf<'v, StarlarkConfiguredTargetNode>),
+    Label(ValueOf<'v, StarlarkConfiguredTargetLabel>),
+    ProvidersLabel(ValueOf<'v, StarlarkConfiguredProvidersLabel>),
 }
 
 /// ConfiguredProvidersLabelListArg is a type that can be used as an argument in starlark api for
 /// a list of configured provider labels
-#[derive(StarlarkTypeRepr, UnpackValue)]
+#[derive(UnpackValue)]
 pub(crate) enum ConfiguredProvidersLabelListArg<'v> {
-    List(UnpackList<ConfiguredProvidersLabelArg<'v>>),
-    TargetSet(&'v StarlarkTargetSet<ConfiguredTargetNode>),
+    List(ValueOf<'v, ListType<ConfiguredProvidersLabelArg<'v>>>),
+    TargetSet(ValueOf<'v, StarlarkTargetSet<ConfiguredTargetNode>>),
 }
 
 /// ConfiguredProvidersExprArg is a type that can be used as an argument in starlark api for
 /// a configured provider label expression (single or list)
-#[derive(StarlarkTypeRepr, UnpackValue)]
+#[derive(UnpackValue)]
 pub(crate) enum ConfiguredProvidersExprArg<'v> {
     One(ConfiguredProvidersLabelArg<'v>),
     List(ConfiguredProvidersLabelListArg<'v>),
@@ -93,20 +94,20 @@ pub(crate) enum ConfiguredProvidersExprArg<'v> {
 
 /// AnyProvidersLabelArg is a type that can be used as an argument in stalark api for
 /// a configured provider label or an unconfigured provider label
-#[derive(StarlarkTypeRepr, UnpackValue)]
+#[derive(UnpackValue)]
 pub(crate) enum AnyProvidersLabelArg<'v> {
     Configured(ConfiguredProvidersLabelArg<'v>),
     Unconfigured(ProvidersLabelArg<'v>),
 }
 
-#[derive(StarlarkTypeRepr, UnpackValue)]
+#[derive(UnpackValue)]
 pub(crate) enum AnyProvidersLabelListArg<'v> {
-    StarlarkTargetSet(&'v StarlarkTargetSet<TargetNode>),
-    StarlarkConfiguredTargetSet(&'v StarlarkTargetSet<ConfiguredTargetNode>),
-    List(UnpackList<AnyProvidersLabelArg<'v>>),
+    StarlarkTargetSet(ValueOf<'v, StarlarkTargetSet<TargetNode>>),
+    StarlarkConfiguredTargetSet(ValueOf<'v, StarlarkTargetSet<ConfiguredTargetNode>>),
+    List(ValueOf<'v, ListType<AnyProvidersLabelArg<'v>>>),
 }
 
-#[derive(StarlarkTypeRepr, UnpackValue)]
+#[derive(UnpackValue)]
 pub(crate) enum AnyProvidersExprArg<'v> {
     One(AnyProvidersLabelArg<'v>),
     List(AnyProvidersLabelListArg<'v>),
@@ -129,17 +130,16 @@ impl<'v> ConfiguredProvidersLabelArg<'v> {
 }
 
 impl<'v> ConfiguredProvidersExprArg<'v> {
-    pub(crate) fn unpack(&self) -> ProvidersExpr<ConfiguredProvidersLabel> {
-        match self {
+    pub(crate) fn unpack(&self) -> buck2_error::Result<ProvidersExpr<ConfiguredProvidersLabel>> {
+        Ok(match self {
             ConfiguredProvidersExprArg::One(arg) => {
                 ProvidersExpr::Literal(arg.configured_providers_label())
             }
             ConfiguredProvidersExprArg::List(ConfiguredProvidersLabelListArg::List(list)) => {
                 ProvidersExpr::Iterable(
-                    list.items
-                        .iter()
-                        .map(|arg| arg.configured_providers_label())
-                        .collect(),
+                    list.try_items::<ConfiguredProvidersLabelArg>()
+                        .map(|arg| buck2_error::Ok(arg?.configured_providers_label()))
+                        .collect::<buck2_error::Result<_>>()?,
                 )
             }
             ConfiguredProvidersExprArg::List(ConfiguredProvidersLabelListArg::TargetSet(
@@ -151,7 +151,7 @@ impl<'v> ConfiguredProvidersExprArg<'v> {
                     .map(|node| ConfiguredProvidersLabel::default_for(node.label().dupe()))
                     .collect(),
             ),
-        }
+        })
     }
 }
 
@@ -216,7 +216,8 @@ impl ProvidersExpr<ConfiguredProvidersLabel> {
             }
             AnyProvidersLabelListArg::List(iterable) => {
                 let mut res = Vec::new();
-                for arg in iterable.items {
+                for arg in iterable.try_items() {
+                    let arg = arg?;
                     res.push(
                         Self::unpack_literal(arg, global_cfg_options_override, ctx, dice).await?,
                     );
@@ -258,8 +259,8 @@ impl ProvidersExpr<ProvidersLabel> {
             )),
             ProvidersLabelListArg::List(iterable) => {
                 let mut res = Vec::new();
-                for val in iterable.items {
-                    res.push(Self::unpack_providers_label(val, ctx)?)
+                for val in iterable.try_items() {
+                    res.push(Self::unpack_providers_label(val?, ctx)?)
                 }
                 Ok(ProvidersExpr::Iterable(res))
             }
@@ -281,6 +282,7 @@ impl<P: ProvidersLabelMaybeConfigured> ProvidersExpr<P> {
     ) -> buck2_error::Result<ProvidersLabel> {
         match arg {
             ProvidersLabelArg::Str(s) => {
+                let s = s.as_str();
                 Ok(ParsedPattern::<ProvidersPatternExtra>::parse_relaxed(
                     ctx.target_alias_resolver(),
                     // TODO(nga): Parse relaxed relative to cell root is incorrect.

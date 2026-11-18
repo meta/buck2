@@ -220,9 +220,9 @@ mod tests {
             let b = make_span(frozen_heap, "a()");
             let c = make_span(frozen_heap, "b()");
             a.inlined_frames
-                .inline_into(b, frozen_heap.alloc_str("b").to_value(), &mut span_alloc);
+                .inline_into(b, frozen_heap.alloc("b").to_value(), &mut span_alloc);
             a.inlined_frames
-                .inline_into(c, frozen_heap.alloc_str("c").to_value(), &mut span_alloc);
+                .inline_into(c, frozen_heap.alloc("c").to_value(), &mut span_alloc);
 
             assert_stack(&["b() in c", "a() in b"], &a);
 
@@ -231,14 +231,14 @@ mod tests {
             let f = make_span(frozen_heap, "e()");
 
             d.inlined_frames
-                .inline_into(e, frozen_heap.alloc_str("e").to_value(), &mut span_alloc);
+                .inline_into(e, frozen_heap.alloc("e").to_value(), &mut span_alloc);
             d.inlined_frames
-                .inline_into(f, frozen_heap.alloc_str("f").to_value(), &mut span_alloc);
+                .inline_into(f, frozen_heap.alloc("f").to_value(), &mut span_alloc);
 
             assert_stack(&["e() in f", "d() in e"], &d);
 
             a.inlined_frames
-                .inline_into(d, frozen_heap.alloc_str("d").to_value(), &mut span_alloc);
+                .inline_into(d, frozen_heap.alloc("d").to_value(), &mut span_alloc);
 
             assert_stack(
                 &["e() in f", "d() in e", "c() in d", "b() in c", "a() in b"],

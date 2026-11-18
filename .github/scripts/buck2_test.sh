@@ -30,65 +30,122 @@ run() {
 }
 
 # What failed in the run with the log $1: buck2's closing counts, the test
-# targets that failed and, for each of their failed cases, the start of what
-# the case printed. buck2 heads a test target's output with
-# `<status>: <target> (<time>)`; in that output libtest marks a failed case
-# with `test <case> ... FAILED` and prints what it wrote under
-# `---- <case> stdout ----`. Of that, six lines from the last `Error:` or panic
-# on are kept, since a case may print a lot before it fails. Without a failed
-# case to name, the end of the log has to do: it holds the error of a build
+# targets that failed and, for each of their failed cases, why. buck2 heads a
+# test target's output with `<status>: <target> (<time>)`; in that output
+# libtest marks a failed case with `test <case> ... FAILED` and prints what it
+# wrote under `---- <case> stdout ----`, and either names the case: the start
+# of a long output may be missing. Of what it wrote, the lines from the last
+# `Error:` or panic on are kept, without a backtrace and what a daemon logs as
+# it starts: the first 4 and the last 9 when there are more, since a chain of
+# errors ends with its cause. Cases of a target that failed the same way are
+# listed together, above what they printed. A target without a failed case
+# died some other way, and gets the end of its output. Without any failed
+# target to name, the end of the log has to do: it holds the error of a build
 # failure and buck2's closing lines.
 report() {
   awk '
+    function fail(name) {
+      if (!((target, name) in failed)) {
+        failed[target, name] = 1
+        cases[target] = cases[target] name "\n"
+      }
+    }
+    function keep(text,    n) {
+      n = ++count[target, block]
+      if (n <= 4) {
+        first[target, block, n] = text
+      } else {
+        rest[target, block, (n - 5) % 9] = text
+      }
+    }
+    function why(t, c,    n, i, text) {
+      n = count[t, c]
+      text = ""
+      for (i = 1; i <= n; i++) {
+        if (n > 13 && i == 5) {
+          text = text "    ...\n"
+          i = n - 8
+        }
+        text = text "    " (i <= 4 ? first[t, c, i] : rest[t, c, (i - 5) % 9]) "\n"
+      }
+      return text
+    }
+    BEGIN { color = sprintf("%c", 27) "\\[[0-9;]*m" }
     { last[NR % 40] = $0 }
     /^Tests finished: / { counts = $0 }
     {
       line = $0
-      sub(/^\[[^]]*\] /, "", line)
+      gsub(color, "", line)
+      sub(/^\[[0-9][-0-9T:.+Z]*\] ?/, "", line)
     }
-    line ~ /^[^ ]+ (Fail|Timeout|Fatal): .* \([0-9:.]+s\)$/ {
-      target = line
-      sub(/^[^ ]+ (Fail|Timeout|Fatal): /, "", target)
-      sub(/ \([0-9:.]+s\)$/, "", target)
-      sub(/^[^\/]*\/\//, "", target)
-      if (!(target in seen)) {
-        seen[target] = 1
-        order[++targets] = target
+    # A result of the run: of a failed target, whose output follows, or of
+    # another, which ends the output of the one before. What a case printed can
+    # hold the results of a `buck2 test` that it ran. There, only a line that
+    # names a target in the cell of the tests counts as a result of the run.
+    line ~ /^[^ ]+ [A-Z][A-Za-z ]*: .* \([0-9:.]+s\)$/ {
+      label = line
+      sub(/^[^ ]+ [A-Z][A-Za-z ]*: /, "", label)
+      sub(/ \([0-9:.]+s\)$/, "", label)
+      from = label
+      sub(/\/\/.*$/, "", from)
+      if (block == "" && cell == "") cell = from
+      if (block == "" || from == cell) {
+        block = ""
+        target = ""
+        if (line ~ /^[^ ]+ (Fail|Timeout|Fatal): /) {
+          target = label
+          sub(/^[^\/]*\/\//, "", target)
+          if (!(target in seen)) {
+            seen[target] = 1
+            order[++targets] = target
+          }
+          ended[target] = 0
+        }
+        next
       }
-      block = ""
-      next
     }
+    block == "" && line ~ /^Tests finished: / { target = "" }
+    target != "" && line != "" { tail[target, ++ended[target]] = line }
     line ~ /^test .* \.\.\. FAILED$/ {
       name = line
       sub(/^test /, "", name)
       sub(/ \.\.\. FAILED$/, "", name)
-      cases[target] = cases[target] name "\n"
-      failed++
+      fail(name)
       next
     }
     line ~ /^---- .* stdout ----$/ {
       block = line
       sub(/^---- /, "", block)
       sub(/ stdout ----$/, "", block)
-      kept = 0
+      fail(block)
+      count[target, block] = 0
+      backtrace = 0
       next
     }
-    line ~ /^(failures:|stack backtrace:)$/ { block = "" }
     block != "" {
-      sub(/^[ \t]+/, "", line)
-      sub(/^\[[^]]*\] /, "", line)
-      if (line ~ /^Error: / || line ~ / panicked at /) {
-        why[target, block] = ""
-        kept = 0
+      if (line == "failures:") {
+        block = ""
+        next
       }
+      sub(/^[ \t]+/, "", line)
+      sub(/^\[[0-9][-0-9T:.+Z]*\] ?/, "", line)
+      if (line ~ /^Error: / || line ~ / panicked at /) {
+        count[target, block] = 0
+        backtrace = 0
+      }
+      if (line == "stack backtrace:") backtrace = 1
+      if (backtrace) next
       sub(/^thread .* panicked at /, "panicked at ", line)
       sub(/^<cmd> [^ ]*\/buck2 /, "buck2 ", line)
-      if (kept < 6 && line != "" && line !~ /^<(working_dir|stderr|stdout)>/ && line !~ /^(Build ID:|Buck UI:|Starting new buck2 daemon|Connected to new buck2 daemon|note: run with )/) {
-        why[target, block] = why[target, block] (kept++ ? " | " : "") substr(line, 1, 200)
-      }
+      if (line == "" || line ~ /^<\/?(working_dir|stderr|stdout)>/) next
+      if (line ~ /^(Build ID:|Buck UI:|Starting new buck2 daemon|Connected to new buck2 daemon|note: run with )/) next
+      if (line ~ /^(Daemon process info from |daemon dir: |pid: |endpoint: |version: |pid present on system: |Try running `rm -rf )/) next
+      if (line ~ /^[0-9-]+T[0-9:.]+Z +(INFO|DEBUG|TRACE) /) next
+      keep(substr(line, 1, 200))
+      next
     }
     END {
-      if (failed == 0) {
+      if (targets == 0) {
         for (i = NR - 39; i <= NR; i++) if (i > 0) print last[i % 40]
         exit
       }
@@ -96,10 +153,27 @@ report() {
       print "Failed test targets (" targets "):"
       for (i = 1; i <= targets; i++) print order[i]
       for (i = 1; i <= targets; i++) {
+        t = order[i]
         print ""
-        print order[i]
-        n = split(cases[order[i]], names, "\n")
-        for (j = 1; j < n; j++) print "  " names[j] ": " why[order[i], names[j]]
+        print t
+        n = split(cases[t], names, "\n")
+        if (n < 2) {
+          print "  No failed test case. Its output ends:"
+          for (j = ended[t] - 11; j <= ended[t]; j++) if (j > 0) print "  " substr(tail[t, j], 1, 200)
+          continue
+        }
+        for (j = 1; j < n; j++) {
+          if (names[j] in listed) continue
+          print "  " names[j]
+          for (k = j + 1; k < n; k++) {
+            if (!(names[k] in listed) && why(t, names[k]) == why(t, names[j])) {
+              listed[names[k]] = 1
+              print "  " names[k]
+            }
+          }
+          printf "%s", why(t, names[j])
+        }
+        for (name in listed) delete listed[name]
       }
     }
   ' "$1"

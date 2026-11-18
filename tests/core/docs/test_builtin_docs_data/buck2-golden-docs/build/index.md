@@ -18,7 +18,6 @@
 ## get\_parent\_modifiers
 ## glob
 ## host\_info
-## implicit\_package\_symbol
 ## load\_symbols
 ## oncall
 ## package

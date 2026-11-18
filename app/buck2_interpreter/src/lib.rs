@@ -24,7 +24,6 @@ pub mod from_freeze;
 pub mod import_paths;
 pub mod late_binding_ty;
 pub mod load_module;
-pub mod package_imports;
 pub mod parse_import;
 pub mod paths;
 pub mod plugins;

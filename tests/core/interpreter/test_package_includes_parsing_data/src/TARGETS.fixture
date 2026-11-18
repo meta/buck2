@@ -1,2 +1,0 @@
-# `my_rule` reaches this package through `buildfile.package_includes` (aliased as `alias`).
-implicit_package_symbol("alias")(name = "included")

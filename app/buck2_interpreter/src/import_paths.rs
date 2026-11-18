@@ -28,17 +28,13 @@ use dice::Key;
 use dice::OkPagableValueSerialize;
 use dice::ValueSerialize;
 use dice_futures::cancellation::CancellationContext;
-use dupe::Dupe;
 use dupe::ResultDupedErrExt;
 use pagable::Pagable;
 use pagable::pagable_typetag;
 
-use crate::package_imports::PackageImplicitImports;
-
 #[derive(PartialEq, Allocative, Pagable)]
 pub struct ImplicitImportPaths {
     pub root_import: Option<ImportPath>,
-    pub package_imports: PackageImplicitImports,
 }
 
 impl ImplicitImportPaths {
@@ -69,20 +65,7 @@ impl ImplicitImportPaths {
                 ImportPath::new_with_build_file_cells(path, cell_name)
             })
             .map_or(Ok(None), |e: buck2_error::Result<ImportPath>| e.map(Some))?;
-        let package_imports = PackageImplicitImports::new(
-            cell_name,
-            cell_alias_resolver.dupe(),
-            config
-                .get(BuckconfigKeyRef {
-                    section: "buildfile",
-                    property: "package_includes",
-                })?
-                .as_deref(),
-        )?;
-        Ok(ImplicitImportPaths {
-            root_import,
-            package_imports,
-        })
+        Ok(ImplicitImportPaths { root_import })
     }
 
     pub fn root_import(&self) -> Option<&ImportPath> {

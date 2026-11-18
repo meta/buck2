@@ -11,6 +11,28 @@ load(
     "ExtraLinkerOutputs",
 )
 
+def merge_linker_args_for_platform(merge_linker_args: dict[str, typing.Any], platform: str | None) -> dict[str, typing.Any]:
+    """The `native_library_merge_linker_args` entries for one platform.
+
+    A key `<platform>:<soname>` (or `<platform>:<synthesized>`) applies only to
+    that platform's libraries: its args follow the unscoped entry's, if any.
+    Keys scoped to other platforms are dropped; unscoped keys apply to every
+    platform. Without scoped keys the dict is returned unchanged.
+    """
+    if not any([":" in key for key in merge_linker_args]):
+        return merge_linker_args
+    result = {}
+    for key, args in merge_linker_args.items():
+        if ":" not in key:
+            result[key] = list(args)
+    for key, args in merge_linker_args.items():
+        if ":" not in key:
+            continue
+        scope, name = key.split(":", 1)
+        if scope == platform:
+            result[name] = result.get(name, []) + list(args)
+    return result
+
 def merge_extra_linker_args(arg_dicts: list[dict[str, typing.Any]]) -> dict[str, typing.Any]:
     """Merge multiple extra linker output factory dicts.
 

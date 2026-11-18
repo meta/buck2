@@ -30,7 +30,7 @@ load(
     "prebuilt_native_library_symbols",
 )
 load("@prelude//android:relinker_linker_outputs.bzl", "get_extra_relinker_args")
-load("@prelude//android:util.bzl", "EnhancementContext", "merge_extra_linker_args")
+load("@prelude//android:util.bzl", "EnhancementContext", "merge_extra_linker_args", "merge_linker_args_for_platform")
 load("@prelude//android:voltron.bzl", "ROOT_MODULE", "all_targets_in_root_module", "get_apk_module_graph_info", "is_root_module")
 # @oss-disable[end= ]: load(
     # @oss-disable[end= ]: "@prelude//android/meta_only:gatorade.bzl",
@@ -711,7 +711,7 @@ def get_android_binary_native_library_info(
                     default_shared_libs = original_shared_libs_by_platform[platform],
                     linkable_nodes = linkable_nodes_by_platform[platform],
                     merge_map = merge_map_by_platform[platform],
-                    merge_linker_args = native_library_merge_linker_args or {},
+                    merge_linker_args = merge_linker_args_for_platform(native_library_merge_linker_args or {}, platform),
                     apk_module_graph = get_module_from_target,
                     jni_onload_check_inputs = jni_onload_check_inputs,
                 )

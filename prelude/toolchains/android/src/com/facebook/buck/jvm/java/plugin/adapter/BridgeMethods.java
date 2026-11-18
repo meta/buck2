@@ -12,6 +12,7 @@ package com.facebook.buck.jvm.java.plugin.adapter;
 
 import com.facebook.buck.jvm.java.lang.model.BridgeMethod;
 import com.facebook.buck.jvm.java.lang.model.ElementsExtended;
+import com.facebook.buck.jvm.java.lang.model.ErasedTypes;
 import com.facebook.buck.jvm.java.lang.model.MoreElements;
 import com.facebook.infer.annotation.Nullsafe;
 import java.util.ArrayList;
@@ -26,7 +27,6 @@ import javax.lang.model.element.Name;
 import javax.lang.model.element.TypeElement;
 import javax.lang.model.type.DeclaredType;
 import javax.lang.model.type.ExecutableType;
-import javax.lang.model.type.TypeMirror;
 import javax.lang.model.util.ElementFilter;
 import javax.lang.model.util.Types;
 
@@ -181,20 +181,23 @@ public class BridgeMethods {
           return true;
         }
 
-        return !types.isSameType(
-            methodErasure.getReturnType(), languageImplementationErasure.getReturnType());
+        return !ErasedTypes.isSameType(
+            types, methodErasure.getReturnType(), languageImplementationErasure.getReturnType());
       } else if (!method.getModifiers().contains(Modifier.ABSTRACT)
           && !method.getModifiers().contains(Modifier.DEFAULT)) {
-        return !isSameMemberWhenErased(inType, method, types.erasure(method.asType()));
+        return !isSameMemberWhenErased(
+            inType, method, (ExecutableType) types.erasure(method.asType()));
       }
 
       return false;
     }
 
     private boolean isSameMemberWhenErased(
-        TypeElement inType, ExecutableElement method, TypeMirror erasedType) {
-      return types.isSameType(
-          types.erasure(types.asMemberOf((DeclaredType) inType.asType(), method)), erasedType);
+        TypeElement inType, ExecutableElement method, ExecutableType erasedType) {
+      return ErasedTypes.isSameDescriptor(
+          types,
+          (ExecutableType) types.asMemberOf((DeclaredType) inType.asType(), method),
+          erasedType);
     }
 
     private boolean isHiddenInType(ExecutableElement hidden, TypeElement subclass) {

@@ -354,7 +354,8 @@ public class Jsr199JavacTest {
                 null,
                 mode,
                 AbiGenerationMode.CLASS,
-                factory)) {
+                factory,
+                ImmutableList.of())) {
       return invocation.buildClasses();
     }
   }
@@ -408,7 +409,8 @@ public class Jsr199JavacTest {
                 jar,
                 AbiGenerationMode.CLASS,
                 AbiGenerationMode.CLASS,
-                null)) {
+                null,
+                ImmutableList.of())) {
       return invocation.buildClasses();
     }
   }

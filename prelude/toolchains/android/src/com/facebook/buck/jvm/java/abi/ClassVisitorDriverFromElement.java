@@ -13,6 +13,7 @@ package com.facebook.buck.jvm.java.abi;
 import com.facebook.buck.jvm.java.abi.source.api.CannotInferException;
 import com.facebook.buck.jvm.java.lang.extra.MoreTypeAnnotations;
 import com.facebook.buck.jvm.java.lang.model.BridgeMethod;
+import com.facebook.buck.jvm.java.lang.model.ClassFileTypes;
 import com.facebook.buck.jvm.java.lang.model.ElementsExtended;
 import com.facebook.buck.jvm.java.lang.model.MoreElements;
 import com.facebook.infer.annotation.Nullsafe;
@@ -36,6 +37,7 @@ import javax.lang.model.type.DeclaredType;
 import javax.lang.model.type.ExecutableType;
 import javax.lang.model.type.TypeKind;
 import javax.lang.model.type.TypeMirror;
+import javax.lang.model.util.ElementFilter;
 import javax.lang.model.util.ElementScanner8;
 import javax.lang.model.util.SimpleAnnotationValueVisitor8;
 import javax.lang.model.util.Types;
@@ -228,8 +230,15 @@ class ClassVisitorDriverFromElement {
 
       private void generateBridge(ExecutableElement fromMethod, ExecutableElement toMethod) {
         ExecutableType toErasure = (ExecutableType) types.erasure(toMethod.asType());
-        String bridgeDescriptor = descriptorFactory.getDescriptor(toErasure);
-        if (bridgedDescriptors.get(toMethod.getSimpleName()).contains(bridgeDescriptor)) {
+        boolean fromClassFile =
+            ClassFileTypes.isReadFromClassFile(toMethod.getEnclosingElement())
+                && ClassFileTypes.getDescriptor(types, toErasure) != null;
+        String bridgeDescriptor =
+            fromClassFile
+                ? Objects.requireNonNull(ClassFileTypes.getDescriptor(types, toErasure))
+                : descriptorFactory.getDescriptor(toErasure);
+        if (bridgedDescriptors.get(toMethod.getSimpleName()).contains(bridgeDescriptor)
+            || declaresMethodWithDescriptor(toMethod.getSimpleName(), bridgeDescriptor)) {
           return;
         }
 
@@ -237,7 +246,11 @@ class ClassVisitorDriverFromElement {
 
         String[] exceptions =
             toErasure.getThrownTypes().stream()
-                .map(descriptorFactory::getInternalName)
+                .map(
+                    thrown ->
+                        fromClassFile
+                            ? Objects.requireNonNull(ClassFileTypes.getInternalName(thrown))
+                            : descriptorFactory.getInternalName(thrown))
                 .toArray(String[]::new);
 
         MethodVisitor methodVisitor =
@@ -268,6 +281,21 @@ class ClassVisitorDriverFromElement {
 
           bridgedDescriptors.put(toMethod.getSimpleName(), bridgeDescriptor);
         }
+      }
+
+      /**
+       * javac never writes a bridge with the descriptor of a method the class declares. The bridge
+       * finder can still ask for one when a missing class that the source names by its simple name
+       * is the class a class file names.
+       */
+      private boolean declaresMethodWithDescriptor(Name name, String descriptor) {
+        for (ExecutableElement method : ElementFilter.methodsIn(subclass.getEnclosedElements())) {
+          if (method.getSimpleName().contentEquals(name)
+              && descriptor.equals(descriptorFactory.getDescriptor(method))) {
+            return true;
+          }
+        }
+        return false;
       }
 
       private int getBridgeAccessFlags(ExecutableElement method) {

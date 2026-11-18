@@ -11,11 +11,14 @@
 package com.facebook.buck.jvm.java.plugin.adapter;
 
 import com.facebook.buck.jvm.java.lang.model.BridgeMethod;
+import com.facebook.buck.jvm.java.lang.model.ClassFileBridges;
 import com.facebook.buck.jvm.java.lang.model.ElementsExtended;
+import com.facebook.buck.jvm.java.lang.model.ErasedTypes;
 import com.facebook.buck.jvm.java.lang.model.MoreAnnotations;
 import com.facebook.buck.jvm.java.lang.model.MoreElements;
 import com.facebook.infer.annotation.Nullsafe;
 import com.sun.source.util.Trees;
+import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
@@ -28,6 +31,7 @@ import javax.lang.model.element.Element;
 import javax.lang.model.element.ExecutableElement;
 import javax.lang.model.element.Name;
 import javax.lang.model.element.TypeElement;
+import javax.lang.model.type.ExecutableType;
 import javax.lang.model.util.ElementFilter;
 import javax.lang.model.util.Elements;
 import javax.lang.model.util.Types;
@@ -45,6 +49,9 @@ public class ElementsExtendedImpl extends DelegatingElements implements Elements
   private final Map<TypeElement, Map<Name, List<ExecutableElement>>> allMethodsMaps =
       new HashMap<>();
   private final BridgeMethods bridgeMethods;
+  private final Map<TypeElement, Optional<Map<String, List<ExecutableElement>>>> classFileBridges =
+      new HashMap<>();
+  private List<Path> localClassDirectories = Collections.emptyList();
   private final Types types;
   private final Trees trees;
 
@@ -104,12 +111,8 @@ public class ElementsExtendedImpl extends DelegatingElements implements Elements
         break;
       }
 
-      Name name = method.getSimpleName();
-      List<BridgeMethod> bridgeMethods = this.bridgeMethods.getBridgeMethodsNoCreate(type, name);
-
       Optional<ExecutableElement> result =
-          bridgeMethods.stream()
-              .map(it -> it.to)
+          getBinaryBridges(type, method.getSimpleName()).stream()
               .filter(it -> binarySignaturesMatch(it, method))
               .findFirst();
       if (result.isPresent()) {
@@ -121,9 +124,36 @@ public class ElementsExtendedImpl extends DelegatingElements implements Elements
     return implementationOwner;
   }
 
+  /**
+   * The bridges a class declares, as the VM sees them: those in its class file when it is read from
+   * one, otherwise the bridges javac adds when it compiles the class.
+   */
+  private List<ExecutableElement> getBinaryBridges(TypeElement type, Name name) {
+    Optional<Map<String, List<ExecutableElement>>> declared =
+        classFileBridges.computeIfAbsent(
+            type,
+            it ->
+                Optional.ofNullable(
+                    ClassFileBridges.getDeclaredBridges(it, localClassDirectories)));
+    if (declared.isPresent()) {
+      return declared.get().getOrDefault(name.toString(), Collections.emptyList());
+    }
+    List<ExecutableElement> result = new ArrayList<>();
+    for (BridgeMethod bridgeMethod : bridgeMethods.getBridgeMethodsNoCreate(type, name)) {
+      result.add(bridgeMethod.to);
+    }
+    return result;
+  }
+
   private boolean binarySignaturesMatch(ExecutableElement e1, ExecutableElement e2) {
-    return types.isSameType(types.erasure(e1.asType()), types.erasure(e2.asType()))
-        && types.isSameType(types.erasure(e1.getReturnType()), types.erasure(e2.getReturnType()));
+    return ErasedTypes.isSameDescriptor(
+        types, (ExecutableType) e1.asType(), (ExecutableType) e2.asType());
+  }
+
+  @Override
+  public void setLocalClassDirectories(List<Path> directories) {
+    localClassDirectories = List.copyOf(directories);
+    classFileBridges.clear();
   }
 
   @Override

@@ -44,7 +44,8 @@ public interface ResolvedJavac {
       @Nullable JarParameters libraryJarParameters,
       AbiGenerationMode abiGenerationMode,
       AbiGenerationMode abiCompatibilityMode,
-      @Nullable SourceOnlyAbiRuleInfoFactory ruleInfoFactory);
+      @Nullable SourceOnlyAbiRuleInfoFactory ruleInfoFactory,
+      ImmutableList<RelPath> localClassDirectories);
 
   String getDescription(ImmutableList<String> options, RelPath pathToSrcsList);
 

@@ -11,6 +11,7 @@
 package com.facebook.buck.jvm.java.lang.model;
 
 import com.facebook.infer.annotation.Nullsafe;
+import java.nio.file.Path;
 import java.util.List;
 import javax.lang.model.element.AnnotationMirror;
 import javax.lang.model.element.Element;
@@ -39,6 +40,13 @@ public interface ElementsExtended extends Elements {
   @Nullable TypeElement getBinaryImplementationOwner(ExecutableElement method, TypeElement inType);
 
   boolean isCompiledInCurrentRun(Element element);
+
+  /**
+   * Directories of class files this module compiles in another step, such as a mixed module's own
+   * Kotlin classes. Their bridges are computed, not read from their class files: source-only ABI
+   * generation reads stubs there while the library compilation reads the compiled classes.
+   */
+  default void setLocalClassDirectories(List<Path> directories) {}
 
   /**
    * Return type annotations present on an element.

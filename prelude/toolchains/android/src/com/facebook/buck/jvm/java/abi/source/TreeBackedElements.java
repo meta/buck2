@@ -12,11 +12,13 @@ package com.facebook.buck.jvm.java.abi.source;
 
 import com.facebook.buck.jvm.java.abi.source.api.CannotInferException;
 import com.facebook.buck.jvm.java.lang.model.BridgeMethod;
+import com.facebook.buck.jvm.java.lang.model.ClassFileTypes;
 import com.facebook.buck.jvm.java.plugin.adapter.ElementsExtendedImpl;
 import com.facebook.infer.annotation.Nullsafe;
 import com.facebook.infer.annotation.PropagatesNullable;
 import com.sun.source.util.Trees;
 import java.io.Writer;
+import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashMap;
@@ -312,6 +314,12 @@ class TreeBackedElements extends ElementsExtendedImpl {
     return javacElements.getAllMembers(type);
   }
 
+  @Override
+  public void setLocalClassDirectories(List<Path> directories) {
+    super.setLocalClassDirectories(directories);
+    javacElementsExtended.setLocalClassDirectories(directories);
+  }
+
   /**
    * Computes the bridge methods javac emits for a source type from javac's own symbols, which are
    * complete for source types after enter, and maps them back to the canonical elements. Fails when
@@ -342,6 +350,18 @@ class TreeBackedElements extends ElementsExtendedImpl {
 
   private boolean hasResolvedErasure(ExecutableElement javacMethod) {
     ExecutableType erasure = (ExecutableType) javacTypes.erasure(javacMethod.asType());
+    if (ClassFileTypes.isReadFromClassFile(javacMethod.getEnclosingElement())) {
+      // A class file names each class in the descriptor, available or not.
+      if (ClassFileTypes.getDescriptor(javacTypes, erasure) == null) {
+        return false;
+      }
+      for (TypeMirror thrown : erasure.getThrownTypes()) {
+        if (ClassFileTypes.getInternalName(thrown) == null) {
+          return false;
+        }
+      }
+      return true;
+    }
     List<TypeMirror> signature = new ArrayList<>(erasure.getParameterTypes());
     signature.add(erasure.getReturnType());
     signature.addAll(erasure.getThrownTypes());

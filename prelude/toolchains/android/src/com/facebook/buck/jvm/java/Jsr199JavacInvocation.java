@@ -95,6 +95,7 @@ class Jsr199JavacInvocation implements ResolvedJavac.Invocation {
   @Nullable private final JarParameters abiJarParameters;
   @Nullable private final JarParameters libraryJarParameters;
   @Nullable private final SourceOnlyAbiRuleInfoFactory ruleInfoFactory;
+  private final ImmutableList<RelPath> localClassDirectories;
   private final boolean trackClassUsage;
 
   @Nullable private CompilerWorker worker;
@@ -114,7 +115,8 @@ class Jsr199JavacInvocation implements ResolvedJavac.Invocation {
       @Nullable JarParameters libraryJarParameters,
       AbiGenerationMode abiGenerationMode,
       AbiGenerationMode abiCompatibilityMode,
-      @Nullable SourceOnlyAbiRuleInfoFactory ruleInfoFactory) {
+      @Nullable SourceOnlyAbiRuleInfoFactory ruleInfoFactory,
+      ImmutableList<RelPath> localClassDirectories) {
     this.compilerConstructor = compilerConstructor;
     this.context = context;
     this.invokingRule = invokingRule;
@@ -130,6 +132,7 @@ class Jsr199JavacInvocation implements ResolvedJavac.Invocation {
     this.libraryJarParameters = libraryJarParameters;
     this.abiGenerationMode = abiGenerationMode;
     this.ruleInfoFactory = ruleInfoFactory;
+    this.localClassDirectories = localClassDirectories;
   }
 
   @Override
@@ -248,6 +251,17 @@ class Jsr199JavacInvocation implements ResolvedJavac.Invocation {
 
       JarParameters jarParameters = Objects.requireNonNull(abiJarParameters);
       BuckJavacTaskProxy javacTask = getJavacTask(buildSourceOnlyAbi);
+      if (buildSourceOnlyAbi) {
+        javacTask
+            .getElements()
+            .setLocalClassDirectories(
+                localClassDirectories.stream()
+                    .map(
+                        directory ->
+                            ProjectFilesystemUtils.getPathForRelativePath(
+                                context.getRuleCellRoot(), directory))
+                    .collect(ImmutableList.toImmutableList()));
+      }
       // abi could be ready when compiler phase finished
       javacTask.addPostEnterCallback(
           topLevelTypes -> {

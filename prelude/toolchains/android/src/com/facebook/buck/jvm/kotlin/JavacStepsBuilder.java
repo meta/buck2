@@ -92,7 +92,8 @@ public class JavacStepsBuilder {
             parameters.getAbiGenerationMode(),
             parameters.getAbiCompatibilityMode(),
             parameters.getShouldTrackClassUsage(),
-            ruleInfoFactory);
+            ruleInfoFactory,
+            outputDirectories);
 
     // Indicate no annotation processing required from this factory.  It is already handled by the
     // Kotlin factory, when it resolves javac's options.

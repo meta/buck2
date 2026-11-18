@@ -61,7 +61,8 @@ public abstract class Jsr199Javac {
         @Nullable JarParameters libraryJarParameters,
         AbiGenerationMode abiGenerationMode,
         AbiGenerationMode abiCompatibilityMode,
-        @Nullable SourceOnlyAbiRuleInfoFactory ruleInfoFactory) {
+        @Nullable SourceOnlyAbiRuleInfoFactory ruleInfoFactory,
+        ImmutableList<RelPath> localClassDirectories) {
       return new Jsr199JavacInvocation(
           () -> createCompiler(context),
           context,
@@ -77,7 +78,8 @@ public abstract class Jsr199Javac {
           libraryJarParameters,
           abiGenerationMode,
           abiCompatibilityMode,
-          ruleInfoFactory);
+          ruleInfoFactory,
+          localClassDirectories);
     }
   }
 }

@@ -44,7 +44,8 @@ public class FakeJavac implements ResolvedJavac {
       @Nullable JarParameters libraryJarParameters,
       AbiGenerationMode abiGenerationMode,
       AbiGenerationMode abiCompatibilityMode,
-      @Nullable SourceOnlyAbiRuleInfoFactory ruleInfoFactory) {
+      @Nullable SourceOnlyAbiRuleInfoFactory ruleInfoFactory,
+      ImmutableList<RelPath> localClassDirectories) {
     return new ResolvedJavac.Invocation() {
       @Override
       public int buildSourceOnlyAbiJar(boolean isMixedModule) {

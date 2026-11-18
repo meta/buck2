@@ -100,6 +100,125 @@ async fn test_distinct_flag_sets_compile_separately(buck: &Buck) -> anyhow::Resu
     Ok(())
 }
 
+/// The targets that a uquery prints, sorted.
+async fn query(buck: &Buck, query: &str) -> anyhow::Result<Vec<String>> {
+    let res = buck.uquery(&[query]).await?;
+    let mut targets: Vec<String> = res.stdout.lines().map(str::to_owned).collect();
+    targets.sort();
+    Ok(targets)
+}
+
+// prelude/lean/library.bzl `covers`
+#[buck_test(inplace = false)]
+async fn test_queries_find_the_lean_target_that_covers_a_file(buck: &Buck) -> anyhow::Result<()> {
+    let spec = ["root//lean_covers:spec"];
+    let covered = "lean_covers/code/add.txt";
+    assert_eq!(
+        query(buck, &format!("kind('^lean_', owner({covered}))")).await?,
+        spec
+    );
+    assert_eq!(
+        query(
+            buck,
+            &format!(r"attrregexfilter(covers, 'code/add\.txt$', owner({covered}))")
+        )
+        .await?,
+        spec
+    );
+
+    // A file that the library reads, but does not cover: the library owns it too, and only the
+    // query on `covers` tells the two apart.
+    let resource = "lean_covers/Spec/notes.txt";
+    assert_eq!(
+        query(buck, &format!("kind('^lean_', owner({resource}))")).await?,
+        spec
+    );
+    assert_eq!(
+        query(
+            buck,
+            &format!(r"attrregexfilter(covers, 'Spec/notes\.txt$', owner({resource}))")
+        )
+        .await?,
+        Vec::<String>::new()
+    );
+
+    assert_eq!(
+        query(buck, "owner(lean_covers/code/sub.txt)").await?,
+        Vec::<String>::new()
+    );
+    Ok(())
+}
+
+#[buck_test(inplace = false)]
+async fn test_covers_attribute_has_the_files_of_a_lean_target(buck: &Buck) -> anyhow::Result<()> {
+    let res = buck
+        .uquery(&["--output-attribute", "^covers$", "root//lean_covers:"])
+        .await?;
+    let targets: Value = serde_json::from_str(&res.stdout)?;
+    assert_eq!(
+        targets,
+        serde_json::json!({
+            "root//lean_covers:spec": {
+                "covers": ["root//lean_covers/code/add.txt", "root//lean_covers/code/mul.txt"],
+            },
+            "root//lean_covers:spec_check": {"covers": null},
+        })
+    );
+    Ok(())
+}
+
+// prelude/lean/library.bzl `lean_default_info`
+#[buck_test(inplace = false)]
+async fn test_covers_sub_target_is_a_directory_of_the_files(buck: &Buck) -> anyhow::Result<()> {
+    let res = buck
+        .build(&["root//lean_covers_dir:covered[covers]"])
+        .await?;
+    let dir = res
+        .build_report()?
+        .output_for_sub_target("root//lean_covers_dir:covered", "covers")?;
+    assert_eq!(std::fs::read_to_string(dir.join("a.txt"))?, "a\n");
+    assert_eq!(
+        std::fs::read_to_string(dir.join("sub").join("b.txt"))?,
+        "b\n"
+    );
+    Ok(())
+}
+
+#[buck_test(inplace = false)]
+async fn test_covers_without_a_file_is_an_error(buck: &Buck) {
+    buck.build(&["root//lean_covers_dir:no_file"])
+        .await
+        .expect_failure()
+        .assert_stderr_matches("`covers` names no file");
+}
+
+#[buck_test(inplace = false)]
+async fn test_a_target_in_covers_is_an_error(buck: &Buck) {
+    // The second target names a file of another package through an `export_file`: its output is
+    // a source file, at the path of a file that the target covers in its own package.
+    for (target, label) in [
+        ("output_of_a_target", "root//lean_covers_dir:generated"),
+        ("source_of_a_target", "root//lean_covers_other:a_txt"),
+    ] {
+        buck.build(&[&format!("root//lean_covers_dir:{target}")])
+            .await
+            .expect_failure()
+            .assert_stderr_matches(&format!(
+                "`covers` takes files of the package, and `{label}` is a target"
+            ));
+    }
+}
+
+#[buck_test(inplace = false)]
+async fn test_build_fails_on_a_covered_file_that_does_not_exist(buck: &Buck) {
+    // No action of the default output reads the file. Open source buck2 fails earlier, when it
+    // reads the build file.
+    buck.build(&["root//lean_covers_missing:missing_file"])
+        .await
+        .expect_failure()
+        .assert_stderr_matches(r"missing\.txt`.*does not exist");
+}
+
 // prelude/sh_binary.bzl `_generate_script`
 #[buck_test(inplace = false, skip_for_os = ["windows"])]
 async fn test_two_resources_at_one_link_are_an_error(buck: &Buck) {

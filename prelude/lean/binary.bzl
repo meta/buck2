@@ -28,7 +28,7 @@ load(
 )
 load("@prelude//os_lookup:defs.bzl", "Os", "OsLookup")
 load("@prelude//tests:re_utils.bzl", "get_re_executors_from_props")
-load(":library.bzl", "compile_lean_library", "lean_library_attrs")
+load(":library.bzl", "compile_lean_library", "lean_default_info", "lean_library_attrs")
 load(":providers.bzl", "LeanToolchainInfo")
 load(":transition.bzl", "lean_transition")
 
@@ -71,7 +71,7 @@ def _link_executable(ctx: AnalysisContext) -> Artifact:
 def _lean_binary_impl(ctx: AnalysisContext) -> list[Provider]:
     exe = _link_executable(ctx)
     return [
-        DefaultInfo(default_output = exe),
+        lean_default_info(ctx, exe),
         RunInfo(args = cmd_args(exe)),
     ]
 
@@ -80,7 +80,7 @@ def _lean_test_impl(ctx: AnalysisContext) -> list[Provider]:
     command = [cmd_args(exe)] + ctx.attrs.args
     re_executors = get_re_executors_from_props(ctx)
     return [
-        DefaultInfo(default_output = exe),
+        lean_default_info(ctx, exe),
         RunInfo(args = cmd_args(command)),
         ExternalRunnerTestInfo(
             type = "custom",

@@ -9,6 +9,7 @@
 load("@prelude//cxx:cxx_sources.bzl", "get_srcs_with_flags")
 load("@prelude//http_archive:exec_deps.bzl", "HttpArchiveExecDeps")
 load("@prelude//http_archive:unarchive.bzl", "unarchive")
+load("@prelude//lean:library.bzl", "lean_default_info", "lean_library_attrs")
 
 def _value_impl(_ctx):
     return [DefaultInfo()]
@@ -105,4 +106,13 @@ unpack = rule(
         "excludes": attrs.list(attrs.string(), default = []),
         "exec_deps": attrs.exec_dep(providers = [HttpArchiveExecDeps], default = "prelude//http_archive/tools:exec_deps"),
     },
+)
+
+def _covers_only_impl(ctx):
+    return [lean_default_info(ctx, ctx.actions.write("out.txt", ""))]
+
+# `covers` of the Lean rules on a target that builds without a Lean toolchain.
+covers_only = rule(
+    impl = _covers_only_impl,
+    attrs = {"covers": lean_library_attrs["covers"]},
 )

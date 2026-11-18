@@ -29,6 +29,14 @@ each once, in dependency order. Two libraries cannot have a module of the same
 name. The inputs of a module are only the `.olean` and IR files of the modules
 it imports, transitively, and the `resources` of the target: files that the
 modules read at compile time with `include_str`.
+
+`covers` names the files that the modules model, for example the code that a
+specification is about. No action that compiles the modules reads them. They
+are sources of the target, so queries find the target from a file:
+`owner(<file>)` returns it, and `attrregexfilter(covers, '<file>$',
+owner(<file>))` returns only the targets that name the file in `covers`, not
+in `srcs` or `resources`. The `[covers]` sub-target is a directory of symlinks
+to the files.
 """
 
 load("@prelude//cxx:archive.bzl", "archive_flags")
@@ -420,12 +428,44 @@ def compile_lean_library(ctx: AnalysisContext, link_whole: bool) -> struct:
         native_deps = native_deps,
     )
 
+def lean_default_info(ctx: AnalysisContext, default_output: Artifact, sub_targets: dict[str, list[Provider]] = {}) -> DefaultInfo:
+    """The `DefaultInfo` of a `lean_library`, `lean_binary` or `lean_test`:
+    `default_output`, `sub_targets` and, for a target with `covers`, the
+    `[covers]` sub-target."""
+    covers = ctx.attrs.covers
+    if covers == None:
+        return DefaultInfo(default_output = default_output, sub_targets = sub_targets)
+    if not covers:
+        fail("{}: `covers` names no file".format(ctx.label))
+    files = {}
+    for file in covers:
+        # A label would add the target as a dependency. Its output can also be
+        # a file of another package, which `owner()` does not give to this
+        # target, at a path that a file of this package has too.
+        if isinstance(file, Dependency):
+            fail("{}: `covers` takes files of the package, and `{}` is a target".format(ctx.label, file.label.raw_target()))
+        files[file.short_path] = file
+
+    # Named after the target: `covers` alone is the path of the executable of
+    # a `lean_binary` or `lean_test` with that name.
+    covers_dir = ctx.actions.symlinked_dir(ctx.label.name + ".covers", files)
+    return DefaultInfo(
+        default_output = default_output,
+        # Buck accepts the name of a file that does not exist until an action
+        # reads the file, and no other action of the target reads these. As
+        # an other output, the directory makes a build of the target fail on
+        # such a name.
+        other_outputs = [covers_dir],
+        sub_targets = sub_targets | {"covers": [DefaultInfo(default_output = covers_dir)]},
+    )
+
 def lean_library_impl(ctx: AnalysisContext) -> list[Provider]:
     library = compile_lean_library(ctx, link_whole = ctx.attrs.link_whole)
     return [
-        DefaultInfo(
-            default_output = library.archive,
-            sub_targets = {
+        lean_default_info(
+            ctx,
+            library.archive,
+            {
                 "lean": [DefaultInfo(default_output = library.lean_dir)],
                 "modules": [DefaultInfo(default_output = library.module_list)],
             },
@@ -453,6 +493,14 @@ def lean_library_impl(ctx: AnalysisContext) -> list[Provider]:
 # The attributes of every Lean rule that compiles sources.
 lean_library_attrs = {
     "c_compiler_flags": attrs.list(attrs.arg(), default = [], doc = "Extra flags for the compilation of the generated C."),
+    "covers": attrs.option(
+        # `attrs.source()` alone takes a label too, and gives the output of
+        # the target. With `attrs.dep()` first, a label is a `Dependency`,
+        # which `lean_default_info` refuses.
+        attrs.list(attrs.one_of(attrs.dep(), attrs.source())),
+        default = None,
+        doc = 'Source files of the package that the modules model, for example the code that a specification is about. They make the target an owner of the files for queries: `buck2 uquery "owner(<file>)"` returns it. No action that compiles the modules reads them, so a change to one recompiles nothing. A list without files is an error, so that a `glob` that matches nothing does not pass unseen; so are the label of a target, and a file that does not exist, when the target is built. The `[covers]` sub-target is a directory of symlinks to the files.',
+    ),
     "deps": attrs.list(attrs.dep(providers = [LeanLibraryInfo]), default = [], doc = "`lean_library` targets whose modules `srcs` import."),
     "labels": attrs.list(attrs.string(), default = []),
     "lean_flags": attrs.list(attrs.arg(), default = [], doc = "Extra flags for `lean`, for example `-DmaxHeartbeats=0`."),

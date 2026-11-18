@@ -421,7 +421,8 @@ mod tests {
         }
     }
 
-    /// Value whose static type is a `TyUser`, and whose base only supports `+`.
+    /// Value whose static type is a `TyUser`, and whose base only supports `+`, with a value
+    /// of the same type.
     #[derive(
         Debug,
         derive_more::Display,
@@ -447,7 +448,7 @@ mod tests {
             )
         }
 
-        fn add(&self, _other: Value<'v>, _heap: Heap<'v>) -> Option<crate::Result<Value<'v>>> {
+        fn add(&self, _other: &Self) -> Coin {
             unreachable!("only typechecked in tests")
         }
     }
@@ -549,6 +550,44 @@ def test():
     mk_coin() - mk_coin()
 "#,
             "Binary operator `-` is not available on the types `Coin` and `Coin`",
+        );
+    }
+
+    /// The base's `+` is written with its operand and result, which are the base's type, and
+    /// that is the `TyUser`: a value of the user type or of unknown type is taken, a value of
+    /// another type is not, and the result is of the user type.
+    #[test]
+    fn test_ty_user_typed_bin_op() {
+        let mut a = Assert::new();
+        a.globals_add(globals);
+        a.pass(
+            r#"
+def test(x):
+    mk_coin() + x
+"#,
+        );
+        a.fail(
+            r#"
+def test():
+    mk_coin() + mk_fruit()
+"#,
+            "Binary operator `+` is not available on the types `Coin` and `fruit`",
+        );
+        a.fail(
+            r#"
+Pear = fruit("pear")
+
+def test(pear: Pear):
+    mk_coin() + pear
+"#,
+            "Binary operator `+` is not available on the types `Coin` and `pear`",
+        );
+        a.fail(
+            r#"
+def test() -> str:
+    return mk_coin() + mk_coin()
+"#,
+            "Expected type `str` but got `Coin`",
         );
     }
 }

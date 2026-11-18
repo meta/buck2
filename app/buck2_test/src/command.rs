@@ -1013,6 +1013,8 @@ enum TestDriverTask {
         oncall: Option<String>,
         tenting_acl_names: TentingStatus,
     },
+    /// Errors for the report, from work that goes on with its other tasks.
+    RecordErrors { events: Vec<BuildEvent> },
 }
 
 #[derive(Copy, Clone, Dupe)]
@@ -1055,7 +1057,7 @@ struct TestDriver<'a, 'e> {
     pending_build_work: usize,
     labels_configured: BuckMutSet<(ProvidersLabelWithModifiers, bool)>,
     labels_tested: BuckMutSet<ConfiguredProvidersLabel>,
-    /// Fed the events of every `ControlFlow::Break`.
+    /// Fed the events of every `ControlFlow::Break` and `TestDriverTask::RecordErrors`.
     errors: BuildTargetResultBuilder,
     /// The first error `errors` returned, which fails the run once it has been cleaned up.
     first_internal_error: Option<buck2_error::Error>,
@@ -1181,16 +1183,19 @@ impl<'a, 'e> TestDriver<'a, 'e> {
                                     tenting_acl_names,
                                 );
                             }
+                            TestDriverTask::RecordErrors { events } => self.record_errors(events),
                         }
                     }
                 }
-                ControlFlow::Break(events) => {
-                    for event in events {
-                        if let Err(e) = self.errors.event(event) {
-                            self.first_internal_error.get_or_insert(e);
-                        }
-                    }
-                }
+                ControlFlow::Break(events) => self.record_errors(events),
+            }
+        }
+    }
+
+    fn record_errors(&mut self, events: Vec<BuildEvent>) {
+        for event in events {
+            if let Err(e) = self.errors.event(event) {
+                self.first_internal_error.get_or_insert(e);
             }
         }
     }
@@ -1251,19 +1256,25 @@ impl<'a, 'e> TestDriver<'a, 'e> {
 
                 let (targets, missing) = res.apply_spec(spec);
 
+                let mut missing_target_errors = None;
                 if let Some(missing) = missing {
                     match state.missing_target_behavior {
                         MissingTargetBehavior::Fail => {
-                            let err = missing.into_first_error();
-                            let events = vec![BuildEvent::OtherError {
-                                label: Some(ProvidersLabel::new(
-                                    TargetLabel::new(err.package.dupe(), err.target.as_ref()),
-                                    buck2_core::provider::label::ProvidersName::Default,
-                                )),
-                                err: err.into(),
-                            }];
-
-                            return ControlFlow::Break(finish_error_only_targets(events));
+                            // As in `buck2 build`, each missing target fails on its own and the
+                            // package's other targets are still tested.
+                            let events = missing
+                                .into_all_errors()
+                                .map(|err| BuildEvent::OtherError {
+                                    label: Some(ProvidersLabel::new(
+                                        TargetLabel::new(err.package.dupe(), err.target.as_ref()),
+                                        buck2_core::provider::label::ProvidersName::Default,
+                                    )),
+                                    err: err.into(),
+                                })
+                                .collect();
+                            missing_target_errors = Some(TestDriverTask::RecordErrors {
+                                events: finish_error_only_targets(events),
+                            });
                         }
                         MissingTargetBehavior::Warn => {
                             console_message(missing.missing_targets_warning());
@@ -1312,16 +1323,18 @@ impl<'a, 'e> TestDriver<'a, 'e> {
                                 target_node.test_config_unification_rollout(),
                             )
                         });
-                let work = labels
+                let work = missing_target_errors
                     .into_iter()
-                    .map(|(label_with_modifiers, test_config_unification_rollout)| {
-                        TestDriverTask::ConfigureTarget {
-                            label_with_modifiers,
-                            skippable,
-                            test_config_unification_rollout,
-                            tenting_acl_names: tenting_acl_names.dupe(),
-                        }
-                    })
+                    .chain(labels.into_iter().map(
+                        |(label_with_modifiers, test_config_unification_rollout)| {
+                            TestDriverTask::ConfigureTarget {
+                                label_with_modifiers,
+                                skippable,
+                                test_config_unification_rollout,
+                                tenting_acl_names: tenting_acl_names.dupe(),
+                            }
+                        },
+                    ))
                     .collect();
 
                 ControlFlow::Continue(work)

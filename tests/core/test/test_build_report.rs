@@ -158,6 +158,23 @@ async fn test_target_doesnt_exist(buck: &Buck, tmp_path: &Path) -> anyhow::Resul
     .await
 }
 
+/// As in `buck build`, each missing target fails on its own and the package's other targets are
+/// still built and tested.
+#[buck_test]
+async fn test_missing_targets_beside_existing_target(
+    buck: &Buck,
+    tmp_path: &Path,
+) -> anyhow::Result<()> {
+    build_report_test(
+        buck,
+        tmp_path,
+        "test_missing_targets_beside_existing_target",
+        &["//:ok", "//:doesnt_exist", "//:doesnt_exist_either"],
+        true,
+    )
+    .await
+}
+
 #[buck_test]
 async fn test_multiple_failures_included(buck: &Buck, tmp_path: &Path) -> anyhow::Result<()> {
     build_report_test(

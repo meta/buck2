@@ -1,0 +1,71 @@
+# This file is @generated, regenerate by re-running test with `-- --env BUCK2_UPDATE_GOLDEN=1` appended to the test command
+
+{
+  "error_category": "USER",
+  "failures": {
+    "root//:doesnt_exist": "Unknown target `<TARGET>` from package <IRRELEVANT>",
+    "root//:doesnt_exist_either": "Unknown target `<TARGET>` from package <IRRELEVANT>"
+  },
+  "results": {
+    "root//:doesnt_exist": {
+      "configured": {},
+      "configured_graph_size": null,
+      "errors": [
+        {
+          "action_error": null,
+          "category_key": "MISSING_TARGET",
+          "cause_index": 0,
+          "error_category": "USER",
+          "error_tags": [
+            "MISSING_TARGET"
+          ],
+          "message_content": "<STRING_HASH>"
+        }
+      ],
+      "other_outputs": {},
+      "outputs": {},
+      "success": "FAIL"
+    },
+    "root//:doesnt_exist_either": {
+      "configured": {},
+      "configured_graph_size": null,
+      "errors": [
+        {
+          "action_error": null,
+          "category_key": "MISSING_TARGET",
+          "cause_index": 1,
+          "error_category": "USER",
+          "error_tags": [
+            "MISSING_TARGET"
+          ],
+          "message_content": "<STRING_HASH>"
+        }
+      ],
+      "other_outputs": {},
+      "outputs": {},
+      "success": "FAIL"
+    },
+    "root//:ok": {
+      "configured": {
+        "<unspecified>": {
+          "configured_graph_size": null,
+          "errors": [],
+          "other_outputs": {},
+          "outputs": {},
+          "success": "SUCCESS"
+        }
+      },
+      "configured_graph_size": null,
+      "errors": [],
+      "other_outputs": {},
+      "outputs": {},
+      "success": "SUCCESS"
+    }
+  },
+  "strings": {
+    "<STRING_HASH>": "Unknown target `<TARGET>` from package <IRRELEVANT>",
+    "<STRING_HASH>": "Unknown target `<TARGET>` from package <IRRELEVANT>"
+  },
+  "success": false,
+  "truncated": false
+}

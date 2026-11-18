@@ -22,13 +22,12 @@ use buck2_error::BuckErrorContext;
 use buck2_error::internal_error;
 use buck2_fs::error::IoResultExt;
 use buck2_fs::fs_util;
-use buck2_fs::paths::abs_path::AbsPath;
 
 use crate::artifact_value::ArtifactValue;
 use crate::digest_config::DigestConfig;
 use crate::execute::blocking::BlockingExecutor;
 use crate::execute::clean_output_paths::cleanup_path;
-use crate::execute::clean_output_paths::tag_file_busy_error;
+use crate::materialize::atomic_publish;
 use crate::materialize::materializer::WriteRequest;
 
 /// Serialization of concurrent writers to one output path.
@@ -208,77 +207,24 @@ pub fn maybe_locked_write(
 
 /// Writes `content` to a freshly created temporary sibling of `path`, then
 /// renames it into place, atomically replacing any plain file already there.
-///
-/// `tempfile` owns temp naming (random, claimed with create-new semantics, so
-/// nothing that already exists is ever touched) and deletes the temp on drop
-/// when the publish does not complete; the publish rename goes through
-/// `fs_util` so the operation with replace semantics stays in buck's IO
-/// layer. The temp creation and content write bypass `fs_util` (no IO
-/// counters, retries, or error categorization for those two operations).
 fn write_via_atomic_rename(
     fs: &ProjectRoot,
     path: &ProjectRelativePath,
     content: &[u8],
     is_executable: bool,
 ) -> buck2_error::Result<()> {
-    let (Some(parent), Some(file_name)) = (path.parent(), path.file_name()) else {
+    let Some(parent) = path.parent() else {
         return Err(internal_error!(
             "write path `{path}` has no parent directory"
         ));
     };
-    let dest_dir = fs.resolve(parent);
-    fs_util::create_dir_all(&dest_dir)?;
+    fs_util::create_dir_all(fs.resolve(parent))?;
 
-    // The destination's name in the prefix is only for debuggability. Cap it
-    // (on a char boundary) so the temp name stays under NAME_MAX even when
-    // the destination name is itself near the limit.
-    const TEMP_PREFIX_NAME_BYTES: usize = 64;
-    let name = file_name.as_str();
-    let mut cap = name.len().min(TEMP_PREFIX_NAME_BYTES);
-    while !name.is_char_boundary(cap) {
-        cap -= 1;
-    }
-    let prefix = format!(".{}.", &name[..cap]);
-    let mut builder = tempfile::Builder::new();
-    builder.prefix(&prefix).suffix(".tmp");
-    // The rename carries the temp's mode onto the destination, so give the
-    // temp the mode a materialized output is expected to have: umask-defaulted
-    // 0666 (`File::create` semantics), not tempfile's owner-only default. The
-    // executable bit is applied below.
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        builder.permissions(std::fs::Permissions::from_mode(0o666));
-    }
-    let mut temp = builder
-        .tempfile_in(&dest_dir)
-        .with_buck_error_context(|| format!("creating temp file for `{path}`"))?;
+    let dest = fs.resolve(path);
+    let mut temp = atomic_publish::temp_sibling(&dest)?;
     temp.write_all(content)
         .with_buck_error_context(|| format!("writing temp file for `{path}`"))?;
-
-    let temp_path = temp.into_temp_path();
-    let temp_abs = AbsPath::new(&*temp_path)?;
-    #[cfg(unix)]
-    if is_executable {
-        use std::os::unix::fs::PermissionsExt;
-        fs_util::set_permissions(temp_abs, std::fs::Permissions::from_mode(0o755))
-            .categorize_internal()?;
-    }
-    #[cfg(not(unix))]
-    let _ = is_executable;
-
-    // On Windows a destination another process holds open cannot be
-    // replaced; report that as file-busy.
-    fs_util::rename(temp_abs, fs.resolve(path))
-        .categorize_internal()
-        .map_err(tag_file_busy_error)?;
-    // The rename freed the temp name for another writer to claim, so
-    // `temp_path`'s delete-on-drop must be disarmed — it deletes by name and
-    // could unlink someone else's fresh claim. (On failure above, that drop
-    // is exactly what cleans our temp up.)
-    // `-W let-underscore-drop` wants a named binding for the dropped Result.
-    let _unused = temp_path.keep();
-    Ok(())
+    atomic_publish::publish(temp, &dest, is_executable)
 }
 
 /// Writes each request's content at its path. With `read_only` the files are left without their

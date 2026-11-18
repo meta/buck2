@@ -23,7 +23,6 @@ use buck2_common::file_ops::metadata::TrackedFileDigest;
 use buck2_core::fs::project::ProjectRoot;
 use buck2_core::fs::project_rel_path::ProjectRelativePath;
 use buck2_error::BuckErrorContext;
-use buck2_fs::error::IoResultExt;
 use buck2_fs::fs_util;
 use buck2_http::HttpClient;
 use buck2_http::retries::HttpError;
@@ -43,6 +42,7 @@ use sha2::Sha256;
 use smallvec::SmallVec;
 
 use crate::digest_config::DigestConfig;
+use crate::materialize::atomic_publish;
 
 #[derive(Debug, Clone, Dupe, Allocative, Pagable)]
 pub enum Checksum {
@@ -273,10 +273,12 @@ pub async fn http_download(
                 .map_err(|e| HttpDownloadError::Client(HttpError::Client(e)))?;
 
             let (head, stream) = response.into_parts();
-            let file = fs_util::create_file(&abs_path)
-                .categorize_internal()
-                .map_err(HttpDownloadError::IoError)?;
-            let buf_writer = std::io::BufWriter::new(file);
+            // Whatever is already at `path`, such as another configuration's download of the same
+            // content-based path, stays readable until the complete and verified download
+            // replaces it.
+            let temp =
+                atomic_publish::temp_sibling(&abs_path).map_err(HttpDownloadError::IoError)?;
+            let buf_writer = std::io::BufWriter::new(temp.as_file());
 
             let digest = copy_and_hash(
                 url,
@@ -290,10 +292,8 @@ pub async fn http_download(
             )
             .await?;
 
-            if executable {
-                fs.set_executable(path)
-                    .map_err(HttpDownloadError::IoError)?;
-            }
+            atomic_publish::publish(temp, &abs_path, executable)
+                .map_err(HttpDownloadError::IoError)?;
 
             Result::<_, HttpDownloadError>::Ok(TrackedFileDigest::new(
                 digest,
@@ -514,6 +514,7 @@ impl fmt::Display for MaybeResponseDebugInfo {
 mod tests {
     use assert_matches::assert_matches;
     use buck2_common::cas_digest::testing;
+    use buck2_fs::error::IoResultExt;
     use futures::stream;
 
     use super::*;
@@ -662,5 +663,113 @@ mod tests {
         let mut buff = DebugBuffer::new(4);
         buff.peek(&[0xff]);
         assert_eq!(buff.to_utf8(), None);
+    }
+
+    /// Serves `content` at `/file` for as many requests as a test makes.
+    fn serve(content: Vec<u8>) -> httptest::Server {
+        use httptest::Expectation;
+        use httptest::matchers::request;
+        use httptest::responders;
+
+        let server = httptest::Server::run();
+        server.expect(
+            Expectation::matching(request::method_path("GET", "/file"))
+                .times(..)
+                .respond_with(responders::status_code(200).body(content)),
+        );
+        server
+    }
+
+    async fn download(
+        server: &httptest::Server,
+        project: &ProjectRoot,
+        path: &ProjectRelativePath,
+        content: &[u8],
+    ) -> buck2_error::Result<TrackedFileDigest> {
+        buck2_certs::certs::maybe_setup_cryptography();
+        let client = buck2_http::HttpClientBuilder::https_with_system_roots()
+            .await?
+            .build();
+        let checksum = Checksum::Sha1(hex::encode(Sha1::digest(content)).into());
+        http_download(
+            &client,
+            project,
+            DigestConfig::testing_default(),
+            path,
+            &server.url_str("/file"),
+            &checksum,
+            false,
+        )
+        .await
+    }
+
+    /// A target analyzed under several configurations downloads one content-based output path
+    /// once per configuration, while consumers of the download that finished first already read
+    /// it. They must never see the file missing or partially written.
+    #[tokio::test]
+    async fn test_redownload_never_exposes_a_missing_or_partial_file() -> buck2_error::Result<()> {
+        use std::sync::Arc;
+        use std::sync::atomic::AtomicBool;
+        use std::sync::atomic::Ordering;
+
+        use buck2_core::fs::project::ProjectRootTemp;
+
+        // Large enough to arrive in many chunks, so a reader could catch it half written.
+        let content: Vec<u8> = (0..4 << 20).map(|i: u32| i as u8).collect();
+        let server = serve(content.clone());
+        let project = ProjectRootTemp::new()?;
+        let path = ProjectRelativePath::new("out/file")?;
+        download(&server, project.path(), path, &content).await?;
+
+        let stop = Arc::new(AtomicBool::new(false));
+        let reader = std::thread::spawn({
+            let stop = stop.dupe();
+            let abs = project.path().resolve(path);
+            let content = content.clone();
+            move || -> Result<usize, String> {
+                let mut reads = 0;
+                while !stop.load(Ordering::Relaxed) {
+                    match std::fs::read(&abs) {
+                        Ok(read) if read == content => reads += 1,
+                        Ok(read) => return Err(format!("read {} bytes", read.len())),
+                        Err(e) => return Err(e.to_string()),
+                    }
+                }
+                Ok(reads)
+            }
+        });
+        for _ in 0..10 {
+            download(&server, project.path(), path, &content).await?;
+        }
+        stop.store(true, Ordering::Relaxed);
+
+        let reads = reader.join().expect("reader panicked");
+        assert!(
+            matches!(reads, Ok(n) if n > 0),
+            "a reader saw the file missing or incomplete: {reads:?}"
+        );
+        Ok(())
+    }
+
+    /// A download that fails its checksum leaves an earlier one in place, and nothing else.
+    #[tokio::test]
+    async fn test_failed_download_keeps_the_published_file() -> buck2_error::Result<()> {
+        use buck2_core::fs::project::ProjectRootTemp;
+
+        let project = ProjectRootTemp::new()?;
+        let path = ProjectRelativePath::new("out/file")?;
+        download(&serve(b"good".to_vec()), project.path(), path, b"good").await?;
+
+        let error = download(&serve(b"evil".to_vec()), project.path(), path, b"good").await;
+        assert!(
+            error.is_err(),
+            "a download with the wrong content succeeded"
+        );
+
+        let abs = project.path().resolve(path);
+        assert_eq!(fs_util::read(&abs).categorize_internal()?, b"good");
+        let dir = fs_util::read_dir(abs.parent().unwrap()).categorize_internal()?;
+        assert_eq!(dir.count(), 1, "the failed download left a file behind");
+        Ok(())
     }
 }

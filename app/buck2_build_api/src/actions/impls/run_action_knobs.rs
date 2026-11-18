@@ -59,6 +59,9 @@ pub struct RunActionKnobs {
     /// configuration of it built in this daemon. Without it, only a configuration with no entry
     /// of its own looks at other configurations' entries.
     pub cross_config_lookup_on_stale_entry: bool,
+
+    /// Whether `download_file` uploads the file it downloaded to the CAS.
+    pub upload_downloads_to_cas: bool,
 }
 
 /// How write actions use the action cache; `buck2.write_action_cache`. Whether a miss is

@@ -657,6 +657,29 @@ async fn test_uses_the_cas_when_it_has_the_content(buck: &Buck) -> anyhow::Resul
 }
 
 #[buck_test(data_dir = "download", meta_only = "remote execution")]
+async fn test_a_download_is_uploaded_to_the_cas(buck: &Buck) -> anyhow::Result<()> {
+    let content = random_string().into_bytes();
+    let server = StaticHttpServer::start([("/file", content.clone())]).await?;
+    let mut declared = configs(&server.url("/file"), Some(&sha1_hex(&content)), None, None);
+    declared.extend([
+        "-c".to_owned(),
+        "buck2.upload_downloads_to_cas=true".to_owned(),
+    ]);
+
+    buck.build(&with(&["//:download"], &[&declared])).await?;
+    assert_eq!(server.count("GET", "/file"), 1);
+
+    let target = "//:download_again";
+    let res = buck
+        .build(&with(&[target, "--materializations=none"], &[&declared]))
+        .await?;
+    let output = res.build_report()?.output_for_target(target)?;
+    assert!(!output.exists());
+    assert_eq!(server.count("GET", "/file"), 1);
+    Ok(())
+}
+
+#[buck_test(data_dir = "download", meta_only = "remote execution")]
 async fn test_content_the_cas_holds_needs_no_url(buck: &Buck) -> anyhow::Result<()> {
     let content = random_string().into_bytes();
     let server = StaticHttpServer::start([("/file", content.clone())]).await?;

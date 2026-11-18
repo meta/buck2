@@ -37,7 +37,6 @@ use starlark::values::StarlarkType;
 use starlark::values::StarlarkValue;
 use starlark::values::StringValue;
 use starlark::values::Trace;
-use starlark::values::Value;
 use starlark::values::ValueTyped;
 use starlark::values::starlark_value;
 use starlark_map::StarlarkHasher;
@@ -45,6 +44,7 @@ use starlark_map::StarlarkHasher;
 use crate::interpreter::rule_defs::artifact::methods::any_artifact_methods;
 use crate::interpreter::rule_defs::artifact::starlark_artifact::StarlarkArtifact;
 use crate::interpreter::rule_defs::artifact::starlark_artifact_like::ArtifactFingerprint;
+use crate::interpreter::rule_defs::artifact::starlark_artifact_like::ArtifactOrOutputArtifact;
 use crate::interpreter::rule_defs::artifact::starlark_artifact_like::StarlarkArtifactLike;
 use crate::interpreter::rule_defs::artifact::starlark_declared_artifact::StarlarkDeclaredArtifact;
 use crate::interpreter::rule_defs::cmd_args::ArtifactPathMapper;
@@ -235,11 +235,11 @@ impl<'v> StarlarkType<'v> for StarlarkOutputArtifactView<'v> {
         Some(OUTPUT_ARTIFACT_METHODS.methods())
     }
 
-    fn equals(&self, other: Value<'v>) -> starlark::Result<bool> {
+    fn equals(&self, other: ArtifactOrOutputArtifact<'v>) -> bool {
         StarlarkArtifactLike::equals(self.as_artifact_like(), other)
     }
 
-    fn write_hash(&self, hasher: &mut StarlarkHasher) -> starlark::Result<()> {
+    fn write_hash(&self, hasher: &mut StarlarkHasher) {
         StarlarkArtifactLike::write_hash(self.as_artifact_like(), hasher)
     }
 }

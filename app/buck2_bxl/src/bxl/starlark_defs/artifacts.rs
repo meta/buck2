@@ -157,10 +157,9 @@ where
         Some(ARTIFACT_GROUP_METHODS.methods())
     }
 
-    fn write_hash(&self, hasher: &mut StarlarkHasher) -> starlark::Result<()> {
+    fn write_hash(&self, hasher: &mut StarlarkHasher) {
         let _hash = self.inner.write_hash(hasher);
         self.abs.hash(hasher);
-        Ok(())
     }
 }
 
@@ -169,9 +168,8 @@ impl<'v> StarlarkValue<'v> for EnsuredArtifactGroupInner
 where
     Self: ProvidesStaticType<'v>,
 {
-    fn write_hash(&self, hasher: &mut StarlarkHasher) -> starlark::Result<()> {
+    fn write_hash(&self, hasher: &mut StarlarkHasher) {
         self.ags.hash(hasher);
-        Ok(())
     }
 }
 
@@ -283,10 +281,9 @@ where
         Some(ENSURED_ARTIFACT_METHODS.methods())
     }
 
-    fn write_hash(&self, hasher: &mut StarlarkHasher) -> starlark::Result<()> {
-        let _artifact_write_hash = self.as_artifact().write_hash(hasher);
+    fn write_hash(&self, hasher: &mut StarlarkHasher) {
+        self.as_artifact().write_hash(hasher);
         self.abs().hash(hasher);
-        Ok(())
     }
 }
 

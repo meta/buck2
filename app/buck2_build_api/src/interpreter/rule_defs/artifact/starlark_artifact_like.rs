@@ -64,14 +64,12 @@ pub trait StarlarkArtifactLike<'v>: Display {
     where
         'v: 's;
 
-    fn equals(&self, other: Value<'v>) -> starlark::Result<bool> {
-        Ok(ArtifactOrOutputArtifact::unpack_value_opt(other)
-            .is_some_and(|other| self.fingerprint() == other.as_artifact_like().fingerprint()))
+    fn equals(&self, other: ArtifactOrOutputArtifact<'v>) -> bool {
+        self.fingerprint() == other.as_artifact_like().fingerprint()
     }
 
-    fn write_hash(&self, hasher: &mut StarlarkHasher) -> starlark::Result<()> {
+    fn write_hash(&self, hasher: &mut StarlarkHasher) {
         self.fingerprint().hash(hasher);
-        Ok(())
     }
 }
 
@@ -170,11 +168,11 @@ impl<'v> StarlarkType<'v> for StarlarkArtifactView<'v> {
         Some(STARLARK_ARTIFACT_METHODS.methods())
     }
 
-    fn equals(&self, other: Value<'v>) -> starlark::Result<bool> {
+    fn equals(&self, other: ArtifactOrOutputArtifact<'v>) -> bool {
         StarlarkArtifactLike::equals(self.as_input_artifact_like(), other)
     }
 
-    fn write_hash(&self, hasher: &mut StarlarkHasher) -> starlark::Result<()> {
+    fn write_hash(&self, hasher: &mut StarlarkHasher) {
         StarlarkArtifactLike::write_hash(self.as_input_artifact_like(), hasher)
     }
 }

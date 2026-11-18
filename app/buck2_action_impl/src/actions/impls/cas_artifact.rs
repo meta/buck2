@@ -37,6 +37,7 @@ use buck2_error::ErrorTag;
 use buck2_error::internal_error;
 use buck2_execute::artifact_value::ArtifactValue;
 use buck2_execute::digest::CasDigestToReExt;
+use buck2_execute::digest_config::DigestConfig;
 use buck2_execute::directory::ActionDirectoryEntry;
 use buck2_execute::directory::INTERNER;
 use buck2_execute::directory::re_directory_to_re_tree;
@@ -433,6 +434,121 @@ impl CasArtifactAction {
         result
     }
 
+    /// Extends the digest's TTL to a little past `expires_after`, in the namespace the artifact was
+    /// declared in.
+    async fn extend_expiration(
+        &self,
+        own_client: &ManagedRemoteExecutionClient,
+        own_info: &CasDownloadInfo,
+    ) -> buck2_error::Result<()> {
+        let now = Timestamp::now();
+
+        // Adds a small buffer to avoid minor clock skew issues.
+        let new_ttl = self.inner.expires_after.duration_since(now) + SignedDuration::from_mins(5);
+
+        own_client
+            .extend_digest_ttl(
+                vec![self.inner.digest.to_re()],
+                std::time::Duration::try_from(new_ttl)
+                    .map_err(|e| internal_error!("casting ttl to std duration `{}`", e))?,
+                own_info,
+            )
+            .await
+    }
+
+    async fn download_directory(
+        &self,
+        re_client: &ManagedRemoteExecutionClient,
+        cas_download_info: &CasDownloadInfo,
+        directory_kind: DirectoryKind,
+        digest_config: DigestConfig,
+        fingerprint_eagerly: bool,
+    ) -> buck2_error::Result<ArtifactValue> {
+        // TODO: should honor the semaphore here from OutputTreesDownloadConfig.
+
+        let tree = match directory_kind {
+            DirectoryKind::Tree => re_client
+                .download_typed_blobs::<RE::Tree>(
+                    None,
+                    vec![self.inner.digest.to_re()],
+                    cas_download_info,
+                )
+                .await
+                .and_then(|trees| {
+                    trees
+                        .into_iter()
+                        .next()
+                        .internal_error("RE response was empty")
+                })
+                .with_buck_error_context(|| {
+                    format!("Error downloading tree: {}", self.inner.digest)
+                })?,
+            DirectoryKind::Directory => {
+                let root_directory = re_client
+                    .download_typed_blobs::<RE::Directory>(
+                        None,
+                        vec![self.inner.digest.to_re()],
+                        cas_download_info,
+                    )
+                    .await
+                    .and_then(|dirs| {
+                        dirs.into_iter()
+                            .next()
+                            .internal_error("RE response was empty")
+                    })
+                    .with_buck_error_context(|| {
+                        format!("Error downloading dir: {}", self.inner.digest)
+                    })?;
+                re_directory_to_re_tree(root_directory, re_client, cas_download_info).await?
+            }
+        };
+
+        // NOTE: We assign a zero timestamp here because we didn't check the nodes in the tree,
+        // just the tree itself. Perhaps we should, but some of the prospective users for this
+        // have very large trees so that might not be wise.
+        let dir = re_tree_to_directory(
+            &tree,
+            &Timestamp::UNIX_EPOCH,
+            digest_config,
+            fingerprint_eagerly,
+        )
+        .buck_error_context("Invalid directory")?;
+
+        Ok(ArtifactValue::new(
+            ActionDirectoryEntry::Dir(
+                dir.fingerprint(digest_config.as_directory_serializer())
+                    .shared(&*INTERNER),
+            ),
+            None,
+        ))
+    }
+
+    async fn declare_output(
+        &self,
+        ctx: &dyn ActionExecutionCtx,
+        cas_download_info: Arc<CasDownloadInfo>,
+        value: &ArtifactValue,
+    ) -> buck2_error::Result<()> {
+        let path = ctx.fs().resolve_build(
+            self.output.get_path(),
+            if self.output.get_path().is_content_based_path() {
+                Some(value.content_based_path_hash())
+            } else {
+                None
+            }
+            .as_ref(),
+        )?;
+        ctx.materializer()
+            .declare_cas_many(
+                cas_download_info,
+                vec![DeclareArtifactPayload {
+                    path,
+                    artifact: value.dupe(),
+                }],
+            )
+            .await
+    }
+
     async fn execute_for_offline(
         &self,
         ctx: &mut dyn ActionExecutionCtx,
@@ -544,20 +660,7 @@ impl Action for CasArtifactAction {
             // If the observed expiration is too short, we'll log a soft error and try to extend it.
             //
             // TODO(cjhopman): It would be reasonable for this behavior to be more configurable, there just hasn't been need for it yet.
-            let now = Timestamp::now();
-
-            // Adds a small buffer to avoid minor clock skew issues.
-            let new_ttl =
-                self.inner.expires_after.duration_since(now) + SignedDuration::from_mins(5);
-
-            own_client
-                .extend_digest_ttl(
-                    vec![self.inner.digest.to_re()],
-                    std::time::Duration::try_from(new_ttl)
-                        .map_err(|e| internal_error!("casting ttl to std duration `{}`", e))?,
-                    &own_info,
-                )
-                .await?;
+            self.extend_expiration(&own_client, &own_info).await?;
 
             // We were able to extend the ttl, so this won't be failing builds, but we need to report it so we can track it.
             // The digest still carries the expiration from before the extension.
@@ -586,69 +689,15 @@ impl Action for CasArtifactAction {
 
         let value = match self.inner.kind {
             ArtifactKind::Directory(directory_kind) => {
-                // TODO: should honor the semaphore here from OutputTreesDownloadConfig.
-
-                let tree = match directory_kind {
-                    DirectoryKind::Tree => re_client
-                        .download_typed_blobs::<RE::Tree>(
-                            None,
-                            vec![self.inner.digest.to_re()],
-                            cas_download_info.as_ref(),
-                        )
-                        .await
-                        .and_then(|trees| {
-                            trees
-                                .into_iter()
-                                .next()
-                                .internal_error("RE response was empty")
-                        })
-                        .with_buck_error_context(|| {
-                            format!("Error downloading tree: {}", self.inner.digest)
-                        })?,
-                    DirectoryKind::Directory => {
-                        let root_directory = re_client
-                            .download_typed_blobs::<RE::Directory>(
-                                None,
-                                vec![self.inner.digest.to_re()],
-                                cas_download_info.as_ref(),
-                            )
-                            .await
-                            .and_then(|dirs| {
-                                dirs.into_iter()
-                                    .next()
-                                    .internal_error("RE response was empty")
-                            })
-                            .with_buck_error_context(|| {
-                                format!("Error downloading dir: {}", self.inner.digest)
-                            })?;
-                        re_directory_to_re_tree(
-                            root_directory,
-                            &re_client,
-                            cas_download_info.as_ref(),
-                        )
-                        .await?
-                    }
-                };
-
-                // NOTE: We assign a zero timestamp here because we didn't check the nodes in the tree,
-                // just the tree itself. Perhaps we should, but some of the prospective users for this
-                // have very large trees so that might not be wise.
-                let dir = re_tree_to_directory(
-                    &tree,
-                    &Timestamp::UNIX_EPOCH,
+                self.download_directory(
+                    &re_client,
+                    cas_download_info.as_ref(),
+                    directory_kind,
                     ctx.digest_config(),
                     ctx.output_trees_download_config()
                         .fingerprint_re_output_trees_eagerly(),
                 )
-                .buck_error_context("Invalid directory")?;
-
-                ArtifactValue::new(
-                    ActionDirectoryEntry::Dir(
-                        dir.fingerprint(ctx.digest_config().as_directory_serializer())
-                            .shared(&*INTERNER),
-                    ),
-                    None,
-                )
+                .await?
             }
             ArtifactKind::File => {
                 let config = ctx.digest_config().cas_digest_config();
@@ -666,23 +715,7 @@ impl Action for CasArtifactAction {
             }
         };
 
-        let path = ctx.fs().resolve_build(
-            self.output.get_path(),
-            if self.output.get_path().is_content_based_path() {
-                Some(value.content_based_path_hash())
-            } else {
-                None
-            }
-            .as_ref(),
-        )?;
-        ctx.materializer()
-            .declare_cas_many(
-                cas_download_info,
-                vec![DeclareArtifactPayload {
-                    path,
-                    artifact: value.dupe(),
-                }],
-            )
+        self.declare_output(&*ctx, cas_download_info, &value)
             .await?;
 
         let io_provider = ctx.io_provider();

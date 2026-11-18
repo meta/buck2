@@ -323,89 +323,120 @@ impl CasDownloader<'_> {
         ),
     > {
         let manager = manager.with_execution_kind(output_spec.execution_kind(details.clone()));
-        executor_stage_async(stage, async {
-            let now = Timestamp::now();
-            let expires = re_expiration_from_ttl(now, output_spec.ttl(), &identity.action_key);
-            // Derived from the clamped expiration rather than the raw TTL so that the two can't
-            // disagree, and because the difference of two in-range datetimes can't overflow.
-            let ttl = expires.duration_since(now);
-            let info = CasDownloadInfo::new_execution(
-                details.action_digest.dupe(),
-                self.re_client.use_case,
-                now,
-                ttl,
-            );
-            let artifacts = self
-                .extract_artifacts(
-                    artifact_fs,
-                    identity,
-                    paths,
-                    requested_outputs,
-                    output_spec,
-                    expires,
-                    &info,
-                )
-                .await;
+        executor_stage_async(
+            stage,
+            self.download_inner(
+                artifact_fs,
+                manager,
+                identity,
+                paths,
+                requested_outputs,
+                output_spec,
+                details,
+                cancellations,
+            ),
+        )
+        .await
+    }
 
-            let artifacts =
-                match artifacts {
-                    Ok(artifacts) => artifacts,
+    async fn download_inner<'a>(
+        &self,
+        artifact_fs: &ArtifactFs,
+        manager: CommandExecutionManager,
+        identity: &ReActionIdentity<'_>,
+        paths: &CommandExecutionPaths,
+        requested_outputs: impl IntoIterator<Item = CommandExecutionOutputRef<'a>>,
+        output_spec: &dyn RemoteActionResult,
+        details: &RemoteCommandExecutionDetails,
+        cancellations: &CancellationContext,
+    ) -> ControlFlow<
+        DownloadResult,
+        (
+            CommandExecutionManagerWithClaim,
+            BuckMutInsertionMap<CommandExecutionOutput, ArtifactValue>,
+        ),
+    > {
+        let now = Timestamp::now();
+        let expires = re_expiration_from_ttl(now, output_spec.ttl(), &identity.action_key);
+        // Derived from the clamped expiration rather than the raw TTL so that the two can't
+        // disagree, and because the difference of two in-range datetimes can't overflow.
+        let ttl = expires.duration_since(now);
+        let info = CasDownloadInfo::new_execution(
+            details.action_digest.dupe(),
+            self.re_client.use_case,
+            now,
+            ttl,
+        );
+        let artifacts = self
+            .extract_artifacts(
+                artifact_fs,
+                identity,
+                paths,
+                requested_outputs,
+                output_spec,
+                expires,
+                &info,
+            )
+            .await;
+
+        let artifacts = match artifacts {
+            Ok(artifacts) => artifacts,
+            Err(e) => {
+                let error: buck2_error::Error =
+                    e.context(format!("action_digest={}", details.action_digest));
+                let is_storage_resource_exhausted = error
+                    .find_typed_context::<RemoteExecutionError>()
+                    .is_some_and(|re_client_error| {
+                        is_storage_resource_exhausted(re_client_error.as_ref())
+                    });
+                let error_type = if is_storage_resource_exhausted {
+                    CommandExecutionErrorType::StorageResourceExhausted
+                } else {
+                    CommandExecutionErrorType::Other
+                };
+                return ControlFlow::Break(DownloadResult::Result(manager.error_classified(
+                    "extract_artifacts",
+                    error,
+                    error_type,
+                )));
+            }
+        };
+
+        let (manager, outputs) = match self.paranoid {
+            Some(paranoid) => {
+                let manager = paranoid
+                    .declare_cas_many(
+                        self.materializer,
+                        manager,
+                        info,
+                        artifacts.to_declare,
+                        cancellations,
+                    )
+                    .await
+                    .map_break(DownloadResult::Result)?;
+                (manager, artifacts.mapped_outputs)
+            }
+            None => {
+                // Claim the request before starting the download.
+                let manager = manager.claim().await;
+
+                let outputs = self.materialize_outputs(artifacts, info).await;
+
+                let outputs = match outputs {
+                    Ok(outputs) => outputs,
                     Err(e) => {
-                        let error: buck2_error::Error =
-                            e.context(format!("action_digest={}", details.action_digest));
-                        let is_storage_resource_exhausted = error
-                            .find_typed_context::<RemoteExecutionError>()
-                            .is_some_and(|re_client_error| {
-                                is_storage_resource_exhausted(re_client_error.as_ref())
-                            });
-                        let error_type = if is_storage_resource_exhausted {
-                            CommandExecutionErrorType::StorageResourceExhausted
-                        } else {
-                            CommandExecutionErrorType::Other
-                        };
-                        return ControlFlow::Break(DownloadResult::Result(
-                            manager.error_classified("extract_artifacts", error, error_type),
-                        ));
+                        return ControlFlow::Break(DownloadResult::Result(manager.error(
+                            "materialize_outputs",
+                            e.context(format!("action_digest={}", details.action_digest)),
+                        )));
                     }
                 };
 
-            let (manager, outputs) = match self.paranoid {
-                Some(paranoid) => {
-                    let manager = paranoid
-                        .declare_cas_many(
-                            self.materializer,
-                            manager,
-                            info,
-                            artifacts.to_declare,
-                            cancellations,
-                        )
-                        .await
-                        .map_break(DownloadResult::Result)?;
-                    (manager, artifacts.mapped_outputs)
-                }
-                None => {
-                    // Claim the request before starting the download.
-                    let manager = manager.claim().await;
+                (manager, outputs)
+            }
+        };
 
-                    let outputs = self.materialize_outputs(artifacts, info).await;
-
-                    let outputs = match outputs {
-                        Ok(outputs) => outputs,
-                        Err(e) => {
-                            return ControlFlow::Break(DownloadResult::Result(manager.error(
-                                "materialize_outputs",
-                                e.context(format!("action_digest={}", details.action_digest)),
-                            )));
-                        }
-                    };
-
-                    (manager, outputs)
-                }
-            };
-
-            ControlFlow::Continue((manager, outputs))
-        })
-        .await
+        ControlFlow::Continue((manager, outputs))
     }
 
     async fn extract_artifacts<'a>(

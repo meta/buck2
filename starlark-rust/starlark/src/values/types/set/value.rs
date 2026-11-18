@@ -327,7 +327,7 @@ impl<'v> StarlarkType<'v> for SetView<'v> {
 
     // Set union
     // Unlike in `union` it is not possible to `|` `set` and iterable. This is due python semantics.
-    fn bit_or(&self, rhs: SetRef<'v>, _heap: Heap<'v>) -> SetData<'v> {
+    fn bit_or(&self, rhs: SetRef<'v>) -> SetData<'v> {
         let content = self.content();
         if content.is_empty() {
             return (*rhs.aref).clone();
@@ -360,13 +360,13 @@ impl<'v> StarlarkType<'v> for SetView<'v> {
     }
 
     // Set symmetric difference
-    fn bit_xor(&self, rhs: SetRef<'v>, _heap: Heap<'v>) -> SetData<'v> {
+    fn bit_xor(&self, rhs: SetRef<'v>) -> SetData<'v> {
         let items = self.content().symmetric_difference(&rhs.aref.content);
         SetData { content: items }
     }
 
     // Set difference
-    fn sub(&self, rhs: SetRef<'v>, _heap: Heap<'v>) -> SetData<'v> {
+    fn sub(&self, rhs: SetRef<'v>) -> SetData<'v> {
         let content = self.content();
 
         let content = content.difference_with(&rhs.aref.content);

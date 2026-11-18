@@ -347,15 +347,15 @@ impl<'v> StarlarkValue<'v> for StarlarkStr {
         }
     }
 
-    fn mul(&self, times: i32, _heap: Heap<'v>) -> String {
+    fn mul(&self, times: i32) -> String {
         self.repeated(times)
     }
 
-    fn rmul(&self, times: i32, _heap: Heap<'v>) -> String {
+    fn rmul(&self, times: i32) -> String {
         self.repeated(times)
     }
 
-    fn percent(&self, other: Value<'v>, _heap: Heap<'v>) -> crate::Result<String> {
+    fn percent(&self, other: Value<'v>) -> crate::Result<String> {
         interpolation::percent(self, other)
     }
 }

@@ -263,11 +263,11 @@ impl<'v> StarlarkValue<'v> for StarlarkBytes {
     }
 
     /// `bytes * n` — repetition.
-    fn mul(&self, times: i32, _heap: Heap<'v>) -> StarlarkBytes {
+    fn mul(&self, times: i32) -> StarlarkBytes {
         self.repeated(times)
     }
 
-    fn rmul(&self, times: i32, _heap: Heap<'v>) -> StarlarkBytes {
+    fn rmul(&self, times: i32) -> StarlarkBytes {
         self.repeated(times)
     }
 }

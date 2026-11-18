@@ -167,6 +167,11 @@ def _get_re_executors(
     missing_props = [name for name in ("capabilities", "use_case") if name not in re_props_copy]
     if missing_props:
         fail("{}: re props are missing required fields: {}".format(ctx.label, ", ".join(missing_props)))
+    re_toolchain = getattr(ctx.attrs, "_remote_test_execution_toolchain", None)
+    if re_toolchain != None:
+        prepare_re_properties = getattr(re_toolchain[RemoteTestExecutionToolchainInfo], "prepare_re_properties", None)
+        if prepare_re_properties != None:
+            re_props_copy = prepare_re_properties(re_props_copy)
     capabilities = re_props_copy.pop("capabilities")
     use_case = re_props_copy.pop("use_case")
     listing_capabilities = re_props_copy.pop("listing_capabilities", None)

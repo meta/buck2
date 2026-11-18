@@ -17,5 +17,8 @@ RemoteTestExecutionToolchainInfo = provider(
         # should be run in a bundle. This makes all tests in a suite run in
         # a single RE action as opposed to one action per test.
         "default_run_as_bundle",
+        # Optional callback that updates and returns the supplied RE properties.
+        # Executor conversion passes a mutable copy and consumes the result.
+        "prepare_re_properties",
     ],
 )

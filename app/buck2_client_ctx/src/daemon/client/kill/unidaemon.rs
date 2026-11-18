@@ -58,6 +58,7 @@ pub(crate) async fn stop_unidaemon(
         reason: "Client reported corrupted daemon state".to_owned(),
         timeout: Some(super::GRACEFUL_SHUTDOWN_TIMEOUT.try_into()?),
         callers,
+        bes_drain_timeout: None,
     }));
     match tokio::time::timeout(super::KILL_REQUEST_TIMEOUT, request).await {
         Ok(Ok(_)) => {
@@ -168,7 +169,13 @@ pub async fn kill_unidaemon_tenant(
             return Ok(());
         }
         _ => {
-            return super::kill_command_impl(lifecycle, command.reason(), command.quiet()).await;
+            return super::kill_command_impl(
+                lifecycle,
+                command.reason(),
+                command.quiet(),
+                Duration::ZERO,
+            )
+            .await;
         }
     };
     let info = proxy.client.process_info().clone();

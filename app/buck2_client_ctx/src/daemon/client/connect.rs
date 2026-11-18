@@ -1115,8 +1115,12 @@ impl BootstrapBuckdClient {
         &self.info
     }
 
-    pub(crate) async fn kill(&mut self, reason: &str) -> buck2_error::Result<Pid> {
-        kill::kill(&mut self.client, &self.info, reason).await?;
+    pub(crate) async fn kill(
+        &mut self,
+        reason: &str,
+        bes_drain_timeout: Duration,
+    ) -> buck2_error::Result<Pid> {
+        kill::kill(&mut self.client, &self.info, reason, bes_drain_timeout).await?;
         Pid::from_i64(self.info.pid)
     }
 
@@ -1127,7 +1131,8 @@ impl BootstrapBuckdClient {
         reason: &str,
         graceful: Duration,
     ) -> buck2_error::Result<Pid> {
-        kill::kill_with_timeout(&mut self.client, &self.info, reason, graceful).await?;
+        kill::kill_with_timeout(&mut self.client, &self.info, reason, graceful, Duration::ZERO)
+            .await?;
         Pid::from_i64(self.info.pid)
     }
 
@@ -1136,8 +1141,11 @@ impl BootstrapBuckdClient {
     }
 
     async fn kill_for_constraints_mismatch(&mut self) -> buck2_error::Result<Pid> {
-        self.kill("client expected different buckd constraints")
-            .await
+        self.kill(
+            "client expected different buckd constraints",
+            Duration::ZERO,
+        )
+        .await
     }
 
     pub fn pid(&self) -> i64 {

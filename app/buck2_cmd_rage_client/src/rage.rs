@@ -33,8 +33,8 @@ use buck2_event_log::file_names::get_local_logs;
 use buck2_event_log::read::EventLogPathBuf;
 use buck2_event_log::read::EventLogSummary;
 use buck2_events::BuckEvent;
+use buck2_events::sink::remote::RemoteEventConfig;
 use buck2_events::sink::remote::RemoteEventSink;
-use buck2_events::sink::remote::ScribeConfig;
 use buck2_events::sink::remote::new_remote_event_sink_if_enabled;
 use buck2_fs::paths::abs_norm_path::AbsNormPath;
 use buck2_fs::paths::abs_norm_path::AbsNormPathBuf;
@@ -570,7 +570,11 @@ async fn dispatch_event_to_scribe(
 fn create_scribe_sink(ctx: &ClientCommandContext) -> buck2_error::Result<Option<RemoteEventSink>> {
     // TODO(swgiillespie) scribe_logging is likely the right feature for this, but we should be able to inject a sink
     // without using configurations at the call site
-    new_remote_event_sink_if_enabled(ctx.fbinit(), ScribeConfig::default())
+    let config = buck2_client_ctx::remote_sink_config::with_buckconfig_overrides(
+        ctx.maybe_paths()?,
+        RemoteEventConfig::default(),
+    );
+    new_remote_event_sink_if_enabled(ctx.fbinit(), config)
 }
 
 async fn maybe_select_invocation(

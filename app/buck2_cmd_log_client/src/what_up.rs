@@ -101,6 +101,7 @@ impl BuckSubcommand for WhatUpCommand {
                 ..Default::default()
             },
             None,
+            None,
         )?;
         // Ignore any events that are truncated, hence unreadable
         while let Ok(Some(event)) = events.try_next().await {

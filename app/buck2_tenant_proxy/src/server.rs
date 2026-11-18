@@ -217,7 +217,7 @@ impl ProxyState {
             }
         }
         Ok(Response::new(CommandResult {
-            result: Some(KillResponse {}.into()),
+            result: Some(KillResponse { bes_drain: None }.into()),
         }))
     }
 

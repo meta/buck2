@@ -1,0 +1,13 @@
+load("@fbcode//buck2:proto_defs.bzl", "rust_protobuf_library")
+
+oncall("build_infra")
+
+rust_protobuf_library(
+    name = "bazel_bep_proto",
+    srcs = glob(["src/**/*.rs"]),
+    build_script = "build.rs",
+    protos = glob(["proto/**/*.proto"]),
+    deps = [
+        "fbsource//third-party/rust:prost-types",
+    ],
+)

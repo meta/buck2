@@ -14,3 +14,38 @@ python_test(
     name = "timeout",
     script = "import time; time.sleep(60)",
 )
+
+# Records in `$LOCK_DIR` whether another of these tests ran at the same time.
+overlap_script = """
+import os, time
+d = os.environ["LOCK_DIR"]
+me = os.path.join(d, "running-%d" % os.getpid())
+open(me, "w").close()
+deadline = time.time() + 10
+while time.time() < deadline:
+    if any(os.path.join(d, n) != me for n in os.listdir(d) if n.startswith("running-")):
+        open(os.path.join(d, "overlapped"), "w").close()
+        break
+    time.sleep(0.05)
+os.remove(me)
+"""
+
+[
+    python_test(
+        name = name,
+        script = overlap_script,
+        labels = labels,
+    )
+    for name, labels in [
+        ("unweighted_a", []),
+        ("unweighted_b", []),
+        ("weighted_a", ["buck2:weight=2"]),
+        ("weighted_b", ["buck2:weight=2"]),
+    ]
+]
+
+python_test(
+    name = "invalid_weight",
+    script = "import sys; sys.exit(0)",
+    labels = ["buck2:weight=many"],
+)

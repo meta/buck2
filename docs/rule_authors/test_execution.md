@@ -14,7 +14,11 @@ In its open-source build, Buck2 ships with a built-in simplistic test runner.
 
 This test runner receives the commands defined by `ExternalRunnerTestInfo` and
 simply executes them. Exit code zero means the test passed, and one means it
-failed.
+failed. A test labelled `buck2:weight=N` takes `N` of the local execution slots
+set by `build.threads` (at most all of them), as `weight` does for
+`ctx.actions.run`; other tests take one. A test with a malformed `buck2:weight=`
+label fails without running. A test using `InternalRunnerTestInfo` runs each
+listed test case as its own process, and each case takes `N` slots.
 
 Users can of course develop their own test runners. Look at
 `fbcode/buck2/app/buck2_test_runner` as a sample. For comparison, here's how
@@ -90,7 +94,8 @@ which the test runner can interact:
   [Verbatim arguments and handles](#verbatim-arguments-and-handles), below).
 - `labels` - a set of string labels to pass to the test runner. <FbInternalOnly>
   They have no meaning to Buck2, but some labels have impact on translation in
-  Tpx. </FbInternalOnly>
+  Tpx. Tpx ignores `buck2:weight=N`, which only Buck2's built-in test runner
+  reads. </FbInternalOnly>
 - `contacts` - a list of contacts for the tests; usually oncalls.
 - `executor_overrides` - a key-value mapping of executor configurations that the
   test runner can use when requesting execution from Buck2.

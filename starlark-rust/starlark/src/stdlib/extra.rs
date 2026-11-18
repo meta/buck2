@@ -275,6 +275,11 @@ assert_eq(["11",8], map(double, ["1",4]))
         a.set_print_handler(&print_handler);
         a.pass("print('hw')");
         assert_eq!("hw", s_copy.borrow().as_str());
+        a.pass("print()");
+        assert_eq!("", s_copy.borrow().as_str());
+        a.pass("print('hello', 'world')");
+        assert_eq!("hello world", s_copy.borrow().as_str());
+        a.fail("print('hello', 'world', sep=', ')", "extra named");
     }
 
     #[test]

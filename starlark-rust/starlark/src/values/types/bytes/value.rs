@@ -34,7 +34,6 @@ use crate::environment::Methods;
 use crate::starlark_simple_value;
 use crate::values::Heap;
 use crate::values::StarlarkValue;
-use crate::values::UnpackValue;
 use crate::values::Value;
 use crate::values::index::apply_slice;
 use crate::values::index::convert_index;
@@ -87,6 +86,12 @@ impl StarlarkBytes {
     /// Whether the bytes are empty.
     pub fn is_empty(&self) -> bool {
         self.content.is_empty()
+    }
+
+    /// The bytes `times` times over: `bytes * times` and `times * bytes`.
+    fn repeated(&self, times: i32) -> StarlarkBytes {
+        let count = cmp::max(0, times) as usize;
+        StarlarkBytes::from_vec(self.content.repeat(count))
     }
 }
 
@@ -258,18 +263,11 @@ impl<'v> StarlarkValue<'v> for StarlarkBytes {
     }
 
     /// `bytes * n` — repetition.
-    fn mul(&self, other: Value<'v>, heap: Heap<'v>) -> Option<crate::Result<Value<'v>>> {
-        let l = match i32::unpack_value(other) {
-            Ok(Some(l)) => l,
-            Ok(None) => return None,
-            Err(e) => return Some(Err(e)),
-        };
-        let count = std::cmp::max(0, l) as usize;
-        let result = self.content.repeat(count);
-        Some(Ok(heap.alloc(StarlarkBytes::from_vec(result)).to_value()))
+    fn mul(&self, times: i32, _heap: Heap<'v>) -> StarlarkBytes {
+        self.repeated(times)
     }
 
-    fn rmul(&self, lhs: Value<'v>, heap: Heap<'v>) -> Option<crate::Result<Value<'v>>> {
-        self.mul(lhs, heap)
+    fn rmul(&self, times: i32, _heap: Heap<'v>) -> StarlarkBytes {
+        self.repeated(times)
     }
 }

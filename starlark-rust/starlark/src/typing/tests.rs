@@ -652,6 +652,50 @@ def test(s: str, i: int):
     );
 }
 
+/// The operators of `str`, `bytes` and `tuple` take and give what their bodies say, and the
+/// typechecker's own rules for `list`, `dict` and `set` answer before the bodies are asked.
+#[test]
+fn test_operators_of_builtin_types() {
+    TypeCheck::new()
+        .ty("str_add")
+        .ty("str_mul")
+        .ty("int_mul_str")
+        .ty("str_percent")
+        .ty("bytes_add")
+        .ty("bytes_mul")
+        .ty("tuple_add")
+        .ty("tuple_mul")
+        .ty("list_add")
+        .ty("list_mul")
+        .ty("dict_or")
+        .ty("set_or")
+        .check(
+            "operators_of_builtin_types",
+            r#"
+def test(s: str, b: bytes, t: tuple[int, ...], i: int, a):
+    str_add = s + s
+    str_mul = s * i
+    int_mul_str = i * s
+    str_percent = s % a
+    bytes_add = b + b
+    bytes_mul = b * i
+    tuple_add = t + t
+    tuple_mul = t * i
+    list_add = [i] + [s]
+    list_mul = [i] * i
+    dict_or = {i: s} | {s: i}
+    set_or = set([i]) | set([s])
+
+def bad(s: str, b: bytes, t: tuple[int, ...], i: int):
+    s + i
+    s * s
+    b + s
+    t + [i]
+    t * s
+"#,
+        );
+}
+
 #[test]
 fn test_union() {
     TypeCheck::new().check(

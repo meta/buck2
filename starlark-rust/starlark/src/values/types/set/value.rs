@@ -326,19 +326,17 @@ impl<'v> StarlarkType<'v> for SetView<'v> {
     }
 
     // Set union
-    fn bit_or(&self, rhs: Value<'v>, heap: Heap<'v>) -> crate::Result<Value<'v>> {
-        // Unlike in `union` it is not possible to `|` `set` and iterable. This is due python semantics.
-        let rhs = SetRef::unpack_value_opt(rhs)
-            .map_or_else(|| ValueError::unsupported_with(self, "|", rhs), Ok)?;
+    // Unlike in `union` it is not possible to `|` `set` and iterable. This is due python semantics.
+    fn bit_or(&self, rhs: SetRef<'v>, _heap: Heap<'v>) -> SetData<'v> {
         let content = self.content();
         if content.is_empty() {
-            return Ok(heap.alloc((*rhs.aref).clone()).to_value());
+            return (*rhs.aref).clone();
         }
         let mut items = content.clone();
         for h in rhs.aref.iter_hashed() {
             items.insert_hashed(h);
         }
-        Ok(heap.alloc(SetData { content: items }).to_value())
+        SetData { content: items }
     }
 
     // Set intersection
@@ -362,25 +360,17 @@ impl<'v> StarlarkType<'v> for SetView<'v> {
     }
 
     // Set symmetric difference
-    fn bit_xor(&self, rhs: Value<'v>, heap: Heap<'v>) -> crate::Result<Value<'v>> {
-        let rhs = SetRef::unpack_value_opt(rhs)
-            .map_or_else(|| ValueError::unsupported_with(self, "^", rhs), Ok)?;
-
+    fn bit_xor(&self, rhs: SetRef<'v>, _heap: Heap<'v>) -> SetData<'v> {
         let items = self.content().symmetric_difference(&rhs.aref.content);
-        Ok(heap.alloc(SetData { content: items }).to_value())
+        SetData { content: items }
     }
 
     // Set difference
-    fn sub(&self, rhs: Value<'v>, heap: Heap<'v>) -> crate::Result<Value<'v>> {
-        let rhs = SetRef::unpack_value_opt(rhs)
-            .map_or_else(|| ValueError::unsupported_with(self, "-", rhs), Ok)?;
-
+    fn sub(&self, rhs: SetRef<'v>, _heap: Heap<'v>) -> SetData<'v> {
         let content = self.content();
 
         let content = content.difference_with(&rhs.aref.content);
-        let data = SetData { content };
-
-        Ok(heap.alloc(data).to_value())
+        SetData { content }
     }
 
     fn get_type_starlark_repr() -> Ty {

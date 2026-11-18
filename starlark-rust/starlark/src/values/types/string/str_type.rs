@@ -48,6 +48,7 @@ use crate::values::FreezeResult;
 use crate::values::Freezer;
 use crate::values::Heap;
 use crate::values::StarlarkValue;
+use crate::values::StringValue;
 use crate::values::UnpackValue;
 use crate::values::Value;
 use crate::values::ValueError;
@@ -200,6 +201,15 @@ impl StarlarkStr {
         string_repr(s, &mut buffer);
         buffer
     }
+
+    /// The string `times` times over: `str * times` and `times * str`.
+    fn repeated(&self, times: i32) -> String {
+        let mut result = String::with_capacity(self.len() * cmp::max(0, times) as usize);
+        for _i in 0..times {
+            result.push_str(self)
+        }
+        result
+    }
 }
 
 /// How to hash a string in a way that is compatible with Value
@@ -329,37 +339,24 @@ impl<'v> StarlarkValue<'v> for StarlarkStr {
         }
     }
 
-    fn add(&self, other: Value<'v>, heap: Heap<'v>) -> Option<crate::Result<Value<'v>>> {
-        if let Some(other_str) = other.unpack_str() {
-            if self.is_empty() {
-                Some(Ok(other))
-            } else {
-                Some(Ok(heap.alloc_str_concat(self, other_str).to_value()))
-            }
+    fn add(&self, other: StringValue<'v>, heap: Heap<'v>) -> StringValue<'v> {
+        if self.is_empty() {
+            other
         } else {
-            None
+            heap.alloc_str_concat(self, other.as_str())
         }
     }
 
-    fn mul(&self, other: Value<'v>, heap: Heap<'v>) -> Option<crate::Result<Value<'v>>> {
-        let l = match i32::unpack_value(other) {
-            Ok(Some(l)) => l,
-            Ok(None) => return None,
-            Err(e) => return Some(Err(e)),
-        };
-        let mut result = String::with_capacity(self.len() * cmp::max(0, l) as usize);
-        for _i in 0..l {
-            result.push_str(self)
-        }
-        Some(Ok(heap.alloc(result).to_value()))
+    fn mul(&self, times: i32, _heap: Heap<'v>) -> String {
+        self.repeated(times)
     }
 
-    fn rmul(&self, lhs: Value<'v>, heap: Heap<'v>) -> Option<crate::Result<Value<'v>>> {
-        self.mul(lhs, heap)
+    fn rmul(&self, times: i32, _heap: Heap<'v>) -> String {
+        self.repeated(times)
     }
 
-    fn percent(&self, other: Value<'v>, heap: Heap<'v>) -> crate::Result<Value<'v>> {
-        Ok(heap.alloc(interpolation::percent(self, other)?).to_value())
+    fn percent(&self, other: Value<'v>, _heap: Heap<'v>) -> crate::Result<String> {
+        interpolation::percent(self, other)
     }
 }
 

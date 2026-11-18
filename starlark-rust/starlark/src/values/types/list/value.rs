@@ -46,8 +46,8 @@ use crate::values::Heap;
 use crate::values::StarlarkType;
 use crate::values::StarlarkValue;
 use crate::values::StringValue;
-use crate::values::UnpackValue;
 use crate::values::Value;
+use crate::values::ValueOf;
 use crate::values::ValueTyped;
 use crate::values::array::Array;
 use crate::values::comparison::compare_slice;
@@ -56,6 +56,7 @@ use crate::values::error::ValueError;
 use crate::values::index::apply_slice;
 use crate::values::index::convert_index;
 use crate::values::list::ListRef;
+use crate::values::list::ListType;
 
 #[derive(Clone, Default, Trace, Debug, ProvidesStaticType, Allocative)]
 #[repr(transparent)]
@@ -395,6 +396,18 @@ impl<'v> ListView<'v> {
     fn content(self) -> &'v [Value<'v>] {
         with_list!(self, |l| l.content())
     }
+
+    /// A list of the items `times` times over: `list * times` and `times * list`.
+    // Inlined into `mul` and `rmul`, as `Tuple::repeated` is.
+    #[inline(always)]
+    fn repeated(self, times: i32, heap: Heap<'v>) -> ValueOf<'v, ListType<Value<'v>>> {
+        let content = self.content();
+        let mut result = Vec::with_capacity(content.len() * cmp::max(0, times) as usize);
+        for _ in 0..times {
+            result.extend(content.iter());
+        }
+        heap.alloc_list(&result)
+    }
 }
 
 #[starlark_value(type = ListData::TYPE)]
@@ -478,27 +491,16 @@ impl<'v> StarlarkType<'v> for ListView<'v> {
         unsafe { with_list!(self, |l| l.iter_stop()) }
     }
 
-    fn add(&self, other: Value<'v>, heap: Heap<'v>) -> Option<crate::Result<Value<'v>>> {
-        ListRef::from_value(other)
-            .map(|other| Ok(heap.alloc_list_concat(self.content(), other.content())))
+    fn add(&self, other: &ListRef<'v>, heap: Heap<'v>) -> ValueOf<'v, ListType<Value<'v>>> {
+        heap.alloc_list_concat(self.content(), other.content())
     }
 
-    fn mul(&self, other: Value, heap: Heap<'v>) -> Option<crate::Result<Value<'v>>> {
-        let l = match i32::unpack_value(other) {
-            Ok(Some(l)) => l,
-            Ok(None) => return None,
-            Err(e) => return Some(Err(e)),
-        };
-        let content = self.content();
-        let mut result = Vec::with_capacity(content.len() * cmp::max(0, l) as usize);
-        for _ in 0..l {
-            result.extend(content.iter());
-        }
-        Some(Ok(heap.alloc_list(&result).to_value()))
+    fn mul(&self, times: i32, heap: Heap<'v>) -> ValueOf<'v, ListType<Value<'v>>> {
+        self.repeated(times, heap)
     }
 
-    fn rmul(&self, lhs: Value<'v>, heap: Heap<'v>) -> Option<crate::Result<Value<'v>>> {
-        self.mul(lhs, heap)
+    fn rmul(&self, times: i32, heap: Heap<'v>) -> ValueOf<'v, ListType<Value<'v>>> {
+        self.repeated(times, heap)
     }
 
     fn set_at(&self, index: Value<'v>, alloc_value: Value<'v>) -> crate::Result<()> {

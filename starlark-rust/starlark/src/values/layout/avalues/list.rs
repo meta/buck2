@@ -237,11 +237,16 @@ impl<'v> Heap<'v> {
     }
 
     /// Allocate a list by concatenating two slices.
-    pub(crate) fn alloc_list_concat(self, a: &[Value<'v>], b: &[Value<'v>]) -> Value<'v> {
+    pub(crate) fn alloc_list_concat(
+        self,
+        a: &[Value<'v>],
+        b: &[Value<'v>],
+    ) -> ValueOf<'v, ListType<Value<'v>>> {
         let array = self.alloc_array(a.len() + b.len());
         array.extend_from_slice(a);
         array.extend_from_slice(b);
-        self.alloc_raw(list_avalue(array)).to_value()
+        // Every value is a `typing.Any`, so the list is a `list[typing.Any]`.
+        ValueOf::new_unchecked(self.alloc_raw(list_avalue(array)).to_value())
     }
 }
 

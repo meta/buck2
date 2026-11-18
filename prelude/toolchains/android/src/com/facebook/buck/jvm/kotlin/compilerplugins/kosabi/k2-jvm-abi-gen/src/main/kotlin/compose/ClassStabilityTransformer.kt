@@ -23,9 +23,9 @@ import org.jetbrains.kotlin.ir.declarations.IrClass
 import org.jetbrains.kotlin.ir.declarations.IrDeclaration
 import org.jetbrains.kotlin.ir.declarations.IrDeclarationOrigin
 import org.jetbrains.kotlin.ir.declarations.IrField
+import org.jetbrains.kotlin.ir.declarations.IrFile
 import org.jetbrains.kotlin.ir.declarations.IrModuleFragment
 import org.jetbrains.kotlin.ir.declarations.IrProperty
-import org.jetbrains.kotlin.ir.expressions.IrConst
 import org.jetbrains.kotlin.ir.expressions.impl.IrConstImpl
 import org.jetbrains.kotlin.ir.symbols.IrClassSymbol
 import org.jetbrains.kotlin.ir.symbols.UnsafeDuringIrConstructionAPI
@@ -47,7 +47,7 @@ import org.jetbrains.kotlin.ir.types.isString
 import org.jetbrains.kotlin.ir.types.isUnit
 import org.jetbrains.kotlin.ir.types.makeNotNull
 import org.jetbrains.kotlin.ir.util.constructors
-import org.jetbrains.kotlin.ir.util.getAnnotation
+import org.jetbrains.kotlin.ir.util.fileOrNull
 import org.jetbrains.kotlin.ir.util.hasAnnotation
 import org.jetbrains.kotlin.ir.util.isEnumClass
 import org.jetbrains.kotlin.ir.util.isEnumEntry
@@ -72,7 +72,7 @@ import org.jetbrains.kotlin.name.Name
  * annotated @StableMarker (Compose's @Stable and @Immutable among them), or one Compose lists in
  * KnownStableConstructs.stableMarkers.
  *
- * Stability rules (simplified for ABI emulation):
+ * Stability rules (Compose's `Stability` algebra over the members and the superclass):
  * - A class that carries a stable marker, or has a supertype that does: stable, with no
  *   type-parameter dependencies
  * - An object, when the compiler's Compose plugin calls every object stable (2.4 on)
@@ -80,11 +80,20 @@ import org.jetbrains.kotlin.name.Name
  * - val properties typed with one of the class's own type parameters: set that parameter's bit and
  *   are not known stable, as Compose's Stability.Parameter
  * - var properties (non-delegated): unstable
- * - Primitives, String, Unit, enums, function types: stable
- * - A type that carries a stable marker, or has a supertype that does: stable, and so is an object
- *   type when objects are stable
- * - A class is no more stable than its superclass
- * - Unrecognised types: conservatively not-known-stable
+ * - Primitives, String, Unit, enums, function types (including the synthetic
+ *   `(K)ComposableFunctionN` kinds): stable
+ * - Interface-typed members are `Unknown`: one such member leaves the class not known stable, two
+ *   or more combine and are dropped by `normalize()`, so the class is known stable. From 2.4 a
+ *   non-final class starts at `Unknown`, so one interface member is enough there. Java-stub
+ *   interfaces are unstable, and on 2.3 so is any interface from another module.
+ * - An in-module member class is analysed structurally: from 2.4 one declared in the same file, on
+ *   2.3 any in-module class. A member class from another file is runtime stability, as is any other
+ *   unrecognised type: conservatively not-known-stable
+ * - An unmarked value-class member takes the stability of its underlying type (2.3/2.4) or of its
+ *   fields, after the marker check (whose supertype scope is versioned)
+ * - A class combines the stability of its superclass, unless that superclass is only `Unknown`,
+ *   which is dropped (2.4 on). A superclass from another file of the module, or from a compiled
+ *   dependency, is runtime stability: never known stable
  *
  * The two outputs use different encodings. $stable carries StabilityBits: 0 when known stable,
  * UNSTABLE.bitsForSlot(0) = 8 otherwise. @StabilityInferred(parameters) carries the type-parameter
@@ -99,7 +108,6 @@ internal class ClassStabilityTransformer(private val pluginContext: IrPluginCont
         ClassId(FqName("androidx.compose.runtime"), Name.identifier("Composer"))
     private val STABILITY_INFERRED_CLASS_ID =
         ClassId(FqName("androidx.compose.runtime.internal"), Name.identifier("StabilityInferred"))
-    private val STABILITY_INFERRED_FQ_NAME = STABILITY_INFERRED_CLASS_ID.asSingleFqName()
     private val STABLE_MARKER_FQ_NAME = FqName("androidx.compose.runtime.StableMarker")
     private val JVM_FIELD_CLASS_ID = ClassId(FqName("kotlin.jvm"), Name.identifier("JvmField"))
 
@@ -131,6 +139,14 @@ internal class ClassStabilityTransformer(private val pluginContext: IrPluginCont
     // Written as the derivation rather than 8 so the slot-0 substitution stays visible.
     private const val STABLE_BITS = 0
     private const val UNSTABLE_BITS_SLOT0 = 0b100 shl 1
+
+    // The synthetic composable function-type kinds K2 classifies `@Composable (P..) -> R` as.
+    // Compose's StabilityInferencer calls both stable; see ComposableTypeRewriter for the split
+    // between these and the legacy `kotlin.FunctionN` + annotation form.
+    private const val COMPOSABLE_FUNCTION_FQ_PREFIX =
+        "androidx.compose.runtime.internal.ComposableFunction"
+    private const val K_COMPOSABLE_FUNCTION_FQ_PREFIX =
+        "androidx.compose.runtime.internal.KComposableFunction"
   }
 
   // Classes currently being analyzed (cycle detection)
@@ -284,107 +300,115 @@ internal class ClassStabilityTransformer(private val pluginContext: IrPluginCont
     )
   }
 
-  /** Type-parameter bitmask plus whether the class itself is known stable. */
-  private data class Stability(val typeParamMask: Int, val knownStable: Boolean)
+  /** Type-parameter bitmask plus the folded member/superclass stability. */
+  private data class Stability(val typeParamMask: Int, val folded: EmulatedStability) {
+    val knownStable: Boolean
+      get() = folded.knownStable()
+  }
 
   // Deliberately conservative: an unrecognised member type yields not-known-stable, so consumers
   // resolve stability at runtime rather than assume the wrong answer.
-  private fun computeStability(irClass: IrClass, asSuperclass: Boolean = false): Stability {
+  private fun computeStability(irClass: IrClass): Stability {
     // Compose answers Stable here before it looks at any member, superclass or type parameter.
-    if (hasStableMarkedDescendant(irClass)) return Stability(0, knownStable = true)
+    if (hasStableMarkedDescendant(irClass)) {
+      return Stability(0, EmulatedStability.Stable)
+    }
     if (COMPOSE_OBJECTS_ARE_STABLE && irClass.kind == ClassKind.OBJECT) {
-      return Stability(0, knownStable = true)
+      return Stability(0, EmulatedStability.Stable)
     }
 
     val classFqn = irClass.classFqName()
     if (classFqn != null && analyzing.contains(classFqn)) {
-      // Cycle — do not claim knowledge we do not have.
-      return Stability(0, knownStable = false)
+      // Cycle — Compose answers Unstable for a class it is already analysing.
+      return Stability(0, EmulatedStability.Unstable)
     }
     if (classFqn != null) analyzing.add(classFqn)
-
-    var mask = 0
-    var knownStable = true
-    for (declaration in irClass.declarations) {
-      when (declaration) {
-        is IrProperty -> {
-          if (declaration.isVar && declaration.isDelegated != true) {
-            if (classFqn != null) analyzing.remove(classFqn)
-            return Stability(0, knownStable = false)
+    try {
+      var mask = 0
+      // From 2.4 Compose starts a class that is not final at `Stability.Unknown`.
+      var folded: EmulatedStability =
+          if (
+              COMPOSE_NON_FINAL_CLASSES_ARE_UNKNOWN &&
+                  irClass.modality != Modality.FINAL &&
+                  !irClass.isEnumClass
+          ) {
+            EmulatedStability.Unknown
+          } else {
+            EmulatedStability.Stable
           }
-          // Only stored state counts. A computed getter has no backing field and is skipped,
-          // which is what the real StabilityInferencer does - it reaches members through
-          // `member.backingField?.let { ... }`.
-          val backingField = declaration.backingField
-          if (backingField != null) {
-            mask = mask or typeParamBits(backingField.type, irClass)
-            if (!isKnownStableType(backingField.type)) {
-              knownStable = false
+      val analyzedFile = irClass.fileOrNull
+      for (declaration in irClass.declarations) {
+        when (declaration) {
+          is IrProperty -> {
+            if (declaration.isVar && declaration.isDelegated != true) {
+              return Stability(0, EmulatedStability.Unstable)
+            }
+            // Only stored state counts. A computed getter has no backing field and is skipped,
+            // which is what the real StabilityInferencer does - it reaches members through
+            // `member.backingField?.let { ... }`.
+            val backingField = declaration.backingField
+            if (backingField != null) {
+              mask = mask or typeParamBits(backingField.type, irClass)
+              folded = folded.plus(stabilityOfType(backingField.type, analyzedFile))
             }
           }
-        }
-        is IrField -> {
-          if (!declaration.isStatic) {
-            mask = mask or typeParamBits(declaration.type, irClass)
-            if (!isKnownStableType(declaration.type)) {
-              knownStable = false
+          is IrField -> {
+            if (!declaration.isStatic) {
+              mask = mask or typeParamBits(declaration.type, irClass)
+              folded = folded.plus(stabilityOfType(declaration.type, analyzedFile))
             }
           }
+          else -> {}
         }
-        else -> {}
       }
-    }
 
-    // A subclass holds every field its superclass declares, so it can be no more stable than that
-    // superclass. Skipping this let a class with no stored state of its own be called stable while
-    // the real compiler called it unstable — e.g. `object EmptyPainter : Painter()`, where all the
-    // mutable state lives in Painter. Over-asserting stability makes a consumer skip recomposition
-    // for a value that did change, so this is deliberately the pessimistic direction.
-    if (knownStable && !superclassKnownStable(irClass)) {
-      knownStable = false
-    }
-    // From 2.4 Compose starts a class that is not final at `Stability.Unknown`. As a superclass
-    // such
-    // a class is still answered by its members: Compose drops a superclass that is only Unknown and
-    // keeps one with an unstable member.
-    if (
-        !asSuperclass &&
-            COMPOSE_NON_FINAL_CLASSES_ARE_UNKNOWN &&
-            irClass.modality != Modality.FINAL &&
-            !irClass.isEnumClass
-    ) {
-      knownStable = false
-    }
+      // A subclass holds every field its superclass declares, so the superclass's stability is
+      // combined into its own. Skipping this let a class with no stored state of its own be called
+      // stable while the real compiler called it unstable — e.g. `object EmptyPainter :
+      // Painter()`, where all the mutable state lives in Painter. Over-asserting stability makes
+      // a consumer skip recomposition for a value that did change, so this is deliberately the
+      // pessimistic direction.
+      folded = folded.plus(superclassStability(irClass))
 
-    if (classFqn != null) analyzing.remove(classFqn)
-    return Stability(mask, knownStable)
+      return Stability(mask, folded)
+    } finally {
+      if (classFqn != null) analyzing.remove(classFqn)
+    }
   }
 
   /**
-   * Whether [irClass]'s superclass permits it to be known stable. Interfaces and [Any] are ignored:
-   * neither contributes stored state.
+   * The superclass's contribution to [irClass]'s stability. Interfaces and [Any] are ignored:
+   * neither contributes stored state. A superclass the analysis cannot see — from another file of
+   * the module (2.4 on), or from a compiled dependency — is runtime stability: Compose forces it
+   * rather than read back a bitmask that incremental compilation may have produced from stale
+   * inputs.
    */
-  private fun superclassKnownStable(irClass: IrClass): Boolean {
+  private fun superclassStability(irClass: IrClass): EmulatedStability {
     val superClass =
         irClass.superTypes.mapNotNull { it.classOrNull?.owner }.firstOrNull { !it.isInterface }
-            ?: return true
-    val superFqn = superClass.classFqName() ?: return false
-    if (superFqn == "kotlin.Any") return true
+            ?: return EmulatedStability.Stable
+    val superFqn = superClass.classFqName() ?: return EmulatedStability.Unstable
+    if (superFqn == "kotlin.Any") return EmulatedStability.Stable
     if (superFqn in moduleClassFqns) {
-      return computeStability(superClass, asSuperclass = true).knownStable
+      if (COMPOSE_STABILITY_IS_FILE_SCOPED && superClass.fileOrNull !== irClass.fileOrNull) {
+        return EmulatedStability.Other
+      }
+      val folded = computeStability(superClass).folded
+      // From 2.4 Compose drops a superclass that is only Unknown and combines any other. A
+      // private member type cannot cross files, so the class under analysis and the superclass it
+      // reaches structurally are always in the same file here, and no entry file needs threading.
+      return if (COMPOSE_STABILITY_IS_FILE_SCOPED && folded === EmulatedStability.Unknown) {
+        EmulatedStability.Stable
+      } else {
+        folded
+      }
     }
-    // Compiled dependency: trust its @StabilityInferred, and treat an absent one as unstable. A
-    // class outside a Compose-enabled compilation carries no stability information, and its private
-    // state may be stripped from the ABI jar, so its declarations cannot be inspected instead.
-    return externalClassKnownStable(superClass)
-  }
-
-  private fun externalClassKnownStable(irClass: IrClass): Boolean {
-    val annotation = irClass.getAnnotation(STABILITY_INFERRED_FQ_NAME) ?: return false
-    val parameters = (annotation.arguments[0] as? IrConst)?.value as? Int ?: return false
-    val typeParamCount = irClass.typeParameters.size
-    if (typeParamCount >= 32) return false
-    return (parameters and (1 shl typeParamCount)) != 0
+    // Compiled dependency: Compose forces runtime stability for what it cannot analyse (a class
+    // outside a Compose-enabled compilation carries no stability information, and its private
+    // state may be stripped from the ABI jar, so its declarations cannot be inspected instead).
+    // Treating its bitmask as authoritative over-asserted every subclass of a stable dependency
+    // class.
+    return EmulatedStability.Other
   }
 
   /** Whether [irClass] itself carries a stable marker (Compose's `hasStableMarker`). */
@@ -413,7 +437,7 @@ internal class ClassStabilityTransformer(private val pluginContext: IrPluginCont
     if (irClass.typeParameters.isEmpty()) return 0
 
     // If the type is already known stable, no type param dependency
-    if (isKnownStableType(type)) return 0
+    if (stabilityOfType(type, irClass.fileOrNull) === EmulatedStability.Stable) return 0
 
     // Check if the type IS a type parameter of this class
     if (type is IrSimpleType) {
@@ -436,11 +460,14 @@ internal class ClassStabilityTransformer(private val pluginContext: IrPluginCont
     return 0
   }
 
-  // Check if a type is known stable (primitives, String, enums, function types, etc.)
-  private fun isKnownStableType(type: IrType): Boolean {
+  // The stability of a member type, following Compose's StabilityInferencer check order: markers
+  // and enums before interfaces, known-stable containers before the interface rule (an
+  // `ImmutableList` of unstable arguments takes the argument's stability, which normalize()
+  // keeps — it is never Unknown), and structural analysis last.
+  private fun stabilityOfType(type: IrType, analyzedFile: IrFile?): EmulatedStability {
     // Handle nullable — strip and check inner
     if (type.isNullable()) {
-      return isKnownStableType(type.makeNotNull())
+      return stabilityOfType(type.makeNotNull(), analyzedFile)
     }
 
     // Primitives
@@ -454,60 +481,142 @@ internal class ClassStabilityTransformer(private val pluginContext: IrPluginCont
             type.isShort() ||
             type.isChar()
     ) {
-      return true
+      return EmulatedStability.Stable
     }
     // String, Unit
-    if (type.isString() || type.isUnit()) return true
+    if (type.isString() || type.isUnit()) return EmulatedStability.Stable
 
-    val fqn = type.classFqName?.asString() ?: return false
+    val fqn = type.classFqName?.asString() ?: return EmulatedStability.Unstable
 
-    // Function types
-    if (fqn.startsWith("kotlin.Function") || fqn.startsWith("kotlin.reflect.KFunction")) {
-      return true
+    // Function types, including the synthetic composable kinds K2 classifies `@Composable`
+    // function types as. Compose's isSyntheticComposableFunction matches on the same prefix.
+    if (
+        fqn.startsWith("kotlin.Function") ||
+            fqn.startsWith("kotlin.reflect.KFunction") ||
+            fqn.startsWith(COMPOSABLE_FUNCTION_FQ_PREFIX) ||
+            fqn.startsWith(K_COMPOSABLE_FUNCTION_FQ_PREFIX)
+    ) {
+      return EmulatedStability.Stable
     }
 
     // Enums, and the types Compose calls stable before it looks at their state or their arguments:
     // those that carry a stable marker or have a supertype that does, and objects where its
-    // StabilityInferencer calls every object stable.
+    // StabilityInferencer calls every object stable. A value class without its marker takes the
+    // stability of its underlying type instead (an unmarked full value class combines its fields).
     val classSymbol = (type as? IrSimpleType)?.classOrNull
-    if (classSymbol != null) {
-      val owner = classSymbol.owner
-      if (owner.isEnumClass) return true
-      val marked =
-          if (owner.isValue && !COMPOSE_VALUE_CLASS_MARKERS_INCLUDE_SUPERTYPES)
-              hasStableMarker(owner)
-          else hasStableMarkedDescendant(owner)
-      if (marked) return true
-      if (COMPOSE_OBJECTS_ARE_STABLE && owner.kind == ClassKind.OBJECT) return true
+    val owner = classSymbol?.owner
+    if (owner != null) {
+      if (owner.isEnumClass) return EmulatedStability.Stable
+      if (owner.isValue) {
+        val marked =
+            if (!COMPOSE_VALUE_CLASS_MARKERS_INCLUDE_SUPERTYPES) hasStableMarker(owner)
+            else hasStableMarkedDescendant(owner)
+        if (marked) return EmulatedStability.Stable
+        if (fqn in KNOWN_STABLE_FQNS) {
+          return knownStableConstructStability(type, analyzedFile)
+        }
+        return valueClassStability(owner, analyzedFile)
+      }
+      if (hasStableMarkedDescendant(owner)) return EmulatedStability.Stable
+      if (COMPOSE_OBJECTS_ARE_STABLE && owner.kind == ClassKind.OBJECT) {
+        return EmulatedStability.Stable
+      }
     }
 
     // Known stable types. The container-shaped ones are only as stable as their arguments:
     // `Pair<String, MutableList<Int>>` matches on FQN alone but is not stable, and claiming it is
     // makes a consumer skip a recomposition it needed. A star projection or a type-parameter
     // argument is not known stable here either — that stability is carried by the type-parameter
-    // mask, which is a separate signal from this one.
+    // mask, which is a separate signal from this one. The arguments fold through plus(), so an
+    // `ImmutableList` of `Unknown` arguments stays `Unknown` rather than collapsing to stable.
     if (fqn in KNOWN_STABLE_FQNS) {
-      return (type as? IrSimpleType)?.arguments.orEmpty().all {
-        it is org.jetbrains.kotlin.ir.types.IrTypeProjection && isKnownStableType(it.type)
+      return knownStableConstructStability(type, analyzedFile)
+    }
+
+    if (owner != null) {
+      if (owner.origin == IrDeclarationOrigin.IR_EXTERNAL_JAVA_DECLARATION_STUB) {
+        return EmulatedStability.Unstable
+      }
+      // Interfaces are Unknown: stability bitmasks are never populated for them. On 2.3 an
+      // interface from another module takes the bitmask branch instead, which has no bitmask to
+      // find, so it is Unstable there.
+      if (owner.isInterface) {
+        if (!COMPOSE_STABILITY_IS_FILE_SCOPED) {
+          val ownerFqn = owner.classFqName()
+          if (ownerFqn == null || ownerFqn !in moduleClassFqns) {
+            return EmulatedStability.Unstable
+          }
+        }
+        return EmulatedStability.Unknown
+      }
+      // An in-module member class is analysed structurally: from 2.4 one declared in the same
+      // file (a member type visible from another file is public or internal, so Compose forces
+      // runtime stability for it), on 2.3 any in-module class. Annotation classes keep the
+      // legacy answer: their IR members do not model what Compose analyses.
+      if (owner.kind == ClassKind.CLASS || owner.kind == ClassKind.OBJECT) {
+        val ownerFqn = owner.classFqName()
+        if (
+            ownerFqn != null &&
+                ownerFqn in moduleClassFqns &&
+                (!COMPOSE_STABILITY_IS_FILE_SCOPED || owner.fileOrNull === analyzedFile)
+        ) {
+          return computeStability(owner).folded
+        }
       }
     }
 
-    // SDK types (java.*, kotlin.* excluding collections interfaces)
-    // Kotlin collections interfaces (List, Set, Map) are NOT stable — they're interfaces
-    if (
-        fqn == "kotlin.collections.List" ||
-            fqn == "kotlin.collections.Set" ||
-            fqn == "kotlin.collections.Map" ||
-            fqn == "kotlin.collections.MutableList" ||
-            fqn == "kotlin.collections.MutableSet" ||
-            fqn == "kotlin.collections.MutableMap" ||
-            fqn == "kotlin.collections.Collection" ||
-            fqn == "kotlin.collections.MutableCollection"
-    ) {
-      return false
-    }
+    return EmulatedStability.Unstable
+  }
 
-    return false
+  /** A known-stable container folded over its type arguments through plus(). */
+  private fun knownStableConstructStability(
+      type: IrType,
+      analyzedFile: IrFile?,
+  ): EmulatedStability {
+    var folded: EmulatedStability = EmulatedStability.Stable
+    for (arg in (type as? IrSimpleType)?.arguments.orEmpty()) {
+      val argType = (arg as? org.jetbrains.kotlin.ir.types.IrTypeProjection)?.type
+      // A star projection carries no stability information.
+      folded =
+          folded.plus(
+              if (argType == null) EmulatedStability.Unstable
+              else stabilityOfType(argType, analyzedFile),
+          )
+    }
+    return folded
+  }
+
+  /**
+   * The stability of an unmarked value class: its underlying type's, or the combination of its
+   * fields for a full value class. The analysed file is not threaded through: a value class's
+   * members are its underlying representation, and a member class reached from there is analysed
+   * against the entry file by the caller.
+   */
+  private fun valueClassStability(owner: IrClass, analyzedFile: IrFile?): EmulatedStability {
+    val ownerFqn = owner.classFqName()
+    if (ownerFqn != null && analyzing.contains(ownerFqn)) {
+      return EmulatedStability.Unstable
+    }
+    if (ownerFqn != null) analyzing.add(ownerFqn)
+    try {
+      var folded: EmulatedStability = EmulatedStability.Stable
+      for (declaration in owner.declarations) {
+        when (declaration) {
+          is IrProperty ->
+              declaration.backingField?.let {
+                folded = folded.plus(stabilityOfType(it.type, analyzedFile))
+              }
+          is IrField ->
+              if (!declaration.isStatic) {
+                folded = folded.plus(stabilityOfType(declaration.type, analyzedFile))
+              }
+          else -> {}
+        }
+      }
+      return folded
+    } finally {
+      if (ownerFqn != null) analyzing.remove(ownerFqn)
+    }
   }
 
   private fun IrClass.classFqName(): String? {
@@ -529,4 +638,52 @@ internal class ClassStabilityTransformer(private val pluginContext: IrPluginCont
               ?.packageFqName ?: return null
       return FqName(packageFqName.asString() + "." + segments.joinToString("."))
     }
+}
+
+/**
+ * Compose's `Stability` algebra (`analysis/Stability.kt`), just enough of it to answer the
+ * known-stable bit. `Parameter` and `Runtime` both survive `normalize()` and are never known
+ * stable, so they share [EmulatedStability.Other]; nothing here needs them told apart.
+ */
+private sealed interface EmulatedStability {
+  data object Stable : EmulatedStability
+
+  data object Unstable : EmulatedStability
+
+  data object Unknown : EmulatedStability
+
+  /** A type-parameter or runtime part: kept by `normalize()`, never known stable. */
+  data object Other : EmulatedStability
+
+  data class Combined(val parts: List<EmulatedStability>) : EmulatedStability
+}
+
+/** Compose's `Stability.plus`, unchanged. */
+private fun EmulatedStability.plus(other: EmulatedStability): EmulatedStability =
+    when {
+      other === EmulatedStability.Stable -> this
+      other === EmulatedStability.Unstable -> other
+      this === EmulatedStability.Stable -> other
+      this === EmulatedStability.Unstable -> this
+      else -> EmulatedStability.Combined(listOf(this, other))
+    }
+
+/**
+ * Compose's `normalize().knownStable()`: no unstable, parameter or runtime part, and not a bare
+ * `Unknown`. A bare `Unknown` is a single interface-typed member (or a member-less non-final
+ * class); two or more `Unknown` parts combine, and `normalize()` drops every one of them, so the
+ * class is known stable.
+ */
+private fun EmulatedStability.knownStable(): Boolean {
+  val leaves = ArrayDeque<EmulatedStability>()
+  val stack = ArrayDeque<EmulatedStability>()
+  stack.add(this)
+  while (stack.isNotEmpty()) {
+    val next = stack.removeLast()
+    if (next is EmulatedStability.Combined) stack.addAll(next.parts) else leaves.add(next)
+  }
+  if (leaves.any { it === EmulatedStability.Unstable || it === EmulatedStability.Other }) {
+    return false
+  }
+  return this is EmulatedStability.Combined || leaves.none { it === EmulatedStability.Unknown }
 }

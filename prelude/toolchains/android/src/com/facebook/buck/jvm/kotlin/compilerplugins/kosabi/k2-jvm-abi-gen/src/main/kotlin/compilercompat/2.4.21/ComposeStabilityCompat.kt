@@ -40,3 +40,12 @@ internal const val COMPOSE_NON_FINAL_CLASSES_ARE_UNKNOWN = true
  * the value class's own marker, and otherwise take the stability of its underlying type.
  */
 internal const val COMPOSE_VALUE_CLASS_MARKERS_INCLUDE_SUPERTYPES = false
+
+/**
+ * Whether this compiler's Compose plugin scopes class-stability inference by file. From 2.4 an
+ * interface is `Unknown` wherever it is declared, and a public/internal superclass from another
+ * file is forced to runtime stability instead of being analysed structurally. 2.3 analyses every
+ * in-module class structurally, and calls only in-module interfaces `Unknown`: an external
+ * interface takes the bitmask branch, and interfaces carry no bitmask, so it is `Unstable`.
+ */
+internal const val COMPOSE_STABILITY_IS_FILE_SCOPED = true

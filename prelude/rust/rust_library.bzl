@@ -68,10 +68,6 @@ load("@prelude//linking:types.bzl", "Linkage")
 load("@prelude//os_lookup:defs.bzl", "OsLookup")
 load("@prelude//rust:attrs.bzl", "rust_analyzer_target_kind", "rust_binary_attrs_group", "rust_common", "rust_common_attributes")
 load("@prelude//rust:link_info.bzl", "RustProcMacroPlugin")
-# Local alias for arch transitions: inlined from
-# `rust/buildscript/buildscript_platform.bzl` so OSS and isolated graphs do
-# not need the `rust/buildscript` package to exist as a BUCK package.
-# Same behavior as the shared rule: forwards providers with an incoming transition.
 load("@prelude//rust/rust-analyzer:provider.bzl", "rust_analyzer_provider")
 load(
     "@prelude//tests:re_utils.bzl",
@@ -146,7 +142,7 @@ load(
     "RustcOutput",  # @unused Used as a type
     "output_as_diag_subtargets",
 )
-load(":proc_macro_alias.bzl", "rust_proc_macro_alias", "rust_proc_macro_arch_aggregate")
+load(":proc_macro_alias.bzl", "rust_proc_macro_alias")
 load(":profile.bzl", "make_profile_providers")
 load(":resources.bzl", "rust_attr_resources")
 load(":rust_toolchain.bzl", "RustToolchainInfo", "toolchain_supports_miri")
@@ -157,14 +153,6 @@ load(
 )
 load(":targets.bzl", "targets")
 
-transition_alias = rule(
-    impl = lambda ctx: ctx.attrs.actual.providers,
-    attrs = {
-        "actual": attrs.dep(),
-        "labels": attrs.list(attrs.string(), default = []),
-    },
-    supports_incoming_transition = True,
-)
 _DEFAULT_ROOTS = ["lib.rs"]
 
 # Add provider for default output, and for each lib output style...
@@ -1282,59 +1270,20 @@ def _compute_transitive_deps(
 
     return transitive_deps, rust_debug_info, transitive_proc_macro_deps
 
-def _dual_arch_eligible_for_package() -> bool:
-    if get_cell_name() == "fbcode":
-        return True
-    # Only fbsource third-party/fbcode paths are eligible. OSS and isolated
-    # graphs (different cell) must stay scalar even when their base path
-    # happens to start with `third-party/`, since they lack the
-    # `fbsource//third-party/rust-toolchain/constraints` package.
-    if get_cell_name() != "fbsource":
-        return False
-    base_path = get_base_path()
-    return base_path.startswith("fbcode/") or base_path.startswith("third-party/")
-
 def rust_library_macro_wrapper(rust_library: typing.Callable) -> typing.Callable:
     def wrapper(proc_macro_alias_actual = None, **kwargs):
         if kwargs.get("proc_macro") == True:
             name = kwargs["name"]
-            explicit_variants = kwargs.pop("_create_dual_arch_proc_macro_variants", None)
-            create_arch_variants = explicit_variants if explicit_variants != None else _dual_arch_eligible_for_package()
             if kwargs.get("crate", None) == None and kwargs.get("crate_dynamic", None) == None:
                 kwargs["crate"] = name.replace("-", "_")
 
-            raw_target = ":_" + name
-            if proc_macro_alias_actual != None:
-                # Reindeer-generated toolchain rules already select stage,
-                # workspace, and arch routing; honor the caller's value.
-                actual = proc_macro_alias_actual
-            elif create_arch_variants:
-                arch_variants = {}
-                for arch in ["x86_64", "arm64"]:
-                    arch_name = "_{}-dual-arch-{}".format(name, arch)
-                    transition_alias(
-                        name = arch_name,
-                        actual = raw_target,
-                        incoming_transition = "@fbsource//third-party/rust-toolchain/platforms:final-arch-{}".format(arch),
-                        visibility = [],
-                    )
-                    arch_variants[arch] = ":" + arch_name
-                aggregate_name = "_{}-dual-arch".format(name)
-                rust_proc_macro_arch_aggregate(
-                    name = aggregate_name,
-                    arch_variants = arch_variants,
-                )
-                actual = select({
-                    "DEFAULT": raw_target,
-                    "fbsource//third-party/rust-toolchain/constraints:dual-arch-qualification[enabled]": ":" + aggregate_name,
-                })
-            else:
-                actual = raw_target
+            if proc_macro_alias_actual == None:
+                proc_macro_alias_actual = ":_" + name
 
             rust_proc_macro_alias(
                 name = name,
-                actual_exec = actual,
-                actual_plugin = actual,
+                actual_exec = proc_macro_alias_actual,
+                actual_plugin = proc_macro_alias_actual,
                 default_target_platform = kwargs.get("default_target_platform", None),
                 visibility = kwargs.pop("visibility", []),
                 _rust_toolchain = kwargs.get("_rust_toolchain", None),

@@ -2240,7 +2240,9 @@ def _mk_argsfiles(
     argsfiles = []
     args_list = []
 
-    # The arguments by contributing layer, for `CompileArgsfile.layers` (Xcode argsfiles alone).
+    # The arguments by contributing layer, for `CompileArgsfile.layers` (Xcode argsfiles alone), as
+    # Buck's compile has them: the Xcode argsfiles' substitutions are for a project built with Apple's
+    # clang, and a project built with the toolchain's own compiler needs the flags they rewrite.
     layers = {}
 
     def add_layer(name: str, args):
@@ -2248,7 +2250,7 @@ def _mk_argsfiles(
             return
         if name in layers:
             fail("compile flags layer `{}` added twice for `{}`; each layer of the argsfile is recorded once".format(name, ext.value))
-        layers[name] = create_cmd_args(is_nasm, is_xcode_argsfile, args)
+        layers[name] = cmd_args(args)
 
     def mk_argsfile(filename: str, args, absolute: bool = False, use_dep_files_placeholder_for_content_based_paths: bool = False) -> Artifact:
         content = create_cmd_args(is_nasm, is_xcode_argsfile, args)

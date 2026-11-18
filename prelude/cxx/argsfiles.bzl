@@ -25,14 +25,14 @@ CompileArgsfile = record(
     # The generated GCC specs file carrying the file-prefix-map flags, when the
     # compiler takes them that way. None for compilers given the flags directly.
     file_prefix_specs = field(Artifact | None, None),
-    # The argsfile's arguments by the layer that contributes them, in the order the argsfile
-    # concatenates them: `toolchain` (the compiler's own flags), `compiler_type`, `cxx_flags`
-    # (the `flags` targets' projection), `deps` (the preprocessor set's `args`, the target's own
-    # exported preprocessor first, then its dependencies', and its `modular_args` when the set
-    # uses modules), `target` (`_target_compile_flags`, the include directories and the
-    # `-include` of a prefix header or an uncompiled precompiled header). The file-prefix
-    # arguments (`-ffile-prefix-map`, `-fcoverage-prefix-map`, the symlink-tree header modes'
-    # last argsfile) are in no layer on purpose: they map the paths of this compile's own
+    # The argsfile's arguments, before `XCODE_ARG_SUBSTITUTIONS`, by the layer that contributes
+    # them, in the order the argsfile concatenates them: `toolchain` (the compiler's own flags),
+    # `compiler_type`, `cxx_flags` (the `flags` targets' projection), `deps` (the preprocessor
+    # set's `args`, the target's own exported preprocessor first, then its dependencies', and its
+    # `modular_args` when the set uses modules), `target` (`_target_compile_flags`, the include
+    # directories and the `-include` of a prefix header or an uncompiled precompiled header). The
+    # file-prefix arguments (`-ffile-prefix-map`, `-fcoverage-prefix-map`, the symlink-tree header
+    # modes' last argsfile) are in no layer on purpose: they map the paths of this compile's own
     # symlink trees, which a compile run from elsewhere never sees. Kept for Xcode argsfiles
     # alone, for the `xcode-compiler-flags` sub-target; None otherwise.
     layers = field(dict[str, cmd_args] | None, None),
@@ -64,8 +64,9 @@ def get_xcode_compiler_flags_output(ctx: AnalysisContext, argsfile_by_ext: dict[
     """
     The compile flags of every Xcode argsfile as one JSON file, by source extension and by the
     layer that contributes them (`CompileArgsfile.layers`), each layer a list of arguments as
-    the argsfile spells them. A project generator reads the layers Buck composed instead of
-    recomposing them from the target's attributes. The write depends on the content-based
+    Buck's compile has them, before the Xcode argsfiles' substitutions (`XCODE_ARG_SUBSTITUTIONS`,
+    for a project built with Apple's clang). A project generator reads the layers Buck composed
+    instead of recomposing them from the target's attributes. The write depends on the content-based
     artifacts the arguments name (the header maps of the target and of its dependencies, and
     what they name in turn), which Buck builds but does not materialize for it; the output
     itself is one write per library.

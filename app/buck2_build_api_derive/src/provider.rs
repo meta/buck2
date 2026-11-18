@@ -497,11 +497,7 @@ impl ProviderCodegen {
                     demand.provide_value::<
                         &dyn buck2_build_api::interpreter::rule_defs::provider::ProviderLike>(self);
                 }
-                fn equals(&self, other: starlark::values::Value<'v>) -> starlark::Result<bool> {
-                    let other: &#name<'v> = match #name::from_value(other) {
-                        Some(other) => other,
-                        None => return Ok(false),
-                    };
+                fn equals(&self, other: &Self) -> starlark::Result<bool> {
                     #(
                         if !#self_values.equals(#other_values)? {
                             return Ok(false);

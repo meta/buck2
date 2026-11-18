@@ -182,12 +182,12 @@ async fn test_detecting_changed_dependencies() -> anyhow::Result<()> {
     let dep_key = dice.key_index.index_key(K);
 
     let (ctx, _guard) = dice.testing_shared_ctx(v1).await;
-    let eval = TransactionData {
-        version_state: ctx.dupe(),
-        user_data: user_data.dupe(),
-        global_data: dice.global_data.dupe(),
-        dice: dice.dupe(),
-    };
+    let eval = TransactionData::new(
+        ctx.dupe(),
+        user_data.dupe(),
+        dice.dupe(),
+        dice.global_data.dupe(),
+    );
 
     // Dep changed between v0 and v1: the edge records the revision K held at v0
     // (`Revision::FIRST`, minted by the initial `changed_to`); K's value moved at v1, so
@@ -208,12 +208,12 @@ async fn test_detecting_changed_dependencies() -> anyhow::Result<()> {
     let v2 = updater.commit().await.0.get_version();
 
     let (ctx, _guard) = dice.testing_shared_ctx(v2).await;
-    let eval = TransactionData {
-        version_state: ctx.dupe(),
-        user_data: user_data.dupe(),
-        global_data: dice.global_data.dupe(),
-        dice: dice.dupe(),
-    };
+    let eval = TransactionData::new(
+        ctx.dupe(),
+        user_data.dupe(),
+        dice.dupe(),
+        dice.global_data.dupe(),
+    );
 
     // Dep did NOT change between v1 and v2 (same value): the edge records the revision K
     // held at v1 (the second one minted), which K still holds at v2.
@@ -295,12 +295,12 @@ async fn when_equal_return_same_instance() -> anyhow::Result<()> {
     let v = dice.state_handle.update_state(root, vec![]).await;
 
     let (ctx, _guard) = dice.testing_shared_ctx(v).await;
-    let eval = TransactionData {
-        version_state: ctx.dupe(),
-        user_data: user_data.dupe(),
-        global_data: dice.global_data.dupe(),
-        dice: dice.dupe(),
-    };
+    let eval = TransactionData::new(
+        ctx.dupe(),
+        user_data.dupe(),
+        dice.dupe(),
+        dice.global_data.dupe(),
+    );
 
     let (task, _initial_promise) = spawn_task(key.dupe(), eval.dupe(), None);
     let res = task.depended_on_by(ParentKey::None).unwrap().await?;
@@ -318,12 +318,12 @@ async fn when_equal_return_same_instance() -> anyhow::Result<()> {
         .await;
 
     let (ctx, _guard) = dice.testing_shared_ctx(v).await;
-    let eval = TransactionData {
-        version_state: ctx.dupe(),
-        user_data: user_data.dupe(),
-        global_data: dice.global_data.dupe(),
-        dice: dice.dupe(),
-    };
+    let eval = TransactionData::new(
+        ctx.dupe(),
+        user_data.dupe(),
+        dice.dupe(),
+        dice.global_data.dupe(),
+    );
 
     let (task, _initial_promise) = spawn_task(key.dupe(), eval.dupe(), None);
     let res2 = task.depended_on_by(ParentKey::None).unwrap().await?;
@@ -360,12 +360,12 @@ async fn spawn_with_no_previously_cancelled_task() {
     let k = dice.key_index.index_key(IsRan(is_ran.dupe()));
 
     let extra = Arc::new(UserComputationData::new());
-    let eval = TransactionData {
-        version_state: shared_ctx.dupe(),
-        user_data: extra.dupe(),
-        global_data: dice.global_data.dupe(),
-        dice: dice.dupe(),
-    };
+    let eval = TransactionData::new(
+        shared_ctx.dupe(),
+        extra.dupe(),
+        dice.dupe(),
+        dice.global_data.dupe(),
+    );
     let previously_cancelled_task = None;
 
     let (task, _initial_promise) = spawn_task(k, eval, previously_cancelled_task);
@@ -382,12 +382,12 @@ async fn spawn_with_previously_cancelled_task_that_cancelled() {
     let (shared_ctx, _guard) = dice.testing_shared_ctx(VersionNumber::testing_new(1)).await;
 
     let extra = Arc::new(UserComputationData::new());
-    let eval = TransactionData {
-        version_state: shared_ctx.dupe(),
-        user_data: extra.dupe(),
-        global_data: dice.global_data.dupe(),
-        dice: dice.dupe(),
-    };
+    let eval = TransactionData::new(
+        shared_ctx.dupe(),
+        extra.dupe(),
+        dice.dupe(),
+        dice.global_data.dupe(),
+    );
 
     #[derive(Allocative, Clone, Dupe, Debug, Display, PartialEq, Eq, Hash, Pagable)]
     #[pagable_typetag(DiceKeyDyn)]
@@ -439,12 +439,12 @@ async fn spawn_with_previously_cancelled_task_that_finished() {
     let (shared_ctx, _guard) = dice.testing_shared_ctx(VersionNumber::testing_new(1)).await;
 
     let extra = Arc::new(UserComputationData::new());
-    let eval = TransactionData {
-        version_state: shared_ctx.dupe(),
-        user_data: extra.dupe(),
-        global_data: dice.global_data.dupe(),
-        dice: dice.dupe(),
-    };
+    let eval = TransactionData::new(
+        shared_ctx.dupe(),
+        extra.dupe(),
+        dice.dupe(),
+        dice.global_data.dupe(),
+    );
 
     #[derive(Allocative, Clone, Dupe, Debug, Display, PartialEq, Eq, Hash, Pagable)]
     #[pagable_typetag(DiceKeyDyn)]
@@ -506,12 +506,12 @@ async fn writes_after_the_last_transaction_is_dropped_are_accepted() {
     let (shared_ctx, guard) = dice.testing_shared_ctx(VersionNumber::testing_new(1)).await;
 
     let extra = Arc::new(UserComputationData::new());
-    let eval = TransactionData {
-        version_state: shared_ctx.dupe(),
-        user_data: extra.dupe(),
-        global_data: dice.global_data.dupe(),
-        dice: dice.dupe(),
-    };
+    let eval = TransactionData::new(
+        shared_ctx.dupe(),
+        extra.dupe(),
+        dice.dupe(),
+        dice.global_data.dupe(),
+    );
 
     drop(guard);
 
@@ -608,12 +608,12 @@ async fn spawn_with_previously_cancelled_task_nested_cancelled() -> anyhow::Resu
     let k = dice.key_index.index_key(key);
 
     let extra = Arc::new(UserComputationData::new());
-    let eval = TransactionData {
-        version_state: shared_ctx.dupe(),
-        user_data: extra.dupe(),
-        global_data: dice.global_data.dupe(),
-        dice: dice.dupe(),
-    };
+    let eval = TransactionData::new(
+        shared_ctx.dupe(),
+        extra.dupe(),
+        dice.dupe(),
+        dice.global_data.dupe(),
+    );
 
     let (first_task, first_task_promise) = spawn_task(k, eval.dupe(), None);
     is_started.notified().await;
@@ -791,12 +791,12 @@ async fn test_check_dependencies_stops_at_changed() -> anyhow::Result<()> {
     let user_data = Arc::new(UserComputationData::new());
     let (ctx, _guard) = dice.testing_shared_ctx(version).await;
 
-    let eval = TransactionData {
-        version_state: ctx.dupe(),
-        user_data: user_data.dupe(),
-        global_data: dice.global_data.dupe(),
-        dice: dice.dupe(),
-    };
+    let eval = TransactionData::new(
+        ctx.dupe(),
+        user_data.dupe(),
+        dice.dupe(),
+        dice.global_data.dupe(),
+    );
 
     *data.compute_behavior[0].lock().unwrap() = ComputeBehavior::Sleep(Duration::from_millis(20));
 
@@ -877,12 +877,12 @@ async fn test_check_dependencies_can_eagerly_check_all_parallel_deps() -> anyhow
     let user_data = Arc::new(UserComputationData::new());
     let (ctx, _guard) = dice.testing_shared_ctx(version).await;
 
-    let eval = TransactionData {
-        version_state: ctx.dupe(),
-        user_data: user_data.dupe(),
-        global_data: dice.global_data.dupe(),
-        dice: dice.dupe(),
-    };
+    let eval = TransactionData::new(
+        ctx.dupe(),
+        user_data.dupe(),
+        dice.dupe(),
+        dice.global_data.dupe(),
+    );
 
     let semaphore = Arc::new(Semaphore::new(0));
 

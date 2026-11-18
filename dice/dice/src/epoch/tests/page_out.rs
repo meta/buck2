@@ -1753,12 +1753,12 @@ async fn equal_revisions_get_distinct_paged_out_descriptors_across_versions() ->
 
     let old = dice.updater(root).commit().await;
     let (old_state, _old_guard) = dice.testing_shared_ctx(old.0.get_version()).await;
-    let old_eval = TransactionData {
-        version_state: old_state.dupe(),
-        user_data: DiceArc::new(user_data_with_counter(&counter)),
-        global_data: dice.global_data.dupe(),
-        dice: dice.dupe(),
-    };
+    let old_eval = TransactionData::new(
+        old_state.dupe(),
+        DiceArc::new(user_data_with_counter(&counter)),
+        dice.dupe(),
+        dice.global_data.dupe(),
+    );
     let key = dice.key_index.index_key(PagableKey(1));
     let old_value = old_eval.bring_up_to_date(key, ParentKey::None).await?;
     let old_descriptor = old_value
@@ -1777,12 +1777,12 @@ async fn equal_revisions_get_distinct_paged_out_descriptors_across_versions() ->
     let new = updater.commit().await;
     assert_ne!(old.version(), new.version());
     let (new_state, _new_guard) = dice.testing_shared_ctx(new.0.get_version()).await;
-    let new_eval = TransactionData {
-        version_state: new_state.dupe(),
-        user_data: DiceArc::new(user_data_with_counter(&counter)),
-        global_data: dice.global_data.dupe(),
-        dice: dice.dupe(),
-    };
+    let new_eval = TransactionData::new(
+        new_state.dupe(),
+        DiceArc::new(user_data_with_counter(&counter)),
+        dice.dupe(),
+        dice.global_data.dupe(),
+    );
     let new_value = new_eval.bring_up_to_date(key, ParentKey::None).await?;
     let new_descriptor = new_value
         .try_as_resident()
@@ -1831,12 +1831,12 @@ async fn recovery_demands_use_the_transaction_cache() {
             Revision::FIRST,
         );
         cache.testing_insert_task(key, make_completed_task_with_computed_value(key, value));
-        TransactionData {
-            version_state: VersionState::new(tx.0.get_version(), cache),
-            user_data: DiceArc::new(UserComputationData::new()),
-            global_data: dice.global_data.dupe(),
-            dice: dice.dupe(),
-        }
+        TransactionData::new(
+            VersionState::new(tx.0.get_version(), cache),
+            DiceArc::new(UserComputationData::new()),
+            dice.dupe(),
+            dice.global_data.dupe(),
+        )
     };
     let first_eval = new_eval();
     let second_eval = new_eval();
@@ -1900,12 +1900,12 @@ async fn validated_unreadable_value_fails_only_on_demand() -> anyhow::Result<()>
     data.activation_tracker = Some(tracker.dupe());
     data.tracker = tracker.dupe();
     let (version_state, _guard) = dice.testing_shared_ctx(tx.0.get_version()).await;
-    let eval = TransactionData {
-        version_state: version_state.dupe(),
-        user_data: DiceArc::new(data),
-        global_data: dice.global_data.dupe(),
-        dice: dice.dupe(),
-    };
+    let eval = TransactionData::new(
+        version_state.dupe(),
+        DiceArc::new(data),
+        dice.dupe(),
+        dice.global_data.dupe(),
+    );
     let key = dice.key_index.index_key(UnreadableValidatedKey);
     let validated = eval.bring_up_to_date(key, ParentKey::None).await?;
     assert!(validated.try_as_resident().is_err());

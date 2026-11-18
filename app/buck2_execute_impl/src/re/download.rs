@@ -13,6 +13,8 @@ use std::ops::ControlFlow;
 use std::ops::FromResidual;
 use std::path::Path;
 use std::sync::Arc;
+use std::time::Duration;
+use std::time::Instant;
 
 use buck2_common::file_ops::metadata::FileDigest;
 use buck2_common::file_ops::metadata::FileMetadata;
@@ -22,9 +24,11 @@ use buck2_core::execution_types::executor_config::RemoteExecutorUseCase;
 use buck2_core::fs::artifact_path_resolver::ArtifactFs;
 use buck2_core::fs::buck_out_path::BuildArtifactPath;
 use buck2_core::fs::project_rel_path::ProjectRelativePathBuf;
+use buck2_data::timing::Micros;
 use buck2_directory::directory::entry::DirectoryEntry;
 use buck2_error::BuckErrorContext;
 use buck2_events::dispatch::console_message;
+use buck2_events::dispatch::span_async;
 use buck2_execute::artifact_value::ArtifactValue;
 use buck2_execute::digest::CasDigestFromReExt;
 use buck2_execute::digest_config::DigestConfig;
@@ -303,6 +307,30 @@ pub struct CasDownloader<'a> {
     pub output_trees_download_config: &'a OutputTreesDownloadConfig,
 }
 
+/// Where a download's time went. Measured for every download; reported for cache hits. A phase
+/// the download did not reach, because it failed earlier, stays `None`.
+#[derive(Default)]
+struct DownloadPhases {
+    tree_admission: Option<Duration>,
+    tree_fetch: Option<Duration>,
+    local_bookkeeping: Option<Duration>,
+    declare: Option<Duration>,
+    tree_count: u64,
+}
+
+impl DownloadPhases {
+    fn to_proto(&self) -> buck2_data::CacheHitTimings {
+        let us = |d: Option<Duration>| d.map(|d| Micros::from(d).into());
+        buck2_data::CacheHitTimings {
+            tree_admission_us: us(self.tree_admission),
+            tree_fetch_us: us(self.tree_fetch),
+            local_bookkeeping_us: us(self.local_bookkeeping),
+            declare_us: us(self.declare),
+            tree_count: self.tree_count,
+        }
+    }
+}
+
 impl CasDownloader<'_> {
     async fn download<'a>(
         &self,
@@ -323,18 +351,30 @@ impl CasDownloader<'_> {
         ),
     > {
         let manager = manager.with_execution_kind(output_spec.execution_kind(details.clone()));
-        executor_stage_async(
-            stage,
-            self.download_inner(
-                artifact_fs,
-                manager,
-                identity,
-                paths,
-                requested_outputs,
-                output_spec,
-                details,
-                cancellations,
-            ),
+        let is_cache_hit = matches!(stage, buck2_data::executor_stage_start::Stage::CacheHit(_));
+        span_async(
+            buck2_data::ExecutorStageStart { stage: Some(stage) },
+            async {
+                let mut phases = DownloadPhases::default();
+                let result = self
+                    .download_inner(
+                        artifact_fs,
+                        manager,
+                        identity,
+                        paths,
+                        requested_outputs,
+                        output_spec,
+                        details,
+                        cancellations,
+                        &mut phases,
+                    )
+                    .await;
+                let end = buck2_data::ExecutorStageEnd {
+                    cache_hit: is_cache_hit.then(|| phases.to_proto()),
+                    ..Default::default()
+                };
+                (result, end)
+            },
         )
         .await
     }
@@ -349,6 +389,7 @@ impl CasDownloader<'_> {
         output_spec: &dyn RemoteActionResult,
         details: &RemoteCommandExecutionDetails,
         cancellations: &CancellationContext,
+        phases: &mut DownloadPhases,
     ) -> ControlFlow<
         DownloadResult,
         (
@@ -376,6 +417,7 @@ impl CasDownloader<'_> {
                 output_spec,
                 expires,
                 &info,
+                phases,
             )
             .await;
 
@@ -418,9 +460,13 @@ impl CasDownloader<'_> {
             }
             None => {
                 // Claim the request before starting the download.
+                let start = Instant::now();
                 let manager = manager.claim().await;
+                *phases.local_bookkeeping.get_or_insert_default() += Instant::now() - start;
 
+                let start = Instant::now();
                 let outputs = self.materialize_outputs(artifacts, info).await;
+                phases.declare = Some(Instant::now() - start);
 
                 let outputs = match outputs {
                     Ok(outputs) => outputs,
@@ -448,11 +494,14 @@ impl CasDownloader<'_> {
         output_spec: &dyn RemoteActionResult,
         expires: Timestamp,
         info: &CasDownloadInfo,
+        phases: &mut DownloadPhases,
     ) -> buck2_error::Result<ExtractedArtifacts> {
         // Download process:
         // 1. merges all the outputs (files and trees) into the inputs structure
         // 2. computes the ArtifactValue for all outputs from that merged structure
         // 3. pass those new ArtifactValue to the materializer
+        phases.tree_count = output_spec.output_directories().len() as u64;
+        let mut start = Instant::now();
         let input_dir = paths.input_directory();
         let output_paths = paths.output_paths();
         let mut input_dir = input_dir.clone().into_builder();
@@ -479,6 +528,7 @@ impl CasDownloader<'_> {
             )));
             input_dir.insert(re_forward_path(x.name.as_str())?, entry)?;
         }
+        *phases.local_bookkeeping.get_or_insert_default() += Instant::now() - start;
 
         {
             let _permit = if let Some(semaphore) = self.output_trees_download_config.semaphore() {
@@ -492,18 +542,20 @@ impl CasDownloader<'_> {
                     .try_into()
                     .unwrap_or(semaphore.max_concurrent_bytes);
 
-                Some(
-                    semaphore
-                        .semaphore
-                        .acquire_many(blob_size.min(semaphore.max_concurrent_bytes))
-                        .await?,
-                )
+                start = Instant::now();
+                let permit = semaphore
+                    .semaphore
+                    .acquire_many(blob_size.min(semaphore.max_concurrent_bytes))
+                    .await?;
+                phases.tree_admission = Some(Instant::now() - start);
+                Some(permit)
             } else {
                 None
             };
 
             // Compute the re_outputs from the output_directories
             // This requires traversing the trees to find symlinks that point outside such trees
+            start = Instant::now();
             let trees = self
                 .re_client
                 .download_typed_blobs::<RE::Tree>(
@@ -518,7 +570,9 @@ impl CasDownloader<'_> {
                 .boxed()
                 .await
                 .buck_error_context("Failed to download trees")?;
+            phases.tree_fetch = Some(Instant::now() - start);
 
+            start = Instant::now();
             for (dir, tree) in output_spec.output_directories().iter().zip(trees) {
                 let entry = re_tree_to_directory(
                     &tree,
@@ -558,6 +612,8 @@ impl CasDownloader<'_> {
                 mapped_outputs.insert(requested.cloned(), value);
             }
         }
+
+        *phases.local_bookkeeping.get_or_insert_default() += Instant::now() - start;
 
         Ok(ExtractedArtifacts {
             to_declare,
@@ -607,5 +663,32 @@ impl FromResidual<ControlFlow<Self, Infallible>> for DownloadResult {
         match residual {
             ControlFlow::Break(v) => v,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_download_phases_to_proto() {
+        let phases = DownloadPhases {
+            tree_admission: None,
+            tree_fetch: Some(Duration::from_micros(2)),
+            local_bookkeeping: Some(Duration::from_micros(3)),
+            declare: Some(Duration::from_micros(4)),
+            tree_count: 1,
+        };
+        assert_eq!(
+            phases.to_proto(),
+            buck2_data::CacheHitTimings {
+                tree_admission_us: None,
+                tree_fetch_us: Some(2),
+                local_bookkeeping_us: Some(3),
+                declare_us: Some(4),
+                tree_count: 1,
+            },
+            "each phase goes to its own field, and an unmeasured one stays unset"
+        );
     }
 }

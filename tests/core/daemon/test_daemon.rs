@@ -415,6 +415,31 @@ async fn test_recovers_when_daemon_pid_cannot_be_killed(buck: &Buck) -> anyhow::
     Ok(())
 }
 
+#[buck_test]
+async fn test_recovers_when_dead_daemon_port_is_reused(buck: &Buck) -> anyhow::Result<()> {
+    buck.targets(&["//:rule"]).await?;
+    let daemon_dir = buck.daemon_dir().await?;
+    let mut info: Value =
+        serde_json::from_str(&std::fs::read_to_string(daemon_dir.join("buckd.info"))?)?;
+    buck.kill().await?;
+
+    // Stands in for an unrelated process that took over the dead daemon's port.
+    let listener = std::net::TcpListener::bind("127.0.0.1:0")?;
+    let port = listener.local_addr()?.port();
+    std::thread::spawn(move || listener.incoming().for_each(drop));
+    info["pid"] = json!(i32::MAX);
+    info["endpoint"] = json!(format!("tcp:{port}"));
+    std::fs::write(daemon_dir.join("buckd.info"), serde_json::to_string(&info)?)?;
+
+    let result = buck.targets(&["//:rule"]).await?;
+    assert!(
+        result.stderr.contains("buck2 daemon is not running"),
+        "{}",
+        result.stderr
+    );
+    Ok(())
+}
+
 #[buck_test(skip_for_os = ["windows"])]
 async fn test_unkillable_daemon_that_owns_outputs_is_named(buck: &Buck) -> anyhow::Result<()> {
     // When the daemon that could not be killed still owns buck-out, no new daemon may

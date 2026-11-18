@@ -1330,10 +1330,20 @@ async fn establish_connection_inner(
     let daemon_was_started_reason = {
         match BuckdProcessInfo::load_if_exists(&daemon_dir) {
             Ok(Some(buckd_info)) => {
-                match try_connect_existing(&buckd_info, &deadline, &lifecycle_lock).await {
-                    Ok(channel) => {
-                        let mut client = channel.upgrade().await?;
-
+                let connected =
+                    match try_connect_existing(&buckd_info, &deadline, &lifecycle_lock).await {
+                        Ok(channel) => match channel.upgrade().await {
+                            Ok(client) => Ok(client),
+                            // Another process may now accept connections on a dead daemon's port.
+                            Err(_) if pid_present_on_system(buckd_info.info.pid) == Some(false) => {
+                                Err(buck2_data::DaemonWasStartedReason::NoDaemonProcess)
+                            }
+                            Err(e) => return Err(e),
+                        },
+                        Err(reason) => Err(reason),
+                    };
+                match connected {
+                    Ok(mut client) => {
                         let reason = match constraints.satisfied(&client.constraints) {
                             Ok(()) => return Ok(client),
                             Err(reason) => reason,

@@ -239,6 +239,41 @@ struct CriticalPathEntry<'a> {
     reused: bool,
 }
 
+/// A csv row for a critical path entry. The csv writer takes the header from the first row and
+/// rejects rows of another width, so unlike the JSON output every column is always present.
+#[derive(Serialize)]
+struct CriticalPathCsvRow<'a> {
+    kind: &'a str,
+    name: &'a str,
+    category: Option<&'a str>,
+    identifier: Option<&'a str>,
+    execution_kind: Option<&'a str>,
+    total_duration: &'a OptionalDuration,
+    user_duration: &'a OptionalDuration,
+    potential_improvement_duration: &'a OptionalDuration,
+    non_critical_path_time: &'a OptionalDuration,
+    start_offset: u64,
+    reused: bool,
+}
+
+impl CriticalPathEntry<'_> {
+    fn csv_row(&self) -> CriticalPathCsvRow<'_> {
+        CriticalPathCsvRow {
+            kind: self.kind,
+            name: &self.name,
+            category: self.category,
+            identifier: self.identifier,
+            execution_kind: self.execution_kind,
+            total_duration: &self.total_duration,
+            user_duration: &self.user_duration,
+            potential_improvement_duration: &self.potential_improvement_duration,
+            non_critical_path_time: &self.non_critical_path_time,
+            start_offset: self.start_offset,
+            reused: self.reused,
+        }
+    }
+}
+
 async fn log_critical_path(
     path: &Vec<buck2_data::CriticalPathEntry2>,
     format: LogCommandOutputFormat,
@@ -333,7 +368,7 @@ async fn log_critical_path(
                     }
                     LogCommandOutputFormatWithWriter::Csv(writer) => {
                         writer
-                            .serialize(critical_path)
+                            .serialize(critical_path.csv_row())
                             .map_err(|e| from_any_with_tag(e, buck2_error::ErrorTag::LogCmd))?;
                     }
                 }
@@ -344,4 +379,89 @@ async fn log_critical_path(
         Ok(())
     })
     .await
+}
+
+#[cfg(test)]
+mod tests {
+    use std::time::Duration;
+
+    use super::CriticalPathEntry;
+    use super::OptionalDuration;
+
+    fn d(us: u64) -> OptionalDuration {
+        OptionalDuration {
+            inner: Some(Duration::from_micros(us)),
+        }
+    }
+
+    /// The `Csv` arm of `log_critical_path`, with the writer from `transform_format`.
+    fn to_csv(entries: Vec<CriticalPathEntry<'_>>) -> (String, Result<(), csv::Error>) {
+        let mut out = Vec::new();
+        let mut res = Ok(());
+        {
+            let mut w = csv::WriterBuilder::new().from_writer(&mut out);
+            for e in entries {
+                if let Err(e) = w.serialize(e.csv_row()) {
+                    res = Err(e);
+                    break;
+                }
+            }
+        }
+        (String::from_utf8(out).unwrap(), res)
+    }
+
+    /// Every row has every column, whatever optional fields are present.
+    #[test]
+    fn test_csv_rows_have_every_column() {
+        let (out, res) = to_csv(vec![
+            CriticalPathEntry {
+                kind: "buckd_command_init",
+                total_duration: d(10),
+                ..Default::default()
+            },
+            CriticalPathEntry {
+                kind: "listing",
+                name: "root//".to_owned(),
+                total_duration: d(20),
+                ..Default::default()
+            },
+            CriticalPathEntry {
+                kind: "action",
+                name: "root//:a (<unspecified>)".to_owned(),
+                execution_kind: Some("LOCAL"),
+                ..Default::default()
+            },
+            CriticalPathEntry {
+                kind: "materialization",
+                name: "root//:a (<unspecified>)".to_owned(),
+                identifier: Some("buck-out/v2/gen/x"),
+                ..Default::default()
+            },
+        ]);
+        res.unwrap();
+        let lines: Vec<&str> = out.lines().collect();
+        assert_eq!(
+            lines[0],
+            "kind,name,category,identifier,execution_kind,total_duration,user_duration,potential_improvement_duration,non_critical_path_time,start_offset,reused"
+        );
+        assert_eq!(lines.len(), 5);
+        for line in &lines[1..] {
+            assert_eq!(line.split(',').count(), 11, "{line}");
+        }
+        assert!(
+            lines[1].starts_with("buckd_command_init,,,,,10,"),
+            "{}",
+            lines[1]
+        );
+        assert!(
+            lines[3].starts_with("action,root//:a (<unspecified>),,,LOCAL,"),
+            "{}",
+            lines[3]
+        );
+        assert!(
+            lines[4].starts_with("materialization,root//:a (<unspecified>),,buck-out/v2/gen/x,,"),
+            "{}",
+            lines[4]
+        );
+    }
 }

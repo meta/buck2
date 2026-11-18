@@ -9,6 +9,7 @@
  */
 
 use std::collections::BTreeSet;
+use std::collections::HashMap;
 use std::io::Write;
 
 use anyhow::Context;
@@ -300,6 +301,41 @@ async fn test_critical_path_json(buck: &Buck) -> anyhow::Result<()> {
             assert!(critical.get("execution_kind").is_none());
         }
     }
+    Ok(())
+}
+
+/// Every csv row has every column, although the entries differ in which optional
+/// fields (name, category, identifier, execution_kind) they carry.
+#[buck_test]
+async fn test_critical_path_csv(buck: &Buck) -> anyhow::Result<()> {
+    buck.build(&["//:step_3", "--no-remote-cache"]).await?;
+    let out = buck
+        .log(&["critical-path", "--format", "csv"])
+        .await?
+        .stdout;
+    let rows = csv::ReaderBuilder::new()
+        .has_headers(false)
+        .flexible(true)
+        .from_reader(out.as_bytes())
+        .records()
+        .collect::<Result<Vec<_>, _>>()?;
+    let header = &rows[0];
+    assert_eq!(
+        header.iter().take(5).collect::<Vec<_>>(),
+        ["kind", "name", "category", "identifier", "execution_kind"]
+    );
+    assert!(rows.len() > 2);
+    for row in &rows[1..] {
+        assert_eq!(row.len(), header.len(), "{row:?}");
+    }
+    let by_kind: HashMap<&str, HashMap<&str, &str>> = rows[1..]
+        .iter()
+        .map(|row| (&row[0], header.iter().zip(row).collect()))
+        .collect();
+    assert_eq!(by_kind["buckd_command_init"]["name"], "");
+    let execution_kind = by_kind["action"]["execution_kind"];
+    assert_ne!(execution_kind, "");
+    assert_ne!(execution_kind, "ACTION_EXECUTION_NOTSET");
     Ok(())
 }
 

@@ -10,6 +10,7 @@ buck2_core_tests(
             "compatible_with": ["ovr_config//os:linux"],
         },
         "test_critical_path": {
+            "deps": ["fbsource//third-party/rust:csv"],
             "use_compiled_buck2_client_and_tpx": True,
         },
         "test_error_categorization": {

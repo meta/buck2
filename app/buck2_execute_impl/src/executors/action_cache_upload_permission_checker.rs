@@ -61,7 +61,12 @@ impl ActionCacheUploadPermissionChecker {
 
         // This is CAS upload, if it fails, something is very broken.
         re_client
-            .upload_files_and_directories(Vec::new(), Vec::new(), action.blobs.to_inlined_blobs())
+            .upload_files_and_directories(
+                Vec::new(),
+                Vec::new(),
+                action.blobs.to_inlined_blobs(),
+                None,
+            )
             .await?;
 
         // This operation requires permission to write.
@@ -69,6 +74,7 @@ impl ActionCacheUploadPermissionChecker {
             .write_action_result(
                 action.action,
                 &mut action_result,
+                None,
                 &platform.to_re_platform(),
                 ActionCacheWriteType::PermissionCheck,
             )

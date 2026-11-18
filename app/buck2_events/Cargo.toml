@@ -10,6 +10,8 @@ license.workspace = true
 [dependencies]
 allocative.workspace = true
 async-trait.workspace = true
+bazel_bep_proto.workspace = true
+bes_grpc_proto.workspace = true
 buck2_build_info.workspace = true
 buck2_cli_proto.workspace = true
 buck2_core.workspace = true
@@ -18,20 +20,28 @@ buck2_error.workspace = true
 buck2_hash.workspace = true
 buck2_util.workspace = true
 buck2_wrapper_common.workspace = true
+chrono.workspace = true
 console.workspace = true
 crossbeam-channel.workspace = true
 derive_more.workspace = true
 dupe.workspace = true
 fbinit.workspace = true
+flate2.workspace = true
 futures.workspace = true
+google_grpc_proto.workspace = true
 hostname.workspace = true
 is_proc_translated.workspace = true
 pin-project.workspace = true
 prost.workspace = true
+prost-types.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+sha2.workspace = true
 smallvec.workspace = true
 tokio.workspace = true
+tokio-stream.workspace = true
+tonic.workspace = true
+tracing.workspace = true
 uuid.workspace = true
 
 [target.'cfg(target_os = "linux")'.dependencies]
@@ -42,6 +52,9 @@ sys-info.workspace = true
 
 [target.'cfg(target_os = "windows")'.dependencies]
 winver.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
 
 [lints]
 workspace = true

@@ -41,10 +41,13 @@ const GRACEFUL_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(4);
 const KILL_REQUEST_TIMEOUT: Duration = Duration::from_secs(3);
 const FORCE_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(10);
 
+/// `bes_drain_timeout` is how long the daemon may wait for the BES server to acknowledge its
+/// events before it shuts down, on top of the usual bounds; zero is the plain kill.
 pub async fn kill_command_impl(
     lifecycle_lock: &BuckdLifecycleLock,
     reason: &str,
     quiet: bool,
+    bes_drain_timeout: Duration,
 ) -> buck2_error::Result<()> {
     let process = match BuckdProcessInfo::load_if_exists(lifecycle_lock.daemon_dir()) {
         Ok(Some(p)) => p,
@@ -70,7 +73,7 @@ pub async fn kill_command_impl(
     let pid = match buckd {
         Ok(Ok(mut buckd)) => {
             crate::eprintln!("killing buckd server")?;
-            Some(buckd.kill(reason).await?)
+            Some(buckd.kill(reason, bes_drain_timeout).await?)
         }
         Ok(Err((e, connected))) => {
             // No time out: we just errored out. This is likely indicative that there is no
@@ -129,21 +132,52 @@ pub async fn kill_command_impl(
     Ok(())
 }
 
+/// How long the client waits, from sending the kill request, for the daemon to answer it, for
+/// the daemon to exit before it is killed by signal, and for the whole kill. The daemon drains
+/// before it answers, so each grows by the drain timeout. The request may take up to `graceful`
+/// on its own, because a tenant proxy answers only once its daemon accepted the eviction or its
+/// accept window within `graceful` has passed.
+#[derive(Debug, PartialEq, Eq)]
+struct KillBounds {
+    request: Duration,
+    graceful: Duration,
+    total: Duration,
+}
+
+fn kill_bounds(graceful: Duration, bes_drain_timeout: Duration) -> KillBounds {
+    let graceful_with_drain = graceful + bes_drain_timeout;
+    KillBounds {
+        request: KILL_REQUEST_TIMEOUT.max(graceful) + bes_drain_timeout,
+        graceful: graceful_with_drain,
+        total: graceful_with_drain + FORCE_SHUTDOWN_TIMEOUT,
+    }
+}
+
 pub(crate) async fn kill(
     client: &mut DaemonApiClient<InterceptedService<Channel, BuckAddAuthTokenInterceptor>>,
     info: &DaemonProcessInfo,
     reason: &str,
+    bes_drain_timeout: Duration,
 ) -> buck2_error::Result<()> {
-    kill_with_timeout(client, info, reason, GRACEFUL_SHUTDOWN_TIMEOUT).await
+    kill_with_timeout(
+        client,
+        info,
+        reason,
+        GRACEFUL_SHUTDOWN_TIMEOUT,
+        bes_drain_timeout,
+    )
+    .await
 }
 
 /// Asks the daemon to shut down, giving it `graceful` to exit on its own before it is killed. The
-/// request carries `graceful` too, so a tenant proxy knows how long its eviction may take.
+/// request carries `graceful` too, so a tenant proxy knows how long its eviction may take, and
+/// `bes_drain_timeout` for the daemon's BES drain, which every bound grows by.
 pub(crate) async fn kill_with_timeout(
     client: &mut DaemonApiClient<InterceptedService<Channel, BuckAddAuthTokenInterceptor>>,
     info: &DaemonProcessInfo,
     reason: &str,
     graceful: Duration,
+    bes_drain_timeout: Duration,
 ) -> buck2_error::Result<()> {
     let pid = Pid::from_i64(info.pid)?;
     let callers = get_callers_for_kill();
@@ -154,28 +188,39 @@ pub(crate) async fn kill_with_timeout(
         reason: reason.to_owned(),
         timeout: Some(graceful.try_into()?),
         callers,
+        bes_drain_timeout: if bes_drain_timeout.is_zero() {
+            None
+        } else {
+            Some(bes_drain_timeout.try_into()?)
+        },
     }));
-    let time_to_kill = graceful + FORCE_SHUTDOWN_TIMEOUT;
+    let bounds = kill_bounds(graceful, bes_drain_timeout);
     let time_req_sent = Instant::now();
-    // First we send a Kill request. A tenant proxy answers once its daemon has accepted the
-    // eviction, or once its accept window within `graceful` has passed and it has forced the
-    // daemon, so the answer may take up to `graceful`.
-    match tokio::time::timeout(KILL_REQUEST_TIMEOUT.max(graceful), request_fut).await {
+    // First we send a Kill request.
+    match tokio::time::timeout(bounds.request, request_fut).await {
         Ok(inner_result) => {
             match inner_result {
-                Ok(_) => loop {
-                    if !kill::process_exists(pid)? {
-                        return Ok(());
+                Ok(response) => {
+                    if let Some(command_result::Result::KillResponse(KillResponse {
+                        bes_drain: Some(bes_drain),
+                    })) = &response.get_ref().result
+                    {
+                        report_bes_drain(bes_drain)?;
                     }
-                    if Instant::now() - time_req_sent > graceful {
-                        crate::eprintln!(
-                            "Timed out waiting for graceful shutdown of buck2 daemon pid {}",
-                            pid
-                        )?;
-                        break;
+                    loop {
+                        if !kill::process_exists(pid)? {
+                            return Ok(());
+                        }
+                        if Instant::now() - time_req_sent > bounds.graceful {
+                            crate::eprintln!(
+                                "Timed out waiting for graceful shutdown of buck2 daemon pid {}",
+                                pid
+                            )?;
+                            break;
+                        }
+                        tokio::time::sleep(Duration::from_millis(100)).await;
                     }
-                    tokio::time::sleep(Duration::from_millis(100)).await;
-                },
+                }
                 Err(e) => {
                     // The kill request can fail if the server is in a bad state and we cannot
                     // authenticate to it.
@@ -196,7 +241,7 @@ pub(crate) async fn kill_with_timeout(
         }
     };
 
-    hard_kill_impl(pid, time_req_sent, time_to_kill).await
+    hard_kill_impl(pid, time_req_sent, bounds.total).await
 }
 
 pub(crate) async fn hard_kill(info: &DaemonProcessInfo) -> buck2_error::Result<()> {
@@ -311,4 +356,120 @@ fn get_callers_for_kill() -> Vec<String> {
     }
 
     process_tree.into_iter().rev().collect()
+}
+
+/// Prints what the daemon's BES drain left unacknowledged, and returns whether the server
+/// acknowledged everything.
+pub fn report_bes_drain(result: &BesDrainResult) -> buck2_error::Result<bool> {
+    if !result.sink_enabled {
+        crate::eprintln!("BES: this daemon sends no build events")?;
+        return Ok(true);
+    }
+    if !result.error.is_empty() {
+        crate::eprintln!("BES: the drain did not run: {}", result.error)?;
+        return Ok(false);
+    }
+    let acked = result
+        .streams
+        .iter()
+        .filter(|stream| stream.outcome() == bes_stream_drain::Outcome::Acked)
+        .count();
+    let unacked_events: u64 = result
+        .streams
+        .iter()
+        .map(|stream| stream.unacked_events)
+        .sum();
+    crate::eprintln!(
+        "BES: {} of {} streams acknowledged, {} events pending",
+        acked,
+        result.streams.len(),
+        unacked_events
+    )?;
+    for stream in &result.streams {
+        match stream.outcome() {
+            bes_stream_drain::Outcome::Acked => {}
+            bes_stream_drain::Outcome::Pending => crate::eprintln!(
+                "  {}: {} events not yet acknowledged",
+                stream.invocation_id,
+                stream.unacked_events
+            )?,
+            bes_stream_drain::Outcome::Failed => crate::eprintln!(
+                "  {}: failed with {} events not acknowledged: {}",
+                stream.invocation_id,
+                stream.unacked_events,
+                stream.error
+            )?,
+        }
+    }
+    Ok(acked == result.streams.len())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_kill_without_a_drain_keeps_upstreams_bounds() {
+        assert_eq!(
+            kill_bounds(GRACEFUL_SHUTDOWN_TIMEOUT, Duration::ZERO),
+            KillBounds {
+                request: Duration::from_secs(4),
+                graceful: Duration::from_secs(4),
+                total: Duration::from_secs(14),
+            }
+        );
+    }
+
+    #[test]
+    fn a_drain_extends_every_bound_by_its_timeout_and_no_more() {
+        assert_eq!(
+            kill_bounds(GRACEFUL_SHUTDOWN_TIMEOUT, Duration::from_secs(120)),
+            KillBounds {
+                request: Duration::from_secs(124),
+                graceful: Duration::from_secs(124),
+                total: Duration::from_secs(134),
+            }
+        );
+    }
+
+    #[test]
+    fn a_request_shorter_than_its_graceful_window_waits_for_the_window() {
+        assert_eq!(
+            kill_bounds(Duration::from_secs(1), Duration::ZERO).request,
+            Duration::from_secs(3)
+        );
+    }
+
+    #[test]
+    fn a_drain_that_left_events_unacknowledged_is_reported_as_incomplete() {
+        let pending = BesDrainResult {
+            sink_enabled: true,
+            streams: vec![
+                BesStreamDrain {
+                    invocation_id: "a".to_owned(),
+                    outcome: bes_stream_drain::Outcome::Acked as i32,
+                    unacked_events: 0,
+                    error: String::new(),
+                },
+                BesStreamDrain {
+                    invocation_id: "b".to_owned(),
+                    outcome: bes_stream_drain::Outcome::Pending as i32,
+                    unacked_events: 7,
+                    error: String::new(),
+                },
+            ],
+            error: String::new(),
+        };
+        assert!(!report_bes_drain(&pending).unwrap());
+        let mut acked = pending.clone();
+        acked.streams.truncate(1);
+        assert!(report_bes_drain(&acked).unwrap());
+        assert!(report_bes_drain(&BesDrainResult::default()).unwrap());
+        let not_run = BesDrainResult {
+            sink_enabled: true,
+            streams: Vec::new(),
+            error: "busy".to_owned(),
+        };
+        assert!(!report_bes_drain(&not_run).unwrap());
+    }
 }

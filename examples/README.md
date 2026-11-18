@@ -25,3 +25,9 @@ Examples testing the various toolchains included in the prelude.
 ## bootstrap
 
 A sample project that demonstrates configuration of a bootstrap toolchain.
+
+## bes
+
+A check that runs buck2 against a recording Build Event Service: what a
+build, a failure and a test run send, and that `buck2 kill --bes-drain-timeout`
+delivers what the daemon still holds.

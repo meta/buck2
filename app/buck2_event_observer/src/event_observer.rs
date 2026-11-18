@@ -45,7 +45,7 @@ impl<E> EventObserver<E>
 where
     E: EventObserverExtra,
 {
-    pub fn new(trace_id: TraceId) -> Self {
+    pub fn new(trace_id: TraceId, bes_results_url: Option<String>) -> Self {
         Self {
             span_tracker: BuckEventSpanTracker::new(),
             action_stats: ActionStats::default(),
@@ -54,6 +54,7 @@ where
             system_info: buck2_data::SystemInfo::default(),
             session_info: SessionInfo {
                 trace_id: trace_id.clone(),
+                bes_results_url,
                 test_session: None,
                 legacy_dice: false,
             },

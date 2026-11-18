@@ -777,6 +777,60 @@ mod tests {
         Ok(())
     }
 
+    /// `read_dir_unless_behind_symlink` finds nothing at a symlink or behind one, without reading
+    /// through it, and is `read_dir` everywhere else.
+    #[tokio::test]
+    async fn read_dir_unless_behind_symlink() -> buck2_error::Result<()> {
+        let f = Fixture::new("ign").await?;
+        f.fs.write_file("a/b/f", "");
+        f.fs.write_file("ign/f", "");
+        f.symlink("l", "a");
+        let outside = ProjectRootTemp::new()?;
+        outside.write_file("b/f", "");
+        f.symlink("e", outside.path().root().as_path().to_str().unwrap());
+
+        let list = async |ctx: &DiceTransaction, path: &str| {
+            DiceFileComputations::read_dir_unless_behind_symlink(&mut ctx.ctx(), cp(path))
+                .await
+                .map(|out| {
+                    out.map(|out| {
+                        out.included
+                            .iter()
+                            .map(|n| n.as_str().to_owned())
+                            .collect::<Vec<_>>()
+                    })
+                })
+                .map_err(|e| format!("{e:#}"))
+        };
+        for refused in [
+            RefusedSymlinkReads::default(),
+            RefusedSymlinkReads {
+                into_repo: true,
+                out_of_repo: true,
+            },
+        ] {
+            f.refused_symlink_reads.set(refused);
+            let ctx = f.transaction(FileChangeTracker::new()).await?;
+            assert_eq!(list(&ctx, "root//a").await, Ok(Some(vec!["b".to_owned()])));
+            for behind in ["root//l", "root//l/b", "root//e", "root//e/b"] {
+                assert_eq!(list(&ctx, behind).await, Ok(None), "{behind}");
+            }
+            assert!(
+                list(&ctx, "root//ign")
+                    .await
+                    .unwrap_err()
+                    .contains("is ignored")
+            );
+            assert!(
+                list(&ctx, "root//nope")
+                    .await
+                    .unwrap_err()
+                    .contains("does not exist")
+            );
+        }
+        Ok(())
+    }
+
     /// Nested cell roots are not entries of the enclosing cell, and not reachable through it.
     #[tokio::test]
     async fn read_dir_and_nested_cells() -> buck2_error::Result<()> {

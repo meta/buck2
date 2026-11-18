@@ -160,6 +160,51 @@ async fn test_target_pattern_symlinks_refused_by_kind(
     Ok(())
 }
 
+// A symlink is a leaf of the package it is in: a file behind one belongs to that
+// package, not to a build file that following the symlink would find. Finding the
+// package reads through no symlink, so it is the same whichever reads are refused;
+// without `allow_soft_errors`, a read through one would fail the test.
+#[buck_test]
+async fn test_owner_behind_symlink(buck: &Buck, tmp_path: &Path) -> anyhow::Result<()> {
+    let outside = tmp_path;
+    fs::write(outside.join("f"), "")?;
+    symlink(outside, buck.cwd().join("extlink"))?;
+    symlink("realdir", buck.cwd().join("linkdir"))?;
+    fs::write(buck.cwd().join("defs.bzl"), CP_DEFS)?;
+    fs::write(
+        buck.cwd().join("TARGETS.fixture"),
+        concat!(
+            "load(\":defs.bzl\", \"cp\")\n",
+            "cp(name = \"in_repo\", src = \"linkdir/f\")\n",
+            "cp(name = \"out_of_repo\", src = \"extlink/f\")\n",
+        ),
+    )?;
+    // The directory behind `linkdir` is a package with a target of its own for the file.
+    fs::write(buck.cwd().join("realdir").join("f"), "")?;
+    fs::write(
+        buck.cwd().join("realdir").join("TARGETS.fixture"),
+        "load(\"//:defs.bzl\", \"cp\")\ncp(name = \"inner\", src = \"f\")\n",
+    )?;
+
+    let refused = [
+        "-c",
+        REFUSE_SYMLINKS_INTO_REPO,
+        "-c",
+        REFUSE_SYMLINKS_OUT_OF_REPO,
+    ];
+    for config in [&[][..], &refused[..]] {
+        let owners = async |path: &str| -> anyhow::Result<String> {
+            let mut args = vec!["owner(%s)", path];
+            args.extend_from_slice(config);
+            Ok(buck.uquery(&args).await?.stdout)
+        };
+        assert_eq!(owners("linkdir/f").await?, "root//:in_repo\n");
+        assert_eq!(owners("extlink/f").await?, "root//:out_of_repo\n");
+        assert_eq!(owners("realdir/f").await?, "root//realdir:inner\n");
+    }
+    Ok(())
+}
+
 // Reads through a symlink out of the repo and through one into it are counted
 // apart: a report is printed for the kind the filter names and not the other.
 #[buck_test(allow_soft_errors = true)]

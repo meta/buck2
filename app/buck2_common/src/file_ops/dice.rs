@@ -36,6 +36,7 @@ use crate::file_ops::metadata::ReadDirOutput;
 use crate::file_ops::path_check::PathCheck;
 use crate::file_ops::path_check::PathCheckError;
 use crate::file_ops::path_check::ReadKind;
+use crate::file_ops::path_check::check_path;
 use crate::ignores::file_ignores::CellFileIgnores;
 use crate::ignores::file_ignores::FileIgnoreReason;
 use crate::ignores::file_ignores::FileIgnoreResult;
@@ -57,6 +58,31 @@ impl DiceFileComputations {
             Ok(listing) => Ok(listing),
             Err(refusal) => Err(refusal.into_error(ctx, path)),
         }
+    }
+
+    /// Lists a directory like `read_dir`, except that a path that is a symlink or behind one is
+    /// `None` rather than an error.
+    ///
+    /// Nothing is found through a symlink, so a caller that looks for something along a path,
+    /// such as the package a file belongs to, finds nothing there and looks on above it.
+    pub async fn read_dir_unless_behind_symlink(
+        ctx: &mut DiceComputations<'_>,
+        path: CellPath,
+    ) -> buck2_error::Result<Option<ReadDirOutput>> {
+        let cells = ctx.get_cell_resolver().await?;
+        if external_cell_delegate(ctx, cells, path.cell())
+            .await?
+            .is_none()
+        {
+            // Asking the check rather than matching on the listing's refusal: where reads through
+            // symlinks are tolerated, the listing goes through.
+            if let PathCheck::Present(FileType::Symlink) | PathCheck::ParentSymlink { .. } =
+                check_path(ctx, cells.resolve_ipath(path)?).await?
+            {
+                return Ok(None);
+            }
+        }
+        Self::read_dir(ctx, path).await.map(Some)
     }
 
     /// Whether a file, directory or symlink exists at the path, spelled exactly like that in

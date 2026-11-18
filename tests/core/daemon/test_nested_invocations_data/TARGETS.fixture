@@ -1,4 +1,4 @@
-load(":defs.bzl", "nested_daemon_dir", "normal_nested_invocation", "trace_nested_invocation")
+load(":defs.bzl", "nested_daemon_dir", "no_buckd_nested_invocation", "normal_nested_invocation", "trace_nested_invocation")
 
 trivial_build(name = "trivial")
 
@@ -14,5 +14,10 @@ trace_nested_invocation(
 
 nested_daemon_dir(
     name = "nested_daemon_dir",
+    buck2_path = read_root_config("nested", "buck2_path"),
+)
+
+no_buckd_nested_invocation(
+    name = "nested_no_buckd",
     buck2_path = read_root_config("nested", "buck2_path"),
 )

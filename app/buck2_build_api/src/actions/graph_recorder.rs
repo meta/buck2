@@ -32,6 +32,7 @@ use futures::FutureExt;
 
 use crate::actions::impls::run_action_knobs::HasRunActionKnobs;
 use crate::artifact_groups::ArtifactGroup;
+use crate::artifact_groups::TransitiveSetProjectionKey;
 
 /// The schema of recorded action graphs.
 const ACTION_GRAPH_SCHEMA: u32 = 1;
@@ -48,6 +49,9 @@ struct RecorderState {
     /// A per-command id for each reused producer that the graph refers to, numbered from 0 in
     /// order of first reference.
     reused_ids: Mutex<BuckMutMap<ActionKey, u64>>,
+    /// A per-command id for each transitive-set projection that an action referred to, numbered
+    /// from 0 in order of first reference.
+    tset_ids: Mutex<BuckMutMap<TransitiveSetProjectionKey, u64>>,
     action_ends: AtomicU64,
     capture: TotalTime,
 }
@@ -113,17 +117,32 @@ pub(crate) struct DirectProducers {
     /// Producers that didn't run in this command, because their results were reused, by per-command
     /// id.
     reused_ids: Vec<u64>,
+    /// Inputs that arrive through a transitive set, by the projection's per-command id.
+    tset_ids: Vec<u64>,
 }
 
 impl DirectProducers {
-    /// Finds the producers of `inputs`, skipping inputs that arrive through a transitive set.
+    /// Finds the producers of `inputs`. An input that arrives through a transitive set is
+    /// recorded as the projection's id, not expanded.
     pub(crate) fn collect<'a>(
         recorder: &GraphRecorder,
         inputs: impl IntoIterator<Item = &'a ArtifactGroup>,
     ) -> Self {
         let start = Instant::now();
-        let keys = producer_keys(inputs);
+        let (keys, tsets) = producer_keys(inputs);
         let mut result = DirectProducers::default();
+        if !tsets.is_empty() {
+            let mut ids = recorder.0.tset_ids.lock().expect("poisoned lock");
+            result.tset_ids = tsets
+                .into_iter()
+                .map(|key| {
+                    let next = ids.len() as u64;
+                    *ids.entry(key.dupe()).or_insert(next)
+                })
+                .collect();
+            result.tset_ids.sort_unstable();
+            result.tset_ids.dedup();
+        }
         if !keys.is_empty() {
             let mut reused = Vec::new();
             let spans = recorder.0.producer_spans.lock().expect("poisoned lock");
@@ -155,17 +174,20 @@ impl DirectProducers {
         buck2_data::ActionGraphProducers {
             span_ids: self.span_ids,
             reused_ids: self.reused_ids,
-            tset_ids: Vec::new(),
+            tset_ids: self.tset_ids,
         }
     }
 }
 
-/// The producers of `inputs` by action key, leaving out inputs that arrive through a transitive
-/// set.
+/// The producers of `inputs` by action key, and the transitive-set projections among them.
 fn producer_keys<'a>(
     inputs: impl IntoIterator<Item = &'a ArtifactGroup>,
-) -> BuckMutSet<&'a ActionKey> {
+) -> (
+    BuckMutSet<&'a ActionKey>,
+    Vec<&'a TransitiveSetProjectionKey>,
+) {
     let mut keys = BuckMutSet::<&ActionKey>::default();
+    let mut tsets = Vec::new();
     for input in inputs {
         match input {
             ArtifactGroup::Artifact(artifact) => keys.extend(artifact.action_key()),
@@ -175,10 +197,10 @@ fn producer_keys<'a>(
                     .get()
                     .and_then(|artifact| artifact.action_key()),
             ),
-            ArtifactGroup::TransitiveSetProjection(_) => {}
+            ArtifactGroup::TransitiveSetProjection(tset) => tsets.push(&tset.key),
         }
     }
-    keys
+    (keys, tsets)
 }
 
 /// Runs a command's `work`, recording the action graph around it if this command records one.
@@ -258,6 +280,9 @@ mod tests {
     use buck2_core::target::configured_target_label::ConfiguredTargetLabel;
 
     use super::*;
+    use crate::artifact_groups::TransitiveSetProjectionWrapper;
+    use crate::artifact_groups::deferred::TransitiveSetIndex;
+    use crate::artifact_groups::deferred::TransitiveSetKey;
 
     fn build_artifact(index: u32) -> ArtifactGroup {
         let target =
@@ -315,6 +340,36 @@ mod tests {
             15,
             "ten 1.5 µs captures make 15 µs; rounding each to whole microseconds would make 10"
         );
+    }
+
+    fn tset(index: u32) -> ArtifactGroup {
+        let ArtifactGroup::Artifact(artifact) = build_artifact(0) else {
+            unreachable!()
+        };
+        let holder = artifact.action_key().unwrap().holder_key().dupe();
+        ArtifactGroup::TransitiveSetProjection(Arc::new(TransitiveSetProjectionWrapper {
+            key: TransitiveSetProjectionKey {
+                key: TransitiveSetKey::new(holder, TransitiveSetIndex(index)),
+                projection: 0,
+            },
+            path_resolution_may_require_artifact_value: false,
+            is_eligible_for_dedupe: false,
+        }))
+    }
+
+    #[test]
+    fn test_tsets_get_stable_per_command_ids() {
+        let recorder = GraphRecorder::default();
+        let (a, b) = (tset(1), tset(2));
+        let first = DirectProducers::collect(&recorder, [&a, &b, &a]);
+        assert_eq!(
+            first.tset_ids,
+            vec![0, 1],
+            "numbered in order of first reference, once each"
+        );
+        let second = DirectProducers::collect(&recorder, [&b]);
+        assert_eq!(second.tset_ids, vec![1], "the same projection keeps its id");
+        assert_eq!(recorder.0.tset_ids.lock().expect("poisoned lock").len(), 2);
     }
 
     #[test]

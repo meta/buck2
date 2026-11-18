@@ -31,8 +31,9 @@ use tokio_stream::StreamExt;
 /// - `header`, first: the recorded command.
 /// - `action`, one per executed action, in event order: its `span` (the span id of its
 ///   `ActionExecution` event, which is the action's id here), `key`, `category`, `identifier`,
-///   `deps` (the spans of producers that ran in this command) and `reused` (the per-command ids of
-///   producers this command did not run).
+///   `deps` (the spans of producers that ran in this command), `reused` (the per-command ids of
+///   producers this command did not run) and `tsets` (the per-command ids
+///   of transitive-set projections among its inputs).
 /// - `dangling`, after the actions: a `span` that some action's `deps` refer to but that no
 ///   action in the log has, with one action that refers to it.
 /// - `stats`, last: counts of `actions`, `edges` (entries in `deps`), `reused` references and
@@ -88,6 +89,7 @@ enum Record<'a> {
         identifier: &'a str,
         deps: &'a [u64],
         reused: &'a [u64],
+        tsets: &'a [u64],
     },
     Dangling {
         span: u64,
@@ -159,7 +161,7 @@ impl GraphReader {
         if self.schema.is_none() {
             return Err(not_recorded());
         }
-        let (deps, reused, _) = producers(action.graph_producers.as_ref());
+        let (deps, reused, tsets) = producers(action.graph_producers.as_ref());
         self.actions += 1;
         self.edges += deps.len() as u64;
         self.reused += reused.len() as u64;
@@ -181,6 +183,7 @@ impl GraphReader {
                 identifier: name.map_or("", |n| n.identifier.as_str()),
                 deps,
                 reused,
+                tsets,
             },
         )
     }

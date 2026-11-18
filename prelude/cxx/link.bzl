@@ -252,7 +252,6 @@ def cxx_link_into(
                 ctx,
                 output,
                 opts,
-                linker_info.thin_lto_premerger_enabled,
                 linker_info.thin_lto_double_codegen_enabled,
                 is_result_executable,
                 sanitizer_runtime_args,

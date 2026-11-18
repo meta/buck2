@@ -210,7 +210,6 @@ def _cxx_toolchain_override(ctx):
         push_pop_state_flags = base_linker_info.push_pop_state_flags,
         supports_content_based_paths_for_archiving = base_linker_info.supports_content_based_paths_for_archiving,
         supports_shared_libraries = base_linker_info.supports_shared_libraries,
-        thin_lto_premerger_enabled = base_linker_info.thin_lto_premerger_enabled,
         thin_lto_double_codegen_enabled = base_linker_info.thin_lto_double_codegen_enabled,
     )
 

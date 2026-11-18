@@ -23,7 +23,6 @@ def thin_link(
     index_argsfile_out: Artifact,
     link_plan_out: Artifact,
     identifier: str | None,
-    premerger_enabled: bool,
     use_content_based_output_paths: bool,
     make_cat,
     distributed_link_action_identifier: str,
@@ -65,9 +64,6 @@ def thin_link(
                 "output_plan_file_path": link_data.plan.as_output(),
                 "starlark_array_index": idx,
             }
-            if premerger_enabled:
-                object_file_record["output_premerged_bitcode_file_path"] = link_data.merged_bc.as_output()
-
             index_meta_records.append(object_file_record)
 
         elif artifact.data_type == LinkDataType("dynamic_library"):
@@ -95,8 +91,6 @@ def thin_link(
     )
 
     plan_cmd = cmd_args([lto_planner, "--meta", index_meta_file, "--index", index_out_dir, "--link-plan", link_plan_out.as_output()])
-    if premerger_enabled:
-        plan_cmd.add("--enable-premerger")
     plan_cmd.add("--", index_cmd)
 
     plan_cmd.add(

@@ -26,42 +26,8 @@ import os
 import os.path
 import subprocess
 import sys
-import tempfile
 import traceback
 from dataclasses import dataclass
-from enum import Enum
-from typing import Optional
-
-
-class BitcodeMergeState(str, Enum):
-    STANDALONE = "STANDALONE"
-    ABSORBED = "ABSORBED"
-    ROOT = "ROOT"
-    NOT_LOADED = "NOT_LOADED"
-
-
-def is_file_llvm_bitcode_wrapper_file(filepath: str) -> bool:
-    LLVM_BITCODE_WRAPPER_FILE_MAGIC = 0xDEC0170B
-    with open(filepath, "rb") as f:
-        file_magic = int.from_bytes(f.read(4), "big")
-        return file_magic == LLVM_BITCODE_WRAPPER_FILE_MAGIC
-
-
-def read_merged_bitcode_file(merged_bitcode_path) -> BitcodeMergeState:
-    if os.path.getsize(merged_bitcode_path) == 0:
-        return BitcodeMergeState.NOT_LOADED
-
-    if is_file_llvm_bitcode_wrapper_file(merged_bitcode_path):
-        return BitcodeMergeState.ROOT
-
-    with open(merged_bitcode_path) as merged_bitcode_file:
-        for line in merged_bitcode_file:
-            if "standalone" in line:
-                return BitcodeMergeState.STANDALONE
-            if "absorbed" in line:
-                return BitcodeMergeState.ABSORBED
-
-    raise Exception(f"unexpected merged bitcode file contents: {merged_bitcode_path}")
 
 
 @dataclass
@@ -70,7 +36,6 @@ class ObjectFile:
 
     input_object_file_path: str
     output_index_shard_file_path: str
-    output_premerged_bitcode_file_path: Optional[str]
     output_plan_file_path: str
     starlark_array_index: int
 
@@ -80,11 +45,9 @@ class ObjectFile:
         output_index_shard_file_path: str,
         output_plan_file_path: str,
         starlark_array_index: int,
-        output_premerged_bitcode_file_path: Optional[str] = None,
     ):
         self.input_object_file_path = input_object_file_path
         self.output_index_shard_file_path = output_index_shard_file_path
-        self.output_premerged_bitcode_file_path = output_premerged_bitcode_file_path
         self.output_plan_file_path = output_plan_file_path
         self.starlark_array_index = int(starlark_array_index)
 
@@ -99,14 +62,13 @@ class ObjectFileOptimizationPlan:
     # and thus should be optimized along side
     imports: list[int]
     is_bitcode: bool
-    merge_state: Optional[BitcodeMergeState]
     loaded_by_linker: bool
+    final_link_line_position: int
 
 
 BITCODE_SUFFIX = ".thinlto.bc"
 IMPORTS_SUFFIX = ".imports"
 OPT_OBJECTS_SUFFIX = ".opt.o"  # please note the files are not exist yet, this is to generate the index file use in final link
-MERGED_BITCODE_SUFFIX = ".merged.bc"
 
 
 def _parse_meta_file_records(
@@ -125,104 +87,24 @@ def _parse_meta_file_records(
     return object_file_records_map
 
 
-def _populate_premerger_path_conversion_maps(
-    object_file_records_map: dict[str, ObjectFile],
-) -> tuple[dict[str, str], dict[str, str]]:
-    original_bitcode_to_merged_bitcode_path_mapping = {}
-    merged_bitcode_to_original_bitcode_path_mapping = {}
-    for (
-        input_object_file_path,
-        object_file_record,
-    ) in object_file_records_map.items():
-        output_merged_bitcode_file_path = None
-        assert object_file_record.output_premerged_bitcode_file_path is not None
-        output_merged_bitcode_file_path = (
-            object_file_record.output_premerged_bitcode_file_path
-        )
-
-        original_bitcode_to_merged_bitcode_path_mapping[input_object_file_path] = (
-            output_merged_bitcode_file_path
-        )
-        merged_bitcode_to_original_bitcode_path_mapping[
-            output_merged_bitcode_file_path
-        ] = input_object_file_path
-
-    return (
-        original_bitcode_to_merged_bitcode_path_mapping,
-        merged_bitcode_to_original_bitcode_path_mapping,
-    )
-
-
-def _run_thin_link(
-    premerger_enabled: bool,
-    original_bitcode_to_merged_bitcode_path_mapping: dict[str, str],
-    thin_link_args: list[str],
-):
-    if premerger_enabled:
-        # Buck requires actions write output files to a location set by the build system.  When toolchain
-        # binaries cannot for whatever reason easily produce output files at known locations configurable
-        # locations, the usual approach is to use a wrapper Python script such as this one to place the
-        # files at the locations buck expects.  In this case, this will not work as sharded summaries embed
-        # paths to other bitcode files within the bitcode.  That means the toolchain must write the merged
-        # bitcode files to locations buck expects in the first place. This json document is parsed by the
-        # linker and communicates the locations at which the toolchain must write the merged bitcode files.
-        with tempfile.NamedTemporaryFile(mode="w+t") as premerger_output_mapping:
-            json.dump(
-                original_bitcode_to_merged_bitcode_path_mapping,
-                premerger_output_mapping,
-            )
-            premerger_output_mapping.flush()
-            thin_link_args.append(
-                f"-Wl,-mllvm,-premerger-output-map={premerger_output_mapping.name}"
-            )
-            subprocess.check_call(thin_link_args)
-    else:
-        subprocess.check_call(thin_link_args)
-
-
 def main(argv):
     parser = argparse.ArgumentParser()
     parser.add_argument("--meta")
     parser.add_argument("--index")
     parser.add_argument("--link-plan")
-    parser.add_argument("--enable-premerger", action="store_true")
     parser.add_argument("index_args", nargs=argparse.REMAINDER)
     args = parser.parse_args(argv[1:])
 
-    premerger_enabled = args.enable_premerger
-
     def read_imports(imports_path):
         with open(imports_path) as infile:
-            if not premerger_enabled:
-                return [line.strip() for line in infile.readlines()]
-
-            result = []
-            for line in infile.readlines():
-                if line.strip().endswith(".merged.bc"):
-                    result.append(
-                        merged_bitcode_to_original_bitcode_path_mapping[line.strip()]
-                    )
-                else:
-                    result.append(line.strip())
-            return result
+            return [line.strip() for line in infile.readlines()]
 
     def index_path(path):
         return os.path.join(args.index, path)
 
     object_file_records_map = _parse_meta_file_records(args.meta)
 
-    original_bitcode_to_merged_bitcode_path_mapping = {}
-    if premerger_enabled:
-        (
-            original_bitcode_to_merged_bitcode_path_mapping,
-            merged_bitcode_to_original_bitcode_path_mapping,
-        ) = _populate_premerger_path_conversion_maps(object_file_records_map)
-
-    _run_thin_link(
-        premerger_enabled,
-        original_bitcode_to_merged_bitcode_path_mapping,
-        args.index_args[1:],
-    )
+    subprocess.check_call(args.index_args[1:])
 
     loaded_input_files_positions = {}
     with open(index_path("index.full")) as indexfile:
@@ -240,7 +122,6 @@ def main(argv):
     def _input_file_path_is_loaded_by_linker(path):
         return path in loaded_input_files_positions
 
-    absorbed_source_files = set()
     non_lto_objects = {}
 
     # Generate plans for object files
@@ -252,11 +133,6 @@ def main(argv):
 
         temporary_sharded_index_location = index_path(path) + BITCODE_SUFFIX
         imports_file_path = index_path(path) + IMPORTS_SUFFIX
-        merged_bitcode_path = (
-            original_bitcode_to_merged_bitcode_path_mapping[path]
-            if premerger_enabled
-            else None
-        )
 
         final_link_line_position = -1
         if path in loaded_input_files_positions:
@@ -275,35 +151,21 @@ def main(argv):
                 imported_object_file_record = object_file_records_map[import_path]
                 imports_list.append(imported_object_file_record.starlark_array_index)
 
-            merge_state = None
-            if premerger_enabled:
-                assert os.path.exists(merged_bitcode_path), (
-                    f"missing merged bitcode file at {merged_bitcode_path}"
-                )
-                merge_state = read_merged_bitcode_file(merged_bitcode_path)
-                if merge_state == BitcodeMergeState.ABSORBED:
-                    absorbed_source_files.add(path)
-
             plan = ObjectFileOptimizationPlan(
                 imports=imports_list,
-                merge_state=merge_state,
                 is_bitcode=True,
                 loaded_by_linker=_input_file_path_is_loaded_by_linker(path),
                 final_link_line_position=final_link_line_position,
             )
         else:
-            # The linker will not generate an index shard, or a merged bitcode file if the input is not bitcode.
+            # The linker will not generate an index shard if the input is not bitcode.
             # Buck still expect the output, so write an empty file.
             non_lto_objects[data.starlark_array_index] = 1
             with open(final_sharded_index_output_path, "w"):
                 pass
 
-            if premerger_enabled:
-                with open(merged_bitcode_path, "w"):
-                    pass
             plan = ObjectFileOptimizationPlan(
                 imports=[],
-                merge_state=None,
                 is_bitcode=False,
                 loaded_by_linker=_input_file_path_is_loaded_by_linker(path),
                 final_link_line_position=final_link_line_position,

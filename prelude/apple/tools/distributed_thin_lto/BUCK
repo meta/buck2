@@ -21,7 +21,6 @@ cxx_binary(
     ],
     visibility = ["PUBLIC"],
     deps = [
-        "fbcode//common/files:files",
         "fbsource//xplat/folly:file_util",
         "fbsource//xplat/folly:json",
         "fbsource//xplat/folly:subprocess",

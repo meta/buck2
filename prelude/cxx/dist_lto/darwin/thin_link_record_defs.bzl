@@ -8,17 +8,9 @@
 
 # These records are documented in the dist_lto_planner_darwin.py script and must be kept in sync with those definitions
 
-BitcodeMergeState = enum(
-    "STANDALONE",
-    "ABSORBED",
-    "ROOT",
-    "NOT_LOADED",
-)
-
 ObjectFileOptimizationPlan = record(
     imports = field(list[int]),
     is_bitcode = field(bool),
-    merge_state = field(str | None, None),  # BitcodeMergeState
     loaded_by_linker = field(bool),
     final_link_line_position = field(int),
 )

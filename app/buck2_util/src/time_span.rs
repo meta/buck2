@@ -231,6 +231,7 @@ impl Sub<Duration> for TimeSpan {
 }
 
 /// A `TimeSpanBuilder` with the wall-clock time read when it started.
+#[derive(Clone, Copy)]
 pub struct AnchoredTimeSpanBuilder {
     span: TimeSpanBuilder,
     start_time: SystemTime,
@@ -249,6 +250,7 @@ impl AnchoredTimeSpanBuilder {
 }
 
 /// A builder for creating `TimeSpan` instances that start at a specific time.
+#[derive(Clone, Copy)]
 pub struct TimeSpanBuilder {
     start: Instant,
 }

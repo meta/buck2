@@ -64,7 +64,6 @@ use buck2_fs::paths::forward_rel_path::ForwardRelativePath;
 use buck2_hash::BuckMutInsertionMap;
 use buck2_hash::BuckMutSet;
 use buck2_util::time_span::AnchoredTimeSpanBuilder;
-use buck2_util::time_span::TimeSpan;
 use dice_futures::cancellation::CancellationContext;
 use dupe::Dupe;
 use futures::FutureExt;
@@ -123,8 +122,8 @@ pub async fn download_action_results<'a>(
             Some(action_exit_code),
             CommandExecutionMetadata::from_re_timing(
                 response.timing(),
-                None,
-                TimeSpan::empty_now(),
+                Some(execution_time.start_time()),
+                execution_time.end_now(),
             ),
             additional_message,
             false,

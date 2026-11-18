@@ -8,6 +8,7 @@
  * above-listed licenses.
  */
 
+use std::future::Future;
 use std::ops::ControlFlow;
 use std::sync::Arc;
 use std::time::Duration;
@@ -54,6 +55,7 @@ use buck2_execute::re::output_trees_download_config::OutputTreesDownloadConfig;
 use buck2_execute::re::remote_action_result::ExecuteResponseWithQueueStats;
 use buck2_execute::re::remote_action_result::RemoteActionResult;
 use buck2_hash::BuckMutInsertionMap;
+use buck2_util::time_span::AnchoredTimeSpanBuilder;
 use buck2_util::time_span::TimeSpan;
 use dice_futures::cancellation::CancellationContext;
 use dupe::Dupe;
@@ -171,8 +173,6 @@ impl ReExecutor {
             request.all_args_str(),
             action_digest,
         );
-
-        let now = TimeSpan::start_now();
 
         let execute_response_fut = self.re_client.execute(
             action_digest.dupe(),
@@ -307,10 +307,11 @@ impl ReExecutor {
                     // and yet received one.
                     request.timeout().unwrap(),
                     CommandStdStreams::Remote(response.std_streams(&self.re_client, digest_config)),
+                    // `measure_returned_attempt` fills in the attempt's interval.
                     CommandExecutionMetadata::from_re_timing(
                         response.timing(),
                         None,
-                        now.end_now(),
+                        TimeSpan::empty_now(),
                     ),
                     additional_message,
                 )
@@ -358,6 +359,22 @@ impl ReExecutor {
 #[async_trait]
 impl PreparedCommandExecutor for ReExecutor {
     async fn exec_cmd(
+        &self,
+        command: &PreparedCommand<'_, '_>,
+        manager: CommandExecutionManager,
+        cancellations: &CancellationContext,
+    ) -> CommandExecutionResult {
+        self.exec_cmd_impl(command, manager, cancellations).await
+    }
+
+    fn is_local_execution_possible(&self, _executor_preference: ExecutorPreference) -> bool {
+        false
+    }
+}
+
+impl ReExecutor {
+    /// The body of `exec_cmd`, as an inherent method so that its future's size can be asserted.
+    async fn exec_cmd_impl(
         &self,
         command: &PreparedCommand<'_, '_>,
         manager: CommandExecutionManager,
@@ -457,8 +474,9 @@ impl PreparedCommandExecutor for ReExecutor {
             None => Either::Right(remote_execution_dependencies),
         };
 
-        let (manager, response) = self
-            .re_execute(
+        let (manager, response) = measure_returned_attempt(
+            execution_time,
+            self.re_execute(
                 manager,
                 &identity,
                 request,
@@ -469,8 +487,9 @@ impl PreparedCommandExecutor for ReExecutor {
                 &re_gang_workers,
                 command.request.meta_internal_extra_params(),
                 worker_tool_action_digest,
-            )
-            .await?;
+            ),
+        )
+        .await?;
 
         let exit_code = response.execute_response.action_result.exit_code;
         let additional_message = if response.execute_response.status.message.is_empty() {
@@ -513,10 +532,26 @@ impl PreparedCommandExecutor for ReExecutor {
 
         res
     }
+}
 
-    fn is_local_execution_possible(&self, _executor_preference: ExecutorPreference) -> bool {
-        false
-    }
+#[cfg(fbcode_build)] // Relies on fbcode future sizes
+buck2_util::size_assert::words_of_async_fn_future!(ReExecutor::exec_cmd_impl, (_, _, _, _), ~1005);
+
+/// Gives any result that ends the attempt early (cancellation, timeout, RPC failure) the client
+/// interval since `execution_time` started, the same start a successful execution reports once
+/// its outputs are downloaded.
+fn measure_returned_attempt<T>(
+    execution_time: AnchoredTimeSpanBuilder,
+    attempt: impl Future<Output = ControlFlow<CommandExecutionResult, T>>,
+) -> impl Future<Output = ControlFlow<CommandExecutionResult, T>> {
+    attempt.map(move |attempt| match attempt {
+        ControlFlow::Break(mut result) => {
+            result.report.timing.client_start_time = Some(execution_time.start_time());
+            result.report.timing.time_span = execution_time.end_now();
+            ControlFlow::Break(result)
+        }
+        ControlFlow::Continue(value) => ControlFlow::Continue(value),
+    })
 }
 
 #[derive(buck2_error::Error, Debug)]
@@ -575,4 +610,71 @@ fn is_re_queue_full(e: &buck2_error::Error) -> bool {
 
     e.find_typed_context::<RemoteExecutionError>()
         .is_some_and(|re_err| re_err.group == TCodeReasonGroup::USER_QUEUE_FULL)
+}
+
+#[cfg(test)]
+mod tests {
+    use std::time::SystemTime;
+
+    use buck2_build_signals::env::WaitingData;
+    use buck2_common::cas_digest::CasDigest;
+    use buck2_common::liveliness_observer::LivelinessGuard;
+    use buck2_events::dispatch::EventDispatcher;
+    use buck2_execute::execute::claim::MutexClaimManager;
+    use buck2_execute::execute::result::CommandExecutionStatus;
+
+    use super::*;
+
+    fn manager() -> CommandExecutionManager {
+        let (observer, guard) = LivelinessGuard::create();
+        guard.forget();
+        CommandExecutionManager::new(
+            Box::new(MutexClaimManager::new()),
+            EventDispatcher::null(),
+            observer,
+            WaitingData::new(),
+        )
+    }
+
+    #[tokio::test]
+    async fn test_early_results_get_the_attempt_interval() {
+        let before = SystemTime::now();
+        let result = measure_returned_attempt(TimeSpan::start_now_with_wall_time(), async {
+            tokio::time::sleep(Duration::from_millis(5)).await;
+            ControlFlow::<_, ()>::Break(manager().cancel(
+                CommandExecutionKind::Local {
+                    digest: CasDigest::new_blake3([0; 32], 0),
+                    command: Vec::new(),
+                    env: Default::default(),
+                },
+                CommandCancellationReason::ReQueueTimeout,
+                CommandExecutionMetadata::empty(TimeSpan::empty_now()),
+            ))
+        })
+        .await
+        .break_value()
+        .unwrap();
+        assert!(matches!(
+            result.report.status,
+            CommandExecutionStatus::Cancelled { .. }
+        ));
+        let timing = result.report.timing;
+        assert!(timing.client_start_time.unwrap() >= before);
+        assert!(
+            timing.time_span.duration() >= Duration::from_millis(5),
+            "covers the attempt"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_successful_attempts_pass_through() {
+        assert_eq!(
+            measure_returned_attempt(TimeSpan::start_now_with_wall_time(), async {
+                ControlFlow::<CommandExecutionResult, _>::Continue(42)
+            })
+            .await
+            .continue_value(),
+            Some(42),
+        );
+    }
 }

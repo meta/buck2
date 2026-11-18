@@ -153,7 +153,9 @@ provider_args(Expected, Filtered, OutputFile) ->
     OutputDir :: file:filename(),
     Args :: [string()].
 run_test_binary(Providers, OutputDir, Args) ->
-    {ok, [[ErlExec | ErlFlags]]} = init:get_argument(progname),
+    {ok, [[_ProgName | ErlFlags]]} = init:get_argument(progname),
+    % progname is only the launcher's basename on OTP 29+, so resolve erl from the running installation
+    ErlExec = filename:join([code:root_dir(), "bin", "erl"]),
     CodePaths = [common_util:filename_all_to_filename(filename:absname(Path)) || Path <- code:get_path()],
     TestInfoFile = filename:join(OutputDir, "test_info.json"),
     ok = test_info:write_to_file(TestInfoFile, #test_info{
@@ -169,7 +171,7 @@ run_test_binary(Providers, OutputDir, Args) ->
         raw_target = ~"test_binary_SUITE",
         trampolines = []
     }),
-    Port = open_port({spawn_executable, filename:absname(ErlExec)}, [
+    Port = open_port({spawn_executable, ErlExec}, [
         binary,
         exit_status,
         stderr_to_stdout,

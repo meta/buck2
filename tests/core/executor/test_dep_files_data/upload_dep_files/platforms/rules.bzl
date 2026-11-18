@@ -6,6 +6,8 @@
 # of this source tree. You may select, at your option, one of the
 # above-listed licenses.
 
+_TEST_REMOTE_DEP_FILE_CACHE_ENABLED = read_config("test", "remote_dep_file_cache_enabled", "true")
+
 ExecutorConfigInfo = provider(fields = ["config"])
 
 def _platform(ctx):
@@ -38,7 +40,7 @@ def _platform(ctx):
             allow_hybrid_fallbacks_on_failure = ctx.attrs.allow_hybrid_fallbacks_on_failure,
             remote_execution_use_case = "buck2-testing",
             allow_cache_uploads = ctx.attrs.allow_cache_uploads,
-            remote_dep_file_cache_enabled = ctx.attrs.remote_dep_file_cache_enabled and read_config("test", "remote_dep_file_cache_enabled", "true") == "true",
+            remote_dep_file_cache_enabled = ctx.attrs.remote_dep_file_cache_enabled and _TEST_REMOTE_DEP_FILE_CACHE_ENABLED == "true",
             max_cache_upload_mebibytes = 1,
         ),
     )

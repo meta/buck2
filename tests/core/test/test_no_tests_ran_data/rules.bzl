@@ -6,6 +6,8 @@
 # of this source tree. You may select, at your option, one of the
 # above-listed licenses.
 
+_TEST_BODY_SENTINEL = read_config("test", "body_sentinel", "")
+
 _BODY = """
 import os
 from pathlib import Path
@@ -13,7 +15,7 @@ Path(os.environ["TEST_BODY_SENTINEL"]).write_text("executed")
 """
 
 def _test_case(ctx):
-    env = {"TEST_BODY_SENTINEL": read_config("test", "body_sentinel", "")}
+    env = {"TEST_BODY_SENTINEL": _TEST_BODY_SENTINEL}
     executor = CommandExecutorConfig(local_enabled = True, remote_enabled = False)
     if ctx.attrs.skipped:
         return [

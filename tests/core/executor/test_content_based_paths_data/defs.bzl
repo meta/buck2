@@ -23,6 +23,10 @@
 # under different platforms so the producer is re-analyzed once per
 # configuration.
 
+_CBP_RACE_SEED = read_config("cbp_race", "seed", "0")
+_TEST_URL = read_config("test", "url")
+_TEST_SHA1 = read_config("test", "sha1")
+
 def _rust_pattern_producer_impl(ctx):
     # Stable content that does NOT depend on configuration. A per-test-run
     # seed (via buckconfig) invalidates the RE cache between runs, but
@@ -30,7 +34,7 @@ def _rust_pattern_producer_impl(ctx):
     # analysis resolves to the same content-hash path.
     out = ctx.actions.write_json(
         ctx.actions.declare_output("artifacts.json", has_content_based_path = True),
-        {"seed": read_config("cbp_race", "seed", "0")},
+        {"seed": _CBP_RACE_SEED},
         pretty = True,
     )
     return [DefaultInfo(default_output = out)]
@@ -309,10 +313,10 @@ cas_artifact_with_content_based_path = rule(
 )
 
 def _download_with_content_based_path_impl(ctx: AnalysisContext):
-    url = read_config("test", "url")
+    url = _TEST_URL
 
     if ctx.attrs.defer_download:
-        sha1 = read_config("test", "sha1")
+        sha1 = _TEST_SHA1
         dummy_sha_256 = None
     else:
         # The digest config only accepts sha1 here, so a sha256 alone gives the action no usable

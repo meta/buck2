@@ -6,6 +6,8 @@
 # of this source tree. You may select, at your option, one of the
 # above-listed licenses.
 
+_TEST_CACHE_BUSTER = read_config("test", "cache_buster", "")
+
 def _test_exec_platforms(ctx):
     bxl_actions = ctx.bxl_actions(exec_deps = ctx.cli_args.exec_deps, toolchains = ctx.cli_args.toolchains, target_platform = "//platforms:target")
     actions = bxl_actions.actions
@@ -26,7 +28,7 @@ def _test_exec_platforms(ctx):
             out.as_output(),
         ],
         category = "command",
-        env = {"cache_buster": read_config("test", "cache_buster", "")},
+        env = {"cache_buster": _TEST_CACHE_BUSTER},
         local_only = False,
     )
     ctx.output.print(ctx.output.ensure(out))
@@ -51,7 +53,7 @@ def _test_exec_compatible_with(ctx):
             out.as_output(),
         ],
         category = "command",
-        env = {"cache_buster": read_config("test", "cache_buster", "")},
+        env = {"cache_buster": _TEST_CACHE_BUSTER},
         prefer_local = True,
     )
     ctx.output.print(ctx.output.ensure(out))

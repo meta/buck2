@@ -6,8 +6,10 @@
 # of this source tree. You may select, at your option, one of the
 # above-listed licenses.
 
+_BUCK2_RE_CLIENT_ENABLED = read_config("buck2_re_client", "enabled", "false")
+
 def is_remote_enabled() -> bool:
-    re_enabled = read_config("buck2_re_client", "enabled", "false")
+    re_enabled = _BUCK2_RE_CLIENT_ENABLED
     return re_enabled == "true"
 
 def _execution_platforms_impl(ctx: AnalysisContext) -> list[Provider]:

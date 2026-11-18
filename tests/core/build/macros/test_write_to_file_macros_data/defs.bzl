@@ -6,6 +6,9 @@
 # of this source tree. You may select, at your option, one of the
 # above-listed licenses.
 
+_TEST_DEP_FILES_FINGERPRINT_USING_CANONICAL_PATHS = read_config("test", "dep_files_fingerprint_using_canonical_paths", "false")
+_TEST_PYTHON = read_config("test", "python")
+
 def _write_file(ctx):
     f = ctx.actions.write("write_file.txt", "test test test", has_content_based_path = False)
     return [DefaultInfo(default_output = f)]
@@ -19,7 +22,7 @@ def _test_rule(ctx):
     arg = ctx.attrs.arg
 
     f = ctx.actions.declare_output("out.txt", has_content_based_path = False)
-    fingerprint = read_config("test", "dep_files_fingerprint_using_canonical_paths", "false") == "true"
+    fingerprint = _TEST_DEP_FILES_FINGERPRINT_USING_CANONICAL_PATHS == "true"
     written, _ = ctx.actions.write(
         f,
         [
@@ -37,7 +40,7 @@ def _test_rule(ctx):
         artifact, descriptor = written
         copied = ctx.actions.declare_output("copy.txt")
         ctx.actions.run(
-            [read_config("test", "python"), "-c", "import shutil,sys; shutil.copyfile(sys.argv[1],sys.argv[2])", artifact, copied.as_output()],
+            [_TEST_PYTHON, "-c", "import shutil,sys; shutil.copyfile(sys.argv[1],sys.argv[2])", artifact, copied.as_output()],
             category = "copy_args",
             dep_file_fingerprints = [descriptor],
             local_only = True,

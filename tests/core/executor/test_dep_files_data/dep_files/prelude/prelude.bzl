@@ -6,6 +6,8 @@
 # of this source tree. You may select, at your option, one of the
 # above-listed licenses.
 
+_TEST_NUM_PRECEDING_ACTIONS = read_config("test", "num_preceding_actions", "0")
+
 def _c_binary_impl(ctx):
     headers = {"{}/{}".format(ctx.label.package, h.short_path): h for h in ctx.attrs.headers}
 
@@ -402,7 +404,7 @@ shared_dir_dep_file = rule(
 )
 
 def _dep_file_with_preceding_actions_impl(ctx):
-    num_preceding = int(read_config("test", "num_preceding_actions", "0"))
+    num_preceding = int(_TEST_NUM_PRECEDING_ACTIONS)
 
     dummy_script = ctx.actions.write(
         "dummy_script.py",

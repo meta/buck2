@@ -39,10 +39,10 @@ run() {
 # wrote under `---- <case> stdout ----`, and either names the case: the start
 # of a long output may be missing. Of what it wrote, the lines from the last
 # `Error:` or panic on are kept, without a backtrace and what a daemon logs as
-# it starts: the first 4 and the last 9 when there are more, since a chain of
-# errors ends with its cause. Cases of a target that failed the same way are
-# listed together, above what they printed. A target without a failed case
-# died some other way, and gets the end of its output. Without any failed
+# it starts: the first 12 and the last 9 when there are more, since a chain of
+# errors names its cause near one end. Cases of a target that failed the same
+# way are listed together, above what they printed. A target without a failed
+# case died some other way, and gets the end of its output. Without any failed
 # target to name, the end of the log has to do: it holds the error of a build
 # failure and buck2's closing lines.
 report() {
@@ -55,25 +55,33 @@ report() {
     }
     function keep(text,    n) {
       n = ++count[target, block]
-      if (n <= 4) {
+      if (n <= leading) {
         first[target, block, n] = text
       } else {
-        rest[target, block, (n - 5) % 9] = text
+        rest[target, block, (n - leading) % trailing] = text
       }
     }
     function why(t, c,    n, i, text) {
       n = count[t, c]
       text = ""
       for (i = 1; i <= n; i++) {
-        if (n > 13 && i == 5) {
+        if (n > leading + trailing && i == leading + 1) {
           text = text "    ...\n"
-          i = n - 8
+          i = n - trailing + 1
         }
-        text = text "    " (i <= 4 ? first[t, c, i] : rest[t, c, (i - 5) % 9]) "\n"
+        if (i <= leading) {
+          text = text "    " first[t, c, i] "\n"
+        } else {
+          text = text "    " rest[t, c, (i - leading) % trailing] "\n"
+        }
       }
       return text
     }
-    BEGIN { color = sprintf("%c", 27) "\\[[0-9;]*m" }
+    BEGIN {
+      color = sprintf("%c", 27) "\\[[0-9;]*m"
+      leading = 12
+      trailing = 9
+    }
     { last[NR % 40] = $0 }
     /^Tests finished: / { counts = $0 }
     {

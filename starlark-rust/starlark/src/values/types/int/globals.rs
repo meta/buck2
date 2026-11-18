@@ -43,7 +43,7 @@ pub(crate) fn register_int(globals: &mut GlobalsBuilder) {
     /// If x is a `bool`, the result is 0 for `False` or 1 for `True`.
     ///
     /// If x is a string, it is interpreted like a string literal;
-    /// an optional base prefix (`0`, `0b`, `0B`, `0x`, `0X`) determines which
+    /// an optional base prefix (`0b`, `0B`, `0o`, `0O`, `0x`, `0X`) determines which
     /// base to use. The string may specify an arbitrarily large integer,
     /// whereas true integer literals are restricted to 64 bits.
     /// If a non-zero `base` argument is provided, the string is interpreted
@@ -94,6 +94,7 @@ pub(crate) fn register_int(globals: &mut GlobalsBuilder) {
             Either::Right(Either::Left(b)) => Either::Right(b),
             Either::Right(Either::Right(s)) => {
                 let s = s.as_str();
+                let literal = base == Some(0);
                 let base = base.unwrap_or(0);
                 if base == 1 || base < 0 || base > 36 {
                     return Err(anyhow::anyhow!(
@@ -114,6 +115,19 @@ pub(crate) fn register_int(globals: &mut GlobalsBuilder) {
                         Some("0b") | Some("0B") => 2,
                         Some("0o") | Some("0O") => 8,
                         Some("0x") | Some("0X") => 16,
+                        // Like an integer literal, a decimal cannot have a leading 0,
+                        // which would be read as an obsolete octal literal.
+                        _ if literal
+                            && s.len() > 1
+                            && s.starts_with('0')
+                            && s.bytes().any(|b| b != b'0') =>
+                        {
+                            return Err(anyhow::anyhow!(
+                                "Cannot parse `{}` as an integer with base 0, integer cannot have leading 0",
+                                s,
+                            )
+                            .into());
+                        }
                         _ => 10,
                     }
                 } else {

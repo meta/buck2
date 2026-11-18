@@ -483,6 +483,22 @@ noop(hash)(foo)
     }
 
     #[test]
+    fn test_int_base_zero_leading_zero() {
+        // With base 0 the string is read like an integer literal, which cannot have a leading 0.
+        assert::fail("int('0755', 0)", "cannot have leading 0");
+        assert::fail("int('-012', 0)", "cannot have leading 0");
+        assert::fail("int('+09', 0)", "cannot have leading 0");
+        assert::fail("int('00012', 0)", "cannot have leading 0");
+        assert::eq("0", "int('0', 0)");
+        assert::eq("0", "int('000', 0)");
+        assert::eq("0", "int('-00', 0)");
+        assert::eq("755", "int('755', 0)");
+        assert::eq("493", "int('0o755', 0)");
+        assert::eq("755", "int('0755')");
+        assert::eq("493", "int('0755', 8)");
+    }
+
+    #[test]
     fn test_tuple() {
         let mut a = Assert::new();
         // TODO(nga): fix and enable.

@@ -15,18 +15,13 @@
  * limitations under the License.
  */
 
+use crate::typing::OperatorSignature;
 use crate::typing::Ty;
-use crate::typing::TyBasic;
 use crate::typing::TypingBinOp;
 
 pub(crate) enum NumTy {
     Int,
     Float,
-}
-
-enum NumRhsTy {
-    Num(NumTy),
-    Any,
 }
 
 fn int_or_float() -> Ty {
@@ -47,17 +42,12 @@ enum BinOpClass {
     Less,
 }
 
-pub(crate) fn typecheck_num_bin_op(lhs: NumTy, op: TypingBinOp, rhs: &TyBasic) -> Option<Ty> {
-    let rhs = if rhs == &TyBasic::Any {
-        NumRhsTy::Any
-    } else if rhs == &TyBasic::int() {
-        NumRhsTy::Num(NumTy::Int)
-    } else if rhs == &TyBasic::float() {
-        NumRhsTy::Num(NumTy::Float)
-    } else {
-        return None;
-    };
-
+/// The signatures of `lhs op rhs` for a number `lhs`.
+///
+/// `int` and `float` are the types whose operators take more than one type of operand with
+/// a result that depends on which, so they write their signatures here instead of having them
+/// read off their operator methods, which take any value.
+pub(crate) fn num_bin_op_signatures(lhs: NumTy, op: TypingBinOp) -> Vec<OperatorSignature> {
     let op = match op {
         TypingBinOp::Add
         | TypingBinOp::Sub
@@ -74,17 +64,17 @@ pub(crate) fn typecheck_num_bin_op(lhs: NumTy, op: TypingBinOp, rhs: &TyBasic) -
         TypingBinOp::Less => BinOpClass::Less,
     };
 
-    match (lhs, op, rhs) {
-        (_, BinOpClass::In, _) => None,
-        (_, BinOpClass::Less, _) => Some(Ty::bool()),
-        (NumTy::Float, BinOpClass::Add, _) => Some(Ty::float()),
-        (NumTy::Int, BinOpClass::Add, NumRhsTy::Num(NumTy::Int)) => Some(Ty::int()),
-        (_, BinOpClass::Add, NumRhsTy::Num(NumTy::Float)) => Some(Ty::float()),
-        (_, BinOpClass::Add, NumRhsTy::Any) => Some(int_or_float()),
-        (_, BinOpClass::Div, _) => Some(Ty::float()),
-        (NumTy::Int, BinOpClass::BitAnd, NumRhsTy::Num(NumTy::Int) | NumRhsTy::Any) => {
-            Some(Ty::int())
-        }
-        (_, BinOpClass::BitAnd, _) => None,
+    let signature = |operand, result| OperatorSignature { operand, result };
+    match (lhs, op) {
+        (_, BinOpClass::In) => Vec::new(),
+        (_, BinOpClass::Less) => vec![signature(int_or_float(), Ty::bool())],
+        (NumTy::Int, BinOpClass::Add) => vec![
+            signature(Ty::int(), Ty::int()),
+            signature(Ty::float(), Ty::float()),
+        ],
+        (NumTy::Float, BinOpClass::Add) => vec![signature(int_or_float(), Ty::float())],
+        (_, BinOpClass::Div) => vec![signature(int_or_float(), Ty::float())],
+        (NumTy::Int, BinOpClass::BitAnd) => vec![signature(Ty::int(), Ty::int())],
+        (NumTy::Float, BinOpClass::BitAnd) => Vec::new(),
     }
 }

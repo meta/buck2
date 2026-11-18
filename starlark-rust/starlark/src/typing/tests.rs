@@ -696,6 +696,55 @@ def bad(s: str, b: bytes, t: tuple[int, ...], i: int):
         );
 }
 
+/// The operators of `int` and `float`, whose result depends on the operand.
+#[test]
+fn test_operators_of_numbers() {
+    TypeCheck::new()
+        .ty("int_add_int")
+        .ty("int_add_float")
+        .ty("int_add_any")
+        .ty("float_add_int")
+        .ty("float_add_any")
+        .ty("int_div_int")
+        .ty("int_floor_div_float")
+        .ty("int_percent_int")
+        .ty("int_or_int")
+        .ty("int_or_any")
+        .ty("int_shift_int")
+        .ty("int_less_float")
+        .ty("float_less_any")
+        .check(
+            "operators_of_numbers",
+            r#"
+def test(i: int, f: float, a):
+    int_add_int = i + i
+    int_add_float = i + f
+    int_add_any = i + a
+    float_add_int = f + i
+    float_add_any = f * a
+    int_div_int = i / i
+    int_floor_div_float = i // f
+    int_percent_int = i % i
+    int_or_int = i | i
+    int_or_any = i ^ a
+    int_shift_int = i << i
+    int_less_float = i < f
+    float_less_any = f < a
+
+def bad(i: int, f: float, s: str):
+    i + s
+    f - s
+    i / s
+    i | f
+    f & f
+    i << f
+    i < s
+    f < s
+    i in i
+"#,
+        );
+}
+
 #[test]
 fn test_union() {
     TypeCheck::new().check(

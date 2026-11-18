@@ -33,8 +33,7 @@ use crate as starlark;
 use crate::any::ProvidesStaticType;
 use crate::collections::StarlarkHasher;
 use crate::private::Private;
-use crate::typing::Ty;
-use crate::typing::TyBasic;
+use crate::typing::OperatorSignature;
 use crate::typing::TypingBinOp;
 use crate::values::AllocFrozenValue;
 use crate::values::AllocValue;
@@ -47,7 +46,7 @@ use crate::values::ValueError;
 use crate::values::ValueOf;
 use crate::values::ValueTyped;
 use crate::values::types::num::typecheck::NumTy;
-use crate::values::types::num::typecheck::typecheck_num_bin_op;
+use crate::values::types::num::typecheck::num_bin_op_signatures;
 use crate::values::types::num::value::NumRef;
 
 const WRITE_PRECISION: usize = 6;
@@ -351,8 +350,8 @@ impl<'v> StarlarkValue<'v> for StarlarkFloat {
         }
     }
 
-    fn bin_op_ty(op: TypingBinOp, rhs: &TyBasic) -> Option<Ty> {
-        typecheck_num_bin_op(NumTy::Float, op, rhs)
+    fn bin_op_signatures(op: TypingBinOp) -> Vec<OperatorSignature> {
+        num_bin_op_signatures(NumTy::Float, op)
     }
 
     fn compare(&self, other: Value) -> crate::Result<Ordering> {

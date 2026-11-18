@@ -28,8 +28,7 @@ use starlark_map::StarlarkHasher;
 
 use crate as starlark;
 use crate::private::Private;
-use crate::typing::Ty;
-use crate::typing::TyBasic;
+use crate::typing::OperatorSignature;
 use crate::typing::TypingBinOp;
 use crate::values::Heap;
 use crate::values::StarlarkType;
@@ -42,7 +41,7 @@ use crate::values::types::int::int_or_big::StarlarkIntRef;
 use crate::values::types::int::pointer_i32::INT_TYPE;
 use crate::values::types::int::pointer_i32::PointerI32;
 use crate::values::types::num::typecheck::NumTy;
-use crate::values::types::num::typecheck::typecheck_num_bin_op;
+use crate::values::types::num::typecheck::num_bin_op_signatures;
 use crate::values::types::num::value::NumRef;
 
 /// An `int` in either of its representations: the type expression for `int`, and what a
@@ -222,7 +221,7 @@ impl<'v> StarlarkType<'v> for IntView<'v> {
         }
     }
 
-    fn bin_op_ty(op: TypingBinOp, rhs: &TyBasic) -> Option<Ty> {
-        typecheck_num_bin_op(NumTy::Int, op, rhs)
+    fn bin_op_signatures(op: TypingBinOp) -> Vec<OperatorSignature> {
+        num_bin_op_signatures(NumTy::Int, op)
     }
 }

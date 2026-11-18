@@ -1,0 +1,117 @@
+# @generated
+# To regenerate, run:
+# ```
+# STARLARK_RUST_REGENERATE_GOLDEN_TESTS=1 cargo test -p starlark --lib
+# ```
+
+Code:
+def test(i: int, f: float, a):
+    int_add_int = i + i
+    int_add_float = i + f
+    int_add_any = i + a
+    float_add_int = f + i
+    float_add_any = f * a
+    int_div_int = i / i
+    int_floor_div_float = i // f
+    int_percent_int = i % i
+    int_or_int = i | i
+    int_or_any = i ^ a
+    int_shift_int = i << i
+    int_less_float = i < f
+    float_less_any = f < a
+
+def bad(i: int, f: float, s: str):
+    i + s
+    f - s
+    i / s
+    i | f
+    f & f
+    i << f
+    i < s
+    f < s
+    i in i
+
+Error:
+error: Binary operator `+` is not available on the types `int` and `str`
+  --> filename:18:5
+   |
+18 |     i + s
+   |     ^^^^^
+
+Error:
+error: Binary operator `-` is not available on the types `float` and `str`
+  --> filename:19:5
+   |
+19 |     f - s
+   |     ^^^^^
+
+Error:
+error: Binary operator `/` is not available on the types `int` and `str`
+  --> filename:20:5
+   |
+20 |     i / s
+   |     ^^^^^
+
+Error:
+error: Binary operator `|` is not available on the types `int` and `float`
+  --> filename:21:5
+   |
+21 |     i | f
+   |     ^^^^^
+
+Error:
+error: Binary operator `&` is not available on the types `float` and `float`
+  --> filename:22:5
+   |
+22 |     f & f
+   |     ^^^^^
+
+Error:
+error: Binary operator `<<` is not available on the types `int` and `float`
+  --> filename:23:5
+   |
+23 |     i << f
+   |     ^^^^^^
+
+Error:
+error: Binary operator `<` is not available on the types `int` and `str`
+  --> filename:24:5
+   |
+24 |     i < s
+   |     ^^^^^
+
+Error:
+error: Binary operator `<` is not available on the types `float` and `str`
+  --> filename:25:5
+   |
+25 |     f < s
+   |     ^^^^^
+
+Error:
+error: Binary operator `in` is not available on the types `int` and `int`
+  --> filename:26:5
+   |
+26 |     i in i
+   |     ^^^^^^
+
+Types:
+int_add_int: int
+int_add_float: float
+int_add_any: float | int
+float_add_int: float
+float_add_any: float
+int_div_int: float
+int_floor_div_float: float
+int_percent_int: int
+int_or_int: int
+int_or_any: int
+int_shift_int: int
+int_less_float: bool
+float_less_any: bool
+
+Compiler typechecker (eval):
+error: Binary operator `+` is not available on the types `int` and `str`
+  --> filename:18:5
+   |
+18 |     i + s
+   |     ^^^^^

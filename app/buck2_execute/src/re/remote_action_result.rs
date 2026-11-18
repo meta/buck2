@@ -13,6 +13,7 @@ use std::time::SystemTime;
 
 use buck2_core::fs::project_rel_path::ProjectRelativePathBuf;
 use buck2_core::soft_error_or_panic;
+use buck2_data::timing::Micros;
 use buck2_error::BuckErrorContext;
 use buck2_miniperf_proto::MiniperfCounter;
 use remote_execution::ActionResultResponse;
@@ -84,6 +85,14 @@ impl ExecuteResponseWithQueueStats {
             RemoteExecutionOrigin::Executed
         }
     }
+
+    /// What the worker reported, if RE ran the action for this request.
+    fn re_worker(&self) -> Option<Box<buck2_data::ReWorkerDetails>> {
+        if self.origin() != RemoteExecutionOrigin::Executed {
+            return None;
+        }
+        re_worker_details(&self.execute_response.action_result.execution_metadata).map(Box::new)
+    }
 }
 
 impl RemoteActionResult for ExecuteResponseWithQueueStats {
@@ -115,6 +124,7 @@ impl RemoteActionResult for ExecuteResponseWithQueueStats {
             materialized_inputs_for_failed,
             materialized_outputs_for_failed_actions,
             origin: self.origin(),
+            re_worker: self.re_worker(),
         }
     }
 
@@ -232,6 +242,54 @@ fn timing_from_re_metadata(meta: &TExecutedActionMetadata) -> ReMetadataTiming {
     }
 }
 
+/// What the worker reported in `meta`, or `None` if it reported nothing.
+fn re_worker_details(meta: &TExecutedActionMetadata) -> Option<buck2_data::ReWorkerDetails> {
+    // RE reports zero both for a real zero and for "not reported".
+    let positive = |value: i64| u64::try_from(value).ok().filter(|v| *v > 0);
+    let positive_us =
+        |value: i64| positive(value).map(|us| Micros::from(Duration::from_micros(us)).into());
+    let duration_us = |start: &TTimestamp, end: &TTimestamp| {
+        end.duration_since_if_set(start)
+            .map(|d| Micros::from(d).into())
+    };
+    let details = buck2_data::ReWorkerDetails {
+        worker_wall_time_us: duration_us(
+            &meta.worker_start_timestamp,
+            &meta.worker_completed_timestamp,
+        ),
+        output_upload_us: duration_us(
+            &meta.output_upload_start_timestamp,
+            &meta.output_upload_completed_timestamp,
+        ),
+        elastic_capacity: meta.executed_on_elastic_capacity,
+        cpu_time_user_us: positive_us(meta.cpu_stat_user_usec),
+        cpu_time_system_us: positive_us(meta.cpu_stat_system_usec),
+        ..Default::default()
+    };
+    (details != buck2_data::ReWorkerDetails::default()).then_some(details)
+}
+
+/// Durations between RE's timestamps.
+trait DurationSinceIfSet {
+    /// The time from `earlier` to this timestamp, or `None` if either is unset (RE leaves the
+    /// stamps of phases it did not record at zero) or `earlier` is later, so that neither case
+    /// reads as a plausible duration.
+    fn duration_since_if_set(&self, earlier: &TTimestamp) -> Option<Duration>;
+}
+
+impl DurationSinceIfSet for TTimestamp {
+    fn duration_since_if_set(&self, earlier: &TTimestamp) -> Option<Duration> {
+        let unset = |t: &TTimestamp| t.seconds == 0 && t.nanos == 0;
+        if unset(self)
+            || unset(earlier)
+            || (self.seconds, self.nanos) < (earlier.seconds, earlier.nanos)
+        {
+            return None;
+        }
+        Some(self.saturating_duration_since(earlier))
+    }
+}
+
 fn convert_perf_counts(
     meta: &TExecutedActionMetadata,
 ) -> buck2_error::Result<buck2_data::CommandExecutionStats> {
@@ -269,4 +327,107 @@ fn convert_perf_count(
             .try_into()
             .buck_error_context("Invalid time_running")?,
     }))
+}
+
+#[cfg(test)]
+mod tests {
+    use remote_execution::TActionResult2;
+
+    use super::*;
+
+    fn ts(seconds: i64) -> TTimestamp {
+        TTimestamp {
+            seconds,
+            nanos: 0,
+            ..Default::default()
+        }
+    }
+
+    fn executed_metadata() -> TExecutedActionMetadata {
+        TExecutedActionMetadata {
+            execution_start_timestamp: ts(110),
+            execution_completed_timestamp: ts(140),
+            worker_start_timestamp: ts(100),
+            worker_completed_timestamp: ts(160),
+            output_upload_start_timestamp: ts(150),
+            output_upload_completed_timestamp: ts(158),
+            cpu_stat_user_usec: 400,
+            cpu_stat_system_usec: 100,
+            executed_on_elastic_capacity: true,
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn test_worker_details_come_from_re_metadata() {
+        let details = re_worker_details(&executed_metadata()).unwrap();
+        assert_eq!(
+            details.worker_wall_time_us,
+            Some(60_000_000),
+            "worker receipt to completion"
+        );
+        assert_eq!(
+            details.output_upload_us,
+            Some(8_000_000),
+            "upload start to completion"
+        );
+        assert!(details.elastic_capacity);
+        assert_eq!(
+            (details.cpu_time_user_us, details.cpu_time_system_us),
+            (Some(400), Some(100))
+        );
+    }
+
+    #[test]
+    fn test_unrecorded_or_reversed_stamps_are_absent() {
+        for (start, end, expected) in [
+            (0, 158, None),
+            (150, 0, None),
+            (158, 150, None),
+            (150, 150, Some(Duration::ZERO)),
+        ] {
+            assert_eq!(
+                ts(end).duration_since_if_set(&ts(start)),
+                expected,
+                "stamps {start}..{end}: an unset stamp would otherwise read as decades, a reversed pair as zero"
+            );
+        }
+        assert_eq!(
+            re_worker_details(&TExecutedActionMetadata::default()),
+            None,
+            "RE reports zero CPU time and unset stamps when it has nothing to report"
+        );
+    }
+
+    #[test]
+    fn test_reused_results_have_no_worker_details() {
+        let mut response = ExecuteResponseWithQueueStats {
+            execute_response: ExecuteResponse {
+                action_result: TActionResult2 {
+                    execution_metadata: Box::new(executed_metadata()),
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+            queue_stats: QueueStats::default(),
+        };
+        assert!(response.re_worker().is_some(), "a real execution has them");
+
+        #[cfg(fbcode_build)]
+        {
+            response
+                .execute_response
+                .executed_action_details
+                .was_deduplicated = true;
+        }
+        #[cfg(not(fbcode_build))]
+        {
+            response.execute_response.cached_result = true;
+        }
+        assert_eq!(
+            response.re_worker(),
+            None,
+            "the metadata describes the original execution"
+        );
+    }
 }

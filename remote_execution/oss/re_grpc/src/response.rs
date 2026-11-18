@@ -68,6 +68,9 @@ pub struct TExecutedActionMetadata {
     pub instruction_counts: TPerfCount,
     pub auxiliary_metadata: Vec<TAny>,
     pub max_used_mem: i64,
+    pub cpu_stat_user_usec: i64,
+    pub cpu_stat_system_usec: i64,
+    pub executed_on_elastic_capacity: bool,
     // Compatibility with the Thrift structs
     pub _dot_dot_default: (),
 }

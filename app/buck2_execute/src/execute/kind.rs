@@ -69,6 +69,9 @@ pub enum CommandExecutionKind {
         /// was passed to build options
         materialized_outputs_for_failed_actions: Option<Vec<ProjectRelativePathBuf>>,
         origin: RemoteExecutionOrigin,
+        /// What the RE worker reported, when RE ran this command for this build rather than
+        /// reusing another execution's result.
+        re_worker: Option<Box<buck2_data::ReWorkerDetails>>,
     },
     /// This action was served by the action cache and not executed.
     #[display("action_cache")]
@@ -173,6 +176,7 @@ impl CommandExecutionKind {
                 materialized_inputs_for_failed,
                 materialized_outputs_for_failed_actions,
                 origin,
+                re_worker,
             } => Command::RemoteCommand(buck2_data::RemoteCommand {
                 action_digest: details.action_digest.to_string(),
                 cache_hit: false,
@@ -200,7 +204,7 @@ impl CommandExecutionKind {
                             .collect::<Vec<_>>()
                     })
                     .unwrap_or_default(),
-                re_worker: None,
+                re_worker: re_worker.clone(),
             }),
             Self::ActionCache { details } => Command::RemoteCommand(buck2_data::RemoteCommand {
                 action_digest: details.action_digest.to_string(),

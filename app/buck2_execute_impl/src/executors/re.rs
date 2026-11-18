@@ -250,6 +250,7 @@ impl ReExecutor {
                             materialized_inputs_for_failed: None,
                             materialized_outputs_for_failed_actions: None,
                             origin: RemoteExecutionOrigin::Executed,
+                            re_worker: None,
                         },
                         reason,
                         CommandExecutionMetadata {
@@ -267,6 +268,7 @@ impl ReExecutor {
                                 materialized_inputs_for_failed: None,
                                 materialized_outputs_for_failed_actions: None,
                                 origin: RemoteExecutionOrigin::Executed,
+                                re_worker: None,
                             },
                             CommandCancellationReason::ReQueueTimeout,
                             CommandExecutionMetadata::empty(TimeSpan::empty_now()),
@@ -394,6 +396,7 @@ impl PreparedCommandExecutor for ReExecutor {
             materialized_inputs_for_failed: None,
             materialized_outputs_for_failed_actions: None,
             origin: RemoteExecutionOrigin::Executed,
+            re_worker: None,
         });
 
         if command.request.executor_preference().requires_local() {

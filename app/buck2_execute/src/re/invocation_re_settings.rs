@@ -44,6 +44,9 @@ pub struct InvocationReSettings {
     /// what remote caches hold. Says nothing about materialization: content tracked as the CAS's
     /// is fetched from it either way.
     pub may_probe_cas: bool,
+    /// `--no-remote-cache`. Unlike `--local-only`, it also keeps `download_file` from asking the
+    /// CAS for its content: a cache that is not up yet must not hold up the build that starts it.
+    pub skip_cache_read: bool,
 }
 
 /// The invocation's own RE use case as configured: [`RE_USE_CASE_OVERRIDE_KEY`] if set, else

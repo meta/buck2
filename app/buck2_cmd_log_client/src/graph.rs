@@ -8,6 +8,7 @@
  * above-listed licenses.
  */
 
+use std::collections::BTreeSet;
 use std::io::Write;
 
 use buck2_client_ctx::client_ctx::BuckSubcommand;
@@ -49,8 +50,19 @@ use tokio_stream::StreamExt;
 /// - `dangling_reused`: a reused `id` that is referred to but has no `structure` or `alias`.
 /// - `stats`, last: counts of `actions`, `edges` (entries in `deps`), `reused` references,
 ///   `tsets`, `tset_def_events`, `structures`, `aliases`, `dangling` spans, `dangling_tsets` and
-///   `dangling_reused`; the `schema` from the start event; and the `footer` the build wrote, or
-///   null if the log has none (it was cut off).
+///   `dangling_reused`; the `schema` from the start event; the `footer` the build wrote, or null
+///   if the log has none; `integrity`, the reasons the graph can't be trusted as complete; and
+///   `complete`, true when there are none.
+///
+/// The `integrity` reasons are:
+/// - `no_footer`: the log was cut off.
+/// - `incomplete`: the recorder says it can't vouch for the graph, with the `reason` (for example
+///   a failed build). The event count check is skipped then.
+/// - `event_count_mismatch`: the `footer` says it wrote a different number of graph events than
+///   the `stream` has.
+/// - `dangling_references`: `count` references that point at nothing in the log.
+/// - `concurrent_commands`: other commands, by `trace_ids`, shared the daemon while this one ran.
+///   Actions they ran show up here as reused, and their logs, not this one, record them.
 #[derive(Debug, clap::Parser)]
 pub struct GraphCommand {
     #[clap(flatten)]
@@ -86,6 +98,17 @@ impl BuckSubcommand for GraphCommand {
         .await?;
         ExitResult::success()
     }
+}
+
+/// Why a recorded graph can't be trusted as complete.
+#[derive(Debug, PartialEq, Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+enum Integrity {
+    NoFooter,
+    Incomplete { reason: String },
+    EventCountMismatch { footer: u64, stream: u64 },
+    DanglingReferences { count: u64 },
+    ConcurrentCommands { trace_ids: Vec<String> },
 }
 
 #[derive(Serialize)]
@@ -148,6 +171,8 @@ enum Record<'a> {
         dangling_reused: u64,
         schema: Option<u32>,
         footer: Option<&'a buck2_data::ActionGraphFooter>,
+        integrity: &'a [Integrity],
+        complete: bool,
     },
 }
 
@@ -179,6 +204,8 @@ struct GraphReader {
     undefined: BuckMutMap<u64, u64>,
     schema: Option<u32>,
     footer: Option<buck2_data::ActionGraphFooter>,
+    /// Trace ids of other commands that shared the daemon while this one ran.
+    concurrent_commands: BTreeSet<String>,
 }
 
 impl GraphReader {
@@ -212,6 +239,10 @@ impl GraphReader {
                 }
                 Some(buck2_data::instant_event::Data::ActionGraphAlias(alias)) => {
                     self.aliases.push(alias.clone());
+                }
+                Some(buck2_data::instant_event::Data::ConcurrentCommands(concurrent)) => {
+                    self.concurrent_commands
+                        .extend(concurrent.trace_ids.iter().cloned());
                 }
                 Some(buck2_data::instant_event::Data::TransitiveSetProjectionDef(def)) => {
                     self.tset_def_events += 1;
@@ -379,6 +410,8 @@ impl GraphReader {
         for id in &dangling_reused {
             self.write(w, &Record::DanglingReused { id: *id })?;
         }
+        let dangling_count = (dangling.len() + dangling_tsets.len() + dangling_reused.len()) as u64;
+        let integrity = self.integrity(dangling_count);
         self.write(
             w,
             &Record::Stats {
@@ -394,8 +427,54 @@ impl GraphReader {
                 dangling_reused: dangling_reused.len() as u64,
                 schema: self.schema,
                 footer: self.footer.as_ref(),
+                integrity: &integrity,
+                complete: integrity.is_empty(),
             },
         )
+    }
+
+    fn integrity(&self, dangling_count: u64) -> Vec<Integrity> {
+        let mut integrity = Vec::new();
+        match &self.footer {
+            None => integrity.push(Integrity::NoFooter),
+            Some(footer) => {
+                if let Some(reason) = footer.incomplete {
+                    integrity.push(Integrity::Incomplete {
+                        reason: buck2_data::action_graph_footer::Incomplete::try_from(reason)
+                            .map_or_else(
+                                |_| reason.to_string(),
+                                |r| r.as_str_name().to_lowercase(),
+                            ),
+                    });
+                } else {
+                    let footer_events = footer.action_ends
+                        + footer.tset_def_events
+                        + footer.structure_defs
+                        + footer.aliases;
+                    let stream_events = self.actions
+                        + self.tset_def_events
+                        + self.structures.len() as u64
+                        + self.aliases.len() as u64;
+                    if footer_events != stream_events {
+                        integrity.push(Integrity::EventCountMismatch {
+                            footer: footer_events,
+                            stream: stream_events,
+                        });
+                    }
+                }
+            }
+        }
+        if dangling_count > 0 {
+            integrity.push(Integrity::DanglingReferences {
+                count: dangling_count,
+            });
+        }
+        if !self.concurrent_commands.is_empty() {
+            integrity.push(Integrity::ConcurrentCommands {
+                trace_ids: self.concurrent_commands.iter().cloned().collect(),
+            });
+        }
+        integrity
     }
 }
 
@@ -415,6 +494,9 @@ fn producers(p: Option<&buck2_data::ActionGraphProducers>) -> (&[u64], &[u64], &
 
 #[cfg(test)]
 mod tests {
+    use buck2_data::action_graph_footer::Incomplete;
+    use serde_json::json;
+
     use super::*;
 
     fn action_end(span: u64, deps: Vec<u64>) -> buck2_data::BuckEvent {
@@ -596,6 +678,77 @@ mod tests {
             dangling,
             vec![1],
             "the alias and the structure define 0 and 2"
+        );
+    }
+
+    fn footer(
+        action_ends: u64,
+        incomplete: Option<buck2_data::action_graph_footer::Incomplete>,
+    ) -> buck2_data::BuckEvent {
+        buck2_data::BuckEvent {
+            data: Some(buck2_data::buck_event::Data::Instant(
+                buck2_data::InstantEvent {
+                    data: Some(
+                        buck2_data::ActionGraphFooter {
+                            action_ends,
+                            incomplete: incomplete.map(|i| i as i32),
+                            ..Default::default()
+                        }
+                        .into(),
+                    ),
+                },
+            )),
+            ..Default::default()
+        }
+    }
+
+    fn integrity(events: &[buck2_data::BuckEvent]) -> serde_json::Value {
+        read(events).last().unwrap()["integrity"].clone()
+    }
+
+    #[test]
+    fn test_integrity() {
+        let complete = read(&[action_end(1, vec![]), footer(1, None)]);
+        assert_eq!(complete.last().unwrap()["complete"], true);
+        assert_eq!(
+            integrity(&[action_end(1, vec![])]),
+            json!([{"kind": "no_footer"}])
+        );
+        assert_eq!(
+            integrity(&[action_end(1, vec![]), footer(2, None)]),
+            json!([{"kind": "event_count_mismatch", "footer": 2, "stream": 1}])
+        );
+        assert_eq!(
+            integrity(&[footer(5, Some(Incomplete::BuildFailed))]),
+            json!([{"kind": "incomplete", "reason": "build_failed"}]),
+            "no count check when the recorder says it is incomplete"
+        );
+        assert_eq!(
+            integrity(&[action_end(2, vec![9]), footer(1, None)]),
+            json!([{"kind": "dangling_references", "count": 1}])
+        );
+        let concurrent = |trace_ids: &[&str]| buck2_data::BuckEvent {
+            data: Some(buck2_data::buck_event::Data::Instant(
+                buck2_data::InstantEvent {
+                    data: Some(
+                        buck2_data::ConcurrentCommands {
+                            trace_ids: trace_ids.iter().map(|id| (*id).to_owned()).collect(),
+                        }
+                        .into(),
+                    ),
+                },
+            )),
+            ..Default::default()
+        };
+        assert_eq!(
+            integrity(&[
+                concurrent(&["b", "a"]),
+                action_end(1, vec![]),
+                concurrent(&["a"]),
+                footer(1, None)
+            ]),
+            json!([{"kind": "concurrent_commands", "trace_ids": ["a", "b"]}]),
+            "each other command once, whether it was running first or started later"
         );
     }
 

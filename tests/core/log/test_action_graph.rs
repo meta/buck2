@@ -246,6 +246,7 @@ async fn test_nothing_is_defined_when_nothing_ran(buck: &Buck) -> anyhow::Result
         json!([0, 0, 0])
     );
     assert_eq!(stats["footer"]["structure_defs"], 0);
+    assert_eq!(stats["complete"], true);
     Ok(())
 }
 
@@ -297,5 +298,15 @@ async fn test_dynamic_output_alias(buck: &Buck) -> anyhow::Result<()> {
     );
     assert_eq!(stats["structures"], 0);
     assert_eq!(stats["footer"]["aliases"], 1);
+    Ok(())
+}
+
+#[buck_test]
+async fn test_complete_build_is_complete(buck: &Buck) -> anyhow::Result<()> {
+    buck.build(&["//:consume", "--log-action-graph"]).await?;
+    let records = graph(buck).await?;
+    let stats = stats(&records)?;
+    assert_eq!(stats["complete"], true);
+    assert_eq!(stats["integrity"], json!([]));
     Ok(())
 }

@@ -88,12 +88,18 @@ async fn test_changing_external_include(buck: &Buck) -> anyhow::Result<()> {
     Ok(())
 }
 
-#[buck_test(data_dir = "include_through_symlink", allow_soft_errors = true)]
+#[buck_test(data_dir = "include_through_symlink")]
 async fn test_external_symlink_source_file(buck: &Buck) -> anyhow::Result<()> {
     let external_dir = project_parent(buck).join("extra");
     std::fs::create_dir(&external_dir)?;
     symlink(&external_dir, &buck.cwd().join("repo_dir"))?;
 
-    buck.audit_config(&["--cell", "root", "abc.def"]).await?;
+    // A config include behind a symlink inside the project is refused like any
+    // other read through a symlink, even an optional one of a file that is not
+    // there.
+    buck.audit_config(&["--cell", "root", "abc.def"])
+        .await
+        .expect_failure()
+        .assert_stderr_matches("is behind the symlink `repo_dir`, which buck2 does not follow");
     Ok(())
 }

@@ -36,7 +36,6 @@ use crate::file_ops::metadata::ReadDirOutput;
 use crate::file_ops::path_check::PathCheck;
 use crate::file_ops::path_check::PathCheckError;
 use crate::file_ops::path_check::ReadKind;
-use crate::file_ops::path_check::check_path;
 use crate::ignores::file_ignores::CellFileIgnores;
 use crate::ignores::file_ignores::FileIgnoreReason;
 use crate::ignores::file_ignores::FileIgnoreResult;
@@ -69,20 +68,14 @@ impl DiceFileComputations {
         ctx: &mut DiceComputations<'_>,
         path: CellPath,
     ) -> buck2_error::Result<Option<ReadDirOutput>> {
-        let cells = ctx.get_cell_resolver().await?;
-        if external_cell_delegate(ctx, cells, path.cell())
-            .await?
-            .is_none()
-        {
-            // Asking the check rather than matching on the listing's refusal: where reads through
-            // symlinks are tolerated, the listing goes through.
-            if let PathCheck::Present(FileType::Symlink) | PathCheck::ParentSymlink { .. } =
-                check_path(ctx, cells.resolve_ipath(path)?).await?
-            {
-                return Ok(None);
-            }
+        match read_dir_impl(ctx, path).await? {
+            Ok(listing) => Ok(Some(listing)),
+            Err(ReadDirRefusal::Check {
+                check: PathCheck::Present(FileType::Symlink) | PathCheck::ParentSymlink { .. },
+                ..
+            }) => Ok(None),
+            Err(refusal) => Err(refusal.into_error(ctx, path)),
         }
-        Self::read_dir(ctx, path).await.map(Some)
     }
 
     /// Whether a file, directory or symlink exists at the path, spelled exactly like that in

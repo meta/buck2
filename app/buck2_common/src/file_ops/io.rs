@@ -14,7 +14,6 @@ use allocative::Allocative;
 use async_trait::async_trait;
 use buck2_core::fs::i_project_rel_path::IProjectRelativePath;
 use buck2_core::fs::project_rel_path::ProjectRelativePath;
-use buck2_core::soft_error;
 use buck2_error::BuckErrorContext;
 use buck2_error::internal_error;
 use buck2_fs::paths::file_name::FileName;
@@ -27,11 +26,9 @@ use dice::CancellationContext;
 use dice::DiceComputations;
 use dice::DiceTransactionUpdater;
 use dice::EqualityBehavior;
-use dice::InjectedKey;
 use dice::InvalidationSourcePriority;
 use dice::Key;
 use dice::OkPagableValueSerialize;
-use dice::PagableValueSerialize;
 use dice::UserComputationData;
 use dice::ValueSerialize;
 use dupe::Dupe;
@@ -44,11 +41,8 @@ use crate::dice::data::HasIoProvider;
 use crate::file_ops::baseline::HasFileSystemBaseline;
 use crate::file_ops::metadata::FileType;
 use crate::file_ops::metadata::RawPathMetadata;
-use crate::file_ops::metadata::RawSymlink;
 use crate::file_ops::path_check::PathCheck;
-use crate::file_ops::path_check::PathCheckError;
 use crate::file_ops::path_check::PathCheckKey;
-use crate::file_ops::path_check::ReadKind;
 use crate::file_ops::path_check::check_ignored_path;
 use crate::file_ops::path_check::check_path;
 use crate::file_ops::path_check::read_ignored_path;
@@ -56,8 +50,6 @@ use crate::ignores::ignore_set::HasIgnoreSet;
 use crate::ignores::ignore_set::IgnoreSet;
 use crate::io::trace;
 use crate::io::trace::TracingIoProvider;
-use crate::legacy_configs::configs::LegacyBuckConfig;
-use crate::legacy_configs::key::BuckconfigKeyRef;
 
 /// The `Io*` keys are the DICE nodes at which file system state enters the graph; file watchers
 /// invalidate them through the `FileChangeTracker`.
@@ -124,11 +116,6 @@ impl Key for IoReadDirKey {
         ctx.get_file_system_baseline().await?;
         match check_path(ctx, self.0).await? {
             PathCheck::Present(FileType::Directory) => {}
-            check @ (PathCheck::Present(FileType::Symlink) | PathCheck::ParentSymlink { .. }) => {
-                if !read_through_symlink(ctx, self.0, check, ReadKind::Directory).await? {
-                    return Ok(DirListing::Refused(check));
-                }
-            }
             check => return Ok(DirListing::Refused(check)),
         }
         let entries = read_dir_cached(ctx, self.0).await?;
@@ -243,131 +230,6 @@ async fn list_dir(
     Ok(builder.sort_and_build())
 }
 
-/// Which reads through symlinks are refused; the others go ahead, reported as soft errors.
-///
-/// This is how a repo that the soft errors of `read_through_symlink` say is clean turns the
-/// refusal on. A symlink out of the repo, such as one into `/mnt/gvfs`, is told apart from one
-/// into the repo because the two are cleaned up differently, and not at the same time.
-///
-/// A read is of one kind or the other by the first symlink on its path, which is the one the
-/// path check finds: a path that reaches a symlink out of the repo through one into it counts as
-/// into the repo. `out_of_repo` on its own therefore does not keep every read inside the repo;
-/// together with `into_repo` it does.
-#[derive(Clone, Copy, Dupe, Debug, Default, PartialEq, Eq, Allocative, Pagable)]
-pub struct RefusedSymlinkReads {
-    /// `buck2.refuse_reads_through_symlinks_into_repo`
-    pub into_repo: bool,
-    /// `buck2.refuse_reads_through_symlinks_out_of_repo`
-    pub out_of_repo: bool,
-}
-
-impl RefusedSymlinkReads {
-    pub fn from_root_buckconfig(config: &LegacyBuckConfig) -> buck2_error::Result<Self> {
-        let is_set = |property| {
-            buck2_error::Ok(
-                config
-                    .parse::<bool>(BuckconfigKeyRef {
-                        section: "buck2",
-                        property,
-                    })?
-                    .unwrap_or(false),
-            )
-        };
-        Ok(Self {
-            into_repo: is_set("refuse_reads_through_symlinks_into_repo")?,
-            out_of_repo: is_set("refuse_reads_through_symlinks_out_of_repo")?,
-        })
-    }
-}
-
-/// Injected by each command. Reading the buckconfig on DICE from here is not an option:
-/// buckconfigs are themselves read through this layer, so the read of one behind a symlink would
-/// depend on itself.
-#[derive(Clone, Dupe, Display, Debug, Eq, Hash, PartialEq, Allocative, Pagable)]
-#[display("{:?}", self)]
-#[pagable_typetag(dice::DiceKeyDyn)]
-struct RefusedSymlinkReadsKey;
-
-impl InjectedKey for RefusedSymlinkReadsKey {
-    type Value = RefusedSymlinkReads;
-
-    fn equality_behavior() -> EqualityBehavior<Self::Value> {
-        EqualityBehavior::Compare(|x, y| x == y)
-    }
-
-    fn value_serialize() -> impl ValueSerialize<Value = Self::Value> {
-        PagableValueSerialize::<Self::Value>::new()
-    }
-}
-
-pub trait SetRefusedSymlinkReads {
-    /// Has to be set before anything is read through DICE.
-    fn set_refused_symlink_reads(
-        &mut self,
-        refused: RefusedSymlinkReads,
-    ) -> buck2_error::Result<()>;
-}
-
-impl SetRefusedSymlinkReads for DiceTransactionUpdater {
-    fn set_refused_symlink_reads(
-        &mut self,
-        refused: RefusedSymlinkReads,
-    ) -> buck2_error::Result<()> {
-        Ok(self.changed_to(vec![(RefusedSymlinkReadsKey, refused)])?)
-    }
-}
-
-/// Whether a read that found a symlink at the path or above it goes ahead anyway. If not, the
-/// caller refuses the read with the check, as it does when the check finds anything else that is
-/// not what the read wanted.
-///
-/// The read goes ahead, reported as a soft error, unless [`RefusedSymlinkReads`] says otherwise.
-/// The soft errors show where such reads still happen, in categories that tell symlinks into the
-/// repo from symlinks out of it. The extra logview samples are keyed by the symlink, which makes
-/// them the list of what to clean up.
-///
-/// Once both kinds are refused everywhere, this function goes, along with the buckconfigs and the
-/// code that reads through.
-async fn read_through_symlink(
-    ctx: &mut DiceComputations<'_>,
-    path: IProjectRelativePath,
-    check: PathCheck,
-    kind: ReadKind,
-) -> buck2_error::Result<bool> {
-    let link = match check {
-        PathCheck::ParentSymlink { at } => at,
-        _ => path,
-    };
-    let external = matches!(
-        ctx.compute(&IoPathMetadataKey(link)).await?.dupe()?,
-        Some(RawPathMetadata::Symlink {
-            to: RawSymlink::External(_),
-            ..
-        })
-    );
-    let refused = ctx.compute(&RefusedSymlinkReadsKey).await?;
-    let refuse = if external {
-        refused.out_of_repo
-    } else {
-        refused.into_repo
-    };
-    if refuse {
-        return Ok(false);
-    }
-    let category = match (check, external) {
-        (PathCheck::ParentSymlink { .. }, false) => "path_check_symlink_in_parent_two",
-        (PathCheck::ParentSymlink { .. }, true) => "path_check_external_symlink_in_parent_two",
-        (_, false) => "path_check_symlink_at_path_two",
-        (_, true) => "path_check_external_symlink_at_path_two",
-    };
-    soft_error!(
-        category,
-        PathCheckError::new(ctx, path, check, kind).into(),
-        low_cardinality_key_for_additional_logview_samples: Some(Box::new(link.as_str().to_owned())),
-    );
-    Ok(true)
-}
-
 #[derive(Clone, Display, Debug, Eq, Hash, PartialEq, Allocative, Pagable)]
 #[pagable_typetag(dice::DiceKeyDyn)]
 struct IoPathMetadataKey(IProjectRelativePath);
@@ -461,8 +323,7 @@ impl Key for IoPathMetadataKey {
     }
 }
 
-/// The contents of the file at the path, or the check that found no file there. A symlink at the
-/// path or above it is read through if `read_through_symlink` says so.
+/// The contents of the file at the path, or the check that found no file there.
 pub(super) async fn read_file(
     ctx: &mut DiceComputations<'_>,
     path: IProjectRelativePath,
@@ -475,13 +336,6 @@ pub(super) async fn read_file(
     match check {
         PathCheck::Present(FileType::File | FileType::Unknown) => {
             read_present_file(ctx, path).await
-        }
-        check @ (PathCheck::Present(FileType::Symlink) | PathCheck::ParentSymlink { .. }) => {
-            if read_through_symlink(ctx, path, check, ReadKind::File).await? {
-                read_present_file(ctx, path).await
-            } else {
-                Ok(Err(check))
-            }
         }
         check => Ok(Err(check)),
     }
@@ -517,24 +371,16 @@ pub(super) async fn read_path_metadata_if_exists(
     ctx.compute(&IoPathMetadataKey(path)).await?.dupe()
 }
 
-/// Whether something is at the path, spelled exactly like that and not under an ignored prefix.
+/// Whether something is at the path, spelled exactly like that and not behind a symlink or an
+/// ignored prefix.
 pub(super) async fn exists(
     ctx: &mut DiceComputations<'_>,
     path: IProjectRelativePath,
 ) -> buck2_error::Result<bool> {
-    match check_path(ctx, path).await? {
-        PathCheck::Present(_) => Ok(true),
-        check @ PathCheck::ParentSymlink { .. } => {
-            if !read_through_symlink(ctx, path, check, ReadKind::File).await? {
-                return Ok(false);
-            }
-            let Some((parent, name)) = path.split_last() else {
-                return Ok(true);
-            };
-            Ok(read_dir_cached(ctx, parent).await?.lookup(name).is_some())
-        }
-        _ => Ok(false),
-    }
+    Ok(matches!(
+        check_path(ctx, path).await?,
+        PathCheck::Present(_)
+    ))
 }
 
 struct ReadDirCache(

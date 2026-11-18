@@ -9,18 +9,13 @@
  */
 
 use std::fs;
-use std::future::Future;
 use std::path::Path;
 
-use anyhow::Context;
 use buck2_e2e::golden::sanitize_stderr;
 use buck2_e2e::prelude::*;
 use buck2_e2e::utils::is_open_source;
 
 const SHOW_IGNORED_READS: (&str, &str) = ("BUCK2_SHOW_SOFT_ERRORS", "only=path_check_ignored_read");
-
-const REFUSE_SYMLINKS_INTO_REPO: &str = "buck2.refuse_reads_through_symlinks_into_repo=true";
-const REFUSE_SYMLINKS_OUT_OF_REPO: &str = "buck2.refuse_reads_through_symlinks_out_of_repo=true";
 
 const CP_DEFS: &str = concat!(
     "def _impl(ctx):\n",
@@ -47,25 +42,10 @@ fn symlink(target: impl AsRef<Path>, link: impl AsRef<Path>) -> std::io::Result<
     }
 }
 
-/// Passes if `test` fails, as `unittest.expectedFailure` does: the test describes a check buck does
-/// not perform yet, and closing the gap makes it fail. `test` fails by an error, not a panic: the
-/// test runner counts every panic as a failure.
-async fn expected_failure(test: impl Future<Output = anyhow::Result<()>>) {
-    match test.await {
-        Err(e) => eprintln!("Expected failure: {e:#}"),
-        Ok(()) => panic!(
-            "Unexpected success: buck performs this check now, so the test is no longer an expected failure"
-        ),
-    }
-}
-
 // These tests assert that buck2 refuses to read source files when a path element
 // along the way is "invalid" in some sense: wrong-case, a symlink, ignored, or
 // crossing a cell boundary. Each test sets up a `TARGETS.fixture` reachable via
 // such a path and asks buck to read it; the assertion is that buck rejects.
-//
-// A test wrapped in `expected_failure` describes a check buck does not perform yet;
-// closing the gap makes the wrapper fail and it can be dropped.
 
 #[buck_test]
 async fn test_target_pattern_wrong_case(buck: &Buck) {
@@ -78,28 +58,10 @@ async fn test_target_pattern_wrong_case(buck: &Buck) {
     );
 }
 
-// Symlinks in a target pattern's path are read through.
-#[buck_test(allow_soft_errors = true)]
-async fn test_target_pattern_symlink(buck: &Buck) {
-    expected_failure(async {
-        symlink("realdir", buck.cwd().join("linkdir"))?;
-        buck.targets(&["//linkdir:"])
-            .await
-            .err()
-            .context("buck2 was expected to fail but succeeded")?;
-        Ok(())
-    })
-    .await;
-}
-
-// With `buck2.refuse_reads_through_symlinks_into_repo`, they are not.
 #[buck_test]
-async fn test_target_pattern_symlink_refused(buck: &Buck) -> anyhow::Result<()> {
+async fn test_target_pattern_symlink(buck: &Buck) -> anyhow::Result<()> {
     symlink("realdir", buck.cwd().join("linkdir"))?;
-    let res = buck
-        .targets(&["//linkdir:", "-v0", "-c", REFUSE_SYMLINKS_INTO_REPO])
-        .await
-        .expect_failure();
+    let res = buck.targets(&["//linkdir:", "-v0"]).await.expect_failure();
     golden(
         &sanitize_stderr(&res.stderr),
         "golden/target_pattern_symlink.golden.stderr",
@@ -107,63 +69,21 @@ async fn test_target_pattern_symlink_refused(buck: &Buck) -> anyhow::Result<()> 
     Ok(())
 }
 
-// The refusal follows the root cell's `.buckconfig` from one command to the
-// next, in the same daemon.
-#[buck_test(allow_soft_errors = true)]
-async fn test_refuse_reads_through_symlinks_follows_buckconfig(buck: &Buck) -> anyhow::Result<()> {
-    symlink("realdir", buck.cwd().join("linkdir"))?;
-    let buckconfig = buck.cwd().join(".buckconfig");
-    let read_through = fs::read_to_string(&buckconfig)?;
-    let refused =
-        format!("{read_through}\n[buck2]\n  refuse_reads_through_symlinks_into_repo = true\n");
-
-    let res = buck.targets(&["//linkdir:"]).await?;
-    assert!(res.stdout.contains("root//linkdir:x"), "{}", res.stdout);
-
-    fs::write(&buckconfig, refused)?;
-    let res = buck.targets(&["//linkdir:"]).await.expect_failure();
-    assert!(!res.stderr.contains("restarting daemon"), "{}", res.stderr);
-    res.assert_stderr_matches("`root//linkdir` is a symlink");
-
-    fs::write(&buckconfig, read_through)?;
-    let res = buck.targets(&["//linkdir:"]).await?;
-    assert!(!res.stderr.contains("restarting daemon"), "{}", res.stderr);
-    assert!(res.stdout.contains("root//linkdir:x"), "{}", res.stdout);
-    Ok(())
-}
-
-// Symlinks into the repo and symlinks out of it are each refused by their own
-// buckconfig, and read through under the other's.
-#[buck_test(allow_soft_errors = true)]
-async fn test_target_pattern_symlinks_refused_by_kind(
-    buck: &Buck,
-    tmp_path: &Path,
-) -> anyhow::Result<()> {
+// A symlink out of the repo is no different from one into it.
+#[buck_test]
+async fn test_target_pattern_external_symlink(buck: &Buck, tmp_path: &Path) -> anyhow::Result<()> {
     let outside = tmp_path;
     fs::write(outside.join("TARGETS.fixture"), "stub(name = \"ext\")\n")?;
     symlink(outside, buck.cwd().join("extlink"))?;
-    symlink("realdir", buck.cwd().join("linkdir"))?;
-
-    buck.targets(&["//extlink:", "-c", REFUSE_SYMLINKS_INTO_REPO])
-        .await?;
-    buck.targets(&["//linkdir:", "-c", REFUSE_SYMLINKS_INTO_REPO])
+    buck.targets(&["//extlink:"])
         .await
         .expect_failure()
-        .assert_stderr_matches("`root//linkdir` is a symlink");
-
-    buck.targets(&["//linkdir:", "-c", REFUSE_SYMLINKS_OUT_OF_REPO])
-        .await?;
-    buck.targets(&["//extlink:", "-c", REFUSE_SYMLINKS_OUT_OF_REPO])
-        .await
-        .expect_failure()
-        .assert_stderr_matches("`root//extlink` is a symlink");
+        .assert_stderr_matches("path `root//extlink` is a symlink, which buck2 does not follow");
     Ok(())
 }
 
 // A symlink is a leaf of the package it is in: a file behind one belongs to that
-// package, not to a build file that following the symlink would find. Finding the
-// package reads through no symlink, so it is the same whichever reads are refused;
-// without `allow_soft_errors`, a read through one would fail the test.
+// package, not to a build file that following the symlink would find.
 #[buck_test]
 async fn test_owner_behind_symlink(buck: &Buck, tmp_path: &Path) -> anyhow::Result<()> {
     let outside = tmp_path;
@@ -186,61 +106,12 @@ async fn test_owner_behind_symlink(buck: &Buck, tmp_path: &Path) -> anyhow::Resu
         "load(\"//:defs.bzl\", \"cp\")\ncp(name = \"inner\", src = \"f\")\n",
     )?;
 
-    let refused = [
-        "-c",
-        REFUSE_SYMLINKS_INTO_REPO,
-        "-c",
-        REFUSE_SYMLINKS_OUT_OF_REPO,
-    ];
-    for config in [&[][..], &refused[..]] {
-        let owners = async |path: &str| -> anyhow::Result<String> {
-            let mut args = vec!["owner(%s)", path];
-            args.extend_from_slice(config);
-            Ok(buck.uquery(&args).await?.stdout)
-        };
-        assert_eq!(owners("linkdir/f").await?, "root//:in_repo\n");
-        assert_eq!(owners("extlink/f").await?, "root//:out_of_repo\n");
-        assert_eq!(owners("realdir/f").await?, "root//realdir:inner\n");
-    }
-    Ok(())
-}
-
-// Reads through a symlink out of the repo and through one into it are counted
-// apart: a report is printed for the kind the filter names and not the other.
-#[buck_test(allow_soft_errors = true)]
-async fn test_target_pattern_external_symlink(buck: &Buck, tmp_path: &Path) -> anyhow::Result<()> {
-    let outside = tmp_path;
-    fs::write(outside.join("TARGETS.fixture"), "stub(name = \"ext\")\n")?;
-    symlink(outside, buck.cwd().join("extlink"))?;
-    symlink("realdir", buck.cwd().join("linkdir"))?;
-    let res = buck
-        .targets(&["//extlink:", "//linkdir:"])
-        .env(
-            "BUCK2_SHOW_SOFT_ERRORS",
-            "only=path_check_external_symlink_in_parent_two,path_check_external_symlink_at_path_two",
-        )
-        .await?;
-    assert!(res.stdout.contains("root//extlink:ext"), "{}", res.stdout);
-    assert!(res.stderr.contains("symlink `extlink`"), "{}", res.stderr);
-    assert!(!res.stderr.contains("`linkdir`"), "{}", res.stderr);
-    Ok(())
-}
-
-#[buck_test(allow_soft_errors = true)]
-async fn test_target_pattern_in_repo_symlink(buck: &Buck, tmp_path: &Path) -> anyhow::Result<()> {
-    let outside = tmp_path;
-    fs::write(outside.join("TARGETS.fixture"), "stub(name = \"ext\")\n")?;
-    symlink(outside, buck.cwd().join("extlink"))?;
-    symlink("realdir", buck.cwd().join("linkdir"))?;
-    let res = buck
-        .targets(&["//extlink:", "//linkdir:"])
-        .env(
-            "BUCK2_SHOW_SOFT_ERRORS",
-            "only=path_check_symlink_in_parent_two,path_check_symlink_at_path_two",
-        )
-        .await?;
-    assert!(res.stderr.contains("symlink `linkdir`"), "{}", res.stderr);
-    assert!(!res.stderr.contains("`extlink`"), "{}", res.stderr);
+    let owners = async |path: &str| -> anyhow::Result<String> {
+        Ok(buck.uquery(&["owner(%s)", path]).await?.stdout)
+    };
+    assert_eq!(owners("linkdir/f").await?, "root//:in_repo\n");
+    assert_eq!(owners("extlink/f").await?, "root//:out_of_repo\n");
+    assert_eq!(owners("realdir/f").await?, "root//realdir:inner\n");
     Ok(())
 }
 
@@ -369,38 +240,15 @@ async fn test_load_cell_traverse(buck: &Buck) -> anyhow::Result<()> {
     Ok(())
 }
 
-// Symlinks in a `load()` path are read through.
-#[buck_test(allow_soft_errors = true)]
-async fn test_load_symlink(buck: &Buck) {
-    expected_failure(async {
-        symlink("realdir", buck.cwd().join("linkdir"))?;
-        fs::create_dir(buck.cwd().join("loader"))?;
-        fs::write(
-            buck.cwd().join("loader").join("TARGETS.fixture"),
-            "load(\"//linkdir:lib.bzl\", \"value\")\nstub(name = \"loader_\" + value)\n",
-        )?;
-        buck.targets(&["//loader:"])
-            .await
-            .err()
-            .context("buck2 was expected to fail but succeeded")?;
-        Ok(())
-    })
-    .await;
-}
-
-// With `buck2.refuse_reads_through_symlinks_into_repo`, they are not.
 #[buck_test]
-async fn test_load_symlink_refused(buck: &Buck) -> anyhow::Result<()> {
+async fn test_load_symlink(buck: &Buck) -> anyhow::Result<()> {
     symlink("realdir", buck.cwd().join("linkdir"))?;
     fs::create_dir(buck.cwd().join("loader"))?;
     fs::write(
         buck.cwd().join("loader").join("TARGETS.fixture"),
         "load(\"//linkdir:lib.bzl\", \"value\")\nstub(name = \"loader_\" + value)\n",
     )?;
-    let res = buck
-        .targets(&["//loader:", "-v0", "-c", REFUSE_SYMLINKS_INTO_REPO])
-        .await
-        .expect_failure();
+    let res = buck.targets(&["//loader:", "-v0"]).await.expect_failure();
     golden(
         &sanitize_stderr(&res.stderr),
         "golden/load_symlink.golden.stderr",

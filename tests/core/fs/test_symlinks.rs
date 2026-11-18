@@ -223,21 +223,31 @@ async fn test_no_read_through_source_symlinks_to_in_symlink_target(
     Ok(())
 }
 
-#[buck_test(setup_eden = true, allow_soft_errors = true)]
-async fn test_eden_io_read_symlink_dir_build_target(buck: &Buck) -> anyhow::Result<()> {
+// Packages are not reachable through symlinks, on Eden the same as anywhere else
+// (Eden reports a symlinked directory differently from a plain one, so this is
+// worth checking separately).
+
+#[buck_test(setup_eden = true)]
+async fn test_eden_no_package_through_symlink_build_target(buck: &Buck) -> anyhow::Result<()> {
     setup_symlink(
         &buck.cwd().join("testlink"),
         &buck.cwd().join("symdir").join("dir"),
     )?;
 
-    buck.build(&["//:symlink_dep"]).await?;
+    buck.build(&["//:symlink_dep"])
+        .await
+        .expect_failure()
+        .assert_stderr_matches("path `root//testlink` is a symlink, which buck2 does not follow");
     Ok(())
 }
 
-#[buck_test(setup_eden = true, allow_soft_errors = true)]
-async fn test_eden_io_read_symlink_dir_list_target(buck: &Buck) -> anyhow::Result<()> {
+#[buck_test(setup_eden = true)]
+async fn test_eden_no_package_through_symlink_list_target(buck: &Buck) -> anyhow::Result<()> {
     setup_symlink(&buck.cwd().join("testlink"), &buck.cwd().join("symdir"))?;
 
-    buck.targets(&["//testlink/dir:"]).await?;
+    buck.targets(&["//testlink/dir:"])
+        .await
+        .expect_failure()
+        .assert_stderr_matches("path `root//testlink` is a symlink, which buck2 does not follow");
     Ok(())
 }

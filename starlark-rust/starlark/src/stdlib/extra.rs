@@ -136,12 +136,13 @@ pub fn print(builder: &mut GlobalsBuilder) {
     /// Print some values to the output.
     fn print<'v>(
         #[starlark(args)] args: ValueOf<'v, TupleType<Value<'v>>>,
+        #[starlark(require = named, default = " ")] sep: &str,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<NoneType> {
         // In practice most users should want to put the print somewhere else, but this does for now
         // Unfortunately, we can't use PrintWrapper because strings to_str() and Display are different.
         eval.print_handler
-            .println(&args.items().map(|x| x.to_str()).join(" "))?;
+            .println(&args.items().map(|x| x.to_str()).join(sep))?;
         Ok(NoneType)
     }
 }
@@ -279,7 +280,16 @@ assert_eq(["11",8], map(double, ["1",4]))
         assert_eq!("", s_copy.borrow().as_str());
         a.pass("print('hello', 'world')");
         assert_eq!("hello world", s_copy.borrow().as_str());
-        a.fail("print('hello', 'world', sep=', ')", "extra named");
+        a.pass("print('hello', 'world', sep=', ')");
+        assert_eq!("hello, world", s_copy.borrow().as_str());
+        a.pass("print('hello', 'world', sep='')");
+        assert_eq!("helloworld", s_copy.borrow().as_str());
+        a.pass("print(1, ['two'], None, sep='|')");
+        assert_eq!("1|[\"two\"]|None", s_copy.borrow().as_str());
+        a.pass("print(sep=', ')");
+        assert_eq!("", s_copy.borrow().as_str());
+        a.fail("print('hello', sep=None)", "str");
+        a.fail("print('hello', end='')", "extra named");
     }
 
     #[test]

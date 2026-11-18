@@ -275,10 +275,7 @@ def rust_common_attributes(is_binary: bool):
             "incremental_enabled": attrs.bool(default = False),
             "multi_arch_toolchain": attrs.option(
                 attrs.dep(providers = [RustArchToolchainInfo]),
-                default = select({
-                    "DEFAULT": None,
-                    "fbsource//third-party/rust-toolchain/constraints:dual-arch-qualification[enabled]": "fbsource//third-party/rust-toolchain:dual-arch-stage2-toolchain",
-                }),
+                default = None,
             ),
             "resources": attrs.named_set(attrs.one_of(attrs.dep(), attrs.source()), sorted = True, default = []),
             "rustdoc_flags": attrs.list(attrs.arg(), default = []),

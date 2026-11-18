@@ -101,6 +101,11 @@ impl<'v, T: StarlarkTypeExpr<'v> + EmptyListType> ValueOf<'v, T> {
 /// What a value read as a `list[T]` gives ([`ListType`]'s `Get`): the handle, and the list
 /// that the read found, so that what holds one does not look the list up again.
 ///
+/// A reading, and an iterator made from one, is of the list as the read found it. It does
+/// not follow a mutable list that changes afterwards: its items may then be neither the old
+/// ones nor the new. What keeps one across code that can change the list reads again from
+/// the [`handle`](Self::handle), whose own methods look the list up each time.
+///
 /// The type is interim: a list is to have one public type, and this is not its name.
 #[derive(Clone_, Copy_, Dupe_)]
 pub struct ListOf<'v, T: StarlarkTypeExpr<'v>> {

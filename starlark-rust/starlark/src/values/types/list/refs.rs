@@ -36,6 +36,10 @@ use crate::values::list::value::display_list;
 use crate::values::types::list::value::ListData;
 
 /// Reference to list content (mutable or frozen).
+///
+/// The content is the list's when the reference was taken. It does not follow a mutable list
+/// that changes afterwards (its items may then be neither the old ones nor the new), so code
+/// that can change the list in between takes the reference again.
 #[repr(transparent)]
 #[derive(RefCastCustom)]
 pub struct ListRef<'v> {

@@ -170,7 +170,10 @@ impl BuckSubcommand for SnoopCommand {
                                     "The command ended without a result: it was likely interrupted, or its log was deleted."
                                 )?;
                             }
-                            Err(e) if e.has_tag(ErrorTag::InterruptedByDaemonShutdown) => {
+                            Err(e)
+                                if e.has_tag(ErrorTag::InterruptedByDaemonShutdown)
+                                    || e.has_tag(ErrorTag::DaemonInactivityTimeout) =>
+                            {
                                 buck2_client_ctx::eprintln!(
                                     "The buck2 daemon shut down while the command was running."
                                 )?;

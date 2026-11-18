@@ -83,6 +83,9 @@ enum BuckdCommunicationError {
     )]
     #[buck2(tag = InterruptedByDaemonShutdown)]
     InterruptedByDaemonShutdown(buck2_data::DaemonShutdown),
+    #[error("The Buck2 daemon shut down due to inactivity while executing your command: {0}")]
+    #[buck2(tag = DaemonInactivityTimeout)]
+    DaemonInactivityTimeout(String),
     #[error("buckd communication encountered an unexpected error `{0:?}`")]
     #[buck2(tag = Tier0)]
     TonicError(tonic::Status),
@@ -330,6 +333,11 @@ impl<'a> DaemonEventsCtx<'a> {
                 };
                 return Err(match triggering_error {
                     Some(error) => error.clone().into(),
+                    None if shutdown.error_tag
+                        == Some(ErrorTag::DaemonInactivityTimeout as i32) =>
+                    {
+                        BuckdCommunicationError::DaemonInactivityTimeout(shutdown.reason).into()
+                    }
                     None => BuckdCommunicationError::InterruptedByDaemonShutdown(shutdown).into(),
                 });
             }
@@ -959,6 +967,7 @@ mod tests {
         let shutdown = buck2_data::DaemonShutdown {
             reason: "killed".to_owned(),
             callers: Vec::new(),
+            error_tag: None,
         };
         let reported = buck2_error!(ErrorTag::TestOnly, "the forkserver is gone");
         let corrupted = buck2_data::StructuredError {
@@ -975,9 +984,19 @@ mod tests {
             "{error:?}"
         );
 
-        let error = interrupted_after(vec![shutdown.into()]);
+        let error = interrupted_after(vec![shutdown.clone().into()]);
         assert!(
             error.has_tag(ErrorTag::InterruptedByDaemonShutdown),
+            "{error:?}"
+        );
+
+        let idle = buck2_data::DaemonShutdown {
+            error_tag: Some(ErrorTag::DaemonInactivityTimeout as i32),
+            ..shutdown
+        };
+        let error = interrupted_after(vec![idle.into()]);
+        assert!(
+            error.has_tag(ErrorTag::DaemonInactivityTimeout),
             "{error:?}"
         );
     }

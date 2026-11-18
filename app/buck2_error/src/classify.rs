@@ -471,6 +471,7 @@ fn tag_metadata(tag: ErrorTag) -> TagMetadata {
         // happens, it's probably because the user tried to shut down with Ctrl+C and something
         // about that didn't work
         ErrorTag::InterruptedByDaemonShutdown => rank!(input),
+        ErrorTag::DaemonInactivityTimeout => rank!(input),
         ErrorTag::DaemonIsBusy => rank!(input).exit_code(ExitCode::DaemonIsBusy),
         ErrorTag::DaemonPreempted => rank!(input).exit_code(ExitCode::DaemonPreempted),
         ErrorTag::ConfigureAttr => rank!(input),

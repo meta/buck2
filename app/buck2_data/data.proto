@@ -4337,6 +4337,9 @@ message DaemonShutdown {
   reserved 3;
   string reason = 1;
   repeated string callers = 4;
+  // Tags the errors of the commands this shutdown interrupts, in place of
+  // INTERRUPTED_BY_DAEMON_SHUTDOWN.
+  optional buck.data.error.ErrorTag error_tag = 5;
 }
 
 message ConsolePreferences {

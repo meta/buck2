@@ -436,6 +436,7 @@ pub fn restart_daemon(error: &buck2_error::Error) {
     let shutdown = buck2_data::DaemonShutdown {
         reason: format!("{error:#}"),
         callers: Vec::new(),
+        error_tag: None,
     };
     daemon_shutdown.start_shutdown(shutdown, Some(RESTART_TIMEOUT));
 }
@@ -503,6 +504,7 @@ impl BuckdServer {
             buck2_data::DaemonShutdown {
                 reason: "The final tenant was evicted".to_owned(),
                 callers: Vec::new(),
+                error_tag: None,
             },
             None,
         );
@@ -1645,6 +1647,7 @@ impl DaemonApi for BuckdServer {
             let reason = buck2_data::DaemonShutdown {
                 reason: req.reason,
                 callers: req.callers,
+                error_tag: None,
             };
 
             if self.0.daemon_state.data().routing().is_shared() {
@@ -2774,7 +2777,12 @@ fn server_shutdown_signal(
         futures::pin_mut!(timeout);
 
         let shutdown_deadline = match futures::future::select(timeout, shutdown).await {
-            futures::future::Either::Left(_) => tokio::time::Instant::now() + DEFAULT_KILL_TIMEOUT,
+            futures::future::Either::Left((idle, _)) => {
+                if let Some(idle) = idle {
+                    crate::active_commands::broadcast_shutdown(&idle);
+                }
+                tokio::time::Instant::now() + DEFAULT_KILL_TIMEOUT
+            }
             futures::future::Either::Right((shutdown_deadline, _)) => shutdown_deadline
                 .unwrap_or_else(|| tokio::time::Instant::now() + DEFAULT_KILL_TIMEOUT),
         };
@@ -2831,23 +2839,28 @@ fn spawn_shutdown_watchdog(in_process: bool, deadline: tokio::time::Instant) {
     .expect("Failed to spawn shutdown watchdog thread");
 }
 
+/// The shutdown to report to commands still running once no command has arrived for the
+/// inactivity timeout, or `None` once commands can no longer arrive.
 async fn inactivity_timeout(
     mut command_receiver: UnboundedReceiver<()>,
     inactivity_config: DaemonInactivityConfig,
-) {
+) -> Option<buck2_data::DaemonShutdown> {
     let duration = loop {
         let duration = inactivity_config.current_timeout();
         match timeout(duration, command_receiver.next()).await {
             Ok(Some(())) => {}        // A command arrived; restart the timer.
-            Ok(None) => return,       // Channel closed; exit without logging.
+            Ok(None) => return None,  // Channel closed; exit without logging.
             Err(_) => break duration, // Timeout expired; break with the duration that fired.
         }
     };
 
-    eprintln!(
-        "inactivity timeout elapsed ({:?}), shutting down server",
-        duration
-    );
+    let reason = format!("inactivity timeout elapsed ({duration:?})");
+    eprintln!("{reason}, shutting down server");
+    Some(buck2_data::DaemonShutdown {
+        reason,
+        callers: Vec::new(),
+        error_tag: Some(ErrorTag::DaemonInactivityTimeout as i32),
+    })
 }
 
 async fn certs_validation_background_job(cert_state: CertState) {

@@ -917,11 +917,18 @@ async fn test_inactivity_shutdown_exits_with_a_command_in_flight(
         anyhow::Ok(())
     }
     .await;
-    // Exiting tears the stream down under the subscriber, so it reports a
-    // broken connection. That is the deliberate trade: the command is
-    // terminated rather than the daemon being left alive and unusable.
-    let _ignored = subscriber.close().await;
-    result
+    // Exiting tears the stream down under the subscriber. That is the deliberate
+    // trade: the command is terminated rather than the daemon being left alive and
+    // unusable, and it is told why.
+    let closed = subscriber.close().await;
+    result?;
+    let error = closed.expect_err("the subscriber outlived its daemon");
+    assert!(
+        error.stderr.contains("inactivity timeout elapsed"),
+        "{}",
+        error.stderr
+    );
+    Ok(())
 }
 
 /// A new daemon waits within the startup deadline for whatever still owns its tenant's

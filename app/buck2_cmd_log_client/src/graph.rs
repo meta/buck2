@@ -37,13 +37,16 @@ use tokio_stream::StreamExt;
 /// - `tset`, after the actions, one per transitive-set projection, by `id`: its `display_key`
 ///   (display only), `own` producer spans, `reused` producer ids and `children` ids, merged
 ///   across the events a big definition is split into.
+/// - `structure`, one per action whose result was reused rather than run: its reused `id`,
+///   `key`, `category`, `identifier`, `deps`, `reused` and `tsets`, as for `action`.
 /// - `dangling`: a `span` that an action or a set refers to but that no action in the log has,
-///   with one span that refers to it (0 when only sets refer to it).
+///   with one span that refers to it (0 when only sets or structures refer to it).
 /// - `dangling_tset`: a set `id` that is referred to but never defined.
+/// - `dangling_reused`: a reused `id` that is referred to but has no `structure`.
 /// - `stats`, last: counts of `actions`, `edges` (entries in `deps`), `reused` references,
-///   `tsets`, `tset_def_events`, `dangling` spans and `dangling_tsets`; the `schema` from the
-///   start event; and the `footer` the build wrote, or null if the log has none (it was cut
-///   off).
+///   `tsets`, `tset_def_events`, `structures`, `dangling` spans, `dangling_tsets` and
+///   `dangling_reused`; the `schema` from the start event; and the `footer` the build wrote, or
+///   null if the log has none (it was cut off).
 #[derive(Debug, clap::Parser)]
 pub struct GraphCommand {
     #[clap(flatten)]
@@ -107,7 +110,19 @@ enum Record<'a> {
         span: u64,
         referenced_by: u64,
     },
+    Structure {
+        id: u64,
+        key: Option<&'a buck2_data::ActionKey>,
+        category: &'a str,
+        identifier: &'a str,
+        deps: &'a [u64],
+        reused: &'a [u64],
+        tsets: &'a [u64],
+    },
     DanglingTset {
+        id: u64,
+    },
+    DanglingReused {
         id: u64,
     },
     Stats {
@@ -116,8 +131,10 @@ enum Record<'a> {
         reused: u64,
         tsets: u64,
         tset_def_events: u64,
+        structures: u64,
         dangling: u64,
         dangling_tsets: u64,
+        dangling_reused: u64,
         schema: Option<u32>,
         footer: Option<&'a buck2_data::ActionGraphFooter>,
     },
@@ -139,8 +156,11 @@ struct GraphReader {
     reused: u64,
     tsets: BuckMutMap<u64, TsetDef>,
     tset_def_events: u64,
+    structures: Vec<buck2_data::ActionGraphStructureDef>,
     /// Set ids referred to by actions.
     referenced_tsets: BuckMutSet<u64>,
+    /// Reused-action ids referred to.
+    referenced_reused: BuckMutSet<u64>,
     /// Spans of the actions seen so far.
     defined: BuckMutSet<u64>,
     /// Spans referred to before any action with that span was seen, with one referrer each.
@@ -175,6 +195,9 @@ impl GraphReader {
                 Some(buck2_data::instant_event::Data::ActionGraphFooter(footer)) => {
                     self.footer = Some(*footer);
                 }
+                Some(buck2_data::instant_event::Data::ActionGraphStructureDef(def)) => {
+                    self.structures.push(def.clone());
+                }
                 Some(buck2_data::instant_event::Data::TransitiveSetProjectionDef(def)) => {
                     self.tset_def_events += 1;
                     let tset = self.tsets.entry(def.tset_id).or_default();
@@ -208,6 +231,7 @@ impl GraphReader {
         self.edges += deps.len() as u64;
         self.reused += reused.len() as u64;
         self.referenced_tsets.extend(tsets);
+        self.referenced_reused.extend(reused);
         for dep in deps {
             if !self.defined.contains(dep) {
                 self.undefined.entry(*dep).or_insert(span);
@@ -246,6 +270,7 @@ impl GraphReader {
                 }
             }
             referenced_tsets.extend(&tset.children);
+            self.referenced_reused.extend(&tset.reused);
             self.write(
                 w,
                 &Record::Tset {
@@ -254,6 +279,32 @@ impl GraphReader {
                     own: &tset.own,
                     reused: &tset.reused,
                     children: &tset.children,
+                },
+            )?;
+        }
+
+        let mut defined_reused = BuckMutSet::default();
+        for structure in &self.structures {
+            let (deps, reused, tsets) = producers(structure.producers.as_ref());
+            for span in deps {
+                if !self.defined.contains(span) {
+                    self.undefined.entry(*span).or_insert(0);
+                }
+            }
+            referenced_tsets.extend(tsets);
+            self.referenced_reused.extend(reused);
+            defined_reused.insert(structure.reused_id);
+            let name = structure.name.as_ref();
+            self.write(
+                w,
+                &Record::Structure {
+                    id: structure.reused_id,
+                    key: structure.key.as_ref(),
+                    category: name.map_or("", |n| n.category.as_str()),
+                    identifier: name.map_or("", |n| n.identifier.as_str()),
+                    deps,
+                    reused,
+                    tsets,
                 },
             )?;
         }
@@ -277,6 +328,16 @@ impl GraphReader {
         for id in &dangling_tsets {
             self.write(w, &Record::DanglingTset { id: *id })?;
         }
+        let mut dangling_reused: Vec<u64> = self
+            .referenced_reused
+            .iter()
+            .copied()
+            .filter(|id| !defined_reused.contains(id))
+            .collect();
+        dangling_reused.sort_unstable();
+        for id in &dangling_reused {
+            self.write(w, &Record::DanglingReused { id: *id })?;
+        }
         self.write(
             w,
             &Record::Stats {
@@ -285,8 +346,10 @@ impl GraphReader {
                 reused: self.reused,
                 tsets: ids.len() as u64,
                 tset_def_events: self.tset_def_events,
+                structures: self.structures.len() as u64,
                 dangling: dangling.len() as u64,
                 dangling_tsets: dangling_tsets.len() as u64,
+                dangling_reused: dangling_reused.len() as u64,
                 schema: self.schema,
                 footer: self.footer.as_ref(),
             },

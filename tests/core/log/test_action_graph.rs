@@ -98,6 +98,10 @@ fn only(values: &Value) -> anyhow::Result<&Value> {
     Ok(value)
 }
 
+fn of_kind<'a>(records: &'a [Value], kind: &str) -> Vec<&'a Value> {
+    records.iter().filter(|r| r["kind"] == kind).collect()
+}
+
 #[buck_test]
 async fn test_edges_join_by_span_id(buck: &Buck) -> anyhow::Result<()> {
     buck.build(&["//:copy", "--log-action-graph"]).await?;
@@ -228,5 +232,39 @@ async fn test_transitive_set_definitions(buck: &Buck) -> anyhow::Result<()> {
     assert_eq!(stats["footer"]["tset_def_events"], 2);
     assert_eq!(stats["tset_def_events"], 2);
     assert!(json_get(stats, &["footer", "incomplete"]).is_none());
+    Ok(())
+}
+
+#[buck_test]
+async fn test_nothing_is_defined_when_nothing_ran(buck: &Buck) -> anyhow::Result<()> {
+    buck.build(&["//:copy"]).await?;
+    buck.build(&["//:copy", "--log-action-graph"]).await?;
+    let records = graph(buck).await?;
+    let stats = stats(&records)?;
+    assert_eq!(
+        json!([stats["actions"], stats["structures"], stats["tsets"]]),
+        json!([0, 0, 0])
+    );
+    assert_eq!(stats["footer"]["structure_defs"], 0);
+    Ok(())
+}
+
+#[buck_test]
+async fn test_warm_rebuild_keeps_chains_connected(buck: &Buck) -> anyhow::Result<()> {
+    buck.build(&["//:copy"]).await?;
+    buck.build(&["//:copy2", "--log-action-graph"]).await?;
+    let records = graph(buck).await?;
+    let [copy2] = of_kind(&records, "action")[..] else {
+        anyhow::bail!("Expected one action: {records:?}");
+    };
+    let [write] = of_kind(&records, "structure")[..] else {
+        anyhow::bail!("Expected one structure: {records:?}");
+    };
+    assert_eq!(
+        copy2["reused"],
+        json!([write["id"]]),
+        "the reused producer is defined by a structure"
+    );
+    assert_eq!(stats(&records)?["dangling_reused"], 0);
     Ok(())
 }

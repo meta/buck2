@@ -18,3 +18,8 @@ consume(
     name = "consume",
     dep = ":l2",
 )
+
+copy(
+    name = "copy2",
+    src = ":write",
+)

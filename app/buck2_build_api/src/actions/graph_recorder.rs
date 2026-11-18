@@ -20,6 +20,7 @@ use std::time::Duration;
 use std::time::Instant;
 
 use buck2_artifact::actions::key::ActionKey;
+use buck2_data::ToProtoMessage;
 use buck2_data::action_graph_footer::Incomplete;
 use buck2_data::timing::Micros;
 use buck2_events::dispatch::instant_event;
@@ -31,6 +32,7 @@ use dice::UserComputationData;
 use dupe::Dupe;
 use futures::FutureExt;
 
+use crate::actions::calculation::ActionCalculation;
 use crate::actions::impls::run_action_knobs::HasRunActionKnobs;
 use crate::artifact_groups::ArtifactGroup;
 use crate::artifact_groups::TransitiveSetProjectionKey;
@@ -68,6 +70,7 @@ struct RecorderState {
     capture: TotalTime,
     tset_def_events: AtomicU64,
     definitions_walk: TotalTime,
+    structure_defs: AtomicU64,
 }
 
 /// A time that threads add to without a lock. It is kept exact, and rounded only when written.
@@ -96,6 +99,33 @@ impl GraphRecorder {
             .lock()
             .expect("poisoned lock")
             .insert(action.dupe(), span_id);
+    }
+
+    /// Whether `action` ran in this command.
+    fn ran(&self, action: &ActionKey) -> bool {
+        self.0
+            .producer_spans
+            .lock()
+            .expect("poisoned lock")
+            .contains_key(action)
+    }
+
+    /// The per-command id of reused producer `key`, assigning the next one if it has none.
+    fn reused_id(&self, key: &ActionKey) -> u64 {
+        let mut ids = self.0.reused_ids.lock().expect("poisoned lock");
+        let next = ids.len() as u64;
+        *ids.entry(key.dupe()).or_insert(next)
+    }
+
+    /// The reused producers that actions referred to, with their ids.
+    fn referenced_reused(&self) -> Vec<(ActionKey, u64)> {
+        self.0
+            .reused_ids
+            .lock()
+            .expect("poisoned lock")
+            .iter()
+            .map(|(key, id)| (key.dupe(), *id))
+            .collect()
     }
 
     /// The per-command id of `key`, assigning the next one if it has none.
@@ -135,9 +165,25 @@ impl GraphRecorder {
             capture_us: Micros::from(self.0.capture.get()).into(),
             tset_def_events: self.0.tset_def_events.load(Ordering::Relaxed),
             definitions_walk_us: Micros::from(self.0.definitions_walk.get()).into(),
-            structure_defs: 0,
+            structure_defs: self.0.structure_defs.load(Ordering::Relaxed),
             aliases: 0,
         }
+    }
+
+    fn write_structure_def(
+        &self,
+        key: &ActionKey,
+        name: buck2_data::ActionName,
+        node: DirectProducers,
+    ) {
+        instant_event(buck2_data::ActionGraphStructureDef {
+            reused_id: self.reused_id(key),
+            key: Some(key.as_proto()),
+            name: Some(name),
+            producers: Some(node.into_proto()),
+            inputs_omitted: false,
+        });
+        self.0.structure_defs.fetch_add(1, Ordering::Relaxed);
     }
 
     /// Writes the definition of projection `id`, split across events if it is big. Sizes are
@@ -332,59 +378,105 @@ fn start_recording(ctx: &DiceComputations<'_>) -> bool {
     recording
 }
 
-/// Ends a command that records the action graph: writes the transitive-set definitions the graph
-/// refers to, then the footer.
+/// Ends a command that records the action graph: writes the definitions the graph refers to, then
+/// the footer.
 async fn finish_recording(ctx: &mut DiceComputations<'_>, incomplete: Option<Incomplete>) {
     let recorder = ctx.per_transaction_data().get_graph_recorder().dupe();
-    let finished = write_tset_definitions(ctx, &recorder).await;
+    let finished = write_graph_definitions(ctx, &recorder).await;
     let incomplete = incomplete.or((!finished).then_some(Incomplete::UnfinishedWalk));
     instant_event(recorder.footer(incomplete));
 }
 
-/// Writes a definition for each transitive-set projection that actions referred to, and each
-/// projection below those, in one walk after the command. Returns `false` if the walk could not
-/// finish, in which case some referenced ids stay undefined.
-async fn write_tset_definitions(ctx: &mut DiceComputations<'_>, recorder: &GraphRecorder) -> bool {
+/// After the command, writes what the recorded graph refers to but hasn't defined yet: a structure
+/// for each action whose result was reused, starting from those that ran actions referred to, and a
+/// definition for each transitive-set projection. It follows what those contain until nothing new
+/// is found. Nothing is written when no action ran: there is no critical path to explain. Returns
+/// `false` if some could not be read, in which case they stay undefined.
+async fn write_graph_definitions(ctx: &mut DiceComputations<'_>, recorder: &GraphRecorder) -> bool {
+    if recorder.0.action_ends.load(Ordering::Relaxed) == 0 {
+        return true;
+    }
     let start = Instant::now();
     let mut referenced = recorder.referenced_tsets();
     referenced.sort_unstable_by_key(|(_, id)| *id);
-    let mut pending: VecDeque<_> = referenced.into();
-    let mut written = BuckMutSet::default();
+    let mut tsets: VecDeque<_> = referenced.into();
+    let mut actions: VecDeque<ActionKey> = recorder
+        .referenced_reused()
+        .into_iter()
+        .map(|(key, _)| key)
+        .collect();
+    let mut written_tsets = BuckMutSet::default();
+    let mut written_actions = BuckMutSet::default();
     let mut finished = true;
     let mut steps: u64 = 0;
 
-    while let Some((key, id)) = pending.pop_front() {
+    loop {
         // Cached lookups complete without suspending, so without this a large walk would hold
         // its executor thread for its whole length and delay cancellation.
         steps += 1;
         if steps.is_multiple_of(1000) {
             tokio::task::yield_now().await;
         }
-        if !written.insert(id) {
-            continue;
-        }
-        let sub_inputs = match key.key.lookup(ctx).await {
-            Ok(set) => set.by_ref(|s| s.get_projection_sub_inputs(key.projection)),
-            Err(e) => Err(e),
-        };
-        let sub_inputs = match sub_inputs {
-            Ok(sub_inputs) => sub_inputs,
-            Err(e) => {
-                tracing::debug!("Could not define transitive set `{key}`: {e:#}");
-                finished = false;
+        let sub_inputs = if let Some(key) = actions.pop_front() {
+            if recorder.ran(&key) || !written_actions.insert(key.dupe()) {
                 continue;
             }
+            let action = match ActionCalculation::get_action(ctx, &key).await {
+                Ok(action) => action,
+                Err(e) => {
+                    tracing::debug!("Could not look up reused action `{key}`: {e:#}");
+                    finished = false;
+                    continue;
+                }
+            };
+            let inputs = match action.inputs() {
+                Ok(inputs) => inputs.into_owned(),
+                Err(e) => {
+                    tracing::debug!("Could not get inputs of reused action `{key}`: {e:#}");
+                    finished = false;
+                    continue;
+                }
+            };
+            let node = DirectProducers::collect_uncounted(recorder, &inputs);
+            let name = buck2_data::ActionName {
+                category: action.category().as_str().to_owned(),
+                identifier: action.identifier().unwrap_or("").to_owned(),
+            };
+            actions.extend(producer_keys(&inputs).0.into_iter().cloned());
+            recorder.write_structure_def(&key, name, node);
+            inputs
+        } else if let Some((key, id)) = tsets.pop_front() {
+            if !written_tsets.insert(id) {
+                continue;
+            }
+            let sub_inputs = match key.key.lookup(ctx).await {
+                Ok(set) => set.by_ref(|s| s.get_projection_sub_inputs(key.projection)),
+                Err(e) => Err(e),
+            };
+            let sub_inputs = match sub_inputs {
+                Ok(sub_inputs) => sub_inputs,
+                Err(e) => {
+                    tracing::debug!("Could not define transitive set `{key}`: {e:#}");
+                    finished = false;
+                    continue;
+                }
+            };
+            let node = DirectProducers::collect_uncounted(recorder, &sub_inputs);
+            actions.extend(producer_keys(&sub_inputs).0.into_iter().cloned());
+            recorder.write_tset_def(id, &key, node);
+            sub_inputs
+        } else {
+            break;
         };
-        let node = DirectProducers::collect_uncounted(recorder, &sub_inputs);
+
         for input in &sub_inputs {
             if let ArtifactGroup::TransitiveSetProjection(child) = input {
                 let child_id = recorder.tset_id(&child.key);
-                if !written.contains(&child_id) {
-                    pending.push_back((child.key.dupe(), child_id));
+                if !written_tsets.contains(&child_id) {
+                    tsets.push_back((child.key.dupe(), child_id));
                 }
             }
         }
-        recorder.write_tset_def(id, &key, node);
     }
 
     recorder.0.definitions_walk.add(Instant::now() - start);
@@ -550,6 +642,11 @@ mod tests {
             next.reused_ids,
             vec![0, 1],
             "the same producer keeps its id, and a new one gets the next"
+        );
+        assert_eq!(
+            recorder.referenced_reused().len(),
+            2,
+            "only reused producers get ids"
         );
     }
 }

@@ -124,14 +124,17 @@ pub struct LowPassFilterGuard<'a> {
 
 impl Drop for LowPassFilterGuard<'_> {
     /// When a guard is released, lower the accessors count, and if we are now low enough to
-    /// proceed, notify a task. Note that this happens regardless of whether the owner of the
-    /// LowPassFilterGuard had entered the critical section or not, since there is no difference
-    /// between dropping a permit and dropping an outstading request for access.
+    /// proceed, notify the waiting tasks. Note that this happens regardless of whether the owner
+    /// of the LowPassFilterGuard had entered the critical section or not, since there is no
+    /// difference between dropping a permit and dropping an outstading request for access.
+    ///
+    /// Every waiter is woken: the condition is about the shared count, so once it holds it holds
+    /// for all of them, and a woken waiter that proceeds does not pass the wakeup on.
     fn drop(&mut self) {
         let mut state = self.filter.state.lock();
         state.accessors -= self.weight;
         if state.can_dispatch_more(self.filter.capacity) {
-            self.filter.cv.notify_one();
+            self.filter.cv.notify_all();
         }
     }
 }
@@ -214,6 +217,36 @@ mod tests {
 
         drop(t0);
         assert!(futures::poll!(t1.as_mut()).is_ready());
+    }
+
+    #[tokio::test]
+    async fn test_release_with_several_waiters() {
+        let filter = LowPassFilter::new(2);
+        let t0 = filter.access(1).await;
+        let t1 = filter.access(1).await;
+
+        let t2 = filter.access(1);
+        let t3 = filter.access(1);
+        futures::pin_mut!(t2);
+        futures::pin_mut!(t3);
+
+        // 4 accessors: both waiters block.
+        assert!(futures::poll!(t2.as_mut()).is_pending());
+        assert!(futures::poll!(t3.as_mut()).is_pending());
+
+        // 3 accessors: still over capacity.
+        drop(t0);
+        assert!(futures::poll!(t2.as_mut()).is_pending());
+        assert!(futures::poll!(t3.as_mut()).is_pending());
+
+        // 2 accessors: both waiters are now within capacity, and both proceed.
+        drop(t1);
+        let g2 = match futures::poll!(t2.as_mut()) {
+            std::task::Poll::Ready(g) => g,
+            std::task::Poll::Pending => panic!("t2 should be ready"),
+        };
+        assert!(futures::poll!(t3.as_mut()).is_ready());
+        drop(g2);
     }
 
     #[tokio::test]

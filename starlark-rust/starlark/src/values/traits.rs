@@ -587,7 +587,7 @@ pub trait StarlarkType<'v>: 'v + ProvidesStaticType<'v> + Debug + Display + Size
     /// assume that it is held in `iter_next`, and release it in `iter_stop`.
     /// Obviously, there are no such guarantees if these functions are called directly.
     unsafe fn iterate(&self, _me: Value<'v>, heap: Heap<'v>) -> crate::Result<Value<'v>> {
-        Ok(heap.alloc_tuple(&self.iterate_collect(heap)?))
+        Ok(heap.alloc_tuple(&self.iterate_collect(heap)?).to_value())
     }
 
     /// Returns the size hint for the iterator.

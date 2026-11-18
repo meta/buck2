@@ -140,7 +140,7 @@ impl<'v> Tuple<'v> {
         for _i in 0..times {
             result.extend(self.content().iter().map(|e| e.to_value()));
         }
-        heap.alloc_tuple(&result)
+        heap.alloc_tuple(&result).to_value()
     }
 }
 
@@ -197,7 +197,9 @@ impl<'v> StarlarkValue<'v> for Tuple<'v> {
         stride: Option<Value>,
         heap: Heap<'v>,
     ) -> crate::Result<Value<'v>> {
-        Ok(heap.alloc_tuple(&apply_slice(self.content(), start, stop, stride)?))
+        Ok(heap
+            .alloc_tuple(&apply_slice(self.content(), start, stop, stride)?)
+            .to_value())
     }
 
     unsafe fn iterate(&self, me: Value<'v>, _heap: Heap<'v>) -> crate::Result<Value<'v>> {
@@ -224,7 +226,7 @@ impl<'v> StarlarkValue<'v> for Tuple<'v> {
         for x in other.iter() {
             result.push(x);
         }
-        heap.alloc_tuple(&result)
+        heap.alloc_tuple(&result).to_value()
     }
 
     fn mul(&self, times: i32, heap: Heap<'v>) -> Value<'v> {

@@ -37,7 +37,10 @@ impl<'v, T1: AllocValue<'v>> AllocValue<'v> for (T1,) {
 
     fn alloc_value(self, heap: Heap<'v>) -> ValueOf<'v, Self::Type> {
         // The items are the parts' `Type`s by their declarations.
-        ValueOf::new_unchecked(heap.alloc_tuple(&[self.0.alloc_value(heap).to_value()]))
+        ValueOf::new_unchecked(
+            heap.alloc_tuple(&[self.0.alloc_value(heap).to_value()])
+                .to_value(),
+        )
     }
 }
 
@@ -46,10 +49,13 @@ impl<'v, T1: AllocValue<'v>, T2: AllocValue<'v>> AllocValue<'v> for (T1, T2) {
 
     fn alloc_value(self, heap: Heap<'v>) -> ValueOf<'v, Self::Type> {
         // The items are the parts' `Type`s by their declarations.
-        ValueOf::new_unchecked(heap.alloc_tuple(&[
-            self.0.alloc_value(heap).to_value(),
-            self.1.alloc_value(heap).to_value(),
-        ]))
+        ValueOf::new_unchecked(
+            heap.alloc_tuple(&[
+                self.0.alloc_value(heap).to_value(),
+                self.1.alloc_value(heap).to_value(),
+            ])
+            .to_value(),
+        )
     }
 }
 
@@ -60,11 +66,14 @@ impl<'v, T1: AllocValue<'v>, T2: AllocValue<'v>, T3: AllocValue<'v>> AllocValue<
 
     fn alloc_value(self, heap: Heap<'v>) -> ValueOf<'v, Self::Type> {
         // The items are the parts' `Type`s by their declarations.
-        ValueOf::new_unchecked(heap.alloc_tuple(&[
-            self.0.alloc_value(heap).to_value(),
-            self.1.alloc_value(heap).to_value(),
-            self.2.alloc_value(heap).to_value(),
-        ]))
+        ValueOf::new_unchecked(
+            heap.alloc_tuple(&[
+                self.0.alloc_value(heap).to_value(),
+                self.1.alloc_value(heap).to_value(),
+                self.2.alloc_value(heap).to_value(),
+            ])
+            .to_value(),
+        )
     }
 }
 
@@ -73,7 +82,10 @@ impl<'fv, T1: AllocFrozenValue<'fv>> AllocFrozenValue<'fv> for (T1,) {
 
     fn alloc_frozen_value(self, heap: FrozenHeap<'fv>) -> ValueOf<'fv, Self::Type> {
         // The items are the parts' `Type`s by their declarations.
-        ValueOf::new_unchecked(heap.alloc_tuple(&[self.0.alloc_frozen_value(heap).to_value()]))
+        ValueOf::new_unchecked(
+            heap.alloc_tuple(&[self.0.alloc_frozen_value(heap).to_value()])
+                .to_value(),
+        )
     }
 }
 
@@ -82,10 +94,13 @@ impl<'fv, T1: AllocFrozenValue<'fv>, T2: AllocFrozenValue<'fv>> AllocFrozenValue
 
     fn alloc_frozen_value(self, heap: FrozenHeap<'fv>) -> ValueOf<'fv, Self::Type> {
         // The items are the parts' `Type`s by their declarations.
-        ValueOf::new_unchecked(heap.alloc_tuple(&[
-            self.0.alloc_frozen_value(heap).to_value(),
-            self.1.alloc_frozen_value(heap).to_value(),
-        ]))
+        ValueOf::new_unchecked(
+            heap.alloc_tuple(&[
+                self.0.alloc_frozen_value(heap).to_value(),
+                self.1.alloc_frozen_value(heap).to_value(),
+            ])
+            .to_value(),
+        )
     }
 }
 
@@ -96,11 +111,14 @@ impl<'fv, T1: AllocFrozenValue<'fv>, T2: AllocFrozenValue<'fv>, T3: AllocFrozenV
 
     fn alloc_frozen_value(self, heap: FrozenHeap<'fv>) -> ValueOf<'fv, Self::Type> {
         // The items are the parts' `Type`s by their declarations.
-        ValueOf::new_unchecked(heap.alloc_tuple(&[
-            self.0.alloc_frozen_value(heap).to_value(),
-            self.1.alloc_frozen_value(heap).to_value(),
-            self.2.alloc_frozen_value(heap).to_value(),
-        ]))
+        ValueOf::new_unchecked(
+            heap.alloc_tuple(&[
+                self.0.alloc_frozen_value(heap).to_value(),
+                self.1.alloc_frozen_value(heap).to_value(),
+                self.2.alloc_frozen_value(heap).to_value(),
+            ])
+            .to_value(),
+        )
     }
 }
 

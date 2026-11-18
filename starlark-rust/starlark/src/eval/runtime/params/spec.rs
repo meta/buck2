@@ -933,7 +933,7 @@ impl<'v> ParametersSpec<Value<'v>> {
         // Note that we deliberately give warnings about missing parameters _before_ giving warnings
         // about unexpected extra parameters, so if a user misspells an argument they get a better error.
         if let Some(args_pos) = self.prototype.indices.args {
-            slots[args_pos as usize] = Some(heap.alloc_tuple(&star_args));
+            slots[args_pos as usize] = Some(heap.alloc_tuple(&star_args).to_value());
         } else if unlikely(!star_args.is_empty()) {
             return Err(FunctionError::ExtraPositionalArg {
                 count: star_args.len(),

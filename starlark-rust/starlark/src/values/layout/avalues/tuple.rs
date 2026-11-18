@@ -161,8 +161,9 @@ impl<'v> AValue<'v> for AValueFrozenTuple {
 
 impl<'fh> FrozenHeap<'fh> {
     /// Allocate a tuple with the given elements on this heap.
-    pub(crate) fn alloc_tuple(self, elems: &[Value<'fh>]) -> Value<'fh> {
-        self.alloc_tuple_values(elems.iter().copied())
+    pub(crate) fn alloc_tuple(self, elems: &[Value<'fh>]) -> ValueOf<'fh, TupleType<Value<'fh>>> {
+        // Every value is a `typing.Any`, so the tuple is a `tuple[typing.Any, ...]`.
+        ValueOf::new_unchecked(self.alloc_tuple_values(elems.iter().copied()))
     }
 
     /// Allocate a tuple of these items on this heap, typed by them.
@@ -196,7 +197,12 @@ impl<'fh> FrozenHeap<'fh> {
 
 impl<'v> Heap<'v> {
     /// Allocate a tuple with the given elements.
-    pub(crate) fn alloc_tuple(self, elems: &[Value<'v>]) -> Value<'v> {
+    pub(crate) fn alloc_tuple(self, elems: &[Value<'v>]) -> ValueOf<'v, TupleType<Value<'v>>> {
+        // Every value is a `typing.Any`, so the tuple is a `tuple[typing.Any, ...]`.
+        ValueOf::new_unchecked(self.alloc_tuple_values_from_slice(elems))
+    }
+
+    fn alloc_tuple_values_from_slice(self, elems: &[Value<'v>]) -> Value<'v> {
         if elems.is_empty() {
             return Value::new_empty_tuple();
         }
@@ -233,7 +239,7 @@ impl<'v> Heap<'v> {
                 v.to_value()
             }
         } else {
-            self.alloc_tuple(&elems.collect::<Vec<_>>())
+            self.alloc_tuple_values_from_slice(&elems.collect::<Vec<_>>())
         }
     }
 }

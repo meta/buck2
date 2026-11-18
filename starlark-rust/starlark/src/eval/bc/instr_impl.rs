@@ -940,7 +940,7 @@ impl<'v> InstrNoFlowImpl<'v> for InstrTupleNPopImpl {
         (values, target): &(BcSlotInRange, BcSlotOut),
     ) -> crate::Result<()> {
         let items = frame.get_bc_slot_range(*values);
-        let value = eval.heap().alloc_tuple(items);
+        let value = eval.heap().alloc_tuple(items).to_value();
         frame.set_bc_slot(*target, value);
         Ok(())
     }

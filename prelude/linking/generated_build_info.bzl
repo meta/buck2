@@ -290,8 +290,7 @@ def generate_build_info_shared_library(
     config = _generated_build_info_config(ctx, stable_placeholder = stable_placeholder)
     if config == None:
         return None
-    spec, _tool = config
-    tool = _tool
+    spec, tool = config
     if stable_placeholder:
         # Stable generation ignores per-build `-c build_info.*` overrides,
         # so the config-baked tool would re-run on every host change with

@@ -1,0 +1,4 @@
+stub(
+    name = "s",
+    dpes = [],
+)

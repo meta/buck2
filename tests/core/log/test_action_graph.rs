@@ -13,9 +13,14 @@ use std::collections::BTreeMap;
 use anyhow::Context;
 use buck2_e2e::prelude::*;
 use buck2_e2e::utils::filter_event_roots;
+use buck2_e2e::utils::filter_events;
 use buck2_e2e::utils::json_get;
 use serde_json::Value;
 use serde_json::json;
+
+/// `ActionGraphFooter.Incomplete` values.
+const BUILD_FAILED: u64 = 1;
+const FAIL_FAST: u64 = 2;
 
 /// The `ActionExecution` span ends of the last command, keyed by action category, each with its
 /// span's id as `span_id`.
@@ -37,6 +42,19 @@ async fn action_ends(buck: &Buck) -> anyhow::Result<BTreeMap<String, Value>> {
             Ok((category, end))
         })
         .collect()
+}
+
+async fn graph_events(buck: &Buck, name: &str) -> anyhow::Result<Vec<Value>> {
+    filter_events(buck, &["Event", "data", "Instant", "data", name]).await
+}
+
+/// The one `name` event of the last command.
+async fn graph_event(buck: &Buck, name: &str) -> anyhow::Result<Value> {
+    let events = graph_events(buck, name).await?;
+    let [event] = events.as_slice() else {
+        anyhow::bail!("Expected one `{name}`, got {events:?}");
+    };
+    Ok(event.clone())
 }
 
 #[buck_test]
@@ -67,5 +85,46 @@ async fn test_nothing_recorded_without_the_flag(buck: &Buck) -> anyhow::Result<(
         ends.values()
             .all(|end| json_get(end, &["graph_producers"]).is_none())
     );
+    Ok(())
+}
+
+#[buck_test]
+async fn test_one_footer_counting_the_action_ends(buck: &Buck) -> anyhow::Result<()> {
+    buck.build(&["//:copy", "--log-action-graph"]).await?;
+    let start = graph_event(buck, "ActionGraphStart").await?;
+    let footer = graph_event(buck, "ActionGraphFooter").await?;
+    assert_eq!(start["schema"], 1);
+    assert_eq!(footer["schema"], 1);
+    assert_eq!(action_ends(buck).await?.len(), 2);
+    assert_eq!(footer["action_ends"], 2);
+    assert!(json_get(&footer, &["incomplete"]).is_none());
+    Ok(())
+}
+
+#[buck_test]
+async fn test_footer_marks_a_failed_build_incomplete(buck: &Buck) -> anyhow::Result<()> {
+    buck.build(&["//:fail", "--log-action-graph"])
+        .await
+        .expect_failure();
+    let footer = graph_event(buck, "ActionGraphFooter").await?;
+    assert_eq!(footer["incomplete"], BUILD_FAILED);
+    Ok(())
+}
+
+#[buck_test]
+async fn test_footer_marks_fail_fast_incomplete(buck: &Buck) -> anyhow::Result<()> {
+    buck.build(&["//:fail", "//:copy", "--fail-fast", "--log-action-graph"])
+        .await
+        .expect_failure();
+    let footer = graph_event(buck, "ActionGraphFooter").await?;
+    assert_eq!(footer["incomplete"], FAIL_FAST);
+    Ok(())
+}
+
+#[buck_test]
+async fn test_no_start_or_footer_without_the_flag(buck: &Buck) -> anyhow::Result<()> {
+    buck.build(&["//:copy"]).await?;
+    assert!(graph_events(buck, "ActionGraphStart").await?.is_empty());
+    assert!(graph_events(buck, "ActionGraphFooter").await?.is_empty());
     Ok(())
 }

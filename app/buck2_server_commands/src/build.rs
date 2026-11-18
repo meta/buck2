@@ -15,6 +15,7 @@ use std::time::SystemTime;
 
 use async_trait::async_trait;
 use buck2_build_api::actions::artifact::get_artifact_fs::GetArtifactFs;
+use buck2_build_api::actions::graph_recorder::with_graph_recording;
 use buck2_build_api::build;
 use buck2_build_api::build::AsyncBuildTargetResultBuilder;
 use buck2_build_api::build::BuildEvent;
@@ -60,6 +61,7 @@ use buck2_core::provider::label::ProvidersLabel;
 use buck2_core::provider::label::ProvidersName;
 use buck2_core::target::label::label::TargetLabel;
 use buck2_data::BuildResult;
+use buck2_data::action_graph_footer::Incomplete;
 use buck2_error::BuckErrorContext;
 use buck2_error::BuckErrorOptionContext;
 use buck2_events::dispatch::console_message;
@@ -293,15 +295,19 @@ async fn build(
         result
     });
 
-    let build_result = build::build_report::maybe_stream_build_reports(
-        build_future,
-        build_opts,
-        cloned_ctx,
-        server_ctx.project_root(),
-        server_ctx.working_dir(),
-        server_ctx.events().trace_id().dupe(),
-        graph_properties.dupe(),
-        streaming_build_result_rx,
+    let build_result = with_graph_recording(
+        ctx.dupe(),
+        build::build_report::maybe_stream_build_reports(
+            build_future,
+            build_opts,
+            cloned_ctx,
+            server_ctx.project_root(),
+            server_ctx.working_dir(),
+            server_ctx.events().trace_id().dupe(),
+            graph_properties.dupe(),
+            streaming_build_result_rx,
+        ),
+        |build_result| graph_incomplete(build_result, build_opts.fail_fast),
     )
     .await?;
 
@@ -447,6 +453,19 @@ async fn process_build_result(
         serialized_build_report,
         errors,
     })
+}
+
+/// Why the recorded action graph may be incomplete, if it may.
+fn graph_incomplete(result: &BuildTargetResult, fail_fast: bool) -> Option<Incomplete> {
+    if result.configured.values().flatten().any(|r| r.timed_out()) {
+        Some(Incomplete::Timeout)
+    } else if result.build_failed && fail_fast {
+        Some(Incomplete::FailFast)
+    } else if result.build_failed {
+        Some(Incomplete::BuildFailed)
+    } else {
+        None
+    }
 }
 
 async fn build_targets(

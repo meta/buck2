@@ -4,3 +4,5 @@ copy(
     name = "copy",
     src = ":write",
 )
+
+fail(name = "fail")

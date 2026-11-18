@@ -195,6 +195,17 @@ async fn build_action_no_redirect(
         .boxed()
         .await;
 
+    // Only now that the end event has been written, so that the footer's count matches the log.
+    if ctx
+        .per_transaction_data()
+        .get_run_action_knobs()
+        .log_action_graph
+    {
+        ctx.per_transaction_data()
+            .get_graph_recorder()
+            .action_end_written();
+    }
+
     let execution_metrics = ActionExecutionMetrics {
         key: action.key().dupe(),
         execution_time_ms: action_execution_data

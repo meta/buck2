@@ -16,3 +16,10 @@ def _copy(ctx):
     return [DefaultInfo(default_output = ctx.actions.copy_file("b.txt", src))]
 
 copy = rule(impl = _copy, attrs = {"src": attrs.dep()})
+
+def _fail(ctx):
+    out = ctx.actions.declare_output("never")
+    ctx.actions.run(cmd_args(["sh", "-c", "exit 1", out.as_output()]), category = "fail", local_only = True)
+    return [DefaultInfo(default_output = out)]
+
+fail = rule(impl = _fail, attrs = {})

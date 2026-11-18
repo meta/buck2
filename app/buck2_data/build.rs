@@ -130,6 +130,10 @@ fn main() -> io::Result<()> {
         )
         .type_attribute("buck.data.CpuCounter", "#[derive(dupe::Dupe)]")
         .type_attribute("buck.data.CommandExecutionStats", "#[derive(dupe::Dupe)]")
+        .type_attribute(
+            "buck.data.LocalCommand.EnvironmentRule",
+            "#[derive(dupe::Dupe)]",
+        )
         .type_attribute(".", "#[derive(::serde::Serialize, ::serde::Deserialize)]")
         .type_attribute(".", "#[derive(::allocative::Allocative)]")
         // Keep the JSON event log for ordinary failures as `{"Failure": {}}`.

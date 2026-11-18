@@ -3038,6 +3038,7 @@ mod tests {
     use buck2_core::configuration::data::ConfigurationData;
     use buck2_core::fs::buck_out_path::BuckOutPathResolver;
     use buck2_core::fs::project::ProjectRootTemp;
+    use buck2_data::local_command::EnvironmentRule;
     use buck2_execute::digest_config::SetDigestConfig;
     use buck2_execute::execute::manager::CommandExecutionManagerExt;
     use buck2_execute::execute::output::CommandStdStreams;
@@ -3115,6 +3116,8 @@ mod tests {
                 digest: command.prepared_action.digest(),
                 command: vec![],
                 env: BuckFixedSortedMap::new(),
+                working_directory: Default::default(),
+                environment_rule: EnvironmentRule::Unspecified,
             };
             manager.claim().await.failure(
                 kind,

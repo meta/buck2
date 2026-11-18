@@ -13,6 +13,7 @@ use std::ffi::OsString;
 use std::sync::Arc;
 use std::sync::OnceLock;
 
+use buck2_data::local_command::EnvironmentRule;
 use dupe::Dupe;
 
 /// The variable in which AI agent launchers describe the agent session a process runs for.
@@ -91,6 +92,7 @@ pub struct EnvironmentInheritance {
     values: &'static [(&'static str, OsString)],
     exclusions: &'static [&'static str],
     coding_agent_metadata: ClientCodingAgentMetadata,
+    rule: EnvironmentRule,
 }
 
 impl EnvironmentInheritance {
@@ -120,6 +122,7 @@ impl EnvironmentInheritance {
             values,
             exclusions: &[],
             coding_agent_metadata: ClientCodingAgentMetadata::default(),
+            rule: EnvironmentRule::TestAllowlist,
         }
     }
 
@@ -146,6 +149,7 @@ impl EnvironmentInheritance {
                 "LD_PRELOAD",
             ],
             coding_agent_metadata: ClientCodingAgentMetadata::default(),
+            rule: EnvironmentRule::InheritExceptExclusions,
         }
     }
 
@@ -155,6 +159,7 @@ impl EnvironmentInheritance {
             exclusions: &[],
             clear: true,
             coding_agent_metadata: ClientCodingAgentMetadata::default(),
+            rule: EnvironmentRule::Cleared,
         }
     }
 
@@ -173,6 +178,11 @@ impl EnvironmentInheritance {
 
     pub fn clear(&self) -> bool {
         self.clear
+    }
+
+    /// Which of the constructors above built this, as recorded in the event log.
+    pub(crate) fn rule(&self) -> EnvironmentRule {
+        self.rule
     }
 }
 

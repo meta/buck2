@@ -27,6 +27,7 @@ use buck2_core::fs::buck_out_path::BuildArtifactPath;
 use buck2_core::fs::project_rel_path::ProjectRelativePath;
 use buck2_core::fs::project_rel_path::ProjectRelativePathBuf;
 pub use buck2_data::NetworkAccess;
+use buck2_data::local_command::EnvironmentRule;
 use buck2_directory::directory::dashmap_directory_interner::DashMapDirectoryInterner;
 use buck2_directory::directory::directory::Directory;
 use buck2_directory::directory::directory_iterator::DirectoryIterator;
@@ -643,6 +644,13 @@ impl CommandExecutionRequest {
 
     pub fn local_environment_inheritance(&self) -> Option<&EnvironmentInheritance> {
         self.local_environment_inheritance.as_ref()
+    }
+
+    /// How the local command's environment is built from buck2's own, as the event log records it.
+    pub fn local_environment_rule(&self) -> EnvironmentRule {
+        self.local_environment_inheritance
+            .as_ref()
+            .map_or(EnvironmentRule::Unspecified, |e| e.rule())
     }
 
     pub fn with_force_full_hybrid_if_capable(mut self, force_full_hybrid_if_capable: bool) -> Self {

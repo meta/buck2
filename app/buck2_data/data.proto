@@ -3367,7 +3367,9 @@ message LocalCommand {
     // buck2's environment minus a fixed list of variables known to break
     // commands, such as `LD_PRELOAD` and `PYTHONPATH`.
     INHERIT_EXCEPT_EXCLUSIONS = 1;
-    // An empty environment plus the allow-listed variables buck2 had.
+    // An empty environment plus the allow-listed variables buck2 had. With
+    // `buck2.tests_inherit_client_coding_agent_metadata`, a test also gets the
+    // invoking client's `CODING_AGENT_METADATA`, which `env` doesn't list.
     TEST_ALLOWLIST = 2;
     // An empty environment.
     CLEARED = 3;

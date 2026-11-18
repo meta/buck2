@@ -619,6 +619,7 @@ mod tests {
     use buck2_build_signals::env::WaitingData;
     use buck2_common::cas_digest::CasDigest;
     use buck2_common::liveliness_observer::LivelinessGuard;
+    use buck2_data::local_command::EnvironmentRule;
     use buck2_events::dispatch::EventDispatcher;
     use buck2_execute::execute::claim::MutexClaimManager;
     use buck2_execute::execute::result::CommandExecutionStatus;
@@ -646,6 +647,8 @@ mod tests {
                     digest: CasDigest::new_blake3([0; 32], 0),
                     command: Vec::new(),
                     env: Default::default(),
+                    working_directory: Default::default(),
+                    environment_rule: EnvironmentRule::Unspecified,
                 },
                 CommandCancellationReason::ReQueueTimeout,
                 CommandExecutionMetadata::empty(TimeSpan::empty_now()),

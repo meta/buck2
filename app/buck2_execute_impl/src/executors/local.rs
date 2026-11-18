@@ -743,6 +743,8 @@ impl LocalExecutor {
                     digest: action_digest.dupe(),
                     command: args.to_vec(),
                     env: request.env().clone(),
+                    working_directory: request.working_directory().to_owned(),
+                    environment_rule: request.local_environment_rule(),
                 },
                 Some(_) => CommandExecutionKind::LocalWorker {
                     digest: action_digest.dupe(),
@@ -1390,6 +1392,8 @@ impl PreparedCommandExecutor for LocalExecutor {
             digest: command.prepared_action.digest(),
             command: command.request.all_args_vec(),
             env: command.request.env().clone(),
+            working_directory: command.request.working_directory().to_owned(),
+            environment_rule: command.request.local_environment_rule(),
         });
         if command.request.executor_preference().requires_remote() {
             return manager.error("local_prepare", LocalExecutionError::RemoteOnlyAction);

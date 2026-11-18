@@ -543,6 +543,8 @@ mod tests {
     use std::time::Instant;
 
     use buck2_common::cas_digest::CasDigest;
+    use buck2_core::fs::project_rel_path::ProjectRelativePathBuf;
+    use buck2_data::local_command::EnvironmentRule;
     use buck2_hash::BuckFixedSortedMap;
     use buck2_util::time_span::TimeSpan;
 
@@ -555,6 +557,8 @@ mod tests {
                 digest: CasDigest::new_blake3([0].repeat(32).as_slice().try_into().unwrap(), 123),
                 command: vec!["fake_buck2".to_owned()],
                 env: BuckFixedSortedMap::from_iter([("FAKE_ENV_VAR".to_owned(), "1".to_owned())]),
+                working_directory: ProjectRelativePathBuf::unchecked_new("dir".to_owned()),
+                environment_rule: EnvironmentRule::InheritExceptExclusions,
             },
         };
         let timing = CommandExecutionMetadata {
@@ -613,7 +617,12 @@ mod tests {
                         value: "1".to_owned(),
                     }],
                     action_digest: format!("{}:{}", "0".repeat(64), "123"),
-                    ..Default::default()
+                    context: Some(buck2_data::LocalCommandContext {
+                        working_directory: Some("dir".to_owned()),
+                        environment_rule:
+                            buck2_data::local_command::EnvironmentRule::InheritExceptExclusions
+                                .into(),
+                    }),
                 },
             )),
         };

@@ -252,7 +252,7 @@ impl TyCustomImpl for TyUser {
             }
             Ok(index.result.dupe())
         } else {
-            Ok(self.base.index(item)?)
+            self.base.index(item, ctx)
         }
     }
 

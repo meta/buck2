@@ -574,6 +574,19 @@ impl ImplStarlarkValue {
         })
     }
 
+    /// `fn at_signature()`, unless the block writes it: any index and an unknown result if the
+    /// block has `at`.
+    fn at_signature(&self) -> Option<syn::ImplItem> {
+        if self.has_fn("at_signature") || !self.has_fn("at") {
+            return None;
+        }
+        Some(syn::parse_quote! {
+            fn at_signature() -> Option<starlark::typing::OperatorSignature> {
+                Some(starlark::typing::OperatorSignature::any())
+            }
+        })
+    }
+
     /// `fn attr_ty()`.
     fn attr_ty(&self) -> syn::Result<Option<syn::ImplItem>> {
         if self.has_fn("attr_ty") || self.has_macro_item() {
@@ -875,7 +888,8 @@ impl ImplStarlarkValue {
                 .chain(self.bit_or()?)
                 .chain(self.bin_op_signatures(&typed))
                 .chain(self.rbin_op_signatures(&typed))
-                .chain(self.un_op_result(&typed)),
+                .chain(self.un_op_result(&typed))
+                .chain(self.at_signature()),
         );
         let has_fn_flags = self.has_fn_flags(&type_impl)?;
         type_impl.items.extend(has_fn_flags);

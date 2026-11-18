@@ -174,10 +174,14 @@ impl<'v> StarlarkValue<'v> for EveryOperator {
     fn is_in(&self, _other: Value<'v>) -> crate::Result<bool> {
         Ok(true)
     }
+
+    fn at(&self, index: Value<'v>, _heap: Heap<'v>) -> crate::Result<Value<'v>> {
+        Ok(index)
+    }
 }
 
 /// A type that writes the signatures of its operators by hand: `+` with a result that
-/// depends on the operand, a reflected `*`, and unary `-`.
+/// depends on the operand, a reflected `*`, unary `-`, and indexing.
 #[derive(
     derive_more::Display,
     Debug,
@@ -222,6 +226,17 @@ impl<'v> StarlarkValue<'v> for WithSignatures {
             TypingUnOp::Minus => Some(Ty::int()),
             _ => None,
         }
+    }
+
+    fn at(&self, index: Value<'v>, _heap: Heap<'v>) -> crate::Result<Value<'v>> {
+        Ok(index)
+    }
+
+    fn at_signature() -> Option<OperatorSignature> {
+        Some(OperatorSignature {
+            operand: Ty::int(),
+            result: Ty::string(),
+        })
     }
 }
 
@@ -601,6 +616,29 @@ def test(x: EveryOperator, y: str):
     boolean = (x < y, y in x)
     reflected = (None + x, None * x)
     unary = (+x, -x, ~x)
+"#,
+        );
+}
+
+/// Indexing a type that says what index it takes and what is there, one that has `at` and
+/// says nothing, and one that has no `at`.
+#[test]
+fn test_index_signature() {
+    TypeCheck::new()
+        .ty("by_int")
+        .ty("by_unknown")
+        .ty("by_str")
+        .ty("unsaid")
+        .ty("not_indexed")
+        .check(
+            "index_signature",
+            r#"
+def test(x: WithSignatures, y: EveryOperator, z: MyCustomType, i: int, s: str, a):
+    by_int = x[i]
+    by_unknown = x[a]
+    by_str = x[s]
+    unsaid = y[s]
+    not_indexed = z[i]
 "#,
         );
 }

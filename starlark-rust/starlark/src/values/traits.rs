@@ -982,6 +982,16 @@ pub trait StarlarkType<'v>: 'v + ProvidesStaticType<'v> + Debug + Display + Size
         None
     }
 
+    /// The typing of `this[index]`: the type of index the type takes and the type of what is
+    /// there, or `None` if the type is not indexed. The typechecker matches the index against
+    /// it as it matches an operand against the signature of an operator.
+    ///
+    /// [`#[starlark_value]`](crate::values::starlark_value) generates this from the
+    /// [`at`](Self::at) of the block: [`OperatorSignature::any`] if it has one.
+    fn at_signature() -> Option<OperatorSignature> {
+        None
+    }
+
     /// Called when exporting a value under a specific name,
     fn export_as(
         &self,

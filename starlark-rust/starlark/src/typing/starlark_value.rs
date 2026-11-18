@@ -393,11 +393,15 @@ impl TyStarlarkValue {
         oracle.operator_result((self.vtable.vtable.rbin_op_signatures)(op), lhs)
     }
 
-    pub(crate) fn index(self, _index: &TyBasic) -> Result<Ty, TypingNoContextError> {
-        if self.vtable.vtable.HAS_at {
-            Ok(Ty::any())
-        } else {
-            Err(TypingNoContextError)
+    /// The type of `self[index]`.
+    pub(crate) fn index(
+        self,
+        index: &TyBasic,
+        oracle: &TypingOracleCtx,
+    ) -> Result<Ty, TypingNoContextOrInternalError> {
+        match (self.vtable.vtable.at_signature)() {
+            Some(signature) => oracle.operator_result(vec![signature], index),
+            None => Err(TypingNoContextOrInternalError::Typing),
         }
     }
 

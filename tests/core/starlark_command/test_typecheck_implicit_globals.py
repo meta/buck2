@@ -12,6 +12,7 @@
 from buck2.tests.e2e_util.api.buck import Buck
 from buck2.tests.e2e_util.asserts import expect_failure
 from buck2.tests.e2e_util.buck_workspace import buck_test, BuckTestCase
+from buck2.tests.e2e_util.helper.golden import golden
 
 
 class TypecheckImplicitGlobalsTest(BuckTestCase):
@@ -20,9 +21,12 @@ class TypecheckImplicitGlobalsTest(BuckTestCase):
         # Rule names in build files come from the implicit prelude import; rule
         # calls are typechecked against their attribute-derived signatures.
         await buck.starlark("typecheck", "TARGETS.fixture")
-        await expect_failure(
+        failure = await expect_failure(
             buck.starlark("typecheck", "bad/TARGETS.fixture"),
-            stderr_regex="Detected 1 errors",
+        )
+        golden(
+            output=failure.stdout,
+            rel_path="fixtures/test_typecheck_build_file_bad.golden.txt",
         )
 
     @buck_test()

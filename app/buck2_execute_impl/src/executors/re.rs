@@ -307,7 +307,11 @@ impl ReExecutor {
                     // and yet received one.
                     request.timeout().unwrap(),
                     CommandStdStreams::Remote(response.std_streams(&self.re_client, digest_config)),
-                    CommandExecutionMetadata::from_re_timing(response.timing(), now.end_now()),
+                    CommandExecutionMetadata::from_re_timing(
+                        response.timing(),
+                        None,
+                        now.end_now(),
+                    ),
                     additional_message,
                 )
             } else {
@@ -420,7 +424,7 @@ impl PreparedCommandExecutor for ReExecutor {
         };
         let worker_tool_action_digest = worker_tool_init_action.clone().map(|w| w.action);
 
-        let execution_time = TimeSpan::start_now();
+        let execution_time = TimeSpan::start_now_with_wall_time();
 
         let re_gang_workers: Vec<_> = self
             .gang_workers

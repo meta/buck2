@@ -63,8 +63,8 @@ use buck2_fs::paths::RelativePathBuf;
 use buck2_fs::paths::forward_rel_path::ForwardRelativePath;
 use buck2_hash::BuckMutInsertionMap;
 use buck2_hash::BuckMutSet;
+use buck2_util::time_span::AnchoredTimeSpanBuilder;
 use buck2_util::time_span::TimeSpan;
-use buck2_util::time_span::TimeSpanBuilder;
 use dice_futures::cancellation::CancellationContext;
 use dupe::Dupe;
 use futures::FutureExt;
@@ -78,7 +78,7 @@ use crate::storage_resource_exhausted::is_storage_resource_exhausted;
 
 pub async fn download_action_results<'a>(
     request: &CommandExecutionRequest,
-    execution_time: TimeSpanBuilder,
+    execution_time: AnchoredTimeSpanBuilder,
     materializer: &dyn Materializer,
     re_client: &ManagedRemoteExecutionClient,
     invocation_re_use_case: RemoteExecutorUseCase,
@@ -121,7 +121,11 @@ pub async fn download_action_results<'a>(
             BuckMutInsertionMap::default(),
             CommandStdStreams::Remote(std_streams),
             Some(action_exit_code),
-            CommandExecutionMetadata::from_re_timing(response.timing(), TimeSpan::empty_now()),
+            CommandExecutionMetadata::from_re_timing(
+                response.timing(),
+                None,
+                TimeSpan::empty_now(),
+            ),
             additional_message,
             false,
         ));
@@ -154,7 +158,11 @@ pub async fn download_action_results<'a>(
             response.execution_kind(details),
             outputs,
             CommandStdStreams::Remote(std_streams),
-            CommandExecutionMetadata::from_re_timing(response.timing(), execution_time.end_now()),
+            CommandExecutionMetadata::from_re_timing(
+                response.timing(),
+                Some(execution_time.start_time()),
+                execution_time.end_now(),
+            ),
         ),
         e => {
             let materialized_inputs = if materialize_failed_re_action_inputs {
@@ -219,6 +227,7 @@ pub async fn download_action_results<'a>(
                 Some(e),
                 CommandExecutionMetadata::from_re_timing(
                     response.timing(),
+                    Some(execution_time.start_time()),
                     execution_time.end_now(),
                 ),
                 additional_message,

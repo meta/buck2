@@ -197,7 +197,7 @@ async fn query_action_cache_and_download_result(
     let response = ActionCacheResult(response, cache_type.to_proto());
     let res = download_action_results(
         request,
-        TimeSpan::start_now(),
+        TimeSpan::start_now_with_wall_time(),
         materializer,
         re_client,
         invocation_re_use_case,

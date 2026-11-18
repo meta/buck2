@@ -158,6 +158,10 @@ pub struct CommandExecutionMetadata {
     /// A TimeSpan covering the time that this build actually waited for this action to complete
     pub time_span: TimeSpan,
 
+    /// The client's wall-clock time when `time_span` started. `None` when `time_span` is not a
+    /// real attempt interval.
+    pub client_start_time: Option<SystemTime>,
+
     /// How long this command actually took to execute. This can be different from the wall_time if
     /// this was e.g. an action cache hit, in which case this field would reflect how long the
     /// command took to actually execute but not how we had to wait for it.
@@ -190,6 +194,7 @@ impl CommandExecutionMetadata {
     pub fn empty(time_span: TimeSpan) -> Self {
         Self {
             time_span,
+            client_start_time: None,
             execution_time: Duration::default(),
             start_time: SystemTime::now(),
             execution_stats: None,
@@ -202,9 +207,14 @@ impl CommandExecutionMetadata {
         }
     }
 
-    pub fn from_re_timing(re_timing: ReMetadataTiming, time_span: TimeSpan) -> Self {
+    pub fn from_re_timing(
+        re_timing: ReMetadataTiming,
+        client_start_time: Option<SystemTime>,
+        time_span: TimeSpan,
+    ) -> Self {
         Self {
             time_span,
+            client_start_time,
             execution_time: re_timing.execution_time,
             start_time: re_timing.start_time,
             execution_stats: re_timing.execution_stats,
@@ -234,7 +244,11 @@ impl CommandExecutionMetadata {
             queue_duration: metadata.queue_duration.and_then(|d| d.try_into().ok()),
             suspend_duration: metadata.suspend_duration.and_then(|d| d.try_into().ok()),
             suspend_count: metadata.suspend_count,
-            client_attempt: None,
+            client_attempt: metadata
+                .client_start_time
+                .map(|t| buck2_data::ClientAttempt {
+                    start_time: Some(buck2_data::timing::whole_millis(t).into()),
+                }),
         }
     }
 }
@@ -545,6 +559,7 @@ mod tests {
         };
         let timing = CommandExecutionMetadata {
             time_span: TimeSpan::from_start_and_duration(Instant::now(), Duration::from_secs(2)),
+            client_start_time: None,
             execution_time: Duration::from_secs(3),
             start_time: SystemTime::UNIX_EPOCH,
             execution_stats: Some(buck2_data::CommandExecutionStats {

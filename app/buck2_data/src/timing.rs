@@ -11,11 +11,13 @@
 //! Precision of per-event timing values in the event log.
 //!
 //! Durations are recorded at two significant figures, which is more than any per-action analysis
-//! needs. Full microseconds are close to random bytes that don't compress: on a representative
-//! large optimized build, recording the per-action timings at this precision made the event log
-//! 1.6% smaller than at full microseconds.
+//! needs, and wall-clock timestamps at whole milliseconds. Full microseconds are close to random
+//! bytes that don't compress: on a representative large optimized build, recording the
+//! per-action timings at this precision made the event log 1.6% smaller than at full microseconds.
 
 use std::time::Duration;
+use std::time::SystemTime;
+use std::time::UNIX_EPOCH;
 
 /// A duration in microseconds at two significant figures, for the event log's `*_us` fields.
 ///
@@ -47,6 +49,14 @@ fn round_micros(us: u64) -> u64 {
     (us / unit + u64::from(us % unit >= unit / 2)).saturating_mul(unit)
 }
 
+/// `t` truncated to a whole millisecond. Times before the Unix epoch are returned unchanged.
+pub fn whole_millis(t: SystemTime) -> SystemTime {
+    match t.duration_since(UNIX_EPOCH) {
+        Ok(since) => UNIX_EPOCH + Duration::new(since.as_secs(), since.subsec_millis() * 1_000_000),
+        Err(_) => t,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -74,5 +84,14 @@ mod tests {
     fn test_micros() {
         assert_eq!(u64::from(Micros::from(Duration::from_nanos(189_600))), 190);
         assert_eq!(u64::from(Micros::from(Duration::from_micros(6456))), 6500);
+    }
+
+    #[test]
+    fn test_whole_millis() {
+        let t = UNIX_EPOCH + Duration::new(1_700_000_000, 123_456_789);
+        assert_eq!(
+            whole_millis(t),
+            UNIX_EPOCH + Duration::new(1_700_000_000, 123_000_000)
+        );
     }
 }

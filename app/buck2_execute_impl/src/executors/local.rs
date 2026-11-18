@@ -384,8 +384,8 @@ impl LocalExecutor {
                 buck2_data::LocalStage { stage: Some(stage) }
             },
             async move {
-                let execution_start = TimeSpan::start_now();
-                let start_time = SystemTime::now();
+                let execution_start = TimeSpan::start_now_with_wall_time();
+                let start_time = execution_start.start_time();
 
                 let env = env.iter().map(|(k, v)| (k, v.into_os_str()));
                 let r = if let Some(worker) = worker {
@@ -783,6 +783,7 @@ impl LocalExecutor {
 
             let mut timing = Box::new(CommandExecutionMetadata {
                 time_span,
+                client_start_time: Some(start_time),
                 execution_time: time_span.duration(),
                 start_time,
                 execution_stats: None, // We fill this in later if available.

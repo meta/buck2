@@ -13,6 +13,7 @@ use std::fmt::Display;
 use std::ops::ControlFlow;
 use std::sync::Arc;
 use std::time::Duration;
+use std::time::Instant;
 
 use allocative::Allocative;
 use async_trait::async_trait;
@@ -483,6 +484,7 @@ enum ExecuteResult {
         executor_preference: ExecutorPreference,
         action_and_blobs: ActionDigestAndBlobs,
         input_files_bytes: u64,
+        prepare_command: Duration,
     },
 }
 
@@ -1242,6 +1244,7 @@ impl RunAction {
         let mut run_action_visitor =
             RunActionVisitor::new(&self.inner.dep_files, incremental_action_ignore_tags);
         waiting_data.start_waiting_category_now(WaitingCategory::PreparingAction);
+        let prepare_start = Instant::now();
         let (prepared_run_action, cmdline_digest_for_dep_files, host_sharing_requirements) =
             self.prepare(&mut run_action_visitor, ctx).await?;
 
@@ -1252,6 +1255,7 @@ impl RunAction {
             &prepared_run_action.paths,
             prepared_run_action.worker.as_ref().map(|w| &w.input_paths),
         )?;
+        let prepare_command = Instant::now() - prepare_start;
 
         // First, check in the local dep file cache if an identical action can be found there.
         // Do this before checking the action cache as we can avoid a potentially large download.
@@ -1261,7 +1265,8 @@ impl RunAction {
             .await?;
         // We can avoid preparing the action for a local cache hit as long as we're not forcing certain digests to cache-miss.
         let forced_misses = induced_cache_misses_configured();
-        if !forced_misses && let Some((outputs, metadata)) = identical_action {
+        if !forced_misses && let Some((outputs, mut metadata)) = identical_action {
+            metadata.timing.prepare_command = Some(prepare_command);
             return Ok(ExecuteResult::LocalDepFileHit(outputs, metadata));
         }
 
@@ -1291,7 +1296,8 @@ impl RunAction {
                     let lookup = dep_file_bundle
                         .check_local_dep_file_cache(ctx, self.outputs.as_slice())
                         .await?;
-                    if let Some((outputs, metadata)) = lookup {
+                    if let Some((outputs, mut metadata)) = lookup {
+                        metadata.timing.prepare_command = Some(prepare_command);
                         return Ok(ExecuteResult::LocalDepFileHit(outputs, metadata));
                     }
                 }
@@ -1388,6 +1394,7 @@ impl RunAction {
             executor_preference: req.executor_preference,
             action_and_blobs,
             input_files_bytes: req.paths().input_files_bytes(),
+            prepare_command,
         })
     }
 
@@ -1847,6 +1854,7 @@ impl Action for RunAction {
             executor_preference,
             action_and_blobs,
             input_files_bytes,
+            prepare_command,
         ) = match self.execute_inner(ctx, waiting_data).await? {
             ExecuteResult::LocalDepFileHit(outputs, metadata) => {
                 return Ok((outputs, metadata));
@@ -1857,12 +1865,14 @@ impl Action for RunAction {
                 executor_preference,
                 action_and_blobs,
                 input_files_bytes,
+                prepare_command,
             } => (
                 result,
                 dep_file_bundle,
                 executor_preference,
                 action_and_blobs,
                 input_files_bytes,
+                prepare_command,
             ),
         };
 
@@ -1928,6 +1938,7 @@ impl Action for RunAction {
             }
         }
 
+        let finish_start = Instant::now();
         let was_locally_executed = result.was_locally_executed();
         let (outputs, mut metadata) = ctx.unpack_command_execution_result(
             executor_preference,
@@ -1959,6 +1970,8 @@ impl Action for RunAction {
         let queued_write =
             populate_dep_files(ctx, dep_file_bundle, &outputs, was_locally_executed).await?;
         metadata.dep_file_db_writes_queued = u64::from(queued_write);
+        metadata.timing.prepare_command = Some(prepare_command);
+        metadata.timing.finish_action = Some(Instant::now() - finish_start);
 
         Ok((outputs, metadata))
     }

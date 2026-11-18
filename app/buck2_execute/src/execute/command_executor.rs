@@ -57,23 +57,20 @@ use crate::execute::result::CommandExecutionMetadata;
 use crate::execute::result::CommandExecutionResult;
 use crate::execute::write_action_cache::WriteActionCache;
 
-#[derive(Copy, Dupe, Clone, Debug, PartialEq, Eq)]
+#[derive(Copy, Dupe, Clone, Debug, Default, PartialEq, Eq)]
 pub struct ActionExecutionTimingData {
     pub wall_time: Duration,
-}
-
-impl Default for ActionExecutionTimingData {
-    fn default() -> Self {
-        Self {
-            wall_time: Duration::ZERO,
-        }
-    }
+    /// For `run` actions, time spent before checking caches.
+    pub prepare_command: Option<Duration>,
+    /// For `run` actions, time spent after the result arrived.
+    pub finish_action: Option<Duration>,
 }
 
 impl From<CommandExecutionMetadata> for ActionExecutionTimingData {
     fn from(command: CommandExecutionMetadata) -> Self {
         Self {
             wall_time: command.time_span.duration(),
+            ..Default::default()
         }
     }
 }

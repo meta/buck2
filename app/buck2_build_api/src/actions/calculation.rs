@@ -26,6 +26,7 @@ use buck2_data::ActionErrorDiagnostics;
 use buck2_data::ActionSubErrors;
 use buck2_data::ToProtoMessage;
 use buck2_data::get_action_digest;
+use buck2_data::timing::Micros;
 use buck2_error::BuckErrorContext;
 use buck2_event_observer::action_util::get_execution_time_ms;
 use buck2_events::dispatch::async_record_root_spans;
@@ -277,6 +278,7 @@ async fn build_action_inner(
     let mut incremental_kind = None;
     let mut waiting_data = None;
     let mut dep_file_db_writes_queued = 0;
+    let mut execution_timing = None;
     let error_diagnostics = match execute_result {
         Ok((outputs, meta)) => {
             output_size = outputs.calc_output_count_and_bytes(false).bytes;
@@ -293,6 +295,7 @@ async fn build_action_inner(
                 hostname = buck2_events::metadata::hostname();
             }
             wall_time = Some(meta.timing.wall_time);
+            execution_timing = Some(meta.timing);
             error = None;
             input_files_bytes = meta.input_files_bytes;
             waiting_data = Some(meta.waiting_data);
@@ -474,7 +477,12 @@ async fn build_action_inner(
             incremental_kind: incremental_kind.map(|k| k as i32),
             eligible_for_dedupe: is_eligible_for_dedupe as i32,
             expected_eligible_for_dedupe: is_expected_eligible_for_dedupe as i32,
-            run_action_timings: None,
+            run_action_timings: execution_timing
+                .map(|t| buck2_data::RunActionTimings {
+                    prepare_command_us: t.prepare_command.map(|d| Micros::from(d).into()),
+                    finish_action_us: t.finish_action.map(|d| Micros::from(d).into()),
+                })
+                .filter(|t| *t != buck2_data::RunActionTimings::default()),
             graph_producers: None,
             exec_group: match action.execution_group() {
                 Some(ExecutionGroup::Named(group)) => group.name().to_owned(),

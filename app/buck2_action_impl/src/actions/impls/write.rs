@@ -470,7 +470,10 @@ impl Action for WriteAction {
             ActionExecutionMetadata {
                 dep_file_db_writes_queued: 0,
                 execution_kind,
-                timing: ActionExecutionTimingData { wall_time },
+                timing: ActionExecutionTimingData {
+                    wall_time,
+                    ..Default::default()
+                },
                 input_files_bytes: None,
                 waiting_data,
             },

@@ -508,6 +508,13 @@ impl<'a> ServerCommandContext<'a> {
             write_action_cache: WriteActionCacheMode::Off,
             write_action_cache_populate: RolloutFraction::none(),
             cross_config_lookup_on_stale_entry: false,
+            // The request's flag; `make_user_computation_data` ORs in `buck2.log_action_graph`.
+            // A flag for one command leaves buckconfig unchanged, so the daemon doesn't recheck
+            // its config-dependent state.
+            log_action_graph: self
+                .build_options
+                .as_ref()
+                .is_some_and(|options| options.log_action_graph),
         };
 
         let concurrency = self
@@ -1124,6 +1131,13 @@ impl DiceCommandUpdater<'_, '_> {
             .parse::<bool>(BuckconfigKeyRef {
                 section: "buck2",
                 property: "cross_config_lookup_on_stale_entry",
+            })?
+            .unwrap_or(false);
+
+        run_action_knobs.log_action_graph |= root_config
+            .parse::<bool>(BuckconfigKeyRef {
+                section: "buck2",
+                property: "log_action_graph",
             })?
             .unwrap_or(false);
 

@@ -156,6 +156,13 @@ pub struct CommonBuildOptions {
     #[clap(long)]
     eager_dep_files: bool,
 
+    /// Record, in the event log, each executed action's direct dependencies, for analysis after
+    /// the build. Equivalent to `-c buck2.log_action_graph=true`, except that changing a config
+    /// value makes the daemon recheck its whole build graph on the next command, and this flag
+    /// does not.
+    #[clap(long, hide = true)]
+    log_action_graph: bool,
+
     /// Uploads every action to the RE service, regardless of whether the action needs to execute on RE.
     ///
     /// This is useful when debugging builds and trying to inspect actions which executed remotely.
@@ -267,6 +274,7 @@ impl CommonBuildOptions {
             unstable_print_build_report,
             unstable_build_report_filename,
             eager_dep_files: self.eager_dep_files,
+            log_action_graph: self.log_action_graph,
             upload_all_actions: self.upload_all_actions,
             skip_cache_read: self.no_remote_cache,
             skip_cache_write: self.no_remote_cache && !self.write_to_cache_anyway,
@@ -342,5 +350,24 @@ impl CommonOutputOptions {
 
     pub fn is_full(&self) -> bool {
         self.show_full_output || self.show_full_simple_output || self.show_full_json_output
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use clap::Parser;
+
+    use super::*;
+
+    #[test]
+    fn test_log_action_graph_is_opt_in() {
+        let default = CommonBuildOptions::try_parse_from(["build"]).unwrap();
+        assert!(!default.to_proto().log_action_graph);
+
+        let enabled = CommonBuildOptions::try_parse_from(["build", "--log-action-graph"]).unwrap();
+        assert!(
+            enabled.to_proto().log_action_graph,
+            "the option works when typed"
+        );
     }
 }

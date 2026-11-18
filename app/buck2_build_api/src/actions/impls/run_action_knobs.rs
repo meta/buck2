@@ -59,6 +59,10 @@ pub struct RunActionKnobs {
     /// configuration of it built in this daemon. Without it, only a configuration with no entry
     /// of its own looks at other configurations' entries.
     pub cross_config_lookup_on_stale_entry: bool,
+
+    /// Record the action graph in the event log, from the request's `--log-action-graph` or the
+    /// `buck2.log_action_graph` config.
+    pub log_action_graph: bool,
 }
 
 /// How write actions use the action cache; `buck2.write_action_cache`. Whether a miss is

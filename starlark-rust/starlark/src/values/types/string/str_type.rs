@@ -272,40 +272,34 @@ impl<'v> StarlarkValue<'v> for StarlarkStr {
         self.as_str().cmp(other.as_str())
     }
 
-    fn at(&self, index: Value<'v>, heap: Heap<'v>) -> crate::Result<Value<'v>> {
+    fn at(&self, index: i32) -> crate::Result<char> {
         // This method is disturbingly hot. Use the logic from `convert_index`,
         // but modified to be UTF8 string friendly.
-        let i = i32::unpack_value_err(index)?;
-        if i >= 0 {
-            match fast_string::at(self, CharIndex(i as usize)) {
-                None => Err(ValueError::IndexOutOfBound(i).into()),
-                Some(c) => Ok(heap.alloc(c).to_value()),
+        if index >= 0 {
+            match fast_string::at(self, CharIndex(index as usize)) {
+                None => Err(ValueError::IndexOutOfBound(index).into()),
+                Some(c) => Ok(c),
             }
         } else {
             let len_chars = fast_string::len(self);
-            let ind = CharIndex(i.unsigned_abs() as usize); // Index from the end, minimum of 1
+            let ind = CharIndex(index.unsigned_abs() as usize); // Index from the end, minimum of 1
             if ind > len_chars {
-                Err(ValueError::IndexOutOfBound(i).into())
+                Err(ValueError::IndexOutOfBound(index).into())
             } else if len_chars.0 == self.len() {
                 // We are a 7bit ASCII string, so take the fast-path
-                Ok(heap
-                    .alloc(self.as_bytes()[(len_chars - ind).0] as char)
-                    .to_value())
+                Ok(self.as_bytes()[(len_chars - ind).0] as char)
             } else {
-                Ok(heap
-                    .alloc(fast_string::at(self, len_chars - ind).unwrap())
-                    .to_value())
+                Ok(fast_string::at(self, len_chars - ind).unwrap())
             }
         }
     }
 
-    fn length(&self) -> crate::Result<i32> {
-        Ok(fast_string::len(self).0 as i32)
+    fn length(&self) -> i32 {
+        fast_string::len(self).0 as i32
     }
 
-    fn is_in(&self, other: Value) -> crate::Result<bool> {
-        let s = <&str>::unpack_value_err(other)?;
-        Ok(fast_string::contains(self, s))
+    fn is_in(&self, other: &str) -> bool {
+        fast_string::contains(self, other)
     }
 
     fn slice(

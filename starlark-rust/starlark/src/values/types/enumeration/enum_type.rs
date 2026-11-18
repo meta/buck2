@@ -383,11 +383,11 @@ impl<'v> StarlarkType<'v> for EnumTypeView<'v> {
             .collect()
     }
 
-    fn length(&self) -> crate::Result<i32> {
-        Ok(self.as_dyn().elements().len() as i32)
+    fn length(&self) -> i32 {
+        self.as_dyn().elements().len() as i32
     }
 
-    fn at(&self, index: Value, _heap: Heap<'v>) -> crate::Result<Value<'v>> {
+    fn at(&self, index: i32) -> crate::Result<Value<'v>> {
         let elements = self.as_dyn().elements();
         let i = convert_index(index, elements.len() as i32)? as usize;
         // Must be in the valid range since convert_index checks that, so just unwrap

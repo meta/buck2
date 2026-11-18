@@ -282,8 +282,8 @@ impl<'v> SetView<'v> {
 #[starlark_value(type = "set")]
 impl<'v> StarlarkType<'v> for SetView<'v> {
     /// Returns the length of the value, if this value is a sequence.
-    fn length(&self) -> crate::Result<i32> {
-        Ok(self.content().len() as i32)
+    fn length(&self) -> i32 {
+        self.content().len() as i32
     }
 
     fn is_in(&self, other: Value<'v>) -> crate::Result<bool> {

@@ -734,6 +734,59 @@ def bad(s: str, b: bytes, t: tuple[int, ...], i: int):
         );
 }
 
+/// Indexing and `in` on `str`, `bytes` and `range` take and give what their bodies say, and
+/// the typechecker's own rules for `list`, `tuple`, `dict` and `set` answer before the bodies
+/// are asked.
+#[test]
+fn test_index_and_in_of_builtin_types() {
+    TypeCheck::new()
+        .ty("str_at")
+        .ty("str_in")
+        .ty("bytes_at")
+        .ty("bytes_in")
+        .ty("range_at")
+        .ty("range_in")
+        .ty("list_at")
+        .ty("list_in")
+        .ty("tuple_at")
+        .ty("tuple_in")
+        .ty("dict_at")
+        .ty("dict_in")
+        .ty("set_in")
+        .check(
+            "index_and_in_of_builtin_types",
+            r#"
+def test(s: str, b: bytes, r: range, t: tuple[int, ...], i: int, a):
+    str_at = s[i]
+    str_in = s in s
+    bytes_at = b[i]
+    bytes_in = i in b
+    range_at = r[i]
+    range_in = s in r
+    list_at = [s][i]
+    list_in = s in [s]
+    tuple_at = t[i]
+    tuple_in = s in t
+    dict_at = {s: i}[s]
+    dict_in = s in {s: i}
+    set_in = s in set([s])
+    s[a]
+    a in s
+
+def bad(s: str, b: bytes, r: range, t: tuple[int, ...], i: int):
+    s[s]
+    i in s
+    b[s]
+    r[s]
+    [i][s]
+    t[s]
+    {s: i}[i]
+    i in [s]
+    i in {s: i}
+"#,
+        );
+}
+
 /// The operators of `int` and `float`, whose result depends on the operand.
 #[test]
 fn test_operators_of_numbers() {

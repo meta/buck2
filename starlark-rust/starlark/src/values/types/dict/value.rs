@@ -531,8 +531,8 @@ impl<'v> StarlarkType<'v> for DictView<'v> {
         }
     }
 
-    fn length(&self) -> crate::Result<i32> {
-        Ok(self.content().len() as i32)
+    fn length(&self) -> i32 {
+        self.content().len() as i32
     }
 
     fn is_in(&self, other: Value<'v>) -> crate::Result<bool> {

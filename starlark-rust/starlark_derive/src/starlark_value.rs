@@ -863,6 +863,10 @@ impl ImplStarlarkValue {
                     // and dispatches on the variant when it runs: 3.6% more instructions on
                     // `xs < ys`, with the `starlark` crate built as one codegen unit.
                     //
+                    // `at`, `is_in` and `length` are forced with them. The hint is enough for
+                    // the list and tuple views, and leaves the enum type view's `at` out of
+                    // line: 1.8% more instructions on `Enum[i]`.
+                    //
                     // An operator is left to the hint. Forced, the conversion goes into each
                     // entry and the body, which allocates and is not small, stays behind one
                     // more call: 2.5% more instructions on `xs * 3`.

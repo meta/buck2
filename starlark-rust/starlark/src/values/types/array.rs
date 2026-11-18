@@ -322,8 +322,8 @@ impl<'v> StarlarkValue<'v> for Array<'v> {
         true
     }
 
-    fn length(&self) -> crate::Result<i32> {
-        Ok(self.len() as i32)
+    fn length(&self) -> i32 {
+        self.len() as i32
     }
 
     unsafe fn iter_next(&self, index: usize, _heap: Heap<'v>) -> Option<Value<'v>> {

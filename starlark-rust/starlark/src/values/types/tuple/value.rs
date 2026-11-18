@@ -174,13 +174,13 @@ impl<'v> StarlarkValue<'v> for Tuple<'v> {
         compare_slice(self.content(), other.content(), |x, y| x.compare(*y))
     }
 
-    fn at(&self, index: Value, _heap: Heap<'v>) -> crate::Result<Value<'v>> {
+    fn at(&self, index: i32) -> crate::Result<Value<'v>> {
         let i = convert_index(index, self.len() as i32)? as usize;
         Ok(self.content()[i].to_value())
     }
 
-    fn length(&self) -> crate::Result<i32> {
-        Ok(self.len() as i32)
+    fn length(&self) -> i32 {
+        self.len() as i32
     }
 
     fn is_in(&self, other: Value<'v>) -> crate::Result<bool> {

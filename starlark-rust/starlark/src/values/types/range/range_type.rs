@@ -151,14 +151,12 @@ impl<'v> StarlarkValue<'v> for Range {
         }
     }
 
-    fn at(&self, index: Value, heap: Heap<'v>) -> crate::Result<Value<'v>> {
+    fn at(&self, index: i32) -> crate::Result<i32> {
         let index = convert_index(index, self.length()?)?;
         // The element itself fits in `i32`, but `step * index` can leave the range
         // on the way there, so compute in `i64` like `slice` and the iterator do.
         let element = self.start as i64 + self.step.get() as i64 * index as i64;
-        Ok(heap
-            .alloc(i32::try_from(element).map_err(|_| ValueError::IntegerOverflow)?)
-            .to_value())
+        i32::try_from(element).map_err(|_| ValueError::IntegerOverflow.into())
     }
 
     fn equals(&self, other: &Self) -> crate::Result<bool> {

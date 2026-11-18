@@ -201,14 +201,14 @@ impl<'v> StarlarkValue<'v> for StarlarkBytes {
         self.content.cmp(&other.content)
     }
 
-    fn length(&self) -> crate::Result<i32> {
-        Ok(self.content.len() as i32)
+    fn length(&self) -> i32 {
+        self.content.len() as i32
     }
 
     /// `bytes[i]` returns the integer value of byte at index `i`.
-    fn at(&self, index: Value<'v>, heap: Heap<'v>) -> crate::Result<Value<'v>> {
+    fn at(&self, index: i32) -> crate::Result<i32> {
         let i = convert_index(index, self.content.len() as i32)? as usize;
-        Ok(heap.alloc(self.content[i] as i32).to_value())
+        Ok(self.content[i] as i32)
     }
 
     /// `bytes[i:j:k]` returns a new bytes object.

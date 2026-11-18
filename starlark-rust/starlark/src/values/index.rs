@@ -46,13 +46,9 @@ fn convert_index_aux(
     }
 }
 
-/// Function to parse the index for at/set_at methods.
-///
-/// Return an `i32` from self corresponding to the index recenterd between 0
-/// and len. Raise the correct errors if the value is not numeric or the
-/// index is out of bound.
-pub(crate) fn convert_index(v: Value, len: i32) -> crate::Result<i32> {
-    let x = i32::unpack_value_err(v)?;
+/// The position `x` names in a sequence of length `len`, counted from the end if `x` is
+/// negative; the out-of-bounds error if there is none. For `at` and `set_at`.
+pub(crate) fn convert_index(x: i32, len: i32) -> crate::Result<i32> {
     let i = if x < 0 {
         len.checked_add(x).ok_or(ValueError::IntegerOverflow)?
     } else {
@@ -153,38 +149,35 @@ mod tests {
 
     #[test]
     fn test_convert_index() {
-        Heap::temp(|heap| {
-            assert_eq!(Some(6), convert_index(Value::testing_new_int(6), 7).ok());
-            assert_eq!(Some(6), convert_index(Value::testing_new_int(-1), 7).ok());
-            assert_eq!(
-                Some((6, 7, 1)),
-                convert_slice_indices(7, Some(Value::testing_new_int(6)), None, None).ok()
-            );
-            assert_eq!(
-                Some((6, -1, -1)),
-                convert_slice_indices(
-                    7,
-                    Some(Value::testing_new_int(-1)),
-                    None,
-                    Some(Value::testing_new_int(-1))
-                )
-                .ok()
-            );
-            assert_eq!(
-                Some((6, 7, 1)),
-                convert_slice_indices(
-                    7,
-                    Some(Value::testing_new_int(-1)),
-                    Some(Value::testing_new_int(10)),
-                    None
-                )
-                .ok()
-            );
-            // Errors
-            assert!(convert_index(heap.alloc("a").to_value(), 7).is_err());
-            assert!(convert_index(Value::testing_new_int(8), 7).is_err()); // 8 > 7 = len
-            assert!(convert_index(Value::testing_new_int(-8), 7).is_err()); // -8 + 7 = -1 < 0
-        });
+        assert_eq!(Some(6), convert_index(6, 7).ok());
+        assert_eq!(Some(6), convert_index(-1, 7).ok());
+        assert_eq!(
+            Some((6, 7, 1)),
+            convert_slice_indices(7, Some(Value::testing_new_int(6)), None, None).ok()
+        );
+        assert_eq!(
+            Some((6, -1, -1)),
+            convert_slice_indices(
+                7,
+                Some(Value::testing_new_int(-1)),
+                None,
+                Some(Value::testing_new_int(-1))
+            )
+            .ok()
+        );
+        assert_eq!(
+            Some((6, 7, 1)),
+            convert_slice_indices(
+                7,
+                Some(Value::testing_new_int(-1)),
+                Some(Value::testing_new_int(10)),
+                None
+            )
+            .ok()
+        );
+        // Errors
+        assert!(convert_index(8, 7).is_err()); // 8 > 7 = len
+        assert!(convert_index(-8, 7).is_err()); // -8 + 7 = -1 < 0
     }
 
     #[test]

@@ -46,6 +46,7 @@ use crate::values::Heap;
 use crate::values::StarlarkType;
 use crate::values::StarlarkValue;
 use crate::values::StringValue;
+use crate::values::UnpackValue;
 use crate::values::Value;
 use crate::values::ValueOf;
 use crate::values::ValueTyped;
@@ -444,14 +445,14 @@ impl<'v> StarlarkType<'v> for ListView<'v> {
         compare_slice(self.content(), &other.content, |x, y| x.compare(*y))
     }
 
-    fn at(&self, index: Value, _heap: Heap<'v>) -> crate::Result<Value<'v>> {
+    fn at(&self, index: i32) -> crate::Result<Value<'v>> {
         let content = self.content();
         let i = convert_index(index, content.len() as i32)? as usize;
         Ok(content[i])
     }
 
-    fn length(&self) -> crate::Result<i32> {
-        Ok(self.content().len() as i32)
+    fn length(&self) -> i32 {
+        self.content().len() as i32
     }
 
     fn is_in(&self, other: Value<'v>) -> crate::Result<bool> {
@@ -504,6 +505,7 @@ impl<'v> StarlarkType<'v> for ListView<'v> {
     }
 
     fn set_at(&self, index: Value<'v>, alloc_value: Value<'v>) -> crate::Result<()> {
+        let index = i32::unpack_value_err(index)?;
         let i = convert_index(index, self.content().len() as i32)? as usize;
         with_list!(self, |l| l.set_at(i, alloc_value))
     }

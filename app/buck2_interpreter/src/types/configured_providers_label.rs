@@ -33,7 +33,6 @@ use starlark::values::StarlarkPagable;
 use starlark::values::StarlarkValue;
 use starlark::values::StringValue;
 use starlark::values::Trace;
-use starlark::values::Value;
 use starlark::values::ValueOf;
 use starlark::values::list::AllocList;
 use starlark::values::none::NoneOr;
@@ -104,16 +103,12 @@ where
         Some(CONFIGURED_PROVIDERS_LABEL_METHODS.methods())
     }
 
-    fn equals(&self, other: Value<'v>) -> starlark::Result<bool> {
-        Ok(match StarlarkConfiguredProvidersLabel::from_value(other) {
-            Some(other) => self.label == other.label,
-            None => false,
-        })
+    fn equals(&self, other: &Self) -> bool {
+        self.label == other.label
     }
 
-    fn write_hash(&self, hasher: &mut StarlarkHasher) -> starlark::Result<()> {
+    fn write_hash(&self, hasher: &mut StarlarkHasher) {
         self.label.hash(hasher);
-        Ok(())
     }
 }
 
@@ -274,17 +269,12 @@ where
         Some(PROVIDERS_LABEL_METHODS.methods())
     }
 
-    fn equals(&self, other: Value<'v>) -> starlark::Result<bool> {
-        if let Some(other) = StarlarkProvidersLabel::from_value(other) {
-            Ok(self.label == other.label)
-        } else {
-            Ok(false)
-        }
+    fn equals(&self, other: &Self) -> bool {
+        self.label == other.label
     }
 
-    fn write_hash(&self, hasher: &mut StarlarkHasher) -> starlark::Result<()> {
+    fn write_hash(&self, hasher: &mut StarlarkHasher) {
         self.label.hash(hasher);
-        Ok(())
     }
 }
 

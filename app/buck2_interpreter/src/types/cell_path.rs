@@ -27,7 +27,6 @@ use starlark::starlark_simple_value;
 use starlark::values::Heap;
 use starlark::values::StarlarkPagable;
 use starlark::values::StarlarkValue;
-use starlark::values::Value;
 use starlark::values::ValueOf;
 use starlark::values::starlark_value;
 
@@ -61,16 +60,12 @@ impl<'v> StarlarkValue<'v> for StarlarkCellPath {
         Some(CELL_PATH_METHODS.methods())
     }
 
-    fn equals(&self, other: Value<'v>) -> starlark::Result<bool> {
-        match other.downcast_ref::<StarlarkCellPath>() {
-            None => Ok(false),
-            Some(v) => Ok(v.0 == self.0),
-        }
+    fn equals(&self, other: &Self) -> bool {
+        other.0 == self.0
     }
 
-    fn write_hash(&self, hasher: &mut StarlarkHasher) -> starlark::Result<()> {
+    fn write_hash(&self, hasher: &mut StarlarkHasher) {
         self.0.hash(hasher);
-        Ok(())
     }
 }
 

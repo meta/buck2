@@ -36,8 +36,6 @@ use starlark::values::StarlarkPagable;
 use starlark::values::StarlarkValue;
 use starlark::values::StringValue;
 use starlark::values::UnpackValue;
-use starlark::values::Value;
-use starlark::values::ValueError;
 use starlark::values::ValueOf;
 use starlark::values::list::ListType;
 use starlark::values::starlark_value;
@@ -92,25 +90,16 @@ impl<'v> StarlarkValue<'v> for StarlarkTargetLabel {
         Some(TARGET_LABEL_METHODS.methods())
     }
 
-    fn write_hash(&self, hasher: &mut StarlarkHasher) -> starlark::Result<()> {
+    fn write_hash(&self, hasher: &mut StarlarkHasher) {
         self.hash(hasher);
-        Ok(())
     }
 
-    fn equals(&self, other: Value<'v>) -> starlark::Result<bool> {
-        if let Some(other) = other.downcast_ref::<Self>() {
-            Ok(self.label == other.label)
-        } else {
-            Ok(false)
-        }
+    fn equals(&self, other: &Self) -> bool {
+        self.label == other.label
     }
 
-    fn compare(&self, other: Value<'v>) -> starlark::Result<std::cmp::Ordering> {
-        if let Some(other) = other.downcast_ref::<Self>() {
-            Ok(self.label.cmp(&other.label))
-        } else {
-            ValueError::unsupported_with(self, "compare", other)
-        }
+    fn compare(&self, other: &Self) -> std::cmp::Ordering {
+        self.label.cmp(&other.label)
     }
 }
 
@@ -228,25 +217,16 @@ impl<'v> StarlarkValue<'v> for StarlarkConfiguredTargetLabel {
         Some(CONFIGURED_TARGET_LABEL_METHODS.methods())
     }
 
-    fn write_hash(&self, hasher: &mut StarlarkHasher) -> starlark::Result<()> {
+    fn write_hash(&self, hasher: &mut StarlarkHasher) {
         self.hash(hasher);
-        Ok(())
     }
 
-    fn equals(&self, other: Value<'v>) -> starlark::Result<bool> {
-        if let Some(other) = other.downcast_ref::<Self>() {
-            Ok(self.label == other.label)
-        } else {
-            Ok(false)
-        }
+    fn equals(&self, other: &Self) -> bool {
+        self.label == other.label
     }
 
-    fn compare(&self, other: Value<'v>) -> starlark::Result<std::cmp::Ordering> {
-        if let Some(other) = other.downcast_ref::<Self>() {
-            Ok(self.label.cmp(&other.label))
-        } else {
-            ValueError::unsupported_with(self, "compare", other)
-        }
+    fn compare(&self, other: &Self) -> std::cmp::Ordering {
+        self.label.cmp(&other.label)
     }
 }
 

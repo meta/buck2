@@ -25,8 +25,6 @@ use starlark::starlark_module;
 use starlark::starlark_simple_value;
 use starlark::values::StarlarkPagable;
 use starlark::values::StarlarkValue;
-use starlark::values::Value;
-use starlark::values::ValueError;
 use starlark::values::starlark_value;
 
 #[derive(
@@ -69,25 +67,16 @@ impl<'v> StarlarkValue<'v> for StarlarkPackagePath {
         Some(PACKAGE_PATH_METHODS.methods())
     }
 
-    fn write_hash(&self, hasher: &mut StarlarkHasher) -> starlark::Result<()> {
+    fn write_hash(&self, hasher: &mut StarlarkHasher) {
         self.hash(hasher);
-        Ok(())
     }
 
-    fn equals(&self, other: Value<'v>) -> starlark::Result<bool> {
-        if let Some(other) = other.downcast_ref::<Self>() {
-            Ok(self.pkg == other.pkg)
-        } else {
-            Ok(false)
-        }
+    fn equals(&self, other: &Self) -> bool {
+        self.pkg == other.pkg
     }
 
-    fn compare(&self, other: Value<'v>) -> starlark::Result<std::cmp::Ordering> {
-        if let Some(other) = other.downcast_ref::<Self>() {
-            Ok(self.pkg.cmp(&other.pkg))
-        } else {
-            ValueError::unsupported_with(self, "compare", other)
-        }
+    fn compare(&self, other: &Self) -> std::cmp::Ordering {
+        self.pkg.cmp(&other.pkg)
     }
 }
 

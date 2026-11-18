@@ -763,6 +763,10 @@ impl RunAction {
             )?;
 
             let worker_key = if worker.supports_bazel_remote_persistent_worker_protocol {
+                // A remote executor starts the worker from the action's own input root, so the
+                // worker's artifacts have to be inputs of the action, unlike a local worker's,
+                // which buck2 materializes separately from `input_paths`.
+                worker.exe.visit_artifacts(artifact_visitor)?;
                 let mut worker_visitor = SimpleCommandLineArtifactVisitor::new();
                 worker.exe.visit_artifacts(&mut worker_visitor)?;
                 if !worker_visitor.declared_outputs.is_empty()

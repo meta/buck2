@@ -9,7 +9,6 @@
  */
 
 use std::ops::Deref;
-use std::slice;
 use std::sync::OnceLock;
 
 use allocative::Allocative;
@@ -37,12 +36,10 @@ use starlark::starlark_module;
 use starlark::starlark_simple_value;
 use starlark::typing::HasTyVTable;
 use starlark::typing::Ty;
-use starlark::typing::TyBasic;
 use starlark::typing::TyStarlarkValue;
 use starlark::typing::TyUser;
 use starlark::typing::TyUserIndex;
 use starlark::typing::TyUserParams;
-use starlark::typing::TypingBinOp;
 use starlark::values::AllocFrozenRepresentation;
 use starlark::values::AllocRepresentation;
 use starlark::values::Allocator;
@@ -208,21 +205,6 @@ where
         Some(STARLARK_TARGET_SET_METHODS.methods())
     }
 
-    fn bin_op_ty(op: TypingBinOp, rhs: &TyBasic) -> Option<Ty> {
-        match op {
-            TypingBinOp::Add | TypingBinOp::Sub | TypingBinOp::BitAnd => {
-                let set_ty = Node::target_set_ty();
-                // Like `add`/`sub`/`bit_and`, require the same node kind. An unknown (`Any`)
-                // right-hand side may still be one, so it is allowed.
-                let same_kind = matches!(rhs, TyBasic::Any)
-                    || set_ty.iter_union() == slice::from_ref(rhs)
-                    || *rhs == TyBasic::StarlarkValue(TyStarlarkValue::new::<Self>());
-                same_kind.then_some(set_ty)
-            }
-            _ => None,
-        }
-    }
-
     fn iterate_collect(&self, heap: Heap<'v>) -> starlark::Result<Vec<Value<'v>>> {
         Ok(Node::alloc_all(self.0.iter(), heap))
     }
@@ -241,33 +223,24 @@ where
         self.0.len().try_into().map_err(starlark::Error::new_other)
     }
 
-    fn add(&self, other: Value<'v>, heap: Heap<'v>) -> Option<starlark::Result<Value<'v>>> {
-        let other = other.downcast_ref::<Self>()?;
-        let union = self.0.union(&other.0);
-        Some(Ok(heap.alloc(Self(union)).to_value()))
+    // The operators take a set of the same node kind and give one. The typechecker reads that
+    // off `Self`, whose type is the kind's `TyUser` (`get_type_starlark_repr` above).
+    fn add(&self, other: &Self) -> Self {
+        Self(self.0.union(&other.0))
     }
 
-    fn sub(&self, other: Value<'v>, heap: Heap<'v>) -> starlark::Result<Value<'v>> {
-        let Some(other) = other.downcast_ref::<Self>() else {
-            return ValueError::unsupported_with(self, "-", other);
-        };
+    fn sub(&self, other: &Self) -> starlark::Result<Self> {
         let difference = self.0.difference(&other.0)?;
-        Ok(heap.alloc(Self(difference)).to_value())
+        Ok(Self(difference))
     }
 
-    fn equals(&self, other: Value<'v>) -> starlark::Result<bool> {
-        match other.downcast_ref::<StarlarkTargetSet<Node>>() {
-            Some(other) => Ok(self.0 == other.0),
-            None => Ok(false),
-        }
+    fn equals(&self, other: &Self) -> bool {
+        self.0 == other.0
     }
 
-    fn bit_and(&self, other: Value<'v>, heap: Heap<'v>) -> starlark::Result<Value<'v>> {
-        let Some(other) = other.downcast_ref::<Self>() else {
-            return ValueError::unsupported_with(self, "&", other);
-        };
+    fn bit_and(&self, other: &Self) -> starlark::Result<Self> {
         let intersect = self.0.intersect(&other.0)?;
-        Ok(heap.alloc(Self(intersect)).to_value())
+        Ok(Self(intersect))
     }
 }
 
@@ -441,8 +414,11 @@ starlark::__starlark_pagable_only! {
         use buck2_node::rule_type::RuleType;
         use pagable::PagableDeserialize;
         use pagable::PagableSerialize;
+        use starlark::typing::OperatorSignature;
+        use starlark::typing::TypingBinOp;
         use starlark::values::FrozenHeapName;
         use starlark::values::OwnedFrozen;
+        use starlark::values::StarlarkType;
         use starlark::values::StarlarkTypeExpr;
 
         use super::*;
@@ -466,18 +442,23 @@ starlark::__starlark_pagable_only! {
             );
         }
 
+        /// The operators take and give the set type of the same node kind, which is a different
+        /// type for each kind (`target_set_types_are_distinct_per_node_kind`). Matching an
+        /// operand against the signature is the typechecker's.
         #[test]
-        fn target_set_bin_op_requires_same_kind() {
+        fn target_set_operators_are_typed_by_node_kind() {
             type Configured = StarlarkTargetSet<ConfiguredTargetNode>;
             let configured = Configured::starlark_type_repr();
-            let unconfigured = StarlarkTargetSet::<TargetNode>::starlark_type_repr();
-            let single = |ty: &Ty| ty.iter_union()[0].dupe();
-            let bin_op_ty = <Configured as StarlarkValue<'static>>::bin_op_ty;
+            let same_kind = vec![OperatorSignature {
+                operand: configured.dupe(),
+                result: configured,
+            }];
+            let signatures = <Configured as StarlarkType<'static>>::bin_op_signatures;
 
-            assert_eq!(bin_op_ty(TypingBinOp::Add, &single(&configured)), Some(configured.dupe()));
-            assert_eq!(bin_op_ty(TypingBinOp::Sub, &TyBasic::Any), Some(configured.dupe()));
-            assert_eq!(bin_op_ty(TypingBinOp::BitAnd, &single(&unconfigured)), None);
-            assert_eq!(bin_op_ty(TypingBinOp::Add, &single(&Ty::list(Ty::any()))), None);
+            assert_eq!(signatures(TypingBinOp::Add), same_kind);
+            assert_eq!(signatures(TypingBinOp::Sub), same_kind);
+            assert_eq!(signatures(TypingBinOp::BitAnd), same_kind);
+            assert_eq!(signatures(TypingBinOp::BitOr), Vec::new());
         }
 
         #[test]

@@ -100,6 +100,7 @@ pub mod box_slice_set;
 pub mod calculation;
 pub mod errors;
 pub mod execute;
+pub mod graph_recorder;
 pub mod impls;
 pub mod query;
 pub mod registry;

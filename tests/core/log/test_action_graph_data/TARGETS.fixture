@@ -1,0 +1,6 @@
+write(name = "write")
+
+copy(
+    name = "copy",
+    src = ":write",
+)

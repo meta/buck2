@@ -30,6 +30,7 @@ use buck2_data::timing::Micros;
 use buck2_error::BuckErrorContext;
 use buck2_event_observer::action_util::get_execution_time_ms;
 use buck2_events::dispatch::async_record_root_spans;
+use buck2_events::dispatch::current_span;
 use buck2_events::dispatch::get_dispatcher;
 use buck2_events::dispatch::span_async;
 use buck2_events::span::SpanId;
@@ -76,6 +77,9 @@ use crate::actions::execute::action_executor::ActionOutputs;
 use crate::actions::execute::action_executor::BuckActionExecutor;
 use crate::actions::execute::action_executor::DiceActionOutputs;
 use crate::actions::execute::action_executor::HasActionExecutor;
+use crate::actions::graph_recorder::DirectProducers;
+use crate::actions::graph_recorder::HasGraphRecorder;
+use crate::actions::impls::run_action_knobs::HasRunActionKnobs;
 use crate::artifact_groups::ArtifactGroup;
 use crate::artifact_groups::ArtifactGroupValues;
 use crate::artifact_groups::calculation::ensure_artifact_group_staged;
@@ -149,6 +153,18 @@ async fn build_action_no_redirect(
         .await
         .buck_error_context(format!("for action `{action}`"))?;
 
+    // Before the action's clock starts, so the recorder's time isn't counted as the action's.
+    let producers = ctx
+        .per_transaction_data()
+        .get_run_action_knobs()
+        .log_action_graph
+        .then(|| {
+            Box::new(DirectProducers::collect(
+                ctx.per_transaction_data().get_graph_recorder(),
+                ensured_inputs.keys(),
+            ))
+        });
+
     let now = TimeSpan::start_now();
 
     let target_rule_type_name = rule_type.map(|rule_type| rule_type.name().to_owned());
@@ -161,6 +177,7 @@ async fn build_action_no_redirect(
         ensured_inputs,
         &action,
         target_rule_type_name,
+        producers,
     );
 
     // Don't hold this across an await point
@@ -216,6 +233,7 @@ async fn build_action_inner(
     ensured_inputs: BuckMutInsertionMap<ArtifactGroup, ArtifactGroupValues>,
     action: &Arc<RegisteredAction>,
     target_rule_type_name: Option<String>,
+    producers: Option<Box<DirectProducers>>,
 ) -> (ActionExecutionData, Box<buck2_data::ActionExecutionEnd>) {
     let is_eligible_for_dedupe = is_action_eligible_for_dedupe(action, &ensured_inputs);
     let is_expected_eligible_for_dedupe = match action.is_expected_eligible_for_dedupe() {
@@ -231,6 +249,16 @@ async fn build_action_inner(
     let (execute_result, command_reports) = executor
         .execute(waiting_data, ensured_inputs, action, cancellation)
         .await;
+
+    // Consumers look this up only after DICE gives them this action's value, which happens after
+    // this future completes. A failed action's outputs are never consumed.
+    if producers.is_some()
+        && let Some(span) = current_span()
+    {
+        ctx.per_transaction_data()
+            .get_graph_recorder()
+            .record(action.key(), span.0.get());
+    }
 
     let allow_omit_details = execute_result.is_ok();
 
@@ -428,6 +456,8 @@ async fn build_action_inner(
         .and_then(|r| r.status.execution_kind())
         .and_then(|k| k.re_platform_name());
 
+    let graph_producers = producers.map(|p| p.into_proto());
+
     (
         ActionExecutionData {
             action_result,
@@ -483,7 +513,7 @@ async fn build_action_inner(
                     finish_action_us: t.finish_action.map(|d| Micros::from(d).into()),
                 })
                 .filter(|t| *t != buck2_data::RunActionTimings::default()),
-            graph_producers: None,
+            graph_producers,
             exec_group: match action.execution_group() {
                 Some(ExecutionGroup::Named(group)) => group.name().to_owned(),
                 Some(ExecutionGroup::Default) | None => String::new(),

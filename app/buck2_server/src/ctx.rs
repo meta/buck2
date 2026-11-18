@@ -23,6 +23,8 @@ use buck2_build_api::actions::execute::dice_data::SetCommandExecutor;
 use buck2_build_api::actions::execute::dice_data::SetLowPassFilter;
 use buck2_build_api::actions::execute::dice_data::SetReClient;
 use buck2_build_api::actions::execute::dice_data::set_fallback_executor_config;
+use buck2_build_api::actions::graph_recorder::GraphRecorder;
+use buck2_build_api::actions::graph_recorder::HasGraphRecorder;
 use buck2_build_api::actions::impls::run_action_knobs::HasRunActionKnobs;
 use buck2_build_api::actions::impls::run_action_knobs::RunActionKnobs;
 use buck2_build_api::actions::impls::run_action_knobs::WriteActionCacheMode;
@@ -1269,6 +1271,7 @@ impl DiceCommandUpdater<'_, '_> {
         data.init_materialization_queue_tracker();
         data.set_build_signals(self.build_signals.build_signals.dupe());
         data.set_run_action_knobs(run_action_knobs);
+        data.set_graph_recorder(GraphRecorder::default());
         data.set_invocation_re_settings(invocation_re_settings);
         data.set_create_unhashed_symlink_lock(
             self.cmd_ctx

@@ -94,6 +94,8 @@ LateBuildInfoPatch = record(
     exe_dest = field(str),
     # Placeholder (stable-mode) manifest entries for the packaged manifest.
     placeholder_manifest_entries = field(Artifact | None, None),
+    # Real full-mode build-info JSON to re-stamp the packaged executable with.
+    build_info_json = field(Artifact | None, None),
     # The native executable re-stamped with `build_info_json`; used for
     # non-outplace styles, whose trees symlink to it directly.
     stamped_exe = field(Artifact | None, None),

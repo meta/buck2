@@ -446,6 +446,9 @@ def _compute_pex_providers(
             debuginfo_files.append((name + ".debuginfo", debuginfo))
         extensions = stripped_extensions
 
+    if late_build_info_patch != None:
+        late_build_info_patch = _restamp_packaged_executable(ctx, shared_libs, late_build_info_patch)
+
     # Combine sources and extensions into a map of all modules.
     pex_modules = PexModules(
         manifests = manifests_to_interface(library.manifests),
@@ -594,7 +597,6 @@ def _replace_placeholder_build_info(
     placeholder_manifest_entries = build_info_manifest_entries
     build_info_manifest_entries = real_build_info.manifest_entries
     late_build_info_patch = _late_build_info_patch(
-        ctx,
         shared_libs,
         extra,
         real_build_info,
@@ -658,7 +660,6 @@ def _compute_pex_providers_from_anon(
     )
 
 def _late_build_info_patch(
-    ctx: AnalysisContext,
     shared_libs: list[(SharedLibrary, str)],
     extra: dict[str, typing.Any],
     real_build_info,
@@ -668,7 +669,8 @@ def _late_build_info_patch(
     """The late build-info patch for a binary whose build info is generated after the link.
 
     Locates the swapped-in DSO and the native executable in the packaged
-    shared libraries and re-stamps the executable with the real build info.
+    shared libraries. The executable is re-stamped by
+    `_restamp_packaged_executable` once it is final (e.g. stripped).
     Returns None when either is missing, in which case packaging falls back
     to applying the real build info before packaging as before.
     """
@@ -684,15 +686,34 @@ def _late_build_info_patch(
             exe_dest = dest
     if dso_dest == None or exe_dest == None or "native-executable" not in extra:
         return None
-    placeholder_exe = extra["native-executable"][0].default_outputs[0]
     return LateBuildInfoPatch(
         dso = real_build_info.library.lib.output,
         placeholder_dso = placeholder_dso,
         dso_dest = dso_dest,
         exe_dest = exe_dest,
         placeholder_manifest_entries = placeholder_manifest_entries,
-        stamped_exe = _restamp_executable(ctx, placeholder_exe, real_build_info.json),
+        build_info_json = real_build_info.json,
     )
+
+def _restamp_packaged_executable(
+    ctx: AnalysisContext,
+    shared_libs: list[(SharedLibrary, str)],
+    late_build_info_patch: LateBuildInfoPatch,
+) -> LateBuildInfoPatch:
+    """Set `stamped_exe` by re-stamping the executable `shared_libs` packages
+    at `exe_dest`, so a stripped executable stays stripped."""
+    for shlib, libdir in shared_libs:
+        if shlib.soname.is_str and paths.join(libdir, shlib.soname.ensure_str()) == late_build_info_patch.exe_dest:
+            return LateBuildInfoPatch(
+                dso = late_build_info_patch.dso,
+                placeholder_dso = late_build_info_patch.placeholder_dso,
+                dso_dest = late_build_info_patch.dso_dest,
+                exe_dest = late_build_info_patch.exe_dest,
+                placeholder_manifest_entries = late_build_info_patch.placeholder_manifest_entries,
+                build_info_json = late_build_info_patch.build_info_json,
+                stamped_exe = _restamp_executable(ctx, shlib.lib.output, late_build_info_patch.build_info_json),
+            )
+    fail("no packaged executable at {}".format(late_build_info_patch.exe_dest))
 
 def _restamp_executable(ctx: AnalysisContext, exe: Artifact, build_info_json: Artifact) -> Artifact:
     """Re-stamp `exe`'s `fb_build_info` section with the real build info.

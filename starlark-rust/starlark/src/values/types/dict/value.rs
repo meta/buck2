@@ -568,12 +568,10 @@ impl<'v> StarlarkType<'v> for DictView<'v> {
         with_dict!(self, |d| d.set_at(index, alloc_value))
     }
 
-    fn bit_or(&self, rhs: Value<'v>, heap: Heap<'v>) -> crate::Result<Value<'v>> {
-        let rhs = DictRef::from_value(rhs)
-            .map_or_else(|| ValueError::unsupported_with(self, "|", rhs), Ok)?;
+    fn bit_or(&self, rhs: DictRef<'v>) -> Dict<'v> {
         let content = self.content();
         if content.is_empty() {
-            return Ok(heap.alloc((*rhs).clone()).to_value());
+            return (*rhs).clone();
         }
         // Might be faster if we preallocate the capacity, but then copying in the LHS
         // is more expensive and might oversize given the behaviour on duplicates.
@@ -582,7 +580,7 @@ impl<'v> StarlarkType<'v> for DictView<'v> {
         for (k, v) in rhs.iter_hashed() {
             items.insert_hashed(k, v);
         }
-        Ok(heap.alloc(Dict::new(items)).to_value())
+        Dict::new(items)
     }
 
     fn get_type_starlark_repr() -> Ty {

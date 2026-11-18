@@ -47,7 +47,6 @@ use crate::values::StarlarkRepresentations;
 use crate::values::StarlarkType;
 use crate::values::StarlarkValue;
 use crate::values::Trace;
-use crate::values::UnpackValue;
 use crate::values::Value;
 use crate::values::ValueError;
 use crate::values::ValueOf;
@@ -340,14 +339,11 @@ impl<'v> StarlarkType<'v> for SetView<'v> {
     }
 
     // Set intersection
-    fn bit_and(&self, rhs: Value<'v>, heap: Heap<'v>) -> crate::Result<Value<'v>> {
-        let rhs = SetRef::unpack_value_opt(rhs)
-            .map_or_else(|| ValueError::unsupported_with(self, "&", rhs), Ok)?;
-
+    fn bit_and(&self, rhs: SetRef<'v>) -> SetData<'v> {
         let mut items = SmallSet::new();
         let content = self.content();
         if content.is_empty() {
-            return Ok(heap.alloc(SetData { content: items }).to_value());
+            return SetData { content: items };
         }
 
         for h in rhs.aref.iter_hashed() {
@@ -356,7 +352,7 @@ impl<'v> StarlarkType<'v> for SetView<'v> {
             }
         }
 
-        Ok(heap.alloc(SetData { content: items }).to_value())
+        SetData { content: items }
     }
 
     // Set symmetric difference

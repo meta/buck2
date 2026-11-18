@@ -41,6 +41,13 @@ error: Binary operator `*` is not available on the types `str` and `str`
    |     ^^^^^
 
 Error:
+error: Binary operator `+` is not available on the types `bytes` and `str`
+  --> filename:19:5
+   |
+19 |     b + s
+   |     ^^^^^
+
+Error:
 error: Binary operator `+` is not available on the types `tuple[int, ...]` and `list[int]`
   --> filename:20:5
    |
@@ -59,7 +66,7 @@ str_add: str
 str_mul: str
 int_mul_str: str
 str_percent: str
-bytes_add: typing.Any
+bytes_add: bytes
 bytes_mul: bytes
 tuple_add: typing.Any
 tuple_mul: typing.Any

@@ -251,15 +251,11 @@ impl<'v> StarlarkValue<'v> for StarlarkBytes {
     }
 
     /// `bytes + bytes` — concatenation.
-    fn add(&self, other: Value<'v>, heap: Heap<'v>) -> Option<crate::Result<Value<'v>>> {
-        if let Some(other) = StarlarkBytes::from_value(other) {
-            let mut result = Vec::with_capacity(self.content.len() + other.content.len());
-            result.extend_from_slice(&self.content);
-            result.extend_from_slice(&other.content);
-            Some(Ok(heap.alloc(StarlarkBytes::from_vec(result)).to_value()))
-        } else {
-            None
-        }
+    fn add(&self, other: &Self) -> StarlarkBytes {
+        let mut result = Vec::with_capacity(self.content.len() + other.content.len());
+        result.extend_from_slice(&self.content);
+        result.extend_from_slice(&other.content);
+        StarlarkBytes::from_vec(result)
     }
 
     /// `bytes * n` — repetition.

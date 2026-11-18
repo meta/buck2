@@ -68,8 +68,8 @@ int_mul_str: str
 str_percent: str
 bytes_add: bytes
 bytes_mul: bytes
-tuple_add: typing.Any
-tuple_mul: typing.Any
+tuple_add: tuple
+tuple_mul: tuple
 list_add: list[int | str]
 list_mul: list[int]
 dict_or: dict[int | str, int | str]

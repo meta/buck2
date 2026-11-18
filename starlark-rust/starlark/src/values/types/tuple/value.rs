@@ -37,11 +37,13 @@ use crate::typing::Ty;
 use crate::values::Heap;
 use crate::values::StarlarkValue;
 use crate::values::Value;
+use crate::values::ValueOf;
 use crate::values::comparison::compare_slice;
 use crate::values::comparison::equals_slice;
 use crate::values::index::apply_slice;
 use crate::values::index::convert_index;
 use crate::values::layout::avalue::TrailingValues;
+use crate::values::tuple::TupleType;
 
 /// Define the tuple type.
 #[repr(C)]
@@ -135,12 +137,12 @@ impl<'v> Tuple<'v> {
     /// A tuple of the items `times` times over: `tuple * times` and `times * tuple`.
     // Inlined into `mul` and `rmul`: as a call it measured 13 instructions more on `t * 3`.
     #[inline(always)]
-    fn repeated(&self, times: i32, heap: Heap<'v>) -> Value<'v> {
+    fn repeated(&self, times: i32, heap: Heap<'v>) -> ValueOf<'v, TupleType<Value<'v>>> {
         let mut result = Vec::new();
         for _i in 0..times {
             result.extend(self.content().iter().map(|e| e.to_value()));
         }
-        heap.alloc_tuple(&result).to_value()
+        heap.alloc_tuple(&result)
     }
 }
 
@@ -218,7 +220,7 @@ impl<'v> StarlarkValue<'v> for Tuple<'v> {
 
     unsafe fn iter_stop(&self) {}
 
-    fn add(&self, other: &Self, heap: Heap<'v>) -> Value<'v> {
+    fn add(&self, other: &Self, heap: Heap<'v>) -> ValueOf<'v, TupleType<Value<'v>>> {
         let mut result = Vec::with_capacity(self.len() + other.len());
         for x in self.iter() {
             result.push(x);
@@ -226,14 +228,14 @@ impl<'v> StarlarkValue<'v> for Tuple<'v> {
         for x in other.iter() {
             result.push(x);
         }
-        heap.alloc_tuple(&result).to_value()
+        heap.alloc_tuple(&result)
     }
 
-    fn mul(&self, times: i32, heap: Heap<'v>) -> Value<'v> {
+    fn mul(&self, times: i32, heap: Heap<'v>) -> ValueOf<'v, TupleType<Value<'v>>> {
         self.repeated(times, heap)
     }
 
-    fn rmul(&self, times: i32, heap: Heap<'v>) -> Value<'v> {
+    fn rmul(&self, times: i32, heap: Heap<'v>) -> ValueOf<'v, TupleType<Value<'v>>> {
         self.repeated(times, heap)
     }
 

@@ -9,7 +9,7 @@ repository.workspace = true
 license.workspace = true
 
 [dependencies]
-allocative = { version = "0.3.6", path = "../../allocative/allocative", optional = true }
+allocative = { version = "0.4.0", path = "../../allocative/allocative", optional = true }
 dupe = { workspace = true, optional = true }
 equivalent.workspace = true
 lock_free_hashtable.workspace = true

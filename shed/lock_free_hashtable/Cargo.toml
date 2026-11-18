@@ -9,7 +9,7 @@ repository.workspace = true
 license.workspace = true
 
 [dependencies]
-allocative = { version = "0.3.6", path = "../../allocative/allocative", optional = true }
+allocative = { version = "0.4.0", path = "../../allocative/allocative", optional = true }
 parking_lot = "0.13.0"
 
 [dev-dependencies]

@@ -2,7 +2,7 @@
 
 [package]
 name = "allocative_derive"
-version = "0.3.6"
+version = "0.4.0"
 authors = ["Meta"]
 edition.workspace = true
 description = "Implementation of derive(Allocative) for allocative crate"

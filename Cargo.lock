@@ -85,7 +85,7 @@ dependencies = [
 
 [[package]]
 name = "allocative"
-version = "0.3.6"
+version = "0.4.0"
 dependencies = [
  "allocative_derive",
  "anyhow",
@@ -113,7 +113,7 @@ dependencies = [
 
 [[package]]
 name = "allocative_derive"
-version = "0.3.6"
+version = "0.4.0"
 dependencies = [
  "proc-macro2",
  "quote",

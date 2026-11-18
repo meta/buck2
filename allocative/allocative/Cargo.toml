@@ -2,7 +2,7 @@
 
 [package]
 name = "allocative"
-version = "0.3.6"
+version = "0.4.0"
 authors = ["Meta"]
 edition.workspace = true
 description = "Inspect rust object tree and output it as flamegraph"

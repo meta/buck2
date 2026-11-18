@@ -50,7 +50,6 @@ use starlark::values::Heap;
 use starlark::values::NoSerialize;
 use starlark::values::StarlarkPagable;
 use starlark::values::StarlarkValue;
-use starlark::values::UnpackValue;
 use starlark::values::Value;
 use starlark::values::ValueError;
 use starlark::values::ValueTyped;
@@ -209,14 +208,13 @@ where
         Ok(Node::alloc_all(self.0.iter(), heap))
     }
 
-    fn at(&self, index: Value<'v>, heap: Heap<'v>) -> starlark::Result<Value<'v>> {
-        let i = i32::unpack_value_err(index)?;
-        if let Ok(i) = usize::try_from(i) {
+    fn at(&self, index: i32, heap: Heap<'v>) -> starlark::Result<Value<'v>> {
+        if let Ok(i) = usize::try_from(index) {
             if let Some(node) = self.0.get_index(i) {
                 return Ok(node.dupe().alloc(heap));
             }
         }
-        Err(ValueError::IndexOutOfBound(i).into())
+        Err(ValueError::IndexOutOfBound(index).into())
     }
 
     fn length(&self) -> starlark::Result<i32> {

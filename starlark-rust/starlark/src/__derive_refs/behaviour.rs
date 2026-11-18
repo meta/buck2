@@ -37,6 +37,7 @@ use crate::values::StarlarkTypeExpr;
 use crate::values::UnpackValue;
 use crate::values::Value;
 use crate::values::ValueError;
+use crate::values::expected_type_error;
 use crate::values::unpack_then;
 
 /// What a typed method may return where the trait's method returns `starlark::Result<T>`: a
@@ -266,8 +267,59 @@ typed_unary_operators! {
     bit_not => typed_bit_not;
 }
 
-/// What a typed binary operator says to the typechecker: an operand of the type `O` converts
-/// from gives a result of the type `R` makes.
+/// [`StarlarkType::at`] from a typed body. A value that is not of the index's type is the error
+/// of a conversion that expected one ([`operand_type_error`]), not the default's "`[]` not
+/// supported": the type is indexed, and was given the wrong kind of index.
+#[inline(always)]
+pub fn typed_at<'v, O, R>(
+    index: Value<'v>,
+    heap: Heap<'v>,
+    typed: impl FnOnce(O, Heap<'v>) -> R,
+) -> crate::Result<Value<'v>>
+where
+    O: UnpackValue<'v>,
+    R: TypedOperatorResult<'v>,
+{
+    unpack_then(
+        index,
+        |index| typed(index, heap).alloc_result(heap),
+        || Err(operand_type_error::<O>(index)),
+        Err,
+    )
+}
+
+/// [`StarlarkType::is_in`] from a typed body. A value that is not of the operand's type is the
+/// error of a conversion that expected one ([`operand_type_error`]), as for
+/// [`typed_at`].
+#[inline(always)]
+pub fn typed_is_in<'v, O, R>(other: Value<'v>, typed: impl FnOnce(O) -> R) -> crate::Result<bool>
+where
+    O: UnpackValue<'v>,
+    R: TypedResult<bool>,
+{
+    unpack_then(
+        other,
+        |other| typed(other).into_result(),
+        || Err(operand_type_error::<O>(other)),
+        Err,
+    )
+}
+
+/// The error for an index, or the left operand of `in`, that is not of the type `O` converts
+/// from.
+#[cold]
+pub fn operand_type_error<'v, O: UnpackValue<'v>>(value: Value<'v>) -> crate::Error {
+    expected_type_error(value, O::Type::starlark_type_repr)
+}
+
+/// [`StarlarkType::length`] from a body that cannot fail.
+#[inline(always)]
+pub fn typed_length(typed: impl FnOnce() -> i32) -> crate::Result<i32> {
+    Ok(typed())
+}
+
+/// What a typed binary operator, or a typed `at` with its index as the operand, says to the
+/// typechecker: an operand of the type `O` converts from gives a result of the type `R` makes.
 pub fn operator_signature<'v, O, R>() -> OperatorSignature
 where
     O: UnpackValue<'v>,
@@ -282,6 +334,15 @@ where
 /// What a typed `compare` says to the typechecker about `<` and its like: the operand is of the
 /// type `O` converts from.
 pub fn compare_signature<'v, O: UnpackValue<'v>>() -> OperatorSignature {
+    OperatorSignature {
+        operand: O::Type::starlark_type_repr(),
+        result: Ty::bool(),
+    }
+}
+
+/// What a typed `is_in` says to the typechecker about `x in this`: `x` is of the type `O`
+/// converts from.
+pub fn is_in_signature<'v, O: UnpackValue<'v>>() -> OperatorSignature {
     OperatorSignature {
         operand: O::Type::starlark_type_repr(),
         result: Ty::bool(),

@@ -504,6 +504,26 @@ pub trait StarlarkType<'v>: 'v + ProvidesStaticType<'v> + Debug + Display + Size
     }
 
     /// Return the result of `a[index]` if `a` is indexable.
+    ///
+    /// # In a `#[starlark_value]` block
+    ///
+    /// The method is written with the index it takes and what it returns, as an operator is
+    /// with its operand and result ([`add`](Self::add)), and may leave out the heap the same
+    /// way:
+    ///
+    /// ```ignore
+    /// fn at(&self, index: i32) -> starlark::Result<Value<'v>> {
+    ///     self.items.get(index as usize).copied().ok_or_else(|| out_of_bounds(index))
+    /// }
+    /// ```
+    ///
+    /// [`#[starlark_value]`](crate::values::starlark_value) derives this method from it, and
+    /// from its two types what the typechecker knows of `a[index]`
+    /// ([`at_signature`](Self::at_signature)).
+    ///
+    /// A value that is not of the index's type is the error of a conversion that expected one
+    /// ("Expected `int`, but got ..") rather than what this default answers: the type is
+    /// indexed, and was given the wrong kind of index.
     fn at(&self, index: Value<'v>, _heap: Heap<'v>) -> crate::Result<Value<'v>> {
         ValueError::unsupported_with(self, "[]", index)
     }
@@ -627,6 +647,9 @@ pub trait StarlarkType<'v>: 'v + ProvidesStaticType<'v> + Debug + Display + Size
     }
 
     /// Returns the length of the value, if this value is a sequence.
+    ///
+    /// In a `#[starlark_value]` block, a length that cannot fail is written
+    /// `fn length(&self) -> i32`.
     fn length(&self) -> crate::Result<i32> {
         ValueError::unsupported(self, "len()")
     }
@@ -693,6 +716,21 @@ pub trait StarlarkType<'v>: 'v + ProvidesStaticType<'v> + Debug + Display + Size
     /// ('z' in 'abc') == False
     /// # "#);
     /// ```
+    ///
+    /// # In a `#[starlark_value]` block
+    ///
+    /// The method is written with the operand it takes, as [`equals`](Self::equals) is:
+    ///
+    /// ```ignore
+    /// fn is_in(&self, other: &str) -> bool {
+    ///     self.name.contains(other)
+    /// }
+    /// ```
+    ///
+    /// The result is `bool` or `starlark::Result<bool>`. The operand's type is what the
+    /// typechecker takes `other in a` to accept. A value that is not of it is the error of a
+    /// conversion that expected one, as for [`at`](Self::at), rather than what this default
+    /// answers, which says that the type has no `in`.
     fn is_in(&self, other: Value<'v>) -> crate::Result<bool> {
         ValueError::unsupported_owned(other.get_type(), "in", Some(Self::TYPE))
     }
@@ -962,7 +1000,8 @@ pub trait StarlarkType<'v>: 'v + ProvidesStaticType<'v> + Debug + Display + Size
     /// [`#[starlark_value]`](crate::values::starlark_value) generates this from the operator
     /// methods of the block: for one written with types (see [`add`](Self::add)), the types of
     /// its operand and result; for one written as declared here,
-    /// [`OperatorSignature::any`]. `<` is [`compare`](Self::compare) with its operand.
+    /// [`OperatorSignature::any`]. `<` is [`compare`](Self::compare) with its operand, and
+    /// `in` is [`is_in`](Self::is_in) with its.
     fn bin_op_signatures(_op: TypingBinOp) -> Vec<OperatorSignature> {
         Vec::new()
     }
@@ -987,7 +1026,8 @@ pub trait StarlarkType<'v>: 'v + ProvidesStaticType<'v> + Debug + Display + Size
     /// it as it matches an operand against the signature of an operator.
     ///
     /// [`#[starlark_value]`](crate::values::starlark_value) generates this from the
-    /// [`at`](Self::at) of the block: [`OperatorSignature::any`] if it has one.
+    /// [`at`](Self::at) of the block: the types of its index and result if it is written with
+    /// them, [`OperatorSignature::any`] if it is written as declared here.
     fn at_signature() -> Option<OperatorSignature> {
         None
     }

@@ -391,6 +391,21 @@ impl<'v> StarlarkType<'v> for SizedView<'v> {
     fn write_hash(&self, hasher: &mut StarlarkHasher) {
         self.get().hash(hasher)
     }
+
+    fn at(&self, index: i32, heap: Heap<'v>) -> Value<'v> {
+        heap.alloc(self.get() as i32 + index).to_value()
+    }
+
+    fn is_in(&self, other: Self) -> starlark::Result<bool> {
+        if other.get() == 0 {
+            return Err(starlark::Error::new_other(Negative));
+        }
+        Ok(other.get() <= self.get())
+    }
+
+    fn length(&self) -> i32 {
+        self.get() as i32
+    }
 }
 
 #[starlark_value]
@@ -417,6 +432,15 @@ fn test_view() {
         assert!(!small.equals(heap.alloc(1i32).to_value()).unwrap());
         assert_eq!(Ordering::Less, small.compare(larger).unwrap());
         assert_eq!(hash_of(small).unwrap(), hash_of(large).unwrap());
+
+        let two = heap.alloc(2i32).to_value();
+        assert_eq!("3", small.to_value().at(two, heap).unwrap().to_str());
+        assert!(larger.to_value().is_in(small.to_value()).unwrap());
+        assert!(!small.to_value().is_in(larger.to_value()).unwrap());
+        let zero = heap.alloc_simple(Small(0)).to_value();
+        let e = small.to_value().is_in(zero).unwrap_err();
+        assert!(e.to_string().contains("negative number"), "{e}");
+        assert_eq!(1, large.to_value().length().unwrap());
     });
 }
 
@@ -903,4 +927,124 @@ fn test_operators_view() {
         }],
         <LengthView as StarlarkType>::bin_op_signatures(TypingBinOp::Add),
     );
+}
+
+/// `at`, `is_in` and `length` typed, without a heap and without a `Result` where there is
+/// nothing to fail.
+#[derive(
+    Debug,
+    Display,
+    ProvidesStaticType,
+    NoSerialize,
+    Allocative,
+    StarlarkPagable
+)]
+#[display("word({})", _0)]
+struct Word(String);
+starlark_simple_value!(Word);
+
+#[derive(Debug, thiserror::Error)]
+#[error("no letter {0} in the word")]
+struct NoLetter(i32);
+
+#[starlark_value(type = "word")]
+impl<'v> StarlarkValue<'v> for Word {
+    fn at(&self, index: i32) -> starlark::Result<char> {
+        usize::try_from(index)
+            .ok()
+            .and_then(|i| self.0.chars().nth(i))
+            .ok_or_else(|| starlark::Error::new_other(NoLetter(index)))
+    }
+
+    fn is_in(&self, other: &str) -> bool {
+        self.0.contains(other)
+    }
+
+    fn length(&self) -> i32 {
+        self.0.len() as i32
+    }
+}
+
+#[test]
+fn test_at_is_in_length() {
+    Heap::temp(|heap| {
+        let word = heap.alloc_simple(Word("word".to_owned())).to_value();
+        let int = |n: i32| heap.alloc(n).to_value();
+        let str = |s: &str| heap.alloc(s).to_value();
+
+        assert_eq!("o", word.at(int(1), heap).unwrap().to_str());
+        assert!(word.is_in(str("or")).unwrap());
+        assert!(!word.is_in(str("ro")).unwrap());
+        assert_eq!(4, word.length().unwrap());
+
+        // The body's error.
+        let e = word.at(int(9), heap).unwrap_err();
+        assert!(e.to_string().contains("no letter 9 in the word"), "{e}");
+        // A value of the index's type that does not convert.
+        let e = word
+            .at(heap.alloc(1i64 << 40).to_value(), heap)
+            .unwrap_err();
+        assert!(e.to_string().contains("too big to fit in i32"), "{e}");
+    });
+}
+
+/// A value that is not of the index's or the operand's type is the error of a conversion that
+/// expected one, not what the trait's default answers for a type without `[]` or `in`.
+#[test]
+fn test_at_is_in_operand_of_another_type() {
+    Heap::temp(|heap| {
+        let word = heap.alloc_simple(Word("word".to_owned())).to_value();
+        let default = heap.alloc_simple(NoOperators).to_value();
+        let int = heap.alloc(1i32).to_value();
+        let str = heap.alloc("x").to_value();
+
+        let e = word.at(str, heap).unwrap_err().to_string();
+        assert!(
+            e.contains("Expected `int`, but got `string (repr: \"x\")`"),
+            "{e}"
+        );
+        let e = word.is_in(int).unwrap_err().to_string();
+        assert!(e.contains("Expected `str`, but got `int (repr: 1)`"), "{e}");
+
+        let e = default.at(str, heap).unwrap_err().to_string();
+        assert!(e.contains("Operation `[]` not supported"), "{e}");
+        let e = default.is_in(int).unwrap_err().to_string();
+        assert!(e.contains("Operation `in` not supported"), "{e}");
+    });
+}
+
+/// The typechecker is told the index's type and the result's for a typed `at`, and the
+/// operand's for a typed `is_in`.
+#[test]
+fn test_at_is_in_signatures() {
+    assert_eq!(
+        Some(OperatorSignature {
+            operand: Ty::int(),
+            result: Ty::string(),
+        }),
+        <Word as StarlarkType>::at_signature(),
+    );
+    assert_eq!(
+        vec![OperatorSignature {
+            operand: Ty::string(),
+            result: Ty::bool(),
+        }],
+        <Word as StarlarkType>::bin_op_signatures(TypingBinOp::In),
+    );
+    let sized = Ty::starlark_value::<Small>();
+    assert_eq!(
+        Some(OperatorSignature {
+            operand: Ty::int(),
+            result: Ty::any(),
+        }),
+        <SizedView as StarlarkType>::at_signature(),
+    );
+    assert_eq!(
+        vec![OperatorSignature {
+            operand: sized,
+            result: Ty::bool(),
+        }],
+        <SizedView as StarlarkType>::bin_op_signatures(TypingBinOp::In),
+    );
+    assert_eq!(None, <Seconds as StarlarkType>::at_signature());
 }

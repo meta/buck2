@@ -150,6 +150,7 @@ pub use crate::values::types::tuple;
 pub use crate::values::unpack::UnpackValue;
 pub use crate::values::unpack::UnpackValueError;
 pub use crate::values::unpack::UnpackValueErrorInfallible;
+pub(crate) use crate::values::unpack::expected_type_error;
 pub(crate) use crate::values::unpack::unpack_then;
 pub use crate::values::value_of::ValueOf;
 

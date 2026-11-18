@@ -447,6 +447,9 @@ impl ImplStarlarkValue {
             Some(Typing::Compare { operand }) => signatures.push(syn::parse_quote! {
                 starlark::__derive_refs::behaviour::compare_signature::<#operand>()
             }),
+            Some(Typing::IsIn { operand }) => signatures.push(syn::parse_quote! {
+                starlark::__derive_refs::behaviour::is_in_signature::<#operand>()
+            }),
             Some(Typing::UnaryOperator { .. }) => {}
             None if self.has_fn(impl_name) || type_union => signatures.push(any),
             None => {}
@@ -574,15 +577,21 @@ impl ImplStarlarkValue {
         })
     }
 
-    /// `fn at_signature()`, unless the block writes it: any index and an unknown result if the
-    /// block has `at`.
-    fn at_signature(&self) -> Option<syn::ImplItem> {
+    /// `fn at_signature()`, unless the block writes it: for an `at` written with types, what
+    /// they say; for one written as the trait declares it, any index and an unknown result.
+    fn at_signature(&self, typed: &TypedMethods) -> Option<syn::ImplItem> {
         if self.has_fn("at_signature") || !self.has_fn("at") {
             return None;
         }
+        let signature: syn::Expr = match typed.get("at") {
+            Some(Typing::Operator { operand, result }) => syn::parse_quote! {
+                starlark::__derive_refs::behaviour::operator_signature::<#operand, #result>()
+            },
+            _ => syn::parse_quote! { starlark::typing::OperatorSignature::any() },
+        };
         Some(syn::parse_quote! {
             fn at_signature() -> Option<starlark::typing::OperatorSignature> {
-                Some(starlark::typing::OperatorSignature::any())
+                Some(#signature)
             }
         })
     }
@@ -889,7 +898,7 @@ impl ImplStarlarkValue {
                 .chain(self.bin_op_signatures(&typed))
                 .chain(self.rbin_op_signatures(&typed))
                 .chain(self.un_op_result(&typed))
-                .chain(self.at_signature()),
+                .chain(self.at_signature(&typed)),
         );
         let has_fn_flags = self.has_fn_flags(&type_impl)?;
         type_impl.items.extend(has_fn_flags);

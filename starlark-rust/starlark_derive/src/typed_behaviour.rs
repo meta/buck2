@@ -44,14 +44,25 @@ enum Shape {
     Operator,
     /// `plus`, `minus`, `bit_not`: `(&self, Heap) -> Result<Value>`.
     UnaryOperator,
+    /// `(&self, Value, Heap) -> Result<Value>`.
+    At,
+    /// `(&self, Value) -> Result<bool>`.
+    IsIn,
+    /// `(&self) -> Result<i32>`.
+    Length,
 }
 
 impl Shape {
     /// How many parameters the trait's method has after the receiver.
     fn parameters(self) -> usize {
         match self {
-            Shape::Equals | Shape::Compare | Shape::WriteHash | Shape::UnaryOperator => 1,
-            Shape::OperatorOrNone | Shape::Operator => 2,
+            Shape::Length => 0,
+            Shape::Equals
+            | Shape::Compare
+            | Shape::WriteHash
+            | Shape::UnaryOperator
+            | Shape::IsIn => 1,
+            Shape::OperatorOrNone | Shape::Operator | Shape::At => 2,
         }
     }
 }
@@ -73,6 +84,9 @@ impl Method {
             "sub" | "div" | "floor_div" | "percent" | "bit_and" | "bit_or" | "bit_xor"
             | "left_shift" | "right_shift" => Shape::Operator,
             "plus" | "minus" | "bit_not" => Shape::UnaryOperator,
+            "at" => Shape::At,
+            "is_in" => Shape::IsIn,
+            "length" => Shape::Length,
             _ => return None,
         };
         Some(Method { name, shape })
@@ -117,6 +131,20 @@ impl Method {
                  `fn {name}(&self, heap: Heap<'v>) -> starlark::Result<Value<'v>>` is the \
                  trait's own form"
             ),
+            Shape::At => "`fn at(&self, index: Index, heap: Heap<'v>) -> Made`, where `Index` is \
+                 an `UnpackValue` such as `i32`, `Made` is an `AllocValue` or a \
+                 `starlark::Result` of one, and `heap` may be left out; \
+                 `fn at(&self, index: Value<'v>, heap: Heap<'v>) -> starlark::Result<Value<'v>>` \
+                 is the trait's own form"
+                .to_owned(),
+            Shape::IsIn => "`fn is_in(&self, other: Operand) -> bool`, where `Operand` is an \
+                 `UnpackValue` such as `&str`, the result may also be `starlark::Result<bool>`, \
+                 and `fn is_in(&self, other: Value<'v>) -> starlark::Result<bool>` is the \
+                 trait's own form"
+                .to_owned(),
+            Shape::Length => "`fn length(&self) -> i32` for a length that cannot fail, or the \
+                 trait's own form `fn length(&self) -> starlark::Result<i32>`"
+                .to_owned(),
         }
     }
 
@@ -132,7 +160,10 @@ impl Method {
 pub(crate) enum Typing {
     /// `compare`: the operand's type.
     Compare { operand: Box<syn::Type> },
-    /// A binary operator: the operand's type and the result's.
+    /// `is_in`: the operand's type.
+    IsIn { operand: Box<syn::Type> },
+    /// A binary operator, or `at` with its index as the operand: the operand's type and the
+    /// result's.
     Operator {
         operand: Box<syn::Type>,
         result: Box<syn::Type>,
@@ -147,7 +178,7 @@ pub(crate) struct Derived {
     /// The typed method says that every value of the type hashes.
     pub(crate) always_hashes: bool,
     /// The method is one whose body is typically a few instructions and that the evaluator
-    /// calls on its hot paths: `equals`, `compare`, `write_hash`.
+    /// calls on its hot paths: `equals`, `compare`, `write_hash`, `at`, `is_in`, `length`.
     pub(crate) small: bool,
     /// What the typed method says to the typechecker, if it is one the typechecker reads.
     pub(crate) typing: Option<Typing>,
@@ -251,9 +282,9 @@ fn heap_parameter(typed: Option<&syn::PatType>) -> (syn::Ident, proc_macro2::Tok
 ///
 /// A signature is the trait's by its spelling, as `#[starlark_module]` recognises a `Value`
 /// parameter: the operand's type is named `Value` and the result's is spelled as the trait's
-/// (`Result` for `equals` and `compare`, `Option` for `add` and its like, `Result<Value>` for
-/// the other operators). The trait's operators take the heap, which a typed one may leave out,
-/// so an operator without it is typed whatever its types are.
+/// (`Result` for `equals`, `compare`, `is_in` and `length`, `Option` for `add` and its like,
+/// `Result<Value>` for the other operators and `at`). The trait's operators and `at` take the
+/// heap, which a typed one may leave out, so one without it is typed whatever its types are.
 pub(crate) fn derive_from_typed(
     f: &syn::ImplItemFn,
     lt: &syn::Lifetime,
@@ -276,13 +307,16 @@ pub(crate) fn derive_from_typed(
         }
     }
     let operand_is_value = match (method.shape, &params[..]) {
-        (Shape::UnaryOperator, _) | (_, []) => false,
+        (Shape::UnaryOperator | Shape::Length, _) | (_, []) => false,
         (_, [operand, ..]) => is_type_name(&operand.ty, "Value"),
     };
     let every_parameter = params.len() == method.shape.parameters();
 
     let typed = match method.shape {
-        Shape::Equals | Shape::Compare => !(operand_is_value && returns_result(&sig.output)),
+        Shape::Equals | Shape::Compare | Shape::IsIn => {
+            !(operand_is_value && returns_result(&sig.output))
+        }
+        Shape::Length => !returns_result(&sig.output),
         Shape::WriteHash => match &sig.output {
             syn::ReturnType::Default => true,
             syn::ReturnType::Type(_, ty) => match &**ty {
@@ -307,7 +341,7 @@ pub(crate) fn derive_from_typed(
                 (_, false) => true,
             }
         }
-        Shape::Operator => {
+        Shape::Operator | Shape::At => {
             !(operand_is_value && every_parameter && returns_result_of_value(&sig.output))
         }
         Shape::UnaryOperator => !(every_parameter && returns_result_of_value(&sig.output)),
@@ -433,6 +467,61 @@ pub(crate) fn derive_from_typed(
             };
             (derived, Some(typing))
         }
+        (Shape::At, [index, typed_heap @ ..]) if typed_heap.len() <= 1 => {
+            let result = operator_result(&method, sig)?;
+            let untyped_index = derived_parameter(Some(index), "index");
+            let (heap, typed_heap) = heap_parameter(typed_heap.first().copied());
+            let call = quote_spanned! { sig.span() =>
+                starlark::__derive_refs::behaviour::#glue(
+                    #untyped_index,
+                    #heap,
+                    |#index, #typed_heap| #output #block,
+                )
+            };
+            let derived = syn::parse_quote! {
+                #( #attrs )*
+                fn #name(
+                    &self,
+                    #untyped_index: starlark::values::Value<#lt>,
+                    #heap: starlark::values::Heap<#lt>,
+                ) -> starlark::Result<starlark::values::Value<#lt>> {
+                    #call
+                }
+            };
+            let typing = Typing::Operator {
+                operand: index.ty.clone(),
+                result: Box::new(result.clone()),
+            };
+            (derived, Some(typing))
+        }
+        (Shape::IsIn, [operand]) => {
+            let other = derived_parameter(Some(operand), "other");
+            let call = quote_spanned! { sig.span() =>
+                starlark::__derive_refs::behaviour::#glue(#other, |#operand| #output #block)
+            };
+            let derived = syn::parse_quote! {
+                #( #attrs )*
+                fn #name(&self, #other: starlark::values::Value<#lt>) -> starlark::Result<bool> {
+                    #call
+                }
+            };
+            let typing = Typing::IsIn {
+                operand: operand.ty.clone(),
+            };
+            (derived, Some(typing))
+        }
+        (Shape::Length, []) => {
+            let call = quote_spanned! { sig.span() =>
+                starlark::__derive_refs::behaviour::#glue(|| #output #block)
+            };
+            let derived = syn::parse_quote! {
+                #( #attrs )*
+                fn #name(&self) -> starlark::Result<i32> {
+                    #call
+                }
+            };
+            (derived, None)
+        }
         (Shape::UnaryOperator, typed_heap) if typed_heap.len() <= 1 => {
             let result = operator_result(&method, sig)?;
             let (heap, typed_heap) = heap_parameter(typed_heap.first().copied());
@@ -460,7 +549,12 @@ pub(crate) fn derive_from_typed(
         always_hashes: method.shape == Shape::WriteHash,
         small: matches!(
             method.shape,
-            Shape::Equals | Shape::Compare | Shape::WriteHash
+            Shape::Equals
+                | Shape::Compare
+                | Shape::WriteHash
+                | Shape::At
+                | Shape::IsIn
+                | Shape::Length
         ),
         typing,
     }))
